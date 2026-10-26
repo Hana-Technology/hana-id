@@ -84,3 +84,35 @@ hard-coded · NEAR Auth/FastAuth and per-tx signing code no longer needed.
 Keys in plaintext `sessionStorage` (`legacy/client/local-keys.ts`) → in-memory vault on a Hana origin ·
 CKD network key read over RPC → pin it · full Google token (with email) is public on-chain → `openid`-only OAuth flow ·
 HKDF salt `hana-embed-ckd-v1` → decide final name before freeze.
+
+## Next steps (handoff, 2026-10-26)
+
+Status: batches A and A.2 plus the smoke page are merged on `develop`, CI green. Nothing is deployed yet. The plan
+doc's Status section is the summary for humans: https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi
+
+1. **Human setup** (the user does these; never ask for or handle private keys):
+   - Three testnet accounts via near CLI into the legacy keychain (`~/.near-credentials/testnet/`), names as in
+     `envs/sandbox-dev.json` (signer ≥ 6 NEAR, relayer ≈ 7 NEAR, owner ≈ 1 NEAR):
+     `near account create-account sponsor-by-faucet-service <name>.testnet autogenerate-new-keypair save-to-legacy-keychain network-config testnet create`
+   - Google Cloud OAuth (consent screen in Testing mode with test users): Hana app client → `googleClientIds`;
+     a separate shared login client → `sharedGoogleClientIds`; a "partner" client for own-client tests; all with
+     `http://localhost:5173` as an authorized JavaScript origin for the smoke page. Optional console client →
+     `consoleAudiences`.
+   - Cloudflare account with a workers.dev subdomain; `pnpm --dir apps/api exec wrangler login`.
+2. **Deploy sandbox-dev** (README "deploy a sandbox env" has exact commands): fill the manifest → `fetch-ckd-key` →
+   `deploy-contract` (show the plan, deploy only after the user says yes) → `post-google-keys` → D1 create + `gen`
+   + migrations → Worker secrets (`RELAYER_KEYS`, `OWNER_RELAYER_KEYS`, `KEYS_UPDATER_KEY`) → `deploy` → put the real
+   workers.dev URL in `apiUrl`.
+3. **Register two test apps** (`admin scope:register`, `admin app:create --origin http://localhost:5173`): one with the
+   partner's own client and `--allow-shared`, one shared-only.
+4. **Smoke test** with `apps/smoke` (checklist in `apps/smoke/README.md`): real MPC CKD + pairing check, app A vs B
+   give different addresses, key index 0 vs 1, own vs shared client give the same path (confirms Google `sub` is
+   stable across clients), revoke, replays rejected, max_uses. Record per-method gas and latency.
+5. **Tune from measurements:** per-method gas in `apps/api/src/gas.ts` and relayer allowances in deploy-contract;
+   update the plan doc's Status section and this file.
+6. **Then batch B (SDK):** Hana-hosted login page (shared client), vault, `@hana-id/core|web|react`, standard
+   interfaces (EIP-1193, Stellar Wallets Kit), optional `@hana-id/sodax` adapter. Write a batch B spec first, as for
+   batch A (`docs/batch-a-spec.md`), and fix the HKDF salt name before the address freeze.
+
+Working rules: feature branch → PR into `develop` (an org ruleset requires one approving review from a teammate;
+the user merges). Never bypass the gitleaks hook. Production standards: tests for every behaviour.

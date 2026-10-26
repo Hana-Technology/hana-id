@@ -49,8 +49,14 @@ jobs:
         with:
           workspaces: contracts/hana-signer
           cache-bin: true
+      # cargo-near 0.22 needs Rust >= 1.93; install it with that toolchain (the contracts keep their own pin).
       - name: Install cargo-near
-        run: cargo near --version 2>/dev/null || cargo install cargo-near --version 0.22.0 --locked
+        working-directory: .
+        run: |
+          cargo near --version 2>/dev/null || {
+            rustup toolchain install 1.94.1 --profile minimal
+            cargo +1.94.1 install cargo-near --version 0.22.0 --locked
+          }
       - run: cargo test --locked
       - run: cargo near build non-reproducible-wasm
       - name: Wasm size
@@ -91,6 +97,12 @@ jobs:
             contracts/hana-signer
             contracts/mock-mpc
           cache-bin: true
+      # cargo-near 0.22 needs Rust >= 1.93; install it with that toolchain (the contracts keep their own pin).
       - name: Install cargo-near
-        run: cargo near --version 2>/dev/null || cargo install cargo-near --version 0.22.0 --locked
+        working-directory: .
+        run: |
+          cargo near --version 2>/dev/null || {
+            rustup toolchain install 1.94.1 --profile minimal
+            cargo +1.94.1 install cargo-near --version 0.22.0 --locked
+          }
       - run: cargo test --locked -- --test-threads=1

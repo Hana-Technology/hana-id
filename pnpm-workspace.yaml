@@ -2,3 +2,11 @@ packages:
   - apps/*
   - packages/*
   - scripts
+
+# Block packages published less than 7 days ago (in minutes): supply-chain protection, as in other Hana repos.
+minimumReleaseAge: 10080
+
+allowBuilds:
+  esbuild: true
+  workerd: true
+  sharp: false

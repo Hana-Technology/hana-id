@@ -1,0 +1,16 @@
+{
+  "name": "sandbox-dev",
+  "network": "testnet",
+  "signer": "hana-id-signer-dev1.testnet",
+  "relayer": "hana-id-relayer-dev1.testnet",
+  "owner": "hana-id-admin-dev1.testnet",
+  "mpc": "v1.signer-prod.testnet",
+  "ckdDomainId": 2,
+  "ckdNetworkKey": "UNSET-run-scripts/fetch-ckd-key.ts",
+  "rpc": "https://test.rpc.fastnear.com",
+  "apiUrl": "https://hana-id-api-sandbox-dev.workers.dev",
+  "changeDelayMs": 60000,
+  "googleClientIds": ["UNSET.apps.googleusercontent.com"],
+  "consoleAudiences": [],
+  "cloudflare": { "workerName": "hana-id-api-sandbox-dev", "d1Name": "hana-id-sandbox-dev" }
+}

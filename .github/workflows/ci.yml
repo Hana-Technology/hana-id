@@ -48,15 +48,18 @@ jobs:
       - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
         with:
           workspaces: contracts/hana-signer
-          cache-bin: true
-      # cargo-near 0.22 needs Rust >= 1.93; install it with that toolchain (the contracts keep their own pin).
+      # Prebuilt release binary, checksum-verified (building it needs Rust >= 1.93 and libudev, and takes ~15 min).
       - name: Install cargo-near
         working-directory: .
+        env:
+          CARGO_NEAR_VERSION: 0.22.0
+          CARGO_NEAR_SHA256: 9429064e30a427e96523f539cb255f3688d2345e5000d7d4e4873a8247247d1a
         run: |
-          cargo near --version 2>/dev/null || {
-            rustup toolchain install 1.94.1 --profile minimal
-            cargo +1.94.1 install cargo-near --version 0.22.0 --locked
-          }
+          curl -sSfL -o cargo-near.tar.gz "https://github.com/near/cargo-near/releases/download/cargo-near-v${CARGO_NEAR_VERSION}/cargo-near-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${CARGO_NEAR_SHA256}  cargo-near.tar.gz" | sha256sum -c -
+          tar -xzf cargo-near.tar.gz --strip-components=1 -C "$HOME/.cargo/bin" cargo-near-x86_64-unknown-linux-gnu/cargo-near
+          rm cargo-near.tar.gz
+          cargo near --version
       - run: cargo test --locked
       - run: cargo near build non-reproducible-wasm
       - name: Wasm size
@@ -96,13 +99,16 @@ jobs:
             contracts/integration-tests
             contracts/hana-signer
             contracts/mock-mpc
-          cache-bin: true
-      # cargo-near 0.22 needs Rust >= 1.93; install it with that toolchain (the contracts keep their own pin).
+      # Prebuilt release binary, checksum-verified (building it needs Rust >= 1.93 and libudev, and takes ~15 min).
       - name: Install cargo-near
         working-directory: .
+        env:
+          CARGO_NEAR_VERSION: 0.22.0
+          CARGO_NEAR_SHA256: 9429064e30a427e96523f539cb255f3688d2345e5000d7d4e4873a8247247d1a
         run: |
-          cargo near --version 2>/dev/null || {
-            rustup toolchain install 1.94.1 --profile minimal
-            cargo +1.94.1 install cargo-near --version 0.22.0 --locked
-          }
+          curl -sSfL -o cargo-near.tar.gz "https://github.com/near/cargo-near/releases/download/cargo-near-v${CARGO_NEAR_VERSION}/cargo-near-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${CARGO_NEAR_SHA256}  cargo-near.tar.gz" | sha256sum -c -
+          tar -xzf cargo-near.tar.gz --strip-components=1 -C "$HOME/.cargo/bin" cargo-near-x86_64-unknown-linux-gnu/cargo-near
+          rm cargo-near.tar.gz
+          cargo near --version
       - run: cargo test --locked -- --test-threads=1

@@ -47,6 +47,7 @@ Rules the contract enforces:
 ```
 contracts/hana-signer/   Rust NEAR contract (near-sdk 5): OIDC verification, scope registry, sessions, CKD
 apps/api/                Cloudflare Worker + Durable Objects + D1: the relayer partners call (publishable keys)
+apps/smoke/              Local smoke-test page (Vite, http://localhost:5173): real login + CKD against a deployed env
 packages/env/            Environment manifest schema (zod) + loadEnv()
 envs/                    One manifest per environment (sandbox-dev.json): every account name and endpoint
 scripts/                 Deploy, Google key sync, CKD key pinning, admin CLI (TypeScript, run with tsx)

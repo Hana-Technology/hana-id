@@ -4,6 +4,7 @@ import { defineConfig } from 'vitest/config';
 
 // Fresh throwaway keys per run: tests never touch a real account (all RPC is mocked).
 const relayerKeys = [KeyPair.fromRandom('ed25519').toString(), KeyPair.fromRandom('ed25519').toString()];
+const ownerRelayerKeys = [KeyPair.fromRandom('ed25519').toString(), KeyPair.fromRandom('ed25519').toString()];
 const keysUpdaterKey = KeyPair.fromRandom('ed25519').toString();
 
 export default defineConfig(async () => {
@@ -19,6 +20,9 @@ export default defineConfig(async () => {
             RELAYER_ACCOUNT: 'relayer.test.near',
             ENV_NAME: 'test',
             RELAYER_KEYS: JSON.stringify(relayerKeys),
+            OWNER_RELAYER_KEYS: JSON.stringify(ownerRelayerKeys),
+            // A gas override (gas.ts) for a method no endpoint relays, so the default gas of the others stays tested.
+            GAS_PRUNE_SESSIONS_TGAS: '70',
             KEYS_UPDATER_KEY: keysUpdaterKey,
             TEST_MIGRATIONS: migrations,
           },

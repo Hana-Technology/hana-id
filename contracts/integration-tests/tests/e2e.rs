@@ -23,10 +23,10 @@ async fn derive_key_paths_are_per_scope_and_key_index() -> Result<()> {
     assert_eq!(env.scope_for_client(APP_X).await?, None);
 
     // App A, key index 0, through the relayer's function-call key.
-    let (mut sa, jwt_a) = env.new_session(APP_A, USER_SUB, 0, 600_000).await?;
+    let (mut sa, jwt_a) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
     let outcome = env.create_session(&env.relayer_fc, &sa, &jwt_a).await?;
     println!("create_session gas burnt: {} Tgas", outcome.total_gas_burnt.as_tgas());
-    assert!(outcome.total_gas_burnt <= CREATE_SESSION_GAS_BUDGET, "create_session burnt {} Tgas", outcome.total_gas_burnt.as_tgas());
+    assert!(outcome.total_gas_burnt <= create_session_gas_budget(), "create_session burnt {} Tgas", outcome.total_gas_burnt.as_tgas());
     let created: SessionView = outcome.into_result()?.json()?;
     let path_a = format!("{}#google#{}#0", env.scope_a, USER_SUB);
     assert_eq!(created.path, path_a);
@@ -41,7 +41,7 @@ async fn derive_key_paths_are_per_scope_and_key_index() -> Result<()> {
 
     let args = sa.derive_args("bls12381g1:pk1-a", "bls12381g2:pk2-a");
     let replay = args.clone();
-    let outcome = env.relayer_fc.call(env.signer.id(), "derive_key").args_json(args).gas(GAS).transact().await?;
+    let outcome = env.relayer_fc.call(env.signer.id(), "derive_key").args_json(args).gas(api_gas("derive_key")).transact().await?;
     println!("derive_key gas burnt (with mock MPC): {} Tgas", outcome.total_gas_burnt.as_tgas());
     let response: CkdResponse = outcome.into_result()?.json()?;
     let expected: CkdResponse = env
@@ -62,27 +62,27 @@ async fn derive_key_paths_are_per_scope_and_key_index() -> Result<()> {
     assert_eq!((calls[0].pk1.as_str(), calls[0].pk2.as_str()), ("bls12381g1:pk1-a", "bls12381g2:pk2-a"));
 
     // Replaying the same signed request is rejected.
-    expect_failure(tx(env.relayer_fc.call(env.signer.id(), "derive_key").args_json(replay).gas(GAS).transact().await), "Wrong counter");
+    expect_failure(tx(env.relayer_fc.call(env.signer.id(), "derive_key").args_json(replay).gas(api_gas("derive_key")).transact().await), "Wrong counter");
     // A signature by another key is rejected.
-    let mut other = TestSession::new(0, 0, 1);
+    let mut other = TestSession::new(&env.scope_a, 0, 0, 1);
     other.counter = sa.counter;
     let mut forged = other.derive_args("bls12381g1:x", "bls12381g2:x");
     forged["session_public_key"] = json!(sa.public_key());
-    expect_failure(tx(env.relayer_fc.call(env.signer.id(), "derive_key").args_json(forged).gas(GAS).transact().await), "Invalid session signature");
+    expect_failure(tx(env.relayer_fc.call(env.signer.id(), "derive_key").args_json(forged).gas(api_gas("derive_key")).transact().await), "Invalid session signature");
 
     // Same user, app B: a different scope, so a different path.
-    let (mut sb, jwt_b) = env.new_session(APP_B, USER_SUB, 0, 600_000).await?;
+    let (mut sb, jwt_b) = env.new_session(APP_B, USER_SUB, &env.scope_b, 0, 600_000).await?;
     let created_b: SessionView = env.create_session(&env.relayer_fc, &sb, &jwt_b).await?.into_result()?.json()?;
     let path_b = format!("{}#google#{}#0", env.scope_b, USER_SUB);
     assert_eq!(created_b.path, path_b);
-    env.relayer_fc.call(env.signer.id(), "derive_key").args_json(sb.derive_args("p1", "p2")).gas(GAS).transact().await?.into_result()?;
+    env.relayer_fc.call(env.signer.id(), "derive_key").args_json(sb.derive_args("p1", "p2")).gas(api_gas("derive_key")).transact().await?.into_result()?;
 
     // Same user, app A, key index 1: a fresh wallet under the same login.
-    let (mut s1, jwt_k1) = env.new_session(APP_A, USER_SUB, 1, 600_000).await?;
+    let (mut s1, jwt_k1) = env.new_session(APP_A, USER_SUB, &env.scope_a, 1, 600_000).await?;
     let created_k1: SessionView = env.create_session(&env.relayer_fc, &s1, &jwt_k1).await?.into_result()?.json()?;
     let path_k1 = format!("{}#google#{}#1", env.scope_a, USER_SUB);
     assert_eq!(created_k1.path, path_k1);
-    env.relayer_fc.call(env.signer.id(), "derive_key").args_json(s1.derive_args("p1", "p2")).gas(GAS).transact().await?.into_result()?;
+    env.relayer_fc.call(env.signer.id(), "derive_key").args_json(s1.derive_args("p1", "p2")).gas(api_gas("derive_key")).transact().await?.into_result()?;
 
     let paths: Vec<String> = env.mpc_calls().await?.into_iter().map(|c| c.derivation_path).collect();
     assert_eq!(paths, vec![path_a.clone(), path_b.clone(), path_k1.clone()]);
@@ -90,61 +90,87 @@ async fn derive_key_paths_are_per_scope_and_key_index() -> Result<()> {
     assert_ne!(path_a, path_k1);
 
     // A token for an unregistered client id is rejected.
-    let (sx, jwt_x) = env.new_session(APP_X, USER_SUB, 0, 600_000).await?;
+    let (sx, jwt_x) = env.new_session(APP_X, USER_SUB, &env.scope_a, 0, 600_000).await?;
     expect_failure(env.create_session(&env.relayer_fc, &sx, &jwt_x).await, "Token is for an unregistered app");
+    // An own-client token can only open sessions in its own scope, whatever scope_id the caller passes.
+    let (sw, jwt_w) = env.new_session(APP_A, USER_SUB, &env.scope_b, 0, 600_000).await?;
+    expect_failure(env.create_session(&env.relayer_fc, &sw, &jwt_w).await, "Token is for another app");
     // A token whose nonce commits to another session key is rejected.
-    let (sy, _) = env.new_session(APP_A, USER_SUB, 0, 600_000).await?;
+    let (sy, _) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
     expect_failure(env.create_session(&env.relayer_fc, &sy, &jwt_a).await, "Token nonce doesn't commit to this session");
     // The key_index is in the nonce: a token for index 0 can't open index 1.
-    let mut wrong_index = TestSession::new(sy.expires_at_ms, 1, 5);
+    let mut wrong_index = TestSession::new(&env.scope_a, sy.expires_at_ms, 1, sy.max_uses);
     wrong_index.key = sy.key.clone();
-    let jwt_idx0 = env.jwt(APP_A, USER_SUB, Some(&sy.nonce())).await?;
+    let jwt_idx0 = env.jwt(APP_A, USER_SUB, Some(&sy.nonce(env.signer.id()))).await?;
     expect_failure(env.create_session(&env.relayer_fc, &wrong_index, &jwt_idx0).await, "Token nonce doesn't commit to this session");
+    // max_uses is in the nonce too: a front-runner can't open the session with a lower cap.
+    let mut lower_cap = TestSession::new(&env.scope_a, sy.expires_at_ms, 0, 1);
+    lower_cap.key = sy.key.clone();
+    expect_failure(env.create_session(&env.relayer_fc, &lower_cap, &jwt_idx0).await, "Token nonce doesn't commit to this session");
     // Re-opening a live session key is rejected.
     expect_failure(env.create_session(&env.relayer_fc, &sa, &jwt_a).await, "Session key already in use");
 
     // Revoke ends the session at once.
     let revoke = sb.revoke_args();
-    env.relayer_fc.call(env.signer.id(), "revoke_session").args_json(revoke).gas(GAS).transact().await?.into_result()?;
+    env.relayer_fc.call(env.signer.id(), "revoke_session").args_json(revoke).gas(api_gas("revoke_session")).transact().await?.into_result()?;
     assert_eq!(env.get_session(&sb).await?, None);
-    expect_failure(tx(env.relayer_fc.call(env.signer.id(), "derive_key").args_json(sb.derive_args("p1", "p2")).gas(GAS).transact().await), "No such session");
+    expect_failure(tx(env.relayer_fc.call(env.signer.id(), "derive_key").args_json(sb.derive_args("p1", "p2")).gas(api_gas("derive_key")).transact().await), "No such session");
     assert_eq!(env.mpc_calls().await?.len(), 3, "rejected requests never reach the MPC");
     Ok(())
 }
 
-/// The relayer's function-call key reaches only the relayed methods; the keys-updater key on the signer account
-/// reaches only set_issuer_key / remove_issuer_key; nobody but the owner reaches admin methods.
+/// The relayer's two key pools reach only their own methods (the session pool can't call owner methods and vice
+/// versa); the keys-updater key on the signer account reaches only set_issuer_key / remove_issuer_key; nobody but the
+/// owner reaches admin methods.
 #[tokio::test]
 async fn access_keys_are_limited() -> Result<()> {
     let env = Env::setup().await?;
     let signer = env.signer.id();
 
-    // The relayer key can open sessions (see also the test above) and prune.
-    let (s, jwt) = env.new_session(APP_A, USER_SUB, 0, 600_000).await?;
+    // The session pool can open sessions (see also the test above) and prune.
+    let (s, jwt) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
     env.create_session(&env.relayer_fc, &s, &jwt).await?.into_result()?;
-    env.relayer_fc.call(signer, "prune_sessions").args_json(json!({"limit": 10})).gas(GAS).transact().await?.into_result()?;
+    env.relayer_fc.call(signer, "prune_sessions").args_json(json!({"limit": 10})).gas(api_gas("prune_sessions")).transact().await?.into_result()?;
+    // The owner pool can run owner-pool methods (apply_pending_config takes no arguments)...
+    env.relayer_owner_fc.call(signer, "apply_pending_config").args_json(json!({})).gas(PROBE_GAS).transact().await?.into_result()?;
+    // ...but can't open sessions: abuse of the owner endpoint can never use up the login keys, and vice versa.
+    let (s2, jwt2) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
+    let text = expect_failure(env.create_session(&env.relayer_owner_fc, &s2, &jwt2).await, "");
+    assert!(text.contains("MethodNameMismatch"), "owner pool create_session: expected an access-key rejection, got {text}");
+    let text = expect_failure(tx(env.relayer_fc.call(signer, "apply_pending_config").args_json(json!({})).gas(PROBE_GAS).transact().await), "");
+    assert!(text.contains("MethodNameMismatch"), "session pool apply_pending_config: expected an access-key rejection, got {text}");
 
-    // ...but not admin or issuer methods: the access key rejects the transaction before it runs.
+    // Neither pool reaches admin or issuer methods: the access key rejects the transaction before it runs.
     let issuer_key = json!({"provider": PROVIDER, "kid": "evil", "n": env.issuer.n, "e": env.issuer.e});
     let admin_calls: Vec<(&str, Value)> = vec![
         ("set_issuer_key", issuer_key.clone()),
         ("set_issuer", json!({"provider": "evil", "iss_values": ["https://evil.example"]})),
-        ("admin_register_scope", json!({"owners": [near_owner(env.relayer.id())], "clients": [[PROVIDER, APP_X]], "scope_id": null})),
+        ("admin_register_scope", json!({"owners": [near_owner(env.relayer.id())], "clients": [[PROVIDER, APP_X]], "scope_id": null, "allow_shared": false})),
         ("enable_public_registration", json!({})),
         ("set_owner", json!({"owner": env.relayer.id()})),
         ("set_sponsors", json!({"sponsors": []})),
         ("set_change_delay_ms", json!({"change_delay_ms": 0})),
+        ("set_shared_clients", json!({"clients": [[PROVIDER, APP_X]]})),
     ];
-    for (method, args) in &admin_calls {
-        let text = expect_failure(tx(env.relayer_fc.call(signer, method).args_json(args.clone()).gas(GAS).transact().await), "");
-        assert!(text.contains("MethodNameMismatch"), "{method}: expected an access-key rejection, got {text}");
+    for key in [&env.relayer_fc, &env.relayer_owner_fc] {
+        for (method, args) in &admin_calls {
+            let text = expect_failure(tx(key.call(signer, method).args_json(args.clone()).gas(PROBE_GAS).transact().await), "");
+            assert!(text.contains("MethodNameMismatch"), "{method}: expected an access-key rejection, got {text}");
+        }
     }
-    // Every change method outside the allowlist is refused by the access key; every allowlisted name exists in the
-    // wasm (empty args fail inside the contract, not with MethodNameMismatch / MethodNotFound).
-    assert_key_reaches_only(&env.relayer_fc, signer, RELAYER_METHODS, PROBE_GAS).await?;
+    // Every change method outside a pool's allowlist is refused by the access key; every allowlisted name exists in
+    // the wasm (it runs, or fails inside the contract, not with MethodNameMismatch / MethodNotFound).
+    assert_key_reaches_only(&env.relayer_fc, signer, SESSION_RELAYER_METHODS, PROBE_GAS).await?;
+    assert_key_reaches_only(&env.relayer_owner_fc, signer, OWNER_RELAYER_METHODS, PROBE_GAS).await?;
+    // The two pools don't overlap.
+    for m in SESSION_RELAYER_METHODS {
+        assert!(!OWNER_RELAYER_METHODS.contains(m), "{m} is in both pools");
+    }
     // Nor any other receiver.
-    let text = expect_failure(tx(env.relayer_fc.call(env.mpc.id(), "request_app_private_key").args_json(json!({})).gas(GAS).transact().await), "");
-    assert!(text.contains("ReceiverMismatch"), "expected a receiver rejection, got {text}");
+    for key in [&env.relayer_fc, &env.relayer_owner_fc] {
+        let text = expect_failure(tx(key.call(env.mpc.id(), "request_app_private_key").args_json(json!({})).gas(PROBE_GAS).transact().await), "");
+        assert!(text.contains("ReceiverMismatch"), "expected a receiver rejection, got {text}");
+    }
 
     // Even with its full-access key, the relayer account is not the owner.
     for (method, args) in &admin_calls {
@@ -152,7 +178,7 @@ async fn access_keys_are_limited() -> Result<()> {
     }
 
     // The keys-updater key (on the signer account itself) can rotate issuer keys. Its allowance (0.25 NEAR) must
-    // cover the prepaid gas of each call (gas × gas price), so it sends 30 Tgas, not the relayer's 300.
+    // cover the prepaid gas of each call (gas × gas price), so it sends 30 Tgas, not the 300 Tgas wallet calls here attach.
     const UPDATER_GAS: near_workspaces::types::Gas = near_workspaces::types::Gas::from_tgas(30);
     env.keys_updater.call(signer, "set_issuer_key").args_json(json!({"provider": PROVIDER, "kid": "rotated", "n": env.issuer.n, "e": env.issuer.e})).gas(UPDATER_GAS).transact().await?.into_result()?;
     let issuer: Value = env.signer.view("get_issuer").args_json(json!({"provider": PROVIDER})).await?.json()?;
@@ -173,7 +199,7 @@ async fn access_keys_are_limited() -> Result<()> {
     expect_failure(tx(env.alice.call(signer, "set_issuer_key").args_json(issuer_key).gas(GAS).transact().await), "Only the owner or the contract account");
 
     // The owner can.
-    let config: Value = env.signer.view("get_config").await?.json()?;
+    let config = env.get_config().await?;
     assert_eq!(config["owner"], json!(env.admin.id()));
     assert_eq!(config["mpc"], json!(env.mpc.id()));
     assert_eq!(config["public_registration"], json!(false));
@@ -202,14 +228,21 @@ async fn access_keys_are_limited() -> Result<()> {
     Ok(())
 }
 
-/// Smaller gas for calls that are expected to fail, so they don't drain a key's allowance.
+/// Smaller gas for probe calls, so they don't drain a key's allowance.
 const PROBE_GAS: near_workspaces::types::Gas = near_workspaces::types::Gas::from_tgas(30);
 
-/// Calls every hana-signer change method with `key`: methods outside `allowed` must be refused by the access key
-/// (MethodNameMismatch, before anything runs); allowed ones must reach the contract (they fail there on empty args).
+/// Calls every hana-signer change method with `key` and empty args: methods outside `allowed` must be refused by
+/// the access key (MethodNameMismatch, before anything runs); allowed ones must reach the contract (most fail there
+/// on missing args; argument-less ones such as apply_pending_config may succeed).
 async fn assert_key_reaches_only(key: &near_workspaces::Account, signer: &near_workspaces::AccountId, allowed: &[&str], gas: near_workspaces::types::Gas) -> Result<()> {
     for method in ALL_CHANGE_METHODS {
-        let text = expect_failure(tx(key.call(signer, method).args_json(json!({})).gas(gas).transact().await), "");
+        let text = match key.call(signer, method).args_json(json!({})).gas(gas).transact().await {
+            Ok(outcome) => match outcome.into_result() {
+                Ok(_) => String::from("<succeeded>"),
+                Err(e) => format!("{e:?}"),
+            },
+            Err(e) => format!("{e:?}"),
+        };
         let refused = text.contains("MethodNameMismatch");
         if allowed.contains(method) {
             assert!(!refused && !text.contains("MethodNotFound"), "{method} is allowlisted for {} but did not reach the contract: {text}", key.id());
@@ -227,20 +260,40 @@ async fn assert_key_reaches_only(key: &near_workspaces::Account, signer: &near_w
 /// access-key test above checks the deployed restrictions, not a copy that could drift.
 #[test]
 fn method_allowlists_match_deploy_script() -> Result<()> {
-    let mut relayer = deploy_script_methods("RELAYER_METHODS")?;
-    let mut updater = deploy_script_methods("KEYS_UPDATER_METHODS")?;
-    relayer.sort();
-    updater.sort();
-    let mut want_relayer: Vec<String> = RELAYER_METHODS.iter().map(|s| s.to_string()).collect();
-    let mut want_updater: Vec<String> = KEYS_UPDATER_METHODS.iter().map(|s| s.to_string()).collect();
-    want_relayer.sort();
-    want_updater.sort();
-    assert_eq!(relayer, want_relayer, "scripts/lib/contract.ts RELAYER_METHODS");
-    assert_eq!(updater, want_updater, "scripts/lib/contract.ts KEYS_UPDATER_METHODS");
-    // The relayer must never hold issuer or admin methods.
-    for m in ["set_issuer_key", "remove_issuer_key", "set_issuer", "admin_register_scope", "set_owner", "enable_public_registration", "new"] {
-        assert!(!relayer.iter().any(|r| r == m), "relayer allowlist contains {m}");
+    for (name, want) in [("SESSION_RELAYER_METHODS", SESSION_RELAYER_METHODS), ("OWNER_RELAYER_METHODS", OWNER_RELAYER_METHODS), ("KEYS_UPDATER_METHODS", KEYS_UPDATER_METHODS)] {
+        let mut got = deploy_script_methods(name)?;
+        got.sort();
+        let mut want: Vec<String> = want.iter().map(|s| s.to_string()).collect();
+        want.sort();
+        assert_eq!(got, want, "scripts/lib/contract.ts {name}");
     }
+    // Neither relayer pool may ever hold issuer or admin methods.
+    for name in ["SESSION_RELAYER_METHODS", "OWNER_RELAYER_METHODS"] {
+        let methods = deploy_script_methods(name)?;
+        for m in ["set_issuer_key", "remove_issuer_key", "set_issuer", "admin_register_scope", "set_owner", "enable_public_registration", "set_shared_clients", "set_sponsors", "set_change_delay_ms", "new"] {
+            assert!(!methods.iter().any(|r| r == m), "{name} contains {m}");
+        }
+    }
+    Ok(())
+}
+
+/// Every method a relayer pool may call has a gas value in the API (apps/api/src/gas.ts), and the API has none for
+/// methods outside the pools; each fits NEAR's 300 Tgas cap. The sandbox tests attach these values to relayed calls.
+#[test]
+fn api_gas_covers_relayed_methods() -> Result<()> {
+    let table = api_gas_table()?;
+    let mut got: Vec<&str> = table.iter().map(|(m, _)| m.as_str()).collect();
+    got.sort_unstable();
+    let mut want: Vec<&str> = SESSION_RELAYER_METHODS.iter().chain(OWNER_RELAYER_METHODS).copied().collect();
+    want.sort_unstable();
+    want.dedup();
+    assert_eq!(got, want, "apps/api/src/gas.ts DEFAULT_GAS_TGAS keys vs the relayer pools' methods");
+    for (m, tgas) in &table {
+        assert!((1..=300).contains(tgas), "{m}: {tgas} Tgas");
+    }
+    // The budget the create_session assertions use is the API's, not a looser sandbox value.
+    assert_eq!(create_session_gas_budget(), api_gas("create_session"));
+    assert!(create_session_gas_budget() < GAS);
     Ok(())
 }
 
@@ -250,38 +303,56 @@ fn method_allowlists_match_deploy_script() -> Result<()> {
 async fn public_registration_and_timelocked_changes() -> Result<()> {
     let env = Env::setup().await?;
     let signer = env.signer.id();
+    let sid = signer.as_str();
 
     // register_scope is closed while public_registration is false.
     let owners = vec![oidc_owner(OWNER_SUB), near_owner(env.carol.id())];
-    let proof_c = env.jwt(APP_C, OWNER_SUB, Some(&register_nonce(&owners))).await?;
+    let only_c = [(PROVIDER, APP_C)];
+    let proof_c = env.jwt(APP_C, OWNER_SUB, Some(&register_nonce(sid, &owners, &only_c, false))).await?;
     expect_failure(
-        tx(env.carol.call(signer, "register_scope").args_json(json!({"owners": owners, "client_proofs": [proof_c]})).deposit(NearToken::from_millinear(10)).gas(GAS).transact().await),
+        tx(env.carol.call(signer, "register_scope").args_json(json!({"owners": owners, "client_proofs": [proof_c], "allow_shared": false})).deposit(NearToken::from_millinear(10)).gas(GAS).transact().await),
         "Public registration is not enabled",
     );
 
     env.admin.call(signer, "enable_public_registration").transact().await?.into_result()?;
-    let config: Value = env.signer.view("get_config").await?.json()?;
+    let config = env.get_config().await?;
     assert_eq!(config["public_registration"], json!(true));
     expect_failure(
-        tx(env.admin.call(signer, "admin_register_scope").args_json(json!({"owners": [near_owner(env.admin.id())], "clients": [[PROVIDER, APP_X]], "scope_id": null})).gas(GAS).transact().await),
+        tx(env.admin.call(signer, "admin_register_scope").args_json(json!({"owners": [near_owner(env.admin.id())], "clients": [[PROVIDER, APP_X]], "scope_id": null, "allow_shared": false})).gas(GAS).transact().await),
         "Admin registration is closed",
     );
 
-    // Proofs must commit to the owners being registered.
+    // Proofs must commit to the owners being registered...
     let other_owners = vec![near_owner(env.bob.id())];
     expect_failure(
-        tx(env.carol.call(signer, "register_scope").args_json(json!({"owners": other_owners, "client_proofs": [proof_c]})).deposit(NearToken::from_millinear(10)).gas(GAS).transact().await),
-        "Proof nonce doesn't commit to these owners",
+        tx(env.carol.call(signer, "register_scope").args_json(json!({"owners": other_owners, "client_proofs": [proof_c], "allow_shared": false})).deposit(NearToken::from_millinear(10)).gas(GAS).transact().await),
+        "Proof nonce doesn't commit to this registration",
+    );
+    // ...and to allow_shared...
+    expect_failure(
+        tx(env.carol.call(signer, "register_scope").args_json(json!({"owners": owners, "client_proofs": [proof_c], "allow_shared": true})).deposit(NearToken::from_millinear(10)).gas(GAS).transact().await),
+        "Proof nonce doesn't commit to this registration",
     );
     // A client registered elsewhere can't be claimed.
-    let proof_a = env.jwt(APP_A, OWNER_SUB, Some(&register_nonce(&owners))).await?;
+    let proof_a = env.jwt(APP_A, OWNER_SUB, Some(&register_nonce(sid, &owners, &[(PROVIDER, APP_A)], false))).await?;
     expect_failure(
-        tx(env.carol.call(signer, "register_scope").args_json(json!({"owners": owners, "client_proofs": [proof_a]})).deposit(NearToken::from_millinear(10)).gas(GAS).transact().await),
+        tx(env.carol.call(signer, "register_scope").args_json(json!({"owners": owners, "client_proofs": [proof_a], "allow_shared": false})).deposit(NearToken::from_millinear(10)).gas(GAS).transact().await),
         "Client is already registered",
     );
+    // ...and to the whole client set, in order: a front-runner can't register a subset with proof_c alone.
+    let both_clients = [(PROVIDER, APP_C), (PROVIDER, APP_D)];
+    let proof_c2 = env.jwt(APP_C, OWNER_SUB, Some(&register_nonce(sid, &owners, &both_clients, false))).await?;
+    let proof_d2 = env.jwt(APP_D, OWNER_SUB, Some(&register_nonce(sid, &owners, &both_clients, false))).await?;
+    expect_failure(
+        tx(env.carol.call(signer, "register_scope").args_json(json!({"owners": owners, "client_proofs": [proof_c2], "allow_shared": false})).deposit(NearToken::from_millinear(10)).gas(GAS).transact().await),
+        "Proof nonce doesn't commit to this registration",
+    );
+    expect_failure(
+        tx(env.carol.call(signer, "register_scope").args_json(json!({"owners": owners, "client_proofs": [proof_d2, proof_c2], "allow_shared": false})).deposit(NearToken::from_millinear(10)).gas(GAS).transact().await),
+        "Proof nonce doesn't commit to this registration",
+    );
     // Non-sponsors pay for storage.
-    let proof_d = env.jwt(APP_D, OWNER_SUB, Some(&register_nonce(&owners))).await?;
-    let both = json!({"owners": owners, "client_proofs": [proof_c, proof_d]});
+    let both = json!({"owners": owners, "client_proofs": [proof_c2, proof_d2], "allow_shared": false});
     expect_failure(tx(env.carol.call(signer, "register_scope").args_json(both.clone()).gas(GAS).transact().await), "Attached deposit doesn't cover storage");
 
     let res = env.carol.call(signer, "register_scope").args_json(both).deposit(NearToken::from_millinear(10)).gas(GAS).transact().await?.into_result()?;
@@ -291,33 +362,124 @@ async fn public_registration_and_timelocked_changes() -> Result<()> {
     assert_eq!(env.scope_for_client(APP_D).await?.as_deref(), Some(scope_c.as_str()));
     let scope = env.get_scope(&scope_c).await?;
     assert_eq!(scope["owners"], json!(owners));
+    assert_eq!(scope["allow_shared"], json!(false));
+
+    // A shared-only scope needs no proof (scope ids are contract-assigned, nothing to squat). Through the owner
+    // pool, which is a sponsor.
+    let shared_only: String = env
+        .relayer_owner_fc
+        .call(signer, "register_scope")
+        .args_json(json!({"owners": [near_owner(env.carol.id())], "client_proofs": [], "allow_shared": true}))
+        .gas(api_gas("register_scope"))
+        .transact()
+        .await?
+        .into_result()?
+        .json()?;
+    let scope_so = env.get_scope(&shared_only).await?;
+    assert_eq!(scope_so["clients"], json!([]));
+    assert_eq!(scope_so["allow_shared"], json!(true));
+    // Without shared login a scope needs at least one client.
+    expect_failure(
+        tx(env.relayer_owner_fc.call(signer, "register_scope").args_json(json!({"owners": [near_owner(env.carol.id())], "client_proofs": [], "allow_shared": false})).gas(api_gas("register_scope")).transact().await),
+        "A scope needs a client or shared login",
+    );
+
+    // Worst case for the API's register_scope gas: MAX_CLIENTS (10) RS256 proofs and 5 OIDC owners, relayed by the
+    // owner pool at api_gas("register_scope") (the 10-proof entry of apps/api/src/gas.ts).
+    let big_owners: Vec<Value> = (0..5).map(|i| oidc_owner(&format!("{OWNER_SUB}-{i}"))).collect();
+    let big_auds: Vec<String> = (0..10).map(|i| format!("app-big-{i}.apps.googleusercontent.com")).collect();
+    let big_clients: Vec<(&str, &str)> = big_auds.iter().map(|a| (PROVIDER, a.as_str())).collect();
+    let big_nonce = register_nonce(sid, &big_owners, &big_clients, false);
+    let mut big_proofs = Vec::new();
+    for aud in &big_auds {
+        big_proofs.push(env.jwt(aud, OWNER_SUB, Some(&big_nonce)).await?);
+    }
+    let big = env
+        .relayer_owner_fc
+        .call(signer, "register_scope")
+        .args_json(json!({"owners": big_owners, "client_proofs": big_proofs, "allow_shared": false}))
+        .gas(api_gas("register_scope"))
+        .transact()
+        .await?;
+    println!("register_scope with 10 proofs burnt {} Tgas (attached {} Tgas)", big.total_gas_burnt.as_tgas(), api_gas("register_scope").as_tgas());
+    let scope_big: String = big.into_result()?.json()?;
+    assert_eq!(env.get_scope(&scope_big).await?["clients"].as_array().map(Vec::len), Some(10));
 
     // A session through the self-registered app lands in its scope.
-    let (s, jwt) = env.new_session(APP_C, USER_SUB, 0, 600_000).await?;
+    let (s, jwt) = env.new_session(APP_C, USER_SUB, &scope_c, 0, 600_000).await?;
     let view: SessionView = env.create_session(&env.relayer_fc, &s, &jwt).await?.into_result()?.json()?;
     assert_eq!(view.path, format!("{scope_c}#google#{USER_SUB}#0"));
 
-    // OIDC owner removes a client through the relayer, with a console token whose nonce commits to the action.
+    // OIDC owner removes a client through the owner pool, with a console token whose nonce commits to the action.
     let action_nonce = scope["action_nonce"].as_u64().unwrap();
     let mut args = borsh_str(&scope_c);
     args.extend(borsh_str(PROVIDER));
     args.extend(borsh_str(APP_D));
-    let console_jwt = env.jwt(CONSOLE, OWNER_SUB, Some(&owner_action_nonce(&scope_c, "remove_client", &args, action_nonce))).await?;
+    let console_jwt = env.jwt(CONSOLE, OWNER_SUB, Some(&owner_action_nonce(sid, &scope_c, "remove_client", &args, action_nonce))).await?;
     let remove = json!({"scope_id": scope_c, "auth": {"Oidc": {"jwt": console_jwt}}, "provider": PROVIDER, "aud": APP_D});
     // A token for another audience than the console is refused.
-    let app_jwt = env.jwt(APP_C, OWNER_SUB, Some(&owner_action_nonce(&scope_c, "remove_client", &args, action_nonce))).await?;
+    let app_jwt = env.jwt(APP_C, OWNER_SUB, Some(&owner_action_nonce(sid, &scope_c, "remove_client", &args, action_nonce))).await?;
     let mut wrong_aud = remove.clone();
     wrong_aud["auth"] = json!({"Oidc": {"jwt": app_jwt}});
-    expect_failure(tx(env.relayer_fc.call(signer, "remove_client").args_json(wrong_aud).gas(GAS).transact().await), "Token is not for the Hana console");
-    env.relayer_fc.call(signer, "remove_client").args_json(remove.clone()).gas(GAS).transact().await?.into_result()?;
+    expect_failure(tx(env.relayer_owner_fc.call(signer, "remove_client").args_json(wrong_aud).gas(api_gas("remove_client")).transact().await), "Token is not for the Hana console");
+    // A token for another method (same args) is refused.
+    let wrong_method = env.jwt(CONSOLE, OWNER_SUB, Some(&owner_action_nonce(sid, &scope_c, "cancel_change", &args, action_nonce))).await?;
+    let mut wm = remove.clone();
+    wm["auth"] = json!({"Oidc": {"jwt": wrong_method}});
+    expect_failure(tx(env.relayer_owner_fc.call(signer, "remove_client").args_json(wm).gas(api_gas("remove_client")).transact().await), "Owner token nonce doesn't match");
+    env.relayer_owner_fc.call(signer, "remove_client").args_json(remove.clone()).gas(api_gas("remove_client")).transact().await?.into_result()?;
     assert_eq!(env.scope_for_client(APP_D).await?, None);
     // Replay: action_nonce moved on.
-    expect_failure(tx(env.relayer_fc.call(signer, "remove_client").args_json(remove).gas(GAS).transact().await), "Owner token nonce doesn't match");
+    expect_failure(tx(env.relayer_owner_fc.call(signer, "remove_client").args_json(remove).gas(api_gas("remove_client")).transact().await), "Owner token nonce doesn't match");
 
-    // Alice (NEAR owner of scope A) adds APP_E: client proof for (scope A, current action_nonce), timelocked.
+    // The OIDC owner's heaviest action, as /v1/owner-actions relays it at the API's gas: propose_change(AddClient)
+    // verifies two RS256 tokens (the console owner token and the client proof). Re-adding APP_D to the scope it was
+    // removed from is allowed at once (the quarantine only blocks other scopes).
+    let nonce_c = env.get_scope(&scope_c).await?["action_nonce"].as_u64().unwrap();
+    let proof_d = env.jwt(APP_D, OWNER_SUB, Some(&client_proof_nonce(sid, &scope_c, nonce_c))).await?;
+    let add_d = json!({"AddClient": {"provider": PROVIDER, "aud": APP_D}});
+    let mut args = borsh_str(&scope_c);
+    args.extend(borsh_change(&add_d));
+    args.extend(borsh_opt_str(Some(&proof_d)));
+    let owner_jwt = env.jwt(CONSOLE, OWNER_SUB, Some(&owner_action_nonce(sid, &scope_c, "propose_change", &args, nonce_c))).await?;
+    let propose = json!({"scope_id": scope_c, "auth": {"Oidc": {"jwt": owner_jwt}}, "change": add_d, "client_proof": proof_d});
+    let outcome = env.relayer_owner_fc.call(signer, "propose_change").args_json(propose).gas(api_gas("propose_change")).transact().await?;
+    println!("propose_change (OIDC owner + client proof) gas burnt: {} Tgas", outcome.total_gas_burnt.as_tgas());
+    assert!(outcome.total_gas_burnt <= api_gas("propose_change"), "propose_change burnt {} Tgas", outcome.total_gas_burnt.as_tgas());
+    let add_d_id: u64 = outcome.into_result()?.json()?;
+    assert_eq!(add_d_id, nonce_c);
+    // OIDC cancel_change through the owner pool.
+    let mut args = borsh_str(&scope_c);
+    args.extend(borsh_u64(add_d_id));
+    let owner_jwt = env.jwt(CONSOLE, OWNER_SUB, Some(&owner_action_nonce(sid, &scope_c, "cancel_change", &args, nonce_c + 1))).await?;
+    env.relayer_owner_fc
+        .call(signer, "cancel_change")
+        .args_json(json!({"scope_id": scope_c, "auth": {"Oidc": {"jwt": owner_jwt}}, "change_id": add_d_id}))
+        .gas(api_gas("cancel_change"))
+        .transact()
+        .await?
+        .into_result()?;
+    assert_eq!(env.get_scope(&scope_c).await?["pending"], json!([]));
+    // OIDC propose_change(SetAllowShared) through the owner pool; executed and then disabled below.
+    let set_allow = json!({"SetAllowShared": {"allow": true}});
+    let mut args = borsh_str(&scope_c);
+    args.extend(borsh_change(&set_allow));
+    args.extend(borsh_opt_str(None));
+    let owner_jwt = env.jwt(CONSOLE, OWNER_SUB, Some(&owner_action_nonce(sid, &scope_c, "propose_change", &args, nonce_c + 2))).await?;
+    let allow_id: u64 = env
+        .relayer_owner_fc
+        .call(signer, "propose_change")
+        .args_json(json!({"scope_id": scope_c, "auth": {"Oidc": {"jwt": owner_jwt}}, "change": set_allow, "client_proof": null}))
+        .gas(api_gas("propose_change"))
+        .transact()
+        .await?
+        .into_result()?
+        .json()?;
+
+    // Alice (NEAR owner of scope A) adds APP_E: client proof for (signer, scope A, current action_nonce), timelocked.
     let scope_a = env.get_scope(&env.scope_a).await?;
     let nonce_a = scope_a["action_nonce"].as_u64().unwrap();
-    let client_proof = env.jwt(APP_E, OWNER_SUB, Some(&client_proof_nonce(&env.scope_a, nonce_a))).await?;
+    let client_proof = env.jwt(APP_E, OWNER_SUB, Some(&client_proof_nonce(sid, &env.scope_a, nonce_a))).await?;
     let change = json!({"AddClient": {"provider": PROVIDER, "aud": APP_E}});
     // Bob is not an owner of scope A.
     expect_failure(
@@ -343,21 +505,36 @@ async fn public_registration_and_timelocked_changes() -> Result<()> {
 
     // Too early.
     expect_failure(
-        tx(env.relayer_fc.call(signer, "execute_change").args_json(json!({"scope_id": env.scope_a, "change_id": change_id})).gas(GAS).transact().await),
+        tx(env.relayer_owner_fc.call(signer, "execute_change").args_json(json!({"scope_id": env.scope_a, "change_id": change_id})).gas(api_gas("execute_change")).transact().await),
         "Change is still timelocked",
     );
     assert_eq!(env.scope_for_client(APP_E).await?, None);
 
     env.advance_to(unlock_at_ms + 1).await?;
-    // Anyone can execute (here the relayer).
-    env.relayer_fc.call(signer, "execute_change").args_json(json!({"scope_id": env.scope_a, "change_id": change_id})).gas(GAS).transact().await?.into_result()?;
+    // Anyone can execute (here the relayer's owner pool).
+    env.relayer_owner_fc.call(signer, "execute_change").args_json(json!({"scope_id": env.scope_a, "change_id": change_id})).gas(api_gas("execute_change")).transact().await?.into_result()?;
     assert_eq!(env.scope_for_client(APP_E).await?.as_deref(), Some(env.scope_a.as_str()));
+
+    // Scope C's SetAllowShared (proposed before alice's change, so unlocked too) executes; then the OIDC owner
+    // disables shared login through the owner pool, at the API's gas.
+    env.relayer_owner_fc.call(signer, "execute_change").args_json(json!({"scope_id": scope_c, "change_id": allow_id})).gas(api_gas("execute_change")).transact().await?.into_result()?;
+    assert_eq!(env.get_scope(&scope_c).await?["allow_shared"], json!(true));
+    let nonce_c = env.get_scope(&scope_c).await?["action_nonce"].as_u64().unwrap();
+    let owner_jwt = env.jwt(CONSOLE, OWNER_SUB, Some(&owner_action_nonce(sid, &scope_c, "disable_shared_login", &borsh_str(&scope_c), nonce_c))).await?;
+    env.relayer_owner_fc
+        .call(signer, "disable_shared_login")
+        .args_json(json!({"scope_id": scope_c, "auth": {"Oidc": {"jwt": owner_jwt}}}))
+        .gas(api_gas("disable_shared_login"))
+        .transact()
+        .await?
+        .into_result()?;
+    assert_eq!(env.get_scope(&scope_c).await?["allow_shared"], json!(false));
     let scope_a = env.get_scope(&env.scope_a).await?;
     assert_eq!(scope_a["clients"], json!([[PROVIDER, APP_A], [PROVIDER, APP_E]]));
     assert_eq!(scope_a["pending"], json!([]));
 
     // The new client derives in scope A: same path as APP_A for the same user.
-    let (s, jwt) = env.new_session(APP_E, USER_SUB, 0, 600_000).await?;
+    let (s, jwt) = env.new_session(APP_E, USER_SUB, &env.scope_a, 0, 600_000).await?;
     let view: SessionView = env.create_session(&env.relayer_fc, &s, &jwt).await?.into_result()?.json()?;
     assert_eq!(view.path, format!("{}#google#{USER_SUB}#0", env.scope_a));
     Ok(())
@@ -371,11 +548,11 @@ async fn prune_sessions_after_expiry() -> Result<()> {
 
     let mut short = Vec::new();
     for _ in 0..4 {
-        let (s, jwt) = env.new_session(APP_A, USER_SUB, 0, 15_000).await?;
+        let (s, jwt) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 15_000).await?;
         env.create_session(&env.relayer_fc, &s, &jwt).await?.into_result()?;
         short.push(s);
     }
-    let (long, jwt) = env.new_session(APP_B, USER_SUB, 0, 3_600_000).await?;
+    let (long, jwt) = env.new_session(APP_B, USER_SUB, &env.scope_b, 0, 3_600_000).await?;
     env.create_session(&env.relayer_fc, &long, &jwt).await?.into_result()?;
 
     // Nothing has expired yet.
@@ -386,9 +563,9 @@ async fn prune_sessions_after_expiry() -> Result<()> {
     env.advance_to(latest + 1).await?;
 
     // Expired but not yet pruned: unusable, still stored.
-    let mut s0 = TestSession::new(short[0].expires_at_ms, 0, 5);
+    let mut s0 = TestSession::new(&env.scope_a, short[0].expires_at_ms, 0, 5);
     s0.key = short[0].key.clone();
-    expect_failure(tx(env.relayer_fc.call(signer, "derive_key").args_json(s0.derive_args("p1", "p2")).gas(GAS).transact().await), "Session expired");
+    expect_failure(tx(env.relayer_fc.call(signer, "derive_key").args_json(s0.derive_args("p1", "p2")).gas(api_gas("derive_key")).transact().await), "Session expired");
     assert!(env.get_session(&short[0]).await?.is_some());
 
     // Anyone can prune, oldest first, up to `limit`.
@@ -399,17 +576,260 @@ async fn prune_sessions_after_expiry() -> Result<()> {
     assert!(env.get_session(&short[2]).await?.is_some());
 
     // create_session prunes up to 3 expired sessions itself: the remaining two, then stops at the live one.
-    let (s, jwt) = env.new_session(APP_A, USER_SUB, 0, 600_000).await?;
+    let (s, jwt) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
     let outcome = env.create_session(&env.relayer_fc, &s, &jwt).await?;
     println!("create_session gas burnt (pruning 2): {} Tgas", outcome.total_gas_burnt.as_tgas());
-    assert!(outcome.total_gas_burnt <= CREATE_SESSION_GAS_BUDGET, "create_session burnt {} Tgas", outcome.total_gas_burnt.as_tgas());
+    assert!(outcome.total_gas_burnt <= create_session_gas_budget(), "create_session burnt {} Tgas", outcome.total_gas_burnt.as_tgas());
     outcome.into_result()?;
     assert_eq!(env.get_session(&short[2]).await?, None);
     assert_eq!(env.get_session(&short[3]).await?, None);
     assert!(env.get_session(&long).await?.is_some());
     assert!(env.get_session(&s).await?.is_some());
 
-    let pruned: u32 = env.relayer_fc.call(signer, "prune_sessions").args_json(json!({"limit": 100})).gas(GAS).transact().await?.into_result()?.json()?;
+    let pruned: u32 = env.relayer_fc.call(signer, "prune_sessions").args_json(json!({"limit": 100})).gas(api_gas("prune_sessions")).transact().await?.into_result()?.json()?;
     assert_eq!(pruned, 0);
+    Ok(())
+}
+
+/// Hana's shared Google client: its tokens carry Hana's `aud`, so the scope comes from `scope_id`, committed to by
+/// the session nonce. Shared-client additions are timelocked, removals immediate; a client is never both shared and
+/// registered; only scopes with `allow_shared` accept shared tokens; the path for a user is the same whether they
+/// come through the shared client or the app's own client.
+#[tokio::test]
+async fn shared_client_login() -> Result<()> {
+    let env = Env::setup().await?;
+    let signer = env.signer.id();
+    let sid = signer.as_str();
+
+    // A shared-only scope (no clients) is fine with allow_shared; without it a scope needs a client.
+    let scope_s = env.admin_register(vec![near_owner(env.carol.id())], &[], true).await?;
+    let s = env.get_scope(&scope_s).await?;
+    assert_eq!((s["clients"].clone(), s["allow_shared"].clone()), (json!([]), json!(true)));
+    expect_failure(env.try_admin_register_on(signer, vec![near_owner(env.carol.id())], &[], false).await, "A scope needs a client or shared login");
+    assert_eq!(env.get_scope(&env.scope_a).await?["allow_shared"], json!(false));
+
+    // Adding a shared client is timelocked.
+    let before_ms = env.now_ms().await?;
+    env.set_shared_clients(&[SHARED]).await?.into_result()?;
+    let config = env.get_config().await?;
+    println!("get_config with a pending shared client: {config}");
+    assert_eq!(config["shared_clients"], json!([]), "a shared client addition must not apply before the delay");
+    assert_eq!(config["pending_shared_clients"][0]["provider"], json!(PROVIDER));
+    assert_eq!(config["pending_shared_clients"][0]["aud"], json!(SHARED));
+    let unlock_at_ms = pending_shared_unlock(&config, SHARED).unwrap_or_else(|| panic!("pending shared addition of {SHARED} not shown in get_config: {config}"));
+    assert!(unlock_at_ms >= before_ms + CHANGE_DELAY_MS, "unlock {unlock_at_ms} vs set after {before_ms}");
+    // Only the owner sets shared clients.
+    expect_failure(tx(env.alice.call(signer, "set_shared_clients").args_json(json!({"clients": [[PROVIDER, APP_X]]})).gas(GAS).transact().await), "Only the owner");
+
+    // Not effective yet.
+    let (s0, jwt0) = env.new_session(SHARED, USER_SUB, &scope_s, 0, 600_000).await?;
+    expect_failure(env.create_session(&env.relayer_fc, &s0, &jwt0).await, "Token is for an unregistered app");
+
+    // A pending shared client can't be registered to a scope...
+    expect_failure(env.try_admin_register_on(signer, vec![near_owner(env.carol.id())], &[SHARED], false).await, "Client is a shared client");
+    // ...and a registered client can't become shared.
+    expect_failure(env.set_shared_clients(&[SHARED, APP_A]).await, "Client is already registered");
+
+    env.advance_to(unlock_at_ms + 1).await?;
+    // Lazy on read: the view shows it effective once the delay has passed.
+    let config = env.get_config().await?;
+    assert_eq!(config["shared_clients"], json!([[PROVIDER, SHARED]]), "config: {config}");
+    // Anyone may apply it (here the owner pool).
+    env.relayer_owner_fc.call(signer, "apply_pending_config").args_json(json!({})).gas(api_gas("apply_pending_config")).transact().await?.into_result()?;
+    let config = env.get_config().await?;
+    assert_eq!(config["shared_clients"], json!([[PROVIDER, SHARED]]), "config: {config}");
+    assert_eq!(pending_shared_unlock(&config, SHARED), None, "applied addition still pending: {config}");
+
+    // An effective shared client can't be registered either (admin path, or AddClient on a scope).
+    expect_failure(env.try_admin_register_on(signer, vec![near_owner(env.carol.id())], &[SHARED], false).await, "Client is a shared client");
+    let nonce_a = env.get_scope(&env.scope_a).await?["action_nonce"].as_u64().unwrap();
+    let proof = env.jwt(SHARED, OWNER_SUB, Some(&client_proof_nonce(sid, &env.scope_a, nonce_a))).await?;
+    expect_failure(
+        tx(env.alice.call(signer, "propose_change").args_json(json!({"scope_id": env.scope_a, "auth": "Near", "change": {"AddClient": {"provider": PROVIDER, "aud": SHARED}}, "client_proof": proof})).deposit(NearToken::from_millinear(10)).gas(GAS).transact().await),
+        "Client is a shared client",
+    );
+    assert_eq!(env.scope_for_client(SHARED).await?, None);
+
+    // Shared token into the shared-only scope.
+    let (mut ss, jwt_ss) = env.new_session(SHARED, USER_SUB, &scope_s, 0, 600_000).await?;
+    let view: SessionView = env.create_session(&env.relayer_fc, &ss, &jwt_ss).await?.into_result()?.json()?;
+    let path_s = format!("{scope_s}#google#{USER_SUB}#0");
+    assert_eq!((view.path.as_str(), view.scope_id.as_str()), (path_s.as_str(), scope_s.as_str()));
+    // Shared token into a scope without allow_shared.
+    let (sa0, jwt_sa0) = env.new_session(SHARED, USER_SUB, &env.scope_a, 0, 600_000).await?;
+    expect_failure(env.create_session(&env.relayer_fc, &sa0, &jwt_sa0).await, "Scope does not allow shared login");
+    // Shared token into a scope that doesn't exist.
+    let (sn, jwt_sn) = env.new_session(SHARED, USER_SUB, "szzz", 0, 600_000).await?;
+    expect_failure(env.create_session(&env.relayer_fc, &sn, &jwt_sn).await, "No such scope");
+    // An app's own client can't open sessions in the shared-only scope.
+    let (so, jwt_so) = env.new_session(APP_A, USER_SUB, &scope_s, 0, 600_000).await?;
+    expect_failure(env.create_session(&env.relayer_fc, &so, &jwt_so).await, "Token is for another app");
+
+    // SetAllowShared only enables; disabling has its own immediate method.
+    expect_failure(
+        tx(env.alice.call(signer, "propose_change").args_json(json!({"scope_id": env.scope_a, "auth": "Near", "change": {"SetAllowShared": {"allow": false}}, "client_proof": null})).deposit(NearToken::from_millinear(10)).gas(GAS).transact().await),
+        "SetAllowShared can only enable shared login",
+    );
+    let set_allow = json!({"SetAllowShared": {"allow": true}});
+    expect_failure(
+        tx(env.carol.call(signer, "propose_change").args_json(json!({"scope_id": scope_s, "auth": "Near", "change": set_allow, "client_proof": null})).deposit(NearToken::from_millinear(10)).gas(GAS).transact().await),
+        "Shared login is already enabled",
+    );
+    // Scope A enables shared login through a timelocked change (alice is its NEAR owner).
+    let change_id: u64 = env
+        .alice
+        .call(signer, "propose_change")
+        .args_json(json!({"scope_id": env.scope_a, "auth": "Near", "change": set_allow, "client_proof": null}))
+        .deposit(NearToken::from_millinear(10))
+        .gas(GAS)
+        .transact()
+        .await?
+        .into_result()?
+        .json()?;
+    let pending = env.get_scope(&env.scope_a).await?["pending"].clone();
+    assert_eq!(pending[0]["change"], set_allow);
+    let unlock = pending[0]["unlock_at_ms"].as_u64().unwrap();
+    expect_failure(
+        tx(env.relayer_owner_fc.call(signer, "execute_change").args_json(json!({"scope_id": env.scope_a, "change_id": change_id})).gas(api_gas("execute_change")).transact().await),
+        "Change is still timelocked",
+    );
+    expect_failure(env.create_session(&env.relayer_fc, &sa0, &jwt_sa0).await, "Scope does not allow shared login");
+    env.advance_to(unlock + 1).await?;
+    env.relayer_owner_fc.call(signer, "execute_change").args_json(json!({"scope_id": env.scope_a, "change_id": change_id})).gas(api_gas("execute_change")).transact().await?.into_result()?;
+    assert_eq!(env.get_scope(&env.scope_a).await?["allow_shared"], json!(true));
+
+    // Same sub via the shared client and via app A's own client into scope A: the SAME path.
+    let (mut sa_shared, jwt_shared) = env.new_session(SHARED, USER_SUB, &env.scope_a, 0, 600_000).await?;
+    let v_shared: SessionView = env.create_session(&env.relayer_fc, &sa_shared, &jwt_shared).await?.into_result()?.json()?;
+    let (mut sa_own, jwt_own) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
+    let v_own: SessionView = env.create_session(&env.relayer_fc, &sa_own, &jwt_own).await?.into_result()?.json()?;
+    let path_a = format!("{}#google#{USER_SUB}#0", env.scope_a);
+    assert_eq!(v_shared.path, path_a);
+    assert_eq!(v_own.path, path_a);
+    // Same sub via the shared client into scopes S and A: DIFFERENT paths.
+    assert_ne!(path_s, path_a);
+
+    // The MPC sees exactly those paths.
+    for s in [&mut ss, &mut sa_shared, &mut sa_own] {
+        env.relayer_fc.call(signer, "derive_key").args_json(s.derive_args("bls12381g1:p1", "bls12381g2:p2")).gas(api_gas("derive_key")).transact().await?.into_result()?;
+    }
+    let paths: Vec<String> = env.mpc_calls().await?.into_iter().map(|c| c.derivation_path).collect();
+    assert_eq!(paths, vec![path_s.clone(), path_a.clone(), path_a.clone()]);
+
+    // The nonce commits to scope_id: a shared token for scope S can't open a session in scope A (both allow shared).
+    let (s_for_s, jwt_for_s) = env.new_session(SHARED, USER_SUB, &scope_s, 0, 600_000).await?;
+    let mut moved = TestSession::new(&env.scope_a, s_for_s.expires_at_ms, 0, s_for_s.max_uses);
+    moved.key = s_for_s.key.clone();
+    expect_failure(env.create_session(&env.relayer_fc, &moved, &jwt_for_s).await, "Token nonce doesn't commit to this session");
+
+    // Last-client rules: a scope with clients and allow_shared may drop its last client...
+    let scope_t = env.admin_register(vec![near_owner(env.carol.id())], &[APP_C], true).await?;
+    env.carol.call(signer, "remove_client").args_json(json!({"scope_id": scope_t, "auth": "Near", "provider": PROVIDER, "aud": APP_C})).gas(GAS).transact().await?.into_result()?;
+    assert_eq!(env.get_scope(&scope_t).await?["clients"], json!([]));
+    // ...after which shared login can't be disabled (it would leave no way in).
+    expect_failure(tx(env.carol.call(signer, "disable_shared_login").args_json(json!({"scope_id": scope_t, "auth": "Near"})).gas(GAS).transact().await), "Cannot disable shared login: the scope has no clients");
+    expect_failure(tx(env.carol.call(signer, "disable_shared_login").args_json(json!({"scope_id": scope_s, "auth": "Near"})).gas(GAS).transact().await), "Cannot disable shared login: the scope has no clients");
+    assert_eq!(env.get_scope(&scope_s).await?["allow_shared"], json!(true));
+    // Without allow_shared the last client stays.
+    expect_failure(tx(env.bob.call(signer, "remove_client").args_json(json!({"scope_id": env.scope_b, "auth": "Near", "provider": PROVIDER, "aud": APP_B})).gas(GAS).transact().await), "Cannot remove the last client of a scope without shared login");
+    expect_failure(tx(env.bob.call(signer, "disable_shared_login").args_json(json!({"scope_id": env.scope_b, "auth": "Near"})).gas(GAS).transact().await), "Shared login is not enabled");
+
+    // Disabling shared login is immediate and owner-only. Through the owner pool with an OIDC owner it would need a
+    // console token; here alice (NEAR owner) calls directly.
+    expect_failure(tx(env.bob.call(signer, "disable_shared_login").args_json(json!({"scope_id": env.scope_a, "auth": "Near"})).gas(GAS).transact().await), "Caller is not a NEAR owner of this scope");
+    env.alice.call(signer, "disable_shared_login").args_json(json!({"scope_id": env.scope_a, "auth": "Near"})).gas(GAS).transact().await?.into_result()?;
+    assert_eq!(env.get_scope(&env.scope_a).await?["allow_shared"], json!(false));
+    let (sd, jwt_sd) = env.new_session(SHARED, USER_SUB, &env.scope_a, 0, 600_000).await?;
+    expect_failure(env.create_session(&env.relayer_fc, &sd, &jwt_sd).await, "Scope does not allow shared login");
+    // The app's own client still works.
+    let (so2, jwt_so2) = env.new_session(APP_A, USER_SUB, &env.scope_a, 1, 600_000).await?;
+    env.create_session(&env.relayer_fc, &so2, &jwt_so2).await?.into_result()?;
+
+    // Removing a shared client applies at once.
+    env.set_shared_clients(&[]).await?.into_result()?;
+    let config = env.get_config().await?;
+    assert_eq!((config["shared_clients"].clone(), config["pending_shared_clients"].clone()), (json!([]), json!([])));
+    let (sr, jwt_sr) = env.new_session(SHARED, USER_SUB, &scope_s, 0, 600_000).await?;
+    expect_failure(env.create_session(&env.relayer_fc, &sr, &jwt_sr).await, "Token is for an unregistered app");
+    Ok(())
+}
+
+/// The unlock time of a pending shared-client addition of `aud`, as shown by get_config.
+fn pending_shared_unlock(config: &Value, aud: &str) -> Option<u64> {
+    let pending = config.get("pending_shared_clients")?;
+    let entries: Vec<&Value> = match pending {
+        Value::Array(a) => a.iter().collect(),
+        Value::Null => vec![],
+        other => vec![other],
+    };
+    for e in entries {
+        if e.to_string().contains(aud) {
+            return ["unlock_at_ms", "effective_at_ms"].iter().find_map(|k| e.get(*k).and_then(Value::as_u64));
+        }
+    }
+    None
+}
+
+/// Every proof commits to the deployment (`current_account_id`): the same token, args and scope ids on a second
+/// hana-signer are rejected. Covers the session nonce, client proof, owner-action nonce and register proof.
+#[tokio::test]
+async fn cross_deployment_replay_rejected() -> Result<()> {
+    let env = Env::setup().await?;
+    let main = env.signer.id().clone();
+    let other = env.deploy_another_signer("signer2").await?;
+    let oid = other.id().clone();
+
+    // Same registrations in the same order on both, so the scope ids (and action nonces) coincide.
+    let a2 = env.admin_register_on(&oid, vec![near_owner(env.alice.id())], &[APP_A], false).await?;
+    let b2 = env.admin_register_on(&oid, vec![near_owner(env.bob.id())], &[APP_B], false).await?;
+    assert_eq!((a2.as_str(), b2.as_str()), (env.scope_a.as_str(), env.scope_b.as_str()));
+    let oidc_owners = vec![oidc_owner(OWNER_SUB)];
+    let c1 = env.admin_register_on(&main, oidc_owners.clone(), &[APP_C, APP_D], false).await?;
+    let c2 = env.admin_register_on(&oid, oidc_owners.clone(), &[APP_C, APP_D], false).await?;
+    assert_eq!(c1, c2);
+
+    // Session nonce: a token for the main deployment fails on the other, then works on main.
+    let (s, jwt) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
+    expect_failure(tx(env.alice.call(&oid, "create_session").args_json(s.create_args(&jwt)).gas(GAS).transact().await), "Token nonce doesn't commit to this session");
+    env.create_session(&env.relayer_fc, &s, &jwt).await?.into_result()?;
+    // Control: a token made for the other deployment works there.
+    let (s2, _) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
+    let jwt2 = env.jwt(APP_A, USER_SUB, Some(&s2.nonce(&oid))).await?;
+    let v: SessionView = env.alice.call(&oid, "create_session").args_json(s2.create_args(&jwt2)).gas(GAS).transact().await?.into_result()?.json()?;
+    assert_eq!(v.path, format!("{}#google#{USER_SUB}#0", env.scope_a));
+
+    // Client proof (alice adds APP_E to scope A): the proof for main fails on the other.
+    let nonce_main = env.get_scope(&env.scope_a).await?["action_nonce"].as_u64().unwrap();
+    let nonce_other = other.view("get_scope").args_json(json!({"scope_id": a2})).await?.json::<Value>()?["action_nonce"].as_u64().unwrap();
+    assert_eq!(nonce_main, nonce_other);
+    let proof = env.jwt(APP_E, OWNER_SUB, Some(&client_proof_nonce(main.as_str(), &env.scope_a, nonce_main))).await?;
+    let propose = json!({"scope_id": env.scope_a, "auth": "Near", "change": {"AddClient": {"provider": PROVIDER, "aud": APP_E}}, "client_proof": proof});
+    expect_failure(tx(env.alice.call(&oid, "propose_change").args_json(propose.clone()).deposit(NearToken::from_millinear(10)).gas(GAS).transact().await), "Client proof nonce doesn't match");
+    env.alice.call(&main, "propose_change").args_json(propose).deposit(NearToken::from_millinear(10)).gas(GAS).transact().await?.into_result()?;
+
+    // Owner-action nonce (OIDC owner removes APP_D from scope C): the console token for main fails on the other.
+    let action_nonce = env.get_scope(&c1).await?["action_nonce"].as_u64().unwrap();
+    let mut args = borsh_str(&c1);
+    args.extend(borsh_str(PROVIDER));
+    args.extend(borsh_str(APP_D));
+    let console_jwt = env.jwt(CONSOLE, OWNER_SUB, Some(&owner_action_nonce(main.as_str(), &c1, "remove_client", &args, action_nonce))).await?;
+    let remove = json!({"scope_id": c1, "auth": {"Oidc": {"jwt": console_jwt}}, "provider": PROVIDER, "aud": APP_D});
+    expect_failure(tx(env.alice.call(&oid, "remove_client").args_json(remove.clone()).gas(GAS).transact().await), "Owner token nonce doesn't match");
+    env.relayer_owner_fc.call(&main, "remove_client").args_json(remove).gas(api_gas("remove_client")).transact().await?.into_result()?;
+    assert_eq!(env.scope_for_client(APP_D).await?, None);
+    let still: Option<String> = other.view("scope_for_client").args_json(json!({"provider": PROVIDER, "aud": APP_D})).await?.json()?;
+    assert_eq!(still.as_deref(), Some(c2.as_str()));
+
+    // Register proof: with public registration on both, a proof made for main fails on the other.
+    for signer in [&main, &oid] {
+        env.admin.call(signer, "enable_public_registration").transact().await?.into_result()?;
+    }
+    let owners = vec![near_owner(env.carol.id())];
+    let clients = [(PROVIDER, APP_X)];
+    let proof_main = env.jwt(APP_X, OWNER_SUB, Some(&register_nonce(main.as_str(), &owners, &clients, false))).await?;
+    let reg = json!({"owners": owners, "client_proofs": [proof_main], "allow_shared": false});
+    expect_failure(tx(env.carol.call(&oid, "register_scope").args_json(reg.clone()).deposit(NearToken::from_millinear(10)).gas(GAS).transact().await), "Proof nonce doesn't commit to this registration");
+    let id: String = env.carol.call(&main, "register_scope").args_json(reg).deposit(NearToken::from_millinear(10)).gas(GAS).transact().await?.into_result()?.json()?;
+    assert_eq!(env.scope_for_client(APP_X).await?.as_deref(), Some(id.as_str()));
     Ok(())
 }

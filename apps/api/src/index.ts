@@ -1,6 +1,6 @@
 // Hana ID API: relays hana-signer calls for registered apps (Cloudflare Worker + Durable Objects + D1).
 import type { Env } from './env.ts';
-import { type AppEndpoint, APP_ENDPOINTS, appPreflight, handleAppEndpoint, handleHealth, handleOwnerAction, openPreflight } from './handlers.ts';
+import { type AppEndpoint, APP_CONFIG_ENDPOINT, APP_ENDPOINTS, appPreflight, handleAppConfig, handleAppEndpoint, handleHealth, handleOwnerAction, openPreflight } from './handlers.ts';
 import { json } from './http.ts';
 import { syncIssuerKeys } from './issuer-keys.ts';
 import { log } from './log.ts';
@@ -25,6 +25,11 @@ export default {
         if (request.method === 'GET' || request.method === 'HEAD') return handleHealth(env, requestId);
         if (request.method === 'OPTIONS') return openPreflight();
         return json(405, { error: 'Method not allowed', code: 'method_not_allowed', requestId }, { allow: 'GET' });
+      }
+      if (pathname === APP_CONFIG_ENDPOINT) {
+        if (request.method === 'OPTIONS') return await appPreflight(request, env);
+        if (request.method === 'GET') return await handleAppConfig(request, env, requestId);
+        return json(405, { error: 'Method not allowed', code: 'method_not_allowed', requestId }, { allow: 'GET, OPTIONS' });
       }
       if (APP_ENDPOINTS.includes(pathname)) {
         if (request.method === 'OPTIONS') return await appPreflight(request, env);

@@ -6,8 +6,12 @@
 //!   to a browser-held Ed25519 session key. Path = `{scope_id}#{provider}#{sub}#{key_index}`.
 //! - `derive_key` (signed by the session key) calls the MPC's `request_app_private_key` with that path.
 //! - The registry (`registry.rs`) maps client ids to scopes. Scope owners (NEAR accounts or OIDC identities) manage
-//!   their scope; adding clients and changing owners is timelocked. Hana (the `owner`) registers scopes while
-//!   `public_registration` is off, and can never change a registered scope's clients or owners.
+//!   their scope; adding clients, changing owners and enabling shared login are timelocked. Hana (the `owner`)
+//!   registers scopes while `public_registration` is off, and can never change a registered scope's clients or owners.
+//! - Shared clients (`shared_clients`) are Hana's own login clients for partners without one: their tokens open
+//!   sessions in any scope with `allow_shared`, the scope being the one the session nonce commits to. A client is
+//!   never both shared and a scope client. Adding a shared client is delayed by `change_delay_ms`.
+//! - Every nonce commits to `env::current_account_id()`, so tokens can't be replayed across deployments.
 //!
 //! The exact JSON interface and byte layouts are in `docs/contract-interface.md`.
 
@@ -29,6 +33,7 @@ use near_sdk::{env, near, AccountId, BorshStorageKey, NearToken, PanicOnDefault,
 pub const MAX_CHANGE_DELAY_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 const MAX_SPONSORS: usize = 10;
 const MAX_CONSOLE_AUDIENCES: usize = 10;
+pub const MAX_SHARED_CLIENTS: usize = 5;
 
 #[derive(BorshStorageKey)]
 #[near(serializers = [borsh])]
@@ -40,6 +45,7 @@ enum StorageKey {
     Sessions,
     SessionQueue,
     RemovedClients,
+    PendingAdds,
 }
 
 /// A scheduled decrease of `change_delay_ms` (increases apply at once).
@@ -50,6 +56,21 @@ pub struct DelayChange {
     pub effective_at_ms: u64,
 }
 
+/// A shared client added by `set_shared_clients`, in force from `effective_at_ms`.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PendingSharedClient {
+    pub provider: String,
+    pub aud: String,
+    pub effective_at_ms: u64,
+}
+
+impl PendingSharedClient {
+    fn client(&self) -> (String, String) {
+        (self.provider.clone(), self.aud.clone())
+    }
+}
+
 #[near(serializers = [json])]
 #[derive(Debug, PartialEq)]
 pub struct ConfigView {
@@ -58,6 +79,10 @@ pub struct ConfigView {
     pub ckd_domain_id: u64,
     pub console_audiences: Vec<(String, String)>,
     pub sponsors: Vec<AccountId>,
+    /// Shared clients in force now (matured pending additions included).
+    pub shared_clients: Vec<(String, String)>,
+    /// Shared clients not yet in force.
+    pub pending_shared_clients: Vec<PendingSharedClient>,
     /// The delay in force now.
     pub change_delay_ms: u64,
     pub pending_change_delay: Option<DelayChange>,
@@ -77,6 +102,11 @@ pub struct HanaSigner {
     pub(crate) console_audiences: Vec<(String, String)>,
     /// Callers whose registrations and proposals the contract pays storage for (the relayer).
     pub(crate) sponsors: Vec<AccountId>,
+    /// (provider, aud) of Hana's shared login clients in force. Read through `shared_clients_at`, which also counts
+    /// matured `pending_shared_clients` (folded in by `set_shared_clients` / `apply_pending_config`).
+    pub(crate) shared_clients: Vec<(String, String)>,
+    /// Shared-client additions waiting for `change_delay_ms`.
+    pub(crate) pending_shared_clients: Vec<PendingSharedClient>,
     pub(crate) change_delay_ms: u64,
     pub(crate) pending_change_delay: Option<DelayChange>,
     /// One way: false → true.
@@ -90,6 +120,8 @@ pub struct HanaSigner {
     pub(crate) client_index: LookupMap<(String, String), String>,
     /// (provider, aud) → the scope it was removed from and when another scope may take it (see `remove_client`).
     pub(crate) removed_clients: LookupMap<(String, String), registry::RemovedClient>,
+    /// (provider, aud) → how many scopes have a pending `AddClient` for it. Such a client can't be made shared.
+    pub(crate) pending_adds: LookupMap<(String, String), u32>,
     /// The next contract-assigned scope number (scope id = "s" + base36).
     pub(crate) next_scope: u64,
     /// Session public key (32 bytes) → session.
@@ -111,6 +143,8 @@ impl HanaSigner {
             ckd_domain_id,
             console_audiences: vec![],
             sponsors: vec![],
+            shared_clients: vec![],
+            pending_shared_clients: vec![],
             change_delay_ms,
             pending_change_delay: None,
             public_registration: false,
@@ -119,6 +153,7 @@ impl HanaSigner {
             scopes: LookupMap::new(StorageKey::Scopes),
             client_index: LookupMap::new(StorageKey::ClientIndex),
             removed_clients: LookupMap::new(StorageKey::RemovedClients),
+            pending_adds: LookupMap::new(StorageKey::PendingAdds),
             next_scope: 1,
             sessions: LookupMap::new(StorageKey::Sessions),
             session_queue: LookupMap::new(StorageKey::SessionQueue),
@@ -175,6 +210,72 @@ impl HanaSigner {
         }
     }
 
+    /// Replaces Hana's shared login clients (≤ 5). Clients dropped from the list stop working at once; new ones
+    /// take effect after `change_delay_ms`, so owners of a scope that has its own client can see them coming and
+    /// disable shared login first. A shared-only scope (no clients) can't opt out in time: turning shared login off
+    /// needs a client of its own, whose `AddClient` is timelocked by the same delay, so such a scope trusts every
+    /// shared client Hana adds. A client can never be both shared and registered to a scope, and a client that a
+    /// scope has a pending `AddClient` for (or that is quarantined after a `remove_client`) can't be made shared.
+    /// A client dropped from the shared list is retired: it may return to the shared list but never join a scope.
+    pub fn set_shared_clients(&mut self, clients: Vec<(String, String)>) {
+        self.assert_owner();
+        assert!(clients.len() <= MAX_SHARED_CLIENTS, "Too many shared clients");
+        let now = env::block_timestamp_ms();
+        self.apply_matured_config(now);
+        for (i, client) in clients.iter().enumerate() {
+            assert_provider(&client.0);
+            assert_aud(&client.1);
+            assert!(self.has_issuer(&client.0), "Unknown issuer");
+            assert!(!clients[..i].contains(client), "Duplicate shared client");
+            assert!(!self.client_index.contains_key(client), "Client is already registered");
+            // A retired shared client may come back to the shared list (it was Hana's); anything else quarantined may not.
+            if self.removed_clients.get(client).is_none_or(|r| r.scope_id != registry::RETIRED_SHARED) {
+                self.assert_not_quarantined(client, None);
+            }
+            assert!(!self.pending_adds.contains_key(client), "Client is pending in a scope");
+        }
+        let effective_at_ms = now.saturating_add(self.change_delay_at(now));
+        // Dropped shared clients (in force or pending) are retired for good: no scope may ever claim them, since
+        // anyone able to load Hana's login page could mint tokens for them with a nonce of their choosing.
+        let dropped: Vec<(String, String)> = self
+            .shared_clients
+            .iter()
+            .cloned()
+            .chain(self.pending_shared_clients.iter().map(|p| p.client()))
+            .filter(|c| !clients.contains(c))
+            .collect();
+        for client in dropped {
+            self.removed_clients.insert(
+                client,
+                registry::RemovedClient { scope_id: registry::RETIRED_SHARED.to_string(), free_at_ms: u64::MAX, reserved_by: None },
+            );
+        }
+        for client in &clients {
+            if self.removed_clients.get(client).is_some_and(|r| r.scope_id == registry::RETIRED_SHARED) {
+                self.removed_clients.remove(client);
+            }
+        }
+        self.shared_clients.retain(|c| clients.contains(c));
+        self.pending_shared_clients.retain(|p| clients.contains(&p.client()));
+        for client in clients {
+            if !self.shared_clients.contains(&client) && !self.pending_shared_clients.iter().any(|p| p.client() == client) {
+                self.pending_shared_clients.push(PendingSharedClient { provider: client.0, aud: client.1, effective_at_ms });
+            }
+        }
+        // With a zero delay the additions are already in force.
+        self.apply_matured_config(now);
+        events::emit(
+            "shared_clients_set",
+            near_sdk::serde_json::json!({ "shared_clients": self.shared_clients, "pending_shared_clients": self.pending_shared_clients }),
+        );
+    }
+
+    /// Anyone: folds matured pending config (shared-client additions, a scheduled `change_delay_ms` decrease) into
+    /// state. Optional: every read and check already treats matured entries as in force.
+    pub fn apply_pending_config(&mut self) {
+        self.apply_matured_config(env::block_timestamp_ms());
+    }
+
     pub fn get_config(&self) -> ConfigView {
         let now = env::block_timestamp_ms();
         let pending = self.pending_change_delay.clone().filter(|p| now < p.effective_at_ms);
@@ -184,6 +285,8 @@ impl HanaSigner {
             ckd_domain_id: self.ckd_domain_id,
             console_audiences: self.console_audiences.clone(),
             sponsors: self.sponsors.clone(),
+            shared_clients: self.shared_clients_at(now),
+            pending_shared_clients: self.pending_shared_clients.iter().filter(|p| now < p.effective_at_ms).cloned().collect(),
             change_delay_ms: self.change_delay_at(now),
             pending_change_delay: pending,
             public_registration: self.public_registration,
@@ -201,6 +304,35 @@ impl HanaSigner {
         match &self.pending_change_delay {
             Some(p) if now >= p.effective_at_ms => p.change_delay_ms,
             _ => self.change_delay_ms,
+        }
+    }
+
+    /// Shared clients in force at `now`: the stored list, then pending additions that have matured, in the order
+    /// they matured (`effective_at_ms`, ties in the order they were added). `apply_matured_config` appends in the
+    /// same order, so the result doesn't depend on whether or when anyone applied them.
+    pub(crate) fn shared_clients_at(&self, now: u64) -> Vec<(String, String)> {
+        let mut matured: Vec<&PendingSharedClient> = self.pending_shared_clients.iter().filter(|p| now >= p.effective_at_ms).collect();
+        matured.sort_by_key(|p| p.effective_at_ms); // stable: ties keep insertion order
+        let mut clients = self.shared_clients.clone();
+        clients.extend(matured.into_iter().map(PendingSharedClient::client));
+        clients
+    }
+
+    /// Whether `client` is a shared client, in force or pending. Such a client can't become a scope client.
+    pub(crate) fn is_shared_or_pending(&self, client: &(String, String)) -> bool {
+        self.shared_clients.contains(client) || self.pending_shared_clients.iter().any(|p| p.provider == client.0 && p.aud == client.1)
+    }
+
+    /// Moves matured pending shared clients into `shared_clients` and applies a scheduled delay decrease whose time
+    /// has come. Changes nothing anyone can observe through views or checks.
+    pub(crate) fn apply_matured_config(&mut self, now: u64) {
+        let (mut matured, pending): (Vec<_>, Vec<_>) = self.pending_shared_clients.drain(..).partition(|p| now >= p.effective_at_ms);
+        matured.sort_by_key(|p| p.effective_at_ms); // same order as shared_clients_at
+        self.pending_shared_clients = pending;
+        self.shared_clients.extend(matured.iter().map(PendingSharedClient::client));
+        if self.pending_change_delay.as_ref().is_some_and(|p| now >= p.effective_at_ms) {
+            self.change_delay_ms = self.change_delay_at(now);
+            self.pending_change_delay = None;
         }
     }
 

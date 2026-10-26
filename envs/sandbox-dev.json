@@ -11,6 +11,7 @@
   "apiUrl": "https://hana-id-api-sandbox-dev.workers.dev",
   "changeDelayMs": 60000,
   "googleClientIds": ["UNSET.apps.googleusercontent.com"],
+  "sharedGoogleClientIds": ["UNSET-shared.apps.googleusercontent.com"],
   "consoleAudiences": [],
   "cloudflare": { "workerName": "hana-id-api-sandbox-dev", "d1Name": "hana-id-sandbox-dev" }
 }

@@ -10,28 +10,32 @@ import type { KeyPair } from '@near-js/crypto';
 import { actionCreators } from '@near-js/transactions';
 import { CliError, parseCli } from './cli.ts';
 import { type ContractConfig, GLOBAL_SCOPE, GOOGLE_PROVIDER, normaliseIssuer, tryView } from './contract.ts';
-import { buildDeployPlan, type DeployObserved, type DeployStep, describeStep, type Role, ROLES, stepSigner } from './deploy-plan.ts';
+import { buildDeployPlan, type DeployObserved, type DeployOptions, type DeployStep, describeStep, registerGlobalArgs, type Role, ROLES, stepSigner } from './deploy-plan.ts';
 import {
   findLegacyCredential,
   generateKey,
   type LoadedKey,
   loadLegacyCredential,
+  poolFileName,
   readKeysUpdater,
-  readRelayerKeys,
+  readPoolKeys,
   writeKeysUpdater,
-  writeRelayerKeys,
+  writePoolKeys,
 } from './keys.ts';
-import { explorerTx, formatNear, functionCallKeysFor, hasFullAccess, NearRpc, nearToYocto, otherAccessKeys, STORAGE_YOCTO_PER_BYTE, TGAS } from './near.ts';
+import { explorerTx, formatNear, hasFullAccess, NearRpc, nearToYocto, STORAGE_YOCTO_PER_BYTE, TGAS } from './near.ts';
 
-export const DEPLOY_USAGE = `Usage: deploy-contract.ts <env> [--yes] [--relayer-keys 3] [--relayer-allowance 2] [--updater-allowance 1]
+export const DEPLOY_USAGE = `Usage: deploy-contract.ts <env> [--yes] [--relayer-keys 3] [--relayer-allowance 2]
+                          [--owner-relayer-keys 1] [--owner-relayer-allowance 0.5] [--updater-allowance 1]
                           [--upgrade] [--wasm <file>] [--skip-build]
-  --yes                 apply the plan (without it, only print it)
-  --relayer-keys N      function-call keys to keep on the relayer account (default 3)
-  --relayer-allowance   gas allowance per relayer key, in NEAR (default 2)
-  --updater-allowance   gas allowance of the keys-updater key, in NEAR (default 1)
-  --upgrade             redeploy the code to an already-initialised contract (no init call)
-  --wasm <file>         deploy this wasm instead of building
-  --skip-build          use the last built wasm`;
+  --yes                       apply the plan (without it, only print it)
+  --relayer-keys N            session-pool keys on the relayer (RELAYER_KEYS: logins) (default 3)
+  --relayer-allowance         gas allowance per session-pool key, in NEAR (default 2)
+  --owner-relayer-keys N      owner-pool keys on the relayer (OWNER_RELAYER_KEYS: /v1/owner-actions) (default 1)
+  --owner-relayer-allowance   gas allowance per owner-pool key, in NEAR (default 0.5)
+  --updater-allowance         gas allowance of the keys-updater key, in NEAR (default 1)
+  --upgrade                   redeploy the code to an already-initialised contract (no init call)
+  --wasm <file>               deploy this wasm instead of building
+  --skip-build                use the last built wasm`;
 
 export const DRY_RUN_LINE = 'Dry run: nothing changed. Re-run with --yes to apply.';
 
@@ -107,6 +111,13 @@ async function observe(c: Ctx, wasmPath: string | null): Promise<{ observed: Dep
   const config = accounts.signer.exists ? await tryView<ContractConfig>(rpc, m.signer, 'get_config') : null;
   const googleIssuer = config ? normaliseIssuer(await tryView<unknown>(rpc, m.signer, 'get_issuer', { provider: GOOGLE_PROVIDER })) : null;
   const globalScope = config ? await tryView<unknown>(rpc, m.signer, 'get_scope', { scope_id: GLOBAL_SCOPE }) : null;
+  const sharedClientScopes: Record<string, string | null> = {};
+  if (config) {
+    for (const aud of m.sharedGoogleClientIds.filter((id) => !/UNSET/u.test(id))) {
+      const scope = await tryView<unknown>(rpc, m.signer, 'scope_for_client', { provider: GOOGLE_PROVIDER, aud });
+      sharedClientScopes[aud] = typeof scope === 'string' ? scope : null;
+    }
+  }
   const updater = readKeysUpdater(m.name, c.secretsRoot);
   if (updater && updater.accountId !== m.signer) throw new Error(`.secrets/${m.name}/keys-updater.json is for ${updater.accountId}, not ${m.signer}`);
   return {
@@ -116,13 +127,16 @@ async function observe(c: Ctx, wasmPath: string | null): Promise<{ observed: Dep
       accounts,
       credentials,
       config,
-      relayerKeysOnChain: functionCallKeysFor(keyLists.relayer ?? [], m.signer),
-      relayerKeysElsewhere: otherAccessKeys(keyLists.relayer ?? [], m.signer),
-      relayerKeysInFile: readRelayerKeys(m.name, c.secretsRoot).map((k) => k.getPublicKey().toString()),
-      signerFunctionKeysOnChain: functionCallKeysFor(keyLists.signer ?? [], m.signer),
+      relayerAccessKeys: keyLists.relayer ?? [],
+      signerAccessKeys: keyLists.signer ?? [],
+      poolKeysInFile: {
+        session: readPoolKeys(m.name, 'session', c.secretsRoot).map((k) => k.getPublicKey().toString()),
+        owner: readPoolKeys(m.name, 'owner', c.secretsRoot).map((k) => k.getPublicKey().toString()),
+      },
       updaterKeyInFile: updater?.publicKey ?? null,
       googleIssuer,
       globalScope,
+      sharedClientScopes,
       wasmBytes: wasmPath ? readFileSync(wasmPath).length : null,
     },
   };
@@ -160,10 +174,10 @@ async function execute(c: Ctx, step: DeployStep, creds: Partial<Record<Role, Loa
       return;
     }
     case 'relayer-keys': {
-      const existing = readRelayerKeys(m.name, c.secretsRoot);
+      const existing = readPoolKeys(m.name, step.pool, c.secretsRoot);
       const fresh: KeyPair[] = Array.from({ length: step.generate }, () => generateKey());
       // Save before adding on chain, so a key that lands on chain is never lost.
-      if (fresh.length) writeRelayerKeys(m.name, [...existing, ...fresh], c.secretsRoot);
+      if (fresh.length) writePoolKeys(m.name, step.pool, [...existing, ...fresh], c.secretsRoot);
       const toAdd = [...existing.filter((k) => step.reuse.includes(k.getPublicKey().toString())), ...fresh];
       const access = actionCreators.functionCallAccessKey(m.signer, step.methods, step.allowanceYocto);
       await send(m.relayer, toAdd.map((k) => actionCreators.addKey(k.getPublicKey(), access)));
@@ -190,8 +204,11 @@ async function execute(c: Ctx, step: DeployStep, creds: Partial<Record<Role, Loa
     case 'set-console-audiences':
       await call('set_console_audiences', { audiences: step.audiences });
       return;
+    case 'set-shared-clients':
+      await call('set_shared_clients', { clients: step.clients });
+      return;
     case 'register-global': {
-      const value = await call('admin_register_scope', { owners: step.owners, clients: step.clients, scope_id: GLOBAL_SCOPE });
+      const value = await call('admin_register_scope', registerGlobalArgs(step));
       log(`    scope ${JSON.stringify(value)}`);
       return;
     }
@@ -203,7 +220,7 @@ export async function deployMain(argv: readonly string[], deps: DeployDeps = def
   const { log } = deps;
   const args = parseCli(argv, {
     booleans: ['yes', 'upgrade', 'skip-build', 'help'],
-    strings: ['relayer-keys', 'relayer-allowance', 'updater-allowance', 'wasm'],
+    strings: ['relayer-keys', 'relayer-allowance', 'owner-relayer-keys', 'owner-relayer-allowance', 'updater-allowance', 'wasm'],
   });
   if (args.flag('help')) {
     log(DEPLOY_USAGE);
@@ -217,10 +234,22 @@ export async function deployMain(argv: readonly string[], deps: DeployDeps = def
 
   const wasmArg = args.str('wasm');
   if (wasmArg && !existsSync(wasmArg)) throw new CliError(`--wasm ${wasmArg} does not exist`);
-  const options = {
-    relayerKeyCount: args.int('relayer-keys', 3, { min: 1, max: 20 }),
-    relayerAllowanceYocto: nearToYocto(args.str('relayer-allowance') ?? '2'),
-    updaterAllowanceYocto: nearToYocto(args.str('updater-allowance') ?? '1'),
+  const allowance = (flag: string, fallback: string): bigint => {
+    let yocto: bigint;
+    try {
+      yocto = nearToYocto(args.str(flag) ?? fallback);
+    } catch {
+      throw new CliError(`--${flag} must be a NEAR amount such as 0.5`);
+    }
+    if (yocto <= 0n) throw new CliError(`--${flag} must be more than 0`);
+    return yocto;
+  };
+  const options: DeployOptions = {
+    pools: {
+      session: { count: args.int('relayer-keys', 3, { min: 1, max: 20 }), allowanceYocto: allowance('relayer-allowance', '2') },
+      owner: { count: args.int('owner-relayer-keys', 1, { min: 1, max: 5 }), allowanceYocto: allowance('owner-relayer-allowance', '0.5') },
+    },
+    updaterAllowanceYocto: allowance('updater-allowance', '1'),
     upgrade: args.flag('upgrade'),
     skipBuild: args.flag('skip-build') || !!wasmArg,
   };
@@ -257,6 +286,7 @@ export async function deployMain(argv: readonly string[], deps: DeployDeps = def
   log(`\nDone. Secrets (if any were generated) are in .secrets/${m.name}/ (0600). Next:
   pnpm --filter @hana-id/scripts run post-google-keys ${m.name}     # Google signing keys → contract
   pnpm --filter @hana-id/scripts run fetch-ckd-key ${m.name}        # pin the MPC CKD key in envs/${m.name}.json
-  then generate the API config and upload RELAYER_KEYS / KEYS_UPDATER_KEY (see README.md).`);
+  then generate the API config and upload RELAYER_KEYS (${poolFileName('session')}), OWNER_RELAYER_KEYS (${poolFileName('owner')})
+  and KEYS_UPDATER_KEY (keys-updater.json) (see README.md).`);
   return 0;
 }

@@ -39,8 +39,22 @@ function onlyKeys(o: Obj, required: string[], optional: string[] = []): boolean 
 
 // ---- App endpoints (camelCase request bodies, as the legacy client sent) ----
 
-export function toCreateSession(body: unknown, now = Date.now()): Checked<ContractCall & { jwt: string }> {
+export interface CreateSessionRequest {
+  jwt: string;
+  sessionPublicKey: number[];
+  expiresAtMs: number;
+  salt: number[];
+  keyIndex: number;
+  maxUses: number;
+}
+
+/**
+ * `create_session` for the app's `scopeId` (from D1). The client never chooses the scope: a body with `scopeId` (or
+ * `scope_id`) is rejected rather than silently ignored.
+ */
+export function toCreateSession(body: unknown, scopeId: string, now = Date.now()): Checked<ContractCall & { request: CreateSessionRequest }> {
   if (!isObj(body)) return { error: 'Body must be a JSON object' };
+  if ('scopeId' in body || 'scope_id' in body) return { error: 'scopeId is not accepted: the app’s scope is used' };
   const { jwt, sessionPublicKey, expiresAtMs, salt, keyIndex, maxUses } = body;
   if (!isJwt(jwt)) return { error: 'jwt must be a Google ID token' };
   if (!isBytes(sessionPublicKey, 32, 32)) return { error: 'sessionPublicKey must be 32 bytes' };
@@ -50,31 +64,37 @@ export function toCreateSession(body: unknown, now = Date.now()): Checked<Contra
   if (!isU32(keyIndex)) return { error: 'keyIndex must be a u32' };
   if (!isCount(maxUses) || maxUses > MAX_USES) return { error: `maxUses must be 1 to ${MAX_USES}` };
   return {
-    jwt,
+    request: { jwt, sessionPublicKey, expiresAtMs, salt, keyIndex, maxUses },
     method: 'create_session',
-    args: { jwt, session_public_key: sessionPublicKey, expires_at_ms: expiresAtMs, salt, key_index: keyIndex, max_uses: maxUses },
+    args: { jwt, scope_id: scopeId, session_public_key: sessionPublicKey, expires_at_ms: expiresAtMs, salt, key_index: keyIndex, max_uses: maxUses },
   };
 }
 
-export function toDeriveKey(body: unknown): Checked<ContractCall & { sessionPublicKey: number[] }> {
+export interface SessionSigned {
+  sessionPublicKey: number[];
+  counter: number;
+  signature: number[];
+}
+
+export function toDeriveKey(body: unknown): Checked<ContractCall & SessionSigned & { pk1: string; pk2: string }> {
   if (!isObj(body)) return { error: 'Body must be a JSON object' };
   const { sessionPublicKey, counter, signature, pk1, pk2 } = body;
   if (!isBytes(sessionPublicKey, 32, 32) || !isCount(counter) || !isBytes(signature, 64, 64) || !isPoint(pk1, 'bls12381g1:') || !isPoint(pk2, 'bls12381g2:')) {
     return { error: 'Malformed key request' };
   }
-  return { sessionPublicKey, method: 'derive_key', args: { session_public_key: sessionPublicKey, counter, signature, pk1, pk2 } };
+  return { sessionPublicKey, counter, signature, pk1, pk2, method: 'derive_key', args: { session_public_key: sessionPublicKey, counter, signature, pk1, pk2 } };
 }
 
-export function toRevokeSession(body: unknown): Checked<ContractCall & { sessionPublicKey: number[] }> {
+export function toRevokeSession(body: unknown): Checked<ContractCall & SessionSigned> {
   if (!isObj(body)) return { error: 'Body must be a JSON object' };
   const { sessionPublicKey, counter, signature } = body;
   if (!isBytes(sessionPublicKey, 32, 32) || !isCount(counter) || !isBytes(signature, 64, 64)) return { error: 'Malformed revoke request' };
-  return { sessionPublicKey, method: 'revoke_session', args: { session_public_key: sessionPublicKey, counter, signature } };
+  return { sessionPublicKey, counter, signature, method: 'revoke_session', args: { session_public_key: sessionPublicKey, counter, signature } };
 }
 
 // ---- Owner actions: `{ method, args }`, args exactly as the contract takes them (snake_case, serde enums) ----
 
-export const OWNER_ACTION_METHODS = ['propose_change', 'cancel_change', 'remove_client', 'execute_change'] as const;
+export const OWNER_ACTION_METHODS = ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change'] as const;
 
 /** Only `{"Oidc":{"jwt":"..."}}`: `"Near"` auth would make the relayer the predecessor, which is never an owner. */
 function isOidcAuth(v: unknown): boolean {
@@ -88,7 +108,7 @@ function isOwner(v: unknown): boolean {
   return false;
 }
 
-function changeKind(v: unknown): 'AddClient' | 'SetOwners' | null {
+function changeKind(v: unknown): 'AddClient' | 'SetOwners' | 'SetAllowShared' | null {
   if (!isObj(v)) return null;
   if ('AddClient' in v) {
     const c = v.AddClient;
@@ -99,6 +119,11 @@ function changeKind(v: unknown): 'AddClient' | 'SetOwners' | null {
     return onlyKeys(v, ['SetOwners']) && isObj(c) && onlyKeys(c, ['owners']) && Array.isArray(c.owners) && c.owners.length >= 1 && c.owners.length <= 5 && c.owners.every(isOwner)
       ? 'SetOwners'
       : null;
+  }
+  if ('SetAllowShared' in v) {
+    // Only enabling is a (timelocked) change; disabling is disable_shared_login.
+    const c = v.SetAllowShared;
+    return onlyKeys(v, ['SetAllowShared']) && isObj(c) && onlyKeys(c, ['allow']) && c.allow === true ? 'SetAllowShared' : null;
   }
   return null;
 }
@@ -116,7 +141,7 @@ export function toOwnerAction(body: unknown): Checked<ContractCall> {
       if (!kind) return { error: 'Malformed change' };
       const proof = args.client_proof ?? null;
       if (kind === 'AddClient' && !isJwt(proof)) return { error: 'AddClient needs a client_proof token' };
-      if (kind === 'SetOwners' && proof !== null) return { error: 'client_proof is only for AddClient' };
+      if (kind !== 'AddClient' && proof !== null) return { error: 'client_proof is only for AddClient' };
       return { method, args: { scope_id: args.scope_id, auth: args.auth, change: args.change, client_proof: proof } };
     }
     case 'cancel_change': {
@@ -130,6 +155,11 @@ export function toOwnerAction(body: unknown): Checked<ContractCall> {
       if (!isOidcAuth(args.auth)) return { error: 'auth must be {"Oidc":{"jwt":...}}' };
       if (!isProvider(args.provider) || !isAud(args.aud)) return { error: 'Malformed client' };
       return { method, args: { scope_id: args.scope_id, auth: args.auth, provider: args.provider, aud: args.aud } };
+    }
+    case 'disable_shared_login': {
+      if (!onlyKeys(args, ['scope_id', 'auth'])) return { error: 'Unexpected or missing arguments' };
+      if (!isOidcAuth(args.auth)) return { error: 'auth must be {"Oidc":{"jwt":...}}' };
+      return { method, args: { scope_id: args.scope_id, auth: args.auth } };
     }
     case 'execute_change': {
       if (!onlyKeys(args, ['scope_id', 'change_id'])) return { error: 'Unexpected or missing arguments' };

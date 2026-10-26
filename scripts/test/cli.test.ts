@@ -51,4 +51,15 @@ describe('scope:register arguments', () => {
     expect(() => clientsFromArgs([])).toThrow();
     expect(() => clientsFromArgs(['a', 'a'])).toThrow('Duplicate');
   });
+
+  it('allows zero clients only with --allow-shared', () => {
+    expect(() => clientsFromArgs([])).toThrow('--allow-shared');
+    expect(clientsFromArgs([], { allowShared: true })).toEqual([]);
+    expect(clientsFromArgs(['x.apps'], { allowShared: true })).toEqual([['google', 'x.apps']]);
+  });
+
+  it("refuses Hana's shared client as an app's own client, and more than 10", () => {
+    expect(() => clientsFromArgs(['shared.apps'], { allowShared: true, sharedClientIds: ['shared.apps'] })).toThrow("Hana's shared Google client");
+    expect(() => clientsFromArgs(Array.from({ length: 11 }, (_, i) => `c${i}`))).toThrow('at most 10');
+  });
 });

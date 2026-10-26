@@ -77,10 +77,10 @@ describe('CORS', () => {
     const app = await seedApp();
     const aud = `${uid()}.apps.googleusercontent.com`;
     chain({ [aud]: app.scope });
-    const ok = await call('/v1/sessions', { headers: appHeaders(app), body: sessionBody(aud) });
+    const ok = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud) });
     expect(ok.status).toBe(200);
     expect(ok.headers.get('access-control-allow-origin')).toBe(ORIGIN);
-    const unknown = await call('/v1/derive', { headers: appHeaders(app), body: deriveBody(newSessionKey()) });
+    const unknown = await call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(newSessionKey()) });
     expect(unknown.status).toBe(404);
     expect(unknown.headers.get('access-control-allow-origin')).toBe(ORIGIN);
   });
@@ -100,20 +100,20 @@ describe('logging', () => {
     const app = await seedApp();
     const aud = `${uid()}.apps.googleusercontent.com`;
     const near = chain({ [aud]: app.scope });
-    const req = sessionBody(aud);
+    const req = await sessionBody(app.scope, aud);
     expect((await call('/v1/sessions', { headers: appHeaders(app), body: req })).status).toBe(200);
     const spk = req.sessionPublicKey as number[];
-    expect((await call('/v1/derive', { headers: appHeaders(app), body: deriveBody(spk) })).status).toBe(200);
+    expect((await call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(spk) })).status).toBe(200);
     near.contract.derive_key = () => {
       throw new Error(`echo ${String(req.jwt)}`);
     };
-    expect((await call('/v1/derive', { headers: appHeaders(app), body: deriveBody(spk, { counter: 2 }) })).status).toBe(422);
+    expect((await call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(spk, { counter: 2 }) })).status).toBe(422);
 
     const all = lines.join('\n');
     expect(lines.length).toBeGreaterThan(0);
     for (const line of lines) expect(() => JSON.parse(line)).not.toThrow();
     const jwt = String(req.jwt);
-    for (const secret of [jwt, jwt.split('.')[1]!, app.key, 'bls12381g1:Y', 'bls12381g1:C', JSON.stringify(deriveBody(spk).signature), JSON.stringify(spk)]) {
+    for (const secret of [jwt, jwt.split('.')[1]!, app.key, 'bls12381g1:Y', 'bls12381g1:C', JSON.stringify((await deriveBody(spk)).signature), JSON.stringify(spk)]) {
       expect(all).not.toContain(secret);
     }
     const request = lines.map((l) => JSON.parse(l) as Record<string, unknown>).find((l) => l.event === 'request' && l.endpoint === '/v1/sessions');

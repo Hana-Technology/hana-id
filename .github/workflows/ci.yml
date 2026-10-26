@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Actions are pinned to commit SHAs (supply-chain safety); the comment gives the tag.
+jobs:
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      # The gitleaks binary (MIT) needs no license, unlike the gitleaks GitHub Action on org repos.
+      - name: Install gitleaks (checksum-verified)
+        run: |
+          curl -sSfL -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+      - name: Scan full history
+        run: ./gitleaks git --no-banner --redact --config .gitleaks.toml --exit-code 1 .
+
+  contract:
+    name: Contract (cargo test + wasm)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: contracts/hana-signer
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # rustup installs the toolchain pinned in rust-toolchain.toml (incl. wasm32 target) on first use.
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
+        with:
+          workspaces: contracts/hana-signer
+          cache-bin: true
+      - name: Install cargo-near
+        run: cargo near --version 2>/dev/null || cargo install cargo-near --version 0.22.0 --locked
+      - run: cargo test --locked
+      - run: cargo near build non-reproducible-wasm
+      - name: Wasm size
+        run: ls -l target/near/hana_signer.wasm
+
+  typescript:
+    name: TypeScript (typecheck + tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r typecheck
+      - run: pnpm -r test
+
+  e2e:
+    name: Sandbox e2e (near-workspaces)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: contract
+    defaults:
+      run:
+        working-directory: contracts/integration-tests
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - run: rustup show active-toolchain
+      # The tests build hana-signer and mock-mpc with their own pinned toolchain.
+      - run: rustup toolchain install 1.85.1 --target wasm32-unknown-unknown --profile minimal
+      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
+        with:
+          workspaces: |
+            contracts/integration-tests
+            contracts/hana-signer
+            contracts/mock-mpc
+          cache-bin: true
+      - name: Install cargo-near
+        run: cargo near --version 2>/dev/null || cargo install cargo-near --version 0.22.0 --locked
+      - run: cargo test --locked -- --test-threads=1

@@ -10,10 +10,10 @@ export function json(status: number, body: unknown, headers: Headers_ = {}): Res
 }
 
 /** CORS for an origin that has been checked against an app (or `*` for the open endpoints). */
-export function corsHeaders(origin: string | '*', allowHeaders: string): Headers_ {
+export function corsHeaders(origin: string | '*', allowHeaders: string, methods = 'POST, OPTIONS'): Headers_ {
   return {
     'access-control-allow-origin': origin,
-    'access-control-allow-methods': 'POST, OPTIONS',
+    'access-control-allow-methods': methods,
     'access-control-allow-headers': allowHeaders,
     'access-control-expose-headers': 'x-request-id, retry-after',
     'access-control-max-age': '600',

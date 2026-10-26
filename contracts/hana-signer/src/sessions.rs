@@ -1,5 +1,8 @@
 //! Sessions (an ID token binds a browser-held Ed25519 key to a derivation path) and CKD key release.
 
+// create_session takes 7 arguments (8 with self): the JSON interface is flat on purpose.
+#![allow(clippy::too_many_arguments)]
+
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{env, ext_contract, near, Gas, NearToken, Promise, PromiseOrValue};
 use schemars::JsonSchema;
@@ -13,7 +16,9 @@ const CKD_GAS: Gas = Gas::from_tgas(20);
 /// Domain-separates CKD requests from anything else the session key signs.
 pub const CKD_PREFIX: &str = "hana-id-ckd-v1:";
 /// Domain-separates session-key signatures from anything else the key might sign.
-pub const SESSION_DOMAIN: &[u8] = b"hana-embed-session-v1:";
+pub const SESSION_DOMAIN: &[u8] = b"hana-id-session-v1:";
+/// Domain-separates session nonces from the other nonces (registry.rs).
+const SESSION_NONCE_DOMAIN: &[u8] = b"hana-id/session/v1";
 pub const REVOKE_PAYLOAD: &[u8] = b"revoke";
 
 pub const MAX_SESSION_MS: u64 = 24 * 60 * 60 * 1000;
@@ -82,13 +87,34 @@ pub struct CkdRequestArgs {
     pub domain_id: u64,
 }
 
-/// nonce = b64url(sha256(session_public_key ‖ expires_at_ms u64 LE ‖ key_index u32 LE ‖ salt)).
-pub fn session_nonce(session_public_key: &[u8], expires_at_ms: u64, key_index: u32, salt: &[u8]) -> String {
-    let mut committed = session_public_key.to_vec();
-    committed.extend_from_slice(&expires_at_ms.to_le_bytes());
-    committed.extend_from_slice(&key_index.to_le_bytes());
-    committed.extend_from_slice(salt);
-    oidc::b64url(&env::sha256(&committed))
+/// What a session nonce commits to. Mirrors `create_session`'s arguments (minus the token) plus the deployment.
+pub struct SessionCommitment<'a> {
+    pub signer: &'a str,
+    pub scope_id: &'a str,
+    pub session_public_key: &'a [u8],
+    pub expires_at_ms: u64,
+    pub key_index: u32,
+    pub max_uses: u32,
+    pub salt: &'a [u8],
+}
+
+/// "hana-id/session/v1" ‖ borsh(signer) ‖ borsh(scope_id) ‖ session_public_key ‖ expires_at_ms u64 LE ‖
+/// key_index u32 LE ‖ max_uses u32 LE ‖ salt.
+pub fn session_nonce_preimage(c: &SessionCommitment) -> Vec<u8> {
+    let mut preimage = SESSION_NONCE_DOMAIN.to_vec();
+    preimage.extend(near_sdk::borsh::to_vec(c.signer).unwrap());
+    preimage.extend(near_sdk::borsh::to_vec(c.scope_id).unwrap());
+    preimage.extend_from_slice(c.session_public_key);
+    preimage.extend_from_slice(&c.expires_at_ms.to_le_bytes());
+    preimage.extend_from_slice(&c.key_index.to_le_bytes());
+    preimage.extend_from_slice(&c.max_uses.to_le_bytes());
+    preimage.extend_from_slice(c.salt);
+    preimage
+}
+
+/// nonce = b64url(sha256(session_nonce_preimage)).
+pub fn session_nonce(c: &SessionCommitment) -> String {
+    oidc::b64url(&env::sha256(session_nonce_preimage(c)))
 }
 
 /// What the session key signs for a CKD request: "hana-id-ckd-v1:" ‖ pk1 ‖ ":" ‖ pk2.
@@ -96,7 +122,7 @@ pub fn ckd_request_bytes(pk1: &str, pk2: &str) -> Vec<u8> {
     format!("{}{}:{}", CKD_PREFIX, pk1, pk2).into_bytes()
 }
 
-/// "hana-embed-session-v1:" ‖ counter u64 LE ‖ sha256(payload).
+/// "hana-id-session-v1:" ‖ counter u64 LE ‖ sha256(payload).
 pub fn session_message_bytes(counter: u64, payload: &[u8]) -> Vec<u8> {
     let mut message = SESSION_DOMAIN.to_vec();
     message.extend_from_slice(&counter.to_le_bytes());
@@ -106,9 +132,19 @@ pub fn session_message_bytes(counter: u64, payload: &[u8]) -> Vec<u8> {
 
 #[near]
 impl HanaSigner {
-    /// Opens a session for the user in `jwt`, bound to `session_public_key`. The token's `(provider, aud)` must be a
-    /// registered client (its scope picks the keys) and its nonce must equal session_nonce(...). Returns the session.
-    pub fn create_session(&mut self, jwt: String, session_public_key: Vec<u8>, expires_at_ms: u64, salt: Vec<u8>, key_index: u32, max_uses: u32) -> Session {
+    /// Opens a session in scope `scope_id` for the user in `jwt`, bound to `session_public_key`. The token's
+    /// `(provider, aud)` must be a client of that scope, or a shared client if the scope has `allow_shared`; its nonce
+    /// must equal session_nonce(...), which commits to this deployment, the scope and every other argument.
+    pub fn create_session(
+        &mut self,
+        jwt: String,
+        scope_id: String,
+        session_public_key: Vec<u8>,
+        expires_at_ms: u64,
+        salt: Vec<u8>,
+        key_index: u32,
+        max_uses: u32,
+    ) -> Session {
         assert!(session_public_key.len() == 32, "Session key must be a 32-byte Ed25519 public key");
         assert!((16..=64).contains(&salt.len()), "Salt must be 16-64 bytes");
         let now = env::block_timestamp_ms();
@@ -119,8 +155,17 @@ impl HanaSigner {
         }
 
         let token = self.verify_token(&jwt);
-        let scope_id = self.scope_id_for(&token.provider, &token.aud).unwrap_or_else(|| env::panic_str("Token is for an unregistered app"));
-        let nonce = session_nonce(&session_public_key, expires_at_ms, key_index, &salt);
+        let scope_id = self.session_scope(&token.provider, &token.aud, &scope_id);
+        let signer = env::current_account_id();
+        let nonce = session_nonce(&SessionCommitment {
+            signer: signer.as_str(),
+            scope_id: &scope_id,
+            session_public_key: &session_public_key,
+            expires_at_ms,
+            key_index,
+            max_uses,
+            salt: &salt,
+        });
         assert!(token.nonce.as_deref() == Some(nonce.as_str()), "Token nonce doesn't commit to this session");
 
         let stored = StoredSession {
@@ -170,7 +215,13 @@ impl HanaSigner {
         self.sessions.get(&session_public_key).filter(|s| !s.revoked).map(StoredSession::view)
     }
 
-    /// The bytes a session key signs for request number `counter`: "hana-embed-session-v1:" ‖ counter (u64 LE) ‖ sha256(payload).
+    /// True if create_session would refuse this key with "Session key already in use": a session for it, revoked or
+    /// not, has not expired yet. Lets a relayer reject a replayed create_session without paying for it.
+    pub fn session_key_in_use(&self, session_public_key: Vec<u8>) -> bool {
+        self.sessions.get(&session_public_key).is_some_and(|s| s.expires_at_ms > env::block_timestamp_ms())
+    }
+
+    /// The bytes a session key signs for request number `counter`: "hana-id-session-v1:" ‖ counter (u64 LE) ‖ sha256(payload).
     pub fn session_message(&self, counter: u64, payload: Vec<u8>) -> Vec<u8> {
         session_message_bytes(counter, &payload)
     }

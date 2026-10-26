@@ -1,7 +1,9 @@
-# hana-signer contract interface (batch A)
+# hana-signer contract interface (batch A + A.2)
 
 The exact on-chain interface of `contracts/hana-signer`. The API, scripts, console and SDK must match this file.
-If the code and this file disagree, the code is wrong: raise it.
+If the code and this file disagree, the code is wrong: raise it. Batch A.2 (`docs/batch-a2-shared-client.md`) added
+shared clients, `allow_shared`, `disable_shared_login`, `apply_pending_config`, the `scope_id` argument of
+`create_session`, and binds every nonce to the contract account. **Every byte layout changed in A.2.**
 
 Conventions:
 
@@ -14,8 +16,9 @@ Conventions:
 - `borsh(x)` is the [Borsh](https://borsh.io) encoding (see "Borsh encodings" below for every type used).
 - Panic messages are listed so callers can map them; a panic aborts the whole call (no state change).
 - Methods not marked payable reject any attached deposit (`Method ... doesn't accept deposit`).
-- Recommended gas: 300 Tgas for every change method (the relayer's default). `derive_key` forwards a fixed 20 Tgas
-  to the MPC; it needs ≥ 50 Tgas attached. View methods cost nothing.
+- Gas: `derive_key` forwards a fixed 20 Tgas to the MPC and needs ≥ 50 Tgas attached. The API's per-method defaults
+  (batch A.2, **to measure on testnet**): `create_session` 50 Tgas, `derive_key` 60, `revoke_session` 20,
+  `prune_sessions` 50, owner-pool methods 50. 300 Tgas always works. View methods cost nothing.
 
 ## Types (JSON)
 
@@ -31,6 +34,7 @@ Conventions:
 // Change
 {"AddClient":{"provider":"google","aud":"123-abc.apps.googleusercontent.com"}}
 {"SetOwners":{"owners":[{"Near":{"account_id":"alice.testnet"}}]}}
+{"SetAllowShared":{"allow":true}}          // only allow = true is accepted (disable with disable_shared_login)
 
 // Session (create_session / get_session)
 {"path":"s1#google#110248495921238986420#0","scope_id":"s1","expires_at_ms":1800003600000,"max_uses":3,"used":0}
@@ -39,7 +43,8 @@ Conventions:
 {
   "id": "s1",
   "owners": [{"Near":{"account_id":"alice.testnet"}}],
-  "clients": [["google","123-abc.apps.googleusercontent.com"]],   // [provider, aud] pairs
+  "clients": [["google","123-abc.apps.googleusercontent.com"]],   // [provider, aud] pairs; may be [] if allow_shared
+  "allow_shared": false,                                          // tokens of a shared client may log in to this scope
   "pending": [{"id":0,"change":{"AddClient":{"provider":"google","aud":"456-def.apps.googleusercontent.com"}},"unlock_at_ms":1800172800000}],
   "action_nonce": 1,
   "created_at_ms": 1800000000000
@@ -52,6 +57,8 @@ Conventions:
   "ckd_domain_id": 2,
   "console_audiences": [["google","console.apps.googleusercontent.com"]],
   "sponsors": ["hana-id-relayer-dev1.testnet"],
+  "shared_clients": [["google","hana-shared.apps.googleusercontent.com"]],  // in force now (matured pending ones included), in the order they took effect
+  "pending_shared_clients": [{"provider":"google","aud":"hana-shared2.apps.googleusercontent.com","effective_at_ms":1800172800000}],
   "change_delay_ms": 172800000,                 // the delay in force now
   "pending_change_delay": null,                 // or {"change_delay_ms":60000,"effective_at_ms":1800172800000}
   "public_registration": false
@@ -70,8 +77,13 @@ Identifiers:
 - **aud** (client id): 1..=256 bytes. **sub**: 1..=255 bytes, must not contain `#`.
 - **path** (MPC derivation path): `{scope_id}#{provider}#{sub}#{key_index}`, key_index in decimal without leading
   zeros. Example `s1#google#110248495921238986420#0`. Changing anything in this format changes every address.
+- **signer account id**: `env::current_account_id()`, the account the contract is deployed on (e.g.
+  `hana-signer-dev1.testnet`). Every nonce commits to it, so a token used on one deployment can't be replayed on
+  another.
 
-Limits: 1..=5 owners per scope, 1..=10 clients per scope, ≤ 10 pending changes per scope, ≤ 10 RSA keys per issuer,
+Limits: 1..=5 owners per scope, 0..=10 clients per scope (at least one client **or** `allow_shared`), ≤ 5 shared
+clients (effective + pending), ≤ 10 pending changes per scope (≤ 2 queued by a sponsor on a scope without clients),
+≤ 10 RSA keys per issuer,
 ≤ 4 iss values per issuer, ≤ 10 console audiences, ≤ 10 sponsors, JWT ≤ 7168 bytes, kid ≤ 128 bytes,
 session ≤ 24 h, `max_uses` 1..=500, `change_delay_ms` ≤ 7 days.
 
@@ -89,83 +101,102 @@ A JWT is accepted when, in this order:
 6. `exp * 1000 > block_timestamp_ms` (`Token expired`).
 7. `sub` is 1..=255 bytes without `#` (`Invalid sub`); `aud` is 1..=256 bytes (`Invalid aud`).
 
-The verified token yields `(provider, aud, sub, nonce)`. Each method then checks `nonce` against the
-commitment below (`... nonce ...` panics). Tokens are public once used on-chain; every use is bound by its nonce to
+The verified token yields `(provider, aud, sub, nonce)`; `(provider, aud)` is the token's **client**. Each method
+then checks `nonce` against the commitment below (`... nonce ...` panics). Tokens are public once used on-chain; every use is bound by its nonce to
 one purpose, so a published token can't be reused for anything else.
 
 ## Byte layouts (nonces, commitments, signed messages)
 
-The four nonces (session nonce, register proof, client proof, owner-action nonce) are reproduced by
-`contracts/hana-signer/scripts/gen-fixtures.mjs` (an independent JS implementation used to generate the unit-test
-tokens). The Rust tests check their own nonces against the ones that script writes, so those four agree byte for byte.
-The session message and its CKD payload (`derive_key`, `revoke_session`) have no independent implementation yet. Only
-Rust unit tests check them, and they test the Rust code against itself. An SDK that builds these bytes must follow
-the layout below exactly, and can compare its output with the `session_message(counter, payload)` view. A mismatch
-shows up on chain only as `Invalid session signature`.
+Every layout below is implemented twice: in Rust (`registry.rs`, `sessions.rs`) and independently in JS
+(`contracts/hana-signer/scripts/gen-fixtures.mjs`, which also signs the unit-test tokens). The JS writes the worked
+examples below (preimage hex and nonce) to `src/test_fixture.json`, and the Rust tests check their own preimages,
+nonces and signed messages against them byte for byte. An SDK can also compare its session messages with the
+`session_message(counter, payload)` view. A mismatch shows up on chain only as a nonce panic or
+`Invalid session signature`.
+
+All nonces are `b64url(sha256(preimage))` (43 characters). `signer` below is borsh(signer account id) =
+borsh(`env::current_account_id()` as a String).
 
 ### Session nonce (`create_session`)
 
 ```
-nonce = b64url(sha256( session_public_key (32 bytes)
-                     ‖ expires_at_ms  u64 LE
-                     ‖ key_index      u32 LE
-                     ‖ salt           (16..=64 bytes) ))
+preimage = "hana-id/session/v1"
+         ‖ borsh(signer account id)
+         ‖ borsh(scope_id)
+         ‖ session_public_key (32 bytes, raw)
+         ‖ expires_at_ms  u64 LE
+         ‖ key_index      u32 LE
+         ‖ max_uses       u32 LE
+         ‖ salt           (16..=64 bytes, raw)
 ```
 
-`max_uses` is not committed (see Security notes).
+`scope_id` is the `scope_id` argument of `create_session` (the app's scope); `max_uses` is committed, so a
+front-runner can't open the session with another cap.
 
 ### Register proof (`register_scope`)
 
 ```
-nonce = b64url(sha256( "hana-id/register/v1" ‖ borsh(owners: Vec<Owner>) ))
+preimage = "hana-id/register/v1"
+         ‖ borsh(signer account id)
+         ‖ borsh(owners: Vec<Owner>)
+         ‖ borsh(clients: Vec<(String provider, String aud)>)   // the proofs' clients, in client_proofs order
+         ‖ allow_shared u8 (0x00 | 0x01)
 ```
 
-One token per client being registered; each token's `(provider, aud)` is a client, all with this same nonce.
+One token per client being registered; each token's `(provider, aud)` is a client, all with this same nonce. A
+shared-only registration (`client_proofs: []`, `allow_shared: true`) needs no token and so no nonce.
 
 ### Client proof (`propose_change` with `AddClient`)
 
 ```
-nonce = b64url(sha256( "hana-id/client-proof/v1" ‖ scope_id (UTF-8, no length prefix) ‖ action_nonce u64 LE ))
+preimage = "hana-id/client-proof/v1" ‖ borsh(signer account id) ‖ borsh(scope_id) ‖ action_nonce u64 LE
 ```
 
 `action_nonce` is the scope's current value (before the call increments it). The token's `(provider, aud)` must
-equal the `AddClient` change. (Unambiguous without a length prefix: scope ids are `[a-z0-9]+` and the tail is a
-fixed 8 bytes.)
+equal the `AddClient` change.
 
 ### Owner-action nonce (`OwnerAuth::Oidc`)
 
 ```
-nonce = b64url(sha256( "hana-id/owner-action/v1"
-                     ‖ scope_id     (UTF-8, no length prefix)
-                     ‖ method_name  (UTF-8, no length prefix: "propose_change" | "cancel_change" | "remove_client")
-                     ‖ borsh(args without auth)
-                     ‖ action_nonce u64 LE ))
+preimage = "hana-id/owner-action/v1"
+         ‖ borsh(signer account id)
+         ‖ borsh(scope_id)
+         ‖ borsh(method_name)        // "propose_change" | "cancel_change" | "remove_client" | "disable_shared_login"
+         ‖ borsh(args without auth)
+         ‖ action_nonce u64 LE
 ```
 
 `borsh(args without auth)` is every argument of the call except `auth`, in declaration order, each Borsh-encoded and
-concatenated:
+concatenated (no extra length prefix around the whole):
 
 | method | args without auth |
 |---|---|
 | `propose_change` | `borsh(scope_id: String) ‖ borsh(change: Change) ‖ borsh(client_proof: Option<String>)` |
 | `cancel_change` | `borsh(scope_id: String) ‖ borsh(change_id: u64)` |
 | `remove_client` | `borsh(scope_id: String) ‖ borsh(provider: String) ‖ borsh(aud: String)` |
+| `disable_shared_login` | `borsh(scope_id: String)` |
+
+(`scope_id` therefore appears twice in the preimage: once after the signer, once as the first argument.)
 
 For `propose_change(AddClient)` the owner token therefore commits to the exact client-proof JWT: obtain the client
 proof first, then the owner token. `action_nonce` is the scope's current value; any successful `propose_change`,
-`cancel_change` or `remove_client` on the scope (with either auth kind) increments it, so a used owner token can
-never be replayed, and a token prepared before another owner's action must be re-obtained.
+`cancel_change`, `remove_client` or `disable_shared_login` on the scope (with either auth kind) increments it, and so
+does every `execute_change` (anyone may call it). So a used owner token can never be replayed, a token published by a
+call that failed only because of the scope's state can't be replayed once that state changes, and a token (or client
+proof) prepared before another action or an execute must be re-obtained.
 
 ### Session message (`derive_key`, `revoke_session`)
 
 The session key (Ed25519) signs:
 
 ```
-session_message(counter, payload) = "hana-embed-session-v1:" ‖ counter u64 LE ‖ sha256(payload)
+session_message(counter, payload) = "hana-id-session-v1:" ‖ counter u64 LE ‖ sha256(payload)
 ```
 
-- `derive_key`: `payload = "hana-id-ckd-v1:" ‖ pk1 ‖ ":" ‖ pk2` (UTF-8 of the two strings exactly as passed).
-  **Renamed** from `hana-embed-ckd-v1:` in batch A (SDK follows in batch B).
+**Renamed** in A.2 from `hana-embed-session-v1:`.
+
+- `derive_key`: `payload` = the CKD payload `"hana-id-ckd-v1:" ‖ pk1 ‖ ":" ‖ pk2` (UTF-8 of the two strings exactly as
+  passed; unchanged in A.2).
 - `revoke_session`: `payload = "revoke"`.
 - `counter` must equal `used + 1`. The view `session_message(counter, payload)` returns these bytes.
 
@@ -173,14 +204,117 @@ session_message(counter, payload) = "hana-embed-session-v1:" ‖ counter u64 LE 
 
 | Type | Encoding |
 |---|---|
-| `String` | `u32 LE` byte length ‖ UTF-8 bytes |
-| `u64` | 8 bytes LE |
+| `String` (incl. account ids) | `u32 LE` byte length ‖ UTF-8 bytes |
+| `u8` / `bool` | 1 byte (`0x00` / `0x01`) |
+| `u32` / `u64` | 4 / 8 bytes LE |
 | `Option<String>` | `0x00` (None) or `0x01` ‖ borsh(String) |
 | `Vec<T>` | `u32 LE` count ‖ each element |
+| `(String, String)` | borsh(first) ‖ borsh(second) |
 | `Owner::Near { account_id }` | `0x00` ‖ borsh(account_id as String) |
 | `Owner::Oidc { provider, sub }` | `0x01` ‖ borsh(provider) ‖ borsh(sub) |
 | `Change::AddClient { provider, aud }` | `0x00` ‖ borsh(provider) ‖ borsh(aud) |
 | `Change::SetOwners { owners }` | `0x01` ‖ borsh(Vec<Owner>) |
+| `Change::SetAllowShared { allow }` | `0x02` ‖ allow (`0x00` / `0x01`) |
+
+### Worked examples
+
+Generated by `node contracts/hana-signer/scripts/gen-fixtures.mjs --doc` (also stored under `layouts` in
+`src/test_fixture.json`, which the Rust tests check). Each line is one field in hex; the preimage is the lines
+concatenated in order, and `nonce = b64url(sha256(preimage))`. Signer account id `hana-signer.testnet`; client ids
+are `app-c.apps.googleusercontent.com` etc.; the session key is the Ed25519 public key of the 32-byte seed `07…07`.
+
+**Session nonce: scope s1, session key = Ed25519 public key of seed [7; 32], expires 1800003600000, key_index 0, max_uses 3, salt [9; 16]**
+
+```
+domain "hana-id/session/v1"           68616e612d69642f73657373696f6e2f7631
+borsh(signer) "hana-signer.testnet"   1300000068616e612d7369676e65722e746573746e6574
+borsh(scope_id) "s1"                  020000007331
+session_public_key (32 bytes)         ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c
+expires_at_ms u64 LE (1800003600000)  803e9318a3010000
+key_index u32 LE (0)                  00000000
+max_uses u32 LE (3)                   03000000
+salt (16 bytes)                       09090909090909090909090909090909
+nonce                                 ZibEIOYJ7wXdsxU_7hIdD_speAW8z7cmSgoIh8XexsE
+```
+
+**Register proof: owners [Oidc google/owner-111, Near carol.testnet], clients [google app-c], allow_shared false**
+
+```
+domain "hana-id/register/v1"         68616e612d69642f72656769737465722f7631
+borsh(signer) "hana-signer.testnet"  1300000068616e612d7369676e65722e746573746e6574
+borsh(owners) (2)                    020000000106000000676f6f676c65090000006f776e65722d313131000d0000006361726f6c2e746573746e6574
+borsh(clients) (1)                   0100000006000000676f6f676c65200000006170702d632e617070732e676f6f676c6575736572636f6e74656e742e636f6d
+allow_shared u8 (false)              00
+nonce                                WcMdJbl3q0qXzEVxgYB-yX8eFV2ejKVwZpNss9giSIw
+```
+
+**Client proof: scope s1, action_nonce 0**
+
+```
+domain "hana-id/client-proof/v1"     68616e612d69642f636c69656e742d70726f6f662f7631
+borsh(signer) "hana-signer.testnet"  1300000068616e612d7369676e65722e746573746e6574
+borsh(scope_id) "s1"                 020000007331
+action_nonce u64 LE (0)              0000000000000000
+nonce                                5nh7P_dNPCQFltyJ0cTH6EiLvBkSYapJXxZs_c8N3hk
+```
+
+**Owner action: remove_client(s1, google, app-a2), action_nonce 0**
+
+```
+domain "hana-id/owner-action/v1"     68616e612d69642f6f776e65722d616374696f6e2f7631
+borsh(signer) "hana-signer.testnet"  1300000068616e612d7369676e65722e746573746e6574
+borsh(scope_id) "s1"                 020000007331
+borsh(method) "remove_client"        0d00000072656d6f76655f636c69656e74
+borsh(args without auth)             02000000733106000000676f6f676c65210000006170702d61322e617070732e676f6f676c6575736572636f6e74656e742e636f6d
+action_nonce u64 LE (0)              0000000000000000
+nonce                                Wmis02hrYwgcGDlFuifhD_Sj-mxZYzcxsCnOfKwtf9M
+```
+
+**Owner action: propose_change(s1, {"SetAllowShared":{"allow":true}}, null), action_nonce 0**
+
+```
+domain "hana-id/owner-action/v1"     68616e612d69642f6f776e65722d616374696f6e2f7631
+borsh(signer) "hana-signer.testnet"  1300000068616e612d7369676e65722e746573746e6574
+borsh(scope_id) "s1"                 020000007331
+borsh(method) "propose_change"       0e00000070726f706f73655f6368616e6765
+borsh(args without auth)             020000007331020100
+action_nonce u64 LE (0)              0000000000000000
+nonce                                dtFhwpx29WjdMb_v1mjn62mMAnCK5l9vzYgr3ncOloI
+```
+
+**Owner action: disable_shared_login(s1), action_nonce 1**
+
+```
+domain "hana-id/owner-action/v1"      68616e612d69642f6f776e65722d616374696f6e2f7631
+borsh(signer) "hana-signer.testnet"   1300000068616e612d7369676e65722e746573746e6574
+borsh(scope_id) "s1"                  020000007331
+borsh(method) "disable_shared_login"  1400000064697361626c655f7368617265645f6c6f67696e
+borsh(args without auth)              020000007331
+action_nonce u64 LE (1)               0100000000000000
+nonce                                 PSxo7hRPOnC6VHSCKt4xP05Z11_0pHcXnFx6KdhDkMI
+```
+
+**CKD payload: pk1 "bls12381g1:A", pk2 "bls12381g2:B"**
+
+```
+"hana-id-ckd-v1:" ‖ pk1 ‖ ":" ‖ pk2  68616e612d69642d636b642d76313a626c73313233383167313a413a626c73313233383167323a42
+```
+
+**Session message for derive_key: counter 1, payload = the CKD payload above**
+
+```
+domain "hana-id-session-v1:"  68616e612d69642d73657373696f6e2d76313a
+counter u64 LE (1)            0100000000000000
+sha256(payload)               0960891c21e35062fd240c1bed987623f83ee726cad22b05e2f450e7a3100f14
+```
+
+**Session message for revoke_session: counter 2, payload "revoke"**
+
+```
+domain "hana-id-session-v1:"  68616e612d69642d73657373696f6e2d76313a
+counter u64 LE (2)            0200000000000000
+sha256(payload)               777ac4ea0a6e6f4d1301fd1cf8aa9183f44f435be43c75a6615ba307c266e5a7
+```
 
 ## Methods
 
@@ -196,7 +330,7 @@ it), **scope owner** = authenticated via `OwnerAuth`, **anyone**.
 ```
 
 Panics: `change_delay_ms must be at most 7 days`. Starts with no issuers, no scopes, `public_registration = false`,
-no sponsors, no console audiences.
+no sponsors, no console audiences, no shared clients.
 
 ### Config (owner only, `Only the owner can do this`)
 
@@ -207,8 +341,37 @@ no sponsors, no console audiences.
 | `set_console_audiences(audiences)` | `{"audiences":[["google","console.apps.googleusercontent.com"]]}` | Replaces the list. ≤ 10 (`Too many console audiences`), `Invalid provider`, `Invalid aud`. |
 | `set_change_delay_ms(change_delay_ms)` | `{"change_delay_ms":172800000}` | ≤ 7 days. An increase applies now. A **decrease** applies only after the current delay has passed (`pending_change_delay`), so the admin can't shorten a timelock to act on scopes faster than owners were promised. Already queued changes keep their `unlock_at_ms`. |
 | `enable_public_registration()` | `{}` | One way: false → true, never back. No-op if already true. Event `public_registration_enabled`. |
+| `set_shared_clients(clients)` | `{"clients":[["google","hana-shared.apps.googleusercontent.com"]]}` | Replaces the shared-client list (see below). |
+
+Not owner-only: `apply_pending_config()` (`{}`, **anyone**) folds matured pending config into state: pending shared
+clients whose `effective_at_ms` has passed and a `pending_change_delay` whose time has come. Nothing depends on
+calling it: every read and check already treats matured entries as in force ("lazy").
 
 Views: `get_config()` → Config.
+
+#### Shared clients
+
+A **shared client** is a `(provider, aud)` Hana runs for partners without their own OAuth client (Hana's login page,
+on a Hana origin). Its tokens are not tied to one scope: `create_session` takes the scope from its `scope_id`
+argument, which the session nonce commits to, and accepts it only for scopes with `allow_shared`.
+
+`set_shared_clients(clients)`, owner only, sets the target list (≤ 5, `Too many shared clients`):
+
+- Clients in force now but not in the list are **removed at once**; pending ones not in the list are dropped.
+- Clients not in force and not pending become **pending** with `effective_at_ms = now + change_delay_ms` (the delay
+  in force now). Pending clients already in the list keep their `effective_at_ms`. `get_config()` shows them in
+  `pending_shared_clients` until then, and in `shared_clients` from then on. In-force order is the order they took
+  effect (`effective_at_ms`, ties in the order they were added); it is the same whether or not anyone has called
+  `apply_pending_config`, so "the first shared client" is well defined.
+- Each client: `Invalid provider`, `Invalid aud`, `Unknown issuer` (provider must be a configured issuer),
+  `Duplicate shared client`, `Client is already registered` (it is a client of some scope),
+  `Client was recently removed from another scope` (quarantined by a `remove_client`: until its `free_at_ms`, or
+  longer while the old scope's re-add is pending, see `remove_client`), `Client is pending in a scope` (some scope has
+  a pending `AddClient` for it; the listing works again once every such change is executed or cancelled).
+- Disjointness also holds the other way: a client that is shared **or pending shared** can never become a scope
+  client (`Client is a shared client` from `admin_register_scope`, `register_scope`, `propose_change(AddClient)` and
+  `execute_change(AddClient)`).
+- Event `shared_clients_set` with the resulting lists.
 
 ### Issuers
 
@@ -231,37 +394,47 @@ Views: `get_config()` → Config.
 
 ### Registry
 
-#### `admin_register_scope(owners, clients, scope_id)` — owner, only while `public_registration == false`
+#### `admin_register_scope(owners, clients, scope_id, allow_shared)` — owner, only while `public_registration == false`
 
 ```json
 {"owners":[{"Near":{"account_id":"hana-id-admin-dev1.testnet"}}],
  "clients":[["google","123-abc.apps.googleusercontent.com"]],
- "scope_id":"global"}
+ "scope_id":"global","allow_shared":false}
 ```
 
-`scope_id`: `null` (contract assigns `sN`) or `"global"` (only allowed value). Returns the scope id (`"s1"`).
+`scope_id`: `null` (contract assigns `sN`) or `"global"` (only allowed value). `allow_shared` (required bool):
+whether shared-client tokens may log in to this scope; `clients` may be `[]` when it is `true`. Returns the scope id
+(`"s1"`).
 No proofs. Contract pays storage. Panics: `Admin registration is closed: public registration is enabled`,
 `Only "global" can be chosen as a scope id`, `Scope already exists`, owner/client validation (below).
 Event `scope_registered`.
 
-#### `register_scope(owners, client_proofs)` — anyone, only while `public_registration == true`, payable
+#### `register_scope(owners, client_proofs, allow_shared)` — anyone, only while `public_registration == true`, payable
 
 ```json
-{"owners":[{"Oidc":{"provider":"google","sub":"1102..."}}],"client_proofs":["eyJ...","eyJ..."]}
+{"owners":[{"Oidc":{"provider":"google","sub":"1102..."}}],"client_proofs":["eyJ...","eyJ..."],"allow_shared":false}
+{"owners":[{"Near":{"account_id":"partner.testnet"}}],"client_proofs":[],"allow_shared":true}
 ```
 
-Each proof is a verified token whose nonce is the Register proof above; the clients are the proofs'
-`(provider, aud)`. Returns the scope id. Storage: the caller attaches ≥ the storage the call adds
-(`bytes × storage_byte_cost`: 262 bytes ≈ 0.0026 NEAR for one client and two owners; attach 0.01 NEAR); the excess is refunded to the caller. Callers in
-`sponsors` are exempt and any deposit they attach is refunded in full. Panics: `Public registration is not enabled`,
-`Proof nonce doesn't commit to these owners`, `Attached deposit doesn't cover storage: need N yoctoNEAR`, plus
+Each proof is a verified token whose nonce is the Register proof above (committing to the owners, the full client
+list in `client_proofs` order, and `allow_shared`); the clients are the proofs' `(provider, aud)`. `client_proofs`
+may be empty only when `allow_shared` is true (a shared-only scope needs no proof: scope ids are contract-assigned,
+so there is nothing to squat). Returns the scope id. Client validation (below) runs before the nonce check. Storage: the caller attaches ≥ the storage the call adds
+(`bytes × storage_byte_cost`: 263 bytes ≈ 0.0026 NEAR for one client and two owners; attach 0.01 NEAR); the excess is refunded to the caller. Callers in
+`sponsors` are exempt and any deposit they attach is refunded in full. A **shared-only** registration (`client_proofs:
+[]`) by a non-sponsor also prepays `2 × 1501 = 3002` bytes, the most that sponsors may later queue for free on a scope
+without clients (see `propose_change`): ≈ 3104 bytes ≈ 0.031 NEAR in all for one NEAR owner; attach 0.05 NEAR.
+Panics: `Public registration is not enabled`,
+`Proof nonce doesn't commit to this registration`, `Attached deposit doesn't cover storage: need N yoctoNEAR`, plus
 client/owner validation. Event `scope_registered`.
 
 Owner validation: 1..=5 owners (`A scope needs 1 to 5 owners`), no duplicates (`Duplicate owner`), valid provider and
-sub for `Oidc` owners. Client validation: 1..=10 (`A scope needs 1 to 10 clients`), provider must be a configured
-issuer (`Unknown issuer`), no duplicates (`Duplicate client`), not registered anywhere
-(`Client is already registered`), not quarantined after a `remove_client`
-(`Client was recently removed from another scope`; applies to `admin_register_scope` too).
+sub for `Oidc` owners. Client validation: ≤ 10 (`A scope has at most 10 clients`), at least one unless
+`allow_shared` (`A scope needs a client or shared login`), valid provider and aud (`Invalid provider`, `Invalid aud`),
+provider must be a configured issuer (`Unknown issuer`), no duplicates (`Duplicate client`), not registered anywhere
+(`Client is already registered`), not a shared or pending shared client (`Client is a shared client`), not
+quarantined after a `remove_client` (`Client was recently removed from another scope`). All of it applies to
+`admin_register_scope` too.
 
 #### `propose_change(scope_id, auth, change, client_proof)` — scope owner, payable
 
@@ -269,6 +442,7 @@ issuer (`Unknown issuer`), no duplicates (`Duplicate client`), not registered an
 {"scope_id":"s1","auth":"Near",
  "change":{"AddClient":{"provider":"google","aud":"456-def.apps.googleusercontent.com"}},
  "client_proof":"eyJ..."}
+{"scope_id":"s1","auth":"Near","change":{"SetAllowShared":{"allow":true}},"client_proof":null}
 ```
 
 Returns the change id (`u64`, = the scope's `action_nonce` before the call; unique within the scope). Queues the
@@ -276,14 +450,22 @@ change with `unlock_at_ms = now + change_delay_ms`. Increments `action_nonce`.
 
 - `AddClient` needs `client_proof` (`AddClient needs a client_proof`; Client proof above, token `(provider, aud)` must equal the change:
   `Client proof is for another client`, `Client proof nonce doesn't match`); the client must not be registered
-  anywhere (`Client is already registered`), not quarantined by a removal from **another** scope
-  (`Client was recently removed from another scope`; the scope it was removed from may re-add it at once), not already
-  pending in this scope (`Client is already pending`), and the scope must have room (`A scope needs 1 to 10 clients`).
+  anywhere (`Client is already registered`), not a shared or pending shared client (`Client is a shared client`), not
+  quarantined by a removal from **another** scope (`Client was recently removed from another scope`; the scope it was
+  removed from may re-add it at once, and a re-add proposed before `free_at_ms` keeps the client reserved for this
+  scope until it is executed or cancelled), not already pending in this scope (`Client is already pending`), and the
+  scope must have room (`A scope has at most 10 clients`). While pending, the client can't be made a shared client.
 - `SetOwners`: owners validated as above; `client_proof` must be `null` (`client_proof is only for AddClient`).
-- ≤ 10 pending (`Too many pending changes`). Storage paid like `register_scope` (sponsors exempt). For `AddClient`
+- `SetAllowShared`: the only way to **enable** shared login on an existing scope (timelocked, so co-owners can cancel).
+  `allow` must be `true` (`SetAllowShared can only enable shared login; use disable_shared_login`); panics
+  `Shared login is already enabled`, `Change is already pending`; `client_proof` must be `null`.
+- ≤ 10 pending (`Too many pending changes`). On a scope without clients a **sponsor** may queue a change only while
+  fewer than 2 are pending (`Too many sponsored pending changes for a scope without clients`); a non-sponsor, who
+  pays, may queue up to 10. Storage paid like `register_scope` (sponsors exempt). For `AddClient`
   the charge also covers the client index record that `execute_change` will add (40 + 1 + borsh((provider, aud)) +
   borsh(scope_id) bytes), since `execute_change` is free to call: ≈ 156 bytes ≈ 0.0016 NEAR for a Google client in
-  `s1`; attach 0.01 NEAR. Nothing is refunded if the change is cancelled.
+  `s1`; attach 0.01 NEAR (an `AddClient` also adds a small pending-add counter record, freed at execute or cancel).
+  Nothing is refunded if the change is cancelled.
 - Event `change_proposed`.
 
 #### `execute_change(scope_id, change_id)` — anyone
@@ -294,9 +476,11 @@ change with `unlock_at_ms = now + change_delay_ms`. Increments `action_nonce`.
 
 Applies a pending change once `now >= unlock_at_ms` (`Change is still timelocked`). Re-checks: `AddClient` client
 still unregistered (`Client is already registered`), not quarantined for another scope
-(`Client was recently removed from another scope`) and room in the scope (`A scope needs 1 to 10 clients`);
-`SetOwners` re-validated. On a failed
-re-check the change stays pending until an owner cancels it. Panics: `No such scope`, `No such change`.
+(`Client was recently removed from another scope`), not shared (`Client is a shared client`) and room in the scope
+(`A scope has at most 10 clients`); `SetOwners` re-validated; `SetAllowShared` sets `allow_shared = true` (no-op if
+already on). On a failed
+re-check the change stays pending until an owner cancels it. **Increments `action_nonce`** (since A.2), so owner
+tokens and client proofs made before the execute go stale. Panics: `No such scope`, `No such change`.
 Event `change_executed`.
 
 #### `cancel_change(scope_id, auth, change_id)` — scope owner
@@ -306,7 +490,8 @@ Event `change_executed`.
 ```
 
 Removes a pending change (any owner may cancel any pending change, including one proposed by a removed owner).
-Increments `action_nonce`. Event `change_cancelled`.
+Cancelling a re-add that reserved a quarantined client releases the reservation. Increments `action_nonce`. Event
+`change_cancelled`.
 
 #### `remove_client(scope_id, auth, provider, aud)` — scope owner
 
@@ -318,12 +503,29 @@ Immediate: the client stops resolving to the scope at once. The client id is the
 `free_at_ms = now + change_delay_ms` (the delay in force at removal): until then only this scope may take it back
 (`propose_change(AddClient)` here is allowed at once, with the usual timelock), and every other path
 (`register_scope`, `admin_register_scope`, `propose_change` / `execute_change` in another scope) fails with
-`Client was recently removed from another scope`. So a single owner can't move a client out of a shared scope into
-another scope faster than the timelock other owners rely on. Panics: `Client is not in this scope`,
-`Cannot remove the last client`. Increments `action_nonce`. Event `client_removed` (with `free_at_ms`).
+`Client was recently removed from another scope`; so does `set_shared_clients`. If this scope proposes the re-add
+before `free_at_ms`, the client stays reserved for it after `free_at_ms` too, until that change is executed or
+cancelled: the re-add's timelock always ends after the quarantine, and nobody may take the client in between. So a
+single owner can't move a client out of a shared scope into another scope (or have it made shared) faster than the
+timelock other owners rely on. The last client may be removed only when the scope has
+`allow_shared` (it then becomes shared-only). Panics: `Client is not in this scope`,
+`Cannot remove the last client of a scope without shared login`. Increments `action_nonce`. Event `client_removed`
+(with `free_at_ms`).
+
+#### `disable_shared_login(scope_id, auth)` — scope owner
+
+```json
+{"scope_id":"s1","auth":"Near"}
+```
+
+Immediate: sets `allow_shared = false`, so shared-client tokens stop opening sessions in this scope at once (sessions
+already open stay valid until they expire or are revoked). Panics: `Shared login is not enabled`,
+`Cannot disable shared login: the scope has no clients`. A pending `SetAllowShared` is left pending (cancel it with
+`cancel_change`). Increments `action_nonce`. Event `shared_login_disabled`.
 
 #### Owner auth panics
 
+Apply to `propose_change`, `cancel_change`, `remove_client` and `disable_shared_login`:
 `No such scope`, `Caller is not a NEAR owner of this scope` (Near), `Token is not for the Hana console`
 (Oidc: token `(provider, aud)` ∉ `console_audiences`), `Token is not from an owner of this scope`,
 `Owner token nonce doesn't match this action` (wrong args, wrong method, or replay: `action_nonce` moved on).
@@ -337,19 +539,26 @@ another scope faster than the timelock other owners rely on. Panics: `Client is 
 
 ### Sessions and CKD
 
-#### `create_session(jwt, session_public_key, expires_at_ms, salt, key_index, max_uses)` — anyone
+#### `create_session(jwt, scope_id, session_public_key, expires_at_ms, salt, key_index, max_uses)` — anyone
 
 ```json
-{"jwt":"eyJ...","session_public_key":[234,74,...32 bytes],"expires_at_ms":1800003600000,
+{"jwt":"eyJ...","scope_id":"s1","session_public_key":[234,74,...32 bytes],"expires_at_ms":1800003600000,
  "salt":[9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9],"key_index":0,"max_uses":3}
 ```
 
 Returns Session. Checks, in order: `Session key must be a 32-byte Ed25519 public key`, `Salt must be 16-64 bytes`,
 `Session expiry must be within 24 hours` (now < expires_at_ms ≤ now + 24 h), `max_uses must be 1-500`,
 `Session key already in use` (an unexpired session, including a revoked one, exists for this key), token
-verification, `Token is for an unregistered app` (no scope for the token's `(provider, aud)`),
-`Token nonce doesn't commit to this session`. Path = `{scope}#{provider}#{sub}#{key_index}`. Then prunes up to 3
-expired sessions. Not payable; the contract pays session storage (≈ 250 bytes, freed by pruning).
+verification, scope resolution for the token's client `(provider, aud)`:
+
+1. A registered scope client → its scope must equal `scope_id`, else `Token is for another app`.
+2. Else a shared client in force now (pending ones don't count) → scope `scope_id` must exist (`No such scope`) and
+   have `allow_shared` (`Scope does not allow shared login`).
+3. Else `Token is for an unregistered app`.
+
+Then `Token nonce doesn't commit to this session` (Session nonce above, with this `scope_id`). Path =
+`{scope_id}#{provider}#{sub}#{key_index}`, the same whether the token came from the scope's own client or a shared
+one (Google's `sub` is the same across client ids). Then prunes up to 3 expired sessions. Not payable; the contract pays session storage (≈ 250 bytes, freed by pruning).
 
 #### `derive_key(session_public_key, counter, signature, pk1, pk2)` — anyone
 
@@ -388,6 +597,7 @@ longer-lived one for at most 24 h.
 | Method | Args | Returns |
 |---|---|---|
 | `get_session(session_public_key)` | `{"session_public_key":[...32]}` | Session or `null` (also `null` once revoked) |
+| `session_key_in_use(session_public_key)` | `{"session_public_key":[...32]}` | `bool`: `true` while a session for this key (revoked or not) has not expired, i.e. when `create_session` would panic `Session key already in use` |
 | `session_message(counter, payload)` | `{"counter":1,"payload":[...]}` | bytes to sign (`Vec<u8>`) |
 
 ## Events (NEP-297)
@@ -397,16 +607,30 @@ one-element array, as in NEP-171).
 
 | event | data |
 |---|---|
-| `scope_registered` | `{"scope_id","owners":[Owner],"clients":[[provider,aud]],"by":"account","admin":bool}` |
+| `scope_registered` | `{"scope_id","owners":[Owner],"clients":[[provider,aud]],"allow_shared":bool,"by":"account","admin":bool}` |
 | `change_proposed` | `{"scope_id","change_id","change":Change,"unlock_at_ms","by":Owner}` |
 | `change_executed` | `{"scope_id","change_id","change":Change}` |
 | `change_cancelled` | `{"scope_id","change_id","by":Owner}` |
 | `client_removed` | `{"scope_id","provider","aud","free_at_ms","by":Owner}` |
+| `shared_login_disabled` | `{"scope_id","by":Owner}` |
+| `shared_clients_set` | `{"shared_clients":[[provider,aud]],"pending_shared_clients":[{"provider","aud","effective_at_ms"}]}` (state after the call) |
 | `public_registration_enabled` | `{}` |
 | `issuer_key_set` | `{"provider","kid"}` |
 | `issuer_key_removed` | `{"provider","kid"}` |
 
-`by: Owner` is the authenticated owner (`{"Near":{...}}` or `{"Oidc":{...}}`).
+`by: Owner` is the authenticated owner (`{"Near":{...}}` or `{"Oidc":{...}}`). Enabling shared login shows up as
+`change_proposed` / `change_executed` with a `SetAllowShared` change.
+
+## Changed in batch A.2
+
+`create_session` gained `scope_id` (2nd argument); `admin_register_scope` and `register_scope` gained `allow_shared`;
+every nonce layout gained `borsh(signer account id)`; the session nonce commits to `scope_id` and `max_uses`; the
+register proof commits to the clients and `allow_shared`; client-proof and owner-action nonces length-prefix
+`scope_id` and the method name; session messages use `hana-id-session-v1:`. `execute_change` now increments
+`action_nonce`; `set_shared_clients` rejects clients with a pending `AddClient`; a quarantine re-add reserves the
+client; sponsored proposals on scopes without clients are capped at 2 and a non-sponsor shared-only registration
+prepays them. New view `session_key_in_use` (also covers revoked, unexpired sessions). The contract state layout changed too
+(new config fields, `Scope.allow_shared`): deploy fresh, don't upgrade a batch A deployment in place.
 
 ## Removed in batch A
 
@@ -418,7 +642,29 @@ one-element array, as in NEP-171).
 
 - **Hana's trust surface.** The owner (and the contract account) controls issuer keys: whoever can post a Google key
   can mint any token, so this is total control in the PoC, as is contract upgrade (no lock in batch A). Beyond
-  that, Hana cannot change a scope's clients or owners, and cannot block derivation for a scope.
+  that, Hana cannot change a scope's clients or owners, and cannot block derivation for a scope that has its own
+  client (it can for a shared-only scope: see Shared login).
+- **Shared login.** A scope with `allow_shared` accepts tokens of Hana's shared clients, with the scope taken from
+  the session nonce. Whoever can get a shared-client token with a nonce of their choosing for a user can open a
+  session for that user in any `allow_shared` scope: Hana's login page (it decides which nonces to compute after
+  checking the opener's origin against the app's allowed origins), and the user themself (who only gets their own
+  key, which they are entitled to). So enabling shared login on a scope trusts Hana's login page with that scope's
+  keys; that is why enabling it on an existing scope is timelocked (`SetAllowShared`, co-owners can cancel) while
+  disabling is immediate. Hana can also stop logins to a shared-only scope by removing its shared clients
+  (removal is immediate). A client can't be shared and a scope client at once, and Hana can't list a client that a
+  scope has registered, has a pending `AddClient` for, or has quarantined after a removal, so Hana can't turn a
+  partner's **registered or proposed** client into a shared one, and a scope's own client always resolves to that
+  scope only (`Token is for another app`). A partner client that no scope has registered or proposed yet is not
+  protected: Hana could list it first (it is then never registrable while listed).
+- **Shared-only scopes trust every shared client Hana adds.** Adding a shared client is delayed by `change_delay_ms`,
+  which lets owners of a scope **with its own client** call `disable_shared_login` before it takes effect. A
+  shared-only scope can't: disabling needs a client of its own, and the `AddClient` for one is timelocked by the same
+  delay and proposed only after the addition was announced, so it lands after the new shared client is in force.
+  Such a scope accepts every shared client (and the login page behind it) Hana adds.
+- **Removed shared clients are retired.** A client dropped from `set_shared_clients` (in force or still pending) gets a
+  permanent `removed_clients` record with scope id `#shared`, so no scope can ever claim it
+  (`Client was a shared client and is retired`): anyone able to load Hana's login page could otherwise mint tokens
+  for it with a nonce of their choosing. Hana may put it back on the shared list (timelocked like any addition).
 - **Client proofs prove less than they seem.** Any user who can sign in to a client app can usually obtain a token
   for that `aud` with a nonce of their choosing (e.g. from the browser console on the app's origin), so a client
   proof shows "can sign in to this app", not "controls this OAuth client". Uniqueness, the timelock and owner
@@ -432,25 +678,28 @@ one-element array, as in NEP-171).
   public registration.
 - **Removing a client.** `remove_client` is immediate, but the client id is quarantined for `change_delay_ms` so
   one owner can't remove it and claim it in a scope they control (via `register_scope`, or an `AddClient` in another
-  scope whose timelock the original owners can't cancel) before co-owners react. Co-owners can re-add it at once
-  (timelocked as usual). A malicious co-owner can still deny service on their own scope (remove clients, cancel every
-  re-add); the multi-owner model trusts each owner that far.
-- **Proofs are not bound to a deployment.** Owner-action, client-proof and register nonces commit to scope ids and
-  `action_nonce`, not to the contract account. Scope ids are sequential and `action_nonce` starts at 0, so two
-  deployments (e.g. `sandbox-dev` and a later env) can share a nonce, and a token used on one (public on-chain) can
-  be replayed on the other within its ~1 h lifetime. Until the layouts include the contract account, give each
-  deployment its own console audience (`consoleAudiences`) and don't reuse owner identities and client ids across
-  deployments you care about. Fixing this changes no derived keys.
+  scope whose timelock the original owners can't cancel), or have Hana list it as shared, before co-owners react.
+  Co-owners can re-add it at once (timelocked as usual); a re-add proposed during the quarantine keeps the client
+  reserved until it executes, so the quarantine can't run out before it does. A malicious co-owner can still deny
+  service on their own scope (remove clients, cancel every re-add, which also releases the reservation); the
+  multi-owner model trusts each owner that far.
+- **Proofs are bound to a deployment.** Since A.2 every nonce starts with borsh(contract account id), so a token
+  used on one deployment (public on-chain) can't be replayed on another, even though scope ids and `action_nonce`
+  values repeat across deployments.
 - **OIDC owners trust the console code.** An `Oidc` owner's token is obtained on Hana's console; console code that
   asks for a nonce of a different action could act as that owner. The timelock (adds, owner changes) plus events
   give other owners time to cancel; NEAR-account owners avoid this.
 - **Front-running.** Tokens and proofs are visible in the mempool. Replaying the same args has the same effect
-  (harmless). `create_session`'s `max_uses` is not in the nonce, so a front-runner could open the session with a
-  lower cap (griefing only: the user retries). A register proof commits to the owners but not to the client set,
-  so a front-runner could register a subset of the clients with the same owners.
+  (harmless). Since A.2 the session nonce commits to `scope_id` and `max_uses`, and a register proof to the owners,
+  the full client list and `allow_shared`, so a front-runner can't change any of them.
 - **Storage.** Scopes and pending changes are paid by the caller (sponsors exempt); counts per scope are capped.
   A sponsor (the relayer) gives free storage to whoever it relays for, so the API must not relay `register_scope`
-  without its own authentication and rate limit. Keep the contract account funded: it pays for sponsored
+  without its own authentication and rate limit. Since a shared-only scope needs no proof, scopes are no longer
+  bounded by OAuth clients; to keep sponsored proposals from multiplying contract-paid storage, a sponsor may queue
+  at most 2 changes on a scope without clients, and a non-sponsor registering such a scope prepays that storage
+  (3002 bytes). Residual: a scope that queued sponsored changes while it had a client keeps them after removing its
+  last client (allowed with `allow_shared`), and the client can join another scope after its quarantine; each cycle
+  costs a client proof and `change_delay_ms`, and the API's owner-action rate limit still bounds the total. Keep the contract account funded: it pays for sponsored
   registrations, sessions and the 1 yoctoNEAR per CKD request. `execute_change(AddClient)` is free to call; its
   client index record is charged to the proposer at `propose_change`. `remove_client` is free and leaves a
   quarantine record about the size of the index record it frees (deleted when the client is claimed again).

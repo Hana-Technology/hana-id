@@ -1,17 +1,21 @@
 // hana-signer interface as the scripts use it (method names and JSON shapes per docs/batch-a-spec.md).
 import type { NearRpc } from './near.ts';
 
-/** Methods the relayer's function-call keys may call on the signer (spec: deploy-contract). */
-export const RELAYER_METHODS = [
-  'create_session',
-  'derive_key',
-  'revoke_session',
-  'prune_sessions',
-  'register_scope',
+/**
+ * Methods the relayer's session-pool keys (the API's RELAYER_KEYS) may call on the signer (docs/batch-a2-shared-client.md).
+ * Logins only: abuse of the owner endpoint can never use up these keys.
+ */
+export const SESSION_RELAYER_METHODS = ['create_session', 'derive_key', 'revoke_session', 'prune_sessions'] as const;
+
+/** Methods the relayer's owner-pool keys (the API's OWNER_RELAYER_KEYS, /v1/owner-actions) may call on the signer. */
+export const OWNER_RELAYER_METHODS = [
   'propose_change',
   'cancel_change',
   'remove_client',
+  'disable_shared_login',
   'execute_change',
+  'register_scope',
+  'apply_pending_config',
 ] as const;
 
 /** Methods the keys-updater function-call key (on the signer account itself) may call. */
@@ -33,6 +37,49 @@ export interface ContractConfig {
   sponsors?: string[];
   change_delay_ms?: number;
   public_registration?: boolean;
+  /** Effective shared login clients, [provider, aud] (batch A.2). Absent on a contract that predates them. */
+  shared_clients?: [string, string][];
+  /** pending_shared_clients: [{provider, aud, effective_at_ms}] not yet in force (read through sharedClientsOf). */
+  [key: string]: unknown;
+}
+
+export interface PendingSharedClient {
+  client: [string, string];
+  unlockAtMs: number | null;
+}
+
+export interface SharedClientsView {
+  effective: [string, string][];
+  pending: PendingSharedClient[];
+}
+
+const isPair = (v: unknown): v is [string, string] => Array.isArray(v) && v.length === 2 && typeof v[0] === 'string' && typeof v[1] === 'string';
+
+function pendingEntries(raw: unknown, unlock: number | null = null): PendingSharedClient[] {
+  if (raw === null || raw === undefined) return [];
+  if (isPair(raw)) return [{ client: raw, unlockAtMs: unlock }];
+  if (Array.isArray(raw)) return raw.flatMap((e) => pendingEntries(e, unlock));
+  if (typeof raw === 'object') {
+    const o = raw as Record<string, unknown>;
+    const at = typeof o.effective_at_ms === 'number' ? o.effective_at_ms : typeof o.unlock_at_ms === 'number' ? o.unlock_at_ms : unlock;
+    if (isPair(o.client)) return [{ client: o.client, unlockAtMs: at }];
+    if (typeof o.provider === 'string' && typeof o.aud === 'string') return [{ client: [o.provider, o.aud], unlockAtMs: at }];
+    if (Array.isArray(o.clients)) return pendingEntries(o.clients, at);
+  }
+  throw new Error(`Unexpected pending shared clients in get_config: ${JSON.stringify(raw)}`);
+}
+
+/**
+ * Shared clients from get_config: the effective list and pending additions. hana-signer returns
+ * `pending_shared_clients: [{provider, aud, effective_at_ms}]`; pairs, {client, unlock_at_ms} objects and
+ * {clients, unlock_at_ms} are tolerated too. Returns null when the contract has no `shared_clients` (deployed before
+ * batch A.2).
+ */
+export function sharedClientsOf(config: ContractConfig): SharedClientsView | null {
+  if (!Array.isArray(config.shared_clients)) return null;
+  const effective = config.shared_clients.filter(isPair);
+  const pendingKey = Object.keys(config).find((k) => /pending.*shared|shared.*pending/u.test(k));
+  return { effective, pending: pendingKey ? pendingEntries(config[pendingKey]) : [] };
 }
 
 export interface IssuerView {

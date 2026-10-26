@@ -18,9 +18,17 @@ export function ownersFromArgs(near: string[], google: string[]): Owner[] {
   return owners;
 }
 
-export function clientsFromArgs(clients: string[]): [string, string][] {
-  if (!clients.length) throw new CliError('At least one --client is required');
+/**
+ * Clients from --client. A scope needs at least one client unless it allows shared login (`--allow-shared`), and a
+ * client ID can't be one of Hana's shared clients (the contract rejects it: use --allow-shared instead).
+ */
+export function clientsFromArgs(clients: string[], { allowShared = false, sharedClientIds = [] }: { allowShared?: boolean; sharedClientIds?: readonly string[] } = {}): [string, string][] {
+  if (!clients.length && !allowShared) throw new CliError('At least one --client is required (or --allow-shared for a scope that logs in only through Hana\'s shared client)');
   for (const c of clients) if (!c || c.length > 255 || /\s/u.test(c)) throw new CliError(`Invalid client id: ${c}`);
   if (new Set(clients).size !== clients.length) throw new CliError('Duplicate --client');
+  if (clients.length > 10) throw new CliError('A scope can have at most 10 clients');
+  for (const c of clients) {
+    if (sharedClientIds.includes(c)) throw new CliError(`${c} is Hana's shared Google client; don't register it as a client, pass --allow-shared instead`);
+  }
   return clients.map((aud) => [GOOGLE_PROVIDER, aud]);
 }

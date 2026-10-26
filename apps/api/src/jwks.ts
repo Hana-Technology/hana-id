@@ -1,9 +1,12 @@
-// Off-chain ID-token verification (RS256 against the issuer's published JWKS), used where the API must not relay
-// a forged token: owner actions, whose proof is only in the args. The contract verifies again against the keys it
-// holds on chain (synced hourly from the same JWKS by the cron).
+// Off-chain ID-token verification (RS256 with WebCrypto against the issuer's published JWKS, cached per its
+// Cache-Control max-age, refetched on an unknown kid at most once a minute; while refetches fail, the expired set
+// keeps serving the kids it holds for a bounded grace period). Used wherever the API must not relay a
+// forged token: logins (/v1/sessions) and owner actions. The contract verifies again against the keys it holds on
+// chain (synced hourly from the same JWKS by the cron).
 import { base64UrlDecode } from './bytes.ts';
 import { GOOGLE_JWKS_URL, type Jwk, usableJwks } from './issuer-keys.ts';
 import { providerForIssuer } from './jwt.ts';
+import { log } from './log.ts';
 
 /** provider → JWKS URL. */
 export const JWKS_URLS: Readonly<Record<string, string>> = { google: GOOGLE_JWKS_URL };
@@ -13,14 +16,24 @@ const MIN_TTL_MS = 5 * 60_000;
 const MAX_TTL_MS = 6 * 60 * 60_000;
 /** An unknown kid refetches the JWKS at most this often (Google pre-publishes keys, so this is rare). */
 const REFETCH_MIN_MS = 60_000;
+/** After a failed fetch, no new attempt for this long (fail closed, or serve the stale set, in between). */
+const RETRY_AFTER_FAILURE_MS = 10_000;
+/**
+ * How long past its max-age an entry still serves the kids it holds while refetches fail (Google publishes keys well
+ * before using them and keeps them for days after; the contract checks the same token against its on-chain keys).
+ */
+const STALE_GRACE_MS = MAX_TTL_MS;
 
 interface CachedJwks {
   keys: Map<string, Jwk>;
   until: number;
-  fetchedAt: number;
 }
 
 const cache = new Map<string, CachedJwks>();
+/** provider → time of the last fetch attempt, successful or not (throttles refetches even while they fail). */
+const lastAttempt = new Map<string, number>();
+/** provider → time of the last failed fetch. */
+const lastFailure = new Map<string, number>();
 
 /** The issuer's JWKS could not be fetched or had no usable key. */
 export class JwksUnavailableError extends Error {
@@ -39,27 +52,45 @@ function maxAgeMs(res: Response): number {
 async function fetchJwks(provider: string, now: number): Promise<CachedJwks> {
   const url = JWKS_URLS[provider];
   if (!url) throw new JwksUnavailableError(`No JWKS for provider ${provider}`);
+  lastAttempt.set(provider, now);
   let keys: Jwk[];
   let res: Response;
   try {
     res = await fetch(url, { headers: { accept: 'application/json' } });
     if (!res.ok) throw new Error(`JWKS HTTP ${res.status}`);
     keys = usableJwks(await res.json());
+    if (keys.length === 0) throw new Error('JWKS has no usable key');
   } catch (err) {
+    lastFailure.set(provider, now);
     throw new JwksUnavailableError(err instanceof Error ? err.message : String(err));
   }
-  if (keys.length === 0) throw new JwksUnavailableError('JWKS has no usable key');
-  const entry = { keys: new Map(keys.map((k) => [k.kid, k])), until: now + maxAgeMs(res), fetchedAt: now };
+  lastFailure.delete(provider);
+  const entry = { keys: new Map(keys.map((k) => [k.kid, k])), until: now + maxAgeMs(res) };
   cache.set(provider, entry);
   return entry;
 }
 
+const usableStale = (entry: CachedJwks | undefined, now: number): entry is CachedJwks => !!entry && now < entry.until + STALE_GRACE_MS;
+
 async function jwkFor(provider: string, kid: string, now: number): Promise<Jwk | null> {
   let entry = cache.get(provider);
-  if (!entry || entry.until <= now) entry = await fetchJwks(provider, now);
+  if (!entry || entry.until <= now) {
+    const failedAt = lastFailure.get(provider);
+    const mayFetch = failedAt === undefined || now - failedAt >= RETRY_AFTER_FAILURE_MS;
+    try {
+      if (!mayFetch) throw new JwksUnavailableError('JWKS fetch failed recently');
+      entry = await fetchJwks(provider, now);
+    } catch (err) {
+      // Stale-while-error: keep serving the kids we already hold for a bounded grace period.
+      if (!usableStale(entry, now)) throw err;
+      if (mayFetch) log({ event: 'jwks_stale', code: 'issuer_keys_unavailable' }, 'warn');
+    }
+  }
+  if (!entry) throw new JwksUnavailableError('JWKS unavailable');
   const hit = entry.keys.get(kid);
   if (hit) return hit;
-  if (now - entry.fetchedAt < REFETCH_MIN_MS) return null;
+  // Unknown kid: refetch at most once a minute, counting failed attempts (a forged kid can't make us hammer Google).
+  if (now - (lastAttempt.get(provider) ?? -Infinity) < REFETCH_MIN_MS) return null;
   return (await fetchJwks(provider, now)).keys.get(kid) ?? null;
 }
 
@@ -85,12 +116,17 @@ const decodeJson = (part: string): Record<string, unknown> | null => {
   }
 };
 
+export interface VerifyOptions {
+  /** Clock skew tolerated on `exp`: a token is accepted until `exp + skewMs` (default 0). */
+  skewMs?: number;
+}
+
 /**
  * Verifies an ID token the way the contract does (docs/contract-interface.md, "Token verification"): RS256 only,
  * known issuer, known kid, valid signature, not expired, single-string aud. Throws JwksUnavailableError only when
- * the JWKS cannot be fetched (callers answer 503: fail closed).
+ * the JWKS cannot be fetched (callers answer 503: fail closed). `aud` and `nonce` are the caller's to check.
  */
-export async function verifyIdToken(jwt: string, now: number = Date.now()): Promise<VerifyResult> {
+export async function verifyIdToken(jwt: string, now: number = Date.now(), opts: VerifyOptions = {}): Promise<VerifyResult> {
   const parts = jwt.split('.');
   if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) return fail('invalid_token', 'Malformed token');
   const header = decodeJson(parts[0]);
@@ -101,7 +137,7 @@ export async function verifyIdToken(jwt: string, now: number = Date.now()): Prom
   if (typeof iss !== 'string' || typeof aud !== 'string' || typeof sub !== 'string' || typeof exp !== 'number') return fail('invalid_token', 'Malformed token claims');
   const provider = providerForIssuer(iss);
   if (!provider || !JWKS_URLS[provider]) return fail('unsupported_issuer', 'Unsupported token issuer');
-  if (exp * 1000 <= now) return fail('token_expired', 'The token has expired');
+  if (exp * 1000 + (opts.skewMs ?? 0) <= now) return fail('token_expired', 'The token has expired');
 
   const jwk = await jwkFor(provider, header.kid, now);
   if (!jwk) return fail('invalid_token', 'Unknown token signing key');
@@ -119,4 +155,6 @@ export async function verifyIdToken(jwt: string, now: number = Date.now()): Prom
 /** Tests only. */
 export function clearJwksCache(): void {
   cache.clear();
+  lastAttempt.clear();
+  lastFailure.clear();
 }

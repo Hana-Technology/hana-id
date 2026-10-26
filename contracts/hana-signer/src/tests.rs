@@ -8,8 +8,11 @@ use near_sdk::serde_json::{self, Value};
 use near_sdk::test_utils::{get_created_receipts, get_logs, VMContextBuilder};
 use near_sdk::{testing_env, AccountId, NearToken};
 
-use crate::registry::{client_proof_nonce, owner_action_nonce, register_nonce};
-use crate::sessions::{ckd_request_bytes, session_message_bytes, session_nonce};
+use crate::registry::{
+    client_proof_nonce, client_proof_preimage, owner_action_nonce, owner_action_preimage, register_nonce, register_preimage, MAX_PENDING_CHANGE_BYTES,
+    MAX_SPONSORED_PENDING_WITHOUT_CLIENTS, SHARED_ONLY_RESERVE_BYTES,
+};
+use crate::sessions::{ckd_request_bytes, session_message_bytes, session_nonce, session_nonce_preimage, SessionCommitment};
 use crate::*;
 
 const NOW_MS: u64 = 1_800_000_000_000;
@@ -28,13 +31,23 @@ const C: &str = "app-c.apps.googleusercontent.com";
 const D: &str = "app-d.apps.googleusercontent.com";
 const E: &str = "app-e.apps.googleusercontent.com";
 const CONSOLE: &str = "console.apps.googleusercontent.com";
+/// Hana's shared login client.
+const SHARED: &str = "hana-shared.apps.googleusercontent.com";
 
 const ME: &str = "hana-signer.testnet";
+/// A second deployment, for cross-deployment replay tests.
+const OTHER_ME: &str = "hana-signer-other.testnet";
 const ADMIN: &str = "admin.testnet";
 const RELAYER: &str = "relayer.testnet";
 const ALICE: &str = "alice.testnet";
 const BOB: &str = "bob.testnet";
 const MALLORY: &str = "mallory.testnet";
+const CAROL: &str = "carol.testnet";
+
+std::thread_local! {
+    /// The contract account (`env::current_account_id()`) for this test's calls. Each test runs on its own thread.
+    static CURRENT_ACCOUNT: std::cell::Cell<&'static str> = const { std::cell::Cell::new(ME) };
+}
 
 // ---- helpers ----
 
@@ -44,7 +57,7 @@ fn acc(s: &str) -> AccountId {
 
 fn ctx_with(caller: &str, ms: u64, deposit: NearToken) {
     testing_env!(VMContextBuilder::new()
-        .current_account_id(acc(ME))
+        .current_account_id(acc(CURRENT_ACCOUNT.with(|a| a.get())))
         .predecessor_account_id(acc(caller))
         .signer_account_id(acc(caller))
         .block_timestamp(ms * 1_000_000)
@@ -112,13 +125,14 @@ fn setup() -> HanaSigner {
     c.set_issuer_key("google".into(), "test-kid".into(), f["n"].as_str().unwrap().into(), f["e"].as_str().unwrap().into());
     c.set_console_audiences(vec![google(CONSOLE)]);
     c.set_sponsors(vec![acc(RELAYER)]);
-    assert_eq!(c.admin_register_scope(vec![near_owner(ALICE), oidc_owner(OWNER_SUB)], vec![google(A), google(A2)], None), "s1");
-    assert_eq!(c.admin_register_scope(vec![near_owner(BOB)], vec![google(B)], None), "s2");
+    assert_eq!(c.admin_register_scope(vec![near_owner(ALICE), oidc_owner(OWNER_SUB)], vec![google(A), google(A2)], None, false), "s1");
+    assert_eq!(c.admin_register_scope(vec![near_owner(BOB)], vec![google(B)], None, false), "s2");
     c
 }
 
-fn open(c: &mut HanaSigner, token: &str, seed: u8, key_index: u32) -> Session {
-    c.create_session(tok(token), pk(seed), EXPIRES_MS, SALT.to_vec(), key_index, 3)
+/// Opens a session with `token` in `scope` (expiry EXPIRES_MS, salt SALT, max_uses 3: what the fixture nonces commit to).
+fn open(c: &mut HanaSigner, token: &str, scope: &str, seed: u8, key_index: u32) -> Session {
+    c.create_session(tok(token), scope.into(), pk(seed), EXPIRES_MS, SALT.to_vec(), key_index, 3)
 }
 
 fn session_sig(seed: u8, counter: u64, payload: &[u8]) -> Vec<u8> {
@@ -152,35 +166,103 @@ fn transfers() -> Vec<(String, u128)> {
 
 // ---- byte layouts: Rust and the independent JS implementation agree ----
 
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().fold(String::new(), |mut out, b| {
+        use std::fmt::Write;
+        let _ = write!(out, "{b:02x}");
+        out
+    })
+}
+
+fn borsh_cat(parts: &[Vec<u8>]) -> Vec<u8> {
+    parts.concat()
+}
+
+fn bs<T: near_sdk::borsh::BorshSerialize + ?Sized>(value: &T) -> Vec<u8> {
+    near_sdk::borsh::to_vec(value).unwrap()
+}
+
+/// Compares Rust's bytes (and nonce) with the worked example the JS wrote under `layouts.<name>`.
+fn check_layout(name: &str, rust_bytes: &[u8], rust_nonce: Option<String>) {
+    let f = fixture();
+    let ex = &f["layouts"][name];
+    assert!(ex.is_object(), "no layout example {name}");
+    let parts: Vec<String> = ex["parts"].as_array().unwrap().iter().map(|p| format!("  {}: {}", p[0].as_str().unwrap(), p[1].as_str().unwrap())).collect();
+    assert_eq!(hex(rust_bytes), ex["preimage_hex"].as_str().unwrap(), "{name}: Rust bytes differ from the JS implementation; JS parts:\n{}", parts.join("\n"));
+    match rust_nonce {
+        Some(nonce) => assert_eq!(nonce, ex["nonce"].as_str().unwrap(), "{name}: nonce"),
+        None => assert!(ex.get("nonce").is_none(), "{name}: unexpected nonce"),
+    }
+}
+
+fn commitment<'a>(signer: &'a str, scope_id: &'a str, key: &'a [u8], expires_at_ms: u64, key_index: u32) -> SessionCommitment<'a> {
+    SessionCommitment { signer, scope_id, session_public_key: key, expires_at_ms, key_index, max_uses: 3, salt: &SALT }
+}
+
 #[test]
-fn nonces_match_the_js_implementation() {
+fn layouts_match_the_js_implementation() {
     ctx(ADMIN, NOW_MS);
     let f = fixture();
+    assert_eq!(f["signer"], ME);
+    assert_eq!(f["other_signer"], OTHER_ME);
     assert_eq!(hex(&pk(7)), f["session_pk7_hex"].as_str().unwrap());
     assert_eq!(hex(&pk(8)), f["session_pk8_hex"].as_str().unwrap());
-    assert_eq!(session_nonce(&pk(7), EXPIRES_MS, 0, &SALT), fixture_nonce("session_pk7_k0"));
-    assert_eq!(session_nonce(&pk(8), EXPIRES_MS, 1, &SALT), fixture_nonce("session_pk8_k1"));
-    assert_eq!(register_nonce(&[oidc_owner(OWNER_SUB), near_owner("carol.testnet")]), fixture_nonce("register_reg_owners"));
-    assert_eq!(client_proof_nonce("s1", 1), fixture_nonce("client_s1_1"));
-    let mut remove_args = near_sdk::borsh::to_vec(&"s1".to_string()).unwrap();
-    remove_args.extend(near_sdk::borsh::to_vec(&"google".to_string()).unwrap());
-    remove_args.extend(near_sdk::borsh::to_vec(&A2.to_string()).unwrap());
-    assert_eq!(owner_action_nonce("s1", "remove_client", &remove_args, 0), fixture_nonce("owner_remove_a2_s1_0"));
-    assert_eq!(owner_action_nonce("s1", "cancel_change", &remove_args, 0), fixture_nonce("owner_cancel_method_remove_args_s1_0"));
-}
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+    let (pk7, pk8) = (pk(7), pk(8));
+    let session = commitment(ME, "s1", &pk7, EXPIRES_MS, 0);
+    check_layout("session_nonce", &session_nonce_preimage(&session), Some(session_nonce(&session)));
+    let reg_c = [google(C)];
+    check_layout("register_proof", &register_preimage(ME, &reg_owners(), &reg_c, false), Some(register_nonce(ME, &reg_owners(), &reg_c, false)));
+    check_layout("client_proof", &client_proof_preimage(ME, "s1", 0), Some(client_proof_nonce(ME, "s1", 0)));
+    let remove_args = borsh_cat(&[bs("s1"), bs("google"), bs(A2)]);
+    check_layout("owner_action_remove_client", &owner_action_preimage(ME, "s1", "remove_client", &remove_args, 0), Some(owner_action_nonce(ME, "s1", "remove_client", &remove_args, 0)));
+    let allow_args = borsh_cat(&[bs("s1"), bs(&Change::SetAllowShared { allow: true }), bs(&None::<String>)]);
+    check_layout("owner_action_allow_shared", &owner_action_preimage(ME, "s1", "propose_change", &allow_args, 0), Some(owner_action_nonce(ME, "s1", "propose_change", &allow_args, 0)));
+    let disable_args = bs("s1");
+    check_layout("owner_action_disable_shared", &owner_action_preimage(ME, "s1", "disable_shared_login", &disable_args, 1), Some(owner_action_nonce(ME, "s1", "disable_shared_login", &disable_args, 1)));
+    let ckd = &f["layouts"]["ckd_payload"];
+    let ckd_payload = ckd_request_bytes(ckd["pk1"].as_str().unwrap(), ckd["pk2"].as_str().unwrap());
+    check_layout("ckd_payload", &ckd_payload, None);
+    check_layout("session_message_ckd", &session_message_bytes(1, &ckd_payload), None);
+    check_layout("session_message_revoke", &session_message_bytes(2, b"revoke"), None);
+    // The view returns exactly these bytes.
+    let c = setup();
+    assert_eq!(c.session_message(1, ckd_payload.clone()), session_message_bytes(1, &ckd_payload));
+
+    // The nonces the fixture tokens carry.
+    let cases: Vec<(&str, String)> = vec![
+        ("session_s1_pk8_k1", session_nonce(&commitment(ME, "s1", &pk8, EXPIRES_MS, 1))),
+        ("session_s1_pk7_late_k0", session_nonce(&commitment(ME, "s1", &pk7, EXPIRES_LATE_MS, 0))),
+        ("session_s1_pk7_other_signer", session_nonce(&commitment(OTHER_ME, "s1", &pk7, EXPIRES_MS, 0))),
+        ("session_s3_pk7_k0", session_nonce(&commitment(ME, "s3", &pk7, EXPIRES_MS, 0))),
+        ("register_reg_cd", register_nonce(ME, &reg_owners(), &[google(C), google(D)], false)),
+        ("register_reg_c_shared", register_nonce(ME, &reg_owners(), &[google(C)], true)),
+        ("register_mallory_a2", register_nonce(ME, &[near_owner(MALLORY)], &[google(A2)], false)),
+        ("client_s2_0", client_proof_nonce(ME, "s2", 0)),
+        ("owner_cancel_s1_0_at_1", owner_action_nonce(ME, "s1", "cancel_change", &borsh_cat(&[bs("s1"), bs(&0u64)]), 1)),
+        ("owner_cancel_method_remove_args_s1_0", owner_action_nonce(ME, "s1", "cancel_change", &remove_args, 0)),
+        ("owner_disable_shared_s1_1", owner_action_nonce(ME, "s1", "disable_shared_login", &disable_args, 1)),
+        (
+            "owner_propose_e_s1_0",
+            owner_action_nonce(ME, "s1", "propose_change", &borsh_cat(&[bs("s1"), bs(&add(E)), bs(&Some(tok("cp_e_s1_0")))]), 0),
+        ),
+    ];
+    for (name, rust) in cases {
+        assert_eq!(rust, fixture_nonce(name), "{name}");
+    }
 }
 
 #[test]
-fn session_message_layout() {
-    ctx(ADMIN, NOW_MS);
-    let m = session_message_bytes(5, b"revoke");
-    assert_eq!(&m[..22], b"hana-embed-session-v1:");
-    assert_eq!(&m[22..30], &5u64.to_le_bytes());
-    assert_eq!(&m[30..], &near_sdk::env::sha256(b"revoke")[..]);
-    assert_eq!(ckd_request_bytes("x", "y"), b"hana-id-ckd-v1:x:y".to_vec());
+#[should_panic(expected = "Invalid session signature")]
+fn the_old_session_domain_is_rejected() {
+    let mut c = setup();
+    open(&mut c, "session_a", "s1", 7, 0);
+    let payload = ckd_request_bytes("bls12381g1:A", "bls12381g2:B");
+    let mut old = b"hana-embed-session-v1:".to_vec();
+    old.extend_from_slice(&1u64.to_le_bytes());
+    old.extend_from_slice(&near_sdk::env::sha256(&payload));
+    let sig = sk(7).sign(&old).to_bytes().to_vec();
+    let _ = c.derive_key(pk(7), 1, sig, "bls12381g1:A".into(), "bls12381g2:B".into());
 }
 
 // ---- token verification ----
@@ -188,7 +270,7 @@ fn session_message_layout() {
 #[test]
 fn token_opens_a_session_in_its_apps_scope() {
     let mut c = setup();
-    let s = open(&mut c, "session_a", 7, 0);
+    let s = open(&mut c, "session_a", "s1", 7, 0);
     assert_eq!(s, Session { path: format!("s1#google#{USER}#0"), scope_id: "s1".into(), expires_at_ms: EXPIRES_MS, max_uses: 3, used: 0 });
     assert_eq!(c.get_session(pk(7)), Some(s));
 }
@@ -196,28 +278,28 @@ fn token_opens_a_session_in_its_apps_scope() {
 #[test]
 fn second_iss_value_is_accepted() {
     let mut c = setup();
-    assert_eq!(open(&mut c, "session_alt_iss", 7, 0).path, format!("s1#google#{USER}#0"));
+    assert_eq!(open(&mut c, "session_alt_iss", "s1", 7, 0).path, format!("s1#google#{USER}#0"));
 }
 
 #[test]
 #[should_panic(expected = "Token expired")]
 fn rejects_expired_token() {
     let mut c = setup();
-    open(&mut c, "session_expired", 7, 0);
+    open(&mut c, "session_expired", "s1", 7, 0);
 }
 
 #[test]
 #[should_panic(expected = "Unknown token issuer")]
 fn rejects_unknown_issuer() {
     let mut c = setup();
-    open(&mut c, "session_unknown_iss", 7, 0);
+    open(&mut c, "session_unknown_iss", "s1", 7, 0);
 }
 
 #[test]
 #[should_panic(expected = "Unknown signing key")]
 fn rejects_unknown_kid() {
     let mut c = setup();
-    open(&mut c, "session_unknown_kid", 7, 0);
+    open(&mut c, "session_unknown_kid", "s1", 7, 0);
 }
 
 #[test]
@@ -225,14 +307,14 @@ fn rejects_unknown_kid() {
 fn rejects_removed_key() {
     let mut c = setup();
     assert!(c.remove_issuer_key("google".into(), "test-kid".into()));
-    open(&mut c, "session_a", 7, 0);
+    open(&mut c, "session_a", "s1", 7, 0);
 }
 
 #[test]
 #[should_panic(expected = "Invalid token signature")]
 fn rejects_token_signed_by_another_key() {
     let mut c = setup();
-    open(&mut c, "session_wrong_key", 7, 0);
+    open(&mut c, "session_wrong_key", "s1", 7, 0);
 }
 
 #[test]
@@ -241,43 +323,43 @@ fn rejects_forged_claims() {
     let mut c = setup();
     let jwt = tok("session_a");
     let parts: Vec<&str> = jwt.split('.').collect();
-    let claims = oidc::b64url(format!(r#"{{"iss":"https://accounts.google.com","aud":"{A}","sub":"victim","exp":1800010800,"nonce":"{}"}}"#, fixture_nonce("session_pk7_k0")).as_bytes());
-    c.create_session(format!("{}.{}.{}", parts[0], claims, parts[2]), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3);
+    let claims = oidc::b64url(format!(r#"{{"iss":"https://accounts.google.com","aud":"{A}","sub":"victim","exp":1800010800,"nonce":"{}"}}"#, fixture_nonce("session_s1_pk7_k0")).as_bytes());
+    c.create_session(format!("{}.{}.{}", parts[0], claims, parts[2]), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3);
 }
 
 #[test]
 #[should_panic(expected = "Unsupported JWT algorithm")]
 fn rejects_non_rs256() {
     let mut c = setup();
-    open(&mut c, "session_es256", 7, 0);
+    open(&mut c, "session_es256", "s1", 7, 0);
 }
 
 #[test]
 #[should_panic(expected = "JWT must have three parts")]
 fn rejects_malformed_token() {
     let mut c = setup();
-    c.create_session("abc.def".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3);
+    c.create_session("abc.def".into(), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3);
 }
 
 #[test]
 #[should_panic(expected = "Invalid sub")]
 fn rejects_sub_with_separator() {
     let mut c = setup();
-    open(&mut c, "session_hash_sub", 7, 0);
+    open(&mut c, "session_hash_sub", "s1", 7, 0);
 }
 
 #[test]
 #[should_panic(expected = "nonce doesn't commit to this session")]
 fn rejects_token_without_nonce() {
     let mut c = setup();
-    open(&mut c, "session_no_nonce", 7, 0);
+    open(&mut c, "session_no_nonce", "s1", 7, 0);
 }
 
 #[test]
 #[should_panic(expected = "nonce doesn't commit to this session")]
 fn rejects_token_for_another_session_key() {
     let mut c = setup();
-    open(&mut c, "session_a", 8, 0);
+    open(&mut c, "session_a", "s1", 8, 0);
 }
 
 // ---- isolation ----
@@ -286,21 +368,21 @@ fn rejects_token_for_another_session_key() {
 #[should_panic(expected = "Token is for an unregistered app")]
 fn rejects_unregistered_client() {
     let mut c = setup();
-    open(&mut c, "session_unregistered", 7, 0);
+    open(&mut c, "session_unregistered", "s1", 7, 0);
 }
 
 #[test]
 #[should_panic(expected = "Token is for an unregistered app")]
 fn console_tokens_cannot_open_sessions() {
     let mut c = setup();
-    open(&mut c, "session_console", 7, 0);
+    open(&mut c, "session_console", "s1", 7, 0);
 }
 
 #[test]
 fn two_apps_in_two_scopes_get_different_paths() {
     let mut c = setup();
-    let a = open(&mut c, "session_a", 7, 0);
-    let b = open(&mut c, "session_b", 8, 0);
+    let a = open(&mut c, "session_a", "s1", 7, 0);
+    let b = open(&mut c, "session_b", "s2", 8, 0);
     assert_eq!(a.path, format!("s1#google#{USER}#0"));
     assert_eq!(b.path, format!("s2#google#{USER}#0"));
     assert_ne!(a.path, b.path);
@@ -309,20 +391,20 @@ fn two_apps_in_two_scopes_get_different_paths() {
 #[test]
 fn two_clients_of_one_scope_share_the_path() {
     let mut c = setup();
-    assert_eq!(open(&mut c, "session_a", 7, 0).path, open(&mut c, "session_a2", 8, 0).path);
+    assert_eq!(open(&mut c, "session_a", "s1", 7, 0).path, open(&mut c, "session_a2", "s1", 8, 0).path);
 }
 
 #[test]
 fn key_index_is_in_path_and_nonce() {
     let mut c = setup();
-    assert_eq!(open(&mut c, "session_a_k1", 8, 1).path, format!("s1#google#{USER}#1"));
+    assert_eq!(open(&mut c, "session_a_k1", "s1", 8, 1).path, format!("s1#google#{USER}#1"));
 }
 
 #[test]
 #[should_panic(expected = "nonce doesn't commit to this session")]
 fn key_index_cannot_be_swapped() {
     let mut c = setup();
-    open(&mut c, "session_a_k1", 8, 0);
+    open(&mut c, "session_a_k1", "s1", 8, 0);
 }
 
 // ---- session lifecycle ----
@@ -331,18 +413,18 @@ fn key_index_cannot_be_swapped() {
 #[should_panic(expected = "Session key already in use")]
 fn session_token_cannot_be_replayed() {
     let mut c = setup();
-    open(&mut c, "session_a", 7, 0);
-    open(&mut c, "session_a", 7, 0);
+    open(&mut c, "session_a", "s1", 7, 0);
+    open(&mut c, "session_a", "s1", 7, 0);
 }
 
 #[test]
 #[should_panic(expected = "Session key already in use")]
 fn revoked_session_cannot_be_reopened_with_its_public_token() {
     let mut c = setup();
-    open(&mut c, "session_a", 7, 0);
+    open(&mut c, "session_a", "s1", 7, 0);
     c.revoke_session(pk(7), 1, session_sig(7, 1, b"revoke"));
     assert_eq!(c.get_session(pk(7)), None);
-    open(&mut c, "session_a", 7, 0);
+    open(&mut c, "session_a", "s1", 7, 0);
 }
 
 #[test]
@@ -359,7 +441,7 @@ fn session_argument_bounds() {
     ];
     for (key, expires, salt, max_uses, expected) in cases {
         let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            c.create_session(tok("session_a"), key.clone(), expires, salt.clone(), 0, max_uses);
+            c.create_session(tok("session_a"), "s1".into(), key.clone(), expires, salt.clone(), 0, max_uses);
         }))
         .expect_err(expected);
         let msg = panic_msg(err);
@@ -370,7 +452,7 @@ fn session_argument_bounds() {
 #[test]
 fn derive_key_calls_the_mpc_with_the_session_path() {
     let mut c = setup();
-    open(&mut c, "session_a", 7, 0);
+    open(&mut c, "session_a", "s1", 7, 0);
     derive(&mut c, 7, 1);
     assert_eq!(c.get_session(pk(7)).unwrap().used, 1);
     let receipts = get_created_receipts();
@@ -391,7 +473,7 @@ fn derive_key_calls_the_mpc_with_the_session_path() {
 #[should_panic(expected = "Invalid session signature")]
 fn derive_key_cannot_be_redirected_to_another_key() {
     let mut c = setup();
-    open(&mut c, "session_a", 7, 0);
+    open(&mut c, "session_a", "s1", 7, 0);
     let _ = c.derive_key(pk(7), 1, ckd_sig(7, 1, "bls12381g1:USER", "bls12381g2:USER"), "bls12381g1:EVIL".into(), "bls12381g2:EVIL".into());
 }
 
@@ -399,7 +481,7 @@ fn derive_key_cannot_be_redirected_to_another_key() {
 #[should_panic(expected = "Invalid session signature")]
 fn derive_key_rejects_the_old_domain_string() {
     let mut c = setup();
-    open(&mut c, "session_a", 7, 0);
+    open(&mut c, "session_a", "s1", 7, 0);
     let sig = session_sig(7, 1, b"hana-embed-ckd-v1:bls12381g1:A:bls12381g2:B");
     let _ = c.derive_key(pk(7), 1, sig, "bls12381g1:A".into(), "bls12381g2:B".into());
 }
@@ -408,7 +490,7 @@ fn derive_key_rejects_the_old_domain_string() {
 #[should_panic(expected = "Invalid session signature")]
 fn revoke_signature_cannot_be_used_for_ckd() {
     let mut c = setup();
-    open(&mut c, "session_a", 7, 0);
+    open(&mut c, "session_a", "s1", 7, 0);
     let _ = c.derive_key(pk(7), 1, session_sig(7, 1, b"revoke"), "bls12381g1:A".into(), "bls12381g2:B".into());
 }
 
@@ -416,7 +498,7 @@ fn revoke_signature_cannot_be_used_for_ckd() {
 #[should_panic(expected = "Wrong counter")]
 fn derive_key_cannot_be_replayed() {
     let mut c = setup();
-    open(&mut c, "session_a", 7, 0);
+    open(&mut c, "session_a", "s1", 7, 0);
     derive(&mut c, 7, 1);
     let _ = c.derive_key(pk(7), 1, ckd_sig(7, 1, "bls12381g1:A", "bls12381g2:B"), "bls12381g1:A".into(), "bls12381g2:B".into());
 }
@@ -425,7 +507,7 @@ fn derive_key_cannot_be_replayed() {
 #[should_panic(expected = "Session use limit reached")]
 fn max_uses_is_enforced() {
     let mut c = setup();
-    open(&mut c, "session_a", 7, 0);
+    open(&mut c, "session_a", "s1", 7, 0);
     for n in 1..=4 {
         derive(&mut c, 7, n);
     }
@@ -435,7 +517,7 @@ fn max_uses_is_enforced() {
 #[should_panic(expected = "Session expired")]
 fn expired_session_cannot_derive() {
     let mut c = setup();
-    open(&mut c, "session_a", 7, 0);
+    open(&mut c, "session_a", "s1", 7, 0);
     ctx(RELAYER, EXPIRES_MS);
     derive(&mut c, 7, 1);
 }
@@ -444,7 +526,7 @@ fn expired_session_cannot_derive() {
 #[should_panic(expected = "No such session")]
 fn revoked_session_cannot_derive() {
     let mut c = setup();
-    open(&mut c, "session_a", 7, 0);
+    open(&mut c, "session_a", "s1", 7, 0);
     c.revoke_session(pk(7), 1, session_sig(7, 1, b"revoke"));
     derive(&mut c, 7, 1);
 }
@@ -453,7 +535,7 @@ fn revoked_session_cannot_derive() {
 #[should_panic(expected = "Invalid session signature")]
 fn revoke_needs_the_session_key() {
     let mut c = setup();
-    open(&mut c, "session_a", 7, 0);
+    open(&mut c, "session_a", "s1", 7, 0);
     c.revoke_session(pk(7), 1, session_sig(8, 1, b"revoke"));
 }
 
@@ -462,12 +544,12 @@ fn session_key_can_be_reused_after_expiry() {
     let mut c = setup();
     propose_e(&mut c);
     ctx(RELAYER, NOW_MS);
-    open(&mut c, "session_a", 7, 0);
+    open(&mut c, "session_a", "s1", 7, 0);
     ctx(RELAYER, EXPIRES_MS);
     c.execute_change("s1".into(), 0);
     // The old session (same key) has expired, so a new token may reuse the key. Its queue entry is now stale:
     // the prune in create_session pops it but must not delete the new session.
-    let s = c.create_session(tok("session_e_late"), pk(7), EXPIRES_LATE_MS, SALT.to_vec(), 0, 5);
+    let s = c.create_session(tok("session_e_late"), "s1".into(), pk(7), EXPIRES_LATE_MS, SALT.to_vec(), 0, 3);
     assert_eq!(s.expires_at_ms, EXPIRES_LATE_MS);
     assert_eq!(c.queue_head, 1);
     assert_eq!(c.get_session(pk(7)), Some(s));
@@ -478,8 +560,8 @@ fn session_key_can_be_reused_after_expiry() {
 #[test]
 fn pruning_deletes_expired_sessions_in_fifo_order() {
     let mut c = setup();
-    open(&mut c, "session_a", 7, 0);
-    open(&mut c, "session_b", 8, 0);
+    open(&mut c, "session_a", "s1", 7, 0);
+    open(&mut c, "session_b", "s2", 8, 0);
     assert_eq!(c.prune_sessions(100), 0);
     ctx(RELAYER, EXPIRES_MS);
     assert_eq!(c.prune_sessions(1), 1);
@@ -494,12 +576,26 @@ fn pruning_deletes_expired_sessions_in_fifo_order() {
 #[test]
 fn pruning_removes_revoked_tombstones_after_expiry() {
     let mut c = setup();
-    open(&mut c, "session_a", 7, 0);
+    open(&mut c, "session_a", "s1", 7, 0);
     c.revoke_session(pk(7), 1, session_sig(7, 1, b"revoke"));
     assert!(c.sessions.get(&pk(7)).is_some());
     ctx(RELAYER, EXPIRES_MS);
     assert_eq!(c.prune_sessions(10), 1);
     assert!(c.sessions.get(&pk(7)).is_none());
+}
+
+#[test]
+fn session_key_in_use_covers_revoked_sessions_until_expiry() {
+    let mut c = setup();
+    assert!(!c.session_key_in_use(pk(7)));
+    open(&mut c, "session_a", "s1", 7, 0);
+    assert!(c.session_key_in_use(pk(7)));
+    c.revoke_session(pk(7), 1, session_sig(7, 1, b"revoke"));
+    // get_session hides it, but the key still can't be reused.
+    assert_eq!(c.get_session(pk(7)), None);
+    assert!(c.session_key_in_use(pk(7)));
+    ctx(RELAYER, EXPIRES_MS);
+    assert!(!c.session_key_in_use(pk(7)));
 }
 
 #[test]
@@ -510,7 +606,7 @@ fn create_session_prunes_up_to_three() {
         c.session_queue.insert(c.queue_tail, sessions::QueueEntry { expires_at_ms: NOW_MS - 1, key: pk(seed) });
         c.queue_tail += 1;
     }
-    open(&mut c, "session_a", 7, 0);
+    open(&mut c, "session_a", "s1", 7, 0);
     let remaining = (20..25u8).filter(|s| c.sessions.get(&pk(*s)).is_some()).count();
     assert_eq!(remaining, 2);
     assert_eq!(c.queue_head, 3);
@@ -597,7 +693,7 @@ fn updating_an_issuer_keeps_keys_and_reindexes_iss() {
     c.set_issuer("google".into(), vec!["https://accounts.google.com".into()]);
     assert_eq!(c.get_issuer("google".into()).unwrap().kids, vec!["test-kid".to_string()]);
     // The kept key still verifies tokens with the remaining iss value.
-    assert_eq!(open(&mut c, "session_a", 7, 0).path, format!("s1#google#{USER}#0"));
+    assert_eq!(open(&mut c, "session_a", "s1", 7, 0).path, format!("s1#google#{USER}#0"));
 }
 
 #[test]
@@ -606,7 +702,7 @@ fn dropped_iss_value_is_no_longer_trusted() {
     let mut c = setup();
     c.set_issuer("google".into(), vec!["https://accounts.google.com".into()]);
     // session_alt_iss (iss "accounts.google.com") commits to session key 7, so only the iss check can reject it.
-    open(&mut c, "session_alt_iss", 7, 0);
+    open(&mut c, "session_alt_iss", "s1", 7, 0);
 }
 
 #[test]
@@ -643,14 +739,14 @@ fn a_kid_only_verifies_tokens_of_its_own_issuer() {
     with_other_issuer(&mut c);
     // Control: the other issuer's own token verifies (as provider "other", which has no registered client).
     let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        open(&mut c, "session_other_issuer", 7, 0);
+        open(&mut c, "session_other_issuer", "s1", 7, 0);
     }))
     .unwrap_err();
     assert!(panic_msg(err).contains("Token is for an unregistered app"));
     // A google-iss token signed by the other issuer's key, under that key's kid.
     for token in ["session_google_iss_other_kid", "session_other_iss_google_kid"] {
         let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            open(&mut c, token, 7, 0);
+            open(&mut c, token, "s1", 7, 0);
         }))
         .expect_err(token);
         let msg = panic_msg(err);
@@ -666,7 +762,7 @@ fn config_view_and_owner_setters() {
     let cfg = c.get_config();
     assert_eq!(
         serde_json::to_value(&cfg).unwrap(),
-        serde_json::json!({"owner":ADMIN,"mpc":"v1.signer-prod.testnet","ckd_domain_id":2,"console_audiences":[["google",CONSOLE]],"sponsors":[RELAYER],"change_delay_ms":DELAY_MS,"pending_change_delay":null,"public_registration":false})
+        serde_json::json!({"owner":ADMIN,"mpc":"v1.signer-prod.testnet","ckd_domain_id":2,"console_audiences":[["google",CONSOLE]],"sponsors":[RELAYER],"shared_clients":[],"pending_shared_clients":[],"change_delay_ms":DELAY_MS,"pending_change_delay":null,"public_registration":false})
     );
     c.set_owner(acc("admin2.testnet"));
     assert_eq!(c.get_config().owner, acc("admin2.testnet"));
@@ -684,7 +780,7 @@ fn only_the_owner_changes_config() {
         Box::new(|c| c.enable_public_registration()),
         Box::new(|c| c.set_issuer("evil".into(), vec!["https://evil.example".into()])),
         Box::new(|c| {
-            c.admin_register_scope(vec![near_owner(MALLORY)], vec![google(C)], None);
+            c.admin_register_scope(vec![near_owner(MALLORY)], vec![google(C)], None, false);
         }),
     ];
     for call in calls {
@@ -729,16 +825,16 @@ fn shortening_the_timelock_waits_for_the_old_delay() {
 #[test]
 fn admin_registers_scopes_and_global() {
     let mut c = setup();
-    assert_eq!(c.admin_register_scope(vec![near_owner(ADMIN)], vec![google(C)], Some("global".into())), "global");
+    assert_eq!(c.admin_register_scope(vec![near_owner(ADMIN)], vec![google(C)], Some("global".into()), false), "global");
     assert_eq!(c.scope_for_client("google".into(), C.into()), Some("global".into()));
     assert_eq!(c.scope_for_client("google".into(), A2.into()), Some("s1".into()));
     assert_eq!(c.scope_for_client("google".into(), "nope".into()), None);
     let s1 = c.get_scope("s1".into()).unwrap();
     assert_eq!(
         serde_json::to_value(&s1).unwrap(),
-        serde_json::json!({"id":"s1","owners":[{"Near":{"account_id":ALICE}},{"Oidc":{"provider":"google","sub":OWNER_SUB}}],"clients":[["google",A],["google",A2]],"pending":[],"action_nonce":0,"created_at_ms":NOW_MS})
+        serde_json::json!({"id":"s1","owners":[{"Near":{"account_id":ALICE}},{"Oidc":{"provider":"google","sub":OWNER_SUB}}],"clients":[["google",A],["google",A2]],"allow_shared":false,"pending":[],"action_nonce":0,"created_at_ms":NOW_MS})
     );
-    assert_eq!(c.admin_register_scope(vec![near_owner(ADMIN)], vec![google(D)], None), "s3");
+    assert_eq!(c.admin_register_scope(vec![near_owner(ADMIN)], vec![google(D)], None, false), "s3");
 }
 
 #[test]
@@ -746,10 +842,10 @@ fn admin_registration_emits_an_event() {
     ctx(ADMIN, NOW_MS);
     let mut c = setup();
     ctx(ADMIN, NOW_MS);
-    c.admin_register_scope(vec![near_owner(ADMIN)], vec![google(C)], None);
+    c.admin_register_scope(vec![near_owner(ADMIN)], vec![google(C)], None, false);
     assert_eq!(
         events(),
-        vec![serde_json::json!({"standard":"hana-id","version":"1.0.0","event":"scope_registered","data":[{"scope_id":"s3","owners":[{"Near":{"account_id":ADMIN}}],"clients":[["google",C]],"by":ADMIN,"admin":true}]})]
+        vec![serde_json::json!({"standard":"hana-id","version":"1.0.0","event":"scope_registered","data":[{"scope_id":"s3","owners":[{"Near":{"account_id":ADMIN}}],"clients":[["google",C]],"allow_shared":false,"by":ADMIN,"admin":true}]})]
     );
 }
 
@@ -763,7 +859,8 @@ fn registry_validation() {
         (vec![near_owner(ADMIN), near_owner(ADMIN)], vec![google(C)], None, "Duplicate owner"),
         (vec![Owner::Oidc { provider: "google".into(), sub: "a#b".into() }], vec![google(C)], None, "Invalid sub"),
         (vec![Owner::Oidc { provider: "Goo#gle".into(), sub: "x".into() }], vec![google(C)], None, "Invalid provider"),
-        (vec![near_owner(ADMIN)], vec![], None, "1 to 10 clients"),
+        (vec![near_owner(ADMIN)], vec![], None, "A scope needs a client or shared login"),
+        (vec![near_owner(ADMIN)], (0..11).map(|i| google(&format!("x{i}"))).collect(), None, "A scope has at most 10 clients"),
         (vec![near_owner(ADMIN)], vec![google(C), google(C)], None, "Duplicate client"),
         (vec![near_owner(ADMIN)], vec![google(A)], None, "Client is already registered"),
         (vec![near_owner(ADMIN)], vec![("apple".into(), C.into())], None, "Unknown issuer"),
@@ -771,7 +868,7 @@ fn registry_validation() {
     ];
     for (owners, clients, id, expected) in cases {
         let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            c.admin_register_scope(owners.clone(), clients.clone(), id.clone());
+            c.admin_register_scope(owners.clone(), clients.clone(), id.clone(), false);
         }))
         .expect_err(expected);
         let msg = panic_msg(err);
@@ -783,8 +880,8 @@ fn registry_validation() {
 #[should_panic(expected = "Scope already exists")]
 fn global_can_only_be_registered_once() {
     let mut c = setup();
-    c.admin_register_scope(vec![near_owner(ADMIN)], vec![google(C)], Some("global".into()));
-    c.admin_register_scope(vec![near_owner(ADMIN)], vec![google(D)], Some("global".into()));
+    c.admin_register_scope(vec![near_owner(ADMIN)], vec![google(C)], Some("global".into()), false);
+    c.admin_register_scope(vec![near_owner(ADMIN)], vec![google(D)], Some("global".into()), false);
 }
 
 #[test]
@@ -797,7 +894,7 @@ fn admin_path_closes_with_public_registration() {
     assert_eq!(events()[0]["event"], "public_registration_enabled");
     c.enable_public_registration(); // idempotent, still on
     assert!(c.get_config().public_registration);
-    c.admin_register_scope(vec![near_owner(ADMIN)], vec![google(C)], None);
+    c.admin_register_scope(vec![near_owner(ADMIN)], vec![google(C)], None, false);
 }
 
 // ---- registry: public registration ----
@@ -817,14 +914,14 @@ fn public() -> HanaSigner {
 fn register_scope_is_closed_by_default() {
     let mut c = setup();
     ctx(RELAYER, NOW_MS);
-    c.register_scope(reg_owners(), vec![tok("reg_c")]);
+    c.register_scope(reg_owners(), vec![tok("reg_c")], false);
 }
 
 #[test]
 fn register_scope_with_proofs_by_a_sponsor() {
     let mut c = public();
     ctx_with(RELAYER, NOW_MS, NearToken::from_millinear(5));
-    assert_eq!(c.register_scope(reg_owners(), vec![tok("reg_c"), tok("reg_d")]), "s3");
+    assert_eq!(c.register_scope(reg_owners(), vec![tok("reg_cd_c"), tok("reg_cd_d")], false), "s3");
     let s3 = c.get_scope("s3".into()).unwrap();
     assert_eq!(s3.owners, reg_owners());
     assert_eq!(s3.clients, vec![google(C), google(D)]);
@@ -841,7 +938,7 @@ fn register_scope_charges_storage_and_refunds_the_excess() {
     c.scopes.flush();
     c.client_index.flush();
     ctx_with(MALLORY, NOW_MS, NearToken::from_near(1));
-    c.register_scope(reg_owners(), vec![tok("reg_c")]);
+    c.register_scope(reg_owners(), vec![tok("reg_c")], false);
     let refunds = transfers();
     assert_eq!(refunds.len(), 1);
     assert_eq!(refunds[0].0, MALLORY);
@@ -855,24 +952,24 @@ fn register_scope_charges_storage_and_refunds_the_excess() {
 fn register_scope_needs_a_deposit_from_non_sponsors() {
     let mut c = public();
     ctx_with(MALLORY, NOW_MS, NearToken::from_yoctonear(0));
-    c.register_scope(reg_owners(), vec![tok("reg_c")]);
+    c.register_scope(reg_owners(), vec![tok("reg_c")], false);
 }
 
 #[test]
-#[should_panic(expected = "Proof nonce doesn't commit to these owners")]
+#[should_panic(expected = "Proof nonce doesn't commit to this registration")]
 fn register_proof_is_bound_to_the_owners() {
     let mut c = public();
     ctx(RELAYER, NOW_MS);
     // Proof made for owners = [mallory], submitted with other owners — and the reverse.
-    c.register_scope(reg_owners(), vec![tok("reg_c_mallory")]);
+    c.register_scope(reg_owners(), vec![tok("reg_c_mallory")], false);
 }
 
 #[test]
-#[should_panic(expected = "Proof nonce doesn't commit to these owners")]
+#[should_panic(expected = "Proof nonce doesn't commit to this registration")]
 fn register_proof_cannot_be_reused_for_other_owners() {
     let mut c = public();
     ctx(RELAYER, NOW_MS);
-    c.register_scope(vec![near_owner(MALLORY)], vec![tok("reg_c")]);
+    c.register_scope(vec![near_owner(MALLORY)], vec![tok("reg_c")], false);
 }
 
 #[test]
@@ -880,7 +977,7 @@ fn register_proof_cannot_be_reused_for_other_owners() {
 fn register_scope_cannot_take_a_registered_client() {
     let mut c = public();
     ctx(RELAYER, NOW_MS);
-    c.register_scope(reg_owners(), vec![tok("reg_a")]);
+    c.register_scope(reg_owners(), vec![tok("reg_a")], false);
 }
 
 #[test]
@@ -888,8 +985,8 @@ fn register_scope_cannot_take_a_registered_client() {
 fn register_proof_cannot_be_replayed() {
     let mut c = public();
     ctx(RELAYER, NOW_MS);
-    c.register_scope(reg_owners(), vec![tok("reg_c")]);
-    c.register_scope(reg_owners(), vec![tok("reg_c")]);
+    c.register_scope(reg_owners(), vec![tok("reg_c")], false);
+    c.register_scope(reg_owners(), vec![tok("reg_c")], false);
 }
 
 #[test]
@@ -897,7 +994,7 @@ fn register_proof_cannot_be_replayed() {
 fn register_scope_rejects_duplicate_proofs() {
     let mut c = public();
     ctx(RELAYER, NOW_MS);
-    c.register_scope(reg_owners(), vec![tok("reg_c"), tok("reg_c")]);
+    c.register_scope(reg_owners(), vec![tok("reg_c"), tok("reg_c")], false);
 }
 
 #[test]
@@ -905,7 +1002,7 @@ fn register_scope_rejects_duplicate_proofs() {
 fn session_tokens_are_not_register_proofs() {
     let mut c = public();
     ctx(RELAYER, NOW_MS);
-    c.register_scope(reg_owners(), vec![tok("session_e_late")]);
+    c.register_scope(reg_owners(), vec![tok("session_e_late")], false);
 }
 
 // ---- registry: timelocked changes ----
@@ -938,7 +1035,7 @@ fn add_client_after_the_timelock() {
     assert_eq!(s1.clients.len(), 3);
 
     // E's users now land in s1, with the same keys as A's users.
-    let s = c.create_session(tok("session_e_late"), pk(7), EXPIRES_LATE_MS, SALT.to_vec(), 0, 3);
+    let s = c.create_session(tok("session_e_late"), "s1".into(), pk(7), EXPIRES_LATE_MS, SALT.to_vec(), 0, 3);
     assert_eq!(s.path, format!("s1#google#{USER}#0"));
 }
 
@@ -1043,7 +1140,7 @@ fn admin_registration_beats_a_pending_add() {
     let mut c = setup();
     propose_e(&mut c);
     ctx(ADMIN, NOW_MS);
-    c.admin_register_scope(vec![near_owner(ADMIN)], vec![google(E)], None);
+    c.admin_register_scope(vec![near_owner(ADMIN)], vec![google(E)], None, false);
     ctx(MALLORY, NOW_MS + DELAY_MS);
     c.execute_change("s1".into(), 0);
 }
@@ -1136,7 +1233,7 @@ fn fill_s1(c: &mut HanaSigner, count: usize) {
 }
 
 #[test]
-#[should_panic(expected = "A scope needs 1 to 10 clients")]
+#[should_panic(expected = "A scope has at most 10 clients")]
 fn a_full_scope_cannot_propose_another_client() {
     let mut c = setup();
     fill_s1(&mut c, 10);
@@ -1152,7 +1249,7 @@ fn queued_adds_cannot_overfill_a_scope() {
     ctx(MALLORY, NOW_MS + DELAY_MS);
     c.execute_change("s1".into(), 0);
     let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| c.execute_change("s1".into(), 1))).unwrap_err();
-    assert!(panic_msg(err).contains("A scope needs 1 to 10 clients"));
+    assert!(panic_msg(err).contains("A scope has at most 10 clients"));
     let s1 = c.get_scope("s1".into()).unwrap();
     assert_eq!(s1.clients.len(), 10);
     assert_eq!(c.scope_for_client("google".into(), C.into()), None);
@@ -1174,12 +1271,12 @@ fn add_client_proposer_pays_for_what_execute_adds() {
     ctx(MALLORY, NOW_MS + DELAY_MS);
     let before = near_sdk::env::storage_usage();
     c.execute_change("s1".into(), 0);
-    c.scopes.flush();
-    c.client_index.flush();
-    c.removed_clients.flush();
-    let executed = near_sdk::env::storage_usage() - before;
-    assert!(executed > 0, "execute_change(AddClient) adds storage");
-    assert!(charged_bytes >= u128::from(proposed + executed), "charged {charged_bytes} bytes, propose added {proposed}, execute added {executed}");
+    c.flush_registry();
+    // Execute adds the client_index record but frees the pending entry and its pending_adds record, so the net change
+    // can be negative; the proposer must cover whatever it adds.
+    let executed = i128::from(near_sdk::env::storage_usage()) - i128::from(before);
+    assert!(c.client_index.contains_key(&google(E)));
+    assert!(charged_bytes as i128 >= i128::from(proposed) + executed.max(0), "charged {charged_bytes} bytes, propose added {proposed}, execute added {executed}");
     println!("propose_change(AddClient) charge: {charged_bytes} bytes (propose {proposed} + execute {executed})");
 }
 
@@ -1213,7 +1310,7 @@ fn owners_remove_clients_immediately() {
     assert_eq!(c.scope_for_client("google".into(), A2.into()), None);
     assert_eq!(c.get_scope("s1".into()).unwrap().clients, vec![google(A)]);
     let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        open(&mut c, "session_a2", 8, 0);
+        open(&mut c, "session_a2", "s1", 8, 0);
     }))
     .unwrap_err();
     assert!(panic_msg(err).contains("unregistered app"));
@@ -1293,21 +1390,82 @@ fn a_removed_client_cannot_be_registered_until_free() {
     remove_a2_from_s1(&mut c);
     ctx(ADMIN, NOW_MS);
     let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        c.admin_register_scope(vec![near_owner(MALLORY)], vec![google(A2)], None);
+        c.admin_register_scope(vec![near_owner(MALLORY)], vec![google(A2)], None, false);
     }))
     .unwrap_err();
     assert!(panic_msg(err).contains("Client was recently removed from another scope"));
     c.enable_public_registration();
     ctx(RELAYER, NOW_MS + DELAY_MS - 1);
     let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        c.register_scope(vec![near_owner(MALLORY)], vec![tok("reg_a2_mallory")]);
+        c.register_scope(vec![near_owner(MALLORY)], vec![tok("reg_a2_mallory")], false);
     }))
     .unwrap_err();
     assert!(panic_msg(err).contains("Client was recently removed from another scope"));
     ctx(RELAYER, NOW_MS + DELAY_MS);
-    let id = c.register_scope(vec![near_owner(MALLORY)], vec![tok("reg_a2_mallory")]);
+    let id = c.register_scope(vec![near_owner(MALLORY)], vec![tok("reg_a2_mallory")], false);
     assert_eq!(c.scope_for_client("google".into(), A2.into()), Some(id));
     assert!(c.removed_clients.get(&google(A2)).is_none());
+}
+
+#[test]
+fn a_re_add_proposed_during_the_quarantine_keeps_the_client_reserved() {
+    // An s1 owner removes A2 and a co-owner re-adds it one block later, so the re-add unlocks just after free_at.
+    // Between free_at and the re-add's execution nobody else may take A2: not a fresh registration, not the admin,
+    // not another scope, and Hana can't list it as a shared client.
+    let mut c = setup();
+    remove_a2_from_s1(&mut c); // action_nonce 0 → 1, free at NOW + DELAY
+    ctx(ALICE, NOW_MS + 1);
+    let id = c.propose_change("s1".into(), OwnerAuth::Near, add(A2), Some(tok("cp_a2_s1_1"))); // unlocks NOW + DELAY + 1
+    assert_eq!(c.removed_clients.get(&google(A2)).unwrap().reserved_by, Some(id));
+    let free_at = NOW_MS + DELAY_MS;
+    ctx(ADMIN, free_at);
+    expect_panic("Client was recently removed from another scope", || {
+        c.admin_register_scope(vec![near_owner(MALLORY)], vec![google(A2)], None, false);
+    });
+    expect_panic("Client was recently removed from another scope", || c.set_shared_clients(vec![google(A2)]));
+    ctx(BOB, free_at);
+    expect_panic("Client was recently removed from another scope", || {
+        c.propose_change("s2".into(), OwnerAuth::Near, add(A2), Some(tok("cp_a2_s2_0")));
+    });
+    ctx(ADMIN, free_at);
+    c.enable_public_registration();
+    ctx(RELAYER, free_at);
+    expect_panic("Client was recently removed from another scope", || {
+        c.register_scope(vec![near_owner(MALLORY)], vec![tok("reg_a2_mallory")], false);
+    });
+    ctx(MALLORY, free_at + 1);
+    c.execute_change("s1".into(), id);
+    assert_eq!(c.scope_for_client("google".into(), A2.into()), Some("s1".into()));
+    assert!(c.removed_clients.get(&google(A2)).is_none());
+}
+
+#[test]
+fn cancelling_the_re_add_releases_the_reserved_client() {
+    let mut c = setup();
+    remove_a2_from_s1(&mut c);
+    let id = c.propose_change("s1".into(), OwnerAuth::Near, add(A2), Some(tok("cp_a2_s1_1")));
+    c.cancel_change("s1".into(), OwnerAuth::Near, id);
+    ctx(ADMIN, NOW_MS + DELAY_MS - 1);
+    expect_panic("Client was recently removed from another scope", || {
+        c.admin_register_scope(vec![near_owner(MALLORY)], vec![google(A2)], None, false);
+    });
+    ctx(ADMIN, NOW_MS + DELAY_MS);
+    let s3 = c.admin_register_scope(vec![near_owner(MALLORY)], vec![google(A2)], None, false);
+    assert_eq!(c.scope_for_client("google".into(), A2.into()), Some(s3));
+}
+
+#[test]
+fn a_re_add_proposed_after_the_quarantine_reserves_nothing() {
+    // Once free, the old scope competes like anyone else: the admin registers A2 first and the late re-add fails.
+    let mut c = setup();
+    remove_a2_from_s1(&mut c);
+    ctx(ALICE, NOW_MS + DELAY_MS);
+    let id = c.propose_change("s1".into(), OwnerAuth::Near, add(A2), Some(tok("cp_a2_s1_1")));
+    assert_eq!(c.removed_clients.get(&google(A2)).unwrap().reserved_by, None);
+    ctx(ADMIN, NOW_MS + DELAY_MS);
+    c.admin_register_scope(vec![near_owner(MALLORY)], vec![google(A2)], None, false);
+    ctx(MALLORY, NOW_MS + 2 * DELAY_MS);
+    expect_panic("Client is already registered", || c.execute_change("s1".into(), id));
 }
 
 #[test]
@@ -1359,6 +1517,31 @@ fn oidc_owner_token_goes_stale_after_another_action() {
     propose_e(&mut c); // alice acts first: action_nonce 0 → 1
     ctx(RELAYER, NOW_MS);
     c.remove_client("s1".into(), oidc("oa_remove_a2"), "google".into(), A2.into());
+}
+
+#[test]
+fn execute_change_moves_action_nonce_on() {
+    let mut c = setup();
+    let id = propose_e(&mut c);
+    assert_eq!(c.get_scope("s1".into()).unwrap().action_nonce, 1);
+    ctx(MALLORY, NOW_MS + DELAY_MS);
+    c.execute_change("s1".into(), id);
+    assert_eq!(c.get_scope("s1".into()).unwrap().action_nonce, 2);
+}
+
+#[test]
+fn a_token_that_failed_on_scope_state_goes_stale_once_a_change_executes() {
+    // An owner token for disable_shared_login (action_nonce 1) is submitted while SetAllowShared is still pending:
+    // the call fails, but the token is now public. Once anyone executes the change, replaying it must not work.
+    let mut c = shared_setup();
+    ctx(RELAYER, NOW_MS);
+    let id = c.propose_change("s1".into(), oidc("oa_allow_shared"), allow_shared(), None); // action_nonce 0 → 1
+    expect_panic("Shared login is not enabled", || c.disable_shared_login("s1".into(), oidc("oa_disable_shared")));
+    ctx(MALLORY, NOW_MS + DELAY_MS);
+    c.execute_change("s1".into(), id); // 1 → 2
+    ctx(MALLORY, NOW_MS + DELAY_MS);
+    expect_panic("Owner token nonce doesn't match this action", || c.disable_shared_login("s1".into(), oidc("oa_disable_shared")));
+    assert!(c.get_scope("s1".into()).unwrap().allow_shared);
 }
 
 #[test]
@@ -1449,4 +1632,563 @@ fn json_shapes() {
         serde_json::to_string(&req).unwrap(),
         r#"{"derivation_path":"s1#google#1#0","app_public_key":{"AppPublicKeyPV":{"pk1":"bls12381g1:x","pk2":"bls12381g2:y"}},"domain_id":2}"#
     );
+}
+
+// ---- shared clients (batch A.2) ----
+
+/// setup() plus Hana's shared client SHARED (set at NOW - DELAY, so in force at NOW) and two scopes owned by carol:
+/// s3 = shared-only (no clients, allow_shared); s4 = clients [C] and allow_shared.
+fn shared_setup() -> HanaSigner {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS - DELAY_MS);
+    c.set_shared_clients(vec![google(SHARED)]);
+    ctx(ADMIN, NOW_MS);
+    assert_eq!(c.admin_register_scope(vec![near_owner(CAROL)], vec![], None, true), "s3");
+    assert_eq!(c.admin_register_scope(vec![near_owner(CAROL)], vec![google(C)], None, true), "s4");
+    c
+}
+
+fn expect_panic(expected: &str, f: impl FnOnce()) {
+    let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).expect_err(expected);
+    let msg = panic_msg(err);
+    assert!(msg.contains(expected), "{msg:?} should contain {expected:?}");
+}
+
+#[test]
+fn shared_client_opens_a_session_in_an_allow_shared_scope() {
+    let mut c = shared_setup();
+    let s = open(&mut c, "shared_s3", "s3", 7, 0);
+    assert_eq!(s, Session { path: format!("s3#google#{USER}#0"), scope_id: "s3".into(), expires_at_ms: EXPIRES_MS, max_uses: 3, used: 0 });
+    derive(&mut c, 7, 1);
+    assert_eq!(c.get_session(pk(7)).unwrap().used, 1);
+}
+
+#[test]
+fn shared_client_into_two_scopes_gives_two_paths() {
+    let mut c = shared_setup();
+    let s3 = open(&mut c, "shared_s3", "s3", 7, 0);
+    let s4 = open(&mut c, "shared_s4", "s4", 8, 0);
+    assert_eq!(s4.path, format!("s4#google#{USER}#0"));
+    assert_ne!(s3.path, s4.path);
+}
+
+#[test]
+fn shared_and_own_client_give_the_same_path() {
+    let mut c = shared_setup();
+    let own = open(&mut c, "session_c_s4", "s4", 7, 0);
+    let shared = open(&mut c, "shared_s4", "s4", 8, 0);
+    assert_eq!(own.path, format!("s4#google#{USER}#0"));
+    assert_eq!(own.path, shared.path);
+}
+
+#[test]
+#[should_panic(expected = "Scope does not allow shared login")]
+fn shared_client_is_rejected_by_a_scope_without_allow_shared() {
+    let mut c = shared_setup();
+    c.create_session(tok("shared_s2"), "s2".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3);
+}
+
+#[test]
+#[should_panic(expected = "No such scope")]
+fn shared_client_needs_an_existing_scope() {
+    let mut c = shared_setup();
+    open(&mut c, "shared_s3", "s9", 7, 0);
+}
+
+#[test]
+#[should_panic(expected = "nonce doesn't commit to this session")]
+fn shared_token_cannot_be_moved_to_another_scope() {
+    let mut c = shared_setup();
+    // Committed to s3; s4 also allows shared login.
+    open(&mut c, "shared_s3", "s4", 7, 0);
+}
+
+#[test]
+fn own_client_token_with_another_scope_id_fails() {
+    let mut c = shared_setup();
+    expect_panic("Token is for another app", || {
+        open(&mut c, "session_a", "s2", 7, 0);
+    });
+    // Also when the other scope allows shared login: an own client only ever opens its own scope.
+    expect_panic("Token is for another app", || {
+        open(&mut c, "session_c_s4", "s3", 7, 0);
+    });
+}
+
+#[test]
+#[should_panic(expected = "nonce doesn't commit to this session")]
+fn max_uses_is_committed_by_the_nonce() {
+    let mut c = setup();
+    c.create_session(tok("session_a"), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 2);
+}
+
+#[test]
+fn shared_client_additions_are_delayed() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.set_shared_clients(vec![google(SHARED)]);
+    assert_eq!(
+        events()[0],
+        serde_json::json!({"standard":"hana-id","version":"1.0.0","event":"shared_clients_set","data":[{"shared_clients":[],"pending_shared_clients":[{"provider":"google","aud":SHARED,"effective_at_ms":NOW_MS + DELAY_MS}]}]})
+    );
+    let cfg = c.get_config();
+    assert!(cfg.shared_clients.is_empty());
+    assert_eq!(cfg.pending_shared_clients, vec![PendingSharedClient { provider: "google".into(), aud: SHARED.into(), effective_at_ms: NOW_MS + DELAY_MS }]);
+    assert_eq!(c.admin_register_scope(vec![near_owner(CAROL)], vec![], None, true), "s3");
+    // Not in force yet: the token is for no app.
+    expect_panic("Token is for an unregistered app", || {
+        open(&mut c, "shared_s3", "s3", 7, 0);
+    });
+    // Setting the same list again doesn't restart the delay.
+    ctx(ADMIN, NOW_MS + DELAY_MS / 2);
+    c.set_shared_clients(vec![google(SHARED)]);
+    assert_eq!(c.get_config().pending_shared_clients[0].effective_at_ms, NOW_MS + DELAY_MS);
+    // In force once the delay has passed: views see it before anyone applies it ("lazy").
+    ctx(MALLORY, NOW_MS + DELAY_MS);
+    let cfg = c.get_config();
+    assert_eq!(cfg.shared_clients, vec![google(SHARED)]);
+    assert!(cfg.pending_shared_clients.is_empty());
+    assert!(c.shared_clients.is_empty());
+    c.apply_pending_config(); // anyone
+    assert_eq!(c.shared_clients, vec![google(SHARED)]);
+    assert!(c.pending_shared_clients.is_empty());
+    assert_eq!(c.get_config().shared_clients, vec![google(SHARED)]);
+}
+
+#[test]
+fn shared_clients_in_force_open_sessions_without_being_applied() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS - DELAY_MS);
+    c.set_shared_clients(vec![google(SHARED)]);
+    ctx(ADMIN, NOW_MS);
+    c.admin_register_scope(vec![near_owner(CAROL)], vec![], None, true);
+    assert_eq!(c.pending_shared_clients.len(), 1, "still stored as pending");
+    assert_eq!(open(&mut c, "shared_s3", "s3", 7, 0).path, format!("s3#google#{USER}#0"));
+}
+
+#[test]
+fn removing_a_shared_client_is_immediate() {
+    let mut c = shared_setup();
+    c.set_shared_clients(vec![]);
+    let cfg = c.get_config();
+    assert!(cfg.shared_clients.is_empty() && cfg.pending_shared_clients.is_empty());
+    expect_panic("Token is for an unregistered app", || {
+        open(&mut c, "shared_s3", "s3", 7, 0);
+    });
+}
+
+#[test]
+fn apply_pending_config_also_applies_a_matured_delay_decrease() {
+    let mut c = setup();
+    c.set_change_delay_ms(0);
+    ctx(MALLORY, NOW_MS + DELAY_MS);
+    c.apply_pending_config();
+    assert_eq!((c.change_delay_ms, c.pending_change_delay.clone()), (0, None));
+}
+
+#[test]
+fn set_shared_clients_validation() {
+    let mut c = setup();
+    let many: Vec<_> = (0..6).map(|i| google(&format!("shared-{i}"))).collect();
+    let cases: Vec<(Vec<(String, String)>, &str)> = vec![
+        (many, "Too many shared clients"),
+        (vec![google(SHARED), google(SHARED)], "Duplicate shared client"),
+        (vec![("apple".into(), SHARED.into())], "Unknown issuer"),
+        (vec![("Goo#gle".into(), SHARED.into())], "Invalid provider"),
+        (vec![google("")], "Invalid aud"),
+        (vec![google(A)], "Client is already registered"),
+    ];
+    for (clients, expected) in cases {
+        expect_panic(expected, || c.set_shared_clients(clients.clone()));
+    }
+    ctx(MALLORY, NOW_MS);
+    expect_panic("Only the owner can do this", || c.set_shared_clients(vec![google(SHARED)]));
+    assert!(c.get_config().pending_shared_clients.is_empty());
+}
+
+#[test]
+fn a_quarantined_client_cannot_become_shared_until_free() {
+    let mut c = setup();
+    remove_a2_from_s1(&mut c);
+    ctx(ADMIN, NOW_MS + DELAY_MS - 1);
+    expect_panic("Client was recently removed from another scope", || c.set_shared_clients(vec![google(A2)]));
+    ctx(ADMIN, NOW_MS + DELAY_MS);
+    c.set_shared_clients(vec![google(A2)]);
+}
+
+#[test]
+fn a_shared_or_pending_shared_client_cannot_join_a_scope() {
+    // Pending shared.
+    let mut c = setup();
+    c.set_shared_clients(vec![google(SHARED)]);
+    expect_panic("Client is a shared client", || {
+        c.admin_register_scope(vec![near_owner(CAROL)], vec![google(SHARED)], None, false);
+    });
+    ctx(ALICE, NOW_MS);
+    expect_panic("Client is a shared client", || {
+        c.propose_change("s1".into(), OwnerAuth::Near, add(SHARED), Some(tok("cp_shared_s1_0")));
+    });
+    // In force, and through public registration.
+    let mut c = shared_setup();
+    c.enable_public_registration();
+    ctx(RELAYER, NOW_MS);
+    expect_panic("Client is a shared client", || {
+        c.register_scope(reg_owners(), vec![tok("reg_shared_client")], false);
+    });
+}
+
+#[test]
+fn a_client_pending_in_a_scope_cannot_become_shared() {
+    // A partner's pending add can't be blocked (and the client turned shared) by listing it as a shared client.
+    let mut c = setup();
+    ctx(ALICE, NOW_MS);
+    let id = c.propose_change("s1".into(), OwnerAuth::Near, add(SHARED), Some(tok("cp_shared_s1_0")));
+    ctx(ADMIN, NOW_MS + 1);
+    expect_panic("Client is pending in a scope", || c.set_shared_clients(vec![google(SHARED)]));
+    assert!(c.get_config().pending_shared_clients.is_empty());
+    ctx(MALLORY, NOW_MS + DELAY_MS);
+    c.execute_change("s1".into(), id);
+    assert_eq!(c.scope_for_client("google".into(), SHARED.into()), Some("s1".into()));
+    assert!(c.pending_adds.get(&google(SHARED)).is_none(), "executed adds are no longer counted");
+}
+
+#[test]
+fn a_client_pending_in_two_scopes_stays_blocked_until_both_adds_are_gone() {
+    let mut c = setup();
+    let s1_id = propose_e(&mut c);
+    ctx(BOB, NOW_MS);
+    let s2_id = c.propose_change("s2".into(), OwnerAuth::Near, add(E), Some(tok("cp_e_s2_0")));
+    assert_eq!(c.pending_adds.get(&google(E)).copied(), Some(2));
+    ctx(ALICE, NOW_MS);
+    c.cancel_change("s1".into(), OwnerAuth::Near, s1_id);
+    ctx(ADMIN, NOW_MS);
+    expect_panic("Client is pending in a scope", || c.set_shared_clients(vec![google(E)]));
+    ctx(BOB, NOW_MS);
+    c.cancel_change("s2".into(), OwnerAuth::Near, s2_id);
+    assert!(c.pending_adds.get(&google(E)).is_none());
+    ctx(ADMIN, NOW_MS);
+    c.set_shared_clients(vec![google(E)]);
+    assert_eq!(c.get_config().pending_shared_clients.len(), 1);
+}
+
+/// A delay decrease lets a later addition (B) mature before an earlier one (A). Whether or not anyone applies the
+/// pending config in between, the in-force order is the order they matured in: [B, A].
+fn shared_client_order(apply_between: bool) {
+    let mut c = setup();
+    c.set_change_delay_ms(DELAY_MS / 6); // a decrease: in force from NOW + DELAY
+    ctx(ADMIN, NOW_MS + DELAY_MS - 1);
+    c.set_shared_clients(vec![google("shared-a")]); // effective NOW + 2 DELAY - 1
+    ctx(ADMIN, NOW_MS + DELAY_MS);
+    c.set_shared_clients(vec![google("shared-a"), google("shared-b")]); // B effective NOW + DELAY + DELAY/6
+    if apply_between {
+        ctx(MALLORY, NOW_MS + DELAY_MS + DELAY_MS / 6);
+        c.apply_pending_config();
+        assert_eq!(c.shared_clients, vec![google("shared-b")]);
+    }
+    ctx(MALLORY, NOW_MS + 3 * DELAY_MS);
+    let view = c.get_config().shared_clients;
+    assert_eq!(view, vec![google("shared-b"), google("shared-a")]);
+    c.apply_pending_config();
+    assert_eq!(c.shared_clients, view, "applying doesn't change the view");
+}
+
+#[test]
+fn shared_client_order_without_applying() {
+    shared_client_order(false);
+}
+
+#[test]
+fn shared_client_order_when_applied_in_between() {
+    shared_client_order(true);
+}
+
+#[test]
+fn shared_scopes_in_views_and_events() {
+    let c = shared_setup();
+    assert_eq!(
+        serde_json::to_value(c.get_scope("s3".into()).unwrap()).unwrap(),
+        serde_json::json!({"id":"s3","owners":[{"Near":{"account_id":CAROL}}],"clients":[],"allow_shared":true,"pending":[],"action_nonce":0,"created_at_ms":NOW_MS})
+    );
+    assert_eq!(events()[0]["data"][0]["scope_id"], "s3");
+    assert_eq!(events()[0]["data"][0]["allow_shared"], true);
+    let cfg = serde_json::to_value(c.get_config()).unwrap();
+    assert_eq!(cfg["shared_clients"], serde_json::json!([["google", SHARED]]));
+    assert_eq!(cfg["pending_shared_clients"], serde_json::json!([]));
+}
+
+// ---- allow_shared: enable (timelocked), disable (immediate), last-client rules ----
+
+fn allow_shared() -> Change {
+    Change::SetAllowShared { allow: true }
+}
+
+#[test]
+fn enabling_shared_login_is_timelocked() {
+    let mut c = shared_setup();
+    ctx(ALICE, NOW_MS);
+    let id = c.propose_change("s1".into(), OwnerAuth::Near, allow_shared(), None);
+    assert_eq!(events()[0]["data"][0]["change"], serde_json::json!({"SetAllowShared":{"allow":true}}));
+    expect_panic("Scope does not allow shared login", || {
+        c.create_session(tok("shared_s1_late"), "s1".into(), pk(8), EXPIRES_LATE_MS, SALT.to_vec(), 0, 3);
+    });
+    expect_panic("Change is still timelocked", || c.execute_change("s1".into(), id));
+    ctx(MALLORY, NOW_MS + DELAY_MS);
+    c.execute_change("s1".into(), id);
+    assert!(c.get_scope("s1".into()).unwrap().allow_shared);
+    // The shared client now lands on the same key as s1's own clients.
+    let s = c.create_session(tok("shared_s1_late"), "s1".into(), pk(8), EXPIRES_LATE_MS, SALT.to_vec(), 0, 3);
+    assert_eq!(s.path, format!("s1#google#{USER}#0"));
+}
+
+#[test]
+fn disabling_shared_login_is_immediate() {
+    let mut c = shared_setup();
+    ctx(ALICE, NOW_MS);
+    let id = c.propose_change("s1".into(), OwnerAuth::Near, allow_shared(), None);
+    ctx(ALICE, NOW_MS + DELAY_MS);
+    c.execute_change("s1".into(), id);
+    c.disable_shared_login("s1".into(), OwnerAuth::Near);
+    assert_eq!(
+        events()[1],
+        serde_json::json!({"standard":"hana-id","version":"1.0.0","event":"shared_login_disabled","data":[{"scope_id":"s1","by":{"Near":{"account_id":ALICE}}}]})
+    );
+    let s1 = c.get_scope("s1".into()).unwrap();
+    assert!(!s1.allow_shared);
+    assert_eq!(s1.action_nonce, 3, "propose, execute and disable each move it on");
+    expect_panic("Scope does not allow shared login", || {
+        c.create_session(tok("shared_s1_late"), "s1".into(), pk(8), EXPIRES_LATE_MS, SALT.to_vec(), 0, 3);
+    });
+    expect_panic("Shared login is not enabled", || c.disable_shared_login("s1".into(), OwnerAuth::Near));
+}
+
+#[test]
+fn set_allow_shared_validation() {
+    let mut c = shared_setup();
+    ctx(ALICE, NOW_MS);
+    expect_panic("SetAllowShared can only enable shared login", || {
+        c.propose_change("s1".into(), OwnerAuth::Near, Change::SetAllowShared { allow: false }, None);
+    });
+    expect_panic("client_proof is only for AddClient", || {
+        c.propose_change("s1".into(), OwnerAuth::Near, allow_shared(), Some(tok("cp_e_s1_0")));
+    });
+    c.propose_change("s1".into(), OwnerAuth::Near, allow_shared(), None);
+    expect_panic("Change is already pending", || {
+        c.propose_change("s1".into(), OwnerAuth::Near, allow_shared(), None);
+    });
+    ctx(CAROL, NOW_MS);
+    expect_panic("Shared login is already enabled", || {
+        c.propose_change("s4".into(), OwnerAuth::Near, allow_shared(), None);
+    });
+    ctx(MALLORY, NOW_MS);
+    expect_panic("Caller is not a NEAR owner of this scope", || c.disable_shared_login("s4".into(), OwnerAuth::Near));
+}
+
+#[test]
+fn shared_login_can_be_enabled_and_disabled_by_an_oidc_owner() {
+    let mut c = shared_setup();
+    ctx(RELAYER, NOW_MS);
+    let id = c.propose_change("s1".into(), oidc("oa_allow_shared"), allow_shared(), None);
+    ctx(RELAYER, NOW_MS + DELAY_MS);
+    c.execute_change("s1".into(), id); // action_nonce 1 → 2
+    c.disable_shared_login("s1".into(), oidc("oa_disable_shared_2"));
+    assert_eq!(events()[1]["data"][0]["by"], serde_json::json!({"Oidc":{"provider":"google","sub":OWNER_SUB}}));
+    assert!(!c.get_scope("s1".into()).unwrap().allow_shared);
+}
+
+#[test]
+fn last_client_rules() {
+    let mut c = shared_setup();
+    // s2 has no shared login: its last client stays.
+    ctx(BOB, NOW_MS);
+    expect_panic("Cannot remove the last client", || c.remove_client("s2".into(), OwnerAuth::Near, "google".into(), B.into()));
+    // s4 allows shared login: its last client may go, and the scope becomes shared-only.
+    ctx(CAROL, NOW_MS);
+    c.remove_client("s4".into(), OwnerAuth::Near, "google".into(), C.into());
+    assert!(c.get_scope("s4".into()).unwrap().clients.is_empty());
+    assert_eq!(c.scope_for_client("google".into(), C.into()), None);
+    // A shared-only scope can't turn shared login off.
+    expect_panic("Cannot disable shared login: the scope has no clients", || c.disable_shared_login("s4".into(), OwnerAuth::Near));
+    expect_panic("Cannot disable shared login: the scope has no clients", || c.disable_shared_login("s3".into(), OwnerAuth::Near));
+    // Shared logins still work there.
+    assert_eq!(open(&mut c, "shared_s4", "s4", 8, 0).path, format!("s4#google#{USER}#0"));
+}
+
+#[test]
+fn sponsored_proposals_on_a_scope_without_clients_are_capped() {
+    // s3 is shared-only (carol). Make carol a sponsor so her proposals are contract-paid, like relayed ones.
+    let mut c = shared_setup();
+    c.set_sponsors(vec![acc(RELAYER), acc(CAROL)]);
+    ctx_with(CAROL, NOW_MS, NearToken::from_yoctonear(0));
+    let set_owners = || Change::SetOwners { owners: vec![near_owner(CAROL)] };
+    for _ in 0..MAX_SPONSORED_PENDING_WITHOUT_CLIENTS {
+        c.propose_change("s3".into(), OwnerAuth::Near, set_owners(), None);
+    }
+    expect_panic("Too many sponsored pending changes for a scope without clients", || {
+        c.propose_change("s3".into(), OwnerAuth::Near, set_owners(), None);
+    });
+    // s4 has a client of its own: the usual cap applies.
+    for _ in 0..MAX_SPONSORED_PENDING_WITHOUT_CLIENTS + 1 {
+        c.propose_change("s4".into(), OwnerAuth::Near, set_owners(), None);
+    }
+    // A non-sponsor pays for its own proposals, so it isn't capped below MAX_PENDING.
+    ctx(ADMIN, NOW_MS);
+    c.set_sponsors(vec![acc(RELAYER)]);
+    ctx(CAROL, NOW_MS);
+    c.propose_change("s3".into(), OwnerAuth::Near, set_owners(), None);
+    assert_eq!(c.get_scope("s3".into()).unwrap().pending.len(), MAX_SPONSORED_PENDING_WITHOUT_CLIENTS + 1);
+}
+
+#[test]
+fn the_largest_pending_change_fits_in_max_pending_change_bytes() {
+    let mut c = shared_setup();
+    c.flush_registry();
+    let owners: Vec<Owner> = (0..5u8).map(|i| Owner::Oidc { provider: "p".repeat(31) + &i.to_string(), sub: format!("{i}").repeat(255) }).collect();
+    ctx(CAROL, NOW_MS);
+    let before = near_sdk::env::storage_usage();
+    c.propose_change("s3".into(), OwnerAuth::Near, Change::SetOwners { owners }, None);
+    c.flush_registry();
+    let added = near_sdk::env::storage_usage() - before;
+    assert!(added <= MAX_PENDING_CHANGE_BYTES, "a maximal SetOwners added {added} bytes");
+    assert!(added + 16 >= MAX_PENDING_CHANGE_BYTES, "the bound is tight: {added} bytes");
+}
+
+#[test]
+fn a_shared_only_registration_prepays_what_sponsors_may_add() {
+    // A non-sponsor registering a shared-only scope pays for MAX_SPONSORED_PENDING_WITHOUT_CLIENTS maximal changes.
+    let mut c = public();
+    c.flush_registry();
+    ctx_with(MALLORY, NOW_MS, NearToken::from_near(1));
+    let before = near_sdk::env::storage_usage();
+    c.register_scope(vec![near_owner(MALLORY)], vec![], true);
+    c.flush_registry();
+    let scope_bytes = near_sdk::env::storage_usage() - before;
+    let charged = NearToken::from_near(1).as_yoctonear() - transfers()[0].1;
+    let byte_cost = near_sdk::env::storage_byte_cost().as_yoctonear();
+    assert_eq!(charged, u128::from(scope_bytes + SHARED_ONLY_RESERVE_BYTES) * byte_cost);
+    println!("shared-only register_scope charge: {} bytes", scope_bytes + SHARED_ONLY_RESERVE_BYTES);
+}
+
+#[test]
+fn a_registration_with_a_client_does_not_prepay() {
+    // The client is the scarce resource there.
+    let mut c = public();
+    c.flush_registry();
+    ctx_with(MALLORY, NOW_MS, NearToken::from_near(1));
+    let before = near_sdk::env::storage_usage();
+    c.register_scope(reg_owners(), vec![tok("reg_c")], false);
+    c.flush_registry();
+    let charged = NearToken::from_near(1).as_yoctonear() - transfers()[0].1;
+    assert_eq!(charged, u128::from(near_sdk::env::storage_usage() - before) * near_sdk::env::storage_byte_cost().as_yoctonear());
+}
+
+#[test]
+fn register_scope_with_shared_login() {
+    let mut c = public();
+    ctx_with(RELAYER, NOW_MS, NearToken::from_yoctonear(0));
+    // Shared-only: no proofs needed.
+    assert_eq!(c.register_scope(vec![near_owner(CAROL)], vec![], true), "s3");
+    let s3 = c.get_scope("s3".into()).unwrap();
+    assert!(s3.allow_shared && s3.clients.is_empty());
+    expect_panic("A scope needs a client or shared login", || {
+        c.register_scope(vec![near_owner(CAROL)], vec![], false);
+    });
+    // The proof commits to allow_shared.
+    expect_panic("Proof nonce doesn't commit to this registration", || {
+        c.register_scope(reg_owners(), vec![tok("reg_c")], true);
+    });
+    expect_panic("Proof nonce doesn't commit to this registration", || {
+        c.register_scope(reg_owners(), vec![tok("reg_c_shared")], false);
+    });
+    assert_eq!(c.register_scope(reg_owners(), vec![tok("reg_c_shared")], true), "s4");
+    assert!(c.get_scope("s4".into()).unwrap().allow_shared);
+}
+
+#[test]
+#[should_panic(expected = "Proof nonce doesn't commit to this registration")]
+fn register_proof_commits_to_the_full_client_list() {
+    let mut c = public();
+    ctx(RELAYER, NOW_MS);
+    // A front-runner registering a subset of the clients with the same owners.
+    c.register_scope(reg_owners(), vec![tok("reg_cd_c")], false);
+}
+
+#[test]
+fn admin_registers_a_shared_only_scope() {
+    let mut c = setup();
+    assert_eq!(c.admin_register_scope(vec![near_owner(CAROL)], vec![], None, true), "s3");
+    expect_panic("A scope needs a client or shared login", || {
+        c.admin_register_scope(vec![near_owner(CAROL)], vec![], None, false);
+    });
+}
+
+// ---- cross-deployment replay ----
+
+/// setup() on another contract account (another deployment with the same scopes and keys).
+fn setup_other_deployment() -> HanaSigner {
+    CURRENT_ACCOUNT.with(|a| a.set(OTHER_ME));
+    setup()
+}
+
+#[test]
+fn session_tokens_are_bound_to_the_deployment() {
+    let mut other = setup_other_deployment();
+    // A token made for this deployment's account works here...
+    assert_eq!(open(&mut other, "session_a_other_signer", "s1", 7, 0).path, format!("s1#google#{USER}#0"));
+    // ...and one made for hana-signer.testnet (same scope, key, everything else) doesn't.
+    expect_panic("nonce doesn't commit to this session", || {
+        open(&mut other, "session_a", "s1", 8, 0);
+    });
+    CURRENT_ACCOUNT.with(|a| a.set(ME));
+    let mut c = setup();
+    expect_panic("nonce doesn't commit to this session", || {
+        open(&mut c, "session_a_other_signer", "s1", 7, 0);
+    });
+}
+
+#[test]
+fn registry_proofs_are_bound_to_the_deployment() {
+    let mut c = setup_other_deployment();
+    ctx(RELAYER, NOW_MS);
+    expect_panic("Owner token nonce doesn't match this action", || {
+        c.remove_client("s1".into(), oidc("oa_remove_a2"), "google".into(), A2.into());
+    });
+    ctx(ALICE, NOW_MS);
+    expect_panic("Client proof nonce doesn't match", || {
+        c.propose_change("s1".into(), OwnerAuth::Near, add(E), Some(tok("cp_e_s1_0")));
+    });
+    ctx(ADMIN, NOW_MS);
+    c.enable_public_registration();
+    ctx(RELAYER, NOW_MS);
+    expect_panic("Proof nonce doesn't commit to this registration", || {
+        c.register_scope(reg_owners(), vec![tok("reg_c")], false);
+    });
+}
+
+#[test]
+fn a_dropped_shared_client_is_retired_for_scopes_but_may_return_to_the_shared_list() {
+    let mut c = setup();
+    c.set_shared_clients(vec![google(SHARED)]);
+    ctx(ADMIN, NOW_MS + DELAY_MS);
+    assert_eq!(c.get_config().shared_clients, vec![google(SHARED)]);
+    c.set_shared_clients(vec![]);
+    assert!(c.get_config().shared_clients.is_empty());
+    // Long after any quarantine would have ended, no scope may claim it.
+    ctx(ADMIN, NOW_MS + 100 * DELAY_MS);
+    expect_panic("Client was a shared client and is retired", || {
+        c.admin_register_scope(vec![near_owner(CAROL)], vec![google(SHARED)], None, false);
+    });
+    // Hana may put it back on the shared list (timelocked like any addition).
+    c.set_shared_clients(vec![google(SHARED)]);
+    assert_eq!(c.get_config().pending_shared_clients.len(), 1);
+}
+
+#[test]
+fn a_dropped_pending_shared_client_is_retired_too() {
+    let mut c = setup();
+    c.set_shared_clients(vec![google(SHARED)]);
+    c.set_shared_clients(vec![]);
+    ctx(ADMIN, NOW_MS + 100 * DELAY_MS);
+    expect_panic("Client was a shared client and is retired", || {
+        c.admin_register_scope(vec![near_owner(CAROL)], vec![google(SHARED)], None, false);
+    });
 }

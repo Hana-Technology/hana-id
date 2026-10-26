@@ -1,8 +1,8 @@
 // admin.ts <env> <command> [options]
 //
 // Partner-app admin for one environment. App rows live in the env's D1 database (wrangler d1 execute, local by
-// default, --remote for the deployed database). scope:register calls admin_register_scope on the contract with
-// the owner's full-access key from ~/.near-credentials/testnet/<owner>.json.
+// default, --remote for the deployed database). scope:register calls admin_register_scope (with allow_shared from
+// --allow-shared) on the contract with the owner's full-access key from ~/.near-credentials/testnet/<owner>.json.
 import { loadEnv, type Manifest } from '@hana-id/env';
 import {
   addOriginsSql,
@@ -31,10 +31,12 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
   app:suspend        --app <app id | publishable key>
   app:resume         --app <app id | publishable key>
   app:list
-  scope:register --client <google client id> [--client …] (--owner-near <account> | --owner-google <sub>) […] [--yes]
+  scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […] [--yes]
 
   --remote   act on the deployed D1 database (default: local, apps/api/.wrangler/state)
-  --yes      scope:register only: send the transaction (without it, only print it)`;
+  --yes      scope:register only: send the transaction (without it, only print it)
+  --allow-shared  scope:register only: the app may log in through Hana's shared Google client; with it, --client is
+                  optional (an app with no Google client of its own)`;
 
 const COMMANDS = ['app:create', 'app:origins:add', 'app:origins:remove', 'app:suspend', 'app:resume', 'app:list', 'scope:register'] as const;
 type Command = (typeof COMMANDS)[number];
@@ -70,7 +72,7 @@ async function main(): Promise<void> {
   const args = parseCli(process.argv.slice(2), {
     strings: ['name', 'scope', 'plan', 'app'],
     multiple: ['origin', 'client', 'owner-near', 'owner-google'],
-    booleans: ['remote', 'yes', 'help'],
+    booleans: ['remote', 'yes', 'allow-shared', 'help'],
   });
   if (args.flag('help')) return void console.log(USAGE);
   const [envName, command, ...rest] = args.positionals;

@@ -203,23 +203,12 @@ export function hasFullAccess(keys: AccessKeyListEntry[], publicKey: string): bo
   return keys.some((k) => k.public_key === publicKey && k.access_key.permission === 'FullAccess');
 }
 
-/** Public keys of function-call keys limited to `receiverId`. */
-export function functionCallKeysFor(keys: AccessKeyListEntry[], receiverId: string): string[] {
-  return keys.flatMap((k) => (typeof k.access_key.permission === 'object' && k.access_key.permission.FunctionCall.receiver_id === receiverId ? [k.public_key] : []));
-}
-
-/**
- * Keys that are NOT function-call keys limited to `receiverId`, as public key → what they are ("a full-access key",
- * "a function-call key for x.testnet"). Adding any of these public keys again fails with AddKeyAlreadyExists.
- */
-export function otherAccessKeys(keys: AccessKeyListEntry[], receiverId: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const k of keys) {
-    const p = k.access_key.permission;
-    if (p === 'FullAccess') out[k.public_key] = 'a full-access key';
-    else if (p.FunctionCall.receiver_id !== receiverId) out[k.public_key] = `a function-call key for ${p.FunctionCall.receiver_id}`;
-  }
-  return out;
+/** What an access key may do, for messages: "a full-access key", "a function-call key for x (methods a, b)". */
+export function describePermission(permission: AccessKeyView['permission']): string {
+  if (permission === 'FullAccess') return 'a full-access key';
+  const fc = permission.FunctionCall;
+  const methods = fc.method_names.length ? `methods ${fc.method_names.join(', ')}` : 'ANY method';
+  return `a function-call key for ${fc.receiver_id} (${methods})`;
 }
 
 export function explorerTx(hash: string): string {

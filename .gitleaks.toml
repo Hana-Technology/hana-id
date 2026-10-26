@@ -1,0 +1,18 @@
+# gitleaks config: default rules + narrow allowlists. Used by the pre-commit hook and CI.
+title = "hana-id"
+
+[extend]
+useDefault = true
+
+# Contract test fixtures: Google-style ID tokens signed by a throwaway RSA key whose private half is discarded
+# (contracts/hana-signer/scripts/gen-fixtures.mjs). Only the `jwt` rule is waived here; any other secret in the
+# file still fails.
+[[allowlists]]
+description = "Test-only JWT fixtures"
+targetRules = ["jwt"]
+paths = ['''^contracts/hana-signer/src/test_fixture\.json$''']
+
+# Build output and dependencies (only seen by directory scans; both are gitignored).
+[[allowlists]]
+description = "Build output and dependencies"
+paths = ['''(^|/)target/''', '''(^|/)node_modules/''', '''(^|/)\.wrangler/''']

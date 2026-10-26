@@ -17,7 +17,9 @@ Plan doc: https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi
 - Anything that changes how a path or key is derived changes every user's address. Before the address freeze
   (final accounts deployed) that's allowed but must be called out; after it, never.
 - `legacy/` is read-only reference code from wend-widget-demo.
-- Git: work on `develop`; no remote yet. Commit only when asked.
+- Git: remote `Hana-Technology/hana-id` (private). Work on feature branches, PR into `develop`; `main` = releases.
+  A gitleaks pre-commit hook blocks secrets; never bypass it (`--no-verify`).
+- Target is a production MVP (mainnet, real funds): production standards everywhere, tests for every behaviour.
 
 ## Layout
 

@@ -2,8 +2,10 @@ import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { env } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { RELAYABLE_METHODS, type RelayerKey, type RelayResult, parseRelayerKeys } from '../src/relayer-key.ts';
-import { pickKeyIndex, relay, relayerKeyName } from '../src/relayer-pool.ts';
+import { DEFAULT_GAS_TGAS, MAX_CLIENT_PROOFS, MAX_TGAS, TGAS, gasEnvVar, gasFor, registerScopeTgas } from '../src/gas.ts';
+import { POOL_METHODS, type Pool } from '../src/relayer-config.ts';
+import { type RelayerKey, type RelayResult, parseRelayerKeys } from '../src/relayer-key.ts';
+import { pickKeyIndex, relay, relayerKeyCount, relayerKeyName } from '../src/relayer-pool.ts';
 import { clearViewCaches } from '../src/views.ts';
 import { appHeaders, call, chain, seedApp, seedPlan, sessionBody, uid } from './helpers.ts';
 import { NearMock } from './near-mock.ts';
@@ -11,7 +13,8 @@ import { NearMock } from './near-mock.ts';
 afterEach(() => vi.restoreAllMocks());
 
 const keys = parseRelayerKeys(env.RELAYER_KEYS);
-const publicKeyOf = (i: number): string => KeyPair.fromString(keys[i] as KeyPairString).getPublicKey().toString();
+const ownerKeys = parseRelayerKeys(env.OWNER_RELAYER_KEYS);
+const publicKeyOf = (i: number, pool: Pool = 'session'): string => KeyPair.fromString((pool === 'session' ? keys : ownerKeys)[i] as KeyPairString).getPublicKey().toString();
 
 /** A DO for a fresh name, so each test starts cold (nonce read from RPC). */
 function freshKeyStub(): DurableObjectStub<RelayerKey> {
@@ -35,7 +38,7 @@ describe('RelayerKey Durable Object', () => {
     near.install();
     const stub = freshKeyStub();
     const N = 25;
-    const results = (await Promise.all(Array.from({ length: N }, (_, i) => stub.relay(0, revokeCall(i), `r${i}`)))) as RelayResult[];
+    const results = (await Promise.all(Array.from({ length: N }, (_, i) => stub.relay('session', 0, revokeCall(i), `r${i}`)))) as RelayResult[];
     expect(results.every((r) => r.ok)).toBe(true);
     expect(near.sent).toHaveLength(N);
     expectConsecutive(near.sent.map((t) => t.nonce), 501n);
@@ -57,9 +60,9 @@ describe('RelayerKey Durable Object', () => {
       return undefined;
     };
     const stub = freshKeyStub();
-    const slow = stub.relay(0, revokeCall(0), 'slow');
+    const slow = stub.relay('session', 0, revokeCall(0), 'slow');
     // While the first broadcast is still pending, more requests go out.
-    const others = await Promise.all([1, 2, 3].map((i) => stub.relay(0, revokeCall(i), `o${i}`)));
+    const others = await Promise.all([1, 2, 3].map((i) => stub.relay('session', 0, revokeCall(i), `o${i}`)));
     expect(others.every((r) => (r as RelayResult).ok)).toBe(true);
     expect(dispatched).toBe(4);
     release();
@@ -71,15 +74,15 @@ describe('RelayerKey Durable Object', () => {
     near.defaultNonce = 10n;
     near.install();
     const stub = freshKeyStub();
-    expect(((await stub.relay(0, revokeCall(1))) as RelayResult).ok).toBe(true);
+    expect(((await stub.relay('session', 0, revokeCall(1))) as RelayResult).ok).toBe(true);
     expect(near.sent.at(-1)!.nonce).toBe(11n);
     // Someone else used the key: the chain is now at 200.
     near.akNonce.set(publicKeyOf(0), 200n);
-    const res = (await stub.relay(0, revokeCall(2))) as RelayResult;
+    const res = (await stub.relay('session', 0, revokeCall(2))) as RelayResult;
     expect(res.ok).toBe(true);
     expect(near.sent.at(-1)!.nonce).toBe(201n);
     // Later requests continue from the recovered nonce.
-    expect(((await stub.relay(0, revokeCall(3))) as RelayResult).ok).toBe(true);
+    expect(((await stub.relay('session', 0, revokeCall(3))) as RelayResult).ok).toBe(true);
     expect(near.sent.at(-1)!.nonce).toBe(202n);
   });
 
@@ -88,9 +91,9 @@ describe('RelayerKey Durable Object', () => {
     near.defaultNonce = 10n;
     near.install();
     const stub = freshKeyStub();
-    expect(((await stub.relay(0, revokeCall(1))) as RelayResult).ok).toBe(true);
+    expect(((await stub.relay('session', 0, revokeCall(1))) as RelayResult).ok).toBe(true);
     near.akNonce.set(publicKeyOf(0), 300n);
-    const results = (await Promise.all(Array.from({ length: 8 }, (_, i) => stub.relay(0, revokeCall(i + 10))))) as RelayResult[];
+    const results = (await Promise.all(Array.from({ length: 8 }, (_, i) => stub.relay('session', 0, revokeCall(i + 10))))) as RelayResult[];
     expect(results.every((r) => r.ok)).toBe(true);
     const nonces = near.sent.slice(1).map((t) => t.nonce);
     expect(new Set(nonces.map(String)).size).toBe(8);
@@ -101,7 +104,7 @@ describe('RelayerKey Durable Object', () => {
     const near = new NearMock();
     near.install();
     near.onSendTx = (tx) => ({ error: { name: 'HANDLER_ERROR', cause: { name: 'INVALID_TRANSACTION' }, data: { TxExecutionError: { InvalidTxError: { InvalidNonce: { ak_nonce: 1, tx_nonce: Number(tx.nonce) } } } } } });
-    const res = (await freshKeyStub().relay(0, revokeCall(1))) as RelayResult;
+    const res = (await freshKeyStub().relay('session', 0, revokeCall(1))) as RelayResult;
     expect(res).toMatchObject({ ok: false, status: 503, code: 'relayer_busy' });
   });
 
@@ -114,7 +117,7 @@ describe('RelayerKey Durable Object', () => {
       state.storage.kv.put('publicKey', publicKeyOf(0));
       state.storage.kv.put('nonce', '75');
     });
-    expect(((await stub.relay(0, revokeCall(1))) as RelayResult).ok).toBe(true);
+    expect(((await stub.relay('session', 0, revokeCall(1))) as RelayResult).ok).toBe(true);
     expect(near.sent.at(-1)!.nonce).toBe(76n);
     const stored = await runInDurableObject(stub, (_i, state) => state.storage.kv.get<string>('nonce'));
     expect(stored).toBe('76');
@@ -129,7 +132,7 @@ describe('RelayerKey Durable Object', () => {
       state.storage.kv.put('publicKey', 'ed25519:someoneelse');
       state.storage.kv.put('nonce', '9999');
     });
-    await stub.relay(0, revokeCall(1));
+    await stub.relay('session', 0, revokeCall(1));
     expect(near.sent.at(-1)!.nonce).toBe(41n);
   });
 
@@ -138,7 +141,7 @@ describe('RelayerKey Durable Object', () => {
     near.sendTxTimesOut = true;
     near.contract.derive_key = () => ({ big_y: 'y', big_c: 'c' });
     near.install();
-    const res = (await freshKeyStub().relay(0, { method: 'derive_key', args: {} })) as RelayResult;
+    const res = (await freshKeyStub().relay('session', 0, { method: 'derive_key', args: {} })) as RelayResult;
     expect(res).toMatchObject({ ok: true, result: { big_y: 'y', big_c: 'c' } });
     expect(near.rpcMethods).toContain('tx');
   });
@@ -147,7 +150,7 @@ describe('RelayerKey Durable Object', () => {
     const near = new NearMock();
     near.install();
     near.onSendTx = () => ({ error: { name: 'HANDLER_ERROR', cause: { name: 'INVALID_TRANSACTION' }, data: { TxExecutionError: { InvalidTxError: { NotEnoughBalance: {} } } } } });
-    const res = (await freshKeyStub().relay(0, revokeCall(1))) as RelayResult;
+    const res = (await freshKeyStub().relay('session', 0, revokeCall(1))) as RelayResult;
     expect(res).toMatchObject({ ok: false, status: 502, code: 'near_rejected' });
   });
 
@@ -158,7 +161,7 @@ describe('RelayerKey Durable Object', () => {
       near.contract.create_session = () => ({ path: 's1#google#1#0', scope_id: 's1', expires_at_ms: 1, max_uses: 1, used: 0 });
       near.sendTxTransportError = failure;
       near.install();
-      const res = (await freshKeyStub().relay(0, { method: 'create_session', args: {} })) as RelayResult;
+      const res = (await freshKeyStub().relay('session', 0, { method: 'create_session', args: {} })) as RelayResult;
       expect(res, String(failure)).toMatchObject({ ok: true, result: { scope_id: 's1' } });
       expect(near.rpcMethods).toContain('tx');
       vi.restoreAllMocks();
@@ -171,7 +174,7 @@ describe('RelayerKey Durable Object', () => {
     near.txPollFailures = 2;
     near.contract.derive_key = () => ({ big_y: 'y', big_c: 'c' });
     near.install();
-    const res = (await freshKeyStub().relay(0, { method: 'derive_key', args: {} })) as RelayResult;
+    const res = (await freshKeyStub().relay('session', 0, { method: 'derive_key', args: {} })) as RelayResult;
     expect(res).toMatchObject({ ok: true, result: { big_y: 'y', big_c: 'c' } });
     expect(near.rpcMethods.filter((m) => m === 'tx')).toHaveLength(3);
   });
@@ -188,28 +191,104 @@ describe('RelayerKey Durable Object', () => {
       near.akNonce.set(tx.publicKey, tx.nonce + 1n);
       return { error: { name: 'HANDLER_ERROR', cause: { name: 'TIMEOUT_ERROR' }, message: 'Timeout', data: 'TIMEOUT' } };
     };
-    const res = (await freshKeyStub().relay(0, revokeCall(1))) as RelayResult;
+    const res = (await freshKeyStub().relay('session', 0, revokeCall(1))) as RelayResult;
     expect(res.ok).toBe(true);
     // Executed exactly once, with a nonce above the one that superseded the dropped tx.
     expect(near.sent).toHaveLength(1);
     expect(near.sent[0]!.nonce).toBe(53n);
   });
 
-  it('only relays allowlisted methods', async () => {
+  it('each pool relays only its own allowlist', async () => {
     const near = new NearMock();
     near.install();
-    for (const method of ['set_issuer_key', 'admin_register_scope', 'set_owner', 'register_scope', 'prune_sessions', 'sign']) {
-      const res = (await freshKeyStub().relay(0, { method, args: {} })) as RelayResult;
-      expect(res).toMatchObject({ ok: false, code: 'method_not_allowed' });
+    expect(POOL_METHODS).toEqual({
+      session: ['create_session', 'derive_key', 'revoke_session', 'prune_sessions'],
+      owner: ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change', 'register_scope', 'apply_pending_config'],
+    });
+    const never = ['set_issuer_key', 'remove_issuer_key', 'admin_register_scope', 'set_owner', 'set_shared_clients', 'set_sponsors', 'enable_public_registration', 'sign', '__proto__'];
+    for (const method of [...never, ...POOL_METHODS.owner]) {
+      expect((await freshKeyStub().relay('session', 0, { method, args: {} })) as RelayResult, `session ${method}`).toMatchObject({ ok: false, code: 'method_not_allowed' });
     }
+    for (const method of [...never, ...POOL_METHODS.session]) {
+      expect((await freshKeyStub().relay('owner', 0, { method, args: {} })) as RelayResult, `owner ${method}`).toMatchObject({ ok: false, code: 'method_not_allowed' });
+    }
+    expect((await freshKeyStub().relay('admin' as Pool, 0, revokeCall(1))) as RelayResult).toMatchObject({ ok: false, code: 'method_not_allowed' });
     expect(near.sent).toHaveLength(0);
-    expect([...RELAYABLE_METHODS].sort()).toEqual(['cancel_change', 'create_session', 'derive_key', 'execute_change', 'propose_change', 'remove_client', 'revoke_session']);
   });
 
-  it('fails cleanly for a key index outside RELAYER_KEYS', async () => {
+  it('signs with the pool’s own key, and an object never serves a second pool', async () => {
+    const near = new NearMock();
+    near.install();
+    const stub = freshKeyStub();
+    expect(((await stub.relay('owner', 1, { method: 'execute_change', args: { scope_id: 's1', change_id: 0 } })) as RelayResult).ok).toBe(true);
+    expect(near.sent[0]!.publicKey).toBe(publicKeyOf(1, 'owner'));
+    expect(near.sent[0]!.publicKey).not.toBe(publicKeyOf(1));
+    // Same object, other pool or other key index: refused.
+    expect((await stub.relay('session', 1, revokeCall(1))) as RelayResult).toMatchObject({ ok: false, status: 503 });
+    expect((await stub.relay('owner', 0, { method: 'execute_change', args: {} })) as RelayResult).toMatchObject({ ok: false, status: 503 });
+    expect(near.sent).toHaveLength(1);
+  });
+
+  it('attaches per-method gas (env override included), never the caller’s', async () => {
+    const near = new NearMock();
+    near.install();
+    const stub = freshKeyStub();
+    await stub.relay('session', 0, { ...revokeCall(1), gas: 300n * TGAS });
+    await stub.relay('session', 0, { method: 'derive_key', args: {} });
+    await stub.relay('session', 0, { method: 'create_session', args: {} });
+    await stub.relay('session', 0, { method: 'prune_sessions', args: { limit: 100 } });
+    const owner = freshKeyStub();
+    await owner.relay('owner', 0, { method: 'disable_shared_login', args: {} });
+    expect(near.sent.map((t) => [t.method, t.gas / TGAS])).toEqual([
+      ['revoke_session', 20n],
+      ['derive_key', 60n],
+      ['create_session', 50n],
+      // GAS_PRUNE_SESSIONS_TGAS=70 in vitest.config.ts.
+      ['prune_sessions', 70n],
+      ['disable_shared_login', 50n],
+    ]);
+  });
+
+  it('fails cleanly for a key index outside its pool', async () => {
     new NearMock().install();
-    const res = (await freshKeyStub().relay(99, revokeCall(1))) as RelayResult;
+    const res = (await freshKeyStub().relay('session', 99, revokeCall(1))) as RelayResult;
     expect(res).toMatchObject({ ok: false, status: 503 });
+    expect((await freshKeyStub().relay('owner', 2, { method: 'execute_change', args: {} })) as RelayResult).toMatchObject({ ok: false, status: 503 });
+  });
+});
+
+describe('gas', () => {
+  it('defaults (to measure on testnet) and overrides', () => {
+    expect(DEFAULT_GAS_TGAS).toMatchObject({ create_session: 50, derive_key: 60, revoke_session: 20, prune_sessions: 50 });
+    for (const m of POOL_METHODS.owner) expect(DEFAULT_GAS_TGAS[m], m).toBe(m === 'register_scope' ? registerScopeTgas(MAX_CLIENT_PROOFS) : 50);
+    expect(gasEnvVar('derive_key')).toBe('GAS_DERIVE_KEY_TGAS');
+    expect(gasFor('derive_key', {})).toBe(60n * TGAS);
+    expect(gasFor('derive_key', { GAS_DERIVE_KEY_TGAS: '80' })).toBe(80n * TGAS);
+    expect(gasFor('derive_key', { GAS_CREATE_SESSION_TGAS: '80' })).toBe(60n * TGAS);
+    // Invalid overrides fall back to the default.
+    for (const bad of ['0', '301', '12.5', 'lots', '-5']) expect(gasFor('revoke_session', { GAS_REVOKE_SESSION_TGAS: bad }), bad).toBe(20n * TGAS);
+  });
+
+  it('register_scope scales with its client proofs (one RS256 verification each, up to 10)', () => {
+    const proofs = (n: number): Record<string, unknown> => ({ owners: [], client_proofs: Array(n).fill('jwt'), allow_shared: false });
+    expect(gasFor('register_scope', {}, proofs(0))).toBe(30n * TGAS);
+    expect(gasFor('register_scope', {}, proofs(4))).toBe(130n * TGAS);
+    expect(gasFor('register_scope', {}, proofs(MAX_CLIENT_PROOFS))).toBe(280n * TGAS);
+    expect(registerScopeTgas(MAX_CLIENT_PROOFS)).toBe(DEFAULT_GAS_TGAS.register_scope);
+    // Never above the per-transaction cap, and the worst case without args.
+    expect(gasFor('register_scope', {}, proofs(50))).toBe(BigInt(MAX_TGAS) * TGAS);
+    expect(gasFor('register_scope', {})).toBe(280n * TGAS);
+    // An env override is the whole budget.
+    expect(gasFor('register_scope', { GAS_REGISTER_SCOPE_TGAS: '200' }, proofs(10))).toBe(200n * TGAS);
+  });
+
+  it('the relayer attaches register_scope gas for the call’s proof count', async () => {
+    const near = new NearMock();
+    near.install();
+    const proofs = Array(10).fill('jwt');
+    const res = await relay(env, 'owner', { method: 'register_scope', args: { owners: [], client_proofs: proofs, allow_shared: false } }, 'r');
+    expect(res.ok).toBe(true);
+    expect(near.sent[0]!.gas).toBe(280n * TGAS);
   });
 });
 
@@ -218,16 +297,37 @@ describe('relayer pool', () => {
     const near = new NearMock();
     near.install();
     for (const RELAYER_KEYS of ['[]', '', 'not json', '[1]']) {
-      expect(await relay({ ...env, RELAYER_KEYS }, revokeCall(1), 'r')).toMatchObject({ ok: false, status: 503, code: 'relayer_unconfigured' });
+      expect(await relay({ ...env, RELAYER_KEYS }, 'session', revokeCall(1), 'r')).toMatchObject({ ok: false, status: 503, code: 'relayer_unconfigured' });
+    }
+    // The owner pool is configured separately: without it owner actions fail, logins don't.
+    for (const OWNER_RELAYER_KEYS of [undefined, '[]', 'not json']) {
+      expect(await relay({ ...env, OWNER_RELAYER_KEYS }, 'owner', { method: 'execute_change', args: {} }, 'r')).toMatchObject({ ok: false, status: 503, code: 'relayer_unconfigured' });
     }
     expect(near.rpcMethods).toHaveLength(0);
+  });
+
+  it('routes each method to its pool and refuses the other pool’s methods', async () => {
+    const near = new NearMock();
+    near.install();
+    expect(await relay(env, 'session', { method: 'execute_change', args: {} }, 'r')).toMatchObject({ ok: false, code: 'method_not_allowed' });
+    expect(await relay(env, 'owner', revokeCall(1), 'r')).toMatchObject({ ok: false, code: 'method_not_allowed' });
+    expect(near.sent).toHaveLength(0);
+    const owner = await relay(env, 'owner', { method: 'execute_change', args: { scope_id: 's1', change_id: 0 } }, 'r');
+    const session = await relay(env, 'session', revokeCall(7), 'r');
+    expect(owner.ok && session.ok).toBe(true);
+    expect(near.sent.map((t) => [t.method, t.publicKey])).toEqual([
+      ['execute_change', publicKeyOf(owner.keyIndex!, 'owner')],
+      ['revoke_session', publicKeyOf(session.keyIndex!)],
+    ]);
+    expect(relayerKeyCount(env, 'owner')).toBe(ownerKeys.length);
   });
 
   it('round-robins across keys', () => {
     const picks = Array.from({ length: 6 }, () => pickKeyIndex(3));
     expect(new Set(picks).size).toBe(3);
     for (let i = 1; i < picks.length; i++) expect(picks[i]).toBe((picks[i - 1]! + 1) % 3);
-    expect(relayerKeyName(1)).toBe('relayer-key-1');
+    expect(relayerKeyName('session', 1)).toBe('relayer-key-1');
+    expect(relayerKeyName('owner', 1)).toBe('owner-relayer-key-1');
   });
 
   it('N parallel HTTP requests: every key’s nonces are distinct and consecutive', async () => {
@@ -240,7 +340,8 @@ describe('relayer pool', () => {
     near.onSendTx = () => new Promise((r) => setTimeout(() => r(undefined), Math.random() * 20));
     const before = new Map(keys.map((_, i) => [publicKeyOf(i), near.nonceOf(publicKeyOf(i))]));
     const N = 20;
-    const responses = await Promise.all(Array.from({ length: N }, () => call('/v1/sessions', { headers: appHeaders(app), body: sessionBody(aud) })));
+    const bodies = await Promise.all(Array.from({ length: N }, () => sessionBody(app.scope, aud)));
+    const responses = await Promise.all(bodies.map((b) => call('/v1/sessions', { headers: appHeaders(app), body: b })));
     expect(responses.map((r) => r.status)).toEqual(Array(N).fill(200));
     expect(near.sent).toHaveLength(N);
     const byKey = new Map<string, bigint[]>();

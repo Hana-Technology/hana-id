@@ -30,18 +30,22 @@ export class RateLimiter extends DurableObject<Env> {
   }
 
   /**
-   * One-time markers (e.g. an owner token already used on chain): `isMarked` is true while a `mark` is unexpired.
-   * Expired markers are dropped on the next `mark`.
+   * One-time markers (e.g. an owner token reserved for, or already used by, one relay). `reserve` is an atomic
+   * test-and-set: true (and marked until `untilMs`) only if no unexpired marker exists, so concurrent requests with
+   * the same key can't all pass. Expired markers are dropped on the next `reserve`.
    */
-  isMarked(key: string, now: number = Date.now()): boolean {
-    const until = this.ctx.storage.kv.get<number>(`mark:${key}`);
-    return until !== undefined && until > now;
+  reserve(key: string, untilMs: number, now: number = Date.now()): boolean {
+    const kv = this.ctx.storage.kv;
+    const until = kv.get<number>(`mark:${key}`);
+    if (until !== undefined && until > now) return false;
+    for (const [k, u] of kv.list<number>({ prefix: 'mark:' })) if (u <= now) kv.delete(k);
+    kv.put(`mark:${key}`, untilMs);
+    return true;
   }
 
-  mark(key: string, untilMs: number, now: number = Date.now()): void {
-    const kv = this.ctx.storage.kv;
-    for (const [k, until] of kv.list<number>({ prefix: 'mark:' })) if (until <= now) kv.delete(k);
-    kv.put(`mark:${key}`, untilMs);
+  /** Drops a marker (a reservation whose relay definitely did not execute). */
+  release(key: string): void {
+    this.ctx.storage.kv.delete(`mark:${key}`);
   }
 
   /** Drops counters of windows that have ended (keys are `<name>@<windowStart>`). */

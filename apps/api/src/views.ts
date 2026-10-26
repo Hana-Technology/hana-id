@@ -20,16 +20,22 @@ export class TtlCache<V> {
     return hit.value;
   }
 
-  set(key: string, value: V, now = Date.now()): void {
+  /** `ttlMs` overrides the cache's TTL for this entry. */
+  set(key: string, value: V, now = Date.now(), ttlMs = this.ttlMs): void {
     if (this.map.size >= this.maxEntries) {
       const oldest = this.map.keys().next();
       if (!oldest.done) this.map.delete(oldest.value);
     }
-    this.map.set(key, { value, until: now + this.ttlMs });
+    this.map.set(key, { value, until: now + ttlMs });
   }
 
   delete(key: string): void {
     this.map.delete(key);
+  }
+
+  /** Drops every entry whose value matches. */
+  deleteWhere(match: (value: V) => boolean): void {
+    for (const [key, hit] of this.map) if (match(hit.value)) this.map.delete(key);
   }
 
   clear(): void {
@@ -46,14 +52,29 @@ export interface SessionView {
   used: number;
 }
 
-/** (provider, aud) → scope id (or null), ≤ 60 s. */
+/**
+ * (provider, aud) → scope id, ≤ 60 s; "no scope" (null) only ≤ 10 s, like the scope view, so a client added by an
+ * executed AddClient is usable as soon as /v1/app reports it. Entries for a scope (and all nulls) are dropped after
+ * every owner action relayed in this isolate.
+ */
 const scopeCache = new TtlCache<string | null>(60_000);
+const NO_SCOPE_TTL_MS = 10_000;
 /** session public key → session, ≤ 10 s. Misses (null) are not cached: a session may have just been created. */
 const sessionCache = new TtlCache<SessionView>(10_000);
+
+/** A shared-client addition still in its timelock (`set_shared_clients` additions wait `change_delay_ms`). */
+export interface PendingSharedClient {
+  client: [string, string];
+  effective_at_ms: number;
+}
 
 /** `get_config()`: only the fields the API uses. */
 export interface ConfigView {
   console_audiences: [string, string][];
+  /** Hana's shared login clients `[provider, aud]` in force when read (matured pending additions included). */
+  shared_clients: [string, string][];
+  /** Additions not in force when read; one counts as shared once `effective_at_ms` has passed (the view may be cached). */
+  pending_shared_clients: PendingSharedClient[];
 }
 
 export interface PendingChangeView {
@@ -69,6 +90,8 @@ export interface ScopeView {
   clients: [string, string][];
   pending: PendingChangeView[];
   action_nonce: number;
+  /** Users may log in through Hana's shared clients into this scope. */
+  allow_shared: boolean;
 }
 
 /** get_config, ≤ 60 s. */
@@ -78,15 +101,49 @@ const scopeViewCache = new TtlCache<ScopeView | null>(10_000);
 
 const isPair = (v: unknown): v is [string, string] => Array.isArray(v) && v.length === 2 && typeof v[0] === 'string' && typeof v[1] === 'string';
 
+/**
+ * `get_config().pending_shared_clients`: `[{provider, aud, effective_at_ms}]`, additions still in their timelock.
+ * Malformed entries are ignored (fail closed: an unreadable addition is not treated as shared).
+ */
+export function parsePendingShared(raw: unknown): PendingSharedClient[] {
+  const list = (raw as { pending_shared_clients?: unknown } | null)?.pending_shared_clients;
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((e: unknown) => {
+    const o = e as { provider?: unknown; aud?: unknown; effective_at_ms?: unknown } | null;
+    return o && typeof o.provider === 'string' && typeof o.aud === 'string' && typeof o.effective_at_ms === 'number'
+      ? [{ client: [o.provider, o.aud] as [string, string], effective_at_ms: o.effective_at_ms }]
+      : [];
+  });
+}
+
 export async function getConfig(env: Env): Promise<ConfigView> {
   const cached = configCache.get('config');
   if (cached) return cached;
-  const raw = await new Rpc(env.NEAR_RPC).view<{ console_audiences?: unknown } | null>(env.SIGNER_ACCOUNT, 'get_config', {});
-  const audiences = Array.isArray(raw?.console_audiences) ? raw.console_audiences.filter(isPair) : [];
-  const value = { console_audiences: audiences };
+  const raw = await new Rpc(env.NEAR_RPC).view<{ console_audiences?: unknown; shared_clients?: unknown } | null>(env.SIGNER_ACCOUNT, 'get_config', {});
+  const value: ConfigView = {
+    console_audiences: Array.isArray(raw?.console_audiences) ? raw.console_audiences.filter(isPair) : [],
+    shared_clients: Array.isArray(raw?.shared_clients) ? raw.shared_clients.filter(isPair) : [],
+    pending_shared_clients: parsePendingShared(raw),
+  };
   configCache.set('config', value);
   return value;
 }
+
+/** Shared clients in force at `now`: the listed ones plus pending additions that matured since the (cached) read. */
+export function effectiveSharedClients(config: ConfigView, now: number = Date.now()): [string, string][] {
+  const out = [...config.shared_clients];
+  for (const p of config.pending_shared_clients) {
+    if (p.effective_at_ms <= now && !out.some(([a, b]) => a === p.client[0] && b === p.client[1])) out.push(p.client);
+  }
+  return out;
+}
+
+export const isSharedClient = (config: ConfigView, provider: string, aud: string, now: number = Date.now()): boolean =>
+  effectiveSharedClients(config, now).some(([p, a]) => p === provider && a === aud);
+
+/** Shared now or still pending (a client being added as shared can't also be a scope's own client). */
+export const isSharedOrPending = (config: ConfigView, provider: string, aud: string): boolean =>
+  config.shared_clients.some(([p, a]) => p === provider && a === aud) || config.pending_shared_clients.some(({ client: [p, a] }) => p === provider && a === aud);
 
 export async function getScope(env: Env, scopeId: string): Promise<ScopeView | null> {
   const cached = scopeViewCache.get(scopeId);
@@ -102,14 +159,17 @@ export async function getScope(env: Env, scopeId: string): Promise<ScopeView | n
         (p): p is PendingChangeView => typeof p === 'object' && p !== null && Number.isSafeInteger((p as PendingChangeView).id) && typeof (p as PendingChangeView).unlock_at_ms === 'number',
       ),
       action_nonce: typeof raw.action_nonce === 'number' ? raw.action_nonce : 0,
+      allow_shared: raw.allow_shared === true,
     };
   }
   scopeViewCache.set(scopeId, value);
   return value;
 }
 
+/** After an owner action for `scopeId`: its view, its clients and every cached "no scope" may have changed. */
 export function forgetScope(scopeId: string): void {
   scopeViewCache.delete(scopeId);
+  scopeCache.deleteWhere((s) => s === null || s === scopeId);
 }
 
 export async function scopeForClient(env: Env, provider: string, aud: string): Promise<string | null> {
@@ -118,7 +178,7 @@ export async function scopeForClient(env: Env, provider: string, aud: string): P
   if (cached !== undefined) return cached;
   const scope = await new Rpc(env.NEAR_RPC).view<string | null>(env.SIGNER_ACCOUNT, 'scope_for_client', { provider, aud });
   const value = typeof scope === 'string' ? scope : null;
-  scopeCache.set(key, value);
+  scopeCache.set(key, value, Date.now(), value === null ? NO_SCOPE_TTL_MS : undefined);
   return value;
 }
 
@@ -130,6 +190,17 @@ export async function getSession(env: Env, sessionPublicKey: number[]): Promise<
   if (!isSessionView(session)) return null;
   sessionCache.set(key, session);
   return session;
+}
+
+/**
+ * Whether create_session would refuse this key ("Session key already in use"): an unexpired session holds it, revoked
+ * or not. A cached unexpired session answers yes without a view call; "no" is always read fresh from chain.
+ */
+export async function sessionKeyInUse(env: Env, sessionPublicKey: number[], now: number): Promise<boolean> {
+  const cached = sessionCache.get(hex(new Uint8Array(sessionPublicKey)));
+  if (cached && cached.expires_at_ms > now) return true;
+  const inUse = await new Rpc(env.NEAR_RPC).view<boolean>(env.SIGNER_ACCOUNT, 'session_key_in_use', { session_public_key: sessionPublicKey });
+  return inUse === true;
 }
 
 /** After our own create_session succeeds, remember the session so the first derive skips the view call. */

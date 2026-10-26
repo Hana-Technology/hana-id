@@ -1,0 +1,7 @@
+#!/bin/sh
+# Blocks commits that contain secrets (keys, tokens). Installed by `pnpm install` (see package.json "prepare").
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-commit: gitleaks is not installed. Install it (brew install gitleaks) — commits are blocked until then." >&2
+  exit 1
+fi
+exec gitleaks git --staged --no-banner --redact --config .gitleaks.toml

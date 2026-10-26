@@ -72,6 +72,41 @@ describe('generated key files', () => {
     expect(loaded?.publicKey).toBe(u.getPublicKey().toString());
   });
 
+  it('never quotes a malformed secret file in the error (trailing or missing comma)', () => {
+    const [k1, k2] = [KeyPair.fromRandom('ed25519'), KeyPair.fromRandom('ed25519')];
+    const secret1 = k1.toString().slice('ed25519:'.length);
+    const secret2 = k2.toString().slice('ed25519:'.length);
+    const fragments = (msg: string) => [secret1, secret2].some((sk) => [...Array(sk.length - 5).keys()].some((i) => msg.includes(sk.slice(i, i + 6))));
+    const file = join(secretsDir('bad', root), 'owner-relayer-keys.json');
+    writeSecretJson(file, []);
+    for (const text of [`[\n  "${k1.toString()}",\n]\n`, `[\n  "${k1.toString()}"\n  "${k2.toString()}"\n]\n`]) {
+      writeFileSync(file, text, { mode: 0o600 });
+      let msg = '';
+      try {
+        readSecretJson(file);
+      } catch (err) {
+        msg = (err as Error).message;
+      }
+      expect(msg).toContain('is not valid JSON');
+      expect(fragments(msg)).toBe(false);
+    }
+  });
+
+  it('never quotes a malformed keychain file in the error', () => {
+    const k = KeyPair.fromRandom('ed25519');
+    const dir = join(root, '.near-credentials', 'testnet');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'a.testnet.json'), `{"account_id":"a.testnet","private_key":"${k.toString()}",}`);
+    let msg = '';
+    try {
+      findLegacyCredential('a.testnet', 'testnet', root);
+    } catch (err) {
+      msg = (err as Error).message;
+    }
+    expect(msg).toContain('is not valid JSON');
+    expect(msg).not.toContain(k.toString().slice(-7));
+  });
+
   it('returns empty when no files exist', () => {
     expect(readRelayerKeys('none', root)).toEqual([]);
     expect(readKeysUpdater('none', root)).toBeNull();

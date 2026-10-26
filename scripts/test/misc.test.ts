@@ -6,7 +6,7 @@ import { normaliseIssuer } from '../lib/contract.ts';
 import { d1Argv, parseD1Json } from '../lib/d1.ts';
 import { diffJwks } from '../lib/jwks.ts';
 import { setManifestString } from '../lib/manifest-edit.ts';
-import { type FinalOutcome, failureText, formatNear, functionCallKeysFor, hasFullAccess, nearToYocto, otherAccessKeys, successValue } from '../lib/near.ts';
+import { describePermission, type FinalOutcome, failureText, formatNear, hasFullAccess, nearToYocto, successValue } from '../lib/near.ts';
 
 const jwk = (kid: string) => ({ kid, kty: 'RSA', alg: 'RS256', use: 'sig', n: 'sXch', e: 'AQAB' });
 
@@ -67,16 +67,19 @@ describe('near helpers', () => {
     expect(formatNear(15n * 10n ** 23n)).toBe('1.5000 NEAR');
   });
 
-  it('access key filters', () => {
+  it('access key descriptions', () => {
     const keys = [
       { public_key: 'ed25519:A', access_key: { nonce: 1, permission: 'FullAccess' as const } },
       { public_key: 'ed25519:B', access_key: { nonce: 1, permission: { FunctionCall: { allowance: null, receiver_id: 'signer.testnet', method_names: [] } } } },
-      { public_key: 'ed25519:C', access_key: { nonce: 1, permission: { FunctionCall: { allowance: null, receiver_id: 'other.testnet', method_names: [] } } } },
+      { public_key: 'ed25519:C', access_key: { nonce: 1, permission: { FunctionCall: { allowance: null, receiver_id: 'other.testnet', method_names: ['a', 'b'] } } } },
     ];
     expect(hasFullAccess(keys, 'ed25519:A')).toBe(true);
     expect(hasFullAccess(keys, 'ed25519:B')).toBe(false);
-    expect(functionCallKeysFor(keys, 'signer.testnet')).toEqual(['ed25519:B']);
-    expect(otherAccessKeys(keys, 'signer.testnet')).toEqual({ 'ed25519:A': 'a full-access key', 'ed25519:C': 'a function-call key for other.testnet' });
+    expect(keys.map((k) => describePermission(k.access_key.permission))).toEqual([
+      'a full-access key',
+      'a function-call key for signer.testnet (ANY method)',
+      'a function-call key for other.testnet (methods a, b)',
+    ]);
   });
 
   it('outcome decoding', () => {

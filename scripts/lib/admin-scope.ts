@@ -1,4 +1,5 @@
-// admin.ts scope:register: print the admin_register_scope call, and send it only with --yes.
+// admin.ts scope:register: print the admin_register_scope call, and send it only with --yes. --allow-shared lets
+// the scope log in through Hana's shared Google client (then --client is optional).
 import type { Manifest } from '@hana-id/env';
 import { actionCreators } from '@near-js/transactions';
 import { clientsFromArgs, ownersFromArgs } from './admin-args.ts';
@@ -20,9 +21,20 @@ export const defaultScopeRegisterDeps = (): ScopeRegisterDeps => ({ rpc: (url) =
 export async function scopeRegister(m: Manifest, args: Args, deps: ScopeRegisterDeps = defaultScopeRegisterDeps()): Promise<void> {
   const { log } = deps;
   const owners = ownersFromArgs(args.list('owner-near'), args.list('owner-google'));
-  const clients = clientsFromArgs(args.list('client'));
-  const callArgs = { owners, clients, scope_id: null };
+  const allowShared = args.flag('allow-shared');
+  const clients = clientsFromArgs(args.list('client'), { allowShared, sharedClientIds: m.sharedGoogleClientIds });
+  const callArgs = { owners, clients, scope_id: null, allow_shared: allowShared };
   log(`admin_register_scope(${JSON.stringify(callArgs)}) on ${m.signer}, signed by ${m.owner}`);
+  log(
+    clients.length && allowShared
+      ? 'Logins: through the app\'s own Google client(s) and through Hana\'s shared client, into this one scope.'
+      : clients.length
+        ? 'Logins: through the app\'s own Google client(s) only.'
+        : 'Logins: through Hana\'s shared Google client only (the app can add its own client later with propose_change(AddClient)).',
+  );
+  if (allowShared && (!m.sharedGoogleClientIds.length || m.sharedGoogleClientIds.some((id) => /UNSET/u.test(id)))) {
+    log(`Note: envs/${m.name}.json has no shared Google client yet, so shared login won't work until it is set and deploy-contract has run set_shared_clients.`);
+  }
   if (!args.flag('yes')) return void log(SCOPE_DRY_RUN_LINE);
   const rpc = deps.rpc(m.rpc);
   if ((await rpc.chainId()) !== 'testnet') throw new Error(`${m.rpc} is not a testnet RPC`);

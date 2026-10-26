@@ -5,9 +5,10 @@
 // --d1-id      D1 database id (`wrangler d1 create <cloudflare.d1Name>` prints it). Without it, the id already in
 //              wrangler.jsonc is kept only when that file was generated for the same D1 database (same
 //              `database_name`), else a local-only placeholder is written (fine for `wrangler dev` and tests).
-// --dev-vars   Also write apps/api/.dev.vars (0600, gitignored) from .secrets/<env>/relayer-keys.json (JSON array of
-//              ed25519 secret keys) and .secrets/<env>/keys-updater.json ({account_id, public_key, private_key}), as
-//              written by scripts/deploy-contract.ts, when they exist. Never prints secrets.
+// --dev-vars   Also write apps/api/.dev.vars (0600, gitignored) from .secrets/<env>/relayer-keys.json (session pool,
+//              JSON array of ed25519 secret keys), .secrets/<env>/owner-relayer-keys.json (owner pool, same format) and
+//              .secrets/<env>/keys-updater.json ({account_id, public_key, private_key}), as written by
+//              scripts/deploy-contract.ts, when they exist. Never prints secrets.
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,43 +59,51 @@ export function existingD1Id(path: string, d1Name: string): string | null {
   return id && id !== LOCAL_D1_ID && name === d1Name ? id : null;
 }
 
-/**
- * .dev.vars content (dotenv syntax, as wrangler parses it). RELAYER_KEYS is single-quoted: dotenv takes single-quoted
- * values literally, whereas inside double quotes it does not unescape `\"`, so a JSON string there would not parse.
- */
-export function devVarsContent(secrets: { relayerKeys?: unknown; keysUpdaterKey?: string }): string {
-  const lines: string[] = [];
-  if (secrets.relayerKeys !== undefined) {
-    const keys = secrets.relayerKeys;
-    if (!Array.isArray(keys) || !keys.every((k) => typeof k === 'string' && /^ed25519:[1-9A-HJ-NP-Za-km-z]+$/u.test(k))) {
-      throw new Error('relayer-keys.json must be a JSON array of ed25519:<base58> secret keys');
-    }
-    lines.push(`RELAYER_KEYS='${JSON.stringify(keys)}'`);
+const SECRET_KEY_RE = /^ed25519:[1-9A-HJ-NP-Za-km-z]+$/u;
+
+/** A pool's keys as a single-quoted dotenv value (JSON array of ed25519 keys; base58 never contains a quote). */
+function poolLine(name: 'RELAYER_KEYS' | 'OWNER_RELAYER_KEYS', file: string, keys: unknown): string {
+  if (!Array.isArray(keys) || keys.length === 0 || !keys.every((k) => typeof k === 'string' && SECRET_KEY_RE.test(k))) {
+    throw new Error(`${file} must be a non-empty JSON array of ed25519:<base58> secret keys`);
   }
+  return `${name}='${JSON.stringify(keys)}'`;
+}
+
+/**
+ * .dev.vars content (dotenv syntax, as wrangler parses it). RELAYER_KEYS and OWNER_RELAYER_KEYS are single-quoted:
+ * dotenv takes single-quoted values literally, whereas inside double quotes it does not unescape `\"`, so a JSON
+ * string there would not parse.
+ */
+export function devVarsContent(secrets: { relayerKeys?: unknown; ownerRelayerKeys?: unknown; keysUpdaterKey?: string }): string {
+  const lines: string[] = [];
+  if (secrets.relayerKeys !== undefined) lines.push(poolLine('RELAYER_KEYS', 'relayer-keys.json', secrets.relayerKeys));
+  if (secrets.ownerRelayerKeys !== undefined) lines.push(poolLine('OWNER_RELAYER_KEYS', 'owner-relayer-keys.json', secrets.ownerRelayerKeys));
   if (secrets.keysUpdaterKey !== undefined) {
-    if (!/^ed25519:[1-9A-HJ-NP-Za-km-z]+$/u.test(secrets.keysUpdaterKey)) throw new Error('keys-updater.json has no ed25519 private_key');
+    if (!SECRET_KEY_RE.test(secrets.keysUpdaterKey)) throw new Error('keys-updater.json has no ed25519 private_key');
     lines.push(`KEYS_UPDATER_KEY=${secrets.keysUpdaterKey}`);
   }
   return lines.length ? lines.join('\n') + '\n' : '';
 }
 
+const readJsonIfExists = (path: string): unknown => (existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as unknown) : undefined);
+
 /** Writes <apiDir>/.dev.vars (0600) from <root>/.secrets/<env>/. Returns the number of secrets; never their values. */
 export function writeDevVars(envName: string, root: string = repoRoot, dir: string = apiDir): { path: string; count: number } {
   const secrets = join(root, '.secrets', envName);
-  const relayerKeysFile = join(secrets, 'relayer-keys.json');
+  const relayerKeys = readJsonIfExists(join(secrets, 'relayer-keys.json'));
+  const ownerRelayerKeys = readJsonIfExists(join(secrets, 'owner-relayer-keys.json'));
   const updaterFile = join(secrets, 'keys-updater.json');
-  const relayerKeys: unknown = existsSync(relayerKeysFile) ? JSON.parse(readFileSync(relayerKeysFile, 'utf8')) : undefined;
   let keysUpdaterKey: string | undefined;
   if (existsSync(updaterFile)) {
     const { private_key: key } = JSON.parse(readFileSync(updaterFile, 'utf8')) as { private_key?: unknown };
     if (typeof key !== 'string') throw new Error(`${updaterFile} has no ed25519 private_key`);
     keysUpdaterKey = key;
   }
-  const content = devVarsContent({ relayerKeys, keysUpdaterKey });
+  const content = devVarsContent({ relayerKeys, ownerRelayerKeys, keysUpdaterKey });
   const path = join(dir, '.dev.vars');
   writeFileSync(path, content, { mode: 0o600 });
   chmodSync(path, 0o600);
-  return { path, count: (relayerKeys === undefined ? 0 : 1) + (keysUpdaterKey === undefined ? 0 : 1) };
+  return { path, count: [relayerKeys, ownerRelayerKeys, keysUpdaterKey].filter((v) => v !== undefined).length };
 }
 
 /** Writes <dir>/wrangler.jsonc for the env. */

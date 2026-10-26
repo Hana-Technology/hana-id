@@ -1,10 +1,14 @@
+import { KeyPair } from '@near-js/crypto';
 import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import worker from '../src/index.ts';
-import { NearMock, makeJwt } from './near-mock.ts';
+import { ckdPayload, revokePayload, sessionMessage, sessionNonce } from '../src/session-crypto.ts';
+import { NearMock, type RsaSigner, rsaSigner } from './near-mock.ts';
 
 export const GOOGLE_ISS = 'https://accounts.google.com';
 export const ORIGIN = 'https://wallet.example.com';
+/** "Google": the RSA key behind the mock JWKS that every chain() serves. */
+export const google = await rsaSigner('google-test-kid');
 
 let counter = 0;
 /** Unique-ish suffix so tests don't share rate-limit windows or cache entries. */
@@ -58,13 +62,42 @@ export const appHeaders = (app: { key: string }, origin = ORIGIN): Record<string
 
 export const bytes = (n: number, fill: number): number[] => Array.from({ length: n }, (_, i) => (fill + i) % 256);
 
-let spkSeed = 1;
-/** A fresh 32-byte session public key. */
-export const newSessionKey = (): number[] => bytes(32, (spkSeed++ * 37) % 256).map((b, i) => (i === 0 ? spkSeed % 256 : b));
+/** Session key pairs by public key (JSON of the byte array), so bodies can be signed by the right key. */
+const sessionKeys = new Map<string, KeyPair>();
 
-export function sessionBody(aud: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    jwt: makeJwt({ iss: GOOGLE_ISS, aud, sub: '1234567890', nonce: 'n', exp: Math.floor(Date.now() / 1000) + 3600 }),
+/** A fresh Ed25519 session key; returns its 32-byte public key. */
+export function newSessionKey(): number[] {
+  const kp = KeyPair.fromRandom('ed25519');
+  const pk = [...kp.getPublicKey().data];
+  sessionKeys.set(JSON.stringify(pk), kp);
+  return pk;
+}
+
+/** The key pair behind a test session key (tests that sign custom messages). */
+export function sessionKeyPair(spk: number[]): KeyPair {
+  const kp = sessionKeys.get(JSON.stringify(spk));
+  if (!kp) throw new Error('Unknown test session key');
+  return kp;
+}
+
+/** Ed25519 signature of the session key over sessionMessage(counter, payload). */
+export async function signSession(spk: number[], counter: number, payload: Uint8Array): Promise<number[]> {
+  return [...sessionKeyPair(spk).sign(await sessionMessage(counter, payload)).signature];
+}
+
+/**
+ * A /v1/sessions body with a genuine RS256 token (signed by `google`) whose nonce commits to the body for `scope` on
+ * SIGNER_ACCOUNT. `overrides` replace body fields after the nonce is computed only when `jwt` is among them; `claims`
+ * replace token claims (e.g. `nonce`, `exp`, `aud`); `signer` signs the token (default `google`).
+ */
+export async function sessionBody(
+  scope: string,
+  aud: string,
+  overrides: Record<string, unknown> = {},
+  claims: Record<string, unknown> = {},
+  signer: RsaSigner = google,
+): Promise<Record<string, unknown>> {
+  const body: Record<string, unknown> = {
     sessionPublicKey: newSessionKey(),
     expiresAtMs: Date.now() + 60 * 60 * 1000,
     salt: bytes(16, 3),
@@ -72,38 +105,111 @@ export function sessionBody(aud: string, overrides: Record<string, unknown> = {}
     maxUses: 10,
     ...overrides,
   };
+  if ('jwt' in overrides) return body;
+  let nonce = 'unused';
+  try {
+    nonce = await sessionNonce({
+      signer: env.SIGNER_ACCOUNT,
+      scopeId: scope,
+      sessionPublicKey: body.sessionPublicKey as number[],
+      expiresAtMs: body.expiresAtMs as number,
+      keyIndex: body.keyIndex as number,
+      maxUses: body.maxUses as number,
+      salt: body.salt as number[],
+    });
+  } catch {
+    // Malformed fields (shape tests): any nonce will do, the request is rejected first.
+  }
+  body.jwt = await signer.sign({ iss: GOOGLE_ISS, aud, sub: '1234567890', nonce, exp: Math.floor(Date.now() / 1000) + 3600, ...claims });
+  return body;
 }
 
-export const deriveBody = (spk: number[], overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
-  sessionPublicKey: spk,
-  counter: 1,
-  signature: bytes(64, 9),
-  pk1: 'bls12381g1:abc',
-  pk2: 'bls12381g2:def',
-  ...overrides,
-});
+/** A /v1/derive body signed by the session key (unless `signature` is overridden). */
+export async function deriveBody(spk: number[], overrides: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  const b: Record<string, unknown> = { sessionPublicKey: spk, counter: 1, pk1: 'bls12381g1:abc', pk2: 'bls12381g2:def', ...overrides };
+  if (!('signature' in overrides)) b.signature = await signSession(spk, b.counter as number, ckdPayload(b.pk1 as string, b.pk2 as string));
+  return b;
+}
 
-export const revokeBody = (spk: number[]): Record<string, unknown> => ({ sessionPublicKey: spk, counter: 2, signature: bytes(64, 1) });
+/** A /v1/sessions/revoke body signed by the session key (unless `signature` is overridden). */
+export async function revokeBody(spk: number[], overrides: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  const b: Record<string, unknown> = { sessionPublicKey: spk, counter: 2, ...overrides };
+  if (!('signature' in overrides)) b.signature = await signSession(spk, b.counter as number, revokePayload());
+  return b;
+}
+
+export interface Chain extends NearMock {
+  sessions: Map<string, Record<string, unknown>>;
+  /** aud → scope id (registered own clients, provider google). */
+  clients: Record<string, string>;
+  /** Shared Google client ids in force. */
+  shared: string[];
+  /** get_config().pending_shared_clients. */
+  pendingShared: unknown[];
+  /** Scopes with allow_shared. */
+  allowShared: Set<string>;
+  /** Scope ids get_scope answers null for. */
+  missingScopes: Set<string>;
+}
 
 /**
- * A NearMock wired with a tiny registry: `clients` maps aud → scope; sessions created through the mock are stored
- * and served by get_session.
+ * A NearMock wired with a tiny registry: `clients` maps aud → scope, `shared` lists shared clients, `allowShared` the
+ * scopes that allow them. create_session resolves the scope like the contract (own client → its scope, which must be
+ * the `scope_id` argument; shared client → `scope_id` if it allows shared login). Sessions are stored and served by
+ * get_session and session_key_in_use; revoke_session leaves a tombstone, as on chain. Google's JWKS serves `google`.
  */
-export function chain(clients: Record<string, string> = {}): NearMock & { sessions: Map<string, Record<string, unknown>>; clients: Record<string, string> } {
-  const near = Object.assign(new NearMock(), { sessions: new Map<string, Record<string, unknown>>(), clients });
-  near.views.scope_for_client = (a) => (a.provider === 'google' ? (clients[a.aud as string] ?? null) : null);
-  near.views.get_session = (a) => near.sessions.get(JSON.stringify(a.session_public_key)) ?? null;
+export function chain(clients: Record<string, string> = {}, opts: { shared?: string[]; allowShared?: string[] } = {}): Chain {
+  const near: Chain = Object.assign(new NearMock(), {
+    sessions: new Map<string, Record<string, unknown>>(),
+    clients,
+    shared: opts.shared ?? [],
+    pendingShared: [] as unknown[],
+    allowShared: new Set(opts.allowShared ?? []),
+    missingScopes: new Set<string>(),
+  });
+  near.jwks = { keys: [google.jwk] };
+  near.views.scope_for_client = (a) => (a.provider === 'google' ? (near.clients[a.aud as string] ?? null) : null);
+  near.views.get_session = (a) => {
+    const s = near.sessions.get(JSON.stringify(a.session_public_key));
+    return s && !s.revoked ? s : null;
+  };
+  near.views.session_key_in_use = (a) => {
+    const s = near.sessions.get(JSON.stringify(a.session_public_key));
+    return s !== undefined && (s.expires_at_ms as number) > Date.now();
+  };
+  near.views.get_config = () => ({
+    owner: 'admin.test.near',
+    console_audiences: [],
+    shared_clients: near.shared.map((aud) => ['google', aud]),
+    pending_shared_clients: near.pendingShared,
+    change_delay_ms: 0,
+    public_registration: false,
+  });
+  near.views.get_scope = (a) => {
+    const id = a.scope_id as string;
+    if (near.missingScopes.has(id)) return null;
+    const own = Object.entries(near.clients).filter(([, s]) => s === id).map(([aud]) => ['google', aud]);
+    return { id, owners: [{ Near: { account_id: 'owner.test.near' } }], clients: own, pending: [], action_nonce: 0, created_at_ms: 1, allow_shared: near.allowShared.has(id) };
+  };
   near.contract.create_session = (a) => {
     const aud = JSON.parse(atob((a.jwt as string).split('.')[1]!.replace(/-/gu, '+').replace(/_/gu, '/'))).aud as string;
-    const scope = clients[aud];
-    if (!scope) throw new Error('Token is for an unregistered app');
-    const session = { path: `${scope}#google#1234567890#${a.key_index}`, scope_id: scope, expires_at_ms: a.expires_at_ms, max_uses: a.max_uses, used: 0 };
+    const scopeId = a.scope_id as string;
+    const own = near.clients[aud];
+    if (own !== undefined) {
+      if (own !== scopeId) throw new Error('Token is for another app');
+    } else if (near.shared.includes(aud)) {
+      if (!near.allowShared.has(scopeId)) throw new Error('Scope does not allow shared login');
+    } else throw new Error('Token is for an unregistered app');
+    const session = { path: `${scopeId}#google#1234567890#${a.key_index}`, scope_id: scopeId, expires_at_ms: a.expires_at_ms, max_uses: a.max_uses, used: 0 };
     near.sessions.set(JSON.stringify(a.session_public_key), session);
     return session;
   };
   near.contract.derive_key = () => ({ big_y: 'bls12381g1:Y', big_c: 'bls12381g1:C' });
   near.contract.revoke_session = (a) => {
-    near.sessions.delete(JSON.stringify(a.session_public_key));
+    // Like the contract: a revoked session stays as a tombstone until it expires (get_session hides it).
+    const k = JSON.stringify(a.session_public_key);
+    const s = near.sessions.get(k);
+    if (s) near.sessions.set(k, { ...s, revoked: true });
     return null;
   };
   near.install();

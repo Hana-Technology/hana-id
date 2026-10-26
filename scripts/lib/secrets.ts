@@ -39,7 +39,19 @@ export function writeSecretJson(file: string, value: unknown): void {
 export function readSecretJson<T>(file: string): T | undefined {
   if (!existsSync(file)) return undefined;
   assertPrivate(file);
-  return JSON.parse(readFileSync(file, 'utf8')) as T;
+  return parseSecretJson<T>(readFileSync(file, 'utf8'), file);
+}
+
+/**
+ * JSON.parse for secret files. The parser's own SyntaxError quotes the text around the error (on Node 22, the end of
+ * a secret key), so this throws a message that names only the file.
+ */
+export function parseSecretJson<T>(text: string, file: string): T {
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`${file} is not valid JSON (check for a missing or trailing comma)`);
+  }
 }
 
 /** Throws if group or others have any permission on the file. */
@@ -52,8 +64,10 @@ export function assertPrivate(file: string): void {
 
 /** File names inside .secrets/<env>/. */
 export const SECRET_FILES = {
-  /** JSON array of `ed25519:…` secret keys: function-call keys on manifest.relayer (the API's RELAYER_KEYS). */
+  /** JSON array of `ed25519:…` secret keys: the session-pool function-call keys on manifest.relayer (the API's RELAYER_KEYS). */
   relayerKeys: 'relayer-keys.json',
+  /** Same format: the owner-pool function-call keys on manifest.relayer (the API's OWNER_RELAYER_KEYS). */
+  ownerRelayerKeys: 'owner-relayer-keys.json',
   /** `{account_id, public_key, private_key}`: function-call key on manifest.signer (the API's KEYS_UPDATER_KEY). */
   keysUpdater: 'keys-updater.json',
 } as const;

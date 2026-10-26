@@ -12,6 +12,7 @@ export interface LogFields {
   code?: string;
   latencyMs?: number;
   nearTx?: string;
+  pool?: string;
   keyIndex?: number;
   nonce?: string;
   attempt?: number;

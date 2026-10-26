@@ -1,11 +1,8 @@
 import { env } from 'cloudflare:workers';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { type Mock, afterEach, describe, expect, it, vi } from 'vitest';
 import { usageDay } from '../src/apps.ts';
-import { clearViewCaches } from '../src/views.ts';
-import { makeJwt, panic } from './near-mock.ts';
-import { GOOGLE_ISS, ORIGIN, appHeaders, call, chain, deriveBody, newKey, newSessionKey, revokeBody, seedApp, seedPlan, sessionBody, uid } from './helpers.ts';
-
-beforeEach(() => clearViewCaches());
+import { panic } from './near-mock.ts';
+import { ORIGIN, appHeaders, bytes, call, chain, deriveBody, newKey, newSessionKey, revokeBody, seedApp, seedPlan, sessionBody, uid } from './helpers.ts';
 afterEach(() => vi.restoreAllMocks());
 
 async function body(res: Response): Promise<Record<string, unknown>> {
@@ -21,7 +18,7 @@ describe('POST /v1/sessions', () => {
     const app = await seedApp();
     const aud = `${uid()}.apps.googleusercontent.com`;
     const near = chain({ [aud]: app.scope });
-    const req = sessionBody(aud, { keyIndex: 3 });
+    const req = await sessionBody(app.scope, aud, { keyIndex: 3 });
     const res = await call('/v1/sessions', { headers: appHeaders(app), body: req });
     const json = await body(res);
     expect(res.status).toBe(200);
@@ -36,16 +33,21 @@ describe('POST /v1/sessions', () => {
     expect(tx.receiverId).toBe(env.SIGNER_ACCOUNT);
     expect(tx.signerId).toBe(env.RELAYER_ACCOUNT);
     expect(tx.method).toBe('create_session');
-    expect(tx.gas).toBe(300_000_000_000_000n);
+    expect(tx.gas).toBe(50_000_000_000_000n);
     expect(tx.args).toEqual({
       jwt: req.jwt,
+      scope_id: app.scope,
       session_public_key: req.sessionPublicKey,
       expires_at_ms: req.expiresAtMs,
       salt: req.salt,
       key_index: 3,
       max_uses: 10,
     });
-    expect(near.viewCalls).toEqual([{ method: 'scope_for_client', args: { provider: 'google', aud } }]);
+    expect(near.viewCalls).toEqual([
+      { method: 'scope_for_client', args: { provider: 'google', aud } },
+      // The session key must not be in use already.
+      { method: 'session_key_in_use', args: { session_public_key: req.sessionPublicKey } },
+    ]);
     expect(await usage(app.id)).toEqual({ sessions: 1, derives: 0 });
   });
 
@@ -53,8 +55,7 @@ describe('POST /v1/sessions', () => {
     const app = await seedApp();
     const aud = `${uid()}.apps.googleusercontent.com`;
     chain({ [aud]: app.scope });
-    const jwt = makeJwt({ iss: 'accounts.google.com', aud, sub: '1', exp: Math.floor(Date.now() / 1000) + 600 });
-    const res = await call('/v1/sessions', { headers: appHeaders(app), body: sessionBody(aud, { jwt }) });
+    const res = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud, {}, { iss: 'accounts.google.com' }) });
     expect(res.status).toBe(200);
   });
 
@@ -62,8 +63,8 @@ describe('POST /v1/sessions', () => {
     const app = await seedApp();
     const aud = `${uid()}.apps.googleusercontent.com`;
     const near = chain({ [aud]: app.scope });
-    expect((await call('/v1/sessions', { headers: appHeaders(app), body: sessionBody(aud) })).status).toBe(200);
-    expect((await call('/v1/sessions', { headers: appHeaders(app), body: sessionBody(aud) })).status).toBe(200);
+    expect((await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud) })).status).toBe(200);
+    expect((await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud) })).status).toBe(200);
     expect(near.viewCalls.filter((v) => v.method === 'scope_for_client')).toHaveLength(1);
     expect(await usage(app.id)).toEqual({ sessions: 2, derives: 0 });
   });
@@ -71,7 +72,7 @@ describe('POST /v1/sessions', () => {
   it('rejects a token for an unregistered client before relaying', async () => {
     const app = await seedApp();
     const near = chain({});
-    const res = await call('/v1/sessions', { headers: appHeaders(app), body: sessionBody('nobody.apps.googleusercontent.com') });
+    const res = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, 'nobody.apps.googleusercontent.com') });
     expect(res.status).toBe(403);
     expect(await body(res)).toMatchObject({ code: 'unregistered_client' });
     expect(near.sent).toHaveLength(0);
@@ -82,7 +83,7 @@ describe('POST /v1/sessions', () => {
     const app = await seedApp();
     const aud = `${uid()}.apps.googleusercontent.com`;
     const near = chain({ [aud]: 'sother' });
-    const res = await call('/v1/sessions', { headers: appHeaders(app), body: sessionBody(aud) });
+    const res = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud) });
     expect(res.status).toBe(403);
     expect(await body(res)).toMatchObject({ code: 'scope_mismatch' });
     expect(near.sent).toHaveLength(0);
@@ -92,16 +93,16 @@ describe('POST /v1/sessions', () => {
     const app = await seedApp();
     const aud = `${uid()}.apps.googleusercontent.com`;
     const near = chain({ [aud]: app.scope });
-    const exp = Math.floor(Date.now() / 1000) + 600;
-    const cases: [string, number, string][] = [
-      [makeJwt({ iss: 'https://evil.example', aud, sub: '1', exp }), 400, 'unsupported_issuer'],
-      [makeJwt({ iss: GOOGLE_ISS, aud: [aud], sub: '1', exp }), 400, 'bad_request'],
-      [makeJwt({ iss: GOOGLE_ISS, aud, sub: '1', exp: Math.floor(Date.now() / 1000) - 10 }), 400, 'token_expired'],
-      ['aaaa.!!!!.bbbb', 400, 'bad_request'],
-      ['aaaa.bbbb.cccc', 400, 'bad_request'],
+    const now = Math.floor(Date.now() / 1000);
+    const cases: [Record<string, unknown>, number, string][] = [
+      [await sessionBody(app.scope, aud, {}, { iss: 'https://evil.example' }), 400, 'unsupported_issuer'],
+      [await sessionBody(app.scope, aud, {}, { aud: [aud] }), 401, 'invalid_token'],
+      [await sessionBody(app.scope, aud, {}, { exp: now - 120 }), 400, 'token_expired'],
+      [await sessionBody(app.scope, aud, { jwt: 'aaaa.!!!!.bbbb' }), 400, 'bad_request'],
+      [await sessionBody(app.scope, aud, { jwt: 'aaaa.bbbb.cccc' }), 401, 'invalid_token'],
     ];
-    for (const [jwt, status, code] of cases) {
-      const res = await call('/v1/sessions', { headers: appHeaders(app), body: sessionBody(aud, { jwt }) });
+    for (const [req, status, code] of cases) {
+      const res = await call('/v1/sessions', { headers: appHeaders(app), body: req });
       expect(res.status, code).toBe(status);
       expect((await body(res)).code).toBe(code);
     }
@@ -127,9 +128,12 @@ describe('POST /v1/sessions', () => {
       { maxUses: 501 },
       { jwt: 'x'.repeat(8000) },
       { jwt: 42 },
+      // The scope is the app's: the client can't name one.
+      { scopeId: 'sother' },
+      { scope_id: 'sother' },
     ];
     for (const override of bad) {
-      const res = await call('/v1/sessions', { headers: appHeaders(app), body: sessionBody(aud, override) });
+      const res = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud, override) });
       expect(res.status, JSON.stringify(override).slice(0, 80)).toBe(400);
       expect((await body(res)).code).toBe('bad_request');
     }
@@ -147,7 +151,7 @@ describe('POST /v1/sessions', () => {
     const aud = `${uid()}.apps.googleusercontent.com`;
     const near = chain({ [aud]: app.scope });
     near.contract.create_session = () => panic('Nonce mismatch');
-    const res = await call('/v1/sessions', { headers: appHeaders(app), body: sessionBody(aud) });
+    const res = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud) });
     expect(res.status).toBe(422);
     const json = await body(res);
     expect(json).toMatchObject({ code: 'contract_rejected' });
@@ -158,8 +162,14 @@ describe('POST /v1/sessions', () => {
 
   it('reports an unreachable RPC as 502', async () => {
     const app = await seedApp();
-    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network down'));
-    const res = await call('/v1/sessions', { headers: appHeaders(app), body: sessionBody(`${uid()}.apps.googleusercontent.com`) });
+    const aud = `${uid()}.apps.googleusercontent.com`;
+    chain({ [aud]: app.scope });
+    // Google's JWKS answers, the NEAR RPC is down.
+    const jwksOnly = (globalThis.fetch as Mock<typeof fetch>).getMockImplementation()!;
+    vi.mocked(globalThis.fetch).mockImplementation((input, init) =>
+      String(input instanceof Request ? input.url : input).startsWith(env.NEAR_RPC) ? Promise.reject(new Error('network down')) : jwksOnly(input, init),
+    );
+    const res = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud) });
     expect(res.status).toBe(502);
     expect((await body(res)).code).toBe('near_unavailable');
   });
@@ -283,7 +293,7 @@ describe('view cache lifetimes', () => {
     vi.spyOn(Date, 'now').mockReturnValue(ms);
   };
 
-  it('scope_for_client is cached for at most 60 s, a cached miss included', async () => {
+  it('scope_for_client is cached for at most 60 s, a cached miss for at most 10 s', async () => {
     const plan = `p${uid()}`;
     await seedPlan(plan, 1000, 1000, 1000);
     const app = await seedApp({ plan });
@@ -292,20 +302,20 @@ describe('view cache lifetimes', () => {
     const t0 = Date.now();
     const scopeViews = (): number => near.viewCalls.filter((v) => v.method === 'scope_for_client').length;
     at(t0);
-    expect((await call('/v1/sessions', { headers: appHeaders(app), body: sessionBody(aud) })).status).toBe(403);
-    // Registered meanwhile: the cached null still answers within 60 s...
+    expect((await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud) })).status).toBe(403);
+    // Registered meanwhile: the cached null still answers within 10 s (as long as /v1/app's scope view)...
     near.clients[aud] = app.scope;
-    at(t0 + 59_000);
-    expect((await call('/v1/sessions', { headers: appHeaders(app), body: sessionBody(aud) })).status).toBe(403);
+    at(t0 + 9_000);
+    expect((await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud) })).status).toBe(403);
     expect(scopeViews()).toBe(1);
     // ...and expires after it.
-    at(t0 + 61_000);
-    expect((await call('/v1/sessions', { headers: appHeaders(app), body: sessionBody(aud) })).status).toBe(200);
+    at(t0 + 11_000);
+    expect((await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud) })).status).toBe(200);
     expect(scopeViews()).toBe(2);
-    // A client removed on chain stops passing the API check once the entry expires.
+    // A found scope is cached for 60 s: a client removed on chain stops passing the API check once it expires.
     delete near.clients[aud];
-    at(t0 + 123_000);
-    expect((await call('/v1/sessions', { headers: appHeaders(app), body: sessionBody(aud) })).status).toBe(403);
+    at(t0 + 72_000);
+    expect((await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud) })).status).toBe(403);
     expect(scopeViews()).toBe(3);
   });
 
@@ -319,14 +329,14 @@ describe('view cache lifetimes', () => {
     near.sessions.set(JSON.stringify(spk), { path: `${app.scope}#google#1#0`, scope_id: app.scope, expires_at_ms: t0 + 3_600_000, max_uses: 10, used: 0 });
     const sessionViews = (): number => near.viewCalls.filter((v) => v.method === 'get_session').length;
     at(t0);
-    expect((await call('/v1/derive', { headers: appHeaders(app), body: deriveBody(spk) })).status).toBe(200);
+    expect((await call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(spk) })).status).toBe(200);
     at(t0 + 9_000);
-    expect((await call('/v1/derive', { headers: appHeaders(app), body: deriveBody(spk, { counter: 2 }) })).status).toBe(200);
+    expect((await call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(spk, { counter: 2 }) })).status).toBe(200);
     expect(sessionViews()).toBe(1);
     // Revoked outside the API: seen once the 10 s entry expires.
     near.sessions.delete(JSON.stringify(spk));
     at(t0 + 11_000);
-    expect((await call('/v1/derive', { headers: appHeaders(app), body: deriveBody(spk, { counter: 3 }) })).status).toBe(404);
+    expect((await call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(spk, { counter: 3 }) })).status).toBe(404);
     expect(sessionViews()).toBe(2);
   });
 });
@@ -343,53 +353,55 @@ describe('POST /v1/derive and /v1/sessions/revoke', () => {
 
   it('relays derive_key for the app’s own session and returns {big_y, big_c}', async () => {
     const { app, near, spk } = await withSession();
-    const res = await call('/v1/derive', { headers: appHeaders(app), body: deriveBody(spk) });
+    const res = await call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(spk) });
     expect(res.status).toBe(200);
     const json = await body(res);
     expect(json.result).toEqual({ big_y: 'bls12381g1:Y', big_c: 'bls12381g1:C' });
     expect(near.sent.map((t) => t.method)).toEqual(['derive_key']);
-    expect(near.sent[0]!.args).toEqual({ session_public_key: spk, counter: 1, signature: deriveBody(spk).signature, pk1: 'bls12381g1:abc', pk2: 'bls12381g2:def' });
+    expect(near.sent[0]!.args).toEqual({ session_public_key: spk, counter: 1, signature: (await deriveBody(spk)).signature, pk1: 'bls12381g1:abc', pk2: 'bls12381g2:def' });
+    expect(near.sent[0]!.gas).toBe(60_000_000_000_000n);
     expect(await usage(app.id)).toEqual({ sessions: 0, derives: 1 });
   });
 
   it('counts sessions and derives separately over a full login', async () => {
     const { app, near, aud } = await withSession();
-    const req = sessionBody(aud);
+    const req = await sessionBody(app.scope, aud);
     expect((await call('/v1/sessions', { headers: appHeaders(app), body: req })).status).toBe(200);
     const spk = req.sessionPublicKey as number[];
-    expect((await call('/v1/derive', { headers: appHeaders(app), body: deriveBody(spk) })).status).toBe(200);
-    expect((await call('/v1/derive', { headers: appHeaders(app), body: deriveBody(spk, { counter: 2 }) })).status).toBe(200);
-    // The session came from our own create_session: no get_session view needed.
+    expect((await call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(spk) })).status).toBe(200);
+    expect((await call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(spk, { counter: 2 }) })).status).toBe(200);
+    // One session_key_in_use before create_session (the key must be unused); the derives use the session it returned.
+    expect(near.viewCalls.filter((v) => v.method === 'session_key_in_use')).toHaveLength(1);
     expect(near.viewCalls.filter((v) => v.method === 'get_session')).toHaveLength(0);
     expect(await usage(app.id)).toEqual({ sessions: 1, derives: 2 });
-    expect((await call('/v1/sessions/revoke', { headers: appHeaders(app), body: revokeBody(spk) })).status).toBe(200);
+    expect((await call('/v1/sessions/revoke', { headers: appHeaders(app), body: await revokeBody(spk) })).status).toBe(200);
     expect(await usage(app.id)).toEqual({ sessions: 1, derives: 2 });
   });
 
   it('caches get_session (≤ 10 s)', async () => {
     const { app, near, spk } = await withSession();
-    await call('/v1/derive', { headers: appHeaders(app), body: deriveBody(spk) });
-    await call('/v1/derive', { headers: appHeaders(app), body: deriveBody(spk, { counter: 2 }) });
+    await call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(spk) });
+    await call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(spk, { counter: 2 }) });
     expect(near.viewCalls.filter((v) => v.method === 'get_session')).toHaveLength(1);
   });
 
   it('rejects unknown sessions, sessions of other scopes and expired sessions', async () => {
     const { app, near } = await withSession();
-    const unknown = await call('/v1/derive', { headers: appHeaders(app), body: deriveBody(newSessionKey()) });
+    const unknown = await call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(newSessionKey()) });
     expect(unknown.status).toBe(404);
     expect((await body(unknown)).code).toBe('unknown_session');
 
     const foreign = newSessionKey();
     near.sessions.set(JSON.stringify(foreign), { path: 'sother#google#1#0', scope_id: 'sother', expires_at_ms: Date.now() + 3_600_000, max_uses: 10, used: 0 });
     for (const path of ['/v1/derive', '/v1/sessions/revoke']) {
-      const res = await call(path, { headers: appHeaders(app), body: path === '/v1/derive' ? deriveBody(foreign) : revokeBody(foreign) });
+      const res = await call(path, { headers: appHeaders(app), body: path === '/v1/derive' ? await deriveBody(foreign) : await revokeBody(foreign) });
       expect(res.status).toBe(403);
       expect((await body(res)).code).toBe('scope_mismatch');
     }
 
     const expired = newSessionKey();
     near.sessions.set(JSON.stringify(expired), { path: `${app.scope}#google#1#0`, scope_id: app.scope, expires_at_ms: Date.now() - 1, max_uses: 10, used: 0 });
-    const res = await call('/v1/derive', { headers: appHeaders(app), body: deriveBody(expired) });
+    const res = await call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(expired) });
     expect(res.status).toBe(404);
     expect(near.sent).toHaveLength(0);
   });
@@ -397,11 +409,11 @@ describe('POST /v1/derive and /v1/sessions/revoke', () => {
   it('validates derive and revoke shapes', async () => {
     const { app, near, spk } = await withSession();
     const bad = [
-      deriveBody(spk, { counter: 0 }),
-      deriveBody(spk, { signature: [1, 2] }),
-      deriveBody(spk, { pk1: 'bls12381g2:x' }),
-      deriveBody(spk, { pk2: 'x'.repeat(400) }),
-      deriveBody([1]),
+      await deriveBody(spk, { counter: 0 }),
+      await deriveBody(spk, { signature: [1, 2] }),
+      await deriveBody(spk, { pk1: 'bls12381g2:x' }),
+      await deriveBody(spk, { pk2: 'x'.repeat(400) }),
+      await deriveBody([1], { signature: bytes(64, 9) }),
     ];
     for (const b of bad) expect((await call('/v1/derive', { headers: appHeaders(app), body: b })).status).toBe(400);
     expect((await call('/v1/sessions/revoke', { headers: appHeaders(app), body: { sessionPublicKey: spk, counter: 1 } })).status).toBe(400);
@@ -410,11 +422,11 @@ describe('POST /v1/derive and /v1/sessions/revoke', () => {
 
   it('relays revoke_session and forgets the cached session', async () => {
     const { app, near, spk } = await withSession();
-    expect((await call('/v1/derive', { headers: appHeaders(app), body: deriveBody(spk) })).status).toBe(200);
-    const res = await call('/v1/sessions/revoke', { headers: appHeaders(app), body: revokeBody(spk) });
+    expect((await call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(spk) })).status).toBe(200);
+    const res = await call('/v1/sessions/revoke', { headers: appHeaders(app), body: await revokeBody(spk) });
     expect(res.status).toBe(200);
     expect((await body(res)).result).toBeNull();
-    const after = await call('/v1/derive', { headers: appHeaders(app), body: deriveBody(spk, { counter: 3 }) });
+    const after = await call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(spk, { counter: 3 }) });
     expect(after.status).toBe(404);
     expect(near.sent.map((t) => t.method)).toEqual(['derive_key', 'revoke_session']);
   });
@@ -422,7 +434,7 @@ describe('POST /v1/derive and /v1/sessions/revoke', () => {
   it('rejects a derive_key result without the key', async () => {
     const { app, near, spk } = await withSession();
     near.contract.derive_key = () => null;
-    const res = await call('/v1/derive', { headers: appHeaders(app), body: deriveBody(spk) });
+    const res = await call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(spk) });
     expect(res.status).toBe(502);
     expect(await usage(app.id)).toBeNull();
   });

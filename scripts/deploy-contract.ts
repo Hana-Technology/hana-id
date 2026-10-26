@@ -1,5 +1,5 @@
-// deploy-contract.ts <env> [--yes] [--relayer-keys N] [--relayer-allowance NEAR] [--updater-allowance NEAR]
-//                              [--upgrade] [--wasm path] [--skip-build]
+// deploy-contract.ts <env> [--yes] [--relayer-keys N] [--relayer-allowance NEAR] [--owner-relayer-keys N]
+//                              [--owner-relayer-allowance NEAR] [--updater-allowance NEAR] [--upgrade] [--wasm path] [--skip-build]
 //
 // Deploys hana-signer for one environment. Prints the plan first and changes nothing without --yes. Re-running
 // plans only what is missing. Accounts must already exist and be funded; their full-access keys are read from the

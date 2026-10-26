@@ -5,7 +5,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { KeyPair, type KeyPairString } from '@near-js/crypto';
-import { SECRET_FILES, readSecretJson, secretsDir, writeSecretJson } from './secrets.ts';
+import { SECRET_FILES, parseSecretJson, readSecretJson, secretsDir, writeSecretJson } from './secrets.ts';
 
 export interface LoadedKey {
   accountId: string;
@@ -44,7 +44,7 @@ export function findLegacyCredential(accountId: string, network: string, home: s
   }
   for (const file of candidates) {
     if (!existsSync(file)) continue;
-    const json = JSON.parse(readFileSync(file, 'utf8')) as CredentialFile;
+    const json = parseSecretJson<CredentialFile>(readFileSync(file, 'utf8'), file);
     const secret = json.private_key ?? json.secret_key;
     if (!secret) continue;
     if (json.account_id && json.account_id !== accountId) continue;
@@ -74,26 +74,42 @@ export function generateKey(): KeyPair {
 
 // --- .secrets/<env>/ key files ---
 
+/** The relayer's two function-call key pools: `session` (RELAYER_KEYS) and `owner` (OWNER_RELAYER_KEYS). */
+export type KeyPool = 'session' | 'owner';
+export const KEY_POOLS: readonly KeyPool[] = ['session', 'owner'];
+
+export function poolFileName(pool: KeyPool): string {
+  return pool === 'session' ? SECRET_FILES.relayerKeys : SECRET_FILES.ownerRelayerKeys;
+}
+
+export function poolKeysFile(env: string, pool: KeyPool, root?: string): string {
+  return join(secretsDir(env, root), poolFileName(pool));
+}
+
 export function relayerKeysFile(env: string, root?: string): string {
-  return join(secretsDir(env, root), SECRET_FILES.relayerKeys);
+  return poolKeysFile(env, 'session', root);
 }
 
 export function keysUpdaterFile(env: string, root?: string): string {
   return join(secretsDir(env, root), SECRET_FILES.keysUpdater);
 }
 
-/** Relayer function-call keys (KeyPairs), in file order. */
-export function readRelayerKeys(env: string, root?: string): KeyPair[] {
-  const file = relayerKeysFile(env, root);
+/** One pool's relayer function-call keys (KeyPairs), in file order. */
+export function readPoolKeys(env: string, pool: KeyPool, root?: string): KeyPair[] {
+  const file = poolKeysFile(env, pool, root);
   const raw = readSecretJson<unknown>(file);
   if (raw === undefined) return [];
   if (!Array.isArray(raw) || !raw.every((k) => typeof k === 'string')) throw new Error(`${file} must be a JSON array of secret key strings`);
   return raw.map((k) => parseKey(k, file));
 }
 
-export function writeRelayerKeys(env: string, keys: KeyPair[], root?: string): void {
-  writeSecretJson(relayerKeysFile(env, root), keys.map((k) => k.toString()));
+export function writePoolKeys(env: string, pool: KeyPool, keys: KeyPair[], root?: string): void {
+  writeSecretJson(poolKeysFile(env, pool, root), keys.map((k) => k.toString()));
 }
+
+/** Session-pool keys (relayer-keys.json). */
+export const readRelayerKeys = (env: string, root?: string): KeyPair[] => readPoolKeys(env, 'session', root);
+export const writeRelayerKeys = (env: string, keys: KeyPair[], root?: string): void => writePoolKeys(env, 'session', keys, root);
 
 export function readKeysUpdater(env: string, root?: string): LoadedKey | null {
   const file = keysUpdaterFile(env, root);

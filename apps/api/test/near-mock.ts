@@ -49,13 +49,20 @@ export class NearMock {
   txPollFailures = 0;
   jwks: unknown = { keys: [] };
   jwksStatus = 200;
+  /** Cache-Control of the JWKS response (Google sends `public, max-age=…`). */
+  jwksCacheControl?: string;
+  /** How many times the JWKS was fetched. */
+  jwksFetches = 0;
   private readonly outcomes = new Map<string, unknown>();
   private readonly pool = new Map<string, Set<bigint>>();
 
   install(): void {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = input instanceof Request ? input.url : String(input);
-      if (url === GOOGLE_JWKS_URL) return Promise.resolve(Response.json(this.jwks, { status: this.jwksStatus }));
+      if (url === GOOGLE_JWKS_URL) {
+        this.jwksFetches++;
+        return Promise.resolve(Response.json(this.jwks, { status: this.jwksStatus, headers: this.jwksCacheControl ? { 'cache-control': this.jwksCacheControl } : {} }));
+      }
       if (url.startsWith(env.NEAR_RPC) && typeof init?.body === 'string') {
         // Parsed synchronously so RPC calls are seen in exactly the order the worker sent them.
         const body = JSON.parse(init.body) as { id: string; method: string; params: Record<string, unknown> };

@@ -38,6 +38,7 @@ afterEach(() => {
 });
 
 const relayerKeys = [KeyPair.fromRandom('ed25519').toString(), KeyPair.fromRandom('ed25519').toString()];
+const ownerRelayerKeys = [KeyPair.fromRandom('ed25519').toString()];
 const updaterKey = KeyPair.fromRandom('ed25519').toString();
 const manifest = loadEnv('sandbox-dev');
 
@@ -45,19 +46,25 @@ function seedSecrets(root: string, env = manifest.name): void {
   const dir = join(root, '.secrets', env);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'relayer-keys.json'), JSON.stringify(relayerKeys));
+  writeFileSync(join(dir, 'owner-relayer-keys.json'), JSON.stringify(ownerRelayerKeys));
   writeFileSync(join(dir, 'keys-updater.json'), JSON.stringify({ account_id: 'x.testnet', public_key: 'ed25519:abc', private_key: updaterKey }));
 }
 
 describe('.dev.vars', () => {
-  it('round-trips RELAYER_KEYS and KEYS_UPDATER_KEY through wrangler’s dotenv parser', () => {
-    const parsed = dotenvParse(devVarsContent({ relayerKeys, keysUpdaterKey: updaterKey }));
+  it('round-trips RELAYER_KEYS, OWNER_RELAYER_KEYS and KEYS_UPDATER_KEY through wrangler’s dotenv parser', () => {
+    const parsed = dotenvParse(devVarsContent({ relayerKeys, ownerRelayerKeys, keysUpdaterKey: updaterKey }));
     expect(parseRelayerKeys(parsed.RELAYER_KEYS)).toEqual(relayerKeys);
+    expect(parseRelayerKeys(parsed.OWNER_RELAYER_KEYS, 'OWNER_RELAYER_KEYS')).toEqual(ownerRelayerKeys);
     expect(parsed.KEYS_UPDATER_KEY).toBe(updaterKey);
+    expect(Object.keys(parsed).sort()).toEqual(['KEYS_UPDATER_KEY', 'OWNER_RELAYER_KEYS', 'RELAYER_KEYS']);
   });
 
   it('rejects malformed secrets instead of writing them', () => {
     expect(() => devVarsContent({ relayerKeys: ["ed25519:a'b"] })).toThrow();
     expect(() => devVarsContent({ relayerKeys: 'ed25519:abc' })).toThrow();
+    expect(() => devVarsContent({ ownerRelayerKeys: ["ed25519:a'b"] })).toThrow();
+    expect(() => devVarsContent({ ownerRelayerKeys: [] })).toThrow();
+    expect(() => devVarsContent({ ownerRelayerKeys: { keys: relayerKeys } })).toThrow();
     expect(() => devVarsContent({ keysUpdaterKey: 'secp256k1:abc' })).toThrow();
   });
 
@@ -66,10 +73,11 @@ describe('.dev.vars', () => {
     const out = tmp();
     seedSecrets(root);
     const { path, count } = writeDevVars(manifest.name, root, out);
-    expect(count).toBe(2);
+    expect(count).toBe(3);
     expect(statSync(path).mode & 0o777).toBe(0o600);
     const parsed = dotenvParse(readFileSync(path, 'utf8'));
     expect(parseRelayerKeys(parsed.RELAYER_KEYS)).toEqual(relayerKeys);
+    expect(parseRelayerKeys(parsed.OWNER_RELAYER_KEYS, 'OWNER_RELAYER_KEYS')).toEqual(ownerRelayerKeys);
     expect(parsed.KEYS_UPDATER_KEY).toBe(updaterKey);
   });
 });
@@ -84,6 +92,7 @@ describe('wrangler.jsonc', () => {
     expect(config.d1_databases[0]).toMatchObject({ database_name: manifest.cloudflare.d1Name, database_id: LOCAL_D1_ID });
     expect(text).not.toMatch(/ed25519:/u);
     expect(text).not.toMatch(/RELAYER_KEYS|KEYS_UPDATER_KEY/u);
+    expect(text).not.toMatch(/OWNER_RELAYER_KEYS/u);
   });
 
   it('keeps an existing D1 id only for the same database', () => {
@@ -98,6 +107,17 @@ describe('wrangler.jsonc', () => {
     const other = { ...manifest, name: 'other-env', cloudflare: { ...manifest.cloudflare, d1Name: 'hana-id-other-env' } };
     expect(existingD1Id(path, other.cloudflare.d1Name)).toBeNull();
     expect(writeWranglerConfig(other, undefined, dir).d1Id).toBe(LOCAL_D1_ID);
+  });
+
+  it('writes only the secrets that exist (no owner pool yet: no OWNER_RELAYER_KEYS line)', () => {
+    const root = tmp();
+    const out = tmp();
+    const dir = join(root, '.secrets', manifest.name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'relayer-keys.json'), JSON.stringify(relayerKeys));
+    const { path, count } = writeDevVars(manifest.name, root, out);
+    expect(count).toBe(1);
+    expect(Object.keys(dotenvParse(readFileSync(path, 'utf8')))).toEqual(['RELAYER_KEYS']);
   });
 
   it('main writes both files and never prints secret values', () => {

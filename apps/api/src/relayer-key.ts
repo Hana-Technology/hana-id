@@ -1,26 +1,17 @@
-// One Durable Object per relayer access key (name `relayer-key-<index>`). It owns that key's nonce: nonces are
-// handed out strictly in order inside a small critical section (nonce → sign → dispatch send_tx), and the outcome
-// is awaited outside it, so many transactions per key can be in flight at once.
+// One Durable Object per relayer access key (name from relayerKeyName(pool, index): `relayer-key-<i>` for the
+// session pool, `owner-relayer-key-<i>` for the owner pool). It owns that key's nonce: nonces are handed out strictly
+// in order inside a small critical section (nonce → sign → dispatch send_tx), and the outcome is awaited outside it,
+// so many transactions per key can be in flight at once.
 import type { KeyPair } from '@near-js/crypto';
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from './env.ts';
+import { gasFor } from './gas.ts';
 import { log } from './log.ts';
-import { parseRelayerKeys } from './relayer-config.ts';
+import { POOL_SECRET, type Pool, isPool, parseRelayerKeys, poolAllows } from './relayer-config.ts';
 import { Rpc, invalidNonce, isDefiniteRejection, isExpired, type SendTxResult } from './near/rpc.ts';
 import { type ContractCall, parseKeyPair, signFunctionCall, waitForOutcome } from './near/tx.ts';
 
 export { parseRelayerKeys };
-
-/** The only methods the relayer will ever call, always on SIGNER_ACCOUNT. */
-export const RELAYABLE_METHODS = new Set([
-  'create_session',
-  'derive_key',
-  'revoke_session',
-  'propose_change',
-  'cancel_change',
-  'remove_client',
-  'execute_change',
-]);
 
 /** Refresh the reference block hash after this long (a tx is valid for ~24 h of blocks). */
 const BLOCK_HASH_MAX_AGE_MS = 5 * 60_000;
@@ -37,6 +28,9 @@ interface Dispatched {
 }
 
 export class RelayerKey extends DurableObject<Env> {
+  /** The pool this object serves, fixed by its first relay (an object never signs for two pools). */
+  private pool: Pool | null = null;
+  private keyIndex = -1;
   private keyPair: KeyPair | null = null;
   private publicKey = '';
   private nonce: bigint | null = null;
@@ -50,21 +44,28 @@ export class RelayerKey extends DurableObject<Env> {
     return this.inflight;
   }
 
-  async relay(keyIndex: number, call: ContractCall, requestId?: string): Promise<RelayResult> {
-    if (!RELAYABLE_METHODS.has(call.method)) return { ok: false, status: 400, code: 'method_not_allowed', error: `Method ${call.method} is not relayed` };
+  async relay(pool: Pool, keyIndex: number, request: ContractCall, requestId?: string): Promise<RelayResult> {
+    if (!isPool(pool)) return { ok: false, status: 400, code: 'method_not_allowed', error: 'Unknown relayer pool' };
+    const method = request.method;
+    if (!poolAllows(pool, method)) return { ok: false, status: 400, code: 'method_not_allowed', error: `Method ${method} is not relayed by the ${pool} pool` };
+    if ((this.pool !== null && this.pool !== pool) || (this.keyIndex >= 0 && this.keyIndex !== keyIndex)) {
+      return { ok: false, status: 503, code: 'relayer_unavailable', error: 'Relayer key mismatch' };
+    }
+    // Gas always comes from gas.ts (per method, env-overridable), never from the caller.
+    const call: ContractCall = { method, args: request.args, gas: gasFor(method, this.env, request.args) };
     const rpc = new Rpc(this.env.NEAR_RPC);
     this.inflight++;
     try {
-      this.loadKey(keyIndex);
+      this.loadKey(pool, keyIndex);
       for (let attempt = 0; ; attempt++) {
         let sent: Dispatched;
         try {
           sent = await this.exclusive(() => this.dispatch(rpc, call));
         } catch (err) {
-          log({ event: 'relay_dispatch_failed', requestId, keyIndex, method: call.method, code: 'near_unavailable' }, 'error');
+          log({ event: 'relay_dispatch_failed', requestId, pool, keyIndex, method: call.method, code: 'near_unavailable' }, 'error');
           return { ok: false, status: 502, code: 'near_unavailable', error: `NEAR RPC failed: ${errorMessage(err)}` };
         }
-        log({ event: 'relay_dispatched', requestId, keyIndex, method: call.method, nearTx: sent.hash, nonce: sent.nonce.toString(), attempt });
+        log({ event: 'relay_dispatched', requestId, pool, keyIndex, method: call.method, nearTx: sent.hash, nonce: sent.nonce.toString(), attempt });
 
         let initial: SendTxResult | null = null;
         try {
@@ -74,7 +75,7 @@ export class RelayerKey extends DurableObject<Env> {
           if ((bad || isExpired(err)) && attempt === 0) {
             // Another writer used this key, or our view of the nonce/block was stale: re-read and retry once.
             await this.exclusive(() => this.recover(rpc, bad?.akNonce ?? null, !bad));
-            log({ event: 'relay_retry', requestId, keyIndex, method: call.method, code: bad ? 'invalid_nonce' : 'expired', nearTx: sent.hash }, 'warn');
+            log({ event: 'relay_retry', requestId, pool, keyIndex, method: call.method, code: bad ? 'invalid_nonce' : 'expired', nearTx: sent.hash }, 'warn');
             continue;
           }
           if (bad) return { ok: false, status: 503, code: 'relayer_busy', error: 'The relayer could not get a valid nonce, try again', nearTx: sent.hash };
@@ -93,7 +94,7 @@ export class RelayerKey extends DurableObject<Env> {
           if (attempt === 0) {
             // It never executed: resend once with a fresh nonce (re-read, since other txs moved the key on).
             await this.exclusive(() => this.recover(rpc, null, false));
-            log({ event: 'relay_retry', requestId, keyIndex, method: call.method, code: 'dropped', nearTx: sent.hash }, 'warn');
+            log({ event: 'relay_retry', requestId, pool, keyIndex, method: call.method, code: 'dropped', nearTx: sent.hash }, 'warn');
             continue;
           }
           return { ok: false, status: 503, code: 'relayer_busy', error: 'The transaction was dropped, try again', nearTx: sent.hash };
@@ -116,12 +117,15 @@ export class RelayerKey extends DurableObject<Env> {
     return run;
   }
 
-  private loadKey(keyIndex: number): void {
+  private loadKey(pool: Pool, keyIndex: number): void {
     if (this.keyPair) return;
-    const secret = parseRelayerKeys(this.env.RELAYER_KEYS)[keyIndex];
-    if (!secret) throw new Error(`No relayer key at index ${keyIndex}`);
+    const name = POOL_SECRET[pool];
+    const secret = parseRelayerKeys(this.env[name], name)[keyIndex];
+    if (!secret) throw new Error(`No ${name} key at index ${keyIndex}`);
     this.keyPair = parseKeyPair(secret);
     this.publicKey = this.keyPair.getPublicKey().toString();
+    this.pool = pool;
+    this.keyIndex = keyIndex;
   }
 
   /** Critical section: next nonce, sign, start the broadcast. Does not wait for the broadcast to answer. */

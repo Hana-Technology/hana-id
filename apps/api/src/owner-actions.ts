@@ -7,7 +7,7 @@ import { hex } from './bytes.ts';
 import type { Env } from './env.ts';
 import { verifyIdToken } from './jwks.ts';
 import type { ContractCall } from './near/tx.ts';
-import { getConfig, getScope } from './views.ts';
+import { getConfig, getScope, isSharedOrPending } from './views.ts';
 
 export type OwnerPrecheck =
   | { ok: true; scopeId: string; authToken: { hash: string; expMs: number } | null }
@@ -58,16 +58,26 @@ export async function precheckOwnerAction(env: Env, call: ContractCall, now: num
     }
     case 'remove_client': {
       if (!scope.clients.some(([p, a]) => p === args.provider && a === args.aud)) return no(404, 'unknown_client', 'Client is not in this scope');
-      if (scope.clients.length <= 1) return no(409, 'last_client', 'Cannot remove the last client');
+      // The last client may go only while shared login keeps the scope usable.
+      if (scope.clients.length <= 1 && !scope.allow_shared) return no(409, 'last_client', 'Cannot remove the last client');
+      break;
+    }
+    case 'disable_shared_login': {
+      if (!scope.allow_shared) return no(409, 'shared_login_disabled', 'Shared login is already disabled for this scope');
+      if (scope.clients.length === 0) return no(409, 'last_client', 'A scope without its own client must keep shared login');
       break;
     }
     case 'propose_change': {
-      const add = (args.change as { AddClient?: { provider: string; aud: string } }).AddClient;
+      const change = args.change as { AddClient?: { provider: string; aud: string }; SetAllowShared?: { allow: boolean } };
+      if (change.SetAllowShared && scope.allow_shared) return no(409, 'shared_login_enabled', 'Shared login is already enabled for this scope');
+      const add = change.AddClient;
       if (add) {
         const proof = await verifyIdToken(args.client_proof as string, now);
         if (!proof.ok) return no(400, 'invalid_client_proof', `Client proof: ${proof.error}`);
         if (proof.token.provider !== add.provider || proof.token.aud !== add.aud) return no(400, 'invalid_client_proof', 'Client proof is for another client');
         if (scope.clients.some(([p, a]) => p === add.provider && a === add.aud)) return no(409, 'client_registered', 'Client is already in this scope');
+        const config = await getConfig(env);
+        if (isSharedOrPending(config, add.provider, add.aud)) return no(409, 'shared_client', 'This client is one of Hana’s shared login clients');
       }
       break;
     }

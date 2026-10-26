@@ -7,10 +7,12 @@ SDK security page: https://claude.ai/artifact/AwzpW8xZ7pAuMoTYgBfcvo
 ## How a login works (from the wend-widget-demo PoC, see `legacy/`)
 
 1. The browser makes a non-extractable WebCrypto Ed25519 **session key**.
-2. Google Sign-In is started with `nonce = b64url(sha256(sessionPubKey ‖ expiry u64 LE ‖ salt))`
-   (batch A adds `key_index u32 LE` before the salt), so Google's signed ID token commits to that session key.
-3. The relayer submits `hana-signer.create_session(jwt, …)`. The contract verifies the RS256 token against Google's
-   keys stored on-chain, checks `aud`, recomputes the nonce, and records a session whose `path` names the user's key.
+2. Google Sign-In is started with a nonce that commits to that session key (PoC:
+   `b64url(sha256(sessionPubKey ‖ expiry u64 LE ‖ salt))`; batch A.2 layout in `docs/batch-a2-shared-client.md`), so
+   Google's signed ID token commits to that session key.
+3. The relayer submits `hana-signer.create_session(jwt, scope_id, …)`. The contract verifies the RS256 token against
+   Google's keys stored on-chain, resolves the scope from `aud` (or, for a shared client, from `scope_id`), recomputes
+   the nonce, and records a session whose `path` names the user's key.
 4. The browser makes a BLS12-381 keypair and asks (session-key-signed, counter = previous + 1) for
    `derive_key(pk1, pk2)`. The contract calls the NEAR MPC's `request_app_private_key` (CKD, domain 2) with that path.
 5. The MPC (17 nodes, threshold 11, TEEs) returns `big_y = y·G1`, `big_c = msk·H + y·a·G1`. Only the browser knows `a`:
@@ -29,13 +31,47 @@ The key is a function of: MPC network, signer account, path (`scope#provider#sub
   app can't derive another app's users' keys. One scope can hold several client IDs (web/iOS/Android).
 - Self-serve later: client-ID ownership proven by an ID token for that client; adding clients is owner-only and
   timelocked; Hana can't move clients or block derivation (suspension is API-side only). Owners: NEAR account or Google
-  identity. `public_registration` is off for the PoC (Hana registers apps).
+  identity. `public_registration` is off until client-ownership proofs are solved (Hana registers apps).
 - App config off-chain in Cloudflare D1; API on Cloudflare Workers + Durable Objects (nonce serialisation per relayer
   key). Chosen for built-in DDoS/rate limiting, free tier, no DB credentials.
 - Throwaway accounts first; every account name in `envs/<env>.json`.
 - Email login later: whoever signs email tokens can derive any email user's key — needs its own trust decision.
   Batch A makes the verifier provider-generic so email can be another issuer.
-- Partners: Sodax first (Stellar via `IStellarWalletProvider`), on testnet-MPC keys that are disposable.
+- **Target: a production MVP** — real users and real funds on mainnet, built to production standards throughout.
+  Path: testnet pilot (batches A, A.2, B + testnet smoke test) → production MVP (final accounts + address freeze,
+  external audit, upgrade governance, mainnet MPC, key export/rotation, monitoring, legal + Google brand verification).
+- **Any app can integrate**; nothing is customer-specific. Sodax is the first customer (Stellar via
+  `IStellarWalletProvider`): its adapter is a thin optional package, the core SDK exposes standard interfaces
+  (EIP-1193, Stellar Wallets Kit, raw sign). Pilot wallets on testnet-MPC keys are disposable.
+
+## Batch A.2 decisions (2026-10-26; details in `docs/batch-a2-shared-client.md`)
+
+- **Shared client mode.** Besides its own Google client (scope from the token's `aud`), an app can log in through
+  Hana's shared Google client(s) (`sharedGoogleClientIds`, `set_shared_clients`, max 5). Then `aud` is Hana's, so the
+  scope comes from the session nonce, which commits to `scope_id`; the scope must have `allow_shared`. Hana's login
+  page (batch B) computes a nonce for scope X only for an opener origin allowed for app X. Forging a nonce only gets
+  the forger their own key. The path has no client ID, so own and shared logins give the same address if Google's
+  `sub` matches across clients (to confirm on testnet). A client is shared or a scope's own, never both; adding a
+  shared client and enabling `allow_shared` are timelocked, removing / `disable_shared_login` are immediate.
+  Shared-only scopes trust every shared client Hana adds (see the security notes in `docs/contract-interface.md`).
+- **Two relayer key pools.** Session pool (`RELAYER_KEYS`: create_session, derive_key, revoke_session,
+  prune_sessions) and owner pool (`OWNER_RELAYER_KEYS`, small allowance: owner actions, register_scope,
+  apply_pending_config), separate keys and Durable Objects, so abuse of `/v1/owner-actions` can't stop logins.
+  deploy-contract treats a key with the wrong receiver, methods, an empty method list or an unlimited/too-large
+  allowance as a blocker. Gas is per method (`apps/api/src/gas.ts`, to measure on testnet; register_scope scales
+  with its proof count, 10 proofs burnt 175 Tgas in the sandbox).
+- **Layouts.** Every nonce commits to the signer account id (`env::current_account_id()`), so tokens can't be
+  replayed across deployments; the session nonce also commits to `scope_id` and `max_uses`; the register proof to
+  the client list and `allow_shared`; strings are borsh length-prefixed. Session messages are
+  `"hana-id-session-v1:" ‖ counter ‖ sha256(payload)`. Layouts are checked against an independent JS implementation
+  (`gen-fixtures.mjs`) and in the sandbox (`tests/layouts.rs`).
+- **API verifies before relaying**: RS256 + claims + nonce for `/v1/sessions` (JWKS cached, stale up to 6 h if
+  Google is down), Ed25519 session signatures for derive/revoke, the scope check, and `session_key_in_use` (also
+  covers revoked, unexpired sessions) so replays aren't paid for. `GET /v1/app` tells the SDK own vs shared mode.
+- **Retired shared clients.** A client dropped from the shared list can never join a scope (it may return to the
+  shared list).
+- **Fresh deploy only.** The contract state layout changed (config, `Scope.allow_shared`, quarantine reservations,
+  pending-add counts): deploy a new signer, don't upgrade a batch A one. `execute_change` bumps `action_nonce`.
 
 ## Known issues fixed by batch A (were in the PoC)
 

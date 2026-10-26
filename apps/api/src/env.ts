@@ -7,13 +7,17 @@ export interface Env {
   NEAR_RPC: string;
   /** hana-signer contract account: the only receiver the relayer ever calls. */
   SIGNER_ACCOUNT: string;
-  /** Account whose function-call keys (RELAYER_KEYS) pay gas. */
+  /** Account whose function-call keys (RELAYER_KEYS, OWNER_RELAYER_KEYS) pay gas. */
   RELAYER_ACCOUNT: string;
   ENV_NAME: string;
-  /** Secret: JSON array of `ed25519:...` secret keys, one per access key on RELAYER_ACCOUNT. */
+  /** Secret: session pool. JSON array of `ed25519:...` secret keys (create_session, derive_key, revoke_session, prune_sessions). */
   RELAYER_KEYS: string;
+  /** Secret: owner pool. JSON array of `ed25519:...` secret keys, small allowance, used by /v1/owner-actions only. */
+  OWNER_RELAYER_KEYS?: string;
   /** Secret: function-call key on SIGNER_ACCOUNT limited to set_issuer_key / remove_issuer_key. */
   KEYS_UPDATER_KEY?: string;
+  /** Optional per-method gas overrides in Tgas (see gas.ts), e.g. GAS_DERIVE_KEY_TGAS. */
+  [gasOverride: `GAS_${string}_TGAS`]: string | undefined;
   DB: D1Database;
   RELAYER_KEY: DurableObjectNamespace<RelayerKey>;
   RATE_LIMITER: DurableObjectNamespace<RateLimiter>;

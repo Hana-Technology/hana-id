@@ -1,0 +1,11 @@
+node_modules/
+target/
+.wrangler/
+.dev.vars
+.env
+.env.*
+.secrets/
+dist/
+coverage/
+*.log
+.DS_Store

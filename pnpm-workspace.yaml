@@ -10,3 +10,4 @@ allowBuilds:
   esbuild: true
   workerd: true
   sharp: false
+  secp256k1: false

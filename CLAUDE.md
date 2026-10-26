@@ -28,4 +28,4 @@ Plan doc: https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi
 
 - Contract: `cd contracts/hana-signer && cargo test`; wasm: `cargo near build non-reproducible-wasm`
 - TS: `pnpm install`, `pnpm -r test`, `pnpm -r typecheck`
-- API dev: `pnpm --filter api dev`
+- API dev: `pnpm --filter @hana-id/api gen <env> [--dev-vars]`, then `pnpm --filter @hana-id/api dev`

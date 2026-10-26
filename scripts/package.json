@@ -1,0 +1,26 @@
+{
+  "name": "@hana-id/scripts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy-contract": "tsx deploy-contract.ts",
+    "post-google-keys": "tsx post-google-keys.ts",
+    "fetch-ckd-key": "tsx fetch-ckd-key.ts",
+    "admin": "tsx admin.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hana-id/env": "workspace:*",
+    "@near-js/crypto": "2.5.1",
+    "@near-js/transactions": "2.5.1",
+    "@near-js/utils": "2.5.1",
+    "tsx": "4.23.15"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.0"
+  }
+}

@@ -1,0 +1,226 @@
+//! Sessions (an ID token binds a browser-held Ed25519 key to a derivation path) and CKD key release.
+
+use near_sdk::serde::{Deserialize, Serialize};
+use near_sdk::{env, ext_contract, near, Gas, NearToken, Promise, PromiseOrValue};
+use schemars::JsonSchema;
+
+use crate::{oidc, HanaSigner, HanaSignerExt};
+
+/// What the NEAR MPC charges per CKD request.
+const MPC_FEE: NearToken = NearToken::from_yoctonear(1);
+/// The MPC requires at least 15 TGas attached to `request_app_private_key`.
+const CKD_GAS: Gas = Gas::from_tgas(20);
+/// Domain-separates CKD requests from anything else the session key signs.
+pub const CKD_PREFIX: &str = "hana-id-ckd-v1:";
+/// Domain-separates session-key signatures from anything else the key might sign.
+pub const SESSION_DOMAIN: &[u8] = b"hana-embed-session-v1:";
+pub const REVOKE_PAYLOAD: &[u8] = b"revoke";
+
+pub const MAX_SESSION_MS: u64 = 24 * 60 * 60 * 1000;
+pub const MAX_USES: u32 = 500;
+pub const MAX_PRUNE: u32 = 100;
+/// Expired sessions pruned by every `create_session`.
+const PRUNE_ON_CREATE: u32 = 3;
+const MAX_BLS_KEY_BYTES: usize = 512;
+
+/// A session as returned by `create_session` / `get_session`.
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct Session {
+    /// MPC derivation path: `{scope_id}#{provider}#{sub}#{key_index}`.
+    pub path: String,
+    pub scope_id: String,
+    pub expires_at_ms: u64,
+    pub max_uses: u32,
+    /// Uses so far; the next request must carry counter = used + 1.
+    pub used: u32,
+}
+
+#[near(serializers = [borsh])]
+#[derive(Clone, Debug)]
+pub struct StoredSession {
+    pub path: String,
+    pub scope_id: String,
+    pub expires_at_ms: u64,
+    pub max_uses: u32,
+    pub used: u32,
+    /// Revoked sessions stay as tombstones until expiry, so their (public) token can't reopen them.
+    pub revoked: bool,
+}
+
+impl StoredSession {
+    fn view(&self) -> Session {
+        Session { path: self.path.clone(), scope_id: self.scope_id.clone(), expires_at_ms: self.expires_at_ms, max_uses: self.max_uses, used: self.used }
+    }
+}
+
+#[near(serializers = [borsh])]
+pub struct QueueEntry {
+    pub expires_at_ms: u64,
+    pub key: Vec<u8>,
+}
+
+#[allow(dead_code)]
+#[ext_contract(mpc_contract)]
+pub trait MpcContract {
+    fn request_app_private_key(&mut self, request: CkdRequestArgs) -> PromiseOrValue<near_sdk::serde_json::Value>;
+}
+
+/// The browser's ephemeral BLS12-381 key in the MPC's publicly verifiable form: `{"AppPublicKeyPV":{"pk1","pk2"}}`
+/// (near/mpc crates/near-mpc-crypto-types/src/ckd.rs). The MPC checks e(pk1, g2) = e(g1, pk2).
+#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone)]
+#[serde(crate = "near_sdk::serde")]
+pub enum CkdAppPublicKey {
+    AppPublicKeyPV { pk1: String, pk2: String },
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone)]
+#[serde(crate = "near_sdk::serde")]
+pub struct CkdRequestArgs {
+    pub derivation_path: String,
+    pub app_public_key: CkdAppPublicKey,
+    pub domain_id: u64,
+}
+
+/// nonce = b64url(sha256(session_public_key ‖ expires_at_ms u64 LE ‖ key_index u32 LE ‖ salt)).
+pub fn session_nonce(session_public_key: &[u8], expires_at_ms: u64, key_index: u32, salt: &[u8]) -> String {
+    let mut committed = session_public_key.to_vec();
+    committed.extend_from_slice(&expires_at_ms.to_le_bytes());
+    committed.extend_from_slice(&key_index.to_le_bytes());
+    committed.extend_from_slice(salt);
+    oidc::b64url(&env::sha256(&committed))
+}
+
+/// What the session key signs for a CKD request: "hana-id-ckd-v1:" ‖ pk1 ‖ ":" ‖ pk2.
+pub fn ckd_request_bytes(pk1: &str, pk2: &str) -> Vec<u8> {
+    format!("{}{}:{}", CKD_PREFIX, pk1, pk2).into_bytes()
+}
+
+/// "hana-embed-session-v1:" ‖ counter u64 LE ‖ sha256(payload).
+pub fn session_message_bytes(counter: u64, payload: &[u8]) -> Vec<u8> {
+    let mut message = SESSION_DOMAIN.to_vec();
+    message.extend_from_slice(&counter.to_le_bytes());
+    message.extend_from_slice(&env::sha256(payload));
+    message
+}
+
+#[near]
+impl HanaSigner {
+    /// Opens a session for the user in `jwt`, bound to `session_public_key`. The token's `(provider, aud)` must be a
+    /// registered client (its scope picks the keys) and its nonce must equal session_nonce(...). Returns the session.
+    pub fn create_session(&mut self, jwt: String, session_public_key: Vec<u8>, expires_at_ms: u64, salt: Vec<u8>, key_index: u32, max_uses: u32) -> Session {
+        assert!(session_public_key.len() == 32, "Session key must be a 32-byte Ed25519 public key");
+        assert!((16..=64).contains(&salt.len()), "Salt must be 16-64 bytes");
+        let now = env::block_timestamp_ms();
+        assert!(expires_at_ms > now && expires_at_ms <= now.saturating_add(MAX_SESSION_MS), "Session expiry must be within 24 hours");
+        assert!(max_uses > 0 && max_uses <= MAX_USES, "max_uses must be 1-500");
+        if let Some(existing) = self.sessions.get(&session_public_key) {
+            assert!(existing.expires_at_ms <= now, "Session key already in use");
+        }
+
+        let token = self.verify_token(&jwt);
+        let scope_id = self.scope_id_for(&token.provider, &token.aud).unwrap_or_else(|| env::panic_str("Token is for an unregistered app"));
+        let nonce = session_nonce(&session_public_key, expires_at_ms, key_index, &salt);
+        assert!(token.nonce.as_deref() == Some(nonce.as_str()), "Token nonce doesn't commit to this session");
+
+        let stored = StoredSession {
+            path: format!("{}#{}#{}#{}", scope_id, token.provider, token.sub, key_index),
+            scope_id,
+            expires_at_ms,
+            max_uses,
+            used: 0,
+            revoked: false,
+        };
+        let session = stored.view();
+        self.sessions.insert(session_public_key.clone(), stored);
+        self.session_queue.insert(self.queue_tail, QueueEntry { expires_at_ms, key: session_public_key });
+        self.queue_tail += 1;
+        self.prune(PRUNE_ON_CREATE);
+        session
+    }
+
+    /// Full-key mode: asks the MPC's CKD domain for the session path's secret, encrypted to the browser's BLS key
+    /// (`pk1`, `pk2`). `signature` is the session key's Ed25519 signature over
+    /// session_message(counter, "hana-id-ckd-v1:{pk1}:{pk2}"). Returns the MPC's `{big_y, big_c}`.
+    pub fn derive_key(&mut self, session_public_key: Vec<u8>, counter: u64, signature: Vec<u8>, pk1: String, pk2: String) -> Promise {
+        assert!(pk1.len() <= MAX_BLS_KEY_BYTES && pk2.len() <= MAX_BLS_KEY_BYTES, "BLS key too long");
+        let path = self.use_session(&session_public_key, counter, signature, &ckd_request_bytes(&pk1, &pk2));
+        mpc_contract::ext(self.mpc.clone())
+            .with_attached_deposit(MPC_FEE)
+            .with_static_gas(CKD_GAS)
+            .request_app_private_key(CkdRequestArgs { derivation_path: path, app_public_key: CkdAppPublicKey::AppPublicKeyPV { pk1, pk2 }, domain_id: self.ckd_domain_id })
+    }
+
+    /// Ends a session early. Signed by the session key over session_message(counter, "revoke").
+    pub fn revoke_session(&mut self, session_public_key: Vec<u8>, counter: u64, signature: Vec<u8>) {
+        let mut session = self.live_session(&session_public_key);
+        assert!(counter == u64::from(session.used) + 1, "Wrong counter (replayed or out of order)");
+        verify_session_signature(&session_public_key, signature, &session_message_bytes(counter, REVOKE_PAYLOAD));
+        session.revoked = true;
+        self.sessions.insert(session_public_key, session);
+    }
+
+    /// Deletes up to `limit` (≤ 100) expired sessions from the head of the expiry FIFO. Returns how many it deleted.
+    pub fn prune_sessions(&mut self, limit: u32) -> u32 {
+        self.prune(limit.min(MAX_PRUNE))
+    }
+
+    /// `null` if there is no session for this key or it was revoked.
+    pub fn get_session(&self, session_public_key: Vec<u8>) -> Option<Session> {
+        self.sessions.get(&session_public_key).filter(|s| !s.revoked).map(StoredSession::view)
+    }
+
+    /// The bytes a session key signs for request number `counter`: "hana-embed-session-v1:" ‖ counter (u64 LE) ‖ sha256(payload).
+    pub fn session_message(&self, counter: u64, payload: Vec<u8>) -> Vec<u8> {
+        session_message_bytes(counter, &payload)
+    }
+}
+
+fn verify_session_signature(session_public_key: &[u8], signature: Vec<u8>, message: &[u8]) {
+    let pk: [u8; 32] = session_public_key.try_into().unwrap_or_else(|_| env::panic_str("Bad session key"));
+    let sig: [u8; 64] = signature.try_into().unwrap_or_else(|_| env::panic_str("Signature must be 64 bytes"));
+    assert!(env::ed25519_verify(&sig, message, &pk), "Invalid session signature");
+}
+
+impl HanaSigner {
+    fn live_session(&self, session_public_key: &Vec<u8>) -> StoredSession {
+        self.sessions.get(session_public_key).filter(|s| !s.revoked).cloned().unwrap_or_else(|| env::panic_str("No such session"))
+    }
+
+    /// Checks expiry, use limit, counter and signature over `payload`, counts the use, returns the path.
+    fn use_session(&mut self, session_public_key: &Vec<u8>, counter: u64, signature: Vec<u8>, payload: &[u8]) -> String {
+        let mut session = self.live_session(session_public_key);
+        assert!(env::block_timestamp_ms() < session.expires_at_ms, "Session expired");
+        assert!(session.used < session.max_uses, "Session use limit reached");
+        assert!(counter == u64::from(session.used) + 1, "Wrong counter (replayed or out of order)");
+        verify_session_signature(session_public_key, signature, &session_message_bytes(counter, payload));
+        session.used += 1;
+        let path = session.path.clone();
+        self.sessions.insert(session_public_key.clone(), session);
+        path
+    }
+
+    /// Pops up to `limit` queue entries while the head has expired; deletes each entry's session unless it is
+    /// already gone or was replaced by a newer session for the same key. Returns how many sessions it deleted.
+    pub(crate) fn prune(&mut self, limit: u32) -> u32 {
+        let now = env::block_timestamp_ms();
+        let mut deleted = 0;
+        for _ in 0..limit {
+            if self.queue_head >= self.queue_tail {
+                break;
+            }
+            let Some(entry) = self.session_queue.get(&self.queue_head) else { break };
+            if entry.expires_at_ms > now {
+                break;
+            }
+            let (expires_at_ms, key) = (entry.expires_at_ms, entry.key.clone());
+            self.session_queue.remove(&self.queue_head);
+            self.queue_head += 1;
+            if self.sessions.get(&key).is_some_and(|s| s.expires_at_ms == expires_at_ms) {
+                self.sessions.remove(&key);
+                deleted += 1;
+            }
+        }
+        deleted
+    }
+}

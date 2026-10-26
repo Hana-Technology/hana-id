@@ -1,6 +1,6 @@
 [package]
 name = "hana-signer"
-description = "Signs Stellar and EVM payloads with NEAR MPC keys, authorised by a NEAR Auth JWT guard"
+description = "Hana ID: OIDC sessions, per-app scope registry and NEAR MPC confidential key derivation"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"

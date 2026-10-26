@@ -1,0 +1,26 @@
+// Argument → contract-argument conversion for admin.ts scope:register.
+import { CliError } from './cli.ts';
+import { GOOGLE_PROVIDER, type Owner } from './contract.ts';
+
+/** Owners from --owner-near / --owner-google (Owner JSON per the contract's serde form). */
+export function ownersFromArgs(near: string[], google: string[]): Owner[] {
+  const owners: Owner[] = [
+    ...near.map((account_id) => {
+      if (!/^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/u.test(account_id)) throw new CliError(`Invalid NEAR account: ${account_id}`);
+      return { Near: { account_id } };
+    }),
+    ...google.map((sub) => {
+      if (!sub || sub.includes('#') || sub.length > 255) throw new CliError(`Invalid Google sub: ${sub}`);
+      return { Oidc: { provider: GOOGLE_PROVIDER, sub } };
+    }),
+  ];
+  if (owners.length < 1 || owners.length > 5) throw new CliError('A scope needs 1..5 owners (--owner-near / --owner-google)');
+  return owners;
+}
+
+export function clientsFromArgs(clients: string[]): [string, string][] {
+  if (!clients.length) throw new CliError('At least one --client is required');
+  for (const c of clients) if (!c || c.length > 255 || /\s/u.test(c)) throw new CliError(`Invalid client id: ${c}`);
+  if (new Set(clients).size !== clients.length) throw new CliError('Duplicate --client');
+  return clients.map((aud) => [GOOGLE_PROVIDER, aud]);
+}

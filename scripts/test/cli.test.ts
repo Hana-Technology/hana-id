@@ -1,0 +1,54 @@
+import { describe, expect, it } from 'vitest';
+import { CliError, parseCli } from '../lib/cli.ts';
+import { clientsFromArgs, ownersFromArgs } from '../lib/admin-args.ts';
+
+describe('parseCli', () => {
+  const spec = { strings: ['name', 'n'], multiple: ['origin'], booleans: ['yes', 'remote'] };
+
+  it('parses positionals, strings, repeatable and boolean flags', () => {
+    const a = parseCli(['sandbox-dev', 'app:create', '--name', 'Sodax', '--origin', 'https://a.com', '--origin=https://b.com', '--yes'], spec);
+    expect(a.positionals).toEqual(['sandbox-dev', 'app:create']);
+    expect(a.str('name')).toBe('Sodax');
+    expect(a.list('origin')).toEqual(['https://a.com', 'https://b.com']);
+    expect(a.flag('yes')).toBe(true);
+    expect(a.flag('remote')).toBe(false);
+    expect(a.list('name')).toEqual(['Sodax']);
+    expect(a.list('missing')).toEqual([]);
+  });
+
+  it('rejects unknown flags and missing values', () => {
+    expect(() => parseCli(['x', '--nope'], spec)).toThrow(CliError);
+    expect(() => parseCli(['x', '--name'], spec)).toThrow(CliError);
+  });
+
+  it('required and int', () => {
+    const a = parseCli(['--n', '5'], spec);
+    expect(() => a.required('name')).toThrow('--name is required');
+    expect(a.int('n', 3, { min: 1, max: 20 })).toBe(5);
+    expect(a.int('other', 3)).toBe(3);
+    expect(() => parseCli(['--n', '0'], spec).int('n', 3, { min: 1 })).toThrow(CliError);
+    expect(() => parseCli(['--n', '1.5'], spec).int('n', 3)).toThrow(CliError);
+  });
+});
+
+describe('scope:register arguments', () => {
+  it('builds owners in the contract JSON form', () => {
+    expect(ownersFromArgs(['alice.testnet'], ['1234567890'])).toEqual([
+      { Near: { account_id: 'alice.testnet' } },
+      { Oidc: { provider: 'google', sub: '1234567890' } },
+    ]);
+  });
+
+  it('rejects bad owners', () => {
+    expect(() => ownersFromArgs([], [])).toThrow('1..5 owners');
+    expect(() => ownersFromArgs(['Bad Account'], [])).toThrow('Invalid NEAR account');
+    expect(() => ownersFromArgs([], ['a#b'])).toThrow('Invalid Google sub');
+    expect(() => ownersFromArgs(['a1.testnet', 'a2.testnet', 'a3.testnet', 'a4.testnet', 'a5.testnet', 'a6.testnet'], [])).toThrow('1..5 owners');
+  });
+
+  it('builds (provider, aud) client tuples', () => {
+    expect(clientsFromArgs(['x.apps.googleusercontent.com'])).toEqual([['google', 'x.apps.googleusercontent.com']]);
+    expect(() => clientsFromArgs([])).toThrow();
+    expect(() => clientsFromArgs(['a', 'a'])).toThrow('Duplicate');
+  });
+});

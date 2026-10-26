@@ -1,0 +1,4 @@
+# near-workspaces 0.23 needs Rust >= 1.93. The contracts under test keep their own toolchain (1.85.1); the tests
+# build them with it (see tests/common/mod.rs).
+[toolchain]
+channel = "1.94.1"

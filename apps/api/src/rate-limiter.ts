@@ -1,0 +1,59 @@
+// Fixed-window rate limiter. One instance per subject (`app:<id>` or `ip:<address>`); each call checks several
+// windows at once and only counts the hit when every window still has room, so a rejected request costs nothing.
+// The storage calls are synchronous (SQLite-backed KV), so a hit is atomic inside the object.
+import { DurableObject } from 'cloudflare:workers';
+import type { Env } from './env.ts';
+
+export interface Limit {
+  /** Window name, unique per subject (e.g. `minute`, `day`, `<appId>:minute`). */
+  name: string;
+  windowMs: number;
+  max: number;
+}
+
+export type HitResult = { ok: true } | { ok: false; limit: string; retryAfterS: number };
+
+export class RateLimiter extends DurableObject<Env> {
+  hit(limits: Limit[], now: number = Date.now()): HitResult {
+    const kv = this.ctx.storage.kv;
+    const slots = limits.map((l) => {
+      const start = Math.floor(now / l.windowMs) * l.windowMs;
+      const key = `${l.name}@${start}`;
+      return { l, key, start, count: kv.get<number>(key) ?? 0 };
+    });
+    for (const s of slots) {
+      if (s.count >= s.l.max) return { ok: false, limit: s.l.name, retryAfterS: Math.max(1, Math.ceil((s.start + s.l.windowMs - now) / 1000)) };
+    }
+    for (const s of slots) kv.put(s.key, s.count + 1);
+    this.prune(limits, now);
+    return { ok: true };
+  }
+
+  /**
+   * One-time markers (e.g. an owner token already used on chain): `isMarked` is true while a `mark` is unexpired.
+   * Expired markers are dropped on the next `mark`.
+   */
+  isMarked(key: string, now: number = Date.now()): boolean {
+    const until = this.ctx.storage.kv.get<number>(`mark:${key}`);
+    return until !== undefined && until > now;
+  }
+
+  mark(key: string, untilMs: number, now: number = Date.now()): void {
+    const kv = this.ctx.storage.kv;
+    for (const [k, until] of kv.list<number>({ prefix: 'mark:' })) if (until <= now) kv.delete(k);
+    kv.put(`mark:${key}`, untilMs);
+  }
+
+  /** Drops counters of windows that have ended (keys are `<name>@<windowStart>`). */
+  private prune(limits: Limit[], now: number): void {
+    const kv = this.ctx.storage.kv;
+    const byName = new Map(limits.map((l) => [l.name, l.windowMs]));
+    for (const [key] of kv.list<number>()) {
+      if (key.startsWith('mark:')) continue;
+      const at = key.lastIndexOf('@');
+      const windowMs = byName.get(key.slice(0, at));
+      const start = Number(key.slice(at + 1));
+      if (windowMs !== undefined && start + windowMs <= now) kv.delete(key);
+    }
+  }
+}

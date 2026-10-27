@@ -143,5 +143,8 @@ describe('logging', () => {
     const derive = requests.find((l) => l.endpoint === '/v1/derive');
     expect(derive?.colo).toBeUndefined();
     expect(Object.keys(derive?.phases as object).sort()).toEqual(RELAY_PHASES);
+    for (const r of [session, derive]) {
+      expect(r?.relayInstance).toEqual({ cold: expect.any(Boolean), coldChainRead: expect.any(Boolean), blockRefresh: expect.any(Boolean), served: expect.any(Number), ageMs: expect.any(Number) });
+    }
   });
 });

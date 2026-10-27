@@ -19,6 +19,8 @@ export default defineConfig(async () => {
             SIGNER_ACCOUNT: 'signer.test.near',
             RELAYER_ACCOUNT: 'relayer.test.near',
             ENV_NAME: 'test',
+            // The generated wrangler.jsonc may carry an env's hint; tests use unplaced objects unless they set one.
+            DO_LOCATION_HINT: '',
             RELAYER_KEYS: JSON.stringify(relayerKeys),
             OWNER_RELAYER_KEYS: JSON.stringify(ownerRelayerKeys),
             // A gas override (gas.ts) for a method no endpoint relays, so the default gas of the others stays tested.

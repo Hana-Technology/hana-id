@@ -64,10 +64,24 @@ export interface RelayTiming {
 /** The parts of dispatchMs, accumulated across attempts. */
 type DispatchTiming = Pick<RelayTiming, 'queueMs' | 'chainReadMs' | 'signMs' | 'persistMs'>;
 
+/**
+ * Which object instance served the relay, to explain chainReadMs: `cold` when this relay started a new instance
+ * (first use, or after eviction or a deploy), `coldChainRead` when that start had to read the chain, `blockRefresh` when it re-read the reference block,
+ * `served` relays this instance handled before this one, `ageMs` since the instance started.
+ */
+export interface RelayInstance {
+  cold: boolean;
+  /** A cold start that had to read the nonce from chain (no stored reservation for this key). */
+  coldChainRead: boolean;
+  blockRefresh: boolean;
+  served: number;
+  ageMs: number;
+}
+
 export type RelayResult = (
   | { ok: true; result: unknown; nearTx: string }
   | { ok: false; status: number; code: string; error: string; nearTx?: string }
-) & { timing?: RelayTiming };
+) & { timing?: RelayTiming; instance?: RelayInstance };
 
 interface Dispatched {
   hash: string;
@@ -88,7 +102,12 @@ export class RelayerKey extends DurableObject<Env> {
   private reserved = 0n;
   private blockHash: string | null = null;
   private blockHashAt = 0;
+  /** The block hash changed since it was last stored (written after the next broadcast, see dispatch). */
+  private blockDirty = false;
   private queue: Promise<unknown> = Promise.resolve();
+  /** When this instance started, and how many relays it has taken (see RelayInstance). */
+  private readonly startedAt = Date.now();
+  private served = 0;
   private inflight = 0;
 
   /** Requests currently being relayed through this key (dispatched or waiting for an outcome). */
@@ -100,9 +119,10 @@ export class RelayerKey extends DurableObject<Env> {
     const started = Date.now();
     const mark = { dispatched: started };
     const parts: DispatchTiming = { queueMs: 0, chainReadMs: 0, signMs: 0, persistMs: 0 };
-    const result = await this.relayTimed(pool, keyIndex, request, requestId, mark, parts);
+    const instance: RelayInstance = { cold: false, coldChainRead: false, blockRefresh: false, served: this.served++, ageMs: started - this.startedAt };
+    const result = await this.relayTimed(pool, keyIndex, request, requestId, mark, parts, instance);
     const end = Date.now();
-    return { ...result, timing: { dispatchMs: mark.dispatched - started, outcomeMs: end - mark.dispatched, ...parts } };
+    return { ...result, timing: { dispatchMs: mark.dispatched - started, outcomeMs: end - mark.dispatched, ...parts }, instance };
   }
 
   /** `mark.dispatched` is set each time a transaction has been broadcast; `parts` accumulates the dispatch stages. */
@@ -113,6 +133,7 @@ export class RelayerKey extends DurableObject<Env> {
     requestId: string | undefined,
     mark: { dispatched: number },
     parts: DispatchTiming,
+    instance: RelayInstance,
   ): Promise<RelayResult> {
     if (!isPool(pool)) return { ok: false, status: 400, code: 'method_not_allowed', error: 'Unknown relayer pool' };
     const method = request.method;
@@ -129,7 +150,7 @@ export class RelayerKey extends DurableObject<Env> {
       for (let attempt = 0; ; attempt++) {
         let sent: Dispatched;
         try {
-          sent = await this.exclusive(() => this.dispatch(rpc, call, parts), parts);
+          sent = await this.exclusive(() => this.dispatch(rpc, call, parts, instance), parts);
         } catch (err) {
           // An RPC read failed (or, rarely, the reservation write did): either way nothing was sent.
           log({ event: 'relay_dispatch_failed', requestId, pool, keyIndex, method: call.method, code: 'near_unavailable' }, 'error');
@@ -208,12 +229,18 @@ export class RelayerKey extends DurableObject<Env> {
    * Critical section: next nonce, sign, reserve the nonce if it is above the reservation (see NONCE_RESERVATION),
    * start the broadcast. Does not wait for the broadcast to answer.
    */
-  private async dispatch(rpc: Rpc, call: ContractCall, parts: DispatchTiming): Promise<Dispatched> {
+  private async dispatch(rpc: Rpc, call: ContractCall, parts: DispatchTiming, instance: RelayInstance): Promise<Dispatched> {
     const keyPair = this.keyPair;
     if (!keyPair) throw new Error('Relayer key not loaded');
     let at = Date.now();
-    if (this.nonce === null) await this.initNonce(rpc);
-    if (!this.blockHash || Date.now() - this.blockHashAt > BLOCK_HASH_MAX_AGE_MS) await this.refreshBlockHash(rpc);
+    if (this.nonce === null) {
+      instance.cold = true;
+      instance.coldChainRead = (await this.initNonce(rpc)).chainRead;
+    }
+    if (!this.blockHash || Date.now() - this.blockHashAt > BLOCK_HASH_MAX_AGE_MS) {
+      instance.blockRefresh = true;
+      await this.refreshBlockHash(rpc);
+    }
     at = addLap(parts, 'chainReadMs', at);
     const nonce = (this.nonce ?? 0n) + 1n;
     const signed = await signFunctionCall({
@@ -232,24 +259,42 @@ export class RelayerKey extends DurableObject<Env> {
     const response = rpc.sendTx(signed.bytes, RELAY_WAIT_UNTIL);
     // Handled by the caller; this keeps an early rejection from being reported as unhandled.
     response.catch(() => undefined);
+    // After the broadcast has left: an unconfirmed write would hold it (output gate). Losing this write only costs
+    // the next cold start a block read.
+    if (this.blockDirty) this.storeBlock();
     return { hash: signed.hash, nonce, response };
   }
 
   /**
-   * Cold start: the larger of the stored reservation (txs up to it may have been sent and still be in the pool) and
-   * the chain's nonce. Nothing is written: the first dispatch reserves. The reference block is a final one, read
-   * alongside: the access key view answers at an optimistic block, which an RPC node that is a block behind rejects as
-   * `Expired` (seen on testnet, costing a retry).
+   * Cold start. With a reservation stored for this key, it starts from that reservation without reading the chain:
+   * idle objects are evicted after ~10 s (measured on sandbox-dev: every relay of a quiet pool started cold, ~0.24 s of
+   * RPC each), and only this object sends with this key, so every nonce it ever sent is ≤ the reservation. If the key
+   * was used elsewhere anyway, the node answers InvalidNonce and `recover` re-reads the chain (one retry). The stored
+   * block hash is reused while under BLOCK_HASH_MAX_AGE_MS. The first dispatch then reserves a new block of nonces.
+   *
+   * Without a stored reservation (a new or replaced key): the chain's nonce, and a final block read alongside (the
+   * access key view answers at an optimistic block, which an RPC node a block behind rejects as `Expired`).
    */
-  private async initNonce(rpc: Rpc): Promise<void> {
-    const [ak, blockHash] = await Promise.all([rpc.viewAccessKey(this.env.RELAYER_ACCOUNT, this.publicKey), rpc.latestBlockHash()]);
+  private async initNonce(rpc: Rpc): Promise<{ chainRead: boolean }> {
     const kv = this.ctx.storage.kv;
     // A reservation stored for another key (the secret at this index was replaced) says nothing about this one.
-    const stored = kv.get<string>('publicKey') === this.publicKey ? kv.get<string>('nonce') : undefined;
-    this.reserved = stored ? BigInt(stored) : 0n;
-    this.nonce = maxBig(BigInt(ak.nonce), this.reserved);
-    this.blockHash = blockHash;
-    this.blockHashAt = Date.now();
+    const mine = kv.get<string>('publicKey') === this.publicKey;
+    const stored = mine ? kv.get<string>('nonce') : undefined;
+    if (stored) {
+      this.reserved = BigInt(stored);
+      this.nonce = this.reserved;
+      const block = kv.get<{ hash: string; at: number }>('block');
+      if (block && typeof block.hash === 'string' && typeof block.at === 'number') {
+        this.blockHash = block.hash;
+        this.blockHashAt = block.at;
+      }
+      return { chainRead: false };
+    }
+    const [ak, blockHash] = await Promise.all([rpc.viewAccessKey(this.env.RELAYER_ACCOUNT, this.publicKey), rpc.latestBlockHash()]);
+    this.reserved = 0n;
+    this.nonce = BigInt(ak.nonce);
+    this.setBlock(blockHash);
+    return { chainRead: true };
   }
 
   /**
@@ -263,15 +308,26 @@ export class RelayerKey extends DurableObject<Env> {
     } else {
       const [ak, blockHash] = await Promise.all([rpc.viewAccessKey(this.env.RELAYER_ACCOUNT, this.publicKey), rpc.latestBlockHash()]);
       this.nonce = maxBig(this.nonce ?? 0n, BigInt(ak.nonce), akNonce ?? 0n);
-      this.blockHash = blockHash;
-      this.blockHashAt = Date.now();
+      this.setBlock(blockHash);
     }
     addLap(parts, 'chainReadMs', at);
   }
 
   private async refreshBlockHash(rpc: Rpc): Promise<void> {
-    this.blockHash = await rpc.latestBlockHash();
+    this.setBlock(await rpc.latestBlockHash());
+  }
+
+  private setBlock(hash: string): void {
+    this.blockHash = hash;
     this.blockHashAt = Date.now();
+    this.blockDirty = true;
+  }
+
+  /** Stores the reference block for the next cold start (no wait: see dispatch). */
+  private storeBlock(): void {
+    this.ctx.storage.kv.put('publicKey', this.publicKey);
+    this.ctx.storage.kv.put('block', { hash: this.blockHash, at: this.blockHashAt });
+    this.blockDirty = false;
   }
 
   /** Stores a reservation covering `nonce` (above the current one) and waits until the write is confirmed. */

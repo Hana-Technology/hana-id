@@ -137,7 +137,7 @@ describe('RelayerKey Durable Object', () => {
     expect(res).toMatchObject({ ok: false, status: 503, code: 'relayer_busy' });
   });
 
-  it('cold start takes the larger of the stored reservation and the on-chain nonce', async () => {
+  it('cold start trusts its stored reservation without reading the chain; a chain ahead of it is caught by InvalidNonce', async () => {
     const near = new NearMock();
     near.defaultNonce = 40n;
     near.install();
@@ -149,7 +149,9 @@ describe('RelayerKey Durable Object', () => {
     expect(((await stub.relay('session', 0, revokeCall(1))) as RelayResult).ok).toBe(true);
     expect(near.sent.at(-1)!.nonce).toBe(76n);
     expect(await storedNonce(stub)).toBe(76n + RESERVE - 1n);
-    // The chain ahead of the reservation (the key was used elsewhere): the chain wins.
+    // No access key read: the stored reservation is enough.
+    expect(near.rpcMethods).not.toContain('query');
+    // The chain ahead of the reservation (the key was used elsewhere): InvalidNonce, one chain read, then the chain wins.
     const ahead = freshKeyStub();
     await runInDurableObject(ahead, (_instance, state) => {
       state.storage.kv.put('publicKey', publicKeyOf(0));
@@ -157,6 +159,31 @@ describe('RelayerKey Durable Object', () => {
     });
     expect(((await ahead.relay('session', 0, revokeCall(2))) as RelayResult).ok).toBe(true);
     expect(near.sent.at(-1)!.nonce).toBe(77n);
+    expect(near.rpcMethods.filter((m) => m === 'query')).toHaveLength(1);
+  });
+
+  it('restarts warm from storage: no chain reads while the stored block hash is fresh, one block read once it is old', async () => {
+    const near = new NearMock();
+    near.defaultNonce = 300n;
+    near.install();
+    const id = env.RELAYER_KEY.idFromName(`test-${uid()}`);
+    expect(((await env.RELAYER_KEY.get(id).relay('session', 0, revokeCall(1))) as RelayResult).ok).toBe(true);
+    await crash(env.RELAYER_KEY.get(id));
+    const before = near.rpcMethods.length;
+    const warm = (await env.RELAYER_KEY.get(id).relay('session', 0, revokeCall(2))) as RelayResult;
+    expect(warm.ok).toBe(true);
+    expect(warm.instance).toMatchObject({ cold: true, coldChainRead: false, blockRefresh: false, served: 0 });
+    expect(near.rpcMethods.slice(before).filter((m) => m === 'query' || m === 'block')).toEqual([]);
+    expect(near.sent.at(-1)!.nonce).toBe(301n + RESERVE);
+    expect(near.sent.at(-1)!.blockHash).toBe(near.finalBlockHash);
+    // Evicted again, more than 5 min later: the stored hash is too old, so only the block is re-read.
+    await crash(env.RELAYER_KEY.get(id));
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 5 * 60_000 + 1_000);
+    const mark = near.rpcMethods.length;
+    const stale = (await env.RELAYER_KEY.get(id).relay('session', 0, revokeCall(3))) as RelayResult;
+    expect(stale.ok).toBe(true);
+    expect(stale.instance).toMatchObject({ cold: true, coldChainRead: false, blockRefresh: true });
+    expect(near.rpcMethods.slice(mark).filter((m) => m === 'query' || m === 'block')).toEqual(['block']);
   });
 
   it('reserves nonces in blocks: one confirmed write per NONCE_RESERVATION relays, none in between', async () => {

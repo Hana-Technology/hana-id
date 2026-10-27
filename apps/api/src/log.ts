@@ -16,7 +16,7 @@ export interface LogFields {
   /** Cloudflare data center that ran the request (e.g. SIN). */
   colo?: string;
   /** The relayer key object instance that served a relay (see relayer-key.ts RelayInstance). */
-  relayInstance?: { cold: boolean; blockRefresh: boolean; served: number; ageMs: number };
+  relayInstance?: { cold: boolean; coldChainRead: boolean; blockRefresh: boolean; served: number; ageMs: number };
   nearTx?: string;
   pool?: string;
   keyIndex?: number;

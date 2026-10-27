@@ -113,8 +113,13 @@ The key is a function of: MPC network, signer account, path (`scope#provider#sub
   cold after its 70–140 s idle eviction, a block hash over 5 min old) or queueing. The output gate on the per-tx nonce
   write held the send_tx fetch itself, inside `relayOutcome`. Now: nonces are reserved 100 at a time (one confirmed
   write per 100 relays, safety argued in `relayer-key.ts`; a restart skips ≤ 99 nonces, which NEAR allows), and the
-  request log splits the dispatch into `relayQueue` / `relayChainRead` / `relaySign` / `relayPersist`. To confirm
-  on the next deploy.
+  request log splits the dispatch into `relayQueue` / `relayChainRead` / `relaySign` / `relayPersist`.
+- **Relayer cold starts (branch `perf/relayer-cold-start`, 2026-10-27)**: measured with `relayInstance` in the
+  request log, every relay of a quiet pool started a new object instance (idle Durable Objects are evicted after
+  ~10 s; 3 keys round-robin), and the cold start read the nonce and block from chain (`relayChainRead` 0.22–0.58 s).
+  Now a cold start trusts the stored nonce reservation (only that object sends with its key; a key used elsewhere is
+  caught by InvalidNonce and one re-read) and the stored block hash while under 5 min old: no chain read. Each cold
+  start still skips up to 99 nonces and writes one reservation (~3–30 ms).
 - Function-call key allowances drop by gas **burnt**, not attached (refunds restore them): 3 × 2 NEAR covers ~1,500
   logins. Mainnet needs allowance monitoring and key rotation.
 - Google `sub` is the same across the partner and shared clients (same Google Cloud project; expected per account).

@@ -2,6 +2,9 @@ import { z } from 'zod';
 
 const nearAccount = z.string().regex(/^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/u, 'Invalid NEAR account id');
 
+/** Cloudflare Durable Object location hints (https://developers.cloudflare.com/durable-objects/reference/data-location/). */
+export const DO_LOCATION_HINTS = ['wnam', 'enam', 'sam', 'weur', 'eeur', 'apac', 'oc', 'afr', 'me'] as const;
+
 const clientId = z.string().min(1).max(255).regex(/^\S+$/u, 'Client IDs contain no whitespace');
 
 /** One environment's accounts and endpoints. Every account name the code uses comes from here. */
@@ -36,6 +39,12 @@ export const manifestSchema = z
     cloudflare: z.object({
       workerName: z.string().min(1),
       d1Name: z.string().min(1),
+      /**
+       * Region for the Durable Objects every request shares (relayer keys, per-app and owner-action limiters), passed
+       * as a location hint when they are first created. Per-IP limiters stay near their client. Optional: without it
+       * Cloudflare places each object near the first request that uses it. Changing it creates new objects there.
+       */
+      durableObjectLocation: z.enum(DO_LOCATION_HINTS).optional(),
     }),
   })
   .superRefine((m, ctx) => {

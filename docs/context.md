@@ -99,8 +99,15 @@ The key is a function of: MPC network, signer account, path (`scope#provider#sub
 | `revoke_session` | 2.68 Tgas | 0.00025 NEAR | |
 | rejected `derive_key` (limit / replay) | 2.21 Tgas | 0.0002 NEAR | |
 
-- A login is ~40 Tgas (~$0.021 at $5.29/NEAR) and ~10.9 s median for create + derive (PoC: 6.2 s). **Investigate**:
-  API wait-for-execution vs MPC time; a single tx batching `create_session` + `derive_key` would save a round trip.
+- A login is ~40 Tgas (~$0.021 at $5.29/NEAR). The PoC's 6.2 s was `derive_key` alone, not create + derive.
+- **Latency work (branch `perf/api-latency`, 2026-10-27)**: before, create ~4.3 s and derive ~7.1 s (median); requests
+  from Malaysia often ran in US/EU colos (free-plan `workers.dev` routing, also seen on a free custom zone), and the
+  API made sequential chain reads and waited for finality. After (all via SIN, warm): create **2.5 s**, derive
+  **6.0–6.7 s** (median 6.4 s), login ~8.9 s. Per-stage logs (warm): create = checks 0.2 s + relay 2.2 s (chain
+  ~0.6 s); derive = relay ~6.0 s (MPC ~4.5 s on chain). Remaining levers: one transaction for create_session +
+  derive_key (~2 s, contract change: batch B spec), ~0.2 s per relay inside the relayer key object (likely the
+  Durable Object output gate on the nonce write), the 10 s session cache (a derive after it pays ~0.2 s), and
+  Cloudflare routing (paid zone test pending a Hana domain).
 - Function-call key allowances drop by gas **burnt**, not attached (refunds restore them): 3 × 2 NEAR covers ~1,500
   logins. Mainnet needs allowance monitoring and key rotation.
 - Google `sub` is the same across the partner and shared clients (same Google Cloud project; expected per account).

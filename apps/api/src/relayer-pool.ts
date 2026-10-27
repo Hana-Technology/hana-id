@@ -1,5 +1,6 @@
 // Spreads relays across the RelayerKey Durable Objects of a pool (one object per key in that pool's secret).
 import type { Env } from './env.ts';
+import { placedStub } from './placement.ts';
 import type { ContractCall } from './near/tx.ts';
 import { POOL_SECRET, type Pool, parseRelayerKeys, poolAllows, relayerKeyName } from './relayer-config.ts';
 import type { RelayResult } from './relayer-key.ts';
@@ -39,7 +40,7 @@ export async function relay(env: Env, pool: Pool, call: ContractCall, requestId:
   }
   if (count === 0) return { ok: false, status: 503, code: 'relayer_unconfigured', error: 'The relayer is not configured' };
   const keyIndex = pickKeyIndex(count, pool);
-  const stub = env.RELAYER_KEY.get(env.RELAYER_KEY.idFromName(relayerKeyName(pool, keyIndex)));
+  const stub = placedStub(env, env.RELAYER_KEY, relayerKeyName(pool, keyIndex));
   try {
     const result = (await stub.relay(pool, keyIndex, { method: call.method, args: call.args }, requestId)) as RelayResult;
     return { ...result, keyIndex };

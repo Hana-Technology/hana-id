@@ -5,7 +5,13 @@ import { buildDeployPlan, checkFunctionKey, type DeployObserved, type DeployOpti
 import { type AccessKeyListEntry, EMPTY_CODE_HASH } from '../lib/near.ts';
 import { POOL_METHODS as API_POOL_METHODS } from '../../apps/api/src/relayer-config.ts';
 
-const base = loadEnv('sandbox-dev');
+const base = {
+  ...loadEnv('sandbox-dev'),
+  // The Google fields as an undeployed manifest has them; the real envs/sandbox-dev.json changes as it is deployed.
+  googleClientIds: ['UNSET.apps.googleusercontent.com'],
+  sharedGoogleClientIds: ['UNSET-shared.apps.googleusercontent.com'],
+  consoleAudiences: [],
+};
 const SHARED = 'shared.apps.googleusercontent.com';
 const m = { ...base, googleClientIds: ['hana.apps.googleusercontent.com'], sharedGoogleClientIds: [SHARED] };
 const NEAR = 10n ** 24n;

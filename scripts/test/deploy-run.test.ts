@@ -13,7 +13,13 @@ import { DRY_RUN_LINE, type DeployRpc, deployMain } from '../lib/deploy-run.ts';
 import { keysUpdaterFile, poolKeysFile, readPoolKeys, readRelayerKeys, relayerKeysFile, writeRelayerKeys } from '../lib/keys.ts';
 import type { AccessKeyListEntry, AccountView, TxSigner } from '../lib/near.ts';
 
-const m = loadEnv('sandbox-dev');
+const m = {
+  ...loadEnv('sandbox-dev'),
+  // The Google fields as an undeployed manifest has them; the real envs/sandbox-dev.json changes as it is deployed.
+  googleClientIds: ['UNSET.apps.googleusercontent.com'],
+  sharedGoogleClientIds: ['UNSET-shared.apps.googleusercontent.com'],
+  consoleAudiences: [],
+};
 const NEAR = 10n ** 24n;
 const mode = (p: string) => statSync(p).mode & 0o777;
 
@@ -83,6 +89,7 @@ async function deploy(argv: string[], chain: Chain) {
   const out: string[] = [];
   let built = 0;
   const code = await deployMain(argv, {
+    loadManifest: () => m,
     rpc: () => rpc,
     log: (l) => out.push(l),
     home,

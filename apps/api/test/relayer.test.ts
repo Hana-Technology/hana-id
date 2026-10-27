@@ -1,4 +1,5 @@
 import { KeyPair, type KeyPairString } from '@near-js/crypto';
+import { baseEncode } from '@near-js/utils';
 import { env } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -249,6 +250,51 @@ describe('RelayerKey Durable Object', () => {
     ]);
   });
 
+  it('returns once executed (EXECUTED_OPTIMISTIC), for send_tx and for outcome polls', async () => {
+    const near = new NearMock();
+    near.sendTxTimesOut = true;
+    near.install();
+    const result = (await freshKeyStub().relay('session', 0, revokeCall(1))) as RelayResult;
+    expect(result.ok).toBe(true);
+    expect(near.waitUntil.map((w) => w.method)).toEqual(['send_tx', 'tx']);
+    expect(near.waitUntil.every((w) => w.waitUntil === 'EXECUTED_OPTIMISTIC')).toBe(true);
+  });
+
+  it('signs against a final block read on cold start, not the access key view’s optimistic block', async () => {
+    const near = new NearMock();
+    near.finalBlockHash = baseEncode(new Uint8Array(32).fill(9));
+    near.install();
+    const stub = freshKeyStub();
+    expect(((await stub.relay('session', 0, revokeCall(1))) as RelayResult).ok).toBe(true);
+    expect(near.sent[0]!.blockHash).toBe(near.finalBlockHash);
+    expect(near.sent[0]!.blockHash).not.toBe(near.blockHash);
+  });
+
+  it('re-reads a final block when recovering from InvalidNonce', async () => {
+    const near = new NearMock();
+    near.install();
+    const stub = freshKeyStub();
+    expect(((await stub.relay('session', 0, revokeCall(1))) as RelayResult).ok).toBe(true);
+    // Someone else used the key, and a new block became final.
+    near.akNonce.set(publicKeyOf(0), near.nonceOf(publicKeyOf(0)) + 5n);
+    near.finalBlockHash = baseEncode(new Uint8Array(32).fill(11));
+    expect(((await stub.relay('session', 0, revokeCall(2))) as RelayResult).ok).toBe(true);
+    expect(near.sent.at(-1)!.blockHash).toBe(near.finalBlockHash);
+  });
+
+  it('reports the time spent getting a nonce and broadcasting vs waiting for the outcome', async () => {
+    const near = new NearMock();
+    near.onSendTx = () => new Promise((r) => setTimeout(() => r(undefined), 40));
+    near.install();
+    const result = (await freshKeyStub().relay('session', 0, revokeCall(1))) as RelayResult;
+    expect(result.ok).toBe(true);
+    expect(result.timing?.dispatchMs).toBeGreaterThanOrEqual(0);
+    expect(result.timing?.outcomeMs).toBeGreaterThanOrEqual(30);
+    const refused = (await freshKeyStub().relay('session', 0, { method: 'register_scope', args: {} })) as RelayResult;
+    expect(refused.ok).toBe(false);
+    expect(refused.timing).toEqual({ dispatchMs: expect.any(Number), outcomeMs: expect.any(Number) });
+  });
+
   it('fails cleanly for a key index outside its pool', async () => {
     new NearMock().install();
     const res = (await freshKeyStub().relay('session', 99, revokeCall(1))) as RelayResult;
@@ -320,6 +366,22 @@ describe('relayer pool', () => {
       ['revoke_session', publicKeyOf(session.keyIndex!)],
     ]);
     expect(relayerKeyCount(env, 'owner')).toBe(ownerKeys.length);
+  });
+
+  it('pins relayer key objects to DO_LOCATION_HINT through their name; an unknown hint is ignored', async () => {
+    const near = new NearMock();
+    near.install();
+    const placed = await relay({ ...env, DO_LOCATION_HINT: 'apac' }, 'session', revokeCall(1), 'r-apac');
+    expect(placed.ok).toBe(true);
+    const name = `${relayerKeyName('session', placed.keyIndex!)}@apac`;
+    await runInDurableObject(env.RELAYER_KEY.get(env.RELAYER_KEY.idFromName(name)), (_i, state) => {
+      expect(state.storage.kv.get('nonce')).toBe(near.sent[0]!.nonce.toString());
+    });
+    const unknown = await relay({ ...env, DO_LOCATION_HINT: 'mars' }, 'session', revokeCall(2), 'r-mars');
+    expect(unknown.ok).toBe(true);
+    await runInDurableObject(env.RELAYER_KEY.get(env.RELAYER_KEY.idFromName(relayerKeyName('session', unknown.keyIndex!))), (_i, state) => {
+      expect(state.storage.kv.get('nonce')).toBe(near.sent[1]!.nonce.toString());
+    });
   });
 
   it('round-robins across keys', () => {

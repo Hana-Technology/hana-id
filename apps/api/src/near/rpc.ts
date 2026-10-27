@@ -64,6 +64,16 @@ export function invalidNonce(err: unknown): { akNonce: bigint | null } | null {
 /** The tx's block hash is too old (or from a fork): refresh it and retry. */
 export const isExpired = (err: unknown): boolean => err instanceof Error && /\bExpired\b/u.test(err.message + JSON.stringify((err as RpcError).rpc ?? null));
 
+export type TxWaitUntil = 'NONE' | 'INCLUDED' | 'EXECUTED_OPTIMISTIC' | 'EXECUTED' | 'FINAL';
+
+/**
+ * Relayed transactions are answered once every receipt has executed (EXECUTED_OPTIMISTIC), not once the blocks are
+ * final (EXECUTED: 1–2 s later, measured on testnet). Nothing the API returns depends on finality: a session or key
+ * from a block that were never finalised would only make the next call fail on chain, and the CKD answer is the
+ * same for the same request.
+ */
+export const RELAY_WAIT_UNTIL: TxWaitUntil = 'EXECUTED_OPTIMISTIC';
+
 export interface AccessKeyView {
   nonce: number | string;
   block_hash: string;
@@ -128,12 +138,12 @@ export class Rpc {
     return block.header.hash;
   }
 
-  sendTx(signedTxBytes: Uint8Array, waitUntil: 'NONE' | 'INCLUDED' | 'EXECUTED_OPTIMISTIC' | 'EXECUTED' | 'FINAL'): Promise<SendTxResult> {
+  sendTx(signedTxBytes: Uint8Array, waitUntil: TxWaitUntil): Promise<SendTxResult> {
     return this.call<SendTxResult>('send_tx', { signed_tx_base64: base64Encode(signedTxBytes), wait_until: waitUntil });
   }
 
-  txStatus(txHash: string, senderId: string): Promise<FinalOutcome> {
-    return this.call<FinalOutcome>('tx', { tx_hash: txHash, sender_account_id: senderId, wait_until: 'EXECUTED' });
+  txStatus(txHash: string, senderId: string, waitUntil: TxWaitUntil = RELAY_WAIT_UNTIL): Promise<FinalOutcome> {
+    return this.call<FinalOutcome>('tx', { tx_hash: txHash, sender_account_id: senderId, wait_until: waitUntil });
   }
 }
 

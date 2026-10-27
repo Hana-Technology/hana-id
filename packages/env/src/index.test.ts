@@ -9,7 +9,9 @@ describe('loadEnv', () => {
     const env = loadEnv('sandbox-dev');
     expect(env.network).toBe('testnet');
     expect(env.ckdDomainId).toBe(2);
-    expect(env.sharedGoogleClientIds).toEqual(['UNSET-shared.apps.googleusercontent.com']);
+    // Real values once deployed: check the shape, not the IDs.
+    expect(env.sharedGoogleClientIds.length).toBeGreaterThan(0);
+    expect(env.sharedGoogleClientIds.every((id) => id.endsWith('.apps.googleusercontent.com'))).toBe(true);
   });
 
   it('rejects path-like names', () => {
@@ -38,5 +40,23 @@ describe('manifestSchema: Google clients', () => {
     expect(own.error?.issues[0]?.message).toContain('either shared or a scope');
     const console = manifestSchema.safeParse({ ...raw(), consoleAudiences: [['google', 'c.apps']], sharedGoogleClientIds: ['c.apps'] });
     expect(console.success).toBe(false);
+  });
+});
+
+describe('manifestSchema: Durable Object location', () => {
+  const withLocation = (durableObjectLocation: unknown) => {
+    const m = raw();
+    return { ...m, cloudflare: { ...(m.cloudflare as Record<string, unknown>), durableObjectLocation } };
+  };
+
+  it('is optional', () => {
+    const m = raw();
+    const { durableObjectLocation: _, ...cloudflare } = m.cloudflare as Record<string, unknown>;
+    expect(manifestSchema.safeParse({ ...m, cloudflare }).success).toBe(true);
+  });
+
+  it('accepts only Cloudflare location hints', () => {
+    for (const hint of ['apac', 'weur', 'enam']) expect(manifestSchema.safeParse(withLocation(hint)).success).toBe(true);
+    for (const bad of ['asia', 'APAC', '', 1]) expect(manifestSchema.safeParse(withLocation(bad)).success).toBe(false);
   });
 });

@@ -51,6 +51,19 @@ describe('POST /v1/sessions', () => {
     expect(await usage(app.id)).toEqual({ sessions: 1, derives: 0 });
   });
 
+  it('counts usage after responding (waitUntil), not before', async () => {
+    const app = await seedApp();
+    const aud = `${uid()}.apps.googleusercontent.com`;
+    chain({ [aud]: app.scope });
+    const pending: Promise<unknown>[] = [];
+    const exec = { waitUntil: (p: Promise<unknown>) => void pending.push(p), passThroughOnException: () => undefined, props: {} } as unknown as ExecutionContext;
+    const res = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud), exec });
+    expect(res.status).toBe(200);
+    expect(pending).toHaveLength(1);
+    await Promise.all(pending);
+    expect(await usage(app.id)).toEqual({ sessions: 1, derives: 0 });
+  });
+
   it('maps both Google iss forms to provider google', async () => {
     const app = await seedApp();
     const aud = `${uid()}.apps.googleusercontent.com`;

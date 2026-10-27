@@ -17,7 +17,7 @@ function newRequestId(request: Request): string {
 }
 
 export default {
-  async fetch(request, env, _ctx): Promise<Response> {
+  async fetch(request, env, ctx): Promise<Response> {
     const requestId = newRequestId(request);
     const { pathname } = new URL(request.url);
     try {
@@ -33,7 +33,7 @@ export default {
       }
       if (APP_ENDPOINTS.includes(pathname)) {
         if (request.method === 'OPTIONS') return await appPreflight(request, env);
-        if (request.method === 'POST') return await handleAppEndpoint(request, env, pathname as AppEndpoint, requestId);
+        if (request.method === 'POST') return await handleAppEndpoint(request, env, pathname as AppEndpoint, requestId, ctx);
         return json(405, { error: 'Method not allowed', code: 'method_not_allowed', requestId }, { allow: 'POST, OPTIONS' });
       }
       if (pathname === '/v1/owner-actions') {

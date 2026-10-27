@@ -273,7 +273,13 @@ describe('POST /v1/sessions: shared vs own client', () => {
     expect((await body(res)).result).toMatchObject({ scope_id: app.scope, path: `${app.scope}#google#1234567890#2` });
     expect(near.sent).toHaveLength(1);
     expect(near.sent[0]!.args.scope_id).toBe(app.scope);
-    expect(near.viewCalls.map((v) => v.method)).toEqual(['scope_for_client', 'get_config', 'get_scope', 'session_key_in_use']);
+    // session_key_in_use runs alongside the scope checks; get_config and get_scope follow scope_for_client's miss.
+    const views = near.viewCalls.map((v) => v.method);
+    expect([...views].sort()).toEqual(['get_config', 'get_scope', 'scope_for_client', 'session_key_in_use']);
+    expect(views.indexOf('get_config')).toBeGreaterThan(views.indexOf('scope_for_client'));
+    expect(views.indexOf('get_scope')).toBeGreaterThan(views.indexOf('get_config'));
+    // Concurrent: the session-key read does not wait for the scope reads.
+    expect(views.indexOf('session_key_in_use')).toBeLessThan(views.indexOf('get_config'));
   });
 
   it('rejects a shared client for a scope without allow_shared, or a scope that is not on chain', async () => {

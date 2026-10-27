@@ -33,6 +33,7 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
       SIGNER_ACCOUNT: m.signer,
       RELAYER_ACCOUNT: m.relayer,
       ENV_NAME: m.name,
+      ...(m.cloudflare.durableObjectLocation ? { DO_LOCATION_HINT: m.cloudflare.durableObjectLocation } : {}),
     },
     d1_databases: [{ binding: 'DB', database_name: m.cloudflare.d1Name, database_id: d1Id, migrations_dir: 'migrations' }],
     durable_objects: {

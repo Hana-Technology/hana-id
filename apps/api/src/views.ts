@@ -29,6 +29,12 @@ export class TtlCache<V> {
     this.map.set(key, { value, until: now + ttlMs });
   }
 
+  /** Replaces an unexpired entry's value, keeping its expiry. Does nothing if there is none. */
+  update(key: string, change: (value: V) => V, now = Date.now()): void {
+    const hit = this.map.get(key);
+    if (hit && hit.until > now) hit.value = change(hit.value);
+  }
+
   delete(key: string): void {
     this.map.delete(key);
   }
@@ -59,7 +65,10 @@ export interface SessionView {
  */
 const scopeCache = new TtlCache<string | null>(60_000);
 const NO_SCOPE_TTL_MS = 10_000;
-/** session public key → session, ≤ 10 s. Misses (null) are not cached: a session may have just been created. */
+/**
+ * session public key → session, ≤ 10 s. Misses (null) are not cached: a session may have just been created. `used` is
+ * kept in step with this isolate's own successful derives (recordSessionUse); other isolates' uses are not seen.
+ */
 const sessionCache = new TtlCache<SessionView>(10_000);
 
 /** A shared-client addition still in its timelock (`set_shared_clients` additions wait `change_delay_ms`). */
@@ -182,15 +191,33 @@ export async function scopeForClient(env: Env, provider: string, aud: string): P
   return value;
 }
 
-export async function getSession(env: Env, sessionPublicKey: number[]): Promise<SessionView | null> {
+/** A `get_session` answer, and whether it came from this isolate's cache rather than the chain. */
+export interface SessionRead {
+  session: SessionView | null;
+  cached: boolean;
+}
+
+/**
+ * `get_session`, from the cache unless `fresh`. A fresh read replaces the cached entry (or drops it when the session is
+ * gone), except that a higher `used` cached for the same session is kept: it counts a derive this isolate saw
+ * executed, which the node that answered may not show yet (`used` only grows).
+ */
+export async function getSession(env: Env, sessionPublicKey: number[], opts: { fresh?: boolean } = {}): Promise<SessionRead> {
   const key = hex(new Uint8Array(sessionPublicKey));
   const cached = sessionCache.get(key);
-  if (cached) return cached;
-  const session = await new Rpc(env.NEAR_RPC).view<SessionView | null>(env.SIGNER_ACCOUNT, 'get_session', { session_public_key: sessionPublicKey });
-  if (!isSessionView(session)) return null;
+  if (cached && !opts.fresh) return { session: cached, cached: true };
+  const view = await new Rpc(env.NEAR_RPC).view<unknown>(env.SIGNER_ACCOUNT, 'get_session', { session_public_key: sessionPublicKey });
+  if (!isSessionView(view)) {
+    sessionCache.delete(key);
+    return { session: null, cached: false };
+  }
+  const session = cached && sameSession(cached, view) && cached.used > view.used ? { ...view, used: cached.used } : view;
   sessionCache.set(key, session);
-  return session;
+  return { session, cached: false };
 }
+
+/** The same session, not a newer one for the same key (a key is reusable once its session expired). */
+const sameSession = (a: SessionView, b: SessionView): boolean => a.path === b.path && a.scope_id === b.scope_id && a.expires_at_ms === b.expires_at_ms && a.max_uses === b.max_uses;
 
 /**
  * Whether create_session would refuse this key ("Session key already in use"): an unexpired session holds it, revoked
@@ -208,6 +235,15 @@ export function rememberSession(sessionPublicKey: number[], session: SessionView
   sessionCache.set(hex(new Uint8Array(sessionPublicKey)), session);
 }
 
+/**
+ * After our own derive_key with `counter` succeeded: the cached session (if still cached) has used it. Its expiry is
+ * kept, so a revocation from elsewhere is still seen within 10 s of the read. `used` never goes down, so derives that
+ * complete out of order leave the highest.
+ */
+export function recordSessionUse(sessionPublicKey: number[], counter: number): void {
+  sessionCache.update(hex(new Uint8Array(sessionPublicKey)), (s) => ({ ...s, used: Math.max(s.used, counter) }));
+}
+
 export function forgetSession(sessionPublicKey: number[]): void {
   sessionCache.delete(hex(new Uint8Array(sessionPublicKey)));
 }
@@ -215,7 +251,7 @@ export function forgetSession(sessionPublicKey: number[]): void {
 export function isSessionView(v: unknown): v is SessionView {
   if (typeof v !== 'object' || v === null) return false;
   const s = v as Record<string, unknown>;
-  return typeof s.path === 'string' && typeof s.scope_id === 'string' && typeof s.expires_at_ms === 'number';
+  return typeof s.path === 'string' && typeof s.scope_id === 'string' && typeof s.expires_at_ms === 'number' && Number.isSafeInteger(s.max_uses) && Number.isSafeInteger(s.used);
 }
 
 /** Tests only. */

@@ -76,7 +76,7 @@ export interface SessionSigned {
   signature: number[];
 }
 
-export function toDeriveKey(body: unknown): Checked<ContractCall & SessionSigned & { pk1: string; pk2: string }> {
+export function toDeriveKey(body: unknown): Checked<ContractCall & SessionSigned & { method: 'derive_key'; pk1: string; pk2: string }> {
   if (!isObj(body)) return { error: 'Body must be a JSON object' };
   const { sessionPublicKey, counter, signature, pk1, pk2 } = body;
   if (!isBytes(sessionPublicKey, 32, 32) || !isCount(counter) || !isBytes(signature, 64, 64) || !isPoint(pk1, 'bls12381g1:') || !isPoint(pk2, 'bls12381g2:')) {
@@ -85,7 +85,7 @@ export function toDeriveKey(body: unknown): Checked<ContractCall & SessionSigned
   return { sessionPublicKey, counter, signature, pk1, pk2, method: 'derive_key', args: { session_public_key: sessionPublicKey, counter, signature, pk1, pk2 } };
 }
 
-export function toRevokeSession(body: unknown): Checked<ContractCall & SessionSigned> {
+export function toRevokeSession(body: unknown): Checked<ContractCall & SessionSigned & { method: 'revoke_session' }> {
   if (!isObj(body)) return { error: 'Body must be a JSON object' };
   const { sessionPublicKey, counter, signature } = body;
   if (!isBytes(sessionPublicKey, 32, 32) || !isCount(counter) || !isBytes(signature, 64, 64)) return { error: 'Malformed revoke request' };

@@ -210,7 +210,7 @@ describe('POST /v1/sessions: ID token verification', () => {
     const b = await sessionBody(app.scope, aud);
     expect((await post(b)).status).toBe(200);
     const spk = b.sessionPublicKey as number[];
-    expect((await call('/v1/sessions/revoke', { headers: appHeaders(app), body: await revokeBody(spk) })).status).toBe(200);
+    expect((await call('/v1/sessions/revoke', { headers: appHeaders(app), body: await revokeBody(spk, { counter: 1 }) })).status).toBe(200);
     // get_session now hides the session, but the key still blocks create_session on chain.
     clearViewCaches();
     await expectRejected(await post(b), 409, 'session_exists');

@@ -95,9 +95,10 @@ by the contract).
 - [ ] **Shared-only scope**: an app on a scope registered with `--allow-shared` and no client gets `mode: shared`
       from `/v1/app` and logs in.
 - [ ] **Derive again**: counter 2 gives the same addresses; *Derive again* past `max_uses` fails with
-      `Session use limit reached`.
+      `409 session_exhausted` (refused by the API, no transaction).
 - [ ] **Revoke**: *Revoke session* succeeds; *Derive again* afterwards fails (`404 unknown_session`).
-- [ ] **Replay rejected**: *Replay last create_session* → `409 session_exists`; *Replay last derive* → `422
-      contract_rejected` (`Wrong counter`), or `404` after a revoke. "REPLAY ACCEPTED" in the event log is a failure.
+- [ ] **Replay rejected**: *Replay last create_session* → `409 session_exists`; *Replay last derive* → `409
+      counter_used` (refused by the API, no transaction), `409 session_exhausted` once `max_uses` is reached, or `404`
+      after a revoke. "REPLAY ACCEPTED" in the event log is a failure.
 - [ ] **Latency and gas**: copy the results JSON for a few runs and note create_session / derive_key gas against the
       API defaults in `apps/api/src/gas.ts` (50 / 60 Tgas, "to measure on testnet").

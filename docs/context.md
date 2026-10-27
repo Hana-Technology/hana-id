@@ -111,9 +111,12 @@ The key is a function of: MPC network, signer account, path (`scope#provider#sub
 - Function-call key allowances drop by gas **burnt**, not attached (refunds restore them): 3 × 2 NEAR covers ~1,500
   logins. Mainnet needs allowance monitoring and key rotation.
 - Google `sub` is the same across the partner and shared clients (same Google Cloud project; expected per account).
-- Rejected derives (counter replayed, `max_uses` reached) are still relayed and cost ~2.2 Tgas each; signed derive
-  requests are public on-chain, so anyone can replay them. Small, rate-limited; the API could pre-check the session
-  counter with a view call before relaying.
+- Rejected derives (counter replayed, `max_uses` reached) cost ~2.2 Tgas each, and signed derive requests are public
+  on-chain, so anyone can replay them. **Fixed (branch `fix/derive-precheck`, 2026-10-27)**: the API mirrors the
+  contract's counter and `max_uses` rules (`apps/api/src/session-use.ts`) and refuses such derives and revokes
+  off-chain (`409 counter_used` / `session_exhausted` / `counter_out_of_range`), confirming on a fresh `get_session`
+  before refusing on a cached view; a request that might succeed (counter ahead of `used + 1`) is still relayed.
+  Same-counter copies racing in different isolates can still reach the chain (all but one fail there).
 - Attached gas defaults (`apps/api/src/gas.ts`: create_session 50, derive_key 60, revoke 20) have ample headroom;
   left unchanged.
 

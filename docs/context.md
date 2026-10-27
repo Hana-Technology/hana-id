@@ -73,6 +73,43 @@ The key is a function of: MPC network, signer account, path (`scope#provider#sub
 - **Fresh deploy only.** The contract state layout changed (config, `Scope.allow_shared`, quarantine reservations,
   pending-add counts): deploy a new signer, don't upgrade a batch A one. `execute_change` bumps `action_nonce`.
 
+## Batch C decisions (2026-10-27; spec to write)
+
+- **Developer dashboard, like Privy's.** Partners manage orgs, members, apps, origins, keys and on-chain owner actions
+  (`/v1/owner-actions` with a console-client token). Replaces `admin app:*` after the pilot.
+- **Invite-only.** No public sign-up: a Hana admin issues email-bound, single-use, expiring invites (stored hashed);
+  sign-in with Google through the console client; no accepted invite → refused. `public_registration` stays off.
+- **Hana admin console**, separate, behind Cloudflare Access. Contract-billing reports per org/app by day and month
+  (logins, derives, monthly active users, new users, gas burnt + USD, failures, latency), CSV statement. Billing-grade
+  totals in D1 (Analytics Engine keeps 3 months: operational metrics only).
+- **Billing on hold** (no Stripe/plans yet). Sodax is billed by service contract from the monthly statement.
+- **Allowed origins are security-critical** in shared-login mode: changes need a fresh sign-in, are logged and email
+  the other owners (delay before effect: open).
+- **Infra stays Cloudflare** (review in the plan doc, 2026-10-27): cheapest at every volume, DDoS included, no OS,
+  Durable Objects fit the nonce design. Infra is <1% of running cost; NEAR gas (~38 Tgas ≈ $0.02 per login) is the
+  bill, so cut on-chain calls per login (batch B: keep the key across reloads). AWS KMS later only for HSM-grade keys
+  (email issuer). Revisit at D1 ~5 GB, an HSM/region requirement, or ~500 req/s per app.
+
+## Testnet measurements (sandbox-dev, 2026-10-27, real MPC)
+
+| Call | Gas (all receipts) | Cost | Latency (median, API round trip) |
+|---|---|---|---|
+| `create_session` (5 runs) | 19.98–20.15 Tgas | 0.0020 NEAR | 4.3 s (3.6–8.6) |
+| `derive_key` (9 runs) | 19.61–19.88 Tgas | 0.0019 NEAR | 7.1 s (6.0–8.4) |
+| `revoke_session` | 2.68 Tgas | 0.00025 NEAR | |
+| rejected `derive_key` (limit / replay) | 2.21 Tgas | 0.0002 NEAR | |
+
+- A login is ~40 Tgas (~$0.021 at $5.29/NEAR) and ~10.9 s median for create + derive (PoC: 6.2 s). **Investigate**:
+  API wait-for-execution vs MPC time; a single tx batching `create_session` + `derive_key` would save a round trip.
+- Function-call key allowances drop by gas **burnt**, not attached (refunds restore them): 3 × 2 NEAR covers ~1,500
+  logins. Mainnet needs allowance monitoring and key rotation.
+- Google `sub` is the same across the partner and shared clients (same Google Cloud project; expected per account).
+- Rejected derives (counter replayed, `max_uses` reached) are still relayed and cost ~2.2 Tgas each; signed derive
+  requests are public on-chain, so anyone can replay them. Small, rate-limited; the API could pre-check the session
+  counter with a view call before relaying.
+- Attached gas defaults (`apps/api/src/gas.ts`: create_session 50, derive_key 60, revoke 20) have ample headroom;
+  left unchanged.
+
 ## Known issues fixed by batch A (were in the PoC)
 
 Global client-ID list (any listed app could derive every user's key) · sessions never pruned (storage grows forever) ·
@@ -87,7 +124,10 @@ HKDF salt `hana-embed-ckd-v1` → decide final name before freeze.
 
 ## Next steps (handoff, 2026-10-26)
 
-Status: batches A and A.2 plus the smoke page are merged on `develop`, CI green. Nothing is deployed yet. The plan
+Status: batches A and A.2 plus the smoke page are merged on `develop`, CI green. **sandbox-dev is deployed on
+testnet and passed the full smoke checklist (2026-10-27)**: signer `hana-id-signer-dev1.testnet`, API
+`https://hana-id-api-sandbox-dev.tingtc.workers.dev` (personal Cloudflare account: production needs a Hana-owned one),
+apps `s1` (partner client + shared) and `s2` (shared only). Steps 1–4 below are done. The plan
 doc's Status section is the summary for humans: https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi
 
 1. **Human setup** (the user does these; never ask for or handle private keys):
@@ -96,8 +136,8 @@ doc's Status section is the summary for humans: https://claude.ai/artifact/GyQq6
      `near account create-account sponsor-by-faucet-service <name>.testnet autogenerate-new-keypair save-to-legacy-keychain network-config testnet create`
    - Google Cloud OAuth (consent screen in Testing mode with test users): Hana app client → `googleClientIds`;
      a separate shared login client → `sharedGoogleClientIds`; a "partner" client for own-client tests; all with
-     `http://localhost:5173` as an authorized JavaScript origin for the smoke page. Optional console client →
-     `consoleAudiences`.
+     `http://localhost:5173` as an authorized JavaScript origin for the smoke page. A "Hana console" client →
+     `consoleAudiences` (set before the first deploy; batch C signs in with it).
    - Cloudflare account with a workers.dev subdomain; `pnpm --dir apps/api exec wrangler login`.
 2. **Deploy sandbox-dev** (README "deploy a sandbox env" has exact commands): fill the manifest → `fetch-ckd-key` →
    `deploy-contract` (show the plan, deploy only after the user says yes) → `post-google-keys` → D1 create + `gen`
@@ -113,6 +153,7 @@ doc's Status section is the summary for humans: https://claude.ai/artifact/GyQq6
 6. **Then batch B (SDK):** Hana-hosted login page (shared client), vault, `@hana-id/core|web|react`, standard
    interfaces (EIP-1193, Stellar Wallets Kit), optional `@hana-id/sodax` adapter. Write a batch B spec first, as for
    batch A (`docs/batch-a-spec.md`), and fix the HKDF salt name before the address freeze.
+7. **Batch C (dashboard):** write the spec (see Batch C decisions); can run alongside batch B.
 
 Working rules: feature branch → PR into `develop` (an org ruleset requires one approving review from a teammate;
 the user merges). Never bypass the gitleaks hook. Production standards: tests for every behaviour.

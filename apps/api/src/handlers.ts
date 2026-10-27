@@ -8,6 +8,7 @@ import { placedStub } from './placement.ts';
 import { JwksUnavailableError, verifyIdToken } from './jwks.ts';
 import { precheckOwnerAction } from './owner-actions.ts';
 import type { RateLimiter } from './rate-limiter.ts';
+import type { RelayTiming } from './relayer-key.ts';
 import { relay } from './relayer-pool.ts';
 import { ckdPayload, revokePayload, sessionNonce, verifySessionSignature } from './session-crypto.ts';
 import { MAX_BODY, isError, toCreateSession, toDeriveKey, toOwnerAction, toRevokeSession } from './validate.ts';
@@ -61,12 +62,20 @@ function lap(ctx: Ctx, name: string): void {
   ctx.lapAt = now;
 }
 
-/** Records a relay's stages: the round trip to the relayer key object and, inside it, nonce + broadcast vs outcome. */
-function lapRelay(ctx: Ctx, result: { timing?: { dispatchMs: number; outcomeMs: number } }): void {
+/**
+ * Records a relay's stages: the round trip to the relayer key object and, inside it, nonce + broadcast vs outcome,
+ * with the broadcast split into queue / chain reads / signing / nonce reservation (see RelayTiming).
+ */
+function lapRelay(ctx: Ctx, result: { timing?: RelayTiming }): void {
   lap(ctx, 'relay');
-  if (ctx.phases && result.timing) {
-    ctx.phases.relayDispatch = result.timing.dispatchMs;
-    ctx.phases.relayOutcome = result.timing.outcomeMs;
+  const t = result.timing;
+  if (ctx.phases && t) {
+    ctx.phases.relayDispatch = t.dispatchMs;
+    ctx.phases.relayQueue = t.queueMs;
+    ctx.phases.relayChainRead = t.chainReadMs;
+    ctx.phases.relaySign = t.signMs;
+    ctx.phases.relayPersist = t.persistMs;
+    ctx.phases.relayOutcome = t.outcomeMs;
   }
 }
 

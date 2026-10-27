@@ -56,6 +56,8 @@ export interface DeployDeps {
   secretsRoot?: string;
   buildWasm?: (log: (line: string) => void) => string;
   existingWasm?: () => string | null;
+  /** Reads envs/<name>.json (default loadEnv; tests pass a fixture). */
+  loadManifest?: (name: string) => Manifest;
 }
 
 export const defaultDeployDeps = (): DeployDeps => ({ rpc: (url) => new NearRpc(url), log: (line) => console.log(line) });
@@ -228,7 +230,7 @@ export async function deployMain(argv: readonly string[], deps: DeployDeps = def
   }
   const envName = args.positionals[0];
   if (!envName || args.positionals.length > 1) throw new CliError('Expected exactly one <env>');
-  const m = loadEnv(envName);
+  const m = (deps.loadManifest ?? loadEnv)(envName);
   const existingWasm = deps.existingWasm ?? builtWasm;
   const c: Ctx = { m, rpc: deps.rpc(m.rpc), log, home: deps.home, secretsRoot: deps.secretsRoot, buildWasm: deps.buildWasm ?? cargoBuildWasm, existingWasm };
 

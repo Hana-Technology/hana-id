@@ -3,6 +3,9 @@ import { ORIGIN, appHeaders, call, chain, deriveBody, newKey, newSessionKey, see
 
 afterEach(() => vi.restoreAllMocks());
 
+/** Stages logged for a relayed request (sorted): handler stages, then the relayer key object's split of `relay`. */
+const RELAY_PHASES = ['app', 'checks', 'limits', 'relay', 'relayChainRead', 'relayDispatch', 'relayOutcome', 'relayPersist', 'relayQueue', 'relaySign'];
+
 const preflight = (path: string, origin: string | null): Promise<Response> =>
   call(path, {
     method: 'OPTIONS',
@@ -135,10 +138,10 @@ describe('logging', () => {
     const requests = lines.map((l) => JSON.parse(l) as Record<string, unknown>).filter((l) => l.event === 'request');
     const session = requests.find((l) => l.endpoint === '/v1/sessions');
     expect(session?.colo).toBe('SIN');
-    expect(Object.keys(session?.phases as object).sort()).toEqual(['app', 'checks', 'limits', 'relay', 'relayDispatch', 'relayOutcome']);
+    expect(Object.keys(session?.phases as object).sort()).toEqual(RELAY_PHASES);
     for (const ms of Object.values(session?.phases as Record<string, number>)) expect(ms).toBeGreaterThanOrEqual(0);
     const derive = requests.find((l) => l.endpoint === '/v1/derive');
     expect(derive?.colo).toBeUndefined();
-    expect(Object.keys(derive?.phases as object).sort()).toEqual(['app', 'checks', 'limits', 'relay', 'relayDispatch', 'relayOutcome']);
+    expect(Object.keys(derive?.phases as object).sort()).toEqual(RELAY_PHASES);
   });
 });

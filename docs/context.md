@@ -105,15 +105,25 @@ The key is a function of: MPC network, signer account, path (`scope#provider#sub
   API made sequential chain reads and waited for finality. After (all via SIN, warm): create **2.5 s**, derive
   **6.0–6.7 s** (median 6.4 s), login ~8.9 s. Per-stage logs (warm): create = checks 0.2 s + relay 2.2 s (chain
   ~0.6 s); derive = relay ~6.0 s (MPC ~4.5 s on chain). Remaining levers: one transaction for create_session +
-  derive_key (~2 s, contract change: batch B spec), ~0.2 s per relay inside the relayer key object (likely the
-  Durable Object output gate on the nonce write), the 10 s session cache (a derive after it pays ~0.2 s), and
-  Cloudflare routing (paid zone test pending a Hana domain).
+  derive_key (~2 s, contract change: batch B spec), ~0.2 s per relay inside the relayer key object (see next
+  bullet), the 10 s session cache (a derive after it pays ~0.2 s), and Cloudflare routing (paid zone test pending a
+  Hana domain).
+- **Relayer key dispatch (branch `perf/relay-dispatch`, 2026-10-27)**: `relayDispatch` (~0.2 s) can't be the output
+  gate: dispatch doesn't await the broadcast and the Workers clock only advances on I/O, so it is RPC reads (an object
+  cold after its 70–140 s idle eviction, a block hash over 5 min old) or queueing. The output gate on the per-tx nonce
+  write held the send_tx fetch itself, inside `relayOutcome`. Now: nonces are reserved 100 at a time (one confirmed
+  write per 100 relays, safety argued in `relayer-key.ts`; a restart skips ≤ 99 nonces, which NEAR allows), and the
+  request log splits the dispatch into `relayQueue` / `relayChainRead` / `relaySign` / `relayPersist`. To confirm
+  on the next deploy.
 - Function-call key allowances drop by gas **burnt**, not attached (refunds restore them): 3 × 2 NEAR covers ~1,500
   logins. Mainnet needs allowance monitoring and key rotation.
 - Google `sub` is the same across the partner and shared clients (same Google Cloud project; expected per account).
-- Rejected derives (counter replayed, `max_uses` reached) are still relayed and cost ~2.2 Tgas each; signed derive
-  requests are public on-chain, so anyone can replay them. Small, rate-limited; the API could pre-check the session
-  counter with a view call before relaying.
+- Rejected derives (counter replayed, `max_uses` reached) cost ~2.2 Tgas each, and signed derive requests are public
+  on-chain, so anyone can replay them. **Fixed (branch `fix/derive-precheck`, 2026-10-27)**: the API mirrors the
+  contract's counter and `max_uses` rules (`apps/api/src/session-use.ts`) and refuses such derives and revokes
+  off-chain (`409 counter_used` / `session_exhausted` / `counter_out_of_range`), confirming on a fresh `get_session`
+  before refusing on a cached view; a request that might succeed (counter ahead of `used + 1`) is still relayed.
+  Same-counter copies racing in different isolates can still reach the chain (all but one fail there).
 - Attached gas defaults (`apps/api/src/gas.ts`: create_session 50, derive_key 60, revoke 20) have ample headroom;
   left unchanged.
 

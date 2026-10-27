@@ -8,10 +8,12 @@ import { placedStub } from './placement.ts';
 import { JwksUnavailableError, verifyIdToken } from './jwks.ts';
 import { precheckOwnerAction } from './owner-actions.ts';
 import type { RateLimiter } from './rate-limiter.ts';
+import type { RelayTiming } from './relayer-key.ts';
 import { relay } from './relayer-pool.ts';
 import { ckdPayload, revokePayload, sessionNonce, verifySessionSignature } from './session-crypto.ts';
+import { claimCounter, precheckSessionUse } from './session-use.ts';
 import { MAX_BODY, isError, toCreateSession, toDeriveKey, toOwnerAction, toRevokeSession } from './validate.ts';
-import { effectiveSharedClients, forgetScope, forgetSession, getConfig, getScope, getSession, isSessionView, isSharedClient, rememberSession, scopeForClient, sessionKeyInUse } from './views.ts';
+import { effectiveSharedClients, forgetScope, forgetSession, getConfig, getScope, isSessionView, isSharedClient, recordSessionUse, rememberSession, scopeForClient, sessionKeyInUse } from './views.ts';
 
 const APP_ALLOW_HEADERS = 'content-type, x-hana-key';
 const APP_METHODS = 'GET, POST, OPTIONS';
@@ -61,12 +63,20 @@ function lap(ctx: Ctx, name: string): void {
   ctx.lapAt = now;
 }
 
-/** Records a relay's stages: the round trip to the relayer key object and, inside it, nonce + broadcast vs outcome. */
-function lapRelay(ctx: Ctx, result: { timing?: { dispatchMs: number; outcomeMs: number } }): void {
+/**
+ * Records a relay's stages: the round trip to the relayer key object and, inside it, nonce + broadcast vs outcome,
+ * with the broadcast split into queue / chain reads / signing / nonce reservation (see RelayTiming).
+ */
+function lapRelay(ctx: Ctx, result: { timing?: RelayTiming }): void {
   lap(ctx, 'relay');
-  if (ctx.phases && result.timing) {
-    ctx.phases.relayDispatch = result.timing.dispatchMs;
-    ctx.phases.relayOutcome = result.timing.outcomeMs;
+  const t = result.timing;
+  if (ctx.phases && t) {
+    ctx.phases.relayDispatch = t.dispatchMs;
+    ctx.phases.relayQueue = t.queueMs;
+    ctx.phases.relayChainRead = t.chainReadMs;
+    ctx.phases.relaySign = t.signMs;
+    ctx.phases.relayPersist = t.persistMs;
+    ctx.phases.relayOutcome = t.outcomeMs;
   }
 }
 
@@ -280,34 +290,45 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     payload = revokePayload();
   }
 
-  // 5. The session key signed this request (Ed25519 over the session message); counter freshness is the contract's.
+  // 5. The session key signed this request (Ed25519 over the session message).
   if (!(await verifySessionSignature(call.sessionPublicKey, call.counter, call.signature, payload))) {
     return reject(ctx, 401, 'invalid_signature', 'Invalid session signature');
   }
 
-  // 6. The session must belong to this app's scope.
-  let session;
+  // 6. The session belongs to this app's scope, is live and can still take this counter (the contract's rules,
+  //    session-use.ts): a replayed request or one past the use limit would only fail on chain, at the relayer's cost.
+  //    A second request for the same counter waits here for the first.
+  const release = await claimCounter(call.sessionPublicKey, call.counter);
   try {
-    session = await getSession(env, call.sessionPublicKey);
-  } catch {
-    return reject(ctx, 502, 'near_unavailable', 'Could not read the session');
-  }
-  if (!session) return reject(ctx, 404, 'unknown_session', 'Unknown or expired session');
-  if (session.scope_id !== app.scope_id) return reject(ctx, 403, 'scope_mismatch', 'Session belongs to a different app');
-  if (session.expires_at_ms <= now) return reject(ctx, 404, 'unknown_session', 'Unknown or expired session');
-  lap(ctx, 'checks');
+    let check;
+    try {
+      check = await precheckSessionUse(env, app.scope_id, call.method, call.sessionPublicKey, call.counter);
+    } catch {
+      return reject(ctx, 502, 'near_unavailable', 'Could not read the session');
+    }
+    const { rejection } = check;
+    if (rejection) return done(ctx, rejection.status, { error: rejection.error, code: rejection.code, nextCounter: rejection.nextCounter });
+    lap(ctx, 'checks');
 
-  const result = await relay(env, 'session', { method: call.method, args: call.args }, requestId);
-  lapRelay(ctx, result);
-  if (endpoint === '/v1/sessions/revoke') forgetSession(call.sessionPublicKey);
-  if (!result.ok) return done(ctx, result.status, { error: result.error, code: result.code, nearTx: result.nearTx });
-  if (endpoint === '/v1/derive') {
-    const r = result.result as { big_y?: unknown; big_c?: unknown } | null;
-    if (!r || typeof r.big_y !== 'string' || typeof r.big_c !== 'string') return done(ctx, 502, { error: 'The contract returned no key', code: 'bad_contract_result', nearTx: result.nearTx });
-    await countUsage(env, app.id, 'derives', ctx, exec);
-    return done(ctx, 200, { result: { big_y: r.big_y, big_c: r.big_c }, nearTx: result.nearTx });
+    const result = await relay(env, 'session', { method: call.method, args: call.args }, requestId);
+    lapRelay(ctx, result);
+    // A derive that succeeded used its counter: count it in the cached session, if that is still the session it was
+    // judged against (the key may have opened a new one while the derive ran). Anything else may have changed the
+    // session or not (a revoke ends it; a derive whose MPC call failed still counted the use; an unknown outcome may
+    // land), so the next request reads it from chain.
+    if (endpoint === '/v1/derive' && result.ok) recordSessionUse(call.sessionPublicKey, call.counter, check.session);
+    else forgetSession(call.sessionPublicKey);
+    if (!result.ok) return done(ctx, result.status, { error: result.error, code: result.code, nearTx: result.nearTx });
+    if (endpoint === '/v1/derive') {
+      const r = result.result as { big_y?: unknown; big_c?: unknown } | null;
+      if (!r || typeof r.big_y !== 'string' || typeof r.big_c !== 'string') return done(ctx, 502, { error: 'The contract returned no key', code: 'bad_contract_result', nearTx: result.nearTx });
+      await countUsage(env, app.id, 'derives', ctx, exec);
+      return done(ctx, 200, { result: { big_y: r.big_y, big_c: r.big_c }, nearTx: result.nearTx });
+    }
+    return done(ctx, 200, { result: null, nearTx: result.nearTx });
+  } finally {
+    release();
   }
-  return done(ctx, 200, { result: null, nearTx: result.nearTx });
 }
 
 /**

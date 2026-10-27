@@ -387,7 +387,7 @@ describe('POST /v1/derive and /v1/sessions/revoke', () => {
     expect(near.viewCalls.filter((v) => v.method === 'session_key_in_use')).toHaveLength(1);
     expect(near.viewCalls.filter((v) => v.method === 'get_session')).toHaveLength(0);
     expect(await usage(app.id)).toEqual({ sessions: 1, derives: 2 });
-    expect((await call('/v1/sessions/revoke', { headers: appHeaders(app), body: await revokeBody(spk) })).status).toBe(200);
+    expect((await call('/v1/sessions/revoke', { headers: appHeaders(app), body: await revokeBody(spk, { counter: 3 }) })).status).toBe(200);
     expect(await usage(app.id)).toEqual({ sessions: 1, derives: 2 });
   });
 

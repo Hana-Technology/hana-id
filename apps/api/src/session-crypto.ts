@@ -52,7 +52,7 @@ export const revokePayload = (): Uint8Array => utf8(REVOKE_PAYLOAD);
 
 /**
  * Ed25519 (WebCrypto) check of a session-key signature over sessionMessage(counter, payload). False for any malformed
- * key or signature. Counter freshness is left to the contract.
+ * key or signature. Counter freshness is checked against the session (session-use.ts) and, finally, by the contract.
  */
 export async function verifySessionSignature(sessionPublicKey: number[], counter: number, signature: number[], payload: Uint8Array): Promise<boolean> {
   if (sessionPublicKey.length !== 32 || signature.length !== 64) return false;

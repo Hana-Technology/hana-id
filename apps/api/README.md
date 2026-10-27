@@ -82,9 +82,19 @@ Checks, in order (rejected before anything is relayed):
      session answers without a view call; "not in use" is always read from chain.
 6. `/v1/derive`, `/v1/sessions/revoke`: the Ed25519 signature (WebCrypto) of `sessionPublicKey` over
    `"hana-id-session-v1:" ‖ counter u64 LE ‖ sha256(payload)` must verify, payload `"hana-id-ckd-v1:{pk1}:{pk2}"` or
-   `"revoke"` (`401 invalid_signature`; counter freshness is left to the contract). Then `get_session` (cached 10 s,
-   misses not cached) must exist, be unexpired (`404 unknown_session`) and belong to the app's scope
-   (`403 scope_mismatch`).
+   `"revoke"` (`401 invalid_signature`). Then `get_session` (cached 10 s, misses not cached) must exist, belong to the
+   app's scope (`403 scope_mismatch`) and be unexpired (`404 unknown_session`), and the request must be one the
+   contract could still accept (`src/session-use.ts` mirrors its rules), so replays of the public signed requests
+   cost no gas: `409 session_exhausted` (derive with `used = max_uses`), `409 counter_used` (counter ≤ `used`, a
+   replay) and `409 counter_out_of_range` (counter past `max_uses`, or `max_uses + 1` for a revoke, which ignores the
+   limit); the counter errors carry `nextCounter` (`used + 1`). A counter ahead of `used + 1` is relayed (the requests
+   before it may be in flight). The cache counts this isolate's successful derives in the session each was judged
+   against (keeping the entry's expiry; if the key has opened a new session meanwhile, the entry is dropped instead)
+   and is dropped after any other outcome; a request the cache would refuse is judged again on a fresh read, so a
+   counter advanced or a session replaced in another isolate never gets a valid request refused. A fresh read keeps
+   a higher cached `used` for the same session (a lagging node can't reopen a replay window) until the entry's
+   expiry, at most 10 s. A second request for the same session counter waits in this isolate until the first is done,
+   then is judged on its outcome.
 
 `GET /v1/app` runs checks 1–2 and a per-IP limit of its own (the plan's `per_ip_minute`, separate window), never the
 app's relay quota. `google` is `own` with the scope's first Google client, else `shared` with the first shared client

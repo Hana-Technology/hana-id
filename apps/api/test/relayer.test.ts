@@ -5,7 +5,7 @@ import { runInDurableObject } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_GAS_TGAS, MAX_CLIENT_PROOFS, MAX_TGAS, TGAS, gasEnvVar, gasFor, registerScopeTgas } from '../src/gas.ts';
 import { POOL_METHODS, type Pool } from '../src/relayer-config.ts';
-import { type RelayerKey, type RelayResult, parseRelayerKeys } from '../src/relayer-key.ts';
+import { NONCE_RESERVATION, type RelayerKey, type RelayResult, parseRelayerKeys } from '../src/relayer-key.ts';
 import { pickKeyIndex, relay, relayerKeyCount, relayerKeyName } from '../src/relayer-pool.ts';
 import { clearViewCaches } from '../src/views.ts';
 import { appHeaders, call, chain, seedApp, seedPlan, sessionBody, uid } from './helpers.ts';
@@ -23,6 +23,34 @@ function freshKeyStub(): DurableObjectStub<RelayerKey> {
 }
 
 const revokeCall = (i: number) => ({ method: 'revoke_session', args: { session_public_key: Array(32).fill(i % 256), counter: 1, signature: Array(64).fill(1) } });
+
+const RESERVE = BigInt(NONCE_RESERVATION);
+
+/** The object's stored nonce reservation (see NONCE_RESERVATION). */
+async function storedNonce(stub: DurableObjectStub<RelayerKey>): Promise<bigint> {
+  return BigInt(await runInDurableObject(stub, (_instance, state) => state.storage.kv.get<string>('nonce') ?? '0'));
+}
+
+/** Counts the object's `storage.sync()` calls (confirmed reservation writes) from now on. */
+async function countSyncs(stub: DurableObjectStub<RelayerKey>): Promise<() => number> {
+  let spy: { mock: { calls: unknown[] } } | undefined;
+  await runInDurableObject(stub, (_instance, state) => {
+    spy = vi.spyOn(state.storage, 'sync');
+  });
+  return () => spy?.mock.calls.length ?? -1;
+}
+
+/** Crashes the object, as an eviction, deploy or runtime restart would: memory is lost, storage is kept. */
+async function crash(stub: DurableObjectStub<RelayerKey>): Promise<void> {
+  await runInDurableObject(stub, (_instance, state) => state.abort('test crash')).catch(() => undefined);
+}
+
+async function until(cond: () => boolean): Promise<void> {
+  for (let i = 0; !cond(); i++) {
+    if (i > 200) throw new Error('Timed out waiting for a condition');
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
 
 function expectConsecutive(nonces: bigint[], from: bigint): void {
   const sorted = [...nonces].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
@@ -109,7 +137,7 @@ describe('RelayerKey Durable Object', () => {
     expect(res).toMatchObject({ ok: false, status: 503, code: 'relayer_busy' });
   });
 
-  it('cold start takes the larger of the stored and on-chain nonce', async () => {
+  it('cold start takes the larger of the stored reservation and the on-chain nonce', async () => {
     const near = new NearMock();
     near.defaultNonce = 40n;
     near.install();
@@ -120,8 +148,122 @@ describe('RelayerKey Durable Object', () => {
     });
     expect(((await stub.relay('session', 0, revokeCall(1))) as RelayResult).ok).toBe(true);
     expect(near.sent.at(-1)!.nonce).toBe(76n);
-    const stored = await runInDurableObject(stub, (_i, state) => state.storage.kv.get<string>('nonce'));
-    expect(stored).toBe('76');
+    expect(await storedNonce(stub)).toBe(76n + RESERVE - 1n);
+    // The chain ahead of the reservation (the key was used elsewhere): the chain wins.
+    const ahead = freshKeyStub();
+    await runInDurableObject(ahead, (_instance, state) => {
+      state.storage.kv.put('publicKey', publicKeyOf(0));
+      state.storage.kv.put('nonce', '30');
+    });
+    expect(((await ahead.relay('session', 0, revokeCall(2))) as RelayResult).ok).toBe(true);
+    expect(near.sent.at(-1)!.nonce).toBe(77n);
+  });
+
+  it('reserves nonces in blocks: one confirmed write per NONCE_RESERVATION relays, none in between', async () => {
+    const near = new NearMock();
+    near.defaultNonce = 500n;
+    near.install();
+    const stub = freshKeyStub();
+    const syncs = await countSyncs(stub);
+    expect(((await stub.relay('session', 0, revokeCall(0))) as RelayResult).ok).toBe(true);
+    expect(near.sent[0]!.nonce).toBe(501n);
+    expect(await storedNonce(stub)).toBe(500n + RESERVE);
+    expect(syncs()).toBe(1);
+    // The rest of the block: no writes, the stored reservation stays.
+    const rest = (await Promise.all(Array.from({ length: NONCE_RESERVATION - 1 }, (_, i) => stub.relay('session', 0, revokeCall(i + 1))))) as RelayResult[];
+    expect(rest.every((r) => r.ok && r.timing!.persistMs === 0)).toBe(true);
+    expect(near.sent.at(-1)!.nonce).toBe(500n + RESERVE);
+    expect(await storedNonce(stub)).toBe(500n + RESERVE);
+    expect(syncs()).toBe(1);
+    // The next nonce leaves the block: a new reservation is confirmed before it is sent.
+    expect(((await stub.relay('session', 0, revokeCall(999))) as RelayResult).ok).toBe(true);
+    expect(near.sent.at(-1)!.nonce).toBe(501n + RESERVE);
+    expect(await storedNonce(stub)).toBe(500n + 2n * RESERVE);
+    expect(syncs()).toBe(2);
+    expectConsecutive(near.sent.map((t) => t.nonce), 501n);
+  });
+
+  it('never reuses a nonce after a crash, while its txs are still unconfirmed in the pool', async () => {
+    const near = new NearMock();
+    near.defaultNonce = 100n;
+    const signed: bigint[] = [];
+    // Broadcasts that never answer and are never included: the chain's nonce stays at 100.
+    near.onSendTx = (tx) => {
+      signed.push(tx.nonce);
+      return new Promise(() => undefined);
+    };
+    near.install();
+    const id = env.RELAYER_KEY.idFromName(`test-${uid()}`);
+    const stub = env.RELAYER_KEY.get(id);
+    const hung = Promise.allSettled(Array.from({ length: 3 }, (_, i) => stub.relay('session', 0, revokeCall(i))));
+    await until(() => signed.length === 3);
+    await crash(stub);
+    // The in-flight requests fail with the reset (the Worker answers relayer_unavailable).
+    expect((await hung).map((r) => r.status)).toEqual(['rejected', 'rejected', 'rejected']);
+    expect(signed).toEqual([101n, 102n, 103n]);
+    expect(near.nonceOf(publicKeyOf(0))).toBe(100n);
+
+    // Cold start (same object, new instance): starts above the reservation, never at 101–103 again.
+    near.onSendTx = (tx) => void signed.push(tx.nonce);
+    const restarted = env.RELAYER_KEY.get(id);
+    expect(((await restarted.relay('session', 0, revokeCall(9))) as RelayResult).ok).toBe(true);
+    expect(signed.at(-1)).toBe(101n + RESERVE);
+    expect(await storedNonce(restarted)).toBe(100n + 2n * RESERVE);
+    expect(new Set(signed.map(String)).size).toBe(signed.length);
+  });
+
+  it('a nonce recovered from InvalidNonce above the reservation is reserved before it is sent', async () => {
+    const near = new NearMock();
+    near.defaultNonce = 10n;
+    near.install();
+    const id = env.RELAYER_KEY.idFromName(`test-${uid()}`);
+    const stub = env.RELAYER_KEY.get(id);
+    expect(((await stub.relay('session', 0, revokeCall(1))) as RelayResult).ok).toBe(true);
+    expect(await storedNonce(stub)).toBe(10n + RESERVE);
+    // Someone else used the key, far past the reservation.
+    near.akNonce.set(publicKeyOf(0), 10n + 5n * RESERVE);
+    expect(((await stub.relay('session', 0, revokeCall(2))) as RelayResult).ok).toBe(true);
+    expect(near.sent.at(-1)!.nonce).toBe(11n + 5n * RESERVE);
+    expect(await storedNonce(stub)).toBe(10n + 6n * RESERVE);
+    // Crash with the chain behind (the retried tx not yet included): the restart still starts above it.
+    near.akNonce.set(publicKeyOf(0), 10n);
+    await crash(stub);
+    expect(((await env.RELAYER_KEY.get(id).relay('session', 0, revokeCall(3))) as RelayResult).ok).toBe(true);
+    expect(near.sent.at(-1)!.nonce).toBe(11n + 6n * RESERVE);
+  });
+
+  it('a nonce recovered from InvalidNonce inside the reservation needs no write, and survives a crash', async () => {
+    const near = new NearMock();
+    near.defaultNonce = 10n;
+    near.install();
+    const id = env.RELAYER_KEY.idFromName(`test-${uid()}`);
+    const stub = env.RELAYER_KEY.get(id);
+    expect(((await stub.relay('session', 0, revokeCall(1))) as RelayResult).ok).toBe(true);
+    const syncs = await countSyncs(stub);
+    near.akNonce.set(publicKeyOf(0), 50n);
+    const retried = (await stub.relay('session', 0, revokeCall(2))) as RelayResult;
+    expect(retried.ok).toBe(true);
+    expect(near.sent.at(-1)!.nonce).toBe(51n);
+    expect(syncs()).toBe(0);
+    expect(await storedNonce(stub)).toBe(10n + RESERVE);
+    await crash(stub);
+    expect(((await env.RELAYER_KEY.get(id).relay('session', 0, revokeCall(3))) as RelayResult).ok).toBe(true);
+    expect(near.sent.at(-1)!.nonce).toBe(11n + RESERVE);
+  });
+
+  it('sends nothing when the reservation write fails, and does not skip the nonce', async () => {
+    const near = new NearMock();
+    near.defaultNonce = 70n;
+    near.install();
+    const stub = freshKeyStub();
+    await runInDurableObject(stub, (_instance, state) => {
+      vi.spyOn(state.storage, 'sync').mockRejectedValueOnce(new Error('storage write failed'));
+    });
+    expect((await stub.relay('session', 0, revokeCall(1))) as RelayResult).toMatchObject({ ok: false, status: 502, code: 'near_unavailable' });
+    expect(near.rpcMethods).not.toContain('send_tx');
+    expect(((await stub.relay('session', 0, revokeCall(2))) as RelayResult).ok).toBe(true);
+    expect(near.sent.map((t) => t.nonce)).toEqual([71n]);
+    expect(await storedNonce(stub)).toBe(70n + RESERVE);
   });
 
   it('ignores a stored nonce that belonged to a different key', async () => {
@@ -292,7 +434,34 @@ describe('RelayerKey Durable Object', () => {
     expect(result.timing?.outcomeMs).toBeGreaterThanOrEqual(30);
     const refused = (await freshKeyStub().relay('session', 0, { method: 'register_scope', args: {} })) as RelayResult;
     expect(refused.ok).toBe(false);
-    expect(refused.timing).toEqual({ dispatchMs: expect.any(Number), outcomeMs: expect.any(Number) });
+    expect(refused.timing).toEqual({ dispatchMs: expect.any(Number), outcomeMs: expect.any(Number), queueMs: 0, chainReadMs: 0, signMs: 0, persistMs: 0 });
+  });
+
+  it('splits the dispatch time into queue, chain reads, signing and reservation', async () => {
+    const near = new NearMock();
+    near.readDelayMs = 40;
+    near.install();
+    const stub = freshKeyStub();
+    // Cold start: the first relay reads the access key and a block; the second waits for it in the queue.
+    const [cold, queued] = (await Promise.all([stub.relay('session', 0, revokeCall(1)), stub.relay('session', 0, revokeCall(2))])) as RelayResult[];
+    expect(cold!.ok && queued!.ok).toBe(true);
+    expect(cold!.timing!.chainReadMs).toBeGreaterThanOrEqual(30);
+    expect(cold!.timing!.queueMs).toBeLessThan(30);
+    expect(queued!.timing!.queueMs).toBeGreaterThanOrEqual(30);
+    expect(queued!.timing!.chainReadMs).toBe(0);
+    for (const t of [cold!.timing!, queued!.timing!]) {
+      expect(t.dispatchMs).toBeGreaterThanOrEqual(t.queueMs + t.chainReadMs + t.signMs + t.persistMs);
+      expect(t.signMs).toBeGreaterThanOrEqual(0);
+      expect(t.persistMs).toBeGreaterThanOrEqual(0);
+    }
+    // Warm, inside the reservation: no RPC reads, no storage write.
+    const warm = (await stub.relay('session', 0, revokeCall(3))) as RelayResult;
+    expect(warm.timing).toMatchObject({ queueMs: 0, chainReadMs: 0, persistMs: 0 });
+    // A recovery's re-read counts as chain reads.
+    near.akNonce.set(publicKeyOf(0), near.nonceOf(publicKeyOf(0)) + 3n);
+    const retried = (await stub.relay('session', 0, revokeCall(4))) as RelayResult;
+    expect(retried.ok).toBe(true);
+    expect(retried.timing!.chainReadMs).toBeGreaterThanOrEqual(30);
   });
 
   it('fails cleanly for a key index outside its pool', async () => {
@@ -374,14 +543,14 @@ describe('relayer pool', () => {
     const placed = await relay({ ...env, DO_LOCATION_HINT: 'apac' }, 'session', revokeCall(1), 'r-apac');
     expect(placed.ok).toBe(true);
     const name = `${relayerKeyName('session', placed.keyIndex!)}@apac`;
-    await runInDurableObject(env.RELAYER_KEY.get(env.RELAYER_KEY.idFromName(name)), (_i, state) => {
-      expect(state.storage.kv.get('nonce')).toBe(near.sent[0]!.nonce.toString());
-    });
+    // The named object holds the reservation covering the nonce it sent.
+    expect(await storedNonce(env.RELAYER_KEY.get(env.RELAYER_KEY.idFromName(name)))).toBe(near.sent[0]!.nonce + RESERVE - 1n);
     const unknown = await relay({ ...env, DO_LOCATION_HINT: 'mars' }, 'session', revokeCall(2), 'r-mars');
     expect(unknown.ok).toBe(true);
-    await runInDurableObject(env.RELAYER_KEY.get(env.RELAYER_KEY.idFromName(relayerKeyName('session', unknown.keyIndex!))), (_i, state) => {
-      expect(state.storage.kv.get('nonce')).toBe(near.sent[1]!.nonce.toString());
-    });
+    // Earlier tests may have relayed through this unhinted object: its reservation covers the nonce, maybe more.
+    const reserved = await storedNonce(env.RELAYER_KEY.get(env.RELAYER_KEY.idFromName(relayerKeyName('session', unknown.keyIndex!))));
+    expect(reserved).toBeGreaterThanOrEqual(near.sent[1]!.nonce);
+    expect(reserved).toBeLessThan(near.sent[1]!.nonce + RESERVE);
   });
 
   it('round-robins across keys', () => {

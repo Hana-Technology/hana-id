@@ -53,7 +53,7 @@ function mpcAnswer(pk1: string, path: string) {
   };
 }
 
-/** A stateful fake of the API + chain: enough contract rules to see replays rejected. */
+/** A stateful fake of the API + chain: enough of the API's session checks to see replays rejected. */
 function mockBackend(opts: { signer?: string } = {}) {
   const calls: { url: string; body: Json | null; headers: Headers }[] = [];
   const sessions = new Map<string, { path: string; used: number; revoked: boolean; maxUses: number }>();
@@ -82,12 +82,14 @@ function mockBackend(opts: { signer?: string } = {}) {
         const b = reqBody as { sessionPublicKey: number[]; counter: number; pk1?: string };
         const s = sessions.get(toHex(Uint8Array.from(b.sessionPublicKey)));
         if (!s || s.revoked) return apiError(404, 'unknown_session', 'Unknown or expired session');
+        if (!url.endsWith('/revoke') && s.used >= s.maxUses) return apiError(409, 'session_exhausted', 'Session use limit reached, open a new session');
+        if (b.counter <= s.used) return apiError(409, 'counter_used', `Counter already used (replayed request); the next one is ${s.used + 1}`);
         if (b.counter !== s.used + 1) return apiError(422, 'contract_rejected', 'Wrong counter (replayed or out of order)');
-        s.used += 1;
         if (url.endsWith('/revoke')) {
           s.revoked = true;
           return Response.json({ result: null, nearTx: tx(), requestId: 'r4' });
         }
+        s.used += 1;
         return Response.json({ result: mpcAnswer(b.pk1!, s.path), nearTx: tx(), requestId: 'r3' });
       }
       case 'https://rpc.example': {
@@ -228,7 +230,7 @@ describe('smoke page', () => {
     await vi.waitFor(() => expect(text('timings')).toContain('12.00 Tgas'));
 
     button('replay-derive').click();
-    await vi.waitFor(() => expect(text('log')).toMatch(/Replay of derive rejected as expected: 422 contract_rejected/));
+    await vi.waitFor(() => expect(text('log')).toMatch(/Replay of derive rejected as expected: 409 counter_used/));
     await idle();
     button('replay-session').click();
     await vi.waitFor(() => expect(text('log')).toMatch(/Replay of create_session rejected as expected: 409 session_exists/));

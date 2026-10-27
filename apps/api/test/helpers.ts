@@ -172,7 +172,9 @@ export interface Chain extends NearMock {
  * A NearMock wired with a tiny registry: `clients` maps aud → scope, `shared` lists shared clients, `allowShared` the
  * scopes that allow them. create_session resolves the scope like the contract (own client → its scope, which must be
  * the `scope_id` argument; shared client → `scope_id` if it allows shared login). Sessions are stored and served by
- * get_session and session_key_in_use; revoke_session leaves a tombstone, as on chain. Google's JWKS serves `google`.
+ * get_session and session_key_in_use; derive_key and revoke_session enforce the contract's session-use rules (live
+ * session, counter = used + 1, the use limit for derive_key) and revoke_session leaves a tombstone, as on chain.
+ * Google's JWKS serves `google`.
  */
 export function chain(clients: Record<string, string> = {}, opts: { shared?: string[]; allowShared?: string[] } = {}): Chain {
   const near: Chain = Object.assign(new NearMock(), {
@@ -220,12 +222,27 @@ export function chain(clients: Record<string, string> = {}, opts: { shared?: str
     near.sessions.set(JSON.stringify(a.session_public_key), session);
     return session;
   };
-  near.contract.derive_key = () => ({ big_y: 'bls12381g1:Y', big_c: 'bls12381g1:C' });
+  /** The contract's live_session: the stored session unless missing or revoked. */
+  const live = (a: Record<string, unknown>): Record<string, unknown> => {
+    const s = near.sessions.get(JSON.stringify(a.session_public_key));
+    if (!s || s.revoked) throw new Error('No such session');
+    return s;
+  };
+  // use_session's checks in the contract's order (the signature was checked by the API); a use bumps `used`.
+  near.contract.derive_key = (a) => {
+    const s = live(a);
+    if (Date.now() >= (s.expires_at_ms as number)) throw new Error('Session expired');
+    if ((s.used as number) >= (s.max_uses as number)) throw new Error('Session use limit reached');
+    if (a.counter !== (s.used as number) + 1) throw new Error('Wrong counter (replayed or out of order)');
+    near.sessions.set(JSON.stringify(a.session_public_key), { ...s, used: a.counter });
+    return { big_y: 'bls12381g1:Y', big_c: 'bls12381g1:C' };
+  };
   near.contract.revoke_session = (a) => {
-    // Like the contract: a revoked session stays as a tombstone until it expires (get_session hides it).
-    const k = JSON.stringify(a.session_public_key);
-    const s = near.sessions.get(k);
-    if (s) near.sessions.set(k, { ...s, revoked: true });
+    // Like the contract: no expiry or use limit check, `used` unchanged, and a revoked session stays as a tombstone
+    // until it expires (get_session hides it).
+    const s = live(a);
+    if (a.counter !== (s.used as number) + 1) throw new Error('Wrong counter (replayed or out of order)');
+    near.sessions.set(JSON.stringify(a.session_public_key), { ...s, revoked: true });
     return null;
   };
   near.install();

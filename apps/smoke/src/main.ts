@@ -379,7 +379,7 @@ async function derive(s: ActiveSession, runStart: number, first: boolean): Promi
   if (envProblem) throw new Error(envProblem);
   const counter = s.used + 1;
   if (s.revoked) logEvent('Session is revoked: expect 404 unknown_session');
-  else if (counter > s.maxUses) logEvent(`Counter ${counter} > max_uses ${s.maxUses}: expect "Session use limit reached"`);
+  else if (counter > s.maxUses) logEvent(`Counter ${counter} > max_uses ${s.maxUses}: expect 409 session_exhausted`);
   let outcome;
   try {
     outcome = await deriveOnce({

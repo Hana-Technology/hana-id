@@ -28,7 +28,7 @@ Batch B is done when:
 - `@hana-id/core`, `@hana-id/web`, `@hana-id/react` and `@hana-id/sodax` build, and every behaviour listed under [Tests](#tests) has a passing test.
 - A partner page on an allowed origin logs in through the shared client and through its own client (in a separate Google Cloud project) and gets the same addresses for the same Google account. Google uses `scope=openid` only, and the token on chain carries only allow-listed claims.
 - A reload within the app's limits restores the wallet with zero `/v1/derive` calls, no chain transaction and no chain RPC.
-- Every signature needs an Approve click in a Hana popup. The approval is bound to the whole request (bytes, chain, address, network context), not only the bytes.
+- Every signature needs an Approve click in a Hana popup, bound to the whole request (bytes, chain, address, network context), unless it matches an auto-approve policy that the app owner set and the user accepted in a Hana popup (see [Auto-approve policies](#auto-approve-policies)). Raw signing always needs an Approve click.
 - Derivation v1 is frozen in `@hana-id/core`, with test vectors and a CI guard. Key export works for both chains.
 - `create_session_and_derive` is measured on testnet against the ship gate, and the result is recorded in `docs/context.md`.
 - `apps/smoke` runs on `@hana-id/web` (the vault) instead of deriving keys in the page.
@@ -59,7 +59,7 @@ Nothing else in batch B changes an address. That covers `create_session_and_deri
 - **Google OIDC implicit flow** (google-flow): `response_type=id_token`, `response_mode=fragment`, `scope=openid`, `prompt=select_account`, plus `nonce` and `state`. The redirect URI is `{authOrigin}/login/callback` in both client modes. Google Identity Services is not used anywhere.
 - **Claim allow-list** (changed from a PII deny-list). The vault and the API accept only tokens whose claims are all in `{iss, azp, aud, sub, iat, exp, nonce, nbf, jti, auth_time}` (final list from the spike). Anything else, named explicitly including `hd` (the Workspace domain, which identifies an employer), `email`, `email_verified`, `name`, `picture`, `given_name`, `family_name`, `locale` and `profile`, gives 400 `token_has_pii` with `data: {claim}`. This covers API-relayed tokens only: the contract itself parses claims with unknown fields ignored and accepts any token on a direct call (see [Invariants](#invariants-each-has-a-test)). Workspace accounts are refused until Q32 is decided.
 - **The key survives reloads only through a server-held share** (B-key-persistence). Each app has a `persistence: 'session' | 'none'` setting, default `'session'`. In `'session'` mode the session has `max_uses = 1`. The API stores a share only for a session that is used up, so the share is the only path back to the key. The share has idle and absolute limits and can be revoked.
-- **Approval in a Hana popup for every signature.** Partners can't turn it off. Raw signing has two states: off (default) or approval required, with a warning that raw signing can authorize any transaction on that chain. **The silent `app_signed` mode is removed from the MVP** (Q31). Approval is bound to the whole request, Approve is guarded against window-timing attacks, and the popup stays open for up to 15 s for follow-up requests.
+- **Approval in a Hana popup by default; auto-approve only under a policy the user accepted** (user decision, 2026-10-27). An app owner may set an auto-approve policy (allowed contracts and functions, address rules, per-transaction and daily limits). Matching requests are signed without a popup only after the user accepts that exact policy once in a Hana popup; anything outside it gets the normal popup. Policies never cover raw signing, `personal_sign`, contract creation or classic Stellar operations other than listed trustlines. This replaces "partners can't turn it off", and is Hana's equivalent of Privy's confirmation toggle plus delegated-action policies, without a server-side signer (the key exists only in the vault). Raw signing has two states: off (default) or approval required, with a warning that raw signing can authorize any transaction on that chain. **The silent `app_signed` mode is removed from the MVP** (Q31). Approval is bound to the whole request, Approve is guarded against window-timing attacks, and the popup stays open for up to 15 s for follow-up requests.
 - **One transaction per login** (single-tx-login). A new contract method `create_session_and_derive` is a literal composition of `create_session` and `derive_key`, called through a new `POST /v1/login`. There is a ship gate: if the 10-run testnet median saves less than 1.5 s, the method is removed before the audit.
 - **The vault computes the path itself** (single-tx-login, mandatory) as `scope#google#<sub from its own token>#<its key_index>`. It never uses a path, session or counter returned by the API.
 - **Pinned per env, never read at runtime:** the CKD network key (manifest `ckdNetworkKey`), the **signer account** (manifest `signer`) and the relayer account (manifest `relayer`, used only as `sender_account_id` for tx polling). They are build constants in the vault, login and export bundles. Any inlined or API-supplied `signer` that differs from the constant stops the flow.
@@ -133,13 +133,14 @@ Every place that derives keys (the vault, the export window and the tests) impor
 | `session_ttl_ms` | absolute limit, 1 h to 23 h 50 min | 12 h | on-chain session expiry and share `abs_expires_at` |
 | `idle_ttl_ms` | 15 min to `session_ttl_ms` | 2 h | share `idle_until`, enforced by the server |
 | `raw_sign` | `'off'`, `'approval'` | `'off'` | vault |
+| `auto_approve_policy` | null, or an `AutoApprovePolicyV1` (JSON, see [Auto-approve policies](#auto-approve-policies)) | null | vault (inlined in the vault page) |
 | `google_web_client_id` | null, or one of the scope's own Google clients | null | vault (via `GET /v1/app`) and `GET /v1/app` in own-client mode |
 
 The 23 h 50 min cap leaves a 10 min margin under the contract's `expires_at_ms ≤ block_now + 24 h`.
 
-`admin app:settings <app> --persistence … --session-ttl … --idle-ttl … --raw-sign … --google-web-client …` sets them until the batch C dashboard takes over. It validates every range, and checks `--google-web-client` against the scope's on-chain Google clients. When unset, `GET /v1/app` uses the first Google client of the scope, as today. The setting exists because a scope may also hold iOS and Android clients, which can't do the web implicit flow.
+`admin app:settings <app> --persistence … --session-ttl … --idle-ttl … --raw-sign … --google-web-client … --auto-approve <policy.json | off>` sets them until the batch C dashboard takes over. It validates every range, and checks `--google-web-client` against the scope's on-chain Google clients. When unset, `GET /v1/app` uses the first Google client of the scope, as today. The setting exists because a scope may also hold iOS and Android clients, which can't do the web implicit flow.
 
-**`raw_sign` changes are delayed.** Setting it to `'off'` takes effect at once. Setting it to `'approval'` writes `raw_sign_pending = 'approval'` and `raw_sign_effective_at = now + RAW_SIGN_DELAY_MS` (24 h; `changeDelayMs` from the manifest in `local*`/`sandbox*` envs). The vault page uses the pending value only once `now ≥ raw_sign_effective_at`. The CLI prints the warning that raw signing can authorize any transaction on that chain and logs the change. Batch C moves this into the dashboard's fresh-sign-in, logged, owner-notified and delayed process for origin changes. A bare D1 update must never be the way to change it.
+**`raw_sign` and `auto_approve_policy` changes are delayed.** Removing an auto-approve policy takes effect at once, like setting `raw_sign` to `'off'`; setting or changing a policy follows the same pending + `effective_at` rule as `raw_sign = 'approval'` (columns `auto_approve_pending`, `auto_approve_effective_at`). Setting `raw_sign` to `'off'` takes effect at once. Setting it to `'approval'` writes `raw_sign_pending = 'approval'` and `raw_sign_effective_at = now + RAW_SIGN_DELAY_MS` (24 h; `changeDelayMs` from the manifest in `local*`/`sandbox*` envs). The vault page uses the pending value only once `now ≥ raw_sign_effective_at`. The CLI prints the warning that raw signing can authorize any transaction on that chain and logs the change. Batch C moves this into the dashboard's fresh-sign-in, logged, owner-notified and delayed process for origin changes. A bare D1 update must never be the way to change it.
 
 ## Protocol
 
@@ -208,6 +209,9 @@ Every cross-window message is a plain object sent by structured clone. Bytes tra
 | `personal_sign` | `[message hex, address]` | `0x` signature | approval |
 | `eth_signTypedData_v4` | `[address, typedData JSON string]` | `0x` signature | approval |
 | `hana_signRaw` | `{chain: 'stellar', bytes: Uint8Array (≤ 4 KiB)}` or `{chain: 'evm', digest: Uint8Array(32)}` | `{signature: Uint8Array}`: Ed25519 64 bytes, or secp256k1 `r‖s‖v` 65 bytes with `v ∈ {27, 28}` | `raw_sign = 'off'` → `4100`; `'approval'` → approval with the raw warning |
+| `hana_requestAutoApprove` | none | `{granted: boolean, policyId?, expiresAtMs?}` | consent screen in the approval popup; `4100` if the app has no policy in force |
+| `hana_autoApproveStatus` | none | `{policyId, label, expiresAtMs, used: {count, native}} \| null` | silent |
+| `hana_revokeAutoApprove` | none | `null` | silent (the user can also revoke from any approval popup) |
 
 The SDK answers some calls itself without the vault: `eth_chainId`, `wallet_switchEthereumChain`, `getNetwork` and read-only RPC methods. It also handles fee and nonce filling and broadcasting, using the partner's RPC.
 
@@ -382,7 +386,8 @@ PRK is zeroed in memory at `expiresAtMs`, on logout, or on a `revoked` broadcast
 | Tier | Methods |
 |---|---|
 | Silent | `hana_status`, `stellar_getAddress`, `eth_accounts`, `eth_chainId`, `getNetwork`, `hana_logout` |
-| Hana popup approval, every time, partners can't turn it off | `stellar_signTransaction`, `stellar_signAuthEntry`, `stellar_signMessage`, `eth_signTransaction` (and `eth_sendTransaction` through it), `personal_sign`, `eth_signTypedData_v4` |
+| Hana popup approval, unless an accepted auto-approve policy matches | `stellar_signTransaction`, `stellar_signAuthEntry`, `eth_signTransaction` (and `eth_sendTransaction` through it), `eth_signTypedData_v4` |
+| Hana popup approval, every time | `stellar_signMessage`, `personal_sign` |
 | Per `raw_sign` | `hana_signRaw`: off (`4100`) or approval with the raw warning |
 
 ### Approval flow
@@ -421,6 +426,59 @@ What gets signed:
 - **Raw:** Ed25519 over `bytes`, or secp256k1 over `digest` (`v ∈ {27, 28}`). Both can produce a valid signature on any transaction of that chain.
 
 The SDK, not the vault, fills fees and nonces and broadcasts, using the partner's RPC. The approval screen shows the final fields. Each chain key is derived from PRK per signature with HKDF-Expand and zeroed in `finally`.
+
+### Auto-approve policies
+
+Decided by the user on 2026-10-27, after comparing with Privy (which lets an app switch confirmation modals off, or grant its server a policy-limited signer the user consents to). Approval stays the default. An app may skip the popup only for requests that match a policy its owner set, and only after the user accepted that exact policy in a Hana popup. The vault enforces the policy; the partner page can't.
+
+**Policy (set per app; `admin app:settings --auto-approve` now, batch C dashboard later):**
+
+```
+AutoApprovePolicyV1 {
+  v: 1,
+  label: string,                       // ≤ 80 chars, shown to the user ("Swaps on Sodax")
+  maxConsentMs: number,                // ≤ the app's session_ttl_ms; the consent ends earlier with the session
+  limits: { perDayCount: number },     // auto-signed requests per user per day (UTC), ≤ 500
+  stellar?: {
+    networkPassphrases: string[],
+    maxFeeStroops: string,             // per transaction, decimal
+    contracts: [{ id: 'C…', name: string, functions: [{ name: string, addressArgs?: 'self-or-listed' | 'any' }] }],
+    changeTrustAssets?: string[],      // 'CODE:ISSUER'; the only classic operation a policy may cover
+    addresses?: string[],              // extra G…/C… addresses allowed as call arguments
+  },
+  evm?: {
+    chains: [{
+      chainId: number,
+      maxValueWei: string,             // per transaction
+      maxValueWeiPerDay: string,
+      contracts: [{ address: '0x…', name: string, selectors: [{ selector: '0x12345678', signature: string, addressArgs?: 'self-or-listed' | 'any' }] }],
+      typedData?: [{ verifyingContract: '0x…', primaryType: string }],
+      addresses?: string[],
+    }],
+  },
+}
+policyId = sha256(utf8("hana-id/auto-approve/v1") ‖ canonical JSON of the policy)
+```
+
+**What a policy can never cover:** `hana_signRaw`, `personal_sign`, `stellar_signMessage`, EVM contract creation (`to` empty), `eth_sign`, Stellar classic operations other than `changeTrust` for a listed asset (so never `setOptions`, `payment`, `accountMerge` or signer changes), fee-bump envelopes, and any request the vault can't fully decode. The validator (`@hana-id/core` `validateAutoApprovePolicy`, used by the CLI, the API and the vault) refuses a policy that lists an ERC-20 or SAC `approve`/`transfer`/`transferFrom`-style function with `addressArgs: 'any'`, and requires `addressArgs` on every listed function that takes an address.
+
+**Address rule (the main defence against partner-page XSS).** With `addressArgs: 'self-or-listed'` (the default), every address-typed argument of an auto-approved call, at any depth of the Soroban invocation tree or ABI-decoded EVM calldata, must be the user's own address, a listed contract, or a policy `addresses` entry. So an injected script can't make an allowed function send funds or allowances to itself. `'any'` must be set explicitly per function and is shown to the user as "can send to any address".
+
+**Matching (in the vault, with the same decoders the approval popup uses, moved to `@hana-id/core`):**
+- Stellar transaction: the network passphrase is listed; the fee is within `maxFeeStroops`; every operation is an `invokeHostFunction` calling a listed contract function (including `restoreFootprint`/`extendFootprintTtl` for those contracts' footprints) or a listed `changeTrust`; the whole authorization tree uses only listed contracts and functions; the address rule holds.
+- Stellar auth entry: its whole invocation tree passes the same contract, function and address checks.
+- EVM transaction: `chainId` listed; `to` a listed contract and the selector listed for it; calldata decodes against the listed signature and passes the address rule; `value ≤ maxValueWei`, and the day's auto-signed value plus this one `≤ maxValueWeiPerDay`.
+- EIP-712: `domain.verifyingContract` and `primaryType` are listed pairs, `domain.chainId` is a listed chain, and address fields in the message pass the address rule.
+- Every match also counts against `perDayCount`. Any failed check, decode error or limit reached sends the request to the normal approval popup, which shows why it wasn't auto-approved.
+
+**Consent.** The first matching request (or `hana_requestAutoApprove`) opens the approval popup with a consent screen: the app name and verified origin, the label, every contract with its partner-supplied name and its address, the functions, the address rule (with a warning for any `'any'`), the limits and the duration. Allow uses the same guard as Approve. The consent is stored in the vault record as `consent {policyId, grantedAt, expiresAtMs, day, count, valueWeiByChain}`, inside the AES-GCM record (so it can't be edited on disk), and in memory.
+- It is bound to `policyId`: any change to the policy, including one by Hana or a compromised dashboard, needs a new consent, after the change delay.
+- It ends at `min(grantedAt + maxConsentMs, session expiry)`, on logout, on `hana_revokeAutoApprove`, or when the user clicks "Stop auto-approving" in any approval popup.
+- Counters are per device (the record is per device). Tabs share them through the per-app Web Lock and BroadcastChannel.
+
+**Visibility.** After each auto-signed request the vault emits `autoApproved {kind, chain, contract, function}` to the SDK, and the launcher shows "Signed by Hana under {label}" for 3 s. The partner page can hide the launcher, so this is a courtesy, not a security control.
+
+**Sodax pilot policy (example):** Stellar mainnet passphrase and the Sodax spoke/hub contracts with their swap and deposit functions, `addressArgs: 'self-or-listed'`, `changeTrustAssets` for the assets Sodax swaps, `perDayCount: 50`, `maxConsentMs` = 12 h, small `maxFeeStroops`; EVM chains Sodax uses, its spoke contracts and selectors, `maxValueWei` and `maxValueWeiPerDay` sized for pilot amounts.
 
 ## Derivation v1
 
@@ -531,7 +589,7 @@ Typed against `@sodax/types` 2.1.0 (`IEvmWalletProvider = {chainType:'EVM', getW
 | `createSodaxStellarProvider(hana, {networkPassphrase, horizonUrl, sorobanRpcUrl})` | `IStellarWalletProvider` | `chainType: 'STELLAR'`. `getWalletAddress` uses `hana.stellar`. `signTransaction(xdr, {address?})` returns the signed envelope XDR (fee-bump allowed). `waitForTransactionReceipt(hash)` polls Horizon every 2 s for 60 s and returns its JSON. `sendTransaction` goes to Soroban RPC. `signAndSendTransaction(p)` is `sendTransaction(signTransaction(p.data))`. |
 | `createSodaxEvmProvider(hana, {chainId, rpcUrl})` | `IEvmWalletProvider` | One provider per spoke chain, bound at creation; throws if `chainId` isn't in the client's `evm.chains`. `chainType: 'EVM'`. `sendTransaction(rawTx)` checks `rawTx.from` is the vault's address, pins `hana.ethereum` to the bound chain, fills, signs with approval and broadcasts. `waitForTransactionReceipt` stringifies number fields. |
 
-Sodax supports mainnet only, so the adapter is tested against mocks of the `@sodax/sdk` 2.1.0 call patterns, not end to end on testnet. A Sodax swap can need several signatures (`restoreFootprint`, a re-sign with the next sequence number, a trustline); the 15 s keep-open approval popup covers them.
+Sodax supports mainnet only, so the adapter is tested against mocks of the `@sodax/sdk` 2.1.0 call patterns, not end to end on testnet. A Sodax swap can need several signatures (`restoreFootprint`, a re-sign with the next sequence number, a trustline); the 15 s keep-open approval popup covers them, and with the pilot's auto-approve policy (see [Auto-approve policies](#auto-approve-policies)) they need no popup at all once the user has accepted it.
 
 ## Contract changes (`contracts/hana-signer`)
 
@@ -641,7 +699,7 @@ All take `x-hana-key` and `x-hana-parent-origin`, `Origin: vaultOrigin`, JSON bo
 ### Data, secrets, code
 
 - **Migration `0003_vault.sql`:**
-  - `apps` gets `persistence TEXT NOT NULL DEFAULT 'session' CHECK (persistence IN ('session','none'))`, `session_ttl_ms INTEGER NOT NULL DEFAULT 43200000 CHECK (session_ttl_ms BETWEEN 3600000 AND 85800000)`, `idle_ttl_ms INTEGER NOT NULL DEFAULT 7200000 CHECK (idle_ttl_ms >= 900000 AND idle_ttl_ms <= session_ttl_ms)`, `raw_sign TEXT NOT NULL DEFAULT 'off' CHECK (raw_sign IN ('off','approval'))`, `raw_sign_pending TEXT CHECK (raw_sign_pending IN ('approval'))`, `raw_sign_effective_at INTEGER`, and `google_web_client_id TEXT`. The admin CLI and the API validate the same ranges.
+  - `apps` gets `persistence TEXT NOT NULL DEFAULT 'session' CHECK (persistence IN ('session','none'))`, `session_ttl_ms INTEGER NOT NULL DEFAULT 43200000 CHECK (session_ttl_ms BETWEEN 3600000 AND 85800000)`, `idle_ttl_ms INTEGER NOT NULL DEFAULT 7200000 CHECK (idle_ttl_ms >= 900000 AND idle_ttl_ms <= session_ttl_ms)`, `raw_sign TEXT NOT NULL DEFAULT 'off' CHECK (raw_sign IN ('off','approval'))`, `raw_sign_pending TEXT CHECK (raw_sign_pending IN ('approval'))`, `raw_sign_effective_at INTEGER`, `auto_approve_policy TEXT` (JSON, validated), `auto_approve_pending TEXT`, `auto_approve_effective_at INTEGER`, and `google_web_client_id TEXT`. The admin CLI and the API validate the same ranges.
   - `usage` gets `unlocks INTEGER NOT NULL DEFAULT 0`.
   - A new table: `vault_shares(share_id BLOB PRIMARY KEY, app_id TEXT NOT NULL REFERENCES apps(id) ON DELETE CASCADE, session_pk BLOB NOT NULL UNIQUE, path_hash BLOB NOT NULL, partner_origin TEXT NOT NULL, share_enc BLOB NOT NULL, kek_id INTEGER NOT NULL, counter INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, idle_until INTEGER NOT NULL, abs_expires_at INTEGER NOT NULL, revoked_at INTEGER)`, indexed on `(app_id, path_hash)`.
 - **Secrets.** `VAULT_KEK` is 32 bytes, base64, with an id. `share_enc = AES-GCM(KEK, iv, K_s, aad = share_id ‖ app_id ‖ session_pk)`. During a rotation `VAULT_KEK_PREVIOUS` is also read, and rows are re-wrapped on unlock and by the cron.
@@ -665,10 +723,10 @@ All take `x-hana-key` and `x-hana-parent-origin`, `Origin: vaultOrigin`, JSON bo
 | Attacker | Can | Cannot |
 |---|---|---|
 | Another site (evil.test) | Frame a vault with its own `pk`, and so log users into its own scope (legitimate) | Frame the vault for app X (CSP); get `auth-params` (source/origin checks); use a popup it opened (no vault in its frames); inject a token (state, nonce, relay encryption and source checks) |
-| XSS or a malicious dependency on the partner page | Start a login (the popup is visible), read addresses, queue signature requests, navigate the login popup | Read keys, tokens or nonces; get any signature, raw or decodable, without a guarded Approve in a Hana popup; clickjack the approval (the popup can't be overlaid, the launcher only opens it, and Approve needs 1 s after render and after focus plus a pointer move) |
+| XSS or a malicious dependency on the partner page | Start a login (the popup is visible), read addresses, queue signature requests, navigate the login popup | Read keys, tokens or nonces; get any signature, raw or decodable, without a guarded Approve in a Hana popup, except requests matching an auto-approve policy the user accepted (bounded by its contracts, functions, address rule and limits); clickjack the approval (the popup can't be overlaid, the launcher only opens it, and Approve needs 1 s after render and after focus plus a pointer move) |
 | A malicious extension in all frames | Everything the user can do, including reading an exported key | Nothing: no browser design stops it. Stated here so integrators know. |
 | Disk thief or malware in the same profile | With a live share: call unlock and get PRK permanently. | Anything after logout, idle expiry, absolute expiry or revoke. A derive (the session is used up). |
-| Compromised Hana API logic or D1 (not the pages or bundles) | Deny service; with `VAULT_KEK` plus a device dump, get PRK; point a vault at another scope of the same user (Q7); turn `raw_sign` to `'approval'` (the user still sees the raw warning and must approve) | Substitute a signer, path or key (pinned `SIGNER` and CKD key, vault-computed path, end-to-end encrypted relay so it never sees the nonce before the path is fixed); swap the token; sign without approval |
+| Compromised Hana API logic or D1 (not the pages or bundles) | Deny service; with `VAULT_KEK` plus a device dump, get PRK; point a vault at another scope of the same user (Q7); turn `raw_sign` to `'approval'` (the user still sees the raw warning and must approve); set or widen an auto-approve policy (delayed, and the user must accept the new `policyId` before it signs anything) | Substitute a signer, path or key (pinned `SIGNER` and CKD key, vault-computed path, end-to-end encrypted relay so it never sees the nonce before the path is fixed); swap the token; sign without approval |
 | Compromised Hana Worker, vault or auth origin, or Cloudflare account | Everything (single trust root): it serves the bundles. Mitigated by a tiny vault bundle, strict CSP, no third-party script and a narrow `frame-ancestors`. | |
 | Lying NEAR RPC | Fail derives, give wrong counters, delay | Forge a CKD (pairing check against the pinned key) |
 | Someone who sees the token (the API at `/v1/login`, mempool, chain) | Front-run `create_session` with the vault's public key (the vault derives with the next counter); replay the whole combined call, which in `'session'` mode burns the only use and costs the user one re-login (`session_consumed`; the attacker pays gas) | Derive for themselves (needs the session key; the MPC result is encrypted to the vault's `a`) |
@@ -682,7 +740,7 @@ All take `x-hana-key` and `x-hana-parent-origin`, `Origin: vaultOrigin`, JSON bo
 - No message to the partner page, and no message in any direction, carries key bytes, S, PRK, a CKD response, a Google token or a session secret. The one session secret that crosses `postMessage` is `relayKey`: vault → login popup (`authOrigin`), and export window → its child popup, never to or from the partner.
 - The vault refuses to run top-level, accepts one hello, and serves only the pinned port.
 - The vault, login and export pages use only the pinned `SIGNER`, `RELAYER` and CKD key.
-- Every signature is preceded by a guarded approval whose digest matches the whole signed request.
+- Every signature is preceded either by a guarded approval whose digest matches the whole signed request, or by a full match against an auto-approve policy whose `policyId` the user accepted and whose consent and limits are still valid. Raw, `personal_sign`, `stellar_signMessage` and contract-creation requests are never auto-approved.
 - The vault never uses a path, session or counter from the API.
 - A 410 from unlock leads to a full login, never to a derive.
 - In `'session'` mode a persisted session key can never derive on chain (`used === max_uses`).
@@ -696,7 +754,7 @@ All take `x-hana-key` and `x-hana-parent-origin`, `Origin: vaultOrigin`, JSON bo
 3. A new coupling: Hana's API (with `VAULT_KEK`) plus a device dump yields the key. Neither does alone.
 4. In `'session'` mode an MPC failure, or a replay of the combined call, means a new login.
 5. A new authenticated surface: five vault endpoints, the relay, `/v1/login` and a D1 table, all audit items.
-6. Every signature costs at least a launcher click and an Approve. On mobile, popups open as tabs.
+6. Without an auto-approve policy, every signature costs at least a launcher click and an Approve (on mobile, popups open as tabs). With one, partner-page XSS can sign requests inside the accepted policy up to its limits, for example swaps with poor prices on allowed contracts; token amounts other than native value are not capped yet (Q39).
 7. Safari and iOS may drop partitioned storage early, which means more full logins.
 8. The relay holds an encrypted token for up to 120 s and adds about 0.1–0.3 s.
 9. No single recovery phrase: export is one key per chain.
@@ -809,7 +867,7 @@ Run live logins with the real sandbox shared client and an openid-only implicit 
 
 ### Scripts
 
-- `admin app:settings`: every range accepted at its bounds and refused outside; `--raw-sign approval` writes the pending value and effective time, `--raw-sign off` is immediate; `--google-web-client` refused unless it is one of the scope's Google clients.
+- `admin app:settings`: every range accepted at its bounds and refused outside; `--raw-sign approval` writes the pending value and effective time, `--raw-sign off` is immediate; `--google-web-client` refused unless it is one of the scope's Google clients; `--auto-approve` validates the policy, writes it as pending with its effective time, and `--auto-approve off` is immediate.
 - Manifest schema: `vaultOrigin`/`authOrigin` both or neither; `https` required; loopback only for `local*` env names; same-site pairs refused.
 - `envs.generated.ts`: generated with `signer`, `relayer` and the origins; the build fails when `ckdKeyProblem()` reports a problem.
 
@@ -865,6 +923,13 @@ Run live logins with the real sandbox shared client and an openid-only implicit 
   - Reject and close give `4001`;
   - the queue order;
   - keep-open reuse within 15 s and close after.
+- Auto-approve:
+  - the policy validator refuses `addressArgs: 'any'` on approve/transfer-style functions, a missing `addressArgs` on a function taking an address, raw/`personal_sign`/creation entries, and limits out of range; `policyId` is stable under key reordering;
+  - no consent: a matching request opens the consent screen, then signs; Allow is guarded like Approve;
+  - with consent: a matching request signs with no popup and emits `autoApproved`; each mismatch (unlisted contract, function, selector, chain or passphrase; an address argument that isn't self or listed, at any depth of the auth tree or calldata; fee, value or daily value over the limit; `perDayCount` reached; an undecodable request; a classic op other than a listed `changeTrust`; a fee-bump) goes to the approval popup with the reason;
+  - raw, `personal_sign`, `stellar_signMessage` and contract creation always need approval, whatever the policy;
+  - a changed policy (new `policyId`) ignores the old consent; removal is immediate; setting or changing waits for the delay;
+  - consent ends at its expiry, at session expiry, on logout, on `hana_revokeAutoApprove` and on "Stop auto-approving"; counters survive reload (inside the encrypted record), reset per UTC day, and are shared across tabs; a record with tampered consent fails the AAD check;
 - Raw signing: off gives `4100`; approval mode needs approval and shows the raw warning; a raw request whose bytes are a valid transaction hash is shown as raw, never decoded, and needs the same approval.
 - Persistence:
   - AAD tamper on each field (including `appId`) fails and deletes the record;
@@ -961,7 +1026,7 @@ The partner runs on `http://localhost:<p>`, the vault on `http://127.0.0.1:<v>` 
 - Rotation flow and `set_active_key_index`.
 - "Remember this device" beyond the on-chain session.
 - Inline confirmation via IntersectionObserver v2.
-- Scoped spending permissions.
+- Token-amount caps in auto-approve policies (Q39), cross-device limits, and server-side delegated signing (Privy-style session signers: the key exists only in the vault).
 - Storage Access API.
 - A full-page redirect login mode.
 - Native mobile SDKs.
@@ -985,6 +1050,9 @@ These changes were made for safety or because a decision could not work as writt
 - **Q36.** Derivation strings renamed to `hana-id/chain-keys/v1/extract` and `hana-id/chain-keys/v1/expand` (were `hana-id/chain-keys/v1` and `hana-id/chain-key/v1`), so the frozen pair can't be confused. Confirm before the freeze.
 - **Q37.** Loopback origins and partner-origin `/v1/sessions`/`/v1/derive`/`/v1/sessions/revoke` are limited to `local*`/`sandbox*` envs, and test and live apps may not share a scope. Confirm that a partner's staging uses its own scope (and therefore different addresses) from production.
 - **Q38.** `raw_sign` enabling is delayed 24 h. Is that the right delay, and should batch C reuse the origin-change delay instead?
+- **Q39.** Auto-approve limits cover counts and native value only. Add per-token amount caps (decoding token amounts from known swap/transfer calls), or rely on counts, the address rule and small pilot limits?
+- **Q40.** Auto-approve consent is per device and lasts up to the session (12 h default). Should it also require a fresh Google login (not a reload unlock) to grant, and should batch C let users see and revoke consents across devices?
+- **Q41.** Contract names on the consent screen come from the partner's policy. Should Hana verify or curate names for known protocols (Sodax first) before they are shown to users?
 
 ### Google and privacy
 

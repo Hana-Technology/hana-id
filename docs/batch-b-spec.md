@@ -482,14 +482,18 @@ policyId = sha256(utf8("hana-id/auto-approve/v1") ‖ canonical JSON of the poli
 
 | Chain | Auto-approve | Fit |
 |---|---|---|
-| Stellar, Soroban invocations | yes | Strong: typed arguments, so the address rule sees every address, including in nested authorizations |
+| Stellar, Soroban invocations | yes | Strong for typed arguments: the address rule sees every typed address, including in nested authorizations. Not for `Bytes` arguments (Sodax, below) |
 | Stellar classic | `changeTrust` for listed assets only | Everything else always needs approval |
 | Any EVM chain (listed by `chainId`) | yes, direct calls to listed contracts with a listed function signature | Weak for functions with opaque `bytes` arguments (routers, multicall, cross-chain messages): the address rule can't see inside them, so they need `addressArgs: 'any'` (warned, tight limits) or a protocol-specific decoder in `@hana-id/core` |
 | EVM EIP-712 | listed `(verifyingContract, primaryType)` pairs only | Permit-style signatures never by default |
 | ERC-4337 user operations, zkSync-native transactions | no | Always approval |
 | Other chains (Solana, Sui, Bitcoin, NEAR, …) | no | Batch B derives no keys for them; a later chain needs a new derivation namespace (additive, no address change), a signer and a decoder |
 
-The go/no-go spike also records the calldata of Sodax's Stellar and EVM spoke calls for a swap. If the EVM spokes carry intents as opaque `bytes`, decide (Q42) between a Sodax intent decoder in `@hana-id/core` and `addressArgs: 'any'` with pilot-sized limits.
+**Sodax needs a protocol decoder (checked against `@sodax/sdk` 2.1.0, 2026-10-27).** On every spoke, a swap is one call to Sodax's AssetManager, `transfer(token, to: bytes, amount, data: bytes)` (EVM ABI; on Stellar a Soroban `transfer(from, token, amount: u128, to: Bytes, data: Bytes)`). `to` is the user's hub wallet on Sonic, and `data` is an ABI-encoded list of calls that wallet executes: for a swap, `[ERC20.approve(hubAsset, intentsContract, amount), Intents.createIntent(Intent)]`, where `Intent.dstAddress` is the real recipient (encoded per destination chain) and `Intent.data` carries the partner fee and optional delivery hook. Other hub actions use `Connection.sendMessage(dstChainId, dstAddress: bytes, payload: bytes)` / `send_message`. The hub wallet holds the user's hub positions, so an arbitrary `data` on a tiny deposit could empty it: per-transaction value limits don't bound this. Therefore:
+- `AssetManager.transfer`, `Connection.sendMessage` and `send_message` may **never** have `addressArgs: 'any'`; the validator refuses them like raw signing.
+- `@hana-id/core` gets a Sodax decoder. A swap is auto-approved only when `to` is exactly the user's hub wallet (computed with the factory's CREATE3 rule, or read once from the hub factory and pinned in the vault record, with test vectors), `data` is not a 32-byte hash, it decodes to exactly the approve + `createIntent` pair with allowlisted targets and matching amounts, `Intent.creator` is the hub wallet, `srcAddress` is the user, `dstAddress` is the user's own address on the destination chain (or a listed hook whose delivery recipient is the user), `solver` is zero or listed, and `Intent.data` holds only a fee entry (receiver listed) and/or a delivery entry.
+- ERC-20 `approve` to the listed AssetManager and Stellar `changeTrust` for listed assets work under the address rule as written. Cancel, withdraw, borrow and bridge payloads go to the popup until decoded as further templates.
+- Still unverified (the spike records real calldata): the deployed contract sources, the exact `Intent` ABI types, and the factory's CREATE3 variant. `minOutputAmount` can't be judged by a policy, so a script on the partner page could still submit swaps at a poor price to the user's own address, within the count limit (Q39).
 
 **Sodax pilot policy (example):** Stellar mainnet passphrase and the Sodax spoke/hub contracts with their swap and deposit functions, `addressArgs: 'self-or-listed'`, `changeTrustAssets` for the assets Sodax swaps, `perDayCount: 50`, `maxConsentMs` = 12 h, small `maxFeeStroops`; EVM chains Sodax uses, its spoke contracts and selectors, `maxValueWei` and `maxValueWeiPerDay` sized for pilot amounts.
 
@@ -1066,7 +1070,7 @@ These changes were made for safety or because a decision could not work as writt
 - **Q39.** Auto-approve limits cover counts and native value only. Add per-token amount caps (decoding token amounts from known swap/transfer calls), or rely on counts, the address rule and small pilot limits?
 - **Q40.** Auto-approve consent is per device and lasts up to the session (12 h default). Should it also require a fresh Google login (not a reload unlock) to grant, and should batch C let users see and revoke consents across devices?
 - **Q41.** Contract names on the consent screen come from the partner's policy. Should Hana verify or curate names for known protocols (Sodax first) before they are shown to users?
-- **Q42.** If Sodax's EVM spoke calls carry swap intents as opaque `bytes`: write a Sodax intent decoder so the address rule applies, or allow `addressArgs: 'any'` for those functions with tight limits?
+- **Q42.** (Answered 2026-10-27: they do, on EVM and Stellar.) Build the Sodax decoder above in batch B, or launch the pilot with approval popups for swaps and add the decoder later?
 
 ### Google and privacy
 

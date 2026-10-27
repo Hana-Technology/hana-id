@@ -184,6 +184,105 @@ describe('POST /v1/derive and /v1/sessions/revoke: counter and use-limit pre-che
     expect(sentCounters(near)).toEqual([1, 1]);
   });
 
+  it('does not count a derive on an expired session in the new session the key opened while it ran', async () => {
+    const { app, near, spk, derive } = await setup();
+    const at = (ms: number): void => {
+      vi.spyOn(Date, 'now').mockReturnValue(ms);
+    };
+    const t0 = Date.now();
+    const key = JSON.stringify(spk);
+    const s1 = { path: `${app.scope}#google#1#0`, scope_id: app.scope, expires_at_ms: t0 + 5_000, max_uses: 10, used: 2 };
+    near.sessions.set(key, s1);
+    // Derive 3 on S1 executes on chain, then takes a while to return (the MPC): it is held here.
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    let executedOnS1!: string;
+    near.onSendTx = async (tx) => {
+      if (tx.args.counter !== 3 || executedOnS1) return undefined;
+      near.sessions.set(key, { ...s1, used: 3 });
+      executedOnS1 = tx.hash;
+      await gate;
+      return undefined;
+    };
+    const succeed = near.contract.derive_key!;
+    near.contract.derive_key = (a, tx) => (tx.hash === executedOnS1 ? { big_y: 'bls12381g1:Y', big_c: 'bls12381g1:C' } : succeed(a, tx));
+    at(t0);
+    const old = derive(3);
+    await vi.waitFor(() => expect(executedOnS1).toBeDefined());
+    // S1 expired and the key opened S2; derive 1 on S2 goes through this isolate (which caches S2, used 1).
+    at(t0 + 6_000);
+    near.sessions.set(key, { path: `${app.scope}#google#1#1`, scope_id: app.scope, expires_at_ms: t0 + HOUR, max_uses: 10, used: 0 });
+    expect((await derive(1)).status).toBe(200);
+    // Now the S1 derive returns: its use is not S2's.
+    open();
+    expect((await old).status).toBe(200);
+    // The next valid counter on S2 is relayed and succeeds.
+    expect((await derive(2)).status).toBe(200);
+    // (`sent` records a tx once it is included, so the held S1 derive comes after S2's first.)
+    expect(sentCounters(near)).toEqual([1, 3, 2]);
+    expect(heldCounters()).toBe(0);
+  });
+
+  it('keeps a derive counted while a fresh read was in flight (the read answered before it executed)', async () => {
+    const { near, derive } = await setup();
+    expect((await derive(1)).status).toBe(200);
+    // Derive 2 is relayed and held before it executes.
+    let openTx!: () => void;
+    const txGate = new Promise<void>((resolve) => (openTx = resolve));
+    let relayed = false;
+    near.onSendTx = async (tx) => {
+      if (tx.args.counter !== 2) return undefined;
+      relayed = true;
+      await txGate;
+      return undefined;
+    };
+    const second = derive(2);
+    await vi.waitFor(() => expect(relayed).toBe(true));
+    // A replay of counter 1 is refused by the cache and confirmed on a fresh read, which answers used 1 but is slow.
+    let openView!: () => void;
+    const viewGate = new Promise<void>((resolve) => (openView = resolve));
+    near.onView = (method) => (method === 'get_session' ? viewGate : undefined);
+    const views = sessionViews(near);
+    const replay = derive(1);
+    await vi.waitFor(() => expect(sessionViews(near)).toBe(views + 1));
+    // Derive 2 executes and returns while that read is still in flight.
+    openTx();
+    expect((await second).status).toBe(200);
+    openView();
+    near.onView = undefined;
+    await expectRejected(await replay, 409, 'counter_used', 3);
+    // The stale answer did not undo derive 2's count: a replay of it is refused without being sent.
+    await expectRejected(await derive(2), 409, 'counter_used', 3);
+    expect(sentCounters(near)).toEqual([1, 2]);
+    expect(heldCounters()).toBe(0);
+  });
+
+  it('a kept higher use count does not extend the cache entry: it is re-read from chain ≤ 10 s after the read', async () => {
+    const { near, spk, derive } = await setup();
+    const at = (ms: number): void => {
+      vi.spyOn(Date, 'now').mockReturnValue(ms);
+    };
+    // A node that never shows our derive (used 0 throughout).
+    const behind = near.views.get_session!;
+    near.views.get_session = (a) => {
+      const s = behind(a) as Record<string, unknown> | null;
+      return s && JSON.stringify(a.session_public_key) === JSON.stringify(spk) ? { ...s, used: 0 } : s;
+    };
+    const t0 = Date.now();
+    at(t0);
+    expect((await derive(1)).status).toBe(200);
+    // Within the entry's 10 s, each confirming read keeps our count...
+    at(t0 + 5_000);
+    await expectRejected(await derive(1), 409, 'counter_used', 2);
+    at(t0 + 9_000);
+    await expectRejected(await derive(1), 409, 'counter_used', 2);
+    // ...but does not restart the entry's TTL: after it, the chain's answer is used (here the replay is relayed and
+    // refused on chain, which costs gas but never refuses a valid request on a count the chain doesn't show).
+    at(t0 + 10_500);
+    expect((await derive(1)).status).toBe(422);
+    expect(sentCounters(near)).toEqual([1, 1]);
+  });
+
   it('counting our own derive keeps the cache entry’s expiry, so a revocation elsewhere is seen ≤ 10 s after the read', async () => {
     const { near, spk, derive } = await setup();
     const at = (ms: number): void => {

@@ -67,7 +67,8 @@ const scopeCache = new TtlCache<string | null>(60_000);
 const NO_SCOPE_TTL_MS = 10_000;
 /**
  * session public key → session, ≤ 10 s. Misses (null) are not cached: a session may have just been created. `used` is
- * kept in step with this isolate's own successful derives (recordSessionUse); other isolates' uses are not seen.
+ * kept in step with this isolate's own successful derives on that same session (recordSessionUse); other isolates'
+ * uses are not seen.
  */
 const sessionCache = new TtlCache<SessionView>(10_000);
 
@@ -199,8 +200,10 @@ export interface SessionRead {
 
 /**
  * `get_session`, from the cache unless `fresh`. A fresh read replaces the cached entry (or drops it when the session is
- * gone), except that a higher `used` cached for the same session is kept: it counts a derive this isolate saw
- * executed, which the node that answered may not show yet (`used` only grows).
+ * gone), except that a higher `used` cached for the same session when the answer arrives is kept: it counts a derive
+ * this isolate saw executed on that session (recordSessionUse), possibly while the read was in flight, which the node
+ * that answered may not show yet (`used` only grows). Such a merge keeps the entry's expiry, so a kept count lasts at
+ * most 10 s past the read that cached the entry and is then re-read from chain.
  */
 export async function getSession(env: Env, sessionPublicKey: number[], opts: { fresh?: boolean } = {}): Promise<SessionRead> {
   const key = hex(new Uint8Array(sessionPublicKey));
@@ -211,9 +214,16 @@ export async function getSession(env: Env, sessionPublicKey: number[], opts: { f
     sessionCache.delete(key);
     return { session: null, cached: false };
   }
-  const session = cached && sameSession(cached, view) && cached.used > view.used ? { ...view, used: cached.used } : view;
-  sessionCache.set(key, session);
-  return { session, cached: false };
+  // The entry as it is now, not as it was before the await: a derive of ours may have been counted meanwhile.
+  const now = Date.now();
+  const latest = sessionCache.get(key, now);
+  if (latest && sameSession(latest, view) && latest.used > view.used) {
+    const session = { ...view, used: latest.used };
+    sessionCache.update(key, () => session, now);
+    return { session, cached: false };
+  }
+  sessionCache.set(key, view, now);
+  return { session: view, cached: false };
 }
 
 /** The same session, not a newer one for the same key (a key is reusable once its session expired). */
@@ -236,12 +246,22 @@ export function rememberSession(sessionPublicKey: number[], session: SessionView
 }
 
 /**
- * After our own derive_key with `counter` succeeded: the cached session (if still cached) has used it. Its expiry is
- * kept, so a revocation from elsewhere is still seen within 10 s of the read. `used` never goes down, so derives that
- * complete out of order leave the highest.
+ * After our own derive_key with `counter`, judged against session `judged`, succeeded: if the session still cached for
+ * the key is that one, it has used `counter`. Its expiry is kept, so a revocation from elsewhere is still seen within
+ * 10 s of the read. `used` never goes down, so derives that complete out of order leave the highest. If another
+ * session is cached for the key now (the judged one expired and the key opened a new one while the derive was in
+ * flight), the use can't be attributed to it: the entry is dropped and the next request reads the chain.
  */
-export function recordSessionUse(sessionPublicKey: number[], counter: number): void {
-  sessionCache.update(hex(new Uint8Array(sessionPublicKey)), (s) => ({ ...s, used: Math.max(s.used, counter) }));
+export function recordSessionUse(sessionPublicKey: number[], counter: number, judged: SessionView): void {
+  const key = hex(new Uint8Array(sessionPublicKey));
+  const now = Date.now();
+  const cached = sessionCache.get(key, now);
+  if (!cached) return;
+  if (!sameSession(cached, judged)) {
+    sessionCache.delete(key);
+    return;
+  }
+  sessionCache.update(key, (s) => ({ ...s, used: Math.max(s.used, counter) }), now);
 }
 
 export function forgetSession(sessionPublicKey: number[]): void {

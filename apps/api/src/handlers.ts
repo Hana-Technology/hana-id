@@ -291,21 +291,23 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
   //    A second request for the same counter waits here for the first.
   const release = await claimCounter(call.sessionPublicKey, call.counter);
   try {
-    let rejection;
+    let check;
     try {
-      rejection = await precheckSessionUse(env, app.scope_id, call.method, call.sessionPublicKey, call.counter);
+      check = await precheckSessionUse(env, app.scope_id, call.method, call.sessionPublicKey, call.counter);
     } catch {
       return reject(ctx, 502, 'near_unavailable', 'Could not read the session');
     }
+    const { rejection } = check;
     if (rejection) return done(ctx, rejection.status, { error: rejection.error, code: rejection.code, nextCounter: rejection.nextCounter });
     lap(ctx, 'checks');
 
     const result = await relay(env, 'session', { method: call.method, args: call.args }, requestId);
     lapRelay(ctx, result);
-    // A derive that succeeded used its counter: count it in the cached session. Anything else may have changed the
+    // A derive that succeeded used its counter: count it in the cached session, if that is still the session it was
+    // judged against (the key may have opened a new one while the derive ran). Anything else may have changed the
     // session or not (a revoke ends it; a derive whose MPC call failed still counted the use; an unknown outcome may
     // land), so the next request reads it from chain.
-    if (endpoint === '/v1/derive' && result.ok) recordSessionUse(call.sessionPublicKey, call.counter);
+    if (endpoint === '/v1/derive' && result.ok) recordSessionUse(call.sessionPublicKey, call.counter, check.session);
     else forgetSession(call.sessionPublicKey);
     if (!result.ok) return done(ctx, result.status, { error: result.error, code: result.code, nearTx: result.nearTx });
     if (endpoint === '/v1/derive') {

@@ -44,6 +44,11 @@ export class NearMock {
   views: Record<string, (args: Record<string, unknown>) => unknown> = {};
   /** Optional hook before send_tx is processed: return a reply to override, or wait to delay. */
   onSendTx?: (tx: SentTx) => Promise<RpcReply | undefined> | RpcReply | undefined;
+  /**
+   * Optional hook for view calls: the answer is computed when the call arrives (the chain state then), then sent once
+   * the hook settles, like a slow node.
+   */
+  onView?: (method: string, args: Record<string, unknown>) => Promise<void> | void;
   /** When true, send_tx answers TIMEOUT and the outcome is only available through `tx`. */
   sendTxTimesOut = false;
   /**
@@ -95,8 +100,11 @@ export class NearMock {
   private handle(method: string, params: Record<string, unknown>): Promise<RpcReply> {
     this.rpcMethods.push(method);
     switch (method) {
-      case 'query':
-        return Promise.resolve(this.query(params));
+      case 'query': {
+        const reply = this.query(params);
+        const hold = params.request_type === 'call_function' ? this.onView?.(params.method_name as string, this.viewCalls.at(-1)!.args) : undefined;
+        return hold ? hold.then(() => reply) : Promise.resolve(reply);
+      }
       case 'block':
         return Promise.resolve({ result: { header: { hash: params.finality === 'final' ? this.finalBlockHash : this.blockHash, height: 1000 } } });
       case 'send_tx':

@@ -39,17 +39,27 @@ export function sessionUseRejection(session: SessionView | null, appScope: strin
   return null;
 }
 
+/** The pre-check's verdict: why the request is refused, or the session it was accepted against. */
+export type SessionCheck = { rejection: SessionRejection; session?: undefined } | { rejection: null; session: SessionView };
+
+function judge(session: SessionView | null, appScope: string, method: SessionMethod, counter: number): SessionCheck {
+  const rejection = sessionUseRejection(session, appScope, method, counter, Date.now());
+  // A null session is always rejected (unknown_session), so an accepted one is never null.
+  return rejection ? { rejection } : { rejection: null, session: session! };
+}
+
 /**
  * Check 6 for /v1/derive and /v1/sessions/revoke. A cached view never rejects on its own: other isolates may have
  * used, revoked or (after expiry) replaced the session, so a request the cache would refuse is judged again on a fresh
- * read. Throws when the chain can't be read.
+ * read. An accepted request comes with the session it was judged against, so its use is only counted in that session
+ * (recordSessionUse). Throws when the chain can't be read.
  */
-export async function precheckSessionUse(env: Env, appScope: string, method: SessionMethod, sessionPublicKey: number[], counter: number): Promise<SessionRejection | null> {
+export async function precheckSessionUse(env: Env, appScope: string, method: SessionMethod, sessionPublicKey: number[], counter: number): Promise<SessionCheck> {
   const read = await getSession(env, sessionPublicKey);
-  const rejection = sessionUseRejection(read.session, appScope, method, counter, Date.now());
-  if (!rejection || !read.cached) return rejection;
+  const check = judge(read.session, appScope, method, counter);
+  if (!check.rejection || !read.cached) return check;
   const fresh = await getSession(env, sessionPublicKey, { fresh: true });
-  return sessionUseRejection(fresh.session, appScope, method, counter, Date.now());
+  return judge(fresh.session, appScope, method, counter);
 }
 
 /** `session key:counter` → settles when the request holding that counter is done (this isolate only). */

@@ -42,7 +42,21 @@ export async function seedApp(opts: { scope?: string; key?: string; status?: str
   return { id, key, scope };
 }
 
-export async function call(path: string, init: { method?: string; headers?: Record<string, string>; body?: unknown; rawBody?: string } = {}): Promise<Response> {
+export async function call(
+  path: string,
+  init: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: unknown;
+    rawBody?: string;
+    /** Bindings to override for this request (e.g. DO_LOCATION_HINT). */
+    env?: Partial<typeof env>;
+    /** Incoming `request.cf` (e.g. `{ colo: 'SIN' }`). */
+    cf?: Record<string, unknown>;
+    /** Execution context to pass instead of a fresh one (its waitUntil promises are then the caller's to await). */
+    exec?: ExecutionContext;
+  } = {},
+): Promise<Response> {
   const headers = new Headers(init.headers ?? {});
   let body: string | undefined;
   if (init.rawBody !== undefined) body = init.rawBody;
@@ -51,9 +65,11 @@ export async function call(path: string, init: { method?: string; headers?: Reco
     headers.set('content-type', 'application/json');
   }
   if (!headers.has('cf-connecting-ip')) headers.set('cf-connecting-ip', `10.0.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`);
-  const request = new Request(`https://api.test${path}`, { method: init.method ?? (body ? 'POST' : 'GET'), headers, body }) as Request<unknown, IncomingRequestCfProperties>;
+  const request = new Request(`https://api.test${path}`, { method: init.method ?? (body ? 'POST' : 'GET'), headers, body, cf: init.cf }) as Request<unknown, IncomingRequestCfProperties>;
+  const bindings = init.env ? { ...env, ...init.env } : env;
+  if (init.exec) return worker.fetch(request, bindings, init.exec);
   const ctx = createExecutionContext();
-  const res = await worker.fetch(request, env, ctx);
+  const res = await worker.fetch(request, bindings, ctx);
   await waitOnExecutionContext(ctx);
   return res;
 }

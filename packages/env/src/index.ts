@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type Manifest, manifestSchema } from './schema.ts';
 
-export { type Manifest, manifestSchema } from './schema.ts';
+export { DO_LOCATION_HINTS, type Manifest, manifestSchema } from './schema.ts';
 
 /** Repo root (packages/env/src → ../../..). */
 export const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');

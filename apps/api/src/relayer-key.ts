@@ -8,7 +8,7 @@ import type { Env } from './env.ts';
 import { gasFor } from './gas.ts';
 import { log } from './log.ts';
 import { POOL_SECRET, type Pool, isPool, parseRelayerKeys, poolAllows } from './relayer-config.ts';
-import { Rpc, invalidNonce, isDefiniteRejection, isExpired, type SendTxResult } from './near/rpc.ts';
+import { RELAY_WAIT_UNTIL, Rpc, invalidNonce, isDefiniteRejection, isExpired, type SendTxResult } from './near/rpc.ts';
 import { type ContractCall, parseKeyPair, signFunctionCall, waitForOutcome } from './near/tx.ts';
 
 export { parseRelayerKeys };
@@ -16,9 +16,16 @@ export { parseRelayerKeys };
 /** Refresh the reference block hash after this long (a tx is valid for ~24 h of blocks). */
 const BLOCK_HASH_MAX_AGE_MS = 5 * 60_000;
 
-export type RelayResult =
+/** Time spent inside the object: getting a nonce and broadcasting (queue included), then waiting for the outcome. */
+export interface RelayTiming {
+  dispatchMs: number;
+  outcomeMs: number;
+}
+
+export type RelayResult = (
   | { ok: true; result: unknown; nearTx: string }
-  | { ok: false; status: number; code: string; error: string; nearTx?: string };
+  | { ok: false; status: number; code: string; error: string; nearTx?: string }
+) & { timing?: RelayTiming };
 
 interface Dispatched {
   hash: string;
@@ -45,6 +52,15 @@ export class RelayerKey extends DurableObject<Env> {
   }
 
   async relay(pool: Pool, keyIndex: number, request: ContractCall, requestId?: string): Promise<RelayResult> {
+    const started = Date.now();
+    const mark = { dispatched: started };
+    const result = await this.relayTimed(pool, keyIndex, request, requestId, mark);
+    const end = Date.now();
+    return { ...result, timing: { dispatchMs: mark.dispatched - started, outcomeMs: end - mark.dispatched } };
+  }
+
+  /** `mark.dispatched` is set each time a transaction has been broadcast. */
+  private async relayTimed(pool: Pool, keyIndex: number, request: ContractCall, requestId: string | undefined, mark: { dispatched: number }): Promise<RelayResult> {
     if (!isPool(pool)) return { ok: false, status: 400, code: 'method_not_allowed', error: 'Unknown relayer pool' };
     const method = request.method;
     if (!poolAllows(pool, method)) return { ok: false, status: 400, code: 'method_not_allowed', error: `Method ${method} is not relayed by the ${pool} pool` };
@@ -65,6 +81,7 @@ export class RelayerKey extends DurableObject<Env> {
           log({ event: 'relay_dispatch_failed', requestId, pool, keyIndex, method: call.method, code: 'near_unavailable' }, 'error');
           return { ok: false, status: 502, code: 'near_unavailable', error: `NEAR RPC failed: ${errorMessage(err)}` };
         }
+        mark.dispatched = Date.now();
         log({ event: 'relay_dispatched', requestId, pool, keyIndex, method: call.method, nearTx: sent.hash, nonce: sent.nonce.toString(), attempt });
 
         let initial: SendTxResult | null = null;
@@ -145,19 +162,23 @@ export class RelayerKey extends DurableObject<Env> {
     });
     this.nonce = nonce;
     this.persist();
-    const response = rpc.sendTx(signed.bytes, 'EXECUTED');
+    const response = rpc.sendTx(signed.bytes, RELAY_WAIT_UNTIL);
     // Handled by the caller; this keeps an early rejection from being reported as unhandled.
     response.catch(() => undefined);
     return { hash: signed.hash, nonce, response };
   }
 
-  /** Cold start: the larger of the stored nonce (txs may still be in the pool) and the chain's. */
+  /**
+   * Cold start: the larger of the stored nonce (txs may still be in the pool) and the chain's. The reference block is
+   * a final one, read alongside: the access key view answers at an optimistic block, which an RPC node that is a
+   * block behind rejects as `Expired` (seen on testnet, costing a retry).
+   */
   private async initNonce(rpc: Rpc): Promise<void> {
-    const ak = await rpc.viewAccessKey(this.env.RELAYER_ACCOUNT, this.publicKey);
+    const [ak, blockHash] = await Promise.all([rpc.viewAccessKey(this.env.RELAYER_ACCOUNT, this.publicKey), rpc.latestBlockHash()]);
     const kv = this.ctx.storage.kv;
     const stored = kv.get<string>('publicKey') === this.publicKey ? kv.get<string>('nonce') : undefined;
     this.nonce = maxBig(BigInt(ak.nonce), stored ? BigInt(stored) : 0n);
-    this.blockHash = ak.block_hash;
+    this.blockHash = blockHash;
     this.blockHashAt = Date.now();
     this.persist();
   }
@@ -168,9 +189,9 @@ export class RelayerKey extends DurableObject<Env> {
       await this.refreshBlockHash(rpc);
       return;
     }
-    const ak = await rpc.viewAccessKey(this.env.RELAYER_ACCOUNT, this.publicKey);
+    const [ak, blockHash] = await Promise.all([rpc.viewAccessKey(this.env.RELAYER_ACCOUNT, this.publicKey), rpc.latestBlockHash()]);
     this.nonce = maxBig(this.nonce ?? 0n, BigInt(ak.nonce), akNonce ?? 0n);
-    this.blockHash = ak.block_hash;
+    this.blockHash = blockHash;
     this.blockHashAt = Date.now();
     this.persist();
   }

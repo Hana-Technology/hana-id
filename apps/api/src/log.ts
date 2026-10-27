@@ -11,6 +11,10 @@ export interface LogFields {
   status?: number;
   code?: string;
   latencyMs?: number;
+  /** Milliseconds per stage of a request (see handlers.ts `lap`). */
+  phases?: Record<string, number>;
+  /** Cloudflare data center that ran the request (e.g. SIN). */
+  colo?: string;
   nearTx?: string;
   pool?: string;
   keyIndex?: number;

@@ -5,7 +5,7 @@ import { KeyPair } from '@near-js/crypto';
 import { loadEnv } from '@hana-id/env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseRelayerKeys } from '../../src/relayer-config.ts';
-import { LOCAL_D1_ID, devVarsContent, existingD1Id, main, writeDevVars, writeWranglerConfig } from '../gen-wrangler.ts';
+import { LOCAL_D1_ID, devVarsContent, existingD1Id, main, writeDevVars, writeWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
 
 /**
  * dotenv 16.3.1 `parse`, exactly as bundled in wrangler 4.x (wrangler-dist/cli.js, used by tryLoadDotDevDotVars to
@@ -88,11 +88,24 @@ describe('wrangler.jsonc', () => {
     const { path } = writeWranglerConfig(manifest, undefined, dir);
     const text = readFileSync(path, 'utf8');
     const config = JSON.parse(text.slice(text.indexOf('\n') + 1)) as { vars: Record<string, string>; d1_databases: { database_name: string; database_id: string }[] };
-    expect(config.vars).toEqual({ NEAR_RPC: manifest.rpc, SIGNER_ACCOUNT: manifest.signer, RELAYER_ACCOUNT: manifest.relayer, ENV_NAME: manifest.name });
+    expect(config.vars).toEqual({
+      NEAR_RPC: manifest.rpc,
+      SIGNER_ACCOUNT: manifest.signer,
+      RELAYER_ACCOUNT: manifest.relayer,
+      ENV_NAME: manifest.name,
+      ...(manifest.cloudflare.durableObjectLocation ? { DO_LOCATION_HINT: manifest.cloudflare.durableObjectLocation } : {}),
+    });
     expect(config.d1_databases[0]).toMatchObject({ database_name: manifest.cloudflare.d1Name, database_id: LOCAL_D1_ID });
     expect(text).not.toMatch(/ed25519:/u);
     expect(text).not.toMatch(/RELAYER_KEYS|KEYS_UPDATER_KEY/u);
     expect(text).not.toMatch(/OWNER_RELAYER_KEYS/u);
+  });
+
+  it('sets DO_LOCATION_HINT only when the manifest names a Durable Object location', () => {
+    const vars = (m: typeof manifest) => wranglerConfig(m, LOCAL_D1_ID).vars as Record<string, string>;
+    expect(vars({ ...manifest, cloudflare: { ...manifest.cloudflare, durableObjectLocation: 'weur' } }).DO_LOCATION_HINT).toBe('weur');
+    const { durableObjectLocation: _, ...cloudflare } = manifest.cloudflare;
+    expect(vars({ ...manifest, cloudflare })).not.toHaveProperty('DO_LOCATION_HINT');
   });
 
   it('keeps an existing D1 id only for the same database', () => {

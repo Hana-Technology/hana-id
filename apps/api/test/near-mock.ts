@@ -16,6 +16,8 @@ export interface SentTx {
   method: string;
   args: Record<string, unknown>;
   gas: bigint;
+  /** Reference block hash the tx was signed against. */
+  blockHash: string;
 }
 
 type Outcome = { SuccessValue: unknown } | { Failure: unknown };
@@ -32,6 +34,10 @@ export class NearMock {
   readonly viewCalls: { method: string; args: Record<string, unknown> }[] = [];
   readonly rpcMethods: string[] = [];
   readonly blockHash = baseEncode(new Uint8Array(32).fill(7));
+  /** Hash of the latest final block (`block` with finality final); the access key view answers with `blockHash`. */
+  finalBlockHash = this.blockHash;
+  /** `wait_until` of every send_tx and tx call, in order. */
+  readonly waitUntil: { method: 'send_tx' | 'tx'; waitUntil: unknown }[] = [];
   defaultNonce = 100n;
   /** Contract behaviour per method: return a value, or throw/return {Failure} for a panic. */
   contract: Record<string, (args: Record<string, unknown>, tx: SentTx) => Outcome | unknown> = {};
@@ -92,10 +98,12 @@ export class NearMock {
       case 'query':
         return Promise.resolve(this.query(params));
       case 'block':
-        return Promise.resolve({ result: { header: { hash: this.blockHash, height: 1000 } } });
+        return Promise.resolve({ result: { header: { hash: params.finality === 'final' ? this.finalBlockHash : this.blockHash, height: 1000 } } });
       case 'send_tx':
+        this.waitUntil.push({ method, waitUntil: params.wait_until });
         return this.sendTx(params);
       case 'tx': {
+        this.waitUntil.push({ method, waitUntil: params.wait_until });
         const outcome = this.outcomes.get(params.tx_hash as string);
         return Promise.resolve(outcome ? { result: outcome } : { error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_TRANSACTION' }, message: 'UNKNOWN_TRANSACTION' } });
       }
@@ -147,6 +155,7 @@ export class NearMock {
       method: fc.methodName,
       args: JSON.parse(new TextDecoder().decode(new Uint8Array(fc.args))) as Record<string, unknown>,
       gas: BigInt(fc.gas),
+      blockHash: baseEncode(new Uint8Array(t.blockHash)),
     };
     let override: RpcReply | undefined;
     try {

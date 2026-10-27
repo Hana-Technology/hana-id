@@ -13,3 +13,8 @@ Google client fields:
 
 Values containing `UNSET` are placeholders: `deploy-contract` skips the step that needs them (with a warning) until
 they are filled in.
+
+`cloudflare.durableObjectLocation` (optional): the region for the Durable Objects every login shares (relayer keys, the
+per-app and owner-action limiters), as a Cloudflare location hint (`apac`, `weur`, `enam`, …). Without it each object
+lives wherever its first request happened to arrive. Pick the region of most users (sandbox-dev: `apac`, next to its
+D1 database). Per-IP limiters always stay near their client. Changing it creates new objects in the new region.

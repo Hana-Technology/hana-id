@@ -4,6 +4,7 @@ import type { Env } from './env.ts';
 import { type Headers_, corsHeaders, json, readJson } from './http.ts';
 import { ipSubject } from './ip.ts';
 import { log } from './log.ts';
+import { placedStub } from './placement.ts';
 import { JwksUnavailableError, verifyIdToken } from './jwks.ts';
 import { precheckOwnerAction } from './owner-actions.ts';
 import type { RateLimiter } from './rate-limiter.ts';
@@ -40,7 +41,42 @@ interface Ctx {
   started: number;
   cors: Headers_;
   appId?: string;
+  /** Data center that ran the request (logged). */
+  colo?: string;
+  /** Stage durations for the request log, filled by `lap`. */
+  phases?: Record<string, number>;
+  lapAt?: number;
 }
+
+function newCtx(env: Env, requestId: string, endpoint: string, request?: Request, cors: Headers_ = {}): Ctx {
+  const started = Date.now();
+  const colo = (request as Request<unknown, IncomingRequestCfProperties> | undefined)?.cf?.colo;
+  return { env, requestId, endpoint, started, cors, colo: typeof colo === 'string' ? colo : undefined, phases: {}, lapAt: started };
+}
+
+/** Records the time since the previous lap (or the start) as stage `name`. */
+function lap(ctx: Ctx, name: string): void {
+  const now = Date.now();
+  if (ctx.phases) ctx.phases[name] = now - (ctx.lapAt ?? ctx.started);
+  ctx.lapAt = now;
+}
+
+/** Records a relay's stages: the round trip to the relayer key object and, inside it, nonce + broadcast vs outcome. */
+function lapRelay(ctx: Ctx, result: { timing?: { dispatchMs: number; outcomeMs: number } }): void {
+  lap(ctx, 'relay');
+  if (ctx.phases && result.timing) {
+    ctx.phases.relayDispatch = result.timing.dispatchMs;
+    ctx.phases.relayOutcome = result.timing.outcomeMs;
+  }
+}
+
+type Settled<T> = { ok: true; value: T } | { ok: false; error: unknown };
+/** Never rejects, so a check started early and then not needed can't become an unhandled rejection. */
+const settle = <T>(p: Promise<T>): Promise<Settled<T>> =>
+  p.then(
+    (value) => ({ ok: true as const, value }),
+    (error: unknown) => ({ ok: false as const, error }),
+  );
 
 function done(ctx: Ctx, status: number, body: Record<string, unknown>, extra: Headers_ = {}): Response {
   const ok = status < 400;
@@ -57,6 +93,8 @@ function done(ctx: Ctx, status: number, body: Record<string, unknown>, extra: He
       code,
       nearTx,
       latencyMs: Date.now() - ctx.started,
+      phases: ctx.phases && Object.keys(ctx.phases).length > 0 ? ctx.phases : undefined,
+      colo: ctx.colo,
     },
     status >= 500 ? 'error' : 'info',
   );
@@ -70,8 +108,9 @@ function ipKey(request: Request): string {
   return `ip:${ipSubject(request.headers.get('cf-connecting-ip'))}`;
 }
 
+/** Per-IP limiters are created near their client; shared ones (per app, owner actions) in the configured region. */
 function limiter(env: Env, name: string): DurableObjectStub<RateLimiter> {
-  return env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(name));
+  return name.startsWith('ip:') ? env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(name)) : placedStub(env, env.RATE_LIMITER, name);
 }
 
 // ---- Preflight ----
@@ -107,6 +146,7 @@ async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay' | 'co
   } catch {
     return fail(503, 'config_unavailable', 'App config is unavailable, try again');
   }
+  lap(ctx, 'app');
   if (!app) return fail(401, 'unknown_app', 'Unknown publishable key');
   ctx.appId = app.id;
   const origin = request.headers.get('origin');
@@ -133,6 +173,7 @@ async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay' | 'co
   } catch {
     return fail(503, 'rate_limiter_unavailable', 'Try again');
   }
+  lap(ctx, 'limits');
   return { ok: true, app };
 }
 
@@ -144,7 +185,7 @@ async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay' | 'co
  * when the scope allows shared login, else 409.
  */
 export async function handleAppConfig(request: Request, env: Env, requestId: string): Promise<Response> {
-  const ctx: Ctx = { env, requestId, endpoint: APP_CONFIG_ENDPOINT, started: Date.now(), cors: {} };
+  const ctx = newCtx(env, requestId, APP_CONFIG_ENDPOINT, request);
   const gate = await appGate(request, env, ctx, 'config');
   if (!gate.ok) return gate.response;
   const { app } = gate;
@@ -166,8 +207,12 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
 
 // ---- App endpoints ----
 
-export async function handleAppEndpoint(request: Request, env: Env, endpoint: AppEndpoint, requestId: string): Promise<Response> {
-  const ctx: Ctx = { env, requestId, endpoint, started: Date.now(), cors: {} };
+/**
+ * Clients wait for these: chain reads that do not depend on each other run concurrently, and usage is counted after
+ * the response (`exec.waitUntil`) when the runtime gives an execution context.
+ */
+export async function handleAppEndpoint(request: Request, env: Env, endpoint: AppEndpoint, requestId: string, exec?: ExecutionContext): Promise<Response> {
+  const ctx = newCtx(env, requestId, endpoint, request);
   const now = Date.now();
   const gate = await appGate(request, env, ctx, 'relay');
   if (!gate.ok) return gate.response;
@@ -198,30 +243,26 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     const expected = await sessionNonce({ signer: env.SIGNER_ACCOUNT, scopeId: app.scope_id, ...req });
     if (token.nonce !== expected) return reject(ctx, 400, 'nonce_mismatch', 'The ID token nonce does not commit to this session');
 
+    // 7 and 8 read the chain; only a verified token gets this far, and the two reads run side by side.
     // 7. Scope: a registered client must be this app's; a shared client needs a scope that allows shared login.
-    try {
-      const scope = await scopeForClient(env, token.provider, token.aud);
-      if (scope !== null) {
-        if (scope !== app.scope_id) return reject(ctx, 403, 'scope_mismatch', 'Token is for a different app');
-      } else if (isSharedClient(await getConfig(env), token.provider, token.aud, now)) {
-        const appScope = await getScope(env, app.scope_id);
-        if (!appScope) return reject(ctx, 403, 'unknown_scope', 'The app’s scope is not registered');
-        if (!appScope.allow_shared) return reject(ctx, 403, 'shared_login_disabled', 'This app does not allow shared login');
-      } else {
-        return reject(ctx, 403, 'unregistered_client', 'Token is for an unregistered app');
-      }
-      // 8. The session key is not in use already (a replayed request would only fail on chain, at the relayer's
-      //    cost). session_key_in_use also covers revoked sessions that have not expired, which get_session hides.
-      if (await sessionKeyInUse(env, req.sessionPublicKey, now)) return reject(ctx, 409, 'session_exists', 'This session key is already in use');
-    } catch {
-      return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');
-    }
+    // 8. The session key is not in use already (a replayed request would only fail on chain, at the relayer's
+    //    cost). session_key_in_use also covers revoked sessions that have not expired, which get_session hides.
+    const [scope, inUse] = await Promise.all([
+      settle(checkClientScope(env, token.provider, token.aud, app.scope_id, now)),
+      settle(sessionKeyInUse(env, req.sessionPublicKey, now)),
+    ]);
+    if (!scope.ok) return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');
+    if (scope.value) return reject(ctx, scope.value.status, scope.value.code, scope.value.error);
+    if (!inUse.ok) return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');
+    if (inUse.value) return reject(ctx, 409, 'session_exists', 'This session key is already in use');
+    lap(ctx, 'checks');
 
     const result = await relay(env, 'session', { method: call.method, args: call.args }, requestId);
+    lapRelay(ctx, result);
     if (!result.ok) return done(ctx, result.status, { error: result.error, code: result.code, nearTx: result.nearTx });
     if (!isSessionView(result.result)) return done(ctx, 502, { error: 'The contract returned no session', code: 'bad_contract_result', nearTx: result.nearTx });
     rememberSession(req.sessionPublicKey, result.result);
-    await countUsage(env, app.id, 'sessions', ctx);
+    await countUsage(env, app.id, 'sessions', ctx, exec);
     return done(ctx, 200, { result: result.result, nearTx: result.nearTx });
   }
 
@@ -254,31 +295,53 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
   if (!session) return reject(ctx, 404, 'unknown_session', 'Unknown or expired session');
   if (session.scope_id !== app.scope_id) return reject(ctx, 403, 'scope_mismatch', 'Session belongs to a different app');
   if (session.expires_at_ms <= now) return reject(ctx, 404, 'unknown_session', 'Unknown or expired session');
+  lap(ctx, 'checks');
 
   const result = await relay(env, 'session', { method: call.method, args: call.args }, requestId);
+  lapRelay(ctx, result);
   if (endpoint === '/v1/sessions/revoke') forgetSession(call.sessionPublicKey);
   if (!result.ok) return done(ctx, result.status, { error: result.error, code: result.code, nearTx: result.nearTx });
   if (endpoint === '/v1/derive') {
     const r = result.result as { big_y?: unknown; big_c?: unknown } | null;
     if (!r || typeof r.big_y !== 'string' || typeof r.big_c !== 'string') return done(ctx, 502, { error: 'The contract returned no key', code: 'bad_contract_result', nearTx: result.nearTx });
-    await countUsage(env, app.id, 'derives', ctx);
+    await countUsage(env, app.id, 'derives', ctx, exec);
     return done(ctx, 200, { result: { big_y: r.big_y, big_c: r.big_c }, nearTx: result.nearTx });
   }
   return done(ctx, 200, { result: null, nearTx: result.nearTx });
 }
 
-async function countUsage(env: Env, appId: string, field: 'sessions' | 'derives', ctx: Ctx): Promise<void> {
-  try {
-    await incrementUsage(env.DB, appId, field);
-  } catch {
+/**
+ * Counts a successful call. With an execution context the D1 write runs after the response is sent (waitUntil);
+ * without one it is awaited here. Never rejects.
+ */
+async function countUsage(env: Env, appId: string, field: 'sessions' | 'derives', ctx: Ctx, exec?: ExecutionContext): Promise<void> {
+  const write = incrementUsage(env.DB, appId, field).catch(() => {
     log({ event: 'usage_increment_failed', requestId: ctx.requestId, appId, endpoint: ctx.endpoint }, 'error');
-  }
+  });
+  if (exec) exec.waitUntil(write);
+  else await write;
+}
+
+type ScopeRejection = { status: number; code: string; error: string };
+
+/**
+ * Check 7: the client (provider, aud) may log in to `appScope`, or why not. A registered client must be the app's own;
+ * otherwise it must be a shared client in force (config, cached 60 s) and the app's scope must allow shared login.
+ */
+async function checkClientScope(env: Env, provider: string, aud: string, appScope: string, now: number): Promise<ScopeRejection | null> {
+  const scope = await scopeForClient(env, provider, aud);
+  if (scope !== null) return scope === appScope ? null : { status: 403, code: 'scope_mismatch', error: 'Token is for a different app' };
+  if (!isSharedClient(await getConfig(env), provider, aud, now)) return { status: 403, code: 'unregistered_client', error: 'Token is for an unregistered app' };
+  const scopeView = await getScope(env, appScope);
+  if (!scopeView) return { status: 403, code: 'unknown_scope', error: 'The app’s scope is not registered' };
+  if (!scopeView.allow_shared) return { status: 403, code: 'shared_login_disabled', error: 'This app does not allow shared login' };
+  return null;
 }
 
 // ---- Owner actions ----
 
 export async function handleOwnerAction(request: Request, env: Env, requestId: string): Promise<Response> {
-  const ctx: Ctx = { env, requestId, endpoint: '/v1/owner-actions', started: Date.now(), cors: corsHeaders('*', 'content-type') };
+  const ctx = newCtx(env, requestId, '/v1/owner-actions', request, corsHeaders('*', 'content-type'));
   try {
     const hit = await limiter(env, ipKey(request)).hit([{ name: 'owner-actions:minute', windowMs: MINUTE, max: OWNER_ACTIONS_PER_IP_MINUTE }]);
     if (!hit.ok) return reject(ctx, 429, 'rate_limited', 'Rate limit exceeded (per IP per minute)', { 'retry-after': String(hit.retryAfterS) });
@@ -331,7 +394,9 @@ export async function handleOwnerAction(request: Request, env: Env, requestId: s
     return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
   }
 
+  lap(ctx, 'checks');
   const result = await relay(env, 'owner', call, requestId);
+  lapRelay(ctx, result);
   forgetScope(check.scopeId);
   // The reservation stays unless the transaction certainly never executed (an unknown outcome may still land).
   if (!result.ok && NOT_EXECUTED.has(result.code)) await release();

@@ -92,7 +92,7 @@ export interface WaitOptions {
 }
 
 /**
- * Waits for a broadcast tx's outcome by polling `tx` (EXECUTED). Starts from `initial` if send_tx already settled.
+ * Waits for a broadcast tx's outcome by polling `tx` (RELAY_WAIT_UNTIL). Starts from `initial` if send_tx already settled.
  * Transient errors (see isTransient) keep polling until the deadline. Never holds any lock: callers run this outside
  * the nonce critical section.
  */

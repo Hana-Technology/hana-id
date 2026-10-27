@@ -8,7 +8,7 @@ import { placedStub } from './placement.ts';
 import { JwksUnavailableError, verifyIdToken } from './jwks.ts';
 import { precheckOwnerAction } from './owner-actions.ts';
 import type { RateLimiter } from './rate-limiter.ts';
-import type { RelayTiming } from './relayer-key.ts';
+import type { RelayInstance, RelayTiming } from './relayer-key.ts';
 import { relay } from './relayer-pool.ts';
 import { ckdPayload, revokePayload, sessionNonce, verifySessionSignature } from './session-crypto.ts';
 import { claimCounter, precheckSessionUse } from './session-use.ts';
@@ -47,6 +47,8 @@ interface Ctx {
   colo?: string;
   /** Stage durations for the request log, filled by `lap`. */
   phases?: Record<string, number>;
+  /** The relayer key instance behind a relay (request log). */
+  relayInstance?: RelayInstance;
   lapAt?: number;
 }
 
@@ -67,8 +69,9 @@ function lap(ctx: Ctx, name: string): void {
  * Records a relay's stages: the round trip to the relayer key object and, inside it, nonce + broadcast vs outcome,
  * with the broadcast split into queue / chain reads / signing / nonce reservation (see RelayTiming).
  */
-function lapRelay(ctx: Ctx, result: { timing?: RelayTiming }): void {
+function lapRelay(ctx: Ctx, result: { timing?: RelayTiming; instance?: RelayInstance }): void {
   lap(ctx, 'relay');
+  ctx.relayInstance = result.instance;
   const t = result.timing;
   if (ctx.phases && t) {
     ctx.phases.relayDispatch = t.dispatchMs;
@@ -105,6 +108,7 @@ function done(ctx: Ctx, status: number, body: Record<string, unknown>, extra: He
       latencyMs: Date.now() - ctx.started,
       phases: ctx.phases && Object.keys(ctx.phases).length > 0 ? ctx.phases : undefined,
       colo: ctx.colo,
+      relayInstance: ctx.relayInstance,
     },
     status >= 500 ? 'error' : 'info',
   );

@@ -171,7 +171,8 @@ describe('RelayerKey Durable Object', () => {
     expect(syncs()).toBe(1);
     // The rest of the block: no writes, the stored reservation stays.
     const rest = (await Promise.all(Array.from({ length: NONCE_RESERVATION - 1 }, (_, i) => stub.relay('session', 0, revokeCall(i + 1))))) as RelayResult[];
-    expect(rest.every((r) => r.ok && r.timing!.persistMs === 0)).toBe(true);
+    // No write and no wait: syncs() below proves it (a timing of exactly 0 ms is not reliable under load).
+    expect(rest.every((r) => r.ok)).toBe(true);
     expect(near.sent.at(-1)!.nonce).toBe(500n + RESERVE);
     expect(await storedNonce(stub)).toBe(500n + RESERVE);
     expect(syncs()).toBe(1);
@@ -422,6 +423,25 @@ describe('RelayerKey Durable Object', () => {
     near.finalBlockHash = baseEncode(new Uint8Array(32).fill(11));
     expect(((await stub.relay('session', 0, revokeCall(2))) as RelayResult).ok).toBe(true);
     expect(near.sent.at(-1)!.blockHash).toBe(near.finalBlockHash);
+  });
+
+  it('reports which instance served a relay: cold on its first, warm after; block refresh once the hash is 5 min old', async () => {
+    const near = new NearMock();
+    near.install();
+    const stub = freshKeyStub();
+    const first = (await stub.relay('session', 0, revokeCall(1))) as RelayResult;
+    expect(first.instance).toMatchObject({ cold: true, blockRefresh: false, served: 0 });
+    const second = (await stub.relay('session', 0, revokeCall(2))) as RelayResult;
+    expect(second.instance).toMatchObject({ cold: false, blockRefresh: false, served: 1 });
+    expect(second.instance!.ageMs).toBeGreaterThanOrEqual(first.instance!.ageMs);
+    const later = Date.now() + 5 * 60_000 + 1_000;
+    vi.spyOn(Date, 'now').mockReturnValue(later);
+    const third = (await stub.relay('session', 0, revokeCall(3))) as RelayResult;
+    expect(third.instance).toMatchObject({ cold: false, blockRefresh: true, served: 2 });
+    const methods = near.rpcMethods;
+    // One cold read (access key + final block), then only the 5-min block refresh.
+    expect(methods.filter((m) => m === 'query')).toHaveLength(1);
+    expect(methods.filter((m) => m === 'block')).toHaveLength(2);
   });
 
   it('reports the time spent getting a nonce and broadcasting vs waiting for the outcome', async () => {

@@ -64,10 +64,22 @@ export interface RelayTiming {
 /** The parts of dispatchMs, accumulated across attempts. */
 type DispatchTiming = Pick<RelayTiming, 'queueMs' | 'chainReadMs' | 'signMs' | 'persistMs'>;
 
+/**
+ * Which object instance served the relay, to explain chainReadMs: `cold` when this relay read the nonce from chain
+ * (a new instance: first use, or after eviction or a deploy), `blockRefresh` when it re-read the reference block,
+ * `served` relays this instance handled before this one, `ageMs` since the instance started.
+ */
+export interface RelayInstance {
+  cold: boolean;
+  blockRefresh: boolean;
+  served: number;
+  ageMs: number;
+}
+
 export type RelayResult = (
   | { ok: true; result: unknown; nearTx: string }
   | { ok: false; status: number; code: string; error: string; nearTx?: string }
-) & { timing?: RelayTiming };
+) & { timing?: RelayTiming; instance?: RelayInstance };
 
 interface Dispatched {
   hash: string;
@@ -89,6 +101,9 @@ export class RelayerKey extends DurableObject<Env> {
   private blockHash: string | null = null;
   private blockHashAt = 0;
   private queue: Promise<unknown> = Promise.resolve();
+  /** When this instance started, and how many relays it has taken (see RelayInstance). */
+  private readonly startedAt = Date.now();
+  private served = 0;
   private inflight = 0;
 
   /** Requests currently being relayed through this key (dispatched or waiting for an outcome). */
@@ -100,9 +115,10 @@ export class RelayerKey extends DurableObject<Env> {
     const started = Date.now();
     const mark = { dispatched: started };
     const parts: DispatchTiming = { queueMs: 0, chainReadMs: 0, signMs: 0, persistMs: 0 };
-    const result = await this.relayTimed(pool, keyIndex, request, requestId, mark, parts);
+    const instance: RelayInstance = { cold: false, blockRefresh: false, served: this.served++, ageMs: started - this.startedAt };
+    const result = await this.relayTimed(pool, keyIndex, request, requestId, mark, parts, instance);
     const end = Date.now();
-    return { ...result, timing: { dispatchMs: mark.dispatched - started, outcomeMs: end - mark.dispatched, ...parts } };
+    return { ...result, timing: { dispatchMs: mark.dispatched - started, outcomeMs: end - mark.dispatched, ...parts }, instance };
   }
 
   /** `mark.dispatched` is set each time a transaction has been broadcast; `parts` accumulates the dispatch stages. */
@@ -113,6 +129,7 @@ export class RelayerKey extends DurableObject<Env> {
     requestId: string | undefined,
     mark: { dispatched: number },
     parts: DispatchTiming,
+    instance: RelayInstance,
   ): Promise<RelayResult> {
     if (!isPool(pool)) return { ok: false, status: 400, code: 'method_not_allowed', error: 'Unknown relayer pool' };
     const method = request.method;
@@ -129,7 +146,7 @@ export class RelayerKey extends DurableObject<Env> {
       for (let attempt = 0; ; attempt++) {
         let sent: Dispatched;
         try {
-          sent = await this.exclusive(() => this.dispatch(rpc, call, parts), parts);
+          sent = await this.exclusive(() => this.dispatch(rpc, call, parts, instance), parts);
         } catch (err) {
           // An RPC read failed (or, rarely, the reservation write did): either way nothing was sent.
           log({ event: 'relay_dispatch_failed', requestId, pool, keyIndex, method: call.method, code: 'near_unavailable' }, 'error');
@@ -208,12 +225,18 @@ export class RelayerKey extends DurableObject<Env> {
    * Critical section: next nonce, sign, reserve the nonce if it is above the reservation (see NONCE_RESERVATION),
    * start the broadcast. Does not wait for the broadcast to answer.
    */
-  private async dispatch(rpc: Rpc, call: ContractCall, parts: DispatchTiming): Promise<Dispatched> {
+  private async dispatch(rpc: Rpc, call: ContractCall, parts: DispatchTiming, instance: RelayInstance): Promise<Dispatched> {
     const keyPair = this.keyPair;
     if (!keyPair) throw new Error('Relayer key not loaded');
     let at = Date.now();
-    if (this.nonce === null) await this.initNonce(rpc);
-    if (!this.blockHash || Date.now() - this.blockHashAt > BLOCK_HASH_MAX_AGE_MS) await this.refreshBlockHash(rpc);
+    if (this.nonce === null) {
+      instance.cold = true;
+      await this.initNonce(rpc);
+    }
+    if (!this.blockHash || Date.now() - this.blockHashAt > BLOCK_HASH_MAX_AGE_MS) {
+      instance.blockRefresh = true;
+      await this.refreshBlockHash(rpc);
+    }
     at = addLap(parts, 'chainReadMs', at);
     const nonce = (this.nonce ?? 0n) + 1n;
     const signed = await signFunctionCall({

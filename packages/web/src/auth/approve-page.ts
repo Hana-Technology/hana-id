@@ -3,6 +3,11 @@
 // with a digest computed from exactly what it rendered (the approval digest, or the consent digest for the
 // auto-approve consent screen), so the vault signs only what the user saw. Approve and Allow are guarded
 // (approve-guard.ts). After an answer it waits up to 15 s for a follow-up request, then says bye and closes.
+//
+// One request is on screen at a time. If the vault sends another (a different id) while one is still unanswered, the
+// one on screen is rejected first (approve-result approved: false, or consent-result allowed: false, with its own
+// digest), so the vault never waits on an id the user can no longer answer; the new one needs its own guarded Approve.
+// The same id sent again (the vault re-sending what is on show) is rendered again, which also resets the guard.
 import {
   type ApprovalDigestInput,
   DecodeError,
@@ -12,9 +17,9 @@ import {
   parseWindowMessage,
 } from '@hana-id/core';
 import { type DecodedApproval, decodeApprovalRequest } from '@hana-id/core/decode';
-import { type AutoApprovePolicyV1, parseAutoApprovePolicy, policyId } from '@hana-id/core/policy';
+import { type AutoApprovePolicyV1, type AutoApproveReason, policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import type { HanaEnv } from '../hana-env.ts';
-import { ApproveGuard } from './approve-guard.ts';
+import { ApproveGuard, type GuardGesture } from './approve-guard.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import { type GestureCheck, type PageWindow, isFramed, isUserGesture } from './page-window.ts';
 import { renderApproval } from './render-approval.ts';
@@ -22,6 +27,40 @@ import { renderConsent } from './render-consent.ts';
 
 /** How long the popup waits for a follow-up request after an answer before it closes. */
 export const KEEP_OPEN_MS = 15_000;
+
+/** Why the vault didn't auto-approve a request (the matcher's reason, policy/match.ts), in the popup's words. */
+export const AUTO_APPROVE_REASON_TEXT: Readonly<Record<AutoApproveReason, string>> = Object.freeze({
+  never_covered: 'this kind of request is never signed automatically',
+  no_policy_section: 'the rules don’t cover this chain',
+  decode_failed: 'Hana couldn’t fully read the request',
+  network_not_listed: 'the network isn’t listed in the rules',
+  chain_not_listed: 'the chain isn’t listed in the rules',
+  fee_bump: 'fee-bump transactions are never signed automatically',
+  unsupported_envelope: 'this transaction format isn’t supported',
+  fee_too_high: 'the fee is over the rules’ limit',
+  source_not_self: 'the transaction’s source isn’t your account',
+  operation_not_allowed: 'it contains an operation the rules don’t allow',
+  asset_not_listed: 'the asset isn’t listed in the rules',
+  contract_creation: 'it creates a contract',
+  contract_not_listed: 'the contract isn’t listed in the rules',
+  function_not_listed: 'the function isn’t listed in the rules',
+  selector_not_listed: 'the function isn’t listed in the rules',
+  calldata_mismatch: 'the call doesn’t match the listed function',
+  address_not_allowed: 'it involves an address the rules don’t allow',
+  opaque_bytes: 'it carries data Hana can’t check',
+  unsupported_argument: 'it has an argument Hana can’t check',
+  decoder_unavailable: 'Hana can’t decode this protocol yet',
+  decoder_refused: 'the protocol check refused it',
+  typed_data_not_listed: 'this kind of signature isn’t listed in the rules',
+  value_too_high: 'the amount is over the per-transaction limit',
+  daily_value_exceeded: 'it would go over today’s amount limit',
+  daily_count_reached: 'today’s limit of automatic signatures is reached',
+});
+
+/** The text for a reason code (an unknown code, from a newer vault, is shown generically). */
+export function autoApproveReasonText(reason: string): string {
+  return Object.hasOwn(AUTO_APPROVE_REASON_TEXT, reason) ? AUTO_APPROVE_REASON_TEXT[reason as AutoApproveReason] : 'it doesn’t match the rules';
+}
 
 export interface ApprovePageDeps {
   win: PageWindow;
@@ -33,7 +72,7 @@ export interface ApprovePageDeps {
 
 type Current =
   | { readonly kind: 'request'; readonly msg: WindowMessage<'hana:approve-request'>; readonly input: ApprovalDigestInput; readonly decodable: boolean }
-  | { readonly kind: 'consent'; readonly msg: WindowMessage<'hana:consent-request'>; readonly policyId: string; readonly valid: boolean };
+  | { readonly kind: 'consent'; readonly msg: WindowMessage<'hana:consent-request'>; readonly valid: boolean };
 
 export type ApprovePageState = 'connecting' | 'request' | 'consent' | 'waiting' | 'closed' | 'error';
 
@@ -68,11 +107,16 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     }
   };
 
+  const onGesture = (kind: GuardGesture) => (e: Event) => {
+    if (isGesture(e)) guard.gesture(kind);
+  };
   const listeners: [string, (e: Event) => void][] = [
     ['message', onMessage],
     ['focus', () => guard.focused()],
     ['blur', () => guard.blurred()],
-    ['pointermove', () => guard.pointerMoved()],
+    ['pointermove', onGesture('pointermove')],
+    ['pointerdown', onGesture('pointerdown')],
+    ['keydown', onGesture('keydown')],
     ['pagehide', onPageHide],
   ];
   const onVisibility = () => (visible() ? guard.focused() : guard.blurred());
@@ -124,8 +168,9 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     const ok = d.h('button', { class: 'primary', attrs: { type: 'button' } }, primaryLabel);
     ok.disabled = true;
     ok.addEventListener('click', (e) => {
-      // The guard is checked here too, not only through `disabled`.
-      if (isGesture(e) && enabled && guard.armed()) answer(true);
+      // The guard is checked here too, not only through `disabled`, and the click must have started (pointerdown, or
+      // keydown for a keyboard click, whose detail is 0) after the gesture that armed it.
+      if (isGesture(e) && enabled && guard.mayActivate((e as MouseEvent).detail === 0)) answer(true);
     });
     primary = enabled ? ok : null;
     return d.h('div', { class: 'actions' }, reject, enabled ? ok : null);
@@ -143,7 +188,15 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     return box;
   }
 
+  /** A new request replaces the one on screen: the unanswered one is rejected first. */
+  function replaceCurrent(id: string): void {
+    if (current && current.msg.id !== id) post(result(current, false));
+    current = null;
+    primary = null;
+  }
+
   function showRequest(msg: WindowMessage<'hana:approve-request'>): void {
+    replaceCurrent(msg.id);
     const input: ApprovalDigestInput = {
       id: msg.id,
       kind: msg.kind,
@@ -169,7 +222,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         { class: 'panel approve' },
         header(msg, `Request ${msg.position} of ${msg.queued}`),
         d.h('p', { class: 'account' }, `Your ${msg.chain === 'stellar' ? 'Stellar' : 'EVM'} account `, d.h('code', { class: 'mono' }, msg.address)),
-        auto?.miss ? d.h('p', { class: 'note' }, `Not signed automatically under “${auto.label}”: ${auto.miss.detail || auto.miss.reason}`) : null,
+        auto?.reason ? d.h('p', { class: 'note' }, `Not signed automatically under “${auto.label}”: ${autoApproveReasonText(auto.reason)}.`) : null,
         decoded
           ? renderApproval(d, decoded, msg.appName)
           : d.h('div', { class: 'request' }, d.h('p', { class: 'danger' }, 'Hana can’t read this request, so it can’t be approved.'), d.h('p', { class: 'muted' }, problem)),
@@ -181,18 +234,19 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   }
 
   function showConsent(msg: WindowMessage<'hana:consent-request'>): void {
+    replaceCurrent(msg.id);
+    // The popup validates the policy itself and recomputes its id: it shows and binds only a policy whose id is the
+    // one the vault will store the consent under.
     let policy: AutoApprovePolicyV1 | null = null;
-    let id = '';
-    const parsed = parseAutoApprovePolicy(msg.policy);
-    if (parsed.ok) {
+    const validated = validateAutoApprovePolicy(msg.policy);
+    if (validated.ok) {
       try {
-        id = policyId(parsed.policy);
-        policy = id === msg.policyId ? parsed.policy : null;
+        policy = policyId(validated.policy) === msg.policyId ? validated.policy : null;
       } catch {
         policy = null;
       }
     }
-    current = { kind: 'consent', msg, policyId: policy ? id : msg.policyId, valid: policy !== null };
+    current = { kind: 'consent', msg, valid: policy !== null };
     state = 'consent';
     d.show(
       d.h(
@@ -200,7 +254,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         { class: 'panel consent' },
         header(msg),
         policy
-          ? renderConsent(d, policy, msg.appName, msg.parentOrigin)
+          ? renderConsent(d, { policy, appName: msg.appName, parentOrigin: msg.parentOrigin, expiresAtMs: msg.expiresAtMs, nowMs: now() })
           : d.h('div', {}, d.h('h1', {}, 'Automatic signing'), d.h('p', { class: 'danger' }, 'This app’s automatic-signing rules could not be checked, so they can’t be allowed.')),
         buttons('Allow', policy !== null),
       ),
@@ -217,16 +271,19 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     }, KEEP_OPEN_MS);
   }
 
+  /** The answer to `c`, with the digest of exactly what was rendered for it. */
+  function result(c: Current, approved: boolean): Record<string, unknown> {
+    if (c.kind === 'request') return { t: 'hana:approve-result', id: c.msg.id, approved: approved && c.decodable, digest: approvalDigest(c.input) };
+    const { id, policyId: pid, parentOrigin, expiresAtMs } = c.msg;
+    return { t: 'hana:consent-result', id, allowed: approved && c.valid, digest: consentDigest({ id, policyId: pid, parentOrigin, expiresAtMs }) };
+  }
+
   function answer(approved: boolean): void {
     const c = current;
     if (!c) return;
     current = null;
     primary = null;
-    if (c.kind === 'request') {
-      post({ t: 'hana:approve-result', id: c.msg.id, approved: approved && c.decodable, digest: approvalDigest(c.input) });
-    } else {
-      post({ t: 'hana:consent-result', id: c.msg.id, granted: approved && c.valid, digest: consentDigest({ id: c.msg.id, parentOrigin: c.msg.parentOrigin, policyId: c.policyId }) });
-    }
+    post(result(c, approved));
     guard.cleared();
     if (stopped) return;
     state = 'waiting';

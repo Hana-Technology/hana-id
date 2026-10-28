@@ -1,6 +1,7 @@
 // The auto-approve consent screen (docs/batch-b-spec.md "Consent"): the app name and verified origin, the label, every
 // contract with its partner-supplied name and its address, the functions, the address rule (with a warning for any
-// 'any'), the limits and the duration. Rendered from the policy the popup validated itself.
+// 'any'), the limits and the duration: the actual end time the vault sent (`expiresAtMs`, bound by the consent digest).
+// Rendered from the policy the popup validated itself.
 import type { AutoApprovePolicyV1, FunctionRule } from '@hana-id/core/policy';
 import { type Child, type Dom, row, rows } from './dom.ts';
 import { formatUnits } from './render-approval.ts';
@@ -28,8 +29,24 @@ function hasAny(policy: AutoApprovePolicyV1): boolean {
   return s || e;
 }
 
+/** An absolute time in the user's locale, with the date: "28 Oct 2026, 21:30". */
+export function formatEndTime(ms: number): string {
+  return new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+export interface ConsentView {
+  readonly policy: AutoApprovePolicyV1;
+  readonly appName: string;
+  readonly parentOrigin: string;
+  /** When the consent would end (the vault's min(now + maxConsentMs, session expiry)). */
+  readonly expiresAtMs: number;
+  /** Now, for "about … from now". */
+  readonly nowMs: number;
+}
+
 /** The consent body (everything above the Allow / Don't allow buttons). */
-export function renderConsent(d: Dom, policy: AutoApprovePolicyV1, appName: string, parentOrigin: string): HTMLElement {
+export function renderConsent(d: Dom, view: ConsentView): HTMLElement {
+  const { policy, appName, parentOrigin } = view;
   const parts: Child[] = [
     d.h('h1', {}, 'Allow automatic signing?'),
     d.h('p', {}, d.h('strong', {}, appName), ' at ', d.h('span', { class: 'origin' }, parentOrigin), ' asks to sign some requests without asking you each time.'),
@@ -98,7 +115,11 @@ export function renderConsent(d: Dom, policy: AutoApprovePolicyV1, appName: stri
     d.h('h2', {}, 'Limits'),
     rows(d, [
       row(d, 'Requests per day', `at most ${policy.limits.perDayCount} (UTC day, on this device)`),
-      row(d, 'For', `up to ${formatDuration(policy.maxConsentMs)}, ending earlier when you sign out or your session ends`),
+      row(
+        d,
+        'Until',
+        `${formatEndTime(view.expiresAtMs)} (about ${formatDuration(view.expiresAtMs - view.nowMs)} from now), or earlier if you sign out or stop it`,
+      ),
     ]),
   );
   return d.h('div', { class: 'consent' }, ...parts);

@@ -13,10 +13,11 @@ import {
   rawSigningWarning,
   utf8,
 } from '@hana-id/core';
-import { canonicalJson, policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
+import { policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GUARD_DELAY_MS } from '../../src/auth/approve-guard.ts';
-import { KEEP_OPEN_MS, startApprovePage } from '../../src/auth/approve-page.ts';
+import { AUTO_APPROVE_REASON_TEXT, KEEP_OPEN_MS, autoApproveReasonText, startApprovePage } from '../../src/auth/approve-page.ts';
+import { formatEndTime } from '../../src/auth/render-consent.ts';
 import { policyJson } from '../../../core/test/policy-fixtures.ts';
 import { PASSPHRASE, USER, paymentOp, txBytes } from '../../../core/test/stellar-fixtures.ts';
 import { ENV, EVIL, FakeWindow, PARTNER, type RemoteWindow, asWindow, pageText, remoteWindow, resetDom } from './helpers.ts';
@@ -59,8 +60,12 @@ const digestInput = (r: Req): ApprovalDigestInput => ({
 
 const POLICY = validateAutoApprovePolicy(policyJson());
 if (!POLICY.ok) throw new Error('fixture policy is invalid');
-const POLICY_TEXT = canonicalJson(POLICY.policy);
+/** The normalized policy as a plain object, as the vault posts it. */
+const POLICY_OBJECT = JSON.parse(JSON.stringify(POLICY.policy)) as Record<string, unknown>;
 const POLICY_ID = policyId(POLICY.policy);
+/** The fake clock's start; the consent ends 12 h after it (the fixture's maxConsentMs). */
+const T0 = 1_800_000_000_000;
+const CONSENT_END = T0 + 12 * 3_600_000;
 
 const consentRequest = (over: Record<string, unknown> = {}): Req => ({
   v: 1,
@@ -68,8 +73,11 @@ const consentRequest = (over: Record<string, unknown> = {}): Req => ({
   id: newRequestId(),
   appName: 'Partner App',
   parentOrigin: PARTNER,
-  policy: POLICY_TEXT,
+  policy: POLICY_OBJECT,
   policyId: POLICY_ID,
+  expiresAtMs: CONSENT_END,
+  position: 1,
+  queued: 1,
   ...over,
 });
 
@@ -79,7 +87,20 @@ let page: ReturnType<typeof startApprovePage>;
 
 const primary = () => document.querySelector<HTMLButtonElement>('button.primary');
 const secondary = () => document.querySelector<HTMLButtonElement>('button.secondary');
-const click = (b: Element | null) => b?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+/** A mouse or touch click: its pointerdown reaches the window first, then the click (detail 1) fires on the button. */
+const click = (b: Element | null) => {
+  if (!b) return;
+  win.dispatch('pointerdown');
+  b.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+};
+/** A click on the button with no pointerdown of its own (a pointer click whose press began earlier). */
+const bareClick = (b: Element | null) => b?.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+/** Enter on a focused button: keydown, then a click with detail 0. */
+const keyClick = (b: Element | null, key = 'Enter') => {
+  if (!b) return;
+  win.dispatch('keydown', { key });
+  b.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+};
 const send = (m: unknown, origin = ENV.vaultOrigin, source: unknown = vault) => win.message(m, origin, source);
 const results = () => vault.postMessage.mock.calls.map((c) => c[0] as Record<string, unknown>).filter((m) => m.t !== 'hana:approve-hello');
 /** Waits out the guard: 1 s, then a pointer move. */
@@ -99,6 +120,7 @@ function start(): void {
 beforeEach(() => {
   resetDom();
   vi.useFakeTimers();
+  vi.setSystemTime(T0);
   start();
 });
 afterEach(() => {
@@ -170,15 +192,94 @@ describe('/approve', () => {
       expect(results()).toEqual([]);
     });
 
-    it('stays disabled without a pointer move', () => {
+    it('stays disabled without a gesture after the marks, and the gesture that arms it never approves', () => {
       send(evmRequest());
       vi.advanceTimersByTime(10 * GUARD_DELAY_MS);
       expect(primary()?.disabled).toBe(true);
-      // Clicking anyway (the disabled attribute removed) does nothing: the guard is checked on click.
+      // Clicking anyway (the disabled attribute removed) does nothing: the guard is checked on click. That click's
+      // pointerdown arms the guard, but the click it belongs to still can't act.
       const b = primary() as HTMLButtonElement;
       b.disabled = false;
       click(b);
       expect(results()).toEqual([]);
+      expect(primary()?.disabled).toBe(false);
+    });
+
+    it('a click whose press began before the guard armed does not approve', () => {
+      send(evmRequest());
+      vi.advanceTimersByTime(GUARD_DELAY_MS - 1);
+      win.dispatch('pointerdown');
+      vi.advanceTimersByTime(1);
+      win.dispatch('pointermove'); // the drag of that press arms the guard
+      expect(primary()?.disabled).toBe(false);
+      bareClick(primary());
+      expect(results()).toEqual([]);
+      click(primary());
+      expect(results()[0]).toMatchObject({ approved: true });
+    });
+
+    it('touch only: a tap without a move arms it, that tap does not approve, the next tap does', () => {
+      const r = evmRequest();
+      send(r);
+      vi.advanceTimersByTime(GUARD_DELAY_MS);
+      // A stationary tap: pointerdown/up and click, no pointermove (on the disabled button, which enables at once).
+      win.dispatch('pointerdown');
+      expect(primary()?.disabled).toBe(false);
+      win.dispatch('pointerup');
+      bareClick(primary());
+      expect(results()).toEqual([]);
+      click(primary());
+      expect(results()[0]).toMatchObject({ t: 'hana:approve-result', id: r.id, approved: true });
+    });
+
+    it('a tap before the 1 s marks neither arms it nor approves', () => {
+      send(evmRequest());
+      vi.advanceTimersByTime(GUARD_DELAY_MS - 1);
+      click(primary());
+      expect(primary()?.disabled).toBe(true);
+      expect(results()).toEqual([]);
+    });
+
+    it('keyboard only: a key after the marks arms it, and Enter on Approve (a later keydown) approves', () => {
+      const r = evmRequest();
+      send(r);
+      vi.advanceTimersByTime(GUARD_DELAY_MS);
+      win.dispatch('keydown', { key: 'Tab' });
+      expect(primary()?.disabled).toBe(false);
+      keyClick(primary());
+      expect(results()[0]).toMatchObject({ id: r.id, approved: true });
+    });
+
+    it('a keyboard click needs a keydown after arming; a pointer click needs a pointerdown after arming', () => {
+      send(evmRequest());
+      arm(); // pointermove
+      // A keyboard click (detail 0) without a keydown of its own.
+      primary()?.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+      expect(results()).toEqual([]);
+      // A key pressed after arming does not let a pointer click without its own pointerdown through.
+      win.dispatch('keydown', { key: 'Shift' });
+      bareClick(primary());
+      expect(results()).toEqual([]);
+      keyClick(primary(), ' ');
+      expect(results()[0]).toMatchObject({ approved: true });
+    });
+
+    it('gestures that are not trusted are ignored', () => {
+      page.stop();
+      resetDom();
+      win = new FakeWindow('/approve');
+      vault = remoteWindow();
+      win.opener = asWindow(vault);
+      page = startApprovePage({ win, env: ENV, isGesture: (e) => (e as { trusted?: boolean }).trusted === true });
+      win.dispatch('focus');
+      send(evmRequest());
+      vi.advanceTimersByTime(GUARD_DELAY_MS);
+      win.dispatch('pointermove');
+      win.dispatch('pointerdown');
+      win.dispatch('keydown', { key: 'Tab' });
+      expect(primary()?.disabled).toBe(true);
+      win.dispatch('pointermove', { trusted: true });
+      expect(primary()?.disabled).toBe(false);
     });
 
     it('stays disabled before 1 s since the window last gained focus, and a blur disarms it', () => {
@@ -221,17 +322,29 @@ describe('/approve', () => {
     });
 
     it('resets for a new request in a reused popup (a request slipped in at the moment of a click)', () => {
-      send(evmRequest());
+      const first = evmRequest();
+      send(first);
       arm();
       expect(primary()?.disabled).toBe(false);
       const second = evmRequest({ position: 2, queued: 2 });
       send(second);
       expect(primary()?.disabled).toBe(true);
       click(primary());
-      expect(results()).toEqual([]);
+      // The click meant for the first request approves nothing (the first is rejected as replaced).
+      expect(results()).toEqual([expect.objectContaining({ id: first.id, approved: false })]);
       arm();
       click(primary());
-      expect(results()[0]).toMatchObject({ id: second.id, approved: true });
+      expect(results()[1]).toMatchObject({ id: second.id, approved: true });
+    });
+
+    it('a double-click carried across the popup opening approves nothing', () => {
+      send(evmRequest());
+      // The second click of a double-click on the launcher lands in the new popup within a few hundred ms.
+      vi.advanceTimersByTime(200);
+      click(primary());
+      click(primary());
+      expect(results()).toEqual([]);
+      expect(primary()?.disabled).toBe(true);
     });
   });
 
@@ -312,8 +425,8 @@ describe('/approve', () => {
   });
 
   it('shows why a request was not auto-approved, and "Stop auto-approving" while a consent is active', () => {
-    send(evmRequest({ autoApprove: { label: 'Swaps on Example', active: true, miss: { reason: 'contract_not_listed', detail: 'The contract is not listed' } } }));
-    expect(pageText()).toContain('Not signed automatically under “Swaps on Example”: The contract is not listed');
+    send(evmRequest({ autoApprove: { label: 'Swaps on Example', active: true, reason: 'contract_not_listed' } }));
+    expect(pageText()).toContain('Not signed automatically under “Swaps on Example”: the contract isn’t listed in the rules.');
     const stop = document.querySelector('button.link');
     expect(stop?.textContent).toBe('Stop auto-approving');
     click(stop);
@@ -343,9 +456,72 @@ describe('/approve', () => {
     expect(posted).not.toMatch(/relayKey|prk|seed|idToken/iu);
   });
 
-  it('offers no "Stop auto-approving" without an active consent', () => {
+  it('offers no "Stop auto-approving" without an active consent, and no reason line without a reason', () => {
     send(evmRequest({ autoApprove: { label: 'Swaps', active: false } }));
     expect(document.querySelector('button.link')).toBeNull();
+    expect(pageText()).not.toContain('Not signed automatically');
+  });
+
+  it('has words for every matcher reason, and a generic line for a code it does not know', () => {
+    for (const [code, text] of Object.entries(AUTO_APPROVE_REASON_TEXT)) {
+      expect(text.length).toBeGreaterThan(0);
+      expect(autoApproveReasonText(code)).toBe(text);
+    }
+    expect(autoApproveReasonText('some_new_reason')).toBe('it doesn’t match the rules');
+    expect(autoApproveReasonText('constructor')).toBe('it doesn’t match the rules');
+    send(evmRequest({ autoApprove: { label: 'Swaps', active: true, reason: 'daily_count_reached' } }));
+    expect(pageText()).toContain('today’s limit of automatic signatures is reached');
+  });
+
+  describe('a new request while one is on screen and unanswered', () => {
+    it('rejects the one on screen with its own digest; the new one needs its own guarded Approve', () => {
+      const first = evmRequest();
+      send(first);
+      arm();
+      const second = stellarRequest({ position: 2, queued: 2 });
+      send(second);
+      expect(results()).toEqual([{ v: 1, t: 'hana:approve-result', id: first.id, approved: false, digest: approvalDigest(digestInput(first)) }]);
+      expect(pageText()).toContain('Request 2 of 2');
+      expect(primary()?.disabled).toBe(true);
+      click(primary());
+      expect(results()).toHaveLength(1);
+      arm();
+      click(primary());
+      expect(results()[1]).toMatchObject({ id: second.id, approved: true });
+      expect(results()[1]?.digest).toEqual(approvalDigest(digestInput(second)));
+    });
+
+    it('a consent screen replaced by a request is answered allowed: false; a request replaced by a consent screen is rejected', () => {
+      const consent = consentRequest();
+      send(consent);
+      const req = evmRequest();
+      send(req);
+      expect(results()[0]).toMatchObject({ t: 'hana:consent-result', id: consent.id, allowed: false });
+      expect(results()[0]?.digest).toEqual(consentDigest({ id: consent.id, policyId: POLICY_ID, parentOrigin: PARTNER, expiresAtMs: CONSENT_END }));
+      send(consentRequest());
+      expect(results()[1]).toMatchObject({ t: 'hana:approve-result', id: req.id, approved: false });
+      expect(page.state).toBe('consent');
+    });
+
+    it('the same id sent again is shown again, unanswered, with the guard reset', () => {
+      const r = evmRequest();
+      send(r);
+      arm();
+      send(r);
+      expect(results()).toEqual([]);
+      expect(primary()?.disabled).toBe(true);
+      arm();
+      click(primary());
+      expect(results()).toEqual([expect.objectContaining({ id: r.id, approved: true })]);
+    });
+
+    it('a request after an answer is not a replacement: nothing more is sent', () => {
+      const r = evmRequest();
+      send(r);
+      click(secondary());
+      send(evmRequest());
+      expect(results()).toHaveLength(1);
+    });
   });
 });
 
@@ -353,11 +529,18 @@ describe('/approve consent screen', () => {
   it('shows the app, origin, label, every contract with name and address, the functions, the address rule, limits and duration', () => {
     send(consentRequest());
     const text = pageText();
-    for (const s of ['Partner App', PARTNER, '“Swaps on Example”', 'Example pool', 'USDC', 'Router', 'swap', 'deposit', 'route', 'can send to any address', 'at most 3', 'up to 12 h', 'deposit(uint256)', 'EVM chain 8453', 'PermitSingle']) {
+    for (const s of ['Partner App', PARTNER, '“Swaps on Example”', 'Example pool', 'USDC', 'Router', 'swap', 'deposit', 'route', 'can send to any address', 'at most 3', 'deposit(uint256)', 'EVM chain 8453', 'PermitSingle']) {
       expect(text).toContain(s);
     }
     for (const c of POLICY.ok ? POLICY.policy.stellar?.contracts ?? [] : []) expect(text).toContain(c.id);
     expect(text).toContain('Some functions below can send to any address');
+  });
+
+  it('shows the actual end time the vault sent, not only the policy’s maximum', () => {
+    const end = T0 + 90 * 60_000; // the session ends in 1 h 30 min, before the policy's 12 h
+    send(consentRequest({ expiresAtMs: end }));
+    expect(pageText()).toContain(`Until${formatEndTime(end)} (about 1 h 30 min from now)`);
+    expect(pageText()).not.toContain('12 h');
   });
 
   it('Allow is guarded like Approve and sends the consent digest over the policyId it recomputed', () => {
@@ -371,26 +554,35 @@ describe('/approve consent screen', () => {
     click(primary());
     const [result] = results();
     expect(parseWindowMessage(result, ['hana:consent-result'])).not.toBeNull();
-    expect(result).toMatchObject({ t: 'hana:consent-result', id: r.id, granted: true });
-    expect(result?.digest).toEqual(consentDigest({ id: r.id, parentOrigin: PARTNER, policyId: POLICY_ID }));
+    expect(result).toMatchObject({ t: 'hana:consent-result', id: r.id, allowed: true });
+    expect(result?.digest).toEqual(consentDigest({ id: r.id, policyId: POLICY_ID, parentOrigin: PARTNER, expiresAtMs: CONSENT_END }));
+    // The digest binds the end time the user saw.
+    expect(result?.digest).not.toEqual(consentDigest({ id: r.id, policyId: POLICY_ID, parentOrigin: PARTNER, expiresAtMs: CONSENT_END + 1 }));
   });
 
-  it('Don’t allow answers granted: false', () => {
+  it('Don’t allow answers allowed: false', () => {
     const r = consentRequest();
     send(r);
     click(secondary());
-    expect(results()[0]).toMatchObject({ t: 'hana:consent-result', id: r.id, granted: false });
+    expect(results()[0]).toMatchObject({ t: 'hana:consent-result', id: r.id, allowed: false });
+  });
+
+  it('recomputes policyId from the normalized policy: key order and address case don’t matter', () => {
+    const shuffled = Object.fromEntries(Object.entries(POLICY_OBJECT).reverse());
+    send(consentRequest({ policy: shuffled }));
+    expect(primary()).not.toBeNull();
   });
 
   it.each([
     ['a policyId that is not the policy’s', { policyId: 'f'.repeat(64) }],
-    ['an invalid policy (raw entry smuggled in)', { policy: POLICY_TEXT.replace('"v":1', '"raw":true,"v":1') }],
-    ['a policy that is not JSON', { policy: '{nope' }],
+    ['an invalid policy (raw entry smuggled in)', { policy: { ...POLICY_OBJECT, raw: true } }],
+    ['a policy that does not validate (empty label)', { policy: { ...POLICY_OBJECT, label: '' } }],
+    ['another valid policy than the one its id names', { policy: { ...POLICY_OBJECT, limits: { perDayCount: 500 } } }],
   ])('refuses %s: no Allow button', (_, over) => {
     send(consentRequest(over));
     expect(primary()).toBeNull();
     expect(pageText()).toContain('could not be checked');
     click(secondary());
-    expect(results()[0]).toMatchObject({ granted: false });
+    expect(results()[0]).toMatchObject({ allowed: false });
   });
 });

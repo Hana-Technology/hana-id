@@ -79,19 +79,28 @@ export async function markRevoked(db: D1Database, appId: string, shareId: Uint8A
   await db.prepare('UPDATE vault_shares SET revoked_at = ?3 WHERE share_id = ?1 AND app_id = ?2 AND revoked_at IS NULL').bind(shareId, appId, now).run();
 }
 
+/** Lowers a share's absolute expiry to `capAt` (never raises it), so the hourly cron prunes it on time. */
+export async function capExpiry(db: D1Database, appId: string, shareId: Uint8Array, capAt: number): Promise<void> {
+  await db.prepare('UPDATE vault_shares SET abs_expires_at = MIN(abs_expires_at, ?3) WHERE share_id = ?1 AND app_id = ?2').bind(shareId, appId, capAt).run();
+}
+
 export interface Advanced {
   counter: number;
   idleUntil: number;
   absExpiresAt: number;
 }
 
+/** created_at + the app's current session TTL: a lowered TTL shortens live shares too (it never lengthens them). */
+const CAPPED_ABS = 'created_at + (SELECT session_ttl_ms FROM apps WHERE id = ?2)';
+
 export type ShareUpdate =
-  /** unlock, touch: slide `idle_until` to min(now + the app's idle_ttl_ms, abs_expires_at); unlock may re-wrap. */
+  /**
+   * unlock, touch: only while the app's persistence is 'session'; caps `abs_expires_at` at created_at + the app's
+   * current session_ttl_ms, then slides `idle_until` to min(now + its idle_ttl_ms, that cap); unlock may re-wrap.
+   */
   | { kind: 'slide'; rewrap?: { shareEnc: Uint8Array; kekId: number } }
-  /** revoke: end the share. */
-  | { kind: 'revoke' }
-  /** revoke-all (its own share stays live). */
-  | { kind: 'counter' };
+  /** revoke: end the share. (revoke-all goes through revokeAllFrom.) */
+  | { kind: 'revoke' };
 
 /**
  * Sets the share's counter to `counter` if it is `counter - 1` and the share is live at `now`, with the action's
@@ -100,8 +109,16 @@ export type ShareUpdate =
 export async function advanceShare(db: D1Database, appId: string, shareId: Uint8Array, counter: number, now: number, update: ShareUpdate): Promise<Advanced | null> {
   const sets = ['counter = ?3'];
   const binds: unknown[] = [shareId, appId, counter, now];
+  const where = ['share_id = ?1', 'app_id = ?2', 'counter = ?3 - 1', '?4 < idle_until', '?4 < abs_expires_at', 'revoked_at IS NULL'];
   if (update.kind === 'slide') {
-    sets.push('idle_until = MIN(?4 + (SELECT idle_ttl_ms FROM apps WHERE id = ?2), abs_expires_at)');
+    // The app's settings as they are now, in the same statement (so a change made after the caller's check still
+    // applies): only while it keeps logins, and never past created_at + the current session TTL. SQLite evaluates
+    // every SET expression against the row as it was, so idle_until is capped by the old and the new limit alike.
+    sets.push(
+      `abs_expires_at = MIN(abs_expires_at, ${CAPPED_ABS})`,
+      `idle_until = MIN(?4 + (SELECT idle_ttl_ms FROM apps WHERE id = ?2), abs_expires_at, ${CAPPED_ABS})`,
+    );
+    where.push(`?4 < ${CAPPED_ABS}`, "(SELECT persistence FROM apps WHERE id = ?2) = 'session'");
     if (update.rewrap) {
       sets.push('share_enc = ?5', 'kek_id = ?6');
       binds.push(update.rewrap.shareEnc, update.rewrap.kekId);
@@ -110,26 +127,44 @@ export async function advanceShare(db: D1Database, appId: string, shareId: Uint8
     sets.push('revoked_at = ?4');
   }
   const row = await db
-    .prepare(
-      `UPDATE vault_shares SET ${sets.join(', ')}
-        WHERE share_id = ?1 AND app_id = ?2 AND counter = ?3 - 1 AND ?4 < idle_until AND ?4 < abs_expires_at AND revoked_at IS NULL
-        RETURNING counter, idle_until, abs_expires_at`,
-    )
+    .prepare(`UPDATE vault_shares SET ${sets.join(', ')} WHERE ${where.join(' AND ')} RETURNING counter, idle_until, abs_expires_at`)
     .bind(...binds)
     .first<{ counter: number; idle_until: number; abs_expires_at: number }>();
   return row ? { counter: row.counter, idleUntil: row.idle_until, absExpiresAt: row.abs_expires_at } : null;
 }
 
-/** Revokes every other live share of the same user (app, path) and returns how many. */
-export async function revokeOtherShares(db: D1Database, appId: string, pathHash: Uint8Array, keepShareId: Uint8Array, now: number): Promise<number> {
-  const res = await db
-    .prepare(
-      `UPDATE vault_shares SET revoked_at = ?3
-        WHERE app_id = ?1 AND path_hash = ?2 AND share_id != ?4 AND revoked_at IS NULL AND ?3 < idle_until AND ?3 < abs_expires_at`,
-    )
-    .bind(appId, pathHash, now, keepShareId)
-    .run();
-  return res.meta.changes;
+/**
+ * revoke-all: moves the share's counter to `counter` and revokes every other live share of the same user (app, path),
+ * in one D1 batch (one transaction), or does neither. The revoke runs first, on the condition the counter move then
+ * meets (the share is live with `counter - 1`), so a replayed request revokes nothing. Null when nothing changed.
+ */
+export async function revokeAllFrom(
+  db: D1Database,
+  appId: string,
+  keepShareId: Uint8Array,
+  pathHash: Uint8Array,
+  counter: number,
+  now: number,
+): Promise<{ counter: number; revoked: number } | null> {
+  const [revoke, advance] = await db.batch<{ counter: number }>([
+    db
+      .prepare(
+        `UPDATE vault_shares SET revoked_at = ?3
+          WHERE app_id = ?1 AND path_hash = ?2 AND share_id != ?4 AND revoked_at IS NULL AND ?3 < idle_until AND ?3 < abs_expires_at
+            AND EXISTS (SELECT 1 FROM vault_shares k
+                         WHERE k.share_id = ?4 AND k.app_id = ?1 AND k.counter = ?5 - 1 AND k.revoked_at IS NULL AND ?3 < k.idle_until AND ?3 < k.abs_expires_at)`,
+      )
+      .bind(appId, pathHash, now, keepShareId, counter),
+    db
+      .prepare(
+        `UPDATE vault_shares SET counter = ?3
+          WHERE share_id = ?1 AND app_id = ?2 AND counter = ?3 - 1 AND ?4 < idle_until AND ?4 < abs_expires_at AND revoked_at IS NULL
+          RETURNING counter`,
+      )
+      .bind(keepShareId, appId, counter, now),
+  ]);
+  const row = advance?.results[0];
+  return row ? { counter: row.counter, revoked: revoke?.meta.changes ?? 0 } : null;
 }
 
 /** Counts one successful unlock for the app's usage day. */

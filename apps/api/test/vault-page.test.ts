@@ -5,7 +5,7 @@ import worker from '../src/index.ts';
 import { MAX_APP_ORIGINS } from '../src/vault/origins.ts';
 import { jsonForHtml } from '../src/vault/page.ts';
 import { ORIGIN, call, chain, newKey, seedApp, uid } from './helpers.ts';
-import { HOUR, VAULT, setSettings } from './vault-helpers.ts';
+import { HOUR, VAULT, autoApprovePolicy, setSettings } from './vault-helpers.ts';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -28,33 +28,6 @@ const vaultPage = (key: string, opts: Parameters<typeof page>[1] = {}): Promise<
 function inlinedConfig(html: string): Record<string, unknown> | null {
   const m = /<script type="application\/json" id="hana-config">([^<]*)<\/script>/u.exec(html);
   return m ? (JSON.parse(m[1]!) as Record<string, unknown>) : null;
-}
-
-/** A valid AutoApprovePolicyV1 in normalized form: ERC-20 approve on one Base contract, under the address rule. */
-function autoApprovePolicy(label: string, perDayCount = 5) {
-  return {
-    v: 1,
-    label,
-    maxConsentMs: 12 * HOUR,
-    limits: { perDayCount },
-    evm: {
-      chains: [
-        {
-          chainId: 8453,
-          maxValueWei: '0',
-          maxValueWeiPerDay: '0',
-          maxFeeWei: '100000',
-          contracts: [
-            {
-              address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-              name: 'USDC',
-              selectors: [{ selector: '0x095ea7b3', signature: 'approve(address,uint256)', addressArgs: 'self-or-listed' }],
-            },
-          ],
-        },
-      ],
-    },
-  };
 }
 
 const csp = (res: Response): string => res.headers.get('content-security-policy') ?? '';

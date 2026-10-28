@@ -3,6 +3,7 @@ import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ORIGIN, appHeaders, call, chain, seedApp, uid } from './helpers.ts';
 import { AUTH, VAULT, hanaHeaders } from './login-helpers.ts';
+import { autoApprovePolicy } from './vault-helpers.ts';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -56,12 +57,12 @@ describe('GET /v1/app (batch B)', () => {
     const app = await seedApp();
     const aud = newAud();
     chain({ [aud]: app.scope });
-    const policy = { v: 1, label: 'Swaps' };
+    const policy = autoApprovePolicy('Swaps');
     const setPolicy = (sql: string, ...args: unknown[]) => env.DB.prepare(`UPDATE apps SET ${sql} WHERE id = ?1`).bind(app.id, ...args).run();
     await setPolicy('auto_approve_policy = ?2', JSON.stringify(policy));
     expect(await body(await get(appHeaders(app)))).toMatchObject({ autoApprovePolicy: policy });
     // A pending change is served only once it is effective.
-    const next = { v: 1, label: 'Swaps v2' };
+    const next = autoApprovePolicy('Swaps v2', 50);
     await setPolicy('auto_approve_pending = ?2, auto_approve_effective_at = ?3', JSON.stringify(next), Date.now() + 3_600_000);
     expect(await body(await get(appHeaders(app)))).toMatchObject({ autoApprovePolicy: policy });
     await setPolicy('auto_approve_effective_at = ?2', Date.now() - 1);
@@ -69,6 +70,18 @@ describe('GET /v1/app (batch B)', () => {
     // Removal (the CLI clears the pending value too) is immediate.
     await setPolicy('auto_approve_policy = NULL, auto_approve_pending = NULL, auto_approve_effective_at = NULL');
     expect((await body(await get(appHeaders(app)))).autoApprovePolicy).toBeNull();
+  });
+
+  it('answers null for a stored policy @hana-id/core refuses (the same rule as the vault page), with a log line', async () => {
+    const app = await seedApp();
+    const aud = newAud();
+    chain({ [aud]: app.scope });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await env.DB.prepare('UPDATE apps SET auto_approve_policy = ?2 WHERE id = ?1').bind(app.id, JSON.stringify({ v: 1, label: 'Swaps' })).run();
+    const res = await get(appHeaders(app));
+    expect(res.status).toBe(200);
+    expect((await body(res)).autoApprovePolicy).toBeNull();
+    expect(errors.mock.calls.map(([line]) => JSON.parse(String(line)).event)).toContain('auto_approve_policy_invalid');
   });
 
   it('503 config_unavailable when the settings row cannot be read', async () => {

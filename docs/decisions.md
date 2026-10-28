@@ -251,6 +251,34 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
 - Decision: origin changes need a fresh sign-in, are logged and email the other owners.
 - Why: in shared mode, origins decide which pages may embed the vault and get nonces for the scope.
 
+## Pre-mainnet and batch C scope, decided 2026-10-28
+
+### D33. Bound issuer-key and upgrade power before mainnet
+- Date 2026-10-28 · Status: confirmed by the user, to spec as a pre-mainnet batch · Source: `docs/security.md` open issue (e)
+- Decision: a newly posted issuer key becomes usable only after a delay, during which an independent watchdog (own
+  key, own service, checks Google's published JWKS) can cancel it; alert on any `issuer_key_set` for a kid Google
+  doesn't publish; the owner account becomes a multisig; the signer account's full-access key is removed and
+  upgrades go only through the owner multisig with a timelock and public notice. Later, optionally, k-of-n
+  independent key posters.
+- Why: today `KEYS_UPDATER_KEY` (a Worker secret), the owner account or the signer's full-access key can each forge
+  Google tokens or swap the contract and so derive any user's key.
+- Open: the delay length. Measure Google's key lead time first (record when each kid first appears in the JWKS);
+  the watchdog may approve early when the key matches Google's list. No address change.
+
+### D34. Batch C MVP cut
+- Date 2026-10-28 · Status: confirmed by the user · Source: batch C MVP trim proposal (to be folded into
+  `docs/batch-c-spec.md`)
+- Decision: keep three Workers and three D1s, the script-free auth origin, the server-side Google code flow,
+  invite-only sign-up, origin safety (change-bound token, 24 h delay, notice, cancel), the on-chain watcher,
+  settlement at FINAL, uid HMAC for MAU and the admin billing reports. Add the auto-approve policy editor (same path
+  as origin changes; removal immediate). Simplify: two roles (owner, viewer), one fail-closed notice channel from the
+  admin Worker, direct usage inserts with a daily nonce cross-check, on-demand reports with frozen monthly
+  statements, compare-and-swap writes instead of the reconciler, publishable keys with a fixed 24 h grace. Defer:
+  mandatory passkeys (required before a second partner joins), second-owner approval, Hana restore of revoked keys
+  and removed origins, the partner app-request queue, secret keys, R2/AE copies, Stripe.
+- Why: about 40% of the draft's size with every security property kept or its loss stated.
+- Blocked on: a Hana Cloudflare account and zone, an email provider, Cloudflare Access with MFA.
+
 ## Superseded or amended
 
 | Was | Now | Source |

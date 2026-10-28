@@ -27,7 +27,7 @@ export function bootVault(win: Window, env: HanaEnv): Vault | null {
     config,
     host,
     openStore: () => openRecordStore(win.indexedDB),
-    locks: browserLocks(win.navigator as Navigator & { locks?: never }),
+    locks: browserLocks(win.navigator),
     channel: browserChannel,
     launcherView: domLauncherView(win.document),
   });

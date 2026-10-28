@@ -470,7 +470,8 @@ export class Vault {
       throw new VaultError('login_cancelled', 'A newer sign-in replaced this one');
     }
     let persistence = this.persistence;
-    let warning: 'storage_unavailable' | undefined;
+    // The app keeps the wallet across reloads but this browser's storage can't: say so with the result too.
+    let warning: 'storage_unavailable' | undefined = this.storageBroken ? 'storage_unavailable' : undefined;
     let share: Share | null = null;
     if (persistence === 'session') {
       try {

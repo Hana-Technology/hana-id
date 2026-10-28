@@ -205,7 +205,7 @@ describe('the record', () => {
     const t = await tab(browser);
     const { reply, run } = await login(t, g);
     expect(run.params.maxUses).toBe(2);
-    expect(reply.result).toMatchObject({ persistence: 'none' });
+    expect(reply.result).toMatchObject({ persistence: 'none', warning: 'storage_unavailable' });
     expect(browser.backend.count('/v1/vault/shares')).toBe(0);
   });
 

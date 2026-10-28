@@ -162,6 +162,11 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
     return this.#chainId === null ? null : chainHex(this.#chainId);
   }
 
+  /** The chain IDs of `evm.chains`, in config order (empty without evm config). The Sodax adapter checks against it. */
+  get chainIds(): number[] {
+    return [...this.#chains.keys()];
+  }
+
   request(args: RequestArguments): Promise<unknown> {
     if (!isObject(args) || typeof args.method !== 'string' || args.method.length === 0) {
       return Promise.reject(err(RpcCode.invalidParams, 'request() takes {method, params?}'));

@@ -213,8 +213,8 @@ Approval: the vault queues the request and shows a launcher; a click opens `{aut
 the bytes itself (`decodeApprovalRequest`, `packages/core/src/decode/request.ts:55`; EIP-712 through
 `normalizeTypedData`, `packages/core/src/typed-data.ts:266`), guards Approve (`approve-guard.ts`: 1 s after render,
 1 s after focus, then a mouse move, a touch or pen press, or Tab/an arrow key; the arming gesture never approves;
-decisions D34), and returns `approvalDigest` (`approval.ts:179`; empty network context for messages, typed data and
-raw, which the popup says aren't tied to one network, D33). The vault recomputes the digest from the queued request
+decisions D36), and returns `approvalDigest` (`approval.ts:179`; empty network context for messages, typed data and
+raw, which the popup says aren't tied to one network, D35). The vault recomputes the digest from the queued request
 and signs only on a match, deriving the chain key from PRK per signature and zeroing it (`withChainKey`,
 `derivation.ts:98`). At most 100 requests wait; one the popup couldn't show is refused at once. The SDK fills fees
 and nonces and broadcasts through the partner's RPC: `eth_sendTransaction` runs one at a time per chain, broadcasts on

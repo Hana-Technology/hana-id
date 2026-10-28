@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`); D33 and D34 on `fix/b-web` (2026-10-28).
+Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`); D35 and D36 on `fix/b-web` (2026-10-28).
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -220,7 +220,7 @@ progress or not started), **deferred**, **superseded**, **proposed** (in a draft
   (`packages/core/src/id-token.ts:113`).
 - Why: with `max_age=0` Google returned no `auth_time`.
 
-### D33. Message, typed-data and raw approvals bind no network; the popup says so
+### D35. Message, typed-data and raw approvals bind no network; the popup says so
 - Date 2026-10-28 · Status: in force (`packages/core/src/approval.ts`, `packages/web/src/auth/render-approval.ts`) ·
   Source: conversation (decided by the user); `docs/security.md` (k)
 - Decision: the approval digest's `contextString` is the passphrase for Stellar transactions and auth entries, the
@@ -233,7 +233,7 @@ progress or not started), **deferred**, **superseded**, **proposed** (in a draft
 - Rejected: binding the SDK's current chain (the vault can't verify it, and the signature is valid on every chain
   anyway).
 
-### D34. The Approve guard arms per input type
+### D36. The Approve guard arms per input type
 - Date 2026-10-28 · Status: in force (`packages/web/src/auth/approve-guard.ts`) · Source: conversation (decided by
   the user); amends `docs/batch-b-spec.md` "Approval flow" step 5
 - Decision: Approve and Allow stay disabled until 1 s after the request rendered, 1 s after the window last gained

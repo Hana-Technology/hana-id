@@ -128,7 +128,7 @@ origins, partner-origin `/v1/sessions`/`/v1/derive`/`/v1/sessions/revoke`) tied 
   (`apps/api` "Page Workers"). They are one site (`tingtc.workers.dev` is the registrable domain), so the manifest
   schema refuses same-site Hana origins only outside `local*`/`sandbox*` envs. The spec's "two `workers.dev`
   hostnames are separate sites" holds only across account subdomains. Production needs a Hana-owned domain (Q15).
-- The Approve guard arms per input (user decision 2026-10-28, `docs/decisions.md` D34): a mouse `pointermove`, a
+- The Approve guard arms per input (user decision 2026-10-28, `docs/decisions.md` D36): a mouse `pointermove`, a
   touch or pen `pointerdown`, or Tab/arrow keys (never Enter or Space), and the arming gesture itself never approves.
 - Auto-approve policies gain a required per-chain `maxFeeWei` (gas × fee cap), because the SDK fills EVM fees on the
   partner page. Under `'self-or-listed'`, `string` and `bytes20`–`bytes32` arguments count as opaque like `bytes`.

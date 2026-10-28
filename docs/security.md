@@ -171,8 +171,8 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   `relayKey` from the vault to its authenticated login popup (schemas: `packages/core/src/protocol.ts`).
 - Approval binds the whole request through `approvalDigest` (`packages/core/src/approval.ts:179`). Its network
   context is the passphrase or chain ID for transactions and auth entries, and empty for messages, typed data and raw
-  requests (D33); the popup says those signatures aren't tied to one network. The launcher only opens the popup.
-- The Approve guard (`packages/web/src/auth/approve-guard.ts`, D34): disabled until 1 s after render and 1 s after
+  requests (D35); the popup says those signatures aren't tied to one network. The launcher only opens the popup.
+- The Approve guard (`packages/web/src/auth/approve-guard.ts`, D36): disabled until 1 s after render and 1 s after
   the window last gained focus or became visible, then an arming gesture: a mouse `pointermove` that moved, a touch or
   pen `pointerdown`, or Tab/Shift+Tab/an arrow key (never Enter, Space or a repeated key). Approve acts only on a click
   whose own pointerdown or keydown came after the arming gesture, and the page never focuses it. So a double-click
@@ -310,7 +310,7 @@ over 20 gets 403 `too_many_origins` on its vault page (availability, not safety)
 this only in dev envs (`packages/env/src/schema.ts:101`). The spec asked for different sites.
 
 **(k) The approval digest binds no network for messages, typed data and raw requests.** Accepted by the user
-(2026-10-28, `docs/decisions.md` D33): `contextString` is `''` for those kinds (`approval.ts` header,
+(2026-10-28, `docs/decisions.md` D35): `contextString` is `''` for those kinds (`approval.ts` header,
 `approvalContextString`). Typed data carries its chain in its domain; messages and raw requests name no network, and
 the approve popup now says "This signature isn't tied to one network." on them.
 

@@ -9,6 +9,8 @@
   "ckdNetworkKey": "bls12381g2:xeYho48G2Sr9oJz4gw9sLGZGspeeKpHZvMDAwWvoNTRnVMFJH96GxX98TT2MRhTtsot1wcGR1Ti2Xh8PCsbYJ2enbLNdJXDvTYSK8aTE3nJ5NZXU7Kt1F6mFtReWs5pR4kj",
   "rpc": "https://test.rpc.fastnear.com",
   "apiUrl": "https://hana-id-api-sandbox-dev.tingtc.workers.dev",
+  "vaultOrigin": "https://hana-id-vault-sandbox-dev.tingtc.workers.dev",
+  "authOrigin": "https://hana-id-auth-sandbox-dev.tingtc.workers.dev",
   "changeDelayMs": 60000,
   "googleClientIds": ["875896396522-g5q9419kksfvn7gdshlgae7t3buab12a.apps.googleusercontent.com"],
   "sharedGoogleClientIds": ["875896396522-f86rqsi6hbfr6nluld75nc03ugehbhit.apps.googleusercontent.com"],

@@ -57,14 +57,15 @@ test('a second tab unlocks', async ({ context, requests }) => {
 test('another top-level site sees no record (partitioned storage)', async ({ context, browserName }) => {
   const app = await newApp({ origins: [PARTNER_ORIGIN, SITE_B_ORIGIN] });
   const a = await context.newPage();
-  await openPartner(a, app);
+  expect(await openPartner(a, app)).toBe('ok');
   await login(a);
   const keys = await vaultRecordKeys(a);
   expect(keys).toHaveLength(1);
   expect(keys[0]).toContain(app.appId);
 
+  // Site B is a second partner site, cross-site to the vault as the first one is: its vault frame is third-party too.
   const b = await context.newPage();
-  await openPartner(b, app, { origin: SITE_B_ORIGIN });
+  expect(await openPartner(b, app, { origin: SITE_B_ORIGIN })).toBe('ok');
   expect(await status(b)).toBe('logged_out');
   if (browserName === 'chromium') {
     // Playwright launches Chromium with ThirdPartyStoragePartitioning disabled (microsoft/playwright#32230), unlike
@@ -86,11 +87,11 @@ test('another app on the same site and scope sees no record', async ({ context }
   const appA = await newApp({ scopeId: 'shared' });
   const appB = await newApp({ scopeId: 'shared' });
   const a = await context.newPage();
-  await openPartner(a, appA);
+  expect(await openPartner(a, appA)).toBe('ok');
   await login(a);
 
   const b = await context.newPage();
-  await openPartner(b, appB);
+  expect(await openPartner(b, appB)).toBe('ok');
   expect(await status(b)).toBe('logged_out');
   // Same partition, so B's vault frame sees A's entry in the store, keyed by A's app id: it reads only its own key.
   const keys = await vaultRecordKeys(b);

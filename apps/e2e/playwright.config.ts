@@ -12,7 +12,11 @@ export default defineConfig({
   testDir: 'tests',
   fullyParallel: true,
   forbidOnly: CI,
+  // A retry keeps the failing attempt's trace, but a test that only passed on retry still fails the run: several cases
+  // are timing-dependent security checks (the Approve guard, the double-click, the reused popup), where an intermittent
+  // pass is a regression, not flakiness.
   retries: CI ? 1 : 0,
+  failOnFlakyTests: CI,
   workers: CI ? 2 : undefined,
   timeout: 60_000,
   expect: { timeout: 10_000 },
@@ -34,6 +38,8 @@ export default defineConfig({
     },
     { name: 'webkit', use: { ...devices['Desktop Safari'] } },
   ],
+  // The stack listening on the fixed ports must be this checkout's current code (src/fingerprint.ts).
+  globalSetup: './tests/global-setup.ts',
   webServer: {
     command: 'node --import tsx src/server/main.ts',
     url: `${API_URL}/__e2e/health`,

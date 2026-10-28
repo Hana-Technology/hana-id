@@ -3,7 +3,7 @@
 // answer from its own popup whose digest matches the whole request.
 import { type Page } from '@playwright/test';
 import { approvalDigest } from '@hana-id/core';
-import { AUTH_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
+import { AUTH_ORIGIN, SITE_B_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
 import {
   type App,
   VAULT_FRAME,
@@ -175,7 +175,50 @@ test.describe('the digest binds the answer to the whole request', () => {
     expect(await errorCode(page, 'sig')).toBe(4001);
   });
 
-  test('the right digest, posted the same way, is accepted (the control for the two cases above)', async ({ page }) => {
+  test('a digest over another kind is refused (4001, no signature)', async ({ page }) => {
+    await loggedIn(page);
+    await runAction(page, 'sig', 'personalSign', 'a message');
+    const popup = await clickLauncher(page, 'Review in Hana');
+    // Same chain, same (empty) context and bytes: only the kind differs.
+    await forgeFromPopup(popup, (i) => ({ ...i, kind: i.kind === 'personal_sign' ? 'eip712' : 'personal_sign' }));
+    expect(await errorCode(page, 'sig')).toBe(4001);
+  });
+
+  test('a digest over another chain is refused (4001, no signature)', async ({ page }) => {
+    // A raw request (either chain) of 32 bytes fits both chains, so only the chain differs.
+    await loggedIn(page, await newApp({ settings: { rawSign: 'approval' } }));
+    await page.evaluate(() => (window as any).e2e.run('sig', 'signRaw', { chain: 'stellar', bytes: new Uint8Array(32).fill(3) }));
+    const popup = await clickLauncher(page, 'Review in Hana');
+    await forgeFromPopup(popup, (i) => ({ ...i, chain: i.chain === 'stellar' ? 'evm' : 'stellar' }));
+    expect(await errorCode(page, 'sig')).toBe(4001);
+  });
+
+  test('a digest over another address is refused (4001, no signature)', async ({ page }) => {
+    await loggedIn(page);
+    await runAction(page, 'sig', 'personalSign', 'whose key');
+    const popup = await clickLauncher(page, 'Review in Hana');
+    await forgeFromPopup(popup, (i) => ({ ...i, address: '0x000000000000000000000000000000000000dEaD' }));
+    expect(await errorCode(page, 'sig')).toBe(4001);
+  });
+
+  test('a digest over another parent origin is refused (4001, no signature)', async ({ page }) => {
+    await loggedIn(page);
+    await runAction(page, 'sig', 'stellarSignMessage', 'for which site');
+    const popup = await clickLauncher(page, 'Review in Hana');
+    await forgeFromPopup(popup, (i) => ({ ...i, parentOrigin: SITE_B_ORIGIN }));
+    expect(await errorCode(page, 'sig')).toBe(4001);
+  });
+
+  test('a digest for another request id is refused (4001, no signature)', async ({ page }) => {
+    await loggedIn(page);
+    await runAction(page, 'sig', 'personalSign', 'which request');
+    const popup = await clickLauncher(page, 'Review in Hana');
+    // The result names the request on show; only the id inside the digest differs.
+    await forgeFromPopup(popup, (i) => ({ ...i, id: `${i.id}-other` }));
+    expect(await errorCode(page, 'sig')).toBe(4001);
+  });
+
+  test('the right digest, posted the same way, is accepted (the control for the cases above)', async ({ page }) => {
     await loggedIn(page);
     await runAction(page, 'sig', 'personalSign', 'exact');
     const popup = await clickLauncher(page, 'Review in Hana');

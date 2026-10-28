@@ -1,6 +1,8 @@
 // The local stack the Playwright suite runs against (docs/batch-b-spec.md "Tests → Playwright"): the partner on
-// http://localhost, the vault and auth origins on http://127.0.0.1 (a `local` env, so partner and vault are different
-// sites), a mocked Hana API, NEAR RPC and EVM chain RPC, and a test MPC whose network key is pinned in the bundles.
+// http://localhost, a second partner site on http://site-b.localhost, the vault and auth origins on http://127.0.0.1
+// (a `local` env, so both partner sites are cross-site to Hana, as in production), apps/api's own Worker for the Hana
+// API (with /v1/login and /v1/derive mocked), a mocked NEAR RPC and EVM chain RPC, and a test MPC whose network key is
+// pinned in the bundles.
 //
 // The env lives here, not in envs/: a manifest there would put a loopback env into every build's HANA_ENVS (the list
 // the published partner client accepts). The bundles are built for it by src/build.ts with the real per-env build
@@ -14,7 +16,12 @@ export const ENV_NAME = 'local-e2e';
 /** Fixed ports: the bundles inline the origins, so they can't change between the build and the run. */
 export const PORTS = Object.freeze({
   partner: 4410,
-  /** A second partner site (127.0.0.1 is another site than localhost): the storage-partitioning case. */
+  /**
+   * A second partner site, neither localhost nor the Hana pages' 127.0.0.1: the storage-partitioning case, where two
+   * partner sites are each cross-site to the vault. A `*.localhost` name (browsers resolve it to loopback and treat it
+   * as potentially trustworthy) rather than [::1]: CSP source expressions have no IPv6 form, so no browser lets a
+   * [::1] page embed the vault through its frame-ancestors.
+   */
   siteB: 4411,
   vault: 4420,
   auth: 4430,
@@ -24,7 +31,7 @@ export const PORTS = Object.freeze({
 });
 
 export const PARTNER_ORIGIN = `http://localhost:${PORTS.partner}`;
-export const SITE_B_ORIGIN = `http://127.0.0.1:${PORTS.siteB}`;
+export const SITE_B_ORIGIN = `http://site-b.localhost:${PORTS.siteB}`;
 export const VAULT_ORIGIN = `http://127.0.0.1:${PORTS.vault}`;
 export const AUTH_ORIGIN = `http://127.0.0.1:${PORTS.auth}`;
 export const API_URL = `http://127.0.0.1:${PORTS.api}`;

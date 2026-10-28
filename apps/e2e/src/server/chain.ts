@@ -1,11 +1,13 @@
 // The mocked NEAR side: hana-signer's sessions, relayed transactions and a test MPC (real BLS12-381, so the vault's
-// pairing check against the pinned network key runs exactly as on testnet), plus the NEAR JSON-RPC the vault and the
-// export window read (`get_session`, `EXPERIMENTAL_tx_status`).
+// pairing check against the pinned network key runs exactly as on testnet), plus the NEAR JSON-RPC that the vault and
+// the export window (`get_session`, `EXPERIMENTAL_tx_status`) and apps/api's Worker (`get_session` for share
+// creation, `get_scope` and `get_config` for GET /v1/app) read. Every scope allows shared login with the stack's
+// shared Google client.
 import { bls12_381 as bls } from '@noble/curves/bls12-381';
 import { base58 } from '@scure/base';
 import { CKD_DST, base64Decode, base64Encode, ckdAppId, fromUtf8, toHex, utf8 } from '@hana-id/core';
-import { E2E_ENV, TEST_MPC_MSK } from '../stack.ts';
-import { json } from './http.ts';
+import { E2E_ENV, GOOGLE_CLIENT_ID, TEST_MPC_MSK } from '../stack.ts';
+import { type Handler, json } from './http.ts';
 
 const G1 = bls.G1.ProjectivePoint;
 const G2 = bls.G2.ProjectivePoint;
@@ -45,17 +47,37 @@ export class Chain {
     return s && s.expires_at_ms > Date.now() ? s : null;
   }
 
-  /** NEAR JSON-RPC (only what the Hana pages call). */
+  /** The contract's view methods the stack's callers use, or undefined for any other. */
+  private view(method: unknown, args: Record<string, unknown>): { value: unknown } | undefined {
+    switch (method) {
+      case 'get_session':
+        return { value: Array.isArray(args.session_public_key) ? this.session(Uint8Array.from(args.session_public_key as number[])) : null };
+      case 'get_scope':
+        return { value: typeof args.scope_id === 'string' ? { id: args.scope_id, owners: [], clients: [], pending: [], action_nonce: 0, allow_shared: true } : null };
+      case 'get_config':
+        return { value: { console_audiences: [], shared_clients: [['google', GOOGLE_CLIENT_ID]], pending_shared_clients: [] } };
+      default:
+        return undefined;
+    }
+  }
+
+  /** NEAR JSON-RPC (only what the Hana pages and the API call). */
   rpc(body: unknown): Response {
     const req = body as { id?: unknown; method?: unknown; params?: Record<string, unknown> } | null;
     const id = req?.id ?? null;
     const ok = (result: unknown) => json(200, { jsonrpc: '2.0', id, result });
     const err = (name: string) => json(200, { jsonrpc: '2.0', id, error: { name, cause: { name }, code: -32000, message: name } });
-    if (req?.method === 'query' && req.params?.request_type === 'call_function' && req.params.method_name === 'get_session') {
+    if (req?.method === 'query' && req.params?.request_type === 'call_function') {
       if (req.params.account_id !== E2E_ENV.signer) return err('UNKNOWN_ACCOUNT');
-      const args = JSON.parse(fromUtf8(base64Decode(String(req.params.args_base64)))) as { session_public_key: number[] };
-      const s = this.session(Uint8Array.from(args.session_public_key));
-      return ok({ result: Array.from(utf8(JSON.stringify(s))), logs: [], block_height: 1, block_hash: '11111111111111111111111111111111' });
+      let args: Record<string, unknown>;
+      try {
+        args = JSON.parse(fromUtf8(base64Decode(String(req.params.args_base64)))) as Record<string, unknown>;
+      } catch {
+        return err('PARSE_ERROR');
+      }
+      const v = this.view(req.params.method_name, args ?? {});
+      if (!v) return err('MethodResolveError');
+      return ok({ result: Array.from(utf8(JSON.stringify(v.value))), logs: [], block_height: 1, block_hash: '11111111111111111111111111111111' });
     }
     if (req?.method === 'EXPERIMENTAL_tx_status') {
       if (req.params?.sender_account_id !== E2E_ENV.relayer) return err('UNKNOWN_TRANSACTION');
@@ -64,5 +86,17 @@ export class Chain {
       return ok({ status: { SuccessValue: base64Encode(utf8(JSON.stringify(v))) }, receipts_outcome: [] });
     }
     return json(200, { jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' } });
+  }
+
+  /** The RPC over HTTP, with CORS for the pages. */
+  handler(): Handler {
+    return async (request) => {
+      const cors = { 'access-control-allow-origin': request.headers.get('origin') ?? '*', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'content-type' };
+      if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+      if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+      const res = this.rpc(await request.json().catch(() => null));
+      for (const [k, v] of Object.entries(cors)) res.headers.set(k, v);
+      return res;
+    };
   }
 }

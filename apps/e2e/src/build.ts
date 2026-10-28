@@ -7,7 +7,7 @@
 //
 //   pnpm --filter @hana-id/e2e build
 //
-// Playwright's global setup runs it before every run (tests/global-setup.ts).
+// src/server/main.ts (Playwright's webServer) runs it before serving, unless --no-build.
 import { copyFileSync, mkdirSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { type Plugin, build } from 'esbuild';

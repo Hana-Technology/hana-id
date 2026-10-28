@@ -65,8 +65,11 @@ describe('page Worker configs', () => {
 
   it('auth: AUTH_ORIGIN plus apiUrl and rpc for the CSP, and no service binding', () => {
     const config = pagesWranglerConfig(manifest, 'auth', COMPATIBILITY_DATE);
-    expect(config.vars).toEqual({ AUTH_ORIGIN: manifest.authOrigin, API_URL: manifest.apiUrl, NEAR_RPC: manifest.rpc });
+    // sandbox-dev sets rpcFallback, which joins the export page's connect-src.
+    expect(config.vars).toEqual({ AUTH_ORIGIN: manifest.authOrigin, API_URL: manifest.apiUrl, NEAR_RPC: manifest.rpc, NEAR_RPC_FALLBACK: manifest.rpcFallback });
     expect(config).not.toHaveProperty('services');
+    const { rpcFallback: _, ...noFallback } = manifest;
+    expect(pagesWranglerConfig(manifestSchema.parse(noFallback), 'auth', COMPATIBILITY_DATE).vars).toEqual({ AUTH_ORIGIN: manifest.authOrigin, API_URL: manifest.apiUrl, NEAR_RPC: manifest.rpc });
     // rpcFallback joins the export page's connect-src when the manifest sets it.
     const fb = pagesWranglerConfig(variant({ rpcFallback: 'https://rpc.fallback.example' }), 'auth', COMPATIBILITY_DATE);
     expect(fb.vars).toEqual({ AUTH_ORIGIN: manifest.authOrigin, API_URL: manifest.apiUrl, NEAR_RPC: manifest.rpc, NEAR_RPC_FALLBACK: 'https://rpc.fallback.example' });

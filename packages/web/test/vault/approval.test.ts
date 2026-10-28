@@ -2,7 +2,7 @@
 // Web unit → Approval, Raw signing). The approval popup is simulated as the auth page runs it: hello, then a result
 // with the digest of what it rendered.
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { SIGN_MESSAGE_MAX_BYTES, base64Decode, base64Encode, parsePortRequest, recoverEvmAddress, toHex, utf8 } from '@hana-id/core';
+import { SIGN_MESSAGE_MAX_BYTES, TEST_APP_RAW_RULE, base64Decode, base64Encode, parsePortRequest, recoverEvmAddress, toHex, utf8 } from '@hana-id/core';
 import { verifyStellarSignature } from '@hana-id/core/signers/stellar';
 import { POLICY_FRESH_MS } from '../../src/vault/vault.ts';
 import { Browser, ENV, FakeWindow, type Google, PARTNER, type Tab, answer, apiError, approveDigest, google, login, makeConfig, openApproval, readyTab, sleepReal, waitLauncher } from './harness.ts';
@@ -322,14 +322,38 @@ describe('what gets signed', () => {
 });
 
 describe('raw signing', () => {
-  it('is 4100 when the app has raw signing off', async () => {
-    const s = await session();
-    expect((await s.t.request('hana_signRaw', { chain: 'evm', digest: new Uint8Array(32).fill(1) })).error?.code).toBe(4100);
+  // Raw signing is for live apps only: a test app's raw request is refused whatever its setting (D39).
+  const LIVE = 'pk_live_1111111111111111111111';
+
+  it('a test app (pk_test_) can never sign raw, even with raw signing on: 4100 at once, no popup, no API read', async () => {
+    const s = await session({ config: makeConfig({ settings: { rawSign: 'approval' } }) });
+    const reads = s.t.browser.backend.count('/v1/app');
+    for (const params of [{ chain: 'evm', digest: new Uint8Array(32).fill(1) }, { chain: 'stellar', bytes: new Uint8Array(32).fill(2) }]) {
+      const reply = await s.t.request('hana_signRaw', params);
+      expect(reply.error).toEqual({ code: 4100, message: TEST_APP_RAW_RULE, data: { reason: 'raw_not_allowed_for_test_apps' } });
+    }
+    expect(s.t.browser.backend.count('/v1/app')).toBe(reads);
+    await sleepReal(20);
     expect(s.t.launcher.label).toBeNull();
   });
 
+  it('is 4100 when the app has raw signing off', async () => {
+    const s = await session({ config: makeConfig({ publishableKey: LIVE }) });
+    const reply = await s.t.request('hana_signRaw', { chain: 'evm', digest: new Uint8Array(32).fill(1) });
+    expect(reply.error).toMatchObject({ code: 4100, data: { reason: 'raw_sign_off' } });
+    expect(s.t.launcher.label).toBeNull();
+  });
+
+  it('a digest that differs only in the chain produces no signature (4001)', async () => {
+    const s = await session({ config: makeConfig({ publishableKey: LIVE, settings: { rawSign: 'approval' } }) });
+    // 32 bytes fit a raw request on either chain, so only the chain differs.
+    const { reply, popup, m } = await shown(s, 'hana_signRaw', { chain: 'stellar', bytes: new Uint8Array(32).fill(3) });
+    answer(s.t, popup, m, true, approveDigest({ ...m, chain: 'evm', address: s.evm }));
+    expect((await reply).error?.code).toBe(4001);
+  });
+
   it('needs approval in "approval" mode; the popup gets kind raw (never decoded) and the signature verifies', async () => {
-    const s = await session({ config: makeConfig({ settings: { rawSign: 'approval' } }) });
+    const s = await session({ config: makeConfig({ publishableKey: LIVE, settings: { rawSign: 'approval' } }) });
     const digest = new Uint8Array(32).fill(0xab);
     const evm = await shown(s, 'hana_signRaw', { chain: 'evm', digest });
     expect(evm.m).toMatchObject({ kind: 'raw', chain: 'evm', context: {} });
@@ -352,7 +376,7 @@ describe('raw signing', () => {
   async function rawSession(): Promise<Session> {
     const browser = new Browser();
     browser.backend.serverNow = () => browser.timers.now;
-    const t = await readyTab(browser, { googleJwk: g.jwk, config: makeConfig({ settings: { rawSign: 'approval' } }) });
+    const t = await readyTab(browser, { googleJwk: g.jwk, config: makeConfig({ publishableKey: LIVE, settings: { rawSign: 'approval' } }) });
     tabs.push(t);
     const { reply } = await login(t, g);
     const a = (reply.result as { addresses: { stellar: string; evm: string } }).addresses;

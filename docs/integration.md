@@ -127,8 +127,9 @@ button.addEventListener('click', async () => {
   0.1–0.3 s).
 - **Sessions.** With the default `'session'` persistence the wallet survives reloads and new tabs for up to 12 h,
   or until it has been idle for 2 h. Then `sessionExpired` fires and the user signs in again. An open tab that sends
-  the vault no request for the idle limit drops its key from memory; your page sees nothing, and the next request
-  that needs the key (a signature, an export) restores it with one API call, as a reload does, while the session is
+  the vault no request that uses the key (a signature, an export, an auto-approve consent request) for the idle limit
+  drops its key from memory; polling status or addresses doesn't count. Your page sees nothing (status, addresses and
+  auto-approve status keep answering), and the next request that uses the key restores it with one API call, as a reload does, while the session is
   still alive on Hana's side. With `'none'`, every
   page load is a new login. If the browser blocks storage (some private modes), the vault falls back to `'none'` and
   `hana.warning` is `storage_unavailable`.
@@ -282,7 +283,9 @@ Hana code is in `error.data.code`. Logging out emits `accountsChanged []`, as wa
 
 ### Raw signing
 
-Off by default. With raw signing set to `'approval'` for your app:
+Off by default, and never available to a test app (`pk_test_…`): a raw digest can be a mainnet transaction's hash,
+so a test app's `signRaw` is `4100` (`data.reason: 'raw_not_allowed_for_test_apps'`) whatever its setting. With raw
+signing set to `'approval'` for a live app:
 
 ```ts
 await hana.signRaw({ chain: 'stellar', bytes });   // Ed25519 over ≤ 4 KiB → { signature } (64 bytes)
@@ -498,11 +501,12 @@ A test app's keys come from the testnet MPC, which can lose or leak them, so its
 accept (`4100`, `data.reason: 'mainnet_not_allowed'`, before any popup or policy): a Stellar transaction or auth entry
 for `Public Global Stellar Network ; September 2015`, an EVM transaction on a chain outside the list below, and typed
 data whose domain names such a chain. `eth_sendTransaction`, `eth_signTransaction` and switching to or adding such a
-chain are refused by the SDK the same way. Messages, typed data without a `chainId`, and raw requests name no network
-and are not refused; don't use them to move mainnet funds from a test app either.
+chain are refused by the SDK the same way. Raw signing is refused for test apps altogether
+([section 8](#8-signing)). Messages and typed data without a `chainId` name no network and are not refused; don't use
+them to move mainnet funds from a test app either.
 
-EVM chains a test app may use: Sepolia (11155111), Holesky (17000), Base Sepolia (84532), Arbitrum Sepolia (421614),
-OP Sepolia (11155420), Sonic Blaze testnet (57054), BNB Smart Chain testnet (97), Polygon Amoy (80002), Avalanche Fuji
+EVM chains a test app may use: Sepolia (11155111), Holesky (17000), Hoodi (560048), Base Sepolia (84532), Arbitrum Sepolia (421614),
+OP Sepolia (11155420), Sonic testnet (14601), Sonic Blaze testnet (57054), BNB Smart Chain testnet (97), Polygon Amoy (80002), Avalanche Fuji
 (43113), and local chains 31337 and 1337 (`TEST_EVM_CHAINS` in `@hana-id/core`). Ask Hana to add another testnet.
 
 A test app and a live app never share a scope. Your staging and production apps therefore give the same Google

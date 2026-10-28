@@ -113,6 +113,7 @@ describe('wrangler.jsonc', () => {
     const config = JSON.parse(text.slice(text.indexOf('\n') + 1)) as { vars: Record<string, string>; d1_databases: { database_name: string; database_id: string }[] };
     expect(config.vars).toEqual({
       NEAR_RPC: manifest.rpc,
+      ...(manifest.rpcFallback ? { NEAR_RPC_FALLBACK: manifest.rpcFallback } : {}),
       SIGNER_ACCOUNT: manifest.signer,
       RELAYER_ACCOUNT: manifest.relayer,
       ENV_NAME: manifest.name,
@@ -132,7 +133,8 @@ describe('wrangler.jsonc', () => {
   });
 
   it('passes rpcFallback as NEAR_RPC_FALLBACK only when the manifest sets it', () => {
-    expect((wranglerConfig(manifest, LOCAL_D1_ID) as { vars: Record<string, string> }).vars).not.toHaveProperty('NEAR_RPC_FALLBACK');
+    const { rpcFallback: _, ...noFallback } = manifest;
+    expect((wranglerConfig(manifestSchema.parse(noFallback), LOCAL_D1_ID) as { vars: Record<string, string> }).vars).not.toHaveProperty('NEAR_RPC_FALLBACK');
     const withFallback = manifestSchema.parse({ ...manifest, rpcFallback: 'https://rpc.fallback.example' });
     expect((wranglerConfig(withFallback, LOCAL_D1_ID) as { vars: Record<string, string> }).vars.NEAR_RPC_FALLBACK).toBe('https://rpc.fallback.example');
   });

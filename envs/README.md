@@ -23,7 +23,8 @@ D1 database). Per-IP limiters always stay near their client. Changing it creates
 provider. The vault and the export window read from it (session re-syncs, the login's registry check, transaction
 polling) only when `rpc` errors or doesn't answer within 8 s; each read's answer comes from one endpoint. It is built
 into the pages and joins `rpc` in their CSP (`NEAR_RPC_FALLBACK` in the generated Worker configs), so a change needs a
-page build and a redeploy. sandbox-dev sets none.
+page build and a redeploy. sandbox-dev uses `https://rpc.testnet.near.org` (primary `test.rpc.fastnear.com`; the
+fallback answered in ~3.5 s when probed, slow but fine for a fallback).
 
 `vaultOrigin` and `authOrigin` (batch B; optional in the schema until every deployed env has them): the origins of
 Hana's key vault page and of its login, approval and export pages. Set both or neither. Each is a bare origin

@@ -272,7 +272,8 @@ describe('with consent', () => {
   });
 
   it('raw, personal_sign, stellar_signMessage and contract creation always need approval', async () => {
-    const s = await session(new Browser(), POLICY(), { settings: { rawSign: 'approval' } });
+    // A live app: a test app can't sign raw at all (D39).
+    const s = await session(new Browser(), POLICY(), { publishableKey: 'pk_live_1111111111111111111111', settings: { rawSign: 'approval' } });
     const popup = await grant(s);
     const requests: [string, unknown][] = [
       ['hana_signRaw', { chain: 'evm', digest: new Uint8Array(32).fill(1) }],
@@ -457,6 +458,24 @@ describe('persistence and tabs', () => {
     expect((m.autoApprove as { reason: string }).reason).toBe('daily_count_reached');
     answer(b.t, popup, m, false);
     await fourth;
+  });
+
+  it('hana_autoApproveStatus answers a dormant session from the last known consent, without an unlock', async () => {
+    const s = await session();
+    await grant(s);
+    expect((await s.t.request('eth_signTransaction', { tx: evmTx() })).result).toMatch(/^0x02/u);
+    const unlocks = () => s.t.browser.backend.count('/v1/vault/unlock');
+    // The idle limit (2 h) passes with no request that uses the key: PRK is gone, the session dormant.
+    s.t.browser.timers.advance(2 * HOUR);
+    expect((s.t.vault as unknown as { session: unknown }).session).toBeNull();
+    const before = unlocks();
+    expect((await s.t.request('hana_autoApproveStatus')).result).toEqual({ policyId: PID, label: 'Swaps on Example', expiresAtMs: START_MS + 6 * HOUR, used: { count: 1, native: '100000' } });
+    expect(unlocks()).toBe(before);
+    expect((s.t.vault as unknown as { session: unknown }).session).toBeNull();
+    // The next signature unlocks (it uses the key) and is still auto-approved under the consent in the record.
+    expect((await s.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x2' }) })).result).toMatch(/^0x02/u);
+    expect(unlocks()).toBe(before + 1);
+    expect((await s.t.request('hana_autoApproveStatus')).result).toMatchObject({ used: { count: 2 } });
   });
 
   it('a changed policy (new policyId) ignores the old consent', async () => {

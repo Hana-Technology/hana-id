@@ -15,6 +15,7 @@ import {
   bytesEqual,
   from0xHex,
   TEST_APP_NETWORK_RULE,
+  TEST_APP_RAW_RULE,
   hashTypedData,
   mainnetOfRequest,
   normalizeTypedData,
@@ -50,11 +51,14 @@ export interface SubjectRules {
 
 /**
  * The approval subject of a sign request for this vault's addresses. Throws VaultError 4100 when the request names
- * another address, when raw signing is off, when a test app asks for a mainnet (reason `mainnet_not_allowed`), or when
+ * another address, when raw signing is off, when a test app asks for a mainnet (reason `mainnet_not_allowed`) or for a
+ * raw signature (reason `raw_not_allowed_for_test_apps`), or when
  * the request can't be signed as given (malformed typed data, non-canonical XDR, an envelope that doesn't parse for its
  * network).
  */
 export function approvalSubject(request: SignRequest, addresses: RecordAddresses, rules: SubjectRules): ApprovalSubject {
+  // A test app never signs raw (D39): a raw digest can be a mainnet transaction's hash. Before the app's setting.
+  if (request.method === 'hana_signRaw' && rules.testApp) throw new VaultError(ErrorCode.unauthorized, TEST_APP_RAW_RULE, { reason: 'raw_not_allowed_for_test_apps' });
   if (request.method === 'hana_signRaw' && rules.rawSign !== 'approval') throw new VaultError(ErrorCode.unauthorized, 'Raw signing is off for this app', { reason: 'raw_sign_off' });
   const chain = approvalChain(request);
   const address = chain === 'stellar' ? addresses.stellar : addresses.evm;

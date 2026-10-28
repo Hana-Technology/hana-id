@@ -1,7 +1,7 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-10-28 (`feat/b-defaults`: `feat/batch-b` with the batch B fix
+known open issues. Last verified against code: 2026-10-28 (`feat/b-defaults-2`: `feat/batch-b` with the batch B fix
 branches and the defaults the user approved on 2026-10-28).
 
 Component map and flows: `docs/architecture.md`. On-chain layouts and the contract's own security notes:
@@ -59,7 +59,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | CKD master secret | BLS12-381, threshold-shared | MPC nodes (TEEs) | NEAR MPC network | Not Hana's. A new network changes every address |
 | CKD network public key | BLS12-381 G2, public | manifest `ckdNetworkKey`; build constant of vault/login/export bundles | public | Pinned with `scripts/fetch-ckd-key.ts`; never read at runtime by the pages |
 | S (CKD secret) | 48-byte G1 point | Browser memory only | vault / export window | Zeroed by `extractPrk` (`packages/core/src/derivation.ts:46`) |
-| PRK | 32 bytes | Vault memory; IndexedDB record as AES-GCM under `K_s` | vault | Zeroed at `expiresAtMs` and after the app's `idle_ttl_ms` with no request from the page (each by a timer, and on the first use past it if the timer is late; after the idle limit a `'session'` record can be unlocked again while its share is alive), logout (any tab of the app), a `revoked` broadcast for its share, a newer login. Rotation: new `key_index` |
+| PRK | 32 bytes | Vault memory; IndexedDB record as AES-GCM under `K_s` | vault | Zeroed at `expiresAtMs` and after the app's `idle_ttl_ms` with no request that uses the key (each by a timer, and on the first use past it if the timer is late; after the idle limit a `'session'` record can be unlocked again while its share is alive), logout (any tab of the app), a `revoked` broadcast for its share, a newer login. Rotation: new `key_index` |
 | Chain keys (Stellar seed, EVM `d`) | ed25519 seed, secp256k1 scalar | Derived per signature, zeroed in `finally` (`withChainKey`, `derivation.ts:98`) | vault; export window shows one on request | Same as PRK |
 | BLS app key `a` | BLS12-381 scalar | Memory, one login | vault / export window | Dropped after decrypt (`packages/core/src/ckd.ts:84`) |
 | Session key | Ed25519, non-extractable WebCrypto | Vault memory; IndexedDB record in `'session'` mode | vault | ≤ the session (≤ 23 h 50 min app setting, ≤ 24 h on chain) |
@@ -195,10 +195,13 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   the check (it then gets that scope's key for the user, still only in the user's own vault).
 - Test apps (`pk_test_`) never sign for a mainnet (D39, `packages/core/src/networks.ts`): the Stellar public network,
   EVM chains outside the testnet allowlist (`TEST_EVM_CHAINS`), typed data whose domain names such a chain; refused
-  before any popup or policy (4100 `mainnet_not_allowed`). Messages, chainless typed data and raw requests name no
-  network and pass. The partner client refuses switching to or sending on such a chain too (not a security boundary).
-- PRK leaves memory after the app's idle limit without a request from the page (Q28, `goIdle`); a `'session'` record
-  is unlocked again before the next request that needs the key, only for the same share.
+  before any popup or policy (4100 `mainnet_not_allowed`). Messages and chainless typed data name no network and
+  pass. Raw requests are refused for test apps whatever `raw_sign` says (4100 `raw_not_allowed_for_test_apps`): a
+  raw digest could be a mainnet transaction's hash. The partner client refuses switching to or sending on such a chain too (not a security boundary).
+- PRK leaves memory after the app's idle limit without a request that uses the key (signing, export,
+  revoke-other-devices, an auto-approve consent request; Q28, `goIdle`). Status, address and auto-approve-status reads
+  don't count and don't unlock a dormant session, so a page polling them can't keep the key in memory. A `'session'`
+  record is unlocked again before the next request that uses the key, only for the same share.
 - The vault refuses to run top-level, accepts one hello, pins the parent origin (checked against the inlined origins
   and `ancestorOrigins`) and serves only that port. Popups and the vault authenticate each other by `event.origin` and
   `event.source`.

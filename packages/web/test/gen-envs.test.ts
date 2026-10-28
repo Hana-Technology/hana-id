@@ -45,13 +45,15 @@ describe('hanaEnv', () => {
       signer: sandbox.signer,
       relayer: sandbox.relayer,
       rpc: sandbox.rpc,
+      rpcFallback: sandbox.rpcFallback,
       ckdNetworkKey: sandbox.ckdNetworkKey,
       devEnv: true,
     });
   });
 
   it('passes rpcFallback through when the manifest sets it, and leaves it out otherwise', async () => {
-    expect(hanaEnv(sandbox)).not.toHaveProperty('rpcFallback');
+    expect(sandbox.rpcFallback).toBe('https://rpc.testnet.near.org');
+    expect(hanaEnv(manifest({ name: 'sandbox-nofb', rpcFallback: undefined }))).not.toHaveProperty('rpcFallback');
     const withFallback = manifest({ name: 'sandbox-fb', rpcFallback: 'https://rpc.fallback.example' });
     expect(hanaEnv(withFallback)?.rpcFallback).toBe('https://rpc.fallback.example');
     expect((await generated([withFallback]))['sandbox-fb']?.rpcFallback).toBe('https://rpc.fallback.example');

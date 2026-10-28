@@ -2,7 +2,8 @@
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
 Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`); D35–D38 and the amendments against the batch B
-fix branches (2026-10-28); D39 and D47–D70 against `feat/b-defaults` (2026-10-28).
+fix branches (2026-10-28); D39 and D47–D70 against `feat/b-defaults` (2026-10-28), the D39, D55 and D65 amendments
+against `feat/b-defaults-2` (2026-10-28).
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -358,13 +359,19 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
 - How: Stellar mainnet is the passphrase `Public Global Stellar Network ; September 2015` (the only one a mainnet
   accepts). EVM uses an **allowlist** of testnet chain IDs (`TEST_EVM_CHAINS`: Sepolia 11155111, Holesky 17000, Base
   Sepolia 84532, Arbitrum Sepolia 421614, OP Sepolia 11155420, Sonic Blaze 57054, BSC testnet 97, Polygon Amoy 80002,
-  Avalanche Fuji 43113, local 31337 and 1337); anything else counts as a mainnet. Refused before any popup or policy
+  Avalanche Fuji 43113, local 31337 and 1337; Hoodi 560048 and Sonic testnet 14601 added 2026-10-28, see the
+  amendment below); anything else counts as a mainnet. Refused before any popup or policy
   (4100 `mainnet_not_allowed`): transactions and auth entries for those networks, and typed data whose domain
   `chainId` is one. Messages, typed data without a `chainId` and raw requests name no network (D35) and are allowed.
   The EIP-1193 provider refuses `wallet_switchEthereumChain`/`wallet_addEthereumChain` to such a chain and
   `eth_sendTransaction`/`eth_signTransaction` on one. The approval and consent screens of a test app say Hana signs
   only for test networks.
 - Rejected: a denylist of known mainnets (a new or unlisted chain would be allowed).
+- Amended 2026-10-28 (`feat/b-defaults-2`, default decided for the user): test apps can't use raw signing at all.
+  `hana_signRaw` from a `pk_test_` app is 4100 `raw_not_allowed_for_test_apps` whatever `raw_sign` says, before any
+  API read or popup (`packages/web/src/vault/signing.ts`), because a raw digest can be a mainnet transaction's hash.
+  Messages stay allowed. The allowlist gains Ethereum Hoodi 560048 and Sonic testnet 14601 (IDs checked against
+  ethereum-lists/chains and each chain's official RPC, `eth_chainId` 0x88bb0 and 0x3909).
 - Why: testnet MPC keys can be stolen (weaker operator and node standards) or lost (a network reset changes every
   address), and testnet-derived addresses differ from production ones.
 - Rejected: allowing mainnet with warnings and small amounts.
@@ -503,6 +510,13 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
   unlocks the record again (one API call, same share only), which works while the server share is alive; otherwise,
   and in `'none'` mode, the session ends (`sessionExpired`).
 - Why: shortens how long PRK sits in a tab nobody uses, where a renderer bug could reach it (security.md (j)).
+- Amended 2026-10-28 (`feat/b-defaults-2`, default decided for the user): only requests that use the key count as
+  activity (the sign methods, `hana_export`, `hana_revokeOtherDevices`, `hana_requestAutoApprove`). `hana_status`,
+  `eth_accounts`, `stellar_getAddress` and `hana_autoApproveStatus` don't, and they keep answering while the session
+  is dormant without unlocking it, so a page that polls them can't keep PRK in memory. `hana_autoApproveStatus` would
+  need PRK to open the consent in the record (it is sealed under a PRK-derived key), so a dormant session answers it
+  from this tab's last known consent (not secret: policy id, end time, counters); its counters can lag auto-signs made
+  in other tabs until the next request that uses the key.
 
 ### D56. The vault checks its scope against the on-chain registry at login (Q7)
 - Date 2026-10-28 · Status: in force on `feat/b-defaults` (`packages/web/src/vault/login.ts` `checkScope`) · Source:
@@ -562,7 +576,10 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
   Source: `docs/batch-b-spec.md` Q9
 - Decision: the manifest may name a second https NEAR RPC. The vault and the export window read from it only when the
   primary errors or times out (8 s), for `get_session` re-syncs, registry views and tx polling; each read's answer
-  comes from one endpoint, never a mix. It joins `rpc` in the pages' CSP. sandbox-dev sets none yet.
+  comes from one endpoint, never a mix. It joins `rpc` in the pages' CSP.
+- Amended 2026-10-28 (`feat/b-defaults-2`, decided for the user): sandbox-dev's `rpcFallback` is
+  `https://rpc.testnet.near.org` (probed: 200, ~3.5 s); the primary stays `test.rpc.fastnear.com`. Takes effect on the
+  next `gen`, page build and deploy.
 
 ### D66. One thin Worker per Hana origin (R19)
 - Date 2026-10-28 · Status: in force (`apps/api/scripts/pages-wrangler.ts`, `apps/api/src/pages/`) · Source: review

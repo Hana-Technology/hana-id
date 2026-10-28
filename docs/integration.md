@@ -414,14 +414,24 @@ import { HanaProvider, useHana, useWallet } from '@hana-id/react';
 
 function SignIn() {
   const { status, addresses, persistence, error, login, logout, exportKey } = useHana();
-  return <button onClick={() => login()}>Sign in</button>; // login must run in the onClick
+  return <button onClick={login}>Sign in</button>; // login must run in the onClick, with no await before it
 }
 
 const { address, signer } = useWallet('stellar'); // signer is hana.stellar
 const { address, provider } = useWallet('evm');   // provider is hana.ethereum (EIP-1193)
 ```
 
-`HanaProvider` creates one client, also under strict mode, and destroys it on unmount.
+- `HanaProvider` creates one client, also under strict mode, and destroys it on unmount. It reads `config` once; to
+  switch app or environment, remount it (a `key`).
+- A failed login (popup closed, `4001`, `popup_blocked`, `login_cancelled`) is in `useHana().error`. The promise
+  `login()` returns is already marked handled, so `onClick={login}` never raises an unhandled rejection; if you
+  `await` or `.catch` it, you still get the rejection. `logout()` and `exportKey()` reject as usual and their
+  failures aren't in `error`: handle them (`onClick={() => logout().catch(report)}`).
+- Server rendering (Next.js): the modules are `'use client'`, and the client is created in an effect, so a server
+  render shows the initial state (`status: 'unlocking'`, no addresses, `signer` / `provider` null) and never touches
+  `window`.
+- React 18 and 19 are both supported (peer dependency `^18 || ^19`); the test suite runs on both, and the source
+  typechecks against `@types/react` 18 and 19.
 
 ## 11. Sodax adapter
 
@@ -435,9 +445,18 @@ const evmProvider = createSodaxEvmProvider(hana, { chainId: 8453, rpcUrl });    
 ```
 
 - The Stellar provider signs through `hana.stellar` (fee-bump allowed) and sends to Soroban RPC.
-  `waitForTransactionReceipt` polls Horizon every 2 s for 60 s.
+  `signAndSendTransaction(rawTx)` signs as `rawTx.from`: a transaction built for another account is refused (4100)
+  before any popup. `waitForTransactionReceipt` polls Horizon every 2 s for 60 s.
 - The EVM provider is bound to one chain, which must be in your `evm.chains` (it throws otherwise). It refuses a
-  `from` other than the user's address, fills, gets the user's approval and broadcasts.
+  `from` other than the user's address, fills, gets the user's approval and broadcasts. Filling and broadcasting use
+  the `evm.chains` RPC; `rpcUrl` is for receipts and must be the same chain: the provider checks its `eth_chainId`
+  once, before the first transaction is signed, and refuses another chain with `4902` (`data.reason:
+  'receipt_rpc_wrong_chain'`). If that RPC can't be reached for the check, the send fails with nothing signed
+  (`-32603`, `receipt_rpc_unreachable`); the next send checks again.
+- `waitForTransactionReceipt` (EVM) polls `rpcUrl` every 2 s for 180 s. RPC faults and receipts that don't parse
+  are retried until the deadline, never reported as a failed transaction, since the transaction is already
+  broadcast; only `receipt_timeout` ends it. The receipt is passed through leniently, as viem does (a null `type`,
+  an unknown `status` or missing optional fields stay as the node sent them).
 - A Sodax swap can need several signatures (`restoreFootprint`, a re-sign, a trustline). The approval popup's 15 s
   keep-open covers them in one session of clicks. Sodax swaps can't be auto-approved yet (see section 9).
 - Sodax runs on mainnet only, while pilot keys are testnet-MPC keys: the adapter is tested against mocks of the

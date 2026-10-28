@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`)
+Last verified against code: 2026-10-28 (`fix/b-clients` on `feat/batch-b` 0f0a437)
 
 Commands and flags are from `scripts/`, `apps/api/scripts/gen-wrangler.ts` and their tests. Endpoints:
 `docs/api.md`. Contract methods: `docs/contract-interface.md`. Design and measurements: `docs/context.md`.
@@ -330,19 +330,48 @@ using a session at the old index and logs in with another `keyIndex` (`apps/smok
 
 ## Smoke test (`apps/smoke`)
 
-Needs a deployed env (contract, Google keys, API with secrets, `apiUrl` and `ckdNetworkKey` set), an app whose
-origins include `http://localhost:5173` with a `pk_test_` key in a `sandbox*` / `local*` env (partner pages may only
-call the session endpoints there), and `http://localhost:5173` on the clients' JavaScript origins.
+Needs a deployed env (contract, Google keys, API with secrets and `VAULT_KEK`, the vault and auth page Workers,
+`apiUrl`, `vaultOrigin`, `authOrigin` and `ckdNetworkKey` set), an app whose origins include `http://localhost:5173`
+with a `pk_test_` key in a `sandbox*` / `local*` env, `{authOrigin}/login/callback` on the clients' redirect URIs and,
+for the direct page, `http://localhost:5173` on their JavaScript origins.
 
 ```sh
 corepack pnpm --filter @hana-id/smoke dev                                   # envs/sandbox-dev.json
 VITE_HANA_ENV=<env> corepack pnpm --filter @hana-id/smoke dev
-VITE_HANA_API_URL=http://localhost:8787 corepack pnpm --filter @hana-id/smoke dev   # local wrangler dev
+VITE_HANA_API_URL=http://localhost:8787 corepack pnpm --filter @hana-id/smoke dev   # local wrangler dev (the pages' own calls only)
 ```
 
-Restart it after editing the manifest. The checklist (real MPC, app A vs B, key index, own vs shared client, revoke,
-replays, `max_uses`, gas and latency) is in `apps/smoke/README.md`. Smoke still uses `/v1/sessions` + `/v1/derive`
-with Google Identity Services tokens (they carry `email`), which is why `REJECT_PII_ON_SESSIONS` stays `"0"`.
+Restart it after editing the manifest. Two pages: `/` logs in through the vault (`@hana-id/web`, `POST /v1/login`), as a
+partner would; `/direct.html` is the in-page `/v1/sessions` + `/v1/derive` flow, kept as the ship gate's split-flow
+baseline and for what the vault can't do (`key_index` ≠ 0, replays). The direct page uses Google Identity Services
+tokens (they carry `email`), so it works only while `REJECT_PII_ON_SESSIONS` is `"0"`. The checklist (login, isolation,
+own vs shared client, persistence and unlock, Safari/WebKit retention, logout, revoke, export, approval and
+auto-approve, the ship gate, the BLS precheck CPU time, replays, gas) is in `apps/smoke/README.md`.
+
+- The ship gate compares vault logins with direct-page sessions **against the same API**: the vault always calls the
+  manifest's `apiUrl`, so direct-page runs made with a `VITE_HANA_API_URL` override are left out (the panel says how
+  many). Measure the split side without the override.
+- The demo auto-approve policy path is relative to `scripts/` (pnpm runs the admin script there):
+  `admin <env> app:settings <app> --auto-approve ../apps/smoke/policies/demo-auto-approve.json --remote`.
+- A replayed derive is refused by the API (`409 counter_used`) before anything is relayed: no transaction, no gas.
+
+## Browser tests (`apps/e2e`, Playwright)
+
+The real vault, login, approval and export bundles and the partner client in Chromium, WebKit and Firefox, against a
+local stack: apps/api's Worker run in Node (only `/v1/login` and `/v1/derive` mocked), a mocked NEAR RPC, MPC and EVM
+RPC, and an OIDC stub for Google. No testnet, no secrets. Details: `apps/e2e/README.md`.
+
+```sh
+corepack pnpm --filter @hana-id/e2e e2e:install          # once: the browsers
+corepack pnpm --filter @hana-id/e2e e2e                  # build, start the stack, run all three browsers
+HANA_E2E_PORT_BASE=4510 corepack pnpm --filter @hana-id/e2e e2e   # a second worktree at the same time
+```
+
+- Ports are `HANA_E2E_PORT_BASE` (default 4410) to base + 50. Outside CI Playwright reuses a stack already listening
+  there; the global setup fails the run unless it is this checkout's current stack (fingerprint on
+  `/__e2e/health`). On "not this checkout's current e2e stack": stop the other stack or use another base.
+- CI (`.github/workflows/ci.yml`, job "Playwright") retries a failed test once to keep its trace, but a test that
+  passes only on the retry fails the job (`failOnFlakyTests`). The report and traces are uploaded on failure.
 
 ## Logs and latency
 
@@ -411,7 +440,8 @@ Warm stage split: create = checks 0.2 s + relay 2.2 s (chain ~0.6 s); derive = r
   `main` = releases. Remote `Hana-Technology/hana-id` (private).
 - CI (`.github/workflows/ci.yml`, on PRs and pushes to `develop` / `main`): gitleaks over the full history;
   `cargo test --locked` + `cargo near build non-reproducible-wasm`; `pnpm install --frozen-lockfile`, `pnpm -r
-  typecheck`, `pnpm -r test`; sandbox e2e (`contracts/integration-tests`).
+  typecheck`, `pnpm -r test` (this includes `@hana-id/react`'s suite on React 18, `packages/react/react18`); the
+  Playwright suite (`apps/e2e`, three browsers); sandbox e2e (`contracts/integration-tests`).
 - The pre-commit hook runs `gitleaks git --staged` with `.gitleaks.toml`. Never bypass it (`--no-verify`). Scan
   locally with `corepack pnpm secrets:scan`.
 - Never commit `.secrets/`, `.env*`, `.dev.vars` (all gitignored) or a regenerated `apps/api/wrangler.jsonc`. That

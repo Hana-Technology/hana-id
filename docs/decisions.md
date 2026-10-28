@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`).
+Last verified against code: 2026-10-28 (`fix/b-clients` on `feat/batch-b` 0f0a437).
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -264,7 +264,7 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
 | Full Google token with email on chain | `scope=openid` and the claim allow-list (D25) | same |
 | Login page computes the shared-mode nonce (A.2) | The vault computes it; the login page only checks and relays it (proposed in batch B, below) | `docs/batch-b-spec.md` "Amends" |
 | Contract upgradeable with no lock (batch A, PoC) | Still so on testnet; upgrade governance is a production MVP item (D2) | `docs/batch-a-spec.md` |
-
+| Sodax Stellar `signAndSendTransaction(p)` is `sendTransaction(signTransaction(p.data))` | It signs as `p.from`: `sendTransaction(signTransaction(p.data, {address: p.from}))`, so a raw transaction built for another account (a muxed `M…` address included) is 4100 before any popup. Sodax builds every raw transaction for `getWalletAddress()`'s `G…` address. Adapter choice (2026-10-28), for the user's review | `docs/batch-b-spec.md` "Sodax adapter"; `packages/sodax/src/stellar.ts` |
 ## Proposed, not yet confirmed
 
 Still open for the user's review in `docs/batch-b-spec.md`: the vault iframe plus Hana popups on two origins and the

@@ -20,6 +20,13 @@ import { log } from './log.ts';
 import { type HanaPage, RELAY_KEY_HEADER, hanaPage } from './origins.ts';
 
 export const LOGIN_RELAY_PREFIX = '/v1/login-relay/';
+/** The endpoint as every log line names it: never with the relayId, which is also the OAuth `state`. */
+export const LOGIN_RELAY_ENDPOINT = '/v1/login-relay';
+
+/** A request path as it may be logged: a login relay path loses its relayId. */
+export function loggedEndpoint(pathname: string): string {
+  return pathname.startsWith(LOGIN_RELAY_PREFIX) ? LOGIN_RELAY_ENDPOINT : pathname;
+}
 /** A written value lives this long, then a tombstone answers 410 for as long again, then the object is empty. */
 export const RELAY_TTL_MS = 120_000;
 export const RELAY_TOMBSTONE_MS = 120_000;
@@ -168,7 +175,7 @@ export async function handleLoginRelay(request: Request, env: Env, requestId: st
     const code = typeof body?.code === 'string' ? body.code : undefined;
     // Never the body, the key or the relay id.
     log(
-      { event: 'request', requestId, endpoint: '/v1/login-relay', method, outcome: status < 400 ? 'ok' : status >= 500 ? 'error' : 'rejected', status, code, latencyMs: Date.now() - started },
+      { event: 'request', requestId, endpoint: LOGIN_RELAY_ENDPOINT, method, outcome: status < 400 ? 'ok' : status >= 500 ? 'error' : 'rejected', status, code, latencyMs: Date.now() - started },
       status >= 500 ? 'error' : 'info',
     );
     const headers = { ...cors, 'x-request-id': requestId, ...extra };

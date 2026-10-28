@@ -5,7 +5,7 @@ import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import apiWorker from '../src/index.ts';
 import authWorker from '../src/pages/auth-worker.ts';
-import { AUTH_PAGE_PATHS, type AuthHostEnv, type VaultHostEnv } from '../src/pages/host.ts';
+import { ASSET_CSP, AUTH_PAGE_PATHS, type AuthHostEnv, type VaultHostEnv } from '../src/pages/host.ts';
 import vaultWorker from '../src/pages/vault-worker.ts';
 import { ORIGIN, chain, seedApp } from './helpers.ts';
 
@@ -156,6 +156,25 @@ describe('auth origin Worker', () => {
     const again = await call(authWorker, env, `${AUTH}/login.js`, { headers: { 'if-none-match': '"/login.js"' } });
     expect(again.status).toBe(304);
     expect((await call(authWorker, env, `${AUTH}/style.css`)).headers.get('content-type')).toBe('text/css');
+  });
+
+  it('every asset carries a policy that runs, loads and frames nothing (an SVG opened as a document included)', async () => {
+    const env = authEnv({
+      ASSETS: assets({
+        '/x.svg': { body: '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>', type: 'image/svg+xml' },
+        '/x.js': { body: 'export {}', type: 'text/javascript', headers: { 'content-security-policy': "default-src *" } },
+        '/x.xml': { body: '<x/>', type: 'application/xml' },
+      }),
+    });
+    for (const path of ['/x.svg', '/x.js', '/x.xml']) {
+      const res = await call(authWorker, env, `${AUTH}${path}`);
+      expect(res.status).toBe(200);
+      expect(csp(res)).toBe(ASSET_CSP);
+      expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    }
+    expect(ASSET_CSP).toBe("default-src 'none'; frame-ancestors 'none'; sandbox");
+    const vault = await call(vaultWorker, vaultEnv(), `${VAULT}/vault.js`);
+    expect(csp(vault)).toBe(ASSET_CSP);
   });
 
   it('404s an unknown path, without a body on HEAD', async () => {

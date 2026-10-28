@@ -1,8 +1,9 @@
-import { runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
+import { createExecutionContext, runDurableObjectAlarm, runInDurableObject, waitOnExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { base64UrlEncode, sha256 } from '../src/bytes.ts';
 import { RELAY_READS_PER_IP_MINUTE, RELAY_TOMBSTONE_MS, RELAY_TTL_MS, RELAY_WRITES_PER_IP_MINUTE } from '../src/login-relay.ts';
+import worker from '../src/index.ts';
 import { ORIGIN, call } from './helpers.ts';
 import { AUTH, VAULT } from './login-helpers.ts';
 
@@ -222,5 +223,48 @@ describe('login relay', () => {
     const all = lines.join('\n');
     expect(lines.filter((l) => l.includes('"endpoint":"/v1/login-relay"'))).toHaveLength(5);
     for (const secret of [v.iv, v.ct, r.readKey, r.id]) expect(all).not.toContain(secret);
+  });
+
+  it('an error outside the handler’s own checks (a body stream that fails) is logged without the relay id', async () => {
+    const lines: string[] = [];
+    for (const level of ['log', 'warn', 'error', 'info', 'debug'] as const) vi.spyOn(console, level).mockImplementation((...args: unknown[]) => void lines.push(args.map(String).join(' ')));
+    const r = await newRelay();
+    const failing = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.error(new Error(`client went away ${r.id}`));
+      },
+    });
+    const request = new Request(`https://api.test/v1/login-relay/${r.id}`, { method: 'POST', headers: { origin: AUTH, 'content-type': 'application/json', 'cf-connecting-ip': '10.9.9.9' }, body: failing });
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(request as Request<unknown, IncomingRequestCfProperties>, env, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(500);
+    expect(res.headers.get('x-request-id')).toBeTruthy();
+    expect(await body(res)).toMatchObject({ code: 'internal' });
+    const errors = lines.filter((l) => l.includes('"code":"internal"'));
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('"endpoint":"/v1/login-relay"');
+    expect(lines.join('\n')).not.toContain(r.id);
+  });
+
+  it('503 relay_unavailable when the relay object can’t be reached, for a write and a read', async () => {
+    const r = await newRelay();
+    const broken = {
+      idFromName: (name: string) => env.LOGIN_RELAY.idFromName(name),
+      get: () => ({
+        write: async () => {
+          throw new Error('object unavailable');
+        },
+        read: async () => {
+          throw new Error('object unavailable');
+        },
+      }),
+    } as unknown as typeof env.LOGIN_RELAY;
+    const w = await call(`/v1/login-relay/${r.id}`, { method: 'POST', headers: { origin: AUTH }, body: value(), env: { LOGIN_RELAY: broken } });
+    expect([w.status, (await body(w)).code]).toEqual([503, 'relay_unavailable']);
+    const g = await call(`/v1/login-relay/${r.id}`, { method: 'GET', headers: { origin: VAULT, 'x-hana-relay-key': r.readKey }, env: { LOGIN_RELAY: broken } });
+    expect([g.status, (await body(g)).code]).toEqual([503, 'relay_unavailable']);
+    // Nothing was written to the real slot.
+    expect(await stored(r.id)).toBeUndefined();
   });
 });

@@ -27,6 +27,14 @@ describe('routing', () => {
     expect((await call('/v1/owner-actions')).status).toBe(405);
     expect((await call('/v1/health', { body: {} })).status).toBe(405);
   });
+
+  it('the router’s own 404 and 405 carry x-request-id, matching the body', async () => {
+    for (const res of [await call('/v1/nope'), await call('/v1/sessions')]) {
+      const id = res.headers.get('x-request-id');
+      expect(id).toBeTruthy();
+      expect(((await res.json()) as { requestId: string }).requestId).toBe(id);
+    }
+  });
 });
 
 describe('CORS', () => {

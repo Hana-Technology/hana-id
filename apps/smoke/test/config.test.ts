@@ -1,6 +1,7 @@
+import { ckdKeyProblem } from '@hana-id/core';
 import { loadEnv } from '@hana-id/env';
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_ENV, ckdKeyProblem, pageEnvFrom } from '../src/config.ts';
+import { DEFAULT_ENV, pageEnvFrom } from '../src/config.ts';
 import { NearRpc, formatNear, formatTgas, googleOwnClients, googleSharedClients, sumGas } from '../src/near.ts';
 
 describe('page config', () => {
@@ -19,9 +20,9 @@ describe('page config', () => {
   });
 
   it('fails clearly while ckdNetworkKey is the UNSET placeholder', () => {
-    expect(ckdKeyProblem({ name: 'sandbox-dev', ckdNetworkKey: 'UNSET-run-scripts/fetch-ckd-key.ts' }, () => true)).toMatch(/UNSET placeholder.*fetch-ckd-key sandbox-dev/);
-    expect(ckdKeyProblem({ name: 'x', ckdNetworkKey: 'bls12381g2:zzz' }, () => false)).toMatch(/not a valid/);
-    expect(ckdKeyProblem({ name: 'x', ckdNetworkKey: 'bls12381g2:ok' }, () => true)).toBeNull();
+    // ckdKeyProblem lives in @hana-id/core (tested there); the page runs it on its own env.
+    expect(ckdKeyProblem({ ...pageEnvFrom(loadEnv(DEFAULT_ENV)), ckdNetworkKey: 'UNSET-run-scripts/fetch-ckd-key.ts' })).toMatch(/UNSET placeholder.*fetch-ckd-key sandbox-dev/);
+    expect(ckdKeyProblem(pageEnvFrom(loadEnv(DEFAULT_ENV)))).toBeNull();
   });
 });
 

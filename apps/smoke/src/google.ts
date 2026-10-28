@@ -1,6 +1,6 @@
 // Google Identity Services: renders the sign-in button with the session nonce and returns the ID token.
 // The token is handed straight to POST /v1/sessions; the page never displays, logs or stores it.
-import { base64UrlDecode } from './bytes.ts';
+import { base64UrlDecode } from '@hana-id/core';
 
 let gisLoaded: Promise<void> | null = null;
 

@@ -1,5 +1,5 @@
 // Read-only NEAR RPC calls: contract views (get_config, get_scope, get_session) and gas of a relayed transaction.
-import { base64Encode, utf8 } from './bytes.ts';
+import { base64Encode, utf8 } from '@hana-id/core';
 
 type Fetch = typeof fetch;
 

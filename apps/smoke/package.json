@@ -10,12 +10,12 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json"
   },
   "dependencies": {
-    "@noble/curves": "1.9.7",
-    "@noble/hashes": "1.8.0",
-    "@scure/base": "1.2.6"
+    "@hana-id/core": "workspace:*"
   },
   "devDependencies": {
     "@hana-id/env": "workspace:*",
+    "@noble/curves": "1.9.7",
+    "@scure/base": "1.2.6",
     "@types/node": "^22.0.0",
     "happy-dom": "21.0.3",
     "typescript": "^5.7.0",

@@ -1,15 +1,14 @@
 // Hana ID smoke page: wires the DOM to the flow. Public data only on screen, in the log and in storage.
 // Never display, log, persist or send (except the token to POST /v1/sessions) the Google ID token, the CKD secret or
 // derived private keys.
+import { checkSessionParams, ckdKeyProblem, jsonBytes, toHex } from '@hana-id/core';
 import { ApiError, type AppConfig, type CreateSessionBody, type GoogleMode, HanaApi } from './api.ts';
-import { toHex } from './bytes.ts';
-import { isValidNetworkKey } from './ckd.ts';
-import { ckdKeyProblem, type PageEnv } from './config.ts';
+import type { PageEnv } from './config.ts';
 import { deriveOnce } from './flow.ts';
 import { readClaims, renderGoogleButton } from './google.ts';
 import { NearRpc, formatNear, formatTgas, googleOwnClients, googleSharedClients, type ScopeView } from './near.ts';
 import { type RunRecord, type StepTimings, compareRun, parseStoredRuns, pkPrefix, resultsJson } from './runs.ts';
-import { type PendingSession, checkSessionParams, jsonBytes, newPendingSession, signRevoke } from './session.ts';
+import { type PendingSession, newPendingSession, signRevoke } from './session.ts';
 
 const env: PageEnv = __HANA_SMOKE_ENV__;
 const rpc = new NearRpc(env.rpc);
@@ -89,7 +88,7 @@ let app: LoadedApp | null = null;
 let session: ActiveSession | null = null;
 let busy = false;
 let runs: RunRecord[] = loadRuns();
-const envProblem = ckdKeyProblem(env, isValidNetworkKey);
+const envProblem = ckdKeyProblem(env);
 
 function loadRuns(): RunRecord[] {
   try {
@@ -203,8 +202,8 @@ function renderResult(r: RunRecord | null): void {
     return;
   }
   fillDl($('result'), [
-    ['Stellar (PROVISIONAL)', code(r.stellar)],
-    ['EVM (PROVISIONAL)', code(r.evm)],
+    ['Stellar', code(r.stellar)],
+    ['EVM', code(r.evm)],
     ['app_id', code(r.appIdHex)],
     ['derive_key tx', txLink(r.deriveTx)],
     ['derive_key gas', r.deriveGas === null ? '…' : formatTgas(r.deriveGas)],
@@ -418,6 +417,7 @@ async function derive(s: ActiveSession, runStart: number, first: boolean): Promi
     counter,
     sessionKeyPrefix: toHex(s.pending.publicKey.slice(0, 6)),
     appIdHex: outcome.appIdHex,
+    derivation: 1,
     stellar: outcome.stellar,
     evm: outcome.evm,
     createSessionTx: first ? s.createSessionTx : null,

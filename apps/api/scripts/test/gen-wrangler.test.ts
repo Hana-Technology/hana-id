@@ -163,7 +163,7 @@ describe('wrangler.jsonc', () => {
     expect(Object.keys(dotenvParse(readFileSync(path, 'utf8')))).toEqual(['RELAYER_KEYS']);
   });
 
-  it('main writes both files and never prints secret values', () => {
+  it('main writes the API and page Worker configs and .dev.vars, and never prints secret values', () => {
     const logs: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => void logs.push(a.join(' ')));
     vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => void logs.push(a.join(' ')));
@@ -171,9 +171,11 @@ describe('wrangler.jsonc', () => {
     const dir = tmp();
     seedSecrets(root);
     main([manifest.name, '--dev-vars'], { root, dir });
-    expect(logs).toHaveLength(2);
+    expect(logs).toHaveLength(4);
     expect(logs.join('\n')).not.toMatch(/ed25519:|[1-9A-HJ-NP-Za-km-z]{40,}/u);
     expect(statSync(join(dir, '.dev.vars')).mode & 0o777).toBe(0o600);
-    expect(readFileSync(join(dir, 'wrangler.jsonc'), 'utf8')).not.toMatch(/ed25519:/u);
+    for (const file of ['wrangler.jsonc', 'wrangler.vault.jsonc', 'wrangler.auth.jsonc']) {
+      expect(readFileSync(join(dir, file), 'utf8')).not.toMatch(/ed25519:|RELAYER_KEYS|VAULT_KEK/u);
+    }
   });
 });

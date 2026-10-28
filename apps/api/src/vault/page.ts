@@ -11,7 +11,7 @@ import { type AppSettings, effectiveSettings, getSettingsRow } from './settings.
 export const VAULT_PAGE_PATH = '/vault';
 /** The vault bundle @hana-id/web serves from the static-assets binding. */
 export const VAULT_SCRIPT_PATH = '/vault.js';
-const GOOGLE_CERTS_ORIGIN = 'https://www.googleapis.com';
+export const GOOGLE_CERTS_ORIGIN = 'https://www.googleapis.com';
 
 /** Every Hana page's base policy. */
 export const BASE_CSP = ["default-src 'none'", "script-src 'self'", "style-src 'self'", "img-src 'self' data:", "font-src 'self'", "base-uri 'none'", "form-action 'none'"];
@@ -43,7 +43,7 @@ export function jsonForHtml(value: unknown): string {
   return JSON.stringify(value).replace(/[<>&\u2028\u2029]/gu, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
 
-function originOf(url: string | undefined): string | null {
+export function originOf(url: string | undefined): string | null {
   if (!url) return null;
   try {
     const { origin } = new URL(url);

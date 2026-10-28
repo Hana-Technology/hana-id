@@ -8,13 +8,14 @@ Durable Object per relayer key. Spec: `docs/batch-a-spec.md` (API section) as am
 ## Commands
 
 ```sh
-pnpm --filter @hana-id/api gen sandbox-dev [--d1-id <uuid>] [--dev-vars]  # wrangler.jsonc (+ .dev.vars) from envs/<env>.json
+pnpm --filter @hana-id/api gen sandbox-dev [--d1-id <uuid>] [--dev-vars]  # wrangler.jsonc, wrangler.{vault,auth}.jsonc (+ .dev.vars) from envs/<env>.json
 pnpm --filter @hana-id/api test        # vitest in workerd (@cloudflare/vitest-plugin), NEAR RPC mocked; then scripts/ tests in Node
 pnpm --filter @hana-id/api typecheck
 pnpm --filter @hana-id/api dev         # wrangler dev (local D1: `wrangler d1 migrations apply DB --local` first)
 ```
 
-`wrangler.jsonc` is generated: change `envs/<env>.json` or `scripts/gen-wrangler.ts`, not the file. Without `--d1-id`
+`wrangler.jsonc` (and the page Workers' `wrangler.vault.jsonc`, `wrangler.auth.jsonc`, see [Page Workers](#page-workers))
+are generated: change `envs/<env>.json` or `scripts/gen-wrangler.ts`, not the files. Without `--d1-id`
 the id already in the file is kept only if that file was generated for the same D1 database (`database_name`), else a
 local-only placeholder is written. `--dev-vars` writes `RELAYER_KEYS` (from `.secrets/<env>/relayer-keys.json`) and
 `OWNER_RELAYER_KEYS` (from `.secrets/<env>/owner-relayer-keys.json`) single-quoted (wrangler's dotenv parser takes them
@@ -23,7 +24,8 @@ literally), plus `KEYS_UPDATER_KEY`; files that don't exist are skipped.
 Deploy (testnet only): `wrangler d1 create <cloudflare.d1Name>` → `gen <env> --d1-id <id>` →
 `wrangler d1 migrations apply DB --remote` → `wrangler secret put RELAYER_KEYS` (JSON array of `ed25519:` secret
 keys, e.g. the content of `.secrets/<env>/relayer-keys.json`) → `wrangler secret put OWNER_RELAYER_KEYS` (same format,
-`.secrets/<env>/owner-relayer-keys.json`) → `wrangler secret put KEYS_UPDATER_KEY` → `wrangler deploy`.
+`.secrets/<env>/owner-relayer-keys.json`) → `wrangler secret put KEYS_UPDATER_KEY` → `wrangler deploy` → the page
+Workers (below).
 
 ## Config
 
@@ -175,6 +177,37 @@ form-action 'none'; frame-ancestors <app origins>; connect-src <API_URL> <NEAR_R
 `X-Content-Type-Options: nosniff`. Origins: loopback ones (and `http://localhost:*`) only for `pk_test_` keys in
 `local*`/`sandbox*` envs; anything that isn't a bare lowercase http(s) origin is dropped; more than 20 → 403. 403 (no
 config script, `frame-ancestors 'none'`) for an unknown, suspended or scope-conflicting app; 503 when D1 fails.
+
+### Page Workers (`src/pages/`, `wrangler.vault.jsonc`, `wrangler.auth.jsonc`)
+
+Where the two Hana origins can't be routes on this Worker (sandbox-dev on `workers.dev`: `docs/batch-b-spec.md`,
+"Order of work" step 0), each is a thin Worker of its own, with only that origin's built pages as its static assets.
+`gen` writes both configs from the manifest (`scripts/pages-wrangler.ts`):
+
+| | Vault Worker | Auth Worker |
+|---|---|---|
+| Serves | `GET`/`HEAD /vault` → this Worker through the `API` service binding, request unchanged (so it is rendered above, with the vault origin in its URL); any other path: a static asset (`/vault.js`) | `/login`, `/login/callback`, `/approve`, `/export` from `<path>.html`, with each page's CSP (`connect-src <API_URL>` on login and callback, none on approve, `<API_URL> <NEAR_RPC> https://www.googleapis.com` on export), `frame-ancestors 'none'`, `no-store`, `no-referrer`, `nosniff` and no COOP; any other path: a static asset |
+| Assets | `packages/web/dist/pages/<env>/vault` | `packages/web/dist/pages/<env>/auth` |
+| Vars | `VAULT_ORIGIN` | `AUTH_ORIGIN`, `API_URL`, `NEAR_RPC` |
+
+Both answer only on their own origin (404 on any other host), only `GET`/`HEAD` (405), never serve an HTML file under
+its own name (404; pages exist only on their routes, with their headers), and add `nosniff`, `no-referrer` and a
+same-origin CORP to assets. No other path reaches the API, so `{vaultOrigin}/v1/*` is not the API. A missing page file
+or an unreachable API gives 503 with no config script. Placement follows the origin: `<worker>.<subdomain>.workers.dev`
+→ a `workers.dev` Worker named `<worker>` (dev envs only; same subdomain as a `workers.dev` `apiUrl`, since the service
+binding needs one account), any other hostname → a Custom Domain on `<API worker>-vault`/`-auth`, loopback (`local*`
+envs) → `wrangler dev` on that host and port. Preview URLs are off.
+
+Deploy (testnet only), after this Worker, since the vault Worker binds to it:
+
+```sh
+pnpm --filter @hana-id/web build                 # writes packages/web/dist/pages/<env>/{vault,auth}
+pnpm --filter @hana-id/api gen <env> --d1-id <id> # also writes wrangler.vault.jsonc and wrangler.auth.jsonc
+pnpm --filter @hana-id/api run deploy:pages       # wrangler deploy -c wrangler.vault.jsonc, then -c wrangler.auth.jsonc
+```
+
+Locally, `pnpm --dir apps/api exec wrangler dev -c wrangler.vault.jsonc -c wrangler.jsonc` runs the vault Worker with
+this one behind its service binding (the first config is the one served).
 
 ### Vault endpoints: `Origin: VAULT_ORIGIN` + `x-hana-key` + `x-hana-parent-origin`
 

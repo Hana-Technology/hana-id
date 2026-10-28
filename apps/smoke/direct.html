@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="referrer" content="no-referrer" />
-    <title>Hana ID smoke test</title>
+    <title>Hana ID smoke test (direct)</title>
     <style>
       :root { color-scheme: light dark; font: 14px/1.45 system-ui, sans-serif; }
       body { max-width: 1100px; margin: 0 auto; padding: 16px; }
@@ -36,11 +36,19 @@
     </style>
   </head>
   <body>
-    <h1>Hana ID smoke test</h1>
+    <h1>Hana ID smoke test: direct flow</h1>
     <p>
-      Local test tooling for the deployed testnet backend (not the SDK). Shows public data only: no Google token,
-      CKD secret or private key is ever displayed, logged, stored or sent anywhere but the API.
+      The in-page flow from before the vault: Google Identity Services → <code>POST /v1/sessions</code> →
+      <code>POST /v1/derive</code> → CKD decryption in this page. Kept as the split-flow baseline for the ship gate and
+      for key_index, client choice, revoke and replay tests; the <a href="./index.html">vault page</a> is the main one.
+      Shows public data only: no Google token, CKD secret or private key is ever displayed, logged, stored or sent
+      anywhere but the API.
     </p>
+    <div class="banner warn">
+      Works only while the env's <code>REJECT_PII_ON_SESSIONS</code> is <code>"0"</code>: Google Identity Services
+      tokens carry <code>email</code>, which <code>/v1/sessions</code> refuses (400 <code>token_has_pii</code>) once it
+      is turned on.
+    </div>
     <dl id="env"></dl>
     <div id="env-problem" class="banner error" hidden></div>
 
@@ -107,6 +115,6 @@
       <div id="log" class="mono"></div>
     </section>
 
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="/src/direct.ts"></script>
   </body>
 </html>

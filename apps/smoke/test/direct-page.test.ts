@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
-// @vitest-environment-options {"url":"http://localhost:5173/"}
-// Boots the real page (index.html + src/main.ts) against a mocked API, RPC, Google Identity Services and MPC: wiring,
-// the UNSET-key guard, the client choice, and a whole run (sign-in → create_session → derive → revoke → replays).
+// @vitest-environment-options {"url":"http://localhost:5173/direct.html"}
+// Boots the real direct page (direct.html + src/direct.ts) against a mocked API, RPC, Google Identity Services and MPC:
+// wiring, the UNSET-key guard, the client choice, a whole run (sign-in → create_session → derive → revoke → replays),
+// and the message once REJECT_PII_ON_SESSIONS refuses GIS tokens.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { bls12_381 as bls } from '@noble/curves/bls12-381';
@@ -10,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CKD_DST, base64UrlEncode, ckdAppId, sessionNonce, toHex, utf8 } from '@hana-id/core';
 import type { PageEnv } from '../src/config.ts';
 
-const html = readFileSync(join(import.meta.dirname, '..', 'index.html'), 'utf8');
+const html = readFileSync(join(import.meta.dirname, '..', 'direct.html'), 'utf8');
 const body = /<body>([\s\S]*)<\/body>/u.exec(html)![1]!.replace(/<script[\s\S]*?<\/script>/gu, '');
 const PK = 'pk_test_1111111111111111111111';
 const OWN = 'own.apps.googleusercontent.com';
@@ -33,6 +34,8 @@ const baseEnv: PageEnv = {
   rpc: 'https://rpc.example',
   apiUrl: 'https://api.example',
   apiUrlOverridden: false,
+  vaultOrigin: null,
+  authOrigin: null,
 };
 
 type Json = Record<string, unknown>;
@@ -52,7 +55,7 @@ function mpcAnswer(pk1: string, path: string) {
 }
 
 /** A stateful fake of the API + chain: enough of the API's session checks to see replays rejected. */
-function mockBackend(opts: { signer?: string } = {}) {
+function mockBackend(opts: { signer?: string; rejectPii?: boolean } = {}) {
   const calls: { url: string; body: Json | null; headers: Headers }[] = [];
   const sessions = new Map<string, { path: string; used: number; revoked: boolean; maxUses: number }>();
   let txs = 0;
@@ -65,6 +68,8 @@ function mockBackend(opts: { signer?: string } = {}) {
       case 'https://api.example/v1/app':
         return Response.json({ scopeId: 's1', signer: opts.signer ?? baseEnv.signer, google: { clientId: OWN, mode: 'own' }, requestId: 'r1' });
       case 'https://api.example/v1/sessions': {
+        // As the API answers once REJECT_PII_ON_SESSIONS = "1" (GIS tokens carry `email`).
+        if (opts.rejectPii) return Response.json({ error: 'The ID token carries a claim outside the allow-list', code: 'token_has_pii', data: { claim: 'email' }, requestId: 'rq' }, { status: 400 });
         const b = reqBody as { jwt: string; sessionPublicKey: number[]; keyIndex: number; maxUses: number; expiresAtMs: number; salt: number[] };
         const key = toHex(Uint8Array.from(b.sessionPublicKey));
         if (sessions.has(key)) return apiError(409, 'session_exists', 'This session key is already in use');
@@ -130,7 +135,7 @@ async function boot(env: Partial<PageEnv> = {}): Promise<void> {
   document.body.innerHTML = body;
   (globalThis as Record<string, unknown>).__HANA_SMOKE_ENV__ = { ...baseEnv, ...env };
   vi.resetModules();
-  await import('../src/main.ts');
+  await import('../src/direct.ts');
 }
 
 const button = (id: string) => document.getElementById(id) as HTMLButtonElement;
@@ -249,6 +254,20 @@ describe('smoke page', () => {
     button('restart').click();
     expect(button('start').disabled).toBe(false);
     expect(text('result')).toBe('');
+  });
+
+  it('explains a token_has_pii refusal: the env refuses GIS tokens on /v1/sessions', async () => {
+    const backend = mockBackend({ rejectPii: true });
+    const google = mockGoogle();
+    await boot({ ckdNetworkKey: validKey });
+    await loadApp();
+    button('start').click();
+    await vi.waitFor(() => expect(google.state.nonce).not.toBeNull());
+    google.signIn();
+    await vi.waitFor(() => expect(text('log')).toMatch(/400 token_has_pii.*REJECT_PII_ON_SESSIONS = "1".*use the vault page/u));
+    await idle();
+    expect(backend.calls.some((c) => c.url.endsWith('/v1/derive'))).toBe(false);
+    expect(document.querySelectorAll('#runs tr')).toHaveLength(0);
   });
 
   it('restores the results log from storage and exports it as JSON', async () => {

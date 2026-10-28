@@ -1,52 +1,27 @@
-// Hana ID smoke page: wires the DOM to the flow. Public data only on screen, in the log and in storage.
-// Never display, log, persist or send (except the token to POST /v1/sessions) the Google ID token, the CKD secret or
-// derived private keys.
+// Hana ID smoke, direct page: the in-page flow from before the vault (Google Identity Services → POST /v1/sessions →
+// POST /v1/derive → CKD decryption here). It stays as the split-flow baseline for the ship gate and for what the vault
+// can't do (key_index ≠ 0, a client choice, derive again, revoke, replays), and works only while the env's
+// REJECT_PII_ON_SESSIONS is "0": GIS tokens carry `email`, which the claim allow-list refuses once the user turns it on
+// (400 token_has_pii). Public data only on screen, in the log and in storage. Never display, log, persist or send
+// (except the token to POST /v1/sessions) the Google ID token, the CKD secret or derived private keys.
 import { checkSessionParams, ckdKeyProblem, jsonBytes, toHex } from '@hana-id/core';
 import { ApiError, type AppConfig, type CreateSessionBody, type GoogleMode, HanaApi } from './api.ts';
 import type { PageEnv } from './config.ts';
+import { $, code, fillDl, h, logEvent, ms, txLink } from './dom.ts';
 import { deriveOnce } from './flow.ts';
 import { readClaims, renderGoogleButton } from './google.ts';
 import { NearRpc, formatNear, formatTgas, googleOwnClients, googleSharedClients, type ScopeView } from './near.ts';
 import { type RunRecord, type StepTimings, compareRun, parseStoredRuns, pkPrefix, resultsJson } from './runs.ts';
 import { type PendingSession, newPendingSession, signRevoke } from './session.ts';
+import { PK_STORAGE, RUNS_STORAGE, isPublishableKey } from './storage-keys.ts';
 
 const env: PageEnv = __HANA_SMOKE_ENV__;
 const rpc = new NearRpc(env.rpc);
-const PK_STORAGE = 'hana-smoke.publishableKey';
-const RUNS_STORAGE = 'hana-smoke.runs';
-const PUBLISHABLE_KEY_RE = /^pk_(test|live)_[1-9A-HJ-NP-Za-km-z]{16,64}$/u;
-
-// ---- DOM helpers (textContent only: API and chain strings are never parsed as HTML) ----
-
-function $<T extends HTMLElement = HTMLElement>(id: string): T {
-  const node = document.getElementById(id);
-  if (!node) throw new Error(`Missing #${id}`);
-  return node as T;
-}
-
-type Child = Node | string;
-function h(tag: string, attrs: Record<string, string> = {}, ...children: Child[]): HTMLElement {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
-  node.append(...children);
-  return node;
-}
-
-const code = (text: string): HTMLElement => h('code', {}, text);
-const txLink = (hash: string | null): Child => (hash ? h('a', { href: `https://testnet.nearblocks.io/txns/${encodeURIComponent(hash)}`, target: '_blank', rel: 'noreferrer' }, hash) : '—');
-
-function fillDl(dl: HTMLElement, rows: [string, Child][]): void {
-  dl.replaceChildren(...rows.flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)]));
-}
-
-const ms = (v: number | null): string => (v === null ? '—' : String(Math.round(v)));
-
-function logEvent(text: string, kind: 'info' | 'error' = 'info'): void {
-  const line = h('div', kind === 'error' ? { class: 'fail' } : {}, `${new Date().toLocaleTimeString()}  ${text}`);
-  $('log').prepend(line);
-}
 
 function describeError(err: unknown): string {
+  if (err instanceof ApiError && err.code === 'token_has_pii') {
+    return `${err.message}: this env refuses GIS tokens on /v1/sessions (REJECT_PII_ON_SESSIONS = "1"), so the direct flow is retired here; use the vault page${err.requestId ? ` [request ${err.requestId}]` : ''}`;
+  }
   if (err instanceof ApiError) return `${err.message}${err.nearTx ? ` (tx ${err.nearTx})` : ''}${err.requestId ? ` [request ${err.requestId}]` : ''}`;
   return err instanceof Error ? err.message : String(err);
 }
@@ -271,7 +246,7 @@ async function withBusy(action: () => Promise<void>): Promise<void> {
 
 async function loadApp(): Promise<void> {
   const publishableKey = ($('pk') as HTMLInputElement).value.trim();
-  if (!PUBLISHABLE_KEY_RE.test(publishableKey)) throw new Error('Enter a publishable key (pk_test_…)');
+  if (!isPublishableKey(publishableKey)) throw new Error('Enter a publishable key (pk_test_…)');
   try {
     localStorage.setItem(PK_STORAGE, publishableKey);
   } catch {

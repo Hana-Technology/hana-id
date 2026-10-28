@@ -8,8 +8,15 @@ describe('page config', () => {
   it('takes only public fields from the default manifest', () => {
     const m = loadEnv(DEFAULT_ENV);
     const env = pageEnvFrom(m);
-    expect(Object.keys(env).sort()).toEqual(['apiUrl', 'apiUrlOverridden', 'ckdDomainId', 'ckdNetworkKey', 'mpc', 'name', 'network', 'relayer', 'rpc', 'signer']);
-    expect(env).toMatchObject({ name: DEFAULT_ENV, signer: m.signer, apiUrl: m.apiUrl, apiUrlOverridden: false });
+    expect(Object.keys(env).sort()).toEqual(['apiUrl', 'apiUrlOverridden', 'authOrigin', 'ckdDomainId', 'ckdNetworkKey', 'mpc', 'name', 'network', 'relayer', 'rpc', 'signer', 'vaultOrigin']);
+    expect(env).toMatchObject({ name: DEFAULT_ENV, signer: m.signer, apiUrl: m.apiUrl, apiUrlOverridden: false, vaultOrigin: m.vaultOrigin, authOrigin: m.authOrigin });
+    expect(env.vaultOrigin).toMatch(/^https:\/\//u);
+  });
+
+  it('gives null Hana origins for an env without the vault pages', () => {
+    const m = loadEnv(DEFAULT_ENV);
+    const { vaultOrigin: _v, authOrigin: _a, ...rest } = m;
+    expect(pageEnvFrom(rest)).toMatchObject({ vaultOrigin: null, authOrigin: null });
   });
 
   it('accepts an https or localhost API override only', () => {

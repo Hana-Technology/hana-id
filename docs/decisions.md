@@ -359,7 +359,8 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
   tokens for that client).
 - Why: private keys import into every major EVM and Stellar wallet (Privy exports keys the same way); a phrase would
   change EVM derivation and add little for these users.
-- Rejected: EVM seed phrase export.
+- Rejected: EVM seed phrase export. Deferred (future): a standalone open-source recovery tool that works without
+  Hana's servers.
 
 ## Superseded or amended
 

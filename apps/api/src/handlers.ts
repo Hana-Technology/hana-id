@@ -16,6 +16,7 @@ import { relay } from './relayer-pool.ts';
 import { ckdPayload, revokePayload, sessionNonce, verifySessionSignature } from './session-crypto.ts';
 import { claimCounter, precheckSessionUse } from './session-use.ts';
 import { MAX_BODY, isError, toCreateSession, toDeriveKey, toOwnerAction, toRevokeSession } from './validate.ts';
+import { effectiveSettings, getSettingsRow } from './vault/settings.ts';
 import { effectiveSharedClients, forgetScope, forgetSession, getConfig, getScope, isSessionView, isSharedClient, recordSessionUse, rememberSession, scopeForClient, sessionKeyInUse } from './views.ts';
 
 const APP_ALLOW_HEADERS = `content-type, x-hana-key, ${PARENT_ORIGIN_HEADER}, ${RELAY_KEY_HEADER}`;
@@ -204,12 +205,21 @@ export async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay
  * the server clock (`serverTimeMs`, which the vault corrects its clock with). `own` when the scope has a Google client
  * of its own (the app's `google_web_client_id` when set, which must still be one of the scope's clients; else the
  * first one), else `shared` (the first shared client in force) when the scope allows shared login, else 409.
+ * `autoApprovePolicy` is the policy in force now (D1, the same value the vault page inlines), or null: an open vault
+ * re-reads it, so removing a policy stops auto-approval without a reload.
  */
 export async function handleAppConfig(request: Request, env: Env, requestId: string): Promise<Response> {
   const ctx = newCtx(env, requestId, APP_CONFIG_ENDPOINT, request);
   const gate = await appGate(request, env, ctx, 'config');
   if (!gate.ok) return gate.response;
   const { app } = gate;
+  let autoApprovePolicy: Record<string, unknown> | null;
+  try {
+    const row = await getSettingsRow(env.DB, app.id);
+    autoApprovePolicy = row ? effectiveSettings(row, app.id, Date.now()).autoApprovePolicy : null;
+  } catch {
+    return reject(ctx, 503, 'config_unavailable', 'App config is unavailable, try again');
+  }
   try {
     const scope = await getScope(env, app.scope_id);
     if (!scope) return reject(ctx, 409, 'scope_not_registered', 'The app’s scope is not registered on chain');
@@ -222,7 +232,7 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
       if (shared) google = { clientId: shared[1], mode: 'shared' };
     }
     if (!google) return reject(ctx, 409, 'no_google_client', 'The app has no Google client and shared login is not available');
-    return done(ctx, 200, { name: app.name, scopeId: app.scope_id, signer: env.SIGNER_ACCOUNT, google, serverTimeMs: Date.now() });
+    return done(ctx, 200, { name: app.name, scopeId: app.scope_id, signer: env.SIGNER_ACCOUNT, google, serverTimeMs: Date.now(), autoApprovePolicy });
   } catch {
     return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');
   }

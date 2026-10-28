@@ -9,6 +9,7 @@ export * from './addresses.ts';
 export * from './api-types.ts';
 export * from './bytes.ts';
 export * from './ckd.ts';
+export * from './consent.ts';
 export * from './derivation.ts';
 export * from './export.ts';
 export * from './id-token.ts';

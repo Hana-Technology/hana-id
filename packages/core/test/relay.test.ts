@@ -1,5 +1,5 @@
 // Relay payload encryption (AES-GCM under relayKey, AAD bound to relayId) and the API response types and guards.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ApiError,
   badCounterExpected,
@@ -29,6 +29,28 @@ describe('relay payload', () => {
     expect(base64UrlDecode(ct.iv)).toHaveLength(12);
     expect(await decryptRelayPayload(k, relayId, ct)).toEqual({ idToken: TOKEN });
     expect(await decryptRelayPayload(k, relayId, await encryptRelayPayload(k, relayId, { error: 'access_denied' }))).toEqual({ error: 'access_denied' });
+  });
+
+  it('zeroes the copy of relayKey it imports (the caller keeps its own)', async () => {
+    const k = key();
+    const before = k.slice();
+    const imported: Uint8Array[] = [];
+    const importKey = crypto.subtle.importKey.bind(crypto.subtle);
+    const spy = vi.spyOn(crypto.subtle, 'importKey').mockImplementation(((format: 'raw', data: Uint8Array, ...rest: never[]) => {
+      if (format === 'raw') imported.push(data);
+      return (importKey as (...a: unknown[]) => Promise<CryptoKey>)(format, data, ...rest);
+    }) as never);
+    try {
+      await decryptRelayPayload(k, relayId, await encryptRelayPayload(k, relayId, { idToken: TOKEN }));
+    } finally {
+      spy.mockRestore();
+    }
+    expect(imported).toHaveLength(2);
+    for (const raw of imported) {
+      expect(raw).not.toBe(k);
+      expect(raw.every((b) => b === 0)).toBe(true);
+    }
+    expect(k).toEqual(before);
   });
 
   it('uses a fresh IV each time', async () => {
@@ -92,6 +114,10 @@ describe('API responses', () => {
     const b = (n: number) => new Array(n).fill(1);
     expect(isAppConfig({ scopeId: 's1', signer: 'x', google: { clientId: 'c', mode: 'shared' }, name: 'App', serverTimeMs: 5, requestId: 'r' })).toBe(true);
     expect(isAppConfig({ scopeId: 's1', signer: 'x', google: { clientId: 'c', mode: 'shared' }, serverTimeMs: -1 })).toBe(false);
+    expect(isAppConfig({ scopeId: 's1', signer: 'x', google: { clientId: 'c', mode: 'shared' }, autoApprovePolicy: null, requestId: 'r' })).toBe(true);
+    expect(isAppConfig({ scopeId: 's1', signer: 'x', google: { clientId: 'c', mode: 'shared' }, autoApprovePolicy: { v: 1 }, requestId: 'r' })).toBe(true);
+    expect(isAppConfig({ scopeId: 's1', signer: 'x', google: { clientId: 'c', mode: 'shared' }, autoApprovePolicy: [1], requestId: 'r' })).toBe(false);
+    expect(isAppConfig({ scopeId: 's1', signer: 'x', google: { clientId: 'c', mode: 'shared' }, autoApprovePolicy: 'off', requestId: 'r' })).toBe(false);
     expect(isLoginResponse({ result: { big_y: 'y', big_c: 'c' }, session: { scope_id: 's1', expires_at_ms: 1, max_uses: 1, used: 1 }, nearTx: 'tx', requestId: 'r' })).toBe(true);
     expect(isLoginResponse({ result: { big_y: 'y', big_c: 'c' }, session: { scope_id: 's1', expires_at_ms: 1, max_uses: 1, used: 2 }, nearTx: 'tx' })).toBe(false);
     expect(isRelayReadResponse({ iv: 'a', ct: 'b', serverTimeMs: 1 })).toBe(true);

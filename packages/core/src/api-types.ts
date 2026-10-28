@@ -4,13 +4,18 @@
 // `requestId`.
 export type GoogleMode = 'own' | 'shared';
 
-/** `GET /v1/app`. `name` and `serverTimeMs` arrive with batch B; older APIs omit them. */
+/** `GET /v1/app`. `name`, `serverTimeMs` and `autoApprovePolicy` arrive with batch B; older APIs omit them. */
 export interface AppConfig {
   scopeId: string;
   signer: string;
   google: { clientId: string; mode: GoogleMode };
   name?: string;
   serverTimeMs?: number;
+  /**
+   * The auto-approve policy JSON in force now (as the vault page inlines it, shape-checked only), or null. The vault
+   * re-reads it while it stays open, so removing a policy stops auto-approval without a reload.
+   */
+  autoApprovePolicy?: Record<string, unknown> | null;
   requestId: string;
 }
 
@@ -208,7 +213,8 @@ export function isAppConfig(v: unknown): v is AppConfig {
     typeof v.google.clientId === 'string' &&
     (v.google.mode === 'own' || v.google.mode === 'shared') &&
     (v.name === undefined || typeof v.name === 'string') &&
-    (v.serverTimeMs === undefined || isMs(v.serverTimeMs))
+    (v.serverTimeMs === undefined || isMs(v.serverTimeMs)) &&
+    (v.autoApprovePolicy === undefined || v.autoApprovePolicy === null || isObj(v.autoApprovePolicy))
   );
 }
 

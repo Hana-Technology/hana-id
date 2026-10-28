@@ -515,6 +515,11 @@ export interface WindowMessageMap {
     context: ApprovalContext;
     position: number;
     queued: number;
+    /**
+     * Present when the app has an auto-approve policy in force: its label, whether the user's consent to it is active
+     * (the popup then offers "Stop auto-approving"), and why this request wasn't auto-approved (a matcher reason).
+     */
+    autoApprove?: AutoApproveNote;
   };
   'hana:approve-result': { id: string; approved: boolean; digest: Uint8Array };
   'hana:approve-bye': Record<string, never>;
@@ -529,6 +534,31 @@ export interface WindowMessageMap {
     chain: 'stellar' | 'evm';
     address: string;
   };
+  /** Vault → approval popup: the consent screen for the app's auto-approve policy (docs/batch-b-spec.md "Consent"). */
+  'hana:consent-request': {
+    id: string;
+    appName: string;
+    parentOrigin: string;
+    /** The normalized policy; the popup validates it and recomputes policyId itself before display. */
+    policy: Record<string, unknown>;
+    policyId: string;
+    /** When the consent would end: min(now + maxConsentMs, session expiry). */
+    expiresAtMs: number;
+    position: number;
+    queued: number;
+  };
+  /** Approval popup → vault: Allow (guarded like Approve) or Decline, with consentDigest of what it rendered. */
+  'hana:consent-result': { id: string; allowed: boolean; digest: Uint8Array };
+  /** Approval popup → vault: "Stop auto-approving". */
+  'hana:auto-approve-stop': Record<string, never>;
+}
+
+/** hana:approve-request's note on the app's auto-approve policy. */
+export interface AutoApproveNote {
+  label: string;
+  active: boolean;
+  /** The matcher's reason (policy/match.ts AutoApproveReason) when an active consent didn't cover this request. */
+  reason?: string;
 }
 
 export type WindowMessageType = keyof WindowMessageMap;
@@ -590,7 +620,8 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
     isBytes(m.relayKey, 32, 32),
   'hana:approve-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:approve-request': (m) => {
-    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'])) return false;
+    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove'])) return false;
+    if (m.autoApprove !== undefined && !isAutoApproveNote(m.autoApprove)) return false;
     if (!isRequestId(m.id) || !isAppName(m.appName) || !isOrigin(m.parentOrigin) || !isApprovalKind(m.kind) || !isChain(m.chain)) return false;
     const expected = approvalKindChain(m.kind);
     if (expected !== null && expected !== m.chain) return false;
@@ -616,7 +647,29 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
     isInt(m.keyIndex, 0, KEY_INDEX_LIMIT) &&
     isChain(m.chain) &&
     isAddressFor(m.chain, m.address),
+  'hana:consent-request': (m) =>
+    exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'policy', 'policyId', 'expiresAtMs', 'position', 'queued']) &&
+    isRequestId(m.id) &&
+    isAppName(m.appName) &&
+    isOrigin(m.parentOrigin) &&
+    isPlainObject(m.policy) &&
+    isPolicyId(m.policyId) &&
+    isMs(m.expiresAtMs) &&
+    isInt(m.queued, 1, 1000) &&
+    isInt(m.position, 1, m.queued as number),
+  'hana:consent-result': (m) => exactKeys(m, ['v', 't', 'id', 'allowed', 'digest']) && isRequestId(m.id) && typeof m.allowed === 'boolean' && isBytes(m.digest, 32, 32),
+  'hana:auto-approve-stop': (m) => exactKeys(m, ['v', 't']),
 };
+
+function isAutoApproveNote(v: unknown): v is AutoApproveNote {
+  return (
+    isPlainObject(v) &&
+    exactKeys(v, ['label', 'active'], ['reason']) &&
+    isStr(v.label, 1, 80) &&
+    typeof v.active === 'boolean' &&
+    (v.reason === undefined || (typeof v.reason === 'string' && /^[a-z_]{1,40}$/u.test(v.reason)))
+  );
+}
 
 /**
  * Validates a window message whose `t` is in `allowed` (each receiver passes only the types it expects at that point),
@@ -624,7 +677,7 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
  */
 export function parseWindowMessage<T extends WindowMessageType>(data: unknown, allowed: readonly T[]): WindowMessage<T> | null {
   if (!isPlainObject(data) || data.v !== PROTOCOL_VERSION || typeof data.t !== 'string' || !(allowed as readonly string[]).includes(data.t) || !Object.hasOwn(FIELDS, data.t)) return null;
-  const cap = data.t === 'hana:approve-request' ? SIGN_MESSAGE_MAX_BYTES : MESSAGE_MAX_BYTES;
+  const cap = data.t === 'hana:approve-request' || data.t === 'hana:consent-request' ? SIGN_MESSAGE_MAX_BYTES : MESSAGE_MAX_BYTES;
   if (messageSize(data, cap) === Number.POSITIVE_INFINITY) return null;
   return FIELDS[data.t as WindowMessageType](data) ? (data as WindowMessage<T>) : null;
 }
@@ -673,7 +726,13 @@ export function approvalContent(request: Extract<PortRequest, { method: SignMeth
 
 // ---- BroadcastChannel `hana-vault:<appId>` (outcomes only, never key material) ----
 
-export type VaultBroadcast = { v: 1; t: 'counter'; shareId: Uint8Array; counter: number } | { v: 1; t: 'logout' } | { v: 1; t: 'revoked' };
+/**
+ * - `counter`: a tab advanced this share's counter (unlock, touch).
+ * - `revoked`: this share is dead (the API said 410, or a newer login on this device replaced it); only the tabs
+ *   holding that share end their session.
+ * - `logout`: the user logged out of this app on this device; every tab of the app ends its session.
+ */
+export type VaultBroadcast = { v: 1; t: 'counter'; shareId: Uint8Array; counter: number } | { v: 1; t: 'logout' } | { v: 1; t: 'revoked'; shareId: Uint8Array };
 
 /** Validates a per-app BroadcastChannel message, or null. */
 export function parseVaultBroadcast(data: unknown): VaultBroadcast | null {
@@ -681,6 +740,7 @@ export function parseVaultBroadcast(data: unknown): VaultBroadcast | null {
   if (data.t === 'counter') {
     return exactKeys(data, ['v', 't', 'shareId', 'counter']) && isBytes(data.shareId, SHARE_ID_BYTES, SHARE_ID_BYTES) && isMs(data.counter) ? (data as VaultBroadcast) : null;
   }
-  if (data.t === 'logout' || data.t === 'revoked') return exactKeys(data, ['v', 't']) ? (data as VaultBroadcast) : null;
+  if (data.t === 'revoked') return exactKeys(data, ['v', 't', 'shareId']) && isBytes(data.shareId, SHARE_ID_BYTES, SHARE_ID_BYTES) ? (data as VaultBroadcast) : null;
+  if (data.t === 'logout') return exactKeys(data, ['v', 't']) ? (data as VaultBroadcast) : null;
   return null;
 }

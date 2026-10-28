@@ -259,6 +259,12 @@ function message(d: Dom, m: DecodedMessage): HTMLElement[] {
 
 const CHAIN_NAMES = { stellar: 'Stellar', evm: 'EVM chains' } as const;
 
+/**
+ * Shown on message and raw requests: their approval binds no network (an empty context in the approval digest; user
+ * decision 2026-10-28, docs/decisions.md). Typed data shows its domain's chain instead.
+ */
+export const NO_NETWORK_NOTE = 'This signature isn’t tied to one network.';
+
 /** The body of the approval screen for a decoded request. */
 export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string): HTMLElement {
   const parts: HTMLElement[] = [];
@@ -279,10 +285,10 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
       );
       break;
     case 'stellar_message':
-      parts.push(d.h('h2', {}, 'Sign a Stellar message'), ...message(d, decoded.message));
+      parts.push(d.h('h2', {}, 'Sign a Stellar message'), d.h('p', { class: 'note' }, NO_NETWORK_NOTE), ...message(d, decoded.message));
       break;
     case 'personal_sign':
-      parts.push(d.h('h2', {}, 'Sign a message'), ...message(d, decoded.message));
+      parts.push(d.h('h2', {}, 'Sign a message'), d.h('p', { class: 'note' }, NO_NETWORK_NOTE), ...message(d, decoded.message));
       break;
     case 'evm_tx':
       parts.push(d.h('h2', {}, 'EVM transaction'), ...evmTx(d, decoded.chainId, decoded.tx));
@@ -298,7 +304,12 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
       );
       break;
     case 'raw':
-      parts.push(d.h('h2', {}, 'Raw signature'), d.h('p', { class: 'danger' }, rawSigningWarning(CHAIN_NAMES[decoded.chain], appName)), mono(d, decoded.hex));
+      parts.push(
+        d.h('h2', {}, 'Raw signature'),
+        d.h('p', { class: 'danger' }, rawSigningWarning(CHAIN_NAMES[decoded.chain], appName)),
+        d.h('p', { class: 'note' }, NO_NETWORK_NOTE),
+        mono(d, decoded.hex),
+      );
       break;
   }
   return d.h('div', { class: 'request' }, ...parts);

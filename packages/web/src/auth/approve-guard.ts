@@ -1,20 +1,48 @@
-// The Approve guard (docs/batch-b-spec.md "Approval flow" step 5). Approve (and Allow on the consent screen) stays
-// disabled until all of these have happened: at least 1 s since this request rendered, at least 1 s since the window
-// last gained focus or became visible, and a user gesture inside the window after both. A new request in a reused
-// popup resets it. This stops a double-click carried across the launcher→popup opening, and a request slipped in
-// at the moment of a click.
+// The Approve guard (docs/batch-b-spec.md "Approval flow" step 5; the per-input rule is a user decision of
+// 2026-10-28, docs/decisions.md). Approve (and Allow on the consent screen) stays disabled until all of these have
+// happened: at least 1 s since this request rendered, at least 1 s since the window last gained focus or became
+// visible, and an arming gesture inside the window after both. A new request in a reused popup, a focus change and a
+// blur or hide reset it. This stops a double-click carried across the launcher→popup opening, and a request slipped
+// in at the moment of a click.
 //
-// SPEC DEVIATION (raised for the user to confirm): the spec arms on a `pointermove` only. A stationary touch tap fires
-// no pointermove and keyboard activation fires none at all, so on phones (where popups open as tabs) and for
-// keyboard-only users Approve would never enable. The guard therefore also arms on a `pointerdown` or `keydown`
-// after both marks. The gesture that arms it can never approve: Approve acts only on a click whose own pointerdown
-// (or, for a keyboard click, keydown) came after the arming gesture, so a tap that lands on the button as it enables
-// does nothing and only the next tap approves. (Every supported browser fires pointer events for touch, so
-// `touchstart` is not needed and would double-count a tap.)
+// What arms it depends on the input:
+// - mouse: only a `pointermove` that moved (a press never arms; Chromium's synthetic moves after a layout change carry
+//   zero movement and are ignored). So clicking in place, however often, never approves.
+// - touch and pen: a `pointerdown` (a stationary tap fires no pointermove), or a move.
+// - keyboard: only Tab, Shift+Tab and the arrow keys, the keys that move focus. Enter and Space never arm, and a
+//   key's auto-repeat never counts, so a held Enter never approves.
+// The gesture that arms it never approves: Approve acts only on a click whose own pointerdown (or, for a keyboard
+// click, its own non-repeated keydown) came after the arming gesture. So a tap that lands on the button as it enables
+// does nothing and only the next tap approves. Approve is never focused by the page: a keyboard user reaches it with
+// Tab, which arms the guard on the way.
+//
+// Residual risk (accepted): on a phone, someone tapping repeatedly for more than 1 s after the popup tab opens can
+// still approve in two taps, if the second lands on Approve.
 
 export const GUARD_DELAY_MS = 1000;
 
-export type GuardGesture = 'pointermove' | 'pointerdown' | 'keydown';
+/** Keys that arm the guard (they move focus; none of them activates a button). */
+export const ARMING_KEYS: ReadonlySet<string> = new Set(['Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+
+/** The parts of a pointer or keyboard event the guard reads (absent fields are treated strictly). */
+export type GuardInput =
+  | { type: 'pointermove'; pointerType?: string; movementX?: number; movementY?: number }
+  | { type: 'pointerdown'; pointerType?: string }
+  | { type: 'keydown'; key?: string; repeat?: boolean };
+
+/** Whether this input, after both marks, arms the guard. */
+function arms(input: GuardInput): boolean {
+  switch (input.type) {
+    case 'pointermove':
+      // A mouse move with zero movement is a synthetic one (layout change under a still cursor); other moves count.
+      if (input.pointerType === 'touch' || input.pointerType === 'pen') return true;
+      return !(input.movementX === 0 && input.movementY === 0);
+    case 'pointerdown':
+      return input.pointerType === 'touch' || input.pointerType === 'pen';
+    case 'keydown':
+      return input.repeat !== true && input.key !== undefined && ARMING_KEYS.has(input.key);
+  }
+}
 
 export class ApproveGuard {
   private renderedAt: number | null = null;
@@ -68,19 +96,20 @@ export class ApproveGuard {
   }
 
   /**
-   * A user gesture anywhere in the window (including on the disabled button). It arms the guard only once both 1 s
-   * marks have passed; a pointerdown or keydown is also remembered as the start of a possible activation.
+   * A trusted pointer or key event anywhere in the window (including on the disabled button). It arms the guard only
+   * if it is an arming input (see the file comment) and both 1 s marks have passed; a pointerdown or a non-repeated
+   * keydown is also remembered as the start of a possible activation.
    */
-  gesture(kind: GuardGesture): void {
+  gesture(input: GuardInput): void {
+    if (input.type === 'keydown' && input.repeat === true) return;
     const n = ++this.seq;
-    if (kind === 'pointerdown') this.lastPointerDown = n;
-    if (kind === 'keydown') this.lastKeyDown = n;
-    const t = this.now();
-    if (this.armedBy === null && this.marksPassed(t)) this.armedBy = n;
+    if (input.type === 'pointerdown') this.lastPointerDown = n;
+    if (input.type === 'keydown') this.lastKeyDown = n;
+    if (this.armedBy === null && arms(input) && this.marksPassed(this.now())) this.armedBy = n;
     this.update();
   }
 
-  /** Whether Approve is enabled (both marks passed and a gesture after them). */
+  /** Whether Approve is enabled (both marks passed and an arming gesture after them). */
   armed(): boolean {
     return this.armedBy !== null && this.marksPassed(this.now());
   }

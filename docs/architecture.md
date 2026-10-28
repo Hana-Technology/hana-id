@@ -1,7 +1,7 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-10-28 (`feat/b-defaults`: `feat/batch-b` with the batch B fix branches and the
+Last verified against code: 2026-10-28 (`feat/b-defaults-2`: `feat/batch-b` with the batch B fix branches and the
 defaults the user approved on 2026-10-28).
 
 Byte layouts and contract methods are in `docs/contract-interface.md`; this file links to it rather than repeating
@@ -203,11 +203,12 @@ NULL` that re-checks persistence and the TTL cap in the same statement, caps `ab
 approved signature, per spec). The hourly cron deletes shares past `abs_expires_at` or revoked and re-wraps up to
 2000 rows from `VAULT_KEK_PREVIOUS` (`apps/api/src/vault/cron.ts:63`).
 
-In-memory idle limit (Q28, `packages/web/src/vault/vault.ts` `goIdle`/`wake`): every request from the partner page
-for the session (signing, status, addresses, export, auto-approve, revoke-other-devices) restarts a timer of the app's
-`idle_ttl_ms`, and every use re-checks it on the server-corrected clock (a throttled timer can't keep PRK). When it
+In-memory idle limit (Q28, `packages/web/src/vault/vault.ts` `goIdle`/`wake`): every request that uses the key
+(signing, export, revoke-other-devices, an auto-approve consent request) restarts a timer of the app's `idle_ttl_ms`;
+reads (status, `eth_accounts`, `stellar_getAddress`, `hana_autoApproveStatus`) don't, so polling can't keep PRK, and every use re-checks it on the server-corrected clock (a throttled timer can't keep PRK). When it
 passes, PRK is zeroed. In `'session'` mode the session goes dormant: the vault keeps only the addresses, expiry and
-share id, still answers status and addresses, and before the next request that needs the key unlocks the record again
+share id and this tab's last known consent, still answers status, addresses and auto-approve status (from that
+consent: its counters may lag other tabs' auto-signs) without unlocking, and before the next request that needs the key unlocks the record again
 (one `/v1/vault/unlock`, same share only). If that fails (the server share's own idle or absolute limit passed, or it
 was revoked) the session ends with `sessionExpired`. A dormant session also ends at `expiresAtMs`, on logout and on a
 `revoked` broadcast for its share. In `'none'` mode the idle limit ends the session.
@@ -227,7 +228,9 @@ Code: `packages/web/src/vault/` (queue, signing, policies), `packages/web/src/au
 Test apps (D39, `packages/core/src/networks.ts`): for a `pk_test_` key the vault refuses, before any popup or
 policy, a Stellar transaction or auth entry for the public network's passphrase, an EVM transaction on a chain outside
 `TEST_EVM_CHAINS`, and typed data whose domain `chainId` is outside it (4100 `mainnet_not_allowed`). Messages, typed
-data without a `chainId` and raw requests name no network and pass. The EIP-1193 provider refuses switching to or
+data without a `chainId` name no network and pass. Raw requests are refused outright for test apps (4100
+`raw_not_allowed_for_test_apps`, whatever `raw_sign` says): a raw digest can be a mainnet transaction's hash. The
+EIP-1193 provider refuses switching to or
 adding such a chain, and `eth_sendTransaction`/`eth_signTransaction` on one, before anything is filled. Every
 approval and consent screen of a test app says Hana signs only for test networks (`testApp` in the popup messages).
 

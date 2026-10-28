@@ -18,6 +18,14 @@ export interface Env {
   OWNER_RELAYER_KEYS?: string;
   /** Secret: function-call key on SIGNER_ACCOUNT limited to set_issuer_key / remove_issuer_key. */
   KEYS_UPDATER_KEY?: string;
+  /** Hana page origins (manifest vaultOrigin/authOrigin) and the API's own URL (manifest apiUrl, for the vault CSP). */
+  VAULT_ORIGIN?: string;
+  AUTH_ORIGIN?: string;
+  API_URL?: string;
+  /** Secret: vault share wrapping key, `<id>:<base64 of 32 bytes>` (vault/kek.ts). Without it the vault endpoints answer 503. */
+  VAULT_KEK?: string;
+  /** Secret, during a KEK rotation only: the previous VAULT_KEK, read to unwrap and re-wrap older shares. */
+  VAULT_KEK_PREVIOUS?: string;
   /** Optional per-method gas overrides in Tgas (see gas.ts), e.g. GAS_DERIVE_KEY_TGAS. */
   [gasOverride: `GAS_${string}_TGAS`]: string | undefined;
   DB: D1Database;

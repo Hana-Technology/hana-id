@@ -36,7 +36,7 @@ export type AppEndpoint = '/v1/sessions' | '/v1/derive' | '/v1/sessions/revoke';
 export const APP_ENDPOINTS: readonly string[] = ['/v1/sessions', '/v1/derive', '/v1/sessions/revoke'];
 export const APP_CONFIG_ENDPOINT = '/v1/app';
 
-interface Ctx {
+export interface Ctx {
   env: Env;
   requestId: string;
   endpoint: string;
@@ -52,14 +52,14 @@ interface Ctx {
   lapAt?: number;
 }
 
-function newCtx(env: Env, requestId: string, endpoint: string, request?: Request, cors: Headers_ = {}): Ctx {
+export function newCtx(env: Env, requestId: string, endpoint: string, request?: Request, cors: Headers_ = {}): Ctx {
   const started = Date.now();
   const colo = (request as Request<unknown, IncomingRequestCfProperties> | undefined)?.cf?.colo;
   return { env, requestId, endpoint, started, cors, colo: typeof colo === 'string' ? colo : undefined, phases: {}, lapAt: started };
 }
 
 /** Records the time since the previous lap (or the start) as stage `name`. */
-function lap(ctx: Ctx, name: string): void {
+export function lap(ctx: Ctx, name: string): void {
   const now = Date.now();
   if (ctx.phases) ctx.phases[name] = now - (ctx.lapAt ?? ctx.started);
   ctx.lapAt = now;
@@ -91,7 +91,7 @@ const settle = <T>(p: Promise<T>): Promise<Settled<T>> =>
     (error: unknown) => ({ ok: false as const, error }),
   );
 
-function done(ctx: Ctx, status: number, body: Record<string, unknown>, extra: Headers_ = {}): Response {
+export function done(ctx: Ctx, status: number, body: Record<string, unknown>, extra: Headers_ = {}): Response {
   const ok = status < 400;
   const code = typeof body.code === 'string' ? body.code : undefined;
   const nearTx = typeof body.nearTx === 'string' ? body.nearTx : undefined;
@@ -115,15 +115,15 @@ function done(ctx: Ctx, status: number, body: Record<string, unknown>, extra: He
   return json(status, { ...body, requestId: ctx.requestId }, { ...ctx.cors, 'x-request-id': ctx.requestId, ...extra });
 }
 
-const reject = (ctx: Ctx, status: number, code: string, error: string, extra: Headers_ = {}): Response => done(ctx, status, { error, code }, extra);
+export const reject = (ctx: Ctx, status: number, code: string, error: string, extra: Headers_ = {}): Response => done(ctx, status, { error, code }, extra);
 
 /** Per-IP limiter subject: IPv4 address, or the IPv6 /64 (see ip.ts). */
-function ipKey(request: Request): string {
+export function ipKey(request: Request): string {
   return `ip:${ipSubject(request.headers.get('cf-connecting-ip'))}`;
 }
 
 /** Per-IP limiters are created near their client; shared ones (per app, owner actions) in the configured region. */
-function limiter(env: Env, name: string): DurableObjectStub<RateLimiter> {
+export function limiter(env: Env, name: string): DurableObjectStub<RateLimiter> {
   return name.startsWith('ip:') ? env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(name)) : placedStub(env, env.RATE_LIMITER, name);
 }
 

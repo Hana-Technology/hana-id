@@ -34,9 +34,13 @@ keys, e.g. the content of `.secrets/<env>/relayer-keys.json`) → `wrangler secr
 | `OWNER_RELAYER_KEYS` | secret | Owner pool (small allowance), same format: `propose_change`, `cancel_change`, `remove_client`, `disable_shared_login`, `execute_change`, `register_scope`, `apply_pending_config`. Without it `/v1/owner-actions` answers 503 and logins are unaffected |
 | `GAS_<METHOD>_TGAS` | optional vars | Per-method gas override in Tgas (integer 1..300), e.g. `GAS_DERIVE_KEY_TGAS=80`; invalid values are ignored (logged) |
 | `KEYS_UPDATER_KEY` | secret | function-call key on `SIGNER_ACCOUNT` (`set_issuer_key`, `remove_issuer_key`); cron skips without it |
+| `VAULT_ORIGIN`, `AUTH_ORIGIN`, `API_URL` | vars (manifest) | `vaultOrigin`, `authOrigin`, `apiUrl`; set only when the manifest has both Hana origins |
+| `VAULT_KEK` | secret | Vault share wrapping key, `<id>:<base64 of 32 bytes>` (`id` a positive integer). Set it without printing it, e.g. `printf '1:%s' "$(openssl rand -base64 32)" \| wrangler secret put VAULT_KEK`. Without it the vault endpoints answer `503 vault_key_unavailable` |
+| `VAULT_KEK_PREVIOUS` | secret, rotation only | The previous `VAULT_KEK`. Rotate: put the current value here, a new key with a new id in `VAULT_KEK`; unlocks and the cron re-wrap old rows; remove it once the cron logs no rows left under the old id |
 | `DB` | D1 | `migrations/` |
 | `RELAYER_KEY`, `RATE_LIMITER` | Durable Objects | SQLite-backed classes `RelayerKey`, `RateLimiter` |
 | cron `0 * * * *` | trigger | Google JWKS → `set_issuer_key` / `remove_issuer_key` (a kid is removed only after it has been missing from the JWKS for ≥ 55 min, i.e. two hourly runs in a row; tracked in D1 `issuer_key_missing`) |
+| cron `0 * * * *` | trigger | Also vault maintenance (`src/vault/cron.ts`): deletes `vault_shares` rows past `abs_expires_at` or revoked, re-wraps up to 2000 rows per run from `VAULT_KEK_PREVIOUS` to `VAULT_KEK`, logs rows under an unknown KEK id |
 
 ## Endpoints
 
@@ -109,6 +113,47 @@ tx hash is polled; transient errors while polling don't end the wait. Usage (`us
 
 CORS: responses echo `Origin` (with `Vary: Origin`) only when it is allowed for the request's app. Preflight carries no
 key, so `OPTIONS` succeeds when any active app allows the origin; the real request is then checked against its own app.
+
+### Vault page: `GET {VAULT_ORIGIN}/vault?pk=<publishable key>`
+
+Served only on the vault origin (the request URL's origin must equal `VAULT_ORIGIN`; 404 elsewhere). Rendered per
+request from D1 only (no chain RPC): a non-executable `<script type="application/json" id="hana-config">` with
+`{v:1, appId, appName, scopeId, origins, settings:{persistence, sessionTtlMs, idleTtlMs, rawSign, autoApprovePolicy},
+publishableKey, serverTimeMs}` (JSON with `<`, `>`, `&`, U+2028, U+2029 escaped; no `signer`), then
+`<script type="module" src="/vault.js">` (the `@hana-id/web` bundle, a static asset). `rawSign` and
+`autoApprovePolicy` use their pending values only from `raw_sign_effective_at` / `auto_approve_effective_at`.
+Headers: `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none';
+form-action 'none'; frame-ancestors <app origins>; connect-src <API_URL> <NEAR_RPC> https://www.googleapis.com`,
+`Cross-Origin-Resource-Policy: cross-origin`, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`,
+`X-Content-Type-Options: nosniff`. Origins: loopback ones (and `http://localhost:*`) only for `pk_test_` keys in
+`local*`/`sandbox*` envs; anything that isn't a bare lowercase http(s) origin is dropped; more than 20 → 403. 403 (no
+config script, `frame-ancestors 'none'`) for an unknown, suspended or scope-conflicting app; 503 when D1 fails.
+
+### Vault endpoints: `Origin: VAULT_ORIGIN` + `x-hana-key` + `x-hana-parent-origin`
+
+Spec: `docs/batch-b-spec.md` ("Share creation", "Unlock", "Logout and lost device", "Vault endpoints"). Signatures are
+Ed25519 by the session key over `utf8("hana-id-vault-v1:") ‖ borsh(signer) ‖ borsh(appId) ‖ shareId(16) ‖
+u64le(counter) ‖ sha256(payload)` with the gate app's D1 id (`src/vault/message.ts`).
+
+| Endpoint | Body | 2xx |
+|---|---|---|
+| `POST /v1/vault/shares` | `{sessionPublicKey[32], signature[64]}` (share id 0×16, counter 0, payload `"share" ‖ borsh(parentOrigin)`) | 201 `{shareId[16], ks[32], absExpiresAtMs, idleUntilMs}` |
+| `POST /v1/vault/unlock` | `{shareId[16], counter, signature[64]}` (payload `"unlock"`) | `{ks[32], counter, idleUntilMs, absExpiresAtMs}` |
+| `POST /v1/vault/touch` | same (payload `"touch"`) | `{counter, idleUntilMs}` |
+| `POST /v1/vault/revoke` | same (payload `"revoke"`) | `{revoked: true}` |
+| `POST /v1/vault/revoke-all` | same (payload `"revoke-all"`); the share must be < 5 min old (`403 share_not_fresh`) | `{revoked: <other live shares of the same (app, path) revoked>}` |
+
+Gate: key and app (`401 missing_key`/`unknown_app`, `403 app_suspended`), `Origin` is `VAULT_ORIGIN` and the parent is
+allowed for the app (`403 origin_not_allowed`; loopback only for `pk_test_` in `local*`/`sandbox*` envs), no live app on
+a test app's scope (`403 scope_conflict`), then the vault's own limits, never the relay counters: 60 per IP per app
+per minute, 10 × the plan's `per_minute` per app, and 10 per share per minute. Shares: `409 persistence_off`, `401
+invalid_signature`, then `get_session` straight from the node (re-read every 300 ms for up to 2 s while missing or not
+used up): `404 unknown_session`, `403 scope_mismatch`, `409 session_not_spent`, `502 near_unavailable`; then
+`409 share_exists`. Share actions: `404 unknown_share` (missing, or another app's), `410 share_revoked` (also when the
+share's origin was removed from the app, which revokes it), `401 invalid_signature`, then one atomic counter update:
+`409 bad_counter {expected}`, `410 share_expired`. `503 vault_key_unavailable` when `VAULT_KEK` (or, for an older row,
+`VAULT_KEK_PREVIOUS`) is missing; unlock unwraps K_s before the counter moves. Usage counts `usage.unlocks`. D1 holds
+only `share_enc = iv ‖ AES-GCM(VAULT_KEK, iv, K_s, aad = share_id ‖ app_id ‖ session_pk)` (`src/vault/kek.ts`).
 
 ### `POST /v1/owner-actions` (no app auth; 10 per IP per minute, 20 per minute and 200 per day globally)
 

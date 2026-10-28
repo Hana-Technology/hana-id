@@ -94,11 +94,22 @@ describe('wrangler.jsonc', () => {
       RELAYER_ACCOUNT: manifest.relayer,
       ENV_NAME: manifest.name,
       ...(manifest.cloudflare.durableObjectLocation ? { DO_LOCATION_HINT: manifest.cloudflare.durableObjectLocation } : {}),
+      VAULT_ORIGIN: manifest.vaultOrigin,
+      AUTH_ORIGIN: manifest.authOrigin,
+      API_URL: manifest.apiUrl,
     });
     expect(config.d1_databases[0]).toMatchObject({ database_name: manifest.cloudflare.d1Name, database_id: LOCAL_D1_ID });
     expect(text).not.toMatch(/ed25519:/u);
     expect(text).not.toMatch(/RELAYER_KEYS|KEYS_UPDATER_KEY/u);
     expect(text).not.toMatch(/OWNER_RELAYER_KEYS/u);
+    expect(text).not.toMatch(/VAULT_KEK/u);
+  });
+
+  it('sets VAULT_ORIGIN, AUTH_ORIGIN and API_URL only for a manifest with both Hana origins', () => {
+    const vars = (m: typeof manifest) => wranglerConfig(m, LOCAL_D1_ID).vars as Record<string, string>;
+    expect(vars(manifest)).toMatchObject({ VAULT_ORIGIN: manifest.vaultOrigin, AUTH_ORIGIN: manifest.authOrigin, API_URL: manifest.apiUrl });
+    const { vaultOrigin: _v, authOrigin: _a, ...bare } = manifest;
+    for (const key of ['VAULT_ORIGIN', 'AUTH_ORIGIN', 'API_URL']) expect(vars(bare)).not.toHaveProperty(key);
   });
 
   it('sets DO_LOCATION_HINT only when the manifest names a Durable Object location', () => {

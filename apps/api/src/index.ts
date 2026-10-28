@@ -4,6 +4,9 @@ import { type AppEndpoint, APP_CONFIG_ENDPOINT, APP_ENDPOINTS, appPreflight, han
 import { json } from './http.ts';
 import { syncIssuerKeys } from './issuer-keys.ts';
 import { log } from './log.ts';
+import { vaultMaintenance } from './vault/cron.ts';
+import { handleVaultEndpoint, isVaultEndpoint, vaultPreflight } from './vault/endpoints.ts';
+import { handleVaultPage, isVaultPageRequest } from './vault/page.ts';
 
 export { RateLimiter } from './rate-limiter.ts';
 export { RelayerKey } from './relayer-key.ts';
@@ -21,6 +24,10 @@ export default {
     const requestId = newRequestId(request);
     const { pathname } = new URL(request.url);
     try {
+      if (isVaultPageRequest(request, env)) {
+        if (request.method === 'GET' || request.method === 'HEAD') return await handleVaultPage(request, env, requestId);
+        return json(405, { error: 'Method not allowed', code: 'method_not_allowed', requestId }, { allow: 'GET, HEAD' });
+      }
       if (pathname === '/v1/health') {
         if (request.method === 'GET' || request.method === 'HEAD') return handleHealth(env, requestId);
         if (request.method === 'OPTIONS') return openPreflight();
@@ -36,6 +43,11 @@ export default {
         if (request.method === 'POST') return await handleAppEndpoint(request, env, pathname as AppEndpoint, requestId, ctx);
         return json(405, { error: 'Method not allowed', code: 'method_not_allowed', requestId }, { allow: 'POST, OPTIONS' });
       }
+      if (isVaultEndpoint(pathname)) {
+        if (request.method === 'OPTIONS') return vaultPreflight(request, env);
+        if (request.method === 'POST') return await handleVaultEndpoint(request, env, pathname, requestId, ctx);
+        return json(405, { error: 'Method not allowed', code: 'method_not_allowed', requestId }, { allow: 'POST, OPTIONS' });
+      }
       if (pathname === '/v1/owner-actions') {
         if (request.method === 'OPTIONS') return openPreflight();
         if (request.method === 'POST') return await handleOwnerAction(request, env, requestId);
@@ -49,6 +61,10 @@ export default {
   },
 
   async scheduled(_controller, env, _ctx): Promise<void> {
-    await syncIssuerKeys(env);
+    // Independent jobs: one failing must not skip the other.
+    const [vault, issuerKeys] = await Promise.allSettled([vaultMaintenance(env), syncIssuerKeys(env)]);
+    if (vault.status === 'rejected') log({ event: 'vault_maintenance', outcome: 'error', code: 'internal' }, 'error');
+    if (issuerKeys.status === 'rejected') throw issuerKeys.reason;
+    if (vault.status === 'rejected') throw vault.reason;
   },
 } satisfies ExportedHandler<Env>;

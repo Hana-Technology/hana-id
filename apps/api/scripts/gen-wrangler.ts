@@ -34,6 +34,8 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
       RELAYER_ACCOUNT: m.relayer,
       ENV_NAME: m.name,
       ...(m.cloudflare.durableObjectLocation ? { DO_LOCATION_HINT: m.cloudflare.durableObjectLocation } : {}),
+      // The Hana page origins and the API's own URL (the vault page's CSP); VAULT_KEK is a secret.
+      ...(m.vaultOrigin && m.authOrigin ? { VAULT_ORIGIN: m.vaultOrigin, AUTH_ORIGIN: m.authOrigin, API_URL: m.apiUrl } : {}),
     },
     d1_databases: [{ binding: 'DB', database_name: m.cloudflare.d1Name, database_id: d1Id, migrations_dir: 'migrations' }],
     durable_objects: {

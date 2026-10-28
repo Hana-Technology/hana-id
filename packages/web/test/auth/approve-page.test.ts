@@ -13,6 +13,7 @@ import {
   rawSigningWarning,
   utf8,
 } from '@hana-id/core';
+import { STELLAR_MAINNET_PASSPHRASE, shortAddress } from '@hana-id/core';
 import { policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GUARD_DELAY_MS } from '../../src/auth/approve-guard.ts';
@@ -703,7 +704,8 @@ describe('/approve consent screen', () => {
     for (const s of ['Partner App', PARTNER, '“Swaps on Example”', 'Example pool', 'USDC', 'Router', 'swap', 'deposit', 'route', 'can send to any address', 'at most 3', 'deposit(uint256)', 'EVM chain 8453', 'PermitSingle', 'Maximum value plus network fees, per transaction', 'Maximum value plus network fees, per day', 'Maximum network fee per transaction']) {
       expect(text).toContain(s);
     }
-    for (const c of POLICY.ok ? POLICY.policy.stellar?.contracts ?? [] : []) expect(text).toContain(c.id);
+    for (const c of POLICY.ok ? POLICY.policy.stellar?.contracts ?? [] : []) expect(text).toContain(shortAddress(c.id));
+    expect(text).toContain('Example pool · named by Partner App');
     expect(text).toContain('Some functions below can send to any address');
   });
 
@@ -755,5 +757,144 @@ describe('/approve consent screen', () => {
     expect(pageText()).toContain('could not be checked');
     click(secondary());
     expect(results()[0]).toMatchObject({ allowed: false });
+  });
+});
+
+describe('/approve consent screen: contract names (D44)', () => {
+  // Sodax's Base asset manager and Stellar asset manager are on Hana's verified list; OTHER is not.
+  const SODAX_BASE = '0x348BE44F63A458be9C1b13D6fD8e99048F297Bc3';
+  const SODAX_STELLAR = 'CCGF33A4CO6D3BXFEKPXVCFCZBK76I3AQOZK6KIKRPAWAZR3632WHCJ3';
+  const OTHER = '0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD';
+  const DEPOSIT = { selector: '0xb6b55f25', signature: 'deposit(uint256)', addressArgs: 'self-or-listed' };
+
+  type Contract = { address: string; name: string };
+  function evmPolicy(chainId: number, contracts: Contract[], stellar?: { passphrases: string[]; contracts: { id: string; name: string }[] }) {
+    const json: Record<string, unknown> = {
+      v: 1,
+      label: 'Swaps',
+      maxConsentMs: 12 * 3_600_000,
+      limits: { perDayCount: 3 },
+      evm: { chains: [{ chainId, maxValueWei: '1000', maxValueWeiPerDay: '3000', maxFeeWei: '1000', contracts: contracts.map((c) => ({ ...c, selectors: [DEPOSIT] })) }] },
+    };
+    if (stellar) {
+      json.stellar = { networkPassphrases: stellar.passphrases, maxFeeStroops: '100000', contracts: stellar.contracts.map((c) => ({ ...c, functions: [{ name: 'deposit' }] })) };
+    }
+    const r = validateAutoApprovePolicy(json);
+    if (!r.ok) throw new Error(JSON.stringify(r.problems));
+    const policy = JSON.parse(JSON.stringify(r.policy)) as Record<string, unknown>;
+    return { policy, policyId: policyId(r.policy) };
+  }
+  const lines = () => [...document.querySelectorAll<HTMLElement>('.contracts p.contract')];
+  const line = (address: string) => {
+    const l = lines().find((p) => p.querySelector('code')?.getAttribute('title') === address);
+    if (!l) throw new Error(`no line for ${address}`);
+    return l;
+  };
+
+  it('a verified contract shows ✓ and the verified name, not the partner’s name, with the short address and explorer link', () => {
+    send(consentRequest(evmPolicy(8453, [{ address: SODAX_BASE, name: 'Totally my router' }])));
+    expect(primary()).not.toBeNull();
+    const l = line(SODAX_BASE);
+    expect(l.querySelector('.verified')?.textContent).toBe('✓ Sodax Asset Manager');
+    expect(l.textContent).not.toContain('Totally my router');
+    expect(l.textContent).not.toContain('named by');
+    expect(l.querySelector('code')?.textContent).toBe('0x348B…7Bc3');
+    const a = l.querySelector('a');
+    expect(a?.getAttribute('href')).toBe(`https://basescan.org/address/${SODAX_BASE}`);
+    expect(a?.getAttribute('target')).toBe('_blank');
+    expect(a?.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(a?.textContent).toBe('View on Basescan');
+    expect(pageText()).not.toContain('look like verified ones');
+  });
+
+  it('a verified address is case-insensitive on EVM (the policy may list it lowercase)', () => {
+    send(consentRequest(evmPolicy(8453, [{ address: SODAX_BASE.toLowerCase(), name: 'x' }])));
+    expect(document.querySelector('.verified')?.textContent).toBe('✓ Sodax Asset Manager');
+  });
+
+  it('an unverified contract shows the partner’s name as “named by {app}”, unflagged', () => {
+    send(consentRequest(evmPolicy(8453, [{ address: OTHER, name: 'Example vault' }])));
+    const l = line(OTHER);
+    expect(l.querySelector('.verified')).toBeNull();
+    expect(l.textContent).toContain('Example vault · named by Partner App');
+    expect(l.querySelector('.name-warning')).toBeNull();
+    expect(l.querySelector('a')?.getAttribute('href')).toBe(`https://basescan.org/address/${OTHER}`);
+    expect(pageText()).not.toContain('look like verified ones');
+  });
+
+  it('a partner name that imitates a verified name is flagged, inline and at the top', () => {
+    send(consentRequest(evmPolicy(8453, [{ address: OTHER, name: 'Sodax Asset Manager' }])));
+    const l = line(OTHER);
+    expect(l.querySelector('.verified')).toBeNull();
+    expect(l.textContent).toContain('Sodax Asset Manager · named by Partner App — not the verified Sodax Asset Manager');
+    expect(l.querySelector('.name-warning.danger')).not.toBeNull();
+    expect(pageText()).toContain('Partner App gave some contracts below names that look like verified ones');
+  });
+
+  it('a partner name mentioning a verified protocol is flagged ("Sodax Router" on an unverified address)', () => {
+    send(consentRequest(evmPolicy(8453, [{ address: OTHER, name: 'Sodax Router' }])));
+    expect(line(OTHER).textContent).toContain('Sodax Router · named by Partner App — not a verified Sodax contract');
+  });
+
+  it('a verified name on the wrong chain is not verified: the same address on another chain is flagged', () => {
+    send(consentRequest(evmPolicy(42220, [{ address: SODAX_BASE, name: 'Sodax Asset Manager' }])));
+    const l = line(SODAX_BASE);
+    expect(l.querySelector('.verified')).toBeNull();
+    expect(l.textContent).toContain('— not the verified Sodax Asset Manager');
+  });
+
+  it('check marks in a partner name are removed: only the verified mark shows one', () => {
+    send(consentRequest(evmPolicy(8453, [{ address: OTHER, name: '✓ USDC ✔' }])));
+    const l = line(OTHER);
+    expect(l.textContent).toContain('USDC · named by Partner App');
+    expect(l.textContent).not.toMatch(/[✓✔]/u);
+  });
+
+  it.each([
+    [1, 'https://etherscan.io/address/', 'Etherscan'],
+    [146, 'https://sonicscan.org/address/', 'SonicScan'],
+    [11155111, 'https://sepolia.etherscan.io/address/', 'Sepolia Etherscan'],
+    [84532, 'https://sepolia.basescan.org/address/', 'Base Sepolia Basescan'],
+  ])('EVM chain %i links to its explorer', (chainId, prefix, name) => {
+    send(consentRequest(evmPolicy(chainId, [{ address: OTHER, name: 'Example vault' }])));
+    const a = line(OTHER).querySelector('a');
+    expect(a?.getAttribute('href')).toBe(`${prefix}${OTHER}`);
+    expect(a?.textContent).toBe(`View on ${name}`);
+  });
+
+  it('Stellar contracts link to each listed network’s explorer; verified only on the network it is verified on', () => {
+    send(consentRequest(evmPolicy(8453, [{ address: OTHER, name: 'Example vault' }], { passphrases: [STELLAR_MAINNET_PASSPHRASE], contracts: [{ id: SODAX_STELLAR, name: 'pool' }] })));
+    let l = line(SODAX_STELLAR);
+    expect(l.querySelector('.verified')?.textContent).toBe('✓ Sodax Asset Manager');
+    expect(l.querySelector('code')?.textContent).toBe('CCGF…HCJ3');
+    expect([...l.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual([`https://stellar.expert/explorer/public/contract/${SODAX_STELLAR}`]);
+
+    send(consentRequest(evmPolicy(8453, [{ address: OTHER, name: 'Example vault' }], { passphrases: [STELLAR_MAINNET_PASSPHRASE, PASSPHRASE], contracts: [{ id: SODAX_STELLAR, name: 'Sodax Asset Manager' }] })));
+    l = line(SODAX_STELLAR);
+    // Not verified on testnet, so not verified for this policy; its own name is no imitation.
+    expect(l.querySelector('.verified')).toBeNull();
+    expect(l.textContent).toContain('Sodax Asset Manager · named by Partner App');
+    expect(l.querySelector('.name-warning')).toBeNull();
+    expect([...l.querySelectorAll('a')].map((a) => [a.getAttribute('href'), a.textContent])).toEqual([
+      [`https://stellar.expert/explorer/public/contract/${SODAX_STELLAR}`, 'View on StellarExpert'],
+      [`https://stellar.expert/explorer/testnet/contract/${SODAX_STELLAR}`, 'View on StellarExpert (testnet)'],
+    ]);
+  });
+
+  it('an unknown chain shows the short address without a link', () => {
+    send(consentRequest(evmPolicy(999_999, [{ address: OTHER, name: 'Example vault' }])));
+    const l = line(OTHER);
+    expect(l.querySelector('a')).toBeNull();
+    expect(l.querySelector('code')?.textContent).toBe('0x3fC9…7FAD');
+    expect(l.textContent).toContain('Example vault · named by Partner App');
+    expect(primary()).not.toBeNull();
+  });
+
+  it('renders partner-controlled names and app names as text, never markup', () => {
+    send(consentRequest({ ...evmPolicy(8453, [{ address: OTHER, name: '<img src=x onerror=alert(1)>' }]), appName: '<b>App</b>' }));
+    const l = line(OTHER);
+    expect(l.querySelector('img')).toBeNull();
+    expect(l.querySelector('b')).toBeNull();
+    expect(l.textContent).toContain('<img src=x onerror=alert(1)> · named by <b>App</b>');
   });
 });

@@ -1,8 +1,8 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-10-28 (`feat/b-defaults-2`: `feat/batch-b` with the batch B fix branches and the
-defaults the user approved on 2026-10-28).
+Last verified against code: 2026-10-28 (`feat/b-verified-names`: `feat/batch-b` with the batch B fix branches, the
+defaults the user approved on 2026-10-28 and D44's verified contract names).
 
 Byte layouts and contract methods are in `docs/contract-interface.md`; this file links to it rather than repeating
 them. The security model is `docs/security.md`, the decision log `docs/decisions.md`. Where a spec and the code
@@ -253,6 +253,11 @@ every 60 s), so a removal stops auto-signing in open tabs within 10 s. A policy 
 The user accepts that exact `policyId` (`packages/core/src/policy/id.ts`) once in a consent screen; then the vault
 signs a request without a popup only if `matchAutoApprovePolicy` (`packages/core/src/policy/match.ts:91`) passes and
 the per-day counters (`packages/core/src/policy/usage.ts`) allow it. Rules in `docs/security.md`.
+The consent screen (`packages/web/src/auth/render-consent.ts`, D44) shows each policy contract as "✓ {verified name}"
+when `(chain, address)` is on Hana's verified list, otherwise as "{partner name} · named by {app}" (flagged "— not
+the verified …" when the name imitates a verified one), always with the short address and a "View on {explorer}"
+link when the chain's explorer is known. The list and the explorer URLs are pinned data in
+`packages/core/src/verified-contracts.ts`, built into the popup bundle; nothing reads them from D1 or the API.
 
 ### Revoke and logout
 

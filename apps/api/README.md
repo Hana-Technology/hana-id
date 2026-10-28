@@ -3,7 +3,7 @@
 Cloudflare Worker that relays `hana-signer` calls for registered apps: it pays the gas, checks the app (publishable
 key, origin, plan limits, scope) before anything reaches the chain, and keeps relayer nonces in order with one
 Durable Object per relayer key. Spec: `docs/batch-a-spec.md` (API section) as amended by
-`docs/batch-a2-shared-client.md`; contract: `docs/contract-interface.md`.
+`docs/batch-a2-shared-client.md` and `docs/batch-b-spec.md` (API changes); contract: `docs/contract-interface.md`.
 
 ## Commands
 
@@ -29,13 +29,15 @@ keys, e.g. the content of `.secrets/<env>/relayer-keys.json`) → `wrangler secr
 
 | Name | Kind | |
 |---|---|---|
-| `NEAR_RPC`, `SIGNER_ACCOUNT`, `RELAYER_ACCOUNT`, `ENV_NAME` | vars (manifest) | `rpc`, `signer`, `relayer`, `name` |
-| `RELAYER_KEYS` | secret | Session pool: JSON array of function-call keys on `RELAYER_ACCOUNT` (receiver `SIGNER_ACCOUNT`; `create_session`, `derive_key`, `revoke_session`, `prune_sessions`) |
+| `NEAR_RPC`, `SIGNER_ACCOUNT`, `RELAYER_ACCOUNT`, `ENV_NAME`, `MPC_ACCOUNT` | vars (manifest) | `rpc`, `signer`, `relayer`, `name`, `mpc`. `ENV_NAME` `local*`/`sandbox*` is a dev env (see Origins) |
+| `VAULT_ORIGIN`, `AUTH_ORIGIN` | vars (manifest) | `vaultOrigin`, `authOrigin`; `gen` refuses an env without them |
+| `BLS_PRECHECK`, `REJECT_PII_ON_SESSIONS` | vars | `"0"` everywhere until their step in `docs/batch-b-spec.md` ("Order of work") |
+| `RELAYER_KEYS` | secret | Session pool: JSON array of function-call keys on `RELAYER_ACCOUNT` (receiver `SIGNER_ACCOUNT`; `create_session`, `create_session_and_derive`, `derive_key`, `revoke_session`, `prune_sessions`) |
 | `OWNER_RELAYER_KEYS` | secret | Owner pool (small allowance), same format: `propose_change`, `cancel_change`, `remove_client`, `disable_shared_login`, `execute_change`, `register_scope`, `apply_pending_config`. Without it `/v1/owner-actions` answers 503 and logins are unaffected |
 | `GAS_<METHOD>_TGAS` | optional vars | Per-method gas override in Tgas (integer 1..300), e.g. `GAS_DERIVE_KEY_TGAS=80`; invalid values are ignored (logged) |
 | `KEYS_UPDATER_KEY` | secret | function-call key on `SIGNER_ACCOUNT` (`set_issuer_key`, `remove_issuer_key`); cron skips without it |
 | `DB` | D1 | `migrations/` |
-| `RELAYER_KEY`, `RATE_LIMITER` | Durable Objects | SQLite-backed classes `RelayerKey`, `RateLimiter` |
+| `RELAYER_KEY`, `RATE_LIMITER`, `LOGIN_RELAY` | Durable Objects | SQLite-backed classes `RelayerKey`, `RateLimiter` (migration `v1`), `LoginRelay` (`v2`) |
 | cron `0 * * * *` | trigger | Google JWKS → `set_issuer_key` / `remove_issuer_key` (a kid is removed only after it has been missing from the JWKS for ≥ 55 min, i.e. two hourly runs in a row; tracked in D1 `issuer_key_missing`) |
 
 ## Endpoints
@@ -43,21 +45,21 @@ keys, e.g. the content of `.secrets/<env>/relayer-keys.json`) → `wrangler secr
 All JSON. Success: `{"result": …, "nearTx": "<base58 tx hash>", "requestId": "…"}`. Error:
 `{"error": "<message>", "code": "<code>", "nearTx"?: "…", "requestId": "…"}`. Every response has `x-request-id`.
 
-### App endpoints: `x-hana-key: pk_test_…` + an allowed `Origin`
+### App endpoints: `x-hana-key: pk_…` + an allowed caller (see Origins)
 
 | Endpoint | Body (camelCase, byte arrays as JSON number arrays) | Contract call → `result` |
 |---|---|---|
-| `GET /v1/app` | — | none → `{scopeId, signer, google: {clientId, mode: "own" \| "shared"}, requestId}` (top level, no `result`) |
-| `POST /v1/sessions` | `{jwt, sessionPublicKey[32], expiresAtMs, salt[16..64], keyIndex (u32), maxUses (1..500)}`; `scopeId` is rejected | `create_session` with the app's `scope_id` (D1) → Session `{path, scope_id, expires_at_ms, max_uses, used}` |
+| `GET /v1/app` | — | none → `{name, scopeId, signer, google: {clientId, mode: "own" \| "shared"}, serverTimeMs, requestId}` (top level, no `result`) |
+| `POST /v1/login` | a `/v1/sessions` body plus `{signature[64], pk1, pk2}` (the session key's signature over counter 1 of the CKD payload); nothing else | `create_session_and_derive` (100 Tgas) → `{big_y, big_c}`, plus `session: {scope_id, expires_at_ms, max_uses, used: 1}` (informational) |
+| `POST /v1/sessions` | `{jwt, sessionPublicKey[32], expiresAtMs, salt[16..64], keyIndex (0..2^31 − 1; higher is reserved), maxUses (1..500)}`; `scopeId` is rejected | `create_session` with the app's `scope_id` (D1) → Session `{path, scope_id, expires_at_ms, max_uses, used}` |
 | `POST /v1/derive` | `{sessionPublicKey[32], counter, signature[64], pk1 "bls12381g1:…", pk2 "bls12381g2:…"}` | `derive_key` → `{big_y, big_c}` |
 | `POST /v1/sessions/revoke` | `{sessionPublicKey[32], counter, signature[64]}` | `revoke_session` → `null` |
 
 Checks, in order (rejected before anything is relayed):
 
-1. Key present and known (`401 missing_key` / `unknown_app`), app `active` (`403 app_suspended`).
-2. `Origin` exactly equals one of the app's `app_origins` (`403 origin_not_allowed`). The entry
-   `http://localhost:*` allows any `http://localhost:<port>`, and loopback origins are honoured only for `pk_test_`
-   keys.
+1. Key present and known (`401 missing_key` / `unknown_app`), app `active` (`403 app_suspended`), and not a
+   `pk_test_` app on a scope a `pk_live_` app also uses (`403 scope_conflict`).
+2. The caller may call this endpoint for this app (`403 origin_not_allowed`; see Origins).
 3. Rate limits from the app's plan: per client IP (per app) per minute first, then per app per minute and per UTC day
    (`429 rate_limited` + `retry-after`). The IP check runs first so requests it rejects never use up the app's shared
    quota. "Client IP" is the IPv4 address, or the IPv6 /64 prefix (a host can rotate addresses inside its /64).
@@ -109,6 +111,51 @@ tx hash is polled; transient errors while polling don't end the wait. Usage (`us
 
 CORS: responses echo `Origin` (with `Vary: Origin`) only when it is allowed for the request's app. Preflight carries no
 key, so `OPTIONS` succeeds when any active app allows the origin; the real request is then checked against its own app.
+
+### Origins (`src/origins.ts`)
+
+- **Hana pages.** `Origin` = `VAULT_ORIGIN` or `AUTH_ORIGIN`, each only where it calls: `GET /v1/app` and
+  `/v1/login` both; `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` the vault only. The request acts for
+  `x-hana-parent-origin`, which must be one of the app's origins. CORS echoes the Hana origin (also when the parent is
+  refused, so the page can read why).
+- **Partner pages.** `Origin` exactly equals one of the app's `app_origins`: `GET /v1/app` for both key types in every
+  env; `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` only with `pk_test_` keys in dev envs (`apps/smoke`);
+  nothing else.
+- **Loopback** origins (`localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]`), and `http://localhost:<port>` through the
+  entry `http://localhost:*`, count only for `pk_test_` keys in dev envs (`ENV_NAME` starting with `local` or
+  `sandbox`), for partner origins and parent origins alike.
+- Preflight carries no key: it allows the two Hana origins, and any origin an active app allows (loopback only through
+  a `pk_test_` app in a dev env). Allowed headers: `content-type`, `x-hana-key`, `x-hana-parent-origin`,
+  `x-hana-relay-key`.
+- `admin app:create` refuses a scope already used by an app with the other key type.
+
+### `POST /v1/login` (`src/login.ts`)
+
+One transaction per login. Checks, in order: the gate (checks 1–3, `relay` quota); the body (`400 bad_request`); the
+token as for `/v1/sessions`, plus the claim allow-list (`src/claims.ts`: only `iss azp aud sub iat exp nonce nbf jti
+auth_time`; anything else is `400 token_has_pii` with `data: {claim}`) and the nonce; scope and `session_key_in_use`
+side by side (`403 …`, `409 session_exists`); the signature over counter 1 (`401 invalid_signature`); pk1/pk2 each one
+compressed, non-identity point (`400 invalid_app_key`); with `BLS_PRECHECK = "1"` the pairing
+`e(pk1, −g2) · e(g1, pk2) = 1` (`400 invalid_app_key`; the same var gates it on `/v1/derive`). Failures map by the
+failing receipt's executor: the signer → `422 contract_rejected` (with `reason: "session_key_in_use"` for that panic;
+the session was not created), `MPC_ACCOUNT` → `422 ckd_failed` with `session: {used: 1}` (the session is committed),
+else `502 near_error`; `504 timeout` and relayer errors keep their codes and `nearTx`. Usage: `sessions` and `derives`
+on success, `sessions` only on `ckd_failed`. `/v1/sessions` applies the claim allow-list too once
+`REJECT_PII_ON_SESSIONS = "1"`.
+
+### `/v1/login-relay/<relayId>` (`src/login-relay.ts`, Durable Object `LoginRelay`)
+
+How the login callback page hands the (end-to-end encrypted) Google token to the vault. No `x-hana-key`; per IP, 10
+writes and 120 reads per minute. `relayId` is 43 base64url characters (`400 bad_relay_id`).
+
+- `POST` (`AUTH_ORIGIN` only) `{iv, ct}` base64url (12-byte iv, ≤ 8 KiB body, else `413`): `204`, or
+  `409 relay_used` if the slot was ever written.
+- `GET ?wait=1..25` (`VAULT_ORIGIN`, `AUTH_ORIGIN`) with `x-hana-relay-key` (b64url of the 32-byte read key; the
+  object checks `b64url(sha256(key)) === relayId` first, else `403 relay_forbidden` without consuming): `200 {iv, ct,
+  serverTimeMs}` and the slot becomes a tombstone; `204` while still empty after `wait` seconds (the long poll returns
+  on the write); `410 relay_gone` once read or expired.
+- 120 s after the write the value is deleted and a tombstone kept for 120 s more, then nothing. Only ciphertext the API
+  can't decrypt is stored; bodies, keys and relay ids are never logged.
 
 ### `POST /v1/owner-actions` (no app auth; 10 per IP per minute, 20 per minute and 200 per day globally)
 
@@ -167,7 +214,8 @@ transactions per key are in flight. The nonce is kept in memory and in DO storag
 `max(stored, chain)` (transactions still in the pool aren't in the chain's nonce yet). On `InvalidNonce` the object
 re-reads the access key (`max(local, chain, ak_nonce from the error)`) and retries once; an expired block hash is
 refreshed and retried once. The object only relays its pool's methods, always to `SIGNER_ACCOUNT`, no deposit, with
-per-method gas from `src/gas.ts` (never the caller's): `create_session` 50 Tgas, `derive_key` 60, `revoke_session` 20,
+per-method gas from `src/gas.ts` (never the caller's): `create_session` 50 Tgas, `create_session_and_derive` 100,
+`derive_key` 60, `revoke_session` 20,
 `prune_sessions` 50, owner-pool methods 50 except `register_scope`, which verifies one RS256 client proof per client:
 30 + 25 per proof, capped at 300 (280 for the contract's 10). **To measure on testnet**; override with
 `GAS_<METHOD>_TGAS`.

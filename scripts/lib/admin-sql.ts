@@ -63,6 +63,15 @@ export function createAppSql(app: NewApp): string {
   return `${stmts.join(';\n')};`;
 }
 
+/**
+ * Apps on `scopeId` whose key type is the other one: a pk_test_ app may never share a scope with a pk_live_ app (the
+ * API refuses such a test key with 403 scope_conflict), so creating either side of that pair is refused.
+ */
+export function scopeConflictSql(scopeId: string, publishableKey: string): string {
+  const other = publishableKey.startsWith('pk_live_') ? 'pk\\_test\\_%' : 'pk\\_live\\_%';
+  return sql`SELECT id FROM apps WHERE scope_id = ${scopeId} AND publishable_key LIKE ${other} ESCAPE '\\'`;
+}
+
 export function planExistsSql(plan: string): string {
   return sql`SELECT id FROM plans WHERE id = ${plan}`;
 }

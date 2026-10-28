@@ -1,3 +1,4 @@
+import type { LoginRelay } from './login-relay.ts';
 import type { RateLimiter } from './rate-limiter.ts';
 import type { RelayerKey } from './relayer-key.ts';
 
@@ -10,9 +11,19 @@ export interface Env {
   /** Account whose function-call keys (RELAYER_KEYS, OWNER_RELAYER_KEYS) pay gas. */
   RELAYER_ACCOUNT: string;
   ENV_NAME: string;
+  /** MPC contract (manifest `mpc`): a failed receipt on it means the CKD failed after the session was committed. */
+  MPC_ACCOUNT: string;
+  /** Origin of the vault page (manifest `vaultOrigin`); unset in envs without Hana pages. */
+  VAULT_ORIGIN?: string;
+  /** Origin of the login, callback, approval and export pages (manifest `authOrigin`). */
+  AUTH_ORIGIN?: string;
+  /** "1": BLS pairing precheck of the app key on /v1/login and /v1/derive (Workers Paid plan only). Default off. */
+  BLS_PRECHECK?: string;
+  /** "1": /v1/sessions also refuses tokens with claims outside the allow-list. Default off until smoke moves. */
+  REJECT_PII_ON_SESSIONS?: string;
   /** Optional Durable Object location hint for the shared objects (manifest cloudflare.durableObjectLocation). */
   DO_LOCATION_HINT?: string;
-  /** Secret: session pool. JSON array of `ed25519:...` secret keys (create_session, derive_key, revoke_session, prune_sessions). */
+  /** Secret: session pool. JSON array of `ed25519:...` secret keys (relayer-config.ts POOL_METHODS.session). */
   RELAYER_KEYS: string;
   /** Secret: owner pool. JSON array of `ed25519:...` secret keys, small allowance, used by /v1/owner-actions only. */
   OWNER_RELAYER_KEYS?: string;
@@ -23,4 +34,5 @@ export interface Env {
   DB: D1Database;
   RELAYER_KEY: DurableObjectNamespace<RelayerKey>;
   RATE_LIMITER: DurableObjectNamespace<RateLimiter>;
+  LOGIN_RELAY: DurableObjectNamespace<LoginRelay>;
 }

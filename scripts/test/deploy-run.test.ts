@@ -146,7 +146,7 @@ describe('deploy-contract --yes gate', () => {
     const owner = perm(r.sent[1]);
     expect(session).toHaveLength(2);
     expect(owner).toHaveLength(2);
-    expect(session?.[0]).toMatchObject({ receiverId: m.signer, methodNames: ['create_session', 'derive_key', 'revoke_session', 'prune_sessions'], allowance: 3n * NEAR });
+    expect(session?.[0]).toMatchObject({ receiverId: m.signer, methodNames: ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions'], allowance: 3n * NEAR });
     expect(owner?.[0]).toMatchObject({
       receiverId: m.signer,
       methodNames: ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change', 'register_scope', 'apply_pending_config'],

@@ -39,7 +39,10 @@ export class NearMock {
   /** `wait_until` of every send_tx and tx call, in order. */
   readonly waitUntil: { method: 'send_tx' | 'tx'; waitUntil: unknown }[] = [];
   defaultNonce = 100n;
-  /** Contract behaviour per method: return a value, or throw/return {Failure} for a panic. */
+  /**
+   * Contract behaviour per method: return a value, or throw/return {Failure} for a panic (in the signer's receipt), or
+   * return receiptFailure(...) for a failure in another account's receipt (the MPC) or in no receipt at all.
+   */
   contract: Record<string, (args: Record<string, unknown>, tx: SentTx) => Outcome | unknown> = {};
   views: Record<string, (args: Record<string, unknown>) => unknown> = {};
   /** Optional hook before send_tx is processed: return a reply to override, or wait to delay. */
@@ -187,14 +190,18 @@ export class NearMock {
 
     const impl = this.contract[tx.method];
     let status: Record<string, unknown>;
+    // Who ran the failing receipt: the signer's own (receiverId) unless the contract said otherwise; null for none.
+    let failedIn: string | null = tx.receiverId;
     try {
       const value = impl ? impl(tx.args, tx) : null;
-      if (value && typeof value === 'object' && 'Failure' in value) status = { Failure: (value as { Failure: unknown }).Failure };
-      else status = { SuccessValue: value === null || value === undefined ? '' : base64Encode(new TextEncoder().encode(JSON.stringify(value))) };
+      if (value && typeof value === 'object' && 'Failure' in value) {
+        status = { Failure: (value as { Failure: unknown }).Failure };
+        if ('executor' in value) failedIn = (value as { executor: string | null }).executor;
+      } else status = { SuccessValue: value === null || value === undefined ? '' : base64Encode(new TextEncoder().encode(JSON.stringify(value))) };
     } catch (err) {
       status = panic(err instanceof Error ? err.message : String(err));
     }
-    const outcome = { status, transaction: { hash }, receipts_outcome: [], final_execution_status: 'EXECUTED' };
+    const outcome = { status, transaction: { hash }, receipts_outcome: receiptsFor(tx.receiverId, status, failedIn), final_execution_status: 'EXECUTED' };
     this.outcomes.set(hash, outcome);
     if (this.sendTxTimesOut) return { error: { name: 'HANDLER_ERROR', cause: { name: 'TIMEOUT_ERROR' }, message: 'Timeout', data: 'TIMEOUT' } };
     return { result: outcome };
@@ -204,6 +211,26 @@ export class NearMock {
 /** A contract panic as it appears in an outcome's Failure. */
 export function panic(msg: string): { Failure: unknown } {
   return { Failure: { ActionError: { index: 0, kind: { FunctionCallError: { ExecutionError: `Smart contract panicked: ${msg}` } } } } };
+}
+
+/**
+ * A failure in the receipt of `executor` (e.g. the MPC contract the signer called), or, with null, a transaction
+ * that failed without any failed receipt (receipts_outcome empty).
+ */
+export function receiptFailure(executor: string | null, msg: string): { Failure: unknown; executor: string | null } {
+  return { ...panic(msg), executor };
+}
+
+/**
+ * receipts_outcome as NEAR reports it: the signer's receipt first; a failure elsewhere comes after the signer's receipt,
+ * which then succeeded (it returned the promise that failed).
+ */
+function receiptsFor(signer: string, status: Record<string, unknown>, failedIn: string | null): unknown[] {
+  const outcome = (executor: string, s: unknown): unknown => ({ outcome: { executor_id: executor, logs: [], status: s } });
+  if (!('Failure' in status)) return [outcome(signer, status)];
+  if (failedIn === null) return [];
+  if (failedIn === signer) return [outcome(signer, status)];
+  return [outcome(signer, { SuccessReceiptId: 'receipt-1' }), outcome(failedIn, status)];
 }
 
 const b64url = (s: string): string => base64Encode(new TextEncoder().encode(s)).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '');

@@ -51,8 +51,9 @@ pub const OWNER_SUB: &str = "owner-111";
 pub const SHARED: &str = "hana-shared.apps.googleusercontent.com";
 pub const SHARED_2: &str = "hana-shared-2.apps.googleusercontent.com";
 
-/// Session pool (`RELAYER_KEYS`): the methods its function-call keys may call (docs/batch-a2-shared-client.md).
-pub const SESSION_RELAYER_METHODS: &[&str] = &["create_session", "derive_key", "revoke_session", "prune_sessions"];
+/// Session pool (`RELAYER_KEYS`): the methods its function-call keys may call (docs/batch-a2-shared-client.md;
+/// batch B allowlist state 1, docs/batch-b-spec.md "Relayer allowlists").
+pub const SESSION_RELAYER_METHODS: &[&str] = &["create_session", "create_session_and_derive", "derive_key", "revoke_session", "prune_sessions"];
 /// Owner pool (`OWNER_RELAYER_KEYS`): the methods its function-call keys may call.
 pub const OWNER_RELAYER_METHODS: &[&str] = &[
     "propose_change",

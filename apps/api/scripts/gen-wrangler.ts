@@ -18,7 +18,16 @@ const apiDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const LOCAL_D1_ID = '00000000-0000-4000-8000-000000000000';
 export const COMPATIBILITY_DATE = '2026-10-01';
 
+/**
+ * Batch B's runtime flags, off in every env until their step (docs/batch-b-spec.md, "Order of work"):
+ * REJECT_PII_ON_SESSIONS once apps/smoke is on the vault, BLS_PRECHECK only after its CPU time is measured on the
+ * Workers Paid plan.
+ */
+export const FLAG_DEFAULTS = { BLS_PRECHECK: '0', REJECT_PII_ON_SESSIONS: '0' } as const;
+
 export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknown> {
+  // The API checks callers against both Hana origins (and the login relay serves only them).
+  if (!m.vaultOrigin || !m.authOrigin) throw new Error(`envs/${m.name}.json needs vaultOrigin and authOrigin`);
   return {
     $schema: 'node_modules/wrangler/config-schema.json',
     name: m.cloudflare.workerName,
@@ -33,6 +42,10 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
       SIGNER_ACCOUNT: m.signer,
       RELAYER_ACCOUNT: m.relayer,
       ENV_NAME: m.name,
+      MPC_ACCOUNT: m.mpc,
+      VAULT_ORIGIN: m.vaultOrigin,
+      AUTH_ORIGIN: m.authOrigin,
+      ...FLAG_DEFAULTS,
       ...(m.cloudflare.durableObjectLocation ? { DO_LOCATION_HINT: m.cloudflare.durableObjectLocation } : {}),
     },
     d1_databases: [{ binding: 'DB', database_name: m.cloudflare.d1Name, database_id: d1Id, migrations_dir: 'migrations' }],
@@ -40,9 +53,13 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
       bindings: [
         { name: 'RELAYER_KEY', class_name: 'RelayerKey' },
         { name: 'RATE_LIMITER', class_name: 'RateLimiter' },
+        { name: 'LOGIN_RELAY', class_name: 'LoginRelay' },
       ],
     },
-    migrations: [{ tag: 'v1', new_sqlite_classes: ['RelayerKey', 'RateLimiter'] }],
+    migrations: [
+      { tag: 'v1', new_sqlite_classes: ['RelayerKey', 'RateLimiter'] },
+      { tag: 'v2', new_sqlite_classes: ['LoginRelay'] },
+    ],
     // Hourly: sync Google's JWKS into hana-signer.
     triggers: { crons: ['0 * * * *'] },
   };

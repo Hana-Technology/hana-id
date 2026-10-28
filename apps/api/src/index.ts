@@ -4,7 +4,10 @@ import { type AppEndpoint, APP_CONFIG_ENDPOINT, APP_ENDPOINTS, appPreflight, han
 import { json } from './http.ts';
 import { syncIssuerKeys } from './issuer-keys.ts';
 import { log } from './log.ts';
+import { LOGIN_ENDPOINT, handleLogin } from './login.ts';
+import { LOGIN_RELAY_PREFIX, handleLoginRelay } from './login-relay.ts';
 
+export { LoginRelay } from './login-relay.ts';
 export { RateLimiter } from './rate-limiter.ts';
 export { RelayerKey } from './relayer-key.ts';
 export type { Env } from './env.ts';
@@ -36,6 +39,12 @@ export default {
         if (request.method === 'POST') return await handleAppEndpoint(request, env, pathname as AppEndpoint, requestId, ctx);
         return json(405, { error: 'Method not allowed', code: 'method_not_allowed', requestId }, { allow: 'POST, OPTIONS' });
       }
+      if (pathname === LOGIN_ENDPOINT) {
+        if (request.method === 'OPTIONS') return await appPreflight(request, env);
+        if (request.method === 'POST') return await handleLogin(request, env, requestId, ctx);
+        return json(405, { error: 'Method not allowed', code: 'method_not_allowed', requestId }, { allow: 'POST, OPTIONS' });
+      }
+      if (pathname.startsWith(LOGIN_RELAY_PREFIX)) return await handleLoginRelay(request, env, requestId);
       if (pathname === '/v1/owner-actions') {
         if (request.method === 'OPTIONS') return openPreflight();
         if (request.method === 'POST') return await handleOwnerAction(request, env, requestId);

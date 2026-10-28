@@ -18,7 +18,14 @@ export default defineConfig(async () => {
             NEAR_RPC: 'https://rpc.test.invalid',
             SIGNER_ACCOUNT: 'signer.test.near',
             RELAYER_ACCOUNT: 'relayer.test.near',
-            ENV_NAME: 'test',
+            // A dev env (sandbox*): partner-origin calls and loopback origins for pk_test_ keys, as apps/smoke uses them.
+            // Tests of the production rules override ENV_NAME per request.
+            ENV_NAME: 'sandbox-test',
+            MPC_ACCOUNT: 'mpc.test.near',
+            VAULT_ORIGIN: 'https://vault.hana-vault.test',
+            AUTH_ORIGIN: 'https://auth.hana-auth.test',
+            BLS_PRECHECK: '0',
+            REJECT_PII_ON_SESSIONS: '0',
             // The generated wrangler.jsonc may carry an env's hint; tests use unplaced objects unless they set one.
             DO_LOCATION_HINT: '',
             RELAYER_KEYS: JSON.stringify(relayerKeys),

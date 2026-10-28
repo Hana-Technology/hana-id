@@ -105,7 +105,7 @@ export async function handleVaultPage(request: Request, env: Env, requestId: str
     if (app.status !== 'active') return errorPage(403, requestId, app.id, 'app_suspended', head);
     const row = await getSettingsRow(env.DB, app.id);
     if (!row) return errorPage(403, requestId, app.id, 'unknown_app', head);
-    settings = effectiveSettings(row, app.id, Date.now());
+    settings = await effectiveSettings(row, app.id, Date.now());
   } catch {
     return errorPage(503, requestId, undefined, 'config_unavailable', head);
   }

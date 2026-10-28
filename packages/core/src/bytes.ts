@@ -5,7 +5,7 @@ import { sha256 as nobleSha256 } from '@noble/hashes/sha2';
 export type Bytes = Uint8Array<ArrayBuffer>;
 
 const utf8Encoder = new TextEncoder();
-const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
+const utf8Decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: false });
 
 export const utf8 = (s: string): Bytes => utf8Encoder.encode(s) as Bytes;
 

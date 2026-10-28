@@ -8,6 +8,7 @@
   "ckdDomainId": 2,
   "ckdNetworkKey": "bls12381g2:xeYho48G2Sr9oJz4gw9sLGZGspeeKpHZvMDAwWvoNTRnVMFJH96GxX98TT2MRhTtsot1wcGR1Ti2Xh8PCsbYJ2enbLNdJXDvTYSK8aTE3nJ5NZXU7Kt1F6mFtReWs5pR4kj",
   "rpc": "https://test.rpc.fastnear.com",
+  "rpcFallback": "https://rpc.testnet.near.org",
   "apiUrl": "https://hana-id-api-sandbox-dev.tingtc.workers.dev",
   "vaultOrigin": "https://hana-id-vault-sandbox-dev.tingtc.workers.dev",
   "authOrigin": "https://hana-id-auth-sandbox-dev.tingtc.workers.dev",

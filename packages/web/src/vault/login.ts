@@ -7,7 +7,12 @@
 //     `source.opener === window.parent`; vault: the window its launcher opened) with hana:auth-params.
 //  7. It long-polls the relay with the read key, decrypts the slot with relayKey, and checks the token (RS256 against
 //     Google's JWKS, iss, aud, nonce, exp/iat on the corrected clock, the claim allow-list, sub).
-//  8. It fixes `expectedPath = scopeId#google#sub#keyIndex`, the only path it ever uses for this session.
+//  8. It fixes `expectedPath = scopeId#google#sub#keyIndex`, the only path it ever uses for this session. Before the
+//     chain step it has also checked the inlined scopeId against the on-chain registry (docs/batch-b-spec.md Q7): one
+//     view through the manifest RPC, started as soon as GET /v1/app answers so it runs while the user is at Google.
+//     Own client: `scope_for_client('google', clientId)` must be the scopeId; shared client: `get_scope(scopeId)` must
+//     exist and allow shared login. A mismatch is `config_mismatch` (reason `scope_mismatch`); no answer from either
+//     RPC endpoint is `api_unavailable` (reason `scope_unchecked`). Nothing is relayed in either case.
 //  9. It runs POST /v1/login and, on failure, recovers exactly as the "Failure handling" table says, re-syncing from
 //     NEAR directly (never from the API).
 // 10. It decrypts the CKD with the pairing check against the pinned key for ckdAppId(SIGNER, path), extracts PRK
@@ -223,6 +228,12 @@ export class PendingLogin {
     this.check();
     if (app.signer !== env.signer || app.scopeId !== config.scopeId) throw fail('config_mismatch', 'The app configuration does not match this vault');
     mark('app');
+    // Q7, in the background: settled before the chain step, never an unhandled rejection.
+    const scopeStarted = ctx.deviceNow();
+    const scopeCheck = this.checkScope(app).then(
+      (problem) => ({ problem, ms: ctx.deviceNow() - scopeStarted }),
+      () => ({ problem: 'unchecked' as const, ms: ctx.deviceNow() - scopeStarted }),
+    );
 
     const sessionKey = await newSessionKey();
     this.check();
@@ -289,8 +300,14 @@ export class PendingLogin {
       const { sub, exp } = verified.token;
       mark('verify');
 
-      // Step 8: the only path this session ever uses.
+      // Step 8: the only path this session ever uses, in a scope the registry confirmed.
       const path = `${config.scopeId}#google#${sub}#${KEY_INDEX}`;
+      const scope = await scopeCheck;
+      this.check();
+      timings.scopeCheck = Math.max(0, scope.ms);
+      mark('scopeWait');
+      if (scope.problem === 'unchecked') throw fail('api_unavailable', 'Could not check the app’s scope on NEAR', { reason: 'scope_unchecked' });
+      if (scope.problem === 'mismatch') throw fail('config_mismatch', 'The app’s scope does not match the on-chain registry', { reason: 'scope_mismatch' });
 
       // Step 9: the chain.
       ctx.progress('chain');
@@ -329,6 +346,18 @@ export class PendingLogin {
     } finally {
       zero(salt, relayKey, relayReadKey);
     }
+  }
+
+  /**
+   * The registry's view of the app's scope (Q7): 'mismatch' when the Google client the API named belongs to another
+   * scope (own client) or the scope can't take shared logins (shared client), else null. Throws when the RPC can't
+   * answer.
+   */
+  private async checkScope(app: AppConfig): Promise<'mismatch' | null> {
+    const { near, config } = this.ctx;
+    if (app.google.mode === 'own') return (await near.scopeForClient('google', app.google.clientId)) === config.scopeId ? null : 'mismatch';
+    const scope = await near.getScope(config.scopeId);
+    return scope && scope.id === config.scopeId && scope.allow_shared ? null : 'mismatch';
   }
 
   /** Long-polls the relay until it holds Google's answer; returns the ID token. */

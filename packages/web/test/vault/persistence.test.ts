@@ -483,6 +483,106 @@ describe('expiry', () => {
   });
 });
 
+describe('in-memory idle limit (Q28)', () => {
+  const IDLE = 2 * HOUR;
+  const unlocks = (b: Browser) => b.backend.count('/v1/vault/unlock');
+
+  async function signMessage(t: Tab, message: string): Promise<string> {
+    const reply = t.request('stellar_signMessage', { message });
+    await until(() => t.launcher.label === 'Review in Hana', 'the launcher');
+    const popup = openApproval(t);
+    answer(t, popup, await popup.next('hana:approve-request'), true);
+    const r = await reply;
+    popup.closed = true;
+    return (r.result as { signerAddress: string }).signerAddress;
+  }
+
+  it("zeroes PRK after idleTtlMs with no request; the session stays (dormant) and the next request unlocks it again", async () => {
+    const { browser, first, addresses } = await loggedIn();
+    const prk = prkOf(first)!;
+    browser.timers.advance(IDLE);
+    expect(prk.every((b) => b === 0)).toBe(true);
+    expect(prkOf(first)).toBeUndefined();
+    // No event: for the page the wallet is still there, and the record is kept.
+    await sleepReal(20);
+    expect(first.events.filter((e) => e.event === 'sessionExpired' || e.event === 'disconnect')).toHaveLength(0);
+    expect(await stored(browser)).toBeDefined();
+    // Status and addresses answer without the key (and without an unlock).
+    const before = unlocks(browser);
+    expect((await first.request('hana_status')).result).toMatchObject({ status: 'logged_in', addresses });
+    expect((await first.request('eth_accounts')).result).toEqual([addresses.evm]);
+    expect(unlocks(browser)).toBe(before);
+    // A request that needs the key unlocks the record first (one API call, as a reload).
+    expect(await signMessage(first, 'after a break')).toBe(addresses.stellar);
+    expect(unlocks(browser)).toBe(before + 1);
+    expect(prkOf(first)!.some((b) => b !== 0)).toBe(true);
+  });
+
+  it('every request from the page restarts the idle limit', async () => {
+    const { browser, first } = await loggedIn();
+    browser.timers.advance(IDLE - 60_000);
+    expect(await statusOf(first)).toBe('logged_in');
+    browser.timers.advance(IDLE - 60_000);
+    expect(prkOf(first)?.some((b) => b !== 0)).toBe(true);
+    browser.timers.advance(60_000);
+    expect(prkOf(first)).toBeUndefined();
+  });
+
+  it('follows the app’s idle setting, and a late timer (a throttled tab) still zeroes PRK on the next use', async () => {
+    const { browser, first } = await loggedIn(new Browser(), { config: makeConfig({ settings: { idleTtlMs: 15 * 60_000 } }) });
+    const prk = prkOf(first)!;
+    // The clock passes the idle limit without any timer running.
+    browser.timers.now += 15 * 60_000;
+    const before = unlocks(browser);
+    const reply = first.request('stellar_signMessage', { message: 'late' });
+    await until(() => first.launcher.label === 'Review in Hana', 'the launcher');
+    expect(prk.every((b) => b === 0)).toBe(true);
+    expect(unlocks(browser)).toBe(before + 1);
+    const popup = openApproval(first);
+    answer(first, popup, await popup.next('hana:approve-request'), true);
+    expect((await reply).error).toBeUndefined();
+  });
+
+  it('a dormant session whose server share is gone ends at the next request that needs the key', async () => {
+    const { browser, first } = await loggedIn();
+    browser.timers.advance(IDLE);
+    for (const share of browser.backend.shares.values()) share.revoked = true;
+    expect((await first.request('stellar_signMessage', { message: 'x' })).error?.code).toBe(4100);
+    expect(await first.waitEvent('sessionExpired')).toBeNull();
+    expect(first.events.filter((e) => e.event === 'accountsChanged').at(-1)!.data).toEqual({ addresses: null });
+    expect(await statusOf(first)).toBe('logged_out');
+    await until(async () => (await stored(browser)) === undefined, 'the record deleted');
+  });
+
+  it('a dormant session ends at expiresAtMs (record deleted, sessionExpired), and on a logout or revocation', async () => {
+    const { browser, first } = await loggedIn();
+    browser.timers.advance(IDLE);
+    browser.timers.advance(12 * HOUR - IDLE);
+    expect(await first.waitEvent('sessionExpired')).toBeNull();
+    expect(await statusOf(first)).toBe('logged_out');
+    await until(async () => (await stored(browser)) === undefined, 'the record deleted');
+
+    // Logout while dormant revokes the share and wipes the record.
+    const second = await loggedIn();
+    second.browser.timers.advance(IDLE);
+    expect(liveShares(second.browser)).toHaveLength(1);
+    await second.first.request('hana_logout');
+    expect(liveShares(second.browser)).toHaveLength(0);
+    expect(await stored(second.browser)).toBeUndefined();
+    expect(await statusOf(second.first)).toBe('logged_out');
+  });
+
+  it('"none" mode: the idle limit ends the session (nothing to unlock)', async () => {
+    const { browser, first } = await loggedIn(new Browser(), { config: makeConfig({ settings: { persistence: 'none' } }) });
+    const prk = prkOf(first)!;
+    browser.timers.advance(IDLE);
+    expect(prk.every((b) => b === 0)).toBe(true);
+    expect(await first.waitEvent('sessionExpired')).toBeNull();
+    expect(await statusOf(first)).toBe('logged_out');
+    expect((await first.request('stellar_signMessage', { message: 'x' })).error?.code).toBe(4100);
+  });
+});
+
 describe('zeroization', () => {
   it('K_s (share creation and unlock), and the login relayKey and salt, are zeroed once used, every copy', async () => {
     // Taint tracking: K_s as the API's JSON gives it, the vault's random relayKey and salt, and every Uint8Array.from

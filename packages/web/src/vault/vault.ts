@@ -11,13 +11,20 @@
 //   auto-approve policy the user accepted. Key material never crosses postMessage or the BroadcastChannel.
 // - The inlined policy is re-checked against GET /v1/app while the vault stays open (every POLICY_REFRESH_MS, and
 //   before an auto-sign when the last check is older than POLICY_FRESH_MS): a policy removed or changed since the page
-//   loaded no longer auto-signs anything, and the request goes to the approval popup.
+//   loaded no longer auto-signs anything, and the request goes to the approval popup. Raw signing is re-checked the
+//   same way before every raw request: once GET /v1/app says 'off', raw requests are refused until a reload.
+// - A pk_test_ app never signs for a mainnet (docs/decisions.md D39): the request is refused before any popup or
+//   policy.
+// - PRK is zeroed after the app's idle limit (`idleTtlMs`) without a request from the partner page, not only at the
+//   session's end. In 'session' mode the session stays dormant (addresses known, no key) and the next request that
+//   needs the key unlocks the record again, which works while the server share is alive; in 'none' mode it ends.
 // - One session per app per device: a login replaces the record and revokes the shares it replaces, a logout ends
 //   every tab's session, and a `revoked` broadcast ends only the tabs holding that share.
 import {
   type AppConfig,
   ErrorCode,
   type Jwk,
+  isTestPublishableKey,
   type LoginResult,
   NEVER_AUTO_APPROVED_KINDS,
   type PortEventMap,
@@ -46,7 +53,7 @@ import type { HanaEnv } from '../hana-env.ts';
 import { VaultApi } from './api.ts';
 import { type ApprovalOutcome, Approvals } from './approvals.ts';
 import { autoApproveStatus, consentActive, consentEnd, newConsent, withUsage } from './auto-approve.ts';
-import { type Persistence, type PolicyInForce, type VaultConfig, parentAllowed, policyInForce } from './config.ts';
+import { type Persistence, type PolicyInForce, type RawSign, type VaultConfig, parentAllowed, policyInForce } from './config.ts';
 import { VaultError, apiErrorToVault, disconnected, notLoggedIn, toProtocolError, userRejected } from './errors.ts';
 import { Launcher, type LauncherHandle, type LauncherView } from './launcher.ts';
 import { type LoginMode, type LoginStage, type LoginSuccess, PendingLogin } from './login.ts';
@@ -117,6 +124,19 @@ interface Session {
   /** 'none' mode: the consent lives here. 'session' mode: in the record. */
   consent: ConsentV1 | null;
   lastTouchAt: number;
+  /** Server-corrected time of the partner page's last request for this session (the in-memory idle limit). */
+  lastActivityAt: number;
+  expiryTimer: unknown;
+  idleTimer: unknown;
+}
+
+/** A 'session'-mode session whose PRK was zeroed for idleness: the record can unlock it again (same share only). */
+interface Dormant {
+  addresses: { stellar: string; evm: string };
+  expiresAtMs: number;
+  sessionPk: Uint8Array;
+  shareId: Uint8Array;
+  /** Ends it at expiresAtMs, as a live session's expiry timer would. */
   expiryTimer: unknown;
 }
 
@@ -168,6 +188,11 @@ export class Vault {
   private policyCheckedAt: number;
   private policyCheck: Promise<void> | null = null;
   private policyTimer: unknown = null;
+  /** The raw-signing setting in force: the inlined one until GET /v1/app says 'off' (then 'off' until a reload). */
+  private rawSign: RawSign;
+  /** Server-corrected time of the last GET /v1/app (or page render) that confirmed `rawSign`. */
+  private rawSignCheckedAt: number;
+  private readonly testApp: boolean;
   private readonly launcher: Launcher;
   private readonly lockName: string;
   private readonly recordId: string;
@@ -183,6 +208,8 @@ export class Vault {
   private storageBroken = false;
   private started: Promise<void> | null = null;
   private session: Session | null = null;
+  private dormant: Dormant | null = null;
+  private waking: Promise<void> | null = null;
   private pending: PendingLogin | null = null;
   private continueIntent: LauncherHandle | null = null;
   private exportJob: ExportJob | null = null;
@@ -200,6 +227,9 @@ export class Vault {
     this.clock = new Clock(o.config.serverTimeMs, this.deviceNow);
     this.policy = policyInForce(o.config.settings);
     this.policyCheckedAt = o.config.serverTimeMs;
+    this.rawSign = o.config.settings.rawSign;
+    this.rawSignCheckedAt = o.config.serverTimeMs;
+    this.testApp = isTestPublishableKey(o.config.publishableKey);
     this.launcher = new Launcher(o.launcherView, (ui) => this.emit('ui', ui), this.timers);
     this.lockName = `hana-vault-unlock:${o.config.appId}`;
     this.recordId = recordKey(o.env.signer, o.config.appId, o.config.scopeId, 0);
@@ -250,7 +280,7 @@ export class Vault {
       ...(fetchFn ? { fetch: fetchFn } : {}),
       onServerTime: (t) => this.clock.refresh(t),
     });
-    this.near = new NearView(this.env.rpc, this.env.signer, this.env.relayer, fetchFn);
+    this.near = new NearView({ rpc: this.env.rpc, rpcFallback: this.env.rpcFallback }, this.env.signer, this.env.relayer, fetchFn);
     this.approvals = new Approvals({
       authOrigin: this.env.authOrigin,
       appName: this.config.appName,
@@ -259,6 +289,7 @@ export class Vault {
       launcher: this.launcher,
       timers: this.timers,
       now: this.deviceNow,
+      testApp: this.testApp,
       onStop: () => void this.revokeAutoApprove(),
     });
     port.onmessage = (m) => void this.onPortMessage(m.data);
@@ -298,16 +329,24 @@ export class Vault {
 
   private statusResult(): StatusResult {
     const s = this.live();
-    if (!s) return { status: 'logged_out', persistence: this.persistence };
-    return { status: 'logged_in', addresses: { ...s.addresses }, expiresAtMs: s.expiresAtMs, persistence: s.persistence };
+    if (s) return { status: 'logged_in', addresses: { ...s.addresses }, expiresAtMs: s.expiresAtMs, persistence: s.persistence };
+    const d = this.liveDormant();
+    if (d) return { status: 'logged_in', addresses: { ...d.addresses }, expiresAtMs: d.expiresAtMs, persistence: 'session' };
+    return { status: 'logged_out', persistence: this.persistence };
   }
 
-  /** GET /v1/app, cached on success. Every fresh answer also re-checks the policy in force. */
+  /** The addresses of the session, live or dormant, or null. */
+  private addresses(): { stellar: string; evm: string } | null {
+    return this.live()?.addresses ?? this.liveDormant()?.addresses ?? null;
+  }
+
+  /** GET /v1/app, cached on success. Every fresh answer also re-checks the policy and raw signing in force. */
   private appConfig(): Promise<AppConfig> {
     if (!this.appConfigPromise) {
       const at = this.clock.now();
       const p = this.api!.app().then((app) => {
         this.applyServedPolicy(app, at);
+        this.applyServedRawSign(app, at);
         return app;
       });
       this.appConfigPromise = p;
@@ -335,6 +374,27 @@ export class Vault {
     this.policy = null;
     this.timers.clearTimeout(this.policyTimer);
     this.policyTimer = null;
+  }
+
+  /** Raw signing stays on only while GET /v1/app (asked at `at`) serves 'approval'; a missing value counts as 'off'. */
+  private applyServedRawSign(app: AppConfig, at: number): void {
+    if (this.rawSign !== 'approval') return;
+    if (app.rawSign === 'approval') this.rawSignCheckedAt = Math.max(this.rawSignCheckedAt, at);
+    else this.rawSign = 'off';
+  }
+
+  /**
+   * The raw-signing setting a raw request may use: 'approval' only when GET /v1/app confirmed it within POLICY_FRESH_MS
+   * (re-read first when older). A re-read that fails refuses the request (raw signing fails closed).
+   */
+  private async freshRawSign(): Promise<RawSign> {
+    if (this.rawSign !== 'approval') return 'off';
+    if (this.clock.now() - this.rawSignCheckedAt >= POLICY_FRESH_MS) await this.refreshPolicy().catch(() => undefined);
+    if (this.rawSign !== 'approval') return 'off';
+    if (this.clock.now() - this.rawSignCheckedAt >= POLICY_FRESH_MS) {
+      throw new VaultError('api_unavailable', 'Could not confirm that raw signing is on for this app', { reason: 'raw_sign_unconfirmed' });
+    }
+    return 'approval';
   }
 
   /** A fresh GET /v1/app (one at a time). */
@@ -420,8 +480,25 @@ export class Vault {
     return true;
   }
 
+  /** Requests that read or use the session: each one counts as activity for the in-memory idle limit. */
+  private static readonly SESSION_METHODS: ReadonlySet<string> = new Set([
+    'hana_status',
+    'hana_export',
+    'hana_revokeOtherDevices',
+    'stellar_getAddress',
+    'eth_accounts',
+    'hana_requestAutoApprove',
+    'hana_autoApproveStatus',
+  ]);
+
+  /** Requests that need PRK (a dormant session is unlocked first). */
+  private static readonly KEY_METHODS: ReadonlySet<string> = new Set(['hana_export', 'hana_revokeOtherDevices', 'hana_requestAutoApprove', 'hana_autoApproveStatus']);
+
   private async dispatch(r: PortRequest): Promise<unknown> {
-    if (isSignMethod(r.method)) return this.sign(r as SignRequest);
+    const sign = isSignMethod(r.method);
+    if (sign || Vault.SESSION_METHODS.has(r.method)) this.noteActivity();
+    if (sign || Vault.KEY_METHODS.has(r.method)) await this.wake();
+    if (sign) return this.sign(r as SignRequest);
     switch (r.method) {
       case 'hana_status':
         return this.statusResult();
@@ -438,13 +515,13 @@ export class Vault {
       case 'hana_revokeOtherDevices':
         return this.revokeOtherDevices();
       case 'stellar_getAddress': {
-        const s = this.live();
-        if (!s) throw notLoggedIn();
-        return { address: s.addresses.stellar } satisfies PortResultMap['stellar_getAddress'];
+        const a = this.addresses();
+        if (!a) throw notLoggedIn();
+        return { address: a.stellar } satisfies PortResultMap['stellar_getAddress'];
       }
       case 'eth_accounts': {
-        const s = this.live();
-        return s ? [s.addresses.evm] : [];
+        const a = this.addresses();
+        return a ? [a.evm] : [];
       }
       case 'hana_requestAutoApprove':
         return this.requestAutoApprove();
@@ -596,7 +673,9 @@ export class Vault {
       share,
       consent: null,
       lastTouchAt: this.clock.now(),
+      lastActivityAt: this.clock.now(),
       expiryTimer: null,
+      idleTimer: null,
     };
     this.adopt(s);
     if (this.pending === pending) this.emit('loginProgress', { stage: 'done' });
@@ -714,7 +793,106 @@ export class Vault {
       void this.expire(s);
       return null;
     }
+    // The idle limit, for the same reason: a delayed idle timer never keeps PRK in memory past it.
+    if (s && this.clock.now() - s.lastActivityAt >= this.config.settings.idleTtlMs) {
+      this.goIdle(s);
+      return null;
+    }
     return s;
+  }
+
+  /** The dormant session, or null (ended here once past its absolute end). */
+  private liveDormant(): Dormant | null {
+    const d = this.dormant;
+    if (d && this.clock.now() >= d.expiresAtMs) {
+      this.expireDormant(d);
+      return null;
+    }
+    return d;
+  }
+
+  /** A dormant session reached its absolute end: as expire() (record deleted if still its own, sessionExpired). */
+  private expireDormant(d: Dormant): void {
+    if (this.dormant !== d) return;
+    this.clearDormant();
+    void this.deleteRecordIf({ sessionPk: d.sessionPk, share: { shareId: d.shareId, counter: 0, createdAt: null } }).catch(() => undefined);
+    this.emit('sessionExpired', null);
+    this.emit('accountsChanged', { addresses: null });
+  }
+
+  private clearDormant(): void {
+    if (this.dormant) this.timers.clearTimeout(this.dormant.expiryTimer);
+    this.dormant = null;
+  }
+
+  /** A request from the partner page for the session: restarts the in-memory idle limit. */
+  private noteActivity(): void {
+    const s = this.session;
+    if (s && this.live() === s) s.lastActivityAt = this.clock.now();
+  }
+
+  /** Arms the idle check for `s` at its current deadline (re-armed on firing while there was activity since). */
+  private scheduleIdle(s: Session): void {
+    this.timers.clearTimeout(s.idleTimer);
+    const delay = Math.max(0, s.lastActivityAt + this.config.settings.idleTtlMs - this.clock.now());
+    s.idleTimer = this.timers.setTimeout(() => {
+      s.idleTimer = null;
+      if (this.session !== s) return;
+      if (this.clock.now() - s.lastActivityAt >= this.config.settings.idleTtlMs) this.goIdle(s);
+      else this.scheduleIdle(s);
+    }, Math.min(delay, 0x7fffffff));
+  }
+
+  /**
+   * The in-memory idle limit passed (docs/batch-b-spec.md Q28): PRK is zeroed. A 'session'-mode session with its record
+   * goes dormant and the next request that needs the key unlocks it again; otherwise it ends as at expiry.
+   */
+  private goIdle(s: Session): void {
+    if (this.session !== s) return;
+    if (s.persistence !== 'session' || !s.share || !this.store) {
+      void this.expire(s);
+      return;
+    }
+    const dormant: Dormant = { addresses: { ...s.addresses }, expiresAtMs: s.expiresAtMs, sessionPk: s.sessionPk, shareId: Uint8Array.from(s.share.shareId), expiryTimer: null };
+    this.endSession(false);
+    this.dormant = dormant;
+    const delay = Math.max(0, s.expiresAtMs - this.clock.now());
+    dormant.expiryTimer = this.timers.setTimeout(() => this.expireDormant(dormant), Math.min(delay, 0x7fffffff));
+  }
+
+  /**
+   * Unlocks a dormant session (one signed API call, as on reload) before a request that needs the key. Only the same
+   * share is unlocked: if the record is gone, belongs to another session or the API refuses (the server share passed
+   * its idle or absolute limit, or was revoked), the session ends.
+   */
+  private async wake(): Promise<void> {
+    if (this.session || !this.liveDormant()) return;
+    this.waking ??= (async () => {
+      const d = this.dormant!;
+      try {
+        await this.unlock(d.shareId);
+      } catch {
+        // As a failed unlock: the session ends below.
+      }
+      if (this.dormant === d) {
+        this.clearDormant();
+        this.emit('sessionExpired', null);
+        this.emit('accountsChanged', { addresses: null });
+      }
+    })().finally(() => {
+      this.waking = null;
+    });
+    await this.waking;
+  }
+
+  /** Drops a dormant session for good (logout, revocation); `announce` tells the partner page. */
+  private dropDormant(announce: boolean): void {
+    if (!this.dormant) return;
+    this.clearDormant();
+    if (announce) {
+      this.emit('disconnect', { code: ErrorCode.disconnected });
+      this.emit('accountsChanged', { addresses: null });
+    }
   }
 
   /** Tells this app's other tabs that `shareId` is dead: the ones holding it end their session. */
@@ -724,8 +902,10 @@ export class Vault {
 
   private adopt(s: Session): void {
     this.session = s;
+    this.clearDormant();
     const delay = Math.max(0, s.expiresAtMs - this.clock.now());
     s.expiryTimer = this.timers.setTimeout(() => void this.expire(s), Math.min(delay, 0x7fffffff));
+    this.scheduleIdle(s);
   }
 
   /** Zeroes PRK and drops the session; pending approvals and an export end. */
@@ -734,6 +914,7 @@ export class Vault {
     if (!s) return;
     this.session = null;
     this.timers.clearTimeout(s.expiryTimer);
+    this.timers.clearTimeout(s.idleTimer);
     s.prk.fill(0);
     this.approvals?.cancelAll('cancelled');
     this.cancelExport(disconnected());
@@ -788,8 +969,11 @@ export class Vault {
     );
   }
 
-  /** Unlock (docs/batch-b-spec.md "Unlock"): one signed API call returns K_s; no chain call. */
-  private async unlock(): Promise<void> {
+  /**
+   * Unlock (docs/batch-b-spec.md "Unlock"): one signed API call returns K_s; no chain call. `onlyShare` (waking a
+   * dormant session) unlocks the record only if it still holds that share.
+   */
+  private async unlock(onlyShare?: Uint8Array): Promise<void> {
     const store = this.store;
     if (!store) return;
     let read: RecordV1 | null | 'invalid';
@@ -805,6 +989,7 @@ export class Vault {
       return;
     }
     const first: RecordV1 = read;
+    if (onlyShare && !bytesEqual(first.shareId, onlyShare)) return;
     // Another parent origin on this top-level site: not this parent's record (left alone).
     if (first.parentOrigin !== this.parentOrigin || !parentAllowed(this.config, first.parentOrigin, this.env.devEnv)) return;
 
@@ -871,7 +1056,9 @@ export class Vault {
       share: { shareId: record.shareId, counter: record.counter, createdAt: null },
       consent: null,
       lastTouchAt: this.clock.now(),
+      lastActivityAt: this.clock.now(),
       expiryTimer: null,
+      idleTimer: null,
     });
     this.channel?.postMessage({ v: 1, t: 'counter', shareId: Uint8Array.from(record.shareId), counter: record.counter });
   }
@@ -942,10 +1129,12 @@ export class Vault {
     if (m.t === 'revoked') {
       // Only the tabs holding that share: a stale tab's 410 must not end a newer session in another tab.
       if (s?.share && bytesEqual(s.share.shareId, m.shareId)) this.endSession(true);
+      if (this.dormant && bytesEqual(this.dormant.shareId, m.shareId)) this.dropDormant(true);
       return;
     }
     // logout: the user logged out of this app on this device.
     if (s) this.endSession(true);
+    this.dropDormant(true);
   }
 
   // ---- logout and lost device ----
@@ -977,8 +1166,10 @@ export class Vault {
         .catch(() => undefined);
     }
     if (s && this.session === s) this.endSession(false);
+    const wasDormant = this.dormant !== null;
+    this.dropDormant(false);
     this.channel?.postMessage({ v: 1, t: 'logout' });
-    if (s) this.emit('accountsChanged', { addresses: null });
+    if (s || wasDormant) this.emit('accountsChanged', { addresses: null });
   }
 
   private async revokeOtherDevices(): Promise<PortResultMap['hana_revokeOtherDevices']> {
@@ -1024,7 +1215,10 @@ export class Vault {
   private async sign(request: SignRequest): Promise<unknown> {
     const s = this.live();
     if (!s) throw notLoggedIn();
-    const subject = approvalSubject(request, s.addresses, this.config.settings.rawSign);
+    // Raw signing is re-read before every raw request (setting it to 'off' takes effect in open tabs).
+    const rawSign: RawSign = request.method === 'hana_signRaw' ? await this.freshRawSign() : 'off';
+    if (this.live() !== s) throw disconnected();
+    const subject = approvalSubject(request, s.addresses, { rawSign, testApp: this.testApp });
     const policy = NEVER_AUTO_APPROVED_KINDS.has(subject.kind) ? null : await this.freshPolicy();
     if (this.live() !== s) throw disconnected();
     let note: { label: string; active: boolean; reason?: string } | undefined;

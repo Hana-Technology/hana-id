@@ -1,0 +1,71 @@
+// Test apps and mainnet chains (docs/decisions.md D39). A `pk_test_` app's keys come from the testnet MPC, whose keys
+// can be stolen (weaker operator and node standards) or lost (a network reset changes every address), so the vault
+// never signs anything for such an app that a mainnet would accept:
+// - Stellar: a transaction or auth entry for the public network's passphrase is refused (it is the only mainnet; a
+//   signature for any other passphrase is invalid there).
+// - EVM: an explicit allowlist of known testnet chain IDs. Anything else is treated as a mainnet and refused, which is
+//   safer than a denylist of mainnets (a new or unknown chain is refused, not allowed).
+// - Typed data is refused when its domain names a chain outside the allowlist. Messages, typed data without a chainId
+//   and raw requests name no network (D35) and are not refused.
+// The partner client applies the same rules to eth_sendTransaction and wallet_switchEthereumChain/addEthereumChain,
+// for a clear error before anything is filled or switched; the vault's check is the one that counts.
+import { type PortRequest, type SignMethod, approvalContent } from './protocol.ts';
+import { normalizeTypedData, typedDataChainId } from './typed-data.ts';
+
+export const STELLAR_MAINNET_PASSPHRASE = 'Public Global Stellar Network ; September 2015';
+
+/** EVM chains a test app may use, by chain ID. Everything else counts as a mainnet for a test app. */
+export const TEST_EVM_CHAINS: Readonly<Record<number, string>> = Object.freeze({
+  11155111: 'Sepolia',
+  17000: 'Holesky',
+  84532: 'Base Sepolia',
+  421614: 'Arbitrum Sepolia',
+  11155420: 'OP Sepolia',
+  57054: 'Sonic Blaze testnet',
+  97: 'BNB Smart Chain testnet',
+  80002: 'Polygon Amoy',
+  43113: 'Avalanche Fuji',
+  31337: 'Local (Hardhat, Anvil)',
+  1337: 'Local (Ganache, Geth dev)',
+});
+
+export const isTestPublishableKey = (pk: string): boolean => pk.startsWith('pk_test_');
+
+/** Whether a test app may use this EVM chain (it is on the testnet allowlist). */
+export const isTestEvmChain = (chainId: number): boolean => Number.isSafeInteger(chainId) && Object.hasOwn(TEST_EVM_CHAINS, chainId);
+
+/** Whether a test app may sign for this Stellar network. */
+export const isTestStellarNetwork = (passphrase: string): boolean => passphrase !== STELLAR_MAINNET_PASSPHRASE;
+
+/** The user-facing explanation (vault errors, the partner client's errors, the approval popup). */
+export const TEST_APP_NETWORK_RULE = 'Test apps (pk_test_ keys) can sign only for test networks: Hana ID refuses Stellar mainnet and EVM chains outside its testnet list';
+
+/** A mainnet a test app may not sign for, as the request names it. */
+export type MainnetRefusal = { chain: 'stellar'; networkPassphrase: string } | { chain: 'evm'; chainId: number };
+
+/**
+ * The mainnet this sign request is for, or null when a test app may sign it (a test network, or a request that names
+ * no network). Throws on a request that doesn't parse (the caller refuses those first).
+ */
+export function mainnetOfRequest(request: Extract<PortRequest, { method: SignMethod }>): MainnetRefusal | null {
+  switch (request.method) {
+    case 'stellar_signTransaction':
+    case 'stellar_signAuthEntry': {
+      const passphrase = request.params.networkPassphrase;
+      return isTestStellarNetwork(passphrase) ? null : { chain: 'stellar', networkPassphrase: passphrase };
+    }
+    case 'eth_signTransaction': {
+      const context = approvalContent(request).context;
+      const chainId = 'chainId' in context ? context.chainId : 0;
+      return isTestEvmChain(chainId) ? null : { chain: 'evm', chainId };
+    }
+    case 'eth_signTypedData_v4': {
+      const chainId = typedDataChainId(normalizeTypedData(request.params[1]));
+      return chainId === null || isTestEvmChain(chainId) ? null : { chain: 'evm', chainId };
+    }
+    case 'stellar_signMessage':
+    case 'personal_sign':
+    case 'hana_signRaw':
+      return null;
+  }
+}

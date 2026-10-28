@@ -68,6 +68,8 @@ export interface ApprovalDeps {
   authOrigin: string;
   appName: string;
   parentOrigin: string;
+  /** A pk_test_ app: every request and consent screen says Hana signs only for test networks (D39). */
+  testApp?: boolean;
   open(url: string, name: string, features: string): WindowRef | null;
   launcher: Launcher;
   timers: Timers;
@@ -264,7 +266,7 @@ export class Approvals {
 
   /** The hana:approve-request or hana:consent-request for `item`; `copy` gives the popup its own bytes and policy. */
   private message(item: Item, position: number, queued: number, copy: boolean): { t: 'hana:approve-request' | 'hana:consent-request' } & Record<string, unknown> {
-    const common = { v: 1, id: item.id, appName: this.d.appName, parentOrigin: this.d.parentOrigin, position, queued } as const;
+    const common = { v: 1, id: item.id, appName: this.d.appName, parentOrigin: this.d.parentOrigin, position, queued, ...(this.d.testApp ? { testApp: true } : {}) } as const;
     if (item.type === 'consent') {
       return { ...common, t: 'hana:consent-request', policy: structuredPolicy(item.policy), policyId: item.policyId, expiresAtMs: item.expiresAtMs };
     }

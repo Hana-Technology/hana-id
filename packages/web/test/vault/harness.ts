@@ -58,6 +58,9 @@ export const ENV: HanaEnv = Object.freeze({
   devEnv: true,
 });
 
+/** A second RPC endpoint, for envs whose manifest sets rpcFallback (tests pass `{...ENV, rpcFallback: RPC_FALLBACK}`). */
+export const RPC_FALLBACK = 'https://rpc-fallback.test';
+
 export const HOUR = 3_600_000;
 export const START_MS = 1_800_000_000_000;
 
@@ -206,12 +209,19 @@ export class FakeBackend {
   readonly txs = new Map<string, unknown>();
   readonly relay = new Map<string, { iv: string; ct: string } | 'consumed'>();
   readonly calls: ApiCall[] = [];
-  readonly rpcCalls: { method: string; params: Record<string, unknown> }[] = [];
+  readonly rpcCalls: { method: string; params: Record<string, unknown>; endpoint: string }[] = [];
   readonly overrides = new Map<string, Handler>();
+  /** The on-chain registry the RPC answers views from: `get_scope` by id, `scope_for_client` by `<provider>|<aud>`. */
+  readonly scopes = new Map<string, { id: string; allow_shared: boolean }>([[SCOPE, { id: SCOPE, allow_shared: true }]]);
+  readonly clientScopes = new Map<string, string>();
+  /** RPC endpoints (origins) that fail every call with a network error. */
+  readonly rpcDown = new Set<string>();
   /** What GET /v1/app answers. */
   app: Record<string, unknown> = { scopeId: SCOPE, signer: ENV.signer, google: { clientId: CLIENT_ID, mode: 'shared' }, name: 'Partner' };
   /** The auto-approve policy in force that GET /v1/app answers: each new tab's page sets it (the page is current). */
   autoApprovePolicy: Record<string, unknown> | null = null;
+  /** The raw-signing setting in force that GET /v1/app answers (each new tab's page sets it, as for the policy). */
+  rawSign: 'off' | 'approval' = 'off';
   serverNow: () => number = () => START_MS;
   private txSeq = 0;
   private readonly relayWaiters = new Set<() => void>();
@@ -253,7 +263,10 @@ export class FakeBackend {
       headers[k] = v;
     });
     const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined;
-    if (url.origin === ENV.rpc) return this.rpc(body as { method: string; params: Record<string, unknown> });
+    if (url.origin === ENV.rpc || url.origin === RPC_FALLBACK) {
+      if (this.rpcDown.has(url.origin)) throw new TypeError('Failed to fetch');
+      return this.rpc(body as { method: string; params: Record<string, unknown> }, url.origin);
+    }
     if (url.href === 'https://www.googleapis.com/oauth2/v3/certs') return json(200, { keys: [] });
     const call: ApiCall = { method: init?.method ?? 'GET', path: url.pathname, headers, body };
     this.calls.push(call);
@@ -267,7 +280,7 @@ export class FakeBackend {
 
   private async route(call: ApiCall, url: URL, signal?: AbortSignal): Promise<Response> {
     const b = call.body as Record<string, unknown>;
-    if (call.path === '/v1/app') return json(200, { autoApprovePolicy: this.autoApprovePolicy, ...this.app, serverTimeMs: this.serverNow(), requestId: 'rq' });
+    if (call.path === '/v1/app') return json(200, { autoApprovePolicy: this.autoApprovePolicy, rawSign: this.rawSign, ...this.app, serverTimeMs: this.serverNow(), requestId: 'rq' });
     if (call.path === '/v1/login') {
       const r = this.createSession(b, true);
       const nearTx = this.nextTx();
@@ -362,12 +375,14 @@ export class FakeBackend {
     return json(200, { revoked, requestId: 'rq' });
   }
 
-  private rpc(body: { method: string; params: Record<string, unknown> }): Response {
-    this.rpcCalls.push(body);
+  private rpc(body: { method: string; params: Record<string, unknown> }, endpoint: string): Response {
+    this.rpcCalls.push({ ...body, endpoint });
     if (body.method === 'query') {
-      const args = JSON.parse(fromUtf8(base64Decode(body.params.args_base64 as string))) as { session_public_key: number[] };
-      const s = this.sessions.get(toHex(Uint8Array.from(args.session_public_key))) ?? null;
-      return json(200, { jsonrpc: '2.0', id: 'x', result: { result: Array.from(utf8(JSON.stringify(s))) } });
+      const args = JSON.parse(fromUtf8(base64Decode(body.params.args_base64 as string))) as Record<string, unknown>;
+      const answer = (v: unknown) => json(200, { jsonrpc: '2.0', id: 'x', result: { result: Array.from(utf8(JSON.stringify(v))) } });
+      if (body.params.method_name === 'get_scope') return answer(this.scopes.get(args.scope_id as string) ?? null);
+      if (body.params.method_name === 'scope_for_client') return answer(this.clientScopes.get(`${args.provider as string}|${args.aud as string}`) ?? null);
+      return answer(this.sessions.get(toHex(Uint8Array.from(args.session_public_key as number[]))) ?? null);
     }
     if (body.method === 'EXPERIMENTAL_tx_status') {
       const v = this.txs.get(body.params.tx_hash as string);
@@ -514,6 +529,8 @@ export interface Tab {
   ready(): Promise<Record<string, unknown>>;
   request(method: string, params?: unknown): Promise<Reply>;
   waitEvent(event: PortEventName, n?: number): Promise<unknown>;
+  /** Waits until `check` is true, re-checking on every port message (and every 20 ms), for up to 4 s of real time. */
+  waitUntil(check: () => boolean, what: string): Promise<void>;
   close(): void;
 }
 
@@ -536,6 +553,7 @@ export function openTab(browser: Browser, o: TabOptions = {}): Tab {
   const config = o.config ?? makeConfig();
   // The page a tab loads inlines what the API serves at that moment.
   browser.backend.autoApprovePolicy = config.settings.autoApprovePolicy;
+  browser.backend.rawSign = config.settings.rawSign;
   const vault = new Vault({
     env: o.env ?? ENV,
     config,
@@ -612,6 +630,9 @@ export function openTab(browser: Browser, o: TabOptions = {}): Tab {
       return waitFor(() => replies.find((r) => r.id === id), `reply to ${method}`, 8000);
     },
     waitEvent: async (event, n = 0) => (await waitFor(() => events.filter((e) => e.event === event)[n], `event ${event}`)).data,
+    waitUntil: async (check, what) => {
+      await waitFor(() => (check() ? true : undefined), what);
+    },
     close: () => {
       port1.close();
       port2.close();
@@ -664,6 +685,18 @@ export async function readyTab(browser: Browser, o: TabOptions = {}): Promise<Ta
   tab.hello();
   await tab.ready();
   return tab;
+}
+
+/**
+ * Waits until the launcher shows `label` (null: hidden) and the partner page has been told so: the vault sets its view
+ * synchronously but the `ui` event crosses the port later, so a test that reads the events must wait for both.
+ */
+export async function waitLauncher(tab: Tab, label: string | null): Promise<void> {
+  await tab.waitUntil(() => {
+    if (tab.launcher.label !== label) return false;
+    const ui = tab.events.filter((e) => e.event === 'ui').at(-1)?.data as { launcher: string; label: string } | undefined;
+    return label === null ? ui === undefined || ui.launcher === 'hide' : ui?.launcher === 'show' && ui.label === label;
+  }, `launcher ${label ?? 'hidden'}`);
 }
 
 // ---- the approval popup, as the auth page would run it ----

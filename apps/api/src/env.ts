@@ -6,6 +6,11 @@ import type { RelayerKey } from './relayer-key.ts';
 export interface Env {
   /** NEAR JSON-RPC endpoint. */
   NEAR_RPC: string;
+  /**
+   * Manifest `rpcFallback`, when set: the vault reads from it when NEAR_RPC fails, so the vault page's CSP
+   * `connect-src` lists it too. The API itself reads only NEAR_RPC.
+   */
+  NEAR_RPC_FALLBACK?: string;
   /** hana-signer contract account: the only receiver the relayer ever calls. */
   SIGNER_ACCOUNT: string;
   /** Account whose function-call keys (RELAYER_KEYS, OWNER_RELAYER_KEYS) pay gas. */

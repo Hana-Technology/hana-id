@@ -382,6 +382,11 @@ function evmChain(c: Checker, raw: unknown, path: string, decoders: ProtocolDeco
   if (maxValue !== undefined && maxPerDay !== undefined && BigInt(maxValue) > BigInt(maxPerDay)) {
     c.problem(`${path}.maxValueWei`, 'must not exceed maxValueWeiPerDay');
   }
+  // Value plus the maximum fee counts against maxValueWei (D37), so a limit below the fee cap could only auto-approve
+  // transactions with a smaller fee, and "0" none at all: refused, so a policy says what it can actually do.
+  if (maxValue !== undefined && maxFee !== undefined && BigInt(maxValue) < BigInt(maxFee)) {
+    c.problem(`${path}.maxValueWei`, 'must be at least maxFeeWei (value plus fees counts against it)');
+  }
   const contracts = c.array(o.contracts, `${path}.contracts`, 0, 32)?.map((rawC, i) => {
     const cpath = `${path}.contracts[${i}]`;
     const co = c.object(rawC, cpath, ['address', 'name', 'selectors'], []);

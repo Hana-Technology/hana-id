@@ -21,7 +21,7 @@ describe('GET /v1/app (batch B)', () => {
     const res = await get(appHeaders(app));
     const b = await body(res);
     expect(res.status).toBe(200);
-    expect(b).toEqual({ name: `Test ${app.id}`, scopeId: app.scope, signer: env.SIGNER_ACCOUNT, google: { clientId: aud, mode: 'own' }, serverTimeMs: expect.any(Number), autoApprovePolicy: null, requestId: expect.any(String) });
+    expect(b).toEqual({ name: `Test ${app.id}`, scopeId: app.scope, signer: env.SIGNER_ACCOUNT, google: { clientId: aud, mode: 'own' }, serverTimeMs: expect.any(Number), autoApprovePolicy: null, rawSign: 'off', requestId: expect.any(String) });
     expect(b.serverTimeMs as number).toBeGreaterThanOrEqual(before);
     expect(b.serverTimeMs as number).toBeLessThanOrEqual(Date.now());
   });
@@ -70,6 +70,25 @@ describe('GET /v1/app (batch B)', () => {
     // Removal (the CLI clears the pending value too) is immediate.
     await setPolicy('auto_approve_policy = NULL, auto_approve_pending = NULL, auto_approve_effective_at = NULL');
     expect((await body(await get(appHeaders(app)))).autoApprovePolicy).toBeNull();
+  });
+
+  it('answers the raw-signing setting in force: off at once, approval only after its effective time', async () => {
+    const app = await seedApp();
+    const aud = newAud();
+    chain({ [aud]: app.scope });
+    const set = (sql: string, ...args: unknown[]) => env.DB.prepare(`UPDATE apps SET ${sql} WHERE id = ?1`).bind(app.id, ...args).run();
+    const rawSign = async () => (await body(await get(appHeaders(app)))).rawSign;
+    expect(await rawSign()).toBe('off');
+    // Enabling is delayed (the CLI writes the pending value): still off until it is effective.
+    await set("raw_sign_pending = 'approval', raw_sign_effective_at = ?2", Date.now() + 3_600_000);
+    expect(await rawSign()).toBe('off');
+    await set('raw_sign_effective_at = ?2', Date.now() - 1);
+    expect(await rawSign()).toBe('approval');
+    await set("raw_sign = 'approval', raw_sign_pending = NULL, raw_sign_effective_at = NULL");
+    expect(await rawSign()).toBe('approval');
+    // Turning it off is immediate, and an open vault re-reads this before every raw request.
+    await set("raw_sign = 'off'");
+    expect(await rawSign()).toBe('off');
   });
 
   it('answers null for a stored policy @hana-id/core refuses (the same rule as the vault page), with a log line', async () => {

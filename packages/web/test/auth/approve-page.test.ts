@@ -16,7 +16,7 @@ import {
 import { policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GUARD_DELAY_MS } from '../../src/auth/approve-guard.ts';
-import { AUTO_APPROVE_REASON_TEXT, KEEP_OPEN_MS, autoApproveReasonText, startApprovePage } from '../../src/auth/approve-page.ts';
+import { AUTO_APPROVE_REASON_TEXT, KEEP_OPEN_MS, TEST_APP_NOTE, autoApproveReasonText, startApprovePage } from '../../src/auth/approve-page.ts';
 import { NO_NETWORK_NOTE } from '../../src/auth/render-approval.ts';
 import { formatEndTime } from '../../src/auth/render-consent.ts';
 import { policyJson } from '../../../core/test/policy-fixtures.ts';
@@ -235,6 +235,47 @@ describe('/approve', () => {
       expect(primary()?.disabled).toBe(false);
       click(primary(), 'mouse');
       expect(results()[0]).toMatchObject({ approved: true });
+    });
+
+    /** A zero-movement mouse event at client (x, y), whose screen position is the window's offset plus that. */
+    const at = (x: number, y: number) => ({ pointerType: 'mouse', movementX: 0, movementY: 0, clientX: x, clientY: y, screenX: 300 + x, screenY: 200 + y });
+
+    it('mouse: with zero movement (WebKit reports 0 on every move), only a real cursor move arms it', () => {
+      send(evmRequest());
+      vi.advanceTimersByTime(GUARD_DELAY_MS);
+      // The first move has nothing to compare with; repeats at the same spot (synthetic moves, a press) never arm.
+      win.dispatch('pointermove', at(5, 5));
+      win.dispatch('pointermove', at(5, 5));
+      win.dispatch('pointerdown', at(5, 5));
+      win.dispatch('pointermove', at(5, 5));
+      expect(primary()?.disabled).toBe(true);
+      // The cursor moved (client and screen positions both changed): armed. The arming move never approves.
+      win.dispatch('pointermove', at(16, 16));
+      expect(primary()?.disabled).toBe(false);
+      click(primary(), 'mouse');
+      expect(results()[0]).toMatchObject({ approved: true });
+    });
+
+    it('mouse: a synthetic move at the position of the last press never arms it (the press records the position)', () => {
+      send(evmRequest());
+      vi.advanceTimersByTime(GUARD_DELAY_MS);
+      win.dispatch('pointermove', at(5, 5));
+      win.dispatch('pointerdown', at(40, 40));
+      win.dispatch('pointermove', at(40, 40));
+      expect(primary()?.disabled).toBe(true);
+    });
+
+    it('mouse: a position from the previous request never arms the next one', () => {
+      send(evmRequest());
+      vi.advanceTimersByTime(GUARD_DELAY_MS);
+      win.dispatch('pointermove', at(5, 5));
+      send(evmRequest());
+      vi.advanceTimersByTime(GUARD_DELAY_MS);
+      // Different from (5, 5), but that was recorded for the request before: nothing to compare with yet.
+      win.dispatch('pointermove', at(40, 40));
+      expect(primary()?.disabled).toBe(true);
+      win.dispatch('pointermove', at(41, 41));
+      expect(primary()?.disabled).toBe(false);
     });
 
     it('a click whose press began before the guard armed does not approve', () => {
@@ -539,6 +580,21 @@ describe('/approve', () => {
     expect(pageText()).toContain('Chain ID 11155111');
   });
 
+  it('says a test app signs only for test networks (D39), on requests and the consent screen; nothing for a live app', () => {
+    send(evmRequest({ testApp: true }));
+    expect(pageText()).toContain(TEST_APP_NOTE);
+    expect(TEST_APP_NOTE).toMatch(/only for test networks/u);
+    send(evmRequest());
+    expect(pageText()).not.toContain(TEST_APP_NOTE);
+    send(consentRequest({ testApp: true }));
+    expect(pageText()).toContain(TEST_APP_NOTE);
+    send(consentRequest());
+    expect(pageText()).not.toContain(TEST_APP_NOTE);
+    // The flag is `true` or absent: anything else is not a valid request (the popup drops it).
+    send(evmRequest({ testApp: false }));
+    expect(pageText()).not.toContain(TEST_APP_NOTE);
+  });
+
   it('shows why a request was not auto-approved, and "Stop auto-approving" while a consent is active', () => {
     send(evmRequest({ autoApprove: { label: 'Swaps on Example', active: true, reason: 'contract_not_listed' } }));
     expect(pageText()).toContain('Not signed automatically under “Swaps on Example”: the contract isn’t listed in the rules.');
@@ -644,7 +700,7 @@ describe('/approve consent screen', () => {
   it('shows the app, origin, label, every contract with name and address, the functions, the address rule, limits and duration', () => {
     send(consentRequest());
     const text = pageText();
-    for (const s of ['Partner App', PARTNER, '“Swaps on Example”', 'Example pool', 'USDC', 'Router', 'swap', 'deposit', 'route', 'can send to any address', 'at most 3', 'deposit(uint256)', 'EVM chain 8453', 'PermitSingle']) {
+    for (const s of ['Partner App', PARTNER, '“Swaps on Example”', 'Example pool', 'USDC', 'Router', 'swap', 'deposit', 'route', 'can send to any address', 'at most 3', 'deposit(uint256)', 'EVM chain 8453', 'PermitSingle', 'Maximum value plus network fees, per transaction', 'Maximum value plus network fees, per day', 'Maximum network fee per transaction']) {
       expect(text).toContain(s);
     }
     for (const c of POLICY.ok ? POLICY.policy.stellar?.contracts ?? [] : []) expect(text).toContain(c.id);

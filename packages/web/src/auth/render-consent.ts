@@ -88,8 +88,8 @@ export function renderConsent(d: Dom, view: ConsentView): HTMLElement {
     parts.push(
       d.h('h2', {}, `EVM chain ${ch.chainId}`),
       rows(d, [
-        row(d, 'Maximum value per transaction', `${formatUnits(ch.maxValueWei, 18)} (${ch.maxValueWei} wei)`),
-        row(d, 'Maximum value per day', `${formatUnits(ch.maxValueWeiPerDay, 18)} (${ch.maxValueWeiPerDay} wei)`),
+        row(d, 'Maximum value plus network fees, per transaction', `${formatUnits(ch.maxValueWei, 18)} (${ch.maxValueWei} wei)`),
+        row(d, 'Maximum value plus network fees, per day', `${formatUnits(ch.maxValueWeiPerDay, 18)} (${ch.maxValueWeiPerDay} wei)`),
         row(d, 'Maximum network fee per transaction', `${formatUnits(ch.maxFeeWei, 18)} (${ch.maxFeeWei} wei)`),
         ch.addresses && ch.addresses.length > 0 && row(d, 'Also allowed as recipients', ...ch.addresses.flatMap((a, i) => [i > 0 ? ', ' : '', mono(d, a)])),
       ]),

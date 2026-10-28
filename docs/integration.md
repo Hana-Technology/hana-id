@@ -7,9 +7,9 @@ never reach your page. They live in a hidden Hana iframe, and every signature ne
 popup, unless it falls under an auto-approve policy you set and the user accepted.
 
 > **Testnet pilot.** Keys come from the NEAR **testnet** MPC and stay disposable until the address freeze (final
-> accounts, audit, mainnet). Don't keep real funds in pilot wallets, on any chain. The SDK doesn't yet refuse
-> mainnet networks for test apps (`docs/batch-b-spec.md` Q27). The specification is `docs/batch-b-spec.md`, and this
-> guide follows the code on the batch B branch. Where it describes a part still being built, it says so.
+> accounts, audit, mainnet). Don't keep real funds in pilot wallets, on any chain. A test app (`pk_test_…`) can't sign
+> for mainnet chains at all ([section 12](#12-test-and-live-keys)). The specification is `docs/batch-b-spec.md`, and
+> this guide follows the code on the batch B branch. Where it describes a part still being built, it says so.
 
 ## How it works
 
@@ -126,7 +126,10 @@ button.addEventListener('click', async () => {
   6.5–7 s, to be measured on testnet). Show progress with `loginProgress`. A reload needs one API call (estimated
   0.1–0.3 s).
 - **Sessions.** With the default `'session'` persistence the wallet survives reloads and new tabs for up to 12 h,
-  or until it has been idle for 2 h. Then `sessionExpired` fires and the user signs in again. With `'none'`, every
+  or until it has been idle for 2 h. Then `sessionExpired` fires and the user signs in again. An open tab that sends
+  the vault no request for the idle limit drops its key from memory; your page sees nothing, and the next request
+  that needs the key (a signature, an export) restores it with one API call, as a reload does, while the session is
+  still alive on Hana's side. With `'none'`, every
   page load is a new login. If the browser blocks storage (some private modes), the vault falls back to `'none'` and
   `hana.warning` is `storage_unavailable`.
 - `await hana.logout()` signs this app out on this device, in every tab. It sends no transaction.
@@ -134,7 +137,8 @@ button.addEventListener('click', async () => {
   fresh login, so offer it right after one.
 - `await hana.exportKey('stellar' | 'evm')` lets the user take their key elsewhere. Hana shows a button; the key
   appears only in a top-level Hana window, after a fresh Google sign-in and a typed confirmation, and never reaches
-  your page. Stellar keys export as `S…`, EVM keys as `0x…` hex. There is no recovery phrase.
+  your page. Stellar keys export as `S…`, EVM keys as `0x…` hex. There is no recovery phrase. Each export is a NEAR
+  transaction Hana pays for, so one account can export at most 3 times an hour per app (`rate_limited` after that).
 
 ## 5. Your page: origins, CSP, popups
 
@@ -204,8 +208,8 @@ Hana sets these per app on request (`admin app:settings` now, the dashboard in b
 
 Loosening takes effect after a delay (24 h in production; 60 s on sandbox-dev): raw signing `'approval'`, and setting
 or changing a policy. Tightening takes effect at once for new page loads: raw signing `'off'`, and removing a policy.
-In a tab that is already open, a removed policy stops auto-signing within 10 s ([section 9](#9-auto-approve-policies));
-raw signing `'off'` reaches an open tab only on its next load.
+In a tab that is already open, a removed policy stops auto-signing within 10 s ([section 9](#9-auto-approve-policies)),
+and raw signing `'off'` refuses raw requests within 10 s too (the vault re-reads the setting before each one).
 
 ## 8. Signing
 
@@ -218,7 +222,8 @@ The Approve button arms only after the request has been on screen for 1 s and th
 a mouse move, a tap, or Tab or an arrow key. The gesture that arms it doesn't approve, so a tap-only user taps twice;
 clicking in place without moving the mouse, Enter and Space never arm it. That stops clickjacking and double-click
 tricks. Message and raw requests (`personal_sign`, `stellar_signMessage`, `signRaw`) carry a line that the signature
-isn't tied to one network: they are valid wherever the key is.
+isn't tied to one network: they are valid wherever the key is. For a test app every request and consent screen also
+says that Hana signs only for test networks.
 
 ### Stellar
 
@@ -265,7 +270,7 @@ const provider = new BrowserProvider(hana.ethereum);
 |---|---|
 | `eth_requestAccounts` | logs in if needed (from a click; the button fallback otherwise) |
 | `eth_accounts` | `[address]` or `[]` |
-| `eth_chainId`, `wallet_switchEthereumChain` | among `evm.chains`; another chain is `4902` |
+| `eth_chainId`, `wallet_switchEthereumChain`, `wallet_addEthereumChain` | among `evm.chains`; another chain is `4902`. A test app switching to or adding a mainnet chain gets `4100` (`data.reason: 'mainnet_not_allowed'`) |
 | `eth_sendTransaction` | the SDK fills nonce, gas and fees from your RPC, the user approves, and the SDK broadcasts through the RPC of the chain it was filled on (even if the chain is switched during the approval). Sends run one at a time per chain, and a filled nonce is never below one past the last one this page broadcast, so back-to-back sends get consecutive nonces |
 | `eth_signTransaction`, `personal_sign`, `eth_signTypedData_v4` | approval |
 | `eth_sign` and other signing or wallet methods | `4200` |
@@ -286,7 +291,9 @@ await hana.signRaw({ chain: 'evm', digest });      // secp256k1 over 32 bytes �
 
 The user always approves raw requests, under a red warning that raw signing can authorize any transaction on that
 chain. No policy ever covers them. Ask for it only if a standard method can't do the job. With raw signing off,
-`signRaw` is `4100`.
+`signRaw` is `4100` (`data.reason: 'raw_sign_off'`), also in a tab opened before it was turned off. If the vault can't
+confirm the setting with Hana's API (it re-reads it at most every 10 s), the request fails with `api_unavailable`
+rather than going ahead.
 
 ## 9. Auto-approve policies
 
@@ -376,7 +383,7 @@ gets the popup. A changed policy is treated as no policy until the page reloads,
 | `stellar.networkPassphrases`, `maxFeeStroops` | the networks, and the most fee one transaction may pay |
 | `stellar.contracts[].functions[]` | Soroban functions by name; the whole authorization tree must stay inside listed contracts and functions |
 | `stellar.changeTrustAssets` | `CODE:ISSUER`: `changeTrust` is the only classic operation a policy can cover |
-| `evm.chains[]` | per `chainId`: `maxValueWei` per transaction and `maxValueWeiPerDay` of native spend, where spend is the value **plus the maximum fee** (gas limit × max fee per gas, or gas price); `maxFeeWei` caps the fee alone per transaction. So `maxValueWei` must be at least the fee your calls may pay even if they send no value (the example allows fees only: 20 calls at up to 0.00005 ETH) |
+| `evm.chains[]` | per `chainId`: `maxValueWei` per transaction and `maxValueWeiPerDay` of native spend, where spend is the value **plus the maximum fee** (gas limit × max fee per gas, or gas price); `maxFeeWei` caps the fee alone per transaction. So `maxValueWei` must be at least `maxFeeWei` (the validator refuses less: such a rule could never auto-approve a call at its fee cap), even if your calls send no value (the example allows fees only: 20 calls at up to 0.00005 ETH). The consent screen shows these as "Maximum value plus network fees, per transaction / per day" |
 | `evm.chains[].contracts[].selectors[]` | the 4-byte `selector` and its canonical `signature`; calldata must decode against it |
 | `evm.chains[].typedData` | `(verifyingContract, primaryType)` pairs for EIP-712 (permit-style signatures are never covered by default) |
 | `addresses` (either chain) | extra addresses allowed as call arguments |
@@ -473,7 +480,9 @@ const evmProvider = createSodaxEvmProvider(hana, { chainId: 8453, rpcUrl });    
 - A Sodax swap can need several signatures (`restoreFootprint`, a re-sign, a trustline). The approval popup's 15 s
   keep-open covers them in one session of clicks. Sodax swaps can't be auto-approved yet (see section 9).
 - Sodax runs on mainnet only, while pilot keys are testnet-MPC keys: the adapter is tested against mocks of the
-  `@sodax/sdk` 2.1.0 call patterns, not end to end. Don't move real funds with pilot wallets.
+  `@sodax/sdk` 2.1.0 call patterns, not end to end. A test app's vault refuses Sodax's mainnet transactions
+  (`mainnet_not_allowed`, [section 12](#12-test-and-live-keys)): integrate and test on chain testnets; real Sodax swaps
+  through Hana wait for live keys (D39).
 
 ## 12. Test and live keys
 
@@ -483,6 +492,18 @@ const evmProvider = createSodaxEvmProvider(hana, { chainId: 8453, rpcUrl });    
 | Loopback origins (`http://localhost:…`) | allowed, in `local*`/`sandbox*` envs only | never |
 | Login result | carries per-stage `timings` (`hana.lastLogin.timings`) | no timings |
 | Direct API calls from your page (`/v1/sessions`, `/v1/derive`) | only in sandbox envs, for test tooling such as `apps/smoke` | never |
+| Networks | test networks only: Stellar testnet/futurenet/local, and the EVM chains below | any |
+
+A test app's keys come from the testnet MPC, which can lose or leak them, so its vault refuses anything a mainnet would
+accept (`4100`, `data.reason: 'mainnet_not_allowed'`, before any popup or policy): a Stellar transaction or auth entry
+for `Public Global Stellar Network ; September 2015`, an EVM transaction on a chain outside the list below, and typed
+data whose domain names such a chain. `eth_sendTransaction`, `eth_signTransaction` and switching to or adding such a
+chain are refused by the SDK the same way. Messages, typed data without a `chainId`, and raw requests name no network
+and are not refused; don't use them to move mainnet funds from a test app either.
+
+EVM chains a test app may use: Sepolia (11155111), Holesky (17000), Base Sepolia (84532), Arbitrum Sepolia (421614),
+OP Sepolia (11155420), Sonic Blaze testnet (57054), BNB Smart Chain testnet (97), Polygon Amoy (80002), Avalanche Fuji
+(43113), and local chains 31337 and 1337 (`TEST_EVM_CHAINS` in `@hana-id/core`). Ask Hana to add another testnet.
 
 A test app and a live app never share a scope. Your staging and production apps therefore give the same Google
 account **different addresses** (Q37). Wallets made with test keys are disposable.
@@ -495,7 +516,7 @@ account **different addresses** (Q37). Wallets made with test keys are disposabl
 | Code | Meaning | What to do |
 |---|---|---|
 | `4001` | The user rejected, closed the popup, or let it time out | nothing; let them retry |
-| `4100` | Not logged in, wrong address, or not allowed for this app (raw signing off, no policy) | log in, or check the call |
+| `4100` | Not logged in, wrong address, or not allowed for this app (raw signing off, no policy, a mainnet for a test app: `data.reason`) | log in, or check the call |
 | `4200` | Unsupported method (`eth_sign`, …) | use a supported method |
 | `4900` | The vault is gone (logged out, session ended, frame replaced) | create the client again, or log in |
 | `4902` | EVM chain not in `evm.chains` | add it to `createHana` |
@@ -507,10 +528,10 @@ account **different addresses** (Q37). Wallets made with test keys are disposabl
 | `google_error` | Google returned an error (`data.error`) | retry; `access_denied` means the user declined |
 | `no_google_client` | Your scope has no usable Google client | ask Hana |
 | `token_invalid`, `token_has_pii` | The Google token failed Hana's checks | retry; report it if it persists |
-| `config_mismatch` | Hana's pages disagree about the signer, scope or client | report it to Hana; never retry around it |
+| `config_mismatch` | Hana's pages disagree about the signer, scope or client, or the scope doesn't match the on-chain registry (`data.reason: 'scope_mismatch'`) | report it to Hana; never retry around it |
 | `ckd_failed`, `derive_failed`, `pairing_failed`, `address_mismatch` | The key couldn't be produced | the user logs in again |
 | `session_consumed` | Someone replayed the login transaction first | the vault offers "Continue signing in" |
-| `rate_limited`, `app_suspended`, `origin_not_allowed`, `api_unavailable` | From Hana's API | back off, or contact Hana |
+| `rate_limited`, `app_suspended`, `origin_not_allowed`, `api_unavailable` | From Hana's API (`rate_limited` also after 3 key exports of one account in an hour), or NEAR's RPC couldn't be read | back off, or contact Hana |
 | `busy` | An export is already running | wait |
 
 ## 14. Security notes for integrators

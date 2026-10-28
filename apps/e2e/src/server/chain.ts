@@ -1,8 +1,9 @@
 // The mocked NEAR side: hana-signer's sessions, relayed transactions and a test MPC (real BLS12-381, so the vault's
 // pairing check against the pinned network key runs exactly as on testnet), plus the NEAR JSON-RPC that the vault and
-// the export window (`get_session`, `EXPERIMENTAL_tx_status`) and apps/api's Worker (`get_session` for share
-// creation, `get_scope` and `get_config` for GET /v1/app) read. Every scope allows shared login with the stack's
-// shared Google client.
+// the export window (`get_session`, `EXPERIMENTAL_tx_status`, and the vault's registry check at login: `get_scope` or
+// `scope_for_client`) and apps/api's Worker (`get_session` for share creation, `get_scope` and `get_config` for GET
+// /v1/app) read. Every scope allows shared login with the stack's shared Google client; no scope has a client of its
+// own.
 import { bls12_381 as bls } from '@noble/curves/bls12-381';
 import { base58 } from '@scure/base';
 import { CKD_DST, base64Decode, base64Encode, ckdAppId, fromUtf8, toHex, utf8 } from '@hana-id/core';
@@ -54,6 +55,8 @@ export class Chain {
         return { value: Array.isArray(args.session_public_key) ? this.session(Uint8Array.from(args.session_public_key as number[])) : null };
       case 'get_scope':
         return { value: typeof args.scope_id === 'string' ? { id: args.scope_id, owners: [], clients: [], pending: [], action_nonce: 0, allow_shared: true } : null };
+      case 'scope_for_client':
+        return { value: null };
       case 'get_config':
         return { value: { console_audiences: [], shared_clients: [['google', GOOGLE_CLIENT_ID]], pending_shared_clients: [] } };
       default:

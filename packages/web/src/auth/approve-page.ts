@@ -19,7 +19,7 @@ import {
 import { type DecodedApproval, decodeApprovalRequest } from '@hana-id/core/decode';
 import { type AutoApprovePolicyV1, type AutoApproveReason, policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import type { HanaEnv } from '../hana-env.ts';
-import { ApproveGuard, type GuardInput } from './approve-guard.ts';
+import { ApproveGuard, type Coords, type GuardInput } from './approve-guard.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import { type GestureCheck, type PageWindow, isFramed, isUserGesture } from './page-window.ts';
 import { renderApproval } from './render-approval.ts';
@@ -57,6 +57,12 @@ export const AUTO_APPROVE_REASON_TEXT: Readonly<Record<AutoApproveReason, string
   daily_value_exceeded: 'it would go over today’s amount limit',
   daily_count_reached: 'today’s limit of automatic signatures is reached',
 });
+
+/**
+ * Shown on every request and consent screen of a pk_test_ app (docs/decisions.md D39): its keys come from the testnet
+ * MPC, so the vault refuses mainnet requests from it before they reach this popup.
+ */
+export const TEST_APP_NOTE = 'Test app: Hana ID signs only for test networks here. Requests for Stellar or EVM mainnets are refused, so don’t keep real funds at this account.';
 
 /** The text for a reason code (an unknown code, from a newer vault, is shown generically). */
 export function autoApproveReasonText(reason: string): string {
@@ -223,6 +229,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         { class: 'panel approve' },
         header(msg, `Request ${msg.position} of ${msg.queued}`),
         d.h('p', { class: 'account' }, `Your ${msg.chain === 'stellar' ? 'Stellar' : 'EVM'} account `, d.h('code', { class: 'mono' }, msg.address)),
+        msg.testApp ? d.h('p', { class: 'note test-app' }, TEST_APP_NOTE) : null,
         auto?.reason ? d.h('p', { class: 'note' }, `Not signed automatically under “${auto.label}”: ${autoApproveReasonText(auto.reason)}.`) : null,
         decoded
           ? renderApproval(d, decoded, msg.appName)
@@ -254,6 +261,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         'section',
         { class: 'panel consent' },
         header(msg),
+        msg.testApp ? d.h('p', { class: 'note test-app' }, TEST_APP_NOTE) : null,
         policy
           ? renderConsent(d, { policy, appName: msg.appName, parentOrigin: msg.parentOrigin, expiresAtMs: msg.expiresAtMs, nowMs: now() })
           : d.h('div', {}, d.h('h1', {}, 'Automatic signing'), d.h('p', { class: 'danger' }, 'This app’s automatic-signing rules could not be checked, so they can’t be allowed.')),
@@ -315,6 +323,13 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   };
 }
 
+/** The client and screen coordinates of a pointer event (each only when it is a number). */
+function position(o: Partial<PointerEvent>): Coords {
+  const out: Coords = {};
+  for (const k of ['clientX', 'clientY', 'screenX', 'screenY'] as const) if (typeof o[k] === 'number') out[k] = o[k];
+  return out;
+}
+
 /** The fields of a pointer or keyboard event the guard reads (approve-guard.ts). */
 function guardInput(type: GuardInput['type'], e: Event): GuardInput {
   const o = e as Partial<PointerEvent & KeyboardEvent>;
@@ -325,10 +340,10 @@ function guardInput(type: GuardInput['type'], e: Event): GuardInput {
     case 'pointermove': {
       const movementX = num(o.movementX);
       const movementY = num(o.movementY);
-      return { type, ...(pointerType !== undefined ? { pointerType } : {}), ...(movementX !== undefined ? { movementX } : {}), ...(movementY !== undefined ? { movementY } : {}) };
+      return { type, ...(pointerType !== undefined ? { pointerType } : {}), ...(movementX !== undefined ? { movementX } : {}), ...(movementY !== undefined ? { movementY } : {}), ...position(o) };
     }
     case 'pointerdown':
-      return { type, ...(pointerType !== undefined ? { pointerType } : {}) };
+      return { type, ...(pointerType !== undefined ? { pointerType } : {}), ...position(o) };
     case 'keydown': {
       const key = str(o.key);
       return { type, ...(key !== undefined ? { key } : {}), repeat: o.repeat === true };

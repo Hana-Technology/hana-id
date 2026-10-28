@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { usageDay } from '../src/apps.ts';
 import { ALLOWED_CLAIMS } from '../src/claims.ts';
 import { DEFAULT_GAS_TGAS, TGAS } from '../src/gas.ts';
-import { loginFailure } from '../src/login.ts';
+import { EXPORTS_PER_PATH_HOUR, exportLimiterKey, loginFailure } from '../src/login.ts';
 import { failedExecutor } from '../src/near/tx.ts';
 import { ORIGIN, appHeaders, bytes, call, chain, newSessionKey, seedApp, sessionBody, uid } from './helpers.ts';
 import { AUTH, VAULT, appKey, hanaHeaders, loginBody, mismatchedAppKey, withCombinedCall } from './login-helpers.ts';
@@ -77,6 +77,46 @@ describe('POST /v1/login', () => {
       expect(res.headers.get('access-control-allow-origin')).toBeNull();
     }
     expect(near.sent).toHaveLength(1);
+  });
+
+  it('limits exports (the auth origin) to 3 per hour per user path per app, counted only for a verified token', async () => {
+    expect(EXPORTS_PER_PATH_HOUR).toBe(3);
+    const { app, aud, near } = await setup();
+    const exportLogin = async (claims: Record<string, unknown> = {}, target = app, client = aud) => login(target, await loginBody(target.scope, client, {}, claims), hanaHeaders(target, AUTH));
+    // A refused token costs nothing.
+    const bad = await login(app, await loginBody(app.scope, aud, {}, { nonce: 'A'.repeat(43) }), hanaHeaders(app, AUTH));
+    expect((await body(bad)).code).toBe('nonce_mismatch');
+    for (let i = 0; i < EXPORTS_PER_PATH_HOUR; i++) expect((await exportLogin()).status).toBe(200);
+    const over = await exportLogin();
+    expect([over.status, (await body(over)).code]).toEqual([429, 'rate_limited']);
+    expect(Number(over.headers.get('retry-after'))).toBeGreaterThan(0);
+    expect(near.sent).toHaveLength(EXPORTS_PER_PATH_HOUR);
+    // The vault's own logins aren't exports; another user, and the same user in another app, have their own count.
+    expect((await login(app, await loginBody(app.scope, aud))).status).toBe(200);
+    expect((await exportLogin({ sub: '209384756102938475610' })).status).toBe(200);
+    const other = await seedApp();
+    const otherAud = newAud();
+    withCombinedCall(chain({ [aud]: app.scope, [otherAud]: other.scope }));
+    expect((await exportLogin({}, other, otherAud)).status).toBe(200);
+  });
+
+  it('keys the export limit by app and a hash of the path (no Google sub in the key)', async () => {
+    const path = 's1#google#110248495921238986420#0';
+    const key = await exportLimiterKey('app_1', path);
+    expect(key).toMatch(/^export:app_1:[0-9a-f]{64}$/u);
+    expect(key).not.toContain('110248495921238986420');
+    expect(await exportLimiterKey('app_2', path)).not.toBe(key);
+    expect(await exportLimiterKey('app_1', 's1#google#110248495921238986420#1')).not.toBe(key);
+  });
+
+  it('503 when the export limiter is unavailable: nothing is relayed', async () => {
+    const { app, aud, near } = await setup();
+    vi.spyOn(env.RATE_LIMITER, 'idFromName').mockImplementation(() => {
+      throw new Error('DO down');
+    });
+    const res = await login(app, await loginBody(app.scope, aud), hanaHeaders(app, AUTH));
+    expect(res.status).toBe(503);
+    expect(near.sent).toHaveLength(0);
   });
 
   it('checks x-hana-parent-origin against the app’s origins (and still answers the Hana page in CORS)', async () => {

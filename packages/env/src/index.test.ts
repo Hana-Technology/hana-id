@@ -60,3 +60,18 @@ describe('manifestSchema: Durable Object location', () => {
     for (const bad of ['asia', 'APAC', '', 1]) expect(manifestSchema.safeParse(withLocation(bad)).success).toBe(false);
   });
 });
+
+describe('manifestSchema: rpcFallback', () => {
+  it('is optional, https only, and not rpc itself', () => {
+    const { rpcFallback: _, ...base } = raw();
+    expect(manifestSchema.safeParse(base).success).toBe(true);
+    expect(manifestSchema.parse({ ...base, rpcFallback: 'https://rpc.testnet.example' }).rpcFallback).toBe('https://rpc.testnet.example');
+    const http = manifestSchema.safeParse({ ...base, rpcFallback: 'http://rpc.testnet.example' });
+    expect(http.success).toBe(false);
+    expect(http.error?.issues[0]?.message).toContain('https');
+    expect(manifestSchema.safeParse({ ...base, rpcFallback: 'not a url' }).success).toBe(false);
+    const same = manifestSchema.safeParse({ ...base, rpcFallback: base.rpc });
+    expect(same.success).toBe(false);
+    expect(same.error?.issues[0]?.message).toContain('different endpoint');
+  });
+});

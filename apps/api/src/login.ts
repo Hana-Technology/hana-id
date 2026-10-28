@@ -6,7 +6,8 @@ import { usageDay } from './apps.ts';
 import { appKeyPairs, appKeyProblem } from './bls.ts';
 import { disallowedClaim } from './claims.ts';
 import type { Env } from './env.ts';
-import { TOKEN_EXP_SKEW_MS, appGate, checkClientScope, done, lap, lapRelay, newCtx, reject, settle } from './handlers.ts';
+import { hex, sha256 } from './bytes.ts';
+import { TOKEN_EXP_SKEW_MS, appGate, checkClientScope, done, lap, lapRelay, limiter, newCtx, reject, settle } from './handlers.ts';
 import { readJson } from './http.ts';
 import { JwksUnavailableError, verifyIdToken } from './jwks.ts';
 import { log } from './log.ts';
@@ -18,6 +19,18 @@ import { type Checked, type CreateSessionRequest, MAX_BODY, isError, toCreateSes
 import { forgetSession, sessionKeyInUse } from './views.ts';
 
 export const LOGIN_ENDPOINT = '/v1/login';
+/**
+ * Key exports (the export window's /v1/login, from authOrigin) per user path per app (docs/batch-b-spec.md Q18): each
+ * one is a relayer-paid transaction, so a page that keeps starting exports can't drain the allowance. Counted per
+ * `(app, sha256(path))` once the token is verified, before anything is relayed.
+ */
+export const EXPORTS_PER_PATH_HOUR = 3;
+const HOUR = 3_600_000;
+
+/** The rate-limiter subject of a user's exports in one app: the path is hashed (it carries the Google `sub`). */
+export async function exportLimiterKey(appId: string, path: string): Promise<string> {
+  return `export:${appId}:${hex(await sha256(new TextEncoder().encode(path)))}`;
+}
 /** The contract's panic when the session key already holds a session (a front-run create_session or a replay). */
 export const SESSION_KEY_IN_USE_PANIC = 'Session key already in use';
 
@@ -100,6 +113,17 @@ export async function handleLogin(request: Request, env: Env, requestId: string,
   if (token.nonce === null) return reject(ctx, 400, 'nonce_mismatch', 'The ID token has no nonce');
   const expected = await sessionNonce({ signer: env.SIGNER_ACCOUNT, scopeId: app.scope_id, ...req });
   if (token.nonce !== expected) return reject(ctx, 400, 'nonce_mismatch', 'The ID token nonce does not commit to this session');
+
+  // An export (the auth origin's window): at most EXPORTS_PER_PATH_HOUR per user path per app.
+  if (gate.caller.page === 'auth') {
+    try {
+      const key = await exportLimiterKey(app.id, `${app.scope_id}#${token.provider}#${token.sub}#${req.keyIndex}`);
+      const hit = await limiter(env, key).hit([{ name: 'export:hour', windowMs: HOUR, max: EXPORTS_PER_PATH_HOUR }]);
+      if (!hit.ok) return reject(ctx, 429, 'rate_limited', 'Too many key exports for this account, try again later', { 'retry-after': String(hit.retryAfterS) });
+    } catch {
+      return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
+    }
+  }
 
   // A login uses counter 1: a copy of this request in this isolate waits for this one rather than being relayed
   // beside it (at most one can succeed), and is then refused by session_key_in_use.

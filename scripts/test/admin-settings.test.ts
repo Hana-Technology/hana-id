@@ -67,8 +67,8 @@ const policy = (label = 'Approvals', extra: Record<string, unknown> = {}) => ({
     chains: [
       {
         chainId: 8453,
-        maxValueWei: '0',
-        maxValueWeiPerDay: '0',
+        maxValueWei: '100000',
+        maxValueWeiPerDay: '100000',
         maxFeeWei: '100000',
         contracts: [
           {

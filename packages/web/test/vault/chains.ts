@@ -69,7 +69,7 @@ export const stellarAuthSignedBy = (preimageXdr: string, signedAuthEntry: string
 
 export const EVM_VAULT = '0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD';
 export const EVM_FRIEND = '0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB';
-export const CHAIN = 8453;
+export const CHAIN = 84532;
 
 const word = (hex: string) => hex.replace(/^0x/u, '').toLowerCase().padStart(64, '0');
 export const deposit = (amount: bigint) => `${functionSelector('deposit(uint256)')}${word(amount.toString(16))}`;

@@ -205,8 +205,9 @@ export async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay
  * the server clock (`serverTimeMs`, which the vault corrects its clock with). `own` when the scope has a Google client
  * of its own (the app's `google_web_client_id` when set, which must still be one of the scope's clients; else the
  * first one), else `shared` (the first shared client in force) when the scope allows shared login, else 409.
- * `autoApprovePolicy` is the policy in force now (D1, validated and normalized as the vault page inlines it), or null: an open vault
- * re-reads it, so removing a policy stops auto-approval without a reload.
+ * `autoApprovePolicy` is the policy in force now (D1, validated and normalized as the vault page inlines it), or null, and
+ * `rawSign` the raw-signing setting in force now: an open vault re-reads both (within 10 s of a request), so removing a
+ * policy stops auto-approval, and setting raw signing to 'off' stops raw requests, without a reload.
  */
 export async function handleAppConfig(request: Request, env: Env, requestId: string): Promise<Response> {
   const ctx = newCtx(env, requestId, APP_CONFIG_ENDPOINT, request);
@@ -214,9 +215,12 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
   if (!gate.ok) return gate.response;
   const { app } = gate;
   let autoApprovePolicy: AppSettings['autoApprovePolicy'];
+  let rawSign: AppSettings['rawSign'];
   try {
     const row = await getSettingsRow(env.DB, app.id);
-    autoApprovePolicy = row ? (await effectiveSettings(row, app.id, Date.now())).autoApprovePolicy : null;
+    const settings = row ? await effectiveSettings(row, app.id, Date.now()) : null;
+    autoApprovePolicy = settings?.autoApprovePolicy ?? null;
+    rawSign = settings?.rawSign ?? 'off';
   } catch {
     return reject(ctx, 503, 'config_unavailable', 'App config is unavailable, try again');
   }
@@ -232,7 +236,7 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
       if (shared) google = { clientId: shared[1], mode: 'shared' };
     }
     if (!google) return reject(ctx, 409, 'no_google_client', 'The app has no Google client and shared login is not available');
-    return done(ctx, 200, { name: app.name, scopeId: app.scope_id, signer: env.SIGNER_ACCOUNT, google, serverTimeMs: Date.now(), autoApprovePolicy });
+    return done(ctx, 200, { name: app.name, scopeId: app.scope_id, signer: env.SIGNER_ACCOUNT, google, serverTimeMs: Date.now(), autoApprovePolicy, rawSign });
   } catch {
     return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');
   }

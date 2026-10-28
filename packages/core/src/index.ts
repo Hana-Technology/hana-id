@@ -14,6 +14,7 @@ export * from './derivation.ts';
 export * from './export.ts';
 export * from './id-token.ts';
 export * from './layouts.ts';
+export * from './networks.ts';
 export * from './protocol.ts';
 export * from './relay.ts';
 export * from './session.ts';

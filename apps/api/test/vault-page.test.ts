@@ -64,6 +64,19 @@ describe('GET {vaultOrigin}/vault', () => {
     expect(near.viewCalls).toEqual([]);
   });
 
+  it('adds rpcFallback to connect-src when the env sets it (the vault reads from it when rpc fails)', async () => {
+    const app = await seedApp();
+    const saved = env.NEAR_RPC_FALLBACK;
+    try {
+      env.NEAR_RPC_FALLBACK = 'https://rpc.fallback.test/v1';
+      expect(csp(await vaultPage(app.key))).toBe(`${BASE}; frame-ancestors ${ORIGIN}; connect-src https://api.test https://rpc.test.invalid https://rpc.fallback.test https://www.googleapis.com`);
+      env.NEAR_RPC_FALLBACK = 'not a url';
+      expect((await vaultPage(app.key)).status).toBe(503);
+    } finally {
+      env.NEAR_RPC_FALLBACK = saved;
+    }
+  });
+
   it('sends the full CSP and the other headers', async () => {
     const app = await seedApp();
     const res = await vaultPage(app.key);

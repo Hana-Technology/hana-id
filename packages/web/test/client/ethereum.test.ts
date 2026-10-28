@@ -104,12 +104,44 @@ describe('chains', () => {
   it('an unknown chain gives 4902, and the chain stays', async () => {
     await loggedIn();
     const p = s.client.ethereum;
-    const e = await refused(p.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x1' }] }), 4902);
-    expect(e.data).toEqual({ chainId: '0x1' });
+    // Holesky: a test network (so a test app may use it), but not in evm.chains.
+    const e = await refused(p.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x4268' }] }), 4902);
+    expect(e.data).toEqual({ chainId: '0x4268' });
     expect(await p.request({ method: 'eth_chainId' })).toBe('0xaa36a7');
-    await refused(p.request({ method: 'wallet_addEthereumChain', params: [{ chainId: '0x1' }] }), 4902);
+    await refused(p.request({ method: 'wallet_addEthereumChain', params: [{ chainId: '0x4268' }] }), 4902);
     await expect(p.request({ method: 'wallet_addEthereumChain', params: [{ chainId: '0xaa36a7' }] })).resolves.toBeNull();
     await refused(p.request({ method: 'wallet_switchEthereumChain', params: [{}] }), -32602);
+  });
+
+  it('a test app (pk_test_) refuses mainnet chains: switching, adding and sending give 4100 mainnet_not_allowed (D39)', async () => {
+    const rpc = rpcFetch(CHAIN);
+    s = setup({ config: { evm: { chains: [{ id: 1, rpcUrl: 'https://mainnet.rpc.test' }, ...EVM_CONFIG.chains], defaultChainId: 1 } }, fetch: rpc });
+    await s.vault.connect(LOGGED_IN);
+    const p = s.client.ethereum;
+    for (const method of ['wallet_switchEthereumChain', 'wallet_addEthereumChain']) {
+      const e = await refused(p.request({ method, params: [{ chainId: '0x1' }] }), 4100);
+      expect(e.message).toMatch(/test networks/u);
+      expect(e.data).toEqual({ reason: 'mainnet_not_allowed', chainId: '0x1' });
+    }
+    // A chain nobody listed counts as a mainnet too, configured or not.
+    expect((await refused(p.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x2105' }] }), 4100)).data).toMatchObject({ reason: 'mainnet_not_allowed' });
+    // The default chain is mainnet here: sending and signing are refused before anything is filled or asked.
+    const calls = rpc.calls.length;
+    for (const method of ['eth_sendTransaction', 'eth_signTransaction']) {
+      const e = await refused(p.request({ method, params: [{ from: EVM, to: TO, value: '0x1' }] }), 4100);
+      expect(e.data).toEqual({ reason: 'mainnet_not_allowed', chainId: '0x1' });
+    }
+    expect(rpc.calls.length).toBe(calls);
+    expect(s.vault.requests.filter((r) => r.method === 'eth_signTransaction')).toHaveLength(0);
+    // A test network still works.
+    await expect(p.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0xaa36a7' }] })).resolves.toBeNull();
+  });
+
+  it('a live app (pk_live_) may switch to mainnet chains', async () => {
+    s = setup({ config: { publishableKey: 'pk_live_1111111111111111111111', evm: { chains: [{ id: 1, rpcUrl: 'https://mainnet.rpc.test' }, ...EVM_CONFIG.chains], defaultChainId: SEPOLIA } } });
+    await s.vault.connect(LOGGED_IN);
+    await expect(s.client.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x1' }] })).resolves.toBeNull();
+    expect(await s.client.ethereum.request({ method: 'eth_chainId' })).toBe('0x1');
   });
 
   it('without evm config, chain methods give 4902', async () => {

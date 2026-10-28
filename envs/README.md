@@ -19,6 +19,12 @@ per-app and owner-action limiters), as a Cloudflare location hint (`apac`, `weur
 lives wherever its first request happened to arrive. Pick the region of most users (sandbox-dev: `apac`, next to its
 D1 database). Per-IP limiters always stay near their client. Changing it creates new objects in the new region.
 
+`rpcFallback` (optional): a second NEAR JSON-RPC endpoint, `https` only and not `rpc` itself, ideally from another
+provider. The vault and the export window read from it (session re-syncs, the login's registry check, transaction
+polling) only when `rpc` errors or doesn't answer within 8 s; each read's answer comes from one endpoint. It is built
+into the pages and joins `rpc` in their CSP (`NEAR_RPC_FALLBACK` in the generated Worker configs), so a change needs a
+page build and a redeploy. sandbox-dev sets none.
+
 `vaultOrigin` and `authOrigin` (batch B; optional in the schema until every deployed env has them): the origins of
 Hana's key vault page and of its login, approval and export pages. Set both or neither. Each is a bare origin
 (`https://host[:port]`, no path or trailing slash); `https` is required, and loopback (`localhost`, `*.localhost`,

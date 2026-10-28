@@ -1,7 +1,7 @@
 # API reference — every endpoint the `apps/api` Worker serves today
 
-Last verified against code: 2026-10-28 (`feat/batch-b` after merging the batch B fix branches `fix/b-web`,
-`fix/b-core-policy`, `fix/b-clients` and `fix/b-api`)
+Last verified against code: 2026-10-28 (`feat/b-defaults`: `feat/batch-b` with the batch B fix branches and the
+defaults the user approved on 2026-10-28)
 
 Current state, not a spec. Where the specs (`docs/batch-*.md`) and this file differ, this file follows the code.
 Contract methods and byte layouts: `docs/contract-interface.md`. How to run it: `docs/operations.md`.
@@ -99,6 +99,7 @@ is the IPv4 address or the IPv6 /64 (`src/ip.ts`). The day window is the UTC day
 | Endpoint | Per IP | Per app | Other |
 |---|---|---|---|
 | relay kind: `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke`, `/v1/login` (one shared window) | plan `per_ip_minute` (window `<appId>:minute`) | plan `per_minute` and `per_day` | IP checked first, so its rejects don't spend the app's quota |
+| key exports: `/v1/login` from `AUTH_ORIGIN` | — | — | 3 per hour per user path per app (subject `export:<appId>:<hex sha256(path)>`, window `export:hour`), counted once the token and nonce are verified, before anything is relayed (Q18) |
 | `GET /v1/app` | plan `per_ip_minute` (own window `<appId>:config:minute`) | — | never touches the relay quota |
 | vault endpoints | 60/min (`<appId>:vault:minute`) | 10 × plan `per_minute` (`vault:minute`) | share actions: 10/min per share (`share:<hex>`) |
 | login relay | writes 10/min, reads 120/min | — | not per app |
@@ -122,12 +123,15 @@ Headers: `x-hana-key`; from a Hana page also `x-hana-parent-origin`. Gate kind `
 ```json
 { "name": "string", "scopeId": "string", "signer": "string",
   "google": { "clientId": "string", "mode": "own" | "shared" },
-  "serverTimeMs": 0, "autoApprovePolicy": {} | null, "requestId": "string" }
+  "serverTimeMs": 0, "autoApprovePolicy": {} | null, "rawSign": "off" | "approval", "requestId": "string" }
 ```
 
-`name`, `serverTimeMs` and `autoApprovePolicy` are new in B. `autoApprovePolicy` is the policy in force now (read from
-D1 on every request, validated and normalized as the vault page inlines it), or null; an open vault re-reads it before
-auto-signing, so a removal takes effect without a reload (`docs/security.md` "Auto-approve policies"). `google`: `own` with the app's `google_web_client_id` if set (it must still be
+`name`, `serverTimeMs`, `autoApprovePolicy` and `rawSign` are new in B. `autoApprovePolicy` is the policy in force now
+(read from D1 on every request, validated and normalized as the vault page inlines it), or null; an open vault
+re-reads it before auto-signing, so a removal takes effect without a reload (`docs/security.md` "Auto-approve
+policies"). `rawSign` is the app's raw-signing setting in force now (`'approval'` only once a pending enable has reached
+`raw_sign_effective_at`; `'off'` when the settings row is missing); an open vault re-reads it, on the same 10 s bound,
+before every raw request and refuses once it says `'off'`. `google`: `own` with the app's `google_web_client_id` if set (it must still be
 a client of the scope), else the scope's first Google client; else `shared` with the first shared client in force
 when the scope has `allow_shared`.
 
@@ -205,7 +209,10 @@ payload), `pk1`, `pk2`. Any other field: `400 bad_request`.
 Checks, in order: gate (relay kind) → shape → token (as `/v1/sessions`) → claim allow-list, **always on**
 (`400 token_has_pii` + `data: {claim}`) → nonce → in-isolate hold on (key, counter 1) → scope and
 `session_key_in_use` side by side → signature over counter 1 (`401 invalid_signature`) → pk1/pk2 each one compressed,
-non-identity point of 48 / 96 bytes (`400 invalid_app_key`) → pairing only with `BLS_PRECHECK = "1"`.
+non-identity point of 48 / 96 bytes (`400 invalid_app_key`) → pairing only with `BLS_PRECHECK = "1"`. From
+`AUTH_ORIGIN` (a key export) the export limit comes right after the nonce check: `429 rate_limited` with
+`retry-after` once 3 exports of that user path in that app were counted this hour, `503 rate_limiter_unavailable` if
+the limiter can't be reached; nothing is relayed in either case.
 
 → `200`:
 
@@ -258,12 +265,12 @@ lowercase http(s) origins, loopback ones only for `pk_test_` in dev envs, sorted
 
 Headers: `content-security-policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;
 font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors <origins | 'none'>; connect-src <API_URL origin>
-<NEAR_RPC origin> https://www.googleapis.com`, `cross-origin-resource-policy: cross-origin`, `cache-control: no-store`,
+<NEAR_RPC origin> [<NEAR_RPC_FALLBACK origin>] https://www.googleapis.com`, `cross-origin-resource-policy: cross-origin`, `cache-control: no-store`,
 `referrer-policy: no-referrer`, `x-content-type-options: nosniff`.
 
 Errors are an empty HTML page with `frame-ancestors 'none'` and no config: `403` (`unknown_app`, `app_suspended`,
 `scope_conflict`, `too_many_origins` > 20), `503` (`config_unavailable`, `misconfigured` when `API_URL` or `NEAR_RPC`
-is missing or not a URL). The code is in the log line, not the body.
+is missing or not a URL, or `NEAR_RPC_FALLBACK` is set but not a URL). The code is in the log line, not the body.
 
 ### Page Workers (`src/pages/`) · B
 
@@ -274,16 +281,21 @@ One thin Worker per Hana origin in every env (`workers.dev` in dev envs, a Custo
 
 | Origin | Path | Response |
 |---|---|---|
-| vault | `/vault` | forwarded unchanged to the API Worker (service binding `API`); `503` page with no config if it is unreachable |
+| vault | `/vault` | forwarded to the API Worker (service binding `API`), unchanged but for a `Set-Cookie` header, which is dropped; `503` page with no config if it is unreachable |
 | auth | `/login`, `/login/callback` | `<path>.html` with `frame-ancestors 'none'; connect-src <API_URL>` |
 | auth | `/approve` | `approve.html` with `frame-ancestors 'none'` |
-| auth | `/export` | `export.html` with `frame-ancestors 'none'; connect-src <API_URL> <NEAR_RPC> https://www.googleapis.com` |
+| auth | `/export` | `export.html` with `frame-ancestors 'none'; connect-src <API_URL> <NEAR_RPC> [<NEAR_RPC_FALLBACK>] https://www.googleapis.com` |
 | both | any other path | a static asset, never HTML (`*.html` and `text/html` → `404`) |
 
 Pages carry the base policy plus their directives, `no-store`, `no-referrer`, `nosniff`, no COOP; a missing page file
 is a `503` page. Every asset carries `content-security-policy: default-src 'none'; frame-ancestors 'none'; sandbox`
 (an SVG or XML file opened as a document runs, loads and frames nothing; not applied by browsers to the scripts and
 styles the pages load), `nosniff`, `no-referrer` and `cross-origin-resource-policy: same-origin`.
+
+**No cookies.** No response of the API Worker or of either page Worker sets a cookie; the page Workers drop a
+`Set-Cookie` header from what their bindings answer (`withoutCookies`, `src/pages/host.ts`). Tests:
+`apps/api/test/no-cookies.test.ts` (every endpoint and page), `packages/web/test/no-cookies.test.ts` (no source sets
+one) and the Playwright suite (every Hana response of every flow).
 
 ### Vault endpoints · B
 
@@ -480,6 +492,7 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 | Binding | Kind | Source | Notes |
 |---|---|---|---|
 | `NEAR_RPC` | var | `rpc` | |
+| `NEAR_RPC_FALLBACK` | var, optional | `rpcFallback` | only written when set; the vault page's and the export page's `connect-src` (the API itself reads only `NEAR_RPC`) |
 | `SIGNER_ACCOUNT` | var | `signer` | only receiver ever called |
 | `RELAYER_ACCOUNT` | var | `relayer` | pays gas |
 | `ENV_NAME` | var | `name` | `local*` / `sandbox*` = dev env |

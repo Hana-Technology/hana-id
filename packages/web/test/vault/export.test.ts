@@ -2,8 +2,8 @@
 // its launcher and hands it public values; the export window logs in again itself. Plus the idle-slide touch
 // (docs/batch-b-spec.md "Unlock", "Idle slide while active").
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { evmTx } from './chains.ts';
-import { Browser, ENV, FakeWindow, type Google, HOUR, PARTNER, SCOPE, type Tab, answer, google, login, makeConfig, openApproval, readyTab, sleepReal } from './harness.ts';
+import { CHAIN, evmTx } from './chains.ts';
+import { Browser, ENV, FakeWindow, type Google, HOUR, PARTNER, SCOPE, type Tab, answer, google, login, makeConfig, openApproval, readyTab, sleepReal, waitLauncher } from './harness.ts';
 import { consentDigest } from '@hana-id/core';
 import { functionSelector } from '@hana-id/core/decode';
 
@@ -26,10 +26,8 @@ async function session(o: Parameters<typeof readyTab>[1] = {}, browser = new Bro
   return { t, addresses: (reply.result as { addresses: { stellar: string; evm: string } }).addresses };
 }
 
-async function waitLabel(t: Tab, label: string | null): Promise<void> {
-  for (let i = 0; i < 200 && t.launcher.label !== label; i++) await sleepReal(5);
-  expect(t.launcher.label).toBe(label);
-}
+/** Event-driven (the launcher view and its `ui` event on the port), so a loaded machine only slows it down. */
+const waitLabel = (t: Tab, label: string | null): Promise<void> => waitLauncher(t, label);
 
 describe('export (vault side)', () => {
   it('shows the launcher; its click opens a top-level /export window with a random name; the hello gets public values only', async () => {
@@ -170,7 +168,7 @@ describe('touch (idle slide)', () => {
       label: 'Deposits',
       maxConsentMs: 6 * HOUR,
       limits: { perDayCount: 5 },
-      evm: { chains: [{ chainId: 8453, maxValueWei: '100000', maxValueWeiPerDay: '500000', maxFeeWei: '100000', contracts: [{ address: '0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD', name: 'Vault', selectors: [{ selector: functionSelector('deposit(uint256)'), signature: 'deposit(uint256)' }] }] }] },
+      evm: { chains: [{ chainId: CHAIN, maxValueWei: '100000', maxValueWeiPerDay: '500000', maxFeeWei: '100000', contracts: [{ address: '0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD', name: 'Vault', selectors: [{ selector: functionSelector('deposit(uint256)'), signature: 'deposit(uint256)' }] }] }] },
     };
     const s2 = await session({ config: makeConfig({ settings: { autoApprovePolicy: policy } }) });
     const grant = s2.t.request('hana_requestAutoApprove');

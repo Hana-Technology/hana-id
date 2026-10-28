@@ -201,6 +201,14 @@ describe('auth origin Worker', () => {
     }
   });
 
+  it('adds rpcFallback to the export page’s connect-src when set; an unusable value is a 503', async () => {
+    const res = await call(authWorker, authEnv({ NEAR_RPC_FALLBACK: 'https://rpc.fallback.test/v1' }), `${AUTH}/export`);
+    expect(csp(res)).toBe(`${BASE}; frame-ancestors 'none'; connect-src https://api.test https://rpc.test https://rpc.fallback.test https://www.googleapis.com`);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect((await call(authWorker, authEnv({ NEAR_RPC_FALLBACK: 'not a url' }), `${AUTH}/export`)).status).toBe(503);
+    expect(errors).toHaveBeenCalledTimes(1);
+  });
+
   it('503 when a page file is missing from the build, or the CSP origins are misconfigured', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const missing = await call(authWorker, authEnv({ ASSETS: assets({}) }), `${AUTH}/approve`);

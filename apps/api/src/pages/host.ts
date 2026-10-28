@@ -29,14 +29,16 @@ export interface VaultHostEnv {
 export interface AuthHostEnv {
   /** Manifest `authOrigin`: the only origin this Worker answers on. */
   AUTH_ORIGIN: string;
-  /** Manifest `apiUrl` and `rpc`, for the pages' CSP `connect-src`. */
+  /** Manifest `apiUrl` and `rpc` (and `rpcFallback` when set), for the pages' CSP `connect-src`. */
   API_URL: string;
   NEAR_RPC: string;
+  NEAR_RPC_FALLBACK?: string;
   /** Static assets: packages/web/dist/pages/<env>/auth. */
   ASSETS: Fetcher;
 }
 
 /** Each auth page's directives on top of the base policy (docs/batch-b-spec.md "Origins and pages"). */
+/** `origins.rpc` is the NEAR RPC origin, or the primary and fallback origins separated by a space. */
 export function authPageDirectives(pathname: string, origins: { api: string; rpc: string }): string[] | null {
   switch (pathname) {
     case '/login':
@@ -88,6 +90,17 @@ export const ASSET_CSP = "default-src 'none'; frame-ancestors 'none'; sandbox";
  * A static asset (scripts, styles, images) as the assets binding has it, plus ASSET_CSP, `nosniff`, `no-referrer`
  * and a same-origin CORP (only the origin's own pages load them). HTML is refused: pages exist only on their routes.
  */
+/**
+ * No Hana origin ever sets a cookie: whatever a binding answers (the assets binding, the API Worker behind /vault),
+ * a `Set-Cookie` header is dropped before the response leaves the page Worker.
+ */
+export function withoutCookies(res: Response): Response {
+  if (!res.headers.has('set-cookie')) return res;
+  const headers = new Headers(res.headers);
+  headers.delete('set-cookie');
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
 async function staticAsset(request: Request, assets: Fetcher, head: boolean): Promise<Response> {
   if (new URL(request.url).pathname.toLowerCase().endsWith('.html')) return notFound(head);
   const res = await assets.fetch(request);
@@ -102,6 +115,7 @@ async function staticAsset(request: Request, assets: Fetcher, head: boolean): Pr
   }
   if (head) await res.body?.cancel();
   const headers = new Headers(res.headers);
+  headers.delete('set-cookie');
   headers.set('content-security-policy', ASSET_CSP);
   headers.set('x-content-type-options', 'nosniff');
   headers.set('referrer-policy', 'no-referrer');
@@ -123,7 +137,7 @@ export async function handleVaultHost(request: Request, env: VaultHostEnv): Prom
   const head = request.method === 'HEAD';
   if (new URL(request.url).pathname === VAULT_PAGE_PATH) {
     try {
-      return await env.API.fetch(request);
+      return withoutCookies(await env.API.fetch(request));
     } catch {
       log({ event: 'vault_host', endpoint: VAULT_PAGE_PATH, outcome: 'error', status: 503, code: 'api_unavailable' }, 'error');
       return unavailable(head);
@@ -139,7 +153,10 @@ export async function handleAuthHost(request: Request, env: AuthHostEnv): Promis
   const url = new URL(request.url);
   if (!(AUTH_PAGE_PATHS as readonly string[]).includes(url.pathname)) return staticAsset(request, env.ASSETS, head);
   const api = originOf(env.API_URL);
-  const rpc = originOf(env.NEAR_RPC);
+  const primary = originOf(env.NEAR_RPC);
+  const fallback = env.NEAR_RPC_FALLBACK ? originOf(env.NEAR_RPC_FALLBACK) : null;
+  // The export window falls back to rpcFallback when the primary fails (Q9): both are in its connect-src.
+  const rpc = primary && (!env.NEAR_RPC_FALLBACK || fallback) ? (fallback && fallback !== primary ? `${primary} ${fallback}` : primary) : null;
   const directives = api && rpc ? authPageDirectives(url.pathname, { api, rpc }) : null;
   if (!directives) {
     log({ event: 'auth_page', endpoint: url.pathname, outcome: 'error', status: 503, code: 'misconfigured' }, 'error');

@@ -29,6 +29,8 @@ export interface VaultRunRecord {
   at: string;
   env: string;
   signer: string;
+  /** The API the vault called: the env manifest's apiUrl, which the vault is built with. Absent in older runs. */
+  apiUrl?: string;
   /** First characters of the publishable key (public). */
   pkPrefix: string;
   /** From GET /v1/app on this page, when it answered. */

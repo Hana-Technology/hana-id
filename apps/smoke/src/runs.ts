@@ -21,6 +21,8 @@ export interface RunRecord {
   at: string;
   env: string;
   signer: string;
+  /** The API the run called (VITE_HANA_API_URL when set). Absent in runs logged before it was recorded. */
+  apiUrl?: string;
   /** First characters of the publishable key (public). */
   pkPrefix: string;
   scopeId: string;

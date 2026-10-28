@@ -27,6 +27,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 const provider = (p = port) => createSodaxStellarProvider(stellarHana(p), CONFIG);
@@ -219,6 +220,7 @@ describe('waitForTransactionReceipt', () => {
   it('gives up after 60 s with receipt_timeout, and not before', async () => {
     vi.useFakeTimers({ now: 1_000_000 });
     net.get.set(url, () => ({ status: 404 }));
+    const timeouts = vi.spyOn(AbortSignal, 'timeout');
     let settled = false;
     const p = provider()
       .waitForTransactionReceipt(HASH)
@@ -233,6 +235,10 @@ describe('waitForTransactionReceipt', () => {
     // Every 2 s from 0 to 60 s inclusive.
     expect(net.calls).toHaveLength(STELLAR_RECEIPT_TIMEOUT_MS / STELLAR_RECEIPT_POLL_MS + 1);
     expect(net.calls.at(-1)!.at - 1_000_000).toBe(STELLAR_RECEIPT_TIMEOUT_MS);
+    // The poll at the deadline still gets a poll interval to answer in (not a ~0 ms abort), and so does every other.
+    expect(timeouts.mock.calls).toHaveLength(net.calls.length);
+    expect(timeouts.mock.calls.at(-1)?.[0]).toBe(STELLAR_RECEIPT_POLL_MS);
+    expect(Math.min(...timeouts.mock.calls.map((c) => c[0]))).toBeGreaterThanOrEqual(STELLAR_RECEIPT_POLL_MS);
   });
 
   it('a status that will not change (400) fails at once; so does a body for another transaction', async () => {

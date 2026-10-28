@@ -47,11 +47,18 @@ function chain(url: string, hash: string = HASH) {
   });
 }
 
+/** The receipt RPC (Base's): answers eth_chainId with Base's id, plus `answers`. */
+function receipts(answers: Record<string, unknown> = {}, url = RECEIPTS, chainId = '0x2105') {
+  net.rpc.set(url, { eth_chainId: chainId, ...answers });
+}
+
 beforeEach(() => {
   net = new FakeNetwork();
   vi.stubGlobal('fetch', net.fetch);
   chain(BASE_RPC);
   chain(ARB_RPC, `0x${'a1'.repeat(32)}`);
+  receipts();
+  receipts({}, 'https://arb.receipts.test', '0xa4b1');
   signed = [];
   port = new FakePort({
     eth_accounts: () => [EVM],
@@ -64,6 +71,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 const setup = () => {
@@ -131,8 +139,46 @@ describe('sendTransaction', () => {
       { tx: { type: '0x2', from: EVM, chainId: '0x2105', nonce: '0x3', gas: '0xb411', to: USDC, value: '0x0', data: APPROVE, maxFeePerGas: '0xd09dc300', maxPriorityFeePerGas: '0x59682f00' } },
     ]);
     expect(net.rpcCalls(BASE_RPC, 'eth_sendRawTransaction').map((c) => c.params)).toEqual([['0x02f801']]);
-    // Filling and broadcasting use createHana's RPC for the chain; the receipt RPC isn't touched.
-    expect(net.calls.every((c) => c.url === BASE_RPC)).toBe(true);
+    // Filling and broadcasting use createHana's RPC for the chain. The receipt RPC is only asked its chain id, first.
+    expect(net.calls[0]).toMatchObject({ url: RECEIPTS, rpc: 'eth_chainId' });
+    expect(net.calls.filter((c) => c.url !== BASE_RPC).map((c) => [c.url, c.rpc])).toEqual([[RECEIPTS, 'eth_chainId']]);
+  });
+
+  it("refuses a receipt rpcUrl on another chain with 4902 before anything is signed, and keeps refusing", async () => {
+    const { hana } = setup();
+    receipts({}, 'https://sepolia.test', '0xaa36a7');
+    const base = createSodaxEvmProvider(hana, { chainId: BASE, rpcUrl: 'https://sepolia.test' });
+    for (let i = 0; i < 2; i++) {
+      expect(await rejection(base.sendTransaction({ from: EVM, to: USDC, value: 0n, data: APPROVE }))).toMatchObject({
+        code: 4902,
+        data: { reason: 'receipt_rpc_wrong_chain', chainId: '0x2105', rpcChainId: '0xaa36a7' },
+      });
+    }
+    // A config error is not retried: one eth_chainId, and nothing switched, filled, signed or broadcast.
+    expect(net.calls.map((c) => [c.url, c.rpc])).toEqual([['https://sepolia.test', 'eth_chainId']]);
+    expect(port.calls).toEqual([]);
+    expect(signed).toEqual([]);
+    expect(hana.ethereum.chainId).toBe('0xa4b1');
+  });
+
+  it('an unreachable receipt RPC refuses the send (nothing signed), and the next send checks again', async () => {
+    const { base } = setup();
+    receipts({
+      eth_chainId: () => {
+        throw { code: -32005, message: 'rate limited' };
+      },
+    });
+    expect(await rejection(base.sendTransaction({ from: EVM, to: USDC, value: 0n, data: APPROVE }))).toMatchObject({
+      code: -32603,
+      data: { reason: 'receipt_rpc_unreachable', chainId: '0x2105' },
+    });
+    expect(signed).toEqual([]);
+    expect(net.rpcCalls(BASE_RPC)).toEqual([]);
+    receipts();
+    await expect(base.sendTransaction({ from: EVM, to: USDC, value: 0n, data: APPROVE })).resolves.toBe(HASH);
+    await base.sendTransaction({ from: EVM, to: SPOKE, value: 0n, data: DEPOSIT });
+    // Checked once it answered, then cached.
+    expect(net.rpcCalls(RECEIPTS, 'eth_chainId')).toHaveLength(2);
   });
 
   it('passes a native value as a 0x quantity, and accepts `from` in any case', async () => {
@@ -198,8 +244,10 @@ describe('sendTransaction', () => {
 
   it('a partner page switching chains while the transaction is filled gets a refusal, never a send on another chain', async () => {
     const { hana, base } = setup();
+    const adapterSwitched = new Promise<void>((resolve) => hana.ethereum.on('chainChanged', (c) => c === '0x2105' && resolve()));
     const p = base.sendTransaction({ from: EVM, to: USDC, value: 0n, data: APPROVE });
-    // Let the adapter's switch land, then switch away while hana.ethereum fills from the RPC.
+    // Let the adapter's switch land (after its receipt-RPC check), then switch away while hana.ethereum fills.
+    await adapterSwitched;
     await Promise.resolve();
     await Promise.resolve();
     await hana.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0xa4b1' }] });
@@ -244,7 +292,7 @@ describe('waitForTransactionReceipt', () => {
     vi.useFakeTimers({ now: 5_000_000 });
     const { base } = setup();
     let n = 0;
-    net.rpc.set(RECEIPTS, { eth_getTransactionReceipt: () => (++n < 3 ? null : rpcReceipt()) });
+    receipts({ eth_getTransactionReceipt: () => (++n < 3 ? null : rpcReceipt()) });
     const p = base.waitForTransactionReceipt(HASH);
     await vi.advanceTimersByTimeAsync(2 * EVM_RECEIPT_POLL_MS);
     const r = await p;
@@ -260,24 +308,52 @@ describe('waitForTransactionReceipt', () => {
     });
     // Logs keep the RPC's hex, as EvmRawLog declares.
     expect(r.logs[0]).toEqual(rpcReceipt().logs[0]);
-    expect(net.rpcCalls(RECEIPTS).map((c) => [c.rpc, c.params, c.at - 5_000_000])).toEqual([0, 2000, 4000].map((t) => ['eth_getTransactionReceipt', [HASH], t]));
+    expect(net.rpcCalls(RECEIPTS, 'eth_getTransactionReceipt').map((c) => [c.rpc, c.params, c.at - 5_000_000])).toEqual([0, 2000, 4000].map((t) => ['eth_getTransactionReceipt', [HASH], t]));
+    // The chain check runs once, before the first poll.
+    expect(net.rpcCalls(RECEIPTS).map((c) => c.rpc)).toEqual(['eth_chainId', ...Array(3).fill('eth_getTransactionReceipt')]);
+  });
+
+  it('a receipt rpcUrl on another chain fails at once with 4902, without polling', async () => {
+    const { hana } = setup();
+    receipts({ eth_getTransactionReceipt: null }, 'https://testnet.base.test', '0x14a34');
+    const base = createSodaxEvmProvider(hana, { chainId: BASE, rpcUrl: 'https://testnet.base.test' });
+    expect(await rejection(base.waitForTransactionReceipt(HASH))).toMatchObject({ code: 4902, data: { reason: 'receipt_rpc_wrong_chain', rpcChainId: '0x14a34' } });
+    expect(net.rpcCalls('https://testnet.base.test', 'eth_getTransactionReceipt')).toEqual([]);
+  });
+
+  it('a fault on the chain check is retried like a poll fault', async () => {
+    vi.useFakeTimers();
+    const { base } = setup();
+    let n = 0;
+    receipts({
+      eth_chainId: () => {
+        if (++n === 1) throw { code: -32000, message: 'busy' };
+        return '0x2105';
+      },
+      eth_getTransactionReceipt: rpcReceipt(),
+    });
+    const p = base.waitForTransactionReceipt(HASH);
+    await vi.advanceTimersByTimeAsync(EVM_RECEIPT_POLL_MS);
+    await expect(p).resolves.toMatchObject({ status: 'success' });
+    expect(net.rpcCalls(RECEIPTS).map((c) => c.rpc)).toEqual(['eth_chainId', 'eth_chainId', 'eth_getTransactionReceipt']);
   });
 
   it('maps a reverted status and the legacy type, stringifies blob fields, and keeps a contract address', async () => {
     const { base } = setup();
     const created = '0x00000000000000000000000000000000000000cc';
-    net.rpc.set(RECEIPTS, { eth_getTransactionReceipt: rpcReceipt({ status: '0x0', type: '0x0', to: null, contractAddress: created, blobGasUsed: '0x20000', blobGasPrice: '0x1' }) });
+    receipts({ eth_getTransactionReceipt: rpcReceipt({ status: '0x0', type: '0x0', to: null, contractAddress: created, blobGasUsed: '0x20000', blobGasPrice: '0x1' }) });
     expect(await base.waitForTransactionReceipt(HASH)).toMatchObject({ status: 'reverted', type: 'legacy', to: null, contractAddress: created, blobGasUsed: '131072', blobGasPrice: '1' });
   });
 
   it('retries RPC faults, and gives up after 180 s with receipt_timeout (not before)', async () => {
     vi.useFakeTimers({ now: 5_000_000 });
     const { base } = setup();
-    net.rpc.set(RECEIPTS, {
+    receipts({
       eth_getTransactionReceipt: () => {
         throw { code: -32005, message: 'rate limited' };
       },
     });
+    const timeouts = vi.spyOn(AbortSignal, 'timeout');
     let settled = false;
     const p = base.waitForTransactionReceipt(HASH).finally(() => {
       settled = true;
@@ -287,14 +363,19 @@ describe('waitForTransactionReceipt', () => {
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     expect(await e).toMatchObject({ code: -32603, data: { reason: 'receipt_timeout', hash: HASH, chainId: '0x2105', lastError: expect.stringMatching(/rate limited/u) } });
-    expect(net.rpcCalls(RECEIPTS)).toHaveLength(EVM_RECEIPT_TIMEOUT_MS / EVM_RECEIPT_POLL_MS + 1);
+    const polls = net.rpcCalls(RECEIPTS, 'eth_getTransactionReceipt');
+    expect(polls).toHaveLength(EVM_RECEIPT_TIMEOUT_MS / EVM_RECEIPT_POLL_MS + 1);
+    expect(polls.at(-1)!.at - 5_000_000).toBe(EVM_RECEIPT_TIMEOUT_MS);
+    // Every request, the last one at the deadline included, gets at least a poll interval (never a ~0 ms abort).
+    expect(timeouts.mock.calls.at(-1)?.[0]).toBe(EVM_RECEIPT_POLL_MS);
+    expect(Math.min(...timeouts.mock.calls.map((c) => c[0]))).toBeGreaterThanOrEqual(EVM_RECEIPT_POLL_MS);
   });
 
   it('a transient fault then the receipt resolves', async () => {
     vi.useFakeTimers();
     const { base } = setup();
     let n = 0;
-    net.rpc.set(RECEIPTS, {
+    receipts({
       eth_getTransactionReceipt: () => {
         if (++n === 1) throw { code: -32000, message: 'header not found' };
         return rpcReceipt();
@@ -305,21 +386,58 @@ describe('waitForTransactionReceipt', () => {
     await expect(p).resolves.toMatchObject({ status: 'success' });
   });
 
-  it('a receipt for another transaction or with malformed fields is refused', async () => {
+  it('is lenient where viem is: a null type, an unknown status, leading zeros, missing optional fields', async () => {
     const { base } = setup();
-    for (const over of [
-      { transactionHash: `0x${'00'.repeat(32)}` },
-      { blockNumber: 291 },
-      { blockNumber: '0x0123' },
-      { gasUsed: undefined },
-      { status: '0x2' },
-      { logs: [{ address: 'x' }] },
-      { logs: null },
-      { from: '0x12' },
-    ]) {
-      net.rpc.set(RECEIPTS, { eth_getTransactionReceipt: rpcReceipt(over) });
-      expect((await rejection(base.waitForTransactionReceipt(HASH))).message).toMatch(/malformed receipt/u);
+    const cases: [Record<string, unknown>, Record<string, unknown>][] = [
+      [{ type: null }, { type: null, status: 'success' }],
+      [{ type: '0x02' }, { type: 'eip1559' }],
+      [{ type: '0x7e' }, { type: '0x7e' }],
+      [{ status: null }, { status: null }],
+      [{ status: '0x2' }, { status: '0x2' }],
+      [{ blockNumber: '0x0123', gasUsed: '0x00b411', transactionIndex: null }, { blockNumber: '291', gasUsed: '46097', transactionIndex: null }],
+      [{ blockNumber: 291, gasUsed: 46097 }, { blockNumber: '291', gasUsed: '46097' }],
+      [{ logsBloom: undefined, from: undefined, effectiveGasPrice: undefined }, { blockNumber: '291' }],
+      [{ logs: null }, { logs: null }],
+    ];
+    for (const [over, expected] of cases) {
+      receipts({ eth_getTransactionReceipt: rpcReceipt(over) });
+      const r = (await base.waitForTransactionReceipt(HASH)) as unknown as Record<string, unknown>;
+      expect(r).toMatchObject(expected);
+      for (const [k, v] of Object.entries(over)) if (v === undefined) expect(r).not.toHaveProperty(k);
     }
+    // A log keeps the node's fields as given; absent block fields are null.
+    receipts({ eth_getTransactionReceipt: rpcReceipt({ logs: [{ address: USDC, topics: [TOPIC], data: '0x' }] }) });
+    expect((await base.waitForTransactionReceipt(HASH)).logs).toEqual([
+      { address: USDC, topics: [TOPIC], data: '0x', blockHash: null, blockNumber: null, logIndex: null, transactionHash: null, transactionIndex: null, removed: false },
+    ]);
+  });
+
+  it('a malformed receipt (another hash, no block, a garbled field) is polled again, not reported as a failure', async () => {
+    vi.useFakeTimers();
+    const { base } = setup();
+    const bad = [
+      { transactionHash: `0x${'00'.repeat(32)}` },
+      { blockHash: null },
+      { blockNumber: undefined },
+      { blockNumber: 291.5 },
+      { gasUsed: 'lots' },
+      { logs: [null] },
+    ];
+    let n = 0;
+    receipts({ eth_getTransactionReceipt: () => (n < bad.length ? rpcReceipt(bad[n++]) : rpcReceipt()) });
+    const p = base.waitForTransactionReceipt(HASH);
+    await vi.advanceTimersByTimeAsync(bad.length * EVM_RECEIPT_POLL_MS);
+    await expect(p).resolves.toMatchObject({ transactionHash: HASH, status: 'success', blockNumber: '291' });
+    expect(net.rpcCalls(RECEIPTS, 'eth_getTransactionReceipt')).toHaveLength(bad.length + 1);
+  });
+
+  it('a receipt that stays malformed ends in receipt_timeout naming the fault', async () => {
+    vi.useFakeTimers();
+    const { base } = setup();
+    receipts({ eth_getTransactionReceipt: rpcReceipt({ blockHash: '0x12' }) });
+    const e = rejection(base.waitForTransactionReceipt(HASH));
+    await vi.advanceTimersByTimeAsync(EVM_RECEIPT_TIMEOUT_MS);
+    expect(await e).toMatchObject({ code: -32603, data: { reason: 'receipt_timeout', lastError: expect.stringMatching(/malformed receipt \(blockHash\)/u) } });
   });
 
   it('refuses a malformed hash without a request', async () => {

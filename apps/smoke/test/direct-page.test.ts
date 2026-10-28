@@ -34,6 +34,7 @@ const baseEnv: PageEnv = {
   rpc: 'https://rpc.example',
   apiUrl: 'https://api.example',
   apiUrlOverridden: false,
+  manifestApiUrl: 'https://api.example',
   vaultOrigin: null,
   authOrigin: null,
 };
@@ -217,6 +218,8 @@ describe('smoke page', () => {
     expect(result).toContain(toHex(ckdAppId(baseEnv.signer, path)));
     const firstRow = document.querySelector('#runs tr')!.textContent!;
     expect(firstRow).toContain('shared');
+    // The run names the API it called (the ship gate compares only runs against the vault's API).
+    expect(JSON.parse(localStorage.getItem('hana-smoke.runs')!)[0]).toMatchObject({ apiUrl: baseEnv.apiUrl, counter: 1 });
 
     // The Google token never reaches the DOM or storage.
     const jwt = create.body!.jwt as string;

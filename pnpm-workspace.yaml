@@ -1,6 +1,8 @@
 packages:
   - apps/*
   - packages/*
+  # @hana-id/react's suite again on React 18 (its peer range is 18 or 19).
+  - packages/react/react18
   - scripts
 
 # Block packages published less than 7 days ago (in minutes): supply-chain protection, as in other Hana repos.

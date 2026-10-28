@@ -1,4 +1,5 @@
-// Starts the local stack (Playwright's webServer, playwright.config.ts): builds the bundles, then serves
+// Starts the local stack (Playwright's webServer, playwright.config.ts): builds the bundles, then serves, with the
+// default port base 4410 (HANA_E2E_PORT_BASE, src/stack.ts; each port is base + the offset shown)
 //
 //   http://localhost:4410                  the partner test app
 //   http://site-b.localhost:4411           the partner test app on a second partner site
@@ -9,7 +10,7 @@
 //   http://127.0.0.1:4450                  the mocked NEAR RPC
 //   http://127.0.0.1:4460                  the mocked EVM chain RPC
 //
-//   pnpm --filter @hana-id/e2e serve [--no-build]
+//   [HANA_E2E_PORT_BASE=4510] pnpm --filter @hana-id/e2e serve [--no-build]
 //
 // Google is not served here: the tests route accounts.google.com and www.googleapis.com to an OIDC stub inside the
 // browser context (src/google-stub.ts), so the bundles keep their hard-coded Google endpoints.

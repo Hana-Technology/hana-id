@@ -31,6 +31,7 @@ const env: PageEnv = {
   rpc: 'https://rpc.example',
   apiUrl: 'https://api.example',
   apiUrlOverridden: false,
+  manifestApiUrl: 'https://api.example',
   vaultOrigin: 'https://vault.example',
   authOrigin: 'https://auth.example',
 };
@@ -407,6 +408,8 @@ describe('vault smoke page: auto-approve demo', () => {
 
   it('tells auto-approved, approved, rejected and refused requests apart', async () => {
     const c = await loggedIn();
+    // Consent in force for the first request; none afterwards (the mock's default).
+    c.autoApproveStatus.mockResolvedValueOnce({ label: 'Demo', policyId: policyId(DEMO_POLICY), expiresAtMs: Date.UTC(2026, 9, 28, 13), used: { count: 0 } } as never);
     c.stellar.signTransaction.mockImplementationOnce(async () => {
       c.emit('autoApproved', { kind: 'stellar_signTransaction', chain: 'stellar', contract: 'CDLZ', function: 'transfer' });
       return { signedTxXdr: 'AAAA', signerAddress: A.stellar };
@@ -438,11 +441,73 @@ describe('vault smoke page: auto-approve demo', () => {
     expect(c.signRaw).toHaveBeenCalledWith({ chain: 'stellar', bytes: expect.any(Uint8Array) });
     expect(rows('signs')).toHaveLength(5);
   });
+
+  it('a covered request that opened the consent screen is not logged as "no popup"', async () => {
+    const c = await loggedIn();
+    // No consent in force (autoApproveStatus answers null): the vault asks for consent, then signs under the policy.
+    c.stellar.signTransaction.mockImplementationOnce(async () => {
+      c.emit('autoApproved', { kind: 'stellar_signTransaction', chain: 'stellar', contract: 'CDLZ', function: 'transfer' });
+      return { signedTxXdr: 'AAAA', signerAddress: A.stellar };
+    });
+    button('sign-stellar-self').click();
+    await vi.waitFor(() => expect(rows('signs')[0]).toMatch(/signed under the policy, after the consent screen/u));
+
+    // Consent in force, but the vault still showed its launcher (a popup was needed): not "no popup" either.
+    c.autoApproveStatus.mockResolvedValueOnce({ label: 'Demo' } as never);
+    c.stellar.signTransaction.mockImplementationOnce(async () => {
+      c.emit('launcher', { visible: true, label: 'Review in Hana' });
+      c.emit('autoApproved', { kind: 'stellar_signTransaction', chain: 'stellar', contract: 'CDLZ', function: 'transfer' });
+      return { signedTxXdr: 'AAAA', signerAddress: A.stellar };
+    });
+    await vi.waitFor(() => expect(button('sign-stellar-self').disabled).toBe(false));
+    button('sign-stellar-self').click();
+    await vi.waitFor(() => expect(rows('signs')).toHaveLength(2));
+    await vi.waitFor(() => expect(rows('signs')[0]).toMatch(/signed under the policy, after the consent screen/u));
+  });
+
+  it('runs one request at a time, so an auto-approved one never relabels another that waits in the popup', async () => {
+    const c = await loggedIn();
+    c.autoApproveStatus.mockResolvedValue({ label: 'Demo' } as never);
+    let approve!: () => void;
+    // The stranger transfer waits in the approval popup.
+    c.stellar.signTransaction.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          approve = () => resolve({ signedTxXdr: 'AAAA', signerAddress: A.stellar });
+        }),
+    );
+    button('sign-stellar-other').click();
+    await vi.waitFor(() => expect(c.stellar.signTransaction).toHaveBeenCalledTimes(1));
+    for (const id of ['sign-stellar-self', 'sign-evm-self', 'aa-request', 'export-evm']) expect(button(id).disabled).toBe(true);
+
+    // A click meanwhile (here on a button forced back on) is ignored: nothing sent, no row, nothing auto-approved.
+    button('sign-stellar-self').disabled = false;
+    button('sign-stellar-self').click();
+    button('aa-request').disabled = false;
+    button('aa-request').click();
+    await Promise.resolve();
+    expect(c.stellar.signTransaction).toHaveBeenCalledTimes(1);
+    expect(c.requestAutoApprove).not.toHaveBeenCalled();
+    expect(rows('signs')).toHaveLength(1);
+
+    // Approved in the popup: logged as such, since no other request could run and bump the counters meanwhile.
+    approve();
+    await vi.waitFor(() => expect(rows('signs')[0]).toMatch(/stranger.*signed after approval/u));
+    await vi.waitFor(() => expect(button('sign-stellar-self').disabled).toBe(false));
+
+    c.stellar.signTransaction.mockImplementationOnce(async () => {
+      c.emit('autoApproved', { kind: 'stellar_signTransaction', chain: 'stellar', contract: 'CDLZ', function: 'transfer' });
+      return { signedTxXdr: 'AAAA', signerAddress: A.stellar };
+    });
+    button('sign-stellar-self').click();
+    await vi.waitFor(() => expect(rows('signs')[0]).toMatch(/yourself.*signed, auto-approved \(no popup\)/u));
+    expect(rows('signs')[1]).toMatch(/stranger.*signed after approval/u);
+  });
 });
 
 describe('vault smoke page: results log', () => {
   it('shows the ship gate, copies both logs as JSON and clears the vault log', async () => {
-    const direct = [{ run: 1, env: 'sandbox-dev', signer: env.signer, path: 's1#google#111#0', stellar: 'GA', evm: '0xA', appIdHex: 'aa', derivation: 1, keyIndex: 0, scopeId: 's1', counter: 1, timings: { googleMs: 1, createSessionMs: 4000, deriveMs: 4000, decryptVerifyMs: 4, totalMs: 10 } }];
+    const direct = [{ run: 1, env: 'sandbox-dev', signer: env.signer, apiUrl: env.apiUrl, path: 's1#google#111#0', stellar: 'GA', evm: '0xA', appIdHex: 'aa', derivation: 1, keyIndex: 0, scopeId: 's1', counter: 1, timings: { googleMs: 1, createSessionMs: 4000, deriveMs: 4000, decryptVerifyMs: 4, totalMs: 10 } }];
     localStorage.setItem('hana-smoke.runs', JSON.stringify(direct));
     const writeText = vi.fn(async (_: string) => undefined);
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
@@ -459,5 +524,60 @@ describe('vault smoke page: results log', () => {
     expect(rows('runs')).toHaveLength(0);
     expect(storedRuns()).toHaveLength(0);
     expect(localStorage.getItem('hana-smoke.runs')).not.toBeNull();
+  });
+
+  it("records the vault's API (the manifest's) even under a page override, and the gate leaves out override runs", async () => {
+    const direct = [
+      { run: 1, env: 'sandbox-dev', signer: env.signer, apiUrl: 'http://localhost:8787', path: 's1#google#111#0', stellar: 'GA', evm: '0xA', appIdHex: 'aa', derivation: 1, keyIndex: 0, scopeId: 's1', counter: 1, timings: { googleMs: 1, createSessionMs: 400, deriveMs: 400, decryptVerifyMs: 4, totalMs: 10 } },
+    ];
+    localStorage.setItem('hana-smoke.runs', JSON.stringify(direct));
+    localStorage.setItem('hana-smoke.publishableKey', PK);
+    stubApi();
+    boot({ env: { ...env, apiUrl: 'https://api.example', apiUrlOverridden: true, manifestApiUrl: 'https://manifest.example' } });
+    last().readyWith(A);
+    await vi.waitFor(() => expect(storedRuns()).toHaveLength(1));
+    expect(storedRuns()[0]).toMatchObject({ kind: 'unlock', apiUrl: 'https://manifest.example' });
+    expect(text('ship-gate')).toMatch(/median — ms over 0 of 0 session/u);
+    expect(text('ship-gate')).toMatch(/left out: 1 direct-page run\(s\) against another API than https:\/\/manifest\.example/u);
+  });
+
+  it('two tabs recording in turn keep both runs, with distinct run numbers', async () => {
+    localStorage.setItem('hana-smoke.publishableKey', PK);
+    localStorage.setItem('hana-smoke.account', 'personal');
+    boot();
+    last().readyWith(null);
+    await vi.waitFor(() => expect(button('login').disabled).toBe(false));
+    button('login').click();
+    last().finishLogin!(login(A));
+    await vi.waitFor(() => expect(storedRuns()).toHaveLength(1));
+
+    // Tab 2 (another page instance on the same storage) unlocks and records run #2. Its storage event hasn't reached
+    // this tab yet.
+    const tab1 = last();
+    const stored = JSON.parse(localStorage.getItem('hana-smoke.vault-runs')!) as Record<string, unknown>[];
+    const tab2Run = { ...stored[0], run: 2, kind: 'unlock', timings: { stages: null, totalMs: 150 } };
+    localStorage.setItem('hana-smoke.vault-runs', JSON.stringify([...stored, tab2Run]));
+    expect(rows('runs')).toHaveLength(1);
+
+    // Tab 1 logs in again: appended after tab 2's run, which survives.
+    tab1.status = 'logged_out';
+    tab1.addresses = null;
+    tab1.emit('statusChanged', 'logged_out');
+    await vi.waitFor(() => expect(button('login').disabled).toBe(false));
+    button('login').click();
+    tab1.finishLogin!(login(A));
+    await vi.waitFor(() => expect(storedRuns()).toHaveLength(3));
+    const runs = JSON.parse(localStorage.getItem('hana-smoke.vault-runs')!) as { run: number; kind: string }[];
+    expect(runs.map((r) => [r.run, r.kind])).toEqual([
+      [1, 'login'],
+      [2, 'unlock'],
+      [3, 'login'],
+    ]);
+    expect(rows('runs')).toHaveLength(3);
+
+    // Another tab's write shows here once its storage event arrives.
+    localStorage.setItem('hana-smoke.vault-runs', JSON.stringify([...runs, { ...tab2Run, run: 4 }]));
+    window.dispatchEvent(new StorageEvent('storage', { key: 'hana-smoke.vault-runs' }));
+    expect(rows('runs')).toHaveLength(4);
   });
 });

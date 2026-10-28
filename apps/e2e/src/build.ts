@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { type Plugin, build } from 'esbuild';
 import { buildAuthPages } from '../../../packages/web/scripts/build-auth-pages.ts';
 import { buildVault } from '../../../packages/web/scripts/build-vault.ts';
-import { BUILD_DIR, E2E_ENV, ENV_NAME } from './stack.ts';
+import { BUILD_DIR, E2E_ENV, ENV_NAME, portBase } from './stack.ts';
 
 const e2eRoot = fileURLToPath(new URL('../', import.meta.url));
 export const PAGES_DIR = fileURLToPath(new URL('pages/', BUILD_DIR));
@@ -46,8 +46,9 @@ export async function buildPartner(): Promise<void> {
     target: 'es2022',
     sourcemap: false,
     outfile: `${PARTNER_DIR}app.js`,
-    // Stellar Wallets Kit 1.9's dependencies expect Node's `global`.
-    define: { global: 'globalThis' },
+    // Stellar Wallets Kit 1.9's dependencies expect Node's `global`. src/stack.ts reads the port base from the
+    // environment: the bundle gets this run's value inlined.
+    define: { global: 'globalThis', 'process.env.HANA_E2E_PORT_BASE': JSON.stringify(String(portBase())) },
     plugins: [e2eEnvs],
     logLevel: 'warning',
   });

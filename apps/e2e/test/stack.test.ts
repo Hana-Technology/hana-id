@@ -23,7 +23,8 @@ import {
   verifyGoogleIdToken,
 } from '@hana-id/core';
 import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { stackFingerprint } from '../src/fingerprint.ts';
 import { CALLBACK_URL, GOOGLE_AUTH_URL, GoogleStub, checkAuthRequest } from '../src/google-stub.ts';
 import { MockApi } from '../src/server/api.ts';
 import { type ApiModules, loadApiModules } from '../src/server/api-modules.ts';
@@ -31,7 +32,20 @@ import { Chain, mpcAnswer } from '../src/server/chain.ts';
 import { D1Shim } from '../src/server/d1.ts';
 import { serve } from '../src/server/http.ts';
 import { MemoryNamespace, type MemoryStorage } from '../src/server/workers.ts';
-import { AUTH_ORIGIN, E2E_ENV, GOOGLE_CLIENT_ID, PARTNER_ORIGIN, SITE_B_ORIGIN, TEST_CKD_NETWORK_KEY, VAULT_ORIGIN } from '../src/stack.ts';
+import {
+  API_URL,
+  AUTH_ORIGIN,
+  DEFAULT_PORT_BASE,
+  E2E_ENV,
+  GOOGLE_CLIENT_ID,
+  PARTNER_ORIGIN,
+  PORTS,
+  SITE_B_ORIGIN,
+  TEST_CKD_NETWORK_KEY,
+  VAULT_ORIGIN,
+  portBase,
+  portsFrom,
+} from '../src/stack.ts';
 
 let modules: ApiModules;
 beforeAll(async () => {
@@ -52,6 +66,29 @@ describe('the e2e env', () => {
     expect(host(SITE_B_ORIGIN)).not.toBe(host(PARTNER_ORIGIN));
     // A *.localhost name: loopback and potentially trustworthy, and expressible in frame-ancestors (an IPv6 literal is not).
     expect(host(SITE_B_ORIGIN)).toMatch(/^[a-z0-9-]+\.localhost$/u);
+  });
+
+  it('takes its ports from HANA_E2E_PORT_BASE (4410 by default), so worktrees can run side by side', () => {
+    expect(portBase(undefined)).toBe(DEFAULT_PORT_BASE);
+    expect(portBase('')).toBe(DEFAULT_PORT_BASE);
+    expect(portBase('4510')).toBe(4510);
+    expect(portsFrom(4510)).toEqual({ partner: 4510, siteB: 4511, vault: 4520, auth: 4530, api: 4540, near: 4550, evm: 4560 });
+    for (const bad of ['80', '65500', '45.5', '4510x', '-1', ' 0x1000']) expect(() => portBase(bad)).toThrow(/HANA_E2E_PORT_BASE/u);
+    // This run's origins follow its base.
+    const base = portBase();
+    expect([PARTNER_ORIGIN, SITE_B_ORIGIN, VAULT_ORIGIN, AUTH_ORIGIN, API_URL].map((o) => Number(new URL(o).port))).toEqual([base, base + 1, base + 10, base + 20, base + 30]);
+    expect(new Set(Object.values(PORTS)).size).toBe(7);
+  });
+
+  it("the stack's fingerprint covers the port base the bundles are built for", () => {
+    const now = stackFingerprint();
+    vi.stubEnv('HANA_E2E_PORT_BASE', String(portBase() + 100));
+    try {
+      expect(stackFingerprint()).not.toBe(now);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(stackFingerprint()).toBe(now);
   });
 });
 

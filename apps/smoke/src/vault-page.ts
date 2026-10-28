@@ -68,6 +68,8 @@ export interface VaultPageDeps {
 }
 
 const STAGES = ['app', 'popup', 'google', 'verify', 'chain', 'decrypt'] as const;
+/** The buttons that send a request which may need a Hana popup: one such request at a time. */
+const REQUEST_BUTTONS = ['export-stellar', 'export-evm', 'aa-request', 'aa-status', 'aa-revoke', 'sign-stellar-self', 'sign-stellar-other', 'sign-evm-self', 'sign-evm-other', 'sign-personal', 'sign-raw'] as const;
 const TEST_MESSAGE_HEX = `0x${[...new TextEncoder().encode('Hana ID smoke test: personal_sign')].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
 const RAW_TEST_BYTES = new TextEncoder().encode('Hana ID smoke test: raw bytes, not a transaction');
 
@@ -135,8 +137,15 @@ export function startVaultPage(deps: VaultPageDeps): void {
   let busy = false;
   let progress = '';
   let launcher = '';
-  /** Bumped on every `autoApproved` event: a sign request that saw it bump was signed without a popup. */
+  /**
+   * A sign, auto-approve or export request is pending. They run one at a time (their buttons are disabled meanwhile),
+   * so the counters below change only for the pending request and its outcome label is its own.
+   */
+  let requestPending = false;
+  /** Bumped on every `autoApproved` event: a sign request that saw it bump was signed under the policy. */
   let autoApprovedCount = 0;
+  /** Bumped on every launcher shown: a request that saw it bump needed a click into a Hana popup. */
+  let launcherShownCount = 0;
   let signs = 0;
   let vaultRuns: VaultRunRecord[] = parseStoredVaultRuns(read(VAULT_RUNS_STORAGE));
   const directRuns = (): RunRecord[] => parseStoredRuns(read(RUNS_STORAGE));
@@ -218,9 +227,7 @@ export function startVaultPage(deps: VaultPageDeps): void {
     setDisabled('logout', busy || !loggedIn);
     setDisabled('remount', busy || publishableKey === null || vaultProblem !== null);
     setDisabled('revoke-others', busy || !loggedIn);
-    for (const id of ['export-stellar', 'export-evm', 'aa-request', 'aa-status', 'aa-revoke', 'sign-stellar-self', 'sign-stellar-other', 'sign-evm-self', 'sign-evm-other', 'sign-personal', 'sign-raw']) {
-      setDisabled(id, !loggedIn);
-    }
+    for (const id of REQUEST_BUTTONS) setDisabled(id, !loggedIn || requestPending);
   }
 
   function renderRuns(): void {
@@ -256,7 +263,7 @@ export function startVaultPage(deps: VaultPageDeps): void {
         );
       }),
     );
-    const gate = shipGate(env.name, env.signer, vaultRuns, direct);
+    const gate = shipGate(env.name, env.signer, env.manifestApiUrl, vaultRuns, direct);
     fillDl($('ship-gate'), [
       ['Combined (vault chain stage)', `median ${ms(gate.combined.medianMs)} ms over ${Math.min(gate.combined.runs, 10)} of ${gate.combined.runs} login(s)`],
       ['Split (direct page create_session + derive_key)', `median ${ms(gate.split.medianMs)} ms over ${Math.min(gate.split.runs, 10)} of ${gate.split.runs} session(s)`],
@@ -272,11 +279,16 @@ export function startVaultPage(deps: VaultPageDeps): void {
   // ---- Runs ----
 
   function record(kind: VaultRunRecord['kind'], c: SmokeClient, addresses: HanaAddresses, totalMs: number, account: string, stages: Record<string, number> | null): void {
+    // Another tab of this page may have recorded since this one loaded (the README's new-tab and logout-across-tabs
+    // steps): append to the stored log as it is now, so neither tab's runs are lost and run numbers stay unique.
+    vaultRuns = parseStoredVaultRuns(read(VAULT_RUNS_STORAGE));
     const r: VaultRunRecord = {
       run: (vaultRuns.at(-1)?.run ?? 0) + 1,
       at: new Date().toISOString(),
       env: env.name,
       signer: env.signer,
+      // The vault calls the apiUrl it was built with (the manifest's), whatever this page's VITE_HANA_API_URL says.
+      apiUrl: env.manifestApiUrl,
       pkPrefix: pkPrefix(publishableKey ?? ''),
       scopeId: app?.scopeId ?? null,
       clientMode: app?.google.mode ?? null,
@@ -344,7 +356,10 @@ export function startVaultPage(deps: VaultPageDeps): void {
     c.on('launcher', ({ visible, label }) => {
       if (!live()) return;
       launcher = visible ? `shown: "${label}" (click it)` : '';
-      if (visible) logEvent(`Hana launcher: "${label}"`);
+      if (visible) {
+        launcherShownCount += 1;
+        logEvent(`Hana launcher: "${label}"`);
+      }
       render();
     });
     c.on('autoApproved', (d) => {
@@ -522,31 +537,56 @@ export function startVaultPage(deps: VaultPageDeps): void {
     }
   }
 
-  /** Runs one sign request and logs whether it was auto-approved, approved in the popup, rejected or refused. */
+  /** Runs `action` unless another sign, auto-approve or export request is pending (see `requestPending`). */
+  function exclusive(action: () => Promise<void>): void {
+    if (requestPending) return;
+    requestPending = true;
+    render();
+    void action()
+      .catch((e: unknown) => logEvent(describeError(e), 'error'))
+      .finally(() => {
+        requestPending = false;
+        render();
+      });
+  }
+
+  /**
+   * Runs one sign request and logs its outcome: auto-approved with no popup, signed under the policy after the consent
+   * screen (the first covered request with no consent in force), signed after approval, rejected or refused. Requests
+   * run one at a time, so the `autoApproved` and launcher events seen meanwhile are this request's.
+   */
   function sign(label: string, send: (c: SmokeClient, a: HanaAddresses) => Promise<unknown>): void {
     const c = client;
     const a = c?.addresses;
     if (!c || !a) return;
-    signs += 1;
-    const outcome = h('td', {}, 'waiting (approve or reject in the Hana popup)…');
-    const took = h('td', { class: 'num' }, '…');
-    $('signs').prepend(h('tr', {}, h('td', {}, String(signs)), h('td', {}, label), outcome, took));
-    const before = autoApprovedCount;
-    const t0 = now();
-    void send(c, a).then(
-      () => {
+    exclusive(async () => {
+      signs += 1;
+      const outcome = h('td', {}, 'waiting (approve or reject in the Hana popup)…');
+      const took = h('td', { class: 'num' }, '…');
+      $('signs').prepend(h('tr', {}, h('td', {}, String(signs)), h('td', {}, label), outcome, took));
+      // Whether consent was in force before: a covered request without it opens the consent screen first, which may
+      // reuse a recently active Hana popup (no launcher). undefined: the vault couldn't say.
+      const consentBefore = await c.autoApproveStatus().then(
+        (s) => s !== null,
+        () => undefined,
+      );
+      const autoBefore = autoApprovedCount;
+      const launcherBefore = launcherShownCount;
+      const t0 = now();
+      try {
+        await send(c, a);
         took.textContent = ms(now() - t0);
-        const auto = autoApprovedCount > before;
+        const auto = autoApprovedCount > autoBefore;
+        const popup = launcherShownCount > launcherBefore || consentBefore === false;
         outcome.className = 'ok';
-        outcome.textContent = auto ? 'signed, auto-approved (no popup)' : 'signed after approval';
-      },
-      (e: unknown) => {
+        outcome.textContent = !auto ? 'signed after approval' : popup ? 'signed under the policy, after the consent screen' : 'signed, auto-approved (no popup)';
+      } catch (e) {
         took.textContent = ms(now() - t0);
         const code = errorCode(e);
         outcome.className = code === 4001 ? 'info' : 'fail';
         outcome.textContent = code === 4001 ? 'rejected (4001)' : `refused: ${describeError(e)}`;
-      },
-    );
+      }
+    });
   }
 
   // ---- Wiring ----
@@ -564,11 +604,11 @@ export function startVaultPage(deps: VaultPageDeps): void {
   });
   $('reload').addEventListener('click', () => (deps.reload ?? (() => location.reload()))());
   $('revoke-others').addEventListener('click', () => void withBusy(revokeOthers));
-  $('export-stellar').addEventListener('click', () => void exportKey('stellar').catch((e: unknown) => logEvent(describeError(e), 'error')));
-  $('export-evm').addEventListener('click', () => void exportKey('evm').catch((e: unknown) => logEvent(describeError(e), 'error')));
-  $('aa-request').addEventListener('click', () => void autoApprove('request').catch((e: unknown) => logEvent(describeError(e), 'error')));
-  $('aa-status').addEventListener('click', () => void autoApprove('status').catch((e: unknown) => logEvent(describeError(e), 'error')));
-  $('aa-revoke').addEventListener('click', () => void autoApprove('revoke').catch((e: unknown) => logEvent(describeError(e), 'error')));
+  $('export-stellar').addEventListener('click', () => exclusive(() => exportKey('stellar')));
+  $('export-evm').addEventListener('click', () => exclusive(() => exportKey('evm')));
+  $('aa-request').addEventListener('click', () => exclusive(() => autoApprove('request')));
+  $('aa-status').addEventListener('click', () => exclusive(() => autoApprove('status')));
+  $('aa-revoke').addEventListener('click', () => exclusive(() => autoApprove('revoke')));
   $('sign-stellar-self').addEventListener('click', () =>
     sign('Stellar: SAC transfer of 1 stroop to yourself', (c, a) => c.stellar.signTransaction(demoStellarTransfer(a.stellar, a.stellar), { networkPassphrase: DEMO_STELLAR_PASSPHRASE })),
   );
@@ -590,6 +630,12 @@ export function startVaultPage(deps: VaultPageDeps): void {
   $('clear-log').addEventListener('click', () => {
     vaultRuns = [];
     write(VAULT_RUNS_STORAGE, JSON.stringify(vaultRuns));
+    renderRuns();
+  });
+  // Another tab of this page (or the direct page) recorded a run: show the logs as stored.
+  window.addEventListener('storage', (e) => {
+    if (e.key !== null && e.key !== VAULT_RUNS_STORAGE && e.key !== RUNS_STORAGE) return;
+    vaultRuns = parseStoredVaultRuns(read(VAULT_RUNS_STORAGE));
     renderRuns();
   });
   renderApp();

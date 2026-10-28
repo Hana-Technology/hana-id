@@ -1,0 +1,24 @@
+{
+  "name": "@hana-id/react-on-react18",
+  "version": "0.0.0",
+  "description": "@hana-id/react's tests, and a typecheck of its source, on React 18 and @types/react 18 (its peer range is ^18 || ^19; the package itself develops on 19).",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "pnpm --filter @hana-id/web gen:envs && vitest run",
+    "typecheck": "pnpm --filter @hana-id/web gen:envs && tsc --noEmit"
+  },
+  "devDependencies": {
+    "@hana-id/web": "workspace:*",
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/react": "16.3.3",
+    "@types/node": "22.20.5",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "happy-dom": "21.0.3",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.12"
+  }
+}

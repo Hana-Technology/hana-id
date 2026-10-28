@@ -8,7 +8,7 @@ describe('page config', () => {
   it('takes only public fields from the default manifest', () => {
     const m = loadEnv(DEFAULT_ENV);
     const env = pageEnvFrom(m);
-    expect(Object.keys(env).sort()).toEqual(['apiUrl', 'apiUrlOverridden', 'authOrigin', 'ckdDomainId', 'ckdNetworkKey', 'mpc', 'name', 'network', 'relayer', 'rpc', 'signer', 'vaultOrigin']);
+    expect(Object.keys(env).sort()).toEqual(['apiUrl', 'apiUrlOverridden', 'authOrigin', 'ckdDomainId', 'ckdNetworkKey', 'manifestApiUrl', 'mpc', 'name', 'network', 'relayer', 'rpc', 'signer', 'vaultOrigin']);
     expect(env).toMatchObject({ name: DEFAULT_ENV, signer: m.signer, apiUrl: m.apiUrl, apiUrlOverridden: false, vaultOrigin: m.vaultOrigin, authOrigin: m.authOrigin });
     expect(env.vaultOrigin).toMatch(/^https:\/\//u);
   });
@@ -21,7 +21,7 @@ describe('page config', () => {
 
   it('accepts an https or localhost API override only', () => {
     const m = loadEnv(DEFAULT_ENV);
-    expect(pageEnvFrom(m, 'http://localhost:8787')).toMatchObject({ apiUrl: 'http://localhost:8787', apiUrlOverridden: true });
+    expect(pageEnvFrom(m, 'http://localhost:8787')).toMatchObject({ apiUrl: 'http://localhost:8787', apiUrlOverridden: true, manifestApiUrl: m.apiUrl });
     expect(pageEnvFrom(m, '  ')).toMatchObject({ apiUrl: m.apiUrl, apiUrlOverridden: false });
     expect(() => pageEnvFrom(m, 'http://api.example')).toThrow(/https/);
   });

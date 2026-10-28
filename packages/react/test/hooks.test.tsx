@@ -333,6 +333,46 @@ describe('login from onClick', () => {
     expect(m.renders.last.hana.status).toBe('logged_in');
   });
 
+  it('`onClick={login}` with a login the user rejects (4001) sets error and leaves no unhandled rejection', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const m = mount();
+      await act(() => m.vault.connect(LOGGED_OUT));
+      m.vault.handle('hana_login', () => 'manual');
+      // React drops the promise the handler returns.
+      fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+      await settle();
+      const req = m.vault.last('hana_login');
+      await act(async () => {
+        m.vault.emit('loginProgress', { stage: 'popup_connected' });
+        m.vault.replyError(req.id, 4001, 'User rejected the request');
+      });
+      await settle();
+      // Node reports an unhandled rejection after the microtask queue drains: give it a macrotask.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(m.renders.last.hana.status).toBe('logged_out');
+      expect(m.renders.last.hana.error?.code).toBe(4001);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  it('a caller that awaits login still gets the rejection; logout and exportKey reject as usual', async () => {
+    const m = mount();
+    await act(() => m.vault.connect(LOGGED_IN));
+    m.vault.handle('hana_logout', () => ({ error: { code: 4900, message: 'gone' } }));
+    m.vault.handle('hana_export', () => ({ error: { code: 4001, message: 'User rejected the request' } }));
+    const logout = m.renders.last.hana.logout();
+    const exportKey = m.renders.last.hana.exportKey('stellar');
+    await act(async () => {
+      await expect(logout).rejects.toMatchObject({ code: 4900 });
+      await expect(exportKey).rejects.toMatchObject({ code: 4001 });
+    });
+  });
+
   it('opens the popup even before the handshake finishes', async () => {
     const m = mount();
     m.vault.handle('hana_login', () => ({ result: LOGIN_RESULT }));

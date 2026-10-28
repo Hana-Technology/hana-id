@@ -30,7 +30,7 @@ keys, e.g. the content of `.secrets/<env>/relayer-keys.json`) → `wrangler secr
 | Name | Kind | |
 |---|---|---|
 | `NEAR_RPC`, `SIGNER_ACCOUNT`, `RELAYER_ACCOUNT`, `ENV_NAME` | vars (manifest) | `rpc`, `signer`, `relayer`, `name` |
-| `RELAYER_KEYS` | secret | Session pool: JSON array of function-call keys on `RELAYER_ACCOUNT` (receiver `SIGNER_ACCOUNT`; `create_session`, `derive_key`, `revoke_session`, `prune_sessions`) |
+| `RELAYER_KEYS` | secret | Session pool: JSON array of function-call keys on `RELAYER_ACCOUNT` (receiver `SIGNER_ACCOUNT`; `create_session`, `create_session_and_derive`, `derive_key`, `revoke_session`, `prune_sessions`) |
 | `OWNER_RELAYER_KEYS` | secret | Owner pool (small allowance), same format: `propose_change`, `cancel_change`, `remove_client`, `disable_shared_login`, `execute_change`, `register_scope`, `apply_pending_config`. Without it `/v1/owner-actions` answers 503 and logins are unaffected |
 | `GAS_<METHOD>_TGAS` | optional vars | Per-method gas override in Tgas (integer 1..300), e.g. `GAS_DERIVE_KEY_TGAS=80`; invalid values are ignored (logged) |
 | `KEYS_UPDATER_KEY` | secret | function-call key on `SIGNER_ACCOUNT` (`set_issuer_key`, `remove_issuer_key`); cron skips without it |
@@ -167,10 +167,10 @@ transactions per key are in flight. The nonce is kept in memory and in DO storag
 `max(stored, chain)` (transactions still in the pool aren't in the chain's nonce yet). On `InvalidNonce` the object
 re-reads the access key (`max(local, chain, ak_nonce from the error)`) and retries once; an expired block hash is
 refreshed and retried once. The object only relays its pool's methods, always to `SIGNER_ACCOUNT`, no deposit, with
-per-method gas from `src/gas.ts` (never the caller's): `create_session` 50 Tgas, `derive_key` 60, `revoke_session` 20,
-`prune_sessions` 50, owner-pool methods 50 except `register_scope`, which verifies one RS256 client proof per client:
-30 + 25 per proof, capped at 300 (280 for the contract's 10). **To measure on testnet**; override with
-`GAS_<METHOD>_TGAS`.
+per-method gas from `src/gas.ts` (never the caller's): `create_session` 50 Tgas, `create_session_and_derive` 100,
+`derive_key` 60, `revoke_session` 20, `prune_sessions` 50, owner-pool methods 50 except `register_scope`, which
+verifies one RS256 client proof per client: 30 + 25 per proof, capped at 300 (280 for the contract's 10). **To
+measure on testnet**; override with `GAS_<METHOD>_TGAS`.
 
 ## Logging
 

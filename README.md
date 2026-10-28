@@ -107,8 +107,9 @@ missing, so it is safe to resume after a failure. Steps:
    (`--upgrade` redeploys code to an initialised contract without calling `new`.)
 3. Add two pools of function-call keys on `relayer`, both with receiver = `signer`, one transaction per pool:
    - **Session pool** (the API's `RELAYER_KEYS`, logins): `--relayer-keys` keys (default 3), limited to
-     `create_session`, `derive_key`, `revoke_session`, `prune_sessions`, allowance `--relayer-allowance` each
-     (default 2 NEAR).
+     `create_session`, `create_session_and_derive`, `derive_key`, `revoke_session`, `prune_sessions`, allowance
+     `--relayer-allowance` each (default 2 NEAR). A key already on chain with another method list (an earlier
+     allowlist) stops the plan with the commands to delete it; re-running then re-adds it with the current list.
    - **Owner pool** (the API's `OWNER_RELAYER_KEYS`, `/v1/owner-actions`): `--owner-relayer-keys` keys (default 1),
      limited to `propose_change`, `cancel_change`, `remove_client`, `disable_shared_login`, `execute_change`,
      `register_scope`, `apply_pending_config`, allowance `--owner-relayer-allowance` each (default 0.5 NEAR).
@@ -133,11 +134,11 @@ It does not create accounts. If one is missing, or its key is not in the keychai
 near CLI command to fix it.
 
 An allowance is charged each call's full prepaid gas, and refunds go to the account, not back to the allowance. The
-API attaches per-method gas (defaults `create_session` 50 Tgas, `derive_key` 60, `revoke_session` 20,
-`prune_sessions` 50, owner-pool methods 50; still to be measured on testnet). At testnet prices, 50 Tgas is about
-0.005 NEAR, so 2 NEAR covers roughly 350 session calls per key and 0.5 NEAR roughly 100 owner calls. Pass larger
-allowances for heavier testing. To replace a used-up key, delete it on chain with near CLI, remove it from its
-`.secrets` file, and re-run.
+API attaches per-method gas (defaults `create_session` 50 Tgas, `create_session_and_derive` 100, `derive_key` 60,
+`revoke_session` 20, `prune_sessions` 50, owner-pool methods 50; still to be measured on testnet). At testnet
+prices, 50 Tgas is about 0.005 NEAR, so 2 NEAR covers roughly 350 session calls per key (half as many combined
+logins) and 0.5 NEAR roughly 100 owner calls. Pass larger allowances for heavier testing. To replace a used-up key,
+delete it on chain with near CLI, remove it from its `.secrets` file, and re-run.
 
 **Existing keys are checked, not trusted.** For every key in a pool file (and the keys-updater key), the plan
 compares the on-chain key's `receiver_id`, `method_names` and `allowance` with the intended permission. The plan

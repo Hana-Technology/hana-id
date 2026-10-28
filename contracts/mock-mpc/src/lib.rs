@@ -5,6 +5,9 @@
 //! attached). Instead of running CKD it records the call (path, predecessor, keys, domain, deposit) and returns a
 //! deterministic fake `{big_y, big_c}` computed from the request, so tests can check that a response is passed
 //! through unchanged and that different paths give different answers. The values are not valid BLS12-381 points.
+//!
+//! `set_fail(true)` makes every request panic (`Mock MPC failure`) until `set_fail(false)`, so tests can see what a
+//! failed MPC receipt leaves behind in `hana-signer` (the caller's own receipt has already committed).
 
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::store::Vector;
@@ -51,6 +54,8 @@ pub struct RecordedCall {
 #[derive(PanicOnDefault)]
 pub struct MockMpc {
     calls: Vector<RecordedCall>,
+    /// When set, `request_app_private_key` panics.
+    fail: bool,
 }
 
 /// The real MPC charges 1 yoctoNEAR per CKD request.
@@ -60,12 +65,13 @@ const MIN_DEPOSIT: NearToken = NearToken::from_yoctonear(1);
 impl MockMpc {
     #[init]
     pub fn new() -> Self {
-        Self { calls: Vector::new(b"c") }
+        Self { calls: Vector::new(b"c"), fail: false }
     }
 
-    /// Records the request and returns `fake_response(request)`.
+    /// Records the request and returns `fake_response(request)`; panics without recording it while `fail` is set.
     #[payable]
     pub fn request_app_private_key(&mut self, request: CkdRequestArgs) -> CkdResponse {
+        assert!(!self.fail, "Mock MPC failure");
         let deposit = env::attached_deposit();
         assert!(deposit >= MIN_DEPOSIT, "Attach at least 1 yoctoNEAR");
         let CkdAppPublicKey::AppPublicKeyPV { pk1, pk2 } = request.app_public_key.clone();
@@ -78,6 +84,16 @@ impl MockMpc {
             deposit: deposit.as_yoctonear().to_string(),
         });
         fake_response(&request)
+    }
+
+    /// The failure switch. Only the mock's own account may flip it.
+    pub fn set_fail(&mut self, fail: bool) {
+        assert!(env::predecessor_account_id() == env::current_account_id(), "Only the mock's account can set the failure switch");
+        self.fail = fail;
+    }
+
+    pub fn fails(&self) -> bool {
+        self.fail
     }
 
     pub fn calls_count(&self) -> u32 {

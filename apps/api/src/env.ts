@@ -12,7 +12,7 @@ export interface Env {
   ENV_NAME: string;
   /** Optional Durable Object location hint for the shared objects (manifest cloudflare.durableObjectLocation). */
   DO_LOCATION_HINT?: string;
-  /** Secret: session pool. JSON array of `ed25519:...` secret keys (create_session, derive_key, revoke_session, prune_sessions). */
+  /** Secret: session pool. JSON array of `ed25519:...` secret keys (create_session, create_session_and_derive, derive_key, revoke_session, prune_sessions). */
   RELAYER_KEYS: string;
   /** Secret: owner pool. JSON array of `ed25519:...` secret keys, small allowance, used by /v1/owner-actions only. */
   OWNER_RELAYER_KEYS?: string;

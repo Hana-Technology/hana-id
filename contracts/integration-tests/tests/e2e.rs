@@ -8,6 +8,7 @@
 mod common;
 
 use anyhow::Result;
+use ed25519_dalek::Signer as _;
 use common::*;
 use near_workspaces::types::NearToken;
 use serde_json::{json, Value};
@@ -274,6 +275,38 @@ fn method_allowlists_match_deploy_script() -> Result<()> {
             assert!(!methods.iter().any(|r| r == m), "{name} contains {m}");
         }
     }
+    Ok(())
+}
+
+/// The session pool's allowlist is one of the three planned states (docs/batch-b-spec.md "Relayer allowlists"), and
+/// the deploy script (scripts/lib/contract.ts, the keys it installs), the API (apps/api/src/relayer-config.ts, what its
+/// relayer objects relay) and the sandbox keys all hold that same state. Moving to another state changes
+/// SESSION_ALLOWLIST_STATE here and both TS lists together.
+#[test]
+fn session_allowlist_is_in_a_planned_state_everywhere() -> Result<()> {
+    let sorted = |v: Vec<String>| {
+        let mut v = v;
+        v.sort();
+        v
+    };
+    let owned = |m: &[&str]| sorted(m.iter().map(|s| s.to_string()).collect());
+    // The three states, as the spec lists them: each keeps derive_key, revoke_session and prune_sessions; state 2
+    // drops create_session, state 3 drops create_session_and_derive.
+    let [s1, s2, s3] = SESSION_ALLOWLIST_STATES;
+    assert_eq!(owned(s1), owned(&["create_session", "create_session_and_derive", "derive_key", "revoke_session", "prune_sessions"]));
+    assert_eq!(owned(s2), owned(&s1.iter().copied().filter(|m| *m != "create_session").collect::<Vec<_>>()));
+    assert_eq!(owned(s3), owned(&s1.iter().copied().filter(|m| *m != "create_session_and_derive").collect::<Vec<_>>()));
+    for state in SESSION_ALLOWLIST_STATES {
+        for m in state {
+            assert!(ALL_CHANGE_METHODS.contains(m), "{m} is not a hana-signer change method");
+            assert!(!OWNER_RELAYER_METHODS.contains(m), "{m} is in both pools");
+        }
+    }
+    let current = owned(SESSION_ALLOWLIST_STATES[SESSION_ALLOWLIST_STATE]);
+    assert_eq!(owned(SESSION_RELAYER_METHODS), current);
+    assert_eq!(sorted(deploy_script_methods("SESSION_RELAYER_METHODS")?), current, "scripts/lib/contract.ts SESSION_RELAYER_METHODS");
+    assert_eq!(sorted(api_pool_methods("session")?), current, "apps/api/src/relayer-config.ts POOL_METHODS.session");
+    assert_eq!(sorted(api_pool_methods("owner")?), owned(OWNER_RELAYER_METHODS), "apps/api/src/relayer-config.ts POOL_METHODS.owner");
     Ok(())
 }
 
@@ -831,5 +864,179 @@ async fn cross_deployment_replay_rejected() -> Result<()> {
     expect_failure(tx(env.carol.call(&oid, "register_scope").args_json(reg.clone()).deposit(NearToken::from_millinear(10)).gas(GAS).transact().await), "Proof nonce doesn't commit to this registration");
     let id: String = env.carol.call(&main, "register_scope").args_json(reg).deposit(NearToken::from_millinear(10)).gas(GAS).transact().await?.into_result()?.json()?;
     assert_eq!(env.scope_for_client(APP_X).await?.as_deref(), Some(id.as_str()));
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// One-transaction login: create_session_and_derive (docs/batch-b-spec.md "Contract changes")
+
+const PK1: &str = "bls12381g1:pk1-login";
+const PK2: &str = "bls12381g2:pk2-login";
+
+/// Through the session pool's key with the API's gas, the combined call opens a session with used = 1 and returns
+/// the MPC's answer unchanged: the same key a create_session + derive_key gives. A replay fails; a bad derive half
+/// reverts the session insert; key_index 2^31 and above is reserved.
+#[tokio::test]
+async fn combined_login_matches_create_then_derive() -> Result<()> {
+    let env = Env::setup().await?;
+    let signer = env.signer.id();
+    let path = format!("{}#google#{}#0", env.scope_a, USER_SUB);
+
+    let (mut s, jwt) = env.new_session_with_uses(APP_A, USER_SUB, &env.scope_a, 0, 1, 600_000).await?;
+    let args = s.login_args(&jwt, PK1, PK2);
+    let outcome = env.login(&env.relayer_fc, &args).await?;
+    println!("create_session_and_derive gas burnt (with mock MPC): {} Tgas", outcome.total_gas_burnt.as_tgas());
+    assert!(outcome.total_gas_burnt <= api_gas("create_session_and_derive"), "burnt {} Tgas", outcome.total_gas_burnt.as_tgas());
+    let response: CkdResponse = outcome.into_result()?.json()?;
+    assert_eq!(response, env.expected_ckd(&path, PK1, PK2).await?, "the MPC's answer must come back unchanged");
+    assert_eq!(env.get_session(&s).await?, Some(SessionView { path: path.clone(), scope_id: env.scope_a.clone(), expires_at_ms: s.expires_at_ms, max_uses: 1, used: 1 }));
+
+    // The same user through create_session then derive_key (another session key, same BLS key): same request, same key.
+    let (mut split, jwt_split) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
+    let created: SessionView = env.create_session(&env.relayer_fc, &split, &jwt_split).await?.into_result()?.json()?;
+    assert_eq!(created.path, path);
+    let split_response: CkdResponse =
+        env.relayer_fc.call(signer, "derive_key").args_json(split.derive_args(PK1, PK2)).gas(api_gas("derive_key")).transact().await?.into_result()?.json()?;
+    assert_eq!(split_response, response);
+    let calls = env.mpc_calls().await?;
+    assert_eq!(calls.len(), 2);
+    for call in &calls {
+        assert_eq!((call.derivation_path.as_str(), &call.predecessor, call.domain_id, call.deposit.as_str()), (path.as_str(), signer, CKD_DOMAIN_ID, "1"));
+        assert_eq!((call.pk1.as_str(), call.pk2.as_str()), (PK1, PK2));
+    }
+
+    // Replaying the transaction fails before the MPC, and the session's one use is not spent twice.
+    expect_failure(env.login(&env.relayer_fc, &args).await, "Session key already in use");
+    // With max_uses = 1 nothing can derive any more.
+    expect_failure(tx(env.relayer_fc.call(signer, "derive_key").args_json(s.derive_args(PK1, PK2)).gas(api_gas("derive_key")).transact().await), "Session use limit reached");
+    assert_eq!(env.mpc_calls().await?.len(), 2);
+
+    // A panic in the derive half (here a signature over counter 2) reverts the whole call: no session is left, and
+    // the same token then logs in.
+    let (mut bad, jwt_bad) = env.new_session_with_uses(APP_A, USER_SUB, &env.scope_a, 0, 1, 600_000).await?;
+    let mut wrong_counter = bad.login_args(&jwt_bad, PK1, PK2);
+    wrong_counter["signature"] = json!(bad.key.sign(&session_message(2, &ckd_payload(PK1, PK2))).to_bytes().to_vec());
+    expect_failure(env.login(&env.relayer_fc, &wrong_counter).await, "Invalid session signature");
+    assert_eq!(env.get_session(&bad).await?, None);
+    assert!(!env.session_key_in_use(&bad).await?);
+    let mut oversize = bad.login_args(&jwt_bad, PK1, PK2);
+    oversize["pk2"] = json!(format!("bls12381g2:{}", "B".repeat(502)));
+    expect_failure(env.login(&env.relayer_fc, &oversize).await, "BLS key too long");
+    assert!(!env.session_key_in_use(&bad).await?);
+    assert_eq!(env.mpc_calls().await?.len(), 2, "reverted calls never reach the MPC");
+    env.login(&env.relayer_fc, &bad.login_args(&jwt_bad, PK1, PK2)).await?.into_result()?;
+    assert_eq!(env.get_session(&bad).await?.unwrap().used, 1);
+
+    // key_index: 2^31 - 1 is the last one create_session accepts; 2^31 and u32::MAX are reserved, even with a
+    // token whose nonce commits to them.
+    let (last, jwt_last) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0x7fff_ffff, 600_000).await?;
+    let created: SessionView = env.create_session(&env.relayer_fc, &last, &jwt_last).await?.into_result()?.json()?;
+    assert_eq!(created.path, format!("{}#google#{}#2147483647", env.scope_a, USER_SUB));
+    for key_index in [0x8000_0000u32, u32::MAX] {
+        let (mut reserved, jwt_reserved) = env.new_session(APP_A, USER_SUB, &env.scope_a, key_index, 600_000).await?;
+        expect_failure(env.create_session(&env.relayer_fc, &reserved, &jwt_reserved).await, "key_index must be below 2^31");
+        expect_failure(env.login(&env.relayer_fc, &reserved.login_args(&jwt_reserved, PK1, PK2)).await, "key_index must be below 2^31");
+        assert!(!env.session_key_in_use(&reserved).await?);
+    }
+
+    // A vault message (off-chain, batch B) signed by a session key is neither a derive nor a revoke.
+    let (mut v, jwt_v) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
+    env.create_session(&env.relayer_fc, &v, &jwt_v).await?.into_result()?;
+    let vault_sig = v.key.sign(&vault_message(signer.as_str(), "app_test", &[7; 16], 1, b"unlock")).to_bytes().to_vec();
+    let mut derive = v.derive_args(PK1, PK2);
+    derive["signature"] = json!(vault_sig);
+    expect_failure(tx(env.relayer_fc.call(signer, "derive_key").args_json(derive).gas(api_gas("derive_key")).transact().await), "Invalid session signature");
+    v.counter = 0;
+    let mut revoke = v.revoke_args();
+    revoke["signature"] = json!(vault_sig);
+    expect_failure(tx(env.relayer_fc.call(signer, "revoke_session").args_json(revoke).gas(api_gas("revoke_session")).transact().await), "Invalid session signature");
+    assert_eq!(env.get_session(&v).await?.unwrap().used, 0);
+    Ok(())
+}
+
+/// Someone who sees the token (the API, the mempool) can front-run the login, but never derives for themselves:
+/// - a front-run create_session: the vault's combined call fails "Session key already in use", and it recovers with
+///   derive_key at counter 1 (`max_uses = 1`), or counter 1 and then its spare counter 2 (`max_uses = 2`);
+/// - a front-run replay of the whole combined call: with `max_uses = 1` the replay burns the only use
+///   (`session_consumed`, a new login); with `max_uses = 2` the vault recovers with counter 2.
+#[tokio::test]
+async fn combined_login_front_running() -> Result<()> {
+    let env = Env::setup().await?;
+    let signer = env.signer.id();
+    let path = format!("{}#google#{}#0", env.scope_a, USER_SUB);
+    let expected = env.expected_ckd(&path, PK1, PK2).await?;
+    let derive = |s: &mut TestSession| env.relayer_fc.call(signer, "derive_key").args_json(s.derive_args(PK1, PK2)).gas(api_gas("derive_key")).transact();
+
+    for max_uses in [1u32, 2] {
+        // Front-run create_session (by another account, with its own key).
+        let (mut s, jwt) = env.new_session_with_uses(APP_A, USER_SUB, &env.scope_a, 0, max_uses, 600_000).await?;
+        env.alice.call(signer, "create_session").args_json(s.create_args(&jwt)).gas(GAS).transact().await?.into_result()?;
+        expect_failure(env.login(&env.relayer_fc, &s.login_args(&jwt, PK1, PK2)).await, "Session key already in use");
+        let synced = env.get_session(&s).await?.unwrap();
+        assert_eq!((synced.path.as_str(), synced.used, synced.max_uses), (path.as_str(), 0, max_uses));
+        s.counter = u64::from(synced.used);
+        let response: CkdResponse = derive(&mut s).await?.into_result()?.json()?;
+        assert_eq!(response, expected);
+        if max_uses == 2 {
+            let response: CkdResponse = derive(&mut s).await?.into_result()?.json()?;
+            assert_eq!(response, expected);
+        }
+        expect_failure(tx(derive(&mut s).await), "Session use limit reached");
+
+        // Front-run replay of the whole combined call (the attacker pays; the answer is encrypted to the vault's key).
+        let (mut s, jwt) = env.new_session_with_uses(APP_A, USER_SUB, &env.scope_a, 0, max_uses, 600_000).await?;
+        let args = s.login_args(&jwt, PK1, PK2);
+        let stolen: CkdResponse = env.alice.call(signer, "create_session_and_derive").args_json(args.clone()).gas(GAS).transact().await?.into_result()?.json()?;
+        assert_eq!(stolen, expected, "the replay only ever gets the answer for the vault's own BLS key");
+        expect_failure(env.login(&env.relayer_fc, &args).await, "Session key already in use");
+        let synced = env.get_session(&s).await?.unwrap();
+        assert_eq!((synced.used, synced.max_uses), (1, max_uses));
+        if max_uses == 1 {
+            // used == max_uses: the vault reports session_consumed and starts a new login.
+            expect_failure(tx(derive(&mut s).await), "Session use limit reached");
+        } else {
+            s.counter = u64::from(synced.used);
+            let response: CkdResponse = derive(&mut s).await?.into_result()?.json()?;
+            assert_eq!(response, expected);
+            assert_eq!(env.get_session(&s).await?.unwrap().used, 2);
+        }
+    }
+    Ok(())
+}
+
+/// When the MPC receipt fails, the signer's receipt has already committed: the session stays with used = 1. A
+/// two-use session retries with derive_key at counter 2; a one-use session can't (a new login).
+#[tokio::test]
+async fn combined_login_mpc_failure_keeps_the_session() -> Result<()> {
+    let env = Env::setup().await?;
+    let signer = env.signer.id();
+    let path = format!("{}#google#{}#0", env.scope_a, USER_SUB);
+
+    // Only the mock's own account flips the switch.
+    expect_failure(tx(env.alice.call(env.mpc.id(), "set_fail").args_json(json!({"fail": true})).transact().await), "Only the mock's account");
+    env.set_mpc_fail(true).await?;
+    let fails: bool = env.mpc.view("fails").await?.json()?;
+    assert!(fails);
+
+    for max_uses in [2u32, 1] {
+        let (mut s, jwt) = env.new_session_with_uses(APP_A, USER_SUB, &env.scope_a, 0, max_uses, 600_000).await?;
+        let outcome = env.login(&env.relayer_fc, &s.login_args(&jwt, PK1, PK2)).await?;
+        let failures: Vec<&str> = outcome.receipt_failures().iter().map(|o| o.executor_id.as_str()).collect();
+        assert_eq!(failures, vec![env.mpc.id().as_str()], "only the MPC receipt fails");
+        expect_failure(Ok(outcome), "Mock MPC failure");
+        assert_eq!(env.get_session(&s).await?.unwrap().used, 1);
+
+        env.set_mpc_fail(false).await?;
+        let retry = env.relayer_fc.call(signer, "derive_key").args_json(s.derive_args(PK1, PK2)).gas(api_gas("derive_key")).transact().await;
+        if max_uses == 2 {
+            let response: CkdResponse = retry?.into_result()?.json()?;
+            assert_eq!(response, env.expected_ckd(&path, PK1, PK2).await?);
+            assert_eq!(env.get_session(&s).await?.unwrap().used, 2);
+            env.set_mpc_fail(true).await?;
+        } else {
+            expect_failure(tx(retry), "Session use limit reached");
+        }
+    }
+    assert_eq!(env.mpc_calls().await?.len(), 1, "only the successful retry is recorded");
     Ok(())
 }

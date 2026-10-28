@@ -56,6 +56,12 @@ importers:
       '@hana-id/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@hana-id/web':
+        specifier: workspace:*
+        version: link:../../packages/web
+      '@stellar/stellar-base':
+        specifier: 15.0.0
+        version: 15.0.0
     devDependencies:
       '@hana-id/env':
         specifier: workspace:*
@@ -72,6 +78,9 @@ importers:
       happy-dom:
         specifier: 21.0.3
         version: 21.0.3
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

@@ -47,7 +47,7 @@ Rules the contract enforces:
 ```
 contracts/hana-signer/   Rust NEAR contract (near-sdk 5): OIDC verification, scope registry, sessions, CKD
 apps/api/                Cloudflare Worker + Durable Objects + D1: the relayer partners call (publishable keys)
-apps/smoke/              Local smoke-test page (Vite, http://localhost:5173): real login + CKD against a deployed env
+apps/smoke/              Local smoke-test pages (Vite, http://localhost:5173): login through the vault, plus the direct flow
 packages/env/            Environment manifest schema (zod) + loadEnv()
 packages/core/           SDK core (batch B, pure TS): layouts, CKD, derivation v1, signers, decoders, token checks
 packages/web/            Partner client (createHana) and the Hana pages (vault, login, approve, export), built per env

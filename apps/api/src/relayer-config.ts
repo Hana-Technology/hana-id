@@ -3,7 +3,10 @@
 
 /**
  * Two pools of function-call keys on RELAYER_ACCOUNT (receiver SIGNER_ACCOUNT), each with its own Durable Objects:
- * - `session` (RELAYER_KEYS): logins. Only the session methods.
+ * - `session` (RELAYER_KEYS): logins. Only the session methods. Batch B moves this list through three states
+ *   (docs/batch-b-spec.md, "Relayer allowlists"); this is state 1, from the contract upgrade that adds
+ *   create_session_and_derive. State 2 (ship gate passes, smoke on /v1/login) drops create_session; state 3 (gate
+ *   fails) drops create_session_and_derive. Each change is a deploy step that re-adds every session-pool key.
  * - `owner` (OWNER_RELAYER_KEYS, small allowance): /v1/owner-actions. Abuse of that endpoint can only drain this pool,
  *   never stop logins.
  * The allowlists match the access keys' `method_names` (scripts/deploy-contract.ts); the Durable Object refuses

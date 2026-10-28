@@ -16,6 +16,7 @@ const SHARED = 'shared.apps.googleusercontent.com';
 const m = { ...base, googleClientIds: ['hana.apps.googleusercontent.com'], sharedGoogleClientIds: [SHARED] };
 const NEAR = 10n ** 24n;
 
+/** Batch B allowlist state 1 (docs/batch-b-spec.md, "Relayer allowlists"). */
 const SESSION = ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions'];
 const OWNER = ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change', 'register_scope', 'apply_pending_config'];
 const UPDATER = ['set_issuer_key', 'remove_issuer_key'];

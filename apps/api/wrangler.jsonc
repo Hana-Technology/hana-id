@@ -17,7 +17,13 @@
     "NEAR_RPC": "https://test.rpc.fastnear.com",
     "SIGNER_ACCOUNT": "hana-id-signer-dev1.testnet",
     "RELAYER_ACCOUNT": "hana-id-relayer-dev1.testnet",
-    "ENV_NAME": "sandbox-dev"
+    "ENV_NAME": "sandbox-dev",
+    "MPC_ACCOUNT": "v1.signer-prod.testnet",
+    "VAULT_ORIGIN": "https://hana-id-vault-sandbox-dev.tingtc.workers.dev",
+    "AUTH_ORIGIN": "https://hana-id-auth-sandbox-dev.tingtc.workers.dev",
+    "BLS_PRECHECK": "0",
+    "REJECT_PII_ON_SESSIONS": "0",
+    "DO_LOCATION_HINT": "apac"
   },
   "d1_databases": [
     {
@@ -36,6 +42,10 @@
       {
         "name": "RATE_LIMITER",
         "class_name": "RateLimiter"
+      },
+      {
+        "name": "LOGIN_RELAY",
+        "class_name": "LoginRelay"
       }
     ]
   },
@@ -45,6 +55,12 @@
       "new_sqlite_classes": [
         "RelayerKey",
         "RateLimiter"
+      ]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": [
+        "LoginRelay"
       ]
     }
   ],

@@ -93,12 +93,40 @@ describe('wrangler.jsonc', () => {
       SIGNER_ACCOUNT: manifest.signer,
       RELAYER_ACCOUNT: manifest.relayer,
       ENV_NAME: manifest.name,
+      MPC_ACCOUNT: manifest.mpc,
+      VAULT_ORIGIN: manifest.vaultOrigin,
+      AUTH_ORIGIN: manifest.authOrigin,
+      BLS_PRECHECK: '0',
+      REJECT_PII_ON_SESSIONS: '0',
       ...(manifest.cloudflare.durableObjectLocation ? { DO_LOCATION_HINT: manifest.cloudflare.durableObjectLocation } : {}),
     });
     expect(config.d1_databases[0]).toMatchObject({ database_name: manifest.cloudflare.d1Name, database_id: LOCAL_D1_ID });
     expect(text).not.toMatch(/ed25519:/u);
     expect(text).not.toMatch(/RELAYER_KEYS|KEYS_UPDATER_KEY/u);
     expect(text).not.toMatch(/OWNER_RELAYER_KEYS/u);
+  });
+
+  it('binds the LoginRelay Durable Object, created by a v2 migration after v1', () => {
+    const config = wranglerConfig(manifest, LOCAL_D1_ID) as {
+      durable_objects: { bindings: { name: string; class_name: string }[] };
+      migrations: { tag: string; new_sqlite_classes: string[] }[];
+    };
+    expect(config.durable_objects.bindings).toEqual([
+      { name: 'RELAYER_KEY', class_name: 'RelayerKey' },
+      { name: 'RATE_LIMITER', class_name: 'RateLimiter' },
+      { name: 'LOGIN_RELAY', class_name: 'LoginRelay' },
+    ]);
+    // Deployed migrations are append-only: v1 stays exactly as it was.
+    expect(config.migrations).toEqual([
+      { tag: 'v1', new_sqlite_classes: ['RelayerKey', 'RateLimiter'] },
+      { tag: 'v2', new_sqlite_classes: ['LoginRelay'] },
+    ]);
+  });
+
+  it('refuses an env without vaultOrigin and authOrigin', () => {
+    const { vaultOrigin: _v, authOrigin: _a, ...bare } = manifest;
+    expect(() => wranglerConfig(bare, LOCAL_D1_ID)).toThrow(/needs vaultOrigin and authOrigin/u);
+    expect(() => wranglerConfig({ ...manifest, authOrigin: undefined }, LOCAL_D1_ID)).toThrow(/needs vaultOrigin and authOrigin/u);
   });
 
   it('sets DO_LOCATION_HINT only when the manifest names a Durable Object location', () => {

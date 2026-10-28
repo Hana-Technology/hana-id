@@ -82,7 +82,8 @@ export interface AccessKeyView {
 
 export interface FinalOutcome {
   status: { SuccessValue?: string; Failure?: unknown } | string;
-  receipts_outcome?: { outcome: { logs?: string[]; status: { Failure?: unknown } | string } }[];
+  /** Every receipt's outcome; `executor_id` is the account that ran it (the contract, or a contract it called). */
+  receipts_outcome?: { outcome: { logs?: string[]; executor_id?: string; status: { Failure?: unknown } | string } }[];
   transaction?: { hash: string };
   final_execution_status?: string;
 }

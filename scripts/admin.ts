@@ -15,6 +15,7 @@ import {
   normaliseOrigin,
   planExistsSql,
   removeOriginsSql,
+  scopeConflictSql,
   setStatusSql,
 } from './lib/admin-sql.ts';
 import { type Args, CliError, parseCli, run } from './lib/cli.ts';
@@ -91,6 +92,9 @@ async function main(): Promise<void> {
       if (!(await scopeExists(m, scopeId))) throw new Error(`Scope ${scopeId} is not registered on ${m.signer} (admin.ts ${m.name} scope:register …)`);
       if (!d1Execute(m, planExistsSql(plan), { remote }).length) throw new Error(`No plan "${plan}" in ${where}`);
       const app = { id: newAppId(), name, scopeId, publishableKey: publishableKey(), plan, createdAt: Date.now(), origins: list };
+      // Test and live keys never share a scope (the API would refuse the test key: scope_conflict).
+      const conflict = d1Execute<{ id: string }>(m, scopeConflictSql(scopeId, app.publishableKey), { remote });
+      if (conflict.length) throw new Error(`Scope ${scopeId} is used by ${conflict.map((r) => r.id).join(', ')} with the other key type (pk_test_ and pk_live_ apps can't share a scope)`);
       d1Execute(m, createAppSql(app), { remote });
       console.log(`Created app ${app.id} "${name}" (scope ${scopeId}, plan ${plan}) in ${where}`);
       console.log(`Origins: ${list.join(' ')}`);

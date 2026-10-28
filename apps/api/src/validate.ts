@@ -8,6 +8,8 @@ const MAX_SESSION_MS = 24 * 60 * 60 * 1000;
 /** Clock skew tolerated between us and the chain when checking expiry windows. */
 const SKEW_MS = 5 * 60 * 1000;
 export const MAX_USES = 500;
+/** Largest usable `key_index`: values ≥ 2^31 are reserved (the contract, the API and the SDK refuse them). */
+export const KEY_INDEX_LIMIT = 0x7fffffff;
 
 type Obj = Record<string, unknown>;
 export type Checked<T> = T | { error: string };
@@ -17,7 +19,7 @@ const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !
 const isBytes = (v: unknown, min: number, max: number): v is number[] =>
   Array.isArray(v) && v.length >= min && v.length <= max && v.every((b) => Number.isInteger(b) && b >= 0 && b <= 255);
 const isCount = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) > 0;
-const isU32 = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 0xffffffff;
+const isKeyIndex = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= KEY_INDEX_LIMIT;
 const isU64 = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
 const isJwt = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= MAX_JWT && /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(v);
 const isPoint = (v: unknown, prefix: string): v is string => typeof v === 'string' && v.startsWith(prefix) && v.length < 300;
@@ -61,7 +63,7 @@ export function toCreateSession(body: unknown, scopeId: string, now = Date.now()
   if (!isBytes(salt, 16, 64)) return { error: 'salt must be 16 to 64 bytes' };
   if (!isCount(expiresAtMs)) return { error: 'expiresAtMs must be a timestamp in ms' };
   if (expiresAtMs <= now || expiresAtMs > now + MAX_SESSION_MS + SKEW_MS) return { error: 'expiresAtMs must be in the next 24 hours' };
-  if (!isU32(keyIndex)) return { error: 'keyIndex must be a u32' };
+  if (!isKeyIndex(keyIndex)) return { error: 'keyIndex must be 0 to 2^31 - 1 (2^31 and above are reserved)' };
   if (!isCount(maxUses) || maxUses > MAX_USES) return { error: `maxUses must be 1 to ${MAX_USES}` };
   return {
     request: { jwt, sessionPublicKey, expiresAtMs, salt, keyIndex, maxUses },

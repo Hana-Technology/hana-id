@@ -7,10 +7,8 @@ import { join } from 'node:path';
 import { bls12_381 as bls } from '@noble/curves/bls12-381';
 import { base58 } from '@scure/base';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { base64UrlEncode, toHex, utf8 } from '../src/bytes.ts';
-import { CKD_DST, ckdAppId } from '../src/ckd.ts';
+import { CKD_DST, base64UrlEncode, ckdAppId, sessionNonce, toHex, utf8 } from '@hana-id/core';
 import type { PageEnv } from '../src/config.ts';
-import { sessionNonce } from '../src/layouts.ts';
 
 const html = readFileSync(join(import.meta.dirname, '..', 'index.html'), 'utf8');
 const body = /<body>([\s\S]*)<\/body>/u.exec(html)![1]!.replace(/<script[\s\S]*?<\/script>/gu, '');
@@ -71,7 +69,7 @@ function mockBackend(opts: { signer?: string } = {}) {
         const key = toHex(Uint8Array.from(b.sessionPublicKey));
         if (sessions.has(key)) return apiError(409, 'session_exists', 'This session key is already in use');
         const claims = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(b.jwt.split('.')[1]!.replace(/-/gu, '+').replace(/_/gu, '/')), (c) => c.charCodeAt(0)))) as { nonce: string };
-        const expected = await sessionNonce({ signer: baseEnv.signer, scopeId: 's1', sessionPublicKey: Uint8Array.from(b.sessionPublicKey), expiresAtMs: b.expiresAtMs, keyIndex: b.keyIndex, maxUses: b.maxUses, salt: Uint8Array.from(b.salt) });
+        const expected = sessionNonce({ signer: baseEnv.signer, scopeId: 's1', sessionPublicKey: Uint8Array.from(b.sessionPublicKey), expiresAtMs: b.expiresAtMs, keyIndex: b.keyIndex, maxUses: b.maxUses, salt: Uint8Array.from(b.salt) });
         if (claims.nonce !== expected) return apiError(400, 'nonce_mismatch', 'The ID token nonce does not commit to this session');
         const path = `s1#google#${SUB}#${b.keyIndex}`;
         sessions.set(key, { path, used: 0, revoked: false, maxUses: b.maxUses });
@@ -255,7 +253,7 @@ describe('smoke page', () => {
 
   it('restores the results log from storage and exports it as JSON', async () => {
     mockBackend();
-    const run = { run: 1, path: 's1#google#111#0', stellar: 'GA', evm: '0xA', appIdHex: 'aa', pkPrefix: 'pk_test_x', clientMode: 'own', keyIndex: 0, env: 'sandbox-dev', signer: baseEnv.signer, sessionKeyPrefix: '00', timings: { googleMs: 1, createSessionMs: 2, deriveMs: 3, decryptVerifyMs: 4, totalMs: 10 }, createSessionGas: null, deriveGas: null };
+    const run = { run: 1, path: 's1#google#111#0', stellar: 'GA', evm: '0xA', appIdHex: 'aa', derivation: 1, pkPrefix: 'pk_test_x', clientMode: 'own', keyIndex: 0, env: 'sandbox-dev', signer: baseEnv.signer, sessionKeyPrefix: '00', timings: { googleMs: 1, createSessionMs: 2, deriveMs: 3, decryptVerifyMs: 4, totalMs: 10 }, createSessionGas: null, deriveGas: null };
     localStorage.setItem('hana-smoke.runs', JSON.stringify([run]));
     const writeText = vi.fn(async (_: string) => undefined);
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });

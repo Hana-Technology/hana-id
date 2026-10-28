@@ -9,7 +9,7 @@ export interface StepTimings {
   createSessionMs: number | null;
   /** POST /v1/derive round trip (derive_key + MPC). */
   deriveMs: number;
-  /** Local CKD decryption, pairing check and PROVISIONAL address derivation. */
+  /** Local CKD decryption, pairing check and derivation v1 addresses. */
   decryptVerifyMs: number;
   /** Start of the run (session start, or "derive again" click) to addresses shown. */
   totalMs: number;
@@ -33,7 +33,8 @@ export interface RunRecord {
   /** First bytes of the session public key, hex: tells runs of one session apart. */
   sessionKeyPrefix: string;
   appIdHex: string;
-  /** PROVISIONAL (legacy HKDF salt): will change when batch B fixes the derivation. */
+  /** Chain-key derivation version (@hana-id/core/derivation). Runs logged before v1 (PROVISIONAL) are dropped on load. */
+  derivation: 1;
   stellar: string;
   evm: string;
   createSessionTx: string | null;
@@ -101,10 +102,13 @@ export function compareRun(run: RunRecord, earlier: readonly RunRecord[]): Compa
 
 /** "Copy results as JSON": the public log only. */
 export function resultsJson(runs: readonly RunRecord[]): string {
-  return JSON.stringify({ kind: 'hana-id-smoke-results', version: 1, derivation: 'PROVISIONAL (legacy HKDF salt hana-embed-ckd-v1)', runs }, null, 2);
+  return JSON.stringify({ kind: 'hana-id-smoke-results', version: 1, derivation: 'v1 (hana-id/chain-keys/v1, @hana-id/core/derivation)', runs }, null, 2);
 }
 
-/** Loads a stored log, dropping anything that doesn't look like a run (public data, a convenience only). */
+/**
+ * Loads a stored log, dropping anything that doesn't look like a run (public data, a convenience only), including runs
+ * from the PROVISIONAL derivation, whose addresses would wrongly fail the comparisons against v1 runs.
+ */
 export function parseStoredRuns(text: string | null): RunRecord[] {
   if (!text) return [];
   try {
@@ -112,7 +116,12 @@ export function parseStoredRuns(text: string | null): RunRecord[] {
     if (!Array.isArray(v)) return [];
     return v.filter(
       (r): r is RunRecord =>
-        typeof r === 'object' && r !== null && typeof (r as RunRecord).run === 'number' && typeof (r as RunRecord).path === 'string' && typeof (r as RunRecord).stellar === 'string',
+        typeof r === 'object' &&
+        r !== null &&
+        typeof (r as RunRecord).run === 'number' &&
+        typeof (r as RunRecord).path === 'string' &&
+        typeof (r as RunRecord).stellar === 'string' &&
+        (r as RunRecord).derivation === 1,
     );
   } catch {
     return [];

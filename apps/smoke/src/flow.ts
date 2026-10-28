@@ -1,12 +1,11 @@
 // The derive step without the DOM, so tests can drive it against a simulated MPC:
 // fresh BLS app key → session signature over the CKD payload → POST /v1/derive → decrypt + pairing check against the
-// pinned network key → PROVISIONAL addresses. Only public results come back; the CKD secret is zeroed and every
-// reference to it and to the ephemeral scalar is dropped when this returns.
+// pinned network key → derivation v1 addresses (@hana-id/core/derivation). Only public results come back; the CKD
+// secret is zeroed (addressesFromCkdSecret consumes it) and every reference to it and to the ephemeral scalar is
+// dropped when this returns.
+import { ckdAppId, decryptCkd, jsonBytes, newAppKey, signDerive, toHex } from '@hana-id/core';
+import { addressesFromCkdSecret } from '@hana-id/core/derivation';
 import type { DeriveBody, HanaApi } from './api.ts';
-import { toHex } from './bytes.ts';
-import { ckdAppId, decryptCkd, newAppKey } from './ckd.ts';
-import { deriveAddresses } from './chain-keys.ts';
-import { jsonBytes, signDerive } from './session.ts';
 
 export interface DeriveInput {
   api: Pick<HanaApi, 'derive'>;
@@ -51,7 +50,7 @@ export async function deriveOnce(i: DeriveInput): Promise<DeriveOutcome> {
   let secret: Uint8Array | null = null;
   try {
     secret = decryptCkd(result, appKey.a, appId, i.ckdNetworkKey);
-    const addresses = deriveAddresses(secret);
+    const addresses = addressesFromCkdSecret(secret);
     return { ...addresses, appIdHex: toHex(appId), nearTx, requestId, deriveMs, decryptVerifyMs: now() - t1, body };
   } finally {
     secret?.fill(0);

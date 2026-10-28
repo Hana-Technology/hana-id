@@ -82,7 +82,7 @@ describe('envs.generated.ts', () => {
   it('fails the build when an included env has an unusable CKD key', () => {
     const unset = manifest({ name: 'sandbox-x', ckdNetworkKey: 'UNSET-run-scripts/fetch-ckd-key.ts' });
     expect(() => envsModule([sandbox, unset])).toThrow(/sandbox-x\.json ckdNetworkKey is still the UNSET placeholder/u);
-    expect(() => envsModule([manifest({ name: 'sandbox-y', ckdNetworkKey: 'ed25519:abc' })])).toThrow(/sandbox-y\.json ckdNetworkKey is not a bls12381g2/u);
+    expect(() => envsModule([manifest({ name: 'sandbox-y', ckdNetworkKey: 'ed25519:abc' })])).toThrow(/sandbox-y\.json ckdNetworkKey is not a valid bls12381g2 point/u);
     // An env without origins gets no pages, so its key doesn't block the others.
     expect(() => envsModule([sandbox, manifest({ name: 'sandbox-z', vaultOrigin: undefined, authOrigin: undefined, ckdNetworkKey: 'UNSET' })])).not.toThrow();
   });
@@ -95,8 +95,12 @@ describe('envs.generated.ts', () => {
   });
 });
 
-describe('ckdKeyProblem (stub until @hana-id/core)', () => {
+describe('ckdKeyProblem (@hana-id/core)', () => {
   it('accepts the pinned sandbox-dev key', () => {
     expect(ckdKeyProblem(sandbox)).toBeNull();
+  });
+
+  it('refuses a bls12381g2:<base58> key that is not a valid G2 point', () => {
+    expect(ckdKeyProblem({ name: 'sandbox-w', ckdNetworkKey: 'bls12381g2:abc' })).toMatch(/sandbox-w\.json ckdNetworkKey is not a valid bls12381g2 point/u);
   });
 });

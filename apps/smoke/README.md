@@ -9,8 +9,9 @@ It shows public data only. The Google ID token goes only to `POST /v1/sessions` 
 "replay create_session" button and dropped with the session). The CKD secret and the derived private keys exist only
 inside one function call and are zeroed afterwards; they are never displayed, logged, stored or sent.
 
-> **Addresses are PROVISIONAL.** Chain keys use the legacy PoC derivation (HKDF-SHA256, salt `hana-embed-ckd-v1`).
-> Batch B decides the final salt before the address freeze, so every address this page shows will change.
+> **Addresses use derivation v1** (`@hana-id/core/derivation`, HKDF-SHA256 with salt `hana-id/chain-keys/v1/extract`),
+> which replaced the PROVISIONAL legacy derivation (salt `hana-embed-ckd-v1`) in batch B, so addresses logged before
+> that differ. Testnet addresses stay disposable until the address freeze.
 
 ## Prerequisites
 
@@ -64,7 +65,7 @@ pnpm --filter @hana-id/smoke typecheck
 3. Sign in. The page checks the token's `nonce` and `aud`, calls `POST /v1/sessions`, then immediately derives
    (counter 1): fresh BLS12-381 key, session signature over
    `"hana-id-session-v1:" ‖ counter u64 LE ‖ sha256("hana-id-ckd-v1:{pk1}:{pk2}")`, `POST /v1/derive`, decryption, pairing
-   check against the pinned `ckdNetworkKey`, PROVISIONAL addresses and `app_id`.
+   check against the pinned `ckdNetworkKey`, derivation v1 addresses and `app_id`.
 4. Buttons: *Derive again* (counter + 1), *Revoke session* (signature over `"revoke"`), *Replay last create_session*,
    *Replay last derive*, *New session* (then change key index, client or publishable key).
 

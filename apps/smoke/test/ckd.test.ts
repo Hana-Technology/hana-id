@@ -1,14 +1,12 @@
-// Ported from legacy/client/ckd.test.ts (base58 via @scure/base), plus the page's derive step end to end against a
-// simulated MPC.
+// The page's derive step end to end against a simulated MPC. The CKD client itself (ported from legacy) is tested in
+// packages/core/test/ckd.test.ts, and derivation v1 in packages/core/test/derivation.test.ts.
+import { CKD_DST, ckdAppId, ckdPayload, sessionMessage, toHex } from '@hana-id/core';
+import { addressesFromCkdSecret } from '@hana-id/core/derivation';
 import { bls12_381 as bls } from '@noble/curves/bls12-381';
 import { base58 } from '@scure/base';
 import { describe, expect, it, vi } from 'vitest';
 import type { DeriveBody } from '../src/api.ts';
-import { toHex } from '../src/bytes.ts';
-import { CKD_DST, ckdAppId, decryptCkd, isValidNetworkKey, newAppKey } from '../src/ckd.ts';
-import { deriveAddresses } from '../src/chain-keys.ts';
 import { deriveOnce } from '../src/flow.ts';
-import { ckdPayload, sessionMessage } from '../src/layouts.ts';
 import { newPendingSession } from '../src/session.ts';
 
 const G1 = bls.G1.ProjectivePoint;
@@ -32,61 +30,6 @@ function simulateMpc(appPk1: string, appId: Uint8Array, net = mpcNetwork()) {
   };
   return { response, networkKey: net.networkKey, expected: h.multiply(net.msk).toRawBytes(true) };
 }
-
-describe('CKD client (ported from legacy)', () => {
-  const appId = ckdAppId('hana-signer.testnet', 'global#google#123');
-
-  it('builds the app id exactly as near-mpc kdf.rs (sha3-256 of prefix ‖ account ‖ "," ‖ path)', () => {
-    expect(appId).toHaveLength(32);
-    expect(ckdAppId('hana-signer.testnet', 'global#google#123')).toEqual(appId);
-    expect(ckdAppId('hana-signer.testnet', 'global#google#124')).not.toEqual(appId);
-    expect(ckdAppId('hana-signer-other.testnet', 'global#google#123')).not.toEqual(appId);
-  });
-
-  it('decrypts and verifies a well-formed response', () => {
-    const key = newAppKey();
-    const { response, networkKey, expected } = simulateMpc(key.publicKey.AppPublicKeyPV.pk1, appId);
-    expect(decryptCkd(response, key.a, appId, networkKey)).toEqual(expected);
-  });
-
-  it('rejects a response for a different app id, key or network', () => {
-    const key = newAppKey();
-    const { response, networkKey } = simulateMpc(key.publicKey.AppPublicKeyPV.pk1, appId);
-    expect(() => decryptCkd(response, key.a, ckdAppId('hana-signer.testnet', 'other'), networkKey)).toThrow(/pairing/);
-    expect(() => decryptCkd(response, newAppKey().a, appId, networkKey)).toThrow(/pairing/);
-    const other = simulateMpc(key.publicKey.AppPublicKeyPV.pk1, appId);
-    expect(() => decryptCkd(response, key.a, appId, other.networkKey)).toThrow(/pairing/);
-  });
-
-  it('rejects malformed points', () => {
-    const key = newAppKey();
-    const { response, networkKey } = simulateMpc(key.publicKey.AppPublicKeyPV.pk1, appId);
-    expect(() => decryptCkd({ ...response, big_y: response.big_y.replace('bls12381g1:', 'bls12381g2:') }, key.a, appId, networkKey)).toThrow(/bls12381g1/);
-    expect(() => decryptCkd(response, key.a, appId, networkKey.replace('bls12381g2:', 'bls12381g1:'))).toThrow(/bls12381g2/);
-  });
-
-  it('publishes a matching (a·G1, a·G2) pair, as the contract pairing check requires', () => {
-    const { a, publicKey } = newAppKey();
-    expect(publicKey.AppPublicKeyPV.pk1).toBe(`bls12381g1:${base58.encode(G1.BASE.multiply(a).toRawBytes(true))}`);
-    expect(publicKey.AppPublicKeyPV.pk2).toBe(`bls12381g2:${base58.encode(G2.BASE.multiply(a).toRawBytes(true))}`);
-  });
-
-  it('derives stable, distinct per-chain addresses from the secret', () => {
-    const secret = new Uint8Array(48).fill(7);
-    const k1 = deriveAddresses(secret);
-    expect(deriveAddresses(secret)).toEqual(k1);
-    expect(k1.evm).toMatch(/^0x[0-9a-fA-F]{40}$/u);
-    expect(k1.stellar).toMatch(/^G[A-Z2-7]{55}$/u);
-    expect(deriveAddresses(new Uint8Array(48).fill(8)).evm).not.toBe(k1.evm);
-    expect(secret).toEqual(new Uint8Array(48).fill(7)); // the caller zeroes it, deriveAddresses doesn't touch it
-  });
-
-  it('validates the pinned network key format', () => {
-    expect(isValidNetworkKey(mpcNetwork().networkKey)).toBe(true);
-    expect(isValidNetworkKey('UNSET-run-scripts/fetch-ckd-key.ts')).toBe(false);
-    expect(isValidNetworkKey('bls12381g2:abc')).toBe(false);
-  });
-});
 
 describe('deriveOnce (page derive step)', () => {
   const signer = 'hana-id-signer-dev1.testnet';
@@ -116,10 +59,10 @@ describe('deriveOnce (page derive step)', () => {
     expect(body.counter).toBe(1);
     expect(body.sessionPublicKey).toEqual([...session.publicKey]);
     const key = await crypto.subtle.importKey('raw', session.publicKey, { name: 'Ed25519' }, false, ['verify']);
-    expect(await crypto.subtle.verify({ name: 'Ed25519' }, key, Uint8Array.from(body.signature), await sessionMessage(1, ckdPayload(body.pk1, body.pk2)))).toBe(true);
+    expect(await crypto.subtle.verify({ name: 'Ed25519' }, key, Uint8Array.from(body.signature), sessionMessage(1, ckdPayload(body.pk1, body.pk2)))).toBe(true);
 
     expect(out.appIdHex).toBe(toHex(ckdAppId(signer, path)));
-    expect(out).toMatchObject(deriveAddresses(secret()!));
+    expect(out).toMatchObject(addressesFromCkdSecret(Uint8Array.from(secret()!)));
     expect(out.nearTx).toBe('TxHash111');
     expect(Object.keys(out).sort()).toEqual(['appIdHex', 'body', 'decryptVerifyMs', 'deriveMs', 'evm', 'nearTx', 'requestId', 'stellar']);
     // Nothing secret in what comes back.

@@ -46,11 +46,4 @@ export function pageEnvFrom(m: ManifestFields, apiUrlOverride?: string): PageEnv
   };
 }
 
-/** Why the pinned CKD key can't be used, or null. `isValidKey` checks the point (ckd.ts isValidNetworkKey). */
-export function ckdKeyProblem(env: Pick<PageEnv, 'name' | 'ckdNetworkKey'>, isValidKey: (key: string) => boolean): string | null {
-  if (env.ckdNetworkKey.includes('UNSET')) {
-    return `envs/${env.name}.json ckdNetworkKey is still the UNSET placeholder. Pin it with \`pnpm --filter @hana-id/scripts fetch-ckd-key ${env.name}\` and restart the dev server.`;
-  }
-  if (!isValidKey(env.ckdNetworkKey)) return `envs/${env.name}.json ckdNetworkKey is not a valid bls12381g2 point.`;
-  return null;
-}
+// The pinned-key check (`ckdKeyProblem`) moved to @hana-id/core (ckd.ts).

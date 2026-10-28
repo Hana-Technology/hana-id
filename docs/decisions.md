@@ -349,6 +349,18 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
 - Rejected: allowing mainnet with warnings and small amounts.
 - Open: the mainnet launch date (not set).
 
+### D40. Leaving Hana: per-chain key export and Hana Home, no seed phrase
+- Date 2026-10-28 · Status: confirmed by the user; Hana Home to build before mainnet · Source: `docs/batch-b-spec.md`
+  Q19
+- Decision: users leave by exporting each chain's private key (fresh Google sign-in plus typed confirmation). No seed
+  phrase, global or per chain, for EVM or Stellar. Before mainnet, Hana runs "Hana Home" on the auth domain: a user
+  signs in with Google and can export their keys for any app that uses Hana's shared Google login, so a partner app
+  shutting down doesn't strand them. Apps on their own Google client can't be covered (only their origins can get
+  tokens for that client).
+- Why: private keys import into every major EVM and Stellar wallet (Privy exports keys the same way); a phrase would
+  change EVM derivation and add little for these users.
+- Rejected: EVM seed phrase export.
+
 ## Superseded or amended
 
 | Was | Now | Source |

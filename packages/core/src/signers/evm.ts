@@ -128,7 +128,8 @@ function hexData(v: unknown, what: string): Bytes {
 
 /**
  * Validates and parses the port's transaction object. Exact field set; EIP-1559 needs both fee fields and no
- * gasPrice, legacy needs gasPrice and neither fee field; `type`, if present, must agree. `chainId` is required (EIP-155).
+ * gasPrice, legacy needs gasPrice and neither fee field; `type`, if present, must agree. `chainId` is required (EIP-155)
+ * and at most Number.MAX_SAFE_INTEGER.
  */
 export function parseEvmTxRequest(raw: unknown): EvmTx {
   if (!isObj(raw)) throw new Error('tx must be an object');
@@ -144,7 +145,9 @@ export function parseEvmTxRequest(raw: unknown): EvmTx {
   }
   if (raw.to !== undefined && raw.to !== null && typeof raw.to !== 'string') throw new Error('tx.to must be an address');
 
-  const chainId = quantity(raw, 'chainId', U64_MAX);
+  // A safe integer, as the approval context and digest carry it (approvalContextString): a larger chainId is refused
+  // here, so parsePortRequest refuses the request instead of the approval path failing later.
+  const chainId = quantity(raw, 'chainId', BigInt(Number.MAX_SAFE_INTEGER));
   if (chainId === 0n) throw new RangeError('tx.chainId must be positive');
   const nonce = quantity(raw, 'nonce', U64_MAX - 1n);
   const gas = quantity(raw, 'gas', U64_MAX);

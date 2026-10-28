@@ -452,6 +452,68 @@ describe('approval content', () => {
     expect(toHex(approvalDigest({ ...input, context: { networkPassphrase: 'Public Global Stellar Network ; September 2015' } }))).not.toBe(toHex(approvalDigest(input)));
   });
 
+  it('refuses an eth_signTransaction chainId over Number.MAX_SAFE_INTEGER at parse time', () => {
+    const tx = (chainId: string) => parsePortRequest(req('eth_signTransaction', { tx: { ...TX, chainId } }));
+    expect(tx('0xffffffffffffff')).toBeNull();
+    expect(tx(`0x${(BigInt(Number.MAX_SAFE_INTEGER) + 1n).toString(16)}`)).toBeNull();
+    const max = tx(`0x${Number.MAX_SAFE_INTEGER.toString(16)}`);
+    expect(max).not.toBeNull();
+    expect(approvalContent(max as never).context).toEqual({ chainId: Number.MAX_SAFE_INTEGER });
+  });
+
+  describe('the largest sign request of each method still fits what it turns into', () => {
+    // The largest n for which build(n) passes parsePortRequest (accepted sizes are a prefix: binary search).
+    const largest = (build: (n: number) => unknown): Extract<PortRequest, { method: 'hana_signRaw' }> => {
+      let lo = 0;
+      let hi = SIGN_MESSAGE_MAX_BYTES * 2;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (parsePortRequest(build(mid)) !== null) lo = mid;
+        else hi = mid - 1;
+      }
+      const r = parsePortRequest(build(lo));
+      expect(r).not.toBeNull();
+      expect(parsePortRequest(build(lo + 4))).toBeNull();
+      return r as never;
+    };
+    const b64 = (n: number) => base64Encode(new Uint8Array(Math.floor((n * 3) / 4)));
+    const id = 'i'.repeat(64);
+
+    it.each([
+      ['stellar_signTransaction', (n: number) => req('stellar_signTransaction', { xdr: b64(n), networkPassphrase: TESTNET, address: G }, id)],
+      ['stellar_signAuthEntry', (n: number) => req('stellar_signAuthEntry', { preimageXdr: b64(n), networkPassphrase: TESTNET, address: G }, id)],
+      ['stellar_signMessage (bytes)', (n: number) => req('stellar_signMessage', { message: new Uint8Array(n), address: G }, id)],
+      ['stellar_signMessage (multi-byte text)', (n: number) => req('stellar_signMessage', { message: '€'.repeat(n), address: G }, id)],
+      ['personal_sign', (n: number) => req('personal_sign', [`0x${'ab'.repeat(n)}`, EVM], id)],
+      ['eth_signTypedData_v4', (n: number) => req('eth_signTypedData_v4', [EVM, '€'.repeat(n)], id)],
+      ['eth_signTransaction', (n: number) => req('eth_signTransaction', { tx: { ...TX, data: `0x${'ab'.repeat(n)}` } }, id)],
+    ] as const)('%s → hana:approve-request with the longest app name and origin', (_, build) => {
+      const r = largest(build);
+      const { bytes, context } = approvalContent(r);
+      const chain = approvalChain(r);
+      const msg = {
+        ...APPROVE_REQUEST,
+        appName: '€'.repeat(200),
+        parentOrigin: `https://${'a'.repeat(63)}.${'b'.repeat(63)}.${'c'.repeat(63)}.example:65535`,
+        kind: APPROVAL_KIND[r.method],
+        chain,
+        address: chain === 'evm' ? EVM : G,
+        bytes,
+        context,
+        position: 1000,
+        queued: 1000,
+      };
+      expect(parseWindowMessage(msg, ['hana:approve-request'])).not.toBeNull();
+    });
+
+    it('the signed envelope of the largest stellar_signTransaction fits the reply cap', () => {
+      const r = largest((n) => req('stellar_signTransaction', { xdr: b64(n), networkPassphrase: TESTNET, address: G }, id));
+      // The signed envelope is the input plus one DecoratedSignature (4-byte hint, 4-byte length, 64-byte signature).
+      const signed = base64Encode(new Uint8Array(approvalContent(r).bytes.length + 72));
+      expect(parsePortReply({ v: 1, id, result: { signedTxXdr: signed, signerAddress: G } }, 'stellar_signTransaction')).not.toBeNull();
+    });
+  });
+
   it('request ids are 128-bit random hex', () => {
     const a = newRequestId();
     expect(a).toMatch(/^[0-9a-f]{32}$/u);

@@ -261,9 +261,9 @@ describe('Approvals', () => {
     expect(await again).toBe('cancelled');
   });
 
-  it("refuses a request whose message the popup's validator would drop (over the 192 KiB cap), at once", async () => {
+  it("refuses a request whose message the popup's validator would drop (bytes over the 192 KiB cap), at once", async () => {
     const { approvals } = make();
-    await expect(approvals.requestApproval(subject(new Uint8Array(APPROVAL_MAX_BYTES)))).rejects.toMatchObject({ code: 4100, data: { reason: 'invalid_request' } });
+    await expect(approvals.requestApproval(subject(new Uint8Array(APPROVAL_MAX_BYTES + 1)))).rejects.toMatchObject({ code: 4100, data: { reason: 'invalid_request' } });
     expect(approvals.pending).toBe(0);
     // A note the popup would refuse (a reason outside its pattern) is refused the same way.
     await expect(approvals.requestApproval(subject(), { label: 'Swaps', active: true, reason: 'Not A Reason' })).rejects.toMatchObject({ code: 4100 });

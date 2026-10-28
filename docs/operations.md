@@ -1,7 +1,7 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-10-28 (`feat/batch-b` after merging the batch B fix branches `fix/b-web`,
-`fix/b-core-policy`, `fix/b-clients` and `fix/b-api`)
+Last verified against code: 2026-10-28 (`feat/b-defaults`: `feat/batch-b` with the batch B fix branches and the
+defaults the user approved on 2026-10-28)
 
 Commands and flags are from `scripts/`, `apps/api/scripts/gen-wrangler.ts` and their tests. Endpoints:
 `docs/api.md`. Contract methods: `docs/contract-interface.md`. Design and measurements: `docs/context.md`.
@@ -60,6 +60,7 @@ Every name comes from `envs/<env>.json` (schema: `packages/env/src/schema.ts`; n
 | `mpc` | the NEAR MPC contract (exists already; not ours) | — |
 | `ckdDomainId`, `ckdNetworkKey` | CKD domain and the pinned MPC public key | pin with `fetch-ckd-key` |
 | `rpc`, `apiUrl` | NEAR RPC; the deployed Worker URL | `apiUrl` is known only after the first deploy |
+| `rpcFallback` (optional) | a second NEAR RPC from another provider, https; the vault and the export window read from it only when `rpc` fails or times out | not `rpc` itself; changing it needs `gen`, a page build and a redeploy of the API and auth Workers (it is in their CSP) |
 | `vaultOrigin`, `authOrigin` | Hana page origins (batch B) | both or neither; `gen` refuses an env without them |
 | `googleClientIds` | Hana's own app clients → reserved `global` scope | |
 | `sharedGoogleClientIds` | Hana's shared login clients (≤ 5) | never also in `googleClientIds` / `consoleAudiences` |

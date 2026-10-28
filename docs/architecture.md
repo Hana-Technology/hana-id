@@ -1,8 +1,8 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-10-28 (`feat/batch-b` after merging the batch B fix branches `fix/b-web`,
-`fix/b-core-policy`, `fix/b-clients` and `fix/b-api`).
+Last verified against code: 2026-10-28 (`feat/b-defaults`: `feat/batch-b` with the batch B fix branches and the
+defaults the user approved on 2026-10-28).
 
 Byte layouts and contract methods are in `docs/contract-interface.md`; this file links to it rather than repeating
 them. The security model is `docs/security.md`, the decision log `docs/decisions.md`. Where a spec and the code
@@ -89,7 +89,7 @@ Who talks to whom:
 | Auth popup → Google | top-level navigation | Implicit flow, `response_type=id_token`, `scope=openid`, `prompt=select_account` |
 | `/login/callback` → API | `POST /v1/login-relay/:relayId` (`Origin: authOrigin`) | AES-GCM ciphertext of the token |
 | Vault → API | `fetch`, `Origin: vaultOrigin`, `x-hana-key`, `x-hana-parent-origin` | `/v1/app`, relay read, `/v1/login`, `/v1/vault/*` |
-| Vault → NEAR RPC | JSON-RPC (manifest `rpc`, per spec) | `get_session` re-sync, `EXPERIMENTAL_tx_status` polling |
+| Vault → NEAR RPC | JSON-RPC (manifest `rpc`; `rpcFallback` only when `rpc` errors or times out, one endpoint per answer: `packages/web/src/near-call.ts`) | `get_session` re-sync, the login's registry check (`scope_for_client` or `get_scope`), `EXPERIMENTAL_tx_status` polling; the export window the same |
 | Vault, export window → Google | `https://www.googleapis.com/oauth2/v3/certs` | JWKS for the defence-in-depth RS256 check |
 | Partner page → API | `fetch` from the partner origin | `GET /v1/app` (any key); `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` only for `pk_test_` in dev envs (`apps/smoke`) |
 | API → NEAR | NEAR RPC | Views (`get_config`, `get_scope`, `scope_for_client`, `get_session`, `session_key_in_use`), `send_tx`, `tx` |
@@ -110,7 +110,11 @@ Browser steps are per spec, not yet merged (`docs/batch-b-spec.md` "Login"); API
    `nonce = sessionNonce(SIGNER, scopeId, …)` (`packages/core/src/layouts.ts:68`), `relayKey`, `relayReadKey` and
    `relayId = b64url(sha256(relayReadKey))` (`layouts.ts:156`). `SIGNER` is a build constant; `scopeId` comes from
    the vault page's inlined D1 config. It needs `GET /v1/app` first (`apps/api/src/handlers.ts:208`) for the Google
-   client and refuses a `signer` or `scopeId` that differs.
+   client and refuses a `signer` or `scopeId` that differs. As soon as `GET /v1/app` answers it also starts one
+   registry view (Q7, `packages/web/src/vault/login.ts` `checkScope`), which runs while the user is at Google: own
+   client `scope_for_client('google', clientId)` must be `scopeId`, shared client `get_scope(scopeId)` must exist with
+   `allow_shared`. Its answer is awaited after the token check, before step 6: a mismatch is `config_mismatch`
+   (`scope_mismatch`), no answer `api_unavailable` (`scope_unchecked`).
 3. The popup finds the vault (`opener.frames[v]`), gets `hana:auth-params`, checks `signer` against its own pinned
    constant, calls `GET /v1/app` itself, recomputes the nonce, stores `{relayKey}` under `hana.login.<relayId>` in its
    `sessionStorage`, and redirects to Google with `nonce` and `state = relayId`.
@@ -199,6 +203,15 @@ NULL` that re-checks persistence and the TTL cap in the same statement, caps `ab
 approved signature, per spec). The hourly cron deletes shares past `abs_expires_at` or revoked and re-wraps up to
 2000 rows from `VAULT_KEK_PREVIOUS` (`apps/api/src/vault/cron.ts:63`).
 
+In-memory idle limit (Q28, `packages/web/src/vault/vault.ts` `goIdle`/`wake`): every request from the partner page
+for the session (signing, status, addresses, export, auto-approve, revoke-other-devices) restarts a timer of the app's
+`idle_ttl_ms`, and every use re-checks it on the server-corrected clock (a throttled timer can't keep PRK). When it
+passes, PRK is zeroed. In `'session'` mode the session goes dormant: the vault keeps only the addresses, expiry and
+share id, still answers status and addresses, and before the next request that needs the key unlocks the record again
+(one `/v1/vault/unlock`, same share only). If that fails (the server share's own idle or absolute limit passed, or it
+was revoked) the session ends with `sessionExpired`. A dormant session also ends at `expiresAtMs`, on logout and on a
+`revoked` broadcast for its share. In `'none'` mode the idle limit ends the session.
+
 ### Signing: approval popup vs auto-approve
 
 Code: `packages/web/src/vault/` (queue, signing, policies), `packages/web/src/auth/approve-page.ts` (popup),
@@ -209,7 +222,14 @@ Code: `packages/web/src/vault/` (queue, signing, policies), `packages/web/src/au
 | Silent | `hana_status`, `stellar_getAddress`, `eth_accounts`, `eth_chainId`, `getNetwork`, `hana_logout` |
 | Popup unless an accepted auto-approve policy matches | `stellar_signTransaction`, `stellar_signAuthEntry`, `eth_signTransaction` (and `eth_sendTransaction` via it), `eth_signTypedData_v4` |
 | Popup every time | `stellar_signMessage`, `personal_sign` (`NEVER_AUTO_APPROVED_KINDS`, `packages/core/src/approval.ts:41`) |
-| Per app `raw_sign` | `hana_signRaw`: `'off'` → 4100; `'approval'` → popup with the raw warning, never auto-approved |
+| Per app `raw_sign` | `hana_signRaw`: `'off'` → 4100; `'approval'` → popup with the raw warning, never auto-approved. The vault re-reads `rawSign` from `GET /v1/app` before each raw request when its last check is 10 s old (as for the policy); `'off'` there stops raw requests in that tab until a reload, and a failed re-read refuses (`api_unavailable`, `raw_sign_unconfirmed`) |
+
+Test apps (D39, `packages/core/src/networks.ts`): for a `pk_test_` key the vault refuses, before any popup or
+policy, a Stellar transaction or auth entry for the public network's passphrase, an EVM transaction on a chain outside
+`TEST_EVM_CHAINS`, and typed data whose domain `chainId` is outside it (4100 `mainnet_not_allowed`). Messages, typed
+data without a `chainId` and raw requests name no network and pass. The EIP-1193 provider refuses switching to or
+adding such a chain, and `eth_sendTransaction`/`eth_signTransaction` on one, before anything is filled. Every
+approval and consent screen of a test app says Hana signs only for test networks (`testApp` in the popup messages).
 
 Approval: the vault queues the request and shows a launcher; a click opens `{authOrigin}/approve`. The popup decodes
 the bytes itself (`decodeApprovalRequest`, `packages/core/src/decode/request.ts:55`; EIP-712 through
@@ -225,7 +245,8 @@ the chain it was filled on, and never fills a nonce below one past its last broa
 Auto-approve: the app owner sets an `AutoApprovePolicyV1` (D1 `auto_approve_policy`, pending + effective time on
 set/change, immediate on removal; `apps/api/src/vault/settings.ts:66`). The vault page inlines the policy in force,
 and an open vault re-reads it from `GET /v1/app` before an auto-sign when its last check is 10 s old or more (and
-every 60 s), so a removal stops auto-signing in open tabs within 10 s.
+every 60 s), so a removal stops auto-signing in open tabs within 10 s. A policy rule whose `maxValueWei` is below its
+`maxFeeWei` is refused by the validator (value plus fees counts against it, D37).
 The user accepts that exact `policyId` (`packages/core/src/policy/id.ts`) once in a consent screen; then the vault
 signs a request without a popup only if `matchAutoApprovePolicy` (`packages/core/src/policy/match.ts:91`) passes and
 the per-day counters (`packages/core/src/policy/usage.ts`) allow it. Rules in `docs/security.md`.
@@ -262,7 +283,10 @@ Per spec, not yet merged: `hana_export {chain}` → launcher → top-level `{aut
 own fresh login (`/login?mode=export`, `max_age=0`, `max_uses = 1`) through `/v1/login`, decrypts against its own
 path, aborts if the address differs from the vault's, and shows the key (SEP-23 `S…` or `0x` hex) while a button is
 held after a typed confirmation. The vault's PRK is never used for export. The `auth_time` freshness check is off
-(Google returns no `auth_time`; `packages/core/src/id-token.ts:113`). Encodings: `packages/core/src/export.ts`.
+(Google returns no `auth_time`; `packages/core/src/id-token.ts:113`). Encodings: `packages/core/src/export.ts`. The
+export window takes its context only from the vault frame that opened it (its `opener`, origin `vaultOrigin`), and
+the vault opens it only from its own launcher's click, so a partner page can't start an export on its own. Its
+`/v1/login` is relayer-paid and limited to 3 per hour per user path per app (`apps/api/src/login.ts`, Q18).
 
 ## Key derivation
 
@@ -323,7 +347,9 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
 - One manifest per env, `envs/<env>.json`, validated by `packages/env/src/schema.ts` (zod) and loaded with `loadEnv`.
   Only `sandbox-dev` exists. `network` accepts only `testnet`. Every account name the code uses comes from here
   (`signer`, `relayer`, `owner`, `mpc`); code reads it via generated config, never by hard-coding names.
-- Other fields: `ckdDomainId`, `ckdNetworkKey` (pinned with `scripts/fetch-ckd-key.ts`), `rpc`, `apiUrl`,
+- Other fields: `ckdDomainId`, `ckdNetworkKey` (pinned with `scripts/fetch-ckd-key.ts`), `rpc`, optional
+  `rpcFallback` (https, not `rpc`; the vault's and the export window's second NEAR RPC, in their CSP, and the
+  Workers' `NEAR_RPC_FALLBACK`), `apiUrl`,
   `vaultOrigin`/`authOrigin` (both or neither; bare origins; `https`; loopback only in `local*` envs; otherwise a real
   DNS name, never an IP, a bare public suffix, a single label or a trailing dot; different origins, neither
   `apiUrl`'s origin; different sites from each other and from `apiUrl` outside `local*`/`sandbox*`,
@@ -339,7 +365,7 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
   both Hana origins. All three are per env and gitignored (the deployed D1 id is passed with `--d1-id` and never
   committed); the API tests generate their own `wrangler.vitest.jsonc` from a fixed test manifest.
 - `packages/web/scripts/gen-envs.ts` writes the gitignored `packages/web/src/envs.generated.ts` with the pinned
-  per-env constants (`signer`, `relayer`, `rpc`, `ckdNetworkKey`, origins, `devEnv`) for every manifest with both
+  per-env constants (`signer`, `relayer`, `rpc`, `rpcFallback` when set, `ckdNetworkKey`, origins, `devEnv`) for every manifest with both
   origins; it fails on an unusable CKD key.
 - Runtime flags, `"0"` everywhere for now: `BLS_PRECHECK` (Workers Paid plan only), `REJECT_PII_ON_SESSIONS` (until
   smoke moves to the vault).

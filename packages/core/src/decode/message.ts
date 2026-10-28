@@ -18,11 +18,17 @@ const utf8Decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 const UNSAFE =
   /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/u;
 
+/**
+ * True when `text` can be shown as is: no control, bidi or invisible characters. The approval page shows the hex of
+ * any text that fails this (messages, Stellar strings and memos, ABI and EIP-712 strings).
+ */
+export const isDisplaySafeText = (text: string): boolean => !UNSAFE.test(text);
+
 export function decodeMessage(bytes: Uint8Array): DecodedMessage {
   let text: string | null;
   try {
     text = utf8Decoder.decode(bytes);
-    if (UNSAFE.test(text)) text = null;
+    if (!isDisplaySafeText(text)) text = null;
   } catch {
     text = null;
   }

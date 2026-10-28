@@ -14,7 +14,7 @@ import {
   digestsEqual,
   rawSigningWarning,
   validateApprovalSubject,
-} from '../src/index.ts';
+} from './entries.ts';
 import { PASSPHRASE, POOL, USER, addr, authPreimageBytes, invocation, paymentOp, txBytes } from './stellar-fixtures.ts';
 
 const EVM_USER = '0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826';

@@ -1,5 +1,5 @@
 // A pilot-like auto-approve policy covering both chains, used by the validator and matcher tests.
-import { functionSelector } from '../src/index.ts';
+import { functionSelector } from './entries.ts';
 import { PASSPHRASE, POOL, ROUTER, TOKEN, USDC } from './stellar-fixtures.ts';
 
 export const EVM_USER = '0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826';
@@ -40,6 +40,8 @@ export const policyJson = () => ({
         chainId: CHAIN,
         maxValueWei: '1000',
         maxValueWeiPerDay: '1500',
+        // The matcher tests' transactions use gas 100 000 at 1 wei per gas.
+        maxFeeWei: '100000',
         contracts: [
           { address: EVM_USDC, name: 'USDC', selectors: [entry('approve(address,uint256)', 'self-or-listed')] },
           {

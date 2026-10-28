@@ -10,6 +10,7 @@ import {
 } from 'viem';
 import { describe, expect, it } from 'vitest';
 import {
+  ABI_MAX_ARRAY_LENGTH,
   DecodeError,
   decodeAbiParameters,
   decodeEvmTransaction,
@@ -19,7 +20,7 @@ import {
   knownFunction,
   knownFunctions,
   parseFunctionSignature,
-} from '../src/index.ts';
+} from './entries.ts';
 
 const b = (hex: string) => hexToBytes(hex.replace(/^0x/u, ''));
 
@@ -116,6 +117,16 @@ describe('function signatures and selectors', () => {
   ])('refuses non-canonical or unsupported %s', (sig) => {
     expect(() => parseFunctionSignature(sig)).toThrow(DecodeError);
   });
+
+  it('caps fixed array lengths at ABI_MAX_ARRAY_LENGTH', () => {
+    expect(parseFunctionSignature(`f(uint256[${ABI_MAX_ARRAY_LENGTH}])`).params[0]).toMatchObject({
+      kind: 'array',
+      length: ABI_MAX_ARRAY_LENGTH,
+    });
+    for (const sig of [`f(string[${ABI_MAX_ARRAY_LENGTH + 1}])`, 'f(string[1000000000])', 'f(uint8[2][1025])']) {
+      expect(errCode(() => parseFunctionSignature(sig))).toBe('too_large');
+    }
+  });
 });
 
 describe('decodeAbiParameters', () => {
@@ -162,7 +173,7 @@ describe('decodeAbiParameters', () => {
     });
     expect(out.slice(1)).toEqual([
       { type: 'bytes', kind: 'bytes', value: '0xdeadbeef00' },
-      { type: 'string', kind: 'string', value: 'héllo' },
+      { type: 'string', kind: 'string', value: 'héllo', hex: '0x68c3a96c6c6f' },
       { type: 'int24', kind: 'int', value: -8388608n },
       { type: 'bool', kind: 'bool', value: true },
       { type: 'bytes4', kind: 'bytes', value: '0x01020304' },
@@ -213,6 +224,45 @@ describe('decodeAbiParameters', () => {
     expect(one('f(uint256[])', `${word('20')}${word('ffffff')}`)).toBe('malformed');
     // Invalid UTF-8 in a string.
     expect(one('f(string)', `${word('20')}${word('01')}${'ff'.padEnd(64, '0')}`)).toBe('invalid_value');
+  });
+});
+
+describe('decodeAbiParameters: strings and fixed arrays', () => {
+  const RLO = String.fromCodePoint(0x202e);
+  const ZWSP = String.fromCodePoint(0x200b);
+
+  it.each([
+    ['a bidi override (U+202E)', `USD${RLO}C`],
+    ['a zero-width space (U+200B)', `pay${ZWSP}me`],
+    ['a control character', 'a\u0007b'],
+  ])('hides a string with %s behind its hex', (_, text) => {
+    const data = encodeAbiParameters(parseAbiParameters('string'), [text]);
+    const [v] = decodeAbiParameters(parseFunctionSignature('f(string)').params, b(data));
+    expect(v).toEqual({
+      type: 'string',
+      kind: 'string',
+      value: null,
+      hex: `0x${Buffer.from(text, 'utf8').toString('hex')}`,
+    });
+  });
+
+  it('keeps newlines, tabs and non-ASCII text readable', () => {
+    const data = encodeAbiParameters(parseAbiParameters('string'), ['línea 1\n\tlínea 2']);
+    const [v] = decodeAbiParameters(parseFunctionSignature('f(string)').params, b(data));
+    expect(v).toMatchObject({ value: 'línea 1\n\tlínea 2' });
+  });
+
+  it('decodes a fixed-length array of dynamic elements', () => {
+    const data = encodeAbiParameters(parseAbiParameters('string[2]'), [['a', 'b']]);
+    const [v] = decodeAbiParameters(parseFunctionSignature('f(string[2])').params, b(data));
+    expect(v).toMatchObject({ type: 'string[2]', kind: 'array', items: [{ value: 'a' }, { value: 'b' }] });
+  });
+
+  it('refuses a fixed-length array of dynamic elements longer than the data before allocating it', () => {
+    // One head word (offset 0x20) and nothing else: string[1024] needs at least 1024 more words.
+    const data = b(`${'20'.padStart(64, '0')}`);
+    const fn = parseFunctionSignature(`f(string[${ABI_MAX_ARRAY_LENGTH}])`);
+    expect(errCode(() => decodeAbiParameters(fn.params, data))).toBe('malformed');
   });
 });
 

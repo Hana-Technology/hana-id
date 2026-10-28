@@ -6,6 +6,7 @@ import { keccak_256 } from '@noble/hashes/sha3';
 import { bytesToHex } from '@noble/hashes/utils';
 import { fail } from './errors.ts';
 import { checksumAddress, toHex0x } from './hex.ts';
+import { isDisplaySafeText } from './message.ts';
 
 export type AbiType =
   | { kind: 'uint' | 'int'; bits: number }
@@ -26,17 +27,23 @@ export interface AbiFunction {
   readonly selector: string;
 }
 
-/** A decoded value; `type` is its canonical ABI type string. Addresses are EIP-55, bytes are `0x` lowercase hex. */
+/**
+ * A decoded value; `type` is its canonical ABI type string. Addresses are EIP-55, bytes are `0x` lowercase hex. A
+ * string's `value` is null when it holds control, bidi or invisible characters; the page then shows `hex` (its UTF-8
+ * bytes), so a string can't read differently from what is signed.
+ */
 export type AbiValue =
   | { readonly type: string; readonly kind: 'uint' | 'int'; readonly value: bigint }
   | { readonly type: string; readonly kind: 'address'; readonly value: string }
   | { readonly type: string; readonly kind: 'bool'; readonly value: boolean }
   | { readonly type: string; readonly kind: 'bytes'; readonly value: string }
-  | { readonly type: string; readonly kind: 'string'; readonly value: string }
+  | { readonly type: string; readonly kind: 'string'; readonly value: string | null; readonly hex: string }
   | { readonly type: string; readonly kind: 'array' | 'tuple'; readonly items: readonly AbiValue[] };
 
 export const ABI_MAX_SIGNATURE_LENGTH = 1024;
 export const ABI_MAX_NESTING = 16;
+/** Largest fixed array length a signature may declare (like TYPED_DATA_MAX_ARRAY_DIMENSION). */
+export const ABI_MAX_ARRAY_LENGTH = 1024;
 
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
 
@@ -113,7 +120,9 @@ export function parseFunctionSignature(signature: string): AbiFunction {
       const m = /^\[([1-9][0-9]*)?\]/u.exec(signature.slice(at));
       if (!m) break;
       at += m[0].length;
-      t = { kind: 'array', element: t, length: m[1] === undefined ? null : Number(m[1]) };
+      const length = m[1] === undefined ? null : Number(m[1]);
+      if (length !== null && length > ABI_MAX_ARRAY_LENGTH) fail('too_large', 'ABI array length too large');
+      t = { kind: 'array', element: t, length };
       if (++depth > ABI_MAX_NESTING) fail('too_large', 'ABI type nested too deep');
     }
     return t;
@@ -222,7 +231,8 @@ function decodeDynamic(t: AbiType, data: Uint8Array, at: number, depth: number):
     } catch {
       fail('invalid_value', 'ABI string is not valid UTF-8');
     }
-    return [{ type, kind: 'string', value }, start + padded];
+    const hex = toHex0x(body);
+    return [{ type, kind: 'string', value: isDisplaySafeText(value) ? value : null, hex }, start + padded];
   }
   if (t.kind === 'array') {
     let start = at;
@@ -230,9 +240,9 @@ function decodeDynamic(t: AbiType, data: Uint8Array, at: number, depth: number):
     if (length === null) {
       length = smallWord(data, at);
       start = at + 32;
-      // Every element takes at least one word, so a larger count can't be honest (and would allocate a lot).
-      if (length > (data.length - start) / 32) fail('malformed', 'ABI array length runs past the end');
     }
+    // Every element takes at least one word, so a larger count can't be honest (and would allocate a lot).
+    if (length > (data.length - start) / 32) fail('malformed', 'ABI array length runs past the end');
     const [items, end] = decodeTuple(
       Array.from({ length }, () => t.element),
       data,

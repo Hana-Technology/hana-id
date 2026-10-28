@@ -7,10 +7,16 @@ import {
   type TypedDataValue,
   parseTypedDataType,
 } from '../typed-data.ts';
+import { toHex0x } from './hex.ts';
+import { isDisplaySafeText } from './message.ts';
 
 export type TypedDataNode =
-  /** An atomic value rendered as text: decimal integers, `true`/`false`, EIP-55 addresses, `0x` hex, strings. */
-  | { readonly name: string; readonly type: string; readonly value: string }
+  /**
+   * An atomic value rendered as text: decimal integers, `true`/`false`, EIP-55 addresses, `0x` hex, strings. A string
+   * holding control, bidi or invisible characters has `value: null` and `hex` (its UTF-8 bytes), which the page shows
+   * instead, so a spoofed domain name or message text can't read differently from what is signed.
+   */
+  | { readonly name: string; readonly type: string; readonly value: string | null; readonly hex?: string }
   /** A struct or array, with its fields (or elements, named `[i]`) in order. */
   | { readonly name: string; readonly type: string; readonly children: readonly TypedDataNode[] };
 
@@ -40,6 +46,9 @@ function node(
         node(data, structs, `[${i}]`, elementType, t.element, e),
       ),
     };
+  }
+  if (t.kind === 'string' && !isDisplaySafeText(v as string)) {
+    return { name, type, value: null, hex: toHex0x(new TextEncoder().encode(v as string)) };
   }
   return { name, type, value: typeof v === 'bigint' || typeof v === 'boolean' ? String(v) : (v as string) };
 }

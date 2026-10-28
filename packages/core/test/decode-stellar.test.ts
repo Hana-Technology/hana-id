@@ -6,7 +6,7 @@ import {
   decodeMessage,
   decodeStellarAuthPreimage,
   decodeStellarTransaction,
-} from '../src/index.ts';
+} from './entries.ts';
 import {
   OTHER,
   PASSPHRASE,

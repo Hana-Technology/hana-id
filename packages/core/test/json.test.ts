@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DecodeError, JSON_MAX_DEPTH, JsonNumber, isJsonObject, parseStrictJson } from '../src/index.ts';
+import { DecodeError, JSON_MAX_DEPTH, JsonNumber, isJsonObject, parseStrictJson } from './entries.ts';
 
 const code = (f: () => unknown) => {
   try {

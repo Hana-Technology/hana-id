@@ -5,7 +5,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./decode": "./src/decode/index.ts",
+    "./policy": "./src/policy/index.ts"
   },
   "scripts": {
     "test": "vitest run",

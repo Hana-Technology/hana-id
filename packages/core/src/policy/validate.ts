@@ -3,14 +3,15 @@
 // contract-creation entry can't be smuggled in), out-of-range limits, a decoder id the bundle doesn't ship, a missing
 // `addressArgs` on an EVM function that takes an address, `addressArgs: 'any'` on an approve/transfer-style function
 // (ERC-20, SAC, Sodax `AssetManager.transfer`, `Connection.sendMessage`/`send_message`), and 'self-or-listed' on an EVM
-// function with opaque `bytes` arguments (the address rule can't see inside them). It returns the normalized policy
-// that policyId hashes and the matcher reads.
+// function with arguments an address could hide in (`bytes`, `string`, `bytes20` to `bytes32`: the address rule can't
+// see inside them). It returns the normalized policy that policyId hashes and the matcher reads.
 import { StrKey } from '@stellar/stellar-base';
 import { abiTypeContains, parseFunctionSignature } from '../decode/abi.ts';
 import { DecodeError } from '../decode/errors.ts';
 import { parseEvmAddress } from '../decode/hex.ts';
 import { JsonNumber, type StrictJson, parseStrictJson } from '../decode/json.ts';
 import { PROTOCOL_DECODERS, type ProtocolDecoderRegistry } from './decoders.ts';
+import { isOpaqueToAddressRule } from './opaque.ts';
 import type {
   AddressArgsRule,
   AutoApprovePolicyV1,
@@ -46,23 +47,34 @@ export type PolicyValidationResult =
   | { readonly ok: false; readonly problems: readonly string[] };
 
 /**
- * Function names that move or approve assets (compared lowercased, without underscores). They may never have
- * `addressArgs: 'any'`: with it an injected script could send funds or allowances to itself.
+ * Function names that move or approve assets, or hand over control of a contract, matched on the name lowercased and
+ * without underscores. Matching is by prefix and substring, not exact name, so the ERC-677/1363 `transferAndCall`,
+ * `approveAndCall`, ERC-777 `send`/`operatorSend`/`authorizeOperator`, EIP-3009 `transferWithAuthorization`, Permit2
+ * `permitTransferFrom`, `transferOwnership`, Soroban `transfer_from`/`set_admin` and Sodax `sendMessage`/`send_message`
+ * are all caught. They may never have `addressArgs: 'any'`: with it an injected script could send funds, allowances or
+ * ownership to itself. A protocol that genuinely needs one of these names unchecked uses a protocol decoder instead.
  */
-const VALUE_MOVING_NAMES = new Set([
-  'approve',
+const VALUE_MOVING_PREFIXES = [
   'transfer',
-  'transferfrom',
-  'safetransferfrom',
-  'safebatchtransferfrom',
-  'increaseallowance',
-  'setapprovalforall',
+  'safetransfer',
+  'safebatchtransfer',
+  'approve',
+  'send',
   'permit',
-  'sendmessage',
-]);
+  'operatorsend',
+  'authorizeoperator',
+  'setapproval',
+  'setowner',
+  'changeowner',
+  'setadmin',
+  'changeadmin',
+];
+const VALUE_MOVING_SUBSTRINGS = ['allowance', 'transfer', 'ownership'];
 
-export const isValueMovingFunctionName = (name: string): boolean =>
-  VALUE_MOVING_NAMES.has(name.replace(/_/gu, '').toLowerCase());
+export const isValueMovingFunctionName = (name: string): boolean => {
+  const n = name.replace(/_/gu, '').toLowerCase();
+  return VALUE_MOVING_PREFIXES.some((p) => n.startsWith(p)) || VALUE_MOVING_SUBSTRINGS.some((x) => n.includes(x));
+};
 
 // Characters a label or name may not contain (controls, bidi and invisible format characters).
 const UNSAFE_TEXT = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/u;
@@ -286,7 +298,7 @@ function evmSelector(c: Checker, raw: unknown, path: string, decoders: ProtocolD
   const rule = functionRule(c, so, path, 'evm', decoders);
   if (!rule) return undefined;
   const takesAddress = fn.params.some((t) => abiTypeContains(t, (x) => x.kind === 'address'));
-  const takesBytes = fn.params.some((t) => abiTypeContains(t, (x) => x.kind === 'bytes'));
+  const takesOpaque = fn.params.some((t) => abiTypeContains(t, isOpaqueToAddressRule));
   if (rule.decoder === undefined) {
     if (takesAddress && so.addressArgs === undefined) {
       return c.problem(path, `${fn.signature} takes an address: set addressArgs`);
@@ -294,10 +306,11 @@ function evmSelector(c: Checker, raw: unknown, path: string, decoders: ProtocolD
     if (rule.addressArgs === 'any' && isValueMovingFunctionName(fn.name)) {
       return c.problem(path, `"${fn.name}" moves or approves assets and can't have addressArgs 'any'`);
     }
-    if (rule.addressArgs === 'self-or-listed' && takesBytes) {
+    if (rule.addressArgs === 'self-or-listed' && takesOpaque) {
       return c.problem(
         path,
-        `${fn.signature} takes opaque bytes the address rule can't check: it needs a protocol decoder or addressArgs 'any'`,
+        `${fn.signature} takes opaque arguments (bytes, string or bytes20 to bytes32) the address rule can't check: ` +
+          "it needs a protocol decoder or addressArgs 'any'",
       );
     }
   }
@@ -308,13 +321,14 @@ function evmChain(c: Checker, raw: unknown, path: string, decoders: ProtocolDeco
   const o = c.object(
     raw,
     path,
-    ['chainId', 'maxValueWei', 'maxValueWeiPerDay', 'contracts'],
+    ['chainId', 'maxValueWei', 'maxValueWeiPerDay', 'maxFeeWei', 'contracts'],
     ['typedData', 'addresses'],
   );
   if (!o) return undefined;
   const chainId = c.integer(o.chainId, `${path}.chainId`, 1, Number.MAX_SAFE_INTEGER);
   const maxValue = c.decimal(o.maxValueWei, `${path}.maxValueWei`, 0n, MAX_U256);
   const maxPerDay = c.decimal(o.maxValueWeiPerDay, `${path}.maxValueWeiPerDay`, 0n, MAX_U256);
+  const maxFee = c.decimal(o.maxFeeWei, `${path}.maxFeeWei`, 1n, MAX_U256);
   if (maxValue !== undefined && maxPerDay !== undefined && BigInt(maxValue) > BigInt(maxPerDay)) {
     c.problem(`${path}.maxValueWei`, 'must not exceed maxValueWeiPerDay');
   }
@@ -367,6 +381,7 @@ function evmChain(c: Checker, raw: unknown, path: string, decoders: ProtocolDeco
     chainId === undefined ||
     maxValue === undefined ||
     maxPerDay === undefined ||
+    maxFee === undefined ||
     !contracts ||
     contracts.includes(undefined) ||
     (o.typedData !== undefined && (!typedData || typedData.includes(undefined))) ||
@@ -378,6 +393,7 @@ function evmChain(c: Checker, raw: unknown, path: string, decoders: ProtocolDeco
     chainId,
     maxValueWei: maxValue,
     maxValueWeiPerDay: maxPerDay,
+    maxFeeWei: maxFee,
     contracts: Object.freeze(contracts as EvmPolicyContract[]),
     ...(typedData ? { typedData: Object.freeze(typedData as EvmPolicyTypedData[]) } : {}),
     ...(addresses ? { addresses: Object.freeze(addresses as string[]) } : {}),

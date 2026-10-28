@@ -60,6 +60,12 @@ export interface EvmPolicyChain {
   readonly maxValueWei: string;
   /** Per UTC day, wei, decimal (auto-signed value on this chain plus this one). */
   readonly maxValueWeiPerDay: string;
+  /**
+   * Per transaction, wei, decimal, at least 1: the most the transaction may pay in fees (gasLimit × maxFeePerGas, or
+   * gasPrice for legacy). The SDK fills gas and fee fields on the partner page, so without this cap an injected script
+   * could burn the user's native balance in priority fees. The EVM counterpart of `maxFeeStroops`.
+   */
+  readonly maxFeeWei: string;
   readonly contracts: readonly EvmPolicyContract[];
   readonly typedData?: readonly EvmPolicyTypedData[];
   readonly addresses?: readonly string[];

@@ -11,7 +11,7 @@ import {
   policyId,
   protocolDecoderRegistry,
   validateAutoApprovePolicy,
-} from '../src/index.ts';
+} from './entries.ts';
 import { CHAIN, EVM_USDC, EVM_VAULT, policyJson } from './policy-fixtures.ts';
 import { POOL, TOKEN } from './stellar-fixtures.ts';
 
@@ -131,8 +131,41 @@ describe('validateAutoApprovePolicy: refusals', () => {
       'Sodax send_message',
       (x: Mutable) => x.stellar.contracts[0].functions.push({ name: 'send_message', addressArgs: 'any' }),
     ],
+    [
+      'Soroban transfer_and_call',
+      (x: Mutable) => x.stellar.contracts[1].functions.push({ name: 'transfer_and_call', addressArgs: 'any' }),
+    ],
+    ['SAC set_admin', (x: Mutable) => x.stellar.contracts[1].functions.push({ name: 'set_admin', addressArgs: 'any' })],
   ])("refuses addressArgs 'any' on %s", (_, f) => {
     expect(problems(patch(f)).join()).toMatch(/moves or approves assets/u);
+  });
+
+  it.each([
+    ['ERC-677/1363 transferAndCall', 'transferAndCall(address,uint256,bytes)'],
+    ['ERC-1363 approveAndCall', 'approveAndCall(address,uint256,bytes)'],
+    ['ERC-777 send', 'send(address,uint256,bytes)'],
+    ['ERC-777 operatorSend', 'operatorSend(address,address,uint256,bytes,bytes)'],
+    ['ERC-777 authorizeOperator', 'authorizeOperator(address)'],
+    [
+      'EIP-3009 transferWithAuthorization',
+      'transferWithAuthorization(address,address,uint256,uint256,uint256,bytes32,uint8,bytes32,bytes32)',
+    ],
+    ['Ownable transferOwnership', 'transferOwnership(address)'],
+    [
+      'Permit2 permitTransferFrom',
+      'permitTransferFrom(((address,uint256),uint256,uint256),(address,uint256),address,bytes)',
+    ],
+    ['decreaseAllowance', 'decreaseAllowance(address,uint256)'],
+    ['an OFT sendFrom', 'sendFrom(address,uint16,bytes,uint256,address,address,bytes)'],
+    ['setOwner', 'setOwner(address)'],
+  ])("refuses addressArgs 'any' on %s", (_, signature) => {
+    const p = patch(
+      (x) =>
+        (x.evm.chains[0].contracts[0].selectors = [
+          { selector: functionSelector(signature), signature, addressArgs: 'any' },
+        ]),
+    );
+    expect(problems(p).join()).toMatch(/moves or approves assets/u);
   });
 
   it('refuses a missing addressArgs on an EVM function that takes an address, at any depth', () => {
@@ -147,7 +180,37 @@ describe('validateAutoApprovePolicy: refusals', () => {
   it("refuses 'self-or-listed' on an EVM function with opaque bytes (needs a decoder or 'any')", () => {
     expect(
       problems(patch((x) => (x.evm.chains[0].contracts[1].selectors[3].addressArgs = 'self-or-listed'))).join(),
-    ).toMatch(/opaque bytes/u);
+    ).toMatch(/opaque arguments/u);
+  });
+
+  const withSelector = (signature: string, addressArgs?: 'self-or-listed' | 'any') =>
+    patch(
+      (x) =>
+        (x.evm.chains[0].contracts[1].selectors = [
+          { selector: functionSelector(signature), signature, ...(addressArgs ? { addressArgs } : {}) },
+        ]),
+    );
+
+  it.each([
+    // Wormhole TokenBridge: the recipient is a bytes32.
+    ['a bytes32 recipient (Wormhole transferTokens)', 'transferTokens(address,uint256,uint16,bytes32,uint256,uint32)'],
+    // Axelar Gateway: the destination address is a string.
+    ['a string recipient (Axelar sendToken)', 'sendToken(string,string,string,uint256)'],
+    ['a bytes20 argument', 'bridge(address,bytes20,uint256)'],
+    ['a bytes32 inside a tuple array', 'bridge((uint256,bytes32)[])'],
+    ['a string inside a tuple', 'register((address,string))'],
+  ])("refuses 'self-or-listed' on a function with %s", (_, signature) => {
+    expect(problems(withSelector(signature, 'self-or-listed')).join()).toMatch(/opaque arguments/u);
+  });
+
+  it('refuses the defaulted addressArgs on a function with only a string or bytes32 argument', () => {
+    expect(problems(withSelector('setRecipient(string)')).join()).toMatch(/opaque arguments/u);
+    expect(problems(withSelector('claim(bytes32)')).join()).toMatch(/opaque arguments/u);
+  });
+
+  it("accepts fixed bytes too short to hold an address (bytes4 to bytes19) under 'self-or-listed'", () => {
+    expect(problems(withSelector('call(address,bytes4,bytes19)', 'self-or-listed'))).toEqual([]);
+    expect(problems(withSelector('ping(bytes1)'))).toEqual([]);
   });
 
   it.each([
@@ -179,6 +242,11 @@ describe('validateAutoApprovePolicy: refusals', () => {
     ['maxFeeStroops as a number', (x: Mutable) => (x.stellar.maxFeeStroops = 100)],
     ['maxFeeStroops with a leading zero', (x: Mutable) => (x.stellar.maxFeeStroops = '0100')],
     ['maxValueWei over maxValueWeiPerDay', (x: Mutable) => (x.evm.chains[0].maxValueWei = '1501')],
+    ['no maxFeeWei', (x: Mutable) => delete x.evm.chains[0].maxFeeWei],
+    ['maxFeeWei 0', (x: Mutable) => (x.evm.chains[0].maxFeeWei = '0')],
+    ['maxFeeWei as a number', (x: Mutable) => (x.evm.chains[0].maxFeeWei = 100000)],
+    ['maxFeeWei over 2^256', (x: Mutable) => (x.evm.chains[0].maxFeeWei = (2n ** 256n).toString())],
+    ['a negative maxFeeWei', (x: Mutable) => (x.evm.chains[0].maxFeeWei = '-1')],
     ['maxValueWeiPerDay over 2^256', (x: Mutable) => (x.evm.chains[0].maxValueWeiPerDay = (2n ** 256n).toString())],
     ['a negative value', (x: Mutable) => (x.evm.chains[0].maxValueWei = '-1')],
     ['chainId 0', (x: Mutable) => (x.evm.chains[0].chainId = 0)],
@@ -336,10 +404,29 @@ describe('isValueMovingFunctionName', () => {
       'sendMessage',
       'send_message',
       'increaseAllowance',
+      'decrease_allowance',
+      'transferAndCall',
+      'transfer_and_call',
+      'approveAndCall',
+      'send',
+      'sendToken',
+      'operatorSend',
+      'authorizeOperator',
+      'transferWithAuthorization',
+      'transferOwnership',
+      'acceptOwnership',
+      'renounceOwnership',
+      'permitTransferFrom',
+      'safeBatchTransferFrom',
+      'set_admin',
+      'setOwner',
+      'TRANSFER',
     ]) {
       expect(isValueMovingFunctionName(n)).toBe(true);
     }
-    for (const n of ['swap', 'deposit', 'withdraw', 'balance']) expect(isValueMovingFunctionName(n)).toBe(false);
+    for (const n of ['swap', 'deposit', 'withdraw', 'balance', 'mint', 'stake', 'claim', 'route', 'execute']) {
+      expect(isValueMovingFunctionName(n)).toBe(false);
+    }
   });
 });
 
@@ -401,6 +488,7 @@ describe('policyId', () => {
       (x) => x.stellar.contracts.reverse(),
       (x) => (x.evm.chains[0].chainId = CHAIN + 1),
       (x) => (x.evm.chains[0].maxValueWei = '999'),
+      (x) => (x.evm.chains[0].maxFeeWei = '99999'),
       (x) => (x.stellar.addresses = [TOKEN]),
     ];
     const ids = changes.map((f) => policyId(patch(f)));

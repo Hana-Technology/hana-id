@@ -19,6 +19,7 @@ import {
   typedDataChainId,
 } from '../typed-data.ts';
 import { PROTOCOL_DECODERS, type ProtocolCall, type ProtocolDecoderRegistry } from './decoders.ts';
+import { isOpaqueAbiValue, isOpaqueToAddressRule } from './opaque.ts';
 import type { AutoApprovePolicyV1, EvmPolicyChain, FunctionRule, StellarPolicy } from './types.ts';
 import { type AutoApproveUsage, usageToday } from './usage.ts';
 
@@ -41,7 +42,7 @@ export type AutoApproveReason =
   | 'selector_not_listed'
   | 'calldata_mismatch'
   | 'address_not_allowed'
-  | 'opaque_bytes' // bytes arguments the address rule can't see into
+  | 'opaque_bytes' // bytes, string or bytes20–32 arguments the address rule can't see into
   | 'unsupported_argument'
   | 'decoder_unavailable'
   | 'decoder_refused'
@@ -150,8 +151,11 @@ function checkScVals(values: readonly StellarScVal[], allowed: ReadonlySet<strin
           miss('address_not_allowed', `${where}: ${v.address} is not you or a listed address`);
         }
         return;
+      // Soroban `Bytes`/`BytesN` and `String` can carry a recipient on another chain (a bridge's `to`). Symbols are at
+      // most 32 characters of [A-Za-z0-9_], too short for a G… address or a hex EVM address, and stay allowed.
       case 'bytes':
-        return miss('opaque_bytes', `${where}: bytes arguments can't be checked by the address rule`);
+      case 'string':
+        return miss('opaque_bytes', `${where}: ${v.type} arguments can't be checked by the address rule`);
       case 'vec':
         v.items.forEach(walk);
         return;
@@ -376,14 +380,17 @@ function matchEvmTx(
     };
     runDecoder(entry.decoder, call, { user: self, chainId }, allowed, decoders, where);
   } else if (entry.addressArgs === 'self-or-listed') {
-    if (abiValuesOfKind(args, 'bytes').some((b) => b.type === 'bytes')) {
-      miss('opaque_bytes', `${where}: bytes arguments can't be checked by the address rule`);
-    }
+    // The validator already refuses these signatures under 'self-or-listed'; checked again on the decoded values.
+    const opaque = [...abiValuesOfKind(args, 'bytes'), ...abiValuesOfKind(args, 'string')].find(isOpaqueAbiValue);
+    if (opaque) miss('opaque_bytes', `${where}: ${opaque.type} arguments can't be checked by the address rule`);
     for (const a of abiValuesOfKind(args, 'address')) {
       if (!allowed.has(a.value.toLowerCase())) {
         miss('address_not_allowed', `${where}: ${a.value} is not you or a listed address`);
       }
     }
+  }
+  if (tx.maxFeeWei > BigInt(chain.maxFeeWei)) {
+    miss('fee_too_high', `Maximum fee ${tx.maxFeeWei} is over ${chain.maxFeeWei} wei`);
   }
   if (tx.value > BigInt(chain.maxValueWei)) miss('value_too_high', `Value is over ${chain.maxValueWei} wei`);
   const today = BigInt(usage.valueWeiByChain[String(chainId)] ?? '0');
@@ -422,7 +429,13 @@ function matchTypedData(policy: AutoApprovePolicyV1, data: NormalizedTypedData, 
         }
         return;
       case 'bytes':
-        return miss('opaque_bytes', `${where}: bytes fields can't be checked by the address rule`);
+      case 'string':
+      case 'fixedBytes':
+        if (isOpaqueToAddressRule(t)) {
+          const type = t.kind === 'fixedBytes' ? `bytes${t.size}` : t.kind;
+          miss('opaque_bytes', `${where}: ${type} fields can't be checked by the address rule`);
+        }
+        return;
       case 'array':
         (v as readonly TypedDataValue[]).forEach((e, i) => walk(t.element, e, `${where}[${i}]`));
         return;

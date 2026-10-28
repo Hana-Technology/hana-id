@@ -7,13 +7,14 @@ import {
   type AutoApproveResult,
   type PolicyValidationOptions,
   type ProtocolDecoder,
+  functionSelector,
   matchAutoApprovePolicy,
   protocolDecoderRegistry,
   recordAutoApproveUse,
   usageToday,
   utcDay,
   validateAutoApprovePolicy,
-} from '../src/index.ts';
+} from './entries.ts';
 import { CHAIN, EVM_FRIEND, EVM_PERMIT2, EVM_USDC, EVM_USER, EVM_VAULT, policyJson } from './policy-fixtures.ts';
 import {
   OTHER,
@@ -72,6 +73,17 @@ const evmTx = (tx: Record<string, unknown>, chainId = CHAIN): ApprovalSubject =>
       gas: 100_000n,
       ...tx,
     } as never).slice(2),
+    'hex',
+  ),
+});
+
+const legacyTx = (tx: Record<string, unknown>, chainId = CHAIN): ApprovalSubject => ({
+  kind: 'evm_tx',
+  chain: 'evm',
+  address: EVM_USER,
+  context: { chainId },
+  bytes: Buffer.from(
+    serializeTransaction({ type: 'legacy', chainId, nonce: 1, gasPrice: 1n, gas: 100_000n, ...tx } as never).slice(2),
     'hex',
   ),
 });
@@ -192,6 +204,20 @@ describe('Stellar transactions', () => {
     expect(reason(match(stellarTx(swapTx({ args: [addr(USER), xdr.ScVal.scvBytes(Buffer.alloc(32))] }))))).toBe(
       'opaque_bytes',
     );
+  });
+
+  it('refuses String arguments under the address rule (a recipient on another chain could hide in one)', () => {
+    const evil = xdr.ScVal.scvString(`0x${'ee'.repeat(20)}`);
+    expect(reason(match(stellarTx(swapTx({ args: [addr(USER), evil] }))))).toBe('opaque_bytes');
+    const nested = xdr.ScVal.scvVec([i128(1n), xdr.ScVal.scvString('GATTACKER')]);
+    expect(reason(match(stellarTx(swapTx({ args: [addr(USER), nested] }))))).toBe('opaque_bytes');
+    const inAuth = invocation(POOL, 'swap', [addr(USER), xdr.ScVal.scvString('x')]);
+    expect(reason(match(stellarTx(swapTx({ root: inAuth }))))).toBe('opaque_bytes');
+  });
+
+  it('allows Symbol arguments (too short to hold an address) under the address rule', () => {
+    const tag = xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('Native')]);
+    expect(reason(match(stellarTx(swapTx({ args: [addr(USER), tag] }))))).toBe('ok');
   });
 
   it.each([
@@ -410,6 +436,96 @@ describe('EVM transactions', () => {
     expect(usageToday(usage, tomorrow)).toEqual({ day: utcDay(tomorrow), count: 0, valueWeiByChain: {} });
   });
 
+  describe('fee cap (maxFeeWei 100 000 in the fixture)', () => {
+    const deposit = encodeFunctionData({ abi: vault, functionName: 'deposit', args: [1n] });
+    const exec = encodeFunctionData({ abi: vault, functionName: 'execute', args: [EVM_FRIEND, '0xdeadbeef'] });
+
+    it('auto-approves an EIP-1559 or legacy transaction whose maximum fee is at the cap', () => {
+      expect(reason(match(evmTx({ to: EVM_VAULT, data: deposit, gas: 50_000n, maxFeePerGas: 2n })))).toBe('ok');
+      expect(reason(match(legacyTx({ to: EVM_VAULT, data: deposit, gas: 25_000n, gasPrice: 4n })))).toBe('ok');
+    });
+
+    it.each([
+      ['an EIP-1559 gas limit one over', () => evmTx({ to: EVM_VAULT, data: deposit, gas: 100_001n })],
+      ['an EIP-1559 maxFeePerGas over', () => evmTx({ to: EVM_VAULT, data: deposit, maxFeePerGas: 2n })],
+      [
+        'a huge priority fee',
+        () =>
+          evmTx({
+            to: EVM_VAULT,
+            data: deposit,
+            gas: 10_000_000n,
+            maxFeePerGas: 10n ** 15n,
+            maxPriorityFeePerGas: 10n ** 15n,
+          }),
+      ],
+      ['a legacy gasPrice over', () => legacyTx({ to: EVM_VAULT, data: deposit, gasPrice: 2n })],
+      ['a legacy gas limit over', () => legacyTx({ to: EVM_VAULT, data: deposit, gas: 100_001n })],
+      ['an addressArgs any function', () => evmTx({ to: EVM_VAULT, data: exec, gas: 200_000n })],
+    ])('sends %s to the popup', (_, s) => {
+      expect(match(s())).toMatchObject({ ok: false, reason: 'fee_too_high' });
+    });
+  });
+
+  describe('opaque arguments as defence in depth (policies the validator would refuse)', () => {
+    const ATTACKER = '0x000000000000000000000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' as Hex;
+    const BRIDGE = '0x1111111111111111111111111111111111111111';
+    const unvalidated = (signature: string): AutoApprovePolicyV1 => {
+      const chain = POLICY.evm?.chains[0] as NonNullable<AutoApprovePolicyV1['evm']>['chains'][number];
+      return {
+        ...POLICY,
+        evm: {
+          chains: [
+            {
+              ...chain,
+              contracts: [
+                {
+                  address: BRIDGE,
+                  name: 'Bridge',
+                  selectors: [
+                    { selector: functionSelector(signature), signature, addressArgs: 'self-or-listed' },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      };
+    };
+    const call = (signature: string, args: readonly unknown[]) =>
+      evmTx({
+        to: BRIDGE,
+        data: encodeFunctionData({ abi: parseAbi([`function ${signature}` as string]), args: args as never } as never),
+      });
+
+    it('refuses a Wormhole-shaped transfer to a bytes32 recipient', () => {
+      const sig = 'transferTokens(address,uint256,uint16,bytes32,uint256,uint32)';
+      expect(validateAutoApprovePolicy(unvalidated(sig)).ok).toBe(false);
+      expect(match(call(sig, [EVM_USDC, 10n, 2, ATTACKER, 0n, 0]), unvalidated(sig))).toMatchObject({
+        ok: false,
+        reason: 'opaque_bytes',
+        detail: expect.stringMatching(/bytes32/u),
+      });
+    });
+
+    it('refuses an Axelar-shaped sendToken to a string address', () => {
+      const sig = 'sendToken(string,string,string,uint256)';
+      expect(validateAutoApprovePolicy(unvalidated(sig)).ok).toBe(false);
+      expect(
+        reason(match(call(sig, ['ethereum', `0x${'ee'.repeat(20)}`, 'USDC', 10n]), unvalidated(sig))),
+      ).toBe('opaque_bytes');
+    });
+
+    it('refuses bytes20 and nested bytes32, and lets short fixed bytes through', () => {
+      const b20 = 'f(address,bytes20)';
+      expect(reason(match(call(b20, [EVM_USER, `0x${'ee'.repeat(20)}`]), unvalidated(b20)))).toBe('opaque_bytes');
+      const nested = 'g((uint256,bytes32)[])';
+      expect(reason(match(call(nested, [[[1n, ATTACKER]]]), unvalidated(nested)))).toBe('opaque_bytes');
+      const short = 'h(address,bytes4)';
+      expect(reason(match(call(short, [EVM_USER, '0xdeadbeef']), unvalidated(short)))).toBe('ok');
+    });
+  });
+
   it('refuses a policy without an EVM section', () => {
     const { evm: _, ...stellarOnly } = policyJson();
     expect(reason(match(evmTx({ to: EVM_USDC, data: approve(EVM_VAULT) }), validated(stellarOnly)))).toBe(
@@ -420,7 +536,14 @@ describe('EVM transactions', () => {
 
 describe('EIP-712', () => {
   const permit = (
-    o: { spender?: string; verifyingContract?: string; chainId?: number; primaryType?: string; extra?: boolean } = {},
+    o: {
+      spender?: string;
+      verifyingContract?: string;
+      chainId?: number;
+      primaryType?: string;
+      extra?: boolean;
+      field?: { type: string; value: unknown };
+    } = {},
   ) => {
     const types: Record<string, { name: string; type: string }[]> = {
       EIP712Domain: [
@@ -439,6 +562,7 @@ describe('EIP-712', () => {
         { name: 'spender', type: 'address' },
         { name: 'sigDeadline', type: 'uint256' },
         ...(o.extra ? [{ name: 'hook', type: 'bytes' }] : []),
+        ...(o.field ? [{ name: 'field', type: o.field.type }] : []),
       ],
     };
     const json = JSON.stringify({
@@ -450,6 +574,7 @@ describe('EIP-712', () => {
         spender: o.spender ?? EVM_VAULT,
         sigDeadline: '1',
         ...(o.extra ? { hook: '0x1234' } : {}),
+        ...(o.field ? { field: o.field.value } : {}),
       },
     });
     return {
@@ -471,8 +596,16 @@ describe('EIP-712', () => {
     ['an unlisted primary type', { primaryType: 'PermitBatch' }, 'typed_data_not_listed'],
     ['an unlisted chain', { chainId: 1 }, 'chain_not_listed'],
     ['an opaque bytes field', { extra: true }, 'opaque_bytes'],
+    ['a bytes32 field', { field: { type: 'bytes32', value: `0x${'ee'.repeat(32)}` } }, 'opaque_bytes'],
+    ['a bytes20 field', { field: { type: 'bytes20', value: `0x${'ee'.repeat(20)}` } }, 'opaque_bytes'],
+    ['a string field', { field: { type: 'string', value: `0x${'ee'.repeat(20)}` } }, 'opaque_bytes'],
+    ['a string array field', { field: { type: 'string[]', value: ['a'] } }, 'opaque_bytes'],
   ])('sends %s to the popup', (_, o, why) => {
     expect(reason(match(permit(o)))).toBe(why);
+  });
+
+  it('allows fixed bytes too short to hold an address', () => {
+    expect(reason(match(permit({ field: { type: 'bytes4', value: '0xdeadbeef' } })))).toBe('ok');
   });
 
   it('refuses typed data whose domain has no chainId or verifyingContract', () => {

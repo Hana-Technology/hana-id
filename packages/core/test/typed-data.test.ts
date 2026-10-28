@@ -9,7 +9,7 @@ import {
   normalizeTypedData,
   typedDataChainId,
   typedDataView,
-} from '../src/index.ts';
+} from './entries.ts';
 
 const DOMAIN_TYPES = [
   { name: 'name', type: 'string' },
@@ -377,5 +377,43 @@ describe('typedDataView', () => {
         { value: '0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB' },
       ],
     });
+  });
+});
+
+describe('typedDataView: unsafe strings', () => {
+  const RLO = String.fromCodePoint(0x202e);
+  const ZWSP = String.fromCodePoint(0x200b);
+  const hex = (t: string) => `0x${Buffer.from(t, 'utf8').toString('hex')}`;
+
+  it('shows the hex of a domain name with a bidi override and a message string with a zero-width space', () => {
+    const name = `USD${RLO}C`;
+    const contents = `Pay${ZWSP} Bob`;
+    const view = typedDataView(
+      normalizeTypedData(json({ ...MAIL, domain: { ...MAIL.domain, name }, message: { ...MAIL.message, contents } })),
+    );
+    expect(view.domain[0]).toEqual({ name: 'name', type: 'string', value: null, hex: hex(name) });
+    expect((view.message as { readonly children: readonly unknown[] }).children[2]).toEqual({
+      name: 'contents',
+      type: 'string',
+      value: null,
+      hex: hex(contents),
+    });
+  });
+
+  it('hides unsafe strings at any depth, and leaves clean ones as text', () => {
+    const view = typedDataView(
+      normalizeTypedData(
+        json({ ...MAIL, message: { ...MAIL.message, to: { ...MAIL.message.to, name: `B${RLO}ob` } } }),
+      ),
+    );
+    const msg = view.message as unknown as { children: { children?: unknown[]; value?: unknown }[] };
+    expect(msg.children[0]?.children?.[0]).toEqual({ name: 'name', type: 'string', value: 'Cow' });
+    expect(msg.children[1]?.children?.[0]).toEqual({
+      name: 'name',
+      type: 'string',
+      value: null,
+      hex: hex(`B${RLO}ob`),
+    });
+    expect(msg.children[2]).toEqual({ name: 'contents', type: 'string', value: 'Hello, Bob!' });
   });
 });

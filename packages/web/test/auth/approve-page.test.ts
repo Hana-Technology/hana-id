@@ -659,7 +659,7 @@ describe('/approve consent screen', () => {
   it('shows the app, origin, label, every contract with name and address, the functions, the address rule, limits and duration', () => {
     send(consentRequest());
     const text = pageText();
-    for (const s of ['Partner App', PARTNER, '“Swaps on Example”', 'Example pool', 'USDC', 'Router', 'swap', 'deposit', 'route', 'can send to any address', 'at most 3', 'deposit(uint256)', 'EVM chain 8453', 'PermitSingle']) {
+    for (const s of ['Partner App', PARTNER, '“Swaps on Example”', 'Example pool', 'USDC', 'Router', 'swap', 'deposit', 'route', 'can send to any address', 'at most 3', 'deposit(uint256)', 'EVM chain 8453', 'PermitSingle', 'Maximum value plus network fees, per transaction', 'Maximum value plus network fees, per day', 'Maximum network fee per transaction']) {
       expect(text).toContain(s);
     }
     for (const c of POLICY.ok ? POLICY.policy.stellar?.contracts ?? [] : []) expect(text).toContain(c.id);

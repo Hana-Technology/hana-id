@@ -65,7 +65,7 @@ describe('policyInForce', () => {
     expect(policyInForce(makeConfig().settings)).toBeNull();
     const bad = { ...makeConfig().settings, autoApprovePolicy: { v: 1, label: 'x', maxConsentMs: 60_000, limits: { perDayCount: 1 }, personalSign: true } };
     expect(policyInForce(bad)).toBeNull();
-    const evm = { chains: [{ chainId: 1, maxValueWei: '0', maxValueWeiPerDay: '0', maxFeeWei: '1', contracts: [{ address: '0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD', name: 'Vault', selectors: [{ selector: '0xb6b55f25', signature: 'deposit(uint256)' }] }] }] };
+    const evm = { chains: [{ chainId: 1, maxValueWei: '1', maxValueWeiPerDay: '1', maxFeeWei: '1', contracts: [{ address: '0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD', name: 'Vault', selectors: [{ selector: '0xb6b55f25', signature: 'deposit(uint256)' }] }] }] };
     const ok = { ...makeConfig().settings, autoApprovePolicy: { v: 1, label: 'x', maxConsentMs: 60_000, limits: { perDayCount: 1 }, evm } };
     expect(policyInForce(ok)?.policyId).toMatch(/^[0-9a-f]{64}$/u);
     // maxConsentMs may not exceed the app's session TTL.

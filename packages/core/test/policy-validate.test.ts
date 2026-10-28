@@ -79,7 +79,13 @@ describe('validateAutoApprovePolicy: accepts and normalizes', () => {
     expect(problems(patch((x) => (x.maxConsentMs = MAX_SESSION_TTL_MS)))).toEqual([]);
     expect(problems(patch((x) => (x.label = 'x'.repeat(80))))).toEqual([]);
     expect(problems(patch((x) => (x.stellar.maxFeeStroops = '4294967295')))).toEqual([]);
-    expect(problems(patch((x) => (x.evm.chains[0].maxValueWei = '0')))).toEqual([]);
+    // The fixture's maxFeeWei is 100 000: value plus fees can just fit.
+    expect(problems(patch((x) => (x.evm.chains[0].maxValueWei = '100000')))).toEqual([]);
+  });
+
+  it('refuses maxValueWei below maxFeeWei: value plus fees counts against it, so it could never auto-approve', () => {
+    expect(problems(patch((x) => (x.evm.chains[0].maxValueWei = '0')))).toEqual(['evm.chains[0].maxValueWei: must be at least maxFeeWei (value plus fees counts against it)']);
+    expect(problems(patch((x) => (x.evm.chains[0].maxValueWei = '99999')))).toHaveLength(1);
   });
 });
 
@@ -321,6 +327,7 @@ describe('validateAutoApprovePolicy: refusals', () => {
     ['maxFeeStroops as a number', (x: Mutable) => (x.stellar.maxFeeStroops = 100)],
     ['maxFeeStroops with a leading zero', (x: Mutable) => (x.stellar.maxFeeStroops = '0100')],
     ['maxValueWei over maxValueWeiPerDay', (x: Mutable) => (x.evm.chains[0].maxValueWei = '301501')],
+    ['maxValueWei below maxFeeWei', (x: Mutable) => (x.evm.chains[0].maxValueWei = '0')],
     ['no maxFeeWei', (x: Mutable) => delete x.evm.chains[0].maxFeeWei],
     ['maxFeeWei 0', (x: Mutable) => (x.evm.chains[0].maxFeeWei = '0')],
     ['maxFeeWei as a number', (x: Mutable) => (x.evm.chains[0].maxFeeWei = 100000)],

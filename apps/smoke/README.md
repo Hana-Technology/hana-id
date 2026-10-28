@@ -173,6 +173,11 @@ present, whether the nonce matched, and whether the popup kept `window.opener`) 
 The client must list that callback URL as an Authorized redirect URI; remove it after the spike. The 2026-10-28
 results are in `docs/context.md` ("Google openid-only spike").
 
+The summary also has `audProject` (the Cloud project number the client ID starts with) and `subFingerprint` (the first
+6 bytes of `sha256(sub)`, never `sub` itself). Signing in with the same Google account through clients in two
+different projects and getting the same `subFingerprint` shows that a partner can move from Hana's shared client to a
+Hana-held branded client without any address change (the path is `scope#provider#sub#key_index`, with no client ID).
+
 ## Test checklist
 
 ### Vault page

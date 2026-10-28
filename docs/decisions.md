@@ -371,6 +371,23 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
 - Why: a working exit underpins the non-custodial claim (get legal advice before mainnet) and partner due diligence.
 - Rejected: letting partners disable export (Privy allows it); extra delays or friction beyond the security checks.
 
+### D42. Google client tiers: shared by default, Hana-held branded client for Enterprise
+- Date 2026-10-28 · Status: confirmed by the user, conditional on the cross-project `sub` test (below) · Source:
+  `docs/batch-b-spec.md` Q3, Q37
+- Decision:
+  - Standard (default): Hana's shared Google client; Google's screen names Hana. Sodax pilots on this.
+  - Enterprise: Hana creates and holds a Google Cloud project and client per partner, branded with the partner's name
+    and logo, allowing only Hana's popup pages; registered as the scope's own client. Manual onboarding.
+  - Partner-held own client: only if a partner insists, with the client locked down (only Hana's popup pages as
+    origins and redirect, no native clients) and a written warning that whoever controls that Google project can
+    derive its users' keys.
+  - Staging uses its own scope (and test keys), so staging wallet addresses differ from production.
+- Why: branding never weakens custody. In Hana the Google token unlocks derivation, so a partner holding the client
+  could derive its users' keys silently (unlike Privy, where the token only logs in to Privy). A partner moves from
+  Standard to Enterprise with the same addresses, since the path has no client ID.
+- Condition: same Google account through clients in two different Cloud projects gives the same `sub`
+  (`apps/smoke/spike.html` `subFingerprint`). If it doesn't, branding has to be chosen at sign-up.
+
 ## Superseded or amended
 
 | Was | Now | Source |

@@ -67,7 +67,14 @@
         handle(e.newValue, 'storage (opener was severed)');
       });
 
-      function handle(hash, via) {
+      // A short fingerprint of `sub`, so runs can be compared across Google clients and projects without pasting the
+      // account ID itself.
+      async function subFingerprint(sub) {
+        const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(sub))));
+        return Array.from(d.slice(0, 6), (b) => b.toString(16).padStart(2, '0')).join('');
+      }
+
+      async function handle(hash, via) {
         if (!pending) return;
         const p = new URLSearchParams(hash);
         if (p.get('error')) return void alertOut(`Google error: ${p.get('error')}`);
@@ -79,19 +86,23 @@
         const rows = Object.entries(claims).map(([k, v]) => `<tr><td><code>${k}</code></td><td><code>${String(v).replace(/</g, '&lt;')}</code></td></tr>`).join('');
         $('out').innerHTML = `<h2>Claims in this token (shown only here)</h2><table><tr><th>claim</th><th>value</th></tr>${rows}</table>`;
         const pii = ['email', 'email_verified', 'name', 'picture', 'given_name', 'family_name', 'locale', 'hd', 'profile'];
+        const run = pending;
+        pending = null;
         summaries.push({
           run: summaries.length + 1,
-          maxAge0: pending.maxAge,
+          // Google client IDs start with the Cloud project number.
+          audProject: String(claims.aud).split('-')[0],
+          subFingerprint: await subFingerprint(claims.sub),
+          maxAge0: run.maxAge,
           claimNames: Object.keys(claims).sort(),
           personalClaimsPresent: pii.filter((k) => k in claims),
           hasHd: 'hd' in claims,
           hasAuthTime: 'auth_time' in claims,
           authTimeAgeS: 'auth_time' in claims ? Math.round(Date.now() / 1000 - claims.auth_time) : null,
-          nonceMatches: claims.nonce === pending.nonce,
+          nonceMatches: claims.nonce === run.nonce,
           returnedVia: via,
         });
         $('summary').textContent = JSON.stringify(summaries, null, 1);
-        pending = null;
       }
 
       function alertOut(msg) {

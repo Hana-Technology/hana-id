@@ -141,10 +141,14 @@ export const EXPORT_START_MS = 5 * 60_000;
 export const EXPORT_MAX_MS = 15 * 60_000;
 /** "Signed by Hana under {label}" shows this long. */
 export const AUTO_APPROVED_FLASH_MS = 3_000;
-/** While logged in with a policy in force, GET /v1/app is re-read this often. */
+/** While logged in with a policy in force, GET /v1/app is re-read this often (keeps hana_autoApproveStatus current). */
 export const POLICY_REFRESH_MS = 60_000;
-/** An auto-sign needs the policy confirmed by GET /v1/app this recently (else it re-reads it first, or asks). */
-export const POLICY_FRESH_MS = 90_000;
+/**
+ * An auto-sign needs the policy confirmed by GET /v1/app this recently, else it re-reads it first (or, if that fails,
+ * asks). This bounds how long a removed policy can still auto-sign in an open tab; a burst of requests within it shares
+ * one read, so GET /v1/app stays far below its per-IP limit.
+ */
+export const POLICY_FRESH_MS = 10_000;
 const SEEN_IDS_MAX = 4096;
 const JWKS_REFETCH_MS = 60_000;
 export const LOGIN_FEATURES = 'popup,width=480,height=640';
@@ -1225,6 +1229,11 @@ export class Vault {
   private onExportHello(e: WindowMessageEvent): void {
     const job = this.exportJob;
     if (!job || !job.window || job.contextSent || e.source !== job.window || e.origin !== this.env.authOrigin) return;
+    // The session may have ended (expiry with a delayed timer) since the export started: no context for it.
+    if (!this.live()) {
+      this.cancelExport(disconnected());
+      return;
+    }
     job.contextSent = true;
     job.window.postMessage(
       {

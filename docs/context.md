@@ -128,8 +128,8 @@ origins, partner-origin `/v1/sessions`/`/v1/derive`/`/v1/sessions/revoke`) tied 
   (`apps/api` "Page Workers"). They are one site (`tingtc.workers.dev` is the registrable domain), so the manifest
   schema refuses same-site Hana origins only outside `local*`/`sandbox*` envs. The spec's "two `workers.dev`
   hostnames are separate sites" holds only across account subdomains. Production needs a Hana-owned domain (Q15).
-- The Approve guard also arms on a `pointerdown` or `keydown` after both 1 s marks, not only on a `pointermove`
-  (a stationary tap or the keyboard fire none), and the arming gesture itself never approves.
+- The Approve guard arms per input (user decision 2026-10-28, `docs/decisions.md` D34): a mouse `pointermove`, a
+  touch or pen `pointerdown`, or Tab/arrow keys (never Enter or Space), and the arming gesture itself never approves.
 - Auto-approve policies gain a required per-chain `maxFeeWei` (gas × fee cap), because the SDK fills EVM fees on the
   partner page. Under `'self-or-listed'`, `string` and `bytes20`–`bytes32` arguments count as opaque like `bytes`.
   Function names that move value are matched by prefix and substring (`transferAndCall`, `permit…`, `set_admin`).
@@ -139,8 +139,8 @@ origins, partner-origin `/v1/sessions`/`/v1/derive`/`/v1/sessions/revoke`) tied 
   chain.
 - The consent digest (`hana-id/auto-approve-consent/v1`) binds the request id, `policyId`, the parent origin and the
   end time the user agrees to. An open vault re-reads the policy in force (`GET /v1/app` now returns
-  `autoApprovePolicy`) every 60 s while logged in, and before an auto-sign if the last check is over 90 s old. A
-  removed or changed policy stops auto-approval without a reload.
+  `autoApprovePolicy`) every 60 s while logged in, and before an auto-sign if the last check is 10 s old or more. A
+  removed or changed policy stops auto-approval within 10 s, without a reload.
 - Logout is app-wide on the device. Tabs end only on a `revoked` broadcast for their own share, so a stale tab can't
   end a newer session. At most 100 approvals wait at once (`4100 too_many_pending`).
 - Export accepts a token without `auth_time` (Google sends none, even with `max_age=0`; Q33). One that has it must be

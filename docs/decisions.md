@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`).
+Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`); D33 and D34 on `fix/b-web` (2026-10-28).
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -219,6 +219,36 @@ progress or not started), **deferred**, **superseded**, **proposed** (in a draft
 - Decision: export runs its own fresh login plus a typed confirmation; the `auth_time` check is off
   (`packages/core/src/id-token.ts:113`).
 - Why: with `max_age=0` Google returned no `auth_time`.
+
+### D33. Message, typed-data and raw approvals bind no network; the popup says so
+- Date 2026-10-28 · Status: in force (`packages/core/src/approval.ts`, `packages/web/src/auth/render-approval.ts`) ·
+  Source: conversation (decided by the user); `docs/security.md` (k)
+- Decision: the approval digest's `contextString` is the passphrase for Stellar transactions and auth entries, the
+  chain ID for EVM transactions, and empty for `stellar_signMessage`, `personal_sign`, `eth_signTypedData_v4` and
+  `hana_signRaw`. The approve popup shows "This signature isn't tied to one network." on message and raw requests;
+  typed data shows its domain's chain (or warns that it names none).
+- Why: these requests name no network of their own, and the vault never learns the dapp's selected EVM chain (the
+  SDK answers `eth_chainId`), so there is nothing true to bind; showing a chain the signature isn't limited to would
+  mislead.
+- Rejected: binding the SDK's current chain (the vault can't verify it, and the signature is valid on every chain
+  anyway).
+
+### D34. The Approve guard arms per input type
+- Date 2026-10-28 · Status: in force (`packages/web/src/auth/approve-guard.ts`) · Source: conversation (decided by
+  the user); amends `docs/batch-b-spec.md` "Approval flow" step 5
+- Decision: Approve and Allow stay disabled until 1 s after the request rendered, 1 s after the window last gained
+  focus or became visible, and an arming gesture after both. Mouse: only a `pointermove` that moved arms (a press
+  never does, and zero-movement synthetic moves are ignored). Touch and pen: a `pointerdown` arms. Keyboard: only
+  Tab, Shift+Tab and the arrow keys arm; Enter, Space and auto-repeated keys never do. The arming gesture never
+  approves: Approve acts only on a click whose own pointerdown (or non-repeated keydown) came after it. The page never
+  focuses Approve.
+- Why: the spec's `pointermove`-only rule never arms on a stationary tap or from the keyboard, so phone and
+  keyboard-only users could not approve. Keeping mouse on `pointermove` means clicking in place never approves, and
+  keeping Enter and Space out means a held key never approves.
+- Residual risk (accepted): on a phone, someone tapping repeatedly for more than 1 s after the popup tab opens can
+  still approve in two taps, if the second lands on Approve.
+- Rejected: `pointermove` only (unusable on touch and keyboard); any `pointerdown` or `keydown` arming (the deviation
+  first coded in `fbdb0ce`: mouse click-spam or a held Enter could approve in two events).
 
 ## Batch C (dashboard), decided 2026-10-27
 

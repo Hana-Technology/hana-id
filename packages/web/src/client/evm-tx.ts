@@ -6,7 +6,8 @@
 // numbers and bigints are accepted too) and refuses anything it doesn't know. fillTransaction then completes it:
 // - `from` is the vault's address (a different `from` is 4100); `chainId` is the provider's current chain (a different
 //   one is refused, so a dapp can't get a signature for a chain it didn't switch to);
-// - `nonce` from `eth_getTransactionCount(from, 'pending')`, `gas` from `eth_estimateGas`;
+// - `nonce` from `eth_getTransactionCount(from, 'pending')`, but never below `minNonce` (one past the last nonce the
+//   provider broadcast, for an RPC node that lags), `gas` from `eth_estimateGas`;
 // - fees: an explicit `gasPrice` (or `type: '0x0'`) keeps the legacy EIP-155 form, filled with `eth_gasPrice`.
 //   Otherwise EIP-1559 when the latest block has `baseFeePerGas`: `maxPriorityFeePerGas` from
 //   `eth_maxPriorityFeePerGas` (or `eth_gasPrice − baseFee` where that method is missing) and
@@ -104,6 +105,8 @@ export interface FillContext {
   chainId: number;
   /** JSON-RPC on the current chain's rpcUrl. */
   rpc: (method: string, params: readonly unknown[]) => Promise<unknown>;
+  /** A floor for a filled nonce (one past the last one broadcast from this page); a dapp's own nonce is kept as is. */
+  minNonce?: bigint;
 }
 
 const rpcQuantity = (v: unknown, what: string): bigint => {
@@ -126,7 +129,14 @@ export async function fillTransaction(input: NormalizedTx, ctx: FillContext): Pr
   const data = input.data ?? '0x';
   const to = input.to ?? null;
 
-  const nonceP = input.nonce !== undefined ? Promise.resolve(input.nonce) : ctx.rpc('eth_getTransactionCount', [ctx.from, 'pending']).then((r) => hex(rpcQuantity(r, 'nonce')));
+  const floor = ctx.minNonce ?? 0n;
+  const nonceP =
+    input.nonce !== undefined
+      ? Promise.resolve(input.nonce)
+      : ctx.rpc('eth_getTransactionCount', [ctx.from, 'pending']).then((r) => {
+          const n = rpcQuantity(r, 'nonce');
+          return hex(n > floor ? n : floor);
+        });
   const estimate: Record<string, unknown> = { from: ctx.from, value, data };
   if (to !== null) estimate.to = to;
   const gasP = input.gas !== undefined ? Promise.resolve(input.gas) : ctx.rpc('eth_estimateGas', [estimate]).then((r) => hex(rpcQuantity(r, 'gas estimate')));

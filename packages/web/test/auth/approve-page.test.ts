@@ -17,6 +17,7 @@ import { policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GUARD_DELAY_MS } from '../../src/auth/approve-guard.ts';
 import { AUTO_APPROVE_REASON_TEXT, KEEP_OPEN_MS, autoApproveReasonText, startApprovePage } from '../../src/auth/approve-page.ts';
+import { NO_NETWORK_NOTE } from '../../src/auth/render-approval.ts';
 import { formatEndTime } from '../../src/auth/render-consent.ts';
 import { policyJson } from '../../../core/test/policy-fixtures.ts';
 import { PASSPHRASE, USER, paymentOp, txBytes } from '../../../core/test/stellar-fixtures.ts';
@@ -87,10 +88,17 @@ let page: ReturnType<typeof startApprovePage>;
 
 const primary = () => document.querySelector<HTMLButtonElement>('button.primary');
 const secondary = () => document.querySelector<HTMLButtonElement>('button.secondary');
-/** A mouse or touch click: its pointerdown reaches the window first, then the click (detail 1) fires on the button. */
-const click = (b: Element | null) => {
+/** A pointer click: its pointerdown reaches the window first, then the click (detail 1) fires on the button. */
+const click = (b: Element | null, pointerType = 'mouse') => {
   if (!b) return;
-  win.dispatch('pointerdown');
+  win.dispatch('pointerdown', { pointerType });
+  b.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+};
+/** A stationary touch tap: pointerdown, pointerup, click; no pointermove. */
+const tap = (b: Element | null) => {
+  if (!b) return;
+  win.dispatch('pointerdown', { pointerType: 'touch' });
+  win.dispatch('pointerup', { pointerType: 'touch' });
   b.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
 };
 /** A click on the button with no pointerdown of its own (a pointer click whose press began earlier). */
@@ -103,10 +111,10 @@ const keyClick = (b: Element | null, key = 'Enter') => {
 };
 const send = (m: unknown, origin = ENV.vaultOrigin, source: unknown = vault) => win.message(m, origin, source);
 const results = () => vault.postMessage.mock.calls.map((c) => c[0] as Record<string, unknown>).filter((m) => m.t !== 'hana:approve-hello');
-/** Waits out the guard: 1 s, then a pointer move. */
+/** Waits out the guard: 1 s, then a mouse move. */
 const arm = () => {
   vi.advanceTimersByTime(GUARD_DELAY_MS);
-  win.dispatch('pointermove');
+  win.dispatch('pointermove', { pointerType: 'mouse', movementX: 3, movementY: 1 });
 };
 
 function start(): void {
@@ -196,13 +204,37 @@ describe('/approve', () => {
       send(evmRequest());
       vi.advanceTimersByTime(10 * GUARD_DELAY_MS);
       expect(primary()?.disabled).toBe(true);
-      // Clicking anyway (the disabled attribute removed) does nothing: the guard is checked on click. That click's
+      // Tapping anyway (the disabled attribute removed) does nothing: the guard is checked on click. That tap's
       // pointerdown arms the guard, but the click it belongs to still can't act.
       const b = primary() as HTMLButtonElement;
       b.disabled = false;
-      click(b);
+      tap(b);
       expect(results()).toEqual([]);
       expect(primary()?.disabled).toBe(false);
+    });
+
+    it('mouse: clicks without a pointer move never arm it, however many (click-spam in place)', () => {
+      send(evmRequest());
+      vi.advanceTimersByTime(GUARD_DELAY_MS);
+      const b = primary() as HTMLButtonElement;
+      for (let i = 0; i < 20; i++) {
+        b.disabled = false; // as if the attribute were bypassed: the guard itself refuses
+        click(b, 'mouse');
+        vi.advanceTimersByTime(100);
+      }
+      expect(results()).toEqual([]);
+      expect(page.guard.armed()).toBe(false);
+    });
+
+    it('mouse: a synthetic move with zero movement (a layout change under a still cursor) does not arm it', () => {
+      send(evmRequest());
+      vi.advanceTimersByTime(GUARD_DELAY_MS);
+      win.dispatch('pointermove', { pointerType: 'mouse', movementX: 0, movementY: 0 });
+      expect(primary()?.disabled).toBe(true);
+      win.dispatch('pointermove', { pointerType: 'mouse', movementX: 0, movementY: 2 });
+      expect(primary()?.disabled).toBe(false);
+      click(primary(), 'mouse');
+      expect(results()[0]).toMatchObject({ approved: true });
     });
 
     it('a click whose press began before the guard armed does not approve', () => {
@@ -218,18 +250,30 @@ describe('/approve', () => {
       expect(results()[0]).toMatchObject({ approved: true });
     });
 
-    it('touch only: a tap without a move arms it, that tap does not approve, the next tap does', () => {
+    it.each(['touch', 'pen'])('%s: a tap without a move arms it, that tap does not approve, the next tap does', (pointerType) => {
       const r = evmRequest();
       send(r);
       vi.advanceTimersByTime(GUARD_DELAY_MS);
       // A stationary tap: pointerdown/up and click, no pointermove (on the disabled button, which enables at once).
-      win.dispatch('pointerdown');
+      win.dispatch('pointerdown', { pointerType });
       expect(primary()?.disabled).toBe(false);
-      win.dispatch('pointerup');
+      win.dispatch('pointerup', { pointerType });
       bareClick(primary());
       expect(results()).toEqual([]);
-      click(primary());
+      click(primary(), pointerType);
       expect(results()[0]).toMatchObject({ t: 'hana:approve-result', id: r.id, approved: true });
+    });
+
+    it('touch: tap-tap on Approve after the marks approves (the residual risk of tap-spam), one tap never does', () => {
+      send(evmRequest());
+      vi.advanceTimersByTime(GUARD_DELAY_MS);
+      const b = primary() as HTMLButtonElement;
+      b.disabled = false;
+      tap(b);
+      expect(results()).toEqual([]);
+      tap(primary());
+      expect(results()).toHaveLength(1);
+      expect(results()[0]).toMatchObject({ approved: true });
     });
 
     it('a tap before the 1 s marks neither arms it nor approves', () => {
@@ -240,7 +284,7 @@ describe('/approve', () => {
       expect(results()).toEqual([]);
     });
 
-    it('keyboard only: a key after the marks arms it, and Enter on Approve (a later keydown) approves', () => {
+    it('keyboard only: Tab after the marks arms it, and Enter on Approve (a later keydown) approves', () => {
       const r = evmRequest();
       send(r);
       vi.advanceTimersByTime(GUARD_DELAY_MS);
@@ -248,6 +292,56 @@ describe('/approve', () => {
       expect(primary()?.disabled).toBe(false);
       keyClick(primary());
       expect(results()[0]).toMatchObject({ id: r.id, approved: true });
+    });
+
+    it.each(['Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'])('keyboard: %s arms it', (key) => {
+      send(evmRequest());
+      vi.advanceTimersByTime(GUARD_DELAY_MS);
+      win.dispatch('keydown', { key, shiftKey: key === 'Tab' });
+      expect(primary()?.disabled).toBe(false);
+    });
+
+    it.each(['Enter', ' ', 'Shift', 'a', 'Escape'])('keyboard: %j never arms it', (key) => {
+      send(evmRequest());
+      vi.advanceTimersByTime(GUARD_DELAY_MS);
+      win.dispatch('keydown', { key });
+      expect(primary()?.disabled).toBe(true);
+    });
+
+    it('a held Enter never approves (auto-repeat), even when the button is enabled by hand', () => {
+      send(evmRequest());
+      const b = primary() as HTMLButtonElement;
+      win.dispatch('keydown', { key: 'Enter' });
+      for (let i = 0; i < 40; i++) {
+        vi.advanceTimersByTime(50);
+        b.disabled = false;
+        // Each auto-repeated keydown of a held Enter fires a keyboard click (detail 0) on a focused button.
+        win.dispatch('keydown', { key: 'Enter', repeat: true });
+        b.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+      }
+      expect(results()).toEqual([]);
+      expect(page.guard.armed()).toBe(false);
+      // Nor after a Tab arms it while Enter is still held: only a fresh Enter press approves.
+      win.dispatch('keydown', { key: 'Tab' });
+      win.dispatch('keydown', { key: 'Enter', repeat: true });
+      b.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+      expect(results()).toEqual([]);
+      keyClick(b);
+      expect(results()[0]).toMatchObject({ approved: true });
+    });
+
+    it('Approve is never focused by the page: not on render, not when it enables, not in a reused popup', () => {
+      send(evmRequest());
+      expect(document.activeElement).not.toBe(primary());
+      arm();
+      expect(primary()?.disabled).toBe(false);
+      expect(document.activeElement).not.toBe(primary());
+      expect(primary()?.hasAttribute('autofocus')).toBe(false);
+      primary()?.focus();
+      click(primary());
+      send(evmRequest({ position: 2, queued: 2 }));
+      expect(document.activeElement).not.toBe(primary());
+      expect(primary()?.hasAttribute('autofocus')).toBe(false);
     });
 
     it('a keyboard click needs a keydown after arming; a pointer click needs a pointerdown after arming', () => {
@@ -422,6 +516,27 @@ describe('/approve', () => {
     send(evmRequest({ kind: 'personal_sign', context: {}, bytes: utf8('pay‮evil') }));
     expect(pageText()).toContain('shown as hex');
     expect(pageText()).not.toContain('pay‮evil');
+  });
+
+  it('says a message or raw signature is not tied to one network; transactions and typed data name theirs', () => {
+    const shown = (r: Req) => {
+      send(r);
+      return pageText().includes(NO_NETWORK_NOTE);
+    };
+    expect(shown(evmRequest({ kind: 'personal_sign', context: {}, bytes: utf8('Sign in to Partner') }))).toBe(true);
+    expect(shown(stellarRequest({ kind: 'stellar_message', context: {}, bytes: utf8('Sign in to Partner') }))).toBe(true);
+    expect(shown(stellarRequest({ kind: 'raw', context: {}, bytes: txBytes([paymentOp()]) }))).toBe(true);
+    expect(shown(evmRequest({ kind: 'raw', context: {}, bytes: new Uint8Array(32).fill(7) }))).toBe(true);
+    expect(shown(evmRequest())).toBe(false);
+    expect(shown(stellarRequest())).toBe(false);
+    const typed = JSON.stringify({
+      types: { EIP712Domain: [{ name: 'chainId', type: 'uint256' }], Order: [{ name: 'amount', type: 'uint256' }] },
+      primaryType: 'Order',
+      domain: { chainId: 11155111 },
+      message: { amount: '5' },
+    });
+    expect(shown(evmRequest({ kind: 'eip712', context: {}, bytes: utf8(typed) }))).toBe(false);
+    expect(pageText()).toContain('Chain ID 11155111');
   });
 
   it('shows why a request was not auto-approved, and "Stop auto-approving" while a consent is active', () => {

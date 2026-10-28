@@ -1,7 +1,8 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`).
+Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`); the signing, approval, auto-approve and
+logout parts of `packages/web` re-verified 2026-10-28 on `fix/b-web` (from `feat/batch-b` 0f0a437).
 
 Byte layouts and contract methods are in `docs/contract-interface.md`; this file links to it rather than repeating
 them. The security model is `docs/security.md`, the decision log `docs/decisions.md`. Where a spec and the code
@@ -18,9 +19,9 @@ disagree, this file describes the code.
 | `apps/api` vault page, vault endpoints, migration 0003, vault cron (batch B) | `feat/batch-b` (`b/api-vault`) | Code done |
 | `@hana-id/core` (layouts, CKD, derivation v1, signers, decoders, policies) | `feat/batch-b` (`b/core-crypto`, `b/core-decode`) | Code done |
 | `packages/env` `vaultOrigin`/`authOrigin`, package scaffolds | `feat/batch-b` (`b/scaffold`) | Code done |
-| Vault app (`packages/web`) | `b/web-vault` | **In progress, not merged** |
-| Auth pages `/login`, `/login/callback`, `/approve`, `/export` | `b/web-auth` | **In progress, not merged** |
-| Partner client `createHana`, EIP-1193, SWK module | `b/web-client` | **In progress, not merged** |
+| Vault app (`packages/web`) | `feat/batch-b` (`b/web-vault`) | Code done |
+| Auth pages `/login`, `/login/callback`, `/approve`, `/export` | `feat/batch-b` (`b/web-auth`) | Code done |
+| Partner client `createHana`, EIP-1193, SWK module | `feat/batch-b` (`b/web-client`) | Code done |
 | Thin Workers serving `vaultOrigin`/`authOrigin` on workers.dev | `b/pages-hosting` | **In progress, not merged** |
 | `admin app:settings`, API-side policy validation | `b/settings-cli` | **In progress, not merged** |
 | `@hana-id/react`, `@hana-id/sodax` | scaffold only (`VERSION` export) | Per spec, not started |
@@ -35,10 +36,10 @@ Everything below marked **(per spec, not yet merged)** describes `docs/batch-b-s
 | Component | Code | Runs on | Role |
 |---|---|---|---|
 | Partner page | partner's own | partner origin | Embeds the SDK; never sees keys or tokens |
-| `@hana-id/web` client | `packages/web` (per spec, not yet merged) | partner origin | Mounts the vault iframe, opens the login popup, exposes EIP-1193, Stellar signer, raw signer, SWK module |
+| `@hana-id/web` client | `packages/web/src/client` | partner origin | Mounts the vault iframe, opens the login popup, exposes EIP-1193, Stellar signer, raw signer, SWK module |
 | `@hana-id/react`, `@hana-id/sodax` | `packages/react`, `packages/sodax` (per spec, not started) | partner origin | `HanaProvider`/`useHana`/`useWallet`; Sodax `IStellarWalletProvider`/`IEvmWalletProvider` adapters |
-| Vault | `packages/web` vault app (per spec, not yet merged); page HTML `apps/api/src/vault/page.ts` | hidden iframe on `vaultOrigin` | Holds the session key and PRK, computes nonces and paths, signs |
-| Auth pages | `packages/web` auth apps (per spec, not yet merged) | popups / top-level windows on `authOrigin` | Google login, approval, consent, key export |
+| Vault | `packages/web/src/vault`; page HTML `apps/api/src/vault/page.ts` | hidden iframe on `vaultOrigin` | Holds the session key and PRK, computes nonces and paths, signs |
+| Auth pages | `packages/web/src/auth` | popups / top-level windows on `authOrigin` | Google login, approval, consent, key export |
 | `@hana-id/core` | `packages/core` | everywhere (no DOM) | Layouts, CKD, derivation v1, signers, approval decoders, policy validator/matcher, ID-token check, message schemas |
 | API Worker | `apps/api/src/index.ts` | Cloudflare Workers (`apiUrl`) | Gate (key, origin, limits), verify-before-relay, relayer, vault shares, login relay, vault page HTML, crons |
 | `RelayerKey` DO | `apps/api/src/relayer-key.ts` | one object per relayer access key | Serialises that key's nonces, signs and broadcasts |
@@ -198,7 +199,8 @@ approved signature, per spec). The hourly cron deletes shares past `abs_expires_
 
 ### Signing: approval popup vs auto-approve
 
-Per spec, not yet merged, except the `@hana-id/core` pieces named here.
+Code: `packages/web/src/vault/` (queue, signing, policies), `packages/web/src/auth/approve-page.ts` (popup),
+`packages/web/src/client/ethereum.ts` (EIP-1193), and the `@hana-id/core` pieces named here.
 
 | Tier | Methods |
 |---|---|
@@ -209,13 +211,19 @@ Per spec, not yet merged, except the `@hana-id/core` pieces named here.
 
 Approval: the vault queues the request and shows a launcher; a click opens `{authOrigin}/approve`. The popup decodes
 the bytes itself (`decodeApprovalRequest`, `packages/core/src/decode/request.ts:55`; EIP-712 through
-`normalizeTypedData`, `packages/core/src/typed-data.ts:266`), guards Approve (1 s after render, 1 s after focus, a
-pointer move), and returns `approvalDigest` (`approval.ts:179`). The vault recomputes the digest from the queued
-request and signs only on a match, deriving the chain key from PRK per signature and zeroing it (`withChainKey`,
-`derivation.ts:98`). The SDK fills fees and nonces and broadcasts through the partner's RPC.
+`normalizeTypedData`, `packages/core/src/typed-data.ts:266`), guards Approve (`approve-guard.ts`: 1 s after render,
+1 s after focus, then a mouse move, a touch or pen press, or Tab/an arrow key; the arming gesture never approves;
+decisions D34), and returns `approvalDigest` (`approval.ts:179`; empty network context for messages, typed data and
+raw, which the popup says aren't tied to one network, D33). The vault recomputes the digest from the queued request
+and signs only on a match, deriving the chain key from PRK per signature and zeroing it (`withChainKey`,
+`derivation.ts:98`). At most 100 requests wait; one the popup couldn't show is refused at once. The SDK fills fees
+and nonces and broadcasts through the partner's RPC: `eth_sendTransaction` runs one at a time per chain, broadcasts on
+the chain it was filled on, and never fills a nonce below one past its last broadcast.
 
 Auto-approve: the app owner sets an `AutoApprovePolicyV1` (D1 `auto_approve_policy`, pending + effective time on
-set/change, immediate on removal; `apps/api/src/vault/settings.ts:66`). The vault page inlines the policy in force.
+set/change, immediate on removal; `apps/api/src/vault/settings.ts:66`). The vault page inlines the policy in force,
+and an open vault re-reads it from `GET /v1/app` before an auto-sign when its last check is 10 s old or more (and
+every 60 s), so a removal stops auto-signing in open tabs within 10 s.
 The user accepts that exact `policyId` (`packages/core/src/policy/id.ts`) once in a consent screen; then the vault
 signs a request without a popup only if `matchAutoApprovePolicy` (`packages/core/src/policy/match.ts:91`) passes and
 the per-day counters (`packages/core/src/policy/usage.ts`) allow it. Rules in `docs/security.md`.
@@ -224,7 +232,8 @@ the per-day counters (`packages/core/src/policy/usage.ts`) allow it. Rules in `d
 
 | Action | Path | Chain tx |
 |---|---|---|
-| Logout (default) | `POST /v1/vault/revoke` (share revoked), vault deletes the record, zeroes PRK, broadcasts `logout` on `hana-vault:<appId>` (per spec) | none |
+| Logout (default) | App-wide on the device: under the per-app lock, `POST /v1/vault/revoke` for this tab's share and for the stored record's share if it is another session's; the vault deletes the record, zeroes PRK and broadcasts `logout` on `hana-vault:<appId>`, which ends every tab of the app | none |
+| New login | Revokes this tab's previous share and the overwritten record's share, broadcasting `revoked {shareId}`; only tabs holding that share end | none |
 | Lost device | `POST /v1/vault/revoke-all`, only with a share created < 5 min ago (`endpoints.ts:289`); revokes the user's other live shares for `(app_id, path_hash)` | none |
 | On-chain revoke | `POST /v1/sessions/revoke` → `revoke_session` (20 Tgas), signed `sessionMessage(counter, "revoke")`; the precheck allows counter up to `max_uses + 1` so a spent session can still be revoked | yes; not used by default |
 | Origin removed | the next unlock of each share made for that origin marks it revoked (410) | none |

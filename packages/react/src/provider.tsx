@@ -39,7 +39,9 @@ interface Mounted {
   released: boolean;
 }
 
-export function HanaProvider({ config, children }: HanaProviderProps): ReactNode {
+// The return type is inferred (JSX.Element under every @types/react): a `ReactNode` annotation isn't accepted as a JSX
+// component by older @types/react 18 releases, and `JSX.Element` has no import that works under both 18 and 19.
+export function HanaProvider({ config, children }: HanaProviderProps) {
   const initialConfig = useRef(config);
   const mounted = useRef<Mounted | null>(null);
   const [value, setValue] = useState<HanaContextValue>(NO_CLIENT);

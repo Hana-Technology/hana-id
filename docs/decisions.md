@@ -412,6 +412,15 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
 - Why: whoever can click Allow can already click Approve on any single request, which is more powerful than a capped
   consent; a fresh sign-in would add ~9 s and $0.021 for little protection.
 
+### D46. No token amount caps in auto-approve for the pilot
+- Date 2026-10-28 · Status: confirmed by the user · Source: `docs/batch-b-spec.md` Q39
+- Decision: policies limit counts, native value plus fees, recipients (address rule) and contracts/functions; token
+  amounts aren't capped. Revisit with the Sodax decoder, which can cap per token per day once it decodes token and
+  amount.
+- Why: in batch B Sodax swaps and bridges always use the popup; `approve` to an unlisted spender is refused; auto-approve
+  is off by default, delayed 24 h and needs user consent.
+- Rejected for now: per-token caps from generic `transfer`/`approve`/swap decoding.
+
 ## Superseded or amended
 
 | Was | Now | Source |

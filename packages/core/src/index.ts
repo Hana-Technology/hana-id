@@ -27,6 +27,7 @@ export * from './signers/evm.ts';
 // entry, which the partner client imports, never pulls in @stellar/stellar-base (test/index.test.ts checks).
 export * from './approval.ts';
 export * from './typed-data.ts';
+export * from './verified-contracts.ts';
 export * from './decode/errors.ts';
 export * from './decode/json.ts';
 // Names two modules both define are exported once, explicitly (an ambiguous `export *` name is silently dropped):

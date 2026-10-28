@@ -12,6 +12,7 @@
   --warn-text: #5c4400;
   --danger-bg: #fde8e8;
   --danger-text: #8a1c1c;
+  --ok-text: #12652f;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
@@ -28,6 +29,7 @@
     --warn-text: #f5dd9b;
     --danger-bg: #43161a;
     --danger-text: #ffb4b4;
+    --ok-text: #8fe0a8;
   }
 }
 
@@ -139,6 +141,16 @@ ul {
 .contracts > li {
   border-top: 1px solid var(--line);
   padding-top: 8px;
+}
+
+/* Consent screen contract lines (docs/decisions.md D44): Hana's verified mark, partner names, explorer links. */
+.contract .verified {
+  color: var(--ok-text);
+}
+
+.contract a.explorer {
+  color: var(--accent);
+  white-space: nowrap;
 }
 
 .sub {

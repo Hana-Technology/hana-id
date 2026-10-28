@@ -141,6 +141,7 @@ const actions: Record<string, (...args: never[]) => Promise<unknown>> = {
   cancelLogin: async () => hana.cancelLogin(),
   exportKey: (chainName: 'stellar' | 'evm') => hana.exportKey(chainName),
   revokeOtherDevices: () => hana.revokeOtherDevices(),
+  requestAutoApprove: () => hana.requestAutoApprove(),
   signRaw: (params: Parameters<typeof hana.signRaw>[0]) => hana.signRaw(params),
   stellarSignMessage: (message: string) => hana.stellar.signMessage(message),
   stellarSignTx: async () => {

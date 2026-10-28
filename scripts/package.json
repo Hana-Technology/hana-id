@@ -8,6 +8,7 @@
     "post-google-keys": "tsx post-google-keys.ts",
     "fetch-ckd-key": "tsx fetch-ckd-key.ts",
     "admin": "tsx admin.ts",
+    "vault-kek": "tsx vault-kek.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

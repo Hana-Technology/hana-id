@@ -5,7 +5,8 @@
 
 /**
  * 'self-or-listed': every address-typed argument, at any depth, must be the user's own address, a listed contract or a
- * policy `addresses` entry. 'any': no address check (shown to the user as "can send to any address").
+ * policy `addresses` entry. 'any': no check on typed addresses (shown to the user as "can send to any address"). Under
+ * either rule, opaque arguments (policy/opaque.ts) are never auto-approved: such functions need a protocol decoder.
  */
 export type AddressArgsRule = 'self-or-listed' | 'any';
 
@@ -56,14 +57,19 @@ export interface EvmPolicyTypedData {
 
 export interface EvmPolicyChain {
   readonly chainId: number;
-  /** Per transaction, wei, decimal. */
+  /**
+   * Per transaction, wei, decimal: the most an auto-signed transaction may take from the native balance, its value
+   * plus its maximum fee (gasLimit × maxFeePerGas, or gasPrice for legacy). So a non-zero value is needed even for
+   * calls that send no value: at least the fee they may pay.
+   */
   readonly maxValueWei: string;
-  /** Per UTC day, wei, decimal (auto-signed value on this chain plus this one). */
+  /** Per UTC day, wei, decimal: today's auto-signed value plus maximum fees on this chain, this transaction included. */
   readonly maxValueWeiPerDay: string;
   /**
    * Per transaction, wei, decimal, at least 1: the most the transaction may pay in fees (gasLimit × maxFeePerGas, or
    * gasPrice for legacy). The SDK fills gas and fee fields on the partner page, so without this cap an injected script
-   * could burn the user's native balance in priority fees. The EVM counterpart of `maxFeeStroops`.
+   * could burn the user's native balance in priority fees. The EVM counterpart of `maxFeeStroops`. The fee also counts
+   * against maxValueWei and maxValueWeiPerDay.
    */
   readonly maxFeeWei: string;
   readonly contracts: readonly EvmPolicyContract[];

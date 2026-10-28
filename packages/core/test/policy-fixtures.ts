@@ -38,9 +38,10 @@ export const policyJson = () => ({
     chains: [
       {
         chainId: CHAIN,
-        maxValueWei: '1000',
-        maxValueWeiPerDay: '1500',
-        // The matcher tests' transactions use gas 100 000 at 1 wei per gas.
+        // The matcher tests' transactions use gas 100 000 at 1 wei per gas: a maximum fee of 100 000 wei, which counts
+        // against maxValueWei and maxValueWeiPerDay with the value. So a value of up to 1 000 fits at that fee.
+        maxValueWei: '101000',
+        maxValueWeiPerDay: '301500',
         maxFeeWei: '100000',
         contracts: [
           { address: EVM_USDC, name: 'USDC', selectors: [entry('approve(address,uint256)', 'self-or-listed')] },
@@ -51,7 +52,7 @@ export const policyJson = () => ({
               entry('deposit(uint256)'),
               entry('withdraw(address,uint256)', 'self-or-listed'),
               entry('batch((address,uint256)[])', 'self-or-listed'),
-              entry('execute(address,bytes)', 'any'),
+              entry('vote(address,uint256)', 'any'),
             ],
           },
         ],

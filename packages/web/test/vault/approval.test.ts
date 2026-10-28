@@ -271,20 +271,20 @@ describe('what gets signed', () => {
     expect(typedSigner(json, (await reply).result as string)).toBe(s.evm);
   });
 
-  it('a request whose approval message would pass the popup\'s cap is refused at once (4100 invalid_request), never left to time out', async () => {
+  it('the largest sign request the port accepts still reaches the popup (the approval cap leaves room for its other fields)', async () => {
     const s = await session();
-    // The port request fits its 192 KiB cap; the approval request adds the app name, origin, address and context.
+    // The port request fits its 192 KiB cap; the approval request adds the app name, origin, address and context,
+    // which APPROVAL_MESSAGE_MAX_BYTES has room for. (A message the popup would still drop is refused at once:
+    // units.test.ts "Approvals".)
     const message = new Uint8Array(SIGN_MESSAGE_MAX_BYTES - 128).fill(0x61);
     expect(parsePortRequest({ v: 1, id: 'r-big', method: 'stellar_signMessage', params: { message } })).not.toBeNull();
-    const reply = await s.t.request('stellar_signMessage', { message });
-    expect(reply.error).toMatchObject({ code: 4100, data: { reason: 'invalid_request' } });
-    expect(s.t.launcher.label).toBeNull();
-    // A smaller one still goes to approval.
-    const ok = s.t.request('stellar_signMessage', { message: message.subarray(0, 1024) });
+    const reply = s.t.request('stellar_signMessage', { message });
     await waitLabel(s.t, 'Review in Hana');
     const popup = openApproval(s.t);
-    answer(s.t, popup, await popup.next('hana:approve-request'), true);
-    expect((await ok).error).toBeUndefined();
+    const m = await popup.next('hana:approve-request');
+    expect((m.bytes as Uint8Array).length).toBe(message.length);
+    answer(s.t, popup, m, true);
+    expect((await reply).error).toBeUndefined();
   });
 
   it('at most 100 requests wait for approval: the next is refused at once (4100 too_many_pending)', async () => {

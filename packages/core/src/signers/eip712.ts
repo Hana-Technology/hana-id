@@ -19,15 +19,6 @@ export interface TypedDataForHashing {
   message: Readonly<Record<string, unknown>>;
 }
 
-/** EIP712Domain fields in their canonical order, used when `types` doesn't declare EIP712Domain. */
-const DOMAIN_FIELDS: readonly TypedDataField[] = [
-  { name: 'name', type: 'string' },
-  { name: 'version', type: 'string' },
-  { name: 'chainId', type: 'uint256' },
-  { name: 'verifyingContract', type: 'address' },
-  { name: 'salt', type: 'bytes32' },
-];
-
 const MAX_DEPTH = 32;
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
 const ARRAY_SUFFIX = /^(.*)\[(\d*)\]$/u;
@@ -201,9 +192,14 @@ function encodeData(type: string, data: Record<string, unknown>, types: Types, d
 /** hashStruct(type, data) = keccak256(encodeData). */
 export const hashStruct = (type: string, data: Record<string, unknown>, types: Types): Bytes => keccak(encodeData(type, data, types, 0));
 
+/**
+ * `types` must declare EIP712Domain. Implementations infer a missing one differently (viem by the values' JS types,
+ * eth-sig-util as empty), so a digest over an inferred domain could differ from what the dApp verifies;
+ * normalizeTypedData requires it too, and eth_signTypedData_v4 callers (viem, ethers) always send it.
+ */
 function domainTypes(td: TypedDataForHashing): Types {
-  if (fieldsOf(td.types, 'EIP712Domain')) return td.types;
-  return { ...td.types, EIP712Domain: DOMAIN_FIELDS.filter((f) => td.domain[f.name] !== undefined) };
+  if (!fieldsOf(td.types, 'EIP712Domain')) throw new Error('EIP-712 types must declare EIP712Domain');
+  return td.types;
 }
 
 /** The domain separator: hashStruct("EIP712Domain", domain). */

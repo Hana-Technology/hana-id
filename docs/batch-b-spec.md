@@ -149,7 +149,7 @@ The 23 h 50 min cap leaves a 10 min margin under the contract's `expires_at_ms �
 
 ### Envelope
 
-Every cross-window message is a plain object sent by structured clone. Bytes travel as `Uint8Array`, never as number arrays or strings. Every receiver checks `v === 1`, an allow-list of `t` or `method` values, the exact field set and types, and a size cap: 192 KiB for sign requests, 8 KiB for everything else. Anything else is dropped without a reply.
+Every cross-window message is a plain object sent by structured clone. Bytes travel as `Uint8Array`, never as number arrays or strings. Every receiver checks `v === 1`, an allow-list of `t` or `method` values, the exact field set and types, and a size cap: 192 KiB for sign requests, 200 KiB (192 + 8) for what a sign request turns into (the approval and consent requests, and sign-method replies, which carry its content plus their own fields, so every sign request the port accepts can be shown and answered), 8 KiB for everything else. Anything else is dropped without a reply.
 
 | Kind | Shape |
 |---|---|
@@ -208,7 +208,7 @@ Every cross-window message is a plain object sent by structured clone. Bytes tra
 | `stellar_signAuthEntry` | `{preimageXdr: string, networkPassphrase: string, address?}` | `{signedAuthEntry (base64, 64 bytes), signerAddress}` | approval |
 | `stellar_signMessage` | `{message: string \| Uint8Array, address?}` | `{signedMessage (base64), signerAddress}` | approval |
 | `eth_accounts` | none | `[address]` or `[]` | silent |
-| `eth_signTransaction` | `{tx}`: EIP-1559 or EIP-155 legacy fields, fully filled; every quantity (`chainId`, `nonce`, `gas`, `value`, fees) is a `0x` hex string as in JSON-RPC, `data` is `0x` hex | `0x` raw signed tx | approval |
+| `eth_signTransaction` | `{tx}`: EIP-1559 or EIP-155 legacy fields, fully filled; every quantity (`chainId`, `nonce`, `gas`, `value`, fees) is a `0x` hex string as in JSON-RPC (`chainId` at most `Number.MAX_SAFE_INTEGER`, as the approval context carries it), `data` is `0x` hex | `0x` raw signed tx | approval |
 | `personal_sign` | `[message hex, address]` | `0x` signature | approval |
 | `eth_signTypedData_v4` | `[address, typedData JSON string]` | `0x` signature | approval |
 | `hana_signRaw` | `{chain: 'stellar', bytes: Uint8Array (≤ 4 KiB)}` or `{chain: 'evm', digest: Uint8Array(32)}` | `{signature: Uint8Array}`: Ed25519 64 bytes, or secp256k1 `r‖s‖v` 65 bytes with `v ∈ {27, 28}` | `raw_sign = 'off'` → `4100`; `'approval'` → approval with the raw warning |
@@ -460,8 +460,9 @@ AutoApprovePolicyV1 {
   evm?: {
     chains: [{
       chainId: number,
-      maxValueWei: string,             // per transaction
-      maxValueWeiPerDay: string,
+      maxValueWei: string,             // per transaction: value + maximum fee (gasLimit × maxFeePerGas, or gasPrice)
+      maxValueWeiPerDay: string,       // per UTC day: auto-signed value + maximum fees on this chain
+      maxFeeWei: string,               // per transaction, ≥ 1: the maximum fee alone
       contracts: [{ address: '0x…', name: string, selectors: [{ selector: '0x12345678', signature: string, addressArgs?: 'self-or-listed' | 'any' }] }],
       typedData?: [{ verifyingContract: '0x…', primaryType: string }],
       addresses?: string[],
@@ -471,14 +472,16 @@ AutoApprovePolicyV1 {
 policyId = sha256(utf8("hana-id/auto-approve/v1") ‖ canonical JSON of the policy)
 ```
 
-**What a policy can never cover:** `hana_signRaw`, `personal_sign`, `stellar_signMessage`, EVM contract creation (`to` empty), `eth_sign`, Stellar classic operations other than `changeTrust` for a listed asset (so never `setOptions`, `payment`, `accountMerge` or signer changes), fee-bump envelopes, and any request the vault can't fully decode. The validator (`@hana-id/core` `validateAutoApprovePolicy`, used by the CLI, the API and the vault) refuses a policy that lists an ERC-20 or SAC `approve`/`transfer`/`transferFrom`-style function with `addressArgs: 'any'`, and requires `addressArgs` on every listed function that takes an address.
+**What a policy can never cover:** `hana_signRaw`, `personal_sign`, `stellar_signMessage`, EVM contract creation (`to` empty), `eth_sign`, Stellar classic operations other than `changeTrust` for a listed asset (so never `setOptions`, `payment`, `accountMerge` or signer changes), fee-bump envelopes, and any request the vault can't fully decode. The validator (`@hana-id/core` `validateAutoApprovePolicy`, used by the CLI, the API and the vault) refuses a policy that lists an ERC-20 or SAC `approve`/`transfer`/`transferFrom`-style function (matched by name prefix and substring, so `transferAndCall`, `send`, `permit…`, `…Ownership` and the like too) or an execute/multicall-style function (`execute…`, `exec…`, `multicall`, `aggregate…`, `delegatecall`, `call…`, `batch…`, `invoke`, `forward`, `relay`, `dispatch`, `handleOps`, `upgrade…`, `proxy…`) with `addressArgs: 'any'`, refuses an EVM function with an opaque argument (below) under either rule, and requires `addressArgs` on every listed function that takes an address. Functions refused this way need a protocol decoder.
 
-**Address rule (the main defence against partner-page XSS).** With `addressArgs: 'self-or-listed'` (the default), every address-typed argument of an auto-approved call, at any depth of the Soroban invocation tree or ABI-decoded EVM calldata, must be the user's own address, a listed contract, or a policy `addresses` entry. So an injected script can't make an allowed function send funds or allowances to itself. `'any'` must be set explicitly per function and is shown to the user as "can send to any address".
+**Address rule (the main defence against partner-page XSS).** With `addressArgs: 'self-or-listed'` (the default), every address-typed argument of an auto-approved call, at any depth of the Soroban invocation tree or ABI-decoded EVM calldata, must be the user's own address, a listed contract, or a policy `addresses` entry. So an injected script can't make an allowed function send funds or allowances to itself. `'any'` must be set explicitly per function and is shown to the user as "can send to any address"; it skips only the check on typed addresses.
+
+**Opaque arguments are never auto-approved without a decoder (fix/b-core-policy, 2026-10-28).** A recipient or a call can hide in arguments the address rule can't see into: EVM `bytes`, `string`, `bytes20`–`bytes32` and 160-bit integers (`uint160`/`int160`, an address as an integer), at any depth of arrays and tuples, in calldata and in EIP-712 fields; Soroban `Bytes`, `BytesN` and `String` at any depth of `Vec`/`Map`. Under either rule such a request goes to the popup (`opaque_bytes`). The validator refuses EVM signatures that have them; a Stellar policy names functions without argument types, so for Stellar the matcher refuses them in each request. Shorter fixed bytes (selectors, flags), Soroban `Symbol`s and integers of other widths pass. Residual risks: a contract that casts a `uint256` (or `u256`) argument to an address isn't caught; a value-moving or execute-style function under a name the lists don't cover can still be listed with `'any'`. Only partner-listed contracts are ever auto-approved. Treating `uint160` as opaque also keeps Permit2 typed data (`uint160` amounts) and Uniswap v3 calls (`uint160 sqrtPriceLimitX96`) out of auto-approval until a decoder covers them.
 
 **Matching (in the vault, with the same decoders the approval popup uses, moved to `@hana-id/core`):**
 - Stellar transaction: the network passphrase is listed; the fee is within `maxFeeStroops`; every operation is an `invokeHostFunction` calling a listed contract function (including `restoreFootprint`/`extendFootprintTtl` for those contracts' footprints) or a listed `changeTrust`; the whole authorization tree uses only listed contracts and functions; the address rule holds.
 - Stellar auth entry: its whole invocation tree passes the same contract, function and address checks.
-- EVM transaction: `chainId` listed; `to` a listed contract and the selector listed for it; calldata decodes against the listed signature and passes the address rule; `value ≤ maxValueWei`, and the day's auto-signed value plus this one `≤ maxValueWeiPerDay`.
+- EVM transaction: `chainId` listed; `to` a listed contract and the selector listed for it; calldata decodes against the listed signature and passes the address rule; the maximum fee (`gasLimit × maxFeePerGas`, or `gasLimit × gasPrice`) `≤ maxFeeWei` (`fee_too_high`); `value ≤ maxValueWei` (`value_too_high`) and `value + maximum fee ≤ maxValueWei` (`value_plus_fee_too_high`); the day's auto-signed spend plus this one's `value + maximum fee` `≤ maxValueWeiPerDay` (`daily_value_exceeded`). The SDK fills gas and fees on the partner page, so fees count as spend: the vault records `value + maximum fee`. A policy whose calls send no value still needs `maxValueWei` at least the fee they may pay.
 - EIP-712: `domain.verifyingContract` and `primaryType` are listed pairs, `domain.chainId` is a listed chain, and address fields in the message pass the address rule.
 - Every match also counts against `perDayCount`. Any failed check, decode error or limit reached sends the request to the normal approval popup, which shows why it wasn't auto-approved.
 
@@ -495,7 +498,7 @@ policyId = sha256(utf8("hana-id/auto-approve/v1") ‖ canonical JSON of the poli
 |---|---|---|
 | Stellar, Soroban invocations | yes | Strong for typed arguments: the address rule sees every typed address, including in nested authorizations. Not for `Bytes` arguments (Sodax, below) |
 | Stellar classic | `changeTrust` for listed assets only | Everything else always needs approval |
-| Any EVM chain (listed by `chainId`) | yes, direct calls to listed contracts with a listed function signature | Weak for functions with opaque `bytes` arguments (routers, multicall, cross-chain messages): the address rule can't see inside them, so they need `addressArgs: 'any'` (warned, tight limits) or a protocol-specific decoder in `@hana-id/core` |
+| Any EVM chain (listed by `chainId`) | yes, direct calls to listed contracts with a listed function signature | Weak for functions with opaque arguments (routers, multicall, cross-chain messages): the address rule can't see inside them, so they need a protocol-specific decoder in `@hana-id/core` (`addressArgs: 'any'` is refused for them) |
 | EVM EIP-712 | listed `(verifyingContract, primaryType)` pairs only | Permit-style signatures never by default |
 | ERC-4337 user operations, zkSync-native transactions | no | Always approval |
 | Other chains (Solana, Sui, Bitcoin, NEAR, …) | no | Batch B derives no keys for them; a later chain needs a new derivation namespace (additive, no address change), a signer and a decoder |
@@ -506,7 +509,7 @@ policyId = sha256(utf8("hana-id/auto-approve/v1") ‖ canonical JSON of the poli
 - ERC-20 `approve` to the listed AssetManager and Stellar `changeTrust` for listed assets work under the address rule as written. Cancel, withdraw, borrow and bridge payloads go to the popup until decoded as further templates.
 - Still unverified (the spike records real calldata): the deployed contract sources, the exact `Intent` ABI types, and the factory's CREATE3 variant. `minOutputAmount` can't be judged by a policy, so a script on the partner page could still submit swaps at a poor price to the user's own address, within the count limit (Q39).
 
-**Sodax pilot policy (example):** Stellar mainnet passphrase and the Sodax spoke/hub contracts with their swap and deposit functions, `addressArgs: 'self-or-listed'`, `changeTrustAssets` for the assets Sodax swaps, `perDayCount: 50`, `maxConsentMs` = 12 h, small `maxFeeStroops`; EVM chains Sodax uses, its spoke contracts and selectors, `maxValueWei` and `maxValueWeiPerDay` sized for pilot amounts.
+**Sodax pilot policy (example):** Stellar mainnet passphrase and the Sodax spoke/hub contracts with their swap and deposit functions, `addressArgs: 'self-or-listed'`, `changeTrustAssets` for the assets Sodax swaps, `perDayCount: 50`, `maxConsentMs` = 12 h, small `maxFeeStroops`; EVM chains Sodax uses, its spoke contracts and selectors, `maxFeeWei` sized for the chain's fees, `maxValueWei` and `maxValueWeiPerDay` sized for pilot amounts plus those fees.
 
 ## Derivation v1
 
@@ -954,9 +957,9 @@ Run live logins with the real sandbox shared client and an openid-only implicit 
   - the queue order;
   - keep-open reuse within 15 s and close after.
 - Auto-approve:
-  - the policy validator refuses `addressArgs: 'any'` on approve/transfer-style functions, a missing `addressArgs` on a function taking an address, raw/`personal_sign`/creation entries, and limits out of range; `policyId` is stable under key reordering;
+  - the policy validator refuses `addressArgs: 'any'` on approve/transfer-style and execute/multicall-style functions, EVM functions with opaque arguments (`bytes`, `string`, `bytes20`+, `uint160`/`int160`) under either rule, a missing `addressArgs` on a function taking an address, raw/`personal_sign`/creation entries, and limits out of range; `policyId` is stable under key reordering;
   - no consent: a matching request opens the consent screen, then signs; Allow is guarded like Approve;
-  - with consent: a matching request signs with no popup and emits `autoApproved`; each mismatch (unlisted contract, function, selector, chain or passphrase; an address argument that isn't self or listed, at any depth of the auth tree or calldata; fee, value or daily value over the limit; `perDayCount` reached; an undecodable request; a classic op other than a listed `changeTrust`; a fee-bump) goes to the approval popup with the reason;
+  - with consent: a matching request signs with no popup and emits `autoApproved`; each mismatch (unlisted contract, function, selector, chain or passphrase; an address argument that isn't self or listed, at any depth of the auth tree or calldata; fee, value, value plus fee or daily value plus fees over the limit; an opaque argument under either rule; `perDayCount` reached; an undecodable request; a classic op other than a listed `changeTrust`; a fee-bump) goes to the approval popup with the reason;
   - raw, `personal_sign`, `stellar_signMessage` and contract creation always need approval, whatever the policy;
   - a changed policy (new `policyId`) ignores the old consent; removal is immediate; setting or changing waits for the delay;
   - consent ends at its expiry, at session expiry, on logout, on `hana_revokeAutoApprove` and on "Stop auto-approving"; counters survive reload (inside the encrypted record), reset per UTC day, and are shared across tabs; a record with tampered consent fails the AAD check;

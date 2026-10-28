@@ -1,10 +1,20 @@
 // validateAutoApprovePolicy: the one validator the CLI (`admin app:settings --auto-approve`), the API and the vault use
 // (docs/batch-b-spec.md "Auto-approve policies"). It refuses unknown keys anywhere (so a `raw`, `personalSign` or
 // contract-creation entry can't be smuggled in), out-of-range limits, a decoder id the bundle doesn't ship, a missing
-// `addressArgs` on an EVM function that takes an address, `addressArgs: 'any'` on an approve/transfer-style function
-// (ERC-20, SAC, Sodax `AssetManager.transfer`, `Connection.sendMessage`/`send_message`), and 'self-or-listed' on an EVM
-// function with arguments an address could hide in (`bytes`, `string`, `bytes20` to `bytes32`: the address rule can't
-// see inside them). It returns the normalized policy that policyId hashes and the matcher reads.
+// `addressArgs` on an EVM function that takes an address, and `addressArgs: 'any'` on:
+// - an approve/transfer-style function (ERC-20, SAC, Sodax `AssetManager.transfer`, `Connection.sendMessage`/
+//   `send_message`; isValueMovingFunctionName),
+// - an execute/multicall-style function (isExecutionStyleFunctionName), on both chains,
+// - an EVM function with an opaque argument (policy/opaque.ts: `bytes`, `string`, `bytes20` to `bytes32`, a 160-bit
+//   integer, at any depth of arrays and tuples).
+// An EVM function with an opaque argument is refused under 'self-or-listed' too: under either rule it needs a protocol
+// decoder, because the address rule can't see inside such arguments and an unchecked one can carry a transfer or an
+// approval to any address. A Stellar policy names functions without their argument types, so for Stellar the matcher
+// refuses opaque arguments (Soroban `Bytes`, `BytesN`, `String`, at any depth of `Vec`/`Map`) in each request instead,
+// under either rule. Residual risk: a value-moving or execute-style function under another name (`withdraw(to,…)`,
+// `claim`, `bridge`, `swap(…, recipient)`) can't be recognised by its name; only contracts and functions the partner
+// lists are ever auto-approved, and 'any' is shown to the user as "can send to any address". The validator returns
+// the normalized policy that policyId hashes and the matcher reads.
 import { StrKey } from '@stellar/stellar-base';
 import { abiTypeContains, parseFunctionSignature } from '../decode/abi.ts';
 import { DecodeError } from '../decode/errors.ts';
@@ -71,10 +81,52 @@ const VALUE_MOVING_PREFIXES = [
 ];
 const VALUE_MOVING_SUBSTRINGS = ['allowance', 'transfer', 'ownership'];
 
+/**
+ * Function names that make the contract run calls the arguments describe (account abstraction, multicall, batching,
+ * proxies, relays, upgrades), matched the same way: `execute`, `executeBatch`, `execTransaction`, `multicall`,
+ * `tryAggregate`, `aggregate3`, `delegateCall`, `call`, `callContract`, `batchCall`, `invoke`, `forward`, `relay`,
+ * `dispatch`, `handleOps`, `upgradeTo`, `upgradeToAndCall`, `proxyCall`. Under 'any' such a call could carry a transfer
+ * or an approval to any address inside its arguments, so they need a protocol decoder.
+ */
+const EXECUTION_PREFIXES = [
+  'exec',
+  'call',
+  'multicall',
+  'aggregate',
+  'tryaggregate',
+  'blockandaggregate',
+  'delegatecall',
+  'batch',
+  'invoke',
+  'forward',
+  'relay',
+  'dispatch',
+  'handleops',
+  'upgrade',
+  'proxy',
+];
+const EXECUTION_SUBSTRINGS = ['execute', 'multicall', 'aggregate', 'delegatecall', 'andcall', 'upgradeto'];
+
+const normalizedName = (name: string): string => name.replace(/_/gu, '').toLowerCase();
+
 export const isValueMovingFunctionName = (name: string): boolean => {
-  const n = name.replace(/_/gu, '').toLowerCase();
+  const n = normalizedName(name);
   return VALUE_MOVING_PREFIXES.some((p) => n.startsWith(p)) || VALUE_MOVING_SUBSTRINGS.some((x) => n.includes(x));
 };
+
+export const isExecutionStyleFunctionName = (name: string): boolean => {
+  const n = normalizedName(name);
+  return EXECUTION_PREFIXES.some((p) => n.startsWith(p)) || EXECUTION_SUBSTRINGS.some((x) => n.includes(x));
+};
+
+/** Why `addressArgs: 'any'` is refused for a function named `name`, or undefined if its name allows it. */
+function anyRefusedByName(name: string): string | undefined {
+  if (isValueMovingFunctionName(name)) return `"${name}" moves or approves assets and can't have addressArgs 'any'`;
+  if (isExecutionStyleFunctionName(name)) {
+    return `"${name}" executes calls described by its arguments and can't have addressArgs 'any': it needs a protocol decoder`;
+  }
+  return undefined;
+}
 
 // Characters a label or name may not contain (controls, bidi and invisible format characters).
 const UNSAFE_TEXT = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/u;
@@ -214,9 +266,8 @@ function stellarSection(c: Checker, v: unknown, decoders: ProtocolDecoderRegistr
       }
       const rule = functionRule(c, fo, fpath, 'stellar', decoders);
       if (!rule) return undefined;
-      if (rule.addressArgs === 'any' && isValueMovingFunctionName(fo.name)) {
-        return c.problem(fpath, `"${fo.name}" moves or approves assets and can't have addressArgs 'any'`);
-      }
+      const refused = rule.addressArgs === 'any' ? anyRefusedByName(fo.name) : undefined;
+      if (refused) return c.problem(fpath, refused);
       return Object.freeze({ name: fo.name, ...rule }) as StellarPolicyFunction;
     });
     if (functions) c.unique(functions.filter(Boolean) as StellarPolicyFunction[], (f) => f.name, `${path}.functions`);
@@ -303,14 +354,13 @@ function evmSelector(c: Checker, raw: unknown, path: string, decoders: ProtocolD
     if (takesAddress && so.addressArgs === undefined) {
       return c.problem(path, `${fn.signature} takes an address: set addressArgs`);
     }
-    if (rule.addressArgs === 'any' && isValueMovingFunctionName(fn.name)) {
-      return c.problem(path, `"${fn.name}" moves or approves assets and can't have addressArgs 'any'`);
-    }
-    if (rule.addressArgs === 'self-or-listed' && takesOpaque) {
+    const refused = rule.addressArgs === 'any' ? anyRefusedByName(fn.name) : undefined;
+    if (refused) return c.problem(path, refused);
+    if (takesOpaque) {
       return c.problem(
         path,
-        `${fn.signature} takes opaque arguments (bytes, string or bytes20 to bytes32) the address rule can't check: ` +
-          "it needs a protocol decoder or addressArgs 'any'",
+        `${fn.signature} takes opaque arguments (bytes, string, bytes20 to bytes32 or a 160-bit integer) the address ` +
+          'rule can\'t check: it needs a protocol decoder',
       );
     }
   }

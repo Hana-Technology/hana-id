@@ -1,7 +1,8 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`); D35 and D36 on `fix/b-web` (2026-10-28).
+Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`); D35–D37 against the batch B fix branches
+(2026-10-28).
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -196,6 +197,22 @@ progress or not started), **deferred**, **superseded**, **proposed** (in a draft
   ships the `ProtocolDecoder` interface with an empty registry; a `sodax-intent-v1` decoder comes later on demand.
   `AssetManager.transfer`, `Connection.sendMessage` and `send_message` may never have `addressArgs: 'any'`.
 - Why: an arbitrary `data` on a tiny deposit could empty the user's hub wallet; value limits don't bound that.
+
+### D37. Auto-approve: fees count as spend; opaque arguments always need a decoder
+- Date 2026-10-28 · Status: in force on `fix/b-core-policy` (`packages/core/src/policy/`) · Source: conversation
+  (security findings (b)–(d), `docs/security.md` "Known open issues")
+- Decision: on EVM, `value + maximum fee` counts against `maxValueWei` and `maxValueWeiPerDay` and is recorded as the
+  day's spend (`maxFeeWei` still caps the fee alone). Arguments the address rule can't see into (`bytes`, `string`,
+  `bytes20`+, exactly-160-bit integers; Soroban `Bytes`/`BytesN`/`String`) are never auto-approved under either
+  `addressArgs` rule: such functions need a protocol decoder. `'any'` is also refused on execute/multicall-style
+  names. Wider integers stay allowed as amounts.
+- Why: the SDK fills gas and fees on the partner page, so an injected script could burn the native balance in fees on
+  top of the value limit; under `'any'` a multicall or an `execute(…, bytes)` could carry a transfer to any address;
+  a `uint160` is an address in integer form.
+- Rejected: treating `uint256` as opaque (it is every amount); a validator check on Stellar argument types (a Stellar
+  policy names functions only; the matcher checks each request instead).
+- Consequences: a policy with `maxValueWei: "0"` no longer auto-approves EVM transactions; Permit2 typed data and
+  Uniswap v3 calls (`uint160` fields) always get the popup until a decoder covers them.
 
 ### D25. Google Workspace accounts are allowed; openid-only tokens
 - Date 2026-10-28 · Status: confirmed, in force (`apps/api/src/claims.ts`, `packages/core/src/id-token.ts`) · Source:

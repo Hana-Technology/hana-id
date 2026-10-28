@@ -1,4 +1,4 @@
-import { Asset, Operation, xdr } from '@stellar/stellar-base';
+import { Asset, Operation, nativeToScVal, xdr } from '@stellar/stellar-base';
 import { type Hex, encodeFunctionData, parseAbi, serializeTransaction } from 'viem';
 import { describe, expect, it } from 'vitest';
 import {
@@ -200,6 +200,30 @@ describe('Stellar transactions', () => {
     expect(reason(match(stellarTx(tx2)))).toBe('address_not_allowed');
   });
 
+  it("refuses Bytes and String arguments under 'any' too (a Stellar policy declares no argument types)", () => {
+    const bytes = txBytes([invokeOp(ROUTER, 'route', [addr(OTHER), xdr.ScVal.scvBytes(Buffer.alloc(32))])], {
+      soroban: sorobanData(),
+      fee: '1000',
+    });
+    expect(match(stellarTx(bytes))).toMatchObject({ ok: false, reason: 'opaque_bytes' });
+    const nested = xdr.ScVal.scvMap([
+      new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol('to'), val: xdr.ScVal.scvString(`0x${'ee'.repeat(20)}`) }),
+    ]);
+    const str = txBytes([invokeOp(ROUTER, 'route', [nested])], { soroban: sorobanData(), fee: '1000' });
+    expect(reason(match(stellarTx(str)))).toBe('opaque_bytes');
+    const inAuth = invocation(ROUTER, 'route', [xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.alloc(20))])]);
+    const auth = txBytes([invokeOp(ROUTER, 'route', [addr(OTHER)], [sourceAuth(inAuth)])], {
+      soroban: sorobanData(),
+      fee: '1000',
+    });
+    expect(reason(match(stellarTx(auth)))).toBe('opaque_bytes');
+  });
+
+  it('allows wide integers (u256) as amounts under the address rule (Soroban has no 160-bit integers)', () => {
+    const wide = nativeToScVal(2n ** 200n, { type: 'u256' });
+    expect(reason(match(stellarTx(swapTx({ args: [addr(USER), wide] }))))).toBe('ok');
+  });
+
   it('refuses opaque bytes arguments under the address rule', () => {
     expect(reason(match(stellarTx(swapTx({ args: [addr(USER), xdr.ScVal.scvBytes(Buffer.alloc(32))] }))))).toBe(
       'opaque_bytes',
@@ -339,7 +363,7 @@ describe('EVM transactions', () => {
     'function deposit(uint256)',
     'function withdraw(address,uint256)',
     'function batch((address,uint256)[])',
-    'function execute(address,bytes)',
+    'function vote(address,uint256)',
   ]);
   const approve = (spender: string) =>
     encodeFunctionData({ abi: erc20, functionName: 'approve', args: [spender as Hex, 10n] });
@@ -350,7 +374,8 @@ describe('EVM transactions', () => {
       chain: 'evm',
       contract: EVM_USDC,
       function: 'approve(address,uint256)',
-      spend: { chainId: CHAIN, valueWei: 0n },
+      // No value, but the maximum fee (gas 100 000 at 1 wei) counts as native spend.
+      spend: { chainId: CHAIN, valueWei: 100_000n },
     });
   });
 
@@ -373,10 +398,10 @@ describe('EVM transactions', () => {
     expect(reason(match(evmTx({ to: EVM_VAULT, data: withdraw(EVM_USER.toLowerCase()) })))).toBe('ok');
   });
 
-  it("skips the address rule for 'any' (opaque bytes) functions, within the value limits", () => {
-    const exec = encodeFunctionData({ abi: vault, functionName: 'execute', args: [EVM_FRIEND, '0xdeadbeef'] });
-    expect(reason(match(evmTx({ to: EVM_VAULT, data: exec, value: 1000n })))).toBe('ok');
-    expect(reason(match(evmTx({ to: EVM_VAULT, data: exec, value: 1001n })))).toBe('value_too_high');
+  it("skips the address rule for 'any' functions, within the value limits", () => {
+    const vote = encodeFunctionData({ abi: vault, functionName: 'vote', args: [EVM_FRIEND, 1n] });
+    expect(reason(match(evmTx({ to: EVM_VAULT, data: vote, value: 1000n })))).toBe('ok');
+    expect(reason(match(evmTx({ to: EVM_VAULT, data: vote, value: 1001n })))).toBe('value_plus_fee_too_high');
   });
 
   it.each([
@@ -404,7 +429,7 @@ describe('EVM transactions', () => {
         evmTx({
           to: EVM_VAULT,
           data: encodeFunctionData({ abi: vault, functionName: 'deposit', args: [1n] }),
-          value: 1001n,
+          value: 101_001n,
         }),
       'value_too_high',
     ],
@@ -427,18 +452,68 @@ describe('EVM transactions', () => {
     const first = match(deposit, POLICY, { usage, nowMs: NOW });
     expect(first.ok).toBe(true);
     usage = recordAutoApproveUse(usage, NOW, first.ok ? first.spend : undefined);
-    expect(usage).toEqual({ day: utcDay(NOW), count: 1, valueWeiByChain: { [CHAIN]: '600' } });
+    // Value 600 plus the maximum fee of 100 000.
+    expect(usage).toEqual({ day: utcDay(NOW), count: 1, valueWeiByChain: { [CHAIN]: '100600' } });
     const second = match(deposit, POLICY, { usage, nowMs: NOW });
     usage = recordAutoApproveUse(usage, NOW, second.ok ? second.spend : undefined);
-    expect(reason(match(deposit, POLICY, { usage, nowMs: NOW }))).toBe('daily_value_exceeded'); // 1800 > 1500
+    // 3 × 100 600 = 301 800 > 301 500.
+    expect(match(deposit, POLICY, { usage, nowMs: NOW })).toMatchObject({
+      ok: false,
+      reason: 'daily_value_exceeded',
+      detail: expect.stringMatching(/maximum fee/u),
+    });
     const tomorrow = NOW + 86_400_000;
     expect(reason(match(deposit, POLICY, { usage, nowMs: tomorrow }))).toBe('ok');
     expect(usageToday(usage, tomorrow)).toEqual({ day: utcDay(tomorrow), count: 0, valueWeiByChain: {} });
   });
 
+  describe('value plus fee (maxValueWei 101 000, maxValueWeiPerDay 301 500 in the fixture)', () => {
+    const deposit = encodeFunctionData({ abi: vault, functionName: 'deposit', args: [1n] });
+
+    it('counts the EIP-1559 maximum fee (gas × maxFeePerGas) with the value, and records both as the spend', () => {
+      // Fee 50 000 × 2 = 100 000; value 1 000: exactly 101 000.
+      const at = (value: bigint) => evmTx({ to: EVM_VAULT, data: deposit, gas: 50_000n, maxFeePerGas: 2n, value });
+      expect(match(at(1000n))).toMatchObject({ ok: true, spend: { chainId: CHAIN, valueWei: 101_000n } });
+      expect(match(at(1001n))).toMatchObject({
+        ok: false,
+        reason: 'value_plus_fee_too_high',
+        detail: expect.stringMatching(/maximum fee/u),
+      });
+      // A lower fee leaves room for more value: fee 21 000, value 80 000.
+      expect(match(evmTx({ to: EVM_VAULT, data: deposit, gas: 21_000n, value: 80_000n }))).toMatchObject({
+        ok: true,
+        spend: { chainId: CHAIN, valueWei: 101_000n },
+      });
+    });
+
+    it('counts the legacy fee (gas × gasPrice) the same way', () => {
+      const at = (value: bigint) => legacyTx({ to: EVM_VAULT, data: deposit, gas: 25_000n, gasPrice: 4n, value });
+      expect(match(at(1000n))).toMatchObject({ ok: true, spend: { chainId: CHAIN, valueWei: 101_000n } });
+      expect(reason(match(at(1001n)))).toBe('value_plus_fee_too_high');
+    });
+
+    it('refuses a value over maxValueWei on its own as value_too_high, and a fee over maxFeeWei as fee_too_high', () => {
+      expect(reason(match(evmTx({ to: EVM_VAULT, data: deposit, gas: 1n, value: 101_001n })))).toBe('value_too_high');
+      expect(reason(match(evmTx({ to: EVM_VAULT, data: deposit, gas: 100_001n })))).toBe('fee_too_high');
+    });
+
+    it('counts fees against the daily total even when no value is sent', () => {
+      const approve0 = evmTx({ to: EVM_USDC, data: approve(EVM_VAULT) });
+      let usage = usageToday(null, NOW);
+      for (let i = 0; i < 3; i++) {
+        const r = match(approve0, POLICY, { usage, nowMs: NOW });
+        expect(r.ok).toBe(true);
+        usage = recordAutoApproveUse(usage, NOW, r.ok ? r.spend : undefined);
+      }
+      expect(usage.valueWeiByChain[CHAIN]).toBe('300000');
+      // A fourth 100 000 would make 400 000 > 301 500 (checked before the daily count of 3).
+      expect(reason(match(approve0, POLICY, { usage, nowMs: NOW }))).toBe('daily_value_exceeded');
+    });
+  });
+
   describe('fee cap (maxFeeWei 100 000 in the fixture)', () => {
     const deposit = encodeFunctionData({ abi: vault, functionName: 'deposit', args: [1n] });
-    const exec = encodeFunctionData({ abi: vault, functionName: 'execute', args: [EVM_FRIEND, '0xdeadbeef'] });
+    const vote = encodeFunctionData({ abi: vault, functionName: 'vote', args: [EVM_FRIEND, 1n] });
 
     it('auto-approves an EIP-1559 or legacy transaction whose maximum fee is at the cap', () => {
       expect(reason(match(evmTx({ to: EVM_VAULT, data: deposit, gas: 50_000n, maxFeePerGas: 2n })))).toBe('ok');
@@ -461,7 +536,7 @@ describe('EVM transactions', () => {
       ],
       ['a legacy gasPrice over', () => legacyTx({ to: EVM_VAULT, data: deposit, gasPrice: 2n })],
       ['a legacy gas limit over', () => legacyTx({ to: EVM_VAULT, data: deposit, gas: 100_001n })],
-      ['an addressArgs any function', () => evmTx({ to: EVM_VAULT, data: exec, gas: 200_000n })],
+      ['an addressArgs any function', () => evmTx({ to: EVM_VAULT, data: vote, gas: 200_000n })],
     ])('sends %s to the popup', (_, s) => {
       expect(match(s())).toMatchObject({ ok: false, reason: 'fee_too_high' });
     });
@@ -470,7 +545,10 @@ describe('EVM transactions', () => {
   describe('opaque arguments as defence in depth (policies the validator would refuse)', () => {
     const ATTACKER = '0x000000000000000000000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' as Hex;
     const BRIDGE = '0x1111111111111111111111111111111111111111';
-    const unvalidated = (signature: string): AutoApprovePolicyV1 => {
+    const unvalidated = (
+      signature: string,
+      addressArgs: 'self-or-listed' | 'any' = 'self-or-listed',
+    ): AutoApprovePolicyV1 => {
       const chain = POLICY.evm?.chains[0] as NonNullable<AutoApprovePolicyV1['evm']>['chains'][number];
       return {
         ...POLICY,
@@ -483,7 +561,7 @@ describe('EVM transactions', () => {
                   address: BRIDGE,
                   name: 'Bridge',
                   selectors: [
-                    { selector: functionSelector(signature), signature, addressArgs: 'self-or-listed' },
+                    { selector: functionSelector(signature), signature, addressArgs },
                   ],
                 },
               ],
@@ -524,6 +602,30 @@ describe('EVM transactions', () => {
       const short = 'h(address,bytes4)';
       expect(reason(match(call(short, [EVM_USER, '0xdeadbeef']), unvalidated(short)))).toBe('ok');
     });
+
+    it('refuses a 160-bit integer (an address as an integer), at any depth, and lets other widths through', () => {
+      const u160 = 'stake(uint160,uint256)';
+      expect(validateAutoApprovePolicy(unvalidated(u160)).ok).toBe(false);
+      expect(match(call(u160, [BigInt(ATTACKER), 1n]), unvalidated(u160))).toMatchObject({
+        ok: false,
+        reason: 'opaque_bytes',
+        detail: expect.stringMatching(/uint160/u),
+      });
+      const i160 = 'stake((int160,uint256)[])';
+      expect(reason(match(call(i160, [[[1n, 2n]]]), unvalidated(i160)))).toBe('opaque_bytes');
+      // Residual risk, accepted: a uint256 holding an address is an amount to the rule.
+      const wide = 'stake(uint256,int256,uint168)';
+      expect(validateAutoApprovePolicy(unvalidated(wide)).ok).toBe(true);
+      expect(reason(match(call(wide, [BigInt(ATTACKER), -1n, 1n]), unvalidated(wide)))).toBe('ok');
+    });
+
+    it("refuses opaque arguments under 'any' too", () => {
+      const run = 'run(address,bytes)';
+      expect(validateAutoApprovePolicy(unvalidated(run, 'any')).ok).toBe(false);
+      expect(reason(match(call(run, [EVM_FRIEND, '0xdeadbeef']), unvalidated(run, 'any')))).toBe('opaque_bytes');
+      const u160 = 'stake(uint160)';
+      expect(reason(match(call(u160, [1n]), unvalidated(u160, 'any')))).toBe('opaque_bytes');
+    });
   });
 
   it('refuses a policy without an EVM section', () => {
@@ -543,6 +645,8 @@ describe('EIP-712', () => {
       primaryType?: string;
       extra?: boolean;
       field?: { type: string; value: unknown };
+      /** Permit2's real PermitDetails.amount is uint160 (see the test below); the other tests use uint256. */
+      amountType?: string;
     } = {},
   ) => {
     const types: Record<string, { name: string; type: string }[]> = {
@@ -553,7 +657,7 @@ describe('EIP-712', () => {
       ],
       PermitDetails: [
         { name: 'token', type: 'address' },
-        { name: 'amount', type: 'uint160' },
+        { name: 'amount', type: o.amountType ?? 'uint256' },
         { name: 'expiration', type: 'uint48' },
         { name: 'nonce', type: 'uint48' },
       ],
@@ -607,6 +711,17 @@ describe('EIP-712', () => {
 
   it('allows fixed bytes too short to hold an address', () => {
     expect(reason(match(permit({ field: { type: 'bytes4', value: '0xdeadbeef' } })))).toBe('ok');
+  });
+
+  it("treats 160-bit integer fields as opaque, so Permit2's PermitSingle (uint160 amount) goes to the popup", () => {
+    expect(match(permit({ amountType: 'uint160' }))).toMatchObject({
+      ok: false,
+      reason: 'opaque_bytes',
+      detail: expect.stringMatching(/details\.amount: uint160/u),
+    });
+    expect(reason(match(permit({ field: { type: 'int160', value: '-1' } })))).toBe('opaque_bytes');
+    expect(reason(match(permit({ field: { type: 'uint160[]', value: ['1'] } })))).toBe('opaque_bytes');
+    expect(reason(match(permit({ field: { type: 'uint168', value: '1' } })))).toBe('ok');
   });
 
   it('refuses typed data whose domain has no chainId or verifyingContract', () => {

@@ -344,8 +344,8 @@ gets the popup. A changed policy is treated as no policy until the page reloads,
     "chains": [
       {
         "chainId": 84532,
-        "maxValueWei": "0",
-        "maxValueWeiPerDay": "0",
+        "maxValueWei": "50000000000000",
+        "maxValueWeiPerDay": "1000000000000000",
         "maxFeeWei": "50000000000000",
         "contracts": [
           {
@@ -376,7 +376,7 @@ gets the popup. A changed policy is treated as no policy until the page reloads,
 | `stellar.networkPassphrases`, `maxFeeStroops` | the networks, and the most fee one transaction may pay |
 | `stellar.contracts[].functions[]` | Soroban functions by name; the whole authorization tree must stay inside listed contracts and functions |
 | `stellar.changeTrustAssets` | `CODE:ISSUER`: `changeTrust` is the only classic operation a policy can cover |
-| `evm.chains[]` | per `chainId`: `maxValueWei` per transaction and `maxValueWeiPerDay` of native value, `maxFeeWei` (gas × fee cap) per transaction |
+| `evm.chains[]` | per `chainId`: `maxValueWei` per transaction and `maxValueWeiPerDay` of native spend, where spend is the value **plus the maximum fee** (gas limit × max fee per gas, or gas price); `maxFeeWei` caps the fee alone per transaction. So `maxValueWei` must be at least the fee your calls may pay even if they send no value (the example allows fees only: 20 calls at up to 0.00005 ETH) |
 | `evm.chains[].contracts[].selectors[]` | the 4-byte `selector` and its canonical `signature`; calldata must decode against it |
 | `evm.chains[].typedData` | `(verifyingContract, primaryType)` pairs for EIP-712 (permit-style signatures are never covered by default) |
 | `addresses` (either chain) | extra addresses allowed as call arguments |
@@ -385,9 +385,15 @@ gets the popup. A changed policy is treated as no policy until the page reloads,
 Soroban call tree or the ABI-decoded calldata, must be the user's own address, a listed contract or an `addresses`
 entry. That is what stops an injected script from sending funds or allowances to itself through an allowed
 function. `'any'` must be set explicitly, and the user sees "can send to any address". The validator refuses
-`'any'` on approve-, transfer-, send-, permit- and ownership-style functions. It also requires `addressArgs` on
-every EVM function that takes an address, and it refuses `'self-or-listed'` on EVM functions with `bytes`, `string`
-or `bytes20`–`bytes32` arguments, where an address could hide.
+`'any'` on approve-, transfer-, send-, permit- and ownership-style functions, and on execute-style ones (`execute`,
+`multicall`, `aggregate`, `call`, `batch…`, `delegatecall`, `upgradeTo` and the like), which run calls described in
+their arguments. It also requires `addressArgs` on every EVM function that takes an address. Arguments where an
+address could hide unseen (`bytes`, `string`, `bytes20`–`bytes32`, `uint160`/`int160`, at any depth of arrays and
+tuples; on Stellar `Bytes`, `BytesN` and `String`) are never auto-approved under either rule: the validator refuses
+such EVM functions, and the vault sends any Stellar call carrying them to the popup. They need a protocol decoder.
+Note that 160-bit integers include Permit2's `uint160` amounts, so Permit2 `PermitSingle`/`PermitBatch` typed data
+and calls with a `uint160` argument (Uniswap v3's `sqrtPriceLimitX96`) always get the popup. Wider integers
+(`uint256`) are treated as amounts.
 
 **Never covered, whatever the policy says:** raw signing, `personal_sign`, Stellar messages, EVM contract creation,
 `eth_sign`, Stellar classic operations other than a listed `changeTrust`, fee-bump envelopes, and anything the

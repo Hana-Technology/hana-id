@@ -15,10 +15,17 @@ import { KEY_INDEX_LIMIT, MAX_USES_LIMIT, RELAY_ID_PATTERN, SALT_MAX_BYTES, SALT
 import { type EvmTxRequest, evmTxSigningPayload, parseEvmTxRequest } from './signers/evm.ts';
 
 export const PROTOCOL_VERSION = 1;
-/** Cap for sign requests (port) and approval requests (window). */
+/** Cap for sign requests (port). */
 export const SIGN_MESSAGE_MAX_BYTES = 192 * 1024;
 /** Cap for every other message. */
 export const MESSAGE_MAX_BYTES = 8 * 1024;
+/**
+ * Cap for what a sign request turns into: the approval and consent requests (window) and sign-method replies (port).
+ * Each carries content up to SIGN_MESSAGE_MAX_BYTES (the request's bytes, or the signed envelope: the input plus a
+ * signature) plus fields of its own (app name, origin, address, ids), which MESSAGE_MAX_BYTES of headroom covers, so
+ * every sign request the port accepts yields an approval request the popup accepts and a reply the SDK accepts.
+ */
+export const APPROVAL_MESSAGE_MAX_BYTES = SIGN_MESSAGE_MAX_BYTES + MESSAGE_MAX_BYTES;
 const MAX_DEPTH = 24;
 
 // ---- errors ----
@@ -391,7 +398,7 @@ const RESULTS: { [M in PortMethod]: (r: unknown) => boolean } = {
   hana_export: (r) => r === null,
   hana_revokeOtherDevices: (r) => isPlainObject(r) && exactKeys(r, ['revoked']) && isInt(r.revoked, 0, 1_000_000),
   stellar_getAddress: (r) => isPlainObject(r) && exactKeys(r, ['address']) && isAddressFor('stellar', r.address),
-  stellar_signTransaction: (r) => isSignedBy(r, 'signedTxXdr') && isBase64((r as Obj).signedTxXdr, SIGN_MESSAGE_MAX_BYTES),
+  stellar_signTransaction: (r) => isSignedBy(r, 'signedTxXdr') && isBase64((r as Obj).signedTxXdr, APPROVAL_MESSAGE_MAX_BYTES),
   stellar_signAuthEntry: (r) => isSignedBy(r, 'signedAuthEntry') && isBase64((r as Obj).signedAuthEntry, 88) && base64Decode((r as Obj).signedAuthEntry as string).length === 64,
   stellar_signMessage: (r) => isSignedBy(r, 'signedMessage') && isBase64((r as Obj).signedMessage, 88) && base64Decode((r as Obj).signedMessage as string).length === 64,
   eth_accounts: (r) => Array.isArray(r) && r.length <= 1 && r.every((a) => isAddressFor('evm', a)),
@@ -428,7 +435,8 @@ function isProtocolError(v: unknown): v is ProtocolError {
 
 /** Validates a reply (SDK side) to a request it sent with `method`, or null. */
 export function parsePortReply<M extends PortMethod>(data: unknown, method: M): PortReply<M> | null {
-  if (!isPlainObject(data) || messageSize(data, portRequestCap(method)) === Number.POSITIVE_INFINITY) return null;
+  const cap = isSignMethod(method) ? APPROVAL_MESSAGE_MAX_BYTES : MESSAGE_MAX_BYTES;
+  if (!isPlainObject(data) || messageSize(data, cap) === Number.POSITIVE_INFINITY) return null;
   if (data.v !== PROTOCOL_VERSION || !isStr(data.id, 1, 64)) return null;
   if (exactKeys(data, ['v', 'id', 'error'])) return isProtocolError(data.error) ? { v: 1, id: data.id, error: data.error } : null;
   if (!exactKeys(data, ['v', 'id', 'result']) || !RESULTS[method](data.result)) return null;
@@ -677,7 +685,7 @@ function isAutoApproveNote(v: unknown): v is AutoApproveNote {
  */
 export function parseWindowMessage<T extends WindowMessageType>(data: unknown, allowed: readonly T[]): WindowMessage<T> | null {
   if (!isPlainObject(data) || data.v !== PROTOCOL_VERSION || typeof data.t !== 'string' || !(allowed as readonly string[]).includes(data.t) || !Object.hasOwn(FIELDS, data.t)) return null;
-  const cap = data.t === 'hana:approve-request' || data.t === 'hana:consent-request' ? SIGN_MESSAGE_MAX_BYTES : MESSAGE_MAX_BYTES;
+  const cap = data.t === 'hana:approve-request' || data.t === 'hana:consent-request' ? APPROVAL_MESSAGE_MAX_BYTES : MESSAGE_MAX_BYTES;
   if (messageSize(data, cap) === Number.POSITIVE_INFINITY) return null;
   return FIELDS[data.t as WindowMessageType](data) ? (data as WindowMessage<T>) : null;
 }
@@ -711,8 +719,8 @@ export function approvalContent(request: Extract<PortRequest, { method: SignMeth
       return { bytes: typeof m === 'string' ? utf8(m) : Uint8Array.from(m), context: {} };
     }
     case 'eth_signTransaction': {
+      // parseEvmTxRequest bounds chainId to a safe integer, so the port refuses a larger one up front.
       const tx = parseEvmTxRequest(request.params.tx);
-      if (tx.chainId > BigInt(Number.MAX_SAFE_INTEGER)) throw new RangeError('chainId is too large to approve');
       return { bytes: evmTxSigningPayload(tx), context: { chainId: Number(tx.chainId) } };
     }
     case 'personal_sign':

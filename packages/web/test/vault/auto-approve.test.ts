@@ -85,8 +85,9 @@ const POLICY = () => ({
     chains: [
       {
         chainId: CHAIN,
-        maxValueWei: '1000',
-        maxValueWeiPerDay: '1500',
+        // evmTx's maximum fee is 100 000 wei (gas 100 000 at 1 wei), which counts with the value against both limits.
+        maxValueWei: '101000',
+        maxValueWeiPerDay: '301500',
         maxFeeWei: '100000',
         contracts: [{ address: EVM_VAULT, name: 'Example vault', selectors: [entry('deposit(uint256)'), entry('withdraw(address,uint256)', 'self-or-listed')] }],
         typedData: [{ verifyingContract: EVM_VAULT, primaryType: 'Order' }],
@@ -159,7 +160,7 @@ describe('consent', () => {
     expect(evmTxSigner((await reply).result as string, tx)).toBe(s.evm);
     expect(popup.posted.filter((p) => p.message.t === 'hana:approve-request')).toHaveLength(0);
     expect(await s.t.waitEvent('autoApproved')).toEqual({ kind: 'eth_signTransaction', chain: 'evm', contract: EVM_VAULT, function: 'deposit(uint256)' });
-    expect((await s.t.request('hana_autoApproveStatus')).result).toEqual({ policyId: PID, label: 'Swaps on Example', expiresAtMs: START_MS + 6 * HOUR, used: { count: 1, native: '0' } });
+    expect((await s.t.request('hana_autoApproveStatus')).result).toEqual({ policyId: PID, label: 'Swaps on Example', expiresAtMs: START_MS + 6 * HOUR, used: { count: 1, native: '100000' } });
   });
 
   it('an Allow with a digest for another policy, origin or end time stores nothing', async () => {
@@ -226,7 +227,8 @@ describe('with consent', () => {
     ['an unlisted selector', () => ['eth_signTransaction', { tx: evmTx({ data: `${functionSelector('steal()')}` }) }], 'selector_not_listed'],
     ['an unlisted chain', () => ['eth_signTransaction', { tx: evmTx({ chainId: '0x1' }) }], 'chain_not_listed'],
     ['an address argument that is not self or listed', () => ['eth_signTransaction', { tx: evmTx({ data: withdraw(EVM_FRIEND, 1n) }) }], 'address_not_allowed'],
-    ['a value over the limit', () => ['eth_signTransaction', { tx: evmTx({ value: '0x3e9' }) }], 'value_too_high'],
+    ['a value over the limit', () => ['eth_signTransaction', { tx: evmTx({ value: `0x${(101_001).toString(16)}` }) }], 'value_too_high'],
+    ['a value over the limit with the maximum fee', () => ['eth_signTransaction', { tx: evmTx({ value: '0x3e9' }) }], 'value_plus_fee_too_high'],
     ['a fee over the limit', () => ['eth_signTransaction', { tx: evmTx({ maxFeePerGas: '0x2' }) }], 'fee_too_high'],
     ['calldata that does not decode', () => ['eth_signTransaction', { tx: evmTx({ data: `${functionSelector('deposit(uint256)')}00` }) }], 'calldata_mismatch'],
     ['contract creation', () => ['eth_signTransaction', { tx: evmCreation() }], 'contract_creation'],
@@ -312,17 +314,20 @@ describe('with consent', () => {
   it('counts per day: perDayCount reached and the daily native value go to the popup', async () => {
     const s = await session();
     const popup = await grant(s);
+    // Each spends value 1000 plus the maximum fee 100 000: 202 000 today.
     expect((await s.t.request('eth_signTransaction', { tx: evmTx({ value: '0x3e8' }) })).result).toMatch(/^0x02/u);
-    // 1000 already today; 600 more passes the per-transaction limit but not the daily 1500.
-    const over = s.t.request('eth_signTransaction', { tx: evmTx({ value: '0x258', nonce: '0x2' }) });
+    expect((await s.t.request('eth_signTransaction', { tx: evmTx({ value: '0x3e8', nonce: '0x2' }) })).result).toMatch(/^0x02/u);
+    // A third would pass the per-transaction limit but take the day to 303 000, over 301 500.
+    const over = s.t.request('eth_signTransaction', { tx: evmTx({ value: '0x3e8', nonce: '0x3' }) });
     const m = await popup.next('hana:approve-request');
     expect((m.autoApprove as { reason: string }).reason).toBe('daily_value_exceeded');
     answer(s.t, popup, m, false);
     await over;
-    expect((await s.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x3' }) })).result).toMatch(/^0x02/u);
-    expect((await s.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x4' }) })).result).toMatch(/^0x02/u);
-    expect((await s.t.request('hana_autoApproveStatus')).result).toMatchObject({ used: { count: 3, native: '1000' } });
-    const fourth = s.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x5' }) });
+    // A cheaper one (gas 21 000, no value) still fits: 223 000.
+    const cheap = (nonce: string) => evmTx({ nonce, gas: '0x5208' });
+    expect((await s.t.request('eth_signTransaction', { tx: cheap('0x4') })).result).toMatch(/^0x02/u);
+    expect((await s.t.request('hana_autoApproveStatus')).result).toMatchObject({ used: { count: 3, native: '223000' } });
+    const fourth = s.t.request('eth_signTransaction', { tx: cheap('0x5') });
     const m4 = await popup.next('hana:approve-request', 1);
     expect((m4.autoApprove as { reason: string }).reason).toBe('daily_count_reached');
     answer(s.t, popup, m4, false);
@@ -460,13 +465,14 @@ describe('persistence and tabs', () => {
     const browser = new Browser();
     const a = await session(browser);
     await grant(a);
-    expect((await a.t.request('eth_signTransaction', { tx: evmTx() })).result).toMatch(/^0x02/u);
+    expect((await a.t.request('eth_signTransaction', { tx: evmTx({ gas: '0x5208' }) })).result).toMatch(/^0x02/u);
     const b = await session(browser);
     expect((await b.t.request('hana_autoApproveStatus')).result).toMatchObject({ policyId: PID, used: { count: 1 } });
-    expect((await b.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x2' }) })).result).toMatch(/^0x02/u);
-    expect((await a.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x3' }) })).result).toMatch(/^0x02/u);
-    // The third is used up across both tabs: the fourth (in either tab) needs approval.
-    const fourth = b.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x4' }) });
+    expect((await b.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x2', gas: '0x5208' }) })).result).toMatch(/^0x02/u);
+    expect((await a.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x3', gas: '0x5208' }) })).result).toMatch(/^0x02/u);
+    // The third is used up across both tabs: the fourth (in either tab) needs approval. Gas 21 000 keeps the four
+    // maximum fees (84 000) inside the daily value limit, so the count is what runs out.
+    const fourth = b.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x4', gas: '0x5208' }) });
     await waitLabel(b.t, 'Review in Hana');
     const popup = openApproval(b.t);
     const m = await popup.next('hana:approve-request');

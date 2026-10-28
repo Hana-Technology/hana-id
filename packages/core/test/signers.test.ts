@@ -351,10 +351,17 @@ describe('EIP-712', () => {
     expect(signTypedData(D, mail)).toBe(await ACCOUNT.signTypedData(mail));
   });
 
-  it('a permit with uint, bytes, bool, int, arrays and an inferred domain matches viem', async () => {
+  it('a permit with uint, bytes, bool, int, arrays and every domain field matches viem', async () => {
     const td = {
       domain: { name: 'Token', version: '2', chainId: 11155111, verifyingContract: TO, salt: `0x${'ab'.repeat(32)}` as `0x${string}` },
       types: {
+        EIP712Domain: [
+          { name: 'name', type: 'string' },
+          { name: 'version', type: 'string' },
+          { name: 'chainId', type: 'uint256' },
+          { name: 'verifyingContract', type: 'address' },
+          { name: 'salt', type: 'bytes32' },
+        ],
         Permit: [
           { name: 'owner', type: 'address' },
           { name: 'spender', type: 'address' },
@@ -386,10 +393,25 @@ describe('EIP-712', () => {
         notes: ['a', 'b'],
       },
     } as const;
-    expect(`0x${toHex(hashTypedData(td))}`).toBe(viemHashTypedData(td));
-    expect(signTypedData(D, td)).toBe(await ACCOUNT.signTypedData(td));
+    expect(`0x${toHex(hashTypedData(td))}`).toBe(viemHashTypedData(td as never));
+    expect(signTypedData(D, td)).toBe(await ACCOUNT.signTypedData(td as never));
     // Decimal and hex strings for integers hash the same as bigints.
     expect(toHex(hashTypedData({ ...td, message: { ...td.message, value: (10n ** 24n).toString(), nonce: '0x0', delta: '-5' } }))).toBe(toHex(hashTypedData(td)));
+  });
+
+  it('refuses types without EIP712Domain instead of inferring it (implementations infer it differently)', () => {
+    const { EIP712Domain: _, ...noDomain } = mail.types;
+    expect(() => hashTypedData({ ...mail, types: noDomain })).toThrow(/must declare EIP712Domain/u);
+    expect(() => signTypedData(D, { ...mail, types: noDomain })).toThrow(/must declare EIP712Domain/u);
+    // The case that diverged: a string chainId. viem drops it from an inferred domain, this module kept it; with the
+    // domain declared, both hash it as the uint256 1.
+    const stringChain = { ...mail, domain: { name: 'X', chainId: '1' } };
+    expect(() => hashTypedData({ ...stringChain, types: noDomain })).toThrow(/must declare EIP712Domain/u);
+    const declared = {
+      ...stringChain,
+      types: { ...noDomain, EIP712Domain: [{ name: 'name', type: 'string' }, { name: 'chainId', type: 'uint256' }] },
+    };
+    expect(`0x${toHex(hashTypedData(declared))}`).toBe(viemHashTypedData({ ...declared, domain: { name: 'X', chainId: 1 } } as never));
   });
 
   it('primaryType EIP712Domain hashes the domain only (as viem)', () => {

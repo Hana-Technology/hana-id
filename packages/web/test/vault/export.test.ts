@@ -170,7 +170,7 @@ describe('touch (idle slide)', () => {
       label: 'Deposits',
       maxConsentMs: 6 * HOUR,
       limits: { perDayCount: 5 },
-      evm: { chains: [{ chainId: 8453, maxValueWei: '0', maxValueWeiPerDay: '0', maxFeeWei: '100000', contracts: [{ address: '0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD', name: 'Vault', selectors: [{ selector: functionSelector('deposit(uint256)'), signature: 'deposit(uint256)' }] }] }] },
+      evm: { chains: [{ chainId: 8453, maxValueWei: '100000', maxValueWeiPerDay: '500000', maxFeeWei: '100000', contracts: [{ address: '0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD', name: 'Vault', selectors: [{ selector: functionSelector('deposit(uint256)'), signature: 'deposit(uint256)' }] }] }] },
     };
     const s2 = await session({ config: makeConfig({ settings: { autoApprovePolicy: policy } }) });
     const grant = s2.t.request('hana_requestAutoApprove');

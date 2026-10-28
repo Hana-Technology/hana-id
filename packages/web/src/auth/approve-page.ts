@@ -53,6 +53,7 @@ export const AUTO_APPROVE_REASON_TEXT: Readonly<Record<AutoApproveReason, string
   decoder_refused: 'the protocol check refused it',
   typed_data_not_listed: 'this kind of signature isn’t listed in the rules',
   value_too_high: 'the amount is over the per-transaction limit',
+  value_plus_fee_too_high: 'the amount plus the maximum network fee is over the per-transaction limit',
   daily_value_exceeded: 'it would go over today’s amount limit',
   daily_count_reached: 'today’s limit of automatic signatures is reached',
 });

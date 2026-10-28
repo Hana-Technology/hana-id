@@ -10,8 +10,9 @@
   },
   "scripts": {
     "gen:envs": "tsx scripts/gen-envs.ts",
-    "build": "tsx scripts/gen-envs.ts && tsx scripts/build-auth-pages.ts",
+    "build": "tsx scripts/gen-envs.ts && tsx scripts/build-vault.ts && tsx scripts/build-auth-pages.ts",
     "build:auth": "tsx scripts/build-auth-pages.ts",
+    "build:vault": "tsx scripts/build-vault.ts",
     "test": "tsx scripts/gen-envs.ts && vitest run",
     "typecheck": "tsx scripts/gen-envs.ts && tsc --noEmit && tsc --noEmit -p tsconfig.node.json"
   },

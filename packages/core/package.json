@@ -7,7 +7,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./derivation": "./src/derivation.ts",
-    "./signers/stellar": "./src/signers/stellar.ts"
+    "./signers/stellar": "./src/signers/stellar.ts",
+    "./decode": "./src/decode/index.ts",
+    "./policy": "./src/policy/index.ts"
   },
   "scripts": {
     "test": "vitest run",

@@ -1,0 +1,396 @@
+// @vitest-environment happy-dom
+// /approve (docs/batch-b-spec.md "Approval flow", "Consent", "Tests → Web unit → Approval, Auto-approve, Raw signing"):
+// sender checks, the popup's own decode, the digest over exactly what was rendered, the Approve guard, the queue
+// position, Reject and close, keep-open reuse, raw requests never decoded, the consent screen and "Stop auto-approving".
+import {
+  type ApprovalDigestInput,
+  approvalDigest,
+  consentDigest,
+  evmTxSigningPayload,
+  newRequestId,
+  parseEvmTxRequest,
+  parseWindowMessage,
+  rawSigningWarning,
+  utf8,
+} from '@hana-id/core';
+import { canonicalJson, policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { GUARD_DELAY_MS } from '../../src/auth/approve-guard.ts';
+import { KEEP_OPEN_MS, startApprovePage } from '../../src/auth/approve-page.ts';
+import { policyJson } from '../../../core/test/policy-fixtures.ts';
+import { PASSPHRASE, USER, paymentOp, txBytes } from '../../../core/test/stellar-fixtures.ts';
+import { ENV, EVIL, FakeWindow, PARTNER, type RemoteWindow, asWindow, pageText, remoteWindow, resetDom } from './helpers.ts';
+
+const EVM = '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23';
+const TX = { chainId: '0xaa36a7', nonce: '0x1', gas: '0x5208', maxFeePerGas: '0x2', maxPriorityFeePerGas: '0x1', to: EVM, value: '0xde0b6b3a7640000', data: '0x' };
+
+type Req = Record<string, unknown> & { id: string };
+
+function evmRequest(over: Record<string, unknown> = {}): Req {
+  return {
+    v: 1,
+    t: 'hana:approve-request',
+    id: newRequestId(),
+    appName: 'Partner App',
+    parentOrigin: PARTNER,
+    kind: 'evm_tx',
+    chain: 'evm',
+    address: EVM,
+    bytes: evmTxSigningPayload(parseEvmTxRequest(TX)),
+    context: { chainId: 11155111 },
+    position: 1,
+    queued: 1,
+    ...over,
+  };
+}
+
+const stellarRequest = (over: Record<string, unknown> = {}): Req =>
+  evmRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, bytes: txBytes([paymentOp()]), context: { networkPassphrase: PASSPHRASE }, ...over });
+
+const digestInput = (r: Req): ApprovalDigestInput => ({
+  id: r.id,
+  kind: r.kind as never,
+  chain: r.chain as never,
+  address: r.address as string,
+  parentOrigin: r.parentOrigin as string,
+  context: r.context as never,
+  bytes: r.bytes as Uint8Array,
+});
+
+const POLICY = validateAutoApprovePolicy(policyJson());
+if (!POLICY.ok) throw new Error('fixture policy is invalid');
+const POLICY_TEXT = canonicalJson(POLICY.policy);
+const POLICY_ID = policyId(POLICY.policy);
+
+const consentRequest = (over: Record<string, unknown> = {}): Req => ({
+  v: 1,
+  t: 'hana:consent-request',
+  id: newRequestId(),
+  appName: 'Partner App',
+  parentOrigin: PARTNER,
+  policy: POLICY_TEXT,
+  policyId: POLICY_ID,
+  ...over,
+});
+
+let win: FakeWindow;
+let vault: RemoteWindow;
+let page: ReturnType<typeof startApprovePage>;
+
+const primary = () => document.querySelector<HTMLButtonElement>('button.primary');
+const secondary = () => document.querySelector<HTMLButtonElement>('button.secondary');
+const click = (b: Element | null) => b?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+const send = (m: unknown, origin = ENV.vaultOrigin, source: unknown = vault) => win.message(m, origin, source);
+const results = () => vault.postMessage.mock.calls.map((c) => c[0] as Record<string, unknown>).filter((m) => m.t !== 'hana:approve-hello');
+/** Waits out the guard: 1 s, then a pointer move. */
+const arm = () => {
+  vi.advanceTimersByTime(GUARD_DELAY_MS);
+  win.dispatch('pointermove');
+};
+
+function start(): void {
+  win = new FakeWindow('/approve');
+  vault = remoteWindow();
+  win.opener = asWindow(vault);
+  page = startApprovePage({ win, env: ENV, isGesture: () => true });
+  win.dispatch('focus');
+}
+
+beforeEach(() => {
+  resetDom();
+  vi.useFakeTimers();
+  start();
+});
+afterEach(() => {
+  page.stop();
+  vi.useRealTimers();
+});
+
+describe('/approve', () => {
+  it('says hello to its opener on vaultOrigin', () => {
+    expect(vault.postMessage).toHaveBeenCalledWith({ v: 1, t: 'hana:approve-hello' }, ENV.vaultOrigin);
+  });
+
+  it('ignores requests from another origin or another window', () => {
+    send(evmRequest(), EVIL);
+    send(evmRequest(), ENV.authOrigin);
+    send(evmRequest(), ENV.vaultOrigin, remoteWindow());
+    send(evmRequest(), ENV.vaultOrigin, null);
+    expect(page.state).toBe('connecting');
+    expect(primary()).toBeNull();
+  });
+
+  it('ignores malformed requests (schema)', () => {
+    send({ ...evmRequest(), extra: 1 });
+    send({ ...evmRequest(), kind: 'stellar_tx' });
+    expect(page.state).toBe('connecting');
+  });
+
+  it('decodes and shows an EVM transaction, with the queue position', () => {
+    send(evmRequest({ position: 2, queued: 3 }));
+    const text = pageText();
+    expect(text).toContain('Request 2 of 3 from Partner App');
+    expect(text).toContain(PARTNER);
+    expect(text).toContain('11155111');
+    expect(text).toContain(EVM);
+    expect(text).toContain('1 (1000000000000000000 wei)');
+  });
+
+  it('decodes and shows a Stellar transaction', () => {
+    send(stellarRequest());
+    const text = pageText();
+    expect(text).toContain(PASSPHRASE);
+    expect(text).toContain('payment');
+    expect(text).toContain(USER);
+  });
+
+  it('Approve sends the digest of exactly what was rendered, bound to the context', () => {
+    const r = evmRequest();
+    send(r);
+    arm();
+    click(primary());
+    const [result] = results();
+    expect(parseWindowMessage(result, ['hana:approve-result'])).not.toBeNull();
+    expect(result).toMatchObject({ t: 'hana:approve-result', id: r.id, approved: true });
+    expect(result?.digest).toEqual(approvalDigest(digestInput(r)));
+    // A request that differs only in context (another chain) has another digest.
+    expect(result?.digest).not.toEqual(approvalDigest({ ...digestInput(r), parentOrigin: EVIL }));
+    const s = stellarRequest();
+    expect(approvalDigest(digestInput(s))).not.toEqual(approvalDigest({ ...digestInput(s), context: { networkPassphrase: 'Public Global Stellar Network ; September 2015' } }));
+    expect(vault.postMessage.mock.calls.every((c) => c[1] === ENV.vaultOrigin)).toBe(true);
+  });
+
+  describe('the Approve guard', () => {
+    it('stays disabled before 1 s since render', () => {
+      send(evmRequest());
+      vi.advanceTimersByTime(GUARD_DELAY_MS - 1);
+      win.dispatch('pointermove');
+      expect(primary()?.disabled).toBe(true);
+      click(primary());
+      expect(results()).toEqual([]);
+    });
+
+    it('stays disabled without a pointer move', () => {
+      send(evmRequest());
+      vi.advanceTimersByTime(10 * GUARD_DELAY_MS);
+      expect(primary()?.disabled).toBe(true);
+      // Clicking anyway (the disabled attribute removed) does nothing: the guard is checked on click.
+      const b = primary() as HTMLButtonElement;
+      b.disabled = false;
+      click(b);
+      expect(results()).toEqual([]);
+    });
+
+    it('stays disabled before 1 s since the window last gained focus, and a blur disarms it', () => {
+      send(evmRequest());
+      arm();
+      expect(primary()?.disabled).toBe(false);
+      win.dispatch('blur');
+      expect(primary()?.disabled).toBe(true);
+      win.dispatch('focus');
+      vi.advanceTimersByTime(GUARD_DELAY_MS - 1);
+      win.dispatch('pointermove');
+      expect(primary()?.disabled).toBe(true);
+      vi.advanceTimersByTime(1);
+      win.dispatch('pointermove');
+      expect(primary()?.disabled).toBe(false);
+    });
+
+    it('a pointer move from before the 1 s mark does not count', () => {
+      send(evmRequest());
+      vi.advanceTimersByTime(500);
+      win.dispatch('pointermove');
+      vi.advanceTimersByTime(600);
+      expect(primary()?.disabled).toBe(true);
+      win.dispatch('pointermove');
+      expect(primary()?.disabled).toBe(false);
+    });
+
+    it('a hidden window is disarmed until visible again for 1 s', () => {
+      send(evmRequest());
+      arm();
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+      document.dispatchEvent(new Event('visibilitychange'));
+      expect(primary()?.disabled).toBe(true);
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+      document.dispatchEvent(new Event('visibilitychange'));
+      win.dispatch('pointermove');
+      expect(primary()?.disabled).toBe(true);
+      arm();
+      expect(primary()?.disabled).toBe(false);
+    });
+
+    it('resets for a new request in a reused popup (a request slipped in at the moment of a click)', () => {
+      send(evmRequest());
+      arm();
+      expect(primary()?.disabled).toBe(false);
+      const second = evmRequest({ position: 2, queued: 2 });
+      send(second);
+      expect(primary()?.disabled).toBe(true);
+      click(primary());
+      expect(results()).toEqual([]);
+      arm();
+      click(primary());
+      expect(results()[0]).toMatchObject({ id: second.id, approved: true });
+    });
+  });
+
+  it('Reject answers approved: false; closing with a request on screen also rejects', () => {
+    const r = evmRequest();
+    send(r);
+    click(secondary());
+    expect(results()[0]).toMatchObject({ t: 'hana:approve-result', id: r.id, approved: false });
+    const r2 = evmRequest();
+    send(r2);
+    win.dispatch('pagehide');
+    expect(results()[1]).toMatchObject({ t: 'hana:approve-result', id: r2.id, approved: false });
+    expect(results()[1]?.digest).toEqual(approvalDigest(digestInput(r2)));
+  });
+
+  it('waits up to 15 s for a follow-up request, shows it without another launcher click, then says bye and closes', () => {
+    send(evmRequest());
+    arm();
+    click(primary());
+    expect(page.state).toBe('waiting');
+    expect(pageText()).toContain('Waiting for the next request from Partner App');
+    vi.advanceTimersByTime(KEEP_OPEN_MS - 1000);
+    const next = stellarRequest({ position: 1, queued: 1 });
+    send(next);
+    expect(page.state).toBe('request');
+    vi.advanceTimersByTime(KEEP_OPEN_MS * 2);
+    expect(win.closed).toBe(false);
+    arm();
+    click(primary());
+    expect(results()[1]).toMatchObject({ id: next.id, approved: true });
+    vi.advanceTimersByTime(KEEP_OPEN_MS - 1);
+    expect(win.closed).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(results().at(-1)).toEqual({ v: 1, t: 'hana:approve-bye' });
+    expect(win.closed).toBe(true);
+    expect(page.state).toBe('closed');
+  });
+
+  it('closes after 15 s if no request ever arrives', () => {
+    vi.advanceTimersByTime(KEEP_OPEN_MS);
+    expect(results()).toEqual([{ v: 1, t: 'hana:approve-bye' }]);
+    expect(win.closed).toBe(true);
+  });
+
+  it('refuses to approve a request it cannot decode: no Approve button, Reject only', () => {
+    send(evmRequest({ bytes: new Uint8Array([0x02, 0xc0]) }));
+    expect(primary()).toBeNull();
+    expect(pageText()).toContain('can’t read this request');
+    click(secondary());
+    expect(results()[0]).toMatchObject({ approved: false });
+  });
+
+  it('refuses an EVM transaction whose bytes name another chain than its context', () => {
+    send(evmRequest({ context: { chainId: 1 } }));
+    expect(primary()).toBeNull();
+  });
+
+  it('shows a raw request as raw, with the warning, even when its bytes are a valid transaction', () => {
+    const bytes = txBytes([paymentOp()]);
+    const r = stellarRequest({ kind: 'raw', context: {}, bytes });
+    send(r);
+    const text = pageText();
+    expect(text).toContain(rawSigningWarning('Stellar', 'Partner App'));
+    expect(text).toContain(`0x${Buffer.from(bytes).toString('hex')}`);
+    expect(text).not.toContain('payment');
+    arm();
+    click(primary());
+    expect(results()[0]).toMatchObject({ id: r.id, approved: true });
+    expect(results()[0]?.digest).toEqual(approvalDigest(digestInput(r)));
+  });
+
+  it('shows message text, and hex for text with invisible characters', () => {
+    send(evmRequest({ kind: 'personal_sign', context: {}, bytes: utf8('Sign in to Partner') }));
+    expect(pageText()).toContain('Sign in to Partner');
+    send(evmRequest({ kind: 'personal_sign', context: {}, bytes: utf8('pay‮evil') }));
+    expect(pageText()).toContain('shown as hex');
+    expect(pageText()).not.toContain('pay‮evil');
+  });
+
+  it('shows why a request was not auto-approved, and "Stop auto-approving" while a consent is active', () => {
+    send(evmRequest({ autoApprove: { label: 'Swaps on Example', active: true, miss: { reason: 'contract_not_listed', detail: 'The contract is not listed' } } }));
+    expect(pageText()).toContain('Not signed automatically under “Swaps on Example”: The contract is not listed');
+    const stop = document.querySelector('button.link');
+    expect(stop?.textContent).toBe('Stop auto-approving');
+    click(stop);
+    expect(results()).toEqual([{ v: 1, t: 'hana:auto-approve-stop' }]);
+    expect(pageText()).toContain('Auto-approving stopped');
+    // The request itself is still pending.
+    arm();
+    click(primary());
+    expect(results()[1]).toMatchObject({ t: 'hana:approve-result', approved: true });
+  });
+
+  it('fuzz: mutated requests never throw, and nothing but answers to rendered requests is ever posted', () => {
+    const values: unknown[] = [null, undefined, 0, -1, 2 ** 53, '', 'x', [], {}, new Uint8Array(0), new Uint8Array(32), true, EVM, USER, { chainId: 1 }];
+    let seed = 99;
+    const rand = (n: number) => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed % n;
+    };
+    for (let i = 0; i < 400; i++) {
+      const m: Record<string, unknown> = rand(2) ? evmRequest() : consentRequest();
+      const keys = Object.keys(m);
+      m[rand(4) === 0 ? `k${rand(3)}` : (keys[rand(keys.length)] as string)] = values[rand(values.length)];
+      expect(() => send(m)).not.toThrow();
+    }
+    for (const r of results()) expect(['hana:approve-result', 'hana:consent-result']).toContain(r.t);
+    const posted = JSON.stringify(results(), (_, v) => (v instanceof Uint8Array ? `bytes:${v.length}` : v));
+    expect(posted).not.toMatch(/relayKey|prk|seed|idToken/iu);
+  });
+
+  it('offers no "Stop auto-approving" without an active consent', () => {
+    send(evmRequest({ autoApprove: { label: 'Swaps', active: false } }));
+    expect(document.querySelector('button.link')).toBeNull();
+  });
+});
+
+describe('/approve consent screen', () => {
+  it('shows the app, origin, label, every contract with name and address, the functions, the address rule, limits and duration', () => {
+    send(consentRequest());
+    const text = pageText();
+    for (const s of ['Partner App', PARTNER, '“Swaps on Example”', 'Example pool', 'USDC', 'Router', 'swap', 'deposit', 'route', 'can send to any address', 'at most 3', 'up to 12 h', 'deposit(uint256)', 'EVM chain 8453', 'PermitSingle']) {
+      expect(text).toContain(s);
+    }
+    for (const c of POLICY.ok ? POLICY.policy.stellar?.contracts ?? [] : []) expect(text).toContain(c.id);
+    expect(text).toContain('Some functions below can send to any address');
+  });
+
+  it('Allow is guarded like Approve and sends the consent digest over the policyId it recomputed', () => {
+    const r = consentRequest();
+    send(r);
+    vi.advanceTimersByTime(GUARD_DELAY_MS - 1);
+    win.dispatch('pointermove');
+    click(primary());
+    expect(results()).toEqual([]);
+    arm();
+    click(primary());
+    const [result] = results();
+    expect(parseWindowMessage(result, ['hana:consent-result'])).not.toBeNull();
+    expect(result).toMatchObject({ t: 'hana:consent-result', id: r.id, granted: true });
+    expect(result?.digest).toEqual(consentDigest({ id: r.id, parentOrigin: PARTNER, policyId: POLICY_ID }));
+  });
+
+  it('Don’t allow answers granted: false', () => {
+    const r = consentRequest();
+    send(r);
+    click(secondary());
+    expect(results()[0]).toMatchObject({ t: 'hana:consent-result', id: r.id, granted: false });
+  });
+
+  it.each([
+    ['a policyId that is not the policy’s', { policyId: 'f'.repeat(64) }],
+    ['an invalid policy (raw entry smuggled in)', { policy: POLICY_TEXT.replace('"v":1', '"raw":true,"v":1') }],
+    ['a policy that is not JSON', { policy: '{nope' }],
+  ])('refuses %s: no Allow button', (_, over) => {
+    send(consentRequest(over));
+    expect(primary()).toBeNull();
+    expect(pageText()).toContain('could not be checked');
+    click(secondary());
+    expect(results()[0]).toMatchObject({ granted: false });
+  });
+});

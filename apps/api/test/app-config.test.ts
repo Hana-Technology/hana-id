@@ -20,7 +20,7 @@ describe('GET /v1/app (batch B)', () => {
     const res = await get(appHeaders(app));
     const b = await body(res);
     expect(res.status).toBe(200);
-    expect(b).toEqual({ name: `Test ${app.id}`, scopeId: app.scope, signer: env.SIGNER_ACCOUNT, google: { clientId: aud, mode: 'own' }, serverTimeMs: expect.any(Number), requestId: expect.any(String) });
+    expect(b).toEqual({ name: `Test ${app.id}`, scopeId: app.scope, signer: env.SIGNER_ACCOUNT, google: { clientId: aud, mode: 'own' }, serverTimeMs: expect.any(Number), autoApprovePolicy: null, requestId: expect.any(String) });
     expect(b.serverTimeMs as number).toBeGreaterThanOrEqual(before);
     expect(b.serverTimeMs as number).toBeLessThanOrEqual(Date.now());
   });
@@ -50,6 +50,38 @@ describe('GET /v1/app (batch B)', () => {
     await setWebClient(app.id, web);
     near.views.get_scope = (a) => ({ id: a.scope_id, owners: [], clients: [['apple', web]], pending: [], action_nonce: 0, allow_shared: true });
     expect((await get(appHeaders(app))).status).toBe(409);
+  });
+
+  it('answers the auto-approve policy in force: a removal at once, a new one only after its effective time', async () => {
+    const app = await seedApp();
+    const aud = newAud();
+    chain({ [aud]: app.scope });
+    const policy = { v: 1, label: 'Swaps' };
+    const setPolicy = (sql: string, ...args: unknown[]) => env.DB.prepare(`UPDATE apps SET ${sql} WHERE id = ?1`).bind(app.id, ...args).run();
+    await setPolicy('auto_approve_policy = ?2', JSON.stringify(policy));
+    expect(await body(await get(appHeaders(app)))).toMatchObject({ autoApprovePolicy: policy });
+    // A pending change is served only once it is effective.
+    const next = { v: 1, label: 'Swaps v2' };
+    await setPolicy('auto_approve_pending = ?2, auto_approve_effective_at = ?3', JSON.stringify(next), Date.now() + 3_600_000);
+    expect(await body(await get(appHeaders(app)))).toMatchObject({ autoApprovePolicy: policy });
+    await setPolicy('auto_approve_effective_at = ?2', Date.now() - 1);
+    expect(await body(await get(appHeaders(app)))).toMatchObject({ autoApprovePolicy: next });
+    // Removal (the CLI clears the pending value too) is immediate.
+    await setPolicy('auto_approve_policy = NULL, auto_approve_pending = NULL, auto_approve_effective_at = NULL');
+    expect((await body(await get(appHeaders(app)))).autoApprovePolicy).toBeNull();
+  });
+
+  it('503 config_unavailable when the settings row cannot be read', async () => {
+    const app = await seedApp();
+    const aud = newAud();
+    chain({ [aud]: app.scope });
+    const prepare = env.DB.prepare.bind(env.DB);
+    vi.spyOn(env.DB, 'prepare').mockImplementation((sql: string) => {
+      if (sql.includes('auto_approve_policy')) throw new Error('D1 down');
+      return prepare(sql);
+    });
+    const res = await get(appHeaders(app));
+    expect([res.status, (await body(res)).code]).toEqual([503, 'config_unavailable']);
   });
 
   it('serves the vault and the login popup for an allowed parent origin', async () => {

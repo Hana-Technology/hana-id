@@ -463,7 +463,12 @@ describe('vault BroadcastChannel', () => {
   it('accepts counter, logout and revoked outcomes only', () => {
     expect(parseVaultBroadcast({ v: 1, t: 'counter', shareId: new Uint8Array(16), counter: 4 })).not.toBeNull();
     expect(parseVaultBroadcast({ v: 1, t: 'logout' })).not.toBeNull();
-    expect(parseVaultBroadcast({ v: 1, t: 'revoked' })).not.toBeNull();
+    expect(parseVaultBroadcast({ v: 1, t: 'revoked', shareId: new Uint8Array(16) })).not.toBeNull();
+    // A revocation names the share it ends (tabs holding another share keep theirs).
+    expect(parseVaultBroadcast({ v: 1, t: 'revoked' })).toBeNull();
+    expect(parseVaultBroadcast({ v: 1, t: 'revoked', shareId: new Uint8Array(15) })).toBeNull();
+    expect(parseVaultBroadcast({ v: 1, t: 'revoked', shareId: new Uint8Array(16), counter: 1 })).toBeNull();
+    expect(parseVaultBroadcast({ v: 1, t: 'logout', shareId: new Uint8Array(16) })).toBeNull();
     expect(parseVaultBroadcast({ v: 1, t: 'counter', shareId: new Uint8Array(15), counter: 4 })).toBeNull();
     expect(parseVaultBroadcast({ v: 1, t: 'logout', prk: new Uint8Array(32) })).toBeNull();
     expect(parseVaultBroadcast({ v: 1, t: 'unlocked', ks: new Uint8Array(32) })).toBeNull();

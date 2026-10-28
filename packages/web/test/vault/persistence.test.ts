@@ -1,11 +1,33 @@
 // Key persistence (docs/batch-b-spec.md "Key persistence": record, share creation, unlock, logout, lost device,
 // tabs; Tests → Web unit → Persistence).
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { bls12_381 as bls } from '@noble/curves/bls12-381';
 import { base58 } from '@scure/base';
 import { toHex } from '@hana-id/core';
 import { openRecordStore, recordKey } from '../../src/vault/record.ts';
-import { APP_ID, Browser, ENV, type Google, HOUR, PARTNER, SCOPE, START_MS, type Tab, apiError, google, login, makeConfig, openTab, readyTab, sleepReal } from './harness.ts';
+import { bytesEqual } from '@hana-id/core';
+import type { Channel } from '../../src/vault/runtime.ts';
+import { TOUCH_EVERY_MS } from '../../src/vault/vault.ts';
+import {
+  APP_ID,
+  Browser,
+  ENV,
+  type Google,
+  HOUR,
+  PARTNER,
+  SCOPE,
+  START_MS,
+  type Tab,
+  answer,
+  apiError,
+  google,
+  login,
+  makeConfig,
+  openApproval,
+  openTab,
+  readyTab,
+  sleepReal,
+} from './harness.ts';
 
 let g: Google;
 const tabs: Tab[] = [];
@@ -43,6 +65,34 @@ async function loggedIn(browser = new Browser(), o: Parameters<typeof readyTab>[
 }
 
 const prkOf = (t: Tab): Uint8Array | undefined => (t.vault as unknown as { session: { prk: Uint8Array } | null }).session?.prk;
+const shareIdOf = (t: Tab): Uint8Array | undefined => (t.vault as unknown as { session: { share: { shareId: Uint8Array } | null } | null }).session?.share?.shareId;
+const statusOf = async (t: Tab): Promise<string> => ((await t.request('hana_status')).result as { status: string }).status;
+const liveShares = (b: Browser) => [...b.backend.shares.values()].filter((s) => !s.revoked);
+
+async function until(cond: () => boolean | Promise<boolean>, what: string): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    if (await cond()) return;
+    await sleepReal(5);
+  }
+  throw new Error(`Timed out waiting for ${what}`);
+}
+
+/** A tab that posts on the app's channel but never hears it (a tab that missed every broadcast). */
+const deaf = (browser: Browser) => ({
+  channel: (name: string): Channel => {
+    const c = browser.bus.channel(name);
+    return { postMessage: (m) => c.postMessage(m), onMessage: () => undefined, close: () => c.close() };
+  },
+});
+
+/** An approved stellar_signMessage in `t` (the launcher opens the popup). */
+async function approvedSign(t: Tab): Promise<void> {
+  const reply = t.request('stellar_signMessage', { message: 'hello' });
+  await until(() => t.launcher.label === 'Review in Hana', 'the launcher');
+  const popup = openApproval(t);
+  answer(t, popup, await popup.next('hana:approve-request'), true);
+  expect((await reply).error).toBeUndefined();
+}
 
 describe('the record', () => {
   it('is written after login under <signer>|<appId>|<scopeId>|<keyIndex>, holding PRK only under K_s', async () => {
@@ -296,6 +346,93 @@ describe('tabs', () => {
     expect(browser.backend.calls.filter((c) => c.path === '/v1/sessions/revoke')).toHaveLength(0);
   });
 
+  it('a login in one tab replaces the session on this device: tabs on the old share drop it', async () => {
+    const { browser, first } = await loggedIn();
+    const second = await tab(browser);
+    const oldShare = shareIdOf(first)!;
+    const oldPrk = prkOf(first)!;
+    await login(second, g, { sub: '220000000000000000001' });
+    expect(bytesEqual(shareIdOf(second)!, oldShare)).toBe(false);
+    // The old share's tab hears a revocation naming that share, zeroes PRK and disconnects.
+    const revoked = browser.bus.sent.find((m) => (m.data as { t: string }).t === 'revoked')!.data as { shareId: Uint8Array };
+    expect(bytesEqual(revoked.shareId, oldShare)).toBe(true);
+    expect(await first.waitEvent('disconnect')).toEqual({ code: 4900 });
+    expect(oldPrk.every((b) => b === 0)).toBe(true);
+    expect(await statusOf(first)).toBe('logged_out');
+    expect(await statusOf(second)).toBe('logged_in');
+    await until(() => liveShares(browser).length === 1, 'the old share revoked');
+  });
+
+  it("a login in a tab with no session, over another tab's record, revokes that record's share", async () => {
+    const { browser, first: a } = await loggedIn();
+    const shareA = shareIdOf(a)!;
+    // B's unlock fails (network): B is logged out and the record (A's) stays.
+    browser.backend.overrides.set('/v1/vault/unlock', () => {
+      throw new TypeError('Failed to fetch');
+    });
+    const b = await tab(browser);
+    expect((await b.ready()).status).toBe('logged_out');
+    browser.backend.overrides.delete('/v1/vault/unlock');
+    await login(b, g, { sub: '220000000000000000001' });
+    await until(() => browser.backend.shares.get(toHex(shareA))!.revoked, "the replaced record's share revoked");
+    expect(await a.waitEvent('disconnect')).toEqual({ code: 4900 });
+    expect(liveShares(browser)).toHaveLength(1);
+    expect(bytesEqual((await stored(browser))!.shareId as Uint8Array, shareIdOf(b)!)).toBe(true);
+  });
+
+  it('A and B unlocked, B logs in again, A logs out: no record and no live share remain, both tabs logged out', async () => {
+    const { browser, first: a } = await loggedIn();
+    const b = await tab(browser);
+    expect(await statusOf(b)).toBe('logged_in');
+    await login(b, g, { sub: '220000000000000000001' });
+    await until(async () => (await statusOf(a)) === 'logged_out', 'A to drop the replaced share');
+    // A logs out with no session of its own: still app-wide on this device.
+    expect((await a.request('hana_logout')).result).toBeNull();
+    expect(await stored(browser)).toBeUndefined();
+    expect(liveShares(browser)).toHaveLength(0);
+    expect(await b.waitEvent('disconnect')).toEqual({ code: 4900 });
+    expect(await statusOf(b)).toBe('logged_out');
+    // A reload stays logged out.
+    const c = await tab(browser);
+    expect((await c.ready()).status).toBe('logged_out');
+  });
+
+  it('a logout from a tab that missed the revocation still revokes the newer session and its record', async () => {
+    const browser = new Browser();
+    const a = await tab(browser, { options: deaf(browser) });
+    await login(a, g);
+    const b = await tab(browser);
+    await login(b, g, { sub: '220000000000000000001' });
+    // A never heard that its share was replaced: it is still logged in on it.
+    expect(await statusOf(a)).toBe('logged_in');
+    await a.request('hana_logout');
+    expect(await stored(browser)).toBeUndefined();
+    await until(() => liveShares(browser).length === 0, 'every share revoked');
+    expect(await b.waitEvent('disconnect')).toEqual({ code: 4900 });
+    expect(await statusOf(a)).toBe('logged_out');
+    expect(await statusOf(b)).toBe('logged_out');
+  });
+
+  it("a stale tab's 410 on touch ends only that tab, never another tab's newer session", async () => {
+    const browser = new Browser();
+    const a = await tab(browser, { options: deaf(browser) });
+    await login(a, g);
+    const staleShare = shareIdOf(a)!;
+    const b = await tab(browser);
+    await login(b, g, { sub: '220000000000000000001' });
+    await until(() => browser.backend.shares.get(toHex(staleShare))!.revoked, 'the stale share revoked');
+    expect(await statusOf(a)).toBe('logged_in');
+    browser.timers.advance(TOUCH_EVERY_MS);
+    await approvedSign(a);
+    expect(await a.waitEvent('disconnect')).toEqual({ code: 4900 });
+    const revocations = browser.bus.sent.filter((m) => (m.data as { t: string }).t === 'revoked').map((m) => (m.data as { shareId: Uint8Array }).shareId);
+    expect(revocations.at(-1) && bytesEqual(revocations.at(-1)!, staleShare)).toBe(true);
+    await sleepReal(30);
+    expect(await statusOf(b)).toBe('logged_in');
+    expect(b.events.some((e) => e.event === 'disconnect')).toBe(false);
+    expect(await stored(browser)).toBeDefined();
+  });
+
   it('logout still ends the session locally when the API is down', async () => {
     const { browser, first } = await loggedIn();
     browser.backend.overrides.set('/v1/vault/revoke', () => apiError(503, 'config_unavailable'));
@@ -306,6 +443,35 @@ describe('tabs', () => {
 });
 
 describe('expiry', () => {
+  it('past expiresAtMs with the expiry timer not yet run (a throttled tab or a sleeping device): refused and PRK zeroed', async () => {
+    const { browser, first } = await loggedIn();
+    const prk = prkOf(first)!;
+    // The clock passes the session end; no timer runs.
+    browser.timers.now += 12 * HOUR;
+    expect((await first.request('stellar_signMessage', { message: 'late' })).error?.code).toBe(4100);
+    expect(prk.every((b) => b === 0)).toBe(true);
+    expect(first.launcher.label).toBeNull();
+    expect(await first.waitEvent('sessionExpired')).toBeNull();
+    expect(await statusOf(first)).toBe('logged_out');
+    expect((await first.request('hana_export', { chain: 'evm' })).error?.code).toBe(4100);
+    expect((await first.request('eth_accounts')).result).toEqual([]);
+    await until(async () => (await stored(browser)) === undefined, 'the record deleted');
+  });
+
+  it('a request approved after expiresAtMs is not signed (4900)', async () => {
+    const { browser, first } = await loggedIn();
+    const prk = prkOf(first)!;
+    browser.timers.now += 12 * HOUR - 60_000;
+    const reply = first.request('stellar_signMessage', { message: 'almost' });
+    await until(() => first.launcher.label === 'Review in Hana', 'the launcher');
+    const popup = openApproval(first);
+    const m = await popup.next('hana:approve-request');
+    browser.timers.now += 2 * 60_000;
+    answer(first, popup, m, true);
+    expect((await reply).error?.code).toBe(4900);
+    expect(prk.every((b) => b === 0)).toBe(true);
+  });
+
   it('zeroes PRK at expiresAtMs, deletes the record and emits sessionExpired', async () => {
     const { browser, first } = await loggedIn();
     const prk = prkOf(first)!;
@@ -314,6 +480,54 @@ describe('expiry', () => {
     expect(prk.every((b) => b === 0)).toBe(true);
     await sleepReal(30);
     expect(await stored(browser)).toBeUndefined();
+  });
+});
+
+describe('zeroization', () => {
+  it('K_s (share creation and unlock), and the login relayKey and salt, are zeroed once used, every copy', async () => {
+    // Taint tracking: K_s as the API's JSON gives it, the vault's random relayKey and salt, and every Uint8Array.from
+    // copy made of them (the copies importKey gets included).
+    const ks = new Set<unknown>();
+    const random = new Map<unknown, Uint8Array>();
+    const parse = JSON.parse;
+    const from = Uint8Array.from;
+    const getRandomValues = crypto.getRandomValues.bind(crypto);
+    vi.spyOn(JSON, 'parse').mockImplementation((text: string, reviver?: Parameters<typeof JSON.parse>[1]) => {
+      const v: unknown = parse(text, reviver);
+      if (typeof v === 'object' && v !== null && Array.isArray((v as { ks?: unknown }).ks)) ks.add((v as { ks: unknown }).ks);
+      return v;
+    });
+    vi.spyOn(Uint8Array, 'from').mockImplementation(function (this: unknown, src: never, ...rest: never[]) {
+      const out = (from as (...a: unknown[]) => Uint8Array).call(Uint8Array, src, ...rest);
+      if (ks.has(src)) ks.add(out);
+      const root = random.get(src);
+      if (root) random.set(out, root);
+      return out;
+    } as never);
+    vi.spyOn(crypto, 'getRandomValues').mockImplementation(<T extends ArrayBufferView | null>(a: T): T => {
+      const out = getRandomValues(a as never) as unknown as T;
+      if (out instanceof Uint8Array && out.length === 32) random.set(out, out.slice());
+      return out;
+    });
+    try {
+      const browser = new Browser();
+      const first = await tab(browser);
+      const { run } = await login(first, g);
+      const second = await tab(browser);
+      expect((await second.ready()).status).toBe('logged_in');
+      // Two K_s (share creation and the unlock), each as JSON numbers, the vault's copy and importKey's copy.
+      expect(ks.size).toBeGreaterThanOrEqual(6);
+      for (const k of ks) expect(Array.from(k as ArrayLike<number>).every((b) => b === 0)).toBe(true);
+      // The relayKey and salt the popup got: the vault's original and each copy it made (the popup's own
+      // structured-clone copy is the popup's to zero).
+      for (const name of ['relayKey', 'salt'] as const) {
+        const family = [...random.entries()].filter(([, root]) => bytesEqual(root, run.params[name] as Uint8Array)).map(([a]) => a as Uint8Array);
+        expect(family.length).toBeGreaterThanOrEqual(3);
+        for (const a of family) expect(a.every((b) => b === 0)).toBe(true);
+      }
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 });
 

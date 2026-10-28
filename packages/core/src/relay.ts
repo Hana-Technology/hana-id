@@ -35,7 +35,13 @@ export function isRelayPayload(v: unknown): v is RelayPayload {
 
 async function importKey(relayKey: Uint8Array, usage: 'encrypt' | 'decrypt'): Promise<CryptoKey> {
   if (relayKey.length !== RELAY_KEY_BYTES) throw new Error(`relayKey must be ${RELAY_KEY_BYTES} bytes`);
-  return crypto.subtle.importKey('raw', toBytes(relayKey), { name: 'AES-GCM' }, false, [usage]);
+  // importKey keeps its own copy: the one made for it is zeroed straight after.
+  const raw = toBytes(relayKey);
+  try {
+    return await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, [usage]);
+  } finally {
+    raw.fill(0);
+  }
 }
 
 /** Encrypts the callback's payload for `relayId`. */

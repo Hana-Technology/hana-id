@@ -10,9 +10,13 @@
 //   hana:approve-bye     → the popup closes itself after 15 s idle
 //   hana:auto-approve-stop → "Stop auto-approving"
 // Reject, a popup closed while a request is on show, or a request older than 5 min resolves 'rejected' (4001).
+// A request is refused at once (4100) when MAX_PENDING_APPROVALS are already waiting or on show, or when the message
+// the popup would get fails the popup's own validator (parseWindowMessage), which would otherwise drop it silently and
+// leave the request hanging until its 5 min end.
 import {
   type ApprovalSubject,
   type AutoApproveNote,
+  ErrorCode,
   approvalDigest,
   consentDigest,
   digestsEqual,
@@ -20,6 +24,7 @@ import {
   parseWindowMessage,
 } from '@hana-id/core';
 import type { AutoApprovePolicyV1 } from '@hana-id/core/policy';
+import { VaultError } from './errors.ts';
 import type { Launcher, LauncherHandle } from './launcher.ts';
 import { type Timers, type WindowMessageEvent, type WindowRef, randomHex128 } from './runtime.ts';
 
@@ -32,6 +37,10 @@ export const POPUP_REUSE_MS = 15_000;
 const CLOSED_POLL_MS = 500;
 export const APPROVE_LABEL = 'Review in Hana';
 export const APPROVE_FEATURES = 'popup,width=420,height=680';
+/** Requests waiting or on show at once; more are refused (a script on the page can't queue without limit). */
+export const MAX_PENDING_APPROVALS = 100;
+/** The protocol's bound on `queued` (and so on `position`) in hana:approve-request and hana:consent-request. */
+const QUEUED_MAX = 1000;
 
 interface BaseItem {
   id: string;
@@ -106,23 +115,33 @@ export class Approvals {
   }
 
   private enqueue(make: (base: BaseItem) => Item): Promise<ApprovalOutcome> {
-    return new Promise((resolve) => {
-      let settled = false;
-      const base: BaseItem = {
-        id: newRequestId(),
-        createdAt: this.d.now(),
-        timer: null,
-        settle: (o) => {
-          if (settled) return;
-          settled = true;
-          resolve(o);
-        },
-      };
-      const item = make(base);
-      item.timer = this.d.timers.setTimeout(() => this.expire(item), APPROVAL_TTL_MS);
-      this.queue.push(item);
-      this.pump();
+    if (this.pending >= MAX_PENDING_APPROVALS) {
+      return Promise.reject(new VaultError(ErrorCode.unauthorized, 'Too many requests are waiting for approval', { reason: 'too_many_pending' }));
+    }
+    let resolve: (o: ApprovalOutcome) => void = () => undefined;
+    const done = new Promise<ApprovalOutcome>((r) => {
+      resolve = r;
     });
+    let settled = false;
+    const item = make({
+      id: newRequestId(),
+      createdAt: this.d.now(),
+      timer: null,
+      settle: (o) => {
+        if (settled) return;
+        settled = true;
+        resolve(o);
+      },
+    });
+    // position and queued are numbers of a fixed size, so this probe stands for every message the item can produce.
+    const probe = this.message(item, 1, 1, false);
+    if (!parseWindowMessage(probe, [probe.t])) {
+      return Promise.reject(new VaultError(ErrorCode.unauthorized, 'The request is too large or malformed to show', { reason: 'invalid_request' }));
+    }
+    item.timer = this.d.timers.setTimeout(() => this.expire(item), APPROVAL_TTL_MS);
+    this.queue.push(item);
+    this.pump();
+    return done;
   }
 
   private expire(item: Item): void {
@@ -237,23 +256,28 @@ export class Approvals {
     if (!popup) return;
     this.queue.shift();
     this.current = item;
-    const position = this.batchDone + 1;
-    const queued = position + this.queue.length;
+    // A popup reused for a long batch could count past the protocol's bound: clamp (the popup shows "1000 of 1000").
+    const queued = Math.min(QUEUED_MAX, this.batchDone + 1 + this.queue.length);
+    const position = Math.min(this.batchDone + 1, queued);
+    popup.postMessage(this.message(item, position, queued, true), this.d.authOrigin);
+  }
+
+  /** The hana:approve-request or hana:consent-request for `item`; `copy` gives the popup its own bytes and policy. */
+  private message(item: Item, position: number, queued: number, copy: boolean): { t: 'hana:approve-request' | 'hana:consent-request' } & Record<string, unknown> {
     const common = { v: 1, id: item.id, appName: this.d.appName, parentOrigin: this.d.parentOrigin, position, queued } as const;
-    const message =
-      item.type === 'sign'
-        ? {
-            ...common,
-            t: 'hana:approve-request',
-            kind: item.subject.kind,
-            chain: item.subject.chain,
-            address: item.subject.address,
-            bytes: Uint8Array.from(item.subject.bytes),
-            context: { ...item.subject.context },
-            ...(item.note ? { autoApprove: { ...item.note } } : {}),
-          }
-        : { ...common, t: 'hana:consent-request', policy: structuredPolicy(item.policy), policyId: item.policyId, expiresAtMs: item.expiresAtMs };
-    popup.postMessage(message, this.d.authOrigin);
+    if (item.type === 'consent') {
+      return { ...common, t: 'hana:consent-request', policy: structuredPolicy(item.policy), policyId: item.policyId, expiresAtMs: item.expiresAtMs };
+    }
+    return {
+      ...common,
+      t: 'hana:approve-request',
+      kind: item.subject.kind,
+      chain: item.subject.chain,
+      address: item.subject.address,
+      bytes: copy ? Uint8Array.from(item.subject.bytes) : item.subject.bytes,
+      context: { ...item.subject.context },
+      ...(item.note ? { autoApprove: { ...item.note } } : {}),
+    };
   }
 
   /** Handles a window message meant for the approval popup protocol; true if it was one (accepted or not). */

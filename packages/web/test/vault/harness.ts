@@ -210,6 +210,8 @@ export class FakeBackend {
   readonly overrides = new Map<string, Handler>();
   /** What GET /v1/app answers. */
   app: Record<string, unknown> = { scopeId: SCOPE, signer: ENV.signer, google: { clientId: CLIENT_ID, mode: 'shared' }, name: 'Partner' };
+  /** The auto-approve policy in force that GET /v1/app answers: each new tab's page sets it (the page is current). */
+  autoApprovePolicy: Record<string, unknown> | null = null;
   serverNow: () => number = () => START_MS;
   private txSeq = 0;
   private readonly relayWaiters = new Set<() => void>();
@@ -265,7 +267,7 @@ export class FakeBackend {
 
   private async route(call: ApiCall, url: URL, signal?: AbortSignal): Promise<Response> {
     const b = call.body as Record<string, unknown>;
-    if (call.path === '/v1/app') return json(200, { ...this.app, serverTimeMs: this.serverNow(), requestId: 'rq' });
+    if (call.path === '/v1/app') return json(200, { autoApprovePolicy: this.autoApprovePolicy, ...this.app, serverTimeMs: this.serverNow(), requestId: 'rq' });
     if (call.path === '/v1/login') {
       const r = this.createSession(b, true);
       const nearTx = this.nextTx();
@@ -532,6 +534,8 @@ export function openTab(browser: Browser, o: TabOptions = {}): Tab {
   const opened: FakeWindow[] = [];
   const listeners: ((e: WindowMessageEvent) => void)[] = [];
   const config = o.config ?? makeConfig();
+  // The page a tab loads inlines what the API serves at that moment.
+  browser.backend.autoApprovePolicy = config.settings.autoApprovePolicy;
   const vault = new Vault({
     env: o.env ?? ENV,
     config,

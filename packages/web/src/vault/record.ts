@@ -157,7 +157,17 @@ const aadOf = (b: RecordBinding): Bytes =>
     expiresAtMs: b.expiresAtMs,
   });
 
-const aesKey = (raw: Uint8Array, usage: KeyUsage): Promise<CryptoKey> => crypto.subtle.importKey('raw', toBytes(raw), { name: 'AES-GCM' }, false, [usage]);
+/** Imports `raw` (K_s or PRK) through a copy that is zeroed straight after: importKey keeps its own copy. */
+async function importRaw(raw: Uint8Array, algorithm: AlgorithmIdentifier, usage: KeyUsage): Promise<CryptoKey> {
+  const bytes = toBytes(raw);
+  try {
+    return await crypto.subtle.importKey('raw', bytes, algorithm, false, [usage]);
+  } finally {
+    bytes.fill(0);
+  }
+}
+
+const aesKey = (raw: Uint8Array, usage: KeyUsage): Promise<CryptoKey> => importRaw(raw, { name: 'AES-GCM' }, usage);
 
 /** Encrypts PRK under K_s for the record. The caller zeroes K_s and PRK. */
 export async function sealPrk(ks: Uint8Array, prk: Uint8Array, binding: RecordBinding): Promise<{ iv: Bytes; ct: Bytes }> {
@@ -190,7 +200,7 @@ export async function openPrk(ks: Uint8Array, record: RecordV1): Promise<Bytes> 
 // ---- consent under a PRK-derived key ----
 
 async function consentKey(prk: Uint8Array, usage: KeyUsage): Promise<CryptoKey> {
-  const base = await crypto.subtle.importKey('raw', toBytes(prk), 'HKDF', false, ['deriveKey']);
+  const base = await importRaw(prk, 'HKDF', 'deriveKey');
   return crypto.subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info: utf8(CONSENT_KEY_INFO) }, base, { name: 'AES-GCM', length: 256 }, false, [usage]);
 }
 

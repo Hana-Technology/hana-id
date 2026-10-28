@@ -31,11 +31,22 @@ export function feeBump(innerXdr: string, feeSource: string): string {
   return TransactionBuilder.buildFeeBumpTransaction(feeSource, '1000', tx as never, PASSPHRASE).toEnvelope().toXDR('base64');
 }
 
-export function authPreimage(contract: string, fn: string, args: xdr.ScVal[]): string {
-  const invocation = new xdr.SorobanAuthorizedInvocation({
+/** A Soroban authorized contract call, with the calls it authorizes in turn (any depth). */
+export const authCall = (contract: string, fn: string, args: xdr.ScVal[], subInvocations: xdr.SorobanAuthorizedInvocation[] = []): xdr.SorobanAuthorizedInvocation =>
+  new xdr.SorobanAuthorizedInvocation({
     function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(new xdr.InvokeContractArgs({ contractAddress: new Address(contract).toScAddress(), functionName: fn, args })),
-    subInvocations: [],
+    subInvocations,
   });
+
+/** An invokeContractFunction whose auth tree is `root` (source-account credentials). */
+export const invokeWithAuth = (contract: string, fn: string, args: xdr.ScVal[], root: xdr.SorobanAuthorizedInvocation) =>
+  Operation.invokeContractFunction({ contract, function: fn, args, auth: [new xdr.SorobanAuthorizationEntry({ credentials: xdr.SorobanCredentials.sorobanCredentialsSourceAccount(), rootInvocation: root })] });
+
+export function authPreimage(contract: string, fn: string, args: xdr.ScVal[], subInvocations: xdr.SorobanAuthorizedInvocation[] = []): string {
+  return authPreimageOf(authCall(contract, fn, args, subInvocations));
+}
+
+export function authPreimageOf(invocation: xdr.SorobanAuthorizedInvocation): string {
   return xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
     new xdr.HashIdPreimageSorobanAuthorization({ networkId: hash(Buffer.from(PASSPHRASE)), nonce: xdr.Int64.fromString('99'), signatureExpirationLedger: 12345, invocation }),
   ).toXDR('base64');
@@ -93,7 +104,7 @@ export const personalSigner = (messageHex: string, sig: string): string => recov
 
 export const typedSigner = (json: string, sig: string): string => recoverEvmAddress(hashTypedData(normalizeTypedData(json)), from0xHex(sig));
 
-export const typedData = (verifyingContract: string, primaryType: string, message: Record<string, unknown>, types: { name: string; type: string }[]) =>
+export const typedData = (verifyingContract: string, primaryType: string, message: Record<string, unknown>, types: { name: string; type: string }[], chainId: number = CHAIN) =>
   JSON.stringify({
     types: {
       EIP712Domain: [
@@ -104,7 +115,7 @@ export const typedData = (verifyingContract: string, primaryType: string, messag
       [primaryType]: types,
     },
     primaryType,
-    domain: { name: 'Example', chainId: CHAIN, verifyingContract },
+    domain: { name: 'Example', chainId, verifyingContract },
     message,
   });
 

@@ -60,12 +60,22 @@ export function sessionNoncePreimage(i: SessionNonceInput): Bytes {
     u64le(i.expiresAtMs),
     u32le(i.keyIndex),
     u32le(i.maxUses),
-    toBytes(i.salt),
+    i.salt,
   );
 }
 
-/** The `nonce` Google must put in the ID token: b64url_nopad(sha256(preimage)), 43 characters. */
-export const sessionNonce = (i: SessionNonceInput): string => base64UrlEncode(sha256(sessionNoncePreimage(i)));
+/**
+ * The `nonce` Google must put in the ID token: b64url_nopad(sha256(preimage)), 43 characters. The preimage (it holds
+ * the salt) is zeroed once hashed.
+ */
+export function sessionNonce(i: SessionNonceInput): string {
+  const preimage = sessionNoncePreimage(i);
+  try {
+    return base64UrlEncode(sha256(preimage));
+  } finally {
+    preimage.fill(0);
+  }
+}
 
 /** What the session key signs on chain: "hana-id-session-v1:" ‖ counter u64 LE ‖ sha256(payload). */
 export const sessionMessage = (counter: number, payload: Uint8Array): Bytes => concatBytes(utf8(SESSION_MESSAGE_DOMAIN), u64le(counter), sha256(payload));

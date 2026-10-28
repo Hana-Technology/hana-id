@@ -726,7 +726,13 @@ export function approvalContent(request: Extract<PortRequest, { method: SignMeth
 
 // ---- BroadcastChannel `hana-vault:<appId>` (outcomes only, never key material) ----
 
-export type VaultBroadcast = { v: 1; t: 'counter'; shareId: Uint8Array; counter: number } | { v: 1; t: 'logout' } | { v: 1; t: 'revoked' };
+/**
+ * - `counter`: a tab advanced this share's counter (unlock, touch).
+ * - `revoked`: this share is dead (the API said 410, or a newer login on this device replaced it); only the tabs
+ *   holding that share end their session.
+ * - `logout`: the user logged out of this app on this device; every tab of the app ends its session.
+ */
+export type VaultBroadcast = { v: 1; t: 'counter'; shareId: Uint8Array; counter: number } | { v: 1; t: 'logout' } | { v: 1; t: 'revoked'; shareId: Uint8Array };
 
 /** Validates a per-app BroadcastChannel message, or null. */
 export function parseVaultBroadcast(data: unknown): VaultBroadcast | null {
@@ -734,6 +740,7 @@ export function parseVaultBroadcast(data: unknown): VaultBroadcast | null {
   if (data.t === 'counter') {
     return exactKeys(data, ['v', 't', 'shareId', 'counter']) && isBytes(data.shareId, SHARE_ID_BYTES, SHARE_ID_BYTES) && isMs(data.counter) ? (data as VaultBroadcast) : null;
   }
-  if (data.t === 'logout' || data.t === 'revoked') return exactKeys(data, ['v', 't']) ? (data as VaultBroadcast) : null;
+  if (data.t === 'revoked') return exactKeys(data, ['v', 't', 'shareId']) && isBytes(data.shareId, SHARE_ID_BYTES, SHARE_ID_BYTES) ? (data as VaultBroadcast) : null;
+  if (data.t === 'logout') return exactKeys(data, ['v', 't']) ? (data as VaultBroadcast) : null;
   return null;
 }

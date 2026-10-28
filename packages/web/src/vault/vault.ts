@@ -9,6 +9,11 @@
 //   GET /v1/app in the background (never on the unlock path).
 // - Requests arrive on the port only. Signatures need a guarded Approve in a Hana popup, or a match against an
 //   auto-approve policy the user accepted. Key material never crosses postMessage or the BroadcastChannel.
+// - The inlined policy is re-checked against GET /v1/app while the vault stays open (every POLICY_REFRESH_MS, and
+//   before an auto-sign when the last check is older than POLICY_FRESH_MS): a policy removed or changed since the page
+//   loaded no longer auto-signs anything, and the request goes to the approval popup.
+// - One session per app per device: a login replaces the record and revokes the shares it replaces, a logout ends
+//   every tab's session, and a `revoked` broadcast ends only the tabs holding that share.
 import {
   type AppConfig,
   ErrorCode,
@@ -136,6 +141,10 @@ export const EXPORT_START_MS = 5 * 60_000;
 export const EXPORT_MAX_MS = 15 * 60_000;
 /** "Signed by Hana under {label}" shows this long. */
 export const AUTO_APPROVED_FLASH_MS = 3_000;
+/** While logged in with a policy in force, GET /v1/app is re-read this often. */
+export const POLICY_REFRESH_MS = 60_000;
+/** An auto-sign needs the policy confirmed by GET /v1/app this recently (else it re-reads it first, or asks). */
+export const POLICY_FRESH_MS = 90_000;
 const SEEN_IDS_MAX = 4096;
 const JWKS_REFETCH_MS = 60_000;
 export const LOGIN_FEATURES = 'popup,width=480,height=640';
@@ -149,7 +158,12 @@ export class Vault {
   private readonly timers: Timers;
   private readonly deviceNow: () => number;
   private readonly clock: Clock;
-  private readonly policy: PolicyInForce | null;
+  /** The inlined policy while GET /v1/app still serves it; null once removed or changed (until a reload). */
+  private policy: PolicyInForce | null;
+  /** Server-corrected time of the last GET /v1/app (or page render) that confirmed `policy`. */
+  private policyCheckedAt: number;
+  private policyCheck: Promise<void> | null = null;
+  private policyTimer: unknown = null;
   private readonly launcher: Launcher;
   private readonly lockName: string;
   private readonly recordId: string;
@@ -181,6 +195,7 @@ export class Vault {
     this.deviceNow = o.deviceNow ?? (() => Date.now());
     this.clock = new Clock(o.config.serverTimeMs, this.deviceNow);
     this.policy = policyInForce(o.config.settings);
+    this.policyCheckedAt = o.config.serverTimeMs;
     this.launcher = new Launcher(o.launcherView, (ui) => this.emit('ui', ui), this.timers);
     this.lockName = `hana-vault-unlock:${o.config.appId}`;
     this.recordId = recordKey(o.env.signer, o.config.appId, o.config.scopeId, 0);
@@ -266,8 +281,10 @@ export class Vault {
     }
     if (this.storageBroken) warning = 'storage_unavailable';
     this.emit('ready', { ...this.statusResult(), ...(warning ? { warning } : {}) });
-    // The Google client (read from chain by the API), in the background: never on the unlock path.
+    // The Google client (read from chain by the API) and the policy in force, in the background: never on the unlock
+    // path.
     void this.appConfig().catch(() => undefined);
+    this.schedulePolicyRefresh();
   }
 
   /** The persistence in force: the app's, unless storage is unavailable. */
@@ -276,21 +293,77 @@ export class Vault {
   }
 
   private statusResult(): StatusResult {
-    const s = this.session;
+    const s = this.live();
     if (!s) return { status: 'logged_out', persistence: this.persistence };
     return { status: 'logged_in', addresses: { ...s.addresses }, expiresAtMs: s.expiresAtMs, persistence: s.persistence };
   }
 
-  /** GET /v1/app, cached on success. */
+  /** GET /v1/app, cached on success. Every fresh answer also re-checks the policy in force. */
   private appConfig(): Promise<AppConfig> {
     if (!this.appConfigPromise) {
-      const p = this.api!.app();
+      const at = this.clock.now();
+      const p = this.api!.app().then((app) => {
+        this.applyServedPolicy(app, at);
+        return app;
+      });
       this.appConfigPromise = p;
       p.catch(() => {
         if (this.appConfigPromise === p) this.appConfigPromise = null;
       });
     }
     return this.appConfigPromise;
+  }
+
+  // ---- the policy in force ----
+
+  /**
+   * Keeps the inlined policy only while GET /v1/app (asked at `at`) serves the same policyId. A removal or a change
+   * drops it until a reload: the new policy, if any, then needs its own consent.
+   */
+  private applyServedPolicy(app: AppConfig, at: number): void {
+    const current = this.policy;
+    if (!current) return;
+    const served = app.autoApprovePolicy ? policyInForce({ ...this.config.settings, autoApprovePolicy: app.autoApprovePolicy }) : null;
+    if (served?.policyId === current.policyId) {
+      this.policyCheckedAt = Math.max(this.policyCheckedAt, at);
+      return;
+    }
+    this.policy = null;
+    this.timers.clearTimeout(this.policyTimer);
+    this.policyTimer = null;
+  }
+
+  /** A fresh GET /v1/app (one at a time). */
+  private refreshPolicy(): Promise<void> {
+    this.policyCheck ??= (async () => {
+      try {
+        this.appConfigPromise = null;
+        await this.appConfig();
+      } finally {
+        this.policyCheck = null;
+      }
+    })();
+    return this.policyCheck;
+  }
+
+  /** The background re-check, while a policy is in force (it only fetches while logged in). */
+  private schedulePolicyRefresh(): void {
+    if (!this.policy || this.policyTimer !== null) return;
+    this.policyTimer = this.timers.setTimeout(() => {
+      this.policyTimer = null;
+      const check = this.session ? this.refreshPolicy().catch(() => undefined) : Promise.resolve();
+      void check.then(() => this.schedulePolicyRefresh());
+    }, POLICY_REFRESH_MS);
+  }
+
+  /**
+   * The policy an auto-sign may use: one GET /v1/app confirmed within POLICY_FRESH_MS (re-read first when older), or
+   * null, and the request then goes to the approval popup. A failed re-read also gives null for this request.
+   */
+  private async freshPolicy(): Promise<PolicyInForce | null> {
+    if (this.policy && this.clock.now() - this.policyCheckedAt >= POLICY_FRESH_MS) await this.refreshPolicy().catch(() => undefined);
+    const policy = this.policy;
+    return policy && this.clock.now() - this.policyCheckedAt < POLICY_FRESH_MS ? policy : null;
   }
 
   private async jwks(kid: string): Promise<Jwk | null> {
@@ -360,11 +433,15 @@ export class Vault {
         return this.startExport(r.params.chain);
       case 'hana_revokeOtherDevices':
         return this.revokeOtherDevices();
-      case 'stellar_getAddress':
-        if (!this.session) throw notLoggedIn();
-        return { address: this.session.addresses.stellar } satisfies PortResultMap['stellar_getAddress'];
-      case 'eth_accounts':
-        return this.session ? [this.session.addresses.evm] : [];
+      case 'stellar_getAddress': {
+        const s = this.live();
+        if (!s) throw notLoggedIn();
+        return { address: s.addresses.stellar } satisfies PortResultMap['stellar_getAddress'];
+      }
+      case 'eth_accounts': {
+        const s = this.live();
+        return s ? [s.addresses.evm] : [];
+      }
       case 'hana_requestAutoApprove':
         return this.requestAutoApprove();
       case 'hana_autoApproveStatus':
@@ -473,9 +550,10 @@ export class Vault {
     // The app keeps the wallet across reloads but this browser's storage can't: say so with the result too.
     let warning: 'storage_unavailable' | undefined = this.storageBroken ? 'storage_unavailable' : undefined;
     let share: Share | null = null;
+    let replaced: RecordV1 | null = null;
     if (persistence === 'session') {
       try {
-        share = await this.persistLogin(success);
+        ({ share, replaced } = await this.persistLogin(success));
       } catch {
         persistence = 'none';
         warning = 'storage_unavailable';
@@ -483,19 +561,25 @@ export class Vault {
     }
     if (pending.aborted) {
       // Superseded while persisting: the share and record of this login must not outlive it.
-      if (share) {
-        const dropped = { sessionPk: success.sessionKey.publicKey, keyPair: success.sessionKey.keyPair, share };
-        void this.revokeDetached(dropped).catch(() => undefined);
-        void this.deleteRecordIf(dropped).catch(() => undefined);
-      }
+      if (share) void this.dropPersistedLogin(success, share, replaced);
       success.prk.fill(0);
       throw new VaultError('login_cancelled', 'A newer sign-in replaced this one');
     }
     const previous = this.session;
-    if (previous) {
-      // A new login replaces the session in this tab: the old share (its record is overwritten) is revoked.
-      this.endSession(false);
-      if (previous.share && (!share || !bytesEqual(previous.share.shareId, share.shareId))) void this.revokeDetached(previous).catch(() => undefined);
+    // A new login replaces the app's session on this device: this tab's previous share and the share of the record it
+    // overwrote (another tab's login) are revoked, and the tabs still holding them are told to drop them.
+    if (previous) this.endSession(false);
+    const old: { keyPair: CryptoKeyPair; share: Share }[] = [];
+    if (previous?.share) old.push({ keyPair: previous.keyPair, share: { ...previous.share } });
+    if (replaced) {
+      const same = old.find((o) => bytesEqual(o.share.shareId, replaced.shareId));
+      if (same) same.share.counter = Math.max(same.share.counter, replaced.counter);
+      else old.push({ keyPair: replaced.sessionKeyPair, share: { shareId: replaced.shareId, counter: replaced.counter, createdAt: null } });
+    }
+    for (const o of old) {
+      if (share && bytesEqual(o.share.shareId, share.shareId)) continue;
+      this.broadcastRevoked(o.share.shareId);
+      void this.revokeDetached(o).catch(() => undefined);
     }
     const s: Session = {
       prk: success.prk,
@@ -519,8 +603,11 @@ export class Vault {
     return result;
   }
 
-  /** Share creation and the record (docs/batch-b-spec.md "Share creation"). Throws on any failure. */
-  private async persistLogin(success: LoginSuccess): Promise<Share> {
+  /**
+   * Share creation and the record (docs/batch-b-spec.md "Share creation"). Returns the share and the record it
+   * overwrote, if that was another session's. Throws on any failure.
+   */
+  private async persistLogin(success: LoginSuccess): Promise<{ share: Share; replaced: RecordV1 | null }> {
     const store = this.store;
     if (!store) throw new Error('No storage');
     const api = this.api!;
@@ -564,14 +651,40 @@ export class Vault {
       ct: sealed.ct,
       addresses: { stellar: success.addresses.stellar, evm: success.addresses.evm },
     };
+    let replaced: RecordV1 | null = null;
     try {
-      await this.o.locks.request(this.lockName, () => store.put(this.recordId, record));
+      await this.o.locks.request(this.lockName, async () => {
+        const read = await this.readRecord().catch(() => null);
+        replaced = read && read !== 'invalid' ? read : null;
+        await store.put(this.recordId, record);
+      });
     } catch (e) {
       // The share is useless without the record: revoke it (best effort) before falling back to 'none'.
       void this.callShare(success.sessionKey.keyPair, shareId, 1, 'revoke').catch(() => undefined);
       throw e;
     }
-    return { shareId, counter: 0, createdAt: this.clock.now() };
+    return { share: { shareId, counter: 0, createdAt: this.clock.now() }, replaced };
+  }
+
+  /**
+   * A login superseded after it persisted: if its record is still the one stored, the record it overwrote is put back
+   * (or the record deleted when there was none), and its share is revoked. Best effort.
+   */
+  private async dropPersistedLogin(success: LoginSuccess, share: Share, replaced: RecordV1 | null): Promise<void> {
+    const store = this.store;
+    if (store) {
+      await this.o.locks
+        .request(this.lockName, async () => {
+          const r = await this.readRecord();
+          if (r === 'invalid') await store.delete(this.recordId);
+          else if (r && sameSession(r, { sessionPk: success.sessionKey.publicKey, shareId: share.shareId })) {
+            if (replaced) await store.put(this.recordId, replaced);
+            else await store.delete(this.recordId);
+          }
+        })
+        .catch(() => undefined);
+    }
+    await this.revokeDetached({ keyPair: success.sessionKey.keyPair, share }).catch(() => undefined);
   }
 
   /** Revokes a share this tab no longer uses (best effort; one retry on 409 bad_counter). No record change. */
@@ -585,6 +698,24 @@ export class Vault {
       if (expected === null) throw e;
       await this.callShare(s.keyPair, share.shareId, expected, 'revoke');
     }
+  }
+
+  /**
+   * The session, or null once it has passed expiresAtMs: it is then ended here, so a timer delayed by background-tab
+   * throttling or device sleep never keeps PRK alive (or signing) after the session's end.
+   */
+  private live(): Session | null {
+    const s = this.session;
+    if (s && this.clock.now() >= s.expiresAtMs) {
+      void this.expire(s);
+      return null;
+    }
+    return s;
+  }
+
+  /** Tells this app's other tabs that `shareId` is dead: the ones holding it end their session. */
+  private broadcastRevoked(shareId: Uint8Array): void {
+    this.channel?.postMessage({ v: 1, t: 'revoked', shareId: Uint8Array.from(shareId) });
   }
 
   private adopt(s: Session): void {
@@ -695,7 +826,7 @@ export class Vault {
           }
           if (e.status === 404 || e.status === 410 || e.status === 401 || e.code === 'bad_counter') {
             await store.delete(this.recordId);
-            if (e.status === 410) this.channel?.postMessage({ v: 1, t: 'revoked' });
+            if (e.status === 410) this.broadcastRevoked(r.shareId);
           }
           return null;
         }
@@ -766,7 +897,7 @@ export class Vault {
    * (`n + 1`; one retry with the API's `expected` on 409 bad_counter). The new counter is written and broadcast.
    */
   private async shareAction<T>(action: 'touch' | 'revoke' | 'revoke-all', after?: (r: RecordV1 | null) => Promise<void>): Promise<T> {
-    const s = this.session;
+    const s = this.live();
     if (!s?.share) throw notLoggedIn();
     const share = s.share;
     return this.o.locks.request(this.lockName, async () => {
@@ -804,35 +935,54 @@ export class Vault {
       if (s?.share && bytesEqual(s.share.shareId, m.shareId)) s.share.counter = Math.max(s.share.counter, m.counter);
       return;
     }
-    // logout or revoked in another tab of this app.
+    if (m.t === 'revoked') {
+      // Only the tabs holding that share: a stale tab's 410 must not end a newer session in another tab.
+      if (s?.share && bytesEqual(s.share.shareId, m.shareId)) this.endSession(true);
+      return;
+    }
+    // logout: the user logged out of this app on this device.
     if (s) this.endSession(true);
   }
 
   // ---- logout and lost device ----
 
+  /**
+   * Logout (docs/batch-b-spec.md "Logout") is app-wide on this device. Under the per-app lock: this tab's share is
+   * revoked, so is the record's when it belongs to another session (a newer login in another tab, with the record's own
+   * session key), and the record is deleted. Then PRK is zeroed and `logout` is broadcast, so every tab of the app ends
+   * its session. 404 and 410 mean already revoked; anything else (network) still ends the session here: a share left
+   * live dies at its idle limit, and without the record its K_s opens nothing.
+   */
   private async logout(): Promise<void> {
-    const s = this.session;
+    const s = this.live();
     this.pending?.abort(new VaultError('login_cancelled', 'Logged out'));
-    if (!s) return;
-    if (s.share) {
-      await this.shareAction('revoke', async (record) => {
-        if (record) await this.store!.delete(this.recordId);
-      }).catch(async () => {
-        // 404 and 410 mean already revoked. Anything else (network) still ends the session here; the share then dies
-        // at its idle limit, and without the record its K_s opens nothing.
-        await this.deleteRecordIf(s).catch(() => undefined);
-      });
+    const store = this.store;
+    const own = s?.share ? { keyPair: s.keyPair, sessionPk: s.sessionPk, share: s.share } : null;
+    if (store || own) {
+      await this.o.locks
+        .request(this.lockName, async () => {
+          const read = store ? await this.readRecord().catch(() => null) : null;
+          const record = read && read !== 'invalid' ? read : null;
+          const mine = own && record && sameSession(record, { sessionPk: own.sessionPk, shareId: own.share.shareId }) ? record : null;
+          if (own) await this.revokeDetached({ keyPair: own.keyPair, share: { ...own.share, counter: Math.max(own.share.counter, mine?.counter ?? 0) } }).catch(() => undefined);
+          if (record && !mine) {
+            await this.revokeDetached({ keyPair: record.sessionKeyPair, share: { shareId: record.shareId, counter: record.counter, createdAt: null } }).catch(() => undefined);
+          }
+          await store?.delete(this.recordId).catch(() => undefined);
+        })
+        .catch(() => undefined);
     }
-    this.endSession(false);
+    if (s && this.session === s) this.endSession(false);
     this.channel?.postMessage({ v: 1, t: 'logout' });
-    this.emit('accountsChanged', { addresses: null });
+    if (s) this.emit('accountsChanged', { addresses: null });
   }
 
   private async revokeOtherDevices(): Promise<PortResultMap['hana_revokeOtherDevices']> {
-    const s = this.session;
+    const s = this.live();
     if (!s) throw notLoggedIn();
-    if (!s.share) throw new VaultError(ErrorCode.unauthorized, 'This app does not keep the wallet across reloads', { reason: 'persistence_off' });
-    if (s.share.createdAt === null || this.clock.now() - s.share.createdAt >= FRESH_LOGIN_MS) {
+    const share = s.share;
+    if (!share) throw new VaultError(ErrorCode.unauthorized, 'This app does not keep the wallet across reloads', { reason: 'persistence_off' });
+    if (share.createdAt === null || this.clock.now() - share.createdAt >= FRESH_LOGIN_MS) {
       throw new VaultError(ErrorCode.unauthorized, 'Only within 5 minutes of a fresh sign-in', { reason: 'share_not_fresh' });
     }
     try {
@@ -842,7 +992,8 @@ export class Vault {
       if (e instanceof ApiError && e.code === 'share_not_fresh') throw new VaultError(ErrorCode.unauthorized, 'Only within 5 minutes of a fresh sign-in', { reason: 'share_not_fresh' });
       if (e instanceof ApiError && (e.status === 404 || e.status === 410)) {
         await this.deleteRecordIf(s).catch(() => undefined);
-        this.endSession(true);
+        this.broadcastRevoked(share.shareId);
+        if (this.session === s) this.endSession(true);
         throw disconnected('This session was revoked');
       }
       throw e instanceof ApiError ? apiErrorToVault(e) : e;
@@ -851,13 +1002,14 @@ export class Vault {
 
   /** Slides the server idle limit after an approved signature, at most once per 10 min. Best effort. */
   private maybeTouch(): void {
-    const s = this.session;
-    if (!s?.share || this.clock.now() - s.lastTouchAt < TOUCH_EVERY_MS) return;
+    const s = this.live();
+    const share = s?.share;
+    if (!s || !share || this.clock.now() - s.lastTouchAt < TOUCH_EVERY_MS) return;
     s.lastTouchAt = this.clock.now();
     void this.shareAction('touch').catch((e: unknown) => {
       if (e instanceof ApiError && (e.status === 404 || e.status === 410) && this.session === s) {
         void this.deleteRecordIf(s).catch(() => undefined);
-        this.channel?.postMessage({ v: 1, t: 'revoked' });
+        this.broadcastRevoked(share.shareId);
         this.endSession(true);
       }
     });
@@ -866,12 +1018,13 @@ export class Vault {
   // ---- signing ----
 
   private async sign(request: SignRequest): Promise<unknown> {
-    const s = this.session;
+    const s = this.live();
     if (!s) throw notLoggedIn();
     const subject = approvalSubject(request, s.addresses, this.config.settings.rawSign);
-    const policy = this.policy;
+    const policy = NEVER_AUTO_APPROVED_KINDS.has(subject.kind) ? null : await this.freshPolicy();
+    if (this.live() !== s) throw disconnected();
     let note: { label: string; active: boolean; reason?: string } | undefined;
-    if (policy && !NEVER_AUTO_APPROVED_KINDS.has(subject.kind)) {
+    if (policy) {
       let auto = await this.tryAutoSign(s, request, subject, policy);
       if (auto.kind === 'signed') return auto.result;
       if (auto.kind === 'no_consent' && this.declinedPolicyId !== policy.policyId) {
@@ -879,8 +1032,9 @@ export class Vault {
         const would = matchAutoApprovePolicy(policy.policy, subject, { usage: null, nowMs: this.clock.now() });
         if (would.ok) {
           const granted = await this.askConsent(s, policy);
-          if (this.session !== s) throw disconnected();
-          if (granted) {
+          if (this.live() !== s) throw disconnected();
+          // The consent screen can stay up for minutes: the policy must still be in force to sign under it.
+          if (granted && (await this.freshPolicy())?.policyId === policy.policyId) {
             auto = await this.tryAutoSign(s, request, subject, policy);
             if (auto.kind === 'signed') return auto.result;
           }
@@ -890,9 +1044,9 @@ export class Vault {
       if (auto.kind === 'miss') note.reason = auto.reason;
     }
     const outcome = await this.approvals!.requestApproval(subject, note);
-    if (outcome === 'cancelled' || this.session !== s) throw disconnected();
+    if (outcome === 'cancelled' || this.live() !== s) throw disconnected();
     if (outcome !== 'approved') throw userRejected();
-    if (this.session !== s) throw disconnected();
+    if (this.live() !== s) throw disconnected();
     const result = signRequest(s.prk, request, subject);
     this.maybeTouch();
     return result;
@@ -911,7 +1065,7 @@ export class Vault {
     type Outcome = { kind: 'signed'; result: unknown; match: Extract<AutoApproveResult, { ok: true }> } | { kind: 'no_consent' } | { kind: 'miss'; reason: string };
     const outcome = await this.withConsent<Outcome>(s, async (consent) => {
       // A logout or expiry while the lock was awaited zeroed PRK: never sign with it.
-      if (this.session !== s) throw disconnected();
+      if (this.live() !== s) throw disconnected();
       const now = this.clock.now();
       if (!consentActive(consent, policy, now, s.expiresAtMs)) return { value: { kind: 'no_consent' } };
       const match = matchAutoApprovePolicy(policy.policy, subject, { usage: consent, nowMs: now });
@@ -977,7 +1131,7 @@ export class Vault {
   private async askConsent(s: Session, policy: PolicyInForce): Promise<boolean> {
     const expiresAtMs = consentEnd(policy, this.clock.now(), s.expiresAtMs);
     const outcome: ApprovalOutcome = await this.approvals!.requestConsent(policy.policy, policy.policyId, expiresAtMs);
-    if (outcome === 'cancelled' || this.session !== s) throw disconnected();
+    if (outcome === 'cancelled' || this.live() !== s) throw disconnected();
     if (outcome !== 'approved') {
       this.declinedPolicyId = policy.policyId;
       return false;
@@ -988,9 +1142,11 @@ export class Vault {
   }
 
   private async requestAutoApprove(): Promise<PortResultMap['hana_requestAutoApprove']> {
-    const s = this.session;
+    const s = this.live();
     if (!s) throw notLoggedIn();
-    const policy = this.policy;
+    // A stale policy is re-read first; if that fails, the consent screen still shows the cached one (signing re-checks).
+    const policy = (await this.freshPolicy()) ?? this.policy;
+    if (this.live() !== s) throw disconnected();
     if (!policy) throw new VaultError(ErrorCode.unauthorized, 'This app has no auto-approve policy in force');
     const active = await this.withConsent(s, async (c) => ({ value: consentActive(c, policy, this.clock.now(), s.expiresAtMs) ? c : null }));
     if (active) return { granted: true, policyId: policy.policyId, expiresAtMs: active.expiresAtMs };
@@ -1001,7 +1157,7 @@ export class Vault {
   }
 
   private async autoApproveStatusResult(): Promise<PortResultMap['hana_autoApproveStatus']> {
-    const s = this.session;
+    const s = this.live();
     const policy = this.policy;
     if (!s || !policy) return null;
     return this.withConsent(s, async (c) => ({ value: consentActive(c, policy, this.clock.now(), s.expiresAtMs) ? autoApproveStatus(c, policy, this.clock.now()) : null }));
@@ -1016,7 +1172,7 @@ export class Vault {
   // ---- export (vault side; docs/batch-b-spec.md "Key export" steps 1–2) ----
 
   private startExport(chain: 'stellar' | 'evm'): Promise<null> {
-    const s = this.session;
+    const s = this.live();
     if (!s) return Promise.reject(notLoggedIn());
     if (this.exportJob) return Promise.reject(new VaultError('busy', 'An export is already running'));
     return new Promise<null>((resolve, reject) => {

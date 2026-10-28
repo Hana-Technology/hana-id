@@ -1,12 +1,13 @@
 // Unit tests of the vault's pure pieces: the inlined config parser and parent rule, the policy in force, the record
 // and consent encryption, the clock, the launcher queue and the in-page lock.
 import { describe, expect, it } from 'vitest';
-import { recordAad } from '@hana-id/core';
+import { APPROVAL_MAX_BYTES, type ApprovalSubject, parseWindowMessage, recordAad, utf8 } from '@hana-id/core';
+import { Approvals, MAX_PENDING_APPROVALS } from '../../src/vault/approvals.ts';
 import { parentAllowed, parseVaultConfig, policyInForce } from '../../src/vault/config.ts';
 import { Launcher, type LauncherView } from '../../src/vault/launcher.ts';
 import { type RecordBinding, type RecordV1, openConsent, openPrk, parseRecord, recordKey, sealConsent, sealPrk } from '../../src/vault/record.ts';
 import { Clock, localLocks } from '../../src/vault/runtime.ts';
-import { HOUR, PARTNER, TestTimers, makeConfig, sleepReal } from './harness.ts';
+import { ENV, FakeLauncherView, FakeWindow, HOUR, PARTNER, TestTimers, approveDigest, makeConfig, sleepReal } from './harness.ts';
 
 describe('parseVaultConfig', () => {
   it('accepts the page config', () => {
@@ -210,5 +211,76 @@ describe('localLocks', () => {
     await expect(b).rejects.toThrow('b');
     await c;
     expect(order).toEqual(['a1', 'a2', 'b', 'c']);
+  });
+});
+
+describe('Approvals', () => {
+  const ADDRESS = '0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD';
+  const subject = (bytes: Uint8Array = utf8('hi')): ApprovalSubject => ({ kind: 'personal_sign', chain: 'evm', address: ADDRESS, context: {}, bytes });
+
+  function make() {
+    const timers = new TestTimers();
+    const view = new FakeLauncherView();
+    const opened: FakeWindow[] = [];
+    const approvals = new Approvals({
+      authOrigin: ENV.authOrigin,
+      appName: 'Partner',
+      parentOrigin: PARTNER,
+      open: (url, name, features) => {
+        const w = new FakeWindow(url, name, features);
+        opened.push(w);
+        return w;
+      },
+      launcher: new Launcher(view, () => undefined, timers),
+      timers,
+      now: () => timers.now,
+      onStop: () => undefined,
+    });
+    const send = (popup: FakeWindow, data: Record<string, unknown>) => approvals.handleMessage({ data: { v: 1, ...data }, origin: ENV.authOrigin, source: popup, ports: [] });
+    /** Clicks the launcher and connects the popup it opens. */
+    const connect = (): FakeWindow => {
+      view.click();
+      const popup = opened.at(-1)!;
+      send(popup, { t: 'hana:approve-hello' });
+      return popup;
+    };
+    return { approvals, timers, connect, send };
+  }
+
+  it(`refuses a request past ${MAX_PENDING_APPROVALS} waiting or on show, at once`, async () => {
+    const { approvals } = make();
+    const waiting = Array.from({ length: MAX_PENDING_APPROVALS }, () => approvals.requestApproval(subject()));
+    expect(approvals.pending).toBe(MAX_PENDING_APPROVALS);
+    await expect(approvals.requestApproval(subject())).rejects.toMatchObject({ code: 4100, data: { reason: 'too_many_pending' } });
+    await expect(approvals.requestConsent({} as never, 'a'.repeat(64), 1)).rejects.toMatchObject({ code: 4100 });
+    approvals.cancelAll();
+    expect(await Promise.all(waiting)).toEqual(Array(MAX_PENDING_APPROVALS).fill('cancelled'));
+    // Room again.
+    const again = approvals.requestApproval(subject());
+    approvals.cancelAll();
+    expect(await again).toBe('cancelled');
+  });
+
+  it("refuses a request whose message the popup's validator would drop (over the 192 KiB cap), at once", async () => {
+    const { approvals } = make();
+    await expect(approvals.requestApproval(subject(new Uint8Array(APPROVAL_MAX_BYTES)))).rejects.toMatchObject({ code: 4100, data: { reason: 'invalid_request' } });
+    expect(approvals.pending).toBe(0);
+    // A note the popup would refuse (a reason outside its pattern) is refused the same way.
+    await expect(approvals.requestApproval(subject(), { label: 'Swaps', active: true, reason: 'Not A Reason' })).rejects.toMatchObject({ code: 4100 });
+  });
+
+  it('keeps position and queued within the protocol (≤ 1000) over a long batch in one popup', async () => {
+    const { approvals, connect, send } = make();
+    let popup: FakeWindow | null = null;
+    let last: Record<string, unknown> = {};
+    for (let i = 0; i < 1002; i++) {
+      const outcome = approvals.requestApproval(subject(utf8(`m${i}`)));
+      popup ??= connect();
+      last = popup.posted.at(-1)!.message;
+      expect(parseWindowMessage(last, ['hana:approve-request'])).not.toBeNull();
+      send(popup, { t: 'hana:approve-result', id: last.id, approved: true, digest: approveDigest(last) });
+      expect(await outcome).toBe('approved');
+    }
+    expect(last).toMatchObject({ position: 1000, queued: 1000 });
   });
 });

@@ -2,7 +2,7 @@
 // Web unit → Approval, Raw signing). The approval popup is simulated as the auth page runs it: hello, then a result
 // with the digest of what it rendered.
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { base64Decode, base64Encode, recoverEvmAddress, toHex, utf8 } from '@hana-id/core';
+import { SIGN_MESSAGE_MAX_BYTES, base64Decode, base64Encode, parsePortRequest, recoverEvmAddress, toHex, utf8 } from '@hana-id/core';
 import { verifyStellarSignature } from '@hana-id/core/signers/stellar';
 import { Browser, ENV, FakeWindow, type Google, PARTNER, type Tab, answer, approveDigest, google, login, makeConfig, openApproval, readyTab, sleepReal } from './harness.ts';
 import {
@@ -269,6 +269,37 @@ describe('what gets signed', () => {
     expect(m.kind).toBe('eip712');
     answer(s.t, popup, m, true);
     expect(typedSigner(json, (await reply).result as string)).toBe(s.evm);
+  });
+
+  it('a request whose approval message would pass the popup\'s cap is refused at once (4100 invalid_request), never left to time out', async () => {
+    const s = await session();
+    // The port request fits its 192 KiB cap; the approval request adds the app name, origin, address and context.
+    const message = new Uint8Array(SIGN_MESSAGE_MAX_BYTES - 128).fill(0x61);
+    expect(parsePortRequest({ v: 1, id: 'r-big', method: 'stellar_signMessage', params: { message } })).not.toBeNull();
+    const reply = await s.t.request('stellar_signMessage', { message });
+    expect(reply.error).toMatchObject({ code: 4100, data: { reason: 'invalid_request' } });
+    expect(s.t.launcher.label).toBeNull();
+    // A smaller one still goes to approval.
+    const ok = s.t.request('stellar_signMessage', { message: message.subarray(0, 1024) });
+    await waitLabel(s.t, 'Review in Hana');
+    const popup = openApproval(s.t);
+    answer(s.t, popup, await popup.next('hana:approve-request'), true);
+    expect((await ok).error).toBeUndefined();
+  });
+
+  it('at most 100 requests wait for approval: the next is refused at once (4100 too_many_pending)', async () => {
+    const s = await session();
+    const waiting = Array.from({ length: 100 }, (_, i) => s.t.request('personal_sign', [`0x${(i + 1).toString(16).padStart(2, '0')}`, s.evm]));
+    const approvals = (s.t.vault as unknown as { approvals: { pending: number } }).approvals;
+    for (let i = 0; i < 200 && approvals.pending < 100; i++) await sleepReal(5);
+    expect(approvals.pending).toBe(100);
+    expect((await s.t.request('personal_sign', ['0x6869', s.evm])).error).toMatchObject({ code: 4100, data: { reason: 'too_many_pending' } });
+    // The popup shows "1 of 100".
+    await waitLabel(s.t, 'Review in Hana');
+    const popup = openApproval(s.t);
+    expect(await popup.next('hana:approve-request')).toMatchObject({ position: 1, queued: 100 });
+    await s.t.request('hana_logout');
+    for (const r of await Promise.all(waiting)) expect(r.error?.code).toBe(4900);
   });
 
   it('refuses malformed typed data before anything is shown', async () => {

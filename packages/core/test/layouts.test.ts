@@ -44,6 +44,14 @@ describe('session nonce (create_session)', () => {
     expect(L.session_nonce!.nonce).toHaveLength(43);
   });
 
+  it("zeroes only its own preimage: the caller's salt is left as it was", () => {
+    const salt = Uint8Array.from(base.salt);
+    expect(sessionNonce({ ...base, salt })).toBe(L.session_nonce!.nonce);
+    expect(salt).toEqual(Uint8Array.from(base.salt));
+    // The same input gives the same nonce again (nothing it reads was zeroed).
+    expect(sessionNonce({ ...base, salt })).toBe(L.session_nonce!.nonce);
+  });
+
   it.each([
     ['session_s1_pk7_k0', {}],
     ['session_s1_pk8_k0', { sessionPublicKey: PK8 }],

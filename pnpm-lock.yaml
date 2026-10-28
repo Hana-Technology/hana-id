@@ -168,13 +168,25 @@ importers:
 
   packages/sodax:
     dependencies:
+      '@hana-id/core':
+        specifier: workspace:*
+        version: link:../core
       '@hana-id/web':
         specifier: workspace:*
         version: link:../web
     devDependencies:
+      '@sodax/types':
+        specifier: 2.1.0
+        version: 2.1.0
+      '@stellar/stellar-base':
+        specifier: 15.0.0
+        version: 15.0.0
       '@types/node':
         specifier: 22.20.5
         version: 22.20.5
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -867,6 +879,10 @@ packages:
   '@sindresorhus/is@7.2.0':
     resolution: {integrity: sha512-P1Cz1dWaFfR4IR+U13mqqiGsLFf1KbayybWwdd2vfctdV6hDpUkgCY0nKOLLTMSoRd/jJNjtbqzf13K8DCCXQw==}
     engines: {node: '>=18'}
+
+  '@sodax/types@2.1.0':
+    resolution: {integrity: sha512-5fK0RTcRGzc/iK1ZeqIEE9n/CkB2Q8ecRYgY7aeBICe30X+GApkviSjsEtMETLW3Lx9EUSFJChCsVLjB2d5dWQ==}
+    engines: {node: '>=22.12.0'}
 
   '@speed-highlight/core@1.2.24':
     resolution: {integrity: sha512-qeW2e1l78afw8VhRPfPQ1Gjj+KU5XFQ/OFV5ti6eTa9bruO7mJyZtA4vw0ofqmA3tKCkROE9xLk3VZoeRc98nw==}
@@ -2065,6 +2081,8 @@ snapshots:
       '@scure/base': 1.2.6
 
   '@sindresorhus/is@7.2.0': {}
+
+  '@sodax/types@2.1.0': {}
 
   '@speed-highlight/core@1.2.24': {}
 

@@ -117,6 +117,15 @@ describe('chains', () => {
     await s.vault.connect(LOGGED_IN);
     await refused(s.client.ethereum.request({ method: 'eth_chainId' }), 4902);
     await refused(s.client.ethereum.request({ method: 'eth_blockNumber' }), 4902);
+    expect(s.client.ethereum.chainIds).toEqual([]);
+  });
+
+  it('chainIds lists evm.chains in config order, as a copy', async () => {
+    await loggedIn();
+    const ids = s.client.ethereum.chainIds;
+    expect(ids).toEqual([SEPOLIA, BASE_SEPOLIA]);
+    ids.push(1);
+    expect(s.client.ethereum.chainIds).toEqual([SEPOLIA, BASE_SEPOLIA]);
   });
 
   it('createHana validates evm config', () => {

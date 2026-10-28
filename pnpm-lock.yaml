@@ -76,6 +76,18 @@ importers:
         specifier: 4.1.12
         version: 4.1.12(@types/node@22.20.5)(happy-dom@21.0.3)(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15))
 
+  packages/core:
+    devDependencies:
+      '@types/node':
+        specifier: 22.20.5
+        version: 22.20.5
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.12
+        version: 4.1.12(@types/node@22.20.5)(happy-dom@21.0.3)(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15))
+
   packages/env:
     dependencies:
       tldts:
@@ -94,6 +106,60 @@ importers:
       vitest:
         specifier: ^3.2.0
         version: 3.2.7(@types/node@22.20.5)(happy-dom@21.0.3)(tsx@4.23.15)
+
+  packages/react:
+    dependencies:
+      '@hana-id/web':
+        specifier: workspace:*
+        version: link:../web
+    devDependencies:
+      '@types/node':
+        specifier: 22.20.5
+        version: 22.20.5
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.12
+        version: 4.1.12(@types/node@22.20.5)(happy-dom@21.0.3)(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15))
+
+  packages/sodax:
+    dependencies:
+      '@hana-id/web':
+        specifier: workspace:*
+        version: link:../web
+    devDependencies:
+      '@types/node':
+        specifier: 22.20.5
+        version: 22.20.5
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.12
+        version: 4.1.12(@types/node@22.20.5)(happy-dom@21.0.3)(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15))
+
+  packages/web:
+    dependencies:
+      '@hana-id/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@hana-id/env':
+        specifier: workspace:*
+        version: link:../env
+      '@types/node':
+        specifier: 22.20.5
+        version: 22.20.5
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.12
+        version: 4.1.12(@types/node@22.20.5)(happy-dom@21.0.3)(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15))
 
   scripts:
     dependencies:

@@ -1,0 +1,19 @@
+{
+  "name": "@hana-id/core",
+  "version": "0.0.0",
+  "description": "Pure TypeScript core of Hana ID (no DOM): byte layouts, CKD, derivation v1, signers, decoders, token checks and protocol message schemas.",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "5.9.3",
+    "vitest": "4.1.12"
+  }
+}

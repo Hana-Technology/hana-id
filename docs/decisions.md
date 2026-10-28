@@ -340,6 +340,15 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
 - Limits: no process guarantee on Chrome Android or WebKit. If the auth domain also hosts other Hana sites: no
   domain-wide cookies, restricted DNS zone access.
 
+### D39. Test apps can't sign for mainnet chains
+- Date 2026-10-28 · Status: confirmed by the user, to build · Source: `docs/batch-b-spec.md` Q27
+- Decision: the vault refuses mainnet Stellar passphrases and mainnet EVM chain IDs for `pk_test_` apps (keys from the
+  testnet MPC). Sodax integrates and tests on chain testnets; real Sodax swaps through Hana wait for the mainnet launch.
+- Why: testnet MPC keys can be stolen (weaker operator and node standards) or lost (a network reset changes every
+  address), and testnet-derived addresses differ from production ones.
+- Rejected: allowing mainnet with warnings and small amounts.
+- Open: the mainnet launch date (not set).
+
 ## Superseded or amended
 
 | Was | Now | Source |

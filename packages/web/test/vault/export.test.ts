@@ -72,6 +72,21 @@ describe('export (vault side)', () => {
     expect((await again).result).toBeNull();
   });
 
+  it('a hello after the session ended (expiry timer not yet run) gets no context; the export fails 4900', async () => {
+    const { t } = await session();
+    const reply = t.request('hana_export', { chain: 'evm' });
+    await waitLabel(t, 'Export key in Hana');
+    t.launcher.click();
+    const w = t.opened.at(-1)!;
+    // The session's end passes while the export window loads; no timer runs (a throttled tab or a sleeping device).
+    t.browser.timers.now += 12 * HOUR;
+    t.dispatch({ data: { v: 1, t: 'hana:export-hello' }, origin: ENV.authOrigin, source: w });
+    expect((await reply).error?.code).toBe(4900);
+    expect(w.posted).toEqual([]);
+    expect(w.closed).toBe(true);
+    expect(await t.waitEvent('sessionExpired')).toBeNull();
+  });
+
   it('answers only the window it opened, from authOrigin, once', async () => {
     const { t } = await session();
     const reply = t.request('hana_export', { chain: 'evm' });

@@ -5,6 +5,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { functionSelector } from '@hana-id/core/decode';
 import { policyId } from '@hana-id/core/policy';
 import { openRecordStore, recordKey } from '../../src/vault/record.ts';
+import { POPUP_REUSE_MS } from '../../src/vault/approvals.ts';
 import { POLICY_FRESH_MS, POLICY_REFRESH_MS } from '../../src/vault/vault.ts';
 import {
   APP_ID,
@@ -344,6 +345,13 @@ describe('with consent', () => {
 });
 
 describe('the policy in force, re-read while the vault stays open', () => {
+  /** Past the freshness bound and the 15 s popup reuse window (so the launcher opens a new popup). */
+  const STALE_MS = Math.max(POLICY_FRESH_MS, POPUP_REUSE_MS + 1);
+
+  it('the freshness bound is the documented 10 s (docs/integration.md section 9)', () => {
+    expect(POLICY_FRESH_MS).toBe(10_000);
+  });
+
   /**
    * Sends a request the policy covers and returns the approval request it got instead (rejected). Every caller moved
    * the clock past the 15 s popup reuse window, so the launcher opens a new popup.
@@ -380,12 +388,26 @@ describe('the policy in force, re-read while the vault stays open', () => {
     await grant(s);
     s.t.browser.backend.autoApprovePolicy = null;
     // The clock moves past the freshness window without running any timer.
-    s.t.browser.timers.now += POLICY_FRESH_MS;
+    s.t.browser.timers.now += STALE_MS;
     const before = s.t.browser.backend.count('/v1/app');
     const m = await shownForApproval(s);
     expect(m.autoApprove).toBeUndefined();
     expect(s.t.browser.backend.count('/v1/app')).toBe(before + 1);
     expect(s.t.events.some((e) => e.event === 'autoApproved')).toBe(false);
+  });
+
+  it('a removal stops auto-signing once the last check is 10 s old, with no timer run', async () => {
+    const s = await session();
+    await grant(s);
+    s.t.browser.backend.autoApprovePolicy = null;
+    // Within the bound the cached check still holds (one burst shares one read)…
+    s.t.browser.timers.now += POLICY_FRESH_MS - 1_000;
+    expect((await s.t.request('eth_signTransaction', { tx: evmTx() })).result).toMatch(/^0x02/u);
+    // …and at the bound it is re-read first: the removed policy signs nothing more.
+    s.t.browser.timers.now += POPUP_REUSE_MS + 1;
+    const m = await shownForApproval(s);
+    expect(m.autoApprove).toBeUndefined();
+    expect(s.t.events.filter((e) => e.event === 'autoApproved')).toHaveLength(1);
   });
 
   it('a fresh check signs without another GET /v1/app', async () => {
@@ -400,7 +422,7 @@ describe('the policy in force, re-read while the vault stays open', () => {
     const s = await session();
     await grant(s);
     s.t.browser.backend.autoApprovePolicy = { ...POLICY(), limits: { perDayCount: 4 } };
-    s.t.browser.timers.now += POLICY_FRESH_MS;
+    s.t.browser.timers.now += STALE_MS;
     const m = await shownForApproval(s);
     expect(m.autoApprove).toBeUndefined();
     expect(s.t.events.some((e) => e.event === 'autoApproved')).toBe(false);
@@ -411,7 +433,7 @@ describe('the policy in force, re-read while the vault stays open', () => {
     await grant(s);
     const backend = s.t.browser.backend;
     backend.overrides.set('/v1/app', () => apiError(503, 'config_unavailable'));
-    s.t.browser.timers.now += POLICY_FRESH_MS;
+    s.t.browser.timers.now += STALE_MS;
     const m = await shownForApproval(s);
     expect(m.autoApprove).toBeUndefined();
     backend.overrides.delete('/v1/app');
@@ -424,7 +446,7 @@ describe('the policy in force, re-read while the vault stays open', () => {
     const reply = s.t.request('eth_signTransaction', { tx: evmTx() });
     const { popup, m } = await consentScreen(s);
     s.t.browser.backend.autoApprovePolicy = null;
-    s.t.browser.timers.now += POLICY_FRESH_MS;
+    s.t.browser.timers.now += STALE_MS;
     answerConsent(s.t, popup, m, true);
     const a = await popup.next('hana:approve-request');
     answer(s.t, popup, a, false);

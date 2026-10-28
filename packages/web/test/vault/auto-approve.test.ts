@@ -1,0 +1,388 @@
+// Auto-approve policies, vault side (docs/batch-b-spec.md "Auto-approve policies"; Tests → Web unit → Auto-approve).
+// The matcher and the validator are @hana-id/core's (tested there reason by reason); these tests cover the vault's
+// wiring: consent, signing without a popup, the reasons shown in the popup, counters, expiry and revocation.
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { functionSelector } from '@hana-id/core/decode';
+import { policyId } from '@hana-id/core/policy';
+import { openRecordStore, recordKey } from '../../src/vault/record.ts';
+import {
+  APP_ID,
+  Browser,
+  ENV,
+  type FakeWindow,
+  type Google,
+  HOUR,
+  PARTNER,
+  SCOPE,
+  START_MS,
+  type Tab,
+  answer,
+  answerConsent,
+  google,
+  login,
+  makeConfig,
+  openApproval,
+  readyTab,
+  sleepReal,
+} from './harness.ts';
+import {
+  CHAIN,
+  EVM_FRIEND,
+  EVM_VAULT,
+  ISSUER,
+  PASSPHRASE,
+  POOL,
+  UNLISTED,
+  addr,
+  changeTrust,
+  evmCreation,
+  evmTx,
+  evmTxSigner,
+  feeBump,
+  invoke,
+  payment,
+  stellarTx,
+  stellarTxSignedBy,
+  withdraw,
+} from './chains.ts';
+
+let g: Google;
+const tabs: Tab[] = [];
+beforeAll(async () => {
+  g = await google();
+});
+afterEach(() => {
+  for (const t of tabs.splice(0)) {
+    t.close();
+    t.browser.timers.dispose();
+  }
+});
+
+const entry = (signature: string, addressArgs?: 'self-or-listed' | 'any') => ({ selector: functionSelector(signature), signature, ...(addressArgs ? { addressArgs } : {}) });
+
+const POLICY = () => ({
+  v: 1,
+  label: 'Swaps on Example',
+  maxConsentMs: 6 * HOUR,
+  limits: { perDayCount: 3 },
+  stellar: {
+    networkPassphrases: [PASSPHRASE],
+    maxFeeStroops: '100000',
+    contracts: [{ id: POOL, name: 'Example pool', functions: [{ name: 'swap' }] }],
+    changeTrustAssets: [`USDC:${ISSUER}`],
+  },
+  evm: {
+    chains: [
+      {
+        chainId: CHAIN,
+        maxValueWei: '1000',
+        maxValueWeiPerDay: '1500',
+        maxFeeWei: '100000',
+        contracts: [{ address: EVM_VAULT, name: 'Example vault', selectors: [entry('deposit(uint256)'), entry('withdraw(address,uint256)', 'self-or-listed')] }],
+      },
+    ],
+  },
+});
+
+interface Session {
+  t: Tab;
+  stellar: string;
+  evm: string;
+}
+
+async function session(browser = new Browser(), policy: Record<string, unknown> | null = POLICY(), over: Parameters<typeof makeConfig>[0] = {}): Promise<Session> {
+  const config = makeConfig({ ...over, settings: { autoApprovePolicy: policy, ...over.settings } });
+  const t = await readyTab(browser, { googleJwk: g.jwk, config });
+  tabs.push(t);
+  const status = (await t.ready()) as { status: string; addresses?: { stellar: string; evm: string } };
+  if (status.status === 'logged_in') return { t, ...status.addresses! };
+  const { reply } = await login(t, g);
+  const a = (reply.result as { addresses: { stellar: string; evm: string } }).addresses;
+  return { t, stellar: a.stellar, evm: a.evm };
+}
+
+async function waitLabel(t: Tab, label: string): Promise<void> {
+  for (let i = 0; i < 200 && t.launcher.label !== label; i++) await sleepReal(5);
+  expect(t.launcher.label).toBe(label);
+}
+
+/** Opens the popup from the launcher and returns the consent screen it shows. */
+async function consentScreen(s: Session): Promise<{ popup: FakeWindow; m: Record<string, unknown> }> {
+  await waitLabel(s.t, 'Review in Hana');
+  const popup = openApproval(s.t);
+  return { popup, m: await popup.next('hana:consent-request') };
+}
+
+/** Grants consent through hana_requestAutoApprove. */
+async function grant(s: Session): Promise<FakeWindow> {
+  const reply = s.t.request('hana_requestAutoApprove');
+  const { popup, m } = await consentScreen(s);
+  answerConsent(s.t, popup, m, true);
+  expect((await reply).result).toMatchObject({ granted: true });
+  return popup;
+}
+
+const PID = policyId(POLICY(), { sessionTtlMs: 12 * HOUR });
+
+describe('consent', () => {
+  it('no consent: a matching request opens the consent screen, then signs under it without an approval screen', async () => {
+    const s = await session();
+    const tx = evmTx();
+    const reply = s.t.request('eth_signTransaction', { tx });
+    const { popup, m } = await consentScreen(s);
+    expect(m).toMatchObject({ appName: 'Partner', parentOrigin: PARTNER, policyId: PID, expiresAtMs: START_MS + 6 * HOUR, position: 1, queued: 1 });
+    expect((m.policy as { label: string }).label).toBe('Swaps on Example');
+    answerConsent(s.t, popup, m, true);
+    expect(evmTxSigner((await reply).result as string, tx)).toBe(s.evm);
+    expect(popup.posted.filter((p) => p.message.t === 'hana:approve-request')).toHaveLength(0);
+    expect(await s.t.waitEvent('autoApproved')).toEqual({ kind: 'eth_signTransaction', chain: 'evm', contract: EVM_VAULT, function: 'deposit(uint256)' });
+    expect((await s.t.request('hana_autoApproveStatus')).result).toEqual({ policyId: PID, label: 'Swaps on Example', expiresAtMs: START_MS + 6 * HOUR, used: { count: 1, native: '0' } });
+  });
+
+  it('an Allow with a digest for another policy, origin or end time stores nothing', async () => {
+    const s = await session();
+    const reply = s.t.request('hana_requestAutoApprove');
+    const { popup, m } = await consentScreen(s);
+    answerConsent(s.t, popup, { ...m, policyId: 'f'.repeat(64) }, true);
+    expect((await reply).result).toEqual({ granted: false });
+    expect((await s.t.request('hana_autoApproveStatus')).result).toBeNull();
+  });
+
+  it('declined: the request goes to the approval screen (with the policy note), and later matches skip the consent screen', async () => {
+    const s = await session();
+    const reply = s.t.request('eth_signTransaction', { tx: evmTx() });
+    const { popup, m } = await consentScreen(s);
+    answerConsent(s.t, popup, m, false);
+    const a = await popup.next('hana:approve-request');
+    expect(a.autoApprove).toEqual({ label: 'Swaps on Example', active: false });
+    answer(s.t, popup, a, true);
+    expect((await reply).result).toMatch(/^0x02/u);
+    const again = s.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x2' }) });
+    const a2 = await popup.next('hana:approve-request', 1);
+    expect(popup.posted.filter((p) => p.message.t === 'hana:consent-request')).toHaveLength(1);
+    answer(s.t, popup, a2, false);
+    expect((await again).error?.code).toBe(4001);
+  });
+
+  it('hana_requestAutoApprove grants once; a second call answers at once', async () => {
+    const s = await session();
+    await grant(s);
+    const opened = s.t.opened.length;
+    expect((await s.t.request('hana_requestAutoApprove')).result).toEqual({ granted: true, policyId: PID, expiresAtMs: START_MS + 6 * HOUR });
+    expect(s.t.opened.length).toBe(opened);
+  });
+
+  it('hana_requestAutoApprove is 4100 when the app has no policy in force (and removal is immediate)', async () => {
+    const s = await session(new Browser(), null);
+    expect((await s.t.request('hana_requestAutoApprove')).error?.code).toBe(4100);
+    expect((await s.t.request('hana_autoApproveStatus')).result).toBeNull();
+  });
+
+  it('a policy that fails the validator is treated as no policy', async () => {
+    const bad = { ...POLICY(), limits: { perDayCount: 100_000 } };
+    const s = await session(new Browser(), bad);
+    expect((await s.t.request('hana_requestAutoApprove')).error?.code).toBe(4100);
+  });
+});
+
+describe('with consent', () => {
+  it('a matching request signs with no popup and no launcher, emits autoApproved and flashes the launcher', async () => {
+    const s = await session();
+    await grant(s);
+    const opened = s.t.opened.length;
+    const xdr = stellarTx(s.stellar, [invoke(POOL, 'swap', [addr(s.stellar)])]);
+    const r = (await s.t.request('stellar_signTransaction', { xdr, networkPassphrase: PASSPHRASE })).result as { signedTxXdr: string };
+    expect(stellarTxSignedBy(r.signedTxXdr, s.stellar)).toBe(true);
+    expect(s.t.opened.length).toBe(opened);
+    expect(await s.t.waitEvent('autoApproved')).toEqual({ kind: 'stellar_signTransaction', chain: 'stellar', contract: POOL, function: 'swap' });
+    expect(s.t.launcher.history).toContain('Signed by Hana under Swaps on Example');
+  });
+
+  it.each([
+    ['an unlisted contract', () => ['eth_signTransaction', { tx: evmTx({ to: EVM_FRIEND }) }], 'contract_not_listed'],
+    ['an unlisted selector', () => ['eth_signTransaction', { tx: evmTx({ data: `${functionSelector('steal()')}` }) }], 'selector_not_listed'],
+    ['an unlisted chain', () => ['eth_signTransaction', { tx: evmTx({ chainId: '0x1' }) }], 'chain_not_listed'],
+    ['an address argument that is not self or listed', () => ['eth_signTransaction', { tx: evmTx({ data: withdraw(EVM_FRIEND, 1n) }) }], 'address_not_allowed'],
+    ['a value over the limit', () => ['eth_signTransaction', { tx: evmTx({ value: '0x3e9' }) }], 'value_too_high'],
+    ['a fee over the limit', () => ['eth_signTransaction', { tx: evmTx({ maxFeePerGas: '0x2' }) }], 'fee_too_high'],
+    ['calldata that does not decode', () => ['eth_signTransaction', { tx: evmTx({ data: `${functionSelector('deposit(uint256)')}00` }) }], 'calldata_mismatch'],
+    ['contract creation', () => ['eth_signTransaction', { tx: evmCreation() }], 'contract_creation'],
+    ['an unlisted Stellar contract', (s: Session) => ['stellar_signTransaction', { xdr: stellarTx(s.stellar, [invoke(UNLISTED, 'swap', [addr(s.stellar)])]), networkPassphrase: PASSPHRASE }], 'contract_not_listed'],
+    ['a Stellar address argument that is not self', (s: Session) => ['stellar_signTransaction', { xdr: stellarTx(s.stellar, [invoke(POOL, 'swap', [addr('GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ')])]), networkPassphrase: PASSPHRASE }], 'address_not_allowed'],
+    ['a classic operation other than a listed changeTrust', (s: Session) => ['stellar_signTransaction', { xdr: stellarTx(s.stellar, [payment()]), networkPassphrase: PASSPHRASE }], 'operation_not_allowed'],
+    ['a fee-bump', (s: Session) => ['stellar_signTransaction', { xdr: feeBump(stellarTx(s.stellar, [changeTrust()]), s.stellar), networkPassphrase: PASSPHRASE }], 'fee_bump'],
+    ['an unlisted network', (s: Session) => ['stellar_signTransaction', { xdr: stellarTx(s.stellar, [changeTrust()]), networkPassphrase: 'Public Global Stellar Network ; September 2015' }], 'network_not_listed'],
+  ] as const)('%s goes to the approval popup with the reason', async (_, make, reason) => {
+    const s = await session();
+    const popup = await grant(s);
+    const [method, params] = (make as unknown as (s: Session) => readonly [string, unknown])(s);
+    const reply = s.t.request(method, params);
+    const shown = (await popup.next('hana:approve-request').catch(async () => {
+      await waitLabel(s.t, 'Review in Hana');
+      return openApproval(s.t).next('hana:approve-request');
+    })) as Record<string, unknown>;
+    expect(shown.autoApprove).toEqual({ label: 'Swaps on Example', active: true, reason });
+    answer(s.t, popup.closed ? s.t.opened.at(-1)! : popup, shown, false);
+    expect((await reply).error?.code).toBe(4001);
+    expect(s.t.events.some((e) => e.event === 'autoApproved')).toBe(false);
+  });
+
+  it('a listed changeTrust is auto-approved', async () => {
+    const s = await session();
+    await grant(s);
+    const xdr = stellarTx(s.stellar, [changeTrust()]);
+    expect((await s.t.request('stellar_signTransaction', { xdr, networkPassphrase: PASSPHRASE })).result).toHaveProperty('signedTxXdr');
+  });
+
+  it('raw, personal_sign, stellar_signMessage and contract creation always need approval', async () => {
+    const s = await session(new Browser(), POLICY(), { settings: { rawSign: 'approval' } });
+    const popup = await grant(s);
+    const requests: [string, unknown][] = [
+      ['hana_signRaw', { chain: 'evm', digest: new Uint8Array(32).fill(1) }],
+      ['personal_sign', ['0x6869', s.evm]],
+      ['stellar_signMessage', { message: 'hi' }],
+      ['eth_signTransaction', { tx: evmCreation() }],
+    ];
+    for (const [i, [method, params]] of requests.entries()) {
+      const reply = s.t.request(method, params);
+      const m = await popup.next('hana:approve-request', i);
+      answer(s.t, popup, m, true);
+      expect((await reply).error).toBeUndefined();
+    }
+    expect(s.t.events.some((e) => e.event === 'autoApproved')).toBe(false);
+  });
+
+  it('counts per day: perDayCount reached and the daily native value go to the popup', async () => {
+    const s = await session();
+    const popup = await grant(s);
+    expect((await s.t.request('eth_signTransaction', { tx: evmTx({ value: '0x3e8' }) })).result).toMatch(/^0x02/u);
+    // 1000 already today; 600 more passes the per-transaction limit but not the daily 1500.
+    const over = s.t.request('eth_signTransaction', { tx: evmTx({ value: '0x258', nonce: '0x2' }) });
+    const m = await popup.next('hana:approve-request');
+    expect((m.autoApprove as { reason: string }).reason).toBe('daily_value_exceeded');
+    answer(s.t, popup, m, false);
+    await over;
+    expect((await s.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x3' }) })).result).toMatch(/^0x02/u);
+    expect((await s.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x4' }) })).result).toMatch(/^0x02/u);
+    expect((await s.t.request('hana_autoApproveStatus')).result).toMatchObject({ used: { count: 3, native: '1000' } });
+    const fourth = s.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x5' }) });
+    const m4 = await popup.next('hana:approve-request', 1);
+    expect((m4.autoApprove as { reason: string }).reason).toBe('daily_count_reached');
+    answer(s.t, popup, m4, false);
+    await fourth;
+  });
+
+  it('counters reset at the UTC day boundary', async () => {
+    const browser = new Browser();
+    const day = 86_400_000;
+    const nearMidnight = (Math.floor(START_MS / day) + 1) * day - 30 * 60_000;
+    browser.timers.now = nearMidnight;
+    browser.backend.serverNow = () => browser.timers.now;
+    const s = await session(browser, POLICY(), { serverTimeMs: nearMidnight });
+    await grant(s);
+    for (let i = 1; i <= 3; i++) expect((await s.t.request('eth_signTransaction', { tx: evmTx({ nonce: `0x${i}` }) })).result).toMatch(/^0x02/u);
+    browser.timers.advance(31 * 60_000);
+    expect((await s.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x9' }) })).result).toMatch(/^0x02/u);
+    expect((await s.t.request('hana_autoApproveStatus')).result).toMatchObject({ used: { count: 1 } });
+  });
+});
+
+describe('persistence and tabs', () => {
+  it('counters survive a reload (inside the encrypted record) and are shared across tabs', async () => {
+    const browser = new Browser();
+    const a = await session(browser);
+    await grant(a);
+    expect((await a.t.request('eth_signTransaction', { tx: evmTx() })).result).toMatch(/^0x02/u);
+    const b = await session(browser);
+    expect((await b.t.request('hana_autoApproveStatus')).result).toMatchObject({ policyId: PID, used: { count: 1 } });
+    expect((await b.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x2' }) })).result).toMatch(/^0x02/u);
+    expect((await a.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x3' }) })).result).toMatch(/^0x02/u);
+    // The third is used up across both tabs: the fourth (in either tab) needs approval.
+    const fourth = b.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x4' }) });
+    await waitLabel(b.t, 'Review in Hana');
+    const popup = openApproval(b.t);
+    const m = await popup.next('hana:approve-request');
+    expect((m.autoApprove as { reason: string }).reason).toBe('daily_count_reached');
+    answer(b.t, popup, m, false);
+    await fourth;
+  });
+
+  it('a changed policy (new policyId) ignores the old consent', async () => {
+    const browser = new Browser();
+    const a = await session(browser);
+    await grant(a);
+    const changed = { ...POLICY(), limits: { perDayCount: 4 } };
+    const b = await session(browser, changed);
+    expect((await b.t.request('hana_autoApproveStatus')).result).toBeNull();
+    const reply = b.t.request('eth_signTransaction', { tx: evmTx() });
+    const { popup, m } = await consentScreen(b);
+    expect(m.policyId).toBe(policyId(changed, { sessionTtlMs: 12 * HOUR }));
+    expect(m.policyId).not.toBe(PID);
+    answerConsent(b.t, popup, m, true);
+    expect((await reply).result).toMatch(/^0x02/u);
+  });
+
+  it('a record with a tampered consent fails its check: the record is deleted and the vault disconnects', async () => {
+    const browser = new Browser();
+    const a = await session(browser);
+    await grant(a);
+    const store = await openRecordStore(browser.idb);
+    const key = recordKey(ENV.signer, APP_ID, SCOPE, 0);
+    const r = (await store.get(key)) as { consent: { ct: Uint8Array } };
+    r.consent.ct[0]! ^= 1;
+    await store.put(key, r as never);
+    expect((await a.t.request('eth_signTransaction', { tx: evmTx() })).error?.code).toBe(4900);
+    expect(await store.get(key)).toBeUndefined();
+  });
+
+  it('"none" mode keeps the consent in memory', async () => {
+    const s = await session(new Browser(), POLICY(), { settings: { persistence: 'none' } });
+    await grant(s);
+    expect((await s.t.request('eth_signTransaction', { tx: evmTx() })).result).toMatch(/^0x02/u);
+  });
+});
+
+describe('the consent ends', () => {
+  it('at its expiry', async () => {
+    const s = await session();
+    await grant(s);
+    s.t.browser.timers.advance(6 * HOUR);
+    expect((await s.t.request('hana_autoApproveStatus')).result).toBeNull();
+  });
+
+  it('at session expiry, when that comes first', async () => {
+    const s = await session(new Browser(), { ...POLICY(), maxConsentMs: 12 * HOUR });
+    const reply = s.t.request('hana_requestAutoApprove');
+    const { popup, m } = await consentScreen(s);
+    expect(m.expiresAtMs).toBe(START_MS + 12 * HOUR);
+    answerConsent(s.t, popup, m, true);
+    await reply;
+  });
+
+  it('on hana_revokeAutoApprove', async () => {
+    const s = await session();
+    await grant(s);
+    expect((await s.t.request('hana_revokeAutoApprove')).result).toBeNull();
+    expect((await s.t.request('hana_autoApproveStatus')).result).toBeNull();
+  });
+
+  it('on "Stop auto-approving" in the approval popup (only from the vault\'s popup)', async () => {
+    const s = await session();
+    const popup = await grant(s);
+    s.t.dispatch({ data: { v: 1, t: 'hana:auto-approve-stop' }, origin: 'https://evil.test', source: popup });
+    await sleepReal(20);
+    expect((await s.t.request('hana_autoApproveStatus')).result).not.toBeNull();
+    s.t.dispatch({ data: { v: 1, t: 'hana:auto-approve-stop' }, origin: ENV.authOrigin, source: popup });
+    for (let i = 0; i < 50 && (await s.t.request('hana_autoApproveStatus')).result !== null; i++) await sleepReal(5);
+    expect((await s.t.request('hana_autoApproveStatus')).result).toBeNull();
+  });
+
+  it('on logout (the record and its consent are gone)', async () => {
+    const browser = new Browser();
+    const s = await session(browser);
+    await grant(s);
+    await s.t.request('hana_logout');
+    const again = await session(browser);
+    expect((await again.t.request('hana_autoApproveStatus')).result).toBeNull();
+  });
+});

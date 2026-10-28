@@ -6,6 +6,7 @@ import {
   type ProtocolDecoder,
   canonicalJson,
   functionSelector,
+  isExecutionStyleFunctionName,
   isValueMovingFunctionName,
   parseAutoApprovePolicy,
   policyId,
@@ -177,12 +178,6 @@ describe('validateAutoApprovePolicy: refusals', () => {
     );
   });
 
-  it("refuses 'self-or-listed' on an EVM function with opaque bytes (needs a decoder or 'any')", () => {
-    expect(
-      problems(patch((x) => (x.evm.chains[0].contracts[1].selectors[3].addressArgs = 'self-or-listed'))).join(),
-    ).toMatch(/opaque arguments/u);
-  });
-
   const withSelector = (signature: string, addressArgs?: 'self-or-listed' | 'any') =>
     patch(
       (x) =>
@@ -201,6 +196,90 @@ describe('validateAutoApprovePolicy: refusals', () => {
     ['a string inside a tuple', 'register((address,string))'],
   ])("refuses 'self-or-listed' on a function with %s", (_, signature) => {
     expect(problems(withSelector(signature, 'self-or-listed')).join()).toMatch(/opaque arguments/u);
+  });
+
+  it.each([
+    // Names chosen so that only the argument check applies (the name checks would refuse `execute`, `transferTokens`,
+    // `sendToken`, `multicall` and `aggregate` on their own).
+    ['opaque bytes', 'run(address,bytes)'],
+    ['a bytes32 recipient (Wormhole-shaped)', 'lockTokens(address,uint256,uint16,bytes32,uint256,uint32)'],
+    ['a string recipient (Axelar-shaped)', 'bridgeToken(string,string,string,uint256)'],
+    ['a router path in bytes', 'exactInput((bytes,address,uint256,uint256,uint256))'],
+    ['a bytes array', 'many(bytes[])'],
+    ['calls in a tuple array', 'group((address,bytes)[])'],
+    ['a bytes20 argument', 'bridge(address,bytes20,uint256)'],
+    ['a string inside a tuple', 'register((address,string))'],
+    ['a uint160 argument', 'stake(uint160,uint256)'],
+    ['an int160 inside a tuple array', 'stake((int160,uint256)[])'],
+  ])("refuses addressArgs 'any' on a function with %s: it needs a protocol decoder", (_, signature) => {
+    expect(problems(withSelector(signature, 'any')).join()).toMatch(/opaque arguments.*needs a protocol decoder/u);
+  });
+
+  it.each([
+    'execute(address,uint256,bytes)',
+    'multicall(bytes[])',
+    'multicall(uint256,bytes[])',
+    'aggregate((address,bytes)[])',
+    'transferTokens(address,uint256,uint16,bytes32,uint256,uint32)',
+    'sendToken(string,string,string,uint256)',
+  ])("refuses addressArgs 'any' and 'self-or-listed' on %s", (signature) => {
+    expect(problems(withSelector(signature, 'any'))).not.toEqual([]);
+    expect(problems(withSelector(signature, 'self-or-listed'))).not.toEqual([]);
+  });
+
+  it.each([
+    ['a uint160', 'stake(uint160,uint256)'],
+    ['an int160', 'stake(address,int160)'],
+    ['a uint160 inside a tuple array', 'stake((uint160,uint256)[])'],
+  ])("refuses 'self-or-listed' and the default on a function with %s (an address as an integer)", (_, signature) => {
+    expect(problems(withSelector(signature, 'self-or-listed')).join()).toMatch(/160-bit integer/u);
+    if (!signature.includes('address')) expect(problems(withSelector(signature)).join()).toMatch(/opaque arguments/u);
+  });
+
+  it('accepts integers of other widths, uint256 included, as amounts', () => {
+    for (const sig of ['stake(uint256,int256)', 'stake(uint152,uint168)', 'stake(uint8,int128)', 'stake(uint256[])']) {
+      expect(problems(withSelector(sig)), sig).toEqual([]);
+    }
+  });
+
+  it.each([
+    ['execute', 'execute(address,uint256)'],
+    ['executeBatch', 'executeBatch(address[],uint256[])'],
+    ['execTransaction', 'execTransaction(address,uint256,uint8)'],
+    ['tryAggregate', 'tryAggregate(bool,uint256)'],
+    ['aggregate3', 'aggregate3(address[])'],
+    ['delegateCall', 'delegateCall(address)'],
+    ['call', 'call(address,uint256)'],
+    ['callContract', 'callContract(address)'],
+    ['batchCall', 'batchCall(address[])'],
+    ['invoke', 'invoke(address,uint256)'],
+    ['forward', 'forward(address,uint256)'],
+    ['relay', 'relay(address)'],
+    ['dispatch', 'dispatch(address,uint256)'],
+    ['upgradeTo', 'upgradeTo(address)'],
+    ['proxyCall', 'proxyCall(address)'],
+  ])("refuses addressArgs 'any' on the execute-style %s (no opaque arguments)", (_, signature) => {
+    expect(problems(withSelector(signature, 'any')).join()).toMatch(/executes calls.*needs a protocol decoder/u);
+    // The address rule is still allowed: every argument is typed, so it can check them.
+    expect(problems(withSelector(signature, 'self-or-listed'))).toEqual([]);
+  });
+
+  it.each([
+    ['execute', 'execute'],
+    ['invoke_contract', 'invoke_contract'],
+    ['multicall', 'multicall'],
+    ['exec_batch', 'exec_batch'],
+    ['upgrade', 'upgrade'],
+  ])("refuses addressArgs 'any' on the Soroban execute-style %s", (_, name) => {
+    const p = patch((x) => x.stellar.contracts[0].functions.push({ name, addressArgs: 'any' }));
+    expect(problems(p).join()).toMatch(/executes calls/u);
+    const ok = patch((x) => x.stellar.contracts[0].functions.push({ name, addressArgs: 'self-or-listed' }));
+    expect(problems(ok)).toEqual([]);
+  });
+
+  it("accepts addressArgs 'any' on a typed function whose name is neither value-moving nor execute-style", () => {
+    expect(problems(withSelector('vote(address,uint256)', 'any'))).toEqual([]);
+    expect(problems(withSelector('register(address,bytes4)', 'any'))).toEqual([]);
   });
 
   it('refuses the defaulted addressArgs on a function with only a string or bytes32 argument', () => {
@@ -241,7 +320,7 @@ describe('validateAutoApprovePolicy: refusals', () => {
     ['maxFeeStroops over u32', (x: Mutable) => (x.stellar.maxFeeStroops = '4294967296')],
     ['maxFeeStroops as a number', (x: Mutable) => (x.stellar.maxFeeStroops = 100)],
     ['maxFeeStroops with a leading zero', (x: Mutable) => (x.stellar.maxFeeStroops = '0100')],
-    ['maxValueWei over maxValueWeiPerDay', (x: Mutable) => (x.evm.chains[0].maxValueWei = '1501')],
+    ['maxValueWei over maxValueWeiPerDay', (x: Mutable) => (x.evm.chains[0].maxValueWei = '301501')],
     ['no maxFeeWei', (x: Mutable) => delete x.evm.chains[0].maxFeeWei],
     ['maxFeeWei 0', (x: Mutable) => (x.evm.chains[0].maxFeeWei = '0')],
     ['maxFeeWei as a number', (x: Mutable) => (x.evm.chains[0].maxFeeWei = 100000)],
@@ -430,6 +509,42 @@ describe('isValueMovingFunctionName', () => {
   });
 });
 
+describe('isExecutionStyleFunctionName', () => {
+  it('matches camelCase and snake_case forms', () => {
+    for (const n of [
+      'execute',
+      'executeBatch',
+      'execute_call',
+      'execTransaction',
+      'multicall',
+      'tryMulticall',
+      'aggregate',
+      'aggregate3',
+      'tryAggregate',
+      'blockAndAggregate',
+      'delegatecall',
+      'call',
+      'callContract',
+      'batch',
+      'batchExecute',
+      'invoke',
+      'forward',
+      'relay',
+      'dispatch',
+      'handleOps',
+      'upgradeTo',
+      'upgradeToAndCall',
+      'proxyCall',
+      'EXECUTE',
+    ]) {
+      expect(isExecutionStyleFunctionName(n), n).toBe(true);
+    }
+    for (const n of ['swap', 'deposit', 'withdraw', 'mint', 'stake', 'claim', 'route', 'vote', 'register']) {
+      expect(isExecutionStyleFunctionName(n), n).toBe(false);
+    }
+  });
+});
+
 describe('parseAutoApprovePolicy', () => {
   it('parses strictly: duplicate keys and big numbers are refused', () => {
     expect(parseAutoApprovePolicy(JSON.stringify(policyJson())).ok).toBe(true);
@@ -487,7 +602,7 @@ describe('policyId', () => {
       (x) => (x.stellar.contracts[0].name = 'Other pool'),
       (x) => x.stellar.contracts.reverse(),
       (x) => (x.evm.chains[0].chainId = CHAIN + 1),
-      (x) => (x.evm.chains[0].maxValueWei = '999'),
+      (x) => (x.evm.chains[0].maxValueWei = '100999'),
       (x) => (x.evm.chains[0].maxFeeWei = '99999'),
       (x) => (x.stellar.addresses = [TOKEN]),
     ];

@@ -19,7 +19,7 @@ import {
   typedDataChainId,
 } from '../typed-data.ts';
 import { PROTOCOL_DECODERS, type ProtocolCall, type ProtocolDecoderRegistry } from './decoders.ts';
-import { isOpaqueAbiValue, isOpaqueToAddressRule } from './opaque.ts';
+import { findOpaqueAbiValue, isOpaqueToAddressRule } from './opaque.ts';
 import type { AutoApprovePolicyV1, EvmPolicyChain, FunctionRule, StellarPolicy } from './types.ts';
 import { type AutoApproveUsage, usageToday } from './usage.ts';
 
@@ -42,12 +42,13 @@ export type AutoApproveReason =
   | 'selector_not_listed'
   | 'calldata_mismatch'
   | 'address_not_allowed'
-  | 'opaque_bytes' // bytes, string or bytes20–32 arguments the address rule can't see into
+  | 'opaque_bytes' // bytes, string, bytes20–32 or 160-bit integer arguments the address rule can't see into
   | 'unsupported_argument'
   | 'decoder_unavailable'
   | 'decoder_refused'
   | 'typed_data_not_listed'
-  | 'value_too_high'
+  | 'value_too_high' // EVM native value alone is over maxValueWei
+  | 'value_plus_fee_too_high' // EVM value + maximum fee is over maxValueWei (each alone is within its cap)
   | 'daily_value_exceeded'
   | 'daily_count_reached';
 
@@ -58,7 +59,10 @@ export type AutoApproveResult =
       /** For the `autoApproved` event and the launcher: the (first) contract and function signed for. */
       readonly contract: string;
       readonly function: string;
-      /** Pass to recordAutoApproveUse after signing (EVM native value; absent on Stellar). */
+      /**
+       * Pass to recordAutoApproveUse after signing. EVM: the most the transaction can take from the user's native
+       * balance, value + maximum fee (gasLimit × maxFeePerGas, or gasPrice for legacy). Absent on Stellar.
+       */
       readonly spend?: { readonly chainId: number; readonly valueWei: bigint };
     }
   | { readonly ok: false; readonly reason: AutoApproveReason; readonly detail: string };
@@ -143,16 +147,21 @@ function stellarRule(p: StellarPolicy, contract: string, fn: string): FunctionRu
   return c.functions.find((f) => f.name === fn) ?? miss('function_not_listed', `${fn} on ${contract} is not listed`);
 }
 
-function checkScVals(values: readonly StellarScVal[], allowed: ReadonlySet<string>, where: string): void {
+/**
+ * Checks call arguments at any depth. `allowed` null ('any') skips the address check only: opaque and unsupported
+ * arguments are refused under either rule, since a Stellar policy doesn't declare argument types for the validator.
+ */
+function checkScVals(values: readonly StellarScVal[], allowed: ReadonlySet<string> | null, where: string): void {
   const walk = (v: StellarScVal) => {
     switch (v.type) {
       case 'address':
-        if (!allowed.has(v.address)) {
+        if (allowed !== null && !allowed.has(v.address)) {
           miss('address_not_allowed', `${where}: ${v.address} is not you or a listed address`);
         }
         return;
-      // Soroban `Bytes`/`BytesN` and `String` can carry a recipient on another chain (a bridge's `to`). Symbols are at
-      // most 32 characters of [A-Za-z0-9_], too short for a G… address or a hex EVM address, and stay allowed.
+      // Soroban `Bytes`/`BytesN` and `String` can carry a recipient on another chain (a bridge's `to`) or encoded
+      // calls; they need a protocol decoder. Symbols are at most 32 characters of [A-Za-z0-9_], too short for a G…
+      // address or a hex EVM address, and stay allowed. Soroban has no 160-bit integers (policy/opaque.ts).
       case 'bytes':
       case 'string':
         return miss('opaque_bytes', `${where}: ${v.type} arguments can't be checked by the address rule`);
@@ -192,7 +201,7 @@ function checkStellarCall(
     runDecoder(rule.decoder, pc, { user: self, networkPassphrase: passphrase }, allowed, decoders, where);
     return;
   }
-  if (rule.addressArgs === 'self-or-listed') checkScVals(call.args, allowed, where);
+  checkScVals(call.args, rule.addressArgs === 'self-or-listed' ? allowed : null, where);
 }
 
 function checkInvocation(
@@ -379,25 +388,37 @@ function matchEvmTx(
       valueWei: tx.value,
     };
     runDecoder(entry.decoder, call, { user: self, chainId }, allowed, decoders, where);
-  } else if (entry.addressArgs === 'self-or-listed') {
-    // The validator already refuses these signatures under 'self-or-listed'; checked again on the decoded values.
-    const opaque = [...abiValuesOfKind(args, 'bytes'), ...abiValuesOfKind(args, 'string')].find(isOpaqueAbiValue);
+  } else {
+    // The validator refuses opaque signatures under either rule; checked again on the decoded values.
+    const opaque = findOpaqueAbiValue(args);
     if (opaque) miss('opaque_bytes', `${where}: ${opaque.type} arguments can't be checked by the address rule`);
-    for (const a of abiValuesOfKind(args, 'address')) {
-      if (!allowed.has(a.value.toLowerCase())) {
-        miss('address_not_allowed', `${where}: ${a.value} is not you or a listed address`);
+    if (entry.addressArgs === 'self-or-listed') {
+      for (const a of abiValuesOfKind(args, 'address')) {
+        if (!allowed.has(a.value.toLowerCase())) {
+          miss('address_not_allowed', `${where}: ${a.value} is not you or a listed address`);
+        }
       }
     }
   }
-  if (tx.maxFeeWei > BigInt(chain.maxFeeWei)) {
-    miss('fee_too_high', `Maximum fee ${tx.maxFeeWei} is over ${chain.maxFeeWei} wei`);
+  // Native spend: the value plus the most the transaction can pay in fees. The SDK fills gas and fees on the partner
+  // page, so the fee counts against the same limits as the value (and the daily total records both).
+  const fee = tx.maxFeeWei;
+  if (fee > BigInt(chain.maxFeeWei)) miss('fee_too_high', `Maximum fee ${fee} is over ${chain.maxFeeWei} wei`);
+  if (tx.value > BigInt(chain.maxValueWei)) {
+    miss('value_too_high', `Value ${tx.value} is over ${chain.maxValueWei} wei`);
   }
-  if (tx.value > BigInt(chain.maxValueWei)) miss('value_too_high', `Value is over ${chain.maxValueWei} wei`);
+  const spend = tx.value + fee;
+  if (spend > BigInt(chain.maxValueWei)) {
+    miss('value_plus_fee_too_high', `Value ${tx.value} plus maximum fee ${fee} is over ${chain.maxValueWei} wei`);
+  }
   const today = BigInt(usage.valueWeiByChain[String(chainId)] ?? '0');
-  if (today + tx.value > BigInt(chain.maxValueWeiPerDay)) {
-    miss('daily_value_exceeded', `Daily value limit of ${chain.maxValueWeiPerDay} wei reached`);
+  if (today + spend > BigInt(chain.maxValueWeiPerDay)) {
+    miss(
+      'daily_value_exceeded',
+      `Value plus maximum fee (${spend}) would take today's ${today} wei over the daily limit of ${chain.maxValueWeiPerDay} wei`,
+    );
   }
-  return { ok: true, chain: 'evm', contract: to, function: entry.signature, spend: { chainId, valueWei: tx.value } };
+  return { ok: true, chain: 'evm', contract: to, function: entry.signature, spend: { chainId, valueWei: spend } };
 }
 
 // --- EIP-712 ---
@@ -431,8 +452,10 @@ function matchTypedData(policy: AutoApprovePolicyV1, data: NormalizedTypedData, 
       case 'bytes':
       case 'string':
       case 'fixedBytes':
+      case 'int':
         if (isOpaqueToAddressRule(t)) {
-          const type = t.kind === 'fixedBytes' ? `bytes${t.size}` : t.kind;
+          const type =
+            t.kind === 'fixedBytes' ? `bytes${t.size}` : t.kind === 'int' ? `${t.signed ? '' : 'u'}int${t.bits}` : t.kind;
           miss('opaque_bytes', `${where}: ${type} fields can't be checked by the address rule`);
         }
         return;

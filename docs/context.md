@@ -131,8 +131,10 @@ origins, partner-origin `/v1/sessions`/`/v1/derive`/`/v1/sessions/revoke`) tied 
 - The Approve guard also arms on a `pointerdown` or `keydown` after both 1 s marks, not only on a `pointermove`
   (a stationary tap or the keyboard fire none), and the arming gesture itself never approves.
 - Auto-approve policies gain a required per-chain `maxFeeWei` (gas × fee cap), because the SDK fills EVM fees on the
-  partner page. Under `'self-or-listed'`, `string` and `bytes20`–`bytes32` arguments count as opaque like `bytes`.
-  Function names that move value are matched by prefix and substring (`transferAndCall`, `permit…`, `set_admin`).
+  partner page; the fee also counts with the value against `maxValueWei` and `maxValueWeiPerDay`. `string`,
+  `bytes20`–`bytes32` and 160-bit integer arguments count as opaque like `bytes`, and opaque arguments need a protocol
+  decoder under either `addressArgs` rule. Function names that move value are matched by prefix and substring
+  (`transferAndCall`, `permit…`, `set_admin`), and execute/multicall-style names can't have `'any'`.
 - The approval digest binds a network context only where the request has one: the passphrase for Stellar
   transactions and auth entries, the chain ID for EVM transactions, and an empty context for messages,
   `personal_sign`, EIP-712 (its domain carries `chainId`) and raw. The vault never learns the dapp's selected EVM

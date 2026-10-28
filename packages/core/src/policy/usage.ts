@@ -7,7 +7,10 @@ export interface AutoApproveUsage {
   readonly day: number;
   /** Auto-signed requests today. */
   readonly count: number;
-  /** Native value auto-signed today per EVM chain ID (decimal keys), wei, decimal. */
+  /**
+   * Native spend auto-signed today per EVM chain ID (decimal keys), wei, decimal: each transaction's value plus its
+   * maximum fee (match.ts `spend`), so fees count against maxValueWeiPerDay.
+   */
   readonly valueWeiByChain: Readonly<Record<string, string>>;
 }
 
@@ -22,7 +25,7 @@ export function usageToday(usage: AutoApproveUsage | null | undefined, nowMs: nu
   return Object.freeze({ day, count: 0, valueWeiByChain: Object.freeze({}) });
 }
 
-/** Usage after one more auto-signed request (with `valueWei` on EVM chain `chainId`, if any). */
+/** Usage after one more auto-signed request (with native spend `valueWei`, value + maximum fee, on EVM chain `chainId`). */
 export function recordAutoApproveUse(
   usage: AutoApproveUsage | null | undefined,
   nowMs: number,

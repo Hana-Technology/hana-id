@@ -1,7 +1,8 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`).
+known open issues. Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`; auto-approve policies and open
+issues (b)–(d) against `fix/b-core-policy`, off `feat/batch-b` 0f0a437).
 
 Component map and flows: `docs/architecture.md`. On-chain layouts and the contract's own security notes:
 `docs/contract-interface.md` ("Security notes (for reviewers)"). Browser parts (vault, auth pages, partner client)
@@ -183,20 +184,27 @@ Code: `packages/core/src/policy/` (validator, matcher, `policyId`, usage). The v
 - **Never covered**: `hana_signRaw`, `personal_sign`, `stellar_signMessage` (`NEVER_AUTO_APPROVED_KINDS`), EVM
   contract creation, fee-bump and v0 Stellar envelopes, Stellar classic operations other than a listed `changeTrust`,
   contract creation or upload host functions, anything that fails to decode.
-- **Validator** (`validateAutoApprovePolicy`, `validate.ts:404`): strict JSON, unknown keys refused at every level,
+- **Validator** (`validateAutoApprovePolicy`, `validate.ts:454`): strict JSON, unknown keys refused at every level,
   `perDayCount` 1..500, `maxConsentMs` ≤ the app's `session_ttl_ms`, safe label and names, selector must equal the
-  signature's, `addressArgs` required on an EVM function that takes an address, `addressArgs: 'any'` refused on
-  value-moving names (`isValueMovingFunctionName`, `validate.ts:74`), `'self-or-listed'` refused on EVM functions with
-  `bytes`, `string` or `bytes20`–`bytes32` arguments, decoder ids must be shipped (none in batch B).
-- **Matcher** (`matchAutoApprovePolicy`, `match.ts:91`), every check must pass:
+  signature's, `addressArgs` required on an EVM function that takes an address, decoder ids must be shipped (none in
+  batch B). `addressArgs: 'any'` is refused on value-moving names (`isValueMovingFunctionName`, `validate.ts:112`)
+  and execute/multicall-style names (`isExecutionStyleFunctionName`, `validate.ts:117`) on both chains. An EVM
+  function with an opaque argument (`policy/opaque.ts`: `bytes`, `string`, `bytes20`–`bytes32`, `uint160`/`int160`, at
+  any depth of arrays and tuples) is refused under either rule (`validate.ts:359`): it needs a protocol decoder.
+- **Matcher** (`matchAutoApprovePolicy`, `match.ts:95`), every check must pass:
+  - Opaque arguments are refused under either rule, on every request (defence in depth on EVM, the only check on
+    Stellar, where a policy names functions without argument types): Soroban `Bytes`/`BytesN`/`String` at any depth
+    of `Vec`/`Map` (`match.ts:204`), ABI values as above (`match.ts:393`), EIP-712 fields of those types.
   - Address rule `'self-or-listed'`: every typed address at any depth (Soroban invocation tree including auth
-    entries, ABI-decoded calldata, EIP-712 structs) is the user, a listed contract or a policy `addresses` entry;
-    opaque arguments (Soroban `Bytes`/`String`, ABI `bytes`/`string`/`bytes20`+) are refused.
+    entries, ABI-decoded calldata, EIP-712 structs) is the user, a listed contract or a policy `addresses` entry.
+    `'any'` skips only this check.
   - Stellar: passphrase listed; fee ≤ `maxFeeStroops`; tx and op sources are the user; footprint operations only on
     listed contracts' data.
-  - EVM: chain listed; `to` and selector listed; calldata decodes against the listed signature; max fee
-    (`gasLimit × maxFeePerGas`) ≤ `maxFeeWei`; `value` ≤ `maxValueWei`; today's auto-signed value + `value` ≤
-    `maxValueWeiPerDay`.
+  - EVM (`match.ts:405`): chain listed; `to` and selector listed; calldata decodes against the listed signature; max
+    fee (`gasLimit × maxFeePerGas`, or `gasLimit × gasPrice`) ≤ `maxFeeWei` (`fee_too_high`); `value` ≤
+    `maxValueWei` (`value_too_high`); `value + max fee` ≤ `maxValueWei` (`value_plus_fee_too_high`); today's
+    auto-signed spend + `value + max fee` ≤ `maxValueWeiPerDay` (`daily_value_exceeded`). The recorded spend is
+    `value + max fee` (`usage.ts`), an upper bound on what the transaction can take from the native balance.
   - EIP-712: `(verifyingContract, primaryType)` listed for a listed chain.
   - Every match counts against `perDayCount` (UTC day, per device).
 - **Consent** ends at `min(grantedAt + maxConsentMs, session expiry)`, logout, `hana_revokeAutoApprove` or "Stop
@@ -204,11 +212,16 @@ Code: `packages/core/src/policy/` (validator, matcher, `policyId`, usage). The v
 - **Residual risk (accepted):** within a policy, partner-page XSS can submit allowed calls at bad prices to the
   user's own address; token amounts other than native value aren't capped (Q39); contract names on the consent screen
   are partner-supplied (Q41); Sodax calls carry intents in opaque bytes and always get the popup until a
-  `sodax-intent-v1` decoder exists (Q42).
+  `sodax-intent-v1` decoder exists (Q42). Under `'any'`, a value-moving or execute-style function with another name
+  (`withdraw(to,…)`, `claim`, `bridge`, `swap(…, recipient)`) can't be recognised by name, and its typed addresses
+  aren't checked; only partner-listed contracts and functions are ever auto-approved, and the consent screen warns
+  about every `'any'`. A contract that casts a `uint256` (or a Soroban `u256`) argument to an address isn't caught:
+  only exactly 160-bit integers are treated as opaque, so that wider integers stay usable as amounts.
 
 ## Known open issues
 
-Findings (a)–(d) were raised after the batch B build and are being fixed; each is checked against commit 14e6fc3.
+Findings (a)–(d) were raised after the batch B build; (a) is checked against commit 14e6fc3, (b)–(d) are fixed on
+`fix/b-core-policy` (off `feat/batch-b` 0f0a437).
 
 **(a) Unlock and touch don't re-check the app's current settings.** `shareAction` and `unlock`
 (`apps/api/src/vault/endpoints.ts:256`, `:308`) load no settings. Confirmed:
@@ -220,31 +233,33 @@ Findings (a)–(d) were raised after the batch B build and are being fixed; each
 - Planned fix: unlock and touch refuse and revoke the share when `persistence` is `'none'`, and cap the absolute
   expiry at `created_at + current session_ttl_ms`.
 
-**(b) EVM max fee isn't counted in the value limits.** Partly fixed. Since 879ac55 the matcher caps the fee per
-transaction (`tx.maxFeeWei ≤ chain.maxFeeWei`, `packages/core/src/policy/match.ts:392`). But `maxValueWei` compares
-`tx.value` alone (`match.ts:395`), the daily check adds `tx.value` alone (`match.ts:396`), and the recorded spend is
-`tx.value` (`match.ts:400`, `usage.ts:26`). So per day an injected script can burn up to `perDayCount × maxFeeWei` in
-fees on top of `maxValueWeiPerDay`. Fix: count `value + maxFee` in the per-transaction and daily limits.
+**(b) EVM max fee isn't counted in the value limits.** Fixed (`fix/b-core-policy`). Besides the per-transaction fee
+cap (`fee_too_high`), the matcher counts `value + max fee` against `maxValueWei` (`value_plus_fee_too_high`) and
+against `maxValueWeiPerDay`, and records `value + max fee` as the day's spend (`packages/core/src/policy/match.ts:405`,
+`usage.ts`). Fees can no longer be burnt on top of `maxValueWeiPerDay`. What remains: the recorded spend is the
+maximum fee, not the fee actually paid, so the daily limit is conservative; and a policy whose `maxValueWei` is below
+the fees its calls pay (`"0"` included) validates but never auto-approves an EVM transaction (the validator doesn't
+refuse `maxValueWei < maxFeeWei`; open question for the user).
 
-**(c) The `addressArgs: 'any'` denylist is weak.** Partly fixed. Since 879ac55 the name check matches prefixes and
-substrings (`validate.ts:57`–`77`), so `transferAndCall`, `safeTransferFrom`, `send`, `operatorSend` and
-`authorizeOperator` are now refused. Still open:
-- `'any'` is accepted on every function whose name isn't on the list, including those with opaque arguments:
-  `multicall(bytes[])`, `execute(address,uint256,bytes)`, `aggregate((address,bytes)[])`, routers with a `bytes` path.
-  The matcher skips all address and opaque checks under `'any'` (`match.ts:382`), so such a call can carry a
-  transfer or approval to any address.
-- Renamed or non-standard value-moving functions (`withdraw(to,…)`, `redeem`, `claim`, `bridge`, `swap(…, recipient)`)
-  also pass; a name denylist can't be complete.
-- The same applies to Stellar functions (`validate.ts`, Stellar section).
-- Fix direction: refuse `'any'` on functions with opaque arguments or execute/multicall-style names, and require a
-  protocol decoder for them.
+**(c) The `addressArgs: 'any'` denylist is weak.** Fixed as far as a validator can (`fix/b-core-policy`). `'any'` is
+now also refused on EVM functions with an opaque argument (`multicall(bytes[])`, `execute(address,uint256,bytes)`,
+`aggregate((address,bytes)[])`, routers with a `bytes` path) and on execute/multicall/aggregate/delegatecall/call/
+batch/invoke/relay/upgrade-style names on both chains (`isExecutionStyleFunctionName`, `validate.ts:117`); such
+functions need a protocol decoder. Because a Stellar policy names functions without argument types, the matcher
+refuses Soroban `Bytes`/`BytesN`/`String` arguments under `'any'` as under `'self-or-listed'` (`match.ts:204`), and on
+EVM it refuses opaque values under `'any'` too, as defence in depth (`match.ts:393`). Residual risk (accepted, see
+"Auto-approve policies"): a value-moving or execute-style function under a name the lists don't cover
+(`withdraw(to,…)`, `redeem`, `claim`, `bridge`, `swap(…, recipient)`) still passes with `'any'`, and its typed
+address arguments are not checked; only partner-listed contracts are ever auto-approved, and the consent screen
+warns about each `'any'`.
 
-**(d) 160-bit integers aren't treated as opaque under `'self-or-listed'`.** Confirmed, not fixed.
-`isOpaqueToAddressRule` (`packages/core/src/policy/opaque.ts:13`) and `isOpaqueAbiValue` (`opaque.ts:18`) cover only
-`bytes`, `string` and `bytes20`+, and the matcher checks only `address`-typed values (`match.ts:386`). A function
-taking `uint160`/`int160` (an address as an integer) passes the address rule unchecked. Planned fix: treat 160-bit
-integers as opaque; keep wider integers allowed as amounts. Residual risk, to document with the fix: a contract that
-casts a `uint256` to an address isn't caught.
+**(d) 160-bit integers aren't treated as opaque under `'self-or-listed'`.** Fixed (`fix/b-core-policy`).
+`isOpaqueToAddressRule` and `isOpaqueAbiValue` (`packages/core/src/policy/opaque.ts`) treat any integer exactly 160
+bits wide (`uint160`, `int160`) as opaque, at any depth, in calldata (validator and matcher) and in EIP-712 fields.
+Soroban has no 160-bit integer type, so the Soroban check is unchanged. Wider integers (`uint256` and the like) stay
+allowed as amounts. Residual risk: a contract that casts a `uint256` (or a Soroban `u256`) argument to an address
+isn't caught. Side effect: Permit2 typed data (`PermitDetails.amount` is `uint160`) and calls with a `uint160`
+argument (Uniswap v3 `sqrtPriceLimitX96`) can no longer be auto-approved; they need a decoder.
 
 Other issues and doubts found while verifying:
 

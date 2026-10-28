@@ -18,8 +18,8 @@
     "chains": [
       {
         "chainId": 11155111,
-        "maxValueWei": "0",
-        "maxValueWeiPerDay": "0",
+        "maxValueWei": "1000000000000000",
+        "maxValueWeiPerDay": "20000000000000000",
         "maxFeeWei": "1000000000000000",
         "contracts": [
           {

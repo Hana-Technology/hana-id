@@ -4,7 +4,7 @@ Embedded wallets from social login (Google now, email later), keys derived by NE
 A Privy-style service: partners integrate an SDK; users log in with Google; the NEAR contract `hana-signer` checks the
 Google token on-chain and asks the MPC for the user's key, encrypted so only the user's browser can read it.
 
-Start with `docs/context.md` (how it works, decisions so far) and `docs/batch-a-spec.md` (current work).
+Start with `docs/README.md` (doc index): `docs/architecture.md` for how it works today, `docs/decisions.md` for why.
 Plan doc: https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi
 
 ## Rules
@@ -20,6 +20,10 @@ Plan doc: https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi
 - Git: remote `Hana-Technology/hana-id` (private). Work on feature branches, PR into `develop`; `main` = releases.
   A gitleaks pre-commit hook blocks secrets; never bypass it (`--no-verify`).
 - Target is a production MVP (mainnet, real funds): production standards everywhere, tests for every behaviour.
+- Docs ship with the code. Any change to behaviour, an endpoint, a key, a flow, a command or a security property updates
+  the matching current-state doc (`docs/README.md` lists them) in the same branch and bumps its "Last verified" line.
+  Decisions made in conversation go into `docs/decisions.md` when they're made. Batch specs are history: don't treat
+  them as the current state, and don't update them after the batch merges.
 
 ## Layout
 

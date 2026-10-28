@@ -404,6 +404,14 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
 - Why: partner-chosen names can mislead ("USDC", "Uniswap Router"); addresses alone mean nothing to most users.
 - Rejected: partner names as-is; addresses only.
 
+### D45. Granting auto-approve needs no fresh Google sign-in
+- Date 2026-10-28 · Status: confirmed by the user · Source: `docs/batch-b-spec.md` Q40
+- Decision: consent stays a guarded click in the Hana popup, per device, ending with the session. Hana Home (D40) will
+  list active consents per device and let the user revoke them from any device. A consent that outlives a session,
+  if ever added, needs a fresh sign-in.
+- Why: whoever can click Allow can already click Approve on any single request, which is more powerful than a capped
+  consent; a fresh sign-in would add ~9 s and $0.021 for little protection.
+
 ## Superseded or amended
 
 | Was | Now | Source |

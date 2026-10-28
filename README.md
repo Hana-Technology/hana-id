@@ -201,6 +201,8 @@ admin <env> app:origins:add    --app <app id | pk_test_…> --origin <origin> [�
 admin <env> app:origins:remove --app <app id | pk_test_…> --origin <origin> […] [--remote]
 admin <env> app:suspend|app:resume --app <app id | pk_test_…> [--remote]
 admin <env> app:list [--remote]
+admin <env> app:settings <app id | pk_test_…> [--persistence session|none] [--session-ttl 12h] [--idle-ttl 2h]
+             [--raw-sign off|approval] [--google-web-client <client id>|default] [--auto-approve <policy.json>|off] [--remote]
 admin <env> scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […] [--yes]
 ```
 
@@ -213,6 +215,13 @@ admin <env> scope:register [--client <google client id> …] [--allow-shared] (-
 - `app:create` checks that the scope exists on chain and the plan exists in D1. It generates the app id and a
   publishable key (`pk_test_` + base58 of 24 random bytes) and prints the key. Publishable keys are public: origins
   are what gate them.
+- `app:settings` sets the app's vault settings (`docs/batch-b-spec.md` "App settings"); without setting flags it
+  prints them. It checks every range (session TTL 1 h to 23 h 50 min, idle TTL 15 min to the session TTL), checks
+  `--google-web-client` against the scope's Google clients on chain (`default` unpins it: the scope's first one), and
+  validates `--auto-approve` with `@hana-id/core`'s `validateAutoApprovePolicy`, storing its normalized form and
+  printing its `policyId`. Loosening is delayed: `--raw-sign approval` and a new policy are written as pending, in
+  force after 24 h (the manifest's `changeDelayMs` in `local*`/`sandbox*` envs), and re-running doesn't restart the
+  delay. `--raw-sign off` and `--auto-approve off` are immediate. Every change is printed with its time.
 - `scope:register` calls `admin_register_scope(owners, clients, null, allow_shared)` with the owner's keychain key.
   Without `--yes` it prints the call and stops. It works only while `public_registration` is false, and the contract
   assigns the id (`s1`, `s2`, …), which the command prints. `--allow-shared` lets the app log in through Hana's

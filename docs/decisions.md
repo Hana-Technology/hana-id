@@ -362,6 +362,15 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
 - Rejected: EVM seed phrase export. Deferred (future): a standalone open-source recovery tool that works without
   Hana's servers.
 
+### D41. Key export stays available and mandatory
+- Date 2026-10-28 · Status: confirmed by the user · Source: conversation on lock-in
+- Decision: export lives in account settings behind its security checks (fresh Google sign-in, typed confirmation);
+  it is never removed, hidden behind support, or switchable off by partners. Retention comes from Hana Home as a
+  cross-app destination, features (auto-approve, gas sponsorship, no seed phrase) and partner switching cost
+  (addresses come from Hana's contract).
+- Why: a working exit underpins the non-custodial claim (get legal advice before mainnet) and partner due diligence.
+- Rejected: letting partners disable export (Privy allows it); extra delays or friction beyond the security checks.
+
 ## Superseded or amended
 
 | Was | Now | Source |

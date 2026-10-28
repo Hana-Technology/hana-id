@@ -5,7 +5,7 @@ import type { NearRpc } from './near.ts';
  * Methods the relayer's session-pool keys (the API's RELAYER_KEYS) may call on the signer (docs/batch-a2-shared-client.md).
  * Logins only: abuse of the owner endpoint can never use up these keys.
  */
-export const SESSION_RELAYER_METHODS = ['create_session', 'derive_key', 'revoke_session', 'prune_sessions'] as const;
+export const SESSION_RELAYER_METHODS = ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions'] as const;
 
 /** Methods the relayer's owner-pool keys (the API's OWNER_RELAYER_KEYS, /v1/owner-actions) may call on the signer. */
 export const OWNER_RELAYER_METHODS = [

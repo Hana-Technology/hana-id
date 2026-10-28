@@ -16,7 +16,7 @@ const SHARED = 'shared.apps.googleusercontent.com';
 const m = { ...base, googleClientIds: ['hana.apps.googleusercontent.com'], sharedGoogleClientIds: [SHARED] };
 const NEAR = 10n ** 24n;
 
-const SESSION = ['create_session', 'derive_key', 'revoke_session', 'prune_sessions'];
+const SESSION = ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions'];
 const OWNER = ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change', 'register_scope', 'apply_pending_config'];
 const UPDATER = ['set_issuer_key', 'remove_issuer_key'];
 /** Batch A's single relayer pool. */

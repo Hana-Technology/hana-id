@@ -21,12 +21,14 @@ export const MAX_CLIENT_PROOFS = 10;
 export const registerScopeTgas = (proofs: number): number => Math.min(MAX_TGAS, REGISTER_SCOPE_BASE_TGAS + REGISTER_SCOPE_PER_PROOF_TGAS * Math.max(0, proofs));
 
 /**
- * Defaults in Tgas. derive_key forwards 20 Tgas to the MPC (yield/resume) and needs ≥ 50 attached. register_scope's
+ * Defaults in Tgas. derive_key forwards 20 Tgas to the MPC (yield/resume) and needs ≥ 50 attached;
+ * create_session_and_derive is both in one receipt (docs/batch-b-spec.md). register_scope's
  * entry is its worst case, registerScopeTgas(MAX_CLIENT_PROOFS); gasFor scales it to the call's actual proof count.
  * Values stay numeric literals: contracts/integration-tests parses this table.
  */
 export const DEFAULT_GAS_TGAS: Readonly<Record<RelayMethod, number>> = {
   create_session: 50,
+  create_session_and_derive: 100,
   derive_key: 60,
   revoke_session: 20,
   prune_sessions: 50,

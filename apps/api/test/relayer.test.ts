@@ -373,7 +373,7 @@ describe('RelayerKey Durable Object', () => {
     const near = new NearMock();
     near.install();
     expect(POOL_METHODS).toEqual({
-      session: ['create_session', 'derive_key', 'revoke_session', 'prune_sessions'],
+      session: ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions'],
       owner: ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change', 'register_scope', 'apply_pending_config'],
     });
     const never = ['set_issuer_key', 'remove_issuer_key', 'admin_register_scope', 'set_owner', 'set_shared_clients', 'set_sponsors', 'enable_public_registration', 'sign', '__proto__'];
@@ -521,7 +521,7 @@ describe('RelayerKey Durable Object', () => {
 
 describe('gas', () => {
   it('defaults (to measure on testnet) and overrides', () => {
-    expect(DEFAULT_GAS_TGAS).toMatchObject({ create_session: 50, derive_key: 60, revoke_session: 20, prune_sessions: 50 });
+    expect(DEFAULT_GAS_TGAS).toMatchObject({ create_session: 50, create_session_and_derive: 100, derive_key: 60, revoke_session: 20, prune_sessions: 50 });
     for (const m of POOL_METHODS.owner) expect(DEFAULT_GAS_TGAS[m], m).toBe(m === 'register_scope' ? registerScopeTgas(MAX_CLIENT_PROOFS) : 50);
     expect(gasEnvVar('derive_key')).toBe('GAS_DERIVE_KEY_TGAS');
     expect(gasFor('derive_key', {})).toBe(60n * TGAS);

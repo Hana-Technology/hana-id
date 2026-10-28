@@ -5,11 +5,13 @@ import { describe, expect, it } from 'vitest';
 import {
   APPROVAL_KINDS,
   type ApprovalDigestInput,
+  type ApprovalSubject,
   DecodeError,
   approvalContextString,
   approvalDigest,
   approvalDigestPreimage,
   approvalKindChain,
+  approvalKindContext,
   decodeApprovalRequest,
   digestsEqual,
   rawSigningWarning,
@@ -37,7 +39,8 @@ function referenceDigest(i: ApprovalDigestInput): string {
     len.writeUInt32LE(b.length);
     return Buffer.concat([len, b]);
   };
-  const ctx = 'networkPassphrase' in i.context ? i.context.networkPassphrase : String(i.context.chainId);
+  const ctx =
+    'networkPassphrase' in i.context ? i.context.networkPassphrase : 'chainId' in i.context ? String(i.context.chainId) : '';
   const len = Buffer.alloc(4);
   len.writeUInt32LE(i.bytes.length);
   return createHash('sha256')
@@ -64,12 +67,15 @@ describe('approval digest', () => {
     expect(bytesToHex(approvalDigest(base))).toBe(referenceDigest(base));
     const evm: ApprovalDigestInput = {
       ...base,
-      kind: 'eip712',
+      kind: 'evm_tx',
       chain: 'evm',
       address: EVM_USER,
       context: { chainId: 8453 },
     };
     expect(bytesToHex(approvalDigest(evm))).toBe(referenceDigest(evm));
+    // Typed data (like messages and raw) binds an empty context string.
+    const typed: ApprovalDigestInput = { ...evm, kind: 'eip712', context: {} };
+    expect(bytesToHex(approvalDigest(typed))).toBe(referenceDigest(typed));
   });
 
   it('starts with the domain and ends with the length-prefixed bytes', () => {
@@ -133,10 +139,17 @@ describe('approval subject validation', () => {
     ['oversize bytes', { ...base, bytes: new Uint8Array(192 * 1024 + 1) }],
     [
       'a raw EVM request that is not 32 bytes',
-      { ...base, kind: 'raw', chain: 'evm', context: { chainId: 1 }, bytes: new Uint8Array(31) },
+      { ...base, kind: 'raw', chain: 'evm', context: {}, bytes: new Uint8Array(31) },
     ],
-    ['an empty raw Stellar request', { ...base, kind: 'raw', bytes: new Uint8Array() }],
-    ['a raw Stellar request over 4 KiB', { ...base, kind: 'raw', bytes: new Uint8Array(4097) }],
+    ['an empty raw Stellar request', { ...base, kind: 'raw', context: {}, bytes: new Uint8Array() }],
+    ['a raw Stellar request over 4 KiB', { ...base, kind: 'raw', context: {}, bytes: new Uint8Array(4097) }],
+    ['a transaction without its context', { ...base, context: {} }],
+    ['an EVM transaction without its chain ID', { ...base, kind: 'evm_tx', chain: 'evm', context: {} }],
+    ['a context on a Stellar message', { ...base, kind: 'stellar_message' }],
+    ['a context on raw', { ...base, kind: 'raw' }],
+    ['a chain ID on personal_sign', { ...base, kind: 'personal_sign', chain: 'evm', context: { chainId: 1 } }],
+    ['a chain ID on typed data', { ...base, kind: 'eip712', chain: 'evm', context: { chainId: 1 } }],
+    ['a context that is not an object', { ...base, kind: 'eip712', chain: 'evm', context: null }],
   ])('refuses %s', (_, subject) => {
     expect(() => validateApprovalSubject(subject as never)).toThrow();
     expect(() => approvalDigest(subject as never)).toThrow();
@@ -150,6 +163,20 @@ describe('approval subject validation', () => {
   it('renders the context string', () => {
     expect(approvalContextString('stellar', { networkPassphrase: PASSPHRASE })).toBe(PASSPHRASE);
     expect(approvalContextString('evm', { chainId: 8453 })).toBe('8453');
+    expect(approvalContextString('evm', {})).toBe('');
+    expect(approvalContextString('stellar', {})).toBe('');
+  });
+
+  it('gives each kind its context: passphrase, chain ID or none', () => {
+    expect(APPROVAL_KINDS.map((k) => [k, approvalKindContext(k)])).toEqual([
+      ['stellar_tx', 'networkPassphrase'],
+      ['stellar_auth_entry', 'networkPassphrase'],
+      ['stellar_message', 'none'],
+      ['evm_tx', 'chainId'],
+      ['personal_sign', 'none'],
+      ['eip712', 'none'],
+      ['raw', 'none'],
+    ]);
   });
 
   it('words the raw warning as the spec does', () => {
@@ -183,13 +210,24 @@ describe('decodeApprovalRequest', () => {
         message: { a: 1 },
       }),
     );
-  const evm = (kind: 'evm_tx' | 'eip712' | 'personal_sign', bytes: Uint8Array, chainId = 8453) =>
-    ({ kind, chain: 'evm', address: EVM_USER, context: { chainId }, bytes }) as const;
+  const evm = (kind: 'evm_tx' | 'eip712' | 'personal_sign', bytes: Uint8Array, chainId = 8453): ApprovalSubject => ({
+    kind,
+    chain: 'evm',
+    address: EVM_USER,
+    context: kind === 'evm_tx' ? { chainId } : {},
+    bytes,
+  });
   const stellar = (
     kind: 'stellar_tx' | 'stellar_auth_entry' | 'stellar_message' | 'raw',
     bytes: Uint8Array,
     networkPassphrase = PASSPHRASE,
-  ) => ({ kind, chain: 'stellar', address: USER, context: { networkPassphrase }, bytes }) as const;
+  ): ApprovalSubject => ({
+    kind,
+    chain: 'stellar',
+    address: USER,
+    context: kind === 'stellar_message' || kind === 'raw' ? {} : { networkPassphrase },
+    bytes,
+  });
 
   it('decodes each kind', () => {
     expect(decodeApprovalRequest(stellar('stellar_tx', txBytes([paymentOp()])))).toMatchObject({
@@ -213,8 +251,15 @@ describe('decodeApprovalRequest', () => {
     });
     expect(decodeApprovalRequest(evm('eip712', typedData(8453)))).toMatchObject({
       kind: 'eip712',
+      chainId: 8453,
       view: { primaryType: 'M' },
     });
+    // Typed data names its own chain (the request has no context to compare it with), or none.
+    expect(decodeApprovalRequest(evm('eip712', typedData(1)))).toMatchObject({ chainId: 1 });
+    const noChain = new TextEncoder().encode(
+      JSON.stringify({ types: { EIP712Domain: [{ name: 'name', type: 'string' }], M: [] }, primaryType: 'M', domain: { name: 'x' }, message: {} }),
+    );
+    expect(decodeApprovalRequest(evm('eip712', noChain))).toMatchObject({ kind: 'eip712', chainId: null });
     expect(decodeApprovalRequest(evm('personal_sign', new TextEncoder().encode('Sign in')))).toMatchObject({
       message: { text: 'Sign in' },
     });
@@ -230,7 +275,6 @@ describe('decodeApprovalRequest', () => {
       return 'no error';
     };
     expect(code(() => decodeApprovalRequest(evm('evm_tx', evmTx(1))))).toBe('network_mismatch');
-    expect(code(() => decodeApprovalRequest(evm('eip712', typedData(1))))).toBe('network_mismatch');
     const auth = authPreimageBytes(invocation(POOL, 'f', []));
     expect(
       code(() =>
@@ -252,7 +296,7 @@ describe('decodeApprovalRequest', () => {
     });
     const digest = new Uint8Array(32).fill(0xab);
     expect(
-      decodeApprovalRequest({ kind: 'raw', chain: 'evm', address: EVM_USER, context: { chainId: 1 }, bytes: digest }),
+      decodeApprovalRequest({ kind: 'raw', chain: 'evm', address: EVM_USER, context: {}, bytes: digest }),
     ).toEqual({
       kind: 'raw',
       chain: 'evm',

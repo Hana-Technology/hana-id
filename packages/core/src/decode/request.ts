@@ -24,10 +24,11 @@ export type DecodedApproval =
     }
   | { readonly kind: 'stellar_message'; readonly message: DecodedMessage }
   | { readonly kind: 'evm_tx'; readonly chainId: number; readonly tx: DecodedEvmTx }
-  | { readonly kind: 'personal_sign'; readonly chainId: number; readonly message: DecodedMessage }
+  | { readonly kind: 'personal_sign'; readonly message: DecodedMessage }
   | {
       readonly kind: 'eip712';
-      readonly chainId: number;
+      /** The domain's chainId, or null when the domain declares none (the request itself names no network). */
+      readonly chainId: number | null;
       readonly typedData: NormalizedTypedData;
       readonly view: TypedDataView;
     }
@@ -48,8 +49,8 @@ export function typedDataFromBytes(bytes: Uint8Array): NormalizedTypedData {
 
 /**
  * Decodes a request for display (and for the auto-approve matcher). Throws DecodeError when the bytes are malformed
- * or name another network than `context` (an EVM transaction's or a typed-data domain's chain ID, an authorization's
- * network ID).
+ * or name another network than `context` (an EVM transaction's chain ID, an authorization's network ID). Messages,
+ * typed data and raw requests carry no context (approval.ts); typed data shows its domain's chain.
  */
 export function decodeApprovalRequest(s: ApprovalSubject): DecodedApproval {
   try {
@@ -79,14 +80,10 @@ export function decodeApprovalRequest(s: ApprovalSubject): DecodedApproval {
       return { kind: s.kind, chainId: ctx.chainId as number, tx };
     }
     case 'personal_sign':
-      return { kind: s.kind, chainId: ctx.chainId as number, message: decodeMessage(s.bytes) };
+      return { kind: s.kind, message: decodeMessage(s.bytes) };
     case 'eip712': {
       const typedData = typedDataFromBytes(s.bytes);
-      const domainChain = typedDataChainId(typedData);
-      if (domainChain !== null && domainChain !== ctx.chainId) {
-        fail('network_mismatch', 'Typed data domain is for another chain');
-      }
-      return { kind: s.kind, chainId: ctx.chainId as number, typedData, view: typedDataView(typedData) };
+      return { kind: s.kind, chainId: typedDataChainId(typedData), typedData, view: typedDataView(typedData) };
     }
     case 'raw':
       return { kind: s.kind, chain: s.chain, hex: toHex0x(s.bytes) };

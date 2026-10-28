@@ -7,7 +7,9 @@
 //                   ‖ borsh(parentOrigin) ‖ borsh(contextString) ‖ u32le(len(bytes)) ‖ bytes)
 //
 // borsh(s) is u32 LE byte length ‖ UTF-8; contextString is the network passphrase (Stellar) or the decimal chain ID
-// (EVM).
+// (EVM) for the kinds whose request names its network (stellar_tx, stellar_auth_entry, evm_tx), and '' for the others:
+// a message, typed data (its domain carries the chain) or a raw request names none, and the vault, which never learns
+// the partner's selected EVM chain (the SDK answers eth_chainId), has none to bind.
 import { sha256 } from '@noble/hashes/sha2';
 
 export const APPROVAL_DIGEST_DOMAIN = 'hana-id/approve/v1';
@@ -42,7 +44,16 @@ export const NEVER_AUTO_APPROVED_KINDS: ReadonlySet<ApprovalKind> = new Set([
   'stellar_message',
 ]);
 
-export type ApprovalContext = { readonly networkPassphrase: string } | { readonly chainId: number };
+export type ApprovalContext =
+  | { readonly networkPassphrase: string }
+  | { readonly chainId: number }
+  | { readonly [key: string]: never };
+
+/** The context a kind carries: the network passphrase, the chain ID, or none (`{}`). */
+export function approvalKindContext(kind: ApprovalKind): 'networkPassphrase' | 'chainId' | 'none' {
+  if (kind === 'stellar_tx' || kind === 'stellar_auth_entry') return 'networkPassphrase';
+  return kind === 'evm_tx' ? 'chainId' : 'none';
+}
 
 /** The signed part of a request: everything the popup renders and the digest binds, except `id` and origin. */
 export interface ApprovalSubject {
@@ -90,6 +101,11 @@ export function validateApprovalSubject(s: ApprovalSubject): void {
   const kindChain = approvalKindChain(s.kind);
   if (kindChain !== null && kindChain !== s.chain) throw new Error(`Kind ${s.kind} is not on ${s.chain}`);
   checkString(s.address, 'address');
+  const contextKeys = typeof s.context === 'object' && s.context !== null ? Object.keys(s.context) : null;
+  const wanted = approvalKindContext(s.kind);
+  if (wanted === 'none' ? contextKeys?.length !== 0 : contextKeys?.length !== 1 || contextKeys[0] !== wanted) {
+    throw new Error(wanted === 'none' ? `${s.kind} has no context` : `${s.kind} context is {${wanted}}`);
+  }
   approvalContextString(s.chain, s.context);
   if (!(s.bytes instanceof Uint8Array)) throw new Error('bytes must be a Uint8Array');
   if (s.bytes.length > APPROVAL_MAX_BYTES) throw new Error('bytes too large');
@@ -101,9 +117,14 @@ export function validateApprovalSubject(s: ApprovalSubject): void {
   }
 }
 
-/** The network passphrase (Stellar) or the decimal chain ID (EVM). Throws if the context doesn't fit the chain. */
+/**
+ * The network passphrase (Stellar), the decimal chain ID (EVM), or '' for an empty context. Throws if the context
+ * doesn't fit the chain (validateApprovalSubject also checks it fits the kind).
+ */
 export function approvalContextString(chain: ApprovalChain, context: ApprovalContext): string {
-  const keys = typeof context === 'object' && context !== null ? Object.keys(context) : [];
+  if (typeof context !== 'object' || context === null) throw new Error('context must be an object');
+  const keys = Object.keys(context);
+  if (keys.length === 0) return '';
   if (chain === 'stellar') {
     if (keys.length !== 1 || !('networkPassphrase' in context)) {
       throw new Error('Stellar context is {networkPassphrase}');

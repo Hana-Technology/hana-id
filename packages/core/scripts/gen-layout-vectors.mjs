@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Writes test/vectors/layouts-v1.json: worked examples of the off-chain byte layouts in docs/batch-b-spec.md (vault
 // message, vault record AAD, approval digest, relay id and relay AAD), each with its parts, the whole preimage and the
-// digest. It is an independent implementation (node:crypto and Buffer only) that src/layouts.ts must agree with byte
-// for byte (test/layouts.test.ts). The on-chain layouts' examples stay in contracts/hana-signer/src/test_fixture.json.
+// digest. It is an independent implementation (node:crypto and Buffer only) that src/layouts.ts and, for the approval
+// digest, src/approval.ts must agree with byte for byte (test/layouts.test.ts). The on-chain layouts' examples stay in
+// contracts/hana-signer/src/test_fixture.json.
 //
 //   node packages/core/scripts/gen-layout-vectors.mjs
 
@@ -101,7 +102,7 @@ const layouts = {
   record_aad: example('Vault record AAD', recordParts),
   approval_stellar: approval('Approval digest: Stellar transaction on testnet', {
     id: '00112233445566778899aabbccddeeff',
-    kind: 'stellar_signTransaction',
+    kind: 'stellar_tx',
     chain: 'stellar',
     address: 'GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ',
     context: 'Test SDF Network ; September 2015',
@@ -109,7 +110,7 @@ const layouts = {
   }),
   approval_evm: approval('Approval digest: EVM transaction on chain 11155111', {
     id: 'ffeeddccbbaa99887766554433221100',
-    kind: 'eth_signTransaction',
+    kind: 'evm_tx',
     chain: 'evm',
     address: '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23',
     context: '11155111',
@@ -117,7 +118,7 @@ const layouts = {
   }),
   approval_raw_no_context: approval('Approval digest: raw EVM digest, empty context', {
     id: '0123456789abcdef0123456789abcdef',
-    kind: 'hana_signRaw',
+    kind: 'raw',
     chain: 'evm',
     address: '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23',
     context: '',

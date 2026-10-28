@@ -9,6 +9,7 @@
 // SECURITY: no schema here has a field for key bytes, S, PRK, a CKD response, a Google token or a session secret. The
 // one session secret that crosses postMessage is `relayKey` (hana:auth-params, vault → login popup on authOrigin).
 import { isEvmAddress, isStellarAddress } from './addresses.ts';
+import { APPROVAL_KINDS, type ApprovalContext, type ApprovalKind, approvalKindChain, validateApprovalSubject } from './approval.ts';
 import { base64Decode, from0xHex, toHex, utf8, utf8Length } from './bytes.ts';
 import { KEY_INDEX_LIMIT, MAX_USES_LIMIT, RELAY_ID_PATTERN, SALT_MAX_BYTES, SALT_MIN_BYTES, SHARE_ID_BYTES } from './layouts.ts';
 import { type EvmTxRequest, evmTxSigningPayload, parseEvmTxRequest } from './signers/evm.ts';
@@ -476,11 +477,8 @@ export const isPortEventShape = (data: unknown): boolean => isPlainObject(data) 
 
 export type GoogleClientMode = 'own' | 'shared';
 
-/** Approval request kinds: the port method being approved. */
-export type ApprovalKind = SignMethod;
-
-/** Network context bound into the approval digest. */
-export type ApprovalContext = { networkPassphrase: string } | { chainId: number } | Record<string, never>;
+// Approval request kinds and contexts are approval.ts's (ApprovalKind, ApprovalContext): the digest binds the kind,
+// and the popup's decoders and the auto-approve matcher switch on it. APPROVAL_KIND maps each sign method to its kind.
 
 export interface WindowMessageMap {
   /** SDK → vault, with the MessageChannel port transferred. */
@@ -548,15 +546,27 @@ function isApprovalContext(v: unknown): v is ApprovalContext {
   return false;
 }
 
-const KIND_CHAIN: Record<ApprovalKind, 'stellar' | 'evm' | null> = {
-  stellar_signTransaction: 'stellar',
-  stellar_signAuthEntry: 'stellar',
-  stellar_signMessage: 'stellar',
-  eth_signTransaction: 'evm',
-  personal_sign: 'evm',
-  eth_signTypedData_v4: 'evm',
-  hana_signRaw: null,
+/** The approval kind of each sign method (the `kind` of hana:approve-request and of the approval digest). */
+export const APPROVAL_KIND: Readonly<Record<SignMethod, ApprovalKind>> = {
+  stellar_signTransaction: 'stellar_tx',
+  stellar_signAuthEntry: 'stellar_auth_entry',
+  stellar_signMessage: 'stellar_message',
+  eth_signTransaction: 'evm_tx',
+  personal_sign: 'personal_sign',
+  eth_signTypedData_v4: 'eip712',
+  hana_signRaw: 'raw',
 };
+const isApprovalKind = (v: unknown): v is ApprovalKind => (APPROVAL_KINDS as readonly unknown[]).includes(v);
+
+/** approval.ts's check that kind, chain, context and bytes fit together, as a predicate. */
+function isApprovalSubject(m: Obj): boolean {
+  try {
+    validateApprovalSubject(m as never);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:hello': (m) => exactKeys(m, ['v', 't', 'sdk']) && typeof m.sdk === 'string' && /^[0-9A-Za-z.+-]{1,32}$/u.test(m.sdk),
@@ -581,13 +591,14 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:approve-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:approve-request': (m) => {
     if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'])) return false;
-    if (!isRequestId(m.id) || !isAppName(m.appName) || !isOrigin(m.parentOrigin) || !isSignMethod(m.kind) || !isChain(m.chain)) return false;
-    const expected = KIND_CHAIN[m.kind];
+    if (!isRequestId(m.id) || !isAppName(m.appName) || !isOrigin(m.parentOrigin) || !isApprovalKind(m.kind) || !isChain(m.chain)) return false;
+    const expected = approvalKindChain(m.kind);
     if (expected !== null && expected !== m.chain) return false;
     return (
       isAddressFor(m.chain, m.address) &&
       isBytes(m.bytes, 0, SIGN_MESSAGE_MAX_BYTES) &&
       isApprovalContext(m.context) &&
+      isApprovalSubject(m) &&
       isInt(m.queued, 1, 1000) &&
       isInt(m.position, 1, m.queued as number)
     );
@@ -622,7 +633,7 @@ export function parseWindowMessage<T extends WindowMessageType>(data: unknown, a
 
 /** The approval `chain` of a sign request. */
 export function approvalChain(request: Extract<PortRequest, { method: SignMethod }>): 'stellar' | 'evm' {
-  return request.method === 'hana_signRaw' ? request.params.chain : (KIND_CHAIN[request.method] as 'stellar' | 'evm');
+  return request.method === 'hana_signRaw' ? request.params.chain : (approvalKindChain(APPROVAL_KIND[request.method]) as 'stellar' | 'evm');
 }
 
 /**

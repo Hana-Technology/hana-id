@@ -117,11 +117,11 @@ describe('never-covered kinds', () => {
   it.each([
     [
       'raw (Stellar)',
-      { kind: 'raw', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: swapTx() },
+      { kind: 'raw', chain: 'stellar', address: USER, context: {}, bytes: swapTx() },
     ],
     [
       'raw (EVM)',
-      { kind: 'raw', chain: 'evm', address: EVM_USER, context: { chainId: CHAIN }, bytes: new Uint8Array(32) },
+      { kind: 'raw', chain: 'evm', address: EVM_USER, context: {}, bytes: new Uint8Array(32) },
     ],
     [
       'personal_sign',
@@ -129,7 +129,7 @@ describe('never-covered kinds', () => {
         kind: 'personal_sign',
         chain: 'evm',
         address: EVM_USER,
-        context: { chainId: CHAIN },
+        context: {},
         bytes: new Uint8Array([1]),
       },
     ],
@@ -139,7 +139,7 @@ describe('never-covered kinds', () => {
         kind: 'stellar_message',
         chain: 'stellar',
         address: USER,
-        context: { networkPassphrase: PASSPHRASE },
+        context: {},
         bytes: new Uint8Array([1]),
       },
     ],
@@ -581,7 +581,8 @@ describe('EIP-712', () => {
       kind: 'eip712',
       chain: 'evm',
       address: EVM_USER,
-      context: { chainId: o.chainId ?? CHAIN },
+      // Typed data carries no context: the domain's chainId is what the policy checks.
+      context: {},
       bytes: new TextEncoder().encode(json),
     } as ApprovalSubject;
   };

@@ -2,12 +2,11 @@
 // (the vectors hana-signer's Rust tests use), the off-chain ones against test/vectors/layouts-v1.json
 // (scripts/gen-layout-vectors.mjs). Ported from apps/smoke/test/{layouts,session}.test.ts, plus the batch B layouts.
 import { describe, expect, it } from 'vitest';
+import { type ApprovalChain, type ApprovalContext, type ApprovalDigestInput, type ApprovalKind, approvalContextString, approvalDigest } from '../src/approval.ts';
 import { base64UrlDecode, fromHex, toHex, utf8 } from '../src/bytes.ts';
 import { decodeJwt } from '../src/id-token.ts';
 import {
   KEY_INDEX_LIMIT,
-  approvalContextString,
-  approvalDigest,
   checkSessionParams,
   ckdPayload,
   createShareId,
@@ -240,26 +239,24 @@ describe('approval digest', () => {
     parentOrigin: string;
     bytes: string;
   }
+  // The vectors hold the context string; approvalDigest takes the context object it comes from.
+  const contextOf = (chain: string, s: string): ApprovalContext => (s === '' ? {} : chain === 'stellar' ? { networkPassphrase: s } : { chainId: Number(s) });
+
   it.each(['approval_stellar', 'approval_evm', 'approval_raw_no_context'])('matches %s', (name) => {
     const ex = VL[name]!;
     const i = ex.input as ApprovalInput;
-    const digest = approvalDigest({ id: i.id, kind: i.kind, chain: i.chain, address: i.address, parentOrigin: i.parentOrigin, contextString: i.context, bytes: fromHex(i.bytes) });
-    expect(toHex(digest)).toBe(ex.digest_hex);
+    const input = { id: i.id, kind: i.kind as ApprovalKind, chain: i.chain as ApprovalChain, address: i.address, parentOrigin: i.parentOrigin, context: contextOf(i.chain, i.context), bytes: fromHex(i.bytes) };
+    expect(approvalContextString(input.chain, input.context)).toBe(i.context);
+    expect(toHex(approvalDigest(input))).toBe(ex.digest_hex);
   });
 
   it('changes with any field, including only the context', () => {
-    const i = { id: 'a', kind: 'k', chain: 'evm', address: '0x', parentOrigin: 'https://p.example', contextString: '1', bytes: utf8('x') };
+    const i: ApprovalDigestInput = { id: 'a', kind: 'evm_tx', chain: 'evm', address: '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23', parentOrigin: 'https://p.example', context: { chainId: 1 }, bytes: utf8('x') };
     const d = toHex(approvalDigest(i));
-    for (const change of [{ id: 'b' }, { kind: 'j' }, { chain: 'stellar' }, { address: '0y' }, { parentOrigin: 'https://q.example' }, { contextString: '2' }, { bytes: utf8('y') }]) {
+    const changes: Partial<ApprovalDigestInput>[] = [{ id: 'b' }, { kind: 'personal_sign', context: {} }, { address: '0x2C7536E3605D9C16A7A3D7B1898E529396A65C23' }, { parentOrigin: 'https://q.example' }, { context: { chainId: 2 } }, { bytes: utf8('y') }];
+    for (const change of changes) {
       expect(toHex(approvalDigest({ ...i, ...change }))).not.toBe(d);
     }
-  });
-
-  it('builds the context string from a passphrase, a chain id, or nothing', () => {
-    expect(approvalContextString({ networkPassphrase: 'Test SDF Network ; September 2015' })).toBe('Test SDF Network ; September 2015');
-    expect(approvalContextString({ chainId: 11155111 })).toBe('11155111');
-    expect(approvalContextString({})).toBe('');
-    expect(() => approvalContextString({ chainId: 0 })).toThrow(/chainId/);
   });
 });
 

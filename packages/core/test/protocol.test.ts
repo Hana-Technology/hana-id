@@ -3,8 +3,9 @@
 // either refused or still valid.
 import { describe, expect, it } from 'vitest';
 import { base64Encode, toHex } from '../src/bytes.ts';
-import { approvalContextString, approvalDigest } from '../src/layouts.ts';
+import { type ApprovalDigestInput, approvalContextString, approvalDigest } from '../src/approval.ts';
 import {
+  APPROVAL_KIND,
   ErrorCode,
   MESSAGE_MAX_BYTES,
   PORT_METHODS,
@@ -245,7 +246,7 @@ const APPROVE_REQUEST = {
   id: newRequestId(),
   appName: 'Partner',
   parentOrigin: 'https://partner.example',
-  kind: 'stellar_signTransaction',
+  kind: 'stellar_tx',
   chain: 'stellar',
   address: G,
   bytes: new Uint8Array([1, 2, 3]),
@@ -313,12 +314,16 @@ describe('window messages', () => {
   });
 
   it.each([
-    ['a kind on the wrong chain', { kind: 'eth_signTransaction' }],
+    ['a kind on the wrong chain', { kind: 'evm_tx' }],
     ['an address of the other chain', { address: EVM }],
     ['position over queued', { position: 3 }],
     ['a non-hex id', { id: 'z'.repeat(32) }],
     ['an unknown kind', { kind: 'hana_logout' }],
+    ['a sign method as the kind', { kind: 'stellar_signTransaction' }],
     ['a context with two keys', { context: { networkPassphrase: TESTNET, chainId: 1 } }],
+    ['a transaction without its context', { context: {} }],
+    ['a message with a context', { kind: 'stellar_message' }],
+    ['a raw EVM request that is not a 32-byte digest', { kind: 'raw', chain: 'evm', address: EVM, context: {} }],
     ['bytes over 192 KiB', { bytes: new Uint8Array(SIGN_MESSAGE_MAX_BYTES + 1) }],
   ])('approve-request refuses %s', (_, change) => {
     expect(parseWindowMessage({ ...APPROVE_REQUEST, ...change }, ['hana:approve-request'])).toBeNull();
@@ -330,9 +335,15 @@ describe('window messages', () => {
     expect(parseWindowMessage({ ...VALID_WINDOW['hana:hello'], sdk: '1'.repeat(33) }, ['hana:hello'])).toBeNull();
   });
 
-  it('approve-request allows hana_signRaw on either chain and an empty context', () => {
-    expect(parseWindowMessage({ ...APPROVE_REQUEST, kind: 'hana_signRaw', chain: 'evm', address: EVM, context: {} }, ['hana:approve-request'])).not.toBeNull();
-    expect(parseWindowMessage({ ...APPROVE_REQUEST, kind: 'hana_signRaw', context: {} }, ['hana:approve-request'])).not.toBeNull();
+  it('approve-request allows raw on either chain, and an empty context for messages, typed data and raw', () => {
+    const ok = (change: Record<string, unknown>) => parseWindowMessage({ ...APPROVE_REQUEST, ...change }, ['hana:approve-request']);
+    expect(ok({ kind: 'raw', chain: 'evm', address: EVM, context: {}, bytes: new Uint8Array(32) })).not.toBeNull();
+    expect(ok({ kind: 'raw', context: {} })).not.toBeNull();
+    expect(ok({ kind: 'stellar_message', context: {} })).not.toBeNull();
+    expect(ok({ kind: 'personal_sign', chain: 'evm', address: EVM, context: {} })).not.toBeNull();
+    expect(ok({ kind: 'eip712', chain: 'evm', address: EVM, context: {} })).not.toBeNull();
+    expect(ok({ kind: 'evm_tx', chain: 'evm', address: EVM, context: { chainId: 1 } })).not.toBeNull();
+    expect(ok({ kind: 'eip712', chain: 'evm', address: EVM, context: { chainId: 1 } })).toBeNull();
   });
 
   it('origins are exact URL origins', () => {
@@ -380,7 +391,7 @@ describe('approval content', () => {
     const c = approvalContent(r as never);
     expect(toHex(c.bytes)).toBe(toHex(evmTxSigningPayload(parseEvmTxRequest(TX))));
     expect(c.context).toEqual({ chainId: 11155111 });
-    expect(approvalContextString(c.context)).toBe('11155111');
+    expect(approvalContextString('evm', c.context)).toBe('11155111');
   });
 
   it('messages, typed data and raw: their bytes, no context', () => {
@@ -395,9 +406,9 @@ describe('approval content', () => {
   it('the digest binds the content: popup and vault compute the same one', () => {
     const r = parsePortRequest(req('stellar_signTransaction', VALID_PARAMS.stellar_signTransaction))!;
     const { bytes, context } = approvalContent(r as never);
-    const input = { id: newRequestId(), kind: r.method, chain: 'stellar', address: G, parentOrigin: 'https://partner.example', contextString: approvalContextString(context), bytes };
+    const input: ApprovalDigestInput = { id: newRequestId(), kind: APPROVAL_KIND[r.method as 'stellar_signTransaction'], chain: 'stellar', address: G, parentOrigin: 'https://partner.example', context, bytes };
     expect(toHex(approvalDigest(input))).toBe(toHex(approvalDigest({ ...input, bytes: Uint8Array.from(bytes) })));
-    expect(toHex(approvalDigest({ ...input, contextString: 'Public Global Stellar Network ; September 2015' }))).not.toBe(toHex(approvalDigest(input)));
+    expect(toHex(approvalDigest({ ...input, context: { networkPassphrase: 'Public Global Stellar Network ; September 2015' } }))).not.toBe(toHex(approvalDigest(input)));
   });
 
   it('request ids are 128-bit random hex', () => {

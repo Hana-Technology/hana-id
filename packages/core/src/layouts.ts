@@ -1,8 +1,8 @@
 // Byte layouts. The on-chain ones (session nonce, session message, CKD payload) are the ones hana-signer checks
 // (docs/contract-interface.md "Byte layouts", batch A.2): a mismatch shows up on chain only as a nonce panic or
 // `Invalid session signature`, and at the API as `nonce_mismatch` / `invalid_signature`. The off-chain ones (vault
-// message, vault record AAD, approval digest, relay AAD) are docs/batch-b-spec.md's. test/layouts.test.ts checks
-// them against contracts/hana-signer/src/test_fixture.json and test/vectors/layouts-v1.json (written by
+// message, vault record AAD, relay AAD; the approval digest is approval.ts's) are docs/batch-b-spec.md's.
+// test/layouts.test.ts checks them, the approval digest included, against contracts/hana-signer/src/test_fixture.json and test/vectors/layouts-v1.json (written by
 // scripts/gen-layout-vectors.mjs, an independent implementation).
 import { type Bytes, base64UrlEncode, borshString, concatBytes, sha256, toBytes, u32le, u64le, utf8 } from './bytes.ts';
 
@@ -12,7 +12,6 @@ export const CKD_PAYLOAD_PREFIX = 'hana-id-ckd-v1:';
 export const REVOKE_PAYLOAD = 'revoke';
 export const VAULT_MESSAGE_DOMAIN = 'hana-id-vault-v1:';
 export const VAULT_RECORD_AAD_DOMAIN = 'hana-id/vault/v1';
-export const APPROVAL_DIGEST_DOMAIN = 'hana-id/approve/v1';
 export const RELAY_AAD_DOMAIN = 'hana-id/relay/v1';
 
 /** `key_index ≥ 2^31` is reserved (contract, API and SDK refuse it). */
@@ -147,49 +146,7 @@ export function recordAad(i: RecordAadInput): Bytes {
   );
 }
 
-// ---- approval digest (docs/batch-b-spec.md "Approval flow", step 6) ----
-
-/** What the approval popup rendered and the vault queued; `bytes` are exactly the bytes to be signed or decoded. */
-export interface ApprovalDigestInput {
-  id: string;
-  kind: string;
-  chain: string;
-  address: string;
-  parentOrigin: string;
-  /** The network passphrase (Stellar), the decimal chain ID (EVM), or '' where the request has no network context. */
-  contextString: string;
-  bytes: Uint8Array;
-}
-
-/**
- * sha256(utf8("hana-id/approve/v1") ‖ borsh(id) ‖ borsh(kind) ‖ borsh(chain) ‖ borsh(address) ‖ borsh(parentOrigin)
- *        ‖ borsh(contextString) ‖ u32le(len(bytes)) ‖ bytes)
- */
-export function approvalDigest(i: ApprovalDigestInput): Bytes {
-  return sha256(
-    concatBytes(
-      utf8(APPROVAL_DIGEST_DOMAIN),
-      borshString(i.id),
-      borshString(i.kind),
-      borshString(i.chain),
-      borshString(i.address),
-      borshString(i.parentOrigin),
-      borshString(i.contextString),
-      u32le(i.bytes.length),
-      toBytes(i.bytes),
-    ),
-  );
-}
-
-/** The approval `contextString`: the passphrase, the decimal chain ID, or '' (raw and message requests without one). */
-export function approvalContextString(context: { networkPassphrase: string } | { chainId: number } | Record<string, never>): string {
-  if ('networkPassphrase' in context) return context.networkPassphrase;
-  if ('chainId' in context) {
-    if (!Number.isSafeInteger(context.chainId) || context.chainId <= 0) throw new RangeError('chainId must be a positive safe integer');
-    return String(context.chainId);
-  }
-  return '';
-}
+// ---- approval digest: approval.ts (validated against the request's kind, chain and context) ----
 
 // ---- login relay (docs/batch-b-spec.md "Login" steps 2, 6, 7) ----
 

@@ -35,13 +35,3 @@ export * from './decode/json.ts';
 //   forms stay at `@hana-id/core/decode`.
 export { type TypedDataForHashing, domainSeparator, encodeType, hashStruct, typeHash } from './signers/eip712.ts';
 export { bytesToBigInt, checksumAddress, parseHex0x, toHex0x } from './decode/hex.ts';
-// - Approvals: approval.ts (kinds, contexts, the validated digest) is the root's; layouts.ts's and protocol.ts's
-//   same-named approval helpers are reached through their modules.
-export {
-  APPROVAL_DIGEST_DOMAIN,
-  type ApprovalContext,
-  type ApprovalDigestInput,
-  type ApprovalKind,
-  approvalContextString,
-  approvalDigest,
-} from './approval.ts';

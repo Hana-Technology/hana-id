@@ -223,7 +223,9 @@ admin <env> scope:register [--client <google client id> …] [--allow-shared] (-
   validates `--auto-approve` with `@hana-id/core`'s `validateAutoApprovePolicy`, storing its normalized form and
   printing its `policyId`. Loosening is delayed: `--raw-sign approval` and a new policy are written as pending, in
   force after 24 h (the manifest's `changeDelayMs` in `local*`/`sandbox*` envs), and re-running doesn't restart the
-  delay. `--raw-sign off` and `--auto-approve off` are immediate. Every change is printed with its time.
+  delay. `--raw-sign off` and `--auto-approve off` are immediate. Every change is printed with its time. A relative
+  `--auto-approve` path is relative to where you ran `pnpm`, and the write applies only if nobody changed the app's
+  settings since the command read them (else it fails and writes nothing). `docs/operations.md` has the details.
 - `scope:register` calls `admin_register_scope(owners, clients, null, allow_shared)` with the owner's keychain key.
   Without `--yes` it prints the call and stops. It works only while `public_registration` is false, and the contract
   assigns the id (`s1`, `s2`, …), which the command prints. `--allow-shared` lets the app log in through Hana's
@@ -262,7 +264,7 @@ throwaway names. The signer account is part of every user's derived key, so chan
 7. **API**:
    ```sh
    pnpm --dir apps/api exec wrangler d1 create <cloudflare.d1Name>            # once; deployed envs only: prints the database id
-   pnpm --filter @hana-id/api run gen <env> --d1-id <id>                      # writes apps/api/wrangler.jsonc (omit --d1-id for local only)
+   pnpm --filter @hana-id/api run gen <env> --d1-id <id>                      # writes apps/api/wrangler.jsonc, gitignored (omit --d1-id for local only)
    pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --local   # or --remote
    # Upload secrets without echoing them (run from the repo root):
    node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/relayer-keys.json")))' \
@@ -272,6 +274,7 @@ throwaway names. The signer account is part of every user's derived key, so chan
    node -e 'process.stdout.write(require("./.secrets/<env>/keys-updater.json").private_key)' \
      | pnpm --dir apps/api exec wrangler secret put KEYS_UPDATER_KEY
    pnpm --filter @hana-id/api run deploy
+   pnpm --filter @hana-id/scripts run vault-kek <env> init --yes             # VAULT_KEK: kept in .secrets/<env>/vault-kek, set via stdin
    ```
    For local `wrangler dev`, the same three values go in `apps/api/.dev.vars` (gitignored, 0600):
    `pnpm --filter @hana-id/api run gen <env> --dev-vars` writes it from `.secrets/<env>/` without printing them.

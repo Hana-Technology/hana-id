@@ -1,7 +1,8 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`).
+Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`); vault shares, settings, environments and
+operator secrets re-verified on branch `fix/b-api` (on `feat/batch-b` 0f0a437).
 
 Byte layouts and contract methods are in `docs/contract-interface.md`; this file links to it rather than repeating
 them. The security model is `docs/security.md`, the decision log `docs/decisions.md`. Where a spec and the code
@@ -185,14 +186,16 @@ addresses, and `ct = AES-GCM(K_s, PRK, aad)` with the AAD of `recordAad` (`layou
 
 Unlock on reload or new tab, `POST /v1/vault/unlock` (`endpoints.ts:256`, `:308`): per-share limit 10/min → share
 looked up by `share_id AND app_id` (another app's share is 404) → if the share's partner origin is no longer allowed,
-mark revoked, 410 → vault signature with `counter = n + 1` → unwrap `K_s` (before the counter moves) → one atomic
-`UPDATE … WHERE counter = n AND now < idle_until AND now < abs_expires_at AND revoked_at IS NULL` that also slides
-`idle_until` by the app's current `idle_ttl_ms` and re-wraps under the current KEK if needed
-(`apps/api/src/vault/shares.ts:100`) → `{ks, counter, idleUntilMs, absExpiresAtMs}`. No chain RPC. Errors: 404
-`unknown_share`, 409 `bad_counter {expected}`, 410 `share_expired` / `share_revoked`. A 410 means a full login, never
-a derive. See `docs/security.md` open issue (a): unlock does not re-check the app's current settings.
+mark revoked, 410 → the app's settings as they are now: `persistence = 'none'` revokes the share (410
+`share_revoked`), and the share ends at `min(abs_expires_at, created_at + current session_ttl_ms)` (410
+`share_expired`; the stored expiry is lowered) → vault signature with `counter = n + 1` → unwrap `K_s` (before the
+counter moves) → one atomic `UPDATE … WHERE counter = n AND now < idle_until AND now < abs_expires_at AND revoked_at IS
+NULL` that re-checks persistence and the TTL cap in the same statement, caps `abs_expires_at`, slides `idle_until` to
+`min(now + current idle_ttl_ms, the cap)` and re-wraps under the current KEK if needed (`apps/api/src/vault/shares.ts`,
+`advanceShare`) → `{ks, counter, idleUntilMs, absExpiresAtMs}`. No chain RPC. Errors: 404 `unknown_share`, 409
+`bad_counter {expected}`, 410 `share_expired` / `share_revoked`. A 410 means a full login, never a derive.
 
-`/v1/vault/touch` slides `idle_until` without returning `K_s` (the vault sends it at most every 10 min after an
+`/v1/vault/touch` follows the same settings rules and slides `idle_until` without returning `K_s` (the vault sends it at most every 10 min after an
 approved signature, per spec). The hourly cron deletes shares past `abs_expires_at` or revoked and re-wraps up to
 2000 rows from `VAULT_KEK_PREVIOUS` (`apps/api/src/vault/cron.ts:63`).
 
@@ -225,9 +228,10 @@ the per-day counters (`packages/core/src/policy/usage.ts`) allow it. Rules in `d
 | Action | Path | Chain tx |
 |---|---|---|
 | Logout (default) | `POST /v1/vault/revoke` (share revoked), vault deletes the record, zeroes PRK, broadcasts `logout` on `hana-vault:<appId>` (per spec) | none |
-| Lost device | `POST /v1/vault/revoke-all`, only with a share created < 5 min ago (`endpoints.ts:289`); revokes the user's other live shares for `(app_id, path_hash)` | none |
+| Lost device | `POST /v1/vault/revoke-all`, only with a share created < 5 min ago; revokes the user's other live shares for `(app_id, path_hash)` and moves its own counter in one D1 transaction (`shares.ts`, `revokeAllFrom`): both or neither | none |
 | On-chain revoke | `POST /v1/sessions/revoke` → `revoke_session` (20 Tgas), signed `sessionMessage(counter, "revoke")`; the precheck allows counter up to `max_uses + 1` so a spent session can still be revoked | yes; not used by default |
 | Origin removed | the next unlock of each share made for that origin marks it revoked (410) | none |
+| App switched to `persistence = 'none'` | the next unlock or touch of each of its shares marks it revoked (410) | none |
 
 ### Owner and registry changes
 
@@ -235,7 +239,7 @@ the per-day counters (`packages/core/src/policy/usage.ts`) allow it. Rules in `d
 |---|---|---|
 | Register a scope (pilot) | Hana: `admin scope:register` → `admin_register_scope` with the owner account's full-access key | `scripts/admin.ts`, `scripts/lib/admin-scope.ts` |
 | Register an app, origins, suspend/resume | Hana: `admin app:create`, `app:origins:add/remove`, `app:suspend/resume` (D1 via `wrangler d1 execute`); refuses a `pk_test_`/`pk_live_` scope conflict | `scripts/admin.ts`, `scripts/lib/admin-sql.ts` |
-| Vault settings (`persistence`, TTLs, `raw_sign`, policy, web client) | `admin app:settings` (in progress, `b/settings-cli`); today only a direct D1 update | migration 0003 |
+| Vault settings (`persistence`, TTLs, `raw_sign`, policy, web client) | Hana: `admin app:settings` (D1; loosening is pending for 24 h; the UPDATE applies only over the row it read) | `scripts/lib/admin-settings.ts`, migration 0003 |
 | Propose / cancel / remove client / disable shared login (OIDC owner) | `POST /v1/owner-actions` with a console-client token; off-chain precheck, single-use token marker, owner pool | `handlers.ts:382`, `apps/api/src/owner-actions.ts:31` |
 | Execute a matured change | anyone; `POST /v1/owner-actions` relays `execute_change` | same |
 | NEAR-account owners | call the contract directly (the API relays OIDC auth only, `apps/api/src/validate.ts:99`) | `contracts/hana-signer/src/registry.rs` |
@@ -301,7 +305,7 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
 | Per-isolate memory (API) | JWKS (≤ max-age, stale ≤ 6 h on fetch failure), config / scope / client views (≤ 60 s; "no scope" ≤ 10 s), sessions (≤ 10 s), parsed KEKs, counter holds | — |
 | Browser, `vaultOrigin` (per spec) | IndexedDB `hana-vault` records (partitioned by top-level site); memory: session key, PRK, consent and counters | S, `a` (memory only, dropped), plaintext PRK on disk |
 | Browser, `authOrigin` (per spec) | `sessionStorage` `hana.login.<relayId>` = `{v, createdAt, relayKey}` (≤ 10 min, single use) | Tokens |
-| `.secrets/<env>/` (operator machine, gitignored, 0700/0600) | `relayer-keys.json`, `owner-relayer-keys.json`, `keys-updater.json` (`scripts/lib/secrets.ts:66`) | — |
+| `.secrets/<env>/` (operator machine, gitignored, 0700/0600) | `relayer-keys.json`, `owner-relayer-keys.json`, `keys-updater.json` (`scripts/lib/secrets.ts:66`), `vault-kek` (+ `vault-kek.previous` during a rotation; `scripts/lib/vault-kek.ts`) | — |
 | `~/.near-credentials/testnet/` (operator machine) | Full-access keys of the owner, signer and relayer accounts (`scripts/lib/keys.ts`) | — |
 | Worker secrets | `RELAYER_KEYS`, `OWNER_RELAYER_KEYS`, `KEYS_UPDATER_KEY`, `VAULT_KEK`, `VAULT_KEK_PREVIOUS` | — |
 | `apps/api/.dev.vars` (local, gitignored, 0600) | Relayer and updater keys for `wrangler dev` (`gen-wrangler --dev-vars`) | — |
@@ -312,8 +316,10 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
   Only `sandbox-dev` exists. `network` accepts only `testnet`. Every account name the code uses comes from here
   (`signer`, `relayer`, `owner`, `mpc`); code reads it via generated config, never by hard-coding names.
 - Other fields: `ckdDomainId`, `ckdNetworkKey` (pinned with `scripts/fetch-ckd-key.ts`), `rpc`, `apiUrl`,
-  `vaultOrigin`/`authOrigin` (both or neither; bare origins; `https`; loopback only in `local*` envs; different
-  origins; different sites outside `local*`/`sandbox*`, `packages/env/src/schema.ts:80`), `changeDelayMs`,
+  `vaultOrigin`/`authOrigin` (both or neither; bare origins; `https`; loopback only in `local*` envs; otherwise a real
+  DNS name, never an IP, a bare public suffix, a single label or a trailing dot; different origins, neither
+  `apiUrl`'s origin; different sites from each other and from `apiUrl` outside `local*`/`sandbox*`,
+  `packages/env/src/schema.ts`, `origins.ts`), `changeDelayMs`,
   `googleClientIds` (the `global` scope), `sharedGoogleClientIds` (≤ 5, disjoint from scope clients),
   `consoleAudiences`, `cloudflare.{workerName, d1Name, durableObjectLocation}`.
 - Dev envs are `local*`/`sandbox*` by name (`packages/env/src/origins.ts:9`, mirrored in `apps/api/src/origins.ts:26`
@@ -321,9 +327,9 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
   `pk_test_` keys, and same-site Hana origins. No flag can turn these on elsewhere.
 - `apps/api/scripts/gen-wrangler.ts` writes `apps/api/wrangler.jsonc` (vars from the manifest, D1 binding, DO bindings
   and migrations `v1` RelayerKey/RateLimiter, `v2` LoginRelay, hourly cron) and, with `--dev-vars`, `.dev.vars` from
-  `.secrets/<env>/`. It refuses an env without both Hana origins. A generated copy for sandbox-dev with the local
-  placeholder D1 id is tracked in git (currently stale: it predates the `API_URL` var); the deployed id is passed with
-  `--d1-id` and not committed.
+  `.secrets/<env>/`, plus the page Workers' `wrangler.vault.jsonc` / `wrangler.auth.jsonc`. It refuses an env without
+  both Hana origins. All three are per env and gitignored (the deployed D1 id is passed with `--d1-id` and never
+  committed); the API tests generate their own `wrangler.vitest.jsonc` from a fixed test manifest.
 - `packages/web/scripts/gen-envs.ts` writes the gitignored `packages/web/src/envs.generated.ts` with the pinned
   per-env constants (`signer`, `relayer`, `rpc`, `ckdNetworkKey`, origins, `devEnv`) for every manifest with both
   origins; it fails on an unusable CKD key.

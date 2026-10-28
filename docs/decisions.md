@@ -273,4 +273,7 @@ implicit flow, pinned `signer`/`relayer`/CKD key, the vault computes the path, s
 dev-only privileges tied to the env name); reconciliations R1–R13 (Q30); and the safety changes Q31 (no silent
 `app_signed` raw signing), Q34 (a new login supersedes a pending one), Q35 (no local `K_l` wrapping layer), Q37
 (test and live apps never share a scope), Q38 (24 h delay for enabling raw signing). Much of this is already coded on
-`feat/batch-b`. Every decision in `docs/batch-c-spec.md` beyond D28–D32 is a draft.
+`feat/batch-b`. Also built on `feat/batch-b` and not in the spec (2026-10-28, review finding R19): every env serves
+`vaultOrigin` and `authOrigin` from one thin Worker each (`workers.dev` in dev envs, a Custom Domain elsewhere), not
+from routes and an assets binding on the API Worker, so neither origin can serve the other's files
+(`apps/api/scripts/pages-wrangler.ts`); production would then run three Workers. Every decision in `docs/batch-c-spec.md` beyond D28–D32 is a draft.

@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`)
+Last verified against code: 2026-10-28 (branch `fix/b-api`, on `feat/batch-b` 0f0a437)
 
 Commands and flags are from `scripts/`, `apps/api/scripts/gen-wrangler.ts` and their tests. Endpoints:
 `docs/api.md`. Contract methods: `docs/contract-interface.md`. Design and measurements: `docs/context.md`.
@@ -18,7 +18,7 @@ Never print, log, paste or commit any of these. The scripts never print them eit
 | Session-pool relayer keys (`RELAYER_KEYS`) | `.secrets/<env>/relayer-keys.json` | `deploy-contract` |
 | Owner-pool relayer keys (`OWNER_RELAYER_KEYS`) | `.secrets/<env>/owner-relayer-keys.json` | `deploy-contract` |
 | Keys-updater key (`KEYS_UPDATER_KEY`) | `.secrets/<env>/keys-updater.json` (`private_key`) | `deploy-contract` |
-| `VAULT_KEK` | `.secrets/<env>/vault-kek` (this runbook's convention; no script reads it) | you, below |
+| `VAULT_KEK` (and, during a rotation, `VAULT_KEK_PREVIOUS`) | `.secrets/<env>/vault-kek` (and `vault-kek.previous`); the only copy, since Cloudflare can't give a secret back | `vault-kek` (below) |
 | Worker copies of the above | Cloudflare Worker secrets | `wrangler secret put` |
 | Local dev copies | `apps/api/.dev.vars` (0600) | `gen --dev-vars` |
 
@@ -146,12 +146,13 @@ the signer is part of every address. Dev-only privileges (loopback origins, part
 
    ```sh
    corepack pnpm --dir apps/api exec wrangler d1 create <cloudflare.d1Name>      # prints the database id
-   corepack pnpm --filter @hana-id/api run gen <env> --d1-id <uuid>             # writes apps/api/wrangler.jsonc
+   corepack pnpm --filter @hana-id/api run gen <env> --d1-id <uuid>             # writes apps/api/wrangler.jsonc (+ the page Workers' configs)
    corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --remote
    ```
 
    Without `--d1-id`, `gen` keeps the id already in `wrangler.jsonc` only if that file names the same
-   `database_name`, else it writes the local placeholder `00000000-0000-4000-8000-000000000000`.
+   `database_name`, else it writes the local placeholder `00000000-0000-4000-8000-000000000000`. The generated files
+   are gitignored (they hold the env's D1 id): re-run `gen <env>` whenever you switch envs, and never commit them.
 
 7. **Worker secrets** (from the repo root; values go through a pipe, never the terminal):
 
@@ -162,11 +163,14 @@ the signer is part of every address. Dev-only privileges (loopback origins, part
      | corepack pnpm --dir apps/api exec wrangler secret put OWNER_RELAYER_KEYS
    node -e 'process.stdout.write(require("./.secrets/<env>/keys-updater.json").private_key)' \
      | corepack pnpm --dir apps/api exec wrangler secret put KEYS_UPDATER_KEY
-   (umask 077; printf '1:%s' "$(openssl rand -base64 32)" > .secrets/<env>/vault-kek)
-   corepack pnpm --dir apps/api exec wrangler secret put VAULT_KEK < .secrets/<env>/vault-kek
+   corepack pnpm --filter @hana-id/scripts run vault-kek <env> init           # read the plan
+   corepack pnpm --filter @hana-id/scripts run vault-kek <env> init --yes
    ```
 
-   Keep `.secrets/<env>/vault-kek`: a KEK rotation needs the current value, and Cloudflare can't give it back.
+   `vault-kek init` generates `VAULT_KEK` (key id 1), writes it to `.secrets/<env>/vault-kek` (0600) before anything
+   else, and sets the secret on `cloudflare.workerName` through wrangler's stdin; it prints no key and refuses to
+   overwrite an existing file. If the secret step fails, `vault-kek <env> put --yes` sets it again from the file. Keep
+   the file: a rotation needs the current value.
 
 8. **Deploy the API**, then put the Worker URL in `apiUrl` and re-run `gen` + deploy if it changed (the vault page's
    CSP uses it):
@@ -195,15 +199,23 @@ corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Nam
 corepack pnpm --filter @hana-id/api dev                          # http://localhost:8787
 ```
 
-`--dev-vars` writes `RELAYER_KEYS`, `OWNER_RELAYER_KEYS` (single-quoted) and `KEYS_UPDATER_KEY` from
-`.secrets/<env>/`, skipping missing files, and prints only a count. It rewrites the whole file and has no `VAULT_KEK`;
-for local vault endpoints append a throwaway one after each `gen --dev-vars`:
+`gen` writes the gitignored `apps/api/wrangler.jsonc` for that env (needed by `dev` and `admin app:*`). `--dev-vars`
+writes `RELAYER_KEYS`, `OWNER_RELAYER_KEYS` (single-quoted) and `KEYS_UPDATER_KEY` from `.secrets/<env>/`, skipping
+missing files, and prints only a count. It rewrites the whole file and has no `VAULT_KEK`; for local vault endpoints
+append a throwaway one (never a deployed env's) after each `gen --dev-vars`:
 
 ```sh
 printf 'VAULT_KEK=1:%s\n' "$(openssl rand -base64 32)" >> apps/api/.dev.vars
 ```
 
 `admin app:*` without `--remote` act on this local D1 (`apps/api/.wrangler/state`).
+
+The page Workers run locally only for a `local*` env (loopback `vaultOrigin`/`authOrigin`; none is in `envs/` today,
+`apps/e2e` starts its own stack), each in its own process: `wrangler dev` (the API), then `wrangler dev -c
+wrangler.vault.jsonc` and `wrangler dev -c wrangler.auth.jsonc` in other terminals (they find each other through
+wrangler's dev registry). A single `wrangler dev -c a -c b` serves only its first config over HTTP, so the vault page
+couldn't reach the API; with a sandbox env's configs every page answers 404 (the local URL isn't the configured
+origin).
 
 ## Admin CLI (`scripts/admin.ts`)
 
@@ -214,6 +226,8 @@ admin <env> app:origins:remove --app <app id | publishable key> --origin <origin
 admin <env> app:suspend        --app <app id | publishable key> [--remote]
 admin <env> app:resume         --app <app id | publishable key> [--remote]
 admin <env> app:list [--remote]
+admin <env> app:settings <app id | publishable key> [--persistence session|none] [--session-ttl 12h] [--idle-ttl 2h]
+             [--raw-sign off|approval] [--google-web-client <client id>|default] [--auto-approve <policy.json>|off] [--remote]
 admin <env> scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […] [--yes]
 ```
 
@@ -240,9 +254,14 @@ Run as `corepack pnpm --filter @hana-id/scripts run admin <env> <command> …`. 
 - Suspension is D1-only (the contract can't block derivation). Removing an origin also kills that origin's vault
   shares on their next use.
 - `app:*` need `apps/api/wrangler.jsonc` for the env (`gen <env>` first) and run `wrangler d1 execute` from `apps/api`.
-- Not on `feat/batch-b`: per-app vault settings (`persistence`, TTLs, `raw_sign`, `google_web_client_id`,
-  auto-approve). `admin app:settings` is on `b/settings-cli`. Until it merges the migration defaults apply
-  (`session`, 12 h, 2 h, `off`, first Google client, no policy). Plans other than `free` need a manual D1 insert.
+- `app:settings` (app positionally or with `--app`, not both; no setting flags: show them): ranges as the migration's
+  CHECKs; `--raw-sign approval` and a new `--auto-approve` policy are pending for 24 h (`changeDelayMs` in dev envs),
+  `off` is immediate. A relative `--auto-approve` path is resolved against the directory you ran `pnpm` from
+  (`INIT_CWD`), and the change log names the resolved file. The UPDATE only applies if every settings column is still
+  as the command read it: if someone else changed the app in between, nothing is written and the command fails with
+  "The app's settings changed since they were read"; run it again. `--persistence none` revokes existing vault
+  shares on their next unlock or touch; a lower `--session-ttl` also shortens live shares (to their creation + the new
+  TTL). Plans other than `free` need a manual D1 insert.
 
 Owner actions on a registered scope (add a client, change owners, enable shared login) go through
 `POST /v1/owner-actions` with a console-client token (`docs/api.md`); there is no CLI for them yet.
@@ -309,16 +328,26 @@ It adds before it removes, and refuses to sync if Google returns no usable RS256
 ### `VAULT_KEK`
 
 ```sh
-corepack pnpm --dir apps/api exec wrangler secret put VAULT_KEK_PREVIOUS < .secrets/<env>/vault-kek
-mv .secrets/<env>/vault-kek .secrets/<env>/vault-kek.previous
-(umask 077; printf '2:%s' "$(openssl rand -base64 32)" > .secrets/<env>/vault-kek)     # a new id
-corepack pnpm --dir apps/api exec wrangler secret put VAULT_KEK < .secrets/<env>/vault-kek
+corepack pnpm --filter @hana-id/scripts run vault-kek <env> rotate          # read the plan
+corepack pnpm --filter @hana-id/scripts run vault-kek <env> rotate --yes
 ```
 
-Unlocks and the hourly cron re-wrap old rows (≤ 2000 per run). When `vault_maintenance` logs no rows left under the
-old id, `corepack pnpm --dir apps/api exec wrangler secret delete VAULT_KEK_PREVIOUS` and delete
-`vault-kek.previous`. Rows under an id neither secret
-has show as `unknownKek` (error level): they can't be unlocked until that key is back.
+`rotate` copies `.secrets/<env>/vault-kek` to `vault-kek.previous` and writes a new key with the next id to
+`vault-kek.next` (both 0600) before touching the Worker, then sets `VAULT_KEK_PREVIOUS` (the current key) and
+`VAULT_KEK` (the new one) through wrangler's stdin, then makes the new key `vault-kek`. If it stops part way, run it
+again: it resumes with the same new key. It refuses while a previous rotation's `vault-kek.previous` is still there,
+and needs `vault-kek` to hold the key the Worker has now (Cloudflare can't be asked).
+
+Unlocks and the hourly cron re-wrap old rows (≤ 2000 per run). When no row is left under the old id:
+
+```sh
+corepack pnpm --dir apps/api exec wrangler d1 execute <cloudflare.d1Name> --remote --command "SELECT COUNT(*) AS n FROM vault_shares WHERE kek_id = <old id>"
+corepack pnpm --dir apps/api exec wrangler secret delete VAULT_KEK_PREVIOUS --name <cloudflare.workerName>   # once n is 0
+rm .secrets/<env>/vault-kek.previous
+```
+
+Rows under an id neither secret has show as `unknownKek` (error level): they can't be unlocked until that key is back
+(`vault-kek <env> put --yes` sets both secrets again from the files).
 
 ### A user's leaked key (`key_index`)
 
@@ -395,14 +424,16 @@ Warm stage split: create = checks 0.2 s + relay 2.2 s (chain ~0.6 s); derive = r
 | `422 contract_rejected` on every login after a deploy | contract has no Google keys, or keys out of date | `post-google-keys <env>`; check `KEYS_UPDATER_KEY` |
 | cron logs `jwks_sync_skipped` | no `KEYS_UPDATER_KEY` | upload it |
 | `503 vault_key_unavailable` | no `VAULT_KEK` (or the row's old key missing in `VAULT_KEK_PREVIOUS`) | set it |
-| `GET /vault` 503, log code `misconfigured` | `API_URL` missing: a `wrangler.jsonc` generated before `apiUrl` reached `gen` (the tracked file has none) | `gen <env>` and redeploy |
+| `GET /vault` 503, log code `misconfigured` | `API_URL` missing: a `wrangler.jsonc` generated before `apiUrl` reached `gen` | `gen <env>` and redeploy |
+| `admin app:settings`: "The app's settings changed since they were read" | another `app:settings` or a D1 edit changed the app between the command's read and its write; nothing was written | run it again (it shows and plans from the current row) |
+| `vault-kek init`: "already exists: refusing to overwrite a key" | `.secrets/<env>/vault-kek` exists | `vault-kek <env> put --yes` to set it again, or `rotate` to replace it |
+| `410 share_revoked` / `share_expired` on every reload after a settings change | `persistence` set to `none` (shares revoked), or `session_ttl_ms` lowered below the shares' age | expected: users log in again |
 | `403 origin_not_allowed` from a loopback origin | `pk_live_` key or a non-dev env name; or no `x-hana-parent-origin` from a Hana page | use `pk_test_` in `sandbox*`/`local*`; list the origin |
 | `403 scope_conflict` | a `pk_test_` app shares its scope with a `pk_live_` app | separate scopes |
 | `409 no_google_client` on `/v1/app` | scope has no Google client and no usable shared client (or shared client still in its timelock) | add a client, or `--allow-shared` + wait `changeDelayMs` |
 | `admin`: "No wrangler config in apps/api" | `wrangler.jsonc` missing | `corepack pnpm --filter @hana-id/api run gen <env>` |
 | `deploy-contract` "Cannot deploy until these are fixed" | a key with the wrong receiver, methods, empty method list or too-large/unlimited allowance | run the printed `near account delete-keys …`, re-run |
 | A test fails after someone filled in `envs/sandbox-dev.json` | the test read the real manifest and expected `UNSET` placeholders | tests pin their own fixture manifest (see `scripts/test/deploy-plan.test.ts`, commit fdde123); never depend on live manifest values |
-| API tests behave differently after `gen` (e.g. owner-action limiter tests) | `vitest.config.ts` loads `apps/api/wrangler.jsonc`, so a generated var such as `DO_LOCATION_HINT` leaks into tests | `vitest.config.ts` overrides it (`DO_LOCATION_HINT: ''`, commit 1fa72d9); override any new manifest-derived var there too |
 | smoke refuses to derive: "UNSET placeholder" | `ckdNetworkKey` not pinned | `fetch-ckd-key <env>`, restart the dev server |
 
 ## CI and git
@@ -414,7 +445,8 @@ Warm stage split: create = checks 0.2 s + relay 2.2 s (chain ~0.6 s); derive = r
   typecheck`, `pnpm -r test`; sandbox e2e (`contracts/integration-tests`).
 - The pre-commit hook runs `gitleaks git --staged` with `.gitleaks.toml`. Never bypass it (`--no-verify`). Scan
   locally with `corepack pnpm secrets:scan`.
-- Never commit `.secrets/`, `.env*`, `.dev.vars` (all gitignored) or a regenerated `apps/api/wrangler.jsonc`. That
-  file is tracked as the sandbox-dev version with the local placeholder D1 id; after `gen <env> --d1-id …` for a
-  deploy, `git restore apps/api/wrangler.jsonc`. Edit the manifest or `gen-wrangler.ts`, never the file.
+- Never commit `.secrets/`, `.env*`, `.dev.vars` or the generated `apps/api/wrangler.jsonc`, `wrangler.vault.jsonc`,
+  `wrangler.auth.jsonc`, `wrangler.vitest.jsonc` (all gitignored; the first three hold an env's D1 id). Edit the
+  manifest or `gen-wrangler.ts`, never the files. CI needs none of them: the API tests generate
+  `wrangler.vitest.jsonc` from a fixed test manifest (`TEST_MANIFEST` in `gen-wrangler.ts`) on every run.
 - `legacy/` is read-only reference code.

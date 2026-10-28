@@ -15,7 +15,10 @@ pnpm --filter @hana-id/api dev         # wrangler dev (local D1: `wrangler d1 mi
 ```
 
 `wrangler.jsonc` (and the page Workers' `wrangler.vault.jsonc`, `wrangler.auth.jsonc`, see [Page Workers](#page-workers))
-are generated: change `envs/<env>.json` or `scripts/gen-wrangler.ts`, not the files. Without `--d1-id`
+are generated per env and gitignored (they can hold a real D1 id): run `gen <env>` before `dev`, `deploy` or the
+`admin app:*` commands, change `envs/<env>.json` or `scripts/gen-wrangler.ts`, never the files, and never commit them.
+The tests don't read them: `vitest.config.ts` writes `wrangler.vitest.jsonc` (gitignored) with the same generator from a
+fixed test manifest (`TEST_MANIFEST`), so CI needs no `gen` step and no env's values reach the tests. Without `--d1-id`
 the id already in the file is kept only if that file was generated for the same D1 database (`database_name`), else a
 local-only placeholder is written. `--dev-vars` writes `RELAYER_KEYS` (from `.secrets/<env>/relayer-keys.json`) and
 `OWNER_RELAYER_KEYS` (from `.secrets/<env>/owner-relayer-keys.json`) single-quoted (wrangler's dotenv parser takes them
@@ -24,8 +27,9 @@ literally), plus `KEYS_UPDATER_KEY`; files that don't exist are skipped.
 Deploy (testnet only): `wrangler d1 create <cloudflare.d1Name>` → `gen <env> --d1-id <id>` →
 `wrangler d1 migrations apply DB --remote` → `wrangler secret put RELAYER_KEYS` (JSON array of `ed25519:` secret
 keys, e.g. the content of `.secrets/<env>/relayer-keys.json`) → `wrangler secret put OWNER_RELAYER_KEYS` (same format,
-`.secrets/<env>/owner-relayer-keys.json`) → `wrangler secret put KEYS_UPDATER_KEY` → `wrangler deploy` → the page
-Workers (below).
+`.secrets/<env>/owner-relayer-keys.json`) → `wrangler secret put KEYS_UPDATER_KEY` → `wrangler deploy` →
+`pnpm --filter @hana-id/scripts run vault-kek <env> init --yes` (VAULT_KEK, below) → the page Workers (below).
+`docs/operations.md` has the full runbook.
 
 ## Config
 
@@ -39,8 +43,8 @@ Workers (below).
 | `GAS_<METHOD>_TGAS` | optional vars | Per-method gas override in Tgas (integer 1..300), e.g. `GAS_DERIVE_KEY_TGAS=80`; invalid values are ignored (logged) |
 | `KEYS_UPDATER_KEY` | secret | function-call key on `SIGNER_ACCOUNT` (`set_issuer_key`, `remove_issuer_key`); cron skips without it |
 | `API_URL` | vars (manifest) | `apiUrl`: the API's own URL, in the vault page's CSP `connect-src` |
-| `VAULT_KEK` | secret | Vault share wrapping key, `<id>:<base64 of 32 bytes>` (`id` a positive integer). Set it without printing it, e.g. `printf '1:%s' "$(openssl rand -base64 32)" \| wrangler secret put VAULT_KEK`. Without it the vault endpoints answer `503 vault_key_unavailable` |
-| `VAULT_KEK_PREVIOUS` | secret, rotation only | The previous `VAULT_KEK`. Rotate: put the current value here, a new key with a new id in `VAULT_KEK`; unlocks and the cron re-wrap old rows; remove it once the cron logs no rows left under the old id |
+| `VAULT_KEK` | secret | Vault share wrapping key, `<id>:<base64 of 32 bytes>` (`id` a positive integer). Create it with `pnpm --filter @hana-id/scripts run vault-kek <env> init --yes`: it generates key id 1, keeps it in `.secrets/<env>/vault-kek` (0600, never overwritten; the only copy, since Cloudflare can't give a secret back) and sets the secret through wrangler's stdin, printing no key. `vault-kek <env> put --yes` sets it again from the file. Without it the vault endpoints answer `503 vault_key_unavailable` |
+| `VAULT_KEK_PREVIOUS` | secret, rotation only | The previous `VAULT_KEK`. Rotate with `vault-kek <env> rotate --yes`: the current key goes to `VAULT_KEK_PREVIOUS` (and `.secrets/<env>/vault-kek.previous`), a new key with the next id to `VAULT_KEK` (and `vault-kek`); a run that stops part way resumes when re-run. Unlocks and the cron re-wrap old rows; once `SELECT COUNT(*) FROM vault_shares WHERE kek_id = <old id>` is 0, delete the secret and the `.previous` file (`docs/operations.md`, "Key rotation") |
 | `DB` | D1 | `migrations/` |
 | `RELAYER_KEY`, `RATE_LIMITER`, `LOGIN_RELAY` | Durable Objects | SQLite-backed classes `RelayerKey`, `RateLimiter` (migration `v1`), `LoginRelay` (`v2`) |
 | cron `0 * * * *` | trigger | Google JWKS → `set_issuer_key` / `remove_issuer_key` (a kid is removed only after it has been missing from the JWKS for ≥ 55 min, i.e. two hourly runs in a row; tracked in D1 `issuer_key_missing`) |
@@ -49,7 +53,8 @@ Workers (below).
 ## Endpoints
 
 All JSON. Success: `{"result": …, "nearTx": "<base58 tx hash>", "requestId": "…"}`. Error:
-`{"error": "<message>", "code": "<code>", "nearTx"?: "…", "requestId": "…"}`. Every response has `x-request-id`.
+`{"error": "<message>", "code": "<code>", "nearTx"?: "…", "requestId": "…"}`. Every response except a CORS preflight
+(`OPTIONS`) has `x-request-id`, the router's own `404`/`405`/`500` included.
 
 ### App endpoints: `x-hana-key: pk_…` + an allowed caller (see Origins)
 
@@ -112,8 +117,9 @@ in force when the scope has `allow_shared`, else `409 no_google_client` (`409 sc
 not on chain, `502 near_unavailable` when the registry can't be read).
 
 Relay errors: `422 contract_rejected` (contract panic text in `error`), `502 near_rejected` (the node refused the tx
-as invalid: it never executed) / `near_error` / `near_unavailable`, `503 relayer_busy` / `relayer_unavailable`,
-`504 timeout`. Any other broadcast failure (dropped connection, non-JSON 5xx from a proxy) may still execute, so the
+as invalid: it never executed) / `near_error` / `near_unavailable` / `bad_contract_result` (it executed, but the
+result isn't the shape the endpoint returns), `503 relayer_busy` / `relayer_unavailable` / `relayer_unconfigured` (the
+pool's secret is missing or empty: nothing sent), `504 timeout`. Any other broadcast failure (dropped connection, non-JSON 5xx from a proxy) may still execute, so the
 tx hash is polled; transient errors while polling don't end the wait. Usage (`usage.sessions` /
 `usage.derives`, per app per UTC day) counts successful calls only.
 
@@ -167,7 +173,10 @@ writes and 120 reads per minute. `relayId` is 43 base64url characters (`400 bad_
 
 ### Vault page: `GET {VAULT_ORIGIN}/vault?pk=<publishable key>`
 
-Served only on the vault origin (the request URL's origin must equal `VAULT_ORIGIN`; 404 elsewhere). Rendered per
+Served only on the vault origin (the request URL's origin must equal `VAULT_ORIGIN`; 404 elsewhere). The two Hana
+origins get nothing else from this Worker: any other path (or method) whose URL origin is `VAULT_ORIGIN` or
+`AUTH_ORIGIN`, `/v1/*` included, is a `404` with `frame-ancestors 'none'`, `nosniff` and no CORS, so the vault origin is
+never the API. Rendered per
 request from D1 only (no chain RPC): a non-executable `<script type="application/json" id="hana-config">` with
 `{v:1, appId, appName, scopeId, origins, settings:{persistence, sessionTtlMs, idleTtlMs, rawSign, autoApprovePolicy},
 publishableKey, serverTimeMs}` (JSON with `<`, `>`, `&`, U+2028, U+2029 escaped; no `signer`), then
@@ -182,9 +191,12 @@ config script, `frame-ancestors 'none'`) for an unknown, suspended or scope-conf
 
 ### Page Workers (`src/pages/`, `wrangler.vault.jsonc`, `wrangler.auth.jsonc`)
 
-Where the two Hana origins can't be routes on this Worker (sandbox-dev on `workers.dev`: `docs/batch-b-spec.md`,
-"Order of work" step 0), each is a thin Worker of its own, with only that origin's built pages as its static assets.
-`gen` writes both configs from the manifest (`scripts/pages-wrangler.ts`):
+In every env each Hana origin is a thin Worker of its own, with only that origin's built pages as its static assets
+(on `workers.dev` in dev envs, a Custom Domain elsewhere). This differs from `docs/batch-b-spec.md`, which has the API
+Worker serve both origins through its own routes and an assets binding outside sandbox-dev: one Worker per origin
+means neither origin can serve the other's files, and the API Worker never holds page assets. Recorded as a proposal
+for the user's confirmation in `docs/decisions.md` ("Proposed, not yet confirmed"). `gen` writes both configs from the
+manifest (`scripts/pages-wrangler.ts`):
 
 | | Vault Worker | Auth Worker |
 |---|---|---|
@@ -193,8 +205,10 @@ Where the two Hana origins can't be routes on this Worker (sandbox-dev on `worke
 | Vars | `VAULT_ORIGIN` | `AUTH_ORIGIN`, `API_URL`, `NEAR_RPC` |
 
 Both answer only on their own origin (404 on any other host), only `GET`/`HEAD` (405), never serve an HTML file under
-its own name (404; pages exist only on their routes, with their headers), and add `nosniff`, `no-referrer` and a
-same-origin CORP to assets. No other path reaches the API, so `{vaultOrigin}/v1/*` is not the API. A missing page file
+its own name (404; pages exist only on their routes, with their headers), and add
+`content-security-policy: default-src 'none'; frame-ancestors 'none'; sandbox` (an SVG or XML asset opened as a
+document runs, loads and frames nothing; browsers don't apply it to the scripts and styles the pages load), `nosniff`,
+`no-referrer` and a same-origin CORP to every asset. No other path reaches the API, so `{vaultOrigin}/v1/*` is not the API. A missing page file
 or an unreachable API gives 503 with no config script. Placement follows the origin: `<worker>.<subdomain>.workers.dev`
 → a `workers.dev` Worker named `<worker>` (dev envs only; same subdomain as a `workers.dev` `apiUrl`, since the service
 binding needs one account), any other hostname → a Custom Domain on `<API worker>-vault`/`-auth`, loopback (`local*`
@@ -208,8 +222,12 @@ pnpm --filter @hana-id/api gen <env> --d1-id <id> # also writes wrangler.vault.j
 pnpm --filter @hana-id/api run deploy:pages       # wrangler deploy -c wrangler.vault.jsonc, then -c wrangler.auth.jsonc
 ```
 
-Locally, `pnpm --dir apps/api exec wrangler dev -c wrangler.vault.jsonc -c wrangler.jsonc` runs the vault Worker with
-this one behind its service binding (the first config is the one served).
+Locally, only for a `local*` env (loopback `vaultOrigin`/`authOrigin`; none is in `envs/` today, `apps/e2e` runs its
+own stack): run each Worker in its own process, `pnpm --dir apps/api exec wrangler dev` (the API, on `apiUrl`'s
+port), then `… wrangler dev -c wrangler.vault.jsonc` and `… wrangler dev -c wrangler.auth.jsonc` in other terminals;
+they find each other through wrangler's dev registry. One `wrangler dev -c a -c b` doesn't work: only its first config
+is reachable over HTTP, so the vault page couldn't call `{apiUrl}/v1/*`. With a sandbox env's configs the request URL
+is the local host, not the configured origin, so every page answers 404.
 
 ### Vault endpoints: `Origin: VAULT_ORIGIN` + `x-hana-key` + `x-hana-parent-origin`
 
@@ -232,8 +250,13 @@ per minute, 10 × the plan's `per_minute` per app, and 10 per share per minute. 
 invalid_signature`, then `get_session` straight from the node (re-read every 300 ms for up to 2 s while missing or not
 used up): `404 unknown_session`, `403 scope_mismatch`, `409 session_not_spent`, `502 near_unavailable`; then
 `409 share_exists`. Share actions: `404 unknown_share` (missing, or another app's), `410 share_revoked` (also when the
-share's origin was removed from the app, which revokes it), `401 invalid_signature`, then one atomic counter update:
-`409 bad_counter {expected}`, `410 share_expired`. `503 vault_key_unavailable` when `VAULT_KEK` (or, for an older row,
+share's origin was removed from the app, which revokes it). Unlock and touch then follow the app's settings as they
+are now: `persistence = 'none'` revokes the share (`410 share_revoked`), and a share never outlives `created_at` + the
+current `session_ttl_ms` (a lowered TTL shortens live shares and lowers their stored expiry, `410 share_expired`; a
+raised one never lengthens them). Then `401 invalid_signature`, then one atomic counter update that re-checks those
+settings in the same statement: `409 bad_counter {expected}`, `410 share_expired`. `revoke-all` revokes the other
+shares and moves its counter in one D1 batch (one transaction), the revoke conditional on the counter move, so a
+failure changes neither and a replay revokes nothing. `503 vault_key_unavailable` when `VAULT_KEK` (or, for an older row,
 `VAULT_KEK_PREVIOUS`) is missing; unlock unwraps K_s before the counter moves. Usage counts `usage.unlocks`. D1 holds
 only `share_enc = iv ‖ AES-GCM(VAULT_KEK, iv, K_s, aad = share_id ‖ app_id ‖ session_pk)` (`src/vault/kek.ts`).
 
@@ -288,12 +311,16 @@ Durable Object: the session pool (`RELAYER_KEYS`, objects `relayer-key-<index>`)
 (`OWNER_RELAYER_KEYS`, objects `owner-relayer-key-<index>`). Abuse of `/v1/owner-actions` can only drain the owner
 pool, never stop logins. `relayer-pool.ts` picks a key of the pool round-robin and calls its `RelayerKey` Durable
 Object; an object serves one pool and key only.
-Inside the object a promise-chain mutex covers only *next nonce → sign → dispatch `send_tx`*; the outcome
-(`send_tx` / `tx` with `wait_until: EXECUTED`, polled up to 60 s like the legacy relayer) is awaited outside it, so many
-transactions per key are in flight. The nonce is kept in memory and in DO storage; on cold start it is
-`max(stored, chain)` (transactions still in the pool aren't in the chain's nonce yet). On `InvalidNonce` the object
-re-reads the access key (`max(local, chain, ak_nonce from the error)`) and retries once; an expired block hash is
-refreshed and retried once. The object only relays its pool's methods, always to `SIGNER_ACCOUNT`, no deposit, with
+Inside the object a promise-chain mutex covers only *next nonce → sign → reserve → dispatch `send_tx`*; the outcome
+(`send_tx` / `tx` with `wait_until: EXECUTED_OPTIMISTIC`, `tx` polled every 400 ms for up to 60 s) is awaited outside
+it, so many transactions per key are in flight. Nonces are reserved in blocks of 100 (`NONCE_RESERVATION`): storage
+holds a reservation R ("no tx of this key was ever sent above R"), and a nonce above R first writes R + 100 − 1 and
+waits for the write to be confirmed, so one relay in 100 waits for storage. A cold start (objects are evicted after
+~10 s idle) trusts the stored reservation for this key's public key with no chain read (skipping up to 99 nonces) and
+reuses the stored block hash while it is under 5 min old; only a key with no stored reservation (new, or a replaced
+secret at that index) reads the access-key nonce and a final block from chain. On `InvalidNonce` the object re-reads
+the access key (`max(local, chain, ak_nonce from the error)`) and retries once; an expired block hash is refreshed and
+retried once; a tx superseded twice 2 s apart while unknown is treated as dropped and resent once with a fresh nonce. The object only relays its pool's methods, always to `SIGNER_ACCOUNT`, no deposit, with
 per-method gas from `src/gas.ts` (never the caller's): `create_session` 50 Tgas, `create_session_and_derive` 100,
 `derive_key` 60, `revoke_session` 20, `prune_sessions` 50, owner-pool methods 50 except `register_scope`, which
 verifies one RS256 client proof per client: 30 + 25 per proof, capped at 300 (280 for the contract's 10). **To
@@ -301,9 +328,13 @@ measure on testnet**; override with `GAS_<METHOD>_TGAS`.
 
 ## Logging
 
-One JSON line per request (`requestId`, `appId`, `endpoint`, `outcome`, `status`, `code`, `latencyMs`, `nearTx`) plus
-relay/cron events. The logger only accepts those typed fields: never JWTs, signatures, bodies, keys, CKD responses or
-contract panic text.
+One JSON line per request (`requestId`, `appId`, `endpoint`, `outcome`, `status`, `code`, `latencyMs`, `nearTx`, plus
+`phases` (ms per stage: `app`, `limits`, `checks`, `session`, `relay` and its `relayDispatch` / `relayQueue` /
+`relayChainRead` / `relaySign` / `relayPersist` / `relayOutcome` split), `colo` (the data center) and, for relays,
+`relayInstance` (`{cold, coldChainRead, blockRefresh, served, ageMs}` of the relayer key object)) plus relay, vault and
+cron events; field meanings in `docs/api.md` "Logs". The logger only accepts those typed fields: never JWTs,
+signatures, bodies, keys, CKD responses or contract panic text. A login relay request is always logged as
+`/v1/login-relay`, without its relayId (it is also the OAuth `state`), the top-level error line included.
 
 ## Notes
 

@@ -6,13 +6,13 @@ use ed25519_dalek::{Signer, SigningKey};
 use near_sdk::mock::MockAction;
 use near_sdk::serde_json::{self, Value};
 use near_sdk::test_utils::{get_created_receipts, get_logs, VMContextBuilder};
-use near_sdk::{testing_env, AccountId, NearToken};
+use near_sdk::{env, testing_env, AccountId, NearToken, VMContext};
 
 use crate::registry::{
     client_proof_nonce, client_proof_preimage, owner_action_nonce, owner_action_preimage, register_nonce, register_preimage, MAX_PENDING_CHANGE_BYTES,
     MAX_SPONSORED_PENDING_WITHOUT_CLIENTS, SHARED_ONLY_RESERVE_BYTES,
 };
-use crate::sessions::{ckd_request_bytes, session_message_bytes, session_nonce, session_nonce_preimage, SessionCommitment};
+use crate::sessions::{ckd_request_bytes, session_message_bytes, session_nonce, session_nonce_preimage, SessionCommitment, KEY_INDEX_LIMIT};
 use crate::*;
 
 const NOW_MS: u64 = 1_800_000_000_000;
@@ -55,15 +55,53 @@ fn acc(s: &str) -> AccountId {
     s.parse().unwrap()
 }
 
-fn ctx_with(caller: &str, ms: u64, deposit: NearToken) {
-    testing_env!(VMContextBuilder::new()
+fn vm_context(caller: &str, ms: u64, deposit: NearToken) -> VMContext {
+    VMContextBuilder::new()
         .current_account_id(acc(CURRENT_ACCOUNT.with(|a| a.get())))
         .predecessor_account_id(acc(caller))
         .signer_account_id(acc(caller))
         .block_timestamp(ms * 1_000_000)
         .attached_deposit(deposit)
         .account_balance(NearToken::from_near(100))
-        .build());
+        .build()
+}
+
+fn ctx_with(caller: &str, ms: u64, deposit: NearToken) {
+    testing_env!(vm_context(caller, ms, deposit));
+}
+
+/// A fresh mocked blockchain (no receipts, no logs) whose storage is `storage`.
+fn ctx_with_storage(caller: &str, ms: u64, storage: std::collections::HashMap<Vec<u8>, Vec<u8>>) {
+    env::set_blockchain_interface(near_sdk::MockedBlockchain::new(
+        vm_context(caller, ms, NearToken::from_near(1)),
+        near_sdk::test_vm_config(),
+        near_sdk::RuntimeFeesConfig::test(),
+        vec![],
+        storage,
+        Default::default(),
+        None,
+    ));
+}
+
+/// Runs `call` on `c` as the runtime runs one receipt (caller RELAYER, at NOW_MS). A unit test otherwise sees the
+/// writes a panicking call made before it panicked; here a panic restores storage, receipts and logs to how they were
+/// before the call, as the runtime reverts a failed receipt. Returns the contract as stored afterwards and the panic
+/// message, if any.
+fn as_receipt(c: HanaSigner, call: impl FnOnce(&mut HanaSigner)) -> (HanaSigner, Option<String>) {
+    env::state_write(&c);
+    drop(c); // flushes the collections' caches into storage
+    let before = near_sdk::mock::with_mocked_blockchain(|b| b.take_storage());
+    ctx_with_storage(RELAYER, NOW_MS, before.clone());
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut c: HanaSigner = env::state_read().expect("contract state");
+        call(&mut c);
+        env::state_write(&c);
+    }));
+    let err = outcome.err().map(panic_msg);
+    if err.is_some() {
+        ctx_with_storage(RELAYER, NOW_MS, before);
+    }
+    (env::state_read().expect("contract state"), err)
 }
 
 /// Attaches 1 NEAR, which payable methods use for storage (excess refunded); non-payable methods ignore it here.
@@ -625,6 +663,267 @@ fn prune_sessions_is_capped_at_100() {
     assert_eq!(c.queue_head, 100);
     assert_eq!(c.prune_sessions(1000), 5);
     assert_eq!(c.queue_head, 105);
+}
+
+// ---- one-transaction login: create_session_and_derive (batch B) ----
+
+const PK1: &str = "bls12381g1:A";
+const PK2: &str = "bls12381g2:B";
+
+/// create_session_and_derive with `token` in s1 for session key `seed` (expiry EXPIRES_MS, salt SALT, key_index 0),
+/// signed for counter 1 over (PK1, PK2).
+fn login(c: &mut HanaSigner, token: &str, seed: u8, max_uses: u32) {
+    let _ = c.create_session_and_derive(tok(token), "s1".into(), pk(seed), EXPIRES_MS, SALT.to_vec(), 0, max_uses, ckd_sig(seed, 1, PK1, PK2), PK1.into(), PK2.into());
+}
+
+/// Asserts the one MPC request created so far: `request_app_private_key` on the MPC for `path` with (PK1, PK2),
+/// domain 2, 1 yoctoNEAR and 20 Tgas.
+fn assert_one_mpc_request(path: &str) {
+    let receipts = get_created_receipts();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].receiver_id, acc("v1.signer-prod.testnet"));
+    assert_eq!(receipts[0].actions.len(), 1);
+    let MockAction::FunctionCallWeight { method_name, args, attached_deposit, prepaid_gas, .. } = &receipts[0].actions[0] else { panic!("not a function call") };
+    assert_eq!(method_name, b"request_app_private_key");
+    assert_eq!(*attached_deposit, NearToken::from_yoctonear(1));
+    assert_eq!(prepaid_gas.as_tgas(), 20);
+    let args: Value = serde_json::from_slice(args).unwrap();
+    assert_eq!(args, serde_json::json!({"request":{"derivation_path":path,"app_public_key":{"AppPublicKeyPV":{"pk1":PK1,"pk2":PK2}},"domain_id":2}}));
+}
+
+/// Asserts that no session, tombstone or MPC request exists for session key `seed`, and that the queue is at
+/// `queue` (head, tail).
+fn assert_nothing_left(c: &HanaSigner, seed: u8, queue: (u64, u64)) {
+    assert!(c.sessions.get(&pk(seed)).is_none(), "a session is left for key {seed}");
+    assert!(!c.session_key_in_use(pk(seed)));
+    assert_eq!((c.queue_head, c.queue_tail), queue, "queue changed");
+    assert!(get_created_receipts().is_empty(), "an MPC request was made");
+}
+
+#[test]
+fn combined_login_opens_a_used_session_with_the_create_session_path() {
+    let mut c = setup();
+    // Same scope and user through create_session (A2 is the scope's other client; Google's sub is the same).
+    let created = open(&mut c, "session_a2", "s1", 8, 0);
+    ctx(RELAYER, NOW_MS);
+    login(&mut c, "session_a", 7, 3);
+    let session = c.get_session(pk(7)).unwrap();
+    assert_eq!(session, Session { used: 1, ..created.clone() });
+    assert_eq!(session.path, format!("s1#google#{USER}#0"));
+    assert_eq!((c.queue_head, c.queue_tail), (0, 2));
+    assert_one_mpc_request(&created.path);
+}
+
+#[test]
+fn combined_login_create_panics_leave_nothing() {
+    let mut c = setup();
+    let call = |token: &str, scope: &str, key: Vec<u8>, expires: u64, salt: Vec<u8>, key_index: u32, max_uses: u32| {
+        let (token, scope) = (tok(token), scope.to_string());
+        move |c: &mut HanaSigner| {
+            let _ = c.create_session_and_derive(token, scope, key, expires, salt, key_index, max_uses, ckd_sig(7, 1, PK1, PK2), PK1.into(), PK2.into());
+        }
+    };
+    let cases: Vec<(Box<dyn FnOnce(&mut HanaSigner)>, &str)> = vec![
+        (Box::new(call("session_a", "s1", vec![7; 31], EXPIRES_MS, SALT.to_vec(), 0, 3)), "32-byte"),
+        (Box::new(call("session_a", "s1", pk(7), EXPIRES_MS, vec![9; 15], 0, 3)), "Salt must be 16-64 bytes"),
+        (Box::new(call("session_a", "s1", pk(7), EXPIRES_MS, vec![9; 65], 0, 3)), "Salt must be 16-64 bytes"),
+        (Box::new(call("session_a", "s1", pk(7), NOW_MS, SALT.to_vec(), 0, 3)), "within 24 hours"),
+        (Box::new(call("session_a", "s1", pk(7), NOW_MS + 24 * HOUR_MS + 1, SALT.to_vec(), 0, 3)), "within 24 hours"),
+        (Box::new(call("session_a", "s1", pk(7), EXPIRES_MS, SALT.to_vec(), 0, 0)), "max_uses must be 1-500"),
+        (Box::new(call("session_a", "s1", pk(7), EXPIRES_MS, SALT.to_vec(), 0, 501)), "max_uses must be 1-500"),
+        (Box::new(call("session_a_k_reserved", "s1", pk(7), EXPIRES_MS, SALT.to_vec(), KEY_INDEX_LIMIT, 3)), "key_index must be below 2^31"),
+        (Box::new(call("session_expired", "s1", pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3)), "Token expired"),
+        (Box::new(call("session_wrong_key", "s1", pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3)), "Invalid token signature"),
+        (Box::new(call("session_unregistered", "s1", pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3)), "Token is for an unregistered app"),
+        (Box::new(call("session_a", "s2", pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3)), "Token is for another app"),
+        (Box::new(call("session_console", "s1", pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3)), "Token is for an unregistered app"),
+        // The nonce commits to max_uses and key_index: the token for (max 3, index 0) opens nothing else.
+        (Box::new(call("session_a", "s1", pk(7), EXPIRES_MS, SALT.to_vec(), 0, 1)), "Token nonce doesn't commit to this session"),
+        (Box::new(call("session_a", "s1", pk(7), EXPIRES_MS, SALT.to_vec(), 1, 3)), "Token nonce doesn't commit to this session"),
+        (Box::new(call("session_no_nonce", "s1", pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3)), "Token nonce doesn't commit to this session"),
+    ];
+    for (f, expected) in cases {
+        let (after, err) = as_receipt(c, f);
+        c = after;
+        let msg = err.unwrap_or_else(|| panic!("expected a panic with {expected}"));
+        assert!(msg.contains(expected), "{msg} should contain {expected}");
+        assert_nothing_left(&c, 7, (0, 0));
+    }
+}
+
+#[test]
+fn combined_login_derive_panics_revert_the_session() {
+    let mut c = setup();
+    let vault_sig = sk(7).sign(&vault_unlock_message()).to_bytes().to_vec();
+    let long = format!("bls12381g1:{}", "A".repeat(502));
+    assert_eq!(long.len(), 513);
+    let cases: Vec<(Vec<u8>, String, String, &str)> = vec![
+        (ckd_sig(8, 1, PK1, PK2), PK1.into(), PK2.into(), "Invalid session signature"),
+        (ckd_sig(7, 1, PK1, PK2)[..63].to_vec(), PK1.into(), PK2.into(), "Signature must be 64 bytes"),
+        (ckd_sig(7, 2, PK1, PK2), PK1.into(), PK2.into(), "Invalid session signature"),
+        (ckd_sig(7, 1, "bls12381g1:EVIL", "bls12381g2:EVIL"), PK1.into(), PK2.into(), "Invalid session signature"),
+        (session_sig(7, 1, b"revoke"), PK1.into(), PK2.into(), "Invalid session signature"),
+        (vault_sig, PK1.into(), PK2.into(), "Invalid session signature"),
+        (ckd_sig(7, 1, &long, PK2), long.clone(), PK2.into(), "BLS key too long"),
+        (ckd_sig(7, 1, PK1, &long), PK1.into(), long.clone(), "BLS key too long"),
+    ];
+    for (sig, pk1, pk2, expected) in cases {
+        let (after, err) = as_receipt(c, move |c| {
+            let _ = c.create_session_and_derive(tok("session_a"), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3, sig, pk1, pk2);
+        });
+        c = after;
+        let msg = err.unwrap_or_else(|| panic!("expected a panic with {expected}"));
+        assert!(msg.contains(expected), "{msg} should contain {expected}");
+        assert_nothing_left(&c, 7, (0, 0));
+    }
+    // Nothing was consumed: the same token still logs in.
+    let (c, err) = as_receipt(c, |c| login(c, "session_a", 7, 3));
+    assert_eq!(err, None);
+    assert_eq!(c.get_session(pk(7)).unwrap().used, 1);
+    assert_one_mpc_request(&format!("s1#google#{USER}#0"));
+}
+
+#[test]
+fn combined_login_cannot_be_replayed() {
+    let c = setup();
+    let (c, err) = as_receipt(c, |c| login(c, "session_a", 7, 3));
+    assert_eq!(err, None);
+    let (c, err) = as_receipt(c, |c| login(c, "session_a", 7, 3));
+    assert!(err.unwrap().contains("Session key already in use"));
+    assert_eq!(c.get_session(pk(7)).unwrap().used, 1);
+    assert_eq!((c.queue_head, c.queue_tail), (0, 1));
+    assert!(get_created_receipts().is_empty());
+}
+
+#[test]
+fn combined_login_after_a_front_run_create_session_fails() {
+    let mut c = setup();
+    // Someone saw the token and opened the session first: the combined call fails, and the session key holder
+    // recovers with derive_key and counter 1.
+    open(&mut c, "session_a", "s1", 7, 0);
+    let (mut c, err) = as_receipt(c, |c| login(c, "session_a", 7, 3));
+    assert!(err.unwrap().contains("Session key already in use"));
+    assert_eq!(c.get_session(pk(7)).unwrap().used, 0);
+    ctx(RELAYER, NOW_MS);
+    derive(&mut c, 7, 1);
+    assert_eq!(c.get_session(pk(7)).unwrap().used, 1);
+    assert_one_mpc_request(&format!("s1#google#{USER}#0"));
+}
+
+#[test]
+#[should_panic(expected = "Session use limit reached")]
+fn combined_login_with_one_use_cannot_derive_again() {
+    let mut c = setup();
+    login(&mut c, "session_a_m1", 7, 1);
+    let s = c.get_session(pk(7)).unwrap();
+    assert_eq!((s.used, s.max_uses), (1, 1));
+    derive(&mut c, 7, 2);
+}
+
+#[test]
+fn combined_login_with_two_uses_retries_with_counter_2() {
+    let mut c = setup();
+    login(&mut c, "session_a_m2", 7, 2);
+    // Counter 1 is spent by the combined call. (derive_key's checks run before it counts a use, so the failed
+    // call below writes nothing.)
+    let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| derive(&mut c, 7, 1))).unwrap_err();
+    assert!(panic_msg(err).contains("Wrong counter"));
+    assert_eq!(c.get_session(pk(7)).unwrap().used, 1);
+    ctx(RELAYER, NOW_MS);
+    derive(&mut c, 7, 2);
+    assert_eq!(c.get_session(pk(7)).unwrap().used, 2);
+    assert_one_mpc_request(&format!("s1#google#{USER}#0"));
+    let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| derive(&mut c, 7, 3))).unwrap_err();
+    assert!(panic_msg(err).contains("Session use limit reached"));
+}
+
+#[test]
+fn combined_login_prunes_up_to_three() {
+    let mut c = setup();
+    for seed in 20..25u8 {
+        c.sessions.insert(pk(seed), sessions::StoredSession { path: "p".into(), scope_id: "s1".into(), expires_at_ms: NOW_MS - 1, max_uses: 1, used: 0, revoked: false });
+        c.session_queue.insert(c.queue_tail, sessions::QueueEntry { expires_at_ms: NOW_MS - 1, key: pk(seed) });
+        c.queue_tail += 1;
+    }
+    login(&mut c, "session_a", 7, 3);
+    let remaining = (20..25u8).filter(|s| c.sessions.get(&pk(*s)).is_some()).count();
+    assert_eq!(remaining, 2);
+    assert_eq!((c.queue_head, c.queue_tail), (3, 6));
+    assert_eq!(c.get_session(pk(7)).unwrap().used, 1);
+}
+
+// ---- key_index range: 2^31 and above is reserved (batch B) ----
+
+#[test]
+fn key_index_below_2_31_is_accepted() {
+    let mut c = setup();
+    assert_eq!(KEY_INDEX_LIMIT, 1 << 31);
+    let s = c.create_session(tok("session_a_k_last"), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0x7fff_ffff, 3);
+    assert_eq!(s.path, format!("s1#google#{USER}#2147483647"));
+}
+
+#[test]
+fn key_index_2_31_and_above_is_reserved() {
+    let mut c = setup();
+    // Each token's nonce commits to its key_index, so the bound (not the nonce) is what refuses them.
+    for (token, key_index) in [("session_a_k_reserved", 0x8000_0000u32), ("session_a_k_max", u32::MAX)] {
+        let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            c.create_session(tok(token), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), key_index, 3);
+        }))
+        .unwrap_err();
+        assert_eq!(panic_msg(err), "key_index must be below 2^31");
+        let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = c.create_session_and_derive(tok(token), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), key_index, 3, ckd_sig(7, 1, PK1, PK2), PK1.into(), PK2.into());
+        }))
+        .unwrap_err();
+        assert_eq!(panic_msg(err), "key_index must be below 2^31");
+        assert!(c.sessions.get(&pk(7)).is_none());
+    }
+}
+
+// ---- no claim allow-list on chain (batch B: the API and the vault enforce it) ----
+
+#[test]
+fn tokens_with_personal_claims_are_accepted_on_chain() {
+    // email, email_verified, name, hd and picture are ignored: console owner-action tokens (batch C) may carry email,
+    // and the claim allow-list binds only tokens the API relays.
+    let mut c = setup();
+    let claims: Value = {
+        use base64::Engine;
+        let payload = tok("session_a_pii").split('.').nth(1).unwrap().to_string();
+        serde_json::from_slice(&base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap()
+    };
+    for claim in ["email", "email_verified", "name", "hd", "picture"] {
+        assert!(claims.get(claim).is_some(), "fixture lacks {claim}");
+    }
+    assert_eq!(open(&mut c, "session_a_pii", "s1", 7, 0).path, format!("s1#google#{USER}#0"));
+}
+
+// ---- vault messages (off-chain, batch B) are never session messages ----
+
+/// "hana-id-vault-v1:" ‖ borsh(signer) ‖ borsh(app_id) ‖ share_id (16) ‖ counter u64 LE ‖ sha256(payload), for the
+/// fixture's example (signer ME, app "app_test", share id 01..10, counter 1, payload "unlock").
+fn vault_unlock_message() -> Vec<u8> {
+    let share_id: Vec<u8> = (1u8..=16).collect();
+    borsh_cat(&[b"hana-id-vault-v1:".to_vec(), bs(ME), bs("app_test"), share_id, 1u64.to_le_bytes().to_vec(), env::sha256(b"unlock")])
+}
+
+#[test]
+fn vault_signatures_are_rejected_as_derive_and_revoke() {
+    ctx(ADMIN, NOW_MS);
+    check_layout("vault_message_unlock", &vault_unlock_message(), None);
+    let sig = sk(7).sign(&vault_unlock_message()).to_bytes().to_vec();
+    let mut c = setup();
+    open(&mut c, "session_a", "s1", 7, 0);
+    let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = c.derive_key(pk(7), 1, sig.clone(), PK1.into(), PK2.into());
+    }))
+    .unwrap_err();
+    assert!(panic_msg(err).contains("Invalid session signature"));
+    let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| c.revoke_session(pk(7), 1, sig.clone()))).unwrap_err();
+    assert!(panic_msg(err).contains("Invalid session signature"));
+    assert_eq!(c.get_session(pk(7)).unwrap().used, 0);
+    assert!(get_created_receipts().is_empty());
 }
 
 // ---- issuers ----

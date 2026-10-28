@@ -388,6 +388,12 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
 - Condition, met 2026-10-28: the same Google account through clients in two different Cloud projects got the same
   `sub` (`apps/smoke/spike.html` `subFingerprint`; `docs/context.md` spike notes).
 
+### D43. Session lengths: 12 h absolute, 2 h idle by default
+- Date 2026-10-28 · Status: confirmed by the user · Source: `docs/batch-b-spec.md` Q5
+- Decision: defaults stay 12 h absolute and 2 h idle; partners tune both within the allowed range (≤ 23 h 50 min
+  absolute) through app settings. Review after a month of pilot data (logout frequency, re-login cost ≈ 9 s and
+  $0.021 each).
+
 ## Superseded or amended
 
 | Was | Now | Source |

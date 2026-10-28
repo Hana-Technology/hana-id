@@ -30,6 +30,8 @@ export interface LogFields {
   rewrapped?: number;
   unreadable?: number;
   unknownKek?: number;
+  /** Why a stored auto-approve policy was refused (vault/settings.ts): validator paths and limits, at most 5. */
+  problems?: string[];
 }
 
 export function log(fields: LogFields, level: 'info' | 'warn' | 'error' = 'info'): void {

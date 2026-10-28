@@ -245,7 +245,7 @@ function accountId(a: xdr.AccountId): string {
 const SYMBOL = /^[A-Za-z0-9_]{1,32}$/u;
 
 function symbol(v: string | Uint8Array, what: string): string {
-  const s = typeof v === 'string' ? v : new TextDecoder('utf-8', { fatal: true }).decode(v);
+  const s = typeof v === 'string' ? v : new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(v);
   if (!SYMBOL.test(s)) fail('invalid_value', `Bad Soroban symbol in ${what}`);
   return s;
 }

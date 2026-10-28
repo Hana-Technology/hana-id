@@ -1,7 +1,10 @@
 // Per-app vault settings (D1 `apps` columns from migration 0003). `raw_sign = 'approval'` and a new or changed
 // auto-approve policy are written as pending values with an effective time (admin CLI, later the batch C dashboard);
 // everything served here applies the pending value only once `now >= effective_at`. Turning raw signing off and
-// removing a policy clear the pending value and take effect at once, so they need no rule here.
+// removing a policy clear the pending value and take effect at once, so they need no rule here. A stored policy is
+// served only if @hana-id/core's validateAutoApprovePolicy accepts it (the same check the admin CLI and the vault run).
+// The validator (with @stellar/stellar-base) is imported only when an app has a policy, so it adds nothing to cold starts.
+import type { AutoApprovePolicyV1 } from '@hana-id/core/policy';
 import { log } from '../log.ts';
 
 export type Persistence = 'session' | 'none';
@@ -31,8 +34,8 @@ export interface AppSettings {
   sessionTtlMs: number;
   idleTtlMs: number;
   rawSign: RawSign;
-  /** The policy JSON in force (shape checked only: @hana-id/core's validator runs before it is written and in the vault). */
-  autoApprovePolicy: Record<string, unknown> | null;
+  /** The policy in force, normalized by @hana-id/core's validator (which the vault runs again before using it). */
+  autoApprovePolicy: AutoApprovePolicyV1 | null;
 }
 
 const SETTINGS_COLUMNS =
@@ -42,18 +45,18 @@ export async function getSettingsRow(db: D1Database, appId: string): Promise<Set
   return db.prepare(`SELECT ${SETTINGS_COLUMNS} FROM apps WHERE id = ?1`).bind(appId).first<SettingsRow>();
 }
 
-const isPlainObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
-
-/** A stored policy as JSON, or null (with a log line) when it is not a JSON object: an unreadable policy never applies. */
-function parsePolicy(text: string | null, appId: string): Record<string, unknown> | null {
+/**
+ * A stored policy, validated against the app's session_ttl_ms, or null when there is none. A policy the validator
+ * refuses (a bare D1 edit, or a validator that has since become stricter) never applies: it is logged and dropped, so
+ * every request gets the approval popup.
+ */
+async function parsePolicy(text: string | null, appId: string, sessionTtlMs: number): Promise<AutoApprovePolicyV1 | null> {
   if (text === null) return null;
-  try {
-    const value: unknown = JSON.parse(text);
-    if (isPlainObject(value)) return value;
-  } catch {
-    // Fall through.
-  }
-  log({ event: 'auto_approve_policy_unreadable', appId }, 'error');
+  const { parseAutoApprovePolicy } = await import('@hana-id/core/policy');
+  const result = parseAutoApprovePolicy(text, { sessionTtlMs });
+  if (result.ok) return result.policy;
+  // The problems name paths and limits (the policy itself is the app owner's, not secret); bounded for the log line.
+  log({ event: 'auto_approve_policy_invalid', appId, problems: result.problems.slice(0, 5).map((p) => p.slice(0, 200)) }, 'error');
   return null;
 }
 
@@ -63,7 +66,7 @@ const matured = (pending: unknown, effectiveAt: number | null, now: number): boo
  * The settings in force at `now`. Values outside the migration's CHECKs can't be stored, but a row is still read
  * defensively: anything unexpected falls back to the most restrictive value ('none', 'off', no policy).
  */
-export function effectiveSettings(row: SettingsRow, appId: string, now: number): AppSettings {
+export async function effectiveSettings(row: SettingsRow, appId: string, now: number): Promise<AppSettings> {
   const rawSign: RawSign = matured(row.raw_sign_pending, row.raw_sign_effective_at, now) && row.raw_sign_pending === 'approval' ? 'approval' : row.raw_sign === 'approval' ? 'approval' : 'off';
   const policyText = matured(row.auto_approve_pending, row.auto_approve_effective_at, now) ? row.auto_approve_pending : row.auto_approve_policy;
   return {
@@ -71,6 +74,6 @@ export function effectiveSettings(row: SettingsRow, appId: string, now: number):
     sessionTtlMs: row.session_ttl_ms,
     idleTtlMs: row.idle_ttl_ms,
     rawSign,
-    autoApprovePolicy: parsePolicy(policyText, appId),
+    autoApprovePolicy: await parsePolicy(policyText, appId, row.session_ttl_ms),
   };
 }

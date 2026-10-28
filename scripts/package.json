@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@hana-id/core": "workspace:*",
     "@hana-id/env": "workspace:*",
     "@near-js/crypto": "2.5.1",
     "@near-js/transactions": "2.5.1",

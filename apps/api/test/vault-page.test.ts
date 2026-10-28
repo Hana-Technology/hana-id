@@ -30,6 +30,33 @@ function inlinedConfig(html: string): Record<string, unknown> | null {
   return m ? (JSON.parse(m[1]!) as Record<string, unknown>) : null;
 }
 
+/** A valid AutoApprovePolicyV1 in normalized form: ERC-20 approve on one Base contract, under the address rule. */
+function autoApprovePolicy(label: string, perDayCount = 5) {
+  return {
+    v: 1,
+    label,
+    maxConsentMs: 12 * HOUR,
+    limits: { perDayCount },
+    evm: {
+      chains: [
+        {
+          chainId: 8453,
+          maxValueWei: '0',
+          maxValueWeiPerDay: '0',
+          maxFeeWei: '100000',
+          contracts: [
+            {
+              address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+              name: 'USDC',
+              selectors: [{ selector: '0x095ea7b3', signature: 'approve(address,uint256)', addressArgs: 'self-or-listed' }],
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
 const csp = (res: Response): string => res.headers.get('content-security-policy') ?? '';
 const frameAncestors = (res: Response): string => /frame-ancestors ([^;]*)/u.exec(csp(res))?.[1] ?? '';
 
@@ -188,8 +215,8 @@ describe('delayed settings on the vault page', () => {
   it('an auto-approve policy is served only from auto_approve_effective_at; the policy in force until then', async () => {
     const app = await seedApp();
     const policy = async () => (inlinedConfig(await (await vaultPage(app.key)).text())!.settings as Record<string, unknown>).autoApprovePolicy;
-    const v1 = { v: 1, label: 'Swaps </script>', limits: { perDayCount: 5 } };
-    const v2 = { v: 1, label: 'Wider', limits: { perDayCount: 50 } };
+    const v1 = autoApprovePolicy('Swaps </script>', 5);
+    const v2 = autoApprovePolicy('Wider', 50);
     await setSettings(app.id, { auto_approve_pending: JSON.stringify(v1), auto_approve_effective_at: Date.now() + HOUR });
     expect(await policy()).toBeNull();
     await setSettings(app.id, { auto_approve_effective_at: Date.now() - 1 });
@@ -207,6 +234,45 @@ describe('delayed settings on the vault page', () => {
       await setSettings(app.id, { auto_approve_policy: text });
       expect((inlinedConfig(await (await vaultPage(app.key)).text())!.settings as Record<string, unknown>).autoApprovePolicy).toBeNull();
     }
+  });
+
+  it('a stored policy is served only if @hana-id/core validates it, and served normalized', async () => {
+    const app = await seedApp();
+    const served = async (stored: unknown) => {
+      await setSettings(app.id, { auto_approve_policy: JSON.stringify(stored) });
+      return (inlinedConfig(await (await vaultPage(app.key)).text())!.settings as Record<string, unknown>).autoApprovePolicy;
+    };
+    const valid = autoApprovePolicy('Approvals');
+    const errors = vi.spyOn(console, 'error');
+    // A bare D1 edit can't get past the validator: a missing field, an unknown key, approve with addressArgs 'any'.
+    const { maxConsentMs: _, ...noConsent } = valid;
+    expect(await served(noConsent)).toBeNull();
+    expect(await served({ ...valid, raw: true })).toBeNull();
+    const any = autoApprovePolicy('Any');
+    any.evm.chains[0]!.contracts[0]!.selectors[0]!.addressArgs = 'any';
+    expect(await served(any)).toBeNull();
+    expect(errors.mock.calls.map(([line]) => JSON.parse(String(line)).event)).toEqual(Array(3).fill('auto_approve_policy_invalid'));
+    // The log line names the problem, never the policy body.
+    expect(String(errors.mock.calls[2]![0])).toContain("can't have addressArgs 'any'");
+    // Duplicate keys are refused (strict parse), not resolved last-wins.
+    await setSettings(app.id, { auto_approve_policy: JSON.stringify(valid).replace('"label":"Approvals"', '"label":"Approvals","label":"Other"') });
+    expect((inlinedConfig(await (await vaultPage(app.key)).text())!.settings as Record<string, unknown>).autoApprovePolicy).toBeNull();
+    // Served in the validator's normalized form: EIP-55 addresses, lowercase selectors.
+    const loose = autoApprovePolicy('Approvals');
+    const entry = loose.evm.chains[0]!.contracts[0]!;
+    entry.address = entry.address.toLowerCase();
+    entry.selectors[0]!.selector = '0x095EA7B3';
+    expect(await served(loose)).toEqual(valid);
+  });
+
+  it('a policy whose maxConsentMs exceeds the app’s session_ttl_ms is not served', async () => {
+    const app = await seedApp();
+    await setSettings(app.id, { session_ttl_ms: 2 * HOUR, idle_ttl_ms: HOUR });
+    const page = async () => (inlinedConfig(await (await vaultPage(app.key)).text())!.settings as Record<string, unknown>).autoApprovePolicy;
+    await setSettings(app.id, { auto_approve_policy: JSON.stringify({ ...autoApprovePolicy('Short'), maxConsentMs: 2 * HOUR }) });
+    expect(await page()).toMatchObject({ maxConsentMs: 2 * HOUR });
+    await setSettings(app.id, { auto_approve_policy: JSON.stringify({ ...autoApprovePolicy('Long'), maxConsentMs: 2 * HOUR + 1 }) });
+    expect(await page()).toBeNull();
   });
 
   it('serves persistence and the TTLs as stored', async () => {

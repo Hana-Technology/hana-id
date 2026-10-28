@@ -187,7 +187,7 @@ async function createShare(env: Env, ctx: Ctx, app: App, parentOrigin: string, b
   try {
     const row = await getSettingsRow(env.DB, app.id);
     if (!row) return reject(ctx, 401, 'unknown_app', 'Unknown publishable key');
-    settings = effectiveSettings(row, app.id, Date.now());
+    settings = await effectiveSettings(row, app.id, Date.now());
   } catch {
     return reject(ctx, 503, 'config_unavailable', 'App config is unavailable, try again');
   }

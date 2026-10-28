@@ -8,8 +8,8 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 
 > **Testnet pilot.** Keys come from the NEAR **testnet** MPC and stay disposable until the address freeze (final
 > accounts, audit, mainnet). Don't keep real funds in pilot wallets, on any chain. A test app (`pk_test_…`) can't sign
-> for mainnet chains at all ([section 12](#12-test-and-live-keys)). The specification is `docs/batch-b-spec.md`, and
-> this guide follows the code on the batch B branch. Where it describes a part still being built, it says so.
+> for mainnet chains at all ([section 12](#12-test-and-live-keys)). This guide follows the code; the original
+> specification is `docs/batch-b-spec.md`.
 
 ## How it works
 
@@ -39,7 +39,7 @@ Hana registers apps during the pilot (the self-serve dashboard comes with batch 
 - the app name your users will see ("Signing in to {name} at {origin}");
 - every origin your app runs on, as exact origins (`https://app.example.com`, no path). At most 20. Add
   `http://localhost:<port>` (or `http://localhost:*`) for local development; loopback works only for test keys in
-  sandbox envs;
+  `local*`/`sandbox*` envs;
 - whether you use Hana's shared Google client or your own ([section 6](#6-google-client-shared-or-your-own));
 - any [settings](#7-app-settings) other than the defaults.
 
@@ -127,11 +127,11 @@ button.addEventListener('click', async () => {
   0.1–0.3 s).
 - **Sessions.** With the default `'session'` persistence the wallet survives reloads and new tabs for up to 12 h,
   or until it has been idle for 2 h. Then `sessionExpired` fires and the user signs in again. An open tab that sends
-  the vault no request that uses the key (a signature, an export, an auto-approve consent request) for the idle limit
-  drops its key from memory; polling status or addresses doesn't count. Your page sees nothing (status, addresses and
-  auto-approve status keep answering), and the next request that uses the key restores it with one API call, as a reload does, while the session is
-  still alive on Hana's side. With `'none'`, every
-  page load is a new login. If the browser blocks storage (some private modes), the vault falls back to `'none'` and
+  the vault no request that uses the key (a signature, an export, revoking other devices, an auto-approve consent
+  request) for the idle limit drops its key from memory; polling status or addresses doesn't count. Your page sees
+  nothing (status, addresses and auto-approve status keep answering), and the next request that uses the key restores
+  it with one API call, as a reload does, while the session is still alive on Hana's side. With `'none'`, every page
+  load is a new login. If the browser blocks storage (some private modes), the vault falls back to `'none'` and
   `hana.warning` is `storage_unavailable`.
 - `await hana.logout()` signs this app out on this device, in every tab. It sends no transaction.
 - `await hana.revokeOtherDevices()` signs the user out of your app everywhere else. It works only within 5 min of a
@@ -175,8 +175,8 @@ Removing an origin from your app signs out the users who signed in there.
 
 Both modes put users in your app's own scope, so another app never gets your users' keys. The path holds no client
 ID, so you can start shared and move to your own client later without changing anyone's address. Google gives one
-account the same `sub` across clients of one Google Cloud project, as measured on testnet. The test with clients in
-separate projects is still to run.
+account the same `sub` across clients, both within one Google Cloud project and across two projects (tested with a
+personal and a Workspace account, D42).
 
 **Your own client.** In Google Cloud console → APIs & Services → Credentials, create an OAuth client ID of type "Web
 application":
@@ -409,7 +409,7 @@ and calls with a `uint160` argument (Uniswap v3's `sqrtPriceLimitX96`) always ge
 `eth_sign`, Stellar classic operations other than a listed `changeTrust`, fee-bump envelopes, and anything the
 vault can't fully decode. **Not covered in the pilot:** calls whose instructions travel in opaque bytes, such as
 routers, multicall, bridges and Sodax swaps (`AssetManager.transfer`, `sendMessage`). Those always get the popup until
-a protocol decoder for them ships. Token amounts other than native value are not capped yet (Q39), so keep
+a protocol decoder for them ships. Token amounts other than native value are not capped in the pilot (D46), so keep
 `perDayCount` small.
 
 **Contract names on the consent screen.** The `name` you give a contract is shown as yours: "{name} · named by
@@ -419,8 +419,9 @@ Router" on an address that isn't one of Sodax's verified contracts), the screen 
 Asset Manager", "— not a verified Sodax contract") and warns the user at the top. Check marks are removed from your
 names. Every contract also shows its short address (`0x348B…7Bc3`) and a "View on {explorer}" link for its chain
 (Etherscan, Basescan, SonicScan, StellarExpert and others, test networks included; a chain Hana has no explorer for
-shows the address alone). The verified list starts with Sodax's mainnet contracts (asset managers and bnUSD on each
-EVM chain Sodax supports and on Stellar, and its Sonic hub contracts).
+shows the address alone). The verified list starts with Sodax's mainnet contracts (its Sonic hub contracts; asset
+managers and bnUSD on the EVM spokes and Stellar; Connection contracts on Hedera, Kaia and Robinhood Chain), each
+confirmed by two Sodax sources that agree (D44).
 
 **Getting a contract verified.** Ask Hana, with the chain, the address and the protocol's own official sources for
 it: a page of the protocol's documentation that lists the address, and/or a published, version-pinned package of the
@@ -512,7 +513,7 @@ const evmProvider = createSodaxEvmProvider(hana, { chainId: 8453, rpcUrl });    
 | Loopback origins (`http://localhost:…`) | allowed, in `local*`/`sandbox*` envs only | never |
 | Login result | carries per-stage `timings` (`hana.lastLogin.timings`) | no timings |
 | Direct API calls from your page (`/v1/sessions`, `/v1/derive`) | only in sandbox envs, for test tooling such as `apps/smoke` | never |
-| Networks | test networks only: Stellar testnet/futurenet/local, and the EVM chains below | any |
+| Networks | test networks only: any Stellar network but the public one, and the EVM chains below | any |
 
 A test app's keys come from the testnet MPC, which can lose or leak them, so its vault refuses anything a mainnet would
 accept (`4100`, `data.reason: 'mainnet_not_allowed'`, before any popup or policy): a Stellar transaction or auth entry
@@ -522,12 +523,13 @@ chain are refused by the SDK the same way. Raw signing is refused for test apps 
 ([section 8](#8-signing)). Messages and typed data without a `chainId` name no network and are not refused; don't use
 them to move mainnet funds from a test app either.
 
-EVM chains a test app may use: Sepolia (11155111), Holesky (17000), Hoodi (560048), Base Sepolia (84532), Arbitrum Sepolia (421614),
-OP Sepolia (11155420), Sonic testnet (14601), Sonic Blaze testnet (57054), BNB Smart Chain testnet (97), Polygon Amoy (80002), Avalanche Fuji
-(43113), and local chains 31337 and 1337 (`TEST_EVM_CHAINS` in `@hana-id/core`). Ask Hana to add another testnet.
+EVM chains a test app may use: Sepolia (11155111), Holesky (17000), Hoodi (560048), Base Sepolia (84532), Arbitrum
+Sepolia (421614), OP Sepolia (11155420), Sonic testnet (14601), Sonic Blaze testnet (57054), BNB Smart Chain testnet
+(97), Polygon Amoy (80002), Avalanche Fuji (43113), and local chains 31337 and 1337 (`TEST_EVM_CHAINS` in
+`@hana-id/core`). Ask Hana to add another testnet.
 
 A test app and a live app never share a scope. Your staging and production apps therefore give the same Google
-account **different addresses** (Q37). Wallets made with test keys are disposable.
+account **different addresses** (D51). Wallets made with test keys are disposable.
 
 ## 13. Errors
 

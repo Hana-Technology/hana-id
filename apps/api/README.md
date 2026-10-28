@@ -36,6 +36,8 @@ keys, e.g. the content of `.secrets/<env>/relayer-keys.json`) → `wrangler secr
 | Name | Kind | |
 |---|---|---|
 | `NEAR_RPC`, `SIGNER_ACCOUNT`, `RELAYER_ACCOUNT`, `ENV_NAME`, `MPC_ACCOUNT` | vars (manifest) | `rpc`, `signer`, `relayer`, `name`, `mpc`. `ENV_NAME` `local*`/`sandbox*` is a dev env (see Origins) |
+| `NEAR_RPC_FALLBACK` | optional var (manifest) | `rpcFallback`, written only when set: the vault and export pages' `connect-src` (D65); the API itself reads only `NEAR_RPC` |
+| `DO_LOCATION_HINT` | optional var (manifest) | `cloudflare.durableObjectLocation`: region of the shared Durable Objects (`src/placement.ts`) |
 | `VAULT_ORIGIN`, `AUTH_ORIGIN` | vars (manifest) | `vaultOrigin`, `authOrigin`; `gen` refuses an env without them |
 | `BLS_PRECHECK`, `REJECT_PII_ON_SESSIONS` | vars | `"0"` everywhere until their step in `docs/batch-b-spec.md` ("Order of work") |
 | `RELAYER_KEYS` | secret | Session pool: JSON array of function-call keys on `RELAYER_ACCOUNT` (receiver `SIGNER_ACCOUNT`; `create_session`, `create_session_and_derive`, `derive_key`, `revoke_session`, `prune_sessions`) |
@@ -60,7 +62,7 @@ All JSON. Success: `{"result": …, "nearTx": "<base58 tx hash>", "requestId": "
 
 | Endpoint | Body (camelCase, byte arrays as JSON number arrays) | Contract call → `result` |
 |---|---|---|
-| `GET /v1/app` | — | none → `{name, scopeId, signer, google: {clientId, mode: "own" \| "shared"}, serverTimeMs, autoApprovePolicy, requestId}` (top level, no `result`; `autoApprovePolicy` is the policy in force, validated and normalized, or `null`) |
+| `GET /v1/app` | — | none → `{name, scopeId, signer, google: {clientId, mode: "own" \| "shared"}, serverTimeMs, autoApprovePolicy, rawSign, requestId}` (top level, no `result`; `autoApprovePolicy` is the policy in force, validated and normalized, or `null`; `rawSign` is `"off"` or `"approval"` in force now; an open vault re-reads both within 10 s, D62, D68) |
 | `POST /v1/login` | a `/v1/sessions` body plus `{signature[64], pk1, pk2}` (the session key's signature over counter 1 of the CKD payload); nothing else | `create_session_and_derive` (100 Tgas) → `{big_y, big_c}`, plus `session: {scope_id, expires_at_ms, max_uses, used: 1}` (informational) |
 | `POST /v1/sessions` | `{jwt, sessionPublicKey[32], expiresAtMs, salt[16..64], keyIndex (0..2^31 − 1; higher is reserved), maxUses (1..500)}`; `scopeId` is rejected | `create_session` with the app's `scope_id` (D1) → Session `{path, scope_id, expires_at_ms, max_uses, used}` |
 | `POST /v1/derive` | `{sessionPublicKey[32], counter, signature[64], pk1 "bls12381g1:…", pk2 "bls12381g2:…"}` | `derive_key` → `{big_y, big_c}` |
@@ -149,13 +151,15 @@ One transaction per login. Checks, in order: the gate (checks 1–3, `relay` quo
 token as for `/v1/sessions`, plus the claim allow-list (`src/claims.ts`: only `iss azp aud sub iat exp nonce nbf jti
 auth_time`; anything else is `400 token_has_pii` with `data: {claim}`) and the nonce; scope and `session_key_in_use`
 side by side (`403 …`, `409 session_exists`); the signature over counter 1 (`401 invalid_signature`); pk1/pk2 each one
-compressed, non-identity point (`400 invalid_app_key`); with `BLS_PRECHECK = "1"` the pairing
+compressed, non-identity point (`400 invalid_app_key`); with `BLS_PRECHECK = "1"` (off everywhere, D64) the pairing
 `e(pk1, −g2) · e(g1, pk2) = 1` (`400 invalid_app_key`; the same var gates it on `/v1/derive`). Failures map by the
 failing receipt's executor: the signer → `422 contract_rejected` (with `reason: "session_key_in_use"` for that panic;
 the session was not created), `MPC_ACCOUNT` → `422 ckd_failed` with `session: {used: 1}` (the session is committed),
 else `502 near_error`; `504 timeout` and relayer errors keep their codes and `nearTx`. Usage: `sessions` and `derives`
 on success, `sessions` only on `ckd_failed`. `/v1/sessions` applies the claim allow-list too once
-`REJECT_PII_ON_SESSIONS = "1"`.
+`REJECT_PII_ON_SESSIONS = "1"`. From `AUTH_ORIGIN` (the export window, a key export) the call is also limited to 3 per
+hour per `(app, sha256(path))`, counted right after the nonce check and before anything is relayed (`429 rate_limited`
++ `retry-after`, `503 rate_limiter_unavailable`; D59).
 
 ### `/v1/login-relay/<relayId>` (`src/login-relay.ts`, Durable Object `LoginRelay`)
 
@@ -183,33 +187,34 @@ publishableKey, serverTimeMs}` (JSON with `<`, `>`, `&`, U+2028, U+2029 escaped;
 `<script type="module" src="/vault.js">` (the `@hana-id/web` bundle, a static asset). `rawSign` and
 `autoApprovePolicy` use their pending values only from `raw_sign_effective_at` / `auto_approve_effective_at`.
 Headers: `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none';
-form-action 'none'; frame-ancestors <app origins>; connect-src <API_URL> <NEAR_RPC> https://www.googleapis.com`,
+form-action 'none'; frame-ancestors <app origins>; connect-src <API_URL> <NEAR_RPC> [<NEAR_RPC_FALLBACK>] https://www.googleapis.com`,
 `Cross-Origin-Resource-Policy: cross-origin`, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`,
 `X-Content-Type-Options: nosniff`. Origins: loopback ones (and `http://localhost:*`) only for `pk_test_` keys in
 `local*`/`sandbox*` envs; anything that isn't a bare lowercase http(s) origin is dropped; more than 20 → 403. 403 (no
-config script, `frame-ancestors 'none'`) for an unknown, suspended or scope-conflicting app; 503 when D1 fails.
+config script, `frame-ancestors 'none'`) for an unknown, suspended or scope-conflicting app; 503 when D1 fails or
+`API_URL`, `NEAR_RPC` or a set `NEAR_RPC_FALLBACK` is not a URL.
 
 ### Page Workers (`src/pages/`, `wrangler.vault.jsonc`, `wrangler.auth.jsonc`)
 
 In every env each Hana origin is a thin Worker of its own, with only that origin's built pages as its static assets
-(on `workers.dev` in dev envs, a Custom Domain elsewhere). This differs from `docs/batch-b-spec.md`, which has the API
-Worker serve both origins through its own routes and an assets binding outside sandbox-dev: one Worker per origin
-means neither origin can serve the other's files, and the API Worker never holds page assets. Recorded as a proposal
-for the user's confirmation in `docs/decisions.md` ("Proposed, not yet confirmed"). `gen` writes both configs from the
-manifest (`scripts/pages-wrangler.ts`):
+(on `workers.dev` in dev envs, a Custom Domain elsewhere; D66). This differs from `docs/batch-b-spec.md`, which has the
+API Worker serve both origins through its own routes and an assets binding outside sandbox-dev: one Worker per origin
+means neither origin can serve the other's files, and the API Worker never holds page assets. `gen` writes both
+configs from the manifest (`scripts/pages-wrangler.ts`):
 
 | | Vault Worker | Auth Worker |
 |---|---|---|
-| Serves | `GET`/`HEAD /vault` → this Worker through the `API` service binding, request unchanged (so it is rendered above, with the vault origin in its URL); any other path: a static asset (`/vault.js`) | `/login`, `/login/callback`, `/approve`, `/export` from `<path>.html`, with each page's CSP (`connect-src <API_URL>` on login and callback, none on approve, `<API_URL> <NEAR_RPC> https://www.googleapis.com` on export), `frame-ancestors 'none'`, `no-store`, `no-referrer`, `nosniff` and no COOP; any other path: a static asset |
+| Serves | `GET`/`HEAD /vault` → this Worker through the `API` service binding, request unchanged (so it is rendered above, with the vault origin in its URL); any other path: a static asset (`/vault.js`) | `/login`, `/login/callback`, `/approve`, `/export` from `<path>.html`, with each page's CSP (`connect-src <API_URL>` on login and callback, none on approve, `<API_URL> <NEAR_RPC> [<NEAR_RPC_FALLBACK>] https://www.googleapis.com` on export), `frame-ancestors 'none'`, `no-store`, `no-referrer`, `nosniff` and no COOP; any other path: a static asset |
 | Assets | `packages/web/dist/pages/<env>/vault` | `packages/web/dist/pages/<env>/auth` |
-| Vars | `VAULT_ORIGIN` | `AUTH_ORIGIN`, `API_URL`, `NEAR_RPC` |
+| Vars | `VAULT_ORIGIN` | `AUTH_ORIGIN`, `API_URL`, `NEAR_RPC`, `NEAR_RPC_FALLBACK` (only when the manifest sets `rpcFallback`) |
 
 Both answer only on their own origin (404 on any other host), only `GET`/`HEAD` (405), never serve an HTML file under
 its own name (404; pages exist only on their routes, with their headers), and add
 `content-security-policy: default-src 'none'; frame-ancestors 'none'; sandbox` (an SVG or XML asset opened as a
 document runs, loads and frames nothing; browsers don't apply it to the scripts and styles the pages load), `nosniff`,
 `no-referrer` and a same-origin CORP to every asset. No other path reaches the API, so `{vaultOrigin}/v1/*` is not the API. A missing page file
-or an unreachable API gives 503 with no config script. Placement follows the origin: `<worker>.<subdomain>.workers.dev`
+or an unreachable API gives 503 with no config script. Neither sets a cookie: a `Set-Cookie` from a binding is
+dropped (`withoutCookies`, D70). Placement follows the origin: `<worker>.<subdomain>.workers.dev`
 → a `workers.dev` Worker named `<worker>` (dev envs only; same subdomain as a `workers.dev` `apiUrl`, since the service
 binding needs one account), any other hostname → a Custom Domain on `<API worker>-vault`/`-auth`, loopback (`local*`
 envs) → `wrangler dev` on that host and port. Preview URLs are off.
@@ -288,7 +293,8 @@ including the nonces):
   has not been relayed before (a token is bound to one action by its nonce; `409 token_used`). The token is reserved
   atomically in a Durable Object before relaying, so concurrent copies can't all pass; the reservation is released
   only when the request is turned away by the global cap or the transaction certainly never executed
-  (`near_rejected`, `relayer_busy`, a dispatch failure), and kept on an unknown outcome.
+  (`method_not_allowed`, `relayer_unconfigured`, `near_unavailable`, `near_rejected`, `relayer_busy`), and kept on
+  an unknown outcome (`relayer_unavailable`, `near_error`, `timeout`, a contract rejection).
 - `get_scope(scope_id)` (cached 10 s, dropped after each relayed action): exists (`404 unknown_scope`); the token's
   `(provider, sub)` is an `Oidc` owner (`403 not_owner`).
 - `cancel_change` / `execute_change`: the change is pending (`404 unknown_change`); `execute_change`: unlocked

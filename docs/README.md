@@ -12,10 +12,11 @@ the batch merges, so where a spec and a reference doc disagree, the reference do
 | `security.md` | Who is trusted for what, what each compromise gives, key and secret inventory, invariants, open issues |
 | `contract-interface.md` | `hana-signer` methods, types, byte layouts, events, panics |
 | `api.md` | Every HTTP endpoint, auth, errors, rate limits; D1 schema, Durable Objects, bindings, request logs |
+| `integration.md` | Partner guide: getting an app, `createHana`, page requirements, Google client, app settings, signing, auto-approve, React, Sodax, test and live keys, errors |
 | `operations.md` | Setting up and deploying an environment, Google clients, key rotation, smoke tests, logs, common failures |
 | `decisions.md` | Every decision: when, why, what was rejected, status |
-| `context.md` | Project background, testnet measurements, next steps |
-| `../envs/README.md`, `../apps/api/README.md`, `../apps/smoke/README.md` | Per-package quick starts |
+| `context.md` | Project background, batch B status, testnet measurements, next steps |
+| `../envs/README.md`, `../apps/api/README.md`, `../apps/smoke/README.md`, `../apps/e2e/README.md` | Per-package quick starts |
 
 ## Specs (history)
 
@@ -23,8 +24,8 @@ the batch merges, so where a spec and a reference doc disagree, the reference do
 |---|---|
 | `batch-a-spec.md` | A: isolation (contract registry, API, environments) |
 | `batch-a2-shared-client.md` | A.2: shared Google client, sessions, follow-up fixes |
-| `batch-b-spec.md` | B: browser SDK, vault, one-transaction login, auto-approve policies |
-| `batch-c-spec.md` | C: developer dashboard (draft) |
+| `batch-b-spec.md` | B: browser SDK, vault, one-transaction login, auto-approve policies (merged on `feat/batch-b`) |
+| `batch-c-spec.md` | C: developer dashboard (draft; the MVP cut is `decisions.md` D34, not yet folded in) |
 | `hana-embed-ckd-results.md` | PoC measurements from wend-widget-demo |
 
 ## Where to put new knowledge

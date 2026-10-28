@@ -11,11 +11,12 @@ to the scope); see [Shared vs own Google client](#shared-vs-own-google-client).
 
 **Testnet only.** Every account is a throwaway, and wallets derived on them are disposable.
 
-More: [`docs/context.md`](docs/context.md) (how it works, decisions, status), [`docs/batch-a-spec.md`](docs/batch-a-spec.md)
-and [`docs/batch-a2-shared-client.md`](docs/batch-a2-shared-client.md) (A.2 wins where they differ),
-[`docs/batch-b-spec.md`](docs/batch-b-spec.md) (the SDK, current work; it amends both),
-[`docs/contract-interface.md`](docs/contract-interface.md) (contract methods and byte layouts),
-[`docs/integration.md`](docs/integration.md) (partner integration guide).
+More: [`docs/README.md`](docs/README.md) (index). Current state: [`docs/context.md`](docs/context.md) (background,
+status, next steps), [`docs/architecture.md`](docs/architecture.md), [`docs/security.md`](docs/security.md),
+[`docs/api.md`](docs/api.md), [`docs/contract-interface.md`](docs/contract-interface.md) (contract methods and byte
+layouts), [`docs/operations.md`](docs/operations.md) (runbook), [`docs/decisions.md`](docs/decisions.md),
+[`docs/integration.md`](docs/integration.md) (partner integration guide). The batch specs (`docs/batch-*.md`) are
+history; the reference docs and the code win where they differ.
 
 ## Shared vs own Google client
 
@@ -30,8 +31,9 @@ A partner app can log its users in two ways. Both land in the app's own scope, s
 | Register with | `admin scope:register --client <id>` | `admin scope:register --allow-shared` (no `--client` needed) |
 
 A scope can have both: its own client(s) and `allow_shared`. The path doesn't include the client ID, so a user gets the
-same address either way, as long as Google returns the same `sub` for both clients. Google documents `sub` as stable
-per account, but this is still to be confirmed on testnet with two clients. That also lets an app start on the
+same address either way, as long as Google returns the same `sub` for both clients. It does: the same account got
+the same `sub` through clients of one Cloud project (testnet smoke, 2026-10-27) and of two projects (spike,
+2026-10-28; `docs/decisions.md` D42). That also lets an app start on the
 shared client and add its own client later with a timelocked `propose_change(AddClient)`, without users' addresses
 changing. Forging a shared-client nonce gains nothing: it can only get the forger their own key for a scope, which
 they could get anyway.
@@ -48,8 +50,11 @@ Rules the contract enforces:
 
 ```
 contracts/hana-signer/   Rust NEAR contract (near-sdk 5): OIDC verification, scope registry, sessions, CKD
+contracts/mock-mpc/      Test MPC contract for the sandbox tests
+contracts/integration-tests/  near-workspaces sandbox tests (CI job "Sandbox e2e")
 apps/api/                Cloudflare Worker + Durable Objects + D1: the relayer partners call (publishable keys)
 apps/smoke/              Local smoke-test pages (Vite, http://localhost:5173): login through the vault, plus the direct flow
+apps/e2e/                Playwright suite (Chromium, WebKit, Firefox) against a local stack: no testnet, no secrets
 packages/env/            Environment manifest schema (zod) + loadEnv()
 packages/core/           SDK core (batch B, pure TS): layouts, CKD, derivation v1, signers, decoders, token checks
 packages/web/            Partner client (createHana) and the Hana pages (vault, login, approve, export), built per env
@@ -58,7 +63,7 @@ packages/sodax/          Optional Sodax wallet-provider adapters
 envs/                    One manifest per environment (sandbox-dev.json): every account name and endpoint
 scripts/                 Deploy, Google key sync, CKD key pinning, admin CLI (TypeScript, run with tsx)
 legacy/                  Read-only reference: the earlier PoC client and relayer
-docs/                    Spec, context, contract interface
+docs/                    Reference docs (current state) and batch specs (history): docs/README.md
 ```
 
 ## Setup
@@ -68,8 +73,8 @@ pre-commit hook (`.githooks/pre-commit`) that refuses commits containing secrets
 (`.gitleaks.toml`). Run `pnpm secrets:scan` to scan locally.
 
 Needs Node 22+, pnpm 11, Rust (the toolchain in `contracts/hana-signer/rust-toolchain.toml` with the
-`wasm32-unknown-unknown` target), ideally `cargo-near` (`cargo install cargo-near`), and near CLI
-(near-cli-rs 3.x) for creating accounts.
+`wasm32-unknown-unknown` target), ideally `cargo-near` (`cargo install cargo-near`; CI uses 0.22.0), and near CLI
+(near-cli-rs) for creating accounts. Versions: `docs/operations.md` "Prerequisites".
 
 ```sh
 pnpm install          # pnpm refuses packages younger than 7 days (minimumReleaseAge); pin older versions if needed
@@ -88,9 +93,13 @@ cd contracts/hana-signer && cargo test
 | Deploy the contract | `pnpm --filter @hana-id/scripts run deploy-contract <env> [--yes]` |
 | Sync Google keys once | `pnpm --filter @hana-id/scripts run post-google-keys <env> [--dry-run]` |
 | Pin the MPC CKD key | `pnpm --filter @hana-id/scripts run fetch-ckd-key <env> [--dry-run]` |
-| Admin (apps, scopes) | `pnpm --filter @hana-id/scripts run admin <env> <command> …` |
+| Admin (apps, scopes, app settings) | `pnpm --filter @hana-id/scripts run admin <env> <command> …` |
+| API Worker config | `pnpm --filter @hana-id/api run gen <env> [--d1-id <uuid>] [--dev-vars]` |
+| `VAULT_KEK` | `pnpm --filter @hana-id/scripts run vault-kek <env> init\|put\|rotate [--yes]` |
+| Hana pages (vault, auth) | `pnpm --filter @hana-id/web build` · `pnpm --filter @hana-id/api run deploy:pages` |
+| Browser tests | `pnpm --filter @hana-id/e2e e2e` (`HANA_E2E_PORT_BASE` for a second worktree; `apps/e2e/README.md`) |
 
-All scripts take the environment name (`envs/<env>.json`) first and print `--help`.
+The `@hana-id/scripts` commands take the environment name (`envs/<env>.json`) first and print `--help`.
 
 ### deploy-contract
 
@@ -135,11 +144,11 @@ missing, so it is safe to resume after a failure. Steps:
 It does not create accounts. If one is missing, or its key is not in the keychain, the plan says so and shows the
 near CLI command to fix it.
 
-An allowance is charged each call's full prepaid gas, and refunds go to the account, not back to the allowance. The
-API attaches per-method gas (defaults `create_session` 50 Tgas, `create_session_and_derive` 100, `derive_key` 60,
-`revoke_session` 20, `prune_sessions` 50, owner-pool methods 50; still to be measured on testnet). At testnet
-prices, 50 Tgas is about 0.005 NEAR, so 2 NEAR covers roughly 350 session calls per key (half as many combined
-logins) and 0.5 NEAR roughly 100 owner calls. Pass larger allowances for heavier testing. To replace a used-up key,
+An allowance drops by the gas each call burns, not the gas attached (refunds restore it; measured on testnet,
+`docs/context.md`). The API attaches per-method gas (`apps/api/src/gas.ts`: `create_session` 50 Tgas,
+`create_session_and_derive` 100, `derive_key` 60, `revoke_session` 20, `prune_sessions` 50, `register_scope` 30 + 25
+per client proof, other owner-pool methods 50). A split login burns ~40 Tgas (~0.004 NEAR), so 3 keys × 2 NEAR cover
+~1,500 logins. Pass larger allowances for heavier testing. To replace a used-up key,
 delete it on chain with near CLI, remove it from its `.secrets` file, and re-run.
 
 **Existing keys are checked, not trusted.** For every key in a pool file (and the keys-updater key), the plan
@@ -313,5 +322,6 @@ throwaway names. The signer account is part of every user's derived key, so chan
   `deploy-contract` checks this on every run. A leaked relayer key can burn gas, but it cannot derive anyone's key,
   because every session needs a Google token committing to the user's own session key and scope. Session and owner
   keys are separate pools, so draining the owner pool can't stop logins.
-- Hana cannot change a scope's client IDs or owners after registration, or block derivation on chain. App suspension
-  happens only in D1, through the API.
+- Hana cannot change a scope's client IDs or owners after registration. On chain it can block derivation only for a
+  shared-only scope, by removing the shared clients (`docs/decisions.md` D11, D12). App suspension happens only in D1,
+  through the API.

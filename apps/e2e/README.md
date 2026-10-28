@@ -35,6 +35,15 @@ Durable Object class, on in-memory storage). Only `/v1/login` and `/v1/derive` a
 the Worker's own app gate, since they need the relayer and the MPC. The rate limiter always allows: every page in the
 suite is one client, and apps/api's tests cover the limits.
 
+Every app the suite creates is a `pk_test_` app (loopback partner origins need one), and there is no live-app mode.
+So paths that only a `pk_live_` app reaches are not browser-tested: the raw-signing approval popup (test apps never
+sign raw, `docs/decisions.md` D39) and mainnet chains. `packages/web/test/vault/approval.test.ts` covers a live app's
+raw request; `tests/approval.spec.ts` checks that a test app's raw request is 4100 with no popup.
+
+The mocked NEAR RPC (`src/server/chain.ts`) answers the vault's and the export window's reads (`get_session`, tx
+status, and the login's registry check, `get_scope` / `scope_for_client`, D56) and the Worker's (`get_session`,
+`get_scope`, `get_config`).
+
 The bundles are built by `@hana-id/web`'s own per-env build scripts for `local-e2e`, an env defined in `src/stack.ts`
 (not in `envs/`, so the published client never lists a loopback env). Its CKD key belongs to a test MPC
 (`src/server/chain.ts`, real BLS12-381), so the vault's pairing check runs as on testnet. D1 is node:sqlite with

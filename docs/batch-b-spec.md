@@ -1076,28 +1076,28 @@ The partner runs on `http://localhost:<p>`, the vault on `http://127.0.0.1:<v>` 
 These changes were made for safety or because a decision could not work as written. Each needs the user's confirmation.
 
 - **Q31.** `app_signed` raw signing is removed from the MVP: as specified it was silent signing of chain-valid hashes, controllable from a D1 column. Bring it back later only as requests signed by a per-app partner backend Ed25519 key over `hana-id/raw-request/v1 ‖ appId ‖ chain ‖ sha256(bytes) ‖ expiry ‖ nonce`, registered through batch C's fresh-sign-in, logged, owner-notified and delayed process? **Answered 2026-10-28 (default approved by the user): confirmed (`docs/decisions.md` D48).**
-- **Q32.** Answered by the spike (2026-10-28): an openid-only token carries no `hd`, so Workspace users log in normally and no domain reaches the chain. The allow-list stays as a guard against Google adding claims.
-- **Q33.** Answered by the spike (2026-10-28): with `max_age=0` Google returned no `auth_time`. Export relies on a fresh login plus the typed confirmation; the `auth_time` check is dropped.
+- **Q32.** Answered by the spike (2026-10-28): an openid-only token carries no `hd`, so Workspace users log in normally and no domain reaches the chain. The allow-list stays as a guard against Google adding claims (`docs/decisions.md` D25).
+- **Q33.** Answered by the spike (2026-10-28): with `max_age=0` Google returned no `auth_time`. Export relies on a fresh login plus the typed confirmation; the `auth_time` check is dropped (`docs/decisions.md` D27).
 - **Q34.** `hana_login` now supersedes a pending login instead of answering `busy`. Confirm. **Answered 2026-10-28 (default approved by the user): confirmed (`docs/decisions.md` D49).**
 - **Q35.** The local `K_l` wrapping layer is dropped (it stops no named attacker). Confirm, or name the attacker it should stop. **Answered 2026-10-28 (default approved by the user): confirmed (`docs/decisions.md` D50).**
-- **Q36.** Confirmed by the user (2026-10-28): `hana-id/chain-keys/v1/extract` and `hana-id/chain-keys/v1/expand`.
+- **Q36.** Confirmed by the user (2026-10-28): `hana-id/chain-keys/v1/extract` and `hana-id/chain-keys/v1/expand` (`docs/decisions.md` D9).
 - **Q37.** Loopback origins and partner-origin `/v1/sessions`/`/v1/derive`/`/v1/sessions/revoke` are limited to `local*`/`sandbox*` envs, and test and live apps may not share a scope. Confirm that a partner's staging uses its own scope (and therefore different addresses) from production. **Answered 2026-10-28 (default approved by the user): confirmed (`docs/decisions.md` D51).**
 - **Q38.** `raw_sign` enabling is delayed 24 h. Is that the right delay, and should batch C reuse the origin-change delay instead? **Answered 2026-10-28 (default approved by the user): the same 24 h as origin changes; batch C reuses it (`docs/decisions.md` D52).**
-- **Q39.** Auto-approve limits cover counts and native value only. Add per-token amount caps (decoding token amounts from known swap/transfer calls), or rely on counts, the address rule and small pilot limits?
-- **Q40.** Auto-approve consent is per device and lasts up to the session (12 h default). Should it also require a fresh Google login (not a reload unlock) to grant, and should batch C let users see and revoke consents across devices?
-- **Q41.** Contract names on the consent screen come from the partner's policy. Should Hana verify or curate names for known protocols (Sodax first) before they are shown to users?
-- **Q42.** Answered 2026-10-27 (user): Sodax calls carry intents in opaque bytes on EVM and Stellar. Batch B ships no protocol decoder: Sodax swaps, bridges and hub actions use the approval popup; the decoder interface ships so a Sodax decoder can be added later on demand.
+- **Q39.** Auto-approve limits cover counts and native value only. Add per-token amount caps (decoding token amounts from known swap/transfer calls), or rely on counts, the address rule and small pilot limits? **Answered 2026-10-28 (decided by the user): no token caps for the pilot; revisit with the Sodax decoder (`docs/decisions.md` D46).**
+- **Q40.** Auto-approve consent is per device and lasts up to the session (12 h default). Should it also require a fresh Google login (not a reload unlock) to grant, and should batch C let users see and revoke consents across devices? **Answered 2026-10-28 (decided by the user): no fresh sign-in; Hana Home will list and revoke consents per device (`docs/decisions.md` D45).**
+- **Q41.** Contract names on the consent screen come from the partner's policy. Should Hana verify or curate names for known protocols (Sodax first) before they are shown to users? **Answered 2026-10-28 (decided by the user): partner names are labelled "named by {app}", Hana-verified contracts get a ✓ and their verified name; built (`docs/decisions.md` D44).**
+- **Q42.** Answered 2026-10-27 (user): Sodax calls carry intents in opaque bytes on EVM and Stellar. Batch B ships no protocol decoder: Sodax swaps, bridges and hub actions use the approval popup; the decoder interface ships so a Sodax decoder can be added later on demand (`docs/decisions.md` D24).
 
 ### Google and privacy
 
-- **Q1.** Answered by the spike (2026-10-28): Google accepts `scope=openid` alone with the implicit flow, and the token carries no email or profile claims. The popup kept `window.opener` through Google's pages in Chrome (Safari untested); the spec still returns the token through the relay (R2).
+- **Q1.** Answered by the spike (2026-10-28): Google accepts `scope=openid` alone with the implicit flow, and the token carries no email or profile claims. The popup kept `window.opener` through Google's pages in Chrome (Safari untested); the spec still returns the token through the relay (R2; `docs/decisions.md` D25).
 - **Q2.** Does `prompt=select_account`, or a `login_hint`, give a near-zero-click full login for returning users? That would shrink the UX gap between the modes, though not the cost gap.
-- **Q3.** Own-client policy: require that a partner's client has no JavaScript origins and no native clients, or only warn? Steer Sodax to shared-only? Confirm that adding Hana's domain to a verified consent screen doesn't trigger a re-verification delay.
+- **Q3.** Own-client policy: require that a partner's client has no JavaScript origins and no native clients, or only warn? Steer Sodax to shared-only? Confirm that adding Hana's domain to a verified consent screen doesn't trigger a re-verification delay. **Answered 2026-10-28 (decided by the user): Hana's shared client by default; a Hana-held branded client per partner for Enterprise; a partner-held client only if insisted on, locked down and with a written warning (`docs/decisions.md` D42).**
 
 ### Persistence and storage
 
 - **Q4.** How long does partitioned third-party IndexedDB survive in Safari macOS and iOS, Brave and Firefox strict mode? Measure in the pilot before deciding on IntersectionObserver-v2 inline confirmation or a popup-only vault.
-- **Q5.** Default limits: absolute 12 h (vault-architecture proposed 8 h; the contract allows 24 h, the setting 23 h 50 min) and idle 2 h. Each forced re-login costs about $0.021 and about 9 s. Tune from pilot data.
+- **Q5.** Default limits: absolute 12 h (vault-architecture proposed 8 h; the contract allows 24 h, the setting 23 h 50 min) and idle 2 h. Each forced re-login costs about $0.021 and about 9 s. Tune from pilot data. **Answered 2026-10-28 (decided by the user): keep 12 h and 2 h; review after a month of pilot data (`docs/decisions.md` D43).**
 - **Q6.** Should a later per-app "remember this device" option let the cache outlive the on-chain session? That needs the session public key to stay the share's authenticator after expiry.
 - **Q14.** `max_uses` in `'session'` mode: accept 1 (`ckd_failed` or a combined-call replay means a new login; measure the MPC failure rate), or use 2 and burn the spare use with `revoke_session`? The second option needs the share precondition to become "spent or revoked", but `get_session` returns null once a session is revoked. **Answered 2026-10-28 (default approved by the user): `max_uses = 1` (`docs/decisions.md` D53).**
 - **Q16.** `VAULT_KEK` rotation procedure, and whether to move it to an HSM/KMS alongside the email issuer. **Answered 2026-10-28 (default approved by the user): `VAULT_KEK` stays a Worker secret with its copy in `.secrets` (`vault-kek` script); KMS later (`docs/decisions.md` D54).**
@@ -1109,7 +1109,7 @@ These changes were made for safety or because a decision could not work as writt
 - **Q8.** How much Worker CPU does the BLS multi-pairing precheck take? Turn `BLS_PRECHECK` on only on the Paid plan and only after measuring; or drop it, since the MPC rejects a bad pk anyway. **Answered 2026-10-28 (default approved by the user): the precheck stays off unless a measurement shows it is cheap (`docs/decisions.md` D64).**
 - **Q9.** Which NEAR RPC does the vault use for `get_session` re-sync and tx polling: the manifest `rpc`, or a second independent endpoint? **Answered 2026-10-28 (default approved by the user): the manifest `rpc`, plus an optional `rpcFallback` used only when it fails (`docs/decisions.md` D65).**
 - **Q13.** When can partner-origin CORS for `pk_test_` be removed in sandbox envs too, now that it is already refused elsewhere?
-- **Q22.** Should a newly allowed origin take effect only after a timelock in shared mode, now that origins directly control the vault's `frame-ancestors`?
+- **Q22.** Should a newly allowed origin take effect only after a timelock in shared mode, now that origins directly control the vault's `frame-ancestors`? **Answered for batch C (decided by the user): origin changes take effect after 24 h, with notice and cancel (`docs/decisions.md` D32, D34); not built, so `admin app:origins:add` applies at once.**
 
 ### Contract
 
@@ -1119,7 +1119,7 @@ These changes were made for safety or because a decision could not work as writt
 
 ### Domains and hosting
 
-- **Q15.** The production Hana-owned domain and Cloudflare account for `vaultOrigin` and `authOrigin` (sandbox-dev's are chosen in step 0). Should they sit on a registrable domain separate from the dashboard and marketing site? Should `authOrigin` equal `apiUrl`? Should the static bundles be deployed from a separate origin with different deploy credentials from the API Worker, so a compromised API deploy can't change them?
+- **Q15.** The production Hana-owned domain and Cloudflare account for `vaultOrigin` and `authOrigin` (sandbox-dev's are chosen in step 0). Should they sit on a registrable domain separate from the dashboard and marketing site? Should `authOrigin` equal `apiUrl`? Should the static bundles be deployed from a separate origin with different deploy credentials from the API Worker, so a compromised API deploy can't change them? **Partly answered 2026-10-28 (decided by the user): `vaultOrigin` and `authOrigin` sit on two registrable domains (`docs/decisions.md` D38), each served by its own thin Worker (D66); the domain names and the Cloudflare account are open.**
 - **Q26.** The EIP-6963 `rdns` value, which depends on Q15.
 
 ### Signing UX
@@ -1135,7 +1135,7 @@ These changes were made for safety or because a decision could not work as writt
 
 ### Derivation and rotation (product owner, before the freeze)
 
-- **Q19.** Confirm that raw per-chain export is enough to leave Hana and that there will be no BIP-39 phrase. Ask Sodax and early partners.
+- **Q19.** Confirm that raw per-chain export is enough to leave Hana and that there will be no BIP-39 phrase. Ask Sodax and early partners. **Answered 2026-10-28 (decided by the user): per-chain key export and Hana Home before mainnet, no seed phrase (`docs/decisions.md` D40, D41).**
 - **Q20.** Is two Google sign-ins acceptable for a k→k+1 sweep, or should a later contract change let one session derive at two `key_index` values? **Answered 2026-10-28 (default approved by the user): two sign-ins are acceptable (`docs/decisions.md` D60).**
 - **Q21.** Show `account > 0` in the MVP UI, or keep it at 0 until there is a discovery story? **Answered 2026-10-28 (default approved by the user): account 0 only (`docs/decisions.md` D61).**
 - **Q23.** Add a CODEOWNERS rule on `packages/core/src/derivation*` and `packages/core/test/vectors/derivation-v1.json`? **Answered 2026-10-28 (default approved by the user): yes, `.github/CODEOWNERS` (`docs/decisions.md` D58).**

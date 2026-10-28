@@ -1,14 +1,12 @@
 # API reference — every endpoint the `apps/api` Worker serves today
 
-Last verified against code: 2026-10-28 (`feat/b-defaults`: `feat/batch-b` with the batch B fix branches and the
-defaults the user approved on 2026-10-28)
+Last verified against code: 2026-10-28 (commit 58edee9).
 
 Current state, not a spec. Where the specs (`docs/batch-*.md`) and this file differ, this file follows the code.
 Contract methods and byte layouts: `docs/contract-interface.md`. How to run it: `docs/operations.md`.
 
-**Branches.** Endpoints marked **B** exist only on `feat/batch-b` (not on `develop`, ef2397d), where every batch B
-branch is merged, the page Workers (`b/pages-hosting`), `admin app:settings` (`b/settings-cli`) and the pages
-themselves (`b/web-*`) included.
+**B** marks what batch B added or changed (the vault, the auth pages, `POST /v1/login`, the login relay, the vault
+endpoints and the page Workers).
 
 The API Worker renders `GET /vault` for requests whose URL origin is `VAULT_ORIGIN`: the vault origin's own thin
 Worker forwards them unchanged through a service binding. `/vault.js` and the auth pages (`/login`,
@@ -68,7 +66,6 @@ There is no secret-key (`sk_…`) auth anywhere: publishable keys are public and
 - From a Hana origin the request acts for `x-hana-parent-origin`, which must pass `originAllowed` for the app. CORS
   echoes the Hana origin even when the parent is refused, so the page can read the error.
 - From a partner origin, CORS echoes the origin only when the call is allowed; a refused partner gets no CORS headers.
-- On `develop` the Hana-origin rows don't exist and partner origins may call the session endpoints with any key.
 
 | Preflight | Allowed when | `allow-headers` | `allow-methods` |
 |---|---|---|---|
@@ -91,6 +88,8 @@ Every app endpoint (`/v1/app`, `/v1/sessions`, `/v1/derive`, `/v1/sessions/revok
 3. Caller rule above (`403 origin_not_allowed`).
 4. Rate limits (`429 rate_limited` + `retry-after` seconds; limiter failure `503 rate_limiter_unavailable`).
 
+A test app's other limits are the vault's, never the API's: no raw signing and no mainnet chains for `pk_test_` (D39).
+
 ## Rate limits
 
 Fixed windows in `RateLimiter` Durable Objects; a hit counts only if every window checked has room. The per-IP subject
@@ -99,7 +98,7 @@ is the IPv4 address or the IPv6 /64 (`src/ip.ts`). The day window is the UTC day
 | Endpoint | Per IP | Per app | Other |
 |---|---|---|---|
 | relay kind: `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke`, `/v1/login` (one shared window) | plan `per_ip_minute` (window `<appId>:minute`) | plan `per_minute` and `per_day` | IP checked first, so its rejects don't spend the app's quota |
-| key exports: `/v1/login` from `AUTH_ORIGIN` | — | — | 3 per hour per user path per app (subject `export:<appId>:<hex sha256(path)>`, window `export:hour`), counted once the token and nonce are verified, before anything is relayed (Q18) |
+| key exports: `/v1/login` from `AUTH_ORIGIN` | — | — | 3 per hour per user path per app (subject `export:<appId>:<hex sha256(path)>`, window `export:hour`), counted once the token and nonce are verified, before anything is relayed (D59) |
 | `GET /v1/app` | plan `per_ip_minute` (own window `<appId>:config:minute`) | — | never touches the relay quota |
 | vault endpoints | 60/min (`<appId>:vault:minute`) | 10 × plan `per_minute` (`vault:minute`) | share actions: 10/min per share (`share:<hex>`) |
 | login relay | writes 10/min, reads 120/min | — | not per app |
@@ -128,10 +127,11 @@ Headers: `x-hana-key`; from a Hana page also `x-hana-parent-origin`. Gate kind `
 
 `name`, `serverTimeMs`, `autoApprovePolicy` and `rawSign` are new in B. `autoApprovePolicy` is the policy in force now
 (read from D1 on every request, validated and normalized as the vault page inlines it), or null; an open vault
-re-reads it before auto-signing, so a removal takes effect without a reload (`docs/security.md` "Auto-approve
-policies"). `rawSign` is the app's raw-signing setting in force now (`'approval'` only once a pending enable has reached
-`raw_sign_effective_at`; `'off'` when the settings row is missing); an open vault re-reads it, on the same 10 s bound,
-before every raw request and refuses once it says `'off'`. `google`: `own` with the app's `google_web_client_id` if set (it must still be
+re-reads it before auto-signing, so a removal takes effect within 10 s without a reload (D62, `docs/security.md`
+"Auto-approve policies"). `rawSign` is the app's raw-signing setting in force now (`'approval'` only once a pending
+enable has reached `raw_sign_effective_at`; `'off'` when the settings row is missing); an open vault re-reads it, on
+the same 10 s bound, before every raw request and refuses once it says `'off'` (D68). The test-app refusals (raw
+signing and mainnet chains for `pk_test_`, D39) are the vault's, not the API's. `google`: `own` with the app's `google_web_client_id` if set (it must still be
 a client of the scope), else the scope's first Google client; else `shared` with the first shared client in force
 when the scope has `allow_shared`.
 
@@ -235,12 +235,13 @@ Usage: `sessions` + `derives` on success, `sessions` only on `ckd_failed`.
 ### `/v1/login-relay/<relayId>` — Durable Object `LoginRelay` · B
 
 Hands the end-to-end encrypted Google token from `/login/callback` to the vault. No `x-hana-key`. `relayId` is 43
-base64url characters (`400 bad_relay_id`), `= b64url(sha256(readKey))`. Wrong origin: `403 origin_not_allowed`.
+base64url characters (`400 bad_relay_id`), `= b64url(sha256(readKey))`. Wrong origin: `403 origin_not_allowed`; other
+methods: `405`. Per-IP limits as above (`429 rate_limited`, `503 rate_limiter_unavailable`).
 
 | Request | Origin | Body / headers | Responses |
 |---|---|---|---|
 | `POST` | `AUTH_ORIGIN` | `{iv, ct}` only, base64url; iv 12 bytes, ct ≥ 16 bytes, body ≤ 8 KiB | `204`; `409 relay_used` if ever written; `503 relay_unavailable` |
-| `GET ?wait=<1..25>` (absent = answer at once) | `VAULT_ORIGIN`, `AUTH_ORIGIN` | `x-hana-relay-key: <b64url of 32 bytes>` | `200 {iv, ct, serverTimeMs}` (consumed); `204` still empty after `wait` s; `410 relay_gone` read or expired; `403 relay_forbidden` missing/wrong key (slot untouched); `400 bad_request` bad `wait` |
+| `GET ?wait=<1..25>` (absent = answer at once) | `VAULT_ORIGIN`, `AUTH_ORIGIN` | `x-hana-relay-key: <b64url of 32 bytes>` | `200 {iv, ct, serverTimeMs}` (consumed); `204` still empty after `wait` s; `410 relay_gone` read or expired; `403 relay_forbidden` missing/wrong key (slot untouched); `400 bad_request` bad `wait`; `503 relay_unavailable` |
 
 The value lives 120 s after the write, then a tombstone answers 410 for 120 s more, then the object is empty. Only
 ciphertext is stored; bodies, keys and relay ids are never logged.
@@ -274,7 +275,7 @@ is missing or not a URL, or `NEAR_RPC_FALLBACK` is set but not a URL). The code 
 
 ### Page Workers (`src/pages/`) · B
 
-One thin Worker per Hana origin in every env (`workers.dev` in dev envs, a Custom Domain elsewhere;
+One thin Worker per Hana origin in every env (D66; `workers.dev` in dev envs, a Custom Domain elsewhere;
 `apps/api/scripts/pages-wrangler.ts`), each with only its origin's built pages as static assets
 (`packages/web/dist/pages/<env>/vault`, `…/auth`). Only `GET`/`HEAD` (`405` otherwise), only on their own origin
 (`404` on any other host).
@@ -292,7 +293,7 @@ is a `503` page. Every asset carries `content-security-policy: default-src 'none
 (an SVG or XML file opened as a document runs, loads and frames nothing; not applied by browsers to the scripts and
 styles the pages load), `nosniff`, `no-referrer` and `cross-origin-resource-policy: same-origin`.
 
-**No cookies.** No response of the API Worker or of either page Worker sets a cookie; the page Workers drop a
+**No cookies (D70).** No response of the API Worker or of either page Worker sets a cookie; the page Workers drop a
 `Set-Cookie` header from what their bindings answer (`withoutCookies`, `src/pages/host.ts`). Tests:
 `apps/api/test/no-cookies.test.ts` (every endpoint and page), `packages/web/test/no-cookies.test.ts` (no source sets
 one) and the Playwright suite (every Hana response of every flow).
@@ -411,9 +412,9 @@ is refused as above.
 | owner | `OWNER_RELAYER_KEYS` | `owner-relayer-key-<i>` | `propose_change`, `cancel_change`, `remove_client`, `disable_shared_login`, `execute_change`, `register_scope`, `apply_pending_config` | `/v1/owner-actions` |
 
 Keys are function-call keys on `RELAYER_ACCOUNT`, receiver `SIGNER_ACCOUNT`, no deposit. A key of the pool is picked
-round-robin (random start per isolate). The allowlist is enforced in `relay()` and again in the object. The session
-list is allowlist state 1 of `docs/batch-b-spec.md` ("Relayer allowlists"); `develop` lacks
-`create_session_and_derive`.
+round-robin (random start per isolate). The allowlist is enforced in `relay()` and again in the object (`400
+method_not_allowed` otherwise). The session list is allowlist state 1 of `docs/batch-b-spec.md` ("Relayer
+allowlists").
 
 Gas attached (Tgas; `GAS_<METHOD>_TGAS` var overrides with an integer 1..300, invalid values logged and ignored):
 `create_session` 50, `create_session_and_derive` 100, `derive_key` 60, `revoke_session` 20, `prune_sessions` 50, owner
@@ -510,6 +511,10 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 | `DB` | D1 | `cloudflare.d1Name`, id from `--d1-id` | `migrations_dir: migrations` |
 | `RELAYER_KEY`, `RATE_LIMITER`, `LOGIN_RELAY` | Durable Objects | classes `RelayerKey`, `RateLimiter`, `LoginRelay` | |
 
+`gen` also writes the page Workers' `wrangler.vault.jsonc` (var `VAULT_ORIGIN`, assets, service binding `API` to this
+Worker) and `wrangler.auth.jsonc` (vars `AUTH_ORIGIN`, `API_URL`, `NEAR_RPC`, `NEAR_RPC_FALLBACK` when set; assets),
+both gitignored (`apps/api/scripts/pages-wrangler.ts`).
+
 Also generated: `name` = `cloudflare.workerName`, `compatibility_date` 2026-10-01, `nodejs_compat`, alias
 `secp256k1` → `src/shims/secp256k1.ts`, `observability.enabled`, the cron.
 
@@ -549,6 +554,6 @@ the block hash was re-read; `served` relays this instance handled before; `ageMs
 Other events: `relay_dispatched` (`pool`, `keyIndex`, `method`, `nearTx`, `nonce`, `attempt`), `relay_retry`
 (`code` `invalid_nonce` / `expired` / `dropped`), `relay_dispatch_failed`, `jwks_sync` (`added`, `removed`, `kids`),
 `jwks_sync_failed` / `jwks_sync_skipped` (`code`), `jwks_tx`, `jwks_stale`, `vault_page`, `vault_maintenance`
-(`pruned`, `rewrapped`, `unknownKek`), `vault_rewrap_unreadable`, `vault_kek_unavailable`, `vault_share_unreadable`,
+(`pruned`, `rewrapped`, `unknownKek`), `vault_rewrap_unreadable` (`unreadable`), `vault_kek_unavailable`, `vault_share_unreadable`,
 `usage_increment_failed`, `owner_token_release_failed`, `gas_override_ignored`, `auto_approve_policy_invalid`
 (`problems`), and from the page Workers `vault_host` and `auth_page` (`code`).

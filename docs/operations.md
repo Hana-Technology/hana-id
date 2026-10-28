@@ -1,9 +1,9 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-10-28 (`feat/b-defaults`: `feat/batch-b` with the batch B fix branches and the
-defaults the user approved on 2026-10-28)
+Last verified against code: 2026-10-28 (commit 58edee9).
 
-Commands and flags are from `scripts/`, `apps/api/scripts/gen-wrangler.ts` and their tests. Endpoints:
+Commands and flags are from `scripts/`, `apps/api/scripts/gen-wrangler.ts`, `apps/api/scripts/pages-wrangler.ts`,
+the `package.json` scripts and their tests. Endpoints:
 `docs/api.md`. Contract methods: `docs/contract-interface.md`. Design and measurements: `docs/context.md`.
 
 **Testnet only.** The manifest schema accepts only `network: "testnet"` and every script refuses an RPC whose
@@ -60,7 +60,7 @@ Every name comes from `envs/<env>.json` (schema: `packages/env/src/schema.ts`; n
 | `mpc` | the NEAR MPC contract (exists already; not ours) | — |
 | `ckdDomainId`, `ckdNetworkKey` | CKD domain and the pinned MPC public key | pin with `fetch-ckd-key` |
 | `rpc`, `apiUrl` | NEAR RPC; the deployed Worker URL | `apiUrl` is known only after the first deploy |
-| `rpcFallback` (optional) | a second NEAR RPC from another provider, https; the vault and the export window read from it only when `rpc` fails or times out | not `rpc` itself; changing it needs `gen`, a page build and a redeploy of the API and auth Workers (it is in their CSP) |
+| `rpcFallback` (optional) | a second NEAR RPC from another provider, https; the vault and the export window read from it only when `rpc` fails or times out | not `rpc` itself; built into the vault and auth bundles and in the API's and auth Worker's CSP (`NEAR_RPC_FALLBACK`), so a change needs `gen`, a page build and a redeploy of the API and both page Workers (D65) |
 | `vaultOrigin`, `authOrigin` | Hana page origins (batch B) | both or neither; `gen` refuses an env without them |
 | `googleClientIds` | Hana's own app clients → reserved `global` scope | |
 | `sharedGoogleClientIds` | Hana's shared login clients (≤ 5) | never also in `googleClientIds` / `consoleAudiences` |
@@ -90,14 +90,14 @@ mode with test users.
 | Hana's own app | `googleClientIds` | becomes a client of `global` |
 | Shared login client | `sharedGoogleClientIds` | a different client ID from the above |
 | Hana console | `consoleAudiences` (`["google", "<id>"]`) | batch C signs in with it |
-| Partner test client(s) | `scope:register --client` | for own-client tests; for the own-vs-shared address test use a separate Google Cloud project (batch B spec) |
+| Partner test client(s) | `scope:register --client` | for own-client tests; for the own-vs-shared address test use a separate Google Cloud project (the cross-project `sub` match was confirmed 2026-10-28, D42) |
 
 Register on each client:
 
 | Entry | Value | On which clients | Why |
 |---|---|---|---|
 | Authorized JavaScript origins | `http://localhost:5173` (Google also suggests `http://localhost`) | every client `apps/smoke` signs in with | smoke uses Google Identity Services in the page |
-| Authorized redirect URIs | `{authOrigin}/login/callback`, exact (scheme, host, no trailing slash) | the shared client, and every partner's own client used through Hana's login page | batch B login popup (`response_type=id_token`, `redirect_uri={authOrigin}/login/callback`; pages on `b/web-auth`) |
+| Authorized redirect URIs | `{authOrigin}/login/callback`, exact (scheme, host, no trailing slash) | the shared client, and every partner's own client used through Hana's login page | the login popup (`response_type=id_token`, `redirect_uri={authOrigin}/login/callback`) |
 
 Changes in Google Cloud can take a few minutes to apply. Changing `authOrigin` later breaks every own-client
 partner's redirect registration (not addresses).
@@ -154,7 +154,7 @@ the signer is part of every address. Dev-only privileges (loopback origins, part
 
    Without `--d1-id`, `gen` keeps the id already in `wrangler.jsonc` only if that file names the same
    `database_name`, else it writes the local placeholder `00000000-0000-4000-8000-000000000000`. The generated files
-   are gitignored (they hold the env's D1 id): re-run `gen <env>` whenever you switch envs, and never commit them.
+   are gitignored (`wrangler.jsonc` holds the env's D1 id): re-run `gen <env>` whenever you switch envs, and never commit them.
 
 7. **Worker secrets** (from the repo root; values go through a pipe, never the terminal):
 
@@ -175,14 +175,27 @@ the signer is part of every address. Dev-only privileges (loopback origins, part
    the file: a rotation needs the current value.
 
 8. **Deploy the API**, then put the Worker URL in `apiUrl` and re-run `gen` + deploy if it changed (the vault page's
-   CSP uses it):
+   CSP and the page bundles use it):
 
    ```sh
    corepack pnpm --filter @hana-id/api run deploy
    curl -s https://<worker-url>/v1/health          # {"ok":true,"env":"<env>","signer":"<signer>",…}
    ```
 
-9. **Register apps** (next section), then **smoke test**.
+9. **Deploy the two page Workers** (`vaultOrigin`, `authOrigin`; one thin Worker each, D66), after the API: the vault
+   Worker reaches it through a service binding. `gen` (step 6) already wrote their configs; the web build writes the
+   per-env bundles they serve (`apps/api/README.md`, "Page Workers"):
+
+   ```sh
+   corepack pnpm --filter @hana-id/web build          # packages/web/dist/pages/<env>/{vault,auth}, every env with both origins
+   corepack pnpm --filter @hana-id/api run deploy:pages   # wrangler deploy -c wrangler.vault.jsonc, then -c wrangler.auth.jsonc
+   ```
+
+   Rebuild and redeploy them whenever the manifest's `signer`, `relayer`, `rpc`, `rpcFallback`, `apiUrl`,
+   `ckdNetworkKey` or origins change: the bundles inline them.
+10. **Google redirect URI**: add `{authOrigin}/login/callback` on the shared client and on every partner's own client
+    that logs in through Hana's pages (table above).
+11. **Register apps** (next section), then **smoke test**.
 
 ### Upgrading an env deployed from `develop` to batch B
 
@@ -190,8 +203,10 @@ The contract change is a code upgrade (`deploy-contract <env> --upgrade`, plan f
 gains `create_session_and_derive`, and access-key permissions can't be edited: the plan blocks on every session key
 with the old method list and prints `near account delete-keys …` per key; delete them, re-run (it re-adds them from
 `.secrets/<env>/relayer-keys.json`); the secret is unchanged (same keys). A re-added key starts at a new on-chain
-nonce, so expect one `relay_retry` `invalid_nonce` per key on its first relay. Also: set `vaultOrigin` / `authOrigin`,
-re-run `gen`, apply migration `0003_vault.sql` (`migrations apply … --remote`), set `VAULT_KEK`, deploy.
+nonce, so expect one `relay_retry` `invalid_nonce` per key on its first relay. This is allowlist state 1 (the session
+pool's methods in `apps/api/src/relayer-config.ts`). Then: set `vaultOrigin` / `authOrigin`, re-run `gen`, apply
+migration `0003_vault.sql` (`migrations apply … --remote`), `vault-kek <env> init` (step 7), deploy the API (step 8),
+build and deploy the page Workers (step 9), and register `{authOrigin}/login/callback` (step 10).
 
 ## Local API (`wrangler dev`)
 
@@ -253,7 +268,7 @@ Run as `corepack pnpm --filter @hana-id/scripts run admin <env> <command> …`. 
   corepack pnpm --filter @hana-id/scripts run admin <env> app:create --name smoke-a --scope s1 --origin http://localhost:5173 --remote
   ```
 
-- Suspension is D1-only (the contract can't block derivation). Removing an origin also kills that origin's vault
+- Suspension is D1-only (the contract has no suspension; D11). Removing an origin also kills that origin's vault
   shares on their next use.
 - `app:*` need `apps/api/wrangler.jsonc` for the env (`gen <env>` first) and run `wrangler d1 execute` from `apps/api`.
 - `app:settings` (app positionally or with `--app`, not both; no setting flags: show them): ranges as the migration's
@@ -461,6 +476,8 @@ Warm stage split: create = checks 0.2 s + relay 2.2 s (chain ~0.6 s); derive = r
 | `410 share_revoked` / `share_expired` on every reload after a settings change | `persistence` set to `none` (shares revoked), or `session_ttl_ms` lowered below the shares' age | expected: users log in again |
 | `403 origin_not_allowed` from a loopback origin | `pk_live_` key or a non-dev env name; or no `x-hana-parent-origin` from a Hana page | use `pk_test_` in `sandbox*`/`local*`; list the origin |
 | `403 scope_conflict` | a `pk_test_` app shares its scope with a `pk_live_` app | separate scopes |
+| 4100 `raw_not_allowed_for_test_apps` / `mainnet_not_allowed` from the vault | a `pk_test_` app asked for a raw signature (whatever `raw_sign` says), or for a mainnet Stellar passphrase or an EVM chain outside the testnet allowlist (D39) | expected for test apps; use a test network |
+| `429 rate_limited` "Too many key exports" on `/v1/login` from the export window | more than 3 exports in an hour for one user path in one app (D59) | wait for `retry-after` |
 | `409 no_google_client` on `/v1/app` | scope has no Google client and no usable shared client (or shared client still in its timelock) | add a client, or `--allow-shared` + wait `changeDelayMs` |
 | `admin`: "No wrangler config in apps/api" | `wrangler.jsonc` missing | `corepack pnpm --filter @hana-id/api run gen <env>` |
 | `deploy-contract` "Cannot deploy until these are fixed" | a key with the wrong receiver, methods, empty method list or too-large/unlimited allowance | run the printed `near account delete-keys …`, re-run |
@@ -478,7 +495,8 @@ Warm stage split: create = checks 0.2 s + relay 2.2 s (chain ~0.6 s); derive = r
 - The pre-commit hook runs `gitleaks git --staged` with `.gitleaks.toml`. Never bypass it (`--no-verify`). Scan
   locally with `corepack pnpm secrets:scan`.
 - Never commit `.secrets/`, `.env*`, `.dev.vars` or the generated `apps/api/wrangler.jsonc`, `wrangler.vault.jsonc`,
-  `wrangler.auth.jsonc`, `wrangler.vitest.jsonc` (all gitignored; the first three hold an env's D1 id). Edit the
+  `wrangler.auth.jsonc`, `wrangler.vitest.jsonc` (all gitignored and untracked; `wrangler.jsonc` holds an env's D1
+  id, the page configs its origins and Worker names). Edit the
   manifest or `gen-wrangler.ts`, never the files. CI needs none of them: the API tests generate
   `wrangler.vitest.jsonc` from a fixed test manifest (`TEST_MANIFEST` in `gen-wrangler.ts`) on every run.
 - `legacy/` is read-only reference code.

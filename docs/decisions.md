@@ -1,9 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`); D35–D38 and the amendments against the batch B
-fix branches (2026-10-28); D39 and D47–D70 against `feat/b-defaults` (2026-10-28), the D39, D55 and D65 amendments
-against `feat/b-defaults-2` (2026-10-28); D44 against `feat/b-verified-names` (2026-10-28).
+Last verified against code: 2026-10-28 (commit 58edee9).
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -27,7 +25,8 @@ progress or not started), **deferred**, **superseded**, **proposed** (in a draft
 - Rejected: a throwaway prototype.
 
 ### D3. Any app can integrate; Sodax is the first customer, not a special case
-- Date ≤ 2026-10-26 · Status: in force (adapter package scaffolded only) · Source: `docs/context.md` "Decisions"
+- Date ≤ 2026-10-26 · Status: in force (`@hana-id/sodax`: Stellar and EVM wallet-provider adapters) · Source:
+  `docs/context.md` "Decisions"
 - Decision: nothing customer-specific. The core SDK exposes standard interfaces (EIP-1193, Stellar Wallets Kit, raw
   sign); Sodax gets a thin optional adapter (`@hana-id/sodax`, `IStellarWalletProvider`). Pilot wallets on
   testnet-MPC keys are disposable.
@@ -102,7 +101,8 @@ progress or not started), **deferred**, **superseded**, **proposed** (in a draft
   `allow_shared` are timelocked; removing and `disable_shared_login` are immediate.
 - Why: partners can start without their own OAuth client (like Privy's default credentials) and keep per-app
   isolation. Forging a nonce only gets the forger their own key. The path has no client ID, so own and shared logins
-  give the same address (Google `sub` confirmed stable across one project's clients, 2026-10-27).
+  give the same address (Google `sub` confirmed stable across one project's clients, 2026-10-27, and across Cloud
+  projects, 2026-10-28: D42).
 
 ### D13. Retired shared clients can never join a scope
 - Date 2026-10-26 · Status: in force · Source: `docs/context.md` "Batch A.2 decisions"
@@ -172,7 +172,7 @@ progress or not started), **deferred**, **superseded**, **proposed** (in a draft
 ## Batch B (SDK), confirmed by the user
 
 ### D22. Keep the wallet across reloads with a server-held share
-- Date 2026-10-27 · Status: in force on `feat/batch-b` (`apps/api/src/vault/`, `packages/web/src/vault/`) ·
+- Date 2026-10-27 · Status: in force (`apps/api/src/vault/`, `packages/web/src/vault/`) ·
   Source: `docs/batch-b-spec.md` "Confirmed by the user", "Key persistence"
 - Decision: per-app `persistence: 'session' | 'none'` (default `'session'`). In `'session'` mode the session has
   `max_uses = 1`; the browser stores PRK encrypted under `K_s`; the API returns `K_s` only for a signed, in-order,
@@ -182,7 +182,7 @@ progress or not started), **deferred**, **superseded**, **proposed** (in a draft
   server limits would be bypassable on chain).
 
 ### D23. Approval popup by default; opt-in auto-approve policies
-- Date 2026-10-27 · Status: in force on `feat/batch-b` (`packages/core/src/policy/`, `packages/web/src/vault/`) ·
+- Date 2026-10-27 · Status: in force (`packages/core/src/policy/`, `packages/web/src/vault/`) ·
   Source: `docs/batch-b-spec.md` "Confirmed by the user", "Auto-approve policies"
 - Decision: every signature needs a guarded Approve in a Hana popup unless it matches a policy the app owner set
   (delayed) and the user accepted (bound to `policyId`). Off by default; two opt-ins. Batch B covers typed calls only
@@ -193,27 +193,12 @@ progress or not started), **deferred**, **superseded**, **proposed** (in a draft
 - Rejected: "partners can't turn approval off"; server-side delegated signing.
 
 ### D24. No protocol decoder in batch B; Sodax uses the popup
-- Date 2026-10-27 (Q42) · Status: confirmed · Source: `docs/batch-b-spec.md` "Sodax needs a protocol decoder", Q42
+- Date 2026-10-27 (Q42) · Status: in force (empty decoder registry, `packages/core/src/policy/decoders.ts`) · Source:
+  `docs/batch-b-spec.md` "Sodax needs a protocol decoder", Q42
 - Decision: Sodax spoke calls carry intents in opaque bytes on EVM and Stellar, so no policy can check them. Batch B
   ships the `ProtocolDecoder` interface with an empty registry; a `sodax-intent-v1` decoder comes later on demand.
   `AssetManager.transfer`, `Connection.sendMessage` and `send_message` may never have `addressArgs: 'any'`.
 - Why: an arbitrary `data` on a tiny deposit could empty the user's hub wallet; value limits don't bound that.
-
-### D37. Auto-approve: fees count as spend; opaque arguments always need a decoder
-- Date 2026-10-28 · Status: in force on `fix/b-core-policy` (`packages/core/src/policy/`) · Source: conversation
-  (security findings (b)–(d), `docs/security.md` "Known open issues")
-- Decision: on EVM, `value + maximum fee` counts against `maxValueWei` and `maxValueWeiPerDay` and is recorded as the
-  day's spend (`maxFeeWei` still caps the fee alone). Arguments the address rule can't see into (`bytes`, `string`,
-  `bytes20`+, exactly-160-bit integers; Soroban `Bytes`/`BytesN`/`String`) are never auto-approved under either
-  `addressArgs` rule: such functions need a protocol decoder. `'any'` is also refused on execute/multicall-style
-  names. Wider integers stay allowed as amounts.
-- Why: the SDK fills gas and fees on the partner page, so an injected script could burn the native balance in fees on
-  top of the value limit; under `'any'` a multicall or an `execute(…, bytes)` could carry a transfer to any address;
-  a `uint160` is an address in integer form.
-- Rejected: treating `uint256` as opaque (it is every amount); a validator check on Stellar argument types (a Stellar
-  policy names functions only; the matcher checks each request instead).
-- Consequences: a policy with `maxValueWei: "0"` no longer auto-approves EVM transactions; Permit2 typed data and
-  Uniswap v3 calls (`uint160` fields) always get the popup until a decoder covers them.
 
 ### D25. Google Workspace accounts are allowed; openid-only tokens
 - Date 2026-10-28 · Status: confirmed, in force (`apps/api/src/claims.ts`, `packages/core/src/id-token.ts`) · Source:
@@ -225,7 +210,7 @@ progress or not started), **deferred**, **superseded**, **proposed** (in a draft
 - Rejected: refusing tokens with `hd` (the spec's earlier position, which would have blocked Workspace users).
 
 ### D26. One transaction per login, with a ship gate
-- Date 2026-10-28 · Status: confirmed; contract and API in force, not yet measured on testnet · Source:
+- Date 2026-10-28 · Status: confirmed; contract, API and vault in force, not yet measured on testnet · Source:
   `docs/batch-b-spec.md` "Confirmed by the user"; `docs/contract-interface.md`
 - Decision: `create_session_and_derive`, a literal composition of `create_session` and `derive_key` with counter 1,
   through `POST /v1/login`. If the 10-run testnet median saves less than 1.5 s, the method is removed before the
@@ -233,9 +218,10 @@ progress or not started), **deferred**, **superseded**, **proposed** (in a draft
 - Why: measured ~2 s of the ~8.9 s login is the second transaction.
 
 ### D27. Export proves freshness by a new login, not `auth_time`
-- Date 2026-10-28 (Q33, spike) · Status: confirmed · Source: `docs/batch-b-spec.md` Q33
+- Date 2026-10-28 (Q33, spike) · Status: in force (`packages/web/src/auth/export-page.ts`) · Source:
+  `docs/batch-b-spec.md` Q33
 - Decision: export runs its own fresh login plus a typed confirmation; the `auth_time` check is off
-  (`packages/core/src/id-token.ts:113`).
+  (`maxAuthAgeMs` unset, `packages/core/src/id-token.ts`).
 - Why: with `max_age=0` Google returned no `auth_time`.
 
 ### D35. Message, typed-data and raw approvals bind no network; the popup says so
@@ -260,7 +246,7 @@ progress or not started), **deferred**, **superseded**, **proposed** (in a draft
   Tab, Shift+Tab and the arrow keys arm; Enter, Space and auto-repeated keys never do. The arming gesture never
   approves: Approve acts only on a click whose own pointerdown (or non-repeated keydown) came after it. The page never
   focuses Approve.
-- Amended 2026-10-28 (`feat/b-defaults`): a mouse move "moved" when its `movementX`/`movementY` is non-zero or, when
+- Amended 2026-10-28: a mouse move "moved" when its `movementX`/`movementY` is non-zero or, when
   both are 0, when **both** its client position and its screen position differ from the last pointer event's (move or
   press) recorded in the current request and focus period; every reset of the guard (a new request, a focus, a blur,
   nothing to approve) forgets that position, and missing or non-finite coordinates never arm. WebKit reports 0
@@ -276,6 +262,22 @@ progress or not started), **deferred**, **superseded**, **proposed** (in a draft
   still approve in two taps, if the second lands on Approve.
 - Rejected: `pointermove` only (unusable on touch and keyboard); any `pointerdown` or `keydown` arming (the deviation
   first coded in `fbdb0ce`: mouse click-spam or a held Enter could approve in two events).
+
+### D37. Auto-approve: fees count as spend; opaque arguments always need a decoder
+- Date 2026-10-28 · Status: in force (`packages/core/src/policy/`) · Source: conversation
+  (security findings (b)–(d), `docs/security.md` "Known open issues")
+- Decision: on EVM, `value + maximum fee` counts against `maxValueWei` and `maxValueWeiPerDay` and is recorded as the
+  day's spend (`maxFeeWei` still caps the fee alone). Arguments the address rule can't see into (`bytes`, `string`,
+  `bytes20`+, exactly-160-bit integers; Soroban `Bytes`/`BytesN`/`String`) are never auto-approved under either
+  `addressArgs` rule: such functions need a protocol decoder. `'any'` is also refused on execute/multicall-style
+  names. Wider integers stay allowed as amounts.
+- Why: the SDK fills gas and fees on the partner page, so an injected script could burn the native balance in fees on
+  top of the value limit; under `'any'` a multicall or an `execute(…, bytes)` could carry a transfer to any address;
+  a `uint160` is an address in integer form.
+- Rejected: treating `uint256` as opaque (it is every amount); a validator check on Stellar argument types (a Stellar
+  policy names functions only; the matcher checks each request instead).
+- Consequences: a policy with `maxValueWei: "0"` no longer auto-approves EVM transactions; Permit2 typed data and
+  Uniswap v3 calls (`uint160` fields) always get the popup until a decoder covers them.
 
 ## Batch C (dashboard), decided 2026-10-27
 
@@ -304,8 +306,10 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
 - Decision: no Stripe, plans or invoicing yet. Sodax is billed under its service contract from the monthly statement.
 
 ### D32. Allowed origins are security-critical in shared-login mode
-- Date 2026-10-27 · Status: confirmed, not built (delay length open) · Source: `docs/context.md` "Batch C decisions"
-- Decision: origin changes need a fresh sign-in, are logged and email the other owners.
+- Date 2026-10-27; delay set 2026-10-28 (D34) · Status: confirmed, not built · Source: `docs/context.md` "Batch C
+  decisions"
+- Decision: origin changes need a fresh sign-in, are logged and email the other owners; they take effect after 24 h
+  and can be cancelled meanwhile (D34).
 - Why: in shared mode, origins decide which pages may embed the vault and get nonces for the scope.
 
 ## Pre-mainnet and batch C scope, decided 2026-10-28
@@ -351,7 +355,7 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
   domain-wide cookies, restricted DNS zone access.
 
 ### D39. Test apps can't sign for mainnet chains
-- Date 2026-10-28 · Status: in force on `feat/b-defaults` (`packages/core/src/networks.ts`, `packages/web/src/vault/signing.ts`,
+- Date 2026-10-28 · Status: in force (`packages/core/src/networks.ts`, `packages/web/src/vault/signing.ts`,
   `packages/web/src/client/ethereum.ts`) · Source: `docs/batch-b-spec.md` Q27; decided by the user; how "mainnet" is
   defined: default approved by the user (2026-10-28)
 - Decision: the vault refuses mainnet Stellar passphrases and mainnet EVM chain IDs for `pk_test_` apps (keys from the
@@ -367,7 +371,7 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
   `eth_sendTransaction`/`eth_signTransaction` on one. The approval and consent screens of a test app say Hana signs
   only for test networks.
 - Rejected: a denylist of known mainnets (a new or unlisted chain would be allowed).
-- Amended 2026-10-28 (`feat/b-defaults-2`, default decided for the user): test apps can't use raw signing at all.
+- Amended 2026-10-28 (default decided for the user): test apps can't use raw signing at all.
   `hana_signRaw` from a `pk_test_` app is 4100 `raw_not_allowed_for_test_apps` whatever `raw_sign` says, before any
   API read or popup (`packages/web/src/vault/signing.ts`), because a raw digest can be a mainnet transaction's hash.
   Messages stay allowed. The allowlist gains Ethereum Hoodi 560048 and Sonic testnet 14601 (IDs checked against
@@ -423,7 +427,7 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
   $0.021 each).
 
 ### D44. Consent screen: partner names labelled, Hana-verified names marked
-- Date 2026-10-28 · Status: confirmed by the user; built (in force on `feat/b-verified-names`) · Source:
+- Date 2026-10-28 · Status: confirmed by the user; in force · Source:
   `docs/batch-b-spec.md` Q41
 - Decision: the auto-approve consent screen shows a policy's contract names as "named by {app}" with the short address
   and an explorer link. Contracts on Hana's verified list (per chain address → name, starting with Sodax's contracts)
@@ -464,7 +468,7 @@ Each entry below is a default the user approved on 2026-10-28 (source: conversat
 The matching question in `docs/batch-b-spec.md` "Open questions" points here.
 
 ### D47. Batch B reconciliations R1–R13 and the remaining batch B decisions confirmed (Q30)
-- Date 2026-10-28 · Status: in force on `feat/batch-b` · Source: `docs/batch-b-spec.md` "Reconciled conflicts",
+- Date 2026-10-28 · Status: in force · Source: `docs/batch-b-spec.md` "Reconciled conflicts",
   "Decisions (2026-10-27/28)"
 - Decision: R1–R13 stand as the spec takes them (two origins; relay-only, end-to-end encrypted token return; vault page
   inlines D1 config and reads `GET /v1/app` lazily; BLS key `a` made after the token arrives; server share plus one
@@ -512,14 +516,14 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
 - Decision: rotation through `vault-kek rotate`; an HSM/KMS move is revisited with the email issuer (D17).
 
 ### D55. The vault zeroes PRK after an in-memory idle period (Q28)
-- Date 2026-10-28 · Status: in force on `feat/b-defaults` (`packages/web/src/vault/vault.ts` `goIdle`, `wake`) ·
+- Date 2026-10-28 · Status: in force (`packages/web/src/vault/vault.ts` `goIdle`, `wake`) ·
   Source: `docs/batch-b-spec.md` Q28
 - Decision: after the app's `idle_ttl_ms` with no request from the partner page (signing, status, addresses, export,
   auto-approve), PRK is zeroed, not only at the absolute end. In `'session'` mode the next request that needs the key
   unlocks the record again (one API call, same share only), which works while the server share is alive; otherwise,
   and in `'none'` mode, the session ends (`sessionExpired`).
 - Why: shortens how long PRK sits in a tab nobody uses, where a renderer bug could reach it (security.md (j)).
-- Amended 2026-10-28 (`feat/b-defaults-2`, default decided for the user): only requests that use the key count as
+- Amended 2026-10-28 (default decided for the user): only requests that use the key count as
   activity (the sign methods, `hana_export`, `hana_revokeOtherDevices`, `hana_requestAutoApprove`). `hana_status`,
   `eth_accounts`, `stellar_getAddress` and `hana_autoApproveStatus` don't, and they keep answering while the session
   is dormant without unlocking it, so a page that polls them can't keep PRK in memory. `hana_autoApproveStatus` would
@@ -528,7 +532,7 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
   in other tabs until the next request that uses the key.
 
 ### D56. The vault checks its scope against the on-chain registry at login (Q7)
-- Date 2026-10-28 · Status: in force on `feat/b-defaults` (`packages/web/src/vault/login.ts` `checkScope`) · Source:
+- Date 2026-10-28 · Status: in force (`packages/web/src/vault/login.ts` `checkScope`) · Source:
   `docs/batch-b-spec.md` Q7
 - Decision: one view through the manifest RPC, started as soon as `GET /v1/app` answers and awaited before anything
   is relayed: own client `scope_for_client('google', aud)` must be the inlined `scopeId`; shared client
@@ -552,7 +556,7 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
   and `packages/env/src/`.
 
 ### D59. Key export: only from a Hana window, relayer-paid, rate-limited per user (Q18)
-- Date 2026-10-28 · Status: in force on `feat/b-defaults` (`apps/api/src/login.ts`) · Source: `docs/batch-b-spec.md` Q18
+- Date 2026-10-28 · Status: in force (`apps/api/src/login.ts`) · Source: `docs/batch-b-spec.md` Q18
 - Decision: a partner page can only ask (`hana_export` shows the vault's launcher); the export window opens only from
   that click and takes its context only from the vault that opened it. Its `/v1/login` is relayed at Hana's cost and
   limited to 3 per hour per `(app, sha256(path))`, counted after the token check and before the relay.
@@ -581,12 +585,12 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
   refuses a bad key anyway.
 
 ### D65. Optional `rpcFallback` for the vault's NEAR reads (Q9)
-- Date 2026-10-28 · Status: in force on `feat/b-defaults` (`packages/env/src/schema.ts`, `packages/web/src/near-call.ts`) ·
+- Date 2026-10-28 · Status: in force (`packages/env/src/schema.ts`, `packages/web/src/near-call.ts`) ·
   Source: `docs/batch-b-spec.md` Q9
 - Decision: the manifest may name a second https NEAR RPC. The vault and the export window read from it only when the
   primary errors or times out (8 s), for `get_session` re-syncs, registry views and tx polling; each read's answer
   comes from one endpoint, never a mix. It joins `rpc` in the pages' CSP.
-- Amended 2026-10-28 (`feat/b-defaults-2`, decided for the user): sandbox-dev's `rpcFallback` is
+- Amended 2026-10-28 (decided for the user): sandbox-dev's `rpcFallback` is
   `https://rpc.testnet.near.org` (probed: 200, ~3.5 s); the primary stays `test.rpc.fastnear.com`. Takes effect on the
   next `gen`, page build and deploy.
 
@@ -604,13 +608,13 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
   (a muxed `M…` address included) is 4100 before any popup.
 
 ### D68. Raw signing `'off'` takes effect in open tabs
-- Date 2026-10-28 · Status: in force on `feat/b-defaults` (`GET /v1/app` `rawSign`; `packages/web/src/vault/vault.ts`
+- Date 2026-10-28 · Status: in force (`GET /v1/app` `rawSign`; `packages/web/src/vault/vault.ts`
   `freshRawSign`) · Source: `docs/security.md` "Auto-approve policies"
 - Decision: the vault re-reads `rawSign` before every raw request on the same 10 s bound as the policy; `'off'`
   refuses until a reload, and a failed re-read refuses (fails closed).
 
 ### D69. An EVM policy rule needs `maxValueWei ≥ maxFeeWei`
-- Date 2026-10-28 · Status: in force on `feat/b-defaults` (`packages/core/src/policy/validate.ts`) · Source:
+- Date 2026-10-28 · Status: in force (`packages/core/src/policy/validate.ts`) · Source:
   `docs/security.md` (b)
 - Decision: the validator refuses a rule whose `maxValueWei` is below its `maxFeeWei` (value plus fees counts
   against it since D37, so it could never auto-approve at its fee cap). The consent screen labels the limits
@@ -630,14 +634,19 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
 | One relayer key pool, 300 Tgas for everything (batch A) | Two pools, per-method gas (D19) | `docs/batch-a2-shared-client.md` |
 | Hana can never block derivation for a scope (batch A) | True for scopes with their own client; Hana can stop a shared-only scope by removing shared clients | `docs/contract-interface.md` security notes |
 | Provisional HKDF salt `hana-embed-ckd-v1` | Derivation v1 (D9) | `docs/batch-b-spec.md` "Address impact" |
-| PoC keys in plaintext `sessionStorage` | Vault iframe on a Hana origin (in progress) | `docs/context.md` "Known issues for batch B" |
+| PoC keys in plaintext `sessionStorage` | Vault iframe on a Hana origin (D22, D47) | `docs/context.md` "Known issues for batch B" |
 | CKD network key read over RPC | Pinned per env (`ckdNetworkKey`) | same |
 | Full Google token with email on chain | `scope=openid` and the claim allow-list (D25) | same |
-| Login page computes the shared-mode nonce (A.2) | The vault computes it; the login page only checks and relays it (proposed in batch B, below) | `docs/batch-b-spec.md` "Amends" |
-| Contract upgradeable with no lock (batch A, PoC) | Still so on testnet; upgrade governance is a production MVP item (D2) | `docs/batch-a-spec.md` |
+| Login page computes the shared-mode nonce (A.2) | The vault computes it; the login page only checks and relays it (D47) | `docs/batch-b-spec.md` "Amends" |
+| Contract upgradeable with no lock (batch A, PoC) | Still so on testnet; upgrade governance before mainnet (D2, D33) | `docs/batch-a-spec.md` |
 | Sodax Stellar `signAndSendTransaction(p)` is `sendTransaction(signTransaction(p.data))` | It signs as `p.from`: `sendTransaction(signTransaction(p.data, {address: p.from}))`, so a raw transaction built for another account (a muxed `M…` address included) is 4100 before any popup. Sodax builds every raw transaction for `getWalletAddress()`'s `G…` address. Confirmed (D67) | `docs/batch-b-spec.md` "Sodax adapter"; `packages/sodax/src/stellar.ts` |
+
 ## Proposed, not yet confirmed
 
-The batch B items listed here before 2026-10-28 were confirmed as built that day (D47–D52, D66). Still open in
-`docs/batch-b-spec.md` "Open questions": Q2–Q6, Q10, Q11, Q13, Q15, Q17, Q19, Q22, Q24–Q26, Q29, Q39–Q41. Every
-decision in `docs/batch-c-spec.md` beyond D28–D32 and D34 is a draft.
+Still open in `docs/batch-b-spec.md` "Open questions": Q2 (near-zero-click returning login), Q4 (partitioned IndexedDB
+retention, to measure), Q6 (a "remember this device" option), Q10 (the ship gate's 1.5 s threshold), Q11 (the real
+MPC's timeout and failure behaviour), Q13 (dropping partner-origin CORS for `pk_test_` in sandbox envs), Q15 (the
+production domain names and Cloudflare account; only "two registrable domains" is decided, D38), Q17 (approval popup
+lifetime and mobile behaviour), Q24 (mobile and in-app webviews), Q25 (SWK 1.9.x and 2.x), Q26 (the EIP-6963 `rdns`,
+after Q15), Q29 (runtime dependencies and bundle budget). Also open: D33's delay length and the mainnet launch date
+(D39). Every decision in `docs/batch-c-spec.md` beyond D28–D32 and D34 is a draft.

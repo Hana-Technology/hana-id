@@ -262,6 +262,15 @@ throwaway names. The signer account is part of every user's derived key, so chan
    ```
    For local `wrangler dev`, the same three values go in `apps/api/.dev.vars` (gitignored, 0600):
    `pnpm --filter @hana-id/api run gen <env> --dev-vars` writes it from `.secrets/<env>/` without printing them.
+   Then the vault and auth pages (`vaultOrigin`, `authOrigin`), each a thin Worker with its built pages; the vault
+   Worker reaches the API through a service binding, so deploy the API first
+   ([`apps/api/README.md`](apps/api/README.md#page-workers)):
+   ```sh
+   pnpm --filter @hana-id/web build              # packages/web/dist/pages/<env>/{vault,auth}
+   pnpm --filter @hana-id/api run deploy:pages   # wrangler.vault.jsonc and wrangler.auth.jsonc, written by gen above
+   ```
+   Google redirects logins to `{authOrigin}/login/callback`: add it as an Authorized redirect URI on the shared client
+   and on every own client that logs in through the Hana pages.
 8. **Register a partner**, with its own Google client, or with Hana's shared one, or both:
    ```sh
    # own client

@@ -1,4 +1,5 @@
-// Generates apps/api/wrangler.jsonc from an environment manifest (envs/<env>.json).
+// Generates apps/api/wrangler.jsonc from an environment manifest (envs/<env>.json), plus wrangler.vault.jsonc and
+// wrangler.auth.jsonc for the Workers of the two Hana page origins (scripts/pages-wrangler.ts).
 //
 //   pnpm --filter @hana-id/api gen <env> [--d1-id <uuid>] [--dev-vars]
 //
@@ -13,6 +14,7 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type Manifest, loadEnv, repoRoot } from '@hana-id/env';
+import { writePagesWranglerConfigs } from './pages-wrangler.ts';
 
 const apiDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const LOCAL_D1_ID = '00000000-0000-4000-8000-000000000000';
@@ -147,8 +149,11 @@ export function main(argv: string[], opts: { root?: string; dir?: string } = {})
   if (idFlag >= 0 && (!d1Arg || !/^[0-9a-f-]{36}$/u.test(d1Arg))) throw new Error('--d1-id needs a D1 database uuid');
 
   const manifest = loadEnv(envName);
+  // The page Workers first: they refuse more envs (workers.dev outside dev envs), and a refusal then writes nothing.
+  const pages = writePagesWranglerConfigs(manifest, COMPATIBILITY_DATE, opts.dir);
   const { path, d1Id } = writeWranglerConfig(manifest, d1Arg, opts.dir);
   console.log(`wrote ${path} (env ${manifest.name}, worker ${manifest.cloudflare.workerName}${d1Id === LOCAL_D1_ID ? ', local D1 placeholder id' : ''})`);
+  for (const p of pages) console.log(`wrote ${p}`);
 
   if (argv.includes('--dev-vars')) {
     const { path: devVars, count } = writeDevVars(manifest.name, opts.root, opts.dir);

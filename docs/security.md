@@ -322,7 +322,11 @@ over 20 gets 403 `too_many_origins` on its vault page (availability, not safety)
 
 **(j) sandbox-dev's two Hana origins are one site.** `hana-id-vault-sandbox-dev.tingtc.workers.dev` and
 `hana-id-auth-sandbox-dev.tingtc.workers.dev` share the registrable domain `tingtc.workers.dev`; the schema allows
-this only in dev envs (`packages/env/src/schema.ts:101`). The spec asked for different sites.
+this only in dev envs (`packages/env/src/schema.ts:101`). Production envs must use two registrable domains (D38).
+Why: Chrome/Edge and Firefox desktop always put different sites in different processes, so a renderer bug triggered
+by content the auth popup shows (transactions, messages, app names) can't reach the vault's PRK. Not guaranteed on
+Chrome Android (partial Site Isolation, ≥ 2 GB RAM) or WebKit (Safari, every iOS browser), where the vault iframe may
+also share a process with the partner page; there, short unlock windows and zeroing PRK are the mitigation.
 
 **(k) The approval digest binds no network for messages, typed data and raw requests.** Accepted by the user
 (2026-10-28, `docs/decisions.md` D35): `contextString` is `''` for those kinds (`approval.ts` header,

@@ -326,6 +326,20 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
 - Why: about 40% of the draft's size with every security property kept or its loss stated.
 - Blocked on: a Hana Cloudflare account and zone, an email provider, Cloudflare Access with MFA.
 
+### D38. Vault and auth popups on two registrable domains
+- Date 2026-10-28 · Status: confirmed by the user; domain names not chosen · Source: `docs/batch-b-spec.md` "Origins
+  and pages", `docs/security.md` (j)
+- Decision: production `vaultOrigin` and `authOrigin` sit on different registrable domains. The auth domain is the only
+  one users see (popup address bar), so it is an official, recognisable Hana domain; whether that is `hanawallet.io` or
+  another domain is undecided. The vault domain is never shown and hosts nothing else.
+- Why: desktop Chrome/Edge/Firefox guarantee separate processes per site, so content shown in the popups can't share a
+  process with the vault's PRK. Costs one extra domain (~$12/yr); no code change, the schema already refuses a
+  same-site pair outside `local*`/`sandbox*` envs.
+- Rejected: one dedicated domain with `vault.`/`auth.` subdomains (matches Privy/Turnkey practice, origin isolation
+  only); a separate user-visible auth domain that looks unofficial.
+- Limits: no process guarantee on Chrome Android or WebKit. If the auth domain also hosts other Hana sites: no
+  domain-wide cookies, restricted DNS zone access.
+
 ## Superseded or amended
 
 | Was | Now | Source |

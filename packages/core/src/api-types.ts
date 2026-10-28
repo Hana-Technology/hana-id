@@ -4,7 +4,7 @@
 // `requestId`.
 export type GoogleMode = 'own' | 'shared';
 
-/** `GET /v1/app`. `name`, `serverTimeMs` and `autoApprovePolicy` arrive with batch B; older APIs omit them. */
+/** `GET /v1/app`. `name`, `serverTimeMs`, `autoApprovePolicy` and `rawSign` arrive with batch B; older APIs omit them. */
 export interface AppConfig {
   scopeId: string;
   signer: string;
@@ -16,6 +16,11 @@ export interface AppConfig {
    * re-reads it while it stays open, so removing a policy stops auto-approval without a reload.
    */
   autoApprovePolicy?: Record<string, unknown> | null;
+  /**
+   * The app's raw-signing setting in force now. The vault re-reads it before every raw request (within the same 10 s as
+   * the policy), so setting it to 'off' takes effect in open tabs; a vault treats a missing value as 'off'.
+   */
+  rawSign?: 'off' | 'approval';
   requestId: string;
 }
 
@@ -214,7 +219,8 @@ export function isAppConfig(v: unknown): v is AppConfig {
     (v.google.mode === 'own' || v.google.mode === 'shared') &&
     (v.name === undefined || typeof v.name === 'string') &&
     (v.serverTimeMs === undefined || isMs(v.serverTimeMs)) &&
-    (v.autoApprovePolicy === undefined || v.autoApprovePolicy === null || isObj(v.autoApprovePolicy))
+    (v.autoApprovePolicy === undefined || v.autoApprovePolicy === null || isObj(v.autoApprovePolicy)) &&
+    (v.rawSign === undefined || v.rawSign === 'off' || v.rawSign === 'approval')
   );
 }
 

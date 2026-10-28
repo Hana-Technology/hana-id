@@ -14,7 +14,9 @@ import {
   approvalContent,
   bytesEqual,
   from0xHex,
+  TEST_APP_NETWORK_RULE,
   hashTypedData,
+  mainnetOfRequest,
   normalizeTypedData,
   personalSign,
   signEvmDigest,
@@ -39,13 +41,21 @@ const ACCOUNT = 0;
 
 const sameEvm = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
 
+export interface SubjectRules {
+  /** The app's raw-signing setting in force (the vault re-reads it before a raw request). */
+  rawSign: 'off' | 'approval';
+  /** A pk_test_ app: mainnet chains are refused (docs/decisions.md D39, @hana-id/core networks.ts). */
+  testApp: boolean;
+}
+
 /**
  * The approval subject of a sign request for this vault's addresses. Throws VaultError 4100 when the request names
- * another address, when raw signing is off, or when the request can't be signed as given (malformed typed data,
- * non-canonical XDR, an envelope that doesn't parse for its network).
+ * another address, when raw signing is off, when a test app asks for a mainnet (reason `mainnet_not_allowed`), or when
+ * the request can't be signed as given (malformed typed data, non-canonical XDR, an envelope that doesn't parse for its
+ * network).
  */
-export function approvalSubject(request: SignRequest, addresses: RecordAddresses, rawSign: 'off' | 'approval'): ApprovalSubject {
-  if (request.method === 'hana_signRaw' && rawSign !== 'approval') throw new VaultError(ErrorCode.unauthorized, 'Raw signing is off for this app');
+export function approvalSubject(request: SignRequest, addresses: RecordAddresses, rules: SubjectRules): ApprovalSubject {
+  if (request.method === 'hana_signRaw' && rules.rawSign !== 'approval') throw new VaultError(ErrorCode.unauthorized, 'Raw signing is off for this app', { reason: 'raw_sign_off' });
   const chain = approvalChain(request);
   const address = chain === 'stellar' ? addresses.stellar : addresses.evm;
   switch (request.method) {
@@ -78,6 +88,11 @@ export function approvalSubject(request: SignRequest, addresses: RecordAddresses
     if (request.method === 'stellar_signAuthEntry') parseStellarAuthPreimage(request.params.preimageXdr, request.params.networkPassphrase);
   } catch {
     throw new VaultError(ErrorCode.unauthorized, 'The request is malformed', { reason: 'invalid_request' });
+  }
+  // Before any popup or policy: a test app's keys come from the testnet MPC and must never sign for a mainnet.
+  if (rules.testApp) {
+    const mainnet = mainnetOfRequest(request);
+    if (mainnet) throw new VaultError(ErrorCode.unauthorized, TEST_APP_NETWORK_RULE, { reason: 'mainnet_not_allowed', ...mainnet });
   }
   return { kind: APPROVAL_KIND[request.method], chain, address, ...content };
 }

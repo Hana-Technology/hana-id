@@ -528,6 +528,8 @@ export interface WindowMessageMap {
      * (the popup then offers "Stop auto-approving"), and why this request wasn't auto-approved (a matcher reason).
      */
     autoApprove?: AutoApproveNote;
+    /** A pk_test_ app: the popup says that Hana signs only for test networks for it (docs/decisions.md D39). */
+    testApp?: true;
   };
   'hana:approve-result': { id: string; approved: boolean; digest: Uint8Array };
   'hana:approve-bye': Record<string, never>;
@@ -554,6 +556,8 @@ export interface WindowMessageMap {
     expiresAtMs: number;
     position: number;
     queued: number;
+    /** A pk_test_ app (as in hana:approve-request). */
+    testApp?: true;
   };
   /** Approval popup → vault: Allow (guarded like Approve) or Decline, with consentDigest of what it rendered. */
   'hana:consent-result': { id: string; allowed: boolean; digest: Uint8Array };
@@ -628,8 +632,9 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
     isBytes(m.relayKey, 32, 32),
   'hana:approve-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:approve-request': (m) => {
-    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove'])) return false;
+    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp'])) return false;
     if (m.autoApprove !== undefined && !isAutoApproveNote(m.autoApprove)) return false;
+    if (m.testApp !== undefined && m.testApp !== true) return false;
     if (!isRequestId(m.id) || !isAppName(m.appName) || !isOrigin(m.parentOrigin) || !isApprovalKind(m.kind) || !isChain(m.chain)) return false;
     const expected = approvalKindChain(m.kind);
     if (expected !== null && expected !== m.chain) return false;
@@ -656,7 +661,8 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
     isChain(m.chain) &&
     isAddressFor(m.chain, m.address),
   'hana:consent-request': (m) =>
-    exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'policy', 'policyId', 'expiresAtMs', 'position', 'queued']) &&
+    exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'policy', 'policyId', 'expiresAtMs', 'position', 'queued'], ['testApp']) &&
+    (m.testApp === undefined || m.testApp === true) &&
     isRequestId(m.id) &&
     isAppName(m.appName) &&
     isOrigin(m.parentOrigin) &&

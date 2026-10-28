@@ -354,6 +354,16 @@ describe('window messages', () => {
     expect(ok({ label: 'Swaps', active: true, extra: 1 })).toBeNull();
   });
 
+  it('approve-request and consent-request take an optional testApp flag that is only ever true (D39)', () => {
+    for (const [t, base] of [['hana:approve-request', APPROVE_REQUEST], ['hana:consent-request', VALID_WINDOW['hana:consent-request']]] as const) {
+      const ok = (testApp: unknown) => parseWindowMessage({ ...base, testApp }, [t]);
+      expect(ok(true)).not.toBeNull();
+      expect(parseWindowMessage({ ...base }, [t])).not.toBeNull();
+      expect(ok(false)).toBeNull();
+      expect(ok('yes')).toBeNull();
+    }
+  });
+
   it.each([
     ['a short policyId', { policyId: 'a'.repeat(63) }],
     ['an uppercase policyId', { policyId: 'A'.repeat(64) }],

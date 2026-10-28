@@ -7,27 +7,7 @@ import { policyId } from '@hana-id/core/policy';
 import { openRecordStore, recordKey } from '../../src/vault/record.ts';
 import { POPUP_REUSE_MS } from '../../src/vault/approvals.ts';
 import { POLICY_FRESH_MS, POLICY_REFRESH_MS } from '../../src/vault/vault.ts';
-import {
-  APP_ID,
-  Browser,
-  ENV,
-  type FakeWindow,
-  type Google,
-  HOUR,
-  PARTNER,
-  SCOPE,
-  START_MS,
-  type Tab,
-  answer,
-  answerConsent,
-  apiError,
-  google,
-  login,
-  makeConfig,
-  openApproval,
-  readyTab,
-  sleepReal,
-} from './harness.ts';
+import { APP_ID, Browser, ENV, type FakeWindow, type Google, HOUR, PARTNER, SCOPE, START_MS, type Tab, answer, answerConsent, apiError, google, login, makeConfig, openApproval, readyTab, sleepReal, waitLauncher } from './harness.ts';
 import {
   CHAIN,
   EVM_FRIEND,
@@ -115,10 +95,8 @@ async function session(browser = new Browser(), policy: Record<string, unknown> 
   return { t, stellar: a.stellar, evm: a.evm };
 }
 
-async function waitLabel(t: Tab, label: string): Promise<void> {
-  for (let i = 0; i < 200 && t.launcher.label !== label; i++) await sleepReal(5);
-  expect(t.launcher.label).toBe(label);
-}
+/** Event-driven (the launcher view and its `ui` event on the port), so a loaded machine only slows it down. */
+const waitLabel = (t: Tab, label: string): Promise<void> => waitLauncher(t, label);
 
 /** Opens the popup from the launcher and returns the consent screen it shows. */
 async function consentScreen(s: Session): Promise<{ popup: FakeWindow; m: Record<string, unknown> }> {
@@ -225,7 +203,7 @@ describe('with consent', () => {
   it.each([
     ['an unlisted contract', () => ['eth_signTransaction', { tx: evmTx({ to: EVM_FRIEND }) }], 'contract_not_listed'],
     ['an unlisted selector', () => ['eth_signTransaction', { tx: evmTx({ data: `${functionSelector('steal()')}` }) }], 'selector_not_listed'],
-    ['an unlisted chain', () => ['eth_signTransaction', { tx: evmTx({ chainId: '0x1' }) }], 'chain_not_listed'],
+    ['an unlisted (test) chain', () => ['eth_signTransaction', { tx: evmTx({ chainId: '0xaa36a7' }) }], 'chain_not_listed'],
     ['an address argument that is not self or listed', () => ['eth_signTransaction', { tx: evmTx({ data: withdraw(EVM_FRIEND, 1n) }) }], 'address_not_allowed'],
     ['a value over the limit', () => ['eth_signTransaction', { tx: evmTx({ value: `0x${(101_001).toString(16)}` }) }], 'value_too_high'],
     ['a value over the limit with the maximum fee', () => ['eth_signTransaction', { tx: evmTx({ value: '0x3e9' }) }], 'value_plus_fee_too_high'],
@@ -239,11 +217,11 @@ describe('with consent', () => {
     ['a transaction whose auth tree passes a stranger at depth 3', (s: Session) => ['stellar_signTransaction', { xdr: stellarTx(s.stellar, [invokeWithAuth(POOL, 'swap', [addr(s.stellar)], nested(s.stellar, STRANGER))]), networkPassphrase: PASSPHRASE }], 'address_not_allowed'],
     ['typed data with an unlisted primaryType', (s: Session) => ['eth_signTypedData_v4', [s.evm, order(s.evm, { primaryType: 'Permit' })]], 'typed_data_not_listed'],
     ['typed data for an unlisted verifyingContract', (s: Session) => ['eth_signTypedData_v4', [s.evm, order(s.evm, { verifyingContract: EVM_FRIEND })]], 'typed_data_not_listed'],
-    ['typed data whose domain chainId is not listed', (s: Session) => ['eth_signTypedData_v4', [s.evm, order(s.evm, { chainId: 1 })]], 'chain_not_listed'],
+    ['typed data whose domain chainId is not listed', (s: Session) => ['eth_signTypedData_v4', [s.evm, order(s.evm, { chainId: 11155111 })]], 'chain_not_listed'],
     ['typed data with an address field that is not self or listed', (s: Session) => ['eth_signTypedData_v4', [s.evm, order(EVM_FRIEND)]], 'address_not_allowed'],
     ['a classic operation other than a listed changeTrust', (s: Session) => ['stellar_signTransaction', { xdr: stellarTx(s.stellar, [payment()]), networkPassphrase: PASSPHRASE }], 'operation_not_allowed'],
     ['a fee-bump', (s: Session) => ['stellar_signTransaction', { xdr: feeBump(stellarTx(s.stellar, [changeTrust()]), s.stellar), networkPassphrase: PASSPHRASE }], 'fee_bump'],
-    ['an unlisted network', (s: Session) => ['stellar_signTransaction', { xdr: stellarTx(s.stellar, [changeTrust()]), networkPassphrase: 'Public Global Stellar Network ; September 2015' }], 'network_not_listed'],
+    ['an unlisted (test) network', (s: Session) => ['stellar_signTransaction', { xdr: stellarTx(s.stellar, [changeTrust()]), networkPassphrase: 'Test SDF Future Network ; October 2022' }], 'network_not_listed'],
   ] as const)('%s goes to the approval popup with the reason', async (_, make, reason) => {
     const s = await session();
     const popup = await grant(s);

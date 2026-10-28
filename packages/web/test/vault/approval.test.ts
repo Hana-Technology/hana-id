@@ -4,8 +4,10 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { SIGN_MESSAGE_MAX_BYTES, base64Decode, base64Encode, parsePortRequest, recoverEvmAddress, toHex, utf8 } from '@hana-id/core';
 import { verifyStellarSignature } from '@hana-id/core/signers/stellar';
-import { Browser, ENV, FakeWindow, type Google, PARTNER, type Tab, answer, approveDigest, google, login, makeConfig, openApproval, readyTab, sleepReal } from './harness.ts';
+import { POLICY_FRESH_MS } from '../../src/vault/vault.ts';
+import { Browser, ENV, FakeWindow, type Google, PARTNER, type Tab, answer, apiError, approveDigest, google, login, makeConfig, openApproval, readyTab, sleepReal, waitLauncher } from './harness.ts';
 import {
+  CHAIN,
   EVM_VAULT,
   PASSPHRASE,
   POOL,
@@ -59,10 +61,8 @@ async function shown(s: Session, method: string, params: unknown) {
   return { reply, popup, m };
 }
 
-async function waitLabel(t: Tab, label: string): Promise<void> {
-  for (let i = 0; i < 200 && t.launcher.label !== label; i++) await sleepReal(5);
-  expect(t.launcher.label).toBe(label);
-}
+/** Event-driven (the launcher view and its `ui` event on the port), so a loaded machine only slows it down. */
+const waitLabel = (t: Tab, label: string): Promise<void> => waitLauncher(t, label);
 
 describe('approval flow', () => {
   it('queues the request, shows the launcher, and the launcher click opens /approve; the popup sees the whole request', async () => {
@@ -254,7 +254,7 @@ describe('what gets signed', () => {
     const s = await session();
     const tx = evmTx();
     const { reply, popup, m } = await shown(s, 'eth_signTransaction', { tx });
-    expect(m).toMatchObject({ kind: 'evm_tx', chain: 'evm', address: s.evm, context: { chainId: 8453 } });
+    expect(m).toMatchObject({ kind: 'evm_tx', chain: 'evm', address: s.evm, context: { chainId: CHAIN } });
     answer(s.t, popup, m, true);
     expect(evmTxSigner((await reply).result as string, tx)).toBe(s.evm);
   });
@@ -347,5 +347,65 @@ describe('raw signing', () => {
     answer(s.t, evm.popup, m, true);
     const ssig = ((await st).result as { signature: Uint8Array }).signature;
     expect(verifyStellarSignature(s.stellar, txHashLike, ssig)).toBe(true);
+  });
+  /** A session whose API clock moves with the test's, with raw signing on when the page loaded. */
+  async function rawSession(): Promise<Session> {
+    const browser = new Browser();
+    browser.backend.serverNow = () => browser.timers.now;
+    const t = await readyTab(browser, { googleJwk: g.jwk, config: makeConfig({ settings: { rawSign: 'approval' } }) });
+    tabs.push(t);
+    const { reply } = await login(t, g);
+    const a = (reply.result as { addresses: { stellar: string; evm: string } }).addresses;
+    return { t, stellar: a.stellar, evm: a.evm };
+  }
+  const raw = { chain: 'evm', digest: new Uint8Array(32).fill(0xab) };
+  const appReads = (s: Session) => s.t.browser.backend.count('/v1/app');
+
+  it("'off' takes effect in an open tab: a raw request re-reads GET /v1/app once the last check is 10 s old", async () => {
+    const s = await rawSession();
+    s.t.browser.backend.rawSign = 'off';
+    s.t.browser.timers.advance(POLICY_FRESH_MS);
+    const before = appReads(s);
+    const reply = await s.t.request('hana_signRaw', raw);
+    expect(reply.error).toEqual({ code: 4100, message: 'Raw signing is off for this app', data: { reason: 'raw_sign_off' } });
+    expect(appReads(s)).toBe(before + 1);
+    expect(s.t.launcher.label).toBeNull();
+    // It stays off in this tab even if the API serves 'approval' again (enabling waits for a reload).
+    s.t.browser.backend.rawSign = 'approval';
+    s.t.browser.timers.advance(POLICY_FRESH_MS);
+    expect((await s.t.request('hana_signRaw', raw)).error?.data).toEqual({ reason: 'raw_sign_off' });
+  });
+
+  it('a check younger than 10 s is reused; an older one is redone before the popup', async () => {
+    const s = await rawSession();
+    // The login read GET /v1/app just now: no other read for this request.
+    let before = appReads(s);
+    const first = await shown(s, 'hana_signRaw', raw);
+    expect(appReads(s)).toBe(before);
+    answer(s.t, first.popup, first.m, true);
+    expect((await first.reply).result).toBeDefined();
+    s.t.browser.timers.advance(POLICY_FRESH_MS);
+    before = appReads(s);
+    const second = s.t.request('hana_signRaw', raw);
+    const m = await first.popup.next('hana:approve-request', 1);
+    expect(appReads(s)).toBe(before + 1);
+    answer(s.t, first.popup, m, true);
+    expect((await second).result).toBeDefined();
+  });
+
+  it('refuses when the re-read fails (raw signing fails closed)', async () => {
+    const s = await rawSession();
+    s.t.browser.backend.overrides.set('/v1/app', () => apiError(503, 'config_unavailable'));
+    s.t.browser.timers.advance(POLICY_FRESH_MS);
+    const reply = await s.t.request('hana_signRaw', raw);
+    expect(reply.error).toMatchObject({ code: 'api_unavailable', data: { reason: 'raw_sign_unconfirmed' } });
+    expect(s.t.launcher.label).toBeNull();
+    // Once the API answers again, raw requests go through.
+    s.t.browser.backend.overrides.delete('/v1/app');
+    const again = s.t.request('hana_signRaw', raw);
+    await waitLabel(s.t, 'Review in Hana');
+    const popup = openApproval(s.t);
+    answer(s.t, popup, await popup.next('hana:approve-request'), true);
+    expect((await again).result).toBeDefined();
   });
 });

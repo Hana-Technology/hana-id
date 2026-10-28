@@ -58,6 +58,12 @@ export const AUTO_APPROVE_REASON_TEXT: Readonly<Record<AutoApproveReason, string
   daily_count_reached: 'today’s limit of automatic signatures is reached',
 });
 
+/**
+ * Shown on every request and consent screen of a pk_test_ app (docs/decisions.md D39): its keys come from the testnet
+ * MPC, so the vault refuses mainnet requests from it before they reach this popup.
+ */
+export const TEST_APP_NOTE = 'Test app: Hana ID signs only for test networks here. Requests for Stellar or EVM mainnets are refused, so don’t keep real funds at this account.';
+
 /** The text for a reason code (an unknown code, from a newer vault, is shown generically). */
 export function autoApproveReasonText(reason: string): string {
   return Object.hasOwn(AUTO_APPROVE_REASON_TEXT, reason) ? AUTO_APPROVE_REASON_TEXT[reason as AutoApproveReason] : 'it doesn’t match the rules';
@@ -223,6 +229,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         { class: 'panel approve' },
         header(msg, `Request ${msg.position} of ${msg.queued}`),
         d.h('p', { class: 'account' }, `Your ${msg.chain === 'stellar' ? 'Stellar' : 'EVM'} account `, d.h('code', { class: 'mono' }, msg.address)),
+        msg.testApp ? d.h('p', { class: 'note test-app' }, TEST_APP_NOTE) : null,
         auto?.reason ? d.h('p', { class: 'note' }, `Not signed automatically under “${auto.label}”: ${autoApproveReasonText(auto.reason)}.`) : null,
         decoded
           ? renderApproval(d, decoded, msg.appName)
@@ -254,6 +261,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         'section',
         { class: 'panel consent' },
         header(msg),
+        msg.testApp ? d.h('p', { class: 'note test-app' }, TEST_APP_NOTE) : null,
         policy
           ? renderConsent(d, { policy, appName: msg.appName, parentOrigin: msg.parentOrigin, expiresAtMs: msg.expiresAtMs, nowMs: now() })
           : d.h('div', {}, d.h('h1', {}, 'Automatic signing'), d.h('p', { class: 'danger' }, 'This app’s automatic-signing rules could not be checked, so they can’t be allowed.')),

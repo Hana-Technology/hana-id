@@ -23,6 +23,7 @@ import {
   type PortParamsMap,
   type PortResultMap,
   isPublishableKey,
+  isTestPublishableKey,
 } from '@hana-id/core';
 import { VERSION } from '../version.ts';
 import { Emitter } from './emitter.ts';
@@ -114,7 +115,7 @@ export class HanaClient extends Emitter<HanaEvents> {
       stellar,
     );
     this.ethereum = new HanaEthereumProvider(
-      { evmAddress: () => this.#addresses?.evm ?? null, login: () => this.login(), request: (m, p) => this.#request(m, p), fetch: deps.fetch },
+      { evmAddress: () => this.#addresses?.evm ?? null, login: () => this.login(), request: (m, p) => this.#request(m, p), fetch: deps.fetch, testApp: isTestPublishableKey(config.publishableKey) },
       evm,
     );
 

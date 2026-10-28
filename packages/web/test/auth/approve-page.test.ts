@@ -16,7 +16,7 @@ import {
 import { policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GUARD_DELAY_MS } from '../../src/auth/approve-guard.ts';
-import { AUTO_APPROVE_REASON_TEXT, KEEP_OPEN_MS, autoApproveReasonText, startApprovePage } from '../../src/auth/approve-page.ts';
+import { AUTO_APPROVE_REASON_TEXT, KEEP_OPEN_MS, TEST_APP_NOTE, autoApproveReasonText, startApprovePage } from '../../src/auth/approve-page.ts';
 import { NO_NETWORK_NOTE } from '../../src/auth/render-approval.ts';
 import { formatEndTime } from '../../src/auth/render-consent.ts';
 import { policyJson } from '../../../core/test/policy-fixtures.ts';
@@ -537,6 +537,21 @@ describe('/approve', () => {
     });
     expect(shown(evmRequest({ kind: 'eip712', context: {}, bytes: utf8(typed) }))).toBe(false);
     expect(pageText()).toContain('Chain ID 11155111');
+  });
+
+  it('says a test app signs only for test networks (D39), on requests and the consent screen; nothing for a live app', () => {
+    send(evmRequest({ testApp: true }));
+    expect(pageText()).toContain(TEST_APP_NOTE);
+    expect(TEST_APP_NOTE).toMatch(/only for test networks/u);
+    send(evmRequest());
+    expect(pageText()).not.toContain(TEST_APP_NOTE);
+    send(consentRequest({ testApp: true }));
+    expect(pageText()).toContain(TEST_APP_NOTE);
+    send(consentRequest());
+    expect(pageText()).not.toContain(TEST_APP_NOTE);
+    // The flag is `true` or absent: anything else is not a valid request (the popup drops it).
+    send(evmRequest({ testApp: false }));
+    expect(pageText()).not.toContain(TEST_APP_NOTE);
   });
 
   it('shows why a request was not auto-approved, and "Stop auto-approving" while a consent is active', () => {

@@ -4,8 +4,8 @@
 // |---|---|
 // | eth_requestAccounts | [address]. Logged out: opens the login popup synchronously (call it from a click); if the browser blocks it, the vault's launcher appears and the call resolves after the user clicks it and logs in |
 // | eth_accounts | [address] or [] (the vault answers) |
-// | eth_chainId, wallet_switchEthereumChain | among `evm.chains`, answered here; an unknown chain is 4902 |
-// | eth_sendTransaction | fill (evm-tx.ts) from the current chain's RPC → vault eth_signTransaction (approval) → eth_sendRawTransaction, one at a time per chain; a filled nonce is never below one past the last one broadcast here |
+// | eth_chainId, wallet_switchEthereumChain | among `evm.chains`, answered here; an unknown chain is 4902; a test app (pk_test_) switching to a chain outside the testnet list is 4100 `mainnet_not_allowed` (D39) |
+// | eth_sendTransaction | fill (evm-tx.ts) from the current chain's RPC → vault eth_signTransaction (approval) → eth_sendRawTransaction, one at a time per chain; a filled nonce is never below one past the last one broadcast here. A test app on a mainnet chain is refused before anything is filled (4100 `mainnet_not_allowed`; the vault refuses it too) |
 // | eth_signTransaction, personal_sign, eth_signTypedData_v4 | the vault, with approval (the transaction is filled first) |
 // | eth_sign and other signing or wallet methods | 4200 |
 // | read-only methods (READ_ONLY_METHODS) | forwarded to the current chain's rpcUrl |
@@ -13,7 +13,7 @@
 // Errors are ProviderRpcError with numeric codes (errors.ts maps Hana's string codes). Events: `connect {chainId}`
 // once the vault is ready, `chainChanged`, `accountsChanged`, and `disconnect` (4900) when the vault connection dies.
 // Logging out is `accountsChanged []`, as wallets do, not `disconnect`.
-import { ErrorCode, type PortMethod, type PortParamsMap, type PortResultMap, isEvmAddress, toHex, utf8 } from '@hana-id/core';
+import { ErrorCode, type PortMethod, type PortParamsMap, type PortResultMap, TEST_APP_NETWORK_RULE, isEvmAddress, isTestEvmChain, toHex, utf8 } from '@hana-id/core';
 import { Emitter } from './emitter.ts';
 import { ProviderRpcError, RpcCode, toProviderRpcError } from './errors.ts';
 import { type NormalizedTx, fillTransaction, normalizeTxInput, toQuantity } from './evm-tx.ts';
@@ -56,6 +56,8 @@ export interface EthereumHost {
   login(): Promise<{ evm: string }>;
   request<M extends PortMethod>(method: M, params?: PortParamsMap[M]): Promise<PortResultMap[M]>;
   fetch: FetchLike;
+  /** A pk_test_ app: only the testnet chains of @hana-id/core TEST_EVM_CHAINS can be switched to or sent on (D39). */
+  testApp?: boolean;
 }
 
 /** Methods with no side effect on the user's account, forwarded to the chain RPC as they are. */
@@ -248,9 +250,15 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
     } catch {
       throw err(RpcCode.invalidParams, 'chainId must be a 0x hex quantity');
     }
+    this.#testnetOnly(id, p.chainId);
     const chain = this.#chains.get(id);
     if (!chain) throw err(ErrorCode.chainNotConfigured, `Chain ${p.chainId} is not configured`, { chainId: p.chainId });
     return chain;
+  }
+
+  /** A test app's keys come from the testnet MPC: a chain outside the testnet list is refused (D39). */
+  #testnetOnly(id: number, chainId: string = chainHex(id)): void {
+    if (this.#host.testApp && !isTestEvmChain(id)) throw err(ErrorCode.unauthorized, TEST_APP_NETWORK_RULE, { reason: 'mainnet_not_allowed', chainId });
   }
 
   #switchChain(params: unknown): null {
@@ -278,7 +286,9 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
     const input = normalizeTxInput(params[0]);
     const from = this.#host.evmAddress();
     if (from === null) throw err(ErrorCode.unauthorized, 'Not logged in to Hana ID');
-    return { input, from, chain: this.#current() };
+    const chain = this.#current();
+    this.#testnetOnly(chain.id);
+    return { input, from, chain };
   }
 
   /** Fills the transaction from its chain's RPC and has the vault sign it (approval). Returns the raw tx and its nonce. */

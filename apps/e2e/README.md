@@ -7,10 +7,13 @@ approval and export bundles of `@hana-id/web`, and the partner client, in Chromi
 corepack pnpm --filter @hana-id/e2e e2e:install   # once: the browsers
 corepack pnpm --filter @hana-id/e2e e2e           # build + local stack + all three browsers
 corepack pnpm --filter @hana-id/e2e e2e --project webkit tests/approval.spec.ts
+HANA_E2E_PORT_BASE=4510 corepack pnpm --filter @hana-id/e2e e2e   # another worktree's run at the same time
 corepack pnpm --filter @hana-id/e2e test          # unit tests of the stack's mocks (part of `pnpm -r test`)
 ```
 
 ## What runs
+
+Ports are `HANA_E2E_PORT_BASE` (default 4410) plus the offsets below: the table shows the default.
 
 | Origin | Serves |
 |---|---|
@@ -42,9 +45,12 @@ Google is never contacted: each test's browser context routes `accounts.google.c
 openid-only implicit flow and signs RS256 tokens with the claims Google sends for it. Production bundles keep the
 hard-coded Google endpoints; nothing in them can select the stub.
 
-The ports are fixed, and outside CI Playwright reuses a stack that is already listening. `tests/global-setup.ts` fails
-the run unless that stack is this checkout's current code (`src/fingerprint.ts`: this package's path and the sources
-the stack is built from), so another worktree's stack, or one started before an edit, is never tested by mistake. In
+The ports are fixed for a run (the bundles inline the origins) and chosen by `HANA_E2E_PORT_BASE`, so worktrees that
+run the suite at the same time each set their own base (4410, 4510, …; the stack uses base … base + 50). Outside CI
+Playwright reuses a stack that is already listening on them. `tests/global-setup.ts` fails the run unless that stack
+is this checkout's current code (`src/fingerprint.ts`: this package's path, the port base and the sources the stack
+is built from), so another worktree's stack, an unrelated server, or one started before an edit, is never tested by
+mistake; the error says to stop it or pick another base. In
 CI a test that fails and then passes on its retry fails the run (`failOnFlakyTests`): the Approve-guard and
 origin cases are timing-dependent security checks.
 

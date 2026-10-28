@@ -13,22 +13,47 @@ import type { HanaEnv } from '@hana-id/web';
 
 export const ENV_NAME = 'local-e2e';
 
-/** Fixed ports: the bundles inline the origins, so they can't change between the build and the run. */
-export const PORTS = Object.freeze({
-  partner: 4410,
-  /**
-   * A second partner site, neither localhost nor the Hana pages' 127.0.0.1: the storage-partitioning case, where two
-   * partner sites are each cross-site to the vault. A `*.localhost` name (browsers resolve it to loopback and treat it
-   * as potentially trustworthy) rather than [::1]: CSP source expressions have no IPv6 form, so no browser lets a
-   * [::1] page embed the vault through its frame-ancestors.
-   */
-  siteB: 4411,
-  vault: 4420,
-  auth: 4430,
-  api: 4440,
-  near: 4450,
-  evm: 4460,
-});
+/** The default HANA_E2E_PORT_BASE. */
+export const DEFAULT_PORT_BASE = 4410;
+
+/**
+ * The first of the stack's ports, from HANA_E2E_PORT_BASE (default 4410); the stack uses base … base + 50. Give each
+ * worktree that runs the suite at the same time its own base (4410, 4510, …). Playwright passes its environment to
+ * the webServer, so the build, the servers and the tests all see the same value.
+ */
+export function portBase(value: string | undefined = process.env.HANA_E2E_PORT_BASE): number {
+  if (value === undefined || value.trim() === '') return DEFAULT_PORT_BASE;
+  const n = Number(value);
+  if (!/^\d+$/u.test(value.trim()) || !Number.isSafeInteger(n) || n < 1024 || n + 50 > 65535) {
+    throw new Error(`HANA_E2E_PORT_BASE must be an integer from 1024 to 65485 (the stack uses base … base + 50), not ${JSON.stringify(value)}`);
+  }
+  return n;
+}
+
+/** The stack's ports for `base`. */
+export function portsFrom(base: number) {
+  return Object.freeze({
+    partner: base,
+    /**
+     * A second partner site, neither localhost nor the Hana pages' 127.0.0.1: the storage-partitioning case, where
+     * two partner sites are each cross-site to the vault. A `*.localhost` name (browsers resolve it to loopback and
+     * treat it as potentially trustworthy) rather than [::1]: CSP source expressions have no IPv6 form, so no
+     * browser lets a [::1] page embed the vault through its frame-ancestors.
+     */
+    siteB: base + 1,
+    vault: base + 10,
+    auth: base + 20,
+    api: base + 30,
+    near: base + 40,
+    evm: base + 50,
+  });
+}
+
+/**
+ * The ports of this run. They are fixed for a run: the bundles inline the origins, so they can't change between the
+ * build and the tests.
+ */
+export const PORTS = portsFrom(portBase());
 
 export const PARTNER_ORIGIN = `http://localhost:${PORTS.partner}`;
 export const SITE_B_ORIGIN = `http://site-b.localhost:${PORTS.siteB}`;

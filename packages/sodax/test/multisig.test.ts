@@ -8,7 +8,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { TransactionBuilder, type Transaction, type xdr } from '@stellar/stellar-base';
 import { base64Encode } from '@hana-id/core';
 import { HanaError, HanaStellarSigner } from '@hana-id/web';
-import { Browser, type Google, type Tab, answer, google, login, openApproval, readyTab, sleepReal } from '../../web/test/vault/harness.ts';
+import { Browser, type Google, type Tab, answer, google, login, makeConfig, openApproval, readyTab, sleepReal, waitLauncher } from '../../web/test/vault/harness.ts';
 import { type SodaxStellarProvider, createSodaxStellarProvider } from '../src/index.ts';
 import { changeTrustOp, depositCall, restoreTx, signedBy, tx } from './fixtures.ts';
 import { HORIZON, PUBLIC, SOROBAN } from './helpers.ts';
@@ -27,9 +27,12 @@ afterEach(() => {
   }
 });
 
-/** A logged-in vault tab, and the adapter over hana.stellar on its port. */
+/**
+ * A logged-in vault tab, and the adapter over hana.stellar on its port. Sodax runs on Stellar mainnet, which only a
+ * live app may sign for (a pk_test_ vault refuses it, docs/decisions.md D39), so the vault is a pk_live_ app's.
+ */
 async function sodaxOverVault(): Promise<{ tab: Tab; user: string; provider: SodaxStellarProvider }> {
-  const tab = await readyTab(new Browser(), { googleJwk: g.jwk });
+  const tab = await readyTab(new Browser(), { googleJwk: g.jwk, config: makeConfig({ publishableKey: 'pk_live_1111111111111111111111' }) });
   tabs.push(tab);
   const { reply } = await login(tab, g);
   const user = (reply.result as { addresses: { stellar: string } }).addresses.stellar;
@@ -75,10 +78,8 @@ async function sdkSwap(provider: SodaxStellarProvider, wait: () => Promise<void>
   return signed;
 }
 
-async function waitLabel(t: Tab, label: string): Promise<void> {
-  for (let i = 0; i < 400 && t.launcher.label !== label; i++) await sleepReal(5);
-  expect(t.launcher.label).toBe(label);
-}
+/** Event-driven (the launcher view and its `ui` event on the port), so a loaded machine only slows it down. */
+const waitLabel = (t: Tab, label: string): Promise<void> => waitLauncher(t, label);
 
 const approvePopups = (t: Tab) => t.opened.filter((w) => w.url.endsWith('/approve'));
 

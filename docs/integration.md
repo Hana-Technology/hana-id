@@ -480,7 +480,9 @@ const evmProvider = createSodaxEvmProvider(hana, { chainId: 8453, rpcUrl });    
 - A Sodax swap can need several signatures (`restoreFootprint`, a re-sign, a trustline). The approval popup's 15 s
   keep-open covers them in one session of clicks. Sodax swaps can't be auto-approved yet (see section 9).
 - Sodax runs on mainnet only, while pilot keys are testnet-MPC keys: the adapter is tested against mocks of the
-  `@sodax/sdk` 2.1.0 call patterns, not end to end. Don't move real funds with pilot wallets.
+  `@sodax/sdk` 2.1.0 call patterns, not end to end. A test app's vault refuses Sodax's mainnet transactions
+  (`mainnet_not_allowed`, [section 12](#12-test-and-live-keys)): integrate and test on chain testnets; real Sodax swaps
+  through Hana wait for live keys (D39).
 
 ## 12. Test and live keys
 

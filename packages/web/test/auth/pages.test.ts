@@ -1,13 +1,13 @@
 // The auth pages' CSP and headers (docs/batch-b-spec.md "Origins and pages"), and the per-env build: static HTML with
 // a <meta> CSP and no inline script or style, nothing from another origin, and the env's constants inlined.
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadEnv } from '@hana-id/env';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ASSET_DIR, type BuiltEnv, MANIFEST_FILE, buildAuthPages, pageHtml, selectEnvs } from '../../scripts/build-auth-pages.ts';
+import { ASSET_DIR, type BuiltEnv, ORIGIN_DIR, buildAuthPages, pageHtml, selectEnvs } from '../../scripts/build-auth-pages.ts';
 import { hanaEnv } from '../../scripts/gen-envs.ts';
-import { AUTH_PAGES, authPageCsp, authPageHeaders, authPageMetaCsp } from '../../src/auth/pages.ts';
+import { AUTH_PAGES, authPageCsp, authPageMetaCsp } from '../../src/auth/pages.ts';
 import type { HanaEnv } from '../../src/hana-env.ts';
 
 const sandbox = hanaEnv(loadEnv('sandbox-dev')) as HanaEnv;
@@ -30,14 +30,6 @@ describe('auth page policies', () => {
     }
   });
 
-  it('sends no-store, no-referrer, nosniff, and no COOP header', () => {
-    for (const p of AUTH_PAGES) {
-      const h = authPageHeaders(sandbox, p.name);
-      expect(h).toMatchObject({ 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff', 'content-type': 'text/html; charset=utf-8' });
-      expect(Object.keys(h).map((k) => k.toLowerCase())).not.toContain('cross-origin-opener-policy');
-    }
-  });
-
   it('serves the four pages at the spec’s paths', () => {
     expect(AUTH_PAGES.map((p) => [p.path, p.file])).toEqual([
       ['/login', 'login.html'],
@@ -48,8 +40,8 @@ describe('auth page policies', () => {
   });
 
   it('page HTML escapes what it writes into attributes', () => {
-    const html = pageHtml(sandbox, AUTH_PAGES[0]!, '/auth/a"b.js', '/auth/c.css');
-    expect(html).toContain('src="/auth/a&quot;b.js"');
+    const html = pageHtml(sandbox, AUTH_PAGES[0]!, '/assets/a"b.js', '/assets/c.css');
+    expect(html).toContain('src="/assets/a&quot;b.js"');
   });
 });
 
@@ -89,14 +81,16 @@ describe('per-env build', () => {
       expect(html).toContain(`<meta http-equiv="Content-Security-Policy" content="${authPageMetaCsp(sandbox, page.name)}">`);
       const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gu)];
       expect(scripts).toHaveLength(1);
-      expect(scripts[0]?.[1]).toMatch(/^ type="module" src="\/auth\/[a-z]+-[A-Z0-9]+\.js"$/u);
+      expect(scripts[0]?.[1]).toMatch(/^ type="module" src="\/assets\/[a-z]+-[A-Z0-9]+\.js"$/u);
       expect(scripts[0]?.[2]).toBe('');
       expect(html).not.toMatch(/<style|\sstyle=|\son[a-z]+=/u);
       // No URL to another origin, except inside the CSP itself.
       expect(html.replace(/content="[^"]*"/gu, '')).not.toMatch(/https?:\/\//u);
       const links = [...html.matchAll(/<link\b[^>]*href="([^"]+)"/gu)].map((m) => m[1]);
       expect(links).toEqual([built.pages[page.name].stylesheet]);
+      expect(built.pages[page.name].stylesheet).toMatch(/^\/assets\/auth-[A-Z0-9]+\.css$/u);
       expect(existsSync(join(built.dir, built.pages[page.name].script.slice(1)))).toBe(true);
+      expect(existsSync(join(built.dir, built.pages[page.name].stylesheet.slice(1)))).toBe(true);
     }
   });
 
@@ -120,20 +114,33 @@ describe('per-env build', () => {
     expect(prodJs).not.toContain('__HANA_ENV__');
   });
 
-  it('writes the page manifest the Worker serves headers from', () => {
-    const manifest = JSON.parse(readFileSync(join(builtProd.dir, MANIFEST_FILE), 'utf8')) as { env: string; origin: string; pages: { path: string; file: string; headers: Record<string, string> }[] };
-    expect(manifest.env).toBe('prod-test');
-    expect(manifest.origin).toBe(prod.authOrigin);
-    expect(manifest.pages.map((p) => p.path)).toEqual(['/login', '/login/callback', '/approve', '/export']);
-    expect(manifest.pages[0]?.headers['content-security-policy']).toBe(authPageCsp(prod, 'login'));
+  it('lays out the auth origin’s own assets root, as the auth Worker serves it: <env>/auth/<path>.html and /assets/…', () => {
+    expect(built.dir).toBe(join(out, 'sandbox-dev', ORIGIN_DIR));
+    expect(builtProd.dir).toBe(join(out, 'prod-test', 'auth'));
+    // The Worker (apps/api src/pages/host.ts) serves `/login` from `<root>/login.html`, and so on for each route.
+    for (const page of AUTH_PAGES) expect(existsSync(join(built.dir, `${page.path.slice(1)}.html`))).toBe(true);
+    // Nothing is written next to the origin roots, so the vault root (<env>/vault) holds only the vault's files.
+    expect(readdirSync(join(out, 'sandbox-dev'))).toEqual(['auth']);
+    expect(readdirSync(built.dir).sort()).toEqual([ASSET_DIR, 'approve.html', 'export.html', 'login', 'login.html'].sort());
+    expect(readdirSync(join(built.dir, 'login'))).toEqual(['callback.html']);
   });
 
-  it('replaces only its own files on a rebuild (the vault’s assets share the directory)', async () => {
-    writeFileSync(join(built.dir, 'vault.js'), '// vault');
+  it('replaces only its own root on a rebuild: stale auth files go, the vault’s root stays', async () => {
+    const vaultDir = join(out, 'sandbox-dev', 'vault');
+    mkdirSync(vaultDir, { recursive: true });
+    writeFileSync(join(vaultDir, 'vault.js'), '// vault');
+    writeFileSync(join(built.dir, ASSET_DIR, 'stale-OLD.js'), '// stale');
+    const before = readdirSync(join(built.dir, ASSET_DIR)).filter((f) => f.endsWith('.js') && !f.startsWith('stale')).sort();
     const again = await buildAuthPages(sandbox, out);
-    expect(readFileSync(join(again.dir, 'vault.js'), 'utf8')).toBe('// vault');
-    expect(readdirSync(join(again.dir, ASSET_DIR)).filter((f) => f.endsWith('.js')).length).toBe(readdirSync(join(built.dir, ASSET_DIR)).filter((f) => f.endsWith('.js')).length);
+    expect(readFileSync(join(vaultDir, 'vault.js'), 'utf8')).toBe('// vault');
+    expect(existsSync(join(again.dir, ASSET_DIR, 'stale-OLD.js'))).toBe(false);
+    expect(readdirSync(join(again.dir, ASSET_DIR)).filter((f) => f.endsWith('.js')).sort()).toEqual(before);
+    rmSync(vaultDir, { recursive: true, force: true });
   }, 60_000);
+
+  it('refuses an env name that is not a plain manifest name (it becomes a deleted path)', async () => {
+    await expect(buildAuthPages({ ...sandbox, name: '../x' }, out)).rejects.toThrow(/Invalid environment name/u);
+  });
 
   it('fails for an env whose pinned CKD key is unusable, and for an env without the Hana origins', async () => {
     await expect(buildAuthPages({ ...sandbox, name: 'sandbox-bad', ckdNetworkKey: 'UNSET' }, out)).rejects.toThrow(/sandbox-bad\.json ckdNetworkKey/u);

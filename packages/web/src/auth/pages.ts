@@ -1,6 +1,7 @@
 // The auth-origin pages (docs/batch-b-spec.md "Origins and pages"): where each one is served, the file the per-env build
-// writes for it, and its security headers. The build puts the policy in a <meta> CSP as well, so the built files are
-// locked down whoever serves them; the Worker sends the full set as headers (frame-ancestors only works as a header).
+// writes for it, and its CSP. The build puts the policy in a <meta> CSP, so the built files are locked down whoever
+// serves them; the Worker (apps/api src/pages/host.ts) sends the full policy and the other headers itself
+// (frame-ancestors only works as a header).
 import type { HanaEnv } from '../hana-env.ts';
 
 export type AuthPageName = 'login' | 'callback' | 'approve' | 'export';
@@ -9,7 +10,7 @@ export interface AuthPage {
   readonly name: AuthPageName;
   /** The path on authOrigin. */
   readonly path: string;
-  /** The HTML file, relative to dist/pages/<env>. */
+  /** The HTML file, relative to the auth origin's root dist/pages/<env>/auth. */
   readonly file: string;
   readonly title: string;
 }
@@ -57,19 +58,8 @@ export function authPageMetaCsp(env: Pick<HanaEnv, 'apiUrl' | 'rpc'>, page: Auth
   return [...BASE_CSP, ...(connect.length > 0 ? [`connect-src ${connect.join(' ')}`] : [])].join('; ');
 }
 
-/** The page's full CSP header: the meta policy plus `frame-ancestors 'none'` (no auth page may be framed). */
-export const authPageCsp = (env: Pick<HanaEnv, 'apiUrl' | 'rpc'>, page: AuthPageName): string => `${authPageMetaCsp(env, page)}; frame-ancestors 'none'`;
-
 /**
- * The response headers of an auth page. No COOP header (`unsafe-none`): the login popup must keep `window.opener`
- * across Google's pages where browsers allow it, and the approval and export windows talk to their opener.
+ * The page's full CSP, as the Worker must send it: the meta policy plus `frame-ancestors 'none'` (no auth page may be
+ * framed). The spec's table, kept here so the meta policy is tested against it.
  */
-export function authPageHeaders(env: Pick<HanaEnv, 'apiUrl' | 'rpc'>, page: AuthPageName): Record<string, string> {
-  return {
-    'content-type': 'text/html; charset=utf-8',
-    'content-security-policy': authPageCsp(env, page),
-    'cache-control': 'no-store',
-    'referrer-policy': 'no-referrer',
-    'x-content-type-options': 'nosniff',
-  };
-}
+export const authPageCsp = (env: Pick<HanaEnv, 'apiUrl' | 'rpc'>, page: AuthPageName): string => `${authPageMetaCsp(env, page)}; frame-ancestors 'none'`;

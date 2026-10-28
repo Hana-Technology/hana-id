@@ -260,10 +260,14 @@ progress or not started), **deferred**, **superseded**, **proposed** (in a draft
   approves: Approve acts only on a click whose own pointerdown (or non-repeated keydown) came after it. The page never
   focuses Approve.
 - Amended 2026-10-28 (`feat/b-defaults`): a mouse move "moved" when its `movementX`/`movementY` is non-zero or, when
-  both are 0, when its `clientX`/`clientY` differs from the last pointer event's (move or press). WebKit reports 0
+  both are 0, when **both** its client position and its screen position differ from the last pointer event's (move or
+  press) recorded in the current request and focus period; every reset of the guard (a new request, a focus, a blur,
+  nothing to approve) forgets that position, and missing or non-finite coordinates never arm. WebKit reports 0
   movement on every `pointermove` (found by the Playwright suite: Approve never armed in WebKit, so Safari mouse users
-  could not approve); a synthetic move under a still cursor keeps its position and still never arms, nor does the
-  first zero-movement move (nothing to compare with).
+  could not approve). A real cursor move changes both positions; a layout change under a still cursor changes
+  neither; a window move changes only the screen position; so neither of the last two arms, nor does the first
+  zero-movement move (nothing to compare with). Hardened after a security review of the first version, which compared
+  client coordinates only and kept the position across requests.
 - Why: the spec's `pointermove`-only rule never arms on a stationary tap or from the keyboard, so phone and
   keyboard-only users could not approve. Keeping mouse on `pointermove` means clicking in place never approves, and
   keeping Enter and Space out means a held key never approves.

@@ -237,30 +237,45 @@ describe('/approve', () => {
       expect(results()[0]).toMatchObject({ approved: true });
     });
 
-    it('mouse: with zero movement (WebKit reports 0 on every move), only a changed position arms it', () => {
+    /** A zero-movement mouse event at client (x, y), whose screen position is the window's offset plus that. */
+    const at = (x: number, y: number) => ({ pointerType: 'mouse', movementX: 0, movementY: 0, clientX: x, clientY: y, screenX: 300 + x, screenY: 200 + y });
+
+    it('mouse: with zero movement (WebKit reports 0 on every move), only a real cursor move arms it', () => {
       send(evmRequest());
       vi.advanceTimersByTime(GUARD_DELAY_MS);
       // The first move has nothing to compare with; repeats at the same spot (synthetic moves, a press) never arm.
-      win.dispatch('pointermove', { pointerType: 'mouse', movementX: 0, movementY: 0, clientX: 5, clientY: 5 });
-      win.dispatch('pointermove', { pointerType: 'mouse', movementX: 0, movementY: 0, clientX: 5, clientY: 5 });
-      win.dispatch('pointerdown', { pointerType: 'mouse', clientX: 5, clientY: 5 });
-      win.dispatch('pointermove', { pointerType: 'mouse', movementX: 0, movementY: 0, clientX: 5, clientY: 5 });
+      win.dispatch('pointermove', at(5, 5));
+      win.dispatch('pointermove', at(5, 5));
+      win.dispatch('pointerdown', at(5, 5));
+      win.dispatch('pointermove', at(5, 5));
       expect(primary()?.disabled).toBe(true);
-      // The cursor moved: armed. The arming move never approves; the next click does.
-      win.dispatch('pointermove', { pointerType: 'mouse', movementX: 0, movementY: 0, clientX: 16, clientY: 16 });
+      // The cursor moved (client and screen positions both changed): armed. The arming move never approves.
+      win.dispatch('pointermove', at(16, 16));
       expect(primary()?.disabled).toBe(false);
       click(primary(), 'mouse');
       expect(results()[0]).toMatchObject({ approved: true });
     });
 
-    it('mouse: a click in place after a press elsewhere still never arms it (the press records the position)', () => {
+    it('mouse: a synthetic move at the position of the last press never arms it (the press records the position)', () => {
       send(evmRequest());
       vi.advanceTimersByTime(GUARD_DELAY_MS);
-      win.dispatch('pointermove', { pointerType: 'mouse', movementX: 0, movementY: 0, clientX: 5, clientY: 5 });
-      win.dispatch('pointerdown', { pointerType: 'mouse', clientX: 40, clientY: 40 });
-      // A synthetic move at the press position (the cursor didn't move after the press) doesn't arm.
-      win.dispatch('pointermove', { pointerType: 'mouse', movementX: 0, movementY: 0, clientX: 40, clientY: 40 });
+      win.dispatch('pointermove', at(5, 5));
+      win.dispatch('pointerdown', at(40, 40));
+      win.dispatch('pointermove', at(40, 40));
       expect(primary()?.disabled).toBe(true);
+    });
+
+    it('mouse: a position from the previous request never arms the next one', () => {
+      send(evmRequest());
+      vi.advanceTimersByTime(GUARD_DELAY_MS);
+      win.dispatch('pointermove', at(5, 5));
+      send(evmRequest());
+      vi.advanceTimersByTime(GUARD_DELAY_MS);
+      // Different from (5, 5), but that was recorded for the request before: nothing to compare with yet.
+      win.dispatch('pointermove', at(40, 40));
+      expect(primary()?.disabled).toBe(true);
+      win.dispatch('pointermove', at(41, 41));
+      expect(primary()?.disabled).toBe(false);
     });
 
     it('a click whose press began before the guard armed does not approve', () => {

@@ -19,7 +19,7 @@ import {
 import { type DecodedApproval, decodeApprovalRequest } from '@hana-id/core/decode';
 import { type AutoApprovePolicyV1, type AutoApproveReason, policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import type { HanaEnv } from '../hana-env.ts';
-import { ApproveGuard, type GuardInput } from './approve-guard.ts';
+import { ApproveGuard, type Coords, type GuardInput } from './approve-guard.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import { type GestureCheck, type PageWindow, isFramed, isUserGesture } from './page-window.ts';
 import { renderApproval } from './render-approval.ts';
@@ -323,9 +323,11 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   };
 }
 
-/** clientX/clientY of a pointer event, when both are numbers. */
-function position(o: Partial<PointerEvent>): { clientX?: number; clientY?: number } {
-  return typeof o.clientX === 'number' && typeof o.clientY === 'number' ? { clientX: o.clientX, clientY: o.clientY } : {};
+/** The client and screen coordinates of a pointer event (each only when it is a number). */
+function position(o: Partial<PointerEvent>): Coords {
+  const out: Coords = {};
+  for (const k of ['clientX', 'clientY', 'screenX', 'screenY'] as const) if (typeof o[k] === 'number') out[k] = o[k];
+  return out;
 }
 
 /** The fields of a pointer or keyboard event the guard reads (approve-guard.ts). */

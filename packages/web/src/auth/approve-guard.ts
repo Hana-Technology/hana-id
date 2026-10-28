@@ -8,8 +8,11 @@
 // What arms it depends on the input:
 // - mouse: only a `pointermove` that moved (a press never arms; Chromium's synthetic moves after a layout change carry
 //   zero movement and are ignored). So clicking in place, however often, never approves. A move counts as moved when
-//   its movementX/Y is non-zero, or, when both are 0, when its position differs from the last pointer event's: WebKit
-//   reports movementX/Y = 0 on every pointermove, while a synthetic move under a still cursor keeps the position.
+//   its movementX/Y is non-zero, or, when both are 0 (WebKit reports 0 on every pointermove), when BOTH its client
+//   position and its screen position differ from the last pointer event's, recorded within the current request and
+//   focus period (any reset of the guard forgets it). A real cursor move changes both; a layout change under a still
+//   cursor changes neither; a window move changes only the screen position. Missing or non-finite coordinates, or no
+//   recorded position yet, never arm.
 // - touch and pen: a `pointerdown` (a stationary tap fires no pointermove), or a move.
 // - keyboard: only Tab, Shift+Tab and the arrow keys, the keys that move focus. Enter and Space never arm, and a
 //   key's auto-repeat never counts, so a held Enter never approves.
@@ -28,14 +31,28 @@ export const ARMING_KEYS: ReadonlySet<string> = new Set(['Tab', 'ArrowUp', 'Arro
 
 /** The parts of a pointer or keyboard event the guard reads (absent fields are treated strictly). */
 export type GuardInput =
-  | { type: 'pointermove'; pointerType?: string; movementX?: number; movementY?: number; clientX?: number; clientY?: number }
-  | { type: 'pointerdown'; pointerType?: string; clientX?: number; clientY?: number }
+  | { type: 'pointermove'; pointerType?: string; movementX?: number; movementY?: number } & Coords
+  | ({ type: 'pointerdown'; pointerType?: string } & Coords)
   | { type: 'keydown'; key?: string; repeat?: boolean };
 
-type Point = { x: number; y: number };
+/** A pointer event's client and screen coordinates, as the page read them. */
+export interface Coords {
+  clientX?: number;
+  clientY?: number;
+  screenX?: number;
+  screenY?: number;
+}
 
-const pointOf = (input: { clientX?: number; clientY?: number }): Point | null =>
-  input.clientX !== undefined && input.clientY !== undefined && Number.isFinite(input.clientX) && Number.isFinite(input.clientY) ? { x: input.clientX, y: input.clientY } : null;
+type Point = { cx: number; cy: number; sx: number; sy: number };
+
+const finite = (v: number | undefined): v is number => typeof v === 'number' && Number.isFinite(v);
+
+/** All four coordinates, or null when any is missing or not finite. */
+const pointOf = (c: Coords): Point | null =>
+  finite(c.clientX) && finite(c.clientY) && finite(c.screenX) && finite(c.screenY) ? { cx: c.clientX, cy: c.clientY, sx: c.screenX, sy: c.screenY } : null;
+
+/** The cursor really moved: both the client and the screen position changed. */
+const moved = (p: Point, last: Point): boolean => (p.cx !== last.cx || p.cy !== last.cy) && (p.sx !== last.sx || p.sy !== last.sy);
 
 /** Whether this input, after both marks, arms the guard. `lastPoint` is the previous pointer event's position. */
 function arms(input: GuardInput, lastPoint: Point | null): boolean {
@@ -44,9 +61,10 @@ function arms(input: GuardInput, lastPoint: Point | null): boolean {
       if (input.pointerType === 'touch' || input.pointerType === 'pen') return true;
       if (!(input.movementX === 0 && input.movementY === 0)) return true;
       // Zero movement: a synthetic move under a still cursor (layout change), or WebKit, which reports 0 for every
-      // move. Only a position that changed since the last pointer event counts; with none known, it doesn't.
+      // move. Only a move whose client and screen positions both changed since the last pointer event (of this request
+      // and focus period) counts; with no known position, or incomplete coordinates, it doesn't.
       const p = pointOf(input);
-      return p !== null && lastPoint !== null && (p.x !== lastPoint.x || p.y !== lastPoint.y);
+      return p !== null && lastPoint !== null && moved(p, lastPoint);
     }
     case 'pointerdown':
       return input.pointerType === 'touch' || input.pointerType === 'pen';
@@ -64,7 +82,10 @@ export class ApproveGuard {
   private seq = 0;
   private lastPointerDown = 0;
   private lastKeyDown = 0;
-  /** The position of the last pointer event (move or press), for moves that report zero movement. */
+  /**
+   * The position of the last pointer event (move or press) in the current request and focus period, for moves that
+   * report zero movement. Every reset of the guard forgets it.
+   */
   private lastPoint: Point | null = null;
   private last = false;
 
@@ -84,6 +105,7 @@ export class ApproveGuard {
   rendered(): void {
     this.renderedAt = this.now();
     this.armedBy = null;
+    this.lastPoint = null;
     this.update();
   }
 
@@ -91,6 +113,7 @@ export class ApproveGuard {
   focused(): void {
     this.focusedAt = this.now();
     this.armedBy = null;
+    this.lastPoint = null;
     this.update();
   }
 
@@ -98,6 +121,7 @@ export class ApproveGuard {
   blurred(): void {
     this.focusedAt = null;
     this.armedBy = null;
+    this.lastPoint = null;
     this.update();
   }
 
@@ -105,6 +129,7 @@ export class ApproveGuard {
   cleared(): void {
     this.renderedAt = null;
     this.armedBy = null;
+    this.lastPoint = null;
     this.update();
   }
 
@@ -119,7 +144,8 @@ export class ApproveGuard {
     if (input.type === 'pointerdown') this.lastPointerDown = n;
     if (input.type === 'keydown') this.lastKeyDown = n;
     const arming = arms(input, this.lastPoint);
-    if (input.type !== 'keydown') this.lastPoint = pointOf(input) ?? this.lastPoint;
+    // An event with incomplete coordinates forgets the position: the next zero-movement move has nothing to compare with.
+    if (input.type !== 'keydown') this.lastPoint = pointOf(input);
     if (this.armedBy === null && arming && this.marksPassed(this.now())) this.armedBy = n;
     this.update();
   }

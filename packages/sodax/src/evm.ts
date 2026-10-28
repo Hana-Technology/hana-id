@@ -12,6 +12,13 @@
 // | sendTransaction(rawTx) | the SDK's one-argument call `{from, to, value: bigint, data}`, no chain ID: `from` must be the vault's address (4100); pins hana.ethereum to the bound chain, then eth_sendTransaction (fill from the chain's RPC, sign with approval, broadcast) |
 // | waitForTransactionReceipt(hash) | polls this provider's `rpcUrl` (eth_getTransactionReceipt) every 2 s for up to 180 s; number fields stringified |
 //
+// `rpcUrl` must be the bound chain's: the provider checks its eth_chainId once, before its first transaction is signed
+// (or before the first receipt poll), and refuses another chain with 4902 `receipt_rpc_wrong_chain`. Otherwise every
+// transaction would land and still be reported as a receipt_timeout after 180 s. A receipt that doesn't parse (a
+// garbled body from one node behind a load balancer) is treated like an RPC fault and polled again: the transaction
+// has been broadcast by then, so only the deadline may turn it into an error. Only transactionHash (it must match),
+// blockHash and blockNumber are required; the other fields pass through as viem's formatter passes them.
+//
 // hana.ethereum has one current chain, and eth_sendTransaction pins the chain current when it is called. The adapters
 // of one client therefore send one at a time (a per-client queue), each switching to its chain first, so providers
 // for two spoke chains never sign for each other's chain. A partner page that switches chains while a transaction is
@@ -22,7 +29,7 @@ import { ErrorCode, isEvmAddress } from '@hana-id/core';
 import type { HanaClient } from '@hana-id/web';
 import { HanaError, RpcCode } from '@hana-id/web';
 import type { Address, EvmRawLog, EvmRawTransaction, EvmRawTransactionReceipt, Hash, IEvmWalletProvider } from '@sodax/types';
-import { httpUrl, invalid, isObject, jsonRpc, sleep } from './http.ts';
+import { REQUEST_TIMEOUT_MS, httpUrl, invalid, isObject, jsonRpc, sleep } from './http.ts';
 
 export const EVM_RECEIPT_POLL_MS = 2_000;
 /** viem's waitForTransactionReceipt default, which Sodax's own EvmWalletProvider uses. */
@@ -40,7 +47,8 @@ export type SodaxEvmHana = Pick<HanaClient, 'ethereum' | 'addresses'>;
 
 const HASH = /^0x[0-9a-fA-F]{64}$/u;
 const HEX_DATA = /^0x(?:[0-9a-fA-F]{2})*$/u;
-const QUANTITY = /^0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)$/u;
+/** A `0x` quantity as nodes send it (leading zeros accepted, as viem's BigInt() accepts them). */
+const QUANTITY = /^0x[0-9a-fA-F]+$/u;
 const UINT256_MAX = (1n << 256n) - 1n;
 
 /** Per hana.ethereum, the settled tail of the adapters' sends (see the header). */
@@ -75,7 +83,7 @@ export function createSodaxEvmProvider(hana: SodaxEvmHana, config: SodaxEvmConfi
     } catch (e) {
       return Promise.reject(e);
     }
-    const run = (sendQueues.get(eth) ?? Promise.resolve()).then(() => send(tx));
+    const run = (sendQueues.get(eth) ?? Promise.resolve()).then(() => sendChecked(tx));
     const tail = run.then(noop, noop);
     sendQueues.set(eth, tail);
     void tail.then(() => {
@@ -84,20 +92,59 @@ export function createSodaxEvmProvider(hana: SodaxEvmHana, config: SodaxEvmConfi
     return run;
   };
 
+  // The receipt RPC's chain, checked once (see the header). A mismatch is a config error and stays one; a fault during
+  // the check is retried on the next call.
+  let rpcChainChecked = false;
+  let rpcChainMismatch: HanaError | null = null;
+  const checkReceiptRpc = async (timeoutMs: number): Promise<void> => {
+    if (rpcChainChecked) return;
+    if (rpcChainMismatch) throw rpcChainMismatch;
+    const id = await jsonRpc(rpcUrl, 'eth_chainId', [], 'EVM RPC', timeoutMs);
+    if (typeof id !== 'string' || !QUANTITY.test(id)) throw new HanaError(RpcCode.internal, 'EVM RPC returned a malformed eth_chainId');
+    const actual = BigInt(id);
+    if (actual !== BigInt(chainId)) {
+      rpcChainMismatch = new HanaError(ErrorCode.chainNotConfigured, `rpcUrl is chain ${actual}, not ${chainId}: this provider's receipts would never be found there`, {
+        reason: 'receipt_rpc_wrong_chain',
+        chainId: target,
+        rpcChainId: `0x${actual.toString(16)}`,
+      });
+      throw rpcChainMismatch;
+    }
+    rpcChainChecked = true;
+  };
+
+  const sendChecked = async (tx: { from: string; to: string; value: string; data: string }): Promise<Hash> => {
+    try {
+      await checkReceiptRpc(REQUEST_TIMEOUT_MS);
+    } catch (e) {
+      if (e === rpcChainMismatch) throw e;
+      // Nothing is signed yet, so refusing is safe; sending would leave a transaction whose receipt can't be watched.
+      throw new HanaError(RpcCode.internal, `Could not check rpcUrl's chain, so nothing was signed: ${e instanceof Error ? e.message : 'EVM RPC error'}`, {
+        reason: 'receipt_rpc_unreachable',
+        chainId: target,
+      });
+    }
+    return send(tx);
+  };
+
   const waitForTransactionReceipt = async (txHash: Hash): Promise<EvmRawTransactionReceipt> => {
     if (typeof txHash !== 'string' || !HASH.test(txHash)) throw invalid('waitForTransactionReceipt takes a transaction hash (0x + 64 hex characters)');
     const deadline = Date.now() + EVM_RECEIPT_TIMEOUT_MS;
+    // Every request gets at least one poll interval, the last one at the deadline too (so it may end that much late).
+    const requestTimeout = () => Math.min(EVM_RECEIPT_POLL_MS * 5, Math.max(deadline - Date.now(), EVM_RECEIPT_POLL_MS));
     let lastError: string | null = null;
     for (;;) {
-      let receipt: unknown = null;
       try {
-        receipt = await jsonRpc(rpcUrl, 'eth_getTransactionReceipt', [txHash], 'EVM RPC', Math.max(1, Math.min(deadline - Date.now(), EVM_RECEIPT_POLL_MS * 5)));
+        await checkReceiptRpc(requestTimeout());
+        const receipt = await jsonRpc(rpcUrl, 'eth_getTransactionReceipt', [txHash], 'EVM RPC', requestTimeout());
+        if (receipt !== null && receipt !== undefined) return serializeReceipt(receipt, txHash);
         lastError = null;
       } catch (e) {
-        // A node or network fault says nothing about the transaction: keep polling until the deadline.
+        if (e === rpcChainMismatch) throw e;
+        // A node or network fault, or a receipt that doesn't parse, says nothing about the transaction: keep polling
+        // until the deadline.
         lastError = e instanceof Error ? e.message : 'EVM RPC error';
       }
-      if (receipt !== null && receipt !== undefined) return serializeReceipt(receipt, txHash);
       if (Date.now() + EVM_RECEIPT_POLL_MS > deadline) break;
       await sleep(EVM_RECEIPT_POLL_MS);
     }
@@ -139,76 +186,57 @@ function checkRawTx(raw: EvmRawTransaction, vault: string | null): { from: strin
 
 // ---- receipts ----
 
-/** viem's transaction type names (what Sodax's own EvmWalletProvider returns); an unknown type stays as hex. */
+/** viem's transaction type names (what Sodax's own EvmWalletProvider returns); an unknown type stays as given. */
 const TX_TYPES: Readonly<Record<string, string>> = { '0x0': 'legacy', '0x1': 'eip2930', '0x2': 'eip1559', '0x3': 'eip4844', '0x4': 'eip7702' };
 
 const malformed = (what: string) => new HanaError(RpcCode.internal, `EVM RPC returned a malformed receipt (${what})`);
 
-/** A `0x` quantity field as a decimal string. */
+/** A quantity (`0x` hex, or a non-negative safe integer as viem's BigInt() takes it) as a decimal string. */
 function decimal(r: Record<string, unknown>, key: string): string {
   const v = r[key];
-  if (typeof v !== 'string' || !QUANTITY.test(v)) throw malformed(key);
-  return BigInt(v).toString(10);
+  if (typeof v === 'string' && QUANTITY.test(v)) return BigInt(v).toString(10);
+  if (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0) return String(v);
+  throw malformed(key);
 }
 
-const hexOrNull = (r: Record<string, unknown>, key: string, pattern: RegExp): string | null => {
-  const v = r[key];
-  if (v === null) return null;
-  if (typeof v !== 'string' || !pattern.test(v)) throw malformed(key);
-  return v;
-};
+/** An optional quantity: null stays null, anything else as `decimal`. */
+const decimalOrNull = (r: Record<string, unknown>, key: string): string | null => (r[key] === null ? null : decimal(r, key));
 
+/** A log as the RPC sent it (EvmRawLog keeps the hex), with absent block fields as null and `removed` a boolean. */
 function serializeLog(l: unknown): EvmRawLog {
   if (!isObject(l)) throw malformed('logs');
-  if (typeof l.address !== 'string' || !isEvmAddress(l.address)) throw malformed('log address');
-  if (!Array.isArray(l.topics) || !l.topics.every((t) => typeof t === 'string' && HASH.test(t))) throw malformed('log topics');
-  if (typeof l.data !== 'string' || !HEX_DATA.test(l.data)) throw malformed('log data');
   return {
-    address: l.address as Address,
-    topics: l.topics as EvmRawLog['topics'],
-    data: l.data as Hash,
-    blockHash: hexOrNull(l, 'blockHash', HASH) as Hash | null,
-    blockNumber: hexOrNull(l, 'blockNumber', QUANTITY) as Hash | null,
-    logIndex: hexOrNull(l, 'logIndex', QUANTITY) as Hash | null,
-    transactionHash: hexOrNull(l, 'transactionHash', HASH) as Hash | null,
-    transactionIndex: hexOrNull(l, 'transactionIndex', QUANTITY) as Hash | null,
+    ...l,
+    blockHash: l.blockHash ?? null,
+    blockNumber: l.blockNumber ?? null,
+    logIndex: l.logIndex ?? null,
+    transactionHash: l.transactionHash ?? null,
+    transactionIndex: l.transactionIndex ?? null,
     removed: l.removed === true,
-  };
+  } as unknown as EvmRawLog;
 }
 
 /**
  * The RPC receipt in Sodax's shape (EvmRawTransactionReceipt), as Sodax's own EvmWalletProvider serialises viem's:
- * quantities (transactionIndex, blockNumber, cumulativeGasUsed, gasUsed, effectiveGasPrice, and the blob fields when
- * present) as decimal strings, `status` 'success' or 'reverted', `type` by name. Logs keep the RPC's `0x` hex, which is
- * what the type declares for them. Other fields the node returns pass through.
+ * quantities (blockNumber; transactionIndex, cumulativeGasUsed, gasUsed, effectiveGasPrice and the blob fields when
+ * present) as decimal strings, `status` 'success' or 'reverted', `type` by name. Logs keep the RPC's `0x` hex, which
+ * is what the type declares for them.
+ *
+ * Required: transactionHash (this transaction's), blockHash and blockNumber. Everything else is lenient, as viem's
+ * formatter is: a missing field stays missing, a null or unknown `type` or `status` stays as given, quantities with
+ * leading zeros are read. Only a value that can't be read at all is malformed (the caller polls again).
  */
 function serializeReceipt(receipt: unknown, txHash: string): EvmRawTransactionReceipt {
   if (!isObject(receipt)) throw malformed('not an object');
   if (typeof receipt.transactionHash !== 'string' || receipt.transactionHash.toLowerCase() !== txHash.toLowerCase()) throw malformed('transactionHash');
   if (typeof receipt.blockHash !== 'string' || !HASH.test(receipt.blockHash)) throw malformed('blockHash');
-  if (typeof receipt.from !== 'string' || !isEvmAddress(receipt.from)) throw malformed('from');
-  if (receipt.to !== null && (typeof receipt.to !== 'string' || !isEvmAddress(receipt.to))) throw malformed('to');
-  const contractAddress = receipt.contractAddress ?? null;
-  if (contractAddress !== null && (typeof contractAddress !== 'string' || !isEvmAddress(contractAddress))) throw malformed('contractAddress');
-  if (!Array.isArray(receipt.logs)) throw malformed('logs');
-  if (typeof receipt.logsBloom !== 'string' || !HEX_DATA.test(receipt.logsBloom)) throw malformed('logsBloom');
-  const out: Record<string, unknown> = {
-    ...receipt,
-    transactionIndex: decimal(receipt, 'transactionIndex'),
-    blockNumber: decimal(receipt, 'blockNumber'),
-    cumulativeGasUsed: decimal(receipt, 'cumulativeGasUsed'),
-    gasUsed: decimal(receipt, 'gasUsed'),
-    contractAddress,
-    logs: receipt.logs.map(serializeLog),
-  };
-  for (const key of ['effectiveGasPrice', 'blobGasUsed', 'blobGasPrice']) if (receipt[key] !== undefined) out[key] = decimal(receipt, key);
-  if (receipt.status !== undefined) {
-    if (receipt.status !== '0x1' && receipt.status !== '0x0') throw malformed('status');
-    out.status = receipt.status === '0x1' ? 'success' : 'reverted';
+  const out: Record<string, unknown> = { ...receipt, blockNumber: decimal(receipt, 'blockNumber'), contractAddress: receipt.contractAddress ?? null };
+  for (const key of ['transactionIndex', 'cumulativeGasUsed', 'gasUsed', 'effectiveGasPrice', 'blobGasUsed', 'blobGasPrice']) {
+    if (receipt[key] !== undefined) out[key] = decimalOrNull(receipt, key);
   }
-  if (receipt.type !== undefined) {
-    if (typeof receipt.type !== 'string' || !QUANTITY.test(receipt.type)) throw malformed('type');
-    out.type = TX_TYPES[receipt.type] ?? receipt.type;
-  }
+  if (Array.isArray(receipt.logs)) out.logs = receipt.logs.map(serializeLog);
+  if (receipt.status === '0x1') out.status = 'success';
+  else if (receipt.status === '0x0') out.status = 'reverted';
+  if (typeof receipt.type === 'string' && QUANTITY.test(receipt.type)) out.type = TX_TYPES[`0x${BigInt(receipt.type).toString(16)}`] ?? receipt.type;
   return out as unknown as EvmRawTransactionReceipt;
 }

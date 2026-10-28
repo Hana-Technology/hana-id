@@ -87,7 +87,10 @@ export function createSodaxStellarProvider(hana: SodaxStellarHana, config: Sodax
 
   const signAndSendTransaction = async (params: StellarRawTransaction): Promise<string> => {
     if (!isObject(params) || typeof params.data !== 'string') throw invalid('signAndSendTransaction takes {from, to, value, data: XDR}');
-    // `from` is the account the transaction was built for: the vault refuses to sign it as anyone else (4100).
+    // `from` is the account the transaction was built for: the vault refuses to sign it as anyone else (4100), before
+    // any popup. This amends the spec's `sendTransaction(signTransaction(p.data))` (docs/decisions.md, "Superseded or
+    // amended"): Sodax builds every raw transaction for getWalletAddress()'s G-address, so another `from` is a bug or a
+    // transaction the user can't complete alone, and is better refused than shown for approval.
     const from = typeof params.from === 'string' && params.from.length > 0 ? params.from : undefined;
     return sendTransaction(await signTransaction(params.data, from === undefined ? undefined : { address: from }));
   };
@@ -99,7 +102,8 @@ export function createSodaxStellarProvider(hana: SodaxStellarHana, config: Sodax
     const deadline = Date.now() + STELLAR_RECEIPT_TIMEOUT_MS;
     let lastStatus = 0;
     for (;;) {
-      const r = await getJson(url, Math.max(1, Math.min(deadline - Date.now(), STELLAR_RECEIPT_POLL_MS * 5)));
+      // Every request gets at least one poll interval, the last one at the deadline too (so it may end that much late).
+      const r = await getJson(url, Math.min(STELLAR_RECEIPT_POLL_MS * 5, Math.max(deadline - Date.now(), STELLAR_RECEIPT_POLL_MS)));
       if (r.ok) return horizonReceipt(r.json, hash);
       lastStatus = r.status;
       // 404: not in a ledger yet. 0 (network, timeout), 429 and 5xx are transient. Anything else won't change.

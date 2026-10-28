@@ -15,6 +15,13 @@ export const TX_POLL_LIMIT_MS = 120_000;
 export const TX_POLL_INTERVAL_MS = 2_000;
 /** `relayer_unavailable` without a transaction: wait this long before re-syncing. */
 export const RELAYER_UNAVAILABLE_WAIT_MS = 3_000;
+/**
+ * After a 409 `session_exists` / `session_key_in_use` the session is on chain, but an optimistic read from a
+ * load-balanced RPC can come from a node a block behind: a missing session is read again this often, for this long
+ * (as the API does before it creates a share).
+ */
+export const IN_USE_RESYNC_INTERVAL_MS = 300;
+export const IN_USE_RESYNC_LIMIT_MS = 2_000;
 const TOKEN_CODES: ReadonlySet<string> = new Set(['invalid_token', 'nonce_mismatch', 'token_expired', 'wrong_audience', 'issuer_keys_unavailable']);
 
 export class ChainLoginError extends Error {
@@ -107,10 +114,24 @@ export async function loginOnChain(body: LoginBody, ctx: ChainLoginContext): Pro
     return ctx.derive(s.used + 1);
   };
 
+  /** Re-syncs until the session shows up or IN_USE_RESYNC_LIMIT_MS passes (a lagging RPC node). */
+  const resyncExpectingSession = async (): Promise<SessionView | null> => {
+    const deadline = ctx.now() + IN_USE_RESYNC_LIMIT_MS;
+    for (;;) {
+      const s = await resync();
+      if (s || ctx.now() + IN_USE_RESYNC_INTERVAL_MS > deadline) return s;
+      await ctx.sleep(IN_USE_RESYNC_INTERVAL_MS);
+    }
+  };
+
   /** 409 session_exists / session_key_in_use: someone's create landed first (or an earlier attempt of ours). */
   const inUse = async (): Promise<CkdResult> => {
-    const s = await resync();
-    if (!s) return fail('derive_failed', 'The session key is in use but no session was found');
+    const s = await resyncExpectingSession();
+    if (!s) {
+      // Still not visible: an earlier attempt of ours may have landed (its transaction says so even if the node lags).
+      const r = await fromKnownTxs();
+      return r ?? fail('derive_failed', 'The session key is in use but no session was found');
+    }
     if (s.used < Math.min(s.max_uses, ctx.maxUses)) return deriveWith(s);
     const r = await fromKnownTxs();
     return r ?? fail('session_consumed', 'This sign-in’s only use was spent by someone else');

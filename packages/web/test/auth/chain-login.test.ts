@@ -3,7 +3,16 @@
 // with sender_account_id = RELAYER, one resend for not-executed codes, relayer_unavailable, ckd_failed per mode.
 import { ApiError, type CkdResult, type LoginBody, type SessionView } from '@hana-id/core';
 import { describe, expect, it, vi } from 'vitest';
-import { type ChainLoginContext, ChainLoginError, NOT_EXECUTED_CODES, RELAYER_UNAVAILABLE_WAIT_MS, TX_POLL_LIMIT_MS, loginOnChain } from '../../src/auth/chain-login.ts';
+import {
+  type ChainLoginContext,
+  ChainLoginError,
+  IN_USE_RESYNC_INTERVAL_MS,
+  IN_USE_RESYNC_LIMIT_MS,
+  NOT_EXECUTED_CODES,
+  RELAYER_UNAVAILABLE_WAIT_MS,
+  TX_POLL_LIMIT_MS,
+  loginOnChain,
+} from '../../src/auth/chain-login.ts';
 import { type TxOutcome, txOutcomeOf } from '../../src/auth/near-rpc.ts';
 
 const NOW = 1_800_000_000_000;
@@ -109,6 +118,43 @@ describe('loginOnChain', () => {
     it('fails session_consumed when the session is used up and no attempt of ours is known to have landed', async () => {
       const h = harness({ login: async () => Promise.reject(err()), sessions: [session()], tx: () => ({ status: 'failed' }) });
       expect(await code(loginOnChain(body, h.ctx))).toBe('session_consumed');
+      expect(h.login).toHaveBeenCalledTimes(1);
+    });
+
+    it('a lagging RPC node: get_session null once, then the session → re-reads after 300 ms and goes on', async () => {
+      const h = harness({ login: async () => Promise.reject(err()), sessions: [null, session({ used: 0, max_uses: 2 })], maxUses: 2, derive: true });
+      expect(await loginOnChain(body, h.ctx)).toEqual(OTHER);
+      expect(h.getSession).toHaveBeenCalledTimes(2);
+      expect(h.clock.t - NOW).toBe(IN_USE_RESYNC_INTERVAL_MS);
+      expect(h.derive).toHaveBeenCalledWith(1);
+      expect(h.login).toHaveBeenCalledTimes(1);
+    });
+
+    it('session still null after 2 s: a known nearTx of ours that succeeded gives the result', async () => {
+      let n = 0;
+      const h = harness({
+        login: async () => {
+          n++;
+          if (n === 1) throw apiErr(502, 'near_unavailable', TX2);
+          throw err();
+        },
+        sessions: [null],
+        tx: (hash) => (hash === TX2 ? { status: 'success', result: RESULT } : { status: 'pending' }),
+      });
+      expect(await loginOnChain(body, h.ctx)).toEqual(RESULT);
+      expect(h.login).toHaveBeenCalledTimes(2);
+      // Read every 300 ms for up to 2 s, then the known transaction.
+      expect(h.getSession.mock.calls.length).toBe(Math.floor(IN_USE_RESYNC_LIMIT_MS / IN_USE_RESYNC_INTERVAL_MS) + 1);
+      expect(h.clock.t - NOW).toBeLessThanOrEqual(IN_USE_RESYNC_LIMIT_MS);
+      expect(h.txOutcome).toHaveBeenCalledWith(TX2, RELAYER);
+      expect(h.getSession.mock.invocationCallOrder.at(-1)).toBeLessThan(h.txOutcome.mock.invocationCallOrder[0] as number);
+    });
+
+    it('session still null after 2 s and no known transaction succeeded: derive_failed', async () => {
+      const h = harness({ login: async () => Promise.reject(err()), sessions: [null], tx: () => ({ status: 'failed' }) });
+      expect(await code(loginOnChain(body, h.ctx))).toBe('derive_failed');
+      expect(h.getSession.mock.calls.length).toBeGreaterThan(1);
+      expect(h.clock.t - NOW).toBeLessThanOrEqual(IN_USE_RESYNC_LIMIT_MS);
       expect(h.login).toHaveBeenCalledTimes(1);
     });
 

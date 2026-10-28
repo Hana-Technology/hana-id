@@ -11,9 +11,11 @@ to the scope); see [Shared vs own Google client](#shared-vs-own-google-client).
 
 **Testnet only.** Every account is a throwaway, and wallets derived on them are disposable.
 
-More: [`docs/context.md`](docs/context.md) (how it works, decisions), [`docs/batch-a-spec.md`](docs/batch-a-spec.md)
-and [`docs/batch-a2-shared-client.md`](docs/batch-a2-shared-client.md) (current work; A.2 wins where they differ),
-[`docs/contract-interface.md`](docs/contract-interface.md) (contract methods and byte layouts).
+More: [`docs/context.md`](docs/context.md) (how it works, decisions, status), [`docs/batch-a-spec.md`](docs/batch-a-spec.md)
+and [`docs/batch-a2-shared-client.md`](docs/batch-a2-shared-client.md) (A.2 wins where they differ),
+[`docs/batch-b-spec.md`](docs/batch-b-spec.md) (the SDK, current work; it amends both),
+[`docs/contract-interface.md`](docs/contract-interface.md) (contract methods and byte layouts),
+[`docs/integration.md`](docs/integration.md) (partner integration guide).
 
 ## Shared vs own Google client
 
@@ -24,7 +26,7 @@ A partner app can log its users in two ways. Both land in the app's own scope, s
 | Google OAuth client | The partner creates one in its Google Cloud project | Hana's, from `sharedGoogleClientIds` in the manifest |
 | Consent screen shows | The partner's app name | Hana's |
 | How the contract finds the scope | The token's `aud` is registered to exactly one scope | `aud` is a shared client, so the API passes the app's `scope_id`, and the token's nonce commits to it. The scope must allow shared login. |
-| Who checks the app may use the scope | Google (only the partner's origins can get tokens for its client) | Hana's login page (batch B), which computes a nonce for scope X only for an opener origin allowed for app X |
+| Who checks the app may use the scope | Google (only the redirect URIs and origins registered on the partner's client can get its tokens) | Hana's vault (batch B), which computes a nonce for scope X only for a parent page whose origin app X allows; the login page checks it before relaying it to Google |
 | Register with | `admin scope:register --client <id>` | `admin scope:register --allow-shared` (no `--client` needed) |
 
 A scope can have both: its own client(s) and `allow_shared`. The path doesn't include the client ID, so a user gets the
@@ -243,9 +245,11 @@ throwaway names. The signer account is part of every user's derived key, so chan
    `signer` holds the contract and pays its storage, including scope registrations, so keep a few NEAR on it.
    `relayer` pays gas for the API. `owner` is the Hana admin.
 2. **Create the Google OAuth clients** (Google Cloud console → APIs & Services → Credentials → OAuth client ID, type
-   "Web application"). You need one for Hana's own app, and a separate one as the shared login client. The shared
-   client's authorised JavaScript origins are Hana's login page origins (batch B), not partner origins. They must be
-   two different client IDs.
+   "Web application"). You need one for Hana's own app, and a separate one as the shared login client. They must be
+   two different client IDs. Hana's pages (batch B) use the redirect flow: the shared client's only Authorized
+   redirect URI is `{authOrigin}/login/callback` (step 7), never a partner origin. `apps/smoke` still signs in with
+   Google Identity Services until it moves to the vault, so it also needs `http://localhost:5173` as an authorised
+   JavaScript origin ([`apps/smoke/README.md`](apps/smoke/README.md)).
 3. **Fill in the manifest**: account names, `googleClientIds` (Hana's own app's client IDs, which become the `global`
    scope), `sharedGoogleClientIds` (the shared login client), `consoleAudiences` if any, `changeDelayMs`, and the
    Cloudflare names. Fill these in before the first deploy. Changing them later works, but adding a shared client
@@ -288,8 +292,9 @@ throwaway names. The signer account is part of every user's derived key, so chan
    pnpm --filter @hana-id/scripts run admin <env> scope:register --allow-shared --owner-near <partner-or-owner>.testnet --yes
    pnpm --filter @hana-id/scripts run admin <env> app:create --name "Partner" --scope s1 --origin https://partner.example --origin http://localhost:5173 [--remote]
    ```
-   Give the partner the printed `pk_test_…` key. With its own client, the partner also adds its origins to that
-   client's authorised JavaScript origins in Google Cloud.
+   Give the partner the printed `pk_test_…` key and [`docs/integration.md`](docs/integration.md). With its own
+   client, the partner adds `{authOrigin}/login/callback` as that client's only Authorized redirect URI, with no
+   JavaScript origins.
 
 ## Safety
 

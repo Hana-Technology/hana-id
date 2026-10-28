@@ -55,7 +55,7 @@ All JSON. Success: `{"result": …, "nearTx": "<base58 tx hash>", "requestId": "
 
 | Endpoint | Body (camelCase, byte arrays as JSON number arrays) | Contract call → `result` |
 |---|---|---|
-| `GET /v1/app` | — | none → `{name, scopeId, signer, google: {clientId, mode: "own" \| "shared"}, serverTimeMs, requestId}` (top level, no `result`) |
+| `GET /v1/app` | — | none → `{name, scopeId, signer, google: {clientId, mode: "own" \| "shared"}, serverTimeMs, autoApprovePolicy, requestId}` (top level, no `result`; `autoApprovePolicy` is the policy in force, validated and normalized, or `null`) |
 | `POST /v1/login` | a `/v1/sessions` body plus `{signature[64], pk1, pk2}` (the session key's signature over counter 1 of the CKD payload); nothing else | `create_session_and_derive` (100 Tgas) → `{big_y, big_c}`, plus `session: {scope_id, expires_at_ms, max_uses, used: 1}` (informational) |
 | `POST /v1/sessions` | `{jwt, sessionPublicKey[32], expiresAtMs, salt[16..64], keyIndex (0..2^31 − 1; higher is reserved), maxUses (1..500)}`; `scopeId` is rejected | `create_session` with the app's `scope_id` (D1) → Session `{path, scope_id, expires_at_ms, max_uses, used}` |
 | `POST /v1/derive` | `{sessionPublicKey[32], counter, signature[64], pk1 "bls12381g1:…", pk2 "bls12381g2:…"}` | `derive_key` → `{big_y, big_c}` |
@@ -105,7 +105,9 @@ Checks, in order (rejected before anything is relayed):
    then is judged on its outcome.
 
 `GET /v1/app` runs checks 1–2 and a per-IP limit of its own (the plan's `per_ip_minute`, separate window), never the
-app's relay quota. `google` is `own` with the scope's first Google client, else `shared` with the first shared client
+app's relay quota. `google` is `own` with the scope's first Google client (or the app's `google_web_client_id`, set
+with `admin app:settings --google-web-client`; `409 no_google_client` if it is no longer one of the scope's
+clients), else `shared` with the first shared client
 in force when the scope has `allow_shared`, else `409 no_google_client` (`409 scope_not_registered` when the scope is
 not on chain, `502 near_unavailable` when the registry can't be read).
 

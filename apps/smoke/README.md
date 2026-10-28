@@ -12,7 +12,8 @@ The vault page sees only what a partner sees: status, addresses, expiry, persist
 apps, the login's per-stage timings. The Google token, the session key, the CKD secret and the chain keys stay in the
 Hana pages. The direct page sends the Google token only to `POST /v1/sessions` (kept in memory for the replay button)
 and zeroes the CKD secret and derived keys inside one function call; neither page displays, logs, stores or sends
-them anywhere else.
+them anywhere else. Partners integrate through `@hana-id/web` like the vault page, never like the direct
+page: see [`docs/integration.md`](../../docs/integration.md).
 
 > **The direct page works only while the env's `REJECT_PII_ON_SESSIONS` is `"0"`** (every env's default until the
 > user turns it on, `docs/batch-b-spec.md` "Order of work" step 7). Google Identity Services tokens carry `email`,
@@ -133,7 +134,8 @@ gets the popup; raw signing is 4100 unless the app has `--raw-sign approval`.
    that the API's signer is the manifest's, and reads `get_scope` / `get_config().shared_clients` over RPC to offer
    every Google client the scope can use: its own clients, and Hana's shared clients when the scope has
    `allow_shared`.
-2. **Session**: choose `key_index` (default 0) and `max_uses` (default 5) → *Start session*. The page makes a
+2. **Session**: choose `key_index` (default 0; 0 to 2^31 − 1, higher values are reserved and refused) and `max_uses`
+   (default 5, 1 to 500) → *Start session*. The page makes a
    non-extractable Ed25519 session key, a random 32-byte salt and an expiry of now + 1 h, computes the batch A.2 session
    nonce and renders the Google button for the chosen client.
 3. Sign in. The page checks the token's `nonce` and `aud`, calls `POST /v1/sessions`, then immediately derives
@@ -151,6 +153,16 @@ must give the same addresses and `app_id`, a different path must give different 
 
 Every relayed call costs testnet gas, including a replayed derive (it passes the API's signature check and is rejected
 by the contract).
+
+## Google openid-only spike (`spike.html`)
+
+`http://localhost:5173/spike.html` answers batch B's go/no-go questions with no API and no chain: it runs Google's
+implicit flow with `scope=openid` only (`response_type=id_token`, `prompt=select_account`, optionally `max_age=0`) in
+a popup that redirects to `http://localhost:5173/spike-callback.html`, then decodes the token in the page. It shows the
+claims only in the page and builds a summary with no personal values (claim names, whether `hd` or `auth_time` is
+present, whether the nonce matched, and whether the popup kept `window.opener`) to paste into `docs/context.md`.
+The client must list that callback URL as an Authorized redirect URI; remove it after the spike. The 2026-10-28
+results are in `docs/context.md` ("Google openid-only spike").
 
 ## Test checklist
 

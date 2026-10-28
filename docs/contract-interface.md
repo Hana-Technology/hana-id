@@ -129,7 +129,7 @@ nonces and signed messages against them byte for byte. An SDK can also compare i
 All nonces are `b64url(sha256(preimage))` (43 characters). `signer` below is borsh(signer account id) =
 borsh(`env::current_account_id()` as a String).
 
-### Session nonce (`create_session`)
+### Session nonce (`create_session`, `create_session_and_derive`)
 
 ```
 preimage = "hana-id/session/v1"
@@ -143,7 +143,9 @@ preimage = "hana-id/session/v1"
 ```
 
 `scope_id` is the `scope_id` argument of `create_session` (the app's scope); `max_uses` is committed, so a
-front-runner can't open the session with another cap.
+front-runner can't open the session with another cap. Since batch B the Hana vault computes this nonce from its
+pinned signer account and the app's scope (`@hana-id/core` `sessionNonce`), and the login page recomputes it before
+sending it to Google.
 
 ### Register proof (`register_scope`)
 
@@ -389,9 +391,11 @@ Views: `get_config()` → Config.
 
 #### Shared clients
 
-A **shared client** is a `(provider, aud)` Hana runs for partners without their own OAuth client (Hana's login page,
-on a Hana origin). Its tokens are not tied to one scope: `create_session` takes the scope from its `scope_id`
-argument, which the session nonce commits to, and accepts it only for scopes with `allow_shared`.
+A **shared client** is a `(provider, aud)` Hana runs for partners without their own OAuth client (since batch B its
+only redirect URI is Hana's `{authOrigin}/login/callback`). Its tokens are not tied to one scope: `create_session`
+(and `create_session_and_derive`) takes the scope from its `scope_id` argument, which the session nonce commits to,
+and accepts it only for scopes with `allow_shared`. Hana's vault computes that nonce only for a parent page the app
+allows (see Security notes).
 
 `set_shared_clients(clients)`, owner only, sets the target list (≤ 5, `Too many shared clients`):
 
@@ -727,9 +731,8 @@ prepays them. New view `session_key_in_use` (also covers revoked, unexpired sess
   the session nonce. Whoever can get a shared-client token with a nonce of their choosing for a user can open a
   session for that user in any `allow_shared` scope: Hana's vault and login page (since batch B the vault computes
   the nonce, for a parent page the app's allowed origins permit, and the login page only relays it after checking
-  it), and the user themself (who only gets their own
-  key, which they are entitled to). So enabling shared login on a scope trusts Hana's login page with that scope's
-  keys; that is why enabling it on an existing scope is timelocked (`SetAllowShared`, co-owners can cancel) while
+  it), and the user themself (who only gets their own key, which they are entitled to). So enabling shared login on a
+  scope trusts Hana's vault and login pages (and whoever can change the bundles they serve) with that scope's keys; that is why enabling it on an existing scope is timelocked (`SetAllowShared`, co-owners can cancel) while
   disabling is immediate. Hana can also stop logins to a shared-only scope by removing its shared clients
   (removal is immediate). A client can't be shared and a scope client at once, and Hana can't list a client that a
   scope has registered, has a pending `AddClient` for, or has quarantined after a removal, so Hana can't turn a

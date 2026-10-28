@@ -394,6 +394,16 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
   absolute) through app settings. Review after a month of pilot data (logout frequency, re-login cost ≈ 9 s and
   $0.021 each).
 
+### D44. Consent screen: partner names labelled, Hana-verified names marked
+- Date 2026-10-28 · Status: confirmed by the user, to build · Source: `docs/batch-b-spec.md` Q41
+- Decision: the auto-approve consent screen shows a policy's contract names as "named by {app}" with the short address
+  and an explorer link. Contracts on Hana's verified list (per chain address → name, starting with Sodax's contracts)
+  show a ✓ and the verified name instead. The list is built into the vault and popup bundles (a code release changes
+  it, never D1 or the API), and an entry is added only after Hana confirms the address from the protocol's official
+  sources.
+- Why: partner-chosen names can mislead ("USDC", "Uniswap Router"); addresses alone mean nothing to most users.
+- Rejected: partner names as-is; addresses only.
+
 ## Superseded or amended
 
 | Was | Now | Source |

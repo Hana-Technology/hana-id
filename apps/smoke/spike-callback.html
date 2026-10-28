@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Spike callback</title>
+  </head>
+  <body>
+    <p>Returning the result to the spike page…</p>
+    <script type="module">
+      // Hands the URL fragment (id_token, state, or error) to the opener on this same origin, then closes.
+      const hash = location.hash.slice(1);
+      history.replaceState(null, '', location.pathname);
+      if (window.opener) {
+        window.opener.postMessage({ t: 'spike-callback', hash }, location.origin);
+      } else {
+        // Google's pages may sever the opener (COOP): hand over through same-origin storage instead (removed on read).
+        localStorage.setItem('spike-callback', hash);
+      }
+      window.close();
+    </script>
+  </body>
+</html>

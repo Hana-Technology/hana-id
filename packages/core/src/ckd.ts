@@ -65,12 +65,15 @@ export function isValidNetworkKey(key: string): boolean {
   }
 }
 
-/** Why the pinned CKD key of `envs/<name>.json` can't be used, or null. The web build and smoke refuse to run on one. */
-export function ckdKeyProblem(env: { name: string; ckdNetworkKey: string }, isValidKey: (key: string) => boolean = isValidNetworkKey): string | null {
+/**
+ * Why the pinned CKD key of `envs/<name>.json` can't be used, or null. The web build and smoke refuse to run on one.
+ * It takes one argument, so it can be passed straight to `Array.prototype.map`.
+ */
+export function ckdKeyProblem(env: { name: string; ckdNetworkKey: string }): string | null {
   if (env.ckdNetworkKey.includes('UNSET')) {
     return `envs/${env.name}.json ckdNetworkKey is still the UNSET placeholder. Pin it with \`pnpm --filter @hana-id/scripts fetch-ckd-key ${env.name}\` and restart the dev server.`;
   }
-  if (!isValidKey(env.ckdNetworkKey)) return `envs/${env.name}.json ckdNetworkKey is not a valid bls12381g2 point.`;
+  if (!isValidNetworkKey(env.ckdNetworkKey)) return `envs/${env.name}.json ckdNetworkKey is not a valid bls12381g2 point.`;
   return null;
 }
 

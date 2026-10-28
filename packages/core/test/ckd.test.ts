@@ -107,7 +107,8 @@ describe('pinned network key', () => {
     expect(ckdKeyProblem({ name: 'sandbox-dev', ckdNetworkKey: 'UNSET-run-scripts/fetch-ckd-key.ts' })).toMatch(/UNSET placeholder.*fetch-ckd-key sandbox-dev/);
     expect(ckdKeyProblem({ name: 'x', ckdNetworkKey: 'bls12381g2:zzz' })).toMatch(/not a valid/);
     expect(ckdKeyProblem({ name: 'x', ckdNetworkKey: mpcNetwork().networkKey })).toBeNull();
-    expect(ckdKeyProblem({ name: 'x', ckdNetworkKey: 'bls12381g2:ok' }, () => true)).toBeNull();
+    // Usable as an Array.prototype.map callback (the extra index argument is ignored).
+    expect([{ name: 'x', ckdNetworkKey: mpcNetwork().networkKey }].map(ckdKeyProblem)).toEqual([null]);
   });
 
   it('ckdKeyHash is sha256 of the 96-byte compressed G2', () => {

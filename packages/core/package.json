@@ -6,7 +6,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./derivation": "./src/derivation.ts"
+    "./derivation": "./src/derivation.ts",
+    "./signers/stellar": "./src/signers/stellar.ts"
   },
   "scripts": {
     "test": "vitest run",

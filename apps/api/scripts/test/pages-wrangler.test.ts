@@ -111,7 +111,9 @@ describe('page Worker configs', () => {
   });
 
   it('refuses a page origin that is the API Worker itself', () => {
-    expect(() => pagesPlacement(variant({ vaultOrigin: manifest.apiUrl }), 'vault')).toThrow(/names the API Worker itself/u);
+    // The schema refuses it already (a Hana origin is never apiUrl's origin); the placement refuses it on its own too.
+    expect(() => variant({ vaultOrigin: manifest.apiUrl })).toThrow(/must not be apiUrl's origin/u);
+    expect(() => pagesPlacement({ ...manifest, vaultOrigin: manifest.apiUrl }, 'vault')).toThrow(/names the API Worker itself/u);
   });
 
   it('refuses two origins that give one Worker name', () => {

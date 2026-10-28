@@ -10,6 +10,13 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   type AppSettingsDeps,
   appSettings,
+  googleClientIds,
+  invocationDir,
+  planSettings,
+  resolvePolicyPath,
+  scopeClientsFrom,
+  SETTINGS_CHANGED,
+  settingsAppArg,
   changeDelayMsFor,
   describeSettings,
   formatDuration,
@@ -36,6 +43,7 @@ const KEY = 'pk_test_settings1';
 const SCOPE = 's1';
 const WEB = '111-web.apps.googleusercontent.com';
 const IOS = '222-ios.apps.googleusercontent.com';
+const WORK = '/work/dir';
 
 /** A fresh in-memory database with every apps/api migration and one app at the defaults. */
 function newDb(): DatabaseSync {
@@ -109,13 +117,16 @@ beforeEach(() => {
         booleans: ['remote'],
       });
       const deps: AppSettingsDeps = {
-        d1: (statement) => (/^\s*SELECT/iu.test(statement) ? (db.prepare(statement).all() as Record<string, unknown>[]) : (db.exec(statement), [])),
+        // Rows for a SELECT and for an UPDATE … RETURNING (as wrangler d1 execute --json gives them).
+        d1: (statement) => (/^\s*SELECT|\bRETURNING\b/iu.test(statement) ? (db.prepare(statement).all() as Record<string, unknown>[]) : (db.exec(statement), [])),
         scopeClients: async (scopeId) => {
           state.chainReads.push(scopeId);
           return state.clients;
         },
+        // Policy files live in WORK, the directory the command was "run" from.
+        baseDir: WORK,
         readFile: (path) => {
-          const text = state.files.get(path);
+          const text = path.startsWith(`${WORK}/`) ? state.files.get(path.slice(WORK.length + 1)) : undefined;
           if (text === undefined) throw new Error(`no file ${path}`);
           return text;
         },
@@ -287,7 +298,7 @@ describe('app:settings --auto-approve', () => {
     // Stored as the validator's canonical form (EIP-55 address), so its id is the one users consent to.
     expect(r.auto_approve_pending).toContain('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48');
     expect(policyId(JSON.parse(r.auto_approve_pending!))).toBe(id);
-    expect(output()).toContain(`policy ${id} ("Approvals") pending until`);
+    expect(output()).toContain(`policy ${id} ("Approvals") from ${WORK}/p.json, pending until`);
     // Nothing in force until the delay has passed.
     expect(policyInForce(r, NOW + sandbox.changeDelayMs - 1)).toBeNull();
     expect(policyInForce(r, NOW + sandbox.changeDelayMs)).toBe(r.auto_approve_pending);
@@ -354,6 +365,132 @@ describe('app:settings --auto-approve', () => {
     expect(output()).toContain('policy removed (immediate)');
     await h.run(['--auto-approve', 'off']);
     expect(output()).toContain('auto-approve: already off');
+  });
+});
+
+describe('app:settings writes only over the row it read', () => {
+  const file = (name: string, value: unknown) => {
+    h.files.set(name, JSON.stringify(value));
+    return name;
+  };
+
+  it('a stale plan (P in force, P2 pending) run after another operator’s --auto-approve off changes nothing', async () => {
+    await h.run(['--auto-approve', file('p.json', policy())]);
+    h.now = NOW + sandbox.changeDelayMs;
+    await h.run(['--auto-approve', file('p2.json', policy('Wider'))]);
+    // This CLI reads the row: P in force, P2 pending. It plans "re-set P" (drop the pending P2).
+    const stale = row(h.db);
+    expect(policyId(JSON.parse(stale.auto_approve_policy!))).toBe(policyId(policy()));
+    const plan = planSettings(stale, { autoApprove: { text: JSON.stringify(policy()), file: 'p.json' } }, { now: h.now, delayMs: sandbox.changeDelayMs });
+    expect(plan.lines.join('\n')).toContain('The pending policy is dropped.');
+    expect(plan.sql).not.toMatch(/auto_approve_policy = '/u);
+    // Meanwhile another operator removes every policy.
+    await h.run(['--auto-approve', 'off']);
+    // The stale write matches no row: the removed policy is not put back in force.
+    expect(h.db.prepare(plan.sql!).all()).toEqual([]);
+    expect(row(h.db)).toMatchObject({ auto_approve_policy: null, auto_approve_pending: null, auto_approve_effective_at: null });
+  });
+
+  it('appSettings refuses (and writes nothing) when the row changed between its read and its write', async () => {
+    await h.run(['--auto-approve', file('p.json', policy())]);
+    h.now = NOW + sandbox.changeDelayMs;
+    await h.run(['--auto-approve', file('p2.json', policy('Wider'))]);
+    // A d1 that runs another operator's change right after this CLI's read.
+    const real = h.db;
+    let interleaved = false;
+    const deps: AppSettingsDeps = {
+      d1: (statement) => {
+        if (/^\s*SELECT/iu.test(statement)) {
+          const rows = real.prepare(statement).all() as Record<string, unknown>[];
+          if (!interleaved) {
+            interleaved = true;
+            real.exec(`UPDATE apps SET auto_approve_policy = NULL, auto_approve_pending = NULL, auto_approve_effective_at = NULL WHERE id = '${APP}'`);
+          }
+          return rows;
+        }
+        return real.prepare(statement).all() as Record<string, unknown>[];
+      },
+      scopeClients: async () => null,
+      readFile: () => JSON.stringify(policy()),
+      baseDir: WORK,
+      now: () => h.now,
+      log: (line) => h.out.push(line),
+    };
+    const args = parseCli(['--auto-approve', 'p.json'], { strings: ['auto-approve'] });
+    await expect(appSettings(sandbox, APP, args, 'local D1 test', deps)).rejects.toThrow(SETTINGS_CHANGED);
+    expect(row(h.db)).toMatchObject({ auto_approve_policy: null, auto_approve_pending: null });
+    // Every column is in the guard, so any concurrent change is caught (here: persistence).
+    const before = row(h.db);
+    real.exec(`UPDATE apps SET persistence = 'none' WHERE id = '${APP}'`);
+    const p2 = planSettings(before, { sessionTtlMs: 6 * HOUR }, { now: h.now, delayMs: 0 });
+    expect(real.prepare(p2.sql!).all()).toEqual([]);
+    expect(row(h.db).session_ttl_ms).toBe(12 * HOUR);
+  });
+
+  it('an unchanged row is written, once, and the guard matches NULLs', async () => {
+    const before = row(h.db);
+    expect(before.auto_approve_policy).toBeNull();
+    const plan = planSettings(before, { persistence: 'none' }, { now: NOW, delayMs: 0 });
+    expect(h.db.prepare(plan.sql!).all()).toEqual([{ id: APP }]);
+    expect(h.db.prepare(plan.sql!).all()).toEqual([]);
+  });
+});
+
+describe('app:settings --auto-approve path', () => {
+  it('a relative path is resolved against the directory the command was run from (INIT_CWD), and logged', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hana-settings-cwd-'));
+    try {
+      writeFileSync(join(dir, 'policy.json'), JSON.stringify(policy()));
+      expect(invocationDir({ INIT_CWD: dir }, '/elsewhere')).toBe(dir);
+      expect(invocationDir({}, '/elsewhere')).toBe('/elsewhere');
+      expect(invocationDir({ INIT_CWD: 'relative' }, '/elsewhere')).toBe('/elsewhere');
+      expect(resolvePolicyPath('./policy.json', dir)).toBe(join(dir, 'policy.json'));
+      expect(resolvePolicyPath('/abs/p.json', dir)).toBe('/abs/p.json');
+      const args = parseCli(['--auto-approve', './policy.json'], { strings: ['auto-approve'] });
+      const change = parseSettingsArgs(args, readPolicyFile, invocationDir({ INIT_CWD: dir }, '/elsewhere'));
+      expect(change.autoApprove).toEqual({ text: JSON.stringify(policy()), file: join(dir, 'policy.json') });
+      // Through appSettings, with the real file reader.
+      const deps: AppSettingsDeps = {
+        d1: (statement) => h.db.prepare(statement).all() as Record<string, unknown>[],
+        scopeClients: async () => null,
+        readFile: readPolicyFile,
+        baseDir: dir,
+        now: () => NOW,
+        log: (line) => h.out.push(line),
+      };
+      await appSettings(sandbox, APP, args, 'local D1 test', deps);
+      expect(output()).toContain(`from ${join(dir, 'policy.json')}, pending until`);
+      expect(row(h.db).auto_approve_pending).not.toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('app:settings app selection and on-chain clients', () => {
+  it('takes the app positionally or with --app, exactly one of them', () => {
+    expect(settingsAppArg([APP], undefined)).toBe(APP);
+    expect(settingsAppArg([], KEY)).toBe(KEY);
+    expect(() => settingsAppArg([APP], KEY)).toThrow('not both');
+    expect(() => settingsAppArg([], undefined)).toThrow('takes one app');
+    expect(() => settingsAppArg([APP, 'extra'], undefined)).toThrow('Unexpected argument extra');
+  });
+
+  it('maps get_scope to the scope’s clients: null scope, missing or malformed clients, mixed providers', () => {
+    expect(scopeClientsFrom(null)).toBeNull();
+    expect(scopeClientsFrom(undefined)).toBeNull();
+    expect(scopeClientsFrom({})).toEqual([]);
+    expect(scopeClientsFrom({ clients: 'nope' })).toEqual([]);
+    expect(scopeClientsFrom([['google', WEB]])).toEqual([]);
+    const clients = scopeClientsFrom({
+      clients: [['google', WEB], ['google'], ['google', WEB, 'x'], ['google', 7], 'google', null, { 0: 'google', 1: IOS }, ['apple', 'a.example'], ['google', IOS]],
+    });
+    expect(clients).toEqual([
+      ['google', WEB],
+      ['apple', 'a.example'],
+      ['google', IOS],
+    ]);
+    expect(googleClientIds(clients!)).toEqual([WEB, IOS]);
   });
 });
 

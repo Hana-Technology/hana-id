@@ -1,32 +1,31 @@
 # API reference — every endpoint the `apps/api` Worker serves today
 
-Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`); `GET /v1/app` re-verified 2026-10-28 on
-`fix/b-web` (from `feat/batch-b` 0f0a437)
+Last verified against code: 2026-10-28 (`feat/batch-b` after merging the batch B fix branches `fix/b-web`,
+`fix/b-core-policy`, `fix/b-clients` and `fix/b-api`)
 
 Current state, not a spec. Where the specs (`docs/batch-*.md`) and this file differ, this file follows the code.
 Contract methods and byte layouts: `docs/contract-interface.md`. How to run it: `docs/operations.md`.
 
-**Branches.** Endpoints marked **B** exist only on `feat/batch-b` (not on `develop`, ef2397d). Spec'd but not merged
-into `feat/batch-b` yet:
+**Branches.** Endpoints marked **B** exist only on `feat/batch-b` (not on `develop`, ef2397d), where every batch B
+branch is merged, the page Workers (`b/pages-hosting`), `admin app:settings` (`b/settings-cli`) and the pages
+themselves (`b/web-*`) included.
 
-| Branch | What it adds |
-|---|---|
-| `b/pages-hosting` | Thin Workers for `vaultOrigin` / `authOrigin` (static pages, `/vault` forwarded to the API by service binding), `gen` writes `wrangler.vault.jsonc` / `wrangler.auth.jsonc`, `deploy:pages` |
-| `b/settings-cli` | `admin app:settings`; the vault page serves an auto-approve policy only if `@hana-id/core` validates it |
-| `b/web-auth`, `b/web-vault`, `b/web-client` | The pages themselves (`/login`, `/login/callback`, `/approve`, `/export`, `vault.js`) and the partner client |
-
-So on `feat/batch-b` the Worker renders `GET /vault` only for requests whose URL origin is `VAULT_ORIGIN`, which
-nothing routes to it yet, and `/vault.js` is not served (no assets binding). The `/login*`, `/approve`, `/export`
-pages are not served by this Worker at all.
+The API Worker renders `GET /vault` for requests whose URL origin is `VAULT_ORIGIN`: the vault origin's own thin
+Worker forwards them unchanged through a service binding. `/vault.js` and the auth pages (`/login`,
+`/login/callback`, `/approve`, `/export`) are served by the page Workers ("Page Workers" below), never by
+this Worker.
 
 ## Routing
 
 `src/index.ts`, in this order. Any other path: `404 not_found`. A method not listed: `405 method_not_allowed` with
-`allow`. An uncaught error: `500 internal`.
+`allow`. An uncaught error: `500 internal` (logged with the path, a login relay path without its relayId). The Hana
+page origins never reach the API routes: a request whose URL origin is `VAULT_ORIGIN` or `AUTH_ORIGIN` gets
+`/vault` (vault origin only) or a 404.
 
 | Path | Methods | Handler | Auth | B |
 |---|---|---|---|---|
 | `{VAULT_ORIGIN}/vault` | GET, HEAD | `vault/page.ts` | publishable key in `?pk=` | B |
+| any other path on `VAULT_ORIGIN` or `AUTH_ORIGIN` | any | `index.ts` | — (`404`, text, `frame-ancestors 'none'`, `nosniff`, no CORS) | B |
 | `/v1/health` | GET, HEAD, OPTIONS | `handlers.ts` | none | |
 | `/v1/app` | GET, OPTIONS | `handlers.ts` | publishable key + caller rule | changed in B |
 | `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` | POST, OPTIONS | `handlers.ts` | publishable key + caller rule (+ session signature for derive/revoke) | caller rule changed in B |
@@ -266,6 +265,26 @@ Errors are an empty HTML page with `frame-ancestors 'none'` and no config: `403`
 `scope_conflict`, `too_many_origins` > 20), `503` (`config_unavailable`, `misconfigured` when `API_URL` or `NEAR_RPC`
 is missing or not a URL). The code is in the log line, not the body.
 
+### Page Workers (`src/pages/`) · B
+
+One thin Worker per Hana origin in every env (`workers.dev` in dev envs, a Custom Domain elsewhere;
+`apps/api/scripts/pages-wrangler.ts`), each with only its origin's built pages as static assets
+(`packages/web/dist/pages/<env>/vault`, `…/auth`). Only `GET`/`HEAD` (`405` otherwise), only on their own origin
+(`404` on any other host).
+
+| Origin | Path | Response |
+|---|---|---|
+| vault | `/vault` | forwarded unchanged to the API Worker (service binding `API`); `503` page with no config if it is unreachable |
+| auth | `/login`, `/login/callback` | `<path>.html` with `frame-ancestors 'none'; connect-src <API_URL>` |
+| auth | `/approve` | `approve.html` with `frame-ancestors 'none'` |
+| auth | `/export` | `export.html` with `frame-ancestors 'none'; connect-src <API_URL> <NEAR_RPC> https://www.googleapis.com` |
+| both | any other path | a static asset, never HTML (`*.html` and `text/html` → `404`) |
+
+Pages carry the base policy plus their directives, `no-store`, `no-referrer`, `nosniff`, no COOP; a missing page file
+is a `503` page. Every asset carries `content-security-policy: default-src 'none'; frame-ancestors 'none'; sandbox`
+(an SVG or XML file opened as a document runs, loads and frames nothing; not applied by browsers to the scripts and
+styles the pages load), `nosniff`, `no-referrer` and `cross-origin-resource-policy: same-origin`.
+
 ### Vault endpoints · B
 
 All `POST`, `Origin: VAULT_ORIGIN`, `x-hana-key`, `x-hana-parent-origin`. No transaction. Signatures are Ed25519 by
@@ -290,11 +309,18 @@ re-read every 300 ms for up to 2 s while missing or not used up (`404 unknown_se
 `absExpiresAt = min(session expiry, now + session_ttl_ms)`, `idleUntil = min(now + idle_ttl_ms, absExpiresAt)`.
 
 Share actions, after the gate: per-share limit → `404 unknown_share` (missing or another app's) → share's origin no
-longer allowed: revoked, `410 share_revoked` → `401 invalid_signature` (counter not consumed) → `revoke-all` only:
-`403 share_not_fresh` (share ≥ 5 min old) → one atomic update that needs `counter = stored + 1` and a live share:
-`409 bad_counter` with `expected`, `410 share_expired`, `410 share_revoked`. Unlock unwraps K_s before the counter
-moves, re-wraps it under the current KEK if the row is under `VAULT_KEK_PREVIOUS`, slides `idle_until`, counts
-`usage.unlocks`; an unreadable row is `500 internal`. Touch slides `idle_until`. Revoke-all keeps its own share live.
+longer allowed: revoked, `410 share_revoked` → unlock and touch only, the app's settings as they are now: persistence
+`none` revokes the share (`410 share_revoked`), and the share ends at `min(abs_expires_at, created_at +
+session_ttl_ms)` (a lowered TTL also lowers the stored `abs_expires_at`; `410 share_expired` once past it) →
+`401 invalid_signature` (counter not consumed) → `revoke-all` only: `403 share_not_fresh` (share ≥ 5 min old) → one
+atomic update that needs `counter = stored + 1` and a live share (for unlock and touch it re-checks persistence and
+the TTL cap in the same statement): `409 bad_counter` with `expected`, `410 share_expired`, `410 share_revoked`.
+Unlock unwraps K_s before the counter moves, re-wraps it under the current KEK if the row is under
+`VAULT_KEK_PREVIOUS`, slides `idle_until` to `min(now + idle_ttl_ms, the capped expiry)`, returns the capped
+`absExpiresAtMs`, counts `usage.unlocks`; an unreadable row is `500 internal`. Touch slides `idle_until` the same way.
+Revoke and revoke-all ignore the settings. Revoke-all keeps its own share live and runs as one D1 batch (one
+transaction): the other shares are revoked only on the condition the counter move then meets, so a failed write
+changes nothing and a replay revokes nothing.
 
 ### `POST /v1/owner-actions` — owner pool
 
@@ -447,8 +473,9 @@ Two independent jobs (one failing doesn't skip the other):
 
 ## Configuration (Worker bindings)
 
-Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts`; secrets are set with
-`wrangler secret put`. Schema: `packages/env/src/schema.ts`; types: `apps/api/src/env.ts`.
+Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` into `apps/api/wrangler.jsonc`
+(gitignored, per env; the tests generate their own `wrangler.vitest.jsonc`); secrets are set with
+`wrangler secret put` (`VAULT_KEK` through `scripts/vault-kek.ts`). Schema: `packages/env/src/schema.ts`; types: `apps/api/src/env.ts`.
 
 | Binding | Kind | Source | Notes |
 |---|---|---|---|
@@ -465,8 +492,8 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts`;
 | `RELAYER_KEYS` | secret | `.secrets/<env>/relayer-keys.json` | JSON array of `ed25519:` secret keys |
 | `OWNER_RELAYER_KEYS` | secret | `.secrets/<env>/owner-relayer-keys.json` | same format; absent → owner actions 503 |
 | `KEYS_UPDATER_KEY` | secret | `.secrets/<env>/keys-updater.json` `private_key` | absent → cron skips JWKS sync |
-| `VAULT_KEK` | secret | operator-generated | `<id>:<base64 of 32 bytes>`; absent → vault 503 |
-| `VAULT_KEK_PREVIOUS` | secret, rotation only | the previous `VAULT_KEK` | |
+| `VAULT_KEK` | secret | `.secrets/<env>/vault-kek`, from `scripts/vault-kek.ts init` | `<id>:<base64 of 32 bytes>`; absent → vault 503 |
+| `VAULT_KEK_PREVIOUS` | secret, rotation only | `.secrets/<env>/vault-kek.previous`, from `vault-kek rotate` | |
 | `DB` | D1 | `cloudflare.d1Name`, id from `--d1-id` | `migrations_dir: migrations` |
 | `RELAYER_KEY`, `RATE_LIMITER`, `LOGIN_RELAY` | Durable Objects | classes `RelayerKey`, `RateLimiter`, `LoginRelay` | |
 
@@ -482,7 +509,7 @@ signatures, bodies, keys, CKD responses, relay bodies or panic text.
 
 | Field | |
 |---|---|
-| `requestId`, `appId`, `endpoint`, `method` (login relay only) | |
+| `requestId`, `appId`, `endpoint`, `method` (login relay only) | `endpoint` is the path; a login relay is always `/v1/login-relay`, never with its relayId |
 | `outcome` | `ok` (< 400), `rejected` (4xx), `error` (5xx; logged at level `error`) |
 | `status`, `code`, `nearTx`, `latencyMs` | |
 | `colo` | Cloudflare data center that ran the request (`SIN`, …) |
@@ -510,4 +537,5 @@ Other events: `relay_dispatched` (`pool`, `keyIndex`, `method`, `nearTx`, `nonce
 (`code` `invalid_nonce` / `expired` / `dropped`), `relay_dispatch_failed`, `jwks_sync` (`added`, `removed`, `kids`),
 `jwks_sync_failed` / `jwks_sync_skipped` (`code`), `jwks_tx`, `jwks_stale`, `vault_page`, `vault_maintenance`
 (`pruned`, `rewrapped`, `unknownKek`), `vault_rewrap_unreadable`, `vault_kek_unavailable`, `vault_share_unreadable`,
-`usage_increment_failed`, `owner_token_release_failed`, `gas_override_ignored`, `auto_approve_policy_unreadable`.
+`usage_increment_failed`, `owner_token_release_failed`, `gas_override_ignored`, `auto_approve_policy_invalid`
+(`problems`), and from the page Workers `vault_host` and `auth_page` (`code`).

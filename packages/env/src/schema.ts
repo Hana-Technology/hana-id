@@ -76,8 +76,11 @@ export const manifestSchema = z
     }
   });
 
-/** `vaultOrigin`/`authOrigin`: both or neither, each a valid Hana origin for the env, distinct, and cross-site outside dev envs. */
-function hanaOrigins(m: { name: string; vaultOrigin?: string | undefined; authOrigin?: string | undefined }, ctx: z.RefinementCtx): void {
+/**
+ * `vaultOrigin`/`authOrigin`: both or neither, each a valid Hana origin for the env, distinct, never `apiUrl`'s origin,
+ * and outside dev envs on different sites from each other and from `apiUrl` (the Hana origins host nothing else).
+ */
+function hanaOrigins(m: { name: string; apiUrl: string; vaultOrigin?: string | undefined; authOrigin?: string | undefined }, ctx: z.RefinementCtx): void {
   const { vaultOrigin, authOrigin } = m;
   if (vaultOrigin === undefined && authOrigin === undefined) return;
   if (vaultOrigin === undefined || authOrigin === undefined) {
@@ -104,6 +107,19 @@ function hanaOrigins(m: { name: string; vaultOrigin?: string | undefined; authOr
       path: ['authOrigin'],
       message: `vaultOrigin and authOrigin must be different sites outside local*/sandbox* envs (both are ${siteOf(vaultOrigin)})`,
     });
+  }
+  // The partner-callable API on a Hana origin would be same-origin with the vault's storage or the token pages.
+  let api: string | null = null;
+  try {
+    api = new URL(m.apiUrl).origin;
+  } catch {
+    return; // apiUrl's own check reports it
+  }
+  for (const [field, origin] of [['vaultOrigin', vaultOrigin], ['authOrigin', authOrigin]] as const) {
+    if (origin === api) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: `${field} must not be apiUrl's origin (${api})` });
+    else if (!isDevEnv(m.name) && siteOf(origin) === siteOf(api)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: `${field} must be a different site from apiUrl outside local*/sandbox* envs (both are ${siteOf(api)})` });
+    }
   }
 }
 

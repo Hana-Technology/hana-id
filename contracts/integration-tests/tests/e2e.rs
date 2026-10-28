@@ -939,18 +939,22 @@ async fn combined_login_matches_create_then_derive() -> Result<()> {
         assert!(!env.session_key_in_use(&reserved).await?);
     }
 
-    // A vault message (off-chain, batch B) signed by a session key is neither a derive nor a revoke.
+    // A vault message (off-chain, batch B) signed by a session key is neither a derive nor a revoke: the vault's
+    // "unlock", and its "revoke", whose payload bytes and counter shape match revoke_session's.
     let (mut v, jwt_v) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
     env.create_session(&env.relayer_fc, &v, &jwt_v).await?.into_result()?;
-    let vault_sig = v.key.sign(&vault_message(signer.as_str(), "app_test", &[7; 16], 1, b"unlock")).to_bytes().to_vec();
-    let mut derive = v.derive_args(PK1, PK2);
-    derive["signature"] = json!(vault_sig);
-    expect_failure(tx(env.relayer_fc.call(signer, "derive_key").args_json(derive).gas(api_gas("derive_key")).transact().await), "Invalid session signature");
-    v.counter = 0;
-    let mut revoke = v.revoke_args();
-    revoke["signature"] = json!(vault_sig);
-    expect_failure(tx(env.relayer_fc.call(signer, "revoke_session").args_json(revoke).gas(api_gas("revoke_session")).transact().await), "Invalid session signature");
-    assert_eq!(env.get_session(&v).await?.unwrap().used, 0);
+    for payload in [&b"unlock"[..], &b"revoke"[..]] {
+        let vault_sig = v.key.sign(&vault_message(signer.as_str(), "app_test", &[7; 16], 1, payload)).to_bytes().to_vec();
+        v.counter = 0;
+        let mut derive = v.derive_args(PK1, PK2);
+        derive["signature"] = json!(vault_sig);
+        expect_failure(tx(env.relayer_fc.call(signer, "derive_key").args_json(derive).gas(api_gas("derive_key")).transact().await), "Invalid session signature");
+        v.counter = 0;
+        let mut revoke = v.revoke_args();
+        revoke["signature"] = json!(vault_sig);
+        expect_failure(tx(env.relayer_fc.call(signer, "revoke_session").args_json(revoke).gas(api_gas("revoke_session")).transact().await), "Invalid session signature");
+        assert_eq!(env.get_session(&v).await?.unwrap().used, 0);
+    }
     Ok(())
 }
 

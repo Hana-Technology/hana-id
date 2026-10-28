@@ -15,7 +15,7 @@ import { type Keks, SHARE_KEY_BYTES, kekFor, loadKeks, unwrapShareKey, wrapShare
 import { NO_SHARE_ID, SHARE_ID_BYTES, type ShareAction, actionPayload, createSharePayload, verifyVaultSignature } from './message.ts';
 import { parentOriginAllowed } from './origins.ts';
 import { effectiveSettings, getSettingsRow } from './settings.ts';
-import { type ShareRow, type ShareUpdate, advanceShare, getShare, incrementUnlocks, insertShare, markRevoked, revokeOtherShares } from './shares.ts';
+import { type ShareRow, type ShareUpdate, advanceShare, capExpiry, getShare, incrementUnlocks, insertShare, markRevoked, revokeAllFrom } from './shares.ts';
 
 export const VAULT_ENDPOINTS = ['/v1/vault/shares', '/v1/vault/unlock', '/v1/vault/touch', '/v1/vault/revoke', '/v1/vault/revoke-all'] as const;
 export type VaultEndpoint = (typeof VAULT_ENDPOINTS)[number];
@@ -243,12 +243,33 @@ function vaultKeyUnavailable(ctx: Ctx): Response {
   return reject(ctx, 503, 'vault_key_unavailable', 'The vault is unavailable, try again later');
 }
 
-/** Why an advance changed nothing: re-read the share and name the first reason. */
-async function refusal(env: Env, ctx: Ctx, app: App, shareId: Uint8Array, now: number): Promise<Response> {
+/**
+ * unlock and touch keep a share alive, so they follow the app's settings as they are now, not as they were when the
+ * share was made: an app that no longer keeps logins (`persistence = 'none'`) gets its share revoked, and the share
+ * never outlives created_at + the current session TTL (a lowered TTL shortens it; the stored limit is lowered too).
+ * Null when the share may go on. advanceShare applies the same rules in its statement, against a change made since.
+ */
+async function settingsRefusal(env: Env, ctx: Ctx, app: App, row: ShareRow, now: number): Promise<Response | null> {
+  const settings = await getSettingsRow(env.DB, app.id);
+  if (!settings) return reject(ctx, 401, 'unknown_app', 'Unknown publishable key');
+  if (settings.persistence !== 'session') {
+    await markRevoked(env.DB, app.id, row.share_id, now);
+    return reject(ctx, 410, 'share_revoked', 'This share was revoked: the app no longer keeps logins across reloads');
+  }
+  const capAt = row.created_at + settings.session_ttl_ms;
+  if (capAt < row.abs_expires_at) await capExpiry(env.DB, app.id, row.share_id, capAt);
+  if (now >= capAt) return reject(ctx, 410, 'share_expired', 'This share has expired');
+  return null;
+}
+
+/** Why an advance changed nothing: re-read the share (and, for unlock and touch, the settings) and name the first reason. */
+async function refusal(env: Env, ctx: Ctx, app: App, shareId: Uint8Array, now: number, checkSettings = false): Promise<Response> {
   const row = await getShare(env.DB, app.id, shareId);
   if (!row) return reject(ctx, 404, 'unknown_share', 'Unknown share');
   if (row.revoked_at !== null) return reject(ctx, 410, 'share_revoked', 'This share was revoked');
   if (now >= row.abs_expires_at || now >= row.idle_until) return reject(ctx, 410, 'share_expired', 'This share has expired');
+  const refused = checkSettings ? await settingsRefusal(env, ctx, app, row, now) : null;
+  if (refused) return refused;
   return done(ctx, 409, { error: 'Wrong counter (replayed or out of order)', code: 'bad_counter', expected: row.counter + 1 });
 }
 
@@ -276,6 +297,11 @@ async function shareAction(env: Env, ctx: Ctx, app: App, action: ShareAction, bo
       await markRevoked(env.DB, app.id, req.shareId, now);
       return reject(ctx, 410, 'share_revoked', 'This share was revoked');
     }
+    const keepsAlive = action === 'unlock' || action === 'touch';
+    if (keepsAlive) {
+      const refused = await settingsRefusal(env, ctx, app, row, now);
+      if (refused) return refused;
+    }
     const signed = await verifyVaultSignature(row.session_pk, req.signature, {
       signer: env.SIGNER_ACCOUNT,
       appId: app.id,
@@ -286,16 +312,19 @@ async function shareAction(env: Env, ctx: Ctx, app: App, action: ShareAction, bo
     if (!signed) return reject(ctx, 401, 'invalid_signature', 'Invalid session signature');
 
     if (action === 'unlock') return await unlock(env, ctx, app, row, req.counter, now, keks!, exec);
-    if (action === 'revoke-all' && now - row.created_at >= REVOKE_ALL_FRESH_MS) {
-      return reject(ctx, 403, 'share_not_fresh', 'Revoking other devices needs a share from a login in the last 5 minutes');
+    if (action === 'revoke-all') {
+      if (now - row.created_at >= REVOKE_ALL_FRESH_MS) {
+        return reject(ctx, 403, 'share_not_fresh', 'Revoking other devices needs a share from a login in the last 5 minutes');
+      }
+      const result = await revokeAllFrom(env.DB, app.id, req.shareId, row.path_hash, req.counter, now);
+      if (!result) return await refusal(env, ctx, app, req.shareId, now);
+      return done(ctx, 200, { revoked: result.revoked });
     }
-    const update: ShareUpdate = action === 'touch' ? { kind: 'slide' } : action === 'revoke' ? { kind: 'revoke' } : { kind: 'counter' };
+    const update: ShareUpdate = action === 'touch' ? { kind: 'slide' } : { kind: 'revoke' };
     const advanced = await advanceShare(env.DB, app.id, req.shareId, req.counter, now, update);
-    if (!advanced) return await refusal(env, ctx, app, req.shareId, now);
+    if (!advanced) return await refusal(env, ctx, app, req.shareId, now, keepsAlive);
     if (action === 'touch') return done(ctx, 200, { counter: advanced.counter, idleUntilMs: advanced.idleUntil });
-    if (action === 'revoke') return done(ctx, 200, { revoked: true });
-    const revoked = await revokeOtherShares(env.DB, app.id, row.path_hash, req.shareId, now);
-    return done(ctx, 200, { revoked });
+    return done(ctx, 200, { revoked: true });
   } catch {
     return reject(ctx, 503, 'config_unavailable', 'Vault storage is unavailable, try again');
   }
@@ -317,7 +346,7 @@ async function unlock(env: Env, ctx: Ctx, app: App, row: ShareRow, counter: numb
   try {
     const rewrap = kek === keks.current ? undefined : { shareEnc: await wrapShareKey(keks.current, binding, ks), kekId: keks.current.id };
     const advanced = await advanceShare(env.DB, app.id, row.share_id, counter, now, { kind: 'slide', rewrap });
-    if (!advanced) return await refusal(env, ctx, app, row.share_id, now);
+    if (!advanced) return await refusal(env, ctx, app, row.share_id, now, true);
     const write = incrementUnlocks(env.DB, app.id, now).catch(() => {
       log({ event: 'usage_increment_failed', requestId: ctx.requestId, appId: app.id, endpoint: ctx.endpoint }, 'error');
     });

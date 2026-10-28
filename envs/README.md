@@ -21,10 +21,13 @@ D1 database). Per-IP limiters always stay near their client. Changing it creates
 
 `vaultOrigin` and `authOrigin` (batch B; optional in the schema until every deployed env has them): the origins of
 Hana's key vault page and of its login, approval and export pages. Set both or neither. Each is a bare origin
-(`https://host[:port]`, no path or trailing slash); `https` is required, and loopback (`http://localhost:…`,
-`http://127.0.0.1:…`) is allowed only in envs whose name starts with `local`. The two must be different origins, and
-outside `local*`/`sandbox*` envs different sites (registrable domains, Public Suffix List rules), so the key-holding
-frame shares no cookies or storage with the pages that handle tokens. sandbox-dev's two `*.tingtc.workers.dev`
+(`https://host[:port]`, no path or trailing slash); `https` is required, and loopback (`localhost`, `*.localhost`,
+127.0.0.0/8, `[::1]`, also with a trailing dot or as IPv4-mapped `[::ffff:7f00:1]`) is allowed only in envs whose name
+starts with `local`. Any other host must be a real DNS name under a registrable domain: no IP address (`0.0.0.0` and
+private ranges included), bare public suffix (`workers.dev`), single label or trailing dot, in any env. The two must be
+different origins, neither may be `apiUrl`'s origin, and outside `local*`/`sandbox*` envs all three must be different
+sites (registrable domains, Public Suffix List rules), so the key-holding frame shares no cookies or storage with the
+pages that handle tokens or with the API. sandbox-dev's two `*.tingtc.workers.dev`
 hostnames are one site, which only a dev env allows. Google redirects to `{authOrigin}/login/callback`, so changing
 `authOrigin` breaks own-client partners' redirect registrations (not addresses). `@hana-id/web` builds its pages only
 for envs that set both.

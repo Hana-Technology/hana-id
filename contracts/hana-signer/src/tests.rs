@@ -901,29 +901,40 @@ fn tokens_with_personal_claims_are_accepted_on_chain() {
 
 // ---- vault messages (off-chain, batch B) are never session messages ----
 
-/// "hana-id-vault-v1:" ‖ borsh(signer) ‖ borsh(app_id) ‖ share_id (16) ‖ counter u64 LE ‖ sha256(payload), for the
-/// fixture's example (signer ME, app "app_test", share id 01..10, counter 1, payload "unlock").
-fn vault_unlock_message() -> Vec<u8> {
+/// "hana-id-vault-v1:" ‖ borsh(signer) ‖ borsh(app_id) ‖ share_id (16) ‖ counter u64 LE ‖ sha256(payload), with signer
+/// ME, app "app_test", share id 01..10 and counter 1.
+fn vault_message(payload: &[u8]) -> Vec<u8> {
     let share_id: Vec<u8> = (1u8..=16).collect();
-    borsh_cat(&[b"hana-id-vault-v1:".to_vec(), bs(ME), bs("app_test"), share_id, 1u64.to_le_bytes().to_vec(), env::sha256(b"unlock")])
+    borsh_cat(&[b"hana-id-vault-v1:".to_vec(), bs(ME), bs("app_test"), share_id, 1u64.to_le_bytes().to_vec(), env::sha256(payload)])
+}
+
+/// The fixture's example (payload "unlock").
+fn vault_unlock_message() -> Vec<u8> {
+    vault_message(b"unlock")
 }
 
 #[test]
 fn vault_signatures_are_rejected_as_derive_and_revoke() {
     ctx(ADMIN, NOW_MS);
     check_layout("vault_message_unlock", &vault_unlock_message(), None);
-    let sig = sk(7).sign(&vault_unlock_message()).to_bytes().to_vec();
+    // "unlock", and "revoke": the vault's revoke has the same payload bytes and counter shape as revoke_session's
+    // (utf8("revoke"), counter n + 1), so it is the one a domain-separation regression would let through first.
     let mut c = setup();
     open(&mut c, "session_a", "s1", 7, 0);
-    let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = c.derive_key(pk(7), 1, sig.clone(), PK1.into(), PK2.into());
-    }))
-    .unwrap_err();
-    assert!(panic_msg(err).contains("Invalid session signature"));
-    let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| c.revoke_session(pk(7), 1, sig.clone()))).unwrap_err();
-    assert!(panic_msg(err).contains("Invalid session signature"));
-    assert_eq!(c.get_session(pk(7)).unwrap().used, 0);
-    assert!(get_created_receipts().is_empty());
+    for payload in [&b"unlock"[..], &b"revoke"[..]] {
+        let sig = sk(7).sign(&vault_message(payload)).to_bytes().to_vec();
+        let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = c.derive_key(pk(7), 1, sig.clone(), PK1.into(), PK2.into());
+        }))
+        .unwrap_err();
+        assert!(panic_msg(err).contains("Invalid session signature"));
+        let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| c.revoke_session(pk(7), 1, sig.clone()))).unwrap_err();
+        assert!(panic_msg(err).contains("Invalid session signature"));
+        // The session is untouched and still live (get_session hides a revoked one).
+        let session = c.get_session(pk(7)).expect("session still live");
+        assert_eq!(session.used, 0);
+        assert!(get_created_receipts().is_empty());
+    }
 }
 
 // ---- issuers ----

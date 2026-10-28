@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { hex } from '../src/bytes.ts';
 import { REVOKE_ALL_FRESH_MS, SHARE_PER_MINUTE, VAULT_APP_MINUTE_FACTOR, VAULT_PER_IP_MINUTE } from '../src/vault/endpoints.ts';
 import { clearKekCache } from '../src/vault/kek.ts';
+import { advanceShare } from '../src/vault/shares.ts';
 import { NO_SHARE_ID, createSharePayload, vaultMessage } from '../src/vault/message.ts';
 import { ORIGIN, appHeaders, call, chain, deriveBody, newKey, seedApp, seedPlan, sessionKeyPair, uid } from './helpers.ts';
 import {
@@ -489,6 +490,86 @@ describe('POST /v1/vault/unlock', () => {
   });
 });
 
+describe('unlock and touch follow the app’s current settings', () => {
+  it('persistence switched to none after a share exists: unlock and touch refuse with 410 share_revoked and revoke it', async () => {
+    for (const action of ['unlock', 'touch'] as const) {
+      const { app, near } = await vaultSetup();
+      const share = await createShare(app, near);
+      const other = await createShare(app, near);
+      await setSettings(app.id, { persistence: 'none' });
+      const res = await act(app, share, action, 1);
+      expect(res.status).toBe(410);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body).toMatchObject({ code: 'share_revoked' });
+      expect(body).not.toHaveProperty('ks');
+      expect((await storedShare(share.shareId))!).toMatchObject({ counter: 0, revoked_at: expect.any(Number) });
+      // For good: turning persistence back on doesn't bring the share back (the other one was never used, so it is).
+      await setSettings(app.id, { persistence: 'session' });
+      expect((await act(app, share, 'unlock', 1)).status).toBe(410);
+      expect((await act(app, other, 'unlock', 1)).status).toBe(200);
+    }
+  });
+
+  it('a session TTL lowered after creation caps the share at created_at + the new TTL', async () => {
+    const { app, near } = await vaultSetup();
+    const share = await createShare(app, near);
+    const created = (await storedShare(share.shareId))!.created_at;
+    expect(share.absExpiresAtMs).toBeGreaterThan(created + 11 * HOUR);
+    await setSettings(app.id, { session_ttl_ms: 2 * HOUR, idle_ttl_ms: 2 * HOUR });
+    const res = await act(app, share, 'unlock', 1);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ ks: share.ks, counter: 1, absExpiresAtMs: created + 2 * HOUR });
+    expect(body.idleUntilMs as number).toBeLessThanOrEqual(created + 2 * HOUR);
+    expect((await storedShare(share.shareId))!).toMatchObject({ abs_expires_at: created + 2 * HOUR, idle_until: body.idleUntilMs });
+    const touched = (await (await act(app, share, 'touch', 2)).json()) as Record<string, unknown>;
+    expect(touched.idleUntilMs as number).toBeLessThanOrEqual(created + 2 * HOUR);
+    // Raising the TTL again never lengthens the share.
+    await setSettings(app.id, { session_ttl_ms: 20 * HOUR });
+    expect((await (await act(app, share, 'unlock', 3)).json()) as Record<string, unknown>).toMatchObject({ absExpiresAtMs: created + 2 * HOUR });
+  });
+
+  it('a share already older than the lowered TTL gets 410 share_expired, its counter unused and its stored expiry lowered', async () => {
+    for (const action of ['unlock', 'touch'] as const) {
+      const { app, near } = await vaultSetup();
+      const share = await createShare(app, near);
+      const created = Date.now() - 3 * HOUR;
+      await setShare(share.shareId, { created_at: created });
+      await setSettings(app.id, { session_ttl_ms: 2 * HOUR, idle_ttl_ms: HOUR });
+      const res = await act(app, share, action, 1);
+      expect(res.status).toBe(410);
+      expect(await res.json()).toMatchObject({ code: 'share_expired' });
+      expect((await storedShare(share.shareId))!).toMatchObject({ counter: 0, abs_expires_at: created + 2 * HOUR, revoked_at: null });
+    }
+  });
+
+  it('the counter update itself re-checks the settings (a change after the request’s first read still applies)', async () => {
+    const { app, near } = await vaultSetup();
+    const share = await createShare(app, near);
+    const id = Uint8Array.from(share.shareId);
+    await setSettings(app.id, { persistence: 'none' });
+    expect(await advanceShare(env.DB, app.id, id, 1, Date.now(), { kind: 'slide' })).toBeNull();
+    await setSettings(app.id, { persistence: 'session' });
+    const created = (await storedShare(share.shareId))!.created_at;
+    await setSettings(app.id, { session_ttl_ms: HOUR, idle_ttl_ms: HOUR });
+    expect(await advanceShare(env.DB, app.id, id, 1, created + HOUR, { kind: 'slide' })).toBeNull();
+    expect(await advanceShare(env.DB, app.id, id, 1, created + HOUR - 1, { kind: 'slide' })).toMatchObject({ counter: 1, absExpiresAt: created + HOUR, idleUntil: created + HOUR });
+    // revoke still works on a share whose app no longer keeps logins.
+    await setSettings(app.id, { persistence: 'none' });
+    expect(await advanceShare(env.DB, app.id, id, 2, Date.now(), { kind: 'revoke' })).toMatchObject({ counter: 2 });
+  });
+
+  it('revoke and revoke-all are not refused by the settings', async () => {
+    const { app, near } = await vaultSetup();
+    const share = await createShare(app, near);
+    const device2 = await createShare(app, near);
+    await setSettings(app.id, { persistence: 'none' });
+    expect(await (await act(app, share, 'revoke-all', 1)).json()).toMatchObject({ revoked: 1 });
+    expect(await (await act(app, share, 'revoke', 2)).json()).toMatchObject({ revoked: true });
+    expect((await storedShare(device2.shareId))!.revoked_at).not.toBeNull();
+  });
+});
+
 describe('POST /v1/vault/touch', () => {
   it('slides idle_until without returning K_s', async () => {
     const { app, near } = await vaultSetup();
@@ -537,6 +618,42 @@ describe('POST /v1/vault/revoke and /revoke-all', () => {
     expect((await act(app, mine, 'unlock', 2)).status).toBe(200);
     expect((await act(app, someoneElse, 'unlock', 1)).status).toBe(200);
     expect((await act(other, otherApp, 'unlock', 1)).status).toBe(200);
+  });
+
+  it('revoke-all is one transaction: if the counter move fails, no other share is revoked and the counter stays', async () => {
+    const { app, near } = await vaultSetup();
+    const mine = await createShare(app, near);
+    const device2 = await createShare(app, near);
+    // A D1 whose batch fails on its second statement (the counter move), after the revoke in the same batch ran.
+    const failing = new Proxy(env.DB, {
+      get(target, prop, receiver) {
+        if (prop === 'prepare') {
+          return (query: string) => target.prepare(/^\s*UPDATE vault_shares SET counter = \?3\b/u.test(query) ? query.replace('UPDATE vault_shares', 'UPDATE no_such_table') : query);
+        }
+        const value = Reflect.get(target, prop, receiver) as unknown;
+        return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+    const res = await act(app, mine, 'revoke-all', 1, { env: { DB: failing } });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ code: 'config_unavailable' });
+    expect((await storedShare(mine.shareId))!.counter).toBe(0);
+    expect((await storedShare(device2.shareId))!.revoked_at).toBeNull();
+    // The retry with the same counter then works.
+    expect(await (await act(app, mine, 'revoke-all', 1)).json()).toMatchObject({ revoked: 1 });
+  });
+
+  it('a replayed revoke-all revokes nothing (shares made after the first one stay live)', async () => {
+    const { app, near } = await vaultSetup();
+    const mine = await createShare(app, near);
+    await createShare(app, near);
+    const body = await actionBody(mine, app.id, 'revoke-all', 1);
+    expect(await (await call('/v1/vault/revoke-all', { headers: vaultHeaders(app), body })).json()).toMatchObject({ revoked: 1 });
+    const later = await createShare(app, near);
+    const replay = await call('/v1/vault/revoke-all', { headers: vaultHeaders(app), body });
+    expect(replay.status).toBe(409);
+    expect(await replay.json()).toMatchObject({ code: 'bad_counter', expected: 2 });
+    expect((await storedShare(later.shareId))!.revoked_at).toBeNull();
   });
 
   it('403 share_not_fresh for a share older than 5 min, without consuming the counter', async () => {

@@ -77,8 +77,16 @@ const unavailable = (head: boolean): Response =>
   new Response(head ? null : ERROR_HTML, { status: 503, headers: pageHeaders(["frame-ancestors 'none'"]) });
 
 /**
- * A static asset (scripts, styles, images) as the assets binding has it, plus `nosniff`, `no-referrer` and a
- * same-origin CORP (only the origin's own pages load them). HTML is refused: pages exist only on their routes.
+ * The policy of every static asset: should one ever be opened as a document (an SVG, XML or XHTML file in the build,
+ * opened directly or framed), it runs nothing, loads nothing and can't be framed. Browsers don't apply a response's
+ * CSP to the scripts and styles a page loads, so the pages' own bundles are unaffected (a Web Worker script would be:
+ * none is built).
+ */
+export const ASSET_CSP = "default-src 'none'; frame-ancestors 'none'; sandbox";
+
+/**
+ * A static asset (scripts, styles, images) as the assets binding has it, plus ASSET_CSP, `nosniff`, `no-referrer`
+ * and a same-origin CORP (only the origin's own pages load them). HTML is refused: pages exist only on their routes.
  */
 async function staticAsset(request: Request, assets: Fetcher, head: boolean): Promise<Response> {
   if (new URL(request.url).pathname.toLowerCase().endsWith('.html')) return notFound(head);
@@ -94,6 +102,7 @@ async function staticAsset(request: Request, assets: Fetcher, head: boolean): Pr
   }
   if (head) await res.body?.cancel();
   const headers = new Headers(res.headers);
+  headers.set('content-security-policy', ASSET_CSP);
   headers.set('x-content-type-options', 'nosniff');
   headers.set('referrer-policy', 'no-referrer');
   headers.set('cross-origin-resource-policy', 'same-origin');

@@ -1,5 +1,7 @@
 // Generates apps/api/wrangler.jsonc from an environment manifest (envs/<env>.json), plus wrangler.vault.jsonc and
-// wrangler.auth.jsonc for the Workers of the two Hana page origins (scripts/pages-wrangler.ts).
+// wrangler.auth.jsonc for the Workers of the two Hana page origins (scripts/pages-wrangler.ts). All three are per env
+// and gitignored (they can carry a real D1 id): generate them, never commit them. The API tests use
+// wrangler.vitest.jsonc, which vitest.config.ts writes with testWranglerConfig() (also gitignored).
 //
 //   pnpm --filter @hana-id/api gen <env> [--d1-id <uuid>] [--dev-vars]
 //
@@ -70,6 +72,36 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
 }
 
 /**
+ * The fixed manifest the API tests' wrangler config is generated from: no real account, origin or D1 id, and none of
+ * an env's optional settings (such as a Durable Object location hint), so editing envs/*.json never changes the tests.
+ * Vars here are placeholders; vitest.config.ts sets the bindings the tests use.
+ */
+export const TEST_MANIFEST: Manifest = {
+  name: 'sandbox-test',
+  network: 'testnet',
+  signer: 'signer.test.near',
+  relayer: 'relayer.test.near',
+  owner: 'owner.test.near',
+  mpc: 'mpc.test.near',
+  ckdDomainId: 2,
+  ckdNetworkKey: 'UNSET',
+  rpc: 'https://rpc.test.invalid',
+  apiUrl: 'https://api.test',
+  vaultOrigin: 'https://vault.test',
+  authOrigin: 'https://auth.test',
+  changeDelayMs: 60_000,
+  googleClientIds: [],
+  sharedGoogleClientIds: [],
+  consoleAudiences: [],
+  cloudflare: { workerName: 'hana-id-api-test', d1Name: 'hana-id-test' },
+};
+
+/** The API tests' wrangler config: the generator's output for TEST_MANIFEST, with the local placeholder D1 id. */
+export function testWranglerConfig(): Record<string, unknown> {
+  return wranglerConfig(TEST_MANIFEST, LOCAL_D1_ID);
+}
+
+/**
  * The D1 id in an existing wrangler.jsonc, but only when it was generated for the same database (`d1Name`): an id
  * left over from another environment must never be paired with this env's database name.
  */
@@ -137,8 +169,8 @@ export function writeWranglerConfig(manifest: Manifest, d1Arg: string | undefine
   return { path, d1Id };
 }
 
-/** `root`/`dir` override the repo root (for .secrets/) and the output directory (tests). */
-export function main(argv: string[], opts: { root?: string; dir?: string } = {}): void {
+/** `root`/`dir` override the repo root (for .secrets/) and the output directory; `loadManifest` the manifest (tests). */
+export function main(argv: string[], opts: { root?: string; dir?: string; loadManifest?: (name: string) => Manifest } = {}): void {
   const envName = argv.find((a, i) => !a.startsWith('--') && argv[i - 1] !== '--d1-id');
   if (!envName) {
     console.error('usage: gen-wrangler <env> [--d1-id <uuid>] [--dev-vars]');
@@ -148,7 +180,7 @@ export function main(argv: string[], opts: { root?: string; dir?: string } = {})
   const d1Arg = idFlag >= 0 ? argv[idFlag + 1] : undefined;
   if (idFlag >= 0 && (!d1Arg || !/^[0-9a-f-]{36}$/u.test(d1Arg))) throw new Error('--d1-id needs a D1 database uuid');
 
-  const manifest = loadEnv(envName);
+  const manifest = (opts.loadManifest ?? loadEnv)(envName);
   // The page Workers first: they refuse more envs (workers.dev outside dev envs), and a refusal then writes nothing.
   const pages = writePagesWranglerConfigs(manifest, COMPATIBILITY_DATE, opts.dir);
   const { path, d1Id } = writeWranglerConfig(manifest, d1Arg, opts.dir);

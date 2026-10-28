@@ -33,8 +33,14 @@ describe('isLoopbackHost', () => {
     for (const o of ['http://localhost:5173', 'http://a.localhost', 'http://127.0.0.1', 'http://127.1.2.3:8', 'http://[::1]:80']) {
       expect(isLoopbackHost(new URL(o).hostname)).toBe(true);
     }
-    for (const o of ['https://localhost.example', 'https://128.0.0.1', 'https://example.com', 'http://[::2]']) {
+    for (const o of ['https://localhost.example', 'https://128.0.0.1', 'https://example.com', 'http://[::2]', 'https://[::ffff:a00:1]', 'https://0.0.0.0']) {
       expect(isLoopbackHost(new URL(o).hostname)).toBe(false);
+    }
+  });
+
+  it('also catches a trailing-dot localhost and IPv4-mapped 127.0.0.0/8', () => {
+    for (const o of ['https://localhost.', 'https://a.localhost.', 'https://[::ffff:7f00:1]', 'https://[::ffff:127.0.0.1]', 'https://[::ffff:127.9.8.7]', 'https://0x7f.1']) {
+      expect(isLoopbackHost(new URL(o).hostname), o).toBe(true);
     }
   });
 });
@@ -65,6 +71,71 @@ describe('hanaOriginProblem', () => {
       expect(hanaOriginProblem(o, 'sandbox-dev'), o).toMatch(/loopback only in local/u);
       expect(hanaOriginProblem(o, 'prod'), o).toMatch(/loopback only in local/u);
     }
+  });
+});
+
+describe('hanaOriginProblem: a real DNS name outside loopback', () => {
+  it('refuses a trailing-dot or IPv4-mapped loopback outside local* envs, as loopback', () => {
+    for (const env of ['prod', 'sandbox-dev']) {
+      for (const o of ['https://localhost.', 'https://a.localhost.', 'https://[::ffff:7f00:1]', 'https://[::ffff:7f09:807]']) {
+        expect(hanaOriginProblem(o, env), `${env} ${o}`).toMatch(/loopback only in local/u);
+      }
+    }
+  });
+
+  it('refuses IP addresses, bare public suffixes, single labels and trailing dots in every env', () => {
+    const cases: [string, RegExp][] = [
+      ['https://0.0.0.0', /not an IP address/u],
+      ['https://10.0.0.1', /not an IP address/u],
+      ['https://192.168.1.10:8443', /not an IP address/u],
+      ['https://8.8.8.8', /not an IP address/u],
+      ['https://[2001:db8::1]', /not an IP address/u],
+      ['https://[::ffff:a00:1]', /not an IP address/u],
+      ['https://workers.dev', /registrable domain/u],
+      ['https://co.uk', /registrable domain/u],
+      ['https://intranet', /registrable domain/u],
+      ['https://vault.hana.example.', /trailing dot/u],
+    ];
+    for (const env of ['prod', 'sandbox-dev', 'local-dev']) {
+      for (const [o, why] of cases) expect(hanaOriginProblem(o, env), `${env} ${o}`).toMatch(why);
+    }
+  });
+
+  it('still accepts real names, workers.dev account hostnames included', () => {
+    for (const env of ['prod', 'sandbox-dev']) {
+      for (const o of ['https://vault.hana.example', 'https://hana.example', 'https://hana-id-vault-sandbox-dev.tingtc.workers.dev', 'https://tingtc.workers.dev']) {
+        expect(hanaOriginProblem(o, env), `${env} ${o}`).toBeNull();
+      }
+    }
+    expect(hanaOriginProblem('http://localhost.:8787', 'local-dev')).toBeNull();
+  });
+
+  it('the manifest schema reports them on the field', () => {
+    expect(messages(manifest('prod', 'https://10.0.0.1', AUTH))).toEqual([expect.stringMatching(/^vaultOrigin: vaultOrigin must be a DNS name, not an IP address/u)]);
+    expect(messages(manifest('sandbox-dev', VAULT, 'https://workers.dev'))).toEqual([expect.stringMatching(/^authOrigin: authOrigin must be a name under a registrable domain/u)]);
+  });
+});
+
+describe('Hana origins against apiUrl', () => {
+  const withApi = (name: string, apiUrl: string, vault: string, auth: string) => ({ ...manifest(name, vault, auth), apiUrl });
+
+  it('refuses a Hana origin equal to apiUrl’s origin, in every env', () => {
+    for (const name of ['prod', 'sandbox-dev']) {
+      expect(messages(withApi(name, `${VAULT}/`, VAULT, AUTH))).toEqual([`vaultOrigin: vaultOrigin must not be apiUrl's origin (${VAULT})`]);
+      expect(messages(withApi(name, `${AUTH}/v1`, VAULT, AUTH))).toEqual([`authOrigin: authOrigin must not be apiUrl's origin (${AUTH})`]);
+    }
+    expect(messages(withApi('local-dev', 'http://localhost:8787', 'http://localhost:8787', 'http://localhost:8788'))).toEqual([
+      "vaultOrigin: vaultOrigin must not be apiUrl's origin (http://localhost:8787)",
+    ]);
+  });
+
+  it('refuses a Hana origin on apiUrl’s site outside dev envs, and allows it in them', () => {
+    expect(messages(withApi('prod', 'https://api.hana.example', VAULT, AUTH))).toEqual([
+      expect.stringMatching(/^vaultOrigin: vaultOrigin must be a different site from apiUrl outside local\*\/sandbox\* envs \(both are https:\/\/hana\.example\)/u),
+    ]);
+    expect(messages(withApi('prod', 'https://api.hana-api.example', VAULT, AUTH))).toEqual([]);
+    // sandbox-dev: api, vault and auth are distinct hostnames on one workers.dev account (allowed in dev envs).
+    expect(messages(JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Record<string, unknown>)).toEqual([]);
   });
 });
 
@@ -121,8 +192,13 @@ describe('manifestSchema: vaultOrigin / authOrigin', () => {
   it('refuses a same-site pair outside local*/sandbox* envs', () => {
     const sameSite = manifest('prod', 'https://vault.hana.example', 'https://auth.hana.example');
     expect(messages(sameSite)).toEqual([expect.stringMatching(/^authOrigin: .*different sites outside local\*\/sandbox\* envs \(both are https:\/\/hana\.example\)/u)]);
+    // The fixture's apiUrl is on tingtc.workers.dev too, so both are also same-site with the API.
     const workersDev = manifest('staging', 'https://v.tingtc.workers.dev', 'https://a.tingtc.workers.dev');
-    expect(messages(workersDev)).toHaveLength(1);
+    expect(messages(workersDev)).toEqual([
+      expect.stringMatching(/^authOrigin: vaultOrigin and authOrigin must be different sites/u),
+      expect.stringMatching(/^vaultOrigin: vaultOrigin must be a different site from apiUrl/u),
+      expect.stringMatching(/^authOrigin: authOrigin must be a different site from apiUrl/u),
+    ]);
     // Different workers.dev accounts are different sites.
     expect(messages(manifest('staging', 'https://v.one.workers.dev', 'https://a.two.workers.dev'))).toEqual([]);
   });

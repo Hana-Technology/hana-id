@@ -177,6 +177,40 @@ describe('POST /v1/login', () => {
     expect(near.sent).toHaveLength(1);
   });
 
+  it('502 near_unavailable when scope_for_client, or separately session_key_in_use, can’t be read; nothing is sent', async () => {
+    for (const view of ['scope_for_client', 'session_key_in_use'] as const) {
+      const { app, aud, near } = await setup();
+      // The node answers the view with an error (as for a contract it can't run).
+      delete near.views[view];
+      const res = await login(app, await loginBody(app.scope, aud));
+      expect([res.status, (await body(res)).code]).toEqual([502, 'near_unavailable']);
+      expect(near.viewCalls.map((c) => c.method)).toContain(view);
+      expect(near.sent).toHaveLength(0);
+      expect(await usage(app.id)).toBeNull();
+    }
+  });
+
+  it('503 issuer_keys_unavailable when Google’s JWKS can’t be fetched; nothing is read or sent', async () => {
+    const { app, aud, near } = await setup();
+    near.jwksStatus = 500;
+    const res = await login(app, await loginBody(app.scope, aud));
+    expect([res.status, (await body(res)).code]).toEqual([503, 'issuer_keys_unavailable']);
+    expect(near.jwksFetches).toBe(1);
+    expect(near.viewCalls).toEqual([]);
+    expect(near.sent).toHaveLength(0);
+  });
+
+  it('502 bad_contract_result with the transaction when the call succeeds without big_y/big_c', async () => {
+    const { app, aud, near } = await setup();
+    for (const value of [{}, { big_y: 'bls12381g1:Y' }, null]) {
+      near.contract.create_session_and_derive = () => value;
+      const res = await login(app, await loginBody(app.scope, aud));
+      expect([res.status, await body(res)]).toEqual([502, expect.objectContaining({ code: 'bad_contract_result', nearTx: expect.any(String) })]);
+    }
+    expect(near.sent).toHaveLength(3);
+    expect(await usage(app.id)).toBeNull();
+  });
+
   it('shared login: a shared client into a scope that allows it', async () => {
     const app = await seedApp();
     const shared = newAud();

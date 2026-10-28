@@ -1,9 +1,8 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`); browser parts
-(`packages/web`) re-verified on `fix/b-web`, auto-approve policies and open issues (b)–(d) on `fix/b-core-policy`
-(both 2026-10-28, merged into `feat/batch-b`).
+known open issues. Last verified against code: 2026-10-28 (`feat/batch-b` after merging the batch B fix branches `fix/b-web`,
+`fix/b-core-policy`, `fix/b-clients` and `fix/b-api`).
 
 Component map and flows: `docs/architecture.md`. On-chain layouts and the contract's own security notes:
 `docs/contract-interface.md` ("Security notes (for reviewers)"). Browser parts (vault, auth pages, partner client)
@@ -65,7 +64,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | BLS app key `a` | BLS12-381 scalar | Memory, one login | vault / export window | Dropped after decrypt (`packages/core/src/ckd.ts:84`) |
 | Session key | Ed25519, non-extractable WebCrypto | Vault memory; IndexedDB record in `'session'` mode | vault | ≤ the session (≤ 23 h 50 min app setting, ≤ 24 h on chain) |
 | `K_s` | 32-byte AES-GCM key per share | D1 only as `share_enc` under `VAULT_KEK`; vault memory briefly | API generates, vault uses | Ends with the share (idle ≤ `idle_ttl_ms`, absolute ≤ `session_ttl_ms`, revoke) |
-| `VAULT_KEK`, `VAULT_KEK_PREVIOUS` | AES-256-GCM, `<id>:<base64>` | Worker secrets | Hana | Rotate: old value → `VAULT_KEK_PREVIOUS`, new id in `VAULT_KEK`; unlocks and the hourly cron re-wrap (`apps/api/src/vault/kek.ts`, `vault/cron.ts`) |
+| `VAULT_KEK`, `VAULT_KEK_PREVIOUS` | AES-256-GCM, `<id>:<base64>` | Worker secrets; `.secrets/<env>/vault-kek` (and `vault-kek.previous`), 0600, the only copy | Hana | Generated and set by `scripts/vault-kek.ts init` (wrangler stdin, never printed, file never overwritten). Rotate with `vault-kek rotate`: old value → `VAULT_KEK_PREVIOUS`, new id in `VAULT_KEK`; unlocks and the hourly cron re-wrap (`apps/api/src/vault/kek.ts`, `vault/cron.ts`) |
 | `relayKey`, `relayReadKey` | 32-byte AES-GCM key / read capability | Vault memory; `relayKey` also in the login popup's `sessionStorage` (per spec) | vault, login popup | One login; slot lives 120 s |
 | Session-pool keys `RELAYER_KEYS` | ed25519 function-call keys on `relayer`, receiver `signer` | Worker secret; `.secrets/<env>/relayer-keys.json` | Hana | Default 3 × 2 NEAR. `deploy-contract` deletes and re-adds; mainnet needs allowance monitoring |
 | Owner-pool keys `OWNER_RELAYER_KEYS` | same, owner methods | Worker secret; `.secrets/<env>/owner-relayer-keys.json` | Hana | Default 1 × 0.5 NEAR |
@@ -121,13 +120,23 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   session endpoints only for `pk_test_` in dev envs. Loopback origins and `http://localhost:*` only for `pk_test_` in
   dev envs. A `pk_test_` app on a scope a `pk_live_` app uses is refused (`scope_conflict`, `apps/api/src/apps.ts:29`).
   These checks bind browsers only (a script can send any `Origin`); they never replace a token or signature.
+- **Hana origins host nothing else.** A request whose URL origin is `VAULT_ORIGIN` or `AUTH_ORIGIN` reaches only
+  `{vaultOrigin}/vault` in the API Worker; every other path is a 404 with `frame-ancestors 'none'` and no CORS
+  (`apps/api/src/index.ts`), so no API endpoint is ever same-origin with the vault's storage. The manifest schema
+  (`packages/env/src/origins.ts`, `schema.ts`) refuses a Hana origin that is an IP address, a bare public suffix, a
+  single label or has a trailing dot (any env), loopback (including `localhost.` and IPv4-mapped 127/8) outside
+  `local*`, `apiUrl`'s own origin (any env), or `apiUrl`'s site outside dev envs.
 - **CORS**: app endpoints echo only an allowed origin; preflight allows the Hana origins and origins of active apps
   (`origins.ts:105`); vault endpoints only `VAULT_ORIGIN`; the relay only the Hana origins; `/v1/owner-actions` and
   `/v1/health` are `*`.
 - **Vault shares**: every lookup is `share_id AND app_id`; one share per session key; a share needs a live, used-up
   session in the app's scope; counter moves by one atomic `UPDATE`; a share whose partner origin was removed is
-  revoked on next use; `revoke-all` needs a share < 5 min old; `K_s` is wrapped with AAD `share_id ‖ app_id ‖
-  session_pk`, so a row can't be moved to another share, app or key.
+  revoked on next use; unlock and touch follow the app's settings as they are now (persistence `'none'` revokes the
+  share; it never outlives `created_at` + the current `session_ttl_ms`), checked before the update and again inside
+  it (`apps/api/src/vault/shares.ts`, `advanceShare`); `revoke-all` needs a share < 5 min old and revokes the other
+  shares and moves its counter in one D1 transaction (`revokeAllFrom`), so it does both or neither and a replay
+  revokes nothing; `K_s` is wrapped with AAD `share_id ‖ app_id ‖ session_pk`, so a row can't be moved to another
+  share, app or key.
 - **Login relay**: only `authOrigin` writes, only Hana origins read; write once (409), read once with the read key
   (403 without, slot untouched); 120 s then tombstone; ≤ 8 KiB; ciphertext only.
 - **Rate limits** (fixed windows, `rate-limiter.ts`; IPv6 keyed by /64, `ip.ts`):
@@ -142,7 +151,11 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   | Owner actions | 10/min per IP; 20/min and 200/day globally |
 
 - **Bodies and logs**: body caps (`readJson` streams and stops at the cap; vault 4 KiB, relay 8 KiB). Logs never carry
-  tokens, `K_s`, `share_enc`, ciphertexts, signatures, relay bodies, keys or CKD responses.
+  tokens, `K_s`, `share_enc`, ciphertexts, signatures, relay bodies, keys, CKD responses or relay ids (the OAuth
+  `state`: a relay path is logged as `/v1/login-relay`, the top-level error line included).
+- **Admin settings writes** (`scripts/lib/admin-settings.ts`): the UPDATE is guarded by every settings column as the
+  command read it, so a change made in between (another operator's `--auto-approve off`) can't be overwritten with
+  values planned from the old row; a delayed setting is never put in force by the CLI.
 
 ### Vault page (`apps/api/src/vault/page.ts`)
 
@@ -155,9 +168,11 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
 - Config escaping: `<script type="application/json">` with `<`, `>`, `&`, U+2028, U+2029 escaped (`jsonForHtml`,
   `page.ts:42`); origins that aren't a bare lowercase origin are dropped before they reach the header or the config
   (`apps/api/src/vault/origins.ts:11`). `signer` is not in the config (the bundle's constant is used).
-- Auth pages: `frame-ancestors 'none'`, page-specific `connect-src`, no COOP header. `packages/web` builds them
-  with a `<meta>` CSP (`scripts/build-auth-pages.ts`) and the auth Worker sends the headers
-  (`apps/api/src/pages/host.ts`).
+- Auth pages: `frame-ancestors 'none'`, page-specific `connect-src`, no COOP header (`apps/api/src/pages/host.ts`
+  sets the headers; the build adds a `<meta>` CSP).
+- Static assets on both Hana origins (`host.ts`, `staticAsset`): never HTML, and every one carries `default-src
+  'none'; frame-ancestors 'none'; sandbox`, `nosniff`, `no-referrer` and a same-origin CORP, so an SVG or XML file in
+  the build opened directly or framed runs and frames nothing.
 
 ### Browser (`packages/web`)
 
@@ -252,18 +267,20 @@ Code: `packages/core/src/policy/` (validator, matcher, `policyId`, usage); the v
 
 ## Known open issues
 
-Findings (a)–(d) were raised after the batch B build; (a) is checked against commit 14e6fc3, (b)–(d) are fixed on
-`fix/b-core-policy` (off `feat/batch-b` 0f0a437).
+Findings (a)–(d) were raised after the batch B build: (a) is fixed on `fix/b-api`, (b)–(d) on `fix/b-core-policy`
+(both merged into `feat/batch-b`).
 
-**(a) Unlock and touch don't re-check the app's current settings.** `shareAction` and `unlock`
-(`apps/api/src/vault/endpoints.ts:256`, `:308`) load no settings. Confirmed:
+**(a) Unlock and touch don't re-check the app's current settings. Fixed on `fix/b-api`.** Unlock and touch now
+read the app's settings: `persistence = 'none'` revokes the share (`410 share_revoked`), and the share ends at
+`min(abs_expires_at, created_at + current session_ttl_ms)` (`410 share_expired`, stored expiry lowered); the counter
+`UPDATE` applies both rules in the same statement, so a change made after the first read still holds
+(`apps/api/src/vault/endpoints.ts` `settingsRefusal`, `shares.ts` `advanceShare`; tests in `apps/api/test/vault.test.ts`
+"unlock and touch follow the app's current settings"). As found:
 - An app switched to `persistence = 'none'` keeps unlocking existing shares until each expires (up to 23 h 50 min).
   Only share creation checks `persistence` (`endpoints.ts:194`).
 - `abs_expires_at` is fixed at creation (`endpoints.ts:216`); a lowered `session_ttl_ms` doesn't shorten live
   shares. `idle_until` does follow the current `idle_ttl_ms` on each slide (`apps/api/src/vault/shares.ts:104`), but
   stays capped by the old `abs_expires_at`.
-- Planned fix: unlock and touch refuse and revoke the share when `persistence` is `'none'`, and cap the absolute
-  expiry at `created_at + current session_ttl_ms`.
 
 **(b) EVM max fee isn't counted in the value limits.** Fixed (`fix/b-core-policy`). Besides the per-transaction fee
 cap (`fee_too_high`), the matcher counts `value + max fee` against `maxValueWei` (`value_plus_fee_too_high`) and
@@ -303,11 +320,12 @@ control; the point here is that one of those powers sits in the API Worker's sec
 governance, and a way to bound issuer-key changes (for example a delay, or alerting on `issuer_key_set` for a kid
 Google doesn't publish).
 
-**(f) The API serves a stored auto-approve policy unvalidated.** On `feat/batch-b`, `effectiveSettings` only checks
-that the policy is a JSON object (`apps/api/src/vault/settings.ts:48`) and the vault page inlines it. There is no
-`admin app:settings` yet, so a policy can only arrive through a direct D1 write, which also skips the pending delay.
-`b/settings-cli` (unmerged) adds the CLI and runs `parseAutoApprovePolicy` before serving. The vault validates again
-(per spec), and the user must accept the `policyId`.
+**(f) The API serves a stored auto-approve policy unvalidated. Fixed** (`b/settings-cli`, merged): `effectiveSettings`
+serves a stored policy only if `parseAutoApprovePolicy` accepts it against the app's `session_ttl_ms`, and logs
+`auto_approve_policy_invalid` otherwise (`apps/api/src/vault/settings.ts`); `admin app:settings` validates before
+writing. As found: at 14e6fc3, `effectiveSettings` only checked that the policy was a JSON object and the vault page
+inlined it. A bare D1 write can still set a policy without the pending delay (see "What a compromise gives", D1); the
+vault validates again (per spec), and the user must accept the `policyId`.
 
 **(g) Replays across isolates still reach the chain.** The counter hold is per isolate (`session-use.ts:76`); copies
 of one signed request arriving in different isolates are all relayed and all but one fail on chain (~2.2 Tgas each).

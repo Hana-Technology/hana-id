@@ -158,6 +158,35 @@ describe('GET {vaultOrigin}/vault', () => {
     expect((await vaultPage(app.key, { env: { VAULT_ORIGIN: undefined } })).status).toBe(404);
   });
 
+  it('the Hana page origins serve nothing of the API: 404 with page headers, while the API host still answers', async () => {
+    const app = await seedApp();
+    const near = chain();
+    for (const host of [VAULT, 'https://auth.test']) {
+      for (const [path, method] of [
+        ['/v1/health', 'GET'],
+        ['/v1/app', 'GET'],
+        ['/v1/vault/unlock', 'POST'],
+        ['/v1/sessions', 'POST'],
+        ['/v1/owner-actions', 'POST'],
+        ['/v1/login-relay/' + 'A'.repeat(43), 'GET'],
+        ['/nope', 'GET'],
+      ] as const) {
+        const res = await page('', { host, path, method });
+        expect(res.status).toBe(404);
+        expect(res.headers.get('access-control-allow-origin')).toBeNull();
+        expect(csp(res)).toBe(`${BASE}; frame-ancestors 'none'`);
+        expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+        expect(res.headers.get('content-type')).toBe('text/plain; charset=utf-8');
+      }
+    }
+    expect((await page('', { host: 'https://auth.test', path: '/vault', method: 'HEAD' })).status).toBe(404);
+    expect(near.rpcMethods).toEqual([]);
+    // The same paths on the API's own host.
+    expect((await call('/v1/health')).status).toBe(200);
+    expect((await call('/v1/app', { headers: { 'x-hana-key': app.key, origin: ORIGIN } })).status).not.toBe(404);
+    expect((await call('/v1/vault/unlock', { headers: { 'x-hana-key': app.key, origin: VAULT, 'x-hana-parent-origin': ORIGIN }, body: {} })).status).toBe(400);
+  });
+
   it('an app name of </script><base href=//x> stays inside the JSON', async () => {
     const app = await seedApp();
     const name = '</script><base href=//x> &    <!--';

@@ -1,11 +1,12 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KeyPair } from '@near-js/crypto';
-import { loadEnv } from '@hana-id/env';
+import { loadEnv, manifestSchema, repoRoot } from '@hana-id/env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseRelayerKeys } from '../../src/relayer-config.ts';
-import { LOCAL_D1_ID, devVarsContent, existingD1Id, main, writeDevVars, writeWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
+import { LOCAL_D1_ID, TEST_MANIFEST, devVarsContent, existingD1Id, main, testWranglerConfig, writeDevVars, writeWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
 
 /**
  * dotenv 16.3.1 `parse`, exactly as bundled in wrangler 4.x (wrangler-dist/cli.js, used by tryLoadDotDevDotVars to
@@ -79,6 +80,28 @@ describe('.dev.vars', () => {
     expect(parseRelayerKeys(parsed.RELAYER_KEYS)).toEqual(relayerKeys);
     expect(parseRelayerKeys(parsed.OWNER_RELAYER_KEYS, 'OWNER_RELAYER_KEYS')).toEqual(ownerRelayerKeys);
     expect(parsed.KEYS_UPDATER_KEY).toBe(updaterKey);
+  });
+});
+
+describe('generated configs are never committed', () => {
+  const GENERATED = ['wrangler.jsonc', 'wrangler.vault.jsonc', 'wrangler.auth.jsonc', 'wrangler.vitest.jsonc'].map((f) => `apps/api/${f}`);
+
+  it('every generated wrangler config is gitignored and untracked', () => {
+    const git = (args: string[]) => spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8' });
+    if (git(['rev-parse', '--git-dir']).status !== 0) return; // not a checkout (e.g. an exported tree)
+    for (const path of GENERATED) expect(git(['check-ignore', '-q', '--no-index', path]).status, path).toBe(0);
+    expect(git(['ls-files', '--', ...GENERATED]).stdout.trim()).toBe('');
+  });
+
+  it('the tests’ config comes from the same generator, for a fixed manifest with no real account or D1 id', () => {
+    expect(manifestSchema.parse(TEST_MANIFEST)).toEqual(TEST_MANIFEST);
+    const test = testWranglerConfig() as Record<string, unknown> & { d1_databases: { database_id: string }[]; vars: Record<string, string> };
+    const real = wranglerConfig(manifest, '11111111-2222-4333-8444-555555555555') as Record<string, unknown>;
+    // Everything but the env's names, vars and D1 database is the same as any env gets.
+    for (const key of Object.keys(real).filter((k) => !['name', 'vars', 'd1_databases'].includes(k))) expect(test[key], key).toEqual(real[key]);
+    expect(test.d1_databases[0]!.database_id).toBe(LOCAL_D1_ID);
+    expect(test.vars).not.toHaveProperty('DO_LOCATION_HINT');
+    expect(JSON.stringify(test)).not.toMatch(/\.testnet|workers\.dev/u);
   });
 });
 
@@ -161,6 +184,21 @@ describe('wrangler.jsonc', () => {
     const { path, count } = writeDevVars(manifest.name, root, out);
     expect(count).toBe(1);
     expect(Object.keys(dotenvParse(readFileSync(path, 'utf8')))).toEqual(['RELAYER_KEYS']);
+  });
+
+  it('main writes nothing when the page configs refuse the env (they are built first)', () => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const dir = tmp();
+    // workers.dev page origins outside dev envs: the schema accepts them, the page Workers don't.
+    const refused = manifestSchema.parse({
+      ...manifest,
+      name: 'prod-test',
+      apiUrl: 'https://api.hana.example',
+      vaultOrigin: 'https://v.acct1.workers.dev',
+      authOrigin: 'https://a.acct2.workers.dev',
+    });
+    expect(() => main(['prod-test'], { dir, loadManifest: () => refused })).toThrow(/workers\.dev hostnames are for local\*\/sandbox\* envs only/u);
+    for (const file of ['wrangler.jsonc', 'wrangler.vault.jsonc', 'wrangler.auth.jsonc', '.dev.vars']) expect(existsSync(join(dir, file)), file).toBe(false);
   });
 
   it('main writes the API and page Worker configs and .dev.vars, and never prints secret values', () => {

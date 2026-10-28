@@ -9,7 +9,8 @@
   },
   "scripts": {
     "gen:envs": "tsx scripts/gen-envs.ts",
-    "build": "tsx scripts/gen-envs.ts",
+    "build": "tsx scripts/gen-envs.ts && tsx scripts/build-auth-pages.ts",
+    "build:auth": "tsx scripts/build-auth-pages.ts",
     "test": "tsx scripts/gen-envs.ts && vitest run",
     "typecheck": "tsx scripts/gen-envs.ts && tsc --noEmit && tsc --noEmit -p tsconfig.node.json"
   },
@@ -19,6 +20,8 @@
   "devDependencies": {
     "@hana-id/env": "workspace:*",
     "@types/node": "22.20.5",
+    "esbuild": "0.28.2",
+    "happy-dom": "21.0.3",
     "tsx": "4.23.15",
     "typescript": "5.9.3",
     "vitest": "4.1.12"

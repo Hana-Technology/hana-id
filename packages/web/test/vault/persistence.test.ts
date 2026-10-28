@@ -518,13 +518,35 @@ describe('in-memory idle limit (Q28)', () => {
     expect(prkOf(first)!.some((b) => b !== 0)).toBe(true);
   });
 
-  it('every request from the page restarts the idle limit', async () => {
-    const { browser, first } = await loggedIn();
+  it('a request that uses the key (a signature) restarts the idle limit', async () => {
+    const { browser, first, addresses } = await loggedIn();
     browser.timers.advance(IDLE - 60_000);
-    expect(await statusOf(first)).toBe('logged_in');
+    expect(await signMessage(first, 'still here')).toBe(addresses.stellar);
     browser.timers.advance(IDLE - 60_000);
     expect(prkOf(first)?.some((b) => b !== 0)).toBe(true);
     browser.timers.advance(60_000);
+    expect(prkOf(first)).toBeUndefined();
+  });
+
+  it('reads (status, addresses, auto-approve status) never keep PRK in memory, and answer while dormant without an unlock', async () => {
+    const { browser, first, addresses } = await loggedIn();
+    const reads = async () => {
+      expect((await first.request('hana_status')).result).toMatchObject({ status: 'logged_in', addresses });
+      expect((await first.request('eth_accounts')).result).toEqual([addresses.evm]);
+      expect((await first.request('stellar_getAddress')).result).toEqual({ address: addresses.stellar });
+      expect((await first.request('hana_autoApproveStatus')).result).toBeNull();
+    };
+    browser.timers.advance(IDLE - 60_000);
+    await reads();
+    // Polled just before the limit, yet the limit still counts from the login.
+    browser.timers.advance(60_000);
+    expect(prkOf(first)).toBeUndefined();
+    const before = unlocks(browser);
+    for (let i = 0; i < 3; i++) {
+      await reads();
+      browser.timers.advance(10 * 60_000);
+    }
+    expect(unlocks(browser)).toBe(before);
     expect(prkOf(first)).toBeUndefined();
   });
 

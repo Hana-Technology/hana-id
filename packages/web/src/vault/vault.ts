@@ -15,9 +15,11 @@
 //   same way before every raw request: once GET /v1/app says 'off', raw requests are refused until a reload.
 // - A pk_test_ app never signs for a mainnet (docs/decisions.md D39): the request is refused before any popup or
 //   policy.
-// - PRK is zeroed after the app's idle limit (`idleTtlMs`) without a request from the partner page, not only at the
-//   session's end. In 'session' mode the session stays dormant (addresses known, no key) and the next request that
-//   needs the key unlocks the record again, which works while the server share is alive; in 'none' mode it ends.
+// - PRK is zeroed after the app's idle limit (`idleTtlMs`) without a request that uses the key (a signature, an
+//   export, revoke-other-devices, an auto-approve consent request), not only at the session's end. Status, address and
+//   auto-approve-status reads don't count, so polling them can't keep the key in memory. In 'session' mode the session
+//   stays dormant (addresses known, no key; those reads keep answering) and the next request that uses the key unlocks
+//   the record again, which works while the server share is alive; in 'none' mode it ends.
 // - One session per app per device: a login replaces the record and revokes the shares it replaces, a logout ends
 //   every tab's session, and a `revoked` broadcast ends only the tabs holding that share.
 import {
@@ -121,7 +123,10 @@ interface Session {
   keyPair: CryptoKeyPair;
   persistence: Persistence;
   share: Share | null;
-  /** 'none' mode: the consent lives here. 'session' mode: in the record. */
+  /**
+   * 'none' mode: the consent lives here. 'session' mode: the record holds it (sealed under PRK); this is the last one
+   * this tab read or wrote, kept so hana_autoApproveStatus can answer while the session is dormant.
+   */
   consent: ConsentV1 | null;
   lastTouchAt: number;
   /** Server-corrected time of the partner page's last request for this session (the in-memory idle limit). */
@@ -136,6 +141,8 @@ interface Dormant {
   expiresAtMs: number;
   sessionPk: Uint8Array;
   shareId: Uint8Array;
+  /** The consent this tab last read or wrote (not secret: policy id, end time, counters), for hana_autoApproveStatus. */
+  consent: ConsentV1 | null;
   /** Ends it at expiresAtMs, as a live session's expiry timer would. */
   expiryTimer: unknown;
 }
@@ -481,23 +488,20 @@ export class Vault {
   }
 
   /** Requests that read or use the session: each one counts as activity for the in-memory idle limit. */
-  private static readonly SESSION_METHODS: ReadonlySet<string> = new Set([
-    'hana_status',
-    'hana_export',
-    'hana_revokeOtherDevices',
-    'stellar_getAddress',
-    'eth_accounts',
-    'hana_requestAutoApprove',
-    'hana_autoApproveStatus',
-  ]);
-
-  /** Requests that need PRK (a dormant session is unlocked first). */
-  private static readonly KEY_METHODS: ReadonlySet<string> = new Set(['hana_export', 'hana_revokeOtherDevices', 'hana_requestAutoApprove', 'hana_autoApproveStatus']);
+  /**
+   * Requests that use the key, besides the sign methods: only these count as activity for the in-memory idle limit, and
+   * a dormant session is unlocked before them. Reads (hana_status, eth_accounts, stellar_getAddress,
+   * hana_autoApproveStatus) neither keep PRK in memory nor wake a dormant session: polling them can't hold the key.
+   */
+  private static readonly KEY_METHODS: ReadonlySet<string> = new Set(['hana_export', 'hana_revokeOtherDevices', 'hana_requestAutoApprove']);
 
   private async dispatch(r: PortRequest): Promise<unknown> {
+    const usesKey = isSignMethod(r.method) || Vault.KEY_METHODS.has(r.method);
+    if (usesKey) {
+      this.noteActivity();
+      await this.wake();
+    }
     const sign = isSignMethod(r.method);
-    if (sign || Vault.SESSION_METHODS.has(r.method)) this.noteActivity();
-    if (sign || Vault.KEY_METHODS.has(r.method)) await this.wake();
     if (sign) return this.sign(r as SignRequest);
     switch (r.method) {
       case 'hana_status':
@@ -825,7 +829,7 @@ export class Vault {
     this.dormant = null;
   }
 
-  /** A request from the partner page for the session: restarts the in-memory idle limit. */
+  /** A request that uses the key: restarts the in-memory idle limit. */
   private noteActivity(): void {
     const s = this.session;
     if (s && this.live() === s) s.lastActivityAt = this.clock.now();
@@ -853,7 +857,14 @@ export class Vault {
       void this.expire(s);
       return;
     }
-    const dormant: Dormant = { addresses: { ...s.addresses }, expiresAtMs: s.expiresAtMs, sessionPk: s.sessionPk, shareId: Uint8Array.from(s.share.shareId), expiryTimer: null };
+    const dormant: Dormant = {
+      addresses: { ...s.addresses },
+      expiresAtMs: s.expiresAtMs,
+      sessionPk: s.sessionPk,
+      shareId: Uint8Array.from(s.share.shareId),
+      consent: s.consent ? { ...s.consent, valueWeiByChain: { ...s.consent.valueWeiByChain } } : null,
+      expiryTimer: null,
+    };
     this.endSession(false);
     this.dormant = dormant;
     const delay = Math.max(0, s.expiresAtMs - this.clock.now());
@@ -1216,7 +1227,8 @@ export class Vault {
     const s = this.live();
     if (!s) throw notLoggedIn();
     // Raw signing is re-read before every raw request (setting it to 'off' takes effect in open tabs).
-    const rawSign: RawSign = request.method === 'hana_signRaw' ? await this.freshRawSign() : 'off';
+    // A test app's raw request is refused outright (approvalSubject), with no API read.
+    const rawSign: RawSign = request.method === 'hana_signRaw' && !this.testApp ? await this.freshRawSign() : 'off';
     if (this.live() !== s) throw disconnected();
     const subject = approvalSubject(request, s.addresses, { rawSign, testApp: this.testApp });
     const policy = NEVER_AUTO_APPROVED_KINDS.has(subject.kind) ? null : await this.freshPolicy();
@@ -1307,6 +1319,7 @@ export class Vault {
           return null;
         }
       }
+      s.consent = consent;
       const out = await fn(consent);
       if (out.write !== undefined) {
         s.consent = out.write;
@@ -1354,10 +1367,20 @@ export class Vault {
     return now ? { granted: true, policyId: policy.policyId, expiresAtMs: now.expiresAtMs } : { granted: false };
   }
 
+  /**
+   * The active consent's status. Live: read from the record (it is sealed under PRK, so reading it needs the key in
+   * memory). Dormant: this tab's last known consent, without waking the session (a status poll must not bring PRK
+   * back); its counters may lag auto-signs made by other tabs since, until the next request that uses the key.
+   */
   private async autoApproveStatusResult(): Promise<PortResultMap['hana_autoApproveStatus']> {
     const s = this.live();
     const policy = this.policy;
-    if (!s || !policy) return null;
+    if (!policy) return null;
+    if (!s) {
+      const d = this.liveDormant();
+      const now = this.clock.now();
+      return d && consentActive(d.consent, policy, now, d.expiresAtMs) ? autoApproveStatus(d.consent, policy, now) : null;
+    }
     return this.withConsent(s, async (c) => ({ value: consentActive(c, policy, this.clock.now(), s.expiresAtMs) ? autoApproveStatus(c, policy, this.clock.now()) : null }));
   }
 

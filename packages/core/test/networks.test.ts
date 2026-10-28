@@ -30,8 +30,8 @@ const typed = (domain: Record<string, unknown>) =>
 
 describe('test apps and mainnet chains (D39)', () => {
   it('allows exactly the listed EVM testnets and local chains', () => {
-    for (const id of [11155111, 17000, 84532, 421614, 11155420, 57054, 97, 80002, 43113, 31337, 1337]) expect(isTestEvmChain(id)).toBe(true);
-    expect(Object.keys(TEST_EVM_CHAINS)).toHaveLength(11);
+    for (const id of [11155111, 17000, 560048, 84532, 421614, 11155420, 57054, 14601, 97, 80002, 43113, 31337, 1337]) expect(isTestEvmChain(id)).toBe(true);
+    expect(Object.keys(TEST_EVM_CHAINS)).toHaveLength(13);
     // Mainnets, and chains nobody listed, are refused alike.
     for (const id of [1, 8453, 42161, 10, 146, 56, 137, 43114, 999_999, 0, -1, 1.5, Number.NaN]) expect(isTestEvmChain(id)).toBe(false);
     // Inherited object keys are not chains.

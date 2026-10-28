@@ -5,8 +5,10 @@
 //   signature for any other passphrase is invalid there).
 // - EVM: an explicit allowlist of known testnet chain IDs. Anything else is treated as a mainnet and refused, which is
 //   safer than a denylist of mainnets (a new or unknown chain is refused, not allowed).
-// - Typed data is refused when its domain names a chain outside the allowlist. Messages, typed data without a chainId
-//   and raw requests name no network (D35) and are not refused.
+// - Typed data is refused when its domain names a chain outside the allowlist. Messages and typed data without a
+//   chainId name no network (D35) and are not refused.
+// - Raw signing is refused outright for test apps: a raw digest can be a mainnet transaction's hash, and nothing in
+//   the request says which network it is for.
 // The partner client applies the same rules to eth_sendTransaction and wallet_switchEthereumChain/addEthereumChain,
 // for a clear error before anything is filled or switched; the vault's check is the one that counts.
 import { type PortRequest, type SignMethod, approvalContent } from './protocol.ts';
@@ -22,6 +24,8 @@ export const TEST_EVM_CHAINS: Readonly<Record<number, string>> = Object.freeze({
   421614: 'Arbitrum Sepolia',
   11155420: 'OP Sepolia',
   57054: 'Sonic Blaze testnet',
+  14601: 'Sonic testnet',
+  560048: 'Hoodi',
   97: 'BNB Smart Chain testnet',
   80002: 'Polygon Amoy',
   43113: 'Avalanche Fuji',
@@ -39,6 +43,9 @@ export const isTestStellarNetwork = (passphrase: string): boolean => passphrase 
 
 /** The user-facing explanation (vault errors, the partner client's errors, the approval popup). */
 export const TEST_APP_NETWORK_RULE = 'Test apps (pk_test_ keys) can sign only for test networks: Hana ID refuses Stellar mainnet and EVM chains outside its testnet list';
+
+/** Why a test app's raw request is refused (a raw digest names no network, so it could be a mainnet transaction). */
+export const TEST_APP_RAW_RULE = 'Test apps (pk_test_ keys) can’t use raw signing: a raw digest can be a mainnet transaction';
 
 /** A mainnet a test app may not sign for, as the request names it. */
 export type MainnetRefusal = { chain: 'stellar'; networkPassphrase: string } | { chain: 'evm'; chainId: number };

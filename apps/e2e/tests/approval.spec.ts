@@ -10,6 +10,7 @@ import {
   approve,
   clickLauncher,
   errorCode,
+  launcher,
   expect,
   login,
   newApp,
@@ -184,15 +185,6 @@ test.describe('the digest binds the answer to the whole request', () => {
     expect(await errorCode(page, 'sig')).toBe(4001);
   });
 
-  test('a digest over another chain is refused (4001, no signature)', async ({ page }) => {
-    // A raw request (either chain) of 32 bytes fits both chains, so only the chain differs.
-    await loggedIn(page, await newApp({ settings: { rawSign: 'approval' } }));
-    await page.evaluate(() => (window as any).e2e.run('sig', 'signRaw', { chain: 'stellar', bytes: new Uint8Array(32).fill(3) }));
-    const popup = await clickLauncher(page, 'Review in Hana');
-    await forgeFromPopup(popup, (i) => ({ ...i, chain: i.chain === 'stellar' ? 'evm' : 'stellar' }));
-    expect(await errorCode(page, 'sig')).toBe(4001);
-  });
-
   test('a digest over another address is refused (4001, no signature)', async ({ page }) => {
     await loggedIn(page);
     await runAction(page, 'sig', 'personalSign', 'whose key');
@@ -234,14 +226,14 @@ test.describe('raw signing', () => {
     expect(await errorCode(page, 'raw')).toBe(4100);
   });
 
-  test('needs an Approve under the raw warning when raw_sign is approval', async ({ page }) => {
+  // The suite's apps are test apps (loopback partner origins need pk_test_), which can never sign raw (D39): the
+  // approval flow of a live app's raw request, and a digest that differs only in its chain, are covered by
+  // packages/web/test/vault/approval.test.ts.
+  test('is refused with 4100 for a test app even when raw_sign is approval, with no popup', async ({ page }) => {
     await loggedIn(page, await newApp({ settings: { rawSign: 'approval' } }));
     await page.evaluate(() => (window as any).e2e.run('raw', 'signRaw', { chain: 'stellar', bytes: new Uint8Array(64).fill(2) }));
-    const popup = await clickLauncher(page, 'Review in Hana');
-    await expect(popup.getByText('Raw signing can authorize any transaction', { exact: false })).toBeVisible();
-    await approve(popup);
-    const r = await okValue<{ signature: string }>(page, 'raw');
-    expect(r.signature).toMatch(/^0x[0-9a-f]{128}$/u);
+    expect(await errorCode(page, 'raw')).toBe(4100);
+    await expect(launcher(page).getByRole('button', { name: 'Review in Hana' })).toHaveCount(0);
   });
 });
 

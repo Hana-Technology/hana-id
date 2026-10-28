@@ -5,7 +5,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./stellar-wallets-kit": "./src/stellar-wallets-kit.ts"
   },
   "scripts": {
     "gen:envs": "tsx scripts/gen-envs.ts",

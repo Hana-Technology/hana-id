@@ -170,6 +170,9 @@ importers:
       '@types/node':
         specifier: 22.20.5
         version: 22.20.5
+      happy-dom:
+        specifier: 21.0.3
+        version: 21.0.3
       tsx:
         specifier: 4.23.15
         version: 4.23.15

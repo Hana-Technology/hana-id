@@ -410,6 +410,8 @@ describe('EIP-712', () => {
     ['a wrong fixed array length', { ...mail, types: { ...mail.types, Mail: [{ name: 'a', type: 'uint8[2]' }] }, message: { a: [1] } }],
     ['an invalid uint width', { ...mail, types: { ...mail.types, Mail: [{ name: 'n', type: 'uint7' }] }, message: { n: 1 } }],
     ['a duplicate field', { ...mail, types: { ...mail.types, Person: [...mail.types.Person, { name: 'name', type: 'string' }] } }],
+    ['a struct named like an atomic type', { ...mail, types: { ...mail.types, address: [{ name: 'x', type: 'string' }] } }],
+    ['an undeclared type in an unused struct', { ...mail, types: { ...mail.types, Extra: [{ name: 'x', type: 'Ghost[]' }] } }],
     ['an unsafe number', { ...mail, types: { ...mail.types, Mail: [{ name: 'n', type: 'uint256' }] }, message: { n: 2 ** 60 } }],
   ])('refuses %s', (_, td) => {
     expect(() => hashTypedData(td as never)).toThrow();

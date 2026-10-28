@@ -121,6 +121,12 @@ describe('port requests', () => {
     expect(parsePortRequest({ v: 1, id: 'x'.repeat(64), method: 'hana_export', params: { chain: 'evm' } })).not.toBeNull();
     expect(parsePortRequest(req('hana_login', { popupBlocked: true }, 'y'.repeat(64)))).not.toBeNull();
     expect(messageSize({ a: 'x'.repeat(MESSAGE_MAX_BYTES) }, MESSAGE_MAX_BYTES)).toBe(Number.POSITIVE_INFINITY);
+    // A maximum-size Soroban transaction (132 096 bytes, ~176 K base64 characters) fits the sign cap.
+    const sorobanMax = base64Encode(new Uint8Array(132_096));
+    expect(parsePortRequest(req('stellar_signTransaction', { xdr: sorobanMax, networkPassphrase: TESTNET }))).not.toBeNull();
+    // Strings count as UTF-8.
+    expect(messageSize('é'.repeat(10), 100)).toBe(20);
+    expect(messageSize('€', 100)).toBe(3);
   });
 
   it('messageSize refuses cycles, deep nesting and non-cloneable-plain values', () => {

@@ -9,7 +9,7 @@
 // SECURITY: no schema here has a field for key bytes, S, PRK, a CKD response, a Google token or a session secret. The
 // one session secret that crosses postMessage is `relayKey` (hana:auth-params, vault → login popup on authOrigin).
 import { isEvmAddress, isStellarAddress } from './addresses.ts';
-import { base64Decode, from0xHex, toHex, utf8 } from './bytes.ts';
+import { base64Decode, from0xHex, toHex, utf8, utf8Length } from './bytes.ts';
 import { KEY_INDEX_LIMIT, MAX_USES_LIMIT, RELAY_ID_PATTERN, SALT_MAX_BYTES, SALT_MIN_BYTES, SHARE_ID_BYTES } from './layouts.ts';
 import { type EvmTxRequest, evmTxSigningPayload, parseEvmTxRequest } from './signers/evm.ts';
 
@@ -74,10 +74,14 @@ export const isHanaErrorCode = (v: unknown): v is HanaErrorCode => NUMERIC_CODES
 
 // ---- size and shape helpers ----
 
+/** UTF-8 size of a string, or Infinity when it can't fit in `room` (checked on length first, which is cheaper). */
+const stringSize = (s: string, room: number): number => (s.length > room ? Number.POSITIVE_INFINITY : utf8Length(s));
+
 /**
- * An upper estimate of a structured-clone message's size in bytes, or Infinity once it passes `limit`, nests deeper
- * than 24 levels, or holds anything but plain objects, arrays, Uint8Arrays, strings, numbers, booleans, null and
- * undefined (no Map, Date, ArrayBuffer, Blob, prototypes other than Object's, cycles).
+ * An estimate of a structured-clone message's size in bytes (UTF-8 for strings and keys, byte length for
+ * Uint8Arrays), or Infinity once it passes `limit`, nests deeper than 24 levels, or holds anything but plain objects,
+ * arrays, Uint8Arrays, strings, numbers, booleans, null and undefined (no Map, Date, ArrayBuffer, Blob, prototypes
+ * other than Object's, cycles or shared references).
  */
 export function messageSize(value: unknown, limit: number): number {
   let total = 0;
@@ -86,7 +90,7 @@ export function messageSize(value: unknown, limit: number): number {
     if (depth > MAX_DEPTH) return false;
     if (v === null || v === undefined || typeof v === 'boolean') total += 1;
     else if (typeof v === 'number') total += 8;
-    else if (typeof v === 'string') total += v.length * 3;
+    else if (typeof v === 'string') total += stringSize(v, limit - total);
     else if (v instanceof Uint8Array) total += v.byteLength;
     else if (typeof v === 'object') {
       if (seen.has(v)) return false;
@@ -96,7 +100,7 @@ export function messageSize(value: unknown, limit: number): number {
       } else {
         if (Object.getPrototypeOf(v) !== Object.prototype && Object.getPrototypeOf(v) !== null) return false;
         for (const [k, item] of Object.entries(v)) {
-          total += k.length * 3;
+          total += stringSize(k, limit - total);
           if (!walk(item, depth + 1)) return false;
         }
       }
@@ -256,13 +260,13 @@ const PARAMS: { [M in PortMethod]: (p: unknown) => PortParamsMap[M] | null } = {
       ? (p as PortParamsMap['stellar_signAuthEntry'])
       : null,
   stellar_signMessage: (p) =>
-    isPlainObject(p) && exactKeys(p, ['message'], ['address']) && (isStr(p.message, 0, SIGN_MESSAGE_MAX_BYTES / 3) || isBytes(p.message, 0, SIGN_MESSAGE_MAX_BYTES)) && (p.address === undefined || isAddressFor('stellar', p.address))
+    isPlainObject(p) && exactKeys(p, ['message'], ['address']) && (isStr(p.message, 0, SIGN_MESSAGE_MAX_BYTES) || isBytes(p.message, 0, SIGN_MESSAGE_MAX_BYTES)) && (p.address === undefined || isAddressFor('stellar', p.address))
       ? (p as PortParamsMap['stellar_signMessage'])
       : null,
   eth_accounts: (p) => (noParams(p) ? undefined : null),
   eth_signTransaction: (p) => (isPlainObject(p) && exactKeys(p, ['tx']) && isEvmTxRequest(p.tx) ? { tx: p.tx } : null),
   personal_sign: (p) => (Array.isArray(p) && p.length === 2 && isHex(p[0]) && isAddressFor('evm', p[1]) ? [p[0], p[1]] : null),
-  eth_signTypedData_v4: (p) => (Array.isArray(p) && p.length === 2 && isAddressFor('evm', p[0]) && isStr(p[1], 2, SIGN_MESSAGE_MAX_BYTES / 3) ? [p[0], p[1]] : null),
+  eth_signTypedData_v4: (p) => (Array.isArray(p) && p.length === 2 && isAddressFor('evm', p[0]) && isStr(p[1], 2, SIGN_MESSAGE_MAX_BYTES) ? [p[0], p[1]] : null),
   hana_signRaw: (p) => {
     if (!isPlainObject(p)) return null;
     if (p.chain === 'stellar' && exactKeys(p, ['chain', 'bytes']) && isBytes(p.bytes, 1, 4096)) return { chain: 'stellar', bytes: p.bytes };

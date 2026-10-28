@@ -167,6 +167,21 @@ function checkFields(type: string, fields: readonly TypedDataField[]): void {
   }
 }
 
+/**
+ * Every struct name is an identifier that isn't an atomic type name (a struct called `address` would hash differently
+ * across implementations), and every field type is atomic, a declared struct, or an array of those.
+ */
+function checkTypes(types: Types): void {
+  for (const [name, fields] of Object.entries(types)) {
+    if (!IDENT.test(name) || isAtomic(name) || !Array.isArray(fields)) throw new Error(`Invalid EIP-712 type name ${name}`);
+    checkFields(name, fields);
+    for (const f of fields) {
+      const base = f.type.replace(/(\[\d*\])+$/u, '');
+      if (!isAtomic(base) && !fieldsOf(types, base)) throw new Error(`Undeclared EIP-712 type ${base}`);
+    }
+  }
+}
+
 /** encodeData: typeHash ‖ the 32-byte encoding of every declared field. Every field must be present, and no others. */
 function encodeData(type: string, data: Record<string, unknown>, types: Types, depth: number): Bytes {
   const fields = fieldsOf(types, type);
@@ -201,6 +216,7 @@ export const domainSeparator = (td: TypedDataForHashing): Bytes => hashStruct('E
 export function hashTypedData(td: TypedDataForHashing): Bytes {
   if (!isObj(td) || !isObj(td.types) || !isObj(td.domain) || !isObj(td.message) || typeof td.primaryType !== 'string') throw new Error('Malformed typed data');
   const types = domainTypes(td);
+  checkTypes(types);
   if (!fieldsOf(types, td.primaryType)) throw new Error(`primaryType ${td.primaryType} is not in types`);
   const parts = [Uint8Array.of(0x19, 0x01), hashStruct('EIP712Domain', { ...td.domain }, types)];
   if (td.primaryType !== 'EIP712Domain') parts.push(hashStruct(td.primaryType, { ...td.message }, types));

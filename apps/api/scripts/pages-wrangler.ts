@@ -79,7 +79,10 @@ export function pagesWranglerConfig(m: Manifest, origin: PageOrigin, compatibili
     main: `src/pages/${origin}-worker.ts`,
     compatibility_date: compatibilityDate,
     observability: { enabled: true },
-    vars: origin === 'vault' ? { VAULT_ORIGIN: m.vaultOrigin } : { AUTH_ORIGIN: m.authOrigin, API_URL: m.apiUrl, NEAR_RPC: m.rpc },
+    vars:
+      origin === 'vault'
+        ? { VAULT_ORIGIN: m.vaultOrigin }
+        : { AUTH_ORIGIN: m.authOrigin, API_URL: m.apiUrl, NEAR_RPC: m.rpc, ...(m.rpcFallback ? { NEAR_RPC_FALLBACK: m.rpcFallback } : {}) },
     // The Worker runs first on every request: it alone decides which paths exist and sets the pages' headers.
     assets: { directory: pagesAssetsDir(m.name, origin), binding: 'ASSETS', run_worker_first: true, html_handling: 'none', not_found_handling: 'none' },
     // The vault page is rendered by the API Worker (D1 config inlined), reached through this binding.

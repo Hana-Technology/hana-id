@@ -280,7 +280,7 @@ export class Vault {
       ...(fetchFn ? { fetch: fetchFn } : {}),
       onServerTime: (t) => this.clock.refresh(t),
     });
-    this.near = new NearView(this.env.rpc, this.env.signer, this.env.relayer, fetchFn);
+    this.near = new NearView({ rpc: this.env.rpc, rpcFallback: this.env.rpcFallback }, this.env.signer, this.env.relayer, fetchFn);
     this.approvals = new Approvals({
       authOrigin: this.env.authOrigin,
       appName: this.config.appName,

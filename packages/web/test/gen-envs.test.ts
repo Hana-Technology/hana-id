@@ -50,6 +50,13 @@ describe('hanaEnv', () => {
     });
   });
 
+  it('passes rpcFallback through when the manifest sets it, and leaves it out otherwise', async () => {
+    expect(hanaEnv(sandbox)).not.toHaveProperty('rpcFallback');
+    const withFallback = manifest({ name: 'sandbox-fb', rpcFallback: 'https://rpc.fallback.example' });
+    expect(hanaEnv(withFallback)?.rpcFallback).toBe('https://rpc.fallback.example');
+    expect((await generated([withFallback]))['sandbox-fb']?.rpcFallback).toBe('https://rpc.fallback.example');
+  });
+
   it('mirrors isDevEnv as devEnv', () => {
     expect(hanaEnv(prod)?.devEnv).toBe(false);
     expect(hanaEnv(manifest({ name: 'local-dev', vaultOrigin: 'http://localhost:8787', authOrigin: 'http://localhost:8788' }))?.devEnv).toBe(true);

@@ -4,4 +4,4 @@ import { authApi } from '../api.ts';
 import { startExportPage } from '../export-page.ts';
 import { nearReader } from '../near-rpc.ts';
 
-startExportPage({ win: window, env: BUILD_ENV, api: authApi(BUILD_ENV.apiUrl), near: nearReader(BUILD_ENV.rpc) });
+startExportPage({ win: window, env: BUILD_ENV, api: authApi(BUILD_ENV.apiUrl), near: nearReader(BUILD_ENV) });

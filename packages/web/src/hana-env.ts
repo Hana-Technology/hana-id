@@ -17,6 +17,11 @@ export interface HanaEnv {
   /** Relayer account (`RELAYER`), used only as `sender_account_id` when polling transactions. */
   readonly relayer: string;
   readonly rpc: string;
+  /**
+   * Manifest `rpcFallback` (https), when set: a second NEAR RPC the vault and the export window read from when `rpc`
+   * fails or times out (never mixing answers within one read; src/near-call.ts).
+   */
+  readonly rpcFallback?: string;
   /** Pinned MPC CKD public key (`bls12381g2:…`). */
   readonly ckdNetworkKey: string;
   /** `isDevEnv(name)` from @hana-id/env (`local*`/`sandbox*`): dev-only privileges such as same-site Hana origins. */

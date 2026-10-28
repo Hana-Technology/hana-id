@@ -24,6 +24,16 @@ export const manifestSchema = z
     /** The MPC's CKD public key, pinned (fetch with scripts/fetch-ckd-key.ts). */
     ckdNetworkKey: z.string(),
     rpc: z.string().url(),
+    /**
+     * Optional second NEAR RPC (https only, not `rpc` itself), from an independent provider. The vault and the export
+     * window read from it only when `rpc` errors or times out (get_session re-syncs, registry views, tx polling), and
+     * each read's answer comes from one endpoint. It joins `rpc` in those pages' CSP `connect-src`.
+     */
+    rpcFallback: z
+      .string()
+      .url()
+      .refine((u) => u.startsWith('https://'), 'rpcFallback must be an https URL')
+      .optional(),
     apiUrl: z.string().url(),
     /**
      * Origin of the key vault page (`GET /vault`, a hidden iframe in partner pages). Optional until every deployed env
@@ -61,6 +71,9 @@ export const manifestSchema = z
   })
   .superRefine((m, ctx) => {
     hanaOrigins(m, ctx);
+    if (m.rpcFallback !== undefined && m.rpcFallback === m.rpc) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['rpcFallback'], message: 'rpcFallback must be a different endpoint from rpc' });
+    }
     const dup = (list: string[]) => list.find((v, i) => list.indexOf(v) !== i);
     for (const field of ['googleClientIds', 'sharedGoogleClientIds'] as const) {
       const d = dup(m[field]);

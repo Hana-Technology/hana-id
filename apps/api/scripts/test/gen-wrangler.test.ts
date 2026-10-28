@@ -131,6 +131,12 @@ describe('wrangler.jsonc', () => {
     expect(text).not.toMatch(/VAULT_KEK/u);
   });
 
+  it('passes rpcFallback as NEAR_RPC_FALLBACK only when the manifest sets it', () => {
+    expect((wranglerConfig(manifest, LOCAL_D1_ID) as { vars: Record<string, string> }).vars).not.toHaveProperty('NEAR_RPC_FALLBACK');
+    const withFallback = manifestSchema.parse({ ...manifest, rpcFallback: 'https://rpc.fallback.example' });
+    expect((wranglerConfig(withFallback, LOCAL_D1_ID) as { vars: Record<string, string> }).vars.NEAR_RPC_FALLBACK).toBe('https://rpc.fallback.example');
+  });
+
   it('binds the LoginRelay Durable Object, created by a v2 migration after v1', () => {
     const config = wranglerConfig(manifest, LOCAL_D1_ID) as {
       durable_objects: { bindings: { name: string; class_name: string }[] };

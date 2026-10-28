@@ -67,6 +67,9 @@ describe('page Worker configs', () => {
     const config = pagesWranglerConfig(manifest, 'auth', COMPATIBILITY_DATE);
     expect(config.vars).toEqual({ AUTH_ORIGIN: manifest.authOrigin, API_URL: manifest.apiUrl, NEAR_RPC: manifest.rpc });
     expect(config).not.toHaveProperty('services');
+    // rpcFallback joins the export page's connect-src when the manifest sets it.
+    const fb = pagesWranglerConfig(variant({ rpcFallback: 'https://rpc.fallback.example' }), 'auth', COMPATIBILITY_DATE);
+    expect(fb.vars).toEqual({ AUTH_ORIGIN: manifest.authOrigin, API_URL: manifest.apiUrl, NEAR_RPC: manifest.rpc, NEAR_RPC_FALLBACK: 'https://rpc.fallback.example' });
   });
 
   it('carries no secret, D1 or Durable Object binding', () => {

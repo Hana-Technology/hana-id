@@ -29,14 +29,16 @@ export interface VaultHostEnv {
 export interface AuthHostEnv {
   /** Manifest `authOrigin`: the only origin this Worker answers on. */
   AUTH_ORIGIN: string;
-  /** Manifest `apiUrl` and `rpc`, for the pages' CSP `connect-src`. */
+  /** Manifest `apiUrl` and `rpc` (and `rpcFallback` when set), for the pages' CSP `connect-src`. */
   API_URL: string;
   NEAR_RPC: string;
+  NEAR_RPC_FALLBACK?: string;
   /** Static assets: packages/web/dist/pages/<env>/auth. */
   ASSETS: Fetcher;
 }
 
 /** Each auth page's directives on top of the base policy (docs/batch-b-spec.md "Origins and pages"). */
+/** `origins.rpc` is the NEAR RPC origin, or the primary and fallback origins separated by a space. */
 export function authPageDirectives(pathname: string, origins: { api: string; rpc: string }): string[] | null {
   switch (pathname) {
     case '/login':
@@ -139,7 +141,10 @@ export async function handleAuthHost(request: Request, env: AuthHostEnv): Promis
   const url = new URL(request.url);
   if (!(AUTH_PAGE_PATHS as readonly string[]).includes(url.pathname)) return staticAsset(request, env.ASSETS, head);
   const api = originOf(env.API_URL);
-  const rpc = originOf(env.NEAR_RPC);
+  const primary = originOf(env.NEAR_RPC);
+  const fallback = env.NEAR_RPC_FALLBACK ? originOf(env.NEAR_RPC_FALLBACK) : null;
+  // The export window falls back to rpcFallback when the primary fails (Q9): both are in its connect-src.
+  const rpc = primary && (!env.NEAR_RPC_FALLBACK || fallback) ? (fallback && fallback !== primary ? `${primary} ${fallback}` : primary) : null;
   const directives = api && rpc ? authPageDirectives(url.pathname, { api, rpc }) : null;
   if (!directives) {
     log({ event: 'auth_page', endpoint: url.pathname, outcome: 'error', status: 503, code: 'misconfigured' }, 'error');

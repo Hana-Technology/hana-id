@@ -26,6 +26,7 @@ export function hanaEnv(m: Manifest): HanaEnv | null {
     signer: m.signer,
     relayer: m.relayer,
     rpc: m.rpc,
+    ...(m.rpcFallback ? { rpcFallback: m.rpcFallback } : {}),
     ckdNetworkKey: m.ckdNetworkKey,
     devEnv: isDevEnv(m.name),
   };

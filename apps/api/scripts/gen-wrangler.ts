@@ -43,6 +43,7 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
     observability: { enabled: true },
     vars: {
       NEAR_RPC: m.rpc,
+      ...(m.rpcFallback ? { NEAR_RPC_FALLBACK: m.rpcFallback } : {}),
       SIGNER_ACCOUNT: m.signer,
       RELAYER_ACCOUNT: m.relayer,
       ENV_NAME: m.name,

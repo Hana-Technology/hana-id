@@ -276,6 +276,20 @@ const VALID_WINDOW: Record<WindowMessageType, Record<string, unknown>> = {
     chain: 'evm',
     address: EVM,
   },
+  'hana:consent-request': {
+    v: 1,
+    t: 'hana:consent-request',
+    id: newRequestId(),
+    appName: 'Partner',
+    parentOrigin: 'https://partner.example',
+    policy: { v: 1, label: 'Swaps' },
+    policyId: 'a'.repeat(64),
+    expiresAtMs: 1_800_000_000_000,
+    position: 1,
+    queued: 1,
+  },
+  'hana:consent-result': { v: 1, t: 'hana:consent-result', id: newRequestId(), allowed: true, digest: new Uint8Array(32) },
+  'hana:auto-approve-stop': { v: 1, t: 'hana:auto-approve-stop' },
 };
 const TYPES = Object.keys(VALID_WINDOW) as WindowMessageType[];
 
@@ -327,6 +341,33 @@ describe('window messages', () => {
     ['bytes over 192 KiB', { bytes: new Uint8Array(SIGN_MESSAGE_MAX_BYTES + 1) }],
   ])('approve-request refuses %s', (_, change) => {
     expect(parseWindowMessage({ ...APPROVE_REQUEST, ...change }, ['hana:approve-request'])).toBeNull();
+  });
+
+  it('approve-request takes an optional auto-approve note, strictly shaped', () => {
+    const ok = (autoApprove: unknown) => parseWindowMessage({ ...APPROVE_REQUEST, autoApprove }, ['hana:approve-request']);
+    expect(ok({ label: 'Swaps', active: true, reason: 'contract_not_listed' })).not.toBeNull();
+    expect(ok({ label: 'Swaps', active: false })).not.toBeNull();
+    expect(ok({ label: '', active: true })).toBeNull();
+    expect(ok({ label: 'x'.repeat(81), active: true })).toBeNull();
+    expect(ok({ label: 'Swaps', active: 'yes' })).toBeNull();
+    expect(ok({ label: 'Swaps', active: true, reason: 'Not Listed' })).toBeNull();
+    expect(ok({ label: 'Swaps', active: true, extra: 1 })).toBeNull();
+  });
+
+  it.each([
+    ['a short policyId', { policyId: 'a'.repeat(63) }],
+    ['an uppercase policyId', { policyId: 'A'.repeat(64) }],
+    ['a policy that is not an object', { policy: 'policy' }],
+    ['a policy array', { policy: [] }],
+    ['position over queued', { position: 2 }],
+    ['a negative expiry', { expiresAtMs: -1 }],
+  ])('consent-request refuses %s', (_, change) => {
+    expect(parseWindowMessage({ ...VALID_WINDOW['hana:consent-request'], ...change }, ['hana:consent-request'])).toBeNull();
+  });
+
+  it('consent-request carries a policy up to the 192 KiB approval cap', () => {
+    const big = { ...VALID_WINDOW['hana:consent-request'], policy: { label: 'x'.repeat(20_000) } };
+    expect(parseWindowMessage(big, ['hana:consent-request'])).not.toBeNull();
   });
 
   it('approve-request carries up to 192 KiB, other messages only 8 KiB', () => {

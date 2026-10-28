@@ -1,0 +1,261 @@
+// Shared fixtures and steps for the Playwright specs.
+//
+// Every test gets a fresh browser context with the Google stub routed in (src/google-stub.ts), a log of every request
+// its pages, frames and popups make (so "zero /v1/derive calls" is counted per test, not across the shared stack), and
+// its own app(s) on the mocked API. The partner test app (partner/app.ts) is driven through `window.e2e`: gesture
+// actions are armed and then started by a real click on its #act button, so window.open runs with user activation.
+import { type BrowserContext, type Frame, type FrameLocator, type Page, test as base, expect } from '@playwright/test';
+import { GOOGLE_AUTH_URL, GOOGLE_CERTS_URL, GoogleStub } from '../src/google-stub.ts';
+import type { AppSpec as ServerAppSpec } from '../src/server/api.ts';
+import { API_URL, AUTH_ORIGIN, EVIL_ORIGIN, EVM_RPC, PARTNER_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
+
+export { expect };
+
+/** An app for POST /__e2e/apps; `origins` defaults to the partner origin. */
+export type AppSpec = Partial<ServerAppSpec>;
+
+export interface App {
+  appId: string;
+  pk: string;
+}
+
+export type Result = { state: 'pending' } | { state: 'ok'; value: unknown } | { state: 'error'; code: unknown; message: string };
+
+/** POST /v1/login exactly (not /v1/login-relay/…). */
+export const LOGIN_ENDPOINT = new RegExp(`^${API_URL.replace(/[.]/gu, '\\.')}/v1/login$`, 'u');
+
+/** Every request the context's pages make (frames and popups included), in order. */
+export class RequestLog {
+  readonly entries: { method: string; url: string }[] = [];
+
+  constructor(context: BrowserContext) {
+    context.on('request', (r) => this.entries.push({ method: r.method(), url: r.url() }));
+  }
+
+  /** A position to count from (`since`). */
+  mark(): number {
+    return this.entries.length;
+  }
+
+  /** Requests (not CORS preflights) whose URL starts with `match` (or matches it), after `since`. */
+  count(match: string | RegExp, since = 0): number {
+    const hit = (url: string) => (typeof match === 'string' ? url.startsWith(match) : match.test(url));
+    return this.entries.slice(since).filter((e) => e.method !== 'OPTIONS' && hit(e.url)).length;
+  }
+}
+
+/** The page script of a foreign site (EVIL_ORIGIN): never Hana code, served only by a route in the test's context. */
+const EVIL_HTML = `<!doctype html><meta charset="utf-8"><title>evil</title><script>
+window.received = [];
+addEventListener('message', (e) => { window.received.push({ origin: e.origin, t: e.data && e.data.t }); });
+</script><h1>evil</h1>`;
+
+/** Routes Google's two endpoints to `google`, and the foreign site to its static page, in `context`. */
+export async function routeStubs(context: BrowserContext, google: GoogleStub): Promise<void> {
+  await context.route(`${GOOGLE_AUTH_URL}**`, async (route) => route.fulfill(await google.authorize(new URL(route.request().url()))));
+  await context.route(GOOGLE_CERTS_URL, async (route) =>
+    route.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }, body: JSON.stringify(await google.jwks()) }),
+  );
+  await context.route(`${EVIL_ORIGIN}/**`, (route) => route.fulfill({ status: 200, headers: { 'content-type': 'text/html' }, body: EVIL_HTML }));
+}
+
+/**
+ * Keeps every hana:approve-request the approval popups receive in `window.__approveRequests` (an init script on
+ * authOrigin's /approve), so a test can forge an answer for the request on show.
+ */
+export async function recordApproveRequests(context: BrowserContext): Promise<void> {
+  await context.addInitScript(
+    ([auth]) => {
+      if (location.origin !== auth || location.pathname !== '/approve') return;
+      const seen: unknown[] = [];
+      (window as any).__approveRequests = seen;
+      addEventListener('message', (e) => {
+        if (e.data && e.data.t === 'hana:approve-request') seen.push(e.data);
+      });
+    },
+    [AUTH_ORIGIN] as const,
+  );
+}
+
+export const test = base.extend<{ google: GoogleStub; requests: RequestLog }>({
+  google: [
+    async ({ context }, use) => {
+      const google = new GoogleStub();
+      await routeStubs(context, google);
+      await use(google);
+    },
+    { auto: true },
+  ],
+  requests: [async ({ context }, use) => use(new RequestLog(context)), { auto: true }],
+});
+
+// ---- the mocked API's control endpoints ----
+
+export async function newApp(spec: AppSpec = {}): Promise<App> {
+  const res = await fetch(`${API_URL}/__e2e/apps`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ origins: [PARTNER_ORIGIN], ...spec }) });
+  if (res.status !== 201) throw new Error(`creating the app failed: ${res.status} ${await res.text()}`);
+  return (await res.json()) as App;
+}
+
+/** Revokes every share of the app on the API (its next unlock gets 410 share_revoked). */
+export async function revokeShares(app: App): Promise<number> {
+  const res = await fetch(`${API_URL}/__e2e/apps/${app.pk}/revoke`, { method: 'POST' });
+  return ((await res.json()) as { revoked: number }).revoked;
+}
+
+export async function shares(app: App): Promise<{ counter: number; revoked: boolean; partnerOrigin: string }[]> {
+  return (await (await fetch(`${API_URL}/__e2e/apps/${app.pk}/shares`)).json()) as { counter: number; revoked: boolean; partnerOrigin: string }[];
+}
+
+/** Raw EVM transactions the mocked chain received. */
+export async function evmBroadcasts(): Promise<`0x${string}`[]> {
+  return (await (await fetch(`${EVM_RPC}/__e2e/txs`)).json()) as `0x${string}`[];
+}
+
+// ---- the partner test app ----
+
+export interface PartnerOptions {
+  origin?: string;
+  /** window.open returns null on the partner page (a popup blocker), so the SDK uses the vault's launcher. */
+  blockPopups?: boolean;
+  coop?: string;
+}
+
+export function partnerUrl(app: App, o: PartnerOptions = {}): string {
+  const q = new URLSearchParams({ pk: app.pk });
+  if (o.blockPopups) q.set('blockPopups', '1');
+  if (o.coop) q.set('coop', o.coop);
+  return `${o.origin ?? PARTNER_ORIGIN}/?${q.toString()}`;
+}
+
+/** Opens the partner app and waits for the vault handshake (ready or failed). */
+export async function openPartner(page: Page, app: App, o: PartnerOptions = {}): Promise<'ok' | 'error'> {
+  await page.goto(partnerUrl(app, o));
+  return waitReady(page);
+}
+
+export async function waitReady(page: Page): Promise<'ok' | 'error'> {
+  await page.waitForFunction(() => (window as any).e2e?.ready !== 'pending' && (window as any).e2e?.ready !== undefined, null, { timeout: 15_000 });
+  return page.evaluate(() => (window as any).e2e.ready as 'ok' | 'error');
+}
+
+/** Arms `action` and clicks #act, so it starts inside a real click (user activation). */
+export async function clickAction(page: Page, name: string, action: string, ...args: unknown[]): Promise<void> {
+  await page.evaluate(([n, a, rest]) => (window as any).e2e.arm(n, a, ...(rest as unknown[])), [name, action, args] as const);
+  await page.click('#act');
+}
+
+/** Starts `action` without a user gesture. */
+export async function runAction(page: Page, name: string, action: string, ...args: unknown[]): Promise<void> {
+  await page.evaluate(([n, a, rest]) => (window as any).e2e.run(n, a, ...(rest as unknown[])), [name, action, args] as const);
+}
+
+export async function peek(page: Page, name: string): Promise<Result | undefined> {
+  return page.evaluate((n) => (window as any).e2e.results[n] as Result | undefined, name);
+}
+
+/** Waits for the action's outcome. */
+export async function settled(page: Page, name: string, timeout = 30_000): Promise<Result> {
+  await page.waitForFunction((n) => (window as any).e2e.results[n] && (window as any).e2e.results[n].state !== 'pending', name, { timeout });
+  return (await peek(page, name)) as Result;
+}
+
+export async function okValue<T = unknown>(page: Page, name: string, timeout?: number): Promise<T> {
+  const r = await settled(page, name, timeout);
+  if (r.state !== 'ok') throw new Error(`${name} failed: ${JSON.stringify(r)}`);
+  return r.value as T;
+}
+
+export async function errorCode(page: Page, name: string, timeout?: number): Promise<unknown> {
+  const r = await settled(page, name, timeout);
+  if (r.state !== 'error') throw new Error(`${name} did not fail: ${JSON.stringify(r)}`);
+  return r.code;
+}
+
+export const status = (page: Page): Promise<string> => page.evaluate(() => (window as any).e2e.status() as string);
+export const addresses = (page: Page): Promise<{ stellar: string; evm: string } | null> => page.evaluate(() => (window as any).e2e.addresses());
+
+// ---- the vault frame and its launcher ----
+
+export const VAULT_FRAME = 'iframe[name^="hana-vault-"]';
+
+export function vaultFrame(page: Page): Frame {
+  const f = page.frames().find((x) => x.url().startsWith(`${VAULT_ORIGIN}/vault`));
+  if (!f) throw new Error('no vault frame');
+  return f;
+}
+
+export const launcher = (page: Page): FrameLocator => page.frameLocator(VAULT_FRAME);
+
+/** Waits for the launcher to show `label`, then clicks it and returns the window it opens. */
+export async function clickLauncher(page: Page, label: string | RegExp): Promise<Page> {
+  const button = launcher(page).getByRole('button', { name: label });
+  await expect(button).toBeVisible();
+  const popup = page.waitForEvent('popup');
+  await button.click();
+  return popup;
+}
+
+/** The record keys in the vault frame's IndexedDB (as this top-level site's partition sees them). */
+export async function vaultRecordKeys(page: Page): Promise<string[]> {
+  return vaultFrame(page).evaluate(
+    () =>
+      new Promise<string[]>((resolve, reject) => {
+        const open = indexedDB.open('hana-vault');
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const db = open.result;
+          if (!db.objectStoreNames.contains('records')) {
+            db.close();
+            resolve([]);
+            return;
+          }
+          const req = db.transaction('records', 'readonly').objectStore('records').getAllKeys();
+          req.onsuccess = () => {
+            db.close();
+            resolve(req.result.map(String));
+          };
+          req.onerror = () => reject(req.error);
+        };
+      }),
+  );
+}
+
+// ---- login ----
+
+/** In the login popup: waits for the Google stub's chooser, picks `account`, and waits for the callback to close it. */
+export async function chooseAccount(popup: Page, account = 0): Promise<void> {
+  await popup.waitForURL(`${GOOGLE_AUTH_URL}**`);
+  await popup.click(`#account-${account}`);
+  await popup.waitForEvent('close', { timeout: 20_000 });
+}
+
+/** One click on the partner's login button, the stub's chooser, and the result. */
+export async function login(page: Page, opts: { account?: number; name?: string } = {}): Promise<{ stellar: string; evm: string }> {
+  const name = opts.name ?? 'login';
+  const popup = page.waitForEvent('popup');
+  await clickAction(page, name, 'login');
+  await chooseAccount(await popup, opts.account);
+  return okValue(page, name);
+}
+
+// ---- approval ----
+
+/**
+ * Approve, as a user does: wait past the guard's 1 s marks (render and focus), move the pointer inside the window,
+ * then click. The guard also requires the click's own pointerdown to come after the arming move.
+ */
+export async function approve(popup: Page, label: 'Approve' | 'Allow' = 'Approve'): Promise<void> {
+  const button = popup.getByRole('button', { name: label, exact: true });
+  await expect(button).toBeVisible();
+  await popup.waitForTimeout(1_100);
+  await popup.mouse.move(5, 5);
+  await popup.mouse.move(40, 40, { steps: 3 });
+  await expect(button).toBeEnabled();
+  await button.click();
+}
+
+export async function reject(popup: Page): Promise<void> {
+  await popup.getByRole('button', { name: 'Reject', exact: true }).click();
+}
+

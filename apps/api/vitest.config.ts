@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { KeyPair } from '@near-js/crypto';
 import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-plugin';
 import { defineConfig } from 'vitest/config';
@@ -6,6 +7,7 @@ import { defineConfig } from 'vitest/config';
 const relayerKeys = [KeyPair.fromRandom('ed25519').toString(), KeyPair.fromRandom('ed25519').toString()];
 const ownerRelayerKeys = [KeyPair.fromRandom('ed25519').toString(), KeyPair.fromRandom('ed25519').toString()];
 const keysUpdaterKey = KeyPair.fromRandom('ed25519').toString();
+const vaultKek = `1:${randomBytes(32).toString('base64')}`;
 
 export default defineConfig(async () => {
   const migrations = await readD1Migrations(new URL('./migrations', import.meta.url).pathname);
@@ -26,8 +28,14 @@ export default defineConfig(async () => {
             // A gas override (gas.ts) for a method no endpoint relays, so the default gas of the others stays tested.
             GAS_PRUNE_SESSIONS_TGAS: '70',
             KEYS_UPDATER_KEY: keysUpdaterKey,
+            VAULT_ORIGIN: 'https://vault.test',
+            AUTH_ORIGIN: 'https://auth.test',
+            API_URL: 'https://api.test',
+            VAULT_KEK: vaultKek,
             TEST_MIGRATIONS: migrations,
           },
+          // A second, empty database: migration tests apply 0001–0002, seed rows, then 0003.
+          d1Databases: { DB: 'hana-id-test', MIGRATION_DB: 'migration-db' },
         },
       }),
     ],

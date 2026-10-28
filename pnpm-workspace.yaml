@@ -11,3 +11,11 @@ allowBuilds:
   workerd: true
   sharp: false
   secp256k1: false
+  # apps/e2e: Stellar Wallets Kit's wallet SDKs, used only in browser bundles; none of their install scripts is needed.
+  '@reown/appkit': false
+  blake-hash: false
+  bufferutil: false
+  protobufjs: false
+  tiny-secp256k1: false
+  usb: false
+  utf-8-validate: false

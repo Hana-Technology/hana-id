@@ -190,3 +190,39 @@ export function digestsEqual(a: Uint8Array, b: Uint8Array): boolean {
 export const rawSigningWarning = (chainName: string, appName: string): string =>
   `Raw signing can authorize any transaction, authorization or message on ${chainName}. Hana can't tell what this is. ` +
   `Only approve if you trust ${appName} completely.`;
+
+// ---- auto-approve consent (docs/batch-b-spec.md "Consent") ----
+
+export const CONSENT_DIGEST_DOMAIN = 'hana-id/consent/v1';
+
+export interface ConsentDigestInput {
+  /** The consent request id (128-bit random, from the vault). */
+  readonly id: string;
+  /** The partner origin the vault pinned at the handshake. */
+  readonly parentOrigin: string;
+  /** The policyId (64 lowercase hex) the popup recomputed from the policy it rendered. */
+  readonly policyId: string;
+}
+
+/**
+ * The digest the approval popup returns with Allow or Don't allow on the consent screen, bound to exactly the policy it
+ * rendered:
+ *
+ *   sha256(utf8("hana-id/consent/v1") ‖ borsh(id) ‖ borsh(parentOrigin) ‖ borsh(policyId))
+ *
+ * The vault recomputes it from its pending consent request and its own policyId and stores a consent only on a match,
+ * as it does with the approval digest. Off-chain only; the prefix is distinct from every other layout's.
+ */
+export function consentDigest(i: ConsentDigestInput): Uint8Array {
+  checkString(i.id, 'id');
+  checkString(i.parentOrigin, 'parentOrigin');
+  if (typeof i.policyId !== 'string' || !/^[0-9a-f]{64}$/u.test(i.policyId)) throw new Error('policyId must be 64 lowercase hex');
+  const parts = [utf8(CONSENT_DIGEST_DOMAIN), ...borshString(i.id), ...borshString(i.parentOrigin), ...borshString(i.policyId)];
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  return sha256(out);
+}

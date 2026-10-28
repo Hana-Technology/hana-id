@@ -255,6 +255,16 @@ const APPROVE_REQUEST = {
   queued: 2,
 };
 
+const CONSENT_REQUEST = {
+  v: 1,
+  t: 'hana:consent-request',
+  id: newRequestId(),
+  appName: 'Partner',
+  parentOrigin: 'https://partner.example',
+  policy: '{"v":1}',
+  policyId: 'a'.repeat(64),
+};
+
 const VALID_WINDOW: Record<WindowMessageType, Record<string, unknown>> = {
   'hana:hello': { v: 1, t: 'hana:hello', sdk: '0.0.0' },
   'hana:auth-hello': { v: 1, t: 'hana:auth-hello' },
@@ -262,6 +272,9 @@ const VALID_WINDOW: Record<WindowMessageType, Record<string, unknown>> = {
   'hana:approve-hello': { v: 1, t: 'hana:approve-hello' },
   'hana:approve-request': APPROVE_REQUEST,
   'hana:approve-result': { v: 1, t: 'hana:approve-result', id: newRequestId(), approved: true, digest: new Uint8Array(32) },
+  'hana:consent-request': CONSENT_REQUEST,
+  'hana:consent-result': { v: 1, t: 'hana:consent-result', id: newRequestId(), granted: false, digest: new Uint8Array(32) },
+  'hana:auto-approve-stop': { v: 1, t: 'hana:auto-approve-stop' },
   'hana:approve-bye': { v: 1, t: 'hana:approve-bye' },
   'hana:export-hello': { v: 1, t: 'hana:export-hello' },
   'hana:export-context': {
@@ -344,6 +357,34 @@ describe('window messages', () => {
     expect(ok({ kind: 'eip712', chain: 'evm', address: EVM, context: {} })).not.toBeNull();
     expect(ok({ kind: 'evm_tx', chain: 'evm', address: EVM, context: { chainId: 1 } })).not.toBeNull();
     expect(ok({ kind: 'eip712', chain: 'evm', address: EVM, context: { chainId: 1 } })).toBeNull();
+  });
+
+  it('approve-request may carry the auto-approve state: label, active, and why it was not auto-approved', () => {
+    const ok = (autoApprove: unknown) => parseWindowMessage({ ...APPROVE_REQUEST, autoApprove }, ['hana:approve-request']);
+    expect(ok({ label: 'Swaps', active: true })).not.toBeNull();
+    expect(ok({ label: 'Swaps', active: false, miss: { reason: 'contract_not_listed', detail: 'CABC is not listed' } })).not.toBeNull();
+    for (const bad of [
+      { label: '', active: true },
+      { label: 'x'.repeat(81), active: true },
+      { label: 'Swaps', active: 'yes' },
+      { label: 'Swaps', active: true, extra: 1 },
+      { label: 'Swaps', active: true, miss: { reason: 'Not A Code', detail: '' } },
+      { label: 'Swaps', active: true, miss: { reason: 'fee_too_high' } },
+      { label: 'Swaps', active: true, miss: { reason: 'fee_too_high', detail: 'x'.repeat(513) } },
+      null,
+    ]) {
+      expect(ok(bad)).toBeNull();
+    }
+  });
+
+  it('consent-request carries the policy JSON (up to 16 KiB) and a 64-hex policyId', () => {
+    const ok = (change: Record<string, unknown>) => parseWindowMessage({ ...CONSENT_REQUEST, ...change }, ['hana:consent-request']);
+    expect(ok({ policy: `"${'x'.repeat(16 * 1024 - 2)}"` })).not.toBeNull();
+    expect(ok({ policy: 'x'.repeat(16 * 1024 + 1) })).toBeNull();
+    expect(ok({ policyId: 'A'.repeat(64) })).toBeNull();
+    expect(ok({ policyId: 'a'.repeat(63) })).toBeNull();
+    expect(ok({ id: 'not-an-id' })).toBeNull();
+    expect(ok({ parentOrigin: 'https://partner.example/' })).toBeNull();
   });
 
   it('origins are exact URL origins', () => {

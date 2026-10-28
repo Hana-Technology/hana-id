@@ -515,8 +515,19 @@ export interface WindowMessageMap {
     context: ApprovalContext;
     position: number;
     queued: number;
+    /** Set when the app has an auto-approve policy in force (not part of the digest: display only). */
+    autoApprove?: ApproveRequestAutoApprove;
   };
   'hana:approve-result': { id: string; approved: boolean; digest: Uint8Array };
+  /**
+   * Vault → approval popup: the consent screen for the app's auto-approve policy. `policy` is the policy's canonical
+   * JSON; the popup validates it, recomputes `policyId` from it and refuses a mismatch before display.
+   */
+  'hana:consent-request': { id: string; appName: string; parentOrigin: string; policy: string; policyId: string };
+  /** Approval popup → vault: Allow (`granted`) or Don't allow, with consentDigest over what was rendered. */
+  'hana:consent-result': { id: string; granted: boolean; digest: Uint8Array };
+  /** Approval popup → vault: the user clicked "Stop auto-approving" (ends the consent). */
+  'hana:auto-approve-stop': Record<string, never>;
   'hana:approve-bye': Record<string, never>;
   'hana:export-hello': Record<string, never>;
   'hana:export-context': {
@@ -530,6 +541,20 @@ export interface WindowMessageMap {
     address: string;
   };
 }
+
+/** The auto-approve state of an approval request. */
+export interface ApproveRequestAutoApprove {
+  /** The policy's label. */
+  label: string;
+  /** The user's consent is in force: the popup offers "Stop auto-approving". */
+  active: boolean;
+  /** Why this request wasn't auto-approved (the matcher's reason code and detail), when the policy was consulted. */
+  miss?: { reason: string; detail: string };
+}
+
+/** Cap for hana:consent-request (a canonical policy is at most 16 KiB). */
+export const CONSENT_MESSAGE_MAX_BYTES = 32 * 1024;
+const POLICY_JSON_MAX = 16 * 1024;
 
 export type WindowMessageType = keyof WindowMessageMap;
 export type WindowMessage<T extends WindowMessageType = WindowMessageType> = { [K in T]: { v: 1; t: K } & WindowMessageMap[K] }[T];
@@ -557,6 +582,12 @@ export const APPROVAL_KIND: Readonly<Record<SignMethod, ApprovalKind>> = {
   hana_signRaw: 'raw',
 };
 const isApprovalKind = (v: unknown): v is ApprovalKind => (APPROVAL_KINDS as readonly unknown[]).includes(v);
+
+function isApproveRequestAutoApprove(v: unknown): v is ApproveRequestAutoApprove {
+  if (!isPlainObject(v) || !exactKeys(v, ['label', 'active'], ['miss']) || !isStr(v.label, 1, 80) || typeof v.active !== 'boolean') return false;
+  if (v.miss === undefined) return true;
+  return isPlainObject(v.miss) && exactKeys(v.miss, ['reason', 'detail']) && typeof v.miss.reason === 'string' && /^[a-z_]{1,40}$/u.test(v.miss.reason) && isStr(v.miss.detail, 0, 512);
+}
 
 /** approval.ts's check that kind, chain, context and bytes fit together, as a predicate. */
 function isApprovalSubject(m: Obj): boolean {
@@ -590,7 +621,8 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
     isBytes(m.relayKey, 32, 32),
   'hana:approve-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:approve-request': (m) => {
-    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'])) return false;
+    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove'])) return false;
+    if (m.autoApprove !== undefined && !isApproveRequestAutoApprove(m.autoApprove)) return false;
     if (!isRequestId(m.id) || !isAppName(m.appName) || !isOrigin(m.parentOrigin) || !isApprovalKind(m.kind) || !isChain(m.chain)) return false;
     const expected = approvalKindChain(m.kind);
     if (expected !== null && expected !== m.chain) return false;
@@ -604,6 +636,15 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
     );
   },
   'hana:approve-result': (m) => exactKeys(m, ['v', 't', 'id', 'approved', 'digest']) && isRequestId(m.id) && typeof m.approved === 'boolean' && isBytes(m.digest, 32, 32),
+  'hana:consent-request': (m) =>
+    exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'policy', 'policyId']) &&
+    isRequestId(m.id) &&
+    isAppName(m.appName) &&
+    isOrigin(m.parentOrigin) &&
+    isStr(m.policy, 2, POLICY_JSON_MAX) &&
+    isPolicyId(m.policyId),
+  'hana:consent-result': (m) => exactKeys(m, ['v', 't', 'id', 'granted', 'digest']) && isRequestId(m.id) && typeof m.granted === 'boolean' && isBytes(m.digest, 32, 32),
+  'hana:auto-approve-stop': (m) => exactKeys(m, ['v', 't']),
   'hana:approve-bye': (m) => exactKeys(m, ['v', 't']),
   'hana:export-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:export-context': (m) =>
@@ -624,7 +665,7 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
  */
 export function parseWindowMessage<T extends WindowMessageType>(data: unknown, allowed: readonly T[]): WindowMessage<T> | null {
   if (!isPlainObject(data) || data.v !== PROTOCOL_VERSION || typeof data.t !== 'string' || !(allowed as readonly string[]).includes(data.t) || !Object.hasOwn(FIELDS, data.t)) return null;
-  const cap = data.t === 'hana:approve-request' ? SIGN_MESSAGE_MAX_BYTES : MESSAGE_MAX_BYTES;
+  const cap = data.t === 'hana:approve-request' ? SIGN_MESSAGE_MAX_BYTES : data.t === 'hana:consent-request' ? CONSENT_MESSAGE_MAX_BYTES : MESSAGE_MAX_BYTES;
   if (messageSize(data, cap) === Number.POSITIVE_INFINITY) return null;
   return FIELDS[data.t as WindowMessageType](data) ? (data as WindowMessage<T>) : null;
 }

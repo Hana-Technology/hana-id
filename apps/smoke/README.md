@@ -13,6 +13,19 @@ inside one function call and are zeroed afterwards; they are never displayed, lo
 > which replaced the PROVISIONAL legacy derivation (salt `hana-embed-ckd-v1`) in batch B, so addresses logged before
 > that differ. Testnet addresses stay disposable until the address freeze.
 
+> **Batch B status.** The page still runs the batch A flow from the partner page itself: Google Identity Services,
+> then `/v1/sessions` and `/v1/derive` (the split flow), with the session key, the BLS key and the CKD in this page.
+> Since batch B the API allows these partner-origin calls only for `pk_test_` keys in envs whose name starts with
+> `local` or `sandbox`. Batch B step 7 (`docs/batch-b-spec.md`, "Order of work") moves the page onto `@hana-id/web`:
+> the Hana vault and one-transaction `/v1/login`. Until then:
+> - keep `REJECT_PII_ON_SESSIONS = "0"`, because Google Identity Services tokens carry `email`, `name` and
+>   `picture`, which the claim allow-list refuses (`400 token_has_pii`);
+> - your Google client needs `http://localhost:5173` as an authorised JavaScript origin, which the vault's redirect
+>   flow doesn't need;
+> - the page still shows a token with personal claims to the API, and it lands on chain. Use test accounts.
+>
+> Partners integrate through `@hana-id/web`, never this way: see `docs/integration.md`.
+
 ## Prerequisites
 
 1. **A deployed environment** (`envs/<env>.json`, default `sandbox-dev`), see the root README "Deploying a sandbox
@@ -59,7 +72,8 @@ pnpm --filter @hana-id/smoke typecheck
    `GET /v1/app` (scope, Google client, mode), checks that the API's signer is the manifest's, and reads
    `get_scope` / `get_config().shared_clients` over RPC to offer every Google client the scope can use: its own
    clients, and Hana's shared clients when the scope has `allow_shared`.
-2. **Session**: choose `key_index` (default 0) and `max_uses` (default 5) → *Start session*. The page makes a
+2. **Session**: choose `key_index` (default 0; 0 to 2^31 − 1, higher values are reserved and refused) and `max_uses`
+   (default 5, 1 to 500) → *Start session*. The page makes a
    non-extractable Ed25519 session key, a random 32-byte salt and an expiry of now + 1 h, computes the batch A.2 session
    nonce and renders the Google button for the chosen client.
 3. Sign in. The page checks the token's `nonce` and `aud`, calls `POST /v1/sessions`, then immediately derives
@@ -80,6 +94,16 @@ same environment: same path must give the same addresses and `app_id`, a differe
 
 Every relayed call costs testnet gas, including a replayed derive (it passes the API's signature check and is rejected
 by the contract).
+
+## Google openid-only spike (`spike.html`)
+
+`http://localhost:5173/spike.html` answers batch B's go/no-go questions with no API and no chain: it runs Google's
+implicit flow with `scope=openid` only (`response_type=id_token`, `prompt=select_account`, optionally `max_age=0`) in
+a popup that redirects to `http://localhost:5173/spike-callback.html`, then decodes the token in the page. It shows the
+claims only in the page and builds a summary with no personal values (claim names, whether `hd` or `auth_time` is
+present, whether the nonce matched, and whether the popup kept `window.opener`) to paste into `docs/context.md`.
+The client must list that callback URL as an Authorized redirect URI; remove it after the spike. The 2026-10-28
+results are in `docs/context.md` ("Google openid-only spike").
 
 ## Test checklist
 

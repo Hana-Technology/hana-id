@@ -23,6 +23,19 @@ SDK security page: https://claude.ai/artifact/AwzpW8xZ7pAuMoTYgBfcvo
 The key is a function of: MPC network, signer account, path (`scope#provider#sub#key_index`), local derivation
 (HKDF salt, chain derivation). Change any → different addresses ("address freeze" happens when final accounts deploy).
 
+## How a login works since batch B (`docs/batch-b-spec.md`)
+
+The same chain steps, moved off the partner page. A hidden iframe on Hana's `vaultOrigin` makes the session key, the
+A.2 nonce (over the pinned signer and the app's scope) and the BLS key; the partner page only opens a popup on
+Hana's `authOrigin` in its click handler. The popup checks the vault's values against `GET /v1/app`, runs Google's
+openid-only implicit flow (redirect to `{authOrigin}/login/callback`) and hands the token back to the vault through
+an end-to-end encrypted, read-once relay slot on the API. The vault checks the token, fixes the path
+`scope#google#sub#0` itself and sends one transaction, `create_session_and_derive` (`POST /v1/login`). It decrypts
+the CKD, keeps only PRK (derivation v1, below) and signs after an Approve click in a Hana popup, or under an
+auto-approve policy the user accepted. In `'session'` mode a reload unlocks a PRK record in the vault's IndexedDB
+with a key share the API holds (`POST /v1/vault/unlock`): no chain call. Partners use `createHana` from
+`@hana-id/web` (guide: `docs/integration.md`).
+
 ## Decisions
 
 - Name: repo `hana-id`, product **Hana ID**. npm `@hana` is taken; `@hana-id` looked free (claim it).
@@ -48,14 +61,16 @@ The key is a function of: MPC network, signer account, path (`scope#provider#sub
 
 - **Shared client mode.** Besides its own Google client (scope from the token's `aud`), an app can log in through
   Hana's shared Google client(s) (`sharedGoogleClientIds`, `set_shared_clients`, max 5). Then `aud` is Hana's, so the
-  scope comes from the session nonce, which commits to `scope_id`; the scope must have `allow_shared`. Hana's login
-  page (batch B) computes a nonce for scope X only for an opener origin allowed for app X. Forging a nonce only gets
-  the forger their own key. The path has no client ID, so own and shared logins give the same address if Google's
+  scope comes from the session nonce, which commits to `scope_id`; the scope must have `allow_shared`. Hana's vault
+  (batch B) computes the nonce for scope X only for a parent page whose origin app X allows, and the login page only
+  relays it after checking it against `GET /v1/app` (batch B amended this: A.2 had the login page compute it).
+  Forging a nonce only gets the forger their own key. The path has no client ID, so own and shared logins give the same address if Google's
   `sub` matches across clients (to confirm on testnet). A client is shared or a scope's own, never both; adding a
   shared client and enabling `allow_shared` are timelocked, removing / `disable_shared_login` are immediate.
   Shared-only scopes trust every shared client Hana adds (see the security notes in `docs/contract-interface.md`).
 - **Two relayer key pools.** Session pool (`RELAYER_KEYS`: create_session, derive_key, revoke_session,
-  prune_sessions) and owner pool (`OWNER_RELAYER_KEYS`, small allowance: owner actions, register_scope,
+  prune_sessions; batch B adds create_session_and_derive and later drops one of the two create methods, see
+  "Relayer allowlists" in `docs/batch-b-spec.md`) and owner pool (`OWNER_RELAYER_KEYS`, small allowance: owner actions, register_scope,
   apply_pending_config), separate keys and Durable Objects, so abuse of `/v1/owner-actions` can't stop logins.
   deploy-contract treats a key with the wrong receiver, methods, an empty method list or an unlimited/too-large
   allowance as a blocker. Gas is per method (`apps/api/src/gas.ts`, to measure on testnet; register_scope scales
@@ -73,7 +88,106 @@ The key is a function of: MPC network, signer account, path (`scope#provider#sub
 - **Fresh deploy only.** The contract state layout changed (config, `Scope.allow_shared`, quarantine reservations,
   pending-add counts): deploy a new signer, don't upgrade a batch A one. `execute_change` bumps `action_nonce`.
 
-## Batch C decisions (2026-10-27; spec to write)
+## Batch B decisions (2026-10-27/28; spec `docs/batch-b-spec.md`)
+
+**Confirmed by the user:**
+
+- **The wallet survives reloads through a server-held share** (Privy-like). Per-app `persistence`, `'session'`
+  (default) or `'none'`. In `'session'` mode the on-chain session has `max_uses = 1` and is used up by the login, so
+  the session key kept in the vault's IndexedDB can never derive again. A reload needs the API's share `K_s` (idle
+  2 h, absolute 12 h by default, revocable) to decrypt PRK: no chain call, no gas.
+- **Approval in a Hana popup by default; auto-approve only under a policy the user accepted.** The app owner sets a
+  policy (allowed contracts and functions, address rule, limits). It applies after a delay, and each user accepts that
+  exact policy (`policyId`) once in a Hana popup. Batch B covers typed calls only. It ships no protocol decoder, so
+  Sodax swaps, bridges and hub actions always get the popup (Q42). Raw signing, `personal_sign`, SEP-53 messages and
+  contract creation are never auto-approved. The silent `app_signed` raw mode is out of the MVP (Q31).
+- **Google Workspace accounts are allowed**: the spike found no `hd` claim with `scope=openid` (below).
+- **One transaction per login**, `create_session_and_derive`, with a ship gate: if the 10-run testnet median saves
+  less than 1.5 s, the method is removed before the audit and the split flow (`/v1/sessions` + `/v1/derive`) stays.
+- **Derivation v1** (`@hana-id/core/derivation`): HKDF-Extract with salt `hana-id/chain-keys/v1/extract` to PRK, then
+  HKDF-Expand per borsh tuple `("hana-id/chain-keys/v1/expand", namespace, curve, account)`: `("stellar", "ed25519",
+  0)` as the Ed25519 seed, and `("eip155", "secp256k1", 0)` as 48 bytes reduced with `mapHashToField`. Frozen vectors
+  and a SHA-256 guard live in `packages/core/test/vectors/derivation-v1.json`. There is no global recovery phrase.
+  Export is one raw key per chain (SEP-23 `S…`, `0x` hex), from a fresh login in a top-level Hana window.
+  **Address-changing:** v1 replaced the PROVISIONAL HKDF (salt `hana-embed-ckd-v1`), so every earlier sandbox-dev
+  address changed. That is allowed before the address freeze, and testnet wallets are disposable. Nothing else in
+  batch B changes an address.
+
+**Proposed in the spec, awaiting the user's review** (the spec's Decisions, R1–R13 and open questions): two Hana
+origins (`vaultOrigin` for the key iframe, `authOrigin` for the login, approval and export popups); the token returns
+only through the encrypted relay; the vault computes the nonce and the path itself and pins `signer`, `relayer` and
+the CKD key per env build; a claim allow-list (`iss azp aud sub iat exp nonce nbf jti auth_time`, else
+`token_has_pii`) on API-relayed tokens (the contract ignores extra claims); dev-only privileges (loopback partner
+origins, partner-origin `/v1/sessions`/`/v1/derive`/`/v1/sessions/revoke`) tied to `local*`/`sandbox*` env names;
+`pk_test_` and `pk_live_` apps never share a scope; `key_index ≥ 2^31` reserved, MVP fixed at 0.
+
+**Decided while building (2026-10-28), to confirm with the user:**
+
+- sandbox-dev's Hana origins (step 0) are two thin `workers.dev` Workers on the API's subdomain:
+  `https://hana-id-vault-sandbox-dev.tingtc.workers.dev` and `https://hana-id-auth-sandbox-dev.tingtc.workers.dev`
+  (`apps/api` "Page Workers"). They are one site (`tingtc.workers.dev` is the registrable domain), so the manifest
+  schema refuses same-site Hana origins only outside `local*`/`sandbox*` envs. The spec's "two `workers.dev`
+  hostnames are separate sites" holds only across account subdomains. Production needs a Hana-owned domain (Q15).
+- The Approve guard also arms on a `pointerdown` or `keydown` after both 1 s marks, not only on a `pointermove`
+  (a stationary tap or the keyboard fire none), and the arming gesture itself never approves.
+- Auto-approve policies gain a required per-chain `maxFeeWei` (gas × fee cap), because the SDK fills EVM fees on the
+  partner page. Under `'self-or-listed'`, `string` and `bytes20`–`bytes32` arguments count as opaque like `bytes`.
+  Function names that move value are matched by prefix and substring (`transferAndCall`, `permit…`, `set_admin`).
+- The approval digest binds a network context only where the request has one: the passphrase for Stellar
+  transactions and auth entries, the chain ID for EVM transactions, and an empty context for messages,
+  `personal_sign`, EIP-712 (its domain carries `chainId`) and raw. The vault never learns the dapp's selected EVM
+  chain.
+- The consent digest (`hana-id/auto-approve-consent/v1`) binds the request id, `policyId`, the parent origin and the
+  end time the user agrees to. An open vault re-reads the policy in force (`GET /v1/app` now returns
+  `autoApprovePolicy`) every 60 s while logged in, and before an auto-sign if the last check is over 90 s old. A
+  removed or changed policy stops auto-approval without a reload.
+- Logout is app-wide on the device. Tabs end only on a `revoked` broadcast for their own share, so a stale tab can't
+  end a newer session. At most 100 approvals wait at once (`4100 too_many_pending`).
+- Export accepts a token without `auth_time` (Google sends none, even with `max_age=0`; Q33). One that has it must be
+  under 5 min old.
+- The partner client adds `cancelLogin()`, `requestAutoApprove()`, `autoApproveStatus()`, `revokeAutoApprove()`,
+  `destroy()` and the `loginProgress`, `autoApproved` and `launcher` events to the spec's list. It logs a console
+  warning when Google Identity Services is on the page or the browser is an in-app webview. A report-only CSP
+  violation doesn't fail the handshake; only an enforced one does.
+
+### Google openid-only spike (2026-10-28, `apps/smoke/spike.html`, Chrome)
+
+- With `scope=openid` (implicit flow, `response_type=id_token`), a personal and a Workspace account both got exactly
+  `{aud, azp, exp, iat, iss, jti, nbf, nonce, sub}`: no email, name or picture, and no `hd`. The allow-list was fixed
+  from this.
+- `max_age=0` returned no `auth_time` (Q33). Export relies on a fresh login plus a typed confirmation.
+- The popup kept `window.opener` through Google's pages in Chrome (Safari untested). The token still comes back only
+  through the relay (R2).
+
+### Batch B status (2026-10-28)
+
+On the integration branch `feat/batch-b` (not yet on `develop`), with its tests passing, and **not deployed**:
+
+- Contract: `create_session_and_derive`, the `key_index < 2^31` bound, the mock MPC failure switch; unit and sandbox
+  tests (`docs/contract-interface.md` "Changed in batch B").
+- `@hana-id/core`: layouts, CKD, derivation v1 with vectors, export, signers, decoders, `normalizeTypedData`, the
+  approval and consent digests, auto-approve validation and matching, the ID-token check and allow-list, the protocol
+  schemas.
+- API: `POST /v1/login`, the `LoginRelay` Durable Object, the five vault endpoints, migration `0003_vault.sql`, the
+  vault page, the origin and dev-env rules, the page Workers for both Hana origins, and the `gen` changes.
+- `@hana-id/web`: the vault, the auth pages (`/login`, `/login/callback`, `/approve`, `/export`), per-env builds to
+  `packages/web/dist/pages/<env>/{vault,auth}`, `createHana` with the EIP-1193 provider (EIP-6963), the Stellar
+  signer and the Stellar Wallets Kit module.
+- Scripts: `admin app:settings` for the per-app settings; session-pool allowlist state 1 in `deploy-contract`.
+- Docs: `docs/integration.md` (partner guide), this file, `docs/contract-interface.md`.
+
+Still to do in batch B: `@hana-id/react` and `@hana-id/sodax` (scaffolds only), `apps/smoke` on the vault (step 7),
+the Playwright suite, the npm build of the client packages, and the user's deploy steps. Those are: the contract
+upgrade with the session keys rotated to allowlist state 1, `VAULT_KEK`, migration 0003, the page Workers, and the
+`{authOrigin}/login/callback` redirect URI on the shared and partner clients. **To measure on testnet** after the
+deploy, and record here: the ship gate (10 runs of `create_session_and_derive`: gas over all receipts and the
+latency median), unlock latency from SIN with the page render, the BLS precheck's Worker CPU time (Q8, before
+`BLS_PRECHECK` is on anywhere), one forced MPC-side failure, Safari/WebKit retention of partitioned IndexedDB (Q4),
+and own vs shared client with the own client in a **separate Google Cloud project**. The `sub` match recorded below
+used two clients of one project, which doesn't prove the A.2 promise. After step 7: `REJECT_PII_ON_SESSIONS = "1"`
+and session-key rotation to allowlist state 2 (gate passes) or 3 (gate fails).
+
+## Batch C decisions (2026-10-27; spec `docs/batch-c-spec.md`, draft)
 
 - **Developer dashboard, like Privy's.** Partners manage orgs, members, apps, origins, keys and on-chain owner actions
   (`/v1/owner-actions` with a console-client token). Replaces `admin app:*` after the pilot.
@@ -138,11 +252,15 @@ Global client-ID list (any listed app could derive every user's key) · sessions
 relayer nonce collisions under concurrency · relayer had no app auth / rate limits · owner = contract account
 hard-coded · NEAR Auth/FastAuth and per-tx signing code no longer needed.
 
-## Known issues for batch B (SDK)
+## Known issues for batch B (SDK), and how batch B handles them
 
-Keys in plaintext `sessionStorage` (`legacy/client/local-keys.ts`) → in-memory vault on a Hana origin ·
-CKD network key read over RPC → pin it · full Google token (with email) is public on-chain → `openid`-only OAuth flow ·
-HKDF salt `hana-embed-ckd-v1` → decide final name before freeze.
+- Keys in plaintext `sessionStorage` (`legacy/client/local-keys.ts`) → the vault iframe on `vaultOrigin` holds PRK
+  in memory, and on disk only under the API's share (`'session'` mode).
+- CKD network key read over RPC → pinned per env build (`ckdNetworkKey`), checked by the build (`ckdKeyProblem`).
+- Full Google token (with email) public on chain → the openid-only implicit flow plus the claim allow-list on
+  `/v1/login`. `/v1/sessions` gets the allow-list once `apps/smoke` leaves Google Identity Services
+  (`REJECT_PII_ON_SESSIONS`, step 7). A direct contract caller is not bound by it.
+- HKDF salt `hana-embed-ckd-v1` → derivation v1 (`hana-id/chain-keys/v1/extract`), confirmed by the user.
 
 ## Next steps (handoff, 2026-10-26)
 
@@ -172,10 +290,9 @@ doc's Status section is the summary for humans: https://claude.ai/artifact/GyQq6
    stable across clients), revoke, replays rejected, max_uses. Record per-method gas and latency.
 5. **Tune from measurements:** per-method gas in `apps/api/src/gas.ts` and relayer allowances in deploy-contract;
    update the plan doc's Status section and this file.
-6. **Then batch B (SDK):** Hana-hosted login page (shared client), vault, `@hana-id/core|web|react`, standard
-   interfaces (EIP-1193, Stellar Wallets Kit), optional `@hana-id/sodax` adapter. Write a batch B spec first, as for
-   batch A (`docs/batch-a-spec.md`), and fix the HKDF salt name before the address freeze.
-7. **Batch C (dashboard):** write the spec (see Batch C decisions); can run alongside batch B.
+6. **Then batch B (SDK):** specified in `docs/batch-b-spec.md`. Status and what remains:
+   [Batch B status](#batch-b-status-2026-10-28).
+7. **Batch C (dashboard):** draft spec in `docs/batch-c-spec.md` (see Batch C decisions); can run alongside batch B.
 
 Working rules: feature branch → PR into `develop` (an org ruleset requires one approving review from a teammate;
 the user merges). Never bypass the gitleaks hook. Production standards: tests for every behaviour.

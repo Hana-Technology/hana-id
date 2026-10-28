@@ -3,7 +3,7 @@
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
 Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`); D35–D38 and the amendments against the batch B
 fix branches (2026-10-28); D39 and D47–D70 against `feat/b-defaults` (2026-10-28), the D39, D55 and D65 amendments
-against `feat/b-defaults-2` (2026-10-28).
+against `feat/b-defaults-2` (2026-10-28); D44 against `feat/b-verified-names` (2026-10-28).
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -423,7 +423,8 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
   $0.021 each).
 
 ### D44. Consent screen: partner names labelled, Hana-verified names marked
-- Date 2026-10-28 · Status: confirmed by the user, to build · Source: `docs/batch-b-spec.md` Q41
+- Date 2026-10-28 · Status: confirmed by the user; built (in force on `feat/b-verified-names`) · Source:
+  `docs/batch-b-spec.md` Q41
 - Decision: the auto-approve consent screen shows a policy's contract names as "named by {app}" with the short address
   and an explorer link. Contracts on Hana's verified list (per chain address → name, starting with Sodax's contracts)
   show a ✓ and the verified name instead. The list is built into the vault and popup bundles (a code release changes
@@ -431,6 +432,14 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
   sources.
 - Why: partner-chosen names can mislead ("USDC", "Uniswap Router"); addresses alone mean nothing to most users.
 - Rejected: partner names as-is; addresses only.
+- Built: `packages/core/src/verified-contracts.ts` (frozen list keyed by EVM `chainId` + lowercase address or Stellar
+  passphrase + exact contract ID; each entry has its name, sources and date added; explorer URL per chain, test
+  networks included) and `packages/web/src/auth/render-consent.ts`. A partner name that reads as a verified name or
+  mentions a verified protocol on another contract is flagged ("— not the verified …"); check marks are stripped
+  from partner names. Initial entries: Sodax mainnet contracts confirmed by both `@sodax/types@2.1.0` and
+  docs.sodax.com/developers/deployments/mainnet (Sonic hub contracts; asset manager and bnUSD on 13 EVM spokes and
+  Stellar; Connection on Hedera, Kaia and Robinhood Chain). Addresses only one source lists, or where they disagree,
+  are left out.
 
 ### D45. Granting auto-approve needs no fresh Google sign-in
 - Date 2026-10-28 · Status: confirmed by the user · Source: `docs/batch-b-spec.md` Q40

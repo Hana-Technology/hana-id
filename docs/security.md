@@ -1,8 +1,8 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-10-28 (`feat/b-defaults-2`: `feat/batch-b` with the batch B fix
-branches and the defaults the user approved on 2026-10-28).
+known open issues. Last verified against code: 2026-10-28 (`feat/b-verified-names`: `feat/batch-b` with the batch B
+fix branches, the defaults the user approved on 2026-10-28 and D44's verified contract names).
 
 Component map and flows: `docs/architecture.md`. On-chain layouts and the contract's own security notes:
 `docs/contract-interface.md` ("Security notes (for reviewers)"). Browser parts (vault, auth pages, partner client)
@@ -281,9 +281,25 @@ Code: `packages/core/src/policy/` (validator, matcher, `policyId`, usage); the v
   - Every match counts against `perDayCount` (UTC day, per device).
 - **Consent** ends at `min(grantedAt + maxConsentMs, session expiry)`, logout, `hana_revokeAutoApprove` or "Stop
   auto-approving"; counters live inside the encrypted record.
+- **Contract names on the consent screen (D44).** Each policy contract shows "✓ {verified name}" when `(chain,
+  address)` is on Hana's verified list (`packages/core/src/verified-contracts.ts`: EVM by `chainId` and address
+  compared lowercase, Stellar by passphrase and exact contract ID, and for Stellar on every listed passphrase);
+  otherwise "{partner name} · named by {app}". A partner name whose skeleton (NFKC, accents dropped, case folded,
+  Cyrillic/Greek/digit look-alikes folded, punctuation removed: `nameSkeleton`) equals a verified name, or contains
+  a verified protocol's name, on a contract that isn't that entry is flagged inline ("— not the verified …", "— not a
+  verified {protocol} contract") and with a warning at the top (`nameCollision`, `render-consent.ts`). Check marks
+  are stripped from partner names, so only Hana's mark shows one. Every contract shows its short address (full one
+  in the title) and an explorer link from the same pinned table (none for an unknown chain). The list is built into
+  the popup bundle and never read from D1 or the API, so a D1 or API compromise can't verify a contract; an entry is
+  added in a code release only after Hana confirms the address from the protocol's official sources, recorded in the
+  entry (`test/verified-contracts.test.ts` requires sources, well-formed and unique addresses;
+  `packages/sodax/test/verified-contracts.test.ts` checks the Sodax entries against the pinned `@sodax/types`).
+  Everything is rendered with `textContent` (`dom.ts`). A verified mark says which contract it is, not that the
+  listed functions or limits are safe.
 - **Residual risk (accepted):** within a policy, partner-page XSS can submit allowed calls at bad prices to the
-  user's own address; token amounts other than native value aren't capped (Q39); contract names on the consent screen
-  are partner-supplied (Q41); Sodax calls carry intents in opaque bytes and always get the popup until a
+  user's own address; token amounts other than native value aren't capped (Q39); names of contracts not on the verified
+  list are partner-supplied, labelled "named by {app}" (D44), and a look-alike outside the skeleton's folding (a
+  misspelling, another script's look-alikes) isn't flagged; Sodax calls carry intents in opaque bytes and always get the popup until a
   `sodax-intent-v1` decoder exists (Q42). Under `'any'`, a value-moving or execute-style function with another name
   (`withdraw(to,…)`, `claim`, `bridge`, `swap(…, recipient)`) can't be recognised by name, and its typed addresses
   aren't checked; only partner-listed contracts and functions are ever auto-approved, and the consent screen warns
@@ -378,6 +394,7 @@ also share a process with the partner page; there, short unlock windows and zero
 the approve popup now says "This signature isn't tied to one network." on them.
 
 Open questions in `docs/batch-b-spec.md` that bear on security and are still undecided: Q22 (timelock for new
-origins in shared mode), Q39–Q41 (policy limits and names). Decided on 2026-10-28 (`docs/decisions.md`): Q7 (D56,
+origins in shared mode). Decided on 2026-10-28 (`docs/decisions.md`): Q39 (D46, no token caps), Q40 (D45, consent
+without a fresh sign-in), Q41 (D44, verified contract names, built), Q7 (D56,
 registry check at login), Q14 (D53, `max_uses = 1`), Q16 (D54, KEK in `.secrets`, KMS later), Q18 (D59, export
 limits), Q28 (D55, in-memory idle limit), Q9 (D65, `rpcFallback`), Q27 (D39, test apps refuse mainnets).

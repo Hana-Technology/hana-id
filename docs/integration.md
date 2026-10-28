@@ -305,8 +305,8 @@ example repeated deposits into your contract. It needs two opt-ins:
 
 1. **You** set a policy for your app. It takes effect after the delay (24 h; 60 s on sandbox-dev).
 2. **Each user** accepts that exact policy once, in a Hana popup that shows your app, your verified origin, the
-   policy's label, every contract (with the name you gave it and its address), the functions, the address rule and
-   the limits. A changed policy asks every user again.
+   policy's label, every contract (its name, short address and explorer link: see "Contract names" below), the
+   functions, the address rule and the limits. A changed policy asks every user again.
 
 Until both happen, matching requests simply get the normal popup. The vault, not your page, checks every request
 against the policy, so an injected script on your page can do no more than the policy allows.
@@ -411,6 +411,23 @@ vault can't fully decode. **Not covered in the pilot:** calls whose instructions
 routers, multicall, bridges and Sodax swaps (`AssetManager.transfer`, `sendMessage`). Those always get the popup until
 a protocol decoder for them ships. Token amounts other than native value are not capped yet (Q39), so keep
 `perDayCount` small.
+
+**Contract names on the consent screen.** The `name` you give a contract is shown as yours: "{name} · named by
+{your app name}". A contract on Hana's verified list shows "✓ {verified name}" instead, and your name for it isn't
+shown. If your name for any other contract reads like a verified name or mentions a verified protocol (say "Sodax
+Router" on an address that isn't one of Sodax's verified contracts), the screen flags it ("— not the verified Sodax
+Asset Manager", "— not a verified Sodax contract") and warns the user at the top. Check marks are removed from your
+names. Every contract also shows its short address (`0x348B…7Bc3`) and a "View on {explorer}" link for its chain
+(Etherscan, Basescan, SonicScan, StellarExpert and others, test networks included; a chain Hana has no explorer for
+shows the address alone). The verified list starts with Sodax's mainnet contracts (asset managers and bnUSD on each
+EVM chain Sodax supports and on Stellar, and its Sonic hub contracts).
+
+**Getting a contract verified.** Ask Hana, with the chain, the address and the protocol's own official sources for
+it: a page of the protocol's documentation that lists the address, and/or a published, version-pinned package of the
+protocol (its SDK config) that contains it. Hana adds the entry only after confirming the address from those sources
+(two that agree, where they exist), records them with the entry, and ships it in a Hana release: the list is built
+into Hana's popup, not read from the API, so it can't be changed for one app. Your own contracts can be verified the
+same way, under your protocol's name.
 
 Your page can use:
 

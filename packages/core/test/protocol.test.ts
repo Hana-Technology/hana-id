@@ -1,0 +1,414 @@
+// Message schemas (docs/batch-b-spec.md "Protocol"): v === 1, allow-listed types and methods, exact field sets and
+// types, size caps (192 KiB sign, 8 KiB other). Includes a small fuzz pass: mutated messages never throw and are
+// either refused or still valid.
+import { describe, expect, it } from 'vitest';
+import { base64Encode, toHex } from '../src/bytes.ts';
+import { approvalContextString, approvalDigest } from '../src/layouts.ts';
+import {
+  ErrorCode,
+  MESSAGE_MAX_BYTES,
+  PORT_METHODS,
+  type PortRequest,
+  SIGN_MESSAGE_MAX_BYTES,
+  type WindowMessageType,
+  approvalChain,
+  approvalContent,
+  isOrigin,
+  messageSize,
+  newRequestId,
+  parsePortEvent,
+  parsePortReply,
+  parsePortRequest,
+  parseVaultBroadcast,
+  parseWindowMessage,
+  unsupportedMethodId,
+} from '../src/protocol.ts';
+import { evmTxSigningPayload, parseEvmTxRequest } from '../src/signers/evm.ts';
+
+const G = 'GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ';
+const EVM = '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23';
+const XDR = base64Encode(new Uint8Array([0, 0, 0, 2, 1, 2, 3, 4]));
+const TX = { chainId: '0xaa36a7', nonce: '0x1', gas: '0x5208', maxFeePerGas: '0x2', maxPriorityFeePerGas: '0x1', to: EVM, value: '0x0', data: '0x' };
+const TESTNET = 'Test SDF Network ; September 2015';
+
+const req = (method: string, params?: unknown, id = 'r1') => (params === undefined ? { v: 1, id, method } : { v: 1, id, method, params });
+
+const VALID_PARAMS: Record<(typeof PORT_METHODS)[number], unknown> = {
+  hana_status: undefined,
+  hana_login: { popupBlocked: true },
+  hana_cancelLogin: undefined,
+  hana_logout: undefined,
+  hana_export: { chain: 'evm' },
+  hana_revokeOtherDevices: undefined,
+  stellar_getAddress: undefined,
+  stellar_signTransaction: { xdr: XDR, networkPassphrase: TESTNET, address: G },
+  stellar_signAuthEntry: { preimageXdr: XDR, networkPassphrase: TESTNET },
+  stellar_signMessage: { message: new Uint8Array([1, 2]) },
+  eth_accounts: [],
+  eth_signTransaction: { tx: TX },
+  personal_sign: ['0x68656c6c6f', EVM],
+  eth_signTypedData_v4: [EVM, '{"types":{}}'],
+  hana_signRaw: { chain: 'evm', digest: new Uint8Array(32) },
+  hana_requestAutoApprove: undefined,
+  hana_autoApproveStatus: undefined,
+  hana_revokeAutoApprove: undefined,
+};
+
+describe('port requests', () => {
+  it.each(PORT_METHODS)('accepts a valid %s', (method) => {
+    const parsed = parsePortRequest(req(method, VALID_PARAMS[method]));
+    expect(parsed).not.toBeNull();
+    expect(parsed!.method).toBe(method);
+  });
+
+  it('normalises no-params methods ([] or absent) to undefined, and refuses {} or other values', () => {
+    expect(parsePortRequest(req('eth_accounts', []))!.params).toBeUndefined();
+    expect(parsePortRequest(req('hana_status'))!.params).toBeUndefined();
+    expect(parsePortRequest(req('hana_status', {}))).toBeNull();
+    expect(parsePortRequest(req('hana_logout', [1]))).toBeNull();
+    expect(parsePortRequest(req('hana_login'))!.params).toBeUndefined();
+  });
+
+  it.each([
+    ['v 2', { v: 2, id: 'a', method: 'hana_status' }],
+    ['no id', { v: 1, method: 'hana_status' }],
+    ['an empty id', { v: 1, id: '', method: 'hana_status' }],
+    ['a 65-char id', { v: 1, id: 'x'.repeat(65), method: 'hana_status' }],
+    ['a numeric id', { v: 1, id: 1, method: 'hana_status' }],
+    ['an extra field', { v: 1, id: 'a', method: 'hana_status', extra: 1 }],
+    ['an undefined params key with another', { v: 1, id: 'a', method: 'hana_export', params: { chain: 'evm', key: new Uint8Array(32) } }],
+    ['an unknown method', { v: 1, id: 'a', method: 'eth_sign', params: [] }],
+    ['an array', [1, 'a']],
+    ['null', null],
+    ['a string', 'hana_status'],
+    ['a class instance', Object.assign(new (class X {})(), { v: 1, id: 'a', method: 'hana_status' })],
+  ])('refuses %s', (_, data) => {
+    expect(parsePortRequest(data)).toBeNull();
+  });
+
+  it.each([
+    ['hana_export', { chain: 'solana' }],
+    ['stellar_signTransaction', { xdr: 'not base64', networkPassphrase: TESTNET }],
+    ['stellar_signTransaction', { xdr: XDR, networkPassphrase: '' }],
+    ['stellar_signTransaction', { xdr: XDR, networkPassphrase: TESTNET, address: EVM }],
+    ['stellar_signAuthEntry', { preimageXdr: XDR }],
+    ['stellar_signMessage', { message: 42 }],
+    ['eth_signTransaction', { tx: { ...TX, gasLimit: '0x1' } }],
+    ['eth_signTransaction', { tx: { ...TX, nonce: 1 } }],
+    ['personal_sign', ['hello', EVM]],
+    ['personal_sign', ['0x68', G]],
+    ['eth_signTypedData_v4', [EVM, { types: {} }]],
+    ['hana_signRaw', { chain: 'evm', digest: new Uint8Array(31) }],
+    ['hana_signRaw', { chain: 'evm', bytes: new Uint8Array(32) }],
+    ['hana_signRaw', { chain: 'stellar', bytes: new Uint8Array(4097) }],
+    ['hana_signRaw', { chain: 'stellar', bytes: [1, 2, 3] }],
+    ['hana_login', { popupBlocked: 'yes' }],
+  ])('refuses %s with bad params %j', (method, params) => {
+    expect(parsePortRequest(req(method, params))).toBeNull();
+  });
+
+  it('answers 4200 only to well-formed requests for unknown methods', () => {
+    expect(unsupportedMethodId({ v: 1, id: 'q', method: 'eth_sign', params: [] })).toBe('q');
+    expect(unsupportedMethodId({ v: 1, id: 'q', method: 'hana_status' })).toBeNull();
+    expect(unsupportedMethodId({ v: 2, id: 'q', method: 'eth_sign' })).toBeNull();
+    expect(unsupportedMethodId({ v: 1, id: 'q', method: 'eth_sign', junk: 1 })).toBeNull();
+  });
+
+  it('caps sign requests at 192 KiB and the rest at 8 KiB', () => {
+    const big = new Uint8Array(SIGN_MESSAGE_MAX_BYTES - 200);
+    expect(parsePortRequest(req('stellar_signMessage', { message: big }))).not.toBeNull();
+    expect(parsePortRequest(req('stellar_signMessage', { message: new Uint8Array(SIGN_MESSAGE_MAX_BYTES + 1) }))).toBeNull();
+    expect(parsePortRequest({ v: 1, id: 'x'.repeat(64), method: 'hana_export', params: { chain: 'evm' } })).not.toBeNull();
+    expect(parsePortRequest(req('hana_login', { popupBlocked: true }, 'y'.repeat(64)))).not.toBeNull();
+    expect(messageSize({ a: 'x'.repeat(MESSAGE_MAX_BYTES) }, MESSAGE_MAX_BYTES)).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it('messageSize refuses cycles, deep nesting and non-cloneable-plain values', () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(messageSize(cyclic, 1e6)).toBe(Number.POSITIVE_INFINITY);
+    let deep: unknown = 1;
+    for (let i = 0; i < 30; i++) deep = [deep];
+    expect(messageSize(deep, 1e6)).toBe(Number.POSITIVE_INFINITY);
+    for (const v of [new Map(), new Date(), new ArrayBuffer(4), () => 1, Symbol('x'), 1n]) expect(messageSize({ v }, 1e6)).toBe(Number.POSITIVE_INFINITY);
+    expect(messageSize({ a: new Uint8Array(10), b: [1, 'ab'] }, 1e6)).toBeLessThan(100);
+  });
+});
+
+describe('port replies', () => {
+  const addresses = { stellar: G, evm: EVM };
+
+  it.each([
+    ['hana_status', { status: 'logged_in', addresses, expiresAtMs: 1, persistence: 'session' }],
+    ['hana_status', { status: 'logged_out', persistence: 'none' }],
+    ['hana_login', { addresses, expiresAtMs: 5, persistence: 'none', warning: 'storage_unavailable', timings: { chainMs: 4 } }],
+    ['hana_logout', null],
+    ['hana_revokeOtherDevices', { revoked: 2 }],
+    ['stellar_getAddress', { address: G }],
+    ['stellar_signTransaction', { signedTxXdr: XDR, signerAddress: G }],
+    ['stellar_signAuthEntry', { signedAuthEntry: base64Encode(new Uint8Array(64)), signerAddress: G }],
+    ['stellar_signMessage', { signedMessage: base64Encode(new Uint8Array(64)), signerAddress: G }],
+    ['eth_accounts', [EVM]],
+    ['eth_accounts', []],
+    ['eth_signTransaction', '0x02f8'],
+    ['personal_sign', `0x${'ab'.repeat(65)}`],
+    ['eth_signTypedData_v4', `0x${'ab'.repeat(65)}`],
+    ['hana_signRaw', { signature: new Uint8Array(64) }],
+    ['hana_signRaw', { signature: Uint8Array.from({ length: 65 }, (_, i) => (i === 64 ? 28 : 1)) }],
+    ['hana_requestAutoApprove', { granted: true, policyId: 'a'.repeat(64), expiresAtMs: 9 }],
+    ['hana_autoApproveStatus', null],
+    ['hana_autoApproveStatus', { policyId: 'b'.repeat(64), label: 'Swaps', expiresAtMs: 1, used: { count: 3, native: '1000' } }],
+  ] as const)('accepts a %s result', (method, result) => {
+    expect(parsePortReply({ v: 1, id: 'a', result }, method)).toEqual({ v: 1, id: 'a', result });
+  });
+
+  it.each([
+    ['hana_status', { status: 'logged_in', persistence: 'session' }],
+    ['hana_status', { status: 'logged_out', persistence: 'session', addresses }],
+    ['hana_login', { addresses: { stellar: EVM, evm: G }, expiresAtMs: 5, persistence: 'none' }],
+    ['hana_login', { addresses, expiresAtMs: 5, persistence: 'none', prk: new Uint8Array(32) }],
+    ['stellar_signAuthEntry', { signedAuthEntry: base64Encode(new Uint8Array(63)), signerAddress: G }],
+    ['personal_sign', '0x1234'],
+    ['hana_signRaw', { signature: Uint8Array.from({ length: 65 }, () => 1) }],
+    ['eth_accounts', [EVM, EVM]],
+    ['hana_logout', undefined],
+  ] as const)('refuses a bad %s result', (method, result) => {
+    expect(parsePortReply({ v: 1, id: 'a', result }, method)).toBeNull();
+  });
+
+  it('accepts known error codes only, with an exact error shape', () => {
+    expect(parsePortReply({ v: 1, id: 'a', error: { code: 4001, message: 'User rejected' } }, 'personal_sign')).toMatchObject({ error: { code: ErrorCode.userRejected } });
+    expect(parsePortReply({ v: 1, id: 'a', error: { code: 'token_has_pii', message: 'x', data: { claim: 'email' } } }, 'hana_login')).not.toBeNull();
+    expect(parsePortReply({ v: 1, id: 'a', error: { code: 4321, message: 'x' } }, 'hana_login')).toBeNull();
+    expect(parsePortReply({ v: 1, id: 'a', error: { code: 'nope', message: 'x' } }, 'hana_login')).toBeNull();
+    expect(parsePortReply({ v: 1, id: 'a', error: { code: 4001 } }, 'hana_login')).toBeNull();
+    expect(parsePortReply({ v: 1, id: 'a', result: null, error: { code: 4001, message: '' } }, 'hana_logout')).toBeNull();
+  });
+});
+
+describe('port events', () => {
+  it.each([
+    [{ v: 1, event: 'ready', data: { status: 'logged_out', persistence: 'none', warning: 'storage_unavailable' } }],
+    [{ v: 1, event: 'accountsChanged', data: { addresses: null } }],
+    [{ v: 1, event: 'disconnect', data: { code: 4900 } }],
+    [{ v: 1, event: 'sessionExpired', data: null }],
+    [{ v: 1, event: 'sessionExpired' }],
+    [{ v: 1, event: 'loginProgress', data: { stage: 'chain' } }],
+    [{ v: 1, event: 'ui', data: { launcher: 'show', label: 'Review in Hana' } }],
+    [{ v: 1, event: 'autoApproved', data: { kind: 'eth_signTransaction', chain: 'evm', contract: EVM, function: 'swap' } }],
+  ])('accepts %j', (data) => {
+    expect(parsePortEvent(data)).not.toBeNull();
+  });
+
+  it.each([
+    [{ v: 1, event: 'connect', data: null }],
+    [{ v: 1, event: 'toString', data: null }],
+    [{ v: 1, event: 'loginProgress', data: { stage: 'nope' } }],
+    [{ v: 1, event: 'ui', data: { launcher: 'show' } }],
+    [{ v: 1, event: 'ready', data: { status: 'logged_in', persistence: 'none' } }],
+    [{ v: 1, event: 'disconnect', data: { code: 4900, reason: 'x' } }],
+    [{ v: 1, event: 'autoApproved', data: { kind: 'hana_logout', chain: 'evm', contract: EVM, function: 'swap' } }],
+  ])('refuses %j', (data) => {
+    expect(parsePortEvent(data)).toBeNull();
+  });
+});
+
+const AUTH_PARAMS = {
+  v: 1,
+  t: 'hana:auth-params',
+  pk: 'pk_test_3yZe7d5AqbgrQ8LzVc3qbQ4bHkZ',
+  appName: 'Partner',
+  parentOrigin: 'https://partner.example',
+  scopeId: 's1',
+  signer: 'hana-signer.testnet',
+  clientId: 'hana-shared.apps.googleusercontent.com',
+  mode: 'shared',
+  sessionPublicKey: new Uint8Array(32),
+  expiresAtMs: 1_800_000_000_000,
+  salt: new Uint8Array(32),
+  keyIndex: 0,
+  maxUses: 1,
+  nonce: 'n'.repeat(43),
+  relayId: 'r'.repeat(43),
+  relayKey: new Uint8Array(32),
+};
+
+const APPROVE_REQUEST = {
+  v: 1,
+  t: 'hana:approve-request',
+  id: newRequestId(),
+  appName: 'Partner',
+  parentOrigin: 'https://partner.example',
+  kind: 'stellar_signTransaction',
+  chain: 'stellar',
+  address: G,
+  bytes: new Uint8Array([1, 2, 3]),
+  context: { networkPassphrase: TESTNET },
+  position: 1,
+  queued: 2,
+};
+
+const VALID_WINDOW: Record<WindowMessageType, Record<string, unknown>> = {
+  'hana:hello': { v: 1, t: 'hana:hello', sdk: '0.0.0' },
+  'hana:auth-hello': { v: 1, t: 'hana:auth-hello' },
+  'hana:auth-params': AUTH_PARAMS,
+  'hana:approve-hello': { v: 1, t: 'hana:approve-hello' },
+  'hana:approve-request': APPROVE_REQUEST,
+  'hana:approve-result': { v: 1, t: 'hana:approve-result', id: newRequestId(), approved: true, digest: new Uint8Array(32) },
+  'hana:approve-bye': { v: 1, t: 'hana:approve-bye' },
+  'hana:export-hello': { v: 1, t: 'hana:export-hello' },
+  'hana:export-context': {
+    v: 1,
+    t: 'hana:export-context',
+    pk: AUTH_PARAMS.pk,
+    appName: 'Partner',
+    parentOrigin: 'https://partner.example',
+    scopeId: 's1',
+    signer: 'hana-signer.testnet',
+    keyIndex: 0,
+    chain: 'evm',
+    address: EVM,
+  },
+};
+const TYPES = Object.keys(VALID_WINDOW) as WindowMessageType[];
+
+describe('window messages', () => {
+  it.each(TYPES)('accepts a valid %s when allowed, and refuses it otherwise', (t) => {
+    expect(parseWindowMessage(VALID_WINDOW[t], [t])).not.toBeNull();
+    expect(parseWindowMessage(VALID_WINDOW[t], TYPES.filter((x) => x !== t))).toBeNull();
+  });
+
+  it.each(TYPES)('%s: refuses v 2, an extra field (including key-like ones) and a missing field', (t) => {
+    const m = VALID_WINDOW[t];
+    expect(parseWindowMessage({ ...m, v: 2 }, [t])).toBeNull();
+    for (const extra of ['prk', 'seed', 'idToken', 'secret', 'x']) expect(parseWindowMessage({ ...m, [extra]: new Uint8Array(32) }, [t])).toBeNull();
+    const keys = Object.keys(m).filter((k) => k !== 'v' && k !== 't');
+    for (const k of keys) {
+      const { [k]: _, ...rest } = m;
+      expect(parseWindowMessage(rest, [t])).toBeNull();
+    }
+  });
+
+  it.each([
+    ['a 31-byte relayKey', { relayKey: new Uint8Array(31) }],
+    ['a relayKey as number array', { relayKey: Array.from(new Uint8Array(32)) }],
+    ['a short nonce', { nonce: 'n'.repeat(42) }],
+    ['a bad relayId', { relayId: `${'r'.repeat(42)}=` }],
+    ['key_index ≥ 2^31', { keyIndex: 0x80000000 }],
+    ['max_uses 0', { maxUses: 0 }],
+    ['a 15-byte salt', { salt: new Uint8Array(15) }],
+    ['a path-like origin', { parentOrigin: 'https://partner.example/' }],
+    ['an unknown mode', { mode: 'partner' }],
+    ['a bad signer', { signer: 'Hana Signer' }],
+    ['a bad pk', { pk: 'sk_live_abc' }],
+    ['an over-long appName', { appName: 'x'.repeat(201) }],
+  ])('auth-params refuses %s', (_, change) => {
+    expect(parseWindowMessage({ ...AUTH_PARAMS, ...change }, ['hana:auth-params'])).toBeNull();
+  });
+
+  it.each([
+    ['a kind on the wrong chain', { kind: 'eth_signTransaction' }],
+    ['an address of the other chain', { address: EVM }],
+    ['position over queued', { position: 3 }],
+    ['a non-hex id', { id: 'z'.repeat(32) }],
+    ['an unknown kind', { kind: 'hana_logout' }],
+    ['a context with two keys', { context: { networkPassphrase: TESTNET, chainId: 1 } }],
+    ['bytes over 192 KiB', { bytes: new Uint8Array(SIGN_MESSAGE_MAX_BYTES + 1) }],
+  ])('approve-request refuses %s', (_, change) => {
+    expect(parseWindowMessage({ ...APPROVE_REQUEST, ...change }, ['hana:approve-request'])).toBeNull();
+  });
+
+  it('approve-request carries up to 192 KiB, other messages only 8 KiB', () => {
+    expect(parseWindowMessage({ ...APPROVE_REQUEST, bytes: new Uint8Array(150_000) }, ['hana:approve-request'])).not.toBeNull();
+    expect(parseWindowMessage({ ...AUTH_PARAMS, appName: 'x'.repeat(200) }, ['hana:auth-params'])).not.toBeNull();
+    expect(parseWindowMessage({ ...VALID_WINDOW['hana:hello'], sdk: '1'.repeat(33) }, ['hana:hello'])).toBeNull();
+  });
+
+  it('approve-request allows hana_signRaw on either chain and an empty context', () => {
+    expect(parseWindowMessage({ ...APPROVE_REQUEST, kind: 'hana_signRaw', chain: 'evm', address: EVM, context: {} }, ['hana:approve-request'])).not.toBeNull();
+    expect(parseWindowMessage({ ...APPROVE_REQUEST, kind: 'hana_signRaw', context: {} }, ['hana:approve-request'])).not.toBeNull();
+  });
+
+  it('origins are exact URL origins', () => {
+    expect(isOrigin('https://a.example')).toBe(true);
+    expect(isOrigin('http://localhost:5173')).toBe(true);
+    expect(isOrigin('https://A.example')).toBe(false);
+    expect(isOrigin('https://a.example:443')).toBe(false);
+    expect(isOrigin('javascript:alert(1)')).toBe(false);
+    expect(isOrigin('null')).toBe(false);
+  });
+
+  it('fuzz: random mutations never throw and never produce an invalid accepted message', () => {
+    const values: unknown[] = [null, undefined, 0, -1, 1.5, 2 ** 53, '', 'x', [], {}, new Uint8Array(0), new Uint8Array(32), new Uint8Array(33), true, '0x', G, EVM];
+    let seed = 12345;
+    const rand = (n: number) => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed % n;
+    };
+    for (let i = 0; i < 3000; i++) {
+      const t = TYPES[rand(TYPES.length)]!;
+      const m: Record<string, unknown> = { ...VALID_WINDOW[t] };
+      const keys = Object.keys(m);
+      const k = rand(3) === 0 ? `k${rand(5)}` : keys[rand(keys.length)]!;
+      m[k] = values[rand(values.length)];
+      const out = parseWindowMessage(m, TYPES);
+      if (out !== null) expect(parseWindowMessage(out, [out.t])).toEqual(out);
+      expect(() => parsePortRequest({ v: 1, id: 'f', method: PORT_METHODS[rand(PORT_METHODS.length)], params: m })).not.toThrow();
+    }
+  });
+});
+
+describe('approval content', () => {
+  const parsed = (method: (typeof PORT_METHODS)[number]) => parsePortRequest(req(method, VALID_PARAMS[method])) as Extract<PortRequest, { method: 'hana_signRaw' }>;
+
+  it('Stellar tx: the envelope bytes with the passphrase as context', () => {
+    const r = parsePortRequest(req('stellar_signTransaction', VALID_PARAMS.stellar_signTransaction))!;
+    const c = approvalContent(r as never);
+    expect(toHex(c.bytes)).toBe('0000000201020304');
+    expect(c.context).toEqual({ networkPassphrase: TESTNET });
+    expect(approvalChain(r as never)).toBe('stellar');
+  });
+
+  it('EVM tx: the unsigned signing payload with the chain id as context', () => {
+    const r = parsePortRequest(req('eth_signTransaction', { tx: TX }))!;
+    const c = approvalContent(r as never);
+    expect(toHex(c.bytes)).toBe(toHex(evmTxSigningPayload(parseEvmTxRequest(TX))));
+    expect(c.context).toEqual({ chainId: 11155111 });
+    expect(approvalContextString(c.context)).toBe('11155111');
+  });
+
+  it('messages, typed data and raw: their bytes, no context', () => {
+    expect(toHex(approvalContent(parsePortRequest(req('personal_sign', ['0x6869', EVM]))! as never).bytes)).toBe('6869');
+    expect(new TextDecoder().decode(approvalContent(parsePortRequest(req('eth_signTypedData_v4', [EVM, '{"a":1}']))! as never).bytes)).toBe('{"a":1}');
+    expect(toHex(approvalContent(parsePortRequest(req('stellar_signMessage', { message: 'hi' }))! as never).bytes)).toBe('6869');
+    const raw = parsed('hana_signRaw');
+    expect(approvalContent(raw)).toEqual({ bytes: new Uint8Array(32), context: {} });
+    expect(approvalChain(raw)).toBe('evm');
+  });
+
+  it('the digest binds the content: popup and vault compute the same one', () => {
+    const r = parsePortRequest(req('stellar_signTransaction', VALID_PARAMS.stellar_signTransaction))!;
+    const { bytes, context } = approvalContent(r as never);
+    const input = { id: newRequestId(), kind: r.method, chain: 'stellar', address: G, parentOrigin: 'https://partner.example', contextString: approvalContextString(context), bytes };
+    expect(toHex(approvalDigest(input))).toBe(toHex(approvalDigest({ ...input, bytes: Uint8Array.from(bytes) })));
+    expect(toHex(approvalDigest({ ...input, contextString: 'Public Global Stellar Network ; September 2015' }))).not.toBe(toHex(approvalDigest(input)));
+  });
+
+  it('request ids are 128-bit random hex', () => {
+    const a = newRequestId();
+    expect(a).toMatch(/^[0-9a-f]{32}$/u);
+    expect(newRequestId()).not.toBe(a);
+  });
+});
+
+describe('vault BroadcastChannel', () => {
+  it('accepts counter, logout and revoked outcomes only', () => {
+    expect(parseVaultBroadcast({ v: 1, t: 'counter', shareId: new Uint8Array(16), counter: 4 })).not.toBeNull();
+    expect(parseVaultBroadcast({ v: 1, t: 'logout' })).not.toBeNull();
+    expect(parseVaultBroadcast({ v: 1, t: 'revoked' })).not.toBeNull();
+    expect(parseVaultBroadcast({ v: 1, t: 'counter', shareId: new Uint8Array(15), counter: 4 })).toBeNull();
+    expect(parseVaultBroadcast({ v: 1, t: 'logout', prk: new Uint8Array(32) })).toBeNull();
+    expect(parseVaultBroadcast({ v: 1, t: 'unlocked', ks: new Uint8Array(32) })).toBeNull();
+    expect(parseVaultBroadcast({ t: 'logout' })).toBeNull();
+  });
+});

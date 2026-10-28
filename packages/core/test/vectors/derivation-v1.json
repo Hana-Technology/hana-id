@@ -1,0 +1,267 @@
+{
+  "_comment": "FROZEN derivation v1 vectors (packages/core/scripts/gen-derivation-vectors.mjs). Test-only keys from public test inputs. Changing this file changes every address: see test/derivation.test.ts.",
+  "version": 1,
+  "extractSalt": "hana-id/chain-keys/v1/extract",
+  "expandLabel": "hana-id/chain-keys/v1/expand",
+  "tuples": {
+    "stellar": [
+      "stellar",
+      "ed25519",
+      32
+    ],
+    "evm": [
+      "eip155",
+      "secp256k1",
+      48
+    ]
+  },
+  "mpc": {
+    "signer": "hana-signer.testnet",
+    "mskPreimage": "hana-id test mpc master key v1",
+    "networkKey": "bls12381g2:zehq1XfxytLcxkWYUCoU8QczRC6Bqm5Aa5PCftcaP62okrkWh8S66mZmt86RSWUyRLopx8bC62MTmrZ9kXZ79zhEFh4gJundxCpyxjmj4aGs2DGGyip75hJWSTaYprwapzD"
+  },
+  "vectors": [
+    {
+      "label": "s1, key_index 0",
+      "path": "s1#google#110248495921238986420#0",
+      "appIdHex": "34153044af0cede041f96b2dba154d4a22f2376229e0e1f212a2406c45e09eb2",
+      "sHex": "b87c634c70a33c5422dbb6d2bd0384004dcda96c209f2da747c79070afa83bace1da710748d27c4721ce358eacef1453",
+      "prkHex": "8779acce830c61770cc0dddf9c2630abb08d439eb4ff30a4438e8a80257b41f0",
+      "accounts": [
+        {
+          "account": 0,
+          "stellar": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64070000007374656c6c6172070000006564323535313900000000",
+            "seedHex": "cd57e2d02be982d2e091dc7694448b5335a102d5aa8740aa3e8996f691929438",
+            "address": "GB6P4XKBY2HSYZIDPKWCH34ASTZUC3WW7NCAFWS72X2RJIO5JTPEMIKD",
+            "export": "SDGVPYWQFPUYFUXASHOHNFCERNJTLIIC2WVIOQFKH2EZN5URSKKDRJY3"
+          },
+          "evm": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e640600000065697031353509000000736563703235366b3100000000",
+            "okmHex": "b8e5933ea2d1c4963ae6da4a700b22919e4a7320811181767dbbb247ffe0147640ba6c5a1962baf1e08537a84f7538b7",
+            "dHex": "8940810c48707513c2d36ab5fa6021306d40373cb6304cf35c188c518e198238",
+            "address": "0x0F0E55d3E6017edc88Df0C5CDB430db815c8B11e",
+            "export": "0x8940810c48707513c2d36ab5fa6021306d40373cb6304cf35c188c518e198238"
+          }
+        },
+        {
+          "account": 1,
+          "stellar": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64070000007374656c6c6172070000006564323535313901000000",
+            "seedHex": "dde7990164c0ea7069706655ff6c6c230934ffce8dd3ddcb59101e243ab48ab7",
+            "address": "GAP33OGNZCVBUOB2DQJY35MW3ZJ2ITFQGQOE6WYCSDEF7662QHNDV5PD",
+            "export": "SDO6PGIBMTAOU4DJOBTFL73MNQRQSNH7Z2G5HXOLLEIB4JB2WSFLOB6Q"
+          },
+          "evm": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e640600000065697031353509000000736563703235366b3101000000",
+            "okmHex": "153761f31734994312c6bb2bc8cab962aa18f304a69cc2b37fdb779c6907126cd6ec24bc0b3edaf72d964b4985e47969",
+            "dHex": "c50efbccec7a2ef66719b20d64b8fd269a96dad4817eb49088acf3611f783eea",
+            "address": "0xdE550ead1E2Baed4C84B88e2E6B9b5C8DDf452ef",
+            "export": "0xc50efbccec7a2ef66719b20d64b8fd269a96dad4817eb49088acf3611f783eea"
+          }
+        }
+      ]
+    },
+    {
+      "label": "s1, key_index 1",
+      "path": "s1#google#110248495921238986420#1",
+      "appIdHex": "8dedfb4bc03ec5781c76832aa0275faaafbb996bc1d9aaf614d7b8973d746251",
+      "sHex": "b7839e8dddb20ea497e0e03a2daa5bbf22c7eb0ed88267a1c4eeb58e82377ff1d9edd8c38a1c920aa14448c48025c04d",
+      "prkHex": "5183cc1b2d97a3e7915ae64baaae99a8cd90f4b01779f540e0c5c608d50f149e",
+      "accounts": [
+        {
+          "account": 0,
+          "stellar": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64070000007374656c6c6172070000006564323535313900000000",
+            "seedHex": "840e70743295e062f5a2fccab3834d5f336cc1a8bd72a231bb4c011631bb3e44",
+            "address": "GBB7WUMZIGL7UKACUPDFUYNCCSLGNLSZ3PVFRPWOZHL6L66RBA6WXFDC",
+            "export": "SCCA44DUGKK6AYXVUL6MVM4DJVPTG3GBVC6XFIRRXNGACFRRXM7EI2ZW"
+          },
+          "evm": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e640600000065697031353509000000736563703235366b3100000000",
+            "okmHex": "f7cbb27d3148eb9cf6ec65222fe57b8b35410d373548661ad8ab1b31cccdc78632d44a7239faa689a3cf1ddce7378844",
+            "dHex": "7025303cf8e34458b75a0a122e50548fa4337e57ef84659785329fcdd9f21945",
+            "address": "0x453598bD2E11Bd9b3B3c60ee1A1042055343FC98",
+            "export": "0x7025303cf8e34458b75a0a122e50548fa4337e57ef84659785329fcdd9f21945"
+          }
+        },
+        {
+          "account": 1,
+          "stellar": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64070000007374656c6c6172070000006564323535313901000000",
+            "seedHex": "237fdad68eee53b584ea5198c97de936827f31945421a8993341842ccbdb04d9",
+            "address": "GDRGJTGFJSDOSSXSDFHSUN7VAZTZW4TOSYWAOE6OXGGP2DWTH34QW6UP",
+            "export": "SARX7WWWR3XFHNME5JIZRSL55E3IE7ZRSRKCDKEZGNAYILGL3MCNSDUS"
+          },
+          "evm": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e640600000065697031353509000000736563703235366b3101000000",
+            "okmHex": "4d22b14c7b287d3d01a508da274c43634d5a4cdfcb11ed04908b5fddfae00e7f6afb7311c35f279a0036e931223cb784",
+            "dHex": "af5fca835b922930d9dd38ea2d6ff26a98304421d5ee6e8aef19d9b24b2dbbc5",
+            "address": "0x8B624782d51E630bC9EeFa761de41867252CEdbE",
+            "export": "0xaf5fca835b922930d9dd38ea2d6ff26a98304421d5ee6e8aef19d9b24b2dbbc5"
+          }
+        }
+      ]
+    },
+    {
+      "label": "s2 (other scope), key_index 0",
+      "path": "s2#google#110248495921238986420#0",
+      "appIdHex": "422be6904e2c7a901b759f755a4836feef86da611fdcc9a9e0b40c831cbac590",
+      "sHex": "88a787d2c5abcb9d0668f771b07d93c100a71ae849658a109fa74fb8db35e9a30a27c45cb2142004895b90dfb303d4d9",
+      "prkHex": "71178ecd48d098a2fcde0a04801ba76259e618f429a2cd12911a70af632e70c4",
+      "accounts": [
+        {
+          "account": 0,
+          "stellar": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64070000007374656c6c6172070000006564323535313900000000",
+            "seedHex": "a2bbdf91fcb28ada13adecd96cf394268ceb7c2f22e8b5fb01cbdfeed8b680db",
+            "address": "GCLC6HICAL3CK2WW2V6Q7LRR5FWUYZTG2TEBPBTNHEMKTJLIWKR4HZNR",
+            "export": "SCRLXX4R7SZIVWQTVXWNS3HTSQTIZ234F4RORNP3AHF573WYW2ANWQIO"
+          },
+          "evm": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e640600000065697031353509000000736563703235366b3100000000",
+            "okmHex": "266c053568bd81b8b623f9a805b5be4f093ef9f2fd62b886b3e488dcb512359c77239e85c65c956d030c2966595da08f",
+            "dHex": "3a124a0202a188ed55fd836b2cdd3ba83fbf670d9f9cdc4d408221c771f1fdd0",
+            "address": "0x237Bd4ccb6c47C578BAb5829399052404155C4f0",
+            "export": "0x3a124a0202a188ed55fd836b2cdd3ba83fbf670d9f9cdc4d408221c771f1fdd0"
+          }
+        },
+        {
+          "account": 1,
+          "stellar": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64070000007374656c6c6172070000006564323535313901000000",
+            "seedHex": "70d74fa1acc94af60b4a2e4a8e9d470773e67292123f0e795dc503fbd87ab011",
+            "address": "GBOEIBTBZAKONPT5MEHYTMG4E6VDTV5IMW6ONZD3AIWNPVUAMJWPOSSD",
+            "export": "SBYNOT5BVTEUV5QLJIXEVDU5I4DXHZTSSIJD6DTZLXCQH66YPKYBCDR6"
+          },
+          "evm": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e640600000065697031353509000000736563703235366b3101000000",
+            "okmHex": "5de7cb7de4b8d03e9a82986c573fc120f23ab3f5683fad989227b779f3e8d1a5513e361a0ef84876cdaa6686fe3d1911",
+            "dHex": "698fbc839884756d5aa1c0d6104d8c09b6e91373031c36e8aab8d8e0714d6fd2",
+            "address": "0xdE9E45b5893C7e2759Eb98ef2f50376bcaDd4a42",
+            "export": "0x698fbc839884756d5aa1c0d6104d8c09b6e91373031c36e8aab8d8e0714d6fd2"
+          }
+        }
+      ]
+    },
+    {
+      "label": "s1, other sub, key_index 0",
+      "path": "s1#google#987654321#0",
+      "appIdHex": "d267879282489391c586d23b30323fb9b3416cf9a4cc9f6dad4718420e1eed41",
+      "sHex": "941e3b4c651b893cf02517c7d00fed0a687e8e209b88b1c42fc809a0c015c03f6b210b8c5a06d5fd7f245389681d521f",
+      "prkHex": "45788dcbf6d345f1f1f94d0bdd4bcec2ad8305942afc334edcb07ffc68fff2af",
+      "accounts": [
+        {
+          "account": 0,
+          "stellar": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64070000007374656c6c6172070000006564323535313900000000",
+            "seedHex": "c496fed5ce6903e428a26302a0564f6f8944c0b94c7ff1756dd8f9515e1d0601",
+            "address": "GDHGOPWDQUFJN3QW7U3GHDPSKRS24WFIY2VVW2RF26LAXIFECQBFUMRH",
+            "export": "SDCJN7WVZZUQHZBIUJRQFICWJ5XYSRGAXFGH74LVNXMPSUK6DUDACLXK"
+          },
+          "evm": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e640600000065697031353509000000736563703235366b3100000000",
+            "okmHex": "3b4e9ed1b3f491e6d6a559c5d66d0ecec490c440628dff55b5fad18c0a52a9c7f572d33d4635e72a3cc2d46413a500dc",
+            "dHex": "0fee5fe27974a80ba57d2b689e2a6e4a0559d0ee42a966fe03cb353f77f4be1d",
+            "address": "0x0042bF1D702A37C10f66653De2821C450e9E0Dbe",
+            "export": "0x0fee5fe27974a80ba57d2b689e2a6e4a0559d0ee42a966fe03cb353f77f4be1d"
+          }
+        },
+        {
+          "account": 1,
+          "stellar": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64070000007374656c6c6172070000006564323535313901000000",
+            "seedHex": "3f50d3ae79cf208e6745a869b8dadca1897baaa7251960ec3ef44b622edc5a50",
+            "address": "GBSEIVEO46IR4WOYP24PNHCLVNSCDDVHMNIBGT4LYEZVVBDEERZGGPE4",
+            "export": "SA7VBU5OPHHSBDTHIWUGTOG23SQYS65KU4SRSYHMH32EWYRO3RNFAGY4"
+          },
+          "evm": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e640600000065697031353509000000736563703235366b3101000000",
+            "okmHex": "ee206c15c99528587fefd4408253a3aa0f3f57f84bed4ab8731967b0dd32bb043eb925d8a7a3d192d58bf31916639c96",
+            "dHex": "3dd9fa1822c2abdb4ccd7ec95e226bfc382b60247694bea7f216c3bdceda46d7",
+            "address": "0xba3567d7FE3EDC7c50E9BEDB372F9C989517bdFC",
+            "export": "0x3dd9fa1822c2abdb4ccd7ec95e226bfc382b60247694bea7f216c3bdceda46d7"
+          }
+        }
+      ]
+    },
+    {
+      "label": "S = G1 generator (synthetic)",
+      "sHex": "97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb",
+      "prkHex": "2b4519783e3b33cf9b7ca6d255fbd7d280e21988b827e7bb94af59fc811514b5",
+      "accounts": [
+        {
+          "account": 0,
+          "stellar": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64070000007374656c6c6172070000006564323535313900000000",
+            "seedHex": "ebdc0bcba74802ea8b30220268a31639fefb842fa97a18247b7a0b5b1dadd168",
+            "address": "GBXW242FIA7GFNBGDJBFQTWEDJDUQQSYJ25YKQIU45NKOT66YJ4TOVYQ",
+            "export": "SDV5YC6LU5EAF2ULGARAE2FDCY47564EF6UXUGBEPN5AWWY5VXIWROX5"
+          },
+          "evm": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e640600000065697031353509000000736563703235366b3100000000",
+            "okmHex": "25314276d6667523c7834ac43298ebd94b0d4c4693ba18860aaf23e819a56f50b3b13a0b51a34b5ec87d0f43eecebc47",
+            "dHex": "7a509f56e323c777e9f77d43773391f3a2aa25c3fc00a80831f2f8d064ebad08",
+            "address": "0x00A00f5e22e0Ae900E2bdc42f4ae1bE4fc3caCFB",
+            "export": "0x7a509f56e323c777e9f77d43773391f3a2aa25c3fc00a80831f2f8d064ebad08"
+          }
+        },
+        {
+          "account": 1,
+          "stellar": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64070000007374656c6c6172070000006564323535313901000000",
+            "seedHex": "723fdd4e986dc2f104f1d7e720f3f5b4de81f6ff8a6e4527c0951d1c424b1c63",
+            "address": "GBEDILYWKEZIXL7EJ2X4APJYT6WOACHR2OEX2UJ5QPPM3YRDMJPVN2EO",
+            "export": "SBZD7XKOTBW4F4IE6HL6OIHT6W2N5APW76FG4RJHYCKR2HCCJMOGG6KG"
+          },
+          "evm": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e640600000065697031353509000000736563703235366b3101000000",
+            "okmHex": "9ee860615200736f3e5b822b88fd9a9fa06fa156d2ca4fe16edc99f1e0f96551372215681d9adf5d2f3f75fdc1c95bf1",
+            "dHex": "6a5f01025aa8fdf69dc3120a14dc1e06152fb105dd33de45471d9ab2806013f2",
+            "address": "0xa81508Fe29b98EB79F999B9151834aC25a615865",
+            "export": "0x6a5f01025aa8fdf69dc3120a14dc1e06152fb105dd33de45471d9ab2806013f2"
+          }
+        }
+      ]
+    },
+    {
+      "label": "S = 2·G1 generator (synthetic)",
+      "sHex": "a572cbea904d67468808c8eb50a9450c9721db309128012543902d0ac358a62ae28f75bb8f1c7c42c39a8c5529bf0f4e",
+      "prkHex": "59e4db7bcb9828ec7f5280f284c0452f6a587b288b7b39088974b621a1f742f3",
+      "accounts": [
+        {
+          "account": 0,
+          "stellar": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64070000007374656c6c6172070000006564323535313900000000",
+            "seedHex": "96f01ce76635af53343fe7d75b58784c6b6e117b025b25f2876244be178d1294",
+            "address": "GDCL2KVKR56CXBJ3XOOLSVIGAMMX6NZOFXKWCXD32ZLVAFN7HFSDSSLK",
+            "export": "SCLPAHHHMY226UZUH7T5OW2YPBGGW3QRPMBFWJPSQ5REJPQXRUJJI6ZY"
+          },
+          "evm": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e640600000065697031353509000000736563703235366b3100000000",
+            "okmHex": "8c0f8f237d4b577c3e4ba6f5b9c99748ff140a4d9a654b3d10b84ee1a63d9b9607c7c3f858a6049a8e7c3876fe83bd8f",
+            "dHex": "b1102f25ecf09afc921a5124f3373109c9e48b6a165e2872b6b7917f234e6250",
+            "address": "0xD5B3C91aC2D27BEa7C6CcC3fd77e837bbD778f5f",
+            "export": "0xb1102f25ecf09afc921a5124f3373109c9e48b6a165e2872b6b7917f234e6250"
+          }
+        },
+        {
+          "account": 1,
+          "stellar": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e64070000007374656c6c6172070000006564323535313901000000",
+            "seedHex": "69df00095038b864924ac3fc8695b198c344b3e1453014a49a3515ec8edf0688",
+            "address": "GA6BV7W3LBX4CHVU7UDZMOTQ46KNW5SZUSIFFJ6QXCAB7FEILNMAI4JF",
+            "export": "SBU56AAJKA4LQZESJLB7ZBUVWGMMGRFT4FCTAFFETI2RL3EO34DIRQ4Y"
+          },
+          "evm": {
+            "infoHex": "1c00000068616e612d69642f636861696e2d6b6579732f76312f657870616e640600000065697031353509000000736563703235366b3101000000",
+            "okmHex": "69868c0bed7b49a657a0fdbf8cb55dc3decd34a196af39ccadc5f19d7c399b1041124d92f02a96ea662809e3de991773",
+            "dHex": "64e67676df81d35cdef05f8a6b944176459b35a15580b29fc25aada59d1ae274",
+            "address": "0x34aEb45aBD82ec7f3B2F5689aC2A5F5FF4b7b329",
+            "export": "0x64e67676df81d35cdef05f8a6b944176459b35a15580b29fc25aada59d1ae274"
+          }
+        }
+      ]
+    }
+  ]
+}

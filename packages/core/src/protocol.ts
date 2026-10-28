@@ -1,0 +1,671 @@
+// Cross-window protocol (docs/batch-b-spec.md "Protocol", "Login", "Approval flow", "Key export", "Unlock"): the
+// message schemas and their validators, shared by the partner client, the vault, the auth pages and the tests.
+//
+// Every message is a plain object sent by structured clone; bytes travel as Uint8Array. Every receiver checks
+// `v === 1`, an allow-list of `t`, `method` or `event` values, the exact field set and types, and a size cap
+// (192 KiB for sign requests and approval requests, 8 KiB for everything else). The parse* functions return null for
+// anything else, and the receiver drops it without a reply.
+//
+// SECURITY: no schema here has a field for key bytes, S, PRK, a CKD response, a Google token or a session secret. The
+// one session secret that crosses postMessage is `relayKey` (hana:auth-params, vault → login popup on authOrigin).
+import { isEvmAddress, isStellarAddress } from './addresses.ts';
+import { base64Decode, from0xHex, toHex, utf8 } from './bytes.ts';
+import { KEY_INDEX_LIMIT, MAX_USES_LIMIT, RELAY_ID_PATTERN, SALT_MAX_BYTES, SALT_MIN_BYTES, SHARE_ID_BYTES } from './layouts.ts';
+import { type EvmTxRequest, evmTxSigningPayload, parseEvmTxRequest } from './signers/evm.ts';
+
+export const PROTOCOL_VERSION = 1;
+/** Cap for sign requests (port) and approval requests (window). */
+export const SIGN_MESSAGE_MAX_BYTES = 192 * 1024;
+/** Cap for every other message. */
+export const MESSAGE_MAX_BYTES = 8 * 1024;
+const MAX_DEPTH = 24;
+
+// ---- errors ----
+
+/** Numeric codes (EIP-1193 style). */
+export const ErrorCode = {
+  /** User rejected (approval Reject, popup closed, approval timeout). */
+  userRejected: 4001,
+  /** Not logged in, address mismatch, or method not allowed for this app (for example raw signing off). */
+  unauthorized: 4100,
+  unsupportedMethod: 4200,
+  /** Vault disconnected (logout, session expired). */
+  disconnected: 4900,
+  /** EVM chain not configured. */
+  chainNotConfigured: 4902,
+} as const;
+
+/** String codes (docs/batch-b-spec.md "Envelope" error table). */
+export const STRING_ERROR_CODES = [
+  'vault_unavailable',
+  'popup_blocked',
+  'coop_blocks_popup',
+  'storage_unavailable',
+  'login_timeout',
+  'login_cancelled',
+  'google_error',
+  'no_google_client',
+  'token_invalid',
+  'token_has_pii',
+  'config_mismatch',
+  'ckd_failed',
+  'derive_failed',
+  'pairing_failed',
+  'address_mismatch',
+  'session_consumed',
+  'rate_limited',
+  'app_suspended',
+  'origin_not_allowed',
+  'api_unavailable',
+  'busy',
+] as const;
+
+export type StringErrorCode = (typeof STRING_ERROR_CODES)[number];
+export type HanaErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode] | StringErrorCode;
+
+export interface ProtocolError {
+  code: HanaErrorCode;
+  message: string;
+  data?: unknown;
+}
+
+const NUMERIC_CODES: ReadonlySet<unknown> = new Set(Object.values(ErrorCode));
+export const isHanaErrorCode = (v: unknown): v is HanaErrorCode => NUMERIC_CODES.has(v) || (STRING_ERROR_CODES as readonly unknown[]).includes(v);
+
+// ---- size and shape helpers ----
+
+/**
+ * An upper estimate of a structured-clone message's size in bytes, or Infinity once it passes `limit`, nests deeper
+ * than 24 levels, or holds anything but plain objects, arrays, Uint8Arrays, strings, numbers, booleans, null and
+ * undefined (no Map, Date, ArrayBuffer, Blob, prototypes other than Object's, cycles).
+ */
+export function messageSize(value: unknown, limit: number): number {
+  let total = 0;
+  const seen = new Set<object>();
+  const walk = (v: unknown, depth: number): boolean => {
+    if (depth > MAX_DEPTH) return false;
+    if (v === null || v === undefined || typeof v === 'boolean') total += 1;
+    else if (typeof v === 'number') total += 8;
+    else if (typeof v === 'string') total += v.length * 3;
+    else if (v instanceof Uint8Array) total += v.byteLength;
+    else if (typeof v === 'object') {
+      if (seen.has(v)) return false;
+      seen.add(v);
+      if (Array.isArray(v)) {
+        for (const item of v) if (!walk(item, depth + 1)) return false;
+      } else {
+        if (Object.getPrototypeOf(v) !== Object.prototype && Object.getPrototypeOf(v) !== null) return false;
+        for (const [k, item] of Object.entries(v)) {
+          total += k.length * 3;
+          if (!walk(item, depth + 1)) return false;
+        }
+      }
+    } else return false;
+    return total <= limit;
+  };
+  return walk(value, 0) ? total : Number.POSITIVE_INFINITY;
+}
+
+type Obj = Record<string, unknown>;
+
+const isPlainObject = (v: unknown): v is Obj =>
+  typeof v === 'object' && v !== null && !Array.isArray(v) && (Object.getPrototypeOf(v) === Object.prototype || Object.getPrototypeOf(v) === null);
+
+/** Exactly the `required` keys plus any of `optional` (an optional key that is present must not be undefined). */
+function exactKeys(o: Obj, required: readonly string[], optional: readonly string[] = []): boolean {
+  const allowed = new Set([...required, ...optional]);
+  for (const k of Object.keys(o)) if (!allowed.has(k) || o[k] === undefined) return false;
+  return required.every((k) => Object.hasOwn(o, k));
+}
+
+const isStr = (v: unknown, min: number, max: number): v is string => typeof v === 'string' && v.length >= min && v.length <= max;
+const isInt = (v: unknown, min: number, max: number): v is number => Number.isSafeInteger(v) && (v as number) >= min && (v as number) <= max;
+const isBytes = (v: unknown, min: number, max: number): v is Uint8Array => v instanceof Uint8Array && v.length >= min && v.length <= max;
+const isChain = (v: unknown): v is 'stellar' | 'evm' => v === 'stellar' || v === 'evm';
+const isHex = (v: unknown): v is `0x${string}` => typeof v === 'string' && /^0x(?:[0-9a-fA-F]{2})*$/u.test(v);
+
+/** `scheme://host[:port]` exactly as URL.origin prints it. */
+export function isOrigin(v: unknown): v is string {
+  if (!isStr(v, 1, 512)) return false;
+  try {
+    const u = new URL(v);
+    return (u.protocol === 'https:' || u.protocol === 'http:') && u.origin === v;
+  } catch {
+    return false;
+  }
+}
+
+export const isPublishableKey = (v: unknown): v is string => typeof v === 'string' && /^pk_(?:test|live)_[1-9A-HJ-NP-Za-km-z]{16,64}$/u.test(v);
+export const isScopeId = (v: unknown): v is string => typeof v === 'string' && /^[a-z0-9]{1,64}$/u.test(v);
+export const isNearAccountId = (v: unknown): v is string =>
+  typeof v === 'string' && /^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/u.test(v);
+const isAppName = (v: unknown): v is string => isStr(v, 1, 200);
+const isClientId = (v: unknown): v is string => isStr(v, 1, 256);
+const isNonce = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9_-]{43}$/u.test(v);
+const isRelayId = (v: unknown): v is string => typeof v === 'string' && RELAY_ID_PATTERN.test(v);
+const isMs = (v: unknown): v is number => isInt(v, 0, Number.MAX_SAFE_INTEGER);
+const isAddressFor = (chain: 'stellar' | 'evm', v: unknown): v is string => typeof v === 'string' && (chain === 'stellar' ? isStellarAddress(v) : isEvmAddress(v));
+
+// ---- port: requests ----
+
+export const PORT_METHODS = [
+  'hana_status',
+  'hana_login',
+  'hana_cancelLogin',
+  'hana_logout',
+  'hana_export',
+  'hana_revokeOtherDevices',
+  'stellar_getAddress',
+  'stellar_signTransaction',
+  'stellar_signAuthEntry',
+  'stellar_signMessage',
+  'eth_accounts',
+  'eth_signTransaction',
+  'personal_sign',
+  'eth_signTypedData_v4',
+  'hana_signRaw',
+  'hana_requestAutoApprove',
+  'hana_autoApproveStatus',
+  'hana_revokeAutoApprove',
+] as const;
+
+export type PortMethod = (typeof PORT_METHODS)[number];
+
+/** Methods that produce a signature (192 KiB cap; approval or an accepted auto-approve policy). */
+export const SIGN_METHODS = [
+  'stellar_signTransaction',
+  'stellar_signAuthEntry',
+  'stellar_signMessage',
+  'eth_signTransaction',
+  'personal_sign',
+  'eth_signTypedData_v4',
+  'hana_signRaw',
+] as const satisfies readonly PortMethod[];
+
+export type SignMethod = (typeof SIGN_METHODS)[number];
+export const isSignMethod = (m: unknown): m is SignMethod => (SIGN_METHODS as readonly unknown[]).includes(m);
+
+export interface PortParamsMap {
+  hana_status: undefined;
+  /** `{popupBlocked: true}` when window.open returned null. */
+  hana_login: { popupBlocked?: boolean } | undefined;
+  hana_cancelLogin: undefined;
+  hana_logout: undefined;
+  hana_export: { chain: 'stellar' | 'evm' };
+  hana_revokeOtherDevices: undefined;
+  stellar_getAddress: undefined;
+  stellar_signTransaction: { xdr: string; networkPassphrase: string; address?: string };
+  stellar_signAuthEntry: { preimageXdr: string; networkPassphrase: string; address?: string };
+  stellar_signMessage: { message: string | Uint8Array; address?: string };
+  eth_accounts: undefined;
+  eth_signTransaction: { tx: EvmTxRequest };
+  personal_sign: [message: `0x${string}`, address: string];
+  eth_signTypedData_v4: [address: string, typedData: string];
+  hana_signRaw: { chain: 'stellar'; bytes: Uint8Array } | { chain: 'evm'; digest: Uint8Array };
+  hana_requestAutoApprove: undefined;
+  hana_autoApproveStatus: undefined;
+  hana_revokeAutoApprove: undefined;
+}
+
+export type PortRequest = { [M in PortMethod]: { v: 1; id: string; method: M; params: PortParamsMap[M] } }[PortMethod];
+
+/** No params: absent, undefined, or an empty array (EIP-1193 callers send `[]`). Parsed as undefined. */
+const noParams = (p: unknown): boolean => p === undefined || (Array.isArray(p) && p.length === 0);
+const PASSPHRASE_MAX = 256;
+const XDR_MAX = SIGN_MESSAGE_MAX_BYTES;
+
+function isBase64(v: unknown, max: number): v is string {
+  if (!isStr(v, 4, max)) return false;
+  try {
+    base64Decode(v);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isEvmTxRequest(v: unknown): v is EvmTxRequest {
+  if (!isPlainObject(v)) return false;
+  try {
+    parseEvmTxRequest(v);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Params validators by method. Each returns the params to use (undefined for none), or null if invalid. */
+const PARAMS: { [M in PortMethod]: (p: unknown) => PortParamsMap[M] | null } = {
+  hana_status: (p) => (noParams(p) ? undefined : null),
+  hana_login: (p) => {
+    if (noParams(p)) return undefined;
+    if (isPlainObject(p) && exactKeys(p, [], ['popupBlocked']) && (p.popupBlocked === undefined || typeof p.popupBlocked === 'boolean')) return p as { popupBlocked?: boolean };
+    return null;
+  },
+  hana_cancelLogin: (p) => (noParams(p) ? undefined : null),
+  hana_logout: (p) => (noParams(p) ? undefined : null),
+  hana_export: (p) => (isPlainObject(p) && exactKeys(p, ['chain']) && isChain(p.chain) ? { chain: p.chain } : null),
+  hana_revokeOtherDevices: (p) => (noParams(p) ? undefined : null),
+  stellar_getAddress: (p) => (noParams(p) ? undefined : null),
+  stellar_signTransaction: (p) =>
+    isPlainObject(p) && exactKeys(p, ['xdr', 'networkPassphrase'], ['address']) && isBase64(p.xdr, XDR_MAX) && isStr(p.networkPassphrase, 1, PASSPHRASE_MAX) && (p.address === undefined || isAddressFor('stellar', p.address))
+      ? (p as PortParamsMap['stellar_signTransaction'])
+      : null,
+  stellar_signAuthEntry: (p) =>
+    isPlainObject(p) && exactKeys(p, ['preimageXdr', 'networkPassphrase'], ['address']) && isBase64(p.preimageXdr, XDR_MAX) && isStr(p.networkPassphrase, 1, PASSPHRASE_MAX) && (p.address === undefined || isAddressFor('stellar', p.address))
+      ? (p as PortParamsMap['stellar_signAuthEntry'])
+      : null,
+  stellar_signMessage: (p) =>
+    isPlainObject(p) && exactKeys(p, ['message'], ['address']) && (isStr(p.message, 0, SIGN_MESSAGE_MAX_BYTES / 3) || isBytes(p.message, 0, SIGN_MESSAGE_MAX_BYTES)) && (p.address === undefined || isAddressFor('stellar', p.address))
+      ? (p as PortParamsMap['stellar_signMessage'])
+      : null,
+  eth_accounts: (p) => (noParams(p) ? undefined : null),
+  eth_signTransaction: (p) => (isPlainObject(p) && exactKeys(p, ['tx']) && isEvmTxRequest(p.tx) ? { tx: p.tx } : null),
+  personal_sign: (p) => (Array.isArray(p) && p.length === 2 && isHex(p[0]) && isAddressFor('evm', p[1]) ? [p[0], p[1]] : null),
+  eth_signTypedData_v4: (p) => (Array.isArray(p) && p.length === 2 && isAddressFor('evm', p[0]) && isStr(p[1], 2, SIGN_MESSAGE_MAX_BYTES / 3) ? [p[0], p[1]] : null),
+  hana_signRaw: (p) => {
+    if (!isPlainObject(p)) return null;
+    if (p.chain === 'stellar' && exactKeys(p, ['chain', 'bytes']) && isBytes(p.bytes, 1, 4096)) return { chain: 'stellar', bytes: p.bytes };
+    if (p.chain === 'evm' && exactKeys(p, ['chain', 'digest']) && isBytes(p.digest, 32, 32)) return { chain: 'evm', digest: p.digest };
+    return null;
+  },
+  hana_requestAutoApprove: (p) => (noParams(p) ? undefined : null),
+  hana_autoApproveStatus: (p) => (noParams(p) ? undefined : null),
+  hana_revokeAutoApprove: (p) => (noParams(p) ? undefined : null),
+};
+
+/** The size cap for a port request with `method`. */
+export const portRequestCap = (method: unknown): number => (isSignMethod(method) ? SIGN_MESSAGE_MAX_BYTES : MESSAGE_MAX_BYTES);
+
+/** Validates a port request (vault side). Unknown methods are null here; the vault answers them 4200 only if `id` is valid. */
+export function parsePortRequest(data: unknown): PortRequest | null {
+  if (!isPlainObject(data) || messageSize(data, portRequestCap(data.method)) === Number.POSITIVE_INFINITY) return null;
+  if (!exactKeys(data, ['v', 'id', 'method'], ['params']) || data.v !== PROTOCOL_VERSION || !isStr(data.id, 1, 64)) return null;
+  const method = data.method;
+  if (!(PORT_METHODS as readonly unknown[]).includes(method)) return null;
+  const params = PARAMS[method as PortMethod](data.params);
+  if (params === null) return null;
+  return { v: 1, id: data.id, method, params } as PortRequest;
+}
+
+/**
+ * For a request parsePortRequest refused: the id to answer 4200 to if it is a well-formed request for an unknown
+ * method (so EIP-1193 callers get "unsupported method" instead of a hang), else null (drop silently).
+ */
+export function unsupportedMethodId(data: unknown): string | null {
+  if (!isPlainObject(data) || messageSize(data, MESSAGE_MAX_BYTES) === Number.POSITIVE_INFINITY) return null;
+  if (!exactKeys(data, ['v', 'id', 'method'], ['params']) || data.v !== PROTOCOL_VERSION || !isStr(data.id, 1, 64)) return null;
+  if (!isStr(data.method, 1, 64) || (PORT_METHODS as readonly unknown[]).includes(data.method)) return null;
+  return data.id;
+}
+
+// ---- port: results, replies and events ----
+
+export type VaultStatus = 'logged_in' | 'logged_out';
+export type Persistence = 'session' | 'none';
+
+export interface PortAddresses {
+  stellar: string;
+  evm: string;
+}
+
+export interface StatusResult {
+  status: VaultStatus;
+  addresses?: PortAddresses;
+  expiresAtMs?: number;
+  persistence: Persistence;
+}
+
+export interface LoginResult {
+  addresses: PortAddresses;
+  expiresAtMs: number;
+  persistence: Persistence;
+  /** Informational (`storage_unavailable`: persistence fell back to 'none'). */
+  warning?: 'storage_unavailable';
+  /** pk_test_ apps only: per-stage ms, no secrets (for apps/smoke). */
+  timings?: Record<string, number>;
+}
+
+export interface AutoApproveStatus {
+  policyId: string;
+  label: string;
+  expiresAtMs: number;
+  used: { count: number; native: string };
+}
+
+export interface PortResultMap {
+  hana_status: StatusResult;
+  hana_login: LoginResult;
+  hana_cancelLogin: null;
+  hana_logout: null;
+  hana_export: null;
+  hana_revokeOtherDevices: { revoked: number };
+  stellar_getAddress: { address: string };
+  stellar_signTransaction: { signedTxXdr: string; signerAddress: string };
+  stellar_signAuthEntry: { signedAuthEntry: string; signerAddress: string };
+  stellar_signMessage: { signedMessage: string; signerAddress: string };
+  eth_accounts: string[];
+  eth_signTransaction: `0x${string}`;
+  personal_sign: `0x${string}`;
+  eth_signTypedData_v4: `0x${string}`;
+  hana_signRaw: { signature: Uint8Array };
+  hana_requestAutoApprove: { granted: boolean; policyId?: string; expiresAtMs?: number };
+  hana_autoApproveStatus: AutoApproveStatus | null;
+  hana_revokeAutoApprove: null;
+}
+
+const isPersistence = (v: unknown): v is Persistence => v === 'session' || v === 'none';
+const isPortAddresses = (v: unknown): v is PortAddresses => isPlainObject(v) && exactKeys(v, ['stellar', 'evm']) && isAddressFor('stellar', v.stellar) && isAddressFor('evm', v.evm);
+const isPolicyId = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{64}$/u.test(v);
+const isSig65 = (v: unknown): v is `0x${string}` => typeof v === 'string' && /^0x[0-9a-fA-F]{130}$/u.test(v);
+const isSignedBy = (v: unknown, key: string): boolean => isPlainObject(v) && exactKeys(v, [key, 'signerAddress']) && isAddressFor('stellar', v.signerAddress);
+
+function isStatusResult(v: unknown, extra: readonly string[] = []): v is StatusResult {
+  if (!isPlainObject(v) || !exactKeys(v, ['status', 'persistence'], ['addresses', 'expiresAtMs', ...extra])) return false;
+  if (!isPersistence(v.persistence)) return false;
+  if (v.status === 'logged_out') return v.addresses === undefined && v.expiresAtMs === undefined;
+  return v.status === 'logged_in' && isPortAddresses(v.addresses) && isMs(v.expiresAtMs);
+}
+
+function isTimings(v: unknown): boolean {
+  return isPlainObject(v) && Object.keys(v).length <= 32 && Object.entries(v).every(([k, ms]) => /^[a-zA-Z]{1,32}$/u.test(k) && typeof ms === 'number' && Number.isFinite(ms) && ms >= 0);
+}
+
+const RESULTS: { [M in PortMethod]: (r: unknown) => boolean } = {
+  hana_status: (r) => isStatusResult(r),
+  hana_login: (r) =>
+    isPlainObject(r) &&
+    exactKeys(r, ['addresses', 'expiresAtMs', 'persistence'], ['warning', 'timings']) &&
+    isPortAddresses(r.addresses) &&
+    isMs(r.expiresAtMs) &&
+    isPersistence(r.persistence) &&
+    (r.warning === undefined || r.warning === 'storage_unavailable') &&
+    (r.timings === undefined || isTimings(r.timings)),
+  hana_cancelLogin: (r) => r === null,
+  hana_logout: (r) => r === null,
+  hana_export: (r) => r === null,
+  hana_revokeOtherDevices: (r) => isPlainObject(r) && exactKeys(r, ['revoked']) && isInt(r.revoked, 0, 1_000_000),
+  stellar_getAddress: (r) => isPlainObject(r) && exactKeys(r, ['address']) && isAddressFor('stellar', r.address),
+  stellar_signTransaction: (r) => isSignedBy(r, 'signedTxXdr') && isBase64((r as Obj).signedTxXdr, SIGN_MESSAGE_MAX_BYTES),
+  stellar_signAuthEntry: (r) => isSignedBy(r, 'signedAuthEntry') && isBase64((r as Obj).signedAuthEntry, 88) && base64Decode((r as Obj).signedAuthEntry as string).length === 64,
+  stellar_signMessage: (r) => isSignedBy(r, 'signedMessage') && isBase64((r as Obj).signedMessage, 88) && base64Decode((r as Obj).signedMessage as string).length === 64,
+  eth_accounts: (r) => Array.isArray(r) && r.length <= 1 && r.every((a) => isAddressFor('evm', a)),
+  eth_signTransaction: (r) => isHex(r) && r.length > 2,
+  personal_sign: isSig65,
+  eth_signTypedData_v4: isSig65,
+  hana_signRaw: (r) => isPlainObject(r) && exactKeys(r, ['signature']) && (isBytes(r.signature, 64, 64) || (isBytes(r.signature, 65, 65) && (r.signature[64] === 27 || r.signature[64] === 28))),
+  hana_requestAutoApprove: (r) =>
+    isPlainObject(r) &&
+    exactKeys(r, ['granted'], ['policyId', 'expiresAtMs']) &&
+    typeof r.granted === 'boolean' &&
+    (r.policyId === undefined || isPolicyId(r.policyId)) &&
+    (r.expiresAtMs === undefined || isMs(r.expiresAtMs)),
+  hana_autoApproveStatus: (r) =>
+    r === null ||
+    (isPlainObject(r) &&
+      exactKeys(r, ['policyId', 'label', 'expiresAtMs', 'used']) &&
+      isPolicyId(r.policyId) &&
+      isStr(r.label, 1, 80) &&
+      isMs(r.expiresAtMs) &&
+      isPlainObject(r.used) &&
+      exactKeys(r.used, ['count', 'native']) &&
+      isInt(r.used.count, 0, 1_000_000) &&
+      typeof r.used.native === 'string' &&
+      /^[0-9]{1,78}$/u.test(r.used.native)),
+  hana_revokeAutoApprove: (r) => r === null,
+};
+
+export type PortReply<M extends PortMethod = PortMethod> = { v: 1; id: string; result: PortResultMap[M] } | { v: 1; id: string; error: ProtocolError };
+
+function isProtocolError(v: unknown): v is ProtocolError {
+  return isPlainObject(v) && exactKeys(v, ['code', 'message'], ['data']) && isHanaErrorCode(v.code) && isStr(v.message, 0, 1024);
+}
+
+/** Validates a reply (SDK side) to a request it sent with `method`, or null. */
+export function parsePortReply<M extends PortMethod>(data: unknown, method: M): PortReply<M> | null {
+  if (!isPlainObject(data) || messageSize(data, portRequestCap(method)) === Number.POSITIVE_INFINITY) return null;
+  if (data.v !== PROTOCOL_VERSION || !isStr(data.id, 1, 64)) return null;
+  if (exactKeys(data, ['v', 'id', 'error'])) return isProtocolError(data.error) ? { v: 1, id: data.id, error: data.error } : null;
+  if (!exactKeys(data, ['v', 'id', 'result']) || !RESULTS[method](data.result)) return null;
+  return { v: 1, id: data.id, result: data.result as PortResultMap[M] };
+}
+
+export const LOGIN_STAGES = ['popup_connected', 'google', 'token', 'chain', 'done'] as const;
+
+export interface PortEventMap {
+  ready: StatusResult & { warning?: 'storage_unavailable' };
+  accountsChanged: { addresses: PortAddresses | null };
+  disconnect: { code: number };
+  sessionExpired: null;
+  loginProgress: { stage: (typeof LOGIN_STAGES)[number] };
+  ui: { launcher: 'show' | 'hide'; label: string };
+  autoApproved: { kind: SignMethod; chain: 'stellar' | 'evm'; contract: string; function: string };
+}
+
+export type PortEventName = keyof PortEventMap;
+export type PortEvent = { [E in PortEventName]: { v: 1; event: E; data: PortEventMap[E] } }[PortEventName];
+
+const EVENTS: { [E in PortEventName]: (d: unknown) => boolean } = {
+  ready: (d) => isPlainObject(d) && (d.warning === undefined || d.warning === 'storage_unavailable') && isStatusResult(d, ['warning']),
+  accountsChanged: (d) => isPlainObject(d) && exactKeys(d, ['addresses']) && (d.addresses === null || isPortAddresses(d.addresses)),
+  disconnect: (d) => isPlainObject(d) && exactKeys(d, ['code']) && isInt(d.code, 0, 9999),
+  sessionExpired: (d) => d === null,
+  loginProgress: (d) => isPlainObject(d) && exactKeys(d, ['stage']) && (LOGIN_STAGES as readonly unknown[]).includes(d.stage),
+  ui: (d) => isPlainObject(d) && exactKeys(d, ['launcher', 'label']) && (d.launcher === 'show' || d.launcher === 'hide') && isStr(d.label, 0, 80),
+  autoApproved: (d) =>
+    isPlainObject(d) && exactKeys(d, ['kind', 'chain', 'contract', 'function']) && isSignMethod(d.kind) && isChain(d.chain) && isStr(d.contract, 1, 128) && isStr(d.function, 1, 128),
+};
+
+/** Validates a vault → SDK event, or null. */
+export function parsePortEvent(data: unknown): PortEvent | null {
+  if (!isPlainObject(data) || messageSize(data, MESSAGE_MAX_BYTES) === Number.POSITIVE_INFINITY) return null;
+  if (!exactKeys(data, ['v', 'event'], ['data']) || data.v !== PROTOCOL_VERSION || typeof data.event !== 'string' || !Object.hasOwn(EVENTS, data.event)) return null;
+  const event = data.event as PortEventName;
+  const payload = Object.hasOwn(data, 'data') ? data.data : null;
+  return EVENTS[event](payload) ? ({ v: 1, event, data: payload } as PortEvent) : null;
+}
+
+/** True if `data` is a port message from the vault that is an event (has `event`), so the SDK routes it there. */
+export const isPortEventShape = (data: unknown): boolean => isPlainObject(data) && Object.hasOwn(data, 'event');
+
+// ---- window messages ----
+
+export type GoogleClientMode = 'own' | 'shared';
+
+/** Approval request kinds: the port method being approved. */
+export type ApprovalKind = SignMethod;
+
+/** Network context bound into the approval digest. */
+export type ApprovalContext = { networkPassphrase: string } | { chainId: number } | Record<string, never>;
+
+export interface WindowMessageMap {
+  /** SDK → vault, with the MessageChannel port transferred. */
+  'hana:hello': { sdk: string };
+  /** Login popup (or export-mode child) → vault (or export window). */
+  'hana:auth-hello': Record<string, never>;
+  /** Vault (or export window) → login popup. Carries relayKey, the one session secret that crosses postMessage. */
+  'hana:auth-params': {
+    pk: string;
+    appName: string;
+    parentOrigin: string;
+    scopeId: string;
+    signer: string;
+    clientId: string;
+    mode: GoogleClientMode;
+    sessionPublicKey: Uint8Array;
+    expiresAtMs: number;
+    salt: Uint8Array;
+    keyIndex: number;
+    maxUses: number;
+    nonce: string;
+    relayId: string;
+    relayKey: Uint8Array;
+  };
+  'hana:approve-hello': Record<string, never>;
+  'hana:approve-request': {
+    id: string;
+    appName: string;
+    parentOrigin: string;
+    kind: ApprovalKind;
+    chain: 'stellar' | 'evm';
+    address: string;
+    bytes: Uint8Array;
+    context: ApprovalContext;
+    position: number;
+    queued: number;
+  };
+  'hana:approve-result': { id: string; approved: boolean; digest: Uint8Array };
+  'hana:approve-bye': Record<string, never>;
+  'hana:export-hello': Record<string, never>;
+  'hana:export-context': {
+    pk: string;
+    appName: string;
+    parentOrigin: string;
+    scopeId: string;
+    signer: string;
+    keyIndex: number;
+    chain: 'stellar' | 'evm';
+    address: string;
+  };
+}
+
+export type WindowMessageType = keyof WindowMessageMap;
+export type WindowMessage<T extends WindowMessageType = WindowMessageType> = { [K in T]: { v: 1; t: K } & WindowMessageMap[K] }[T];
+
+/** 128-bit random request id, 32 lowercase hex characters (approval requests). */
+export const newRequestId = (): string => toHex(crypto.getRandomValues(new Uint8Array(16)));
+const isRequestId = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{32}$/u.test(v);
+
+function isApprovalContext(v: unknown): v is ApprovalContext {
+  if (!isPlainObject(v)) return false;
+  if (Object.keys(v).length === 0) return true;
+  if (exactKeys(v, ['networkPassphrase'])) return isStr(v.networkPassphrase, 1, PASSPHRASE_MAX);
+  if (exactKeys(v, ['chainId'])) return isInt(v.chainId, 1, Number.MAX_SAFE_INTEGER);
+  return false;
+}
+
+const KIND_CHAIN: Record<ApprovalKind, 'stellar' | 'evm' | null> = {
+  stellar_signTransaction: 'stellar',
+  stellar_signAuthEntry: 'stellar',
+  stellar_signMessage: 'stellar',
+  eth_signTransaction: 'evm',
+  personal_sign: 'evm',
+  eth_signTypedData_v4: 'evm',
+  hana_signRaw: null,
+};
+
+const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
+  'hana:hello': (m) => exactKeys(m, ['v', 't', 'sdk']) && typeof m.sdk === 'string' && /^[0-9A-Za-z.+-]{1,32}$/u.test(m.sdk),
+  'hana:auth-hello': (m) => exactKeys(m, ['v', 't']),
+  'hana:auth-params': (m) =>
+    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'clientId', 'mode', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses', 'nonce', 'relayId', 'relayKey']) &&
+    isPublishableKey(m.pk) &&
+    isAppName(m.appName) &&
+    isOrigin(m.parentOrigin) &&
+    isScopeId(m.scopeId) &&
+    isNearAccountId(m.signer) &&
+    isClientId(m.clientId) &&
+    (m.mode === 'own' || m.mode === 'shared') &&
+    isBytes(m.sessionPublicKey, 32, 32) &&
+    isMs(m.expiresAtMs) &&
+    isBytes(m.salt, SALT_MIN_BYTES, SALT_MAX_BYTES) &&
+    isInt(m.keyIndex, 0, KEY_INDEX_LIMIT) &&
+    isInt(m.maxUses, 1, MAX_USES_LIMIT) &&
+    isNonce(m.nonce) &&
+    isRelayId(m.relayId) &&
+    isBytes(m.relayKey, 32, 32),
+  'hana:approve-hello': (m) => exactKeys(m, ['v', 't']),
+  'hana:approve-request': (m) => {
+    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'])) return false;
+    if (!isRequestId(m.id) || !isAppName(m.appName) || !isOrigin(m.parentOrigin) || !isSignMethod(m.kind) || !isChain(m.chain)) return false;
+    const expected = KIND_CHAIN[m.kind];
+    if (expected !== null && expected !== m.chain) return false;
+    return (
+      isAddressFor(m.chain, m.address) &&
+      isBytes(m.bytes, 0, SIGN_MESSAGE_MAX_BYTES) &&
+      isApprovalContext(m.context) &&
+      isInt(m.queued, 1, 1000) &&
+      isInt(m.position, 1, m.queued as number)
+    );
+  },
+  'hana:approve-result': (m) => exactKeys(m, ['v', 't', 'id', 'approved', 'digest']) && isRequestId(m.id) && typeof m.approved === 'boolean' && isBytes(m.digest, 32, 32),
+  'hana:approve-bye': (m) => exactKeys(m, ['v', 't']),
+  'hana:export-hello': (m) => exactKeys(m, ['v', 't']),
+  'hana:export-context': (m) =>
+    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'keyIndex', 'chain', 'address']) &&
+    isPublishableKey(m.pk) &&
+    isAppName(m.appName) &&
+    isOrigin(m.parentOrigin) &&
+    isScopeId(m.scopeId) &&
+    isNearAccountId(m.signer) &&
+    isInt(m.keyIndex, 0, KEY_INDEX_LIMIT) &&
+    isChain(m.chain) &&
+    isAddressFor(m.chain, m.address),
+};
+
+/**
+ * Validates a window message whose `t` is in `allowed` (each receiver passes only the types it expects at that point),
+ * or null. The origin and source checks are the receiver's (event.origin, event.source); this checks only the data.
+ */
+export function parseWindowMessage<T extends WindowMessageType>(data: unknown, allowed: readonly T[]): WindowMessage<T> | null {
+  if (!isPlainObject(data) || data.v !== PROTOCOL_VERSION || typeof data.t !== 'string' || !(allowed as readonly string[]).includes(data.t) || !Object.hasOwn(FIELDS, data.t)) return null;
+  const cap = data.t === 'hana:approve-request' ? SIGN_MESSAGE_MAX_BYTES : MESSAGE_MAX_BYTES;
+  if (messageSize(data, cap) === Number.POSITIVE_INFINITY) return null;
+  return FIELDS[data.t as WindowMessageType](data) ? (data as WindowMessage<T>) : null;
+}
+
+// ---- approval request content ----
+
+/** The approval `chain` of a sign request. */
+export function approvalChain(request: Extract<PortRequest, { method: SignMethod }>): 'stellar' | 'evm' {
+  return request.method === 'hana_signRaw' ? request.params.chain : (KIND_CHAIN[request.method] as 'stellar' | 'evm');
+}
+
+/**
+ * The `bytes` and `context` of the approval request for a sign request: exactly what gets signed (or hashed into what
+ * gets signed), which the popup decodes itself.
+ * - stellar_signTransaction: the envelope XDR bytes, context {networkPassphrase}
+ * - stellar_signAuthEntry: the HashIdPreimage XDR bytes, context {networkPassphrase}
+ * - stellar_signMessage: the message bytes (UTF-8 for a string), no context
+ * - eth_signTransaction: the EIP-1559 (0x02 ‖ rlp) or EIP-155 legacy signing payload, context {chainId}
+ * - personal_sign: the message bytes, no context
+ * - eth_signTypedData_v4: the UTF-8 of the typed-data JSON string, no context (the domain carries the chain)
+ * - hana_signRaw: the raw bytes or the 32-byte digest, no context
+ */
+export function approvalContent(request: Extract<PortRequest, { method: SignMethod }>): { bytes: Uint8Array; context: ApprovalContext } {
+  switch (request.method) {
+    case 'stellar_signTransaction':
+      return { bytes: base64Decode(request.params.xdr), context: { networkPassphrase: request.params.networkPassphrase } };
+    case 'stellar_signAuthEntry':
+      return { bytes: base64Decode(request.params.preimageXdr), context: { networkPassphrase: request.params.networkPassphrase } };
+    case 'stellar_signMessage': {
+      const m = request.params.message;
+      return { bytes: typeof m === 'string' ? utf8(m) : Uint8Array.from(m), context: {} };
+    }
+    case 'eth_signTransaction': {
+      const tx = parseEvmTxRequest(request.params.tx);
+      if (tx.chainId > BigInt(Number.MAX_SAFE_INTEGER)) throw new RangeError('chainId is too large to approve');
+      return { bytes: evmTxSigningPayload(tx), context: { chainId: Number(tx.chainId) } };
+    }
+    case 'personal_sign':
+      return { bytes: from0xHex(request.params[0]), context: {} };
+    case 'eth_signTypedData_v4':
+      return { bytes: utf8(request.params[1]), context: {} };
+    case 'hana_signRaw':
+      return { bytes: Uint8Array.from(request.params.chain === 'stellar' ? request.params.bytes : request.params.digest), context: {} };
+  }
+}
+
+// ---- BroadcastChannel `hana-vault:<appId>` (outcomes only, never key material) ----
+
+export type VaultBroadcast = { v: 1; t: 'counter'; shareId: Uint8Array; counter: number } | { v: 1; t: 'logout' } | { v: 1; t: 'revoked' };
+
+/** Validates a per-app BroadcastChannel message, or null. */
+export function parseVaultBroadcast(data: unknown): VaultBroadcast | null {
+  if (!isPlainObject(data) || data.v !== PROTOCOL_VERSION || messageSize(data, MESSAGE_MAX_BYTES) === Number.POSITIVE_INFINITY) return null;
+  if (data.t === 'counter') {
+    return exactKeys(data, ['v', 't', 'shareId', 'counter']) && isBytes(data.shareId, SHARE_ID_BYTES, SHARE_ID_BYTES) && isMs(data.counter) ? (data as VaultBroadcast) : null;
+  }
+  if (data.t === 'logout' || data.t === 'revoked') return exactKeys(data, ['v', 't']) ? (data as VaultBroadcast) : null;
+  return null;
+}

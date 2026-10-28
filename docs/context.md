@@ -173,11 +173,16 @@ On the integration branch `feat/batch-b` (not yet on `develop`), with its tests 
 - `@hana-id/web`: the vault, the auth pages (`/login`, `/login/callback`, `/approve`, `/export`), per-env builds to
   `packages/web/dist/pages/<env>/{vault,auth}`, `createHana` with the EIP-1193 provider (EIP-6963), the Stellar
   signer and the Stellar Wallets Kit module.
+- `@hana-id/react`: `HanaProvider`, `useHana`, `useWallet`. `@hana-id/sodax`: the Stellar and EVM wallet-provider
+  adapters, with `hana.ethereum.chainIds` in `@hana-id/web` for them.
+- `apps/smoke` on the vault (step 7): `/` logs in through `@hana-id/web`, `/direct.html` keeps the split flow for the
+  ship gate (`apps/smoke/README.md`).
+- `apps/e2e`: the Playwright suite (Chromium, WebKit, Firefox) against local builds and the real `apps/api` Worker,
+  with its CI job.
 - Scripts: `admin app:settings` for the per-app settings; session-pool allowlist state 1 in `deploy-contract`.
 - Docs: `docs/integration.md` (partner guide), this file, `docs/contract-interface.md`.
 
-Still to do in batch B: `@hana-id/react` and `@hana-id/sodax` (scaffolds only), `apps/smoke` on the vault (step 7),
-the Playwright suite, the npm build of the client packages, and the user's deploy steps. Those are: the contract
+Still to do in batch B: the npm build of the client packages, and the user's deploy steps. Those are: the contract
 upgrade with the session keys rotated to allowlist state 1, `VAULT_KEK`, migration 0003, the page Workers, and the
 `{authOrigin}/login/callback` redirect URI on the shared and partner clients. **To measure on testnet** after the
 deploy, and record here: the ship gate (10 runs of `create_session_and_derive`: gas over all receipts and the
@@ -258,8 +263,8 @@ hard-coded · NEAR Auth/FastAuth and per-tx signing code no longer needed.
   in memory, and on disk only under the API's share (`'session'` mode).
 - CKD network key read over RPC → pinned per env build (`ckdNetworkKey`), checked by the build (`ckdKeyProblem`).
 - Full Google token (with email) public on chain → the openid-only implicit flow plus the claim allow-list on
-  `/v1/login`. `/v1/sessions` gets the allow-list once `apps/smoke` leaves Google Identity Services
-  (`REJECT_PII_ON_SESSIONS`, step 7). A direct contract caller is not bound by it.
+  `/v1/login`. `/v1/sessions` gets the allow-list when the user sets `REJECT_PII_ON_SESSIONS = "1"` after step 7
+  (only `apps/smoke`'s `direct.html` still uses Google Identity Services). A direct contract caller is not bound by it.
 - HKDF salt `hana-embed-ckd-v1` → derivation v1 (`hana-id/chain-keys/v1/extract`), confirmed by the user.
 
 ## Next steps (handoff, 2026-10-26)

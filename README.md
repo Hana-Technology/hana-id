@@ -247,9 +247,9 @@ throwaway names. The signer account is part of every user's derived key, so chan
 2. **Create the Google OAuth clients** (Google Cloud console → APIs & Services → Credentials → OAuth client ID, type
    "Web application"). You need one for Hana's own app, and a separate one as the shared login client. They must be
    two different client IDs. Hana's pages (batch B) use the redirect flow: the shared client's only Authorized
-   redirect URI is `{authOrigin}/login/callback` (step 7), never a partner origin. `apps/smoke` still signs in with
-   Google Identity Services until it moves to the vault, so it also needs `http://localhost:5173` as an authorised
-   JavaScript origin ([`apps/smoke/README.md`](apps/smoke/README.md)).
+   redirect URI is `{authOrigin}/login/callback` (step 7), never a partner origin. `apps/smoke`'s `direct.html`
+   still signs in with Google Identity Services, so a client it uses also needs `http://localhost:5173` as an
+   authorised JavaScript origin ([`apps/smoke/README.md`](apps/smoke/README.md)).
 3. **Fill in the manifest**: account names, `googleClientIds` (Hana's own app's client IDs, which become the `global`
    scope), `sharedGoogleClientIds` (the shared login client), `consoleAudiences` if any, `changeDelayMs`, and the
    Cloudflare names. Fill these in before the first deploy. Changing them later works, but adding a shared client

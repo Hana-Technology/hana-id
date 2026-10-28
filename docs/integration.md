@@ -55,8 +55,8 @@ with a TS loader all do).
 | Package | What |
 |---|---|
 | `@hana-id/web` | `createHana`, the EIP-1193 provider, the Stellar signer; `@hana-id/web/stellar-wallets-kit` for SWK |
-| `@hana-id/react` | `HanaProvider`, `useHana`, `useWallet` (being built in batch B) |
-| `@hana-id/sodax` | Optional Sodax wallet-provider adapters (being built in batch B) |
+| `@hana-id/react` | `HanaProvider`, `useHana`, `useWallet` |
+| `@hana-id/sodax` | Optional Sodax wallet-provider adapters |
 
 ## 3. Create the client
 
@@ -403,7 +403,7 @@ emits `autoApproved` and its button briefly shows "Signed by Hana under {label}"
 
 ## 10. React
 
-Being built in batch B (`@hana-id/react`), to this interface:
+`@hana-id/react`:
 
 ```tsx
 import { HanaProvider, useHana, useWallet } from '@hana-id/react';
@@ -425,7 +425,7 @@ const { address, provider } = useWallet('evm');   // provider is hana.ethereum (
 
 ## 11. Sodax adapter
 
-Being built in batch B (`@hana-id/sodax`, optional), typed against `@sodax/types` 2.1.0:
+`@hana-id/sodax` (optional), typed against `@sodax/types` 2.1.0:
 
 ```ts
 import { createSodaxEvmProvider, createSodaxStellarProvider } from '@hana-id/sodax';

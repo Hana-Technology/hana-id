@@ -96,6 +96,7 @@ describe('wrangler.jsonc', () => {
       MPC_ACCOUNT: manifest.mpc,
       VAULT_ORIGIN: manifest.vaultOrigin,
       AUTH_ORIGIN: manifest.authOrigin,
+      API_URL: manifest.apiUrl,
       BLS_PRECHECK: '0',
       REJECT_PII_ON_SESSIONS: '0',
       ...(manifest.cloudflare.durableObjectLocation ? { DO_LOCATION_HINT: manifest.cloudflare.durableObjectLocation } : {}),
@@ -104,6 +105,7 @@ describe('wrangler.jsonc', () => {
     expect(text).not.toMatch(/ed25519:/u);
     expect(text).not.toMatch(/RELAYER_KEYS|KEYS_UPDATER_KEY/u);
     expect(text).not.toMatch(/OWNER_RELAYER_KEYS/u);
+    expect(text).not.toMatch(/VAULT_KEK/u);
   });
 
   it('binds the LoginRelay Durable Object, created by a v2 migration after v1', () => {

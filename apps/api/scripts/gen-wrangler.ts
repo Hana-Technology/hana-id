@@ -45,6 +45,8 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
       MPC_ACCOUNT: m.mpc,
       VAULT_ORIGIN: m.vaultOrigin,
       AUTH_ORIGIN: m.authOrigin,
+      // The API's own URL, for the vault page's CSP connect-src. VAULT_KEK is a secret.
+      API_URL: m.apiUrl,
       ...FLAG_DEFAULTS,
       ...(m.cloudflare.durableObjectLocation ? { DO_LOCATION_HINT: m.cloudflare.durableObjectLocation } : {}),
     },

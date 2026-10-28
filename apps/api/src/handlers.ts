@@ -121,12 +121,12 @@ export function done(ctx: Ctx, status: number, body: Record<string, unknown>, ex
 export const reject = (ctx: Ctx, status: number, code: string, error: string, extra: Headers_ = {}): Response => done(ctx, status, { error, code }, extra);
 
 /** Per-IP limiter subject: IPv4 address, or the IPv6 /64 (see ip.ts). */
-function ipKey(request: Request): string {
+export function ipKey(request: Request): string {
   return `ip:${ipSubject(request.headers.get('cf-connecting-ip'))}`;
 }
 
 /** Per-IP limiters are created near their client; shared ones (per app, owner actions) in the configured region. */
-function limiter(env: Env, name: string): DurableObjectStub<RateLimiter> {
+export function limiter(env: Env, name: string): DurableObjectStub<RateLimiter> {
   return name.startsWith('ip:') ? env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(name)) : placedStub(env, env.RATE_LIMITER, name);
 }
 

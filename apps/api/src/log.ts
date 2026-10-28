@@ -25,6 +25,11 @@ export interface LogFields {
   added?: number;
   removed?: number;
   kids?: string[];
+  /** Vault maintenance (vault/cron.ts): shares pruned, re-wrapped, unreadable, and under an unknown KEK id. */
+  pruned?: number;
+  rewrapped?: number;
+  unreadable?: number;
+  unknownKek?: number;
 }
 
 export function log(fields: LogFields, level: 'info' | 'warn' | 'error' = 'info'): void {

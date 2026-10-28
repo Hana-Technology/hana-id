@@ -160,10 +160,10 @@ origins, partner-origin `/v1/sessions`/`/v1/derive`/`/v1/sessions/revoke`) tied 
 - `max_age=0` returned no `auth_time` (Q33). Export relies on a fresh login plus a typed confirmation.
 - The popup kept `window.opener` through Google's pages in Chrome (Safari untested). The token still comes back only
   through the relay (R2).
-- Cross-project `sub` (2026-10-28, Workspace account): the same account signed in through the shared client (project
+- Cross-project `sub` (2026-10-28, a Workspace and a personal account): each account signed in through the shared client (project
   `875896…`) and a client in a second Cloud project (`596419…`) got the same `sub` (fingerprint match). The path has
   no client ID, so moving a scope from the shared client to a Hana-held branded client keeps its users' addresses
-  (D42). Personal account not yet repeated.
+  (D42).
 
 ### Batch B status (2026-10-28)
 

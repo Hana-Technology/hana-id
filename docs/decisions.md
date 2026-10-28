@@ -372,7 +372,7 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
 - Rejected: letting partners disable export (Privy allows it); extra delays or friction beyond the security checks.
 
 ### D42. Google client tiers: shared by default, Hana-held branded client for Enterprise
-- Date 2026-10-28 · Status: confirmed by the user; cross-project `sub` test passed (Workspace account) · Source:
+- Date 2026-10-28 · Status: confirmed by the user; cross-project `sub` test passed (Workspace and personal accounts) · Source:
   `docs/batch-b-spec.md` Q3, Q37
 - Decision:
   - Standard (default): Hana's shared Google client; Google's screen names Hana. Sodax pilots on this.

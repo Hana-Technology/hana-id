@@ -49,6 +49,10 @@ contracts/hana-signer/   Rust NEAR contract (near-sdk 5): OIDC verification, sco
 apps/api/                Cloudflare Worker + Durable Objects + D1: the relayer partners call (publishable keys)
 apps/smoke/              Local smoke-test page (Vite, http://localhost:5173): real login + CKD against a deployed env
 packages/env/            Environment manifest schema (zod) + loadEnv()
+packages/core/           SDK core (batch B, pure TS): layouts, CKD, derivation v1, signers, decoders, token checks
+packages/web/            Partner client (createHana) and the Hana pages (vault, login, approve, export), built per env
+packages/react/          React bindings (HanaProvider, useHana, useWallet)
+packages/sodax/          Optional Sodax wallet-provider adapters
 envs/                    One manifest per environment (sandbox-dev.json): every account name and endpoint
 scripts/                 Deploy, Google key sync, CKD key pinning, admin CLI (TypeScript, run with tsx)
 legacy/                  Read-only reference: the earlier PoC client and relayer

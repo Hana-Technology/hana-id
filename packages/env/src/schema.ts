@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { hanaOriginProblem, isDevEnv, siteOf } from './origins.ts';
 
 const nearAccount = z.string().regex(/^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/u, 'Invalid NEAR account id');
 
@@ -24,6 +25,17 @@ export const manifestSchema = z
     ckdNetworkKey: z.string(),
     rpc: z.string().url(),
     apiUrl: z.string().url(),
+    /**
+     * Origin of the key vault page (`GET /vault`, a hidden iframe in partner pages). Optional until every deployed env
+     * has it; requires `authOrigin`. Rules (both origins): see origins.ts `hanaOriginProblem`, and the two must be
+     * different sites outside dev envs.
+     */
+    vaultOrigin: z.string().optional(),
+    /**
+     * Origin of the login, callback, approval and export pages. Google redirects to `{authOrigin}/login/callback`, so
+     * changing it breaks own-client partners' redirect registrations (not addresses).
+     */
+    authOrigin: z.string().optional(),
     /** Timelock for adding client IDs / changing owners, in ms (contract allows 0..7 days). */
     changeDelayMs: z.number().int().min(0).max(7 * 24 * 60 * 60 * 1000),
     /** Hana's own Google client IDs, registered to the reserved `global` scope at deploy. */
@@ -48,6 +60,7 @@ export const manifestSchema = z
     }),
   })
   .superRefine((m, ctx) => {
+    hanaOrigins(m, ctx);
     const dup = (list: string[]) => list.find((v, i) => list.indexOf(v) !== i);
     for (const field of ['googleClientIds', 'sharedGoogleClientIds'] as const) {
       const d = dup(m[field]);
@@ -62,5 +75,36 @@ export const manifestSchema = z
       }
     }
   });
+
+/** `vaultOrigin`/`authOrigin`: both or neither, each a valid Hana origin for the env, distinct, and cross-site outside dev envs. */
+function hanaOrigins(m: { name: string; vaultOrigin?: string | undefined; authOrigin?: string | undefined }, ctx: z.RefinementCtx): void {
+  const { vaultOrigin, authOrigin } = m;
+  if (vaultOrigin === undefined && authOrigin === undefined) return;
+  if (vaultOrigin === undefined || authOrigin === undefined) {
+    const missing = vaultOrigin === undefined ? 'vaultOrigin' : 'authOrigin';
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: [missing], message: 'vaultOrigin and authOrigin are set together or not at all' });
+    return;
+  }
+  let valid = true;
+  for (const [field, origin] of [['vaultOrigin', vaultOrigin], ['authOrigin', authOrigin]] as const) {
+    const problem = hanaOriginProblem(origin, m.name);
+    if (problem) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: `${field} ${problem}` });
+      valid = false;
+    }
+  }
+  if (!valid) return;
+  // Popups authenticate the vault by origin and the vault authenticates the popups the same way: one origin for both
+  // would let either page pose as the other.
+  if (vaultOrigin === authOrigin) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['authOrigin'], message: 'vaultOrigin and authOrigin must be different origins' });
+  } else if (!isDevEnv(m.name) && siteOf(vaultOrigin) === siteOf(authOrigin)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['authOrigin'],
+      message: `vaultOrigin and authOrigin must be different sites outside local*/sandbox* envs (both are ${siteOf(vaultOrigin)})`,
+    });
+  }
+}
 
 export type Manifest = z.infer<typeof manifestSchema>;

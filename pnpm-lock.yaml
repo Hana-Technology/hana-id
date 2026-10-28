@@ -76,8 +76,23 @@ importers:
         specifier: 4.1.12
         version: 4.1.12(@types/node@22.20.5)(happy-dom@21.0.3)(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15))
 
+  packages/core:
+    devDependencies:
+      '@types/node':
+        specifier: 22.20.5
+        version: 22.20.5
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.12
+        version: 4.1.12(@types/node@22.20.5)(happy-dom@21.0.3)(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15))
+
   packages/env:
     dependencies:
+      tldts:
+        specifier: 7.4.18
+        version: 7.4.18
       zod:
         specifier: ^3.24.0
         version: 3.25.76
@@ -91,6 +106,60 @@ importers:
       vitest:
         specifier: ^3.2.0
         version: 3.2.7(@types/node@22.20.5)(happy-dom@21.0.3)(tsx@4.23.15)
+
+  packages/react:
+    dependencies:
+      '@hana-id/web':
+        specifier: workspace:*
+        version: link:../web
+    devDependencies:
+      '@types/node':
+        specifier: 22.20.5
+        version: 22.20.5
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.12
+        version: 4.1.12(@types/node@22.20.5)(happy-dom@21.0.3)(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15))
+
+  packages/sodax:
+    dependencies:
+      '@hana-id/web':
+        specifier: workspace:*
+        version: link:../web
+    devDependencies:
+      '@types/node':
+        specifier: 22.20.5
+        version: 22.20.5
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.12
+        version: 4.1.12(@types/node@22.20.5)(happy-dom@21.0.3)(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15))
+
+  packages/web:
+    dependencies:
+      '@hana-id/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@hana-id/env':
+        specifier: workspace:*
+        version: link:../env
+      '@types/node':
+        specifier: 22.20.5
+        version: 22.20.5
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.12
+        version: 4.1.12(@types/node@22.20.5)(happy-dom@21.0.3)(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15))
 
   scripts:
     dependencies:
@@ -1054,6 +1123,13 @@ packages:
     resolution: {integrity: sha512-u8KszXvGfU68hVcZpRHKG28T0krMuv2G5nDhiHaMLen/gIuFEgIJhaJuO69qjnXg5paSrbPMFfx3brNuN8eVSg==}
     engines: {node: '>=14.0.0'}
 
+  tldts-core@7.4.19:
+    resolution: {integrity: sha512-goNXV6Ho9TIOfpJZanTd6CKG5DyYgYAL+k+22T0SLh8l6+KHIfBUPFuePuSZv05UttIaaLmI9tb7TmGIdK5AkQ==}
+
+  tldts@7.4.18:
+    resolution: {integrity: sha512-somxA8xKAUzlAxl0TX/jMSYIbRNFIVGnI96pVGJPeMc5BsHmfVXn6mOJT6U++ELnl04eGfzpfcEuZe8WiASkXg==}
+    hasBin: true
+
   tslib@2.8.1:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
 
@@ -2012,6 +2088,12 @@ snapshots:
   tinyrainbow@3.2.0: {}
 
   tinyspy@4.0.6: {}
+
+  tldts-core@7.4.19: {}
+
+  tldts@7.4.18:
+    dependencies:
+      tldts-core: 7.4.19
 
   tslib@2.8.1:
     optional: true

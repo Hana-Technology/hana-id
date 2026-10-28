@@ -82,8 +82,10 @@ pnpm --filter @hana-id/smoke typecheck
    (only within 5 min of a fresh login), *Export Stellar key* / *Export EVM key* (the vault shows its launcher; the
    key is shown only in the Hana export window, after a fresh Google sign-in).
 3. **Signing and auto-approve**: the request buttons sign (never broadcast) one request each and log the outcome:
-   *signed, auto-approved (no popup)*, *signed after approval*, *rejected (4001)* or *refused* with the code. See
-   [Auto-approve demo](#auto-approve-demo).
+   *signed, auto-approved (no popup)*, *signed under the policy, after the consent screen* (a covered request with no
+   consent in force, or one for which the vault showed its launcher), *signed after approval*, *rejected (4001)* or
+   *refused* with the code. One request runs at a time: the sign, auto-approve and export buttons stay disabled until
+   it settles, so each label is that request's own. See [Auto-approve demo](#auto-approve-demo).
 
 Every login is a results-log run with the vault's stages (pk_test_ apps): **app** (Google client), **popup** (until
 the login popup connected), **google** (Google's pages and the relay, so it includes your clicks), **verify** (RS256
@@ -100,6 +102,10 @@ environment and signer:
 - a login whose addresses equal a direct-page run's (same scope, `key_index` 0) is noted: the vault and the in-page
   derivation agree.
 
+Tabs share the log: each run is appended to the log as stored at that moment, and a tab shows another tab's runs as
+soon as they are written, so a second tab's unlock run is never lost. Each run also records the API it called (the
+vault's is always the manifest's `apiUrl`; the direct page's is `VITE_HANA_API_URL` when set).
+
 *Copy results as JSON* copies both logs (vault and direct). Gas isn't in the vault log: the vault returns no
 transaction hash, so read `create_session_and_derive` gas from the relayer's transactions on nearblocks (linked under
 the environment).
@@ -109,17 +115,20 @@ the environment).
 The *Ship gate* panel compares the median of the latest 10 vault logins' **chain** stage (`create_session_and_derive`
 round trip) with the median of the latest 10 direct-page sessions' create_session + derive_key round trips (counter 1).
 If the combined call saves less than 1.5 s, it is removed before the audit (session keys go to allowlist state 3;
-otherwise state 2). The panel only computes; recording the result in `docs/context.md` and rotating the keys are the
-user's steps.
+otherwise state 2). Both sides must have run against the same API: the vault always calls the manifest's `apiUrl`,
+so direct-page runs against a `VITE_HANA_API_URL` override (a local `wrangler dev`), and runs logged before runs
+recorded their API, are left out, and the verdict says how many. Measure the split side with no override. The panel
+only computes; recording the result in `docs/context.md` and rotating the keys are the user's steps.
 
 ### Auto-approve demo
 
 `policies/demo-auto-approve.json` is a testnet policy that covers exactly two harmless requests: a native-XLM SAC
 `transfer` of 1 stroop to yourself on Stellar testnet, and a Sepolia USDC `approve(you, 1)` (address rule
-`self-or-listed`, 20 a day, consent for 1 h). Set it on the app (it takes effect after the env's `changeDelayMs`):
+`self-or-listed`, 20 a day, consent for 1 h). Set it on the app (it takes effect after the env's `changeDelayMs`).
+pnpm runs the admin script in `scripts/`, so the policy path is relative to that directory:
 
 ```sh
-pnpm --filter @hana-id/scripts admin <env> app:settings <app id | pk> --auto-approve apps/smoke/policies/demo-auto-approve.json --remote
+pnpm --filter @hana-id/scripts admin <env> app:settings <app id | pk> --auto-approve ../apps/smoke/policies/demo-auto-approve.json --remote
 pnpm --filter @hana-id/scripts admin <env> app:settings <app id | pk> --auto-approve off --remote   # immediate
 ```
 
@@ -151,8 +160,8 @@ Timings: **Google** is from rendering the button to the token, so it includes yo
 and sums the transaction and all its receipts, including the MPC's. Its results log compares runs by path: same path
 must give the same addresses and `app_id`, a different path must give different ones.
 
-Every relayed call costs testnet gas, including a replayed derive (it passes the API's signature check and is rejected
-by the contract).
+Every relayed call costs testnet gas. A replayed derive doesn't: the API refuses a counter the session has already
+used with `409 counter_used` before relaying anything (no transaction, no gas); the contract would refuse it too.
 
 ## Google openid-only spike (`spike.html`)
 
@@ -200,14 +209,22 @@ results are in `docs/context.md` ("Google openid-only spike").
 - [ ] **Approval**: with no auto-approve policy, each request button opens the Hana approval popup; Approve gives
       "signed after approval", Reject or closing it gives "rejected (4001)".
 - [ ] **Auto-approve**: with the demo policy in force: *Accept the policy* → consent; the two "covered" requests give
-      "signed, auto-approved (no popup)"; the "stranger" and "burn address" ones open the popup with the reason;
+      "signed, auto-approved (no popup)" (without *Accept the policy* first, the first covered request gives "signed
+      under the policy, after the consent screen"); the "stranger" and "burn address" ones open the popup with the reason;
       `personal_sign` always opens it; *Stop auto-approving* → the covered ones need the popup again; `--auto-approve
       off` stops it at once (reload).
 - [ ] **Raw signing**: *Raw sign* is "refused: 4100" by default; with `--raw-sign approval` (after the delay) it opens
       the popup with the raw warning.
-- [ ] **Ship gate**: 10 vault logins and 10 direct-page sessions (the direct page needs `REJECT_PII_ON_SESSIONS = "0"`):
-      the panel's verdict. Record it, the gas of a few `create_session_and_derive` transactions (nearblocks) and the
-      unlock total in `docs/context.md`.
+- [ ] **Safari/WebKit storage retention**: in Safari, log in, then reload after 10 min, 1 h and a day idle, and after
+      quitting and reopening Safari: each reload gives an unlock run, or a logged-out load (no unlock run) if Safari
+      dropped the vault's partitioned IndexedDB. Record which in `docs/context.md`.
+- [ ] **Ship gate**: 10 vault logins and 10 direct-page sessions, with no `VITE_HANA_API_URL` override (the direct page
+      needs `REJECT_PII_ON_SESSIONS = "0"`): the panel's verdict. Record it, the gas of a few
+      `create_session_and_derive` transactions (nearblocks) and the unlock total in `docs/context.md`.
+- [ ] **BLS precheck CPU time** (Q8, before `BLS_PRECHECK` is turned on in any env): on a scratch deploy only, on the
+      Workers Paid plan, set the var `BLS_PRECHECK = "1"`, do a few vault logins and read the `/v1/login` CPU time
+      per request from the Workers dashboard (the Worker's metrics or its logs). Record it in `docs/context.md` next to the
+      ship gate and the unlock total, then delete the scratch deploy.
 - [ ] **After `REJECT_PII_ON_SESSIONS = "1"`** (the user's switch): the direct page's sign-in fails with "400
       token_has_pii … the direct flow is retired here", and the vault page keeps logging in.
 

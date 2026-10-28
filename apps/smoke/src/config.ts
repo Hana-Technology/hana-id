@@ -21,9 +21,12 @@ export interface PageEnv {
   /** Pinned MPC CKD public key (`bls12381g2:…`). */
   ckdNetworkKey: string;
   rpc: string;
+  /** The API this page calls: VITE_HANA_API_URL when set, else the manifest's. */
   apiUrl: string;
   /** True when VITE_HANA_API_URL overrode the manifest's apiUrl (e.g. a local `wrangler dev`). */
   apiUrlOverridden: boolean;
+  /** The manifest's apiUrl: the one the vault and login pages were built with, whatever this page calls. */
+  manifestApiUrl: string;
   /** The vault page's origin (manifest `vaultOrigin`), or null when the env has no Hana pages. */
   vaultOrigin: string | null;
   /** The login, approval and export pages' origin (manifest `authOrigin`), or null. */
@@ -50,6 +53,7 @@ export function pageEnvFrom(m: ManifestFields, apiUrlOverride?: string): PageEnv
     rpc: m.rpc,
     apiUrl: override || m.apiUrl,
     apiUrlOverridden: Boolean(override),
+    manifestApiUrl: m.apiUrl,
     vaultOrigin: m.vaultOrigin ?? null,
     authOrigin: m.authOrigin ?? null,
   };

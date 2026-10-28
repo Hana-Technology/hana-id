@@ -383,6 +383,7 @@ async function derive(s: ActiveSession, runStart: number, first: boolean): Promi
     at: new Date().toISOString(),
     env: env.name,
     signer: env.signer,
+    apiUrl: env.apiUrl,
     pkPrefix: pkPrefix(s.app.publishableKey),
     scopeId: s.app.config.scopeId,
     clientMode: s.client.mode,

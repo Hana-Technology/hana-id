@@ -1,0 +1,13 @@
+# Code owners (docs/decisions.md, Q23). These paths decide every user's address or key, or every environment's
+# accounts: a change to any of them needs @tzechuen's review. Branch protection on `develop` and `main` must have
+# "Require review from Code Owners" on for this to block a merge.
+
+# Derivation v1 and its golden vectors: a change here changes every address (frozen after the address freeze).
+/packages/core/src/derivation*  @tzechuen
+/packages/core/test/vectors/    @tzechuen
+
+# The signer contract: token checks, the registry, sessions and the MPC request.
+/contracts/hana-signer/         @tzechuen
+
+# The manifest schema: account names, origins and the pinned CKD key every bundle is built with.
+/packages/env/src/              @tzechuen

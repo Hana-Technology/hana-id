@@ -237,6 +237,32 @@ describe('/approve', () => {
       expect(results()[0]).toMatchObject({ approved: true });
     });
 
+    it('mouse: with zero movement (WebKit reports 0 on every move), only a changed position arms it', () => {
+      send(evmRequest());
+      vi.advanceTimersByTime(GUARD_DELAY_MS);
+      // The first move has nothing to compare with; repeats at the same spot (synthetic moves, a press) never arm.
+      win.dispatch('pointermove', { pointerType: 'mouse', movementX: 0, movementY: 0, clientX: 5, clientY: 5 });
+      win.dispatch('pointermove', { pointerType: 'mouse', movementX: 0, movementY: 0, clientX: 5, clientY: 5 });
+      win.dispatch('pointerdown', { pointerType: 'mouse', clientX: 5, clientY: 5 });
+      win.dispatch('pointermove', { pointerType: 'mouse', movementX: 0, movementY: 0, clientX: 5, clientY: 5 });
+      expect(primary()?.disabled).toBe(true);
+      // The cursor moved: armed. The arming move never approves; the next click does.
+      win.dispatch('pointermove', { pointerType: 'mouse', movementX: 0, movementY: 0, clientX: 16, clientY: 16 });
+      expect(primary()?.disabled).toBe(false);
+      click(primary(), 'mouse');
+      expect(results()[0]).toMatchObject({ approved: true });
+    });
+
+    it('mouse: a click in place after a press elsewhere still never arms it (the press records the position)', () => {
+      send(evmRequest());
+      vi.advanceTimersByTime(GUARD_DELAY_MS);
+      win.dispatch('pointermove', { pointerType: 'mouse', movementX: 0, movementY: 0, clientX: 5, clientY: 5 });
+      win.dispatch('pointerdown', { pointerType: 'mouse', clientX: 40, clientY: 40 });
+      // A synthetic move at the press position (the cursor didn't move after the press) doesn't arm.
+      win.dispatch('pointermove', { pointerType: 'mouse', movementX: 0, movementY: 0, clientX: 40, clientY: 40 });
+      expect(primary()?.disabled).toBe(true);
+    });
+
     it('a click whose press began before the guard armed does not approve', () => {
       send(evmRequest());
       vi.advanceTimersByTime(GUARD_DELAY_MS - 1);

@@ -323,6 +323,11 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   };
 }
 
+/** clientX/clientY of a pointer event, when both are numbers. */
+function position(o: Partial<PointerEvent>): { clientX?: number; clientY?: number } {
+  return typeof o.clientX === 'number' && typeof o.clientY === 'number' ? { clientX: o.clientX, clientY: o.clientY } : {};
+}
+
 /** The fields of a pointer or keyboard event the guard reads (approve-guard.ts). */
 function guardInput(type: GuardInput['type'], e: Event): GuardInput {
   const o = e as Partial<PointerEvent & KeyboardEvent>;
@@ -333,10 +338,10 @@ function guardInput(type: GuardInput['type'], e: Event): GuardInput {
     case 'pointermove': {
       const movementX = num(o.movementX);
       const movementY = num(o.movementY);
-      return { type, ...(pointerType !== undefined ? { pointerType } : {}), ...(movementX !== undefined ? { movementX } : {}), ...(movementY !== undefined ? { movementY } : {}) };
+      return { type, ...(pointerType !== undefined ? { pointerType } : {}), ...(movementX !== undefined ? { movementX } : {}), ...(movementY !== undefined ? { movementY } : {}), ...position(o) };
     }
     case 'pointerdown':
-      return { type, ...(pointerType !== undefined ? { pointerType } : {}) };
+      return { type, ...(pointerType !== undefined ? { pointerType } : {}), ...position(o) };
     case 'keydown': {
       const key = str(o.key);
       return { type, ...(key !== undefined ? { key } : {}), repeat: o.repeat === true };

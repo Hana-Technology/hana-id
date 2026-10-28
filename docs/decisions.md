@@ -259,6 +259,11 @@ progress or not started), **deferred**, **superseded**, **proposed** (in a draft
   Tab, Shift+Tab and the arrow keys arm; Enter, Space and auto-repeated keys never do. The arming gesture never
   approves: Approve acts only on a click whose own pointerdown (or non-repeated keydown) came after it. The page never
   focuses Approve.
+- Amended 2026-10-28 (`feat/b-defaults`): a mouse move "moved" when its `movementX`/`movementY` is non-zero or, when
+  both are 0, when its `clientX`/`clientY` differs from the last pointer event's (move or press). WebKit reports 0
+  movement on every `pointermove` (found by the Playwright suite: Approve never armed in WebKit, so Safari mouse users
+  could not approve); a synthetic move under a still cursor keeps its position and still never arms, nor does the
+  first zero-movement move (nothing to compare with).
 - Why: the spec's `pointermove`-only rule never arms on a stationary tap or from the keyboard, so phone and
   keyboard-only users could not approve. Keeping mouse on `pointermove` means clicking in place never approves, and
   keeping Enter and Space out means a held key never approves.

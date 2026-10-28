@@ -208,7 +208,8 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   context is the passphrase or chain ID for transactions and auth entries, and empty for messages, typed data and raw
   requests (D35); the popup says those signatures aren't tied to one network. The launcher only opens the popup.
 - The Approve guard (`packages/web/src/auth/approve-guard.ts`, D36): disabled until 1 s after render and 1 s after
-  the window last gained focus or became visible, then an arming gesture: a mouse `pointermove` that moved, a touch or
+  the window last gained focus or became visible, then an arming gesture: a mouse `pointermove` that moved (non-zero
+  `movementX`/`Y`, or, as WebKit always reports 0, a position other than the last pointer event's), a touch or
   pen `pointerdown`, or Tab/Shift+Tab/an arrow key (never Enter, Space or a repeated key). Approve acts only on a click
   whose own pointerdown or keydown came after the arming gesture, and the page never focuses it. So a double-click
   across the opening, clicking in place, a held Enter and a request slipped in at a click never approve. Residual

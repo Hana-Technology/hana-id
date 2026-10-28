@@ -7,7 +7,9 @@
 //
 // What arms it depends on the input:
 // - mouse: only a `pointermove` that moved (a press never arms; Chromium's synthetic moves after a layout change carry
-//   zero movement and are ignored). So clicking in place, however often, never approves.
+//   zero movement and are ignored). So clicking in place, however often, never approves. A move counts as moved when
+//   its movementX/Y is non-zero, or, when both are 0, when its position differs from the last pointer event's: WebKit
+//   reports movementX/Y = 0 on every pointermove, while a synthetic move under a still cursor keeps the position.
 // - touch and pen: a `pointerdown` (a stationary tap fires no pointermove), or a move.
 // - keyboard: only Tab, Shift+Tab and the arrow keys, the keys that move focus. Enter and Space never arm, and a
 //   key's auto-repeat never counts, so a held Enter never approves.
@@ -26,17 +28,26 @@ export const ARMING_KEYS: ReadonlySet<string> = new Set(['Tab', 'ArrowUp', 'Arro
 
 /** The parts of a pointer or keyboard event the guard reads (absent fields are treated strictly). */
 export type GuardInput =
-  | { type: 'pointermove'; pointerType?: string; movementX?: number; movementY?: number }
-  | { type: 'pointerdown'; pointerType?: string }
+  | { type: 'pointermove'; pointerType?: string; movementX?: number; movementY?: number; clientX?: number; clientY?: number }
+  | { type: 'pointerdown'; pointerType?: string; clientX?: number; clientY?: number }
   | { type: 'keydown'; key?: string; repeat?: boolean };
 
-/** Whether this input, after both marks, arms the guard. */
-function arms(input: GuardInput): boolean {
+type Point = { x: number; y: number };
+
+const pointOf = (input: { clientX?: number; clientY?: number }): Point | null =>
+  input.clientX !== undefined && input.clientY !== undefined && Number.isFinite(input.clientX) && Number.isFinite(input.clientY) ? { x: input.clientX, y: input.clientY } : null;
+
+/** Whether this input, after both marks, arms the guard. `lastPoint` is the previous pointer event's position. */
+function arms(input: GuardInput, lastPoint: Point | null): boolean {
   switch (input.type) {
-    case 'pointermove':
-      // A mouse move with zero movement is a synthetic one (layout change under a still cursor); other moves count.
+    case 'pointermove': {
       if (input.pointerType === 'touch' || input.pointerType === 'pen') return true;
-      return !(input.movementX === 0 && input.movementY === 0);
+      if (!(input.movementX === 0 && input.movementY === 0)) return true;
+      // Zero movement: a synthetic move under a still cursor (layout change), or WebKit, which reports 0 for every
+      // move. Only a position that changed since the last pointer event counts; with none known, it doesn't.
+      const p = pointOf(input);
+      return p !== null && lastPoint !== null && (p.x !== lastPoint.x || p.y !== lastPoint.y);
+    }
     case 'pointerdown':
       return input.pointerType === 'touch' || input.pointerType === 'pen';
     case 'keydown':
@@ -53,6 +64,8 @@ export class ApproveGuard {
   private seq = 0;
   private lastPointerDown = 0;
   private lastKeyDown = 0;
+  /** The position of the last pointer event (move or press), for moves that report zero movement. */
+  private lastPoint: Point | null = null;
   private last = false;
 
   /**
@@ -105,7 +118,9 @@ export class ApproveGuard {
     const n = ++this.seq;
     if (input.type === 'pointerdown') this.lastPointerDown = n;
     if (input.type === 'keydown') this.lastKeyDown = n;
-    if (this.armedBy === null && arms(input) && this.marksPassed(this.now())) this.armedBy = n;
+    const arming = arms(input, this.lastPoint);
+    if (input.type !== 'keydown') this.lastPoint = pointOf(input) ?? this.lastPoint;
+    if (this.armedBy === null && arming && this.marksPassed(this.now())) this.armedBy = n;
     this.update();
   }
 

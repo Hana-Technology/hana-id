@@ -1,11 +1,12 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`).
+known open issues. Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`); browser parts
+(`packages/web`) re-verified 2026-10-28 on `fix/b-web` (from `feat/batch-b` 0f0a437).
 
 Component map and flows: `docs/architecture.md`. On-chain layouts and the contract's own security notes:
 `docs/contract-interface.md` ("Security notes (for reviewers)"). Browser parts (vault, auth pages, partner client)
-are on unmerged branches; they are marked **(per spec)** and described from `docs/batch-b-spec.md` "Security model".
+are in `packages/web` on `feat/batch-b`; what is still marked **(per spec)** below was not re-checked against it.
 
 ## Trust roots in one paragraph
 
@@ -26,7 +27,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Hana operator (owner, signer, relayer accounts; Cloudflare account) | Running the contract, API and pages honestly | Today, total control: post an issuer key (owner or `KEYS_UPDATER_KEY`) and mint tokens; upgrade the contract (signer full-access key, no lock); serve modified vault/auth bundles. Suspend apps, stop relaying, list or remove shared clients | Move a scope's registered clients or owners, or block derivation for a scope with its own client, **without** those powers above. Read keys in normal operation |
 | API Worker logic and D1 (not the pages, not the secrets) | Gating and relaying; holding shares | Deny service; with `VAULT_KEK` plus a device dump, get PRK; point a vault at another scope of the same user (Q7); set or widen `raw_sign`/policies (the user still approves raw requests and must accept a new `policyId`); make the vault page frameable by another origin (D1 origins) | Substitute the signer, path or CKD key (pinned in the bundles, path computed in the vault); read or swap the relayed token (end-to-end encrypted); sign without the vault |
 | Partner (app owner) | Its own app config and, in own-client mode, its Google client | Own-client mode: obtain tokens with any nonce for its client and derive its own users' keys in its scope (inherent: Hana can't see Google client settings). Set an auto-approve policy (delayed; users must accept it) | Anything in another scope. In shared mode: derive keys (no token with a nonce of its choosing) |
-| Partner page (incl. XSS, malicious dependency) | Nothing | Start a login (visible popup), read addresses, queue signature requests, drive an unlocked vault within its idle/absolute limits, get requests signed that match an accepted auto-approve policy | Read keys, tokens, nonces; get any other signature without a guarded Approve in a Hana popup (per spec) |
+| Partner page (incl. XSS, malicious dependency) | Nothing | Start a login (visible popup), read addresses, queue signature requests, drive an unlocked vault within its idle/absolute limits, get requests signed that match an accepted auto-approve policy | Read keys, tokens, nonces; get any other signature without a guarded Approve in a Hana popup |
 | User's browser and device | Running Hana's pages; keeping the profile private | Malware or an extension in all frames: everything the user can do, including reading an exported key. A disk dump with a live share: unlock and get PRK | After logout, idle or absolute expiry or revoke: nothing. A derive (the persisted session is used up) |
 | NEAR RPC (manifest `rpc`) | Liveness, honest views | Fail derives, report wrong counters, delay | Forge a CKD result (pairing check against the pinned key) |
 | Anyone watching the chain or mempool | Nothing | Read used tokens (openid-only claims via the API), replay `create_session` with them (the vault derives with the next counter), replay a whole combined call (burns a `max_uses = 1` login: `session_consumed`; attacker pays gas) | Derive for themselves (needs the session key; the answer is encrypted to `a`) |
@@ -58,10 +59,10 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | CKD master secret | BLS12-381, threshold-shared | MPC nodes (TEEs) | NEAR MPC network | Not Hana's. A new network changes every address |
 | CKD network public key | BLS12-381 G2, public | manifest `ckdNetworkKey`; build constant of vault/login/export bundles | public | Pinned with `scripts/fetch-ckd-key.ts`; never read at runtime by the pages |
 | S (CKD secret) | 48-byte G1 point | Browser memory only | vault / export window | Zeroed by `extractPrk` (`packages/core/src/derivation.ts:46`) |
-| PRK | 32 bytes | Vault memory; IndexedDB record as AES-GCM under `K_s` (per spec) | vault | Zeroed at `expiresAtMs`, logout, revoke broadcast. Rotation: new `key_index` |
+| PRK | 32 bytes | Vault memory; IndexedDB record as AES-GCM under `K_s` | vault | Zeroed at `expiresAtMs` (by a timer, and on the first use past it if the timer is late), logout (any tab of the app), a `revoked` broadcast for its share, a newer login. Rotation: new `key_index` |
 | Chain keys (Stellar seed, EVM `d`) | ed25519 seed, secp256k1 scalar | Derived per signature, zeroed in `finally` (`withChainKey`, `derivation.ts:98`) | vault; export window shows one on request | Same as PRK |
 | BLS app key `a` | BLS12-381 scalar | Memory, one login | vault / export window | Dropped after decrypt (`packages/core/src/ckd.ts:84`) |
-| Session key | Ed25519, non-extractable WebCrypto | Vault memory; IndexedDB record in `'session'` mode (per spec) | vault | ≤ the session (≤ 23 h 50 min app setting, ≤ 24 h on chain) |
+| Session key | Ed25519, non-extractable WebCrypto | Vault memory; IndexedDB record in `'session'` mode | vault | ≤ the session (≤ 23 h 50 min app setting, ≤ 24 h on chain) |
 | `K_s` | 32-byte AES-GCM key per share | D1 only as `share_enc` under `VAULT_KEK`; vault memory briefly | API generates, vault uses | Ends with the share (idle ≤ `idle_ttl_ms`, absolute ≤ `session_ttl_ms`, revoke) |
 | `VAULT_KEK`, `VAULT_KEK_PREVIOUS` | AES-256-GCM, `<id>:<base64>` | Worker secrets | Hana | Rotate: old value → `VAULT_KEK_PREVIOUS`, new id in `VAULT_KEK`; unlocks and the hourly cron re-wrap (`apps/api/src/vault/kek.ts`, `vault/cron.ts`) |
 | `relayKey`, `relayReadKey` | 32-byte AES-GCM key / read capability | Vault memory; `relayKey` also in the login popup's `sessionStorage` (per spec) | vault, login popup | One login; slot lives 120 s |
@@ -153,10 +154,11 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
 - Config escaping: `<script type="application/json">` with `<`, `>`, `&`, U+2028, U+2029 escaped (`jsonForHtml`,
   `page.ts:42`); origins that aren't a bare lowercase origin are dropped before they reach the header or the config
   (`apps/api/src/vault/origins.ts:11`). `signer` is not in the config (the bundle's constant is used).
-- Auth pages: `frame-ancestors 'none'`, page-specific `connect-src`, no COOP header (per spec; `b/web-auth` builds
-  them with a `<meta>` CSP and per-page headers, not yet merged).
+- Auth pages: `frame-ancestors 'none'`, page-specific `connect-src`, no COOP header. `packages/web` builds them
+  with a `<meta>` CSP (`scripts/build-auth-pages.ts`) and the auth Worker sends the headers
+  (`apps/api/src/pages/host.ts`).
 
-### Browser (per spec, not yet merged)
+### Browser (`packages/web`)
 
 - The vault, login and export pages use only the pinned `SIGNER`, `RELAYER` and CKD key; any differing value stops
   the flow (`config_mismatch`).
@@ -167,19 +169,49 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   `event.source`.
 - No message in any direction carries key bytes, S, PRK, a CKD response, a token or a session secret, except
   `relayKey` from the vault to its authenticated login popup (schemas: `packages/core/src/protocol.ts`).
-- Approval binds the whole request through `approvalDigest` (`packages/core/src/approval.ts:179`); Approve is guarded
-  (1 s after render, 1 s after focus, a pointer move); the launcher only opens the popup.
+- Approval binds the whole request through `approvalDigest` (`packages/core/src/approval.ts:179`). Its network
+  context is the passphrase or chain ID for transactions and auth entries, and empty for messages, typed data and raw
+  requests (D33); the popup says those signatures aren't tied to one network. The launcher only opens the popup.
+- The Approve guard (`packages/web/src/auth/approve-guard.ts`, D34): disabled until 1 s after render and 1 s after
+  the window last gained focus or became visible, then an arming gesture: a mouse `pointermove` that moved, a touch or
+  pen `pointerdown`, or Tab/Shift+Tab/an arrow key (never Enter, Space or a repeated key). Approve acts only on a click
+  whose own pointerdown or keydown came after the arming gesture, and the page never focuses it. So a double-click
+  across the opening, clicking in place, a held Enter and a request slipped in at a click never approve. Residual
+  risk (accepted): tap-spam on a phone for more than 1 s after the popup tab opens can approve in two taps.
+- The vault's approval queue holds at most 100 requests (`4100 too_many_pending`), and refuses at once
+  (`4100 invalid_request`) a request whose popup message the popup's own validator would drop, so nothing waits out
+  the 5 min timeout unseen (`packages/web/src/vault/approvals.ts`). A popup that gets a new request while one is
+  unanswered rejects the old one first.
+- Session end: every use (sign, before and after approval and inside the auto-sign lock, status, accounts, export
+  start and the export window's hello, share actions, revoke-all) checks `expiresAtMs` against the server-corrected
+  clock and ends the session there, so a timer delayed by a throttled tab or a sleeping device never keeps PRK
+  signing (`live()`, `packages/web/src/vault/vault.ts`).
+- One session per app per device. A login revokes this tab's previous share and the share of the record it
+  overwrites, and broadcasts `revoked {shareId}` for each; only tabs holding that share end. Logout, under the per-app
+  lock, revokes this tab's share and the stored record's (with that record's session key) if it is another session's,
+  deletes the record and broadcasts `logout`, which ends every tab of the app. A stale tab's 410 ends only that tab.
+- The partner client broadcasts an approved `eth_sendTransaction` on the chain it was filled and signed for, one at
+  a time per chain, with a filled nonce never below one past its last broadcast.
 - The IndexedDB record is AES-GCM with an AAD over signer, app, path, session key, derivation version, CKD key hash,
   parent origin and expiry (`packages/core/src/layouts.ts:133`); records, Web Lock and BroadcastChannel are per app.
 - Time checks use a server-corrected clock (`serverTimeMs`).
 
 ## Auto-approve policies
 
-Code: `packages/core/src/policy/` (validator, matcher, `policyId`, usage). The vault that enforces them is per spec.
+Code: `packages/core/src/policy/` (validator, matcher, `policyId`, usage); the vault enforces them
+(`packages/web/src/vault/vault.ts`, `auto-approve.ts`).
 
 - **Off by default, two opt-ins.** An app owner sets a policy (D1; set or change is pending until
-  `auto_approve_effective_at`, 24 h, or `changeDelayMs` in dev envs; removal is immediate). Each user then accepts
-  that exact `policyId` in a Hana consent screen; any change to the policy changes the id and needs a new consent.
+  `auto_approve_effective_at`, 24 h, or `changeDelayMs` in dev envs; removal is immediate in D1). Each user then
+  accepts that exact `policyId` in a Hana consent screen; any change to the policy changes the id and needs a new
+  consent.
+- **Removal in an open tab.** The vault page inlines the policy at load; `GET /v1/app` also returns the policy in
+  force. An open vault auto-signs only under a policy that a `GET /v1/app` confirmed less than 10 s ago
+  (`POLICY_FRESH_MS`), re-reading it first when the last check is older (also every 60 s in the background). A removed
+  or changed policy, or a failed re-read, sends the request to the popup. So a removal stops auto-signing in every
+  open tab within 10 s, plus the API's own read of D1 (no isolate cache on that read). A changed policy counts as none
+  until a reload. Raw signing `'off'` is not re-read: an open tab keeps `'approval'` until its next load (every raw
+  request still needs an Approve).
 - **Never covered**: `hana_signRaw`, `personal_sign`, `stellar_signMessage` (`NEVER_AUTO_APPROVED_KINDS`), EVM
   contract creation, fee-bump and v0 Stellar envelopes, Stellar classic operations other than a listed `changeTrust`,
   contract creation or upload host functions, anything that fails to decode.
@@ -277,9 +309,10 @@ over 20 gets 403 `too_many_origins` on its vault page (availability, not safety)
 `hana-id-auth-sandbox-dev.tingtc.workers.dev` share the registrable domain `tingtc.workers.dev`; the schema allows
 this only in dev envs (`packages/env/src/schema.ts:101`). The spec asked for different sites.
 
-**(k) The approval digest binds no network for messages, typed data and raw requests.** `contextString` is `''` for
-those kinds (`approval.ts` header, `approvalContextString`); the spec text says passphrase or chain ID for every
-request. Typed data carries its chain in its domain; messages and raw requests name no network.
+**(k) The approval digest binds no network for messages, typed data and raw requests.** Accepted by the user
+(2026-10-28, `docs/decisions.md` D33): `contextString` is `''` for those kinds (`approval.ts` header,
+`approvalContextString`). Typed data carries its chain in its domain; messages and raw requests name no network, and
+the approve popup now says "This signature isn't tied to one network." on them.
 
 Open questions in `docs/batch-b-spec.md` that bear on security and are still undecided: Q7 (vault cross-checks
 `scopeId` on chain), Q14 (`max_uses` in `'session'` mode), Q16 (KEK rotation / HSM), Q22 (timelock for new origins

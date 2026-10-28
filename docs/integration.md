@@ -203,7 +203,9 @@ Hana sets these per app on request (`admin app:settings` now, the dashboard in b
 | Google web client | your scope's web client, when it has several | the first one |
 
 Loosening takes effect after a delay (24 h in production; 60 s on sandbox-dev): raw signing `'approval'`, and setting
-or changing a policy. Tightening is immediate: raw signing `'off'`, and removing a policy.
+or changing a policy. Tightening takes effect at once for new page loads: raw signing `'off'`, and removing a policy.
+In a tab that is already open, a removed policy stops auto-signing within 10 s ([section 9](#9-auto-approve-policies));
+raw signing `'off'` reaches an open tab only on its next load.
 
 ## 8. Signing
 
@@ -212,8 +214,11 @@ decodes the request bytes itself, so your page can't misdescribe them. The popup
 so a follow-up request (`restoreFootprint`, a re-sign, a trustline) needs no second click on the button. Each one
 still needs its own Approve. Reject, closing the popup, or 5 min without an answer gives `4001`.
 
-The Approve button arms only after the request has been on screen for 1 s and the window has had focus for 1 s,
-then a pointer move, tap or key. That stops clickjacking and double-click tricks.
+The Approve button arms only after the request has been on screen for 1 s and the window has had focus for 1 s, then
+a mouse move, a tap, or Tab or an arrow key. The gesture that arms it doesn't approve, so a tap-only user taps twice;
+clicking in place without moving the mouse, Enter and Space never arm it. That stops clickjacking and double-click
+tricks. Message and raw requests (`personal_sign`, `stellar_signMessage`, `signRaw`) carry a line that the signature
+isn't tied to one network: they are valid wherever the key is.
 
 ### Stellar
 
@@ -261,7 +266,7 @@ const provider = new BrowserProvider(hana.ethereum);
 | `eth_requestAccounts` | logs in if needed (from a click; the button fallback otherwise) |
 | `eth_accounts` | `[address]` or `[]` |
 | `eth_chainId`, `wallet_switchEthereumChain` | among `evm.chains`; another chain is `4902` |
-| `eth_sendTransaction` | the SDK fills nonce, gas and fees from your RPC, the user approves, and the SDK broadcasts through your RPC |
+| `eth_sendTransaction` | the SDK fills nonce, gas and fees from your RPC, the user approves, and the SDK broadcasts through the RPC of the chain it was filled on (even if the chain is switched during the approval). Sends run one at a time per chain, and a filled nonce is never below one past the last one this page broadcast, so back-to-back sends get consecutive nonces |
 | `eth_signTransaction`, `personal_sign`, `eth_signTypedData_v4` | approval |
 | `eth_sign` and other signing or wallet methods | `4200` |
 | read-only methods (`eth_call`, `eth_getBalance`, …) | forwarded to the current chain's `rpcUrl` |
@@ -305,8 +310,10 @@ import { validateAutoApprovePolicy } from '@hana-id/core/policy';
 const r = validateAutoApprovePolicy(JSON.parse(text), { sessionTtlMs: 12 * 3_600_000 }); // { ok, policy } or { ok: false, problems }
 ```
 
-Removing a policy (`--auto-approve off`) is immediate, also in open tabs: the vault re-checks the policy in force at
-least every 90 s before it auto-signs.
+Removing a policy (`--auto-approve off`) is immediate for new page loads. A tab that is already open re-reads the
+policy in force (`GET /v1/app`) before an auto-sign whenever its last check is 10 s old or more, and every 60 s in the
+background, so a removed or changed policy auto-signs nothing more within 10 s; if that re-read fails, the request
+gets the popup. A changed policy is treated as no policy until the page reloads, and then needs the users' consent.
 
 **Example** (validated against `@hana-id/core`; the addresses are placeholders):
 

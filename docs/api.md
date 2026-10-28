@@ -1,6 +1,7 @@
 # API reference — every endpoint the `apps/api` Worker serves today
 
-Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`)
+Last verified against code: 2026-10-28 (commit 14e6fc3, `feat/batch-b`); `GET /v1/app` re-verified 2026-10-28 on
+`fix/b-web` (from `feat/batch-b` 0f0a437)
 
 Current state, not a spec. Where the specs (`docs/batch-*.md`) and this file differ, this file follows the code.
 Contract methods and byte layouts: `docs/contract-interface.md`. How to run it: `docs/operations.md`.
@@ -122,10 +123,12 @@ Headers: `x-hana-key`; from a Hana page also `x-hana-parent-origin`. Gate kind `
 ```json
 { "name": "string", "scopeId": "string", "signer": "string",
   "google": { "clientId": "string", "mode": "own" | "shared" },
-  "serverTimeMs": 0, "requestId": "string" }
+  "serverTimeMs": 0, "autoApprovePolicy": {} | null, "requestId": "string" }
 ```
 
-`name` and `serverTimeMs` are new in B. `google`: `own` with the app's `google_web_client_id` if set (it must still be
+`name`, `serverTimeMs` and `autoApprovePolicy` are new in B. `autoApprovePolicy` is the policy in force now (read from
+D1 on every request, validated and normalized as the vault page inlines it), or null; an open vault re-reads it before
+auto-signing, so a removal takes effect without a reload (`docs/security.md` "Auto-approve policies"). `google`: `own` with the app's `google_web_client_id` if set (it must still be
 a client of the scope), else the scope's first Google client; else `shared` with the first shared client in force
 when the scope has `allow_shared`.
 
@@ -134,6 +137,7 @@ when the scope has `allow_shared`.
 | 409 | `scope_not_registered` | `get_scope` is null |
 | 409 | `no_google_client` | `google_web_client_id` no longer in the scope, or no own client and no usable shared client |
 | 502 | `near_unavailable` | registry read failed |
+| 503 | `config_unavailable` | the app's settings row could not be read |
 
 ### `POST /v1/sessions` — relays `create_session` (session pool)
 

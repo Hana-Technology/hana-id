@@ -22,12 +22,13 @@ D1 database). Per-IP limiters always stay near their client. Changing it creates
 `rpcFallback` (optional): a second NEAR JSON-RPC endpoint, `https` only and not `rpc` itself, ideally from another
 provider. The vault and the export window read from it (session re-syncs, the login's registry check, transaction
 polling) only when `rpc` errors or doesn't answer within 8 s; each read's answer comes from one endpoint. It is built
-into the pages and joins `rpc` in their CSP (`NEAR_RPC_FALLBACK` in the generated Worker configs), so a change needs a
-page build and a redeploy. sandbox-dev uses `https://rpc.testnet.near.org` (primary `test.rpc.fastnear.com`; the
-fallback answered in ~3.5 s when probed, slow but fine for a fallback).
+into the pages and joins `rpc` in their CSP (`NEAR_RPC_FALLBACK` in the generated Worker configs), so a change needs
+`gen`, a page build and a redeploy of the API and both page Workers (`docs/decisions.md` D65). sandbox-dev uses
+`https://rpc.testnet.near.org` (primary `test.rpc.fastnear.com`; the fallback answered in ~3.5 s when probed, slow but
+fine for a fallback).
 
-`vaultOrigin` and `authOrigin` (batch B; optional in the schema until every deployed env has them): the origins of
-Hana's key vault page and of its login, approval and export pages. Set both or neither. Each is a bare origin
+`vaultOrigin` and `authOrigin` (optional in the schema until every deployed env has them; `gen` refuses an env
+without them and the page build skips it): the origins of Hana's key vault page and of its login, approval and export pages. Set both or neither. Each is a bare origin
 (`https://host[:port]`, no path or trailing slash); `https` is required, and loopback (`localhost`, `*.localhost`,
 127.0.0.0/8, `[::1]`, also with a trailing dot or as IPv4-mapped `[::ffff:7f00:1]`) is allowed only in envs whose name
 starts with `local`. Any other host must be a real DNS name under a registrable domain: no IP address (`0.0.0.0` and

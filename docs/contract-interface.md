@@ -19,9 +19,11 @@ Conventions:
 - Panic messages are listed so callers can map them; a panic aborts the whole call (no state change).
 - Methods not marked payable reject any attached deposit (`Method ... doesn't accept deposit`).
 - Gas: `derive_key` forwards a fixed 20 Tgas to the MPC and needs ≥ 50 Tgas attached. The API's per-method defaults
-  (batch A.2, **to measure on testnet**): `create_session` 50 Tgas, `create_session_and_derive` 100 (batch B),
-  `derive_key` 60, `revoke_session` 20, `prune_sessions` 50, owner-pool methods 50. 300 Tgas always works. View
-  methods cost nothing.
+  (`apps/api/src/gas.ts`, overridable per env with `GAS_<METHOD>_TGAS`): `create_session` 50 Tgas,
+  `create_session_and_derive` 100, `derive_key` 60, `revoke_session` 20, `prune_sessions` 50, owner-pool methods 50
+  except `register_scope` (30 + 25 per client proof, ≤ 280). Measured on testnet (`docs/context.md`): `create_session`
+  and `derive_key` each burn ~20 Tgas over all receipts; `create_session_and_derive` is **not yet measured**. 300 Tgas
+  always works. View methods cost nothing.
 
 ## Types (JSON)
 
@@ -724,7 +726,8 @@ prepays them. New view `session_key_in_use` (also covers revoked, unexpired sess
 ## Security notes (for reviewers)
 
 - **Hana's trust surface.** The owner (and the contract account) controls issuer keys: whoever can post a Google key
-  can mint any token, so this is total control in the PoC, as is contract upgrade (no lock in batch A). Beyond
+  can mint any token, so this is total control, as is contract upgrade (no lock yet; bounding both before mainnet is
+  `docs/decisions.md` D33). Beyond
   that, Hana cannot change a scope's clients or owners, and cannot block derivation for a scope that has its own
   client (it can for a shared-only scope: see Shared login).
 - **Shared login.** A scope with `allow_shared` accepts tokens of Hana's shared clients, with the scope taken from

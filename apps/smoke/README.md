@@ -135,7 +135,8 @@ pnpm --filter @hana-id/scripts admin <env> app:settings <app id | pk> --auto-app
 Reload the page after the delay: *App policy in force* shows `= the demo policy` with its policyId. Then *Accept the
 policy* (or the first covered request) opens the consent screen, after which the "covered" buttons sign with no popup;
 the "stranger" / "burn address" ones break the address rule and get the popup, which says why; `personal_sign` always
-gets the popup; raw signing is 4100 unless the app has `--raw-sign approval`.
+gets the popup; raw signing is always 4100 here: this page's apps are `pk_test_` apps, which never sign raw, even with
+`--raw-sign approval` (`raw_not_allowed_for_test_apps`, `docs/decisions.md` D39).
 
 ## Using the direct page
 
@@ -193,7 +194,8 @@ Hana-held branded client without any address change (the path is `scope#provider
       differ"; another Google account with another label: "other account … addresses differ".
 - [ ] **Own vs shared client**: one scope, a login while it uses the shared client and one after it has its own client
       (or the reverse), same account label: "same account and scope, shared → own client: same addresses". Use an own
-      client in a **separate Google Cloud project** from the shared one, or this doesn't prove the A.2 promise.
+      client in a **separate Google Cloud project** from the shared one, or this doesn't prove the A.2 promise (the spike
+      already matched `sub` across two projects, `docs/decisions.md` D42; this checks it end to end).
 - [ ] **Persistence 'session' (default), reload**: *Reload the page* → an unlock run "OK — unlock restored #n's
       addresses" in well under a second (note the total), and DevTools shows no `/v1/derive`, no `/v1/login` and no
       NEAR RPC call, only `POST /v1/vault/unlock`.
@@ -218,15 +220,16 @@ Hana-held branded client without any address change (the path is `scope#provider
       under the policy, after the consent screen"); the "stranger" and "burn address" ones open the popup with the reason;
       `personal_sign` always opens it; *Stop auto-approving* → the covered ones need the popup again; `--auto-approve
       off` stops it at once (reload).
-- [ ] **Raw signing**: *Raw sign* is "refused: 4100" by default; with `--raw-sign approval` (after the delay) it opens
-      the popup with the raw warning.
+- [ ] **Raw signing refused for test apps**: *Raw sign* is "refused: 4100" (`raw_not_allowed_for_test_apps`) with no
+      popup, also after `--raw-sign approval` has taken effect (D39). The raw approval popup needs a `pk_live_` app,
+      which this page can't use (loopback origin).
 - [ ] **Safari/WebKit storage retention**: in Safari, log in, then reload after 10 min, 1 h and a day idle, and after
       quitting and reopening Safari: each reload gives an unlock run, or a logged-out load (no unlock run) if Safari
       dropped the vault's partitioned IndexedDB. Record which in `docs/context.md`.
 - [ ] **Ship gate**: 10 vault logins and 10 direct-page sessions, with no `VITE_HANA_API_URL` override (the direct page
       needs `REJECT_PII_ON_SESSIONS = "0"`): the panel's verdict. Record it, the gas of a few
       `create_session_and_derive` transactions (nearblocks) and the unlock total in `docs/context.md`.
-- [ ] **BLS precheck CPU time** (Q8, before `BLS_PRECHECK` is turned on in any env): on a scratch deploy only, on the
+- [ ] **BLS precheck CPU time** (D64, before `BLS_PRECHECK` is turned on in any env): on a scratch deploy only, on the
       Workers Paid plan, set the var `BLS_PRECHECK = "1"`, do a few vault logins and read the `/v1/login` CPU time
       per request from the Workers dashboard (the Worker's metrics or its logs). Record it in `docs/context.md` next to the
       ship gate and the unlock total, then delete the scratch deploy.
@@ -244,7 +247,7 @@ Hana-held branded client without any address change (the path is `scope#provider
 - [ ] **Own vs shared client, same path**: on a scope with its own client and `allow_shared`, one session through the
       own client and one through the shared client (same account, same `key_index`): the same path and the same
       addresses (log check "own vs shared client … same addresses"). If the paths differ only in the `sub`, Google
-      gives a different `sub` per client: raise it (docs/context.md assumes it is the same).
+      gives a different `sub` per client: raise it (the spike found the same `sub` across clients and projects, D42).
 - [ ] **Shared-only scope**: an app on a scope registered with `--allow-shared` and no client gets `mode: shared`
       from `/v1/app` and logs in.
 - [ ] **Derive again**: counter 2 gives the same addresses; *Derive again* past `max_uses` fails with

@@ -98,6 +98,12 @@ describe('fillTransaction', () => {
     expect(c.rpc).toHaveBeenCalledWith('eth_getBlockByNumber', ['latest', false]);
   });
 
+  it('a filled nonce is never below minNonce; a higher pending count wins; a dapp nonce is kept as is', async () => {
+    expect((await fillTransaction(normalizeTxInput({ to: TO }), { ...ctx(CHAIN), minNonce: 9n })).nonce).toBe('0x9');
+    expect((await fillTransaction(normalizeTxInput({ to: TO }), { ...ctx(CHAIN), minNonce: 5n })).nonce).toBe('0x7');
+    expect((await fillTransaction(normalizeTxInput({ to: TO, nonce: '0x2' }), { ...ctx(CHAIN), minNonce: 9n })).nonce).toBe('0x2');
+  });
+
   it('makes no RPC call for fields already given', async () => {
     const c = ctx({});
     const tx = await fillTransaction(normalizeTxInput({ to: TO, nonce: '0x1', gas: '0x5208', maxFeePerGas: '0x10', maxPriorityFeePerGas: '0x1', chainId: '0xaa36a7' }), c);

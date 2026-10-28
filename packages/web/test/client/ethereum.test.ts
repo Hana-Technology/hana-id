@@ -305,6 +305,47 @@ describe('signing', () => {
     expect(broadcast).toBe(2);
   });
 
+  it('a lagging RPC node (pending count not yet counting the last broadcast) still gets the next nonce', async () => {
+    let broadcast = 0;
+    await loggedIn({
+      ...CHAIN,
+      // Every 'pending' count comes from a node that never saw this page's broadcasts.
+      eth_getTransactionCount: '0x3',
+      eth_sendRawTransaction: () => {
+        broadcast += 1;
+        return HASH;
+      },
+    });
+    s.vault.handle('eth_signTransaction', () => ({ result: RAW }));
+    for (let i = 0; i < 3; i++) await s.client.ethereum.request({ method: 'eth_sendTransaction', params: [{ to: TO }] });
+    // A dapp's own nonce is left alone; eth_signTransaction (no broadcast here) moves nothing.
+    await s.client.ethereum.request({ method: 'eth_sendTransaction', params: [{ to: TO, nonce: '0x1' }] });
+    await s.client.ethereum.request({ method: 'eth_signTransaction', params: [{ to: TO }] });
+    const nonces = s.vault.seen('eth_signTransaction').map((r) => (r.params as { tx: { nonce: string } }).tx.nonce);
+    expect(nonces).toEqual(['0x3', '0x4', '0x5', '0x1', '0x6']);
+    expect(broadcast).toBe(4);
+    // The floor is per chain: another chain's count is used as the RPC gives it.
+    await s.client.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x14a34' }] });
+    await s.client.ethereum.request({ method: 'eth_sendTransaction', params: [{ to: TO }] });
+    expect((s.vault.last('eth_signTransaction').params as { tx: { nonce: string } }).tx.nonce).toBe('0x3');
+  });
+
+  it('a failed broadcast does not move the nonce floor', async () => {
+    let fail = true;
+    await loggedIn({
+      ...CHAIN,
+      eth_sendRawTransaction: () => {
+        if (fail) throw Object.assign(new Error('nonce too low'), { code: -32000 });
+        return HASH;
+      },
+    });
+    s.vault.handle('eth_signTransaction', () => ({ result: RAW }));
+    await expect(s.client.ethereum.request({ method: 'eth_sendTransaction', params: [{ to: TO }] })).rejects.toBeDefined();
+    fail = false;
+    await s.client.ethereum.request({ method: 'eth_sendTransaction', params: [{ to: TO }] });
+    expect(s.vault.seen('eth_signTransaction').map((r) => (r.params as { tx: { nonce: string } }).tx.nonce)).toEqual(['0x3', '0x3']);
+  });
+
   it('a rejected or failed send does not block the next one in the queue', async () => {
     const rpc = await loggedIn();
     s.vault.handle('eth_signTransaction', () => 'manual');

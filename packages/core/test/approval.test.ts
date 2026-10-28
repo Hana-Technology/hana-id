@@ -12,7 +12,6 @@ import {
   approvalDigestPreimage,
   approvalKindChain,
   approvalKindContext,
-  consentDigest,
   decodeApprovalRequest,
   digestsEqual,
   rawSigningWarning,
@@ -307,36 +306,5 @@ describe('decodeApprovalRequest', () => {
 
   it('throws only DecodeError', () => {
     expect(() => decodeApprovalRequest(stellar('stellar_tx', new Uint8Array([1, 2, 3])))).toThrow(DecodeError);
-  });
-});
-
-describe('consentDigest', () => {
-  const input = { id: '0123456789abcdef0123456789abcdef', parentOrigin: 'https://app.example', policyId: 'ab'.repeat(32) };
-
-  it('is sha256 of the domain and the borsh id, parent origin and policyId (independent implementation)', () => {
-    const s = (v: string) => {
-      const b = Buffer.from(v, 'utf8');
-      const len = Buffer.alloc(4);
-      len.writeUInt32LE(b.length);
-      return Buffer.concat([len, b]);
-    };
-    const expected = createHash('sha256')
-      .update(Buffer.concat([Buffer.from('hana-id/consent/v1'), s(input.id), s(input.parentOrigin), s(input.policyId)]))
-      .digest('hex');
-    expect(bytesToHex(consentDigest(input))).toBe(expected);
-  });
-
-  it('changes with each field and differs from the approval digest of the same id and origin', () => {
-    const d = bytesToHex(consentDigest(input));
-    expect(bytesToHex(consentDigest({ ...input, id: 'f'.repeat(32) }))).not.toBe(d);
-    expect(bytesToHex(consentDigest({ ...input, parentOrigin: 'https://evil.example' }))).not.toBe(d);
-    expect(bytesToHex(consentDigest({ ...input, policyId: 'cd'.repeat(32) }))).not.toBe(d);
-    expect(bytesToHex(approvalDigest({ ...base, id: input.id, parentOrigin: input.parentOrigin }))).not.toBe(d);
-  });
-
-  it('refuses a malformed policyId, an empty id or origin', () => {
-    expect(() => consentDigest({ ...input, policyId: 'AB'.repeat(32) })).toThrow(/policyId/u);
-    expect(() => consentDigest({ ...input, id: '' })).toThrow(/id/u);
-    expect(() => consentDigest({ ...input, parentOrigin: '' })).toThrow(/parentOrigin/u);
   });
 });

@@ -4,7 +4,10 @@
 export const DEFAULT_ENV = 'sandbox-dev';
 
 /** The manifest fields the page reads (a structural slice of @hana-id/env's Manifest, which needs Node to load). */
-export type ManifestFields = Pick<PageEnv, 'name' | 'network' | 'signer' | 'relayer' | 'mpc' | 'ckdDomainId' | 'ckdNetworkKey' | 'rpc' | 'apiUrl'>;
+export type ManifestFields = Pick<PageEnv, 'name' | 'network' | 'signer' | 'relayer' | 'mpc' | 'ckdDomainId' | 'ckdNetworkKey' | 'rpc' | 'apiUrl'> & {
+  vaultOrigin?: string | undefined;
+  authOrigin?: string | undefined;
+};
 
 export interface PageEnv {
   name: string;
@@ -21,6 +24,10 @@ export interface PageEnv {
   apiUrl: string;
   /** True when VITE_HANA_API_URL overrode the manifest's apiUrl (e.g. a local `wrangler dev`). */
   apiUrlOverridden: boolean;
+  /** The vault page's origin (manifest `vaultOrigin`), or null when the env has no Hana pages. */
+  vaultOrigin: string | null;
+  /** The login, approval and export pages' origin (manifest `authOrigin`), or null. */
+  authOrigin: string | null;
 }
 
 /** Only the fields the page needs; `apiUrlOverride` (VITE_HANA_API_URL) replaces `apiUrl` when set. */
@@ -43,6 +50,8 @@ export function pageEnvFrom(m: ManifestFields, apiUrlOverride?: string): PageEnv
     rpc: m.rpc,
     apiUrl: override || m.apiUrl,
     apiUrlOverridden: Boolean(override),
+    vaultOrigin: m.vaultOrigin ?? null,
+    authOrigin: m.authOrigin ?? null,
   };
 }
 

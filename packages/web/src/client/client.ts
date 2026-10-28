@@ -337,6 +337,7 @@ export class HanaClient extends Emitter<HanaEvents> {
     if (!this.#destroyed) {
       this.#error = hanaError(ErrorCode.disconnected);
       this.#setStatus('error');
+      this.emit('disconnect', { code: ErrorCode.disconnected });
       this.ethereum.disconnected();
     }
   }

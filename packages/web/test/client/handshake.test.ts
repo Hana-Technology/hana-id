@@ -145,11 +145,23 @@ describe('handshake', () => {
 
   it('fails at once on a CSP frame-src violation for vaultOrigin (partner requirement)', async () => {
     s = setup();
-    const ev = Object.assign(new Event('securitypolicyviolation'), { effectiveDirective: 'frame-src', violatedDirective: 'frame-src', blockedURI: `${ORIGINS.vaultOrigin}/vault?pk=${PK}` });
+    const ev = Object.assign(new Event('securitypolicyviolation'), { effectiveDirective: 'frame-src', violatedDirective: 'frame-src', blockedURI: `${ORIGINS.vaultOrigin}/vault?pk=${PK}`, disposition: 'enforce' });
     document.dispatchEvent(ev);
     const e = await rejection(s.client.ready);
     expect(e.code).toBe('vault_unavailable');
     expect(e.data).toEqual({ reason: 'csp_frame_src' });
+  });
+
+  it('ignores a report-only frame-src violation for vaultOrigin: the frame still loads, and ready resolves', async () => {
+    s = setup();
+    const ev = Object.assign(new Event('securitypolicyviolation'), { effectiveDirective: 'frame-src', violatedDirective: 'frame-src', blockedURI: `${ORIGINS.vaultOrigin}/vault?pk=${PK}`, disposition: 'report' });
+    document.dispatchEvent(ev);
+    await flush();
+    expect(s.client.status).toBe('unlocking');
+    await s.vault.connect(LOGGED_IN);
+    await expect(s.client.ready).resolves.toBeUndefined();
+    expect(s.client.status).toBe('logged_in');
+    expect(s.client.error).toBeNull();
   });
 
   it('ignores CSP violations for other origins or directives', async () => {
@@ -299,9 +311,11 @@ describe('events and disconnects', () => {
     ]);
   });
 
-  it('a second load (vault document replaced) disconnects: pending requests reject 4900, status error', async () => {
+  it('a second load (vault document replaced) disconnects: pending requests reject 4900, status error, disconnect emitted once', async () => {
     s = setup();
     await s.vault.connect(LOGGED_IN);
+    const disconnects: unknown[] = [];
+    s.client.on('disconnect', (d) => disconnects.push(d));
     s.vault.handle('hana_revokeOtherDevices', () => 'manual');
     const p = s.client.revokeOtherDevices();
     await flush();
@@ -309,7 +323,11 @@ describe('events and disconnects', () => {
     expect((await rejection(p)).code).toBe(4900);
     expect(s.client.status).toBe('error');
     expect(s.client.addresses).toBeNull();
+    expect(s.client.error?.code).toBe(4900);
     expect((await rejection(s.client.logout())).code).toBe(4900);
+    s.vault.load();
+    await flush();
+    expect(disconnects).toEqual([{ code: 4900 }]);
   });
 
   it('destroy removes the iframe, rejects pending and later calls with 4900, and drops listeners', async () => {
@@ -320,7 +338,10 @@ describe('events and disconnects', () => {
     await flush();
     const listener = vi.fn();
     s.client.on('statusChanged', listener);
+    const disconnect = vi.fn();
+    s.client.on('disconnect', disconnect);
     s.client.destroy();
+    expect(disconnect).not.toHaveBeenCalled();
     expect(document.querySelector('iframe')).toBeNull();
     expect((await rejection(p)).code).toBe(4900);
     expect((await rejection(s.client.login())).code).toBe(4900);

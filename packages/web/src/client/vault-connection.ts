@@ -6,7 +6,7 @@
 // 2. On its first `load`, create a MessageChannel and post `{v:1, t:"hana:hello", sdk}` to the frame with
 //    targetOrigin = vaultOrigin, transferring port2. From then on everything goes over port1.
 // 3. Wait for the `ready` event; without it within 5 s of insertion, fail with `vault_unavailable`. A CSP `frame-src`
-//    violation for vaultOrigin fails at once (partner requirement, detected).
+//    violation for vaultOrigin fails at once (partner requirement, detected); a report-only one doesn't block anything.
 // 4. Send requests `{v:1, id, method, params}` and match replies by id. Requests are validated with the vault's own
 //    parser first (parsePortRequest), because the vault drops an invalid one without a reply and the caller would hang.
 //
@@ -133,6 +133,8 @@ export class VaultConnection {
 
   #cspViolation(e: SecurityPolicyViolationEvent): void {
     if (this.#readyDone || this.#disconnected) return;
+    // A Content-Security-Policy-Report-Only policy fires the same event, but the frame still loads.
+    if (e.disposition === 'report') return;
     const directive = e.effectiveDirective || e.violatedDirective || '';
     const blocked = e.blockedURI || '';
     if (!CSP_FRAME_DIRECTIVES.has(directive.split(' ')[0] ?? '')) return;

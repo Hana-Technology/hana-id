@@ -230,6 +230,105 @@ describe('signing', () => {
     expect(s.fetch.mock.calls.every(([url]) => url === 'https://base-sepolia.rpc.test')).toBe(true);
   });
 
+  it('a chain switch during the approval still broadcasts on the chain the transaction was filled and signed for', async () => {
+    await loggedIn();
+    s.vault.handle('eth_signTransaction', () => 'manual');
+    const p = s.client.ethereum.request({ method: 'eth_sendTransaction', params: [{ to: TO }] });
+    await flush();
+    const req = s.vault.last('eth_signTransaction');
+    expect((req.params as { tx: { chainId: string } }).tx.chainId).toBe('0xaa36a7');
+    await s.client.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x14a34' }] });
+    s.vault.reply(req.id, RAW);
+    await expect(p).resolves.toBe(HASH);
+    const broadcasts = s.fetch.mock.calls.filter(([, init]) => (JSON.parse(String((init as RequestInit).body)) as { method: string }).method === 'eth_sendRawTransaction');
+    expect(broadcasts.map(([url]) => url)).toEqual(['https://sepolia.rpc.test']);
+  });
+
+  it('a chain switch while the transaction is still being filled refuses it before the approval', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const rpc = rpcFetch(CHAIN);
+    // The nonce lookup is held until the switch has happened.
+    const fetch = async (url: string, init: RequestInit) => {
+      if ((JSON.parse(String(init.body)) as { method: string }).method === 'eth_getTransactionCount') await held;
+      return rpc(url, init);
+    };
+    s = setup({ config: { evm: EVM_CONFIG }, fetch });
+    await s.vault.connect(LOGGED_IN);
+    const p = s.client.ethereum.request({ method: 'eth_sendTransaction', params: [{ to: TO }] });
+    await flush();
+    await s.client.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x14a34' }] });
+    release();
+    await refused(p, -32602);
+    expect(s.vault.seen('eth_signTransaction')).toEqual([]);
+  });
+
+  it('back-to-back eth_sendTransaction calls on one chain run one at a time and get consecutive nonces', async () => {
+    let broadcast = 0;
+    const rpc = await loggedIn({
+      ...CHAIN,
+      // The node's 'pending' count includes every transaction broadcast so far.
+      eth_getTransactionCount: () => `0x${(3 + broadcast).toString(16)}`,
+      eth_sendRawTransaction: () => {
+        broadcast += 1;
+        return HASH;
+      },
+    });
+    s.vault.handle('eth_signTransaction', () => 'manual');
+    const approve = s.client.ethereum.request({ method: 'eth_sendTransaction', params: [{ to: TO, data: '0x095ea7b3' }] });
+    const swap = s.client.ethereum.request({ method: 'eth_sendTransaction', params: [{ to: TO, data: '0x38ed1739' }] });
+    await flush();
+    // The second is not filled until the first has been broadcast.
+    expect(s.vault.seen('eth_signTransaction')).toHaveLength(1);
+    expect(rpc.calls.filter((c) => c.method === 'eth_getTransactionCount')).toHaveLength(1);
+    s.vault.reply(s.vault.last('eth_signTransaction').id, RAW);
+    await expect(approve).resolves.toBe(HASH);
+    await flush();
+    const signs = s.vault.seen('eth_signTransaction');
+    expect(signs).toHaveLength(2);
+    s.vault.reply(signs[1]!.id, RAW);
+    await expect(swap).resolves.toBe(HASH);
+    const txs = signs.map((r) => (r.params as { tx: { nonce: string; data: string } }).tx);
+    expect(txs.map((t) => [t.data, t.nonce])).toEqual([
+      ['0x095ea7b3', '0x3'],
+      ['0x38ed1739', '0x4'],
+    ]);
+    expect(broadcast).toBe(2);
+  });
+
+  it('a rejected or failed send does not block the next one in the queue', async () => {
+    const rpc = await loggedIn();
+    s.vault.handle('eth_signTransaction', () => 'manual');
+    const first = s.client.ethereum.request({ method: 'eth_sendTransaction', params: [{ to: TO }] });
+    first.catch(() => {});
+    const second = s.client.ethereum.request({ method: 'eth_sendTransaction', params: [{ to: TO }] });
+    await flush();
+    s.vault.replyError(s.vault.last('eth_signTransaction').id, 4001, 'User rejected');
+    await refused(first, 4001);
+    await flush();
+    const signs = s.vault.seen('eth_signTransaction');
+    expect(signs).toHaveLength(2);
+    s.vault.reply(signs[1]!.id, RAW);
+    await expect(second).resolves.toBe(HASH);
+    expect(rpc.calls.filter((c) => c.method === 'eth_sendRawTransaction')).toHaveLength(1);
+  });
+
+  it('sends on different chains do not wait for each other', async () => {
+    await loggedIn();
+    s.vault.handle('eth_signTransaction', () => 'manual');
+    const onSepolia = s.client.ethereum.request({ method: 'eth_sendTransaction', params: [{ to: TO }] });
+    await flush();
+    await s.client.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x14a34' }] });
+    const onBase = s.client.ethereum.request({ method: 'eth_sendTransaction', params: [{ to: TO }] });
+    await flush();
+    const signs = s.vault.seen('eth_signTransaction');
+    expect(signs.map((r) => (r.params as { tx: { chainId: string } }).tx.chainId)).toEqual(['0xaa36a7', '0x14a34']);
+    s.vault.reply(signs[1]!.id, RAW);
+    await expect(onBase).resolves.toBe(HASH);
+    s.vault.reply(signs[0]!.id, RAW);
+    await expect(onSepolia).resolves.toBe(HASH);
+  });
+
   it('a rejected approval is 4001 and nothing is broadcast', async () => {
     const rpc = await loggedIn();
     s.vault.handle('eth_signTransaction', () => ({ error: { code: 4001, message: 'User rejected' } }));

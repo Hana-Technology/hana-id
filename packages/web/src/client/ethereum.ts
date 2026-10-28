@@ -5,7 +5,7 @@
 // | eth_requestAccounts | [address]. Logged out: opens the login popup synchronously (call it from a click); if the browser blocks it, the vault's launcher appears and the call resolves after the user clicks it and logs in |
 // | eth_accounts | [address] or [] (the vault answers) |
 // | eth_chainId, wallet_switchEthereumChain | among `evm.chains`, answered here; an unknown chain is 4902 |
-// | eth_sendTransaction | fill (evm-tx.ts) from the current chain's RPC → vault eth_signTransaction (approval) → eth_sendRawTransaction |
+// | eth_sendTransaction | fill (evm-tx.ts) from the current chain's RPC → vault eth_signTransaction (approval) → eth_sendRawTransaction, one at a time per chain |
 // | eth_signTransaction, personal_sign, eth_signTypedData_v4 | the vault, with approval (the transaction is filled first) |
 // | eth_sign and other signing or wallet methods | 4200 |
 // | read-only methods (READ_ONLY_METHODS) | forwarded to the current chain's rpcUrl |
@@ -16,7 +16,7 @@
 import { ErrorCode, type PortMethod, type PortParamsMap, type PortResultMap, isEvmAddress, toHex, utf8 } from '@hana-id/core';
 import { Emitter } from './emitter.ts';
 import { ProviderRpcError, RpcCode, toProviderRpcError } from './errors.ts';
-import { fillTransaction, normalizeTxInput, toQuantity } from './evm-tx.ts';
+import { type NormalizedTx, fillTransaction, normalizeTxInput, toQuantity } from './evm-tx.ts';
 import { HANA_ID_ICON, HANA_ID_NAME } from './icon.ts';
 import { type FetchLike, jsonRpc } from './rpc.ts';
 
@@ -127,6 +127,14 @@ export function validateEvmConfig(evm: EvmConfig): EvmConfig {
 const chainHex = (id: number): Hex => `0x${id.toString(16)}`;
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const err = (code: number, message: string, data?: unknown) => new ProviderRpcError(code, message, data);
+const noop = () => {};
+
+/** A validated transaction call, pinned to the signer and chain current when the dapp made it. */
+interface TxCall {
+  input: NormalizedTx;
+  from: string;
+  chain: EvmChainConfig;
+}
 
 export class HanaEthereumProvider extends Emitter<EthereumEvents> {
   /** Lets dapps and connectors recognise the provider when they read flags. */
@@ -135,6 +143,12 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
   readonly #chains: ReadonlyMap<number, EvmChainConfig>;
   #chainId: number | null;
   #lastAccounts: string[] = [];
+  /**
+   * Per chain ID, the settled tail of the eth_sendTransaction queue. Each one fills its nonce from the RPC's 'pending'
+   * count only after the one before it was broadcast or failed, so back-to-back sends (approve, then swap) get
+   * consecutive nonces instead of the same one.
+   */
+  readonly #sendQueue = new Map<number, Promise<void>>();
 
   constructor(host: EthereumHost, evm: EvmConfig | undefined) {
     super();
@@ -183,14 +197,10 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
         // Only the partner's configured chains exist here: "adding" one of them is a no-op, anything else is 4902.
         this.#chainParam(params);
         return null;
-      case 'eth_sendTransaction': {
-        const raw = await this.#signTransaction(params);
-        const hash = await this.#rpc('eth_sendRawTransaction', [raw]);
-        if (typeof hash !== 'string' || !/^0x[0-9a-fA-F]{64}$/u.test(hash)) throw err(RpcCode.internal, 'EVM RPC returned a malformed transaction hash');
-        return hash;
-      }
+      case 'eth_sendTransaction':
+        return this.#sendTransaction(params);
       case 'eth_signTransaction':
-        return this.#signTransaction(params);
+        return this.#signTransaction(this.#txCall(params));
       case 'personal_sign': {
         if (!Array.isArray(params) || params.length < 2 || typeof params[0] !== 'string') throw err(RpcCode.invalidParams, 'personal_sign takes [message, address]');
         const address = this.#own(params[1]);
@@ -251,16 +261,45 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
     return mine;
   }
 
-  async #signTransaction(params: unknown): Promise<Hex> {
+  /** Checks `[transaction]` and the signer, and pins the current chain. */
+  #txCall(params: unknown): TxCall {
     if (!Array.isArray(params) || params.length !== 1) throw err(RpcCode.invalidParams, 'Expected [transaction]');
     const input = normalizeTxInput(params[0]);
     const from = this.#host.evmAddress();
     if (from === null) throw err(ErrorCode.unauthorized, 'Not logged in to Hana ID');
-    const chain = this.#current();
+    return { input, from, chain: this.#current() };
+  }
+
+  /** Fills the transaction from its chain's RPC and has the vault sign it (approval). */
+  async #signTransaction(call: TxCall): Promise<Hex> {
+    const { input, from, chain } = call;
     const tx = await fillTransaction(input, { from, chainId: chain.id, rpc: (m, p) => jsonRpc(this.#host.fetch, chain.rpcUrl, m, p) });
-    // The chain may have been switched while filling: sign only for the chain the fields were filled on.
+    // The chain may have been switched since the call (while queued or filling): sign only for the chain the dapp
+    // asked on, and only while it is still the current one.
     if (this.#chainId !== chain.id) throw err(RpcCode.invalidParams, 'The chain changed while the transaction was being prepared');
     return this.#host.request('eth_signTransaction', { tx });
+  }
+
+  /** Queues the call behind earlier eth_sendTransaction calls on its chain (see #sendQueue). */
+  #sendTransaction(params: unknown): Promise<Hex> {
+    const call = this.#txCall(params);
+    const id = call.chain.id;
+    const run = (this.#sendQueue.get(id) ?? Promise.resolve()).then(() => this.#signAndBroadcast(call));
+    const tail = run.then(noop, noop);
+    this.#sendQueue.set(id, tail);
+    void tail.then(() => {
+      if (this.#sendQueue.get(id) === tail) this.#sendQueue.delete(id);
+    });
+    return run;
+  }
+
+  async #signAndBroadcast(call: TxCall): Promise<Hex> {
+    const raw = await this.#signTransaction(call);
+    // Broadcast on the chain it was filled and signed for, even if the dapp switched chains during the approval:
+    // another chain's RPC would refuse it (EIP-155), and the approved transaction would be lost.
+    const hash = await jsonRpc(this.#host.fetch, call.chain.rpcUrl, 'eth_sendRawTransaction', [raw]);
+    if (typeof hash !== 'string' || !/^0x[0-9a-fA-F]{64}$/u.test(hash)) throw err(RpcCode.internal, 'EVM RPC returned a malformed transaction hash');
+    return hash as Hex;
   }
 
   #rpc(method: string, params: readonly unknown[]): Promise<unknown> {

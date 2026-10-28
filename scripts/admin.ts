@@ -5,6 +5,7 @@
 // scope:register calls admin_register_scope (with allow_shared from
 // --allow-shared) on the contract with the owner's full-access key from ~/.near-credentials/testnet/<owner>.json.
 import { loadEnv, type Manifest } from '@hana-id/env';
+import { assertCommandPositionals } from './lib/admin-args.ts';
 import {
   addOriginsSql,
   assertAppName,
@@ -19,7 +20,7 @@ import {
   scopeConflictSql,
   setStatusSql,
 } from './lib/admin-sql.ts';
-import { appSettings, defaultAppSettingsDeps } from './lib/admin-settings.ts';
+import { appSettings, defaultAppSettingsDeps, settingsAppArg } from './lib/admin-settings.ts';
 import { type Args, CliError, parseCli, run } from './lib/cli.ts';
 import { scopeRegister } from './lib/admin-scope.ts';
 import { tryView } from './lib/contract.ts';
@@ -88,8 +89,8 @@ async function main(): Promise<void> {
   const [envName, command, ...rest] = args.positionals;
   if (!envName || !command) throw new CliError('Expected <env> <command>');
   if (!COMMANDS.includes(command as Command)) throw new CliError(`Unknown command ${command}`);
-  // app:settings names its app positionally (docs/batch-b-spec.md) or with --app, like the other app commands.
-  if (rest.length > (command === 'app:settings' ? 1 : 0)) throw new CliError(`Unexpected argument ${rest.join(' ')}`);
+  // app:settings names its app positionally (docs/batch-b-spec.md) or with --app (settingsAppArg).
+  assertCommandPositionals(command, rest);
   const m = loadEnv(envName);
   const remote = args.flag('remote');
   const where = remote ? `remote D1 ${m.cloudflare.d1Name}` : `local D1 ${m.cloudflare.d1Name}`;
@@ -137,9 +138,7 @@ async function main(): Promise<void> {
       return;
     }
     case 'app:settings': {
-      const app = rest[0] ?? args.str('app');
-      if (!app || (rest[0] !== undefined && args.str('app') !== undefined)) throw new CliError('app:settings takes one app: <app id | publishable key> or --app');
-      await appSettings(m, app, args, where, defaultAppSettingsDeps(m, remote));
+      await appSettings(m, settingsAppArg(rest, args.str('app')), args, where, defaultAppSettingsDeps(m, remote));
       return;
     }
     case 'scope:register':

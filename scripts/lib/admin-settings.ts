@@ -7,6 +7,7 @@
 // written as pending values that apply from `effective_at` (24 h; the manifest's changeDelayMs in local*/sandbox*
 // envs); `--raw-sign off` and `--auto-approve off` take effect at once and drop any pending value.
 import { readFileSync, statSync } from 'node:fs';
+import { isAbsolute, resolve } from 'node:path';
 import { canonicalJson, parseAutoApprovePolicy, policyId } from '@hana-id/core/policy';
 import { isDevEnv, type Manifest } from '@hana-id/env';
 import { type Args, CliError } from './cli.ts';
@@ -109,8 +110,24 @@ export function formatDuration(ms: number): string {
 
 const at = (ms: number): string => new Date(ms).toISOString();
 
-/** Reads the flags of one app:settings call. `readFile` returns the policy file's text. */
-export function parseSettingsArgs(args: Args, readFile: (path: string) => string = readPolicyFile): SettingsChange {
+/**
+ * The directory a relative `--auto-approve` path is relative to: where the operator ran the command. `pnpm --filter
+ * @hana-id/scripts run admin …` runs the script from scripts/, and sets INIT_CWD to the directory pnpm was run from.
+ */
+export function invocationDir(env: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): string {
+  return env.INIT_CWD && isAbsolute(env.INIT_CWD) ? env.INIT_CWD : cwd;
+}
+
+/** A policy path as given, made absolute against `baseDir` when relative. */
+export function resolvePolicyPath(path: string, baseDir: string = invocationDir()): string {
+  return resolve(baseDir, path);
+}
+
+/**
+ * Reads the flags of one app:settings call. `readFile` returns the policy file's text; a relative policy path is
+ * resolved against `baseDir` (default: where the command was run, see invocationDir).
+ */
+export function parseSettingsArgs(args: Args, readFile: (path: string) => string = readPolicyFile, baseDir: string = invocationDir()): SettingsChange {
   const change: SettingsChange = {};
   const persistence = args.str('persistence');
   if (persistence !== undefined) {
@@ -135,7 +152,11 @@ export function parseSettingsArgs(args: Args, readFile: (path: string) => string
   const policy = args.str('auto-approve');
   if (policy !== undefined) {
     if (!policy) throw new CliError("--auto-approve needs a policy JSON file or 'off'");
-    change.autoApprove = policy === 'off' ? 'off' : { text: readFile(policy), file: policy };
+    if (policy === 'off') change.autoApprove = 'off';
+    else {
+      const file = resolvePolicyPath(policy, baseDir);
+      change.autoApprove = { text: readFile(file), file };
+    }
   }
   return change;
 }
@@ -204,7 +225,7 @@ export function planSettings(row: SettingsRow, change: SettingsChange, ctx: Plan
     else {
       set.push(sql`persistence = ${change.persistence}`);
       lines.push(`persistence: ${row.persistence} → ${change.persistence} (immediate)`);
-      if (change.persistence === 'none') lines.push('  New logins store no share, so a reload needs a new login. Existing shares last until they expire or are revoked.');
+      if (change.persistence === 'none') lines.push('  New logins store no share, so a reload needs a new login. Existing shares are revoked on their next unlock or touch.');
     }
   }
 
@@ -229,7 +250,7 @@ export function planSettings(row: SettingsRow, change: SettingsChange, ctx: Plan
     if (after === before) lines.push(`${name}: already ${formatDuration(before)}`);
     else {
       set.push(column === 'session_ttl_ms' ? sql`session_ttl_ms = ${after}` : sql`idle_ttl_ms = ${after}`);
-      lines.push(`${name}: ${formatDuration(before)} → ${formatDuration(after)} (immediate; applies to logins from now on)`);
+      lines.push(`${name}: ${formatDuration(before)} → ${formatDuration(after)} (immediate; ${column === 'session_ttl_ms' ? after < before ? 'live shares also end at their creation + the new TTL' : 'live shares keep their expiry; new logins get the new TTL' : 'applies from each share’s next unlock or touch'})`);
     }
   }
 
@@ -280,8 +301,9 @@ export function planSettings(row: SettingsRow, change: SettingsChange, ctx: Plan
     if (storedPolicyId(inForce) === policy.id) {
       lines.push(`auto-approve: policy ${policy.id} ("${policy.label}") already in force`);
       if (pendingOpen) {
-        // Re-setting the policy in force cancels a pending change to another one.
-        set.push(sql`auto_approve_policy = ${inForce}`, 'auto_approve_pending = NULL', 'auto_approve_effective_at = NULL');
+        // Re-setting the policy in force cancels a pending change to another one. Only the pending columns are
+        // written: the policy in force is left as D1 holds it (never rewritten from this read).
+        set.push('auto_approve_pending = NULL', 'auto_approve_effective_at = NULL');
         lines.push('  The pending policy is dropped.');
       }
     } else if (pendingOpen && storedPolicyId(row.auto_approve_pending) === policy.id && row.auto_approve_effective_at !== null) {
@@ -295,7 +317,7 @@ export function planSettings(row: SettingsRow, change: SettingsChange, ctx: Plan
         sql`auto_approve_pending = ${policy.json}`,
         sql`auto_approve_effective_at = ${effectiveAt}`,
       );
-      lines.push(`auto-approve: policy ${policy.id} ("${policy.label}") pending until ${at(effectiveAt)} (${formatDuration(delayMs)} delay)`);
+      lines.push(`auto-approve: policy ${policy.id} ("${policy.label}") from ${change.autoApprove.file}, pending until ${at(effectiveAt)} (${formatDuration(delayMs)} delay)`);
       lines.push(inForce === null ? '  Until then no policy is in force.' : `  Until then the policy in force (${storedPolicyId(inForce) ?? 'unreadable'}) stays.`);
       lines.push('  Each user accepts the new policy in a Hana popup before it auto-approves anything.');
     }
@@ -311,8 +333,22 @@ export function planSettings(row: SettingsRow, change: SettingsChange, ctx: Plan
     }
   }
 
-  return { sql: set.length ? `UPDATE apps SET ${set.join(', ')} WHERE id = ${sqlValue(row.id)}` : null, lines, warnings };
+  return { sql: set.length ? `UPDATE apps SET ${set.join(', ')} WHERE ${unchangedSince(row)} RETURNING id` : null, lines, warnings };
 }
+
+/**
+ * The UPDATE's condition: this app, with every settings column still as it was read. The read and the write are
+ * separate `wrangler d1 execute` calls, so another operator's change in between (say `--auto-approve off`) would
+ * otherwise be overwritten with values planned from the old row, putting a removed policy back in force with no
+ * delay. With the guard such a write changes nothing, and appSettings reports it.
+ */
+export function unchangedSince(row: SettingsRow): string {
+  const columns = SETTINGS_COLUMNS.split(', ') as (keyof SettingsRow)[];
+  return [`id = ${sqlValue(row.id)}`, ...columns.map((c) => `${c} IS ${sqlValue(row[c] as string | number | null)}`)].join(' AND ');
+}
+
+/** The error when the guarded UPDATE matched no row. */
+export const SETTINGS_CHANGED = "The app's settings changed since they were read (another admin:settings or a D1 edit): nothing was written. Run the command again to see and change the current settings.";
 
 /** The settings as stored and in force, for `app:settings <app>` with no setting flags. */
 export function describeSettings(row: SettingsRow, now: number): string[] {
@@ -341,20 +377,46 @@ export interface AppSettingsDeps {
   /** The scope's [provider, aud] clients on chain, or null for an unregistered scope. */
   scopeClients: (scopeId: string) => Promise<[string, string][] | null>;
   readFile: (path: string) => string;
+  /** The directory relative `--auto-approve` paths are resolved against (default: invocationDir()). */
+  baseDir?: string;
   now: () => number;
   log: (line: string) => void;
+}
+
+/**
+ * `get_scope`'s answer → the scope's `[provider, aud]` clients: null for an unregistered scope (a null view), and only
+ * well-formed string pairs (anything else in `clients` is dropped, a missing or non-array `clients` is none).
+ */
+export function scopeClientsFrom(scope: unknown): [string, string][] | null {
+  if (scope === null || scope === undefined) return null;
+  const clients = typeof scope === 'object' && !Array.isArray(scope) ? (scope as { clients?: unknown }).clients : undefined;
+  return (Array.isArray(clients) ? clients : []).filter(
+    (c): c is [string, string] => Array.isArray(c) && c.length === 2 && typeof c[0] === 'string' && typeof c[1] === 'string',
+  );
+}
+
+/** The Google client ids among a scope's clients (what `--google-web-client` may name). */
+export function googleClientIds(clients: readonly [string, string][]): string[] {
+  return clients.filter(([p]) => p === GOOGLE_PROVIDER).map(([, aud]) => aud);
+}
+
+/**
+ * The app an app:settings call names: positionally (`app:settings <app>`) or with `--app`, exactly one of the two.
+ * `rest` is the positionals after `<env> <command>`.
+ */
+export function settingsAppArg(rest: readonly string[], appFlag: string | undefined): string {
+  if (rest.length > 1) throw new CliError(`Unexpected argument ${rest.slice(1).join(' ')}`);
+  const positional = rest[0];
+  if (positional !== undefined && appFlag !== undefined) throw new CliError('app:settings takes one app: <app id | publishable key> or --app, not both');
+  const app = positional ?? appFlag;
+  if (!app) throw new CliError('app:settings takes one app: <app id | publishable key> or --app');
+  return app;
 }
 
 export function defaultAppSettingsDeps(m: Manifest, remote: boolean): AppSettingsDeps {
   return {
     d1: (statement) => d1Execute(m, statement, { remote }),
-    scopeClients: async (scopeId) => {
-      const scope = await tryView<{ clients?: unknown }>(new NearRpc(m.rpc), m.signer, 'get_scope', { scope_id: scopeId });
-      if (!scope) return null;
-      return (Array.isArray(scope.clients) ? scope.clients : []).filter(
-        (c): c is [string, string] => Array.isArray(c) && c.length === 2 && typeof c[0] === 'string' && typeof c[1] === 'string',
-      );
-    },
+    scopeClients: async (scopeId) => scopeClientsFrom(await tryView<unknown>(new NearRpc(m.rpc), m.signer, 'get_scope', { scope_id: scopeId })),
     readFile: readPolicyFile,
     now: () => Date.now(),
     log: (line) => console.log(line),
@@ -366,7 +428,7 @@ export async function appSettings(m: Manifest, idOrKey: string, args: Args, wher
   const rows = deps.d1(settingsSql(idOrKey)) as unknown as SettingsRow[];
   if (rows.length !== 1 || !rows[0]) throw new Error(`No app ${idOrKey}`);
   const row = rows[0];
-  const change = parseSettingsArgs(args, deps.readFile);
+  const change = parseSettingsArgs(args, deps.readFile, deps.baseDir ?? invocationDir());
   const now = deps.now();
   const header = `${row.id} "${row.name}" (scope ${row.scope_id}, ${where})`;
   if (!Object.keys(change).length) {
@@ -379,11 +441,11 @@ export async function appSettings(m: Manifest, idOrKey: string, args: Args, wher
   if (typeof change.googleWebClient === 'string' && change.googleWebClient !== row.google_web_client_id) {
     const clients = await deps.scopeClients(row.scope_id);
     if (clients === null) throw new Error(`Scope ${row.scope_id} is not registered on ${m.signer}`);
-    scopeGoogleClients = clients.filter(([p]) => p === GOOGLE_PROVIDER).map(([, aud]) => aud);
+    scopeGoogleClients = googleClientIds(clients);
   }
   const plan = planSettings(row, change, { now, delayMs: changeDelayMsFor(m), scopeGoogleClients });
   for (const w of plan.warnings) deps.log(w);
-  if (plan.sql) deps.d1(plan.sql);
+  if (plan.sql && deps.d1(plan.sql).length !== 1) throw new Error(SETTINGS_CHANGED);
   // The change log: when, which app, where, and every line (no policy body, only its id and label).
   deps.log(`${at(now)} app:settings ${header}${plan.sql ? '' : ': no change'}`);
   for (const line of plan.lines) deps.log(`  ${line}`);

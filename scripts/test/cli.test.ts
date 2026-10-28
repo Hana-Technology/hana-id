@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CliError, parseCli } from '../lib/cli.ts';
-import { clientsFromArgs, ownersFromArgs } from '../lib/admin-args.ts';
+import { assertCommandPositionals, clientsFromArgs, ownersFromArgs } from '../lib/admin-args.ts';
 
 describe('parseCli', () => {
   const spec = { strings: ['name', 'n'], multiple: ['origin'], booleans: ['yes', 'remote'] };
@@ -61,5 +61,15 @@ describe('scope:register arguments', () => {
   it("refuses Hana's shared client as an app's own client, and more than 10", () => {
     expect(() => clientsFromArgs(['shared.apps'], { allowShared: true, sharedClientIds: ['shared.apps'] })).toThrow("Hana's shared Google client");
     expect(() => clientsFromArgs(Array.from({ length: 11 }, (_, i) => `c${i}`))).toThrow('at most 10');
+  });
+});
+
+describe('admin positionals', () => {
+  it('only app:settings takes a positional after <env> <command>', () => {
+    expect(() => assertCommandPositionals('app:settings', ['app_x'])).not.toThrow();
+    expect(() => assertCommandPositionals('app:list', [])).not.toThrow();
+    for (const command of ['app:create', 'app:origins:add', 'app:suspend', 'app:list', 'scope:register']) {
+      expect(() => assertCommandPositionals(command, ['app_x'])).toThrow('Unexpected argument app_x');
+    }
   });
 });

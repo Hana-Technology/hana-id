@@ -77,7 +77,10 @@ export async function recordApproveRequests(context: BrowserContext): Promise<vo
   );
 }
 
-export const test = base.extend<{ google: GoogleStub; requests: RequestLog }>({
+/** The Hana origins: none of their responses may set a cookie, and none may hold one after a test. */
+const HANA_ORIGINS: readonly string[] = [VAULT_ORIGIN, AUTH_ORIGIN, new URL(API_URL).origin];
+
+export const test = base.extend<{ google: GoogleStub; requests: RequestLog; noCookies: void }>({
   google: [
     async ({ context }, use) => {
       const google = new GoogleStub();
@@ -87,6 +90,22 @@ export const test = base.extend<{ google: GoogleStub; requests: RequestLog }>({
     { auto: true },
   ],
   requests: [async ({ context }, use) => use(new RequestLog(context)), { auto: true }],
+  // No Hana page or API response sets a cookie (docs/security.md): checked on every response of every test, and no
+  // cookie exists for a Hana origin at the end (a script can't have set one either).
+  noCookies: [
+    async ({ context }, use) => {
+      const seen: Promise<string | null>[] = [];
+      context.on('response', (r) => {
+        const url = r.url();
+        if (!HANA_ORIGINS.some((o) => url.startsWith(`${o}/`) || url === o)) return;
+        seen.push(r.headerValue('set-cookie').then((v) => (v === null ? null : `${r.request().method()} ${url.split('?')[0]}`)).catch(() => null));
+      });
+      await use();
+      expect((await Promise.all(seen)).filter((v) => v !== null)).toEqual([]);
+      expect(await context.cookies([...HANA_ORIGINS])).toEqual([]);
+    },
+    { auto: true },
+  ],
 });
 
 // ---- the mocked API's control endpoints ----

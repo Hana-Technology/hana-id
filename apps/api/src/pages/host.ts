@@ -90,6 +90,17 @@ export const ASSET_CSP = "default-src 'none'; frame-ancestors 'none'; sandbox";
  * A static asset (scripts, styles, images) as the assets binding has it, plus ASSET_CSP, `nosniff`, `no-referrer`
  * and a same-origin CORP (only the origin's own pages load them). HTML is refused: pages exist only on their routes.
  */
+/**
+ * No Hana origin ever sets a cookie: whatever a binding answers (the assets binding, the API Worker behind /vault),
+ * a `Set-Cookie` header is dropped before the response leaves the page Worker.
+ */
+export function withoutCookies(res: Response): Response {
+  if (!res.headers.has('set-cookie')) return res;
+  const headers = new Headers(res.headers);
+  headers.delete('set-cookie');
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
 async function staticAsset(request: Request, assets: Fetcher, head: boolean): Promise<Response> {
   if (new URL(request.url).pathname.toLowerCase().endsWith('.html')) return notFound(head);
   const res = await assets.fetch(request);
@@ -104,6 +115,7 @@ async function staticAsset(request: Request, assets: Fetcher, head: boolean): Pr
   }
   if (head) await res.body?.cancel();
   const headers = new Headers(res.headers);
+  headers.delete('set-cookie');
   headers.set('content-security-policy', ASSET_CSP);
   headers.set('x-content-type-options', 'nosniff');
   headers.set('referrer-policy', 'no-referrer');
@@ -125,7 +137,7 @@ export async function handleVaultHost(request: Request, env: VaultHostEnv): Prom
   const head = request.method === 'HEAD';
   if (new URL(request.url).pathname === VAULT_PAGE_PATH) {
     try {
-      return await env.API.fetch(request);
+      return withoutCookies(await env.API.fetch(request));
     } catch {
       log({ event: 'vault_host', endpoint: VAULT_PAGE_PATH, outcome: 'error', status: 503, code: 'api_unavailable' }, 'error');
       return unavailable(head);

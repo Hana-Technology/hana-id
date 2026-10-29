@@ -85,12 +85,22 @@ describe('manifestSchema: watchdog', () => {
     pager: 'ntfy',
     ...over,
   });
-  const issues = (w: unknown) => manifestSchema.safeParse({ ...raw(), watchdog: w }).error?.issues.map((i) => i.message) ?? [];
+  // The service's account is also one of the contract's `watchdogs` (deploy-contract's add_watchdog).
+  const withWatchdog = (w: unknown) => ({ ...raw(), watchdogs: [(w as { account?: unknown } | null)?.account], watchdog: w });
+  const issues = (w: unknown) => manifestSchema.safeParse(withWatchdog(w)).error?.issues.map((i) => i.message) ?? [];
 
   it('is optional', () => {
     const { watchdog: _, ...base } = raw();
     expect(manifestSchema.safeParse(base).success).toBe(true);
-    expect(manifestSchema.parse({ ...base, watchdog: watchdog() }).watchdog?.pager).toBe('ntfy');
+    expect(manifestSchema.parse({ ...base, watchdogs: [watchdog().account], watchdog: watchdog() }).watchdog?.pager).toBe('ntfy');
+  });
+
+  it("must be one of the contract's watchdogs", () => {
+    const { watchdogs: _, ...base } = raw();
+    const msg = 'watchdog.account watchdog.example.testnet must be listed in watchdogs (the contract\'s watchdog accounts)';
+    expect(manifestSchema.safeParse({ ...base, watchdog: watchdog() }).error?.issues.map((i) => i.message)).toEqual([msg]);
+    expect(manifestSchema.safeParse({ ...base, watchdogs: ['other.example.testnet'], watchdog: watchdog() }).error?.issues.map((i) => i.message)).toEqual([msg]);
+    expect(manifestSchema.safeParse({ ...base, watchdogs: ['other.example.testnet', watchdog().account], watchdog: watchdog() }).success).toBe(true);
   });
 
   it('accepts each paging app and an UNSET Cloudflare account id', () => {
@@ -113,7 +123,8 @@ describe('manifestSchema: watchdog', () => {
   it('is a different account from those it watches, and a different Worker from the API', () => {
     const m = raw();
     for (const field of ['signer', 'relayer', 'owner', 'mpc']) {
-      expect(issues(watchdog({ account: m[field] }))).toEqual([`watchdog.account must not be the ${field} account`]);
+      // (signer/relayer/owner also trip the `watchdogs` rule, since the helper lists the account there too.)
+      expect(issues(watchdog({ account: m[field] }))).toContain(`watchdog.account must not be the ${field} account`);
     }
     const api = (m.cloudflare as { workerName: string }).workerName;
     expect(issues(watchdog({ cloudflare: { ...watchdog().cloudflare, workerName: api } }))[0]).toContain("differ from the API's Worker name");

@@ -72,6 +72,7 @@ export const TEST_MANIFEST: Manifest = {
   sharedGoogleClientIds: [],
   consoleAudiences: [],
   cloudflare: { workerName: 'hana-id-api-test', d1Name: 'hana-id-test' },
+  watchdogs: ['watchdog.test.near'],
   watchdog: {
     account: 'watchdog.test.near',
     cloudflare: { accountId: '0'.repeat(32), workerName: 'hana-id-watchdog-test', d1Name: 'hana-id-watchdog-test' },

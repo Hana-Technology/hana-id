@@ -813,8 +813,9 @@ below logged in to the watchdog's account (`wrangler login` there, or `CLOUDFLAR
 
 1. Create the watchdog's NEAR account (`watchdog.account`, e.g. `hana-id-watchdog-dev1.testnet`, ≈ 2 NEAR; its
    full-access key stays in `~/.near-credentials`, like the other accounts) and add the `watchdog` block to
-   `envs/<env>.json` (`envs/README.md`).
-2. The owner adds it: `add_watchdog(<watchdog.account>)` (cancel and pause powers at once, confirm power after
+   `envs/<env>.json` (`envs/README.md`), with `watchdog.account` also in `watchdogs` (the schema requires it).
+2. The owner adds it: `deploy-contract <env>` plans `add_watchdog(<watchdog.account>)` for every `watchdogs` entry
+   that exists on chain (on a DAO owner, as a proposal; cancel and pause powers at once, confirm power after
    `governance_delay_ms`).
 3. Secrets: `corepack pnpm --filter @hana-id/watchdog secrets <env> init` writes `WATCHDOG_KEY` and
    `WATCHDOG_STATUS_TOKEN` to `.secrets/<env>/watchdog-secrets.json` (0600) and prints the public key with the near

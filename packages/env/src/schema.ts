@@ -36,8 +36,19 @@ const watchdogSchema = z.object({
   digestHourUtc: z.number().int().min(0).max(23).optional(),
 });
 
-/** The watchdog is a different party from every account it watches, and a different Worker from the API. */
-function watchdogRules(m: { signer: string; relayer: string; owner: string; mpc: string; cloudflare: { workerName: string } }, w: z.infer<typeof watchdogSchema>, ctx: z.RefinementCtx): void {
+/**
+ * The watchdog is a different party from every account it watches, and a different Worker from the API. Its account
+ * is one of the contract's `watchdogs`, so `deploy-contract` adds it on chain (`add_watchdog`); a watchdog service
+ * whose account the contract doesn't know can't cancel or pause anything.
+ */
+function watchdogRules(
+  m: { signer: string; relayer: string; owner: string; mpc: string; watchdogs?: string[] | undefined; cloudflare: { workerName: string } },
+  w: z.infer<typeof watchdogSchema>,
+  ctx: z.RefinementCtx,
+): void {
+  if (!(m.watchdogs ?? []).includes(w.account)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'account'], message: `watchdog.account ${w.account} must be listed in watchdogs (the contract's watchdog accounts)` });
+  }
   for (const field of ['signer', 'relayer', 'owner', 'mpc'] as const) {
     if (w.account === m[field]) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'account'], message: `watchdog.account must not be the ${field} account` });
   }

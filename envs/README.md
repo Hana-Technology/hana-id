@@ -50,8 +50,9 @@ D1 database). Per-IP limiters always stay near their client. Changing it creates
 }
 ```
 
-- `account`: the watchdog's own NEAR account, added on chain with `add_watchdog`; never the signer, relayer, owner or
-  MPC account. Its key (`WATCHDOG_KEY`) is a function-call key on it.
+- `account`: the watchdog's own NEAR account; never the signer, relayer, owner or MPC account. It must also be listed
+  in `watchdogs` (the schema refuses it otherwise), which is how `deploy-contract` adds it on chain with
+  `add_watchdog`. Its key (`WATCHDOG_KEY`) is a function-call key on it.
 - `cloudflare.accountId`: the watchdog's **own** Cloudflare account (separate login and MFA from the API's, D86),
   32 hex characters; `UNSET` until it exists (`gen` refuses `UNSET`). `workerName` must differ from the API's.
 - `alertEmails`: both founders (D85); `alertFrom`: an address on the dedicated sending subdomain (D87).

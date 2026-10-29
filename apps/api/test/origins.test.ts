@@ -27,6 +27,13 @@ describe('originAllowed', () => {
     }
   });
 
+  it('never treats the literal wildcard entry as an origin, for any key or env (APIV-7)', () => {
+    for (const devEnv of [true, false]) {
+      expect(originAllowed(test, 'http://localhost:*', devEnv)).toBe(false);
+      expect(originAllowed(live, 'http://localhost:*', devEnv)).toBe(false);
+    }
+  });
+
   it('allows loopback origins, and http://localhost:* by wildcard, only for pk_test_ keys in dev envs', () => {
     for (const o of ['http://localhost:5173', 'http://127.0.0.1:8080', 'https://app.localhost']) {
       expect(originAllowed(test, o, true), o).toBe(true);

@@ -1,7 +1,11 @@
+import { loadEnv } from '@hana-id/env';
 import { describe, expect, it } from 'vitest';
 import { sql, sqlValue } from '../lib/sql.ts';
 import {
   addOriginsSql,
+  assertAppName,
+  assertAppOrigins,
+  printable,
   assertPlanId,
   assertScopeId,
   createAppSql,
@@ -84,5 +88,52 @@ describe('admin SQL', () => {
     expect(() => assertScopeId('x')).toThrow();
     expect(assertPlanId('free')).toBe('free');
     expect(() => assertPlanId('Free Plan')).toThrow();
+  });
+});
+
+describe('app origins the admin CLI accepts (OPER-6, APIV-7)', () => {
+  const sandbox = loadEnv('sandbox-dev');
+  const staging = { ...sandbox, name: 'staging' };
+  const TEST = 'pk_test_abc';
+  const LIVE = 'pk_live_abc';
+
+  it('accepts real partner origins', () => {
+    expect(() => assertAppOrigins(sandbox, TEST, ['https://wallet.example.com', 'https://app.partner.io:8443'])).not.toThrow();
+    expect(() => assertAppOrigins(staging, LIVE, ['https://wallet.example.com'])).not.toThrow();
+  });
+
+  it("refuses Hana's own origins for any app", () => {
+    for (const o of [sandbox.vaultOrigin!, sandbox.authOrigin!, new URL(sandbox.apiUrl).origin]) {
+      expect(() => assertAppOrigins(sandbox, TEST, [o]), o).toThrow(/Hana's own origins/u);
+    }
+  });
+
+  it('loopback origins and the localhost wildcard only for pk_test_ apps in dev envs', () => {
+    for (const o of ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:*']) {
+      expect(() => assertAppOrigins(sandbox, TEST, [o]), o).not.toThrow();
+      expect(() => assertAppOrigins(sandbox, LIVE, [o]), `${o} pk_live_`).toThrow(/pk_test_ apps in dev envs/u);
+      expect(() => assertAppOrigins(staging, TEST, [o]), `${o} staging`).toThrow(/pk_test_ apps in dev envs/u);
+    }
+  });
+
+  it('refuses what the API would silently drop', () => {
+    for (const o of ['https://*.example.com', 'https://a;b.example.com', 'https://10.0.0.1', 'https://workers.dev', 'https://intranet']) {
+      expect(() => assertAppOrigins(sandbox, TEST, [o]), o).toThrow();
+    }
+  });
+});
+
+describe('app names (OPER-11)', () => {
+  it('normalises to NFC and refuses controls, bidi and zero-width characters', () => {
+    expect(assertAppName('  Café Wallet ')).toBe('Café Wallet');
+    for (const bad of ['Wallet‮', 'A​B', 'A\u0007B', 'A\u001b[31mB', 'A B', 'A⁦B⁩', 'AB']) {
+      expect(() => assertAppName(bad), JSON.stringify(bad)).toThrow(/control, format/u);
+    }
+    expect(assertAppName('Sodax · Stellar 🌸')).toBe('Sodax · Stellar 🌸');
+  });
+
+  it('prints stored names with unsafe characters escaped (an ANSI escape or bidi override in D1 never reaches the terminal raw)', () => {
+    expect(printable('Wal‮let\u001b[2J')).toBe('Wal\\u{202e}let\\u{1b}[2J');
+    expect(printable('Plain name')).toBe('Plain name');
   });
 });

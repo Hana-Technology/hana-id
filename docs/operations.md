@@ -480,8 +480,13 @@ Run as `corepack pnpm --filter @hana-id/scripts run admin <env> <command> …`. 
 
 - `app:create`: the scope must exist on chain and the plan in D1; refuses a scope already used by an app with the
   other key type. Generates `app_<base58>` and a **`pk_test_`** key (there is no command for `pk_live_` keys) and
-  prints it (public). Origins are normalised to `scheme://host[:port]`; plain `http` only for `localhost`,
-  `127.0.0.1`, `[::1]`; the literal `http://localhost:*` is accepted.
+  prints it (public). Origins are normalised to `scheme://host[:port]`, then refused if the API would drop or misuse
+  them (`app:create` and `app:origins:add`; never `app:origins:remove`, so a bad entry can always be removed; D100,
+  security sweep OPER-6): Hana's own origins (`vaultOrigin`, `authOrigin`, `apiUrl`), wildcards and odd characters,
+  IP addresses, public suffixes and single labels; loopback origins (`http://localhost:<port>`, `127.0.0.1`,
+  `[::1]`) and the literal `http://localhost:*` only for a `pk_test_` app in a dev env (`local*`, `sandbox*`).
+  App names are NFC-normalised and may not contain control, bidi, zero-width, separator or unassigned characters;
+  `app:list` prints stored values with such characters escaped (OPER-11).
 
   ```sh
   corepack pnpm --filter @hana-id/scripts run admin <env> app:create --name smoke-a --scope s1 --origin http://localhost:5173 --remote

@@ -12,6 +12,7 @@ import { assertCommandPositionals } from './lib/admin-args.ts';
 import {
   addOriginsSql,
   assertAppName,
+  assertAppOrigins,
   assertPlanId,
   assertScopeId,
   createAppSql,
@@ -19,6 +20,7 @@ import {
   listAppsSql,
   normaliseOrigin,
   planExistsSql,
+  printable,
   removeOriginsSql,
   scopeConflictSql,
   setStatusSql,
@@ -134,6 +136,7 @@ async function main(): Promise<void> {
       if (!(await scopeExists(m, scopeId))) throw new Error(`Scope ${scopeId} is not registered on ${m.signer} (admin.ts ${m.name} scope:register …)`);
       if (!d1Execute(m, planExistsSql(plan), { remote }).length) throw new Error(`No plan "${plan}" in ${where}`);
       const app = { id: newAppId(), name, scopeId, publishableKey: publishableKey(), plan, createdAt: Date.now(), origins: list };
+      assertAppOrigins(m, app.publishableKey, list);
       // Test and live keys never share a scope (the API would refuse the test key: scope_conflict).
       const conflict = d1Execute<{ id: string }>(m, scopeConflictSql(scopeId, app.publishableKey), { remote });
       if (conflict.length) throw new Error(`Scope ${scopeId} is used by ${conflict.map((r) => r.id).join(', ')} with the other key type (pk_test_ and pk_live_ apps can't share a scope)`);
@@ -147,6 +150,8 @@ async function main(): Promise<void> {
     case 'app:origins:remove': {
       const app = findApp(m, args.required('app'), remote);
       const list = origins(args);
+      // Checked when adding only: removing an entry the API would drop must always work.
+      if (command === 'app:origins:add') assertAppOrigins(m, app.publishable_key, list);
       d1Execute(m, command === 'app:origins:add' ? addOriginsSql(app.id, list) : removeOriginsSql(app.id, list), { remote });
       console.log(`${command === 'app:origins:add' ? 'Added' : 'Removed'} ${list.join(' ')} ${command === 'app:origins:add' ? 'to' : 'from'} ${app.id} (${where})`);
       return;
@@ -156,14 +161,14 @@ async function main(): Promise<void> {
       const app = findApp(m, args.required('app'), remote);
       const status = command === 'app:suspend' ? 'suspended' : 'active';
       d1Execute(m, setStatusSql(app.id, status), { remote });
-      console.log(`${app.id} "${app.name}" is now ${status} (${where})`);
+      console.log(`${app.id} "${printable(app.name)}" is now ${status} (${where})`);
       return;
     }
     case 'app:list': {
       const rows = d1Execute<AppRow>(m, listAppsSql(), { remote });
       if (!rows.length) return void console.log(`No apps in ${where}.`);
       for (const r of rows) {
-        console.log(`${r.id}  ${r.status.padEnd(9)} scope=${r.scope_id} plan=${r.plan}  ${r.publishable_key}  "${r.name}"\n    origins: ${r.origins ?? '(none)'}`);
+        console.log(`${r.id}  ${r.status.padEnd(9)} scope=${r.scope_id} plan=${r.plan}  ${r.publishable_key}  "${printable(r.name)}"\n    origins: ${printable(r.origins ?? '(none)')}`);
       }
       return;
     }

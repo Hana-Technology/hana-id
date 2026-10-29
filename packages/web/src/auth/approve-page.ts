@@ -1,8 +1,19 @@
-// `GET {authOrigin}/approve` (docs/batch-b-spec.md "Approval flow" and "Consent"): the approval popup the vault opens
-// from its launcher. It talks only to its opener on vaultOrigin, decodes every request's bytes itself, and answers
-// with a digest computed from exactly what it rendered (the approval digest, or the consent digest for the
-// auto-approve consent screen), so the vault signs only what the user saw. Approve and Allow are guarded
-// (approve-guard.ts). After an answer it waits up to 15 s for a follow-up request, then says bye and closes.
+// `GET {authOrigin}/approve` (docs/batch-b-spec.md "Approval flow" and "Consent"): the approval popup. It talks only to
+// the app's vault on vaultOrigin, decodes every request's bytes itself, and answers with a digest computed from
+// exactly what it rendered (the approval digest, or the consent digest for the auto-approve consent screen), so the
+// vault signs only what the user saw. Approve and Allow are guarded (approve-guard.ts). After an answer it waits up to
+// 15 s for a follow-up request, then says bye and closes.
+//
+// Opener modes (D95):
+//   vault    /approve                          opened by the vault's launcher; the vault is window.opener
+//   partner  /approve?from=partner&v=<frame>   opened by the SDK on the partner page, in the user's click; the vault
+//                                              is window.opener.frames[v], authenticated as the login popup does it:
+//                                              event.origin === vaultOrigin, event.source === opener.frames[v], and
+//                                              that frame's parent is the opener
+// Either way it accepts requests and hana:approve-close only from that authenticated vault, never from the partner
+// page that holds this window, and posts only to the vault (targetOrigin vaultOrigin). A partner-opened popup shows
+// nothing for LOADING_DELAY_MS (an auto-approved or refused request closes it before that, so it barely flashes), and
+// closes itself if no request arrives within ADOPT_TIMEOUT_MS.
 //
 // One request is on screen at a time. If the vault sends another (a different id) while one is still unanswered, the
 // one on screen is rejected first (approve-result approved: false, or consent-result allowed: false, with its own
@@ -21,12 +32,28 @@ import { type AutoApprovePolicyV1, type AutoApproveReason, policyId, validateAut
 import type { HanaEnv } from '../hana-env.ts';
 import { ApproveGuard, type Coords, type GuardInput } from './approve-guard.ts';
 import { type Dom, dom, errorView } from './dom.ts';
-import { type GestureCheck, type PageWindow, isFramed, isUserGesture } from './page-window.ts';
+import { type GestureCheck, type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed, isUserGesture } from './page-window.ts';
 import { renderApproval } from './render-approval.ts';
 import { renderConsent } from './render-consent.ts';
 
 /** How long the popup waits for a follow-up request after an answer before it closes. */
 export const KEEP_OPEN_MS = 15_000;
+/** A partner-opened popup that no request reaches within this long says bye and closes (vault approvals.ts LATE_CLOSE_MS). */
+export const ADOPT_TIMEOUT_MS = 8_000;
+/** A partner-opened popup stays blank this long before it says it is loading, so an instant close barely shows. */
+export const LOADING_DELAY_MS = 600;
+
+export type ApproveOpenerMode = { mode: 'vault' } | { mode: 'partner'; vaultFrame: string };
+
+/** The opener mode from the query: none (vault), or exactly `from=partner&v=<vault frame name>`; null otherwise. */
+export function approveOpenerMode(search: string): ApproveOpenerMode | null {
+  const q = new URLSearchParams(search);
+  const keys = [...q.keys()];
+  if (keys.length === 0) return { mode: 'vault' };
+  if (keys.length !== 2 || q.getAll('from').length !== 1 || q.getAll('v').length !== 1) return null;
+  const v = q.get('v') as string;
+  return q.get('from') === 'partner' && VAULT_FRAME_NAME.test(v) ? { mode: 'partner', vaultFrame: v } : null;
+}
 
 /** Why the vault didn't auto-approve a request (the matcher's reason, policy/match.ts), in the popup's words. */
 export const AUTO_APPROVE_REASON_TEXT: Readonly<Record<AutoApproveReason, string>> = Object.freeze({
@@ -95,9 +122,11 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   const isGesture = deps.isGesture ?? isUserGesture;
   const d: Dom = dom(win.document);
   const opener = win.opener;
+  const opened = approveOpenerMode(win.location.search);
   let state: ApprovePageState = 'connecting';
   let current: Current | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let loadingTimer: ReturnType<typeof setTimeout> | undefined;
   let primary: HTMLButtonElement | null = null;
   let stopped = false;
   const visible = () => win.document.visibilityState !== 'hidden';
@@ -106,9 +135,21 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     if (primary) primary.disabled = !armed;
   });
 
+  /** The vault window: the opener, or the partner page's vault frame (looked up each time, as the login popup does). */
+  const vaultWindow = (): Window | null => {
+    if (!opener || !opened) return null;
+    return opened.mode === 'vault' ? opener : (childFrame(opener, opened.vaultFrame) as Window | null);
+  };
+  /** Only the authenticated vault: right origin and window for the opener mode. */
+  const fromVault = (e: MessageEvent): boolean => {
+    if (!opener || !opened) return false;
+    if (opened.mode === 'vault') return e.origin === env.vaultOrigin && e.source === opener;
+    return fromPartnerVault(e, opener, opened.vaultFrame, env.vaultOrigin);
+  };
+
   const post = (m: Record<string, unknown>) => {
     try {
-      opener?.postMessage({ v: 1, ...m }, env.vaultOrigin);
+      vaultWindow()?.postMessage({ v: 1, ...m }, env.vaultOrigin);
     } catch {
       // The vault is gone (partner page closed or navigated); nothing to answer.
     }
@@ -131,6 +172,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   function stop(): void {
     stopped = true;
     clearTimeout(idleTimer);
+    clearTimeout(loadingTimer);
     for (const [t, l] of listeners) win.removeEventListener(t, l);
     win.document.removeEventListener('visibilitychange', onVisibility);
   }
@@ -144,10 +186,17 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
 
   function onMessage(event: Event): void {
     const e = event as MessageEvent;
-    if (stopped || e.source !== opener || e.origin !== env.vaultOrigin) return;
-    const msg = parseWindowMessage(e.data, ['hana:approve-request', 'hana:consent-request']);
+    if (stopped || !fromVault(e)) return;
+    const msg = parseWindowMessage(e.data, ['hana:approve-request', 'hana:consent-request', 'hana:approve-close']);
     if (!msg) return;
+    if (msg.t === 'hana:approve-close') {
+      // The vault ended what this window was for (auto-approved, refused, another window in use, logout). It already
+      // settled anything on screen, so nothing is answered.
+      close();
+      return;
+    }
     clearTimeout(idleTimer);
+    clearTimeout(loadingTimer);
     if (msg.t === 'hana:approve-request') showRequest(msg);
     else showConsent(msg);
   }
@@ -271,14 +320,16 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     guard.rendered();
   }
 
-  /** Closes after KEEP_OPEN_MS without a request, saying bye so the vault stops reusing this window. */
-  function idleClose(): void {
+  /** Closes after `ms` (KEEP_OPEN_MS) without a request, saying bye so the vault stops reusing this window. */
+  function idleClose(ms = KEEP_OPEN_MS): void {
     clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
       post({ t: 'hana:approve-bye' });
       close();
-    }, KEEP_OPEN_MS);
+    }, ms);
   }
+
+  const loadingView = () => d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Review in Hana'), d.h('p', { class: 'muted' }, 'Loading the request…')));
 
   /** The answer to `c`, with the digest of exactly what was rendered for it. */
   function result(c: Current, approved: boolean): Record<string, unknown> {
@@ -303,15 +354,27 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   if (isFramed(win)) {
     state = 'error';
     d.show(errorView(d, 'Hana', 'The Hana approval window can’t run inside another page.'));
+  } else if (!opened) {
+    state = 'error';
+    d.show(errorView(d, 'Nothing to review', 'This approval link is not valid. Start again from the app.'));
   } else if (!opener) {
     state = 'error';
     d.show(errorView(d, 'Nothing to review', 'Open this window from the Hana prompt in the app.'));
   } else {
     for (const [t, l] of listeners) win.addEventListener(t, l);
     win.document.addEventListener('visibilitychange', onVisibility);
-    d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Review in Hana'), d.h('p', { class: 'muted' }, 'Loading the request…')));
-    post({ t: 'hana:approve-hello' });
-    idleClose();
+    if (opened.mode === 'vault') {
+      loadingView();
+      post({ t: 'hana:approve-hello' });
+      idleClose();
+    } else {
+      // Blank at first: a request covered by the app's accepted policy (or refused) closes this window before it says
+      // anything. Nothing on it can be approved until the vault sends a request.
+      d.show(d.h('section', { class: 'panel', attrs: { 'aria-busy': 'true' } }));
+      loadingTimer = setTimeout(loadingView, LOADING_DELAY_MS);
+      post({ t: 'hana:approve-hello' });
+      idleClose(ADOPT_TIMEOUT_MS);
+    }
   }
 
   return {

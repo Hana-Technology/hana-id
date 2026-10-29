@@ -26,6 +26,7 @@ import {
   login,
   makeConfig,
   openApproval,
+  partnerApproval,
   popupHello,
   readyTab,
   sleepReal,
@@ -221,6 +222,31 @@ describe('with consent', () => {
     expect(s.t.opened.length).toBe(opened);
     expect(await s.t.waitEvent('autoApproved')).toEqual({ kind: 'stellar_signTransaction', chain: 'stellar', contract: POOL, function: 'swap' });
     expect(s.t.launcher.history).toContain('Signed by Hana under Swaps on Example');
+  });
+
+  it('a matching request whose popup the partner page opened in the click (D95) closes that popup unseen', async () => {
+    const s = await session();
+    const consentPopup = await grant(s);
+    s.t.dispatch({ data: { v: 1, t: 'hana:approve-bye' }, origin: ENV.authOrigin, source: consentPopup });
+    const closes = (w: FakeWindow) => w.posted.filter((p) => p.message.t === 'hana:approve-close');
+    const shown = (w: FakeWindow) => w.posted.filter((p) => p.message.t !== 'hana:approve-close');
+    const launcherSince = s.t.launcher.history.length;
+
+    // The popup loaded first: told to close once the request is signed, having been sent nothing to approve.
+    const first = partnerApproval(s.t);
+    const xdr = stellarTx(s.stellar, [invoke(POOL, 'swap', [addr(s.stellar)])]);
+    const r = (await s.t.request('stellar_signTransaction', { xdr, networkPassphrase: PASSPHRASE }, { popupOpened: true })).result as { signedTxXdr: string };
+    expect(stellarTxSignedBy(r.signedTxXdr, s.stellar)).toBe(true);
+    await s.t.waitUntil(() => closes(first).length === 1, 'approve-close');
+    expect(shown(first)).toEqual([]);
+
+    // The request was signed before its popup loaded: the popup is told to close on arrival.
+    const r2 = await s.t.request('eth_signTransaction', { tx: evmTx({ nonce: '0x2' }) }, { popupOpened: true });
+    expect(evmTxSigner(r2.result as string, evmTx({ nonce: '0x2' }))).toBe(s.evm);
+    const late = partnerApproval(s.t);
+    expect(closes(late)).toHaveLength(1);
+    expect(shown(late)).toEqual([]);
+    expect(s.t.launcher.history.slice(launcherSince)).not.toContain('Review in Hana');
   });
 
   it.each([

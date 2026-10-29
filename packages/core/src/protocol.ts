@@ -198,6 +198,14 @@ export const SIGN_METHODS = [
 export type SignMethod = (typeof SIGN_METHODS)[number];
 export const isSignMethod = (m: unknown): m is SignMethod => (SIGN_METHODS as readonly unknown[]).includes(m);
 
+/**
+ * Methods that may show the approval popup: the sign methods and the consent screen. Only these may carry
+ * `popupOpened` (the partner page opened the approval popup in the user's click for this request, D95).
+ */
+export const APPROVAL_POPUP_METHODS = [...SIGN_METHODS, 'hana_requestAutoApprove'] as const satisfies readonly PortMethod[];
+export type ApprovalPopupMethod = (typeof APPROVAL_POPUP_METHODS)[number];
+export const isApprovalPopupMethod = (m: unknown): m is ApprovalPopupMethod => (APPROVAL_POPUP_METHODS as readonly unknown[]).includes(m);
+
 export interface PortParamsMap {
   hana_status: undefined;
   /** `{popupBlocked: true}` when window.open returned null. */
@@ -220,7 +228,12 @@ export interface PortParamsMap {
   hana_revokeAutoApprove: undefined;
 }
 
-export type PortRequest = { [M in PortMethod]: { v: 1; id: string; method: M; params: PortParamsMap[M] } }[PortMethod];
+/**
+ * `popupOpened: true` (only on APPROVAL_POPUP_METHODS): the SDK opened `{authOrigin}/approve?from=partner&v=…` in the
+ * user's click for this request, so the vault waits briefly for that popup's hello before it shows its launcher, and
+ * tells the popup to close if the request ends without an approval screen (docs/batch-b-spec.md "Approval flow").
+ */
+export type PortRequest = { [M in PortMethod]: { v: 1; id: string; method: M; params: PortParamsMap[M]; popupOpened?: true } }[PortMethod];
 
 /** No params: absent, undefined, or an empty array (EIP-1193 callers send `[]`). Parsed as undefined. */
 const noParams = (p: unknown): boolean => p === undefined || (Array.isArray(p) && p.length === 0);
@@ -293,12 +306,13 @@ export const portRequestCap = (method: unknown): number => (isSignMethod(method)
 /** Validates a port request (vault side). Unknown methods are null here; the vault answers them 4200 only if `id` is valid. */
 export function parsePortRequest(data: unknown): PortRequest | null {
   if (!isPlainObject(data) || messageSize(data, portRequestCap(data.method)) === Number.POSITIVE_INFINITY) return null;
-  if (!exactKeys(data, ['v', 'id', 'method'], ['params']) || data.v !== PROTOCOL_VERSION || !isStr(data.id, 1, 64)) return null;
+  if (!exactKeys(data, ['v', 'id', 'method'], ['params', 'popupOpened']) || data.v !== PROTOCOL_VERSION || !isStr(data.id, 1, 64)) return null;
   const method = data.method;
   if (!(PORT_METHODS as readonly unknown[]).includes(method)) return null;
+  if (data.popupOpened !== undefined && (data.popupOpened !== true || !isApprovalPopupMethod(method))) return null;
   const params = PARAMS[method as PortMethod](data.params);
   if (params === null) return null;
-  return { v: 1, id: data.id, method, params } as PortRequest;
+  return { v: 1, id: data.id, method, params, ...(data.popupOpened === true ? { popupOpened: true } : {}) } as PortRequest;
 }
 
 /**
@@ -451,6 +465,11 @@ export interface PortEventMap {
   sessionExpired: null;
   loginProgress: { stage: (typeof LOGIN_STAGES)[number] };
   ui: { launcher: 'show' | 'hide'; label: string };
+  /**
+   * Whether the vault has an approval popup open (one its launcher opened, or one the partner page opened that it
+   * adopted). The SDK then reuses it instead of opening another in the next click (D95).
+   */
+  approvalWindow: { open: boolean };
   autoApproved: { kind: SignMethod; chain: 'stellar' | 'evm'; contract: string; function: string };
   /**
    * The session's persistence changed after it was reported: today only to 'none', when the share and record made
@@ -470,6 +489,7 @@ const EVENTS: { [E in PortEventName]: (d: unknown) => boolean } = {
   sessionExpired: (d) => d === null,
   loginProgress: (d) => isPlainObject(d) && exactKeys(d, ['stage']) && (LOGIN_STAGES as readonly unknown[]).includes(d.stage),
   ui: (d) => isPlainObject(d) && exactKeys(d, ['launcher', 'label']) && (d.launcher === 'show' || d.launcher === 'hide') && isStr(d.label, 0, 80),
+  approvalWindow: (d) => isPlainObject(d) && exactKeys(d, ['open']) && typeof d.open === 'boolean',
   autoApproved: (d) =>
     isPlainObject(d) && exactKeys(d, ['kind', 'chain', 'contract', 'function']) && isSignMethod(d.kind) && isChain(d.chain) && isStr(d.contract, 1, 128) && isStr(d.function, 1, 128),
   persistenceChanged: (d) => isPlainObject(d) && exactKeys(d, ['persistence']) && isPersistence(d.persistence),
@@ -539,6 +559,12 @@ export interface WindowMessageMap {
   };
   'hana:approve-result': { id: string; approved: boolean; digest: Uint8Array };
   'hana:approve-bye': Record<string, never>;
+  /**
+   * Vault → approval popup: close now, without answering (D95). Sent when the request a partner-opened popup was
+   * opened for ended without an approval screen (auto-approved under the accepted policy, or refused), when the vault
+   * already has a popup in use, and when the vault drops its popup (logout, a stale window).
+   */
+  'hana:approve-close': Record<string, never>;
   'hana:export-hello': Record<string, never>;
   'hana:export-context': {
     pk: string;
@@ -655,6 +681,7 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   },
   'hana:approve-result': (m) => exactKeys(m, ['v', 't', 'id', 'approved', 'digest']) && isRequestId(m.id) && typeof m.approved === 'boolean' && isBytes(m.digest, 32, 32),
   'hana:approve-bye': (m) => exactKeys(m, ['v', 't']),
+  'hana:approve-close': (m) => exactKeys(m, ['v', 't']),
   'hana:export-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:export-context': (m) =>
     exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'keyIndex', 'chain', 'address']) &&

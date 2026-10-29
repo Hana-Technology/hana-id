@@ -17,7 +17,16 @@ import { STELLAR_MAINNET_PASSPHRASE, shortAddress } from '@hana-id/core';
 import { policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GUARD_DELAY_MS } from '../../src/auth/approve-guard.ts';
-import { AUTO_APPROVE_REASON_TEXT, KEEP_OPEN_MS, TEST_APP_NOTE, autoApproveReasonText, startApprovePage } from '../../src/auth/approve-page.ts';
+import {
+  ADOPT_TIMEOUT_MS,
+  AUTO_APPROVE_REASON_TEXT,
+  KEEP_OPEN_MS,
+  LOADING_DELAY_MS,
+  TEST_APP_NOTE,
+  approveOpenerMode,
+  autoApproveReasonText,
+  startApprovePage,
+} from '../../src/auth/approve-page.ts';
 import { NO_NETWORK_NOTE } from '../../src/auth/render-approval.ts';
 import { formatEndTime } from '../../src/auth/render-consent.ts';
 import { policyJson } from '../../../core/test/policy-fixtures.ts';
@@ -896,5 +905,143 @@ describe('/approve consent screen: contract names (D44)', () => {
     expect(l.querySelector('img')).toBeNull();
     expect(l.querySelector('b')).toBeNull();
     expect(l.textContent).toContain('<img src=x onerror=alert(1)> · named by <b>App</b>');
+  });
+});
+
+describe('/approve opened by the partner page in the click (D95)', () => {
+  const FRAME = `hana-vault-${'c'.repeat(32)}`;
+  let partner: RemoteWindow;
+  let vaultFrame: RemoteWindow;
+
+  /** /approve?from=partner&v=FRAME, opened by the partner page, whose child frame FRAME is the vault. */
+  function startPartner(search = `?from=partner&v=${FRAME}`): void {
+    page.stop();
+    resetDom();
+    win = new FakeWindow('/approve', search);
+    partner = remoteWindow();
+    vaultFrame = remoteWindow({ parent: partner });
+    partner.frames[FRAME] = vaultFrame;
+    win.opener = asWindow(partner);
+    vault = vaultFrame;
+    page = startApprovePage({ win, env: ENV, isGesture: () => true });
+    win.dispatch('focus');
+  }
+
+  beforeEach(() => startPartner());
+
+  it('parses only the two opener forms', () => {
+    expect(approveOpenerMode('')).toEqual({ mode: 'vault' });
+    expect(approveOpenerMode(`?from=partner&v=${FRAME}`)).toEqual({ mode: 'partner', vaultFrame: FRAME });
+    expect(approveOpenerMode(`?v=${FRAME}&from=partner`)).toEqual({ mode: 'partner', vaultFrame: FRAME });
+    for (const bad of [`?from=vault&v=${FRAME}`, '?from=partner', `?v=${FRAME}`, '?from=partner&v=hana-vault-x', `?from=partner&v=${FRAME}&v=${FRAME}`, `?from=partner&v=${FRAME}&x=1`, '?x=1']) {
+      expect(approveOpenerMode(bad)).toBeNull();
+    }
+  });
+
+  it('an approval link in neither form shows an error and says nothing', () => {
+    startPartner('?from=partner&v=nope');
+    expect(page.state).toBe('error');
+    expect(pageText()).toContain('This approval link is not valid');
+    expect(vaultFrame.postMessage).not.toHaveBeenCalled();
+    expect(partner.postMessage).not.toHaveBeenCalled();
+  });
+
+  it('says hello to the vault frame (opener.frames[v]) on vaultOrigin, never to the partner page', () => {
+    expect(vaultFrame.postMessage).toHaveBeenCalledWith({ v: 1, t: 'hana:approve-hello' }, ENV.vaultOrigin);
+    expect(partner.postMessage).not.toHaveBeenCalled();
+  });
+
+  it('shows and answers a request from the authenticated vault frame exactly as when the vault opened it', () => {
+    const r = evmRequest({ position: 2, queued: 3 });
+    send(r, ENV.vaultOrigin, vaultFrame);
+    expect(pageText()).toContain('Request 2 of 3 from Partner App');
+    arm();
+    click(primary());
+    const [result] = results();
+    expect(result).toMatchObject({ t: 'hana:approve-result', id: r.id, approved: true });
+    expect(result?.digest).toEqual(approvalDigest(digestInput(r)));
+    expect(vaultFrame.postMessage.mock.calls.every((c) => c[1] === ENV.vaultOrigin)).toBe(true);
+    expect(partner.postMessage).not.toHaveBeenCalled();
+    // It waits for a follow-up, whose Approve is guarded again.
+    expect(page.state).toBe('waiting');
+    send(stellarRequest(), ENV.vaultOrigin, vaultFrame);
+    click(primary());
+    expect(results()).toHaveLength(1);
+  });
+
+  it('the partner page posting fake requests (or a close) to its own popup gets nothing shown, nothing answered', () => {
+    // The partner page holds this window: its messages carry its own origin, and it is not the vault frame.
+    send(evmRequest(), PARTNER, partner);
+    send(evmRequest(), ENV.vaultOrigin, partner); // even if it could claim the vault's origin, the window is wrong
+    send(evmRequest(), PARTNER, vaultFrame);
+    send({ v: 1, t: 'hana:approve-close' }, PARTNER, partner);
+    // A frame on vaultOrigin that is not opener.frames[v] (another vault frame on the page).
+    send(evmRequest(), ENV.vaultOrigin, remoteWindow({ parent: partner }));
+    vi.advanceTimersByTime(LOADING_DELAY_MS);
+    expect(page.state).toBe('connecting');
+    expect(primary()).toBeNull();
+    expect(win.closed).toBe(false);
+    expect(partner.postMessage).not.toHaveBeenCalled();
+    expect(results()).toEqual([]);
+  });
+
+  it('a frame whose parent is not the opener is not the vault, even at opener.frames[v]', () => {
+    vaultFrame.parent = remoteWindow();
+    send(evmRequest(), ENV.vaultOrigin, vaultFrame);
+    expect(primary()).toBeNull();
+    expect(page.state).toBe('connecting');
+  });
+
+  it('auto-approved or refused: the vault’s close shuts it before it shows anything, and nothing can be approved there', () => {
+    // Blank until LOADING_DELAY_MS: no text, no buttons.
+    expect(pageText()).toBe('');
+    expect(document.querySelectorAll('button')).toHaveLength(0);
+    vi.advanceTimersByTime(LOADING_DELAY_MS - 1);
+    send({ v: 1, t: 'hana:approve-close' }, ENV.vaultOrigin, vaultFrame);
+    expect(win.closed).toBe(true);
+    expect(page.state).toBe('closed');
+    expect(pageText()).toBe('');
+    // Closed: a request arriving after can't be shown or approved, and nothing more is posted.
+    send(evmRequest(), ENV.vaultOrigin, vaultFrame);
+    vi.advanceTimersByTime(ADOPT_TIMEOUT_MS * 2);
+    expect(primary()).toBeNull();
+    expect(results()).toEqual([]);
+  });
+
+  it(`says it is loading after ${LOADING_DELAY_MS} ms; with no request in ${ADOPT_TIMEOUT_MS} ms it says bye and closes`, () => {
+    vi.advanceTimersByTime(LOADING_DELAY_MS);
+    expect(pageText()).toContain('Loading the request');
+    vi.advanceTimersByTime(ADOPT_TIMEOUT_MS - LOADING_DELAY_MS - 1);
+    expect(win.closed).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(results()).toEqual([{ v: 1, t: 'hana:approve-bye' }]);
+    expect(win.closed).toBe(true);
+  });
+
+  it('a request on screen when the vault says close is not answered (the vault already settled it)', () => {
+    send(evmRequest(), ENV.vaultOrigin, vaultFrame);
+    send({ v: 1, t: 'hana:approve-close' }, ENV.vaultOrigin, vaultFrame);
+    expect(win.closed).toBe(true);
+    win.dispatch('pagehide');
+    expect(results()).toEqual([]);
+  });
+
+  it('without an opener (the partner page cut it off) it shows an error', () => {
+    page.stop();
+    resetDom();
+    win = new FakeWindow('/approve', `?from=partner&v=${FRAME}`);
+    page = startApprovePage({ win, env: ENV, isGesture: () => true });
+    expect(page.state).toBe('error');
+  });
+});
+
+describe('/approve opened by the vault: hana:approve-close', () => {
+  it('closes at once on the vault’s close, and ignores one from anything else', () => {
+    send({ v: 1, t: 'hana:approve-close' }, EVIL);
+    send({ v: 1, t: 'hana:approve-close' }, ENV.vaultOrigin, remoteWindow());
+    expect(win.closed).toBe(false);
+    send({ v: 1, t: 'hana:approve-close' });
+    expect(win.closed).toBe(true);
+    expect(results()).toEqual([]);
   });
 });

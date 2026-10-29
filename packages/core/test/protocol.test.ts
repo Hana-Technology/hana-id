@@ -6,6 +6,7 @@ import { base64Encode, toHex } from '../src/bytes.ts';
 import { type ApprovalDigestInput, approvalContextString, approvalDigest } from '../src/approval.ts';
 import {
   APPROVAL_KIND,
+  APPROVAL_POPUP_METHODS,
   ErrorCode,
   MESSAGE_MAX_BYTES,
   PORT_METHODS,
@@ -108,6 +109,20 @@ describe('port requests', () => {
     expect(parsePortRequest(req(method, params))).toBeNull();
   });
 
+  it.each(APPROVAL_POPUP_METHODS)('accepts popupOpened: true on %s and keeps it (D95)', (method) => {
+    const parsed = parsePortRequest({ ...req(method, VALID_PARAMS[method]), popupOpened: true });
+    expect(parsed).not.toBeNull();
+    expect(parsed!.popupOpened).toBe(true);
+    expect(parsePortRequest(req(method, VALID_PARAMS[method]))!.popupOpened).toBeUndefined();
+  });
+
+  it('refuses popupOpened on methods that never show the approval popup, and any value but true', () => {
+    for (const method of PORT_METHODS.filter((m) => !(APPROVAL_POPUP_METHODS as readonly string[]).includes(m))) {
+      expect(parsePortRequest({ ...req(method, VALID_PARAMS[method]), popupOpened: true })).toBeNull();
+    }
+    for (const value of [false, 1, 'true', null, {}]) expect(parsePortRequest({ ...req('personal_sign', VALID_PARAMS.personal_sign), popupOpened: value })).toBeNull();
+  });
+
   it('answers 4200 only to well-formed requests for unknown methods', () => {
     expect(unsupportedMethodId({ v: 1, id: 'q', method: 'eth_sign', params: [] })).toBe('q');
     expect(unsupportedMethodId({ v: 1, id: 'q', method: 'hana_status' })).toBeNull();
@@ -204,6 +219,8 @@ describe('port events', () => {
     [{ v: 1, event: 'ui', data: { launcher: 'show', label: 'Review in Hana' } }],
     [{ v: 1, event: 'autoApproved', data: { kind: 'eth_signTransaction', chain: 'evm', contract: EVM, function: 'swap' } }],
     [{ v: 1, event: 'persistenceChanged', data: { persistence: 'none' } }],
+    [{ v: 1, event: 'approvalWindow', data: { open: true } }],
+    [{ v: 1, event: 'approvalWindow', data: { open: false } }],
   ])('accepts %j', (data) => {
     expect(parsePortEvent(data)).not.toBeNull();
   });
@@ -219,6 +236,9 @@ describe('port events', () => {
     [{ v: 1, event: 'persistenceChanged', data: { persistence: 'forever' } }],
     [{ v: 1, event: 'persistenceChanged', data: { persistence: 'none', reason: 'share' } }],
     [{ v: 1, event: 'persistenceChanged', data: null }],
+    [{ v: 1, event: 'approvalWindow', data: { open: 'yes' } }],
+    [{ v: 1, event: 'approvalWindow', data: { open: true, name: 'hana-approve-x' } }],
+    [{ v: 1, event: 'approvalWindow', data: null }],
   ])('refuses %j', (data) => {
     expect(parsePortEvent(data)).toBeNull();
   });
@@ -267,6 +287,7 @@ const VALID_WINDOW: Record<WindowMessageType, Record<string, unknown>> = {
   'hana:approve-request': APPROVE_REQUEST,
   'hana:approve-result': { v: 1, t: 'hana:approve-result', id: newRequestId(), approved: true, digest: new Uint8Array(32) },
   'hana:approve-bye': { v: 1, t: 'hana:approve-bye' },
+  'hana:approve-close': { v: 1, t: 'hana:approve-close' },
   'hana:export-hello': { v: 1, t: 'hana:export-hello' },
   'hana:export-context': {
     v: 1,

@@ -3,8 +3,11 @@
 // handler, hana.stellar / hana.ethereum through Stellar Wallets Kit (1.9.x and 2.x, with HanaIdModule), viem and wagmi.
 //
 // Query: `pk` (publishable key, required), `blockPopups=1` (window.open returns null, as a browser popup blocker does,
-// so the SDK falls back to the vault's launcher). The page holds no secret: everything it sees is what any partner
-// page sees.
+// so the SDK falls back to the vault's launcher), `blockPopups=approve` (only the approval popup is blocked, as Safari
+// blocks a window.open after an await). The page holds no secret: everything it sees is what any partner page sees.
+//
+// Playwright's page.evaluate runs with an emulated user gesture, so `e2e.run` (an action outside any click) hides the
+// page's user activation from the SDK until the next `e2e.arm`; armed actions run inside a real click on #act.
 import { Account, Asset, Keypair, Networks, Operation, TransactionBuilder } from '@stellar/stellar-base';
 import { connect, createConfig, getConnectors, http, signMessage as wagmiSignMessage } from '@wagmi/core';
 import { StellarWalletsKit as Kit1 } from 'swk1/stellar-wallets-kit.mjs';
@@ -12,13 +15,24 @@ import { StellarWalletsKit as Kit2 } from 'swk2/sdk';
 import { createWalletClient, custom, defineChain, toHex, verifyMessage } from 'viem';
 import { HanaError, createHana } from '@hana-id/web';
 import { HanaIdModule } from '@hana-id/web/stellar-wallets-kit';
-import { ENV_NAME, EVM_CHAIN_ID, EVM_RPC } from '../src/stack.ts';
+import { AUTH_ORIGIN, ENV_NAME, EVM_CHAIN_ID, EVM_RPC } from '../src/stack.ts';
 
 const q = new URLSearchParams(location.search);
 /** The browser's own window.open, for tests that open another window from the page (the foreign-site cases). */
 const browserOpen = window.open.bind(window);
 // Playwright's browsers never block popups; this is what a blocker does (Safari after an await, for example).
 if (q.get('blockPopups') === '1') window.open = () => null;
+if (q.get('blockPopups') === 'approve') {
+  window.open = (url?: string | URL, target?: string, features?: string) => (String(url).includes('/approve') ? null : browserOpen(url, target, features));
+}
+
+/** While true, navigator.userActivation reads as "not in a click" (see the header). */
+let outsideClick = false;
+const realActivation = Object.getOwnPropertyDescriptor(Navigator.prototype, 'userActivation')?.get;
+Object.defineProperty(navigator, 'userActivation', {
+  configurable: true,
+  get: () => (outsideClick ? { isActive: false, hasBeenActive: true } : realActivation?.call(navigator)),
+});
 
 const chain = defineChain({
   id: EVM_CHAIN_ID,
@@ -51,7 +65,7 @@ hana.ready.then(
     readyError = e instanceof HanaError ? e.code : String(e);
   },
 );
-for (const name of ['statusChanged', 'accountsChanged', 'sessionExpired', 'disconnect', 'launcher', 'loginProgress'] as const) {
+for (const name of ['statusChanged', 'accountsChanged', 'sessionExpired', 'disconnect', 'launcher', 'loginProgress', 'autoApproved'] as const) {
   hana.on(name, (...args: unknown[]) => events.push({ name, data: args[0] ?? null }));
 }
 
@@ -150,6 +164,11 @@ const actions: Record<string, (...args: never[]) => Promise<unknown>> = {
     return { signerAddress: r.signerAddress, valid: stellarSignedBy(r.signedTxXdr, address) };
   },
   ethRequestAccounts: () => hana.ethereum.request({ method: 'eth_requestAccounts' }),
+  /** eth_signTransaction of a fully filled transaction (no RPC fill); `valid`: signed by the Hana account. */
+  ethSignTx: async (tx: Record<string, string>) => {
+    const raw = (await hana.ethereum.request({ method: 'eth_signTransaction', params: [tx] })) as `0x${string}`;
+    return { raw, valid: /^0x02/u.test(raw) };
+  },
   personalSign: async (message: string) => {
     const address = hana.addresses?.evm as `0x${string}`;
     const signature = (await hana.ethereum.request({ method: 'personal_sign', params: [toHex(message), address] })) as `0x${string}`;
@@ -181,6 +200,7 @@ const actions: Record<string, (...args: never[]) => Promise<unknown>> = {
 };
 
 let armed: (() => void) | null = null;
+let ownApprove: Window | null = null;
 document.getElementById('act')?.addEventListener('click', () => {
   const a = armed;
   armed = null;
@@ -209,10 +229,12 @@ const e2e = {
   warning: () => hana.warning,
   /** The next click on #act runs `action` synchronously inside the click handler (user activation). */
   arm(name: string, action: string, ...args: unknown[]) {
+    outsideClick = false;
     armed = () => run(name, action, args);
   },
-  /** Runs `action` now (no user gesture). */
+  /** Runs `action` now, as a page does outside any click (no user activation, whatever Playwright emulates). */
   run(name: string, action: string, ...args: unknown[]) {
+    outsideClick = true;
     run(name, action, args);
   },
   /** The vault iframe, made invisible (opacity 0) by the page: the clickjacking case. */
@@ -230,6 +252,16 @@ const e2e = {
   /** Opens another window from this page (it gets this page as its opener), whatever `blockPopups` says. */
   openWindow(url: string): boolean {
     return browserOpen(url, '_blank') !== null;
+  },
+  /** Opens its own `/approve?from=partner&v=<vault frame>` and keeps the handle, as the SDK does (the forgery cases). */
+  openApproveWindow(): boolean {
+    const v = document.querySelector<HTMLIFrameElement>('iframe[name^="hana-vault-"]')?.name ?? '';
+    ownApprove = browserOpen(`${AUTH_ORIGIN}/approve?from=partner&v=${encodeURIComponent(v)}`, 'hana-approve-e2e', 'popup,width=420,height=680');
+    return ownApprove !== null;
+  },
+  /** Posts `message` to that window from this page (a partner page forging vault messages to the popup it holds). */
+  postToApproveWindow(message: unknown): void {
+    ownApprove?.postMessage(message, AUTH_ORIGIN);
   },
   /** The vault iframe's window name (the login popup looks the vault up by it). */
   vaultFrameName: () => document.querySelector<HTMLIFrameElement>('iframe[name^="hana-vault-"]')?.name ?? null,

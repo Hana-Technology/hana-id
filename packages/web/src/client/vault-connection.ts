@@ -61,6 +61,11 @@ export interface HandshakeMarks {
   readyAt: number;
 }
 
+/** Envelope fields beside the params: `popupOpened` when the SDK opened the approval popup for the request (D95). */
+export interface RequestExtra {
+  popupOpened?: boolean;
+}
+
 interface Pending {
   method: PortMethod;
   resolve: (result: never) => void;
@@ -211,20 +216,20 @@ export class VaultConnection {
    * Sends a port request once `ready` has resolved. Rejects with the vault's error, `vault_unavailable`, 4900 when the
    * port dies, or -32602 when the vault's own validator would drop the request.
    */
-  async request<M extends PortMethod>(method: M, params?: PortParamsMap[M]): Promise<PortResultMap[M]> {
+  async request<M extends PortMethod>(method: M, params?: PortParamsMap[M], extra?: RequestExtra): Promise<PortResultMap[M]> {
     if (this.#disconnected) throw hanaError(ErrorCode.disconnected);
     await this.ready;
     if (this.#disconnected || !this.#port) throw hanaError(ErrorCode.disconnected);
-    return this.send(method, params);
+    return this.send(method, params, extra);
   }
 
   /** As request(), without waiting for `ready` (the caller already has). */
-  send<M extends PortMethod>(method: M, params?: PortParamsMap[M]): Promise<PortResultMap[M]> {
+  send<M extends PortMethod>(method: M, params?: PortParamsMap[M], extra?: RequestExtra): Promise<PortResultMap[M]> {
     const port = this.#port;
     if (this.#disconnected || !port || !this.#readyOk) return Promise.reject(hanaError(ErrorCode.disconnected));
     this.#seq += 1;
     const id = String(this.#seq);
-    const message = params === undefined ? { v: 1, id, method } : { v: 1, id, method, params };
+    const message = { ...(params === undefined ? { v: 1, id, method } : { v: 1, id, method, params }), ...(extra?.popupOpened ? { popupOpened: true } : {}) };
     if (!parsePortRequest(message)) return Promise.reject(new HanaError(RpcCode.invalidParams, `Invalid params for ${method}`));
     return new Promise<PortResultMap[M]>((resolve, reject) => {
       this.#pending.set(id, { method, resolve: resolve as (r: never) => void, reject });

@@ -25,6 +25,8 @@
 // being filled still gets hana.ethereum's refusal ("The chain changed…") rather than a transaction on the wrong chain.
 //
 // Sodax calls carry the user's intent in opaque bytes, so in batch B every one goes through the approval popup (Q42).
+// sendTransaction calls `hana.prepareApproval()` synchronously, before the queue and the RPC checks, so a swap started
+// from a click opens the approval popup in that click (D95); a send that fails before it is signed closes that window.
 import { ErrorCode, isEvmAddress } from '@hana-id/core';
 import type { HanaClient } from '@hana-id/web';
 import { HanaError, RpcCode } from '@hana-id/web';
@@ -43,7 +45,7 @@ export interface SodaxEvmConfig {
 }
 
 /** What the adapter needs from the client: `hana.ethereum` and the logged-in addresses. */
-export type SodaxEvmHana = Pick<HanaClient, 'ethereum' | 'addresses'>;
+export type SodaxEvmHana = Pick<HanaClient, 'ethereum' | 'addresses'> & Partial<Pick<HanaClient, 'prepareApproval'>>;
 
 const HASH = /^0x[0-9a-fA-F]{64}$/u;
 const HEX_DATA = /^0x(?:[0-9a-fA-F]{2})*$/u;
@@ -83,7 +85,10 @@ export function createSodaxEvmProvider(hana: SodaxEvmHana, config: SodaxEvmConfi
     } catch (e) {
       return Promise.reject(e);
     }
+    // In the caller's click, before any await: the approval popup opens now (D95).
+    const ticket = typeof hana.prepareApproval === 'function' ? hana.prepareApproval() : null;
     const run = (sendQueues.get(eth) ?? Promise.resolve()).then(() => sendChecked(tx));
+    run.catch(() => ticket?.cancel());
     const tail = run.then(noop, noop);
     sendQueues.set(eth, tail);
     void tail.then(() => {

@@ -4,7 +4,7 @@
 // key (DEMO_PK) that every test and browser shares; each test still runs in its own browser context.
 import { type Page } from '@playwright/test';
 import { DEMO_ORIGIN, DEMO_PK, VAULT_ORIGIN } from '../src/stack.ts';
-import { LOGIN_ENDPOINT, approve, chooseAccount, clickLauncher, expect, newApp, test } from './fixtures.ts';
+import { LOGIN_ENDPOINT, VAULT_FRAME, approve, chooseAccount, clickLauncher, expect, newApp, test } from './fixtures.ts';
 
 /** Records every CSP violation on the demo's own document (the page CSP must allow everything the page does). */
 async function recordCspViolations(page: Page): Promise<void> {
@@ -54,11 +54,14 @@ test('the demo logs in, shows addresses and timings, signs, and copies safe diag
   await expect(cells).toHaveCount(8);
   await expect(cells.nth(5)).toHaveText(/^\d+$/u); // the chain stage, from the vault (a pk_test_ app)
 
-  // personal_sign through the launcher and the approval popup; then a Stellar message and the test transaction in
-  // the same popup, which waits for follow-ups.
+  // personal_sign: the click opens the approval popup itself, with no launcher (D95); then a Stellar message and the
+  // test transaction in the same popup, which waits for follow-ups.
+  const approvalP = page.waitForEvent('popup');
   await page.getByRole('button', { name: 'Sign a message (EVM personal_sign)' }).click();
-  const approval = await clickLauncher(page, 'Review in Hana');
+  const approval = await approvalP;
+  expect(new URL(approval.url()).searchParams.get('from')).toBe('partner');
   await approve(approval);
+  await expect(page.frameLocator(VAULT_FRAME).getByRole('button', { name: 'Review in Hana' })).toHaveCount(0);
   await expect(page.locator('#results li').first()).toContainText('EVM personal_sign: signed');
   await expect(page.locator('#results li').first().locator('code')).toHaveText(/^0x[0-9a-f]{130}$/u);
 

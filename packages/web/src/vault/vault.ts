@@ -382,6 +382,7 @@ export class Vault {
     this.near = new NearView({ rpc: this.env.rpc, rpcFallback: this.env.rpcFallback }, this.env.signer, this.env.relayer, fetchFn);
     this.approvals = new Approvals({
       authOrigin: this.env.authOrigin,
+      parentWindow: this.host.parent,
       appName: this.config.appName,
       parentOrigin: e.origin,
       open: (url, name, features) => this.host.open(url, name, features),
@@ -390,6 +391,7 @@ export class Vault {
       now: this.deviceNow,
       testApp: this.testApp,
       onStop: () => void this.revokeAutoApprove(),
+      onWindow: (open) => this.emit('approvalWindow', { open }),
     });
     port.onmessage = (m) => void this.onPortMessage(m.data);
     this.started = this.start();
@@ -587,11 +589,16 @@ export class Vault {
       return;
     }
     if (!this.claimId(request.id)) return;
-    await this.started;
+    // The SDK opened an approval popup for this request in the user's click (D95): hold the launcher for its hello, and
+    // close it if the request ends without an approval screen (auto-approved under the policy, or refused).
+    const claim = request.popupOpened === true ? (this.approvals?.claim() ?? null) : null;
     try {
+      await this.started;
       this.reply(request.id, await this.dispatch(request));
     } catch (e) {
       this.replyError(request.id, e);
+    } finally {
+      claim?.release();
     }
   }
 

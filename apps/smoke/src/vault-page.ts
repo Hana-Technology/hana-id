@@ -61,6 +61,7 @@ export type SmokeClient = Pick<
   | 'requestAutoApprove'
   | 'autoApproveStatus'
   | 'revokeAutoApprove'
+  | 'prepareApproval'
   | 'destroy'
   | 'on'
   | 'stellar'
@@ -600,7 +601,11 @@ export function startVaultPage(deps: VaultPageDeps): void {
   function sign(label: string, send: (c: SmokeClient, a: HanaAddresses) => Promise<unknown>): void {
     const c = client;
     const a = c?.addresses;
-    if (!c || !a) return;
+    if (!c || !a || requestPending) return;
+    // The consent check below is awaited before the request is sent: open the approval popup now, in the click, so
+    // the request can use it (D95; Safari would block window.open after the await). The vault closes it at once if the
+    // request is auto-approved.
+    c.prepareApproval();
     exclusive(async () => {
       signs += 1;
       const outcome = h('td', {}, 'waiting (approve or reject in the Hana popup)…');

@@ -65,6 +65,7 @@ class FakeClient {
   readonly requestAutoApprove = vi.fn(async () => ({ granted: true, policyId: policyId(DEMO_POLICY), expiresAtMs: Date.UTC(2026, 9, 28, 13) }));
   readonly autoApproveStatus = vi.fn(async () => null);
   readonly revokeAutoApprove = vi.fn(async () => null);
+  readonly prepareApproval = vi.fn(() => ({ cancel: vi.fn() }));
   readonly signRaw = vi.fn(async (): Promise<{ signature: Uint8Array }> => Promise.reject(Object.assign(new Error('Raw signing is off for this app'), { code: 4100 })));
   readonly stellar = { signTransaction: vi.fn(async (_xdr: string, _o: unknown) => ({ signedTxXdr: 'AAAA', signerAddress: A.stellar })) };
   readonly ethereum = { request: vi.fn(async (_a: { method: string; params?: unknown }): Promise<unknown> => '0x00') };
@@ -444,6 +445,9 @@ describe('vault smoke page: auto-approve demo', () => {
     });
     clock = 0;
     button('sign-stellar-self').click();
+    // The approval popup opens in the click itself, before the awaited consent check (D95).
+    expect(c.prepareApproval).toHaveBeenCalledTimes(1);
+    expect(c.stellar.signTransaction).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(rows('signs')[0]).toMatch(/signed, auto-approved \(no popup\)/u));
     const [xdr, opts] = c.stellar.signTransaction.mock.calls[0]!;
     expect(opts).toEqual({ networkPassphrase: DEMO_STELLAR_PASSPHRASE });

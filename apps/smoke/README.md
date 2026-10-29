@@ -82,8 +82,9 @@ pnpm --filter @hana-id/smoke typecheck
    (only within 5 min of a fresh login), *Export Stellar key* / *Export EVM key* (the vault shows its launcher; the
    key is shown only in the Hana export window, after a fresh Google sign-in).
 3. **Signing and auto-approve**: the request buttons sign (never broadcast) one request each and log the outcome:
-   *signed, auto-approved (no popup)*, *signed under the policy, after the consent screen* (a covered request with no
-   consent in force, or one for which the vault showed its launcher), *signed after approval*, *rejected (4001)* or
+   *signed, auto-approved (no popup)* (the approval popup the click opened closes at once), *signed under the policy,
+   after the consent screen* (a covered request with no consent in force, or one for which the vault showed its
+   launcher), *signed after approval*, *rejected (4001)* or
    *refused* with the code. One request runs at a time: the sign, auto-approve and export buttons stay disabled until
    it settles, so each label is that request's own. See [Auto-approve demo](#auto-approve-demo).
 

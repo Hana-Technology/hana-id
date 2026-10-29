@@ -135,14 +135,17 @@ export async function evmBroadcasts(): Promise<`0x${string}`[]> {
 
 export interface PartnerOptions {
   origin?: string;
-  /** window.open returns null on the partner page (a popup blocker), so the SDK uses the vault's launcher. */
-  blockPopups?: boolean;
+  /**
+   * window.open returns null on the partner page (a popup blocker), so the SDK uses the vault's launcher; 'approve':
+   * only for the approval popup (Safari blocking a window.open after an await), so login still opens its popup.
+   */
+  blockPopups?: boolean | 'approve';
   coop?: string;
 }
 
 export function partnerUrl(app: App, o: PartnerOptions = {}): string {
   const q = new URLSearchParams({ pk: app.pk });
-  if (o.blockPopups) q.set('blockPopups', '1');
+  if (o.blockPopups) q.set('blockPopups', o.blockPopups === 'approve' ? 'approve' : '1');
   if (o.coop) q.set('coop', o.coop);
   return `${o.origin ?? PARTNER_ORIGIN}/?${q.toString()}`;
 }

@@ -42,8 +42,10 @@ const evmProvider = createSodaxEvmProvider(hana, { chainId: 84532, rpcUrl: 'http
   than the user's address, fills, gets the user's approval and broadcasts through the `evm.chains` RPC. `rpcUrl` is for
   receipts and must be the same chain (checked once with `eth_chainId` before the first signature; `4902`
   `receipt_rpc_wrong_chain` otherwise). `waitForTransactionReceipt` polls every 2 s for 180 s.
-- A Sodax swap can need several signatures (`restoreFootprint`, a re-sign, a trustline); Hana's approval popup stays
-  open 15 s after each answer, so they need one click on "Review in Hana" and an Approve each. Sodax swaps can't be
+- Call `sendTransaction` / `signTransaction` from the user's click: the approval popup opens in that click (the EVM
+  provider calls `hana.prepareApproval()` before its own awaits). A swap can need several signatures
+  (`restoreFootprint`, a re-sign, a trustline); Hana's approval popup stays open 15 s after each answer, so they show
+  in the same window and need an Approve each. Sodax swaps can't be
   auto-approved yet.
 
 ## Test networks only

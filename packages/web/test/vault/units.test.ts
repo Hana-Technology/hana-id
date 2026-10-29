@@ -2,11 +2,11 @@
 // and consent encryption, the clock, the launcher queue and the in-page lock.
 import { describe, expect, it } from 'vitest';
 import { APPROVAL_MAX_BYTES, type ApprovalSubject, parseWindowMessage, recordAad, utf8 } from '@hana-id/core';
-import { Approvals, MAX_PENDING_APPROVALS } from '../../src/vault/approvals.ts';
+import { Approvals, LATE_CLOSE_MS, MAX_PENDING_APPROVALS, POPUP_REUSE_MS, POPUP_WAIT_MS } from '../../src/vault/approvals.ts';
 import { parentAllowed, parseVaultConfig, policyInForce } from '../../src/vault/config.ts';
 import { Launcher, type LauncherView } from '../../src/vault/launcher.ts';
 import { type RecordBinding, type RecordV1, openConsent, openPrk, parseRecord, recordKey, sealConsent, sealPrk } from '../../src/vault/record.ts';
-import { Clock, localLocks } from '../../src/vault/runtime.ts';
+import { Clock, type Timers, localLocks } from '../../src/vault/runtime.ts';
 import { ENV, FakeLauncherView, FakeWindow, HOUR, PARTNER, TestTimers, approveDigest, makeConfig, sleepReal } from './harness.ts';
 
 describe('parseVaultConfig', () => {
@@ -218,12 +218,15 @@ describe('Approvals', () => {
   const ADDRESS = '0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD';
   const subject = (bytes: Uint8Array = utf8('hi')): ApprovalSubject => ({ kind: 'personal_sign', chain: 'evm', address: ADDRESS, context: {}, bytes });
 
-  function make() {
-    const timers = new TestTimers();
+  function make(timers: Timers & { now: number } = new TestTimers()) {
     const view = new FakeLauncherView();
     const opened: FakeWindow[] = [];
+    const parent = new FakeWindow('partner');
+    const windowEvents: boolean[] = [];
     const approvals = new Approvals({
       authOrigin: ENV.authOrigin,
+      parentWindow: parent,
+      onWindow: (open) => windowEvents.push(open),
       appName: 'Partner',
       parentOrigin: PARTNER,
       open: (url, name, features) => {
@@ -244,7 +247,13 @@ describe('Approvals', () => {
       send(popup, { t: 'hana:approve-hello' });
       return popup;
     };
-    return { approvals, timers, connect, send };
+    /** A popup the partner page opened in the user's click (its opener is the partner window), saying hello. */
+    const partnerPopup = (opener: unknown = parent, origin = ENV.authOrigin): FakeWindow => {
+      const popup = new FakeWindow(`${ENV.authOrigin}/approve?from=partner&v=hana-vault-x`, 'hana-approve-p', '', opener);
+      approvals.handleMessage({ data: { v: 1, t: 'hana:approve-hello' }, origin, source: popup, ports: [] });
+      return popup;
+    };
+    return { approvals, timers, connect, send, view, opened, parent, partnerPopup, windowEvents };
   }
 
   it(`refuses a request past ${MAX_PENDING_APPROVALS} waiting or on show, at once`, async () => {
@@ -283,4 +292,224 @@ describe('Approvals', () => {
     }
     expect(last).toMatchObject({ position: 1000, queued: 1000 });
   });
+
+  describe('a popup the partner page opened in the click (D95)', () => {
+    const requests = (w: FakeWindow) => w.posted.filter((p) => p.message.t === 'hana:approve-request').map((p) => p.message);
+    const closes = (w: FakeWindow) => w.posted.filter((p) => p.message.t === 'hana:approve-close');
+
+    it('is adopted for the request: it gets the request, the launcher never shows, the vault opens nothing', async () => {
+      const { approvals, view, opened, partnerPopup, send, windowEvents } = make(new ManualTimers());
+      const claim = approvals.claim();
+      const outcome = approvals.requestApproval(subject());
+      expect(view.label).toBeNull();
+      const popup = partnerPopup();
+      const [m] = requests(popup);
+      expect(m).toMatchObject({ kind: 'personal_sign', position: 1, queued: 1 });
+      expect(popup.posted[0]!.targetOrigin).toBe(ENV.authOrigin);
+      send(popup, { t: 'hana:approve-result', id: m!.id, approved: true, digest: approveDigest(m!) });
+      expect(await outcome).toBe('approved');
+      claim.release();
+      // Shown and answered: the window stays for a follow-up (it is not told to close).
+      expect(closes(popup)).toHaveLength(0);
+      expect(view.history).toEqual([]);
+      expect(opened).toHaveLength(0);
+      expect(windowEvents).toEqual([true]);
+    });
+
+    it('is adopted when its hello comes first, and the request then goes to it', async () => {
+      const { approvals, view, partnerPopup, send } = make(new ManualTimers());
+      const popup = partnerPopup();
+      expect(requests(popup)).toHaveLength(0);
+      const claim = approvals.claim();
+      const outcome = approvals.requestApproval(subject());
+      const [m] = requests(popup);
+      expect(m).toBeDefined();
+      send(popup, { t: 'hana:approve-result', id: m!.id, approved: false, digest: approveDigest(m!) });
+      expect(await outcome).toBe('rejected');
+      claim.release();
+      expect(view.history).toEqual([]);
+    });
+
+    it('a hello from a window not opened by the partner page, or from another origin, is ignored', () => {
+      const { approvals, view, partnerPopup, timers } = make(new ManualTimers());
+      const claim = approvals.claim();
+      void approvals.requestApproval(subject());
+      const stranger = partnerPopup(new FakeWindow('https://evil.test'));
+      const noOpener = partnerPopup(null);
+      const wrongOrigin = partnerPopup(undefined, 'https://evil.test');
+      const vaultOrigin = partnerPopup(undefined, ENV.vaultOrigin);
+      for (const w of [stranger, noOpener, wrongOrigin, vaultOrigin]) expect(w.posted).toEqual([]);
+      // The launcher is the fallback once the wait is over.
+      (timers as ManualTimers).advance(POPUP_WAIT_MS);
+      expect(view.label).toBe('Review in Hana');
+      claim.release();
+      approvals.cancelAll();
+    });
+
+    it(`holds the launcher ${POPUP_WAIT_MS} ms for the popup's hello, then shows it; a late hello still adopts the popup`, () => {
+      const { approvals, view, partnerPopup, timers } = make(new ManualTimers());
+      const claim = approvals.claim();
+      void approvals.requestApproval(subject());
+      (timers as ManualTimers).advance(POPUP_WAIT_MS - 1);
+      expect(view.label).toBeNull();
+      (timers as ManualTimers).advance(1);
+      expect(view.label).toBe('Review in Hana');
+      const popup = partnerPopup();
+      expect(requests(popup)).toHaveLength(1);
+      expect(view.label).toBeNull();
+      claim.release();
+      approvals.cancelAll();
+    });
+
+    it('a request that ends without an approval screen (auto-approved, refused) closes the popup at once; nothing can be approved there', async () => {
+      const { approvals, partnerPopup, send, view, windowEvents } = make(new ManualTimers());
+      const popup = partnerPopup();
+      const claim = approvals.claim();
+      // The vault signed it under the accepted policy (or refused it): no requestApproval.
+      claim.release();
+      expect(closes(popup)).toHaveLength(1);
+      expect(closes(popup)[0]!.targetOrigin).toBe(ENV.authOrigin);
+      expect(popup.closed).toBe(true);
+      expect(requests(popup)).toHaveLength(0);
+      expect(windowEvents).toEqual([true, false]);
+      // An answer from that window, even a well-formed one for a request queued since, is never taken.
+      const next = approvals.requestApproval(subject());
+      expect(view.label).toBe('Review in Hana');
+      const id = 'ab'.repeat(16);
+      send(popup, { t: 'hana:approve-result', id, approved: true, digest: approveDigest({ id, kind: 'personal_sign', chain: 'evm', address: ADDRESS, context: {}, bytes: utf8('hi'), parentOrigin: PARTNER }) });
+      send(popup, { t: 'hana:approve-hello' });
+      expect(requests(popup)).toHaveLength(0);
+      approvals.cancelAll();
+      expect(await next).toBe('cancelled');
+    });
+
+    it(`closes a popup whose hello comes after its request ended, within ${LATE_CLOSE_MS} ms; later it is adopted again`, () => {
+      const { approvals, partnerPopup, timers } = make(new ManualTimers());
+      approvals.claim().release();
+      const late = partnerPopup();
+      expect(closes(late)).toHaveLength(1);
+      // Once is enough: the next popup (another click) is adopted.
+      const next = partnerPopup();
+      expect(closes(next)).toHaveLength(0);
+      approvals.cancelAll();
+      approvals.claim().release();
+      (timers as ManualTimers).advance(LATE_CLOSE_MS);
+      const afterWindow = partnerPopup();
+      expect(closes(afterWindow)).toHaveLength(0);
+    });
+
+    it('keeps a popup another request still uses: release closes only a window that showed nothing', async () => {
+      const { approvals, partnerPopup, send } = make(new ManualTimers());
+      const popup = partnerPopup();
+      const a = approvals.claim();
+      const b = approvals.claim();
+      const outcome = approvals.requestApproval(subject());
+      a.release(); // A's request was auto-approved; B's is on show.
+      expect(closes(popup)).toHaveLength(0);
+      const [m] = requests(popup);
+      send(popup, { t: 'hana:approve-result', id: m!.id, approved: true, digest: approveDigest(m!) });
+      expect(await outcome).toBe('approved');
+      b.release();
+      expect(closes(popup)).toHaveLength(0);
+    });
+
+    it('requests queued before it keep their order; the adopted popup shows them first, with their positions', async () => {
+      const { approvals, partnerPopup, send } = make(new ManualTimers());
+      const first = approvals.requestApproval(subject(utf8('first')));
+      const second = approvals.requestApproval(subject(utf8('second')));
+      const claim = approvals.claim();
+      const third = approvals.requestApproval(subject(utf8('third')));
+      const popup = partnerPopup();
+      const answer = async (p: Promise<unknown>, text: string, n: number) => {
+        const m = requests(popup)[n]!;
+        expect(new TextDecoder().decode(m.bytes as Uint8Array)).toBe(text);
+        expect(m).toMatchObject({ position: n + 1, queued: 3 });
+        send(popup, { t: 'hana:approve-result', id: m.id, approved: true, digest: approveDigest(m) });
+        expect(await p).toBe('approved');
+      };
+      await answer(first, 'first', 0);
+      await answer(second, 'second', 1);
+      await answer(third, 'third', 2);
+      claim.release();
+    });
+
+    it('a second window while one is in use is told to close; the one in use keeps the queue', async () => {
+      const { approvals, connect, partnerPopup, send } = make(new ManualTimers());
+      const outcome = approvals.requestApproval(subject());
+      const inUse = connect();
+      const [m] = requests(inUse);
+      const claim = approvals.claim();
+      const second = approvals.requestApproval(subject(utf8('two')));
+      const newcomer = partnerPopup();
+      expect(closes(newcomer)).toHaveLength(1);
+      expect(requests(newcomer)).toHaveLength(0);
+      expect(inUse.focused).toBeGreaterThan(0);
+      send(inUse, { t: 'hana:approve-result', id: m!.id, approved: true, digest: approveDigest(m!) });
+      expect(await outcome).toBe('approved');
+      const [, m2] = requests(inUse);
+      expect(new TextDecoder().decode(m2!.bytes as Uint8Array)).toBe('two');
+      send(inUse, { t: 'hana:approve-result', id: m2!.id, approved: true, digest: approveDigest(m2!) });
+      expect(await second).toBe('approved');
+      claim.release();
+    });
+
+    it('a stale idle window is replaced by the new one', () => {
+      const { approvals, partnerPopup, timers } = make(new ManualTimers());
+      const old = partnerPopup();
+      (timers as ManualTimers).advance(POPUP_REUSE_MS + 1);
+      const fresh = partnerPopup();
+      expect(closes(old)).toHaveLength(1);
+      expect(closes(fresh)).toHaveLength(0);
+      void approvals.requestApproval(subject());
+      expect(requests(fresh)).toHaveLength(1);
+      approvals.cancelAll();
+    });
+
+    it('logout (cancelAll) tells the adopted popup to close', () => {
+      const { approvals, partnerPopup } = make(new ManualTimers());
+      const popup = partnerPopup();
+      void approvals.requestApproval(subject());
+      approvals.cancelAll();
+      expect(closes(popup)).toHaveLength(1);
+    });
+
+    it('reports the window open and closed (approvalWindow) as it is adopted and as it closes', () => {
+      const { approvals, partnerPopup, timers, windowEvents } = make(new ManualTimers());
+      const popup = partnerPopup();
+      expect(windowEvents).toEqual([true]);
+      popup.closed = true;
+      (timers as ManualTimers).advance(500);
+      expect(windowEvents).toEqual([true, false]);
+      void approvals;
+    });
+  });
 });
+
+/** Timers that run only when the test advances them (TestTimers runs short ones on the next real tick). */
+class ManualTimers implements Timers {
+  now = 1_800_000_000_000;
+  private seq = 0;
+  private readonly due = new Map<number, { at: number; fn: () => void }>();
+
+  setTimeout(fn: () => void, ms: number): unknown {
+    const id = ++this.seq;
+    this.due.set(id, { at: this.now + ms, fn });
+    return id;
+  }
+
+  clearTimeout(handle: unknown): void {
+    this.due.delete(handle as number);
+  }
+
+  advance(ms: number): void {
+    const end = this.now + ms;
+    for (;;) {
+      const next = [...this.due.entries()].filter(([, t]) => t.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+      if (!next) break;
+      this.due.delete(next[0]);
+      this.now = Math.max(this.now, next[1].at);
+      next[1].fn();
+    }
+    this.now = end;
+  }
+}

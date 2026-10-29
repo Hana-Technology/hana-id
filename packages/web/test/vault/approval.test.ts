@@ -5,7 +5,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { SIGN_MESSAGE_MAX_BYTES, TEST_APP_RAW_RULE, base64Decode, base64Encode, parsePortRequest, recoverEvmAddress, toHex, utf8 } from '@hana-id/core';
 import { verifyStellarSignature } from '@hana-id/core/signers/stellar';
 import { POLICY_FRESH_MS } from '../../src/vault/vault.ts';
-import { Browser, ENV, FakeWindow, type Google, PARTNER, type Tab, answer, apiError, approveDigest, google, login, makeConfig, openApproval, readyTab, sleepReal, waitLauncher } from './harness.ts';
+import { Browser, ENV, FakeWindow, type Google, PARTNER, type Tab, answer, apiError, approveDigest, google, login, makeConfig, openApproval, partnerApproval, readyTab, sleepReal, waitLauncher } from './harness.ts';
 import {
   CHAIN,
   EVM_VAULT,
@@ -224,6 +224,69 @@ describe('approval flow', () => {
     await s.t.request('hana_logout');
     expect((await reply).error?.code).toBe(4900);
     expect(popup.closed).toBe(true);
+  });
+});
+
+describe('approval popup opened by the partner page in the click (D95)', () => {
+  const closes = (w: FakeWindow) => w.posted.filter((p) => p.message.t === 'hana:approve-close');
+
+  it('a request flagged popupOpened is shown in the popup whose opener is the partner page: no launcher, signed after Approve', async () => {
+    const s = await session();
+    const message = 'one click';
+    const reply = s.t.request('stellar_signMessage', { message }, { popupOpened: true });
+    const popup = partnerApproval(s.t);
+    const m = await popup.next('hana:approve-request');
+    expect(m).toMatchObject({ kind: 'stellar_message', address: s.stellar, parentOrigin: PARTNER, position: 1, queued: 1 });
+    expect(popup.posted[0]!.targetOrigin).toBe(ENV.authOrigin);
+    answer(s.t, popup, m, true);
+    const r = (await reply).result as { signedMessage: string };
+    expect(stellarMessageSignedBy(message, r.signedMessage, s.stellar)).toBe(true);
+    expect(s.t.launcher.history.filter((l) => l === 'Review in Hana')).toHaveLength(0);
+    expect(s.t.opened.filter((w) => w.url.includes('/approve'))).toHaveLength(0);
+    expect(await s.t.waitEvent('approvalWindow')).toEqual({ open: true });
+    // Answered, not closed: the window waits for a follow-up, which it gets without another popup or launcher.
+    expect(closes(popup)).toHaveLength(0);
+    const second = s.t.request('personal_sign', ['0x6869', s.evm]);
+    const m2 = await popup.next('hana:approve-request', 1);
+    expect(m2).toMatchObject({ kind: 'personal_sign', position: 2, queued: 2 });
+    answer(s.t, popup, m2, true);
+    expect(personalSigner('0x6869', (await second).result as string)).toBe(s.evm);
+  });
+
+  it('a popup whose opener is not the partner page gets nothing, and an answer from it signs nothing', async () => {
+    const s = await session();
+    const reply = s.t.request('personal_sign', ['0x6869', s.evm], { popupOpened: true });
+    const forged = partnerApproval(s.t, new FakeWindow('https://evil.test'));
+    const orphan = partnerApproval(s.t, null);
+    // The launcher is the fallback once the wait for the real popup is over.
+    await waitLabel(s.t, 'Review in Hana');
+    expect(forged.posted).toHaveLength(0);
+    expect(orphan.posted).toHaveLength(0);
+    const id = 'ab'.repeat(16);
+    s.t.dispatch({ data: { v: 1, t: 'hana:approve-result', id, approved: true, digest: new Uint8Array(32) }, origin: ENV.authOrigin, source: forged });
+    const popup = openApproval(s.t);
+    const m = await popup.next('hana:approve-request');
+    answer(s.t, popup, m, false);
+    expect((await reply).error?.code).toBe(4001);
+  });
+
+  it('a flagged request the vault refuses closes the popup at once, whether its hello came first or after', async () => {
+    const s = await session();
+    // Refused before any approval screen: another account's address (4100).
+    const early = partnerApproval(s.t);
+    expect((await s.t.request('stellar_signMessage', { message: 'x', address: 'GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ' }, { popupOpened: true })).error?.code).toBe(4100);
+    expect(closes(early)).toHaveLength(1);
+    expect(early.posted.filter((p) => p.message.t === 'hana:approve-request')).toHaveLength(0);
+    expect((await s.t.request('hana_signRaw', { chain: 'evm', digest: new Uint8Array(32).fill(1) }, { popupOpened: true })).error?.code).toBe(4100);
+    const late = partnerApproval(s.t);
+    expect(closes(late)).toHaveLength(1);
+    expect(late.posted).toHaveLength(1);
+  });
+
+  it('popupOpened on a method that never shows the popup is dropped by the vault (no reply)', async () => {
+    const s = await session();
+    const reply = Promise.race([s.t.request('hana_status', undefined, { popupOpened: true }), sleepReal(80).then(() => 'none')]);
+    expect(await reply).toBe('none');
   });
 });
 

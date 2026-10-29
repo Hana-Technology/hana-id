@@ -1,9 +1,8 @@
 // @vitest-environment happy-dom
 // /login (docs/batch-b-spec.md "Login" steps 3–5, "Tests → Web unit → Login popup"): the sender checks in each opener
-// mode, the signer/scope/client/nonce cross-checks, the COOP error, the sessionStorage entry and the Google request.
-import { ApiError, type AppConfig, relayIdFor, sessionNonce } from '@hana-id/core';
+// mode, the signer and nonce checks, no API call (D77), the COOP error, the sessionStorage entry and the Google request.
+import { relayIdFor, sessionNonce } from '@hana-id/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AuthApi } from '../../src/auth/api.ts';
 import { HELLO_TIMEOUT_MS, openerMode, startLoginPage } from '../../src/auth/login-page.ts';
 import { LOGIN_ENTRY_PREFIX } from '../../src/auth/login-storage.ts';
 import { CLIENT_ID, ENV, EVIL, FakeWindow, PARTNER, PK, type RemoteWindow, asWindow, crossOriginWindow, flush, pageText, remoteWindow, resetDom } from './helpers.ts';
@@ -37,56 +36,41 @@ function authParams(over: Record<string, unknown> = {}) {
   };
 }
 
-const appConfig = (over: Partial<AppConfig> = {}): AppConfig => ({
-  scopeId: SCOPE,
-  signer: ENV.signer,
-  google: { clientId: CLIENT_ID, mode: 'shared' },
-  name: 'Partner App',
-  serverTimeMs: 1_800_000_000_000,
-  requestId: 'r',
-  ...over,
-});
-
-function fakeApi(config: AppConfig | Error = appConfig()): AuthApi & { getApp: ReturnType<typeof vi.fn> } {
-  return {
-    getApp: vi.fn(async () => {
-      if (config instanceof Error) throw config;
-      return config;
-    }),
-    writeRelay: vi.fn(),
-    readRelay: vi.fn(),
-    login: vi.fn(),
-  } as never;
-}
-
 interface Setup {
   win: FakeWindow;
   opener: RemoteWindow;
   vault: RemoteWindow;
-  api: ReturnType<typeof fakeApi>;
+  /** Every fetch the page makes (none: D77). */
+  fetch: ReturnType<typeof vi.fn>;
 }
 
-function setup(mode: 'partner' | 'vault' | 'export', api = fakeApi()): Setup & { page: ReturnType<typeof startLoginPage> } {
+function setup(mode: 'partner' | 'vault' | 'export'): Setup & { page: ReturnType<typeof startLoginPage> } {
   const search = mode === 'partner' ? `?v=${VAULT_FRAME}` : mode === 'vault' ? '?from=vault' : '?mode=export';
   const win = new FakeWindow('/login', search);
   const opener = remoteWindow({ location: { pathname: mode === 'export' ? '/export' : '/' } });
   const vault = remoteWindow({ parent: opener });
   opener.frames[VAULT_FRAME] = vault;
   win.opener = asWindow(opener);
-  const page = startLoginPage({ win, env: ENV, api, now: () => 1_800_000_000_000 });
-  return { win, opener, vault, api, page };
+  const page = startLoginPage({ win, env: ENV, now: () => 1_800_000_000_000 });
+  return { win, opener, vault, fetch: fetchSpy, page };
 }
 
 /** The window that sends auth-params in each mode, and its origin. */
 const preparer = (s: Setup, mode: 'partner' | 'vault' | 'export') =>
   mode === 'partner' ? { source: s.vault, origin: ENV.vaultOrigin } : mode === 'vault' ? { source: s.opener, origin: ENV.vaultOrigin } : { source: s.opener, origin: ENV.authOrigin };
 
+let fetchSpy: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   resetDom();
   vi.useFakeTimers();
+  fetchSpy = vi.fn(async () => {
+    throw new Error('The login popup must not fetch');
+  });
+  vi.stubGlobal('fetch', fetchSpy);
 });
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe('opener modes', () => {
@@ -109,14 +93,16 @@ describe('/login', () => {
     if (mode === 'partner') expect(s.opener.postMessage).not.toHaveBeenCalled();
   });
 
-  it('partner mode: checks the vault against GET /v1/app, stores the relayKey under the state and goes to Google', async () => {
+  it('partner mode: checks the vault’s message without an API call, stores the relayKey under the state and goes to Google', async () => {
     const s = setup('partner');
     const params = authParams();
     const relayKey = Uint8Array.from(params.relayKey);
     s.win.message(params, ENV.vaultOrigin, s.vault);
     const state = await s.page.done;
     expect(state.stage).toBe('redirecting');
-    expect(s.api.getApp).toHaveBeenCalledWith(PK, PARTNER);
+    // D77: the vault's authenticated message is the app's config; the page fetches nothing (and its CSP has no
+    // connect-src).
+    expect(s.fetch).not.toHaveBeenCalled();
 
     const url = new URL(s.win.location.assigned[0] as string);
     expect(url.origin + url.pathname).toBe('https://accounts.google.com/o/oauth2/v2/auth');
@@ -133,9 +119,9 @@ describe('/login', () => {
     const entry = JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + params.relayId) as string) as Record<string, unknown>;
     expect(entry).toMatchObject({ v: 1, createdAt: 1_800_000_000_000 });
     expect(entry.relayKey).toBe(Buffer.from(relayKey).toString('base64url'));
-    // The in-memory copy from the message is zeroed; the name shown is the API's.
+    // The in-memory copy from the message is zeroed; the name and origin shown are the vault's.
     expect(params.relayKey.every((b) => b === 0)).toBe(true);
-    expect(pageText()).toContain('Signing in to Partner App at https://partner.example');
+    expect(pageText()).toContain('Signing in to Vault-side name at https://partner.example');
     // The hello loop stopped.
     const sent = s.vault.postMessage.mock.calls.length;
     vi.advanceTimersByTime(1000);
@@ -155,7 +141,7 @@ describe('/login', () => {
       const { source, origin } = preparer(s, mode);
       for (const o of [EVIL, mode === 'export' ? ENV.vaultOrigin : ENV.authOrigin, PARTNER]) s.win.message(authParams(), o, source);
       await flush();
-      expect(s.api.getApp).not.toHaveBeenCalled();
+      expect(s.win.sessionStorage.length).toBe(0);
       expect(s.page.state.stage).toBe('connecting');
       // The real preparer is still accepted afterwards.
       s.win.message(authParams(), origin, source);
@@ -170,7 +156,7 @@ describe('/login', () => {
       else others.push(s.vault);
       for (const src of others) s.win.message(authParams(), origin, src);
       await flush();
-      expect(s.api.getApp).not.toHaveBeenCalled();
+      expect(s.win.sessionStorage.length).toBe(0);
       expect(s.page.state.stage).toBe('connecting');
     });
   });
@@ -181,7 +167,8 @@ describe('/login', () => {
     s.opener.frames[VAULT_FRAME] = impostor;
     s.win.message(authParams(), ENV.vaultOrigin, impostor);
     await flush();
-    expect(s.api.getApp).not.toHaveBeenCalled();
+    expect(s.page.state.stage).toBe('connecting');
+    expect(s.win.sessionStorage.length).toBe(0);
   });
 
   it('export mode refuses a non-/export opener, including a cross-origin one', async () => {
@@ -189,16 +176,16 @@ describe('/login', () => {
     s.opener.location.pathname = '/approve';
     s.win.message(authParams(), ENV.authOrigin, s.opener);
     await flush();
-    expect(s.api.getApp).not.toHaveBeenCalled();
+    expect(s.page.state.stage).toBe('connecting');
 
     const win = new FakeWindow('/login', '?mode=export');
     const cross = crossOriginWindow();
     win.opener = asWindow(cross);
-    const api = fakeApi();
-    startLoginPage({ win, env: ENV, api });
+    const page = startLoginPage({ win, env: ENV });
     win.message(authParams(), ENV.authOrigin, cross);
     await flush();
-    expect(api.getApp).not.toHaveBeenCalled();
+    expect(page.state.stage).toBe('connecting');
+    expect(win.sessionStorage.length).toBe(0);
   });
 
   it('accepts only the first valid reply', async () => {
@@ -206,19 +193,17 @@ describe('/login', () => {
     s.win.message(authParams(), ENV.vaultOrigin, s.opener);
     s.win.message(authParams(), ENV.vaultOrigin, s.opener);
     await s.page.done;
-    expect(s.api.getApp).toHaveBeenCalledTimes(1);
+    expect(s.win.sessionStorage.length).toBe(1);
     expect(s.win.location.assigned).toHaveLength(1);
   });
 
   it.each([
-    ['the vault names another signer', authParams({ signer: 'evil-signer.testnet' }), appConfig()],
-    ['the API names another signer', authParams(), appConfig({ signer: 'evil-signer.testnet' })],
-    ['the API has another scope', authParams(), appConfig({ scopeId: 's2' })],
-    ['the API has another client', authParams(), appConfig({ google: { clientId: 'other.apps.googleusercontent.com', mode: 'shared' } })],
-    ['the nonce does not commit to the session', authParams({ nonce: 'x'.repeat(43) }), appConfig()],
-    ['the nonce commits to another expiry', authParams({ expiresAtMs: 1_900_000_000_001 }), appConfig()],
-  ])('refuses (config_mismatch) when %s, with no Google redirect and nothing stored', async (_, params, config) => {
-    const s = setup('vault', fakeApi(config));
+    ['the vault names another signer', authParams({ signer: 'evil-signer.testnet' })],
+    ['the nonce does not commit to the session', authParams({ nonce: 'x'.repeat(43) })],
+    ['the nonce commits to another expiry', authParams({ expiresAtMs: 1_900_000_000_001 })],
+    ['the nonce commits to another scope', authParams({ scopeId: 's2' })],
+  ])('refuses (config_mismatch) when %s, with no Google redirect and nothing stored', async (_, params) => {
+    const s = setup('vault');
     s.win.message(params, ENV.vaultOrigin, s.opener);
     expect(await s.page.done).toEqual({ stage: 'error', code: 'config_mismatch' });
     expect(s.win.location.assigned).toEqual([]);
@@ -226,16 +211,18 @@ describe('/login', () => {
     expect((params.relayKey as Uint8Array).every((b) => b === 0)).toBe(true);
   });
 
-  it('maps a GET /v1/app failure (409 no_google_client) to its code', async () => {
-    const s = setup('vault', fakeApi(new ApiError(409, 'no_google_client', 'none', null, null)));
-    s.win.message(authParams(), ENV.vaultOrigin, s.opener);
-    expect(await s.page.done).toEqual({ stage: 'error', code: 'no_google_client' });
-    expect(pageText()).toContain('no Google sign-in');
+  it.each(['partner', 'vault', 'export'] as const)('%s mode goes to Google with the preparer’s client, with no API call', async (mode) => {
+    const s = setup(mode);
+    const { source, origin } = preparer(s, mode);
+    s.win.message(authParams({ clientId: 'own-client.apps.googleusercontent.com', mode: 'own' }), origin, source);
+    expect((await s.page.done).stage).toBe('redirecting');
+    expect(new URL(s.win.location.assigned[0] as string).searchParams.get('client_id')).toBe('own-client.apps.googleusercontent.com');
+    expect(s.fetch).not.toHaveBeenCalled();
   });
 
   it('shows the COOP error when window.opener is null, and posts nothing', async () => {
     const win = new FakeWindow('/login', `?v=${VAULT_FRAME}`);
-    const page = startLoginPage({ win, env: ENV, api: fakeApi() });
+    const page = startLoginPage({ win, env: ENV });
     expect(await page.done).toEqual({ stage: 'error', code: 'coop_blocks_popup' });
     expect(pageText()).toContain('This site’s settings block the Hana sign-in window (COOP)');
     expect(win.listenerCount('message')).toBe(0);
@@ -244,11 +231,11 @@ describe('/login', () => {
   it('refuses a malformed link and a framed page', async () => {
     const bad = new FakeWindow('/login', '?v=nope');
     bad.opener = asWindow(remoteWindow());
-    expect((await startLoginPage({ win: bad, env: ENV, api: fakeApi() }).done).stage).toBe('error');
+    expect((await startLoginPage({ win: bad, env: ENV }).done).stage).toBe('error');
     const framed = new FakeWindow('/login', '?from=vault');
     framed.opener = asWindow(remoteWindow());
     framed.top = {};
-    expect((await startLoginPage({ win: framed, env: ENV, api: fakeApi() }).done).stage).toBe('error');
+    expect((await startLoginPage({ win: framed, env: ENV }).done).stage).toBe('error');
     expect(framed.listenerCount('message')).toBe(0);
   });
 
@@ -276,8 +263,8 @@ describe('/login', () => {
   });
 
   it('shows partner strings as text, never markup', async () => {
-    const s = setup('vault', fakeApi(appConfig({ name: '<img src=x onerror=alert(1)>' })));
-    s.win.message(authParams(), ENV.vaultOrigin, s.opener);
+    const s = setup('vault');
+    s.win.message(authParams({ appName: '<img src=x onerror=alert(1)>' }), ENV.vaultOrigin, s.opener);
     await s.page.done;
     expect(document.querySelector('img')).toBeNull();
     expect(pageText()).toContain('<img src=x onerror=alert(1)>');
@@ -285,7 +272,7 @@ describe('/login', () => {
 });
 
 describe('timings (pk_test_ apps)', () => {
-  it('stores its GET /v1/app check as authCheck with the relay key; a duration only', async () => {
+  it('stores its check as authCheck with the relay key; a duration only', async () => {
     const s = setup('partner');
     const params = authParams();
     s.win.message(params, ENV.vaultOrigin, s.vault);

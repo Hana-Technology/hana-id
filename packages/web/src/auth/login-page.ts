@@ -1,7 +1,10 @@
 // `GET {authOrigin}/login` (docs/batch-b-spec.md "Login" steps 3–5): the login popup. It finds whoever prepared the
-// login (the vault, or the export window), authenticates its reply by origin and window, cross-checks it against the
-// pinned SIGNER and GET /v1/app, recomputes the nonce, stores the relayKey under the state in its own sessionStorage
-// and navigates to Google. It never sees a token: /login/callback relays Google's answer.
+// login (the vault, or the export window), authenticates its reply by origin and window, checks it against the pinned
+// SIGNER, recomputes the nonce, stores the relayKey under the state in its own sessionStorage and navigates to Google.
+// It never sees a token: /login/callback relays Google's answer. It makes no API call (D77): the app's facts it shows
+// and uses (name, parent origin, scope, Google client) are the authenticated preparer's, which read them from the API
+// itself, and the API checks them again on POST /v1/login before anything is relayed (docs/security.md "The login
+// popup trusts the vault's app facts").
 //
 // Opener modes:
 //   partner  /login?v=<vault frame name>  opened by the partner page; the vault is window.opener.frames[v]
@@ -12,9 +15,8 @@
 // the authenticated sender, kept only in sessionStorage, and the in-memory copy is zeroed.
 import { type WindowMessage, isTestPublishableKey, parseWindowMessage, sessionNonce } from '@hana-id/core';
 import type { HanaEnv } from '../hana-env.ts';
-import type { AuthApi } from './api.ts';
 import { type Dom, dom, errorView } from './dom.ts';
-import { PageError, apiErrorCode, errorMessage } from './errors.ts';
+import { PageError } from './errors.ts';
 import { googleAuthUrl } from './google.ts';
 import { storeLoginEntry } from './login-storage.ts';
 import { type PageWindow, isFramed } from './page-window.ts';
@@ -30,7 +32,6 @@ export const EXPORT_PATH = '/export';
 export interface LoginPageDeps {
   win: PageWindow;
   env: HanaEnv;
-  api: AuthApi;
   /** Device clock (only for sessionStorage entry ages). */
   now?: () => number;
   /** Monotonic ms for a pk_test_ app's `authCheck` timing; defaults to performance.now. */
@@ -91,7 +92,7 @@ function openerPath(opener: Window): string | null {
 }
 
 export function startLoginPage(deps: LoginPageDeps): LoginPage {
-  const { win, env, api } = deps;
+  const { win, env } = deps;
   const now = deps.now ?? (() => Date.now());
   const perfNow = deps.perfNow ?? (() => performance.now());
   const d: Dom = dom(win.document);
@@ -145,17 +146,10 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
     state = { stage: 'checking', mode };
     d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signing in'), d.h('p', { class: 'muted' }, 'Checking the sign-in request…')));
     try {
+      // The preparer is Hana code on vaultOrigin (or this origin's /export), authenticated by event.origin and
+      // event.source above; it read the app's scope and Google client from GET /v1/app and the registry. Only the
+      // pinned SIGNER and the nonce's commitment are checked here: no second GET /v1/app (D77).
       if (msg.signer !== env.signer) throw new PageError('config_mismatch', 'The vault named another signer.');
-      let app;
-      try {
-        app = await api.getApp(msg.pk, msg.parentOrigin);
-      } catch (err) {
-        const code = apiErrorCode(err);
-        throw new PageError(code, errorMessage(code));
-      }
-      if (app.signer !== env.signer || app.scopeId !== msg.scopeId || app.google.clientId !== msg.clientId) {
-        throw new PageError('config_mismatch', 'The sign-in request does not match this app’s settings.');
-      }
       const nonce = sessionNonce({
         signer: env.signer,
         scopeId: msg.scopeId,
@@ -167,7 +161,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
       });
       if (nonce !== msg.nonce) throw new PageError('config_mismatch', 'The sign-in request’s nonce does not commit to its session.');
       try {
-        // pk_test_ apps: this page's part of the vault's hello → token (the GET /v1/app check, the nonce), forwarded
+        // pk_test_ apps: this page's part of the vault's hello → token (its checks, the nonce, the entry), forwarded
         // by the callback inside the encrypted relay slot. A duration on this page's clock, nothing else.
         const timings = isTestPublishableKey(msg.pk) ? { authCheck: Math.max(0, perfNow() - checkStarted) } : undefined;
         storeLoginEntry(win.sessionStorage, msg.relayId, msg.relayKey, now(), timings);
@@ -177,13 +171,12 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
         msg.relayKey.fill(0);
       }
       const url = googleAuthUrl({ clientId: msg.clientId, authOrigin: env.authOrigin, nonce: msg.nonce, state: msg.relayId, forceReauth: mode === 'export' });
-      const appName = app.name ?? msg.appName;
       d.show(
         d.h(
           'section',
           { class: 'panel' },
           d.h('h1', {}, mode === 'export' ? 'Confirm it’s you' : 'Signing in'),
-          d.h('p', {}, 'Signing in to ', d.h('strong', {}, appName), ' at ', d.h('span', { class: 'origin' }, msg.parentOrigin)),
+          d.h('p', {}, 'Signing in to ', d.h('strong', {}, msg.appName), ' at ', d.h('span', { class: 'origin' }, msg.parentOrigin)),
           d.h('p', { class: 'muted' }, 'Continuing to Google…'),
         ),
       );

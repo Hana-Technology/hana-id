@@ -41,9 +41,10 @@ export interface AuthHostEnv {
 /** `origins.rpc` is the NEAR RPC origin, or the primary and fallback origins separated by a space. */
 export function authPageDirectives(pathname: string, origins: { api: string; rpc: string }): string[] | null {
   switch (pathname) {
-    case '/login':
     case '/login/callback':
       return ["frame-ancestors 'none'", `connect-src ${origins.api}`];
+    case '/login':
+    // The login popup fetches nothing (D77); the approval popup decodes and renders what the vault sent.
     case '/approve':
       return ["frame-ancestors 'none'"];
     case '/export':

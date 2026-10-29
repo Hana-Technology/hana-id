@@ -15,7 +15,8 @@ const BASE = "default-src 'none'; script-src 'self'; style-src 'self'; img-src '
 
 describe('auth page policies', () => {
   it('sets the spec’s CSP per page: base policy, connect-src and frame-ancestors none', () => {
-    expect(authPageCsp(sandbox, 'login')).toBe(`${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev; frame-ancestors 'none'`);
+    // The login popup fetches nothing (D77): no connect-src, so default-src 'none' applies.
+    expect(authPageCsp(sandbox, 'login')).toBe(`${BASE}; frame-ancestors 'none'`);
     expect(authPageCsp(sandbox, 'callback')).toBe(`${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev; frame-ancestors 'none'`);
     expect(authPageCsp(sandbox, 'approve')).toBe(`${BASE}; frame-ancestors 'none'`);
     expect(authPageCsp(sandbox, 'export')).toBe(

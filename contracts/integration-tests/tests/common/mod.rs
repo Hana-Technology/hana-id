@@ -37,6 +37,13 @@ pub const KID: &str = "sandbox-test-kid";
 pub const CKD_DOMAIN_ID: u64 = 2;
 /// Small timelock so the tests can fast-forward past it.
 pub const CHANGE_DELAY_MS: u64 = 20_000;
+/// issuer_key_delay_ms of the sandbox deployment.
+pub const ISSUER_KEY_DELAY_MS: u64 = 20_000;
+/// governance_delay_ms of the sandbox deployment.
+pub const GOVERNANCE_DELAY_MS: u64 = 30_000;
+/// The commit whose hana-signer is the v1 contract (batch B, the code on sandbox-dev before the governance batch):
+/// the last develop commit that changed contracts/hana-signer before it. The migration tests build its wasm.
+pub const V1_COMMIT: &str = "3fd4964c13488d37cffdedb069c729573c978c68";
 pub const APP_A: &str = "app-a.apps.googleusercontent.com";
 pub const APP_B: &str = "app-b.apps.googleusercontent.com";
 pub const APP_C: &str = "app-c.apps.googleusercontent.com";
@@ -74,13 +81,16 @@ pub const OWNER_RELAYER_METHODS: &[&str] = &[
     "register_scope",
     "apply_pending_config",
 ];
-pub const KEYS_UPDATER_METHODS: &[&str] = &["set_issuer_key", "remove_issuer_key"];
+/// The methods of an updater key, the function-call key the contract installs on its own account with
+/// `add_updater_key` (docs/governance-spec.md "Updater keys"; the contract's `UPDATER_METHODS`). Written out here
+/// from the spec, not read from the contract, so the on-chain checks compare the contract with the spec.
+pub const UPDATER_METHODS: &[&str] = &["set_issuer_key", "propose_issuer_key_removal", "execute_issuer_key_change"];
 
-/// Every change method of hana-signer (docs/batch-a-spec.md, docs/batch-a2-shared-client.md, docs/batch-b-spec.md). The access-key test calls each one with each
-/// function-call key, so a method added to the contract should be added here too.
+/// Every change method of hana-signer (docs/batch-a-spec.md, docs/batch-a2-shared-client.md, docs/batch-b-spec.md,
+/// docs/governance-spec.md). The access-key test calls each one with each function-call key, so a method added to
+/// the contract should be added here too.
 pub const ALL_CHANGE_METHODS: &[&str] = &[
     "new",
-    "set_owner",
     "set_sponsors",
     "set_console_audiences",
     "set_change_delay_ms",
@@ -89,7 +99,31 @@ pub const ALL_CHANGE_METHODS: &[&str] = &[
     "apply_pending_config",
     "set_issuer",
     "set_issuer_key",
+    "propose_issuer_key_removal",
+    "execute_issuer_key_change",
+    "confirm_issuer_key_change",
+    "cancel_issuer_key_change",
     "remove_issuer_key",
+    "set_issuer_key_delay_ms",
+    "set_governance_delay_ms",
+    "add_watchdog",
+    "remove_watchdog",
+    "pause",
+    "unpause",
+    "add_updater_key",
+    "delete_updater_key",
+    "on_updater_key_added",
+    "propose_upgrade",
+    "cancel_upgrade",
+    "execute_upgrade",
+    "migrate",
+    "migrate_v1",
+    "propose_owner",
+    "cancel_owner_proposal",
+    "accept_owner",
+    "propose_withdrawal",
+    "cancel_withdrawal",
+    "execute_withdrawal",
     "admin_register_scope",
     "register_scope",
     "propose_change",
@@ -225,17 +259,21 @@ fn build_wasm(crate_dir: &str, wasm_name: &str, override_var: &str) -> Result<Ve
     if let Ok(path) = std::env::var(override_var) {
         return std::fs::read(&path).with_context(|| format!("reading {override_var}={path}"));
     }
-    let dir = contracts_dir().join(crate_dir);
-    let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("target").join("wasm");
+    build_wasm_at(&contracts_dir().join(crate_dir), wasm_name, &Path::new(env!("CARGO_MANIFEST_DIR")).join("target").join("wasm"))
+}
+
+/// `cargo near build non-reproducible-wasm` in `dir`, into `target`.
+fn build_wasm_at(dir: &Path, wasm_name: &str, target: &Path) -> Result<Vec<u8>> {
+    let crate_dir = dir.display().to_string();
     let mut cmd = Command::new("cargo");
-    cmd.args(["near", "build", "non-reproducible-wasm"]).current_dir(&dir);
+    cmd.args(["near", "build", "non-reproducible-wasm"]).current_dir(dir);
     for (key, _) in std::env::vars() {
         let keep = key == "CARGO_HOME" || key == "RUSTUP_HOME";
         if !keep && (key.starts_with("CARGO") || key.starts_with("RUSTUP_") || key.starts_with("RUSTC") || key.starts_with("RUSTFLAGS") || key == "RUSTDOC") {
             cmd.env_remove(key);
         }
     }
-    cmd.env("CARGO_TARGET_DIR", &target);
+    cmd.env("CARGO_TARGET_DIR", target);
     let out = cmd.output().with_context(|| format!("running cargo near build in {}", dir.display()))?;
     if !out.status.success() {
         bail!("wasm build of {} failed:\n{}\n{}", crate_dir, String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
@@ -256,6 +294,107 @@ pub fn wasms() -> Result<(Vec<u8>, Vec<u8>)> {
         })
         .clone()
         .map_err(|e| anyhow!(e))
+}
+
+static V1_WASM: OnceLock<std::result::Result<Vec<u8>, String>> = OnceLock::new();
+
+/// The v1 hana-signer wasm: `contracts/hana-signer` at `V1_COMMIT`, exported with `git archive` into
+/// `target/v1-src/<commit>` and built there (its own Cargo.lock and toolchain). `HANA_SIGNER_V1_WASM=<path>`
+/// overrides the build.
+pub fn v1_wasm() -> Result<Vec<u8>> {
+    V1_WASM
+        .get_or_init(|| {
+            if let Ok(path) = std::env::var("HANA_SIGNER_V1_WASM") {
+                return std::fs::read(&path).map_err(|e| format!("reading HANA_SIGNER_V1_WASM={path}: {e}"));
+            }
+            build_v1().map_err(|e| format!("{e:#}"))
+        })
+        .clone()
+        .map_err(|e| anyhow!(e))
+}
+
+fn build_v1() -> Result<Vec<u8>> {
+    let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("target");
+    let src = target.join("v1-src").join(V1_COMMIT);
+    let crate_dir = src.join("contracts").join("hana-signer");
+    if !crate_dir.join("Cargo.toml").exists() {
+        std::fs::create_dir_all(&src)?;
+        let tar = target.join("v1-src").join(format!("{V1_COMMIT}.tar"));
+        let repo = contracts_dir().parent().expect("repo root").to_path_buf();
+        let out = Command::new("git").arg("-C").arg(&repo).args(["archive", "--format=tar", "-o"]).arg(&tar).arg(V1_COMMIT).arg("contracts/hana-signer").output()?;
+        if !out.status.success() {
+            bail!("git archive {V1_COMMIT} failed (is the commit in this clone?): {}", String::from_utf8_lossy(&out.stderr));
+        }
+        let out = Command::new("tar").arg("-xf").arg(&tar).arg("-C").arg(&src).output()?;
+        if !out.status.success() {
+            bail!("extracting {}: {}", tar.display(), String::from_utf8_lossy(&out.stderr));
+        }
+    }
+    // The copy lives under this crate's directory, which is a workspace root: mark the copy as its own workspace
+    // (as contracts/hana-signer effectively is: it has no parent workspace). Nothing else in it changes.
+    let manifest = crate_dir.join("Cargo.toml");
+    let text = std::fs::read_to_string(&manifest)?;
+    if !text.lines().any(|l| l.trim() == "[workspace]") {
+        std::fs::write(&manifest, format!("{text}\n# Added by the sandbox tests: a standalone copy (see tests/common/mod.rs build_v1).\n[workspace]\n"))?;
+    }
+    build_wasm_at(&crate_dir, "hana_signer.wasm", &target.join("wasm-v1"))
+}
+
+static SPUTNIK_WASM: OnceLock<std::result::Result<Vec<u8>, String>> = OnceLock::new();
+
+fn sputnik_pin() -> Result<Value> {
+    let path = contracts_dir().join("sputnik").join("pin.json");
+    Ok(serde_json::from_str(&std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?)?)
+}
+
+/// The Sputnik DAO v2 wasm pinned in contracts/sputnik/pin.json: downloaded once from its pinned commit (curl),
+/// checked against the pinned sha256 and cached in `target/sputnik/<sha256>.wasm`. `SPUTNIK_DAO_WASM=<path>`
+/// supplies the file instead (offline runs); it must match the pin too.
+pub fn sputnik_wasm() -> Result<Vec<u8>> {
+    SPUTNIK_WASM.get_or_init(|| fetch_sputnik().map_err(|e| format!("{e:#}"))).clone().map_err(|e| anyhow!(e))
+}
+
+fn fetch_sputnik() -> Result<Vec<u8>> {
+    let pin = sputnik_pin()?;
+    let want = pin["sha256"].as_str().context("pin.json sha256")?.to_string();
+    let check = |bytes: Vec<u8>, from: &str| -> Result<Vec<u8>> {
+        let got: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
+        if got != want {
+            bail!("Sputnik wasm from {from} has sha256 {got}, pinned {want}");
+        }
+        Ok(bytes)
+    };
+    if let Ok(path) = std::env::var("SPUTNIK_DAO_WASM") {
+        return check(std::fs::read(&path).with_context(|| format!("reading SPUTNIK_DAO_WASM={path}"))?, &path);
+    }
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target").join("sputnik");
+    let cached = dir.join(format!("{want}.wasm"));
+    if let Ok(bytes) = std::fs::read(&cached) {
+        return check(bytes, &cached.display().to_string());
+    }
+    std::fs::create_dir_all(&dir)?;
+    let url = pin["url"].as_str().context("pin.json url")?;
+    let partial = dir.join(format!("{want}.download"));
+    let out = Command::new("curl").args(["-sSfL", "--max-time", "120", "-o"]).arg(&partial).arg(url).output().context("running curl")?;
+    if !out.status.success() {
+        bail!("downloading {url} failed ({}); set SPUTNIK_DAO_WASM to a local copy", String::from_utf8_lossy(&out.stderr).trim());
+    }
+    let bytes = check(std::fs::read(&partial)?, url)?;
+    std::fs::rename(&partial, &cached)?;
+    Ok(bytes)
+}
+
+/// contracts/sputnik/policy.json with `members` as the council.
+pub fn sputnik_policy(members: &[&AccountId]) -> Result<Value> {
+    let path = contracts_dir().join("sputnik").join("policy.json");
+    let mut policy: Value = serde_json::from_str(&std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?)?;
+    policy["roles"][0]["kind"]["Group"] = json!(members);
+    Ok(policy)
+}
+
+/// NEAR's account `code_hash` of `code`: base58(sha256(code)).
+pub fn code_hash(code: &[u8]) -> String {
+    near_workspaces::types::CryptoHash(sha256(code).try_into().expect("32 bytes")).to_string()
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -425,22 +564,30 @@ pub fn oidc_owner(sub: &str) -> Value {
 
 pub struct TestIssuer {
     signing: RsaSigningKey<RsaSha256>,
+    /// The kid its tokens carry.
+    pub kid: String,
     pub n: String,
     pub e: String,
 }
 
 impl TestIssuer {
+    /// A key under `KID`.
     pub fn generate() -> Result<Self> {
+        Self::generate_with_kid(KID)
+    }
+
+    /// A fresh RSA key whose tokens carry `kid` (e.g. Google's next key in a rotation).
+    pub fn generate_with_kid(kid: &str) -> Result<Self> {
         let key = RsaPrivateKey::new(&mut rand::thread_rng(), 2048)?;
         let n = b64url(&key.n().to_bytes_be());
         let e = b64url(&key.e().to_bytes_be());
-        Ok(Self { signing: RsaSigningKey::<RsaSha256>::new(key), n, e })
+        Ok(Self { signing: RsaSigningKey::<RsaSha256>::new(key), kid: kid.to_string(), n, e })
     }
 
     /// An RS256 token like Google's, valid for an hour from `now_ms` (sandbox time).
     pub fn jwt(&self, aud: &str, sub: &str, nonce: Option<&str>, now_ms: u64) -> String {
         let now_s = now_ms / 1000;
-        let header = json!({"alg": "RS256", "kid": KID, "typ": "JWT"});
+        let header = json!({"alg": "RS256", "kid": self.kid, "typ": "JWT"});
         let mut claims = json!({"iss": ISS, "azp": aud, "aud": aud, "sub": sub, "iat": now_s - 60, "exp": now_s + 3600});
         if let Some(n) = nonce {
             claims["nonce"] = json!(n);
@@ -567,8 +714,11 @@ pub struct Env {
     pub relayer_fc: Account,
     /// The relayer account signing with an owner-pool key (OWNER_RELAYER_METHODS on the signer).
     pub relayer_owner_fc: Account,
-    /// The signer account signing with a function-call key limited to KEYS_UPDATER_METHODS on itself.
+    /// The signer account signing with the updater key the owner had the contract install (`add_updater_key`:
+    /// UPDATER_METHODS on itself, 1 NEAR allowance).
     pub keys_updater: Account,
+    /// A watchdog account (full key) given to `new`, so it may confirm at once.
+    pub watchdog: Account,
     pub issuer: TestIssuer,
     /// Scope ids of the two admin-registered scopes: A = [APP_A] owned by alice, B = [APP_B] owned by bob. Neither
     /// allows shared login at setup.
@@ -595,14 +745,20 @@ async fn add_fc_key(worker: &Worker<Sandbox>, account: &Account, receiver: &Acco
     Ok(keyed)
 }
 
-/// Deploys hana-signer to `root`/`name`, calls `new`, and configures the Google issuer with the test key, the
-/// console audience and the relayer as sponsor.
-async fn deploy_signer(root: &Account, name: &str, admin: &Account, mpc: &AccountId, issuer: &TestIssuer, relayer: &AccountId) -> Result<Contract> {
+/// Deploys hana-signer to `root`/`name`, calls `new` (owner `admin`, `watchdog` as a watchdog that may confirm at
+/// once), and configures the Google issuer with the test key (proposed by the owner, confirmed by the watchdog),
+/// the console audience and the relayer as sponsor. `new` gets change_delay_ms = 0 so the console audience is in
+/// force at once; the delay is then raised to CHANGE_DELAY_MS (increases apply at once).
+async fn deploy_signer(root: &Account, name: &str, admin: &Account, watchdog: &Account, mpc: &AccountId, issuer: &TestIssuer, relayer: &AccountId) -> Result<Contract> {
     let (signer_wasm, _) = wasms()?;
     let signer = subaccount(root, name, 50).await?.deploy(&signer_wasm).await?.into_result()?;
     signer
         .call("new")
-        .args_json(json!({"owner": admin.id(), "mpc": mpc, "ckd_domain_id": CKD_DOMAIN_ID, "change_delay_ms": CHANGE_DELAY_MS}))
+        .args_json(json!({
+            "owner": admin.id(), "mpc": mpc, "ckd_domain_id": CKD_DOMAIN_ID, "change_delay_ms": 0,
+            "issuer_key_delay_ms": ISSUER_KEY_DELAY_MS, "governance_delay_ms": GOVERNANCE_DELAY_MS,
+            "watchdogs": [watchdog.id()], "updater_keys": [],
+        }))
         .transact()
         .await?
         .into_result()?;
@@ -612,12 +768,7 @@ async fn deploy_signer(root: &Account, name: &str, admin: &Account, mpc: &Accoun
         .transact()
         .await?
         .into_result()?;
-    admin
-        .call(signer.id(), "set_issuer_key")
-        .args_json(json!({"provider": PROVIDER, "kid": KID, "n": issuer.n, "e": issuer.e}))
-        .transact()
-        .await?
-        .into_result()?;
+    post_issuer_key(admin, watchdog, signer.id(), issuer).await?;
     admin
         .call(signer.id(), "set_console_audiences")
         .args_json(json!({"audiences": [[PROVIDER, CONSOLE]]}))
@@ -625,7 +776,41 @@ async fn deploy_signer(root: &Account, name: &str, admin: &Account, mpc: &Accoun
         .await?
         .into_result()?;
     admin.call(signer.id(), "set_sponsors").args_json(json!({"sponsors": [relayer]})).transact().await?.into_result()?;
+    admin.call(signer.id(), "set_change_delay_ms").args_json(json!({"change_delay_ms": CHANGE_DELAY_MS})).transact().await?.into_result()?;
     Ok(signer)
+}
+
+/// Makes `issuer`'s key active on `signer`: `proposer` posts it (`set_issuer_key`), `watchdog` confirms it.
+pub async fn post_issuer_key(proposer: &Account, watchdog: &Account, signer: &AccountId, issuer: &TestIssuer) -> Result<u64> {
+    let id: u64 = proposer
+        .call(signer, "set_issuer_key")
+        .args_json(json!({"provider": PROVIDER, "kid": issuer.kid, "n": issuer.n, "e": issuer.e}))
+        .gas(Gas::from_tgas(30))
+        .transact()
+        .await?
+        .into_result()?
+        .json()?;
+    watchdog.call(signer, "confirm_issuer_key_change").args_json(json!({"id": id})).transact().await?.into_result()?;
+    Ok(id)
+}
+
+/// The owner has the contract add a fresh updater key to `signer`; returns the signer account signing with it,
+/// after checking on chain that it is limited to UPDATER_METHODS on `signer`.
+pub async fn add_updater_key(worker: &Worker<Sandbox>, owner: &Account, signer: &AccountId) -> Result<Account> {
+    let sk = SecretKey::from_random(KeyType::ED25519);
+    let added: bool = owner
+        .call(signer, "add_updater_key")
+        .args_json(json!({"public_key": sk.public_key().to_string()}))
+        .gas(GAS)
+        .transact()
+        .await?
+        .into_result()?
+        .json()?;
+    if !added {
+        bail!("add_updater_key reported the AddKey failed");
+    }
+    assert_function_call_key(worker, signer, &sk.public_key(), signer, UPDATER_METHODS).await?;
+    Ok(Account::from_secret_key(signer.clone(), sk, worker))
 }
 
 impl Env {
@@ -639,20 +824,37 @@ impl Env {
         let bob = subaccount(&root, "bob", 20).await?;
         let carol = subaccount(&root, "carol", 20).await?;
         let relayer = subaccount(&root, "relayer", 20).await?;
+        let watchdog = subaccount(&root, "watchdog", 20).await?;
 
         let mpc = subaccount(&root, "mpc", 20).await?.deploy(&mpc_wasm).await?.into_result()?;
         mpc.call("new").transact().await?.into_result()?;
 
         let issuer = TestIssuer::generate()?;
-        let signer = deploy_signer(&root, "signer", &admin, mpc.id(), &issuer, relayer.id()).await?;
+        let signer = deploy_signer(&root, "signer", &admin, &watchdog, mpc.id(), &issuer, relayer.id()).await?;
 
         // The relayer's two key pools (as deploy-contract.ts sets them up).
         let relayer_fc = add_fc_key(&worker, &relayer, signer.id(), SESSION_RELAYER_METHODS, NearToken::from_near(1)).await?;
         let relayer_owner_fc = add_fc_key(&worker, &relayer, signer.id(), OWNER_RELAYER_METHODS, NearToken::from_millinear(500)).await?;
-        // Keys-updater function-call key on the signer account itself.
-        let keys_updater = add_fc_key(&worker, signer.as_account(), signer.id(), KEYS_UPDATER_METHODS, NearToken::from_millinear(250)).await?;
+        // The updater key on the signer account itself, installed by the contract.
+        let keys_updater = add_updater_key(&worker, &admin, signer.id()).await?;
 
-        let mut env = Self { worker, signer, mpc, admin, alice, bob, carol, relayer, relayer_fc, relayer_owner_fc, keys_updater, issuer, scope_a: String::new(), scope_b: String::new() };
+        let mut env = Self {
+            worker,
+            signer,
+            mpc,
+            admin,
+            alice,
+            bob,
+            carol,
+            relayer,
+            relayer_fc,
+            relayer_owner_fc,
+            keys_updater,
+            watchdog,
+            issuer,
+            scope_a: String::new(),
+            scope_b: String::new(),
+        };
         let alice_owner = near_owner(env.alice.id());
         let bob_owner = near_owner(env.bob.id());
         env.scope_a = env.admin_register(vec![alice_owner], &[APP_A], false).await?;
@@ -664,7 +866,7 @@ impl Env {
     /// issuer key, console audience and sponsor).
     pub async fn deploy_another_signer(&self, name: &str) -> Result<Contract> {
         let root = self.worker.root_account()?;
-        deploy_signer(&root, name, &self.admin, self.mpc.id(), &self.issuer, self.relayer.id()).await
+        deploy_signer(&root, name, &self.admin, &self.watchdog, self.mpc.id(), &self.issuer, self.relayer.id()).await
     }
 
     pub async fn admin_register(&self, owners: Vec<Value>, clients: &[&str], allow_shared: bool) -> Result<String> {
@@ -764,16 +966,54 @@ impl Env {
     /// Fast-forwards until the sandbox clock is at least `target_ms` (fast_forward advances height; the block
     /// timestamp follows it).
     pub async fn advance_to(&self, target_ms: u64) -> Result<()> {
-        for _ in 0..200 {
-            let now = self.now_ms().await?;
-            if now >= target_ms {
-                return Ok(());
-            }
-            let blocks = ((target_ms - now) / 1000).clamp(5, 500);
-            self.worker.fast_forward(blocks).await?;
-        }
-        bail!("sandbox clock did not reach {target_ms}")
+        advance_to(&self.worker, target_ms).await
     }
+
+    pub async fn get_governance(&self) -> Result<Value> {
+        Ok(self.signer.view("get_governance").await?.json()?)
+    }
+
+    pub async fn get_key_changes(&self) -> Result<Value> {
+        Ok(self.signer.view("get_key_changes").await?.json()?)
+    }
+
+    /// Active kids of the Google issuer.
+    pub async fn kids(&self) -> Result<Vec<String>> {
+        let issuer: Value = self.signer.view("get_issuer").args_json(json!({"provider": PROVIDER})).await?.json()?;
+        Ok(issuer["kids"].as_array().context("kids")?.iter().map(|k| k.as_str().unwrap().to_string()).collect())
+    }
+}
+
+/// Sandbox block time (ms).
+pub async fn now_ms(worker: &Worker<Sandbox>) -> Result<u64> {
+    Ok(worker.view_block().await?.timestamp() / 1_000_000)
+}
+
+/// Fast-forwards until the sandbox clock is at least `target_ms` (fast_forward advances height; the block timestamp
+/// follows it).
+pub async fn advance_to(worker: &Worker<Sandbox>, target_ms: u64) -> Result<()> {
+    for _ in 0..200 {
+        let now = now_ms(worker).await?;
+        if now >= target_ms {
+            return Ok(());
+        }
+        let blocks = ((target_ms - now) / 1000).clamp(5, 500);
+        worker.fast_forward(blocks).await?;
+    }
+    bail!("sandbox clock did not reach {target_ms}")
+}
+
+/// The account's code hash (base58), as `view_account` shows it.
+pub async fn account_code_hash(worker: &Worker<Sandbox>, account: &AccountId) -> Result<String> {
+    match worker.view_account(account).await?.contract_state {
+        near_workspaces::ContractState::LocalHash(hash) => Ok(hash.to_string()),
+        other => bail!("{account} has no local contract: {other:?}"),
+    }
+}
+
+/// Every NEP-297 event of `standard` hana-id in an outcome's logs (all receipts), as JSON.
+pub fn hana_events(outcome: &ExecutionFinalResult) -> Vec<Value> {
+    outcome.logs().iter().filter_map(|l| l.strip_prefix("EVENT_JSON:")).filter_map(|j| serde_json::from_str::<Value>(j).ok()).filter(|e| e["standard"] == "hana-id").collect()
 }
 
 // ---------------------------------------------------------------------------------------------------------------

@@ -8,6 +8,9 @@
 //!
 //! `set_fail(true)` makes every request panic (`Mock MPC failure`) until `set_fail(false)`, so tests can see what a
 //! failed MPC receipt leaves behind in `hana-signer` (the caller's own receipt has already committed).
+//!
+//! `migrate()` always panics. The governance sandbox tests (`tests/governance.rs`) propose this wasm as a
+//! `hana-signer` upgrade to check that a failing `migrate` rolls the deploy back (deploy and migrate are one receipt).
 
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::store::Vector;
@@ -110,6 +113,11 @@ impl MockMpc {
     /// The response `request_app_private_key` gives for `request` (deterministic, for test assertions).
     pub fn expected_response(&self, request: CkdRequestArgs) -> CkdResponse {
         fake_response(&request)
+    }
+
+    /// Always fails: stands in for an upgrade whose `migrate` panics (see the crate docs).
+    pub fn migrate() {
+        env::panic_str("mock-mpc: migrate always fails")
     }
 }
 

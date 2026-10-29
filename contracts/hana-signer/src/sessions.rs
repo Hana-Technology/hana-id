@@ -147,6 +147,7 @@ impl HanaSigner {
         key_index: u32,
         max_uses: u32,
     ) -> Session {
+        self.assert_not_paused();
         assert!(session_public_key.len() == 32, "Session key must be a 32-byte Ed25519 public key");
         assert!((16..=64).contains(&salt.len()), "Salt must be 16-64 bytes");
         let now = env::block_timestamp_ms();
@@ -189,8 +190,9 @@ impl HanaSigner {
 
     /// Full-key mode: asks the MPC's CKD domain for the session path's secret, encrypted to the browser's BLS key
     /// (`pk1`, `pk2`). `signature` is the session key's Ed25519 signature over
-    /// session_message(counter, "hana-id-ckd-v1:{pk1}:{pk2}"). Returns the MPC's `{big_y, big_c}`.
+    /// session_message(counter, "hana-id-ckd-v1:{pk1}:{pk2}"). Returns the MPC's `{big_y, big_c}`. Not while paused.
     pub fn derive_key(&mut self, session_public_key: Vec<u8>, counter: u64, signature: Vec<u8>, pk1: String, pk2: String) -> Promise {
+        self.assert_not_paused();
         assert!(pk1.len() <= MAX_BLS_KEY_BYTES && pk2.len() <= MAX_BLS_KEY_BYTES, "BLS key too long");
         let path = self.use_session(&session_public_key, counter, signature, &ckd_request_bytes(&pk1, &pk2));
         mpc_contract::ext(self.mpc.clone())

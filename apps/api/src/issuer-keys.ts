@@ -10,6 +10,7 @@
 // It never calls `remove_issuer_key` (owner-only). A change of ours that disappears without being applied was
 // cancelled (owner or watchdog): it is logged once and not proposed again for REPROPOSE_AFTER_CANCEL_MS. Every fetch
 // also records the kids it lists for the key lead-time measurement (key-observations.ts).
+import { type Jwk, GOOGLE_JWKS_URL, GOOGLE_PROVIDER, usableJwks } from '@hana-id/jwks';
 import { base64UrlDecode } from './bytes.ts';
 import type { Env } from './env.ts';
 import { cacheMaxAgeS, recordJwksObservation } from './key-observations.ts';
@@ -18,8 +19,9 @@ import { Rpc, invalidNonce, isDefiniteRejection, type SendTxResult } from './nea
 import { type ContractCall, parseKeyPair, signFunctionCall, waitForOutcome } from './near/tx.ts';
 import { type UpdaterMethod, updaterAllows } from './relayer-config.ts';
 
-export const GOOGLE_PROVIDER = 'google';
-export const GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
+// The JWKS parsing is shared with apps/watchdog (packages/jwks).
+export { GOOGLE_JWKS_URL, GOOGLE_PROVIDER, type Jwk, usableJwks } from '@hana-id/jwks';
+
 /**
  * A kid missing from the JWKS is proposed for removal only once it has been missing this long (first seen missing by
  * one run, still missing ≥ 55 min later), so a single stale or partial JWKS response can't start a live key's removal.
@@ -33,37 +35,6 @@ export const MAX_KEYS_PER_ISSUER = 10;
 /** Ample for a key proposal or execution (~3 Tgas burnt; docs/contract-interface.md). */
 const ISSUER_KEY_GAS = 30_000_000_000_000n;
 
-export interface Jwk {
-  kid: string;
-  n: string;
-  e: string;
-  kty?: string;
-  alg?: string;
-  use?: string;
-}
-
-const B64URL = /^[A-Za-z0-9_-]+$/u;
-
-/** RS256 signing keys only (the contract verifies RS256 today). */
-export function usableJwks(body: unknown): Jwk[] {
-  const keys = (body as { keys?: unknown } | null)?.keys;
-  if (!Array.isArray(keys)) return [];
-  return keys.filter(
-    (k): k is Jwk =>
-      typeof k === 'object' &&
-      k !== null &&
-      typeof k.kid === 'string' &&
-      k.kid.length > 0 &&
-      k.kid.length <= 128 &&
-      k.kty === 'RSA' &&
-      (k.alg === undefined || k.alg === 'RS256') &&
-      (k.use === undefined || k.use === 'sig') &&
-      typeof k.n === 'string' &&
-      B64URL.test(k.n) &&
-      typeof k.e === 'string' &&
-      B64URL.test(k.e),
-  );
-}
 
 /** `get_issuer(provider)` → active kids. Accepts `{kids: [...]}`, `{keys: [...]}` or a bare array; null when unknown. */
 export function issuerKids(view: unknown): string[] | null {

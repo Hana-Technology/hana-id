@@ -1,0 +1,31 @@
+{
+  "name": "@hana-id/watchdog",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Independent watchdog for hana-signer's issuer keys and governance (docs/governance-spec.md \"Watchdog service\"): a Cloudflare Worker on its own account.",
+  "type": "module",
+  "scripts": {
+    "gen": "tsx scripts/gen-wrangler.ts",
+    "secrets": "tsx scripts/secrets.ts",
+    "dev": "wrangler dev --test-scheduled",
+    "deploy": "wrangler deploy",
+    "test": "vitest run && vitest run -c vitest.scripts.config.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts"
+  },
+  "dependencies": {
+    "@hana-id/jwks": "workspace:*",
+    "@near-js/crypto": "2.5.1",
+    "@near-js/transactions": "2.5.1",
+    "@near-js/utils": "2.5.1"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.4",
+    "@cloudflare/workers-types": "5.20261016.1",
+    "@hana-id/env": "workspace:*",
+    "@types/node": "^22.0.0",
+    "tsx": "4.23.15",
+    "typescript": "^5.7.0",
+    "vitest": "4.1.12",
+    "wrangler": "4.151.1"
+  }
+}

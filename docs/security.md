@@ -69,6 +69,10 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Session-pool keys `RELAYER_KEYS` | ed25519 function-call keys on `relayer`, receiver `signer` | Worker secret; `.secrets/<env>/relayer-keys.json` | Hana | Default 3 × 2 NEAR. `deploy-contract` deletes and re-adds; mainnet needs allowance monitoring |
 | Owner-pool keys `OWNER_RELAYER_KEYS` | same, owner methods | Worker secret; `.secrets/<env>/owner-relayer-keys.json` | Hana | Default 1 × 0.5 NEAR |
 | `KEYS_UPDATER_KEY` | ed25519 function-call key on `signer` (`set_issuer_key`, `remove_issuer_key`) | Worker secret; `.secrets/<env>/keys-updater.json` | Hana | Default 1 NEAR allowance; see open issue (e) and D33 |
+| `WATCHDOG_KEY` | ed25519 function-call key on the watchdog's account (manifest `watchdog.account`), receiver `signer`, methods `cancel_issuer_key_change`, `confirm_issuer_key_change`, `pause`, `delete_updater_key`, 1 NEAR | Watchdog Worker secret (its own Cloudflare account); `.secrets/<env>/watchdog-secrets.json` | Hana (operator) | Created by `watchdog secrets <env> init`; rotate by adding a new key, then deleting the old (`docs/operations.md` "Watchdog service"). DoS power only (cancel, confirm a proposed change, pause, delete updater keys) |
+| `WATCHDOG_STATUS_TOKEN` | random bearer token (32 bytes, base64url) | Watchdog and admin Worker secrets; same file | Hana | Read and acknowledge only: a holder can stop re-sends of an alert already paged, never a first alert or a check |
+| Watchdog alert credentials (`RESEND_API_KEY`, `SLACK_WEBHOOK_URL`, paging app, `HEARTBEAT_URL`) | API keys / capability URLs | Watchdog Worker secrets; same file | Hana | The watchdog's own, not the admin Worker's (D87). Losing one channel leaves two (D85) |
+| Watchdog's Cloudflare account | account credentials | the operator | the user | Separate login and MFA from the API's account (D86); a compromise gives the watchdog key and its alerting, caught by the dead-man's switch |
 | Owner, signer, relayer account keys | ed25519 full-access (not ml-dsa-65: `docs/decisions.md`) | `~/.near-credentials/testnet/` on the operator's machine | the user (Hana admin) | Manual. Agents never ask for or handle them |
 | Google ID tokens | RS256 JWT | Transient; public on chain once used | user's browser, relay (ciphertext), API (in transit) | Never logged or stored; openid-only claims |
 | Google RSA public keys | JWKS | On chain (issuers); API isolate cache (≤ 6 h stale on fetch failure) | public | Hourly cron sync |
@@ -433,7 +437,8 @@ plan (D33, not built), specified in `docs/governance-spec.md` and confirmed by t
   offline backup key neither founder can reach alone.
 - Watchdog (D82, D86): its own service, key and Cloudflare account. It cancels a pending key Google doesn't publish,
   deletes the updater key that proposed one, and pauses only when such a key is active on chain; everything else is
-  alert-only. The owner unpauses at once. Pause stops derivation and every token path, never governance.
+  alert-only. The owner unpauses at once. Pause stops derivation and every token path, never governance. Built in
+  `apps/watchdog` (branch `gov/watchdog`), not deployed.
 - Monitoring (D83): every watchdog check, action and alert surfaces in the admin portal's "Security & monitoring"
   view (a standing rule for future checks); the watchdog sends its own alerts, so a compromised Hana Cloudflare
   account can't silence them.

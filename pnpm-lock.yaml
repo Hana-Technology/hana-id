@@ -13,6 +13,9 @@ importers:
       '@hana-id/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@hana-id/jwks':
+        specifier: workspace:*
+        version: link:../../packages/jwks
       '@near-js/crypto':
         specifier: 2.5.1
         version: 2.5.1(@near-js/types@2.5.1)(@near-js/utils@2.5.1(@near-js/types@2.5.1))
@@ -174,6 +177,46 @@ importers:
         specifier: 4.1.12
         version: 4.1.12(@types/node@22.20.5)(happy-dom@21.0.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15))
 
+  apps/watchdog:
+    dependencies:
+      '@hana-id/jwks':
+        specifier: workspace:*
+        version: link:../../packages/jwks
+      '@near-js/crypto':
+        specifier: 2.5.1
+        version: 2.5.1(@near-js/types@2.5.1)(@near-js/utils@2.5.1(@near-js/types@2.5.1))
+      '@near-js/transactions':
+        specifier: 2.5.1
+        version: 2.5.1(@near-js/crypto@2.5.1(@near-js/types@2.5.1)(@near-js/utils@2.5.1(@near-js/types@2.5.1)))(@near-js/types@2.5.1)(@near-js/utils@2.5.1(@near-js/types@2.5.1))
+      '@near-js/utils':
+        specifier: 2.5.1
+        version: 2.5.1(@near-js/types@2.5.1)
+    devDependencies:
+      '@cloudflare/vitest-plugin':
+        specifier: 1.4.4
+        version: 1.4.4(@cloudflare/workers-types@5.20261016.1)(@types/node@22.20.5)(bufferutil@4.1.0)(utf-8-validate@6.0.6)(vitest@4.1.12(@types/node@22.20.5)(happy-dom@21.0.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15)))
+      '@cloudflare/workers-types':
+        specifier: 5.20261016.1
+        version: 5.20261016.1
+      '@hana-id/env':
+        specifier: workspace:*
+        version: link:../../packages/env
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.5
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.12
+        version: 4.1.12(@types/node@22.20.5)(happy-dom@21.0.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15))
+      wrangler:
+        specifier: 4.151.1
+        version: 4.151.1(@cloudflare/workers-types@5.20261016.1)(@types/node@22.20.5)(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+
   packages/core:
     dependencies:
       '@noble/curves':
@@ -223,6 +266,18 @@ importers:
       vitest:
         specifier: ^3.2.0
         version: 3.2.7(@types/node@22.20.5)(happy-dom@21.0.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(tsx@4.23.15)
+
+  packages/jwks:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.5
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.12
+        version: 4.1.12(@types/node@22.20.5)(happy-dom@21.0.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15))
 
   packages/react:
     dependencies:

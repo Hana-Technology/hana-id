@@ -84,6 +84,9 @@ Conventions:
 // Issuer (get_issuer) — key material is not returned, only active key ids
 {"provider":"google","iss_values":["https://accounts.google.com","accounts.google.com"],"kids":["a1b2...","c3d4..."]}
 
+// Active keys with material (get_issuer_keys), kid order; null for an unknown issuer
+[{"kid":"a1b2...","n":"<JWK n, base64url, leading zeros stripped>","e":"AQAB"}]
+
 // Pending key changes (get_key_changes), in proposal order, all issuers
 [
   {"id":7,"provider":"google","kid":"e5f6","op":"Add","n":"<JWK n, base64url, leading zeros stripped>","e":"AQAB",
@@ -480,6 +483,7 @@ allows (see Security notes).
 | `cancel_issuer_key_change(id)` | owner or any watchdog | `{"id":7}` |
 | `remove_issuer_key(provider, kid)` | **owner only** | `{"provider":"google","kid":"a1b2"}` → returns `true` if an active key was removed |
 | `get_issuer(provider)` | view | → Issuer (active kids) or `null` |
+| `get_issuer_keys(provider)` | view | → `[{"kid","n","e"}]` (active keys with their material, JWK base64url, leading zeros stripped, kid order) or `null` for an unknown issuer. For the watchdog's active-key check (`docs/governance-spec.md` step 5); `verify_token` doesn't use it |
 | `get_key_changes()` | view | → pending key changes (Types above) |
 
 Issuer keys enter or leave the active set only through a public, cancellable delay (D33): a posted change waits
@@ -904,7 +908,7 @@ signer key:
 | Portal item | Source on chain |
 |---|---|
 | Pending issuer-key changes, proposer, countdown | `get_key_changes()` (`executable_at_ms`); match against Google's JWKS by comparing `n`, `e` with the JWKS entry of the same `kid` |
-| Active keys | `get_issuer("google").kids` |
+| Active keys | `get_issuer("google").kids`; with key material `get_issuer_keys("google")` (compare with the JWKS like a pending change) |
 | Pause state, who paused and when | `get_config().paused`; the `paused {by}` / `unpaused` events (block time = when) |
 | Watchdogs and their confirm power | `get_governance().watchdogs` (`confirm_from_ms`), `keys_slow_until_ms`; events `watchdog_added` / `watchdog_removed` |
 | Updater keys against the account's key list | `get_governance().updater_keys` and `updater_methods` against RPC `view_access_key_list(<signer>)`: any other key, or a function-call key with other methods, receiver or a larger allowance, is a finding |
@@ -913,7 +917,8 @@ signer key:
 | Watchdog actions log (cancels, confirms, pauses, updater-key deletions) with transaction links | the NEP-297 events above with `by` = a watchdog account: `issuer_key_change_cancelled`, `issuer_key_set` / `issuer_key_removed` with `how: "confirmed"`, `paused`, `updater_key_deleted`; transaction hash from the RPC receipt |
 
 The portal's other items (heartbeat, the watchdog's verdicts, alert history and acks) come from the watchdog
-service's `GET /status` and `GET /alerts` (`docs/governance-spec.md` "Watchdog service"), not from the contract.
+service's `GET /status`, `GET /alerts`, `GET /actions` and `POST /alerts/:id/ack` (`apps/watchdog/README.md` "Status
+endpoint"), not from the contract.
 
 The API serves all of the table above in one read-only answer, `GET /v1/governance` (`docs/api.md`), normalised,
 with each pending key change's JWKS verdict, the access keys checked against `updater_keys` / `updater_methods`, and
@@ -932,7 +937,9 @@ address changes. In detail:
 - `set_owner` is removed; `propose_owner` / `cancel_owner_proposal` / `accept_owner` replace it.
 - New: `set_issuer_key_delay_ms`, `set_governance_delay_ms`, watchdogs, `pause` / `unpause`, updater keys
   (`add_updater_key`, `delete_updater_key`, callback `on_updater_key_added`), `propose_upgrade` / `cancel_upgrade` /
-  `execute_upgrade` / `migrate`, `migrate_v1`, the surplus withdrawal, `get_governance`.
+  `execute_upgrade` / `migrate`, `migrate_v1`, the surplus withdrawal, `get_governance`, and the view
+  `get_issuer_keys` (added with `apps/watchdog`: active keys with their material, so the watchdog can compare keys
+  that went live while it was down or arrived by an upgrade; read-only, no state change).
 - `new` takes `issuer_key_delay_ms`, `governance_delay_ms`, `watchdogs` and `updater_keys`.
 - `set_console_audiences` additions wait `change_delay_ms` (`pending_console_audiences`); duplicates are refused.
 - `get_config` gains `pending_console_audiences`, `issuer_key_delay_ms`, `pending_issuer_key_delay`,

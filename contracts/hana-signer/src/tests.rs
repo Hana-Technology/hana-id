@@ -2648,6 +2648,24 @@ const NEW_CODE: &[u8] = b"\0asm the next version";
 // ---- issuer-key changes ----
 
 #[test]
+fn get_issuer_keys_returns_active_key_material_only() {
+    let mut c = setup();
+    let (n, e) = fixture_key();
+    let key = |kid: &str| IssuerKeyView { kid: kid.into(), n: n.clone(), e: e.clone() };
+    assert_eq!(c.get_issuer_keys("google".into()), Some(vec![key("test-kid")]));
+    assert_eq!(c.get_issuer_keys("nope".into()), None);
+    // A pending key is not active, so not listed; once confirmed it is, in kid order.
+    let id = propose_key(&mut c, ME, "a-kid");
+    assert_eq!(c.get_issuer_keys("google".into()), Some(vec![key("test-kid")]));
+    ctx(WATCHDOG, NOW_MS);
+    c.confirm_issuer_key_change(id);
+    assert_eq!(c.get_issuer_keys("google".into()), Some(vec![key("a-kid"), key("test-kid")]));
+    // The material is the JWK base64url get_key_changes and the issuer_key_proposed event show.
+    let json = serde_json::to_value(c.get_issuer_keys("google".into())).unwrap();
+    assert_eq!(json[0], serde_json::json!({"kid":"a-kid","n":n,"e":e}));
+}
+
+#[test]
 fn a_posted_key_is_usable_only_once_executed() {
     let mut c = setup();
     let (n, e) = fixture_key();

@@ -219,10 +219,11 @@ the limiter can't be reached; nothing is relayed in either case.
 ```json
 { "result": { "big_y": "string", "big_c": "string" },
   "session": { "scope_id": "string", "expires_at_ms": 0, "max_uses": 0, "used": 1 },
-  "nearTx": "string", "requestId": "string" }
+  "nearTx": "string", "timings": { "totalMs": 0, "phases": { "app": 0, "…": 0 } }, "requestId": "string" }
 ```
 
-`session` is informational. Failures, by the failing receipt's executor:
+`session` is informational; `timings` is there for `pk_test_` apps only (see "Timings" below). Failures, by the
+failing receipt's executor:
 
 | Status | Code | Meaning |
 |---|---|---|
@@ -241,10 +242,12 @@ methods: `405`. Per-IP limits as above (`429 rate_limited`, `503 rate_limiter_un
 | Request | Origin | Body / headers | Responses |
 |---|---|---|---|
 | `POST` | `AUTH_ORIGIN` | `{iv, ct}` only, base64url; iv 12 bytes, ct ≥ 16 bytes, body ≤ 8 KiB | `204`; `409 relay_used` if ever written; `503 relay_unavailable` |
-| `GET ?wait=<1..25>` (absent = answer at once) | `VAULT_ORIGIN`, `AUTH_ORIGIN` | `x-hana-relay-key: <b64url of 32 bytes>` | `200 {iv, ct, serverTimeMs}` (consumed); `204` still empty after `wait` s; `410 relay_gone` read or expired; `403 relay_forbidden` missing/wrong key (slot untouched); `400 bad_request` bad `wait`; `503 relay_unavailable` |
+| `GET ?wait=<1..25>` (absent = answer at once) | `VAULT_ORIGIN`, `AUTH_ORIGIN` | `x-hana-relay-key: <b64url of 32 bytes>` | `200 {iv, ct, serverTimeMs, heldMs}` (consumed; `heldMs`: how long the value sat in the slot before this read, on the object's clock: a duration, never the write's time); `204` still empty after `wait` s; `410 relay_gone` read or expired; `403 relay_forbidden` missing/wrong key (slot untouched); `400 bad_request` bad `wait`; `503 relay_unavailable` |
 
 The value lives 120 s after the write, then a tombstone answers 410 for 120 s more, then the object is empty. Only
-ciphertext is stored; bodies, keys and relay ids are never logged.
+ciphertext is stored; bodies, keys and relay ids are never logged. For a `pk_test_` app the encrypted payload also
+carries the login popup's stage durations (`timings` beside `idToken` or `error`, at most 8 numbers, `@hana-id/core`
+`relay.ts`); the API can't read them any more than the token.
 
 ### `GET {VAULT_ORIGIN}/vault?pk=<publishable key>` · B
 
@@ -310,8 +313,8 @@ limits. Storage errors: `503 config_unavailable`. Missing `VAULT_KEK`: `503 vaul
 
 | Endpoint | Body | Payload | 2xx |
 |---|---|---|---|
-| `/v1/vault/shares` | `{sessionPublicKey: number[32], signature: number[64]}` (exactly) | `"share" ‖ borsh(parentOrigin)`, shareId 0×16, counter 0 | `201 {shareId: number[16], ks: number[32], absExpiresAtMs, idleUntilMs}` |
-| `/v1/vault/unlock` | `{shareId: number[16], counter: integer ≥ 1, signature: number[64]}` (exactly) | `"unlock"` | `200 {ks: number[32], counter, idleUntilMs, absExpiresAtMs}` |
+| `/v1/vault/shares` | `{sessionPublicKey: number[32], signature: number[64]}` (exactly) | `"share" ‖ borsh(parentOrigin)`, shareId 0×16, counter 0 | `201 {shareId: number[16], ks: number[32], absExpiresAtMs, idleUntilMs}` (+ `timings`, `pk_test_` only) |
+| `/v1/vault/unlock` | `{shareId: number[16], counter: integer ≥ 1, signature: number[64]}` (exactly) | `"unlock"` | `200 {ks: number[32], counter, idleUntilMs, absExpiresAtMs}` (+ `timings`, `pk_test_` only) |
 | `/v1/vault/touch` | same | `"touch"` | `200 {counter, idleUntilMs}` |
 | `/v1/vault/revoke` | same | `"revoke"` | `200 {revoked: true}` |
 | `/v1/vault/revoke-all` | same | `"revoke-all"` | `200 {revoked: <number of the same user's other live shares in this app>}` |
@@ -518,6 +521,21 @@ both gitignored (`apps/api/scripts/pages-wrangler.ts`).
 Also generated: `name` = `cloudflare.workerName`, `compatibility_date` 2026-10-01, `nodejs_compat`, alias
 `secp256k1` → `src/shims/secp256k1.ts`, `observability.enabled`, the cron.
 
+## Timings
+
+A `pk_test_` app's successful `POST /v1/login`, `POST /v1/vault/shares` and `POST /v1/vault/unlock` answer with the
+request's own timings, so a test page can set the API's time against its own round trip (apps/smoke, README
+"Timings"):
+
+```json
+"timings": { "totalMs": 0, "phases": { "app": 0, "limits": 0, "…": 0 } }
+```
+
+`totalMs` runs from the request reaching the Worker to the answer; `phases` are the request log's (below). Durations
+only, under phase names: no request field, key, token or transaction. Like the log, they move only on I/O (the Workers
+clock), so CPU-only work shows as 0. `pk_live_` apps never get them, nor does any error answer or any other endpoint
+(`apps/api/test/timings.test.ts`).
+
 ## Logs
 
 One JSON line per event (`src/log.ts`): `{"level", "ts", "event", …}`. Only typed fields can be logged: never JWTs,
@@ -539,7 +557,12 @@ signatures, bodies, keys, CKD responses, relay bodies or panic text.
 | `app` | D1 app lookup |
 | `limits` | rate-limiter round trips |
 | `checks` | body, token, nonce, chain reads, signature, pre-checks (everything before the relay) |
-| `session` | share creation: session read and retries |
+| `settings` | share creation: the app's settings row (D1) |
+| `session` | share creation: signature check, then the session read and its retries (every 300 ms for up to 2 s while the node lags) |
+| `insert` | share creation: wrapping K_s and the D1 insert |
+| `shareLimit` | share actions: the per-share limiter |
+| `share` | share actions: the KEK, the share row and (unlock, touch) the settings row (D1) |
+| `advance` | unlock: re-wrap if needed and the counter update (D1) |
 | `relay` | round trip to the relayer key object |
 | `relayDispatch` | inside it, until broadcast: = `relayQueue` + `relayChainRead` + `relaySign` + `relayPersist` (summed over retries) |
 | `relayQueue` | waiting for earlier critical sections of the same key |
@@ -553,7 +576,7 @@ the block hash was re-read; `served` relays this instance handled before; `ageMs
 
 Other events: `relay_dispatched` (`pool`, `keyIndex`, `method`, `nearTx`, `nonce`, `attempt`), `relay_retry`
 (`code` `invalid_nonce` / `expired` / `dropped`), `relay_dispatch_failed`, `jwks_sync` (`added`, `removed`, `kids`),
-`jwks_sync_failed` / `jwks_sync_skipped` (`code`), `jwks_tx`, `jwks_stale`, `vault_page`, `vault_maintenance`
+`jwks_sync_failed` / `jwks_sync_skipped` (`code`), `jwks_tx`, `jwks_stale`, `vault_page` (`latencyMs`: its D1 reads), `vault_maintenance`
 (`pruned`, `rewrapped`, `unknownKek`), `vault_rewrap_unreadable` (`unreadable`), `vault_kek_unavailable`, `vault_share_unreadable`,
 `usage_increment_failed`, `owner_token_release_failed`, `gas_override_ignored`, `auto_approve_policy_invalid`
 (`problems`), and from the page Workers `vault_host` and `auth_page` (`code`).

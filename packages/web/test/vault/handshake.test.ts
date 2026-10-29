@@ -23,7 +23,7 @@ describe('handshake', () => {
   it('accepts a hello from window.parent on an allowed origin with one port, and replies ready on that port', async () => {
     const t = tab();
     t.hello();
-    expect(await t.ready()).toEqual({ status: 'logged_out', persistence: 'session' });
+    expect(await t.ready()).toEqual({ status: 'logged_out', persistence: 'session', timings: expect.any(Object) });
   });
 
   it.each([
@@ -112,7 +112,7 @@ describe('handshake', () => {
     browser.storeFails = true;
     const t = tab({}, browser);
     t.hello();
-    expect(await t.ready()).toEqual({ status: 'logged_out', persistence: 'none', warning: 'storage_unavailable' });
+    expect(await t.ready()).toEqual({ status: 'logged_out', persistence: 'none', warning: 'storage_unavailable', timings: expect.any(Object) });
   });
 
   it('fetches GET /v1/app in the background after ready, with the pinned parent origin', async () => {

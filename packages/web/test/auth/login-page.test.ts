@@ -283,3 +283,24 @@ describe('/login', () => {
     expect(pageText()).toContain('<img src=x onerror=alert(1)>');
   });
 });
+
+describe('timings (pk_test_ apps)', () => {
+  it('stores its GET /v1/app check as authCheck with the relay key; a duration only', async () => {
+    const s = setup('partner');
+    const params = authParams();
+    s.win.message(params, ENV.vaultOrigin, s.vault);
+    await s.page.done;
+    const entry = JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + params.relayId) as string) as Record<string, unknown>;
+    expect(Object.keys(entry.t as object)).toEqual(['authCheck']);
+    expect((entry.t as { authCheck: number }).authCheck).toBeGreaterThanOrEqual(0);
+  });
+
+  it('a pk_live_ app stores no timings', async () => {
+    const s = setup('partner');
+    const params = authParams({ pk: 'pk_live_1111111111111111' });
+    s.win.message(params, ENV.vaultOrigin, s.vault);
+    expect((await s.page.done).stage).toBe('redirecting');
+    const entry = JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + params.relayId) as string) as Record<string, unknown>;
+    expect(entry).not.toHaveProperty('t');
+  });
+});

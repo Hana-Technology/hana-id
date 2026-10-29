@@ -10,7 +10,7 @@
 //
 // SECURITY: auth-params carries relayKey, the one session secret that crosses postMessage. It is accepted only from
 // the authenticated sender, kept only in sessionStorage, and the in-memory copy is zeroed.
-import { type WindowMessage, parseWindowMessage, sessionNonce } from '@hana-id/core';
+import { type WindowMessage, isTestPublishableKey, parseWindowMessage, sessionNonce } from '@hana-id/core';
 import type { HanaEnv } from '../hana-env.ts';
 import type { AuthApi } from './api.ts';
 import { type Dom, dom, errorView } from './dom.ts';
@@ -33,6 +33,8 @@ export interface LoginPageDeps {
   api: AuthApi;
   /** Device clock (only for sessionStorage entry ages). */
   now?: () => number;
+  /** Monotonic ms for a pk_test_ app's `authCheck` timing; defaults to performance.now. */
+  perfNow?: () => number;
 }
 
 export type LoginPageState =
@@ -91,6 +93,7 @@ function openerPath(opener: Window): string | null {
 export function startLoginPage(deps: LoginPageDeps): LoginPage {
   const { win, env, api } = deps;
   const now = deps.now ?? (() => Date.now());
+  const perfNow = deps.perfNow ?? (() => performance.now());
   const d: Dom = dom(win.document);
   let state: LoginPageState = { stage: 'error', code: 'config_mismatch' };
   let finish: (s: LoginPageState) => void = () => {};
@@ -138,6 +141,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
   }
 
   async function check(msg: WindowMessage<'hana:auth-params'>, mode: OpenerMode): Promise<void> {
+    const checkStarted = perfNow();
     state = { stage: 'checking', mode };
     d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signing in'), d.h('p', { class: 'muted' }, 'Checking the sign-in request…')));
     try {
@@ -163,7 +167,10 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
       });
       if (nonce !== msg.nonce) throw new PageError('config_mismatch', 'The sign-in request’s nonce does not commit to its session.');
       try {
-        storeLoginEntry(win.sessionStorage, msg.relayId, msg.relayKey, now());
+        // pk_test_ apps: this page's part of the vault's hello → token (the GET /v1/app check, the nonce), forwarded
+        // by the callback inside the encrypted relay slot. A duration on this page's clock, nothing else.
+        const timings = isTestPublishableKey(msg.pk) ? { authCheck: Math.max(0, perfNow() - checkStarted) } : undefined;
+        storeLoginEntry(win.sessionStorage, msg.relayId, msg.relayKey, now(), timings);
       } catch {
         throw new PageError('storage_unavailable', 'This browser blocked the storage the sign-in needs.');
       } finally {

@@ -46,6 +46,7 @@ class FakeClient {
   persistence: 'session' | 'none' | null = null;
   warning: 'storage_unavailable' | null = null;
   lastLogin: LoginResult | null = null;
+  readyTimings: Record<string, number> | null = null;
   destroyed = false;
   readonly ready: Promise<void>;
   resolveReady!: () => void;
@@ -265,9 +266,18 @@ describe('vault smoke page: app and login', () => {
     clock = 13_500;
     last().finishLogin!(login(A));
     await vi.waitFor(() => expect(storedRuns()).toHaveLength(1));
-    expect(storedRuns()[0]).toMatchObject({ kind: 'login', account: 'personal', scopeId: 's1', clientMode: 'own', persistence: 'session', stellar: A.stellar, timings: { stages: TIMINGS, totalMs: 12_500 } });
-    expect(rows('timings')[0]).toBe(['1', 'login', '120', '900', '4000', '15', '6200', '40', '12500'].join(''));
-    expect(text('log')).toMatch(/Logged in through the vault in 12500 ms \(chain 6200 ms\)/u);
+    // The stages plus `other` (12 500 − 11 275 ms) add up to the page's total.
+    expect(storedRuns()[0]).toMatchObject({
+      kind: 'login',
+      account: 'personal',
+      scopeId: 's1',
+      clientMode: 'own',
+      persistence: 'session',
+      stellar: A.stellar,
+      timings: { stages: { ...TIMINGS, other: 1225 }, totalMs: 12_500 },
+    });
+    expect(rows('timings')[0]).toBe(['1', 'login', '12500', 'app 120 · popup 900 · google 4000 · verify 15 · chain 6200 · decrypt 40 · other 1225', ''].join(''));
+    expect(text('log')).toMatch(/Logged in through the vault in 12500 ms \(chain 6200 ms, other 1225 ms\)/u);
     expect(text('wallet')).toContain(A.stellar);
     expect(button('login').disabled).toBe(true);
     // GET /v1/app is read again for the login's client mode.
@@ -314,6 +324,24 @@ describe('vault smoke page: app and login', () => {
 });
 
 describe('vault smoke page: persistence and unlock', () => {
+  it('records a pk_test_ unlock’s stages with other, and its POST /v1/vault/unlock breakdown apart', async () => {
+    localStorage.setItem('hana-smoke.publishableKey', PK);
+    clock = 0;
+    boot();
+    const c = last();
+    c.readyTimings = { mount: 2, frameStart: 30, vaultFetch: 400, vaultScript: 120, vaultConfig: 3, vaultLoad: 5, store: 4, record: 6, unlock: 900, counter: 2, unwrap: 1, addresses: 3, port: 4, vault: 919, unlockRtt: 899, unlockServer: 610 };
+    clock = 1500;
+    c.readyWith(A);
+    await vi.waitFor(() => expect(storedRuns()).toHaveLength(1));
+    const stages = storedRuns()[0]!.timings.stages as Record<string, number>;
+    expect(storedRuns()[0]!.timings.totalMs).toBe(1500);
+    expect(stages.other).toBe(1500 - 1480);
+    expect(rows('timings')[0]).toContain('frameStart 30 · vaultFetch 400');
+    expect(rows('timings')[0]).toContain('port 4 · other 20');
+    expect(rows('timings')[0]).toContain('unlockRtt 899 · unlockServer 610 · vault 919');
+    expect(text('log')).toMatch(/Vault ready in 1500 ms \(POST \/v1\/vault\/unlock 899 ms, API 610 ms\)/u);
+  });
+
   it('a page load that unlocks is logged with its ready time and must restore the last run', async () => {
     localStorage.setItem('hana-smoke.publishableKey', PK);
     localStorage.setItem('hana-smoke.account', 'personal');
@@ -517,7 +545,7 @@ describe('vault smoke page: results log', () => {
     button('copy-json').click();
     await vi.waitFor(() => expect(writeText).toHaveBeenCalled());
     const out = JSON.parse(writeText.mock.calls[0]![0]) as { version: number; vaultRuns: unknown[]; directRuns: unknown[] };
-    expect(out.version).toBe(2);
+    expect(out.version).toBe(3);
     expect(out.vaultRuns).toHaveLength(1);
     expect(out.directRuns).toEqual(direct);
     button('clear-log').click();

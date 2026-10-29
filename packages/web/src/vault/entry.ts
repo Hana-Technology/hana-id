@@ -4,4 +4,5 @@
 import { BUILD_ENV } from '../build-env.ts';
 import { bootVault } from './boot.ts';
 
-bootVault(window, BUILD_ENV);
+// When the bundle started running, on this document's clock (pk_test_ unlock timings: `vaultScript`).
+bootVault(window, BUILD_ENV, window.performance?.now());

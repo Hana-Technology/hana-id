@@ -13,6 +13,7 @@ import { APPROVAL_KINDS, type ApprovalContext, type ApprovalKind, approvalKindCh
 import { base64Decode, from0xHex, toHex, utf8, utf8Length } from './bytes.ts';
 import { KEY_INDEX_LIMIT, MAX_USES_LIMIT, RELAY_ID_PATTERN, SALT_MAX_BYTES, SALT_MIN_BYTES, SHARE_ID_BYTES } from './layouts.ts';
 import { type EvmTxRequest, evmTxSigningPayload, parseEvmTxRequest } from './signers/evm.ts';
+import { isTimings } from './timings.ts';
 
 export const PROTOCOL_VERSION = 1;
 /** Cap for sign requests (port). */
@@ -334,7 +335,7 @@ export interface LoginResult {
   persistence: Persistence;
   /** Informational (`storage_unavailable`: persistence fell back to 'none'). */
   warning?: 'storage_unavailable';
-  /** pk_test_ apps only: per-stage ms, no secrets (for apps/smoke). */
+  /** pk_test_ apps only: per-stage ms, no secrets (for apps/smoke; timings.ts, LOGIN_TIMING_STAGES). */
   timings?: Record<string, number>;
 }
 
@@ -379,9 +380,6 @@ function isStatusResult(v: unknown, extra: readonly string[] = []): v is StatusR
   return v.status === 'logged_in' && isPortAddresses(v.addresses) && isMs(v.expiresAtMs);
 }
 
-function isTimings(v: unknown): boolean {
-  return isPlainObject(v) && Object.keys(v).length <= 32 && Object.entries(v).every(([k, ms]) => /^[a-zA-Z]{1,32}$/u.test(k) && typeof ms === 'number' && Number.isFinite(ms) && ms >= 0);
-}
 
 const RESULTS: { [M in PortMethod]: (r: unknown) => boolean } = {
   hana_status: (r) => isStatusResult(r),
@@ -446,7 +444,8 @@ export function parsePortReply<M extends PortMethod>(data: unknown, method: M): 
 export const LOGIN_STAGES = ['popup_connected', 'google', 'token', 'chain', 'done'] as const;
 
 export interface PortEventMap {
-  ready: StatusResult & { warning?: 'storage_unavailable' };
+  /** `timings`: pk_test_ apps only, the vault's boot and unlock stages (timings.ts, UNLOCK_TIMING_STAGES). */
+  ready: StatusResult & { warning?: 'storage_unavailable'; timings?: Record<string, number> };
   accountsChanged: { addresses: PortAddresses | null };
   disconnect: { code: number };
   sessionExpired: null;
@@ -459,7 +458,8 @@ export type PortEventName = keyof PortEventMap;
 export type PortEvent = { [E in PortEventName]: { v: 1; event: E; data: PortEventMap[E] } }[PortEventName];
 
 const EVENTS: { [E in PortEventName]: (d: unknown) => boolean } = {
-  ready: (d) => isPlainObject(d) && (d.warning === undefined || d.warning === 'storage_unavailable') && isStatusResult(d, ['warning']),
+  ready: (d) =>
+    isPlainObject(d) && (d.warning === undefined || d.warning === 'storage_unavailable') && (d.timings === undefined || isTimings(d.timings)) && isStatusResult(d, ['warning', 'timings']),
   accountsChanged: (d) => isPlainObject(d) && exactKeys(d, ['addresses']) && (d.addresses === null || isPortAddresses(d.addresses)),
   disconnect: (d) => isPlainObject(d) && exactKeys(d, ['code']) && isInt(d.code, 0, 9999),
   sessionExpired: (d) => d === null,

@@ -83,6 +83,8 @@ export interface LoginResponse {
   session: { scope_id: string; expires_at_ms: number; max_uses: number; used: 1 };
   nearTx: string | null;
   requestId: string | null;
+  /** pk_test_ apps only: the API's own total and phases (docs/api.md "Timings"); check with isServerTimings. */
+  timings?: unknown;
 }
 
 /** `POST /v1/login-relay/:relayId` body, and `GET` 200 (plus serverTimeMs). base64url. */
@@ -93,6 +95,8 @@ export interface RelayWriteBody {
 
 export interface RelayReadResponse extends RelayWriteBody {
   serverTimeMs: number;
+  /** How long the value sat in the slot before this read answered (API clock, ms). Newer APIs only. */
+  heldMs?: number;
 }
 
 /** `POST /v1/vault/shares` (the create-share vault message, signed by the session key). */
@@ -107,6 +111,8 @@ export interface CreateShareResponse {
   absExpiresAtMs: number;
   idleUntilMs: number;
   requestId?: string;
+  /** pk_test_ apps only: the API's own total and phases (docs/api.md "Timings"); check with isServerTimings. */
+  timings?: unknown;
 }
 
 /** `POST /v1/vault/unlock`, `/touch`, `/revoke`, `/revoke-all`. */
@@ -122,6 +128,8 @@ export interface UnlockResponse {
   idleUntilMs: number;
   absExpiresAtMs: number;
   requestId?: string;
+  /** pk_test_ apps only: the API's own total and phases (docs/api.md "Timings"); check with isServerTimings. */
+  timings?: unknown;
 }
 
 export interface TouchResponse {

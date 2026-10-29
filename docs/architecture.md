@@ -414,9 +414,12 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
 - **Location**: `DO_LOCATION_HINT` (manifest `cloudflare.durableObjectLocation`, sandbox-dev `apac`) pins relayer key
   objects, per-app limiters and owner-action limiters, with the region in the object name
   (`apps/api/src/placement.ts:20`). Per-IP limiters and `LoginRelay` objects are created near their caller.
-- **Request log** (`done`, `handlers.ts:98`): per-stage timings (`app`, `limits`, `checks`, `relay`, `relayQueue`,
-  `relayChainRead`, `relaySign`, `relayPersist`, `relayOutcome`), `colo`, `relayInstance` (cold, chain read, block
-  refresh). Never tokens, signatures, bodies, keys or CKD responses.
+- **Request log** (`done`, `handlers.ts`): per-stage timings (`app`, `limits`, `checks`, `relay`, `relayQueue`,
+  `relayChainRead`, `relaySign`, `relayPersist`, `relayOutcome`; the vault endpoints add `settings`, `session`,
+  `insert`, `shareLimit`, `share`, `advance`), `colo`, `relayInstance` (cold, chain read, block refresh). Never
+  tokens, signatures, bodies, keys or CKD responses. A `pk_test_` app's `/v1/login`, `/v1/vault/shares` and
+  `/v1/vault/unlock` also return the total and phases as `timings` (`docs/api.md` "Timings"), which the vault adds to
+  the per-stage timings it reports to the partner client (`packages/core/src/timings.ts`).
 
 ## Glossary
 

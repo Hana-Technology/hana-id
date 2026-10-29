@@ -441,6 +441,18 @@ corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --status
 | `relayChainRead` with `blockRefresh` only | stored block hash older than 5 min |
 | `relayPersist` | a new 100-nonce reservation (~3–30 ms) |
 | `relayOutcome` | the chain: execution, and on derive the MPC (~4.5 s) |
+| `session` large on `/v1/vault/shares` | the RPC node behind `/v1/login`'s optimistic answer: `get_session` re-read every 300 ms (up to 2 s) |
+| `settings`, `insert`, `share`, `advance` large | D1 round trips (each is one or two queries) |
+| `vault_page` `latencyMs` | the vault page's D1 reads (app, origins, settings) that every page load waits for |
+
+**Stage timings (`pk_test_` apps).** The smoke page's *Timings* table (`apps/smoke/README.md` "Timings") splits a
+login and a reload unlock into consecutive stages that add up to the page's total (with `other`), measured where they
+happen: the partner page, the vault, the login popup and callback (navigation timing), the relay object
+(`relayHeld`) and the API (`timings` on `/v1/login`, `/v1/vault/shares`, `/v1/vault/unlock`, `docs/api.md`
+"Timings"). For a request, `<name>Rtt − <name>Server` is what the API never sees: the network, a CORS preflight and
+Cloudflare's routing to the Worker; set the `colo` of the same request's log line next to it. *Copy results as JSON*
+exports them (results version 3). `pk_live_` apps never get timings; production latency comes from the log lines
+above.
 
 Measured on sandbox-dev (2026-10-27, real MPC, `docs/context.md` "Testnet measurements"):
 

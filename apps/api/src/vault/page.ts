@@ -90,6 +90,7 @@ export function renderVaultHtml(config: VaultConfig): string {
 }
 
 export async function handleVaultPage(request: Request, env: Env, requestId: string): Promise<Response> {
+  const started = Date.now();
   const head = request.method === 'HEAD';
   const key = new URL(request.url).searchParams.get('pk');
   if (!key || !PUBLISHABLE_KEY_RE.test(key)) return errorPage(403, requestId, undefined, 'unknown_app', head);
@@ -129,7 +130,8 @@ export async function handleVaultPage(request: Request, env: Env, requestId: str
     serverTimeMs: Date.now(),
   };
   const frameAncestors = origins.length > 0 ? origins.join(' ') : "'none'";
-  log({ event: 'vault_page', requestId, appId: app.id, outcome: 'ok', status: 200 });
+  // latencyMs: the D1 reads (app, origins, settings) that every page load waits for before the vault can unlock.
+  log({ event: 'vault_page', requestId, appId: app.id, outcome: 'ok', status: 200, latencyMs: Date.now() - started });
   return new Response(head ? null : renderVaultHtml(config), {
     status: 200,
     headers: pageHeaders([`frame-ancestors ${frameAncestors}`, `connect-src ${apiOrigin} ${rpcOrigins} ${GOOGLE_CERTS_ORIGIN}`], {

@@ -236,6 +236,17 @@ Every run, one-transaction and two-transaction, gave the same Stellar and EVM ad
 - The vault login spends ≈ 1.7 s outside Google and the chain (popup ≈ 0.25 s; the rest not yet attributed); the
   direct page ≈ 0.03 s. The registry scope check (D49) took ≈ 0.5 s, fully overlapped (wait 0 ms).
 - Reload unlock: 3.0 s (target < 1 s); no stage breakdown yet.
+- **Instrumented (branch `perf/vault-timings-impl`, not yet measured):** `pk_test_` logins and unlocks now report
+  consecutive stages that add up to the smoke page's total with `other` (`apps/smoke/README.md` "Timings"), plus the
+  API's own time for `/v1/login`, `/v1/vault/shares` and `/v1/vault/unlock` (`docs/api.md` "Timings"). Suspects from
+  the code, to confirm with those numbers: the login's unattributed time is mostly `persist`, a serial
+  `POST /v1/vault/shares` after the chain (vault gate: 2 D1 queries + 2 limiter objects; settings; a fresh
+  `get_session` read that retries every 300 ms while the RPC lags `/v1/login`'s optimistic answer; the D1 insert);
+  the callback's relay POST goes to a new URL every login, so its CORS preflight is never cached (one more round trip
+  inside `google`); a reload is the vault page (`no-store`, 3 serial D1 reads behind the page Worker), `/vault.js`
+  revalidated each load (Workers assets default `max-age=0`, not content-hashed), then `POST /v1/vault/unlock` with
+  ~5 serial D1 queries and 3 limiter objects (2 placed in `apac`), each round trip longer when `workers.dev` routes
+  Malaysia to a US/EU colo.
 
 ## Testnet measurements (sandbox-dev, 2026-10-27, real MPC)
 

@@ -511,7 +511,7 @@ const evmProvider = createSodaxEvmProvider(hana, { chainId: 8453, rpcUrl });    
 |---|---|---|
 | Where | sandbox envs (testnet), the pilot | the production MVP (mainnet), after the audit; not issued yet |
 | Loopback origins (`http://localhost:…`) | allowed, in `local*`/`sandbox*` envs only | never |
-| Login result | carries per-stage `timings` (`hana.lastLogin.timings`) | no timings |
+| Login result | carries per-stage `timings` (`hana.lastLogin.timings`); the handshake and unlock's are `hana.readyTimings` | no timings (`hana.readyTimings` is null) |
 | Direct API calls from your page (`/v1/sessions`, `/v1/derive`) | only in sandbox envs, for test tooling such as `apps/smoke` | never |
 | Networks | test networks only: any Stellar network but the public one, and the EVM chains below | any |
 

@@ -43,6 +43,9 @@ export type LoginOutcome = { kind: 'login'; result: LoginResult } | { kind: 'alr
 export class LoginAttempt {
   readonly promise: Promise<LoginOutcome>;
   readonly popupBlocked: boolean;
+  /** When hana_login was sent and answered (the `now` passed in; 0 until then): the `wait` and `port` timings. */
+  sentAt = 0;
+  repliedAt = 0;
 
   readonly #port: LoginPort;
   readonly #popup: Window | null;
@@ -60,7 +63,12 @@ export class LoginAttempt {
    * `popup` is what openLoginPopup returned, just before this. `isLoggedIn` is read once the vault is ready: a page
    * that called login() before the handshake finished may turn out to be unlocked already.
    */
-  constructor(port: LoginPort, popup: Window | null, isLoggedIn: () => boolean) {
+  constructor(
+    port: LoginPort,
+    popup: Window | null,
+    isLoggedIn: () => boolean,
+    private readonly now: () => number = () => performance.now(),
+  ) {
     this.#port = port;
     this.#popup = popup;
     this.#isLoggedIn = isLoggedIn;
@@ -102,7 +110,9 @@ export class LoginAttempt {
     this.#sent = true;
     let result: LoginResult;
     try {
+      this.sentAt = this.now();
       result = await this.#port.send('hana_login', this.popupBlocked ? { popupBlocked: true } : undefined);
+      this.repliedAt = this.now();
     } catch (e) {
       this.#fail(asHanaError(e), false);
       return;

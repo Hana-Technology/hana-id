@@ -5,6 +5,7 @@
 // SECURITY: the plaintext holds a Google ID token. Never log it; drop it once verified.
 import { base64UrlDecode, base64UrlEncode, fromUtf8, toBytes, utf8 } from './bytes.ts';
 import { relayAad } from './layouts.ts';
+import { isTimings } from './timings.ts';
 
 export const RELAY_IV_BYTES = 12;
 export const RELAY_KEY_BYTES = 32;
@@ -12,8 +13,13 @@ export const RELAY_KEY_BYTES = 32;
 export const RELAY_MAX_BODY_BYTES = 8192;
 const GOOGLE_ERROR = /^[a-z_]{1,64}$/u;
 
-/** What Google returned: a token, or its `error` code. */
-export type RelayPayload = { idToken: string } | { error: string };
+/**
+ * What Google returned: a token, or its `error` code. `timings`: pk_test_ apps only, the login popup's stage durations
+ * (`authCheck`, `callback*`, timings.ts), which the vault adds to the login's timings.
+ */
+export type RelayPayload = ({ idToken: string } | { error: string }) & { timings?: Record<string, number> };
+/** At most this many popup timings ride along in the slot. */
+export const RELAY_TIMINGS_MAX_KEYS = 8;
 
 /** The relay slot value, base64url. */
 export interface RelayCiphertext {
@@ -23,10 +29,11 @@ export interface RelayCiphertext {
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-/** True for exactly `{idToken: string}` or `{error: ^[a-z_]{1,64}$}`. */
+/** True for exactly `{idToken: string}` or `{error: ^[a-z_]{1,64}$}`, each with an optional `timings` record. */
 export function isRelayPayload(v: unknown): v is RelayPayload {
   if (!isObj(v)) return false;
-  const keys = Object.keys(v);
+  const keys = Object.keys(v).filter((k) => k !== 'timings');
+  if ('timings' in v && !(isTimings(v.timings) && Object.keys(v.timings).length <= RELAY_TIMINGS_MAX_KEYS)) return false;
   if (keys.length !== 1) return false;
   if (keys[0] === 'idToken') return typeof v.idToken === 'string' && v.idToken.length > 0 && v.idToken.length <= 4096;
   if (keys[0] === 'error') return typeof v.error === 'string' && GOOGLE_ERROR.test(v.error);

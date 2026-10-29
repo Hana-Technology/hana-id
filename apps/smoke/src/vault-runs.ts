@@ -10,10 +10,11 @@ export type VaultRunKind = 'login' | 'unlock';
 
 export interface VaultTimings {
   /**
-   * The vault's per-stage ms (LoginResult.timings, pk_test_ apps only; null otherwise and for unlocks): `app` (Google
-   * client), `popup` (until the login popup connected), `google` (the Google UI and the relay, so it includes the
-   * tester's clicks), `verify` (RS256 and claims), `chain` (POST /v1/login, create_session_and_derive, with any
-   * retries), `decrypt` (CKD decryption, pairing check, derivation v1).
+   * pk_test_ apps only (null otherwise): per-stage ms. A login's are LoginResult.timings, an unlock's the client's
+   * `readyTimings`, each plus `other` (the total minus the stages, and `overrun` when they pass it), so the stages
+   * add up to `totalMs`. The stage and detail names are @hana-id/core's LOGIN_TIMING_* and UNLOCK_TIMING_* (README
+   * "Timings"). Runs logged before results version 3 have the old login stages only (`app`, `popup`, `google` with the
+   * callback and relay in it, `verify`, `scopeCheck`, `scopeWait`, `chain`, `decrypt`) and no unlock stages.
    */
   stages: Record<string, number> | null;
   /**
@@ -151,7 +152,7 @@ export function parseStoredVaultRuns(text: string | null): VaultRunRecord[] {
 /** "Copy results as JSON": both logs, public data only. */
 export function allResultsJson(vaultRuns: readonly VaultRunRecord[], directRuns: readonly RunRecord[]): string {
   return JSON.stringify(
-    { kind: 'hana-id-smoke-results', version: 2, derivation: 'v1 (hana-id/chain-keys/v1, @hana-id/core/derivation)', vaultRuns, directRuns },
+    { kind: 'hana-id-smoke-results', version: 3, derivation: 'v1 (hana-id/chain-keys/v1, @hana-id/core/derivation)', vaultRuns, directRuns },
     null,
     2,
   );

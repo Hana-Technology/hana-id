@@ -58,7 +58,7 @@ import { autoApproveStatus, consentActive, consentEnd, newConsent, withUsage } f
 import { type Persistence, type PolicyInForce, type RawSign, type VaultConfig, parentAllowed, policyInForce } from './config.ts';
 import { VaultError, apiErrorToVault, disconnected, notLoggedIn, toProtocolError, userRejected } from './errors.ts';
 import { Launcher, type LauncherHandle, type LauncherView } from './launcher.ts';
-import { type LoginMode, type LoginStage, type LoginSuccess, PendingLogin } from './login.ts';
+import { type LoginMode, type LoginStage, type LoginSuccess, PendingLogin, serverDetail } from './login.ts';
 import { NearView } from './near.ts';
 import {
   type ConsentV1,
@@ -76,6 +76,44 @@ import {
 import { type Channel, Clock, type Locks, type Timers, type WindowMessageEvent, type WindowRef, randomHex128, realTimers } from './runtime.ts';
 import { type SignRequest, approvalSubject, signRequest } from './signing.ts';
 
+/** performance.now where there is one (browsers, workers), else Date.now. */
+const defaultPerfNow = (): number => (typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now());
+
+/** The /v1/vault/shares phases (apps/api vault/endpoints.ts `lap`) behind each shareServer* detail. */
+const SHARE_SERVER_GROUPS = { Gate: ['app', 'limits'], Session: ['session'] } as const;
+/** The /v1/vault/unlock phases behind each unlockServer* detail. */
+const UNLOCK_SERVER_GROUPS = { Gate: ['app', 'limits'], Share: ['shareLimit', 'share'], Advance: ['advance'] } as const;
+
+/** Consecutive stages from `start` (pk_test_ timings): `mark(name)` adds the time since the previous mark to `name`. */
+class Laps {
+  readonly timings: Record<string, number> = {};
+  /** Breakdowns of a stage (not added to the total). */
+  readonly detail: Record<string, number> = {};
+  private last: number;
+
+  constructor(
+    private readonly now: () => number,
+    start: number,
+  ) {
+    this.last = start;
+  }
+
+  mark(name: string): void {
+    const t = this.now();
+    this.timings[name] = (this.timings[name] ?? 0) + Math.max(0, t - this.last);
+    this.last = t;
+  }
+
+  has(name: string): boolean {
+    return name in this.timings;
+  }
+
+  /** The time of the last mark. */
+  get at(): number {
+    return this.last;
+  }
+}
+
 /** The vault's surroundings (boot.ts wires the browser's). */
 export interface VaultHost {
   /** window.parent. */
@@ -86,6 +124,20 @@ export interface VaultHost {
   onMessage(listener: (e: WindowMessageEvent) => void): void;
   /** window.open from the vault's browsing context (inside a launcher click). */
   open(url: string, name: string, features: string): WindowRef | null;
+  /** This document's navigation timing (ms since its navigation start), when the browser has it. */
+  navigationTiming?(): NavigationMarks | null;
+}
+
+/** What the vault reads from its own PerformanceNavigationTiming: all on the vault document's clock. */
+export interface NavigationMarks {
+  responseEnd: number;
+  /** 0 until the load event has run. */
+  loadEventEnd: number;
+}
+
+/** entry.ts's mark on the vault document's clock (performance.now): when the bundle started running. */
+export interface BootMarks {
+  scriptStart: number;
 }
 
 export interface VaultOptions {
@@ -100,6 +152,10 @@ export interface VaultOptions {
   fetch?: typeof fetch;
   timers?: Timers;
   deviceNow?: () => number;
+  /** Monotonic ms for pk_test_ timings; defaults to performance.now. */
+  perfNow?: () => number;
+  /** boot.ts's marks, for the unlock timings' `vault*` stages (pk_test_ apps). */
+  boot?: BootMarks;
   /** Google's key for a kid; defaults to fetching and caching Google's JWKS. */
   jwks?: (kid: string) => Promise<Jwk | null>;
   /** The split login fallback (until the ship gate decides). Default 'combined'. */
@@ -188,6 +244,11 @@ export class Vault {
   private readonly host: VaultHost;
   private readonly timers: Timers;
   private readonly deviceNow: () => number;
+  private readonly perfNow: () => number;
+  /** When the constructor finished (perfNow): the end of the `vaultConfig` stage. */
+  private readonly constructedAt: number;
+  /** When the hello was taken (perfNow): the start of the unlock stages after the handshake. */
+  private helloAt = 0;
   private readonly clock: Clock;
   /** The inlined policy while GET /v1/app still serves it; null once removed or changed (until a reload). */
   private policy: PolicyInForce | null;
@@ -231,6 +292,7 @@ export class Vault {
     this.host = o.host;
     this.timers = o.timers ?? realTimers;
     this.deviceNow = o.deviceNow ?? (() => Date.now());
+    this.perfNow = o.perfNow ?? defaultPerfNow;
     this.clock = new Clock(o.config.serverTimeMs, this.deviceNow);
     this.policy = policyInForce(o.config.settings);
     this.policyCheckedAt = o.config.serverTimeMs;
@@ -242,6 +304,7 @@ export class Vault {
     this.recordId = recordKey(o.env.signer, o.config.appId, o.config.scopeId, 0);
     this.bundleCkdKeyHash = ckdKeyHash(o.env.ckdNetworkKey);
     o.host.onMessage((e) => this.onWindowMessage(e));
+    this.constructedAt = this.perfNow();
   }
 
   /** The server-corrected time (tests). */
@@ -277,6 +340,7 @@ export class Vault {
     const ancestor = this.host.ancestorOrigin();
     if (ancestor !== undefined && ancestor !== e.origin) return;
     const port = e.ports[0]!;
+    this.helloAt = this.perfNow();
     this.parentOrigin = e.origin;
     this.port = port;
     const fetchFn = this.o.fetch;
@@ -304,6 +368,7 @@ export class Vault {
   }
 
   private async start(): Promise<void> {
+    const t = new Laps(this.perfNow, this.helloAt);
     // The per-app channel first: an unlock broadcasts its counter (or a revocation) on it.
     this.channel = this.o.channel(`hana-vault:${this.config.appId}`);
     this.channel?.onMessage((d) => this.onBroadcast(d));
@@ -316,17 +381,40 @@ export class Vault {
         warning = 'storage_unavailable';
       }
     }
+    t.mark('store');
     try {
-      await this.unlock();
+      await this.unlock(undefined, t);
     } catch {
       // An unlock that fails for any unexpected reason leaves the vault logged out.
     }
     if (this.storageBroken) warning = 'storage_unavailable';
-    this.emit('ready', { ...this.statusResult(), ...(warning ? { warning } : {}) });
+    const status = this.statusResult();
+    // An unlock that got as far as PRK ends with the addresses; any other path ends where the record was read.
+    t.mark(t.has('unwrap') ? 'addresses' : 'record');
+    const timings = this.testApp ? { ...this.bootTimings(), ...t.timings, ...t.detail, vault: t.at - this.helloAt } : null;
+    this.emit('ready', { ...status, ...(warning ? { warning } : {}), ...(timings ? { timings } : {}) });
     // The Google client (read from chain by the API) and the policy in force, in the background: never on the unlock
     // path.
     void this.appConfig().catch(() => undefined);
     this.schedulePolicyRefresh();
+  }
+
+  /**
+   * The vault document's own load, as unlock stages (pk_test_ apps): `vaultFetch` (navigation start → the vault page's
+   * last byte), `vaultScript` (→ vault.js running), `vaultConfig` (→ config read and the vault constructed),
+   * `vaultLoad` (→ the load event done, which is when the partner sends its hello). All on this document's clock.
+   */
+  private bootTimings(): Record<string, number> {
+    const nav = this.o.host.navigationTiming?.() ?? null;
+    const boot = this.o.boot;
+    if (!nav || !boot) return {};
+    const loadEnd = nav.loadEventEnd > 0 ? nav.loadEventEnd : this.helloAt;
+    return {
+      vaultFetch: Math.max(0, nav.responseEnd),
+      vaultScript: Math.max(0, boot.scriptStart - nav.responseEnd),
+      vaultConfig: Math.max(0, this.constructedAt - boot.scriptStart),
+      vaultLoad: Math.max(0, loadEnd - this.constructedAt),
+    };
   }
 
   /** The persistence in force: the app's, unless storage is unavailable. */
@@ -562,7 +650,7 @@ export class Vault {
           if (this.pending === pending) this.emit('loginProgress', { stage });
         },
         flow: this.o.loginFlow ?? 'combined',
-        deviceNow: this.deviceNow,
+        perfNow: this.perfNow,
       },
       mode,
       popupBlocked,
@@ -636,14 +724,19 @@ export class Vault {
     let warning: 'storage_unavailable' | undefined = this.storageBroken ? 'storage_unavailable' : undefined;
     let share: Share | null = null;
     let replaced: RecordV1 | null = null;
+    const timings = success.timings;
+    // From the end of `decrypt`, so the vault's stages add up to its `vault` total.
+    const persistStarted = success.markedAt;
     if (persistence === 'session') {
       try {
-        ({ share, replaced } = await this.persistLogin(success));
+        ({ share, replaced } = await this.persistLogin(success, timings));
       } catch {
         persistence = 'none';
         warning = 'storage_unavailable';
       }
     }
+    const finishStarted = this.perfNow();
+    timings.persist = finishStarted - persistStarted;
     if (pending.aborted) {
       // Superseded while persisting: the share and record of this login must not outlive it.
       if (share) void this.dropPersistedLogin(success, share, replaced);
@@ -686,7 +779,10 @@ export class Vault {
     this.emit('accountsChanged', { addresses: { ...s.addresses } });
     const result: LoginResult = { addresses: { ...s.addresses }, expiresAtMs: s.expiresAtMs, persistence };
     if (warning) result.warning = warning;
-    if (this.config.publishableKey.startsWith('pk_test_')) result.timings = { ...success.timings };
+    if (this.testApp) {
+      const end = this.perfNow();
+      result.timings = { ...timings, finish: end - finishStarted, vault: end - pending.startedAt };
+    }
     return result;
   }
 
@@ -694,7 +790,7 @@ export class Vault {
    * Share creation and the record (docs/batch-b-spec.md "Share creation"). Returns the share and the record it
    * overwrote, if that was another session's. Throws on any failure.
    */
-  private async persistLogin(success: LoginSuccess): Promise<{ share: Share; replaced: RecordV1 | null }> {
+  private async persistLogin(success: LoginSuccess, timings: Record<string, number>): Promise<{ share: Share; replaced: RecordV1 | null }> {
     const store = this.store;
     if (!store) throw new Error('No storage');
     const api = this.api!;
@@ -706,7 +802,10 @@ export class Vault {
       counter: 0,
       payload: vaultPayload.createShare(parentOrigin),
     });
+    const sent = this.perfNow();
     const created = await api.createShare(success.sessionKey.publicKey, signature);
+    timings.shareRtt = this.perfNow() - sent;
+    Object.assign(timings, serverDetail('share', created.timings, SHARE_SERVER_GROUPS));
     const ks = Uint8Array.from(created.ks);
     created.ks.fill(0);
     const shareId = Uint8Array.from(created.shareId);
@@ -984,7 +1083,7 @@ export class Vault {
    * Unlock (docs/batch-b-spec.md "Unlock"): one signed API call returns K_s; no chain call. `onlyShare` (waking a
    * dormant session) unlocks the record only if it still holds that share.
    */
-  private async unlock(onlyShare?: Uint8Array): Promise<void> {
+  private async unlock(onlyShare?: Uint8Array, t?: Laps): Promise<void> {
     const store = this.store;
     if (!store) return;
     let read: RecordV1 | null | 'invalid';
@@ -1007,15 +1106,24 @@ export class Vault {
     const unlocked = await this.o.locks.request(this.lockName, async () => {
       const r = await this.readRecord();
       if (r === null || r === 'invalid' || !sameSession(r, first) || !this.recordUsable(r)) return null;
+      t?.mark('record');
       let counter = r.counter + 1;
       for (let attempt = 0; ; attempt++) {
         try {
+          const sent = this.perfNow();
           const res = await this.callShare(r.sessionKeyPair, r.shareId, counter, 'unlock');
+          if (t) {
+            // Signing (~0.1 ms) and the round trip of the attempt that answered, next to the API's own time for it.
+            t.detail.unlockRtt = this.perfNow() - sent;
+            Object.assign(t.detail, serverDetail('unlock', res.timings, UNLOCK_SERVER_GROUPS));
+            t.mark('unlock');
+          }
           const ks = Uint8Array.from(res.ks);
           res.ks.fill(0);
           r.counter = res.counter;
           // The counter is written before the lock is released.
           await store.put(this.recordId, r);
+          t?.mark('counter');
           return { record: r, ks };
         } catch (e) {
           if (!(e instanceof ApiError)) return null;
@@ -1043,6 +1151,7 @@ export class Vault {
     } finally {
       ks.fill(0);
     }
+    t?.mark('unwrap');
     let consentOk = true;
     try {
       const addresses = deriveAddresses(prk);
@@ -1075,7 +1184,7 @@ export class Vault {
   }
 
   /** One signed share call with an explicit counter. */
-  private callShare(keyPair: CryptoKeyPair, shareId: Uint8Array, counter: number, action: 'unlock'): Promise<{ ks: number[]; counter: number }>;
+  private callShare(keyPair: CryptoKeyPair, shareId: Uint8Array, counter: number, action: 'unlock'): Promise<{ ks: number[]; counter: number; timings?: unknown }>;
   private callShare(keyPair: CryptoKeyPair, shareId: Uint8Array, counter: number, action: 'touch' | 'revoke' | 'revoke-all'): Promise<unknown>;
   private async callShare(keyPair: CryptoKeyPair, shareId: Uint8Array, counter: number, action: 'unlock' | 'touch' | 'revoke' | 'revoke-all'): Promise<unknown> {
     const payload = action === 'unlock' ? vaultPayload.unlock() : action === 'touch' ? vaultPayload.touch() : action === 'revoke' ? vaultPayload.revoke() : vaultPayload.revokeAll();

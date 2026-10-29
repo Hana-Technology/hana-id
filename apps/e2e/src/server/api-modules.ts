@@ -36,6 +36,8 @@ export type ApiEnv = Record<string, unknown>;
 /** apps/api/src/handlers.ts Ctx: the request's log context; `cors` is what its answers carry. */
 export interface ApiCtx {
   cors: Record<string, string>;
+  /** handlers.ts Ctx.exposeTimings: a pk_test_ app's success carries the request's own timings. */
+  exposeTimings?: boolean;
 }
 
 /** apps/api/src/handlers.ts Gate. */

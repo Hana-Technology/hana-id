@@ -142,6 +142,8 @@ export class MockApi {
     const ctx = this.api.newCtx(this.env, crypto.randomUUID(), endpoint, req);
     const gate = await this.api.appGate(req, this.env, ctx, 'relay');
     if (!gate.ok) return gate.response;
+    // As apps/api's /v1/login: a pk_test_ app's success carries the request's own timings.
+    if (endpoint === '/v1/login') ctx.exposeTimings = gate.app.publishable_key.startsWith('pk_test_');
     try {
       const b = await this.body(req);
       return endpoint === '/v1/login' ? await this.login(ctx, gate.app, b) : await this.derive(ctx, b);

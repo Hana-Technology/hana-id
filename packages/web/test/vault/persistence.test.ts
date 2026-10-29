@@ -115,7 +115,7 @@ describe('the record', () => {
     const rpcBefore = browser.backend.rpcCalls.length;
     const loginsBefore = browser.backend.count('/v1/login');
     const second = await tab(browser);
-    expect(await second.ready()).toEqual({ status: 'logged_in', addresses, expiresAtMs: START_MS + 12 * HOUR, persistence: 'session' });
+    expect(await second.ready()).toEqual({ status: 'logged_in', addresses, expiresAtMs: START_MS + 12 * HOUR, persistence: 'session', timings: expect.any(Object) });
     expect(browser.backend.count('/v1/vault/unlock')).toBe(1);
     expect(browser.backend.count('/v1/derive')).toBe(0);
     expect(browser.backend.count('/v1/login')).toBe(loginsBefore);

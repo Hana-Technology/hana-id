@@ -60,7 +60,8 @@ describe('opening the popup', () => {
     expect(s.client.status).toBe('logged_in');
     expect(s.client.addresses).toEqual({ stellar: STELLAR, evm: EVM });
     expect(s.client.expiresAtMs).toBe(LOGIN_RESULT.expiresAtMs);
-    expect(s.client.lastLogin?.timings).toEqual({ chain: 6500 });
+    // The client adds its own stages around the vault's (pk_test_ only): window.open, the wait, the port round trip.
+    expect(s.client.lastLogin?.timings).toEqual({ chain: 6500, open: expect.any(Number), wait: expect.any(Number), port: expect.any(Number) });
     expect(s.client.error).toBeNull();
   });
 

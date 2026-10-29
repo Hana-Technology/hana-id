@@ -19,7 +19,8 @@ export const LOGIN_TIMING_STAGES = [
   'app',
   'keygen',
   'popup',
-  // Login popup (/login): its GET /v1/app check and the nonce, until it navigates to Google.
+  // Login popup (/login): its checks of the vault's message (the pinned signer, the nonce) and storing the relay key,
+  // until it navigates to Google. No API call (D77).
   'authCheck',
   // The residual of the vault's hello → token time once the popup's and the relay's own parts are taken out: the
   // user at Google and Google's pages, plus the relay's network legs, which no single clock sees (the callback's
@@ -36,13 +37,13 @@ export const LOGIN_TIMING_STAGES = [
   // long-polls; more when its poll was between requests).
   'relayHeld',
   // Vault: the token check (with Google's JWKS fetch when it isn't cached), the wait for the registry scope check,
-  // POST /v1/login with any recovery, CKD decryption and derivation, the share and record (POST /v1/vault/shares,
-  // IndexedDB), and switching to the new session.
+  // POST /v1/login with any recovery, CKD decryption and derivation, and switching to the new session. The share and
+  // record (POST /v1/vault/shares, IndexedDB) are made after the reply (D79), so no stage covers them: their server
+  // time is in the API's request log.
   'verify',
   'scopeWait',
   'chain',
   'decrypt',
-  'persist',
   'finish',
   // Partner client: the port round trip around the vault's own time (postMessage both ways, event-loop queueing).
   'port',
@@ -62,11 +63,6 @@ export const LOGIN_TIMING_DETAILS = [
   'loginServerRelay',
   'loginServerBroadcast',
   'loginServerWait',
-  /** Inside `persist`: POST /v1/vault/shares on the vault's clock, and the API's own total and phases. */
-  'shareRtt',
-  'shareServer',
-  'shareServerGate',
-  'shareServerSession',
   /** The vault's own time, hana_login received → reply sent (the partner client takes it from its round trip). */
   'vault',
 ] as const;
@@ -96,7 +92,11 @@ export const UNLOCK_TIMING_STAGES = [
 ] as const;
 
 export const UNLOCK_TIMING_DETAILS = [
-  /** Inside `unlock`: POST /v1/vault/unlock on the vault's clock, and the API's own total and phases. */
+  /**
+   * Inside `unlock`: POST /v1/vault/unlock on the vault's clock, and the API's own total and phases: `Gate` (the app,
+   * cached per isolate, and the IP, app and share limiters), `Share` (the KEK, the share and settings rows),
+   * `Advance` (the counter update).
+   */
   'unlockRtt',
   'unlockServer',
   'unlockServerGate',

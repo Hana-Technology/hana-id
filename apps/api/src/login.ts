@@ -10,6 +10,7 @@ import { hex, sha256 } from './bytes.ts';
 import { TOKEN_EXP_SKEW_MS, appGate, checkClientScope, done, lap, lapRelay, limiter, newCtx, reject, settle } from './handlers.ts';
 import { readJson } from './http.ts';
 import { JwksUnavailableError, verifyIdToken } from './jwks.ts';
+import { keyObserver } from './key-observations.ts';
 import { log } from './log.ts';
 import { isTestKey } from './origins.ts';
 import type { RelayResult } from './relayer-key.ts';
@@ -104,7 +105,7 @@ export async function handleLogin(request: Request, env: Env, requestId: string,
   //    this app's scope on this signer.
   let verified;
   try {
-    verified = await verifyIdToken(req.jwt, now, { skewMs: TOKEN_EXP_SKEW_MS });
+    verified = await verifyIdToken(req.jwt, now, { skewMs: TOKEN_EXP_SKEW_MS, observer: keyObserver(env, exec) });
   } catch (err) {
     if (err instanceof JwksUnavailableError) return reject(ctx, 503, 'issuer_keys_unavailable', 'Could not read the token issuer keys, try again');
     throw err;

@@ -21,10 +21,13 @@ import {
   answer,
   apiError,
   google,
+  deliverToken,
   login,
   makeConfig,
   openApproval,
   openTab,
+  persisted,
+  popupHello,
   readyTab,
   sleepReal,
 } from './harness.ts';
@@ -259,13 +262,208 @@ describe('the record', () => {
     expect(browser.backend.count('/v1/vault/shares')).toBe(0);
   });
 
-  it('share creation failing falls back to "none" with storage_unavailable', async () => {
+  it('share creation failing twice: the login still succeeds, then persistence turns "none"', async () => {
     const browser = new Browser();
     browser.backend.overrides.set('/v1/vault/shares', () => apiError(409, 'session_not_spent'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const t = await tab(browser);
+      const { reply } = await login(t, g);
+      // Reported before the share was tried: the mode the app asked for, no warning.
+      expect(reply.result).toMatchObject({ persistence: 'session' });
+      expect(reply.result).not.toHaveProperty('warning');
+      expect(await stored(browser)).toBeUndefined();
+      // Tried once more, then given up: status says the next reload needs a full login.
+      expect(browser.backend.count('/v1/vault/shares')).toBe(2);
+      expect((await t.request('hana_status')).result).toMatchObject({ status: 'logged_in', persistence: 'none' });
+      // The partner client is told too (hana.persistence, 'persistenceChanged').
+      expect(await t.waitEvent('persistenceChanged')).toEqual({ persistence: 'none' });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toContain('share:session_not_spent');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+describe('the share and record after the login is reported (D79)', () => {
+  /** A gate for POST /v1/vault/shares: calls wait until `open()` (then reach the fake API as usual). */
+  function gateShares(browser: Browser, only?: (n: number) => boolean) {
+    let open!: () => void;
+    const opened = new Promise<void>((resolve) => (open = resolve));
+    let n = 0;
+    browser.backend.overrides.set('/v1/vault/shares', async () => {
+      n += 1;
+      if (!only || only(n)) await opened;
+      return undefined;
+    });
+    return { open, calls: () => n };
+  }
+
+  /** hana_login through the token, without waiting for the persist. */
+  async function loginReply(t: Tab, over: Record<string, unknown> = {}) {
+    const pending = t.request('hana_login');
+    const run = await popupHello(t);
+    await deliverToken(t, g, run, over);
+    return pending;
+  }
+
+  const persistOf = (t: Tab) => (t.vault as unknown as { session: { persist: { done: Promise<void> } | null } | null }).session?.persist ?? null;
+
+  it('replies before POST /v1/vault/shares answers; the record and share follow', async () => {
+    const browser = new Browser();
+    const gate = gateShares(browser);
     const t = await tab(browser);
-    const { reply } = await login(t, g);
-    expect(reply.result).toMatchObject({ persistence: 'none', warning: 'storage_unavailable' });
+    const reply = await loginReply(t);
+    expect(reply.result).toMatchObject({ persistence: 'session' });
+    await until(() => gate.calls() === 1, 'the share request');
+    // The partner already has its addresses and the session works in memory; nothing is on disk yet.
+    expect((await t.request('hana_status')).result).toMatchObject({ status: 'logged_in', persistence: 'session' });
     expect(await stored(browser)).toBeUndefined();
+    expect(shareIdOf(t)).toBeUndefined();
+    gate.open();
+    await persisted(t);
+    expect(persistOf(t)).toBeNull();
+    expect(bytesEqual(shareIdOf(t)!, (await stored(browser))!.shareId as Uint8Array)).toBe(true);
+    // A reload now unlocks.
+    expect((await (await tab(browser)).ready()).status).toBe('logged_in');
+  });
+
+  it('a failed share request is tried once more, and the login persists', async () => {
+    const browser = new Browser();
+    let n = 0;
+    browser.backend.overrides.set('/v1/vault/shares', () => {
+      n += 1;
+      if (n === 1) throw new TypeError('Failed to fetch');
+      return undefined;
+    });
+    const t = await tab(browser);
+    await login(t, g);
+    expect(n).toBe(2);
+    expect(await stored(browser)).toBeDefined();
+    expect((await t.request('hana_status')).result).toMatchObject({ persistence: 'session' });
+  });
+
+  it('giving up clears the older session’s record (and revokes its share), so the next reload is a full login', async () => {
+    const browser = new Browser();
+    const { first } = await loggedIn(browser);
+    const olderShare = [...browser.backend.shares.values()][0]!;
+    // A second tab that could not unlock (network), so the record is still the first tab's session.
+    browser.backend.overrides.set('/v1/vault/unlock', () => {
+      throw new TypeError('Failed to fetch');
+    });
+    const second = await tab(browser);
+    expect((await second.ready()).status).toBe('logged_out');
+    browser.backend.overrides.delete('/v1/vault/unlock');
+    browser.backend.overrides.set('/v1/vault/shares', () => apiError(503, 'config_unavailable'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await login(second, g, { sub: '220000000000000000001' });
+      expect(await stored(browser)).toBeUndefined();
+      await until(() => olderShare.revoked, 'the older share revoked');
+      expect(await first.waitEvent('disconnect')).toEqual({ code: 4900 });
+      browser.backend.overrides.delete('/v1/vault/shares');
+      expect((await (await tab(browser)).ready()).status).toBe('logged_out');
+      // Its in-memory session goes on.
+      expect((await second.request('hana_status')).result).toMatchObject({ status: 'logged_in', persistence: 'none' });
+      // The log names a reason code only.
+      const text = warn.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(text).toContain('share:config_unavailable');
+      expect(text).not.toMatch(/[0-9a-f]{32}/u);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('a logout while the share request is in flight: the share is revoked once made, and no record is written', async () => {
+    const browser = new Browser();
+    const gate = gateShares(browser);
+    const t = await tab(browser);
+    await loginReply(t);
+    await until(() => gate.calls() === 1, 'the share request');
+    // Logout doesn't wait for the share.
+    expect((await t.request('hana_logout')).result).toBeNull();
+    expect((await t.request('hana_status')).result).toMatchObject({ status: 'logged_out' });
+    gate.open();
+    await until(() => browser.backend.shares.size === 1 && liveShares(browser).length === 0, 'the new share revoked');
+    expect(await stored(browser)).toBeUndefined();
+    // A cancelled persist is not a failure: no persistenceChanged.
+    expect(t.events.some((e) => e.event === 'persistenceChanged')).toBe(false);
+    // Nothing comes back on a reload.
+    expect((await (await tab(browser)).ready()).status).toBe('logged_out');
+  });
+
+  it('a logout while the record is being written takes the record back and revokes the share', async () => {
+    const browser = new Browser();
+    // This tab's store holds its first record write until the logout has started.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let writes = 0;
+    browser.openStore = async () => {
+      const store = await openRecordStore(browser.idb);
+      return {
+        ...store,
+        put: async (key, record) => {
+          writes += 1;
+          if (writes === 1) await held;
+          await store.put(key, record);
+        },
+      };
+    };
+    const t = await tab(browser);
+    await loginReply(t);
+    await until(() => writes === 1, 'the record write');
+    const logout = t.request('hana_logout');
+    await sleepReal(10);
+    release();
+    expect((await logout).result).toBeNull();
+    await until(() => browser.backend.shares.size === 1 && liveShares(browser).length === 0, 'the new share revoked');
+    expect(await stored(browser)).toBeUndefined();
+  });
+
+  it('a newer login in the same tab while the first one’s share is in flight: only the newer one persists', async () => {
+    const browser = new Browser();
+    const gate = gateShares(browser, (n) => n === 1);
+    const t = await tab(browser);
+    await loginReply(t);
+    await until(() => gate.calls() === 1, 'the first share request');
+    await login(t, g, { sub: '220000000000000000001' });
+    expect((await stored(browser))!.path).toBe(`${SCOPE}#google#220000000000000000001#0`);
+    gate.open();
+    await until(() => browser.backend.shares.size === 2 && liveShares(browser).length === 1, 'the first share revoked');
+    // The record is still the newer login's, and its share the live one.
+    const r = (await stored(browser))!;
+    expect(r.path).toBe(`${SCOPE}#google#220000000000000000001#0`);
+    expect(bytesEqual(liveShares(browser)[0]!.shareId, r.shareId as Uint8Array)).toBe(true);
+  });
+
+  it('revoke-other-devices right after a login waits for the share instead of refusing', async () => {
+    const browser = new Browser();
+    const old = await loggedIn(browser);
+    await old.first.request('hana_logout');
+    for (const s of browser.backend.shares.values()) s.revoked = false;
+    const gate = gateShares(browser);
+    const t = await tab(browser);
+    await loginReply(t);
+    const revoke = t.request('hana_revokeOtherDevices');
+    await until(() => gate.calls() === 1, 'the share request');
+    await sleepReal(20);
+    expect(browser.backend.count('/v1/vault/revoke-all')).toBe(0);
+    gate.open();
+    expect((await revoke).result).toEqual({ revoked: 1 });
+  });
+
+  it('revoke-other-devices after the share failed: refused as persistence_off', async () => {
+    const browser = new Browser();
+    browser.backend.overrides.set('/v1/vault/shares', () => apiError(409, 'session_not_spent'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const t = await tab(browser);
+      await loginReply(t);
+      expect((await t.request('hana_revokeOtherDevices')).error).toMatchObject({ code: 4100, data: { reason: 'persistence_off' } });
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

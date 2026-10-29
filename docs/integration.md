@@ -150,6 +150,7 @@ hana.on('disconnect', ({ code }) => {});        // 4900: the vault connection is
 hana.on('loginProgress', ({ stage }) => {});    // 'popup_connected' | 'google' | 'token' | 'chain' | 'done'
 hana.on('launcher', ({ visible, label }) => {}); // Hana's button is shown or hidden ("Review in Hana", …)
 hana.on('autoApproved', ({ kind, chain, contract, function: fn }) => {});
+hana.on('persistenceChanged', (persistence) => {}); // 'none': this login won't survive a reload (see "Sessions")
 ```
 
 `hana.ready` rejects with `vault_unavailable` if the vault doesn't answer within 5 s: usually your CSP's
@@ -182,7 +183,10 @@ button.addEventListener('click', async () => {
   nothing (status, addresses and auto-approve status keep answering), and the next request that uses the key restores
   it with one API call, as a reload does, while the session is still alive on Hana's side. With `'none'`, every page
   load is a new login. If the browser blocks storage (some private modes), the vault falls back to `'none'` and
-  `hana.warning` is `storage_unavailable`.
+  `hana.warning` is `storage_unavailable`. `login()` resolves as soon as the wallet is ready; the vault then saves
+  the session for reloads in the background (one API call). If that fails, the wallet keeps working in this tab,
+  `hana.persistence` becomes `'none'` (with a `persistenceChanged` event; `useHana()` re-renders), and the next page
+  load needs a new login; a reload within that moment after `login()` resolved is a new login too.
 - `await hana.logout()` signs this app out on this device, in every tab. It sends no transaction.
 - `await hana.revokeOtherDevices()` signs the user out of your app everywhere else. It works only within 5 min of a
   fresh login, so offer it right after one.

@@ -70,7 +70,8 @@ describe('vault endpoint timings', () => {
     const share = await createShare(app, near);
     expectTimings((share as unknown as { timings: unknown }).timings, ['app', 'limits', 'settings', 'session', 'insert']);
     const unlocked = await body(await act(app, share, 'unlock', 1));
-    expectTimings(unlocked.timings, ['app', 'limits', 'shareLimit', 'share', 'advance']);
+    // The share's own limit is asked alongside the gate's (D78): it is inside `limits`, no `shareLimit` phase.
+    expectTimings(unlocked.timings, ['app', 'limits', 'share', 'advance']);
     // K_s and the share id are in the body, never in its timings.
     expect(JSON.stringify(unlocked.timings)).not.toContain(JSON.stringify(unlocked.ks).slice(1, -1));
     expect(await body(await act(app, share, 'touch', 2))).not.toHaveProperty('timings');

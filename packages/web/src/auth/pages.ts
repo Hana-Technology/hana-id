@@ -38,10 +38,12 @@ export const BASE_CSP: readonly string[] = Object.freeze([
 
 const originOf = (url: string): string => new URL(url).origin;
 
-/** What the page may fetch: the API (login, callback, export), the NEAR RPC and Google's JWKS (export). */
+/** What the page may fetch: the API (callback, export), the NEAR RPC and Google's JWKS (export). */
 export function connectSources(env: Pick<HanaEnv, 'apiUrl' | 'rpc'>, page: AuthPageName): string[] {
   switch (page) {
     case 'login':
+      // The popup checks the vault's message and goes to Google; it fetches nothing (D77).
+      return [];
     case 'callback':
       return [originOf(env.apiUrl)];
     case 'export':

@@ -7,7 +7,30 @@ import { policyId } from '@hana-id/core/policy';
 import { openRecordStore, recordKey } from '../../src/vault/record.ts';
 import { POPUP_REUSE_MS } from '../../src/vault/approvals.ts';
 import { POLICY_FRESH_MS, POLICY_REFRESH_MS } from '../../src/vault/vault.ts';
-import { APP_ID, Browser, ENV, type FakeWindow, type Google, HOUR, PARTNER, SCOPE, START_MS, type Tab, answer, answerConsent, apiError, google, login, makeConfig, openApproval, readyTab, sleepReal, waitLauncher } from './harness.ts';
+import {
+  APP_ID,
+  Browser,
+  ENV,
+  type FakeWindow,
+  type Google,
+  HOUR,
+  PARTNER,
+  SCOPE,
+  START_MS,
+  type Tab,
+  answer,
+  answerConsent,
+  apiError,
+  deliverToken,
+  google,
+  login,
+  makeConfig,
+  openApproval,
+  popupHello,
+  readyTab,
+  sleepReal,
+  waitLauncher,
+} from './harness.ts';
 import {
   CHAIN,
   EVM_FRIEND,
@@ -440,6 +463,35 @@ describe('the policy in force, re-read while the vault stays open', () => {
 });
 
 describe('persistence and tabs', () => {
+  it('a consent given while the login’s record is still being made goes into the record (D79), not only into memory', async () => {
+    const browser = new Browser();
+    browser.backend.serverNow = () => browser.timers.now;
+    let open!: () => void;
+    const opened = new Promise<void>((resolve) => (open = resolve));
+    browser.backend.overrides.set('/v1/vault/shares', async () => {
+      await opened;
+      return undefined;
+    });
+    const config = makeConfig({ settings: { autoApprovePolicy: POLICY() } });
+    const t = await readyTab(browser, { googleJwk: g.jwk, config });
+    tabs.push(t);
+    const pending = t.request('hana_login');
+    await deliverToken(t, g, await popupHello(t));
+    expect((await pending).result).toHaveProperty('addresses');
+    // The consent request waits for the share and record; then it is sealed into the record.
+    const reply = t.request('hana_requestAutoApprove');
+    await sleepReal(20);
+    expect(t.launcher.label).not.toBe('Review in Hana');
+    open();
+    const { popup, m } = await consentScreen({ t, stellar: '', evm: '' });
+    answerConsent(t, popup, m, true);
+    expect((await reply).result).toMatchObject({ granted: true });
+    // Another tab (a reload) sees it: it is in the record.
+    const other = await readyTab(browser, { googleJwk: g.jwk, config });
+    tabs.push(other);
+    expect((await other.request('hana_autoApproveStatus')).result).toMatchObject({ policyId: PID });
+  });
+
   it('counters survive a reload (inside the encrypted record) and are shared across tabs', async () => {
     const browser = new Browser();
     const a = await session(browser);

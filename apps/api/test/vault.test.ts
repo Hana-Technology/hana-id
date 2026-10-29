@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { forgetCachedApps } from '../src/app-cache.ts';
 import { hex } from '../src/bytes.ts';
 import { REVOKE_ALL_FRESH_MS, SHARE_PER_MINUTE, VAULT_APP_MINUTE_FACTOR, VAULT_PER_IP_MINUTE } from '../src/vault/endpoints.ts';
 import { clearKekCache } from '../src/vault/kek.ts';
@@ -320,6 +321,69 @@ describe('vault gate', () => {
     expect(derive.status).not.toBe(429);
   });
 
+  it('the app window is asked only once the IP window accepted: requests the IP refuses never use the app quota', async () => {
+    // per_minute 10 → an app vault window of 100, above the 60 per IP.
+    const plan = `p${uid()}`;
+    await seedPlan(plan, 10, 1000, 1000);
+    const app = await seedApp({ plan });
+    const ipA = `10.7.${Math.floor(Math.random() * 250)}.1`;
+    const ipB = `10.7.${Math.floor(Math.random() * 250)}.2`;
+    const from = (ip: string) => call('/v1/vault/unlock', { headers: { ...vaultHeaders(app), 'cf-connecting-ip': ip }, body: {} });
+    for (let i = 0; i < VAULT_PER_IP_MINUTE; i++) expect((await from(ipA)).status).toBe(400);
+    for (let i = 0; i < 20; i++) expect((await (await from(ipA)).json()) as object).toMatchObject({ error: 'Rate limit exceeded (per IP per minute)' });
+    // 60 of the app's 100 are used, not 80: another client still gets the other 40.
+    const left = VAULT_APP_MINUTE_FACTOR * 10 - VAULT_PER_IP_MINUTE;
+    for (let i = 0; i < left; i++) expect((await from(ipB)).status).toBe(400);
+    expect((await (await from(ipB)).json()) as object).toMatchObject({ error: 'Rate limit exceeded (app per minute)' });
+  });
+
+  it('a share hit sent alongside the gate is taken back when the IP or app window refuses', async () => {
+    const plan = `p${uid()}`;
+    await seedPlan(plan, 1, 1000, 1000);
+    const near = chain();
+    const app = await seedApp({ plan });
+    const share = await createShare(app, near);
+    // Fill the app's vault window (10 for per_minute 1; share creation used one of them).
+    for (let i = 1; i < VAULT_APP_MINUTE_FACTOR; i++) expect((await call('/v1/vault/unlock', { headers: vaultHeaders(app), body: {} })).status).toBe(400);
+    // Well-formed share requests the app window refuses: more than the share's own limit.
+    for (let i = 0; i <= SHARE_PER_MINUTE; i++) expect((await (await act(app, share, 'touch', 1)).json()) as object).toMatchObject({ error: 'Rate limit exceeded (app per minute)' });
+    // Fill an IP's window, then more share requests from it: refused by the IP window.
+    const ip = `10.6.${Math.floor(Math.random() * 250)}.3`;
+    const other = await seedApp();
+    const otherShare = await createShare(other, near);
+    for (let i = 0; i < VAULT_PER_IP_MINUTE; i++) await call('/v1/vault/unlock', { headers: { ...vaultHeaders(other), 'cf-connecting-ip': ip }, body: {} });
+    for (let i = 0; i <= SHARE_PER_MINUTE; i++) {
+      const res = await act(other, otherShare, 'touch', 1, { headers: { 'cf-connecting-ip': ip } });
+      expect((await res.json()) as object).toMatchObject({ error: 'Rate limit exceeded (per IP per minute)' });
+    }
+    // Neither share's window counted those: each still takes its full SHARE_PER_MINUTE.
+    for (let c = 1; c <= SHARE_PER_MINUTE; c++) expect((await act(other, otherShare, 'touch', c)).status).toBe(200);
+    expect((await act(other, otherShare, 'touch', SHARE_PER_MINUTE + 1)).status).toBe(429);
+    const { RATE_LIMITER } = env;
+    const stub = RATE_LIMITER.get(RATE_LIMITER.idFromName(`share:${hex(Uint8Array.from(share.shareId))}`));
+    const shareWindow = [{ name: 'minute', windowMs: MIN, max: SHARE_PER_MINUTE }];
+    for (let i = 0; i < SHARE_PER_MINUTE; i++) expect(await stub.hit(shareWindow)).toEqual({ ok: true });
+    expect((await stub.hit(shareWindow)).ok).toBe(false);
+  });
+
+  it('a refund takes back one accepted hit of the same window, never below 0', async () => {
+    const { RATE_LIMITER } = env;
+    const stub = RATE_LIMITER.get(RATE_LIMITER.idFromName(`test:${uid()}`));
+    const limits = [{ name: 'minute', windowMs: MIN, max: 2 }];
+    const now = Date.now();
+    expect(await stub.hit(limits, now)).toEqual({ ok: true });
+    expect(await stub.hit(limits, now)).toEqual({ ok: true });
+    expect((await stub.hit(limits, now)).ok).toBe(false);
+    await stub.refund(limits, now);
+    expect(await stub.hit(limits, now)).toEqual({ ok: true });
+    // Another window (the next minute) is not touched by a refund of this one, and an empty window stays at 0.
+    await stub.refund(limits, now + MIN);
+    await stub.refund(limits, now + MIN);
+    expect(await stub.hit(limits, now + MIN)).toEqual({ ok: true });
+    expect(await stub.hit(limits, now + MIN)).toEqual({ ok: true });
+    expect((await stub.hit(limits, now + MIN)).ok).toBe(false);
+  });
+
   it(`per share: ${SHARE_PER_MINUTE} requests per minute`, async () => {
     const { app, near } = await vaultSetup();
     const share = await createShare(app, near);
@@ -443,12 +507,16 @@ describe('POST /v1/vault/unlock', () => {
     const share = await createShare(app, near, { parent: extra });
     const kept = await createShare(app, near);
     await env.DB.prepare('DELETE FROM app_origins WHERE app_id = ?1 AND origin = ?2').bind(app.id, extra).run();
+    // This isolate read the app for the shares above; the change is seen once that read is past its TTL
+    // (test/app-cache.test.ts), here at once.
+    forgetCachedApps();
     const res = await act(app, share, 'unlock', 1);
     expect(res.status).toBe(410);
     expect(await res.json()).toMatchObject({ code: 'share_revoked' });
     expect((await storedShare(share.shareId))!.revoked_at).not.toBeNull();
     expect((await act(app, kept, 'unlock', 1)).status).toBe(200);
     await env.DB.prepare('INSERT INTO app_origins (app_id, origin) VALUES (?1, ?2)').bind(app.id, extra).run();
+    forgetCachedApps();
     expect((await act(app, share, 'unlock', 1, { parent: extra })).status).toBe(410);
   });
 

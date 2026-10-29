@@ -1,6 +1,7 @@
 # API reference — every endpoint the `apps/api` Worker serves today
 
-Last verified against code: 2026-10-28 (commit 58edee9).
+Last verified against code: 2026-10-29 (branch `perf/login-latency-impl`: the vault endpoints' gate, the auth
+pages' CSP and the timings; the rest as of 2026-10-28, commit 58edee9).
 
 Current state, not a spec. Where the specs (`docs/batch-*.md`) and this file differ, this file follows the code.
 Contract methods and byte layouts: `docs/contract-interface.md`. How to run it: `docs/operations.md`.
@@ -31,7 +32,7 @@ page origins never reach the API routes: a request whose URL origin is `VAULT_OR
 | `/v1/login-relay/<relayId>` | GET, POST, OPTIONS | `login-relay.ts` | Hana origin only; read key for GET | B |
 | `/v1/vault/shares`, `/unlock`, `/touch`, `/revoke`, `/revoke-all` | POST, OPTIONS | `vault/endpoints.ts` | publishable key + vault origin + session signature (vault message) | B |
 | `/v1/owner-actions` | POST, OPTIONS | `handlers.ts` | OIDC owner token inside the args | |
-| cron `0 * * * *` | — | `issuer-keys.ts`, `vault/cron.ts` | — | vault part B |
+| cron `*/15 * * * *` | — | `issuer-keys.ts`, `vault/cron.ts`, `key-observations.ts` | — | vault part B; 15 min for the key lead time |
 
 There is no secret-key (`sk_…`) auth anywhere: publishable keys are public and origins gate them.
 
@@ -100,7 +101,7 @@ is the IPv4 address or the IPv6 /64 (`src/ip.ts`). The day window is the UTC day
 | relay kind: `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke`, `/v1/login` (one shared window) | plan `per_ip_minute` (window `<appId>:minute`) | plan `per_minute` and `per_day` | IP checked first, so its rejects don't spend the app's quota |
 | key exports: `/v1/login` from `AUTH_ORIGIN` | — | — | 3 per hour per user path per app (subject `export:<appId>:<hex sha256(path)>`, window `export:hour`), counted once the token and nonce are verified, before anything is relayed (D59) |
 | `GET /v1/app` | plan `per_ip_minute` (own window `<appId>:config:minute`) | — | never touches the relay quota |
-| vault endpoints | 60/min (`<appId>:vault:minute`) | 10 × plan `per_minute` (`vault:minute`) | share actions: 10/min per share (`share:<hex>`) |
+| vault endpoints | 60/min (`<appId>:vault:minute`) | 10 × plan `per_minute` (`vault:minute`) | share actions: 10/min per share (`share:<hex>`); IP checked first, the app window only once it accepted; the share window asked alongside the IP window and refunded if the IP or app window refuses (D78) |
 | login relay | writes 10/min, reads 120/min | — | not per app |
 | `/v1/owner-actions` | 10/min | — | global 20/min and 200/day, counted only after every off-chain check passes |
 | `/v1/health`, `GET /vault` | — | — | — |
@@ -158,7 +159,8 @@ Body (extra keys ignored, except `scopeId` / `scope_id`, which are refused):
 The scope is always the app's (D1). Checks after the gate and shape (`400 bad_request`):
 
 1. RS256 against Google's JWKS, `iss` → provider, `exp` + 60 s skew: `401 invalid_token`, `400 unsupported_issuer`,
-   `400 token_expired`, `503 issuer_keys_unavailable`.
+   `400 token_expired`, `503 issuer_keys_unavailable`. A valid signature's `kid` is recorded once per isolate after the
+   response (`issuer_key_observations.first_token_ms`, here and on `/v1/login`; the kid only, never the token).
 2. Only with `REJECT_PII_ON_SESSIONS = "1"`: claim allow-list (`iss azp aud sub iat exp nonce nbf jti auth_time`),
    else `400 token_has_pii` with `data: {claim}`.
 3. `nonce` equals the session nonce recomputed with `SIGNER_ACCOUNT` and the app's scope (`400 nonce_mismatch`).
@@ -286,8 +288,8 @@ One thin Worker per Hana origin in every env (D66; `workers.dev` in dev envs, a 
 | Origin | Path | Response |
 |---|---|---|
 | vault | `/vault` | forwarded to the API Worker (service binding `API`), unchanged but for a `Set-Cookie` header, which is dropped; `503` page with no config if it is unreachable |
-| auth | `/login`, `/login/callback` | `<path>.html` with `frame-ancestors 'none'; connect-src <API_URL>` |
-| auth | `/approve` | `approve.html` with `frame-ancestors 'none'` |
+| auth | `/login/callback` | `login/callback.html` with `frame-ancestors 'none'; connect-src <API_URL>` |
+| auth | `/login`, `/approve` | `<path>.html` with `frame-ancestors 'none'` (neither fetches anything; the login popup makes no API call, D77) |
 | auth | `/export` | `export.html` with `frame-ancestors 'none'; connect-src <API_URL> <NEAR_RPC> [<NEAR_RPC_FALLBACK>] https://www.googleapis.com` |
 | both | any other path | a static asset, never HTML (`*.html` and `text/html` → `404`) |
 
@@ -309,7 +311,15 @@ sha256(payload)`, `appId` = the D1 `apps.id` (`docs/contract-interface.md`, "Vau
 
 Gate, in order: `401 missing_key` / `unknown_app` / `503 config_unavailable` → `403 app_suspended` → Origin is
 `VAULT_ORIGIN` (`403 origin_not_allowed`) → parent allowed (`403 origin_not_allowed`) → `403 scope_conflict` → vault
-limits. Storage errors: `503 config_unavailable`. Missing `VAULT_KEK`: `503 vault_key_unavailable`.
+limits (per IP, then per app) → body (`400 bad_request`) → share actions: the per-share limit. Storage errors:
+`503 config_unavailable`. Missing `VAULT_KEK`: `503 vault_key_unavailable`.
+
+The app row comes from a per-isolate cache (`src/app-cache.ts`, D78): an entry serves for 30 s after its D1 read, so
+a suspension, a removed or changed key, a removed origin or a scope conflict reaches these endpoints within 30 s per
+isolate (unknown keys and failed reads are never cached; at most 256 apps). Nothing else uses it: the app gate above
+(relay endpoints, `GET /v1/app`) and the vault page read D1 every time. The per-share limiter is called alongside
+the IP limiter and an accepted hit is refunded (`RateLimiter.refund`) when the IP or app window refuses, so each
+window counts as if they were asked in turn.
 
 | Endpoint | Body | Payload | 2xx |
 |---|---|---|---|
@@ -324,7 +334,7 @@ re-read every 300 ms for up to 2 s while missing or not used up (`404 unknown_se
 `409 session_not_spent`, `502 near_unavailable`) → insert (`409 share_exists`: one share per session key).
 `absExpiresAt = min(session expiry, now + session_ttl_ms)`, `idleUntil = min(now + idle_ttl_ms, absExpiresAt)`.
 
-Share actions, after the gate: per-share limit → `404 unknown_share` (missing or another app's) → share's origin no
+Share actions, after the gate (per-share limit included) → `404 unknown_share` (missing or another app's) → share's origin no
 longer allowed: revoked, `410 share_revoked` → unlock and touch only, the app's settings as they are now: persistence
 `none` revokes the share (`410 share_revoked`), and the share ends at `min(abs_expires_at, created_at +
 session_ttl_ms)` (a lowered TTL also lowers the stored `abs_expires_at`; `410 share_expired` once past it) →
@@ -462,7 +472,7 @@ this key's public key, start at R with no chain read (skips up to 99 nonces) and
 | `scope_for_client` | 60 s, a miss 10 s; dropped for the scope after an owner action relayed here |
 | `get_scope` | 10 s; dropped after an owner action |
 | `get_config` | 60 s |
-| Google JWKS | `max-age` clamped to 5 min..6 h; unknown kid refetches at most once a minute; 10 s back-off after a failure; a stale set serves its kids up to 6 h past expiry |
+| Google JWKS | `max-age` clamped to 5 min..6 h; unknown kid refetches at most once a minute; 10 s back-off after a failure; a stale set serves its kids up to 6 h past expiry. Each successful fetch is recorded in `issuer_key_observations` after the response |
 
 ## D1 schema (`apps/api/migrations`)
 
@@ -475,15 +485,20 @@ this key's public key, start at R with no chain read (skips up to 99 nonces) and
 | `usage` | (`app_id`, `day` `YYYY-MM-DD` UTC) PK, `sessions`, `derives` | 0001 |
 | `usage` (added) | `unlocks` | 0003 |
 | `issuer_key_missing` | (`provider`, `kid`) PK, `first_missing_at` ms | 0002 |
+| `issuer_key_observations` | (`provider`, `kid`) PK, `first_seen_jwks_ms`, `last_seen_jwks_ms`, `removed_jwks_ms` (first fetch without the kid after `last_seen`; cleared if it reappears), `first_token_ms` (first verified token by the kid), `max_age_s_last` (the JWKS Cache-Control max-age when last listed); all nullable, ms / s. Public data only (no token, `sub` or user data). D33's key lead time (`admin issuer-keys:lead-times`) | 0004 |
 | `vault_shares` | `share_id` BLOB(16) PK, `app_id`, `session_pk` BLOB(32) UNIQUE, `path_hash` = sha256(path), `partner_origin`, `share_enc` = iv ‖ AES-GCM(KEK, K_s, aad = share_id ‖ app_id ‖ session_pk), `kek_id`, `counter`, `created_at`, `idle_until`, `abs_expires_at`, `revoked_at`; indexes (`app_id`, `path_hash`), `abs_expires_at`, `kek_id` | 0003 |
 
-## Cron (`0 * * * *`)
+## Cron (`*/15 * * * *`)
 
-Two independent jobs (one failing doesn't skip the other):
+One trigger every 15 min (the free plan allows 5 cron triggers per account; this keeps the API at one). The run in the
+first quarter of each UTC hour (`index.ts` `isHourlyRun`) is the hourly one; the other three only fetch Google's JWKS
+and record its kids in `issuer_key_observations` (`issuer-keys.ts` `observeIssuerJwks`; no chain call, no key).
+
+The hourly run has two independent jobs (one failing doesn't skip the other):
 
 - **Google JWKS → contract** (`issuer-keys.ts`): `set_issuer_key` for new kids, `remove_issuer_key` for kids missing
   from the JWKS for ≥ 55 min (tracked in `issuer_key_missing`), signed with `KEYS_UPDATER_KEY`. Without it:
-  `jwks_sync_skipped`.
+  `jwks_sync_skipped`. Its fetch is also recorded in `issuer_key_observations`, with or without the key.
 - **Vault maintenance** (`vault/cron.ts`, B): deletes shares past `abs_expires_at` or revoked; re-wraps up to 2000
   rows from `VAULT_KEK_PREVIOUS` to `VAULT_KEK`; counts rows under a KEK id neither key has (logged as an error).
 
@@ -525,7 +540,10 @@ Also generated: `name` = `cloudflare.workerName`, `compatibility_date` 2026-10-0
 
 A `pk_test_` app's successful `POST /v1/login`, `POST /v1/vault/shares` and `POST /v1/vault/unlock` answer with the
 request's own timings, so a test page can set the API's time against its own round trip (apps/smoke, README
-"Timings"):
+"Timings"). The vault reports the login's and the unlock's; share creation's arrive after the login reply (D79), so
+the vault drops them (the request log keeps them). Unlock's phases are `app` (the cached app row), `limits` (the IP,
+app and share limiters), `share` (the KEK, the share and settings rows) and `advance` (the counter update); there is
+no `shareLimit` phase any more (D78):
 
 ```json
 "timings": { "totalMs": 0, "phases": { "app": 0, "limits": 0, "…": 0 } }
@@ -554,13 +572,12 @@ signatures, bodies, keys, CKD responses, relay bodies or panic text.
 
 | Phase | Covers |
 |---|---|
-| `app` | D1 app lookup |
-| `limits` | rate-limiter round trips |
+| `app` | D1 app lookup (vault endpoints: ~0 when the per-isolate cache has the app, D78) |
+| `limits` | rate-limiter round trips (vault share actions: the per-share limiter too, called alongside the IP one) |
 | `checks` | body, token, nonce, chain reads, signature, pre-checks (everything before the relay) |
 | `settings` | share creation: the app's settings row (D1) |
 | `session` | share creation: signature check, then the session read and its retries (every 300 ms for up to 2 s while the node lags) |
 | `insert` | share creation: wrapping K_s and the D1 insert |
-| `shareLimit` | share actions: the per-share limiter |
 | `share` | share actions: the KEK, the share row and (unlock, touch) the settings row (D1) |
 | `advance` | unlock: re-wrap if needed and the counter update (D1) |
 | `relay` | round trip to the relayer key object |
@@ -576,7 +593,8 @@ the block hash was re-read; `served` relays this instance handled before; `ageMs
 
 Other events: `relay_dispatched` (`pool`, `keyIndex`, `method`, `nearTx`, `nonce`, `attempt`), `relay_retry`
 (`code` `invalid_nonce` / `expired` / `dropped`), `relay_dispatch_failed`, `jwks_sync` (`added`, `removed`, `kids`),
-`jwks_sync_failed` / `jwks_sync_skipped` (`code`), `jwks_tx`, `jwks_stale`, `vault_page` (`latencyMs`: its D1 reads), `vault_maintenance`
+`jwks_sync_failed` / `jwks_sync_skipped` (`code`), `jwks_tx`, `jwks_stale`, `jwks_observe` (`code`
+`jwks_fetch_failed` / `jwks_empty`), `key_observation_failed` (`code` `jwks` / `token`), `vault_page` (`latencyMs`: its D1 reads), `vault_maintenance`
 (`pruned`, `rewrapped`, `unknownKek`), `vault_rewrap_unreadable` (`unreadable`), `vault_kek_unavailable`, `vault_share_unreadable`,
 `usage_increment_failed`, `owner_token_release_failed`, `gas_override_ignored`, `auto_approve_policy_invalid`
 (`problems`), and from the page Workers `vault_host` and `auth_page` (`code`).

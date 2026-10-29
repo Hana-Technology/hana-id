@@ -30,7 +30,7 @@ const CLIENT_UNLOCK_STAGES = new Set(['mount', 'frameStart', 'port']);
 const POPUP = { authCheck: 0.03, callbackRedirect: 0.01, callbackFetch: 0.02, callbackBoot: 0.01, callbackPrep: 0.005 };
 const SERVER = {
   totalMs: 700,
-  phases: { app: 40, limits: 60, checks: 100, relay: 480, relayDispatch: 30, relayOutcome: 440, settings: 20, session: 300, insert: 25, shareLimit: 30, share: 50, advance: 35 },
+  phases: { app: 40, limits: 60, checks: 100, relay: 480, relayDispatch: 30, relayOutcome: 440, settings: 20, session: 300, insert: 25, share: 50, advance: 35 },
 };
 
 /** Close to `want` (the stages are consecutive marks of one clock, so only float rounding separates them). */
@@ -59,7 +59,7 @@ describe('login timings', () => {
     expect(timings).toMatchObject({ ...POPUP, relayHeld: 0.01 });
     // Every vault stage is a lap of one clock from hana_login to the reply: they sum to `vault` exactly.
     near(stageSum(timings, vaultStages), timings.vault!);
-    // The API's own time for /v1/login and /v1/vault/shares, next to the vault's round trips.
+    // The API's own time for /v1/login, next to the vault's round trip.
     expect(timings).toMatchObject({
       loginServer: 700,
       loginServerGate: 100,
@@ -67,13 +67,11 @@ describe('login timings', () => {
       loginServerRelay: 480,
       loginServerBroadcast: 30,
       loginServerWait: 440,
-      shareServer: 700,
-      shareServerGate: 100,
-      shareServerSession: 300,
     });
-    for (const d of ['chainPrep', 'loginRtt', 'shareRtt', 'scopeCheck']) expect(timings, d).toHaveProperty(d);
+    for (const d of ['chainPrep', 'loginRtt', 'scopeCheck']) expect(timings, d).toHaveProperty(d);
     expect(timings.loginRtt!).toBeLessThanOrEqual(timings.chain!);
-    expect(timings.shareRtt!).toBeLessThanOrEqual(timings.persist!);
+    // The share and record are made after the reply (D79): no stage or detail of the login covers them.
+    for (const k of Object.keys(timings)) expect(k).not.toMatch(/^(persist|share)/u);
 
     const p = run.params;
     expectNothingSensitive(timings, [...LOGIN_TIMING_STAGES, ...LOGIN_TIMING_DETAILS], [
@@ -134,7 +132,7 @@ describe('unlock timings', () => {
     const timings = ready.timings as Record<string, number>;
     const vaultStages = UNLOCK_TIMING_STAGES.filter((s) => !CLIENT_UNLOCK_STAGES.has(s));
     for (const s of vaultStages) expect(timings, s).toHaveProperty(s);
-    expect(timings).toMatchObject({ vaultFetch: 180, vaultScript: 50, unlockServer: 700, unlockServerGate: 100, unlockServerShare: 80, unlockServerAdvance: 35 });
+    expect(timings).toMatchObject({ vaultFetch: 180, vaultScript: 50, unlockServer: 700, unlockServerGate: 100, unlockServerShare: 50, unlockServerAdvance: 35 });
     expect(timings.unlockRtt!).toBeLessThanOrEqual(timings.unlock!);
     // After the hello, the stages are laps of one clock up to `ready`.
     near(stageSum(timings, ['store', 'record', 'unlock', 'counter', 'unwrap', 'addresses']), timings.vault!);

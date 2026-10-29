@@ -8,6 +8,7 @@ import { ipSubject } from './ip.ts';
 import { log } from './log.ts';
 import { placedStub } from './placement.ts';
 import { JwksUnavailableError, verifyIdToken } from './jwks.ts';
+import { keyObserver } from './key-observations.ts';
 import { type Caller, PARENT_ORIGIN_HEADER, RELAY_KEY_HEADER, checkCaller, preflightAllows } from './origins.ts';
 import { precheckOwnerAction } from './owner-actions.ts';
 import type { RateLimiter } from './rate-limiter.ts';
@@ -283,7 +284,7 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     // 5. The token is a genuine, unexpired Google ID token (RS256 against Google's JWKS) with a nonce...
     let verified;
     try {
-      verified = await verifyIdToken(req.jwt, now, { skewMs: TOKEN_EXP_SKEW_MS });
+      verified = await verifyIdToken(req.jwt, now, { skewMs: TOKEN_EXP_SKEW_MS, observer: keyObserver(env, exec) });
     } catch (err) {
       if (err instanceof JwksUnavailableError) return reject(ctx, 503, 'issuer_keys_unavailable', 'Could not read the token issuer keys, try again');
       throw err;

@@ -203,6 +203,7 @@ describe('port events', () => {
     [{ v: 1, event: 'loginProgress', data: { stage: 'chain' } }],
     [{ v: 1, event: 'ui', data: { launcher: 'show', label: 'Review in Hana' } }],
     [{ v: 1, event: 'autoApproved', data: { kind: 'eth_signTransaction', chain: 'evm', contract: EVM, function: 'swap' } }],
+    [{ v: 1, event: 'persistenceChanged', data: { persistence: 'none' } }],
   ])('accepts %j', (data) => {
     expect(parsePortEvent(data)).not.toBeNull();
   });
@@ -215,6 +216,9 @@ describe('port events', () => {
     [{ v: 1, event: 'ready', data: { status: 'logged_in', persistence: 'none' } }],
     [{ v: 1, event: 'disconnect', data: { code: 4900, reason: 'x' } }],
     [{ v: 1, event: 'autoApproved', data: { kind: 'hana_logout', chain: 'evm', contract: EVM, function: 'swap' } }],
+    [{ v: 1, event: 'persistenceChanged', data: { persistence: 'forever' } }],
+    [{ v: 1, event: 'persistenceChanged', data: { persistence: 'none', reason: 'share' } }],
+    [{ v: 1, event: 'persistenceChanged', data: null }],
   ])('refuses %j', (data) => {
     expect(parsePortEvent(data)).toBeNull();
   });

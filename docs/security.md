@@ -1,7 +1,8 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-10-28 (commit 58edee9).
+known open issues. Last verified against code: 2026-10-29 (branch `perf/login-latency-impl`; the login popup, the
+background persist and the vault gate were re-checked, the rest as of 2026-10-28, commit 58edee9).
 
 Component map and flows: `docs/architecture.md`. On-chain layouts and the contract's own security notes:
 `docs/contract-interface.md` ("Security notes (for reviewers)"). Browser parts (vault, auth pages, partner client)
@@ -156,10 +157,23 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   | Key exports per user path per app | 3/hour |
   | Relay endpoints per app | plan `per_minute` / `per_day` (free: 60 / 5000) |
   | `GET /v1/app` per IP per app | plan `per_ip_minute`, its own window |
-  | Vault endpoints | 60/min per IP per app; 10 × `per_minute` per app; 10/min per share |
+  | Vault endpoints | 60/min per IP per app; 10 × `per_minute` per app; 10/min per share (share actions) |
   | Login relay per IP | writes 10/min, reads 120/min |
   | Owner actions | 10/min per IP; 20/min and 200/day globally |
 
+  Each request's windows count as if asked in turn: per IP first, and the per-app window only once the IP window
+  accepted, so a request the IP window refuses never uses (or holds) any of the app's shared quota. The vault
+  endpoints ask the per-share window alongside the IP window and refund an accepted share hit when the IP or app
+  window refuses (`RateLimiter.refund`, `apps/api/src/vault/endpoints.ts` `vaultLimits`, D78): the counts are
+  unchanged, one round trip less.
+- **App cache (vault endpoints only, D78).** `/v1/vault/*` takes the app row (status, key, origins, scope conflict,
+  plan) from a per-isolate cache whose entries live 30 s from their D1 read (`apps/api/src/app-cache.ts`; unknown keys
+  and failed reads never cached; at most 256 apps). Nothing in the Worker writes `apps`, so the staleness bound is the
+  TTL: a suspension, a removed or changed publishable key, a removed origin (its shares are revoked on the first use
+  after) or a scope conflict reaches unlock, touch, revoke and share creation within 30 s per isolate. The app's
+  settings (persistence, TTLs), the share rows and the signature are read fresh on every request. The relay endpoints,
+  `GET /v1/app` and the vault page never use the cache, so a suspension stops logins, relays and new vault loads at
+  once (tests: `apps/api/test/app-cache.test.ts`).
 - **Bodies and logs**: body caps (`readJson` streams and stops at the cap; vault 4 KiB, relay 8 KiB). Logs never carry
   tokens, `K_s`, `share_enc`, ciphertexts, signatures, relay bodies, keys, CKD responses or relay ids (the OAuth
   `state`: a relay path is logged as `/v1/login-relay`, the top-level error line included).
@@ -178,7 +192,8 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
 - Config escaping: `<script type="application/json">` with `<`, `>`, `&`, U+2028, U+2029 escaped (`jsonForHtml`,
   `page.ts:42`); origins that aren't a bare lowercase origin are dropped before they reach the header or the config
   (`apps/api/src/vault/origins.ts:11`). `signer` is not in the config (the bundle's constant is used).
-- Auth pages: `frame-ancestors 'none'`, page-specific `connect-src`, no COOP header (`apps/api/src/pages/host.ts`
+- Auth pages: `frame-ancestors 'none'`, page-specific `connect-src` (none at all for `/login`, which fetches nothing:
+  D77), no COOP header (`apps/api/src/pages/host.ts`
   sets the headers; the build adds a `<meta>` CSP).
 - Static assets on both Hana origins (`host.ts`, `staticAsset`): never HTML, and every one carries `default-src
   'none'; frame-ancestors 'none'; sandbox`, `nosniff`, `no-referrer` and a same-origin CORP, so an SVG or XML file in
@@ -231,7 +246,16 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   clock and ends the session there, so a timer delayed by a throttled tab or a sleeping device never keeps PRK
   signing (`live()`, `packages/web/src/vault/vault.ts`).
 - One session per app per device. A login revokes this tab's previous share and the share of the record it
-  overwrites, and broadcasts `revoked {shareId}` for each; only tabs holding that share end. Logout, under the per-app
+  overwrites, and broadcasts `revoked {shareId}` for each; only tabs holding that share end.
+- The share and record are made after the login reply (D79, `packages/web/src/vault/vault.ts` `persistLogin`), and
+  can never outlive the session they are for: a session that ends first (logout, a newer login, expiry, idle, a
+  revocation) marks the job cancelled in the same turn that zeroes PRK; the job then writes no record (checked before
+  sealing, under the per-app lock before the write, and again after it, taking the record back), and revokes a share
+  made for it. Logout doesn't wait; it revokes the record's share if the job won the lock first. Share- and
+  record-bound steps (revoke-other-devices, touch, consent reads and writes) wait for the job, so a consent is never
+  written to a memory copy the new record then drops. If the job gives up (share creation tried twice, or IndexedDB),
+  the session stays in memory with `persistence: 'none'` (event `persistenceChanged`), and the older session's record it replaced is deleted and
+  its share revoked, so a reload never unlocks a session older than the newest login. Logged: a reason code only. Logout, under the per-app
   lock, revokes this tab's share and the stored record's (with that record's session key) if it is another session's,
   deletes the record and broadcasts `logout`, which ends every tab of the app. A stale tab's 410 ends only that tab.
 - The partner client broadcasts an approved `eth_sendTransaction` on the chain it was filled and signed for, one at
@@ -240,6 +264,30 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   parent origin and expiry (`recordAad`, `packages/core/src/layouts.ts:143`); records, Web Lock and BroadcastChannel
   are per app.
 - Time checks use a server-corrected clock (`serverTimeMs`).
+
+### The login popup trusts the vault's app facts
+
+`/login` (D77) gets the app's name, parent origin, scope and Google client from `hana:auth-params` and makes no API
+call. What its own `GET /v1/app` used to give, and why that is not needed:
+
+- **Against a forged message**: nothing. The popup accepts `auth-params` only from `vaultOrigin` (or `/export` on its
+  own origin) and only from the exact window of its opener mode (`opener.frames[v]` whose parent is the opener, or the
+  opener itself); `vaultOrigin` serves only Hana's vault bundle (D66). These checks are unchanged.
+- **Against a compromised vault origin or API**: nothing. Code on `vaultOrigin` already holds every key of every user
+  who loads it, and the popup's read went to the same API Worker that renders the vault page and answers the vault's
+  own `GET /v1/app` (the spec said so: "not a defence against a compromised Worker").
+- **Against a stale vault config** (an app suspended, an origin removed, a Google client changed since the vault
+  page loaded): an earlier error, before Google instead of after. `POST /v1/login` still refuses every such case
+  before relaying anything: the app gate reads the current D1 row (status, key, `x-hana-parent-origin`), the API
+  checks the token's client against the app's scope (`checkClientScope`), the contract checks the scope again, and
+  the vault checks its scope against the registry (D56). The token Google issued in between is openid-only, bound by
+  its nonce to a session key that never reached the chain, and relayed end to end encrypted to the user's own vault.
+- **The name shown**: the vault's inlined config (read from D1 on the vault page's load) instead of the API's
+  current one; a rename shows after the partner page reloads.
+
+What the popup still checks on its own: the pinned `SIGNER`, the nonce recomputed over the message's session
+(signer, scope, session key, expiry, key index, max uses, salt), the message schema, and that it is not framed. With
+no API call its CSP has no `connect-src` at all.
 
 ## Auto-approve policies
 
@@ -367,7 +415,11 @@ account's full-access key can upgrade the contract (no lock). `docs/contract-int
 contract account total control; the point here is that one of those powers sits in the API Worker's secrets. Confirmed
 plan (D33, not built): a delay on newly posted issuer keys with an independent watchdog that can cancel them, alerts
 on `issuer_key_set` for a kid Google doesn't publish, a multisig owner, and upgrades only through it with a timelock
-(the signer's full-access key removed). The delay length is open.
+(the signer's full-access key removed). The delay length is open. Measurement is running: the API records when
+each Google kid first appears in the JWKS (every 15 min), when a token signed with it first arrives, and when it
+leaves the JWKS (D1 `issuer_key_observations`, migration 0004, `apps/api/src/key-observations.ts`; kids and
+timestamps only); `admin <env> issuer-keys:lead-times --remote` prints the lead times (`docs/operations.md` "Issuer
+key lead times"). It changes nothing the contract trusts or how keys are posted.
 
 **(f) The API serves a stored auto-approve policy unvalidated. Fixed.** `effectiveSettings` serves a stored policy
 only if `parseAutoApprovePolicy` accepts it against the app's `session_ttl_ms`, and logs `auto_approve_policy_invalid`

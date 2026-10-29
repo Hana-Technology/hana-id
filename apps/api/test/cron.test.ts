@@ -57,7 +57,7 @@ describe('scheduled JWKS sync', () => {
     const near = chainWithKids(['old', 'kept']);
     near.jwks = { keys: [jwk('kept'), jwk('new1'), jwk('new2')] };
     const ctx = createExecutionContext();
-    await worker.scheduled(createScheduledController({ cron: '0 * * * *' }), env, ctx);
+    await worker.scheduled(createScheduledController({ cron: '*/15 * * * *', scheduledTime: Date.UTC(2026, 9, 29, 12, 0) }), env, ctx);
     await waitOnExecutionContext(ctx);
 
     // First run that sees 'old' missing: adds only.

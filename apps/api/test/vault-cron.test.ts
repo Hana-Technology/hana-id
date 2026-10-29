@@ -58,7 +58,7 @@ describe('vault cron', () => {
     jwks.views.get_issuer = () => ({ provider: 'google', iss_values: [], kids: [] });
     jwks.install();
     const ctx = createExecutionContext();
-    await worker.scheduled(createScheduledController({ cron: '0 * * * *' }), env, ctx);
+    await worker.scheduled(createScheduledController({ cron: '*/15 * * * *', scheduledTime: Date.UTC(2026, 9, 29, 12, 0) }), env, ctx);
     await waitOnExecutionContext(ctx);
     expect(await storedShare(live.shareId)).not.toBeNull();
     expect(await storedShare(idle.shareId)).not.toBeNull();

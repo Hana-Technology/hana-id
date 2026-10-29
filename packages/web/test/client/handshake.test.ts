@@ -390,6 +390,21 @@ describe('logout and the other silent methods', () => {
     expect(seen).toEqual([ev]);
   });
 
+  it('persistenceChanged updates hana.persistence and is re-emitted once per change (D79)', async () => {
+    s = setup();
+    await s.vault.connect(LOGGED_IN);
+    expect(s.client.persistence).toBe('session');
+    const seen: unknown[] = [];
+    s.client.on('persistenceChanged', (p) => seen.push(p));
+    s.vault.emit('persistenceChanged', { persistence: 'none' });
+    s.vault.emit('persistenceChanged', { persistence: 'none' });
+    await flush();
+    expect(s.client.persistence).toBe('none');
+    expect(seen).toEqual(['none']);
+    // The session itself goes on.
+    expect(s.client.status).toBe('logged_in');
+  });
+
   it('requestAutoApprove passes on 4100 when the app has no policy in force', async () => {
     s = setup();
     await s.vault.connect(LOGGED_IN);

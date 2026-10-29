@@ -127,7 +127,7 @@ Login stages, in order:
 | `app` | vault | `GET /v1/app` (normally cached since the vault loaded) |
 | `keygen` | vault | the session key, salt, nonce and relay keys |
 | `popup` | vault | until the login popup's hello (popup window, `/login` load) |
-| `authCheck` | `/login` | its `GET /v1/app` check and the nonce, until it navigates to Google |
+| `authCheck` | `/login` | its checks of the vault's message (pinned signer, nonce) and storing the relay key, until it navigates to Google; no API call since D77 |
 | `google` | vault | what is left of hello → token: the user at Google and Google's pages, **plus the relay's network legs** no single clock sees (the callback's CORS preflight and POST upstream, the vault's read response downstream, ≈ 1.5 API round trips) |
 | `callbackRedirect` | `/login/callback` | Google's redirect hops before the callback page was fetched (its navigation `fetchStart`) |
 | `callbackFetch` | `/login/callback` | DNS, TLS, the auth page Worker and the HTML (`fetchStart` → `responseEnd`) |
@@ -138,17 +138,18 @@ Login stages, in order:
 | `scopeWait` | vault | the wait for the registry scope check (0 when it finished while the user was at Google) |
 | `chain` | vault | the BLS key, the counter-1 signature and `POST /v1/login` with any recovery (the ship gate's number) |
 | `decrypt` | vault | CKD decryption, pairing check, derivation v1 |
-| `persist` | vault | the share and record: `POST /v1/vault/shares` and IndexedDB ('session' persistence only) |
-| `finish` | vault | switching to the new session, revoking replaced shares (not awaited), the events |
+| `finish` | vault | switching to the new session, revoking the replaced share (not awaited), starting the share and record (not awaited), the events |
 | `port` | partner page | the `hana_login` round trip minus the vault's own time (postMessage both ways, queueing) |
 
 Login breakdown: `scopeCheck` (the registry view itself, overlapped), `chainPrep` (BLS key + signature, inside
 `chain`), `loginRtt` / `loginServer` (`POST /v1/login` on the vault's clock / the API's own total, so `loginRtt −
 loginServer` is network, CORS preflight and Worker routing) with `loginServerGate` (D1 app + limiter objects),
 `loginServerChecks` (token, chain reads, signature), `loginServerRelay` (relayer key object round trip),
-`loginServerBroadcast` (until broadcast), `loginServerWait` (broadcast → outcome: the chain and the MPC); `shareRtt` /
-`shareServer` with `shareServerGate` and `shareServerSession` (the `get_session` read and its retries while the RPC
-lags, inside `persist`); `vault` (the vault's own total).
+`loginServerBroadcast` (until broadcast), `loginServerWait` (broadcast → outcome: the chain and the MPC); `vault`
+(the vault's own total). Since D79 the vault replies before it makes the share and record (`POST /v1/vault/shares`
+and IndexedDB, in the background), so the login's timings have no `persist` stage and no `shareRtt` / `shareServer*`
+details; share creation's server phases are in the API's request log. Runs logged before that keep their `persist`
+and `share*` values (shown with the stages).
 
 Unlock stages, in order:
 
@@ -169,8 +170,9 @@ Unlock stages, in order:
 | `port` | partner page | hello → `ready` minus the vault's own time |
 
 A load with no record (logged out) ends at `record`. Unlock breakdown: `unlockRtt` / `unlockServer` with
-`unlockServerGate` (D1 app + limiter objects), `unlockServerShare` (the share limiter, the KEK, the share and settings
-rows) and `unlockServerAdvance` (the counter update); `vault` (hello → `ready`).
+`unlockServerGate` (the app row, from D1 or the API isolate's 30 s cache, and the limiter objects: per IP and per
+share alongside each other, then per app; D78), `unlockServerShare` (the KEK, the share and settings rows; before
+D78 it also held the share limiter) and `unlockServerAdvance` (the counter update); `vault` (hello → `ready`).
 
 Results JSON version 3 adds `other` and these stages. Older runs keep what they had: login `app`, `popup`, `google`
 (which then included the callback and the relay), `verify`, `scopeCheck`, `scopeWait`, `chain`, `decrypt`, and no

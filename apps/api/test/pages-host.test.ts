@@ -99,7 +99,8 @@ function expectPageBasics(res: Response): void {
 describe('auth origin Worker', () => {
   it('serves each page from <route>.html with its full CSP and headers, and no COOP', async () => {
     const expected: Record<string, string> = {
-      '/login': `${BASE}; frame-ancestors 'none'; connect-src https://api.test`,
+      // The login popup fetches nothing (D77).
+      '/login': `${BASE}; frame-ancestors 'none'`,
       '/login/callback': `${BASE}; frame-ancestors 'none'; connect-src https://api.test`,
       '/approve': `${BASE}; frame-ancestors 'none'`,
       '/export': `${BASE}; frame-ancestors 'none'; connect-src https://api.test https://rpc.test https://www.googleapis.com`,

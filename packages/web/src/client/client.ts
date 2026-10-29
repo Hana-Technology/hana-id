@@ -62,6 +62,11 @@ export interface HanaEvents {
   autoApproved: [PortEventMap['autoApproved']];
   /** The vault's launcher (a 320×72 px Hana button) is shown or hidden; `label` is its text. */
   launcher: [{ visible: boolean; label: string }];
+  /**
+   * `persistence` changed after login: 'none' when the vault could not save the session for reloads (D79). The wallet
+   * keeps working on this page; the next page load needs a new login.
+   */
+  persistenceChanged: [Persistence];
 }
 
 export type SignRawParams = PortParamsMap['hana_signRaw'];
@@ -382,6 +387,11 @@ export class HanaClient extends Emitter<HanaEvents> {
         return;
       case 'autoApproved':
         this.emit('autoApproved', e.data);
+        return;
+      case 'persistenceChanged':
+        if (this.#persistence === e.data.persistence) return;
+        this.#persistence = e.data.persistence;
+        this.emit('persistenceChanged', e.data.persistence);
         return;
     }
   }

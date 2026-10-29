@@ -2,10 +2,12 @@
 // Cache-Control max-age, refetched on an unknown kid at most once a minute; while refetches fail, the expired set
 // keeps serving the kids it holds for a bounded grace period). Used wherever the API must not relay a
 // forged token: logins (/v1/sessions) and owner actions. The contract verifies again against the keys it holds on
-// chain (synced hourly from the same JWKS by the cron).
+// chain (synced hourly from the same JWKS by the cron). An optional observer records each fetch's kids and the kid of
+// each verified token, for the key lead-time measurement (key-observations.ts).
 import { base64UrlDecode } from './bytes.ts';
 import { GOOGLE_JWKS_URL, type Jwk, usableJwks } from './issuer-keys.ts';
 import { providerForIssuer } from './jwt.ts';
+import { type KeyObserver, cacheMaxAgeS } from './key-observations.ts';
 import { log } from './log.ts';
 
 /** provider → JWKS URL. */
@@ -49,7 +51,7 @@ function maxAgeMs(res: Response): number {
   return Math.min(MAX_TTL_MS, Math.max(MIN_TTL_MS, ms));
 }
 
-async function fetchJwks(provider: string, now: number): Promise<CachedJwks> {
+async function fetchJwks(provider: string, now: number, observer?: KeyObserver): Promise<CachedJwks> {
   const url = JWKS_URLS[provider];
   if (!url) throw new JwksUnavailableError(`No JWKS for provider ${provider}`);
   lastAttempt.set(provider, now);
@@ -67,19 +69,20 @@ async function fetchJwks(provider: string, now: number): Promise<CachedJwks> {
   lastFailure.delete(provider);
   const entry = { keys: new Map(keys.map((k) => [k.kid, k])), until: now + maxAgeMs(res) };
   cache.set(provider, entry);
+  observer?.jwks(provider, [...entry.keys.keys()], cacheMaxAgeS(res.headers.get('cache-control')), now);
   return entry;
 }
 
 const usableStale = (entry: CachedJwks | undefined, now: number): entry is CachedJwks => !!entry && now < entry.until + STALE_GRACE_MS;
 
-async function jwkFor(provider: string, kid: string, now: number): Promise<Jwk | null> {
+async function jwkFor(provider: string, kid: string, now: number, observer?: KeyObserver): Promise<Jwk | null> {
   let entry = cache.get(provider);
   if (!entry || entry.until <= now) {
     const failedAt = lastFailure.get(provider);
     const mayFetch = failedAt === undefined || now - failedAt >= RETRY_AFTER_FAILURE_MS;
     try {
       if (!mayFetch) throw new JwksUnavailableError('JWKS fetch failed recently');
-      entry = await fetchJwks(provider, now);
+      entry = await fetchJwks(provider, now, observer);
     } catch (err) {
       // Stale-while-error: keep serving the kids we already hold for a bounded grace period.
       if (!usableStale(entry, now)) throw err;
@@ -91,7 +94,7 @@ async function jwkFor(provider: string, kid: string, now: number): Promise<Jwk |
   if (hit) return hit;
   // Unknown kid: refetch at most once a minute, counting failed attempts (a forged kid can't make us hammer Google).
   if (now - (lastAttempt.get(provider) ?? -Infinity) < REFETCH_MIN_MS) return null;
-  return (await fetchJwks(provider, now)).keys.get(kid) ?? null;
+  return (await fetchJwks(provider, now, observer)).keys.get(kid) ?? null;
 }
 
 export interface VerifiedToken {
@@ -119,6 +122,8 @@ const decodeJson = (part: string): Record<string, unknown> | null => {
 export interface VerifyOptions {
   /** Clock skew tolerated on `exp`: a token is accepted until `exp + skewMs` (default 0). */
   skewMs?: number;
+  /** Told about each JWKS fetch and each valid signature's kid (key lead-time measurement); never about the token. */
+  observer?: KeyObserver;
 }
 
 /**
@@ -139,7 +144,7 @@ export async function verifyIdToken(jwt: string, now: number = Date.now(), opts:
   if (!provider || !JWKS_URLS[provider]) return fail('unsupported_issuer', 'Unsupported token issuer');
   if (exp * 1000 + (opts.skewMs ?? 0) <= now) return fail('token_expired', 'The token has expired');
 
-  const jwk = await jwkFor(provider, header.kid, now);
+  const jwk = await jwkFor(provider, header.kid, now, opts.observer);
   if (!jwk) return fail('invalid_token', 'Unknown token signing key');
   let valid = false;
   try {
@@ -149,6 +154,7 @@ export async function verifyIdToken(jwt: string, now: number = Date.now(), opts:
     valid = false;
   }
   if (!valid) return fail('invalid_token', 'Invalid token signature');
+  opts.observer?.token(provider, header.kid, now);
   return { ok: true, token: { provider, iss, aud, sub, exp, nonce: typeof nonce === 'string' ? nonce : null } };
 }
 

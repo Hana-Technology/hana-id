@@ -90,17 +90,17 @@ describe('createStore', () => {
     expect(Object.isFrozen(s.addresses)).toBe(true);
   });
 
-  it('notifies subscribers on statusChanged, accountsChanged, sessionExpired and disconnect, until they unsubscribe', () => {
+  it('notifies subscribers on statusChanged, accountsChanged, sessionExpired, disconnect and persistenceChanged, until they unsubscribe', () => {
     const f = fakeClient();
     const store = createStore(f.client);
-    expect([...f.listeners.keys()].sort()).toEqual(['accountsChanged', 'disconnect', 'sessionExpired', 'statusChanged']);
+    expect([...f.listeners.keys()].sort()).toEqual(['accountsChanged', 'disconnect', 'persistenceChanged', 'sessionExpired', 'statusChanged']);
     const cb = vi.fn();
     const unsubscribe = store.subscribe(cb);
-    for (const e of ['statusChanged', 'accountsChanged', 'sessionExpired', 'disconnect']) f.emit(e);
-    expect(cb).toHaveBeenCalledTimes(4);
+    for (const e of ['statusChanged', 'accountsChanged', 'sessionExpired', 'disconnect', 'persistenceChanged']) f.emit(e);
+    expect(cb).toHaveBeenCalledTimes(5);
     unsubscribe();
     f.emit('statusChanged');
-    expect(cb).toHaveBeenCalledTimes(4);
+    expect(cb).toHaveBeenCalledTimes(5);
   });
 
   it('notifies when ready resolves', async () => {

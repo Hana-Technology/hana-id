@@ -18,7 +18,8 @@ export interface VaultTimings {
    */
   stages: Record<string, number> | null;
   /**
-   * login: click → addresses on this page (includes the Google UI and the share creation). unlock: createHana → ready
+   * login: click → addresses on this page (includes the Google UI; since D79 not the share creation, which follows in
+   * the background). unlock: createHana → ready
    * (iframe load, vault page render, one POST /v1/vault/unlock).
    */
   totalMs: number;

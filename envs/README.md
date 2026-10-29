@@ -11,6 +11,23 @@ Google client fields:
   registered with `--allow-shared` log in through these instead of their own Google client. A client ID can be in only
   one of the two lists (the contract rejects a client that is both shared and a scope's own).
 
+Governance fields (`docs/governance-spec.md`, `docs/operations.md` "Governance"):
+
+- `ownerKind` (default `account`): `account` = `owner` is a plain account whose keychain key signs owner calls;
+  `sputnik` = `owner` is the council DAO (`owner` must equal `council.dao`) and owner calls are DAO proposals.
+  `deploy-contract --transfer-owner` switches it once the DAO has accepted ownership.
+- `council` (optional): `{factory, dao, members}`, the owner council (D81): a Sputnik DAO v2 named
+  `<one label>.<factory>` with exactly three distinct members, none of them an env account. sandbox-dev's is created by
+  `council-setup` (member keys in `.secrets/sandbox-dev/council/`); it exists before it becomes the owner.
+- `watchdogs` (default none, ≤ 3): accounts the contract lets cancel, confirm and pause (`add_watchdog`); none may be
+  an env or council account.
+- `issuerKeyDelayMs` (≤ 7 days), `governanceDelayMs` (≤ 30 days): the delays `new` and `migrate_v1` start with (D80;
+  sandbox-dev 120 000 and 60 000). `deploy-contract` sets them on chain if they differ (decreases wait, per contract).
+- `allowSignerFullAccessKey`: the signer may keep a full-access key (D86). Only for `local*` / `sandbox*` envs on
+  testnet: the schema refuses it outside testnet, `deploy-contract` refuses it in any other env, and a test checks that
+  no committed manifest but sandbox-dev's sets it. Without it, `deploy-contract` blocks on any full-access key on the
+  signer, and a new env's signer is created with the `--creation-plan` batch.
+
 Values containing `UNSET` are placeholders: `deploy-contract` skips the step that needs them (with a warning) until
 they are filled in.
 
@@ -18,6 +35,29 @@ they are filled in.
 per-app and owner-action limiters), as a Cloudflare location hint (`apac`, `weur`, `enam`, …). Without it each object
 lives wherever its first request happened to arrive. Pick the region of most users (sandbox-dev: `apac`, next to its
 D1 database). Per-IP limiters always stay near their client. Changing it creates new objects in the new region.
+
+`watchdog` (optional): the independent watchdog service of the governance batch (`apps/watchdog/README.md`,
+`docs/operations.md` "Watchdog service"). Without it the env has no watchdog Worker (`watchdog gen` refuses it).
+
+```json
+"watchdog": {
+  "account": "hana-id-watchdog-dev1.testnet",
+  "cloudflare": { "accountId": "UNSET", "workerName": "hana-id-watchdog-sandbox-dev", "d1Name": "hana-id-watchdog-sandbox-dev" },
+  "alertEmails": ["founder-a@example.com", "founder-b@example.com"],
+  "alertFrom": "alerts@notify.example.com",
+  "pager": "ntfy",
+  "digestHourUtc": 0
+}
+```
+
+- `account`: the watchdog's own NEAR account; never the signer, relayer, owner or MPC account. It must also be listed
+  in `watchdogs` (the schema refuses it otherwise), which is how `deploy-contract` adds it on chain with
+  `add_watchdog`. Its key (`WATCHDOG_KEY`) is a function-call key on it.
+- `cloudflare.accountId`: the watchdog's **own** Cloudflare account (separate login and MFA from the API's, D86),
+  32 hex characters; `UNSET` until it exists (`gen` refuses `UNSET`). `workerName` must differ from the API's.
+- `alertEmails`: both founders (D85); `alertFrom`: an address on the dedicated sending subdomain (D87).
+- `pager`: `ntfy`, `pushover` or `pagerduty` (D85, chosen at setup); its credentials are Worker secrets.
+- `digestHourUtc` (0–23, default 0): the daily digest goes out on the first run after this hour (UTC).
 
 `rpcFallback` (optional): a second NEAR JSON-RPC endpoint, `https` only and not `rpc` itself, ideally from another
 provider. The vault and the export window read from it (session re-syncs, the login's registry check, transaction

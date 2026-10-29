@@ -1,8 +1,9 @@
 // Hana ID API: relays hana-signer calls for registered apps (Cloudflare Worker + Durable Objects + D1).
 import type { Env } from './env.ts';
 import { type AppEndpoint, APP_CONFIG_ENDPOINT, APP_ENDPOINTS, appPreflight, handleAppConfig, handleAppEndpoint, handleHealth, handleOwnerAction, openPreflight } from './handlers.ts';
+import { GOVERNANCE_ENDPOINT, handleGovernance } from './governance-status.ts';
 import { json } from './http.ts';
-import { observeIssuerJwks, syncIssuerKeys } from './issuer-keys.ts';
+import { syncIssuerKeys } from './issuer-keys.ts';
 import { log } from './log.ts';
 import { LOGIN_ENDPOINT, handleLogin } from './login.ts';
 import { LOGIN_RELAY_PREFIX, handleLoginRelay, loggedEndpoint } from './login-relay.ts';
@@ -19,9 +20,9 @@ const ID_RE = /^[A-Za-z0-9-]{1,64}$/u;
 
 /**
  * The cron fires every 15 min (one quarter-hourly trigger from gen-wrangler.ts: the free plan allows 5 per
- * account). The run in the first quarter of each UTC hour is the hourly one (JWKS → contract sync, vault maintenance);
- * the other three only record the JWKS for the key lead-time measurement. A Worker still on the old `0 * * * *`
- * trigger only ever gets hourly runs.
+ * account). Every run syncs Google's JWKS with hana-signer (proposals and matured executions, issuer-keys.ts; the
+ * governance spec's P = 15 min). The run in the first quarter of each UTC hour also does vault maintenance. A Worker
+ * still on the old `0 * * * *` trigger only ever gets hourly runs.
  */
 export function isHourlyRun(scheduledTime: number): boolean {
   return new Date(scheduledTime).getUTCMinutes() < 15;
@@ -77,6 +78,11 @@ export default {
         if (request.method === 'OPTIONS') return openPreflight();
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'GET' });
       }
+      if (pathname === GOVERNANCE_ENDPOINT) {
+        if (request.method === 'GET' || request.method === 'HEAD') return await handleGovernance(request, env, requestId);
+        if (request.method === 'OPTIONS') return openPreflight();
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'GET' });
+      }
       if (pathname === APP_CONFIG_ENDPOINT) {
         if (request.method === 'OPTIONS') return await appPreflight(request, env);
         if (request.method === 'GET') return await handleAppConfig(request, env, requestId);
@@ -111,14 +117,12 @@ export default {
   },
 
   async scheduled(controller, env, _ctx): Promise<void> {
-    if (!isHourlyRun(controller.scheduledTime)) {
-      await observeIssuerJwks(env);
-      return;
-    }
     // Independent jobs: one failing must not skip the other. The sync records the JWKS observation from its fetch.
-    const [vault, issuerKeys] = await Promise.allSettled([vaultMaintenance(env), syncIssuerKeys(env)]);
-    if (vault.status === 'rejected') log({ event: 'vault_maintenance', outcome: 'error', code: 'internal' }, 'error');
-    if (issuerKeys.status === 'rejected') throw issuerKeys.reason;
-    if (vault.status === 'rejected') throw vault.reason;
+    const jobs: Promise<unknown>[] = [syncIssuerKeys(env)];
+    if (isHourlyRun(controller.scheduledTime)) jobs.push(vaultMaintenance(env));
+    const [issuerKeys, vault] = await Promise.allSettled(jobs);
+    if (vault?.status === 'rejected') log({ event: 'vault_maintenance', outcome: 'error', code: 'internal' }, 'error');
+    if (issuerKeys?.status === 'rejected') throw issuerKeys.reason;
+    if (vault?.status === 'rejected') throw vault.reason;
   },
 } satisfies ExportedHandler<Env>;

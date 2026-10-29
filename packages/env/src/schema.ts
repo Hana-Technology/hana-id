@@ -8,6 +8,56 @@ export const DO_LOCATION_HINTS = ['wnam', 'enam', 'sam', 'weur', 'eeur', 'apac',
 
 const clientId = z.string().min(1).max(255).regex(/^\S+$/u, 'Client IDs contain no whitespace');
 
+/** Paging apps the watchdog can page through (D85: chosen at setup). */
+export const PAGER_PROVIDERS = ['ntfy', 'pushover', 'pagerduty'] as const;
+
+const workerName = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u, 'A Worker name is 1-63 lowercase letters, digits and inner hyphens');
+
+const watchdogSchema = z.object({
+  /**
+   * The watchdog's own NEAR account: one of the contract's watchdogs (`add_watchdog`). Its Worker secret
+   * `WATCHDOG_KEY` is a function-call key on it (receiver `signer`, methods `cancel_issuer_key_change`,
+   * `confirm_issuer_key_change`, `pause`, `delete_updater_key`).
+   */
+  account: nearAccount,
+  cloudflare: z.object({
+    /** The watchdog's own Cloudflare account (separate login and MFA from the API's, D86). `UNSET` until created. */
+    accountId: z.string().regex(/^(?:[0-9a-f]{32}|UNSET)$/u, 'A Cloudflare account id is 32 lowercase hex characters (or UNSET)'),
+    workerName,
+    d1Name: z.string().min(1),
+  }),
+  /** Who gets warning and critical emails and the daily digest: both founders (D85). */
+  alertEmails: z.array(z.string().email()).min(1).max(10),
+  /** Sender address on the dedicated sending subdomain (D87). */
+  alertFrom: z.string().email(),
+  /** The paging app for critical alerts (D85). Its credentials are Worker secrets. */
+  pager: z.enum(PAGER_PROVIDERS),
+  /** Hour (UTC, 0-23) after which the daily info digest is sent; default 0. */
+  digestHourUtc: z.number().int().min(0).max(23).optional(),
+});
+
+/**
+ * The watchdog is a different party from every account it watches, and a different Worker from the API. Its account
+ * is one of the contract's `watchdogs`, so `deploy-contract` adds it on chain (`add_watchdog`); a watchdog service
+ * whose account the contract doesn't know can't cancel or pause anything.
+ */
+function watchdogRules(
+  m: { signer: string; relayer: string; owner: string; mpc: string; watchdogs?: string[] | undefined; cloudflare: { workerName: string } },
+  w: z.infer<typeof watchdogSchema>,
+  ctx: z.RefinementCtx,
+): void {
+  if (!(m.watchdogs ?? []).includes(w.account)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'account'], message: `watchdog.account ${w.account} must be listed in watchdogs (the contract's watchdog accounts)` });
+  }
+  for (const field of ['signer', 'relayer', 'owner', 'mpc'] as const) {
+    if (w.account === m[field]) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'account'], message: `watchdog.account must not be the ${field} account` });
+  }
+  if (w.cloudflare.workerName === m.cloudflare.workerName) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'cloudflare', 'workerName'], message: "watchdog.cloudflare.workerName must differ from the API's Worker name" });
+  }
+  if (new Set(w.alertEmails).size !== w.alertEmails.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'alertEmails'], message: 'Duplicate alert email' });
+}
+
 /** One environment's accounts and endpoints. Every account name the code uses comes from here. */
 export const manifestSchema = z
   .object({
@@ -58,6 +108,43 @@ export const manifestSchema = z
     sharedGoogleClientIds: z.array(clientId).max(5),
     /** Client IDs of the Hana console, accepted for OIDC owner actions: [provider, aud]. */
     consoleAudiences: z.array(z.tuple([z.string(), z.string()])),
+    /**
+     * Who `owner` is (docs/governance-spec.md "Owner = multisig", D81): `account` = a plain NEAR account whose
+     * full-access key the scripts read from ~/.near-credentials; `sputnik` = a Sputnik DAO v2 council (`council.dao`,
+     * which `owner` must then equal), driven through proposals (scripts/lib/owner-tx.ts).
+     */
+    ownerKind: z.enum(['account', 'sputnik']).optional(),
+    /**
+     * The owner council: a Sputnik DAO v2 created by `factory` (the DAO account is `<name>.<factory>`) with exactly
+     * three members, 2 of 3 for every proposal kind (contracts/sputnik/policy.json). Present before it becomes the
+     * owner (migration: the old owner proposes it, the DAO accepts).
+     */
+    council: z
+      .object({
+        factory: nearAccount,
+        dao: nearAccount,
+        members: z.array(nearAccount).length(3),
+      })
+      .optional(),
+    /** Watchdog accounts (≤ 3) the contract lets cancel, confirm and pause (docs/governance-spec.md "Watchdogs"). */
+    watchdogs: z.array(nearAccount).max(3).optional(),
+    /**
+     * `issuer_key_delay_ms` for `new` / `migrate_v1` (contract allows 0..7 days; D80). deploy-contract refuses less
+     * than the security bound 3·(W + T) = 18 min outside dev envs (`delays.ts` `governanceDelayProblems`).
+     */
+    issuerKeyDelayMs: z.number().int().min(0).max(7 * 24 * 60 * 60 * 1000).optional(),
+    /**
+     * `governance_delay_ms` for `new` / `migrate_v1` (contract allows 0..30 days; D80). deploy-contract refuses less
+     * than 24 h outside dev envs (72 h on mainnet).
+     */
+    governanceDelayMs: z.number().int().min(0).max(30 * 24 * 60 * 60 * 1000).optional(),
+    /**
+     * The signer account may keep a full-access key (D86): sandbox-dev only. Refused here on any network but testnet;
+     * deploy-contract also refuses it on a non-dev env (`local*`, `sandbox*` only), and a test keeps every committed
+     * manifest but sandbox-dev's from setting it. Every other env's signer has only the updater keys the contract
+     * installed; deploy-contract blocks on any other key.
+     */
+    allowSignerFullAccessKey: z.boolean().optional(),
     cloudflare: z.object({
       workerName: z.string().min(1),
       d1Name: z.string().min(1),
@@ -68,9 +155,16 @@ export const manifestSchema = z
        */
       durableObjectLocation: z.enum(DO_LOCATION_HINTS).optional(),
     }),
+    /**
+     * The watchdog service (apps/watchdog, docs/governance-spec.md "Watchdog service"). Optional: an env without it
+     * has no watchdog Worker (`gen` for apps/watchdog refuses it). It runs on its own Cloudflare account (D86).
+     */
+    watchdog: watchdogSchema.optional(),
   })
   .superRefine((m, ctx) => {
     hanaOrigins(m, ctx);
+    if (m.watchdog) watchdogRules(m, m.watchdog, ctx);
+    governance(m, ctx);
     if (m.rpcFallback !== undefined && m.rpcFallback === m.rpc) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['rpcFallback'], message: 'rpcFallback must be a different endpoint from rpc' });
     }
@@ -88,6 +182,61 @@ export const manifestSchema = z
       }
     }
   });
+
+interface GovernanceFields {
+  name: string;
+  network: string;
+  signer: string;
+  relayer: string;
+  owner: string;
+  ownerKind?: 'account' | 'sputnik' | undefined;
+  council?: { factory: string; dao: string; members: string[] } | undefined;
+  watchdogs?: string[] | undefined;
+  allowSignerFullAccessKey?: boolean | undefined;
+}
+
+/**
+ * Governance fields (docs/governance-spec.md): a council's DAO is `<one label>.<factory>`, its members are three
+ * distinct accounts other than the env's own; `ownerKind: "sputnik"` means `owner` is the council's DAO; watchdogs are
+ * distinct and none of the env's accounts; a signer full-access key is allowed only in a testnet dev env (D86).
+ */
+function governance(m: GovernanceFields, ctx: z.RefinementCtx): void {
+  const own = new Set([m.signer, m.relayer]);
+  if (m.council) {
+    const { factory, dao, members } = m.council;
+    const name = dao.endsWith(`.${factory}`) ? dao.slice(0, -factory.length - 1) : '';
+    if (!name || name.includes('.')) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['council', 'dao'], message: `council.dao must be <name>.${factory} (one label, created by the factory)` });
+    }
+    if (new Set(members).size !== members.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['council', 'members'], message: 'council.members must be distinct' });
+    for (const a of members) {
+      if (a === dao || own.has(a) || a === m.owner) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['council', 'members'], message: `council member ${a} must not be the DAO, the signer, the relayer or the owner` });
+      }
+    }
+    if (own.has(dao)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['council', 'dao'], message: 'council.dao must not be the signer or the relayer' });
+  }
+  if (m.ownerKind === 'sputnik') {
+    if (!m.council) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ownerKind'], message: 'ownerKind "sputnik" needs a council' });
+    else if (m.owner !== m.council.dao) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['owner'], message: `ownerKind "sputnik": owner must be council.dao (${m.council.dao})` });
+  }
+  const watchdogs = m.watchdogs ?? [];
+  if (new Set(watchdogs).size !== watchdogs.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdogs'], message: 'watchdogs must be distinct' });
+  for (const w of watchdogs) {
+    if (own.has(w) || w === m.owner || w === m.council?.dao || m.council?.members.includes(w)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdogs'], message: `watchdog ${w} must be its own account (not the signer, relayer, owner or a council account)` });
+    }
+  }
+  // The network enum is testnet-only today; this keeps the rule when mainnet manifests become possible. The dev-env
+  // rule is deploy-contract's (a schema refusal would break every fixture that renames sandbox-dev).
+  if (m.allowSignerFullAccessKey && m.network !== 'testnet') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['allowSignerFullAccessKey'],
+      message: 'allowSignerFullAccessKey is refused outside testnet: a mainnet signer never has a full-access key (D86)',
+    });
+  }
+}
 
 /**
  * `vaultOrigin`/`authOrigin`: both or neither, each a valid Hana origin for the env, distinct, never `apiUrl`'s origin,

@@ -64,6 +64,8 @@ describe('POST /v1/login', () => {
     expect(near.viewCalls).toEqual([
       { method: 'scope_for_client', args: { provider: 'google', aud } },
       { method: 'session_key_in_use', args: { session_public_key: req.sessionPublicKey } },
+      { method: 'get_config', args: {} },
+      { method: 'get_issuer', args: { provider: 'google' } },
     ]);
     expect(await usage(app.id)).toEqual({ sessions: 1, derives: 1 });
     // The session is committed with its use spent.

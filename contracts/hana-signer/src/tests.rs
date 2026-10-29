@@ -20,6 +20,10 @@ const HOUR_MS: u64 = 3_600_000;
 const EXPIRES_MS: u64 = NOW_MS + HOUR_MS;
 const EXPIRES_LATE_MS: u64 = NOW_MS + 2 * HOUR_MS;
 const DELAY_MS: u64 = HOUR_MS;
+/// issuer_key_delay_ms after setup().
+const KEY_DELAY_MS: u64 = HOUR_MS / 2;
+/// governance_delay_ms after setup(). Fixture tokens stay valid until NOW_MS + 3 h.
+const GOV_DELAY_MS: u64 = 2 * HOUR_MS;
 const SALT: [u8; 16] = [9; 16];
 
 const USER: &str = "1098765432";
@@ -43,6 +47,9 @@ const ALICE: &str = "alice.testnet";
 const BOB: &str = "bob.testnet";
 const MALLORY: &str = "mallory.testnet";
 const CAROL: &str = "carol.testnet";
+/// A watchdog that may confirm from NOW_MS (added in setup() while the governance delay was 0).
+const WATCHDOG: &str = "watchdog.testnet";
+const WATCHDOG2: &str = "watchdog2.testnet";
 
 std::thread_local! {
     /// The contract account (`env::current_account_id()`) for this test's calls. Each test runs on its own thread.
@@ -133,6 +140,11 @@ fn pk(seed: u8) -> Vec<u8> {
     sk(seed).verifying_key().to_bytes().to_vec()
 }
 
+/// An ed25519 access-key public key.
+fn near_pk(seed: u8) -> near_sdk::PublicKey {
+    near_sdk::PublicKey::from_parts(near_sdk::CurveType::ED25519, pk(seed)).unwrap()
+}
+
 fn near_owner(a: &str) -> Owner {
     Owner::Near { account_id: acc(a) }
 }
@@ -153,19 +165,42 @@ fn oidc(token: &str) -> OwnerAuth {
     OwnerAuth::Oidc { jwt: tok(token) }
 }
 
-/// A fresh contract with the fixture issuer key, a console audience, and two admin-registered scopes:
-/// s1 = owners [alice, Oidc owner-111], clients [A, A2]; s2 = owners [bob], clients [B].
+/// A fresh contract with the fixture issuer key (active), a console audience (in force), and two admin-registered
+/// scopes: s1 = owners [alice, Oidc owner-111], clients [A, A2]; s2 = owners [bob], clients [B]. Built with zero
+/// delays (so the key and the audience are in force at once), then the delays are raised (increases apply at once):
+/// change_delay_ms = DELAY_MS, issuer_key_delay_ms = KEY_DELAY_MS, governance_delay_ms = GOV_DELAY_MS. WATCHDOG was
+/// added while the governance delay was 0, so it may confirm from NOW_MS.
 fn setup() -> HanaSigner {
-    ctx(ADMIN, NOW_MS);
+    // Empty storage, so a test may set up several contracts in turn.
+    ctx_with_storage(ADMIN, NOW_MS, Default::default());
     let f = fixture();
-    let mut c = HanaSigner::new(acc(ADMIN), acc("v1.signer-prod.testnet"), 2, DELAY_MS);
+    let mut c = HanaSigner::new(acc(ADMIN), acc("v1.signer-prod.testnet"), 2, 0, 0, 0, vec![], vec![]);
     c.set_issuer("google".into(), vec!["https://accounts.google.com".into(), "accounts.google.com".into()]);
-    c.set_issuer_key("google".into(), "test-kid".into(), f["n"].as_str().unwrap().into(), f["e"].as_str().unwrap().into());
+    let id = c.set_issuer_key("google".into(), "test-kid".into(), f["n"].as_str().unwrap().into(), f["e"].as_str().unwrap().into());
+    c.execute_issuer_key_change(id);
     c.set_console_audiences(vec![google(CONSOLE)]);
     c.set_sponsors(vec![acc(RELAYER)]);
+    c.add_watchdog(acc(WATCHDOG));
+    c.set_change_delay_ms(DELAY_MS);
+    c.set_issuer_key_delay_ms(KEY_DELAY_MS);
+    c.set_governance_delay_ms(GOV_DELAY_MS);
     assert_eq!(c.admin_register_scope(vec![near_owner(ALICE), oidc_owner(OWNER_SUB)], vec![google(A), google(A2)], None, false), "s1");
     assert_eq!(c.admin_register_scope(vec![near_owner(BOB)], vec![google(B)], None, false), "s2");
     c
+}
+
+/// Proposes `kid` = (n, e) for `provider` as the owner and confirms it as WATCHDOG, at NOW_MS: the key is active.
+fn post_key(c: &mut HanaSigner, provider: &str, kid: &str, n: &str, e: &str) {
+    ctx(ADMIN, NOW_MS);
+    let id = c.set_issuer_key(provider.into(), kid.into(), n.into(), e.into());
+    ctx(WATCHDOG, NOW_MS);
+    c.confirm_issuer_key_change(id);
+}
+
+/// The fixture's google key (n, e).
+fn fixture_key() -> (String, String) {
+    let f = fixture();
+    (f["n"].as_str().unwrap().to_string(), f["e"].as_str().unwrap().to_string())
 }
 
 /// Opens a session with `token` in `scope` (expiry EXPIRES_MS, salt SALT, max_uses 3: what the fixture nonces commit to).
@@ -640,7 +675,7 @@ fn session_key_in_use_covers_revoked_sessions_until_expiry() {
 fn create_session_prunes_up_to_three() {
     let mut c = setup();
     for seed in 20..25u8 {
-        c.sessions.insert(pk(seed), sessions::StoredSession { path: "p".into(), scope_id: "s1".into(), expires_at_ms: NOW_MS - 1, max_uses: 1, used: 0, revoked: false });
+        c.sessions.insert(pk(seed), sessions::StoredSession { path: "p".into(), scope_id: "s1".into(), expires_at_ms: NOW_MS - 1, max_uses: 1, used: 0, revoked: false, created_at_ms: None });
         c.session_queue.insert(c.queue_tail, sessions::QueueEntry { expires_at_ms: NOW_MS - 1, key: pk(seed) });
         c.queue_tail += 1;
     }
@@ -655,7 +690,7 @@ fn prune_sessions_is_capped_at_100() {
     let mut c = setup();
     for i in 0..105u32 {
         let key = [&i.to_le_bytes()[..], &[0u8; 28]].concat();
-        c.sessions.insert(key.clone(), sessions::StoredSession { path: "p".into(), scope_id: "s1".into(), expires_at_ms: NOW_MS - 1, max_uses: 1, used: 0, revoked: false });
+        c.sessions.insert(key.clone(), sessions::StoredSession { path: "p".into(), scope_id: "s1".into(), expires_at_ms: NOW_MS - 1, max_uses: 1, used: 0, revoked: false, created_at_ms: None });
         c.session_queue.insert(c.queue_tail, sessions::QueueEntry { expires_at_ms: NOW_MS - 1, key });
         c.queue_tail += 1;
     }
@@ -841,7 +876,7 @@ fn combined_login_with_two_uses_retries_with_counter_2() {
 fn combined_login_prunes_up_to_three() {
     let mut c = setup();
     for seed in 20..25u8 {
-        c.sessions.insert(pk(seed), sessions::StoredSession { path: "p".into(), scope_id: "s1".into(), expires_at_ms: NOW_MS - 1, max_uses: 1, used: 0, revoked: false });
+        c.sessions.insert(pk(seed), sessions::StoredSession { path: "p".into(), scope_id: "s1".into(), expires_at_ms: NOW_MS - 1, max_uses: 1, used: 0, revoked: false, created_at_ms: None });
         c.session_queue.insert(c.queue_tail, sessions::QueueEntry { expires_at_ms: NOW_MS - 1, key: pk(seed) });
         c.queue_tail += 1;
     }
@@ -940,22 +975,35 @@ fn vault_signatures_are_rejected_as_derive_and_revoke() {
 // ---- issuers ----
 
 #[test]
-fn issuer_keys_by_owner_and_by_the_contract_account() {
+fn issuer_keys_by_owner_and_by_the_contract_account_are_queued() {
     let mut c = setup();
-    let f = fixture();
-    let (n, e) = (f["n"].as_str().unwrap().to_string(), f["e"].as_str().unwrap().to_string());
+    let (n, e) = fixture_key();
+    // The contract account (the updater key) proposes; nothing is active yet.
     ctx(ME, NOW_MS);
-    c.set_issuer_key("google".into(), "k2".into(), n.clone(), e.clone());
-    assert_eq!(events()[0], serde_json::json!({"standard":"hana-id","version":"1.0.0","event":"issuer_key_set","data":[{"provider":"google","kid":"k2"}]}));
-    assert_eq!(c.get_issuer("google".into()).unwrap().kids, vec!["k2".to_string(), "test-kid".to_string()]);
-    assert!(c.remove_issuer_key("google".into(), "k2".into()));
-    assert!(!c.remove_issuer_key("google".into(), "k2".into()));
+    // (setup() used id 0 for test-kid.)
+    assert_eq!(c.set_issuer_key("google".into(), "k2".into(), n.clone(), e.clone()), 1);
+    assert_eq!(c.get_issuer("google".into()).unwrap().kids, vec!["test-kid".to_string()]);
+    // The owner's posts wait the same delay (D86).
     ctx(ADMIN, NOW_MS);
-    c.set_issuer_key("google".into(), "k3".into(), n, e);
+    assert_eq!(c.set_issuer_key("google".into(), "k3".into(), n.clone(), e.clone()), 2);
+    let changes = c.get_key_changes();
+    assert_eq!(changes.iter().map(|k| (k.id, k.kid.as_str(), k.by.as_str(), k.executable_at_ms)).collect::<Vec<_>>(), vec![
+        (1, "k2", ME, NOW_MS + KEY_DELAY_MS),
+        (2, "k3", ADMIN, NOW_MS + KEY_DELAY_MS)
+    ]);
+    // Anyone executes once due.
+    ctx(MALLORY, NOW_MS + KEY_DELAY_MS);
+    c.execute_issuer_key_change(1);
+    c.execute_issuer_key_change(2);
     assert_eq!(
         c.get_issuer("google".into()),
-        Some(IssuerView { provider: "google".into(), iss_values: vec!["https://accounts.google.com".into(), "accounts.google.com".into()], kids: vec!["k3".into(), "test-kid".into()] })
+        Some(IssuerView {
+            provider: "google".into(),
+            iss_values: vec!["https://accounts.google.com".into(), "accounts.google.com".into()],
+            kids: vec!["k2".into(), "k3".into(), "test-kid".into()]
+        })
     );
+    assert!(c.get_key_changes().is_empty());
 }
 
 #[test]
@@ -968,11 +1016,14 @@ fn others_cannot_set_issuer_keys() {
 }
 
 #[test]
-#[should_panic(expected = "Only the owner or the contract account")]
-fn others_cannot_remove_issuer_keys() {
-    let mut c = setup();
-    ctx(RELAYER, NOW_MS);
-    c.remove_issuer_key("google".into(), "test-kid".into());
+fn only_the_owner_removes_issuer_keys_at_once() {
+    for caller in [RELAYER, ME, WATCHDOG] {
+        let mut c = setup();
+        ctx(caller, NOW_MS);
+        expect_panic("Only the owner can do this", || {
+            c.remove_issuer_key("google".into(), "test-kid".into());
+        });
+    }
 }
 
 #[test]
@@ -1040,7 +1091,8 @@ fn with_other_issuer(c: &mut HanaSigner) {
     let f = fixture();
     ctx(ADMIN, NOW_MS);
     c.set_issuer("other".into(), vec!["https://other.example".into()]);
-    c.set_issuer_key("other".into(), f["other_kid"].as_str().unwrap().into(), f["other_n"].as_str().unwrap().into(), f["other_e"].as_str().unwrap().into());
+    post_key(c, "other", f["other_kid"].as_str().unwrap(), f["other_n"].as_str().unwrap(), f["other_e"].as_str().unwrap());
+    ctx(ADMIN, NOW_MS);
 }
 
 #[test]
@@ -1067,35 +1119,76 @@ fn a_kid_only_verifies_tokens_of_its_own_issuer() {
 // ---- config ----
 
 #[test]
-fn config_view_and_owner_setters() {
-    let mut c = setup();
+fn config_view() {
+    let c = setup();
     let cfg = c.get_config();
     assert_eq!(
         serde_json::to_value(&cfg).unwrap(),
-        serde_json::json!({"owner":ADMIN,"mpc":"v1.signer-prod.testnet","ckd_domain_id":2,"console_audiences":[["google",CONSOLE]],"sponsors":[RELAYER],"shared_clients":[],"pending_shared_clients":[],"change_delay_ms":DELAY_MS,"pending_change_delay":null,"public_registration":false})
+        serde_json::json!({
+            "owner":ADMIN,"mpc":"v1.signer-prod.testnet","ckd_domain_id":2,
+            "console_audiences":[["google",CONSOLE]],"pending_console_audiences":[],
+            "sponsors":[RELAYER],"shared_clients":[],"pending_shared_clients":[],
+            "change_delay_ms":DELAY_MS,"pending_change_delay":null,"public_registration":false,
+            "issuer_key_delay_ms":KEY_DELAY_MS,"pending_issuer_key_delay":null,
+            "governance_delay_ms":GOV_DELAY_MS,"pending_governance_delay":null,
+            "paused":false,"unpaused_at_ms":0,"changes_unlock_floor_ms":0,"sessions_valid_from_ms":0
+        })
     );
-    c.set_owner(acc("admin2.testnet"));
-    assert_eq!(c.get_config().owner, acc("admin2.testnet"));
+}
+
+/// Every owner-only method, with valid arguments, so only the caller check can fail.
+fn owner_only_calls() -> Vec<(&'static str, Box<dyn Fn(&mut HanaSigner)>)> {
+    vec![
+        ("set_sponsors", Box::new(|c| c.set_sponsors(vec![acc(MALLORY)]))),
+        ("set_console_audiences", Box::new(|c| c.set_console_audiences(vec![google(A)]))),
+        ("set_change_delay_ms", Box::new(|c| c.set_change_delay_ms(0))),
+        ("enable_public_registration", Box::new(|c| c.enable_public_registration())),
+        ("set_shared_clients", Box::new(|c| c.set_shared_clients(vec![]))),
+        ("set_issuer", Box::new(|c| c.set_issuer("evil".into(), vec!["https://evil.example".into()]))),
+        (
+            "admin_register_scope",
+            Box::new(|c| {
+                c.admin_register_scope(vec![near_owner(MALLORY)], vec![google(C)], None, false);
+            }),
+        ),
+        (
+            "remove_issuer_key",
+            Box::new(|c| {
+                c.remove_issuer_key("google".into(), "test-kid".into());
+            }),
+        ),
+        ("set_issuer_key_delay_ms", Box::new(|c| c.set_issuer_key_delay_ms(0))),
+        ("set_governance_delay_ms", Box::new(|c| c.set_governance_delay_ms(0))),
+        ("add_watchdog", Box::new(|c| c.add_watchdog(acc(MALLORY)))),
+        ("remove_watchdog", Box::new(|c| c.remove_watchdog(acc(WATCHDOG)))),
+        (
+            "add_updater_key",
+            Box::new(|c| {
+                c.add_updater_key(near_pk(3)).detach();
+            }),
+        ),
+        ("unpause", Box::new(|c| c.unpause())),
+        ("set_sessions_valid_from_ms", Box::new(|c| c.set_sessions_valid_from_ms(0))),
+        ("propose_upgrade", Box::new(|c| c.propose_upgrade([1u8; 32].into()))),
+        ("cancel_upgrade", Box::new(|c| c.cancel_upgrade())),
+        ("propose_owner", Box::new(|c| c.propose_owner(acc(MALLORY)))),
+        ("cancel_owner_proposal", Box::new(|c| c.cancel_owner_proposal())),
+        ("propose_withdrawal", Box::new(|c| c.propose_withdrawal(acc(MALLORY), NearToken::from_near(1)))),
+        ("cancel_withdrawal", Box::new(|c| c.cancel_withdrawal())),
+    ]
 }
 
 #[test]
-fn only_the_owner_changes_config() {
-    let mut c = setup();
-    ctx(MALLORY, NOW_MS);
-    let calls: Vec<Box<dyn Fn(&mut HanaSigner)>> = vec![
-        Box::new(|c| c.set_owner(acc(MALLORY))),
-        Box::new(|c| c.set_sponsors(vec![acc(MALLORY)])),
-        Box::new(|c| c.set_console_audiences(vec![google(A)])),
-        Box::new(|c| c.set_change_delay_ms(0)),
-        Box::new(|c| c.enable_public_registration()),
-        Box::new(|c| c.set_issuer("evil".into(), vec!["https://evil.example".into()])),
-        Box::new(|c| {
-            c.admin_register_scope(vec![near_owner(MALLORY)], vec![google(C)], None, false);
-        }),
-    ];
-    for call in calls {
-        let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call(&mut c))).unwrap_err();
-        assert!(panic_msg(err).contains("Only the owner can do this"));
+fn only_the_owner_changes_config_and_governance() {
+    // Others, the contract account itself (the updater key) and a watchdog are all refused.
+    for caller in [MALLORY, ME, WATCHDOG, RELAYER] {
+        let mut c = setup();
+        ctx(caller, NOW_MS);
+        for (name, call) in owner_only_calls() {
+            let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call(&mut c))).expect_err(name);
+            let msg = panic_msg(err);
+            assert!(msg.contains("Only the owner can do this"), "{caller} {name}: {msg}");
+        }
     }
 }
 
@@ -1155,7 +1248,7 @@ fn admin_registration_emits_an_event() {
     c.admin_register_scope(vec![near_owner(ADMIN)], vec![google(C)], None, false);
     assert_eq!(
         events(),
-        vec![serde_json::json!({"standard":"hana-id","version":"1.0.0","event":"scope_registered","data":[{"scope_id":"s3","owners":[{"Near":{"account_id":ADMIN}}],"clients":[["google",C]],"allow_shared":false,"by":ADMIN,"admin":true}]})]
+        vec![serde_json::json!({"standard":"hana-id","version":"1.1.0","event":"scope_registered","data":[{"scope_id":"s3","owners":[{"Near":{"account_id":ADMIN}}],"clients":[["google",C]],"allow_shared":false,"by":ADMIN,"admin":true}]})]
     );
 }
 
@@ -1615,7 +1708,7 @@ fn owners_remove_clients_immediately() {
     c.remove_client("s1".into(), OwnerAuth::Near, "google".into(), A2.into());
     assert_eq!(
         events()[0],
-        serde_json::json!({"standard":"hana-id","version":"1.0.0","event":"client_removed","data":[{"scope_id":"s1","provider":"google","aud":A2,"free_at_ms":NOW_MS + DELAY_MS,"by":{"Near":{"account_id":ALICE}}}]})
+        serde_json::json!({"standard":"hana-id","version":"1.1.0","event":"client_removed","data":[{"scope_id":"s1","provider":"google","aud":A2,"free_at_ms":NOW_MS + DELAY_MS,"by":{"Near":{"account_id":ALICE}}}]})
     );
     assert_eq!(c.scope_for_client("google".into(), A2.into()), None);
     assert_eq!(c.get_scope("s1".into()).unwrap().clients, vec![google(A)]);
@@ -2039,7 +2132,7 @@ fn shared_client_additions_are_delayed() {
     c.set_shared_clients(vec![google(SHARED)]);
     assert_eq!(
         events()[0],
-        serde_json::json!({"standard":"hana-id","version":"1.0.0","event":"shared_clients_set","data":[{"shared_clients":[],"pending_shared_clients":[{"provider":"google","aud":SHARED,"effective_at_ms":NOW_MS + DELAY_MS}]}]})
+        serde_json::json!({"standard":"hana-id","version":"1.1.0","event":"shared_clients_set","data":[{"shared_clients":[],"pending_shared_clients":[{"provider":"google","aud":SHARED,"effective_at_ms":NOW_MS + DELAY_MS}]}]})
     );
     let cfg = c.get_config();
     assert!(cfg.shared_clients.is_empty());
@@ -2260,7 +2353,7 @@ fn disabling_shared_login_is_immediate() {
     c.disable_shared_login("s1".into(), OwnerAuth::Near);
     assert_eq!(
         events()[1],
-        serde_json::json!({"standard":"hana-id","version":"1.0.0","event":"shared_login_disabled","data":[{"scope_id":"s1","by":{"Near":{"account_id":ALICE}}}]})
+        serde_json::json!({"standard":"hana-id","version":"1.1.0","event":"shared_login_disabled","data":[{"scope_id":"s1","by":{"Near":{"account_id":ALICE}}}]})
     );
     let s1 = c.get_scope("s1".into()).unwrap();
     assert!(!s1.allow_shared);
@@ -2501,4 +2594,1587 @@ fn a_dropped_pending_shared_client_is_retired_too() {
     expect_panic("Client was a shared client and is retired", || {
         c.admin_register_scope(vec![near_owner(CAROL)], vec![google(SHARED)], None, false);
     });
+}
+
+// ===================================================================================================================
+// Governance (docs/governance-spec.md): issuer-key changes, watchdogs, delays, pause, updater keys, upgrades, owner
+// transfer, withdrawal, console audiences, migration.
+// ===================================================================================================================
+
+/// One NEP-297 event line as the contract logs it.
+fn ev(event: &str, data: Value) -> Value {
+    serde_json::json!({"standard":"hana-id","version":"1.1.0","event":event,"data":[data]})
+}
+
+/// Like ctx, with `input` as the call's raw input and no deposit.
+fn ctx_input(caller: &str, ms: u64, input: Vec<u8>) {
+    let mut v = vm_context(caller, ms, NearToken::from_yoctonear(0));
+    v.input = input.into();
+    testing_env!(v);
+}
+
+/// Like ctx, with the contract account holding `balance`.
+fn ctx_balance(caller: &str, ms: u64, balance: NearToken) {
+    let mut v = vm_context(caller, ms, NearToken::from_yoctonear(0));
+    v.account_balance = balance;
+    testing_env!(v);
+}
+
+/// A callback context (caller = the contract itself) whose single promise result is `result`.
+fn ctx_callback(result: near_sdk::PromiseResult) {
+    testing_env!(vm_context(ME, NOW_MS, NearToken::from_yoctonear(0)), near_sdk::test_vm_config(), near_sdk::RuntimeFeesConfig::test(), Default::default(), vec![result]);
+}
+
+/// Proposes `kid` with the fixture's google key as `by` at NOW_MS; returns the change id.
+fn propose_key(c: &mut HanaSigner, by: &str, kid: &str) -> u64 {
+    let (n, e) = fixture_key();
+    ctx(by, NOW_MS);
+    c.set_issuer_key("google".into(), kid.into(), n, e)
+}
+
+fn kids(c: &HanaSigner) -> Vec<String> {
+    c.get_issuer("google".into()).unwrap().kids
+}
+
+fn code_hash(code: &[u8]) -> near_sdk::json_types::Base58CryptoHash {
+    env::sha256_array(code).into()
+}
+
+fn b58(code: &[u8]) -> String {
+    serde_json::to_value(code_hash(code)).unwrap().as_str().unwrap().to_string()
+}
+
+const NEW_CODE: &[u8] = b"\0asm the next version";
+
+// ---- issuer-key changes ----
+
+#[test]
+fn get_issuer_keys_returns_active_key_material_only() {
+    let mut c = setup();
+    let (n, e) = fixture_key();
+    let key = |kid: &str| IssuerKeyView { kid: kid.into(), n: n.clone(), e: e.clone() };
+    assert_eq!(c.get_issuer_keys("google".into()), Some(vec![key("test-kid")]));
+    assert_eq!(c.get_issuer_keys("nope".into()), None);
+    // A pending key is not active, so not listed; once confirmed it is, in kid order.
+    let id = propose_key(&mut c, ME, "a-kid");
+    assert_eq!(c.get_issuer_keys("google".into()), Some(vec![key("test-kid")]));
+    ctx(WATCHDOG, NOW_MS);
+    c.confirm_issuer_key_change(id);
+    assert_eq!(c.get_issuer_keys("google".into()), Some(vec![key("a-kid"), key("test-kid")]));
+    // The material is the JWK base64url get_key_changes and the issuer_key_proposed event show.
+    let json = serde_json::to_value(c.get_issuer_keys("google".into())).unwrap();
+    assert_eq!(json[0], serde_json::json!({"kid":"a-kid","n":n,"e":e}));
+}
+
+#[test]
+fn a_posted_key_is_usable_only_once_executed() {
+    let mut c = setup();
+    let (n, e) = fixture_key();
+    // session_unknown_kid is signed by the fixture key under kid "other-kid".
+    let id = propose_key(&mut c, ME, "other-kid");
+    assert_eq!(
+        events(),
+        vec![ev("issuer_key_proposed", serde_json::json!({"id":id,"provider":"google","kid":"other-kid","n":n,"e":e,"executable_at_ms":NOW_MS + KEY_DELAY_MS,"by":ME}))]
+    );
+    assert_eq!(kids(&c), vec!["test-kid".to_string()]);
+    ctx(RELAYER, NOW_MS + KEY_DELAY_MS - 1);
+    expect_panic("Unknown signing key", || {
+        open(&mut c, "session_unknown_kid", "s1", 7, 0);
+    });
+    expect_panic("Key change is still delayed", || c.execute_issuer_key_change(id));
+    // Anyone executes once due.
+    ctx(MALLORY, NOW_MS + KEY_DELAY_MS);
+    c.execute_issuer_key_change(id);
+    assert_eq!(events(), vec![ev("issuer_key_set", serde_json::json!({"provider":"google","kid":"other-kid","id":id,"how":"delay"}))]);
+    assert_eq!(kids(&c), vec!["other-kid".to_string(), "test-kid".to_string()]);
+    assert!(c.get_key_changes().is_empty());
+    assert_eq!(open(&mut c, "session_unknown_kid", "s1", 7, 0).path, format!("s1#google#{USER}#0"));
+    expect_panic("No such key change", || c.execute_issuer_key_change(id));
+}
+
+#[test]
+fn only_the_owner_or_the_contract_account_proposes_key_changes() {
+    let mut c = setup();
+    let (n, e) = fixture_key();
+    for caller in [MALLORY, WATCHDOG, RELAYER] {
+        ctx(caller, NOW_MS);
+        expect_panic("Only the owner or the contract account can do this", || {
+            c.set_issuer_key("google".into(), "k2".into(), n.clone(), e.clone());
+        });
+        expect_panic("Only the owner or the contract account can do this", || {
+            c.propose_issuer_key_removal("google".into(), "test-kid".into());
+        });
+    }
+}
+
+#[test]
+fn the_contract_account_cannot_confirm_cancel_pause_or_delete_keys() {
+    let mut c = setup();
+    let id = propose_key(&mut c, ME, "k2");
+    ctx(ME, NOW_MS);
+    expect_panic("Only a watchdog can do this", || c.confirm_issuer_key_change(id));
+    expect_panic("Only the owner or a watchdog can do this", || c.cancel_issuer_key_change(id));
+    expect_panic("Only the owner or a watchdog can do this", || c.pause());
+    expect_panic("Only the owner or a watchdog can do this", || {
+        c.delete_updater_key(near_pk(3)).detach();
+    });
+}
+
+#[test]
+fn key_proposal_limits() {
+    let mut c = setup();
+    let (n, e) = fixture_key();
+    ctx(ADMIN, NOW_MS);
+    // An active kid is never overwritten.
+    expect_panic("Kid is already active", || {
+        c.set_issuer_key("google".into(), "test-kid".into(), n.clone(), e.clone());
+    });
+    c.set_issuer_key("google".into(), "k2".into(), n.clone(), e.clone());
+    expect_panic("Kid already has a pending change", || {
+        c.set_issuer_key("google".into(), "k2".into(), n.clone(), e.clone());
+    });
+    // Six pending changes over all issuers.
+    for i in 3..=7 {
+        c.set_issuer_key("google".into(), format!("k{i}"), n.clone(), e.clone());
+    }
+    assert_eq!(c.get_key_changes().len(), MAX_PENDING_KEY_CHANGES);
+    expect_panic("Too many pending key changes", || {
+        c.set_issuer_key("google".into(), "k8".into(), n.clone(), e.clone());
+    });
+    expect_panic("Too many pending key changes", || {
+        c.propose_issuer_key_removal("google".into(), "test-kid".into());
+    });
+    // The usual validation still runs first.
+    expect_panic("Invalid kid", || {
+        c.set_issuer_key("google".into(), "".into(), n.clone(), e.clone());
+    });
+    expect_panic("Invalid kid", || {
+        c.set_issuer_key("google".into(), "k".repeat(129), n.clone(), e.clone());
+    });
+    expect_panic("Malformed", || {
+        c.set_issuer_key("google".into(), "k9".into(), "***".into(), e.clone());
+    });
+    expect_panic("Unknown issuer", || {
+        c.set_issuer_key("nope".into(), "k9".into(), n.clone(), e.clone());
+    });
+}
+
+#[test]
+fn too_many_keys_counts_pending_additions() {
+    let mut c = setup();
+    let (n, e) = fixture_key();
+    for i in 0..4 {
+        post_key(&mut c, "google", &format!("a{i}"), &n, &e);
+    }
+    assert_eq!(kids(&c).len(), 5);
+    ctx(ADMIN, NOW_MS);
+    for i in 0..5 {
+        c.set_issuer_key("google".into(), format!("p{i}"), n.clone(), e.clone());
+    }
+    // 5 active + 5 pending = 10.
+    expect_panic("Too many keys for this issuer", || {
+        c.set_issuer_key("google".into(), "p5".into(), n.clone(), e.clone());
+    });
+}
+
+#[test]
+fn key_removal_waits_the_delay_and_never_takes_the_last_key() {
+    let mut c = setup();
+    ctx(ME, NOW_MS);
+    expect_panic("Cannot remove the last key of an issuer", || {
+        c.propose_issuer_key_removal("google".into(), "test-kid".into());
+    });
+    expect_panic("No such key", || {
+        c.propose_issuer_key_removal("google".into(), "nope".into());
+    });
+    expect_panic("Unknown issuer", || {
+        c.propose_issuer_key_removal("nope".into(), "test-kid".into());
+    });
+    let (n, e) = fixture_key();
+    post_key(&mut c, "google", "k2", &n, &e);
+    ctx(ME, NOW_MS);
+    let id = c.propose_issuer_key_removal("google".into(), "k2".into());
+    assert_eq!(
+        events(),
+        vec![ev("issuer_key_removal_proposed", serde_json::json!({"id":id,"provider":"google","kid":"k2","executable_at_ms":NOW_MS + KEY_DELAY_MS,"by":ME}))]
+    );
+    // The other key would be the last one once k2's removal executes.
+    expect_panic("Cannot remove the last key of an issuer", || {
+        c.propose_issuer_key_removal("google".into(), "test-kid".into());
+    });
+    expect_panic("Kid already has a pending change", || {
+        c.propose_issuer_key_removal("google".into(), "k2".into());
+    });
+    // The key stays usable until the removal executes.
+    assert_eq!(kids(&c), vec!["k2".to_string(), "test-kid".to_string()]);
+    ctx(MALLORY, NOW_MS + KEY_DELAY_MS - 1);
+    expect_panic("Key change is still delayed", || c.execute_issuer_key_change(id));
+    ctx(MALLORY, NOW_MS + KEY_DELAY_MS);
+    c.execute_issuer_key_change(id);
+    assert_eq!(events(), vec![ev("issuer_key_removed", serde_json::json!({"provider":"google","kid":"k2","id":id,"how":"delay"}))]);
+    assert_eq!(kids(&c), vec!["test-kid".to_string()]);
+}
+
+#[test]
+fn two_removals_of_three_keys_leave_one() {
+    let mut c = setup();
+    let (n, e) = fixture_key();
+    post_key(&mut c, "google", "k2", &n, &e);
+    post_key(&mut c, "google", "k3", &n, &e);
+    ctx(ME, NOW_MS);
+    c.propose_issuer_key_removal("google".into(), "k2".into());
+    c.propose_issuer_key_removal("google".into(), "k3".into());
+    expect_panic("Cannot remove the last key of an issuer", || {
+        c.propose_issuer_key_removal("google".into(), "test-kid".into());
+    });
+}
+
+#[test]
+fn a_removal_cannot_take_the_last_key_at_execution_either() {
+    let mut c = setup();
+    let (n, e) = fixture_key();
+    post_key(&mut c, "google", "k2", &n, &e);
+    ctx(ME, NOW_MS);
+    let id = c.propose_issuer_key_removal("google".into(), "k2".into());
+    // The owner removes the other key at once: k2 is now the last one.
+    ctx(ADMIN, NOW_MS);
+    assert!(c.remove_issuer_key("google".into(), "test-kid".into()));
+    ctx(MALLORY, NOW_MS + KEY_DELAY_MS);
+    expect_panic("Cannot remove the last key of an issuer", || c.execute_issuer_key_change(id));
+    // The change stays pending until cancelled.
+    assert_eq!(c.get_key_changes().len(), 1);
+    assert_eq!(kids(&c), vec!["k2".to_string()]);
+}
+
+#[test]
+fn the_owner_removes_a_key_at_once_even_the_last_and_drops_its_pending_change() {
+    let mut c = setup();
+    let (n, e) = fixture_key();
+    post_key(&mut c, "google", "k2", &n, &e);
+    ctx(ME, NOW_MS);
+    let id = c.propose_issuer_key_removal("google".into(), "k2".into());
+    ctx(ADMIN, NOW_MS);
+    assert!(c.remove_issuer_key("google".into(), "k2".into()));
+    assert_eq!(
+        events(),
+        vec![
+            ev("issuer_key_removed", serde_json::json!({"provider":"google","kid":"k2","how":"owner"})),
+            ev("issuer_key_change_cancelled", serde_json::json!({"id":id,"provider":"google","kid":"k2","by":ADMIN})),
+        ]
+    );
+    assert!(c.get_key_changes().is_empty());
+    // A pending addition of a kid that isn't active is dropped too; nothing active was removed.
+    let id = propose_key(&mut c, ME, "k3");
+    ctx(ADMIN, NOW_MS);
+    assert!(!c.remove_issuer_key("google".into(), "k3".into()));
+    assert_eq!(events(), vec![ev("issuer_key_change_cancelled", serde_json::json!({"id":id,"provider":"google","kid":"k3","by":ADMIN}))]);
+    assert!(c.get_key_changes().is_empty());
+    // The last key (a deliberate owner action: DoS only).
+    assert!(c.remove_issuer_key("google".into(), "test-kid".into()));
+    assert!(kids(&c).is_empty());
+    expect_panic("Unknown issuer", || {
+        c.remove_issuer_key("nope".into(), "test-kid".into());
+    });
+    ctx(RELAYER, NOW_MS);
+    expect_panic("Unknown signing key", || {
+        open(&mut c, "session_a", "s1", 7, 0);
+    });
+}
+
+#[test]
+fn a_watchdog_confirms_a_key_change_at_once() {
+    let mut c = setup();
+    let id = propose_key(&mut c, ME, "other-kid");
+    ctx(WATCHDOG, NOW_MS);
+    c.confirm_issuer_key_change(id);
+    assert_eq!(events(), vec![ev("issuer_key_set", serde_json::json!({"provider":"google","kid":"other-kid","id":id,"how":"confirmed","by":WATCHDOG}))]);
+    assert!(c.get_key_changes().is_empty());
+    expect_panic("No such key change", || c.confirm_issuer_key_change(id));
+    ctx(RELAYER, NOW_MS);
+    assert_eq!(open(&mut c, "session_unknown_kid", "s1", 7, 0).path, format!("s1#google#{USER}#0"));
+}
+
+#[test]
+fn a_watchdog_confirms_a_removal() {
+    let mut c = setup();
+    let (n, e) = fixture_key();
+    post_key(&mut c, "google", "k2", &n, &e);
+    ctx(ME, NOW_MS);
+    let id = c.propose_issuer_key_removal("google".into(), "k2".into());
+    ctx(WATCHDOG, NOW_MS);
+    c.confirm_issuer_key_change(id);
+    assert_eq!(events(), vec![ev("issuer_key_removed", serde_json::json!({"provider":"google","kid":"k2","id":id,"how":"confirmed","by":WATCHDOG}))]);
+    assert_eq!(kids(&c), vec!["test-kid".to_string()]);
+}
+
+#[test]
+fn a_new_watchdog_confirms_only_after_the_governance_delay_but_cancels_and_pauses_at_once() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.add_watchdog(acc(WATCHDOG2));
+    assert_eq!(events(), vec![ev("watchdog_added", serde_json::json!({"account_id":WATCHDOG2,"confirm_from_ms":NOW_MS + GOV_DELAY_MS}))]);
+    let id = propose_key(&mut c, ME, "k2");
+    ctx(WATCHDOG2, NOW_MS + GOV_DELAY_MS - 1);
+    expect_panic("This watchdog can't confirm yet", || c.confirm_issuer_key_change(id));
+    c.cancel_issuer_key_change(id);
+    assert_eq!(events(), vec![ev("issuer_key_change_cancelled", serde_json::json!({"id":id,"provider":"google","kid":"k2","by":WATCHDOG2}))]);
+    c.pause();
+    assert!(c.get_config().paused);
+    let id = propose_key(&mut c, ME, "k2");
+    ctx(WATCHDOG2, NOW_MS + GOV_DELAY_MS);
+    c.confirm_issuer_key_change(id);
+    assert_eq!(kids(&c), vec!["k2".to_string(), "test-kid".to_string()]);
+}
+
+#[test]
+fn only_watchdogs_confirm() {
+    let mut c = setup();
+    let id = propose_key(&mut c, ME, "k2");
+    for caller in [ADMIN, MALLORY, ME, RELAYER] {
+        ctx(caller, NOW_MS);
+        expect_panic("Only a watchdog can do this", || c.confirm_issuer_key_change(id));
+    }
+}
+
+#[test]
+fn the_owner_or_a_watchdog_cancels_key_changes() {
+    let mut c = setup();
+    let id = propose_key(&mut c, ME, "k2");
+    for caller in [MALLORY, RELAYER] {
+        ctx(caller, NOW_MS);
+        expect_panic("Only the owner or a watchdog can do this", || c.cancel_issuer_key_change(id));
+    }
+    ctx(ADMIN, NOW_MS);
+    c.cancel_issuer_key_change(id);
+    assert_eq!(events(), vec![ev("issuer_key_change_cancelled", serde_json::json!({"id":id,"provider":"google","kid":"k2","by":ADMIN}))]);
+    expect_panic("No such key change", || c.cancel_issuer_key_change(id));
+    // The kid may be proposed again.
+    let id2 = propose_key(&mut c, ME, "k2");
+    assert_eq!(id2, id + 1);
+    ctx(WATCHDOG, NOW_MS);
+    c.cancel_issuer_key_change(id2);
+    assert!(c.get_key_changes().is_empty());
+}
+
+#[test]
+fn key_changes_view() {
+    let mut c = setup();
+    let (n, e) = fixture_key();
+    post_key(&mut c, "google", "k2", &n, &e);
+    let add = propose_key(&mut c, ME, "k3");
+    ctx(ADMIN, NOW_MS);
+    let remove = c.propose_issuer_key_removal("google".into(), "k2".into());
+    assert_eq!(
+        serde_json::to_value(c.get_key_changes()).unwrap(),
+        serde_json::json!([
+            {"id":add,"provider":"google","kid":"k3","op":"Add","n":n,"e":e,"by":ME,"proposed_at_ms":NOW_MS,"executable_at_ms":NOW_MS + KEY_DELAY_MS},
+            {"id":remove,"provider":"google","kid":"k2","op":"Remove","n":null,"e":null,"by":ADMIN,"proposed_at_ms":NOW_MS,"executable_at_ms":NOW_MS + KEY_DELAY_MS}
+        ])
+    );
+}
+
+#[test]
+fn leading_zeros_are_stripped_from_proposed_keys() {
+    let mut c = setup();
+    let (n, e) = fixture_key();
+    let mut padded = vec![0u8, 0u8];
+    padded.extend(base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, &n).unwrap());
+    ctx(ADMIN, NOW_MS);
+    c.set_issuer_key("google".into(), "other-kid".into(), oidc::b64url(&padded), "AAEAAQ".into());
+    let view = &c.get_key_changes()[0];
+    assert_eq!((view.n.clone(), view.e.clone()), (Some(n), Some(e)));
+    ctx(WATCHDOG, NOW_MS);
+    c.confirm_issuer_key_change(view.id);
+    ctx(RELAYER, NOW_MS);
+    open(&mut c, "session_unknown_kid", "s1", 7, 0);
+}
+
+// ---- watchdogs ----
+
+#[test]
+fn watchdogs_are_capped_and_unique() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    expect_panic("Already a watchdog", || c.add_watchdog(acc(WATCHDOG)));
+    c.add_watchdog(acc(WATCHDOG2));
+    c.add_watchdog(acc("watchdog3.testnet"));
+    expect_panic("Too many watchdogs", || c.add_watchdog(acc("watchdog4.testnet")));
+    expect_panic("Not a watchdog", || c.remove_watchdog(acc(MALLORY)));
+    assert_eq!(c.get_governance().watchdogs.len(), MAX_WATCHDOGS);
+}
+
+#[test]
+fn removing_a_watchdog_slows_every_key_change_to_the_governance_delay() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.add_watchdog(acc(WATCHDOG2));
+    let first = propose_key(&mut c, ME, "k2");
+    let removed_at = NOW_MS + 60_000;
+    ctx(ADMIN, removed_at);
+    c.remove_watchdog(acc(WATCHDOG));
+    let slow = removed_at + GOV_DELAY_MS;
+    assert_eq!(events(), vec![ev("watchdog_removed", serde_json::json!({"account_id":WATCHDOG,"keys_slow_until_ms":slow}))]);
+    assert_eq!(c.get_governance().keys_slow_until_ms, slow);
+    assert_eq!(c.get_key_changes()[0].executable_at_ms, slow);
+    // New proposals wait until then too.
+    ctx(ME, removed_at);
+    let (n, e) = fixture_key();
+    let second = c.set_issuer_key("google".into(), "k3".into(), n.clone(), e.clone());
+    assert_eq!(c.get_key_changes()[1].executable_at_ms, slow);
+    // The removed watchdog can't act any more.
+    ctx(WATCHDOG, removed_at);
+    expect_panic("Only a watchdog can do this", || c.confirm_issuer_key_change(first));
+    expect_panic("Only the owner or a watchdog can do this", || c.pause());
+    // Time-based activation waits for `slow`...
+    ctx(MALLORY, slow - 1);
+    expect_panic("Key change is still delayed", || c.execute_issuer_key_change(first));
+    // ...but the remaining watchdog's confirmations still activate keys early (from its own confirm_from_ms).
+    ctx(WATCHDOG2, NOW_MS + GOV_DELAY_MS);
+    c.confirm_issuer_key_change(first);
+    ctx(MALLORY, slow);
+    c.execute_issuer_key_change(second);
+    assert_eq!(kids(&c), vec!["k2".to_string(), "k3".to_string(), "test-kid".to_string()]);
+    // Afterwards proposals get the normal delay again.
+    ctx(ME, slow);
+    c.set_issuer_key("google".into(), "k4".into(), n, e);
+    assert_eq!(c.get_key_changes()[0].executable_at_ms, slow + KEY_DELAY_MS);
+}
+
+#[test]
+fn removing_a_watchdog_never_shortens_an_earlier_slowdown() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.add_watchdog(acc(WATCHDOG2));
+    // A governance-delay decrease to 0, proposed before the first removal, matures at NOW + G.
+    c.set_governance_delay_ms(0);
+    ctx(ADMIN, NOW_MS + GOV_DELAY_MS - 10);
+    c.remove_watchdog(acc(WATCHDOG));
+    let slow = NOW_MS + 2 * GOV_DELAY_MS - 10;
+    assert_eq!(c.get_governance().keys_slow_until_ms, slow);
+    // A second removal under the shorter delay keeps the first slowdown.
+    ctx(ADMIN, NOW_MS + GOV_DELAY_MS);
+    assert_eq!(c.get_config().governance_delay_ms, 0);
+    c.remove_watchdog(acc(WATCHDOG2));
+    assert_eq!(c.get_governance().keys_slow_until_ms, slow);
+    assert_eq!(events(), vec![ev("watchdog_removed", serde_json::json!({"account_id":WATCHDOG2,"keys_slow_until_ms":slow}))]);
+}
+
+#[test]
+fn with_no_watchdog_every_key_change_waits_the_governance_delay() {
+    ctx_with_storage(ADMIN, NOW_MS, Default::default());
+    let mut c = HanaSigner::new(acc(ADMIN), acc("v1.signer-prod.testnet"), 2, DELAY_MS, KEY_DELAY_MS, GOV_DELAY_MS, vec![], vec![]);
+    c.set_issuer("google".into(), vec!["https://accounts.google.com".into()]);
+    let (n, e) = fixture_key();
+    c.set_issuer_key("google".into(), "test-kid".into(), n, e);
+    assert_eq!(c.get_key_changes()[0].executable_at_ms, NOW_MS + GOV_DELAY_MS);
+}
+
+#[test]
+fn a_watchdog_that_cannot_confirm_yet_does_not_shorten_key_changes() {
+    // No watchdog (as after migrate_v1), then the owner adds one: it may cancel at once but confirms only from
+    // NOW + G. Until then it doesn't count, so a fresh (possibly yes-man) watchdog never cuts the wait to D.
+    ctx_with_storage(ADMIN, NOW_MS, Default::default());
+    let mut c = HanaSigner::new(acc(ADMIN), acc("v1.signer-prod.testnet"), 2, DELAY_MS, KEY_DELAY_MS, GOV_DELAY_MS, vec![], vec![]);
+    c.set_issuer("google".into(), vec!["https://accounts.google.com".into()]);
+    c.add_watchdog(acc(WATCHDOG2));
+    let (n, e) = fixture_key();
+    ctx(ME, NOW_MS + 1);
+    let early = c.set_issuer_key("google".into(), "k1".into(), n.clone(), e.clone());
+    assert_eq!(c.get_key_changes()[0].executable_at_ms, NOW_MS + 1 + GOV_DELAY_MS);
+    // The immature watchdog may still cancel, but not confirm.
+    ctx(WATCHDOG2, NOW_MS + 1);
+    expect_panic("This watchdog can't confirm yet", || c.confirm_issuer_key_change(early));
+    // Once it may confirm, new proposals get the normal issuer-key delay; the earlier one keeps its time.
+    ctx(ME, NOW_MS + GOV_DELAY_MS);
+    c.set_issuer_key("google".into(), "k2".into(), n, e);
+    let times: Vec<u64> = c.get_key_changes().iter().map(|k| k.executable_at_ms).collect();
+    assert_eq!(times, vec![NOW_MS + 1 + GOV_DELAY_MS, NOW_MS + GOV_DELAY_MS + KEY_DELAY_MS]);
+    ctx(WATCHDOG2, NOW_MS + GOV_DELAY_MS);
+    c.cancel_issuer_key_change(early);
+}
+
+#[test]
+fn watchdogs_given_to_new_confirm_at_once() {
+    ctx_with_storage(ADMIN, NOW_MS, Default::default());
+    let mut c = HanaSigner::new(acc(ADMIN), acc("v1.signer-prod.testnet"), 2, DELAY_MS, KEY_DELAY_MS, GOV_DELAY_MS, vec![acc(WATCHDOG)], vec![]);
+    assert_eq!(c.get_governance().watchdogs, vec![Watchdog { account_id: acc(WATCHDOG), confirm_from_ms: 0 }]);
+    c.set_issuer("google".into(), vec!["https://accounts.google.com".into()]);
+    let (n, e) = fixture_key();
+    let id = c.set_issuer_key("google".into(), "test-kid".into(), n, e);
+    assert_eq!(c.get_key_changes()[0].executable_at_ms, NOW_MS + KEY_DELAY_MS);
+    ctx(WATCHDOG, NOW_MS);
+    c.confirm_issuer_key_change(id);
+    assert_eq!(kids(&c), vec!["test-kid".to_string()]);
+}
+
+// ---- delays ----
+
+#[test]
+fn issuer_key_delay_increases_at_once_and_decreases_after_the_governance_delay() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.set_issuer_key_delay_ms(2 * KEY_DELAY_MS);
+    assert_eq!(events(), vec![ev("delay_changed", serde_json::json!({"which":"issuer_key","value_ms":2 * KEY_DELAY_MS,"effective_at_ms":NOW_MS}))]);
+    assert_eq!((c.get_config().issuer_key_delay_ms, c.get_config().pending_issuer_key_delay), (2 * KEY_DELAY_MS, None));
+    ctx(ADMIN, NOW_MS);
+    c.set_issuer_key_delay_ms(KEY_DELAY_MS / 2);
+    assert_eq!(
+        events(),
+        vec![ev("delay_changed", serde_json::json!({"which":"issuer_key","value_ms":KEY_DELAY_MS / 2,"effective_at_ms":NOW_MS + GOV_DELAY_MS}))]
+    );
+    let cfg = c.get_config();
+    assert_eq!(cfg.issuer_key_delay_ms, 2 * KEY_DELAY_MS);
+    assert_eq!(cfg.pending_issuer_key_delay, Some(DelayChange { change_delay_ms: KEY_DELAY_MS / 2, effective_at_ms: NOW_MS + GOV_DELAY_MS }));
+    // A proposal now still waits the longer delay, and keeps it.
+    let first = propose_key(&mut c, ME, "k2");
+    assert_eq!(c.get_key_changes()[0].executable_at_ms, NOW_MS + 2 * KEY_DELAY_MS);
+    ctx(ME, NOW_MS + GOV_DELAY_MS);
+    assert_eq!((c.get_config().issuer_key_delay_ms, c.get_config().pending_issuer_key_delay), (KEY_DELAY_MS / 2, None));
+    let (n, e) = fixture_key();
+    c.set_issuer_key("google".into(), "k3".into(), n, e);
+    assert_eq!(c.get_key_changes()[0].id, first);
+    assert_eq!(c.get_key_changes()[0].executable_at_ms, NOW_MS + 2 * KEY_DELAY_MS);
+    assert_eq!(c.get_key_changes()[1].executable_at_ms, NOW_MS + GOV_DELAY_MS + KEY_DELAY_MS / 2);
+    // apply_pending_config folds the matured decrease into state.
+    ctx(MALLORY, NOW_MS + GOV_DELAY_MS);
+    c.apply_pending_config();
+    assert_eq!((c.issuer_key_delay_ms, c.pending_issuer_key_delay.clone()), (KEY_DELAY_MS / 2, None));
+    ctx(ADMIN, NOW_MS + GOV_DELAY_MS);
+    expect_panic("issuer_key_delay_ms must be at most 7 days", || c.set_issuer_key_delay_ms(MAX_ISSUER_KEY_DELAY_MS + 1));
+    c.set_issuer_key_delay_ms(MAX_ISSUER_KEY_DELAY_MS);
+}
+
+#[test]
+fn an_increase_cancels_a_pending_decrease() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.set_issuer_key_delay_ms(0);
+    c.set_issuer_key_delay_ms(KEY_DELAY_MS);
+    assert_eq!((c.get_config().issuer_key_delay_ms, c.get_config().pending_issuer_key_delay), (KEY_DELAY_MS, None));
+    c.set_governance_delay_ms(0);
+    c.set_governance_delay_ms(GOV_DELAY_MS);
+    assert_eq!((c.get_config().governance_delay_ms, c.get_config().pending_governance_delay), (GOV_DELAY_MS, None));
+}
+
+#[test]
+fn governance_delay_increases_at_once_and_decreases_after_the_current_one() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.propose_upgrade(code_hash(NEW_CODE));
+    ctx(ADMIN, NOW_MS);
+    c.set_governance_delay_ms(3 * GOV_DELAY_MS);
+    assert_eq!(events(), vec![ev("delay_changed", serde_json::json!({"which":"governance","value_ms":3 * GOV_DELAY_MS,"effective_at_ms":NOW_MS}))]);
+    // A queued upgrade keeps its time.
+    assert_eq!(c.get_governance().pending_upgrade.unwrap().executable_at_ms, NOW_MS + GOV_DELAY_MS);
+    ctx(ADMIN, NOW_MS);
+    c.set_governance_delay_ms(GOV_DELAY_MS / 2);
+    let due = NOW_MS + 3 * GOV_DELAY_MS;
+    assert_eq!(events(), vec![ev("delay_changed", serde_json::json!({"which":"governance","value_ms":GOV_DELAY_MS / 2,"effective_at_ms":due}))]);
+    assert_eq!(c.get_config().governance_delay_ms, 3 * GOV_DELAY_MS);
+    assert_eq!(c.get_config().pending_governance_delay, Some(DelayChange { change_delay_ms: GOV_DELAY_MS / 2, effective_at_ms: due }));
+    // Owner actions proposed meanwhile wait the longer delay.
+    c.propose_owner(acc(CAROL));
+    assert_eq!(c.get_governance().pending_owner.unwrap().acceptable_at_ms, due);
+    ctx(ADMIN, due);
+    assert_eq!((c.get_config().governance_delay_ms, c.get_config().pending_governance_delay), (GOV_DELAY_MS / 2, None));
+    c.propose_withdrawal(acc(CAROL), NearToken::from_near(1));
+    assert_eq!(c.get_governance().pending_withdrawal.unwrap().executable_at_ms, due + GOV_DELAY_MS / 2);
+    ctx(MALLORY, due);
+    c.apply_pending_config();
+    assert_eq!((c.governance_delay_ms, c.pending_governance_delay.clone()), (GOV_DELAY_MS / 2, None));
+    ctx(ADMIN, due);
+    expect_panic("governance_delay_ms must be at most 30 days", || c.set_governance_delay_ms(MAX_GOVERNANCE_DELAY_MS + 1));
+    c.set_governance_delay_ms(MAX_GOVERNANCE_DELAY_MS);
+}
+
+#[test]
+fn an_issuer_key_delay_decrease_waits_the_governance_delay_in_force() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    // A pending governance decrease doesn't shorten the wait before it matures.
+    c.set_governance_delay_ms(0);
+    c.set_issuer_key_delay_ms(0);
+    assert_eq!(c.get_config().pending_issuer_key_delay.unwrap().effective_at_ms, NOW_MS + GOV_DELAY_MS);
+}
+
+// ---- pause ----
+
+#[test]
+fn pause_stops_every_token_path_derivation_and_the_executors() {
+    let mut c = shared_setup();
+    ctx(ADMIN, NOW_MS);
+    c.enable_public_registration();
+    ctx(RELAYER, NOW_MS);
+    open(&mut c, "session_a", "s1", 7, 0);
+    let change = propose_e(&mut c);
+    let key = propose_key(&mut c, ME, "k2");
+    ctx(ADMIN, NOW_MS);
+    c.propose_withdrawal(acc(CAROL), NearToken::from_near(1));
+    ctx(WATCHDOG, NOW_MS);
+    c.pause();
+    assert_eq!(events(), vec![ev("paused", serde_json::json!({"by":WATCHDOG}))]);
+    assert!(c.get_config().paused);
+    ctx(WATCHDOG, NOW_MS);
+    c.pause(); // no-op
+    assert!(events().is_empty());
+
+    // Everything below is due by now, so only the pause can refuse it.
+    let late = NOW_MS + GOV_DELAY_MS;
+    let paused = |caller: &str, c: &mut HanaSigner, call: &dyn Fn(&mut HanaSigner)| {
+        ctx(caller, late);
+        expect_panic("Paused", || call(c));
+    };
+    paused(RELAYER, &mut c, &|c| {
+        c.create_session(tok("session_a2"), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3);
+    });
+    paused(RELAYER, &mut c, &|c| {
+        let _ = c.create_session_and_derive(
+            tok("session_a2"),
+            "s1".into(),
+            pk(8),
+            EXPIRES_MS,
+            SALT.to_vec(),
+            0,
+            3,
+            ckd_sig(8, 1, "bls12381g1:A", "bls12381g2:B"),
+            "bls12381g1:A".into(),
+            "bls12381g2:B".into(),
+        );
+    });
+    paused(RELAYER, &mut c, &|c| derive(c, 7, 1));
+    paused(RELAYER, &mut c, &|c| {
+        c.register_scope(reg_owners(), vec![tok("reg_c")], false);
+    });
+    paused(RELAYER, &mut c, &|c| {
+        c.register_scope(vec![near_owner(CAROL)], vec![], true);
+    });
+    // A NEAR owner's proposal with a client proof needs a token.
+    paused(ALICE, &mut c, &|c| {
+        c.propose_change("s1".into(), OwnerAuth::Near, add(C), Some(tok("cp_c_s1_1")));
+    });
+    // Every token-authenticated owner action.
+    paused(RELAYER, &mut c, &|c| {
+        c.propose_change("s1".into(), oidc("oa_set_owners"), Change::SetOwners { owners: vec![oidc_owner(OWNER_SUB)] }, None);
+    });
+    paused(RELAYER, &mut c, &|c| c.cancel_change("s1".into(), oidc("oa_cancel_0"), 0));
+    paused(RELAYER, &mut c, &|c| c.remove_client("s1".into(), oidc("oa_remove_a2"), "google".into(), A2.into()));
+    paused(RELAYER, &mut c, &|c| c.disable_shared_login("s1".into(), oidc("oa_disable_shared")));
+    // The executors.
+    paused(MALLORY, &mut c, &|c| c.execute_change("s1".into(), change));
+    paused(MALLORY, &mut c, &|c| c.execute_issuer_key_change(key));
+    paused(MALLORY, &mut c, &|c| {
+        c.execute_withdrawal().detach();
+    });
+}
+
+#[test]
+fn pause_leaves_governance_revocation_cancels_and_near_owner_actions_working() {
+    let mut c = shared_setup();
+    ctx(RELAYER, NOW_MS);
+    open(&mut c, "session_a", "s1", 7, 0);
+    let key = propose_key(&mut c, ME, "k2");
+    ctx(ADMIN, NOW_MS);
+    c.pause();
+    assert_eq!(events(), vec![ev("paused", serde_json::json!({"by":ADMIN}))]);
+    // Revocation and pruning.
+    ctx(RELAYER, NOW_MS);
+    c.revoke_session(pk(7), 1, session_sig(7, 1, crate::sessions::REVOKE_PAYLOAD));
+    assert_eq!(c.get_session(pk(7)), None);
+    c.prune_sessions(10);
+    // NEAR-account owner actions without tokens.
+    ctx(ALICE, NOW_MS);
+    let id = c.propose_change("s1".into(), OwnerAuth::Near, Change::SetOwners { owners: vec![near_owner(ALICE)] }, None);
+    c.cancel_change("s1".into(), OwnerAuth::Near, id);
+    c.remove_client("s1".into(), OwnerAuth::Near, "google".into(), A2.into());
+    ctx(CAROL, NOW_MS);
+    c.disable_shared_login("s4".into(), OwnerAuth::Near);
+    // Watchdog confirmations (a checked Google key may go live while paused) and cancels; the updater may propose.
+    ctx(WATCHDOG, NOW_MS);
+    c.confirm_issuer_key_change(key);
+    let key2 = propose_key(&mut c, ME, "k3");
+    ctx(WATCHDOG, NOW_MS);
+    c.cancel_issuer_key_change(key2);
+    // Owner config and governance.
+    ctx(ADMIN, NOW_MS);
+    c.set_sponsors(vec![acc(RELAYER)]);
+    c.admin_register_scope(vec![near_owner(CAROL)], vec![google(D)], None, false);
+    c.remove_issuer_key("google".into(), "k2".into());
+    c.add_watchdog(acc(WATCHDOG2));
+    c.set_issuer_key_delay_ms(KEY_DELAY_MS);
+    c.propose_upgrade(code_hash(NEW_CODE));
+    c.propose_owner(acc(CAROL));
+    c.propose_withdrawal(acc(CAROL), NearToken::from_near(1));
+    c.cancel_withdrawal();
+    c.add_updater_key(near_pk(3)).detach();
+    c.delete_updater_key(near_pk(3)).detach();
+    // Views.
+    assert!(c.get_config().paused);
+    assert_eq!(c.get_scope("s1".into()).unwrap().clients, vec![google(A)]);
+    assert_eq!(kids(&c), vec!["test-kid".to_string()]);
+    assert!(c.get_governance().pending_upgrade.is_some());
+}
+
+#[test]
+fn only_the_owner_unpauses_and_at_once() {
+    let mut c = setup();
+    ctx(WATCHDOG, NOW_MS);
+    c.pause();
+    for caller in [WATCHDOG, MALLORY, ME] {
+        ctx(caller, NOW_MS);
+        expect_panic("Only the owner can do this", || c.unpause());
+    }
+    ctx(MALLORY, NOW_MS);
+    expect_panic("Only the owner or a watchdog can do this", || c.pause());
+    ctx(ADMIN, NOW_MS);
+    c.unpause();
+    // Scope changes pending across the pause get a full timelock from now (changes_unlock_floor_ms).
+    assert_eq!(events(), vec![ev("unpaused", serde_json::json!({"changes_unlock_floor_ms":NOW_MS + DELAY_MS}))]);
+    assert!(!c.get_config().paused);
+    // In force in the same block: logins work again at once.
+    open(&mut c, "session_a", "s1", 7, 0);
+    ctx(ADMIN, NOW_MS);
+    c.unpause(); // no-op
+    assert!(events().is_empty());
+}
+
+const MINUTE_MS: u64 = 60_000;
+
+/// The forged_active_key incident (docs/operations.md runbook), from the scope owners' side: an attacker with a forged
+/// key (the fixture key stands in for it; it also signs the honest owner's tokens, so it isn't removed here) proposes a
+/// change as s1's OIDC owner with a forged client proof; the watchdog pauses; the change matures while paused, when
+/// no OIDC owner can cancel (every token path stops). After the unpause it still waits a full change_delay_ms, and
+/// the honest OIDC owner cancels in that window.
+#[test]
+fn a_scope_change_pending_across_a_pause_gets_a_full_timelock_after_the_unpause() {
+    let unpause_at = NOW_MS + DELAY_MS + 10 * MINUTE_MS; // the change matured during the pause
+    let paused_through = |c: &mut HanaSigner| -> u64 {
+        ctx(RELAYER, NOW_MS);
+        let id = c.propose_change("s1".into(), oidc("oa_propose_e"), add(E), Some(tok("cp_e_s1_0")));
+        ctx(WATCHDOG, NOW_MS + MINUTE_MS);
+        c.pause();
+        // While paused the OIDC owner can't cancel.
+        ctx(RELAYER, NOW_MS + 2 * MINUTE_MS);
+        expect_panic("Paused", || c.cancel_change("s1".into(), oidc("oa_cancel_0"), id));
+        ctx(ADMIN, unpause_at);
+        c.unpause();
+        id
+    };
+
+    let mut c = setup();
+    let id = paused_through(&mut c);
+    assert_eq!(c.get_config().unpaused_at_ms, unpause_at);
+    assert_eq!(c.get_config().changes_unlock_floor_ms, unpause_at + DELAY_MS);
+    // get_scope shows when execute_change will accept it.
+    assert_eq!(c.get_scope("s1".into()).unwrap().pending[0].unlock_at_ms, unpause_at + DELAY_MS);
+    // Anyone executing in the block after the unpause, or until the window has run again, is refused.
+    for at in [unpause_at, unpause_at + DELAY_MS - 1] {
+        ctx(MALLORY, at);
+        expect_panic("Change is still timelocked", || c.execute_change("s1".into(), id));
+    }
+    // The honest OIDC owner cancels in between.
+    ctx(RELAYER, unpause_at + 10 * MINUTE_MS);
+    c.cancel_change("s1".into(), oidc("oa_cancel_0"), id);
+    assert!(c.get_scope("s1".into()).unwrap().pending.is_empty());
+
+    // Left alone, it executes once the window has run again.
+    let mut c = setup();
+    let id = paused_through(&mut c);
+    ctx(MALLORY, unpause_at + DELAY_MS);
+    c.execute_change("s1".into(), id);
+    assert_eq!(c.scope_for_client("google".into(), E.into()), Some("s1".into()));
+}
+
+#[test]
+fn the_unpause_floor_only_ever_delays_and_never_outlasts_a_change_delay() {
+    let mut c = setup();
+    // A NEAR owner's proposal made while paused (allowed) waits until a full delay after the unpause too.
+    ctx(ADMIN, NOW_MS);
+    c.pause();
+    ctx(ALICE, NOW_MS + MINUTE_MS);
+    let during = c.propose_change("s1".into(), OwnerAuth::Near, Change::SetOwners { owners: vec![near_owner(ALICE)] }, None);
+    ctx(ADMIN, NOW_MS + 30 * MINUTE_MS);
+    c.unpause();
+    let floor = NOW_MS + 30 * MINUTE_MS + DELAY_MS;
+    assert_eq!(c.get_scope("s1".into()).unwrap().pending[0].unlock_at_ms, floor);
+    // A change proposed after the unpause keeps its own timelock (it is already later than the floor).
+    ctx(BOB, NOW_MS + 40 * MINUTE_MS);
+    let after = c.propose_change("s2".into(), OwnerAuth::Near, Change::SetOwners { owners: vec![near_owner(BOB), near_owner(CAROL)] }, None);
+    assert_eq!(c.get_scope("s2".into()).unwrap().pending[0].unlock_at_ms, NOW_MS + 40 * MINUTE_MS + DELAY_MS);
+    ctx(MALLORY, floor);
+    c.execute_change("s1".into(), during);
+    ctx(MALLORY, NOW_MS + 40 * MINUTE_MS + DELAY_MS);
+    c.execute_change("s2".into(), after);
+    // A pause and unpause with nothing pending: later proposals wait their own delay only.
+    ctx(ADMIN, floor + DELAY_MS);
+    c.pause();
+    c.unpause();
+    ctx(ALICE, floor + 2 * DELAY_MS);
+    c.propose_change("s1".into(), OwnerAuth::Near, Change::SetOwners { owners: vec![near_owner(ALICE), near_owner(CAROL)] }, None);
+    assert_eq!(c.get_scope("s1".into()).unwrap().pending[0].unlock_at_ms, floor + 3 * DELAY_MS);
+}
+
+/// The forged_active_key incident from the users' side: a session the forged key opened (for any user's path, with
+/// up to MAX_SESSION_MS and max_uses of the attacker's choosing) keeps deriving after the key is removed and the
+/// contract unpaused, unless the owner raises the session floor past the pause first.
+#[test]
+fn a_session_opened_with_a_forged_key_cannot_derive_after_the_session_floor() {
+    let attack = |raise_floor: bool| -> HanaSigner {
+        let mut c = setup();
+        ctx(RELAYER, NOW_MS);
+        open(&mut c, "session_a", "s1", 7, 0); // the attacker's session, opened with the forged key
+        ctx(WATCHDOG, NOW_MS + MINUTE_MS);
+        c.pause();
+        ctx(ADMIN, NOW_MS + 10 * MINUTE_MS);
+        c.remove_issuer_key("google".into(), "test-kid".into());
+        if raise_floor {
+            c.set_sessions_valid_from_ms(NOW_MS + MINUTE_MS + 1); // just after the pause: no session opens while paused
+            assert_eq!(events().last(), Some(&ev("sessions_valid_from_set", serde_json::json!({"sessions_valid_from_ms":NOW_MS + MINUTE_MS + 1}))));
+        }
+        c.unpause();
+        ctx(RELAYER, NOW_MS + 10 * MINUTE_MS);
+        c
+    };
+    // Without the floor, removing the key and unpausing only delayed it.
+    let mut c = attack(false);
+    derive(&mut c, 7, 1);
+    assert_eq!(get_created_receipts().len(), 1);
+    // With it, the session is gone for derive_key and get_session; its key stays burnt until expiry.
+    let mut c = attack(true);
+    expect_panic("No such session", || derive(&mut c, 7, 1));
+    assert_eq!(c.get_session(pk(7)), None);
+    assert!(c.session_key_in_use(pk(7)));
+    assert_eq!(c.get_config().sessions_valid_from_ms, NOW_MS + MINUTE_MS + 1);
+}
+
+#[test]
+fn the_session_floor_is_owner_only_raised_only_and_never_in_the_future() {
+    let mut c = setup();
+    ctx(RELAYER, NOW_MS);
+    open(&mut c, "session_a", "s1", 7, 0);
+    // A session opened at the floor is in force.
+    ctx(ADMIN, NOW_MS);
+    c.set_sessions_valid_from_ms(NOW_MS);
+    ctx(RELAYER, NOW_MS);
+    derive(&mut c, 7, 1);
+    for caller in [WATCHDOG, MALLORY, ME] {
+        ctx(caller, NOW_MS + 1);
+        expect_panic("Only the owner can do this", || c.set_sessions_valid_from_ms(NOW_MS + 1));
+    }
+    ctx(ADMIN, NOW_MS + 1);
+    expect_panic("sessions_valid_from_ms can't be in the future", || c.set_sessions_valid_from_ms(NOW_MS + 2));
+    c.set_sessions_valid_from_ms(NOW_MS + 1);
+    expect_panic("sessions_valid_from_ms can only be raised", || c.set_sessions_valid_from_ms(NOW_MS));
+    // Sessions opened from the floor on work (a login right after the incident); older ones don't.
+    ctx(RELAYER, NOW_MS + 1);
+    c.create_session(tok("session_a2"), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3);
+    derive(&mut c, 8, 1);
+    expect_panic("No such session", || derive(&mut c, 7, 2));
+    expect_panic("No such session", || c.revoke_session(pk(7), 2, session_sig(7, 2, crate::sessions::REVOKE_PAYLOAD)));
+    // Allowed while paused (the runbook raises it before the unpause).
+    ctx(ADMIN, NOW_MS + 2);
+    c.pause();
+    c.set_sessions_valid_from_ms(NOW_MS + 2);
+}
+
+#[test]
+fn a_v1_session_counts_as_opened_max_session_ms_before_its_expiry() {
+    use crate::sessions::MAX_SESSION_MS;
+    // The v1 fixture's session for pk(7) (no created_at_ms) expires at EXPIRES_MS: it was opened no earlier than
+    // EXPIRES_MS - 24 h, and that is what the floor is compared with.
+    ctx_with_storage(ME, NOW_MS, v1_storage());
+    let mut c = HanaSigner::migrate_v1(KEY_DELAY_MS, GOV_DELAY_MS);
+    assert_eq!(c.sessions.get(&pk(7)).unwrap().created_at_ms, None);
+    ctx(ADMIN, NOW_MS);
+    c.set_sessions_valid_from_ms(EXPIRES_MS - MAX_SESSION_MS);
+    assert!(c.get_session(pk(7)).is_some());
+    c.set_sessions_valid_from_ms(EXPIRES_MS - MAX_SESSION_MS + 1);
+    assert_eq!(c.get_session(pk(7)), None);
+    ctx(RELAYER, NOW_MS);
+    expect_panic("No such session", || derive(&mut c, 7, 2));
+}
+
+#[test]
+fn stored_sessions_read_both_the_v1_and_the_v2_record() {
+    use near_sdk::borsh::{to_vec, BorshDeserialize};
+    let v1 = sessions::StoredSession { path: "s1#google#1#0".into(), scope_id: "s1".into(), expires_at_ms: EXPIRES_MS, max_uses: 3, used: 1, revoked: false, created_at_ms: None };
+    let v2 = sessions::StoredSession { created_at_ms: Some(NOW_MS), ..v1.clone() };
+    let v1_bytes = to_vec(&v1).unwrap();
+    // The v1 layout exactly (the record v1 code wrote), and v2 = that plus created_at_ms u64 LE.
+    let mut expected = to_vec(&("s1#google#1#0", "s1", EXPIRES_MS, 3u32, 1u32, false)).unwrap();
+    assert_eq!(v1_bytes, expected);
+    expected.extend(NOW_MS.to_le_bytes());
+    assert_eq!(to_vec(&v2).unwrap(), expected);
+    assert_eq!(sessions::StoredSession::try_from_slice(&v1_bytes).unwrap(), v1);
+    assert_eq!(sessions::StoredSession::try_from_slice(&expected).unwrap(), v2);
+    // A partial or overlong tail is corrupt.
+    assert!(sessions::StoredSession::try_from_slice(&expected[..expected.len() - 1]).is_err());
+    assert!(sessions::StoredSession::try_from_slice(&[expected.as_slice(), &[0]].concat()).is_err());
+    // create_session stores its time.
+    let mut c = setup();
+    ctx(RELAYER, NOW_MS + 5);
+    open(&mut c, "session_a", "s1", 7, 0);
+    assert_eq!(c.sessions.get(&pk(7)).unwrap().created_at_ms, Some(NOW_MS + 5));
+}
+
+// ---- updater keys ----
+
+const UPDATER_METHOD_LIST: [&str; 3] = ["set_issuer_key", "propose_issuer_key_removal", "execute_issuer_key_change"];
+
+/// Adds updater key `seed` as the owner and runs its callback with a successful `AddKey`: the key is confirmed.
+fn add_confirmed_updater_key(c: &mut HanaSigner, seed: u8) {
+    ctx(ADMIN, NOW_MS);
+    c.add_updater_key(near_pk(seed)).detach();
+    ctx_callback(near_sdk::PromiseResult::Successful(vec![]));
+    assert!(c.on_updater_key_added(near_pk(seed)));
+}
+
+#[test]
+fn add_updater_key_installs_exactly_the_updater_permission() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.add_updater_key(near_pk(3)).detach();
+    let pk3: String = String::from(&near_pk(3));
+    assert_eq!(events(), vec![ev("updater_key_added", serde_json::json!({"public_key":pk3}))]);
+    // Pending until the AddKey receipt resolves.
+    assert!(c.get_governance().updater_keys.is_empty());
+    assert_eq!(c.get_governance().pending_updater_keys, vec![near_pk(3)]);
+    let receipts = get_created_receipts();
+    assert_eq!(receipts.len(), 2);
+    assert_eq!(receipts[0].receiver_id, acc(ME));
+    assert_eq!(receipts[0].actions.len(), 1);
+    let MockAction::AddKeyWithFunctionCall { public_key, nonce, allowance, receiver_id, method_names, .. } = &receipts[0].actions[0] else {
+        panic!("not a function-call AddKey: {:?}", receipts[0].actions)
+    };
+    assert_eq!(public_key.to_string(), pk3);
+    assert_eq!(*nonce, 0);
+    assert_eq!(*allowance, Some(NearToken::from_near(1)));
+    assert_eq!(*receiver_id, acc(ME));
+    assert_eq!(method_names, &UPDATER_METHOD_LIST.map(String::from).to_vec());
+    assert_eq!(UPDATER_METHODS.split(',').collect::<Vec<_>>(), UPDATER_METHOD_LIST);
+    // Then the callback that keeps updater_keys in sync.
+    assert_eq!(receipts[1].receiver_id, acc(ME));
+    let MockAction::FunctionCallWeight { method_name, args, attached_deposit, .. } = &receipts[1].actions[0] else { panic!() };
+    assert_eq!(method_name, b"on_updater_key_added");
+    assert_eq!(serde_json::from_slice::<Value>(args).unwrap(), serde_json::json!({"public_key":pk3}));
+    assert_eq!(*attached_deposit, NearToken::from_yoctonear(0));
+    // A successful AddKey confirms it.
+    ctx_callback(near_sdk::PromiseResult::Successful(vec![]));
+    assert!(c.on_updater_key_added(near_pk(3)));
+    assert!(events().is_empty());
+    assert_eq!(c.get_governance().updater_keys, vec![near_pk(3)]);
+    assert!(c.get_governance().pending_updater_keys.is_empty());
+}
+
+#[test]
+fn updater_keys_are_capped_and_unique() {
+    // The cap and uniqueness count pending and confirmed keys together.
+    let mut c = setup();
+    add_confirmed_updater_key(&mut c, 3);
+    ctx(ADMIN, NOW_MS);
+    c.add_updater_key(near_pk(4)).detach();
+    for seed in [3, 4] {
+        expect_panic("Already an updater key", || {
+            c.add_updater_key(near_pk(seed)).detach();
+        });
+    }
+    expect_panic("Too many updater keys", || {
+        c.add_updater_key(near_pk(5)).detach();
+    });
+    assert_eq!(c.get_governance().updater_keys, vec![near_pk(3)]);
+    assert_eq!(c.get_governance().pending_updater_keys, vec![near_pk(4)]);
+    // Two pending keys fill the cap too.
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.add_updater_key(near_pk(3)).detach();
+    c.add_updater_key(near_pk(4)).detach();
+    expect_panic("Too many updater keys", || {
+        c.add_updater_key(near_pk(5)).detach();
+    });
+}
+
+#[test]
+fn a_failed_add_key_untracks_the_key() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.add_updater_key(near_pk(3)).detach();
+    c.add_updater_key(near_pk(4)).detach();
+    ctx_callback(near_sdk::PromiseResult::Failed);
+    assert!(!c.on_updater_key_added(near_pk(3)));
+    let pk3: String = String::from(&near_pk(3));
+    assert_eq!(events(), vec![ev("updater_key_add_failed", serde_json::json!({"public_key":pk3}))]);
+    assert!(c.get_governance().updater_keys.is_empty());
+    assert_eq!(c.get_governance().pending_updater_keys, vec![near_pk(4)]);
+    ctx_callback(near_sdk::PromiseResult::Successful(vec![]));
+    assert!(c.on_updater_key_added(near_pk(4)));
+    assert!(events().is_empty());
+    assert_eq!(c.get_governance().updater_keys, vec![near_pk(4)]);
+    assert!(c.get_governance().pending_updater_keys.is_empty());
+    // The freed slot can be used again.
+    ctx(ADMIN, NOW_MS);
+    c.add_updater_key(near_pk(3)).detach();
+}
+
+#[test]
+fn a_watchdog_cannot_delete_a_pending_updater_key() {
+    // Until its AddKey succeeds a requested key isn't an updater key: it may already be on the account with another
+    // permission (e.g. a full-access key), and then its AddKey fails. A watchdog deletes confirmed keys only.
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.add_updater_key(near_pk(3)).detach();
+    ctx(WATCHDOG, NOW_MS);
+    expect_panic("Not an updater key", || {
+        c.delete_updater_key(near_pk(3)).detach();
+    });
+    assert!(get_created_receipts().is_empty());
+    // The AddKey fails (the key was already a full-access key): it never becomes an updater key.
+    ctx_callback(near_sdk::PromiseResult::Failed);
+    assert!(!c.on_updater_key_added(near_pk(3)));
+    ctx(WATCHDOG, NOW_MS);
+    expect_panic("Not an updater key", || {
+        c.delete_updater_key(near_pk(3)).detach();
+    });
+    // Once a key is confirmed the watchdog may delete it.
+    add_confirmed_updater_key(&mut c, 4);
+    ctx(WATCHDOG, NOW_MS);
+    c.delete_updater_key(near_pk(4)).detach();
+    assert!(c.get_governance().updater_keys.is_empty());
+}
+
+#[test]
+fn an_updater_key_the_owner_deleted_while_pending_is_not_tracked() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.add_updater_key(near_pk(3)).detach();
+    c.delete_updater_key(near_pk(3)).detach();
+    assert!(c.get_governance().pending_updater_keys.is_empty());
+    ctx_callback(near_sdk::PromiseResult::Successful(vec![]));
+    assert!(c.on_updater_key_added(near_pk(3)));
+    assert!(c.get_governance().updater_keys.is_empty());
+}
+
+#[test]
+fn the_owner_or_a_watchdog_deletes_updater_keys() {
+    let mut c = setup();
+    add_confirmed_updater_key(&mut c, 3);
+    add_confirmed_updater_key(&mut c, 4);
+    ctx(WATCHDOG, NOW_MS);
+    c.delete_updater_key(near_pk(3)).detach();
+    let pk3: String = String::from(&near_pk(3));
+    assert_eq!(events(), vec![ev("updater_key_deleted", serde_json::json!({"public_key":pk3,"by":WATCHDOG}))]);
+    let receipts = get_created_receipts();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].receiver_id, acc(ME));
+    let MockAction::DeleteKey { public_key, .. } = &receipts[0].actions[0] else { panic!() };
+    assert_eq!(public_key.to_string(), pk3);
+    assert_eq!(c.get_governance().updater_keys, vec![near_pk(4)]);
+    // A watchdog deletes tracked keys only...
+    expect_panic("Not an updater key", || {
+        c.delete_updater_key(near_pk(5)).detach();
+    });
+    // ...the owner any key on the account (an untracked key can be cleaned up without a full-access key).
+    ctx(ADMIN, NOW_MS);
+    c.delete_updater_key(near_pk(4)).detach();
+    c.delete_updater_key(near_pk(5)).detach();
+    let pk5: String = String::from(&near_pk(5));
+    assert_eq!(events()[1], ev("updater_key_deleted", serde_json::json!({"public_key":pk5,"by":ADMIN})));
+    assert_eq!(get_created_receipts().len(), 2);
+    assert!(c.get_governance().updater_keys.is_empty());
+    for caller in [MALLORY, ME] {
+        ctx(caller, NOW_MS);
+        expect_panic("Only the owner or a watchdog can do this", || {
+            c.delete_updater_key(near_pk(3)).detach();
+        });
+    }
+}
+
+#[test]
+fn new_installs_its_updater_keys() {
+    ctx_with_storage(ME, NOW_MS, Default::default());
+    let c = HanaSigner::new(acc(ADMIN), acc("v1.signer-prod.testnet"), 2, DELAY_MS, KEY_DELAY_MS, GOV_DELAY_MS, vec![acc(WATCHDOG)], vec![near_pk(3)]);
+    assert!(c.get_governance().updater_keys.is_empty());
+    assert_eq!(c.get_governance().pending_updater_keys, vec![near_pk(3)]);
+    let receipts = get_created_receipts();
+    let MockAction::AddKeyWithFunctionCall { public_key, allowance, receiver_id, method_names, .. } = &receipts[0].actions[0] else { panic!() };
+    assert_eq!(public_key.to_string(), String::from(&near_pk(3)));
+    assert_eq!((*allowance, receiver_id.clone()), (Some(NearToken::from_near(1)), acc(ME)));
+    assert_eq!(method_names, &UPDATER_METHOD_LIST.map(String::from).to_vec());
+    let cfg = c.get_config();
+    assert_eq!((cfg.change_delay_ms, cfg.issuer_key_delay_ms, cfg.governance_delay_ms, cfg.paused), (DELAY_MS, KEY_DELAY_MS, GOV_DELAY_MS, false));
+    assert_eq!(c.get_governance().state_version, STATE_VERSION);
+}
+
+#[test]
+fn new_validates_its_arguments() {
+    let mpc = || acc("v1.signer-prod.testnet");
+    let w = |n: usize| (0..n).map(|i| acc(&format!("w{i}.testnet"))).collect::<Vec<_>>();
+    let cases: Vec<(&str, Box<dyn Fn()>)> = vec![
+        ("change_delay_ms must be at most 7 days", Box::new(move || drop(HanaSigner::new(acc(ADMIN), mpc(), 2, MAX_CHANGE_DELAY_MS + 1, 0, 0, vec![], vec![])))),
+        ("issuer_key_delay_ms must be at most 7 days", Box::new(move || drop(HanaSigner::new(acc(ADMIN), mpc(), 2, 0, MAX_ISSUER_KEY_DELAY_MS + 1, 0, vec![], vec![])))),
+        ("governance_delay_ms must be at most 30 days", Box::new(move || drop(HanaSigner::new(acc(ADMIN), mpc(), 2, 0, 0, MAX_GOVERNANCE_DELAY_MS + 1, vec![], vec![])))),
+        ("Too many watchdogs", Box::new(move || drop(HanaSigner::new(acc(ADMIN), mpc(), 2, 0, 0, 0, w(4), vec![])))),
+        ("Already a watchdog", Box::new(move || drop(HanaSigner::new(acc(ADMIN), mpc(), 2, 0, 0, 0, vec![acc(WATCHDOG), acc(WATCHDOG)], vec![])))),
+        ("Too many updater keys", Box::new(move || drop(HanaSigner::new(acc(ADMIN), mpc(), 2, 0, 0, 0, vec![], vec![near_pk(1), near_pk(2), near_pk(3)])))),
+        ("Already an updater key", Box::new(move || drop(HanaSigner::new(acc(ADMIN), mpc(), 2, 0, 0, 0, vec![], vec![near_pk(1), near_pk(1)])))),
+    ];
+    for (expected, call) in cases {
+        ctx_with_storage(ME, NOW_MS, Default::default());
+        expect_panic(expected, call);
+    }
+    // The bounds themselves are accepted.
+    ctx_with_storage(ME, NOW_MS, Default::default());
+    drop(HanaSigner::new(acc(ADMIN), mpc(), 2, MAX_CHANGE_DELAY_MS, MAX_ISSUER_KEY_DELAY_MS, MAX_GOVERNANCE_DELAY_MS, w(3), vec![near_pk(1), near_pk(2)]));
+}
+
+// ---- upgrades ----
+
+#[test]
+fn upgrades_wait_the_governance_delay_and_deploy_the_proposed_code_with_migrate() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.propose_upgrade(code_hash(NEW_CODE));
+    assert_eq!(events(), vec![ev("upgrade_proposed", serde_json::json!({"code_hash":b58(NEW_CODE),"executable_at_ms":NOW_MS + GOV_DELAY_MS}))]);
+    assert_eq!(
+        c.get_governance().pending_upgrade,
+        Some(PendingUpgradeView { code_hash: code_hash(NEW_CODE), proposed_at_ms: NOW_MS, executable_at_ms: NOW_MS + GOV_DELAY_MS })
+    );
+    ctx_input(MALLORY, NOW_MS + GOV_DELAY_MS - 1, NEW_CODE.to_vec());
+    expect_panic("Upgrade is still delayed", || {
+        c.execute_upgrade().detach();
+    });
+    ctx_input(MALLORY, NOW_MS + GOV_DELAY_MS, b"\0asm other code".to_vec());
+    expect_panic("Code doesn't match the proposed hash", || {
+        c.execute_upgrade().detach();
+    });
+    ctx_input(MALLORY, NOW_MS + GOV_DELAY_MS, vec![]);
+    expect_panic("Code doesn't match the proposed hash", || {
+        c.execute_upgrade().detach();
+    });
+    // Anyone sends the exact code once due.
+    ctx_input(MALLORY, NOW_MS + GOV_DELAY_MS, NEW_CODE.to_vec());
+    c.execute_upgrade().detach();
+    assert_eq!(events(), vec![ev("upgrade_executed", serde_json::json!({"code_hash":b58(NEW_CODE)}))]);
+    assert_eq!(c.get_governance().pending_upgrade, None);
+    // One receipt to the contract itself: deploy, then the new code's migrate (both or neither).
+    let receipts = get_created_receipts();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].receiver_id, acc(ME));
+    let [MockAction::DeployContract { code, .. }, MockAction::FunctionCallWeight { method_name, args, attached_deposit, prepaid_gas, .. }] = receipts[0].actions.as_slice() else {
+        panic!("unexpected actions {:?}", receipts[0].actions)
+    };
+    assert_eq!(code.as_slice(), NEW_CODE);
+    assert_eq!(method_name, b"migrate");
+    assert!(args.is_empty());
+    assert_eq!(*attached_deposit, NearToken::from_yoctonear(0));
+    assert_eq!(*prepaid_gas, MIGRATE_GAS);
+    ctx_input(MALLORY, NOW_MS + GOV_DELAY_MS, NEW_CODE.to_vec());
+    expect_panic("No pending upgrade", || {
+        c.execute_upgrade().detach();
+    });
+}
+
+#[test]
+fn a_new_upgrade_proposal_replaces_the_pending_one_and_the_owner_cancels() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.propose_upgrade(code_hash(b"one"));
+    ctx(ADMIN, NOW_MS + 1000);
+    c.propose_upgrade(code_hash(NEW_CODE));
+    assert_eq!(
+        events(),
+        vec![
+            ev("upgrade_cancelled", serde_json::json!({"code_hash":b58(b"one")})),
+            ev("upgrade_proposed", serde_json::json!({"code_hash":b58(NEW_CODE),"executable_at_ms":NOW_MS + 1000 + GOV_DELAY_MS})),
+        ]
+    );
+    // The replaced code can't be executed; the new proposal has its own, later time.
+    ctx_input(MALLORY, NOW_MS + GOV_DELAY_MS, b"one".to_vec());
+    expect_panic("Upgrade is still delayed", || {
+        c.execute_upgrade().detach();
+    });
+    ctx_input(MALLORY, NOW_MS + 1000 + GOV_DELAY_MS, b"one".to_vec());
+    expect_panic("Code doesn't match the proposed hash", || {
+        c.execute_upgrade().detach();
+    });
+    ctx(ADMIN, NOW_MS + 1000);
+    c.cancel_upgrade();
+    assert_eq!(events(), vec![ev("upgrade_cancelled", serde_json::json!({"code_hash":b58(NEW_CODE)}))]);
+    expect_panic("No pending upgrade", || c.cancel_upgrade());
+    ctx_input(MALLORY, NOW_MS + 1000 + GOV_DELAY_MS, NEW_CODE.to_vec());
+    expect_panic("No pending upgrade", || {
+        c.execute_upgrade().detach();
+    });
+}
+
+#[test]
+fn an_upgrade_executes_while_paused() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.propose_upgrade(code_hash(NEW_CODE));
+    c.pause();
+    ctx_input(MALLORY, NOW_MS + GOV_DELAY_MS, NEW_CODE.to_vec());
+    c.execute_upgrade().detach();
+    assert_eq!(get_created_receipts().len(), 1);
+}
+
+// ---- owner transfer ----
+
+#[test]
+fn owner_transfer_waits_the_governance_delay_and_needs_the_new_owner() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.propose_owner(acc(CAROL));
+    assert_eq!(events(), vec![ev("owner_proposed", serde_json::json!({"owner":CAROL,"acceptable_at_ms":NOW_MS + GOV_DELAY_MS}))]);
+    assert_eq!(c.get_governance().pending_owner, Some(PendingOwner { owner: acc(CAROL), acceptable_at_ms: NOW_MS + GOV_DELAY_MS }));
+    ctx(CAROL, NOW_MS + GOV_DELAY_MS - 1);
+    expect_panic("Owner change is still delayed", || c.accept_owner());
+    for caller in [MALLORY, ADMIN, WATCHDOG] {
+        ctx(caller, NOW_MS + GOV_DELAY_MS);
+        expect_panic("Not the proposed owner", || c.accept_owner());
+    }
+    ctx(CAROL, NOW_MS + GOV_DELAY_MS);
+    c.accept_owner();
+    assert_eq!(events(), vec![ev("owner_changed", serde_json::json!({"old":ADMIN,"new":CAROL}))]);
+    assert_eq!(c.get_config().owner, acc(CAROL));
+    assert_eq!(c.get_governance().pending_owner, None);
+    expect_panic("Not the proposed owner", || c.accept_owner());
+    // The new owner governs; the old one no longer does.
+    c.set_sponsors(vec![]);
+    ctx(ADMIN, NOW_MS + GOV_DELAY_MS);
+    expect_panic("Only the owner can do this", || c.set_sponsors(vec![]));
+}
+
+#[test]
+fn owner_proposals_are_replaced_and_cancelled() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.propose_owner(acc(CAROL));
+    ctx(ADMIN, NOW_MS + 5);
+    c.propose_owner(acc(BOB));
+    // Replacing a pending transfer cancels it publicly, as propose_upgrade and propose_withdrawal do.
+    assert_eq!(
+        events(),
+        vec![
+            ev("owner_proposal_cancelled", serde_json::json!({"owner":CAROL})),
+            ev("owner_proposed", serde_json::json!({"owner":BOB,"acceptable_at_ms":NOW_MS + 5 + GOV_DELAY_MS})),
+        ]
+    );
+    ctx(CAROL, NOW_MS + GOV_DELAY_MS);
+    expect_panic("Not the proposed owner", || c.accept_owner());
+    ctx(ADMIN, NOW_MS);
+    c.cancel_owner_proposal();
+    assert_eq!(events(), vec![ev("owner_proposal_cancelled", serde_json::json!({"owner":BOB}))]);
+    expect_panic("No pending owner change", || c.cancel_owner_proposal());
+    ctx(BOB, NOW_MS + GOV_DELAY_MS);
+    expect_panic("Not the proposed owner", || c.accept_owner());
+    assert_eq!(c.get_config().owner, acc(ADMIN));
+}
+
+// ---- surplus withdrawal ----
+
+/// The least balance that lets a withdrawal of `amount` execute now: storage cost + SIGNER_RESERVE + amount.
+fn least_balance_for(amount: NearToken) -> NearToken {
+    env::storage_byte_cost().saturating_mul(u128::from(env::storage_usage())).saturating_add(SIGNER_RESERVE).saturating_add(amount)
+}
+
+#[test]
+fn withdrawals_wait_the_governance_delay_and_keep_storage_plus_the_reserve() {
+    let mut c = setup();
+    let amount = NearToken::from_near(10);
+    ctx(ADMIN, NOW_MS);
+    c.propose_withdrawal(acc(CAROL), amount);
+    assert_eq!(
+        events(),
+        vec![ev("withdrawal_proposed", serde_json::json!({"receiver":CAROL,"amount":amount,"executable_at_ms":NOW_MS + GOV_DELAY_MS}))]
+    );
+    assert_eq!(c.get_governance().pending_withdrawal, Some(PendingWithdrawal { receiver: acc(CAROL), amount, executable_at_ms: NOW_MS + GOV_DELAY_MS }));
+    ctx(MALLORY, NOW_MS + GOV_DELAY_MS - 1);
+    expect_panic("Withdrawal is still delayed", || {
+        c.execute_withdrawal().detach();
+    });
+    // Checked at execution, against the balance then: one yoctoNEAR short is refused...
+    ctx_balance(MALLORY, NOW_MS + GOV_DELAY_MS, NearToken::from_near(100));
+    let least = least_balance_for(amount);
+    ctx_balance(MALLORY, NOW_MS + GOV_DELAY_MS, least.saturating_sub(NearToken::from_yoctonear(1)));
+    expect_panic("Withdrawal would leave too little", || {
+        c.execute_withdrawal().detach();
+    });
+    // ...and less than the amount itself too.
+    ctx_balance(MALLORY, NOW_MS + GOV_DELAY_MS, NearToken::from_near(5));
+    expect_panic("Withdrawal would leave too little", || {
+        c.execute_withdrawal().detach();
+    });
+    // Exactly enough executes, by anyone: one transfer to the proposed receiver for the proposed amount.
+    ctx_balance(MALLORY, NOW_MS + GOV_DELAY_MS, least);
+    c.execute_withdrawal().detach();
+    assert_eq!(events(), vec![ev("withdrawal_executed", serde_json::json!({"receiver":CAROL,"amount":amount}))]);
+    assert_eq!(transfers(), vec![(CAROL.to_string(), amount.as_yoctonear())]);
+    assert_eq!(c.get_governance().pending_withdrawal, None);
+    expect_panic("No pending withdrawal", || {
+        c.execute_withdrawal().detach();
+    });
+}
+
+#[test]
+fn withdrawal_proposals_are_replaced_cancelled_and_frozen_by_pause() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    expect_panic("Withdrawal amount must be positive", || c.propose_withdrawal(acc(CAROL), NearToken::from_yoctonear(0)));
+    c.propose_withdrawal(acc(CAROL), NearToken::from_near(1));
+    c.propose_withdrawal(acc(BOB), NearToken::from_near(2));
+    assert_eq!(
+        events()[1],
+        ev("withdrawal_cancelled", serde_json::json!({"receiver":CAROL,"amount":NearToken::from_near(1)}))
+    );
+    c.pause();
+    ctx(MALLORY, NOW_MS + GOV_DELAY_MS);
+    expect_panic("Paused", || {
+        c.execute_withdrawal().detach();
+    });
+    ctx(ADMIN, NOW_MS + GOV_DELAY_MS);
+    c.unpause();
+    c.cancel_withdrawal();
+    assert_eq!(events()[1], ev("withdrawal_cancelled", serde_json::json!({"receiver":BOB,"amount":NearToken::from_near(2)})));
+    expect_panic("No pending withdrawal", || c.cancel_withdrawal());
+    ctx(MALLORY, NOW_MS + GOV_DELAY_MS);
+    expect_panic("No pending withdrawal", || {
+        c.execute_withdrawal().detach();
+    });
+}
+
+// ---- console audiences ----
+
+#[test]
+fn console_audience_additions_wait_the_change_delay() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    // oa_remove_a2_wrong_aud is an owner-action token for remove_client(s1, A2) issued to audience A.
+    c.set_console_audiences(vec![google(CONSOLE), google(A)]);
+    assert_eq!(
+        events(),
+        vec![ev(
+            "console_audiences_set",
+            serde_json::json!({"console_audiences":[["google",CONSOLE]],"pending_console_audiences":[{"provider":"google","aud":A,"effective_at_ms":NOW_MS + DELAY_MS}]})
+        )]
+    );
+    let cfg = c.get_config();
+    assert_eq!(cfg.console_audiences, vec![google(CONSOLE)]);
+    assert_eq!(cfg.pending_console_audiences, vec![PendingSharedClient { provider: "google".into(), aud: A.into(), effective_at_ms: NOW_MS + DELAY_MS }]);
+    ctx(RELAYER, NOW_MS + DELAY_MS - 1);
+    expect_panic("Token is not for the Hana console", || {
+        c.remove_client("s1".into(), oidc("oa_remove_a2_wrong_aud"), "google".into(), A2.into());
+    });
+    // Setting the same list again doesn't restart the delay.
+    ctx(ADMIN, NOW_MS + DELAY_MS / 2);
+    c.set_console_audiences(vec![google(CONSOLE), google(A)]);
+    assert_eq!(c.get_config().pending_console_audiences[0].effective_at_ms, NOW_MS + DELAY_MS);
+    // In force once the delay has passed, before anyone applies it.
+    ctx(RELAYER, NOW_MS + DELAY_MS);
+    let cfg = c.get_config();
+    assert_eq!((cfg.console_audiences, cfg.pending_console_audiences), (vec![google(CONSOLE), google(A)], vec![]));
+    c.remove_client("s1".into(), oidc("oa_remove_a2_wrong_aud"), "google".into(), A2.into());
+    c.apply_pending_config();
+    assert_eq!((c.console_audiences.clone(), c.pending_console_audiences.clone()), (vec![google(CONSOLE), google(A)], vec![]));
+}
+
+#[test]
+fn console_audience_removals_apply_at_once() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.set_console_audiences(vec![google(CONSOLE), google(B)]);
+    c.set_console_audiences(vec![google(B)]);
+    let cfg = c.get_config();
+    assert_eq!(cfg.console_audiences, Vec::<(String, String)>::new());
+    assert_eq!(cfg.pending_console_audiences.len(), 1);
+    c.set_console_audiences(vec![]);
+    let cfg = c.get_config();
+    assert!(cfg.console_audiences.is_empty() && cfg.pending_console_audiences.is_empty());
+    assert_eq!(events()[2], ev("console_audiences_set", serde_json::json!({"console_audiences":[],"pending_console_audiences":[]})));
+}
+
+#[test]
+fn set_console_audiences_validation() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    expect_panic("Duplicate console audience", || c.set_console_audiences(vec![google(CONSOLE), google(CONSOLE)]));
+    expect_panic("Too many console audiences", || c.set_console_audiences((0..11).map(|i| google(&format!("c{i}"))).collect()));
+    expect_panic("Invalid provider", || c.set_console_audiences(vec![("Google".into(), CONSOLE.into())]));
+    expect_panic("Invalid aud", || c.set_console_audiences(vec![google("")]));
+}
+
+// ---- governance view ----
+
+#[test]
+fn governance_view() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.propose_owner(acc(CAROL));
+    c.propose_withdrawal(acc(CAROL), NearToken::from_near(1));
+    c.propose_upgrade(code_hash(NEW_CODE));
+    c.add_updater_key(near_pk(3)).detach();
+    let pk3: String = String::from(&near_pk(3));
+    assert_eq!(
+        serde_json::to_value(c.get_governance()).unwrap(),
+        serde_json::json!({
+            "state_version":2,
+            "watchdogs":[{"account_id":WATCHDOG,"confirm_from_ms":NOW_MS}],
+            "keys_slow_until_ms":0,
+            "updater_keys":[],
+            "pending_updater_keys":[pk3],
+            "updater_methods":UPDATER_METHOD_LIST,
+            "pending_upgrade":{"code_hash":b58(NEW_CODE),"proposed_at_ms":NOW_MS,"executable_at_ms":NOW_MS + GOV_DELAY_MS},
+            "pending_owner":{"owner":CAROL,"acceptable_at_ms":NOW_MS + GOV_DELAY_MS},
+            "pending_withdrawal":{"receiver":CAROL,"amount":"1000000000000000000000000","executable_at_ms":NOW_MS + GOV_DELAY_MS}
+        })
+    );
+}
+
+// ---- migration (v1 → v2) ----
+
+fn unhex(s: &str) -> Vec<u8> {
+    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+}
+
+/// The v1 storage in src/v1_state_fixture.json (built by the v1 code, develop 3fd4964; see its "about").
+fn v1_storage() -> std::collections::HashMap<Vec<u8>, Vec<u8>> {
+    let f: Value = serde_json::from_str(include_str!("v1_state_fixture.json")).unwrap();
+    f["storage"].as_array().unwrap().iter().map(|kv| (unhex(kv[0].as_str().unwrap()), unhex(kv[1].as_str().unwrap()))).collect()
+}
+
+#[test]
+fn the_v1_layout_copy_round_trips_the_v1_state_fixture() {
+    use near_sdk::borsh::BorshDeserialize;
+    let storage = v1_storage();
+    let raw = &storage[b"STATE".as_slice()];
+    let v1 = crate::migrate::HanaSignerV1::try_from_slice(raw).expect("the v1 layout reads the v1 state");
+    assert_eq!(&near_sdk::borsh::to_vec(&v1).unwrap(), raw);
+    // The v2 layout doesn't read v1 state, and the v1 layout doesn't read v2 state.
+    assert!(HanaSigner::try_from_slice(raw).is_err());
+    let c = setup();
+    let v2 = near_sdk::borsh::to_vec(&c).unwrap();
+    assert!(crate::migrate::HanaSignerV1::try_from_slice(&v2).is_err());
+    // v2 = the v1 prefix, unchanged, followed by the new fields.
+    let v1_part = crate::migrate::HanaSignerV1::deserialize(&mut v2.as_slice()).unwrap();
+    assert_eq!(near_sdk::borsh::to_vec(&v1_part).unwrap(), v2[..near_sdk::borsh::to_vec(&v1_part).unwrap().len()].to_vec());
+}
+
+#[test]
+fn migrate_v1_keeps_every_scope_client_session_and_issuer_key() {
+    ctx_with_storage(ME, NOW_MS, v1_storage());
+    let mut c = HanaSigner::migrate_v1(KEY_DELAY_MS, GOV_DELAY_MS);
+    assert_eq!(events(), vec![ev("state_migrated", serde_json::json!({"from_version":1,"to_version":2}))]);
+    // Every v1 field as the fixture's v1 code left it, plus the new delays and nothing pending.
+    assert_eq!(
+        serde_json::to_value(c.get_config()).unwrap(),
+        serde_json::json!({
+            "owner":ADMIN,"mpc":"v1.signer-prod.testnet","ckd_domain_id":2,
+            "console_audiences":[["google",CONSOLE]],"pending_console_audiences":[],
+            "sponsors":[RELAYER],
+            "shared_clients":[["google",SHARED]],
+            "pending_shared_clients":[{"provider":"google","aud":D,"effective_at_ms":NOW_MS + DELAY_MS}],
+            "change_delay_ms":DELAY_MS,"pending_change_delay":{"change_delay_ms":0,"effective_at_ms":NOW_MS + DELAY_MS},
+            "public_registration":false,
+            "issuer_key_delay_ms":KEY_DELAY_MS,"pending_issuer_key_delay":null,
+            "governance_delay_ms":GOV_DELAY_MS,"pending_governance_delay":null,
+            "paused":false,"unpaused_at_ms":0,"changes_unlock_floor_ms":0,"sessions_valid_from_ms":0
+        })
+    );
+    assert_eq!(
+        c.get_governance(),
+        GovernanceView {
+            state_version: 2,
+            watchdogs: vec![],
+            keys_slow_until_ms: 0,
+            updater_keys: vec![],
+            pending_updater_keys: vec![],
+            updater_methods: UPDATER_METHOD_LIST.map(String::from).to_vec(),
+            pending_upgrade: None,
+            pending_owner: None,
+            pending_withdrawal: None
+        }
+    );
+    assert!(c.get_key_changes().is_empty());
+    assert_eq!(kids(&c), vec!["test-kid".to_string()]);
+    assert_eq!(c.get_issuer("other".into()).unwrap().kids, vec!["test-kid2".to_string()]);
+    let s1 = c.get_scope("s1".into()).unwrap();
+    assert_eq!(s1.owners, vec![near_owner(ALICE), oidc_owner(OWNER_SUB)]);
+    assert_eq!(s1.clients, vec![google(A)]);
+    assert_eq!(s1.pending, vec![PendingChange { id: 0, change: add(E), unlock_at_ms: NOW_MS + DELAY_MS }]);
+    assert_eq!(s1.action_nonce, 2);
+    assert_eq!(c.get_scope("s2".into()).unwrap().clients, vec![google(B)]);
+    let s3 = c.get_scope("s3".into()).unwrap();
+    assert!(s3.allow_shared && s3.clients.is_empty());
+    assert_eq!(c.scope_for_client("google".into(), A.into()), Some("s1".into()));
+    assert_eq!(c.scope_for_client("google".into(), A2.into()), None);
+    assert_eq!(c.scope_for_client("google".into(), B.into()), Some("s2".into()));
+    assert_eq!(c.get_session(pk(7)), Some(Session { path: format!("s1#google#{USER}#0"), scope_id: "s1".into(), expires_at_ms: EXPIRES_MS, max_uses: 3, used: 1 }));
+    assert_eq!(c.get_session(pk(8)).unwrap().path, format!("s2#google#{USER}#0"));
+    // The migrated state round-trips through storage as v2.
+    env::state_write(&c);
+    let stored: HanaSigner = env::state_read().unwrap();
+    assert_eq!(stored.state_version, 2);
+
+    // It keeps working: the session opened before the upgrade derives with the same path...
+    ctx(RELAYER, NOW_MS);
+    derive(&mut c, 7, 2);
+    let receipts = get_created_receipts();
+    let MockAction::FunctionCallWeight { args, .. } = &receipts[0].actions[0] else { panic!() };
+    let args: Value = serde_json::from_slice(args).unwrap();
+    assert_eq!(args["request"]["derivation_path"], format!("s1#google#{USER}#0"));
+    // ...the A2 quarantine and the pending AddClient carry on...
+    ctx(BOB, NOW_MS);
+    expect_panic("Client was recently removed from another scope", || {
+        c.propose_change("s2".into(), OwnerAuth::Near, add(A2), Some(tok("cp_a2_s2_0")));
+    });
+    ctx(MALLORY, NOW_MS + DELAY_MS);
+    c.execute_change("s1".into(), 0);
+    assert_eq!(c.scope_for_client("google".into(), E.into()), Some("s1".into()));
+    // ...and with no watchdog yet, key changes wait the governance delay.
+    let (n, e) = fixture_key();
+    ctx(ADMIN, NOW_MS + DELAY_MS);
+    c.set_issuer_key("google".into(), "k2".into(), n, e);
+    assert_eq!(c.get_key_changes()[0].executable_at_ms, NOW_MS + DELAY_MS + GOV_DELAY_MS);
+}
+
+#[test]
+fn migrate_v1_bounds_its_delays() {
+    ctx_with_storage(ME, NOW_MS, v1_storage());
+    expect_panic("issuer_key_delay_ms must be at most 7 days", || drop(HanaSigner::migrate_v1(MAX_ISSUER_KEY_DELAY_MS + 1, 0)));
+    expect_panic("governance_delay_ms must be at most 30 days", || drop(HanaSigner::migrate_v1(0, MAX_GOVERNANCE_DELAY_MS + 1)));
+}
+
+#[test]
+fn migrations_refuse_a_state_they_do_not_migrate_from() {
+    // migrate_v1 on v2 state (a stray re-run).
+    let c = setup();
+    env::state_write(&c);
+    expect_panic("Unexpected state version", || drop(HanaSigner::migrate_v1(0, 0)));
+    // migrate on v1 state.
+    ctx_with_storage(ME, NOW_MS, v1_storage());
+    expect_panic("Unexpected state version", || drop(HanaSigner::migrate()));
+    // Either on no state at all.
+    ctx_with_storage(ME, NOW_MS, Default::default());
+    expect_panic("Unexpected state version", || drop(HanaSigner::migrate()));
+    expect_panic("Unexpected state version", || drop(HanaSigner::migrate_v1(0, 0)));
+    // migrate on a v2 layout that claims another version.
+    let mut c = setup();
+    c.state_version = 3;
+    env::state_write(&c);
+    expect_panic("Unexpected state version", || drop(HanaSigner::migrate()));
+}
+
+#[test]
+fn migrate_keeps_a_v2_state_as_it_is() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.add_watchdog(acc(WATCHDOG2));
+    c.propose_owner(acc(CAROL));
+    let key = propose_key(&mut c, ME, "k2");
+    env::state_write(&c);
+    let (config, governance, changes) = (c.get_config(), c.get_governance(), c.get_key_changes());
+    drop(c);
+    ctx(ME, NOW_MS);
+    let migrated = HanaSigner::migrate();
+    assert_eq!(events(), vec![ev("state_migrated", serde_json::json!({"from_version":2,"to_version":2}))]);
+    assert_eq!((migrated.get_config(), migrated.get_governance(), migrated.get_key_changes()), (config, governance, changes));
+    assert_eq!(migrated.get_key_changes()[0].id, key);
 }

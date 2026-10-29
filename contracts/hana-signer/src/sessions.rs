@@ -3,6 +3,7 @@
 // create_session takes 7 arguments and create_session_and_derive 10 (plus self): the JSON interface is flat on purpose.
 #![allow(clippy::too_many_arguments)]
 
+use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{env, ext_contract, near, Gas, NearToken, Promise, PromiseOrValue};
 use schemars::JsonSchema;
@@ -43,8 +44,10 @@ pub struct Session {
     pub used: u32,
 }
 
-#[near(serializers = [borsh])]
-#[derive(Clone, Debug)]
+/// A session as stored. Borsh: path ‖ scope_id ‖ expires_at_ms u64 ‖ max_uses u32 ‖ used u32 ‖ revoked u8, then
+/// `created_at_ms` u64 for sessions opened by v2 code. Sessions opened by v1 code (before the governance migration)
+/// end after `revoked`: the codec below reads both, so they keep working without a migration of every record.
+#[derive(Clone, Debug, PartialEq)]
 pub struct StoredSession {
     pub path: String,
     pub scope_id: String,
@@ -53,11 +56,61 @@ pub struct StoredSession {
     pub used: u32,
     /// Revoked sessions stay as tombstones until expiry, so their (public) token can't reopen them.
     pub revoked: bool,
+    /// When `create_session` opened it; `None` for a session opened by v1 code.
+    pub created_at_ms: Option<u64>,
+}
+
+impl BorshSerialize for StoredSession {
+    fn serialize<W: borsh::io::Write>(&self, writer: &mut W) -> borsh::io::Result<()> {
+        BorshSerialize::serialize(&self.path, writer)?;
+        BorshSerialize::serialize(&self.scope_id, writer)?;
+        BorshSerialize::serialize(&self.expires_at_ms, writer)?;
+        BorshSerialize::serialize(&self.max_uses, writer)?;
+        BorshSerialize::serialize(&self.used, writer)?;
+        BorshSerialize::serialize(&self.revoked, writer)?;
+        // A v1 session stays in the v1 form when it is written back (e.g. after a use).
+        if let Some(t) = self.created_at_ms {
+            BorshSerialize::serialize(&t, writer)?;
+        }
+        Ok(())
+    }
+}
+
+impl BorshDeserialize for StoredSession {
+    fn deserialize_reader<R: borsh::io::Read>(reader: &mut R) -> borsh::io::Result<Self> {
+        let path = String::deserialize_reader(reader)?;
+        let scope_id = String::deserialize_reader(reader)?;
+        let expires_at_ms = u64::deserialize_reader(reader)?;
+        let max_uses = u32::deserialize_reader(reader)?;
+        let used = u32::deserialize_reader(reader)?;
+        let revoked = bool::deserialize_reader(reader)?;
+        // Optional trailing u64: absent (a v1 record) or all 8 bytes; anything in between is corrupt.
+        let mut tail = [0u8; 8];
+        let mut filled = 0;
+        while filled < tail.len() {
+            match reader.read(&mut tail[filled..])? {
+                0 => break,
+                n => filled += n,
+            }
+        }
+        let created_at_ms = match filled {
+            0 => None,
+            8 => Some(u64::from_le_bytes(tail)),
+            _ => return Err(borsh::io::Error::new(borsh::io::ErrorKind::InvalidData, "truncated session record")),
+        };
+        Ok(Self { path, scope_id, expires_at_ms, max_uses, used, revoked, created_at_ms })
+    }
 }
 
 impl StoredSession {
     fn view(&self) -> Session {
         Session { path: self.path.clone(), scope_id: self.scope_id.clone(), expires_at_ms: self.expires_at_ms, max_uses: self.max_uses, used: self.used }
+    }
+
+    /// The earliest time it can have been opened: `created_at_ms`, or for a v1 session `expires_at_ms -
+    /// MAX_SESSION_MS` (`create_session` refuses an expiry more than `MAX_SESSION_MS` ahead, so it was opened no earlier).
+    fn opened_no_earlier_than(&self) -> u64 {
+        self.created_at_ms.unwrap_or(self.expires_at_ms.saturating_sub(MAX_SESSION_MS))
     }
 }
 
@@ -147,6 +200,7 @@ impl HanaSigner {
         key_index: u32,
         max_uses: u32,
     ) -> Session {
+        self.assert_not_paused();
         assert!(session_public_key.len() == 32, "Session key must be a 32-byte Ed25519 public key");
         assert!((16..=64).contains(&salt.len()), "Salt must be 16-64 bytes");
         let now = env::block_timestamp_ms();
@@ -178,6 +232,7 @@ impl HanaSigner {
             max_uses,
             used: 0,
             revoked: false,
+            created_at_ms: Some(now),
         };
         let session = stored.view();
         self.sessions.insert(session_public_key.clone(), stored);
@@ -189,8 +244,9 @@ impl HanaSigner {
 
     /// Full-key mode: asks the MPC's CKD domain for the session path's secret, encrypted to the browser's BLS key
     /// (`pk1`, `pk2`). `signature` is the session key's Ed25519 signature over
-    /// session_message(counter, "hana-id-ckd-v1:{pk1}:{pk2}"). Returns the MPC's `{big_y, big_c}`.
+    /// session_message(counter, "hana-id-ckd-v1:{pk1}:{pk2}"). Returns the MPC's `{big_y, big_c}`. Not while paused.
     pub fn derive_key(&mut self, session_public_key: Vec<u8>, counter: u64, signature: Vec<u8>, pk1: String, pk2: String) -> Promise {
+        self.assert_not_paused();
         assert!(pk1.len() <= MAX_BLS_KEY_BYTES && pk2.len() <= MAX_BLS_KEY_BYTES, "BLS key too long");
         let path = self.use_session(&session_public_key, counter, signature, &ckd_request_bytes(&pk1, &pk2));
         mpc_contract::ext(self.mpc.clone())
@@ -236,9 +292,9 @@ impl HanaSigner {
         self.prune(limit.min(MAX_PRUNE))
     }
 
-    /// `null` if there is no session for this key or it was revoked.
+    /// `null` if there is no session for this key, it was revoked, or it was opened before `sessions_valid_from_ms`.
     pub fn get_session(&self, session_public_key: Vec<u8>) -> Option<Session> {
-        self.sessions.get(&session_public_key).filter(|s| !s.revoked).map(StoredSession::view)
+        self.sessions.get(&session_public_key).filter(|s| self.in_force(s)).map(StoredSession::view)
     }
 
     /// True if create_session would refuse this key with "Session key already in use": a session for it, revoked or
@@ -260,8 +316,13 @@ fn verify_session_signature(session_public_key: &[u8], signature: Vec<u8>, messa
 }
 
 impl HanaSigner {
+    /// Not revoked, and not opened before the owner's `sessions_valid_from_ms` floor. Expiry is checked by the caller.
+    fn in_force(&self, s: &StoredSession) -> bool {
+        !s.revoked && s.opened_no_earlier_than() >= self.sessions_valid_from_ms
+    }
+
     fn live_session(&self, session_public_key: &Vec<u8>) -> StoredSession {
-        self.sessions.get(session_public_key).filter(|s| !s.revoked).cloned().unwrap_or_else(|| env::panic_str("No such session"))
+        self.sessions.get(session_public_key).filter(|s| self.in_force(s)).cloned().unwrap_or_else(|| env::panic_str("No such session"))
     }
 
     /// Checks expiry, use limit, counter and signature over `payload`, counts the use, returns the path.

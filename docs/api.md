@@ -1,13 +1,16 @@
 # API reference — every endpoint the `apps/api` Worker serves today
 
-Last verified against code: 2026-10-29 (branch `perf/login-latency-impl`: the vault endpoints' gate, the auth
-pages' CSP and the timings; the rest as of 2026-10-28, commit 58edee9).
+Last verified against code: 2026-10-29 (branch `gov/api`: the governance batch's cron, `issuer_key_pending` /
+`paused`, `GET /v1/governance`; branch `perf/login-latency-impl`: the vault endpoints' gate, the auth pages' CSP and
+the timings; the rest as of 2026-10-28, commit 58edee9).
 
 Current state, not a spec. Where the specs (`docs/batch-*.md`) and this file differ, this file follows the code.
 Contract methods and byte layouts: `docs/contract-interface.md`. How to run it: `docs/operations.md`.
 
 **B** marks what batch B added or changed (the vault, the auth pages, `POST /v1/login`, the login relay, the vault
-endpoints and the page Workers).
+endpoints and the page Workers). **G** marks the governance batch (`docs/governance-spec.md`): the JWKS cron now
+proposes and executes delayed key changes, logins refuse a kid not yet active on chain and a paused contract, and
+`GET /v1/governance` reports the governance state.
 
 The API Worker renders `GET /vault` for requests whose URL origin is `VAULT_ORIGIN`: the vault origin's own thin
 Worker forwards them unchanged through a service binding. `/vault.js` and the auth pages (`/login`,
@@ -26,13 +29,14 @@ page origins never reach the API routes: a request whose URL origin is `VAULT_OR
 | `{VAULT_ORIGIN}/vault` | GET, HEAD | `vault/page.ts` | publishable key in `?pk=` | B |
 | any other path on `VAULT_ORIGIN` or `AUTH_ORIGIN` | any | `index.ts` | — (`404`, text, `frame-ancestors 'none'`, `nosniff`, no CORS) | B |
 | `/v1/health` | GET, HEAD, OPTIONS | `handlers.ts` | none | |
+| `/v1/governance` | GET, HEAD, OPTIONS | `governance-status.ts` | none (public data, read-only) | G |
 | `/v1/app` | GET, OPTIONS | `handlers.ts` | publishable key + caller rule | changed in B |
 | `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` | POST, OPTIONS | `handlers.ts` | publishable key + caller rule (+ session signature for derive/revoke) | caller rule changed in B |
 | `/v1/login` | POST, OPTIONS | `login.ts` | publishable key + caller rule + session signature | B |
 | `/v1/login-relay/<relayId>` | GET, POST, OPTIONS | `login-relay.ts` | Hana origin only; read key for GET | B |
 | `/v1/vault/shares`, `/unlock`, `/touch`, `/revoke`, `/revoke-all` | POST, OPTIONS | `vault/endpoints.ts` | publishable key + vault origin + session signature (vault message) | B |
 | `/v1/owner-actions` | POST, OPTIONS | `handlers.ts` | OIDC owner token inside the args | |
-| cron `*/15 * * * *` | — | `issuer-keys.ts`, `vault/cron.ts`, `key-observations.ts` | — | vault part B; 15 min for the key lead time |
+| cron `*/15 * * * *` | — | `issuer-keys.ts`, `vault/cron.ts`, `key-observations.ts` | — | vault part B; JWKS sync every 15 min since G |
 
 There is no secret-key (`sk_…`) auth anywhere: publishable keys are public and origins gate them.
 
@@ -123,6 +127,77 @@ Seeded plan `free`: `per_minute` 60, `per_day` 5000, `per_ip_minute` 20.
 
 No auth, no limits, `access-control-allow-origin: *`. → `200 {"ok": true, "env": ENV_NAME, "signer": SIGNER_ACCOUNT, "requestId"}`.
 
+### `GET /v1/governance` · G
+
+No auth, no limits, `access-control-allow-origin: *`, `cache-control: public, max-age=10`. Read-only: it reads
+hana-signer's views (`get_config`, `get_governance`, `get_key_changes`, `get_issuer("google")`), the signer's
+`view_access_key_list`, Google's JWKS (the token-check cache, `jwks.ts`) and the JWKS cron's D1 tables, and sends no
+transaction. One snapshot per isolate serves every request for 10 s (concurrent misses share one read); `readAtMs`
+says when it was taken, so countdowns are the reader's (`executableAtMs − now`).
+
+This is the machine-readable source batch C's admin portal ("Security & monitoring", the pending-upgrades page;
+D83, D86) and operators read for the contract side of governance; the watchdog's heartbeat, verdicts, actions log and
+alerts come from the watchdog service's `GET /status` / `GET /alerts`, never from here. The API runs on Hana's main
+Cloudflare account, so a reader that must not trust it reads the same views through its own RPC
+(`docs/contract-interface.md` "Monitoring hand-off" lists them).
+
+→ `200`:
+
+```jsonc
+{
+  "signer": "hana-signer-dev1.testnet", "env": "sandbox-dev", "readAtMs": 1800000000000,
+  "stateVersion": 2,
+  "paused": false,
+  "unpausedAtMs": 0,                                // the last unpause (0: never)
+  "changesUnlockFloorMs": 0,                        // no execute_change before this (each unpause re-arms the scope timelock)
+  "sessionsValidFromMs": 0,                         // sessions opened before this can't derive (owner's session floor)
+  "delays": {
+    "issuerKeyDelayMs": 120000, "governanceDelayMs": 60000, "changeDelayMs": 60000,
+    "pendingIssuerKeyDelay": null,                  // a decrease: {"valueMs", "effectiveAtMs"}
+    "pendingGovernanceDelay": null, "pendingChangeDelay": null
+  },
+  "issuers": [{ "provider": "google", "activeKids": ["a1b2"], "jwksKids": ["a1b2", "c3d4"] }],  // jwksKids null: JWKS unavailable
+  "keyChanges": [{
+    "id": 7, "provider": "google", "kid": "c3d4", "op": "Add",  // or "Remove"
+    "by": "hana-signer-dev1.testnet", "proposedAtMs": 0, "executableAtMs": 0,
+    "due": false,                                   // executableAtMs has passed: anyone may execute (unless paused)
+    "jwks": "match"                                 // Add: match | mismatch | absent; Remove: absent | present; unknown without a JWKS
+  }],
+  "watchdogs": [{ "accountId": "hana-id-watchdog-dev1.testnet", "confirmFromMs": 0, "canConfirm": true }],
+  "keysSlowUntilMs": 0,
+  "updaterKeys": ["ed25519:…"],
+  "updaterMethods": ["set_issuer_key", "propose_issuer_key_removal", "execute_issuer_key_change"],
+  "signerAccessKeys": [{                            // null when the RPC didn't answer
+    "publicKey": "ed25519:…", "kind": "function_call",   // or "full_access"
+    "receiverId": "hana-signer-dev1.testnet", "methodNames": ["…"], "allowanceYocto": "1000000000000000000000000",
+    "updaterKey": true,                             // listed in get_governance().updater_keys
+    "updaterPermission": true                       // exactly the updater methods, receiver the signer, allowance ≤ 1 NEAR
+  }],
+  "pendingUpgrade": { "codeHash": "8Tf3…", "proposedAtMs": 0, "executableAtMs": 0, "due": false },  // or null
+  "pendingOwner": { "owner": "…", "acceptableAtMs": 0, "due": false },                              // or null
+  "pendingWithdrawal": { "receiver": "…", "amountYocto": "…", "executableAtMs": 0, "due": false },   // or null
+  "pendingConsoleAudiences": [{ "provider": "google", "aud": "…", "effectiveAtMs": 0 }],
+  "pendingSharedClients": [],
+  "updater": {                                      // the JWKS cron (null when D1 failed)
+    "lastRuns": [{ "provider": "google", "atMs": 0, "outcome": "ok", "code": null, "summary": { "proposed": [], "…": [] } }],
+    "proposals": [{ "provider": "google", "kid": "c3d4", "op": "Add", "changeId": 7, "proposedAtMs": 0, "cancelledSeenAtMs": null }]
+  },
+  "requestId": "…"
+}
+```
+
+What the portal derives from it (the API raises no alert): a `keyChanges` entry with `jwks` `mismatch` or `absent`
+(Add) or `present` (Remove); `due` changes not executed; `paused`; any `pendingUpgrade`, `pendingOwner`,
+`pendingWithdrawal`, delay decrease or console-audience addition; a `full_access` key, or a function-call key without
+`updaterKey` and `updaterPermission`, on the signer outside sandbox-dev; `updater.lastRuns[].outcome` other than
+`ok`, and `updater.proposals[].cancelledSeenAtMs` (a proposal of ours was cancelled). `summary` is the run's
+`SyncResult` (`issuer-keys.ts`).
+
+| Status | Code | When |
+|---|---|---|
+| 502 | `near_unavailable` | a contract view failed (also a contract still on v1, which has no `get_governance`) |
+| 502 | `bad_contract_result` | a view answered in a shape this code doesn't know (nothing partial is reported) |
+
 ### `GET /v1/app`
 
 Headers: `x-hana-key`; from a Hana page also `x-hana-parent-origin`. Gate kind `config`. No transaction.
@@ -174,10 +249,26 @@ The scope is always the app's (D1). Checks after the gate and shape (`400 bad_re
    else `400 token_has_pii` with `data: {claim}`.
 3. `nonce` equals the session nonce recomputed with `SIGNER_ACCOUNT` and the app's scope (`400 nonce_mismatch`).
 4. Side by side: client → scope (`403 scope_mismatch` / `unregistered_client` / `unknown_scope` /
-   `shared_login_disabled`) and `session_key_in_use` (`409 session_exists`); read failure `502 near_unavailable`.
+   `shared_login_disabled`), `session_key_in_use` (`409 session_exists`), and the governance gate (G, below); read
+   failure `502 near_unavailable`. Reported in that order.
 
 → `200 {"result": {"path", "scope_id", "expires_at_ms", "max_uses", "used"}, "nearTx", "requestId"}`. Usage:
 `sessions`.
+
+**Governance gate (G, `handlers.ts` `chainGate`; also on `/v1/login`, and the pause part on `/v1/derive`).** The
+contract would refuse these, so nothing is relayed:
+
+| Status | Code | Body extra | `retry-after` | When |
+|---|---|---|---|---|
+| 503 | `paused` | `retryAfterS: 60` | 60 | `get_config().paused` (only the owner multisig unpauses) |
+| 503 | `issuer_key_pending` | `retryAfterS: 30` | 30 | the token's `kid` is in Google's JWKS (it verified) but not an active key on chain: still in its issuer-key delay, waiting for a watchdog's confirmation or for the cron to execute it (`docs/governance-spec.md` "Rotation and logins" step 3). Also when the contract has no such issuer |
+
+Reads: `get_config` (cached 60 s, 10 s while paused, shared with the scope check) and `get_issuer(provider)`
+(cached 60 s; a kid not in the cached set re-reads it at most once per 10 s per isolate, concurrent misses share one
+read). Fail open: when either read fails the request goes on and the contract decides (these checks only save the
+relayer a doomed transaction). The vault retries an `issuer_key_pending` login once after `retryAfterS` (at most
+30 s, with `loginProgress: key_pending` meanwhile), else ends it with `api_unavailable` ("try signing in again"). `revoke_session` works while
+paused and is never gated.
 
 ### `POST /v1/derive` — relays `derive_key` (session pool)
 
@@ -200,7 +291,8 @@ Body `{sessionPublicKey: number[32], counter: integer ≥ 1, signature: number[6
 | 502 | `near_unavailable` | session read failed |
 
    A counter ahead of `used + 1` is relayed (earlier ones may be in flight).
-4. Only with `BLS_PRECHECK = "1"`: pairing check `e(pk1, −g2) · e(g1, pk2) = 1` (`400 invalid_app_key`).
+4. `503 paused` (G) while the contract is paused (`derive_key` panics `Paused`); see the governance gate above.
+5. Only with `BLS_PRECHECK = "1"`: pairing check `e(pk1, −g2) · e(g1, pk2) = 1` (`400 invalid_app_key`).
 
 → `200 {"result": {"big_y": "string", "big_c": "string"}, "nearTx", "requestId"}`. Usage: `derives`.
 
@@ -220,7 +312,9 @@ payload), `pk1`, `pk2`. Any other field: `400 bad_request`.
 Checks, in order: gate (relay kind) → shape → token (as `/v1/sessions`) → claim allow-list, **always on**
 (`400 token_has_pii` + `data: {claim}`) → nonce → in-isolate hold on (key, counter 1) → scope and
 `session_key_in_use` side by side → signature over counter 1 (`401 invalid_signature`) → pk1/pk2 each one compressed,
-non-identity point of 48 / 96 bytes (`400 invalid_app_key`) → pairing only with `BLS_PRECHECK = "1"`. From
+non-identity point of 48 / 96 bytes (`400 invalid_app_key`) → pairing only with `BLS_PRECHECK = "1"`. The governance
+gate (G: `503 paused`, `503 issuer_key_pending`, with `retry-after`; see `/v1/sessions`) runs beside the scope and
+`session_key_in_use` reads and answers after them. From
 `AUTH_ORIGIN` (a key export) the export limit comes right after the nonce check: `429 rate_limited` with
 `retry-after` once 3 exports of that user path in that app were counted this hour, `503 rate_limiter_unavailable` if
 the limiter can't be reached; nothing is relayed in either case.
@@ -440,8 +534,14 @@ allowlists").
 
 Gas attached (Tgas; `GAS_<METHOD>_TGAS` var overrides with an integer 1..300, invalid values logged and ignored):
 `create_session` 50, `create_session_and_derive` 100, `derive_key` 60, `revoke_session` 20, `prune_sessions` 50, owner
-methods 50, `register_scope` 30 + 25 per proof (max 300). The cron's `set_issuer_key` / `remove_issuer_key` use 30 Tgas
-with `KEYS_UPDATER_KEY` (on `SIGNER_ACCOUNT`, not a pool).
+methods 50, `register_scope` 30 + 25 per proof (max 300). The cron's calls use 30 Tgas with `KEYS_UPDATER_KEY` (on
+`SIGNER_ACCOUNT`, not a pool).
+
+**Updater key (G).** `KEYS_UPDATER_KEY` signs only `UPDATER_METHODS` = `set_issuer_key`,
+`propose_issuer_key_removal`, `execute_issuer_key_change` (`relayer-config.ts`, the contract's list; the key itself is
+a function-call key the contract installed with exactly these, `add_updater_key`). Never `remove_issuer_key`
+(owner-only since G). `GOVERNANCE_METHODS` lists every owner, watchdog and governance method; the tests prove that
+neither pool nor `/v1/owner-actions` relays any of them or any updater method.
 
 Transactions are answered at `EXECUTED_OPTIMISTIC` (not finality); `tx` is polled every 400 ms for up to 60 s.
 
@@ -480,7 +580,9 @@ this key's public key, start at R with no chain read (skips up to 99 nonces) and
 | `session_key_in_use` | "in use" from a cached unexpired session; "not in use" always fresh |
 | `scope_for_client` | 60 s, a miss 10 s; dropped for the scope after an owner action relayed here |
 | `get_scope` | 10 s; dropped after an owner action |
-| `get_config` | 60 s |
+| `get_config` | 60 s; 10 s while it says `paused` (G); concurrent misses share one read |
+| `get_issuer` (G) | 60 s per provider; a kid not in the set re-reads it at most every 10 s; concurrent misses share one read |
+| `GET /v1/governance` snapshot (G) | 10 s, `governance-status.ts` |
 | Google JWKS | `max-age` clamped to 5 min..6 h; unknown kid refetches at most once a minute; 10 s back-off after a failure; a stale set serves its kids up to 6 h past expiry. Each successful fetch is recorded in `issuer_key_observations` after the response |
 
 ## D1 schema (`apps/api/migrations`)
@@ -495,21 +597,42 @@ this key's public key, start at R with no chain read (skips up to 99 nonces) and
 | `usage` (added) | `unlocks` | 0003 |
 | `issuer_key_missing` | (`provider`, `kid`) PK, `first_missing_at` ms | 0002 |
 | `issuer_key_observations` | (`provider`, `kid`) PK, `first_seen_jwks_ms`, `last_seen_jwks_ms`, `removed_jwks_ms` (first fetch without the kid after `last_seen`; cleared if it reappears), `first_token_ms` (first verified token by the kid), `max_age_s_last` (the JWKS Cache-Control max-age when last listed); all nullable, ms / s. Public data only (no token, `sub` or user data). D33's key lead time (`admin issuer-keys:lead-times`) | 0004 |
+| `issuer_key_proposals` (G) | (`provider`, `kid`, `op` `Add`/`Remove`) PK, `change_id`, `proposed_at` ms, `cancelled_seen_at` ms: changes the JWKS cron proposed and hasn't seen resolved | 0005 |
+| `issuer_key_sync_runs` (G) | `provider` PK, `at_ms`, `outcome` `ok`/`error`/`skipped`, `code`, `summary` (JSON `SyncResult`): the cron's last run, for `GET /v1/governance` | 0005 |
 | `vault_shares` | `share_id` BLOB(16) PK, `app_id`, `session_pk` BLOB(32) UNIQUE, `path_hash` = sha256(path), `partner_origin`, `share_enc` = iv ‖ AES-GCM(KEK, K_s, aad = share_id ‖ app_id ‖ session_pk), `kek_id`, `counter`, `created_at`, `idle_until`, `abs_expires_at`, `revoked_at`; indexes (`app_id`, `path_hash`), `abs_expires_at`, `kek_id` | 0003 |
 
 ## Cron (`*/15 * * * *`)
 
-One trigger every 15 min (the free plan allows 5 cron triggers per account; this keeps the API at one). The run in the
-first quarter of each UTC hour (`index.ts` `isHourlyRun`) is the hourly one; the other three only fetch Google's JWKS
-and record its kids in `issuer_key_observations` (`issuer-keys.ts` `observeIssuerJwks`; no chain call, no key).
+One trigger every 15 min (the free plan allows 5 cron triggers per account; this keeps the API at one). Two
+independent jobs (one failing doesn't skip the other):
 
-The hourly run has two independent jobs (one failing doesn't skip the other):
-
-- **Google JWKS → contract** (`issuer-keys.ts`): `set_issuer_key` for new kids, `remove_issuer_key` for kids missing
-  from the JWKS for ≥ 55 min (tracked in `issuer_key_missing`), signed with `KEYS_UPDATER_KEY`. Without it:
-  `jwks_sync_skipped`. Its fetch is also recorded in `issuer_key_observations`, with or without the key.
-- **Vault maintenance** (`vault/cron.ts`, B): deletes shares past `abs_expires_at` or revoked; re-wraps up to 2000
-  rows from `VAULT_KEK_PREVIOUS` to `VAULT_KEK`; counts rows under a KEK id neither key has (logged as an error).
+- **Google JWKS → contract, every run** (`issuer-keys.ts`, G; the governance spec's P = 15 min). Issuer keys change
+  on chain only through a public, cancellable delay (`docs/contract-interface.md` "Issuers"). Each run fetches the
+  JWKS (recorded in `issuer_key_observations`, with or without the key), reads `get_issuer`, `get_key_changes` and
+  `get_config`, then, signed with `KEYS_UPDATER_KEY`:
+  1. **executes** (`execute_issuer_key_change`) each matured change of the provider (`executable_at_ms ≤ now`) that
+     agrees with this fetch: an Add whose `n`, `e` equal Google's key for that kid (after stripping leading zeros),
+     a Remove of a kid Google no longer lists, never one that would leave no active key; none while paused (or when
+     `get_config` can't be read). Changes it disagrees with are left to the watchdog and the owner (the cron can't
+     cancel). A change someone else applied or cancelled meanwhile is a race (`execute_raced`), not a failure;
+  2. **proposes** an Add (`set_issuer_key`) for each JWKS kid that is neither active nor pending, within the
+     contract's caps (≤ 6 pending changes over all issuers, active + pending adds ≤ 10);
+  3. **proposes** a Remove (`propose_issuer_key_removal`) for each active kid missing from the JWKS for ≥ 55 min
+     (`issuer_key_missing`), unless it already has a pending change, would leave the issuer without an active key
+     (active − pending removals ≥ 1 always), or an Add proposal of this run failed.
+  It never calls `remove_issuer_key`. Proposals and executions are judged against the state read at the start of the
+  run (a kid with any pending change gets no new proposal; the caps count every pending change), so what an
+  execution frees is used by the next run. Each proposal is remembered in `issuer_key_proposals` with its change id
+(a pending change by the signer account it has no row for, e.g. a send whose outcome it never saw, is adopted);
+  one that later is neither pending nor applied was **cancelled** (owner or watchdog): logged once at error level
+  (`issuer_key_change_cancelled`), and that kid and op is not proposed again for 1 h (`REPROPOSE_AFTER_CANCEL_MS`,
+  note `held_after_cancel`). The run's result is written to `issuer_key_sync_runs` for `GET /v1/governance`.
+  Skips (nothing sent): `jwks_fetch_failed`, `jwks_empty`, `no_keys_updater_key` (warn), `get_issuer_failed`,
+  `issuer_not_configured`, `key_changes_unavailable` (the view failed or is malformed; also a contract still on v1),
+  `bad_keys_updater_key`.
+- **Vault maintenance, the run in the first quarter of each UTC hour** (`index.ts` `isHourlyRun`; `vault/cron.ts`,
+  B): deletes shares past `abs_expires_at` or revoked; re-wraps up to 2000 rows from `VAULT_KEK_PREVIOUS` to
+  `VAULT_KEK`; counts rows under a KEK id neither key has (logged as an error).
 
 ## Configuration (Worker bindings)
 
@@ -532,7 +655,7 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 | `GAS_<METHOD>_TGAS` | var, optional | not generated | per-method gas |
 | `RELAYER_KEYS` | secret | `.secrets/<env>/relayer-keys.json` | JSON array of `ed25519:` secret keys |
 | `OWNER_RELAYER_KEYS` | secret | `.secrets/<env>/owner-relayer-keys.json` | same format; absent → owner actions 503 |
-| `KEYS_UPDATER_KEY` | secret | `.secrets/<env>/keys-updater.json` `private_key` | absent → cron skips JWKS sync |
+| `KEYS_UPDATER_KEY` | secret | `.secrets/<env>/keys-updater.json` `private_key` | function-call key on the signer with exactly the updater methods (installed by `add_updater_key`, G); absent → cron skips JWKS sync |
 | `VAULT_KEK` | secret | `.secrets/<env>/vault-kek`, from `scripts/vault-kek.ts init` | `<id>:<base64 of 32 bytes>`; absent → vault 503 |
 | `VAULT_KEK_PREVIOUS` | secret, rotation only | `.secrets/<env>/vault-kek.previous`, from `vault-kek rotate` | |
 | `DB` | D1 | `cloudflare.d1Name`, id from `--d1-id` | `migrations_dir: migrations` |
@@ -602,9 +725,13 @@ signatures, bodies, keys, CKD responses, relay bodies or panic text.
 the block hash was re-read; `served` relays this instance handled before; `ageMs` since it started.
 
 Other events: `relay_dispatched` (`pool`, `keyIndex`, `method`, `nearTx`, `nonce`, `attempt`), `relay_retry`
-(`code` `invalid_nonce` / `expired` / `dropped`), `relay_dispatch_failed`, `jwks_sync` (`added`, `removed`, `kids`),
-`jwks_sync_failed` / `jwks_sync_skipped` (`code`), `jwks_tx`, `jwks_stale`, `jwks_observe` (`code`
-`jwks_fetch_failed` / `jwks_empty`), `key_observation_failed` (`code` `jwks` / `token`), `vault_page` (`latencyMs`: its D1 reads), `vault_maintenance`
+(`code` `invalid_nonce` / `expired` / `dropped`), `relay_dispatch_failed`, `jwks_sync` (`added` = Adds proposed,
+`removed` = Removes proposed, `executed`, `kids`), `jwks_sync_failed` / `jwks_sync_skipped` (`code`),
+`jwks_sync_note` (`code`, `kids`, `changeId`; warn or error, G: `paused`, `unpublished_change` (error),
+`removal_of_published_kid`, `pending_mismatch` (error), `held_after_cancel`, `queue_full`, `issuer_full`,
+`last_key_kept`, `execute_raced`), `issuer_key_change_cancelled` (error, G: `method`, `kids`, `changeId`), `jwks_tx`
+(`method`, `nearTx`, `code` `raced` / `send_failed` / `method_not_allowed`), `chain_gate_unavailable` (warn, G:
+`code` `get_config_failed` / `get_issuer_failed`), `jwks_stale`, `key_observation_failed` (`code` `jwks` / `token`), `vault_page` (`latencyMs`: its D1 reads), `vault_maintenance`
 (`pruned`, `rewrapped`, `unknownKek`), `vault_rewrap_unreadable` (`unreadable`), `vault_kek_unavailable`, `vault_share_unreadable`,
 `usage_increment_failed`, `owner_token_release_failed`, `gas_override_ignored`, `auto_approve_policy_invalid`
 (`problems`), and from the page Workers `vault_host` and `auth_page` (`code`).

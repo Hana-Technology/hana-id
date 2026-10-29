@@ -80,6 +80,15 @@ export interface AccessKeyView {
   block_height?: number;
 }
 
+/** One entry of `view_access_key_list`. `allowance` is yoctoNEAR (a string), null for an unlimited function-call key. */
+export interface AccessKeyListEntry {
+  public_key: string;
+  access_key: {
+    nonce: number | string;
+    permission: 'FullAccess' | { FunctionCall: { allowance: string | null; receiver_id: string; method_names: string[] } };
+  };
+}
+
 export interface FinalOutcome {
   status: { SuccessValue?: string; Failure?: unknown } | string;
   /** Every receipt's outcome; `executor_id` is the account that ran it (the contract, or a contract it called). */
@@ -132,6 +141,11 @@ export class Rpc {
 
   viewAccessKey(accountId: string, publicKey: string): Promise<AccessKeyView> {
     return this.call<AccessKeyView>('query', { request_type: 'view_access_key', finality: 'optimistic', account_id: accountId, public_key: publicKey });
+  }
+
+  /** Every access key on `accountId` (`view_access_key_list`), as the RPC returns them. */
+  viewAccessKeyList(accountId: string): Promise<{ keys: AccessKeyListEntry[] }> {
+    return this.call<{ keys: AccessKeyListEntry[] }>('query', { request_type: 'view_access_key_list', finality: 'optimistic', account_id: accountId });
   }
 
   async latestBlockHash(): Promise<string> {

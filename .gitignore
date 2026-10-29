@@ -19,3 +19,7 @@ apps/api/wrangler.auth.jsonc
 apps/api/wrangler.vitest.jsonc
 # Generated per env by apps/demo/scripts/gen-wrangler.ts.
 apps/demo/wrangler.jsonc
+# Generated per env by apps/watchdog/scripts/gen-wrangler.ts (holds the watchdog's Cloudflare account id and D1 id),
+# and the watchdog tests' config.
+apps/watchdog/wrangler.jsonc
+apps/watchdog/wrangler.vitest.jsonc

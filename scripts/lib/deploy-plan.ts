@@ -1,13 +1,23 @@
 // Deploy plan: a pure function from (manifest, what is on chain, options) to the steps deploy-contract.ts will run.
 // Re-running after a partial deploy plans only what is still missing.
-import type { Manifest } from '@hana-id/env';
+//
+// Governance (docs/governance-spec.md): the contract is upgraded in place (same signer account, so no address
+// changes). A v1 contract is migrated once with DeployContract + migrate_v1 (signer full-access key, sandbox-dev only);
+// a v2 contract only through propose_upgrade (owner) → wait governance_delay_ms → execute_upgrade (anyone). Owner
+// steps go through owner-tx (the owner account, or a council DAO proposal). The signer's keys are checked against
+// get_governance().updater_keys: outside allowSignerFullAccessKey envs a full-access key on the signer, and anywhere
+// a function-call key the contract didn't install, stops the plan. Before any owner transfer to the council, and on
+// every run once it owns the contract, the DAO's code must be the pinned Sputnik wasm and its get_policy the council
+// policy (D81: exactly the manifest members, 2 of 3 for every proposal kind). Outside dev envs the two governance
+// delays must meet their floors (@hana-id/env governanceDelayProblems).
+import { governanceDelayProblems, isDevEnv, type Manifest } from '@hana-id/env';
 import {
   type ContractConfig,
   GLOBAL_SCOPE,
   GOOGLE_ISS_VALUES,
   GOOGLE_PROVIDER,
+  type GovernanceView,
   type IssuerView,
-  KEYS_UPDATER_METHODS,
   OWNER_RELAYER_METHODS,
   type Owner,
   SESSION_RELAYER_METHODS,
@@ -15,9 +25,14 @@ import {
   samePairs,
   sameSet,
   sharedClientsOf,
+  UPDATER_ALLOWANCE_YOCTO,
+  UPDATER_METHODS,
+  V1_UPDATER_METHODS,
 } from './contract.ts';
 import { KEY_POOLS, type KeyPool, poolFileName } from './keys.ts';
 import { type AccessKeyListEntry, describePermission, EMPTY_CODE_HASH, formatNear, STORAGE_YOCTO_PER_BYTE } from './near.ts';
+import { checkOwnerTxOptions, describeOwnerCall, type OwnerCall, ownerRoute, type OwnerTxOptions, proposingMember } from './owner-tx.ts';
+import { policyProblems, type SputnikPolicy } from './sputnik.ts';
 
 export type Role = 'signer' | 'relayer' | 'owner';
 export const ROLES: readonly Role[] = ['signer', 'relayer', 'owner'];
@@ -38,13 +53,17 @@ export interface ObservedCredential {
 
 export interface DeployObserved {
   chainId: string;
+  /** Block time of the observation (ms), for timelocks. */
+  nowMs: number;
   accounts: Record<Role, ObservedAccount>;
   credentials: Record<Role, ObservedCredential>;
   /** get_config result, or null if the signer isn't initialised (or has no code). */
   config: ContractConfig | null;
+  /** get_governance result: null on a v1 (pre-governance) contract or an uninitialised one. */
+  governance: GovernanceView | null;
   /** Every access key on the relayer account (both pools live here, plus its full-access key). */
   relayerAccessKeys: AccessKeyListEntry[];
-  /** Every access key on the signer account (the keys-updater key lives here). */
+  /** Every access key on the signer account (the updater keys live here). */
   signerAccessKeys: AccessKeyListEntry[];
   /** Public keys in .secrets/<env>/relayer-keys.json (session) and owner-relayer-keys.json (owner). */
   poolKeysInFile: Record<KeyPool, string[]>;
@@ -57,6 +76,14 @@ export interface DeployObserved {
   sharedClientScopes: Record<string, string | null>;
   /** Size of an already-built wasm, if known (for the storage estimate). */
   wasmBytes: number | null;
+  /** NEAR code hash (base58 sha256) of that wasm. */
+  wasmCodeHash: string | null;
+  /** Which manifest watchdog accounts exist on chain. */
+  watchdogAccounts: Record<string, boolean>;
+  /** The council DAO account (null without a council); `policy` is its get_policy (null if it fails or no DAO). */
+  councilDao: { exists: boolean; codeHash: string; policy: SputnikPolicy | null } | null;
+  /** Council members whose signing key the scripts can read (dev: .secrets/<env>/council/; else ~/.near-credentials). */
+  councilKeys: Record<string, boolean>;
 }
 
 export interface PoolOptions {
@@ -69,23 +96,55 @@ export interface PoolOptions {
 export interface DeployOptions {
   /** session = RELAYER_KEYS (logins), owner = OWNER_RELAYER_KEYS (/v1/owner-actions). */
   pools: Record<KeyPool, PoolOptions>;
-  updaterAllowanceYocto: bigint;
-  /** Redeploy code to an already-initialised contract (no init call). */
+  /**
+   * Change the code of an initialised contract: v1 → DeployContract + migrate_v1 in one transaction; v2 →
+   * propose_upgrade(hash), and execute_upgrade once due.
+   */
   upgrade: boolean;
-  /** Skip the wasm build and use the existing file. */
+  /** Skip the wasm build and use the existing file (its hash is then known when planning). */
   skipBuild: boolean;
+  /** Owner transfer to the council DAO: propose_owner(DAO), then (once due) the DAO's accept_owner. */
+  transferOwner: boolean;
+  /** Council options for owner steps (--member, --approve-with). */
+  ownerTx: OwnerTxOptions;
+  /** The pinned Sputnik DAO code hash (contracts/sputnik/pin.json). */
+  sputnikCodeHash: string;
+  /** The council policy template (default: contracts/sputnik/policy.json, the policy the sandbox DAO test checks). */
+  sputnikPolicy?: SputnikPolicy;
+}
+
+export interface NewArgs {
+  owner: string;
+  mpc: string;
+  ckd_domain_id: number;
+  change_delay_ms: number;
+  issuer_key_delay_ms: number;
+  governance_delay_ms: number;
+  watchdogs: string[];
+  updater_keys: string[];
 }
 
 export type DeployStep =
   | { kind: 'build' }
-  | { kind: 'deploy'; init: { owner: string; mpc: string; ckd_domain_id: number; change_delay_ms: number } | null }
+  | { kind: 'deploy'; init: NewArgs }
+  | { kind: 'migrate-v1'; issuer_key_delay_ms: number; governance_delay_ms: number }
   | { kind: 'relayer-keys'; pool: KeyPool; reuse: string[]; generate: number; methods: string[]; allowanceYocto: bigint }
-  | { kind: 'updater-key'; reuse: string | null; methods: string[]; allowanceYocto: bigint }
+  /** add_updater_key: the key in keys-updater.json (`reuse`), or a new one generated into it. */
+  | { kind: 'add-updater-key'; reuse: string | null }
+  /** Deletes a signer key the contract didn't install (the v1 updater key): with the signer's full-access key, or the owner's delete_updater_key. */
+  | { kind: 'delete-signer-key'; publicKey: string; why: string; via: 'signer' | 'owner' }
+  | { kind: 'add-watchdog'; accountId: string }
+  | { kind: 'set-delay'; which: 'issuer_key' | 'governance'; ms: number }
   | { kind: 'set-issuer'; provider: string; iss_values: string[] }
   | { kind: 'set-sponsors'; sponsors: string[] }
   | { kind: 'set-console-audiences'; audiences: [string, string][] }
   | { kind: 'set-shared-clients'; clients: [string, string][]; added: [string, string][]; removed: [string, string][] }
-  | { kind: 'register-global'; owners: Owner[]; clients: [string, string][]; allowShared: boolean };
+  | { kind: 'register-global'; owners: Owner[]; clients: [string, string][]; allowShared: boolean }
+  /** propose_upgrade of the wasm's hash (null: the hash of the wasm this run builds). */
+  | { kind: 'propose-upgrade'; codeHash: string | null; replaces: string | null; current: string }
+  | { kind: 'execute-upgrade'; codeHash: string }
+  | { kind: 'propose-owner'; owner: string }
+  | { kind: 'accept-owner'; owner: string };
 
 export interface DeployPlan {
   /** Problems that stop the deploy (nothing runs while any exist). */
@@ -96,18 +155,53 @@ export interface DeployPlan {
   done: string[];
 }
 
-/** Which full-access keys each step signs with. */
+/** Which full-access key (or owner route) each step signs with. execute-upgrade is open to anyone: the relayer pays. */
 export function stepSigner(step: DeployStep): Role | null {
   switch (step.kind) {
     case 'build':
       return null;
     case 'deploy':
-    case 'updater-key':
+    case 'migrate-v1':
       return 'signer';
+    case 'delete-signer-key':
+      return step.via === 'signer' ? 'signer' : 'owner';
     case 'relayer-keys':
+    case 'execute-upgrade':
       return 'relayer';
     default:
       return 'owner';
+  }
+}
+
+/** The owner call a step makes (null for non-owner steps). A generated updater key shows as `<new key>`. */
+export function ownerCallOf(s: DeployStep, newKey = '<new key in keys-updater.json>'): OwnerCall | null {
+  switch (s.kind) {
+    case 'add-updater-key':
+      return { method: 'add_updater_key', args: { public_key: s.reuse ?? newKey } };
+    case 'delete-signer-key':
+      return s.via === 'owner' ? { method: 'delete_updater_key', args: { public_key: s.publicKey } } : null;
+    case 'add-watchdog':
+      return { method: 'add_watchdog', args: { account_id: s.accountId } };
+    case 'set-delay':
+      return s.which === 'issuer_key' ? { method: 'set_issuer_key_delay_ms', args: { issuer_key_delay_ms: s.ms } } : { method: 'set_governance_delay_ms', args: { governance_delay_ms: s.ms } };
+    case 'set-issuer':
+      return { method: 'set_issuer', args: { provider: s.provider, iss_values: s.iss_values } };
+    case 'set-sponsors':
+      return { method: 'set_sponsors', args: { sponsors: s.sponsors } };
+    case 'set-console-audiences':
+      return { method: 'set_console_audiences', args: { audiences: s.audiences } };
+    case 'set-shared-clients':
+      return { method: 'set_shared_clients', args: { clients: s.clients } };
+    case 'register-global':
+      return { method: 'admin_register_scope', args: registerGlobalArgs(s) };
+    case 'propose-upgrade':
+      return { method: 'propose_upgrade', args: { code_hash: s.codeHash ?? '<hash of the built wasm>' } };
+    case 'propose-owner':
+      return { method: 'propose_owner', args: { owner: s.owner } };
+    case 'accept-owner':
+      return { method: 'accept_owner', args: {} };
+    default:
+      return null;
   }
 }
 
@@ -160,6 +254,26 @@ const pairText = (pairs: readonly (readonly [string, string])[]) => pairs.map(([
 
 const deleteKeyCmd = (account: string, key: string) => `near account delete-keys ${account} public-keys ${key} network-config testnet sign-with-legacy-keychain send`;
 
+const iso = (ms: number) => new Date(ms).toISOString();
+
+/** The v1 updater key deploy-contract added by hand: receiver the signer, exactly set_issuer_key + remove_issuer_key. */
+function isV1UpdaterKey(k: AccessKeyListEntry, signer: string): boolean {
+  const p = k.access_key.permission;
+  return typeof p === 'object' && p.FunctionCall.receiver_id === signer && sameSet(p.FunctionCall.method_names, V1_UPDATER_METHODS);
+}
+
+/**
+ * A timelock counts as passed only this long after its time by the local clock: the contract checks block time, which
+ * can trail the wall clock by a few seconds, and an early execute_upgrade or accept_owner fails (for accept_owner, a
+ * Failed DAO proposal).
+ */
+export const CLOCK_MARGIN_MS = 10_000;
+
+/** The signer may keep a full-access key: the manifest says so and it is a dev env on testnet (D86). */
+export function signerFullAccessAllowed(m: Pick<Manifest, 'name' | 'network' | 'allowSignerFullAccessKey'>): boolean {
+  return !!m.allowSignerFullAccessKey && m.network === 'testnet' && isDevEnv(m.name);
+}
+
 export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOptions): DeployPlan {
   const blockers: string[] = [];
   const warnings: string[] = [];
@@ -169,9 +283,14 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
   if (m.network !== 'testnet') blockers.push(`Manifest network is ${m.network}; only testnet is allowed.`);
   if (o.chainId !== 'testnet') blockers.push(`RPC ${m.rpc} reports chain "${o.chainId}", not testnet.`);
   if (new Set([m.signer, m.relayer, m.owner]).size !== 3) blockers.push('signer, relayer and owner must be three different accounts.');
+  const allowFull = signerFullAccessAllowed(m);
+  if (m.allowSignerFullAccessKey && !allowFull) {
+    blockers.push(`envs/${m.name}.json sets allowSignerFullAccessKey, which only a dev env (local*, sandbox*) on testnet may: staging and mainnet signers never have a full-access key (D86).`);
+  }
 
   for (const role of ROLES) {
     const account = m[role];
+    if (role === 'owner' && m.ownerKind === 'sputnik') continue; // the DAO: checked with the council below
     if (!o.accounts[role].exists) {
       blockers.push(
         `Account ${account} (${role}) does not exist. Create and fund it first, e.g.\n` +
@@ -179,34 +298,131 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
       );
     }
   }
+  if (m.ownerKind === 'sputnik' || opts.transferOwner) {
+    if (!m.council || !o.councilDao?.exists) blockers.push(`The council DAO ${m.council?.dao ?? '(none in the manifest)'} does not exist: run council-setup ${m.name} first.`);
+    else if (o.councilDao.codeHash !== opts.sputnikCodeHash) blockers.push(`${m.council.dao} runs code ${o.councilDao.codeHash}, not the pinned Sputnik DAO ${opts.sputnikCodeHash} (contracts/sputnik/pin.json).`);
+    else if (!o.councilDao.policy) blockers.push(`${m.council.dao} runs the Sputnik DAO code but get_policy fails (not initialised?): its council can't be checked against D81.`);
+    else {
+      // The code hash says nothing about who votes: a factory DAO may be 1 of 3, have an Everyone role or other
+      // members. The owner must be exactly the council of the manifest, 2 of 3 for every proposal kind (D81).
+      const p = policyProblems(o.councilDao.policy, m.council.members, opts.sputnikPolicy);
+      for (const b of p.blockers) blockers.push(`${m.council.dao}: ${b} (D81: exactly ${m.council.members.join(', ')}, 2 of 3 for every proposal kind; contracts/sputnik/policy.json).`);
+      for (const w of p.warnings) warnings.push(`${m.council.dao}: ${w}.`);
+    }
+  }
 
-  // --- contract code + init ---
+  // --- contract code + init / migration / upgrade ---
   const signerAcct = o.accounts.signer;
   const hasCode = signerAcct.exists && signerAcct.codeHash !== EMPTY_CODE_HASH;
   const initialised = o.config !== null;
-  if (!opts.skipBuild && (!initialised || opts.upgrade)) steps.push({ kind: 'build' });
+  const v1 = initialised && o.governance === null;
+  const delays = m.issuerKeyDelayMs !== undefined && m.governanceDelayMs !== undefined ? { issuer_key_delay_ms: m.issuerKeyDelayMs, governance_delay_ms: m.governanceDelayMs } : null;
+  // The delays the env runs with once the plan ran: the manifest's (set by new / migrate_v1 / set-delay), else the
+  // contract's own (the plan sets none then).
+  const onChainDelay = (field: 'issuer_key_delay_ms' | 'governance_delay_ms'): number | undefined => {
+    const v = o.config?.[field];
+    return typeof v === 'number' ? v : undefined;
+  };
+  const delayCheck = governanceDelayProblems(m, {
+    issuerKeyDelayMs: m.issuerKeyDelayMs ?? onChainDelay('issuer_key_delay_ms'),
+    governanceDelayMs: m.governanceDelayMs ?? onChainDelay('governance_delay_ms'),
+  });
+  blockers.push(...delayCheck.blockers);
+  warnings.push(...delayCheck.warnings);
+  const signerFullKeys = o.signerAccessKeys.filter((k) => k.access_key.permission === 'FullAccess');
+  /** Governance as it will be once the code steps of this plan ran (null: unknown, v1 not migrated). */
+  let gov: GovernanceView | null = o.governance;
+  const emptyGov = (watchdogs: string[]): GovernanceView => ({
+    state_version: 2,
+    watchdogs: watchdogs.map((account_id) => ({ account_id, confirm_from_ms: 0 })),
+    keys_slow_until_ms: 0,
+    updater_keys: [],
+    pending_upgrade: null,
+    pending_owner: null,
+    pending_withdrawal: null,
+  });
+
   if (!initialised) {
     if (hasCode) {
       blockers.push(`${m.signer} already has contract code but get_config fails (another contract or old hana-signer state). Use a fresh signer account.`);
     }
-    steps.push({ kind: 'deploy', init: { owner: m.owner, mpc: m.mpc, ckd_domain_id: m.ckdDomainId, change_delay_ms: m.changeDelayMs } });
+    if (!allowFull) {
+      blockers.push(
+        `${m.name} may not keep a full-access key on ${m.signer} (allowSignerFullAccessKey is off, D86), and a plain deploy needs one. ` +
+          `Create the signer with the one-batch creation transaction instead: deploy-contract ${m.name} --creation-plan prints it (DeployContract + new + DeleteKey).`,
+      );
+    }
+    if (!delays) blockers.push(`envs/${m.name}.json needs issuerKeyDelayMs and governanceDelayMs for new() (D80).`);
+    if (!opts.skipBuild) steps.push({ kind: 'build' });
+    steps.push({
+      kind: 'deploy',
+      init: {
+        owner: m.owner,
+        mpc: m.mpc,
+        ckd_domain_id: m.ckdDomainId,
+        change_delay_ms: m.changeDelayMs,
+        issuer_key_delay_ms: delays?.issuer_key_delay_ms ?? 0,
+        governance_delay_ms: delays?.governance_delay_ms ?? 0,
+        watchdogs: [...(m.watchdogs ?? [])],
+        updater_keys: [],
+      },
+    });
+    gov = emptyGov((m.watchdogs ?? []));
   } else {
     const c = o.config as ContractConfig;
-    if (opts.upgrade) steps.push({ kind: 'deploy', init: null });
-    else done.push(`${m.signer} is deployed and initialised (pass --upgrade to redeploy the code).`);
-    if (c.owner !== undefined && c.owner !== m.owner) blockers.push(`Contract owner is ${c.owner}, manifest says ${m.owner}.`);
+    if (c.owner !== undefined && c.owner !== m.owner) {
+      if (m.council && c.owner === m.council.dao && m.ownerKind !== 'sputnik') {
+        blockers.push(`The council DAO ${m.council.dao} owns ${m.signer} now: set "owner": "${m.council.dao}" and "ownerKind": "sputnik" in envs/${m.name}.json.`);
+      } else blockers.push(`Contract owner is ${c.owner}, manifest says ${m.owner}.`);
+    }
     if (c.mpc !== undefined && c.mpc !== m.mpc) warnings.push(`Contract mpc is ${c.mpc}, manifest says ${m.mpc}.`);
     if (c.ckd_domain_id !== undefined && c.ckd_domain_id !== m.ckdDomainId) warnings.push(`Contract ckd_domain_id is ${c.ckd_domain_id}, manifest says ${m.ckdDomainId}.`);
     try {
       if (sharedClientsOf(c) === null) {
-        const msg = `${m.signer} runs a hana-signer without shared clients (get_config has no shared_clients; it predates batch A.2).`;
-        if (opts.upgrade) warnings.push(`${msg} The new code must be able to read the old state, or the upgrade breaks the contract.`);
-        else blockers.push(`${msg} Its state layout differs: deploy to a fresh signer account (this changes every address in ${m.name}), or pass --upgrade only if the new code migrates the state.`);
+        blockers.push(
+          `${m.signer} runs a hana-signer without shared clients (get_config has no shared_clients; it predates batch A.2). ` +
+            `migrate_v1 reads only the batch B layout: deploy to a fresh signer account (this changes every address in ${m.name}).`,
+        );
       }
     } catch (err) {
       blockers.push((err as Error).message);
     }
     if (c.change_delay_ms !== undefined && c.change_delay_ms !== m.changeDelayMs) warnings.push(`Contract change_delay_ms is ${c.change_delay_ms}, manifest says ${m.changeDelayMs} (not changed by this script; use set_change_delay_ms).`);
+
+    if (v1) {
+      if (!opts.upgrade) {
+        blockers.push(`${m.signer} runs the v1 (pre-governance) contract. Migrate it in place with --upgrade (DeployContract + migrate_v1 in one transaction; same account, same addresses).`);
+      } else {
+        if (!delays) blockers.push(`envs/${m.name}.json needs issuerKeyDelayMs and governanceDelayMs for migrate_v1 (D80).`);
+        if (!signerFullKeys.length) blockers.push(`migrate_v1 is sent with ${m.signer}'s full-access key, and it has none.`);
+        if (!opts.skipBuild) steps.push({ kind: 'build' });
+        steps.push({ kind: 'migrate-v1', issuer_key_delay_ms: delays?.issuer_key_delay_ms ?? 0, governance_delay_ms: delays?.governance_delay_ms ?? 0 });
+        gov = emptyGov([]);
+      }
+    } else if (gov) {
+      const pending = gov.pending_upgrade;
+      if (opts.upgrade) {
+        const known = opts.skipBuild ? o.wasmCodeHash : null;
+        if (!opts.skipBuild) steps.push({ kind: 'build' });
+        if (pending && known === pending.code_hash) {
+          if (o.nowMs >= pending.executable_at_ms + CLOCK_MARGIN_MS) steps.push({ kind: 'execute-upgrade', codeHash: pending.code_hash });
+          else done.push(`Upgrade to ${pending.code_hash} proposed; executable from ${iso(pending.executable_at_ms)}. Re-run then with --upgrade --skip-build (or --wasm) to execute it.`);
+        } else if (known && known === signerAcct.codeHash) {
+          done.push(`${m.signer} already runs ${known}.`);
+        } else {
+          if (pending) warnings.push(`propose_upgrade replaces the pending upgrade ${pending.code_hash} (executable from ${iso(pending.executable_at_ms)}).`);
+          steps.push({ kind: 'propose-upgrade', codeHash: known, replaces: pending?.code_hash ?? null, current: signerAcct.codeHash });
+        }
+      } else {
+        done.push(`${m.signer} is deployed and initialised (pass --upgrade to change its code through propose_upgrade / execute_upgrade).`);
+        if (pending) {
+          warnings.push(
+            `Upgrade ${pending.code_hash} is pending, executable from ${iso(pending.executable_at_ms)}. ` +
+              `Execute it with --upgrade --skip-build (or --wasm <that build>); the owner cancels it with cancel_upgrade.`,
+          );
+        }
+      }
+    }
   }
   if (o.wasmBytes !== null && (!initialised || opts.upgrade)) {
     const need = BigInt(o.wasmBytes) * STORAGE_YOCTO_PER_BYTE;
@@ -272,28 +488,92 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
     }
   }
 
-  // --- keys-updater function-call key on the signer ---
-  const updaterStatus = o.updaterKeyInFile ? checkFunctionKey(o.signerAccessKeys, o.updaterKeyInFile, m.signer, KEYS_UPDATER_METHODS, opts.updaterAllowanceYocto) : ({ kind: 'absent' } as const);
-  if (updaterStatus.kind === 'ok') {
-    done.push('Keys-updater key in place.');
-  } else if (updaterStatus.kind === 'mismatch') {
+  // --- the signer's own keys: full access only where allowed; function-call keys only the contract's updater keys ---
+  if (signerFullKeys.length && !allowFull && initialised) {
     blockers.push(
-      `The keys-updater key in .secrets/${m.name}/keys-updater.json (${o.updaterKeyInFile}) ${updaterStatus.reason}; it must be limited to ${m.signer} and ${KEYS_UPDATER_METHODS.join(', ')}, with an allowance of at most ${formatNear(opts.updaterAllowanceYocto)}. ` +
-        `Delete it (${deleteKeyCmd(m.signer, o.updaterKeyInFile ?? '<key>')}) and re-run.`,
+      `${m.signer} has ${signerFullKeys.length} full-access key(s) (${signerFullKeys.map((k) => k.public_key).join(', ')}), and ${m.name} may have none (D86): ` +
+        `with it anyone holding it can replace the code at once. Delete it with itself: ${signerFullKeys.map((k) => deleteKeyCmd(m.signer, k.public_key)).join(' ; ')}`,
     );
-  } else {
-    steps.push({ kind: 'updater-key', reuse: o.updaterKeyInFile, methods: [...KEYS_UPDATER_METHODS], allowanceYocto: opts.updaterAllowanceYocto });
   }
-  // Any other key on the signer that can call set_issuer_key can install a forged Google key, i.e. derive anyone's
-  // wallet: stop on it rather than leave it in place.
-  for (const k of strayFunctionKeys(o.signerAccessKeys, m.signer, new Set(o.updaterKeyInFile ? [o.updaterKeyInFile] : []))) {
-    const methods = strayMethods(k);
-    const what = `${k.public_key} (${describePermission(k.access_key.permission)})`;
-    if (methods.length === 0 || methods.some((x) => (KEYS_UPDATER_METHODS as readonly string[]).includes(x))) {
-      blockers.push(`${m.signer} has a function-call key on itself, not in .secrets/${m.name}/keys-updater.json, that can rotate issuer keys: ${what}. Delete it: ${deleteKeyCmd(m.signer, k.public_key)}`);
-    } else {
-      warnings.push(`${m.signer} has a function-call key on itself not in .secrets (left untouched): ${what}. If it is no longer used, delete it: ${deleteKeyCmd(m.signer, k.public_key)}`);
+  if (gov) {
+    const tracked = new Set(gov.updater_keys);
+    const canDeleteAsSigner = allowFull && signerFullKeys.length > 0;
+    for (const k of o.signerAccessKeys) {
+      if (k.access_key.permission === 'FullAccess') continue;
+      const what = `${k.public_key} (${describePermission(k.access_key.permission)})`;
+      if (tracked.has(k.public_key)) {
+        const st = checkFunctionKey(o.signerAccessKeys, k.public_key, m.signer, UPDATER_METHODS, UPDATER_ALLOWANCE_YOCTO);
+        if (st.kind === 'mismatch') blockers.push(`Updater key ${k.public_key} on ${m.signer} ${st.reason}; the contract installs exactly ${UPDATER_METHODS.join(', ')} with at most 1 NEAR.`);
+      } else if (isV1UpdaterKey(k, m.signer)) {
+        // The pre-governance updater key (it may call set_issuer_key): replaced at the migration.
+        steps.push({ kind: 'delete-signer-key', publicKey: k.public_key, why: 'the v1 keys-updater key (set_issuer_key, remove_issuer_key)', via: canDeleteAsSigner ? 'signer' : 'owner' });
+      } else {
+        blockers.push(
+          `${m.signer} has a function-call key the contract didn't install (not in get_governance().updater_keys): ${what}. ` +
+            `Delete it: ${canDeleteAsSigner ? deleteKeyCmd(m.signer, k.public_key) : `owner call delete_updater_key({"public_key":"${k.public_key}"}) (admin ${m.name} owner:call delete_updater_key …)`}`,
+        );
+      }
     }
+    const onChain = new Set(o.signerAccessKeys.map((k) => k.public_key));
+    for (const k of gov.updater_keys) if (!onChain.has(k)) warnings.push(`get_governance().updater_keys lists ${k}, which is not a key of ${m.signer} (deleted outside the contract?).`);
+
+    // The API's KEYS_UPDATER_KEY: the key in keys-updater.json, installed by the contract.
+    const file = o.updaterKeyInFile;
+    const fileEntry = file ? o.signerAccessKeys.find((k) => k.public_key === file) : undefined;
+    if (file && tracked.has(file) && fileEntry) {
+      if (checkFunctionKey(o.signerAccessKeys, file, m.signer, UPDATER_METHODS, UPDATER_ALLOWANCE_YOCTO).kind === 'ok') done.push('Keys-updater key in place (installed by the contract).');
+    } else if (file && fileEntry && !(isV1UpdaterKey(fileEntry, m.signer))) {
+      // On chain, untracked, not the v1 key: reported as a blocker above.
+    } else if (gov.updater_keys.length >= 2) {
+      blockers.push(`${m.signer} already has 2 updater keys (the most); the one in keys-updater.json isn't one of them. Delete one with the owner's delete_updater_key first.`);
+    } else {
+      const reuse = file && !fileEntry ? file : null;
+      if (reuse) warnings.push(`Re-adding the updater key from .secrets/${m.name}/keys-updater.json. If it may be compromised (e.g. a watchdog deleted it), move the file aside first so a new key is generated.`);
+      steps.push({ kind: 'add-updater-key', reuse });
+    }
+    // Delete the old key only after its replacement is in.
+    const deletes = steps.filter((s) => s.kind === 'delete-signer-key');
+    for (const d of deletes) steps.splice(steps.indexOf(d), 1);
+    steps.push(...deletes);
+
+    // --- watchdogs and delays ---
+    const onChainWatchdogs = gov.watchdogs.map((w) => w.account_id);
+    for (const w of (m.watchdogs ?? [])) {
+      if (onChainWatchdogs.includes(w)) continue;
+      if (!o.watchdogAccounts[w]) warnings.push(`Watchdog ${w} does not exist on chain yet: add_watchdog skipped until it does (docs/governance-spec.md "Watchdog service").`);
+      else steps.push({ kind: 'add-watchdog', accountId: w });
+    }
+    for (const w of onChainWatchdogs) if (!(m.watchdogs ?? []).includes(w)) warnings.push(`${w} is a watchdog on chain but not in envs/${m.name}.json (removing one is a deliberate owner action: remove_watchdog slows key changes to governance_delay_ms).`);
+    const confirmLater = gov.watchdogs.filter((w) => w.confirm_from_ms > o.nowMs);
+    for (const w of confirmLater) done.push(`Watchdog ${w.account_id} may confirm from ${iso(w.confirm_from_ms)}.`);
+    if (o.config && delays && o.governance) {
+      for (const [which, field, pendingField, want] of [
+        ['issuer_key', 'issuer_key_delay_ms', 'pending_issuer_key_delay', delays.issuer_key_delay_ms],
+        ['governance', 'governance_delay_ms', 'pending_governance_delay', delays.governance_delay_ms],
+      ] as const) {
+        const now = o.config[field];
+        const pending = o.config[pendingField] as { change_delay_ms?: number; effective_at_ms?: number } | null | undefined;
+        if (now === want) continue;
+        if (pending?.change_delay_ms === want) done.push(`${field} becomes ${want} at ${iso(pending.effective_at_ms ?? 0)} (a decrease waits).`);
+        else steps.push({ kind: 'set-delay', which, ms: want });
+      }
+    }
+
+    // --- owner transfer to the council (migration step 6) ---
+    if (opts.transferOwner) {
+      if (!m.council) blockers.push(`--transfer-owner needs a council in envs/${m.name}.json.`);
+      else if (m.ownerKind === 'sputnik' || o.config?.owner === m.council.dao) done.push(`The council DAO ${m.council.dao} owns ${m.signer}.`);
+      else if (gov.pending_owner?.owner === m.council.dao) {
+        if (o.nowMs >= gov.pending_owner.acceptable_at_ms + CLOCK_MARGIN_MS) steps.push({ kind: 'accept-owner', owner: m.council.dao });
+        else done.push(`Owner transfer to ${m.council.dao} proposed; the DAO may accept from ${iso(gov.pending_owner.acceptable_at_ms)}. Re-run then.`);
+      } else {
+        if (gov.pending_owner) warnings.push(`propose_owner replaces the pending owner transfer to ${gov.pending_owner.owner}.`);
+        steps.push({ kind: 'propose-owner', owner: m.council.dao });
+      }
+    } else if (gov.pending_owner) {
+      warnings.push(`An owner transfer to ${gov.pending_owner.owner} is pending (acceptable from ${iso(gov.pending_owner.acceptable_at_ms)}).`);
+    }
+    if (gov.pending_withdrawal) warnings.push(`A withdrawal of ${gov.pending_withdrawal.amount} yocto to ${gov.pending_withdrawal.receiver} is pending (executable from ${iso(gov.pending_withdrawal.executable_at_ms)}).`);
   }
 
   // --- owner configuration calls ---
@@ -305,10 +585,14 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
   if (o.config?.sponsors && sameSet(o.config.sponsors, sponsors)) done.push('Sponsors set.');
   else steps.push({ kind: 'set-sponsors', sponsors });
 
+  // Console audiences: removals apply at once, additions after change_delay_ms (pending ones count as set).
   const audiences = m.consoleAudiences.map(([p, a]) => [p, a] as [string, string]);
-  const currentAud = o.config?.console_audiences ?? [];
+  const pendingAud = Array.isArray(o.config?.pending_console_audiences)
+    ? (o.config.pending_console_audiences as { provider: string; aud: string }[]).map((x) => [x.provider, x.aud] as [string, string])
+    : [];
+  const currentAud = [...(o.config?.console_audiences ?? []), ...pendingAud];
   if (audiences.length && !samePairs(currentAud, audiences)) steps.push({ kind: 'set-console-audiences', audiences });
-  else if (audiences.length) done.push('Console audiences set.');
+  else if (audiences.length) done.push(`Console audiences set${pendingAud.length ? ` (pending: ${pairText(pendingAud)})` : ''}.`);
 
   // Shared login clients: set_shared_clients replaces the list. Removals apply at once, additions after
   // change_delay_ms (pending, shown by get_config).
@@ -361,54 +645,143 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
     steps.push({ kind: 'register-global', owners: [{ Near: { account_id: m.owner } }], clients, allowShared: false });
   }
 
+  // The owner transfer goes last: everything else is configured by the current owner first.
+  const transfer = steps.filter((s) => s.kind === 'propose-owner' || s.kind === 'accept-owner');
+  for (const t of transfer) steps.splice(steps.indexOf(t), 1);
+  steps.push(...transfer);
+
   // --- credentials needed by the planned steps ---
   const needed = new Set(steps.map(stepSigner).filter((r): r is Role => r !== null));
   for (const role of needed) {
+    if (role === 'owner') continue;
     const cred = o.credentials[role];
     if (!o.accounts[role].exists) continue; // the create-account command above also saves the key
     if (!cred.found) blockers.push(`No key for ${m[role]} (${role}) in ~/.near-credentials/testnet/ (near CLI legacy keychain).`);
     else if (!cred.fullAccessOnChain) blockers.push(`The key for ${m[role]} in ~/.near-credentials/testnet/ (${cred.publicKey}) is not a full-access key on chain.`);
+  }
+  const ownerCalls = steps.map((s) => ownerCallOf(s)).filter((c): c is OwnerCall => c !== null);
+  if (ownerCalls.some((c) => ownerRoute(m, c.method).kind === 'account')) {
+    const cred = o.credentials.owner;
+    if (o.accounts.owner.exists && !cred.found) blockers.push(`No key for ${m.owner} (owner) in ~/.near-credentials/testnet/ (near CLI legacy keychain).`);
+    else if (o.accounts.owner.exists && !cred.fullAccessOnChain) blockers.push(`The key for ${m.owner} in ~/.near-credentials/testnet/ (${cred.publicKey}) is not a full-access key on chain.`);
+  }
+  const councilCall = ownerCalls.find((c) => ownerRoute(m, c.method).kind === 'sputnik');
+  if (!councilCall && (opts.ownerTx.member || opts.ownerTx.approveWith)) warnings.push('--member/--approve-with are ignored: no planned step goes through the council.');
+  if (councilCall && m.council) {
+    try {
+      checkOwnerTxOptions(m, ownerRoute(m, councilCall.method), opts.ownerTx);
+      const member = proposingMember(m, opts.ownerTx);
+      for (const a of [member, ...(opts.ownerTx.approveWith ? [opts.ownerTx.approveWith] : [])]) {
+        if (!o.councilKeys[a]) blockers.push(`No signing key for council member ${a} (dev envs: .secrets/${m.name}/council/${a}.json from council-setup; others: ~/.near-credentials/${m.network}/${a}.json).`);
+      }
+    } catch (err) {
+      blockers.push((err as Error).message);
+    }
   }
 
   return { blockers, warnings, steps, done };
 }
 
 /** Human-readable description of a step (no secrets: only public keys and arguments). */
-export function describeStep(m: Manifest, s: DeployStep): string {
+export function describeStep(m: Manifest, s: DeployStep, ownerTx: OwnerTxOptions = {}): string {
   const near = (y: bigint) => formatNear(y);
+  const owner = ownerCallOf(s);
   switch (s.kind) {
     case 'build':
       return 'Build contracts/hana-signer wasm (cargo near build non-reproducible-wasm).';
     case 'deploy':
-      return s.init
-        ? `Deploy wasm to ${m.signer} and call new(${JSON.stringify(s.init)}) [signed by ${m.signer}].`
-        : `Redeploy wasm to ${m.signer} (code only, no init) [signed by ${m.signer}].`;
+      return `Deploy wasm to ${m.signer} and call new(${JSON.stringify(s.init)}) [signed by ${m.signer}].`;
+    case 'migrate-v1':
+      return (
+        `Migrate ${m.signer} in place: DeployContract + migrate_v1(${JSON.stringify({ issuer_key_delay_ms: s.issuer_key_delay_ms, governance_delay_ms: s.governance_delay_ms })}) ` +
+        `in one transaction (same account, so every address stays) [signed by ${m.signer}].`
+      );
     case 'relayer-keys':
       return (
         `Add ${s.reuse.length + s.generate} ${s.pool}-pool function-call key(s) to ${m.relayer} (receiver ${m.signer}, allowance ${near(s.allowanceYocto)} each, methods ${s.methods.join(', ')})` +
         `${s.generate ? `; generate ${s.generate} new key(s) into .secrets/${m.name}/${poolFileName(s.pool)}` : ''}` +
         `${s.reuse.length ? `; re-add ${s.reuse.length} key(s) already in .secrets` : ''} [signed by ${m.relayer}].`
       );
-    case 'updater-key':
-      return `Add the keys-updater function-call key to ${m.signer} (receiver ${m.signer}, methods ${s.methods.join(', ')}, allowance ${near(s.allowanceYocto)})${s.reuse ? ' from .secrets' : `; generate it into .secrets/${m.name}/keys-updater.json`} [signed by ${m.signer}].`;
-    case 'set-issuer':
-      return `set_issuer(${JSON.stringify({ provider: s.provider, iss_values: s.iss_values })}) [signed by ${m.owner}].`;
-    case 'set-sponsors':
-      return `set_sponsors(${JSON.stringify({ sponsors: s.sponsors })}) [signed by ${m.owner}].`;
-    case 'set-console-audiences':
-      return `set_console_audiences(${JSON.stringify({ audiences: s.audiences })}) [signed by ${m.owner}].`;
+    case 'add-updater-key':
+      return `Install the keys-updater key (${UPDATER_METHODS.join(', ')}, 1 NEAR)${s.reuse ? ' from .secrets' : `, generated into .secrets/${m.name}/keys-updater.json`}: ${describeOwnerCall(m, owner!, ownerTx)}.`;
+    case 'delete-signer-key':
+      return s.via === 'signer'
+        ? `Delete ${s.publicKey} from ${m.signer}: ${s.why} [signed by ${m.signer}].`
+        : `Delete ${s.publicKey} from ${m.signer} (${s.why}): ${describeOwnerCall(m, owner!, ownerTx)}.`;
+    case 'execute-upgrade':
+      return `execute_upgrade(<wasm ${s.codeHash}>) on ${m.signer}: deploys it and runs its migrate in one receipt [anyone; signed by ${m.relayer}].`;
+    case 'propose-upgrade':
+      return `${s.codeHash ? '' : 'propose_upgrade of the wasm built above (its hash is computed after the build): '}${describeOwnerCall(m, owner!, ownerTx)}; executable after governance_delay_ms, then re-run with --upgrade --skip-build.`;
     case 'set-shared-clients': {
       const changes = [s.added.length ? `adds ${pairText(s.added)} after the ${m.changeDelayMs} ms timelock` : '', s.removed.length ? `removes ${pairText(s.removed)} at once` : '']
         .filter(Boolean)
         .join('; ');
-      return `set_shared_clients(${JSON.stringify({ clients: s.clients })})${changes ? ` (${changes})` : ''} [signed by ${m.owner}].`;
+      return `${describeOwnerCall(m, owner!, ownerTx)}${changes ? ` (${changes})` : ''}.`;
     }
-    case 'register-global':
-      return `admin_register_scope(${JSON.stringify(registerGlobalArgs(s))}) [signed by ${m.owner}].`;
+    default:
+      return `${describeOwnerCall(m, owner!, ownerTx)}.`;
   }
 }
 
 /** admin_register_scope arguments for the reserved global scope. */
 export function registerGlobalArgs(s: Extract<DeployStep, { kind: 'register-global' }>) {
   return { owners: s.owners, clients: s.clients, scope_id: GLOBAL_SCOPE, allow_shared: s.allowShared };
+}
+
+export interface CreationPlanInput {
+  /** NEAR code hash and size of the reproducible build, if given. */
+  wasm: { codeHash: string; bytes: number } | null;
+  updaterPublicKey: string | null;
+  creationPublicKey: string | null;
+}
+
+/**
+ * The mainnet-style signer creation batch (docs/governance-spec.md "Signer account full-access key", "Migration plan
+ * → Mainnet"), printed only: DeployContract + new(owner = council DAO, …, watchdogs, updater_keys) + DeleteKey(creation
+ * key), one transaction signed by the creation key. No AddKey: new() adds the updater key itself
+ * (docs/contract-interface.md "new"), and an AddKey of the same key would make that promise fail and leave the key
+ * untracked. Returns the lines to print, or the problems that stop it.
+ */
+export function creationPlan(m: Manifest, input: CreationPlanInput): { problems: string[]; lines: string[] } {
+  const problems: string[] = [];
+  if (!m.council) problems.push(`envs/${m.name}.json needs a council: the owner from the first transaction is the council DAO (D81).`);
+  if (m.issuerKeyDelayMs === undefined || m.governanceDelayMs === undefined) problems.push(`envs/${m.name}.json needs issuerKeyDelayMs and governanceDelayMs (D80).`);
+  if (!(m.watchdogs ?? []).length) problems.push(`envs/${m.name}.json lists no watchdogs: with none, every key change waits governance_delay_ms.`);
+  const delayCheck = governanceDelayProblems(m);
+  problems.push(...delayCheck.blockers);
+  if (problems.length) return { problems, lines: [] };
+  const updater = input.updaterPublicKey ?? '<updater public key: the API KEYS_UPDATER_KEY>';
+  const creation = input.creationPublicKey ?? '<creation public key: the signer account\'s only key>';
+  const init: NewArgs = {
+    owner: m.council!.dao,
+    mpc: m.mpc,
+    ckd_domain_id: m.ckdDomainId,
+    change_delay_ms: m.changeDelayMs,
+    issuer_key_delay_ms: m.issuerKeyDelayMs!,
+    governance_delay_ms: m.governanceDelayMs!,
+    watchdogs: [...(m.watchdogs ?? [])],
+    updater_keys: [updater],
+  };
+  const lines = [
+    'MAINNET-STYLE SIGNER CREATION BATCH: printed only. This script never sends it; the user runs it, never an agent',
+    '(docs/governance-spec.md "Migration plan" → Mainnet, docs/operations.md "Creating a signer with governance in place").',
+    '',
+    ...delayCheck.warnings.flatMap((w) => [`WARNING: ${w}`, '']),
+    'Before: the council DAO and the watchdog account exist, the watchdog service and its alerts run, the updater key',
+    'is generated where the API secret will live, and the build below is published (D86).',
+    '',
+    '1. Reproducible build (D86): cd contracts/hana-signer && cargo near build reproducible-wasm',
+    `   code_hash ${input.wasm ? `${input.wasm.codeHash} (${input.wasm.bytes} bytes)` : '<pass --wasm <reproducible build> to print it>'}; publish the hash, the source commit and the build command first.`,
+    `2. One transaction, signer = receiver = ${m.signer}, signed by the creation key ${creation} (the account's only key):`,
+    `   a. DeployContract(the wasm above)`,
+    `   b. FunctionCall new(${JSON.stringify(init)}), 0 deposit, 100 Tgas`,
+    `   c. DeleteKey(${creation})`,
+    '   No AddKey action: new() adds the updater key itself with exactly the contract\'s permission',
+    `   (${UPDATER_METHODS.join(', ')}, receiver ${m.signer}, 1 NEAR) and tracks it in get_governance().updater_keys.`,
+    '   The batch is atomic: there is never a moment with code and a full-access key.',
+    `3. After: view_access_key_list(${m.signer}) is exactly ${updater} with that permission; get_config().owner is ${m.council!.dao};`,
+    `   deploy-contract ${m.name} shows no blockers. Then the owner config goes through council proposals (set_issuer, sponsors,`,
+    '   console audiences, shared clients, global scope); the first Google keys go through the normal path (watchdog confirms).',
+  ];
+  return { problems, lines };
 }

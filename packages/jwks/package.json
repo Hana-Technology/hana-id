@@ -1,0 +1,13 @@
+{
+  "name": "@hana-id/jwks",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Issuer JWKS parsing and RSA key comparison shared by the API (key sync) and the watchdog (forgery checks).",
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": { "typescript": "^5.7.0", "vitest": "4.1.12", "@types/node": "^22.0.0" }
+}

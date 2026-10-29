@@ -27,6 +27,10 @@ Batch B is merged on the integration branch `feat/batch-b` (not yet on `develop`
 | `apps/smoke` | `feat/batch-b` | `/` logs in through `@hana-id/web` (the vault); `/direct.html` keeps Google Identity Services and the split path for the ship gate |
 | `apps/e2e` (Playwright: Chromium, WebKit, Firefox; local builds against the real API Worker; CI job) | `feat/batch-b` | Code done |
 | Developer dashboard, admin console, billing-grade usage (batch C) | `docs/batch-c-spec.md` | Spec draft; MVP cut in `docs/decisions.md` D34 |
+| Governance contract (delayed issuer keys, watchdogs, pause, timelocked upgrades, DAO owner) | `gov/contract`, integrated on `feat/governance` | Code done; not deployed (`docs/governance-spec.md` "Migration plan") |
+| `apps/watchdog` (independent watchdog Worker, alerts, status endpoint for the admin portal) | `gov/watchdog`, integrated on `feat/governance` | Code done; not deployed (`docs/operations.md` "Watchdog service") |
+| Governance API (delayed JWKS sync, `issuer_key_pending` / `paused` gate, `GET /v1/governance`) | `gov/api`, integrated on `feat/governance` | Code done; not deployed (`docs/operations.md` "Deploying the governance API") |
+| Governance scripts (owner council, DAO-routed owner calls, timelocked upgrades, migration, `admin governance:status`) | `gov/scripts`, integrated on `feat/governance` | Code done (`docs/operations.md` "Governance") |
 
 ## Components
 
@@ -48,7 +52,10 @@ Batch B is merged on the integration branch `feat/batch-b` (not yet on `develop`
 | `hana-signer` | `contracts/hana-signer` | NEAR testnet, manifest `signer` | Issuers (Google RSA keys), scope registry, sessions, calls the MPC |
 | NEAR MPC | external, manifest `mpc` | NEAR testnet MPC network | CKD (`request_app_private_key`, domain `ckdDomainId` = 2) |
 | Google OIDC | external | `accounts.google.com`, `www.googleapis.com` | Issues ID tokens whose `nonce` commits to the session |
-| Scripts | `scripts/`, `apps/api/scripts/gen-wrangler.ts` | operator's machine | Deploy contract and keys, JWKS one-off sync, CKD key fetch, `VAULT_KEK` init/rotate, admin CLI |
+| Watchdog Worker | `apps/watchdog/src/index.ts` | Cloudflare Workers on **its own account** (manifest `watchdog.cloudflare`, D86) | Every 5 min: Google's JWKS against the contract's pending and active issuer keys; cancels forged pending keys, deletes the updater keys that proposed one, pauses on a forged active key, confirms matches (D82); alerts on governance changes; pages, Slack, email (D85); dead-man's switch; read-only `GET /status`, `/alerts`, `/actions` and `POST /alerts/:id/ack` for the admin portal (D83) |
+| Watchdog D1 | `apps/watchdog/migrations/` | Cloudflare D1 on the watchdog's account | Seen kids, absences, runs and their checks, actions log, alerts, deliveries, acks |
+| `packages/jwks` | `packages/jwks/src/index.ts` | API and watchdog | JWKS parsing (`usableJwks`), RSA key comparison |
+| Scripts | `scripts/`, `apps/api/scripts/gen-wrangler.ts`, `apps/watchdog/scripts/` | operator's machine | Deploy contract and keys, JWKS one-off sync, CKD key fetch, `VAULT_KEK` init/rotate, admin CLI, watchdog config and secrets |
 
 ```
   partner origin                                   Google OIDC (accounts.google.com)
@@ -67,7 +74,7 @@ Batch B is merged on the integration branch `feat/batch-b` (not yet on `develop`
  ┌─────────────────────────────────────────────────────────────────────────────┐
  │ API Worker (apiUrl; also renders GET {vaultOrigin}/vault)                   │
  │  /v1/app /v1/login /v1/login-relay/:id /v1/vault/* /v1/sessions /v1/derive  │
- │  /v1/sessions/revoke /v1/owner-actions /v1/health        cron: hourly       │
+ │  /v1/sessions/revoke /v1/owner-actions /v1/health        cron: 15 min       │
  │  DOs: RelayerKey (per key) · RateLimiter (per subject) · LoginRelay (per id)│
  │  D1: apps, app_origins, plans, usage, vault_shares, issuer_key_missing      │
  └──────────────┬──────────────────────────────────────────────────────────────┘
@@ -92,9 +99,13 @@ Who talks to whom:
 | Vault → NEAR RPC | JSON-RPC (manifest `rpc`; `rpcFallback` only when `rpc` errors or times out, one endpoint per answer: `packages/web/src/near-call.ts`) | `get_session` re-sync, the login's registry check (`scope_for_client` or `get_scope`), `EXPERIMENTAL_tx_status` polling; the export window the same |
 | Vault, export window → Google | `https://www.googleapis.com/oauth2/v3/certs` | JWKS for the defence-in-depth RS256 check |
 | Partner page → API | `fetch` from the partner origin | `GET /v1/app` (any key); `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` only for `pk_test_` in dev envs (`apps/smoke`) |
-| API → NEAR | NEAR RPC | Views (`get_config`, `get_scope`, `scope_for_client`, `get_session`, `session_key_in_use`), `send_tx`, `tx` |
+| API → NEAR | NEAR RPC | Views (`get_config`, `get_scope`, `scope_for_client`, `get_session`, `session_key_in_use`, `get_issuer`; for the cron and `GET /v1/governance` also `get_key_changes`, `get_governance`, `view_access_key_list`), `send_tx`, `tx` |
 | `hana-signer` → MPC | cross-contract call, 20 Tgas, 1 yocto | `request_app_private_key {derivation_path, app_public_key, domain_id}` |
-| API cron → Google, `hana-signer` | HTTPS, then `set_issuer_key`/`remove_issuer_key` signed with `KEYS_UPDATER_KEY` | JWKS sync (`apps/api/src/issuer-keys.ts:103`) |
+| API cron → Google, `hana-signer` | HTTPS, then `set_issuer_key` / `propose_issuer_key_removal` / `execute_issuer_key_change` signed with `KEYS_UPDATER_KEY` (delayed key changes, governance batch) | JWKS sync (`apps/api/src/issuer-keys.ts` `syncIssuerKeys`) |
+| Watchdog → Google | `https://www.googleapis.com/oauth2/v3/certs`, `cache: no-store`, every 5 min (and once more 60 s later when a pending kid is missing) | Its own JWKS copy, never the API's |
+| Watchdog → NEAR | its own RPC (manifest `rpc`, then `rpcFallback`): `status`, views `get_key_changes`, `get_issuer`, `get_issuer_keys`, `get_config`, `get_governance`, the owner's `view_account` and (a DAO) `get_policy` (final); `send_tx` from `WATCHDOG_KEY` on `watchdog.account` | `cancel_issuer_key_change`, `confirm_issuer_key_change`, `pause`, `delete_updater_key` only |
+| Watchdog → paging app, Slack, Resend, heartbeat | HTTPS with its own credentials (`apps/watchdog/src/channels.ts`) | Critical: page + Slack + email, re-sent every 15 min until acknowledged; warning: Slack + email; daily digest; dead-man's switch ping |
+| Admin portal (batch C) → watchdog | `GET /status`, `/alerts`, `/actions`, `POST /alerts/:id/ack`, bearer `WATCHDOG_STATUS_TOKEN` | The "Security & monitoring" view; acks stop re-sends only |
 | Operator → `hana-signer`, D1, Worker | `scripts/`, `wrangler` | Deploy, register scopes, apps, origins, secrets |
 
 ## Flows
@@ -304,7 +315,7 @@ and a "View on {explorer}" link when the chain's explorer is known. The list and
 | Execute a matured change | anyone; `POST /v1/owner-actions` relays `execute_change` | same |
 | NEAR-account owners | call the contract directly (the API relays OIDC auth only, `apps/api/src/validate.ts`) | `contracts/hana-signer/src/registry.rs` |
 | Shared clients, sponsors, console audiences, issuers | owner account via `deploy-contract` | `scripts/deploy-contract.ts`, `scripts/lib/deploy-plan.ts` |
-| Google RSA keys | hourly cron with `KEYS_UPDATER_KEY`; a kid is removed only after ≥ 55 min missing | `apps/api/src/issuer-keys.ts:103`, migration 0002 |
+| Google RSA keys | the 15-min cron with `KEYS_UPDATER_KEY` proposes adds and (after ≥ 55 min missing, never the last key) removals, and executes matured changes that match Google's JWKS; a key is active only after `issuer_key_delay_ms` or a watchdog's confirmation | `apps/api/src/issuer-keys.ts`, migrations 0002, 0005 |
 
 Timelocks, quarantine and shared-client rules: `docs/contract-interface.md` "Registry" and "Shared clients".
 
@@ -372,6 +383,8 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
 | `.secrets/<env>/` (operator machine, gitignored, 0700/0600) | `relayer-keys.json`, `owner-relayer-keys.json`, `keys-updater.json` (`scripts/lib/secrets.ts:66`), `vault-kek` (+ `vault-kek.previous` during a rotation; `scripts/lib/vault-kek.ts`) | — |
 | `~/.near-credentials/testnet/` (operator machine) | Full-access keys of the owner, signer and relayer accounts (`scripts/lib/keys.ts`) | — |
 | Worker secrets | `RELAYER_KEYS`, `OWNER_RELAYER_KEYS`, `KEYS_UPDATER_KEY`, `VAULT_KEK`, `VAULT_KEK_PREVIOUS` | — |
+| Watchdog D1 (its own Cloudflare account) | `meta` (last chain snapshot, failure counters, heartbeat, digest, run lock), `seen_kids` (kid, `n`, `e`, first/last seen; `baseline` kids from the first run), `absences`, `runs` (30 days), `actions` (method, args, tx hash), `alerts` (severity, details, acks), `deliveries` | Secrets, tokens |
+| Watchdog Worker secrets | `WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, `RESEND_API_KEY`, `SLACK_WEBHOOK_URL`, the paging app's credentials, `HEARTBEAT_URL` (from `.secrets/<env>/watchdog-secrets.json`) | — |
 | `apps/api/.dev.vars` (local, gitignored, 0600) | Relayer and updater keys for `wrangler dev` (`gen-wrangler --dev-vars`) | — |
 
 ## Environments and manifests
@@ -387,7 +400,9 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
   `apiUrl`'s origin; different sites from each other and from `apiUrl` outside `local*`/`sandbox*`,
   `packages/env/src/schema.ts`, `origins.ts`), `changeDelayMs`,
   `googleClientIds` (the `global` scope), `sharedGoogleClientIds` (≤ 5, disjoint from scope clients),
-  `consoleAudiences`, `cloudflare.{workerName, d1Name, durableObjectLocation}`.
+  `consoleAudiences`, `cloudflare.{workerName, d1Name, durableObjectLocation}`, and the optional `watchdog` block
+  (`account`, `cloudflare.{accountId, workerName, d1Name}`, `alertEmails`, `alertFrom`, `pager`, `digestHourUtc`;
+  `apps/watchdog/scripts/gen-wrangler.ts` writes the gitignored `apps/watchdog/wrangler.jsonc` with that account id).
 - Dev envs are `local*`/`sandbox*` by name (`packages/env/src/origins.ts:9`, mirrored in `apps/api/src/origins.ts:26`
   and as `devEnv` in the web build). They allow loopback partner origins and partner-origin session endpoints for
   `pk_test_` keys, and same-site Hana origins. No flag can turn these on elsewhere.

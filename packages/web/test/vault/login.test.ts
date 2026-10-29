@@ -359,6 +359,89 @@ describe('login (vault side)', () => {
       expect(browser.backend.count('/v1/login')).toBe(2);
     });
 
+    describe('issuer_key_pending (governance-spec "Rotation and logins" step 3)', () => {
+      const progress = (t: Tab) => t.events.filter((e) => e.event === 'loginProgress').map((e) => (e.data as { stage: string }).stage);
+      /** Waits until the login sleeps on its key_pending wait, then moves the clock past it. */
+      async function passWait(t: Tab, ms: number): Promise<void> {
+        await t.waitUntil(() => progress(t).includes('key_pending'), 'key_pending');
+        await sleepReal(5);
+        t.browser.timers.advance(ms);
+      }
+
+      it("waits the API's retryAfterS with key_pending, then resends the same body once and logs in", async () => {
+        const browser = new Browser();
+        let n = 0;
+        browser.backend.overrides.set('/v1/login', () => (++n === 1 ? apiError(503, 'issuer_key_pending', { retryAfterS: 20 }) : undefined));
+        const t = await tab(browser);
+        const pending = t.request('hana_login');
+        const run = await popupHello(t);
+        await deliverToken(t, g, run);
+        await passWait(t, 19_000);
+        // Not yet: 20 s haven't passed.
+        await sleepReal(20);
+        expect(browser.backend.count('/v1/login')).toBe(1);
+        t.browser.timers.advance(1_000);
+        const reply = await pending;
+        expect(reply.result).toMatchObject({ addresses: expectedAddresses() });
+        const bodies = browser.backend.calls.filter((c) => c.path === '/v1/login').map((c) => JSON.stringify(c.body));
+        expect(bodies).toHaveLength(2);
+        expect(bodies[0]).toBe(bodies[1]);
+        expect(progress(t)).toEqual(['popup_connected', 'google', 'token', 'chain', 'key_pending', 'chain', 'done']);
+      });
+
+      it('caps the wait at 30 s whatever retryAfterS says (and waits 30 s without one)', async () => {
+        for (const extra of [{ retryAfterS: 3600 }, {}]) {
+          const browser = new Browser();
+          let n = 0;
+          browser.backend.overrides.set('/v1/login', () => (++n === 1 ? apiError(503, 'issuer_key_pending', extra) : undefined));
+          const t = await tab(browser);
+          const pending = t.request('hana_login');
+          await deliverToken(t, g, await popupHello(t));
+          await passWait(t, 30_000);
+          expect((await pending).result).toHaveProperty('addresses');
+        }
+      });
+
+      it('a second issuer_key_pending ends the login with a clear try-again error; nothing else is resent', async () => {
+        const browser = new Browser();
+        browser.backend.overrides.set('/v1/login', () => apiError(503, 'issuer_key_pending', { retryAfterS: 30 }));
+        const t = await tab(browser);
+        const pending = t.request('hana_login');
+        await deliverToken(t, g, await popupHello(t));
+        await passWait(t, 30_000);
+        const reply = await pending;
+        expect(reply.error).toMatchObject({ code: 'api_unavailable', data: { api: '503 issuer_key_pending' } });
+        expect(reply.error?.message).toContain('try signing in again');
+        expect(browser.backend.count('/v1/login')).toBe(2);
+      });
+
+      it("doesn't wait when the token wouldn't outlive the wait", async () => {
+        const browser = new Browser();
+        browser.backend.overrides.set('/v1/login', () => apiError(503, 'issuer_key_pending', { retryAfterS: 30 }));
+        const t = await tab(browser);
+        const pending = t.request('hana_login');
+        const run = await popupHello(t);
+        // A token that expires in 45 s: after a 30 s wait it would be within the 30 s resend margin.
+        await deliverToken(t, g, run, { exp: Math.floor((t.browser.timers.now + 45_000) / 1000) });
+        const reply = await pending;
+        expect(reply.error?.code).toBe('api_unavailable');
+        expect(browser.backend.count('/v1/login')).toBe(1);
+        expect(progress(t)).not.toContain('key_pending');
+      });
+
+      it('the split flow retries /v1/sessions the same way', async () => {
+        const browser = new Browser();
+        let n = 0;
+        browser.backend.overrides.set('/v1/sessions', () => (++n === 1 ? apiError(503, 'issuer_key_pending', { retryAfterS: 30 }) : undefined));
+        const t = await tab(browser, { loginFlow: 'split' });
+        const pending = t.request('hana_login');
+        await deliverToken(t, g, await popupHello(t));
+        await passWait(t, 30_000);
+        expect((await pending).result).toHaveProperty('addresses');
+        expect(browser.backend.count('/v1/sessions')).toBe(2);
+      });
+    });
+
     it('ckd_failed: a new login in "session" mode; a counter-2 derive in "none" mode', async () => {
       const fails = (browser: Browser) =>
         browser.backend.overrides.set('/v1/login', (call) => {

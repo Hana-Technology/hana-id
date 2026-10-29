@@ -51,6 +51,7 @@ const PROGRESS: Record<string, string> = {
   google: 'Choose your Google account in the sign-in window…',
   token: 'Google sign-in done. Checking it…',
   chain: 'Creating your wallet key on NEAR testnet (a few seconds)…',
+  key_pending: 'Google just rotated its signing key; Hana ID is activating it. Retrying in up to 30 seconds…',
   done: 'Done.',
 };
 

@@ -13,32 +13,42 @@
 //!   sessions in any scope with `allow_shared`, the scope being the one the session nonce commits to. A client is
 //!   never both shared and a scope client. Adding a shared client is delayed by `change_delay_ms`.
 //! - Every nonce commits to `env::current_account_id()`, so tokens can't be replayed across deployments.
+//! - Governance (`governance.rs`, `issuers.rs`, `docs/governance-spec.md`): an issuer key enters the active set only
+//!   after `issuer_key_delay_ms` or a watchdog's confirmation; upgrades, owner transfers and surplus withdrawals wait
+//!   `governance_delay_ms`; the owner or a watchdog can pause every token path, and only the owner unpauses.
 //!
 //! The exact JSON interface and byte layouts are in `docs/contract-interface.md`.
 
 mod events;
+mod governance;
+mod init;
 mod issuers;
+mod migrate;
 mod oidc;
 mod registry;
 mod sessions;
 #[cfg(test)]
 mod tests;
 
-pub use issuers::{Issuer, IssuerView, RsaKey};
+pub use governance::{
+    GovernanceView, PendingOwner, PendingUpgrade, PendingUpgradeView, PendingWithdrawal, Watchdog, MAX_GOVERNANCE_DELAY_MS, MAX_ISSUER_KEY_DELAY_MS,
+    MAX_UPDATER_ALLOWANCE, MAX_UPDATER_KEYS, MAX_WATCHDOGS, MIGRATE_GAS, SIGNER_RESERVE, STATE_VERSION, UPDATER_METHODS,
+};
+pub use issuers::{Issuer, IssuerKeyView, IssuerView, KeyChangeView, KeyOp, PendingKeyChange, RsaKey, MAX_PENDING_KEY_CHANGES};
 pub use registry::{Change, Owner, OwnerAuth, PendingChange, RemovedClient, Scope};
 pub use sessions::{CkdAppPublicKey, CkdRequestArgs, Session};
 
 use near_sdk::store::LookupMap;
-use near_sdk::{env, near, AccountId, BorshStorageKey, NearToken, PanicOnDefault, Promise};
+use near_sdk::{env, near, AccountId, BorshStorageKey, NearToken, PanicOnDefault, Promise, PublicKey};
 
 pub const MAX_CHANGE_DELAY_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 const MAX_SPONSORS: usize = 10;
-const MAX_CONSOLE_AUDIENCES: usize = 10;
+pub const MAX_CONSOLE_AUDIENCES: usize = 10;
 pub const MAX_SHARED_CLIENTS: usize = 5;
 
 #[derive(BorshStorageKey)]
 #[near(serializers = [borsh])]
-enum StorageKey {
+pub(crate) enum StorageKey {
     Issuers,
     IssIndex,
     Scopes,
@@ -49,7 +59,8 @@ enum StorageKey {
     PendingAdds,
 }
 
-/// A scheduled decrease of `change_delay_ms` (increases apply at once).
+/// A scheduled decrease of a delay (increases apply at once): of `change_delay_ms`, `issuer_key_delay_ms` or
+/// `governance_delay_ms`. The field keeps its batch A name for all three (JSON compatibility): it is the new value.
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Debug, PartialEq)]
 pub struct DelayChange {
@@ -57,7 +68,8 @@ pub struct DelayChange {
     pub effective_at_ms: u64,
 }
 
-/// A shared client added by `set_shared_clients`, in force from `effective_at_ms`.
+/// A shared client added by `set_shared_clients`, or a console audience added by `set_console_audiences`, in force
+/// from `effective_at_ms`.
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PendingSharedClient {
@@ -78,7 +90,10 @@ pub struct ConfigView {
     pub owner: AccountId,
     pub mpc: AccountId,
     pub ckd_domain_id: u64,
+    /// Console audiences in force now (matured pending additions included).
     pub console_audiences: Vec<(String, String)>,
+    /// Console audiences not yet in force.
+    pub pending_console_audiences: Vec<PendingSharedClient>,
     pub sponsors: Vec<AccountId>,
     /// Shared clients in force now (matured pending additions included).
     pub shared_clients: Vec<(String, String)>,
@@ -88,18 +103,35 @@ pub struct ConfigView {
     pub change_delay_ms: u64,
     pub pending_change_delay: Option<DelayChange>,
     pub public_registration: bool,
+    /// The issuer-key delay in force now.
+    pub issuer_key_delay_ms: u64,
+    pub pending_issuer_key_delay: Option<DelayChange>,
+    /// The governance delay in force now.
+    pub governance_delay_ms: u64,
+    pub pending_governance_delay: Option<DelayChange>,
+    pub paused: bool,
+    /// When the owner last unpaused (0: never).
+    pub unpaused_at_ms: u64,
+    /// No scope change executes before this (set at each unpause; see `HanaSigner::changes_unlock_floor_ms`).
+    pub changes_unlock_floor_ms: u64,
+    /// Sessions opened before this can't derive and read as absent (`set_sessions_valid_from_ms`; 0: none).
+    pub sessions_valid_from_ms: u64,
 }
 
+/// Contract state, layout version 2 (`state_version`). The fields before `state_version` are the v1 layout,
+/// unchanged (`migrate.rs` keeps a copy of v1 for `migrate_v1`). The next layout change ships a `migrate` that reads
+/// a copy of this exact struct.
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct HanaSigner {
-    /// Hana admin.
+    /// Hana admin: a Sputnik DAO council outside local envs (`docs/governance-spec.md` "Owner = multisig").
     pub(crate) owner: AccountId,
     /// NEAR MPC signer (e.g. v1.signer-prod.testnet).
     pub(crate) mpc: AccountId,
     /// The MPC's CKD (BLS12-381) domain.
     pub(crate) ckd_domain_id: u64,
-    /// (provider, aud) of Hana's console: tokens for these may authorise OIDC owner actions.
+    /// (provider, aud) of Hana's console in force: tokens for these may authorise OIDC owner actions. Read through
+    /// `console_audiences_at`, which also counts matured `pending_console_audiences`.
     pub(crate) console_audiences: Vec<(String, String)>,
     /// Callers whose registrations and proposals the contract pays storage for (the relayer).
     pub(crate) sponsors: Vec<AccountId>,
@@ -131,44 +163,52 @@ pub struct HanaSigner {
     pub(crate) session_queue: LookupMap<u64, sessions::QueueEntry>,
     pub(crate) queue_head: u64,
     pub(crate) queue_tail: u64,
+
+    // ---- v2 (governance batch, docs/governance-spec.md) ----
+    /// Layout version, `STATE_VERSION`. `migrate` refuses any other.
+    pub(crate) state_version: u32,
+    /// How long a posted issuer-key change waits before anyone may execute it.
+    pub(crate) issuer_key_delay_ms: u64,
+    /// A decrease of `issuer_key_delay_ms`, due after `governance_delay_ms`.
+    pub(crate) pending_issuer_key_delay: Option<DelayChange>,
+    /// How long upgrades, owner transfers, withdrawals, delay decreases and a new watchdog's confirm power wait.
+    pub(crate) governance_delay_ms: u64,
+    /// A decrease of `governance_delay_ms`, due after the current governance delay.
+    pub(crate) pending_governance_delay: Option<DelayChange>,
+    /// ≤ `MAX_WATCHDOGS`.
+    pub(crate) watchdogs: Vec<Watchdog>,
+    /// Time-based activation of key changes waits at least until here (raised when a watchdog is removed).
+    pub(crate) keys_slow_until_ms: u64,
+    /// Pending issuer-key changes of every issuer, ≤ `MAX_PENDING_KEY_CHANGES`, in proposal order.
+    pub(crate) key_changes: Vec<PendingKeyChange>,
+    pub(crate) next_key_change: u64,
+    /// Function-call keys the contract added on its own account whose `AddKey` succeeded (the callback confirmed
+    /// it). With `pending_updater_keys`, ≤ `MAX_UPDATER_KEYS`. Only these may be deleted by a watchdog.
+    pub(crate) updater_keys: Vec<PublicKey>,
+    /// Stops every token path, `derive_key` and the executors; never governance, revocation, cancels or views.
+    pub(crate) paused: bool,
+    pub(crate) pending_upgrade: Option<PendingUpgrade>,
+    pub(crate) pending_owner: Option<PendingOwner>,
+    pub(crate) pending_withdrawal: Option<PendingWithdrawal>,
+    /// Console-audience additions waiting for `change_delay_ms`.
+    pub(crate) pending_console_audiences: Vec<PendingSharedClient>,
+    /// When the owner last unpaused (0: never).
+    pub(crate) unpaused_at_ms: u64,
+    /// No scope change executes before this: the last unpause plus the `change_delay_ms` in force then. While paused
+    /// every OIDC owner action fails (`verify_token`), so OIDC owners can't cancel; a change pending across a pause
+    /// (e.g. proposed with a forged key's tokens before the watchdog paused) still gets a full timelock after it.
+    pub(crate) changes_unlock_floor_ms: u64,
+    /// Sessions opened before this can't derive and read as absent: the owner raises it after a forged issuer key was
+    /// active, so the sessions opened with it die with the key (`set_sessions_valid_from_ms`).
+    pub(crate) sessions_valid_from_ms: u64,
+    /// Updater keys whose `AddKey` receipt hasn't resolved yet: `on_updater_key_added` moves each to `updater_keys`
+    /// on success or drops it on failure (e.g. the key was already on the account, possibly as a full-access key).
+    pub(crate) pending_updater_keys: Vec<PublicKey>,
 }
 
 #[near]
 impl HanaSigner {
-    #[init]
-    pub fn new(owner: AccountId, mpc: AccountId, ckd_domain_id: u64, change_delay_ms: u64) -> Self {
-        assert!(change_delay_ms <= MAX_CHANGE_DELAY_MS, "change_delay_ms must be at most 7 days");
-        Self {
-            owner,
-            mpc,
-            ckd_domain_id,
-            console_audiences: vec![],
-            sponsors: vec![],
-            shared_clients: vec![],
-            pending_shared_clients: vec![],
-            change_delay_ms,
-            pending_change_delay: None,
-            public_registration: false,
-            issuers: LookupMap::new(StorageKey::Issuers),
-            iss_index: LookupMap::new(StorageKey::IssIndex),
-            scopes: LookupMap::new(StorageKey::Scopes),
-            client_index: LookupMap::new(StorageKey::ClientIndex),
-            removed_clients: LookupMap::new(StorageKey::RemovedClients),
-            pending_adds: LookupMap::new(StorageKey::PendingAdds),
-            next_scope: 1,
-            sessions: LookupMap::new(StorageKey::Sessions),
-            session_queue: LookupMap::new(StorageKey::SessionQueue),
-            queue_head: 0,
-            queue_tail: 0,
-        }
-    }
-
     // ---- Config (owner only) ----
-
-    pub fn set_owner(&mut self, owner: AccountId) {
-        self.assert_owner();
-        self.owner = owner;
-    }
 
     pub fn set_sponsors(&mut self, sponsors: Vec<AccountId>) {
         self.assert_owner();
@@ -176,14 +216,34 @@ impl HanaSigner {
         self.sponsors = sponsors;
     }
 
+    /// Replaces the console audiences (≤ 10). Audiences dropped from the list stop authorising OIDC owner actions at
+    /// once; new ones count only after `change_delay_ms` (the delay in force now): a console audience's tokens act
+    /// for OIDC owners, so a new one gets the same public window as a new shared client. Pending ones already in the
+    /// list keep their `effective_at_ms`.
     pub fn set_console_audiences(&mut self, audiences: Vec<(String, String)>) {
         self.assert_owner();
         assert!(audiences.len() <= MAX_CONSOLE_AUDIENCES, "Too many console audiences");
-        for (provider, aud) in &audiences {
+        for (i, (provider, aud)) in audiences.iter().enumerate() {
             assert_provider(provider);
             assert_aud(aud);
+            assert!(!audiences[..i].contains(&audiences[i]), "Duplicate console audience");
         }
-        self.console_audiences = audiences;
+        let now = env::block_timestamp_ms();
+        self.apply_matured_config(now);
+        let effective_at_ms = now.saturating_add(self.change_delay_at(now));
+        self.console_audiences.retain(|a| audiences.contains(a));
+        self.pending_console_audiences.retain(|p| audiences.contains(&p.client()));
+        for audience in audiences {
+            if !self.console_audiences.contains(&audience) && !self.pending_console_audiences.iter().any(|p| p.client() == audience) {
+                self.pending_console_audiences.push(PendingSharedClient { provider: audience.0, aud: audience.1, effective_at_ms });
+            }
+        }
+        // With a zero delay the additions are already in force.
+        self.apply_matured_config(now);
+        events::emit(
+            "console_audiences_set",
+            near_sdk::serde_json::json!({ "console_audiences": self.console_audiences, "pending_console_audiences": self.pending_console_audiences }),
+        );
     }
 
     /// Increases apply now. A decrease applies only once the current delay has passed, so the admin can't shorten
@@ -271,26 +331,36 @@ impl HanaSigner {
         );
     }
 
-    /// Anyone: folds matured pending config (shared-client additions, a scheduled `change_delay_ms` decrease) into
-    /// state. Optional: every read and check already treats matured entries as in force.
+    /// Anyone: folds matured pending config (shared-client and console-audience additions, scheduled decreases of
+    /// `change_delay_ms`, `issuer_key_delay_ms` and `governance_delay_ms`) into state. Optional: every read and check
+    /// already treats matured entries as in force.
     pub fn apply_pending_config(&mut self) {
         self.apply_matured_config(env::block_timestamp_ms());
     }
 
     pub fn get_config(&self) -> ConfigView {
         let now = env::block_timestamp_ms();
-        let pending = self.pending_change_delay.clone().filter(|p| now < p.effective_at_ms);
+        let not_yet = |p: &Option<DelayChange>| p.clone().filter(|p| now < p.effective_at_ms);
         ConfigView {
             owner: self.owner.clone(),
             mpc: self.mpc.clone(),
             ckd_domain_id: self.ckd_domain_id,
-            console_audiences: self.console_audiences.clone(),
+            console_audiences: self.console_audiences_at(now),
+            pending_console_audiences: self.pending_console_audiences.iter().filter(|p| now < p.effective_at_ms).cloned().collect(),
             sponsors: self.sponsors.clone(),
             shared_clients: self.shared_clients_at(now),
             pending_shared_clients: self.pending_shared_clients.iter().filter(|p| now < p.effective_at_ms).cloned().collect(),
             change_delay_ms: self.change_delay_at(now),
-            pending_change_delay: pending,
+            pending_change_delay: not_yet(&self.pending_change_delay),
             public_registration: self.public_registration,
+            issuer_key_delay_ms: self.issuer_key_delay_at(now),
+            pending_issuer_key_delay: not_yet(&self.pending_issuer_key_delay),
+            governance_delay_ms: self.governance_delay_at(now),
+            pending_governance_delay: not_yet(&self.pending_governance_delay),
+            paused: self.paused,
+            unpaused_at_ms: self.unpaused_at_ms,
+            changes_unlock_floor_ms: self.changes_unlock_floor_ms,
+            sessions_valid_from_ms: self.sessions_valid_from_ms,
         }
     }
 }
@@ -302,21 +372,29 @@ impl HanaSigner {
 
     /// The timelock in force at `now` (a scheduled decrease counts once its time has come).
     pub(crate) fn change_delay_at(&self, now: u64) -> u64 {
-        match &self.pending_change_delay {
-            Some(p) if now >= p.effective_at_ms => p.change_delay_ms,
-            _ => self.change_delay_ms,
-        }
+        delay_at(self.change_delay_ms, &self.pending_change_delay, now)
+    }
+
+    /// The issuer-key delay in force at `now`.
+    pub(crate) fn issuer_key_delay_at(&self, now: u64) -> u64 {
+        delay_at(self.issuer_key_delay_ms, &self.pending_issuer_key_delay, now)
+    }
+
+    /// The governance delay in force at `now`.
+    pub(crate) fn governance_delay_at(&self, now: u64) -> u64 {
+        delay_at(self.governance_delay_ms, &self.pending_governance_delay, now)
     }
 
     /// Shared clients in force at `now`: the stored list, then pending additions that have matured, in the order
     /// they matured (`effective_at_ms`, ties in the order they were added). `apply_matured_config` appends in the
     /// same order, so the result doesn't depend on whether or when anyone applied them.
     pub(crate) fn shared_clients_at(&self, now: u64) -> Vec<(String, String)> {
-        let mut matured: Vec<&PendingSharedClient> = self.pending_shared_clients.iter().filter(|p| now >= p.effective_at_ms).collect();
-        matured.sort_by_key(|p| p.effective_at_ms); // stable: ties keep insertion order
-        let mut clients = self.shared_clients.clone();
-        clients.extend(matured.into_iter().map(PendingSharedClient::client));
-        clients
+        in_force_at(&self.shared_clients, &self.pending_shared_clients, now)
+    }
+
+    /// Console audiences in force at `now`, in the same order rules as `shared_clients_at`.
+    pub(crate) fn console_audiences_at(&self, now: u64) -> Vec<(String, String)> {
+        in_force_at(&self.console_audiences, &self.pending_console_audiences, now)
     }
 
     /// Whether `client` is a shared client, in force or pending. Such a client can't become a scope client.
@@ -324,16 +402,19 @@ impl HanaSigner {
         self.shared_clients.contains(client) || self.pending_shared_clients.iter().any(|p| p.provider == client.0 && p.aud == client.1)
     }
 
-    /// Moves matured pending shared clients into `shared_clients` and applies a scheduled delay decrease whose time
-    /// has come. Changes nothing anyone can observe through views or checks.
+    /// Moves matured pending shared clients and console audiences into their lists and applies scheduled delay
+    /// decreases whose time has come. Changes nothing anyone can observe through views or checks.
     pub(crate) fn apply_matured_config(&mut self, now: u64) {
-        let (mut matured, pending): (Vec<_>, Vec<_>) = self.pending_shared_clients.drain(..).partition(|p| now >= p.effective_at_ms);
-        matured.sort_by_key(|p| p.effective_at_ms); // same order as shared_clients_at
-        self.pending_shared_clients = pending;
-        self.shared_clients.extend(matured.iter().map(PendingSharedClient::client));
-        if self.pending_change_delay.as_ref().is_some_and(|p| now >= p.effective_at_ms) {
-            self.change_delay_ms = self.change_delay_at(now);
-            self.pending_change_delay = None;
+        fold_matured(&mut self.shared_clients, &mut self.pending_shared_clients, now);
+        fold_matured(&mut self.console_audiences, &mut self.pending_console_audiences, now);
+        for (value, pending) in [
+            (&mut self.change_delay_ms, &mut self.pending_change_delay),
+            (&mut self.issuer_key_delay_ms, &mut self.pending_issuer_key_delay),
+            (&mut self.governance_delay_ms, &mut self.pending_governance_delay),
+        ] {
+            if let Some(p) = pending.take_if(|p| now >= p.effective_at_ms) {
+                *value = p.change_delay_ms;
+            }
         }
     }
 
@@ -355,6 +436,32 @@ impl HanaSigner {
             Promise::new(caller).transfer(refund).detach();
         }
     }
+}
+
+/// `value`, or the scheduled decrease once its time has come.
+fn delay_at(value: u64, pending: &Option<DelayChange>, now: u64) -> u64 {
+    match pending {
+        Some(p) if now >= p.effective_at_ms => p.change_delay_ms,
+        _ => value,
+    }
+}
+
+/// `stored` followed by the entries of `pending` matured at `now`, in the order they matured (ties in insertion
+/// order).
+fn in_force_at(stored: &[(String, String)], pending: &[PendingSharedClient], now: u64) -> Vec<(String, String)> {
+    let mut matured: Vec<&PendingSharedClient> = pending.iter().filter(|p| now >= p.effective_at_ms).collect();
+    matured.sort_by_key(|p| p.effective_at_ms); // stable: ties keep insertion order
+    let mut out = stored.to_vec();
+    out.extend(matured.into_iter().map(PendingSharedClient::client));
+    out
+}
+
+/// Moves the entries of `pending` matured at `now` to the end of `stored`, in the order `in_force_at` lists them.
+fn fold_matured(stored: &mut Vec<(String, String)>, pending: &mut Vec<PendingSharedClient>, now: u64) {
+    let (mut matured, rest): (Vec<_>, Vec<_>) = pending.drain(..).partition(|p| now >= p.effective_at_ms);
+    matured.sort_by_key(|p| p.effective_at_ms);
+    *pending = rest;
+    stored.extend(matured.iter().map(PendingSharedClient::client));
 }
 
 // ---- Shared validation ----

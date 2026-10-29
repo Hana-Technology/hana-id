@@ -4,7 +4,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { OWNER_ACTIONS_GLOBAL_MINUTE, OWNER_ACTIONS_PER_IP_MINUTE } from '../src/handlers.ts';
 import { clearJwksCache } from '../src/jwks.ts';
 import { KeyPair, type KeyPairString } from '@near-js/crypto';
-import { parseRelayerKeys } from '../src/relayer-config.ts';
+import { GOVERNANCE_METHODS, UPDATER_METHODS, parseRelayerKeys } from '../src/relayer-config.ts';
 import { clearViewCaches, parsePendingShared } from '../src/views.ts';
 import { call } from './helpers.ts';
 import { NearMock, type RsaSigner, makeJwt, panic, rsaSigner } from './near-mock.ts';
@@ -116,7 +116,7 @@ describe('POST /v1/owner-actions', () => {
 
   it('rejects methods outside the allowlist', async () => {
     const n = near();
-    for (const method of ['apply_pending_config', 'set_shared_clients', 'create_session', 'derive_key', 'set_issuer_key', 'remove_issuer_key', 'admin_register_scope', 'register_scope', 'set_owner', 'set_sponsors', 'enable_public_registration', 'set_console_audiences', 'set_change_delay_ms', 'prune_sessions', '__proto__']) {
+    for (const method of ['apply_pending_config', 'create_session', 'derive_key', 'register_scope', 'set_owner', 'prune_sessions', '__proto__', ...GOVERNANCE_METHODS, ...UPDATER_METHODS]) {
       const res = await post({ method, args: { scope_id: 's1' } });
       expect(res.status, method).toBe(400);
     }

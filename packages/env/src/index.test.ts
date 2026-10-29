@@ -75,3 +75,59 @@ describe('manifestSchema: rpcFallback', () => {
     expect(same.error?.issues[0]?.message).toContain('different endpoint');
   });
 });
+
+describe('manifestSchema: watchdog', () => {
+  const watchdog = (over: Record<string, unknown> = {}) => ({
+    account: 'watchdog.example.testnet',
+    cloudflare: { accountId: 'a'.repeat(32), workerName: 'hana-id-watchdog-test', d1Name: 'hana-id-watchdog-test' },
+    alertEmails: ['a@example.com', 'b@example.com'],
+    alertFrom: 'alerts@notify.example.com',
+    pager: 'ntfy',
+    ...over,
+  });
+  // The service's account is also one of the contract's `watchdogs` (deploy-contract's add_watchdog).
+  const withWatchdog = (w: unknown) => ({ ...raw(), watchdogs: [(w as { account?: unknown } | null)?.account], watchdog: w });
+  const issues = (w: unknown) => manifestSchema.safeParse(withWatchdog(w)).error?.issues.map((i) => i.message) ?? [];
+
+  it('is optional', () => {
+    const { watchdog: _, ...base } = raw();
+    expect(manifestSchema.safeParse(base).success).toBe(true);
+    expect(manifestSchema.parse({ ...base, watchdogs: [watchdog().account], watchdog: watchdog() }).watchdog?.pager).toBe('ntfy');
+  });
+
+  it("must be one of the contract's watchdogs", () => {
+    const { watchdogs: _, ...base } = raw();
+    const msg = 'watchdog.account watchdog.example.testnet must be listed in watchdogs (the contract\'s watchdog accounts)';
+    expect(manifestSchema.safeParse({ ...base, watchdog: watchdog() }).error?.issues.map((i) => i.message)).toEqual([msg]);
+    expect(manifestSchema.safeParse({ ...base, watchdogs: ['other.example.testnet'], watchdog: watchdog() }).error?.issues.map((i) => i.message)).toEqual([msg]);
+    expect(manifestSchema.safeParse({ ...base, watchdogs: ['other.example.testnet', watchdog().account], watchdog: watchdog() }).success).toBe(true);
+  });
+
+  it('accepts each paging app and an UNSET Cloudflare account id', () => {
+    for (const pager of ['ntfy', 'pushover', 'pagerduty']) expect(issues(watchdog({ pager }))).toEqual([]);
+    expect(issues(watchdog({ cloudflare: { ...watchdog().cloudflare, accountId: 'UNSET' } }))).toEqual([]);
+    expect(issues(watchdog({ digestHourUtc: 23 }))).toEqual([]);
+  });
+
+  it('rejects bad fields', () => {
+    expect(issues(watchdog({ pager: 'sms' })).length).toBeGreaterThan(0);
+    expect(issues(watchdog({ alertEmails: [] })).length).toBeGreaterThan(0);
+    expect(issues(watchdog({ alertEmails: ['not-an-email'] })).length).toBeGreaterThan(0);
+    expect(issues(watchdog({ alertFrom: 'x' })).length).toBeGreaterThan(0);
+    expect(issues(watchdog({ digestHourUtc: 24 })).length).toBeGreaterThan(0);
+    expect(issues(watchdog({ cloudflare: { ...watchdog().cloudflare, accountId: 'ABC' } }))[0]).toContain('Cloudflare account id');
+    expect(issues(watchdog({ cloudflare: { ...watchdog().cloudflare, workerName: 'Bad_Name' } }))[0]).toContain('Worker name');
+    expect(issues(watchdog({ account: 'Not An Account' })).length).toBeGreaterThan(0);
+  });
+
+  it('is a different account from those it watches, and a different Worker from the API', () => {
+    const m = raw();
+    for (const field of ['signer', 'relayer', 'owner', 'mpc']) {
+      // (signer/relayer/owner also trip the `watchdogs` rule, since the helper lists the account there too.)
+      expect(issues(watchdog({ account: m[field] }))).toContain(`watchdog.account must not be the ${field} account`);
+    }
+    const api = (m.cloudflare as { workerName: string }).workerName;
+    expect(issues(watchdog({ cloudflare: { ...watchdog().cloudflare, workerName: api } }))[0]).toContain("differ from the API's Worker name");
+    expect(issues(watchdog({ alertEmails: ['a@example.com', 'a@example.com'] }))).toEqual(['Duplicate alert email']);
+  });
+});

@@ -1,6 +1,7 @@
 // On-chain views used for the API's early scope checks, with small per-isolate caches.
 import { hex } from './bytes.ts';
 import type { Env } from './env.ts';
+import { issuerKids } from './issuer-keys.ts';
 import { Rpc } from './near/rpc.ts';
 
 export class TtlCache<V> {
@@ -85,6 +86,8 @@ export interface ConfigView {
   shared_clients: [string, string][];
   /** Additions not in force when read; one counts as shared once `effective_at_ms` has passed (the view may be cached). */
   pending_shared_clients: PendingSharedClient[];
+  /** The contract is paused (governance batch): token paths, derive_key and the executors panic `Paused`. */
+  paused: boolean;
 }
 
 export interface PendingChangeView {
@@ -104,8 +107,9 @@ export interface ScopeView {
   allow_shared: boolean;
 }
 
-/** get_config, ≤ 60 s. */
+/** get_config, ≤ 60 s; ≤ 10 s while it says paused, so an unpause reaches logins quickly. */
 const configCache = new TtlCache<ConfigView>(60_000, 1);
+const PAUSED_CONFIG_TTL_MS = 10_000;
 /** scope id → scope (or null), ≤ 10 s; dropped after every owner action relayed for that scope. */
 const scopeViewCache = new TtlCache<ScopeView | null>(10_000);
 
@@ -126,17 +130,67 @@ export function parsePendingShared(raw: unknown): PendingSharedClient[] {
   });
 }
 
+/** A get_config read in flight: concurrent misses (a login's scope and governance checks) share it. */
+let configRead: Promise<ConfigView> | null = null;
+
 export async function getConfig(env: Env): Promise<ConfigView> {
   const cached = configCache.get('config');
   if (cached) return cached;
-  const raw = await new Rpc(env.NEAR_RPC).view<{ console_audiences?: unknown; shared_clients?: unknown } | null>(env.SIGNER_ACCOUNT, 'get_config', {});
-  const value: ConfigView = {
-    console_audiences: Array.isArray(raw?.console_audiences) ? raw.console_audiences.filter(isPair) : [],
-    shared_clients: Array.isArray(raw?.shared_clients) ? raw.shared_clients.filter(isPair) : [],
-    pending_shared_clients: parsePendingShared(raw),
-  };
-  configCache.set('config', value);
-  return value;
+  if (configRead) return configRead;
+  configRead = (async () => {
+    const raw = await new Rpc(env.NEAR_RPC).view<{ console_audiences?: unknown; shared_clients?: unknown; paused?: unknown } | null>(env.SIGNER_ACCOUNT, 'get_config', {});
+    const value: ConfigView = {
+      console_audiences: Array.isArray(raw?.console_audiences) ? raw.console_audiences.filter(isPair) : [],
+      shared_clients: Array.isArray(raw?.shared_clients) ? raw.shared_clients.filter(isPair) : [],
+      pending_shared_clients: parsePendingShared(raw),
+      // Only an explicit true pauses (a v1 contract has no such field and is never paused).
+      paused: raw?.paused === true,
+    };
+    configCache.set('config', value, Date.now(), value.paused ? PAUSED_CONFIG_TTL_MS : undefined);
+    return value;
+  })();
+  try {
+    return await configRead;
+  } finally {
+    configRead = null;
+  }
+}
+
+/**
+ * provider → the kids active on chain (`get_issuer`), ≤ 60 s. A kid not in the cached set re-reads the view, at
+ * most once per ISSUER_REFETCH_MIN_MS per provider and isolate (concurrent misses share one read), so a key that
+ * just went live is seen within seconds while a burst of tokens with a pending kid costs one view call.
+ */
+const issuerCache = new TtlCache<{ kids: ReadonlySet<string>; readAt: number }>(60_000, 16);
+const issuerReads = new Map<string, Promise<ReadonlySet<string>>>();
+export const ISSUER_REFETCH_MIN_MS = 10_000;
+
+async function readIssuerKids(env: Env, provider: string): Promise<ReadonlySet<string>> {
+  const inFlight = issuerReads.get(provider);
+  if (inFlight) return inFlight;
+  const read = (async () => {
+    // An issuer the contract doesn't know has no active key: every token of it would fail on chain.
+    const kids = new Set(issuerKids(await new Rpc(env.NEAR_RPC).view<unknown>(env.SIGNER_ACCOUNT, 'get_issuer', { provider })) ?? []);
+    issuerCache.set(provider, { kids, readAt: Date.now() });
+    return kids;
+  })();
+  issuerReads.set(provider, read);
+  try {
+    return await read;
+  } finally {
+    issuerReads.delete(provider);
+  }
+}
+
+/**
+ * Whether `kid` is an active key of `provider` on chain, i.e. whether `verify_token` would find it (a key still in
+ * its governance delay is not). Throws when the view can't be read.
+ */
+export async function isIssuerKeyActive(env: Env, provider: string, kid: string, now: number = Date.now()): Promise<boolean> {
+  const cached = issuerCache.get(provider, now);
+  if (cached?.kids.has(kid)) return true;
+  if (cached && now - cached.readAt < ISSUER_REFETCH_MIN_MS) return false;
+  return (await readIssuerKids(env, provider)).has(kid);
 }
 
 /** Shared clients in force at `now`: the listed ones plus pending additions that matured since the (cached) read. */
@@ -280,4 +334,7 @@ export function clearViewCaches(): void {
   sessionCache.clear();
   configCache.clear();
   scopeViewCache.clear();
+  issuerCache.clear();
+  issuerReads.clear();
+  configRead = null;
 }

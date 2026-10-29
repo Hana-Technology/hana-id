@@ -166,6 +166,10 @@ export interface Chain extends NearMock {
   allowShared: Set<string>;
   /** Scope ids get_scope answers null for. */
   missingScopes: Set<string>;
+  /** Google kids active on chain (get_issuer); `google`'s kid by default. */
+  activeKids: Set<string>;
+  /** get_config().paused. */
+  paused: boolean;
 }
 
 /**
@@ -174,7 +178,7 @@ export interface Chain extends NearMock {
  * the `scope_id` argument; shared client → `scope_id` if it allows shared login). Sessions are stored and served by
  * get_session and session_key_in_use; derive_key and revoke_session enforce the contract's session-use rules (live
  * session, counter = used + 1, the use limit for derive_key) and revoke_session leaves a tombstone, as on chain.
- * Google's JWKS serves `google`.
+ * Google's JWKS serves `google`, whose kid is active on chain (`activeKids`, get_issuer); `paused` is get_config's.
  */
 export function chain(clients: Record<string, string> = {}, opts: { shared?: string[]; allowShared?: string[] } = {}): Chain {
   const near: Chain = Object.assign(new NearMock(), {
@@ -184,8 +188,11 @@ export function chain(clients: Record<string, string> = {}, opts: { shared?: str
     pendingShared: [] as unknown[],
     allowShared: new Set(opts.allowShared ?? []),
     missingScopes: new Set<string>(),
+    activeKids: new Set([google.jwk.kid]),
+    paused: false,
   });
   near.jwks = { keys: [google.jwk] };
+  near.views.get_issuer = (a) => (a.provider === 'google' ? { provider: 'google', iss_values: [GOOGLE_ISS, 'accounts.google.com'], kids: [...near.activeKids] } : null);
   near.views.scope_for_client = (a) => (a.provider === 'google' ? (near.clients[a.aud as string] ?? null) : null);
   near.views.get_session = (a) => {
     const s = near.sessions.get(JSON.stringify(a.session_public_key));
@@ -202,6 +209,7 @@ export function chain(clients: Record<string, string> = {}, opts: { shared?: str
     pending_shared_clients: near.pendingShared,
     change_delay_ms: 0,
     public_registration: false,
+    paused: near.paused,
   });
   near.views.get_scope = (a) => {
     const id = a.scope_id as string;

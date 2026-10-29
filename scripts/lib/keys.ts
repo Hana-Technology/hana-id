@@ -26,10 +26,12 @@ export function credentialsDir(network: string, home: string = homedir()): strin
   return join(home, '.near-credentials', network);
 }
 
-function parseKey(raw: string, source: string): KeyPair {
+/** Parses a `ed25519:…` secret key string; the error names only `source`, never the text. */
+export function parseKeyPair(raw: string, source: string): KeyPair {
   if (!/^(ed25519|secp256k1):[1-9A-HJ-NP-Za-km-z]+$/u.test(raw)) throw new Error(`${source} does not hold a NEAR secret key`);
   return KeyPair.fromString(raw as KeyPairString);
 }
+const parseKey = parseKeyPair;
 
 /**
  * Finds a full-access key for `accountId` in the legacy keychain: `<dir>/<account>.json`, else the first

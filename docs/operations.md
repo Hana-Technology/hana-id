@@ -1,6 +1,7 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-10-28 (commit 58edee9).
+Last verified against code: 2026-10-29 (branch `gov/scripts`, on `gov/contract` 5dc91cf; the governance sections
+are new there).
 
 Commands and flags are from `scripts/`, `apps/api/scripts/gen-wrangler.ts`, `apps/api/scripts/pages-wrangler.ts`,
 `apps/demo/scripts/gen-wrangler.ts`, the `package.json` scripts and their tests. Endpoints:
@@ -18,10 +19,12 @@ Never print, log, paste or commit any of these. The scripts never print them eit
 | Full-access keys of `signer`, `relayer`, `owner` | `~/.near-credentials/testnet/<account>.json` (or `<account>/*.json`) | near CLI `save-to-legacy-keychain`; scripts only read them |
 | Session-pool relayer keys (`RELAYER_KEYS`) | `.secrets/<env>/relayer-keys.json` | `deploy-contract` |
 | Owner-pool relayer keys (`OWNER_RELAYER_KEYS`) | `.secrets/<env>/owner-relayer-keys.json` | `deploy-contract` |
-| Keys-updater key (`KEYS_UPDATER_KEY`) | `.secrets/<env>/keys-updater.json` (`private_key`) | `deploy-contract` |
+| Keys-updater key (`KEYS_UPDATER_KEY`) | `.secrets/<env>/keys-updater.json` (`private_key`) | `deploy-contract` (generated, then installed on `signer` by the contract's `add_updater_key`) |
+| Council member keys (dev envs only, D81) | `.secrets/<env>/council/<member>.json` (`{account_id, public_key, private_key}`), full-access keys of throwaway testnet accounts | `council-setup`; other envs' members hold their own keys (mainnet: Ledgers, never on disk) |
 | `VAULT_KEK` (and, during a rotation, `VAULT_KEK_PREVIOUS`) | `.secrets/<env>/vault-kek` (and `vault-kek.previous`); the only copy, since Cloudflare can't give a secret back | `vault-kek` (below) |
-| Worker copies of the above | Cloudflare Worker secrets | `wrangler secret put` |
-| Local dev copies | `apps/api/.dev.vars` (0600) | `gen --dev-vars` |
+| Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its Resend key, Slack webhook, paging-app credentials, `HEARTBEAT_URL`) | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
+| Worker copies of the above | Cloudflare Worker secrets (the watchdog's on its own Cloudflare account) | `wrangler secret put` (watchdog: `wrangler secret bulk`) |
+| Local dev copies | `apps/api/.dev.vars`, `apps/watchdog/.dev.vars` (0600) | `gen --dev-vars` |
 
 `.secrets/` is gitignored, directories 0700, files 0600 (`scripts/lib/secrets.ts` refuses to read a file that group
 or others can read). Google ID tokens, CKD outputs and derived keys are never stored anywhere.
@@ -56,7 +59,12 @@ Every name comes from `envs/<env>.json` (schema: `packages/env/src/schema.ts`; n
 |---|---|---|
 | `signer` | holds `hana-signer`; part of every user's address | ≥ 6 NEAR (contract storage, scope registrations) |
 | `relayer` | function-call keys that pay the API's gas (both pools) | ≈ 7 NEAR |
-| `owner` | contract admin (`new(owner, …)`), signs `scope:register` | ≈ 1 NEAR |
+| `owner` | contract admin (`new(owner, …)`): a plain account, or the council DAO once it accepted ownership | ≈ 1 NEAR (an account owner) |
+| `ownerKind` | `account` (the owner's keychain key signs) or `sputnik` (`owner` is `council.dao`; owner calls are DAO proposals) | default `account`; `deploy-contract --transfer-owner` switches it after the DAO accepts |
+| `council` (optional) | `{factory, dao, members}`: the owner council, a Sputnik DAO v2 `<name>.<factory>` with exactly three members, 2 of 3 for every proposal kind (D81) | sandbox-dev: `sputnikv2.testnet`, members funded by `council-setup` (2 NEAR each), DAO 6 NEAR |
+| `watchdogs` | watchdog accounts (≤ 3) the contract lets cancel, confirm and pause | default none; `add_watchdog` is skipped until the account exists |
+| `issuerKeyDelayMs`, `governanceDelayMs` | `new` / `migrate_v1` delays (D80) | sandbox-dev: 120 000 and 60 000; mainnet 2 h (provisional) and 72 h. Outside dev envs `deploy-contract` (and `--creation-plan`) refuses an issuer-key delay below the security bound 3·(W + T) = 18 min and a governance delay below 24 h (mainnet: 72 h); `@hana-id/env` `governanceDelayProblems`. sandbox-dev's 2 min deliberately violates the bound for fast drills (D80): its plans carry a warning, never copy its delays to another env |
+| `allowSignerFullAccessKey` | the signer may keep a full-access key (D86) | only `local*` / `sandbox*` testnet envs; sandbox-dev only among committed manifests |
 | `mpc` | the NEAR MPC contract (exists already; not ours) | — |
 | `ckdDomainId`, `ckdNetworkKey` | CKD domain and the pinned MPC public key | pin with `fetch-ckd-key` |
 | `rpc`, `apiUrl` | NEAR RPC; the deployed Worker URL | `apiUrl` is known only after the first deploy |
@@ -134,14 +142,20 @@ the signer is part of every address. Dev-only privileges (loopback origins, part
    ```
 
    Flags: `--relayer-keys N` (1..20, default 3), `--relayer-allowance <NEAR>` (2), `--owner-relayer-keys N` (1..5,
-   default 1), `--owner-relayer-allowance <NEAR>` (0.5), `--updater-allowance <NEAR>` (1), `--upgrade` (code only, no
-   `new`), `--wasm <file>`, `--skip-build`. Pass the same allowance flags on every re-run if you raised them (a key
-   with a larger allowance than the flag is a blocker). Shared clients take effect `changeDelayMs` after this.
+   default 1), `--owner-relayer-allowance <NEAR>` (0.5), `--upgrade` (see [Governance](#governance-owner-council-upgrades-migration)),
+   `--wasm <file>`, `--skip-build`, `--transfer-owner`, `--member <m>`, `--approve-with <m>`, `--creation-plan`. Pass
+   the same allowance flags on every re-run if you raised them (a key with a larger allowance than the flag is a
+   blocker). Shared clients take effect `changeDelayMs` after this. A plain deploy calls `new(owner, mpc,
+   ckd_domain_id, change_delay_ms, issuer_key_delay_ms, governance_delay_ms, watchdogs, updater_keys: [])` and needs
+   the signer's full-access key, so only envs with `allowSignerFullAccessKey` deploy this way; any other env is
+   created with the one-batch creation transaction (`--creation-plan`, below). The updater key is then installed by
+   the owner's `add_updater_key`.
 
-5. **Post Google's keys** once (the hourly cron keeps them in sync afterwards):
+5. **Post Google's keys** once (the API cron keeps them in sync afterwards). On the governance contract this proposes
+   them; they go live when the watchdog confirms them or after `issuer_key_delay_ms` (re-run with `--execute`):
 
    ```sh
-   corepack pnpm --filter @hana-id/scripts run post-google-keys <env> [--dry-run] [--as-owner]
+   corepack pnpm --filter @hana-id/scripts run post-google-keys <env> [--dry-run] [--execute]
    ```
 
 6. **D1 and Worker config**:
@@ -215,6 +229,190 @@ pool's methods in `apps/api/src/relayer-config.ts`). Then: set `vaultOrigin` / `
 migration `0003_vault.sql` (`migrations apply … --remote`), `vault-kek <env> init` (step 7), deploy the API (step 8),
 build and deploy the page Workers (step 9), and register `{authOrigin}/login/callback` (step 10).
 
+## Governance (owner council, upgrades, migration)
+
+The governance contract (`docs/governance-spec.md`, D33, D80–D86; methods in `docs/contract-interface.md`) puts
+issuer keys and code changes behind public delays and makes the owner a 2-of-3 Sputnik DAO v2 council. The scripts:
+
+| What | Command |
+|---|---|
+| Create the dev council (accounts + DAO) | `council-setup <env> [--yes] [--funder <account>] [--member-balance 2]` |
+| Any owner call through the owner | `admin <env> owner:call <method> --args '<json>' [--member <m>] [--approve-with <m>] [--yes]` |
+| Vote / list council proposals | `admin <env> owner:vote <id> --member <m> [--yes]` · `admin <env> owner:proposals [--json]` |
+| Governance state and findings | `admin <env> governance:status [--json]` |
+| Migrate v1 → v2, upgrade, hand the contract to the DAO | `deploy-contract <env> --upgrade` · `--transfer-owner [--approve-with <m>]` |
+| Print the mainnet-style signer creation batch | `deploy-contract <env> --creation-plan [--wasm <reproducible build>]` |
+
+All are `corepack pnpm --filter @hana-id/scripts run …`. Each prints its plan and sends nothing without `--yes`
+(`--creation-plan` never sends).
+
+### Owner council (Sputnik DAO v2, D81)
+
+The DAO code and policy are pinned in `contracts/sputnik/` (`pin.json`: v3.31, `code_hash`
+`AA4nA45vauiac3jdVwJTzSdUP3oj2r1fDaPAb2mHdgcH`, 539 647 bytes; `policy.json`: one `council` role with exactly the
+manifest's three members, `RoleWeight` threshold `[1, 2]` for every proposal kind = 2 of 3, no `Everyone` role, no
+`RemoveProposal`, bond 0.1 NEAR, 7-day proposals). The sandbox test `sputnik_dao_owner_2_of_3` checks that wasm with
+that policy; the scripts read the same files. `deploy-contract` checks the DAO's `get_policy` against it (not only
+its code hash) before `--transfer-owner` and on every run of a council-owned env, and blocks on any role, member,
+permission or vote-policy difference (`sputnik.ts` `policyProblems`): a staging or mainnet DAO is created by hand, so
+this is the check that it really is 2 of 3 for every kind. The watchdog alerts critical on any later change of the
+owner DAO's policy or code (`owner_policy`, `owner_code_hash`).
+
+**What was verified (2026-10-29), and how.** From the pinned commit of near-daos/sputnik-dao-contract: the factory's
+`create(name, args)` takes base64 JSON `{config, policy}`, needs a deposit of at least (code bytes + 32) × 10¹⁹ yocto
+(`ERR_NOT_ENOUGH_DEPOSIT`; 5.397 NEAR for the pinned wasm, council-setup sends 6) and refunds it if `new` fails;
+`add_proposal({proposal: {description, kind}})` needs the bond and isn't a vote; `act_proposal(id, action, memo)`
+executes on the vote that reaches the threshold; `to_weight` is min(⌊a·n/b⌋ + 1, n). By read-only RPC views of
+testnet: `sputnikv2.testnet` exists, `get_default_code_hash` = the pinned `code_hash`, `get_default_version` = [3, 31].
+From near-cli-rs's `create-account fund-myself` source: a top-level `<name>.testnet` account is created by the
+`testnet` registrar's `create_account({new_account_id, new_public_key})` with the initial balance attached, 30 Tgas.
+**Not verified on testnet yet** (that needs real transactions, which agents don't send): that a DAO created this way
+and a proposal round trip behave as in the sandbox, and the gas `create` really burns (council-setup attaches
+300 Tgas). The first `council-setup sandbox-dev --yes` and `owner:call … --approve-with` runs are that check;
+`owner:proposals` and `governance:status` show the result.
+
+**sandbox-dev** (dev envs only: `local*` / `sandbox*` on testnet):
+
+```sh
+corepack pnpm --filter @hana-id/scripts run council-setup sandbox-dev          # plan
+corepack pnpm --filter @hana-id/scripts run council-setup sandbox-dev --yes    # 3 × create_account + factory create
+```
+
+It generates each member key into `.secrets/sandbox-dev/council/<member>.json` (0600) **before** the account exists,
+creates the accounts from the funder (default the manifest `owner`, from the keychain; ~12.4 NEAR in all), then the
+DAO, and checks the stored policy. Re-running checks what exists: a factory whose default code isn't the pin (re-pin
+and re-run the sandbox test first), a member that exists without its key file, or a DAO with other code or another
+council, threshold, roles or permissions stops the plan.
+
+**Other envs**: council-setup refuses them. Each member creates their own account and keeps their own key (mainnet:
+the founders' Ledgers and the offline backup key, D81); the DAO is created once by hand with the same factory call
+(`scripts/lib/sputnik.ts` `factoryCreateArgs`, the same `policy.json`). The scripts never read a council key from
+disk for mainnet.
+
+### Owner actions through the council
+
+`owner:call` sends one owner-only method (the list is `OWNER_METHODS` in `scripts/lib/contract.ts`) through the
+manifest's owner:
+
+- `ownerKind: "account"`: the owner's keychain key signs it.
+- `ownerKind: "sputnik"`: a `FunctionCall` proposal (receiver `signer`, the JSON args, no deposit, 100 Tgas or
+  `--gas`) by `--member` (dev envs: default the first member). On dev envs `--approve-with <second member>` also casts
+  the proposer's and that member's approvals, so the call executes in the same command. Elsewhere the command only
+  proposes and prints, per member, the `near contract call-function as-transaction <dao> act_proposal … sign-with-ledger`
+  command to sign. `--approve-with` is refused outside dev envs.
+- `accept_owner` always goes through the council (the account accepting is the proposed owner, the DAO).
+- An open proposal for exactly the same call is reused, so a re-run never duplicates one: same receiver, method,
+  args, deposit (none) and gas, and a description starting `hana-id <env>: ` (the scripts' own). An open proposal for
+  the same method and args that differs in gas, deposit or description is never reused: the command prints `WARNING:
+  open proposal #N … a different gas / deposit / description; not reusing it`, then proposes anew. Reject the stray one
+  (or let it expire) if nobody wants it. A call the contract refuses leaves the proposal `Failed` and the command fails.
+
+```sh
+corepack pnpm --filter @hana-id/scripts run admin sandbox-dev owner:call unpause --approve-with hana-id-council-b-dev1.testnet --yes
+corepack pnpm --filter @hana-id/scripts run admin sandbox-dev owner:proposals
+corepack pnpm --filter @hana-id/scripts run admin sandbox-dev owner:vote 4 --member hana-id-council-c-dev1.testnet --yes
+```
+
+`deploy-contract` and `admin scope:register` route their owner steps the same way (both take `--member` /
+`--approve-with`). With a council owner and no `--approve-with`, `deploy-contract` stops after the first step that
+was only proposed; re-run it once that proposal is approved.
+
+### Governance migration (sandbox-dev)
+
+`docs/governance-spec.md` "Migration plan → sandbox-dev", as commands. Same signer account, migrated in place: no
+address changes (the signer id, the path and the CKD request are untouched).
+
+1. Merge the contract, API (sync with the new updater methods) and script changes; tests pass.
+2. `council-setup sandbox-dev --yes` (above). Create the watchdog account (`watchdogs[0]`) with near CLI when the
+   watchdog service is ready; until it exists `deploy-contract` skips `add_watchdog` with a warning.
+3. `deploy-contract sandbox-dev --upgrade` (read the plan), then `--yes`. One run:
+   1. `DeployContract` + `migrate_v1(issuer_key_delay_ms, governance_delay_ms)` from the manifest, **one
+      transaction** signed by the signer's full-access key (a panicking `migrate_v1` rolls the deploy back);
+   2. `add_updater_key(<new key>)` by the owner; the new key is generated into `.secrets/sandbox-dev/keys-updater.json`
+      first (replacing the v1 key's file: that key is deleted next);
+   3. `DeleteKey(<v1 updater key>)` with the signer's full-access key (left in place it could still propose keys);
+   4. `add_watchdog(<watchdog>)` by the owner (its confirm power starts after `governance_delay_ms`).
+
+   Then upload the new `KEYS_UPDATER_KEY` (create step 7) and deploy the API: until then the API's JWKS sync fails
+   (safe: keys only change by proposal). Check `get_scope("global")`, `get_issuer("google")`, a live session and a
+   smoke wallet's addresses.
+4. Watchdog service, alerts and the rotation and pause drills: the watchdog batch (`apps/watchdog`).
+5. `deploy-contract sandbox-dev --transfer-owner --yes`: `propose_owner(<council DAO>)` by the old owner. After
+   `governance_delay_ms` (60 s): `deploy-contract sandbox-dev --transfer-owner --approve-with <member> --yes`: the DAO's
+   `accept_owner` proposal, approved by two members. On success the script sets `"owner": "<dao>"` and
+   `"ownerKind": "sputnik"` in `envs/sandbox-dev.json`; commit that change.
+6. Upgrade drill: rebuild with a no-op change, `deploy-contract sandbox-dev --upgrade --approve-with <member> --yes`
+   (the DAO's `propose_upgrade(hash)`), wait `governance_delay_ms`, then `deploy-contract sandbox-dev --upgrade
+   --skip-build --yes` (`execute_upgrade`). Check `view_account.code_hash`.
+7. The signer keeps its full-access key (D86, `allowSignerFullAccessKey: true`); `deploy-contract sandbox-dev` must
+   show no blockers, and `admin sandbox-dev governance:status` no findings.
+
+### Upgrading the governance contract
+
+`deploy-contract <env> --upgrade` never sends a raw `DeployContract` to a v2 contract:
+
+- No pending upgrade, or a different one: build (or `--wasm` / `--skip-build`), then `propose_upgrade(<code_hash>)`
+  through the owner (`code_hash` = base58 sha256 of the wasm, NEAR's `view_account.code_hash` format). A different
+  pending hash is replaced, with a warning.
+- The same hash pending and not yet due: nothing to do; the plan prints when it is executable.
+- Due: `execute_upgrade` with the raw wasm as the input (not JSON), 300 Tgas, signed by the relayer's full-access key
+  (anyone may execute). The deploy and the new code's `migrate` are one receipt: if `migrate` fails the old code stays,
+  the pending upgrade is consumed, and the script fails with "its migrate failed"; propose a fixed build.
+
+Re-run with `--skip-build` (or the same `--wasm`) to execute, so the hash is the proposed one. For a mainnet manifest
+the build must be reproducible (`cargo near build reproducible-wasm`) and its hash, commit and command published
+before the proposal (D86); the scripts refuse every non-testnet manifest today.
+
+### Creating a signer with governance in place (mainnet-style)
+
+`deploy-contract <env> --creation-plan [--wasm <reproducible build>] [--updater-public-key <pk>]
+[--creation-public-key <pk>]` prints, and never sends, the signer account's first transaction: `DeployContract` +
+`new(owner = council.dao, mpc, ckd_domain_id, change_delay_ms, issuer_key_delay_ms, governance_delay_ms, watchdogs,
+updater_keys: [<updater key>])` + `DeleteKey(<creation key>)`, signed by the creation key. It has **no `AddKey`**:
+`new` installs the updater key itself with exactly `UPDATER_METHODS` and tracks it (an `AddKey` of the same key in
+the batch would make that promise fail and leave the key untracked, which `deploy-contract` blocks on;
+`docs/contract-interface.md` "new"). The mainnet run is the user's alone (`docs/governance-spec.md` "Migration plan →
+Mainnet"); afterwards `deploy-contract <env>` must show no blockers.
+
+### Blockers on the signer's keys
+
+On a governance contract `deploy-contract` compares `view_access_key_list(<signer>)` with
+`get_governance().updater_keys`:
+
+- a full-access key on the signer stops every env without `allowSignerFullAccessKey` (only `local*` / `sandbox*`
+  testnet manifests may set it; a test keeps it to sandbox-dev among committed ones). The fix is a `DeleteKey` signed
+  by that key; afterwards code changes only through `propose_upgrade` / `execute_upgrade`;
+- every function-call key that isn't a tracked updater key stops the plan (the fix: `DeleteKey` with the full-access
+  key where one is allowed, else the owner's `delete_updater_key`, which may delete any key). The exception is the v1
+  updater key, which the plan deletes itself;
+- a tracked key with other methods, another receiver or more than 1 NEAR of allowance stops it; a tracked key missing
+  from the account is a warning.
+
+### Governance status for the admin portal (batch C hand-off)
+
+The admin portal (batch C) doesn't exist yet. Its "Security & monitoring" view (D83) and pending-upgrades page (D86)
+read these sources, all read-only:
+
+- **Contract** (through the portal's own RPC): the views and NEP-297 events in `docs/contract-interface.md`
+  "Monitoring hand-off".
+- **Council DAO**: `get_policy`, `get_last_proposal_id` and `get_proposals({from_index, limit})` on `council.dao` (=
+  `owner` once `ownerKind` is `sputnik`): pending owner actions with their approvals (`votes`); expiry =
+  `submission_time` + `proposal_period` (ns). A `FunctionCall` proposal's calls are `kind.FunctionCall.actions[i]`
+  with base64 JSON `args`; `admin <env> owner:proposals --json` prints them decoded.
+- **One snapshot**: `admin <env> governance:status --json` prints `{env, signer, owner: {account, kind},
+  observedAtMs, contract: {codeHash, stateVersion}, config, governance, keyChanges, activeKids, signerKeys:
+  [{publicKey, permission, tracked}], council: {dao, policy, openProposals}, findings: [string]}`. `findings` are the
+  checks the portal must show as problems: untracked signer keys, a full-access key where none is allowed, a tracked
+  key with the wrong permission or missing, paused, a pending upgrade / owner transfer / withdrawal, no watchdog, a
+  due key change nobody executed, a contract owner other than the manifest's, a missing DAO, a council DAO whose
+  `get_policy` isn't exactly the manifest's council at 2 of 3 for every kind (or can't be read), and on-chain
+  delays below the non-dev floors. The portal's Worker
+  makes the same reads itself (`scripts/lib/admin-owner.ts` `governanceStatus` is the reference implementation).
+- **API**: `GET /v1/governance` serves the contract part already normalised, with JWKS verdicts and the cron's last
+  run ([below](#governance-status-get-v1governance)); not independent of Hana's main Cloudflare account.
+- **Watchdog**: its own status (heartbeat, verdicts, actions, alerts, acks) from its `GET /status`, `/alerts`,
+  `/actions` and `POST /alerts/:id/ack` (`apps/watchdog/README.md` "Status endpoint").
+
 ## Local API (`wrangler dev`)
 
 ```sh
@@ -252,14 +450,21 @@ admin <env> app:resume         --app <app id | publishable key> [--remote]
 admin <env> app:list [--remote]
 admin <env> app:settings <app id | publishable key> [--persistence session|none] [--session-ttl 12h] [--idle-ttl 2h]
              [--raw-sign off|approval] [--google-web-client <client id>|default] [--auto-approve <policy.json>|off] [--remote]
-admin <env> scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […] [--yes]
+admin <env> scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […]
+             [--member <council member>] [--approve-with <council member>] [--yes]
 admin <env> issuer-keys:lead-times [--remote]
+admin <env> owner:call <method> [--args '<json>'] [--gas <Tgas>] [--member <m>] [--approve-with <m>] [--yes]
+admin <env> owner:vote <proposal id> --member <m> [--yes]
+admin <env> owner:proposals [--limit 20] [--json]
+admin <env> governance:status [--json]
 ```
+
+The `owner:*` and `governance:status` commands: [Governance](#governance-owner-council-upgrades-migration).
 
 Run as `corepack pnpm --filter @hana-id/scripts run admin <env> <command> …`. Unknown flags are errors.
 
-- `scope:register`: `admin_register_scope` signed by `owner`'s keychain key; prints the call and stops without
-  `--yes`. 1..5 owners, ≤ 10 clients; `--client` required unless `--allow-shared`; a shared client ID is refused as
+- `scope:register`: `admin_register_scope` through the owner (`owner`'s keychain key, or a council proposal with
+  `--member` / `--approve-with`); prints the call and stops without `--yes`. 1..5 owners, ≤ 10 clients; `--client` required unless `--allow-shared`; a shared client ID is refused as
   `--client`. Prints the contract-assigned id (`s1`, `s2`, …).
 
   ```sh
@@ -317,8 +522,25 @@ only sender (another sender costs an `InvalidNonce` retry).
 
 ### Keys-updater key
 
-Same steps with `.secrets/<env>/keys-updater.json` (key on `signer`), then re-upload `KEYS_UPDATER_KEY`. The plan
-blocks on any other function-call key on `signer` that can call `set_issuer_key` / `remove_issuer_key`.
+On the governance contract (layout v2) the key's methods are exactly `set_issuer_key`, `propose_issuer_key_removal`,
+`execute_issuer_key_change` (receiver `signer`, allowance ≤ 1 NEAR), and only the contract adds it
+(`add_updater_key`, owner; on a DAO owner, a 2-of-3 `FunctionCall` proposal; ≤ 2 tracked at a time, so rotation has an
+overlap). Access-key permissions can't be edited, so the v1 key (with `remove_issuer_key`) is deleted, not changed.
+The API refuses to sign any other method with it (`apps/api/src/relayer-config.ts` `UPDATER_METHODS`);
+`GET /v1/governance` shows `signerAccessKeys` with `updaterKey` / `updaterPermission` for the check.
+
+To rotate: move `.secrets/<env>/keys-updater.json` aside, run `deploy-contract <env>` (plans `add_updater_key` of a
+new key generated into the file), upload the new `KEYS_UPDATER_KEY`, then delete the old key with the owner's
+`admin <env> owner:call delete_updater_key --args '{"public_key":"<old>"}'`.
+
+If a watchdog deleted the key (it does when it sees a proposal from the signer that Google doesn't publish), the
+cron's sends fail (`jwks_tx` `send_failed`) until the owner adds a new one: find out why first (the watchdog's alert
+has the change). A deleted key is re-added from the file only if you leave the file in place: the plan warns, and a
+key that may be compromised gets the move-aside rotation instead. The plan blocks on every function-call key on
+`signer` the contract didn't install ([Blockers on the signer's keys](#blockers-on-the-signers-keys)).
+
+v1 contract: the key was added by hand with `set_issuer_key` / `remove_issuer_key` (rotate: same steps as the relayer
+keys with `.secrets/<env>/keys-updater.json`, then re-upload `KEYS_UPDATER_KEY`); the migration replaces it.
 
 ### Owner
 
@@ -338,19 +560,105 @@ blocks on any other function-call key on `signer` that can call `set_issuer_key`
   near contract call-function as-transaction <signer> set_owner json-args '{"owner":"<new owner>"}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as <owner> network-config testnet sign-with-legacy-keychain send
   ```
 
+  This is the v1 contract. On the governance contract `set_owner` no longer exists: the owner calls
+  `propose_owner(owner)` and, after `governance_delay_ms`, the new owner calls `accept_owner()`
+  (`docs/contract-interface.md` "Owner transfer"). For the council DAO that is `deploy-contract <env>
+  --transfer-owner` (twice: propose, then accept through a 2-of-3 proposal; [Governance
+  migration](#governance-migration-sandbox-dev) step 5), which also rewrites `owner` / `ownerKind` in the manifest.
+- **A council member**: `AddMemberToRole` + `RemoveMemberFromRole` proposals (2 of 3 each), through a UI or near CLI
+  (`add_proposal` with that kind); then update `council.members` in the manifest and check with `admin <env>
+  governance:status` and a `council-setup <env>` dry run (dev envs), which compares the DAO's policy with the manifest.
+
 Scope owners (`--owner-near` / `--owner-google`) are separate: they change by a timelocked `SetOwners` owner action.
 
 ### Google signing keys (JWKS)
 
-The hourly cron adds new kids and removes kids missing from Google's JWKS for ≥ 55 min. To sync now (after a deploy,
-or when the cron has no `KEYS_UPDATER_KEY`):
+**Governance contract (layout v2).** Issuer keys change only through a public, cancellable delay
+(`docs/governance-spec.md` "Rotation and logins"). The API cron (every 15 min, `apps/api/src/issuer-keys.ts`,
+`docs/api.md` "Cron") proposes each new Google kid (`set_issuer_key` queues it), proposes the removal of a kid
+missing from the JWKS for ≥ 55 min (never the last key), and executes matured changes that agree with Google's JWKS.
+A watchdog normally confirms a new key within minutes; without one it goes live `issuer_key_delay_ms` after the
+proposal, at the next cron run (or whoever executes it). Until then a token signed with it gets `503
+issuer_key_pending` with `retry-after: 30` on `/v1/login` and `/v1/sessions`, and nothing is relayed. The cron never
+cancels: a pending change it disagrees with (`jwks_sync_note` `unpublished_change` / `pending_mismatch` /
+`removal_of_published_kid`) is the watchdog's and the owner's (`cancel_issuer_key_change`). A proposal of ours that
+is cancelled logs `issuer_key_change_cancelled` once and is held for 1 h before the cron proposes it again.
+The vault retries an `issuer_key_pending` login (`/v1/login`, or `/v1/sessions` in the split flow) once, after the
+API's `retryAfterS` capped at 30 s, telling the partner page `loginProgress: key_pending` meanwhile; a second refusal
+ends the login with `api_unavailable` ("try signing in again in a few minutes", `data.api: "503 issuer_key_pending"`).
+
+To see the state: `curl -s <apiUrl>/v1/governance | jq '{paused, keyChanges, issuers, updater}'` (below). To execute
+a matured change now (anyone may, the contract checks the delay):
+
+```sh
+near contract call-function as-transaction <signer> execute_issuer_key_change json-args '{"id":<id>}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as <any funded account> network-config testnet sign-with-legacy-keychain send
+```
+
+**Syncing by hand.** To sync now (after a deploy, on a v1 contract, whose cron proposes nothing
+(`key_changes_unavailable`), or when the cron has no `KEYS_UPDATER_KEY`):
 
 ```sh
 corepack pnpm --filter @hana-id/scripts run post-google-keys <env> --dry-run
-corepack pnpm --filter @hana-id/scripts run post-google-keys <env>              # or --as-owner
+corepack pnpm --filter @hana-id/scripts run post-google-keys <env>              # propose
+corepack pnpm --filter @hana-id/scripts run post-google-keys <env> --execute    # also execute due changes
 ```
 
-It adds before it removes, and refuses to sync if Google returns no usable RS256 key.
+It signs with the keys-updater key only (`--as-owner` is gone: an owner post waits the same delay, D86). On the
+governance contract it proposes kids Google publishes that are neither active nor pending (`set_issuer_key`), proposes
+removing active kids Google no longer publishes (`propose_issuer_key_removal`, never the last active key), and with
+`--execute` runs `execute_issuer_key_change` for due changes, additions first. It never executes a pending add Google
+doesn't publish (or with other key material), nor a removal of a kid Google still publishes: it prints those for the
+watchdog or the owner to cancel. It never calls `remove_issuer_key` (owner-only now). On a v1 contract it still sets
+and removes directly. It refuses to sync if Google returns no usable RS256 key.
+
+### Governance status (`GET /v1/governance`)
+
+A read-only JSON snapshot of the contract's governance state (`docs/api.md` "GET /v1/governance"): pause state,
+delays and pending decreases, pending issuer-key changes with `executableAtMs`, `due` and Google's JWKS verdict
+(`match` / `mismatch` / `absent` / `present`), watchdogs and their confirm power, updater keys against the signer's
+access-key list, pending upgrade / owner transfer / withdrawal / console-audience and shared-client additions, and the
+JWKS cron's last run and tracked proposals. Public, no key, cached 10 s.
+
+```sh
+curl -s <apiUrl>/v1/governance | jq '{paused, delays, keyChanges, pendingUpgrade, pendingOwner, pendingWithdrawal}'
+curl -s <apiUrl>/v1/governance | jq '.signerAccessKeys[] | select(.updaterPermission | not)'   # outside sandbox-dev: must be empty
+curl -s <apiUrl>/v1/governance | jq '.updater'                                                # the cron's last run
+```
+
+**Hand-off to batch C.** The admin portal's "Security & monitoring" view and the admin and partner consoles'
+pending-upgrades page (D83, D86) don't exist yet. Their contract-side items read this endpoint (one request, already
+normalised, with countdown inputs and JWKS verdicts), or the same views through the admin Worker's own RPC
+(`docs/contract-interface.md` "Monitoring hand-off"); the portal should warn when a snapshot is older than
+`readAtMs + 20 s` and must not treat the API as independent (it runs on Hana's main Cloudflare account). The council's
+open proposals and the full list of sources are in [Governance status for the admin portal](#governance-status-for-the-admin-portal-batch-c-hand-off).
+The watchdog's heartbeat, verdicts, actions log, alerts and acks come only from the watchdog service's `GET /status`,
+`/alerts`, `/actions` and `POST /alerts/:id/ack` ([Watchdog service](#watchdog-service-appswatchdog)). Nothing here
+alerts: alerts are the watchdog's (D85).
+
+### Deploying the governance API
+
+Order for an env moving to the governance contract (`docs/governance-spec.md` "Migration plan"):
+
+1. Apply D1 migration `0005_issuer_key_sync.sql` (`wrangler d1 migrations apply <cloudflare.d1Name> --remote`), then
+   deploy the API. It is safe on a v1 contract: logins work as before (v1 has no `paused`, and its `get_issuer` lists
+   the same keys `verify_token` uses), the cron fetches and records the JWKS but proposes nothing
+   (`key_changes_unavailable`, sync by hand meanwhile), and `/v1/governance` answers `502 near_unavailable`.
+   Deployed before the migration, the cron logs `proposals_unavailable` / `proposal_record_failed` /
+   `run_record_failed` (it still proposes, without the cancel hold) and `/v1/governance` has `updater: null`.
+2. Upgrade the contract (`migrate_v1`). From then on the v1 updater key can still call `set_issuer_key` (it now
+   queues) but not the new methods: executions fail (`jwks_tx` `send_failed`) until step 3.
+3. `add_updater_key(<new key>)`, upload it as `KEYS_UPDATER_KEY`, delete the v1 key ("Keys-updater key" above).
+4. Check: `curl -s <apiUrl>/v1/governance | jq '{stateVersion, updaterKeys, signerAccessKeys, updater}'`.
+
+### Pause
+
+While `get_config().paused`, `/v1/sessions`, `/v1/login` and `/v1/derive` answer `503 paused` with `retry-after: 60`
+and relay nothing (the contract would panic `Paused`); `/v1/sessions/revoke` and the vault's share endpoints are
+unaffected, and the cron keeps proposing (executions wait). `/v1/owner-actions` isn't gated: its console-token
+actions and `execute_change` fail on chain while paused (`422 contract_rejected`, paid from the small owner pool). The API reads the
+pause state with `get_config`, cached 60 s (10 s while paused), so logins resume within 10 s of `unpause()`. Who
+pauses and unpauses, and what each watchdog alert means, is the watchdog runbook (`docs/governance-spec.md`
+"Alerts"); the API raises no alert.
 
 ### Issuer key lead times (D33)
 
@@ -358,8 +666,8 @@ D33's issuer-key delay must stay shorter than the time between Google publishing
 the tokens our users bring with it, or logins with a new key fail until the delay ends. The API measures it in D1
 `issuer_key_observations` (migration `0004_issuer_key_observations.sql`; kids and timestamps only):
 
-- **First / last seen in the JWKS, removed**: every cron run (every 15 min) fetches Google's JWKS and records each
-  kid; the run at :00 does so from the sync's own fetch. The API's verification fetches (on cache expiry, or on an
+- **First / last seen in the JWKS, removed**: every cron run (every 15 min) fetches Google's JWKS for the sync and
+  records each kid from that fetch. The API's verification fetches (on cache expiry, or on an
   unknown kid at most once a minute per isolate) add sightings. "Removed" is the first fetch without the kid after
   its last sighting; it is cleared if a later fetch lists the kid again (a stale Google frontend).
 - **First token**: the first token with a valid signature by that kid on `/v1/sessions` or `/v1/login`, written after
@@ -498,6 +806,93 @@ corepack pnpm --filter @hana-id/demo run build && corepack pnpm --filter @hana-i
   for another env. `admin <env> app:list --remote` shows the app's origins.
 - Removing the origin (`app:origins:remove`) signs out everyone who used the demo, on their next use.
 
+## Watchdog service (`apps/watchdog`)
+
+The independent watchdog of the governance batch (`docs/governance-spec.md` "Watchdog service", D82–D86): every
+5 min it compares the contract's pending and active issuer keys with Google's JWKS, cancels a pending key Google
+doesn't publish (and deletes the updater keys if the updater proposed it), pauses only when such a key is **active**,
+confirms keys that match, alerts on every governance change, and serves a read-only status for the admin portal.
+What it checks and its status API: `apps/watchdog/README.md`. **Not deployed yet**; it needs the governance contract
+(`migrate_v1`) on the env.
+
+### Setting it up (once per env)
+
+It runs on **its own Cloudflare account** (separate login and MFA from the API's account, D86); `gen` writes that
+account's id into the config, so `wrangler deploy` can't land it on the API's account. Run every `wrangler` command
+below logged in to the watchdog's account (`wrangler login` there, or `CLOUDFLARE_API_TOKEN` for it).
+
+1. Create the watchdog's NEAR account (`watchdog.account`, e.g. `hana-id-watchdog-dev1.testnet`, ≈ 2 NEAR; its
+   full-access key stays in `~/.near-credentials`, like the other accounts) and add the `watchdog` block to
+   `envs/<env>.json` (`envs/README.md`), with `watchdog.account` also in `watchdogs` (the schema requires it).
+2. The owner adds it: `deploy-contract <env>` plans `add_watchdog(<watchdog.account>)` for every `watchdogs` entry
+   that exists on chain (on a DAO owner, as a proposal; cancel and pause powers at once, confirm power after
+   `governance_delay_ms`).
+3. Secrets: `corepack pnpm --filter @hana-id/watchdog secrets <env> init` writes `WATCHDOG_KEY` and
+   `WATCHDOG_STATUS_TOKEN` to `.secrets/<env>/watchdog-secrets.json` (0600) and prints the public key with the near
+   CLI command that installs it (function-call key on `watchdog.account`, receiver `signer`, methods
+   `cancel_issuer_key_change, confirm_issuer_key_change, pause, delete_updater_key`, 1 NEAR allowance). Run that
+   command. Then paste into the same file the watchdog's own `RESEND_API_KEY` (D87), `SLACK_WEBHOOK_URL`, the paging
+   app's credentials (`NTFY_TOPIC_URL` [+ `NTFY_TOKEN`], or `PUSHOVER_TOKEN` + `PUSHOVER_USER` for a group of both
+   founders, or `PAGERDUTY_ROUTING_KEY`) and `HEARTBEAT_URL`; `secrets <env> check` lists what is missing (names
+   only).
+4. Dead-man's switch: a check on a third provider (healthchecks.io, Better Stack, Cronitor) with a 5-min period and
+   ~10-min grace, alerting both founders on its own; its ping URL is `HEARTBEAT_URL`.
+5. D1 and deploy (from `apps/watchdog`, logged in to the watchdog's account):
+
+   ```sh
+   corepack pnpm --dir apps/watchdog exec wrangler d1 create <watchdog.cloudflare.d1Name>    # prints the id
+   corepack pnpm --filter @hana-id/watchdog gen <env> --d1-id <uuid>                          # apps/watchdog/wrangler.jsonc
+   corepack pnpm --dir apps/watchdog exec wrangler d1 migrations apply <d1Name> --remote
+   corepack pnpm --dir apps/watchdog exec wrangler secret bulk ../../.secrets/<env>/watchdog-secrets.json
+   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   ```
+
+6. Check: `curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)"
+   https://<workerName>.<subdomain>.workers.dev/status` shows `last_run.outcome: "ok"`, `first_run: true` on the
+   first run, `heartbeat.ok`, every channel `configured`. The first run alerts critical on any active kid not in
+   Google's JWKS (no pause) and on anything already pending: acknowledge after checking. Then send a test critical
+   page to both founders (the forced-rotation drill of the migration plan does this for real).
+7. The admin Worker (batch C) gets the same `WATCHDOG_STATUS_TOKEN` and the watchdog's URL.
+
+Local: `gen <env> --dev-vars` writes `apps/watchdog/.dev.vars` (0600) from the secrets file; `corepack pnpm --filter
+@hana-id/watchdog dev` runs `wrangler dev --test-scheduled` (`curl localhost:8787/__scheduled` runs one cron). Use a
+test Slack channel and ntfy topic: local runs send real alerts and, with a real `WATCHDOG_KEY`, real testnet
+transactions.
+
+Rotating its secrets: `WATCHDOG_KEY`: add a new function-call key (as in step 3), put it in the file, `wrangler secret
+put WATCHDOG_KEY`, then delete the old key on chain. `WATCHDOG_STATUS_TOKEN`: change it on both Workers. The others:
+replace in the file and `wrangler secret put`.
+
+### Watchdog alerts (runbook)
+
+Critical alerts page both founders (paging app + Slack + email) and are re-sent every 15 min until someone
+acknowledges them in the admin portal (or in Pushover). Acknowledging stops only the re-sends. Every alert's text
+names its id and kind; the full details are in `GET /alerts`. Owner actions below go through the owner: on an env
+whose owner is the DAO, a 2-of-3 `FunctionCall` proposal to `signer` (D81); on an env still owned by an account,
+`near contract call-function as-transaction <signer> <method> json-args '<args>' prepaid-gas '30 Tgas'
+attached-deposit '0 NEAR' sign-as <owner> network-config testnet sign-with-legacy-keychain send`.
+
+| Kind | What it means | What to do |
+|---|---|---|
+| `forged_key_change` | A pending issuer key Google doesn't publish (or with other material), or any change the updater (the signer account) proposed for a provider other than Google (`reason: updater_other_provider`: the updater only serves Google). The watchdog cancelled it and, if the updater proposed it, deleted every updater key. The title and `details.outcome` say what happened: `cancelled`; `gone` (someone else cancelled it first); `executed` (it took effect before the cancel: also a `protective_action_failed`, and the run pauses on the now-active key); `unknown` (gone, and the re-read failed); `failed`; `not_sent` (the watchdog couldn't act) | Treat `KEYS_UPDATER_KEY` (the API Worker's secrets) as stolen: find how, rotate. Re-add a fresh updater key (`add_updater_key`) and set it on the API. If the owner proposed it, treat the owner council as compromised. On `executed`: follow `forged_active_key` |
+| `forged_active_key` | A key Google doesn't publish is **active**: the contract is paused (logins and derivation stop). While it was active, anyone holding its private key could open sessions for any user's path and post OIDC-owner tokens and client proofs | Stay paused until all three steps are done, in this order: (1) the owner removes the key (`remove_issuer_key {provider, kid}`); (2) the owner raises the session floor past the pause: `set_sessions_valid_from_ms {sessions_valid_from_ms: <block time of the "paused" event, ms> + 1}`. Sessions opened with the forged key otherwise keep deriving after the unpause, for up to 24 h (`MAX_SESSION_MS`) with whatever `max_uses` the attacker chose; with the floor every session opened before the pause is gone (users log in again); (3) `unpause {}` (at once). Then review every scope change proposed while the key was active (`change_proposed` events since its `issuer_key_set`): the unpause gives each pending change a full `change_delay_ms` again (`get_config().changes_unlock_floor_ms`), and its OIDC owners cancel the ones they didn't make (`cancel_change`); Hana can't cancel scope changes. Changes that already executed or immediate actions (`remove_client`, `disable_shared_login`) by forged owner tokens are reverted by the scope's owners. Find how the key got there: delay while the watchdog was down, an owner post, or an upgrade. The watchdog pauses again while the key stays active |
+| `published_key_removal` | A pending removal of a kid Google still publishes (logins with it would break) | The owner cancels it (`cancel_issuer_key_change {id}`) unless it is intended; then as for a stolen updater key |
+| `unknown_active_key_first_run` | First run only: an active kid not in Google's JWKS today (often an old kid Google dropped), or with other material | Check the kid against Google's history; remove it if it isn't Google's (with other material the next run pauses) |
+| `unverifiable_key_change` | A pending change the owner proposed for an issuer other than Google (the watchdog has no JWKS for it; one the updater proposed is a `forged_key_change`) | Check it by hand; the owner cancels anything unexpected |
+| `governance_change` | An upgrade proposal or execution, owner transfer, withdrawal, watchdog, updater-key, delay or console-audience change, pause or unpause (`unpaused_at_ms` shows one that fell between two runs), a raised session floor (`sessions_valid_from_ms`), a change of the owner DAO's code or policy (`owner_code_hash`, `owner_policy`: a `ChangePolicy`, `AddMember` or `RemoveMember`), or the owner's immediate issuer actions, which leave no pending state: `issuer` (`set_issuer` changed Google's iss values) and `issuer_keys` (an active kid disappeared without a pending removal leaving the queue: `remove_issuer_key`; also a removal proposed and confirmed by another watchdog between two runs) | Confirm that the council did it on purpose. If not: `cancel_upgrade`, `cancel_owner_proposal`, `cancel_withdrawal`, a delay change back, and treat the council as compromised. Nobody but the owner can cancel an upgrade (D84). A DAO policy that is no longer exactly the manifest's council at 2 of 3 for every kind also blocks every `deploy-contract` run and shows in `governance:status`. A removed Google kid Google still publishes breaks logins signed with it until the updater re-proposes it |
+| `automatic_action`, `protective_action_failed` | The watchdog acted again (e.g. paused after an unpause), or a cancel, pause or deletion it sent failed, or a forged change it tried to cancel was executed first (or it couldn't tell) | Failed: do it through the owner at once (cancel the change, pause); check the watchdog key's allowance and RPC. Executed: the key is active, see `forged_active_key` |
+| `not_a_watchdog`, `watchdog_key_missing`, `wrong_network` | The watchdog can't act: its account isn't a contract watchdog, its key is missing or bad, or its RPC is on another chain | Fix the config (`add_watchdog`, `WATCHDOG_KEY`, the manifest `rpc`); until then nothing cancels forged keys |
+| warning `rpc_failing`, `jwks_failing`, `heartbeat_failing`, `channel_not_configured` | The watchdog is partly blind or mute | Fix the RPC, the secret or the channel; a dead watchdog is caught by the dead-man's switch |
+| warning `unexecuted_key_change`, `stale_active_key` | A matured key change nobody executed (> 1 h), or an active kid Google dropped > 3 h ago | Check the API cron (it executes due changes and proposes removals) |
+
+A paused contract: only the owner unpauses (`unpause`, no delay, D82). An unpause re-arms the scope-change timelock:
+no `execute_change` before `unpause time + change_delay_ms` (`changes_unlock_floor_ms`, also in `get_scope` as each
+pending change's `unlock_at_ms`), since OIDC owners couldn't cancel while paused. A fix that needs new code waits
+`governance_delay_ms` (the upgrade path works while paused). Removing a rogue watchdog (`remove_watchdog`) is
+immediate but slows every key change to `governance_delay_ms` unless another watchdog confirms (D86). Likewise a key
+change proposed while no watchdog may confirm yet (none, or only ones added less than `governance_delay_ms` ago)
+waits `governance_delay_ms`: after adding the first watchdog, rotations go slow until its `confirm_from_ms`.
+
 ## Logs and latency
 
 **Routing from Malaysia (2026-10-29).** `curl <apiUrl>/cdn-cgi/trace` shows which Cloudflare location served a
@@ -567,7 +962,15 @@ Warm stage split: create = checks 0.2 s + relay 2.2 s (chain ~0.6 s); derive = r
 | `relay_retry` `invalid_nonce` warnings | a pool key was used outside its object, or was deleted and re-added on chain (new nonce) | one per re-added key is expected; otherwise don't use pool keys elsewhere |
 | `503 relayer_unconfigured` | `RELAYER_KEYS` (or `OWNER_RELAYER_KEYS` for owner actions) not set | `wrangler secret put` |
 | `422 contract_rejected` on every login after a deploy | contract has no Google keys, or keys out of date | `post-google-keys <env>`; check `KEYS_UPDATER_KEY` |
+| `503 issuer_key_pending` on logins (with `retry-after: 30`) | the token's kid is in Google's JWKS but still in its issuer-key delay on chain (a rotation), or the contract has no Google issuer | expected for minutes after a rotation; check `/v1/governance` `keyChanges` (a pending Add with `jwks: match`): the watchdog confirms it, or it goes live at `executableAtMs` and the next cron run. No pending change for the kid: check the cron (`updater.lastRuns`) and `KEYS_UPDATER_KEY` |
+| `503 paused` on logins and derives | the contract is paused (owner or a watchdog) | see "Pause"; only the owner multisig unpauses |
 | cron logs `jwks_sync_skipped` | no `KEYS_UPDATER_KEY` | upload it |
+| cron logs `jwks_sync_failed` `key_changes_unavailable` | `get_key_changes` failed or is malformed, or the contract is still v1 | v1: sync by hand (`post-google-keys`); v2: check the RPC |
+| cron logs `issuer_key_change_cancelled` (error) | a change the cron proposed was cancelled on chain (the watchdog's alert says why) | if the watchdog cancelled, it also deleted the updater key: see "Keys-updater key". The cron holds that kid for 1 h |
+| cron logs `jwks_sync_note` `unpublished_change` / `pending_mismatch` (error) | a pending Add for a kid Google doesn't publish, or with other key material | the cron won't execute it; the watchdog cancels it (critical alert). If no watchdog: the owner cancels it now (`cancel_issuer_key_change`) |
+| cron logs `jwks_sync_note` `removal_of_published_kid` | a pending Remove of a kid Google still publishes | the owner decides and cancels (the watchdog alerts, D82) |
+| cron logs `jwks_sync_note` `last_key_kept` / `queue_full` / `issuer_full` | removing the issuer's last key, or the contract's caps (6 pending, 10 per issuer) | `last_key_kept` clears once the new key is active; caps clear as changes execute or are cancelled |
+| cron logs `jwks_tx` `send_failed` for `execute_issuer_key_change` / `propose_issuer_key_removal` | the updater key lacks the v2 methods (still the v1 key), was deleted, or its allowance is spent | "Keys-updater key" |
 | `key_observation_failed` warnings (`code` `jwks` / `token`) | a lead-time write to D1 failed (logins unaffected), often `issuer_key_observations` missing | apply migration 0004 (`migrations apply … --remote`) |
 | `503 vault_key_unavailable` | no `VAULT_KEK` (or the row's old key missing in `VAULT_KEK_PREVIOUS`) | set it |
 | `GET /vault` 503, log code `misconfigured` | `API_URL` missing: a `wrangler.jsonc` generated before `apiUrl` reached `gen` | `gen <env>` and redeploy |

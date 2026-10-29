@@ -33,10 +33,18 @@ export function clientsFromArgs(clients: string[], { allowShared = false, shared
   return clients.map((aud) => [GOOGLE_PROVIDER, aud]);
 }
 
+/** Commands that take exactly one positional after `<env> <command>`, and what it is. */
+const ONE_POSITIONAL: Record<string, string> = { 'owner:call': '<method>', 'owner:vote': '<proposal id>' };
+
 /**
- * Positionals after `<env> <command>`: only app:settings takes one (its app, checked by settingsAppArg in
- * admin-settings.ts); any other command refuses them.
+ * Positionals after `<env> <command>`: app:settings takes its app (checked by settingsAppArg in admin-settings.ts),
+ * owner:call its method and owner:vote a proposal id (exactly one each); any other command refuses them.
  */
 export function assertCommandPositionals(command: string, rest: readonly string[]): void {
+  const one = ONE_POSITIONAL[command];
+  if (one) {
+    if (rest.length !== 1) throw new CliError(`${command} takes exactly one ${one}`);
+    return;
+  }
   if (command !== 'app:settings' && rest.length > 0) throw new CliError(`Unexpected argument ${rest.join(' ')}`);
 }

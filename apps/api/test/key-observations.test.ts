@@ -4,7 +4,7 @@ import { createExecutionContext, createScheduledController, waitOnExecutionConte
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker, { isHourlyRun } from '../src/index.ts';
-import { GOOGLE_JWKS_URL, type Jwk, observeIssuerJwks, syncIssuerKeys } from '../src/issuer-keys.ts';
+import { GOOGLE_JWKS_URL, type Jwk, syncIssuerKeys } from '../src/issuer-keys.ts';
 import { cacheMaxAgeS, clearNotedTokenKids, keyObserver, recordJwksObservation, recordTokenKid } from '../src/key-observations.ts';
 import { appHeaders, call, chain, google, seedApp, sessionBody, uid } from './helpers.ts';
 import { appKey, hanaHeaders, loginBody, withCombinedCall } from './login-helpers.ts';
@@ -146,7 +146,7 @@ describe('cron', () => {
     expect(isHourlyRun(T + 45 * 60_000)).toBe(false);
   });
 
-  it('the quarter-hour runs only record the JWKS: no chain call, no key needed', async () => {
+  it('a quarter-hour run records the JWKS; without the keys-updater key it makes no chain call', async () => {
     const near = new NearMock();
     near.jwks = { keys: [jwk('q1'), jwk('q2')] };
     near.jwksCacheControl = 'public, max-age=19000, must-revalidate, no-transform';
@@ -161,26 +161,26 @@ describe('cron', () => {
     expect(r.q1!.max_age_s_last).toBe(19000);
   });
 
-  it('observeIssuerJwks reports a failed or empty fetch and records nothing', async () => {
+  it('a failed or empty JWKS fetch records nothing', async () => {
     const near = new NearMock();
     near.install();
     near.jwksStatus = 503;
-    expect((await observeIssuerJwks(env)).skipped).toBe('jwks_fetch_failed');
+    expect((await syncIssuerKeys(env)).skipped).toBe('jwks_fetch_failed');
     near.jwksStatus = 200;
     near.jwks = { keys: [] };
-    expect((await observeIssuerJwks(env)).skipped).toBe('jwks_empty');
-    near.jwks = { keys: [jwk('a')] };
-    expect(await observeIssuerJwks(env, 'google', GOOGLE_JWKS_URL, T)).toEqual({ kids: ['a'], maxAgeS: null });
-    expect(await rows()).toEqual({ a: seen(T, T, null) });
+    expect((await syncIssuerKeys(env)).skipped).toBe('jwks_empty');
+    expect(await rows()).toEqual({});
   });
 
-  it('the hourly sync records the JWKS from its own fetch, with or without the keys-updater key', async () => {
+  it('the sync records the JWKS from its own fetch, with or without the keys-updater key', async () => {
     const near = new NearMock();
     near.views.get_issuer = () => ({ provider: 'google', iss_values: [], kids: ['h1'] });
+    near.views.get_key_changes = () => [];
+    near.views.get_config = () => ({ paused: false });
     near.jwks = { keys: [jwk('h1')] };
     near.jwksCacheControl = 'public, max-age=21000';
     near.install();
-    expect(await syncIssuerKeys(env, 'google', GOOGLE_JWKS_URL, T)).toEqual({ added: [], removed: [], failed: [] });
+    expect(await syncIssuerKeys(env, 'google', GOOGLE_JWKS_URL, T)).toEqual({ proposed: [], removalsProposed: [], executed: [], failed: [], cancelled: [], notes: [] });
     expect(await syncIssuerKeys({ ...env, KEYS_UPDATER_KEY: undefined }, 'google', GOOGLE_JWKS_URL, T + 60_000)).toMatchObject({ skipped: 'no_keys_updater_key' });
     expect(near.jwksFetches).toBe(2);
     expect(await rows()).toEqual({ h1: seen(T, T + 60_000, 21000) });
@@ -194,6 +194,7 @@ describe('token verification records the signing kid', () => {
     const near = chain({ [aud]: app.scope });
     const signer = await rsaSigner(`kid-${uid()}`);
     near.jwks = { keys: [google.jwk, signer.jwk] };
+    near.activeKids.add(signer.jwk.kid);
     near.jwksCacheControl = 'public, max-age=20000';
     const post = async (b: Record<string, unknown>): Promise<Response> => call('/v1/sessions', { headers: appHeaders(app), body: b });
     return { app, aud, near, signer, post };
@@ -239,6 +240,7 @@ describe('token verification records the signing kid', () => {
     const near = withCombinedCall(chain({ [aud]: app.scope }));
     const signer = await rsaSigner(`kid-${uid()}`);
     near.jwks = { keys: [signer.jwk] };
+    near.activeKids.add(signer.jwk.kid);
     const res = await call('/v1/login', { headers: hanaHeaders(app), body: await loginBody(app.scope, aud, {}, {}, appKey(), signer) });
     expect(res.status).toBe(200);
     expect((await rows())[signer.jwk.kid]).toEqual(expect.objectContaining({ first_token_ms: expect.any(Number), first_seen_jwks_ms: expect.any(Number), max_age_s_last: null }));

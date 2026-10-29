@@ -32,7 +32,7 @@ page origins never reach the API routes: a request whose URL origin is `VAULT_OR
 | `/v1/login-relay/<relayId>` | GET, POST, OPTIONS | `login-relay.ts` | Hana origin only; read key for GET | B |
 | `/v1/vault/shares`, `/unlock`, `/touch`, `/revoke`, `/revoke-all` | POST, OPTIONS | `vault/endpoints.ts` | publishable key + vault origin + session signature (vault message) | B |
 | `/v1/owner-actions` | POST, OPTIONS | `handlers.ts` | OIDC owner token inside the args | |
-| cron `0 * * * *` | — | `issuer-keys.ts`, `vault/cron.ts` | — | vault part B |
+| cron `*/15 * * * *` | — | `issuer-keys.ts`, `vault/cron.ts`, `key-observations.ts` | — | vault part B; 15 min for the key lead time |
 
 There is no secret-key (`sk_…`) auth anywhere: publishable keys are public and origins gate them.
 
@@ -159,7 +159,8 @@ Body (extra keys ignored, except `scopeId` / `scope_id`, which are refused):
 The scope is always the app's (D1). Checks after the gate and shape (`400 bad_request`):
 
 1. RS256 against Google's JWKS, `iss` → provider, `exp` + 60 s skew: `401 invalid_token`, `400 unsupported_issuer`,
-   `400 token_expired`, `503 issuer_keys_unavailable`.
+   `400 token_expired`, `503 issuer_keys_unavailable`. A valid signature's `kid` is recorded once per isolate after the
+   response (`issuer_key_observations.first_token_ms`, here and on `/v1/login`; the kid only, never the token).
 2. Only with `REJECT_PII_ON_SESSIONS = "1"`: claim allow-list (`iss azp aud sub iat exp nonce nbf jti auth_time`),
    else `400 token_has_pii` with `data: {claim}`.
 3. `nonce` equals the session nonce recomputed with `SIGNER_ACCOUNT` and the app's scope (`400 nonce_mismatch`).
@@ -471,7 +472,7 @@ this key's public key, start at R with no chain read (skips up to 99 nonces) and
 | `scope_for_client` | 60 s, a miss 10 s; dropped for the scope after an owner action relayed here |
 | `get_scope` | 10 s; dropped after an owner action |
 | `get_config` | 60 s |
-| Google JWKS | `max-age` clamped to 5 min..6 h; unknown kid refetches at most once a minute; 10 s back-off after a failure; a stale set serves its kids up to 6 h past expiry |
+| Google JWKS | `max-age` clamped to 5 min..6 h; unknown kid refetches at most once a minute; 10 s back-off after a failure; a stale set serves its kids up to 6 h past expiry. Each successful fetch is recorded in `issuer_key_observations` after the response |
 
 ## D1 schema (`apps/api/migrations`)
 
@@ -484,15 +485,20 @@ this key's public key, start at R with no chain read (skips up to 99 nonces) and
 | `usage` | (`app_id`, `day` `YYYY-MM-DD` UTC) PK, `sessions`, `derives` | 0001 |
 | `usage` (added) | `unlocks` | 0003 |
 | `issuer_key_missing` | (`provider`, `kid`) PK, `first_missing_at` ms | 0002 |
+| `issuer_key_observations` | (`provider`, `kid`) PK, `first_seen_jwks_ms`, `last_seen_jwks_ms`, `removed_jwks_ms` (first fetch without the kid after `last_seen`; cleared if it reappears), `first_token_ms` (first verified token by the kid), `max_age_s_last` (the JWKS Cache-Control max-age when last listed); all nullable, ms / s. Public data only (no token, `sub` or user data). D33's key lead time (`admin issuer-keys:lead-times`) | 0004 |
 | `vault_shares` | `share_id` BLOB(16) PK, `app_id`, `session_pk` BLOB(32) UNIQUE, `path_hash` = sha256(path), `partner_origin`, `share_enc` = iv ‖ AES-GCM(KEK, K_s, aad = share_id ‖ app_id ‖ session_pk), `kek_id`, `counter`, `created_at`, `idle_until`, `abs_expires_at`, `revoked_at`; indexes (`app_id`, `path_hash`), `abs_expires_at`, `kek_id` | 0003 |
 
-## Cron (`0 * * * *`)
+## Cron (`*/15 * * * *`)
 
-Two independent jobs (one failing doesn't skip the other):
+One trigger every 15 min (the free plan allows 5 cron triggers per account; this keeps the API at one). The run in the
+first quarter of each UTC hour (`index.ts` `isHourlyRun`) is the hourly one; the other three only fetch Google's JWKS
+and record its kids in `issuer_key_observations` (`issuer-keys.ts` `observeIssuerJwks`; no chain call, no key).
+
+The hourly run has two independent jobs (one failing doesn't skip the other):
 
 - **Google JWKS → contract** (`issuer-keys.ts`): `set_issuer_key` for new kids, `remove_issuer_key` for kids missing
   from the JWKS for ≥ 55 min (tracked in `issuer_key_missing`), signed with `KEYS_UPDATER_KEY`. Without it:
-  `jwks_sync_skipped`.
+  `jwks_sync_skipped`. Its fetch is also recorded in `issuer_key_observations`, with or without the key.
 - **Vault maintenance** (`vault/cron.ts`, B): deletes shares past `abs_expires_at` or revoked; re-wraps up to 2000
   rows from `VAULT_KEK_PREVIOUS` to `VAULT_KEK`; counts rows under a KEK id neither key has (logged as an error).
 
@@ -587,7 +593,8 @@ the block hash was re-read; `served` relays this instance handled before; `ageMs
 
 Other events: `relay_dispatched` (`pool`, `keyIndex`, `method`, `nearTx`, `nonce`, `attempt`), `relay_retry`
 (`code` `invalid_nonce` / `expired` / `dropped`), `relay_dispatch_failed`, `jwks_sync` (`added`, `removed`, `kids`),
-`jwks_sync_failed` / `jwks_sync_skipped` (`code`), `jwks_tx`, `jwks_stale`, `vault_page` (`latencyMs`: its D1 reads), `vault_maintenance`
+`jwks_sync_failed` / `jwks_sync_skipped` (`code`), `jwks_tx`, `jwks_stale`, `jwks_observe` (`code`
+`jwks_fetch_failed` / `jwks_empty`), `key_observation_failed` (`code` `jwks` / `token`), `vault_page` (`latencyMs`: its D1 reads), `vault_maintenance`
 (`pruned`, `rewrapped`, `unknownKek`), `vault_rewrap_unreadable` (`unreadable`), `vault_kek_unavailable`, `vault_share_unreadable`,
 `usage_increment_failed`, `owner_token_release_failed`, `gas_override_ignored`, `auto_approve_policy_invalid`
 (`problems`), and from the page Workers `vault_host` and `auth_page` (`code`).

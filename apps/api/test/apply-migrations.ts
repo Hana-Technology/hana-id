@@ -2,12 +2,14 @@ import { applyD1Migrations } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { beforeEach } from 'vitest';
 import { clearJwksCache } from '../src/jwks.ts';
+import { clearNotedTokenKids } from '../src/key-observations.ts';
 import { clearViewCaches } from '../src/views.ts';
 
 await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
 
-// Per-isolate caches (JWKS, chain views) must not leak between tests: each test installs its own mock chain/JWKS.
+// Per-isolate caches (JWKS, chain views, kids whose first token was written) must not leak between tests: each test installs its own mock chain/JWKS.
 beforeEach(() => {
   clearJwksCache();
+  clearNotedTokenKids();
   clearViewCaches();
 });

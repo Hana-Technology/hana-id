@@ -383,7 +383,7 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
   and as `devEnv` in the web build). They allow loopback partner origins and partner-origin session endpoints for
   `pk_test_` keys, and same-site Hana origins. No flag can turn these on elsewhere.
 - `apps/api/scripts/gen-wrangler.ts` writes `apps/api/wrangler.jsonc` (vars from the manifest, D1 binding, DO bindings
-  and migrations `v1` RelayerKey/RateLimiter, `v2` LoginRelay, hourly cron) and, with `--dev-vars`, `.dev.vars` from
+  and migrations `v1` RelayerKey/RateLimiter, `v2` LoginRelay, the 15-min cron whose :00 run is the hourly one) and, with `--dev-vars`, `.dev.vars` from
   `.secrets/<env>/`, plus the page Workers' `wrangler.vault.jsonc` / `wrangler.auth.jsonc`. It refuses an env without
   both Hana origins. All three are per env and gitignored (the deployed D1 id is passed with `--d1-id` and never
   committed); the API tests generate their own `wrangler.vitest.jsonc` from a fixed test manifest.

@@ -4,6 +4,7 @@
 // default, --remote for the deployed database). app:settings sets the per-app vault settings (lib/admin-settings.ts).
 // scope:register calls admin_register_scope (with allow_shared from
 // --allow-shared) on the contract with the owner's full-access key from ~/.near-credentials/testnet/<owner>.json.
+// issuer-keys:lead-times reads the issuer key observations (lib/admin-lead-times.ts) for D33's issuer-key delay.
 import { loadEnv, type Manifest } from '@hana-id/env';
 import { assertCommandPositionals } from './lib/admin-args.ts';
 import {
@@ -20,6 +21,7 @@ import {
   scopeConflictSql,
   setStatusSql,
 } from './lib/admin-sql.ts';
+import { LEAD_TIMES_SQL, type ObservationRow, leadTimesReport } from './lib/admin-lead-times.ts';
 import { appSettings, defaultAppSettingsDeps, settingsAppArg } from './lib/admin-settings.ts';
 import { type Args, CliError, parseCli, run } from './lib/cli.ts';
 import { scopeRegister } from './lib/admin-scope.ts';
@@ -39,6 +41,7 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
                [--idle-ttl <15m..session TTL>] [--raw-sign off|approval] [--google-web-client <client id>|default]
                [--auto-approve <policy.json>|off]   (no setting flags: show the settings)
   scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […] [--yes]
+  issuer-keys:lead-times   per Google kid: first seen in the JWKS, first token, lead time, lifetime in the JWKS
 
   --remote   act on the deployed D1 database (default: local, apps/api/.wrangler/state)
   --yes      scope:register only: send the transaction (without it, only print it)
@@ -49,7 +52,7 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
   changeDelayMs in local*/sandbox* envs); --raw-sign off and --auto-approve off are immediate. Durations: 12h, 23h50m,
   15m, 3600000ms. --google-web-client must be one of the scope's Google clients on chain (default: the first one).`;
 
-const COMMANDS = ['app:create', 'app:origins:add', 'app:origins:remove', 'app:suspend', 'app:resume', 'app:list', 'app:settings', 'scope:register'] as const;
+const COMMANDS = ['app:create', 'app:origins:add', 'app:origins:remove', 'app:suspend', 'app:resume', 'app:list', 'app:settings', 'scope:register', 'issuer-keys:lead-times'] as const;
 type Command = (typeof COMMANDS)[number];
 
 interface AppRow {
@@ -143,6 +146,9 @@ async function main(): Promise<void> {
     }
     case 'scope:register':
       await scopeRegister(m, args);
+      return;
+    case 'issuer-keys:lead-times':
+      for (const line of leadTimesReport(d1Execute<ObservationRow>(m, LEAD_TIMES_SQL, { remote }), Date.now(), where)) console.log(line);
       return;
   }
 }

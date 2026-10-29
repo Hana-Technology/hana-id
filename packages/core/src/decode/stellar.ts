@@ -2,12 +2,14 @@
 // transaction envelopes (v1, v0 and fee-bump) with every operation, Soroban invocations with typed arguments and the
 // whole authorization tree, and the `HashIdPreimage` a `stellar_signAuthEntry` signs. Values come out as plain,
 // frozen, tagged objects (addresses as StrKey, 64-bit and larger integers as decimal strings) that the page renders
-// with textContent and the matcher walks. Unknown operations and ledger keys keep their raw XDR so the page can show
-// them by type. Malformed, trailing or over-deep input throws DecodeError.
+// with textContent and the matcher walks. Every operation type is decoded field by field (D110: the account-control
+// ones, setOptions signers, weights and thresholds and accountMerge, are flagged by stellarAccountControl); ledger keys
+// other than contract data, contract code and accounts keep their raw XDR so the page can show them by type. Malformed,
+// trailing or over-deep input, or an operation type this library doesn't know, throws DecodeError.
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex } from '@noble/hashes/utils';
 import { base64 } from '@scure/base';
-import { Address, StrKey, encodeMuxedAccountToAddress, scValToBigInt, xdr } from '@stellar/stellar-base';
+import { Address, SignerKey, StrKey, encodeMuxedAccountToAddress, scValToBigInt, xdr } from '@stellar/stellar-base';
 import { DecodeError, fail } from './errors.ts';
 import { decodeMessage } from './message.ts';
 
@@ -113,32 +115,196 @@ export type StellarOperation =
       readonly amount: string;
     })
   | (OpBase & { readonly type: 'createAccount'; readonly destination: string; readonly startingBalance: string })
-  /** Every other operation: shown by type with its raw XDR. */
-  | (OpBase & { readonly type: StellarOtherOperationType });
+  | (OpBase & {
+      readonly type: 'pathPaymentStrictReceive';
+      readonly sendAsset: string;
+      /** The most the source pays, in `sendAsset` stroops. */
+      readonly sendMax: string;
+      readonly destination: string;
+      readonly destAsset: string;
+      /** The exact amount the destination receives, in `destAsset` stroops. */
+      readonly destAmount: string;
+      /** Intermediate assets, in order. */
+      readonly path: readonly string[];
+    })
+  | (OpBase & {
+      readonly type: 'pathPaymentStrictSend';
+      readonly sendAsset: string;
+      /** The exact amount the source pays, in `sendAsset` stroops. */
+      readonly sendAmount: string;
+      readonly destination: string;
+      readonly destAsset: string;
+      /** The least the destination receives, in `destAsset` stroops. */
+      readonly destMin: string;
+      readonly path: readonly string[];
+    })
+  | (OpBase & {
+      readonly type: 'manageSellOffer' | 'createPassiveSellOffer';
+      readonly selling: string;
+      readonly buying: string;
+      /** Stroops of `selling`; "0" deletes the offer. */
+      readonly amount: string;
+      readonly price: StellarPrice;
+      /** "0" for a new offer (always "0" for createPassiveSellOffer). */
+      readonly offerId: string;
+    })
+  | (OpBase & {
+      readonly type: 'manageBuyOffer';
+      readonly selling: string;
+      readonly buying: string;
+      /** Stroops of `buying`; "0" deletes the offer. */
+      readonly buyAmount: string;
+      readonly price: StellarPrice;
+      readonly offerId: string;
+    })
+  | (OpBase & {
+      readonly type: 'setOptions';
+      readonly inflationDest: string | null;
+      /** Account flag bits (STELLAR_ACCOUNT_FLAGS), or null when not changed. */
+      readonly clearFlags: number | null;
+      readonly setFlags: number | null;
+      /** Weight of the account's own key (the master key: the Hana key for a Hana account), 0 to 255. */
+      readonly masterWeight: number | null;
+      readonly lowThreshold: number | null;
+      readonly medThreshold: number | null;
+      readonly highThreshold: number | null;
+      readonly homeDomain: StellarText | null;
+      /** A signer added, re-weighted, or removed (weight 0). */
+      readonly signer: StellarSigner | null;
+    })
+  | (OpBase & {
+      readonly type: 'allowTrust';
+      readonly trustor: string;
+      readonly assetCode: string;
+      /** Trust-line flag bits (STELLAR_TRUSTLINE_FLAGS): 0 revokes, 1 authorizes, 2 authorizes to maintain liabilities. */
+      readonly authorize: number;
+    })
+  /** Closes the source account and sends its whole XLM balance to `destination`. */
+  | (OpBase & { readonly type: 'accountMerge'; readonly destination: string })
+  | (OpBase & { readonly type: 'inflation' | 'endSponsoringFutureReserves' })
+  | (OpBase & {
+      readonly type: 'manageData';
+      readonly name: StellarText;
+      /** Hex, or null to delete the entry. */
+      readonly value: string | null;
+    })
+  | (OpBase & { readonly type: 'bumpSequence'; readonly bumpTo: string })
+  | (OpBase & {
+      readonly type: 'createClaimableBalance';
+      readonly asset: string;
+      readonly amount: string;
+      readonly claimants: readonly StellarClaimant[];
+    })
+  | (OpBase & {
+      readonly type: 'claimClaimableBalance' | 'clawbackClaimableBalance';
+      /** The ClaimableBalanceID XDR, hex (Horizon's form). */
+      readonly balanceId: string;
+    })
+  | (OpBase & { readonly type: 'beginSponsoringFutureReserves'; readonly sponsored: string })
+  | (OpBase & {
+      readonly type: 'revokeSponsorship';
+      readonly target:
+        | { readonly type: 'ledgerEntry'; readonly key: StellarLedgerKey }
+        | { readonly type: 'signer'; readonly account: string; readonly signer: string };
+    })
+  | (OpBase & { readonly type: 'clawback'; readonly asset: string; readonly from: string; readonly amount: string })
+  | (OpBase & {
+      readonly type: 'setTrustLineFlags';
+      readonly trustor: string;
+      readonly asset: string;
+      readonly clearFlags: number;
+      readonly setFlags: number;
+    })
+  | (OpBase & {
+      readonly type: 'liquidityPoolDeposit';
+      /** Hex. */
+      readonly poolId: string;
+      readonly maxAmountA: string;
+      readonly maxAmountB: string;
+      readonly minPrice: StellarPrice;
+      readonly maxPrice: StellarPrice;
+    })
+  | (OpBase & {
+      readonly type: 'liquidityPoolWithdraw';
+      readonly poolId: string;
+      readonly amount: string;
+      readonly minAmountA: string;
+      readonly minAmountB: string;
+    });
 
-/** Operations the decoder shows only by type and raw XDR. */
-export type StellarOtherOperationType =
-  | 'pathPaymentStrictReceive'
-  | 'pathPaymentStrictSend'
-  | 'manageSellOffer'
-  | 'manageBuyOffer'
-  | 'createPassiveSellOffer'
-  | 'setOptions'
-  | 'allowTrust'
-  | 'accountMerge'
-  | 'inflation'
-  | 'manageData'
-  | 'bumpSequence'
-  | 'createClaimableBalance'
-  | 'claimClaimableBalance'
-  | 'beginSponsoringFutureReserves'
-  | 'endSponsoringFutureReserves'
-  | 'revokeSponsorship'
-  | 'clawback'
-  | 'clawbackClaimableBalance'
-  | 'setTrustLineFlags'
-  | 'liquidityPoolDeposit'
-  | 'liquidityPoolWithdraw';
+export type StellarOperationType = StellarOperation['type'];
+
+/** A price as the XDR holds it: `n / d`. */
+export interface StellarPrice {
+  readonly n: number;
+  readonly d: number;
+}
+
+/** A short XDR string (home domain, data name): `value` is null when it isn't display-safe text (then show `hex`). */
+export interface StellarText {
+  readonly value: string | null;
+  readonly hex: string;
+}
+
+export interface StellarSigner {
+  /** StrKey: G… (an ed25519 key), T… (a pre-authorized transaction), X… (a sha256 hash) or P… (a signed payload). */
+  readonly key: string;
+  readonly keyType: 'ed25519' | 'preAuthTx' | 'sha256Hash' | 'ed25519SignedPayload';
+  /** 0 removes the signer. */
+  readonly weight: number;
+}
+
+export interface StellarClaimant {
+  readonly destination: string;
+  /** True when the claimant can claim at any time. */
+  readonly unconditional: boolean;
+  /** The ClaimPredicate XDR, base64, for the page's raw view. */
+  readonly predicate: string;
+}
+
+type FlagNames = readonly { readonly bit: number; readonly name: string }[];
+
+/** Account flags (setOptions setFlags / clearFlags). */
+export const STELLAR_ACCOUNT_FLAGS: FlagNames = Object.freeze([
+  Object.freeze({ bit: 1, name: 'auth required' }),
+  Object.freeze({ bit: 2, name: 'auth revocable' }),
+  Object.freeze({ bit: 4, name: 'auth immutable' }),
+  Object.freeze({ bit: 8, name: 'clawback enabled' }),
+]);
+
+/** Trust-line flags (allowTrust authorize, setTrustLineFlags). */
+export const STELLAR_TRUSTLINE_FLAGS: FlagNames = Object.freeze([
+  Object.freeze({ bit: 1, name: 'authorized' }),
+  Object.freeze({ bit: 2, name: 'authorized to maintain liabilities' }),
+  Object.freeze({ bit: 4, name: 'clawback enabled' }),
+]);
+
+/** Flag bits by name, with any unknown bits as a number: stellarFlagNames(3, STELLAR_ACCOUNT_FLAGS) = ['auth required', 'auth revocable']. */
+export function stellarFlagNames(bits: number, names: FlagNames): string[] {
+  const out = names.filter((f) => (bits & f.bit) !== 0).map((f) => f.name);
+  const known = names.reduce((m, f) => m | f.bit, 0);
+  const unknown = bits & ~known;
+  if (unknown !== 0) out.push(`unknown bits ${unknown >>> 0}`);
+  return out;
+}
+
+/**
+ * How an operation changes who controls an account (docs/decisions.md D110): a signer added, re-weighted or removed,
+ * a signing threshold or the master key's weight changed, or the account merged away. The approval popup shows each
+ * with a danger-level warning, and no auto-approve policy can cover them (policy/match.ts 'account_control').
+ */
+export type StellarAccountControl = 'signer' | 'thresholds' | 'master_weight' | 'merge';
+
+/** What `op` changes about control of its source account; empty for every other operation. */
+export function stellarAccountControl(op: StellarOperation): readonly StellarAccountControl[] {
+  if (op.type === 'accountMerge') return ['merge'];
+  if (op.type !== 'setOptions') return [];
+  const out: StellarAccountControl[] = [];
+  if (op.signer !== null) out.push('signer');
+  if (op.lowThreshold !== null || op.medThreshold !== null || op.highThreshold !== null) out.push('thresholds');
+  if (op.masterWeight !== null) out.push('master_weight');
+  return out;
+}
 
 export interface StellarSorobanData {
   /** Stroops, decimal. */
@@ -480,9 +646,211 @@ function operation(op: xdr.Operation): StellarOperation {
         startingBalance: o.startingBalance().toString(),
       };
     }
+    case 'pathPaymentStrictReceive': {
+      const o = body.pathPaymentStrictReceiveOp();
+      return {
+        ...base,
+        type,
+        sendAsset: asset(o.sendAsset()),
+        sendMax: o.sendMax().toString(),
+        destination: muxed(o.destination()),
+        destAsset: asset(o.destAsset()),
+        destAmount: o.destAmount().toString(),
+        path: o.path().map(asset),
+      };
+    }
+    case 'pathPaymentStrictSend': {
+      const o = body.pathPaymentStrictSendOp();
+      return {
+        ...base,
+        type,
+        sendAsset: asset(o.sendAsset()),
+        sendAmount: o.sendAmount().toString(),
+        destination: muxed(o.destination()),
+        destAsset: asset(o.destAsset()),
+        destMin: o.destMin().toString(),
+        path: o.path().map(asset),
+      };
+    }
+    case 'manageSellOffer': {
+      const o = body.manageSellOfferOp();
+      return {
+        ...base,
+        type,
+        selling: asset(o.selling()),
+        buying: asset(o.buying()),
+        amount: o.amount().toString(),
+        price: price(o.price()),
+        offerId: o.offerId().toString(),
+      };
+    }
+    case 'createPassiveSellOffer': {
+      const o = body.createPassiveSellOfferOp();
+      return {
+        ...base,
+        type,
+        selling: asset(o.selling()),
+        buying: asset(o.buying()),
+        amount: o.amount().toString(),
+        price: price(o.price()),
+        offerId: '0',
+      };
+    }
+    case 'manageBuyOffer': {
+      const o = body.manageBuyOfferOp();
+      return {
+        ...base,
+        type,
+        selling: asset(o.selling()),
+        buying: asset(o.buying()),
+        buyAmount: o.buyAmount().toString(),
+        price: price(o.price()),
+        offerId: o.offerId().toString(),
+      };
+    }
+    case 'setOptions': {
+      const o = body.setOptionsOp();
+      const inflationDest = o.inflationDest();
+      const homeDomain = o.homeDomain();
+      const signer = o.signer();
+      return {
+        ...base,
+        type,
+        // Absent XDR optionals read back as undefined (or null): both become null here.
+        inflationDest: inflationDest ? accountId(inflationDest) : null,
+        clearFlags: o.clearFlags() ?? null,
+        setFlags: o.setFlags() ?? null,
+        masterWeight: o.masterWeight() ?? null,
+        lowThreshold: o.lowThreshold() ?? null,
+        medThreshold: o.medThreshold() ?? null,
+        highThreshold: o.highThreshold() ?? null,
+        homeDomain: homeDomain === null || homeDomain === undefined ? null : text(homeDomain),
+        signer: signer ? { ...signerKey(signer.key()), weight: signer.weight() } : null,
+      };
+    }
+    case 'allowTrust': {
+      const o = body.allowTrustOp();
+      const a = o.asset();
+      const twelve = a.switch().name === 'assetTypeCreditAlphanum12';
+      return {
+        ...base,
+        type,
+        trustor: accountId(o.trustor()),
+        assetCode: assetCode(u8(twelve ? a.assetCode12() : a.assetCode4()), twelve),
+        authorize: o.authorize(),
+      };
+    }
+    case 'accountMerge':
+      return { ...base, type, destination: muxed(body.destination()) };
+    case 'inflation':
+    case 'endSponsoringFutureReserves':
+      return { ...base, type };
+    case 'manageData': {
+      const o = body.manageDataOp();
+      const value = o.dataValue();
+      return { ...base, type, name: text(o.dataName()), value: value ? bytesToHex(value) : null };
+    }
+    case 'bumpSequence':
+      return { ...base, type, bumpTo: body.bumpSequenceOp().bumpTo().toString() };
+    case 'createClaimableBalance': {
+      const o = body.createClaimableBalanceOp();
+      return {
+        ...base,
+        type,
+        asset: asset(o.asset()),
+        amount: o.amount().toString(),
+        claimants: o.claimants().map((c) => {
+          const v0 = c.v0();
+          const predicate = v0.predicate();
+          return {
+            destination: accountId(v0.destination()),
+            unconditional: predicate.switch().name === 'claimPredicateUnconditional',
+            predicate: predicate.toXDR('base64'),
+          };
+        }),
+      };
+    }
+    case 'claimClaimableBalance':
+      return { ...base, type, balanceId: bytesToHex(body.claimClaimableBalanceOp().balanceId().toXDR()) };
+    case 'clawbackClaimableBalance':
+      return { ...base, type, balanceId: bytesToHex(body.clawbackClaimableBalanceOp().balanceId().toXDR()) };
+    case 'beginSponsoringFutureReserves':
+      return { ...base, type, sponsored: accountId(body.beginSponsoringFutureReservesOp().sponsoredId()) };
+    case 'revokeSponsorship': {
+      const o = body.revokeSponsorshipOp();
+      if (o.switch().name === 'revokeSponsorshipLedgerEntry') {
+        return { ...base, type, target: { type: 'ledgerEntry', key: ledgerKey(o.ledgerKey()) } };
+      }
+      const s = o.signer();
+      return {
+        ...base,
+        type,
+        target: { type: 'signer', account: accountId(s.accountId()), signer: signerKey(s.signerKey()).key },
+      };
+    }
+    case 'clawback': {
+      const o = body.clawbackOp();
+      return { ...base, type, asset: asset(o.asset()), from: muxed(o.from()), amount: o.amount().toString() };
+    }
+    case 'setTrustLineFlags': {
+      const o = body.setTrustLineFlagsOp();
+      return {
+        ...base,
+        type,
+        trustor: accountId(o.trustor()),
+        asset: asset(o.asset()),
+        clearFlags: o.clearFlags(),
+        setFlags: o.setFlags(),
+      };
+    }
+    case 'liquidityPoolDeposit': {
+      const o = body.liquidityPoolDepositOp();
+      return {
+        ...base,
+        type,
+        poolId: poolId(o.liquidityPoolId()),
+        maxAmountA: o.maxAmountA().toString(),
+        maxAmountB: o.maxAmountB().toString(),
+        minPrice: price(o.minPrice()),
+        maxPrice: price(o.maxPrice()),
+      };
+    }
+    case 'liquidityPoolWithdraw': {
+      const o = body.liquidityPoolWithdrawOp();
+      return {
+        ...base,
+        type,
+        poolId: poolId(o.liquidityPoolId()),
+        amount: o.amount().toString(),
+        minAmountA: o.minAmountA().toString(),
+        minAmountB: o.minAmountB().toString(),
+      };
+    }
     default:
-      return { ...base, type: type as StellarOtherOperationType };
+      fail('unsupported', `Unknown operation type ${type}`);
   }
+}
+
+const price = (p: xdr.Price): StellarPrice => ({ n: p.n(), d: p.d() });
+// PoolId is typed as Hash (an Opaque[] typedef) but is a Buffer at run time.
+const poolId = (id: xdr.PoolId): string => bytesToHex(u8(id as unknown as Uint8Array));
+
+function text(v: string | Uint8Array): StellarText {
+  const bytes = stringBytes(v);
+  return { value: decodeMessage(bytes).text, hex: bytesToHex(bytes) };
+}
+
+const SIGNER_KEY_TYPES: Record<string, StellarSigner['keyType']> = {
+  signerKeyTypeEd25519: 'ed25519',
+  signerKeyTypePreAuthTx: 'preAuthTx',
+  signerKeyTypeHashX: 'sha256Hash',
+  signerKeyTypeEd25519SignedPayload: 'ed25519SignedPayload',
+};
+
+function signerKey(k: xdr.SignerKey): Pick<StellarSigner, 'key' | 'keyType'> {
+  const keyType = SIGNER_KEY_TYPES[k.switch().name];
+  if (keyType === undefined) fail('unsupported', 'Unknown signer key type');
+  return { key: SignerKey.encodeSignerKey(k), keyType };
 }
 
 function memo(m: xdr.Memo): StellarTransaction['memo'] {

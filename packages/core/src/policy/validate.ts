@@ -233,7 +233,36 @@ function stellarAddress(c: Checker, v: unknown, path: string, allowContract: boo
   return c.problem(path, allowContract ? 'must be a G… or C… address' : 'must be a G… address');
 }
 
+/**
+ * Keys a Stellar section may not have because no policy can cover classic operations other than changeTrust (D110):
+ * named here so the refusal says why, on top of the generic unknown-key refusal. The account-control operations
+ * (setOptions signer, threshold and master-weight changes, accountMerge) are also refused by the matcher whatever the
+ * policy says.
+ */
+const STELLAR_NEVER_COVERED_KEYS = new Set([
+  'operations',
+  'classicOperations',
+  'signers',
+  'setOptions',
+  'accountMerge',
+  'payment',
+  'pathPaymentStrictSend',
+  'pathPaymentStrictReceive',
+  'manageData',
+  'allowTrust',
+  'setTrustLineFlags',
+  'clawback',
+  'revokeSponsorship',
+]);
+
 function stellarSection(c: Checker, v: unknown, decoders: ProtocolDecoderRegistry): StellarPolicy | undefined {
+  if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+    for (const k of Object.keys(v)) {
+      if (STELLAR_NEVER_COVERED_KEYS.has(k)) {
+        c.problem(`stellar.${k}`, 'Stellar classic operations other than changeTrust can never be auto-approved');
+      }
+    }
+  }
   const o = c.object(
     v,
     'stellar',

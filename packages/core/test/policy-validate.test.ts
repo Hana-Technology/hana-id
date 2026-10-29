@@ -91,6 +91,19 @@ describe('validateAutoApprovePolicy: accepts and normalizes', () => {
 
 describe('validateAutoApprovePolicy: refusals', () => {
   it.each([
+    ['operations', ['setOptions']],
+    ['setOptions', { signer: true }],
+    ['accountMerge', true],
+    ['signers', ['GABC']],
+    ['payment', { maxAmount: '1' }],
+    ['pathPaymentStrictSend', true],
+  ])('refuses a Stellar section that tries to cover classic operations (%s) (D110)', (key, value) => {
+    const p = problems(patch((x) => (x.stellar[key] = value)));
+    expect(p).toContain(`stellar.${key}: Stellar classic operations other than changeTrust can never be auto-approved`);
+    expect(p).toContain(`stellar: unknown key "${key}"`);
+  });
+
+  it.each([
     ['ERC-20 approve', (x: Mutable) => (x.evm.chains[0].contracts[0].selectors[0].addressArgs = 'any')],
     [
       'ERC-20 transfer',

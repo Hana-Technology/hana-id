@@ -1046,6 +1046,34 @@ answered question there points here.
 - Rejected: opening the popup only from the vault's launcher (an extra click per signature); having the partner page
   relay requests to the popup (the popup would have to trust the partner page).
 
+## Security sweep fixes: core, web and SDK (2026-10-29)
+
+From the security sweep of `develop` @ 91609c4 (findings CORE-*, AUTH-*, VAUL-*, PART-*). Numbered from D110 so they
+can't collide with the entries the parallel API, contract and watchdog fixes add from D100.
+
+### D110. Stellar classic operations are decoded; account-control operations get a red warning and are never auto-approved
+- Date 2026-10-29 · Status: in force on branch `fix/sweep-web` (`packages/core/src/decode/stellar.ts`
+  `stellarAccountControl`, `src/policy/match.ts`, `src/policy/validate.ts`; `packages/web/src/auth/render-approval.ts`)
+  · Source: user decision on sweep finding CORE-1; amends `docs/batch-b-spec.md` "Approval flow" step 4
+- Decision: the decoder reads every operation type the XDR defines, field by field: `setOptions` (signer key,
+  type and weight, added or removed; master weight; low, medium and high thresholds; set and clear flags by name;
+  home domain, shown as hex when it isn't display-safe; inflation destination), `accountMerge` (destination), path
+  payments strict send and receive (send asset and exact or maximum amount, destination, destination asset and
+  exact or minimum amount, path), offers, `allowTrust`, `manageData`, `bumpSequence`, claimable balances,
+  sponsorship, `clawback`, `setTrustLineFlags` and liquidity pools. An operation type the library doesn't know is a
+  decode error (the popup refuses the request) instead of a raw-XDR line.
+- Account control: a `setOptions` that touches a signer (any weight, 0 included), a threshold or the master weight,
+  and every `accountMerge`, is an account-control operation. The popup puts a red, bordered banner at the top of the
+  transaction ("Danger: this transaction changes who controls a Stellar account…") and one warning per operation
+  that names the new signer and its weight, the thresholds, the master weight (weight 0: "you lose control of it")
+  or the merge destination ("It can't be undone"). The matcher refuses them first, whatever the policy lists
+  (`account_control`); the validator refuses a Stellar section with a key naming classic operations
+  (`operations`, `setOptions`, `accountMerge`, `signers`, `payment`, path payments, …) on top of the unknown-key
+  refusal. Everything is still rendered with `textContent`.
+- Not done: an extra confirmation step on top of the warning (the Approve guard, D36, still applies).
+- Rejected: keeping "shown by type with raw XDR" for classic operations (a compromised partner page plus one click
+  could add a signer or merge the account away).
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -1067,6 +1095,7 @@ answered question there points here.
 | Sodax Stellar `signAndSendTransaction(p)` is `sendTransaction(signTransaction(p.data))` | It signs as `p.from`: `sendTransaction(signTransaction(p.data, {address: p.from}))`, so a raw transaction built for another account (a muxed `M…` address included) is 4100 before any popup. Sodax builds every raw transaction for `getWalletAddress()`'s `G…` address. Confirmed (D67) | `docs/batch-b-spec.md` "Sodax adapter"; `packages/sodax/src/stellar.ts` |
 | `/login` calls `GET /v1/app` itself and cross-checks the vault's signer, scope and client before Google (batch B "Login" step 4) | It checks the pinned signer and the nonce only, makes no API call, and shows the vault's app name (D77) | `docs/security.md` "The login popup trusts the vault's app facts" |
 | Every approval popup opens from the vault's "Review in Hana" launcher (batch B "Approval flow" steps 1–2) | A signing call from a click opens it in that click (`/approve?from=partner&v=…`); the launcher is the fallback without user activation or when `window.open` returns null (D99) | `docs/batch-b-spec.md` "Approval flow" |
+| Stellar classic operations other than changeTrust, payment and createAccount shown by type with their raw XDR (batch B "Approval flow" step 4) | Every operation decoded field by field; account-control operations get a red banner and per-operation warning and are never auto-approved (D110) | `packages/core/src/decode/stellar.ts` |
 | The vault persists (share, record) before it replies to `hana_login` (batch B "Login" steps 11–12) | It replies first; the share and record follow in the background, and a failure turns `persistence` to `'none'` (`persistenceChanged`, D79) | `packages/web/src/vault/vault.ts` `persistLogin` |
 
 ## Proposed, not yet confirmed

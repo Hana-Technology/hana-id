@@ -109,6 +109,20 @@ p.danger {
   font-weight: 600;
 }
 
+/* Stellar account-control operations (D110): stronger than .danger, so they don't read as a routine notice. */
+p.takeover {
+  border: 2px solid var(--danger-text);
+}
+
+p.takeover.banner {
+  font-size: 1.05rem;
+}
+
+.ops > li.takeover-op {
+  border-color: var(--danger-text);
+  border-width: 2px;
+}
+
 header.app {
   border-bottom: 1px solid var(--line);
   margin-bottom: 12px;

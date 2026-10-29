@@ -67,6 +67,7 @@ export const AUTO_APPROVE_REASON_TEXT: Readonly<Record<AutoApproveReason, string
   fee_too_high: 'the fee is over the rules’ limit',
   source_not_self: 'the transaction’s source isn’t your account',
   operation_not_allowed: 'it contains an operation the rules don’t allow',
+  account_control: 'it changes who controls your account, which is never signed automatically',
   asset_not_listed: 'the asset isn’t listed in the rules',
   contract_creation: 'it creates a contract',
   contract_not_listed: 'the contract isn’t listed in the rules',

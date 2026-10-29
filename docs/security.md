@@ -242,6 +242,12 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   `event.source`.
 - No message in any direction carries key bytes, S, PRK, a CKD response, a token or a session secret, except
   `relayKey` from the vault to its authenticated login popup (schemas: `packages/core/src/protocol.ts`).
+- The approval popup decodes every Stellar operation field by field (`packages/core/src/decode/stellar.ts`; no
+  operation is shown as raw XDR only). Account-control operations (a `setOptions` signer, threshold or master-weight
+  change, `accountMerge`) get a red banner at the top of the transaction and a warning per operation naming the new
+  signer and weight, the thresholds, the master weight or the merge destination, in a style stronger than the
+  routine `danger` notice (`render-approval.ts` `ACCOUNT_CONTROL_BANNER`, `accountControlWarnings`; D110, sweep
+  finding CORE-1).
 - Approval binds the whole request through `approvalDigest` (`packages/core/src/approval.ts:179`). Its network
   context is the passphrase or chain ID for transactions and auth entries, and empty for messages, typed data and raw
   requests (D35); the popup says those signatures aren't tied to one network. The launcher only opens the popup. A
@@ -367,7 +373,10 @@ Code: `packages/core/src/policy/` (validator, matcher, `policyId`, usage); the v
   `'off'` refuses raw requests in every open tab within 10 s, and a failed re-read refuses too (fails closed, D68).
 - **Never covered**: `hana_signRaw`, `personal_sign`, `stellar_signMessage` (`NEVER_AUTO_APPROVED_KINDS`), EVM
   contract creation, fee-bump and v0 Stellar envelopes, Stellar classic operations other than a listed `changeTrust`,
-  contract creation or upload host functions, anything that fails to decode.
+  contract creation or upload host functions, anything that fails to decode. Stellar account-control operations
+  (`stellarAccountControl`, `packages/core/src/decode/stellar.ts`: a `setOptions` that adds, re-weights or removes a
+  signer, changes a threshold or the master weight, and `accountMerge`) are refused first, before any other check,
+  as `account_control`, and the validator refuses a Stellar section that names classic operations (D110).
 - **Validator** (`validateAutoApprovePolicy`, `validate.ts:459`): strict JSON, unknown keys refused at every level,
   `perDayCount` 1..500, `maxConsentMs` ≤ the app's `session_ttl_ms`, safe label and names, selector must equal the
   signature's, `addressArgs` required on an EVM function that takes an address, decoder ids must be shipped (none in

@@ -7,16 +7,16 @@ never reach your page. They live in a hidden Hana iframe, and every signature ne
 popup, unless it falls under an auto-approve policy you set and the user accepted.
 
 > **Testnet pilot.** Keys come from the NEAR **testnet** MPC and stay disposable until the address freeze (final
-> accounts, audit, mainnet). Don't keep real funds in pilot wallets, on any chain. A test app (`pk_test_…`) can't sign
+> accounts, audit, mainnet). Don't keep real funds in pilot wallets, on any chain. A test app (`pk_test_â¦`) can't sign
 > for mainnet chains at all ([section 12](#12-test-and-live-keys)). This guide follows the code; the original
 > specification is `docs/batch-b-spec.md`.
 
 ## How it works
 
 ```
-your page ──iframe──▶ vaultOrigin/vault      holds the key (in memory; on disk only under a server-held share)
-    │                      ▲  MessageChannel
-    └─ window.open ─▶ authOrigin/login ─▶ Google ─▶ authOrigin/login/callback ─(encrypted relay)─▶ vault
+your page ââiframeâââ¶ vaultOrigin/vault      holds the key (in memory; on disk only under a server-held share)
+    â                      â²  MessageChannel
+    ââ window.open ââ¶ authOrigin/login ââ¶ Google ââ¶ authOrigin/login/callback â(encrypted relay)ââ¶ vault
                       authOrigin/approve     approval popup: the user reviews and approves every request
                       authOrigin/export      key export window
 ```
@@ -44,7 +44,7 @@ Hana registers apps during the pilot (the self-serve dashboard comes with batch 
 - whether you use Hana's shared Google client or your own ([section 6](#6-google-client-shared-or-your-own));
 - any [settings](#7-app-settings) other than the defaults.
 
-You get a **publishable key** (`pk_test_…`). It is public: ship it in your page. Your origins are what protect it.
+You get a **publishable key** (`pk_test_â¦`). It is public: ship it in your page. Your origins are what protect it.
 
 ## 2. Install
 
@@ -83,7 +83,7 @@ pilot ships `sandbox-dev` (NEAR testnet). A new environment means a new release.
 
 1. Ask Hana for a **test app** on `sandbox-dev`, with the **shared Google client** (nothing to set up in Google
    Cloud), your app's name, and its **allowed origins**: each exact origin your app runs on (`https://app.example.com`,
-   staging, previews) plus `http://localhost:<port>` for development. You get a publishable key `pk_test_…`.
+   staging, previews) plus `http://localhost:<port>` for development. You get a publishable key `pk_test_â¦`.
 2. Install the tarballs above (web, core, react if you use React, sodax and `@sodax/types@2.1.0`).
 3. Allow `https://hana-id-vault-sandbox-dev.tingtc.workers.dev` in your CSP `frame-src`, and your RPCs in
    `connect-src` ([section 5](#5-your-page-origins-csp-popups)).
@@ -93,7 +93,7 @@ pilot ships `sandbox-dev` (NEAR testnet). A new environment means a new release.
 
    ```ts
    const hana = createHana({
-     publishableKey: 'pk_test_…',
+     publishableKey: 'pk_test_â¦',
      environment: 'sandbox-dev',
      evm: { chains: [{ id: 84532, rpcUrl: 'https://sepolia.base.org' }], defaultChainId: 84532 },
      stellar: { networkPassphrase: 'Test SDF Network ; September 2015' },
@@ -115,7 +115,7 @@ pilot ships `sandbox-dev` (NEAR testnet). A new environment means a new release.
 import { createHana } from '@hana-id/web';
 
 const hana = createHana({
-  publishableKey: 'pk_test_…',
+  publishableKey: 'pk_test_â¦',
   environment: 'sandbox-dev',
   // optional: only if you use EVM chains
   evm: { chains: [{ id: 84532, rpcUrl: 'https://sepolia.base.org' }], defaultChainId: 84532 },
@@ -127,7 +127,7 @@ const hana = createHana({
 
 await hana.ready; // the vault is up and the status is known (a reload has already been restored)
 hana.status;      // 'logged_out' | 'unlocking' | 'logging_in' | 'logged_in' | 'error'
-hana.addresses;   // { stellar: 'G…', evm: '0x…' } or null
+hana.addresses;   // { stellar: 'Gâ¦', evm: '0xâ¦' } or null
 ```
 
 Create one client per page and keep it. `hana.destroy()` removes the iframe and its listeners (for example on an SPA
@@ -149,7 +149,7 @@ hana.on('accountsChanged', (addresses) => {}); // { stellar, evm } or null
 hana.on('sessionExpired', () => {});            // the session reached its limit: log in again
 hana.on('disconnect', ({ code }) => {});        // 4900: the vault connection is gone
 hana.on('loginProgress', ({ stage }) => {});    // 'popup_connected' | 'google' | 'token' | 'chain' | 'done'
-hana.on('launcher', ({ visible, label }) => {}); // Hana's button is shown or hidden ("Review in Hana", …)
+hana.on('launcher', ({ visible, label }) => {}); // Hana's button is shown or hidden ("Review in Hana", â¦)
 hana.on('autoApproved', ({ kind, chain, contract, function: fn }) => {});
 hana.on('persistenceChanged', (persistence) => {}); // 'none': this login won't survive a reload (see "Sessions")
 ```
@@ -164,7 +164,7 @@ button.addEventListener('click', async () => {
   try {
     const { stellar, evm } = await hana.login(); // call it directly in the click handler, before any await
   } catch (e) {
-    // e is a HanaError: e.code is a number (4001, …) or a string ('login_cancelled', 'google_error', …)
+    // e is a HanaError: e.code is a number (4001, â¦) or a string ('login_cancelled', 'google_error', â¦)
   }
 });
 ```
@@ -175,8 +175,8 @@ button.addEventListener('click', async () => {
 - Already logged in: `login()` resolves at once. A second `login()` while one is pending replaces it (the first
   rejects with `login_cancelled`). `hana.cancelLogin()` ends a pending one.
 - A first login takes several seconds after the Google account choice (one NEAR transaction plus the MPC; estimated
-  6.5–7 s, to be measured on testnet). Show progress with `loginProgress`. A reload needs one API call (estimated
-  0.1–0.3 s).
+  6.5â7 s, to be measured on testnet). Show progress with `loginProgress`. A reload needs one API call (estimated
+  0.1â0.3 s).
 - **Sessions.** With the default `'session'` persistence the wallet survives reloads and new tabs for up to 12 h,
   or until it has been idle for 2 h. Then `sessionExpired` fires and the user signs in again. An open tab that sends
   the vault no request that uses the key (a signature, an export, revoking other devices, an auto-approve consent
@@ -193,7 +193,7 @@ button.addEventListener('click', async () => {
   fresh login, so offer it right after one.
 - `await hana.exportKey('stellar' | 'evm')` lets the user take their key elsewhere. Hana shows a button; the key
   appears only in a top-level Hana window, after a fresh Google sign-in and a typed confirmation, and never reaches
-  your page. Stellar keys export as `S…`, EVM keys as `0x…` hex. There is no recovery phrase. Each export is a NEAR
+  your page. Stellar keys export as `Sâ¦`, EVM keys as `0xâ¦` hex. There is no recovery phrase. Each export is a NEAR
   transaction Hana pays for, so one account can export at most 3 times an hour per app (`rate_limited` after that).
 
 ## 5. Your page: origins, CSP, popups
@@ -210,11 +210,11 @@ button.addEventListener('click', async () => {
 | Signing calls run in a click, before any `await` (or after `hana.prepareApproval()`) | one extra click per signature (the "Review in Hana" button) |
 
 Not supported: Google Identity Services (the "Sign in with Google" button or One Tap) on the same page, which the
-SDK warns about in the console; in-app browsers (Instagram, TikTok, … webviews), where Google refuses to sign in
+SDK warns about in the console; in-app browsers (Instagram, TikTok, â¦ webviews), where Google refuses to sign in
 (`disallowed_useragent`); pages with COOP `same-origin`. A page with `Cross-Origin-Embedder-Policy: require-corp` is
 untested: the vault frame sends no COEP header, so such a page may refuse to embed it.
 
-The vault's button (sign-in fallback, "Review in Hana", export) is a fixed 320×72 px Hana frame at the bottom right
+The vault's button (sign-in fallback, "Review in Hana", export) is a fixed 320Ã72 px Hana frame at the bottom right
 of the viewport. Don't cover it: whenever the popup couldn't open in the click (and for every export), users can't
 continue without it. The `launcher` event tells you when it
 shows, if you want to point at it.
@@ -235,7 +235,7 @@ ID, so you can start shared and move to your own client later without changing a
 account the same `sub` across clients, both within one Google Cloud project and across two projects (tested with a
 personal and a Workspace account, D42).
 
-**Your own client.** In Google Cloud console → APIs & Services → Credentials, create an OAuth client ID of type "Web
+**Your own client.** In Google Cloud console â APIs & Services â Credentials, create an OAuth client ID of type "Web
 application":
 
 - **Authorized redirect URIs**: exactly `{authOrigin}/login/callback`, and nothing else. For sandbox-dev that is
@@ -371,7 +371,7 @@ const provider = new BrowserProvider(hana.ethereum);
 | `eth_sendTransaction` | the SDK fills nonce, gas and fees from your RPC, the user approves, and the SDK broadcasts through the RPC of the chain it was filled on (even if the chain is switched during the approval). Sends run one at a time per chain, and a filled nonce is never below one past the last one this page broadcast, so back-to-back sends get consecutive nonces |
 | `eth_signTransaction`, `personal_sign`, `eth_signTypedData_v4` | approval |
 | `eth_sign` and other signing or wallet methods | `4200` |
-| read-only methods (`eth_call`, `eth_getBalance`, …) | forwarded to the current chain's `rpcUrl` |
+| read-only methods (`eth_call`, `eth_getBalance`, â¦) | forwarded to the current chain's `rpcUrl` |
 
 One key covers every EVM chain. Contract creation (an empty `to`) works with approval, but no policy ever
 auto-approves it. Errors are `ProviderRpcError` with numeric codes. A sign-in that didn't complete is `4001`, and the
@@ -379,13 +379,13 @@ Hana code is in `error.data.code`. Logging out emits `accountsChanged []`, as wa
 
 ### Raw signing
 
-Off by default, and never available to a test app (`pk_test_…`): a raw digest can be a mainnet transaction's hash,
+Off by default, and never available to a test app (`pk_test_â¦`): a raw digest can be a mainnet transaction's hash,
 so a test app's `signRaw` is `4100` (`data.reason: 'raw_not_allowed_for_test_apps'`) whatever its setting. With raw
 signing set to `'approval'` for a live app:
 
 ```ts
-await hana.signRaw({ chain: 'stellar', bytes });   // Ed25519 over ≤ 4 KiB → { signature } (64 bytes)
-await hana.signRaw({ chain: 'evm', digest });      // secp256k1 over 32 bytes → { signature } (r‖s‖v, v ∈ {27, 28})
+await hana.signRaw({ chain: 'stellar', bytes });   // Ed25519 over â¤ 4 KiB â { signature } (64 bytes)
+await hana.signRaw({ chain: 'evm', digest });      // secp256k1 over 32 bytes â { signature } (râsâv, v â {27, 28})
 ```
 
 The user always approves raw requests, under a red warning that raw signing can authorize any transaction on that
@@ -476,13 +476,13 @@ gets the popup. A changed policy is treated as no policy until the page reloads,
 
 | Field | Rule |
 |---|---|
-| `label` | ≤ 80 characters, shown to the user |
+| `label` | â¤ 80 characters, shown to the user |
 | `maxConsentMs` | how long one acceptance lasts: 1 min up to your session limit (it also ends with the session, on logout, or when the user stops it) |
 | `limits.perDayCount` | auto-signed requests per user per UTC day, 1 to 500, counted per device |
 | `stellar.networkPassphrases`, `maxFeeStroops` | the networks, and the most fee one transaction may pay |
 | `stellar.contracts[].functions[]` | Soroban functions by name; the whole authorization tree must stay inside listed contracts and functions |
 | `stellar.changeTrustAssets` | `CODE:ISSUER`: `changeTrust` is the only classic operation a policy can cover |
-| `evm.chains[]` | per `chainId`: `maxValueWei` per transaction and `maxValueWeiPerDay` of native spend, where spend is the value **plus the maximum fee** (gas limit × max fee per gas, or gas price); `maxFeeWei` caps the fee alone per transaction. So `maxValueWei` must be at least `maxFeeWei` (the validator refuses less: such a rule could never auto-approve a call at its fee cap), even if your calls send no value (the example allows fees only: 20 calls at up to 0.00005 ETH). The consent screen shows these as "Maximum value plus network fees, per transaction / per day" |
+| `evm.chains[]` | per `chainId`: `maxValueWei` per transaction and `maxValueWeiPerDay` of native spend, where spend is the value **plus the maximum fee** (gas limit Ã max fee per gas, or gas price); `maxFeeWei` caps the fee alone per transaction. So `maxValueWei` must be at least `maxFeeWei` (the validator refuses less: such a rule could never auto-approve a call at its fee cap), even if your calls send no value (the example allows fees only: 20 calls at up to 0.00005 ETH). The consent screen shows these as "Maximum value plus network fees, per transaction / per day" |
 | `evm.chains[].contracts[].selectors[]` | the 4-byte `selector` and its canonical `signature`; calldata must decode against it |
 | `evm.chains[].typedData` | `(verifyingContract, primaryType)` pairs for EIP-712 (permit-style signatures are never covered by default) |
 | `addresses` (either chain) | extra addresses allowed as call arguments |
@@ -492,9 +492,9 @@ Soroban call tree or the ABI-decoded calldata, must be the user's own address, a
 entry. That is what stops an injected script from sending funds or allowances to itself through an allowed
 function. `'any'` must be set explicitly, and the user sees "can send to any address". The validator refuses
 `'any'` on approve-, transfer-, send-, permit- and ownership-style functions, and on execute-style ones (`execute`,
-`multicall`, `aggregate`, `call`, `batch…`, `delegatecall`, `upgradeTo` and the like), which run calls described in
+`multicall`, `aggregate`, `call`, `batchâ¦`, `delegatecall`, `upgradeTo` and the like), which run calls described in
 their arguments. It also requires `addressArgs` on every EVM function that takes an address. Arguments where an
-address could hide unseen (`bytes`, `string`, `bytes20`–`bytes32`, `uint160`/`int160`, at any depth of arrays and
+address could hide unseen (`bytes`, `string`, `bytes20`â`bytes32`, `uint160`/`int160`, at any depth of arrays and
 tuples; on Stellar `Bytes`, `BytesN` and `String`) are never auto-approved under either rule: the validator refuses
 such EVM functions, and the vault sends any Stellar call carrying them to the popup. They need a protocol decoder.
 Note that 160-bit integers include Permit2's `uint160` amounts, so Permit2 `PermitSingle`/`PermitBatch` typed data
@@ -503,17 +503,20 @@ and calls with a `uint160` argument (Uniswap v3's `sqrtPriceLimitX96`) always ge
 
 **Never covered, whatever the policy says:** raw signing, `personal_sign`, Stellar messages, EVM contract creation,
 `eth_sign`, Stellar classic operations other than a listed `changeTrust`, fee-bump envelopes, and anything the
-vault can't fully decode. **Not covered in the pilot:** calls whose instructions travel in opaque bytes, such as
+vault can't fully decode. Operations that change who controls a Stellar account (a `setOptions` that adds,
+re-weights or removes a signer or changes a threshold or the master weight, and `accountMerge`) are refused first
+(`account_control`), and the popup shows them under a red "changes who controls a Stellar account" warning (D110):
+don't build flows that need them. **Not covered in the pilot:** calls whose instructions travel in opaque bytes, such as
 routers, multicall, bridges and Sodax swaps (`AssetManager.transfer`, `sendMessage`). Those always get the popup until
 a protocol decoder for them ships. Token amounts other than native value are not capped in the pilot (D46), so keep
 `perDayCount` small.
 
-**Contract names on the consent screen.** The `name` you give a contract is shown as yours: "{name} · named by
-{your app name}". A contract on Hana's verified list shows "✓ {verified name}" instead, and your name for it isn't
+**Contract names on the consent screen.** The `name` you give a contract is shown as yours: "{name} Â· named by
+{your app name}". A contract on Hana's verified list shows "â {verified name}" instead, and your name for it isn't
 shown. If your name for any other contract reads like a verified name or mentions a verified protocol (say "Sodax
-Router" on an address that isn't one of Sodax's verified contracts), the screen flags it ("— not the verified Sodax
-Asset Manager", "— not a verified Sodax contract") and warns the user at the top. Check marks are removed from your
-names. Every contract also shows its short address (`0x348B…7Bc3`) and a "View on {explorer}" link for its chain
+Router" on an address that isn't one of Sodax's verified contracts), the screen flags it ("â not the verified Sodax
+Asset Manager", "â not a verified Sodax contract") and warns the user at the top. Check marks are removed from your
+names. Every contract also shows its short address (`0x348Bâ¦7Bc3`) and a "View on {explorer}" link for its chain
 (Etherscan, Basescan, SonicScan, StellarExpert and others, test networks included; a chain Hana has no explorer for
 shows the address alone). The verified list starts with Sodax's mainnet contracts (its Sonic hub contracts; asset
 managers and bnUSD on the EVM spokes and Stellar; Connection contracts on Hedera, Kaia and Robinhood Chain), each
@@ -529,7 +532,7 @@ same way, under your protocol's name.
 Your page can use:
 
 ```ts
-await hana.requestAutoApprove();   // opens the consent screen now → { granted, policyId?, expiresAtMs? }; 4100 without a policy
+await hana.requestAutoApprove();   // opens the consent screen now â { granted, policyId?, expiresAtMs? }; 4100 without a policy
 await hana.autoApproveStatus();    // { policyId, label, expiresAtMs, used: { count, native } } or null
 await hana.revokeAutoApprove();    // the user can also stop it from any Hana popup
 ```
@@ -545,7 +548,7 @@ emits `autoApproved` and its button briefly shows "Signed by Hana under {label}"
 ```tsx
 import { HanaProvider, useHana, useWallet } from '@hana-id/react';
 
-<HanaProvider config={{ publishableKey: 'pk_test_…', environment: 'sandbox-dev', evm, stellar }}>
+<HanaProvider config={{ publishableKey: 'pk_test_â¦', environment: 'sandbox-dev', evm, stellar }}>
   <App />
 </HanaProvider>;
 
@@ -607,10 +610,10 @@ const evmProvider = createSodaxEvmProvider(hana, { chainId: 8453, rpcUrl });    
 
 ## 12. Test and live keys
 
-| | `pk_test_…` | `pk_live_…` |
+| | `pk_test_â¦` | `pk_live_â¦` |
 |---|---|---|
 | Where | sandbox envs (testnet), the pilot | the production MVP (mainnet), after the audit; not issued yet |
-| Loopback origins (`http://localhost:…`) | allowed, in `local*`/`sandbox*` envs only | never |
+| Loopback origins (`http://localhost:â¦`) | allowed, in `local*`/`sandbox*` envs only | never |
 | Login result | carries per-stage `timings` (`hana.lastLogin.timings`); the handshake and unlock's are `hana.readyTimings` | no timings (`hana.readyTimings` is null) |
 | Direct API calls from your page (`/v1/sessions`, `/v1/derive`) | only in sandbox envs, for test tooling such as `apps/smoke` | never |
 | Networks | test networks only: any Stellar network but the public one, and the EVM chains below | any |
@@ -640,7 +643,7 @@ account **different addresses** (D51). Wallets made with test keys are disposabl
 |---|---|---|
 | `4001` | The user rejected, closed the popup, or let it time out | nothing; let them retry |
 | `4100` | Not logged in, wrong address, or not allowed for this app (raw signing off, no policy, a mainnet for a test app: `data.reason`) | log in, or check the call |
-| `4200` | Unsupported method (`eth_sign`, …) | use a supported method |
+| `4200` | Unsupported method (`eth_sign`, â¦) | use a supported method |
 | `4900` | The vault is gone (logged out, session ended, frame replaced) | create the client again, or log in |
 | `4902` | EVM chain not in `evm.chains` | add it to `createHana` |
 | `vault_unavailable` | The vault didn't load in 5 s | check `frame-src`, your origins, the network |

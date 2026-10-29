@@ -1,4 +1,4 @@
-import { Asset, Operation, nativeToScVal, xdr } from '@stellar/stellar-base';
+import { Asset, Keypair, Operation, nativeToScVal, xdr } from '@stellar/stellar-base';
 import { type Hex, encodeFunctionData, parseAbi, serializeTransaction } from 'viem';
 import { describe, expect, it } from 'vitest';
 import {
@@ -17,6 +17,7 @@ import {
 } from './entries.ts';
 import { CHAIN, EVM_FRIEND, EVM_PERMIT2, EVM_USDC, EVM_USER, EVM_VAULT, policyJson } from './policy-fixtures.ts';
 import {
+  ATTACKER,
   OTHER,
   PASSPHRASE,
   POOL,
@@ -25,6 +26,7 @@ import {
   UNLISTED,
   USDC,
   USER,
+  accountControlOps,
   accountKey,
   addr,
   addressAuth,
@@ -37,6 +39,7 @@ import {
   invocation,
   invokeOp,
   paymentOp,
+  plainClassicOps,
   sorobanData,
   sourceAuth,
   txBytes,
@@ -270,7 +273,7 @@ describe('Stellar transactions', () => {
     ['another operation source', () => swapTx({ opSource: OTHER }), 'source_not_self'],
     ['a classic payment', () => txBytes([paymentOp()]), 'operation_not_allowed'],
     ['setOptions', () => txBytes([Operation.setOptions({ homeDomain: 'evil.test' })]), 'operation_not_allowed'],
-    ['accountMerge', () => txBytes([Operation.accountMerge({ destination: OTHER })]), 'operation_not_allowed'],
+    ['accountMerge', () => txBytes([Operation.accountMerge({ destination: OTHER })]), 'account_control'],
     ['an unlisted changeTrust asset', () => txBytes([changeTrustOp(new Asset('EURC', OTHER))]), 'asset_not_listed'],
     ['a listed changeTrust next to a payment', () => txBytes([changeTrustOp(), paymentOp()]), 'operation_not_allowed'],
     ['a fee-bump', () => feeBumpBytes(swapTx()), 'fee_bump'],
@@ -283,6 +286,36 @@ describe('Stellar transactions', () => {
     ],
   ])('sends %s to the popup', (_, bytes, why) => {
     expect(reason(match(stellarTx(bytes())))).toBe(why);
+  });
+
+  describe('account-control operations are never auto-approved (CORE-1, D110)', () => {
+    it.each(Object.entries(accountControlOps))('%s alone', (_, op) => {
+      const r = match(stellarTx(txBytes([op()])));
+      expect(reason(r)).toBe('account_control');
+      expect(r.ok ? '' : r.detail).toMatch(/changes who controls the account/u);
+    });
+
+    it.each(Object.entries(accountControlOps))('%s next to a listed changeTrust, a listed call or with another source', (_, op) => {
+      expect(reason(match(stellarTx(txBytes([changeTrustOp(USDC), op()]))))).toBe('account_control');
+      const sourced = op();
+      sourced.sourceAccount(Keypair.fromPublicKey(OTHER).xdrMuxedAccount());
+      expect(reason(match(stellarTx(txBytes([sourced]))))).toBe('account_control');
+    });
+
+    it('even under a policy that lists every contract, asset and address', () => {
+      const wide = validated({
+        ...policyJson(),
+        stellar: { ...policyJson().stellar, changeTrustAssets: [`USDC:${USDC.getIssuer()}`], addresses: [OTHER, ATTACKER] },
+      });
+      for (const op of Object.values(accountControlOps)) {
+        expect(reason(matchAutoApprovePolicy(wide, stellarTx(txBytes([op()])), ctx))).toBe('account_control');
+      }
+    });
+
+    it.each(Object.keys(plainClassicOps))('%s is refused as an operation the rules can’t allow', (type) => {
+      const build = plainClassicOps[type] as () => xdr.Operation;
+      expect(reason(match(stellarTx(txBytes([build()]))))).toBe('operation_not_allowed');
+    });
   });
 
   it('refuses an unlisted network passphrase', () => {

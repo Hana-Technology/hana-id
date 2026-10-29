@@ -3,7 +3,7 @@
 Last verified against code: 2026-10-28 (commit 58edee9).
 
 Commands and flags are from `scripts/`, `apps/api/scripts/gen-wrangler.ts`, `apps/api/scripts/pages-wrangler.ts`,
-the `package.json` scripts and their tests. Endpoints:
+`apps/demo/scripts/gen-wrangler.ts`, the `package.json` scripts and their tests. Endpoints:
 `docs/api.md`. Contract methods: `docs/contract-interface.md`. Design and measurements: `docs/context.md`.
 
 **Testnet only.** The manifest schema accepts only `network: "testnet"` and every script refuses an RPC whose
@@ -416,8 +416,41 @@ HANA_E2E_PORT_BASE=4510 corepack pnpm --filter @hana-id/e2e e2e   # a second wor
 - Ports are `HANA_E2E_PORT_BASE` (default 4410) to base + 50. Outside CI Playwright reuses a stack already listening
   there; the global setup fails the run unless it is this checkout's current stack (fingerprint on
   `/__e2e/health`). On "not this checkout's current e2e stack": stop the other stack or use another base.
+- A base that puts a port on one of the Fetch standard's blocked ports (5060/5061 SIP, 6000, 6665–6669, 10080, …) is
+  refused at once: browsers never connect there. 5010 is one (its EVM RPC would be 5060); use 5110, for example.
 - CI (`.github/workflows/ci.yml`, job "Playwright") retries a failed test once to keep its trace, but a test that
   passes only on the retry fails the job (`failOnFlakyTests`). The report and traces are uploaded on failure.
+
+## Hosted demo (`apps/demo`)
+
+A partner-style page on `@hana-id/web` so colleagues can try Hana ID on testnet from a URL: login, addresses with
+explorer links, `personal_sign` / Stellar message / a Base Sepolia test transaction (signed, never broadcast), export,
+logout, "log out other devices", login timings and a *Copy diagnostics* report (no tokens, keys, signatures or relay
+ids). Details: `apps/demo/README.md`.
+
+| | sandbox-dev |
+|---|---|
+| URL | `https://hana-id-demo-sandbox-dev.tingtc.workers.dev` (Worker `hana-id-demo-<env>` on the subdomain of the manifest's `apiUrl`) |
+| App | Smoke B, `pk_test_85gdPtFF4kYzqgPisccZbsT9fQP1tq7ie` (shared Google client); `HANA_DEMO_PUBLISHABLE_KEY` overrides it |
+| Env | `HANA_DEMO_ENV` (default `sandbox-dev`); only testnet `sandbox*`/`local*` envs whose API is on workers.dev |
+
+```sh
+# once per app: the vault loads only on the app's origins (needs apps/api/wrangler.jsonc: `gen sandbox-dev`)
+corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:origins:add \
+  --app pk_test_85gdPtFF4kYzqgPisccZbsT9fQP1tq7ie --origin https://hana-id-demo-sandbox-dev.tingtc.workers.dev --remote
+
+corepack pnpm --filter @hana-id/demo run deploy      # gen:envs, vite build, gen (apps/demo/wrangler.jsonc), wrangler deploy
+corepack pnpm --filter @hana-id/demo run build && corepack pnpm --filter @hana-id/demo run gen \
+  && corepack pnpm --filter @hana-id/demo exec wrangler deploy --dry-run   # check without deploying
+```
+
+- The Worker sets the page's CSP (`frame-src` exactly `vaultOrigin`, `connect-src` exactly the EVM RPC, no inline
+  code, `frame-ancestors 'none'`, Trusted Types) and `nosniff`, `no-referrer`, `X-Frame-Options: DENY`, COOP
+  `same-origin-allow-popups` on every response; preview URLs are off and it answers only on its own origin.
+- Redeploy after changing `envs/<env>.json` (the vault origin is in the CSP and the bundle) or `@hana-id/web`.
+- "Could not load the Hana vault" on the demo: the origin isn't on the app (`app:origins:add` above), or the build is
+  for another env. `admin <env> app:list --remote` shows the app's origins.
+- Removing the origin (`app:origins:remove`) signs out everyone who used the demo, on their next use.
 
 ## Logs and latency
 
@@ -573,8 +606,8 @@ skips everything while the `NPM_TOKEN` secret is missing, and npm refuses `"priv
 - The pre-commit hook runs `gitleaks git --staged` with `.gitleaks.toml`. Never bypass it (`--no-verify`). Scan
   locally with `corepack pnpm secrets:scan`.
 - Never commit `.secrets/`, `.env*`, `.dev.vars` or the generated `apps/api/wrangler.jsonc`, `wrangler.vault.jsonc`,
-  `wrangler.auth.jsonc`, `wrangler.vitest.jsonc` (all gitignored and untracked; `wrangler.jsonc` holds an env's D1
-  id, the page configs its origins and Worker names). Edit the
+  `wrangler.auth.jsonc`, `wrangler.vitest.jsonc` and `apps/demo/wrangler.jsonc` (all gitignored and untracked;
+  `wrangler.jsonc` holds an env's D1 id, the page and demo configs their origins and Worker names). Edit the
   manifest or `gen-wrangler.ts`, never the files. CI needs none of them: the API tests generate
   `wrangler.vitest.jsonc` from a fixed test manifest (`TEST_MANIFEST` in `gen-wrangler.ts`) on every run.
 - `legacy/` is read-only reference code.

@@ -17,3 +17,5 @@ apps/api/wrangler.jsonc
 apps/api/wrangler.vault.jsonc
 apps/api/wrangler.auth.jsonc
 apps/api/wrangler.vitest.jsonc
+# Generated per env by apps/demo/scripts/gen-wrangler.ts.
+apps/demo/wrangler.jsonc

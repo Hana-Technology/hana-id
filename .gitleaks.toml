@@ -12,6 +12,15 @@ description = "Test-only JWT fixtures"
 targetRules = ["jwt"]
 paths = ['''^contracts/hana-signer/src/test_fixture\.json$''']
 
+# Hana ID publishable test keys (`pk_test_` + base58): public by design, shipped in partner pages, protected by the
+# app's origins (docs/integration.md section 1). Only the generic rule is waived, only for a whole match of that
+# shape; `pk_live_` keys and every other key shape still fail.
+[[allowlists]]
+description = "Hana ID publishable test keys (public)"
+targetRules = ["generic-api-key"]
+regexTarget = "secret"
+regexes = ['''^pk_test_[1-9A-HJ-NP-Za-km-z]{16,64}$''']
+
 # Build output and dependencies (only seen by directory scans; both are gitignored).
 [[allowlists]]
 description = "Build output and dependencies"

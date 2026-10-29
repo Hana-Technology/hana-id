@@ -36,6 +36,7 @@ import {
   API_URL,
   AUTH_ORIGIN,
   DEFAULT_PORT_BASE,
+  DEMO_ORIGIN,
   E2E_ENV,
   GOOGLE_CLIENT_ID,
   PARTNER_ORIGIN,
@@ -72,12 +73,17 @@ describe('the e2e env', () => {
     expect(portBase(undefined)).toBe(DEFAULT_PORT_BASE);
     expect(portBase('')).toBe(DEFAULT_PORT_BASE);
     expect(portBase('4510')).toBe(4510);
-    expect(portsFrom(4510)).toEqual({ partner: 4510, siteB: 4511, vault: 4520, auth: 4530, api: 4540, near: 4550, evm: 4560 });
+    expect(portsFrom(4510)).toEqual({ partner: 4510, siteB: 4511, demo: 4512, vault: 4520, auth: 4530, api: 4540, near: 4550, evm: 4560 });
     for (const bad of ['80', '65500', '45.5', '4510x', '-1', ' 0x1000']) expect(() => portBase(bad)).toThrow(/HANA_E2E_PORT_BASE/u);
+    // A base that puts a port on one browsers refuse (5010 + 50 = 5060, SIP) fails at once, not in the tests.
+    expect(() => portBase('5010')).toThrow(/port 5060, which browsers refuse/u);
+    expect(() => portBase('5059')).toThrow(/port 5060, 5061/u);
+    expect(portBase('5110')).toBe(5110);
     // This run's origins follow its base.
     const base = portBase();
     expect([PARTNER_ORIGIN, SITE_B_ORIGIN, VAULT_ORIGIN, AUTH_ORIGIN, API_URL].map((o) => Number(new URL(o).port))).toEqual([base, base + 1, base + 10, base + 20, base + 30]);
-    expect(new Set(Object.values(PORTS)).size).toBe(7);
+    expect(Number(new URL(DEMO_ORIGIN).port)).toBe(base + 2);
+    expect(new Set(Object.values(PORTS)).size).toBe(8);
   });
 
   it("the stack's fingerprint covers the port base the bundles are built for", () => {
@@ -338,6 +344,15 @@ describe('the Hana API: apps/api’s Worker, /v1/login and /v1/derive mocked', (
     expect(await res.json()).toMatchObject({ code: 'session_not_spent' });
     expect((await call(api, '/v1/vault/unlock', { method: 'OPTIONS', origin: VAULT_ORIGIN })).status).toBe(204);
     expect((await call(api, '/v1/vault/unlock', { method: 'OPTIONS', origin: PARTNER_ORIGIN })).status).toBe(403);
+  });
+
+  it('creates an app with a fixed key once and returns the same app after that (the demo bakes its key in)', () => {
+    const { api } = setup();
+    const first = api.createApp({ origins: [PARTNER_ORIGIN], publishableKey: 'pk_test_DemoE2eDemoE2eDemoE2e' });
+    expect(first.pk).toBe('pk_test_DemoE2eDemoE2eDemoE2e');
+    expect(api.createApp({ origins: ['http://other.test'], publishableKey: 'pk_test_DemoE2eDemoE2eDemoE2e' })).toEqual(first);
+    expect(api.createApp({ origins: [PARTNER_ORIGIN] }).pk).not.toBe(first.pk);
+    expect(() => api.createApp({ origins: [PARTNER_ORIGIN], publishableKey: 'pk_live_DemoE2eDemoE2eDemoE2e' })).toThrow(/pk_test_/u);
   });
 
   it('reports the fingerprint it was given on /__e2e/health, to requests without an Origin only', async () => {

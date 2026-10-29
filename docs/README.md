@@ -13,10 +13,10 @@ the batch merges, so where a spec and a reference doc disagree, the reference do
 | `contract-interface.md` | `hana-signer` methods, types, byte layouts, events, panics |
 | `api.md` | Every HTTP endpoint, auth, errors, rate limits; D1 schema, Durable Objects, bindings, request logs |
 | `integration.md` | Partner guide: getting an app, `createHana`, page requirements, Google client, app settings, signing, auto-approve, React, Sodax, test and live keys, errors |
-| `operations.md` | Setting up and deploying an environment, Google clients, key rotation, smoke tests, logs, common failures |
+| `operations.md` | Setting up and deploying an environment, Google clients, key rotation, smoke tests, the hosted demo, logs, common failures |
 | `decisions.md` | Every decision: when, why, what was rejected, status |
 | `context.md` | Project background, batch B status, testnet measurements, next steps |
-| `../envs/README.md`, `../apps/api/README.md`, `../apps/smoke/README.md`, `../apps/e2e/README.md` | Per-package quick starts |
+| `../envs/README.md`, `../apps/api/README.md`, `../apps/smoke/README.md`, `../apps/e2e/README.md`, `../apps/demo/README.md` | Per-package quick starts (`apps/demo`: the hosted testnet demo for colleagues) |
 | `../packages/{core,web,react,sodax}/README.md` | The partner-facing READMEs shipped in the SDK tarballs (install, minimal usage) |
 
 ## Specs (history)

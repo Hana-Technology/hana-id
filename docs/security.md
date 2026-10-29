@@ -122,10 +122,13 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   execute; caps per owner identity (5/min, 30/day), per scope (10/min, 50/day) and global (20/min, 200/day), asked in
   that order and taken back from the earlier windows when a later one refuses (`hitAll`, `RateLimiter.unhit`);
   unauthenticated `execute_change` has its own per-scope window, never the owners'; `cancel_change` is outside all of
-  these, with its own 5/min, 20/day per owner identity and a cancel-only ceiling (30/min, 300/day), and is refused
-  without an owner identity, so no other owner, scope or flood can starve a timelock's cancel window (D100;
-  `handlers.ts` `ownerActionWindows`, `handleOwnerAction`, `owner-actions.ts`). Residual: the cancel ceiling is shared
-  by every owner, so only ≥ 15 invited owners cancelling their own changes all day could fill it. The off-chain check doesn't recompute `owner_action_nonce`: a token with a wrong nonce is
+  these: 5/min, 20/day per owner identity, then 25/min, 100/day per target scope (only that scope's on-chain owners,
+  verified before counting, reach it; sized for the contract's `MAX_OWNERS` = 5 at their cap), then a spend-bound
+  ceiling of 100/min, 1000/day for all cancels; refused without an owner identity (D100; `handlers.ts`
+  `ownerActionWindows`, `handleOwnerAction`, `owner-actions.ts`). Remaining starvation limits: in a scope, only all 5
+  owners together can fill its cancel window; the global one needs ≥ 20 identities at their cap per minute (≥ 4
+  attacker-owned scopes) or ≥ 50 per day plus 1000 cancellable changes (≥ 100 scopes' `MAX_PENDING`); an owner can
+  always cancel on chain directly (`docs/operations.md`). The owner pool's allowance is the hard spend bound. The off-chain check doesn't recompute `owner_action_nonce`: a token with a wrong nonce is
   relayed and fails on chain, at the cost of its owner's own windows only.
 - **Origin rules** (`apps/api/src/origins.ts:81`): a Hana page (`Origin` = `VAULT_ORIGIN`/`AUTH_ORIGIN`) may call only
   its endpoints, and only for an `x-hana-parent-origin` the app allows. Partner origins: `GET /v1/app` always; the
@@ -172,7 +175,7 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   | `GET /v1/app` per IP per app | plan `per_ip_minute`, its own window |
   | Vault endpoints | 60/min per IP per app (*per location*); 10 × `per_minute` per app; 10/min per share (share actions, *per location*) |
   | Login relay per IP | writes 10/min, reads 120/min |
-  | Owner actions | 10/min per IP; per owner 5/min, 30/day; per scope 10/min, 50/day; global 20/min, 200/day; `execute_change` its own 10/min, 50/day per scope; `cancel_change` only 5/min, 20/day per owner and 30/min, 300/day for all cancels (D100) |
+  | Owner actions | 10/min per IP; per owner 5/min, 30/day; per scope 10/min, 50/day; global 20/min, 200/day; `execute_change` its own 10/min, 50/day per scope; `cancel_change` only 5/min, 20/day per owner, 25/min, 100/day per scope and 100/min, 1000/day for all cancels (D100) |
 
   Each request's windows are asked in turn: per IP first, and the per-app window only once the IP window accepted,
   so a request the IP window refuses never uses (or holds) any of the app's shared quota. On the relay endpoints the

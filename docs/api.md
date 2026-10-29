@@ -122,7 +122,7 @@ The per-IP subject is the IPv4 address or the IPv6 /64 (`src/ip.ts`).
 | `GET /v1/app` | plan `per_ip_minute` (own window `<appId>:config:minute`) | — | never touches the relay quota |
 | vault endpoints | 60/min, *per location* (binding `VAULT_IP_LIMIT`, key `<env>:vault-ip:<appId>:<ipSubject>`) | 10 × plan `per_minute` (`vault:minute`), global | share actions: 10/min per share, *per location* (binding `VAULT_SHARE_LIMIT`, key `<env>:vault-share:<appId>:<hex>`); asked in turn: IP, then app only once the IP accepted, then (after the body check) the share (D95) |
 | login relay | writes 10/min, reads 120/min | — | not per app |
-| `/v1/owner-actions` | 10/min | per scope 10/min, 50/day (`owner-actions:scope:<scopeId>`), authenticated actions only | authenticated actions (`propose_change`, `remove_client`, `disable_shared_login`): per owner identity 5/min, 30/day (`owner-actions:owner:<hex sha256(provider#sub)>`), then per scope, then global 20/min, 200/day (`owner-actions:global`). `execute_change` (no auth): its own 10/min, 50/day per scope (`owner-actions:execute:<scopeId>`), then global. `cancel_change`: none of those, only 5/min, 20/day per owner identity (windows `cancel:minute`, `cancel:day`) and its own ceiling 30/min, 300/day (`owner-actions:cancel-global`). Counted only after every off-chain check passes; a request a later window refuses is taken back from the earlier ones (D100) |
+| `/v1/owner-actions` | 10/min | per scope 10/min, 50/day (`owner-actions:scope:<scopeId>`), authenticated actions only | authenticated actions (`propose_change`, `remove_client`, `disable_shared_login`): per owner identity 5/min, 30/day (`owner-actions:owner:<hex sha256(provider#sub)>`), then per scope, then global 20/min, 200/day (`owner-actions:global`). `execute_change` (no auth): its own 10/min, 50/day per scope (`owner-actions:execute:<scopeId>`), then global. `cancel_change`: none of those; 5/min, 20/day per owner identity (windows `cancel:minute`, `cancel:day`), then 25/min, 100/day per target scope (`owner-actions:cancel:<scopeId>`: the contract's `MAX_OWNERS` = 5 owners at their own cap), then a spend-bound ceiling of 100/min, 1000/day (`owner-actions:cancel-global`). Counted only after every off-chain check passes, the owner proof against the target scope's on-chain owners included; a request a later window refuses is taken back from the earlier ones (D100) |
 | `/v1/health`, `GET /vault` | — | — | — |
 
 Seeded plan `free`: `per_minute` 60, `per_day` 5000, `per_ip_minute` 20.
@@ -492,8 +492,17 @@ The token's sha256 is reserved atomically (`RateLimiter` object `owner-actions:t
 before relaying. Then the caps (table above) are asked from the most specific in, at one instant; when one refuses,
 the hits the earlier ones accepted are taken back (`RateLimiter.unhit`), so a refused request uses up no window.
 `execute_change`, which anyone may send, never counts against the window the scope's owners use, and
-`cancel_change` counts only against its own per-owner allowance and cancel-only ceiling, so no other owner, scope
-or execute flood can starve a timelock's cancel window. A `cancel_change` (or any authenticated action) without an
+`cancel_change` counts only against cancel windows: the owner's, the target scope's and a high cancel-only ceiling.
+Only a verified owner of the target scope on chain (`get_scope().owners`, checked before any window) reaches the
+scope's cancel window, and it is sized for all of them at their own cap at once.
+
+Remaining starvation limits for `cancel_change` (APIW-3): within a scope, only all 5 of its owners together (the
+contract's `MAX_OWNERS`), each at its own cap, can fill the scope's cancel window; any 4 leave the fifth room. The
+global cancel ceiling needs 20 owner identities at their cap per minute (≥ 4 scopes an attacker fully owns) or 50 per
+day (≥ 10 such scopes) plus 1000 cancellable changes (`MAX_PENDING` = 10 per scope, so ≥ 100 scopes' worth at once,
+or more proposals than the shared 200/day ceiling allows in five days). Registration is invite-only, and an owner can
+always cancel directly on chain (`docs/operations.md` "Cancelling a change when the API refuses"). The owner pool's
+allowance is the hard spend bound for all of these. A `cancel_change` (or any authenticated action) without an
 owner identity is refused, `403 not_owner` (fail closed; the shape check already requires `auth`). `429
 rate_limited` names the window in `error`: `owner actions per owner per minute`, `… per scope …`, `executes per scope
 …`, `owner actions per day`, `cancels per owner per minute`, `cancels per minute`. The token is released only if a
@@ -570,7 +579,7 @@ All SQLite-backed (wrangler migrations `v1`: `RelayerKey`, `RateLimiter`; `v2`: 
 `DO_LOCATION_HINT`, one of `wnam enam sam weur eeur apac oc afr me`), shared objects get the suffix `@<hint>` and are
 created there: `relayer-key-0@apac`, `owner-relayer-key-0@apac`, `app:<appId>@apac`, `owner-actions:global@apac`,
 `owner-actions:scope:<scopeId>@apac`, `owner-actions:execute:<scopeId>@apac`, `owner-actions:owner:<hash>@apac`,
-`owner-actions:cancel-global@apac`, `owner-actions:tokens@apac`. Unset or unknown hint: no suffix, Cloudflare places them. Changing
+`owner-actions:cancel:<scopeId>@apac`, `owner-actions:cancel-global@apac`, `owner-actions:tokens@apac`. Unset or unknown hint: no suffix, Cloudflare places them. Changing
 the hint creates new objects (fresh limiter counters; new relayer objects read their nonce from chain once). Never
 suffixed: per-IP limiters `ip:v4:<addr>` / `ip:v6:<prefix>::/64` (created near the client) and `LoginRelay` objects
 (named by `relayId`).

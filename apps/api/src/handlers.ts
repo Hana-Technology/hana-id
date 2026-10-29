@@ -33,9 +33,11 @@ export const OWNER_ACTIONS_PER_IP_MINUTE = 10;
  *   then per scope, then the global ceiling that bounds the pool's spend;
  * - execute_change (no auth, anyone may send it): its own per-scope window, never the one the scope's owners use, then
  *   the global ceiling;
- * - cancel_change: none of the above, only its own small allowance per owner identity and a cancel-only global
- *   ceiling, so no other owner's actions, no scope's traffic and no execute flood can starve a timelock's cancel
- *   window; a cancel without an owner identity is refused (fail closed).
+ * - cancel_change: none of the above. Its own allowance per owner identity, then per scope (keyed by the target
+ *   scope: only that scope's on-chain owners pass the precheck, so only they can fill it, and it is sized for all
+ *   CONTRACT_MAX_OWNERS of them at once), then a high cancel-only global ceiling that is only a spend bound. No other
+ *   scope's owners, no shared traffic and no execute flood can starve a timelock's cancel window; within the scope,
+ *   only all of its owners together can. A cancel without an owner identity is refused (fail closed).
  */
 export const OWNER_ACTIONS_PER_OWNER_MINUTE = 5;
 export const OWNER_ACTIONS_PER_OWNER_DAY = 30;
@@ -47,8 +49,21 @@ export const OWNER_ACTIONS_GLOBAL_MINUTE = 20;
 export const OWNER_ACTIONS_GLOBAL_DAY = 200;
 export const CANCELS_PER_OWNER_MINUTE = 5;
 export const CANCELS_PER_OWNER_DAY = 20;
-export const CANCELS_GLOBAL_MINUTE = 30;
-export const CANCELS_GLOBAL_DAY = 300;
+/** hana-signer's `MAX_OWNERS` per scope (registry.rs; scripts/test/contract-constants.test.ts keeps them equal). */
+export const CONTRACT_MAX_OWNERS = 5;
+/** hana-signer's `MAX_PENDING` changes per scope: at most this many cancels can pass the precheck at a time. */
+export const CONTRACT_MAX_PENDING = 10;
+/** Per scope: every owner's whole allowance at once, so fewer than all of a scope's owners can never fill it. */
+export const CANCELS_PER_SCOPE_MINUTE = CONTRACT_MAX_OWNERS * CANCELS_PER_OWNER_MINUTE;
+export const CANCELS_PER_SCOPE_DAY = CONTRACT_MAX_OWNERS * CANCELS_PER_OWNER_DAY;
+/**
+ * A spend bound only (the owner pool's allowance is the hard one). Filling the minute window takes 20 owner
+ * identities at their own cap (≥ 4 scopes the attacker fully owns, at CONTRACT_MAX_OWNERS each); the day window takes
+ * 50 identities (≥ 10 such scopes) and 1000 cancellable changes, which is ≥ 100 scopes' CONTRACT_MAX_PENDING at once
+ * or more proposals than the shared OWNER_ACTIONS_GLOBAL_DAY lets through in five days.
+ */
+export const CANCELS_GLOBAL_MINUTE = 100;
+export const CANCELS_GLOBAL_DAY = 1000;
 /** Clock skew tolerated on an ID token's `exp` (the contract checks `exp` against the block time again). */
 export const TOKEN_EXP_SKEW_MS = 60_000;
 const MINUTE = 60_000;
@@ -493,6 +508,8 @@ export const ownerLimiterKey = async (owner: { provider: string; sub: string }):
 export const scopeLimiterKey = (scopeId: string): string => `owner-actions:scope:${scopeId}`;
 /** execute_change's own per-scope subject: unauthenticated, so it never shares the window the scope's owners use. */
 export const executeLimiterKey = (scopeId: string): string => `owner-actions:execute:${scopeId}`;
+/** cancel_change's per-scope subject: only the target scope's owners (checked on chain state first) count here. */
+export const cancelScopeLimiterKey = (scopeId: string): string => `owner-actions:cancel:${scopeId}`;
 export const CANCEL_GLOBAL_LIMITER = 'owner-actions:cancel-global';
 
 export interface OwnerActionWindow {
@@ -520,6 +537,7 @@ export async function ownerActionWindows(method: string, check: { scopeId: strin
   if (method === 'cancel_change') {
     return [
       { subject: owner, label: 'cancels per owner', limits: pair('cancel:', CANCELS_PER_OWNER_MINUTE, CANCELS_PER_OWNER_DAY) },
+      { subject: cancelScopeLimiterKey(check.scopeId), label: 'cancels per scope', limits: pair('', CANCELS_PER_SCOPE_MINUTE, CANCELS_PER_SCOPE_DAY) },
       { subject: CANCEL_GLOBAL_LIMITER, label: 'cancels', limits: pair('', CANCELS_GLOBAL_MINUTE, CANCELS_GLOBAL_DAY) },
     ];
   }

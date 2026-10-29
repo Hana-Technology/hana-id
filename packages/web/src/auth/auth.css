@@ -80,6 +80,15 @@ p {
   color: var(--muted);
 }
 
+/* Partner-chosen values (app names in <strong>, origins, addresses, decoded values) are bidi-isolated, so right-to-left
+   text in one can't reorder the text around it (sweep AUTH-2). */
+strong,
+.origin,
+.mono,
+.code {
+  unicode-bidi: isolate;
+}
+
 .origin,
 .mono,
 .code {

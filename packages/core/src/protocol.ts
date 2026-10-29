@@ -11,6 +11,7 @@
 import { isEvmAddress, isStellarAddress } from './addresses.ts';
 import { APPROVAL_KINDS, type ApprovalContext, type ApprovalKind, approvalKindChain, validateApprovalSubject } from './approval.ts';
 import { base64Decode, from0xHex, toHex, utf8, utf8Length } from './bytes.ts';
+import { isDisplaySafeLine } from './display-safe.ts';
 import { KEY_INDEX_LIMIT, MAX_USES_LIMIT, RELAY_ID_PATTERN, SALT_MAX_BYTES, SALT_MIN_BYTES, SHARE_ID_BYTES } from './layouts.ts';
 import { type EvmTxRequest, evmTxSigningPayload, parseEvmTxRequest } from './signers/evm.ts';
 import { isTimings } from './timings.ts';
@@ -152,7 +153,8 @@ export const isPublishableKey = (v: unknown): v is string => typeof v === 'strin
 export const isScopeId = (v: unknown): v is string => typeof v === 'string' && /^[a-z0-9]{1,64}$/u.test(v);
 export const isNearAccountId = (v: unknown): v is string =>
   typeof v === 'string' && /^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/u.test(v);
-const isAppName = (v: unknown): v is string => isStr(v, 1, 200);
+/** An app name: 1 to 200 characters, none of them a control, bidi or invisible one (sweep AUTH-2, display-safe.ts). */
+const isAppName = (v: unknown): v is string => isStr(v, 1, 200) && isDisplaySafeLine(v);
 const isClientId = (v: unknown): v is string => isStr(v, 1, 256);
 const isNonce = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9_-]{43}$/u.test(v);
 const isRelayId = (v: unknown): v is string => typeof v === 'string' && RELAY_ID_PATTERN.test(v);

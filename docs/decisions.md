@@ -1175,6 +1175,21 @@ can't collide with the entries the parallel API, contract and watchdog fixes add
   before the user signs in and before gas).
 - Cost: one more optimistic view per shared-mode login, in parallel, while the user is at Google.
 
+### D118. One property-based display-safety rule, app names included
+- Date 2026-10-29 · Status: in force on branch `fix/sweep-web` (`packages/core/src/display-safe.ts`
+  `isDisplaySafeText`, `isDisplaySafeLine`; used by `decode/message.ts`, `policy/validate.ts`, `protocol.ts`
+  `isAppName`, `api-types.ts`, `packages/web/src/vault/config.ts`) · Source: sweep findings AUTH-5 (merged with
+  CORE-4) and AUTH-2 (Low)
+- Decision: the hand-written range lists are replaced by one rule: refuse `\p{Cc}` (multi-line text keeps tab, LF,
+  CR), `\p{Cf}`, `\p{Co}`, `\p{Zl}`, `\p{Zp}` and the other default-ignorable code points (U+034F, the Hangul
+  fillers, U+17B4/U+17B5, U+180B–U+180F, every variation selector). Messages and decoded strings that fail are shown
+  as hex; policy labels and names fail validation; an app name that fails makes the vault config, `GET /v1/app`'s
+  answer and every popup message carrying it invalid, so a bad name stops the app's Hana pages rather than spoofing
+  them (the admin CLI should refuse such names at write time: OPER-11, for the scripts side). `CHECK_MARKS` also
+  strips U+10102 and U+1FBB1. App names, origins and decoded values are bidi-isolated in the auth pages' CSS.
+- Trade-off: an emoji written with U+FE0F (❤️) makes a message show as hex and a label invalid. Unassigned code
+  points stay allowed, so the validator gives the same answer on every engine.
+
 ## Superseded or amended
 
 | Was | Now | Source |

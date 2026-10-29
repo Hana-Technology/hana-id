@@ -1,7 +1,15 @@
 // Message display for `personal_sign` (EIP-191) and `stellar_signMessage` (SEP-53). The approval page shows the text
 // when the bytes are clean UTF-8, and the hex otherwise, so invisible or direction-changing characters can't make a
 // message read differently from what is signed.
+import { isDisplaySafeText } from '../display-safe.ts';
 import { toHex0x } from './hex.ts';
+
+/**
+ * True when `text` can be shown as is (display-safe.ts: no control other than \t \n \r, no format, bidi, invisible or
+ * other default-ignorable character). The approval page shows the hex of any text that fails this (messages, Stellar
+ * strings, memos, home domains and data names, ABI and EIP-712 strings).
+ */
+export { isDisplaySafeText };
 
 export interface DecodedMessage {
   /** The message as text, or null when it isn't valid UTF-8 or holds control, bidi or other invisible characters. */
@@ -12,17 +20,6 @@ export interface DecodedMessage {
 }
 
 const utf8Decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
-
-// C0 controls except \t \n \r, DEL and C1 controls, bidi controls (U+061C, U+200E/F, U+202A–U+202E, U+2066–U+2069),
-// zero-width and other format characters (U+200B–U+200D, U+2060–U+2064, U+FEFF), and line/paragraph separators.
-const UNSAFE =
-  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/u;
-
-/**
- * True when `text` can be shown as is: no control, bidi or invisible characters. The approval page shows the hex of
- * any text that fails this (messages, Stellar strings and memos, ABI and EIP-712 strings).
- */
-export const isDisplaySafeText = (text: string): boolean => !UNSAFE.test(text);
 
 export function decodeMessage(bytes: Uint8Array): DecodedMessage {
   let text: string | null;

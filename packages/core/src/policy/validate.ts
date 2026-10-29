@@ -17,6 +17,7 @@
 // the normalized policy that policyId hashes and the matcher reads.
 import { StrKey } from '@stellar/stellar-base';
 import { abiTypeContains, parseFunctionSignature } from '../decode/abi.ts';
+import { isDisplaySafeLine } from '../display-safe.ts';
 import { DecodeError } from '../decode/errors.ts';
 import { parseEvmAddress } from '../decode/hex.ts';
 import { JsonNumber, type StrictJson, parseStrictJson } from '../decode/json.ts';
@@ -128,8 +129,6 @@ function anyRefusedByName(name: string): string | undefined {
   return undefined;
 }
 
-// Characters a label or name may not contain (controls, bidi and invisible format characters).
-const UNSAFE_TEXT = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/u;
 const SOROBAN_SYMBOL = /^[A-Za-z0-9_]{1,32}$/u;
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
 const DECIMAL = /^(?:0|[1-9][0-9]*)$/u;
@@ -176,7 +175,8 @@ class Checker {
     const len = [...v].length;
     if (len === 0 || len > max) return this.problem(path, `must be 1 to ${max} characters`);
     if (v.trim() !== v) return this.problem(path, 'must not start or end with whitespace');
-    if (UNSAFE_TEXT.test(v)) return this.problem(path, 'contains control or invisible characters');
+    // A label or name may not hold a control, bidi, invisible or other default-ignorable character (display-safe.ts).
+    if (!isDisplaySafeLine(v)) return this.problem(path, 'contains control or invisible characters');
     return v;
   }
 

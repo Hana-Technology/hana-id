@@ -248,6 +248,12 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   `event.source`.
 - No message in any direction carries key bytes, S, PRK, a CKD response, a token or a session secret, except
   `relayKey` from the vault to its authenticated login popup (schemas: `packages/core/src/protocol.ts`).
+- One display-safety rule (`packages/core/src/display-safe.ts`, D118, sweep AUTH-5/CORE-4 and AUTH-2): text with a
+  control (other than tab and newlines in messages), format, bidi, private-use, separator or other default-ignorable
+  code point (variation selectors and tag characters included) is shown as hex (messages, decoded strings) or
+  refused (policy labels and names, app names in the vault config, `GET /v1/app` and every popup message). App
+  names, origins and decoded values are also bidi-isolated in the popups' CSS. Check-mark look-alikes are stripped
+  from partner contract names.
 - The approval popup decodes every Stellar operation field by field (`packages/core/src/decode/stellar.ts`; no
   operation is shown as raw XDR only). Account-control operations (a `setOptions` signer, threshold or master-weight
   change, `accountMerge`) get a red banner at the top of the transaction and a warning per operation naming the new

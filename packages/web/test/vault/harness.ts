@@ -556,6 +556,8 @@ export interface TabOptions {
   config?: VaultConfig;
   env?: HanaEnv;
   ancestorOrigin?: string;
+  /** location.ancestorOrigins as a whole (parent first). */
+  ancestorOrigins?: string[];
   loginFlow?: 'combined' | 'split';
   googleJwk?: Google['jwk'];
   options?: Partial<VaultOptions>;
@@ -578,6 +580,7 @@ export function openTab(browser: Browser, o: TabOptions = {}): Tab {
     host: {
       parent,
       ancestorOrigin: () => o.ancestorOrigin,
+      ancestorOrigins: () => o.ancestorOrigins,
       onMessage: (l) => listeners.push(l),
       open: (url, name, features) => {
         const w = new FakeWindow(url, name, features, null);

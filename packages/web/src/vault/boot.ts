@@ -19,6 +19,10 @@ export function bootVault(win: Window, env: HanaEnv, scriptStart?: number): Vaul
       const list = win.location.ancestorOrigins;
       return list && list.length > 0 ? (list.item(0) ?? undefined) : undefined;
     },
+    ancestorOrigins: () => {
+      const list = win.location.ancestorOrigins;
+      return list && list.length > 0 ? Array.from(list) : undefined;
+    },
     onMessage: (listener) =>
       win.addEventListener('message', (e: MessageEvent) => listener({ data: e.data as unknown, origin: e.origin, source: e.source, ports: e.ports })),
     open: (url, name, features) => win.open(url, name, features) as WindowRef | null,

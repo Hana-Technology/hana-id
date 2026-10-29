@@ -244,7 +244,9 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   keep PRK in memory with requests it can get signed (an accepted policy) or by reloading the vault frame, which
   unlocks a `'session'` record like any reload; the absolute expiry always holds.
 - The vault refuses to run top-level, accepts one hello, pins the parent origin (checked against the inlined origins
-  and `ancestorOrigins`) and serves only that port. Popups and the vault authenticate each other by `event.origin` and
+  and `ancestorOrigins[0]`; every other `ancestorOrigins` entry must be an allowed origin too, sweep VAUL-6) and serves
+  only that port. Where the browser has no `ancestorOrigins` (Firefox), nested framing is refused by the CSP
+  `frame-ancestors` alone, which every current browser enforces for every ancestor. Popups and the vault authenticate each other by `event.origin` and
   `event.source`.
 - No message in any direction carries key bytes, S, PRK, a CKD response, a token or a session secret, except
   `relayKey` from the vault to its authenticated login popup (schemas: `packages/core/src/protocol.ts`).

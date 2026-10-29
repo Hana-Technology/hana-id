@@ -121,6 +121,11 @@ export interface VaultHost {
   readonly parent: unknown;
   /** location.ancestorOrigins[0] where the browser provides it (Chromium, WebKit), else undefined. */
   ancestorOrigin(): string | undefined;
+  /**
+   * Every entry of location.ancestorOrigins (parent first) where the browser provides it, else undefined (Firefox:
+   * nested framing is then refused by the CSP `frame-ancestors` alone).
+   */
+  ancestorOrigins?(): readonly string[] | undefined;
   /** Subscribes to the vault window's `message` events. */
   onMessage(listener: (e: WindowMessageEvent) => void): void;
   /** window.open from the vault's browsing context (inside a launcher click). */
@@ -367,6 +372,10 @@ export class Vault {
     if (!parentAllowed(this.config, e.origin, this.env.devEnv)) return;
     const ancestor = this.host.ancestorOrigin();
     if (ancestor !== undefined && ancestor !== e.origin) return;
+    // Every ancestor, not only the parent, must be an origin the app allows (sweep VAUL-6): an allowed page framed by
+    // another site is refused here too, on top of the CSP's frame-ancestors (which checks every ancestor as well).
+    const ancestors = this.host.ancestorOrigins?.();
+    if (ancestors !== undefined && !ancestors.every((o) => parentAllowed(this.config, o, this.env.devEnv))) return;
     const port = e.ports[0]!;
     this.helloAt = this.perfNow();
     this.parentOrigin = e.origin;

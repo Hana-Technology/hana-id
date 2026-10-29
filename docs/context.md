@@ -133,6 +133,11 @@ origins, partner-origin `/v1/sessions`/`/v1/derive`/`/v1/sessions/revoke`) tied 
   needs two Hana-owned registrable domains (D38; names open, Q15).
 - The Approve guard arms per input (user decision 2026-10-28, `docs/decisions.md` D36): a mouse `pointermove`, a
   touch or pen `pointerdown`, or Tab/arrow keys (never Enter or Space), and the arming gesture itself never approves.
+- A signing call from a user's click opens the approval popup in that click, like login (user decision 2026-10-29,
+  D99: `/approve?from=partner&v=<vault frame>`, found and authenticated like the login popup); the vault's "Review in
+  Hana" launcher is only the fallback (no user activation, or Safari blocking `window.open` after an await). An
+  auto-approved or refused request closes that popup before it shows anything. `hana.prepareApproval()` opens it
+  early for a handler that awaits first.
 - Auto-approve policies gain a required per-chain `maxFeeWei` (gas × fee cap), because the SDK fills EVM fees on the
   partner page; the fee also counts with the value against `maxValueWei` and `maxValueWeiPerDay` (D37; a rule needs
   `maxValueWei ≥ maxFeeWei`, D69). `string`, `bytes20`–`bytes32` and 160-bit integer arguments count as opaque like
@@ -153,7 +158,7 @@ origins, partner-origin `/v1/sessions`/`/v1/derive`/`/v1/sessions/revoke`) tied 
 - Export accepts a token without `auth_time` (Google sends none, even with `max_age=0`; D27). One that has it must be
   under 5 min old.
 - The partner client adds `cancelLogin()`, `requestAutoApprove()`, `autoApproveStatus()`, `revokeAutoApprove()`,
-  `destroy()` and the `loginProgress`, `autoApproved` and `launcher` events to the spec's list. It logs a console
+  `prepareApproval()` (D99), `destroy()` and the `loginProgress`, `autoApproved` and `launcher` events to the spec's list. It logs a console
   warning when Google Identity Services is on the page or the browser is an in-app webview. A report-only CSP
   violation doesn't fail the handshake; only an enforced one does.
 

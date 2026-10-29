@@ -539,7 +539,8 @@ export interface Tab {
   dispatch(e: Partial<WindowMessageEvent> & { data: unknown }): void;
   hello(opts?: { origin?: string; source?: unknown; ports?: MessagePort[] }): void;
   ready(): Promise<Record<string, unknown>>;
-  request(method: string, params?: unknown): Promise<Reply>;
+  /** `extra`: envelope fields beside the params (`popupOpened: true`, D99). */
+  request(method: string, params?: unknown, extra?: Record<string, unknown>): Promise<Reply>;
   waitEvent(event: PortEventName, n?: number): Promise<unknown>;
   /** Waits until `check` is true, re-checking on every port message (and every 20 ms), for up to 4 s of real time. */
   waitUntil(check: () => boolean, what: string): Promise<void>;
@@ -638,10 +639,10 @@ export function openTab(browser: Browser, o: TabOptions = {}): Tab {
       tab.dispatch({ data: { v: 1, t: 'hana:hello', sdk: '0.0.0' }, origin: h.origin ?? PARTNER, source: h.source ?? parent, ports: h.ports ?? [port2] });
     },
     ready: async () => (await waitFor(() => events.find((e) => e.event === 'ready'), 'ready')).data as Record<string, unknown>,
-    request: (method, params) => {
+    request: (method, params, extra) => {
       idSeq += 1;
       const id = `r${idSeq}`;
-      port1.postMessage(params === undefined ? { v: 1, id, method } : { v: 1, id, method, params });
+      port1.postMessage({ ...(params === undefined ? { v: 1, id, method } : { v: 1, id, method, params }), ...extra });
       return waitFor(() => replies.find((r) => r.id === id), `reply to ${method}`, 8000);
     },
     waitEvent: async (event, n = 0) => (await waitFor(() => events.filter((e) => e.event === event)[n], `event ${event}`)).data,
@@ -731,6 +732,16 @@ export async function waitLauncher(tab: Tab, label: string | null): Promise<void
 export function openApproval(tab: Tab): FakeWindow {
   tab.launcher.click();
   const popup = tab.opened.at(-1)!;
+  tab.dispatch({ data: { v: 1, t: 'hana:approve-hello' }, origin: ENV.authOrigin, source: popup });
+  return popup;
+}
+
+/**
+ * An approval popup the partner page opened in the user's click (D99): `/approve?from=partner&v=…`, its opener the
+ * partner window, saying hello to the vault.
+ */
+export function partnerApproval(tab: Tab, opener: unknown = tab.parent): FakeWindow {
+  const popup = new FakeWindow(`${ENV.authOrigin}/approve?from=partner&v=hana-vault-x`, 'hana-approve-p', 'popup,width=420,height=680', opener);
   tab.dispatch({ data: { v: 1, t: 'hana:approve-hello' }, origin: ENV.authOrigin, source: popup });
   return popup;
 }

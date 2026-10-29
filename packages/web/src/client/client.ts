@@ -5,16 +5,19 @@
 //   hana.status;                 // 'logged_out' | 'unlocking' | 'logging_in' | 'logged_in' | 'error'
 //   hana.on('statusChanged' | 'accountsChanged' | 'sessionExpired' | 'disconnect', cb);
 //   hana.login();                // call synchronously in a click handler
+//   hana.prepareApproval();      // in a click handler, before awaiting a quote: opens the approval popup now (D99)
 //   hana.logout(); hana.exportKey(chain); hana.revokeOtherDevices();
 //   hana.stellar; hana.ethereum; hana.signRaw(params);
 //
 // The client holds no key material and no token: it mounts the vault iframe (vault-connection.ts), opens the login
-// popup (login.ts), and relays requests over the port. Everything it learns is public (addresses, expiry, status).
+// popup (login.ts) and, inside the user's click, the approval popup for signing requests (approval-window.ts, D99),
+// and relays requests over the port. Everything it learns is public (addresses, expiry, status).
 // Beyond the spec's list it also exposes cancelLogin() (the port's hana_cancelLogin), the auto-approve port methods,
 // destroy() (React's HanaProvider unmount), and the `loginProgress`, `autoApproved` and `launcher` events.
 import {
   ErrorCode,
   UNLOCK_TIMING_STAGES,
+  isApprovalPopupMethod,
   type AutoApproveStatus,
   type LoginResult,
   type Persistence,
@@ -27,6 +30,7 @@ import {
   isTestPublishableKey,
 } from '@hana-id/core';
 import { VERSION } from '../version.ts';
+import { type ApprovalTicket, ApprovalWindows } from './approval-window.ts';
 import { Emitter } from './emitter.ts';
 import { type HanaError, asHanaError, hanaError } from './errors.ts';
 import { type EvmConfig, HanaEthereumProvider, announceEip6963, rdnsFor, validateEvmConfig } from './ethereum.ts';
@@ -114,6 +118,7 @@ export class HanaClient extends Emitter<HanaEvents> {
   /** The handshake failed or the port died: status stays 'error'. */
   #vaultDown = false;
   #stopEip6963: (() => void) | null = null;
+  readonly #windows: ApprovalWindows;
 
   constructor(config: HanaConfig, deps: HanaClientDeps) {
     super();
@@ -133,7 +138,14 @@ export class HanaClient extends Emitter<HanaEvents> {
       stellar,
     );
     this.ethereum = new HanaEthereumProvider(
-      { evmAddress: () => this.#addresses?.evm ?? null, login: () => this.login(), request: (m, p) => this.#request(m, p), fetch: deps.fetch, testApp: isTestPublishableKey(config.publishableKey) },
+      {
+        evmAddress: () => this.#addresses?.evm ?? null,
+        login: () => this.login(),
+        request: (m, p) => this.#request(m, p),
+        prepareApproval: () => this.prepareApproval(),
+        fetch: deps.fetch,
+        testApp: isTestPublishableKey(config.publishableKey),
+      },
       evm,
     );
 
@@ -147,6 +159,7 @@ export class HanaClient extends Emitter<HanaEvents> {
       onDisconnect: () => this.#onDisconnect(),
       now: this.#now,
     });
+    this.#windows = new ApprovalWindows(deps.win, this.authOrigin, this.#conn.frameName, this.#now);
     this.ready = this.#conn.ready.then(
       (s) => this.#onReady(s),
       (e: unknown) => {
@@ -245,6 +258,18 @@ export class HanaClient extends Emitter<HanaEvents> {
     );
   }
 
+  /**
+   * Opens the Hana approval popup now, inside the user's click, for a signing call that comes after an await (a quote
+   * fetch, a chain switch): call it synchronously at the top of the click handler. The next signing request uses that
+   * window. The signing methods do this themselves, so a handler that calls them before any await needs nothing else.
+   * Opens nothing when logged out, without user activation, when the browser blocks it (the vault's launcher is then the
+   * fallback) or when an approval popup is already open (it is reused). `cancel()` closes a window no request used.
+   */
+  prepareApproval(): ApprovalTicket {
+    if (this.#destroyed || this.#status !== 'logged_in') return { cancel: () => {} };
+    return this.#windows.prepare();
+  }
+
   /** Ends a pending login: it rejects with `login_cancelled`, or `popup_blocked` if it was waiting on the launcher. */
   cancelLogin(): void {
     this.#attempt?.cancel();
@@ -299,7 +324,11 @@ export class HanaClient extends Emitter<HanaEvents> {
 
   #request<M extends PortMethod>(method: M, params?: PortParamsMap[M]): Promise<PortResultMap[M]> {
     if (this.#destroyed) return Promise.reject(hanaError(ErrorCode.disconnected));
-    return this.#conn.request(method, params);
+    if (!isApprovalPopupMethod(method)) return this.#conn.request(method, params);
+    // Synchronously, before the first await: a call from a click opens the approval popup in that click (D99).
+    this.prepareApproval();
+    const popupOpened = this.#windows.claim();
+    return this.#conn.request(method, params, popupOpened ? { popupOpened } : undefined);
   }
 
   /**
@@ -384,6 +413,9 @@ export class HanaClient extends Emitter<HanaEvents> {
         return;
       case 'ui':
         this.emit('launcher', { visible: e.data.launcher === 'show', label: e.data.label });
+        return;
+      case 'approvalWindow':
+        this.#windows.vaultWindowOpen = e.data.open;
         return;
       case 'autoApproved':
         this.emit('autoApproved', e.data);

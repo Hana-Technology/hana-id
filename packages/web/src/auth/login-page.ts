@@ -19,12 +19,11 @@ import { type Dom, dom, errorView } from './dom.ts';
 import { PageError } from './errors.ts';
 import { googleAuthUrl } from './google.ts';
 import { storeLoginEntry } from './login-storage.ts';
-import { type PageWindow, isFramed } from './page-window.ts';
+import { type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed } from './page-window.ts';
 
 export type OpenerMode = 'partner' | 'vault' | 'export';
 
-/** The vault iframe's name, `hana-vault-<32 hex>` (128-bit random, set by the SDK). */
-export const VAULT_FRAME_NAME = /^hana-vault-[0-9a-f]{32}$/u;
+export { VAULT_FRAME_NAME };
 export const HELLO_INTERVAL_MS = 100;
 export const HELLO_TIMEOUT_MS = 15_000;
 export const EXPORT_PATH = '/export';
@@ -63,23 +62,6 @@ export function openerMode(search: string): { mode: OpenerMode; vaultFrame?: str
   if (keys[0] === 'from' && value === 'vault') return { mode: 'vault' };
   if (keys[0] === 'mode' && value === 'export') return { mode: 'export' };
   return null;
-}
-
-/** Child frame `name` of `w`, or null (cross-origin named access to child frames is allowed; anything odd is null). */
-function childFrame(w: Window, name: string): unknown {
-  try {
-    return (w.frames as unknown as Record<string, unknown>)[name] ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function parentOf(w: unknown): unknown {
-  try {
-    return (w as Window).parent;
-  } catch {
-    return null;
-  }
 }
 
 /** `window.opener.location.pathname` when the opener is same-origin, else null (a cross-origin read throws). */
@@ -135,10 +117,8 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
   function fromPreparer(e: MessageEvent, mode: OpenerMode, vaultFrame?: string): boolean {
     if (!opener) return false;
     if (mode === 'export') return e.origin === env.authOrigin && e.source === opener && openerPath(opener) === EXPORT_PATH;
-    if (e.origin !== env.vaultOrigin) return false;
-    if (mode === 'vault') return e.source === opener;
-    const vault = childFrame(opener, vaultFrame as string);
-    return vault !== null && e.source === vault && parentOf(e.source) === opener;
+    if (mode === 'vault') return e.origin === env.vaultOrigin && e.source === opener;
+    return fromPartnerVault(e, opener, vaultFrame as string, env.vaultOrigin);
   }
 
   async function check(msg: WindowMessage<'hana:auth-params'>, mode: OpenerMode): Promise<void> {

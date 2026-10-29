@@ -184,14 +184,17 @@ export interface PartnerOptions {
   origin?: string;
   /** Live mode (src/stack.ts): LIVE_ENV, on LIVE_PARTNER_ORIGIN unless `origin` says otherwise. */
   live?: boolean;
-  /** window.open returns null on the partner page (a popup blocker), so the SDK uses the vault's launcher. */
-  blockPopups?: boolean;
+  /**
+   * window.open returns null on the partner page (a popup blocker), so the SDK uses the vault's launcher; 'approve':
+   * only for the approval popup (Safari blocking a window.open after an await), so login still opens its popup.
+   */
+  blockPopups?: boolean | 'approve';
   coop?: string;
 }
 
 export function partnerUrl(app: App, o: PartnerOptions = {}): string {
   const q = new URLSearchParams({ pk: app.pk });
-  if (o.blockPopups) q.set('blockPopups', '1');
+  if (o.blockPopups) q.set('blockPopups', o.blockPopups === 'approve' ? 'approve' : '1');
   if (o.coop) q.set('coop', o.coop);
   if (o.live) q.set('env', LIVE_ENV_NAME);
   return `${o.origin ?? (o.live ? LIVE_PARTNER_ORIGIN : PARTNER_ORIGIN)}/?${q.toString()}`;

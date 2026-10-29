@@ -10,6 +10,10 @@
 // | eth_sign and other signing or wallet methods | 4200 |
 // | read-only methods (READ_ONLY_METHODS) | forwarded to the current chain's rpcUrl |
 //
+// Every signing method opens the approval popup synchronously in the call (D99), before any await: called from a click,
+// it opens in that click, as login does; otherwise the vault's launcher is the fallback. eth_sendTransaction and
+// eth_signTransaction open it before filling the transaction, so the window is up while the RPC answers.
+//
 // Errors are ProviderRpcError with numeric codes (errors.ts maps Hana's string codes). Events: `connect {chainId}`
 // once the vault is ready, `chainChanged`, `accountsChanged`, and `disconnect` (4900) when the vault connection dies.
 // Logging out is `accountsChanged []`, as wallets do, not `disconnect`.
@@ -17,6 +21,7 @@ import { ErrorCode, type PortMethod, type PortParamsMap, type PortResultMap, TES
 import { Emitter } from './emitter.ts';
 import { ProviderRpcError, RpcCode, toProviderRpcError } from './errors.ts';
 import { type NormalizedTx, fillTransaction, normalizeTxInput, toQuantity } from './evm-tx.ts';
+import type { ApprovalTicket } from './approval-window.ts';
 import { HANA_ID_ICON, HANA_ID_NAME } from './icon.ts';
 import { type FetchLike, jsonRpc } from './rpc.ts';
 
@@ -55,6 +60,8 @@ export interface EthereumHost {
   /** hana.login(): opens the popup synchronously. */
   login(): Promise<{ evm: string }>;
   request<M extends PortMethod>(method: M, params?: PortParamsMap[M]): Promise<PortResultMap[M]>;
+  /** hana.prepareApproval(): opens the approval popup now, for a request sent after an await (D99). */
+  prepareApproval?(): ApprovalTicket;
   fetch: FetchLike;
   /** A pk_test_ app: only the testnet chains of @hana-id/core TEST_EVM_CHAINS can be switched to or sent on (D39). */
   testApp?: boolean;
@@ -294,16 +301,27 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
   /** Fills the transaction from its chain's RPC and has the vault sign it (approval). Returns the raw tx and its nonce. */
   async #signTransaction(call: TxCall): Promise<{ raw: Hex; nonce: bigint }> {
     const { input, from, chain } = call;
+    // Before the fill's first await: the approval popup opens in the caller's click (D99).
+    const ticket = this.#prepare();
     const minNonce = this.#nextNonce.get(nonceKey(chain.id, from));
-    const tx = await fillTransaction(input, {
-      from,
-      chainId: chain.id,
-      rpc: (m, p) => jsonRpc(this.#host.fetch, chain.rpcUrl, m, p),
-      ...(minNonce !== undefined ? { minNonce } : {}),
-    });
+    let tx: Awaited<ReturnType<typeof fillTransaction>>;
+    try {
+      tx = await fillTransaction(input, {
+        from,
+        chainId: chain.id,
+        rpc: (m, p) => jsonRpc(this.#host.fetch, chain.rpcUrl, m, p),
+        ...(minNonce !== undefined ? { minNonce } : {}),
+      });
+    } catch (e) {
+      ticket.cancel();
+      throw e;
+    }
     // The chain may have been switched since the call (while queued or filling): sign only for the chain the dapp
     // asked on, and only while it is still the current one.
-    if (this.#chainId !== chain.id) throw err(RpcCode.invalidParams, 'The chain changed while the transaction was being prepared');
+    if (this.#chainId !== chain.id) {
+      ticket.cancel();
+      throw err(RpcCode.invalidParams, 'The chain changed while the transaction was being prepared');
+    }
     const raw = await this.#host.request('eth_signTransaction', { tx });
     return { raw, nonce: BigInt(tx.nonce) };
   }
@@ -311,8 +329,11 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
   /** Queues the call behind earlier eth_sendTransaction calls on its chain (see #sendQueue). */
   #sendTransaction(params: unknown): Promise<Hex> {
     const call = this.#txCall(params);
+    // Now, in the caller's click, not after the queue ahead of it (D99). A window no request used closes on failure.
+    const ticket = this.#prepare();
     const id = call.chain.id;
     const run = (this.#sendQueue.get(id) ?? Promise.resolve()).then(() => this.#signAndBroadcast(call));
+    run.catch(() => ticket.cancel());
     const tail = run.then(noop, noop);
     this.#sendQueue.set(id, tail);
     void tail.then(() => {
@@ -331,6 +352,10 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
     const next = nonce + 1n;
     if ((this.#nextNonce.get(key) ?? 0n) < next) this.#nextNonce.set(key, next);
     return hash as Hex;
+  }
+
+  #prepare(): ApprovalTicket {
+    return this.#host.prepareApproval?.() ?? { cancel: noop };
   }
 
   #rpc(method: string, params: readonly unknown[]): Promise<unknown> {

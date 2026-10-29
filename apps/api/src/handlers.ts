@@ -1,6 +1,6 @@
 // Request handlers: app endpoints (publishable key + origin), owner actions (OIDC proof in args), health.
 import { type App, PUBLISHABLE_KEY_RE, getAppByKey, incrementUsage } from './apps.ts';
-import { appKeyPairs } from './bls.ts';
+import { appKeyPairs, appKeyProblem } from './bls.ts';
 import { disallowedClaim } from './claims.ts';
 import type { Env } from './env.ts';
 import { type Headers_, corsHeaders, json, readJson } from './http.ts';
@@ -401,6 +401,12 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
   // 5. The session key signed this request (Ed25519 over the session message).
   if (!(await verifySessionSignature(call.sessionPublicKey, call.counter, call.signature, payload))) {
     return reject(ctx, 401, 'invalid_signature', 'Invalid session signature');
+  }
+  // The app key's shape, always (as /v1/login): each one compressed, non-identity point, so a client bug can never
+  // ask the MPC for a CKD answer under a degenerate key (security sweep APIW-4). The pairing stays behind BLS_PRECHECK.
+  if ('pk1' in call) {
+    const keyProblem = appKeyProblem(call.pk1, call.pk2);
+    if (keyProblem) return reject(ctx, 400, 'invalid_app_key', keyProblem);
   }
 
   // 6. The session belongs to this app's scope, is live and can still take this counter (the contract's rules,

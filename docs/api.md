@@ -283,7 +283,8 @@ Body `{sessionPublicKey: number[32], counter: integer ≥ 1, signature: number[6
 "bls12381g2:…"}` (each point < 300 chars), else `400 bad_request`.
 
 1. Ed25519 by `sessionPublicKey` over `"hana-id-session-v1:" ‖ u64le(counter) ‖ sha256("hana-id-ckd-v1:{pk1}:{pk2}")`
-   (`401 invalid_signature`).
+   (`401 invalid_signature`). Then pk1/pk2 each one compressed, non-identity point of 48 / 96 bytes, always, as on
+   `/v1/login` (`400 invalid_app_key`; D100, security sweep APIW-4).
 2. A second request for the same session counter in the same isolate waits for the first.
 3. Session pre-check (`src/session-use.ts`, mirrors the contract), on `get_session` (cached 10 s; a cached refusal is
    re-judged on a fresh read):

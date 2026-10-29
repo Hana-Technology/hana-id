@@ -1,8 +1,9 @@
+import { baseEncode } from '@near-js/utils';
 import { env } from 'cloudflare:workers';
 import { type Mock, afterEach, describe, expect, it, vi } from 'vitest';
 import { usageDay } from '../src/apps.ts';
 import { panic, rsaSigner } from './near-mock.ts';
-import { ORIGIN, appHeaders, bytes, call, chain, deriveBody, google, newKey, newSessionKey, revokeBody, seedApp, seedPlan, sessionBody, uid } from './helpers.ts';
+import { DERIVE_KEY, ORIGIN, appHeaders, bytes, call, chain, deriveBody, google, newKey, newSessionKey, revokeBody, seedApp, seedPlan, sessionBody, uid } from './helpers.ts';
 afterEach(() => vi.restoreAllMocks());
 
 async function body(res: Response): Promise<Record<string, unknown>> {
@@ -412,7 +413,7 @@ describe('POST /v1/derive and /v1/sessions/revoke', () => {
     const json = await body(res);
     expect(json.result).toEqual({ big_y: 'bls12381g1:Y', big_c: 'bls12381g1:C' });
     expect(near.sent.map((t) => t.method)).toEqual(['derive_key']);
-    expect(near.sent[0]!.args).toEqual({ session_public_key: spk, counter: 1, signature: (await deriveBody(spk)).signature, pk1: 'bls12381g1:abc', pk2: 'bls12381g2:def' });
+    expect(near.sent[0]!.args).toEqual({ session_public_key: spk, counter: 1, signature: (await deriveBody(spk)).signature, pk1: DERIVE_KEY.pk1, pk2: DERIVE_KEY.pk2 });
     expect(near.sent[0]!.gas).toBe(60_000_000_000_000n);
     expect(await usage(app.id)).toEqual({ sessions: 0, derives: 1 });
   });
@@ -472,6 +473,19 @@ describe('POST /v1/derive and /v1/sessions/revoke', () => {
     for (const b of bad) expect((await call('/v1/derive', { headers: appHeaders(app), body: b })).status).toBe(400);
     expect((await call('/v1/sessions/revoke', { headers: appHeaders(app), body: { sessionPublicKey: spk, counter: 1 } })).status).toBe(400);
     expect(near.sent).toHaveLength(0);
+  });
+
+  it('refuses app keys that are not one compressed, non-identity point each, signed or not, even with BLS_PRECHECK off (APIW-4)', async () => {
+    const { app, near, spk } = await withSession();
+    const g1Identity = `bls12381g1:${baseEncode(Uint8Array.from([0xc0, ...Array<number>(47).fill(0)]))}`;
+    const g2Identity = `bls12381g2:${baseEncode(Uint8Array.from([0xc0, ...Array<number>(95).fill(0)]))}`;
+    for (const keys of [{ pk1: g1Identity }, { pk2: g2Identity }, { pk1: 'bls12381g1:abc' }, { pk2: 'bls12381g2:def' }]) {
+      // Signed by the session key over these very keys: only the shape check stops it.
+      const res = await call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(spk, keys), env: { BLS_PRECHECK: '0' } });
+      expect([res.status, (await body(res)).code], JSON.stringify(keys)).toEqual([400, 'invalid_app_key']);
+    }
+    expect(near.sent).toHaveLength(0);
+    expect((await call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(spk) })).status).toBe(200);
   });
 
   it('relays revoke_session and forgets the cached session', async () => {

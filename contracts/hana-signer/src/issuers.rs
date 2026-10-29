@@ -65,6 +65,16 @@ pub struct PendingKeyChange {
     pub executable_at_ms: u64,
 }
 
+/// An active signing key as `get_issuer_keys` returns it.
+#[near(serializers = [json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct IssuerKeyView {
+    pub kid: String,
+    /// JWK base64url of the modulus and exponent, leading zeros stripped (as `get_key_changes` shows them).
+    pub n: String,
+    pub e: String,
+}
+
 /// A pending key change as `get_key_changes` returns it.
 #[near(serializers = [json])]
 #[derive(Clone, Debug, PartialEq)]
@@ -233,6 +243,13 @@ impl HanaSigner {
 
     pub fn get_issuer(&self, provider: String) -> Option<IssuerView> {
         self.issuers.get(&provider).map(|i| IssuerView { provider: i.provider.clone(), iss_values: i.iss_values.clone(), kids: i.keys.keys().cloned().collect() })
+    }
+
+    /// The active keys of `provider` with their key material, in kid order, or `null` for an unknown issuer. Lets a
+    /// watchdog compare every active key with the issuer's JWKS, including keys that went live while it was down or
+    /// arrived by an upgrade (`docs/governance-spec.md` "Watchdog service" step 5). Read-only.
+    pub fn get_issuer_keys(&self, provider: String) -> Option<Vec<IssuerKeyView>> {
+        self.issuers.get(&provider).map(|i| i.keys.iter().map(|(kid, k)| IssuerKeyView { kid: kid.clone(), n: oidc::b64url(&k.n), e: oidc::b64url(&k.e) }).collect())
     }
 
     /// Pending key changes of every issuer, in proposal order.

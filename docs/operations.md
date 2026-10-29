@@ -20,8 +20,9 @@ Never print, log, paste or commit any of these. The scripts never print them eit
 | Owner-pool relayer keys (`OWNER_RELAYER_KEYS`) | `.secrets/<env>/owner-relayer-keys.json` | `deploy-contract` |
 | Keys-updater key (`KEYS_UPDATER_KEY`) | `.secrets/<env>/keys-updater.json` (`private_key`) | `deploy-contract` |
 | `VAULT_KEK` (and, during a rotation, `VAULT_KEK_PREVIOUS`) | `.secrets/<env>/vault-kek` (and `vault-kek.previous`); the only copy, since Cloudflare can't give a secret back | `vault-kek` (below) |
-| Worker copies of the above | Cloudflare Worker secrets | `wrangler secret put` |
-| Local dev copies | `apps/api/.dev.vars` (0600) | `gen --dev-vars` |
+| Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its Resend key, Slack webhook, paging-app credentials, `HEARTBEAT_URL`) | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
+| Worker copies of the above | Cloudflare Worker secrets (the watchdog's on its own Cloudflare account) | `wrangler secret put` (watchdog: `wrangler secret bulk`) |
+| Local dev copies | `apps/api/.dev.vars`, `apps/watchdog/.dev.vars` (0600) | `gen --dev-vars` |
 
 `.secrets/` is gitignored, directories 0700, files 0600 (`scripts/lib/secrets.ts` refuses to read a file that group
 or others can read). Google ID tokens, CKD outputs and derived keys are never stored anywhere.
@@ -496,6 +497,88 @@ corepack pnpm --filter @hana-id/demo run build && corepack pnpm --filter @hana-i
 - "Could not load the Hana vault" on the demo: the origin isn't on the app (`app:origins:add` above), or the build is
   for another env. `admin <env> app:list --remote` shows the app's origins.
 - Removing the origin (`app:origins:remove`) signs out everyone who used the demo, on their next use.
+
+## Watchdog service (`apps/watchdog`)
+
+The independent watchdog of the governance batch (`docs/governance-spec.md` "Watchdog service", D82–D86): every
+5 min it compares the contract's pending and active issuer keys with Google's JWKS, cancels a pending key Google
+doesn't publish (and deletes the updater keys if the updater proposed it), pauses only when such a key is **active**,
+confirms keys that match, alerts on every governance change, and serves a read-only status for the admin portal.
+What it checks and its status API: `apps/watchdog/README.md`. **Not deployed yet**; it needs the governance contract
+(`migrate_v1`) on the env.
+
+### Setting it up (once per env)
+
+It runs on **its own Cloudflare account** (separate login and MFA from the API's account, D86); `gen` writes that
+account's id into the config, so `wrangler deploy` can't land it on the API's account. Run every `wrangler` command
+below logged in to the watchdog's account (`wrangler login` there, or `CLOUDFLARE_API_TOKEN` for it).
+
+1. Create the watchdog's NEAR account (`watchdog.account`, e.g. `hana-id-watchdog-dev1.testnet`, ≈ 2 NEAR; its
+   full-access key stays in `~/.near-credentials`, like the other accounts) and add the `watchdog` block to
+   `envs/<env>.json` (`envs/README.md`).
+2. The owner adds it: `add_watchdog(<watchdog.account>)` (cancel and pause powers at once, confirm power after
+   `governance_delay_ms`).
+3. Secrets: `corepack pnpm --filter @hana-id/watchdog secrets <env> init` writes `WATCHDOG_KEY` and
+   `WATCHDOG_STATUS_TOKEN` to `.secrets/<env>/watchdog-secrets.json` (0600) and prints the public key with the near
+   CLI command that installs it (function-call key on `watchdog.account`, receiver `signer`, methods
+   `cancel_issuer_key_change, confirm_issuer_key_change, pause, delete_updater_key`, 1 NEAR allowance). Run that
+   command. Then paste into the same file the watchdog's own `RESEND_API_KEY` (D87), `SLACK_WEBHOOK_URL`, the paging
+   app's credentials (`NTFY_TOPIC_URL` [+ `NTFY_TOKEN`], or `PUSHOVER_TOKEN` + `PUSHOVER_USER` for a group of both
+   founders, or `PAGERDUTY_ROUTING_KEY`) and `HEARTBEAT_URL`; `secrets <env> check` lists what is missing (names
+   only).
+4. Dead-man's switch: a check on a third provider (healthchecks.io, Better Stack, Cronitor) with a 5-min period and
+   ~10-min grace, alerting both founders on its own; its ping URL is `HEARTBEAT_URL`.
+5. D1 and deploy (from `apps/watchdog`, logged in to the watchdog's account):
+
+   ```sh
+   corepack pnpm --dir apps/watchdog exec wrangler d1 create <watchdog.cloudflare.d1Name>    # prints the id
+   corepack pnpm --filter @hana-id/watchdog gen <env> --d1-id <uuid>                          # apps/watchdog/wrangler.jsonc
+   corepack pnpm --dir apps/watchdog exec wrangler d1 migrations apply <d1Name> --remote
+   corepack pnpm --dir apps/watchdog exec wrangler secret bulk ../../.secrets/<env>/watchdog-secrets.json
+   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   ```
+
+6. Check: `curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)"
+   https://<workerName>.<subdomain>.workers.dev/status` shows `last_run.outcome: "ok"`, `first_run: true` on the
+   first run, `heartbeat.ok`, every channel `configured`. The first run alerts critical on any active kid not in
+   Google's JWKS (no pause) and on anything already pending: acknowledge after checking. Then send a test critical
+   page to both founders (the forced-rotation drill of the migration plan does this for real).
+7. The admin Worker (batch C) gets the same `WATCHDOG_STATUS_TOKEN` and the watchdog's URL.
+
+Local: `gen <env> --dev-vars` writes `apps/watchdog/.dev.vars` (0600) from the secrets file; `corepack pnpm --filter
+@hana-id/watchdog dev` runs `wrangler dev --test-scheduled` (`curl localhost:8787/__scheduled` runs one cron). Use a
+test Slack channel and ntfy topic: local runs send real alerts and, with a real `WATCHDOG_KEY`, real testnet
+transactions.
+
+Rotating its secrets: `WATCHDOG_KEY`: add a new function-call key (as in step 3), put it in the file, `wrangler secret
+put WATCHDOG_KEY`, then delete the old key on chain. `WATCHDOG_STATUS_TOKEN`: change it on both Workers. The others:
+replace in the file and `wrangler secret put`.
+
+### Watchdog alerts (runbook)
+
+Critical alerts page both founders (paging app + Slack + email) and are re-sent every 15 min until someone
+acknowledges them in the admin portal (or in Pushover). Acknowledging stops only the re-sends. Every alert's text
+names its id and kind; the full details are in `GET /alerts`. Owner actions below go through the owner: on an env
+whose owner is the DAO, a 2-of-3 `FunctionCall` proposal to `signer` (D81); on an env still owned by an account,
+`near contract call-function as-transaction <signer> <method> json-args '<args>' prepaid-gas '30 Tgas'
+attached-deposit '0 NEAR' sign-as <owner> network-config testnet sign-with-legacy-keychain send`.
+
+| Kind | What it means | What to do |
+|---|---|---|
+| `forged_key_change` | A pending issuer key Google doesn't publish (or with other material). The watchdog cancelled it and, if the updater proposed it, deleted every updater key | Treat `KEYS_UPDATER_KEY` (the API Worker's secrets) as stolen: find how, rotate. Re-add a fresh updater key (`add_updater_key`) and set it on the API. If the owner proposed it, treat the owner council as compromised |
+| `forged_active_key` | A key Google doesn't publish is **active**: the contract is paused (logins and derivation stop) | The owner removes the key (`remove_issuer_key {provider, kid}`), then unpauses (`unpause {}`, at once). Find how it got there: delay while the watchdog was down, an owner post, or an upgrade. The watchdog pauses again while the key stays active |
+| `published_key_removal` | A pending removal of a kid Google still publishes (logins with it would break) | The owner cancels it (`cancel_issuer_key_change {id}`) unless it is intended; then as for a stolen updater key |
+| `unknown_active_key_first_run` | First run only: an active kid not in Google's JWKS today (often an old kid Google dropped), or with other material | Check the kid against Google's history; remove it if it isn't Google's (with other material the next run pauses) |
+| `unverifiable_key_change` | A pending change for an issuer other than Google (the watchdog has no JWKS for it) | Check it by hand; the owner cancels anything unexpected |
+| `governance_change` | An upgrade proposal or execution, owner transfer, withdrawal, watchdog, updater-key, delay or console-audience change, pause or unpause | Confirm that the council did it on purpose. If not: `cancel_upgrade`, `cancel_owner_proposal`, `cancel_withdrawal`, a delay change back, and treat the council as compromised. Nobody but the owner can cancel an upgrade (D84) |
+| `automatic_action`, `protective_action_failed` | The watchdog acted again (e.g. paused after an unpause), or a cancel, pause or deletion it sent failed | Failed: do it through the owner at once (cancel the change, pause); check the watchdog key's allowance and RPC |
+| `not_a_watchdog`, `watchdog_key_missing`, `wrong_network` | The watchdog can't act: its account isn't a contract watchdog, its key is missing or bad, or its RPC is on another chain | Fix the config (`add_watchdog`, `WATCHDOG_KEY`, the manifest `rpc`); until then nothing cancels forged keys |
+| warning `rpc_failing`, `jwks_failing`, `heartbeat_failing`, `channel_not_configured` | The watchdog is partly blind or mute | Fix the RPC, the secret or the channel; a dead watchdog is caught by the dead-man's switch |
+| warning `unexecuted_key_change`, `stale_active_key` | A matured key change nobody executed (> 1 h), or an active kid Google dropped > 3 h ago | Check the API cron (it executes due changes and proposes removals) |
+
+A paused contract: only the owner unpauses (`unpause`, no delay, D82). A fix that needs new code waits
+`governance_delay_ms` (the upgrade path works while paused). Removing a rogue watchdog (`remove_watchdog`) is
+immediate but slows every key change to `governance_delay_ms` unless another watchdog confirms (D86).
 
 ## Logs and latency
 

@@ -34,7 +34,7 @@ pub use governance::{
     GovernanceView, PendingOwner, PendingUpgrade, PendingUpgradeView, PendingWithdrawal, Watchdog, MAX_GOVERNANCE_DELAY_MS, MAX_ISSUER_KEY_DELAY_MS,
     MAX_UPDATER_ALLOWANCE, MAX_UPDATER_KEYS, MAX_WATCHDOGS, MIGRATE_GAS, SIGNER_RESERVE, STATE_VERSION, UPDATER_METHODS,
 };
-pub use issuers::{Issuer, IssuerView, KeyChangeView, KeyOp, PendingKeyChange, RsaKey, MAX_PENDING_KEY_CHANGES};
+pub use issuers::{Issuer, IssuerKeyView, IssuerView, KeyChangeView, KeyOp, PendingKeyChange, RsaKey, MAX_PENDING_KEY_CHANGES};
 pub use registry::{Change, Owner, OwnerAuth, PendingChange, RemovedClient, Scope};
 pub use sessions::{CkdAppPublicKey, CkdRequestArgs, Session};
 

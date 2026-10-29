@@ -19,6 +19,28 @@ per-app and owner-action limiters), as a Cloudflare location hint (`apac`, `weur
 lives wherever its first request happened to arrive. Pick the region of most users (sandbox-dev: `apac`, next to its
 D1 database). Per-IP limiters always stay near their client. Changing it creates new objects in the new region.
 
+`watchdog` (optional): the independent watchdog service of the governance batch (`apps/watchdog/README.md`,
+`docs/operations.md` "Watchdog service"). Without it the env has no watchdog Worker (`watchdog gen` refuses it).
+
+```json
+"watchdog": {
+  "account": "hana-id-watchdog-dev1.testnet",
+  "cloudflare": { "accountId": "UNSET", "workerName": "hana-id-watchdog-sandbox-dev", "d1Name": "hana-id-watchdog-sandbox-dev" },
+  "alertEmails": ["founder-a@example.com", "founder-b@example.com"],
+  "alertFrom": "alerts@notify.example.com",
+  "pager": "ntfy",
+  "digestHourUtc": 0
+}
+```
+
+- `account`: the watchdog's own NEAR account, added on chain with `add_watchdog`; never the signer, relayer, owner or
+  MPC account. Its key (`WATCHDOG_KEY`) is a function-call key on it.
+- `cloudflare.accountId`: the watchdog's **own** Cloudflare account (separate login and MFA from the API's, D86),
+  32 hex characters; `UNSET` until it exists (`gen` refuses `UNSET`). `workerName` must differ from the API's.
+- `alertEmails`: both founders (D85); `alertFrom`: an address on the dedicated sending subdomain (D87).
+- `pager`: `ntfy`, `pushover` or `pagerduty` (D85, chosen at setup); its credentials are Worker secrets.
+- `digestHourUtc` (0–23, default 0): the daily digest goes out on the first run after this hour (UTC).
+
 `rpcFallback` (optional): a second NEAR JSON-RPC endpoint, `https` only and not `rpc` itself, ideally from another
 provider. The vault and the export window read from it (session re-syncs, the login's registry check, transaction
 polling) only when `rpc` errors or doesn't answer within 8 s; each read's answer comes from one endpoint. It is built

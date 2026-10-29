@@ -327,7 +327,8 @@ as today plus the delay bounds and `Too many watchdogs`.
 
 `get_config()` gains `issuer_key_delay_ms`, `pending_issuer_key_delay`, `governance_delay_ms`,
 `pending_governance_delay`, `paused`, `pending_console_audiences`. New `get_governance() -> {watchdogs,
-keys_slow_until_ms, updater_keys, pending_upgrade, pending_owner, pending_withdrawal, state_version}`.
+keys_slow_until_ms, updater_keys, pending_upgrade, pending_owner, pending_withdrawal, state_version}`. New
+`get_issuer_keys(provider) -> [{kid, n, e}] | null` (active keys with their material, for the watchdog's step 5).
 
 ### Events
 
@@ -420,7 +421,10 @@ setting (manifest `rpc` and `rpcFallback`), never through the API. Each run:
 1. Fetch `https://www.googleapis.com/oauth2/v3/certs` directly (`cache: no-store`), keep RS256 keys
    (`usableJwks`, shared from `packages/` rather than imported from `apps/api`). Record each kid's first-seen time
    and key material.
-2. Read `get_key_changes`, `get_issuer` for each provider it watches (Google only), `get_config`, `get_governance`.
+2. Read `get_key_changes`, `get_issuer` and `get_issuer_keys` for each provider it watches (Google only),
+   `get_config`, `get_governance`. (`get_issuer_keys` was added with the watchdog: without the active keys' material
+   the "seen with other key material" case of step 5 can't be checked for a key that went live while the watchdog was
+   down or arrived by an upgrade.)
 3. Pending `Add`:
    - kid in the JWKS with equal `n`, `e` (after stripping leading zeros) → `confirm_issuer_key_change`.
    - kid in the JWKS with different `n`/`e`, or kid absent from two fetches ≥ 60 s apart (a key Google doesn't
@@ -443,7 +447,8 @@ setting (manifest `rpc` and `rpcFallback`), never through the API. Each run:
 
 Providers other than Google: the watchdog only alerts on them (no cancel or confirm) until it knows their JWKS URL.
 
-**Status endpoint (for the admin portal, D83).** `GET /status` and `GET /alerts?cursor`: last run and its checks,
+**Status endpoint (for the admin portal, D83).** `GET /status`, `GET /alerts?cursor` and `GET /actions?cursor`
+(built: field list in `apps/watchdog/README.md`): last run and its checks,
 heartbeat state, seen kids with first-seen times, the actions log, alert history with acks. `POST /alerts/:id/ack
 {by}`: records an acknowledgement. Both need a bearer token that only the admin Worker holds (`WATCHDOG_STATUS_TOKEN`
 on both sides, from `.secrets/<env>/`). The endpoint can read and ack, nothing else: it can't change a check, stop a

@@ -1,14 +1,16 @@
 // Hourly cron: copies Google's ID-token signing keys (JWKS) into hana-signer with the keys-updater key, a
 // function-call key on SIGNER_ACCOUNT limited to set_issuer_key / remove_issuer_key. Every fetch (hourly here, every
 // 15 min in observeIssuerJwks) also records the kids it lists for the key lead-time measurement (key-observations.ts).
+import { type Jwk, GOOGLE_JWKS_URL, GOOGLE_PROVIDER, usableJwks } from '@hana-id/jwks';
 import type { Env } from './env.ts';
 import { cacheMaxAgeS, recordJwksObservation } from './key-observations.ts';
 import { log } from './log.ts';
 import { Rpc, invalidNonce, isDefiniteRejection, type SendTxResult } from './near/rpc.ts';
 import { type ContractCall, parseKeyPair, signFunctionCall, waitForOutcome } from './near/tx.ts';
 
-export const GOOGLE_PROVIDER = 'google';
-export const GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
+// The JWKS parsing is shared with apps/watchdog (packages/jwks).
+export { GOOGLE_JWKS_URL, GOOGLE_PROVIDER, type Jwk, usableJwks } from '@hana-id/jwks';
+
 /**
  * A kid missing from the JWKS is removed on chain only once it has been missing this long (first seen missing by
  * one hourly run, still missing at the next), so a single stale or partial JWKS response can't drop a live key.
@@ -17,37 +19,6 @@ export const REMOVE_AFTER_MISSING_MS = 55 * 60_000;
 /** Ample for an RSA key insert/remove (the old post-google-keys.sh used 30 Tgas). */
 const ISSUER_KEY_GAS = 30_000_000_000_000n;
 
-export interface Jwk {
-  kid: string;
-  n: string;
-  e: string;
-  kty?: string;
-  alg?: string;
-  use?: string;
-}
-
-const B64URL = /^[A-Za-z0-9_-]+$/u;
-
-/** RS256 signing keys only (the contract verifies RS256 today). */
-export function usableJwks(body: unknown): Jwk[] {
-  const keys = (body as { keys?: unknown } | null)?.keys;
-  if (!Array.isArray(keys)) return [];
-  return keys.filter(
-    (k): k is Jwk =>
-      typeof k === 'object' &&
-      k !== null &&
-      typeof k.kid === 'string' &&
-      k.kid.length > 0 &&
-      k.kid.length <= 128 &&
-      k.kty === 'RSA' &&
-      (k.alg === undefined || k.alg === 'RS256') &&
-      (k.use === undefined || k.use === 'sig') &&
-      typeof k.n === 'string' &&
-      B64URL.test(k.n) &&
-      typeof k.e === 'string' &&
-      B64URL.test(k.e),
-  );
-}
 
 /** `get_issuer(provider)` → kids. Accepts `{kids: [...]}`, `{keys: [...]}` or a bare array; null when unknown. */
 export function issuerKids(view: unknown): string[] | null {

@@ -1,6 +1,6 @@
 # Batch C spec: developer dashboard (partner console, Hana admin console, usage reporting)
 
-**Status: DRAFT (2026-10-27).** Written by a multi-agent design workflow (3 proposals + a judge per decision, then security, completeness and implementability reviews). Not yet reviewed or approved by the user: every decision and open question below needs confirmation before implementation.
+**Status: DRAFT (2026-10-27); partly confirmed, see "Confirmed by the user".** Written by a multi-agent design workflow (3 proposals + a judge per decision, then security, completeness and implementability reviews). Not yet reviewed or approved by the user: every decision and open question below needs confirmation before implementation.
 
 This is the source of truth for batch C. If the code and this spec disagree, fix the code or raise it; don't silently
 diverge. It amends `docs/batch-a-spec.md` and `docs/batch-a2-shared-client.md` where it says so. It was decided with
@@ -10,6 +10,34 @@ A review on 2026-10-27 changed three choices for safety: console audiences move 
 scope, an origin add also needs an admin-side notice before its clock starts, and second-owner approval is deferred.
 Open questions 38 to 40 ask the user to confirm them.
 Plan doc: https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi
+
+## Confirmed by the user (2026-10-28/29)
+
+These override anything below that disagrees with them. The rest of this draft still has to be folded into them
+(sections that a cut removes or simplifies are not yet rewritten).
+
+- **MVP cut (D34).** Keep three Workers and three databases' separation of duties, the script-free auth origin, the
+  Google code flow, invite-only sign-up, origin safety (change-bound token, 24 h delay, notice, cancel), the on-chain
+  watcher, settlement at FINAL, the uid HMAC and the admin billing reports. Add the auto-approve policy editor (same
+  path as origin changes; removal immediate). Simplify to two roles (owner, viewer), one fail-closed notice channel
+  from the admin Worker, direct usage inserts with a daily nonce cross-check, on-demand reports with frozen monthly
+  statements, and compare-and-swap writes. Defer mandatory passkeys (required before a second partner joins),
+  second-owner approval, Hana restore of revoked keys and removed origins, the partner app-request queue, secret keys,
+  R2/AE copies and Stripe.
+- **Usage and billing ledger on Neon Postgres, Sydney (D73).** `USAGE_DB` below becomes a Neon project in
+  `aws-ap-southeast-2`, reached from the API and admin Workers through Cloudflare Hyperdrive (connection string as a
+  Worker secret; only the API's usage writer and the admin Worker get the binding). Writes stay off the response path
+  (`waitUntil`); reports, statements and CSV are plain SQL (percentiles, `date_trunc`, materialised views, monthly
+  partitions). Hot app config and the console's data stay in D1.
+- **Files on Cloudflare R2 (D74).** Partner logos (served from a Hana origin with strict headers, never hot-linked
+  from a partner URL), monthly statements (CSV, PDF) and ledger exports.
+- **Three sign-in audiences (D75).** Wallet users: Google in Hana's popup, verified on chain (batch B). Partners:
+  the console's own Google OIDC code flow with PKCE, invite-only, owner/viewer, server sessions (hashed ids, `__Host-`
+  cookies), a fresh Google sign-in bound to each security-critical change; no third-party auth service (Supabase
+  Auth, Clerk, Auth0) because the Google token itself is the on-chain owner proof and another token issuer could
+  impersonate owners. Hana staff: Cloudflare Access in front of the admin Worker, which verifies the Access JWT on
+  every request; policy = members of a `Hana-Technology` GitHub team with org-wide 2FA required, plus an exact-email
+  Google allowlist as a fallback; the admin Worker's `workers.dev` route is disabled or also behind Access.
 
 ## Goal
 

@@ -631,6 +631,37 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
 - Decision: no response from the vault origin, the auth origin or the API sets a cookie; the page Workers drop one a
   binding returns.
 
+### D73. Usage and billing ledger on Neon Postgres in Sydney
+- Date 2026-10-29 · Status: confirmed by the user, for batch C · Source: `docs/batch-c-spec.md` "Confirmed by the user"
+- Decision: the usage and billing ledger (batch C's `USAGE_DB`) is a Neon Postgres project in `aws-ap-southeast-2`
+  (Sydney), reached from Workers through Cloudflare Hyperdrive. Hot app config and console data stay in D1.
+- Why: the ledger only grows and must be kept for years (D1 caps a database at 10 GB); reports need percentiles,
+  time buckets and materialised views; staff and finance can use standard SQL tools; point-in-time restore is
+  included. Sydney because the company is incorporated there (Privacy Act cross-border rules) and a team member is
+  there. Neon over Supabase: plain Postgres with no auto-exposed data API to lock down, usage-based pricing, branching
+  and restore included.
+- Rejected: D1 for the ledger (fine for the pilot, but rollups and archiving would be needed); Supabase (its login,
+  storage and data API go unused and add attack surface).
+
+### D74. Files on Cloudflare R2
+- Date 2026-10-29 · Status: confirmed by the user, for batch C · Source: `docs/batch-c-spec.md` "Confirmed by the user"
+- Decision: partner logos, monthly statements and ledger exports live in R2 in the Hana Cloudflare account. Logos are
+  served from a Hana origin with strict headers; Hana never shows a partner-hosted image in its popups.
+- Rejected: Supabase Storage (a second place to secure for no gain).
+
+### D75. Three sign-in audiences; no third-party auth service
+- Date 2026-10-29 · Status: confirmed by the user, for batch C · Source: `docs/batch-c-spec.md` "Confirmed by the user"
+- Decision: wallet users sign in with Google in Hana's popup, verified on chain. Partners use the console's own Google
+  OIDC code flow (PKCE), invite-only, owner/viewer roles, server sessions stored as hashes, and a fresh sign-in bound
+  to each security-critical change. Hana staff reach the admin console through Cloudflare Access (members of a
+  `Hana-Technology` GitHub team with org 2FA required; exact-email Google rules as fallback), and the admin Worker
+  verifies the Access JWT on every request.
+- Why: the Google ID token is the on-chain owner proof, so an auth service in between adds a party that could
+  impersonate partner owners while we still handle Google's token; Access keeps the admin console off the internet and
+  hands MFA and offboarding to GitHub/Google.
+- Rejected: Supabase Auth (used for Wend's admin portal), Clerk, Auth0, WorkOS; Access for partners (no self-service
+  invites, branding or on-chain proofs; per-seat cost past 50 users).
+
 ## Superseded or amended
 
 | Was | Now | Source |

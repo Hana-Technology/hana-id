@@ -224,7 +224,7 @@ describe('with consent', () => {
     expect(s.t.launcher.history).toContain('Signed by Hana under Swaps on Example');
   });
 
-  it('a matching request whose popup the partner page opened in the click (D95) closes that popup unseen', async () => {
+  it('a matching request whose popup the partner page opened in the click (D99) closes that popup unseen', async () => {
     const s = await session();
     const consentPopup = await grant(s);
     s.t.dispatch({ data: { v: 1, t: 'hana:approve-bye' }, origin: ENV.authOrigin, source: consentPopup });

@@ -75,7 +75,7 @@ origin cases are timing-dependent security checks.
 
 - Playwright's browsers never block popups. Where the spec needs the blocked-popup path (Safari after an `await`: the
   wagmi and SWK connect paths in WebKit), the partner page's `window.open` returns null (`?blockPopups=1`; only for
-  the approval popup with `?blockPopups=approve`, D95).
+  the approval popup with `?blockPopups=approve`, D99).
 - `page.evaluate` runs with an emulated user gesture in all three browsers, so a signing call it starts would open
   the approval popup in "the click". `e2e.run` (an action outside any click) therefore makes
   `navigator.userActivation.isActive` read false until the next `e2e.arm`, so those tests see the launcher path;

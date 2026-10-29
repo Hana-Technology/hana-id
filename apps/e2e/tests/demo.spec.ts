@@ -54,7 +54,7 @@ test('the demo logs in, shows addresses and timings, signs, and copies safe diag
   await expect(cells).toHaveCount(8);
   await expect(cells.nth(5)).toHaveText(/^\d+$/u); // the chain stage, from the vault (a pk_test_ app)
 
-  // personal_sign: the click opens the approval popup itself, with no launcher (D95); then a Stellar message and the
+  // personal_sign: the click opens the approval popup itself, with no launcher (D99); then a Stellar message and the
   // test transaction in the same popup, which waits for follow-ups.
   const approvalP = page.waitForEvent('popup');
   await page.getByRole('button', { name: 'Sign a message (EVM personal_sign)' }).click();

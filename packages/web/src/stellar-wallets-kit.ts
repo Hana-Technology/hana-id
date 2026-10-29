@@ -11,7 +11,7 @@
 // | productName, productUrl, productIcon | 'Hana ID', the env's authOrigin, the Hana ID mark (data: URI) |
 // | isAvailable() | true within 1000 ms when the handshake is done, false otherwise |
 // | getAddress() | {address}; logs in if needed, with the launcher fallback when the popup is blocked |
-// | signTransaction, signAuthEntry, signMessage | through hana.stellar (approval; synchronous up to it, so the approval popup opens in SWK's click where SWK itself doesn't await first, D95) |
+// | signTransaction, signAuthEntry, signMessage | through hana.stellar (approval; synchronous up to it, so the approval popup opens in SWK's click where SWK itself doesn't await first, D99) |
 // | getNetwork() | from createHana's stellar.networkPassphrase |
 // | disconnect() | hana.logout() |
 //

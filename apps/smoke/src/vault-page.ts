@@ -603,7 +603,7 @@ export function startVaultPage(deps: VaultPageDeps): void {
     const a = c?.addresses;
     if (!c || !a || requestPending) return;
     // The consent check below is awaited before the request is sent: open the approval popup now, in the click, so
-    // the request can use it (D95; Safari would block window.open after the await). The vault closes it at once if the
+    // the request can use it (D99; Safari would block window.open after the await). The vault closes it at once if the
     // request is auto-approved.
     c.prepareApproval();
     exclusive(async () => {

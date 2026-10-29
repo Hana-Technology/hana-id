@@ -109,7 +109,7 @@ describe('port requests', () => {
     expect(parsePortRequest(req(method, params))).toBeNull();
   });
 
-  it.each(APPROVAL_POPUP_METHODS)('accepts popupOpened: true on %s and keeps it (D95)', (method) => {
+  it.each(APPROVAL_POPUP_METHODS)('accepts popupOpened: true on %s and keeps it (D99)', (method) => {
     const parsed = parsePortRequest({ ...req(method, VALID_PARAMS[method]), popupOpened: true });
     expect(parsed).not.toBeNull();
     expect(parsed!.popupOpened).toBe(true);

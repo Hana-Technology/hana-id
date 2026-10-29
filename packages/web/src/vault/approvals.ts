@@ -1,6 +1,6 @@
 // The approval queue and popup (docs/batch-b-spec.md "Approval flow", "Consent"). Requests queue in order. The popup
 // is one of:
-// - partner-opened (D95): the SDK opened `{authOrigin}/approve?from=partner&v=<vault frame>` in the user's click and
+// - partner-opened (D99): the SDK opened `{authOrigin}/approve?from=partner&v=<vault frame>` in the user's click and
 //   flagged the request `popupOpened`. Its hello comes from a window whose opener is this vault's parent, with
 //   `event.origin === authOrigin`; the vault adopts it (no launcher) unless it already has a popup in use, in which case
 //   it tells the newcomer to close. While a flagged request waits for its popup's hello (up to POPUP_WAIT_MS), the
@@ -300,7 +300,7 @@ export class Approvals {
   }
 
   /**
-   * A hello from a window other than the popup in use: a popup the partner page opened in the user's click (D95). It
+   * A hello from a window other than the popup in use: a popup the partner page opened in the user's click (D99). It
    * is authenticated by origin (checked by the caller) and by its opener being this vault's parent, as a partner-mode
    * login popup is (login.ts acceptHello).
    */

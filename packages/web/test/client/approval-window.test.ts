@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// The approval popup opened in the partner's click (docs/batch-b-spec.md "Approval flow" step 1, D95): every signing
+// The approval popup opened in the partner's click (docs/batch-b-spec.md "Approval flow" step 1, D99): every signing
 // entry point opens `{authOrigin}/approve?from=partner&v=<vault frame>` synchronously when the page has user
 // activation (or the browser can't tell), flags the request `popupOpened`, and otherwise leaves the vault's launcher as
 // the fallback: no activation, a blocked window.open, or an approval popup that is already open (reused).

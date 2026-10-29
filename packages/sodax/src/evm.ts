@@ -26,7 +26,7 @@
 //
 // Sodax calls carry the user's intent in opaque bytes, so in batch B every one goes through the approval popup (Q42).
 // sendTransaction calls `hana.prepareApproval()` synchronously, before the queue and the RPC checks, so a swap started
-// from a click opens the approval popup in that click (D95); a send that fails before it is signed closes that window.
+// from a click opens the approval popup in that click (D99); a send that fails before it is signed closes that window.
 import { ErrorCode, isEvmAddress } from '@hana-id/core';
 import type { HanaClient } from '@hana-id/web';
 import { HanaError, RpcCode } from '@hana-id/web';
@@ -85,7 +85,7 @@ export function createSodaxEvmProvider(hana: SodaxEvmHana, config: SodaxEvmConfi
     } catch (e) {
       return Promise.reject(e);
     }
-    // In the caller's click, before any await: the approval popup opens now (D95).
+    // In the caller's click, before any await: the approval popup opens now (D99).
     const ticket = typeof hana.prepareApproval === 'function' ? hana.prepareApproval() : null;
     const run = (sendQueues.get(eth) ?? Promise.resolve()).then(() => sendChecked(tx));
     run.catch(() => ticket?.cancel());

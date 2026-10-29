@@ -908,7 +908,7 @@ describe('/approve consent screen: contract names (D44)', () => {
   });
 });
 
-describe('/approve opened by the partner page in the click (D95)', () => {
+describe('/approve opened by the partner page in the click (D99)', () => {
   const FRAME = `hana-vault-${'c'.repeat(32)}`;
   let partner: RemoteWindow;
   let vaultFrame: RemoteWindow;

@@ -10,7 +10,7 @@
 // | eth_sign and other signing or wallet methods | 4200 |
 // | read-only methods (READ_ONLY_METHODS) | forwarded to the current chain's rpcUrl |
 //
-// Every signing method opens the approval popup synchronously in the call (D95), before any await: called from a click,
+// Every signing method opens the approval popup synchronously in the call (D99), before any await: called from a click,
 // it opens in that click, as login does; otherwise the vault's launcher is the fallback. eth_sendTransaction and
 // eth_signTransaction open it before filling the transaction, so the window is up while the RPC answers.
 //
@@ -60,7 +60,7 @@ export interface EthereumHost {
   /** hana.login(): opens the popup synchronously. */
   login(): Promise<{ evm: string }>;
   request<M extends PortMethod>(method: M, params?: PortParamsMap[M]): Promise<PortResultMap[M]>;
-  /** hana.prepareApproval(): opens the approval popup now, for a request sent after an await (D95). */
+  /** hana.prepareApproval(): opens the approval popup now, for a request sent after an await (D99). */
   prepareApproval?(): ApprovalTicket;
   fetch: FetchLike;
   /** A pk_test_ app: only the testnet chains of @hana-id/core TEST_EVM_CHAINS can be switched to or sent on (D39). */
@@ -301,7 +301,7 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
   /** Fills the transaction from its chain's RPC and has the vault sign it (approval). Returns the raw tx and its nonce. */
   async #signTransaction(call: TxCall): Promise<{ raw: Hex; nonce: bigint }> {
     const { input, from, chain } = call;
-    // Before the fill's first await: the approval popup opens in the caller's click (D95).
+    // Before the fill's first await: the approval popup opens in the caller's click (D99).
     const ticket = this.#prepare();
     const minNonce = this.#nextNonce.get(nonceKey(chain.id, from));
     let tx: Awaited<ReturnType<typeof fillTransaction>>;
@@ -329,7 +329,7 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
   /** Queues the call behind earlier eth_sendTransaction calls on its chain (see #sendQueue). */
   #sendTransaction(params: unknown): Promise<Hex> {
     const call = this.#txCall(params);
-    // Now, in the caller's click, not after the queue ahead of it (D95). A window no request used closes on failure.
+    // Now, in the caller's click, not after the queue ahead of it (D99). A window no request used closes on failure.
     const ticket = this.#prepare();
     const id = call.chain.id;
     const run = (this.#sendQueue.get(id) ?? Promise.resolve()).then(() => this.#signAndBroadcast(call));

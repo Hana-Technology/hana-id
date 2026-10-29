@@ -4,7 +4,7 @@
 // vault signs only what the user saw. Approve and Allow are guarded (approve-guard.ts). After an answer it waits up to
 // 15 s for a follow-up request, then says bye and closes.
 //
-// Opener modes (D95):
+// Opener modes (D99):
 //   vault    /approve                          opened by the vault's launcher; the vault is window.opener
 //   partner  /approve?from=partner&v=<frame>   opened by the SDK on the partner page, in the user's click; the vault
 //                                              is window.opener.frames[v], authenticated as the login popup does it:

@@ -293,7 +293,7 @@ describe('Approvals', () => {
     expect(last).toMatchObject({ position: 1000, queued: 1000 });
   });
 
-  describe('a popup the partner page opened in the click (D95)', () => {
+  describe('a popup the partner page opened in the click (D99)', () => {
     const requests = (w: FakeWindow) => w.posted.filter((p) => p.message.t === 'hana:approve-request').map((p) => p.message);
     const closes = (w: FakeWindow) => w.posted.filter((p) => p.message.t === 'hana:approve-close');
 

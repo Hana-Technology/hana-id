@@ -5,12 +5,12 @@
 //   hana.status;                 // 'logged_out' | 'unlocking' | 'logging_in' | 'logged_in' | 'error'
 //   hana.on('statusChanged' | 'accountsChanged' | 'sessionExpired' | 'disconnect', cb);
 //   hana.login();                // call synchronously in a click handler
-//   hana.prepareApproval();      // in a click handler, before awaiting a quote: opens the approval popup now (D95)
+//   hana.prepareApproval();      // in a click handler, before awaiting a quote: opens the approval popup now (D99)
 //   hana.logout(); hana.exportKey(chain); hana.revokeOtherDevices();
 //   hana.stellar; hana.ethereum; hana.signRaw(params);
 //
 // The client holds no key material and no token: it mounts the vault iframe (vault-connection.ts), opens the login
-// popup (login.ts) and, inside the user's click, the approval popup for signing requests (approval-window.ts, D95),
+// popup (login.ts) and, inside the user's click, the approval popup for signing requests (approval-window.ts, D99),
 // and relays requests over the port. Everything it learns is public (addresses, expiry, status).
 // Beyond the spec's list it also exposes cancelLogin() (the port's hana_cancelLogin), the auto-approve port methods,
 // destroy() (React's HanaProvider unmount), and the `loginProgress`, `autoApproved` and `launcher` events.
@@ -325,7 +325,7 @@ export class HanaClient extends Emitter<HanaEvents> {
   #request<M extends PortMethod>(method: M, params?: PortParamsMap[M]): Promise<PortResultMap[M]> {
     if (this.#destroyed) return Promise.reject(hanaError(ErrorCode.disconnected));
     if (!isApprovalPopupMethod(method)) return this.#conn.request(method, params);
-    // Synchronously, before the first await: a call from a click opens the approval popup in that click (D95).
+    // Synchronously, before the first await: a call from a click opens the approval popup in that click (D99).
     this.prepareApproval();
     const popupOpened = this.#windows.claim();
     return this.#conn.request(method, params, popupOpened ? { popupOpened } : undefined);

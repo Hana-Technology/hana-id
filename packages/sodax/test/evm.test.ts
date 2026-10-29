@@ -181,7 +181,7 @@ describe('sendTransaction', () => {
     expect(net.rpcCalls(RECEIPTS, 'eth_chainId')).toHaveLength(2);
   });
 
-  it('opens the approval popup in the caller’s click (hana.prepareApproval, before the queue and any RPC), D95', async () => {
+  it('opens the approval popup in the caller’s click (hana.prepareApproval, before the queue and any RPC), D99', async () => {
     const { hana } = setup();
     const cancel = vi.fn();
     const callsAtPrepare: number[] = [];

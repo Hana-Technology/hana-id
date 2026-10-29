@@ -1,5 +1,5 @@
 // The approval popup opened in the partner's click (docs/batch-b-spec.md "Approval flow" step 1, docs/decisions.md
-// D95): one click on the partner's "Sign" opens `{authOrigin}/approve?from=partner&v=…` with the request, no launcher;
+// D99): one click on the partner's "Sign" opens `{authOrigin}/approve?from=partner&v=…` with the request, no launcher;
 // a blocked window.open (Safari after an await) falls back to the launcher; sequential requests reuse the window; an
 // auto-approved request opens and closes the window without showing anything; and the partner page, which holds the
 // window, can't make it show or approve anything.

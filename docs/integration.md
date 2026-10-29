@@ -276,7 +276,7 @@ misdescribe them. The popup stays open for 15 s after an answer, so a follow-up 
 re-sign, a trustline) appears there without another click. Each one still needs its own Approve. Reject, closing the
 popup, or 5 min without an answer gives `4001`.
 
-**Call the SDK directly in your click handler** (D95). Every signing method (`hana.stellar.sign*`, the Stellar
+**Call the SDK directly in your click handler** (D99). Every signing method (`hana.stellar.sign*`, the Stellar
 Wallets Kit module, `personal_sign`, `eth_signTypedData_v4`, `eth_signTransaction`, `eth_sendTransaction`,
 `hana.signRaw`, `hana.requestAutoApprove`, the Sodax adapters) opens the approval popup synchronously, the moment you
 call it, while the browser still treats the click as a user gesture:

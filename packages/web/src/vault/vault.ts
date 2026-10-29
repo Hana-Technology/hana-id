@@ -589,7 +589,7 @@ export class Vault {
       return;
     }
     if (!this.claimId(request.id)) return;
-    // The SDK opened an approval popup for this request in the user's click (D95): hold the launcher for its hello, and
+    // The SDK opened an approval popup for this request in the user's click (D99): hold the launcher for its hello, and
     // close it if the request ends without an approval screen (auto-approved under the policy, or refused).
     const claim = request.popupOpened === true ? (this.approvals?.claim() ?? null) : null;
     try {

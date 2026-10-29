@@ -200,7 +200,7 @@ export const isSignMethod = (m: unknown): m is SignMethod => (SIGN_METHODS as re
 
 /**
  * Methods that may show the approval popup: the sign methods and the consent screen. Only these may carry
- * `popupOpened` (the partner page opened the approval popup in the user's click for this request, D95).
+ * `popupOpened` (the partner page opened the approval popup in the user's click for this request, D99).
  */
 export const APPROVAL_POPUP_METHODS = [...SIGN_METHODS, 'hana_requestAutoApprove'] as const satisfies readonly PortMethod[];
 export type ApprovalPopupMethod = (typeof APPROVAL_POPUP_METHODS)[number];
@@ -467,7 +467,7 @@ export interface PortEventMap {
   ui: { launcher: 'show' | 'hide'; label: string };
   /**
    * Whether the vault has an approval popup open (one its launcher opened, or one the partner page opened that it
-   * adopted). The SDK then reuses it instead of opening another in the next click (D95).
+   * adopted). The SDK then reuses it instead of opening another in the next click (D99).
    */
   approvalWindow: { open: boolean };
   autoApproved: { kind: SignMethod; chain: 'stellar' | 'evm'; contract: string; function: string };
@@ -560,7 +560,7 @@ export interface WindowMessageMap {
   'hana:approve-result': { id: string; approved: boolean; digest: Uint8Array };
   'hana:approve-bye': Record<string, never>;
   /**
-   * Vault → approval popup: close now, without answering (D95). Sent when the request a partner-opened popup was
+   * Vault → approval popup: close now, without answering (D99). Sent when the request a partner-opened popup was
    * opened for ended without an approval screen (auto-approved under the accepted policy, or refused), when the vault
    * already has a popup in use, and when the vault drops its popup (logout, a stale window).
    */

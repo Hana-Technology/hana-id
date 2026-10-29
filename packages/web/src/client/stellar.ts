@@ -7,7 +7,7 @@
 //   createHana; the vault shows it on the approval screen and binds it into the approval digest.
 // - signMessage: SEP-53, approval every time.
 // - Each sign method sends its request synchronously in the call, so a call from a click opens the approval popup in
-//   that click (client.ts, D95).
+//   that click (client.ts, D99).
 // - getNetwork(): from `stellar.networkPassphrase`.
 import type { PortMethod, PortParamsMap, PortResultMap } from '@hana-id/core';
 import { HanaError, RpcCode } from './errors.ts';

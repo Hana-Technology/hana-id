@@ -445,7 +445,7 @@ describe('vault smoke page: auto-approve demo', () => {
     });
     clock = 0;
     button('sign-stellar-self').click();
-    // The approval popup opens in the click itself, before the awaited consent check (D95).
+    // The approval popup opens in the click itself, before the awaited consent check (D99).
     expect(c.prepareApproval).toHaveBeenCalledTimes(1);
     expect(c.stellar.signTransaction).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(rows('signs')[0]).toMatch(/signed, auto-approved \(no popup\)/u));

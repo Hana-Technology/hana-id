@@ -19,7 +19,7 @@ Everything in A, A.2 and `docs/contract-interface.md` stands except:
 | `batch-a2-shared-client.md` (`GET /v1/app`) | Adds `name` and `serverTimeMs` to the response, accepts `x-hana-parent-origin` from Hana origins, and uses the app's `google_web_client_id` when it is set. |
 | `batch-a2-shared-client.md` (`/v1/sessions` checks) | Adds the claim allow-list (`token_has_pii`), behind `REJECT_PII_ON_SESSIONS` until smoke moves (see [Order of work](#order-of-work)). |
 | `contract-interface.md` | New method `create_session_and_derive`, the `key_index` bound, the off-chain `hana-id-vault-v1:` prefix, and the note that the contract itself does not refuse PII claims. |
-| This spec, [Approval flow](#approval-flow) steps 1–3 (2026-10-29, user decision, `docs/decisions.md` D95) | A signing call from a user's click opens the approval popup in that click, as login does (`/approve?from=partner&v=<vault frame>`); the vault's "Review in Hana" launcher is the fallback without user activation or when `window.open` returns null. New messages: port request field `popupOpened`, port event `approvalWindow`, window message `hana:approve-close`. |
+| This spec, [Approval flow](#approval-flow) steps 1–3 (2026-10-29, user decision, `docs/decisions.md` D99) | A signing call from a user's click opens the approval popup in that click, as login does (`/approve?from=partner&v=<vault frame>`); the vault's "Review in Hana" launcher is the fallback without user activation or when `window.open` returns null. New messages: port request field `popupOpened`, port event `approvalWindow`, window message `hana:approve-close`. |
 | This spec, [Login](#login) steps 4 and 11–12 (2026-10-29, `docs/decisions.md` D77, D79) | `/login` makes no API call (no `GET /v1/app` cross-check; its CSP has no `connect-src`). The vault replies to `hana_login` before it makes the share and record, which follow in the background; a failure there emits `persistenceChanged {persistence: 'none'}`. |
 
 ## Goal
@@ -397,7 +397,7 @@ PRK is zeroed in memory at `expiresAtMs`, on logout, or on a `revoked` broadcast
 
 ### Approval flow
 
-**Amended 2026-10-29 (user decision, `docs/decisions.md` D95): the popup opens in the partner's click, like login; the launcher is the fallback.** Steps 1–3 now read:
+**Amended 2026-10-29 (user decision, `docs/decisions.md` D99): the popup opens in the partner's click, like login; the launcher is the fallback.** Steps 1–3 now read:
 
 1. **In the click.** Every signing entry point of the SDK (`eth_sendTransaction`, `eth_signTransaction`, `personal_sign`, `eth_signTypedData_v4`, `hana_signRaw`, `hana_requestAutoApprove`, `hana.stellar.sign*` and the Stellar Wallets Kit module through it, the Sodax adapters) runs, synchronously and before any await, `window.open('{authOrigin}/approve?from=partner&v=<vault frame name>', 'hana-approve-<32 hex chars, random>', 'popup,width=420,height=680')`, without `noopener`, when the user is logged in and the page has transient user activation (`navigator.userActivation.isActive`; when the API is missing it tries anyway). `eth_sendTransaction` and `eth_signTransaction` open it before filling the transaction; the Sodax EVM adapter before its queue and RPC checks; `hana.prepareApproval()` lets a partner open it before its own awaits (a quote). The request is then sent with `popupOpened: true`. Nothing is opened while an approval popup is already open: the one this page opened (still open), or the vault's (port event `approvalWindow {open}`); the SDK focuses its own and the vault reuses it (step 2). A popup opened for a call that fails before its request is sent (an RPC fill error) is closed by the SDK.
    **Fallback.** Without activation, or when `window.open` returns null (Safari after an await, a popup blocker) or a closed handle, nothing is flagged: the vault queues the request and emits `ui {launcher: 'show', label: 'Review in Hana'}`. The SDK makes the iframe visible as a fixed 320×72 px element. Clicking the launcher only opens the popup (`window.open('{authOrigin}/approve', 'hana-approve-<32 hex>', 'popup,width=420,height=680')` from the vault), so clickjacking it can't produce a signature.
@@ -574,11 +574,11 @@ hana.logout(); hana.exportKey(chain); hana.revokeOtherDevices();
 hana.stellar   // { getAddress, signTransaction, signAuthEntry, signMessage, getNetwork }
 hana.ethereum  // EIP-1193 provider
 hana.signRaw(params)
-hana.prepareApproval(): { cancel() };   // D95: in a click, before awaiting: opens the approval popup for the next signing call
+hana.prepareApproval(): { cancel() };   // D99: in a click, before awaiting: opens the approval popup for the next signing call
 ```
 
 A second `hana.login()` while one is pending supersedes it (the first rejects with `login_cancelled`). Signing methods
-called in a click open the approval popup in that click (see [Approval flow](#approval-flow), amended by D95).
+called in a click open the approval popup in that click (see [Approval flow](#approval-flow), amended by D99).
 
 ### EIP-1193 (`hana.ethereum`)
 
@@ -964,7 +964,7 @@ Run live logins with the real sandbox shared client and an openid-only implicit 
   - Reject and close give `4001`;
   - the queue order;
   - keep-open reuse within 15 s and close after;
-  - opened in the click (D95), client: with activation each signing entry point opens `/approve?from=partner&v=…` synchronously and flags the request; without activation, with `window.open` null, throwing or closed, nothing is flagged; an open window (its own or the vault's `approvalWindow`) is reused, not reopened; a fill that fails closes the unused window; `prepareApproval()`;
+  - opened in the click (D99), client: with activation each signing entry point opens `/approve?from=partner&v=…` synchronously and flags the request; without activation, with `window.open` null, throwing or closed, nothing is flagged; an open window (its own or the vault's `approvalWindow`) is reused, not reopened; a fill that fails closes the unused window; `prepareApproval()`;
   - opened in the click, popup: only `?from=partner&v=<vault frame>` or no query; messages only from `opener.frames[v]` on `vaultOrigin` whose parent is the opener (the partner page posting to it, another frame, a reparented frame get nothing); blank for 0.6 s; `hana:approve-close` closes it without an answer; bye and close after 8 s with no request;
   - opened in the click, vault: adoption only for a hello from `authOrigin` whose opener is the parent; the launcher held 3 s for a flagged request's hello; a request that ends without an approval screen (auto-approved, refused) closes a popup that showed nothing, now or on its late hello; queued requests keep their order; a second window while one is in use is told to close.
 - Auto-approve:
@@ -1030,7 +1030,7 @@ The partner runs on `http://localhost:<p>`, the vault on `http://127.0.0.1:<v>` 
 - Rejection returns `4001`.
 - Export completes for both chains through the export-mode child popup.
 - wagmi/viem with the EIP-1193 provider, and SWK 1.9.x and 2.x with the module, each sign through approval. In WebKit, the wagmi and SWK connect paths (popup after `await`) complete through the launcher fallback.
-- Approval popup in the click (D95, `apps/e2e/tests/approve-in-click.spec.ts`): one click on the partner's "Sign" opens `/approve?from=partner&v=…` with the request and no launcher (EIP-1193 and the SWK module); a blocked approval `window.open` (Safari after an await) falls back to the launcher; two sequential requests from two clicks reuse the one window; an auto-approved request opens the window and closes it without showing a request or a button; the partner page posting forged requests to a window it holds gets nothing shown.
+- Approval popup in the click (D99, `apps/e2e/tests/approve-in-click.spec.ts`): one click on the partner's "Sign" opens `/approve?from=partner&v=…` with the request and no launcher (EIP-1193 and the SWK module); a blocked approval `window.open` (Safari after an await) falls back to the launcher; two sequential requests from two clicks reuse the one window; an auto-approved request opens the window and closes it without showing a request or a button; the partner page posting forged requests to a window it holds gets nothing shown.
 
 ### Testnet (sandbox-dev, results recorded in `docs/context.md`)
 

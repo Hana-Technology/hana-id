@@ -227,7 +227,7 @@ describe('approval flow', () => {
   });
 });
 
-describe('approval popup opened by the partner page in the click (D95)', () => {
+describe('approval popup opened by the partner page in the click (D99)', () => {
   const closes = (w: FakeWindow) => w.posted.filter((p) => p.message.t === 'hana:approve-close');
 
   it('a request flagged popupOpened is shown in the popup whose opener is the partner page: no launcher, signed after Approve', async () => {

@@ -33,7 +33,7 @@ Batch B is merged on the integration branch `feat/batch-b` (not yet on `develop`
 | Component | Code | Runs on | Role |
 |---|---|---|---|
 | Partner page | partner's own | partner origin | Embeds the SDK; never sees keys or tokens |
-| `@hana-id/web` client | `packages/web/src/client` | partner origin | Mounts the vault iframe, opens the login popup and (in the click, D95) the approval popup, exposes EIP-1193, Stellar signer, raw signer, SWK module |
+| `@hana-id/web` client | `packages/web/src/client` | partner origin | Mounts the vault iframe, opens the login popup and (in the click, D99) the approval popup, exposes EIP-1193, Stellar signer, raw signer, SWK module |
 | `@hana-id/react`, `@hana-id/sodax` | `packages/react`, `packages/sodax` | partner origin | `HanaProvider`/`useHana`/`useWallet`; Sodax `IStellarWalletProvider`/`IEvmWalletProvider` adapters |
 | Vault | `packages/web/src/vault`; page HTML `apps/api/src/vault/page.ts` | hidden iframe on `vaultOrigin` | Holds the session key and PRK, computes nonces and paths, signs |
 | Auth pages | `packages/web/src/auth` | popups / top-level windows on `authOrigin` | Google login, approval, consent, key export |
@@ -249,7 +249,7 @@ EIP-1193 provider refuses switching to or
 adding such a chain, and `eth_sendTransaction`/`eth_signTransaction` on one, before anything is filled. Every
 approval and consent screen of a test app says Hana signs only for test networks (`testApp` in the popup messages).
 
-Approval (D95): a signing call made in a click opens `{authOrigin}/approve?from=partner&v=<vault frame>` in that click
+Approval (D99): a signing call made in a click opens `{authOrigin}/approve?from=partner&v=<vault frame>` in that click
 (`packages/web/src/client/approval-window.ts`, synchronously, with user activation, unless an approval popup is
 already open) and sends the request flagged `popupOpened`. The popup finds the vault as the login popup does
 (`opener.frames[v]`, origin and window checked both ways); the vault adopts it for the head of its queue, holds its

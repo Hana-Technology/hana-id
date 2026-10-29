@@ -3,7 +3,7 @@
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
 known open issues. Last verified against code: 2026-10-29 (branch `perf/login-latency-impl`; the login popup, the
 background persist and the vault gate were re-checked, the rest as of 2026-10-28, commit 58edee9; the approval popup
-opened by the partner page, branch `feat/approve-in-click`, D95).
+opened by the partner page, branch `feat/approve-in-click`, D99).
 
 Component map and flows: `docs/architecture.md`. On-chain layouts and the contract's own security notes:
 `docs/contract-interface.md` ("Security notes (for reviewers)"). Browser parts (vault, auth pages, partner client)
@@ -28,7 +28,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Hana operator (owner, signer, relayer accounts; Cloudflare account) | Running the contract, API and pages honestly | Today, total control: post an issuer key (owner or `KEYS_UPDATER_KEY`) and mint tokens; upgrade the contract (signer full-access key, no lock); serve modified vault/auth bundles. Suspend apps, stop relaying, list or remove shared clients | Move a scope's registered clients or owners, or block derivation for a scope with its own client, **without** those powers above. Read keys in normal operation |
 | API Worker logic and D1 (not the pages, not the secrets) | Gating and relaying; holding shares | Deny service; with `VAULT_KEK` plus a device dump, get PRK; point a vault at another scope of the same user only together with a Google client the registry maps to that scope (the vault's login check, D56, refuses any other combination); set or widen `raw_sign`/policies (the user still approves raw requests and must accept a new `policyId`); make the vault page frameable by another origin (D1 origins) | Substitute the signer, path or CKD key (pinned in the bundles, path computed in the vault); read or swap the relayed token (end-to-end encrypted); sign without the vault |
 | Partner (app owner) | Its own app config and, in own-client mode, its Google client | Own-client mode: obtain tokens with any nonce for its client and derive its own users' keys in its scope (inherent: Hana can't see Google client settings). Set an auto-approve policy (delayed; users must accept it) | Anything in another scope. In shared mode: derive keys (no token with a nonce of its choosing) |
-| Partner page (incl. XSS, malicious dependency) | Nothing | Start a login (visible popup), read addresses, queue signature requests, drive an unlocked vault within its idle/absolute limits, get requests signed that match an accepted auto-approve policy; navigate, close or focus the approval popup it opened (D95, "Approval popup opened by the partner page") | Read keys, tokens, nonces; get any other signature without a guarded Approve in a Hana popup |
+| Partner page (incl. XSS, malicious dependency) | Nothing | Start a login (visible popup), read addresses, queue signature requests, drive an unlocked vault within its idle/absolute limits, get requests signed that match an accepted auto-approve policy; navigate, close or focus the approval popup it opened (D99, "Approval popup opened by the partner page") | Read keys, tokens, nonces; get any other signature without a guarded Approve in a Hana popup |
 | User's browser and device | Running Hana's pages; keeping the profile private | Malware or an extension in all frames: everything the user can do, including reading an exported key. A disk dump with a live share: unlock and get PRK | After logout, idle or absolute expiry or revoke: nothing. A derive (the persisted session is used up) |
 | NEAR RPC (manifest `rpc`, and `rpcFallback` when set) | Liveness, honest views | Fail derives, report wrong counters or a wrong registry answer (a refused login), delay. The fallback is asked only when the primary fails, so a lying primary is not outvoted | Forge a CKD result (pairing check against the pinned key) |
 | Anyone watching the chain or mempool | Nothing | Read used tokens (openid-only claims via the API), replay `create_session` with them (the vault derives with the next counter), replay a whole combined call (burns a `max_uses = 1` login: `session_consumed`; attacker pays gas) | Derive for themselves (needs the session key; the answer is encrypted to `a`) |
@@ -230,7 +230,7 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
 - Approval binds the whole request through `approvalDigest` (`packages/core/src/approval.ts:179`). Its network
   context is the passphrase or chain ID for transactions and auth entries, and empty for messages, typed data and raw
   requests (D35); the popup says those signatures aren't tied to one network. The launcher only opens the popup. A
-  signing call from a click opens the popup from the partner page instead (D95); see "Approval popup opened by the
+  signing call from a click opens the popup from the partner page instead (D99); see "Approval popup opened by the
   partner page" below.
 - The Approve guard (`packages/web/src/auth/approve-guard.ts`, D36): disabled until 1 s after render and 1 s after
   the window last gained focus or became visible, then an arming gesture: a mouse `pointermove` that moved (non-zero
@@ -295,7 +295,7 @@ no API call its CSP has no `connect-src` at all.
 ### Approval popup opened by the partner page
 
 A signing call made in a user's click opens `{authOrigin}/approve?from=partner&v=<vault frame>` from the partner page,
-in that click (D95, `packages/web/src/client/approval-window.ts`), as login opens `/login`. The vault's launcher opens
+in that click (D99, `packages/web/src/client/approval-window.ts`), as login opens `/login`. The vault's launcher opens
 it only as the fallback. So the partner page, and any script on it, holds a WindowProxy to the real approval popup.
 
 - **What users trust is the popup's address bar.** The window is a top-level popup whose address bar shows

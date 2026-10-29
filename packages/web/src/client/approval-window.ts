@@ -1,4 +1,4 @@
-// The approval popup opened in the partner's click (docs/batch-b-spec.md "Approval flow" step 1, D95), as login opens
+// The approval popup opened in the partner's click (docs/batch-b-spec.md "Approval flow" step 1, D99), as login opens
 // its popup:
 //
 // - prepare() runs synchronously at the start of every signing entry point, before any await. With transient user

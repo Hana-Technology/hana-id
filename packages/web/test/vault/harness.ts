@@ -539,7 +539,7 @@ export interface Tab {
   dispatch(e: Partial<WindowMessageEvent> & { data: unknown }): void;
   hello(opts?: { origin?: string; source?: unknown; ports?: MessagePort[] }): void;
   ready(): Promise<Record<string, unknown>>;
-  /** `extra`: envelope fields beside the params (`popupOpened: true`, D95). */
+  /** `extra`: envelope fields beside the params (`popupOpened: true`, D99). */
   request(method: string, params?: unknown, extra?: Record<string, unknown>): Promise<Reply>;
   waitEvent(event: PortEventName, n?: number): Promise<unknown>;
   /** Waits until `check` is true, re-checking on every port message (and every 20 ms), for up to 4 s of real time. */
@@ -737,7 +737,7 @@ export function openApproval(tab: Tab): FakeWindow {
 }
 
 /**
- * An approval popup the partner page opened in the user's click (D95): `/approve?from=partner&v=…`, its opener the
+ * An approval popup the partner page opened in the user's click (D99): `/approve?from=partner&v=…`, its opener the
  * partner window, saying hello to the vault.
  */
 export function partnerApproval(tab: Tab, opener: unknown = tab.parent): FakeWindow {

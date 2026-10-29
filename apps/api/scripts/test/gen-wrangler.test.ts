@@ -6,6 +6,7 @@ import { KeyPair } from '@near-js/crypto';
 import { loadEnv, manifestSchema, repoRoot } from '@hana-id/env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseRelayerKeys } from '../../src/relayer-config.ts';
+import { SHARE_PER_MINUTE, VAULT_PER_IP_MINUTE } from '../../src/vault/limits.ts';
 import { LOCAL_D1_ID, TEST_MANIFEST, devVarsContent, existingD1Id, main, testWranglerConfig, writeDevVars, writeWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
 
 /**
@@ -154,6 +155,24 @@ describe('wrangler.jsonc', () => {
       { tag: 'v1', new_sqlite_classes: ['RelayerKey', 'RateLimiter'] },
       { tag: 'v2', new_sqlite_classes: ['LoginRelay'] },
     ]);
+  });
+
+  it('binds the vault’s per-IP and per-share Rate Limiting bindings: 60 and 10 per 60 s, distinct namespaces (D95)', () => {
+    const config = wranglerConfig(manifest, LOCAL_D1_ID) as { ratelimits: { name: string; namespace_id: string; simple: { limit: number; period: number } }[] };
+    expect(config.ratelimits).toEqual([
+      { name: 'VAULT_IP_LIMIT', namespace_id: '95001', simple: { limit: 60, period: 60 } },
+      { name: 'VAULT_SHARE_LIMIT', namespace_id: '95002', simple: { limit: 10, period: 60 } },
+    ]);
+    expect(config.ratelimits.map((r) => r.simple.limit)).toEqual([VAULT_PER_IP_MINUTE, SHARE_PER_MINUTE]);
+    for (const r of config.ratelimits) {
+      // Cloudflare's rules: a positive integer namespace id (a string), a period of 10 or 60 s.
+      expect(r.namespace_id).toMatch(/^[1-9]\d*$/u);
+      expect([10, 60]).toContain(r.simple.period);
+    }
+    // Same bindings in every env and in the tests' config (a namespace is account-wide; keys carry the env name).
+    expect((testWranglerConfig() as { ratelimits: unknown }).ratelimits).toEqual(config.ratelimits);
+    const written = readFileSync(writeWranglerConfig(manifest, undefined, tmp()).path, 'utf8');
+    expect((JSON.parse(written.slice(written.indexOf('\n') + 1)) as { ratelimits: unknown }).ratelimits).toEqual(config.ratelimits);
   });
 
   it('has one quarter-hourly cron trigger (the hourly jobs run at :00, src/index.ts isHourlyRun)', () => {

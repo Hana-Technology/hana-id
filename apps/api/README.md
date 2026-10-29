@@ -49,6 +49,7 @@ keys, e.g. the content of `.secrets/<env>/relayer-keys.json`) → `wrangler secr
 | `VAULT_KEK_PREVIOUS` | secret, rotation only | The previous `VAULT_KEK`. Rotate with `vault-kek <env> rotate --yes`: the current key goes to `VAULT_KEK_PREVIOUS` (and `.secrets/<env>/vault-kek.previous`), a new key with the next id to `VAULT_KEK` (and `vault-kek`); a run that stops part way resumes when re-run. Unlocks and the cron re-wrap old rows; once `SELECT COUNT(*) FROM vault_shares WHERE kek_id = <old id>` is 0, delete the secret and the `.previous` file (`docs/operations.md`, "Key rotation") |
 | `DB` | D1 | `migrations/` |
 | `RELAYER_KEY`, `RATE_LIMITER`, `LOGIN_RELAY` | Durable Objects | SQLite-backed classes `RelayerKey`, `RateLimiter` (migration `v1`), `LoginRelay` (`v2`) |
+| `VAULT_IP_LIMIT`, `VAULT_SHARE_LIMIT` | Rate Limiting (`ratelimits`) | The vault's per-IP (60) and per-share (10) limits per 60 s, counted per Cloudflare location (`src/vault/limits.ts`, D95); namespaces `95001`, `95002` are account-wide |
 | cron `*/15 * * * *` | trigger | One trigger; the run at :00 (`isHourlyRun`) is the hourly one. Every run records Google's JWKS kids in D1 `issuer_key_observations` (D33 key lead time: `admin <env> issuer-keys:lead-times`, `docs/operations.md`) |
 | cron, hourly run | trigger | Google JWKS → `set_issuer_key` / `remove_issuer_key` (a kid is removed only after it has been missing from the JWKS for ≥ 55 min, i.e. two hourly runs in a row; tracked in D1 `issuer_key_missing`) |
 | cron, hourly run | trigger | Also vault maintenance (`src/vault/cron.ts`): deletes `vault_shares` rows past `abs_expires_at` or revoked, re-wraps up to 2000 rows per run from `VAULT_KEK_PREVIOUS` to `VAULT_KEK`, logs rows under an unknown KEK id |
@@ -252,7 +253,8 @@ u64le(counter) ‖ sha256(payload)` with the gate app's D1 id (`src/vault/messag
 Gate: key and app (`401 missing_key`/`unknown_app`, `403 app_suspended`), `Origin` is `VAULT_ORIGIN` and the parent is
 allowed for the app (`403 origin_not_allowed`; loopback only for `pk_test_` in `local*`/`sandbox*` envs), no live app on
 a test app's scope (`403 scope_conflict`), then the vault's own limits, never the relay counters: 60 per IP per app
-per minute, 10 × the plan's `per_minute` per app, and 10 per share per minute. Shares: `409 persistence_off`, `401
+per minute, 10 × the plan's `per_minute` per app, and 10 per share per minute (per IP and per share: Rate Limiting
+bindings, counted per location and approximate; per app: the exact `RateLimiter` object; D95). Shares: `409 persistence_off`, `401
 invalid_signature`, then `get_session` straight from the node (re-read every 300 ms for up to 2 s while missing or not
 used up): `404 unknown_session`, `403 scope_mismatch`, `409 session_not_spent`, `502 near_unavailable`; then
 `409 share_exists`. Share actions: `404 unknown_share` (missing, or another app's), `410 share_revoked` (also when the

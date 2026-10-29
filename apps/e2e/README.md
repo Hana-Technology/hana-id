@@ -33,8 +33,8 @@ vault through its `frame-ancestors`.
 The API is `apps/api/src/index.ts` itself, run in Node: routing, CORS, the app gate and origin rule, `GET /v1/app`,
 the vault endpoints (KEK wrapping, counters and the real SQL on `vault_shares`) and the login relay (the `LoginRelay`
 Durable Object class, on in-memory storage). Only `/v1/login` and `/v1/derive` are mocked (`src/server/api.ts`), after
-the Worker's own app gate, since they need the relayer and the MPC. The rate limiter always allows: every page in the
-suite is one client, and apps/api's tests cover the limits.
+the Worker's own app gate, since they need the relayer and the MPC. The rate limiter object and the vault's Rate
+Limiting bindings always allow: every page in the suite is one client, and apps/api's tests cover the limits.
 
 Every app the suite creates is a `pk_test_` app (loopback partner origins need one), and there is no live-app mode.
 So paths that only a `pk_live_` app reaches are not browser-tested: the raw-signing approval popup (test apps never

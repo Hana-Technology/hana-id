@@ -170,8 +170,8 @@ Unlock stages, in order:
 | `port` | partner page | hello → `ready` minus the vault's own time |
 
 A load with no record (logged out) ends at `record`. Unlock breakdown: `unlockRtt` / `unlockServer` with
-`unlockServerGate` (the app row, from D1 or the API isolate's 30 s cache, and the limiter objects: per IP and per
-share alongside each other, then per app; D78), `unlockServerShare` (the KEK, the share and settings rows; before
+`unlockServerGate` (the app row, from D1 or the API isolate's 30 s cache, and the limits: per IP and per share on
+local Rate Limiting bindings, per app on its limiter object, the one round trip left; D78, D95), `unlockServerShare` (the KEK, the share and settings rows; before
 D78 it also held the share limiter) and `unlockServerAdvance` (the counter update); `vault` (hello → `ready`).
 
 Results JSON version 3 adds `other` and these stages. Older runs keep what they had: login `app`, `popup`, `google`

@@ -46,4 +46,7 @@ export interface Env {
   RELAYER_KEY: DurableObjectNamespace<RelayerKey>;
   RATE_LIMITER: DurableObjectNamespace<RateLimiter>;
   LOGIN_RELAY: DurableObjectNamespace<LoginRelay>;
+  /** Rate Limiting bindings (vault/limits.ts, D95): the vault's per-IP and per-share flood limits, counted per location. */
+  VAULT_IP_LIMIT: RateLimit;
+  VAULT_SHARE_LIMIT: RateLimit;
 }

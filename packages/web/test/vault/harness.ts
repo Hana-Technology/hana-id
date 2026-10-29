@@ -198,7 +198,7 @@ export interface ApiCall {
   body: unknown;
 }
 
-type Handler = (call: ApiCall) => Response | Promise<Response> | undefined;
+type Handler = (call: ApiCall) => Response | Promise<Response | undefined> | undefined;
 
 const json = (status: number, body: unknown): Response => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 export const apiError = (status: number, code: string, extra: Record<string, unknown> = {}): Response => json(status, { error: code, code, requestId: 'rq', ...extra });
@@ -687,12 +687,23 @@ export async function deliverToken(tab: Tab, g: Google, run: LoginRun, over: Rec
   return token;
 }
 
-/** A whole partner-mode login: hana_login, the popup's hello, the token through the relay. */
+/**
+ * Waits until the tab's background persist (the share and record made after a login was reported, D79) has settled.
+ * Tests that look at the record, the share or the next reload right after a login wait for it.
+ */
+export async function persisted(tab: Tab): Promise<void> {
+  const session = (tab.vault as unknown as { session: { persist: { done: Promise<void> } | null } | null }).session;
+  await session?.persist?.done;
+}
+
+/** A whole partner-mode login: hana_login, the popup's hello, the token through the relay; then its persist settles. */
 export async function login(tab: Tab, g: Google, over: Record<string, unknown> = {}): Promise<{ reply: Reply; run: LoginRun; token: string }> {
   const pending = tab.request('hana_login');
   const run = await popupHello(tab);
   const token = await deliverToken(tab, g, run, over);
-  return { reply: await pending, run, token };
+  const reply = await pending;
+  await persisted(tab);
+  return { reply, run, token };
 }
 
 export async function readyTab(browser: Browser, o: TabOptions = {}): Promise<Tab> {

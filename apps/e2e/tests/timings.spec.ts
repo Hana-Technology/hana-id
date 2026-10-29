@@ -24,8 +24,10 @@ test('a login and a reload report their stages, measured in the browser and by t
     [...LOGIN_TIMING_STAGES, ...LOGIN_TIMING_DETAILS],
   );
   // The client's, the popup's (from the callback's navigation timing), the relay's and the API's parts are all there.
-  for (const k of ['open', 'port', 'app', 'keygen', 'popup', 'authCheck', 'google', 'callbackFetch', 'callbackBoot', 'callbackPrep', 'relayHeld', 'chain', 'persist', 'vault', 'loginRtt', 'loginServer', 'shareRtt', 'shareServer'])
+  for (const k of ['open', 'port', 'app', 'keygen', 'popup', 'authCheck', 'google', 'callbackFetch', 'callbackBoot', 'callbackPrep', 'relayHeld', 'chain', 'decrypt', 'finish', 'vault', 'loginRtt', 'loginServer'])
     expect(loginTimings, k).toHaveProperty(k);
+  // The share and record come after the reply (D79): nothing of theirs is in the login's timings.
+  for (const k of Object.keys(loginTimings)) expect(k).not.toMatch(/^(persist|share)/u);
   expect(loginTimings.loginServer!).toBeLessThanOrEqual(loginTimings.loginRtt!);
 
   await page.reload();

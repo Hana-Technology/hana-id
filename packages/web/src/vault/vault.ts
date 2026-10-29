@@ -73,16 +73,17 @@ import {
   sealConsent,
   sealPrk,
 } from './record.ts';
-import { type Channel, Clock, type Locks, type Timers, type WindowMessageEvent, type WindowRef, randomHex128, realTimers } from './runtime.ts';
+import { type Channel, Clock, type Locks, type Timers, type WindowMessageEvent, type WindowRef, randomHex128, realTimers, sleep } from './runtime.ts';
 import { type SignRequest, approvalSubject, signRequest } from './signing.ts';
 
 /** performance.now where there is one (browsers, workers), else Date.now. */
 const defaultPerfNow = (): number => (typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now());
 
-/** The /v1/vault/shares phases (apps/api vault/endpoints.ts `lap`) behind each shareServer* detail. */
-const SHARE_SERVER_GROUPS = { Gate: ['app', 'limits'], Session: ['session'] } as const;
-/** The /v1/vault/unlock phases behind each unlockServer* detail. */
-const UNLOCK_SERVER_GROUPS = { Gate: ['app', 'limits'], Share: ['shareLimit', 'share'], Advance: ['advance'] } as const;
+/**
+ * The /v1/vault/unlock phases (apps/api vault/endpoints.ts `lap`) behind each unlockServer* detail. The share's own
+ * rate limit is asked alongside the gate's, inside `limits` (D78).
+ */
+const UNLOCK_SERVER_GROUPS = { Gate: ['app', 'limits'], Share: ['share'], Advance: ['advance'] } as const;
 
 /** Consecutive stages from `start` (pk_test_ timings): `mark(name)` adds the time since the previous mark to `name`. */
 class Laps {
@@ -177,8 +178,14 @@ interface Session {
   path: string;
   sessionPk: Uint8Array;
   keyPair: CryptoKeyPair;
+  /** 'session' while the share and record are (being) made; 'none' in 'none' mode, or once making them failed. */
   persistence: Persistence;
   share: Share | null;
+  /**
+   * 'session' mode: the share and record being made in the background after the login was reported (D79), until they
+   * are written or the attempt gave up; null otherwise. Share- and record-bound steps wait for it (`persisted`).
+   */
+  persist: PersistJob | null;
   /**
    * 'none' mode: the consent lives here. 'session' mode: the record holds it (sealed under PRK); this is the last one
    * this tab read or wrote, kept so hana_autoApproveStatus can answer while the session is dormant.
@@ -190,6 +197,27 @@ interface Session {
   expiryTimer: unknown;
   idleTimer: unknown;
 }
+
+/** The background persist of one login (D79). */
+interface PersistJob {
+  /**
+   * Set when the session ends (logout, a newer login, expiry, idle, a revocation) before the job settled: it writes no
+   * record, takes back one it wrote, and revokes a share it made.
+   */
+  cancelled: boolean;
+  /** Settles (never rejects) once the share and record are written, or the job gave up or was cancelled. */
+  done: Promise<void>;
+}
+
+/** Why a background persist gave up (logged as a code only). */
+class PersistFailure extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+  }
+}
+
+/** A failed POST /v1/vault/shares is tried once more after this long (D79). */
+export const PERSIST_RETRY_MS = 1_000;
 
 /** A 'session'-mode session whose PRK was zeroed for idleness: the record can unlock it again (same share only). */
 interface Dormant {
@@ -712,52 +740,31 @@ export class Vault {
     this.continueIntent = intent;
   }
 
-  /** Waits for the pending login, then persists it and switches the vault to the new session. */
+  /**
+   * Waits for the pending login, switches the vault to the new session and reports it. In 'session' mode the share and
+   * record are made afterwards, in the background (D79): the partner gets its addresses one `POST /v1/vault/shares`
+   * sooner, and a failure there only means the next reload needs a full login.
+   */
   private async finishLogin(pending: PendingLogin): Promise<LoginResult> {
     const success = await pending.done;
     if (pending.aborted) {
       success.prk.fill(0);
       throw new VaultError('login_cancelled', 'A newer sign-in replaced this one');
     }
-    let persistence = this.persistence;
+    const persistence = this.persistence;
     // The app keeps the wallet across reloads but this browser's storage can't: say so with the result too.
-    let warning: 'storage_unavailable' | undefined = this.storageBroken ? 'storage_unavailable' : undefined;
-    let share: Share | null = null;
-    let replaced: RecordV1 | null = null;
+    const warning: 'storage_unavailable' | undefined = this.storageBroken ? 'storage_unavailable' : undefined;
     const timings = success.timings;
-    // From the end of `decrypt`, so the vault's stages add up to its `vault` total.
-    const persistStarted = success.markedAt;
-    if (persistence === 'session') {
-      try {
-        ({ share, replaced } = await this.persistLogin(success, timings));
-      } catch {
-        persistence = 'none';
-        warning = 'storage_unavailable';
-      }
-    }
-    const finishStarted = this.perfNow();
-    timings.persist = finishStarted - persistStarted;
-    if (pending.aborted) {
-      // Superseded while persisting: the share and record of this login must not outlive it.
-      if (share) void this.dropPersistedLogin(success, share, replaced);
-      success.prk.fill(0);
-      throw new VaultError('login_cancelled', 'A newer sign-in replaced this one');
-    }
     const previous = this.session;
-    // A new login replaces the app's session on this device: this tab's previous share and the share of the record it
-    // overwrote (another tab's login) are revoked, and the tabs still holding them are told to drop them.
+    // A new login replaces the app's session on this device: this tab's previous share is revoked now, and the share
+    // of the record the new one overwrites (another tab's login) once it is overwritten (persistLogin). The tabs still
+    // holding them are told to drop them.
     if (previous) this.endSession(false);
-    const old: { keyPair: CryptoKeyPair; share: Share }[] = [];
-    if (previous?.share) old.push({ keyPair: previous.keyPair, share: { ...previous.share } });
-    if (replaced) {
-      const same = old.find((o) => bytesEqual(o.share.shareId, replaced.shareId));
-      if (same) same.share.counter = Math.max(same.share.counter, replaced.counter);
-      else old.push({ keyPair: replaced.sessionKeyPair, share: { shareId: replaced.shareId, counter: replaced.counter, createdAt: null } });
-    }
-    for (const o of old) {
-      if (share && bytesEqual(o.share.shareId, share.shareId)) continue;
-      this.broadcastRevoked(o.share.shareId);
-      void this.revokeDetached(o).catch(() => undefined);
+    const revoked: Uint8Array[] = [];
+    if (previous?.share) {
+      revoked.push(Uint8Array.from(previous.share.shareId));
+      this.broadcastRevoked(previous.share.shareId);
+      void this.revokeDetached({ keyPair: previous.keyPair, share: { ...previous.share } }).catch(() => undefined);
     }
     const s: Session = {
       prk: success.prk,
@@ -767,7 +774,8 @@ export class Vault {
       sessionPk: success.sessionKey.publicKey,
       keyPair: success.sessionKey.keyPair,
       persistence,
-      share,
+      share: null,
+      persist: null,
       consent: null,
       lastTouchAt: this.clock.now(),
       lastActivityAt: this.clock.now(),
@@ -775,102 +783,167 @@ export class Vault {
       idleTimer: null,
     };
     this.adopt(s);
+    if (persistence === 'session') s.persist = this.startPersist(s, success, revoked);
     if (this.pending === pending) this.emit('loginProgress', { stage: 'done' });
     this.emit('accountsChanged', { addresses: { ...s.addresses } });
     const result: LoginResult = { addresses: { ...s.addresses }, expiresAtMs: s.expiresAtMs, persistence };
     if (warning) result.warning = warning;
     if (this.testApp) {
       const end = this.perfNow();
-      result.timings = { ...timings, finish: end - finishStarted, vault: end - pending.startedAt };
+      // From the end of `decrypt`, so the vault's stages add up to its `vault` total.
+      result.timings = { ...timings, finish: end - success.markedAt, vault: end - pending.startedAt };
     }
     return result;
   }
 
-  /**
-   * Share creation and the record (docs/batch-b-spec.md "Share creation"). Returns the share and the record it
-   * overwrote, if that was another session's. Throws on any failure.
-   */
-  private async persistLogin(success: LoginSuccess, timings: Record<string, number>): Promise<{ share: Share; replaced: RecordV1 | null }> {
-    const store = this.store;
-    if (!store) throw new Error('No storage');
-    const api = this.api!;
-    const parentOrigin = this.parentOrigin!;
-    const signature = await signVaultMessage(success.sessionKey.keyPair.privateKey, {
-      signer: this.env.signer,
-      appId: this.config.appId,
-      shareId: createShareId(),
-      counter: 0,
-      payload: vaultPayload.createShare(parentOrigin),
-    });
-    const sent = this.perfNow();
-    const created = await api.createShare(success.sessionKey.publicKey, signature);
-    timings.shareRtt = this.perfNow() - sent;
-    Object.assign(timings, serverDetail('share', created.timings, SHARE_SERVER_GROUPS));
-    const ks = Uint8Array.from(created.ks);
-    created.ks.fill(0);
-    const shareId = Uint8Array.from(created.shareId);
-    const binding = {
-      signer: this.env.signer,
-      appId: this.config.appId,
-      path: success.path,
-      sessionPk: success.sessionKey.publicKey,
-      derivationVersion: DERIVATION_VERSION,
-      ckdKeyHash: this.bundleCkdKeyHash,
-      parentOrigin,
-      expiresAtMs: success.expiresAtMs,
-    };
-    let sealed;
-    try {
-      sealed = await sealPrk(ks, success.prk, binding);
-    } finally {
-      ks.fill(0);
-    }
-    const record: RecordV1 = {
-      v: 1,
-      ...binding,
-      scopeId: this.config.scopeId,
-      keyIndex: 0,
-      sessionKeyPair: success.sessionKey.keyPair,
-      shareId,
-      counter: 0,
-      iv: sealed.iv,
-      ct: sealed.ct,
-      addresses: { stellar: success.addresses.stellar, evm: success.addresses.evm },
-    };
-    let replaced: RecordV1 | null = null;
-    try {
-      await this.o.locks.request(this.lockName, async () => {
-        const read = await this.readRecord().catch(() => null);
-        replaced = read && read !== 'invalid' ? read : null;
-        await store.put(this.recordId, record);
+  /** Waits until `s`'s background persist, if any, has settled (written, given up or cancelled). */
+  private async persisted(s: Session): Promise<void> {
+    const job = s.persist;
+    if (job) await job.done;
+  }
+
+  private startPersist(s: Session, success: LoginSuccess, revoked: readonly Uint8Array[]): PersistJob {
+    const job: PersistJob = { cancelled: false, done: Promise.resolve() };
+    job.done = this.persistLogin(s, success, job, revoked)
+      .catch(() => undefined)
+      .finally(() => {
+        if (s.persist === job) s.persist = null;
       });
-    } catch (e) {
-      // The share is useless without the record: revoke it (best effort) before falling back to 'none'.
-      void this.callShare(success.sessionKey.keyPair, shareId, 1, 'revoke').catch(() => undefined);
-      throw e;
-    }
-    return { share: { shareId, counter: 0, createdAt: this.clock.now() }, replaced };
+    return job;
   }
 
   /**
-   * A login superseded after it persisted: if its record is still the one stored, the record it overwrote is put back
-   * (or the record deleted when there was none), and its share is revoked. Best effort.
+   * Share creation and the record (docs/batch-b-spec.md "Share creation"), in the background after the login was
+   * reported (D79). `POST /v1/vault/shares` is tried once more after PERSIST_RETRY_MS if it fails. On success the
+   * session gets its share, and the record it overwrote (if another session's, not already revoked) has its share
+   * revoked. If the session ended meanwhile (`job.cancelled`), no record is left for it and a share made for it is
+   * revoked. If it gives up, the session keeps working in memory with persistence 'none' (`persistenceChanged`, hana_status), the
+   * share (if made) is revoked, and the record of an older session is cleared too: the next reload is a full login.
+   * Logs a reason code only.
    */
-  private async dropPersistedLogin(success: LoginSuccess, share: Share, replaced: RecordV1 | null): Promise<void> {
-    const store = this.store;
-    if (store) {
-      await this.o.locks
-        .request(this.lockName, async () => {
-          const r = await this.readRecord();
-          if (r === 'invalid') await store.delete(this.recordId);
-          else if (r && sameSession(r, { sessionPk: success.sessionKey.publicKey, shareId: share.shareId })) {
-            if (replaced) await store.put(this.recordId, replaced);
-            else await store.delete(this.recordId);
+  private async persistLogin(s: Session, success: LoginSuccess, job: PersistJob, revoked: readonly Uint8Array[]): Promise<void> {
+    const keyPair = success.sessionKey.keyPair;
+    const parentOrigin = this.parentOrigin!;
+    let share: Share | null = null;
+    /** The share of the record stored when this login was reported: the session it replaces on this device. */
+    let older: Uint8Array | null = null;
+    try {
+      const store = this.store;
+      if (!store) throw new PersistFailure('storage');
+      const before = await this.readRecord().catch(() => null);
+      older = before && before !== 'invalid' ? before.shareId : null;
+      const signature = await signVaultMessage(keyPair.privateKey, {
+        signer: this.env.signer,
+        appId: this.config.appId,
+        shareId: createShareId(),
+        counter: 0,
+        payload: vaultPayload.createShare(parentOrigin),
+      });
+      let created: Awaited<ReturnType<VaultApi['createShare']>> | null = null;
+      for (let attempt = 0; created === null; attempt++) {
+        if (job.cancelled) return;
+        try {
+          created = await this.api!.createShare(success.sessionKey.publicKey, signature);
+        } catch (e) {
+          if (attempt >= 1 || job.cancelled) throw new PersistFailure(`share:${e instanceof ApiError ? e.code.slice(0, 64) : 'network'}`);
+          await sleep(this.timers, PERSIST_RETRY_MS);
+        }
+      }
+      const ks = Uint8Array.from(created.ks);
+      created.ks.fill(0);
+      share = { shareId: Uint8Array.from(created.shareId), counter: 0, createdAt: this.clock.now() };
+      const made = share;
+      const binding = {
+        signer: this.env.signer,
+        appId: this.config.appId,
+        path: success.path,
+        sessionPk: success.sessionKey.publicKey,
+        derivationVersion: DERIVATION_VERSION,
+        ckdKeyHash: this.bundleCkdKeyHash,
+        parentOrigin,
+        expiresAtMs: success.expiresAtMs,
+      };
+      let sealed: { iv: Uint8Array; ct: Uint8Array };
+      try {
+        // Checked right before sealing: endSession zeroes PRK and sets `cancelled` in the same turn, and sealPrk copies
+        // PRK before its first await, so a zeroed PRK is never sealed.
+        if (job.cancelled) throw new PersistFailure('cancelled');
+        sealed = await sealPrk(ks, s.prk, binding);
+      } finally {
+        ks.fill(0);
+      }
+      const record: RecordV1 = {
+        v: 1,
+        ...binding,
+        scopeId: this.config.scopeId,
+        keyIndex: 0,
+        sessionKeyPair: keyPair,
+        shareId: made.shareId,
+        counter: 0,
+        iv: sealed.iv,
+        ct: sealed.ct,
+        addresses: { stellar: success.addresses.stellar, evm: success.addresses.evm },
+      };
+      let replaced: RecordV1 | null = null;
+      let outcome: 'written' | 'cancelled';
+      try {
+        outcome = await this.o.locks.request(this.lockName, async () => {
+          if (job.cancelled) return 'cancelled';
+          const read = await this.readRecord().catch(() => null);
+          replaced = read && read !== 'invalid' && !sameSession(read, { sessionPk: success.sessionKey.publicKey, shareId: made.shareId }) ? read : null;
+          await store.put(this.recordId, record);
+          if (job.cancelled) {
+            // The session ended while the record was written: take it back (still under the lock, so it is ours).
+            await store.delete(this.recordId).catch(() => undefined);
+            return 'cancelled';
           }
-        })
-        .catch(() => undefined);
+          s.share = made;
+          return 'written';
+        });
+      } catch {
+        throw new PersistFailure('storage');
+      }
+      // The record it overwrote is this device's older session (another tab's login): one session per app per device.
+      const old = replaced as RecordV1 | null;
+      if (old && !revoked.some((id) => bytesEqual(id, old.shareId))) {
+        this.broadcastRevoked(old.shareId);
+        void this.revokeDetached({ keyPair: old.sessionKeyPair, share: { shareId: old.shareId, counter: old.counter, createdAt: null } }).catch(() => undefined);
+      }
+      if (outcome === 'cancelled') await this.revokeDetached({ keyPair, share: made }).catch(() => undefined);
+    } catch (e) {
+      // A share this login can't keep is useless without its record: revoke it (best effort).
+      if (share) await this.revokeDetached({ keyPair, share }).catch(() => undefined);
+      if (job.cancelled) return;
+      const reason = e instanceof PersistFailure ? e.reason : 'internal';
+      // A reason code only: never a key, a share id, a body or a token.
+      console.warn(`[Hana ID vault] This sign-in will not survive a reload (${reason}); the next page load needs a full sign-in.`);
+      if (this.session === s) {
+        s.persistence = 'none';
+        this.emit('persistenceChanged', { persistence: 'none' });
+      }
+      if (older) await this.clearOlderRecord(older, revoked);
     }
-    await this.revokeDetached({ keyPair: success.sessionKey.keyPair, share }).catch(() => undefined);
+  }
+
+  /**
+   * A background persist gave up: if the record stored is still the one this login replaced (share `older`, not a
+   * newer login's from another tab), it is deleted and its share revoked, so the next reload is a full login rather
+   * than an unlock of that older session. Best effort.
+   */
+  private async clearOlderRecord(older: Uint8Array, revoked: readonly Uint8Array[]): Promise<void> {
+    const store = this.store;
+    if (!store) return;
+    await this.o.locks
+      .request(this.lockName, async () => {
+        const r = await this.readRecord();
+        if (r === null || r === 'invalid' || !bytesEqual(r.shareId, older)) return;
+        if (!revoked.some((id) => bytesEqual(id, r.shareId))) {
+          this.broadcastRevoked(r.shareId);
+          void this.revokeDetached({ keyPair: r.sessionKeyPair, share: { shareId: r.shareId, counter: r.counter, createdAt: null } }).catch(() => undefined);
+        }
+        await store.delete(this.recordId);
+      })
+      .catch(() => undefined);
   }
 
   /** Revokes a share this tab no longer uses (best effort; one retry on 409 bad_counter). No record change. */
@@ -1023,6 +1096,8 @@ export class Vault {
     const s = this.session;
     if (!s) return;
     this.session = null;
+    // A share or record still being made for this session must not outlive it (persistLogin checks this).
+    if (s.persist) s.persist.cancelled = true;
     this.timers.clearTimeout(s.expiryTimer);
     this.timers.clearTimeout(s.idleTimer);
     s.prk.fill(0);
@@ -1174,6 +1249,7 @@ export class Vault {
       keyPair: record.sessionKeyPair,
       persistence: 'session',
       share: { shareId: record.shareId, counter: record.counter, createdAt: null },
+      persist: null,
       consent: null,
       lastTouchAt: this.clock.now(),
       lastActivityAt: this.clock.now(),
@@ -1208,8 +1284,10 @@ export class Vault {
    * (`n + 1`; one retry with the API's `expected` on 409 bad_counter). The new counter is written and broadcast.
    */
   private async shareAction<T>(action: 'touch' | 'revoke' | 'revoke-all', after?: (r: RecordV1 | null) => Promise<void>): Promise<T> {
+    const first = this.live();
+    if (first) await this.persisted(first);
     const s = this.live();
-    if (!s?.share) throw notLoggedIn();
+    if (!s?.share || s !== first) throw notLoggedIn();
     const share = s.share;
     return this.o.locks.request(this.lockName, async () => {
       const read = this.store ? await this.readRecord().catch(() => null) : null;
@@ -1268,6 +1346,9 @@ export class Vault {
    */
   private async logout(): Promise<void> {
     const s = this.live();
+    // A share still being made for this login is revoked by its own job once it exists, and no record is written for
+    // it (D79): logout doesn't wait for it.
+    if (s?.persist) s.persist.cancelled = true;
     this.pending?.abort(new VaultError('login_cancelled', 'Logged out'));
     const store = this.store;
     const own = s?.share ? { keyPair: s.keyPair, sessionPk: s.sessionPk, share: s.share } : null;
@@ -1293,8 +1374,12 @@ export class Vault {
   }
 
   private async revokeOtherDevices(): Promise<PortResultMap['hana_revokeOtherDevices']> {
+    const first = this.live();
+    if (!first) throw notLoggedIn();
+    // Right after a login its share may still be in the making: wait for it rather than refuse.
+    await this.persisted(first);
     const s = this.live();
-    if (!s) throw notLoggedIn();
+    if (s !== first) throw disconnected();
     const share = s.share;
     if (!share) throw new VaultError(ErrorCode.unauthorized, 'This app does not keep the wallet across reloads', { reason: 'persistence_off' });
     if (share.createdAt === null || this.clock.now() - share.createdAt >= FRESH_LOGIN_MS) {
@@ -1407,6 +1492,12 @@ export class Vault {
    * the record and ends the session.
    */
   private async withConsent<T>(s: Session, fn: (consent: ConsentV1 | null) => Promise<{ value: T; write?: ConsentV1 | null }>): Promise<T> {
+    // Right after a login the record may still be in the making: the consent goes to the record once it exists (or to
+    // memory if it never will), never to a memory copy that the new record then silently drops.
+    if (s.persist) {
+      await this.persisted(s);
+      if (this.session !== s) throw disconnected();
+    }
     if (!s.share || !this.store) {
       const out = await fn(s.consent);
       if (out.write !== undefined) s.consent = out.write;

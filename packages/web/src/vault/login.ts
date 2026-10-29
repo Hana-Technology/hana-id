@@ -100,9 +100,9 @@ export interface LoginSuccess {
   expiresAtMs: number;
   maxUses: number;
   sessionKey: SessionKey;
-  /** Stage and detail ms (timings.ts LOGIN_TIMING_*), up to `decrypt`; the vault adds `persist`, `finish`, `vault`. */
+  /** Stage and detail ms (timings.ts LOGIN_TIMING_*), up to `decrypt`; the vault adds `finish` and `vault`. */
   timings: Record<string, number>;
-  /** perfNow at the end of `decrypt`, where `persist` starts. */
+  /** perfNow at the end of `decrypt`, where `finish` starts. */
   markedAt: number;
 }
 

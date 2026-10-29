@@ -98,6 +98,15 @@ describe('useHana', () => {
     expect(m.renders.last.hana).toMatchObject({ status: 'logged_out', persistence: 'none' });
   });
 
+  it("re-renders with persistence 'none' when the vault could not save the session after a login (D79)", async () => {
+    const m = mount();
+    await act(() => m.vault.connect(LOGGED_IN));
+    expect(m.renders.last.hana.persistence).toBe('session');
+    await act(async () => m.vault.emit('persistenceChanged', { persistence: 'none' }));
+    await settle();
+    expect(m.renders.last.hana).toMatchObject({ status: 'logged_in', persistence: 'none' });
+  });
+
   it('follows a login: logging_in, then logged_in with the addresses and no error', async () => {
     const m = mount();
     await act(() => m.vault.connect(LOGGED_OUT));

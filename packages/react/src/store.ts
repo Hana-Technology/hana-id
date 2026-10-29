@@ -33,7 +33,7 @@ export const EMPTY_STORE: HanaStore = Object.freeze({
 });
 
 /** The client events after which a getter may read differently. */
-const EVENTS = ['statusChanged', 'accountsChanged', 'sessionExpired', 'disconnect'] as const;
+const EVENTS = ['statusChanged', 'accountsChanged', 'sessionExpired', 'disconnect', 'persistenceChanged'] as const;
 
 export function createStore(client: HanaClient): HanaStore {
   const subscribers = new Set<() => void>();

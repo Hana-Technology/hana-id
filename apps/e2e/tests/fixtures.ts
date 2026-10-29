@@ -249,13 +249,51 @@ export async function chooseAccount(popup: Page, account = 0): Promise<void> {
   await popup.waitForEvent('close', { timeout: 20_000 });
 }
 
-/** One click on the partner's login button, the stub's chooser, and the result. */
+/**
+ * One click on the partner's login button, the stub's chooser, and the result. In 'session' mode the vault replies
+ * before it makes the share and record (D79): this then waits for the record too, so a reload right after unlocks.
+ */
 export async function login(page: Page, opts: { account?: number; name?: string } = {}): Promise<{ stellar: string; evm: string }> {
   const name = opts.name ?? 'login';
   const popup = page.waitForEvent('popup');
   await clickAction(page, name, 'login');
   await chooseAccount(await popup, opts.account);
-  return okValue(page, name);
+  const result = await okValue<{ stellar: string; evm: string }>(page, name);
+  if ((await page.evaluate(() => (window as any).e2e.hana.lastLogin?.persistence)) === 'session') await waitPersisted(page, result.evm);
+  return result;
+}
+
+/** Waits until the vault's IndexedDB holds a record for the wallet `evm` (the background persist after a login). */
+export async function waitPersisted(page: Page, evm: string): Promise<void> {
+  const vault = vaultFrame(page);
+  await expect
+    .poll(
+      () =>
+        vault.evaluate(
+          (want) =>
+            new Promise<boolean>((resolve) => {
+              const open = indexedDB.open('hana-vault');
+              open.onerror = () => resolve(false);
+              open.onsuccess = () => {
+                const db = open.result;
+                if (!db.objectStoreNames.contains('records')) {
+                  db.close();
+                  resolve(false);
+                  return;
+                }
+                const req = db.transaction('records', 'readonly').objectStore('records').getAll();
+                req.onsuccess = () => {
+                  db.close();
+                  resolve(req.result.some((r: { addresses?: { evm?: string } }) => r?.addresses?.evm === want));
+                };
+                req.onerror = () => resolve(false);
+              };
+            }),
+          evm,
+        ),
+      { timeout: 10_000, message: 'the vault record after login' },
+    )
+    .toBe(true);
 }
 
 // ---- approval ----

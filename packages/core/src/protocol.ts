@@ -452,6 +452,11 @@ export interface PortEventMap {
   loginProgress: { stage: (typeof LOGIN_STAGES)[number] };
   ui: { launcher: 'show' | 'hide'; label: string };
   autoApproved: { kind: SignMethod; chain: 'stellar' | 'evm'; contract: string; function: string };
+  /**
+   * The session's persistence changed after it was reported: today only to 'none', when the share and record made
+   * after a login (D79) could not be made, so the next page load needs a full login.
+   */
+  persistenceChanged: { persistence: Persistence };
 }
 
 export type PortEventName = keyof PortEventMap;
@@ -467,6 +472,7 @@ const EVENTS: { [E in PortEventName]: (d: unknown) => boolean } = {
   ui: (d) => isPlainObject(d) && exactKeys(d, ['launcher', 'label']) && (d.launcher === 'show' || d.launcher === 'hide') && isStr(d.label, 0, 80),
   autoApproved: (d) =>
     isPlainObject(d) && exactKeys(d, ['kind', 'chain', 'contract', 'function']) && isSignMethod(d.kind) && isChain(d.chain) && isStr(d.contract, 1, 128) && isStr(d.function, 1, 128),
+  persistenceChanged: (d) => isPlainObject(d) && exactKeys(d, ['persistence']) && isPersistence(d.persistence),
 };
 
 /** Validates a vault → SDK event, or null. */

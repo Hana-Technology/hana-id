@@ -9,6 +9,7 @@
   "scripts": {
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
+    "pack:check": "pnpm --filter @hana-id/scripts run pack:check",
     "prepare": "git config core.hooksPath .githooks",
     "secrets:scan": "gitleaks git --no-banner --redact --config .gitleaks.toml"
   }

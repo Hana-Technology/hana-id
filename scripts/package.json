@@ -9,6 +9,8 @@
     "fetch-ckd-key": "tsx fetch-ckd-key.ts",
     "admin": "tsx admin.ts",
     "vault-kek": "tsx vault-kek.ts",
+    "pack:check": "tsx pack-check.ts",
+    "sdk-version": "tsx sdk-version.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

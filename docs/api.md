@@ -694,7 +694,9 @@ Worker) and `wrangler.auth.jsonc` (vars `AUTH_ORIGIN`, `API_URL`, `NEAR_RPC`, `N
 both gitignored (`apps/api/scripts/pages-wrangler.ts`).
 
 Also generated: `name` = `cloudflare.workerName`, `compatibility_date` 2026-10-01, `nodejs_compat`, alias
-`secp256k1` → `src/shims/secp256k1.ts`, `observability.enabled`, the cron.
+`secp256k1` → `src/shims/secp256k1.ts`, `observability.enabled` with `logs.invocation_logs: false` (Workers Logs
+keeps the Worker's own log lines, not the platform's per-request records, which carry the URL and so the login
+relay's `relayId`; security sweep APIV-3, D100), the cron.
 
 ## Timings
 

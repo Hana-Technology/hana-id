@@ -924,7 +924,10 @@ corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --format
 corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --status error
 ```
 
-`observability` is on, so the same lines are in the Cloudflare dashboard. Each request logs one
+`observability` is on, so the same lines are in the Cloudflare dashboard. Invocation logs are off on the API Worker
+(`observability.logs.invocation_logs: false`, D100): the platform's per-request records carry the URL, and the login
+relay's path holds a live `relayId`. The `request` lines below replace them; for status and CPU per request use the
+Worker's metrics. Check once after a deploy that no relay URL appears in the Workers Logs view. Each request logs one
 `{"event":"request", …}` line with `status`, `code`, `latencyMs`, `colo`, `phases` and, for relays, `relayInstance`
 (fields and phases: `docs/api.md`, "Logs"). Reading a slow request:
 

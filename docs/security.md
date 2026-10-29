@@ -208,7 +208,11 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   once (tests: `apps/api/test/app-cache.test.ts`).
 - **Bodies and logs**: body caps (`readJson` streams and stops at the cap; vault 4 KiB, relay 8 KiB). Logs never carry
   tokens, `K_s`, `share_enc`, ciphertexts, signatures, relay bodies, keys, CKD responses or relay ids (the OAuth
-  `state`: a relay path is logged as `/v1/login-relay`, the top-level error line included).
+  `state`: a relay path is logged as `/v1/login-relay`, the top-level error line included). The platform's invocation
+  records, which carry the request URL, are off on the API Worker (`observability.logs.invocation_logs: false`, D100,
+  security sweep APIV-3). Relay errors never return the RPC's or the runtime's error text (it can name the RPC URL,
+  which can carry an API key): `near_unavailable`, `near_rejected` and `relayer_unavailable` answer a fixed message
+  and log a code.
 - **Admin settings writes** (`scripts/lib/admin-settings.ts`): the UPDATE is guarded by every settings column as the
   command read it, so a change made in between (another operator's `--auto-approve off`) can't be overwritten with
   values planned from the old row; a delayed setting is never put in force by the CLI.

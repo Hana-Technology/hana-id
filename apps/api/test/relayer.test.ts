@@ -322,7 +322,21 @@ describe('RelayerKey Durable Object', () => {
     near.install();
     near.onSendTx = () => ({ error: { name: 'HANDLER_ERROR', cause: { name: 'INVALID_TRANSACTION' }, data: { TxExecutionError: { InvalidTxError: { NotEnoughBalance: {} } } } } });
     const res = (await freshKeyStub().relay('session', 0, revokeCall(1))) as RelayResult;
-    expect(res).toMatchObject({ ok: false, status: 502, code: 'near_rejected' });
+    expect(res).toMatchObject({ ok: false, status: 502, code: 'near_rejected', error: 'NEAR rejected the transaction' });
+  });
+
+  it('never returns the RPC’s or the runtime’s error text: it can name the provider URL and its API key', async () => {
+    const near = new NearMock();
+    near.install();
+    const mocked = globalThis.fetch;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = (JSON.parse(String(init?.body ?? '{}')) as { method?: string }).method;
+      if (method === 'query') throw new TypeError('fetch failed: connect ECONNREFUSED https://rpc.provider.example/v1?apikey=SECRET-KEY');
+      return mocked(input, init);
+    });
+    const res = (await freshKeyStub().relay('session', 0, revokeCall(1))) as RelayResult;
+    expect(res).toMatchObject({ ok: false, status: 502, code: 'near_unavailable', error: 'Could not reach NEAR, try again' });
+    expect(JSON.stringify(res)).not.toMatch(/SECRET-KEY|rpc\.provider\.example|ECONNREFUSED/u);
   });
 
   it('a send_tx that fails without a definite rejection is polled, not reported as rejected', async () => {

@@ -941,6 +941,15 @@ answered question there points here.
   open question 17).
 - Rejected: the alternatives each question listed.
 
+### D94. Smart Placement for the API Worker
+- Date 2026-10-29 · Status: confirmed by the user, deployed to sandbox-dev · Source: `docs/operations.md` "Logs and
+  latency"
+- Decision: the API Worker's generated config sets `placement: { mode: "smart" }`, so Cloudflare runs it near D1
+  and the Durable Objects (APAC) rather than at the request's location.
+- Why: from Malaysia, about 60% of workers.dev requests were served from Marseille; with D1 in APAC every serial
+  query crossed continents, taking reload unlock from about 0.9 s to 2–3 s.
+- Next if not enough: D1 read replicas (Sessions API); a custom domain once the Hana domain exists.
+
 ## Superseded or amended
 
 | Was | Now | Source |

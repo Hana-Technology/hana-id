@@ -493,6 +493,12 @@ corepack pnpm --filter @hana-id/demo run build && corepack pnpm --filter @hana-i
 
 ## Logs and latency
 
+**Routing from Malaysia (2026-10-29).** `curl <apiUrl>/cdn-cgi/trace` shows which Cloudflare location served a
+request: from Malaysia, workers.dev requests land in Marseille (MRS) about 60% of the time, otherwise HKG or SIN,
+while D1 (`running_in_region: APAC`) and the Durable Objects are in APAC. The API Worker therefore uses Smart
+Placement (`placement: { mode: "smart" }`, written by `gen`, D94) so it runs next to D1 instead of where the request
+lands. Placement is decided from traffic, so it can take time to apply on a quiet env.
+
 ```sh
 corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --format pretty
 corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --format json --search '"endpoint":"/v1/login"'

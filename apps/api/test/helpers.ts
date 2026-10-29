@@ -1,4 +1,6 @@
 import { KeyPair } from '@near-js/crypto';
+import { baseEncode } from '@near-js/utils';
+import { bls12_381 } from '@noble/curves/bls12-381';
 import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import worker from '../src/index.ts';
@@ -140,9 +142,15 @@ export async function sessionBody(
   return body;
 }
 
+/** A well-formed BLS app key (3·G1, 3·G2): /v1/derive refuses undecodable points and the identity (APIW-4). */
+export const DERIVE_KEY = {
+  pk1: `bls12381g1:${baseEncode(bls12_381.G1.ProjectivePoint.BASE.multiply(3n).toRawBytes(true))}`,
+  pk2: `bls12381g2:${baseEncode(bls12_381.G2.ProjectivePoint.BASE.multiply(3n).toRawBytes(true))}`,
+};
+
 /** A /v1/derive body signed by the session key (unless `signature` is overridden). */
 export async function deriveBody(spk: number[], overrides: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
-  const b: Record<string, unknown> = { sessionPublicKey: spk, counter: 1, pk1: 'bls12381g1:abc', pk2: 'bls12381g2:def', ...overrides };
+  const b: Record<string, unknown> = { sessionPublicKey: spk, counter: 1, pk1: DERIVE_KEY.pk1, pk2: DERIVE_KEY.pk2, ...overrides };
   if (!('signature' in overrides)) b.signature = await signSession(spk, b.counter as number, ckdPayload(b.pk1 as string, b.pk2 as string));
   return b;
 }

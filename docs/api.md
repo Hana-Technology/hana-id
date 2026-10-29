@@ -91,7 +91,13 @@ Every app endpoint (`/v1/app`, `/v1/sessions`, `/v1/derive`, `/v1/sessions/revok
 2. App `active` (`403 app_suspended`); not a `pk_test_` app on a scope a `pk_live_` app also uses
    (`403 scope_conflict`).
 3. Caller rule above (`403 origin_not_allowed`).
-4. Rate limits (`429 rate_limited` + `retry-after` seconds; limiter failure `503 rate_limiter_unavailable`).
+4. The per-IP limit (`429 rate_limited` + `retry-after` seconds; limiter failure `503 rate_limiter_unavailable`).
+
+The app's relay quota (plan `per_minute` / `per_day`) is not part of the gate: each relay endpoint asks it last, after
+the body, token, nonce, session-signature, scope and session checks and right before the relay (`appQuota`, D100). The
+publishable key and the `Origin` / `x-hana-parent-origin` headers are public, so a request that fails a check never
+spends the quota every user of the app shares (security sweep APIW-1); the per-IP window, asked first, bounds what a
+flood can make the checks cost.
 
 A test app's other limits are the vault's, never the API's: no raw signing and no mainnet chains for `pk_test_` (D39).
 
@@ -111,12 +117,12 @@ The per-IP subject is the IPv4 address or the IPv6 /64 (`src/ip.ts`).
 
 | Endpoint | Per IP | Per app | Other |
 |---|---|---|---|
-| relay kind: `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke`, `/v1/login` (one shared window) | plan `per_ip_minute` (window `<appId>:minute`) | plan `per_minute` and `per_day` | IP checked first, so its rejects don't spend the app's quota |
+| relay kind: `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke`, `/v1/login` (one shared window) | plan `per_ip_minute` (window `<appId>:minute`), before any check | plan `per_minute` and `per_day`, counted only for a request that passed every off-chain check, right before the relay (D100) | a refused or failed request never spends the app's quota |
 | key exports: `/v1/login` from `AUTH_ORIGIN` | — | — | 3 per hour per user path per app (subject `export:<appId>:<hex sha256(path)>`, window `export:hour`), counted once the token and nonce are verified, before anything is relayed (D59) |
 | `GET /v1/app` | plan `per_ip_minute` (own window `<appId>:config:minute`) | — | never touches the relay quota |
 | vault endpoints | 60/min, *per location* (binding `VAULT_IP_LIMIT`, key `<env>:vault-ip:<appId>:<ipSubject>`) | 10 × plan `per_minute` (`vault:minute`), global | share actions: 10/min per share, *per location* (binding `VAULT_SHARE_LIMIT`, key `<env>:vault-share:<appId>:<hex>`); asked in turn: IP, then app only once the IP accepted, then (after the body check) the share (D95) |
 | login relay | writes 10/min, reads 120/min | — | not per app |
-| `/v1/owner-actions` | 10/min | — | global 20/min and 200/day, counted only after every off-chain check passes |
+| `/v1/owner-actions` | 10/min | per scope 10/min, 50/day (`owner-actions:scope:<scopeId>`), authenticated actions only | authenticated actions (`propose_change`, `remove_client`, `disable_shared_login`): per owner identity 5/min, 30/day (`owner-actions:owner:<hex sha256(provider#sub)>`), then per scope, then global 20/min, 200/day (`owner-actions:global`). `execute_change` (no auth): its own 10/min, 50/day per scope (`owner-actions:execute:<scopeId>`), then global. `cancel_change`: none of those; 5/min, 20/day per owner identity (windows `cancel:minute`, `cancel:day`), then 25/min, 100/day per target scope (`owner-actions:cancel:<scopeId>`: the contract's `MAX_OWNERS` = 5 owners at their own cap), then a spend-bound ceiling of 100/min, 1000/day (`owner-actions:cancel-global`). Counted only after every off-chain check passes, the owner proof against the target scope's on-chain owners included; a request a later window refuses is taken back from the earlier ones (D100) |
 | `/v1/health`, `GET /vault` | — | — | — |
 
 Seeded plan `free`: `per_minute` 60, `per_day` 5000, `per_ip_minute` 20.
@@ -251,6 +257,7 @@ The scope is always the app's (D1). Checks after the gate and shape (`400 bad_re
 4. Side by side: client → scope (`403 scope_mismatch` / `unregistered_client` / `unknown_scope` /
    `shared_login_disabled`), `session_key_in_use` (`409 session_exists`), and the governance gate (G, below); read
    failure `502 near_unavailable`. Reported in that order.
+5. The app's relay quota (`429 rate_limited` + `retry-after`), counted only here.
 
 → `200 {"result": {"path", "scope_id", "expires_at_ms", "max_uses", "used"}, "nearTx", "requestId"}`. Usage:
 `sessions`.
@@ -276,7 +283,8 @@ Body `{sessionPublicKey: number[32], counter: integer ≥ 1, signature: number[6
 "bls12381g2:…"}` (each point < 300 chars), else `400 bad_request`.
 
 1. Ed25519 by `sessionPublicKey` over `"hana-id-session-v1:" ‖ u64le(counter) ‖ sha256("hana-id-ckd-v1:{pk1}:{pk2}")`
-   (`401 invalid_signature`).
+   (`401 invalid_signature`). Then pk1/pk2 each one compressed, non-identity point of 48 / 96 bytes, always, as on
+   `/v1/login` (`400 invalid_app_key`; D100, security sweep APIW-4).
 2. A second request for the same session counter in the same isolate waits for the first.
 3. Session pre-check (`src/session-use.ts`, mirrors the contract), on `get_session` (cached 10 s; a cached refusal is
    re-judged on a fresh read):
@@ -293,6 +301,7 @@ Body `{sessionPublicKey: number[32], counter: integer ≥ 1, signature: number[6
    A counter ahead of `used + 1` is relayed (earlier ones may be in flight).
 4. `503 paused` (G) while the contract is paused (`derive_key` panics `Paused`); see the governance gate above.
 5. Only with `BLS_PRECHECK = "1"`: pairing check `e(pk1, −g2) · e(g1, pk2) = 1` (`400 invalid_app_key`).
+6. The app's relay quota (`429 rate_limited` + `retry-after`), counted only here.
 
 → `200 {"result": {"big_y": "string", "big_c": "string"}, "nearTx", "requestId"}`. Usage: `derives`.
 
@@ -312,7 +321,8 @@ payload), `pk1`, `pk2`. Any other field: `400 bad_request`.
 Checks, in order: gate (relay kind) → shape → token (as `/v1/sessions`) → claim allow-list, **always on**
 (`400 token_has_pii` + `data: {claim}`) → nonce → in-isolate hold on (key, counter 1) → scope and
 `session_key_in_use` side by side → signature over counter 1 (`401 invalid_signature`) → pk1/pk2 each one compressed,
-non-identity point of 48 / 96 bytes (`400 invalid_app_key`) → pairing only with `BLS_PRECHECK = "1"`. The governance
+non-identity point of 48 / 96 bytes (`400 invalid_app_key`) → pairing only with `BLS_PRECHECK = "1"` → the app's relay
+quota (`429 rate_limited`, counted only for a request that got this far). The governance
 gate (G: `503 paused`, `503 issuer_key_pending`, with `retry-after`; see `/v1/sessions`) runs beside the scope and
 `session_key_in_use` reads and answers after them. From
 `AUTH_ORIGIN` (a key export) the export limit comes right after the nonce check: `429 rate_limited` with
@@ -480,7 +490,24 @@ No app key. `{"method", "args"}` only, `args` exactly as the contract takes them
 | 503 / 502 | `issuer_keys_unavailable` / `near_unavailable` | JWKS / chain read failed |
 
 The token's sha256 is reserved atomically (`RateLimiter` object `owner-actions:tokens`, until the token's `exp`)
-before relaying; it is released only if the global cap refuses the request or the relay certainly never executed
+before relaying. Then the caps (table above) are asked from the most specific in, at one instant; when one refuses,
+the hits the earlier ones accepted are taken back (`RateLimiter.unhit`), so a refused request uses up no window.
+`execute_change`, which anyone may send, never counts against the window the scope's owners use, and
+`cancel_change` counts only against cancel windows: the owner's, the target scope's and a high cancel-only ceiling.
+Only a verified owner of the target scope on chain (`get_scope().owners`, checked before any window) reaches the
+scope's cancel window, and it is sized for all of them at their own cap at once.
+
+Remaining starvation limits for `cancel_change` (APIW-3): within a scope, only all 5 of its owners together (the
+contract's `MAX_OWNERS`), each at its own cap, can fill the scope's cancel window; any 4 leave the fifth room. The
+global cancel ceiling needs 20 owner identities at their cap per minute (≥ 4 scopes an attacker fully owns) or 50 per
+day (≥ 10 such scopes) plus 1000 cancellable changes (`MAX_PENDING` = 10 per scope, so ≥ 100 scopes' worth at once,
+or more proposals than the shared 200/day ceiling allows in five days). Registration is invite-only, and an owner can
+always cancel directly on chain (`docs/operations.md` "Cancelling a change when the API refuses"). The owner pool's
+allowance is the hard spend bound for all of these. A `cancel_change` (or any authenticated action) without an
+owner identity is refused, `403 not_owner` (fail closed; the shape check already requires `auth`). `429
+rate_limited` names the window in `error`: `owner actions per owner per minute`, `… per scope …`, `executes per scope
+…`, `owner actions per day`, `cancels per owner per minute`, `cancels per minute`. The token is released only if a
+cap refuses the request or the relay certainly never executed
 (`method_not_allowed`, `relayer_unconfigured`, `near_unavailable`, `near_rejected`, `relayer_busy`). Without
 `OWNER_RELAYER_KEYS`: `503 relayer_unconfigured`. → `200 {"result": <contract return or null>, "nearTx", "requestId"}`.
 
@@ -552,7 +579,8 @@ All SQLite-backed (wrangler migrations `v1`: `RelayerKey`, `RateLimiter`; `v2`: 
 **Names and placement (`src/placement.ts`).** With manifest `cloudflare.durableObjectLocation` set (var
 `DO_LOCATION_HINT`, one of `wnam enam sam weur eeur apac oc afr me`), shared objects get the suffix `@<hint>` and are
 created there: `relayer-key-0@apac`, `owner-relayer-key-0@apac`, `app:<appId>@apac`, `owner-actions:global@apac`,
-`owner-actions:tokens@apac`. Unset or unknown hint: no suffix, Cloudflare places them. Changing
+`owner-actions:scope:<scopeId>@apac`, `owner-actions:execute:<scopeId>@apac`, `owner-actions:owner:<hash>@apac`,
+`owner-actions:cancel:<scopeId>@apac`, `owner-actions:cancel-global@apac`, `owner-actions:tokens@apac`. Unset or unknown hint: no suffix, Cloudflare places them. Changing
 the hint creates new objects (fresh limiter counters; new relayer objects read their nonce from chain once). Never
 suffixed: per-IP limiters `ip:v4:<addr>` / `ip:v6:<prefix>::/64` (created near the client) and `LoginRelay` objects
 (named by `relayId`).
@@ -667,7 +695,9 @@ Worker) and `wrangler.auth.jsonc` (vars `AUTH_ORIGIN`, `API_URL`, `NEAR_RPC`, `N
 both gitignored (`apps/api/scripts/pages-wrangler.ts`).
 
 Also generated: `name` = `cloudflare.workerName`, `compatibility_date` 2026-10-01, `nodejs_compat`, alias
-`secp256k1` → `src/shims/secp256k1.ts`, `observability.enabled`, the cron.
+`secp256k1` → `src/shims/secp256k1.ts`, `observability.enabled` with `logs.invocation_logs: false` (Workers Logs
+keeps the Worker's own log lines, not the platform's per-request records, which carry the URL and so the login
+relay's `relayId`; security sweep APIV-3, D100), the cron.
 
 ## Timings
 

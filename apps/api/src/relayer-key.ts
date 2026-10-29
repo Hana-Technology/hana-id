@@ -9,7 +9,7 @@ import type { Env } from './env.ts';
 import { gasFor } from './gas.ts';
 import { log } from './log.ts';
 import { POOL_SECRET, type Pool, isPool, parseRelayerKeys, poolAllows } from './relayer-config.ts';
-import { RELAY_WAIT_UNTIL, Rpc, invalidNonce, isDefiniteRejection, isExpired, type SendTxResult } from './near/rpc.ts';
+import { RELAY_WAIT_UNTIL, Rpc, type RpcError, invalidNonce, isDefiniteRejection, isExpired, type SendTxResult } from './near/rpc.ts';
 import { type ContractCall, parseKeyPair, signFunctionCall, waitForOutcome } from './near/tx.ts';
 
 export { parseRelayerKeys };
@@ -152,10 +152,12 @@ export class RelayerKey extends DurableObject<Env> {
         let sent: Dispatched;
         try {
           sent = await this.exclusive(() => this.dispatch(rpc, call, parts, instance), parts);
-        } catch (err) {
+        } catch {
           // An RPC read failed (or, rarely, the reservation write did): either way nothing was sent.
           log({ event: 'relay_dispatch_failed', requestId, pool, keyIndex, method: call.method, code: 'near_unavailable' }, 'error');
-          return { ok: false, status: 502, code: 'near_unavailable', error: `NEAR RPC failed: ${errorMessage(err)}` };
+          // The RPC's or the runtime's error text stays out of the answer: a fetch error can name the provider's URL,
+          // and an RPC URL can carry an API key.
+          return { ok: false, status: 502, code: 'near_unavailable', error: 'Could not reach NEAR, try again' };
         }
         mark.dispatched = Date.now();
         log({ event: 'relay_dispatched', requestId, pool, keyIndex, method: call.method, nearTx: sent.hash, nonce: sent.nonce.toString(), attempt });
@@ -174,7 +176,10 @@ export class RelayerKey extends DurableObject<Env> {
           if (bad) return { ok: false, status: 503, code: 'relayer_busy', error: 'The relayer could not get a valid nonce, try again', nearTx: sent.hash };
           // Only a validation error is a definite "not accepted". Anything else (timeout, dropped connection, a
           // non-JSON 5xx from a proxy) may have been forwarded and may still execute: poll its hash.
-          if (isDefiniteRejection(err)) return { ok: false, status: 502, code: 'near_rejected', error: `NEAR rejected the transaction: ${errorMessage(err)}`, nearTx: sent.hash };
+          if (isDefiniteRejection(err)) {
+            log({ event: 'relay_rejected', requestId, pool, keyIndex, method: call.method, code: rejectionName(err), nearTx: sent.hash }, 'error');
+            return { ok: false, status: 502, code: 'near_rejected', error: 'NEAR rejected the transaction', nearTx: sent.hash };
+          }
         }
 
         const nonce = sent.nonce;
@@ -196,8 +201,10 @@ export class RelayerKey extends DurableObject<Env> {
         if (outcome.kind === 'timeout') return { ok: false, status: 504, code: 'timeout', error: outcome.error, nearTx: sent.hash };
         return { ok: false, status: 502, code: 'near_error', error: outcome.error, nearTx: sent.hash };
       }
-    } catch (err) {
-      return { ok: false, status: 503, code: 'relayer_unavailable', error: errorMessage(err) };
+    } catch {
+      // Key loading or an RPC read failed: the text could name a secret's binding or the RPC URL, so it isn't returned.
+      log({ event: 'relay_failed', requestId, pool, keyIndex, method: call.method, code: 'relayer_unavailable' }, 'error');
+      return { ok: false, status: 503, code: 'relayer_unavailable', error: 'The relayer is unavailable, try again' };
     } finally {
       this.inflight--;
     }
@@ -349,4 +356,9 @@ function addLap(parts: DispatchTiming, name: keyof DispatchTiming, since: number
 }
 
 const maxBig = (...xs: bigint[]): bigint => xs.reduce((a, b) => (b > a ? b : a));
-const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+/** The NEAR error class of a definite rejection (`InvalidTxError`, `INVALID_TRANSACTION`, …), for the log only. */
+function rejectionName(err: unknown): string {
+  const rpc = (err as RpcError).rpc;
+  const name = rpc?.cause?.name ?? rpc?.name ?? 'rejected';
+  return /^[A-Za-z_]{1,64}$/u.test(name) ? name : 'rejected';
+}

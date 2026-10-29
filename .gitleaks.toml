@@ -1,8 +1,50 @@
-# gitleaks config: default rules + narrow allowlists. Used by the pre-commit hook and CI.
+# gitleaks config: default rules, this repo's own secret shapes, narrow allowlists. Used by the pre-commit hook and CI
+# (full history). The default rules miss every Hana secret format (security sweep OPER-2): scripts/gitleaks-selftest.mjs
+# generates a fake of each at test time and checks these rules catch it (scripts/test/gitleaks.test.ts, the CI
+# `secrets` job). Never commit a real or fake key literally to test this file.
 title = "hana-id"
 
 [extend]
 useDefault = true
+
+# NEAR ed25519 secret keys: `ed25519:` + base58 of the 64-byte seed ‖ public key (87-88 characters), as
+# @near-js KeyPair.toString(), ~/.near-credentials, .secrets/<env>/*.json and the RELAYER_KEYS / OWNER_RELAYER_KEYS /
+# KEYS_UPDATER_KEY / WATCHDOG_KEY values hold them. Public keys (`ed25519:` + 32 bytes, ~44 characters) are too short
+# to match, so docs and manifests may name them.
+[[rules]]
+id = "near-ed25519-secret-key"
+description = "NEAR ed25519 secret key"
+regex = '''\bed25519:([1-9A-HJ-NP-Za-km-z]{80,90})\b'''
+secretGroup = 1
+entropy = 3.5
+keywords = ["ed25519:"]
+
+# VAULT_KEK / VAULT_KEK_PREVIOUS values: `<key id>:<base64 of 32 bytes>`, as scripts/lib/vault-kek.ts writes them to
+# .secrets/<env>/vault-kek and apps/api/src/vault/kek.ts parses them. Placeholders (`1:<base64>`) don't match.
+[[rules]]
+id = "hana-vault-kek"
+description = "Hana VAULT_KEK value"
+regex = '''(?:^|[^0-9A-Za-z+/])([1-9][0-9]{0,8}:[A-Za-z0-9+/]{43}=)(?:[^0-9A-Za-z+/=]|$)'''
+secretGroup = 1
+entropy = 4.0
+
+# A Worker secret assigned a value, as in apps/api/.dev.vars (gen-wrangler --dev-vars), apps/watchdog's .dev.vars or a
+# pasted `wrangler secret` line. A value with `<`, `>` or `…` in it (a doc placeholder) doesn't match.
+[[rules]]
+id = "hana-worker-secret-assignment"
+description = "Hana Worker secret assigned a value (.dev.vars line)"
+regex = '''(?m)^[ \t]*(?:export[ \t]+)?(?:RELAYER_KEYS|OWNER_RELAYER_KEYS|KEYS_UPDATER_KEY|VAULT_KEK|VAULT_KEK_PREVIOUS|WATCHDOG_KEY|WATCHDOG_STATUS_TOKEN|RESEND_API_KEY|SLACK_WEBHOOK_URL|HEARTBEAT_URL|PAGER_TOKEN)[ \t]*=[ \t]*([^\s<>…]{16,})'''
+secretGroup = 1
+entropy = 3.5
+keywords = ["relayer_keys", "keys_updater_key", "vault_kek", "watchdog_key", "watchdog_status_token", "resend_api_key", "slack_webhook_url", "heartbeat_url", "pager_token"]
+
+# Hana's secret files, whatever they contain: anything under a .secrets/ directory (the council key files
+# .secrets/<env>/council/<account>.json included), .dev.vars, the relayer and keys-updater key files, the watchdog's
+# secrets file and the vault KEK files, wherever they are. All gitignored; this catches `git add -f` and copies.
+[[rules]]
+id = "hana-secret-file"
+description = "Hana secret file (.secrets/, .dev.vars, key files, vault KEK)"
+path = '''(^|/)(\.secrets/|\.dev\.vars$|(owner-)?relayer-keys\.json$|keys-updater\.json$|watchdog-secrets\.json$|vault-kek(\.previous|\.next)?$)'''
 
 # Contract test fixtures: Google-style ID tokens signed by a throwaway RSA key whose private half is discarded
 # (contracts/hana-signer/scripts/gen-fixtures.mjs). Only the `jwt` rule is waived here; any other secret in the
@@ -20,6 +62,14 @@ description = "Hana ID publishable test keys (public)"
 targetRules = ["generic-api-key"]
 regexTarget = "secret"
 regexes = ['''^pk_test_[1-9A-HJ-NP-Za-km-z]{16,64}$''']
+
+# The self-test's source names secret files and key helpers (`'keys-updater.json': keyFile(…)`), which the generic rule
+# reads as assignments; it holds no secret (every fake is generated at run time). Only the generic rule is waived, so a
+# real key pasted into it still fails the custom rules.
+[[allowlists]]
+description = "Secret-scan self-test source (generic rule only)"
+targetRules = ["generic-api-key"]
+paths = ['''^scripts/secret-scan-selftest\.mjs$''']
 
 # Build output and dependencies (only seen by directory scans; both are gitignored).
 [[allowlists]]

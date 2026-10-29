@@ -6,7 +6,7 @@ import { base64UrlDecode, base64UrlEncode, hex } from '../src/bytes.ts';
 import { clearViewCaches } from '../src/views.ts';
 import { ckdPayload, revokePayload, sessionMessage, sessionNonce } from '../src/session-crypto.ts';
 import { makeJwt, rsaSigner } from './near-mock.ts';
-import { ORIGIN, appHeaders, bytes, call, chain, deriveBody, google, newSessionKey, revokeBody, seedApp, seedPlan, sessionBody, sessionKeyPair, uid } from './helpers.ts';
+import { DERIVE_KEY, ORIGIN, appHeaders, bytes, call, chain, deriveBody, google, newSessionKey, revokeBody, seedApp, seedPlan, sessionBody, sessionKeyPair, uid } from './helpers.ts';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -349,7 +349,7 @@ describe('POST /v1/derive and /v1/sessions/revoke: Ed25519 session signature pre
       { ...(await deriveBody(spk)), counter: 2 }, // signed for counter 1
       { ...(await deriveBody(spk)), pk1: 'bls12381g1:other' }, // signed for other BLS keys
       await deriveBody(spk, { signature: bytes(64, 9) }),
-      await deriveBody(spk, { signature: await legacy(1, ckdPayload('bls12381g1:abc', 'bls12381g2:def')) }),
+      await deriveBody(spk, { signature: await legacy(1, ckdPayload(DERIVE_KEY.pk1, DERIVE_KEY.pk2)) }),
     ];
     for (const b of derives) {
       const res = await call('/v1/derive', { headers: appHeaders(app), body: b });

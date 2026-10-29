@@ -2,6 +2,7 @@
 //   apps(id, name, scope_id, publishable_key UNIQUE, status 'active'|'suspended', plan, created_at)
 //   app_origins(app_id, origin) · plans(id, per_minute, per_day) · usage(app_id, day, sessions, derives)
 // Every value goes through the escaping `sql` tag.
+import { type Manifest, partnerOriginProblem } from '@hana-id/env';
 import { sql } from './sql.ts';
 
 export type AppStatus = 'active' | 'suspended';
@@ -44,10 +45,36 @@ export function assertScopeId(s: string): string {
   return s;
 }
 
+/**
+ * What can't be in an app name (OPER-11, AUTH-2): controls, format characters (bidi overrides and isolates, zero-width
+ * characters), line and paragraph separators, private-use and unassigned code points. The name is shown beside the
+ * verified origin in the consent and approval popups, and printed to the operator's terminal.
+ */
+const UNSAFE_NAME_RE = /[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Zl}\p{Zp}]/u;
+
+/** A trimmed, NFC-normalised app name of 1..100 characters with nothing UNSAFE_NAME_RE refuses. */
 export function assertAppName(s: string): string {
-  const name = s.trim();
+  const name = s.normalize('NFC').trim();
   if (name.length < 1 || name.length > 100) throw new Error('App name must be 1..100 characters');
+  if (UNSAFE_NAME_RE.test(name)) throw new Error('App name must not contain control, format (bidi, zero-width), separator or unassigned characters');
   return name;
+}
+
+/** A D1 value as the CLI prints it: anything UNSAFE_NAME_RE matches (ANSI escapes, bidi overrides) shown as \u{…}. */
+export function printable(s: string): string {
+  return s.replace(new RegExp(UNSAFE_NAME_RE.source, 'gu'), (c) => `\\u{${c.codePointAt(0)!.toString(16)}}`);
+}
+
+/**
+ * Refuses origins the API would drop or misuse for this app (OPER-6): see `partnerOriginProblem` in @hana-id/env.
+ * Checked on create and add, never on remove (removing a bad entry must always work).
+ */
+export function assertAppOrigins(m: Pick<Manifest, 'name' | 'apiUrl' | 'vaultOrigin' | 'authOrigin'>, publishableKey: string, origins: readonly string[]): void {
+  const hanaOrigins = [m.vaultOrigin, m.authOrigin, new URL(m.apiUrl).origin].filter((o): o is string => !!o);
+  for (const origin of origins) {
+    const problem = partnerOriginProblem(origin, { envName: m.name, testKey: publishableKey.startsWith('pk_test_'), hanaOrigins });
+    if (problem) throw new Error(`Origin ${origin} ${problem}`);
+  }
 }
 
 export function assertPlanId(s: string): string {

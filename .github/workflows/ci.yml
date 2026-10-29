@@ -33,6 +33,13 @@ jobs:
           tar -xzf gitleaks.tar.gz gitleaks
       - name: Scan full history
         run: ./gitleaks git --no-banner --redact --config .gitleaks.toml --exit-code 1 .
+      # The config must catch this repo's own secret shapes (security sweep OPER-2): fakes generated at run time,
+      # scanned with the same binary and config; no dependencies, so no install step.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Self-test the rules on generated fakes
+        run: node scripts/secret-scan-selftest.mjs ./gitleaks
 
   contract:
     name: Contract (cargo test + wasm)

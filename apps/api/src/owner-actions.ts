@@ -10,7 +10,13 @@ import type { ContractCall } from './near/tx.ts';
 import { getConfig, getScope, isSharedOrPending } from './views.ts';
 
 export type OwnerPrecheck =
-  | { ok: true; scopeId: string; authToken: { hash: string; expMs: number } | null }
+  | {
+      ok: true;
+      scopeId: string;
+      authToken: { hash: string; expMs: number } | null;
+      /** The OIDC owner the token proves (null for execute_change, which takes no auth): the per-owner caps' subject. */
+      owner: { provider: string; sub: string } | null;
+    }
   | { ok: false; status: number; code: string; error: string };
 
 const no = (status: number, code: string, error: string): OwnerPrecheck => ({ ok: false, status, code, error });
@@ -20,7 +26,7 @@ const isOidcOwner = (owner: unknown, provider: string, sub: string): boolean => 
   return !!o && o.provider === provider && o.sub === sub;
 };
 
-async function sha256Hex(s: string): Promise<string> {
+export async function sha256Hex(s: string): Promise<string> {
   return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))));
 }
 
@@ -84,5 +90,5 @@ export async function precheckOwnerAction(env: Env, call: ContractCall, now: num
     default:
       return no(400, 'bad_request', 'Unsupported owner action');
   }
-  return { ok: true, scopeId, authToken };
+  return { ok: true, scopeId, authToken, owner };
 }

@@ -435,6 +435,37 @@ describe('POST /v1/login', () => {
     expect([res.status, (await body(res)).code]).toEqual([429, 'rate_limited']);
   });
 
+  it('junk with the public key and forged Hana headers never uses up the quota: it is counted after every check (APIW-1)', async () => {
+    const { seedPlan } = await import('./helpers.ts');
+    const { rsaSigner } = await import('./near-mock.ts');
+    const plan = `p${uid()}`;
+    await seedPlan(plan, 1000, 1, 1000);
+    const app = await seedApp({ plan });
+    const aud = newAud();
+    const near = withCombinedCall(chain({ [aud]: app.scope }));
+    const evil = await rsaSigner('evil-login-kid');
+    const { google } = await import('./helpers.ts');
+    near.jwks = { keys: [google.jwk, evil.jwk] };
+    const junk = [
+      {},
+      await loginBody(app.scope, aud, { signature: bytes(64, 1) }),
+      await loginBody(app.scope, aud, {}, { nonce: 'other' }),
+      await loginBody(app.scope, aud, {}, {}, appKey(), evil),
+      await loginBody(app.scope, aud, { pk1: 'bls12381g1:1111', pk2: 'bls12381g2:1111' }),
+    ];
+    for (let round = 0; round < 4; round++) {
+      for (const req of junk) {
+        const res = await login(app, req);
+        expect(res.status).toBeGreaterThanOrEqual(400);
+        expect(res.status).not.toBe(429);
+      }
+    }
+    expect(near.sent).toHaveLength(0);
+    expect((await login(app, await loginBody(app.scope, aud))).status).toBe(200);
+    // The day quota of 1 is now used, by the one login that passed.
+    expect((await login(app, await loginBody(app.scope, aud))).status).toBe(429);
+  });
+
   it('never logs the token, signature, keys or the CKD result', async () => {
     const lines: string[] = [];
     for (const level of ['log', 'warn', 'error', 'info', 'debug'] as const) vi.spyOn(console, level).mockImplementation((...args: unknown[]) => void lines.push(args.map(String).join(' ')));

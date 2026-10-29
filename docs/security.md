@@ -3,7 +3,8 @@
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
 known open issues. Last verified against code: 2026-10-29 (branch `perf/login-latency-impl`; the login popup, the
 background persist and the vault gate were re-checked, the rest as of 2026-10-28, commit 58edee9; the approval popup
-opened by the partner page, branch `feat/approve-in-click`, D99).
+opened by the partner page, branch `feat/approve-in-click`, D99; the API rate limits, owner-action caps, CKD key pin,
+secret scan and admin CLI after the 2026-10-29 security sweep, branch `fix/sweep-api`, D100).
 
 Component map and flows: `docs/architecture.md`. On-chain layouts and the contract's own security notes:
 `docs/contract-interface.md` ("Security notes (for reviewers)"). Browser parts (vault, auth pages, partner client)
@@ -30,7 +31,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Partner (app owner) | Its own app config and, in own-client mode, its Google client | Own-client mode: obtain tokens with any nonce for its client and derive its own users' keys in its scope (inherent: Hana can't see Google client settings). Set an auto-approve policy (delayed; users must accept it) | Anything in another scope. In shared mode: derive keys (no token with a nonce of its choosing) |
 | Partner page (incl. XSS, malicious dependency) | Nothing | Start a login (visible popup), read addresses, queue signature requests, drive an unlocked vault within its idle/absolute limits, get requests signed that match an accepted auto-approve policy; navigate, close or focus the approval popup it opened (D99, "Approval popup opened by the partner page") | Read keys, tokens, nonces; get any other signature without a guarded Approve in a Hana popup |
 | User's browser and device | Running Hana's pages; keeping the profile private | Malware or an extension in all frames: everything the user can do, including reading an exported key. A disk dump with a live share: unlock and get PRK | After logout, idle or absolute expiry or revoke: nothing. A derive (the persisted session is used up) |
-| NEAR RPC (manifest `rpc`, and `rpcFallback` when set) | Liveness, honest views | Fail derives, report wrong counters or a wrong registry answer (a refused login), delay. The fallback is asked only when the primary fails, so a lying primary is not outvoted | Forge a CKD result (pairing check against the pinned key) |
+| NEAR RPC (manifest `rpc`, and `rpcFallback` when set) | Liveness, honest views | Fail derives, report wrong counters or a wrong registry answer (a refused login), delay. The fallback is asked only when the primary fails, so a lying primary is not outvoted | Forge a CKD result (pairing check against the pinned key, which was read from ≥ 3 independent providers that all agreed at one final block, D100) |
 | Anyone watching the chain or mempool | Nothing | Read used tokens (openid-only claims via the API), replay `create_session` with them (the vault derives with the next counter), replay a whole combined call (burns a `max_uses = 1` login: `session_consumed`; attacker pays gas) | Derive for themselves (needs the session key; the answer is encrypted to `a`) |
 | Another website | Nothing | Embed a vault with its own `pk` and log users into its own scope (legitimate) | Frame the vault for app X (`frame-ancestors`), receive `auth-params` (the popup checks `event.origin` and `event.source`), inject a token (the relay slot is written only from `authOrigin`, read only with `relayReadKey`) |
 
@@ -58,7 +59,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Key / secret | Type | Lives in | Held by | Lifetime and rotation |
 |---|---|---|---|---|
 | CKD master secret | BLS12-381, threshold-shared | MPC nodes (TEEs) | NEAR MPC network | Not Hana's. A new network changes every address |
-| CKD network public key | BLS12-381 G2, public | manifest `ckdNetworkKey`; build constant of vault/login/export bundles | public | Pinned with `scripts/fetch-ckd-key.ts`; never read at runtime by the pages |
+| CKD network public key | BLS12-381 G2, public | manifest `ckdNetworkKey`; build constant of vault/login/export bundles | public | Pinned with `scripts/fetch-ckd-key.ts` from ≥ 3 independent RPC providers that must agree, with the block recorded (`ckdNetworkKeySource`, D100); never read at runtime by the pages |
 | S (CKD secret) | 48-byte G1 point | Browser memory only | vault / export window | Zeroed by `extractPrk` (`packages/core/src/derivation.ts:46`) |
 | PRK | 32 bytes | Vault memory; IndexedDB record as AES-GCM under `K_s` | vault | Zeroed at `expiresAtMs` and after the app's `idle_ttl_ms` with no request that uses the key (each by a timer, and on the first use past it if the timer is late; after the idle limit a `'session'` record can be unlocked again while its share is alive), logout (any tab of the app), a `revoked` broadcast for its share, a newer login. Rotation: new `key_index` |
 | Chain keys (Stellar seed, EVM `d`) | ed25519 seed, secp256k1 scalar | Derived per signature, zeroed in `finally` (`withChainKey`, `derivation.ts:98`) | vault; export window shows one on request | Same as PRK |
@@ -82,7 +83,9 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Cloudflare account / `wrangler login` | account credentials | operator's machine | the user | Deploys the Worker: a trust root |
 
 Rule (CLAUDE.md): derived keys, CKD secrets, relayer keys, owner keys and Google tokens are never logged, printed,
-written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-commit hook blocks secrets.
+written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-commit hook blocks secrets. Its config
+has rules for every secret shape above (NEAR secret keys, `VAULT_KEK`, `.dev.vars` lines, the secret files by name),
+proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and in CI (security sweep OPER-2).
 
 ## Invariants and where they are enforced
 
@@ -119,7 +122,17 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   `SIGNER_ACCOUNT`.
 - **Owner actions**: OIDC auth only, console audience, a current owner of the scope, change exists / unlocked, client
   proof matches; the token is reserved single-use before relaying and released only if the tx certainly didn't
-  execute; global caps 20/min, 200/day (`handlers.ts:30`, `handleOwnerAction` `:396`, `owner-actions.ts:31`).
+  execute; caps per owner identity (5/min, 30/day), per scope (10/min, 50/day) and global (20/min, 200/day), asked in
+  that order and taken back from the earlier windows when a later one refuses (`hitAll`, `RateLimiter.unhit`);
+  unauthenticated `execute_change` has its own per-scope window, never the owners'; `cancel_change` is outside all of
+  these: 5/min, 20/day per owner identity, then 25/min, 100/day per target scope (only that scope's on-chain owners,
+  verified before counting, reach it; sized for the contract's `MAX_OWNERS` = 5 at their cap), then a spend-bound
+  ceiling of 100/min, 1000/day for all cancels; refused without an owner identity (D100; `handlers.ts`
+  `ownerActionWindows`, `handleOwnerAction`, `owner-actions.ts`). Remaining starvation limits: in a scope, only all 5
+  owners together can fill its cancel window; the global one needs ≥ 20 identities at their cap per minute (≥ 4
+  attacker-owned scopes) or ≥ 50 per day plus 1000 cancellable changes (≥ 100 scopes' `MAX_PENDING`); an owner can
+  always cancel on chain directly (`docs/operations.md`). The owner pool's allowance is the hard spend bound. The off-chain check doesn't recompute `owner_action_nonce`: a token with a wrong nonce is
+  relayed and fails on chain, at the cost of its owner's own windows only.
 - **Origin rules** (`apps/api/src/origins.ts:81`): a Hana page (`Origin` = `VAULT_ORIGIN`/`AUTH_ORIGIN`) may call only
   its endpoints, and only for an `x-hana-parent-origin` the app allows. Partner origins: `GET /v1/app` always; the
   session endpoints only for `pk_test_` in dev envs. Loopback origins and `http://localhost:*` only for `pk_test_` in
@@ -161,14 +174,18 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   |---|---|
   | Relay endpoints per IP per app | plan `per_ip_minute` (free: 20/min) |
   | Key exports per user path per app | 3/hour |
-  | Relay endpoints per app | plan `per_minute` / `per_day` (free: 60 / 5000) |
+  | Relay endpoints per app | plan `per_minute` / `per_day` (free: 60 / 5000), counted only after every off-chain check (D100) |
   | `GET /v1/app` per IP per app | plan `per_ip_minute`, its own window |
   | Vault endpoints | 60/min per IP per app (*per location*); 10 × `per_minute` per app; 10/min per share (share actions, *per location*) |
   | Login relay per IP | writes 10/min, reads 120/min |
-  | Owner actions | 10/min per IP; 20/min and 200/day globally |
+  | Owner actions | 10/min per IP; per owner 5/min, 30/day; per scope 10/min, 50/day; global 20/min, 200/day; `execute_change` its own 10/min, 50/day per scope; `cancel_change` only 5/min, 20/day per owner, 25/min, 100/day per scope and 100/min, 1000/day for all cancels (D100) |
 
   Each request's windows are asked in turn: per IP first, and the per-app window only once the IP window accepted,
-  so a request the IP window refuses never uses (or holds) any of the app's shared quota. On the vault endpoints the
+  so a request the IP window refuses never uses (or holds) any of the app's shared quota. On the relay endpoints the
+  app's quota is asked last, after the token, nonce, session-signature, scope and session checks and right before
+  the relay (`appQuota`, D100): the key and the `Origin` headers are public, so junk that fails a check never spends
+  the quota every user of the app shares (security sweep APIW-1); the per-IP window bounds what junk can make the
+  checks cost. On the vault endpoints the
   per-share limit comes last, after the body check, so it counts only requests both others accepted. A limiter that
   fails refuses the request (`503 rate_limiter_unavailable`); none fails open.
 
@@ -192,7 +209,11 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   once (tests: `apps/api/test/app-cache.test.ts`).
 - **Bodies and logs**: body caps (`readJson` streams and stops at the cap; vault 4 KiB, relay 8 KiB). Logs never carry
   tokens, `K_s`, `share_enc`, ciphertexts, signatures, relay bodies, keys, CKD responses or relay ids (the OAuth
-  `state`: a relay path is logged as `/v1/login-relay`, the top-level error line included).
+  `state`: a relay path is logged as `/v1/login-relay`, the top-level error line included). The platform's invocation
+  records, which carry the request URL, are off on the API Worker (`observability.logs.invocation_logs: false`, D100,
+  security sweep APIV-3). Relay errors never return the RPC's or the runtime's error text (it can name the RPC URL,
+  which can carry an API key): `near_unavailable`, `near_rejected` and `relayer_unavailable` answer a fixed message
+  and log a code.
 - **Admin settings writes** (`scripts/lib/admin-settings.ts`): the UPDATE is guarded by every settings column as the
   command read it, so a change made in between (another operator's `--auto-approve off`) can't be overwritten with
   values planned from the old row; a delayed setting is never put in force by the CLI.
@@ -424,7 +445,8 @@ Code: `packages/core/src/policy/` (validator, matcher, `policyId`, usage); the v
 
 Status: **fixed** (a), (b), (c), (d), (f); **accepted** (k), and the residual risks named under (b)–(d) and
 "Auto-approve policies"; **open** (e) (pre-mainnet, D33), (g), (h), (i), (j) (sandbox-dev only; production envs
-need D38's two domains).
+need D38's two domains). The 2026-10-29 security sweep's items in the API, tooling and CI: "Security sweep
+2026-10-29" below.
 
 **(a) Unlock and touch don't re-check the app's current settings. Fixed.** Unlock and touch now read the app's
 settings: `persistence = 'none'` revokes the share (`410 share_revoked`), and the share ends at `min(abs_expires_at,
@@ -549,6 +571,51 @@ with the partner page; there, short unlock windows and zeroing PRK are the mitig
 (2026-10-28, `docs/decisions.md` D35): `contextString` is `''` for those kinds (`approval.ts` header,
 `approvalContextString`). Typed data carries its chain in its domain; messages and raw requests name no network, and
 the approve popup now says "This signature isn't tied to one network." on them.
+
+### Security sweep 2026-10-29: API, operator tooling and CI
+
+The sweep of develop @ 91609c4 (report kept outside the repo) found 63 issues; those in `apps/api`, `scripts/`,
+`packages/env`, `envs/`, the secret scan and CI were re-checked against `feat/governance` and handled on branch
+`fix/sweep-api` (D100). The other areas (contract, vault, auth popups, core, SDK) are tracked separately.
+
+Fixed:
+- **OPER-1 (High)**: the pinned CKD network key came from the one RPC it is meant to protect against. Now read from ≥ 3
+  independent providers at one final block, all agreeing, with the block recorded (`ckdNetworkKeySource`); https RPC
+  and API URLs outside `local*` envs; `/envs/` under CODEOWNERS. sandbox-dev's key was re-read this way: unchanged.
+- **APIW-1 (Medium)**: the per-app relay quota was spent before any check. Counted only before the relay now.
+- **APIW-3 (Medium)**: one global owner-action cap let any invited owner starve `cancel_change`. Caps per owner,
+  scope and global, `cancel_change` on windows of its own (see "Owner actions" above for the remaining limit).
+- **OPER-2 (Medium)**: gitleaks caught none of this repo's secret shapes. Custom rules plus a self-test on fakes.
+- **OPER-3 (Low)**: CODEOWNERS widened (D100); the second owner's handle and "Require review from Code Owners" on
+  `develop` and `main` are still to do (GitHub settings, not in the repo).
+- **APIW-4, APIV-3, APIV-7, OPER-5, OPER-6, OPER-11 (Low/Info)**: as in D100. APIV-5: a "KEK compromised" runbook
+  (`docs/operations.md` "`VAULT_KEK`"). Relay errors no longer echo RPC or fetch error text (sweep question 14).
+
+Deferred, with the reason:
+- **APIW-2** (cron reconciles issuer keys by kid only): needs a per-kid n‖e fingerprint view on the contract; the
+  governance watchdog already checks proposed keys' n/e against Google's JWKS.
+- **APIW-5** (dropped-tx detection may resend an executed call): changes the relayer's nonce/outcome logic; needs a
+  runtime test against a lagging RPC first. Cost: wasted gas, a burned `max_uses = 1` login.
+- **APIW-6** (export limit keyed on a client-chosen `keyIndex`, browsers only): a D59 change (per user, all
+  origins); cost and availability only.
+- **APIW-7** (D1 reads before any limit): needs a new Rate Limiting binding namespace ahead of the app lookup.
+- **APIV-1** (re-created share after prune gets around revoke-all freshness): needs a `session_pk` tombstone
+  (migration) or binding to the session's creation time. Availability only.
+- **APIV-2** (vault app quota spent before the signature check): needs the share endpoints reordered around the
+  per-location bindings; same shape as APIW-1, next.
+- **APIV-4, APIV-8, APIV-9** (relay writer capability, relay polls before the key check, share-action check order):
+  APIV-4 needs a client protocol change in `packages/web`; the others are cheap reorderings left for the vault pass.
+- **APIW-8, APIW-9, APIV-6** (PII flag default, updater block hash, share partner origin on the server): small; next
+  API pass.
+- **(h) wide relayer allowlists**: narrowing changes the on-chain key permissions, which makes `deploy-contract`
+  block until every relayer key is deleted and re-added; folded into batch B's allowlist step.
+- **OPER-4, OPER-7, OPER-8, OPER-9** (publish workflow environment, deploy wasm hash and extra full-access keys,
+  near-sandbox checksum, dependency scanning): CI and deploy hardening that needs GitHub settings or new tooling;
+  before mainnet.
+- **`owner_action_nonce` recompute** (APIW-3's second recommendation): needs a borsh port of `Change`; the caps
+  confine a wrong-nonce flood to its owner's own windows.
+- **OPER-5's doc pipelines** (`node -e require(...)` in `docs/operations.md` "Create an environment"): still print a
+  key fragment on a malformed file; replace with a script.
 
 Open questions in `docs/batch-b-spec.md` that bear on security: Q22 (a timelock for new origins in shared mode) is
 decided for batch C (D32, D34: 24 h delay, notice, cancel) but not built, so `admin app:origins:add` still applies at

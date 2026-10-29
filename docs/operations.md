@@ -67,7 +67,8 @@ Every name comes from `envs/<env>.json` (schema: `packages/env/src/schema.ts`; n
 | `allowSignerFullAccessKey` | the signer may keep a full-access key (D86) | only `local*` / `sandbox*` testnet envs; sandbox-dev only among committed manifests |
 | `mpc` | the NEAR MPC contract (exists already; not ours) | — |
 | `ckdDomainId`, `ckdNetworkKey` | CKD domain and the pinned MPC public key | pin with `fetch-ckd-key` |
-| `rpc`, `apiUrl` | NEAR RPC; the deployed Worker URL | `apiUrl` is known only after the first deploy |
+| `ckdNetworkKeySource` | where the pin was read: `{blockHeight, blockHash, rpcs}`, the final block and the hosts of the ≥ 3 independent providers that agreed (D100) | written by `fetch-ckd-key`; hosts only, never a URL |
+| `rpc`, `apiUrl` | NEAR RPC; the deployed Worker URL | https (the schema allows http only for a loopback host in `local*` envs); `apiUrl` is known only after the first deploy |
 | `rpcFallback` (optional) | a second NEAR RPC from another provider, https; the vault and the export window read from it only when `rpc` fails or times out | not `rpc` itself; built into the vault and auth bundles and in the API's and auth Worker's CSP (`NEAR_RPC_FALLBACK`), so a change needs `gen`, a page build and a redeploy of the API and both page Workers (D65) |
 | `vaultOrigin`, `authOrigin` | Hana page origins (batch B) | both or neither; `gen` refuses an env without them |
 | `googleClientIds` | Hana's own app clients → reserved `global` scope | |
@@ -127,11 +128,19 @@ the signer is part of every address. Dev-only privileges (loopback origins, part
 2. **Manifest**: accounts, Google client IDs, `consoleAudiences`, `changeDelayMs`, Cloudflare names, `vaultOrigin` /
    `authOrigin`. Fill the client lists before the first deploy (a shared client added later waits out the timelock;
    a console audience added after `global` exists needs a timelocked `propose_change`).
-3. **Pin the MPC key** (writes `ckdNetworkKey`; `--dry-run` only prints):
+3. **Pin the MPC key** (writes `ckdNetworkKey` and `ckdNetworkKeySource`; `--dry-run` only prints):
 
    ```sh
-   corepack pnpm --filter @hana-id/scripts run fetch-ckd-key <env>
+   corepack pnpm --filter @hana-id/scripts run fetch-ckd-key <env> [--rpc https://<another provider>]
    ```
+
+   It reads the key at one final block from at least three independent providers (distinct registrable domains: the
+   manifest's `rpc` and `rpcFallback`, each `--rpc`, then the built-in public endpoints `rpc.testnet.near.org`,
+   `test.rpc.fastnear.com`, `near-testnet.drpc.org`) and refuses to write unless every one reports the env's chain,
+   the same block hash and the same key (D100, security sweep OPER-1). A provider that is down or disagrees stops it:
+   find out why before pinning, never drop the disagreeing source. Different domains are only a proxy for different
+   operators; before a mainnet pin also compare the key with the MPC key material NEAR publishes and record that in
+   the PR. The manifest change goes through a code-owner review (`/envs/` in `.github/CODEOWNERS`).
 
 4. **Deploy the contract.** Prints the plan and changes nothing without `--yes`; re-running plans only what's
    missing. What each step does and why it blocks: root `README.md`, "deploy-contract".
@@ -474,8 +483,13 @@ Run as `corepack pnpm --filter @hana-id/scripts run admin <env> <command> …`. 
 
 - `app:create`: the scope must exist on chain and the plan in D1; refuses a scope already used by an app with the
   other key type. Generates `app_<base58>` and a **`pk_test_`** key (there is no command for `pk_live_` keys) and
-  prints it (public). Origins are normalised to `scheme://host[:port]`; plain `http` only for `localhost`,
-  `127.0.0.1`, `[::1]`; the literal `http://localhost:*` is accepted.
+  prints it (public). Origins are normalised to `scheme://host[:port]`, then refused if the API would drop or misuse
+  them (`app:create` and `app:origins:add`; never `app:origins:remove`, so a bad entry can always be removed; D100,
+  security sweep OPER-6): Hana's own origins (`vaultOrigin`, `authOrigin`, `apiUrl`), wildcards and odd characters,
+  IP addresses, public suffixes and single labels; loopback origins (`http://localhost:<port>`, `127.0.0.1`,
+  `[::1]`) and the literal `http://localhost:*` only for a `pk_test_` app in a dev env (`local*`, `sandbox*`).
+  App names are NFC-normalised and may not contain control, bidi, zero-width, separator or unassigned characters;
+  `app:list` prints stored values with such characters escaped (OPER-11).
 
   ```sh
   corepack pnpm --filter @hana-id/scripts run admin <env> app:create --name smoke-a --scope s1 --origin http://localhost:5173 --remote
@@ -496,7 +510,19 @@ Run as `corepack pnpm --filter @hana-id/scripts run admin <env> <command> …`. 
   TTL). Plans other than `free` need a manual D1 insert.
 
 Owner actions on a registered scope (add a client, change owners, enable shared login) go through
-`POST /v1/owner-actions` with a console-client token (`docs/api.md`); there is no CLI for them yet.
+`POST /v1/owner-actions` with a console-client token (`docs/api.md`); there is no CLI for them yet. The endpoint caps
+each owner identity, each scope and all owners together (D100); `cancel_change` has its own small allowance per owner
+(5/min, 20/day) and a cancel-only ceiling outside those caps, so another owner or a flood can't use up a timelock's
+cancel window.
+
+**Cancelling a change when the API refuses (runbook).** OIDC owner auth doesn't depend on who sends the transaction:
+if `/v1/owner-actions` is down or answers 429 while a change you didn't make is in its timelock, call the contract
+directly from any funded testnet account with the same args (`{scope_id, auth: {"Oidc": {"jwt": "<fresh console
+token>"}}, change_id}`), e.g. `near contract call-function as-transaction <signer> cancel_change json-args '…'
+prepaid-gas '50 Tgas' attached-deposit '0 NEAR' sign-as <your account> network-config testnet sign-with-keychain
+send`. The token is the same one the API would take: a console-audience Google token whose nonce commits to this call and
+the scope's current `action_nonce` (`docs/contract-interface.md` "Owner-action nonce"). Never paste it anywhere it is
+logged.
 
 ## Key rotation
 
@@ -720,6 +746,19 @@ rm .secrets/<env>/vault-kek.previous
 Rows under an id neither secret has show as `unknownKek` (error level): they can't be unlocked until that key is back
 (`vault-kek <env> put --yes` sets both secrets again from the files).
 
+**KEK compromised (runbook, security sweep APIV-5).** Rotation alone doesn't help: it re-wraps the same `K_s` under
+the new key, so whoever holds the old KEK and a D1 copy still has every live share's `K_s`. Revoke every share first,
+then rotate:
+
+```sh
+corepack pnpm --dir apps/api exec wrangler d1 execute <cloudflare.d1Name> --remote --command "UPDATE vault_shares SET revoked_at = CAST(strftime('%s','now') AS INTEGER) * 1000 WHERE revoked_at IS NULL"
+corepack pnpm --filter @hana-id/scripts run vault-kek <env> rotate --yes
+```
+
+Every user with a persisted login signs in with Google again on their next visit (their device records can no longer
+be unlocked). D1 backups and Time Travel still hold the old rows under the old KEK for their retention: treat them as
+exposed for that long.
+
 ### A user's leaked key (`key_index`)
 
 The path is `{scope_id}#{provider}#{sub}#{key_index}`, so a new `key_index` is a new key and new addresses. Rotation
@@ -909,7 +948,10 @@ corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --format
 corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --status error
 ```
 
-`observability` is on, so the same lines are in the Cloudflare dashboard. Each request logs one
+`observability` is on, so the same lines are in the Cloudflare dashboard. Invocation logs are off on the API Worker
+(`observability.logs.invocation_logs: false`, D100): the platform's per-request records carry the URL, and the login
+relay's path holds a live `relayId`. The `request` lines below replace them; for status and CPU per request use the
+Worker's metrics. Check once after a deploy that no relay URL appears in the Workers Logs view. Each request logs one
 `{"event":"request", …}` line with `status`, `code`, `latencyMs`, `colo`, `phases` and, for relays, `relayInstance`
 (fields and phases: `docs/api.md`, "Logs"). Reading a slow request:
 
@@ -1064,6 +1106,16 @@ skips everything while the `NPM_TOKEN` secret is missing, and npm refuses `"priv
   (`pnpm run pack:check`, [Releasing the SDK packages](#releasing-the-sdk-packages)).
 - The pre-commit hook runs `gitleaks git --staged` with `.gitleaks.toml`. Never bypass it (`--no-verify`). Scan
   locally with `corepack pnpm secrets:scan`.
+- `.gitleaks.toml` adds rules for this repo's own secrets, which gitleaks' defaults miss (security sweep OPER-2):
+  NEAR ed25519 secret keys (`ed25519:` + 87-88 base58 characters; public keys are too short to match),
+  `VAULT_KEK` values (`<id>:<base64 of 32 bytes>`), Worker-secret lines as in `.dev.vars` (`RELAYER_KEYS=…`,
+  `KEYS_UPDATER_KEY=…`, `VAULT_KEK=…`, the watchdog's), and the secret files by name wherever they are (anything
+  under `.secrets/`, the council key files included, `.dev.vars`, `relayer-keys.json`, `owner-relayer-keys.json`,
+  `keys-updater.json`, `watchdog-secrets.json`, `vault-kek*`). `scripts/secret-scan-selftest.mjs` generates a fake of
+  each at run time (never committed) and checks the rules catch it and pass the public look-alikes (public keys,
+  placeholders, `pk_test_`, BLS keys); `scripts/test/secret-scan.test.ts` runs it in `pnpm -r test` when gitleaks is
+  installed, and the CI `secrets` job runs it with the pinned binary after the history scan. Adding a secret shape
+  means a rule here and a case in the self-test.
 - Never commit `.secrets/`, `.env*`, `.dev.vars` or the generated `apps/api/wrangler.jsonc`, `wrangler.vault.jsonc`,
   `wrangler.auth.jsonc`, `wrangler.vitest.jsonc` and `apps/demo/wrangler.jsonc` (all gitignored and untracked;
   `wrangler.jsonc` holds an env's D1 id, the page and demo configs their origins and Worker names). Edit the

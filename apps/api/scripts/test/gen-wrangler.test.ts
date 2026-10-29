@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KeyPair } from '@near-js/crypto';
@@ -47,9 +47,9 @@ const manifest = loadEnv('sandbox-dev');
 function seedSecrets(root: string, env = manifest.name): void {
   const dir = join(root, '.secrets', env);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'relayer-keys.json'), JSON.stringify(relayerKeys));
-  writeFileSync(join(dir, 'owner-relayer-keys.json'), JSON.stringify(ownerRelayerKeys));
-  writeFileSync(join(dir, 'keys-updater.json'), JSON.stringify({ account_id: 'x.testnet', public_key: 'ed25519:abc', private_key: updaterKey }));
+  writeFileSync(join(dir, 'relayer-keys.json'), JSON.stringify(relayerKeys), { mode: 0o600 });
+  writeFileSync(join(dir, 'owner-relayer-keys.json'), JSON.stringify(ownerRelayerKeys), { mode: 0o600 });
+  writeFileSync(join(dir, 'keys-updater.json'), JSON.stringify({ account_id: 'x.testnet', public_key: 'ed25519:abc', private_key: updaterKey }), { mode: 0o600 });
 }
 
 describe('.dev.vars', () => {
@@ -81,6 +81,39 @@ describe('.dev.vars', () => {
     expect(parseRelayerKeys(parsed.RELAYER_KEYS)).toEqual(relayerKeys);
     expect(parseRelayerKeys(parsed.OWNER_RELAYER_KEYS, 'OWNER_RELAYER_KEYS')).toEqual(ownerRelayerKeys);
     expect(parsed.KEYS_UPDATER_KEY).toBe(updaterKey);
+  });
+
+  it('refuses secret files group or others can read, and never quotes a key in a parse error (OPER-5)', () => {
+    const root = tmp();
+    seedSecrets(root);
+    const file = join(root, '.secrets', manifest.name, 'relayer-keys.json');
+    chmodSync(file, 0o644);
+    expect(() => writeDevVars(manifest.name, root, tmp())).toThrow(/mode 644; secret files must be 0600/u);
+    // A trailing comma: Node's own SyntaxError would quote the text around it (the end of a key).
+    writeFileSync(file, `${JSON.stringify(relayerKeys).slice(0, -1)},]`, { mode: 0o600 });
+    chmodSync(file, 0o600);
+    let message = '';
+    try {
+      writeDevVars(manifest.name, root, tmp());
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toMatch(/relayer-keys\.json is not valid JSON/u);
+    for (const k of relayerKeys) expect(message).not.toContain(k.slice(-10));
+  });
+
+  it('replaces an existing world-readable .dev.vars with a fresh 0600 file (never writes secrets into it)', () => {
+    const root = tmp();
+    const out = tmp();
+    seedSecrets(root);
+    const path = join(out, '.dev.vars');
+    writeFileSync(path, 'OLD=1\n', { mode: 0o644 });
+    chmodSync(path, 0o644);
+    const before = statSync(path).ino;
+    writeDevVars(manifest.name, root, out);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(statSync(path).ino).not.toBe(before);
+    expect(readFileSync(path, 'utf8')).not.toContain('OLD=1');
   });
 });
 
@@ -131,6 +164,10 @@ describe('wrangler.jsonc', () => {
     expect(text).not.toMatch(/RELAYER_KEYS|KEYS_UPDATER_KEY/u);
     expect(text).not.toMatch(/OWNER_RELAYER_KEYS/u);
     expect(text).not.toMatch(/VAULT_KEK/u);
+  });
+
+  it('keeps Workers Logs for the Worker’s own lines but turns off invocation logs, which carry request URLs and so relay ids (APIV-3)', () => {
+    expect((wranglerConfig(manifest, LOCAL_D1_ID) as { observability: unknown }).observability).toEqual({ enabled: true, logs: { invocation_logs: false } });
   });
 
   it('passes rpcFallback as NEAR_RPC_FALLBACK only when the manifest sets it', () => {
@@ -212,7 +249,7 @@ describe('wrangler.jsonc', () => {
     const out = tmp();
     const dir = join(root, '.secrets', manifest.name);
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'relayer-keys.json'), JSON.stringify(relayerKeys));
+    writeFileSync(join(dir, 'relayer-keys.json'), JSON.stringify(relayerKeys), { mode: 0o600 });
     const { path, count } = writeDevVars(manifest.name, root, out);
     expect(count).toBe(1);
     expect(Object.keys(dotenvParse(readFileSync(path, 'utf8')))).toEqual(['RELAYER_KEYS']);

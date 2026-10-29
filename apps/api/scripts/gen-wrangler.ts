@@ -12,7 +12,8 @@
 //              JSON array of ed25519 secret keys), .secrets/<env>/owner-relayer-keys.json (owner pool, same format) and
 //              .secrets/<env>/keys-updater.json ({account_id, public_key, private_key}), as written by
 //              scripts/deploy-contract.ts, when they exist. Never prints secrets.
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type Manifest, loadEnv, repoRoot } from '@hana-id/env';
@@ -41,7 +42,10 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
     compatibility_flags: ['nodejs_compat'],
     // @near-js/crypto imports secp256k1 (CJS/native, unused: relayer keys are ed25519).
     alias: { secp256k1: './src/shims/secp256k1.ts' },
-    observability: { enabled: true },
+    // Workers Logs keeps the Worker's own JSON log lines (src/log.ts: no tokens, keys, signatures or relay ids), but
+    // not the platform's per-request invocation records, which carry the request URL: the login relay's URL path is
+    // `/v1/login-relay/<relayId>`, a live capability for its 120 s slot (security sweep APIV-3, D100).
+    observability: { enabled: true, logs: { invocation_logs: false } },
     // Run next to D1 and the Durable Objects rather than where the request lands: workers.dev routing from
     // Malaysia lands many requests in Europe (MRS), and each serial D1 query then crosses continents.
     // A fixed region next to D1 (APAC) and the Durable Objects: Smart Placement only moves requests from locations it
@@ -150,24 +154,41 @@ export function devVarsContent(secrets: { relayerKeys?: unknown; ownerRelayerKey
   return lines.length ? lines.join('\n') + '\n' : '';
 }
 
-const readJsonIfExists = (path: string): unknown => (existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as unknown) : undefined);
+/**
+ * A secret JSON file from .secrets/, or undefined when absent, as scripts/lib/secrets.ts reads them (OPER-5): refused
+ * when group or others can read it, and a parse error names the file only (Node's SyntaxError quotes the text around
+ * the error, i.e. the end of a key).
+ */
+function readSecretJsonIfExists(path: string): unknown {
+  if (!existsSync(path)) return undefined;
+  const mode = statSync(path).mode & 0o777;
+  if ((mode & 0o077) !== 0) throw new Error(`${path} has mode ${mode.toString(8)}; secret files must be 0600 (chmod 600 ${path})`);
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as unknown;
+  } catch {
+    throw new Error(`${path} is not valid JSON (check for a missing or trailing comma)`);
+  }
+}
 
 /** Writes <apiDir>/.dev.vars (0600) from <root>/.secrets/<env>/. Returns the number of secrets; never their values. */
 export function writeDevVars(envName: string, root: string = repoRoot, dir: string = apiDir): { path: string; count: number } {
   const secrets = join(root, '.secrets', envName);
-  const relayerKeys = readJsonIfExists(join(secrets, 'relayer-keys.json'));
-  const ownerRelayerKeys = readJsonIfExists(join(secrets, 'owner-relayer-keys.json'));
+  const relayerKeys = readSecretJsonIfExists(join(secrets, 'relayer-keys.json'));
+  const ownerRelayerKeys = readSecretJsonIfExists(join(secrets, 'owner-relayer-keys.json'));
   const updaterFile = join(secrets, 'keys-updater.json');
   let keysUpdaterKey: string | undefined;
-  if (existsSync(updaterFile)) {
-    const { private_key: key } = JSON.parse(readFileSync(updaterFile, 'utf8')) as { private_key?: unknown };
-    if (typeof key !== 'string') throw new Error(`${updaterFile} has no ed25519 private_key`);
-    keysUpdaterKey = key;
+  const updater = readSecretJsonIfExists(updaterFile) as { private_key?: unknown } | undefined;
+  if (updater !== undefined) {
+    if (typeof updater?.private_key !== 'string') throw new Error(`${updaterFile} has no ed25519 private_key`);
+    keysUpdaterKey = updater.private_key;
   }
   const content = devVarsContent({ relayerKeys, ownerRelayerKeys, keysUpdaterKey });
   const path = join(dir, '.dev.vars');
-  writeFileSync(path, content, { mode: 0o600 });
-  chmodSync(path, 0o600);
+  // A fresh 0600 file renamed over the old one: an existing world-readable .dev.vars never holds the new secrets.
+  const tmp = `${path}.${randomBytes(6).toString('hex')}.tmp`;
+  writeFileSync(tmp, content, { mode: 0o600, flag: 'wx' });
+  chmodSync(tmp, 0o600);
+  renameSync(tmp, path);
   return { path, count: [relayerKeys, ownerRelayerKeys, keysUpdaterKey].filter((v) => v !== undefined).length };
 }
 

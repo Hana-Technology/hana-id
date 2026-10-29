@@ -27,3 +27,33 @@ export function setManifestStrings(text: string, fields: Record<string, string>)
 export function setManifestString(text: string, key: string, value: string): string {
   return setManifestStrings(text, { [key]: value });
 }
+
+/** A flat object on one line, in the manifests' style: `{ "a": 1, "b": ["x", "y"] }`. */
+function inlineObject(value: Record<string, string | number | readonly string[]>): string {
+  const field = (v: string | number | readonly string[]) => (Array.isArray(v) ? `[${v.map((x) => JSON.stringify(x)).join(', ')}]` : JSON.stringify(v));
+  return `{ ${Object.entries(value).map(([k, v]) => `${JSON.stringify(k)}: ${field(v)}`).join(', ')} }`;
+}
+
+/**
+ * Sets the top-level field `key` to a flat object (string, number or string-array values), on one line: replaced in
+ * place when present, else inserted right after the top-level string field `after`. The rest of the file keeps its
+ * formatting; when the field can't be placed unambiguously the whole file is rewritten. The result must validate.
+ */
+export function setManifestObject(text: string, key: string, value: Record<string, string | number | readonly string[]>, after: string): string {
+  const parsed = JSON.parse(text) as Record<string, unknown>;
+  const line = inlineObject(value);
+  let out: string | null = null;
+  if (key in parsed) {
+    const re = new RegExp(`("${key}"\\s*:\\s*)\\{[^{}]*\\}`, 'gu');
+    if ((text.match(re) ?? []).length === 1) out = text.replace(re, (_m, head: string) => `${head}${line}`);
+  } else {
+    const re = new RegExp(`^([ \\t]*)("${after}"\\s*:\\s*"(?:[^"\\\\]|\\\\.)*")(,?)`, 'gmu');
+    const matches = [...text.matchAll(re)];
+    if (matches.length === 1 && matches[0]![3] === ',') out = text.replace(re, (_m, indent: string, field: string) => `${indent}${field},\n${indent}"${key}": ${line},`);
+  }
+  out ??= `${JSON.stringify({ ...parsed, [key]: value }, null, 2)}\n`;
+  const check = JSON.parse(out) as Record<string, unknown>;
+  if (JSON.stringify(check[key]) !== JSON.stringify(value)) throw new Error(`Failed to set "${key}" in the manifest`);
+  manifestSchema.parse(check);
+  return out;
+}

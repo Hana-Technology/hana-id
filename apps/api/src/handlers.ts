@@ -1,6 +1,6 @@
 // Request handlers: app endpoints (publishable key + origin), owner actions (OIDC proof in args), health.
 import { type App, PUBLISHABLE_KEY_RE, getAppByKey, incrementUsage } from './apps.ts';
-import { appKeyPairs } from './bls.ts';
+import { appKeyPairs, appKeyProblem } from './bls.ts';
 import { disallowedClaim } from './claims.ts';
 import type { Env } from './env.ts';
 import { type Headers_, corsHeaders, json, readJson } from './http.ts';
@@ -10,8 +10,8 @@ import { placedStub } from './placement.ts';
 import { JwksUnavailableError, verifyIdToken } from './jwks.ts';
 import { keyObserver } from './key-observations.ts';
 import { type Caller, PARENT_ORIGIN_HEADER, RELAY_KEY_HEADER, checkCaller, preflightAllows } from './origins.ts';
-import { precheckOwnerAction } from './owner-actions.ts';
-import type { RateLimiter } from './rate-limiter.ts';
+import { precheckOwnerAction, sha256Hex } from './owner-actions.ts';
+import type { Limit, RateLimiter } from './rate-limiter.ts';
 import type { RelayInstance, RelayTiming } from './relayer-key.ts';
 import { relay } from './relayer-pool.ts';
 import { ckdPayload, revokePayload, sessionNonce, verifySessionSignature } from './session-crypto.ts';
@@ -25,11 +25,45 @@ const APP_METHODS = 'GET, POST, OPTIONS';
 /** Owner actions are unauthenticated at the API (the proof is in the args): keep them slow. */
 export const OWNER_ACTIONS_PER_IP_MINUTE = 10;
 /**
- * Global caps on relayed owner actions (only requests that passed every off-chain check count). They are paid from the
- * owner pool (OWNER_RELAYER_KEYS, small allowance), never from the login pool: this bounds what they can ever spend.
+ * Caps on relayed owner actions (only requests that passed every off-chain check count; D100, security sweep APIW-3).
+ * They are paid from the owner pool (OWNER_RELAYER_KEYS, small allowance), never from the login pool. Asked from the
+ * most specific in, so one owner's excess stops at its own window and never reaches what other scopes share; a
+ * request refused by a later window is taken back from the earlier ones (`unhit`), so a refusal costs nothing:
+ * - authenticated actions (propose_change, remove_client, disable_shared_login): per owner identity (provider, sub),
+ *   then per scope, then the global ceiling that bounds the pool's spend;
+ * - execute_change (no auth, anyone may send it): its own per-scope window, never the one the scope's owners use, then
+ *   the global ceiling;
+ * - cancel_change: none of the above. Its own allowance per owner identity, then per scope (keyed by the target
+ *   scope: only that scope's on-chain owners pass the precheck, so only they can fill it, and it is sized for all
+ *   CONTRACT_MAX_OWNERS of them at once), then a high cancel-only global ceiling that is only a spend bound. No other
+ *   scope's owners, no shared traffic and no execute flood can starve a timelock's cancel window; within the scope,
+ *   only all of its owners together can. A cancel without an owner identity is refused (fail closed).
  */
+export const OWNER_ACTIONS_PER_OWNER_MINUTE = 5;
+export const OWNER_ACTIONS_PER_OWNER_DAY = 30;
+export const OWNER_ACTIONS_PER_SCOPE_MINUTE = 10;
+export const OWNER_ACTIONS_PER_SCOPE_DAY = 50;
+export const EXECUTES_PER_SCOPE_MINUTE = 10;
+export const EXECUTES_PER_SCOPE_DAY = 50;
 export const OWNER_ACTIONS_GLOBAL_MINUTE = 20;
 export const OWNER_ACTIONS_GLOBAL_DAY = 200;
+export const CANCELS_PER_OWNER_MINUTE = 5;
+export const CANCELS_PER_OWNER_DAY = 20;
+/** hana-signer's `MAX_OWNERS` per scope (registry.rs; scripts/test/contract-constants.test.ts keeps them equal). */
+export const CONTRACT_MAX_OWNERS = 5;
+/** hana-signer's `MAX_PENDING` changes per scope: at most this many cancels can pass the precheck at a time. */
+export const CONTRACT_MAX_PENDING = 10;
+/** Per scope: every owner's whole allowance at once, so fewer than all of a scope's owners can never fill it. */
+export const CANCELS_PER_SCOPE_MINUTE = CONTRACT_MAX_OWNERS * CANCELS_PER_OWNER_MINUTE;
+export const CANCELS_PER_SCOPE_DAY = CONTRACT_MAX_OWNERS * CANCELS_PER_OWNER_DAY;
+/**
+ * A spend bound only (the owner pool's allowance is the hard one). Filling the minute window takes 20 owner
+ * identities at their own cap (≥ 4 scopes the attacker fully owns, at CONTRACT_MAX_OWNERS each); the day window takes
+ * 50 identities (≥ 10 such scopes) and 1000 cancellable changes, which is ≥ 100 scopes' CONTRACT_MAX_PENDING at once
+ * or more proposals than the shared OWNER_ACTIONS_GLOBAL_DAY lets through in five days.
+ */
+export const CANCELS_GLOBAL_MINUTE = 100;
+export const CANCELS_GLOBAL_DAY = 1000;
 /** Clock skew tolerated on an ID token's `exp` (the contract checks `exp` against the block time again). */
 export const TOKEN_EXP_SKEW_MS = 60_000;
 const MINUTE = 60_000;
@@ -173,9 +207,12 @@ export type Gate = { ok: true; app: App; caller: Caller } | { ok: false; respons
 
 /**
  * Checks 1–3: the app exists and is active, the caller may call this endpoint (`ctx.endpoint`) for it (origins.ts:
- * Hana pages for an allowed `x-hana-parent-origin`, partner pages by key type and env), rate limits. `relay`
- * endpoints count against the plan's per-IP, per-app minute and per-app day limits; `config` (GET /v1/app, no transaction) only against a per-IP
- * window of its own, so reading the config never uses up the app's relay quota.
+ * Hana pages for an allowed `x-hana-parent-origin`, partner pages by key type and env), and the per-IP limit. `relay`
+ * endpoints count against the plan's per-IP window here, and against the app's minute and day quota only once every
+ * off-chain check has passed, right before the relay (`appQuota`, D100): the publishable key and the Origin headers
+ * are public and forgeable, so a request that fails a token, nonce or signature check must never use up the quota
+ * every user of the app shares. `config` (GET /v1/app, no transaction) counts only against a per-IP window of its
+ * own, so reading the config never uses up the app's relay quota.
  */
 export async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay' | 'config'): Promise<Gate> {
   const fail = (status: number, code: string, error: string, extra: Headers_ = {}): Gate => ({ ok: false, response: reject(ctx, status, code, error, extra) });
@@ -201,24 +238,36 @@ export async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay
   // 2. Origin (and, from a Hana page, the partner origin it acts for).
   if (!caller.ok) return fail(403, 'origin_not_allowed', 'Origin not allowed for this app');
 
-  // 3. Rate limits: per IP per minute first, then per app per minute and per day. The IP check comes first so a
-  //    request it rejects never uses up the app's shared quota (one client could otherwise lock out every user).
+  // 3. The per-IP limit, before anything is parsed or verified: it bounds what one client can make the checks cost.
+  //    The app's shared quota is counted later, after verification (appQuota).
   try {
     const window = kind === 'relay' ? `${app.id}:minute` : `${app.id}:config:minute`;
     const ipHit = await limiter(env, ipKey(request)).hit([{ name: window, windowMs: MINUTE, max: app.per_ip_minute }]);
     if (!ipHit.ok) return fail(429, 'rate_limited', 'Rate limit exceeded (per IP per minute)', { 'retry-after': String(ipHit.retryAfterS) });
-    if (kind === 'relay') {
-      const appHit = await limiter(env, `app:${app.id}`).hit([
-        { name: 'minute', windowMs: MINUTE, max: app.per_minute },
-        { name: 'day', windowMs: DAY, max: app.per_day },
-      ]);
-      if (!appHit.ok) return fail(429, 'rate_limited', `Rate limit exceeded (app per ${appHit.limit})`, { 'retry-after': String(appHit.retryAfterS) });
-    }
   } catch {
     return fail(503, 'rate_limiter_unavailable', 'Try again');
   }
   lap(ctx, 'limits');
   return { ok: true, app, caller };
+}
+
+/**
+ * The app's relay quota (plan `per_minute` and `per_day`, one RateLimiter object per app): asked right before a
+ * relay, once the request passed every off-chain check (token, nonce, session signature, scope, session precheck), so
+ * only requests that would plausibly succeed count. Null when it accepts; a refusal is 429 with Retry-After, a
+ * limiter that fails refuses (503), never lets through.
+ */
+export async function appQuota(env: Env, ctx: Ctx, app: App): Promise<Response | null> {
+  try {
+    const appHit = await limiter(env, `app:${app.id}`).hit([
+      { name: 'minute', windowMs: MINUTE, max: app.per_minute },
+      { name: 'day', windowMs: DAY, max: app.per_day },
+    ]);
+    if (!appHit.ok) return reject(ctx, 429, 'rate_limited', `Rate limit exceeded (app per ${appHit.limit})`, { 'retry-after': String(appHit.retryAfterS) });
+  } catch {
+    return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
+  }
+  return null;
 }
 
 // ---- GET /v1/app ----
@@ -322,6 +371,9 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     if (inUse.value) return reject(ctx, 409, 'session_exists', 'This session key is already in use');
     if (gov) return chainGateResponse(ctx, gov);
     lap(ctx, 'checks');
+    // 10. The app's quota, counted only now that the request passed every check.
+    const quota = await appQuota(env, ctx, app);
+    if (quota) return quota;
 
     const result = await relay(env, 'session', { method: call.method, args: call.args }, requestId);
     lapRelay(ctx, result);
@@ -350,6 +402,12 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
   if (!(await verifySessionSignature(call.sessionPublicKey, call.counter, call.signature, payload))) {
     return reject(ctx, 401, 'invalid_signature', 'Invalid session signature');
   }
+  // The app key's shape, always (as /v1/login): each one compressed, non-identity point, so a client bug can never
+  // ask the MPC for a CKD answer under a degenerate key (security sweep APIW-4). The pairing stays behind BLS_PRECHECK.
+  if ('pk1' in call) {
+    const keyProblem = appKeyProblem(call.pk1, call.pk2);
+    if (keyProblem) return reject(ctx, 400, 'invalid_app_key', keyProblem);
+  }
 
   // 6. The session belongs to this app's scope, is live and can still take this counter (the contract's rules,
   //    session-use.ts): a replayed request or one past the use limit would only fail on chain, at the relayer's cost.
@@ -372,6 +430,9 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     // The app key's pairing check (bls.ts), last: it is the costly one.
     if ('pk1' in call && env.BLS_PRECHECK === '1' && !(await appKeyPairs(call.pk1, call.pk2))) return reject(ctx, 400, 'invalid_app_key', 'pk1 and pk2 are not the same key');
     lap(ctx, 'checks');
+    // The app's quota, counted only now that the request passed every check.
+    const quota = await appQuota(env, ctx, app);
+    if (quota) return quota;
 
     const result = await relay(env, 'session', { method: call.method, args: call.args }, requestId);
     lapRelay(ctx, result);
@@ -448,6 +509,76 @@ export async function checkClientScope(env: Env, provider: string, aud: string, 
 
 // ---- Owner actions ----
 
+/** RateLimiter subject of an owner identity's caps: a hash, so no Google `sub` is part of an object name. */
+export const ownerLimiterKey = async (owner: { provider: string; sub: string }): Promise<string> => `owner-actions:owner:${await sha256Hex(`${owner.provider}#${owner.sub}`)}`;
+export const scopeLimiterKey = (scopeId: string): string => `owner-actions:scope:${scopeId}`;
+/** execute_change's own per-scope subject: unauthenticated, so it never shares the window the scope's owners use. */
+export const executeLimiterKey = (scopeId: string): string => `owner-actions:execute:${scopeId}`;
+/** cancel_change's per-scope subject: only the target scope's owners (checked on chain state first) count here. */
+export const cancelScopeLimiterKey = (scopeId: string): string => `owner-actions:cancel:${scopeId}`;
+export const CANCEL_GLOBAL_LIMITER = 'owner-actions:cancel-global';
+
+export interface OwnerActionWindow {
+  subject: string;
+  label: string;
+  limits: Limit[];
+}
+
+/**
+ * The windows a checked owner action counts against, in the order they are asked (see OWNER_ACTIONS_PER_OWNER_*), or
+ * null when it must be refused: an action that needs an owner identity (every method but execute_change) without one.
+ */
+export async function ownerActionWindows(method: string, check: { scopeId: string; owner: { provider: string; sub: string } | null }): Promise<OwnerActionWindow[] | null> {
+  const pair = (prefix: string, minute: number, day: number): Limit[] => [
+    { name: `${prefix}minute`, windowMs: MINUTE, max: minute },
+    { name: `${prefix}day`, windowMs: DAY, max: day },
+  ];
+  const global = { subject: 'owner-actions:global', label: 'owner actions', limits: pair('', OWNER_ACTIONS_GLOBAL_MINUTE, OWNER_ACTIONS_GLOBAL_DAY) };
+  if (method === 'execute_change') {
+    return [{ subject: executeLimiterKey(check.scopeId), label: 'executes per scope', limits: pair('', EXECUTES_PER_SCOPE_MINUTE, EXECUTES_PER_SCOPE_DAY) }, global];
+  }
+  // Every other method carries an OIDC owner proof (toOwnerAction, precheckOwnerAction); without one, fail closed.
+  if (!check.owner) return null;
+  const owner = await ownerLimiterKey(check.owner);
+  if (method === 'cancel_change') {
+    return [
+      { subject: owner, label: 'cancels per owner', limits: pair('cancel:', CANCELS_PER_OWNER_MINUTE, CANCELS_PER_OWNER_DAY) },
+      { subject: cancelScopeLimiterKey(check.scopeId), label: 'cancels per scope', limits: pair('', CANCELS_PER_SCOPE_MINUTE, CANCELS_PER_SCOPE_DAY) },
+      { subject: CANCEL_GLOBAL_LIMITER, label: 'cancels', limits: pair('', CANCELS_GLOBAL_MINUTE, CANCELS_GLOBAL_DAY) },
+    ];
+  }
+  return [
+    { subject: owner, label: 'owner actions per owner', limits: pair('', OWNER_ACTIONS_PER_OWNER_MINUTE, OWNER_ACTIONS_PER_OWNER_DAY) },
+    { subject: scopeLimiterKey(check.scopeId), label: 'owner actions per scope', limits: pair('', OWNER_ACTIONS_PER_SCOPE_MINUTE, OWNER_ACTIONS_PER_SCOPE_DAY) },
+    global,
+  ];
+}
+
+/**
+ * Asks `windows` in turn at one instant; the first refusal takes back the hits the earlier ones accepted (`unhit`), so
+ * a refused request uses up no window. Returns the refusal, or null when every window accepted. Throws when a limiter
+ * can't be reached (the caller refuses: fail closed); a failed take-back is logged and leaves that count in place.
+ */
+export async function hitAll(env: Env, windows: readonly OwnerActionWindow[], requestId?: string): Promise<{ window: OwnerActionWindow; limit: string; retryAfterS: number } | null> {
+  const now = Date.now();
+  const accepted: OwnerActionWindow[] = [];
+  for (const w of windows) {
+    const hit = await limiter(env, w.subject).hit(w.limits, now);
+    if (!hit.ok) {
+      for (const a of accepted) {
+        try {
+          await limiter(env, a.subject).unhit(a.limits, now);
+        } catch {
+          log({ event: 'rate_limit_unhit_failed', requestId, endpoint: '/v1/owner-actions' }, 'warn');
+        }
+      }
+      return { window: w, limit: hit.limit, retryAfterS: hit.retryAfterS };
+    }
+    accepted.push(w);
+  }
+  return null;
+}
+
 export async function handleOwnerAction(request: Request, env: Env, requestId: string): Promise<Response> {
   const ctx = newCtx(env, requestId, '/v1/owner-actions', request, corsHeaders('*', 'content-type'));
   try {
@@ -489,13 +620,15 @@ export async function handleOwnerAction(request: Request, env: Env, requestId: s
     return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
   }
   try {
-    const global = await limiter(env, 'owner-actions:global').hit([
-      { name: 'minute', windowMs: MINUTE, max: OWNER_ACTIONS_GLOBAL_MINUTE },
-      { name: 'day', windowMs: DAY, max: OWNER_ACTIONS_GLOBAL_DAY },
-    ]);
-    if (!global.ok) {
+    const windows = await ownerActionWindows(call.method, check);
+    if (!windows) {
       await release();
-      return reject(ctx, 429, 'rate_limited', `Rate limit exceeded (owner actions per ${global.limit})`, { 'retry-after': String(global.retryAfterS) });
+      return reject(ctx, 403, 'not_owner', 'This owner action needs an owner token');
+    }
+    const refused = await hitAll(env, windows, requestId);
+    if (refused) {
+      await release();
+      return reject(ctx, 429, 'rate_limited', `Rate limit exceeded (${refused.window.label} per ${refused.limit.replace(/^cancel:/u, '')})`, { 'retry-after': String(refused.retryAfterS) });
     }
   } catch {
     await release();

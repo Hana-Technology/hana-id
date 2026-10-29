@@ -32,7 +32,8 @@ export function isDevEnv(envName: string): boolean {
  * for pk_test_ keys in dev envs.
  */
 export function originAllowed(app: Pick<App, 'publishable_key' | 'origins'>, origin: string | null, devEnv: boolean): boolean {
-  if (!origin) return false;
+  // The wildcard entry is a pattern, never an origin (no browser sends `http://localhost:*`; APIV-7).
+  if (!origin || origin === LOCALHOST_WILDCARD) return false;
   const loopbackOk = devEnv && isTestKey(app.publishable_key);
   if (isLoopbackOrigin(origin) && !loopbackOk) return false;
   if (app.origins.includes(origin)) return true;

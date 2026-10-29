@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { heldCounters, sessionUseRejection } from '../src/session-use.ts';
 import { type SessionView, TtlCache } from '../src/views.ts';
 import { type Chain, appHeaders, call, chain, deriveBody, newSessionKey, revokeBody, seedApp, seedPlan, uid } from './helpers.ts';
+import { appKey } from './login-helpers.ts';
 afterEach(() => vi.restoreAllMocks());
 
 const HOUR = 3_600_000;
@@ -346,7 +347,7 @@ describe('POST /v1/derive and /v1/sessions/revoke: counter and use-limit pre-che
     // Same counter, other BLS keys (a client retry or a racing copy): at most one can succeed on chain.
     const first = derive(1);
     await vi.waitFor(() => expect(heldCounters()).toBe(1));
-    const second = derive(1, { pk1: 'bls12381g1:other' });
+    const second = derive(1, appKey(5n));
     await new Promise((r) => setTimeout(r, 20));
     open();
     const [a, b] = await Promise.all([first, second]);

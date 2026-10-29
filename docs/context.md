@@ -196,7 +196,10 @@ Merged on the integration branch `feat/batch-b` (not yet on `develop`), all test
   allowlist state 1 in `deploy-contract`. `.github/CODEOWNERS` (D58).
 - Docs: the reference docs (`docs/README.md`), including `docs/integration.md` (partner guide).
 
-Not done in batch B: an npm build of the client packages (they are private and export their sources). **To measure on
+SDK packaging (`feat/sdk-packaging`, D71, D72): the four packages build to ESM + `.d.ts` and install from `pnpm pack`
+tarballs outside the repo (`pnpm run pack:check`, CI job `packages`); `@hana-id/web` carries the `sandbox-dev` env.
+Not published: the registry (public npm `@hana-id` org or private) and the licence are the user's to decide
+(`docs/operations.md` "Releasing the SDK packages"). **To measure on
 testnet** after the deploy, and record here: the ship gate (10 runs of `create_session_and_derive`: gas over all
 receipts and the latency median, D26), unlock latency from SIN with the page render, the login's registry-check wait
 (`timings.scopeCheck`/`scopeWait`, D56), the BLS precheck's Worker CPU time (D64, before `BLS_PRECHECK` is on

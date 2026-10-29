@@ -1,0 +1,24 @@
+{
+  // The published build (`pnpm build:lib`): the partner client only (the two entries and what they import), ESM +
+  // .d.ts + source maps into dist/lib/. dist/pages/ is the Hana pages build (`pnpm build`), which is never packed.
+  // @hana-id/core resolves to its built declarations, so its sources stay out of this program; the emitted imports
+  // stay `@hana-id/core`. Workspace code keeps importing src/ through `exports`; pnpm pack swaps in
+  // `publishConfig.exports`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "rewriteRelativeImportExtensions": true,
+    "declaration": true,
+    "sourceMap": true,
+    "inlineSources": true,
+    "rootDir": "src",
+    "outDir": "dist/lib",
+    "paths": {
+      "@hana-id/core": ["../core/dist/index.d.ts"],
+      "@hana-id/core/*": ["../core/dist/*.d.ts", "../core/dist/*/index.d.ts"]
+    }
+  },
+  "include": [],
+  "files": ["src/index.ts", "src/stellar-wallets-kit.ts"]
+}

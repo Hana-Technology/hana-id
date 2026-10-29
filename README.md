@@ -97,6 +97,7 @@ cd contracts/hana-signer && cargo test
 | API Worker config | `pnpm --filter @hana-id/api run gen <env> [--d1-id <uuid>] [--dev-vars]` |
 | `VAULT_KEK` | `pnpm --filter @hana-id/scripts run vault-kek <env> init\|put\|rotate [--yes]` |
 | Hana pages (vault, auth) | `pnpm --filter @hana-id/web build` · `pnpm --filter @hana-id/api run deploy:pages` |
+| SDK tarballs: build, check, install outside the repo | `pnpm run pack:check` · version: `pnpm --filter @hana-id/scripts run sdk-version <x.y.z>` (`docs/operations.md` "Releasing the SDK packages") |
 | Browser tests | `pnpm --filter @hana-id/e2e e2e` (`HANA_E2E_PORT_BASE` for a second worktree; `apps/e2e/README.md`) |
 
 The `@hana-id/scripts` commands take the environment name (`envs/<env>.json`) first and print `--help`.

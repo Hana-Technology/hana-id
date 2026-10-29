@@ -17,6 +17,7 @@ the batch merges, so where a spec and a reference doc disagree, the reference do
 | `decisions.md` | Every decision: when, why, what was rejected, status |
 | `context.md` | Project background, batch B status, testnet measurements, next steps |
 | `../envs/README.md`, `../apps/api/README.md`, `../apps/smoke/README.md`, `../apps/e2e/README.md` | Per-package quick starts |
+| `../packages/{core,web,react,sodax}/README.md` | The partner-facing READMEs shipped in the SDK tarballs (install, minimal usage) |
 
 ## Specs (history)
 

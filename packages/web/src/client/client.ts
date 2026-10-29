@@ -38,7 +38,7 @@ import { type ReadyStatus, VaultConnection } from './vault-connection.ts';
 
 export interface HanaConfig {
   publishableKey: string;
-  /** An env name from envs/ whose manifest sets vaultOrigin and authOrigin, e.g. 'sandbox-dev'. */
+  /** The Hana deployment, e.g. 'sandbox-dev': one of HANA_ENVIRONMENTS (the envs/ manifests this build carries). */
   environment: string;
   evm?: EvmConfig;
   stellar?: StellarConfig;

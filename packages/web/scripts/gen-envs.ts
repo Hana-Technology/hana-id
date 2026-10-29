@@ -4,11 +4,18 @@
 //   pnpm --filter @hana-id/web gen:envs
 //
 // build, typecheck and test run it first; the output is gitignored, so it can't drift from the manifests. Every
-// manifest is validated by @hana-id/env, and the run fails if an included env's pinned CKD key is unusable.
+// manifest is validated by @hana-id/env, and the run fails if an included env's pinned CKD key is unusable or any of
+// its values is still an UNSET placeholder.
+//
+//   pnpm --filter @hana-id/web gen:envs --package
+//
+// is the published package's variant (`build:lib`, docs/operations.md "Releasing the SDK packages"): the same file, and
+// it also fails unless at least one env is included and none is a loopback `local*` env, since a partner's install
+// must carry exactly the deployed envs.
 import { readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Manifest, isDevEnv, loadEnv, repoRoot } from '@hana-id/env';
+import { type Manifest, isDevEnv, isLocalEnv, loadEnv, repoRoot } from '@hana-id/env';
 import type { HanaEnv } from '../src/hana-env.ts';
 import { ckdKeyProblem } from './ckd-key.ts';
 
@@ -32,11 +39,42 @@ export function hanaEnv(m: Manifest): HanaEnv | null {
   };
 }
 
-/** envs.generated.ts for these manifests, sorted by name. Throws if an included env's CKD key has a problem. */
-export function envsModule(manifests: readonly Manifest[]): string {
-  const envs = manifests.map(hanaEnv).filter((e): e is HanaEnv => e !== null).sort((a, b) => (a.name < b.name ? -1 : 1));
-  const problems = envs.map(ckdKeyProblem).filter((p): p is string => p !== null);
+/**
+ * The env's values that are still placeholders (containing `UNSET`, envs/README.md), one message each. ckdNetworkKey is
+ * left to ckdKeyProblem, which also checks that the key decodes.
+ */
+export function placeholderProblems(env: HanaEnv): string[] {
+  return Object.entries(env)
+    .filter(([field, value]) => field !== 'ckdNetworkKey' && typeof value === 'string' && value.includes('UNSET'))
+    .map(([field]) => `envs/${env.name}.json ${field} is still an UNSET placeholder.`);
+}
+
+/**
+ * Why these envs can't go into the published @hana-id/web, or null: a partner's install must carry at least one env,
+ * and only deployed ones, so a loopback `local*` env (dev machines only) is refused rather than shipped.
+ */
+export function packageEnvsProblem(envs: readonly HanaEnv[]): string | null {
+  if (envs.length === 0) return 'no envs/<env>.json sets both vaultOrigin and authOrigin, so the package would know no environment.';
+  const local = envs.filter((e) => isLocalEnv(e.name)).map((e) => e.name);
+  if (local.length > 0) return `${local.join(', ')} ${local.length === 1 ? 'is a' : 'are'} local (loopback) env${local.length === 1 ? '' : 's'}: move ${local.length === 1 ? 'it' : 'them'} out of envs/ before building the package.`;
+  return null;
+}
+
+/** The included envs (both origins), sorted by name. */
+function includedEnvs(manifests: readonly Manifest[]): HanaEnv[] {
+  return manifests.map(hanaEnv).filter((e): e is HanaEnv => e !== null).sort((a, b) => (a.name < b.name ? -1 : 1));
+}
+
+/**
+ * envs.generated.ts for these manifests, sorted by name. Throws if an included env's CKD key has a problem or a value
+ * is still a placeholder; with `forPackage`, also if packageEnvsProblem refuses the set.
+ */
+export function envsModule(manifests: readonly Manifest[], opts: { forPackage?: boolean } = {}): string {
+  const envs = includedEnvs(manifests);
+  const problems = envs.flatMap((e) => [ckdKeyProblem(e), ...placeholderProblems(e)]).filter((p): p is string => p !== null);
   if (problems.length > 0) throw new Error(`Can't build the Hana pages:\n${problems.join('\n')}`);
+  const packageProblem = opts.forPackage ? packageEnvsProblem(envs) : null;
+  if (packageProblem) throw new Error(`Can't build the @hana-id/web package: ${packageProblem}`);
   // JSON.stringify of validated strings and booleans is a valid TypeScript literal.
   const entries = envs.map((e) => `  ${JSON.stringify(e.name)}: Object.freeze(${JSON.stringify(e)}),`).join('\n');
   return [
@@ -56,15 +94,18 @@ export function loadManifests(envsDir: string = join(repoRoot, 'envs')): Manifes
     .map((f) => loadEnv(f.slice(0, -'.json'.length)));
 }
 
-/** Writes the generated module; `out` overrides the path (tests). Returns the included env names. */
-export function main(opts: { manifests?: readonly Manifest[]; out?: string } = {}): string[] {
+/**
+ * Writes the generated module; `out` overrides the path (tests), `forPackage` applies the published build's checks.
+ * Returns the included env names.
+ */
+export function main(opts: { manifests?: readonly Manifest[]; out?: string; forPackage?: boolean } = {}): string[] {
   const manifests = opts.manifests ?? loadManifests();
   const out = opts.out ?? GENERATED_PATH;
-  writeFileSync(out, envsModule(manifests));
-  return manifests.filter((m) => hanaEnv(m) !== null).map((m) => m.name).sort();
+  writeFileSync(out, envsModule(manifests, { forPackage: opts.forPackage ?? false }));
+  return includedEnvs(manifests).map((e) => e.name);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const names = main();
+  const names = main({ forPackage: process.argv.includes('--package') });
   console.log(`wrote ${GENERATED_PATH} (${names.length ? names.join(', ') : 'no env sets vaultOrigin and authOrigin'})`);
 }

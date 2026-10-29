@@ -47,16 +47,66 @@ You get a **publishable key** (`pk_test_…`). It is public: ship it in your pag
 
 ## 2. Install
 
-The packages are not on npm yet; `@hana-id/*` is the reserved scope. Until they are, build from the Hana ID
-repository (`corepack pnpm install`, then `corepack pnpm --filter @hana-id/web gen:envs`) and depend on the
-workspace packages. They ship TypeScript sources, so your bundler must compile TypeScript (Vite, esbuild and webpack
-with a TS loader all do).
+The packages are not on a registry yet (`@hana-id/*` is the reserved scope). Hana sends you the tarballs of one
+release, built with `pnpm pack` (`docs/operations.md` "Releasing the SDK packages"), and you install them together
+with npm, pnpm or yarn:
 
-| Package | What |
-|---|---|
-| `@hana-id/web` | `createHana`, the EIP-1193 provider, the Stellar signer; `@hana-id/web/stellar-wallets-kit` for SWK |
-| `@hana-id/react` | `HanaProvider`, `useHana`, `useWallet` |
-| `@hana-id/sodax` | Optional Sodax wallet-provider adapters |
+```sh
+npm install ./hana-id-core-0.1.0.tgz ./hana-id-web-0.1.0.tgz              # always
+npm install ./hana-id-react-0.1.0.tgz                                      # React apps
+npm install ./hana-id-sodax-0.1.0.tgz @sodax/types@2.1.0                   # Sodax adapters
+```
+
+Commit the tarballs to your repository (or a private artifact store) and depend on them by path
+(`"@hana-id/web": "file:vendor/hana-id-web-0.1.0.tgz"`), so every install gets the same bytes.
+
+| Package | What | Peer dependencies (tested) |
+|---|---|---|
+| `@hana-id/core` | Shared core; a dependency of the others. `@hana-id/core/policy` validates auto-approve policies | |
+| `@hana-id/web` | `createHana`, the EIP-1193 provider, the Stellar signer; `@hana-id/web/stellar-wallets-kit` for SWK | |
+| `@hana-id/react` | `HanaProvider`, `useHana`, `useWallet` | `react` `^18 \|\| ^19` (18.3.1, 19.3.1) |
+| `@hana-id/sodax` | Optional Sodax wallet-provider adapters | `@sodax/types` `^2.1.0` (2.1.0, types only) |
+
+They are ESM with TypeScript declarations and source maps. Use a bundler (Vite, webpack, esbuild, Next.js) or
+TypeScript `moduleResolution` `bundler`, `node16` or `nodenext`. The `@hana-id/core/signers/stellar` and
+`/decode` declarations reference Node's `Buffer` through `@stellar/stellar-base`: if you import those, add
+`@types/node` or keep `skipLibCheck`. Each package carries a README with these steps. Each release is checked by
+installing the tarballs into a fresh project outside Hana's repository, type-checking and importing them there.
+
+**Environments are built in.** `@hana-id/web` contains the configuration of every Hana deployment it was released
+for (Hana origins, NEAR accounts, RPC, pinned MPC key; all public values), and you pick one by name with
+`createHana({ environment })`. `HANA_ENVIRONMENTS` lists the names. A release ships exactly the deployed envs; this
+pilot ships `sandbox-dev` (NEAR testnet). A new environment means a new release.
+
+### Testnet quick start (Sodax)
+
+1. Ask Hana for a **test app** on `sandbox-dev`, with the **shared Google client** (nothing to set up in Google
+   Cloud), your app's name, and its **allowed origins**: each exact origin your app runs on (`https://app.example.com`,
+   staging, previews) plus `http://localhost:<port>` for development. You get a publishable key `pk_test_…`.
+2. Install the tarballs above (web, core, react if you use React, sodax and `@sodax/types@2.1.0`).
+3. Allow `https://hana-id-vault-sandbox-dev.tingtc.workers.dev` in your CSP `frame-src`, and your RPCs in
+   `connect-src` ([section 5](#5-your-page-origins-csp-popups)).
+4. Create the client with `environment: 'sandbox-dev'` and **test networks only**: a test app's vault refuses
+   anything a mainnet would accept (D39, [section 12](#12-test-and-live-keys)), so use the Stellar testnet and EVM
+   testnets such as Base Sepolia (84532) or Sonic testnet (14601):
+
+   ```ts
+   const hana = createHana({
+     publishableKey: 'pk_test_…',
+     environment: 'sandbox-dev',
+     evm: { chains: [{ id: 84532, rpcUrl: 'https://sepolia.base.org' }], defaultChainId: 84532 },
+     stellar: { networkPassphrase: 'Test SDF Network ; September 2015' },
+   });
+   const stellarProvider = createSodaxStellarProvider(hana, {
+     networkPassphrase: 'Test SDF Network ; September 2015',
+     horizonUrl: 'https://horizon-testnet.stellar.org',
+     sorobanRpcUrl: 'https://soroban-testnet.stellar.org',
+   });
+   const evmProvider = createSodaxEvmProvider(hana, { chainId: 84532, rpcUrl: 'https://sepolia.base.org' });
+   ```
+
+5. Call `hana.login()` from a click and sign. Sodax's own mainnet swaps through Hana wait for live keys
+   ([section 11](#11-sodax-adapter)).
 
 ## 3. Create the client
 

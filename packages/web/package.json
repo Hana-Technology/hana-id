@@ -1,14 +1,45 @@
 {
   "name": "@hana-id/web",
-  "version": "0.0.0",
-  "description": "Hana ID browser SDK (createHana partner client) and the Hana pages (vault, login, callback, approval, export), built per env.",
+  "version": "0.1.0",
+  "description": "Hana ID browser SDK: the createHana partner client (EIP-1193 provider, Stellar signer, Stellar Wallets Kit module). In the workspace it also builds the Hana pages (vault, login, callback, approval, export) per env; those are never packed.",
   "private": true,
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hana-Technology/hana-id.git",
+    "directory": "packages/web"
+  },
   "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
   "exports": {
     ".": "./src/index.ts",
     "./stellar-wallets-kit": "./src/stellar-wallets-kit.ts"
   },
+  "files": [
+    "dist/lib",
+    "README.md"
+  ],
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/lib/index.d.ts",
+        "import": "./dist/lib/index.js"
+      },
+      "./stellar-wallets-kit": {
+        "types": "./dist/lib/stellar-wallets-kit.d.ts",
+        "import": "./dist/lib/stellar-wallets-kit.js"
+      },
+      "./package.json": "./package.json"
+    },
+    "main": "./dist/lib/index.js",
+    "types": "./dist/lib/index.d.ts"
+  },
   "scripts": {
+    "build:lib": "tsx scripts/gen-envs.ts --package && tsx ../../scripts/sdk-build.ts",
+    "prepack": "pnpm run build:lib",
     "gen:envs": "tsx scripts/gen-envs.ts",
     "build": "tsx scripts/gen-envs.ts && tsx scripts/build-vault.ts && tsx scripts/build-auth-pages.ts",
     "build:auth": "tsx scripts/build-auth-pages.ts",
@@ -17,7 +48,7 @@
     "typecheck": "tsx scripts/gen-envs.ts && tsc --noEmit && tsc --noEmit -p tsconfig.node.json"
   },
   "dependencies": {
-    "@hana-id/core": "workspace:*"
+    "@hana-id/core": "workspace:^"
   },
   "devDependencies": {
     "@hana-id/env": "workspace:*",

@@ -631,6 +631,31 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
 - Decision: no response from the vault origin, the auth origin or the API sets a cookie; the page Workers drop one a
   binding returns.
 
+### D71. SDK packages ship as built ESM with their envs built in
+- Date 2026-10-29 · Status: in force (`packages/*/tsconfig.build.json`, `scripts/lib/sdk-build.ts`,
+  `scripts/pack-check.ts`; CI job `packages`) · Source: Sodax needs to install the SDK outside this monorepo
+- Decision: `@hana-id/core`, `web`, `react` and `sodax` build with `tsc` (no bundler, no new dependency) to ESM,
+  `.d.ts` and source maps with inlined sources (web into `dist/lib`, since `dist/pages` is the page build). The
+  workspace keeps `exports` at `src/`; `pnpm pack` swaps in `publishConfig.exports` and rewrites `workspace:^` to
+  `^<version>`. `@hana-id/web` carries exactly the `envs/*.json` that set both Hana origins (today `sandbox-dev`);
+  its package build fails on an UNSET value, on a local (loopback) env, or on no env. Partners pick one with
+  `createHana({ environment })`. Every change is checked by packing, installing with npm into a project outside the
+  workspace, type-checking and importing in Node.
+- Rejected: tsup or another bundler (not in the lockfile, and per-file output keeps `sideEffects: false` tree-shaking
+  and readable stack traces); a runtime env config (would let a page point the client at another vault).
+
+### D72. One lockstep SDK version, set by script; no Changesets
+- Date 2026-10-29 · Status: in force (`scripts/sdk-version.ts`, `.github/workflows/publish-sdk.yml`) · Source: SDK
+  packaging (D71)
+- Decision: the four packages share one version (`0.1.0` first), set with `pnpm --filter @hana-id/scripts
+  sdk-version <v>`, which also updates the `VERSION` constants (web's goes to the vault as `sdk`). Publishing is a
+  manual-dispatch workflow from `main` with npm provenance, inert until an `NPM_TOKEN` secret exists and the packages
+  drop `"private": true`. Not decided: the registry (public npm under an `@hana-id` org, or private) and the licence
+  (`UNLICENSED` until then).
+- Rejected for now: Changesets. With four packages always released together and one consumer, per-package bump
+  files add a dependency tree and a review step without information, and it wouldn't update the `VERSION` constants.
+  Revisit if the packages start versioning independently.
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -644,6 +669,7 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
 | Full Google token with email on chain | `scope=openid` and the claim allow-list (D25) | same |
 | Login page computes the shared-mode nonce (A.2) | The vault computes it; the login page only checks and relays it (D47) | `docs/batch-b-spec.md` "Amends" |
 | Contract upgradeable with no lock (batch A, PoC) | Still so on testnet; upgrade governance before mainnet (D2, D33) | `docs/batch-a-spec.md` |
+| Partners build the SDK from this repository and compile its TypeScript sources | Built tarballs (`pnpm pack`), installed with npm; no registry yet (D71, D72) | `docs/integration.md` "Install" |
 | Sodax Stellar `signAndSendTransaction(p)` is `sendTransaction(signTransaction(p.data))` | It signs as `p.from`: `sendTransaction(signTransaction(p.data, {address: p.from}))`, so a raw transaction built for another account (a muxed `M…` address included) is 4100 before any popup. Sodax builds every raw transaction for `getWalletAddress()`'s `G…` address. Confirmed (D67) | `docs/batch-b-spec.md` "Sodax adapter"; `packages/sodax/src/stellar.ts` |
 
 ## Proposed, not yet confirmed

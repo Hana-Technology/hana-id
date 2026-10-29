@@ -1004,6 +1004,17 @@ answered question there points here.
   (about 1–1.7 s for `GET /v1/app`, 0.36 s when it enters in SIN). Fix by routing: a custom domain on a Hana zone,
   tested on the free and a paid plan.
 
+### D98. Hana Home: the spec's open questions answered
+- Date 2026-10-29 · Status: confirmed by the user, not built · Source: `docs/hana-home-spec.md` "Confirmed by the
+  user"
+- User decisions: Enterprise branded clients kept alive ≥ 2 years after a partner leaves, with a contract right to
+  enable shared login at exit (Q3); no opt-out from Home access, Enterprise may choose a quieter listing (Q8); Home
+  derives billed to an active partner as their own statement line, Hana pays after exit (Q12).
+- Defaults approved: directory only; partner-held clients best effort; `disable_shared_login` delayed (contract
+  change); keep a shared client in force; one login opens both chains' export for ≤ 5 min; no re-auth to view;
+  "Sign out this device"; coarse device labels; the proposed limits; consent recording fails closed; Home signs in
+  with the first shared client; `/home` on `authOrigin`; legal review before mainnet.
+
 ## Superseded or amended
 
 | Was | Now | Source |

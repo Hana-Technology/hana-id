@@ -1,6 +1,6 @@
 # Hana Home spec: cross-app wallets, key export and consent revocation (pre-mainnet)
 
-**Status: DRAFT (2026-10-29), not reviewed by the user.** Implements `docs/decisions.md` D40 (Hana Home before
+**Status: DRAFT (2026-10-29); open questions answered by the user and defaults on 2026-10-29 (D98), see "Confirmed by the user".** Implements `docs/decisions.md` D40 (Hana Home before
 mainnet) and D45 (list and revoke auto-approve consents per device from any device), under D41 (export stays
 available, not featured) and D42 (Google client tiers). Every proposal and the [open questions](#open-questions) need
 confirmation before implementation. Nothing here is built.
@@ -8,6 +8,36 @@ confirmation before implementation. Nothing here is built.
 This file is the source of truth for the batch once approved. If code and this spec disagree, fix the code or raise
 the problem. Reference docs (`architecture.md`, `security.md`, `api.md`, `integration.md`, `operations.md`) are
 updated in the same branch as the code, not now.
+
+## Confirmed by the user (2026-10-29, D98)
+
+These override the proposals below where they differ. Q3, Q8 and Q12 were decided by the user; the rest are defaults
+the user approved.
+
+1. Discovery: the directory only (A); no new user index.
+2. Partner-held own clients: listed as "best effort"; D40's wording is corrected as this spec says.
+3. **Enterprise (user):** Hana keeps a Hana-held branded Google project and client alive for **at least 2 years** after
+   the partner leaves, and the Enterprise contract lets Hana **enable shared login on the partner's scope at exit**,
+   so Home stays reachable through Hana's own client even if the branded one is suspended.
+4. `disable_shared_login`: **delayed by `change_delay_ms`** (a contract change), so a partner can't cut Home's route
+   and shut down at once (D41's exit guarantee).
+5. Never remove the last shared Google client before its replacement is in force.
+6. One login per app opens both chains' export, PRK held ≤ 5 min.
+7. No forced Google re-auth (`max_age=0`) just to view addresses; export keeps today's fresh-login rule.
+8. **Directory (user):** every app with at least one login, suspended and deleted included; **no opt-out from
+   access**. Enterprise partners may choose a **quieter listing** (shown after the user searches for the app or opens
+   the partner's link), never removal. Test apps only in dev envs.
+9. "Sign out this device" (share revoke) is added.
+10. A coarse device label ("Chrome on macOS") is stored on the share and deleted with it.
+11. Budget and limits as proposed (500 Home derives a day; per user 10/hour, 20/day; per path 3/hour; one Home relayer
+    key with 2 NEAR).
+12. **Billing (user):** while an app is active, its Home derives appear on its org's statement as their own line
+    ("Hana Home logins"); after the partner leaves, Hana pays.
+13. Fail closed: auto-approve can't be turned on while the API can't record the consent.
+14. Identity client: the first shared Google client (as proposed), not a dedicated client, because an unregistered
+    dedicated client could be registered by a scope owner as its own.
+15. `/home` on `authOrigin`.
+16. Legal review of Home's privacy notice before mainnet.
 
 ## Goal
 
@@ -416,6 +446,8 @@ phrase (D40); `key_index` rotation and `account > 0` (D60, D61: Home shows accou
 (Q9).
 
 ## Open questions
+
+All answered on 2026-10-29: see "Confirmed by the user" above (D98).
 
 1. **Discovery:** launch with the directory only (A, proposed: no new user data), or add a server index of
    `HMAC(sub) → scopes` (B) so Home can show "your apps"? B holds what the chain already shows publicly, but in one

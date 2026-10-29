@@ -54,9 +54,11 @@ describe('createHana', () => {
   });
 
   it('the package root exports the client API', () => {
-    for (const name of ['createHana', 'HanaClient', 'HanaError', 'ProviderRpcError', 'HanaEthereumProvider', 'HanaStellarSigner', 'partnerPageIssues', 'VERSION']) {
+    for (const name of ['createHana', 'HanaError', 'ProviderRpcError', 'HanaEthereumProvider', 'HanaStellarSigner', 'partnerPageIssues', 'VERSION']) {
       expect(web).toHaveProperty(name);
     }
+    // The client's constructor (which takes Hana origins) is not public: createHana is the only way in (PART-5).
+    expect(web).not.toHaveProperty('HanaClient');
   });
 });
 

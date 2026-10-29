@@ -6,7 +6,6 @@ import * as addresses from '../src/addresses.ts';
 import * as hex from '../src/decode/hex.ts';
 import * as core from '../src/index.ts';
 import { VERSION } from '../src/index.ts';
-import * as eip712 from '../src/signers/eip712.ts';
 import * as typedData from '../src/typed-data.ts';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
@@ -80,12 +79,9 @@ describe('@hana-id/core', () => {
   });
 
   it('resolves the names two modules define to the documented one', () => {
-    // EIP-712: the single parser's hasher; the signer's structural helpers.
+    // EIP-712: the single parser's hasher only; the looser second hasher's helpers are not exported (CORE-5).
     expect(core.hashTypedData).toBe(typedData.hashTypedData);
-    expect(core.encodeType).toBe(eip712.encodeType);
-    expect(core.typeHash).toBe(eip712.typeHash);
-    expect(core.hashStruct).toBe(eip712.hashStruct);
-    expect(core.domainSeparator).toBe(eip712.domainSeparator);
+    for (const name of ['encodeType', 'typeHash', 'hashStruct', 'domainSeparator']) expect(name in core, name).toBe(false);
     // EVM addresses: addresses.ts's byte forms; the decoders' hex helpers.
     expect(core.parseEvmAddress).toBe(addresses.parseEvmAddress);
     expect(core.isEvmAddress).toBe(addresses.isEvmAddress);

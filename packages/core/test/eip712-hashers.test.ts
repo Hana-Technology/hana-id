@@ -1,8 +1,9 @@
-// The vault signs what normalizeTypedData returns with signTypedData, which hashes with signers/eip712.ts; the root
-// entry's hashTypedData is typed-data.ts's. Both must give the same digest for every normalized input, and the
-// signature must recover to the signer's address over that digest.
+// The vault signs what normalizeTypedData returns; signTypedData hashes it with typed-data.ts's hashTypedData, the
+// single parser and hasher (sweep CORE-5). The second, independent hasher (test/eip712-reference.ts, test-only, checked
+// against viem in signers.test.ts) must give the same digest for every normalized input, and the signature must
+// recover to the signer's address over that digest.
 import { describe, expect, it } from 'vitest';
-import { hashTypedData as signerHash } from '../src/signers/eip712.ts';
+import { hashTypedData as signerHash } from './eip712-reference.ts';
 import { evmSignerAddress, recoverEvmAddress, signTypedData } from '../src/signers/evm.ts';
 import { hashTypedData, normalizeTypedData } from '../src/typed-data.ts';
 

@@ -1126,6 +1126,18 @@ can't collide with the entries the parallel API, contract and watchdog fixes add
 - Not done: the guard's marks still use the page clock (`Date.now`), not `performance.now()`; a device clock change
   during the 1 s or 500 ms waits can only shorten them by that change, and needs local access.
 
+### D114. Public entries trimmed: one EIP-712 hasher, no public HanaClient constructor
+- Date 2026-10-29 · Status: in force on branch `fix/sweep-web` (`packages/core/src/index.ts`,
+  `src/signers/evm.ts` `signTypedData`; `packages/web/src/index.ts`) · Source: sweep findings CORE-5, PART-5 (Info)
+- Decision: `@hana-id/core` signs typed data only with `typed-data.ts`'s `hashTypedData` over
+  `normalizeTypedData`'s output (`signTypedData(d, NormalizedTypedData)`), the same parser the popup renders from.
+  The second, looser hasher (`signers/eip712.ts`) and its root exports (`encodeType`, `typeHash`, `hashStruct`,
+  `domainSeparator`, `TypedDataForHashing`) are gone from the package; it lives on as a test-only reference
+  (`packages/core/test/eip712-reference.ts`) that the tests check against `typed-data.ts` and viem. `@hana-id/web`
+  exports `HanaClient` as a type only: its constructor takes Hana origins, so `createHana`, which resolves them from
+  the build's pinned envs, is the only way to build a client.
+- Effect on partners: none in the documented API (`createHana` returns the same `HanaClient`).
+
 ## Superseded or amended
 
 | Was | Now | Source |

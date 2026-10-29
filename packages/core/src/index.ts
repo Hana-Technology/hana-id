@@ -31,11 +31,10 @@ export * from './typed-data.ts';
 export * from './verified-contracts.ts';
 export * from './decode/errors.ts';
 export * from './decode/json.ts';
+// EIP-712: typed-data.ts is the single parser and hasher. signTypedData signs its hashTypedData over normalizeTypedData's
+// output; the looser second hasher the root used to export is gone (sweep CORE-5, D114), kept only as a test
+// reference (test/eip712-reference.ts, checked against viem).
 // Names two modules both define are exported once, explicitly (an ambiguous `export *` name is silently dropped):
-// - EIP-712: typed-data.ts is the single parser, so its TypedDataField and hashTypedData (over NormalizedTypedData) are
-//   the root's. signTypedData hashes with signers/eip712.ts, which accepts NormalizedTypedData too
-//   (test/eip712-hashers.test.ts checks the two hashers agree); its structural helpers are exported here.
 // - EVM addresses: addresses.ts's parseEvmAddress (→ bytes) and isEvmAddress are the root's; decode/hex.ts's string
 //   forms stay at `@hana-id/core/decode`.
-export { type TypedDataForHashing, domainSeparator, encodeType, hashStruct, typeHash } from './signers/eip712.ts';
 export { bytesToBigInt, checksumAddress, parseHex0x, toHex0x } from './decode/hex.ts';

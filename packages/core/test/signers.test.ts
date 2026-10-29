@@ -18,7 +18,8 @@ import { hashTypedData as viemHashTypedData, keccak256, recoverMessageAddress, s
 import { privateKeyToAccount, sign as viemSign } from 'viem/accounts';
 import { describe, expect, it } from 'vitest';
 import { base64Decode, base64Encode, fromHex, toHex, utf8 } from '../src/bytes.ts';
-import { encodeType, hashTypedData } from '../src/signers/eip712.ts';
+import { encodeType, hashTypedData } from './eip712-reference.ts';
+import { type NormalizedTypedData, normalizeTypedData } from '../src/typed-data.ts';
 import {
   eip191Hash,
   evmSignerAddress,
@@ -188,6 +189,9 @@ describe('Stellar message (SEP-53) and raw', () => {
 // ---- EVM ----
 
 const D = fromHex('4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318');
+/** Typed data as the vault signs it: normalizeTypedData over the JSON a dapp sends (bigints as decimal strings). */
+const normalized = (td: unknown): NormalizedTypedData =>
+  normalizeTypedData(JSON.stringify(td, (_, v: unknown) => (typeof v === 'bigint' ? v.toString() : v)));
 const ACCOUNT = privateKeyToAccount(`0x${toHex(D)}`);
 const TO = '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23';
 
@@ -348,7 +352,7 @@ describe('EIP-712', () => {
   });
 
   it('signs like viem signTypedData', async () => {
-    expect(signTypedData(D, mail)).toBe(await ACCOUNT.signTypedData(mail));
+    expect(signTypedData(D, normalized(mail))).toBe(await ACCOUNT.signTypedData(mail));
   });
 
   it('a permit with uint, bytes, bool, int, arrays and every domain field matches viem', async () => {
@@ -394,7 +398,7 @@ describe('EIP-712', () => {
       },
     } as const;
     expect(`0x${toHex(hashTypedData(td))}`).toBe(viemHashTypedData(td as never));
-    expect(signTypedData(D, td)).toBe(await ACCOUNT.signTypedData(td as never));
+    expect(signTypedData(D, normalized(td))).toBe(await ACCOUNT.signTypedData(td as never));
     // Decimal and hex strings for integers hash the same as bigints.
     expect(toHex(hashTypedData({ ...td, message: { ...td.message, value: (10n ** 24n).toString(), nonce: '0x0', delta: '-5' } }))).toBe(toHex(hashTypedData(td)));
   });
@@ -402,7 +406,7 @@ describe('EIP-712', () => {
   it('refuses types without EIP712Domain instead of inferring it (implementations infer it differently)', () => {
     const { EIP712Domain: _, ...noDomain } = mail.types;
     expect(() => hashTypedData({ ...mail, types: noDomain })).toThrow(/must declare EIP712Domain/u);
-    expect(() => signTypedData(D, { ...mail, types: noDomain })).toThrow(/must declare EIP712Domain/u);
+    expect(() => signTypedData(D, normalized({ ...mail, types: noDomain }))).toThrow(/must declare EIP712Domain/u);
     // The case that diverged: a string chainId. viem drops it from an inferred domain, this module kept it; with the
     // domain declared, both hash it as the uint256 1.
     const stringChain = { ...mail, domain: { name: 'X', chainId: '1' } };

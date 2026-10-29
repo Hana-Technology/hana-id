@@ -427,8 +427,11 @@ Code: `packages/core/src/policy/` (validator, matcher, `policyId`, usage); the v
   `packages/sodax/test/verified-contracts.test.ts` checks the Sodax entries against the pinned `@sodax/types`).
   Everything is rendered with `textContent` (`dom.ts`). A verified mark says which contract it is, not that the listed
   functions or limits are safe.
-- **Residual risk (accepted):** within a policy, partner-page XSS can submit allowed calls at bad prices to the user's
-  own address; token amounts other than native value aren't capped (D46); names of contracts not on the verified list
+- **Residual risk (accepted):** signatures the partner page received under a consent stay usable after it ends or is
+  stopped (a transaction until its time bounds, a Soroban authorization until its `signatureExpirationLedger`, typed
+  data until its own deadline); the consent screen says so (D116, sweep CORE-3), and a ledger cap on auto-approved
+  authorizations waits for a trusted current-ledger source. Within a policy, partner-page XSS can submit allowed
+  calls at bad prices to the user's own address; token amounts other than native value aren't capped (D46); names of contracts not on the verified list
   are partner-supplied, labelled "named by {app}" (D44), and a look-alike outside the skeleton's folding (a
   misspelling, another script's look-alikes) isn't flagged; Sodax calls carry intents in opaque bytes and always get
   the popup until a `sodax-intent-v1` decoder exists (D24). Under `'any'`, a value-moving or execute-style function

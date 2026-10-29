@@ -1150,6 +1150,21 @@ can't collide with the entries the parallel API, contract and watchdog fixes add
 - Why: over plaintext http an on-path attacker fills fees and nonces, answers every read (balances, quotes) and sees
   every broadcast; for real funds that is never acceptable, while test stacks often run a node on another machine.
 
+### D116. Auto-approved signatures outlive the consent: said on the consent screen; the ledger cap waits for a trusted ledger source
+- Date 2026-10-29 · Status: partly in force on branch `fix/sweep-web` (`packages/web/src/auth/render-consent.ts`
+  `lingeringSignaturesNote`); the cap is proposed, not built · Source: sweep finding CORE-3 (Low)
+- In force: every consent screen says that stopping auto-approving doesn't cancel signatures the app already has (a
+  transaction until it expires, a Stellar authorization until the ledger it names, typed data until its own
+  deadline).
+- Proposed default for the cap: refuse to auto-approve a Soroban authorization (`stellar_signAuthEntry`, and address
+  credentials the user signs) whose `signatureExpirationLedger` is more than 720 ledgers (about 1 h at 5 s) past the
+  current ledger, and send it to the popup instead. Not built, because the vault has no trusted current ledger: it
+  reaches no Stellar node (its CSP allows the API, NEAR RPC and Google only), the partner page's Soroban RPC is the
+  party this guards against, and an estimate from the clock drifts (close times vary) and breaks on testnet resets.
+  It needs the API (or a pinned Soroban RPC in the vault's CSP, with a manifest field) to give the vault the latest
+  ledger per network: a change in `apps/api` and `packages/env`, for the API side of the sweep fixes. EIP-712
+  deadlines have no standard field; a policy-declared deadline field with a maximum horizon is the follow-up there.
+
 ## Superseded or amended
 
 | Was | Now | Source |

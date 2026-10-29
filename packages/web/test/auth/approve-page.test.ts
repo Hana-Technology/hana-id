@@ -28,7 +28,7 @@ import {
   startApprovePage,
 } from '../../src/auth/approve-page.ts';
 import { NO_NETWORK_NOTE } from '../../src/auth/render-approval.ts';
-import { formatEndTime } from '../../src/auth/render-consent.ts';
+import { formatEndTime, lingeringSignaturesNote } from '../../src/auth/render-consent.ts';
 import { policyJson } from '../../../core/test/policy-fixtures.ts';
 import { PASSPHRASE, USER, paymentOp, txBytes } from '../../../core/test/stellar-fixtures.ts';
 import { ENV, EVIL, FakeWindow, PARTNER, type RemoteWindow, asWindow, pageText, remoteWindow, resetDom } from './helpers.ts';
@@ -764,6 +764,12 @@ describe('/approve consent screen', () => {
     for (const c of POLICY.ok ? POLICY.policy.stellar?.contracts ?? [] : []) expect(text).toContain(shortAddress(c.id));
     expect(text).toContain('Example pool · named by Partner App');
     expect(text).toContain('Some functions below can send to any address');
+  });
+
+  it('says that stopping can’t take back signatures the app already has (CORE-3, D116)', () => {
+    send(consentRequest());
+    expect(document.querySelector('p.note.lingering')?.textContent).toBe(lingeringSignaturesNote('Partner App'));
+    expect(pageText()).toContain('a Stellar authorization until the ledger it names');
   });
 
   it('shows the actual end time the vault sent, not only the policy’s maximum', () => {

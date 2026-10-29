@@ -3,8 +3,10 @@
 // Partner-app admin for one environment. App rows live in the env's D1 database (wrangler d1 execute, local by
 // default, --remote for the deployed database). app:settings sets the per-app vault settings (lib/admin-settings.ts).
 // scope:register calls admin_register_scope (with allow_shared from
-// --allow-shared) on the contract with the owner's full-access key from ~/.near-credentials/testnet/<owner>.json.
-// issuer-keys:lead-times reads the issuer key observations (lib/admin-lead-times.ts) for D33's issuer-key delay.
+// --allow-shared) through the manifest's owner (lib/owner-tx.ts: the owner's full-access key from
+// ~/.near-credentials/testnet/<owner>.json, or a council DAO proposal). owner:* and governance:status drive and read
+// the governance contract (lib/admin-owner.ts). issuer-keys:lead-times reads the issuer key observations
+// (lib/admin-lead-times.ts) for D33's issuer-key delay.
 import { loadEnv, type Manifest } from '@hana-id/env';
 import { assertCommandPositionals } from './lib/admin-args.ts';
 import {
@@ -25,6 +27,7 @@ import { LEAD_TIMES_SQL, type ObservationRow, leadTimesReport } from './lib/admi
 import { appSettings, defaultAppSettingsDeps, settingsAppArg } from './lib/admin-settings.ts';
 import { type Args, CliError, parseCli, run } from './lib/cli.ts';
 import { scopeRegister } from './lib/admin-scope.ts';
+import { governanceStatusCmd, ownerCallCmd, ownerProposalsCmd, ownerVoteCmd } from './lib/admin-owner.ts';
 import { tryView } from './lib/contract.ts';
 import { d1Execute } from './lib/d1.ts';
 import { NearRpc } from './lib/near.ts';
@@ -40,11 +43,19 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
   app:settings <app id | publishable key> [--persistence session|none] [--session-ttl <1h..23h50m>]
                [--idle-ttl <15m..session TTL>] [--raw-sign off|approval] [--google-web-client <client id>|default]
                [--auto-approve <policy.json>|off]   (no setting flags: show the settings)
-  scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […] [--yes]
+  scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […]
+                 [--member <council member>] [--approve-with <council member>] [--yes]
   issuer-keys:lead-times   per Google kid: first seen in the JWKS, first token, lead time, lifetime in the JWKS
+  owner:call <method> [--args '<json>'] [--gas <Tgas, default 100>] [--member <m>] [--approve-with <m>] [--yes]
+               an owner call on the contract through the manifest's owner: signed by the owner account, or a
+               council DAO proposal by --member; --approve-with (dev envs on testnet only) approves it with a
+               second member in the same command, so it executes; elsewhere it prints what members must sign
+  owner:vote <proposal id> --member <m> [--yes]    approve a council proposal (dev envs: key from .secrets)
+  owner:proposals [--limit 20] [--json]           the council's recent proposals, decoded
+  governance:status [--json]                       contract governance state, signer keys, council, findings
 
   --remote   act on the deployed D1 database (default: local, apps/api/.wrangler/state)
-  --yes      scope:register only: send the transaction (without it, only print it)
+  --yes      scope:register, owner:call, owner:vote: send the transaction (without it, only print it)
   --allow-shared  scope:register only: the app may log in through Hana's shared Google client; with it, --client is
                   optional (an app with no Google client of its own)
 
@@ -52,7 +63,21 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
   changeDelayMs in local*/sandbox* envs); --raw-sign off and --auto-approve off are immediate. Durations: 12h, 23h50m,
   15m, 3600000ms. --google-web-client must be one of the scope's Google clients on chain (default: the first one).`;
 
-const COMMANDS = ['app:create', 'app:origins:add', 'app:origins:remove', 'app:suspend', 'app:resume', 'app:list', 'app:settings', 'scope:register', 'issuer-keys:lead-times'] as const;
+const COMMANDS = [
+  'app:create',
+  'app:origins:add',
+  'app:origins:remove',
+  'app:suspend',
+  'app:resume',
+  'app:list',
+  'app:settings',
+  'scope:register',
+  'issuer-keys:lead-times',
+  'owner:call',
+  'owner:vote',
+  'owner:proposals',
+  'governance:status',
+] as const;
 type Command = (typeof COMMANDS)[number];
 
 interface AppRow {
@@ -78,15 +103,17 @@ function origins(args: Args): string[] {
   return [...new Set(list)];
 }
 
+const ownerDeps = (m: Manifest) => ({ rpc: new NearRpc(m.rpc), log: (line: string) => console.log(line) });
+
 async function scopeExists(m: Manifest, scopeId: string): Promise<boolean> {
   return (await tryView<unknown>(new NearRpc(m.rpc), m.signer, 'get_scope', { scope_id: scopeId })) !== null;
 }
 
 async function main(): Promise<void> {
   const args = parseCli(process.argv.slice(2), {
-    strings: ['name', 'scope', 'plan', 'app', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve'],
+    strings: ['name', 'scope', 'plan', 'app', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve', 'args', 'gas', 'member', 'approve-with', 'limit'],
     multiple: ['origin', 'client', 'owner-near', 'owner-google'],
-    booleans: ['remote', 'yes', 'allow-shared', 'help'],
+    booleans: ['remote', 'yes', 'allow-shared', 'json', 'help'],
   });
   if (args.flag('help')) return void console.log(USAGE);
   const [envName, command, ...rest] = args.positionals;
@@ -149,6 +176,18 @@ async function main(): Promise<void> {
       return;
     case 'issuer-keys:lead-times':
       for (const line of leadTimesReport(d1Execute<ObservationRow>(m, LEAD_TIMES_SQL, { remote }), Date.now(), where)) console.log(line);
+      return;
+    case 'owner:call':
+      await ownerCallCmd(m, rest[0]!, args, ownerDeps(m));
+      return;
+    case 'owner:vote':
+      await ownerVoteCmd(m, rest[0]!, args, ownerDeps(m));
+      return;
+    case 'owner:proposals':
+      await ownerProposalsCmd(m, args, ownerDeps(m));
+      return;
+    case 'governance:status':
+      await governanceStatusCmd(m, args, ownerDeps(m));
       return;
   }
 }

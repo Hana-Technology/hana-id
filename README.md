@@ -62,7 +62,8 @@ packages/web/            Partner client (createHana) and the Hana pages (vault, 
 packages/react/          React bindings (HanaProvider, useHana, useWallet)
 packages/sodax/          Optional Sodax wallet-provider adapters
 envs/                    One manifest per environment (sandbox-dev.json): every account name and endpoint
-scripts/                 Deploy, Google key sync, CKD key pinning, admin CLI (TypeScript, run with tsx)
+contracts/sputnik/       The pinned Sputnik DAO v2 code and the owner-council policy (2 of 3, D81)
+scripts/                 Deploy, owner council, Google key sync, CKD key pinning, admin CLI (TypeScript, run with tsx)
 legacy/                  Read-only reference: the earlier PoC client and relayer
 docs/                    Reference docs (current state) and batch specs (history): docs/README.md
 ```
@@ -92,7 +93,10 @@ cd contracts/hana-signer && cargo test
 | TS tests / types | `pnpm -r test` · `pnpm -r typecheck` |
 | API dev server | `pnpm --filter @hana-id/api dev` |
 | Deploy the contract | `pnpm --filter @hana-id/scripts run deploy-contract <env> [--yes]` |
-| Sync Google keys once | `pnpm --filter @hana-id/scripts run post-google-keys <env> [--dry-run]` |
+| Migrate / upgrade it (propose, then execute) | `pnpm --filter @hana-id/scripts run deploy-contract <env> --upgrade [--yes]` |
+| Create the dev owner council (Sputnik DAO) | `pnpm --filter @hana-id/scripts run council-setup <env> [--yes]` |
+| Owner call through the owner or the council | `pnpm --filter @hana-id/scripts run admin <env> owner:call <method> --args '<json>' [--approve-with <member>] [--yes]` |
+| Sync Google keys once | `pnpm --filter @hana-id/scripts run post-google-keys <env> [--dry-run] [--execute]` |
 | Pin the MPC CKD key | `pnpm --filter @hana-id/scripts run fetch-ckd-key <env> [--dry-run]` |
 | Admin (apps, scopes, app settings) | `pnpm --filter @hana-id/scripts run admin <env> <command> …` |
 | API Worker config | `pnpm --filter @hana-id/api run gen <env> [--d1-id <uuid>] [--dev-vars]` |
@@ -108,17 +112,26 @@ The `@hana-id/scripts` commands take the environment name (`envs/<env>.json`) fi
 
 ```
 deploy-contract <env> [--yes] [--relayer-keys 3] [--relayer-allowance 2]
-                      [--owner-relayer-keys 1] [--owner-relayer-allowance 0.5] [--updater-allowance 1]
+                      [--owner-relayer-keys 1] [--owner-relayer-allowance 0.5]
                       [--upgrade] [--wasm <file>] [--skip-build]
+                      [--transfer-owner] [--member <council member>] [--approve-with <council member>]
+deploy-contract <env> --creation-plan [--wasm <reproducible build>] [--updater-public-key <pk>] [--creation-public-key <pk>]
 ```
 
 Reads what is already on chain, prints a plan, and changes nothing without `--yes`. Re-running plans only what is
-missing, so it is safe to resume after a failure. Steps:
+missing, so it is safe to resume after a failure. Owner steps go through the manifest's owner (`ownerKind`): signed by
+the owner's keychain key, or proposed to the council DAO (`--member`; `--approve-with` on dev envs approves them in the
+same run). Steps:
 
 1. Build the wasm (`cargo near build non-reproducible-wasm`, or plain `cargo build --target wasm32-unknown-unknown`
    if cargo-near is missing).
-2. Deploy to `signer` and call `new(owner, mpc, ckd_domain_id, change_delay_ms)` in the same transaction.
-   (`--upgrade` redeploys code to an initialised contract without calling `new`.)
+2. Deploy to `signer` and call `new(owner, mpc, ckd_domain_id, change_delay_ms, issuer_key_delay_ms,
+   governance_delay_ms, watchdogs, updater_keys)` in the same transaction (only where `allowSignerFullAccessKey`
+   allows the signer a full-access key; other envs are created with the `--creation-plan` batch). On an initialised
+   contract `--upgrade` changes the code in place, same account, so no address changes: a v1 contract gets
+   `DeployContract` + `migrate_v1` in one transaction; a v2 contract gets `propose_upgrade(<code_hash>)` by the owner
+   and, on a re-run once `governance_delay_ms` has passed, `execute_upgrade` with the raw wasm (never a raw
+   `DeployContract`). Details and the sandbox-dev migration: `docs/operations.md` "Governance".
 3. Add two pools of function-call keys on `relayer`, both with receiver = `signer`, one transaction per pool:
    - **Session pool** (the API's `RELAYER_KEYS`, logins): `--relayer-keys` keys (default 3), limited to
      `create_session`, `create_session_and_derive`, `derive_key`, `revoke_session`, `prune_sessions`, allowance
@@ -130,8 +143,14 @@ missing, so it is safe to resume after a failure. Steps:
 
    The pools never share a key, so abuse of the public owner-actions endpoint can only drain the owner pool. It can
    never stop logins.
-4. Add the keys-updater function-call key on `signer` itself (receiver = `signer`, methods `set_issuer_key`,
-   `remove_issuer_key`, default allowance 1 NEAR), which lets the API cron rotate Google keys without the owner key.
+4. The keys-updater key (the API's `KEYS_UPDATER_KEY`, so the cron can propose Google keys without the owner): generated
+   into `.secrets/<env>/keys-updater.json` and installed on `signer` by the owner's `add_updater_key`. The contract
+   gives it exactly `set_issuer_key`, `propose_issuer_key_removal`, `execute_issuer_key_change`, receiver `signer`,
+   1 NEAR; nobody adds keys to the signer by hand any more. On the v1 → v2 migration the old updater key (with
+   `remove_issuer_key`) is deleted after the new one is in. Then `add_watchdog` for each `watchdogs` account that exists,
+   and `set_issuer_key_delay_ms` / `set_governance_delay_ms` if the contract's delays differ from the manifest.
+   `--transfer-owner` adds `propose_owner(<council DAO>)` and, once due, the DAO's `accept_owner` (then the script sets
+   `owner` / `ownerKind` in the manifest).
 5. `set_issuer("google", ["https://accounts.google.com", "accounts.google.com"])`, `set_sponsors([relayer])`,
    `set_console_audiences` if the manifest lists any, `set_shared_clients` with `sharedGoogleClientIds`, and
    `admin_register_scope` for the reserved `global` scope with `googleClientIds` plus the `consoleAudiences` and
@@ -161,15 +180,19 @@ stops instead of passing the key as in place if:
 - the key is for another receiver,
 - the key has a different method set, such as a batch A key that mixes session and owner methods,
 - the key has an **empty method list**, which NEAR treats as "any method",
-- the key has an **unlimited allowance**, or an allowance above the pool's `--…-allowance` flag (or
-  `--updater-allowance`). A lower allowance is fine, since NEAR lowers it as the key spends gas. If you deployed with
-  a larger allowance than the default, pass the same flag on every re-run.
+- the key has an **unlimited allowance**, or an allowance above the pool's `--…-allowance` flag (1 NEAR for an
+  updater key). A lower allowance is fine, since NEAR lowers it as the key spends gas. If you deployed with a larger
+  allowance than the default, pass the same flag on every re-run.
 
 It also stops on:
 - a key for `signer` on the relayer that is in neither pool file and has an empty method list, or methods of both
   pools (for example a batch A key left on chain after its file was moved aside),
-- any function-call key on the signer, other than the keys-updater key, that can call `set_issuer_key` or
-  `remove_issuer_key`. Such a key could install a forged Google key.
+- any function-call key on the signer that isn't in `get_governance().updater_keys` (the v1 updater key excepted: the
+  migration deletes it). Such a key could propose a forged Google key,
+- a full-access key on the signer in any env without `allowSignerFullAccessKey` (sandbox-dev only, D86): with it,
+  anyone holding it could replace the code at once,
+- a v1 contract without `--upgrade`, a missing council DAO or one with other code than the pin (for `--transfer-owner`
+  or a council owner), and `--approve-with` outside dev envs.
 
 Other stray keys are only listed as warnings, each with the command to delete it. The fix the plan prints for a
 blocked key: delete it on chain (`near account delete-keys …`, printed per key) and re-run, which re-adds the key from
@@ -191,15 +214,43 @@ function-call keys for the old signer. NEAR can't add the same key twice, so the
   - `owner-relayer-keys.json`: same format (owner pool), the API's `OWNER_RELAYER_KEYS` secret.
   - `keys-updater.json`: `{"account_id","public_key","private_key"}`, whose `private_key` is the API's
     `KEYS_UPDATER_KEY` secret.
+  - `council/<member>.json` (dev envs only, `council-setup`): the full-access keys of the throwaway council member
+    accounts, same format. Other envs' members keep their own keys (Ledgers on mainnet); the scripts never read a
+    council key from disk outside testnet.
 
-  Each key is saved before it is added on chain, so a key that lands on chain is never lost.
+  Each key is saved before it is added on chain (or before its account is created), so a key that lands on chain is
+  never lost.
+
+### council-setup
+
+```
+council-setup <env> [--yes] [--funder <account>] [--member-balance 2]
+```
+
+Dev envs (`local*`, `sandbox*`) on testnet only. Creates the three `council.members` accounts (keys into
+`.secrets/<env>/council/`) and the `council.dao` Sputnik DAO v2 from the `council.factory`, with
+`contracts/sputnik/policy.json`: 2 of 3 for every proposal kind, only council members propose (D81). It first checks
+that the factory deploys the pinned DAO code (`contracts/sputnik/pin.json`). A re-run checks what exists and stops on
+a DAO with other code or another policy. `docs/operations.md` "Owner council".
+
+### admin owner:* and governance:status
+
+`admin <env> owner:call <method> --args '<json>'` sends one owner-only method through the manifest's owner: the owner's
+keychain key signs it, or (`ownerKind: "sputnik"`) it becomes a DAO `FunctionCall` proposal by `--member`. On dev envs
+`--approve-with <second member>` approves it with both members in the same command, so it executes; elsewhere the
+command only proposes and prints the vote each member signs. `owner:vote <id> --member <m>` approves one proposal,
+`owner:proposals` lists them decoded, `governance:status [--json]` prints the contract's governance state, the
+signer's keys against the updater keys, the council's open proposals and the findings (the source batch C's admin
+portal reads; `docs/operations.md` "Governance status for the admin portal").
 
 ### post-google-keys
 
-Fetches Google's JWKS, compares it with `get_issuer("google")`, and calls `set_issuer_key` for new kids, then
-`remove_issuer_key` for retired ones. This is the same diff the API's hourly cron runs. It signs with the keys-updater
-key from `.secrets/<env>/keys-updater.json` (`--as-owner` uses the owner's keychain key instead). It refuses to sync
-if Google returns no usable RS256 key.
+Fetches Google's JWKS and compares it with `get_issuer("google")` and `get_key_changes()`. On the governance contract
+it proposes new kids (`set_issuer_key`) and the removal of retired ones (`propose_issuer_key_removal`, never the last
+key), and with `--execute` runs `execute_issuer_key_change` for due changes that match Google's JWKS. Keys go live
+when the watchdog confirms them or after `issuer_key_delay_ms`. On a v1 contract it sets and removes directly. It
+signs with the keys-updater key from `.secrets/<env>/keys-updater.json` (there is no owner path: an owner post waits
+the same delay, D86) and refuses to sync if Google returns no usable RS256 key.
 
 ### fetch-ckd-key
 
@@ -217,7 +268,12 @@ admin <env> app:suspend|app:resume --app <app id | pk_test_…> [--remote]
 admin <env> app:list [--remote]
 admin <env> app:settings <app id | pk_test_…> [--persistence session|none] [--session-ttl 12h] [--idle-ttl 2h]
              [--raw-sign off|approval] [--google-web-client <client id>|default] [--auto-approve <policy.json>|off] [--remote]
-admin <env> scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […] [--yes]
+admin <env> scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […]
+             [--member <council member>] [--approve-with <council member>] [--yes]
+admin <env> owner:call <method> [--args '<json>'] [--gas <Tgas>] [--member <m>] [--approve-with <m>] [--yes]
+admin <env> owner:vote <proposal id> --member <m> [--yes]
+admin <env> owner:proposals [--limit 20] [--json]
+admin <env> governance:status [--json]
 ```
 
 - `app:*` commands write the env's D1 database with `wrangler d1 execute`, run from `apps/api`. They use the local
@@ -238,9 +294,11 @@ admin <env> scope:register [--client <google client id> …] [--allow-shared] (-
   delay. `--raw-sign off` and `--auto-approve off` are immediate. Every change is printed with its time. A relative
   `--auto-approve` path is relative to where you ran `pnpm`, and the write applies only if nobody changed the app's
   settings since the command read them (else it fails and writes nothing). `docs/operations.md` has the details.
-- `scope:register` calls `admin_register_scope(owners, clients, null, allow_shared)` with the owner's keychain key.
+- `scope:register` calls `admin_register_scope(owners, clients, null, allow_shared)` through the owner: the owner's
+  keychain key, or a council proposal (`--member`, `--approve-with` on dev envs) once the DAO owns the contract.
   Without `--yes` it prints the call and stops. It works only while `public_registration` is false, and the contract
-  assigns the id (`s1`, `s2`, …), which the command prints. `--allow-shared` lets the app log in through Hana's
+  assigns the id (`s1`, `s2`, …), which the command prints (through the council: read it from `get_scope` or the
+  `scope_registered` event). `--allow-shared` lets the app log in through Hana's
   shared Google client. With it, `--client` is optional, so a partner without its own Google client needs none.
   Without it, at least one `--client` is required. A client ID from `sharedGoogleClientIds` is refused as `--client`.
 
@@ -272,7 +330,8 @@ throwaway names. The signer account is part of every user's derived key, so chan
 5. **Deploy**: `pnpm --filter @hana-id/scripts run deploy-contract <env>`, read the plan, then re-run with `--yes`.
    Shared clients become effective `changeDelayMs` after this (60 s in `sandbox-dev`). Re-run without `--yes` to see
    their status.
-6. **Post Google's keys**: `pnpm --filter @hana-id/scripts run post-google-keys <env>`.
+6. **Post Google's keys**: `pnpm --filter @hana-id/scripts run post-google-keys <env>` (proposes them; they go live
+   when a watchdog confirms them or after `issuerKeyDelayMs`: re-run with `--execute`).
 7. **API**:
    ```sh
    pnpm --dir apps/api exec wrangler d1 create <cloudflare.d1Name>            # once; deployed envs only: prints the database id
@@ -325,6 +384,10 @@ throwaway names. The signer account is part of every user's derived key, so chan
   `deploy-contract` checks this on every run. A leaked relayer key can burn gas, but it cannot derive anyone's key,
   because every session needs a Google token committing to the user's own session key and scope. Session and owner
   keys are separate pools, so draining the owner pool can't stop logins.
+- On the governance contract, Google keys and code change only after public delays (`issuer_key_delay_ms`,
+  `governance_delay_ms`), the owner is a 2-of-3 Sputnik DAO council, and outside sandbox-dev the signer has no
+  full-access key: `deploy-contract` blocks on one, and on any signer key the contract didn't install
+  (`docs/governance-spec.md`, `docs/operations.md` "Governance").
 - Hana cannot change a scope's client IDs or owners after registration. On chain it can block derivation only for a
   shared-only scope, by removing the shared clients (`docs/decisions.md` D11, D12). App suspension happens only in D1,
   through the API.

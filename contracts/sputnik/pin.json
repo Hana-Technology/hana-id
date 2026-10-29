@@ -6,5 +6,6 @@
   "url": "https://raw.githubusercontent.com/near-daos/sputnik-dao-contract/7764926cfd3c47f62b5fcde231c251f3c3892887/sputnikdao2/res/sputnikdao2.wasm",
   "version": [3, 31],
   "sha256": "880bae9a58c99ec1efe8b10cf834b3f0c0ebc7a05d71206f3c1202c4280952da",
+  "bytes": 539647,
   "code_hash": "AA4nA45vauiac3jdVwJTzSdUP3oj2r1fDaPAb2mHdgcH"
 }

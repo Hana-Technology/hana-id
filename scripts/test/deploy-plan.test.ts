@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { loadEnv } from '@hana-id/env';
 import { OWNER_RELAYER_METHODS, SESSION_RELAYER_METHODS, sharedClientsOf } from '../lib/contract.ts';
-import { buildDeployPlan, checkFunctionKey, type DeployObserved, type DeployOptions, type DeployStep, describeStep } from '../lib/deploy-plan.ts';
+import { type GovernanceView, UPDATER_METHODS } from '../lib/contract.ts';
+import { buildDeployPlan, checkFunctionKey, creationPlan, type DeployObserved, type DeployOptions, type DeployStep, describeStep, CLOCK_MARGIN_MS, signerFullAccessAllowed } from '../lib/deploy-plan.ts';
 import { type AccessKeyListEntry, EMPTY_CODE_HASH } from '../lib/near.ts';
 import { POOL_METHODS as API_POOL_METHODS } from '../../apps/api/src/relayer-config.ts';
 
@@ -19,7 +20,12 @@ const NEAR = 10n ** 24n;
 /** Batch B allowlist state 1 (docs/batch-b-spec.md, "Relayer allowlists"). */
 const SESSION = ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions'];
 const OWNER = ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change', 'register_scope', 'apply_pending_config'];
-const UPDATER = ['set_issuer_key', 'remove_issuer_key'];
+/** The governance contract's updater key methods (its UPDATER_METHODS) and the v1 key's. */
+const UPDATER = ['set_issuer_key', 'propose_issuer_key_removal', 'execute_issuer_key_change'];
+const V1_UPDATER = ['set_issuer_key', 'remove_issuer_key'];
+const WATCHDOG = m.watchdogs![0]!;
+const SPUTNIK_HASH = 'AA4nA45vauiac3jdVwJTzSdUP3oj2r1fDaPAb2mHdgcH';
+const NOW = 1_800_000_000_000;
 /** Batch A's single relayer pool. */
 const BATCH_A = ['create_session', 'derive_key', 'revoke_session', 'prune_sessions', 'register_scope', 'propose_change', 'cancel_change', 'remove_client', 'execute_change'];
 
@@ -40,6 +46,24 @@ const configOk = {
   console_audiences: [],
   shared_clients: [['google', SHARED]] as [string, string][],
   pending_shared_clients: [],
+  issuer_key_delay_ms: m.issuerKeyDelayMs,
+  pending_issuer_key_delay: null,
+  governance_delay_ms: m.governanceDelayMs,
+  pending_governance_delay: null,
+  paused: false,
+};
+/** The v1 (batch B) get_config: no governance fields. */
+const { issuer_key_delay_ms: _i, pending_issuer_key_delay: _pi, governance_delay_ms: _g, pending_governance_delay: _pg, paused: _p, ...configV1 } = configOk;
+
+const govOk: GovernanceView = {
+  state_version: 2,
+  watchdogs: [{ account_id: WATCHDOG, confirm_from_ms: NOW - 1 }],
+  keys_slow_until_ms: 0,
+  updater_keys: ['ed25519:U'],
+  updater_methods: UPDATER,
+  pending_upgrade: null,
+  pending_owner: null,
+  pending_withdrawal: null,
 };
 
 function fresh(over: Partial<DeployObserved> = {}): DeployObserved {
@@ -47,26 +71,33 @@ function fresh(over: Partial<DeployObserved> = {}): DeployObserved {
   const cred = { found: true, publicKey: 'ed25519:K', fullAccessOnChain: true };
   return {
     chainId: 'testnet',
+    nowMs: NOW,
     accounts: { signer: acct, relayer: acct, owner: acct },
     credentials: { signer: cred, relayer: cred, owner: cred },
     config: null,
+    governance: null,
     relayerAccessKeys: [],
-    signerAccessKeys: [],
+    signerAccessKeys: [full('ed25519:S')],
     poolKeysInFile: { session: [], owner: [] },
     updaterKeyInFile: null,
     googleIssuer: null,
     globalScope: null,
     sharedClientScopes: {},
     wasmBytes: null,
+    wasmCodeHash: null,
+    watchdogAccounts: { [WATCHDOG]: true },
+    councilDao: { exists: true, codeHash: SPUTNIK_HASH },
+    councilKeys: Object.fromEntries(m.council!.members.map((a) => [a, true])),
     ...over,
   };
 }
 
-/** A deployed, fully configured env; override pieces to test one thing. */
+/** A deployed (governance contract), fully configured env; override pieces to test one thing. */
 function deployed(over: Partial<DeployObserved> = {}): DeployObserved {
   return fresh({
     accounts: { signer: deployedSigner, relayer: fresh().accounts.relayer, owner: fresh().accounts.owner },
     config: configOk,
+    governance: govOk,
     relayerAccessKeys: [full('ed25519:R'), fc('ed25519:s1', m.signer, SESSION), fc('ed25519:s2', m.signer, SESSION), fc('ed25519:s3', m.signer, SESSION), fc('ed25519:o1', m.signer, OWNER)],
     signerAccessKeys: [full('ed25519:S'), fc('ed25519:U', m.signer, UPDATER)],
     poolKeysInFile: { session: ['ed25519:s1', 'ed25519:s2', 'ed25519:s3'], owner: ['ed25519:o1'] },
@@ -78,11 +109,18 @@ function deployed(over: Partial<DeployObserved> = {}): DeployObserved {
   });
 }
 
+/** The same env still on the v1 contract (batch B): no get_governance, the hand-added v1 updater key. */
+function deployedV1(over: Partial<DeployObserved> = {}): DeployObserved {
+  return deployed({ config: configV1, governance: null, signerAccessKeys: [full('ed25519:S'), fc('ed25519:U', m.signer, V1_UPDATER)], ...over });
+}
+
 const opts: DeployOptions = {
   pools: { session: { count: 3, allowanceYocto: 2n * NEAR }, owner: { count: 1, allowanceYocto: NEAR / 2n } },
-  updaterAllowanceYocto: NEAR,
   upgrade: false,
   skipBuild: false,
+  transferOwner: false,
+  ownerTx: {},
+  sputnikCodeHash: SPUTNIK_HASH,
 };
 
 const pool = (steps: DeployStep[], p: 'session' | 'owner') => steps.find((s) => s.kind === 'relayer-keys' && s.pool === p);
@@ -91,11 +129,24 @@ describe('buildDeployPlan', () => {
   it('plans a full fresh deploy in order', () => {
     const p = buildDeployPlan(m, fresh(), opts);
     expect(p.blockers).toEqual([]);
-    expect(p.steps.map((s) => s.kind)).toEqual(['build', 'deploy', 'relayer-keys', 'relayer-keys', 'updater-key', 'set-issuer', 'set-sponsors', 'set-shared-clients', 'register-global']);
-    expect(p.steps[1]).toEqual({ kind: 'deploy', init: { owner: m.owner, mpc: m.mpc, ckd_domain_id: 2, change_delay_ms: m.changeDelayMs } });
+    expect(p.steps.map((s) => s.kind)).toEqual(['build', 'deploy', 'relayer-keys', 'relayer-keys', 'add-updater-key', 'set-issuer', 'set-sponsors', 'set-shared-clients', 'register-global']);
+    expect(p.steps[1]).toEqual({
+      kind: 'deploy',
+      init: {
+        owner: m.owner,
+        mpc: m.mpc,
+        ckd_domain_id: 2,
+        change_delay_ms: m.changeDelayMs,
+        issuer_key_delay_ms: 120_000,
+        governance_delay_ms: 60_000,
+        watchdogs: [WATCHDOG],
+        updater_keys: [],
+      },
+    });
     expect(p.steps[2]).toEqual({ kind: 'relayer-keys', pool: 'session', generate: 3, reuse: [], methods: SESSION, allowanceYocto: 2n * NEAR });
     expect(p.steps[3]).toEqual({ kind: 'relayer-keys', pool: 'owner', generate: 1, reuse: [], methods: OWNER, allowanceYocto: NEAR / 2n });
-    expect(p.steps[4]).toMatchObject({ kind: 'updater-key', reuse: null, methods: UPDATER });
+    // The updater key is installed by the contract (add_updater_key, owner), never added by hand.
+    expect(p.steps[4]).toEqual({ kind: 'add-updater-key', reuse: null });
     expect(p.steps[5]).toEqual({ kind: 'set-issuer', provider: 'google', iss_values: ['https://accounts.google.com', 'accounts.google.com'] });
     expect(p.steps[6]).toEqual({ kind: 'set-sponsors', sponsors: [m.relayer] });
     expect(p.steps[7]).toEqual({ kind: 'set-shared-clients', clients: [['google', SHARED]], added: [['google', SHARED]], removed: [] });
@@ -128,8 +179,14 @@ describe('buildDeployPlan', () => {
     expect(text).toContain(`generate 3 new key(s) into .secrets/${m.name}/relayer-keys.json`);
     expect(text).toContain(`generate 1 new key(s) into .secrets/${m.name}/owner-relayer-keys.json`);
     expect(text).toContain(`methods ${OWNER.join(', ')}`);
-    expect(text).toContain(`set_shared_clients({"clients":[["google","${SHARED}"]]}) (adds google/${SHARED} after the ${m.changeDelayMs} ms timelock)`);
+    expect(text).toContain(`set_shared_clients({"clients":[["google","${SHARED}"]]}) [signed by ${m.owner}] (adds google/${SHARED} after the ${m.changeDelayMs} ms timelock)`);
     expect(text).toContain('"scope_id":"global","allow_shared":false');
+    expect(text).toContain(`add_updater_key({"public_key":"<new key in keys-updater.json>"}) [signed by ${m.owner}]`);
+    expect(text).toContain(`generated into .secrets/${m.name}/keys-updater.json`);
+  });
+
+  it('the updater methods are the contract’s UPDATER_METHODS', () => {
+    expect([...UPDATER_METHODS]).toEqual(UPDATER);
   });
 
   it('plans nothing when everything is in place', () => {
@@ -153,10 +210,12 @@ describe('buildDeployPlan', () => {
       { ...opts, pools: { ...opts.pools, session: { count: 4, allowanceYocto: 2n * NEAR } } },
     );
     expect(p.blockers).toEqual([]);
-    expect(p.steps.map((s) => s.kind)).toEqual(['relayer-keys', 'relayer-keys', 'updater-key']);
+    expect(p.steps.map((s) => s.kind)).toEqual(['relayer-keys', 'relayer-keys', 'add-updater-key']);
     expect(pool(p.steps, 'session')).toMatchObject({ reuse: ['ed25519:s2'], generate: 2 });
     expect(pool(p.steps, 'owner')).toMatchObject({ reuse: ['ed25519:o1'], generate: 0 });
-    expect(p.steps[2]).toMatchObject({ reuse: 'ed25519:U' });
+    // The saved key isn't on chain: re-added (with a warning to rotate it if it may be compromised).
+    expect(p.steps[2]).toEqual({ kind: 'add-updater-key', reuse: 'ed25519:U' });
+    expect(p.warnings.join()).toContain('move the file aside first');
   });
 
   describe('access key permissions', () => {
@@ -205,16 +264,33 @@ describe('buildDeployPlan', () => {
       expect(p.blockers.join() + p.warnings.join()).not.toContain('ed25519:z'); // another receiver: not this deploy's business
     });
 
-    it('checks the keys-updater key and blocks other signer keys that can rotate issuer keys', () => {
-      const wrong = buildDeployPlan(m, deployed({ signerAccessKeys: [fc('ed25519:U', m.signer, [])] }), opts);
-      expect(wrong.blockers.join()).toContain('keys-updater.json (ed25519:U) may call ANY method');
-      expect(wrong.steps.map((s) => s.kind)).not.toContain('updater-key');
-      const extraMethod = buildDeployPlan(m, deployed({ signerAccessKeys: [fc('ed25519:U', m.signer, [...UPDATER, 'set_owner'])] }), opts);
-      expect(extraMethod.blockers.join()).toContain('has methods set_issuer_key, remove_issuer_key, set_owner');
+    it('checks tracked updater keys against UPDATER_METHODS and blocks every signer key the contract did not install', () => {
+      const wrong = buildDeployPlan(m, deployed({ signerAccessKeys: [full('ed25519:S'), fc('ed25519:U', m.signer, [])] }), opts);
+      expect(wrong.blockers.join()).toContain('Updater key ed25519:U on');
+      expect(wrong.blockers.join()).toContain('may call ANY method');
+      const extraMethod = buildDeployPlan(m, deployed({ signerAccessKeys: [full('ed25519:S'), fc('ed25519:U', m.signer, [...UPDATER, 'set_owner'])] }), opts);
+      expect(extraMethod.blockers.join()).toContain(`has methods ${[...UPDATER, 'set_owner'].join(', ')}`);
+      // Untracked keys: even a harmless method list is refused (not in get_governance().updater_keys).
       const stray = buildDeployPlan(m, deployed({ signerAccessKeys: [...deployed().signerAccessKeys, fc('ed25519:old', m.signer, UPDATER), fc('ed25519:v', m.signer, ['get_config'])] }), opts);
-      expect(stray.blockers.join()).toContain('ed25519:old (a function-call key for');
-      expect(stray.blockers.join()).toContain('can rotate issuer keys');
-      expect(stray.warnings.join()).toContain('ed25519:v');
+      const text = stray.blockers.join('\n');
+      expect(text).toContain("function-call key the contract didn't install (not in get_governance().updater_keys): ed25519:old");
+      expect(text).toContain('ed25519:v (a function-call key for');
+      // sandbox-dev keeps the full-access key, so the fix is a plain DeleteKey with it.
+      expect(text).toContain(`near account delete-keys ${m.signer} public-keys ed25519:old `);
+      // Without a usable full-access key the owner deletes it (delete_updater_key may delete any key).
+      const noFull = buildDeployPlan(m, deployed({ signerAccessKeys: [fc('ed25519:U', m.signer, UPDATER), fc('ed25519:old', m.signer, UPDATER)] }), opts);
+      expect(noFull.blockers.join()).toContain('delete_updater_key({"public_key":"ed25519:old"})');
+    });
+
+    it('warns when updater_keys lists a key that is not on the account', () => {
+      const p = buildDeployPlan(m, deployed({ governance: { ...govOk, updater_keys: ['ed25519:U', 'ed25519:gone'] } }), opts);
+      expect(p.warnings.join()).toContain('updater_keys lists ed25519:gone');
+      expect(p.steps).toEqual([]);
+    });
+
+    it('refuses to add a third updater key', () => {
+      const p = buildDeployPlan(m, deployed({ updaterKeyInFile: 'ed25519:N', governance: { ...govOk, updater_keys: ['ed25519:U', 'ed25519:U2'] }, signerAccessKeys: [full('ed25519:S'), fc('ed25519:U', m.signer, UPDATER), fc('ed25519:U2', m.signer, UPDATER)] }), opts);
+      expect(p.blockers.join()).toContain('already has 2 updater keys');
     });
 
     it('checkFunctionKey', () => {
@@ -266,10 +342,10 @@ describe('buildDeployPlan', () => {
       expect(p.done.join()).not.toContain('session-pool relayer key(s) in place');
     });
 
-    it('does not count a keys-updater key with an unlimited allowance as in place', () => {
+    it('blocks a tracked updater key with an unlimited allowance', () => {
       const p = buildDeployPlan(m, deployed({ signerAccessKeys: [full('ed25519:S'), fc('ed25519:U', m.signer, UPDATER, null)] }), opts);
-      expect(p.blockers.join()).toContain('keys-updater.json (ed25519:U) has an unlimited allowance');
-      expect(p.done).not.toContain('Keys-updater key in place.');
+      expect(p.blockers.join()).toContain('Updater key ed25519:U on');
+      expect(p.blockers.join()).toContain('has an unlimited allowance');
     });
 
     it('blocks stray keys that mix session and owner methods (e.g. batch A keys left after moving the file aside)', () => {
@@ -321,14 +397,13 @@ describe('buildDeployPlan', () => {
       expect(p.blockers.join()).toContain(`Shared client ${SHARED} is registered as a client of scope "s4"`);
     });
 
-    it('blocks on a contract without shared clients, unless --upgrade (then warns)', () => {
-      const { shared_clients: _s, pending_shared_clients: _p, ...old } = configOk;
-      const p = buildDeployPlan(m, deployed({ config: old }), opts);
+    it('blocks on a contract without shared clients, also with --upgrade (migrate_v1 reads only the batch B layout)', () => {
+      const { shared_clients: _s, pending_shared_clients: _p, ...old } = configV1;
+      const p = buildDeployPlan(m, deployedV1({ config: old }), opts);
       expect(p.blockers.join()).toContain('predates batch A.2');
       expect(p.steps.find((s) => s.kind === 'set-shared-clients')).toMatchObject({ added: [['google', SHARED]] });
-      const up = buildDeployPlan(m, deployed({ config: old }), { ...opts, upgrade: true, skipBuild: true });
-      expect(up.blockers).toEqual([]);
-      expect(up.warnings.join()).toContain('must be able to read the old state');
+      const up = buildDeployPlan(m, deployedV1({ config: old }), { ...opts, upgrade: true, skipBuild: true });
+      expect(up.blockers.join()).toContain('migrate_v1 reads only the batch B layout');
     });
 
     it('reads the plausible get_config shapes for pending additions', () => {
@@ -344,9 +419,213 @@ describe('buildDeployPlan', () => {
     });
   });
 
-  it('--upgrade redeploys code without init', () => {
-    const p = buildDeployPlan(m, deployed(), { ...opts, upgrade: true, skipBuild: true });
-    expect(p.steps).toEqual([{ kind: 'deploy', init: null }]);
+  describe('v1 → v2 migration (sandbox-dev, docs/governance-spec.md "Migration plan")', () => {
+    it('a v1 contract needs --upgrade', () => {
+      const p = buildDeployPlan(m, deployedV1(), opts);
+      expect(p.blockers.join()).toContain('runs the v1 (pre-governance) contract. Migrate it in place with --upgrade');
+    });
+
+    it('--upgrade migrates in place, installs a new updater key, then deletes the v1 one, then adds the watchdog', () => {
+      const p = buildDeployPlan(m, deployedV1(), { ...opts, upgrade: true, skipBuild: true });
+      expect(p.blockers).toEqual([]);
+      expect(p.steps).toEqual([
+        { kind: 'migrate-v1', issuer_key_delay_ms: 120_000, governance_delay_ms: 60_000 },
+        { kind: 'add-updater-key', reuse: null },
+        { kind: 'delete-signer-key', publicKey: 'ed25519:U', why: 'the v1 keys-updater key (set_issuer_key, remove_issuer_key)', via: 'signer' },
+        { kind: 'add-watchdog', accountId: WATCHDOG },
+      ]);
+      expect(describeStep(m, p.steps[0]!)).toBe(
+        `Migrate ${m.signer} in place: DeployContract + migrate_v1({"issuer_key_delay_ms":120000,"governance_delay_ms":60000}) in one transaction (same account, so every address stays) [signed by ${m.signer}].`,
+      );
+      expect(describeStep(m, p.steps[2]!)).toContain(`[signed by ${m.signer}]`);
+      expect(describeStep(m, p.steps[3]!)).toBe(`add_watchdog({"account_id":"${WATCHDOG}"}) [signed by ${m.owner}].`);
+    });
+
+    it('builds first unless --skip-build, and refuses without the manifest delays or the signer full-access key', () => {
+      expect(buildDeployPlan(m, deployedV1(), { ...opts, upgrade: true }).steps.slice(0, 2).map((s) => s.kind)).toEqual(['build', 'migrate-v1']);
+      const { issuerKeyDelayMs: _i, ...noDelays } = m;
+      expect(buildDeployPlan({ ...noDelays, issuerKeyDelayMs: undefined }, deployedV1(), { ...opts, upgrade: true }).blockers.join()).toContain('needs issuerKeyDelayMs and governanceDelayMs for migrate_v1');
+      const noFull = buildDeployPlan(m, deployedV1({ signerAccessKeys: [fc('ed25519:U', m.signer, V1_UPDATER)] }), { ...opts, upgrade: true });
+      expect(noFull.blockers.join()).toContain("migrate_v1 is sent with");
+    });
+
+    it('after the migration, a re-run sees only what is left (the old key deleted by the owner if there is no full-access key)', () => {
+      const migrated = deployed({ governance: { ...govOk, watchdogs: [], updater_keys: ['ed25519:N'] }, updaterKeyInFile: 'ed25519:N', signerAccessKeys: [fc('ed25519:N', m.signer, UPDATER), fc('ed25519:U', m.signer, V1_UPDATER)] });
+      const p = buildDeployPlan(m, migrated, opts);
+      expect(p.steps).toEqual([
+        { kind: 'delete-signer-key', publicKey: 'ed25519:U', why: 'the v1 keys-updater key (set_issuer_key, remove_issuer_key)', via: 'owner' },
+        { kind: 'add-watchdog', accountId: WATCHDOG },
+      ]);
+      expect(describeStep(m, p.steps[0]!)).toContain(`delete_updater_key({"public_key":"ed25519:U"}) [signed by ${m.owner}]`);
+      expect(p.done).toContain('Keys-updater key in place (installed by the contract).');
+    });
+  });
+
+  describe('upgrades of the governance contract: propose_upgrade → wait → execute_upgrade', () => {
+    const up = { ...opts, upgrade: true };
+    const pending = (code_hash: string, executable_at_ms: number) => deployed({ wasmCodeHash: 'H', governance: { ...govOk, pending_upgrade: { code_hash, proposed_at_ms: NOW - 60_000, executable_at_ms } } });
+
+    it('never plans a raw DeployContract: build, then propose the built hash', () => {
+      const p = buildDeployPlan(m, deployed(), up);
+      expect(p.steps).toEqual([{ kind: 'build' }, { kind: 'propose-upgrade', codeHash: null, replaces: null, current: 'abc' }]);
+      expect(describeStep(m, p.steps[1]!)).toContain(`propose_upgrade({"code_hash":"<hash of the built wasm>"}) [signed by ${m.owner}]`);
+      expect(p.steps.some((s) => s.kind === 'deploy' || s.kind === 'migrate-v1')).toBe(false);
+    });
+
+    it('with a known wasm: propose it; wait while delayed; execute once due', () => {
+      expect(buildDeployPlan(m, deployed({ wasmCodeHash: 'H' }), { ...up, skipBuild: true }).steps).toEqual([{ kind: 'propose-upgrade', codeHash: 'H', replaces: null, current: 'abc' }]);
+      const waiting = buildDeployPlan(m, pending('H', NOW + 30_000), { ...up, skipBuild: true });
+      expect(waiting.steps).toEqual([]);
+      expect(waiting.done.join()).toContain('Upgrade to H proposed; executable from 2027-01-15T08:00:30.000Z');
+      // Block time may trail the local clock: "due" waits CLOCK_MARGIN_MS more, so execute_upgrade never panics early.
+      expect(buildDeployPlan(m, pending('H', NOW), { ...up, skipBuild: true }).steps).toEqual([]);
+      const due = buildDeployPlan(m, pending('H', NOW - CLOCK_MARGIN_MS), { ...up, skipBuild: true });
+      expect(due.steps).toEqual([{ kind: 'execute-upgrade', codeHash: 'H' }]);
+      expect(describeStep(m, due.steps[0]!)).toContain(`[anyone; signed by ${m.relayer}]`);
+    });
+
+    it('a different pending hash is replaced (with a warning); the running code is not proposed again', () => {
+      const other = buildDeployPlan(m, pending('OTHER', NOW - CLOCK_MARGIN_MS), { ...up, skipBuild: true });
+      expect(other.steps).toEqual([{ kind: 'propose-upgrade', codeHash: 'H', replaces: 'OTHER', current: 'abc' }]);
+      expect(other.warnings.join()).toContain('replaces the pending upgrade OTHER');
+      const same = buildDeployPlan(m, deployed({ wasmCodeHash: 'abc' }), { ...up, skipBuild: true });
+      expect(same.steps).toEqual([]);
+      expect(same.done.join()).toContain('already runs abc');
+    });
+
+    it('without --upgrade, a pending upgrade is reported', () => {
+      expect(buildDeployPlan(m, pending('H', NOW - CLOCK_MARGIN_MS), opts).warnings.join()).toContain('Upgrade H is pending');
+    });
+  });
+
+  describe('the signer full-access key (D86)', () => {
+    const staging = { ...m, name: 'staging', allowSignerFullAccessKey: undefined };
+
+    it('sandbox-dev keeps it; any other env is blocked while one exists', () => {
+      expect(buildDeployPlan(m, deployed(), opts).blockers).toEqual([]);
+      const p = buildDeployPlan(staging, deployed(), opts);
+      expect(p.blockers.join()).toContain(`${m.signer} has 1 full-access key(s) (ed25519:S), and staging may have none (D86)`);
+      expect(buildDeployPlan(staging, deployed({ signerAccessKeys: [fc('ed25519:U', m.signer, UPDATER)] }), opts).blockers).toEqual([]);
+    });
+
+    it('only a dev env on testnet may set allowSignerFullAccessKey', () => {
+      for (const name of ['staging', 'prod', 'mainnet']) {
+        const p = buildDeployPlan({ ...m, name, allowSignerFullAccessKey: true }, deployed(), opts);
+        expect(p.blockers.join(), name).toContain('sets allowSignerFullAccessKey, which only a dev env (local*, sandbox*) on testnet may');
+        expect(p.blockers.join(), name).toContain('may have none (D86)');
+      }
+      expect(signerFullAccessAllowed(m)).toBe(true);
+      expect(signerFullAccessAllowed({ ...m, name: 'local-dev' })).toBe(true);
+      expect(signerFullAccessAllowed({ ...m, allowSignerFullAccessKey: undefined })).toBe(false);
+    });
+
+    it('a fresh deploy outside sandbox-dev points at the creation batch', () => {
+      expect(buildDeployPlan(staging, fresh(), opts).blockers.join()).toContain('--creation-plan prints it (DeployContract + new + DeleteKey)');
+    });
+  });
+
+  describe('watchdogs and delays', () => {
+    it('adds a manifest watchdog that exists on chain; skips one that does not; reports extra on-chain ones', () => {
+      expect(buildDeployPlan(m, deployed({ governance: { ...govOk, watchdogs: [] } }), opts).steps).toEqual([{ kind: 'add-watchdog', accountId: WATCHDOG }]);
+      const missing = buildDeployPlan(m, deployed({ governance: { ...govOk, watchdogs: [] }, watchdogAccounts: { [WATCHDOG]: false } }), opts);
+      expect(missing.steps).toEqual([]);
+      expect(missing.warnings.join()).toContain(`Watchdog ${WATCHDOG} does not exist on chain yet`);
+      const extra = buildDeployPlan(m, deployed({ governance: { ...govOk, watchdogs: [...govOk.watchdogs, { account_id: 'rogue.testnet', confirm_from_ms: NOW + 1 }] } }), opts);
+      expect(extra.warnings.join()).toContain('rogue.testnet is a watchdog on chain but not in envs/sandbox-dev.json');
+      expect(extra.done.join()).toContain('Watchdog rogue.testnet may confirm from');
+    });
+
+    it('sets a delay that differs from the manifest; a pending decrease to it counts as done', () => {
+      const p = buildDeployPlan(m, deployed({ config: { ...configOk, governance_delay_ms: 600_000 } }), opts);
+      expect(p.steps).toEqual([{ kind: 'set-delay', which: 'governance', ms: 60_000 }]);
+      expect(describeStep(m, p.steps[0]!)).toBe(`set_governance_delay_ms({"governance_delay_ms":60000}) [signed by ${m.owner}].`);
+      const pendingDecrease = deployed({ config: { ...configOk, issuer_key_delay_ms: 600_000, pending_issuer_key_delay: { change_delay_ms: 120_000, effective_at_ms: NOW + 1 } } });
+      expect(buildDeployPlan(m, pendingDecrease, opts).steps).toEqual([]);
+    });
+  });
+
+  describe('owner transfer to the council DAO (--transfer-owner)', () => {
+    const t = { ...opts, transferOwner: true };
+    const dao = m.council!.dao;
+    const pendingOwner = (acceptable_at_ms: number) => deployed({ governance: { ...govOk, pending_owner: { owner: dao, acceptable_at_ms } } });
+
+    it('the old owner proposes the DAO, as the last step', () => {
+      const p = buildDeployPlan(m, deployed({ governance: { ...govOk, watchdogs: [] } }), t);
+      expect(p.steps.map((s) => s.kind)).toEqual(['add-watchdog', 'propose-owner']);
+      expect(describeStep(m, p.steps[1]!)).toBe(`propose_owner({"owner":"${dao}"}) [signed by ${m.owner}].`);
+    });
+
+    it('the DAO accepts once due, through a council proposal (approved in the same run with --approve-with on dev envs)', () => {
+      expect(buildDeployPlan(m, pendingOwner(NOW + 1), t).done.join()).toContain(`the DAO may accept from`);
+      const due = buildDeployPlan(m, pendingOwner(NOW - CLOCK_MARGIN_MS), { ...t, ownerTx: { approveWith: m.council!.members[1] } });
+      expect(due.blockers).toEqual([]);
+      expect(due.steps).toEqual([{ kind: 'accept-owner', owner: dao }]);
+      expect(describeStep(m, due.steps[0]!, { approveWith: m.council!.members[1] })).toBe(
+        `accept_owner({}) [DAO proposal on ${dao} by ${m.council!.members[0]}, approved by ${m.council!.members[0]} and ${m.council!.members[1]} in the same run].`,
+      );
+    });
+
+    it('blocks without the DAO, with the pinned code, or without council keys', () => {
+      expect(buildDeployPlan(m, deployed({ councilDao: { exists: false, codeHash: '' } }), t).blockers.join()).toContain('run council-setup sandbox-dev first');
+      expect(buildDeployPlan(m, deployed({ councilDao: { exists: true, codeHash: 'X' } }), t).blockers.join()).toContain('not the pinned Sputnik DAO');
+      const noKey = buildDeployPlan(m, pendingOwner(NOW - CLOCK_MARGIN_MS), { ...t, ownerTx: { approveWith: m.council!.members[1] } });
+      expect(noKey.blockers).toEqual([]);
+      const keys = { ...fresh().councilKeys, [m.council!.members[1]!]: false };
+      expect(buildDeployPlan(m, { ...pendingOwner(NOW - CLOCK_MARGIN_MS), councilKeys: keys }, { ...t, ownerTx: { approveWith: m.council!.members[1] } }).blockers.join()).toContain(`No signing key for council member ${m.council!.members[1]}`);
+      expect(buildDeployPlan(m, pendingOwner(NOW - CLOCK_MARGIN_MS), { ...t, ownerTx: { approveWith: m.council!.members[0] } }).blockers.join()).toContain('different member from the proposer');
+    });
+
+    it('once the DAO owns the contract, says to update the manifest', () => {
+      const p = buildDeployPlan(m, deployed({ config: { ...configOk, owner: dao } }), opts);
+      expect(p.blockers.join()).toContain(`set "owner": "${dao}" and "ownerKind": "sputnik" in envs/sandbox-dev.json`);
+    });
+  });
+
+  describe('a council owner (ownerKind sputnik)', () => {
+    const dao = m.council!.dao;
+    const sm = { ...m, owner: dao, ownerKind: 'sputnik' as const };
+    const cfg = { ...configOk, owner: dao };
+
+    it('every owner step is a DAO proposal; no owner keychain key is needed', () => {
+      const p = buildDeployPlan(sm, deployed({ config: cfg, governance: { ...govOk, watchdogs: [] }, credentials: { ...fresh().credentials, owner: { found: false, fullAccessOnChain: false } } }), opts);
+      expect(p.blockers).toEqual([]);
+      expect(describeStep(sm, p.steps[0]!)).toBe(`add_watchdog({"account_id":"${WATCHDOG}"}) [DAO proposal on ${dao} by ${m.council!.members[0]}, then 2 of 3 council approvals].`);
+    });
+
+    it('--approve-with is refused outside dev envs', () => {
+      const staging = { ...sm, name: 'staging', allowSignerFullAccessKey: undefined };
+      const p = buildDeployPlan(staging, deployed({ config: cfg, governance: { ...govOk, watchdogs: [] }, signerAccessKeys: [fc('ed25519:U', m.signer, UPDATER)] }), { ...opts, ownerTx: { member: m.council!.members[0], approveWith: m.council!.members[1] } });
+      expect(p.blockers.join()).toContain('--approve-with is for dev envs on testnet only (D81)');
+      const noMember = buildDeployPlan(staging, deployed({ config: cfg, governance: { ...govOk, watchdogs: [] }, signerAccessKeys: [fc('ed25519:U', m.signer, UPDATER)] }), opts);
+      expect(noMember.blockers.join()).toContain('--member <council member> is required');
+    });
+  });
+
+  describe('mainnet-style creation batch (printed only)', () => {
+    it('Deploy + new(owner = DAO, delays, watchdogs, updater key) + DeleteKey, no AddKey', () => {
+      const { problems, lines } = creationPlan(m, { wasm: { codeHash: 'H', bytes: 500_000 }, updaterPublicKey: 'ed25519:Upd', creationPublicKey: 'ed25519:Cre' });
+      expect(problems).toEqual([]);
+      const text = lines.join('\n');
+      expect(text).toContain('printed only. This script never sends it');
+      expect(text).toContain('cargo near build reproducible-wasm');
+      expect(text).toContain('code_hash H (500000 bytes)');
+      expect(text).toContain(`signed by the creation key ed25519:Cre`);
+      expect(text).toContain(
+        `new(${JSON.stringify({ owner: m.council!.dao, mpc: m.mpc, ckd_domain_id: m.ckdDomainId, change_delay_ms: m.changeDelayMs, issuer_key_delay_ms: 120_000, governance_delay_ms: 60_000, watchdogs: [WATCHDOG], updater_keys: ['ed25519:Upd'] })})`,
+      );
+      expect(text).toContain('c. DeleteKey(ed25519:Cre)');
+      expect(text).not.toMatch(/\d\. AddKey|[a-d]\. AddKey/u);
+      expect(text).toContain('No AddKey action');
+    });
+
+    it('needs a council, delays and a watchdog; placeholders without keys', () => {
+      const { council: _c, ...noCouncil } = m;
+      expect(creationPlan({ ...noCouncil, council: undefined }, { wasm: null, updaterPublicKey: null, creationPublicKey: null }).problems.join()).toContain('needs a council');
+      expect(creationPlan({ ...m, watchdogs: [] }, { wasm: null, updaterPublicKey: null, creationPublicKey: null }).problems.join()).toContain('no watchdogs');
+      const text = creationPlan(m, { wasm: null, updaterPublicKey: null, creationPublicKey: null }).lines.join('\n');
+      expect(text).toContain('<pass --wasm <reproducible build> to print it>');
+      expect(text).toContain('<updater public key');
+    });
   });
 
   it('blocks on missing accounts, missing keys, wrong chain, foreign code and owner mismatch', () => {

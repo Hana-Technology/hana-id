@@ -1297,7 +1297,9 @@ Console-only codes: `unauthenticated` 401, `csrf` 403, `not_invited` 403, `invit
   and the pending-upgrades page (D86, also in the partner console). Its sources are built: the watchdog's `GET
   /status`, `/alerts`, `/actions` and `POST /alerts/:id/ack` (bearer `WATCHDOG_STATUS_TOKEN`, `apps/watchdog/README.md`
   "Status endpoint"; the check and alert-kind registry for the portal's registry test is `apps/watchdog/src/checks.ts`)
-  and the chain views in `docs/contract-interface.md` "Monitoring hand-off".
+  and the chain views in `docs/contract-interface.md` "Monitoring hand-off" (also served normalised by the API's
+  `GET /v1/governance`, `docs/api.md`; the council DAO's open proposals and the `admin <env> governance:status --json`
+  reference snapshot: `docs/operations.md` "Governance status for the admin portal").
 - **No NEAR keys.** `admin_register_scope` and contract admin stay in `scripts/`. NEAR calls are read-only: `tx` for
   settlement, `get_scope` for the watcher, `view_access_key` for the nonce check.
 

@@ -1,19 +1,22 @@
 // admin.ts scope:register: print the admin_register_scope call, and send it only with --yes. --allow-shared lets
-// the scope log in through Hana's shared Google client (then --client is optional).
+// the scope log in through Hana's shared Google client (then --client is optional). The call goes through the
+// manifest's owner (owner-tx.ts): the owner account signs it, or, for a council owner, it becomes a DAO proposal
+// (--member, and on dev envs --approve-with to approve it in the same command).
 import type { Manifest } from '@hana-id/env';
-import { actionCreators } from '@near-js/transactions';
 import { clientsFromArgs, ownersFromArgs } from './admin-args.ts';
 import type { Args } from './cli.ts';
-import { loadLegacyCredential } from './keys.ts';
-import { explorerTx, NearRpc, TGAS } from './near.ts';
+import { NearRpc, TGAS } from './near.ts';
+import { describeOwnerCall, sendOwnerCall } from './owner-tx.ts';
 
 export const SCOPE_DRY_RUN_LINE = 'Dry run: re-run with --yes to send.';
 
 export interface ScopeRegisterDeps {
-  rpc: (url: string) => Pick<NearRpc, 'chainId' | 'sendTx'>;
+  rpc: (url: string) => Pick<NearRpc, 'chainId' | 'sendTx' | 'view'>;
   log: (line: string) => void;
   /** Home directory holding ~/.near-credentials (default: the user's home). */
   home?: string;
+  /** Directory holding .secrets/ (council keys on dev envs). */
+  secretsRoot?: string;
 }
 
 export const defaultScopeRegisterDeps = (): ScopeRegisterDeps => ({ rpc: (url) => new NearRpc(url), log: (line) => console.log(line) });
@@ -24,7 +27,9 @@ export async function scopeRegister(m: Manifest, args: Args, deps: ScopeRegister
   const allowShared = args.flag('allow-shared');
   const clients = clientsFromArgs(args.list('client'), { allowShared, sharedClientIds: m.sharedGoogleClientIds });
   const callArgs = { owners, clients, scope_id: null, allow_shared: allowShared };
-  log(`admin_register_scope(${JSON.stringify(callArgs)}) on ${m.signer}, signed by ${m.owner}`);
+  const call = { method: 'admin_register_scope' as const, args: callArgs, gas: 100n * TGAS };
+  const opts = { member: args.str('member'), approveWith: args.str('approve-with') };
+  log(`${describeOwnerCall(m, call, opts)} on ${m.signer}`);
   log(
     clients.length && allowShared
       ? 'Logins: through the app\'s own Google client(s) and through Hana\'s shared client, into this one scope.'
@@ -38,10 +43,8 @@ export async function scopeRegister(m: Manifest, args: Args, deps: ScopeRegister
   if (!args.flag('yes')) return void log(SCOPE_DRY_RUN_LINE);
   const rpc = deps.rpc(m.rpc);
   if ((await rpc.chainId()) !== 'testnet') throw new Error(`${m.rpc} is not a testnet RPC`);
-  const owner = loadLegacyCredential(m.owner, m.network, deps.home);
-  const { hash, value } = await rpc.sendTx({ accountId: owner.accountId, keyPair: owner.keyPair }, m.signer, [
-    actionCreators.functionCall('admin_register_scope', callArgs, 100n * TGAS, 0n),
-  ]);
-  log(`tx ${explorerTx(hash)}`);
-  log(`Registered scope: ${typeof value === 'string' ? value : JSON.stringify(value)}`);
+  const r = await sendOwnerCall(m, call, opts, { rpc, log, home: deps.home, secretsRoot: deps.secretsRoot });
+  if (r.kind === 'executed') log(`Registered scope: ${typeof r.value === 'string' ? r.value : JSON.stringify(r.value)}`);
+  else if (r.kind === 'approved') log(`Registered through proposal #${r.proposalId}: read the new scope id from the vote transaction's logs (scope_registered event) or get_scope.`);
+  else log(`Proposed #${r.proposalId}: the scope is registered when the council approves it.`);
 }

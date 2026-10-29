@@ -11,6 +11,23 @@ Google client fields:
   registered with `--allow-shared` log in through these instead of their own Google client. A client ID can be in only
   one of the two lists (the contract rejects a client that is both shared and a scope's own).
 
+Governance fields (`docs/governance-spec.md`, `docs/operations.md` "Governance"):
+
+- `ownerKind` (default `account`): `account` = `owner` is a plain account whose keychain key signs owner calls;
+  `sputnik` = `owner` is the council DAO (`owner` must equal `council.dao`) and owner calls are DAO proposals.
+  `deploy-contract --transfer-owner` switches it once the DAO has accepted ownership.
+- `council` (optional): `{factory, dao, members}`, the owner council (D81): a Sputnik DAO v2 named
+  `<one label>.<factory>` with exactly three distinct members, none of them an env account. sandbox-dev's is created by
+  `council-setup` (member keys in `.secrets/sandbox-dev/council/`); it exists before it becomes the owner.
+- `watchdogs` (default none, ≤ 3): accounts the contract lets cancel, confirm and pause (`add_watchdog`); none may be
+  an env or council account.
+- `issuerKeyDelayMs` (≤ 7 days), `governanceDelayMs` (≤ 30 days): the delays `new` and `migrate_v1` start with (D80;
+  sandbox-dev 120 000 and 60 000). `deploy-contract` sets them on chain if they differ (decreases wait, per contract).
+- `allowSignerFullAccessKey`: the signer may keep a full-access key (D86). Only for `local*` / `sandbox*` envs on
+  testnet: the schema refuses it outside testnet, `deploy-contract` refuses it in any other env, and a test checks that
+  no committed manifest but sandbox-dev's sets it. Without it, `deploy-contract` blocks on any full-access key on the
+  signer, and a new env's signer is created with the `--creation-plan` batch.
+
 Values containing `UNSET` are placeholders: `deploy-contract` skips the step that needs them (with a warning) until
 they are filled in.
 

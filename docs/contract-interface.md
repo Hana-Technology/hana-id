@@ -918,12 +918,15 @@ signer key:
 
 The portal's other items (heartbeat, the watchdog's verdicts, alert history and acks) come from the watchdog
 service's `GET /status`, `GET /alerts`, `GET /actions` and `POST /alerts/:id/ack` (`apps/watchdog/README.md` "Status
-endpoint"), not from the contract.
+endpoint"), not from the contract. Owner actions waiting for council votes come from the DAO (`get_policy`,
+`get_last_proposal_id`, `get_proposals`).
 
 The API serves all of the table above in one read-only answer, `GET /v1/governance` (`docs/api.md`), normalised,
 with each pending key change's JWKS verdict, the access keys checked against `updater_keys` / `updater_methods`, and
 the JWKS cron's own last run; the portal may read it instead of the views (it runs on Hana's main Cloudflare account,
-like the admin Worker, so it is no more independent than the portal itself).
+like the admin Worker, so it is no more independent than the portal itself). `scripts/admin.ts <env>
+governance:status --json` is an operator-side reference snapshot of the same chain state plus the council's open
+proposals, with the findings to show (`docs/operations.md` "Governance status for the admin portal").
 
 ## Changed in the governance batch
 

@@ -91,7 +91,13 @@ Every app endpoint (`/v1/app`, `/v1/sessions`, `/v1/derive`, `/v1/sessions/revok
 2. App `active` (`403 app_suspended`); not a `pk_test_` app on a scope a `pk_live_` app also uses
    (`403 scope_conflict`).
 3. Caller rule above (`403 origin_not_allowed`).
-4. Rate limits (`429 rate_limited` + `retry-after` seconds; limiter failure `503 rate_limiter_unavailable`).
+4. The per-IP limit (`429 rate_limited` + `retry-after` seconds; limiter failure `503 rate_limiter_unavailable`).
+
+The app's relay quota (plan `per_minute` / `per_day`) is not part of the gate: each relay endpoint asks it last, after
+the body, token, nonce, session-signature, scope and session checks and right before the relay (`appQuota`, D100). The
+publishable key and the `Origin` / `x-hana-parent-origin` headers are public, so a request that fails a check never
+spends the quota every user of the app shares (security sweep APIW-1); the per-IP window, asked first, bounds what a
+flood can make the checks cost.
 
 A test app's other limits are the vault's, never the API's: no raw signing and no mainnet chains for `pk_test_` (D39).
 
@@ -111,7 +117,7 @@ The per-IP subject is the IPv4 address or the IPv6 /64 (`src/ip.ts`).
 
 | Endpoint | Per IP | Per app | Other |
 |---|---|---|---|
-| relay kind: `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke`, `/v1/login` (one shared window) | plan `per_ip_minute` (window `<appId>:minute`) | plan `per_minute` and `per_day` | IP checked first, so its rejects don't spend the app's quota |
+| relay kind: `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke`, `/v1/login` (one shared window) | plan `per_ip_minute` (window `<appId>:minute`), before any check | plan `per_minute` and `per_day`, counted only for a request that passed every off-chain check, right before the relay (D100) | a refused or failed request never spends the app's quota |
 | key exports: `/v1/login` from `AUTH_ORIGIN` | — | — | 3 per hour per user path per app (subject `export:<appId>:<hex sha256(path)>`, window `export:hour`), counted once the token and nonce are verified, before anything is relayed (D59) |
 | `GET /v1/app` | plan `per_ip_minute` (own window `<appId>:config:minute`) | — | never touches the relay quota |
 | vault endpoints | 60/min, *per location* (binding `VAULT_IP_LIMIT`, key `<env>:vault-ip:<appId>:<ipSubject>`) | 10 × plan `per_minute` (`vault:minute`), global | share actions: 10/min per share, *per location* (binding `VAULT_SHARE_LIMIT`, key `<env>:vault-share:<appId>:<hex>`); asked in turn: IP, then app only once the IP accepted, then (after the body check) the share (D95) |
@@ -251,6 +257,7 @@ The scope is always the app's (D1). Checks after the gate and shape (`400 bad_re
 4. Side by side: client → scope (`403 scope_mismatch` / `unregistered_client` / `unknown_scope` /
    `shared_login_disabled`), `session_key_in_use` (`409 session_exists`), and the governance gate (G, below); read
    failure `502 near_unavailable`. Reported in that order.
+5. The app's relay quota (`429 rate_limited` + `retry-after`), counted only here.
 
 → `200 {"result": {"path", "scope_id", "expires_at_ms", "max_uses", "used"}, "nearTx", "requestId"}`. Usage:
 `sessions`.
@@ -293,6 +300,7 @@ Body `{sessionPublicKey: number[32], counter: integer ≥ 1, signature: number[6
    A counter ahead of `used + 1` is relayed (earlier ones may be in flight).
 4. `503 paused` (G) while the contract is paused (`derive_key` panics `Paused`); see the governance gate above.
 5. Only with `BLS_PRECHECK = "1"`: pairing check `e(pk1, −g2) · e(g1, pk2) = 1` (`400 invalid_app_key`).
+6. The app's relay quota (`429 rate_limited` + `retry-after`), counted only here.
 
 → `200 {"result": {"big_y": "string", "big_c": "string"}, "nearTx", "requestId"}`. Usage: `derives`.
 
@@ -312,7 +320,8 @@ payload), `pk1`, `pk2`. Any other field: `400 bad_request`.
 Checks, in order: gate (relay kind) → shape → token (as `/v1/sessions`) → claim allow-list, **always on**
 (`400 token_has_pii` + `data: {claim}`) → nonce → in-isolate hold on (key, counter 1) → scope and
 `session_key_in_use` side by side → signature over counter 1 (`401 invalid_signature`) → pk1/pk2 each one compressed,
-non-identity point of 48 / 96 bytes (`400 invalid_app_key`) → pairing only with `BLS_PRECHECK = "1"`. The governance
+non-identity point of 48 / 96 bytes (`400 invalid_app_key`) → pairing only with `BLS_PRECHECK = "1"` → the app's relay
+quota (`429 rate_limited`, counted only for a request that got this far). The governance
 gate (G: `503 paused`, `503 issuer_key_pending`, with `retry-after`; see `/v1/sessions`) runs beside the scope and
 `session_key_in_use` reads and answers after them. From
 `AUTH_ORIGIN` (a key export) the export limit comes right after the nonce check: `429 rate_limited` with

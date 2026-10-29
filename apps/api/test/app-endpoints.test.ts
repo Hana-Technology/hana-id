@@ -1,8 +1,8 @@
 import { env } from 'cloudflare:workers';
 import { type Mock, afterEach, describe, expect, it, vi } from 'vitest';
 import { usageDay } from '../src/apps.ts';
-import { panic } from './near-mock.ts';
-import { ORIGIN, appHeaders, bytes, call, chain, deriveBody, newKey, newSessionKey, revokeBody, seedApp, seedPlan, sessionBody, uid } from './helpers.ts';
+import { panic, rsaSigner } from './near-mock.ts';
+import { ORIGIN, appHeaders, bytes, call, chain, deriveBody, google, newKey, newSessionKey, revokeBody, seedApp, seedPlan, sessionBody, uid } from './helpers.ts';
 afterEach(() => vi.restoreAllMocks());
 
 async function body(res: Response): Promise<Record<string, unknown>> {
@@ -241,29 +241,64 @@ describe('app checks (in order)', () => {
     expect((await body(live)).code).toBe('origin_not_allowed');
   });
 
-  it('rate limits per app per minute', async () => {
+  /** An app on `plan` whose own client is `aud`, and a valid /v1/sessions request for it. */
+  async function quotaApp(perMinute: number, perDay: number, perIp = 1000) {
     const plan = `p${uid()}`;
-    await seedPlan(plan, 2, 1000, 1000);
+    await seedPlan(plan, perMinute, perDay, perIp);
     const app = await seedApp({ plan });
+    const aud = `${uid()}.apps.googleusercontent.com`;
+    const near = chain({ [aud]: app.scope });
+    const valid = async (): Promise<Response> => call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud) });
+    return { app, aud, near, valid };
+  }
+
+  it('rate limits per app per minute (requests that passed every check)', async () => {
+    const { near, valid } = await quotaApp(2, 1000);
     const statuses = [];
-    for (let i = 0; i < 3; i++) statuses.push((await call('/v1/sessions', { headers: appHeaders(app), body: {} })).status);
-    expect(statuses).toEqual([400, 400, 429]);
-    const res = await call('/v1/sessions', { headers: appHeaders(app), body: {} });
+    for (let i = 0; i < 3; i++) statuses.push((await valid()).status);
+    expect(statuses).toEqual([200, 200, 429]);
+    const res = await valid();
     expect(res.status).toBe(429);
     expect(Number(res.headers.get('retry-after'))).toBeGreaterThan(0);
     expect(res.headers.get('access-control-allow-origin')).toBe(ORIGIN);
     expect(await body(res)).toMatchObject({ code: 'rate_limited' });
+    expect(near.sent).toHaveLength(2);
   });
 
   it('rate limits per app per day', async () => {
-    const plan = `p${uid()}`;
-    await seedPlan(plan, 1000, 2, 1000);
-    const app = await seedApp({ plan });
+    const { valid } = await quotaApp(1000, 2);
     const statuses = [];
-    for (let i = 0; i < 3; i++) statuses.push((await call('/v1/sessions', { headers: appHeaders(app), body: {} })).status);
-    expect(statuses).toEqual([400, 400, 429]);
-    const res = await call('/v1/sessions', { headers: appHeaders(app), body: {} });
-    expect((await body(res)).error).toContain('day');
+    for (let i = 0; i < 3; i++) statuses.push((await valid()).status);
+    expect(statuses).toEqual([200, 200, 429]);
+    expect((await body(await valid())).error).toContain('day');
+  });
+
+  it('unauthenticated junk never uses up the app’s quota (APIW-1): every check runs before it is counted', async () => {
+    // A day quota of 2: before the fix, two junk requests locked every user of the app out until 00:00 UTC.
+    const { app, aud, near, valid } = await quotaApp(2, 2);
+    const evil = await rsaSigner('evil-kid');
+    near.jwks = { keys: [google.jwk, evil.jwk] }; // a well-formed token signed by a key the chain doesn't trust
+    const spk = newSessionKey();
+    const junk: [string, () => Promise<Response>][] = [
+      ['empty body', () => call('/v1/sessions', { headers: appHeaders(app), body: {} })],
+      ['malformed JSON', () => call('/v1/sessions', { headers: { ...appHeaders(app), 'content-type': 'application/json' }, rawBody: '{' })],
+      ['forged token', async () => call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud, {}, {}, evil) })],
+      ['wrong nonce', async () => call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud, {}, { nonce: 'not-this-session' }) })],
+      ['unregistered client', async () => call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, `${uid()}.apps.googleusercontent.com`) })],
+      ['bad session signature', async () => call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(spk, { signature: bytes(64, 9) }) })],
+      ['unknown session', async () => call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(newSessionKey()) })],
+      ['revoke of an unknown session', async () => call('/v1/sessions/revoke', { headers: appHeaders(app), body: await revokeBody(newSessionKey(), { counter: 1 }) })],
+    ];
+    for (let round = 0; round < 3; round++) {
+      for (const [what, send] of junk) {
+        const res = await send();
+        expect(res.status, what).toBeGreaterThanOrEqual(400);
+        expect(res.status, what).not.toBe(429);
+      }
+    }
+    expect(near.sent).toHaveLength(0);
+    // 24 refused requests later, the app's whole quota is still there.
+    expect([(await valid()).status, (await valid()).status, (await valid()).status]).toEqual([200, 200, 429]);
   });
 
   it('rate limits per IP per minute (other IPs unaffected)', async () => {
@@ -280,18 +315,20 @@ describe('app checks (in order)', () => {
 });
 
 describe('rate limit order', () => {
-  it('a request rejected by the per-IP limit does not use up the app’s shared quota', async () => {
+  it('the per-IP limit comes first and bounds a flood; neither refused nor junk requests use the app’s quota', async () => {
     const plan = `p${uid()}`;
-    await seedPlan(plan, 5, 1000, 2);
+    await seedPlan(plan, 3, 1000, 2);
     const app = await seedApp({ plan });
+    const aud = `${uid()}.apps.googleusercontent.com`;
+    chain({ [aud]: app.scope });
     const noisy = `192.0.2.${Math.floor(Math.random() * 250)}`;
     const statuses: number[] = [];
     for (let i = 0; i < 10; i++) statuses.push((await call('/v1/sessions', { headers: { ...appHeaders(app), 'cf-connecting-ip': noisy }, body: {} })).status);
     expect(statuses).toEqual([400, 400, ...Array(8).fill(429)]);
-    // The app's per-minute quota (5) has 3 left for everyone else.
+    // The app's per-minute quota (3) is untouched: three valid requests from other clients pass, the fourth doesn't.
     const others: number[] = [];
-    for (let i = 0; i < 4; i++) others.push((await call('/v1/sessions', { headers: { ...appHeaders(app), 'cf-connecting-ip': `198.51.100.${i + 20}` }, body: {} })).status);
-    expect(others).toEqual([400, 400, 400, 429]);
+    for (let i = 0; i < 4; i++) others.push((await call('/v1/sessions', { headers: { ...appHeaders(app), 'cf-connecting-ip': `198.51.100.${i + 20}` }, body: await sessionBody(app.scope, aud) })).status);
+    expect(others).toEqual([200, 200, 200, 429]);
   });
 
   it('keys IPv6 clients on their /64', async () => {

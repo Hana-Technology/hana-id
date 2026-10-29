@@ -173,9 +173,12 @@ export type Gate = { ok: true; app: App; caller: Caller } | { ok: false; respons
 
 /**
  * Checks 1–3: the app exists and is active, the caller may call this endpoint (`ctx.endpoint`) for it (origins.ts:
- * Hana pages for an allowed `x-hana-parent-origin`, partner pages by key type and env), rate limits. `relay`
- * endpoints count against the plan's per-IP, per-app minute and per-app day limits; `config` (GET /v1/app, no transaction) only against a per-IP
- * window of its own, so reading the config never uses up the app's relay quota.
+ * Hana pages for an allowed `x-hana-parent-origin`, partner pages by key type and env), and the per-IP limit. `relay`
+ * endpoints count against the plan's per-IP window here, and against the app's minute and day quota only once every
+ * off-chain check has passed, right before the relay (`appQuota`, D100): the publishable key and the Origin headers
+ * are public and forgeable, so a request that fails a token, nonce or signature check must never use up the quota
+ * every user of the app shares. `config` (GET /v1/app, no transaction) counts only against a per-IP window of its
+ * own, so reading the config never uses up the app's relay quota.
  */
 export async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay' | 'config'): Promise<Gate> {
   const fail = (status: number, code: string, error: string, extra: Headers_ = {}): Gate => ({ ok: false, response: reject(ctx, status, code, error, extra) });
@@ -201,24 +204,36 @@ export async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay
   // 2. Origin (and, from a Hana page, the partner origin it acts for).
   if (!caller.ok) return fail(403, 'origin_not_allowed', 'Origin not allowed for this app');
 
-  // 3. Rate limits: per IP per minute first, then per app per minute and per day. The IP check comes first so a
-  //    request it rejects never uses up the app's shared quota (one client could otherwise lock out every user).
+  // 3. The per-IP limit, before anything is parsed or verified: it bounds what one client can make the checks cost.
+  //    The app's shared quota is counted later, after verification (appQuota).
   try {
     const window = kind === 'relay' ? `${app.id}:minute` : `${app.id}:config:minute`;
     const ipHit = await limiter(env, ipKey(request)).hit([{ name: window, windowMs: MINUTE, max: app.per_ip_minute }]);
     if (!ipHit.ok) return fail(429, 'rate_limited', 'Rate limit exceeded (per IP per minute)', { 'retry-after': String(ipHit.retryAfterS) });
-    if (kind === 'relay') {
-      const appHit = await limiter(env, `app:${app.id}`).hit([
-        { name: 'minute', windowMs: MINUTE, max: app.per_minute },
-        { name: 'day', windowMs: DAY, max: app.per_day },
-      ]);
-      if (!appHit.ok) return fail(429, 'rate_limited', `Rate limit exceeded (app per ${appHit.limit})`, { 'retry-after': String(appHit.retryAfterS) });
-    }
   } catch {
     return fail(503, 'rate_limiter_unavailable', 'Try again');
   }
   lap(ctx, 'limits');
   return { ok: true, app, caller };
+}
+
+/**
+ * The app's relay quota (plan `per_minute` and `per_day`, one RateLimiter object per app): asked right before a
+ * relay, once the request passed every off-chain check (token, nonce, session signature, scope, session precheck), so
+ * only requests that would plausibly succeed count. Null when it accepts; a refusal is 429 with Retry-After, a
+ * limiter that fails refuses (503), never lets through.
+ */
+export async function appQuota(env: Env, ctx: Ctx, app: App): Promise<Response | null> {
+  try {
+    const appHit = await limiter(env, `app:${app.id}`).hit([
+      { name: 'minute', windowMs: MINUTE, max: app.per_minute },
+      { name: 'day', windowMs: DAY, max: app.per_day },
+    ]);
+    if (!appHit.ok) return reject(ctx, 429, 'rate_limited', `Rate limit exceeded (app per ${appHit.limit})`, { 'retry-after': String(appHit.retryAfterS) });
+  } catch {
+    return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
+  }
+  return null;
 }
 
 // ---- GET /v1/app ----
@@ -322,6 +337,9 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     if (inUse.value) return reject(ctx, 409, 'session_exists', 'This session key is already in use');
     if (gov) return chainGateResponse(ctx, gov);
     lap(ctx, 'checks');
+    // 10. The app's quota, counted only now that the request passed every check.
+    const quota = await appQuota(env, ctx, app);
+    if (quota) return quota;
 
     const result = await relay(env, 'session', { method: call.method, args: call.args }, requestId);
     lapRelay(ctx, result);
@@ -372,6 +390,9 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     // The app key's pairing check (bls.ts), last: it is the costly one.
     if ('pk1' in call && env.BLS_PRECHECK === '1' && !(await appKeyPairs(call.pk1, call.pk2))) return reject(ctx, 400, 'invalid_app_key', 'pk1 and pk2 are not the same key');
     lap(ctx, 'checks');
+    // The app's quota, counted only now that the request passed every check.
+    const quota = await appQuota(env, ctx, app);
+    if (quota) return quota;
 
     const result = await relay(env, 'session', { method: call.method, args: call.args }, requestId);
     lapRelay(ctx, result);

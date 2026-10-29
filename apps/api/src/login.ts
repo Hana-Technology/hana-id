@@ -7,7 +7,7 @@ import { appKeyPairs, appKeyProblem } from './bls.ts';
 import { disallowedClaim } from './claims.ts';
 import type { Env } from './env.ts';
 import { hex, sha256 } from './bytes.ts';
-import { TOKEN_EXP_SKEW_MS, appGate, chainGate, chainGateResponse, checkClientScope, done, lap, lapRelay, limiter, newCtx, reject, settle } from './handlers.ts';
+import { TOKEN_EXP_SKEW_MS, appGate, appQuota, chainGate, chainGateResponse, checkClientScope, done, lap, lapRelay, limiter, newCtx, reject, settle } from './handlers.ts';
 import { readJson } from './http.ts';
 import { JwksUnavailableError, verifyIdToken } from './jwks.ts';
 import { keyObserver } from './key-observations.ts';
@@ -87,7 +87,7 @@ export function loginFailure(env: Pick<Env, 'SIGNER_ACCOUNT' | 'MPC_ACCOUNT'>, r
 export async function handleLogin(request: Request, env: Env, requestId: string, exec?: ExecutionContext): Promise<Response> {
   const ctx = newCtx(env, requestId, LOGIN_ENDPOINT, request);
   const now = Date.now();
-  // 1. App, caller (the vault or the export window, for an allowed parent origin), rate limits.
+  // 1. App, caller (the vault or the export window, for an allowed parent origin), the per-IP limit.
   const gate = await appGate(request, env, ctx, 'relay');
   if (!gate.ok) return gate.response;
   const { app } = gate;
@@ -155,6 +155,9 @@ export async function handleLogin(request: Request, env: Env, requestId: string,
     if (keyProblem) return reject(ctx, 400, 'invalid_app_key', keyProblem);
     if (env.BLS_PRECHECK === '1' && !(await appKeyPairs(req.pk1, req.pk2))) return reject(ctx, 400, 'invalid_app_key', 'pk1 and pk2 are not the same key');
     lap(ctx, 'checks');
+    // 9. The app's quota (plan per_minute / per_day), counted only now that the request passed every check (D100).
+    const quota = await appQuota(env, ctx, app);
+    if (quota) return quota;
 
     const result = await relay(env, 'session', { method: call.method, args: call.args }, requestId);
     lapRelay(ctx, result);

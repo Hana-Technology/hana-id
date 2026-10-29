@@ -161,14 +161,18 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   |---|---|
   | Relay endpoints per IP per app | plan `per_ip_minute` (free: 20/min) |
   | Key exports per user path per app | 3/hour |
-  | Relay endpoints per app | plan `per_minute` / `per_day` (free: 60 / 5000) |
+  | Relay endpoints per app | plan `per_minute` / `per_day` (free: 60 / 5000), counted only after every off-chain check (D100) |
   | `GET /v1/app` per IP per app | plan `per_ip_minute`, its own window |
   | Vault endpoints | 60/min per IP per app (*per location*); 10 × `per_minute` per app; 10/min per share (share actions, *per location*) |
   | Login relay per IP | writes 10/min, reads 120/min |
   | Owner actions | 10/min per IP; 20/min and 200/day globally |
 
   Each request's windows are asked in turn: per IP first, and the per-app window only once the IP window accepted,
-  so a request the IP window refuses never uses (or holds) any of the app's shared quota. On the vault endpoints the
+  so a request the IP window refuses never uses (or holds) any of the app's shared quota. On the relay endpoints the
+  app's quota is asked last, after the token, nonce, session-signature, scope and session checks and right before
+  the relay (`appQuota`, D100): the key and the `Origin` headers are public, so junk that fails a check never spends
+  the quota every user of the app shares (security sweep APIW-1); the per-IP window bounds what junk can make the
+  checks cost. On the vault endpoints the
   per-share limit comes last, after the body check, so it counts only requests both others accepted. A limiter that
   fails refuses the request (`503 rate_limiter_unavailable`); none fails open.
 

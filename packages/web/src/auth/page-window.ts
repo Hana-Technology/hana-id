@@ -24,6 +24,38 @@ export function isFramed(win: PageWindow): boolean {
   }
 }
 
+/** The vault iframe's name, `hana-vault-<32 hex>` (128-bit random, set by the SDK). */
+export const VAULT_FRAME_NAME = /^hana-vault-[0-9a-f]{32}$/u;
+
+/** Child frame `name` of `w`, or null (cross-origin named access to child frames is allowed; anything odd is null). */
+export function childFrame(w: Window, name: string): unknown {
+  try {
+    return (w.frames as unknown as Record<string, unknown>)[name] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** `w.parent`, or null when it can't be read. */
+export function parentOf(w: unknown): unknown {
+  try {
+    return (w as Window).parent;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether a message came from the partner page's vault frame: `event.origin` is vaultOrigin, `event.source` is
+ * `opener.frames[vaultFrame]`, and that frame's parent is the opener. The login and approval popups opened by the
+ * partner page (`?v=<vault frame name>`) authenticate the vault this way.
+ */
+export function fromPartnerVault(e: MessageEvent, opener: Window, vaultFrame: string, vaultOrigin: string): boolean {
+  if (e.origin !== vaultOrigin) return false;
+  const vault = childFrame(opener, vaultFrame);
+  return vault !== null && e.source === vault && parentOf(e.source) === opener;
+}
+
 /** 128-bit random window-name suffix, 32 lowercase hex characters. */
 export function randomName(prefix: string): string {
   const b = crypto.getRandomValues(new Uint8Array(16));

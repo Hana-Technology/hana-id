@@ -1015,6 +1015,37 @@ answered question there points here.
   "Sign out this device"; coarse device labels; the proposed limits; consent recording fails closed; Home signs in
   with the first shared client; `/home` on `authOrigin`; legal review before mainnet.
 
+### D99. The approval popup opens in the partner's click; the launcher is the fallback
+- Date 2026-10-29 · Status: in force (`packages/web/src/client/approval-window.ts`, `src/auth/approve-page.ts`,
+  `src/vault/approvals.ts`; `hana:approve-close`, `popupOpened` and `approvalWindow` in
+  `packages/core/src/protocol.ts`) · Source: conversation (decided by the user); amends `docs/batch-b-spec.md`
+  "Approval flow" steps 1–3
+- Decision: when a partner calls a signing method (the EIP-1193 signing methods, `hana.stellar` and the Stellar
+  Wallets Kit module, `signRaw`, `requestAutoApprove`, the Sodax adapters) from a user's click, the SDK opens
+  `{authOrigin}/approve?from=partner&v=<vault frame name>` (`hana-approve-<32 hex>`, `popup,width=420,height=680`)
+  synchronously in that click, as login does, and flags the request `popupOpened`. It does so only with transient
+  user activation (`navigator.userActivation.isActive`; when the API is missing it tries anyway), and opens nothing
+  while an approval popup is already open (its own, or the vault's, reported by `approvalWindow`), which is reused.
+  The popup finds the vault through `window.opener.frames[v]` and accepts messages only from it, authenticated as the
+  login popup does (origin `vaultOrigin`, that exact frame, whose parent is the opener); the vault accepts the
+  popup's hello only from `authOrigin` and a window whose opener is its parent. From then on the protocol, the digest,
+  the guard and the 15 s reuse are unchanged. The vault adopts the popup for the head of its queue (requests already
+  queued keep their order), holds its launcher up to 3 s for the hello of a flagged request, tells a second window
+  to close while one is in use, and tells a popup that has shown nothing to close (`hana:approve-close`) when its
+  request ends without an approval screen (auto-approved or refused), on arrival if its hello comes later (within
+  8 s). The popup stays blank for 0.6 s and closes itself after 8 s if no request reaches it.
+  `hana.prepareApproval()` opens the window early for a signing call made after an await (a quote fetch). Without
+  activation, or when `window.open` returns null (Safari after an await, a popup blocker), the vault's "Review in
+  Hana" launcher works as before.
+- Why: one click less on every signature, the same as login, and no small button to find; Safari keeps working
+  through the fallback.
+- Security: the partner page holds a WindowProxy to the popup and can navigate or close it; that is no more than a
+  malicious page opening its own fake popup, since users trust the popup's address bar (`authOrigin`), and the popup
+  never shows or answers anything but the authenticated vault. The guard (D36) is unchanged. `docs/security.md`
+  "Approval popup opened by the partner page".
+- Rejected: opening the popup only from the vault's launcher (an extra click per signature); having the partner page
+  relay requests to the popup (the popup would have to trust the partner page).
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -1035,6 +1066,7 @@ answered question there points here.
 | Batch C draft retention: ledger 400 days, uid stripped 35 days after the month, audit 36 months | Statements and settlements 7 years, raw usage 24 months then de-identified, audit 5 years (D90) | `docs/batch-c-spec.md` "Retention" |
 | Sodax Stellar `signAndSendTransaction(p)` is `sendTransaction(signTransaction(p.data))` | It signs as `p.from`: `sendTransaction(signTransaction(p.data, {address: p.from}))`, so a raw transaction built for another account (a muxed `M…` address included) is 4100 before any popup. Sodax builds every raw transaction for `getWalletAddress()`'s `G…` address. Confirmed (D67) | `docs/batch-b-spec.md` "Sodax adapter"; `packages/sodax/src/stellar.ts` |
 | `/login` calls `GET /v1/app` itself and cross-checks the vault's signer, scope and client before Google (batch B "Login" step 4) | It checks the pinned signer and the nonce only, makes no API call, and shows the vault's app name (D77) | `docs/security.md` "The login popup trusts the vault's app facts" |
+| Every approval popup opens from the vault's "Review in Hana" launcher (batch B "Approval flow" steps 1–2) | A signing call from a click opens it in that click (`/approve?from=partner&v=…`); the launcher is the fallback without user activation or when `window.open` returns null (D99) | `docs/batch-b-spec.md` "Approval flow" |
 | The vault persists (share, record) before it replies to `hana_login` (batch B "Login" steps 11–12) | It replies first; the share and record follow in the background, and a failure turns `persistence` to `'none'` (`persistenceChanged`, D79) | `packages/web/src/vault/vault.ts` `persistLogin` |
 
 ## Proposed, not yet confirmed

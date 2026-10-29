@@ -181,6 +181,31 @@ describe('sendTransaction', () => {
     expect(net.rpcCalls(RECEIPTS, 'eth_chainId')).toHaveLength(2);
   });
 
+  it('opens the approval popup in the caller’s click (hana.prepareApproval, before the queue and any RPC), D99', async () => {
+    const { hana } = setup();
+    const cancel = vi.fn();
+    const callsAtPrepare: number[] = [];
+    const prepareApproval = vi.fn(() => {
+      callsAtPrepare.push(net.calls.length);
+      return { cancel };
+    });
+    const base = createSodaxEvmProvider({ ...hana, ethereum: hana.ethereum, addresses: hana.addresses, prepareApproval }, { chainId: BASE, rpcUrl: RECEIPTS });
+    const p = base.sendTransaction({ from: EVM, to: USDC, value: 0n, data: APPROVE });
+    expect(prepareApproval).toHaveBeenCalledTimes(1);
+    expect(callsAtPrepare).toEqual([0]);
+    await expect(p).resolves.toBe(HASH);
+    expect(cancel).not.toHaveBeenCalled();
+    // A send refused before anything was signed closes the window it opened.
+    receipts({}, RECEIPTS, '0xaa36a7');
+    const other = createSodaxEvmProvider({ ethereum: hana.ethereum, addresses: hana.addresses, prepareApproval }, { chainId: ARB, rpcUrl: RECEIPTS });
+    await rejection(other.sendTransaction({ from: EVM, to: USDC, value: 0n, data: APPROVE }));
+    expect(cancel).toHaveBeenCalledTimes(1);
+    // A from refused at once opens nothing.
+    await rejection(base.sendTransaction({ from: OTHER_EVM, to: USDC, value: 0n, data: APPROVE }));
+    expect(prepareApproval).toHaveBeenCalledTimes(2);
+    expect(callsAtPrepare[1]).toBe(net.calls.length - 1); // before the second provider's own chain check
+  });
+
   it('passes a native value as a 0x quantity, and accepts `from` in any case', async () => {
     const { base } = setup();
     await base.sendTransaction({ from: EVM.toLowerCase() as `0x${string}`, to: SPOKE, value: 10n ** 18n, data: '0x' });

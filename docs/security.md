@@ -2,7 +2,8 @@
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
 known open issues. Last verified against code: 2026-10-29 (branch `perf/login-latency-impl`; the login popup, the
-background persist and the vault gate were re-checked, the rest as of 2026-10-28, commit 58edee9).
+background persist and the vault gate were re-checked, the rest as of 2026-10-28, commit 58edee9; the approval popup
+opened by the partner page, branch `feat/approve-in-click`, D99).
 
 Component map and flows: `docs/architecture.md`. On-chain layouts and the contract's own security notes:
 `docs/contract-interface.md` ("Security notes (for reviewers)"). Browser parts (vault, auth pages, partner client)
@@ -27,7 +28,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Hana operator (owner, signer, relayer accounts; Cloudflare account) | Running the contract, API and pages honestly | Today, total control: post an issuer key (owner or `KEYS_UPDATER_KEY`) and mint tokens; upgrade the contract (signer full-access key, no lock); serve modified vault/auth bundles. Suspend apps, stop relaying, list or remove shared clients | Move a scope's registered clients or owners, or block derivation for a scope with its own client, **without** those powers above. Read keys in normal operation |
 | API Worker logic and D1 (not the pages, not the secrets) | Gating and relaying; holding shares | Deny service; with `VAULT_KEK` plus a device dump, get PRK; point a vault at another scope of the same user only together with a Google client the registry maps to that scope (the vault's login check, D56, refuses any other combination); set or widen `raw_sign`/policies (the user still approves raw requests and must accept a new `policyId`); make the vault page frameable by another origin (D1 origins) | Substitute the signer, path or CKD key (pinned in the bundles, path computed in the vault); read or swap the relayed token (end-to-end encrypted); sign without the vault |
 | Partner (app owner) | Its own app config and, in own-client mode, its Google client | Own-client mode: obtain tokens with any nonce for its client and derive its own users' keys in its scope (inherent: Hana can't see Google client settings). Set an auto-approve policy (delayed; users must accept it) | Anything in another scope. In shared mode: derive keys (no token with a nonce of its choosing) |
-| Partner page (incl. XSS, malicious dependency) | Nothing | Start a login (visible popup), read addresses, queue signature requests, drive an unlocked vault within its idle/absolute limits, get requests signed that match an accepted auto-approve policy | Read keys, tokens, nonces; get any other signature without a guarded Approve in a Hana popup |
+| Partner page (incl. XSS, malicious dependency) | Nothing | Start a login (visible popup), read addresses, queue signature requests, drive an unlocked vault within its idle/absolute limits, get requests signed that match an accepted auto-approve policy; navigate, close or focus the approval popup it opened (D99, "Approval popup opened by the partner page") | Read keys, tokens, nonces; get any other signature without a guarded Approve in a Hana popup |
 | User's browser and device | Running Hana's pages; keeping the profile private | Malware or an extension in all frames: everything the user can do, including reading an exported key. A disk dump with a live share: unlock and get PRK | After logout, idle or absolute expiry or revoke: nothing. A derive (the persisted session is used up) |
 | NEAR RPC (manifest `rpc`, and `rpcFallback` when set) | Liveness, honest views | Fail derives, report wrong counters or a wrong registry answer (a refused login), delay. The fallback is asked only when the primary fails, so a lying primary is not outvoted | Forge a CKD result (pairing check against the pinned key) |
 | Anyone watching the chain or mempool | Nothing | Read used tokens (openid-only claims via the API), replay `create_session` with them (the vault derives with the next counter), replay a whole combined call (burns a `max_uses = 1` login: `session_consumed`; attacker pays gas) | Derive for themselves (needs the session key; the answer is encrypted to `a`) |
@@ -243,7 +244,9 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   `relayKey` from the vault to its authenticated login popup (schemas: `packages/core/src/protocol.ts`).
 - Approval binds the whole request through `approvalDigest` (`packages/core/src/approval.ts:179`). Its network
   context is the passphrase or chain ID for transactions and auth entries, and empty for messages, typed data and raw
-  requests (D35); the popup says those signatures aren't tied to one network. The launcher only opens the popup.
+  requests (D35); the popup says those signatures aren't tied to one network. The launcher only opens the popup. A
+  signing call from a click opens the popup from the partner page instead (D99); see "Approval popup opened by the
+  partner page" below.
 - The Approve guard (`packages/web/src/auth/approve-guard.ts`, D36): disabled until 1 s after render and 1 s after
   the window last gained focus or became visible, then an arming gesture: a mouse `pointermove` that moved (non-zero
   `movementX`/`Y`; or, as WebKit always reports 0, a client position other than that of the last pointer event in the
@@ -303,6 +306,48 @@ call. What its own `GET /v1/app` used to give, and why that is not needed:
 What the popup still checks on its own: the pinned `SIGNER`, the nonce recomputed over the message's session
 (signer, scope, session key, expiry, key index, max uses, salt), the message schema, and that it is not framed. With
 no API call its CSP has no `connect-src` at all.
+
+### Approval popup opened by the partner page
+
+A signing call made in a user's click opens `{authOrigin}/approve?from=partner&v=<vault frame>` from the partner page,
+in that click (D99, `packages/web/src/client/approval-window.ts`), as login opens `/login`. The vault's launcher opens
+it only as the fallback. So the partner page, and any script on it, holds a WindowProxy to the real approval popup.
+
+- **What users trust is the popup's address bar.** The window is a top-level popup whose address bar shows
+  `authOrigin`. That is the only thing that tells a user a window is Hana's; the window's position, size or how it
+  opened never did.
+- **What the handle allows.** A cross-origin WindowProxy exposes only `location` (set, to navigate), `close()`,
+  `focus()`, `blur()`, `closed`, `frames`, `length`, `opener`, `parent`, `top` and `postMessage`. The page can't read
+  the popup, move or resize it, or click in it. It can:
+  - navigate it to a page of its own that imitates Hana: the address bar then shows the partner's origin, and the
+    imitation can't post as `authOrigin`, so the vault never takes an answer from it. A malicious page could already
+    open its own fake popup at any time; holding this handle adds nothing to that. The request in the vault waits
+    until the window closes or 5 min pass (4001), as when a user walks away;
+  - close it: the vault sees the window closed and rejects the request on show (4001), as when the user closes it;
+  - focus or blur it: each focus and blur resets the Approve guard (D36), so this can only delay an approval;
+  - post messages to it: the popup takes none (below).
+- **The popup accepts nothing from the partner page.** It accepts requests, consent screens and `hana:approve-close`
+  only from the authenticated vault: `event.origin === vaultOrigin` and `event.source === opener.frames[v]` whose
+  parent is the opener, exactly the login popup's partner-mode check; it posts only to that frame, with
+  `targetOrigin = vaultOrigin`, never to the partner page. A request the partner page posts is neither shown nor
+  answered (`packages/web/test/auth/approve-page.test.ts`, `apps/e2e/tests/approve-in-click.spec.ts`). A page can
+  only name a frame it embeds, and a vault frame answers only the origins of its own app (`frame-ancestors`, the
+  parent-origin pin), so a page can't steer the popup to another app's vault.
+- **The vault accepts only Hana's popup.** It adopts a popup only on a hello from `authOrigin` whose window's opener
+  is the vault's parent (the partner page itself), as for a partner-mode login popup, and posts to it with
+  `targetOrigin = authOrigin`, so a popup navigated elsewhere receives nothing. Once adopted, results are accepted
+  only from that window, with the digest check unchanged.
+- **Nothing else changes.** The digest binding, the Approve guard (1 s after render, 1 s after focus, an arming
+  gesture that never approves, D36), the queue limit and the 15 s reuse are the same for both kinds of popup. The
+  click that opened the popup can't approve in it: the guard needs 1 s and a new gesture inside the window.
+- **Auto-approved and refused requests.** The popup opens before the vault has decided, so for a request the vault
+  signs under the user's accepted policy, or refuses, it is told to close (`hana:approve-close`); it shows nothing for
+  its first 0.6 s and nothing to approve at any time, since only the vault's requests render an Approve button. A
+  popup no request reaches closes itself after 8 s.
+- **COOP.** Unchanged and the same as for `/login`: the auth pages send no `Cross-Origin-Opener-Policy` header, so
+  the popup keeps its opener; the partner page must not use COOP `same-origin` (`same-origin-allow-popups` is fine).
+  A severed popup reaches no vault and shows an error; the SDK sees its handle closed and leaves the request to the
+  launcher.
 
 ## Auto-approve policies
 

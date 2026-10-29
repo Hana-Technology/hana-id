@@ -76,8 +76,10 @@ import { HanaIdModule } from '@hana-id/web/stellar-wallets-kit';
 const kit = new StellarWalletsKit({ network, modules: [new HanaIdModule(hana), ...otherModules] });
 ```
 
-Each request shows a "Review in Hana" button; the user clicks it and approves in the Hana popup, which decodes the
-request itself. You build, simulate and submit transactions; Hana only signs (`eth_sendTransaction` fills and
+Call the signing methods directly in your click handler, before any `await`: the Hana approval popup opens in that
+click, as `login()` does, and the user approves there; the popup decodes the request itself. Without a click (or
+when Safari blocks the popup after an `await`) the vault shows a "Review in Hana" button that opens the same popup.
+`hana.prepareApproval()` opens it early for a handler that must await something first. You build, simulate and submit transactions; Hana only signs (`eth_sendTransaction` fills and
 broadcasts through your `evm.chains` RPC).
 
 ## Your page must

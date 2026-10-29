@@ -378,6 +378,11 @@ const provider = new BrowserProvider(hana.ethereum);
 | `eth_signTransaction`, `personal_sign`, `eth_signTypedData_v4` | approval |
 | `eth_sign` and other signing or wallet methods | `4200` |
 | read-only methods (`eth_call`, `eth_getBalance`, …) | forwarded to the current chain's `rpcUrl` |
+| `eth_sendRawTransaction` | forwarded to the current chain's `rpcUrl` (it broadcasts a transaction you already hold signed; Hana signs nothing) |
+
+The RPC you configure is trusted for liveness and ordering: it fills fees and nonces, answers reads and broadcasts,
+so use a provider you trust, over https (required for `pk_live_` keys). The hash `eth_sendTransaction` returns is the
+one your RPC reports.
 
 One key covers every EVM chain. Contract creation (an empty `to`) works with approval, but no policy ever
 auto-approves it. Errors are `ProviderRpcError` with numeric codes. A sign-in that didn't complete is `4001`, and the

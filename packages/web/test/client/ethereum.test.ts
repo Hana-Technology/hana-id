@@ -4,7 +4,7 @@
 // the port as 0x hex strings").
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProviderRpcError } from '../../src/client/errors.ts';
-import { rdnsFor } from '../../src/client/ethereum.ts';
+import { READ_ONLY_METHODS, rdnsFor } from '../../src/client/ethereum.ts';
 import { HANA_ID_ICON } from '../../src/client/icon.ts';
 import { EVM, LOGGED_IN, LOGGED_OUT, ORIGINS, STELLAR, type Setup, flush, rpcFetch, setup } from './harness.ts';
 
@@ -474,5 +474,14 @@ describe('signing', () => {
     expect(rpc.calls).toEqual([{ method: 'eth_blockNumber', params: [] }]);
     await refused(s.client.ethereum.request({ method: 'eth_getBalance', params: [EVM, 'latest'] }), -32601);
     await refused(s.client.ethereum.request(null as never), -32602);
+  });
+
+  it('eth_sendRawTransaction is not a read-only method, but is still passed to the current chain RPC as is (PART-6)', async () => {
+    expect(READ_ONLY_METHODS.has('eth_sendRawTransaction')).toBe(false);
+    const rpc = await loggedIn();
+    await expect(s.client.ethereum.request({ method: 'eth_sendRawTransaction', params: ['0x02f8'] })).resolves.toBe(HASH);
+    expect(rpc.calls).toEqual([{ method: 'eth_sendRawTransaction', params: ['0x02f8'] }]);
+    // Nothing went to the vault: Hana signs nothing for it.
+    expect(s.vault.requests.filter((r) => r.method === 'eth_signTransaction')).toEqual([]);
   });
 });

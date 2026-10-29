@@ -9,6 +9,7 @@
 // | eth_signTransaction, personal_sign, eth_signTypedData_v4 | the vault, with approval (the transaction is filled first) |
 // | eth_sign and other signing or wallet methods | 4200 |
 // | read-only methods (READ_ONLY_METHODS) | forwarded to the current chain's rpcUrl |
+// | eth_sendRawTransaction | forwarded to the current chain's rpcUrl: it broadcasts what the dapp already signed |
 //
 // Every signing method opens the approval popup synchronously in the call (D99), before any await: called from a click,
 // it opens in that click, as login does; otherwise the vault's launcher is the fallback. eth_sendTransaction and
@@ -103,7 +104,6 @@ export const READ_ONLY_METHODS: ReadonlySet<string> = new Set([
   'eth_newFilter',
   'eth_newPendingTransactionFilter',
   'eth_protocolVersion',
-  'eth_sendRawTransaction',
   'eth_syncing',
   'eth_uninstallFilter',
   'net_listening',
@@ -232,6 +232,10 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
         if (typed === null) throw err(RpcCode.invalidParams, 'typedData must be a JSON string or object');
         return this.#host.request('eth_signTypedData_v4', [address, typed]);
       }
+      case 'eth_sendRawTransaction':
+        // Not a read (sweep PART-6): it broadcasts a transaction the dapp already holds signed, on the current chain.
+        // Hana signs nothing here, so it is passed to the RPC as is.
+        return this.#rpc(method, Array.isArray(params) ? params : [params]);
       default:
         if (READ_ONLY_METHODS.has(method)) return this.#rpc(method, Array.isArray(params) ? params : [params]);
         throw err(ErrorCode.unsupportedMethod, `Hana ID does not support ${method}`);

@@ -16,6 +16,7 @@ import {
   factoryCreateArgs,
   factoryMinDeposit,
   functionCallKind,
+  callDifferences,
   isCall,
   isOpen,
   policyProblems,
@@ -106,6 +107,22 @@ describe('proposals', () => {
     expect(isCall(p({ kind: functionCallKind('signer.testnet', 'f', { a: 1, b: [2, { c: 3, d: 4 }] }) }), 'signer.testnet', 'f', { b: [2, { d: 4, c: 3 }], a: 1 })).toBe(true);
     expect(isCall(p(), 'signer.testnet', 'propose_owner', { owner: 'other.testnet' })).toBe(false);
     expect(isCall(p(), 'other.testnet', 'propose_owner', { owner: 'dao.testnet' })).toBe(false);
+  });
+
+  it('lists how a proposal differs from the expected call: args, deposit, gas, description', () => {
+    const want = { receiver: 'signer.testnet', method: 'propose_owner', args: { owner: 'dao.testnet' }, deposit: 0n, gas: 100n * TGAS, descriptionPrefix: 'hana-id x: ' };
+    const mine = p({ description: 'hana-id x: propose_owner' });
+    expect(callDifferences(mine, want)).toEqual([]);
+    expect(callDifferences(mine, { ...want, args: { owner: 'other.testnet' } })).toEqual(['args']);
+    expect(callDifferences(mine, { ...want, gas: 50n * TGAS })).toEqual(['gas']);
+    expect(callDifferences(mine, { ...want, deposit: 1n })).toEqual(['deposit']);
+    expect(callDifferences(p(), want)).toEqual(['description']);
+    // Not a candidate: another receiver or method, another kind, or several calls.
+    expect(callDifferences(mine, { ...want, method: 'cancel_owner_proposal' })).toBeNull();
+    expect(callDifferences(mine, { ...want, receiver: 'other.testnet' })).toBeNull();
+    expect(callDifferences(p({ kind: { ChangePolicy: {} } }), want)).toBeNull();
+    const two = { FunctionCall: { ...kind.FunctionCall, actions: [...kind.FunctionCall.actions, ...kind.FunctionCall.actions] } };
+    expect(callDifferences(p({ kind: two, description: 'hana-id x: two' }), want)).toBeNull();
   });
 
   it('is open while InProgress and inside the proposal period', () => {

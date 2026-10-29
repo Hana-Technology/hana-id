@@ -177,6 +177,44 @@ export function isCall(p: DaoProposal, receiver: string, method: string, args: o
   return !!calls && calls.length === 1 && calls[0]!.receiver === receiver && calls[0]!.method === method && canonical(calls[0]!.args) === canonical(args);
 }
 
+/** The full call a proposal is expected to carry: `functionCallKind(receiver, method, args, gas)` with `deposit`. */
+export interface ExpectedCall {
+  receiver: string;
+  method: string;
+  args: object;
+  /** yoctoNEAR (the owner calls attach none). */
+  deposit: bigint;
+  gas: bigint;
+  /** The description must start with this (the scripts' own `hana-id <env>: ` prefix). */
+  descriptionPrefix: string;
+}
+
+/**
+ * How a proposal differs from `want`: null when it isn't a single `FunctionCall` of `want.method` on `want.receiver`
+ * (not a candidate at all); otherwise the fields that differ among args, deposit, gas and description (empty: an
+ * exact match that may be reused). A proposal that differs in any of them executes something else than asked
+ * (another argument, gas too small for the call, a deposit), so it is never reused.
+ */
+export function callDifferences(p: DaoProposal, want: ExpectedCall): ('args' | 'deposit' | 'gas' | 'description')[] | null {
+  const fc = (p.kind as Partial<FunctionCallKind> | null)?.FunctionCall;
+  const calls = decodeFunctionCall(p.kind);
+  if (!fc || !calls || calls.length !== 1 || calls[0]!.receiver !== want.receiver || calls[0]!.method !== want.method) return null;
+  const action = fc.actions[0]!;
+  const asBigInt = (v: unknown): bigint | null => {
+    try {
+      return typeof v === 'string' && /^\d+$/u.test(v) ? BigInt(v) : null;
+    } catch {
+      return null;
+    }
+  };
+  const diffs: ('args' | 'deposit' | 'gas' | 'description')[] = [];
+  if (canonical(calls[0]!.args) !== canonical(want.args)) diffs.push('args');
+  if (asBigInt(action.deposit) !== want.deposit) diffs.push('deposit');
+  if (asBigInt(action.gas) !== want.gas) diffs.push('gas');
+  if (typeof p.description !== 'string' || !p.description.startsWith(want.descriptionPrefix)) diffs.push('description');
+  return diffs;
+}
+
 /** Members who voted to approve. */
 export const approvers = (p: DaoProposal): string[] => Object.entries(p.votes ?? {}).filter(([, v]) => v === 'Approve').map(([a]) => a);
 

@@ -6,8 +6,10 @@
 //   second approval lands. With `--approve-with <member>` (dev envs on testnet only, keys in .secrets, D81) the
 //   proposer and that member approve in the same command; otherwise the command prints what the members must sign.
 // `accept_owner` is always sent through the council: the account accepting is the proposed owner, the DAO.
-// An open proposal for the same call is reused, never duplicated, so re-running a command (or deploy-contract) is
-// safe. Nothing here prints a secret key.
+// An open proposal for exactly the same call (receiver, method, args, deposit, gas, and the scripts' description
+// prefix) is reused, never duplicated, so re-running a command (or deploy-contract) is safe. One that differs in
+// deposit, gas or description is never reused: a new proposal is made and the difference is printed. Nothing here
+// prints a secret key.
 import type { Manifest } from '@hana-id/env';
 import { actionCreators } from '@near-js/transactions';
 import { CliError } from './cli.ts';
@@ -18,9 +20,9 @@ import { explorerTx, type NearRpc, TGAS } from './near.ts';
 import {
   ADD_PROPOSAL_GAS,
   approvers,
+  callDifferences,
   type DaoProposal,
   functionCallKind,
-  isCall,
   isOpen,
   PROPOSAL_CALL_GAS,
   recentProposals,
@@ -130,10 +132,36 @@ async function councilSize(rpc: OwnerTxRpc, dao: string): Promise<{ policy: Sput
   return { policy, needed: votesNeeded(policy.default_vote_policy.threshold, n) };
 }
 
-/** An open proposal on `dao` for exactly this call, if any (newest). */
-export async function findOpenProposal(rpc: OwnerTxRpc, dao: string, signer: string, call: OwnerCall, policy: SputnikPolicy, nowMs: number): Promise<DaoProposal | null> {
-  const open = (await recentProposals(rpc, dao)).filter((p) => isOpen(p, policy, nowMs) && isCall(p, signer, call.method, call.args));
-  return open.at(-1) ?? null;
+/** What every proposal of the scripts for `m` starts its description with. */
+export const descriptionPrefix = (m: Pick<Manifest, 'name'>) => `hana-id ${m.name}: `;
+
+export interface OpenProposalMatch {
+  /** The newest open proposal for exactly this call (receiver, method, args, deposit 0, gas, description prefix). */
+  match: DaoProposal | null;
+  /** Open proposals for the same method and args that differ in deposit, gas or description: never reused. */
+  mismatched: { proposal: DaoProposal; differs: string[] }[];
+}
+
+/** Open proposals on `dao` for this call: an exact match to reuse, and near misses to warn about. */
+export async function findOpenProposal(
+  rpc: OwnerTxRpc,
+  dao: string,
+  m: Pick<Manifest, 'name' | 'signer'>,
+  call: OwnerCall,
+  policy: SputnikPolicy,
+  nowMs: number,
+): Promise<OpenProposalMatch> {
+  const want = { receiver: m.signer, method: call.method, args: call.args, deposit: 0n, gas: call.gas ?? PROPOSAL_CALL_GAS, descriptionPrefix: descriptionPrefix(m) };
+  let match: DaoProposal | null = null;
+  const mismatched: OpenProposalMatch['mismatched'] = [];
+  for (const p of await recentProposals(rpc, dao)) {
+    if (!isOpen(p, policy, nowMs)) continue;
+    const differs = callDifferences(p, want);
+    if (differs === null || differs.includes('args')) continue; // another call altogether
+    if (differs.length === 0) match = p;
+    else mismatched.push({ proposal: p, differs });
+  }
+  return { match, mismatched };
 }
 
 /** One VoteApprove by `member` on proposal `id`; returns the proposal's status afterwards. */
@@ -167,14 +195,20 @@ export async function sendOwnerCall(m: Manifest, call: OwnerCall, opts: OwnerTxO
   const member = proposingMember(m, opts);
   const { policy, needed } = await councilSize(rpc, dao);
   const nowMs = deps.now?.() ?? Date.now();
-  let proposal = await findOpenProposal(rpc, dao, m.signer, call, policy, nowMs);
+  const found = await findOpenProposal(rpc, dao, m, call, policy, nowMs);
+  let proposal = found.match;
   let id: number;
+  if (!proposal) {
+    for (const { proposal: p, differs } of found.mismatched) {
+      log(`    WARNING: open proposal #${p.id} on ${dao} is ${call.method} with these args but a different ${differs.join(', ')}; not reusing it (a new proposal follows). Reject or let it expire if it isn't wanted.`);
+    }
+  }
   if (proposal) {
     id = proposal.id;
     log(`    proposal #${id} on ${dao} for this call is already open (approved by ${approvers(proposal).join(', ') || 'nobody yet'}); not proposing it again`);
   } else {
     const key = loadMemberKey(m, member, deps);
-    const description = `hana-id ${m.name}: ${callText(call)} on ${m.signer}`;
+    const description = `${descriptionPrefix(m)}${callText(call)} on ${m.signer}`;
     const { hash, value } = await rpc.sendTx({ accountId: key.accountId, keyPair: key.keyPair }, dao, [
       actionCreators.functionCall('add_proposal', { proposal: { description, kind: functionCallKind(m.signer, call.method, call.args, gas) } }, ADD_PROPOSAL_GAS, BigInt(policy.proposal_bond)),
     ]);

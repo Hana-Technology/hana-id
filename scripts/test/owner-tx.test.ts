@@ -124,6 +124,41 @@ describe('council backend', () => {
     expect(chain.daos.get(dao)!.proposals).toHaveLength(2);
   });
 
+  it('reuses an open proposal only if deposit, gas and description match too; otherwise proposes anew and warns', async () => {
+    // Same method and args, other gas (a re-run with --gas, or a call too small for the method).
+    await sendOwnerCall(daoOwned, { ...watchdog, gas: 50n * TGAS }, {}, deps());
+    out = [];
+    await sendOwnerCall(daoOwned, watchdog, {}, deps());
+    const proposals = chain.daos.get(dao)!.proposals;
+    expect(proposals).toHaveLength(2);
+    expect(out.join('\n')).toContain('WARNING: open proposal #0 on');
+    expect(out.join('\n')).toContain('a different gas; not reusing it');
+    // Someone else's proposal (not the scripts' description) and one with a deposit are never reused either.
+    const kind = proposals[1]!.kind as { FunctionCall: { actions: { deposit: string }[] } };
+    const withDeposit = JSON.parse(JSON.stringify(kind)) as typeof kind;
+    withDeposit.FunctionCall.actions[0]!.deposit = '1';
+    const submission_time = String(BigInt(chain.now) * 1_000_000n);
+    proposals.splice(1, 1);
+    proposals.push(
+      { id: 1, proposer: B, description: 'add the watchdog', kind, status: 'InProgress', votes: {}, submission_time },
+      { id: 2, proposer: B, description: `hana-id ${daoOwned.name}: add_watchdog`, kind: withDeposit, status: 'InProgress', votes: {}, submission_time },
+    );
+    out = [];
+    const r = await sendOwnerCall(daoOwned, watchdog, {}, deps());
+    expect(r).toMatchObject({ kind: 'proposed', proposalId: 3 });
+    const text = out.join('\n');
+    expect(text).toContain('#1 on');
+    expect(text).toContain('a different description');
+    expect(text).toContain('#2 on');
+    expect(text).toContain('a different deposit');
+    // The exact one is reused on the next run, with no warning about it.
+    out = [];
+    expect(await sendOwnerCall(daoOwned, watchdog, {}, deps())).toMatchObject({ kind: 'proposed', proposalId: 3 });
+    expect(out.join('\n')).toContain('proposal #3');
+    expect(out.join('\n')).toContain('already open');
+    expect(chain.daos.get(dao)!.proposals).toHaveLength(4);
+  });
+
   it('an approved proposal whose call the contract refuses fails loudly', async () => {
     await expect(sendOwnerCall(base, { method: 'accept_owner', args: {} }, { approveWith: B }, deps())).rejects.toThrow('the call accept_owner on');
     expect(chain.daos.get(dao)!.proposals[0]!.status).toBe('Failed');

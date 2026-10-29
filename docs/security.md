@@ -3,7 +3,8 @@
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
 known open issues. Last verified against code: 2026-10-29 (branch `perf/login-latency-impl`; the login popup, the
 background persist and the vault gate were re-checked, the rest as of 2026-10-28, commit 58edee9; the approval popup
-opened by the partner page, branch `feat/approve-in-click`, D99).
+opened by the partner page, branch `feat/approve-in-click`, D99; the browser, core and SDK sweep fixes, branch
+`fix/sweep-web`, D110–D118).
 
 Component map and flows: `docs/architecture.md`. On-chain layouts and the contract's own security notes:
 `docs/contract-interface.md` ("Security notes (for reviewers)"). Browser parts (vault, auth pages, partner client)
@@ -453,6 +454,40 @@ Code: `packages/core/src/policy/` (validator, matcher, `policyId`, usage); the v
   typed addresses aren't checked; only partner-listed contracts and functions are ever auto-approved, and the consent
   screen warns about every `'any'`. A contract that casts a `uint256` (or a Soroban `u256`) argument to an address
   isn't caught: only exactly 160-bit integers are treated as opaque, so that wider integers stay usable as amounts.
+
+## Security sweep of 2026-10-29: core, web, SDK, demo and smoke findings
+
+The sweep of `develop` @ 91609c4 (`security-sweep-hana-id-2026-10-29.md`, kept outside the repo). Status of the
+findings in `packages/core`, `packages/web`, `packages/react`, `packages/sodax`, `apps/demo` and `apps/smoke`, on
+branch `fix/sweep-web` (re-verified against `feat/governance` first). The API, scripts, env, contract and watchdog
+findings are tracked with their own fixes.
+
+| Finding | Status |
+|---|---|
+| CORE-1 (Medium) Stellar account-control operations shown as raw XDR | **Fixed** (D110): every operation decoded; red banner and per-operation warning for signer, threshold and master-weight changes and `accountMerge`; never auto-approved |
+| AUTH-1 (Medium, with VAUL-5) export window keeps the key with no timeout | **Fixed** (D111): erased 5 min after deriving, at the session's end, or when the vault frame goes away |
+| VAUL-1 refused key requests refresh the idle limit | **Fixed** (D112) |
+| AUTH-2 app names unfiltered; AUTH-5/CORE-4 filters miss code points | **Fixed** (D118); the admin CLI's write-time check is OPER-11 (scripts) |
+| AUTH-3 Tab, Tab, Enter approves | **Fixed** (D113): a keyboard Approve needs 500 ms of focus |
+| AUTH-4 auto-translation on the approve and export pages | **Fixed**: `translate="no"` and `notranslate` on every auth page and the key |
+| AUTH-6 revealed key in an `aria-live` region | **Fixed** (D111) |
+| AUTH-7 export re-auth relies on Google honouring `max_age=0` | **Accepted** (D27), unchanged: with a live Google session one click in the chooser re-authenticates; the 5 min key lifetime (D111) bounds what an unattended window exposes |
+| CORE-2 4+4 address display and narrow name-collision check | **Open**: deferred (consent-screen layout and its tests; no signing impact) |
+| CORE-3 auto-approved signatures outlive the consent | **Partly fixed** (D116): said on the consent screen; the ledger cap waits for a trusted current-ledger source (API side) |
+| CORE-5 looser EIP-712 hasher exported | **Fixed** (D114) |
+| CORE-6 base64 decoders accept non-canonical input | **Open**: deferred (no caller depends on uniqueness; a stricter decoder risks breaking stored values) |
+| CORE-8 CKD scalar and copies can't be zeroed | **Partly fixed**: the random bytes are zeroed; bigints and noble's copies can't be |
+| PART-1 vault frame stays visible after the port dies | **Fixed**: the frame is hidden and `launcher {visible: false}` emitted; the guide says to sandbox third-party iframes |
+| PART-2 `eth_sendTransaction` returns the RPC's hash unchecked | **Open**: deferred; the broadcast RPC is documented as trusted for liveness and ordering, and must be https for live apps (D115) |
+| PART-3 plaintext http RPC URLs | **Fixed** (D115) |
+| PART-4 Sodax EVM adapter switches the shared chain | **Open**: deferred (needs a send queue or chain restore in the adapter, and a chain name on the approval screen) |
+| PART-5 `HanaClient` constructor public | **Fixed** (D114) |
+| PART-6 `eth_sendRawTransaction` listed as read-only | **Fixed** |
+| VAUL-2 clock can go backwards; counters reset | **Fixed** (monotonic clock; usage kept on a backwards day) |
+| VAUL-3 consent counters can be rolled back from an old record | **Accepted**: needs write access to the browser profile (the device-compromise model) |
+| VAUL-4 shared-mode check doesn't confirm a shared client | **Fixed** (D117) |
+| VAUL-6 `ancestorOrigins` beyond the parent unchecked | **Fixed** |
+| OPER-10 `spike.html` puts the `error` fragment into `innerHTML` | **Fixed**: state checked first, `textContent` only |
 
 ## Known open issues
 

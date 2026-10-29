@@ -221,6 +221,22 @@ cross-project `sub` test passed (spike above, D42). After the smoke run on the v
   bill, so cut on-chain calls per login (batch B: keep the key across reloads). AWS KMS later only for HSM-grade keys
   (email issuer). Revisit at D1 ~5 GB, an HSM/region requirement, or ~500 req/s per app.
 
+## Batch B on sandbox-dev: first logins (2026-10-29, Smoke B, shared client, Chrome, Malaysia)
+
+Batch B deployed 2026-10-29 (contract upgrade, migration 0003, `VAULT_KEK` key id 1, API and both page Workers).
+Every run, one-transaction and two-transaction, gave the same Stellar and EVM addresses.
+
+| Median, excluding Google | One transaction (vault, 6 runs) | Two transactions (direct page, 5 runs) |
+|---|---|---|
+| Chain | 7.95 s (6.9–10.4) | 9.12 s (8.6–9.4; one outlier 19.3 s) |
+| Login without Google | 9.67 s | 9.15 s |
+
+- Ship gate (Q10): the combined call saves ≈ 1.2 s on chain, under the 1.5 s bar. Not decided on 11 runs; repeat
+  with ~10 interleaved runs each.
+- The vault login spends ≈ 1.7 s outside Google and the chain (popup ≈ 0.25 s; the rest not yet attributed); the
+  direct page ≈ 0.03 s. The registry scope check (D49) took ≈ 0.5 s, fully overlapped (wait 0 ms).
+- Reload unlock: 3.0 s (target < 1 s); no stage breakdown yet.
+
 ## Testnet measurements (sandbox-dev, 2026-10-27, real MPC)
 
 | Call | Gas (all receipts) | Cost | Latency (median, API round trip) |

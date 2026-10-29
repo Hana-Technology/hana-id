@@ -281,6 +281,26 @@ describe('launcher', () => {
       { visible: false, label: '' },
     ]);
   });
+
+  it('a second load while the launcher shows hides the frame at once and emits launcher hidden (PART-1)', async () => {
+    s = setup();
+    const seen: unknown[] = [];
+    s.client.on('launcher', (l) => seen.push(l));
+    await s.vault.connect();
+    s.vault.emit('ui', { launcher: 'show', label: 'Review in Hana' });
+    await flush();
+    expect(s.frame.hidden).toBe(false);
+    // Another frame navigated the vault frame: whatever loads there now must not sit in the launcher's spot.
+    s.vault.load();
+    await flush();
+    expect(s.frame.hidden).toBe(true);
+    expect(s.frame.style.getPropertyValue('display')).toBe('none');
+    expect(seen).toEqual([
+      { visible: true, label: 'Review in Hana' },
+      { visible: false, label: '' },
+    ]);
+    expect(s.client.status).toBe('error');
+  });
 });
 
 describe('events and disconnects', () => {

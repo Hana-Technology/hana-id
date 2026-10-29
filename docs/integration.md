@@ -675,6 +675,11 @@ account **different addresses** (D51). Wallets made with test keys are disposabl
 - Your page holds a handle to the approval popup it opens, as it does for any popup: it could navigate or close it,
   but the popup takes nothing from your page, and users should trust only a window whose address bar shows Hana's
   `authOrigin`.
+- Sandbox third-party iframes (ads, widgets, embeds): give them `sandbox` without `allow-top-navigation` and, unless
+  they need it, without `allow-scripts` and `allow-same-origin` together. An unsandboxed frame can navigate its
+  sibling frames, the Hana vault frame included, and put its own page where the "Review in Hana" launcher was. The
+  SDK hides the vault frame and emits `launcher {visible: false}` as soon as its document is replaced (status
+  `error`, 4900), but a frame that can do this can also overlay your page, so don't give third parties that power.
 - A malicious browser extension can do anything the user can, including reading an exported key. No web wallet
   design prevents that.
 - With your own Google client, your client's settings are part of your users' security ([section 6](#6-google-client-shared-or-your-own)).

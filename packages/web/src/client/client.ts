@@ -158,7 +158,7 @@ export class HanaClient extends Emitter<HanaEvents> {
       publishableKey: config.publishableKey,
       sdkVersion: VERSION,
       onEvent: (e) => this.#onEvent(e),
-      onDisconnect: () => this.#onDisconnect(),
+      onDisconnect: (launcherWasVisible) => this.#onDisconnect(launcherWasVisible),
       now: this.#now,
     });
     this.#windows = new ApprovalWindows(deps.win, this.authOrigin, this.#conn.frameName, this.#now);
@@ -441,8 +441,10 @@ export class HanaClient extends Emitter<HanaEvents> {
     if (this.#status === 'logged_in') this.#setStatus('logged_out');
   }
 
-  #onDisconnect(): void {
+  #onDisconnect(launcherWasVisible: boolean): void {
     this.#vaultDown = true;
+    // The connection hid the frame; tell a partner that mirrors the launcher (PART-1).
+    if (launcherWasVisible && !this.#destroyed) this.emit('launcher', { visible: false, label: '' });
     this.#attempt?.abort(hanaError(ErrorCode.disconnected));
     this.#attempt = null;
     this.#setAddresses(null);

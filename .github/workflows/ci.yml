@@ -143,6 +143,10 @@ jobs:
         working-directory: contracts/integration-tests
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        # The governance sandbox tests rebuild the v1 contract from an older commit (git archive), so
+        # this job needs the history, not a shallow clone.
+        with:
+          fetch-depth: 0
       - run: rustup show active-toolchain
       # The tests build hana-signer and mock-mpc with their own pinned toolchain.
       - run: rustup toolchain install 1.85.1 --target wasm32-unknown-unknown --profile minimal

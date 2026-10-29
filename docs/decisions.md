@@ -559,8 +559,8 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
 - Decision: `create_session` stays a public method, not removed before the audit.
 
 ### D58. CODEOWNERS on derivation, vectors, the contract and the env schema (Q23)
-- Date 2026-10-28 · Status: in force (`.github/CODEOWNERS`; needs "Require review from Code Owners" on `develop` and
-  `main`) · Source: `docs/batch-b-spec.md` Q23
+- Date 2026-10-28 · Status: in force, paths widened by D100 (`.github/CODEOWNERS`; needs "Require review from Code
+  Owners" on `develop` and `main`) · Source: `docs/batch-b-spec.md` Q23
 - Decision: `@tzechuen` owns `packages/core/src/derivation*`, `packages/core/test/vectors/`, `contracts/hana-signer/`
   and `packages/env/src/`.
 
@@ -1046,6 +1046,45 @@ answered question there points here.
 - Rejected: opening the popup only from the vault's launcher (an extra click per signature); having the partner page
   relay requests to the popup (the popup would have to trust the partner page).
 
+### D100. Security sweep fixes (API, operator tooling, CI): quotas after verification, owner-action caps per owner and scope, CKD key from three providers
+- Date 2026-10-29 · Status: in force (branch `fix/sweep-api`) · Source: security sweep 2026-10-29 (OPER-1, APIW-1,
+  APIW-3, OPER-2, OPER-3, APIW-4, APIV-3, APIV-7, OPER-5, OPER-6, OPER-11; `docs/security.md` "Security sweep
+  2026-10-29"); owner answers of the same day; amends D58
+- Decision:
+  - **CKD network key pin (OPER-1).** `fetch-ckd-key` reads the MPC key at one final block from at least three
+    independent RPC providers (distinct registrable domains: the manifest's `rpc`, `rpcFallback`, each `--rpc`, then
+    built-in public endpoints) and writes nothing unless every one reports the env's chain, the same block hash and
+    the same key; the block height, hash and provider hosts are recorded as `ckdNetworkKeySource`. The manifest
+    schema requires https for `rpc`, `rpcFallback` and `apiUrl` outside `local*` envs (there, http only for a loopback
+    host). Before a mainnet pin the key is also compared with NEAR's published MPC key material.
+  - **Relay quota (APIW-1).** The app's `per_minute` / `per_day` quota is counted only for a request that passed
+    every off-chain check, right before the relay; only the per-IP window is asked before verification.
+  - **Owner actions (APIW-3).** Caps per owner identity (5/min, 30/day), per scope (10/min, 50/day) and global
+    (20/min, 200/day) for authenticated actions; `execute_change` (no auth) has its own per-scope window (10/min,
+    50/day) and the global one; `cancel_change` counts against none of these, only 5/min, 20/day per owner identity,
+    25/min, 100/day per target scope (the contract's `MAX_OWNERS` at their cap) and a spend-bound ceiling of 100/min,
+    1000/day. Windows are asked from the most specific in and a refusal takes back the earlier hits. A cancel or any
+    authenticated action without an owner identity is refused.
+  - **Secret scan (OPER-2).** `.gitleaks.toml` has rules for NEAR secret keys, `VAULT_KEK` values, Worker-secret
+    lines and Hana's secret files by name; `scripts/secret-scan-selftest.mjs` proves them on generated fakes in the
+    tests and in CI.
+  - **CODEOWNERS (OPER-1, OPER-3; amends D58).** Also `/envs/`, the API, web, core and watchdog sources, `scripts/`,
+    the lockfiles, `.gitleaks.toml`, `.githooks/` and `.github/`. A second owner is decided; their handle is a TODO
+    until known.
+  - **Smaller fixes.** `/v1/derive` checks the app key's shape always (APIW-4). The API Worker's Workers Logs keep its
+    own lines but not invocation records, which carry relay ids in the URL (APIV-3). Relay errors never return RPC or
+    runtime error text. The admin CLI refuses origins the API drops, Hana's own origins and loopback origins for
+    `pk_live_` apps or outside dev envs, and app names with control, bidi or zero-width characters (OPER-6, OPER-11);
+    the API never treats the literal `http://localhost:*` as an origin (APIV-7). `gen-wrangler --dev-vars` refuses
+    readable secret files and writes `.dev.vars` fresh (OPER-5).
+- Why: each closed a way to break a trust anchor (a lying RPC at pin time), deny service with public inputs (junk
+  against a shared quota, one owner starving another scope's cancel window), or leak a secret past the controls
+  meant to stop it (gitleaks missing every Hana secret shape, relay ids in platform logs).
+- No address or key derivation changes: sandbox-dev's pinned key was re-read from three providers and is unchanged.
+- Rejected: a per-app pre-verification flood window (junk could still lock the app out); one global cancel ceiling
+  (any scope's owners could starve another's cancels); recomputing `owner_action_nonce` off chain now (needs a borsh
+  port of `Change`; the caps already confine a wrong-nonce flood to its owner's own windows; still worth doing).
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -1067,6 +1106,9 @@ answered question there points here.
 | Sodax Stellar `signAndSendTransaction(p)` is `sendTransaction(signTransaction(p.data))` | It signs as `p.from`: `sendTransaction(signTransaction(p.data, {address: p.from}))`, so a raw transaction built for another account (a muxed `M…` address included) is 4100 before any popup. Sodax builds every raw transaction for `getWalletAddress()`'s `G…` address. Confirmed (D67) | `docs/batch-b-spec.md` "Sodax adapter"; `packages/sodax/src/stellar.ts` |
 | `/login` calls `GET /v1/app` itself and cross-checks the vault's signer, scope and client before Google (batch B "Login" step 4) | It checks the pinned signer and the nonce only, makes no API call, and shows the vault's app name (D77) | `docs/security.md` "The login popup trusts the vault's app facts" |
 | Every approval popup opens from the vault's "Review in Hana" launcher (batch B "Approval flow" steps 1–2) | A signing call from a click opens it in that click (`/approve?from=partner&v=…`); the launcher is the fallback without user activation or when `window.open` returns null (D99) | `docs/batch-b-spec.md` "Approval flow" |
+| CODEOWNERS on derivation, vectors, the contract and the env schema (D58) | Also `/envs/`, the API, web, core and watchdog sources, `scripts/`, lockfiles, `.gitleaks.toml`, `.githooks/`, `.github/`; a second owner to add (D100) | `.github/CODEOWNERS` |
+| One global owner-action cap (20/min, 200/day); the relay quota counted in the gate, before verification | Caps per owner, per scope and global, `execute_change` and `cancel_change` on windows of their own; the relay quota counted right before the relay (D100) | `docs/api.md` "Rate limits" |
+| `fetch-ckd-key` reads the CKD key from the manifest's `rpc` | From ≥ 3 independent providers at one final block, all agreeing, with the block recorded (D100) | `docs/operations.md` "Create an environment" step 3 |
 | The vault persists (share, record) before it replies to `hana_login` (batch B "Login" steps 11–12) | It replies first; the share and record follow in the background, and a failure turns `persistence` to `'none'` (`persistenceChanged`, D79) | `packages/web/src/vault/vault.ts` `persistLogin` |
 
 ## Proposed, not yet confirmed

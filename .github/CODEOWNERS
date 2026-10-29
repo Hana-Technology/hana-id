@@ -1,12 +1,27 @@
-# Code owners (docs/decisions.md, Q23; security sweep OPER-1, OPER-3). These paths decide every user's address or key,
-# every environment's accounts and pinned keys, or what the secret scan and CI enforce: a change to any of them needs
-# a code owner's review. Branch protection on `develop` and `main` must have "Require review from Code Owners" on (and
-# the author's own approval not counting) for this to block a merge. A later matching line replaces an earlier one,
-# so each path lists all of its owners.
+# Code owners (docs/decisions.md D58, D100; security sweep OPER-1, OPER-3). These paths decide every user's address or
+# key, every environment's accounts and pinned keys, handle tokens and keys, or decide what the secret scan and CI
+# enforce: a change to any of them needs a code owner's review. Branch protection on `develop` and `main` must have
+# "Require review from Code Owners" on (and the author's own approval not counting) for this to block a merge.
+#
+# The LAST matching line wins and replaces the earlier ones, so the broad paths come first and each specific path
+# below lists all of its owners.
 #
 # Second owner (decided 2026-10-29, security sweep owner answers): a colleague gets write access before mainnet;
 # derivation, contract, env-schema and /envs/ changes then need the other person's approval. Their handle goes on
 # each line marked TODO below.
+
+# Code that handles tokens, keys and the vault: the API, the browser SDK and vault, core crypto and policy, the
+# watchdog, and the operator scripts (access-key method lists, secret files, deploys).
+/apps/api/src/                  @tzechuen
+/apps/watchdog/src/             @tzechuen
+/packages/web/src/              @tzechuen
+/packages/core/src/             @tzechuen
+/scripts/                       @tzechuen
+
+# Dependencies: a changed lockfile can swap any crypto library.
+/pnpm-lock.yaml                 @tzechuen
+/pnpm-workspace.yaml            @tzechuen
+/contracts/**/Cargo.lock        @tzechuen
 
 # Derivation v1 and its golden vectors: a change here changes every address (frozen after the address freeze).
 /packages/core/src/derivation*  @tzechuen

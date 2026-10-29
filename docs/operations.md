@@ -742,6 +742,19 @@ rm .secrets/<env>/vault-kek.previous
 Rows under an id neither secret has show as `unknownKek` (error level): they can't be unlocked until that key is back
 (`vault-kek <env> put --yes` sets both secrets again from the files).
 
+**KEK compromised (runbook, security sweep APIV-5).** Rotation alone doesn't help: it re-wraps the same `K_s` under
+the new key, so whoever holds the old KEK and a D1 copy still has every live share's `K_s`. Revoke every share first,
+then rotate:
+
+```sh
+corepack pnpm --dir apps/api exec wrangler d1 execute <cloudflare.d1Name> --remote --command "UPDATE vault_shares SET revoked_at = CAST(strftime('%s','now') AS INTEGER) * 1000 WHERE revoked_at IS NULL"
+corepack pnpm --filter @hana-id/scripts run vault-kek <env> rotate --yes
+```
+
+Every user with a persisted login signs in with Google again on their next visit (their device records can no longer
+be unlocked). D1 backups and Time Travel still hold the old rows under the old KEK for their retention: treat them as
+exposed for that long.
+
 ### A user's leaked key (`key_index`)
 
 The path is `{scope_id}#{provider}#{sub}#{key_index}`, so a new `key_index` is a new key and new addresses. Rotation

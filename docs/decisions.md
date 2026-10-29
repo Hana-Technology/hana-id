@@ -686,6 +686,12 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
 - Rejected: Supabase Auth (used for Wend's admin portal), Clerk, Auth0, WorkOS; Access for partners (no self-service
   invites, branding or on-chain proofs; per-seat cost past 50 users).
 
+### D76. Keep the one-transaction login (ship gate passed)
+- Date 2026-10-29 · Status: confirmed by measurement under the rule set in D26 · Source: `docs/context.md` "Login
+  timings with stage breakdown"
+- Decision: `create_session_and_derive` stays. Over 10 interleaved runs each, it saved 2.44 s of chain time at the
+  median against `create_session` + `derive_key`, above the 1.5 s bar.
+
 ## Superseded or amended
 
 | Was | Now | Source |

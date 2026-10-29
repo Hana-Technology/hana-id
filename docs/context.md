@@ -251,6 +251,24 @@ Every run, one-transaction and two-transaction, gave the same Stellar and EVM ad
   ~5 serial D1 queries and 3 limiter objects (2 placed in `apac`), each round trip longer when `workers.dev` routes
   Malaysia to a US/EU colo.
 
+## Login timings with stage breakdown (2026-10-29, 10 + 10 interleaved, one account, Smoke B, Chrome, Malaysia)
+
+| Median (range) | One transaction (vault) | Two transactions (direct) |
+|---|---|---|
+| Chain | **7.42 s** (6.71–7.94) | **9.86 s** (7.82–10.87) |
+| Login without Google | 12.28 s | 9.93 s |
+
+- **Ship gate (Q10): passed.** The combined call saves 2.44 s on chain at the median, over the 1.5 s bar. Keep
+  `create_session_and_derive` (D76).
+- The vault login's extra time outside the chain (≈ 4.9 s): `callbackRedirect` 2.47 s (Google's own redirects back
+  to the callback; the direct page counts this inside its Google time, so both flows are at parity once it's moved),
+  `authCheck` 1.05 s (the login page's serial `GET /v1/app` before going to Google), `persist` 0.48 s
+  (`POST /v1/vault/shares` after login), `popup` 0.32 s, callback fetch and boot 0.23 s. `scopeCheck` 0.55 s stays
+  fully overlapped. `/v1/login` server time 7.23 s, of which 5.82 s is waiting for the chain.
+- **Reload unlock: 0.87 s warm** (856, 870 ms), **2.06 s** for the first after a while. Unlock call 0.66 s: server
+  0.44 s (gate 0.24 s = key lookup and rate limiters, share 0.15 s, counter 0.05 s); vault page 0.13 s and script
+  0.07 s.
+
 ## Testnet measurements (sandbox-dev, 2026-10-27, real MPC)
 
 | Call | Gas (all receipts) | Cost | Latency (median, API round trip) |

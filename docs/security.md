@@ -224,7 +224,8 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   endpoint, `packages/web/src/near-call.ts`).
 - Before relaying a login the vault checks its inlined `scopeId` against the registry with one view (D56,
   `packages/web/src/vault/login.ts` `checkScope`): own client `scope_for_client('google', aud) == scopeId`, shared
-  client `get_scope(scopeId)` with `allow_shared`. A mismatch or no answer refuses the login. Limit: the app→scope
+  client `get_scope(scopeId)` with `allow_shared` and the client one of `get_config().shared_clients` in force (the
+  two views in parallel; D117, sweep VAUL-4). A mismatch or no answer refuses the login. Limit: the app→scope
   binding itself lives only in D1, so an API that substitutes another scope **and** that scope's own client passes
   the check (it then gets that scope's key for the user, still only in the user's own vault).
 - Test apps (`pk_test_`) never sign for a mainnet (D39, `packages/core/src/networks.ts`): the Stellar public network,

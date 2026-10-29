@@ -96,7 +96,7 @@ Who talks to whom:
 | Auth popup → Google | top-level navigation | Implicit flow, `response_type=id_token`, `scope=openid`, `prompt=select_account` |
 | `/login/callback` → API | `POST /v1/login-relay/:relayId` (`Origin: authOrigin`) | AES-GCM ciphertext of the token |
 | Vault → API | `fetch`, `Origin: vaultOrigin`, `x-hana-key`, `x-hana-parent-origin` | `/v1/app`, relay read, `/v1/login`, `/v1/vault/*` |
-| Vault → NEAR RPC | JSON-RPC (manifest `rpc`; `rpcFallback` only when `rpc` errors or times out, one endpoint per answer: `packages/web/src/near-call.ts`) | `get_session` re-sync, the login's registry check (`scope_for_client` or `get_scope`), `EXPERIMENTAL_tx_status` polling; the export window the same |
+| Vault → NEAR RPC | JSON-RPC (manifest `rpc`; `rpcFallback` only when `rpc` errors or times out, one endpoint per answer: `packages/web/src/near-call.ts`) | `get_session` re-sync, the login's registry check (`scope_for_client`, or `get_scope` and `get_config`), `EXPERIMENTAL_tx_status` polling; the export window the same |
 | Vault, export window → Google | `https://www.googleapis.com/oauth2/v3/certs` | JWKS for the defence-in-depth RS256 check |
 | Partner page → API | `fetch` from the partner origin | `GET /v1/app` (any key); `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` only for `pk_test_` in dev envs (`apps/smoke`) |
 | API → NEAR | NEAR RPC | Views (`get_config`, `get_scope`, `scope_for_client`, `get_session`, `session_key_in_use`, `get_issuer`; for the cron and `GET /v1/governance` also `get_key_changes`, `get_governance`, `view_access_key_list`), `send_tx`, `tx` |
@@ -122,10 +122,11 @@ Browser steps: `packages/web/src/vault/login.ts`, `packages/web/src/auth/login-p
    `relayId = b64url(sha256(relayReadKey))` (`relayIdFor`, `layouts.ts:166`). `SIGNER` is a build constant; `scopeId`
    comes from the vault page's inlined D1 config. It needs `GET /v1/app` first (`apps/api/src/handlers.ts:212`) for
    the Google client and refuses a `signer` or `scopeId` that differs. As soon as `GET /v1/app` answers it also starts
-   one registry view (D56, `packages/web/src/vault/login.ts` `checkScope`), which runs while the user is at Google:
-   own client `scope_for_client('google', clientId)` must be `scopeId`, shared client `get_scope(scopeId)` must exist
-   with `allow_shared`. Its answer is awaited after the token check, before step 6: a mismatch is `config_mismatch`
-   (`scope_mismatch`), no answer `api_unavailable` (`scope_unchecked`).
+   the registry check (D56, `packages/web/src/vault/login.ts` `checkScope`), which runs while the user is at Google:
+   own client `scope_for_client('google', clientId)` must be `scopeId`; shared client `get_scope(scopeId)` must exist
+   with `allow_shared`, and `get_config().shared_clients` must list the client (both views in parallel, D117). Its
+   answer is awaited after the token check, before step 6: a mismatch is `config_mismatch` (`scope_mismatch`), no
+   answer `api_unavailable` (`scope_unchecked`).
 3. The popup finds the vault (`opener.frames[v]`), gets `hana:auth-params` (accepted only from that window on
    `vaultOrigin`), checks `signer` against its own pinned constant, recomputes the nonce, stores `{relayKey}` under
    `hana.login.<relayId>` in its `sessionStorage`, and redirects to Google with `nonce` and `state = relayId`. It makes

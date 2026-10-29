@@ -1165,6 +1165,16 @@ can't collide with the entries the parallel API, contract and watchdog fixes add
   ledger per network: a change in `apps/api` and `packages/env`, for the API side of the sweep fixes. EIP-712
   deadlines have no standard field; a policy-declared deadline field with a maximum horizon is the follow-up there.
 
+### D117. The vault's shared-mode login check also confirms the client is a shared client
+- Date 2026-10-29 · Status: in force on branch `fix/sweep-web` (`packages/web/src/vault/login.ts` `checkScope`,
+  `src/vault/near.ts` `sharedClients`) · Source: sweep finding VAUL-4 (Info); extends D56
+- Decision: in shared mode the vault checks, in parallel with `get_scope` (`allow_shared`), that the Google client
+  the API named is one of `get_config().shared_clients` in force; otherwise the login is refused
+  (`config_mismatch`, `scope_mismatch`) before Google's answer is relayed. A compromised API can no longer run a
+  shared-mode sign-in through a client of its choosing (the chain would refuse that session anyway; this stops it
+  before the user signs in and before gas).
+- Cost: one more optimistic view per shared-mode login, in parallel, while the user is at Google.
+
 ## Superseded or amended
 
 | Was | Now | Source |

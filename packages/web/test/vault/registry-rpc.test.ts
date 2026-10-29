@@ -26,13 +26,15 @@ const relayed = (b: Browser) => b.backend.count('/v1/login') + b.backend.count('
 const OWN = { scopeId: SCOPE, signer: ENV.signer, google: { clientId: 'own.apps.googleusercontent.com', mode: 'own' }, name: 'Partner' };
 
 describe('the scope check at login (Q7)', () => {
-  it('shared client: get_scope must exist and allow shared login; one view, then the login goes on', async () => {
+  it('shared client: get_scope must exist and allow shared login, and the client be a shared client in force; then the login goes on', async () => {
     const browser = new Browser();
     const t = await tab(browser);
     const { reply } = await login(t, g);
     expect(reply.error).toBeUndefined();
     expect(views(browser, 'get_scope')).toHaveLength(1);
     expect(views(browser, 'get_scope')[0]!.params).toMatchObject({ account_id: ENV.signer, finality: 'optimistic' });
+    expect(views(browser, 'get_config')).toHaveLength(1);
+    expect(views(browser, 'get_config')[0]!.params).toMatchObject({ account_id: ENV.signer, finality: 'optimistic' });
     expect(views(browser, 'scope_for_client')).toHaveLength(0);
     // pk_test_ apps see how long the view took and how long the login waited on it.
     expect((reply.result as { timings: Record<string, number> }).timings).toMatchObject({ scopeCheck: expect.any(Number), scopeWait: expect.any(Number) });
@@ -41,6 +43,9 @@ describe('the scope check at login (Q7)', () => {
   it.each([
     ['is not registered', (b: Browser) => b.backend.scopes.delete(SCOPE)],
     ['does not allow shared login', (b: Browser) => b.backend.scopes.set(SCOPE, { id: SCOPE, allow_shared: false })],
+    // VAUL-4: the API named a client that isn't one of the contract's shared clients (a compromised API's own client).
+    ['is fine, but the client is not a shared client', (b: Browser) => (b.backend.sharedClients = [['google', 'another.apps.googleusercontent.com']])],
+    ['is fine, but no shared client is in force', (b: Browser) => (b.backend.sharedClients = [])],
   ])('shared client: a scope that %s refuses the login (config_mismatch) before anything is relayed', async (_, change) => {
     const browser = new Browser();
     change(browser);

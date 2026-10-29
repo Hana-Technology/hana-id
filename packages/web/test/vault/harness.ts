@@ -214,6 +214,8 @@ export class FakeBackend {
   /** The on-chain registry the RPC answers views from: `get_scope` by id, `scope_for_client` by `<provider>|<aud>`. */
   readonly scopes = new Map<string, { id: string; allow_shared: boolean }>([[SCOPE, { id: SCOPE, allow_shared: true }]]);
   readonly clientScopes = new Map<string, string>();
+  /** `get_config().shared_clients`: the shared Google client in force. */
+  sharedClients: [string, string][] = [['google', CLIENT_ID]];
   /** RPC endpoints (origins) that fail every call with a network error. */
   readonly rpcDown = new Set<string>();
   /** What GET /v1/app answers. */
@@ -394,6 +396,7 @@ export class FakeBackend {
       const answer = (v: unknown) => json(200, { jsonrpc: '2.0', id: 'x', result: { result: Array.from(utf8(JSON.stringify(v))) } });
       if (body.params.method_name === 'get_scope') return answer(this.scopes.get(args.scope_id as string) ?? null);
       if (body.params.method_name === 'scope_for_client') return answer(this.clientScopes.get(`${args.provider as string}|${args.aud as string}`) ?? null);
+      if (body.params.method_name === 'get_config') return answer({ shared_clients: this.sharedClients, pending_shared_clients: [] });
       return answer(this.sessions.get(toHex(Uint8Array.from(args.session_public_key as number[]))) ?? null);
     }
     if (body.method === 'EXPERIMENTAL_tx_status') {

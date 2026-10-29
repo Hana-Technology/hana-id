@@ -75,6 +75,16 @@ export class NearView {
     return { id: value.id, allow_shared: value.allow_shared };
   }
 
+  /** `get_config().shared_clients`: Hana's shared login clients in force, as `[provider, aud]` pairs. */
+  async sharedClients(): Promise<readonly (readonly [string, string])[]> {
+    const value = await this.view('get_config', {});
+    const list = isObj(value) ? value.shared_clients : undefined;
+    if (!Array.isArray(list) || !list.every((c) => Array.isArray(c) && c.length === 2 && typeof c[0] === 'string' && typeof c[1] === 'string')) {
+      throw new Error('NEAR RPC: malformed config');
+    }
+    return list as [string, string][];
+  }
+
   /** The outcome of a relayed transaction (sender: the pinned RELAYER). Network errors throw. */
   async txOutcome(txHash: string): Promise<TxOutcome> {
     const body = await this.call('EXPERIMENTAL_tx_status', { tx_hash: txHash, sender_account_id: this.relayer, wait_until: 'EXECUTED_OPTIMISTIC' }, (b) => b.error === undefined || isPendingTxError(b.error));

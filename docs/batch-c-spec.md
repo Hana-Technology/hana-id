@@ -38,6 +38,9 @@ so. Plan doc: https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi
   monitoring" (D83) and the pending-upgrades page, also in the partner console (D86).
 - **Still open:** Q1 (the code flow's `openid`-only token, to test), Q3 (Hana Cloudflare account, zone, domains), Q4's
   fallback email addresses, Q5 (Neon project setup).
+- **Support ID (D96).** The admin portal gets a Support ID lookup: paste a user's `HANA-XXXX-XXXX` code to see that
+  user's sessions, logins, errors and consents for the app (via the hashed user id; no email or Google account).
+  Hana stores contact details only for partner members, security contacts and billing contacts.
 
 ## Decisions this spec implements
 

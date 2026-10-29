@@ -102,6 +102,14 @@ commits to a key held only in the Home page.
 A per-app derive (below) also checks that its token's `sub` equals the identity's (`home_account_mismatch`); Home
 sends `login_hint=<sub>` so Google preselects the same account.
 
+## Support ID (D96)
+
+Home and the Hana popups show the user's **Support ID** for the app in view: a short code derived from that app's
+hashed user id (HMAC with a Hana secret, the same derivation the usage ledger uses), e.g. `HANA-7F3K-92QD`. It is
+included in "Copy diagnostics". Staff look it up in the admin portal (batch C) to see that user's sessions, logins,
+errors and consents. It reveals no email or Google account and can't be reversed without Hana's secret. Hana never
+contacts end users; partners escalate with the Support ID and request IDs.
+
 ## Discovery: finding a user's apps
 
 What exists today, and what it already reveals:

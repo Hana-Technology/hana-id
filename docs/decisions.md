@@ -984,6 +984,16 @@ answered question there points here.
   a 10 s period (60 per minute as 10 per 10 s would refuse bursts the minute limit allows, such as several users
   behind one address reloading at once).
 
+### D96. Support ID for end users; Hana contacts only partners
+- Date 2026-10-29 · Status: confirmed by the user, for batch C and Hana Home · Source: conversation on support
+- Decision: Hana keeps contact details only for partners and their staff (members, security contacts, billing
+  contact). End users are never contacted by Hana and no user email is stored. For support, users get a **Support
+  ID**: a short code (e.g. `HANA-7F3K-92QD`) derived from the app's hashed user id (HMAC with a Hana secret), shown in
+  the Hana popup and Hana Home and included in "Copy diagnostics". Staff paste it into the admin portal to see that
+  user's sessions, logins, errors and consents; it reveals no email or Google account and only works with Hana's
+  secret. Partners escalate with the Support ID plus request IDs.
+- Rejected: an opt-in user contact email (partners own user communication).
+
 ## Superseded or amended
 
 | Was | Now | Source |

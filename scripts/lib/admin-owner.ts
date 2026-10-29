@@ -126,7 +126,7 @@ export async function governanceStatus(m: Manifest, deps: AdminOwnerDeps): Promi
   const keyChanges = governance ? ((await tryView<KeyChangeView[]>(rpc, m.signer, 'get_key_changes')) ?? []) : [];
   const issuer = config ? normaliseIssuer(await tryView<unknown>(rpc, m.signer, 'get_issuer', { provider: GOOGLE_PROVIDER })) : null;
   const keys: AccessKeyListEntry[] = account ? await rpc.accessKeys(m.signer) : [];
-  const tracked = new Set(governance?.updater_keys ?? []);
+  const tracked = new Set([...(governance?.updater_keys ?? []), ...(governance?.pending_updater_keys ?? [])]);
   const findings: string[] = [];
   if (!config) findings.push(`${m.signer} is not initialised.`);
   else if (!governance) findings.push(`${m.signer} runs the v1 (pre-governance) contract.`);
@@ -140,7 +140,7 @@ export async function governanceStatus(m: Manifest, deps: AdminOwnerDeps): Promi
       if (st.kind === 'mismatch') findings.push(`Updater key ${k.public_key} ${st.reason}.`);
     }
   }
-  for (const k of tracked) if (!keys.some((e) => e.public_key === k)) findings.push(`updater_keys lists ${k}, which is not on ${m.signer}.`);
+  for (const k of governance?.updater_keys ?? []) if (!keys.some((e) => e.public_key === k)) findings.push(`updater_keys lists ${k}, which is not on ${m.signer}.`);
   if (config?.paused) findings.push(`${m.signer} is paused.`);
   if (config) {
     const num = (v: unknown) => (typeof v === 'number' ? v : undefined);
@@ -150,6 +150,10 @@ export async function governanceStatus(m: Manifest, deps: AdminOwnerDeps): Promi
   if (governance?.pending_owner) findings.push(`Owner transfer to ${governance.pending_owner.owner} pending, acceptable from ${new Date(governance.pending_owner.acceptable_at_ms).toISOString()}.`);
   if (governance?.pending_withdrawal) findings.push(`Withdrawal of ${governance.pending_withdrawal.amount} yocto to ${governance.pending_withdrawal.receiver} pending.`);
   if (governance && !governance.watchdogs.length) findings.push('No watchdog: every key change waits governance_delay_ms.');
+  else if (governance && !governance.watchdogs.some((w) => w.confirm_from_ms <= nowMs)) {
+    const first = Math.min(...governance.watchdogs.map((w) => w.confirm_from_ms));
+    findings.push(`No watchdog may confirm yet (the first from ${new Date(first).toISOString()}): every key change proposed until then waits governance_delay_ms.`);
+  }
   for (const c of keyChanges) if (nowMs >= c.executable_at_ms) findings.push(`Key change #${c.id} (${c.op} ${c.provider}/${c.kid}) is due and not executed.`);
   if (config && config.owner !== m.owner) findings.push(`The contract owner is ${String(config.owner)}, envs/${m.name}.json says ${m.owner}.`);
 

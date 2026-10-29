@@ -494,7 +494,9 @@ async fn updater_keys_are_added_and_deleted_by_the_contract_only_with_the_fixed_
         "Too many updater keys",
     );
     let governance = env.get_governance().await?;
+    // The AddKey and its callback ran in the same transaction: both keys are confirmed, none pending.
     assert_eq!(governance["updater_keys"].as_array().unwrap().len(), 2);
+    assert_eq!(governance["pending_updater_keys"], json!([]));
     assert_eq!(governance["updater_methods"], json!(UPDATER_METHODS));
     // Only the owner adds.
     for caller in [&env.watchdog, &env.alice] {
@@ -509,7 +511,11 @@ async fn updater_keys_are_added_and_deleted_by_the_contract_only_with_the_fixed_
     let added: bool = outcome.into_result()?.json()?;
     assert!(!added);
     assert_eq!(events_named(&events, "updater_key_add_failed").len(), 1);
-    assert_eq!(env.get_governance().await?["updater_keys"].as_array().unwrap().len(), 1);
+    let governance = env.get_governance().await?;
+    assert_eq!(governance["updater_keys"].as_array().unwrap().len(), 1);
+    assert_eq!(governance["pending_updater_keys"], json!([]), "the full-access key was never an updater key");
+    // So a watchdog can't delete the signer's full-access key through delete_updater_key.
+    expect_failure(tx(env.watchdog.call(signer, "delete_updater_key").args_json(json!({"public_key": full_access.to_string()})).gas(GAS).transact().await), "Not an updater key");
     let key = env.worker.view_access_key(signer, &full_access).await?;
     assert!(matches!(key.permission, AccessKeyPermission::FullAccess), "the existing key is untouched");
     // The deleted key can't sign any more.

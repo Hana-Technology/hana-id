@@ -80,7 +80,10 @@ pub struct GovernanceView {
     pub state_version: u32,
     pub watchdogs: Vec<Watchdog>,
     pub keys_slow_until_ms: u64,
+    /// Updater keys on the account (their `AddKey` succeeded).
     pub updater_keys: Vec<PublicKey>,
+    /// Updater keys requested whose `AddKey` hasn't resolved yet (normally empty: the callback runs a block later).
+    pub pending_updater_keys: Vec<PublicKey>,
     /// `UPDATER_METHODS`: the exact method list of every updater key, for comparing with the account's key list.
     pub updater_methods: Vec<String>,
     pub pending_upgrade: Option<PendingUpgradeView>,
@@ -208,17 +211,20 @@ impl HanaSigner {
     // ---- Updater keys (the signer manages its own access keys) ----
 
     /// Owner. Adds `public_key` to this account as a function-call key with exactly `UPDATER_METHODS`, receiver this
-    /// account, allowance `MAX_UPDATER_ALLOWANCE`. ≤ 2 tracked keys. If the `AddKey` fails (e.g. the key is already
-    /// on the account, with whatever permission), the callback drops it from `updater_keys` again and the call
-    /// returns `false`.
+    /// account, allowance `MAX_UPDATER_ALLOWANCE`. ≤ 2 keys, pending and confirmed together. The key is pending
+    /// (`pending_updater_keys`) until the `AddKey` resolves: on success the callback moves it to `updater_keys`; on
+    /// failure (e.g. the key is already on the account, with whatever permission) it drops it and the call returns
+    /// `false`.
     pub fn add_updater_key(&mut self, public_key: PublicKey) -> Promise {
         self.assert_owner();
         self.install_updater_key(public_key)
     }
 
     /// Owner or any watchdog (the watchdog deletes every updater key the moment it sees a forged proposal from the
-    /// contract account). A watchdog may delete only keys in `updater_keys` (`Not an updater key`); the owner may
-    /// delete any key on this account, so an untracked key can be cleaned up without a full-access key.
+    /// contract account). A watchdog may delete only confirmed keys in `updater_keys` (`Not an updater key`): never a
+    /// pending one, whose `AddKey` may yet fail because the key is already on the account with another permission
+    /// (e.g. a full-access key). The owner may delete any key on this account, so an untracked key can be cleaned up
+    /// without a full-access key; deleting a pending key also stops its callback from tracking it.
     pub fn delete_updater_key(&mut self, public_key: PublicKey) -> Promise {
         let by = self.assert_owner_or_watchdog();
         let index = self.updater_keys.iter().position(|k| *k == public_key);
@@ -226,21 +232,29 @@ impl HanaSigner {
             Some(i) => {
                 self.updater_keys.remove(i);
             }
-            None => assert!(by == self.owner, "Not an updater key"),
+            None => {
+                assert!(by == self.owner, "Not an updater key");
+                self.pending_updater_keys.retain(|k| *k != public_key);
+            }
         }
         events::emit("updater_key_deleted", json!({ "public_key": public_key, "by": by }));
         Promise::new(env::current_account_id()).delete_key(public_key)
     }
 
-    /// Callback of the `AddKey` receipt of `add_updater_key` / `new`. Keeps `updater_keys` equal to what is on chain.
+    /// Callback of the `AddKey` receipt of `add_updater_key` / `new`. Keeps `updater_keys` equal to what is on chain:
+    /// a pending key becomes an updater key only if its `AddKey` succeeded. A key the owner deleted while pending is
+    /// not tracked either way.
     #[private]
     pub fn on_updater_key_added(&mut self, public_key: PublicKey) -> bool {
         // An AddKey receipt returns no value; only success or failure matters (a non-empty value can't occur and
         // still means the receipt succeeded).
         let added = !matches!(env::promise_result_checked(0, 0), Err(PromiseError::Failed));
+        let was_pending = self.pending_updater_keys.contains(&public_key);
+        self.pending_updater_keys.retain(|k| *k != public_key);
         if !added {
-            self.updater_keys.retain(|k| *k != public_key);
             events::emit("updater_key_add_failed", json!({ "public_key": public_key }));
+        } else if was_pending && !self.updater_keys.contains(&public_key) {
+            self.updater_keys.push(public_key);
         }
         added
     }
@@ -283,9 +297,13 @@ impl HanaSigner {
 
     // ---- Owner transfer ----
 
-    /// Owner. The new owner may accept after `governance_delay_ms`. Replaces a pending proposal.
+    /// Owner. The new owner may accept after `governance_delay_ms`. Replaces a pending proposal
+    /// (`owner_proposal_cancelled` for the old one).
     pub fn propose_owner(&mut self, owner: AccountId) {
         self.assert_owner();
+        if let Some(old) = self.pending_owner.take() {
+            events::emit("owner_proposal_cancelled", json!({ "owner": old.owner }));
+        }
         let now = env::block_timestamp_ms();
         let acceptable_at_ms = now.saturating_add(self.governance_delay_at(now));
         events::emit("owner_proposed", json!({ "owner": owner, "acceptable_at_ms": acceptable_at_ms }));
@@ -356,6 +374,7 @@ impl HanaSigner {
             watchdogs: self.watchdogs.clone(),
             keys_slow_until_ms: self.keys_slow_until_ms,
             updater_keys: self.updater_keys.clone(),
+            pending_updater_keys: self.pending_updater_keys.clone(),
             updater_methods: UPDATER_METHODS.split(',').map(String::from).collect(),
             pending_upgrade: self.pending_upgrade.as_ref().map(upgrade_view),
             pending_owner: self.pending_owner.clone(),
@@ -394,12 +413,12 @@ impl HanaSigner {
         assert!(!self.paused, "Paused");
     }
 
-    /// Tracks `public_key` and adds it to this account with the fixed updater permission; the callback untracks it
-    /// if the `AddKey` fails.
+    /// Tracks `public_key` as pending and adds it to this account with the fixed updater permission; the callback
+    /// confirms it (moves it to `updater_keys`) if the `AddKey` succeeded, else drops it.
     pub(crate) fn install_updater_key(&mut self, public_key: PublicKey) -> Promise {
-        assert!(!self.updater_keys.contains(&public_key), "Already an updater key");
-        assert!(self.updater_keys.len() < MAX_UPDATER_KEYS, "Too many updater keys");
-        self.updater_keys.push(public_key.clone());
+        assert!(!self.updater_keys.contains(&public_key) && !self.pending_updater_keys.contains(&public_key), "Already an updater key");
+        assert!(self.updater_keys.len() + self.pending_updater_keys.len() < MAX_UPDATER_KEYS, "Too many updater keys");
+        self.pending_updater_keys.push(public_key.clone());
         events::emit("updater_key_added", json!({ "public_key": public_key }));
         let me = env::current_account_id();
         let allowance = Allowance::limited(MAX_UPDATER_ALLOWANCE).expect("non-zero allowance");

@@ -3070,6 +3070,30 @@ fn with_no_watchdog_every_key_change_waits_the_governance_delay() {
 }
 
 #[test]
+fn a_watchdog_that_cannot_confirm_yet_does_not_shorten_key_changes() {
+    // No watchdog (as after migrate_v1), then the owner adds one: it may cancel at once but confirms only from
+    // NOW + G. Until then it doesn't count, so a fresh (possibly yes-man) watchdog never cuts the wait to D.
+    ctx_with_storage(ADMIN, NOW_MS, Default::default());
+    let mut c = HanaSigner::new(acc(ADMIN), acc("v1.signer-prod.testnet"), 2, DELAY_MS, KEY_DELAY_MS, GOV_DELAY_MS, vec![], vec![]);
+    c.set_issuer("google".into(), vec!["https://accounts.google.com".into()]);
+    c.add_watchdog(acc(WATCHDOG2));
+    let (n, e) = fixture_key();
+    ctx(ME, NOW_MS + 1);
+    let early = c.set_issuer_key("google".into(), "k1".into(), n.clone(), e.clone());
+    assert_eq!(c.get_key_changes()[0].executable_at_ms, NOW_MS + 1 + GOV_DELAY_MS);
+    // The immature watchdog may still cancel, but not confirm.
+    ctx(WATCHDOG2, NOW_MS + 1);
+    expect_panic("This watchdog can't confirm yet", || c.confirm_issuer_key_change(early));
+    // Once it may confirm, new proposals get the normal issuer-key delay; the earlier one keeps its time.
+    ctx(ME, NOW_MS + GOV_DELAY_MS);
+    c.set_issuer_key("google".into(), "k2".into(), n, e);
+    let times: Vec<u64> = c.get_key_changes().iter().map(|k| k.executable_at_ms).collect();
+    assert_eq!(times, vec![NOW_MS + 1 + GOV_DELAY_MS, NOW_MS + GOV_DELAY_MS + KEY_DELAY_MS]);
+    ctx(WATCHDOG2, NOW_MS + GOV_DELAY_MS);
+    c.cancel_issuer_key_change(early);
+}
+
+#[test]
 fn watchdogs_given_to_new_confirm_at_once() {
     ctx_with_storage(ADMIN, NOW_MS, Default::default());
     let mut c = HanaSigner::new(acc(ADMIN), acc("v1.signer-prod.testnet"), 2, DELAY_MS, KEY_DELAY_MS, GOV_DELAY_MS, vec![acc(WATCHDOG)], vec![]);
@@ -3496,6 +3520,14 @@ fn stored_sessions_read_both_the_v1_and_the_v2_record() {
 
 const UPDATER_METHOD_LIST: [&str; 3] = ["set_issuer_key", "propose_issuer_key_removal", "execute_issuer_key_change"];
 
+/// Adds updater key `seed` as the owner and runs its callback with a successful `AddKey`: the key is confirmed.
+fn add_confirmed_updater_key(c: &mut HanaSigner, seed: u8) {
+    ctx(ADMIN, NOW_MS);
+    c.add_updater_key(near_pk(seed)).detach();
+    ctx_callback(near_sdk::PromiseResult::Successful(vec![]));
+    assert!(c.on_updater_key_added(near_pk(seed)));
+}
+
 #[test]
 fn add_updater_key_installs_exactly_the_updater_permission() {
     let mut c = setup();
@@ -3503,7 +3535,9 @@ fn add_updater_key_installs_exactly_the_updater_permission() {
     c.add_updater_key(near_pk(3)).detach();
     let pk3: String = String::from(&near_pk(3));
     assert_eq!(events(), vec![ev("updater_key_added", serde_json::json!({"public_key":pk3}))]);
-    assert_eq!(c.get_governance().updater_keys, vec![near_pk(3)]);
+    // Pending until the AddKey receipt resolves.
+    assert!(c.get_governance().updater_keys.is_empty());
+    assert_eq!(c.get_governance().pending_updater_keys, vec![near_pk(3)]);
     let receipts = get_created_receipts();
     assert_eq!(receipts.len(), 2);
     assert_eq!(receipts[0].receiver_id, acc(ME));
@@ -3523,21 +3557,39 @@ fn add_updater_key_installs_exactly_the_updater_permission() {
     assert_eq!(method_name, b"on_updater_key_added");
     assert_eq!(serde_json::from_slice::<Value>(args).unwrap(), serde_json::json!({"public_key":pk3}));
     assert_eq!(*attached_deposit, NearToken::from_yoctonear(0));
+    // A successful AddKey confirms it.
+    ctx_callback(near_sdk::PromiseResult::Successful(vec![]));
+    assert!(c.on_updater_key_added(near_pk(3)));
+    assert!(events().is_empty());
+    assert_eq!(c.get_governance().updater_keys, vec![near_pk(3)]);
+    assert!(c.get_governance().pending_updater_keys.is_empty());
 }
 
 #[test]
 fn updater_keys_are_capped_and_unique() {
+    // The cap and uniqueness count pending and confirmed keys together.
+    let mut c = setup();
+    add_confirmed_updater_key(&mut c, 3);
+    ctx(ADMIN, NOW_MS);
+    c.add_updater_key(near_pk(4)).detach();
+    for seed in [3, 4] {
+        expect_panic("Already an updater key", || {
+            c.add_updater_key(near_pk(seed)).detach();
+        });
+    }
+    expect_panic("Too many updater keys", || {
+        c.add_updater_key(near_pk(5)).detach();
+    });
+    assert_eq!(c.get_governance().updater_keys, vec![near_pk(3)]);
+    assert_eq!(c.get_governance().pending_updater_keys, vec![near_pk(4)]);
+    // Two pending keys fill the cap too.
     let mut c = setup();
     ctx(ADMIN, NOW_MS);
     c.add_updater_key(near_pk(3)).detach();
     c.add_updater_key(near_pk(4)).detach();
-    expect_panic("Already an updater key", || {
-        c.add_updater_key(near_pk(3)).detach();
-    });
     expect_panic("Too many updater keys", || {
         c.add_updater_key(near_pk(5)).detach();
     });
-    assert_eq!(c.get_governance().updater_keys, vec![near_pk(3), near_pk(4)]);
 }
 
 #[test]
@@ -3550,19 +3602,61 @@ fn a_failed_add_key_untracks_the_key() {
     assert!(!c.on_updater_key_added(near_pk(3)));
     let pk3: String = String::from(&near_pk(3));
     assert_eq!(events(), vec![ev("updater_key_add_failed", serde_json::json!({"public_key":pk3}))]);
-    assert_eq!(c.get_governance().updater_keys, vec![near_pk(4)]);
+    assert!(c.get_governance().updater_keys.is_empty());
+    assert_eq!(c.get_governance().pending_updater_keys, vec![near_pk(4)]);
     ctx_callback(near_sdk::PromiseResult::Successful(vec![]));
     assert!(c.on_updater_key_added(near_pk(4)));
     assert!(events().is_empty());
     assert_eq!(c.get_governance().updater_keys, vec![near_pk(4)]);
+    assert!(c.get_governance().pending_updater_keys.is_empty());
+    // The freed slot can be used again.
+    ctx(ADMIN, NOW_MS);
+    c.add_updater_key(near_pk(3)).detach();
+}
+
+#[test]
+fn a_watchdog_cannot_delete_a_pending_updater_key() {
+    // Until its AddKey succeeds a requested key isn't an updater key: it may already be on the account with another
+    // permission (e.g. a full-access key), and then its AddKey fails. A watchdog deletes confirmed keys only.
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.add_updater_key(near_pk(3)).detach();
+    ctx(WATCHDOG, NOW_MS);
+    expect_panic("Not an updater key", || {
+        c.delete_updater_key(near_pk(3)).detach();
+    });
+    assert!(get_created_receipts().is_empty());
+    // The AddKey fails (the key was already a full-access key): it never becomes an updater key.
+    ctx_callback(near_sdk::PromiseResult::Failed);
+    assert!(!c.on_updater_key_added(near_pk(3)));
+    ctx(WATCHDOG, NOW_MS);
+    expect_panic("Not an updater key", || {
+        c.delete_updater_key(near_pk(3)).detach();
+    });
+    // Once a key is confirmed the watchdog may delete it.
+    add_confirmed_updater_key(&mut c, 4);
+    ctx(WATCHDOG, NOW_MS);
+    c.delete_updater_key(near_pk(4)).detach();
+    assert!(c.get_governance().updater_keys.is_empty());
+}
+
+#[test]
+fn an_updater_key_the_owner_deleted_while_pending_is_not_tracked() {
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    c.add_updater_key(near_pk(3)).detach();
+    c.delete_updater_key(near_pk(3)).detach();
+    assert!(c.get_governance().pending_updater_keys.is_empty());
+    ctx_callback(near_sdk::PromiseResult::Successful(vec![]));
+    assert!(c.on_updater_key_added(near_pk(3)));
+    assert!(c.get_governance().updater_keys.is_empty());
 }
 
 #[test]
 fn the_owner_or_a_watchdog_deletes_updater_keys() {
     let mut c = setup();
-    ctx(ADMIN, NOW_MS);
-    c.add_updater_key(near_pk(3)).detach();
-    c.add_updater_key(near_pk(4)).detach();
+    add_confirmed_updater_key(&mut c, 3);
+    add_confirmed_updater_key(&mut c, 4);
     ctx(WATCHDOG, NOW_MS);
     c.delete_updater_key(near_pk(3)).detach();
     let pk3: String = String::from(&near_pk(3));
@@ -3597,7 +3691,8 @@ fn the_owner_or_a_watchdog_deletes_updater_keys() {
 fn new_installs_its_updater_keys() {
     ctx_with_storage(ME, NOW_MS, Default::default());
     let c = HanaSigner::new(acc(ADMIN), acc("v1.signer-prod.testnet"), 2, DELAY_MS, KEY_DELAY_MS, GOV_DELAY_MS, vec![acc(WATCHDOG)], vec![near_pk(3)]);
-    assert_eq!(c.get_governance().updater_keys, vec![near_pk(3)]);
+    assert!(c.get_governance().updater_keys.is_empty());
+    assert_eq!(c.get_governance().pending_updater_keys, vec![near_pk(3)]);
     let receipts = get_created_receipts();
     let MockAction::AddKeyWithFunctionCall { public_key, allowance, receiver_id, method_names, .. } = &receipts[0].actions[0] else { panic!() };
     assert_eq!(public_key.to_string(), String::from(&near_pk(3)));
@@ -3753,7 +3848,16 @@ fn owner_proposals_are_replaced_and_cancelled() {
     let mut c = setup();
     ctx(ADMIN, NOW_MS);
     c.propose_owner(acc(CAROL));
+    ctx(ADMIN, NOW_MS + 5);
     c.propose_owner(acc(BOB));
+    // Replacing a pending transfer cancels it publicly, as propose_upgrade and propose_withdrawal do.
+    assert_eq!(
+        events(),
+        vec![
+            ev("owner_proposal_cancelled", serde_json::json!({"owner":CAROL})),
+            ev("owner_proposed", serde_json::json!({"owner":BOB,"acceptable_at_ms":NOW_MS + 5 + GOV_DELAY_MS})),
+        ]
+    );
     ctx(CAROL, NOW_MS + GOV_DELAY_MS);
     expect_panic("Not the proposed owner", || c.accept_owner());
     ctx(ADMIN, NOW_MS);
@@ -3914,7 +4018,8 @@ fn governance_view() {
             "state_version":2,
             "watchdogs":[{"account_id":WATCHDOG,"confirm_from_ms":NOW_MS}],
             "keys_slow_until_ms":0,
-            "updater_keys":[pk3],
+            "updater_keys":[],
+            "pending_updater_keys":[pk3],
             "updater_methods":UPDATER_METHOD_LIST,
             "pending_upgrade":{"code_hash":b58(NEW_CODE),"proposed_at_ms":NOW_MS,"executable_at_ms":NOW_MS + GOV_DELAY_MS},
             "pending_owner":{"owner":CAROL,"acceptable_at_ms":NOW_MS + GOV_DELAY_MS},
@@ -3980,6 +4085,7 @@ fn migrate_v1_keeps_every_scope_client_session_and_issuer_key() {
             watchdogs: vec![],
             keys_slow_until_ms: 0,
             updater_keys: vec![],
+            pending_updater_keys: vec![],
             updater_methods: UPDATER_METHOD_LIST.map(String::from).to_vec(),
             pending_upgrade: None,
             pending_owner: None,

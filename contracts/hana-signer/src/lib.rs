@@ -182,7 +182,8 @@ pub struct HanaSigner {
     /// Pending issuer-key changes of every issuer, ≤ `MAX_PENDING_KEY_CHANGES`, in proposal order.
     pub(crate) key_changes: Vec<PendingKeyChange>,
     pub(crate) next_key_change: u64,
-    /// Function-call keys the contract added on its own account (≤ `MAX_UPDATER_KEYS`).
+    /// Function-call keys the contract added on its own account whose `AddKey` succeeded (the callback confirmed
+    /// it). With `pending_updater_keys`, ≤ `MAX_UPDATER_KEYS`. Only these may be deleted by a watchdog.
     pub(crate) updater_keys: Vec<PublicKey>,
     /// Stops every token path, `derive_key` and the executors; never governance, revocation, cancels or views.
     pub(crate) paused: bool,
@@ -200,6 +201,9 @@ pub struct HanaSigner {
     /// Sessions opened before this can't derive and read as absent: the owner raises it after a forged issuer key was
     /// active, so the sessions opened with it die with the key (`set_sessions_valid_from_ms`).
     pub(crate) sessions_valid_from_ms: u64,
+    /// Updater keys whose `AddKey` receipt hasn't resolved yet: `on_updater_key_added` moves each to `updater_keys`
+    /// on success or drops it on failure (e.g. the key was already on the account, possibly as a full-access key).
+    pub(crate) pending_updater_keys: Vec<PublicKey>,
 }
 
 #[near]

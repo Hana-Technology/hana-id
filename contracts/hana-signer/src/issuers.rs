@@ -285,9 +285,12 @@ impl HanaSigner {
     }
 
     /// When a change proposed now may be executed: after the issuer-key delay, never before `keys_slow_until_ms`
-    /// (a watchdog was removed), and after the governance delay while there is no watchdog to cancel it.
+    /// (a watchdog was removed), and after the governance delay while no watchdog may confirm yet (none, or only ones
+    /// whose `confirm_from_ms` is still ahead). A watchdog counts only once it has been public for the governance
+    /// delay, so adding a fresh one (possibly a compromised owner's yes-man) never shortens the wait.
     pub(crate) fn key_change_executable_at(&self, now: u64) -> u64 {
-        let no_watchdog = if self.watchdogs.is_empty() { now.saturating_add(self.governance_delay_at(now)) } else { 0 };
+        let trusted_watchdog = self.watchdogs.iter().any(|w| w.confirm_from_ms <= now);
+        let no_watchdog = if trusted_watchdog { 0 } else { now.saturating_add(self.governance_delay_at(now)) };
         now.saturating_add(self.issuer_key_delay_at(now)).max(self.keys_slow_until_ms).max(no_watchdog)
     }
 

@@ -129,6 +129,14 @@ describe('admin governance:status (the batch C portal source)', () => {
       'No watchdog: every key change waits governance_delay_ms.',
       'Key change #2 (Add google/k) is due and not executed.',
     ]);
+    // A watchdog that can't confirm yet doesn't count (the contract treats it as none for new key changes).
+    chain.governance!.watchdogs = [{ account_id: 'w.testnet', confirm_from_ms: NOW + 60_000 }];
+    expect((await governanceStatus(daoOwned, deps())).findings).toContain(
+      `No watchdog may confirm yet (the first from ${new Date(NOW + 60_000).toISOString()}): every key change proposed until then waits governance_delay_ms.`,
+    );
+    chain.governance!.watchdogs = [{ account_id: 'w.testnet', confirm_from_ms: NOW }];
+    expect((await governanceStatus(daoOwned, deps())).findings.join()).not.toContain('No watchdog');
+    chain.governance!.watchdogs = [];
     const staging = await governanceStatus({ ...daoOwned, name: 'staging', allowSignerFullAccessKey: undefined }, deps());
     expect(staging.findings.join()).toContain('none allowed on staging, D86');
     // Delays below the non-dev floors (sandbox-dev's 2 min / 60 s on chain) are findings outside dev envs.

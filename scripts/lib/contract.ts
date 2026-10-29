@@ -77,7 +77,10 @@ export interface GovernanceView {
   state_version: number;
   watchdogs: WatchdogView[];
   keys_slow_until_ms: number;
+  /** Updater keys whose AddKey succeeded. */
   updater_keys: string[];
+  /** Updater keys whose AddKey hasn't resolved yet (absent on contracts before it was added). */
+  pending_updater_keys?: string[];
   updater_methods?: string[];
   pending_upgrade: { code_hash: string; proposed_at_ms: number; executable_at_ms: number } | null;
   pending_owner: { owner: string; acceptable_at_ms: number } | null;

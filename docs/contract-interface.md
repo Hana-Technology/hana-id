@@ -103,7 +103,8 @@ Conventions:
   "state_version": 2,
   "watchdogs": [{"account_id":"hana-id-watchdog-dev1.testnet","confirm_from_ms":1800259200000}],  // may confirm from then on
   "keys_slow_until_ms": 0,                      // time-based key activation waits at least until here (raised by remove_watchdog)
-  "updater_keys": ["ed25519:6E8s..."],          // keys the contract added on its own account
+  "updater_keys": ["ed25519:6E8s..."],          // keys the contract added on its own account (their AddKey succeeded)
+  "pending_updater_keys": [],                   // requested keys whose AddKey hasn't resolved yet (normally empty)
   "updater_methods": ["set_issuer_key","propose_issuer_key_removal","execute_issuer_key_change"],  // every updater key's exact method list
   "pending_upgrade": {"code_hash":"8Tf3...","proposed_at_ms":1800000000000,"executable_at_ms":1800259200000},  // or null
   "pending_owner": {"owner":"hana-council.sputnikv2.testnet","acceptable_at_ms":1800259200000},             // or null
@@ -422,8 +423,8 @@ Panics: `change_delay_ms must be at most 7 days`, `issuer_key_delay_ms must be a
 `Too many updater keys` (> 2), `Already an updater key` (duplicate). Starts with no issuers, no scopes,
 `public_registration = false`, no sponsors, no console audiences, no shared clients, `paused = false`,
 `state_version = 2`. Watchdogs given here may confirm at once (`confirm_from_ms = 0`). Each updater key is added to
-the contract account by the contract itself, exactly as `add_updater_key` does (a promise; the callback untracks a
-key whose `AddKey` failed), so the mainnet creation batch is `DeployContract` + `new(...)` + `DeleteKey(creation
+the contract account by the contract itself, exactly as `add_updater_key` does (a promise; the key is pending until
+the callback confirms its `AddKey` succeeded, and dropped if it failed), so the mainnet creation batch is `DeployContract` + `new(...)` + `DeleteKey(creation
 key)`, signed by the creation key, with no `AddKey` action of its own (see [Changed in the governance
 batch](#changed-in-the-governance-batch) for why this differs from the spec draft).
 
@@ -505,7 +506,10 @@ reads active keys only, so logins cost the same gas as before.
   wait like the updater's (D86). Event `issuer_key_proposed` (with `n`, `e` base64url, so a monitor can compare with
   the JWKS without a view).
 - Every proposal gets `executable_at_ms = max(now + issuer_key_delay_ms, keys_slow_until_ms, no watchdog ? now +
-  governance_delay_ms : 0)`: with no watchdog at all, nothing activates faster than an upgrade could.
+  governance_delay_ms : 0)`, where "no watchdog" means no watchdog may confirm yet (none, or only ones whose
+  `confirm_from_ms` is still ahead): with no watchdog that has been public for the governance delay, nothing activates
+  faster than an upgrade could. So adding a first watchdog (possibly a compromised owner's yes-man) doesn't shorten new
+  key changes until its confirm power starts; changes queued meanwhile keep their longer time.
 - `propose_issuer_key_removal` queues a `Remove`: `Unknown issuer`, `No such key` (kid not active), `Kid already has
   a pending change`, `Too many pending key changes`, `Cannot remove the last key of an issuer` (active keys minus
   pending removals must stay ≥ 1, so a stuck sync never empties the registry). Event `issuer_key_removal_proposed`.
@@ -575,10 +579,10 @@ can add or delete keys on it.
 
 | Method | Who | Args example | Notes |
 |---|---|---|---|
-| `add_updater_key(public_key)` | owner | `{"public_key":"ed25519:6E8s..."}` | ≤ 2 tracked (`Too many updater keys`), `Already an updater key`. Adds the key to the contract account as a function-call key with exactly `UPDATER_METHODS` = `set_issuer_key`, `propose_issuer_key_removal`, `execute_issuer_key_change`, receiver the contract account, allowance 1 NEAR. Method list, receiver and allowance are constants: the contract can never add a full-access key or a key for any other method. Returns (via its callback `on_updater_key_added`, `#[private]`) `true` if the `AddKey` succeeded; on failure (e.g. the key is already on the account, with any permission) the callback drops it from `updater_keys` again, emits `updater_key_add_failed {public_key}` and returns `false`. Event `updater_key_added {public_key}`. |
-| `delete_updater_key(public_key)` | owner or any watchdog | `{"public_key":"ed25519:6E8s..."}` | `DeleteKey` on the contract account. A watchdog may delete only keys in `updater_keys` (`Not an updater key`); the owner may delete any key on the account (cleanup of an untracked key without a full-access key). Event `updater_key_deleted {public_key, by}`. The watchdog deletes every updater key the moment it sees a forged proposal from the contract account (one call per key, or one transaction with two actions). |
+| `add_updater_key(public_key)` | owner | `{"public_key":"ed25519:6E8s..."}` | ≤ 2 keys, pending and confirmed together (`Too many updater keys`), `Already an updater key` (either list). Adds the key to the contract account as a function-call key with exactly `UPDATER_METHODS` = `set_issuer_key`, `propose_issuer_key_removal`, `execute_issuer_key_change`, receiver the contract account, allowance 1 NEAR. Method list, receiver and allowance are constants: the contract can never add a full-access key or a key for any other method. The key is in `pending_updater_keys` until the `AddKey` receipt resolves. Returns (via its callback `on_updater_key_added`, `#[private]`) `true` if the `AddKey` succeeded, and the callback moves the key to `updater_keys`; on failure (e.g. the key is already on the account, with any permission, possibly as a full-access key) the callback drops it, emits `updater_key_add_failed {public_key}` and returns `false`. Event `updater_key_added {public_key}` when requested. |
+| `delete_updater_key(public_key)` | owner or any watchdog | `{"public_key":"ed25519:6E8s..."}` | `DeleteKey` on the contract account. A watchdog may delete only confirmed keys in `updater_keys` (`Not an updater key`), never a pending one: until its `AddKey` succeeds the key may be one already on the account with another permission. The owner may delete any key on the account (cleanup of an untracked key without a full-access key); deleting a pending key also drops it, so its callback never tracks it. Event `updater_key_deleted {public_key, by}`. The watchdog deletes every updater key the moment it sees a forged proposal from the contract account (one call per key, or one transaction with two actions). |
 
-`updater_keys` tracks what the contract asked for; deploy tooling compares it (and `updater_methods`) with
+`updater_keys` lists the keys whose `AddKey` succeeded; deploy tooling compares it (and `updater_methods`) with
 `view_access_key_list` and treats any other key as a blocker.
 
 #### Upgrades
@@ -600,7 +604,7 @@ MPC; the test fails above +2%).
 
 | Method | Who | Notes |
 |---|---|---|
-| `propose_owner(owner)` | owner | `{"owner":"hana-council.sputnikv2.testnet"}`. `acceptable_at_ms = now + governance_delay_ms`; replaces a pending proposal. Event `owner_proposed {owner, acceptable_at_ms}`. |
+| `propose_owner(owner)` | owner | `{"owner":"hana-council.sputnikv2.testnet"}`. `acceptable_at_ms = now + governance_delay_ms`; replaces a pending proposal (`owner_proposal_cancelled {owner}` for the old one first, as `propose_upgrade` and `propose_withdrawal` do). Event `owner_proposed {owner, acceptable_at_ms}`. |
 | `cancel_owner_proposal()` | owner | `No pending owner change`. Event `owner_proposal_cancelled {owner}`. |
 | `accept_owner()` | the proposed account | `Not the proposed owner` (also when nothing is pending), `Owner change is still delayed`. Proves the new owner (a DAO) can call the contract before it gets control. Event `owner_changed {old, new}`. |
 
@@ -975,12 +979,16 @@ the v1 fields (v1 records are still read as they are). In detail:
   with `add_updater_key`.
 - Deviations from `docs/governance-spec.md` (DRAFT), raised for review: `new` also takes `updater_keys` and adds them
   itself (the spec's creation batch with its own `AddKey` would leave the key untracked in `updater_keys`, which
-  `deploy-plan` treats as a blocker); `add_updater_key` has a callback that untracks a key whose `AddKey` failed
-  (the spec accepted the drift); `delete_updater_key` by a watchdog is limited to tracked keys; extra events
+  `deploy-plan` treats as a blocker); `add_updater_key` keeps a requested key in `pending_updater_keys` until its
+  callback confirms the `AddKey` succeeded (only then is it in `updater_keys`; the spec accepted untracked drift);
+  `delete_updater_key` by a watchdog is limited to confirmed keys; "no watchdog" in the key-change delay counts only
+  watchdogs that may confirm (review follow-up); `propose_owner` emits `owner_proposal_cancelled` for a replaced
+  transfer; extra events
   `owner_proposal_cancelled`, `updater_key_add_failed`, `state_migrated`; extra panics `Already an updater key`,
   `Not an updater key`, `No pending owner change`, `Withdrawal amount must be positive`, `Duplicate console
   audience`; `register_scope` is refused while paused even without proofs (D86 "scope registration");
-  `get_governance` also returns `updater_methods`.
+  `get_governance` also returns `updater_methods` and `pending_updater_keys`. The state layout gains
+  `pending_updater_keys` at the end (layout v2, before any v2 deployment: `migrate_v1` starts it empty).
 
 ## Changed in batch B
 

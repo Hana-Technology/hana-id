@@ -2,8 +2,9 @@
 //
 //   pages/local-e2e/vault, pages/local-e2e/auth   the vault bundle and the auth pages, built for the e2e env by
 //                                                 @hana-id/web's own per-env build scripts (the deployed pipeline)
+//   pages/local-e2e-live/…                        the same for live mode's env (LIVE_ENV, src/stack.ts)
 //   partner/app.js, partner/index.html            the partner test app (partner/app.ts): createHana from @hana-id/web,
-//                                                 with the e2e env as its only known environment
+//                                                 with the two e2e envs as its only known environments
 //   demo/                                         the hosted demo (apps/demo): its page and src/main.ts, configured
 //                                                 for the e2e env (DEMO_PK, the mocked EVM chain)
 //
@@ -13,10 +14,11 @@
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { type Plugin, build } from 'esbuild';
+import type { HanaEnv } from '@hana-id/web';
 import { buildAuthPages } from '../../../packages/web/scripts/build-auth-pages.ts';
 import { buildVault } from '../../../packages/web/scripts/build-vault.ts';
 import { DEFAULT_STELLAR, type DemoConfig, validateDemoConfig } from '../../demo/src/config.ts';
-import { BUILD_DIR, DEMO_PK, E2E_ENV, ENV_NAME, EVM_CHAIN_ID, EVM_RPC, VAULT_ORIGIN, portBase } from './stack.ts';
+import { BUILD_DIR, DEMO_PK, E2E_ENV, ENV_NAME, EVM_CHAIN_ID, EVM_RPC, LIVE_ENV, VAULT_ORIGIN, portBase } from './stack.ts';
 
 const e2eRoot = fileURLToPath(new URL('../', import.meta.url));
 export const PAGES_DIR = fileURLToPath(new URL('pages/', BUILD_DIR));
@@ -34,19 +36,20 @@ export const DEMO_CONFIG: DemoConfig = validateDemoConfig({
 });
 
 /**
- * createHana resolves `environment` through @hana-id/web's generated envs.generated.ts. The partner bundle gets a
- * module with the e2e env alone instead, so the test app goes through createHana exactly as a partner does.
+ * createHana resolves `environment` through @hana-id/web's generated envs.generated.ts. The partner and demo bundles
+ * get a module with the given e2e envs alone instead, so they go through createHana exactly as a partner does: the
+ * partner test app knows E2E_ENV and live mode's LIVE_ENV, the demo E2E_ENV only.
  */
-const e2eEnvs: Plugin = {
+const e2eEnvs = (envs: readonly HanaEnv[]): Plugin => ({
   name: 'hana-e2e-envs',
   setup(b) {
     b.onResolve({ filter: /\/envs\.generated(\.ts)?$/ }, () => ({ path: 'envs.generated', namespace: 'hana-e2e' }));
     b.onLoad({ filter: /.*/, namespace: 'hana-e2e' }, () => ({
-      contents: `export const HANA_ENVS = Object.freeze({ ${JSON.stringify(ENV_NAME)}: Object.freeze(${JSON.stringify(E2E_ENV)}) });`,
+      contents: `export const HANA_ENVS = Object.freeze({ ${envs.map((e) => `${JSON.stringify(e.name)}: Object.freeze(${JSON.stringify(e)})`).join(', ')} });`,
       loader: 'js',
     }));
   },
-};
+});
 
 export async function buildPartner(): Promise<void> {
   rmSync(PARTNER_DIR, { recursive: true, force: true });
@@ -63,7 +66,7 @@ export async function buildPartner(): Promise<void> {
     // Stellar Wallets Kit 1.9's dependencies expect Node's `global`. src/stack.ts reads the port base from the
     // environment: the bundle gets this run's value inlined.
     define: { global: 'globalThis', 'process.env.HANA_E2E_PORT_BASE': JSON.stringify(String(portBase())) },
-    plugins: [e2eEnvs],
+    plugins: [e2eEnvs([E2E_ENV, LIVE_ENV])],
     logLevel: 'warning',
   });
   copyFileSync(`${e2eRoot}partner/index.html`, `${PARTNER_DIR}index.html`);
@@ -90,7 +93,7 @@ export async function buildDemo(): Promise<void> {
     // src/main.ts imports its stylesheet: esbuild writes it next to app.js as app.css.
     outfile: `${DEMO_DIR}app.js`,
     define: { __HANA_DEMO_CONFIG__: JSON.stringify(DEMO_CONFIG) },
-    plugins: [e2eEnvs],
+    plugins: [e2eEnvs([E2E_ENV])],
     logLevel: 'warning',
   });
   const html = readFileSync(`${demoRoot}index.html`, 'utf8');
@@ -100,8 +103,10 @@ export async function buildDemo(): Promise<void> {
 }
 
 export async function buildAll(): Promise<void> {
-  await buildVault(E2E_ENV, PAGES_DIR);
-  await buildAuthPages(E2E_ENV, PAGES_DIR);
+  for (const env of [E2E_ENV, LIVE_ENV]) {
+    await buildVault(env, PAGES_DIR);
+    await buildAuthPages(env, PAGES_DIR);
+  }
   await buildPartner();
   await buildDemo();
 }

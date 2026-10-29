@@ -7,13 +7,15 @@ import { getAppByKeyCached } from '../app-cache.ts';
 import { type App, PUBLISHABLE_KEY_RE } from '../apps.ts';
 import { hex, sha256 } from '../bytes.ts';
 import type { Env } from '../env.ts';
-import { type Ctx, done, ipKey, lap, limiter, newCtx, reject, settle } from '../handlers.ts';
+import { type Ctx, done, lap, limiter, newCtx, reject } from '../handlers.ts';
 import { type Headers_, corsHeaders, readJson } from '../http.ts';
 import { log } from '../log.ts';
+import { ipSubject } from '../ip.ts';
 import { Rpc } from '../near/rpc.ts';
-import type { HitResult, Limit } from '../rate-limiter.ts';
+import type { Limit } from '../rate-limiter.ts';
 import { type SessionView, isSessionView } from '../views.ts';
 import { type Keks, SHARE_KEY_BYTES, kekFor, loadKeks, unwrapShareKey, wrapShareKey } from './kek.ts';
+import { SHARE_PER_MINUTE, VAULT_LIMIT_PERIOD_S, VAULT_PER_IP_MINUTE, vaultIpKey, vaultShareKey } from './limits.ts';
 import { NO_SHARE_ID, SHARE_ID_BYTES, type ShareAction, actionPayload, createSharePayload, verifyVaultSignature } from './message.ts';
 import { isTestKey } from '../origins.ts';
 import { parentOriginAllowed } from './origins.ts';
@@ -39,11 +41,11 @@ const MAX_VAULT_BODY = 4096;
 
 /**
  * The `'vault'` gate's windows (starting values). They never touch the relay counters (`<appId>:minute` per IP,
- * `minute`/`day` per app), so page reloads never use up the login quota.
+ * `minute`/`day` per app), so page reloads never use up the login quota. Per IP and per share: Rate Limiting
+ * bindings (limits.ts, D95); per app: `VAULT_APP_MINUTE_FACTOR × per_minute` on the RateLimiter object `app:<id>`.
  */
-export const VAULT_PER_IP_MINUTE = 60;
+export { SHARE_PER_MINUTE, VAULT_PER_IP_MINUTE };
 export const VAULT_APP_MINUTE_FACTOR = 10;
-export const SHARE_PER_MINUTE = 10;
 /** Share creation re-reads a lagging session (POST /v1/login answers at EXECUTED_OPTIMISTIC) this often, for this long. */
 export const SESSION_RETRY_INTERVAL_MS = 300;
 export const SESSION_RETRY_FOR_MS = 2000;
@@ -96,51 +98,40 @@ async function vaultApp(request: Request, env: Env, ctx: Ctx): Promise<Gate> {
   return { ok: true, app, parentOrigin };
 }
 
-type ShareHit = { ok: true; value: HitResult } | { ok: false; error: unknown };
-type Limits = { ok: true; share: ShareHit | null } | { ok: false; response: Response };
+/** The bindings say only yes or no; a refusal's `retry-after` is their whole period (an upper bound). */
+const bindingRefusal = (ctx: Ctx, which: string): Response =>
+  reject(ctx, 429, 'rate_limited', `Rate limit exceeded (${which} per minute)`, { 'retry-after': String(VAULT_LIMIT_PERIOD_S) });
 
 /**
- * Check 3, the rate limits, counted exactly as if each limiter were asked in turn: per IP, then per app, then (share
- * actions with a well-formed body) per share. The IP window is asked before the app window, never alongside it: a
- * request the IP window refuses must never use up the app's shared quota, even for a moment (one client could
- * otherwise lock out every user). The share window is independent of both (its own object, keyed by a share id only
- * its holder knows), so it is asked alongside them, and an accepted share hit is refunded when the IP or app window
- * refuses (it counts only for requests that passed them, as before). That takes the share object's round trip off
- * the unlock path (D78). The share outcome is returned, not acted on: the body check comes before it.
+ * Check 3, the IP and app limits, asked in turn: the per-IP flood limit (`VAULT_IP_LIMIT` binding, counted in this
+ * location with no network hop, D95), then the app's vault quota (RateLimiter object `app:<id>`, exact and global)
+ * only once the IP accepted, so a request the IP limit refuses never uses up the app's shared quota (one client could
+ * otherwise lock out every user). Null when both accept. A limiter that fails refuses (503), never lets through.
  */
-async function vaultLimits(request: Request, env: Env, ctx: Ctx, app: App, shareId: Uint8Array | null, exec?: ExecutionContext): Promise<Limits> {
-  const fail = (status: number, code: string, error: string, extra: Headers_ = {}): Limits => ({ ok: false, response: reject(ctx, status, code, error, extra) });
-  // One clock for every hit and refund of this request, so a refund takes back the very windows its hit counted in.
-  const now = Date.now();
-  const ipLimits: Limit[] = [{ name: `${app.id}:vault:minute`, windowMs: MINUTE, max: VAULT_PER_IP_MINUTE }];
-  const appLimits: Limit[] = [{ name: 'vault:minute', windowMs: MINUTE, max: VAULT_APP_MINUTE_FACTOR * app.per_minute }];
-  const shareLimits: Limit[] = [{ name: 'minute', windowMs: MINUTE, max: SHARE_PER_MINUTE }];
-  const shareStub = shareId ? limiter(env, `share:${hex(shareId)}`) : null;
-  const shareHit: Promise<ShareHit> | null = shareStub ? settle<HitResult>(Promise.resolve(shareStub.hit(shareLimits, now))) : null;
-  /** The IP or app window refused (or failed): an accepted share hit is taken back. */
-  const refused = async (out: Limits): Promise<Limits> => {
-    const share = shareHit ? await shareHit : null;
-    if (shareStub && share?.ok && share.value.ok) {
-      const refund = shareStub.refund(shareLimits, now).catch(() => {
-        // A refund that can't reach the object leaves one hit counted: stricter, never looser.
-        log({ event: 'rate_limit_refund_failed', requestId: ctx.requestId, appId: app.id, endpoint: ctx.endpoint }, 'error');
-      });
-      if (exec) exec.waitUntil(refund);
-      else await refund;
-    }
-    return out;
-  };
+async function vaultLimits(request: Request, env: Env, ctx: Ctx, app: App): Promise<Response | null> {
   try {
-    const ipHit = await limiter(env, ipKey(request)).hit(ipLimits, now);
-    if (!ipHit.ok) return await refused(fail(429, 'rate_limited', 'Rate limit exceeded (per IP per minute)', { 'retry-after': String(ipHit.retryAfterS) }));
-    const appHit = await limiter(env, `app:${app.id}`).hit(appLimits, now);
-    if (!appHit.ok) return await refused(fail(429, 'rate_limited', 'Rate limit exceeded (app per minute)', { 'retry-after': String(appHit.retryAfterS) }));
+    const ip = await env.VAULT_IP_LIMIT.limit({ key: vaultIpKey(env.ENV_NAME, app.id, ipSubject(request.headers.get('cf-connecting-ip'))) });
+    if (!ip.success) return bindingRefusal(ctx, 'per IP');
+    const appLimits: Limit[] = [{ name: 'vault:minute', windowMs: MINUTE, max: VAULT_APP_MINUTE_FACTOR * app.per_minute }];
+    const appHit = await limiter(env, `app:${app.id}`).hit(appLimits);
+    if (!appHit.ok) return reject(ctx, 429, 'rate_limited', 'Rate limit exceeded (app per minute)', { 'retry-after': String(appHit.retryAfterS) });
   } catch {
-    return refused(fail(503, 'rate_limiter_unavailable', 'Try again'));
+    return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
   }
-  const share = shareHit ? await shareHit : null;
-  lap(ctx, 'limits');
-  return { ok: true, share };
+  return null;
+}
+
+/**
+ * The share actions' last limit, once the IP and app limits accepted and the body names a share: the per-share flood
+ * limit (`VAULT_SHARE_LIMIT` binding, D95), so it counts only requests that passed the others. Null when it accepts.
+ */
+async function shareLimit(env: Env, ctx: Ctx, app: App, shareId: Uint8Array): Promise<Response | null> {
+  try {
+    const hit = await env.VAULT_SHARE_LIMIT.limit({ key: vaultShareKey(env.ENV_NAME, app.id, hex(shareId)) });
+    return hit.success ? null : bindingRefusal(ctx, 'share');
+  } catch {
+    return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
+  }
 }
 
 // ---- Bodies ----
@@ -175,20 +166,22 @@ export async function handleVaultEndpoint(request: Request, env: Env, endpoint: 
   const ctx = newCtx(env, requestId, endpoint, request);
   const gate = await vaultApp(request, env, ctx);
   if (!gate.ok) return gate.response;
-  // The body is read before the limits only to name the share whose window is asked alongside them; it is checked
-  // after them, as before (a malformed body still counts against the IP and app windows).
-  const parsed = await readJson(request, MAX_VAULT_BODY);
-  const shareReq = endpoint !== '/v1/vault/shares' && parsed.ok ? toShareRequest(parsed.body) : null;
-  const limits = await vaultLimits(request, env, ctx, gate.app, shareReq?.shareId ?? null, exec);
-  if (!limits.ok) return limits.response;
+  // Limits before the body: a malformed body still counts against the IP and app limits.
+  const limited = await vaultLimits(request, env, ctx, gate.app);
+  if (limited) return limited;
   // pk_test_ apps: share creation and unlock answer with the request's own timings (apps/smoke's breakdowns).
   ctx.exposeTimings = (endpoint === '/v1/vault/shares' || endpoint === '/v1/vault/unlock') && isTestKey(gate.app.publishable_key);
+  const parsed = await readJson(request, MAX_VAULT_BODY);
   if (!parsed.ok) return reject(ctx, parsed.status, 'bad_request', parsed.error);
-  if (endpoint === '/v1/vault/shares') return createShare(env, ctx, gate.app, gate.parentOrigin, parsed.body);
+  if (endpoint === '/v1/vault/shares') {
+    lap(ctx, 'limits');
+    return createShare(env, ctx, gate.app, gate.parentOrigin, parsed.body);
+  }
+  const shareReq = toShareRequest(parsed.body);
   if (!shareReq) return reject(ctx, 400, 'bad_request', 'Body must be {shareId: 16 bytes, counter: integer ≥ 1, signature: 64 bytes}');
-  const hit = limits.share;
-  if (!hit || !hit.ok) return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
-  if (!hit.value.ok) return reject(ctx, 429, 'rate_limited', 'Rate limit exceeded (share per minute)', { 'retry-after': String(hit.value.retryAfterS) });
+  const shareLimited = await shareLimit(env, ctx, gate.app, shareReq.shareId);
+  if (shareLimited) return shareLimited;
+  lap(ctx, 'limits');
   return shareAction(env, ctx, gate.app, ACTIONS[endpoint], shareReq, exec);
 }
 
@@ -329,8 +322,8 @@ async function refusal(env: Env, ctx: Ctx, app: App, shareId: Uint8Array, now: n
 }
 
 /**
- * POST /v1/vault/unlock, /touch, /revoke, /revoke-all: one signed, in-order use of a share (its body already checked,
- * and the share's rate limit with the gate's, in vaultLimits).
+ * POST /v1/vault/unlock, /touch, /revoke, /revoke-all: one signed, in-order use of a share (its body and the share's
+ * rate limit already checked, in handleVaultEndpoint).
  */
 async function shareAction(env: Env, ctx: Ctx, app: App, action: ShareAction, req: { shareId: Uint8Array; counter: number; signature: Uint8Array }, exec?: ExecutionContext): Promise<Response> {
   const keks = action === 'unlock' ? await loadKeks(env) : null;

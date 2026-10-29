@@ -41,7 +41,8 @@ Batch B is merged on the integration branch `feat/batch-b` (not yet on `develop`
 | API Worker | `apps/api/src/index.ts` | Cloudflare Workers (`apiUrl`) | Gate (key, origin, limits), verify-before-relay, relayer, vault shares, login relay, vault page HTML, crons |
 | Page Workers | `apps/api/src/pages/` (`vault-worker.ts`, `auth-worker.ts`, `host.ts`) | one Cloudflare Worker per Hana origin (D66) | `vaultOrigin`: forwards `GET /vault` to the API Worker (service binding `API`), serves the vault bundle; `authOrigin`: the four auth pages with their CSP, and their assets. Nothing else; never a cookie (D70) |
 | `RelayerKey` DO | `apps/api/src/relayer-key.ts` | one object per relayer access key | Serialises that key's nonces, signs and broadcasts |
-| `RateLimiter` DO | `apps/api/src/rate-limiter.ts` | one object per subject (`ip:…`, `app:…`, `share:…`, `owner-actions:…`) | Fixed-window counters; owner-token single-use markers |
+| `RateLimiter` DO | `apps/api/src/rate-limiter.ts` | one object per subject (`ip:…`, `app:…`, `export:…`, `owner-actions:…`) | Fixed-window counters, global and exact; owner-token single-use markers |
+| Rate Limiting bindings | `apps/api/src/vault/limits.ts` (`VAULT_IP_LIMIT`, `VAULT_SHARE_LIMIT`) | each Cloudflare location, no network hop | The vault's per-IP and per-share flood limits, approximate (D95) |
 | `LoginRelay` DO | `apps/api/src/login-relay.ts` | one object per `relayId` | Write-once, read-once slot for the encrypted Google token, 120 s |
 | D1 `DB` | `apps/api/migrations/` | Cloudflare D1 | Apps, origins, plans, settings, usage, vault shares |
 | `hana-signer` | `contracts/hana-signer` | NEAR testnet, manifest `signer` | Issuers (Google RSA keys), scope registry, sessions, calls the MPC |
@@ -185,8 +186,9 @@ after it reported the login (D79):
 
 1. The vault gate (`endpoints.ts` `vaultApp`, `vaultLimits`): app known and active (the app row cached per isolate
    for 30 s, `apps/api/src/app-cache.ts`, D78), `Origin === VAULT_ORIGIN`, `x-hana-parent-origin` allowed for the app,
-   no `scope_conflict`, vault limits (60/min per IP per app, then 10 × plan `per_minute` per app; the share actions'
-   10/min per share is asked alongside the IP window and refunded if the IP or app window refuses).
+   no `scope_conflict`, vault limits (60/min per IP per app, a per-location binding; then 10 × plan `per_minute` per
+   app on the `app:<id>` object; the share actions' 10/min per share, a per-location binding, comes after the body
+   check; D95).
 2. `VAULT_KEK` loaded, else 503 `vault_key_unavailable`. App `persistence` must be `'session'` (409 `persistence_off`).
 3. Signature by the session key over the vault message (shareId zero, counter 0, payload
    `"share" ‖ borsh(parentOrigin)`; `apps/api/src/vault/message.ts`).
@@ -202,7 +204,7 @@ non-extractable session `CryptoKeyPair`, `shareId`, counter, addresses, and `ct 
 of `recordAad` (`layouts.ts:143`; `packages/web/src/vault/record.ts`), then zeroes `K_s`.
 
 Unlock on reload or new tab, `POST /v1/vault/unlock` (`apps/api/src/vault/endpoints.ts`, `settingsRefusal`): the
-vault gate as above, with the per-share limit 10/min in the same round of limiter calls → share looked up by `share_id AND app_id` (another app's share is 404) → if the share's partner origin
+vault gate as above, then the per-share limit 10/min → share looked up by `share_id AND app_id` (another app's share is 404) → if the share's partner origin
 is no longer allowed, mark revoked, 410 → the app's settings as they are now: `persistence = 'none'` revokes the share
 (410 `share_revoked`), and the share ends at `min(abs_expires_at, created_at + current session_ttl_ms)` (410
 `share_expired`; the stored expiry is lowered) → vault signature with `counter = n + 1` → unwrap `K_s` (before the
@@ -390,7 +392,7 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
   and as `devEnv` in the web build). They allow loopback partner origins and partner-origin session endpoints for
   `pk_test_` keys, and same-site Hana origins. No flag can turn these on elsewhere.
 - `apps/api/scripts/gen-wrangler.ts` writes `apps/api/wrangler.jsonc` (vars from the manifest, D1 binding, DO bindings
-  and migrations `v1` RelayerKey/RateLimiter, `v2` LoginRelay, the 15-min cron whose :00 run is the hourly one) and, with `--dev-vars`, `.dev.vars` from
+  and migrations `v1` RelayerKey/RateLimiter, `v2` LoginRelay, the vault's two `ratelimits` bindings, the 15-min cron whose :00 run is the hourly one) and, with `--dev-vars`, `.dev.vars` from
   `.secrets/<env>/`, plus the page Workers' `wrangler.vault.jsonc` / `wrangler.auth.jsonc`. It refuses an env without
   both Hana origins. All three are per env and gitignored (the deployed D1 id is passed with `--d1-id` and never
   committed); the API tests generate their own `wrangler.vitest.jsonc` from a fixed test manifest.
@@ -432,10 +434,11 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
   resend; anything else carries `nearTx` for the caller to poll.
 - **Location**: `DO_LOCATION_HINT` (manifest `cloudflare.durableObjectLocation`, sandbox-dev `apac`) pins relayer key
   objects, per-app limiters and owner-action limiters, with the region in the object name
-  (`apps/api/src/placement.ts:20`). Per-IP limiters and `LoginRelay` objects are created near their caller.
+  (`apps/api/src/placement.ts:20`). Per-IP limiters and `LoginRelay` objects are created near their caller. The
+  vault's per-IP and per-share limits are Rate Limiting bindings, counted where the Worker runs (D95).
 - **Request log** (`done`, `handlers.ts`): per-stage timings (`app`, `limits`, `checks`, `relay`, `relayQueue`,
   `relayChainRead`, `relaySign`, `relayPersist`, `relayOutcome`; the vault endpoints add `settings`, `session`,
-  `insert`, `shareLimit`, `share`, `advance`), `colo`, `relayInstance` (cold, chain read, block refresh). Never
+  `insert`, `share`, `advance`), `colo`, `relayInstance` (cold, chain read, block refresh). Never
   tokens, signatures, bodies, keys or CKD responses. A `pk_test_` app's `/v1/login`, `/v1/vault/shares` and
   `/v1/vault/unlock` also return the total and phases as `timings` (`docs/api.md` "Timings"), which the vault adds to
   the per-stage timings it reports to the partner client (`packages/core/src/timings.ts`).

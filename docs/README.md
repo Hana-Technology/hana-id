@@ -28,6 +28,7 @@ the batch merges, so where a spec and a reference doc disagree, the reference do
 | `batch-b-spec.md` | B: browser SDK, vault, one-transaction login, auto-approve policies (merged on `feat/batch-b`) |
 | `batch-c-spec.md` | C: developer dashboard (draft for implementation review; D34 MVP cut and D73–D75 folded in) |
 | `governance-spec.md` | Pre-mainnet governance (D33): delayed issuer keys with a watchdog, multisig owner, timelocked upgrades, pause (draft, for review) |
+| `hana-home-spec.md` | Pre-mainnet Hana Home (D40, D45): cross-app wallets and key export for shared-login apps, consent revocation from any device (draft, for review) |
 | `hana-embed-ckd-results.md` | PoC measurements from wend-widget-demo |
 
 ## Where to put new knowledge

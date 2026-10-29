@@ -196,7 +196,8 @@ Merged on the integration branch `feat/batch-b` (not yet on `develop`), all test
 - `apps/smoke` on the vault (the spec's step 7): `/` logs in through `@hana-id/web`, `/direct.html` keeps the split
   flow for the ship gate (`apps/smoke/README.md`).
 - `apps/e2e`: the Playwright suite (Chromium, WebKit, Firefox) against local builds and the real `apps/api` Worker,
-  with its CI job.
+  with its CI job. Its live mode (a second e2e env on routed https origins) runs `pk_live_` apps, so the raw approval
+  popup is browser-tested too.
 - Scripts: `admin app:settings` for the per-app settings, `vault-kek` (`init`/`put`/`rotate`, D54), session-pool
   allowlist state 1 in `deploy-contract`. `.github/CODEOWNERS` (D58).
 - Docs: the reference docs (`docs/README.md`), including `docs/integration.md` (partner guide).
@@ -358,7 +359,7 @@ hard-coded · NEAR Auth/FastAuth and per-tx signing code no longer needed.
   bound by it.
 - HKDF salt `hana-embed-ckd-v1` → derivation v1 (`hana-id/chain-keys/v1/extract`), confirmed by the user.
 
-## Next steps (2026-10-28)
+## Next steps (2026-10-29)
 
 Done: batches A and A.2 plus the smoke page are merged on `develop`, CI green. **sandbox-dev is deployed on testnet and
 passed the full smoke checklist (2026-10-27)**: signer `hana-id-signer-dev1.testnet`, API
@@ -367,18 +368,22 @@ apps `s1` (partner client + shared) and `s2` (shared only). Batch B is code-comp
 ([Batch B status](#batch-b-status-2026-10-28)). Setup and deploy commands: `docs/operations.md`. The plan doc's
 Status section is the summary for humans: https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi
 
-**The user's to-dos** (agents never ask for or handle private keys):
+**The user's to-dos** (agents never ask for or handle private keys; updated 2026-10-29):
 
-1. Register `{authOrigin}/login/callback` (sandbox-dev:
-   `https://hana-id-auth-sandbox-dev.tingtc.workers.dev/login/callback`) as a redirect URI on the shared Google
-   client (and on any partner client used for own-client tests).
-2. Approve the testnet contract upgrade (`deploy-contract sandbox-dev --upgrade`: `create_session_and_derive`, session
-   keys re-added at allowlist state 1) and the deploys of the API (`gen`, migration 0003) and of the vault and auth
-   page Workers (`docs/operations.md` "Upgrading an env deployed from `develop` to batch B").
-3. `vault-kek sandbox-dev init` (sets `VAULT_KEK`, keeps the only copy in `.secrets/sandbox-dev/vault-kek`).
-4. Test logins on sandbox-dev (`apps/smoke` checklist) and the ship-gate measurement, with the other measurements
-   above.
-5. Turn on "Require review from Code Owners" on `develop` and `main` (D58).
+Done 2026-10-29: callback registered, testnet contract upgraded, migrations 0003/0004 applied, `VAULT_KEK` set,
+API and both page Workers deployed, ship gate measured (D76), latency fixes measured (D77–D79, D94–D97).
+
+1. **Deferred: one-month Pro plan test on `ting.rocks`** to see whether a paid zone keeps Malaysian traffic in SIN
+   (free plan and workers.dev enter in FRA/CDG/LHR; Enterprise sites enter in SIN). The user is discussing it with
+   their colleague. **Remind the user if it hasn't been decided.**
+2. Turn on "Require review from Code Owners" on `develop` and `main` (D58).
+3. Send the hosted demo (`https://hana-id-demo-sandbox-dev.tingtc.workers.dev`) to the colleague for testing.
+4. Add `{authOrigin}/login/callback` to Smoke A's own Google client (own-client login tests).
+5. Backup Google addresses for admin-portal access (D88); where the offline backup council key is held (D81, before
+   mainnet).
+6. Create the Neon project (Sydney, `aws-ap-southeast-2`) to unblock batch C (D73).
+7. **Confirm the email provider with the colleague** before creating any account: Resend is recorded (D87) but
+   another provider may be used instead. The email code sits behind one small interface, so a switch is cheap.
 
 **Before mainnet:**
 
@@ -395,8 +400,6 @@ Status section is the summary for humans: https://claude.ai/artifact/GyQq6HZbaJB
 
 **Known follow-ups:**
 
-- `apps/e2e` has no live-app mode (it creates only `pk_test_` apps), so the raw approval popup isn't browser-tested
-  (covered by `packages/web` unit tests).
 - `docs/batch-c-spec.md` (D34 cut, D73–D75 and the 2026-10-29 decisions D87–D93 folded in) needs implementation
   review. Still open there: Q1 (console code flow `openid`-only check, to test), Q3 (Hana Cloudflare account, zone,
   domains), Q4's Access fallback emails, Q5 (Neon setup). Retention periods (D90) need the company's accountant.

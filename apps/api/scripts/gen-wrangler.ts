@@ -16,6 +16,7 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type Manifest, loadEnv, repoRoot } from '@hana-id/env';
+import { VAULT_RATE_LIMITS } from '../src/vault/limits.ts';
 import { writePagesWranglerConfigs } from './pages-wrangler.ts';
 
 const apiDir = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -43,7 +44,9 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
     observability: { enabled: true },
     // Run next to D1 and the Durable Objects rather than where the request lands: workers.dev routing from
     // Malaysia lands many requests in Europe (MRS), and each serial D1 query then crosses continents.
-    placement: { mode: 'smart' },
+    // A fixed region next to D1 (APAC) and the Durable Objects: Smart Placement only moves requests from locations it
+    // has learned, so requests landing in Paris or Marseille kept running there after each deploy.
+    placement: { region: 'aws:ap-east-1' },
     vars: {
       NEAR_RPC: m.rpc,
       ...(m.rpcFallback ? { NEAR_RPC_FALLBACK: m.rpcFallback } : {}),
@@ -70,6 +73,8 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
       { tag: 'v1', new_sqlite_classes: ['RelayerKey', 'RateLimiter'] },
       { tag: 'v2', new_sqlite_classes: ['LoginRelay'] },
     ],
+    // The vault's per-IP and per-share flood limits, counted where the request runs with no network hop (D95).
+    ratelimits: VAULT_RATE_LIMITS.map((r) => ({ name: r.name, namespace_id: r.namespace_id, simple: { ...r.simple } })),
     // Every 15 min, one trigger (the free plan allows 5 per account): the run at :00 syncs Google's JWKS into
     // hana-signer and does vault maintenance; every run records the JWKS kids (src/index.ts isHourlyRun).
     triggers: { crons: ['*/15 * * * *'] },

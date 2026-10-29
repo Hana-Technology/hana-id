@@ -35,18 +35,32 @@ export function assetsFetcher(root: string): Fetcher {
   };
 }
 
-export function vaultHost(api: ApiModules, d1: D1Shim): Handler {
-  const apiEnv = { DB: d1, ENV_NAME, API_URL, NEAR_RPC, VAULT_ORIGIN };
+/**
+ * The env a pair of Hana page hosts serves: the stack's E2E_ENV by default, or live mode's LIVE_ENV. `nearRpc` is the
+ * RPC the pages read (their CSP `connect-src`), as the env's manifest names it.
+ */
+export interface PagesEnv {
+  envName: string;
+  vaultOrigin: string;
+  authOrigin: string;
+  apiUrl: string;
+  nearRpc: string;
+}
+
+const E2E_PAGES: PagesEnv = { envName: ENV_NAME, vaultOrigin: VAULT_ORIGIN, authOrigin: AUTH_ORIGIN, apiUrl: API_URL, nearRpc: NEAR_RPC };
+
+export function vaultHost(api: ApiModules, d1: D1Shim, pages: PagesEnv = E2E_PAGES): Handler {
+  const apiEnv = { DB: d1, ENV_NAME: pages.envName, API_URL: pages.apiUrl, NEAR_RPC: pages.nearRpc, VAULT_ORIGIN: pages.vaultOrigin };
   let n = 0;
   const env = {
-    VAULT_ORIGIN,
-    ASSETS: assetsFetcher(join(PAGES_DIR, ENV_NAME, 'vault')),
+    VAULT_ORIGIN: pages.vaultOrigin,
+    ASSETS: assetsFetcher(join(PAGES_DIR, pages.envName, 'vault')),
     API: { fetch: (request: Request) => api.handleVaultPage(request, apiEnv, `rq_vault_${(n += 1)}`) },
   };
   return (request) => api.handleVaultHost(request, env);
 }
 
-export function authHost(api: ApiModules): Handler {
-  const env = { AUTH_ORIGIN, API_URL, NEAR_RPC, ASSETS: assetsFetcher(join(PAGES_DIR, ENV_NAME, 'auth')) };
+export function authHost(api: ApiModules, pages: PagesEnv = E2E_PAGES): Handler {
+  const env = { AUTH_ORIGIN: pages.authOrigin, API_URL: pages.apiUrl, NEAR_RPC: pages.nearRpc, ASSETS: assetsFetcher(join(PAGES_DIR, pages.envName, 'auth')) };
   return (request) => api.handleAuthHost(request, env);
 }

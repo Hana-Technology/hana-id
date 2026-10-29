@@ -3,7 +3,8 @@
 // handler, hana.stellar / hana.ethereum through Stellar Wallets Kit (1.9.x and 2.x, with HanaIdModule), viem and wagmi.
 //
 // Query: `pk` (publishable key, required), `blockPopups=1` (window.open returns null, as a browser popup blocker does,
-// so the SDK falls back to the vault's launcher). The page holds no secret: everything it sees is what any partner
+// so the SDK falls back to the vault's launcher), `env=local-e2e-live` (live mode, src/stack.ts: LIVE_ENV and its EVM
+// RPC; the default is the e2e env). The page holds no secret: everything it sees is what any partner
 // page sees.
 import { Account, Asset, Keypair, Networks, Operation, TransactionBuilder } from '@stellar/stellar-base';
 import { connect, createConfig, getConnectors, http, signMessage as wagmiSignMessage } from '@wagmi/core';
@@ -12,26 +13,28 @@ import { StellarWalletsKit as Kit2 } from 'swk2/sdk';
 import { createWalletClient, custom, defineChain, toHex, verifyMessage } from 'viem';
 import { HanaError, createHana } from '@hana-id/web';
 import { HanaIdModule } from '@hana-id/web/stellar-wallets-kit';
-import { ENV_NAME, EVM_CHAIN_ID, EVM_RPC } from '../src/stack.ts';
+import { ENV_NAME, EVM_CHAIN_ID, EVM_RPC, LIVE_ENV_NAME, LIVE_EVM_RPC } from '../src/stack.ts';
 
 const q = new URLSearchParams(location.search);
 /** The browser's own window.open, for tests that open another window from the page (the foreign-site cases). */
 const browserOpen = window.open.bind(window);
 // Playwright's browsers never block popups; this is what a blocker does (Safari after an await, for example).
 if (q.get('blockPopups') === '1') window.open = () => null;
+const live = q.get('env') === LIVE_ENV_NAME;
+const evmRpc = live ? LIVE_EVM_RPC : EVM_RPC;
 
 const chain = defineChain({
   id: EVM_CHAIN_ID,
   name: 'E2E',
   nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-  rpcUrls: { default: { http: [EVM_RPC] } },
+  rpcUrls: { default: { http: [evmRpc] } },
 });
 const PASSPHRASE = Networks.TESTNET;
 
 const hana = createHana({
   publishableKey: q.get('pk') ?? '',
-  environment: ENV_NAME,
-  evm: { chains: [{ id: EVM_CHAIN_ID, rpcUrl: EVM_RPC }], defaultChainId: EVM_CHAIN_ID },
+  environment: live ? LIVE_ENV_NAME : ENV_NAME,
+  evm: { chains: [{ id: EVM_CHAIN_ID, rpcUrl: evmRpc }], defaultChainId: EVM_CHAIN_ID },
   stellar: { networkPassphrase: PASSPHRASE },
 });
 
@@ -55,13 +58,17 @@ for (const name of ['statusChanged', 'accountsChanged', 'sessionExpired', 'disco
   hana.on(name, (...args: unknown[]) => events.push({ name, data: args[0] ?? null }));
 }
 
-/** Errors as plain data (HanaError, ProviderRpcError and SWK's `{code, message}` all carry `code`). */
-function errorOf(e: unknown): { code: unknown; message: string } {
+/**
+ * Errors as plain data (HanaError, ProviderRpcError and SWK's `{code, message}` all carry `code`), with the vault's
+ * `data.reason` where there is one (`raw_sign_off`, `raw_not_allowed_for_test_apps`, …).
+ */
+function errorOf(e: unknown): { code: unknown; message: string; reason: unknown } {
   if (typeof e === 'object' && e !== null) {
-    const o = e as { code?: unknown; message?: unknown; ext?: unknown };
-    return { code: o.code ?? null, message: String(o.message ?? e) };
+    const o = e as { code?: unknown; message?: unknown; data?: unknown };
+    const reason = typeof o.data === 'object' && o.data !== null ? ((o.data as { reason?: unknown }).reason ?? null) : null;
+    return { code: o.code ?? null, message: String(o.message ?? e), reason };
   }
-  return { code: null, message: String(e) };
+  return { code: null, message: String(e), reason: null };
 }
 
 /** Structured-clone-safe for page.evaluate: bytes become hex, bigints strings. */
@@ -126,7 +133,7 @@ async function swkSign(kit: { signTransaction(xdr: string, o: { networkPassphras
 // ---- EVM: viem and wagmi ----
 
 const wallet = createWalletClient({ chain, transport: custom(hana.ethereum) });
-const wagmi = createConfig({ chains: [chain], transports: { [EVM_CHAIN_ID]: http(EVM_RPC) }, multiInjectedProviderDiscovery: true });
+const wagmi = createConfig({ chains: [chain], transports: { [EVM_CHAIN_ID]: http(evmRpc) }, multiInjectedProviderDiscovery: true });
 
 /** The connector wagmi discovered through EIP-6963. */
 function hanaConnector() {

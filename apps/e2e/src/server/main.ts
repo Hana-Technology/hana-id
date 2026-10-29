@@ -10,6 +10,9 @@
 //                                          tests' /__e2e control endpoints)
 //   http://127.0.0.1:4450                  the mocked NEAR RPC
 //   http://127.0.0.1:4460                  the mocked EVM chain RPC
+//   http://127.0.0.1:4421, :4431, :4441    live mode's vault, auth and API hosts (LIVE_ENV, src/stack.ts): the same
+//                                          apps/api code on the same D1 and chain, serving the https origins the
+//                                          tests route to them
 //
 //   [HANA_E2E_PORT_BASE=4510] pnpm --filter @hana-id/e2e serve [--no-build]
 //
@@ -17,14 +20,14 @@
 // browser context (src/google-stub.ts), so the bundles keep their hard-coded Google endpoints.
 import { buildAll } from '../build.ts';
 import { stackFingerprint } from '../fingerprint.ts';
-import { PORTS } from '../stack.ts';
+import { LIVE_API_URL, LIVE_AUTH_ORIGIN, LIVE_ENV_NAME, LIVE_NEAR_RPC, LIVE_VAULT_ORIGIN, PORTS } from '../stack.ts';
 import { MockApi } from './api.ts';
 import { loadApiModules } from './api-modules.ts';
 import { Chain } from './chain.ts';
 import { D1Shim } from './d1.ts';
 import { demoHost } from './demo.ts';
-import { authHost, vaultHost } from './hosts.ts';
-import { serve } from './http.ts';
+import { authHost, type PagesEnv, vaultHost } from './hosts.ts';
+import { serve, servedAt } from './http.ts';
 import { MockEvm, partnerHost } from './partner.ts';
 
 export async function startStack(fingerprint: string): Promise<void> {
@@ -43,6 +46,12 @@ export async function startStack(fingerprint: string): Promise<void> {
   await serve(PORTS.vault, loopback, vaultHost(modules, d1));
   await serve(PORTS.auth, loopback, authHost(modules));
   await serve(PORTS.api, loopback, (req) => api.handle(req));
+  // Live mode (LIVE_ENV): a second Worker and pair of page hosts for the https origins, on the same D1 and chain.
+  const live: PagesEnv = { envName: LIVE_ENV_NAME, vaultOrigin: LIVE_VAULT_ORIGIN, authOrigin: LIVE_AUTH_ORIGIN, apiUrl: LIVE_API_URL, nearRpc: LIVE_NEAR_RPC };
+  const liveApi = new MockApi(d1, chain, modules, { serves: live });
+  await serve(PORTS.liveVault, loopback, servedAt(LIVE_VAULT_ORIGIN, vaultHost(modules, d1, live)));
+  await serve(PORTS.liveAuth, loopback, servedAt(LIVE_AUTH_ORIGIN, authHost(modules, live)));
+  await serve(PORTS.liveApi, loopback, servedAt(LIVE_API_URL, (req) => liveApi.handle(req)));
   await serve(PORTS.near, loopback, chain.handler());
   await serve(PORTS.evm, loopback, evm.handler());
 }

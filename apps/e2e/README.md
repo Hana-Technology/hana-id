@@ -24,6 +24,7 @@ Ports are `HANA_E2E_PORT_BASE` (default 4410) plus the offsets below: the table 
 | `http://127.0.0.1:4430` | `authOrigin`: apps/api's auth host over the built auth pages |
 | `http://127.0.0.1:4440` | the Hana API: apps/api's Worker, with `/v1/login` and `/v1/derive` mocked; plus `/__e2e/*` control endpoints |
 | `http://127.0.0.1:4450`, `:4460` | mocked NEAR RPC and EVM chain RPC |
+| `http://127.0.0.1:4421`, `:4431`, `:4441` | live mode's vault, auth and API hosts (below): reached only through the tests' routes |
 
 Both partner sites are cross-site to the Hana pages, as in production, so the vault frame is a third-party frame on
 each: `localhost`, `site-b.localhost` and `127.0.0.1` are three sites (ports don't count). Site B is a `*.localhost`
@@ -35,11 +36,6 @@ the vault endpoints (KEK wrapping, counters and the real SQL on `vault_shares`) 
 Durable Object class, on in-memory storage). Only `/v1/login` and `/v1/derive` are mocked (`src/server/api.ts`), after
 the Worker's own app gate, since they need the relayer and the MPC. The rate limiter always allows: every page in the
 suite is one client, and apps/api's tests cover the limits.
-
-Every app the suite creates is a `pk_test_` app (loopback partner origins need one), and there is no live-app mode.
-So paths that only a `pk_live_` app reaches are not browser-tested: the raw-signing approval popup (test apps never
-sign raw, `docs/decisions.md` D39) and mainnet chains. `packages/web/test/vault/approval.test.ts` covers a live app's
-raw request; `tests/approval.spec.ts` checks that a test app's raw request is 4100 with no popup.
 
 The mocked NEAR RPC (`src/server/chain.ts`) answers the vault's and the export window's reads (`get_session`, tx
 status, and the login's registry check, `get_scope` / `scope_for_client`, D56) and the Worker's (`get_session`,
@@ -70,6 +66,36 @@ is built from), so another worktree's stack, an unrelated server, or one started
 mistake; the error says to stop it or pick another base. In
 CI a test that fails and then passes on its retry fails the run (`failOnFlakyTests`): the Approve-guard and
 origin cases are timing-dependent security checks.
+
+## Live mode: `pk_live_` apps
+
+Most of the suite's apps are `pk_test_` apps on the loopback partner origins above. Paths only a `pk_live_` app reaches,
+such as the raw-signing approval popup (test apps never sign raw, `docs/decisions.md` D39), run in live mode:
+`newLiveApp()` creates a live app and `openPartner(page, app, { live: true })` opens the partner test app for it
+(`tests/approval.spec.ts` "raw signing" and the chain-only digest case).
+
+Every env, the e2e ones included, allows loopback partner origins only for `pk_test_` keys (`apps/api/src/origins.ts`,
+the vault's `parentAllowed`), so a live app needs a non-loopback partner origin. That page must be https (an http page
+on a non-loopback host isn't a secure context, and the SDK and the vault need one), and an https page can't use the
+`http://127.0.0.1` Hana origins (WebKit blocks them as mixed content, Chromium as local network access). So live mode
+is a second env, `local-e2e-live` (`LIVE_ENV` in `src/stack.ts`), whose every origin is https on a reserved `.test` name:
+
+| Origin | Routed to |
+|---|---|
+| `https://partner.e2e-live.test` | the partner server (the same page, with `?env=local-e2e-live`) |
+| `https://vault.e2e-hana.test`, `https://auth.e2e-hana-auth.test`, `https://api.e2e-hana.test` | apps/api's vault host, auth host and Worker for `LIVE_ENV`, on the same D1 and mocked chain |
+| `https://rpc.e2e-near.test`, `https://rpc.e2e-evm.test` | the mocked NEAR and EVM RPCs |
+
+Nothing resolves those names: each test's browser context routes them (`tests/fixtures.ts`, `LIVE_UPSTREAMS`) to the
+stack's servers, which see each request at its https URL (`servedAt` in `src/server/http.ts`, as a TLS-terminating
+front would). The vault and auth bundles are built for `LIVE_ENV` by the same per-env build scripts, the Google stub
+accepts each env's callback, and live apps get their own scope (`e2elive`: a test app on a live app's scope is
+refused, D51). No origin rule is relaxed and no production env or manifest changes: a live app goes through the rules
+production applies. Mainnet chains are still not browser-tested.
+
+One thing routing changes: Playwright answers the CORS preflight of a routed request itself (allowing it), so in live
+mode the API's preflight answer isn't what the browser checks; the actual response's CORS headers, which are the
+API's, still are. The test-app pages reach the API unrouted, so the preflight rule stays browser-tested there.
 
 ## Browser differences the suite accounts for
 

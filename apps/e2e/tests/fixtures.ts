@@ -2,12 +2,27 @@
 //
 // Every test gets a fresh browser context with the Google stub routed in (src/google-stub.ts), a log of every request
 // its pages, frames and popups make (so "zero /v1/derive calls" is counted per test, not across the shared stack), and
-// its own app(s) on the mocked API. The partner test app (partner/app.ts) is driven through `window.e2e`: gesture
+// its own app(s) on the mocked API: test apps on the partner's loopback origins, or live apps (`newLiveApp`, opened
+// with `{ live: true }`) in the stack's live mode, whose https origins the context routes to the stack (src/stack.ts
+// LIVE_UPSTREAMS). The partner test app (partner/app.ts) is driven through `window.e2e`: gesture
 // actions are armed and then started by a real click on its #act button, so window.open runs with user activation.
-import { type BrowserContext, type Frame, type FrameLocator, type Page, test as base, expect } from '@playwright/test';
+import { type APIResponse, type BrowserContext, type Frame, type FrameLocator, type Page, type Route, test as base, expect } from '@playwright/test';
 import { GOOGLE_AUTH_URL, GOOGLE_CERTS_URL, GoogleStub } from '../src/google-stub.ts';
 import type { AppSpec as ServerAppSpec } from '../src/server/api.ts';
-import { API_URL, AUTH_ORIGIN, EVIL_ORIGIN, EVM_RPC, PARTNER_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
+import {
+  API_URL,
+  AUTH_ORIGIN,
+  EVIL_ORIGIN,
+  EVM_RPC,
+  LIVE_API_URL,
+  LIVE_AUTH_ORIGIN,
+  LIVE_ENV_NAME,
+  LIVE_PARTNER_ORIGIN,
+  LIVE_UPSTREAMS,
+  LIVE_VAULT_ORIGIN,
+  PARTNER_ORIGIN,
+  VAULT_ORIGIN,
+} from '../src/stack.ts';
 
 export { expect };
 
@@ -19,7 +34,7 @@ export interface App {
   pk: string;
 }
 
-export type Result = { state: 'pending' } | { state: 'ok'; value: unknown } | { state: 'error'; code: unknown; message: string };
+export type Result = { state: 'pending' } | { state: 'ok'; value: unknown } | { state: 'error'; code: unknown; message: string; reason: unknown };
 
 /** POST /v1/login exactly (not /v1/login-relay/…). */
 export const LOGIN_ENDPOINT = new RegExp(`^${API_URL.replace(/[.]/gu, '\\.')}/v1/login$`, 'u');
@@ -50,35 +65,58 @@ window.received = [];
 addEventListener('message', (e) => { window.received.push({ origin: e.origin, t: e.data && e.data.t }); });
 </script><h1>evil</h1>`;
 
-/** Routes Google's two endpoints to `google`, and the foreign site to its static page, in `context`. */
+/**
+ * Routes Google's two endpoints to `google`, the foreign site to its static page, and live mode's https origins to the
+ * stack (LIVE_UPSTREAMS), in `context`.
+ */
 export async function routeStubs(context: BrowserContext, google: GoogleStub): Promise<void> {
   await context.route(`${GOOGLE_AUTH_URL}**`, async (route) => route.fulfill(await google.authorize(new URL(route.request().url()))));
   await context.route(GOOGLE_CERTS_URL, async (route) =>
     route.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }, body: JSON.stringify(await google.jwks()) }),
   );
   await context.route(`${EVIL_ORIGIN}/**`, (route) => route.fulfill({ status: 200, headers: { 'content-type': 'text/html' }, body: EVIL_HTML }));
+  await context.route((url) => Object.hasOwn(LIVE_UPSTREAMS, url.origin), forwardLive);
 }
 
 /**
- * Keeps every hana:approve-request the approval popups receive in `window.__approveRequests` (an init script on
+ * A request to one of live mode's https origins, forwarded to the stack server behind it (as a TLS-terminating front
+ * would: method, headers and body unchanged, the server's response, headers included, as is). The servers rewrite the
+ * URL back to the https origin (src/server/http.ts servedAt). Long polls (the login relay) take as long as they take.
+ */
+async function forwardLive(route: Route): Promise<void> {
+  const url = new URL(route.request().url());
+  const upstream = LIVE_UPSTREAMS[url.origin] as string;
+  let response: APIResponse;
+  try {
+    response = await route.fetch({ url: `${upstream}${url.pathname}${url.search}`, maxRedirects: 0, timeout: 0 });
+  } catch {
+    // The page went away mid-request (a closed popup, the end of a test).
+    await route.abort().catch(() => undefined);
+    return;
+  }
+  await route.fulfill({ response }).catch(() => undefined);
+}
+
+/**
+ * Keeps every hana:approve-request the approval popups receive in `window.__approveRequests` (an init script on each
  * authOrigin's /approve), so a test can forge an answer for the request on show.
  */
 export async function recordApproveRequests(context: BrowserContext): Promise<void> {
   await context.addInitScript(
     ([auth]) => {
-      if (location.origin !== auth || location.pathname !== '/approve') return;
+      if (!auth.includes(location.origin) || location.pathname !== '/approve') return;
       const seen: unknown[] = [];
       (window as any).__approveRequests = seen;
       addEventListener('message', (e) => {
         if (e.data && e.data.t === 'hana:approve-request') seen.push(e.data);
       });
     },
-    [AUTH_ORIGIN] as const,
+    [[AUTH_ORIGIN, LIVE_AUTH_ORIGIN]] as const,
   );
 }
 
 /** The Hana origins: none of their responses may set a cookie, and none may hold one after a test. */
-const HANA_ORIGINS: readonly string[] = [VAULT_ORIGIN, AUTH_ORIGIN, new URL(API_URL).origin];
+const HANA_ORIGINS: readonly string[] = [VAULT_ORIGIN, AUTH_ORIGIN, new URL(API_URL).origin, LIVE_VAULT_ORIGIN, LIVE_AUTH_ORIGIN, LIVE_API_URL];
 
 export const test = base.extend<{ google: GoogleStub; requests: RequestLog; noCookies: void }>({
   google: [
@@ -116,6 +154,15 @@ export async function newApp(spec: AppSpec = {}): Promise<App> {
   return (await res.json()) as App;
 }
 
+/**
+ * A live (`pk_live_`) app on LIVE_PARTNER_ORIGIN and the live scope (src/stack.ts): open it with
+ * `openPartner(page, app, { live: true })`. Only a live app reaches what the vault refuses a test app (raw signing,
+ * D39).
+ */
+export async function newLiveApp(spec: AppSpec = {}): Promise<App> {
+  return newApp({ origins: [LIVE_PARTNER_ORIGIN], ...spec, live: true });
+}
+
 /** Revokes every share of the app on the API (its next unlock gets 410 share_revoked). */
 export async function revokeShares(app: App): Promise<number> {
   const res = await fetch(`${API_URL}/__e2e/apps/${app.pk}/revoke`, { method: 'POST' });
@@ -135,6 +182,8 @@ export async function evmBroadcasts(): Promise<`0x${string}`[]> {
 
 export interface PartnerOptions {
   origin?: string;
+  /** Live mode (src/stack.ts): LIVE_ENV, on LIVE_PARTNER_ORIGIN unless `origin` says otherwise. */
+  live?: boolean;
   /** window.open returns null on the partner page (a popup blocker), so the SDK uses the vault's launcher. */
   blockPopups?: boolean;
   coop?: string;
@@ -144,7 +193,8 @@ export function partnerUrl(app: App, o: PartnerOptions = {}): string {
   const q = new URLSearchParams({ pk: app.pk });
   if (o.blockPopups) q.set('blockPopups', '1');
   if (o.coop) q.set('coop', o.coop);
-  return `${o.origin ?? PARTNER_ORIGIN}/?${q.toString()}`;
+  if (o.live) q.set('env', LIVE_ENV_NAME);
+  return `${o.origin ?? (o.live ? LIVE_PARTNER_ORIGIN : PARTNER_ORIGIN)}/?${q.toString()}`;
 }
 
 /** Opens the partner app and waits for the vault handshake (ready or failed). */
@@ -186,9 +236,14 @@ export async function okValue<T = unknown>(page: Page, name: string, timeout?: n
 }
 
 export async function errorCode(page: Page, name: string, timeout?: number): Promise<unknown> {
+  return (await errorOf(page, name, timeout)).code;
+}
+
+/** The action's error: its code and the vault's `data.reason` (null when it has none). */
+export async function errorOf(page: Page, name: string, timeout?: number): Promise<{ code: unknown; reason: unknown }> {
   const r = await settled(page, name, timeout);
   if (r.state !== 'error') throw new Error(`${name} did not fail: ${JSON.stringify(r)}`);
-  return r.code;
+  return { code: r.code, reason: r.reason };
 }
 
 export const status = (page: Page): Promise<string> => page.evaluate(() => (window as any).e2e.status() as string);
@@ -199,7 +254,7 @@ export const addresses = (page: Page): Promise<{ stellar: string; evm: string } 
 export const VAULT_FRAME = 'iframe[name^="hana-vault-"]';
 
 export function vaultFrame(page: Page): Frame {
-  const f = page.frames().find((x) => x.url().startsWith(`${VAULT_ORIGIN}/vault`));
+  const f = page.frames().find((x) => x.url().startsWith(`${VAULT_ORIGIN}/vault`) || x.url().startsWith(`${LIVE_VAULT_ORIGIN}/vault`));
   if (!f) throw new Error('no vault frame');
   return f;
 }

@@ -2,11 +2,11 @@
 // http://localhost, a second partner site on http://site-b.localhost, the vault and auth origins on http://127.0.0.1
 // (a `local` env, so both partner sites are cross-site to Hana, as in production), apps/api's own Worker for the Hana
 // API (with /v1/login and /v1/derive mocked), a mocked NEAR RPC and EVM chain RPC, and a test MPC whose network key is
-// pinned in the bundles.
+// pinned in the bundles. Live mode (below) adds a second env for pk_live_ apps, on https origins the tests route.
 //
-// The env lives here, not in envs/: a manifest there would put a loopback env into every build's HANA_ENVS (the list
-// the published partner client accepts). The bundles are built for it by src/build.ts with the real per-env build
-// scripts of @hana-id/web, so it is pinned exactly as a deployed env's constants are.
+// The envs live here, not in envs/: a manifest there would put a loopback (or routed-only) env into every build's
+// HANA_ENVS (the list the published partner client accepts). The bundles are built for them by src/build.ts with the
+// real per-env build scripts of @hana-id/web, so each is pinned exactly as a deployed env's constants are.
 import { bls12_381 as bls } from '@noble/curves/bls12-381';
 import { base58 } from '@scure/base';
 import type { HanaEnv } from '@hana-id/web';
@@ -54,8 +54,12 @@ export function portsFrom(base: number) {
     /** The hosted demo (apps/demo), served by its own Worker handler over its e2e build. */
     demo: base + 2,
     vault: base + 10,
+    /** Live mode's vault, auth and API hosts (LIVE_ENV): reached only through the test's routes from https origins. */
+    liveVault: base + 11,
     auth: base + 20,
+    liveAuth: base + 21,
     api: base + 30,
+    liveApi: base + 31,
     near: base + 40,
     evm: base + 50,
   });
@@ -103,6 +107,55 @@ export const E2E_ENV: HanaEnv = Object.freeze({
   ckdNetworkKey: TEST_CKD_NETWORK_KEY,
   devEnv: true,
 });
+
+// ---- live mode: a pk_live_ app end to end ----
+//
+// Every env allows loopback partner origins only for pk_test_ keys (apps/api origins.ts, the vault's parentAllowed),
+// so a live app needs a partner page on a real-looking origin, and that page must be https: the SDK and the vault need
+// a secure context, which an http page on a non-loopback host isn't. An https page can't embed or call the stack's
+// http://127.0.0.1 Hana origins (WebKit blocks it as mixed content, Chromium as local network access), so live mode
+// has a second env, LIVE_ENV, whose every origin is https on a `.test` name (reserved, RFC 2606). Nothing resolves
+// those names: each test's browser context routes them (tests/fixtures.ts, LIVE_UPSTREAMS) to the stack's servers,
+// as a TLS-terminating front would. The Hana hosts behind them are apps/api's own (vault page, auth pages, Worker) on
+// the same D1 and mocked chain, configured with LIVE_ENV's origins; the bundles are built for LIVE_ENV by the same
+// per-env build scripts. So a live app goes through the production rules unchanged: no env rule is relaxed, and no
+// production env or manifest is touched.
+
+export const LIVE_ENV_NAME = 'local-e2e-live';
+
+/** The partner test app in live mode (the same page as PARTNER_ORIGIN, with `?env=local-e2e-live`). */
+export const LIVE_PARTNER_ORIGIN = 'https://partner.e2e-live.test';
+export const LIVE_VAULT_ORIGIN = 'https://vault.e2e-hana.test';
+export const LIVE_AUTH_ORIGIN = 'https://auth.e2e-hana-auth.test';
+export const LIVE_API_URL = 'https://api.e2e-hana.test';
+export const LIVE_NEAR_RPC = 'https://rpc.e2e-near.test';
+export const LIVE_EVM_RPC = 'https://rpc.e2e-evm.test';
+
+/** Where each live origin is served: the routes in tests/fixtures.ts forward to these. */
+export const LIVE_UPSTREAMS: Readonly<Record<string, string>> = Object.freeze({
+  [LIVE_PARTNER_ORIGIN]: PARTNER_ORIGIN,
+  [LIVE_VAULT_ORIGIN]: `http://127.0.0.1:${PORTS.liveVault}`,
+  [LIVE_AUTH_ORIGIN]: `http://127.0.0.1:${PORTS.liveAuth}`,
+  [LIVE_API_URL]: `http://127.0.0.1:${PORTS.liveApi}`,
+  [LIVE_NEAR_RPC]: NEAR_RPC,
+  [LIVE_EVM_RPC]: EVM_RPC,
+});
+
+/** The live-mode env: E2E_ENV's chain accounts and test MPC, with the https origins above. */
+export const LIVE_ENV: HanaEnv = Object.freeze({
+  ...E2E_ENV,
+  name: LIVE_ENV_NAME,
+  apiUrl: LIVE_API_URL,
+  vaultOrigin: LIVE_VAULT_ORIGIN,
+  authOrigin: LIVE_AUTH_ORIGIN,
+  rpc: LIVE_NEAR_RPC,
+});
+
+/**
+ * The scope of the stack's live apps. A pk_test_ app on a scope a pk_live_ app uses is refused (`scope_conflict`,
+ * D51), so live apps never use the test apps' scope (`e2e`). Scope ids are `[a-z0-9]{1,64}` (@hana-id/core isScopeId).
+ */
+export const LIVE_SCOPE_ID = 'e2elive';
 
 /** The scope's shared Google client (any string: the OIDC stub accepts any client id the API hands out). */
 export const GOOGLE_CLIENT_ID = 'e2e-shared.apps.googleusercontent.com';

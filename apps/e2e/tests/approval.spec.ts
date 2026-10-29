@@ -2,18 +2,21 @@
 // popup renders what it decoded itself, Approve is guarded against window-timing tricks, and the vault signs only an
 // answer from its own popup whose digest matches the whole request.
 import { type Page } from '@playwright/test';
-import { approvalDigest } from '@hana-id/core';
-import { AUTH_ORIGIN, SITE_B_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
+import { approvalDigest, from0xHex } from '@hana-id/core';
+import { verifyStellarSignature } from '@hana-id/core/signers/stellar';
+import { AUTH_ORIGIN, LIVE_AUTH_ORIGIN, LIVE_PARTNER_ORIGIN, LIVE_VAULT_ORIGIN, SITE_B_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
 import {
   type App,
   VAULT_FRAME,
   approve,
   clickLauncher,
   errorCode,
+  errorOf,
   launcher,
   expect,
   login,
   newApp,
+  newLiveApp,
   okValue,
   openPartner,
   peek,
@@ -26,6 +29,24 @@ import {
 async function loggedIn(page: Page, app?: App): Promise<{ stellar: string; evm: string }> {
   await openPartner(page, app ?? (await newApp()));
   return login(page);
+}
+
+/** Logged in to a live (pk_live_) app in the stack's live mode: the only kind of app that can sign raw (D39). */
+async function loggedInLive(page: Page, app: App): Promise<{ stellar: string; evm: string }> {
+  expect(await openPartner(page, app, { live: true })).toBe('ok');
+  return login(page);
+}
+
+/** Starts hana.signRaw over `len` bytes of `fill` (Stellar `bytes`, EVM `digest`), built in the page as a Uint8Array. */
+async function runSignRaw(page: Page, name: string, chain: 'stellar' | 'evm', len: number, fill: number): Promise<Uint8Array> {
+  await page.evaluate(
+    ([n, c, l, f]) => {
+      const b = new Uint8Array(l).fill(f);
+      (window as any).e2e.run(n, 'signRaw', c === 'evm' ? { chain: c, digest: b } : { chain: c, bytes: b });
+    },
+    [name, chain, len, fill] as const,
+  );
+  return new Uint8Array(len).fill(fill);
 }
 
 /** The guard holds: nothing was signed `ms` after the attempt. */
@@ -156,7 +177,8 @@ test.describe('the digest binds the answer to the whole request', () => {
     const digest = Array.from(approvalDigest(input));
     await popup.evaluate(
       ([id, d, vault]) => window.opener.postMessage({ v: 1, t: 'hana:approve-result', id, approved: true, digest: Uint8Array.from(d as number[]) }, vault as string),
-      [req.id, digest, VAULT_ORIGIN] as const,
+      // The vault that opened this popup: live mode's when the popup is on live mode's authOrigin.
+      [req.id, digest, new URL(popup.url()).origin === LIVE_AUTH_ORIGIN ? LIVE_VAULT_ORIGIN : VAULT_ORIGIN] as const,
     );
   }
 
@@ -182,6 +204,15 @@ test.describe('the digest binds the answer to the whole request', () => {
     const popup = await clickLauncher(page, 'Review in Hana');
     // Same chain, same (empty) context and bytes: only the kind differs.
     await forgeFromPopup(popup, (i) => ({ ...i, kind: i.kind === 'personal_sign' ? 'eip712' : 'personal_sign' }));
+    expect(await errorCode(page, 'sig')).toBe(4001);
+  });
+
+  test('a digest over another chain is refused (4001, no signature)', async ({ page }) => {
+    // Raw requests are a live app's (D39). One of 32 bytes fits both chains, so only the chain differs.
+    await loggedInLive(page, await newLiveApp({ settings: { rawSign: 'approval' } }));
+    await runSignRaw(page, 'sig', 'stellar', 32, 3);
+    const popup = await clickLauncher(page, 'Review in Hana');
+    await forgeFromPopup(popup, (i) => ({ ...i, chain: i.chain === 'stellar' ? 'evm' : 'stellar' }));
     expect(await errorCode(page, 'sig')).toBe(4001);
   });
 
@@ -220,19 +251,38 @@ test.describe('the digest binds the answer to the whole request', () => {
 });
 
 test.describe('raw signing', () => {
-  test("is refused with 4100 when the app's raw_sign is off", async ({ page }) => {
-    await loggedIn(page);
-    await page.evaluate(() => (window as any).e2e.run('raw', 'signRaw', { chain: 'evm', digest: new Uint8Array(32).fill(1) }));
-    expect(await errorCode(page, 'raw')).toBe(4100);
+  // Only a live app signs raw (test apps never do, D39): these run as a pk_live_ app in the stack's live mode
+  // (src/stack.ts), except the test-app refusal itself.
+  test('a live app needs a guarded Approve under the raw warning when raw_sign is approval', async ({ page }) => {
+    const { stellar } = await loggedInLive(page, await newLiveApp({ settings: { rawSign: 'approval' } }));
+    const bytes = await runSignRaw(page, 'raw', 'stellar', 64, 2);
+    const popup = await clickLauncher(page, 'Review in Hana');
+    await expect(popup.getByText('Raw signing can authorize any transaction', { exact: false })).toBeVisible();
+    await expect(popup.getByText('This signature isn’t tied to one network.', { exact: false })).toBeVisible();
+    await expect(popup.getByText(stellar).first()).toBeVisible();
+    await expect(popup.getByText(LIVE_PARTNER_ORIGIN, { exact: true })).toBeVisible();
+    // A live app's popup has no test-network notice.
+    await expect(popup.getByText('test networks', { exact: false })).toHaveCount(0);
+    // A click within 1 s of rendering signs nothing.
+    await rawClick(popup, 'button.primary');
+    await stillPending(page, 'raw', 600);
+    await approve(popup);
+    const { signature } = await okValue<{ signature: `0x${string}` }>(page, 'raw');
+    expect(signature).toMatch(/^0x[0-9a-f]{128}$/u);
+    expect(verifyStellarSignature(stellar, bytes, from0xHex(signature))).toBe(true);
   });
 
-  // The suite's apps are test apps (loopback partner origins need pk_test_), which can never sign raw (D39): the
-  // approval flow of a live app's raw request, and a digest that differs only in its chain, are covered by
-  // packages/web/test/vault/approval.test.ts.
+  test("is refused with 4100 when a live app's raw_sign is off, with no popup", async ({ page }) => {
+    await loggedInLive(page, await newLiveApp());
+    await runSignRaw(page, 'raw', 'evm', 32, 1);
+    expect(await errorOf(page, 'raw')).toEqual({ code: 4100, reason: 'raw_sign_off' });
+    await expect(launcher(page).getByRole('button', { name: 'Review in Hana' })).toHaveCount(0);
+  });
+
   test('is refused with 4100 for a test app even when raw_sign is approval, with no popup', async ({ page }) => {
     await loggedIn(page, await newApp({ settings: { rawSign: 'approval' } }));
-    await page.evaluate(() => (window as any).e2e.run('raw', 'signRaw', { chain: 'stellar', bytes: new Uint8Array(64).fill(2) }));
-    expect(await errorCode(page, 'raw')).toBe(4100);
+    await runSignRaw(page, 'raw', 'stellar', 64, 2);
+    expect(await errorOf(page, 'raw')).toEqual({ code: 4100, reason: 'raw_not_allowed_for_test_apps' });
     await expect(launcher(page).getByRole('button', { name: 'Review in Hana' })).toHaveCount(0);
   });
 });

@@ -7,8 +7,9 @@
 // API's own check has its own tests in apps/api).
 //
 // Control endpoints for the tests (`/__e2e/*`, no CORS, so no page can call them):
-//   POST /__e2e/apps                  {name?, scopeId?, origins, status?, settings?, publishableKey?} → {appId, pk}
-//                                     (with publishableKey: created once, then the same app is returned)
+//   POST /__e2e/apps                  {name?, scopeId?, origins, status?, settings?, publishableKey?, live?} → {appId, pk}
+//                                     (with publishableKey: created once, then the same app is returned; live: a
+//                                     pk_live_ key, on LIVE_SCOPE_ID unless scopeId says otherwise)
 //   POST /__e2e/apps/<pk>/revoke      every live share of the app is revoked (an unlock then gets 410 share_revoked)
 //   GET  /__e2e/apps/<pk>/shares      [{counter, revoked, partnerOrigin}], oldest first
 //   GET  /__e2e/health                {ok, fingerprint} (fingerprint.ts)
@@ -22,7 +23,7 @@ import {
   verifyEd25519,
 } from '@hana-id/core';
 import { base58 } from '@scure/base';
-import { API_URL, AUTH_ORIGIN, E2E_ENV, ENV_NAME, NEAR_RPC, VAULT_ORIGIN } from '../stack.ts';
+import { API_URL, AUTH_ORIGIN, E2E_ENV, ENV_NAME, LIVE_SCOPE_ID, NEAR_RPC, VAULT_ORIGIN } from '../stack.ts';
 import type { ApiApp, ApiCtx, ApiEnv, ApiModules } from './api-modules.ts';
 import { type Chain, mpcAnswer } from './chain.ts';
 import type { D1Shim } from './d1.ts';
@@ -60,6 +61,12 @@ export interface AppSpec {
   settings?: { persistence?: 'session' | 'none'; rawSign?: 'off' | 'approval'; autoApprovePolicy?: Body | null };
   /** A fixed key, for a page that bakes its key in at build time (the demo): the app is created on first use only. */
   publishableKey?: string;
+  /**
+   * A live app: a `pk_live_` key, on LIVE_SCOPE_ID by default (D51: a test app on a live app's scope is refused). The
+   * Worker and the vault then apply a live app's rules: no loopback origin (live mode's LIVE_PARTNER_ORIGIN instead,
+   * src/stack.ts), raw signing when `rawSign` is 'approval', no timings.
+   */
+  live?: boolean;
 }
 
 export interface MockApiOptions {
@@ -67,6 +74,11 @@ export interface MockApiOptions {
   nearRpc?: string;
   /** What /__e2e/health reports (fingerprint.ts). */
   fingerprint?: string;
+  /**
+   * The env this Worker serves (default E2E_ENV): live mode's second Worker, on the same D1 and chain, serves LIVE_ENV
+   * (src/stack.ts). It has no control endpoints: the tests create apps through the default one.
+   */
+  serves?: { envName: string; vaultOrigin: string; authOrigin: string; apiUrl: string };
 }
 
 export class MockApi {
@@ -75,6 +87,7 @@ export class MockApi {
   private readonly exec = new ExecContext();
   private seq = 0;
   private readonly fingerprint: string;
+  private readonly control: boolean;
 
   constructor(
     private readonly d1: D1Shim,
@@ -83,15 +96,17 @@ export class MockApi {
     opts: MockApiOptions = {},
   ) {
     this.fingerprint = opts.fingerprint ?? '';
+    this.control = opts.serves === undefined;
+    const serves = opts.serves ?? { envName: ENV_NAME, vaultOrigin: VAULT_ORIGIN, authOrigin: AUTH_ORIGIN, apiUrl: API_URL };
     const env: ApiEnv = {
       DB: d1,
-      ENV_NAME,
+      ENV_NAME: serves.envName,
       NEAR_RPC: opts.nearRpc ?? NEAR_RPC,
       SIGNER_ACCOUNT: E2E_ENV.signer,
       RELAYER_ACCOUNT: E2E_ENV.relayer,
-      VAULT_ORIGIN,
-      AUTH_ORIGIN,
-      API_URL,
+      VAULT_ORIGIN: serves.vaultOrigin,
+      AUTH_ORIGIN: serves.authOrigin,
+      API_URL: serves.apiUrl,
       VAULT_KEK: newVaultKek(),
       DO_LOCATION_HINT: '',
       RATE_LIMITER: allowAllLimiter,
@@ -104,17 +119,18 @@ export class MockApi {
 
   createApp(spec: AppSpec): { appId: string; pk: string } {
     if (spec.publishableKey !== undefined) {
+      if (spec.live) throw new Error('a live app gets a fresh key: publishableKey is for pk_test_ apps');
       if (!/^pk_test_[1-9A-HJ-NP-Za-km-z]{16,64}$/u.test(spec.publishableKey)) throw new Error('publishableKey must be a pk_test_ key');
       const existing = this.d1.db.prepare('SELECT id FROM apps WHERE publishable_key = ?').get(spec.publishableKey) as { id: string } | undefined;
       if (existing) return { appId: existing.id, pk: spec.publishableKey };
     }
     this.seq += 1;
     const appId = `app_e2e_${this.seq}_${toHex(crypto.getRandomValues(new Uint8Array(4)))}`;
-    const pk = spec.publishableKey ?? `pk_test_${base58.encode(crypto.getRandomValues(new Uint8Array(16)))}`;
+    const pk = spec.publishableKey ?? `${spec.live ? 'pk_live_' : 'pk_test_'}${base58.encode(crypto.getRandomValues(new Uint8Array(16)))}`;
     const s = spec.settings ?? {};
     this.d1.db
       .prepare('INSERT INTO apps (id, name, scope_id, publishable_key, status, persistence, raw_sign, auto_approve_policy) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(appId, spec.name ?? 'E2E Partner', spec.scopeId ?? 'e2e', pk, spec.status ?? 'active', s.persistence ?? 'session', s.rawSign ?? 'off', s.autoApprovePolicy ? JSON.stringify(s.autoApprovePolicy) : null);
+      .run(appId, spec.name ?? 'E2E Partner', spec.scopeId ?? (spec.live ? LIVE_SCOPE_ID : 'e2e'), pk, spec.status ?? 'active', s.persistence ?? 'session', s.rawSign ?? 'off', s.autoApprovePolicy ? JSON.stringify(s.autoApprovePolicy) : null);
     const insert = this.d1.db.prepare('INSERT INTO app_origins (app_id, origin) VALUES (?, ?)');
     for (const o of spec.origins) insert.run(appId, o);
     return { appId, pk };
@@ -140,7 +156,7 @@ export class MockApi {
 
   async handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
-    if (url.pathname.startsWith('/__e2e/')) return this.control(req, url);
+    if (url.pathname.startsWith('/__e2e/')) return this.control ? this.controlEndpoint(req, url) : json(404, { error: 'not_found' });
     if (req.method === 'POST' && (url.pathname === '/v1/login' || url.pathname === '/v1/derive')) return this.mocked(req, url.pathname);
     return this.api.worker.fetch(req, this.env, this.exec);
   }
@@ -227,13 +243,13 @@ export class MockApi {
 
   // ---- control ----
 
-  private async control(req: Request, url: URL): Promise<Response> {
+  private async controlEndpoint(req: Request, url: URL): Promise<Response> {
     // Pages can't reach these: no CORS, and a browser request always carries an Origin on POST.
     if (req.headers.get('origin') !== null) return json(403, { error: 'forbidden' });
     const p = url.pathname;
     if (p === '/__e2e/health') return json(200, { ok: true, fingerprint: this.fingerprint });
     if (p === '/__e2e/apps' && req.method === 'POST') return json(201, this.createApp((await req.json()) as AppSpec));
-    const m = /^\/__e2e\/apps\/(pk_test_[1-9A-HJ-NP-Za-km-z]+)\/(revoke|shares)$/u.exec(p);
+    const m = /^\/__e2e\/apps\/(pk_(?:test|live)_[1-9A-HJ-NP-Za-km-z]+)\/(revoke|shares)$/u.exec(p);
     if (m?.[2] === 'revoke' && req.method === 'POST') return json(200, { revoked: this.revokeApp(m[1] as string) });
     if (m?.[2] === 'shares' && req.method === 'GET') return json(200, this.shares(m[1] as string));
     return json(404, { error: 'not_found' });

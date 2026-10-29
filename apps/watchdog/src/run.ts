@@ -2,6 +2,8 @@
 // D82 allows them. On its own the watchdog only:
 //   - cancels a pending issuer key Google doesn't publish (absent from two fetches ≥ 60 s apart) or publishes with
 //     other key material, and then deletes every updater key if the updater (the signer account) proposed it;
+//   - cancels any pending change the updater proposed for a provider other than Google (the updater only serves
+//     Google, so its key is stolen), and deletes every updater key;
 //   - pauses the contract, and only when a key Google doesn't publish is ACTIVE on chain (never at its first run);
 //   - confirms pending changes that match Google's JWKS (D86).
 // Everything else is an alert (D85). Dependencies are injected so every path is tested against stubs.
@@ -13,6 +15,7 @@ import { ALERT_KINDS, type AlertKind, CHANNELS, CHECK_IDS, type CheckId } from '
 import { maybeSendDigest } from './digest.ts';
 import { diffChain, type StoredSnapshot } from './diff.ts';
 import { log } from './log.ts';
+import { ident } from './sanitize.ts';
 import { iso } from './time.ts';
 import type { CheckResult, Store } from './store.ts';
 
@@ -27,10 +30,12 @@ export const FAILING_RUNS = 3;
 /** A run lock older than this is taken over (a run that died without releasing it). */
 export const LOCK_STALE_MS = 10 * 60_000;
 /**
- * Panics that mean the target is already gone (another run or the owner got there first): not a failed protection.
- * Cancel: the change left the queue. Delete: the key is no longer tracked.
+ * Panics that mean the target is already gone (another run or the owner got there first). Delete: the key is no
+ * longer tracked, not a failed protection. Cancel: the change left the queue, but possibly because it was executed:
+ * the run re-reads the chain to tell (`cancelOutcome`).
  */
 const ALREADY_DONE = /No such key change|Not an updater key/u;
+const CHANGE_GONE = /No such key change/u;
 
 export interface RunConfig {
   envName: string;
@@ -198,7 +203,7 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
         failures = 0;
         run.evaluate('wrong_network');
         if (chainId !== cfg.network) {
-          await run.condition('wrong_network', 'wrong_network', `The RPC is on ${chainId || 'an unknown chain'}, not ${cfg.network}: nothing is sent`, { chain_id: chainId, expected: cfg.network });
+          await run.condition('wrong_network', 'wrong_network', `The RPC is on ${chainId ? ident(chainId) : 'an unknown chain'}, not ${cfg.network}: nothing is sent`, { chain_id: chainId, expected: cfg.network });
         } else {
           snap = s;
           networkOk = true;
@@ -276,8 +281,15 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
       run.evaluate('published_key_removal', 'unverifiable_key_change');
       run.check('pending_key_changes', 'ok', `${s.keyChanges.length} pending`);
       const pending = s.keyChanges.filter((c) => c.provider === GOOGLE_PROVIDER);
+      const deleted = new Set<string>();
       for (const c of s.keyChanges.filter((c) => c.provider !== GOOGLE_PROVIDER)) {
-        await run.condition('unverifiable_key_change', `unverifiable_key_change:${c.id}`, `Pending ${c.op} of ${c.provider} key ${c.kid}: no JWKS known for ${c.provider} (alert only)`, changeDetails(c));
+        if (c.by === cfg.signer) {
+          // The updater (the API's key on the signer account) only serves Google: any other provider's change from
+          // it means the key is stolen. Cancelled like a forged Google key, and the updater keys deleted.
+          await forgedPending(run, s, c, 'updater_other_provider', null, canAct, settled, deleted, self);
+          continue;
+        }
+        await run.condition('unverifiable_key_change', `unverifiable_key_change:${c.id}`, `Pending ${ident(c.op)} of ${ident(c.provider)} key ${ident(c.kid)}: no JWKS known for ${ident(c.provider)} (alert only)`, changeDetails(c));
       }
       let jwksNow: Map<string, Jwk> = firstJwks;
       const absent = await trackAbsences(store, pending, jwksNow, google.at);
@@ -290,7 +302,6 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
           for (const kid of [...absent]) if (jwksNow.has(kid)) absent.delete(kid);
         }
       }
-      const deleted = new Set<string>();
 
       for (const c of pending) {
         const jwk = jwksNow.get(c.kid);
@@ -301,12 +312,12 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
           }
           const reason = jwk ? 'other_key_material' : absent.has(c.kid) ? 'not_published' : null;
           if (!reason) {
-            run.check('pending_key_changes', 'ok', `${c.kid} absent once, rechecking next run`);
+            run.check('pending_key_changes', 'ok', `${ident(c.kid)} absent once, rechecking next run`);
             continue;
           }
           await forgedPending(run, s, c, reason, jwk ?? null, canAct, settled, deleted, self);
         } else if (jwk) {
-          await run.condition('published_key_removal', `published_key_removal:${c.id}`, `Pending removal of ${c.kid}, which Google still publishes (alert only: the owner decides)`, changeDetails(c));
+          await run.condition('published_key_removal', `published_key_removal:${c.id}`, `Pending removal of ${ident(c.kid)}, which Google still publishes (alert only: the owner decides)`, changeDetails(c));
         } else if (absent.has(c.kid) && canConfirm) {
           await confirm(run, c, settled);
         }
@@ -343,10 +354,10 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
       run.check('unexecuted_changes', 'ok');
       for (const c of s.keyChanges) {
         if (settled.has(c.id) || d.now() - c.executable_at_ms <= UNEXECUTED_AFTER_MS) continue;
-        await run.condition('unexecuted_key_change', `unexecuted_key_change:${c.id}`, `Key change ${c.id} (${c.op} ${c.kid}) executable since ${iso(c.executable_at_ms)} and not executed`, changeDetails(c));
+        await run.condition('unexecuted_key_change', `unexecuted_key_change:${c.id}`, `Key change ${c.id} (${ident(c.op)} ${ident(c.kid)}) executable since ${iso(c.executable_at_ms)} and not executed`, changeDetails(c));
       }
 
-      await store.setMeta(META.snapshot, { at: d.now(), config: s.config, governance: s.governance, keyChanges: s.keyChanges, owner: s.owner } satisfies StoredSnapshot);
+      await store.setMeta(META.snapshot, { at: d.now(), config: s.config, governance: s.governance, keyChanges: s.keyChanges, owner: s.owner, issuer: s.issuer } satisfies StoredSnapshot);
       await store.setMeta(META.selfChanges, self);
     } else {
       for (const id of ['governance_diff', 'unexecuted_changes'] as const) run.check(id, 'skipped', 'no chain read');
@@ -414,21 +425,67 @@ async function trackAbsences(store: Store, pending: KeyChange[], jwks: Map<strin
 }
 
 async function confirm(run: Run, c: KeyChange, settled: Set<number>): Promise<void> {
-  const a = await run.act('confirm_issuer_key_change', { id: c.id }, c.op === 'Add' ? `${c.kid} matches Google's JWKS` : `${c.kid} is no longer in Google's JWKS`);
+  const a = await run.act('confirm_issuer_key_change', { id: c.id }, c.op === 'Add' ? `${ident(c.kid)} matches Google's JWKS` : `${ident(c.kid)} is no longer in Google's JWKS`);
   if (a.ok) {
     settled.add(c.id);
-    await run.event('key_change_confirmed', `confirmed:${c.id}`, `Confirmed ${c.op === 'Add' ? 'new key' : 'removal of'} ${c.kid} (change ${c.id})`, { ...changeDetails(c), ...actionDetail(a) });
+    await run.event('key_change_confirmed', `confirmed:${c.id}`, `Confirmed ${c.op === 'Add' ? 'new key' : 'removal of'} ${ident(c.kid)} (change ${c.id})`, { ...changeDetails(c), ...actionDetail(a) });
   } else {
-    await run.event('confirm_failed', `confirm_failed:${a.id}`, `Confirming change ${c.id} (${c.op} ${c.kid}) failed`, { ...changeDetails(c), ...actionDetail(a) });
+    await run.event('confirm_failed', `confirm_failed:${a.id}`, `Confirming change ${c.id} (${ident(c.op)} ${ident(c.kid)}) failed`, { ...changeDetails(c), ...actionDetail(a) });
   }
 }
 
-/** D82: cancel, then delete every updater key if the updater proposed it, then one critical alert with the results. */
+/** Why a pending change is treated as forged and cancelled. */
+export type ForgedReason = 'other_key_material' | 'not_published' | 'updater_other_provider';
+
+/**
+ * What became of a forged change after the cancel: `cancelled` by this run; `gone` from the queue without taking
+ * effect (the owner or another watchdog cancelled it first); `executed` before the cancel landed (it took effect: the
+ * protection failed); `unknown` (the cancel said it was gone, and the re-read failed or still lists it); `failed` (the
+ * cancel failed for another reason, the change is still pending); `not_sent` (the watchdog can't act).
+ */
+export type CancelOutcome = 'cancelled' | 'gone' | 'executed' | 'unknown' | 'failed' | 'not_sent';
+
+/**
+ * A cancel that panicked `No such key change` doesn't say why the change left the queue: re-reads the chain and tells
+ * a cancel by someone else (`gone`) from an execution (`executed`: an Add's kid is active, a Remove's kid isn't).
+ * Returns the fresh snapshot too, so the run judges the active keys on what is on chain now.
+ */
+async function cancelOutcome(run: Run, c: KeyChange): Promise<{ outcome: 'gone' | 'executed' | 'unknown'; fresh: ChainSnapshot | null }> {
+  let fresh: ChainSnapshot | null = null;
+  try {
+    fresh = await run.d.chain.snapshot(c.provider);
+  } catch {
+    return { outcome: 'unknown', fresh: null };
+  }
+  if (fresh.keyChanges.some((x) => x.id === c.id) || !fresh.issuer) return { outcome: 'unknown', fresh };
+  const active = fresh.issuer.kids.includes(c.kid);
+  return { outcome: (c.op === 'Add' ? active : !active) ? 'executed' : 'gone', fresh };
+}
+
+const FORGED_WHY: Record<ForgedReason, string> = {
+  not_published: "Google doesn't publish it",
+  other_key_material: 'Google publishes other key material for it',
+  updater_other_provider: 'the updater only serves Google, so its key is stolen',
+};
+
+const OUTCOME_TEXT: Record<CancelOutcome, string> = {
+  cancelled: 'cancelled',
+  gone: 'already gone from the queue without taking effect',
+  executed: 'EXECUTED before the watchdog could cancel it',
+  unknown: 'the cancel found it gone and the re-read could not tell whether it was executed',
+  failed: 'the cancel failed',
+  not_sent: 'the watchdog could not act',
+};
+
+/**
+ * D82: cancel, then delete every updater key if the updater proposed it, then one critical alert with the results.
+ * The title says what actually happened (never "cancelled" unless this run's cancel went through).
+ */
 async function forgedPending(
   run: Run,
   s: ChainSnapshot,
   c: KeyChange,
-  reason: 'other_key_material' | 'not_published',
+  reason: ForgedReason,
   jwk: Jwk | null,
   canAct: boolean,
   settled: Set<number>,
@@ -437,11 +494,30 @@ async function forgedPending(
 ): Promise<void> {
   const signer = run.d.config.signer;
   const actions: ActionSummary[] = [];
+  let outcome: CancelOutcome = 'not_sent';
   if (canAct) {
-    const cancel = await run.act('cancel_issuer_key_change', { id: c.id }, `${c.kid}: ${reason}`);
+    const cancel = await run.act('cancel_issuer_key_change', { id: c.id }, `${ident(c.kid)}: ${reason}`);
     actions.push(cancel);
-    if (cancel.ok || ALREADY_DONE.test(cancel.error ?? '')) settled.add(c.id);
-    else await run.condition('protective_action_failed', `protective_action_failed:cancel:${c.id}`, `Cancelling forged key change ${c.id} (${c.kid}) failed`, { ...changeDetails(c), ...actionDetail(cancel) });
+    if (cancel.ok) outcome = 'cancelled';
+    else if (CHANGE_GONE.test(cancel.error ?? '')) {
+      const r = await cancelOutcome(run, c);
+      outcome = r.outcome;
+      // An executed forged Google key is active now: let step 5 see it in this run (it pauses, D82).
+      if (r.outcome === 'executed' && r.fresh && c.provider === GOOGLE_PROVIDER) {
+        s.issuer = r.fresh.issuer;
+        s.issuerKeys = r.fresh.issuerKeys;
+      }
+    } else outcome = 'failed';
+    if (outcome !== 'failed') settled.add(c.id);
+    if (outcome === 'failed' || outcome === 'executed' || outcome === 'unknown') {
+      const what =
+        outcome === 'failed'
+          ? `Cancelling forged key change ${c.id} (${ident(c.kid)}) failed`
+          : outcome === 'executed'
+            ? `Forged key change ${c.id} (${ident(c.op)} ${ident(c.provider)} ${ident(c.kid)}) was executed before the watchdog could cancel it`
+            : `Forged key change ${c.id} (${ident(c.kid)}) left the queue and the watchdog could not tell whether it was executed`;
+      await run.condition('protective_action_failed', `protective_action_failed:cancel:${c.id}`, what, { ...changeDetails(c), outcome, ...actionDetail(cancel) });
+    }
     if (c.by === signer) {
       for (const publicKey of s.governance.updater_keys) {
         if (deleted.has(publicKey)) continue;
@@ -451,13 +527,13 @@ async function forgedPending(
           deleted.add(publicKey);
           self.deletedUpdaterKeys.push(publicKey);
         } else if (ALREADY_DONE.test(del.error ?? '')) deleted.add(publicKey);
-        else await run.condition('protective_action_failed', `protective_action_failed:delete_updater_key:${publicKey}`, `Deleting updater key ${publicKey} failed`, actionDetail(del));
+        else await run.condition('protective_action_failed', `protective_action_failed:delete_updater_key:${publicKey}`, `Deleting updater key ${ident(publicKey)} failed`, actionDetail(del));
       }
     }
   }
-  const why = reason === 'not_published' ? "Google doesn't publish it" : 'Google publishes other key material for it';
-  const title = canAct ? `Forged issuer key ${c.kid} (change ${c.id}): ${why}; cancelled` : `Forged issuer key ${c.kid} (change ${c.id}): ${why}; the watchdog could not act`;
-  const details = { ...changeDetails(c), reason, ...(jwk ? { google_n: jwk.n, google_e: jwk.e } : {}), updater_proposed: c.by === signer, actions: actions.map(actionDetail) };
+  const subject = reason === 'updater_other_provider' ? `${ident(c.op)} of ${ident(c.provider)} key ${ident(c.kid)} by the updater` : `issuer key ${ident(c.kid)}`;
+  const title = `Forged ${subject} (change ${c.id}): ${FORGED_WHY[reason]}; ${OUTCOME_TEXT[outcome]}`;
+  const details = { ...changeDetails(c), reason, outcome, ...(jwk ? { google_n: jwk.n, google_e: jwk.e } : {}), updater_proposed: c.by === signer, actions: actions.map(actionDetail) };
   const ev = await run.event('forged_key_change', `forged_key_change:${c.id}`, title, details);
   // Already alerted (an earlier cancel failed): each new successful action gets its own critical alert.
   if (!ev) for (const a of actions.filter((x) => x.ok)) await run.event('automatic_action', `automatic_action:${a.id}`, `Automatic action for forged change ${c.id}: ${a.method}`, actionDetail(a));
@@ -485,9 +561,9 @@ async function checkActiveKeys(run: Run, s: ChainSnapshot, jwks: Map<string, Jwk
       // History the watchdog can't judge: alert, never pause (spec step 5).
       if (!jwk) {
         await store.addBaselineKid(GOOGLE_PROVIDER, kid, onChain?.n ?? null, onChain?.e ?? null, now);
-        await run.event('unknown_active_key_first_run', `first_run_unknown:${GOOGLE_PROVIDER}:${kid}`, `First run: active key ${kid} is not in Google's JWKS (recorded as known; not paused)`, { kid, reason: 'not_in_jwks', ...(onChain ? { n: onChain.n, e: onChain.e } : {}) });
+        await run.event('unknown_active_key_first_run', `first_run_unknown:${GOOGLE_PROVIDER}:${kid}`, `First run: active key ${ident(kid)} is not in Google's JWKS (recorded as known; not paused)`, { kid, reason: 'not_in_jwks', ...(onChain ? { n: onChain.n, e: onChain.e } : {}) });
       } else if (onChain && !sameRsaKey(onChain, jwk)) {
-        await run.event('unknown_active_key_first_run', `first_run_mismatch:${GOOGLE_PROVIDER}:${kid}`, `First run: active key ${kid} has other key material than Google's (not paused now; the next run pauses unless the owner removes it)`, { kid, reason: 'other_key_material', n: onChain.n, e: onChain.e, google_n: jwk.n, google_e: jwk.e });
+        await run.event('unknown_active_key_first_run', `first_run_mismatch:${GOOGLE_PROVIDER}:${kid}`, `First run: active key ${ident(kid)} has other key material than Google's (not paused now; the next run pauses unless the owner removes it)`, { kid, reason: 'other_key_material', n: onChain.n, e: onChain.e, google_n: jwk.n, google_e: jwk.e });
       }
       continue;
     }
@@ -497,27 +573,27 @@ async function checkActiveKeys(run: Run, s: ChainSnapshot, jwks: Map<string, Jwk
     if (reason) {
       let action: ActionSummary | null = null;
       if (canAct && !pausedNow) {
-        action = await run.act('pause', {}, `active key ${kid}: ${reason}`);
+        action = await run.act('pause', {}, `active key ${ident(kid)}: ${reason}`);
         if (action.ok) {
           pausedNow = true;
           self.paused = true;
-        } else await run.condition('protective_action_failed', 'protective_action_failed:pause', `Pausing for active key ${kid} failed`, actionDetail(action));
+        } else await run.condition('protective_action_failed', 'protective_action_failed:pause', `Pausing for active key ${ident(kid)} failed`, actionDetail(action));
       }
       const why = reason === 'never_published' ? 'Google never published it' : 'Google publishes other key material for it';
       const state = action?.ok ? 'paused' : s.config.paused ? 'already paused' : canAct ? 'pause failed' : 'the watchdog could not act';
-      const cond = await run.condition('forged_active_key', `forged_active_key:${GOOGLE_PROVIDER}:${kid}`, `Active issuer key ${kid}: ${why}; ${state}`, {
+      const cond = await run.condition('forged_active_key', `forged_active_key:${GOOGLE_PROVIDER}:${kid}`, `Active issuer key ${ident(kid)}: ${why}; ${state}`, {
         kid,
         reason,
         ...(onChain ? { n: onChain.n, e: onChain.e } : {}),
         ...(action ? { actions: [actionDetail(action)] } : {}),
       });
-      if (!cond.isNew && action?.ok) await run.event('automatic_action', `automatic_action:${action.id}`, `Paused again: active key ${kid} (${why})`, actionDetail(action));
+      if (!cond.isNew && action?.ok) await run.event('automatic_action', `automatic_action:${action.id}`, `Paused again: active key ${ident(kid)} (${why})`, actionDetail(action));
       continue;
     }
     if (!jwk && s0) {
       const since = s0.last_seen_at ?? s0.first_seen_at;
       if (now - since > STALE_ACTIVE_KID_MS) {
-        await run.condition('stale_active_key', `stale_active_key:${GOOGLE_PROVIDER}:${kid}`, `Active key ${kid} has not been in Google's JWKS since ${iso(since)}`, { kid, last_seen_at: s0.last_seen_at, source: s0.source });
+        await run.condition('stale_active_key', `stale_active_key:${GOOGLE_PROVIDER}:${kid}`, `Active key ${ident(kid)} has not been in Google's JWKS since ${iso(since)}`, { kid, last_seen_at: s0.last_seen_at, source: s0.source });
       }
     }
   }
@@ -533,12 +609,12 @@ async function queueExits(run: Run, prev: StoredSnapshot | null, s: ChainSnapsho
     if ((await run.d.store.alertExists(`confirmed:${p.id}`)) || (await run.d.store.alertExists(`forged_key_change:${p.id}`))) continue;
     if (p.provider !== GOOGLE_PROVIDER) {
       // Only Google's active set is read: say it left the queue, not how.
-      await run.event('key_change_executed', `executed:${p.id}`, `Key change ${p.id} left the queue: ${p.op} ${p.provider} ${p.kid}`, { ...changeDetails(p), effect: 'not checked' });
+      await run.event('key_change_executed', `executed:${p.id}`, `Key change ${p.id} left the queue: ${ident(p.op)} ${ident(p.provider)} ${ident(p.kid)}`, { ...changeDetails(p), effect: 'not checked' });
       continue;
     }
     const tookEffect = p.op === 'Add' ? active.has(p.kid) : !active.has(p.kid);
-    if (tookEffect) await run.event('key_change_executed', `executed:${p.id}`, `Key change ${p.id} took effect: ${p.op} ${p.kid}`, changeDetails(p));
-    else await run.event('key_change_cancelled', `cancelled:${p.id}`, `Key change ${p.id} left the queue without taking effect: ${p.op} ${p.kid}`, changeDetails(p));
+    if (tookEffect) await run.event('key_change_executed', `executed:${p.id}`, `Key change ${p.id} took effect: ${ident(p.op)} ${ident(p.kid)}`, changeDetails(p));
+    else await run.event('key_change_cancelled', `cancelled:${p.id}`, `Key change ${p.id} left the queue without taking effect: ${ident(p.op)} ${ident(p.kid)}`, changeDetails(p));
   }
 }
 

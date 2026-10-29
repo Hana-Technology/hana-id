@@ -1,8 +1,12 @@
 // Alert channels behind small interfaces (D85, D87): a paging app (ntfy, Pushover or PagerDuty, chosen at setup),
 // Slack (incoming webhook), email (Resend, the watchdog's own key), and the dead-man's switch. Tests swap in doubles;
 // nothing here is called with real credentials in tests. Errors never carry a URL, token or response body.
+// Titles and texts carry on-chain strings (already allow-listed or escaped by `sanitize.ts` where they are built);
+// each sender also makes the whole message safe for its format: no CR, LF or non-ASCII in a header or subject line,
+// and Slack's `&`, `<`, `>` as entities.
 import type { Channel, Severity } from './checks.ts';
 import { type Env, alertEmails, pagerProvider } from './env.ts';
+import { headerValue, slackEscape } from './sanitize.ts';
 
 export type SendResult = { ok: true; ref?: string } | { ok: false; error: string };
 
@@ -10,7 +14,7 @@ export interface AlertMessage {
   alertId: number;
   severity: Severity;
   kind: string;
-  /** One line, no secrets. */
+  /** One line, no secrets. Senders still strip line breaks and non-ASCII where it goes into a header. */
   title: string;
   /** Plain text body, no secrets. */
   text: string;
@@ -78,7 +82,7 @@ export function slackSender(webhookUrl: string | undefined, envName: string): Se
       const res = await post(webhookUrl, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text: `*${subjectPrefix(envName, msg.severity)}${msg.resend ? ' (re-sent)' : ''}: ${msg.title}*\n${msg.text}` }),
+        body: JSON.stringify({ text: `*${subjectPrefix(envName, msg.severity)}${msg.resend ? ' (re-sent)' : ''}: ${slackEscape(headerValue(msg.title, 500))}*\n${slackEscape(msg.text)}` }),
       });
       const f = failed(res);
       if (f) return f;
@@ -119,7 +123,7 @@ export function emailSender(email: Email & { configured: boolean }, to: string[]
     channel: 'email',
     configured: email.configured && to.length > 0,
     send: (msg) =>
-      email.send({ to, subject: `${subjectPrefix(envName, msg.severity)}${msg.resend ? ' (re-sent)' : ''}: ${msg.title}`, text: msg.text }),
+      email.send({ to, subject: headerValue(`${subjectPrefix(envName, msg.severity)}${msg.resend ? ' (re-sent)' : ''}: ${msg.title}`, 250), text: msg.text }),
   };
 }
 
@@ -133,7 +137,8 @@ export function ntfyPager(topicUrl: string | undefined, token: string | undefine
     async send(msg) {
       if (!topicUrl) return notConfigured;
       const headers: Record<string, string> = {
-        title: `${subjectPrefix(envName, msg.severity)}: ${msg.title}`.slice(0, 250),
+        // An HTTP header: CR/LF and non-ASCII removed (fetch would throw on them, and the page would never go out).
+        title: headerValue(`${subjectPrefix(envName, msg.severity)}: ${msg.title}`, 250),
         priority: msg.severity === 'critical' ? 'urgent' : 'default',
         tags: 'rotating_light',
       };
@@ -164,7 +169,7 @@ export function pushoverPager(token: string | undefined, user: string | undefine
       const form = new URLSearchParams({
         token,
         user,
-        title: `${subjectPrefix(envName, msg.severity)}: ${msg.title}`.slice(0, 250),
+        title: headerValue(`${subjectPrefix(envName, msg.severity)}: ${msg.title}`, 250),
         message: msg.text.slice(0, 1024),
         priority: msg.severity === 'critical' ? '2' : '0',
       });
@@ -211,7 +216,7 @@ export function pagerDutyPager(routingKey: string | undefined, envName: string):
           routing_key: routingKey,
           event_action: 'trigger',
           dedup_key: dedupKey,
-          payload: { summary: `${subjectPrefix(envName, msg.severity)}: ${msg.title}`.slice(0, 1024), source: `hana-id-watchdog-${envName}`, severity: msg.severity === 'critical' ? 'critical' : 'warning', custom_details: { text: msg.text } },
+          payload: { summary: headerValue(`${subjectPrefix(envName, msg.severity)}: ${msg.title}`, 1024), source: `hana-id-watchdog-${envName}`, severity: msg.severity === 'critical' ? 'critical' : 'warning', custom_details: { text: msg.text } },
         }),
       });
       const f = failed(res);

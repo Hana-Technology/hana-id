@@ -2,6 +2,7 @@
 // the runs, every alert (info ones included) and every action since the last digest.
 import type { Notifier } from './channels.ts';
 import { log } from './log.ts';
+import { printable } from './sanitize.ts';
 import type { Store } from './store.ts';
 
 const DAY_MS = 24 * 60 * 60_000;
@@ -27,10 +28,10 @@ export async function digestText(store: Store, since: number, now: number, envNa
     `Unacknowledged critical alerts: ${open.length}${open.length ? ` (${open.map((a) => `#${a.id}`).join(', ')})` : ''}`,
     '',
     `Alerts (${alerts.length}):`,
-    ...alerts.map((a) => `  #${a.id} [${a.severity}] ${a.title}${a.acked_at ? ` (acked by ${a.acked_by} via ${a.acked_via})` : ''}`),
+    ...alerts.map((a) => `  #${a.id} [${a.severity}] ${printable(a.title)}${a.acked_at ? ` (acked by ${printable(String(a.acked_by))} via ${a.acked_via})` : ''}`),
     '',
     `Actions (${actions.length}):`,
-    ...actions.map((a) => `  #${a.id} ${a.method} ${JSON.stringify(a.args)}: ${a.ok ? 'ok' : 'failed'}${a.tx_hash ? ` tx ${a.tx_hash}` : ''} (${a.reason})`),
+    ...actions.map((a) => `  #${a.id} ${a.method} ${printable(JSON.stringify(a.args))}: ${a.ok ? 'ok' : 'failed'}${a.tx_hash ? ` tx ${a.tx_hash}` : ''} (${a.reason})`),
   ];
   return lines.join('\n');
 }

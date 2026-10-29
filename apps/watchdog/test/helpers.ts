@@ -87,6 +87,8 @@ export class StubChain implements ChainReader {
   /** Active keys: kid → material. */
   active = new Map<string, { n: string; e: string }>();
   issuerConfigured = true;
+  /** get_issuer(google).iss_values (the owner's set_issuer changes them at once). */
+  issValues = ['https://accounts.google.com'];
   /** False: the contract predates get_issuer_keys. */
   hasIssuerKeys = true;
   config = baseConfig();
@@ -113,7 +115,7 @@ export class StubChain implements ChainReader {
     const kids = [...this.active.keys()].sort();
     return {
       keyChanges: clone(this.changes),
-      issuer: this.issuerConfigured ? { provider: 'google', iss_values: ['https://accounts.google.com'], kids } : null,
+      issuer: this.issuerConfigured ? { provider: 'google', iss_values: [...this.issValues], kids } : null,
       issuerKeys: this.issuerConfigured && this.hasIssuerKeys ? kids.map((kid) => ({ kid, ...this.active.get(kid)! })) : null,
       config: clone(this.config),
       governance: clone(this.governance),
@@ -153,12 +155,15 @@ export class StubWriter implements ChainWriter {
   calls: { method: WatchdogMethod; args: Record<string, unknown> }[] = [];
   fail = new Set<WatchdogMethod>();
   failError = 'Smart contract panicked: stub failure';
+  /** Runs before each call: what others did on chain between the watchdog's read and its transaction. */
+  before: ((method: WatchdogMethod, args: Record<string, unknown>) => void) | null = null;
   private n = 0;
 
   constructor(private readonly chain: StubChain) {}
 
   async call(method: WatchdogMethod, args: Record<string, unknown>): Promise<TxResult> {
     this.calls.push({ method, args });
+    this.before?.(method, args);
     const txHash = `tx${++this.n}`;
     if (this.fail.has(method)) return { ok: false, txHash, error: this.failError };
     const c = this.chain;

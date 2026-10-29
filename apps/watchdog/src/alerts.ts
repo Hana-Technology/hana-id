@@ -4,6 +4,7 @@
 import { CHANNELS, type Channel, RESEND_MS } from './checks.ts';
 import type { AlertMessage, Notifier, Sender, SendResult } from './channels.ts';
 import { log } from './log.ts';
+import { ident, printable } from './sanitize.ts';
 import { iso } from './time.ts';
 import type { AlertRow, Store } from './store.ts';
 
@@ -14,16 +15,23 @@ export const FIRST_DELIVERY_GIVE_UP_MS = 24 * 60 * 60_000;
 
 /** Fields never shown in alert texts: long key material (it stays in the alert's details). */
 const HIDDEN_FIELDS = new Set(['n', 'e']);
+/** Detail fields that hold an on-chain identifier: shown through the allow-list (`ident`). */
+const IDENT_FIELDS = new Set(['kid', 'provider', 'by', 'op', 'public_key', 'account', 'chain_id', 'owner']);
 
-function fieldText(value: unknown): string {
-  return typeof value === 'string' ? value : JSON.stringify(value);
+/** One detail value, printable ASCII only: identifiers allow-listed, everything else escaped (`sanitize.ts`). */
+function fieldText(key: string, value: unknown): string {
+  if (IDENT_FIELDS.has(key) && typeof value === 'string') return ident(value);
+  return printable(typeof value === 'string' ? value : (JSON.stringify(value) ?? String(value)));
 }
 
-/** Plain-text body of an alert: its details, the alert id and how to acknowledge. Built from public data only. */
+/**
+ * Plain-text body of an alert: its details, the alert id and how to acknowledge. Built from public data only; every
+ * line is printable ASCII (on-chain strings can't add lines or control characters).
+ */
 export function alertText(alert: Pick<AlertRow, 'id' | 'kind' | 'severity' | 'details' | 'created_at'>, envName: string): string {
   const lines = Object.entries(alert.details)
     .filter(([k]) => !HIDDEN_FIELDS.has(k))
-    .map(([k, v]) => `${k}: ${fieldText(v)}`.slice(0, 600));
+    .map(([k, v]) => `${printable(k)}: ${fieldText(k, v)}`.slice(0, 600));
   lines.push(`alert: #${alert.id} (${alert.kind}, ${alert.severity}), env ${envName}, raised ${iso(alert.created_at)}`);
   if (alert.severity === 'critical') lines.push('Re-sent every 15 min until acknowledged (admin portal "Security & monitoring", or the paging app). Runbook: docs/operations.md "Watchdog alerts".');
   return lines.join('\n');

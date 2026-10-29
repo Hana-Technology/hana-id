@@ -2,7 +2,7 @@
 // chain, a scripted JWKS and recording channels.
 import { describe, expect, it } from 'vitest';
 import { ABSENCE_RECHECK_MS } from '../src/run.ts';
-import { alertsOf, councilPolicy, HOUR, initialized, jwk, MIN, OWNER, T0, UPDATER_KEYS, WATCHDOG, world } from './helpers.ts';
+import { alertsOf, councilPolicy, HOUR, initialized, jwk, MIN, OWNER, SIGNER, T0, UPDATER_KEYS, WATCHDOG, world } from './helpers.ts';
 
 const channelsOf = (w: { notifier: { sent: { channel: string; msg: { kind: string } }[] } }, kind: string) =>
   w.notifier.sent.filter((s) => s.msg.kind === kind).map((s) => s.channel).sort();
@@ -140,18 +140,102 @@ describe('pending additions (step 3)', () => {
     expect((await alertsOf(w.store, 'protective_action_failed'))[0]?.resolved_at).not.toBeNull();
   });
 
-  it("doesn't call a cancel of a change already gone a failed protection", async () => {
+  it("doesn't call a cancel of a change someone else cancelled first a failed protection, nor say it cancelled it", async () => {
     const w = await initialized();
-    w.chain.propose('Add', 'k1x', { key: jwk('k1x', 66) });
+    const first = w.chain.propose('Add', 'k1x', { key: jwk('k1x', 66) });
     w.jwks.keys = [jwk('k1', 1), jwk('k1x', 7)];
+    // The owner cancels between the watchdog's read and its cancel.
+    w.writer.before = (method, args) => {
+      if (method === 'cancel_issuer_key_change') w.chain.changes = w.chain.changes.filter((c) => c.id !== args.id);
+    };
     w.writer.fail.add('cancel_issuer_key_change').add('delete_updater_key');
     w.writer.failError = 'Smart contract panicked: No such key change';
     await w.run();
+    // Another forgery; its cancel goes through, but the owner already deleted the updater keys.
+    w.writer.before = null;
+    w.writer.fail.delete('cancel_issuer_key_change');
     w.writer.failError = 'Smart contract panicked: Not an updater key';
     w.chain.propose('Add', 'k1y', { key: jwk('k1y', 67) });
     w.jwks.keys = [jwk('k1', 1), jwk('k1x', 7), jwk('k1y', 8)];
     await w.run();
     expect(await alertsOf(w.store, 'protective_action_failed')).toEqual([]);
+    const forged = (await alertsOf(w.store, 'forged_key_change')).find((a) => a.details.id === first.id);
+    expect(forged?.title).toContain('already gone from the queue without taking effect');
+    expect(forged?.title).not.toContain('; cancelled');
+    expect(forged?.details.outcome).toBe('gone');
+  });
+
+  it('re-reads the chain when the cancel finds the change gone: an executed forgery is a failed protection, and pauses', async () => {
+    const w = await initialized();
+    const forged = w.chain.propose('Add', 'ghost', { key: jwk('ghost', 50) });
+    // Someone executes the forged change between the watchdog's read and its cancel.
+    w.writer.before = (method, args) => {
+      if (method === 'cancel_issuer_key_change') w.chain.execute(args.id as number);
+    };
+    w.writer.fail.add('cancel_issuer_key_change');
+    w.writer.failError = 'Smart contract panicked: No such key change';
+    await w.run();
+    const [alert] = await alertsOf(w.store, 'forged_key_change');
+    expect(alert?.title).toContain('EXECUTED before the watchdog could cancel it');
+    expect(alert?.title).not.toContain('; cancelled');
+    expect(alert?.details.outcome).toBe('executed');
+    const [failed] = await alertsOf(w.store, 'protective_action_failed');
+    expect(failed?.severity).toBe('critical');
+    expect(failed?.title).toBe(`Forged key change ${forged.id} (Add google ghost) was executed before the watchdog could cancel it`);
+    // The updater proposed it: its keys are deleted all the same; and the now-active key pauses the contract in
+    // this same run (step 5 judges the re-read active set).
+    expect(w.writer.methods()).toEqual(['cancel_issuer_key_change', 'delete_updater_key', 'delete_updater_key', 'pause']);
+    expect(w.chain.config.paused).toBe(true);
+    expect((await alertsOf(w.store, 'forged_active_key'))[0]?.title).toContain('Active issuer key ghost');
+  });
+
+  it("alerts a failed protection when the cancel finds the change gone and the re-read fails; never claims it cancelled", async () => {
+    const w = await initialized();
+    w.chain.propose('Add', 'ghost', { key: jwk('ghost', 50), by: OWNER });
+    w.writer.before = (method) => {
+      if (method === 'cancel_issuer_key_change') w.chain.failReads = true;
+    };
+    w.writer.fail.add('cancel_issuer_key_change');
+    w.writer.failError = 'Smart contract panicked: No such key change';
+    await w.run();
+    const [alert] = await alertsOf(w.store, 'forged_key_change');
+    expect(alert?.details.outcome).toBe('unknown');
+    expect(alert?.title).toContain('could not tell whether it was executed');
+    expect(await alertsOf(w.store, 'protective_action_failed')).toHaveLength(1);
+  });
+
+  it('says the cancel failed (not "cancelled") when it did', async () => {
+    const w = await initialized();
+    w.chain.propose('Add', 'ghost', { key: jwk('ghost', 50), by: OWNER });
+    w.writer.fail.add('cancel_issuer_key_change');
+    await w.run();
+    const [alert] = await alertsOf(w.store, 'forged_key_change');
+    expect(alert?.title).toMatch(/; the cancel failed$/u);
+    expect(alert?.details.outcome).toBe('failed');
+  });
+});
+
+describe('the updater for other providers', () => {
+  it('cancels any change the updater proposed for a provider other than Google and deletes every updater key', async () => {
+    const w = await initialized();
+    const c = w.chain.propose('Add', 'x1', { provider: 'apple', by: SIGNER });
+    const r = w.chain.propose('Remove', 'x0', { provider: 'apple', by: SIGNER });
+    await w.run();
+    expect(w.writer.calls).toEqual([
+      { method: 'cancel_issuer_key_change', args: { id: c.id } },
+      { method: 'delete_updater_key', args: { public_key: UPDATER_KEYS[0] } },
+      { method: 'delete_updater_key', args: { public_key: UPDATER_KEYS[1] } },
+      { method: 'cancel_issuer_key_change', args: { id: r.id } },
+    ]);
+    const alerts = await alertsOf(w.store, 'forged_key_change');
+    expect(alerts.map((a) => [a.details.id, a.details.reason, a.details.outcome]).sort()).toEqual([
+      [c.id, 'updater_other_provider', 'cancelled'],
+      [r.id, 'updater_other_provider', 'cancelled'],
+    ]);
+    expect(alerts.find((a) => a.details.id === c.id)?.title).toBe(
+      `Forged Add of apple key x1 by the updater (change ${c.id}): the updater only serves Google, so its key is stolen; cancelled`,
+    );
+    expect(await alertsOf(w.store, 'unverifiable_key_change')).toEqual([]);
   });
 });
 
@@ -330,6 +414,50 @@ describe('governance diff (step 6): alert only', () => {
     expect(channelsOf(w, 'governance_change')).toEqual(['email', 'pager', 'slack']);
   });
 
+  it("alerts critical on the owner's immediate remove_issuer_key, which leaves no pending state", async () => {
+    const w = await initialized({ active: [jwk('k1', 1), jwk('k2', 2)] });
+    w.chain.active.delete('k2');
+    await w.run();
+    expect(w.writer.calls).toEqual([]);
+    const [g] = await alertsOf(w.store, 'governance_change');
+    expect(g?.severity).toBe('critical');
+    expect(g?.title).toBe('Governance change: issuer_keys');
+    expect(g?.details.changes).toEqual([{ field: 'issuer_keys', before: ['k1', 'k2'], after: ['k1'] }]);
+    expect(channelsOf(w, 'governance_change')).toEqual(['email', 'pager', 'slack']);
+  });
+
+  it('does not alert a removal that went through the queue (it is reported as executed)', async () => {
+    const w = await initialized({ active: [jwk('k1', 1), jwk('k2', 2)] });
+    const c = w.chain.propose('Remove', 'k2'); // Google still lists k2: alert only, nothing confirmed
+    await w.run();
+    w.chain.execute(c.id);
+    await w.run();
+    expect(await alertsOf(w.store, 'governance_change')).toEqual([]);
+    expect((await alertsOf(w.store, 'key_change_executed')).map((a) => a.details.id)).toEqual([c.id]);
+  });
+
+  it("alerts critical on the owner's set_issuer (iss values changed at once)", async () => {
+    const w = await initialized();
+    w.chain.issValues = ['https://accounts.google.com', 'https://evil.example'];
+    await w.run();
+    const [g] = await alertsOf(w.store, 'governance_change');
+    expect(g?.details.changes).toEqual([
+      { field: 'issuer', before: { provider: 'google', iss_values: ['https://accounts.google.com'] }, after: { provider: 'google', iss_values: ['https://accounts.google.com', 'https://evil.example'] } },
+    ]);
+    // The snapshot now holds the issuer: no second alert.
+    await w.run();
+    expect(await alertsOf(w.store, 'governance_change')).toHaveLength(1);
+  });
+
+  it('takes the issuer of a snapshot stored before it was recorded as the baseline', async () => {
+    const w = await initialized({ active: [jwk('k1', 1), jwk('k2', 2)] });
+    const { issuer: _i, ...older } = (await w.store.getMeta<Record<string, unknown>>('snapshot'))!;
+    await w.store.setMeta('snapshot', older);
+    w.chain.active.delete('k2');
+    await w.run();
+    expect(await alertsOf(w.store, 'governance_change')).toEqual([]);
+  });
+
   it.each([
     ['pending_owner', (w: Awaited<ReturnType<typeof initialized>>) => (w.chain.governance.pending_owner = { owner: 'dao.test.near', acceptable_at_ms: T0 })],
     ['pending_withdrawal', (w: Awaited<ReturnType<typeof initialized>>) => (w.chain.governance.pending_withdrawal = { receiver: OWNER, amount: '1', executable_at_ms: T0 })],
@@ -429,9 +557,9 @@ describe('governance diff (step 6): alert only', () => {
 });
 
 describe('other alerts', () => {
-  it('alerts critical (no action) on a pending change for a provider it has no JWKS for', async () => {
+  it('alerts critical (no action) on a pending change the owner proposed for a provider it has no JWKS for', async () => {
     const w = await initialized();
-    w.chain.propose('Add', 'x1', { provider: 'apple' });
+    w.chain.propose('Add', 'x1', { provider: 'apple', by: OWNER });
     await w.run();
     expect(w.writer.calls).toEqual([]);
     expect((await alertsOf(w.store, 'unverifiable_key_change'))[0]?.severity).toBe('critical');

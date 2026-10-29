@@ -3,9 +3,12 @@
 //             updater-key, delay or console-audience change, pause and unpause (also one between two runs:
 //             unpaused_at_ms), the session floor; also mpc, ckd_domain_id and state_version, which only an upgrade
 //             can change; and the owner account's code or policy (the council DAO's members and vote rules, D81).
+//             Also the owner's immediate issuer actions, which leave no pending state: `set_issuer` (the watched
+//             issuer created, dropped or its iss values changed: field `issuer`) and `remove_issuer_key` (an active
+//             kid gone without a pending removal of it leaving the queue: field `issuer_keys`).
 //   warning:  shared clients, sponsors, public registration.
 //   matured:  a scheduled delay decrease or audience addition coming into force as scheduled (info).
-import type { ChainSnapshot, ConfigView, GovernanceView, KeyChange, OwnerAccount, PendingClient } from './chain.ts';
+import type { ChainSnapshot, ConfigView, GovernanceView, IssuerView, KeyChange, OwnerAccount, PendingClient } from './chain.ts';
 
 export interface StoredSnapshot {
   at: number;
@@ -14,6 +17,8 @@ export interface StoredSnapshot {
   keyChanges: KeyChange[];
   /** Absent in a snapshot stored before the watchdog read the owner account: that run's owner becomes the baseline. */
   owner?: OwnerAccount | null;
+  /** The watched issuer (Google) as `get_issuer` showed it. Absent in older snapshots: that run's issuer is the baseline. */
+  issuer?: IssuerView | null;
 }
 
 export interface FieldChange {
@@ -87,7 +92,26 @@ function emptyBaseline(cur: ChainSnapshot): StoredSnapshot {
     governance: { ...cur.governance, pending_upgrade: null, pending_owner: null, pending_withdrawal: null },
     keyChanges: [],
     owner: cur.owner,
+    issuer: cur.issuer,
   };
+}
+
+/**
+ * Issuer changes the owner makes at once, without a pending state the watchdog would otherwise see: `set_issuer`
+ * (provider and iss values) and `remove_issuer_key` (active kids that disappeared although no pending removal of them
+ * left the queue since the last run; a removal that executed or was confirmed is reported by the queue check).
+ */
+function issuerChanges(prev: StoredSnapshot, cur: ChainSnapshot): FieldChange[] {
+  if (prev.issuer === undefined) return [];
+  const out: FieldChange[] = [];
+  const shape = (i: IssuerView | null | undefined) => (i ? { provider: i.provider, iss_values: i.iss_values } : null);
+  if (!same(shape(prev.issuer), shape(cur.issuer))) out.push({ field: 'issuer', before: shape(prev.issuer), after: shape(cur.issuer) });
+  const now = new Set(cur.issuer?.kids ?? []);
+  const stillQueued = new Set(cur.keyChanges.map((c) => c.id));
+  const explained = new Set(prev.keyChanges.filter((c) => c.op === 'Remove' && c.provider === (prev.issuer?.provider ?? cur.issuer?.provider) && !stillQueued.has(c.id)).map((c) => c.kid));
+  const removed = (prev.issuer?.kids ?? []).filter((k) => !now.has(k) && !explained.has(k));
+  if (cur.issuer && removed.length) out.push({ field: 'issuer_keys', before: prev.issuer?.kids ?? [], after: cur.issuer.kids });
+  return out;
 }
 
 export function diffChain(prevIn: StoredSnapshot | null, cur: ChainSnapshot, now: number, self: { paused: boolean; deletedUpdaterKeys: string[] }): ChainDiff {
@@ -135,6 +159,7 @@ export function diffChain(prevIn: StoredSnapshot | null, cur: ChainSnapshot, now
       if (!same(before, after)) out.critical.push({ field, before, after });
     }
   }
+  out.critical.push(...issuerChanges(prev, cur));
   for (const f of WARNING_CONFIG) if (!handled.has(f) && !same(pc[f], cc[f])) out.warning.push({ field: f, before: pc[f], after: cc[f] });
   return out;
 }

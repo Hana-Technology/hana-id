@@ -23,7 +23,11 @@ sends nothing on a mismatch.
    (once this watchdog's `confirm_from_ms` has passed). A kid with other key material, or absent from two fetches at
    least 60 s apart (the run re-fetches after 60 s; or the absence recorded by an earlier run counts) →
    `cancel_issuer_key_change`, then `delete_updater_key` for every updater key when the signer account (the updater)
-   proposed it, then one critical alert with the results.
+   proposed it, then one critical alert with the results. A cancel that panics `No such key change` re-reads the
+   chain: gone without effect (someone else cancelled it) is fine; **executed** (an Add's kid is now active) raises
+   `protective_action_failed` and step 6 judges the re-read active set, so it pauses in the same run. The alert's
+   title and `details.outcome` (`cancelled`, `gone`, `executed`, `unknown`, `failed`, `not_sent`) never claim a cancel
+   that didn't happen.
 5. **Pending removals**: kid absent from two fetches → confirm. Kid still published → critical alert, nothing called.
 6. **Active keys**: a kid this watchdog never saw in Google's JWKS, or whose on-chain material (`get_issuer_keys`)
    differs from Google's → `pause` + critical alert. **The only automatic pause.** A kid Google published and later
@@ -36,7 +40,10 @@ sends nothing on a mismatch.
    withdrawal, watchdog, updater-key, delay or console-audience change, pause and unpause (`unpaused_at_ms` also
    catches both between two runs), a raised session floor (`sessions_valid_from_ms`), the owner DAO's code or policy
    (`owner_code_hash`, `owner_policy`: a `ChangePolicy`, `AddMember` or `RemoveMember` reshapes the council without
-   touching hana-signer), and `mpc`, `ckd_domain_id`, `state_version` → critical; shared clients, sponsors, public registration → warning; a scheduled
+   touching hana-signer), the owner's immediate issuer actions, which leave no pending state (`issuer`: `set_issuer`
+   changed Google's iss values; `issuer_keys`: an active kid gone without a pending removal of it leaving the queue,
+   i.e. `remove_issuer_key`; the snapshot keeps `get_issuer("google")` for this), and `mpc`, `ckd_domain_id`,
+   `state_version` → critical; shared clients, sponsors, public registration → warning; a scheduled
    delay decrease or audience addition coming into force as scheduled → info. Its own pause and updater-key deletions
    are not alerted twice. At the first run anything already pending is alerted.
 8. Key changes executable for more than 1 h that nobody executed → warning. Changes that left the queue without
@@ -46,7 +53,19 @@ sends nothing on a mismatch.
 
 Everything not listed in steps 4–6 is alert-only (D82). Actions use exactly four methods, the permission of the
 watchdog's function-call key: `cancel_issuer_key_change`, `confirm_issuer_key_change`, `pause`, `delete_updater_key`.
-Other providers' pending changes get a critical alert and no action (no JWKS URL known for them).
+Other providers' pending changes the owner proposed get a critical alert and no action (no JWKS URL known for them).
+One the updater (the signer account) proposed is cancelled like a forged Google key, and every updater key deleted:
+the updater only serves Google, so such a proposal means its key is stolen. `delete_updater_key` goes only to keys in
+`get_governance().updater_keys` (confirmed by the contract's `AddKey` callback; `pending_updater_keys` are never
+touched, and the contract refuses them to a watchdog).
+
+On-chain strings in alerts (kids, providers, proposers, public keys) are attacker-chosen (any 1–128 bytes for a kid).
+`src/sanitize.ts`: titles and texts show an identifier as is only if it is `[A-Za-z0-9._:-]` and ≤ 80 characters,
+else JSON-quoted with control and non-ASCII characters escaped (`\n`, `\u00e9`), cut to 80; every other value in a
+text is escaped the same way, one line per field. Each channel then makes the whole message safe for its format: the
+ntfy title header, the Pushover and PagerDuty titles and the email subject drop CR, LF and non-ASCII (a header fetch
+can't refuse to page); Slack gets `&`, `<`, `>` as entities (no `<!channel>`, mention or link injection). The stored
+alert details keep the exact on-chain value for the portal.
 
 A run holds a D1 lock (`meta.run_lock`, taken over after 10 min), so an overlapping cron tick skips instead of
 racing; a cancel or delete that fails because the target is already gone isn't counted as a failed protection. A run
@@ -133,7 +152,8 @@ Setup and deploy steps are in `docs/operations.md` "Watchdog service".
 
 `test/` runs in workerd with a real (local) D1: `run.test.ts` covers every rule above against a stub chain, a scripted
 JWKS and recording channels; `alerts.test.ts` routing, re-sends, acks and failing channels; `channels.test.ts` each
-adapter's request; `status.test.ts` the endpoints; `near.test.ts` the RPC client (fallback) and the signed
+adapter's request; `sanitize.test.ts` hostile kids (line breaks, `<!channel>`, 128 bytes, non-ASCII) through every
+channel and a full run; `status.test.ts` the endpoints; `near.test.ts` the RPC client (fallback) and the signed
 transactions; `worker.test.ts` the cron handler end to end with the real wiring behind one stubbed `fetch`, and that
 no secret value appears in any log line or stored row. `scripts/test/` covers the config generator and the secrets
 file.

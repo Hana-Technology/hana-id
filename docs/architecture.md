@@ -33,7 +33,7 @@ Batch B is merged on the integration branch `feat/batch-b` (not yet on `develop`
 | Component | Code | Runs on | Role |
 |---|---|---|---|
 | Partner page | partner's own | partner origin | Embeds the SDK; never sees keys or tokens |
-| `@hana-id/web` client | `packages/web/src/client` | partner origin | Mounts the vault iframe, opens the login popup, exposes EIP-1193, Stellar signer, raw signer, SWK module |
+| `@hana-id/web` client | `packages/web/src/client` | partner origin | Mounts the vault iframe, opens the login popup and (in the click, D95) the approval popup, exposes EIP-1193, Stellar signer, raw signer, SWK module |
 | `@hana-id/react`, `@hana-id/sodax` | `packages/react`, `packages/sodax` | partner origin | `HanaProvider`/`useHana`/`useWallet`; Sodax `IStellarWalletProvider`/`IEvmWalletProvider` adapters |
 | Vault | `packages/web/src/vault`; page HTML `apps/api/src/vault/page.ts` | hidden iframe on `vaultOrigin` | Holds the session key and PRK, computes nonces and paths, signs |
 | Auth pages | `packages/web/src/auth` | popups / top-level windows on `authOrigin` | Google login, approval, consent, key export |
@@ -83,7 +83,8 @@ Who talks to whom:
 | From → to | Channel | What |
 |---|---|---|
 | Partner client → vault | `postMessage` hello, then a `MessageChannel` port (`packages/web/src/client/vault-connection.ts`) | Port methods (`hana_login`, `eth_signTransaction`, …) and events. Never key material |
-| Vault ↔ auth popups | `postMessage`, checked by `event.origin` and `event.source` | `hana:auth-params` (incl. `relayKey`), approval requests/results, export context |
+| Vault ↔ auth popups | `postMessage`, checked by `event.origin` and `event.source` (a popup the partner page opened reaches the vault as `opener.frames[v]`) | `hana:auth-params` (incl. `relayKey`), approval requests/results and `hana:approve-close`, export context |
+| Partner client → approval popup | `window.open` only (it holds the WindowProxy; the popup takes no message from it) | — |
 | Auth popup → Google | top-level navigation | Implicit flow, `response_type=id_token`, `scope=openid`, `prompt=select_account` |
 | `/login/callback` → API | `POST /v1/login-relay/:relayId` (`Origin: authOrigin`) | AES-GCM ciphertext of the token |
 | Vault → API | `fetch`, `Origin: vaultOrigin`, `x-hana-key`, `x-hana-parent-origin` | `/v1/app`, relay read, `/v1/login`, `/v1/vault/*` |
@@ -248,8 +249,14 @@ EIP-1193 provider refuses switching to or
 adding such a chain, and `eth_sendTransaction`/`eth_signTransaction` on one, before anything is filled. Every
 approval and consent screen of a test app says Hana signs only for test networks (`testApp` in the popup messages).
 
-Approval: the vault queues the request and shows a launcher; a click opens `{authOrigin}/approve`. The popup decodes
-the bytes itself (`decodeApprovalRequest`, `packages/core/src/decode/request.ts:55`; EIP-712 through
+Approval (D95): a signing call made in a click opens `{authOrigin}/approve?from=partner&v=<vault frame>` in that click
+(`packages/web/src/client/approval-window.ts`, synchronously, with user activation, unless an approval popup is
+already open) and sends the request flagged `popupOpened`. The popup finds the vault as the login popup does
+(`opener.frames[v]`, origin and window checked both ways); the vault adopts it for the head of its queue, holds its
+launcher up to 3 s for that hello, and tells a popup that showed nothing to close (`hana:approve-close`) when the
+request was auto-approved or refused. Without activation or with `window.open` null (Safari after an await), the
+vault queues the request and shows its launcher, whose click opens `{authOrigin}/approve` from the vault. Either way
+the popup decodes the bytes itself (`decodeApprovalRequest`, `packages/core/src/decode/request.ts:55`; EIP-712 through
 `normalizeTypedData`, `packages/core/src/typed-data.ts:266`), guards Approve (`approve-guard.ts`: 1 s after render,
 1 s after focus, then a mouse move, a touch or pen press, or Tab/an arrow key; the arming gesture never approves;
 decisions D36), and returns `approvalDigest` (`approval.ts:179`; empty network context for messages, typed data and

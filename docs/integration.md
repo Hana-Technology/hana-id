@@ -26,8 +26,9 @@ your page ──iframe──▶ vaultOrigin/vault      holds the key (in memory;
    (Google asks only for `openid`: no email, name or picture is requested or stored). The vault gets the token over
    an end-to-end encrypted relay, sends one NEAR transaction and decrypts the user's key.
 3. A reload or a new tab within the session's limits restores the wallet with one API call and no transaction.
-4. A signing request shows a small "Review in Hana" button. The user clicks it, the Hana popup shows the decoded
-   request, and the user approves it there.
+4. A signing call made in your click handler opens the Hana approval popup in that click, as `login()` does. It shows
+   the decoded request and the user approves it there. If the browser doesn't allow the popup (no click, or Safari
+   after an `await`), the vault shows a small "Review in Hana" button instead, which opens the same popup.
 
 The address depends on your app's **scope** and the user's Google account, never on the browser. The same user
 gets the same addresses on every device, and different addresses in another partner's app.
@@ -206,6 +207,7 @@ button.addEventListener('click', async () => {
 | `Cross-Origin-Opener-Policy` is not `same-origin` (`same-origin-allow-popups` and `unsafe-none` are fine) | `coop_blocks_popup` |
 | Every page that frames yours is also one of your origins (`frame-ancestors` checks all ancestors) | `vault_unavailable` |
 | `login()` and `eth_requestAccounts` run in a click | one extra click (the fallback button) |
+| Signing calls run in a click, before any `await` (or after `hana.prepareApproval()`) | one extra click per signature (the "Review in Hana" button) |
 
 Not supported: Google Identity Services (the "Sign in with Google" button or One Tap) on the same page, which the
 SDK warns about in the console; in-app browsers (Instagram, TikTok, … webviews), where Google refuses to sign in
@@ -213,7 +215,8 @@ SDK warns about in the console; in-app browsers (Instagram, TikTok, … webviews
 untested: the vault frame sends no COEP header, so such a page may refuse to embed it.
 
 The vault's button (sign-in fallback, "Review in Hana", export) is a fixed 320×72 px Hana frame at the bottom right
-of the viewport. Don't cover it: users can't approve anything without it. The `launcher` event tells you when it
+of the viewport. Don't cover it: whenever the popup couldn't open in the click (and for every export), users can't
+continue without it. The `launcher` event tells you when it
 shows, if you want to point at it.
 
 Removing an origin from your app signs out the users who signed in there.
@@ -268,10 +271,48 @@ and raw signing `'off'` refuses raw requests within 10 s too (the vault re-reads
 
 ## 8. Signing
 
-Every signing request goes through the user. The SDK shows "Review in Hana", the user clicks it, and the Hana popup
-decodes the request bytes itself, so your page can't misdescribe them. The popup stays open for 15 s after an answer,
-so a follow-up request (`restoreFootprint`, a re-sign, a trustline) needs no second click on the button. Each one
-still needs its own Approve. Reject, closing the popup, or 5 min without an answer gives `4001`.
+Every signing request goes through the user. The Hana popup decodes the request bytes itself, so your page can't
+misdescribe them. The popup stays open for 15 s after an answer, so a follow-up request (`restoreFootprint`, a
+re-sign, a trustline) appears there without another click. Each one still needs its own Approve. Reject, closing the
+popup, or 5 min without an answer gives `4001`.
+
+**Call the SDK directly in your click handler** (D95). Every signing method (`hana.stellar.sign*`, the Stellar
+Wallets Kit module, `personal_sign`, `eth_signTypedData_v4`, `eth_signTransaction`, `eth_sendTransaction`,
+`hana.signRaw`, `hana.requestAutoApprove`, the Sodax adapters) opens the approval popup synchronously, the moment you
+call it, while the browser still treats the click as a user gesture:
+
+```ts
+signButton.addEventListener('click', () => {
+  // No await before the call: the popup opens in this click.
+  hana.ethereum.request({ method: 'eth_sendTransaction', params: [tx] }).then(onSent, onError);
+});
+```
+
+- **Prepare before the click.** Build the transaction, fetch the quote and simulate when the user enters the amount,
+  not in the click handler. `eth_sendTransaction` may fill gas and fees itself; that happens after the popup is open.
+- **Safari blocks popups after an `await`.** If the handler must await something first, call `hana.prepareApproval()`
+  at its top: it opens the popup now, and the next signing call uses it. If you end up not signing, call the ticket's
+  `cancel()` (or leave it: an unused popup closes itself after 8 s).
+
+  ```ts
+  button.addEventListener('click', async () => {
+    const ticket = hana.prepareApproval();   // first, before any await
+    try {
+      const quote = await getQuote();
+      await hana.stellar.signTransaction(quote.xdr);
+    } catch (e) {
+      ticket.cancel();                        // closes the popup if nothing used it
+      throw e;
+    }
+  });
+  ```
+- **Sequential signatures reuse the window.** A second request while the popup is open (an approve then a swap, a
+  re-sign) goes to the same window, with its position ("Request 2 of 2"); no new popup opens.
+- **Auto-approved requests.** Under a policy the user accepted, the popup opens in the click and closes at once
+  without showing anything, then the signature returns.
+- **Without a click** (a call from a timer, or after the browser dropped the gesture), nothing opens: the vault shows
+  its "Review in Hana" button (bottom right) and the call resolves after the user clicks it and approves. The same
+  happens when a popup blocker refuses the window.
 
 The Approve button arms only after the request has been on screen for 1 s and the window has had focus for 1 s, then
 a mouse move, a tap, or Tab or an arrow key. The gesture that arms it doesn't approve, so a tap-only user taps twice;
@@ -304,7 +345,8 @@ const kit = new StellarWalletsKit({ network, modules: [new HanaIdModule(hana), .
 ```
 
 The module's `productId` is `'hana-id'`. `isAvailable()` is true once the vault is up, `getAddress()` logs in when
-needed (with the button fallback when SWK's own awaits cost the popup), `disconnect()` is `hana.logout()`. Errors are
+needed (with the button fallback when SWK's own awaits cost the popup), the sign methods open the approval popup in
+your click the same way, `disconnect()` is `hana.logout()`. Errors are
 SWK's `{code, message, ext}`, with `4001` for a rejection and the Hana code in `ext`. Hana only signs, so
 `submit: true` is refused.
 
@@ -552,6 +594,10 @@ const evmProvider = createSodaxEvmProvider(hana, { chainId: 8453, rpcUrl });    
   are retried until the deadline, never reported as a failed transaction, since the transaction is already
   broadcast; only `receipt_timeout` ends it. The receipt is passed through leniently, as viem does (a null `type`,
   an unknown `status` or missing optional fields stay as the node sent them).
+- Call the providers' `sendTransaction` / `signTransaction` / `signAndSendTransaction` from your click: the EVM
+  provider opens the approval popup before its own chain check and queue, and the Stellar provider signs at once, so
+  the popup opens in that click. If your handler awaits a Sodax quote first, call `hana.prepareApproval()` before it
+  ([section 8](#8-signing)).
 - A Sodax swap can need several signatures (`restoreFootprint`, a re-sign, a trustline). The approval popup's 15 s
   keep-open covers them in one session of clicks. Sodax swaps can't be auto-approved yet (see section 9).
 - Sodax runs on mainnet only, while pilot keys are testnet-MPC keys: the adapter is tested against mocks of the
@@ -617,6 +663,9 @@ account **different addresses** (D51). Wallets made with test keys are disposabl
   them; build on addresses and signatures.
 - An XSS on your page can start a login, read addresses and queue signature requests. It can't sign anything without
   the user's Approve, except requests inside a policy the user accepted, up to its limits. Keep policies tight.
+- Your page holds a handle to the approval popup it opens, as it does for any popup: it could navigate or close it,
+  but the popup takes nothing from your page, and users should trust only a window whose address bar shows Hana's
+  `authOrigin`.
 - A malicious browser extension can do anything the user can, including reading an exported key. No web wallet
   design prevents that.
 - With your own Google client, your client's settings are part of your users' security ([section 6](#6-google-client-shared-or-your-own)).

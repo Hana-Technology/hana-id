@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { type Manifest, loadEnv, manifestSchema } from '@hana-id/env';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ckdKeyProblem } from '../scripts/ckd-key.ts';
-import { GENERATED_PATH, envsModule, hanaEnv, loadManifests, main } from '../scripts/gen-envs.ts';
+import { GENERATED_PATH, envsModule, hanaEnv, loadManifests, main, packageEnvsProblem, placeholderProblems } from '../scripts/gen-envs.ts';
 import type { HanaEnv } from '../src/hana-env.ts';
 
 const dirs: string[] = [];
@@ -94,6 +94,31 @@ describe('envs.generated.ts', () => {
     expect(() => envsModule([manifest({ name: 'sandbox-y', ckdNetworkKey: 'ed25519:abc' })])).toThrow(/sandbox-y\.json ckdNetworkKey is not a valid bls12381g2 point/u);
     // An env without origins gets no pages, so its key doesn't block the others.
     expect(() => envsModule([sandbox, manifest({ name: 'sandbox-z', vaultOrigin: undefined, authOrigin: undefined, ckdNetworkKey: 'UNSET' })])).not.toThrow();
+  });
+
+  it('fails the build when an included env still has an UNSET placeholder value', () => {
+    const unsetApi = manifest({ name: 'sandbox-u', apiUrl: 'https://UNSET.example' });
+    expect(placeholderProblems(hanaEnv(unsetApi)!)).toEqual(['envs/sandbox-u.json apiUrl is still an UNSET placeholder.']);
+    expect(() => envsModule([sandbox, unsetApi])).toThrow(/sandbox-u\.json apiUrl is still an UNSET placeholder/u);
+    const unsetFallback = manifest({ name: 'sandbox-v', rpcFallback: 'https://UNSET-rpc.example' });
+    expect(() => envsModule([unsetFallback])).toThrow(/sandbox-v\.json rpcFallback is still an UNSET placeholder/u);
+    // Lower-case "unset" is part of real names (sunset.testnet), not the placeholder convention.
+    expect(placeholderProblems(hanaEnv(manifest({ name: 'sandbox-s', signer: 'sunset.testnet' }))!)).toEqual([]);
+    expect(placeholderProblems(hanaEnv(sandbox)!)).toEqual([]);
+    // An env without origins isn't built, so its placeholders don't block the others.
+    expect(() => envsModule([sandbox, manifest({ name: 'sandbox-w', vaultOrigin: undefined, authOrigin: undefined, apiUrl: 'https://UNSET.example' })])).not.toThrow();
+  });
+
+  it('the package build (--package) refuses no envs and local envs, and accepts the deployed ones', async () => {
+    const local = manifest({ name: 'local-dev', vaultOrigin: 'http://localhost:8787', authOrigin: 'http://localhost:8788' });
+    expect(() => envsModule([noOrigins], { forPackage: true })).toThrow(/Can't build the @hana-id\/web package: no envs\/<env>\.json sets both/u);
+    expect(() => envsModule([sandbox, local], { forPackage: true })).toThrow(/local-dev is a local \(loopback\) env/u);
+    expect(envsModule([sandbox, local])).toContain('"local-dev"'); // the dev build keeps it
+    expect(packageEnvsProblem([hanaEnv(sandbox)!, hanaEnv(prod)!])).toBeNull();
+    expect(envsModule([sandbox, noOrigins], { forPackage: true })).toBe(envsModule([sandbox, noOrigins]));
+    const dir = mkdtempSync(join(tmpdir(), 'hana-gen-envs-'));
+    dirs.push(dir);
+    expect(main({ manifests: [prod, noOrigins, sandbox], out: join(dir, 'envs.generated.ts'), forPackage: true })).toEqual(['prod', 'sandbox-dev']);
   });
 
   it('is generated from the real manifests by build, typecheck and test', async () => {

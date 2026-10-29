@@ -158,6 +158,9 @@ importers:
       '@types/node':
         specifier: 22.20.5
         version: 22.20.5
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -190,7 +193,7 @@ importers:
   packages/react:
     dependencies:
       '@hana-id/web':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../web
     devDependencies:
       '@testing-library/dom':
@@ -217,6 +220,9 @@ importers:
       react-dom:
         specifier: 19.3.1
         version: 19.3.1(react@19.3.1)
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -263,10 +269,10 @@ importers:
   packages/sodax:
     dependencies:
       '@hana-id/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       '@hana-id/web':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../web
     devDependencies:
       '@sodax/types':
@@ -291,7 +297,7 @@ importers:
   packages/web:
     dependencies:
       '@hana-id/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
     devDependencies:
       '@hana-id/env':

@@ -7,7 +7,7 @@
 //   <button onClick={login}>Sign in</button>             // login only from an onClick, with no await before it
 
 /** Package version, kept equal to package.json (test/index.test.ts). */
-export const VERSION = '0.0.0';
+export const VERSION = '0.1.0';
 
 export { HanaContext, HanaProvider, type HanaContextValue, type HanaProviderProps } from './provider.tsx';
 export { useHana, useWallet, type EvmWallet, type HanaChain, type StellarWallet, type UseHanaResult } from './hooks.ts';

@@ -1,19 +1,46 @@
 {
   "name": "@hana-id/sodax",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Optional Sodax wallet-provider adapters (IStellarWalletProvider, IEvmWalletProvider) over @hana-id/web.",
   "private": true,
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Hana-Technology/hana-id.git",
+    "directory": "packages/sodax"
+  },
   "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
   "exports": {
     ".": "./src/index.ts"
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./package.json": "./package.json"
+    },
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts"
+  },
   "scripts": {
+    "build:lib": "tsx ../../scripts/sdk-build.ts",
+    "prepack": "pnpm run build:lib",
     "test": "tsx ../web/scripts/gen-envs.ts && vitest run",
     "typecheck": "tsx ../web/scripts/gen-envs.ts && tsc --noEmit && tsc --noEmit -p tsconfig.node.json"
   },
   "dependencies": {
-    "@hana-id/core": "workspace:*",
-    "@hana-id/web": "workspace:*"
+    "@hana-id/core": "workspace:^",
+    "@hana-id/web": "workspace:^"
   },
   "peerDependencies": {
     "@sodax/types": "^2.1.0"

@@ -6,7 +6,10 @@ target/
 .env.*
 .secrets/
 dist/
+*.tgz
 coverage/
+# Throwaway packages scripts/test/sdk-pack.test.ts creates (and removes) under scripts/.
+scripts/.tmp-*/
 *.log
 .DS_Store
 # Generated per env by apps/api/scripts/gen-wrangler.ts (can hold a real D1 id), and the API tests' config.

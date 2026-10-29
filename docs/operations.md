@@ -1079,6 +1079,16 @@ skips everything while the `NPM_TOKEN` secret is missing, and npm refuses `"priv
   (`pnpm run pack:check`, [Releasing the SDK packages](#releasing-the-sdk-packages)).
 - The pre-commit hook runs `gitleaks git --staged` with `.gitleaks.toml`. Never bypass it (`--no-verify`). Scan
   locally with `corepack pnpm secrets:scan`.
+- `.gitleaks.toml` adds rules for this repo's own secrets, which gitleaks' defaults miss (security sweep OPER-2):
+  NEAR ed25519 secret keys (`ed25519:` + 87-88 base58 characters; public keys are too short to match),
+  `VAULT_KEK` values (`<id>:<base64 of 32 bytes>`), Worker-secret lines as in `.dev.vars` (`RELAYER_KEYS=…`,
+  `KEYS_UPDATER_KEY=…`, `VAULT_KEK=…`, the watchdog's), and the secret files by name wherever they are (anything
+  under `.secrets/`, the council key files included, `.dev.vars`, `relayer-keys.json`, `owner-relayer-keys.json`,
+  `keys-updater.json`, `watchdog-secrets.json`, `vault-kek*`). `scripts/secret-scan-selftest.mjs` generates a fake of
+  each at run time (never committed) and checks the rules catch it and pass the public look-alikes (public keys,
+  placeholders, `pk_test_`, BLS keys); `scripts/test/secret-scan.test.ts` runs it in `pnpm -r test` when gitleaks is
+  installed, and the CI `secrets` job runs it with the pinned binary after the history scan. Adding a secret shape
+  means a rule here and a case in the self-test.
 - Never commit `.secrets/`, `.env*`, `.dev.vars` or the generated `apps/api/wrangler.jsonc`, `wrangler.vault.jsonc`,
   `wrangler.auth.jsonc`, `wrangler.vitest.jsonc` and `apps/demo/wrangler.jsonc` (all gitignored and untracked;
   `wrangler.jsonc` holds an env's D1 id, the page and demo configs their origins and Worker names). Edit the

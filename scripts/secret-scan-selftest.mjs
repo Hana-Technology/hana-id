@@ -1,0 +1,120 @@
+#!/usr/bin/env node
+// Secret-scan self-test (security sweep OPER-2): proves .gitleaks.toml catches each of this repo's own secret shapes, and
+// stays quiet on the public look-alikes the repo does contain. Every secret here is a FAKE generated at run time from
+// the CSPRNG and thrown away; none is ever committed (that would be the leak the rules exist to stop) or printed (the
+// scan runs with --redact and only rule ids are shown).
+//
+//   node scripts/secret-scan-selftest.mjs [path to gitleaks]     (default: `gitleaks` on PATH)
+//
+// It scans with `gitleaks dir` (the same rule engine and config as the hook's `--staged` mode and CI's history scan).
+//
+// No dependencies beyond Node's standard library, so the CI `secrets` job runs it with the same pinned gitleaks binary
+// and config as the full-history scan. Exit 0 when every case is caught and the negatives pass, 1 otherwise.
+import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// SECRET_SCAN_CONFIG: another config to test (scripts/test/secret-scan.test.ts proves the default rules alone fail).
+const config = process.env.SECRET_SCAN_CONFIG ?? join(repo, '.gitleaks.toml');
+const gitleaks = process.argv[2] ?? 'gitleaks';
+
+const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+function base58(bytes) {
+  let n = BigInt(`0x${Buffer.from(bytes).toString('hex') || '0'}`);
+  let out = '';
+  while (n > 0n) {
+    out = B58[Number(n % 58n)] + out;
+    n /= 58n;
+  }
+  for (const b of bytes) {
+    if (b !== 0) break;
+    out = `1${out}`;
+  }
+  return out;
+}
+
+/** A fake NEAR ed25519 secret key as KeyPair.toString() writes it (64 bytes: seed ‖ public key). */
+const secretKey = () => `ed25519:${base58(randomBytes(64))}`;
+/** A fake ed25519 public key (32 bytes): public, must not be flagged. */
+const publicKey = () => `ed25519:${base58(randomBytes(32))}`;
+/** A fake VAULT_KEK as scripts/lib/vault-kek.ts writes it. */
+const kek = (id) => `${id}:${randomBytes(32).toString('base64')}`;
+const keyFile = (account) => `${JSON.stringify({ account_id: account, public_key: publicKey(), private_key: secretKey() }, null, 2)}\n`;
+
+/** Each case: files to write, and the rule ids gitleaks must report for them (at least these). */
+const CASES = [
+  { name: 'ed25519 secret key as a TS constant', files: { 'src/config.ts': `export const RELAYER = "${secretKey()}";\n` }, expect: ['near-ed25519-secret-key'] },
+  { name: 'relayer pool keys pasted into an innocent file', files: { 'backup/pool.json': `${JSON.stringify([secretKey(), secretKey()], null, 2)}\n` }, expect: ['near-ed25519-secret-key'] },
+  { name: 'relayer-keys.json outside .secrets', files: { 'notes/relayer-keys.json': `${JSON.stringify([secretKey()], null, 2)}\n` }, expect: ['hana-secret-file', 'near-ed25519-secret-key'] },
+  { name: 'owner-relayer-keys.json', files: { 'owner-relayer-keys.json': `${JSON.stringify([secretKey()])}\n` }, expect: ['hana-secret-file', 'near-ed25519-secret-key'] },
+  { name: 'keys-updater.json', files: { 'keys-updater.json': keyFile('hana-id-signer-dev1.testnet') }, expect: ['hana-secret-file', 'near-ed25519-secret-key'] },
+  {
+    name: '.dev.vars as gen-wrangler --dev-vars writes it',
+    files: {
+      'apps/api/.dev.vars': `RELAYER_KEYS=${JSON.stringify([secretKey(), secretKey()])}\nOWNER_RELAYER_KEYS=${JSON.stringify([secretKey()])}\nKEYS_UPDATER_KEY=${secretKey()}\nVAULT_KEK=${kek(1)}\n`,
+    },
+    expect: ['hana-secret-file', 'hana-worker-secret-assignment', 'near-ed25519-secret-key', 'hana-vault-kek'],
+  },
+  { name: '.dev.vars lines pasted into a doc', files: { 'docs/notes.md': `Set these:\n\nVAULT_KEK=${kek(7)}\nWATCHDOG_STATUS_TOKEN=${randomBytes(32).toString('base64url')}\n` }, expect: ['hana-worker-secret-assignment', 'hana-vault-kek'] },
+  { name: 'vault-kek file copied out of .secrets', files: { 'copy/vault-kek': kek(1), 'copy/vault-kek.previous': kek(2) }, expect: ['hana-secret-file', 'hana-vault-kek'] },
+  { name: 'KEK value in an innocent file', files: { 'kek-backup.txt': `${kek(3)}\n` }, expect: ['hana-vault-kek'] },
+  { name: 'council key file (force-added .secrets)', files: { '.secrets/sandbox-dev/council/hana-id-council-a-dev1.testnet.json': keyFile('hana-id-council-a-dev1.testnet') }, expect: ['hana-secret-file', 'near-ed25519-secret-key'] },
+  { name: 'council key file copied elsewhere', files: { 'council-member.json': keyFile('hana-id-council-b-dev1.testnet') }, expect: ['near-ed25519-secret-key'] },
+  { name: 'watchdog secrets file', files: { '.secrets/sandbox-dev/watchdog-secrets.json': `{"WATCHDOG_STATUS_TOKEN":"${randomBytes(32).toString('base64url')}"}\n` }, expect: ['hana-secret-file'] },
+];
+
+/** Public look-alikes the repo legitimately contains: none may be flagged by any rule. */
+const NEGATIVE = {
+  'src/keys.ts': `export const RELAYER_PUBLIC_KEY = "${publicKey()}";\nexport const CKD = "bls12381g2:${base58(randomBytes(96))}";\nexport const PK = "pk_test_${base58(randomBytes(24))}";\n`,
+  'docs/ops.md': "VAULT_KEK=1:<base64 of 32 bytes>\nRELAYER_KEYS='[\"ed25519:…\"]'\nKEYS_UPDATER_KEY=$(jq -r .private_key .secrets/<env>/keys-updater.json)\n",
+  'test/fixture.ts': `const placeholder = "1:${'A'.repeat(43)}=";\n`,
+  'scripts/vault-kek.ts': '// vault-kek.ts <env> <init | put | rotate>\n',
+  'envs/x.json': `{ "watchdogs": ["${publicKey()}"] }\n`,
+};
+
+function scan(dir) {
+  const report = join(dir, '..', `${dir.split('/').pop()}.report.json`);
+  const res = spawnSync(gitleaks, ['dir', dir, '--config', config, '--no-banner', '--redact', '--exit-code', '0', '--report-format', 'json', '--report-path', report, '--log-level', 'error'], { encoding: 'utf8' });
+  if (res.error) throw new Error(`could not run ${gitleaks}: ${res.error.message}`);
+  if (res.status !== 0) throw new Error(`gitleaks exited ${res.status}: ${(res.stderr || '').slice(0, 500)}`);
+  return JSON.parse(readFileSync(report, 'utf8')).map((f) => f.RuleID);
+}
+
+function writeAll(dir, files) {
+  for (const [path, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(dir, path)), { recursive: true });
+    writeFileSync(join(dir, path), content, { mode: 0o600 });
+  }
+}
+
+const root = mkdtempSync(join(tmpdir(), 'hana-gitleaks-selftest-'));
+let failed = 0;
+try {
+  CASES.forEach((c, i) => {
+    const dir = join(root, `case${i}`);
+    writeAll(dir, c.files);
+    const found = new Set(scan(dir));
+    const missing = c.expect.filter((id) => !found.has(id));
+    if (missing.length) {
+      failed++;
+      console.log(`FAIL  ${c.name}: not caught by ${missing.join(', ')} (found: ${[...found].join(', ') || 'nothing'})`);
+    } else console.log(`ok    ${c.name}: ${[...found].sort().join(', ')}`);
+  });
+  const neg = join(root, 'negative');
+  writeAll(neg, NEGATIVE);
+  const flagged = scan(neg);
+  if (flagged.length) {
+    failed++;
+    console.log(`FAIL  public look-alikes flagged: ${flagged.join(', ')}`);
+  } else console.log('ok    public look-alikes (public keys, placeholders, pk_test_, BLS keys) pass');
+} finally {
+  rmSync(root, { recursive: true, force: true });
+}
+if (failed) {
+  console.log(`${failed} gitleaks self-test case(s) failed: .gitleaks.toml misses a secret shape (or flags a public one).`);
+  process.exitCode = 1;
+}

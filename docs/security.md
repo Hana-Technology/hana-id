@@ -82,7 +82,9 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Cloudflare account / `wrangler login` | account credentials | operator's machine | the user | Deploys the Worker: a trust root |
 
 Rule (CLAUDE.md): derived keys, CKD secrets, relayer keys, owner keys and Google tokens are never logged, printed,
-written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-commit hook blocks secrets.
+written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-commit hook blocks secrets. Its config
+has rules for every secret shape above (NEAR secret keys, `VAULT_KEK`, `.dev.vars` lines, the secret files by name),
+proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and in CI (security sweep OPER-2).
 
 ## Invariants and where they are enforced
 

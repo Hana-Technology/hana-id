@@ -286,11 +286,11 @@ async fn assert_key_reaches_only(key: &near_workspaces::Account, signer: &near_w
 /// access-key test above checks the deployed restrictions, not a copy that could drift. The updater key is no
 /// longer one deploy-contract adds by hand: the contract installs it with its own constant method list
 /// (`add_updater_key`), which the sandbox checks on chain against UPDATER_METHODS (Env::setup, access_keys_are_limited,
-/// tests/governance.rs). scripts/lib/contract.ts KEYS_UPDATER_METHODS still describes the pre-governance key until
-/// the scripts batch moves to add_updater_key, so it isn't compared here.
+/// tests/governance.rs); scripts/lib/contract.ts UPDATER_METHODS, which deploy-plan checks the signer's keys against,
+/// must be that same list.
 #[test]
 fn method_allowlists_match_deploy_script() -> Result<()> {
-    for (name, want) in [("SESSION_RELAYER_METHODS", SESSION_RELAYER_METHODS), ("OWNER_RELAYER_METHODS", OWNER_RELAYER_METHODS)] {
+    for (name, want) in [("SESSION_RELAYER_METHODS", SESSION_RELAYER_METHODS), ("OWNER_RELAYER_METHODS", OWNER_RELAYER_METHODS), ("UPDATER_METHODS", UPDATER_METHODS)] {
         let mut got = deploy_script_methods(name)?;
         got.sort();
         let mut want: Vec<String> = want.iter().map(|s| s.to_string()).collect();

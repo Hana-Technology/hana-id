@@ -19,4 +19,7 @@ and checks: a non-member can't propose; one vote executes nothing and the second
 (`accept_owner`, `propose_upgrade`), a `ChangePolicy` and an `AddMemberToRole` / `RemoveMemberFromRole`; the DAO
 then owns `hana-signer` and an upgrade goes through propose → wait → `execute_upgrade`.
 
-Scripts (`scripts/lib/owner-tx.ts`, governance batch step 2) must read `policy.json` rather than build their own.
+The scripts read these files rather than build their own: `scripts/lib/sputnik.ts` (`councilPolicy` fills the
+members into `policy.json`; `scripts/test/sputnik.test.ts` checks nothing else changes), `council-setup` (refuses a
+factory whose default code isn't `code_hash`; sizes the deposit from `bytes`, which the sandbox test checks against the
+downloaded wasm) and `scripts/lib/owner-tx.ts` (proposals and votes).

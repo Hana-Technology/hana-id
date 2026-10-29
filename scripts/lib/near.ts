@@ -76,6 +76,11 @@ export function successValue(outcome: FinalOutcome): unknown {
   }
 }
 
+/** NEAR's account `code_hash` of a wasm: base58(sha256(code)). */
+export function codeHashOf(code: Uint8Array): string {
+  return baseEncode(new Uint8Array(createHash('sha256').update(code).digest()));
+}
+
 /** NEAR amount string ("1", "0.5") → yoctoNEAR. */
 export function nearToYocto(amount: string): bigint {
   if (!/^\d+(\.\d+)?$/u.test(amount)) throw new Error(`Invalid NEAR amount: ${amount}`);

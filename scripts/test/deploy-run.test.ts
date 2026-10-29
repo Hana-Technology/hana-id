@@ -10,8 +10,9 @@ import type { Action } from '@near-js/transactions';
 import { parseCli } from '../lib/cli.ts';
 import { scopeRegister, SCOPE_DRY_RUN_LINE } from '../lib/admin-scope.ts';
 import { DRY_RUN_LINE, type DeployRpc, deployMain } from '../lib/deploy-run.ts';
-import { keysUpdaterFile, poolKeysFile, readPoolKeys, readRelayerKeys, relayerKeysFile, writeRelayerKeys } from '../lib/keys.ts';
+import { keysUpdaterFile, poolKeysFile, readKeysUpdater, readPoolKeys, readRelayerKeys, relayerKeysFile, writeRelayerKeys } from '../lib/keys.ts';
 import type { AccessKeyListEntry, AccountView, TxSigner } from '../lib/near.ts';
+import { GOVERNANCE_DEFAULT, NOW } from './sim-fixtures.ts';
 
 const m = {
   ...loadEnv('sandbox-dev'),
@@ -66,7 +67,7 @@ function stubRpc(chain: Chain) {
     chainId: async () => 'testnet',
     account: async (id: string): Promise<AccountView> => ({ amount: (10n * NEAR).toString(), locked: '0', code_hash: id === m.signer ? chain.codeHash : '11111111111111111111111111111111', storage_usage: 0 }),
     accessKeys: async (id: string) => [
-      { public_key: fullKeys[id]!.getPublicKey().toString(), access_key: { nonce: 1, permission: 'FullAccess' } },
+      ...(fullKeys[id] ? [{ public_key: fullKeys[id].getPublicKey().toString(), access_key: { nonce: 1, permission: 'FullAccess' as const } }] : []),
       ...(chain.extraKeys?.[id] ?? []),
     ],
     view: (async (_account: string, method: string) => {
@@ -74,6 +75,8 @@ function stubRpc(chain: Chain) {
         if (!chain.config) throw new Error('CodeDoesNotExist');
         return chain.config;
       }
+      // A governance contract with the manifest's watchdog and no updater key yet.
+      if (method === 'get_governance' && chain.config) return { ...GOVERNANCE_DEFAULT, watchdogs: m.watchdogs!.map((account_id) => ({ account_id, confirm_from_ms: 0 })) };
       return null;
     }) as DeployRpc['view'],
     sendTx: async (signer: TxSigner, receiver: string, actions: Action[]) => {
@@ -99,11 +102,27 @@ async function deploy(argv: string[], chain: Chain) {
       return wasm;
     },
     existingWasm: () => wasm,
+    updateManifest: () => {
+      throw new Error('no manifest edits in these tests');
+    },
+    now: () => NOW,
+    sputnikCodeHash: 'AA4nA45vauiac3jdVwJTzSdUP3oj2r1fDaPAb2mHdgcH',
   });
   return { code, sent, out: out.join('\n'), built };
 }
 
-const initialised = { owner: m.owner, mpc: m.mpc, ckd_domain_id: m.ckdDomainId, change_delay_ms: m.changeDelayMs, sponsors: [], console_audiences: [], shared_clients: [] };
+const initialised = {
+  owner: m.owner,
+  mpc: m.mpc,
+  ckd_domain_id: m.ckdDomainId,
+  change_delay_ms: m.changeDelayMs,
+  sponsors: [],
+  console_audiences: [],
+  shared_clients: [],
+  issuer_key_delay_ms: m.issuerKeyDelayMs,
+  governance_delay_ms: m.governanceDelayMs,
+  paused: false,
+};
 
 describe('deploy-contract --yes gate', () => {
   it('without --yes prints the plan, sends nothing, builds nothing and writes no .secrets', async () => {
@@ -126,11 +145,27 @@ describe('deploy-contract --yes gate', () => {
       `${m.signer}→${m.signer}`, // deploy + new
       `${m.relayer}→${m.relayer}`, // session-pool relayer keys
       `${m.relayer}→${m.relayer}`, // owner-pool relayer keys
-      `${m.signer}→${m.signer}`, // keys-updater key
+      `${m.owner}→${m.signer}`, // add_updater_key: the contract installs the keys-updater key
       `${m.owner}→${m.signer}`, // set_issuer
       `${m.owner}→${m.signer}`, // set_sponsors
     ]);
     expect(r.sent[0]?.actions.map((a) => a.enum)).toEqual(['deployContract', 'functionCall']);
+    const init = JSON.parse(Buffer.from(r.sent[0]!.actions[1]!.functionCall!.args).toString()) as Record<string, unknown>;
+    expect(init).toEqual({
+      owner: m.owner,
+      mpc: m.mpc,
+      ckd_domain_id: m.ckdDomainId,
+      change_delay_ms: m.changeDelayMs,
+      issuer_key_delay_ms: 120_000,
+      governance_delay_ms: 60_000,
+      watchdogs: m.watchdogs,
+      updater_keys: [],
+    });
+    const addUpdater = r.sent[3]!.actions[0]!.functionCall!;
+    expect(addUpdater.methodName).toBe('add_updater_key');
+    expect(JSON.parse(Buffer.from(addUpdater.args).toString())).toEqual({ public_key: readKeysUpdater(m.name, secretsRoot)!.publicKey });
+    // No hand-made AddKey on the signer any more.
+    expect(r.sent.filter((t) => t.receiver === m.signer).flatMap((t) => t.actions.map((a) => a.enum))).not.toContain('addKey');
     expect(r.sent[1]?.actions.map((a) => a.enum)).toEqual(['addKey', 'addKey', 'addKey']);
     expect(r.sent[2]?.actions.map((a) => a.enum)).toEqual(['addKey']);
   });
@@ -261,6 +296,7 @@ describe('admin scope:register --yes gate', () => {
         rpcMade++;
         return {
           chainId: async () => 'testnet',
+          view: (async () => null) as <T>() => Promise<T>,
           sendTx: async (signer: TxSigner, receiver: string, actions: Action[]) => {
             sent.push({ signer: signer.accountId, receiver, actions });
             return { hash: 'h', value: 's1' };

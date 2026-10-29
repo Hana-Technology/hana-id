@@ -914,6 +914,9 @@ signer key:
 
 The portal's other items (heartbeat, the watchdog's verdicts, alert history and acks) come from the watchdog
 service's `GET /status` and `GET /alerts` (`docs/governance-spec.md` "Watchdog service"), not from the contract.
+Owner actions waiting for council votes come from the DAO (`get_policy`, `get_last_proposal_id`, `get_proposals`), and
+`scripts/admin.ts <env> governance:status --json` is a reference snapshot of all of it with the findings to show
+(`docs/operations.md` "Governance status for the admin portal").
 
 ## Changed in the governance batch
 

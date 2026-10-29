@@ -357,10 +357,15 @@ pub fn sputnik_wasm() -> Result<Vec<u8>> {
 fn fetch_sputnik() -> Result<Vec<u8>> {
     let pin = sputnik_pin()?;
     let want = pin["sha256"].as_str().context("pin.json sha256")?.to_string();
+    // scripts/lib/sputnik.ts sizes the factory deposit from `bytes` (the factory charges (bytes + 32) × storage cost).
+    let want_len = pin["bytes"].as_u64().context("pin.json bytes")?;
     let check = |bytes: Vec<u8>, from: &str| -> Result<Vec<u8>> {
         let got: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
         if got != want {
             bail!("Sputnik wasm from {from} has sha256 {got}, pinned {want}");
+        }
+        if bytes.len() as u64 != want_len {
+            bail!("Sputnik wasm from {from} has {} bytes, pin.json says {want_len}", bytes.len());
         }
         Ok(bytes)
     };

@@ -20,8 +20,82 @@ export const OWNER_RELAYER_METHODS = [
   'apply_pending_config',
 ] as const;
 
-/** Methods the keys-updater function-call key (on the signer account itself) may call. */
-export const KEYS_UPDATER_METHODS = ['set_issuer_key', 'remove_issuer_key'] as const;
+/**
+ * Methods of the keys-updater function-call key (the API's KEYS_UPDATER_KEY, on the signer account itself) on the
+ * governance contract: the contract installs it with exactly these (`add_updater_key`, its `UPDATER_METHODS`), receiver
+ * the signer, allowance 1 NEAR. contracts/integration-tests checks this list against the contract's.
+ */
+export const UPDATER_METHODS = ['set_issuer_key', 'propose_issuer_key_removal', 'execute_issuer_key_change'] as const;
+
+/** The v1 (pre-governance) keys-updater key's methods, added by hand by deploy-contract; replaced at the migration. */
+export const V1_UPDATER_METHODS = ['set_issuer_key', 'remove_issuer_key'] as const;
+
+/** The allowance the contract gives every updater key (`MAX_UPDATER_ALLOWANCE`). */
+export const UPDATER_ALLOWANCE_YOCTO = 10n ** 24n;
+
+/**
+ * Owner-only methods of the governance contract (`Only the owner can do this`), the only ones owner-tx proposes or
+ * signs (docs/governance-spec.md "How owner actions work through it"). `accept_owner` is the proposed owner's.
+ */
+export const OWNER_METHODS = [
+  'set_sponsors',
+  'set_console_audiences',
+  'set_shared_clients',
+  'set_change_delay_ms',
+  'set_issuer_key_delay_ms',
+  'set_governance_delay_ms',
+  'enable_public_registration',
+  'set_issuer',
+  'admin_register_scope',
+  'set_issuer_key',
+  'propose_issuer_key_removal',
+  'remove_issuer_key',
+  'cancel_issuer_key_change',
+  'add_watchdog',
+  'remove_watchdog',
+  'add_updater_key',
+  'delete_updater_key',
+  'pause',
+  'unpause',
+  'propose_upgrade',
+  'cancel_upgrade',
+  'propose_owner',
+  'cancel_owner_proposal',
+  'accept_owner',
+  'propose_withdrawal',
+  'cancel_withdrawal',
+] as const;
+export type OwnerMethod = (typeof OWNER_METHODS)[number];
+
+export interface WatchdogView {
+  account_id: string;
+  confirm_from_ms: number;
+}
+
+/** get_governance() (docs/contract-interface.md "Governance"). Absent on a v1 contract. */
+export interface GovernanceView {
+  state_version: number;
+  watchdogs: WatchdogView[];
+  keys_slow_until_ms: number;
+  updater_keys: string[];
+  updater_methods?: string[];
+  pending_upgrade: { code_hash: string; proposed_at_ms: number; executable_at_ms: number } | null;
+  pending_owner: { owner: string; acceptable_at_ms: number } | null;
+  pending_withdrawal: { receiver: string; amount: string; executable_at_ms: number } | null;
+}
+
+/** One entry of get_key_changes(). */
+export interface KeyChangeView {
+  id: number;
+  provider: string;
+  kid: string;
+  op: 'Add' | 'Remove';
+  n: string | null;
+  e: string | null;
+  by: string;
+  proposed_at_ms: number;
+  executable_at_ms: number;
+}
 
 export const GOOGLE_PROVIDER = 'google';
 export const GOOGLE_ISS_VALUES = ['https://accounts.google.com', 'accounts.google.com'] as const;

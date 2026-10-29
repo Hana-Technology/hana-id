@@ -304,7 +304,12 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
 - The IndexedDB record is AES-GCM with an AAD over signer, app, path, session key, derivation version, CKD key hash,
   parent origin and expiry (`recordAad`, `packages/core/src/layouts.ts:143`); records, Web Lock and BroadcastChannel
   are per app.
-- Time checks use a server-corrected clock (`serverTimeMs`).
+- Time checks use a server-corrected clock (`serverTimeMs`) that never goes back (`packages/web/src/vault/runtime.ts`
+  `Clock`, sweep VAUL-2): a device clock set back, or an older server time, holds it until real time catches up, so
+  idle limits, expiries, consents and the policy re-read can't be stretched; and the daily auto-approve counters keep
+  a later day's usage when the clock says an earlier day (`usageToday`), so a backwards step never resets the caps.
+  Not done: a cap on how far one server answer may move the clock forward (an API that lies is already a total
+  compromise; a forward step only ends things early).
 
 ### The login popup trusts the vault's app facts
 

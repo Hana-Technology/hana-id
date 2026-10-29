@@ -50,6 +50,8 @@ export function sleep(timers: Timers, ms: number, signal?: AbortSignal): Promise
  */
 export class Clock {
   private offset: number;
+  /** The latest time now() returned: it never goes back (sweep VAUL-2). */
+  private last = Number.NEGATIVE_INFINITY;
 
   constructor(
     serverTimeMs: number,
@@ -58,8 +60,15 @@ export class Clock {
     this.offset = serverTimeMs - deviceNow();
   }
 
+  /**
+   * Server-corrected time, monotonic: a device clock set back, or a server time behind the one already seen, holds it
+   * where it was until real time catches up, so the idle limit, expiries, consents and the policy re-read can't be
+   * stretched by a backwards step. A forward step only ends things earlier.
+   */
   now(): number {
-    return this.deviceNow() + this.offset;
+    const t = this.deviceNow() + this.offset;
+    if (t > this.last) this.last = t;
+    return this.last;
   }
 
   /** Re-anchors on a server time just received (ignored unless it is a plausible ms timestamp). */

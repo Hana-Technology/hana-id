@@ -18,10 +18,13 @@ const DAY_MS = 86_400_000;
 
 export const utcDay = (nowMs: number): number => Math.floor(nowMs / DAY_MS);
 
-/** Today's usage: `usage` if it is from today, otherwise zero. */
+/**
+ * Today's usage: `usage` if it is from today, zero once a later day starts. Usage recorded on a later day than the
+ * clock now says (the clock went back) is kept, so a backwards step never resets the daily caps (sweep VAUL-2).
+ */
 export function usageToday(usage: AutoApproveUsage | null | undefined, nowMs: number): AutoApproveUsage {
   const day = utcDay(nowMs);
-  if (usage && usage.day === day) return usage;
+  if (usage && usage.day >= day) return usage;
   return Object.freeze({ day, count: 0, valueWeiByChain: Object.freeze({}) });
 }
 

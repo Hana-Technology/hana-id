@@ -498,6 +498,11 @@ describe('EVM transactions', () => {
     const tomorrow = NOW + 86_400_000;
     expect(reason(match(deposit, POLICY, { usage, nowMs: tomorrow }))).toBe('ok');
     expect(usageToday(usage, tomorrow)).toEqual({ day: utcDay(tomorrow), count: 0, valueWeiByChain: {} });
+    // A clock that went back a day keeps the later day's usage instead of resetting the caps (VAUL-2).
+    const yesterday = NOW - 86_400_000;
+    expect(usageToday(usage, yesterday)).toBe(usage);
+    expect(match(deposit, POLICY, { usage, nowMs: yesterday })).toMatchObject({ ok: false, reason: 'daily_value_exceeded' });
+    expect(recordAutoApproveUse(usage, yesterday)).toMatchObject({ day: utcDay(NOW), count: usage.count + 1 });
   });
 
   describe('value plus fee (maxValueWei 101 000, maxValueWeiPerDay 301 500 in the fixture)', () => {

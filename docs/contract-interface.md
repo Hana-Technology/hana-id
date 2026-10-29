@@ -1,11 +1,14 @@
-# hana-signer contract interface (batch A, A.2 and B)
+# hana-signer contract interface (batch A, A.2, B and governance)
 
 The exact on-chain interface of `contracts/hana-signer`. The API, scripts, console and SDK must match this file.
 If the code and this file disagree, the code is wrong: raise it. Batch A.2 (`docs/batch-a2-shared-client.md`) added
 shared clients, `allow_shared`, `disable_shared_login`, `apply_pending_config`, the `scope_id` argument of
 `create_session`, and binds every nonce to the contract account. **Every byte layout changed in A.2.** Batch B
 (`docs/batch-b-spec.md`) added `create_session_and_derive` and reserved `key_index ≥ 2^31`; no layout, path or
-state changed (see [Changed in batch B](#changed-in-batch-b)).
+state changed (see [Changed in batch B](#changed-in-batch-b)). The governance batch (`docs/governance-spec.md`,
+D33, D80–D86) delays issuer-key changes behind a watchdog, adds pause, timelocked upgrades, owner transfer and
+surplus withdrawal, and migrates state to layout v2 in place; no byte layout, path or derivation changed, so **no
+address changes** (see [Changed in the governance batch](#changed-in-the-governance-batch)).
 
 Conventions:
 
@@ -23,7 +26,10 @@ Conventions:
   `create_session_and_derive` 100, `derive_key` 60, `revoke_session` 20, `prune_sessions` 50, owner-pool methods 50
   except `register_scope` (30 + 25 per client proof, ≤ 280). Measured on testnet (`docs/context.md`): `create_session`
   and `derive_key` each burn ~20 Tgas over all receipts; `create_session_and_derive` is **not yet measured**. 300 Tgas
-  always works. View methods cost nothing.
+  always works. View methods cost nothing. Governance calls (sandbox, `contracts/integration-tests/tests/governance.rs`):
+  the updater key sends 30 Tgas to `set_issuer_key`, `propose_issuer_key_removal` and `execute_issuer_key_change`
+  (its allowance is 1 NEAR); `execute_upgrade` needs 300 Tgas (see [Upgrades](#upgrades)); owner calls through the
+  DAO attach 100 Tgas per `FunctionCall` action.
 
 ## Types (JSON)
 
@@ -60,17 +66,43 @@ Conventions:
   "owner": "hana-id-admin-dev1.testnet",
   "mpc": "v1.signer-prod.testnet",
   "ckd_domain_id": 2,
-  "console_audiences": [["google","console.apps.googleusercontent.com"]],
+  "console_audiences": [["google","console.apps.googleusercontent.com"]],  // in force now (matured pending ones included)
+  "pending_console_audiences": [{"provider":"google","aud":"console2.apps.googleusercontent.com","effective_at_ms":1800172800000}],
   "sponsors": ["hana-id-relayer-dev1.testnet"],
   "shared_clients": [["google","hana-shared.apps.googleusercontent.com"]],  // in force now (matured pending ones included), in the order they took effect
   "pending_shared_clients": [{"provider":"google","aud":"hana-shared2.apps.googleusercontent.com","effective_at_ms":1800172800000}],
   "change_delay_ms": 172800000,                 // the delay in force now
   "pending_change_delay": null,                 // or {"change_delay_ms":60000,"effective_at_ms":1800172800000}
-  "public_registration": false
+  "public_registration": false,
+  "issuer_key_delay_ms": 7200000,               // in force now
+  "pending_issuer_key_delay": null,             // a decrease: {"change_delay_ms":3600000,"effective_at_ms":...} (field name kept from batch A: it is the new value)
+  "governance_delay_ms": 259200000,             // in force now
+  "pending_governance_delay": null,             // same shape
+  "paused": false
 }
 
-// Issuer (get_issuer) — key material is not returned, only key ids
+// Issuer (get_issuer) — key material is not returned, only active key ids
 {"provider":"google","iss_values":["https://accounts.google.com","accounts.google.com"],"kids":["a1b2...","c3d4..."]}
+
+// Pending key changes (get_key_changes), in proposal order, all issuers
+[
+  {"id":7,"provider":"google","kid":"e5f6","op":"Add","n":"<JWK n, base64url, leading zeros stripped>","e":"AQAB",
+   "by":"hana-signer-dev1.testnet","proposed_at_ms":1800000000000,"executable_at_ms":1800007200000},
+  {"id":8,"provider":"google","kid":"a1b2","op":"Remove","n":null,"e":null,
+   "by":"hana-signer-dev1.testnet","proposed_at_ms":1800000000000,"executable_at_ms":1800007200000}
+]
+
+// Governance (get_governance)
+{
+  "state_version": 2,
+  "watchdogs": [{"account_id":"hana-id-watchdog-dev1.testnet","confirm_from_ms":1800259200000}],  // may confirm from then on
+  "keys_slow_until_ms": 0,                      // time-based key activation waits at least until here (raised by remove_watchdog)
+  "updater_keys": ["ed25519:6E8s..."],          // keys the contract added on its own account
+  "updater_methods": ["set_issuer_key","propose_issuer_key_removal","execute_issuer_key_change"],  // every updater key's exact method list
+  "pending_upgrade": {"code_hash":"8Tf3...","proposed_at_ms":1800000000000,"executable_at_ms":1800259200000},  // or null
+  "pending_owner": {"owner":"hana-council.sputnikv2.testnet","acceptable_at_ms":1800259200000},             // or null
+  "pending_withdrawal": {"receiver":"hana-id-ops.testnet","amount":"10000000000000000000000000","executable_at_ms":1800259200000}  // or null; amount in yoctoNEAR
+}
 ```
 
 Identifiers:
@@ -93,17 +125,21 @@ Limits: 1..=5 owners per scope, 0..=10 clients per scope (at least one client **
 clients (effective + pending), ≤ 10 pending changes per scope (≤ 2 queued by a sponsor on a scope without clients),
 ≤ 10 RSA keys per issuer,
 ≤ 4 iss values per issuer, ≤ 10 console audiences, ≤ 10 sponsors, JWT ≤ 7168 bytes, kid ≤ 128 bytes,
-session ≤ 24 h, `max_uses` 1..=500, `key_index` < 2^31, `change_delay_ms` ≤ 7 days.
+session ≤ 24 h, `max_uses` 1..=500, `key_index` < 2^31, `change_delay_ms` ≤ 7 days. Governance: ≤ 6 pending key
+changes over all issuers (active + pending additions ≤ 10 per issuer), ≤ 3 watchdogs, ≤ 2 updater keys,
+`issuer_key_delay_ms` ≤ 7 days, `governance_delay_ms` ≤ 30 days.
 
 ## Token verification (all methods that take a JWT)
 
 A JWT is accepted when, in this order:
 
+0. The contract is not paused (`Paused`, see [Pause](#pause)).
 1. It has three dot-separated base64url parts and is ≤ 7168 bytes (`JWT too large`, `JWT must have three parts`,
    `Malformed base64url`, `Malformed JWT header`, `Malformed JWT claims`). Header needs `alg` and `kid`; claims need
    `iss`, `aud` (a single string), `sub`, `exp`; `nonce` is optional at parse time.
 2. `iss` is one of a configured issuer's `iss_values` → that issuer's `provider` (`Unknown token issuer`).
-3. `kid` is one of that issuer's keys (`Unknown signing key`).
+3. `kid` is one of that issuer's **active** keys (`Unknown signing key`). A kid with a pending change is not
+   active until the change executes or a watchdog confirms it.
 4. `alg` is supported: only `RS256` today (`Unsupported JWT algorithm`).
 5. The signature verifies (RSASSA-PKCS1-v1_5 / SHA-256 over `header.payload`) (`Invalid token signature`).
 6. `exp * 1000 > block_timestamp_ms` (`Token expired`).
@@ -360,34 +396,49 @@ sha256(payload)                      787600ebe6d6c75b6bc0b2db0bfd6aeec78897b67d3
 
 ## Methods
 
-Caller roles: **owner** = `config.owner` (Hana admin), **self** = the contract account itself (a function-call key on
-it), **scope owner** = authenticated via `OwnerAuth`, **anyone**.
+Caller roles: **owner** = `config.owner` (Hana admin; a Sputnik DAO council outside local envs, see
+[Owner = Sputnik DAO](#owner--sputnik-dao)), **self** = the contract account itself (its updater key, a
+function-call key the contract installed), **watchdog** = an account in `get_governance().watchdogs`, **scope
+owner** = authenticated via `OwnerAuth`, **anyone**.
 
 ### Init
 
-#### `new(owner, mpc, ckd_domain_id, change_delay_ms)` — init, once
+#### `new(owner, mpc, ckd_domain_id, change_delay_ms, issuer_key_delay_ms, governance_delay_ms, watchdogs, updater_keys)` — init, once
 
 ```json
-{"owner":"hana-id-admin-dev1.testnet","mpc":"v1.signer-prod.testnet","ckd_domain_id":2,"change_delay_ms":60000}
+{"owner":"hana-council.sputnik-dao.near","mpc":"v1.signer-prod.testnet","ckd_domain_id":2,"change_delay_ms":172800000,
+ "issuer_key_delay_ms":7200000,"governance_delay_ms":259200000,
+ "watchdogs":["hana-id-watchdog.near"],"updater_keys":["ed25519:6E8s..."]}
 ```
 
-Panics: `change_delay_ms must be at most 7 days`. Starts with no issuers, no scopes, `public_registration = false`,
-no sponsors, no console audiences, no shared clients.
+Panics: `change_delay_ms must be at most 7 days`, `issuer_key_delay_ms must be at most 7 days`,
+`governance_delay_ms must be at most 30 days`, `Too many watchdogs` (> 3), `Already a watchdog` (duplicate),
+`Too many updater keys` (> 2), `Already an updater key` (duplicate). Starts with no issuers, no scopes,
+`public_registration = false`, no sponsors, no console audiences, no shared clients, `paused = false`,
+`state_version = 2`. Watchdogs given here may confirm at once (`confirm_from_ms = 0`). Each updater key is added to
+the contract account by the contract itself, exactly as `add_updater_key` does (a promise; the callback untracks a
+key whose `AddKey` failed), so the mainnet creation batch is `DeployContract` + `new(...)` + `DeleteKey(creation
+key)`, signed by the creation key, with no `AddKey` action of its own (see [Changed in the governance
+batch](#changed-in-the-governance-batch) for why this differs from the spec draft).
 
 ### Config (owner only, `Only the owner can do this`)
 
 | Method | Args example | Notes |
 |---|---|---|
-| `set_owner(owner)` | `{"owner":"new-admin.testnet"}` | Immediate. |
 | `set_sponsors(sponsors)` | `{"sponsors":["relayer.testnet"]}` | Replaces the list. ≤ 10 (`Too many sponsors`). Function-call access keys can't attach deposits, so a relayer calling `register_scope` / `propose_change` with such a key must be a sponsor. |
-| `set_console_audiences(audiences)` | `{"audiences":[["google","console.apps.googleusercontent.com"]]}` | Replaces the list. ≤ 10 (`Too many console audiences`), `Invalid provider`, `Invalid aud`. |
+| `set_console_audiences(audiences)` | `{"audiences":[["google","console.apps.googleusercontent.com"]]}` | Replaces the target list (≤ 10, `Too many console audiences`; `Invalid provider`, `Invalid aud`, `Duplicate console audience`). Audiences dropped from the list stop counting **at once**; new ones are **pending** until `now + change_delay_ms` (D86), the same window a new shared client gets, since a console audience's tokens authorise OIDC owner actions. Pending ones already in the list keep their `effective_at_ms`. The owner-token check counts only audiences in force. Event `console_audiences_set` (lists after the call). |
 | `set_change_delay_ms(change_delay_ms)` | `{"change_delay_ms":172800000}` | ≤ 7 days. An increase applies now. A **decrease** applies only after the current delay has passed (`pending_change_delay`), so the admin can't shorten a timelock to act on scopes faster than owners were promised. Already queued changes keep their `unlock_at_ms`. |
 | `enable_public_registration()` | `{}` | One way: false → true, never back. No-op if already true. Event `public_registration_enabled`. |
 | `set_shared_clients(clients)` | `{"clients":[["google","hana-shared.apps.googleusercontent.com"]]}` | Replaces the shared-client list (see below). |
 
+`set_owner` is **gone** (`MethodNotFound`): the owner changes only through `propose_owner` / `accept_owner`
+([Owner transfer](#owner-transfer)). The delays `issuer_key_delay_ms` and `governance_delay_ms` are set under
+[Delays](#delays).
+
 Not owner-only: `apply_pending_config()` (`{}`, **anyone**) folds matured pending config into state: pending shared
-clients whose `effective_at_ms` has passed and a `pending_change_delay` whose time has come. Nothing depends on
-calling it: every read and check already treats matured entries as in force ("lazy").
+clients and console audiences whose `effective_at_ms` has passed, and pending decreases of `change_delay_ms`,
+`issuer_key_delay_ms` and `governance_delay_ms` whose time has come. Nothing depends on calling it: every read and
+check already treats matured entries as in force ("lazy").
 
 Views: `get_config()` → Config.
 
@@ -422,19 +473,149 @@ allows (see Security notes).
 | Method | Who | Args example |
 |---|---|---|
 | `set_issuer(provider, iss_values)` | owner | `{"provider":"google","iss_values":["https://accounts.google.com","accounts.google.com"]}` |
-| `set_issuer_key(provider, kid, n, e)` | owner **or self** | `{"provider":"google","kid":"a1b2","n":"<JWK n, base64url>","e":"AQAB"}` |
-| `remove_issuer_key(provider, kid)` | owner **or self** | `{"provider":"google","kid":"a1b2"}` → returns `true` if a key was removed |
-| `get_issuer(provider)` | view | → Issuer or `null` |
+| `set_issuer_key(provider, kid, n, e)` | owner **or self** | `{"provider":"google","kid":"a1b2","n":"<JWK n, base64url>","e":"AQAB"}` → returns the key change id (`u64`) |
+| `propose_issuer_key_removal(provider, kid)` | owner **or self** | `{"provider":"google","kid":"a1b2"}` → returns the key change id |
+| `execute_issuer_key_change(id)` | **anyone**, once due, not while paused | `{"id":7}` |
+| `confirm_issuer_key_change(id)` | a watchdog whose `confirm_from_ms ≤ now` | `{"id":7}` |
+| `cancel_issuer_key_change(id)` | owner or any watchdog | `{"id":7}` |
+| `remove_issuer_key(provider, kid)` | **owner only** | `{"provider":"google","kid":"a1b2"}` → returns `true` if an active key was removed |
+| `get_issuer(provider)` | view | → Issuer (active kids) or `null` |
+| `get_key_changes()` | view | → pending key changes (Types above) |
+
+Issuer keys enter or leave the active set only through a public, cancellable delay (D33): a posted change waits
+`issuer_key_delay_ms` (anyone may then execute it) unless a watchdog that checked it against the issuer's published
+JWKS confirms it earlier; the owner or any watchdog cancels. Only the owner removes a key at once. `verify_token`
+reads active keys only, so logins cost the same gas as before.
 
 - `set_issuer` creates or updates; keys are kept on update. Each iss value 1..=256 bytes, 1..=4 values, and no iss
   value may belong to another provider (`iss value already used by another provider`).
-- `set_issuer_key`: issuer must exist (`Unknown issuer`); `n`, `e` are JWK base64url (plain base64 also accepted);
-  RSA modulus 2048..=4096 bits (`RSA modulus must be 2048-4096 bits`), exponent 1..=8 bytes, odd, > 1. Overwrites
-  an existing kid. ≤ 10 keys (`Too many keys for this issuer`). Event `issuer_key_set`.
-- `remove_issuer_key`: no-op (returns `false`) if absent. Event `issuer_key_removed` only when removed.
-- Other panics: `Only the owner or the contract account can do this`, `Invalid provider`,
-  `An issuer needs 1 to 4 iss values`, `Invalid iss value` (empty or > 256 bytes), `Duplicate iss value`,
-  `Invalid kid` (empty or > 128 bytes), `Invalid RSA exponent`, `Malformed key component`.
+- `set_issuer_key` **queues** an `Add`. Validation as before: `Invalid kid` (empty or > 128 bytes), `n`, `e` JWK
+  base64url (plain base64 also accepted; `Malformed key component`), RSA modulus 2048..=4096 bits after stripping
+  leading zeros (`RSA modulus must be 2048-4096 bits`), exponent 1..=8 bytes, odd, > 1 (`Invalid RSA exponent`),
+  issuer must exist (`Unknown issuer`). Then: `Kid is already active` (an active kid is never overwritten: remove
+  it first), `Kid already has a pending change` (one pending change per provider and kid), `Too many pending key
+  changes` (6 over all issuers), `Too many keys for this issuer` (active + pending additions ≤ 10). The owner's posts
+  wait like the updater's (D86). Event `issuer_key_proposed` (with `n`, `e` base64url, so a monitor can compare with
+  the JWKS without a view).
+- Every proposal gets `executable_at_ms = max(now + issuer_key_delay_ms, keys_slow_until_ms, no watchdog ? now +
+  governance_delay_ms : 0)`: with no watchdog at all, nothing activates faster than an upgrade could.
+- `propose_issuer_key_removal` queues a `Remove`: `Unknown issuer`, `No such key` (kid not active), `Kid already has
+  a pending change`, `Too many pending key changes`, `Cannot remove the last key of an issuer` (active keys minus
+  pending removals must stay ≥ 1, so a stuck sync never empties the registry). Event `issuer_key_removal_proposed`.
+- `execute_issuer_key_change`: `Paused`, `No such key change`, `Key change is still delayed`, then re-checks against
+  the current keys (`Add`: `Unknown issuer`, `Kid is already active`, `Too many keys for this issuer`; `Remove`: `No
+  such key`, `Cannot remove the last key of an issuer`). On a failed re-check nothing changes and the change stays
+  pending until cancelled. Applies and drops the change; event `issuer_key_set` / `issuer_key_removed` with `how:
+  "delay"`. The updater key may call it (the API executes matured changes).
+- `confirm_issuer_key_change`: `Only a watchdog can do this`, `This watchdog can't confirm yet` (a watchdog added by
+  `add_watchdog` may confirm only from `now + governance_delay_ms`), `No such key change`, then the same re-checks.
+  Applies at once, **also while paused** (a checked Google key may go live while frozen). Event with `how:
+  "confirmed"` and `by`.
+- `cancel_issuer_key_change`: `Only the owner or a watchdog can do this` (a watchdog that can't confirm yet may still
+  cancel), `No such key change`. Event `issuer_key_change_cancelled`.
+- `remove_issuer_key`: owner only (`Only the owner can do this`; no longer self), `Unknown issuer`. Immediate; may
+  remove an issuer's **last** key (a deliberate owner action: DoS only). Also drops a pending change for that kid
+  (event `issuer_key_change_cancelled` with `by` = the owner). Returns `false` if the kid wasn't active. Event
+  `issuer_key_removed {provider, kid, how: "owner"}` only when an active key was removed.
+- Other panics: `Only the owner or the contract account can do this` (propose methods), `Invalid provider`,
+  `An issuer needs 1 to 4 iss values`, `Invalid iss value` (empty or > 256 bytes), `Duplicate iss value`.
+
+### Governance
+
+#### Delays
+
+| Method | Who | Args example | Notes |
+|---|---|---|---|
+| `set_issuer_key_delay_ms(issuer_key_delay_ms)` | owner | `{"issuer_key_delay_ms":7200000}` | ≤ 7 days (`issuer_key_delay_ms must be at most 7 days`). An increase applies now; a **decrease** applies after `governance_delay_ms` (`pending_issuer_key_delay`). Queued key changes keep their `executable_at_ms`. |
+| `set_governance_delay_ms(governance_delay_ms)` | owner | `{"governance_delay_ms":259200000}` | ≤ 30 days (`governance_delay_ms must be at most 30 days`). An increase applies now; a decrease after the **current** governance delay. Queued upgrades, owner transfers and withdrawals keep their times. |
+
+Both emit `delay_changed {which: "issuer_key" | "governance", value_ms, effective_at_ms}` (`effective_at_ms` = now
+for an increase). An increase also cancels a pending decrease. `change_delay_ms` is unchanged. Values: sandbox-dev
+120 000 / 60 000; mainnet 7 200 000 (provisional, D80) / 259 200 000.
+
+#### Watchdogs
+
+| Method | Who | Args example | Notes |
+|---|---|---|---|
+| `add_watchdog(account_id)` | owner | `{"account_id":"hana-id-watchdog-dev1.testnet"}` | ≤ 3 (`Too many watchdogs`), `Already a watchdog`. Cancel, pause and updater-key deletion apply at once (DoS only); confirm power from `confirm_from_ms = now + governance_delay_ms`, so a compromised owner can't add a yes-man that confirms a forged key faster than an upgrade. Event `watchdog_added {account_id, confirm_from_ms}`. |
+| `remove_watchdog(account_id)` | owner | `{"account_id":"hana-id-watchdog-dev1.testnet"}` | Immediate (`Not a watchdog`). Sets `keys_slow_until_ms = max(keys_slow_until_ms, now + governance_delay_ms)` and raises every pending key change's `executable_at_ms` to at least that: silencing the watchdogs never installs a key faster than an upgrade. A remaining watchdog's confirmations still activate keys early. Event `watchdog_removed {account_id, keys_slow_until_ms}`. |
+
+#### Pause
+
+| Method | Who | Notes |
+|---|---|---|
+| `pause()` | owner or any watchdog | Sets `paused`. No-op if already paused. Event `paused {by}`. The watchdog pauses on its own only when a key Google doesn't publish is active on chain (D82). |
+| `unpause()` | owner only | At once, no governance delay (D82). No-op if not paused. Event `unpaused {}`. |
+
+While paused these panic `Paused` (checked first): every token path (`verify_token`, so `create_session`,
+`create_session_and_derive`, `register_scope` (also without proofs), `propose_change` with a client proof and every
+`OwnerAuth::Oidc` action), `derive_key`, and the executors `execute_change`, `execute_issuer_key_change`,
+`execute_withdrawal` (nothing that may rest on a forged token matures into force while frozen). Still allowed:
+`confirm_issuer_key_change`, `cancel_issuer_key_change`, key proposals, `revoke_session`, `prune_sessions`,
+`OwnerAuth::Near` actions without a token, every owner and governance method (including `execute_upgrade` and
+`accept_owner`), views. Pause can't post keys, change code or move anything: the worst it does is stop logins until
+the owner unpauses.
+
+#### Updater keys
+
+The signer account manages its own access keys: outside sandbox-dev it has no full-access key, so only the contract
+can add or delete keys on it.
+
+| Method | Who | Args example | Notes |
+|---|---|---|---|
+| `add_updater_key(public_key)` | owner | `{"public_key":"ed25519:6E8s..."}` | ≤ 2 tracked (`Too many updater keys`), `Already an updater key`. Adds the key to the contract account as a function-call key with exactly `UPDATER_METHODS` = `set_issuer_key`, `propose_issuer_key_removal`, `execute_issuer_key_change`, receiver the contract account, allowance 1 NEAR. Method list, receiver and allowance are constants: the contract can never add a full-access key or a key for any other method. Returns (via its callback `on_updater_key_added`, `#[private]`) `true` if the `AddKey` succeeded; on failure (e.g. the key is already on the account, with any permission) the callback drops it from `updater_keys` again, emits `updater_key_add_failed {public_key}` and returns `false`. Event `updater_key_added {public_key}`. |
+| `delete_updater_key(public_key)` | owner or any watchdog | `{"public_key":"ed25519:6E8s..."}` | `DeleteKey` on the contract account. A watchdog may delete only keys in `updater_keys` (`Not an updater key`); the owner may delete any key on the account (cleanup of an untracked key without a full-access key). Event `updater_key_deleted {public_key, by}`. The watchdog deletes every updater key the moment it sees a forged proposal from the contract account (one call per key, or one transaction with two actions). |
+
+`updater_keys` tracks what the contract asked for; deploy tooling compares it (and `updater_methods`) with
+`view_access_key_list` and treats any other key as a blocker.
+
+#### Upgrades
+
+| Method | Who | Args | Notes |
+|---|---|---|---|
+| `propose_upgrade(code_hash)` | owner | `{"code_hash":"8Tf3..."}` (base58 sha256 of the wasm, NEAR's account `code_hash` format) | `executable_at_ms = now + governance_delay_ms`. Replaces a pending upgrade (event `upgrade_cancelled` for the old one). Event `upgrade_proposed {code_hash, executable_at_ms}`. Nobody but the owner can cancel (no guardian at launch, D84). Mainnet: a reproducible build whose hash, commit and build command are published first (D86). |
+| `cancel_upgrade()` | owner | `{}` | `No pending upgrade`. Event `upgrade_cancelled {code_hash}`. |
+| `execute_upgrade()` | **anyone**, once due | **raw wasm bytes** as the input (not JSON) | `No pending upgrade`, `Upgrade is still delayed`, `Code doesn't match the proposed hash` (`sha256(input)`). Not blocked by pause (a fix must be deployable). Clears `pending_upgrade`, emits `upgrade_executed {code_hash}`, and returns one promise to the contract account with two actions: `DeployContract(code)` then `FunctionCall migrate({}, 0 deposit, 50 Tgas)`. They are one receipt: if the new code's `migrate` panics (or doesn't exist), the deploy is rolled back with it and the old code stays. The pending upgrade is consumed either way (re-propose a fixed build); `upgrade_executed` is logged by the committed execute receipt, so success is the deploy receipt's outcome, `state_migrated` in its logs, and `view_account.code_hash`. Attach 300 Tgas; the transaction must fit NEAR's 1.5 MiB limit; the account balance must cover the new code's storage. |
+| `migrate()` | the contract account only (`#[private]`, `#[init(ignore_state)]`) | — | Called by `execute_upgrade`'s deploy receipt on the **new** code. This version (layout v2, no change since): reads the state as v2 and panics `Unexpected state version` unless `state_version == 2`; keeps it as is. Event `state_migrated {from_version: 2, to_version: 2}`. Each future version ships its own `migrate` reading a copy of the previous layout. |
+| `migrate_v1(issuer_key_delay_ms, governance_delay_ms)` | the contract account only (`#[private]`, `#[init(ignore_state)]`) | `{"issuer_key_delay_ms":120000,"governance_delay_ms":60000}` | The one-off v1 → v2 migration, sent by `deploy-contract --upgrade` as `DeployContract` + `migrate_v1` in one transaction while the signer still has its full-access key. Reads the exact v1 root struct (`src/migrate.rs`, checked against a v1 state fixture), keeps every field, starts with no watchdogs, no updater keys, nothing pending, `paused = false`. Delay bounds as `new`. Panics `Unexpected state version` on anything but v1 state (a re-run on v2 can only fail). Event `state_migrated {from_version: 1, to_version: 2}`. Deleted in the next version. |
+
+Gas (sandbox, `governance.rs`, measured 2026-10-29): `execute_upgrade` of the 499 KB v2 wasm burns 84 Tgas over all
+receipts (attach 300); `DeployContract` + `migrate_v1` burns 39 Tgas (attach 100 to `migrate_v1`). Logins on v2 burn
++0.5% against v1 (`create_session` 19.6 → 19.7 Tgas, `create_session_and_derive` 22.0 → 22.1 Tgas with the mock
+MPC; the test fails above +2%).
+
+#### Owner transfer
+
+| Method | Who | Notes |
+|---|---|---|
+| `propose_owner(owner)` | owner | `{"owner":"hana-council.sputnikv2.testnet"}`. `acceptable_at_ms = now + governance_delay_ms`; replaces a pending proposal. Event `owner_proposed {owner, acceptable_at_ms}`. |
+| `cancel_owner_proposal()` | owner | `No pending owner change`. Event `owner_proposal_cancelled {owner}`. |
+| `accept_owner()` | the proposed account | `Not the proposed owner` (also when nothing is pending), `Owner change is still delayed`. Proves the new owner (a DAO) can call the contract before it gets control. Event `owner_changed {old, new}`. |
+
+#### Surplus withdrawal (D86)
+
+| Method | Who | Notes |
+|---|---|---|
+| `propose_withdrawal(receiver, amount)` | owner | `{"receiver":"hana-id-ops.testnet","amount":"10000000000000000000000000"}` (yoctoNEAR string). `Withdrawal amount must be positive`. `executable_at_ms = now + governance_delay_ms`; replaces a pending one (`withdrawal_cancelled` for the old one). Event `withdrawal_proposed {receiver, amount, executable_at_ms}`. |
+| `cancel_withdrawal()` | owner | `No pending withdrawal`. Event `withdrawal_cancelled {receiver, amount}`. |
+| `execute_withdrawal()` | **anyone**, once due | `No pending withdrawal`, `Withdrawal is still delayed`, `Paused`, `Withdrawal would leave too little` unless `account_balance − amount ≥ storage_usage × storage_byte_cost + SIGNER_RESERVE` (5 NEAR, provisional), checked at execution. Transfers `amount` to `receiver`. Event `withdrawal_executed {receiver, amount}`. |
+
+#### Governance views
+
+| Method | Returns |
+|---|---|
+| `get_governance()` | Governance (Types above) |
+| `get_key_changes()` | pending key changes (Types above) |
+| `get_config()` | Config, including the delays in force, pending decreases, `paused` and pending console audiences |
+
+#### Owner = Sputnik DAO
+
+The owner is a Sputnik DAO v2 account (D81): the wasm and the policy are pinned in `contracts/sputnik/`
+(`pin.json`: commit, sha256 and `code_hash` of the code the testnet factory deploys; `policy.json`: one `council`
+role, 2 of 3 votes for every proposal kind, no `Everyone` role, no `RemoveProposal`). Each owner call is a DAO
+`FunctionCall` proposal to the signer (method, base64 JSON args, 0 deposit, 100 Tgas), executed when the second
+vote lands; the contract checks only `predecessor == owner`. A proposal whose call panics in the contract ends
+`Failed` in the DAO.
 
 ### Registry
 
@@ -468,7 +649,7 @@ so there is nothing to squat). Returns the scope id. Client validation (below) r
 `sponsors` are exempt and any deposit they attach is refunded in full. A **shared-only** registration (`client_proofs:
 []`) by a non-sponsor also prepays `2 × 1501 = 3002` bytes, the most that sponsors may later queue for free on a scope
 without clients (see `propose_change`): ≈ 3104 bytes ≈ 0.031 NEAR in all for one NEAR owner; attach 0.05 NEAR.
-Panics: `Public registration is not enabled`,
+Panics: `Paused` (first, with or without proofs), `Public registration is not enabled`,
 `Proof nonce doesn't commit to this registration`, `Attached deposit doesn't cover storage: need N yoctoNEAR`, plus
 client/owner validation. Event `scope_registered`.
 
@@ -518,7 +699,7 @@ change with `unlock_at_ms = now + change_delay_ms`. Increments `action_nonce`.
 {"scope_id":"s1","change_id":0}
 ```
 
-Applies a pending change once `now >= unlock_at_ms` (`Change is still timelocked`). Re-checks: `AddClient` client
+Not while paused (`Paused`, checked first). Applies a pending change once `now >= unlock_at_ms` (`Change is still timelocked`). Re-checks: `AddClient` client
 still unregistered (`Client is already registered`), not quarantined for another scope
 (`Client was recently removed from another scope`), not shared (`Client is a shared client`) and room in the scope
 (`A scope has at most 10 clients`); `SetOwners` re-validated; `SetAllowShared` sets `allow_shared = true` (no-op if
@@ -569,9 +750,9 @@ already open stay valid until they expire or are revoked). Panics: `Shared login
 
 #### Owner auth panics
 
-Apply to `propose_change`, `cancel_change`, `remove_client` and `disable_shared_login`:
+Apply to `propose_change`, `cancel_change`, `remove_client` and `disable_shared_login` (an `Oidc` auth or a client proof also panics `Paused` while paused):
 `No such scope`, `Caller is not a NEAR owner of this scope` (Near), `Token is not for the Hana console`
-(Oidc: token `(provider, aud)` ∉ `console_audiences`), `Token is not from an owner of this scope`,
+(Oidc: token `(provider, aud)` not among the console audiences **in force**: a pending addition doesn't count), `Token is not from an owner of this scope`,
 `Owner token nonce doesn't match this action` (wrong args, wrong method, or replay: `action_nonce` moved on).
 
 #### Registry views
@@ -590,7 +771,7 @@ Apply to `propose_change`, `cancel_change`, `remove_client` and `disable_shared_
  "salt":[9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9],"key_index":0,"max_uses":3}
 ```
 
-Returns Session. Checks, in order: `Session key must be a 32-byte Ed25519 public key`, `Salt must be 16-64 bytes`,
+Returns Session. Checks, in order: `Paused`, `Session key must be a 32-byte Ed25519 public key`, `Salt must be 16-64 bytes`,
 `Session expiry must be within 24 hours` (now < expires_at_ms ≤ now + 24 h), `max_uses must be 1-500`,
 `key_index must be below 2^31` (batch B),
 `Session key already in use` (an unexpired session, including a revoked one, exists for this key), token
@@ -612,6 +793,7 @@ one (Google's `sub` is the same across client ids). Then prunes up to 3 expired 
 ```
 
 `signature` = Ed25519 over `session_message(counter, "hana-id-ckd-v1:" ‖ pk1 ‖ ":" ‖ pk2)`. Panics:
+`Paused` (first),
 `No such session` (missing or revoked), `Session expired`, `Session use limit reached`,
 `Wrong counter (replayed or out of order)`, `Bad session key`, `Signature must be 64 bytes`, `Invalid session signature`,
 `BLS key too long` (pk1/pk2 > 512 bytes). Increments `used`, then calls the MPC:
@@ -677,8 +859,10 @@ longer-lived one for at most 24 h.
 
 ## Events (NEP-297)
 
-Logged as `EVENT_JSON:{"standard":"hana-id","version":"1.0.0","event":"<name>","data":[{...}]}` (`data` is a
-one-element array, as in NEP-171).
+Logged as `EVENT_JSON:{"standard":"hana-id","version":"1.1.0","event":"<name>","data":[{...}]}` (`data` is a
+one-element array, as in NEP-171). Version `1.1.0` (governance batch, D86) is additive over `1.0.0`: new events,
+and `issuer_key_set` / `issuer_key_removed` gain fields and are now emitted when a key enters or leaves the active
+set (execution or confirmation, or an owner removal), no longer when a key is posted.
 
 | event | data |
 |---|---|
@@ -689,12 +873,79 @@ one-element array, as in NEP-171).
 | `client_removed` | `{"scope_id","provider","aud","free_at_ms","by":Owner}` |
 | `shared_login_disabled` | `{"scope_id","by":Owner}` |
 | `shared_clients_set` | `{"shared_clients":[[provider,aud]],"pending_shared_clients":[{"provider","aud","effective_at_ms"}]}` (state after the call) |
+| `console_audiences_set` | `{"console_audiences":[[provider,aud]],"pending_console_audiences":[{"provider","aud","effective_at_ms"}]}` (state after the call) |
 | `public_registration_enabled` | `{}` |
-| `issuer_key_set` | `{"provider","kid"}` |
-| `issuer_key_removed` | `{"provider","kid"}` |
+| `issuer_key_proposed` | `{"id","provider","kid","n","e","executable_at_ms","by":"account"}` (`n`, `e` JWK base64url, leading zeros stripped) |
+| `issuer_key_removal_proposed` | `{"id","provider","kid","executable_at_ms","by":"account"}` |
+| `issuer_key_set` | `{"provider","kid","id","how":"delay"\|"confirmed","by"?}` (`by` = the watchdog, for `"confirmed"` only) |
+| `issuer_key_removed` | `{"provider","kid","id","how":"delay"\|"confirmed","by"?}` or `{"provider","kid","how":"owner"}` |
+| `issuer_key_change_cancelled` | `{"id","provider","kid","by":"account"}` (also when `remove_issuer_key` drops a pending change) |
+| `delay_changed` | `{"which":"issuer_key"\|"governance","value_ms","effective_at_ms"}` |
+| `watchdog_added` / `watchdog_removed` | `{"account_id","confirm_from_ms"}` / `{"account_id","keys_slow_until_ms"}` |
+| `updater_key_added` / `updater_key_deleted` / `updater_key_add_failed` | `{"public_key"}` / `{"public_key","by"}` / `{"public_key"}` |
+| `paused` / `unpaused` | `{"by"}` / `{}` |
+| `upgrade_proposed` / `upgrade_cancelled` / `upgrade_executed` | `{"code_hash","executable_at_ms"}` / `{"code_hash"}` / `{"code_hash"}` |
+| `state_migrated` | `{"from_version","to_version"}` (logged by `migrate` / `migrate_v1` in the deploy receipt: the upgrade really happened) |
+| `owner_proposed` / `owner_proposal_cancelled` / `owner_changed` | `{"owner","acceptable_at_ms"}` / `{"owner"}` / `{"old","new"}` |
+| `withdrawal_proposed` / `withdrawal_cancelled` / `withdrawal_executed` | `{"receiver","amount","executable_at_ms"}` / `{"receiver","amount"}` / `{"receiver","amount"}` (amount in yoctoNEAR, a string) |
 
-`by: Owner` is the authenticated owner (`{"Near":{...}}` or `{"Oidc":{...}}`). Enabling shared login shows up as
-`change_proposed` / `change_executed` with a `SetAllowShared` change.
+`by: Owner` is the authenticated owner (`{"Near":{...}}` or `{"Oidc":{...}}`); in the governance events `by` is an
+account id. Enabling shared login shows up as `change_proposed` / `change_executed` with a `SetAllowShared` change.
+Not every state change has an event (e.g. `set_sponsors`, `set_change_delay_ms`, `set_issuer`): monitors diff
+`get_config` / `get_governance` as well.
+
+## Monitoring hand-off (batch C admin portal)
+
+The governance spec puts a "Security & monitoring" view and a pending-upgrades page in the admin portal (D83, D86),
+built on batch C's admin Worker, which does not exist yet. The contract side of that view is exactly these
+read-only sources, which the portal (and the watchdog service) read through their own RPC; nothing here needs a
+signer key:
+
+| Portal item | Source on chain |
+|---|---|
+| Pending issuer-key changes, proposer, countdown | `get_key_changes()` (`executable_at_ms`); match against Google's JWKS by comparing `n`, `e` with the JWKS entry of the same `kid` |
+| Active keys | `get_issuer("google").kids` |
+| Pause state, who paused and when | `get_config().paused`; the `paused {by}` / `unpaused` events (block time = when) |
+| Watchdogs and their confirm power | `get_governance().watchdogs` (`confirm_from_ms`), `keys_slow_until_ms`; events `watchdog_added` / `watchdog_removed` |
+| Updater keys against the account's key list | `get_governance().updater_keys` and `updater_methods` against RPC `view_access_key_list(<signer>)`: any other key, or a function-call key with other methods, receiver or a larger allowance, is a finding |
+| Pending upgrade (code hash, countdown) | `get_governance().pending_upgrade`; events `upgrade_proposed` / `upgrade_cancelled` / `upgrade_executed` / `state_migrated`; after execution `view_account(<signer>).code_hash` |
+| Pending owner transfer, withdrawal, delay decreases, console-audience additions | `get_governance().pending_owner`, `.pending_withdrawal`; `get_config().pending_issuer_key_delay`, `.pending_governance_delay`, `.pending_change_delay`, `.pending_console_audiences` |
+| Watchdog actions log (cancels, confirms, pauses, updater-key deletions) with transaction links | the NEP-297 events above with `by` = a watchdog account: `issuer_key_change_cancelled`, `issuer_key_set` / `issuer_key_removed` with `how: "confirmed"`, `paused`, `updater_key_deleted`; transaction hash from the RPC receipt |
+
+The portal's other items (heartbeat, the watchdog's verdicts, alert history and acks) come from the watchdog
+service's `GET /status` and `GET /alerts` (`docs/governance-spec.md` "Watchdog service"), not from the contract.
+
+## Changed in the governance batch
+
+Layout v2, migrated **in place** (`migrate_v1`); no byte layout, path format, nonce or CKD request changed, so no
+address changes. In detail:
+
+- `set_issuer_key` queues a pending `Add` (returns its id) instead of installing the key; new
+  `propose_issuer_key_removal`, `execute_issuer_key_change`, `confirm_issuer_key_change`,
+  `cancel_issuer_key_change`, `get_key_changes`. `set_issuer_key` no longer overwrites an active kid (`Kid is already
+  active`). `remove_issuer_key` is owner-only (the contract account may no longer call it).
+- `set_owner` is removed; `propose_owner` / `cancel_owner_proposal` / `accept_owner` replace it.
+- New: `set_issuer_key_delay_ms`, `set_governance_delay_ms`, watchdogs, `pause` / `unpause`, updater keys
+  (`add_updater_key`, `delete_updater_key`, callback `on_updater_key_added`), `propose_upgrade` / `cancel_upgrade` /
+  `execute_upgrade` / `migrate`, `migrate_v1`, the surplus withdrawal, `get_governance`.
+- `new` takes `issuer_key_delay_ms`, `governance_delay_ms`, `watchdogs` and `updater_keys`.
+- `set_console_audiences` additions wait `change_delay_ms` (`pending_console_audiences`); duplicates are refused.
+- `get_config` gains `pending_console_audiences`, `issuer_key_delay_ms`, `pending_issuer_key_delay`,
+  `governance_delay_ms`, `pending_governance_delay`, `paused`; `console_audiences` lists those in force.
+- Pause checks in `verify_token`, `create_session`, `derive_key`, `register_scope`, `execute_change`,
+  `execute_issuer_key_change`, `execute_withdrawal`.
+- Events version `1.1.0` (above).
+- The updater key's methods change (`set_issuer_key`, `propose_issuer_key_removal`, `execute_issuer_key_change`):
+  access-key permissions can't be edited, so the old key (with `remove_issuer_key`) is deleted and a new one added
+  with `add_updater_key`.
+- Deviations from `docs/governance-spec.md` (DRAFT), raised for review: `new` also takes `updater_keys` and adds them
+  itself (the spec's creation batch with its own `AddKey` would leave the key untracked in `updater_keys`, which
+  `deploy-plan` treats as a blocker); `add_updater_key` has a callback that untracks a key whose `AddKey` failed
+  (the spec accepted the drift); `delete_updater_key` by a watchdog is limited to tracked keys; extra events
+  `owner_proposal_cancelled`, `updater_key_add_failed`, `state_migrated`; extra panics `Already an updater key`,
+  `Not an updater key`, `No pending owner change`, `Withdrawal amount must be positive`, `Duplicate console
+  audience`; `register_scope` is refused while paused even without proofs (D86 "scope registration");
+  `get_governance` also returns `updater_methods`.
 
 ## Changed in batch B
 
@@ -725,11 +976,14 @@ prepays them. New view `session_key_in_use` (also covers revoked, unexpired sess
 
 ## Security notes (for reviewers)
 
-- **Hana's trust surface.** The owner (and the contract account) controls issuer keys: whoever can post a Google key
-  can mint any token, so this is total control, as is contract upgrade (no lock yet; bounding both before mainnet is
-  `docs/decisions.md` D33). Beyond
-  that, Hana cannot change a scope's clients or owners, and cannot block derivation for a scope that has its own
-  client (it can for a shared-only scope: see Shared login).
+- **Hana's trust surface.** Whoever can install a Google key can mint any token, and whoever can replace the code
+  can do anything; both are total control. Since the governance batch neither is faster than a public, cancellable
+  delay: a posted key waits `issuer_key_delay_ms` while the watchdogs check it against Google's JWKS (cancel, or
+  confirm early), removing the watchdogs slows every key change to `governance_delay_ms`, and upgrades, owner
+  transfers and withdrawals wait `governance_delay_ms` with public events (`docs/governance-spec.md` "What each
+  party can do after this batch"). Pause stops every token path at once and only the owner (a 2-of-3 DAO) lifts it.
+  Beyond that, Hana cannot change a scope's clients or owners, and cannot block derivation for a scope that has its
+  own client (it can for a shared-only scope: see Shared login).
 - **Shared login.** A scope with `allow_shared` accepts tokens of Hana's shared clients, with the scope taken from
   the session nonce. Whoever can get a shared-client token with a nonce of their choosing for a user can open a
   session for that user in any `allow_shared` scope: Hana's vault and login page (since batch B the vault computes

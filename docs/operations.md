@@ -331,6 +331,12 @@ blocks on any other function-call key on `signer` that can call `set_issuer_key`
   near contract call-function as-transaction <signer> set_owner json-args '{"owner":"<new owner>"}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as <owner> network-config testnet sign-with-legacy-keychain send
   ```
 
+  This is the v1 contract. Once an env runs the governance contract (`migrate_v1`, `docs/governance-spec.md`
+  "Migration plan"), `set_owner` no longer exists: the owner calls `propose_owner(owner)`, and after
+  `governance_delay_ms` the new owner (the DAO, through a 2-of-3 `FunctionCall` proposal) calls `accept_owner()`
+  (`docs/contract-interface.md` "Owner transfer"). Likewise the updater key: `remove_issuer_key` becomes owner-only
+  and the key is replaced by one the contract installs with `add_updater_key`.
+
 Scope owners (`--owner-near` / `--owner-google`) are separate: they change by a timelocked `SetOwners` owner action.
 
 ### Google signing keys (JWKS)

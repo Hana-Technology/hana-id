@@ -230,6 +230,8 @@ impl HanaSigner {
     /// a shared-only scope also prepays `SHARED_ONLY_RESERVE_BYTES` for the proposals sponsors may relay for it.
     #[payable]
     pub fn register_scope(&mut self, owners: Vec<Owner>, client_proofs: Vec<String>, allow_shared: bool) -> String {
+        // Scope registration stops while paused, with or without proofs (D86).
+        self.assert_not_paused();
         assert!(self.public_registration, "Public registration is not enabled");
         let storage_before = env::storage_usage();
         validate_owners(&owners);
@@ -315,7 +317,10 @@ impl HanaSigner {
     /// Anyone applies a pending change once its timelock has passed. Uniqueness and limits are re-checked.
     /// Increments `action_nonce`: the scope's state changed, so owner tokens and client proofs made before (including
     /// ones published by calls that failed on the old state) go stale.
+    /// Not while paused: a change that may rest on a forged token (a client proof, an OIDC owner's token) never
+    /// matures into force while frozen.
     pub fn execute_change(&mut self, scope_id: String, change_id: u64) {
+        self.assert_not_paused();
         let mut scope = self.scope_or_panic(&scope_id);
         let index = scope.pending.iter().position(|p| p.id == change_id).unwrap_or_else(|| env::panic_str("No such change"));
         assert!(env::block_timestamp_ms() >= scope.pending[index].unlock_at_ms, "Change is still timelocked");
@@ -500,7 +505,9 @@ impl HanaSigner {
             }
             OwnerAuth::Oidc { jwt } => {
                 let token = self.verify_token(jwt);
-                assert!(self.console_audiences.contains(&(token.provider.clone(), token.aud.clone())), "Token is not for the Hana console");
+                // Console audiences in force now: an addition counts only after change_delay_ms.
+                let console = self.console_audiences_at(env::block_timestamp_ms());
+                assert!(console.contains(&(token.provider.clone(), token.aud.clone())), "Token is not for the Hana console");
                 let owner = Owner::Oidc { provider: token.provider, sub: token.sub };
                 assert!(scope.owners.contains(&owner), "Token is not from an owner of this scope");
                 let expected = owner_action_nonce(&this_signer(), &scope.id, method, args, scope.action_nonce);

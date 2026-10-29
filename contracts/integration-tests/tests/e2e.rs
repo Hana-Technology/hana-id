@@ -10,7 +10,7 @@ mod common;
 use anyhow::Result;
 use ed25519_dalek::Signer as _;
 use common::*;
-use near_workspaces::types::NearToken;
+use near_workspaces::types::{KeyType, NearToken, SecretKey};
 use serde_json::{json, Value};
 
 /// Two apps with different client ids get different paths (so different keys) for the same Google user; the CKD
@@ -121,8 +121,8 @@ async fn derive_key_paths_are_per_scope_and_key_index() -> Result<()> {
 }
 
 /// The relayer's two key pools reach only their own methods (the session pool can't call owner methods and vice
-/// versa); the keys-updater key on the signer account reaches only set_issuer_key / remove_issuer_key; nobody but the
-/// owner reaches admin methods.
+/// versa); the updater key the contract installed on the signer account reaches only UPDATER_METHODS (propose keys
+/// and removals, execute matured changes); nobody but the owner reaches admin and governance methods.
 #[tokio::test]
 async fn access_keys_are_limited() -> Result<()> {
     let env = Env::setup().await?;
@@ -148,10 +148,23 @@ async fn access_keys_are_limited() -> Result<()> {
         ("set_issuer", json!({"provider": "evil", "iss_values": ["https://evil.example"]})),
         ("admin_register_scope", json!({"owners": [near_owner(env.relayer.id())], "clients": [[PROVIDER, APP_X]], "scope_id": null, "allow_shared": false})),
         ("enable_public_registration", json!({})),
-        ("set_owner", json!({"owner": env.relayer.id()})),
+        ("propose_owner", json!({"owner": env.relayer.id()})),
         ("set_sponsors", json!({"sponsors": []})),
         ("set_change_delay_ms", json!({"change_delay_ms": 0})),
         ("set_shared_clients", json!({"clients": [[PROVIDER, APP_X]]})),
+        ("remove_issuer_key", json!({"provider": PROVIDER, "kid": KID})),
+        ("set_issuer_key_delay_ms", json!({"issuer_key_delay_ms": 0})),
+        ("set_governance_delay_ms", json!({"governance_delay_ms": 0})),
+        ("add_watchdog", json!({"account_id": env.relayer.id()})),
+        ("remove_watchdog", json!({"account_id": env.watchdog.id()})),
+        ("pause", json!({})),
+        ("unpause", json!({})),
+        ("add_updater_key", json!({"public_key": SecretKey::from_random(KeyType::ED25519).public_key().to_string()})),
+        ("propose_upgrade", json!({"code_hash": code_hash(b"evil")})),
+        ("cancel_upgrade", json!({})),
+        ("cancel_owner_proposal", json!({})),
+        ("propose_withdrawal", json!({"receiver": env.relayer.id(), "amount": "1"})),
+        ("cancel_withdrawal", json!({})),
     ];
     for key in [&env.relayer_fc, &env.relayer_owner_fc] {
         for (method, args) in &admin_calls {
@@ -178,16 +191,28 @@ async fn access_keys_are_limited() -> Result<()> {
         expect_failure(tx(env.relayer.call(signer, method).args_json(args.clone()).gas(GAS).transact().await), "Only the owner");
     }
 
-    // The keys-updater key (on the signer account itself) can rotate issuer keys. Its allowance (0.25 NEAR) must
-    // cover the prepaid gas of each call (gas × gas price), so it sends 30 Tgas, not the 300 Tgas wallet calls here attach.
+    // The updater key (on the signer account itself) proposes issuer keys and removals and executes matured
+    // changes. Its allowance (1 NEAR) must cover the prepaid gas of each call (gas × gas price), so it sends 30 Tgas,
+    // not the 300 Tgas wallet calls here attach.
     const UPDATER_GAS: near_workspaces::types::Gas = near_workspaces::types::Gas::from_tgas(30);
-    env.keys_updater.call(signer, "set_issuer_key").args_json(json!({"provider": PROVIDER, "kid": "rotated", "n": env.issuer.n, "e": env.issuer.e})).gas(UPDATER_GAS).transact().await?.into_result()?;
-    let issuer: Value = env.signer.view("get_issuer").args_json(json!({"provider": PROVIDER})).await?.json()?;
-    let kids: Vec<&str> = issuer["kids"].as_array().unwrap().iter().map(|k| k.as_str().unwrap()).collect();
-    assert!(kids.contains(&"rotated") && kids.contains(&KID), "kids: {kids:?}");
-    let removed: bool = env.keys_updater.call(signer, "remove_issuer_key").args_json(json!({"provider": PROVIDER, "kid": "rotated"})).gas(UPDATER_GAS).transact().await?.into_result()?.json()?;
-    assert!(removed);
-    // ...but nothing else.
+    let id: u64 = env
+        .keys_updater
+        .call(signer, "set_issuer_key")
+        .args_json(json!({"provider": PROVIDER, "kid": "rotated", "n": env.issuer.n, "e": env.issuer.e}))
+        .gas(UPDATER_GAS)
+        .transact()
+        .await?
+        .into_result()?
+        .json()?;
+    assert_eq!(env.kids().await?, vec![KID.to_string()], "a proposed key is not active");
+    env.watchdog.call(signer, "confirm_issuer_key_change").args_json(json!({"id": id})).transact().await?.into_result()?;
+    assert_eq!(env.kids().await?, vec!["rotated".to_string(), KID.to_string()]);
+    let id: u64 = env.keys_updater.call(signer, "propose_issuer_key_removal").args_json(json!({"provider": PROVIDER, "kid": "rotated"})).gas(UPDATER_GAS).transact().await?.into_result()?.json()?;
+    let due = env.get_key_changes().await?[0]["executable_at_ms"].as_u64().unwrap();
+    env.advance_to(due).await?;
+    env.keys_updater.call(signer, "execute_issuer_key_change").args_json(json!({"id": id})).gas(UPDATER_GAS).transact().await?.into_result()?;
+    assert_eq!(env.kids().await?, vec![KID.to_string()]);
+    // ...but nothing else (remove_issuer_key, the immediate path, is the owner's only).
     for (method, args) in &admin_calls {
         if *method == "set_issuer_key" {
             continue;
@@ -195,7 +220,7 @@ async fn access_keys_are_limited() -> Result<()> {
         let text = expect_failure(tx(env.keys_updater.call(signer, method).args_json(args.clone()).gas(UPDATER_GAS).transact().await), "");
         assert!(text.contains("MethodNameMismatch"), "{method}: expected an access-key rejection, got {text}");
     }
-    assert_key_reaches_only(&env.keys_updater, signer, KEYS_UPDATER_METHODS, UPDATER_GAS).await?;
+    assert_key_reaches_only(&env.keys_updater, signer, UPDATER_METHODS, UPDATER_GAS).await?;
     // Other accounts can't touch issuer keys.
     expect_failure(tx(env.alice.call(signer, "set_issuer_key").args_json(issuer_key).gas(GAS).transact().await), "Only the owner or the contract account");
 
@@ -215,10 +240,10 @@ async fn access_keys_are_limited() -> Result<()> {
         .transact()
         .await?
         .into_result()?;
-    let err = assert_function_call_key(&env.worker, signer, &wide_sk.public_key(), signer, KEYS_UPDATER_METHODS).await.expect_err("an any-method key must not pass as the keys-updater key");
+    let err = assert_function_call_key(&env.worker, signer, &wide_sk.public_key(), signer, UPDATER_METHODS).await.expect_err("an any-method key must not pass as the keys-updater key");
     assert!(format!("{err}").contains("method_names []"), "{err}");
-    // ...and, signing as the contract account, it still gets no owner powers: the contract privileges its own
-    // account only for set_issuer_key / remove_issuer_key.
+    // ...and, signing as the contract account, it still gets no owner or watchdog powers: the contract privileges
+    // its own account only for proposing key changes (set_issuer_key, propose_issuer_key_removal).
     let wide = near_workspaces::Account::from_secret_key(signer.clone(), wide_sk, &env.worker);
     for (method, args) in &admin_calls {
         if *method == "set_issuer_key" {
@@ -257,23 +282,33 @@ async fn assert_key_reaches_only(key: &near_workspaces::Account, signer: &near_w
     Ok(())
 }
 
-/// The sandbox keys use the same allowlists deploy-contract.ts installs (scripts/lib/contract.ts), so the
-/// access-key test above checks the deployed restrictions, not a copy that could drift.
+/// The sandbox relayer keys use the same allowlists deploy-contract.ts installs (scripts/lib/contract.ts), so the
+/// access-key test above checks the deployed restrictions, not a copy that could drift. The updater key is no
+/// longer one deploy-contract adds by hand: the contract installs it with its own constant method list
+/// (`add_updater_key`), which the sandbox checks on chain against UPDATER_METHODS (Env::setup, access_keys_are_limited,
+/// tests/governance.rs). scripts/lib/contract.ts KEYS_UPDATER_METHODS still describes the pre-governance key until
+/// the scripts batch moves to add_updater_key, so it isn't compared here.
 #[test]
 fn method_allowlists_match_deploy_script() -> Result<()> {
-    for (name, want) in [("SESSION_RELAYER_METHODS", SESSION_RELAYER_METHODS), ("OWNER_RELAYER_METHODS", OWNER_RELAYER_METHODS), ("KEYS_UPDATER_METHODS", KEYS_UPDATER_METHODS)] {
+    for (name, want) in [("SESSION_RELAYER_METHODS", SESSION_RELAYER_METHODS), ("OWNER_RELAYER_METHODS", OWNER_RELAYER_METHODS)] {
         let mut got = deploy_script_methods(name)?;
         got.sort();
         let mut want: Vec<String> = want.iter().map(|s| s.to_string()).collect();
         want.sort();
         assert_eq!(got, want, "scripts/lib/contract.ts {name}");
     }
-    // Neither relayer pool may ever hold issuer or admin methods.
+    // Neither relayer pool may ever hold issuer, admin or governance methods: only the owner-pool methods and the
+    // session-pool methods are relayable at all.
+    let relayable: Vec<&str> = SESSION_RELAYER_METHODS.iter().chain(OWNER_RELAYER_METHODS).copied().collect();
     for name in ["SESSION_RELAYER_METHODS", "OWNER_RELAYER_METHODS"] {
         let methods = deploy_script_methods(name)?;
-        for m in ["set_issuer_key", "remove_issuer_key", "set_issuer", "admin_register_scope", "set_owner", "enable_public_registration", "set_shared_clients", "set_sponsors", "set_change_delay_ms", "new"] {
+        for m in ALL_CHANGE_METHODS.iter().filter(|m| !relayable.contains(m)).chain(&["set_owner"]) {
             assert!(!methods.iter().any(|r| r == m), "{name} contains {m}");
         }
+    }
+    // The updater key's methods are change methods of the contract, and none is relayed.
+    for m in UPDATER_METHODS {
+        assert!(ALL_CHANGE_METHODS.contains(m) && !relayable.contains(m), "{m}");
     }
     Ok(())
 }

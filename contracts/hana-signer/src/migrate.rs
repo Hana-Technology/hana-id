@@ -121,6 +121,9 @@ impl HanaSigner {
             pending_owner: None,
             pending_withdrawal: None,
             pending_console_audiences: vec![],
+            unpaused_at_ms: 0,
+            changes_unlock_floor_ms: 0,
+            sessions_valid_from_ms: 0,
         }
     }
 }

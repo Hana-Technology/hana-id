@@ -301,7 +301,8 @@ impl HanaSigner {
                 assert!(!scope.pending.iter().any(|p| p.change == change), "Change is already pending");
             }
         }
-        let unlock_at_ms = now.saturating_add(self.change_delay_at(now));
+        // Never before the floor the last unpause set (an edge case: a delay decrease that came into force since).
+        let unlock_at_ms = now.saturating_add(self.change_delay_at(now)).max(self.changes_unlock_floor_ms);
         scope.pending.push(PendingChange { id, change: change.clone(), unlock_at_ms });
         scope.action_nonce += 1;
         events::emit(
@@ -318,12 +319,14 @@ impl HanaSigner {
     /// Increments `action_nonce`: the scope's state changed, so owner tokens and client proofs made before (including
     /// ones published by calls that failed on the old state) go stale.
     /// Not while paused: a change that may rest on a forged token (a client proof, an OIDC owner's token) never
-    /// matures into force while frozen.
+    /// matures into force while frozen. Nor before `changes_unlock_floor_ms`: after an unpause every pending change
+    /// waits a full `change_delay_ms` again, since OIDC owners couldn't cancel it while paused.
     pub fn execute_change(&mut self, scope_id: String, change_id: u64) {
         self.assert_not_paused();
         let mut scope = self.scope_or_panic(&scope_id);
         let index = scope.pending.iter().position(|p| p.id == change_id).unwrap_or_else(|| env::panic_str("No such change"));
-        assert!(env::block_timestamp_ms() >= scope.pending[index].unlock_at_ms, "Change is still timelocked");
+        let now = env::block_timestamp_ms();
+        assert!(now >= scope.pending[index].unlock_at_ms && now >= self.changes_unlock_floor_ms, "Change is still timelocked");
         let pending = scope.pending.remove(index);
         match &pending.change {
             Change::AddClient { provider, aud } => {
@@ -398,8 +401,15 @@ impl HanaSigner {
         self.scopes.insert(scope_id, scope);
     }
 
+    /// Each pending change's `unlock_at_ms` is when `execute_change` accepts it: its own timelock, or the floor the
+    /// last unpause set if that is later.
     pub fn get_scope(&self, scope_id: String) -> Option<Scope> {
-        self.scopes.get(&scope_id).cloned()
+        self.scopes.get(&scope_id).cloned().map(|mut scope| {
+            for p in &mut scope.pending {
+                p.unlock_at_ms = p.unlock_at_ms.max(self.changes_unlock_floor_ms);
+            }
+            scope
+        })
     }
 
     pub fn scope_for_client(&self, provider: String, aud: String) -> Option<String> {

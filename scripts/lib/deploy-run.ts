@@ -26,7 +26,7 @@ import {
 import { setManifestStrings } from './manifest-edit.ts';
 import { codeHashOf, explorerTx, formatNear, hasFullAccess, NearRpc, nearToYocto, STORAGE_YOCTO_PER_BYTE, TGAS } from './near.ts';
 import { ownerRoute, type OwnerTxOptions, sendOwnerCall } from './owner-tx.ts';
-import { readPin } from './sputnik.ts';
+import { readPin, readPolicyTemplate, type SputnikPolicy } from './sputnik.ts';
 
 export const DEPLOY_USAGE = `Usage: deploy-contract.ts <env> [--yes] [--relayer-keys 3] [--relayer-allowance 2]
                           [--owner-relayer-keys 1] [--owner-relayer-allowance 0.5]
@@ -151,7 +151,9 @@ async function observe(c: Ctx, wasmPath: string | null): Promise<{ observed: Dep
   const councilKeys: Record<string, boolean> = {};
   if (m.council) {
     const dao = await rpc.account(m.council.dao);
-    councilDao = { exists: !!dao, codeHash: dao?.code_hash ?? '' };
+    // Its policy, not only its code: who votes and how many votes each proposal kind needs (D81).
+    const policy = dao ? await tryView<SputnikPolicy>(rpc, m.council.dao, 'get_policy') : null;
+    councilDao = { exists: !!dao, codeHash: dao?.code_hash ?? '', policy };
     for (const a of m.council.members) {
       councilKeys[a] = m.network === 'testnet' && (councilKeysOnDisk(m) ? !!readCouncilKey(m.name, a, c.secretsRoot) : !!findLegacyCredential(a, m.network, c.home));
     }
@@ -383,6 +385,7 @@ export async function deployMain(argv: readonly string[], deps: DeployDeps = def
     transferOwner: args.flag('transfer-owner'),
     ownerTx,
     sputnikCodeHash: deps.sputnikCodeHash ?? readPin().code_hash,
+    sputnikPolicy: readPolicyTemplate(),
   };
   if (options.skipBuild && !wasmArg && !existingWasm()) throw new CliError('--skip-build but no built wasm found');
 

@@ -254,6 +254,23 @@ With no full-access key, nobody but the contract can add or delete keys on the s
   every governance method, views. Pause can't post keys, change code or move anything: the worst it does is stop
   logins. This is the scope D86 confirms: derivation and new sessions (every token path) and the two executors stop;
   governance, revocation and cancels don't.
+- *Added in review (2026-10-29).* Pausing alone doesn't undo what a forged key did while it was active, so two more
+  pieces keep D82's "pause stops derivation" true after the unpause:
+  - **Scope changes.** While paused OIDC owners can't cancel (`verify_token` panics), yet pending scope changes keep
+    maturing. `unpause()` sets `unpaused_at_ms = now` and `changes_unlock_floor_ms = max(itself, now +
+    change_delay_ms)`; `execute_change` needs `now ≥ max(unlock_at_ms, changes_unlock_floor_ms)` (`Change is still
+    timelocked`), so a change proposed with forged owner tokens or client proofs before the pause gets a full window
+    after it for the honest owners to cancel. `get_scope` shows each pending `unlock_at_ms` raised to the floor. No
+    `PendingChange` layout change.
+  - **Sessions.** Sessions the forged key opened (for any user's path, up to `MAX_SESSION_MS`, any `max_uses`) would
+    derive again after the unpause. `set_sessions_valid_from_ms(ms)` (owner; raise only; ≤ block time; allowed while
+    paused) retires every session opened before `ms`: `derive_key` and `revoke_session` panic `No such session`,
+    `get_session` returns `null`. New sessions store `created_at_ms` after the v1 fields of `StoredSession` (v1
+    records read as before and count as opened at `expires_at_ms − MAX_SESSION_MS`, the earliest possible), so the
+    floor retires exactly the older sessions instead of refusing short-lived new ones for up to a day. The runbook
+    (`docs/operations.md`, `forged_active_key`): remove the key, raise the floor just past the pause, then unpause.
+  - Events: `unpaused {changes_unlock_floor_ms}`, `sessions_valid_from_set {sessions_valid_from_ms}`; `get_config`
+    gains `unpaused_at_ms`, `changes_unlock_floor_ms`, `sessions_valid_from_ms`.
 
 ### Upgrades
 
@@ -389,6 +406,9 @@ response comes from pause, not from short delays, so a paused contract waiting u
 | sandbox-dev | 120 000 (2 min) | 60 000 (1 min) | 15 min | 5 min |
 | mainnet | **7 200 000 (2 h)**, provisional; valid if L_min ≥ ~4 h; if L_min turns out shorter, D = max(3·(W+T), L_min − P − T − M) and accept that a watchdog outage during a rotation delays new-kid logins | **259 200 000 (72 h)** | 15 min | 5 min |
 
+The security bound is enforced outside dev envs by `deploy-contract` (see [Signer account full-access
+key](#signer-account-full-access-key)); sandbox-dev's 2 min breaks it on purpose, for drills, and its plans warn.
+
 The 2 h default satisfies the security bound (3·(5 + 1) min = 18 min) with a wide margin and the availability bound
 for any L_min ≥ 2 h 16 min + 1 h. The API's cron moves from hourly to every 15 min for the JWKS part (the vault
 re-wrap stays hourly, gated on the minute).
@@ -422,7 +442,9 @@ setting (manifest `rpc` and `rpcFallback`), never through the API. Each run:
    (`usableJwks`, shared from `packages/` rather than imported from `apps/api`). Record each kid's first-seen time
    and key material.
 2. Read `get_key_changes`, `get_issuer` and `get_issuer_keys` for each provider it watches (Google only),
-   `get_config`, `get_governance`. (`get_issuer_keys` was added with the watchdog: without the active keys' material
+   `get_config`, `get_governance`, and the owner account: `view_account(owner).code_hash` and, for a DAO, its
+   `get_policy` (added in review: the council can be reshaped by its own `ChangePolicy` / `AddMember` /
+   `RemoveMember` without touching hana-signer). (`get_issuer_keys` was added with the watchdog: without the active keys' material
    the "seen with other key material" case of step 5 can't be checked for a key that went live while the watchdog was
    down or arrived by an upgrade.)
 3. Pending `Add`:
@@ -438,7 +460,8 @@ setting (manifest `rpc` and `rpcFallback`), never through the API. Each run:
    not a forgery: missing for > 3 h → warning (the updater should have proposed its removal). On its first run (empty
    D1) the watchdog seeds "seen" from the current JWKS and alerts critical, without pausing, on any active kid not in
    it, so a fresh deploy never pauses on history it can't know.
-6. Diff `get_config` / `get_governance` against the last run: any `pending_upgrade` (D84), `pending_owner`,
+6. Diff `get_config` / `get_governance` / the owner account against the last run: any change of the owner DAO's
+   code or policy, `unpaused_at_ms` (a pause and unpause between two runs), `sessions_valid_from_ms`, any `pending_upgrade` (D84), `pending_owner`,
    `pending_withdrawal`, watchdog or updater-key change, delay change, console-audience change, `paused` or
    unpause → critical alert with the values. Alert only; no action.
 7. Ping an external dead-man's switch (a heartbeat URL on a third provider); a missing heartbeat alerts critical by
@@ -577,6 +600,12 @@ faster than the updater anyway); `post-google-keys` keeps the updater path and g
   `DeployContract`, `new(owner = DAO, …, watchdogs)`, `AddKey(updater, function-call)`, `DeleteKey(creation key)`.
   It's atomic, so there is never a moment with code and a full-access key. (The `add_updater_key` path is for later
   rotations; at creation the batch adds the first key with the exact permission the contract would use.)
+- `deploy-plan.ts` blocks (added in review) an owner transfer to, and every run of an env owned by, a DAO whose
+  `get_policy` isn't exactly the manifest's council at 2 of 3 for every kind (`sputnik.ts` `policyProblems`: roles,
+  members, permissions, vote policies), not only one with other code: staging and mainnet DAOs are created by hand.
+  It also blocks, outside dev envs, an `issuerKeyDelayMs` below the security bound 3·(W + T) = 18 min and a
+  `governanceDelayMs` below 24 h (mainnet: 72 h, D80), in `buildDeployPlan` and `--creation-plan`
+  (`@hana-id/env` `governanceDelayProblems`); dev envs only warn (sandbox-dev's 2 min deliberately violates it, D80).
 - `deploy-plan.ts` gets a blocker: on an env with `ownerKind: "sputnik"`, any full-access key on the signer (unless
   `allowSignerFullAccessKey`), or any function-call key that isn't in `get_governance().updater_keys` with exactly
   `UPDATER_METHODS`, stops the plan.
@@ -677,6 +706,12 @@ Replaces the matching rows of `security.md` "What a compromise gives" (D = `issu
 - Console audiences: a removal applies at once; an addition isn't accepted by the console-token check until
   `change_delay_ms` has passed, then is; `get_config` lists it as pending meanwhile; event JSON exact.
 - Unpause by the owner takes effect in the same call (no delay).
+- A scope change proposed with forged OIDC-owner tokens and a client proof, matured during a pause: `execute_change`
+  panics until `change_delay_ms` after the unpause, and an OIDC owner cancels in between; changes proposed after the
+  unpause keep their own timelock.
+- A session opened under a forged key can't derive after `remove_issuer_key` + `set_sessions_valid_from_ms` +
+  `unpause` (and can without the floor); the floor is owner-only, raise-only, never in the future; a v1 session
+  counts as opened at `expires_at_ms − MAX_SESSION_MS`; the session record reads both the v1 and the v2 form.
 
 ### Sandbox e2e (`contracts/integration-tests`)
 
@@ -711,7 +746,8 @@ Replaces the matching rows of `security.md` "What a compromise gives" (D = `issu
 - Each rule in [Watchdog service](#watchdog-service) steps 3–8: confirm on match; cancel + delete updater + critical
   on mismatch or absence (two fetches); a pending removal of a published kid alerts critical and calls nothing; pause
   only on an active kid never seen or with other key material, never on a dropped kid (warning) or at the first run
-  (critical, no pause); governance diffs alert and call nothing; heartbeat sent; no action on providers it doesn't
+  (critical, no pause); governance diffs alert and call nothing, including a change of the owner DAO's policy or code
+  and an unpause between two runs; heartbeat sent; no action on providers it doesn't
   know; no secret in any log line.
 - Severities route to the right channels (stub paging app, Slack, email); a critical alert re-sends every 15 min
   until acked and stops after an ack from the paging app or `POST /alerts/:id/ack`; an ack is recorded with who and
@@ -730,6 +766,9 @@ Replaces the matching rows of `security.md` "What a compromise gives" (D = `issu
 
 ### Scripts
 
+- `deploy-plan`: blocker on a council DAO policy other than the manifest's 2-of-3 council (1 of 3, an `Everyone`
+  role, other members, a per-kind policy) for `--transfer-owner` and for `ownerKind: "sputnik"`; blocker on delays
+  below the floors outside dev envs (a staging manifest copied from sandbox-dev), a warning in dev envs.
 - `deploy-plan`: blocker on a full-access key on the signer for `ownerKind: "sputnik"` unless
   `allowSignerFullAccessKey`; the schema refuses that flag on mainnet and only sandbox-dev's committed manifest sets
   it; blocker on an untracked signer key; owner steps rendered as proposals; mainnet-style plan refuses (testnet-only

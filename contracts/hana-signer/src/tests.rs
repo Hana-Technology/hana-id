@@ -675,7 +675,7 @@ fn session_key_in_use_covers_revoked_sessions_until_expiry() {
 fn create_session_prunes_up_to_three() {
     let mut c = setup();
     for seed in 20..25u8 {
-        c.sessions.insert(pk(seed), sessions::StoredSession { path: "p".into(), scope_id: "s1".into(), expires_at_ms: NOW_MS - 1, max_uses: 1, used: 0, revoked: false });
+        c.sessions.insert(pk(seed), sessions::StoredSession { path: "p".into(), scope_id: "s1".into(), expires_at_ms: NOW_MS - 1, max_uses: 1, used: 0, revoked: false, created_at_ms: None });
         c.session_queue.insert(c.queue_tail, sessions::QueueEntry { expires_at_ms: NOW_MS - 1, key: pk(seed) });
         c.queue_tail += 1;
     }
@@ -690,7 +690,7 @@ fn prune_sessions_is_capped_at_100() {
     let mut c = setup();
     for i in 0..105u32 {
         let key = [&i.to_le_bytes()[..], &[0u8; 28]].concat();
-        c.sessions.insert(key.clone(), sessions::StoredSession { path: "p".into(), scope_id: "s1".into(), expires_at_ms: NOW_MS - 1, max_uses: 1, used: 0, revoked: false });
+        c.sessions.insert(key.clone(), sessions::StoredSession { path: "p".into(), scope_id: "s1".into(), expires_at_ms: NOW_MS - 1, max_uses: 1, used: 0, revoked: false, created_at_ms: None });
         c.session_queue.insert(c.queue_tail, sessions::QueueEntry { expires_at_ms: NOW_MS - 1, key });
         c.queue_tail += 1;
     }
@@ -876,7 +876,7 @@ fn combined_login_with_two_uses_retries_with_counter_2() {
 fn combined_login_prunes_up_to_three() {
     let mut c = setup();
     for seed in 20..25u8 {
-        c.sessions.insert(pk(seed), sessions::StoredSession { path: "p".into(), scope_id: "s1".into(), expires_at_ms: NOW_MS - 1, max_uses: 1, used: 0, revoked: false });
+        c.sessions.insert(pk(seed), sessions::StoredSession { path: "p".into(), scope_id: "s1".into(), expires_at_ms: NOW_MS - 1, max_uses: 1, used: 0, revoked: false, created_at_ms: None });
         c.session_queue.insert(c.queue_tail, sessions::QueueEntry { expires_at_ms: NOW_MS - 1, key: pk(seed) });
         c.queue_tail += 1;
     }
@@ -1131,7 +1131,7 @@ fn config_view() {
             "change_delay_ms":DELAY_MS,"pending_change_delay":null,"public_registration":false,
             "issuer_key_delay_ms":KEY_DELAY_MS,"pending_issuer_key_delay":null,
             "governance_delay_ms":GOV_DELAY_MS,"pending_governance_delay":null,
-            "paused":false
+            "paused":false,"unpaused_at_ms":0,"changes_unlock_floor_ms":0,"sessions_valid_from_ms":0
         })
     );
 }
@@ -1168,6 +1168,7 @@ fn owner_only_calls() -> Vec<(&'static str, Box<dyn Fn(&mut HanaSigner)>)> {
             }),
         ),
         ("unpause", Box::new(|c| c.unpause())),
+        ("set_sessions_valid_from_ms", Box::new(|c| c.set_sessions_valid_from_ms(0))),
         ("propose_upgrade", Box::new(|c| c.propose_upgrade([1u8; 32].into()))),
         ("cancel_upgrade", Box::new(|c| c.cancel_upgrade())),
         ("propose_owner", Box::new(|c| c.propose_owner(acc(MALLORY)))),
@@ -3302,13 +3303,193 @@ fn only_the_owner_unpauses_and_at_once() {
     expect_panic("Only the owner or a watchdog can do this", || c.pause());
     ctx(ADMIN, NOW_MS);
     c.unpause();
-    assert_eq!(events(), vec![ev("unpaused", serde_json::json!({}))]);
+    // Scope changes pending across the pause get a full timelock from now (changes_unlock_floor_ms).
+    assert_eq!(events(), vec![ev("unpaused", serde_json::json!({"changes_unlock_floor_ms":NOW_MS + DELAY_MS}))]);
     assert!(!c.get_config().paused);
     // In force in the same block: logins work again at once.
     open(&mut c, "session_a", "s1", 7, 0);
     ctx(ADMIN, NOW_MS);
     c.unpause(); // no-op
     assert!(events().is_empty());
+}
+
+const MINUTE_MS: u64 = 60_000;
+
+/// The forged_active_key incident (docs/operations.md runbook), from the scope owners' side: an attacker with a forged
+/// key (the fixture key stands in for it; it also signs the honest owner's tokens, so it isn't removed here) proposes a
+/// change as s1's OIDC owner with a forged client proof; the watchdog pauses; the change matures while paused, when
+/// no OIDC owner can cancel (every token path stops). After the unpause it still waits a full change_delay_ms, and
+/// the honest OIDC owner cancels in that window.
+#[test]
+fn a_scope_change_pending_across_a_pause_gets_a_full_timelock_after_the_unpause() {
+    let unpause_at = NOW_MS + DELAY_MS + 10 * MINUTE_MS; // the change matured during the pause
+    let paused_through = |c: &mut HanaSigner| -> u64 {
+        ctx(RELAYER, NOW_MS);
+        let id = c.propose_change("s1".into(), oidc("oa_propose_e"), add(E), Some(tok("cp_e_s1_0")));
+        ctx(WATCHDOG, NOW_MS + MINUTE_MS);
+        c.pause();
+        // While paused the OIDC owner can't cancel.
+        ctx(RELAYER, NOW_MS + 2 * MINUTE_MS);
+        expect_panic("Paused", || c.cancel_change("s1".into(), oidc("oa_cancel_0"), id));
+        ctx(ADMIN, unpause_at);
+        c.unpause();
+        id
+    };
+
+    let mut c = setup();
+    let id = paused_through(&mut c);
+    assert_eq!(c.get_config().unpaused_at_ms, unpause_at);
+    assert_eq!(c.get_config().changes_unlock_floor_ms, unpause_at + DELAY_MS);
+    // get_scope shows when execute_change will accept it.
+    assert_eq!(c.get_scope("s1".into()).unwrap().pending[0].unlock_at_ms, unpause_at + DELAY_MS);
+    // Anyone executing in the block after the unpause, or until the window has run again, is refused.
+    for at in [unpause_at, unpause_at + DELAY_MS - 1] {
+        ctx(MALLORY, at);
+        expect_panic("Change is still timelocked", || c.execute_change("s1".into(), id));
+    }
+    // The honest OIDC owner cancels in between.
+    ctx(RELAYER, unpause_at + 10 * MINUTE_MS);
+    c.cancel_change("s1".into(), oidc("oa_cancel_0"), id);
+    assert!(c.get_scope("s1".into()).unwrap().pending.is_empty());
+
+    // Left alone, it executes once the window has run again.
+    let mut c = setup();
+    let id = paused_through(&mut c);
+    ctx(MALLORY, unpause_at + DELAY_MS);
+    c.execute_change("s1".into(), id);
+    assert_eq!(c.scope_for_client("google".into(), E.into()), Some("s1".into()));
+}
+
+#[test]
+fn the_unpause_floor_only_ever_delays_and_never_outlasts_a_change_delay() {
+    let mut c = setup();
+    // A NEAR owner's proposal made while paused (allowed) waits until a full delay after the unpause too.
+    ctx(ADMIN, NOW_MS);
+    c.pause();
+    ctx(ALICE, NOW_MS + MINUTE_MS);
+    let during = c.propose_change("s1".into(), OwnerAuth::Near, Change::SetOwners { owners: vec![near_owner(ALICE)] }, None);
+    ctx(ADMIN, NOW_MS + 30 * MINUTE_MS);
+    c.unpause();
+    let floor = NOW_MS + 30 * MINUTE_MS + DELAY_MS;
+    assert_eq!(c.get_scope("s1".into()).unwrap().pending[0].unlock_at_ms, floor);
+    // A change proposed after the unpause keeps its own timelock (it is already later than the floor).
+    ctx(BOB, NOW_MS + 40 * MINUTE_MS);
+    let after = c.propose_change("s2".into(), OwnerAuth::Near, Change::SetOwners { owners: vec![near_owner(BOB), near_owner(CAROL)] }, None);
+    assert_eq!(c.get_scope("s2".into()).unwrap().pending[0].unlock_at_ms, NOW_MS + 40 * MINUTE_MS + DELAY_MS);
+    ctx(MALLORY, floor);
+    c.execute_change("s1".into(), during);
+    ctx(MALLORY, NOW_MS + 40 * MINUTE_MS + DELAY_MS);
+    c.execute_change("s2".into(), after);
+    // A pause and unpause with nothing pending: later proposals wait their own delay only.
+    ctx(ADMIN, floor + DELAY_MS);
+    c.pause();
+    c.unpause();
+    ctx(ALICE, floor + 2 * DELAY_MS);
+    c.propose_change("s1".into(), OwnerAuth::Near, Change::SetOwners { owners: vec![near_owner(ALICE), near_owner(CAROL)] }, None);
+    assert_eq!(c.get_scope("s1".into()).unwrap().pending[0].unlock_at_ms, floor + 3 * DELAY_MS);
+}
+
+/// The forged_active_key incident from the users' side: a session the forged key opened (for any user's path, with
+/// up to MAX_SESSION_MS and max_uses of the attacker's choosing) keeps deriving after the key is removed and the
+/// contract unpaused, unless the owner raises the session floor past the pause first.
+#[test]
+fn a_session_opened_with_a_forged_key_cannot_derive_after_the_session_floor() {
+    let attack = |raise_floor: bool| -> HanaSigner {
+        let mut c = setup();
+        ctx(RELAYER, NOW_MS);
+        open(&mut c, "session_a", "s1", 7, 0); // the attacker's session, opened with the forged key
+        ctx(WATCHDOG, NOW_MS + MINUTE_MS);
+        c.pause();
+        ctx(ADMIN, NOW_MS + 10 * MINUTE_MS);
+        c.remove_issuer_key("google".into(), "test-kid".into());
+        if raise_floor {
+            c.set_sessions_valid_from_ms(NOW_MS + MINUTE_MS + 1); // just after the pause: no session opens while paused
+            assert_eq!(events().last(), Some(&ev("sessions_valid_from_set", serde_json::json!({"sessions_valid_from_ms":NOW_MS + MINUTE_MS + 1}))));
+        }
+        c.unpause();
+        ctx(RELAYER, NOW_MS + 10 * MINUTE_MS);
+        c
+    };
+    // Without the floor, removing the key and unpausing only delayed it.
+    let mut c = attack(false);
+    derive(&mut c, 7, 1);
+    assert_eq!(get_created_receipts().len(), 1);
+    // With it, the session is gone for derive_key and get_session; its key stays burnt until expiry.
+    let mut c = attack(true);
+    expect_panic("No such session", || derive(&mut c, 7, 1));
+    assert_eq!(c.get_session(pk(7)), None);
+    assert!(c.session_key_in_use(pk(7)));
+    assert_eq!(c.get_config().sessions_valid_from_ms, NOW_MS + MINUTE_MS + 1);
+}
+
+#[test]
+fn the_session_floor_is_owner_only_raised_only_and_never_in_the_future() {
+    let mut c = setup();
+    ctx(RELAYER, NOW_MS);
+    open(&mut c, "session_a", "s1", 7, 0);
+    // A session opened at the floor is in force.
+    ctx(ADMIN, NOW_MS);
+    c.set_sessions_valid_from_ms(NOW_MS);
+    ctx(RELAYER, NOW_MS);
+    derive(&mut c, 7, 1);
+    for caller in [WATCHDOG, MALLORY, ME] {
+        ctx(caller, NOW_MS + 1);
+        expect_panic("Only the owner can do this", || c.set_sessions_valid_from_ms(NOW_MS + 1));
+    }
+    ctx(ADMIN, NOW_MS + 1);
+    expect_panic("sessions_valid_from_ms can't be in the future", || c.set_sessions_valid_from_ms(NOW_MS + 2));
+    c.set_sessions_valid_from_ms(NOW_MS + 1);
+    expect_panic("sessions_valid_from_ms can only be raised", || c.set_sessions_valid_from_ms(NOW_MS));
+    // Sessions opened from the floor on work (a login right after the incident); older ones don't.
+    ctx(RELAYER, NOW_MS + 1);
+    c.create_session(tok("session_a2"), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3);
+    derive(&mut c, 8, 1);
+    expect_panic("No such session", || derive(&mut c, 7, 2));
+    expect_panic("No such session", || c.revoke_session(pk(7), 2, session_sig(7, 2, crate::sessions::REVOKE_PAYLOAD)));
+    // Allowed while paused (the runbook raises it before the unpause).
+    ctx(ADMIN, NOW_MS + 2);
+    c.pause();
+    c.set_sessions_valid_from_ms(NOW_MS + 2);
+}
+
+#[test]
+fn a_v1_session_counts_as_opened_max_session_ms_before_its_expiry() {
+    use crate::sessions::MAX_SESSION_MS;
+    // The v1 fixture's session for pk(7) (no created_at_ms) expires at EXPIRES_MS: it was opened no earlier than
+    // EXPIRES_MS - 24 h, and that is what the floor is compared with.
+    ctx_with_storage(ME, NOW_MS, v1_storage());
+    let mut c = HanaSigner::migrate_v1(KEY_DELAY_MS, GOV_DELAY_MS);
+    assert_eq!(c.sessions.get(&pk(7)).unwrap().created_at_ms, None);
+    ctx(ADMIN, NOW_MS);
+    c.set_sessions_valid_from_ms(EXPIRES_MS - MAX_SESSION_MS);
+    assert!(c.get_session(pk(7)).is_some());
+    c.set_sessions_valid_from_ms(EXPIRES_MS - MAX_SESSION_MS + 1);
+    assert_eq!(c.get_session(pk(7)), None);
+    ctx(RELAYER, NOW_MS);
+    expect_panic("No such session", || derive(&mut c, 7, 2));
+}
+
+#[test]
+fn stored_sessions_read_both_the_v1_and_the_v2_record() {
+    use near_sdk::borsh::{to_vec, BorshDeserialize};
+    let v1 = sessions::StoredSession { path: "s1#google#1#0".into(), scope_id: "s1".into(), expires_at_ms: EXPIRES_MS, max_uses: 3, used: 1, revoked: false, created_at_ms: None };
+    let v2 = sessions::StoredSession { created_at_ms: Some(NOW_MS), ..v1.clone() };
+    let v1_bytes = to_vec(&v1).unwrap();
+    // The v1 layout exactly (the record v1 code wrote), and v2 = that plus created_at_ms u64 LE.
+    let mut expected = to_vec(&("s1#google#1#0", "s1", EXPIRES_MS, 3u32, 1u32, false)).unwrap();
+    assert_eq!(v1_bytes, expected);
+    expected.extend(NOW_MS.to_le_bytes());
+    assert_eq!(to_vec(&v2).unwrap(), expected);
+    assert_eq!(sessions::StoredSession::try_from_slice(&v1_bytes).unwrap(), v1);
+    assert_eq!(sessions::StoredSession::try_from_slice(&expected).unwrap(), v2);
+    // A partial or overlong tail is corrupt.
+    assert!(sessions::StoredSession::try_from_slice(&expected[..expected.len() - 1]).is_err());
+    assert!(sessions::StoredSession::try_from_slice(&[expected.as_slice(), &[0]].concat()).is_err());
+    // create_session stores its time.
+    let mut c = setup();
+    ctx(RELAYER, NOW_MS + 5);
+    open(&mut c, "session_a", "s1", 7, 0);
+    assert_eq!(c.sessions.get(&pk(7)).unwrap().created_at_ms, Some(NOW_MS + 5));
 }
 
 // ---- updater keys ----
@@ -3789,7 +3970,7 @@ fn migrate_v1_keeps_every_scope_client_session_and_issuer_key() {
             "public_registration":false,
             "issuer_key_delay_ms":KEY_DELAY_MS,"pending_issuer_key_delay":null,
             "governance_delay_ms":GOV_DELAY_MS,"pending_governance_delay":null,
-            "paused":false
+            "paused":false,"unpaused_at_ms":0,"changes_unlock_floor_ms":0,"sessions_valid_from_ms":0
         })
     );
     assert_eq!(

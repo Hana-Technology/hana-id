@@ -2,8 +2,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KeyPair } from '@near-js/crypto';
-import { type Manifest, PAGER_PROVIDERS, manifestSchema } from '@hana-id/env';
+import { type Manifest, PAGER_PROVIDERS, manifestSchema, WATCHDOG_INTERVAL_MS } from '@hana-id/env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { RUN_INTERVAL_MS } from '../../src/checks.ts';
 import { PAGER_PROVIDERS as WORKER_PAGERS, SECRET_NAMES } from '../../src/names.ts';
 import { CRON, LOCAL_D1_ID, TEST_MANIFEST, devVarsContent, existingD1Id, main, testWranglerConfig, wranglerConfig, writeWranglerConfig } from '../gen-wrangler.ts';
 import { SECRET_RULES } from '../secrets.ts';
@@ -46,6 +47,9 @@ describe('wranglerConfig', () => {
       },
     });
     expect(CRON).toBe('*/5 * * * *');
+    // The interval the deploy-contract delay floor assumes (W in issuer_key_delay_ms ≥ 3·(W + T), @hana-id/env).
+    expect(RUN_INTERVAL_MS).toBe(5 * 60_000);
+    expect(WATCHDOG_INTERVAL_MS).toBe(RUN_INTERVAL_MS);
   });
 
   it('puts no secret in the config: secrets are Worker secrets', () => {

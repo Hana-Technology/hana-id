@@ -58,6 +58,12 @@ export interface ConfigView {
   governance_delay_ms: number;
   pending_governance_delay: DelayChange | null;
   paused: boolean;
+  /** When the owner last unpaused (0: never): a pause and unpause between two runs still shows here. */
+  unpaused_at_ms: number;
+  /** No scope change executes before this (each unpause re-arms the scope-change timelock). */
+  changes_unlock_floor_ms: number;
+  /** Sessions opened before this can't derive (the owner raises it after a forged key was active). */
+  sessions_valid_from_ms: number;
 }
 
 export interface WatchdogEntry {
@@ -77,6 +83,20 @@ export interface GovernanceView {
   pending_withdrawal: { receiver: string; amount: string; executable_at_ms: number } | null;
 }
 
+/**
+ * The contract owner's account (`get_config().owner`): its code and, for a Sputnik DAO council, its `get_policy`. A
+ * council's roles, members and vote policies decide who can act as the owner (D81: 2 of 3 for every proposal kind),
+ * and a `ChangePolicy`, `AddMember` or `RemoveMember` changes them without touching hana-signer, so the watchdog
+ * diffs them too.
+ */
+export interface OwnerAccount {
+  account_id: string;
+  /** `view_account` code hash (`11111111111111111111111111111111`: no contract, a plain account). */
+  code_hash: string;
+  /** The DAO's `get_policy`, or null when the owner has no contract or the contract has no `get_policy`. */
+  policy: unknown;
+}
+
 /** Everything one run reads from the chain. */
 export interface ChainSnapshot {
   keyChanges: KeyChange[];
@@ -86,6 +106,8 @@ export interface ChainSnapshot {
   issuerKeys: IssuerKey[] | null;
   config: ConfigView;
   governance: GovernanceView;
+  /** The owner account (null when `get_config` names none). */
+  owner: OwnerAccount | null;
 }
 
 export interface ChainReader {

@@ -631,6 +631,27 @@ async fn pause_freezes_logins_until_the_owner_unpauses() -> Result<()> {
     Ok(())
 }
 
+/// The forged_active_key runbook's last step before the unpause: sessions opened before the pause (with the forged key,
+/// or not) stop deriving once the owner raises the session floor past the pause; logins after the unpause work.
+#[tokio::test]
+async fn the_session_floor_retires_sessions_opened_before_it() -> Result<()> {
+    let env = Env::setup().await?;
+    let signer = env.signer.id();
+    let (mut early, jwt) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
+    env.create_session(&env.relayer_fc, &early, &jwt).await?.into_result()?;
+    env.watchdog.call(signer, "pause").transact().await?.into_result()?;
+    let floor = env.now_ms().await?;
+    expect_failure(tx(env.watchdog.call(signer, "set_sessions_valid_from_ms").args_json(json!({"sessions_valid_from_ms": floor})).transact().await), "Only the owner can do this");
+    env.admin.call(signer, "set_sessions_valid_from_ms").args_json(json!({"sessions_valid_from_ms": floor})).transact().await?.into_result()?;
+    env.admin.call(signer, "unpause").transact().await?.into_result()?;
+    assert_eq!(env.get_config().await?["sessions_valid_from_ms"], json!(floor));
+    expect_failure(tx(env.relayer_fc.call(signer, "derive_key").args_json(early.derive_args(PK1, PK2)).gas(api_gas("derive_key")).transact().await), "No such session");
+    assert!(env.get_session(&early).await?.is_none());
+    let (mut s, jwt) = env.new_session(APP_A, USER_SUB, &env.scope_a, 0, 600_000).await?;
+    env.login(&env.relayer_fc, &s.login_args(&jwt, PK1, PK2)).await?.into_result()?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Owner = Sputnik DAO v2, 2 of 3 (D81)
 

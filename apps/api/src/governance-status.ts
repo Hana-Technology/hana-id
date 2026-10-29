@@ -94,6 +94,12 @@ export interface GovernanceStatus {
   readAtMs: number;
   stateVersion: number;
   paused: boolean;
+  /** When the owner last unpaused (0: never). */
+  unpausedAtMs: number;
+  /** No scope change executes before this: each unpause gives changes pending across the pause a full timelock. */
+  changesUnlockFloorMs: number;
+  /** Sessions opened before this can't derive (raised by the owner after a forged issuer key was active). */
+  sessionsValidFromMs: number;
   delays: {
     issuerKeyDelayMs: number;
     governanceDelayMs: number;
@@ -213,6 +219,9 @@ export async function readGovernanceStatus(env: Env, now: number = Date.now()): 
     readAtMs: now,
     stateVersion: num(governance.state_version),
     paused: bool(config.paused),
+    unpausedAtMs: num(config.unpaused_at_ms),
+    changesUnlockFloorMs: num(config.changes_unlock_floor_ms),
+    sessionsValidFromMs: num(config.sessions_valid_from_ms),
     delays: {
       issuerKeyDelayMs: num(config.issuer_key_delay_ms),
       governanceDelayMs: num(config.governance_delay_ms),

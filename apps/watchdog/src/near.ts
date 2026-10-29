@@ -3,7 +3,7 @@
 import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { actionCreators, createTransaction, encodeTransaction, Signature, SignedTransaction } from '@near-js/transactions';
 import { baseDecode, baseEncode } from '@near-js/utils';
-import type { ChainReader, ChainSnapshot, ChainWriter, ConfigView, GovernanceView, IssuerKey, IssuerView, KeyChange, TxResult, WatchdogMethod } from './chain.ts';
+import type { ChainReader, ChainSnapshot, ChainWriter, ConfigView, GovernanceView, IssuerKey, IssuerView, KeyChange, OwnerAccount, TxResult, WatchdogMethod } from './chain.ts';
 import { WATCHDOG_METHODS } from './chain.ts';
 import { log } from './log.ts';
 
@@ -97,6 +97,9 @@ export class Rpc {
 
 const isMethodNotFound = (err: unknown): boolean => err instanceof Error && /MethodNotFound|MethodResolveError/u.test(err.message);
 
+/** `view_account` code hash of an account without a contract. */
+export const EMPTY_CODE_HASH = '11111111111111111111111111111111';
+
 export class NearChain implements ChainReader {
   constructor(
     private readonly rpc: Rpc,
@@ -125,7 +128,23 @@ export class NearChain implements ChainReader {
     if (!Array.isArray(keyChanges) || typeof config !== 'object' || config === null || typeof governance !== 'object' || governance === null) {
       throw new RpcError('Unexpected view shape', false);
     }
-    return { keyChanges, issuer, issuerKeys, config, governance };
+    const owner = typeof config.owner === 'string' ? await this.ownerAccount(config.owner) : null;
+    return { keyChanges, issuer, issuerKeys, config, governance, owner };
+  }
+
+  /** The owner's code hash and, if it runs a contract with `get_policy` (a Sputnik DAO), its policy. */
+  private async ownerAccount(accountId: string): Promise<OwnerAccount> {
+    const account = await this.rpc.call<{ code_hash?: unknown }>('query', { request_type: 'view_account', finality: 'final', account_id: accountId });
+    if (typeof account?.code_hash !== 'string') throw new RpcError('Unexpected view_account shape', false);
+    let policy: unknown = null;
+    if (account.code_hash !== EMPTY_CODE_HASH) {
+      try {
+        policy = await this.rpc.view<unknown>(accountId, 'get_policy', {});
+      } catch (err) {
+        if (!isMethodNotFound(err)) throw err;
+      }
+    }
+    return { account_id: accountId, code_hash: account.code_hash, policy };
   }
 }
 

@@ -159,6 +159,7 @@ async fn access_keys_are_limited() -> Result<()> {
         ("remove_watchdog", json!({"account_id": env.watchdog.id()})),
         ("pause", json!({})),
         ("unpause", json!({})),
+        ("set_sessions_valid_from_ms", json!({"sessions_valid_from_ms": 0})),
         ("add_updater_key", json!({"public_key": SecretKey::from_random(KeyType::ED25519).public_key().to_string()})),
         ("propose_upgrade", json!({"code_hash": code_hash(b"evil")})),
         ("cancel_upgrade", json!({})),

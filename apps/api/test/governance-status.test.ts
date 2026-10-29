@@ -37,6 +37,9 @@ const config = (extra: Record<string, unknown> = {}) => ({
   governance_delay_ms: 259_200_000,
   pending_governance_delay: null,
   paused: false,
+  unpaused_at_ms: NOW - 3_600_000,
+  changes_unlock_floor_ms: NOW + 169_200_000,
+  sessions_valid_from_ms: NOW - 3_600_001,
   ...extra,
 });
 
@@ -100,6 +103,9 @@ describe('GET /v1/governance', () => {
       readAtMs: NOW,
       stateVersion: 2,
       paused: false,
+      unpausedAtMs: NOW - 3_600_000,
+      changesUnlockFloorMs: NOW + 169_200_000,
+      sessionsValidFromMs: NOW - 3_600_001,
       delays: {
         issuerKeyDelayMs: 7_200_000,
         governanceDelayMs: 259_200_000,

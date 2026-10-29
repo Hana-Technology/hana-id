@@ -76,6 +76,30 @@ describe('NearChain', () => {
     expect(s.keyChanges[0]?.kid).toBe('k2');
     const issuerCalls = calls.filter((c) => ['get_issuer', 'get_issuer_keys'].includes(c.params.method_name as string));
     expect(issuerCalls.map((c) => viewArgs(c.params))).toEqual([{ provider: 'google' }, { provider: 'google' }]);
+    expect(s.owner).toBeNull(); // this get_config names no owner
+  });
+
+  it("reads the owner account's code hash and, for a DAO, its get_policy", async () => {
+    const DAO = 'council.sputnikv2.testnet';
+    const policy = { roles: [{ name: 'council', kind: { Group: ['a', 'b', 'c'] } }], default_vote_policy: { threshold: [1, 2] } };
+    const handler = (codeHash: string, daoPolicy: unknown): Handler => (_u, method, p) => {
+      if (p.request_type === 'view_account') return { result: { amount: '1', code_hash: codeHash } };
+      if (p.method_name === 'get_policy') return daoPolicy === undefined ? { result: { error: 'wasm execution failed with error: MethodResolveError(MethodNotFound)' } } : viewResult(daoPolicy);
+      return viewResult({ ...views, get_config: { paused: false, owner: DAO } }[p.method_name as string]);
+    };
+    const calls = stubRpc(handler('DAOcode1111111111111111111111111111111111111', policy));
+    const s = await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot('google');
+    expect(s.owner).toEqual({ account_id: DAO, code_hash: 'DAOcode1111111111111111111111111111111111111', policy });
+    expect(calls.find((c) => c.params.request_type === 'view_account')?.params).toMatchObject({ account_id: DAO, finality: 'final' });
+    expect(calls.find((c) => c.params.method_name === 'get_policy')?.params).toMatchObject({ account_id: DAO, finality: 'final' });
+    // A plain account (no contract): no get_policy call. A contract without get_policy: policy null.
+    vi.restoreAllMocks();
+    const plain = stubRpc(handler('11111111111111111111111111111111', policy));
+    expect((await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot('google')).owner).toEqual({ account_id: DAO, code_hash: '11111111111111111111111111111111', policy: null });
+    expect(plain.some((c) => c.params.method_name === 'get_policy')).toBe(false);
+    vi.restoreAllMocks();
+    stubRpc(handler('Other11111111111111111111111111111111111111', undefined));
+    expect((await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot('google')).owner?.policy).toBeNull();
   });
 
   it('treats a contract without get_issuer_keys as no key material', async () => {

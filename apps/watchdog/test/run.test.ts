@@ -2,7 +2,7 @@
 // chain, a scripted JWKS and recording channels.
 import { describe, expect, it } from 'vitest';
 import { ABSENCE_RECHECK_MS } from '../src/run.ts';
-import { alertsOf, HOUR, initialized, jwk, MIN, OWNER, T0, UPDATER_KEYS, WATCHDOG, world } from './helpers.ts';
+import { alertsOf, councilPolicy, HOUR, initialized, jwk, MIN, OWNER, T0, UPDATER_KEYS, WATCHDOG, world } from './helpers.ts';
 
 const channelsOf = (w: { notifier: { sent: { channel: string; msg: { kind: string } }[] } }, kind: string) =>
   w.notifier.sent.filter((s) => s.msg.kind === kind).map((s) => s.channel).sort();
@@ -347,6 +347,29 @@ describe('governance diff (step 6): alert only', () => {
     expect(w.writer.calls).toEqual([]);
     const [g] = await alertsOf(w.store, 'governance_change');
     expect((g?.details.changes as { field: string }[]).map((c) => c.field)).toEqual([field]);
+  });
+
+  it("alerts critical when the owner DAO's policy changes (AddMember, ChangePolicy) and calls nothing", async () => {
+    const w = await initialized();
+    const policy = councilPolicy(['a.test.near', 'b.test.near', 'c.test.near', 'mallory.test.near']);
+    w.chain.owner = { ...w.chain.owner, policy };
+    await w.run();
+    expect(w.writer.calls).toEqual([]);
+    const [g] = await alertsOf(w.store, 'governance_change');
+    expect(g?.severity).toBe('critical');
+    expect(g?.details.changes).toEqual([{ field: 'owner_policy', before: councilPolicy(), after: policy }]);
+    expect(channelsOf(w, 'governance_change')).toEqual(['email', 'pager', 'slack']);
+    // The next run compares with the new policy: no second alert.
+    await w.run();
+    expect(await alertsOf(w.store, 'governance_change')).toHaveLength(1);
+  });
+
+  it('alerts critical on a pause and unpause that both fell between two runs', async () => {
+    const w = await initialized();
+    w.chain.config.unpaused_at_ms = w.clock.t - MIN;
+    w.chain.config.changes_unlock_floor_ms = w.clock.t + HOUR;
+    await w.run();
+    expect(((await alertsOf(w.store, 'governance_change'))[0]?.details.changes as { field: string }[]).map((c) => c.field)).toEqual(['unpaused_at_ms']);
   });
 
   it('alerts critical on an unpause', async () => {

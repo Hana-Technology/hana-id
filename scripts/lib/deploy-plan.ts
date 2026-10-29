@@ -6,8 +6,11 @@
 // a v2 contract only through propose_upgrade (owner) → wait governance_delay_ms → execute_upgrade (anyone). Owner
 // steps go through owner-tx (the owner account, or a council DAO proposal). The signer's keys are checked against
 // get_governance().updater_keys: outside allowSignerFullAccessKey envs a full-access key on the signer, and anywhere
-// a function-call key the contract didn't install, stops the plan.
-import { isDevEnv, type Manifest } from '@hana-id/env';
+// a function-call key the contract didn't install, stops the plan. Before any owner transfer to the council, and on
+// every run once it owns the contract, the DAO's code must be the pinned Sputnik wasm and its get_policy the council
+// policy (D81: exactly the manifest members, 2 of 3 for every proposal kind). Outside dev envs the two governance
+// delays must meet their floors (@hana-id/env governanceDelayProblems).
+import { governanceDelayProblems, isDevEnv, type Manifest } from '@hana-id/env';
 import {
   type ContractConfig,
   GLOBAL_SCOPE,
@@ -29,6 +32,7 @@ import {
 import { KEY_POOLS, type KeyPool, poolFileName } from './keys.ts';
 import { type AccessKeyListEntry, describePermission, EMPTY_CODE_HASH, formatNear, STORAGE_YOCTO_PER_BYTE } from './near.ts';
 import { checkOwnerTxOptions, describeOwnerCall, type OwnerCall, ownerRoute, type OwnerTxOptions, proposingMember } from './owner-tx.ts';
+import { policyProblems, type SputnikPolicy } from './sputnik.ts';
 
 export type Role = 'signer' | 'relayer' | 'owner';
 export const ROLES: readonly Role[] = ['signer', 'relayer', 'owner'];
@@ -76,8 +80,8 @@ export interface DeployObserved {
   wasmCodeHash: string | null;
   /** Which manifest watchdog accounts exist on chain. */
   watchdogAccounts: Record<string, boolean>;
-  /** The council DAO account (null without a council). */
-  councilDao: { exists: boolean; codeHash: string } | null;
+  /** The council DAO account (null without a council); `policy` is its get_policy (null if it fails or no DAO). */
+  councilDao: { exists: boolean; codeHash: string; policy: SputnikPolicy | null } | null;
   /** Council members whose signing key the scripts can read (dev: .secrets/<env>/council/; else ~/.near-credentials). */
   councilKeys: Record<string, boolean>;
 }
@@ -105,6 +109,8 @@ export interface DeployOptions {
   ownerTx: OwnerTxOptions;
   /** The pinned Sputnik DAO code hash (contracts/sputnik/pin.json). */
   sputnikCodeHash: string;
+  /** The council policy template (default: contracts/sputnik/policy.json, the policy the sandbox DAO test checks). */
+  sputnikPolicy?: SputnikPolicy;
 }
 
 export interface NewArgs {
@@ -295,6 +301,14 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
   if (m.ownerKind === 'sputnik' || opts.transferOwner) {
     if (!m.council || !o.councilDao?.exists) blockers.push(`The council DAO ${m.council?.dao ?? '(none in the manifest)'} does not exist: run council-setup ${m.name} first.`);
     else if (o.councilDao.codeHash !== opts.sputnikCodeHash) blockers.push(`${m.council.dao} runs code ${o.councilDao.codeHash}, not the pinned Sputnik DAO ${opts.sputnikCodeHash} (contracts/sputnik/pin.json).`);
+    else if (!o.councilDao.policy) blockers.push(`${m.council.dao} runs the Sputnik DAO code but get_policy fails (not initialised?): its council can't be checked against D81.`);
+    else {
+      // The code hash says nothing about who votes: a factory DAO may be 1 of 3, have an Everyone role or other
+      // members. The owner must be exactly the council of the manifest, 2 of 3 for every proposal kind (D81).
+      const p = policyProblems(o.councilDao.policy, m.council.members, opts.sputnikPolicy);
+      for (const b of p.blockers) blockers.push(`${m.council.dao}: ${b} (D81: exactly ${m.council.members.join(', ')}, 2 of 3 for every proposal kind; contracts/sputnik/policy.json).`);
+      for (const w of p.warnings) warnings.push(`${m.council.dao}: ${w}.`);
+    }
   }
 
   // --- contract code + init / migration / upgrade ---
@@ -303,6 +317,18 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
   const initialised = o.config !== null;
   const v1 = initialised && o.governance === null;
   const delays = m.issuerKeyDelayMs !== undefined && m.governanceDelayMs !== undefined ? { issuer_key_delay_ms: m.issuerKeyDelayMs, governance_delay_ms: m.governanceDelayMs } : null;
+  // The delays the env runs with once the plan ran: the manifest's (set by new / migrate_v1 / set-delay), else the
+  // contract's own (the plan sets none then).
+  const onChainDelay = (field: 'issuer_key_delay_ms' | 'governance_delay_ms'): number | undefined => {
+    const v = o.config?.[field];
+    return typeof v === 'number' ? v : undefined;
+  };
+  const delayCheck = governanceDelayProblems(m, {
+    issuerKeyDelayMs: m.issuerKeyDelayMs ?? onChainDelay('issuer_key_delay_ms'),
+    governanceDelayMs: m.governanceDelayMs ?? onChainDelay('governance_delay_ms'),
+  });
+  blockers.push(...delayCheck.blockers);
+  warnings.push(...delayCheck.warnings);
   const signerFullKeys = o.signerAccessKeys.filter((k) => k.access_key.permission === 'FullAccess');
   /** Governance as it will be once the code steps of this plan ran (null: unknown, v1 not migrated). */
   let gov: GovernanceView | null = o.governance;
@@ -721,6 +747,8 @@ export function creationPlan(m: Manifest, input: CreationPlanInput): { problems:
   if (!m.council) problems.push(`envs/${m.name}.json needs a council: the owner from the first transaction is the council DAO (D81).`);
   if (m.issuerKeyDelayMs === undefined || m.governanceDelayMs === undefined) problems.push(`envs/${m.name}.json needs issuerKeyDelayMs and governanceDelayMs (D80).`);
   if (!(m.watchdogs ?? []).length) problems.push(`envs/${m.name}.json lists no watchdogs: with none, every key change waits governance_delay_ms.`);
+  const delayCheck = governanceDelayProblems(m);
+  problems.push(...delayCheck.blockers);
   if (problems.length) return { problems, lines: [] };
   const updater = input.updaterPublicKey ?? '<updater public key: the API KEYS_UPDATER_KEY>';
   const creation = input.creationPublicKey ?? '<creation public key: the signer account\'s only key>';
@@ -738,6 +766,7 @@ export function creationPlan(m: Manifest, input: CreationPlanInput): { problems:
     'MAINNET-STYLE SIGNER CREATION BATCH: printed only. This script never sends it; the user runs it, never an agent',
     '(docs/governance-spec.md "Migration plan" → Mainnet, docs/operations.md "Creating a signer with governance in place").',
     '',
+    ...delayCheck.warnings.flatMap((w) => [`WARNING: ${w}`, '']),
     'Before: the council DAO and the watchdog account exist, the watchdog service and its alerts run, the updater key',
     'is generated where the API secret will live, and the build below is published (D86).',
     '',

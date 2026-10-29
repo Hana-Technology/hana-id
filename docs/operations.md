@@ -63,7 +63,7 @@ Every name comes from `envs/<env>.json` (schema: `packages/env/src/schema.ts`; n
 | `ownerKind` | `account` (the owner's keychain key signs) or `sputnik` (`owner` is `council.dao`; owner calls are DAO proposals) | default `account`; `deploy-contract --transfer-owner` switches it after the DAO accepts |
 | `council` (optional) | `{factory, dao, members}`: the owner council, a Sputnik DAO v2 `<name>.<factory>` with exactly three members, 2 of 3 for every proposal kind (D81) | sandbox-dev: `sputnikv2.testnet`, members funded by `council-setup` (2 NEAR each), DAO 6 NEAR |
 | `watchdogs` | watchdog accounts (≤ 3) the contract lets cancel, confirm and pause | default none; `add_watchdog` is skipped until the account exists |
-| `issuerKeyDelayMs`, `governanceDelayMs` | `new` / `migrate_v1` delays (D80) | sandbox-dev: 120 000 and 60 000; mainnet 2 h (provisional) and 72 h |
+| `issuerKeyDelayMs`, `governanceDelayMs` | `new` / `migrate_v1` delays (D80) | sandbox-dev: 120 000 and 60 000; mainnet 2 h (provisional) and 72 h. Outside dev envs `deploy-contract` (and `--creation-plan`) refuses an issuer-key delay below the security bound 3·(W + T) = 18 min and a governance delay below 24 h (mainnet: 72 h); `@hana-id/env` `governanceDelayProblems`. sandbox-dev's 2 min deliberately violates the bound for fast drills (D80): its plans carry a warning, never copy its delays to another env |
 | `allowSignerFullAccessKey` | the signer may keep a full-access key (D86) | only `local*` / `sandbox*` testnet envs; sandbox-dev only among committed manifests |
 | `mpc` | the NEAR MPC contract (exists already; not ours) | — |
 | `ckdDomainId`, `ckdNetworkKey` | CKD domain and the pinned MPC public key | pin with `fetch-ckd-key` |
@@ -252,7 +252,11 @@ The DAO code and policy are pinned in `contracts/sputnik/` (`pin.json`: v3.31, `
 `AA4nA45vauiac3jdVwJTzSdUP3oj2r1fDaPAb2mHdgcH`, 539 647 bytes; `policy.json`: one `council` role with exactly the
 manifest's three members, `RoleWeight` threshold `[1, 2]` for every proposal kind = 2 of 3, no `Everyone` role, no
 `RemoveProposal`, bond 0.1 NEAR, 7-day proposals). The sandbox test `sputnik_dao_owner_2_of_3` checks that wasm with
-that policy; the scripts read the same files.
+that policy; the scripts read the same files. `deploy-contract` checks the DAO's `get_policy` against it (not only
+its code hash) before `--transfer-owner` and on every run of a council-owned env, and blocks on any role, member,
+permission or vote-policy difference (`sputnik.ts` `policyProblems`): a staging or mainnet DAO is created by hand, so
+this is the check that it really is 2 of 3 for every kind. The watchdog alerts critical on any later change of the
+owner DAO's policy or code (`owner_policy`, `owner_code_hash`).
 
 **What was verified (2026-10-29), and how.** From the pinned commit of near-daos/sputnik-dao-contract: the factory's
 `create(name, args)` takes base64 JSON `{config, policy}`, needs a deposit of at least (code bytes + 32) × 10¹⁹ yocto
@@ -397,7 +401,9 @@ read these sources, all read-only:
   [{publicKey, permission, tracked}], council: {dao, policy, openProposals}, findings: [string]}`. `findings` are the
   checks the portal must show as problems: untracked signer keys, a full-access key where none is allowed, a tracked
   key with the wrong permission or missing, paused, a pending upgrade / owner transfer / withdrawal, no watchdog, a
-  due key change nobody executed, a contract owner other than the manifest's, a missing DAO. The portal's Worker
+  due key change nobody executed, a contract owner other than the manifest's, a missing DAO, a council DAO whose
+  `get_policy` isn't exactly the manifest's council at 2 of 3 for every kind (or can't be read), and on-chain
+  delays below the non-dev floors. The portal's Worker
   makes the same reads itself (`scripts/lib/admin-owner.ts` `governanceStatus` is the reference implementation).
 - **API**: `GET /v1/governance` serves the contract part already normalised, with JWKS verdicts and the cron's last
   run ([below](#governance-status-get-v1governance)); not independent of Hana's main Cloudflare account.
@@ -865,17 +871,19 @@ attached-deposit '0 NEAR' sign-as <owner> network-config testnet sign-with-legac
 | Kind | What it means | What to do |
 |---|---|---|
 | `forged_key_change` | A pending issuer key Google doesn't publish (or with other material). The watchdog cancelled it and, if the updater proposed it, deleted every updater key | Treat `KEYS_UPDATER_KEY` (the API Worker's secrets) as stolen: find how, rotate. Re-add a fresh updater key (`add_updater_key`) and set it on the API. If the owner proposed it, treat the owner council as compromised |
-| `forged_active_key` | A key Google doesn't publish is **active**: the contract is paused (logins and derivation stop) | The owner removes the key (`remove_issuer_key {provider, kid}`), then unpauses (`unpause {}`, at once). Find how it got there: delay while the watchdog was down, an owner post, or an upgrade. The watchdog pauses again while the key stays active |
+| `forged_active_key` | A key Google doesn't publish is **active**: the contract is paused (logins and derivation stop). While it was active, anyone holding its private key could open sessions for any user's path and post OIDC-owner tokens and client proofs | Stay paused until all three steps are done, in this order: (1) the owner removes the key (`remove_issuer_key {provider, kid}`); (2) the owner raises the session floor past the pause: `set_sessions_valid_from_ms {sessions_valid_from_ms: <block time of the "paused" event, ms> + 1}`. Sessions opened with the forged key otherwise keep deriving after the unpause, for up to 24 h (`MAX_SESSION_MS`) with whatever `max_uses` the attacker chose; with the floor every session opened before the pause is gone (users log in again); (3) `unpause {}` (at once). Then review every scope change proposed while the key was active (`change_proposed` events since its `issuer_key_set`): the unpause gives each pending change a full `change_delay_ms` again (`get_config().changes_unlock_floor_ms`), and its OIDC owners cancel the ones they didn't make (`cancel_change`); Hana can't cancel scope changes. Changes that already executed or immediate actions (`remove_client`, `disable_shared_login`) by forged owner tokens are reverted by the scope's owners. Find how the key got there: delay while the watchdog was down, an owner post, or an upgrade. The watchdog pauses again while the key stays active |
 | `published_key_removal` | A pending removal of a kid Google still publishes (logins with it would break) | The owner cancels it (`cancel_issuer_key_change {id}`) unless it is intended; then as for a stolen updater key |
 | `unknown_active_key_first_run` | First run only: an active kid not in Google's JWKS today (often an old kid Google dropped), or with other material | Check the kid against Google's history; remove it if it isn't Google's (with other material the next run pauses) |
 | `unverifiable_key_change` | A pending change for an issuer other than Google (the watchdog has no JWKS for it) | Check it by hand; the owner cancels anything unexpected |
-| `governance_change` | An upgrade proposal or execution, owner transfer, withdrawal, watchdog, updater-key, delay or console-audience change, pause or unpause | Confirm that the council did it on purpose. If not: `cancel_upgrade`, `cancel_owner_proposal`, `cancel_withdrawal`, a delay change back, and treat the council as compromised. Nobody but the owner can cancel an upgrade (D84) |
+| `governance_change` | An upgrade proposal or execution, owner transfer, withdrawal, watchdog, updater-key, delay or console-audience change, pause or unpause (`unpaused_at_ms` shows one that fell between two runs), a raised session floor (`sessions_valid_from_ms`), or a change of the owner DAO's code or policy (`owner_code_hash`, `owner_policy`: a `ChangePolicy`, `AddMember` or `RemoveMember`) | Confirm that the council did it on purpose. If not: `cancel_upgrade`, `cancel_owner_proposal`, `cancel_withdrawal`, a delay change back, and treat the council as compromised. Nobody but the owner can cancel an upgrade (D84). A DAO policy that is no longer exactly the manifest's council at 2 of 3 for every kind also blocks every `deploy-contract` run and shows in `governance:status` |
 | `automatic_action`, `protective_action_failed` | The watchdog acted again (e.g. paused after an unpause), or a cancel, pause or deletion it sent failed | Failed: do it through the owner at once (cancel the change, pause); check the watchdog key's allowance and RPC |
 | `not_a_watchdog`, `watchdog_key_missing`, `wrong_network` | The watchdog can't act: its account isn't a contract watchdog, its key is missing or bad, or its RPC is on another chain | Fix the config (`add_watchdog`, `WATCHDOG_KEY`, the manifest `rpc`); until then nothing cancels forged keys |
 | warning `rpc_failing`, `jwks_failing`, `heartbeat_failing`, `channel_not_configured` | The watchdog is partly blind or mute | Fix the RPC, the secret or the channel; a dead watchdog is caught by the dead-man's switch |
 | warning `unexecuted_key_change`, `stale_active_key` | A matured key change nobody executed (> 1 h), or an active kid Google dropped > 3 h ago | Check the API cron (it executes due changes and proposes removals) |
 
-A paused contract: only the owner unpauses (`unpause`, no delay, D82). A fix that needs new code waits
+A paused contract: only the owner unpauses (`unpause`, no delay, D82). An unpause re-arms the scope-change timelock:
+no `execute_change` before `unpause time + change_delay_ms` (`changes_unlock_floor_ms`, also in `get_scope` as each
+pending change's `unlock_at_ms`), since OIDC owners couldn't cancel while paused. A fix that needs new code waits
 `governance_delay_ms` (the upgrade path works while paused). Removing a rogue watchdog (`remove_watchdog`) is
 immediate but slows every key change to `governance_delay_ms` unless another watchdog confirms (D86).
 

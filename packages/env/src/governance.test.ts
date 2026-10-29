@@ -2,7 +2,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { loadEnv, manifestPath, manifestSchema } from './index.ts';
+import { governanceDelayProblems, loadEnv, MAINNET_GOVERNANCE_DELAY_MS, manifestPath, manifestSchema, MIN_GOVERNANCE_DELAY_MS, MIN_ISSUER_KEY_DELAY_MS, WATCHDOG_INTERVAL_MS } from './index.ts';
 
 const raw = () => JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Record<string, unknown>;
 const issues = (m: Record<string, unknown>) => manifestSchema.safeParse(m).error?.issues.map((i) => `${i.path.join('.')}: ${i.message}`) ?? [];
@@ -77,5 +77,49 @@ describe('manifestSchema: governance fields', () => {
       .filter((f) => f.endsWith('.json'))
       .filter((f) => (JSON.parse(readFileSync(join(dir, f), 'utf8')) as { allowSignerFullAccessKey?: unknown }).allowSignerFullAccessKey !== undefined);
     expect(setting).toEqual(['sandbox-dev.json']);
+  });
+});
+
+describe('governanceDelayProblems: the delay floors deploy-contract enforces (docs/governance-spec.md "Delay length")', () => {
+  const day = 24 * 60 * 60 * 1000;
+  const staging = { name: 'staging', network: 'testnet' };
+
+  it('the issuer-key floor is the security bound 3·(W + T) with the watchdog interval and a minute to land', () => {
+    expect(WATCHDOG_INTERVAL_MS).toBe(5 * 60_000);
+    expect(MIN_ISSUER_KEY_DELAY_MS).toBe(3 * (WATCHDOG_INTERVAL_MS + 60_000));
+    expect(MIN_ISSUER_KEY_DELAY_MS).toBe(18 * 60_000);
+    expect(MIN_GOVERNANCE_DELAY_MS).toBe(day);
+    expect(MAINNET_GOVERNANCE_DELAY_MS).toBe(3 * day);
+  });
+
+  it('outside dev envs: below either floor is a blocker; at the floor is fine', () => {
+    expect(governanceDelayProblems({ ...staging, issuerKeyDelayMs: MIN_ISSUER_KEY_DELAY_MS, governanceDelayMs: day })).toEqual({ blockers: [], warnings: [] });
+    const low = governanceDelayProblems({ ...staging, issuerKeyDelayMs: MIN_ISSUER_KEY_DELAY_MS - 1, governanceDelayMs: day - 1 });
+    expect(low.warnings).toEqual([]);
+    expect(low.blockers).toEqual([expect.stringContaining('below the security bound 3·(W + T) = 18 min'), expect.stringContaining('below 24 h for a non-dev env')]);
+    expect(governanceDelayProblems({ ...staging, issuerKeyDelayMs: 0, governanceDelayMs: 0 }).blockers).toHaveLength(2);
+  });
+
+  it('a staging manifest copied from sandbox-dev (2 min / 60 s) is refused', () => {
+    const copied = { ...raw(), name: 'staging' } as { name: string; network: string; issuerKeyDelayMs: number; governanceDelayMs: number };
+    expect(governanceDelayProblems(copied).blockers).toHaveLength(2);
+  });
+
+  it('mainnet needs the 72 h of D80', () => {
+    expect(governanceDelayProblems({ name: 'mainnet', network: 'mainnet', issuerKeyDelayMs: 2 * 60 * 60_000, governanceDelayMs: 2 * day }).blockers).toEqual([expect.stringContaining('below 72 h (mainnet, D80)')]);
+    expect(governanceDelayProblems({ name: 'mainnet', network: 'mainnet', issuerKeyDelayMs: 2 * 60 * 60_000, governanceDelayMs: 3 * day }).blockers).toEqual([]);
+  });
+
+  it('dev envs may go lower (sandbox-dev deliberately does, D80) with a warning for the issuer-key delay only', () => {
+    const sandbox = loadEnv('sandbox-dev');
+    const p = governanceDelayProblems(sandbox);
+    expect(p.blockers).toEqual([]);
+    expect(p.warnings).toEqual([expect.stringContaining('Accepted only in dev envs (D80')]);
+    expect(governanceDelayProblems({ name: 'local-x', network: 'testnet', issuerKeyDelayMs: 0, governanceDelayMs: 0 }).blockers).toEqual([]);
+  });
+
+  it('checks the values given instead of the manifest’s, and skips unset ones', () => {
+    expect(governanceDelayProblems(staging)).toEqual({ blockers: [], warnings: [] });
+    expect(governanceDelayProblems({ ...staging, issuerKeyDelayMs: day }, { issuerKeyDelayMs: 60_000 }).blockers).toHaveLength(1);
   });
 });

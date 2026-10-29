@@ -131,6 +131,13 @@ describe('admin governance:status (the batch C portal source)', () => {
     ]);
     const staging = await governanceStatus({ ...daoOwned, name: 'staging', allowSignerFullAccessKey: undefined }, deps());
     expect(staging.findings.join()).toContain('none allowed on staging, D86');
+    // Delays below the non-dev floors (sandbox-dev's 2 min / 60 s on chain) are findings outside dev envs.
+    expect(staging.findings.join()).toContain('On chain: issuer_key_delay_ms 120000 ms is below the security bound');
+    expect(staging.findings.join()).toContain('On chain: governance_delay_ms 60000 ms is below 24 h');
+    // A council DAO reshaped away from the manifest's 2-of-3 council is a finding.
+    const shape = chain.daos.get(dao)!;
+    shape.policy = { ...shape.policy, default_vote_policy: { ...shape.policy.default_vote_policy, threshold: [1, 3] } };
+    expect((await governanceStatus(daoOwned, deps())).findings.join()).toContain(`The council DAO ${dao}: default_vote_policy is`);
     out = [];
     await governanceStatusCmd(daoOwned, argv(['--json']), deps());
     expect(JSON.parse(out.join('\n'))).toMatchObject({ env: 'sandbox-dev', owner: { account: dao, kind: 'sputnik' } });

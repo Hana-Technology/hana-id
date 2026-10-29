@@ -224,6 +224,32 @@ describe('owner transfer to the council DAO', () => {
   });
 });
 
+describe("the council DAO's policy is read, not only its code (D81)", () => {
+  const oneOfThree = () => ({ ...councilPolicy(council.members), default_vote_policy: { weight_kind: 'RoleWeight', quorum: '0', threshold: [1, 3] as [number, number] } });
+
+  it('--transfer-owner to a DAO with the pinned code but a 1-of-3 policy is blocked and nothing is sent', async () => {
+    v2();
+    chain.daos.get(dao)!.policy = oneOfThree();
+    const r = await deploy([base.name, '--transfer-owner', '--yes']);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain(`${dao}: default_vote_policy is`);
+    expect(r.sent).toEqual([]);
+    expect(chain.governance?.pending_owner).toBeNull();
+  });
+
+  it('a council-owned env whose DAO was reshaped (AddMember) is blocked on every run', async () => {
+    const daoOwned: Manifest = { ...base, owner: dao, ownerKind: 'sputnik' };
+    v2(daoOwned);
+    chain.config = { ...chain.config, owner: dao };
+    const p = councilPolicy([...council.members.slice(0, 2), 'mallory.testnet']);
+    chain.daos.get(dao)!.policy = p;
+    const r = await deploy([base.name, '--yes'], daoOwned);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('mallory.testnet');
+    expect(r.sent).toEqual([]);
+  });
+});
+
 describe('a council-owned env', () => {
   const daoOwned: Manifest = { ...base, owner: dao, ownerKind: 'sputnik' };
 

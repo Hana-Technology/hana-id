@@ -177,13 +177,32 @@ impl HanaSigner {
         }
     }
 
-    /// Owner only, at once (no governance delay, D82). No-op if not paused.
+    /// Owner only, at once (no governance delay, D82). No-op if not paused. Re-arms the scope-change timelock: no
+    /// change executes before `now + change_delay_ms` (`changes_unlock_floor_ms`). While paused OIDC owners can't
+    /// cancel (every token path stops), so a change that was pending across the pause, for instance one proposed with
+    /// a forged key's tokens before the watchdog paused, still gets a full public window after the unpause.
     pub fn unpause(&mut self) {
         self.assert_owner();
         if self.paused {
             self.paused = false;
-            events::emit("unpaused", json!({}));
+            let now = env::block_timestamp_ms();
+            self.unpaused_at_ms = now;
+            self.changes_unlock_floor_ms = self.changes_unlock_floor_ms.max(now.saturating_add(self.change_delay_at(now)));
+            events::emit("unpaused", json!({ "changes_unlock_floor_ms": self.changes_unlock_floor_ms }));
         }
+    }
+
+    /// Owner. Sessions opened before `sessions_valid_from_ms` can no longer derive (`derive_key` panics `No such
+    /// session`) and `get_session` returns `null` for them. For a forged issuer key that was active: the sessions it
+    /// opened stay usable after the key is removed until this floor is raised past them (any time after the pause, since
+    /// no session opens while paused). Only raised, never lowered, and never past the current block time (a future
+    /// floor would refuse sessions opened between now and then). Allowed while paused.
+    pub fn set_sessions_valid_from_ms(&mut self, sessions_valid_from_ms: u64) {
+        self.assert_owner();
+        assert!(sessions_valid_from_ms <= env::block_timestamp_ms(), "sessions_valid_from_ms can't be in the future");
+        assert!(sessions_valid_from_ms >= self.sessions_valid_from_ms, "sessions_valid_from_ms can only be raised");
+        self.sessions_valid_from_ms = sessions_valid_from_ms;
+        events::emit("sessions_valid_from_set", json!({ "sessions_valid_from_ms": sessions_valid_from_ms }));
     }
 
     // ---- Updater keys (the signer manages its own access keys) ----

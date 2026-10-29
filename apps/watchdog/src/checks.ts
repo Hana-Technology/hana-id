@@ -8,11 +8,11 @@ export type Severity = 'critical' | 'warning' | 'info';
 export const CHECKS = {
   config: 'Secrets and settings present: the watchdog key, the alert channels, the RPC on the expected network',
   jwks_fetch: "Fetch Google's JWKS directly (no cache) and record each kid's first-seen time and key material",
-  chain_read: 'Read get_key_changes, get_issuer, get_issuer_keys, get_config and get_governance through its own RPC',
+  chain_read: "Read get_key_changes, get_issuer, get_issuer_keys, get_config, get_governance and the owner account (code hash, the council DAO's get_policy) through its own RPC",
   watchdog_role: 'This account is one of the contract watchdogs, and whether it may confirm yet',
   pending_key_changes: "Each pending key change against Google's JWKS: confirm matches, cancel keys Google doesn't publish",
   active_keys: "Each active key against every key Google has published: pause on a key Google doesn't publish",
-  governance_diff: 'Config and governance against the last run: upgrades, owner, withdrawals, watchdogs, updater keys, delays, audiences, pause',
+  governance_diff: "Config and governance against the last run: upgrades, owner, withdrawals, watchdogs, updater keys, delays, audiences, pause and unpause, the session floor, the owner DAO's code and policy",
   unexecuted_changes: 'Key changes past their executable time that nobody executed',
   alert_delivery: 'First deliveries, 15-minute re-sends of unacknowledged critical alerts, paging-app acknowledgements',
   digest: 'Daily info digest email',
@@ -44,7 +44,8 @@ export const ALERT_KINDS = {
   governance_change: {
     severity: 'critical',
     check: 'governance_diff',
-    description: 'An upgrade proposal or execution, owner transfer, withdrawal, watchdog, updater-key, delay or console-audience change, pause or unpause (alert only)',
+    description:
+      "An upgrade proposal or execution, owner transfer, withdrawal, watchdog, updater-key, delay or console-audience change, pause or unpause, session floor, or a change of the owner DAO's code or policy (members, roles, vote thresholds) (alert only)",
   },
   automatic_action: { severity: 'critical', check: 'active_keys', description: 'The watchdog acted again for an incident already alerted (e.g. paused again after an unpause)' },
   protective_action_failed: { severity: 'critical', check: 'pending_key_changes', description: 'A cancel, pause or updater-key deletion the watchdog sent failed' },

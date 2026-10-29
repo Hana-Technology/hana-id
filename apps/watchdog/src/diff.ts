@@ -1,16 +1,19 @@
 // Step 6: get_config / get_governance against the last run. Alert only, never an action (D82, D84, D85).
 //   critical: an upgrade proposal (and its cancel or execution), owner or pending owner, withdrawal, watchdog,
-//             updater-key, delay or console-audience change, pause and unpause; also mpc, ckd_domain_id and
-//             state_version, which only an upgrade can change.
+//             updater-key, delay or console-audience change, pause and unpause (also one between two runs:
+//             unpaused_at_ms), the session floor; also mpc, ckd_domain_id and state_version, which only an upgrade
+//             can change; and the owner account's code or policy (the council DAO's members and vote rules, D81).
 //   warning:  shared clients, sponsors, public registration.
 //   matured:  a scheduled delay decrease or audience addition coming into force as scheduled (info).
-import type { ChainSnapshot, ConfigView, GovernanceView, KeyChange, PendingClient } from './chain.ts';
+import type { ChainSnapshot, ConfigView, GovernanceView, KeyChange, OwnerAccount, PendingClient } from './chain.ts';
 
 export interface StoredSnapshot {
   at: number;
   config: ConfigView;
   governance: GovernanceView;
   keyChanges: KeyChange[];
+  /** Absent in a snapshot stored before the watchdog read the owner account: that run's owner becomes the baseline. */
+  owner?: OwnerAccount | null;
 }
 
 export interface FieldChange {
@@ -38,6 +41,13 @@ const CRITICAL_CONFIG = [
   'pending_issuer_key_delay',
   'governance_delay_ms',
   'pending_governance_delay',
+  'unpaused_at_ms',
+  'sessions_valid_from_ms',
+] as const;
+/** The owner account's code and DAO policy (D81). */
+const CRITICAL_OWNER = [
+  ['owner_code_hash', (o: OwnerAccount | null) => o?.code_hash ?? null],
+  ['owner_policy', (o: OwnerAccount | null) => o?.policy ?? null],
 ] as const;
 const WARNING_CONFIG = ['sponsors', 'shared_clients', 'pending_shared_clients', 'public_registration'] as const;
 const CRITICAL_GOVERNANCE = ['state_version', 'watchdogs', 'keys_slow_until_ms', 'updater_keys', 'updater_methods', 'pending_upgrade', 'pending_owner', 'pending_withdrawal'] as const;
@@ -76,6 +86,7 @@ function emptyBaseline(cur: ChainSnapshot): StoredSnapshot {
     config: { ...cur.config, paused: false, pending_change_delay: null, pending_issuer_key_delay: null, pending_governance_delay: null, pending_console_audiences: [] },
     governance: { ...cur.governance, pending_upgrade: null, pending_owner: null, pending_withdrawal: null },
     keyChanges: [],
+    owner: cur.owner,
   };
 }
 
@@ -116,6 +127,14 @@ export function diffChain(prevIn: StoredSnapshot | null, cur: ChainSnapshot, now
   const pg = prev.governance as unknown as Record<string, unknown>;
   const cg = cur.governance as unknown as Record<string, unknown>;
   for (const f of CRITICAL_GOVERNANCE) if (!handled.has(f) && !same(pg[f], cg[f])) out.critical.push({ field: f, before: pg[f], after: cg[f] });
+  // A ChangePolicy, AddMember or RemoveMember on the council DAO (or new DAO code) changes who acts as the owner.
+  if (prev.owner !== undefined) {
+    for (const [field, pick] of CRITICAL_OWNER) {
+      const before = pick(prev.owner);
+      const after = pick(cur.owner);
+      if (!same(before, after)) out.critical.push({ field, before, after });
+    }
+  }
   for (const f of WARNING_CONFIG) if (!handled.has(f) && !same(pc[f], cc[f])) out.warning.push({ field: f, before: pc[f], after: cc[f] });
   return out;
 }

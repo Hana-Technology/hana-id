@@ -110,6 +110,7 @@ pub const ALL_CHANGE_METHODS: &[&str] = &[
     "remove_watchdog",
     "pause",
     "unpause",
+    "set_sessions_valid_from_ms",
     "add_updater_key",
     "delete_updater_key",
     "on_updater_key_added",

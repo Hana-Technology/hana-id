@@ -5,6 +5,7 @@ import { type GovernanceView, UPDATER_METHODS } from '../lib/contract.ts';
 import { buildDeployPlan, checkFunctionKey, creationPlan, type DeployObserved, type DeployOptions, type DeployStep, describeStep, CLOCK_MARGIN_MS, signerFullAccessAllowed } from '../lib/deploy-plan.ts';
 import { type AccessKeyListEntry, EMPTY_CODE_HASH } from '../lib/near.ts';
 import { POOL_METHODS as API_POOL_METHODS } from '../../apps/api/src/relayer-config.ts';
+import { councilPolicy } from '../lib/sputnik.ts';
 
 const base = {
   ...loadEnv('sandbox-dev'),
@@ -16,6 +17,8 @@ const base = {
 const SHARED = 'shared.apps.googleusercontent.com';
 const m = { ...base, googleClientIds: ['hana.apps.googleusercontent.com'], sharedGoogleClientIds: [SHARED] };
 const NEAR = 10n ** 24n;
+/** Delays at least the non-dev floors (@hana-id/env governanceDelayProblems): 2 h and 72 h, as mainnet (D80). */
+const PROD_DELAYS = { issuerKeyDelayMs: 7_200_000, governanceDelayMs: 259_200_000 };
 
 /** Batch B allowlist state 1 (docs/batch-b-spec.md, "Relayer allowlists"). */
 const SESSION = ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions'];
@@ -86,7 +89,7 @@ function fresh(over: Partial<DeployObserved> = {}): DeployObserved {
     wasmBytes: null,
     wasmCodeHash: null,
     watchdogAccounts: { [WATCHDOG]: true },
-    councilDao: { exists: true, codeHash: SPUTNIK_HASH },
+    councilDao: { exists: true, codeHash: SPUTNIK_HASH, policy: councilPolicy(m.council!.members) },
     councilKeys: Object.fromEntries(m.council!.members.map((a) => [a, true])),
     ...over,
   };
@@ -192,7 +195,8 @@ describe('buildDeployPlan', () => {
   it('plans nothing when everything is in place', () => {
     const p = buildDeployPlan(m, deployed(), opts);
     expect(p.blockers).toEqual([]);
-    expect(p.warnings).toEqual([]);
+    // sandbox-dev's 2-min issuer-key delay is below the security bound on purpose (D80): a warning, not a blocker.
+    expect(p.warnings).toEqual([expect.stringContaining('issuer_key_delay_ms 120000 ms is below the security bound')]);
     expect(p.steps).toEqual([]);
     expect(p.done).toContain('3 session-pool relayer key(s) in place.');
     expect(p.done).toContain('1 owner-pool relayer key(s) in place.');
@@ -499,7 +503,7 @@ describe('buildDeployPlan', () => {
   });
 
   describe('the signer full-access key (D86)', () => {
-    const staging = { ...m, name: 'staging', allowSignerFullAccessKey: undefined };
+    const staging = { ...m, ...PROD_DELAYS, name: 'staging', allowSignerFullAccessKey: undefined };
 
     it('sandbox-dev keeps it; any other env is blocked while one exists', () => {
       expect(buildDeployPlan(m, deployed(), opts).blockers).toEqual([]);
@@ -510,7 +514,7 @@ describe('buildDeployPlan', () => {
 
     it('only a dev env on testnet may set allowSignerFullAccessKey', () => {
       for (const name of ['staging', 'prod', 'mainnet']) {
-        const p = buildDeployPlan({ ...m, name, allowSignerFullAccessKey: true }, deployed(), opts);
+        const p = buildDeployPlan({ ...m, ...PROD_DELAYS, name, allowSignerFullAccessKey: true }, deployed(), opts);
         expect(p.blockers.join(), name).toContain('sets allowSignerFullAccessKey, which only a dev env (local*, sandbox*) on testnet may');
         expect(p.blockers.join(), name).toContain('may have none (D86)');
       }
@@ -566,8 +570,8 @@ describe('buildDeployPlan', () => {
     });
 
     it('blocks without the DAO, with the pinned code, or without council keys', () => {
-      expect(buildDeployPlan(m, deployed({ councilDao: { exists: false, codeHash: '' } }), t).blockers.join()).toContain('run council-setup sandbox-dev first');
-      expect(buildDeployPlan(m, deployed({ councilDao: { exists: true, codeHash: 'X' } }), t).blockers.join()).toContain('not the pinned Sputnik DAO');
+      expect(buildDeployPlan(m, deployed({ councilDao: { exists: false, codeHash: '', policy: null } }), t).blockers.join()).toContain('run council-setup sandbox-dev first');
+      expect(buildDeployPlan(m, deployed({ councilDao: { exists: true, codeHash: 'X', policy: councilPolicy(m.council!.members) } }), t).blockers.join()).toContain('not the pinned Sputnik DAO');
       const noKey = buildDeployPlan(m, pendingOwner(NOW - CLOCK_MARGIN_MS), { ...t, ownerTx: { approveWith: m.council!.members[1] } });
       expect(noKey.blockers).toEqual([]);
       const keys = { ...fresh().councilKeys, [m.council!.members[1]!]: false };
@@ -578,6 +582,84 @@ describe('buildDeployPlan', () => {
     it('once the DAO owns the contract, says to update the manifest', () => {
       const p = buildDeployPlan(m, deployed({ config: { ...configOk, owner: dao } }), opts);
       expect(p.blockers.join()).toContain(`set "owner": "${dao}" and "ownerKind": "sputnik" in envs/sandbox-dev.json`);
+    });
+  });
+
+  describe("the council DAO's policy (D81: exactly the manifest council, 2 of 3 for every kind)", () => {
+    const dao = m.council!.dao;
+    const members = m.council!.members;
+    const sm = { ...m, owner: dao, ownerKind: 'sputnik' as const };
+    const cfg = { ...configOk, owner: dao };
+    const good = councilPolicy(members);
+    const role = good.roles[0]!;
+    const bad: [string, typeof good, string][] = [
+      ['1 of 3', { ...good, default_vote_policy: { ...good.default_vote_policy, threshold: [1, 3] } }, 'default_vote_policy'],
+      ['an Everyone role', { ...good, roles: [role, { name: 'all', kind: 'Everyone', permissions: ['*:AddProposal', '*:VoteApprove'], vote_policy: {} }] }, '2 roles'],
+      ['other members', { ...good, roles: [{ ...role, kind: { Group: [members[0]!, members[1]!, 'mallory.testnet'] } }] }, 'mallory.testnet'],
+      ['a per-kind 1-vote policy', { ...good, roles: [{ ...role, vote_policy: { policy: { weight_kind: 'RoleWeight', quorum: '0', threshold: [0, 1] } } }] }, 'per-kind vote policies'],
+    ];
+
+    it.each(bad)('blocks the owner transfer to a DAO with %s', (_name, policy, why) => {
+      const p = buildDeployPlan(m, deployed({ councilDao: { exists: true, codeHash: SPUTNIK_HASH, policy } }), { ...opts, transferOwner: true });
+      expect(p.blockers.join('\n')).toContain(why);
+      expect(p.blockers.join('\n')).toContain(`${dao}:`);
+      expect(p.blockers.join('\n')).toContain('D81: exactly');
+    });
+
+    it.each(bad)('blocks every run of a council-owned env whose DAO has %s', (_name, policy, why) => {
+      const p = buildDeployPlan(sm, deployed({ config: cfg, councilDao: { exists: true, codeHash: SPUTNIK_HASH, policy } }), opts);
+      expect(p.blockers.join('\n')).toContain(why);
+    });
+
+    it('blocks when get_policy fails; passes the pinned code with the council policy (bond and period only warn)', () => {
+      expect(buildDeployPlan(m, deployed({ councilDao: { exists: true, codeHash: SPUTNIK_HASH, policy: null } }), { ...opts, transferOwner: true }).blockers.join()).toContain('get_policy fails');
+      expect(buildDeployPlan(sm, deployed({ config: cfg }), opts).blockers).toEqual([]);
+      const period = buildDeployPlan(sm, deployed({ config: cfg, councilDao: { exists: true, codeHash: SPUTNIK_HASH, policy: { ...good, proposal_period: '1' } } }), opts);
+      expect(period.blockers).toEqual([]);
+      expect(period.warnings.join()).toContain('proposal_period is 1');
+      // An account owner without --transfer-owner isn't checked against the DAO.
+      expect(buildDeployPlan(m, deployed({ councilDao: { exists: true, codeHash: SPUTNIK_HASH, policy: bad[0]![1] } }), opts).blockers).toEqual([]);
+    });
+  });
+
+  describe('governance delay floors (@hana-id/env governanceDelayProblems)', () => {
+    const staging = { ...m, ...PROD_DELAYS, name: 'staging', allowSignerFullAccessKey: undefined };
+    const stagingDeployed = (over: Partial<DeployObserved> = {}) => deployed({ signerAccessKeys: [fc('ed25519:U', m.signer, UPDATER)], config: { ...configOk, issuer_key_delay_ms: PROD_DELAYS.issuerKeyDelayMs, governance_delay_ms: PROD_DELAYS.governanceDelayMs }, ...over });
+
+    it('a staging manifest copied from sandbox-dev (2 min / 60 s) is blocked, for a fresh deploy, a migration and a deployed contract', () => {
+      const copied = { ...staging, issuerKeyDelayMs: m.issuerKeyDelayMs, governanceDelayMs: m.governanceDelayMs };
+      for (const [o, up] of [[fresh(), opts], [deployedV1({ signerAccessKeys: [full('ed25519:S'), fc('ed25519:U', m.signer, V1_UPDATER)] }), { ...opts, upgrade: true }], [stagingDeployed(), opts]] as const) {
+        const text = buildDeployPlan(copied, o, up).blockers.join('\n');
+        expect(text).toContain('issuer_key_delay_ms 120000 ms is below the security bound 3·(W + T) = 18 min');
+        expect(text).toContain('governance_delay_ms 60000 ms is below 24 h for a non-dev env');
+      }
+    });
+
+    it('a delay of 0 is blocked outside dev envs; the floors themselves pass', () => {
+      expect(buildDeployPlan({ ...staging, issuerKeyDelayMs: 0, governanceDelayMs: 0 }, stagingDeployed(), opts).blockers.join()).toMatch(/issuer_key_delay_ms 0 ms.*governance_delay_ms 0 ms/su);
+      const atFloor = { ...staging, issuerKeyDelayMs: 18 * 60_000, governanceDelayMs: 24 * 3_600_000 };
+      expect(buildDeployPlan(atFloor, stagingDeployed(), opts).blockers).toEqual([]);
+    });
+
+    it('without delays in the manifest, the contract’s own are checked', () => {
+      const { issuerKeyDelayMs: _i, governanceDelayMs: _g, ...noDelays } = staging;
+      const low = stagingDeployed({ config: { ...configOk, issuer_key_delay_ms: 60_000, governance_delay_ms: 3_600_000 } });
+      expect(buildDeployPlan(noDelays, low, opts).blockers).toHaveLength(2);
+    });
+
+    it('dev envs only warn on an issuer-key delay below the bound', () => {
+      const p = buildDeployPlan({ ...m, issuerKeyDelayMs: 0, governanceDelayMs: 0 }, fresh(), opts);
+      expect(p.blockers).toEqual([]);
+      expect(p.warnings).toEqual([expect.stringContaining('Accepted only in dev envs (D80')]);
+    });
+
+    it('the creation batch refuses delays below the floors outside dev envs, and warns in dev envs', () => {
+      const input = { wasm: null, updaterPublicKey: null, creationPublicKey: null };
+      expect(creationPlan({ ...staging, issuerKeyDelayMs: 60_000 }, input).problems.join()).toContain('below the security bound');
+      expect(creationPlan({ ...staging, governanceDelayMs: 3_600_000 }, input).problems.join()).toContain('below 24 h');
+      expect(creationPlan({ ...staging, name: 'mainnet', network: 'mainnet' as 'testnet', governanceDelayMs: 24 * 3_600_000 }, input).problems.join()).toContain('below 72 h (mainnet, D80)');
+      expect(creationPlan(staging, input).problems).toEqual([]);
+      expect(creationPlan(m, input).lines.join('\n')).toContain('WARNING: issuer_key_delay_ms 120000 ms is below the security bound');
     });
   });
 
@@ -593,7 +675,7 @@ describe('buildDeployPlan', () => {
     });
 
     it('--approve-with is refused outside dev envs', () => {
-      const staging = { ...sm, name: 'staging', allowSignerFullAccessKey: undefined };
+      const staging = { ...sm, ...PROD_DELAYS, name: 'staging', allowSignerFullAccessKey: undefined };
       const p = buildDeployPlan(staging, deployed({ config: cfg, governance: { ...govOk, watchdogs: [] }, signerAccessKeys: [fc('ed25519:U', m.signer, UPDATER)] }), { ...opts, ownerTx: { member: m.council!.members[0], approveWith: m.council!.members[1] } });
       expect(p.blockers.join()).toContain('--approve-with is for dev envs on testnet only (D81)');
       const noMember = buildDeployPlan(staging, deployed({ config: cfg, governance: { ...govOk, watchdogs: [] }, signerAccessKeys: [fc('ed25519:U', m.signer, UPDATER)] }), opts);

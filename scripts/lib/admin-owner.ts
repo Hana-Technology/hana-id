@@ -9,13 +9,13 @@
 // governance:status [--json]          get_config / get_governance / get_key_changes / the signer's keys / the council,
 //   with findings. Its --json output is the machine-readable source batch C's "Security & monitoring" view starts
 //   from (docs/operations.md "Governance status for the admin portal").
-import type { Manifest } from '@hana-id/env';
+import { governanceDelayProblems, type Manifest } from '@hana-id/env';
 import { type Args, CliError } from './cli.ts';
 import { type ContractConfig, GOOGLE_PROVIDER, type GovernanceView, type KeyChangeView, normaliseIssuer, tryView, UPDATER_ALLOWANCE_YOCTO, UPDATER_METHODS } from './contract.ts';
 import { checkFunctionKey, signerFullAccessAllowed } from './deploy-plan.ts';
 import { type AccessKeyListEntry, describePermission, type NearRpc, TGAS } from './near.ts';
 import { describeOwnerCall, isOwnerMethod, type OwnerTxDeps, type OwnerTxOptions, sendOwnerCall, voteApprove } from './owner-tx.ts';
-import { approvers, type DaoProposal, decodeFunctionCall, isOpen, recentProposals, type SputnikPolicy, votesNeeded } from './sputnik.ts';
+import { approvers, type DaoProposal, decodeFunctionCall, isOpen, policyProblems, recentProposals, type SputnikPolicy, votesNeeded } from './sputnik.ts';
 
 export const OWNER_DRY_RUN_LINE = 'Dry run: re-run with --yes to send.';
 
@@ -142,6 +142,10 @@ export async function governanceStatus(m: Manifest, deps: AdminOwnerDeps): Promi
   }
   for (const k of tracked) if (!keys.some((e) => e.public_key === k)) findings.push(`updater_keys lists ${k}, which is not on ${m.signer}.`);
   if (config?.paused) findings.push(`${m.signer} is paused.`);
+  if (config) {
+    const num = (v: unknown) => (typeof v === 'number' ? v : undefined);
+    for (const b of governanceDelayProblems(m, { issuerKeyDelayMs: num(config.issuer_key_delay_ms), governanceDelayMs: num(config.governance_delay_ms) }).blockers) findings.push(`On chain: ${b}`);
+  }
   if (governance?.pending_upgrade) findings.push(`Upgrade ${governance.pending_upgrade.code_hash} pending, executable from ${new Date(governance.pending_upgrade.executable_at_ms).toISOString()}.`);
   if (governance?.pending_owner) findings.push(`Owner transfer to ${governance.pending_owner.owner} pending, acceptable from ${new Date(governance.pending_owner.acceptable_at_ms).toISOString()}.`);
   if (governance?.pending_withdrawal) findings.push(`Withdrawal of ${governance.pending_withdrawal.amount} yocto to ${governance.pending_withdrawal.receiver} pending.`);
@@ -155,6 +159,10 @@ export async function governanceStatus(m: Manifest, deps: AdminOwnerDeps): Promi
     const daoAccount = await rpc.account(dao);
     if (daoAccount) {
       const policy = await tryView<SputnikPolicy>(rpc, dao, 'get_policy');
+      // The council must be exactly the manifest's, 2 of 3 for every kind (D81): a ChangePolicy, AddMember or
+      // RemoveMember shows here (and in the watchdog's critical alerts).
+      if (policy) for (const b of policyProblems(policy, m.council.members).blockers) findings.push(`The council DAO ${dao}: ${b}.`);
+      else findings.push(`The council DAO ${dao} has no readable get_policy.`);
       const proposals = policy ? await recentProposals(rpc, dao) : [];
       council = { dao, policy, openProposals: policy ? proposals.filter((p) => isOpen(p, policy, nowMs)) : [] };
     } else {

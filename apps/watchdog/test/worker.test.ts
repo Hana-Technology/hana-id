@@ -12,7 +12,7 @@ import { type Env, SECRET_NAMES } from '../src/env.ts';
 import worker from '../src/index.ts';
 import { RESEND_URL } from '../src/channels.ts';
 import { Store } from '../src/store.ts';
-import { baseConfig, baseGovernance, jwk } from './helpers.ts';
+import { baseConfig, baseGovernance, councilPolicy, jwk } from './helpers.ts';
 
 const rand = (n: number) => baseEncode(crypto.getRandomValues(new Uint8Array(n)));
 const SECRETS = {
@@ -65,6 +65,8 @@ class Net {
         return this.config;
       case 'get_governance':
         return this.governance;
+      case 'get_policy':
+        return councilPolicy();
     }
     return null;
   }
@@ -75,6 +77,7 @@ class Net {
       return { result: { result: [...new TextEncoder().encode(JSON.stringify(this.view(params.method_name as string)))] } };
     }
     if (method === 'query' && params.request_type === 'view_access_key') return { result: { nonce: 1, block_hash: BLOCK } };
+    if (method === 'query' && params.request_type === 'view_account') return { result: { amount: '1', code_hash: 'DAOcode1111111111111111111111111111111111111' } };
     if (method === 'send_tx') {
       const t = SignedTransaction.decode(Uint8Array.from(atob(params.signed_tx_base64 as string), (c) => c.charCodeAt(0))).transaction;
       const fc = t.actions[0]!.functionCall!;

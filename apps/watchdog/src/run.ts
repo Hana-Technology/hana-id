@@ -346,7 +346,7 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
         await run.condition('unexecuted_key_change', `unexecuted_key_change:${c.id}`, `Key change ${c.id} (${c.op} ${c.kid}) executable since ${iso(c.executable_at_ms)} and not executed`, changeDetails(c));
       }
 
-      await store.setMeta(META.snapshot, { at: d.now(), config: s.config, governance: s.governance, keyChanges: s.keyChanges } satisfies StoredSnapshot);
+      await store.setMeta(META.snapshot, { at: d.now(), config: s.config, governance: s.governance, keyChanges: s.keyChanges, owner: s.owner } satisfies StoredSnapshot);
       await store.setMeta(META.selfChanges, self);
     } else {
       for (const id of ['governance_diff', 'unexecuted_changes'] as const) run.check(id, 'skipped', 'no chain read');

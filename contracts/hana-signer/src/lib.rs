@@ -110,6 +110,12 @@ pub struct ConfigView {
     pub governance_delay_ms: u64,
     pub pending_governance_delay: Option<DelayChange>,
     pub paused: bool,
+    /// When the owner last unpaused (0: never).
+    pub unpaused_at_ms: u64,
+    /// No scope change executes before this (set at each unpause; see `HanaSigner::changes_unlock_floor_ms`).
+    pub changes_unlock_floor_ms: u64,
+    /// Sessions opened before this can't derive and read as absent (`set_sessions_valid_from_ms`; 0: none).
+    pub sessions_valid_from_ms: u64,
 }
 
 /// Contract state, layout version 2 (`state_version`). The fields before `state_version` are the v1 layout,
@@ -185,6 +191,15 @@ pub struct HanaSigner {
     pub(crate) pending_withdrawal: Option<PendingWithdrawal>,
     /// Console-audience additions waiting for `change_delay_ms`.
     pub(crate) pending_console_audiences: Vec<PendingSharedClient>,
+    /// When the owner last unpaused (0: never).
+    pub(crate) unpaused_at_ms: u64,
+    /// No scope change executes before this: the last unpause plus the `change_delay_ms` in force then. While paused
+    /// every OIDC owner action fails (`verify_token`), so OIDC owners can't cancel; a change pending across a pause
+    /// (e.g. proposed with a forged key's tokens before the watchdog paused) still gets a full timelock after it.
+    pub(crate) changes_unlock_floor_ms: u64,
+    /// Sessions opened before this can't derive and read as absent: the owner raises it after a forged issuer key was
+    /// active, so the sessions opened with it die with the key (`set_sessions_valid_from_ms`).
+    pub(crate) sessions_valid_from_ms: u64,
 }
 
 #[near]
@@ -339,6 +354,9 @@ impl HanaSigner {
             governance_delay_ms: self.governance_delay_at(now),
             pending_governance_delay: not_yet(&self.pending_governance_delay),
             paused: self.paused,
+            unpaused_at_ms: self.unpaused_at_ms,
+            changes_unlock_floor_ms: self.changes_unlock_floor_ms,
+            sessions_valid_from_ms: self.sessions_valid_from_ms,
         }
     }
 }

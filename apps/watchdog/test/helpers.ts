@@ -48,6 +48,22 @@ export function baseConfig(): ConfigView {
     governance_delay_ms: 72 * HOUR,
     pending_governance_delay: null,
     paused: false,
+    unpaused_at_ms: 0,
+    changes_unlock_floor_ms: 0,
+    sessions_valid_from_ms: 0,
+  };
+}
+
+/** The council DAO policy as contracts/sputnik/policy.json has it (2 of 3 for every kind), for three members. */
+export function councilPolicy(members: string[] = ['a.test.near', 'b.test.near', 'c.test.near']): unknown {
+  const twoOfThree = { weight_kind: 'RoleWeight', quorum: '0', threshold: [1, 2] };
+  return {
+    roles: [{ name: 'council', kind: { Group: members }, permissions: ['*:AddProposal', '*:VoteApprove', '*:VoteReject', '*:VoteRemove', '*:Finalize'], vote_policy: {} }],
+    default_vote_policy: twoOfThree,
+    proposal_bond: '100000000000000000000000',
+    proposal_period: '604800000000000',
+    bounty_bond: '100000000000000000000000',
+    bounty_forgiveness_period: '86400000000000',
   };
 }
 
@@ -75,6 +91,8 @@ export class StubChain implements ChainReader {
   hasIssuerKeys = true;
   config = baseConfig();
   governance = baseGovernance();
+  /** The owner account: a council DAO with the 2-of-3 policy. */
+  owner: { code_hash: string; policy: unknown } = { code_hash: 'DAOcode1111111111111111111111111111111111111', policy: councilPolicy() };
   failReads = false;
   reads = 0;
   private nextId = 10;
@@ -99,6 +117,7 @@ export class StubChain implements ChainReader {
       issuerKeys: this.issuerConfigured && this.hasIssuerKeys ? kids.map((kid) => ({ kid, ...this.active.get(kid)! })) : null,
       config: clone(this.config),
       governance: clone(this.governance),
+      owner: { account_id: this.config.owner, ...clone(this.owner) },
     };
   }
 

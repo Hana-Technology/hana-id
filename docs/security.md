@@ -477,13 +477,24 @@ plan (D33; built on branch `feat/governance`, not deployed), specified in `docs/
 
 - Delays (D80): a newly posted issuer key waits `issuer_key_delay_ms` (mainnet 2 h, provisional until Google's lead
   time is measured with `admin issuer-keys:lead-times`); upgrades, owner transfer and surplus withdrawals wait
-  `governance_delay_ms` (mainnet 72 h). Emergencies are handled by pause, not short delays.
+  `governance_delay_ms` (mainnet 72 h). Emergencies are handled by pause, not short delays. Outside dev envs
+  `deploy-contract` refuses an issuer-key delay below the security bound 3·(W + T) = 18 min (below it a stolen updater
+  key proposes and executes a forged key before the watchdog's first run) and a governance delay below 24 h (mainnet
+  72 h). sandbox-dev's 2 min / 60 s deliberately violate them for fast drills (D80) and warn.
 - Owner (D81): a Sputnik DAO v2 council, 2-of-3 for every proposal kind; on mainnet the two founders' Ledgers and an
-  offline backup key neither founder can reach alone.
+  offline backup key neither founder can reach alone. The DAO's code hash alone doesn't prove that: `deploy-contract`
+  checks its `get_policy` against the manifest's council before an owner transfer and on every run once the DAO owns
+  the contract, and the watchdog alerts critical on any later change of the owner DAO's policy or code (a
+  `ChangePolicy`, `AddMember` or `RemoveMember`).
 - Watchdog (D82, D86): its own service, key and Cloudflare account. It cancels a pending key Google doesn't publish,
   deletes the updater key that proposed one, and pauses only when such a key is active on chain; everything else is
   alert-only. The owner unpauses at once. Pause stops derivation and every token path, never governance. Built in
-  `apps/watchdog` (branch `feat/governance`), not deployed.
+  `apps/watchdog` (branch `feat/governance`), not deployed. Pause stops derivation only for as long as it lasts:
+  sessions a forged key opened before the pause would derive again after it (up to 24 h, any `max_uses`), so the
+  runbook raises the owner's session floor (`set_sessions_valid_from_ms`) past the pause before unpausing, which
+  retires every older session. Scope changes proposed with a forged key's owner tokens or client proofs can't be
+  cancelled by OIDC owners while paused, so each unpause gives every pending change a full `change_delay_ms` again
+  (`changes_unlock_floor_ms`) before anyone may execute it.
 - Monitoring (D83): every watchdog check, action and alert surfaces in the admin portal's "Security & monitoring"
   view (a standing rule for future checks); the watchdog sends its own alerts, so a compromised Hana Cloudflare
   account can't silence them.

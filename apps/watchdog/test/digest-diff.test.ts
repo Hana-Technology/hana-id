@@ -5,16 +5,18 @@ import { diffChain, stable, type StoredSnapshot } from '../src/diff.ts';
 import { maybeSendDigest } from '../src/digest.ts';
 import { Store } from '../src/store.ts';
 import { iso } from '../src/time.ts';
-import { baseConfig, baseGovernance, HOUR, initialized, MIN, RecordingNotifier, T0 } from './helpers.ts';
+import { baseConfig, baseGovernance, councilPolicy, HOUR, initialized, MIN, OWNER, RecordingNotifier, T0 } from './helpers.ts';
 
-const snap = (over: { config?: Partial<ChainSnapshot['config']>; governance?: Partial<ChainSnapshot['governance']> } = {}): ChainSnapshot => ({
+const DAO_CODE = 'DAOcode1111111111111111111111111111111111111';
+const snap = (over: { config?: Partial<ChainSnapshot['config']>; governance?: Partial<ChainSnapshot['governance']>; owner?: ChainSnapshot['owner'] } = {}): ChainSnapshot => ({
   keyChanges: [],
   issuer: null,
   issuerKeys: null,
   config: { ...baseConfig(), ...over.config },
   governance: { ...baseGovernance(), ...over.governance },
+  owner: over.owner !== undefined ? over.owner : { account_id: OWNER, code_hash: DAO_CODE, policy: councilPolicy() },
 });
-const stored = (s: ChainSnapshot): StoredSnapshot => ({ at: T0, config: s.config, governance: s.governance, keyChanges: [] });
+const stored = (s: ChainSnapshot): StoredSnapshot => ({ at: T0, config: s.config, governance: s.governance, keyChanges: [], owner: s.owner });
 const none = { paused: false, deletedUpdaterKeys: [] };
 
 describe('diffChain', () => {
@@ -43,6 +45,35 @@ describe('diffChain', () => {
     expect(diffChain(prev, cur, T0, self).critical).toEqual([]);
     // One more key gone than it deleted: alerted.
     expect(diffChain(prev, cur, T0, { paused: true, deletedUpdaterKeys: [baseGovernance().updater_keys[0]!] }).critical.map((c) => c.field)).toEqual(['updater_keys']);
+  });
+
+  it("alerts critical on any change of the owner DAO's policy or code (a ChangePolicy, AddMember or RemoveMember)", () => {
+    const prev = stored(snap());
+    const owner = (policy: unknown, code_hash = DAO_CODE) => snap({ owner: { account_id: OWNER, code_hash, policy } });
+    const p = councilPolicy() as { roles: { kind: { Group: string[] } }[]; default_vote_policy: object };
+    // A fourth member, a 1-of-n threshold, an Everyone role, new DAO code: each is critical.
+    const added = { ...p, roles: [{ ...p.roles[0], kind: { Group: ['a.test.near', 'b.test.near', 'c.test.near', 'x.test.near'] } }] };
+    const oneOf = { ...p, default_vote_policy: { weight_kind: 'RoleWeight', quorum: '0', threshold: [1, 3] } };
+    const everyone = { ...p, roles: [...p.roles, { name: 'all', kind: 'Everyone', permissions: ['*:AddProposal'], vote_policy: {} }] };
+    for (const policy of [added, oneOf, everyone]) {
+      const d = diffChain(prev, owner(policy), T0, none);
+      expect(d.critical).toEqual([{ field: 'owner_policy', before: councilPolicy(), after: policy }]);
+    }
+    expect(diffChain(prev, owner(councilPolicy(), 'OtherCode111111111111111111111111111111111111'), T0, none).critical.map((c) => c.field)).toEqual(['owner_code_hash']);
+    // The same policy with its keys in another order is no change.
+    const reordered = JSON.parse(JSON.stringify(councilPolicy()), (_k, v: unknown) => (v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).reverse()) : v)) as unknown;
+    expect(diffChain(prev, owner(reordered), T0, none).critical).toEqual([]);
+    // A snapshot stored before the watchdog read the owner: no alert, this run becomes the baseline.
+    const { owner: _o, ...older } = prev;
+    expect(diffChain(older, owner(oneOf), T0, none).critical).toEqual([]);
+    // First run: whatever the owner is now is the baseline.
+    expect(diffChain(null, owner(oneOf), T0, none).critical).toEqual([]);
+  });
+
+  it('alerts critical on an unpause between two runs and on a raised session floor', () => {
+    // Paused and unpaused between two runs: `paused` is false both times, unpaused_at_ms moved.
+    expect(diffChain(stored(snap()), snap({ config: { unpaused_at_ms: T0 - MIN, changes_unlock_floor_ms: T0 + HOUR } }), T0, none).critical.map((c) => c.field)).toEqual(['unpaused_at_ms']);
+    expect(diffChain(stored(snap()), snap({ config: { sessions_valid_from_ms: T0 - MIN } }), T0, none).critical.map((c) => c.field)).toEqual(['sessions_valid_from_ms']);
   });
 
   it('alerts critical on fields only an upgrade can change', () => {

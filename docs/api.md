@@ -148,6 +148,9 @@ Cloudflare account, so a reader that must not trust it reads the same views thro
   "signer": "hana-signer-dev1.testnet", "env": "sandbox-dev", "readAtMs": 1800000000000,
   "stateVersion": 2,
   "paused": false,
+  "unpausedAtMs": 0,                                // the last unpause (0: never)
+  "changesUnlockFloorMs": 0,                        // no execute_change before this (each unpause re-arms the scope timelock)
+  "sessionsValidFromMs": 0,                         // sessions opened before this can't derive (owner's session floor)
   "delays": {
     "issuerKeyDelayMs": 120000, "governanceDelayMs": 60000, "changeDelayMs": 60000,
     "pendingIssuerKeyDelay": null,                  // a decrease: {"valueMs", "effectiveAtMs"}

@@ -14,7 +14,9 @@ sends nothing on a mismatch.
 
 1. **Config**: is `WATCHDOG_KEY` usable, is each channel (paging app, Slack, email) and the heartbeat configured.
 2. **Chain** (`src/near.ts`): `status` (`chain_id`), `get_key_changes`, `get_issuer("google")`,
-   `get_issuer_keys("google")`, `get_config`, `get_governance`, at final finality.
+   `get_issuer_keys("google")`, `get_config`, `get_governance`, and the owner account (`get_config().owner`):
+   `view_account` (code hash) and, when it runs a contract, the DAO's `get_policy` (null for a contract without one),
+   at final finality.
 3. **Google's JWKS**, fetched directly with no cache; every kid's first-seen time and key material go to D1
    (`seen_kids`). RS256 keys only (`usableJwks`, shared with the API in `packages/jwks`).
 4. **Pending additions**: a kid in the JWKS with equal `n`, `e` (leading zeros stripped) → `confirm_issuer_key_change`
@@ -31,8 +33,10 @@ sends nothing on a mismatch.
    material is alerted at the first run and paused at the next one unless the owner removes it: that is a present
    forgery, not history.)
 7. **Governance diff** against the last run (alert only): any upgrade proposal or execution, owner or pending owner,
-   withdrawal, watchdog, updater-key, delay or console-audience change, pause and unpause, and `mpc`,
-   `ckd_domain_id`, `state_version` → critical; shared clients, sponsors, public registration → warning; a scheduled
+   withdrawal, watchdog, updater-key, delay or console-audience change, pause and unpause (`unpaused_at_ms` also
+   catches both between two runs), a raised session floor (`sessions_valid_from_ms`), the owner DAO's code or policy
+   (`owner_code_hash`, `owner_policy`: a `ChangePolicy`, `AddMember` or `RemoveMember` reshapes the council without
+   touching hana-signer), and `mpc`, `ckd_domain_id`, `state_version` → critical; shared clients, sponsors, public registration → warning; a scheduled
    delay decrease or audience addition coming into force as scheduled → info. Its own pause and updater-key deletions
    are not alerted twice. At the first run anything already pending is alerted.
 8. Key changes executable for more than 1 h that nobody executed → warning. Changes that left the queue without

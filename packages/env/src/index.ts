@@ -5,6 +5,15 @@ import { type Manifest, manifestSchema } from './schema.ts';
 
 export { DO_LOCATION_HINTS, type Manifest, manifestSchema, PAGER_PROVIDERS } from './schema.ts';
 export { hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, siteOf } from './origins.ts';
+export {
+  type DelayValues,
+  governanceDelayProblems,
+  MAINNET_GOVERNANCE_DELAY_MS,
+  MIN_GOVERNANCE_DELAY_MS,
+  MIN_ISSUER_KEY_DELAY_MS,
+  TX_LANDING_MS,
+  WATCHDOG_INTERVAL_MS,
+} from './delays.ts';
 
 /** Repo root (packages/env/src → ../../..). */
 export const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');

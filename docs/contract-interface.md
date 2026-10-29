@@ -78,7 +78,10 @@ Conventions:
   "pending_issuer_key_delay": null,             // a decrease: {"change_delay_ms":3600000,"effective_at_ms":...} (field name kept from batch A: it is the new value)
   "governance_delay_ms": 259200000,             // in force now
   "pending_governance_delay": null,             // same shape
-  "paused": false
+  "paused": false,
+  "unpaused_at_ms": 0,                          // the last unpause (0: never)
+  "changes_unlock_floor_ms": 0,                 // no execute_change before this: the last unpause + change_delay_ms then
+  "sessions_valid_from_ms": 0                   // sessions opened before this can't derive (set_sessions_valid_from_ms)
 }
 
 // Issuer (get_issuer) — key material is not returned, only active key ids
@@ -549,7 +552,8 @@ for an increase). An increase also cancels a pending decrease. `change_delay_ms`
 | Method | Who | Notes |
 |---|---|---|
 | `pause()` | owner or any watchdog | Sets `paused`. No-op if already paused. Event `paused {by}`. The watchdog pauses on its own only when a key Google doesn't publish is active on chain (D82). |
-| `unpause()` | owner only | At once, no governance delay (D82). No-op if not paused. Event `unpaused {}`. |
+| `unpause()` | owner only | At once, no governance delay (D82). No-op if not paused. Sets `unpaused_at_ms = now` and `changes_unlock_floor_ms = max(itself, now + change_delay_ms)`: no `execute_change` before then, so every scope change pending across the pause gets a full timelock after it (OIDC owners can't cancel while paused). Event `unpaused {changes_unlock_floor_ms}`. |
+| `set_sessions_valid_from_ms(sessions_valid_from_ms)` | owner only | `{"sessions_valid_from_ms":1800000060001}`. Sessions opened before it can't derive (`No such session`), can't be revoked, and `get_session` returns `null` for them; their keys stay in use until they expire. Raised only (`sessions_valid_from_ms can only be raised`), never past the block time (`sessions_valid_from_ms can't be in the future`). Allowed while paused. For a forged issuer key that was active: set it just after the pause (no session opens while paused) before unpausing, or the sessions the key opened keep deriving for up to `MAX_SESSION_MS` (docs/operations.md, `forged_active_key`). A session opened by v1 code (no stored creation time) counts as opened at `expires_at_ms − MAX_SESSION_MS`, the earliest it can have been. Event `sessions_valid_from_set {sessions_valid_from_ms}`. |
 
 While paused these panic `Paused` (checked first): every token path (`verify_token`, so `create_session`,
 `create_session_and_derive`, `register_scope` (also without proofs), `propose_change` with a client proof and every
@@ -559,6 +563,10 @@ While paused these panic `Paused` (checked first): every token path (`verify_tok
 `OwnerAuth::Near` actions without a token, every owner and governance method (including `execute_upgrade` and
 `accept_owner`), views. Pause can't post keys, change code or move anything: the worst it does is stop logins until
 the owner unpauses.
+
+Pausing alone doesn't undo what a forged key already did: sessions it opened derive again after the unpause unless the
+owner raises `sessions_valid_from_ms` past the pause first, and scope changes proposed with its tokens wait a full
+`change_delay_ms` after the unpause (`changes_unlock_floor_ms`) for their OIDC owners to cancel.
 
 #### Updater keys
 
@@ -610,7 +618,7 @@ MPC; the test fails above +2%).
 |---|---|
 | `get_governance()` | Governance (Types above) |
 | `get_key_changes()` | pending key changes (Types above) |
-| `get_config()` | Config, including the delays in force, pending decreases, `paused` and pending console audiences |
+| `get_config()` | Config, including the delays in force, pending decreases, `paused`, `unpaused_at_ms`, `changes_unlock_floor_ms`, `sessions_valid_from_ms` and pending console audiences |
 
 #### Owner = Sputnik DAO
 
@@ -703,7 +711,7 @@ change with `unlock_at_ms = now + change_delay_ms`. Increments `action_nonce`.
 {"scope_id":"s1","change_id":0}
 ```
 
-Not while paused (`Paused`, checked first). Applies a pending change once `now >= unlock_at_ms` (`Change is still timelocked`). Re-checks: `AddClient` client
+Not while paused (`Paused`, checked first). Applies a pending change once `now >= unlock_at_ms` and `now >= changes_unlock_floor_ms` (`Change is still timelocked`; `get_scope` already shows each pending change's `unlock_at_ms` raised to that floor). Re-checks: `AddClient` client
 still unregistered (`Client is already registered`), not quarantined for another scope
 (`Client was recently removed from another scope`), not shared (`Client is a shared client`) and room in the scope
 (`A scope has at most 10 clients`); `SetOwners` re-validated; `SetAllowShared` sets `allow_shared = true` (no-op if
@@ -763,7 +771,7 @@ Apply to `propose_change`, `cancel_change`, `remove_client` and `disable_shared_
 
 | Method | Args | Returns |
 |---|---|---|
-| `get_scope(scope_id)` | `{"scope_id":"s1"}` | Scope or `null` |
+| `get_scope(scope_id)` | `{"scope_id":"s1"}` | Scope or `null`. Each pending change's `unlock_at_ms` is when `execute_change` accepts it: its own timelock or `changes_unlock_floor_ms`, whichever is later |
 | `scope_for_client(provider, aud)` | `{"provider":"google","aud":"123-abc..."}` | `"s1"` or `null` |
 
 ### Sessions and CKD
@@ -790,6 +798,11 @@ Then `Token nonce doesn't commit to this session` (Session nonce above, with thi
 `{scope_id}#{provider}#{sub}#{key_index}`, the same whether the token came from the scope's own client or a shared
 one (Google's `sub` is the same across client ids). Then prunes up to 3 expired sessions. Not payable; the contract pays session storage (≈ 250 bytes, freed by pruning).
 
+The stored record (borsh) is `path ‖ scope_id ‖ expires_at_ms u64 ‖ max_uses u32 ‖ used u32 ‖ revoked u8 ‖
+created_at_ms u64` (`sessions.rs` `StoredSession`). Sessions opened by v1 code end after `revoked` (no creation
+time); v2 code reads both forms and writes a v1 record back in the v1 form, so no session needed migrating. The next
+layout change of sessions keeps that codec.
+
 #### `derive_key(session_public_key, counter, signature, pk1, pk2)` — anyone
 
 ```json
@@ -798,7 +811,7 @@ one (Google's `sub` is the same across client ids). Then prunes up to 3 expired 
 
 `signature` = Ed25519 over `session_message(counter, "hana-id-ckd-v1:" ‖ pk1 ‖ ":" ‖ pk2)`. Panics:
 `Paused` (first),
-`No such session` (missing or revoked), `Session expired`, `Session use limit reached`,
+`No such session` (missing, revoked, or opened before `sessions_valid_from_ms`), `Session expired`, `Session use limit reached`,
 `Wrong counter (replayed or out of order)`, `Bad session key`, `Signature must be 64 bytes`, `Invalid session signature`,
 `BLS key too long` (pk1/pk2 > 512 bytes). Increments `used`, then calls the MPC:
 
@@ -857,7 +870,7 @@ longer-lived one for at most 24 h.
 
 | Method | Args | Returns |
 |---|---|---|
-| `get_session(session_public_key)` | `{"session_public_key":[...32]}` | Session or `null` (also `null` once revoked) |
+| `get_session(session_public_key)` | `{"session_public_key":[...32]}` | Session or `null` (also `null` once revoked, or when opened before `sessions_valid_from_ms`) |
 | `session_key_in_use(session_public_key)` | `{"session_public_key":[...32]}` | `bool`: `true` while a session for this key (revoked or not) has not expired, i.e. when `create_session` would panic `Session key already in use` |
 | `session_message(counter, payload)` | `{"counter":1,"payload":[...]}` | bytes to sign (`Vec<u8>`) |
 
@@ -887,7 +900,8 @@ set (execution or confirmation, or an owner removal), no longer when a key is po
 | `delay_changed` | `{"which":"issuer_key"\|"governance","value_ms","effective_at_ms"}` |
 | `watchdog_added` / `watchdog_removed` | `{"account_id","confirm_from_ms"}` / `{"account_id","keys_slow_until_ms"}` |
 | `updater_key_added` / `updater_key_deleted` / `updater_key_add_failed` | `{"public_key"}` / `{"public_key","by"}` / `{"public_key"}` |
-| `paused` / `unpaused` | `{"by"}` / `{}` |
+| `paused` / `unpaused` | `{"by"}` / `{"changes_unlock_floor_ms"}` |
+| `sessions_valid_from_set` | `{"sessions_valid_from_ms"}` |
 | `upgrade_proposed` / `upgrade_cancelled` / `upgrade_executed` | `{"code_hash","executable_at_ms"}` / `{"code_hash"}` / `{"code_hash"}` |
 | `state_migrated` | `{"from_version","to_version"}` (logged by `migrate` / `migrate_v1` in the deploy receipt: the upgrade really happened) |
 | `owner_proposed` / `owner_proposal_cancelled` / `owner_changed` | `{"owner","acceptable_at_ms"}` / `{"owner"}` / `{"old","new"}` |
@@ -909,7 +923,8 @@ signer key:
 |---|---|
 | Pending issuer-key changes, proposer, countdown | `get_key_changes()` (`executable_at_ms`); match against Google's JWKS by comparing `n`, `e` with the JWKS entry of the same `kid` |
 | Active keys | `get_issuer("google").kids`; with key material `get_issuer_keys("google")` (compare with the JWKS like a pending change) |
-| Pause state, who paused and when | `get_config().paused`; the `paused {by}` / `unpaused` events (block time = when) |
+| Pause state, who paused and when | `get_config().paused`, `.unpaused_at_ms` (also shows a pause and unpause between two reads), `.changes_unlock_floor_ms`, `.sessions_valid_from_ms`; the `paused {by}` / `unpaused` / `sessions_valid_from_set` events (block time = when) |
+| The owner council's members and vote rules | `view_account(<owner>).code_hash` and the DAO's `get_policy()`: must be exactly the manifest's council, 2 of 3 for every kind (D81); the watchdog alerts critical on any change |
 | Watchdogs and their confirm power | `get_governance().watchdogs` (`confirm_from_ms`), `keys_slow_until_ms`; events `watchdog_added` / `watchdog_removed` |
 | Updater keys against the account's key list | `get_governance().updater_keys` and `updater_methods` against RPC `view_access_key_list(<signer>)`: any other key, or a function-call key with other methods, receiver or a larger allowance, is a finding |
 | Pending upgrade (code hash, countdown) | `get_governance().pending_upgrade`; events `upgrade_proposed` / `upgrade_cancelled` / `upgrade_executed` / `state_migrated`; after execution `view_account(<signer>).code_hash` |
@@ -930,8 +945,9 @@ proposals, with the findings to show (`docs/operations.md` "Governance status fo
 
 ## Changed in the governance batch
 
-Layout v2, migrated **in place** (`migrate_v1`); no byte layout, path format, nonce or CKD request changed, so no
-address changes. In detail:
+Layout v2, migrated **in place** (`migrate_v1`); no path format, nonce, signed message or CKD request changed, so no
+address changes. The one stored-record change is additive: sessions opened by v2 code carry `created_at_ms` after
+the v1 fields (v1 records are still read as they are). In detail:
 
 - `set_issuer_key` queues a pending `Add` (returns its id) instead of installing the key; new
   `propose_issuer_key_removal`, `execute_issuer_key_change`, `confirm_issuer_key_change`,
@@ -946,7 +962,11 @@ address changes. In detail:
 - `new` takes `issuer_key_delay_ms`, `governance_delay_ms`, `watchdogs` and `updater_keys`.
 - `set_console_audiences` additions wait `change_delay_ms` (`pending_console_audiences`); duplicates are refused.
 - `get_config` gains `pending_console_audiences`, `issuer_key_delay_ms`, `pending_issuer_key_delay`,
-  `governance_delay_ms`, `pending_governance_delay`, `paused`; `console_audiences` lists those in force.
+  `governance_delay_ms`, `pending_governance_delay`, `paused`, `unpaused_at_ms`, `changes_unlock_floor_ms`,
+  `sessions_valid_from_ms`; `console_audiences` lists those in force.
+- An unpause re-arms the scope-change timelock (`changes_unlock_floor_ms`, enforced by `execute_change` and shown by
+  `get_scope`); `set_sessions_valid_from_ms` retires every session opened before a floor (both for the
+  `forged_active_key` incident, `docs/operations.md`).
 - Pause checks in `verify_token`, `create_session`, `derive_key`, `register_scope`, `execute_change`,
   `execute_issuer_key_change`, `execute_withdrawal`.
 - Events version `1.1.0` (above).

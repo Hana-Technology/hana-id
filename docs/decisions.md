@@ -1229,6 +1229,22 @@ can't collide with the entries the parallel API, contract and watchdog fixes add
 - Trade-off: an emoji written with U+FE0F (❤️) makes a message show as hex and a label invalid. Unassigned code
   points stay allowed, so the validator gives the same answer on every engine.
 
+### D120. Partner identity token, with opt-in verified email per app
+- Date 2026-10-29 · Status: confirmed by the user, on the roadmap after governance, alongside email login · Source:
+  conversation; `wend-api` (`src/auth/privy.ts`, `src/user/privy-identity.ts`) as the reference use
+- Decision: Hana issues a short-lived (≤ 1 h) JWT a partner's backend can verify against Hana's published keys,
+  obtained by the SDK without a popup (`hana.getIdentityToken()`; the vault proves its session with the session key).
+  Claims: `aud` = the app, a stable per-app pseudonymous user id, the wallet addresses, `iat`/`exp`, and a session id
+  hash (`sid`) so partners can keep one session per device. **Opt-in per app: a verified email claim**: when a partner
+  enables it, Hana asks Google for the email for that app only (Google's screen shows the extra consent), puts it in
+  the identity token off chain, never on chain, and doesn't store it; for email-login users the address comes from
+  the login. The token can't unlock wallets or sign, and Hana's own APIs never accept it.
+- Why: partners' backends need a trusted user identity tied to the wallet (Wend verifies Privy's identity token for
+  verified email + wallets: whitelist, credit programs, referrals, retargeting; and Privy's `sid` for one session per
+  browser). Hana's session model has no bearer token to reuse, by design.
+- Rejected: JWT-based login sessions (bearer tokens; the session key + server share model stays).
+- Amends: D25 and D96 for apps that opt in (Hana handles the Google email transiently and passes it to that partner).
+
 ## Superseded or amended
 
 | Was | Now | Source |

@@ -385,6 +385,10 @@ API and both page Workers deployed, ship gate measured (D76), latency fixes meas
 7. **Confirm the email provider with the colleague** before creating any account: Resend is recorded (D87) but
    another provider may be used instead. The email code sits behind one small interface, so a switch is cheap.
 
+**Roadmap after governance (decided 2026-10-29):** email login with a Hana-run issuer and automatic, Privy-style account
+linking (`docs/email-login-spec.md` on branch `docs/email-login-spec`, open questions in review), and the partner
+identity token with opt-in verified email per app (D120).
+
 **Before mainnet:**
 
 - Bound issuer-key and upgrade power (D33): `docs/governance-spec.md`, decisions confirmed 2026-10-29 (D80–D86:

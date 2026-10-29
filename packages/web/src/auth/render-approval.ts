@@ -2,20 +2,26 @@
 // own decode of the request bytes (@hana-id/core/decode), never from a summary the vault sent. Every value is text;
 // strings the decoders flag as unsafe to show (control, bidi or invisible characters) are shown as hex.
 import { rawSigningWarning } from '@hana-id/core';
-import type {
-  AbiValue,
-  DecodedApproval,
-  DecodedEvmTx,
-  DecodedMessage,
-  DecodedStellarEnvelope,
-  StellarAuthEntry,
-  StellarHostFunction,
-  StellarInvocation,
-  StellarLedgerKey,
-  StellarOperation,
-  StellarScVal,
-  StellarTransaction,
-  TypedDataNode,
+import {
+  type AbiValue,
+  type DecodedApproval,
+  type DecodedEvmTx,
+  type DecodedMessage,
+  type DecodedStellarEnvelope,
+  STELLAR_ACCOUNT_FLAGS,
+  STELLAR_TRUSTLINE_FLAGS,
+  type StellarAuthEntry,
+  type StellarHostFunction,
+  type StellarInvocation,
+  type StellarLedgerKey,
+  type StellarOperation,
+  type StellarPrice,
+  type StellarScVal,
+  type StellarText,
+  type StellarTransaction,
+  type TypedDataNode,
+  stellarAccountControl,
+  stellarFlagNames,
 } from '@hana-id/core/decode';
 import { type Child, type Dom, row, rows } from './dom.ts';
 
@@ -126,8 +132,116 @@ function ledgerKey(d: Dom, k: StellarLedgerKey): HTMLElement {
   }
 }
 
+/** An amount of `asset` (`native` or `CODE:ISSUER`) in stroops: "1.5 USDC:G… (15000000 stroops)". */
+const assetAmount = (d: Dom, s: string, asset: string) => d.h('span', {}, `${formatUnits(s, 7)} `, mono(d, asset === 'native' ? 'XLM' : asset), ` (${s} stroops)`);
+const price = (p: StellarPrice) => `${p.n}/${p.d}`;
+const flags = (bits: number, names: Parameters<typeof stellarFlagNames>[1]) => (bits === 0 ? 'none' : `${stellarFlagNames(bits, names).join(', ')} (${bits})`);
+const shortText = (d: Dom, t: StellarText) => (t.value === null ? mono(d, `(shown as hex) ${t.hex}`) : t.value === '' ? d.h('span', { class: 'muted' }, '(empty: clears it)') : mono(d, t.value));
+const path = (d: Dom, p: readonly string[]) => (p.length === 0 ? 'direct' : d.h('span', {}, ...p.flatMap((a, i) => [i > 0 ? ' → ' : '', mono(d, a)])));
+const offer = (id: string, amount: string) => (id === '0' ? 'new offer' : amount === '0' ? `deletes offer ${id}` : `changes offer ${id}`);
+
+/**
+ * The account-control warnings (docs/decisions.md D110): shown on every setOptions signer, threshold or master-weight
+ * change and every accountMerge, in the popup's strongest style. No auto-approve policy covers these operations.
+ */
+export const ACCOUNT_CONTROL_BANNER =
+  'Danger: this transaction changes who controls a Stellar account. Whoever gets control can take everything in it, and Hana ID can’t undo it. Approve only if you started this change yourself; an app should almost never need it.';
+
+export function accountControlWarnings(op: StellarOperation): string[] {
+  const out: string[] = [];
+  for (const c of stellarAccountControl(op)) {
+    if (c === 'merge' && op.type === 'accountMerge') {
+      out.push(`This closes the account and sends all of its XLM to ${op.destination}. It can’t be undone.`);
+    } else if (op.type === 'setOptions') {
+      if (c === 'signer' && op.signer) {
+        out.push(
+          op.signer.weight === 0
+            ? `This removes signer ${op.signer.key} from the account.`
+            : `This adds ${op.signer.key} as a signer with weight ${op.signer.weight}. Whoever holds that key can sign for the account and, with enough weight, move all its funds and lock you out.`,
+        );
+      } else if (c === 'thresholds') {
+        out.push('This changes the account’s signing thresholds, which decide which keys can move funds and change the account. Wrong values let other signers take over or lock you out for good.');
+      } else if (c === 'master_weight') {
+        out.push(
+          op.masterWeight === 0
+            ? 'This sets the weight of the account’s own key (your Hana key) to 0: it can no longer sign for the account, so you lose control of it.'
+            : `This sets the weight of the account’s own key (your Hana key) to ${op.masterWeight}, which changes what it can still do on the account.`,
+        );
+      }
+    }
+  }
+  return out;
+}
+
+function classic(d: Dom, op: StellarOperation): Child[] {
+  switch (op.type) {
+    case 'pathPaymentStrictReceive':
+      return [rows(d, [row(d, 'To', mono(d, op.destination)), row(d, 'Pays at most', assetAmount(d, op.sendMax, op.sendAsset)), row(d, 'Receives exactly', assetAmount(d, op.destAmount, op.destAsset)), row(d, 'Through', path(d, op.path))])];
+    case 'pathPaymentStrictSend':
+      return [rows(d, [row(d, 'To', mono(d, op.destination)), row(d, 'Pays exactly', assetAmount(d, op.sendAmount, op.sendAsset)), row(d, 'Receives at least', assetAmount(d, op.destMin, op.destAsset)), row(d, 'Through', path(d, op.path))])];
+    case 'manageSellOffer':
+    case 'createPassiveSellOffer':
+      return [rows(d, [row(d, 'Sells', assetAmount(d, op.amount, op.selling)), row(d, 'For', mono(d, op.buying === 'native' ? 'XLM' : op.buying)), row(d, 'Price', `${price(op.price)} per unit sold`), row(d, 'Offer', op.type === 'createPassiveSellOffer' ? 'new passive offer' : offer(op.offerId, op.amount))])];
+    case 'manageBuyOffer':
+      return [rows(d, [row(d, 'Buys', assetAmount(d, op.buyAmount, op.buying)), row(d, 'Paying with', mono(d, op.selling === 'native' ? 'XLM' : op.selling)), row(d, 'Price', `${price(op.price)} per unit bought`), row(d, 'Offer', offer(op.offerId, op.buyAmount))])];
+    case 'setOptions': {
+      const s = op.signer;
+      const r = [
+        s && row(d, s.weight === 0 ? 'Removes signer' : 'Adds signer', mono(d, s.key), ` (${s.keyType}${s.weight === 0 ? '' : `, weight ${s.weight}`})`),
+        op.masterWeight !== null && row(d, 'Own key weight', String(op.masterWeight)),
+        op.lowThreshold !== null && row(d, 'Low threshold', String(op.lowThreshold)),
+        op.medThreshold !== null && row(d, 'Medium threshold', String(op.medThreshold)),
+        op.highThreshold !== null && row(d, 'High threshold', String(op.highThreshold)),
+        op.setFlags !== null && row(d, 'Sets flags', flags(op.setFlags, STELLAR_ACCOUNT_FLAGS)),
+        op.clearFlags !== null && row(d, 'Clears flags', flags(op.clearFlags, STELLAR_ACCOUNT_FLAGS)),
+        op.homeDomain && row(d, 'Home domain', shortText(d, op.homeDomain)),
+        op.inflationDest !== null && row(d, 'Inflation destination', mono(d, op.inflationDest)),
+      ];
+      return r.some(Boolean) ? [rows(d, r)] : [d.h('p', { class: 'muted' }, 'Changes nothing')];
+    }
+    case 'allowTrust':
+      return [rows(d, [row(d, 'Trustor', mono(d, op.trustor)), row(d, 'Asset code', mono(d, op.assetCode)), row(d, 'Authorization', op.authorize === 0 ? 'revoked' : flags(op.authorize, STELLAR_TRUSTLINE_FLAGS))])];
+    case 'accountMerge':
+      return [rows(d, [row(d, 'Sends all XLM to', mono(d, op.destination))])];
+    case 'inflation':
+      return [d.h('p', {}, 'Runs inflation (it no longer has any effect on Stellar)')];
+    case 'endSponsoringFutureReserves':
+      return [d.h('p', {}, 'Ends the reserve sponsorship started earlier in this transaction')];
+    case 'manageData':
+      return [rows(d, [row(d, 'Name', shortText(d, op.name)), row(d, 'Value', op.value === null ? 'deletes the entry' : mono(d, op.value))])];
+    case 'bumpSequence':
+      return [rows(d, [row(d, 'Bumps the sequence number to', mono(d, op.bumpTo))])];
+    case 'createClaimableBalance':
+      return [
+        rows(d, [row(d, 'Amount', assetAmount(d, op.amount, op.asset))]),
+        d.h('p', {}, 'Who can claim it:'),
+        d.h('ul', {}, ...op.claimants.map((c) => d.h('li', {}, mono(d, c.destination), c.unconditional ? ' (at any time)' : ' (with conditions: ', c.unconditional ? null : mono(d, c.predicate), c.unconditional ? null : ')'))),
+      ];
+    case 'claimClaimableBalance':
+    case 'clawbackClaimableBalance':
+      return [rows(d, [row(d, 'Balance', mono(d, op.balanceId))])];
+    case 'beginSponsoringFutureReserves':
+      return [rows(d, [row(d, 'Pays the reserves of', mono(d, op.sponsored))])];
+    case 'revokeSponsorship':
+      return op.target.type === 'ledgerEntry'
+        ? [d.h('p', {}, 'Ends the sponsorship of:'), d.h('ul', {}, ledgerKey(d, op.target.key))]
+        : [rows(d, [row(d, 'Ends the sponsorship of signer', mono(d, op.target.signer)), row(d, 'On account', mono(d, op.target.account))])];
+    case 'clawback':
+      return [rows(d, [row(d, 'Takes back from', mono(d, op.from)), row(d, 'Amount', assetAmount(d, op.amount, op.asset))])];
+    case 'setTrustLineFlags':
+      return [rows(d, [row(d, 'Trustor', mono(d, op.trustor)), row(d, 'Asset', mono(d, op.asset)), row(d, 'Sets flags', flags(op.setFlags, STELLAR_TRUSTLINE_FLAGS)), row(d, 'Clears flags', flags(op.clearFlags, STELLAR_TRUSTLINE_FLAGS))])];
+    case 'liquidityPoolDeposit':
+      return [rows(d, [row(d, 'Pool', mono(d, op.poolId)), row(d, 'At most', `${formatUnits(op.maxAmountA, 7)} of asset A and ${formatUnits(op.maxAmountB, 7)} of asset B`), row(d, 'Price between', `${price(op.minPrice)} and ${price(op.maxPrice)}`)])];
+    case 'liquidityPoolWithdraw':
+      return [rows(d, [row(d, 'Pool', mono(d, op.poolId)), row(d, 'Pool shares', formatUnits(op.amount, 7)), row(d, 'At least', `${formatUnits(op.minAmountA, 7)} of asset A and ${formatUnits(op.minAmountB, 7)} of asset B`)])];
+    default:
+      // Never reached: every operation type the XDR defines is decoded (the decoder refuses unknown ones).
+      return [d.h('p', { class: 'warn' }, 'Hana does not decode this operation. Its raw XDR:'), mono(d, op.xdr)];
+  }
+}
+
 function operation(d: Dom, op: StellarOperation, index: number): HTMLElement {
-  const body: Child[] = [];
+  const body: Child[] = accountControlWarnings(op).map((w) => d.h('p', { class: 'danger takeover' }, w));
   switch (op.type) {
     case 'invokeHostFunction':
       body.push(hostFunction(d, op.hostFunction));
@@ -149,11 +263,11 @@ function operation(d: Dom, op: StellarOperation, index: number): HTMLElement {
       body.push(rows(d, [row(d, 'New account', mono(d, op.destination)), row(d, 'Starting balance', stroops(op.startingBalance))]));
       break;
     default:
-      body.push(d.h('p', { class: 'warn' }, 'Hana does not decode this operation. Its raw XDR:'), mono(d, op.xdr));
+      body.push(...classic(d, op));
   }
   return d.h(
     'li',
-    { class: 'op' },
+    { class: stellarAccountControl(op).length > 0 ? 'op takeover-op' : 'op' },
     d.h('h3', {}, `${index + 1}. ${op.type}`),
     op.source ? d.h('p', {}, 'Source ', mono(d, op.source)) : null,
     ...body,
@@ -184,6 +298,11 @@ function stellarTx(d: Dom, passphrase: string, tx: StellarTransaction): HTMLElem
 }
 
 function stellarEnvelope(d: Dom, passphrase: string, env: DecodedStellarEnvelope): HTMLElement[] {
+  const banner = env.tx.operations.some((op) => stellarAccountControl(op).length > 0) ? [d.h('p', { class: 'danger takeover banner', attrs: { role: 'alert' } }, ACCOUNT_CONTROL_BANNER)] : [];
+  return [...banner, ...envelopeBody(d, passphrase, env)];
+}
+
+function envelopeBody(d: Dom, passphrase: string, env: DecodedStellarEnvelope): HTMLElement[] {
   if (env.envelope === 'fee_bump') {
     return [
       d.h('p', { class: 'warn' }, 'This is a fee-bump: it pays the fee for the transaction inside it.'),

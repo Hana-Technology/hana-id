@@ -2,13 +2,28 @@ import { Asset, Keypair, Operation, StrKey, xdr } from '@stellar/stellar-base';
 import { describe, expect, it } from 'vitest';
 import {
   DecodeError,
+  STELLAR_ACCOUNT_FLAGS,
   STELLAR_MAX_DEPTH,
+  STELLAR_TRUSTLINE_FLAGS,
+  type StellarOperation,
   decodeMessage,
   decodeStellarAuthPreimage,
   decodeStellarTransaction,
+  stellarAccountControl,
+  stellarFlagNames,
 } from './entries.ts';
 import {
+  ATTACKER,
+  BALANCE_ID,
+  ISSUER,
   OTHER,
+  POOL_ID,
+  addSignerOp,
+  homeDomainOp,
+  masterWeightOp,
+  mergeOp,
+  plainClassicOps,
+  thresholdsOp,
   PASSPHRASE,
   POOL,
   ROUTER,
@@ -157,20 +172,17 @@ describe('decodeStellarTransaction', () => {
     expect(Object.isFrozen(op.hostFunction)).toBe(true);
   });
 
-  it('decodes classic operations by type, with raw XDR for the rest', () => {
-    const setOptions = Operation.setOptions({ homeDomain: 'evil.test' });
+  it('decodes changeTrust, payment and createAccount', () => {
     const bytes = txBytes([
       Operation.changeTrust({ asset: USDC, limit: '100' }),
       paymentOp(),
-      setOptions,
       Operation.createAccount({ destination: OTHER, startingBalance: '2' }),
     ]);
     const ops = decodeStellarTransaction(bytes).tx.operations;
-    expect(ops.map((o) => o.type)).toEqual(['changeTrust', 'payment', 'setOptions', 'createAccount']);
+    expect(ops.map((o) => o.type)).toEqual(['changeTrust', 'payment', 'createAccount']);
     expect(ops[0]).toMatchObject({ asset: `USDC:${USDC.getIssuer()}`, limit: '1000000000' });
     expect(ops[1]).toMatchObject({ destination: OTHER, asset: 'native', amount: '10000000' });
-    expect(ops[2]).toEqual({ type: 'setOptions', source: null, xdr: setOptions.toXDR('base64') });
-    expect(ops[3]).toMatchObject({ destination: OTHER, startingBalance: '20000000' });
+    expect(ops[2]).toMatchObject({ destination: OTHER, startingBalance: '20000000' });
   });
 
   it('decodes a 12-character asset code, an operation source, a text memo and muxed accounts', () => {
@@ -234,6 +246,201 @@ describe('decodeStellarTransaction', () => {
     expect(op.hostFunction.args).toEqual([
       { type: 'string', value: null, hex: Buffer.from(`abc${rlo}def`).toString('hex') },
       { type: 'string', value: null, hex: 'ff' },
+    ]);
+  });
+});
+
+describe('decodeStellarTransaction: classic operations (CORE-1, D110)', () => {
+  const one = (op: xdr.Operation) => {
+    const ops = decodeStellarTransaction(txBytes([op])).tx.operations;
+    expect(ops).toHaveLength(1);
+    const [d] = ops;
+    expect(d?.xdr).toBe(op.toXDR('base64'));
+    return d as StellarOperation;
+  };
+  const usdc = `USDC:${ISSUER}`;
+  const eurc = `EURC:${ISSUER}`;
+
+  it('decodes a setOptions that adds a signer with its weight, flagged as account control', () => {
+    const d = one(addSignerOp(255));
+    expect(d).toEqual({
+      type: 'setOptions',
+      source: null,
+      xdr: addSignerOp(255).toXDR('base64'),
+      inflationDest: null,
+      clearFlags: null,
+      setFlags: null,
+      masterWeight: null,
+      lowThreshold: null,
+      medThreshold: null,
+      highThreshold: null,
+      homeDomain: null,
+      signer: { key: ATTACKER, keyType: 'ed25519', weight: 255 },
+    });
+    expect(stellarAccountControl(d)).toEqual(['signer']);
+    expect(Object.isFrozen((d as { signer: object }).signer)).toBe(true);
+  });
+
+  it('decodes a signer removal (weight 0) and every other signer key type', () => {
+    expect(one(addSignerOp(0))).toMatchObject({ signer: { key: ATTACKER, keyType: 'ed25519', weight: 0 } });
+    const preAuth = StrKey.encodePreAuthTx(Buffer.alloc(32, 1));
+    const hashX = StrKey.encodeSha256Hash(Buffer.alloc(32, 2));
+    expect(one(Operation.setOptions({ signer: { preAuthTx: Buffer.alloc(32, 1), weight: 1 } }))).toMatchObject({
+      signer: { key: preAuth, keyType: 'preAuthTx', weight: 1 },
+    });
+    expect(one(Operation.setOptions({ signer: { sha256Hash: Buffer.alloc(32, 2), weight: 3 } }))).toMatchObject({
+      signer: { key: hashX, keyType: 'sha256Hash', weight: 3 },
+    });
+    const payload = StrKey.encodeSignedPayload(
+      new xdr.SignerKeyEd25519SignedPayload({
+        ed25519: StrKey.decodeEd25519PublicKey(ATTACKER),
+        payload: Buffer.from([1, 2, 3, 4]),
+      }).toXDR(),
+    );
+    const signed = one(Operation.setOptions({ signer: { ed25519SignedPayload: payload, weight: 9 } }));
+    expect(signed).toMatchObject({ signer: { key: payload, keyType: 'ed25519SignedPayload', weight: 9 } });
+    expect(stellarAccountControl(signed)).toEqual(['signer']);
+  });
+
+  it('decodes thresholds, master weight, flags, home domain and inflation destination', () => {
+    const d = one(
+      Operation.setOptions({
+        inflationDest: OTHER,
+        clearFlags: 2,
+        setFlags: 9 as never,
+        masterWeight: 0,
+        lowThreshold: 1,
+        medThreshold: 2,
+        highThreshold: 3,
+        homeDomain: 'example.com',
+      }),
+    );
+    expect(d).toMatchObject({
+      inflationDest: OTHER,
+      clearFlags: 2,
+      setFlags: 9,
+      masterWeight: 0,
+      lowThreshold: 1,
+      medThreshold: 2,
+      highThreshold: 3,
+      homeDomain: { value: 'example.com', hex: Buffer.from('example.com').toString('hex') },
+      signer: null,
+    });
+    expect(stellarAccountControl(d)).toEqual(['thresholds', 'master_weight']);
+    expect(stellarAccountControl(one(thresholdsOp()))).toEqual(['thresholds']);
+    expect(stellarAccountControl(one(Operation.setOptions({ highThreshold: 1 })))).toEqual(['thresholds']);
+    expect(stellarAccountControl(one(masterWeightOp(255)))).toEqual(['master_weight']);
+    // A home domain, flags or inflation destination alone doesn't change who controls the account.
+    expect(stellarAccountControl(one(homeDomainOp()))).toEqual([]);
+    expect(stellarAccountControl(one(Operation.setOptions({ setFlags: 1, inflationDest: OTHER })))).toEqual([]);
+  });
+
+  it('shows a home domain with invisible characters as hex only', () => {
+    const rlo = `a${String.fromCodePoint(0x202e)}b`;
+    expect(one(Operation.setOptions({ homeDomain: rlo }))).toMatchObject({
+      homeDomain: { value: null, hex: Buffer.from(rlo).toString('hex') },
+    });
+  });
+
+  it('decodes accountMerge with its destination (a muxed one too), flagged as account control', () => {
+    const d = one(mergeOp());
+    expect(d).toEqual({ type: 'accountMerge', source: null, xdr: mergeOp().toXDR('base64'), destination: ATTACKER });
+    expect(stellarAccountControl(d)).toEqual(['merge']);
+    const m = 'MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUAAAAAAAAAAAACJUQ';
+    expect(one(Operation.accountMerge({ destination: m }))).toMatchObject({ destination: m });
+  });
+
+  it('decodes path payments: assets, amounts, destination and path', () => {
+    expect(one(plainClassicOps.pathPaymentStrictReceive?.() as xdr.Operation)).toMatchObject({
+      type: 'pathPaymentStrictReceive',
+      sendAsset: 'native',
+      sendMax: '50000000',
+      destination: OTHER,
+      destAsset: usdc,
+      destAmount: '10000000',
+      path: [eurc],
+    });
+    expect(one(plainClassicOps.pathPaymentStrictSend?.() as xdr.Operation)).toMatchObject({
+      type: 'pathPaymentStrictSend',
+      sendAsset: usdc,
+      sendAmount: '20000000',
+      destination: OTHER,
+      destAsset: 'native',
+      destMin: '5000000',
+      path: [],
+    });
+  });
+
+  it.each([
+    ['manageSellOffer', { selling: usdc, buying: 'native', amount: '30000000', price: { n: 1, d: 2 }, offerId: '7' }],
+    ['manageBuyOffer', { selling: 'native', buying: usdc, buyAmount: '40000000', price: { n: 2, d: 1 }, offerId: '0' }],
+    ['createPassiveSellOffer', { selling: usdc, buying: eurc, amount: '10000000', price: { n: 1, d: 1 }, offerId: '0' }],
+    ['allowTrust', { trustor: OTHER, assetCode: 'USDC', authorize: 1 }],
+    ['inflation', {}],
+    ['manageData', { name: { value: 'config', hex: Buffer.from('config').toString('hex') }, value: '0102' }],
+    ['bumpSequence', { bumpTo: '1000' }],
+    [
+      'createClaimableBalance',
+      { asset: usdc, amount: '10000000', claimants: [{ destination: OTHER, unconditional: true }] },
+    ],
+    ['claimClaimableBalance', { balanceId: BALANCE_ID }],
+    ['beginSponsoringFutureReserves', { sponsored: OTHER }],
+    ['endSponsoringFutureReserves', {}],
+    ['revokeSponsorship', { target: { type: 'ledgerEntry', key: { type: 'account', account: OTHER } } }],
+    ['clawback', { asset: usdc, from: OTHER, amount: '10000000' }],
+    ['clawbackClaimableBalance', { balanceId: BALANCE_ID }],
+    ['setTrustLineFlags', { trustor: OTHER, asset: usdc, clearFlags: 4, setFlags: 1 }],
+    [
+      'liquidityPoolDeposit',
+      {
+        poolId: POOL_ID,
+        maxAmountA: '10000000',
+        maxAmountB: '20000000',
+        minPrice: { n: 1, d: 2 },
+        maxPrice: { n: 2, d: 1 },
+      },
+    ],
+    ['liquidityPoolWithdraw', { poolId: POOL_ID, amount: '10000000', minAmountA: '1000000', minAmountB: '2000000' }],
+  ])('decodes %s field by field, with no account-control flag', (type, fields) => {
+    const build = plainClassicOps[type] as () => xdr.Operation;
+    const d = one(build());
+    expect(d).toMatchObject({ type, source: null, ...fields });
+    expect(stellarAccountControl(d)).toEqual([]);
+  });
+
+  it('decodes manageData deletion, a 12-character allowTrust code and a signer sponsorship revocation', () => {
+    expect(one(Operation.manageData({ name: 'config', value: null }))).toMatchObject({ value: null });
+    expect(one(Operation.allowTrust({ trustor: OTHER, assetCode: 'LONGASSET123', authorize: 0 }))).toMatchObject({
+      assetCode: 'LONGASSET123',
+      authorize: 0,
+    });
+    expect(
+      one(Operation.revokeSignerSponsorship({ account: OTHER, signer: { ed25519PublicKey: ATTACKER } })),
+    ).toMatchObject({ target: { type: 'signer', account: OTHER, signer: ATTACKER } });
+  });
+
+  it('covers every operation type the XDR defines', () => {
+    const decodedTypes = new Set([
+      'invokeHostFunction',
+      'extendFootprintTtl',
+      'restoreFootprint',
+      'changeTrust',
+      'payment',
+      'createAccount',
+      'accountMerge',
+      ...Object.keys(plainClassicOps),
+    ]);
+    const all = (xdr.OperationType as unknown as { _members: Record<string, unknown> })._members;
+    expect(new Set(Object.keys(all))).toEqual(decodedTypes);
+  });
+
+  it('names flag bits, unknown ones too', () => {
+    expect(stellarFlagNames(9, STELLAR_ACCOUNT_FLAGS)).toEqual(['auth required', 'clawback enabled']);
+    expect(stellarFlagNames(0, STELLAR_ACCOUNT_FLAGS)).toEqual([]);
+    expect(stellarFlagNames(0x13, STELLAR_TRUSTLINE_FLAGS)).toEqual([
+      'authorized',
+      'authorized to maintain liabilities',
+      'unknown bits 16',
     ]);
   });
 });

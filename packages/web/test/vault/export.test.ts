@@ -53,7 +53,9 @@ describe('export (vault side)', () => {
       keyIndex: 0,
       chain: 'stellar',
       address: addresses.stellar,
+      sessionExpiresAtMs: expect.any(Number),
     });
+    expect(ctx.sessionExpiresAtMs).toBeGreaterThan(t.browser.timers.now);
     expect(w.posted[0]!.targetOrigin).toBe(ENV.authOrigin);
     expect((await reply).result).toBeNull();
     // Busy until the export window closes.
@@ -117,6 +119,61 @@ describe('export (vault side)', () => {
     t.browser.timers.advance(5 * 60_000);
     expect((await b).error?.code).toBe(4001);
     await waitLabel(t, null);
+  });
+
+  describe('the session end reaches a window that has its context (AUTH-1, D111)', () => {
+    async function running() {
+      const s = await session();
+      const reply = s.t.request('hana_export', { chain: 'stellar' });
+      await waitLabel(s.t, 'Export key in Hana');
+      s.t.launcher.click();
+      const w = s.t.opened.at(-1)!;
+      s.t.dispatch({ data: { v: 1, t: 'hana:export-hello' }, origin: ENV.authOrigin, source: w });
+      await w.next('hana:export-context');
+      expect((await reply).result).toBeNull();
+      return { ...s, w };
+    }
+    const ends = (w: FakeWindow) => w.posted.filter((p) => p.message.t === 'hana:export-end');
+
+    it('logout sends hana:export-end to authOrigin and frees the job', async () => {
+      const { t, w } = await running();
+      expect(ends(w)).toHaveLength(0);
+      await t.request('hana_logout');
+      const end = await w.next('hana:export-end');
+      expect(end).toEqual({ v: 1, t: 'hana:export-end' });
+      expect(ends(w)[0]!.targetOrigin).toBe(ENV.authOrigin);
+      // Left open so it can say why; the page erases the key on the message.
+      expect(w.closed).toBe(false);
+    });
+
+    it('the session expiry sends it too', async () => {
+      const { t, w } = await running();
+      t.browser.timers.advance(24 * HOUR);
+      await w.next('hana:export-end');
+      expect(await t.waitEvent('sessionExpired')).toBeNull();
+    });
+
+    it('the job limit (15 min) sends it, then a new export can start', async () => {
+      const { t, w } = await running();
+      t.browser.timers.advance(15 * 60_000 + 2_000);
+      await w.next('hana:export-end');
+      const again = t.request('hana_export', { chain: 'evm' });
+      await waitLabel(t, 'Export key in Hana');
+      t.launcher.click();
+      expect(t.opened.at(-1)).not.toBe(w);
+      t.dispatch({ data: { v: 1, t: 'hana:export-hello' }, origin: ENV.authOrigin, source: t.opened.at(-1)! });
+      expect((await again).result).toBeNull();
+    });
+
+    it('a window the user closed gets nothing', async () => {
+      const { t, w } = await running();
+      w.closed = true;
+      t.browser.timers.advance(2_000);
+      await sleepReal(20);
+      await t.request('hana_logout');
+      await sleepReal(20);
+      expect(ends(w)).toHaveLength(0);
+    });
   });
 
   it('is 4100 when logged out', async () => {

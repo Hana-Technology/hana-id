@@ -196,7 +196,7 @@ export function nameCollision(partnerName: string, chains: readonly ContractChai
 }
 
 /** Check marks a partner name may not show: only Hana's verified badge carries one (removed when rendering). */
-export const CHECK_MARKS = /[\u2611\u2705\u2713\u2714\u221a\u{1F5F8}\u{1F5F9}\ufe0e\ufe0f]/gu;
+export const CHECK_MARKS = /[\u2611\u2705\u2713\u2714\u221a\u{10102}\u{1F5F8}\u{1F5F9}\u{1FBB1}\ufe0e\ufe0f]/gu;
 
 /** A partner name as the consent screen shows it: check marks removed, trimmed. */
 export const displayPartnerName = (name: string): string => name.replace(CHECK_MARKS, '').trim();

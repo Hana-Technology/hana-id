@@ -20,12 +20,17 @@
 // The gesture that arms it never approves: Approve acts only on a click whose own pointerdown (or, for a keyboard
 // click, its own non-repeated keydown) came after the arming gesture. So a tap that lands on the button as it enables
 // does nothing and only the next tap approves. Approve is never focused by the page: a keyboard user reaches it with
-// Tab, which arms the guard on the way.
+// Tab, which arms the guard on the way. A keyboard click also needs Approve to have held focus for KEYBOARD_DWELL_MS
+// before its keydown (D113, sweep AUTH-3): "Tab, Tab, Enter" typed in one go, which a partner page could coach a user
+// into, lands Enter on Approve too soon and does nothing; the user has to stop on Approve first.
 //
 // Residual risk (accepted): on a phone, someone tapping repeatedly for more than 1 s after the popup tab opens can
-// still approve in two taps, if the second lands on Approve.
+// still approve in two taps, if the second lands on Approve; on a desktop, a user coached to Tab to Approve, wait and
+// press Enter still approves (as a user coached to click Approve does).
 
 export const GUARD_DELAY_MS = 1000;
+/** How long Approve must hold focus before a keyboard click on it acts (D113). */
+export const KEYBOARD_DWELL_MS = 500;
 
 /** Keys that arm the guard (they move focus; none of them activates a button). */
 export const ARMING_KEYS: ReadonlySet<string> = new Set(['Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
@@ -80,6 +85,10 @@ export class ApproveGuard {
   private seq = 0;
   private lastPointerDown = 0;
   private lastKeyDown = 0;
+  /** When the last non-repeated keydown happened (the guard's clock). */
+  private lastKeyDownAt = Number.NEGATIVE_INFINITY;
+  /** When Approve last gained focus, or null while it doesn't have it. */
+  private primaryFocusAt: number | null = null;
   /**
    * The position of the last pointer event (move or press) in the current request and focus period, for moves that
    * report zero movement. Every reset of the guard forgets it.
@@ -104,7 +113,18 @@ export class ApproveGuard {
     this.renderedAt = this.now();
     this.armedBy = null;
     this.lastPoint = null;
+    this.primaryFocusAt = null;
     this.update();
+  }
+
+  /** Approve gained focus (its own `focus` event, also when the window regains focus with Approve focused). */
+  primaryFocused(): void {
+    this.primaryFocusAt = this.now();
+  }
+
+  /** Approve lost focus. */
+  primaryBlurred(): void {
+    this.primaryFocusAt = null;
   }
 
   /** The window gained focus or became visible. */
@@ -128,6 +148,7 @@ export class ApproveGuard {
     this.renderedAt = null;
     this.armedBy = null;
     this.lastPoint = null;
+    this.primaryFocusAt = null;
     this.update();
   }
 
@@ -140,7 +161,10 @@ export class ApproveGuard {
     if (input.type === 'keydown' && input.repeat === true) return;
     const n = ++this.seq;
     if (input.type === 'pointerdown') this.lastPointerDown = n;
-    if (input.type === 'keydown') this.lastKeyDown = n;
+    if (input.type === 'keydown') {
+      this.lastKeyDown = n;
+      this.lastKeyDownAt = this.now();
+    }
     const arming = arms(input, this.lastPoint);
     // An event with incomplete coordinates forgets the position: the next zero-movement move has nothing to compare with.
     if (input.type !== 'keydown') this.lastPoint = pointOf(input);
@@ -155,11 +179,13 @@ export class ApproveGuard {
 
   /**
    * Whether a click on Approve may act now: armed, and the click's own pointerdown (or keydown, for a click from the
-   * keyboard) came after the gesture that armed the guard. Checked on click, not only through `disabled`.
+   * keyboard) came after the gesture that armed the guard; a keyboard click's keydown also came at least
+   * KEYBOARD_DWELL_MS after Approve gained focus. Checked on click, not only through `disabled`.
    */
   mayActivate(fromKeyboard: boolean): boolean {
     if (!this.armed() || this.armedBy === null) return false;
-    return (fromKeyboard ? this.lastKeyDown : this.lastPointerDown) > this.armedBy;
+    if (!fromKeyboard) return this.lastPointerDown > this.armedBy;
+    return this.lastKeyDown > this.armedBy && this.primaryFocusAt !== null && this.lastKeyDownAt >= this.primaryFocusAt + KEYBOARD_DWELL_MS;
   }
 
   private marksPassed(t: number): boolean {

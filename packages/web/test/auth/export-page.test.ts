@@ -17,9 +17,9 @@ import {
   parseWindowMessage,
   sessionNonce,
 } from '@hana-id/core';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthApi } from '../../src/auth/api.ts';
-import { EXPORT_CONFIRMATION, startExportPage } from '../../src/auth/export-page.ts';
+import { EXPORT_CHECK_MS, EXPORT_CONFIRMATION, EXPORT_END_TEXT, EXPORT_KEY_LIFETIME_MS, startExportPage } from '../../src/auth/export-page.ts';
 import type { NearReader } from '../../src/auth/near-rpc.ts';
 import { simulateMpc } from '../../../core/test/helpers.ts';
 import { CLIENT_ID, ENV, EVIL, FakeWindow, NET, PARTNER, PK, type RemoteWindow, type TokenSigner, asWindow, flush, pageText, remoteWindow, resetDom, tokenSigner } from './helpers.ts';
@@ -58,7 +58,7 @@ interface Run {
   loginBodies: LoginBody[];
 }
 
-function run(o: { chain?: 'stellar' | 'evm'; address?: string; config?: AppConfig; loginPath?: string; gesture?: boolean } = {}): Run {
+function run(o: { chain?: 'stellar' | 'evm'; address?: string; config?: AppConfig; loginPath?: string; gesture?: boolean; sessionExpiresAtMs?: number } = {}): Run {
   const chain = o.chain ?? 'stellar';
   const win = new FakeWindow('/export');
   const vault = remoteWindow();
@@ -84,7 +84,19 @@ function run(o: { chain?: 'stellar' | 'evm'; address?: string; config?: AppConfi
   };
   const near: NearReader = { getSession: vi.fn(), txOutcome: vi.fn() };
   const page = startExportPage({ win, env: ENV, api, near, jwks: async (kid) => (kid === signer.jwk.kid ? signer.jwk : null), sleep: async () => {}, isGesture: () => o.gesture ?? true });
-  const context = { v: 1, t: 'hana:export-context', pk: PK, appName: 'Vault name', parentOrigin: PARTNER, scopeId: SCOPE, signer: ENV.signer, keyIndex: 0, chain, address: o.address ?? addressFor(chain) };
+  const context = {
+    v: 1,
+    t: 'hana:export-context',
+    pk: PK,
+    appName: 'Vault name',
+    parentOrigin: PARTNER,
+    scopeId: SCOPE,
+    signer: ENV.signer,
+    keyIndex: 0,
+    chain,
+    address: o.address ?? addressFor(chain),
+    ...(o.sessionExpiresAtMs === undefined ? {} : { sessionExpiresAtMs: o.sessionExpiresAtMs }),
+  };
   win.message(context, ENV.vaultOrigin, vault);
   return {
     win,
@@ -376,6 +388,128 @@ describe('/export', () => {
     click(button(/Try again/u));
     expect(r.win.opened).toHaveLength(2);
     expect(r.win.opened[1]?.target).not.toBe(r.win.opened[0]?.target);
+  });
+
+  describe('the key is erased 5 min after it is derived, or when the session ends (AUTH-1, D111)', () => {
+    beforeEach(() => {
+      // Fake timers and clock that also follow real time, so the login's crypto and awaits run as usual.
+      vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    async function toConfirm(o: Parameters<typeof run>[0] = {}): Promise<Run> {
+      const r = run(o);
+      await signIn(r);
+      await r.deliver();
+      expect(await r.page.settled).toBe('confirm');
+      return r;
+    }
+    function toReveal(): { hold: HTMLButtonElement; secret: HTMLElement } {
+      const input = document.querySelector('input') as HTMLInputElement;
+      input.value = EXPORT_CONFIRMATION;
+      input.dispatchEvent(new Event('input'));
+      click(button(/Continue/u));
+      return { hold: button(/Hold to show/u) as HTMLButtonElement, secret: document.querySelector('.secret') as HTMLElement };
+    }
+    const ended = (r: Run, reason: string) => {
+      expect(r.page.state).toBe('ended');
+      expect(r.page.endReason).toBe(reason);
+      expect(pageText()).toContain('Export ended');
+      expect(document.querySelector('.secret')).toBeNull();
+      expect(button(/Hold to show|Continue|Try again|Sign in/u)).toBeNull();
+    };
+
+    it('still reveals just before 5 min; at 5 min the key and the screen are erased, with no way back', async () => {
+      const r = await toConfirm();
+      const { hold, secret } = toReveal();
+      vi.advanceTimersByTime(EXPORT_KEY_LIFETIME_MS - 2_000);
+      hold.dispatchEvent(new Event('pointerdown'));
+      expect(secret.textContent).toMatch(/^S[A-Z2-7]{55}$/u);
+      vi.advanceTimersByTime(2_000);
+      ended(r, 'expired');
+      expect(pageText()).toContain(EXPORT_END_TEXT.expired);
+      // The old button can't bring it back.
+      hold.dispatchEvent(new Event('pointerdown'));
+      expect(secret.textContent).toBe('••••••••');
+      expect(pageText()).not.toMatch(/S[A-Z2-7]{55}/u);
+    });
+
+    it('ends in the confirm step too', async () => {
+      const r = await toConfirm();
+      vi.advanceTimersByTime(EXPORT_KEY_LIFETIME_MS);
+      ended(r, 'expired');
+    });
+
+    it('a device clock set back doesn’t extend the deadline', async () => {
+      const r = await toConfirm();
+      vi.setSystemTime(Date.now() - 60 * 60_000);
+      vi.advanceTimersByTime(EXPORT_KEY_LIFETIME_MS);
+      ended(r, 'expired');
+    });
+
+    it('hana:export-end from the vault erases it at once; the same message from anyone else is ignored', async () => {
+      const r = await toConfirm();
+      const { hold, secret } = toReveal();
+      const evil = remoteWindow();
+      r.win.message({ v: 1, t: 'hana:export-end' }, EVIL, r.vault);
+      r.win.message({ v: 1, t: 'hana:export-end' }, ENV.vaultOrigin, evil);
+      r.win.message({ v: 1, t: 'hana:export-end', extra: 1 }, ENV.vaultOrigin, r.vault);
+      expect(r.page.state).toBe('reveal');
+      r.win.message({ v: 1, t: 'hana:export-end' }, ENV.vaultOrigin, r.vault);
+      ended(r, 'session_ended');
+      hold.dispatchEvent(new Event('pointerdown'));
+      expect(secret.textContent).toBe('••••••••');
+    });
+
+    it('hana:export-end before the sign-in finishes ends the export; a late login shows no key', async () => {
+      const r = run();
+      await signIn(r);
+      r.win.message({ v: 1, t: 'hana:export-end' }, ENV.vaultOrigin, r.vault);
+      ended(r, 'session_ended');
+      expect(r.child.closed).toBe(true);
+      await r.deliver();
+      await vi.advanceTimersByTimeAsync(50);
+      expect(r.page.state).toBe('ended');
+      expect(r.api.login).not.toHaveBeenCalled();
+    });
+
+    it('never outlives the session: a session ending in 2 min ends the export at 2 min', async () => {
+      const r = await toConfirm({ sessionExpiresAtMs: Date.now() + 2 * 60_000 });
+      vi.advanceTimersByTime(2 * 60_000 - 1_000);
+      expect(r.page.state).toBe('confirm');
+      vi.advanceTimersByTime(1_000);
+      ended(r, 'session_ended');
+    });
+
+    it('a session that already ended gets no sign-in', async () => {
+      const r = run({ sessionExpiresAtMs: Date.now() - 1 });
+      await vi.waitFor(() => expect(r.page.state).toBe('ended'));
+      ended(r, 'session_ended');
+    });
+
+    it('the vault frame going away ends it within a second', async () => {
+      const r = await toConfirm();
+      r.vault.closed = true;
+      vi.advanceTimersByTime(EXPORT_CHECK_MS);
+      ended(r, 'vault_gone');
+    });
+  });
+
+  it('the revealed key is not in a live region and is marked translate="no" (AUTH-6, AUTH-4)', async () => {
+    const r = run();
+    await signIn(r);
+    await r.deliver();
+    expect(await r.page.settled).toBe('confirm');
+    const input = document.querySelector('input') as HTMLInputElement;
+    input.value = EXPORT_CONFIRMATION;
+    input.dispatchEvent(new Event('input'));
+    click(button(/Continue/u));
+    const secret = document.querySelector('.secret') as HTMLElement;
+    expect(secret.hasAttribute('aria-live')).toBe(false);
+    expect(secret.closest('[aria-live]')).toBeNull();
+    expect(secret.getAttribute('translate')).toBe('no');
   });
 
   it('a relay that answers 410 ends the export', async () => {

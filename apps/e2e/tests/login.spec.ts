@@ -23,8 +23,9 @@ test('one click on the partner button plus the chooser logs in', async ({ page, 
   expect(requests.count(`${API_URL}/v1/login-relay/`)).toBeGreaterThanOrEqual(2);
   expect(requests.count(LOGIN_ENDPOINT)).toBe(1);
   expect(requests.count(`${API_URL}/v1/derive`)).toBe(0);
-  // A clean login reads NEAR once: the vault's registry check of its scope (Q7). Re-syncs are only for failures.
-  expect(requests.count(NEAR_RPC)).toBe(1);
+  // A clean shared-mode login reads NEAR twice, in parallel: the vault's registry check of its scope (Q7: get_scope)
+  // and of the shared client (D117: get_config). Re-syncs are only for failures.
+  expect(requests.count(NEAR_RPC)).toBe(2);
 });
 
 test('the same Google account gets the same addresses on another device, another account other ones', async ({ page, browser }) => {

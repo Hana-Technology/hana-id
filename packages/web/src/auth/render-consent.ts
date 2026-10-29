@@ -104,6 +104,13 @@ export interface ConsentView {
   readonly nowMs: number;
 }
 
+/**
+ * Shown on every consent screen (sweep CORE-3, D116): stopping auto-approving can't take back signatures the app
+ * already has.
+ */
+export const lingeringSignaturesNote = (appName: string): string =>
+  `Signatures made under these rules go to ${appName}, and stopping doesn’t cancel the ones it already has: a transaction stays usable until it expires, a Stellar authorization until the ledger it names, and typed data until its own deadline.`;
+
 /** The consent body (everything above the Allow / Don't allow buttons). */
 export function renderConsent(d: Dom, view: ConsentView): HTMLElement {
   const { policy, appName, parentOrigin } = view;
@@ -185,6 +192,7 @@ export function renderConsent(d: Dom, view: ConsentView): HTMLElement {
         `${formatEndTime(view.expiresAtMs)} (about ${formatDuration(view.expiresAtMs - view.nowMs)} from now), or earlier if you sign out or stop it`,
       ),
     ]),
+    d.h('p', { class: 'note lingering' }, lingeringSignaturesNote(appName)),
   );
   return d.h('div', { class: 'consent' }, ...parts);
 }

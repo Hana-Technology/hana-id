@@ -80,6 +80,15 @@ p {
   color: var(--muted);
 }
 
+/* Partner-chosen values (app names in <strong>, origins, addresses, decoded values) are bidi-isolated, so right-to-left
+   text in one can't reorder the text around it (sweep AUTH-2). */
+strong,
+.origin,
+.mono,
+.code {
+  unicode-bidi: isolate;
+}
+
 .origin,
 .mono,
 .code {
@@ -107,6 +116,20 @@ p.danger {
   border-radius: 8px;
   padding: 8px 10px;
   font-weight: 600;
+}
+
+/* Stellar account-control operations (D110): stronger than .danger, so they don't read as a routine notice. */
+p.takeover {
+  border: 2px solid var(--danger-text);
+}
+
+p.takeover.banner {
+  font-size: 1.05rem;
+}
+
+.ops > li.takeover-op {
+  border-color: var(--danger-text);
+  border-width: 2px;
 }
 
 header.app {

@@ -7,7 +7,7 @@
 // loopback origins, and `http://localhost:<port>` through the `http://localhost:*` wildcard, only for pk_test_ keys in
 // `local*`/`sandbox*` envs (the build constant `devEnv`). The page already serves only the origins this env allows; the
 // vault applies the rule again so a stale or hand-edited page can't widen it.
-import { isOrigin, isPublishableKey, isScopeId } from '@hana-id/core';
+import { isDisplaySafeLine, isOrigin, isPublishableKey, isScopeId } from '@hana-id/core';
 import { type AutoApprovePolicyV1, policyId as computePolicyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 
 export type Persistence = 'session' | 'none';
@@ -74,7 +74,8 @@ export function parseVaultConfig(value: unknown): VaultConfig | null {
   const { appId, appName, scopeId, origins, publishableKey, serverTimeMs } = value;
   if (value.v !== 1) return null;
   if (typeof appId !== 'string' || !APP_ID_RE.test(appId)) return null;
-  if (typeof appName !== 'string' || appName.length === 0 || appName.length > 200) return null;
+  // Shown in every Hana popup: no control, bidi or invisible character (sweep AUTH-2, @hana-id/core display-safe.ts).
+  if (typeof appName !== 'string' || appName.length === 0 || appName.length > 200 || !isDisplaySafeLine(appName)) return null;
   if (!isScopeId(scopeId) || !isPublishableKey(publishableKey)) return null;
   if (!isInt(serverTimeMs, 0, Number.MAX_SAFE_INTEGER)) return null;
   if (!Array.isArray(origins) || origins.length > MAX_ORIGINS) return null;

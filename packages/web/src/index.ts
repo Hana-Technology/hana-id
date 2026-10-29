@@ -9,8 +9,10 @@ export type { HanaEnv } from './hana-env.ts';
 
 // ---- partner client ----
 export { HANA_ENVIRONMENTS, createHana } from './create-hana.ts';
+// HanaClient is a type only (sweep PART-5, D114): its constructor takes Hana origins, so the only way to build one is
+// createHana, which resolves them from the build's pinned envs.
+export type { HanaClient } from './client/client.ts';
 export {
-  HanaClient,
   type HanaAddresses,
   type HanaConfig,
   type HanaEvents,
@@ -33,3 +35,4 @@ export {
 export { HanaStellarSigner, STELLAR_NETWORKS, type StellarConfig, type StellarSignOptions } from './client/stellar.ts';
 export { isInAppWebView, partnerPageIssues, type PartnerIssue, type PartnerIssueCode } from './client/requirements.ts';
 export { HANA_ID_ICON, HANA_ID_NAME } from './client/icon.ts';
+export { isLoopbackHost, serviceUrl } from './client/urls.ts';

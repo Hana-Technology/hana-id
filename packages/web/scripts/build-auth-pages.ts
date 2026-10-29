@@ -41,9 +41,12 @@ const escapeAttr = (s: string) => s.replace(/&/gu, '&amp;').replace(/"/gu, '&quo
 export function pageHtml(env: HanaEnv, page: AuthPage, script: string, stylesheet: string): string {
   return [
     '<!doctype html>',
-    '<html lang="en">',
+    // No auto-translation (AUTH-4): a translator could reword a signing request, and would send an exported key to
+    // its service.
+    '<html lang="en" translate="no">',
     '<head>',
     '<meta charset="utf-8">',
+    '<meta name="google" content="notranslate">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     `<meta http-equiv="Content-Security-Policy" content="${escapeAttr(authPageMetaCsp(env, page.name))}">`,
     '<meta name="referrer" content="no-referrer">',

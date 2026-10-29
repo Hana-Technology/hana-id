@@ -77,14 +77,22 @@
       async function handle(hash, via) {
         if (!pending) return;
         const p = new URLSearchParams(hash);
-        if (p.get('error')) return void alertOut(`Google error: ${p.get('error')}`);
+        // The state first: a fragment from any other page (spike-callback.html opened by someone else) is ignored before
+        // anything of it is shown, and everything shown goes through textContent (sweep OPER-10).
         if (p.get('state') !== pending.state) return void alertOut('state mismatch: ignored');
+        if (p.get('error')) return void alertOut(`Google error: ${p.get('error')}`);
         const jwt = p.get('id_token');
         if (!jwt) return void alertOut('no id_token in the response');
         const b64 = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
         const claims = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))));
-        const rows = Object.entries(claims).map(([k, v]) => `<tr><td><code>${k}</code></td><td><code>${String(v).replace(/</g, '&lt;')}</code></td></tr>`).join('');
-        $('out').innerHTML = `<h2>Claims in this token (shown only here)</h2><table><tr><th>claim</th><th>value</th></tr>${rows}</table>`;
+        const el = (tag, ...children) => {
+          const node = document.createElement(tag);
+          node.append(...children);
+          return node;
+        };
+        const table = el('table', el('tr', el('th', 'claim'), el('th', 'value')));
+        for (const [k, v] of Object.entries(claims)) table.append(el('tr', el('td', el('code', k)), el('td', el('code', String(v)))));
+        $('out').replaceChildren(el('h2', 'Claims in this token (shown only here)'), table);
         const pii = ['email', 'email_verified', 'name', 'picture', 'given_name', 'family_name', 'locale', 'hd', 'profile'];
         const run = pending;
         pending = null;
@@ -106,7 +114,10 @@
       }
 
       function alertOut(msg) {
-        $('out').innerHTML = `<p class="note">${msg}</p>`;
+        const note = document.createElement('p');
+        note.className = 'note';
+        note.textContent = msg;
+        $('out').replaceChildren(note);
       }
     </script>
   </body>

@@ -17,6 +17,7 @@
 // the normalized policy that policyId hashes and the matcher reads.
 import { StrKey } from '@stellar/stellar-base';
 import { abiTypeContains, parseFunctionSignature } from '../decode/abi.ts';
+import { isDisplaySafeLine } from '../display-safe.ts';
 import { DecodeError } from '../decode/errors.ts';
 import { parseEvmAddress } from '../decode/hex.ts';
 import { JsonNumber, type StrictJson, parseStrictJson } from '../decode/json.ts';
@@ -128,8 +129,6 @@ function anyRefusedByName(name: string): string | undefined {
   return undefined;
 }
 
-// Characters a label or name may not contain (controls, bidi and invisible format characters).
-const UNSAFE_TEXT = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/u;
 const SOROBAN_SYMBOL = /^[A-Za-z0-9_]{1,32}$/u;
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
 const DECIMAL = /^(?:0|[1-9][0-9]*)$/u;
@@ -176,7 +175,8 @@ class Checker {
     const len = [...v].length;
     if (len === 0 || len > max) return this.problem(path, `must be 1 to ${max} characters`);
     if (v.trim() !== v) return this.problem(path, 'must not start or end with whitespace');
-    if (UNSAFE_TEXT.test(v)) return this.problem(path, 'contains control or invisible characters');
+    // A label or name may not hold a control, bidi, invisible or other default-ignorable character (display-safe.ts).
+    if (!isDisplaySafeLine(v)) return this.problem(path, 'contains control or invisible characters');
     return v;
   }
 
@@ -233,7 +233,36 @@ function stellarAddress(c: Checker, v: unknown, path: string, allowContract: boo
   return c.problem(path, allowContract ? 'must be a G… or C… address' : 'must be a G… address');
 }
 
+/**
+ * Keys a Stellar section may not have because no policy can cover classic operations other than changeTrust (D110):
+ * named here so the refusal says why, on top of the generic unknown-key refusal. The account-control operations
+ * (setOptions signer, threshold and master-weight changes, accountMerge) are also refused by the matcher whatever the
+ * policy says.
+ */
+const STELLAR_NEVER_COVERED_KEYS = new Set([
+  'operations',
+  'classicOperations',
+  'signers',
+  'setOptions',
+  'accountMerge',
+  'payment',
+  'pathPaymentStrictSend',
+  'pathPaymentStrictReceive',
+  'manageData',
+  'allowTrust',
+  'setTrustLineFlags',
+  'clawback',
+  'revokeSponsorship',
+]);
+
 function stellarSection(c: Checker, v: unknown, decoders: ProtocolDecoderRegistry): StellarPolicy | undefined {
+  if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+    for (const k of Object.keys(v)) {
+      if (STELLAR_NEVER_COVERED_KEYS.has(k)) {
+        c.problem(`stellar.${k}`, 'Stellar classic operations other than changeTrust can never be auto-approved');
+      }
+    }
+  }
   const o = c.object(
     v,
     'stellar',

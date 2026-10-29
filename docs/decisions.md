@@ -1085,6 +1085,150 @@ answered question there points here.
   (any scope's owners could starve another's cancels); recomputing `owner_action_nonce` off chain now (needs a borsh
   port of `Change`; the caps already confine a wrong-nonce flood to its owner's own windows; still worth doing).
 
+## Security sweep fixes: core, web and SDK (2026-10-29)
+
+From the security sweep of `develop` @ 91609c4 (findings CORE-*, AUTH-*, VAUL-*, PART-*). Numbered from D110 so they
+can't collide with the entries the parallel API, contract and watchdog fixes add from D100.
+
+### D110. Stellar classic operations are decoded; account-control operations get a red warning and are never auto-approved
+- Date 2026-10-29 · Status: in force on branch `fix/sweep-web` (`packages/core/src/decode/stellar.ts`
+  `stellarAccountControl`, `src/policy/match.ts`, `src/policy/validate.ts`; `packages/web/src/auth/render-approval.ts`)
+  · Source: user decision on sweep finding CORE-1; amends `docs/batch-b-spec.md` "Approval flow" step 4
+- Decision: the decoder reads every operation type the XDR defines, field by field: `setOptions` (signer key,
+  type and weight, added or removed; master weight; low, medium and high thresholds; set and clear flags by name;
+  home domain, shown as hex when it isn't display-safe; inflation destination), `accountMerge` (destination), path
+  payments strict send and receive (send asset and exact or maximum amount, destination, destination asset and
+  exact or minimum amount, path), offers, `allowTrust`, `manageData`, `bumpSequence`, claimable balances,
+  sponsorship, `clawback`, `setTrustLineFlags` and liquidity pools. An operation type the library doesn't know is a
+  decode error (the popup refuses the request) instead of a raw-XDR line.
+- Account control: a `setOptions` that touches a signer (any weight, 0 included), a threshold or the master weight,
+  and every `accountMerge`, is an account-control operation. The popup puts a red, bordered banner at the top of the
+  transaction ("Danger: this transaction changes who controls a Stellar account…") and one warning per operation
+  that names the new signer and its weight, the thresholds, the master weight (weight 0: "you lose control of it")
+  or the merge destination ("It can't be undone"). The matcher refuses them first, whatever the policy lists
+  (`account_control`); the validator refuses a Stellar section with a key naming classic operations
+  (`operations`, `setOptions`, `accountMerge`, `signers`, `payment`, path payments, …) on top of the unknown-key
+  refusal. Everything is still rendered with `textContent`.
+- Not done: an extra confirmation step on top of the warning (the Approve guard, D36, still applies).
+- Rejected: keeping "shown by type with raw XDR" for classic operations (a compromised partner page plus one click
+  could add a signer or merge the account away).
+
+### D111. The export window keeps the key 5 minutes at most, and never past the session
+- Date 2026-10-29 · Status: in force on branch `fix/sweep-web` (`packages/web/src/auth/export-page.ts`
+  `EXPORT_KEY_LIFETIME_MS`, `end`; `packages/web/src/vault/vault.ts` `cancelExport`, `onExportHello`;
+  `hana:export-end` and `export-context.sessionExpiresAtMs` in `packages/core/src/protocol.ts`) · Source: user
+  decision on sweep finding AUTH-1 (merged with VAUL-5); amends `docs/batch-b-spec.md` "Key export" step 5
+- Decision: the export window erases the derived key from memory and from the screen at the first of: 5 min after
+  it is derived; the vault session's end, from the context's `sessionExpiresAtMs` (server-corrected) or a
+  `{v:1, t:"hana:export-end"}` the vault posts from `cancelExport` (logout, revoke, expiry, a newer login, and the
+  vault's 15 min job limit, now also for a window that already has its context); its vault frame going away
+  (`opener.closed`); and the window closing. The deadline is a timer (which a device clock change can't move) plus a
+  server-clock check before every confirm and reveal and when the tab becomes visible again. The window then shows
+  "Export ended" with the reason and no button: exporting again needs a new export from the app, so a new window and
+  a new Google sign-in. `hana:export-end` is accepted only from the opener with origin `vaultOrigin`.
+- Also (sweep AUTH-6, AUTH-4): the revealed key is no longer in an `aria-live` region, so a screen reader reads it
+  only when the user moves to it; the key element and every auth page are `translate="no"` (plus
+  `<meta name="google" content="notranslate">`), so a page translator neither rewords a request nor sends a key out.
+- Not changed: idle (D55) dims the vault's PRK but doesn't end the session, so it doesn't end an export; the
+  5 min limit bounds that case.
+- Rejected: closing the window from the vault (no explanation for the user; the message does the same and the page
+  says why); keeping the key for as long as the tab is open (an unattended tab would hand the key to anyone at the
+  device).
+
+### D112. Refused key requests don't count as activity for the in-memory idle limit
+- Date 2026-10-29 · Status: in force on branch `fix/sweep-web` (`packages/web/src/vault/vault.ts` `dispatch`,
+  `refuseEarly`, `dormantConsentInForce`) · Source: sweep finding VAUL-1 (Low); refines D55
+- Decision: before a key request counts as activity or unlocks a dormant session, the vault runs the checks that
+  need no key: a sign request goes through `approvalSubject` with raw signing allowed (another address, a malformed
+  request, a mainnet for a test app, a raw request from a test app), a second `hana_export` is `busy`, and
+  `hana_revokeOtherDevices` on a share that isn't fresh (a reload-unlocked share never is) is `share_not_fresh`. A
+  refused request changes nothing. `hana_requestAutoApprove` counts only when it shows the consent screen; with a
+  consent in force it answers without counting, and a dormant session answers it from its last known consent
+  without an unlock.
+- Threat model for D55, written down: the idle limit bounds an abandoned tab and stops a page from keeping PRK
+  in memory with requests that fail. It doesn't bound a hostile page that gets requests signed under an accepted
+  policy, or that reloads the vault frame (a reload unlocks a `'session'` record, as designed); the absolute expiry
+  bounds both.
+
+### D113. A keyboard Approve needs Approve to hold focus for 500 ms first
+- Date 2026-10-29 · Status: in force on branch `fix/sweep-web` (`packages/web/src/auth/approve-guard.ts`
+  `KEYBOARD_DWELL_MS`, `primaryFocused`, `mayActivate`; `approve-page.ts`) · Source: sweep finding AUTH-3 (Low);
+  extends D36
+- Decision: on top of D36 (1 s after render and focus, an arming gesture, a click whose own keydown came after it), a
+  keyboard click on Approve or Allow acts only if its keydown came at least 500 ms after the button gained focus. A
+  blur of the button, and every new request or consent screen, restarts the wait. Pointer and touch clicks are
+  unchanged.
+- Why: on a plain screen the focus order is Reject, then Approve, so a partner page could coach a user into a
+  "Tab, Tab, Enter" rhythm and then trigger a request; typed in one go, Enter now lands too soon and does nothing.
+- Residual (accepted, as D36's tap-spam case): a user coached to Tab to Approve, pause and press Enter still
+  approves, as a user coached to click Approve does.
+- Not done: the guard's marks still use the page clock (`Date.now`), not `performance.now()`; a device clock change
+  during the 1 s or 500 ms waits can only shorten them by that change, and needs local access.
+
+### D114. Public entries trimmed: one EIP-712 hasher, no public HanaClient constructor
+- Date 2026-10-29 · Status: in force on branch `fix/sweep-web` (`packages/core/src/index.ts`,
+  `src/signers/evm.ts` `signTypedData`; `packages/web/src/index.ts`) · Source: sweep findings CORE-5, PART-5 (Info)
+- Decision: `@hana-id/core` signs typed data only with `typed-data.ts`'s `hashTypedData` over
+  `normalizeTypedData`'s output (`signTypedData(d, NormalizedTypedData)`), the same parser the popup renders from.
+  The second, looser hasher (`signers/eip712.ts`) and its root exports (`encodeType`, `typeHash`, `hashStruct`,
+  `domainSeparator`, `TypedDataForHashing`) are gone from the package; it lives on as a test-only reference
+  (`packages/core/test/eip712-reference.ts`) that the tests check against `typed-data.ts` and viem. `@hana-id/web`
+  exports `HanaClient` as a type only: its constructor takes Hana origins, so `createHana`, which resolves them from
+  the build's pinned envs, is the only way to build a client.
+- Effect on partners: none in the documented API (`createHana` returns the same `HanaClient`).
+
+### D115. A live app's RPC, Horizon and Soroban URLs must be https (loopback excepted)
+- Date 2026-10-29 · Status: in force on branch `fix/sweep-web` (`packages/web/src/client/urls.ts` `serviceUrl`, used by
+  `validateEvmConfig`, `validateStellarConfig` and `packages/sodax/src/http.ts` `httpUrl`; `HanaClient.testApp`) ·
+  Source: sweep finding PART-3 (Low)
+- Decision: for a `pk_live_` key, createHana and the Sodax adapters refuse an `http://` RPC, Horizon or Soroban RPC URL
+  unless its host is loopback (`localhost`, `*.localhost`, 127.0.0.0/8, `[::1]`). `pk_test_` keys keep accepting
+  `http://` anywhere (local and LAN test stacks). Every key refuses other schemes and URLs with credentials (which
+  `fetch` refuses anyway). The adapters read the new `hana.testApp` getter; a client object without it gets the
+  strict rule.
+- Why: over plaintext http an on-path attacker fills fees and nonces, answers every read (balances, quotes) and sees
+  every broadcast; for real funds that is never acceptable, while test stacks often run a node on another machine.
+
+### D116. Auto-approved signatures outlive the consent: said on the consent screen; the ledger cap waits for a trusted ledger source
+- Date 2026-10-29 · Status: partly in force on branch `fix/sweep-web` (`packages/web/src/auth/render-consent.ts`
+  `lingeringSignaturesNote`); the cap is proposed, not built · Source: sweep finding CORE-3 (Low)
+- In force: every consent screen says that stopping auto-approving doesn't cancel signatures the app already has (a
+  transaction until it expires, a Stellar authorization until the ledger it names, typed data until its own
+  deadline).
+- Proposed default for the cap: refuse to auto-approve a Soroban authorization (`stellar_signAuthEntry`, and address
+  credentials the user signs) whose `signatureExpirationLedger` is more than 720 ledgers (about 1 h at 5 s) past the
+  current ledger, and send it to the popup instead. Not built, because the vault has no trusted current ledger: it
+  reaches no Stellar node (its CSP allows the API, NEAR RPC and Google only), the partner page's Soroban RPC is the
+  party this guards against, and an estimate from the clock drifts (close times vary) and breaks on testnet resets.
+  It needs the API (or a pinned Soroban RPC in the vault's CSP, with a manifest field) to give the vault the latest
+  ledger per network: a change in `apps/api` and `packages/env`, for the API side of the sweep fixes. EIP-712
+  deadlines have no standard field; a policy-declared deadline field with a maximum horizon is the follow-up there.
+
+### D117. The vault's shared-mode login check also confirms the client is a shared client
+- Date 2026-10-29 · Status: in force on branch `fix/sweep-web` (`packages/web/src/vault/login.ts` `checkScope`,
+  `src/vault/near.ts` `sharedClients`) · Source: sweep finding VAUL-4 (Info); extends D56
+- Decision: in shared mode the vault checks, in parallel with `get_scope` (`allow_shared`), that the Google client
+  the API named is one of `get_config().shared_clients` in force; otherwise the login is refused
+  (`config_mismatch`, `scope_mismatch`) before Google's answer is relayed. A compromised API can no longer run a
+  shared-mode sign-in through a client of its choosing (the chain would refuse that session anyway; this stops it
+  before the user signs in and before gas).
+- Cost: one more optimistic view per shared-mode login, in parallel, while the user is at Google.
+
+### D118. One property-based display-safety rule, app names included
+- Date 2026-10-29 · Status: in force on branch `fix/sweep-web` (`packages/core/src/display-safe.ts`
+  `isDisplaySafeText`, `isDisplaySafeLine`; used by `decode/message.ts`, `policy/validate.ts`, `protocol.ts`
+  `isAppName`, `api-types.ts`, `packages/web/src/vault/config.ts`) · Source: sweep findings AUTH-5 (merged with
+  CORE-4) and AUTH-2 (Low)
+- Decision: the hand-written range lists are replaced by one rule: refuse `\p{Cc}` (multi-line text keeps tab, LF,
+  CR), `\p{Cf}`, `\p{Co}`, `\p{Zl}`, `\p{Zp}` and the other default-ignorable code points (U+034F, the Hangul
+  fillers, U+17B4/U+17B5, U+180B–U+180F, every variation selector). Messages and decoded strings that fail are shown
+  as hex; policy labels and names fail validation; an app name that fails makes the vault config, `GET /v1/app`'s
+  answer and every popup message carrying it invalid, so a bad name stops the app's Hana pages rather than spoofing
+  them (the admin CLI should refuse such names at write time: OPER-11, for the scripts side). `CHECK_MARKS` also
+  strips U+10102 and U+1FBB1. App names, origins and decoded values are bidi-isolated in the auth pages' CSS.
+- Trade-off: an emoji written with U+FE0F (❤️) makes a message show as hex and a label invalid. Unassigned code
+  points stay allowed, so the validator gives the same answer on every engine.
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -1109,6 +1253,8 @@ answered question there points here.
 | CODEOWNERS on derivation, vectors, the contract and the env schema (D58) | Also `/envs/`, the API, web, core and watchdog sources, `scripts/`, lockfiles, `.gitleaks.toml`, `.githooks/`, `.github/`; a second owner to add (D100) | `.github/CODEOWNERS` |
 | One global owner-action cap (20/min, 200/day); the relay quota counted in the gate, before verification | Caps per owner, per scope and global, `execute_change` and `cancel_change` on windows of their own; the relay quota counted right before the relay (D100) | `docs/api.md` "Rate limits" |
 | `fetch-ckd-key` reads the CKD key from the manifest's `rpc` | From ≥ 3 independent providers at one final block, all agreeing, with the block recorded (D100) | `docs/operations.md` "Create an environment" step 3 |
+| Stellar classic operations other than changeTrust, payment and createAccount shown by type with their raw XDR (batch B "Approval flow" step 4) | Every operation decoded field by field; account-control operations get a red banner and per-operation warning and are never auto-approved (D110) | `packages/core/src/decode/stellar.ts` |
+| The export window shows the key while a button is held until the window closes (batch B "Key export" step 5) | The key is erased 5 min after it is derived or when the session ends, whichever is first; a new export needs a new sign-in (D111) | `packages/web/src/auth/export-page.ts` |
 | The vault persists (share, record) before it replies to `hana_login` (batch B "Login" steps 11–12) | It replies first; the share and record follow in the background, and a failure turns `persistence` to `'none'` (`persistenceChanged`, D79) | `packages/web/src/vault/vault.ts` `persistLogin` |
 
 ## Proposed, not yet confirmed

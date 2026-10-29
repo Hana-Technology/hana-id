@@ -6,7 +6,10 @@
 // PRK is never used, and no message in either direction carries key material.
 //
 // SECURITY: the key exists only in this window's memory, as the chain's private key bytes (PRK is zeroed as soon as
-// they are derived), and is zeroed when the window closes. The Google token is dropped after /v1/login.
+// they are derived). It is zeroed and the export ends (D111) at the first of: EXPORT_KEY_LIFETIME_MS (5 min) after
+// it is derived, the vault session's end (the context's `sessionExpiresAtMs`, or `hana:export-end` from the vault on
+// logout, revoke, expiry or a newer login), the vault frame going away, and the window closing. Exporting again
+// needs a new window and a new Google sign-in. The Google token is dropped after /v1/login.
 import {
   ApiError,
   type AppConfig,
@@ -53,10 +56,23 @@ export const EXPORT_SESSION_TTL_MS = 15 * 60_000;
 export const EXPORT_LOGIN_LIMIT_MS = 5 * 60_000;
 /** What the user types to confirm. */
 export const EXPORT_CONFIRMATION = 'EXPORT';
+/** How long the derived key stays in this window (user decision 2026-10-29, D111); never past the session's end. */
+export const EXPORT_KEY_LIFETIME_MS = 5 * 60_000;
+/** How often the window checks its deadlines and that the vault frame is still there. */
+export const EXPORT_CHECK_MS = 1_000;
 const RELAY_WAIT_S = 25;
 /** How often the child popup's `closed` is checked until it connects. */
 const CHILD_WATCH_MS = 500;
 const CHAIN_NAMES = { stellar: 'Stellar', evm: 'EVM' } as const;
+
+/** Why an export ended without an error: the key deadline passed, the vault session ended, or the vault went away. */
+export type ExportEndReason = 'expired' | 'session_ended' | 'vault_gone';
+
+export const EXPORT_END_TEXT: Readonly<Record<ExportEndReason, string>> = Object.freeze({
+  expired: 'Your key was erased from this window: it is kept for 5 minutes only.',
+  session_ended: 'Your key was erased from this window because your session in the app ended (you signed out, or it expired).',
+  vault_gone: 'Your key was erased from this window because the app’s Hana wallet closed.',
+});
 
 export interface ExportPageDeps {
   win: PageWindow;
@@ -70,11 +86,13 @@ export interface ExportPageDeps {
   isGesture?: GestureCheck;
 }
 
-export type ExportPageState = 'connecting' | 'ready' | 'signing_in' | 'confirm' | 'reveal' | 'error' | 'closed';
+export type ExportPageState = 'connecting' | 'ready' | 'signing_in' | 'confirm' | 'reveal' | 'ended' | 'error' | 'closed';
 
 export interface ExportPage {
   readonly state: ExportPageState;
   readonly errorCode: string | null;
+  /** Set when the state is `ended`. */
+  readonly endReason: ExportEndReason | null;
   /** The child login popup's window name, once opened. */
   readonly childName: string | null;
   /** The export session is prepared and waits for the child popup's hello. */
@@ -126,10 +144,24 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
   } | null = null;
   /** The chain's private key bytes, after a verified login. */
   let key: Uint8Array | null = null;
+  /** Server-clock ms past which the key is erased (D111): derivation + EXPORT_KEY_LIFETIME_MS, capped by the session. */
+  let keyDeadline = Number.POSITIVE_INFINITY;
+  let keyTimer: ReturnType<typeof setTimeout> | null = null;
+  let checker: ReturnType<typeof setInterval> | null = null;
+  let endReason: ExportEndReason | null = null;
+  /** Blanks the revealed key on screen (set while the reveal step shows). */
+  let blank: (() => void) | null = null;
   let settle: (s: ExportPageState) => void = () => {};
   const settled = new Promise<ExportPageState>((r) => {
     settle = r;
   });
+
+  const stopTimers = () => {
+    if (keyTimer !== null) clearTimeout(keyTimer);
+    if (checker !== null) clearInterval(checker);
+    keyTimer = null;
+    checker = null;
+  };
 
   const wipe = () => {
     key?.fill(0);
@@ -143,16 +175,78 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
     pending = null;
   };
 
+  const finished = () => state === 'ended' || state === 'error' || state === 'closed';
+
   const fail = (code: string | number, message: string) => {
+    if (finished()) return;
     wipe();
+    stopTimers();
     state = 'error';
     errorCode = String(code);
     d.show(errorView(d, 'Export stopped', message, String(code)));
     settle(state);
   };
 
+  /** Erases the key and ends the export for good (D111): a new export needs a new window and a new sign-in. */
+  function end(reason: ExportEndReason): void {
+    if (finished()) return;
+    wipe();
+    blank?.();
+    blank = null;
+    stopTimers();
+    try {
+      child?.close();
+    } catch {
+      // Already closed.
+    }
+    state = 'ended';
+    endReason = reason;
+    d.show(
+      d.h(
+        'section',
+        { class: 'panel export', attrs: { role: 'status' } },
+        d.h('h1', {}, 'Export ended'),
+        d.h('p', {}, EXPORT_END_TEXT[reason]),
+        d.h('p', { class: 'muted' }, 'To export again, start again from the app; you will sign in with Google again. You can close this window.'),
+      ),
+    );
+    settle(state);
+  }
+
+  /** The session's end from the vault's context (server-corrected ms), when it sent one. */
+  const sessionEnd = () => context?.sessionExpiresAtMs ?? Number.POSITIVE_INFINITY;
+
+  /** Ends the export if a deadline passed or the vault frame is gone; true if it ended. */
+  function check(): boolean {
+    if (finished()) return true;
+    const now = clock.now();
+    if (key !== null && now >= keyDeadline) {
+      end(now >= sessionEnd() ? 'session_ended' : 'expired');
+      return true;
+    }
+    if (now >= sessionEnd()) {
+      end('session_ended');
+      return true;
+    }
+    let gone = false;
+    try {
+      gone = opener?.closed === true;
+    } catch {
+      gone = false;
+    }
+    if (gone) {
+      end('vault_gone');
+      return true;
+    }
+    return false;
+  }
+
   function onMessage(event: Event): void {
     const e = event as MessageEvent;
+    if (e.origin === env.vaultOrigin && e.source === opener && parseWindowMessage(e.data, ['hana:export-end'])) {
+      end('session_ended');
+      return;
+    }
     if (state === 'connecting' && context === null) {
       if (e.origin !== env.vaultOrigin || e.source !== opener) return;
       const msg = parseWindowMessage(e.data, ['hana:export-context']);
@@ -188,6 +282,9 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
       }
       if (app.signer !== env.signer || app.scopeId !== msg.scopeId) throw new PageError('config_mismatch', 'The export request does not match this app’s settings.');
       clock.sync(app.serverTimeMs);
+      if (finished()) return;
+      checker = setInterval(check, EXPORT_CHECK_MS);
+      if (check()) return;
       showReady();
     } catch (err) {
       const e = err instanceof PageError ? err : new PageError('config_mismatch', 'The export request could not be checked.');
@@ -421,9 +518,17 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
         chainKey.fill(0);
         throw new PageError('address_mismatch', errorMessage('address_mismatch'));
       }
+      if (finished()) {
+        chainKey.fill(0);
+        return;
+      }
       key = chainKey;
       p.relayKey.fill(0);
       p.relayReadKey.fill(0);
+      // The key's deadline (D111): a timer, which device clock changes can't move, and the server-clock check.
+      keyDeadline = Math.min(clock.now() + EXPORT_KEY_LIFETIME_MS, sessionEnd());
+      keyTimer = setTimeout(() => end(clock.now() >= sessionEnd() ? 'session_ended' : 'expired'), Math.max(0, keyDeadline - clock.now()));
+      if (check()) return;
       showConfirm();
     } catch (err) {
       idToken = null;
@@ -441,7 +546,7 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
       go.disabled = input.value !== EXPORT_CONFIRMATION;
     });
     go.addEventListener('click', (e) => {
-      if (isGesture(e) && input.value === EXPORT_CONFIRMATION && key) showReveal();
+      if (isGesture(e) && input.value === EXPORT_CONFIRMATION && key && !check()) showReveal();
     });
     d.show(
       d.h(
@@ -459,13 +564,16 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
   function showReveal(): void {
     const ctx = context as WindowMessage<'hana:export-context'>;
     state = 'reveal';
-    const out = d.h('code', { class: 'secret mono', attrs: { 'aria-live': 'polite' } }, '••••••••');
+    // No aria-live (AUTH-6): a screen reader reads the key only when the user moves to it, never on its own; and
+    // translate="no", so a page translator never sends it anywhere (AUTH-4).
+    const out = d.h('code', { class: 'secret mono', attrs: { translate: 'no' } }, '••••••••');
     const hold = d.h('button', { class: 'primary hold', attrs: { type: 'button' } }, 'Hold to show the key');
     const hide = () => {
       out.textContent = '••••••••';
     };
+    blank = hide;
     const reveal = (e: Event) => {
-      if (!isGesture(e) || !key) return;
+      if (!isGesture(e) || !key || check()) return;
       out.textContent = exportString(ctx.chain, key);
     };
     hold.addEventListener('pointerdown', reveal);
@@ -486,12 +594,18 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
         d.h('p', { class: 'account' }, 'For ', d.h('code', { class: 'mono' }, ctx.address)),
         out,
         hold,
-        d.h('p', { class: 'muted' }, 'Close this window when you are done; the key is erased when it closes.'),
+        d.h('p', { class: 'muted' }, 'Close this window when you are done. The key is erased when it closes, 5 minutes after you signed in, or when your session in the app ends.'),
       ),
     );
   }
 
+  // A tab coming back from the background checks at once (its interval may have been throttled while hidden).
+  win.document.addEventListener('visibilitychange', () => {
+    if (win.document.visibilityState === 'visible') check();
+  });
+
   win.addEventListener('pagehide', () => {
+    stopTimers();
     wipe();
     try {
       child?.close();
@@ -521,6 +635,9 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
     },
     get errorCode() {
       return errorCode;
+    },
+    get endReason() {
+      return endReason;
     },
     get childName() {
       return childName;

@@ -405,14 +405,15 @@ export class PendingLogin {
 
   /**
    * The registry's view of the app's scope (Q7): 'mismatch' when the Google client the API named belongs to another
-   * scope (own client) or the scope can't take shared logins (shared client), else null. Throws when the RPC can't
-   * answer.
+   * scope (own client), or, in shared mode, the scope can't take shared logins or the client isn't one of the
+   * contract's shared clients in force (sweep VAUL-4), else null. Throws when the RPC can't answer.
    */
   private async checkScope(app: AppConfig): Promise<'mismatch' | null> {
     const { near, config } = this.ctx;
     if (app.google.mode === 'own') return (await near.scopeForClient('google', app.google.clientId)) === config.scopeId ? null : 'mismatch';
-    const scope = await near.getScope(config.scopeId);
-    return scope && scope.id === config.scopeId && scope.allow_shared ? null : 'mismatch';
+    const [scope, shared] = await Promise.all([near.getScope(config.scopeId), near.sharedClients()]);
+    const isShared = shared.some(([provider, aud]) => provider === 'google' && aud === app.google.clientId);
+    return scope && scope.id === config.scopeId && scope.allow_shared && isShared ? null : 'mismatch';
   }
 
   /** Long-polls the relay until it holds Google's answer; returns the ID token (and, pk_test_ apps, the popup's timings). */

@@ -9,6 +9,7 @@
 // | eth_signTransaction, personal_sign, eth_signTypedData_v4 | the vault, with approval (the transaction is filled first) |
 // | eth_sign and other signing or wallet methods | 4200 |
 // | read-only methods (READ_ONLY_METHODS) | forwarded to the current chain's rpcUrl |
+// | eth_sendRawTransaction | forwarded to the current chain's rpcUrl: it broadcasts what the dapp already signed |
 //
 // Every signing method opens the approval popup synchronously in the call (D99), before any await: called from a click,
 // it opens in that click, as login does; otherwise the vault's launcher is the fallback. eth_sendTransaction and
@@ -24,6 +25,7 @@ import { type NormalizedTx, fillTransaction, normalizeTxInput, toQuantity } from
 import type { ApprovalTicket } from './approval-window.ts';
 import { HANA_ID_ICON, HANA_ID_NAME } from './icon.ts';
 import { type FetchLike, jsonRpc } from './rpc.ts';
+import { serviceUrl } from './urls.ts';
 
 type Hex = `0x${string}`;
 
@@ -102,7 +104,6 @@ export const READ_ONLY_METHODS: ReadonlySet<string> = new Set([
   'eth_newFilter',
   'eth_newPendingTransactionFilter',
   'eth_protocolVersion',
-  'eth_sendRawTransaction',
   'eth_syncing',
   'eth_uninstallFilter',
   'net_listening',
@@ -112,22 +113,18 @@ export const READ_ONLY_METHODS: ReadonlySet<string> = new Set([
   'web3_sha3',
 ]);
 
-/** Validates `evm` config: positive unique chain IDs, http(s) RPC URLs, a listed default. Throws TypeError. */
-export function validateEvmConfig(evm: EvmConfig): EvmConfig {
+/**
+ * Validates `evm` config: positive unique chain IDs, RPC URLs by the service-URL rule (http(s); https for a live app
+ * unless on loopback, D115), a listed default. Throws TypeError.
+ */
+export function validateEvmConfig(evm: EvmConfig, live = true): EvmConfig {
   if (typeof evm !== 'object' || evm === null || !Array.isArray(evm.chains) || evm.chains.length === 0) throw new TypeError('evm.chains must be a non-empty array');
   const ids = new Set<number>();
   const chains = evm.chains.map((c, i) => {
     if (typeof c !== 'object' || c === null || !Number.isSafeInteger(c.id) || c.id <= 0) throw new TypeError(`evm.chains[${i}].id must be a positive integer`);
     if (ids.has(c.id)) throw new TypeError(`evm.chains lists chain ${c.id} twice`);
     ids.add(c.id);
-    let url: URL;
-    try {
-      url = new URL(c.rpcUrl);
-    } catch {
-      throw new TypeError(`evm.chains[${i}].rpcUrl must be a URL`);
-    }
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new TypeError(`evm.chains[${i}].rpcUrl must be http(s)`);
-    return { id: c.id, rpcUrl: c.rpcUrl };
+    return { id: c.id, rpcUrl: serviceUrl(c.rpcUrl, `evm.chains[${i}].rpcUrl`, live) };
   });
   if (!ids.has(evm.defaultChainId)) throw new TypeError('evm.defaultChainId must be one of evm.chains');
   return { chains, defaultChainId: evm.defaultChainId };
@@ -235,6 +232,10 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
         if (typed === null) throw err(RpcCode.invalidParams, 'typedData must be a JSON string or object');
         return this.#host.request('eth_signTypedData_v4', [address, typed]);
       }
+      case 'eth_sendRawTransaction':
+        // Not a read (sweep PART-6): it broadcasts a transaction the dapp already holds signed, on the current chain.
+        // Hana signs nothing here, so it is passed to the RPC as is.
+        return this.#rpc(method, Array.isArray(params) ? params : [params]);
       default:
         if (READ_ONLY_METHODS.has(method)) return this.#rpc(method, Array.isArray(params) ? params : [params]);
         throw err(ErrorCode.unsupportedMethod, `Hana ID does not support ${method}`);

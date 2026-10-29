@@ -62,6 +62,18 @@ describe('handshake', () => {
     expect((await t.ready()).status).toBe('logged_out');
   });
 
+  it('refuses a hello when any ancestor (not only the parent) is an origin the app does not allow (VAUL-6)', async () => {
+    // An allowed partner page framed by another site.
+    const nested = tab({ ancestorOrigin: PARTNER, ancestorOrigins: [PARTNER, 'https://evil.test'] });
+    nested.hello();
+    await settle();
+    expect(nested.events).toHaveLength(0);
+    // Every ancestor allowed: accepted.
+    const ok = tab({ ancestorOrigin: PARTNER, ancestorOrigins: [PARTNER, 'https://other.test'], config: makeConfig({ origins: [PARTNER, 'https://other.test'] }) });
+    ok.hello();
+    expect((await ok.ready()).status).toBe('logged_out');
+  });
+
   it('accepts exactly one hello: a second one (another port) gets nothing, and the first port stays pinned', async () => {
     const t = tab();
     t.hello();

@@ -4,7 +4,7 @@ Who is trusted for what, every key and secret, the invariants and where each is 
 known open issues. Last verified against code: 2026-10-29 (branch `perf/login-latency-impl`; the login popup, the
 background persist and the vault gate were re-checked, the rest as of 2026-10-28, commit 58edee9; the approval popup
 opened by the partner page, branch `feat/approve-in-click`, D99; the API rate limits, owner-action caps, CKD key pin,
-secret scan and admin CLI after the 2026-10-29 security sweep, branch `fix/sweep-api`, D100).
+secret scan and admin CLI after the 2026-10-29 security sweep, D100; the browser, core and SDK sweep fixes, D110–D118).
 
 Component map and flows: `docs/architecture.md`. On-chain layouts and the contract's own security notes:
 `docs/contract-interface.md` ("Security notes (for reviewers)"). Browser parts (vault, auth pages, partner client)
@@ -30,7 +30,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | API Worker logic and D1 (not the pages, not the secrets) | Gating and relaying; holding shares | Deny service; with `VAULT_KEK` plus a device dump, get PRK; point a vault at another scope of the same user only together with a Google client the registry maps to that scope (the vault's login check, D56, refuses any other combination); set or widen `raw_sign`/policies (the user still approves raw requests and must accept a new `policyId`); make the vault page frameable by another origin (D1 origins) | Substitute the signer, path or CKD key (pinned in the bundles, path computed in the vault); read or swap the relayed token (end-to-end encrypted); sign without the vault |
 | Partner (app owner) | Its own app config and, in own-client mode, its Google client | Own-client mode: obtain tokens with any nonce for its client and derive its own users' keys in its scope (inherent: Hana can't see Google client settings). Set an auto-approve policy (delayed; users must accept it) | Anything in another scope. In shared mode: derive keys (no token with a nonce of its choosing) |
 | Partner page (incl. XSS, malicious dependency) | Nothing | Start a login (visible popup), read addresses, queue signature requests, drive an unlocked vault within its idle/absolute limits, get requests signed that match an accepted auto-approve policy; navigate, close or focus the approval popup it opened (D99, "Approval popup opened by the partner page") | Read keys, tokens, nonces; get any other signature without a guarded Approve in a Hana popup |
-| User's browser and device | Running Hana's pages; keeping the profile private | Malware or an extension in all frames: everything the user can do, including reading an exported key. A disk dump with a live share: unlock and get PRK | After logout, idle or absolute expiry or revoke: nothing. A derive (the persisted session is used up) |
+| User's browser and device | Running Hana's pages; keeping the profile private | Malware or an extension in all frames: everything the user can do, including reading an exported key. A disk dump with a live share: unlock and get PRK | After logout, idle or absolute expiry or revoke: nothing (an open export window erases its key then too, and at most 5 min after deriving it, D111). A derive (the persisted session is used up) |
 | NEAR RPC (manifest `rpc`, and `rpcFallback` when set) | Liveness, honest views | Fail derives, report wrong counters or a wrong registry answer (a refused login), delay. The fallback is asked only when the primary fails, so a lying primary is not outvoted | Forge a CKD result (pairing check against the pinned key, which was read from ≥ 3 independent providers that all agreed at one final block, D100) |
 | Anyone watching the chain or mempool | Nothing | Read used tokens (openid-only claims via the API), replay `create_session` with them (the vault derives with the next counter), replay a whole combined call (burns a `max_uses = 1` login: `session_consumed`; attacker pays gas) | Derive for themselves (needs the session key; the answer is encrypted to `a`) |
 | Another website | Nothing | Embed a vault with its own `pk` and log users into its own scope (legitimate) | Frame the vault for app X (`frame-ancestors`), receive `auth-params` (the popup checks `event.origin` and `event.source`), inject a token (the relay slot is written only from `authOrigin`, read only with `relayReadKey`) |
@@ -62,7 +62,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | CKD network public key | BLS12-381 G2, public | manifest `ckdNetworkKey`; build constant of vault/login/export bundles | public | Pinned with `scripts/fetch-ckd-key.ts` from ≥ 3 independent RPC providers that must agree, with the block recorded (`ckdNetworkKeySource`, D100); never read at runtime by the pages |
 | S (CKD secret) | 48-byte G1 point | Browser memory only | vault / export window | Zeroed by `extractPrk` (`packages/core/src/derivation.ts:46`) |
 | PRK | 32 bytes | Vault memory; IndexedDB record as AES-GCM under `K_s` | vault | Zeroed at `expiresAtMs` and after the app's `idle_ttl_ms` with no request that uses the key (each by a timer, and on the first use past it if the timer is late; after the idle limit a `'session'` record can be unlocked again while its share is alive), logout (any tab of the app), a `revoked` broadcast for its share, a newer login. Rotation: new `key_index` |
-| Chain keys (Stellar seed, EVM `d`) | ed25519 seed, secp256k1 scalar | Derived per signature, zeroed in `finally` (`withChainKey`, `derivation.ts:98`) | vault; export window shows one on request | Same as PRK |
+| Chain keys (Stellar seed, EVM `d`) | ed25519 seed, secp256k1 scalar | Derived per signature, zeroed in `finally` (`withChainKey`, `derivation.ts:98`) | vault; export window shows one on request | In the vault, same as PRK. In the export window (D111, sweep AUTH-1): zeroed and taken off the screen at the first of 5 min after it is derived (`EXPORT_KEY_LIFETIME_MS`, a timer plus a server-clock check on every reveal), the vault session's end (`sessionExpiresAtMs` in the context, or `hana:export-end` from the vault on logout, revoke, expiry or a newer login), the vault frame going away, and the window closing; exporting again needs a new window and a new Google sign-in |
 | BLS app key `a` | BLS12-381 scalar | Memory, one login | vault / export window | Made by `newAppKey` (`packages/core/src/ckd.ts:84`), dropped after `decryptCkd` (a bigint: dropped, not zeroed) |
 | Session key | Ed25519, non-extractable WebCrypto | Vault memory; IndexedDB record in `'session'` mode | vault | ≤ the session (≤ 23 h 50 min app setting, ≤ 24 h on chain) |
 | `K_s` | 32-byte AES-GCM key per share | D1 only as `share_enc` under `VAULT_KEK`; vault memory briefly | API generates, vault uses | Ends with the share (idle ≤ `idle_ttl_ms`, absolute ≤ `session_ttl_ms`, revoke) |
@@ -245,7 +245,8 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   endpoint, `packages/web/src/near-call.ts`).
 - Before relaying a login the vault checks its inlined `scopeId` against the registry with one view (D56,
   `packages/web/src/vault/login.ts` `checkScope`): own client `scope_for_client('google', aud) == scopeId`, shared
-  client `get_scope(scopeId)` with `allow_shared`. A mismatch or no answer refuses the login. Limit: the app→scope
+  client `get_scope(scopeId)` with `allow_shared` and the client one of `get_config().shared_clients` in force (the
+  two views in parallel; D117, sweep VAUL-4). A mismatch or no answer refuses the login. Limit: the app→scope
   binding itself lives only in D1, so an API that substitutes another scope **and** that scope's own client passes
   the check (it then gets that scope's key for the user, still only in the user's own vault).
 - Test apps (`pk_test_`) never sign for a mainnet (D39, `packages/core/src/networks.ts`): the Stellar public network,
@@ -256,13 +257,32 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   too (not a security boundary).
 - PRK leaves memory after the app's idle limit without a request that uses the key (signing, export,
   revoke-other-devices, an auto-approve consent request; D55, `goIdle`). Status, address and auto-approve-status reads
-  don't count and don't unlock a dormant session, so a page polling them can't keep the key in memory. A `'session'`
-  record is unlocked again before the next request that uses the key, only for the same share.
+  don't count and don't unlock a dormant session, so a page polling them can't keep the key in memory. Neither do key
+  requests refused by a check that needs no key (another address, a malformed request, a mainnet for a test app, a
+  second export, revoke-other-devices on a share that isn't fresh), nor an auto-approve consent request answered from
+  a consent already in force (D112, sweep VAUL-1; `vault.ts` `refuseEarly`). A `'session'` record is unlocked again
+  before the next request that uses the key, only for the same share. Residual: a hostile partner page can still
+  keep PRK in memory with requests it can get signed (an accepted policy) or by reloading the vault frame, which
+  unlocks a `'session'` record like any reload; the absolute expiry always holds.
 - The vault refuses to run top-level, accepts one hello, pins the parent origin (checked against the inlined origins
-  and `ancestorOrigins`) and serves only that port. Popups and the vault authenticate each other by `event.origin` and
+  and `ancestorOrigins[0]`; every other `ancestorOrigins` entry must be an allowed origin too, sweep VAUL-6) and serves
+  only that port. Where the browser has no `ancestorOrigins` (Firefox), nested framing is refused by the CSP
+  `frame-ancestors` alone, which every current browser enforces for every ancestor. Popups and the vault authenticate each other by `event.origin` and
   `event.source`.
 - No message in any direction carries key bytes, S, PRK, a CKD response, a token or a session secret, except
   `relayKey` from the vault to its authenticated login popup (schemas: `packages/core/src/protocol.ts`).
+- One display-safety rule (`packages/core/src/display-safe.ts`, D118, sweep AUTH-5/CORE-4 and AUTH-2): text with a
+  control (other than tab and newlines in messages), format, bidi, private-use, separator or other default-ignorable
+  code point (variation selectors and tag characters included) is shown as hex (messages, decoded strings) or
+  refused (policy labels and names, app names in the vault config, `GET /v1/app` and every popup message). App
+  names, origins and decoded values are also bidi-isolated in the popups' CSS. Check-mark look-alikes are stripped
+  from partner contract names.
+- The approval popup decodes every Stellar operation field by field (`packages/core/src/decode/stellar.ts`; no
+  operation is shown as raw XDR only). Account-control operations (a `setOptions` signer, threshold or master-weight
+  change, `accountMerge`) get a red banner at the top of the transaction and a warning per operation naming the new
+  signer and weight, the thresholds, the master weight or the merge destination, in a style stronger than the
+  routine `danger` notice (`render-approval.ts` `ACCOUNT_CONTROL_BANNER`, `accountControlWarnings`; D110, sweep
+  finding CORE-1).
 - Approval binds the whole request through `approvalDigest` (`packages/core/src/approval.ts:179`). Its network
   context is the passphrase or chain ID for transactions and auth entries, and empty for messages, typed data and raw
   requests (D35); the popup says those signatures aren't tied to one network. The launcher only opens the popup. A
@@ -273,9 +293,12 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   `movementX`/`Y`; or, as WebKit always reports 0, a client position other than that of the last pointer event in the
   same request and focus period, so a layout change or scroll under a still cursor never arms), a touch or
   pen `pointerdown`, or Tab/Shift+Tab/an arrow key (never Enter, Space or a repeated key). Approve acts only on a click
-  whose own pointerdown or keydown came after the arming gesture, and the page never focuses it. So a double-click
-  across the opening, clicking in place, a held Enter and a request slipped in at a click never approve. Residual
-  risk (accepted): tap-spam on a phone for more than 1 s after the popup tab opens can approve in two taps.
+  whose own pointerdown or keydown came after the arming gesture, and the page never focuses it; a keyboard click
+  also needs Approve to have held focus for 500 ms before its keydown (`KEYBOARD_DWELL_MS`, D113, sweep AUTH-3). So a
+  double-click across the opening, clicking in place, a held Enter, "Tab, Tab, Enter" typed in one go and a request
+  slipped in at a click never approve. Residual risk (accepted): tap-spam on a phone for more than 1 s after the popup
+  tab opens can approve in two taps; a desktop user coached to Tab to Approve, pause and press Enter approves, as one
+  coached to click Approve does.
 - The vault's approval queue holds at most 100 requests (`4100 too_many_pending`), and refuses at once
   (`4100 invalid_request`) a request whose popup message the popup's own validator would drop, so nothing waits out
   the 5 min timeout unseen (`packages/web/src/vault/approvals.ts`). A popup that gets a new request while one is
@@ -302,7 +325,12 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
 - The IndexedDB record is AES-GCM with an AAD over signer, app, path, session key, derivation version, CKD key hash,
   parent origin and expiry (`recordAad`, `packages/core/src/layouts.ts:143`); records, Web Lock and BroadcastChannel
   are per app.
-- Time checks use a server-corrected clock (`serverTimeMs`).
+- Time checks use a server-corrected clock (`serverTimeMs`) that never goes back (`packages/web/src/vault/runtime.ts`
+  `Clock`, sweep VAUL-2): a device clock set back, or an older server time, holds it until real time catches up, so
+  idle limits, expiries, consents and the policy re-read can't be stretched; and the daily auto-approve counters keep
+  a later day's usage when the clock says an earlier day (`usageToday`), so a backwards step never resets the caps.
+  Not done: a cap on how far one server answer may move the clock forward (an API that lies is already a total
+  compromise; a forward step only ends things early).
 
 ### The login popup trusts the vault's app facts
 
@@ -388,7 +416,10 @@ Code: `packages/core/src/policy/` (validator, matcher, `policyId`, usage); the v
   `'off'` refuses raw requests in every open tab within 10 s, and a failed re-read refuses too (fails closed, D68).
 - **Never covered**: `hana_signRaw`, `personal_sign`, `stellar_signMessage` (`NEVER_AUTO_APPROVED_KINDS`), EVM
   contract creation, fee-bump and v0 Stellar envelopes, Stellar classic operations other than a listed `changeTrust`,
-  contract creation or upload host functions, anything that fails to decode.
+  contract creation or upload host functions, anything that fails to decode. Stellar account-control operations
+  (`stellarAccountControl`, `packages/core/src/decode/stellar.ts`: a `setOptions` that adds, re-weights or removes a
+  signer, changes a threshold or the master weight, and `accountMerge`) are refused first, before any other check,
+  as `account_control`, and the validator refuses a Stellar section that names classic operations (D110).
 - **Validator** (`validateAutoApprovePolicy`, `validate.ts:459`): strict JSON, unknown keys refused at every level,
   `perDayCount` 1..500, `maxConsentMs` ≤ the app's `session_ttl_ms`, safe label and names, selector must equal the
   signature's, `addressArgs` required on an EVM function that takes an address, decoder ids must be shipped (none in
@@ -431,8 +462,11 @@ Code: `packages/core/src/policy/` (validator, matcher, `policyId`, usage); the v
   `packages/sodax/test/verified-contracts.test.ts` checks the Sodax entries against the pinned `@sodax/types`).
   Everything is rendered with `textContent` (`dom.ts`). A verified mark says which contract it is, not that the listed
   functions or limits are safe.
-- **Residual risk (accepted):** within a policy, partner-page XSS can submit allowed calls at bad prices to the user's
-  own address; token amounts other than native value aren't capped (D46); names of contracts not on the verified list
+- **Residual risk (accepted):** signatures the partner page received under a consent stay usable after it ends or is
+  stopped (a transaction until its time bounds, a Soroban authorization until its `signatureExpirationLedger`, typed
+  data until its own deadline); the consent screen says so (D116, sweep CORE-3), and a ledger cap on auto-approved
+  authorizations waits for a trusted current-ledger source. Within a policy, partner-page XSS can submit allowed
+  calls at bad prices to the user's own address; token amounts other than native value aren't capped (D46); names of contracts not on the verified list
   are partner-supplied, labelled "named by {app}" (D44), and a look-alike outside the skeleton's folding (a
   misspelling, another script's look-alikes) isn't flagged; Sodax calls carry intents in opaque bytes and always get
   the popup until a `sodax-intent-v1` decoder exists (D24). Under `'any'`, a value-moving or execute-style function
@@ -440,6 +474,40 @@ Code: `packages/core/src/policy/` (validator, matcher, `policyId`, usage); the v
   typed addresses aren't checked; only partner-listed contracts and functions are ever auto-approved, and the consent
   screen warns about every `'any'`. A contract that casts a `uint256` (or a Soroban `u256`) argument to an address
   isn't caught: only exactly 160-bit integers are treated as opaque, so that wider integers stay usable as amounts.
+
+## Security sweep of 2026-10-29: core, web, SDK, demo and smoke findings
+
+The sweep of `develop` @ 91609c4 (`security-sweep-hana-id-2026-10-29.md`, kept outside the repo). Status of the
+findings in `packages/core`, `packages/web`, `packages/react`, `packages/sodax`, `apps/demo` and `apps/smoke`, on
+branch `fix/sweep-web` (re-verified against `feat/governance` first). The API, scripts, env, contract and watchdog
+findings are tracked with their own fixes.
+
+| Finding | Status |
+|---|---|
+| CORE-1 (Medium) Stellar account-control operations shown as raw XDR | **Fixed** (D110): every operation decoded; red banner and per-operation warning for signer, threshold and master-weight changes and `accountMerge`; never auto-approved |
+| AUTH-1 (Medium, with VAUL-5) export window keeps the key with no timeout | **Fixed** (D111): erased 5 min after deriving, at the session's end, or when the vault frame goes away |
+| VAUL-1 refused key requests refresh the idle limit | **Fixed** (D112) |
+| AUTH-2 app names unfiltered; AUTH-5/CORE-4 filters miss code points | **Fixed** (D118); the admin CLI's write-time check is OPER-11 (scripts) |
+| AUTH-3 Tab, Tab, Enter approves | **Fixed** (D113): a keyboard Approve needs 500 ms of focus |
+| AUTH-4 auto-translation on the approve and export pages | **Fixed**: `translate="no"` and `notranslate` on every auth page and the key |
+| AUTH-6 revealed key in an `aria-live` region | **Fixed** (D111) |
+| AUTH-7 export re-auth relies on Google honouring `max_age=0` | **Accepted** (D27), unchanged: with a live Google session one click in the chooser re-authenticates; the 5 min key lifetime (D111) bounds what an unattended window exposes |
+| CORE-2 4+4 address display and narrow name-collision check | **Open**: deferred (consent-screen layout and its tests; no signing impact) |
+| CORE-3 auto-approved signatures outlive the consent | **Partly fixed** (D116): said on the consent screen; the ledger cap waits for a trusted current-ledger source (API side) |
+| CORE-5 looser EIP-712 hasher exported | **Fixed** (D114) |
+| CORE-6 base64 decoders accept non-canonical input | **Open**: deferred (no caller depends on uniqueness; a stricter decoder risks breaking stored values) |
+| CORE-8 CKD scalar and copies can't be zeroed | **Partly fixed**: the random bytes are zeroed; bigints and noble's copies can't be |
+| PART-1 vault frame stays visible after the port dies | **Fixed**: the frame is hidden and `launcher {visible: false}` emitted; the guide says to sandbox third-party iframes |
+| PART-2 `eth_sendTransaction` returns the RPC's hash unchecked | **Open**: deferred; the broadcast RPC is documented as trusted for liveness and ordering, and must be https for live apps (D115) |
+| PART-3 plaintext http RPC URLs | **Fixed** (D115) |
+| PART-4 Sodax EVM adapter switches the shared chain | **Open**: deferred (needs a send queue or chain restore in the adapter, and a chain name on the approval screen) |
+| PART-5 `HanaClient` constructor public | **Fixed** (D114) |
+| PART-6 `eth_sendRawTransaction` listed as read-only | **Fixed** |
+| VAUL-2 clock can go backwards; counters reset | **Fixed** (monotonic clock; usage kept on a backwards day) |
+| VAUL-3 consent counters can be rolled back from an old record | **Accepted**: needs write access to the browser profile (the device-compromise model) |
+| VAUL-4 shared-mode check doesn't confirm a shared client | **Fixed** (D117) |
+| VAUL-6 `ancestorOrigins` beyond the parent unchecked | **Fixed** |
+| OPER-10 `spike.html` puts the `error` fragment into `innerHTML` | **Fixed**: state checked first, `textContent` only |
 
 ## Known open issues
 

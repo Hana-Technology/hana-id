@@ -8,6 +8,7 @@ import { openRecordStore, recordKey } from '../../src/vault/record.ts';
 import { bytesEqual } from '@hana-id/core';
 import type { Channel } from '../../src/vault/runtime.ts';
 import { TOUCH_EVERY_MS } from '../../src/vault/vault.ts';
+import { OTHER as OTHER_STELLAR, PASSPHRASE } from './chains.ts';
 import {
   APP_ID,
   Browser,
@@ -746,6 +747,38 @@ describe('in-memory idle limit (Q28)', () => {
     }
     expect(unlocks(browser)).toBe(before);
     expect(prkOf(first)).toBeUndefined();
+  });
+
+  it('key requests refused without the key never restart the idle limit, nor unlock a dormant session (VAUL-1, D112)', async () => {
+    const { browser, first, addresses } = await loggedIn();
+    const OTHER_EVM = '0x000000000000000000000000000000000000dEaD';
+    const refusals = async () => {
+      // Another address, a malformed request, revoke-other-devices long after the login, a second export.
+      expect((await first.request('personal_sign', ['0x6869', OTHER_EVM])).error?.code).toBe(4100);
+      expect((await first.request('stellar_signMessage', { message: 'x', address: OTHER_STELLAR })).error?.code).toBe(4100);
+      expect((await first.request('stellar_signTransaction', { xdr: 'AAAA', networkPassphrase: PASSPHRASE })).error?.data).toMatchObject({ reason: 'invalid_request' });
+      expect((await first.request('hana_revokeOtherDevices')).error?.data).toMatchObject({ reason: 'share_not_fresh' });
+    };
+    // An export left waiting (it counts, at the login's time) makes a second one busy, which doesn't count.
+    const exporting = first.request('hana_export', { chain: 'evm' });
+    await until(() => first.launcher.label === 'Export key in Hana', 'the export launcher');
+    browser.timers.advance(4 * 60_000);
+    expect((await first.request('hana_export', { chain: 'stellar' })).error?.code).toBe('busy');
+    browser.timers.advance(IDLE - 4 * 60_000 - 60_000);
+    expect((await exporting).error?.code).toBe(4001);
+    await refusals();
+    expect(prkOf(first)?.some((b) => b !== 0)).toBe(true);
+    // The limit still counts from the login.
+    browser.timers.advance(60_000);
+    expect(prkOf(first)).toBeUndefined();
+    // Dormant: the same refusals answer without an unlock.
+    const before = unlocks(browser);
+    await refusals();
+    expect(unlocks(browser)).toBe(before);
+    expect(prkOf(first)).toBeUndefined();
+    // A request that passes the cheap checks still unlocks, as before.
+    expect(await signMessage(first, 'mine')).toBe(addresses.stellar);
+    expect(unlocks(browser)).toBe(before + 1);
   });
 
   it('follows the app’s idle setting, and a late timer (a throttled tab) still zeroes PRK on the next use', async () => {

@@ -133,6 +133,11 @@ hana.addresses;   // { stellar: 'G…', evm: '0x…' } or null
 Create one client per page and keep it. `hana.destroy()` removes the iframe and its listeners (for example on an SPA
 unmount).
 
+RPC, Horizon and Soroban RPC URLs (`evm.chains[].rpcUrl`, `stellar.horizonUrl`, `stellar.sorobanRpcUrl`, and the
+Sodax adapters' `rpcUrl`, `horizonUrl`, `sorobanRpcUrl`) must be `https://` for a `pk_live_` key; plaintext `http://`
+is accepted only on `localhost` and other loopback hosts (a local node), and for `pk_test_` keys anywhere. URLs with
+credentials (`https://user:key@…`) are refused for every key (D115). `hana.testApp` says which rule applies.
+
 `environment` names the Hana deployment. The client takes the Hana origins from its own build, so no configuration
 can point it at another vault. `sandbox-dev` (testnet) uses:
 
@@ -198,7 +203,8 @@ button.addEventListener('click', async () => {
   fresh login, so offer it right after one.
 - `await hana.exportKey('stellar' | 'evm')` lets the user take their key elsewhere. Hana shows a button; the key
   appears only in a top-level Hana window, after a fresh Google sign-in and a typed confirmation, and never reaches
-  your page. Stellar keys export as `S…`, EVM keys as `0x…` hex. There is no recovery phrase. Each export is a NEAR
+  your page. That window keeps the key for 5 minutes at most, and erases it as soon as the user's session in your
+  app ends (`logout()`, revoke, expiry); exporting again starts over with a new sign-in. Stellar keys export as `S…`, EVM keys as `0x…` hex. There is no recovery phrase. Each export is a NEAR
   transaction Hana pays for, so one account can export at most 3 times an hour per app (`rate_limited` after that).
 
 ## 5. Your page: origins, CSP, popups
@@ -377,6 +383,11 @@ const provider = new BrowserProvider(hana.ethereum);
 | `eth_signTransaction`, `personal_sign`, `eth_signTypedData_v4` | approval |
 | `eth_sign` and other signing or wallet methods | `4200` |
 | read-only methods (`eth_call`, `eth_getBalance`, …) | forwarded to the current chain's `rpcUrl` |
+| `eth_sendRawTransaction` | forwarded to the current chain's `rpcUrl` (it broadcasts a transaction you already hold signed; Hana signs nothing) |
+
+The RPC you configure is trusted for liveness and ordering: it fills fees and nonces, answers reads and broadcasts,
+so use a provider you trust, over https (required for `pk_live_` keys). The hash `eth_sendTransaction` returns is the
+one your RPC reports.
 
 One key covers every EVM chain. Contract creation (an empty `to`) works with approval, but no policy ever
 auto-approves it. Errors are `ProviderRpcError` with numeric codes. A sign-in that didn't complete is `4001`, and the
@@ -508,7 +519,10 @@ and calls with a `uint160` argument (Uniswap v3's `sqrtPriceLimitX96`) always ge
 
 **Never covered, whatever the policy says:** raw signing, `personal_sign`, Stellar messages, EVM contract creation,
 `eth_sign`, Stellar classic operations other than a listed `changeTrust`, fee-bump envelopes, and anything the
-vault can't fully decode. **Not covered in the pilot:** calls whose instructions travel in opaque bytes, such as
+vault can't fully decode. Operations that change who controls a Stellar account (a `setOptions` that adds,
+re-weights or removes a signer or changes a threshold or the master weight, and `accountMerge`) are refused first
+(`account_control`), and the popup shows them under a red "changes who controls a Stellar account" warning (D110):
+don't build flows that need them. **Not covered in the pilot:** calls whose instructions travel in opaque bytes, such as
 routers, multicall, bridges and Sodax swaps (`AssetManager.transfer`, `sendMessage`). Those always get the popup until
 a protocol decoder for them ships. Token amounts other than native value are not capped in the pilot (D46), so keep
 `perDayCount` small.
@@ -671,6 +685,11 @@ account **different addresses** (D51). Wallets made with test keys are disposabl
 - Your page holds a handle to the approval popup it opens, as it does for any popup: it could navigate or close it,
   but the popup takes nothing from your page, and users should trust only a window whose address bar shows Hana's
   `authOrigin`.
+- Sandbox third-party iframes (ads, widgets, embeds): give them `sandbox` without `allow-top-navigation` and, unless
+  they need it, without `allow-scripts` and `allow-same-origin` together. An unsandboxed frame can navigate its
+  sibling frames, the Hana vault frame included, and put its own page where the "Review in Hana" launcher was. The
+  SDK hides the vault frame and emits `launcher {visible: false}` as soon as its document is replaced (status
+  `error`, 4900), but a frame that can do this can also overlay your page, so don't give third parties that power.
 - A malicious browser extension can do anything the user can, including reading an exported key. No web wallet
   design prevents that.
 - With your own Google client, your client's settings are part of your users' security ([section 6](#6-google-client-shared-or-your-own)).

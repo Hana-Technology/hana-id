@@ -1,11 +1,11 @@
-// EIP-712 hashing (eth_signTypedData_v4) over the normalized typed data. Parsing and normalizing the partner's JSON is
-// `normalizeTypedData`'s job (the single EIP-712 parser, docs/batch-b-spec.md "Approval flow"): the approval popup
-// renders its output and the vault hashes that same object here. TypedDataForHashing is the structural shape this
-// module needs from it. This module still refuses anything it can't hash unambiguously (undeclared types, missing or
-// extra fields, out-of-range values), so it is safe on its own; test/signers.test.ts checks it against viem.
+// TEST-ONLY reference EIP-712 hasher (moved out of src by sweep CORE-5: the package signs with typed-data.ts's
+// hashTypedData only, so the popup and the signer can't drift apart). Written independently of typed-data.ts; the tests
+// check the two agree on every normalized input (eip712-hashers.test.ts) and check this one against viem
+// (signers.test.ts). It refuses anything it can't hash unambiguously (undeclared types, missing or extra fields,
+// out-of-range values).
 import { keccak_256 } from '@noble/hashes/sha3';
-import { parseEvmAddress } from '../addresses.ts';
-import { type Bytes, concatBytes, from0xHex, toBytes, utf8 } from '../bytes.ts';
+import { parseEvmAddress } from '../src/addresses.ts';
+import { type Bytes, concatBytes, from0xHex, toBytes, utf8 } from '../src/bytes.ts';
 
 export interface TypedDataField {
   name: string;

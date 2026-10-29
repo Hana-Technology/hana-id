@@ -67,6 +67,7 @@ export const AUTO_APPROVE_REASON_TEXT: Readonly<Record<AutoApproveReason, string
   fee_too_high: 'the fee is over the rules’ limit',
   source_not_self: 'the transaction’s source isn’t your account',
   operation_not_allowed: 'it contains an operation the rules don’t allow',
+  account_control: 'it changes who controls your account, which is never signed automatically',
   asset_not_listed: 'the asset isn’t listed in the rules',
   contract_creation: 'it creates a contract',
   contract_not_listed: 'the contract isn’t listed in the rules',
@@ -223,6 +224,9 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     });
     const ok = d.h('button', { class: 'primary', attrs: { type: 'button' } }, primaryLabel);
     ok.disabled = true;
+    // A keyboard click acts only once Approve has held focus for a moment (D113).
+    ok.addEventListener('focus', () => guard.primaryFocused());
+    ok.addEventListener('blur', () => guard.primaryBlurred());
     ok.addEventListener('click', (e) => {
       // The guard is checked here too, not only through `disabled`, and the click must have started (pointerdown, or
       // keydown for a keyboard click, whose detail is 0) after the gesture that armed it.

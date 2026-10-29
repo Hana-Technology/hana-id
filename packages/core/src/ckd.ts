@@ -82,7 +82,14 @@ export const ckdKeyHash = (networkKey: string): Bytes => sha256(parseNetworkKey(
 
 /** A fresh ephemeral BLS12-381 key (publicly verifiable form, so the MPC contract can check it). */
 export function newAppKey(): AppKey {
-  const a = bls.G1.normPrivateKeyToScalar(bls.utils.randomPrivateKey());
+  // The random bytes are zeroed once reduced (sweep CORE-8); the scalar itself is a bigint and can't be.
+  const random = bls.utils.randomPrivateKey();
+  let a: bigint;
+  try {
+    a = bls.G1.normPrivateKeyToScalar(random);
+  } finally {
+    random.fill(0);
+  }
   return { a, publicKey: { AppPublicKeyPV: { pk1: encodeG1(G1.BASE.multiply(a)), pk2: encodeG2(G2.BASE.multiply(a)) } } };
 }
 

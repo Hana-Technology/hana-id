@@ -35,6 +35,23 @@ describe('CKD client', () => {
     expect(decryptCkd(response, key.a, appId, networkKey)).toEqual(expected);
   });
 
+  it('newAppKey zeroes the random bytes the scalar came from (CORE-8)', () => {
+    const real = bls.utils.randomPrivateKey;
+    let drawn: Uint8Array | null = null;
+    bls.utils.randomPrivateKey = () => {
+      drawn = real();
+      return drawn;
+    };
+    try {
+      const key = newAppKey();
+      expect(key.a > 0n).toBe(true);
+      expect(drawn).not.toBeNull();
+      expect((drawn as unknown as Uint8Array).every((b) => b === 0)).toBe(true);
+    } finally {
+      bls.utils.randomPrivateKey = real;
+    }
+  });
+
   it('rejects a response for a different app id, key or network', () => {
     const key = newAppKey();
     const { response, networkKey } = simulateMpc(key.publicKey.AppPublicKeyPV.pk1, appId);

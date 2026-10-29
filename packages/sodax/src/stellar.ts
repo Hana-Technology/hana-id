@@ -34,7 +34,7 @@ export interface SodaxStellarConfig {
 }
 
 /** What the adapter needs from the client: `hana.stellar`. */
-export type SodaxStellarHana = Pick<HanaClient, 'stellar'>;
+export type SodaxStellarHana = Pick<HanaClient, 'stellar'> & Partial<Pick<HanaClient, 'testApp'>>;
 
 /** `IStellarWalletProvider` with its optional broadcast methods present. */
 export type SodaxStellarProvider = IStellarWalletProvider & Required<Pick<IStellarWalletProvider, 'sendTransaction' | 'signAndSendTransaction'>>;
@@ -48,8 +48,8 @@ export function createSodaxStellarProvider(hana: SodaxStellarHana, config: Sodax
   if (typeof networkPassphrase !== 'string' || networkPassphrase.length === 0 || networkPassphrase.length > 256) {
     throw new TypeError('networkPassphrase must be a non-empty string');
   }
-  const horizon = httpUrl(config.horizonUrl, 'horizonUrl');
-  const sorobanRpcUrl = httpUrl(config.sorobanRpcUrl, 'sorobanRpcUrl');
+  const horizon = httpUrl(config.horizonUrl, 'horizonUrl', hana);
+  const sorobanRpcUrl = httpUrl(config.sorobanRpcUrl, 'sorobanRpcUrl', hana);
   // A base with a path (https://host/horizon) keeps it: resolve against it with a trailing slash.
   const horizonBase = horizon.endsWith('/') ? horizon : `${horizon}/`;
   const signer = hana.stellar;

@@ -71,10 +71,23 @@ describe('readInlinedConfig', () => {
   });
 
   it('reads JSON escaped for HTML (the API escapes <, >, &, U+2028, U+2029)', () => {
-    const name = '</script><base href=//x>&\u2028\u2029';
+    const name = '</script><base href=//x>&';
     const escaped = JSON.stringify(makeConfig({ appName: name })).replace(new RegExp('[<>&\\u2028\\u2029]', 'gu'), (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
     setConfig(escaped);
     expect(readInlinedConfig(document)?.appName).toBe(name);
+  });
+
+  it.each([
+    ['a line separator', '\u2028'],
+    ['a right-to-left override', '\u202e'],
+    ['a zero-width space', '\u200b'],
+    ['a soft hyphen', '\u00ad'],
+    ['a Hangul filler', '\u3164'],
+    ['a tag character', '\u{e0041}'],
+    ['a newline', '\n'],
+  ])('refuses an app name with %s (AUTH-2)', (_, c) => {
+    setConfig(JSON.stringify(makeConfig({ appName: `Partner${c}App` })));
+    expect(readInlinedConfig(document)).toBeNull();
   });
 });
 

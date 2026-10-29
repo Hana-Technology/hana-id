@@ -290,6 +290,7 @@ const VALID_WINDOW: Record<WindowMessageType, Record<string, unknown>> = {
   'hana:approve-bye': { v: 1, t: 'hana:approve-bye' },
   'hana:approve-close': { v: 1, t: 'hana:approve-close' },
   'hana:export-hello': { v: 1, t: 'hana:export-hello' },
+  'hana:export-end': { v: 1, t: 'hana:export-end' },
   'hana:export-context': {
     v: 1,
     t: 'hana:export-context',

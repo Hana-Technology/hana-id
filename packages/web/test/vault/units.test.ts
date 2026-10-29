@@ -145,6 +145,25 @@ describe('Clock', () => {
     clock.refresh(-1);
     expect(clock.now()).toBe(9000);
   });
+
+  it('never goes back: a device clock set back or an older server time holds it until real time catches up (VAUL-2)', () => {
+    let device = 1000;
+    const clock = new Clock(5000, () => device);
+    device = 2000;
+    expect(clock.now()).toBe(6000);
+    device = 500; // set back by 1.5 s
+    expect(clock.now()).toBe(6000);
+    device = 2100;
+    expect(clock.now()).toBe(6100);
+    clock.refresh(3000); // a server time behind the one already seen
+    expect(clock.now()).toBe(6100);
+    device = 5200; // 3.1 s of real time later: 3000 + 3100
+    expect(clock.now()).toBe(6100);
+    device = 5300;
+    expect(clock.now()).toBe(6200);
+    clock.refresh(10_000); // forward steps apply at once
+    expect(clock.now()).toBe(10_000);
+  });
 });
 
 describe('Launcher', () => {

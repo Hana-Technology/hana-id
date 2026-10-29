@@ -5,14 +5,15 @@
 // - transaction: EIP-1559 (type 2) or legacy with an EIP-155 chain ID. The port carries every field as a JSON-RPC
 //   `0x` hex string, fully filled by the SDK; parseEvmTxRequest refuses anything else.
 // - personal_sign: EIP-191 (version 0x45), keccak256("\x19Ethereum Signed Message:\n" ‖ len ‖ message).
-// - eth_signTypedData_v4: EIP-712 over the normalized object (signers/eip712.ts).
+// - eth_signTypedData_v4: EIP-712 over normalizeTypedData's output, hashed by typed-data.ts, the single parser (the one
+//   the popup renders from; sweep CORE-5: the looser second hasher is gone from the package).
 // - raw: secp256k1 over a 32-byte digest. It can sign any EVM transaction; only under raw approval.
 // Signatures are RFC 6979 deterministic with low s; `r ‖ s ‖ v` has v ∈ {27, 28}.
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { checksumEvmAddress, evmAddress, parseEvmAddress } from '../addresses.ts';
 import { type Bytes, concatBytes, from0xHex, toBytes, toHex, utf8 } from '../bytes.ts';
-import { type TypedDataForHashing, hashTypedData } from './eip712.ts';
+import { type NormalizedTypedData, hashTypedData } from '../typed-data.ts';
 
 export type Hex = `0x${string}`;
 
@@ -246,7 +247,7 @@ export const eip191Hash = (message: Uint8Array): Bytes => toBytes(keccak_256(con
 export const personalSign = (d: Uint8Array, message: Uint8Array): Hex => `0x${toHex(rsv(signDigest(d, eip191Hash(message))))}`;
 
 /** eth_signTypedData_v4 over the normalized typed data: `0x` r‖s‖v (65 bytes). */
-export const signTypedData = (d: Uint8Array, typedData: TypedDataForHashing): Hex => `0x${toHex(rsv(signDigest(d, hashTypedData(typedData))))}`;
+export const signTypedData = (d: Uint8Array, typedData: NormalizedTypedData): Hex => `0x${toHex(rsv(signDigest(d, hashTypedData(typedData))))}`;
 
 /** Raw secp256k1 over a 32-byte digest: r‖s‖v (65 bytes), v ∈ {27, 28}. Can sign any EVM transaction. */
 export const signEvmDigest = (d: Uint8Array, digest: Uint8Array): Bytes => rsv(signDigest(d, digest));

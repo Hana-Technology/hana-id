@@ -51,6 +51,14 @@ describe('creation', () => {
     expect(() => createSodaxStellarProvider(hana, { ...CONFIG, sorobanRpcUrl: 'ftp://soroban.test' })).toThrow(/sorobanRpcUrl/u);
     expect(() => createSodaxStellarProvider(hana, { ...CONFIG, horizonUrl: undefined as never })).toThrow(/horizonUrl/u);
   });
+
+  it('refuses plaintext http Horizon and Soroban RPC outside loopback unless the client is a test app (PART-3, D115)', () => {
+    const hana = stellarHana(port);
+    expect(() => createSodaxStellarProvider(hana, { ...CONFIG, horizonUrl: 'http://horizon.test' })).toThrow(/horizonUrl must be https for a live app/u);
+    expect(() => createSodaxStellarProvider(hana, { ...CONFIG, sorobanRpcUrl: 'http://soroban.test' })).toThrow(/sorobanRpcUrl must be https/u);
+    expect(() => createSodaxStellarProvider(hana, { ...CONFIG, horizonUrl: 'http://localhost:8000', sorobanRpcUrl: 'http://[::1]:8001' })).not.toThrow();
+    expect(() => createSodaxStellarProvider({ ...hana, testApp: true }, { ...CONFIG, horizonUrl: 'http://horizon.test' })).not.toThrow();
+  });
 });
 
 describe('getWalletAddress', () => {

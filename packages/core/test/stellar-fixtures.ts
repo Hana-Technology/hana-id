@@ -4,6 +4,7 @@ import {
   Account,
   Address,
   Asset,
+  Claimant,
   Keypair,
   Networks,
   Operation,
@@ -153,3 +154,80 @@ export function feeBumpBytes(inner: Uint8Array, feeSource = USER): Uint8Array {
   const fb = TransactionBuilder.buildFeeBumpTransaction(feeSource, '1000', tx as never, PASSPHRASE);
   return new Uint8Array(fb.toEnvelope().toXDR());
 }
+
+// --- classic operations (CORE-1, D110) ---
+
+/** A second key: the "attacker" signer in account-takeover fixtures. */
+export const ATTACKER = Keypair.fromRawEd25519Seed(new Uint8Array(32).fill(13) as never).publicKey();
+export const EURC = new Asset('EURC', ISSUER);
+/** A claimable balance id in Horizon's hex form (type 0 ‖ hash). */
+export const BALANCE_ID = `00000000${'ab'.repeat(32)}`;
+export const POOL_ID = 'cd'.repeat(32);
+
+/** setOptions adding ATTACKER as a signer (weight 255 by default): the one-click account takeover. */
+export const addSignerOp = (weight = 255) => Operation.setOptions({ signer: { ed25519PublicKey: ATTACKER, weight } });
+export const thresholdsOp = () => Operation.setOptions({ lowThreshold: 0, medThreshold: 2, highThreshold: 255 });
+export const masterWeightOp = (w = 0) => Operation.setOptions({ masterWeight: w });
+export const mergeOp = (destination = ATTACKER) => Operation.accountMerge({ destination });
+export const homeDomainOp = () => Operation.setOptions({ homeDomain: 'example.com' });
+
+/** One builder per classic operation type, none with an account-control effect. */
+export const plainClassicOps: Readonly<Record<string, () => xdr.Operation>> = {
+  pathPaymentStrictReceive: () =>
+    Operation.pathPaymentStrictReceive({
+      sendAsset: Asset.native(),
+      sendMax: '5',
+      destination: OTHER,
+      destAsset: USDC,
+      destAmount: '1',
+      path: [EURC],
+    }),
+  pathPaymentStrictSend: () =>
+    Operation.pathPaymentStrictSend({
+      sendAsset: USDC,
+      sendAmount: '2',
+      destination: OTHER,
+      destAsset: Asset.native(),
+      destMin: '0.5',
+      path: [],
+    }),
+  manageSellOffer: () =>
+    Operation.manageSellOffer({ selling: USDC, buying: Asset.native(), amount: '3', price: '0.5', offerId: '7' }),
+  manageBuyOffer: () =>
+    Operation.manageBuyOffer({ selling: Asset.native(), buying: USDC, buyAmount: '4', price: '2', offerId: '0' }),
+  createPassiveSellOffer: () => Operation.createPassiveSellOffer({ selling: USDC, buying: EURC, amount: '1', price: '1' }),
+  setOptions: homeDomainOp,
+  allowTrust: () => Operation.allowTrust({ trustor: OTHER, assetCode: 'USDC', authorize: 1 }),
+  inflation: () => Operation.inflation({}),
+  manageData: () => Operation.manageData({ name: 'config', value: Buffer.from([1, 2]) }),
+  bumpSequence: () => Operation.bumpSequence({ bumpTo: '1000' }),
+  createClaimableBalance: () =>
+    Operation.createClaimableBalance({ asset: USDC, amount: '1', claimants: [new Claimant(OTHER)] }),
+  claimClaimableBalance: () => Operation.claimClaimableBalance({ balanceId: BALANCE_ID }),
+  beginSponsoringFutureReserves: () => Operation.beginSponsoringFutureReserves({ sponsoredId: OTHER }),
+  endSponsoringFutureReserves: () => Operation.endSponsoringFutureReserves({}),
+  revokeSponsorship: () => Operation.revokeAccountSponsorship({ account: OTHER }),
+  clawback: () => Operation.clawback({ asset: USDC, from: OTHER, amount: '1' }),
+  clawbackClaimableBalance: () => Operation.clawbackClaimableBalance({ balanceId: BALANCE_ID }),
+  setTrustLineFlags: () =>
+    Operation.setTrustLineFlags({ trustor: OTHER, asset: USDC, flags: { authorized: true, clawbackEnabled: false } }),
+  liquidityPoolDeposit: () =>
+    Operation.liquidityPoolDeposit({
+      liquidityPoolId: POOL_ID,
+      maxAmountA: '1',
+      maxAmountB: '2',
+      minPrice: '0.5',
+      maxPrice: '2',
+    }),
+  liquidityPoolWithdraw: () =>
+    Operation.liquidityPoolWithdraw({ liquidityPoolId: POOL_ID, amount: '1', minAmountA: '0.1', minAmountB: '0.2' }),
+};
+
+/** The account-control operations (stellarAccountControl non-empty), by description. */
+export const accountControlOps: Readonly<Record<string, () => xdr.Operation>> = {
+  'a new signer': () => addSignerOp(),
+  'a signer removed': () => addSignerOp(0),
+  'threshold changes': thresholdsOp,
+  'a master-weight change': () => masterWeightOp(),
+  'an account merge': () => mergeOp(),
+};

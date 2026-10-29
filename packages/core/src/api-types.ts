@@ -2,6 +2,8 @@
 // client must run before trusting a body. Moved from apps/smoke/src/api.ts (the smoke HTTP client stays there).
 // Request bodies are camelCase JSON with bytes as number arrays; errors are `{error, code, ...details}` plus
 // `requestId`.
+import { isDisplaySafeLine } from './display-safe.ts';
+
 export type GoogleMode = 'own' | 'shared';
 
 /** `GET /v1/app`. `name`, `serverTimeMs`, `autoApprovePolicy` and `rawSign` arrive with batch B; older APIs omit them. */
@@ -225,7 +227,8 @@ export function isAppConfig(v: unknown): v is AppConfig {
     isObj(v.google) &&
     typeof v.google.clientId === 'string' &&
     (v.google.mode === 'own' || v.google.mode === 'shared') &&
-    (v.name === undefined || typeof v.name === 'string') &&
+    // A name with a control, bidi or invisible character is refused (sweep AUTH-2): the export page shows it.
+    (v.name === undefined || (typeof v.name === 'string' && isDisplaySafeLine(v.name))) &&
     (v.serverTimeMs === undefined || isMs(v.serverTimeMs)) &&
     (v.autoApprovePolicy === undefined || v.autoApprovePolicy === null || isObj(v.autoApprovePolicy)) &&
     (v.rawSign === undefined || v.rawSign === 'off' || v.rawSign === 'approval')

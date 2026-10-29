@@ -9,7 +9,12 @@ import type { DecodedEvmTx } from '../decode/evm.ts';
 import { DecodeError } from '../decode/errors.ts';
 import { parseHex0x } from '../decode/hex.ts';
 import { type DecodedApproval, decodeApprovalRequest } from '../decode/request.ts';
-import type { StellarInvocation, StellarScVal, StellarTransaction } from '../decode/stellar.ts';
+import {
+  type StellarInvocation,
+  type StellarScVal,
+  type StellarTransaction,
+  stellarAccountControl,
+} from '../decode/stellar.ts';
 import {
   type NormalizedTypedData,
   type ParsedTypedDataType,
@@ -35,6 +40,7 @@ export type AutoApproveReason =
   | 'source_not_self'
   | 'operation_not_allowed' // a classic op other than a listed changeTrust, a contract creation or upload, …
   // … or a restore/extend footprint outside the listed contracts
+  | 'account_control' // Stellar setOptions signer/threshold/master-weight changes and accountMerge (D110): never covered
   | 'asset_not_listed'
   | 'contract_creation'
   | 'contract_not_listed'
@@ -252,6 +258,12 @@ function matchStellar(
   if (tx.operations.length === 0) miss('operation_not_allowed', 'Transaction has no operations');
   let first: { contract: string; function: string } | null = null;
   for (const op of tx.operations) {
+    // Checked first, whatever the policy lists: an operation that hands over or ends control of an account always
+    // needs the user's own approval, with the popup's account-control warning (D110).
+    const control = stellarAccountControl(op);
+    if (control.length > 0) {
+      miss('account_control', `${op.type} changes who controls the account (${control.join(', ')})`);
+    }
     if (op.source !== null && op.source !== self) miss('source_not_self', `${op.type} has another source`);
     switch (op.type) {
       case 'invokeHostFunction': {

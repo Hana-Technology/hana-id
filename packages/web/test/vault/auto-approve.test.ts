@@ -556,6 +556,22 @@ describe('persistence and tabs', () => {
     expect((await s.t.request('hana_autoApproveStatus')).result).toMatchObject({ used: { count: 2 } });
   });
 
+  it('hana_requestAutoApprove with a consent in force neither restarts the idle limit nor unlocks a dormant session (VAUL-1, D112)', async () => {
+    const s = await session();
+    await grant(s);
+    const unlocks = () => s.t.browser.backend.count('/v1/vault/unlock');
+    const live = () => (s.t.vault as unknown as { session: unknown }).session;
+    s.t.browser.timers.advance(2 * HOUR - 60_000);
+    expect((await s.t.request('hana_requestAutoApprove')).result).toEqual({ granted: true, policyId: PID, expiresAtMs: START_MS + 6 * HOUR });
+    // The limit still counts from the consent (the last request that used the key).
+    s.t.browser.timers.advance(60_000);
+    expect(live()).toBeNull();
+    const before = unlocks();
+    expect((await s.t.request('hana_requestAutoApprove')).result).toEqual({ granted: true, policyId: PID, expiresAtMs: START_MS + 6 * HOUR });
+    expect(unlocks()).toBe(before);
+    expect(live()).toBeNull();
+  });
+
   it('a changed policy (new policyId) ignores the old consent', async () => {
     const browser = new Browser();
     const a = await session(browser);

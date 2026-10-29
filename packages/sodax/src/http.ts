@@ -1,7 +1,7 @@
 // HTTP for the Sodax adapters: JSON-RPC to Soroban RPC and the EVM spoke's RPC, GETs to Horizon, and the poll sleep.
 // Everything goes through the page's `fetch` at call time. Failures are HanaError: -32602 for the caller's input,
 // -32603 for the network or the node, with the node's own code and message (never a body dump) in `data`.
-import { HanaError, RpcCode } from '@hana-id/web';
+import { HanaError, RpcCode, serviceUrl } from '@hana-id/web';
 
 /** Each HTTP request's own limit (a receipt poll also stops at its overall deadline). */
 export const REQUEST_TIMEOUT_MS = 30_000;
@@ -12,16 +12,14 @@ export const invalid = (message: string): HanaError => new HanaError(RpcCode.inv
 
 export const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** `value` as an http(s) URL string, or a TypeError naming `name` (config checks, as createHana does). */
-export function httpUrl(value: unknown, name: string): string {
-  let url: URL;
-  try {
-    url = new URL(String(value));
-  } catch {
-    throw new TypeError(`${name} must be a URL`);
-  }
-  if (typeof value !== 'string' || (url.protocol !== 'https:' && url.protocol !== 'http:')) throw new TypeError(`${name} must be an http(s) URL`);
-  return value;
+/**
+ * `value` as a service URL string, or a TypeError naming `name`, by createHana's rule (D115): http(s), and https unless
+ * on loopback for a live app. The app is live unless `hana.testApp` says it's a `pk_test_` one, so a client object
+ * that doesn't say gets the strict rule.
+ */
+export function httpUrl(value: unknown, name: string, hana: unknown): string {
+  const testApp = isObject(hana) && (hana as { testApp?: unknown }).testApp === true;
+  return serviceUrl(value, name, !testApp);
 }
 
 let rpcId = 0;

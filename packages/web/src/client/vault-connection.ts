@@ -46,7 +46,8 @@ export interface VaultConnectionOptions {
   /** Every valid vault event, `ready` included. */
   onEvent: (event: PortEvent) => void;
   /** The port died (frame replaced, or destroy()). Called once. */
-  onDisconnect: () => void;
+  /** The port died (or destroy); `launcherWasVisible` when the launcher was showing, now hidden. */
+  onDisconnect: (launcherWasVisible: boolean) => void;
   /** Monotonic ms for the handshake marks (pk_test_ timings); defaults to performance.now. */
   now?: () => number;
 }
@@ -271,6 +272,10 @@ export class VaultConnection {
   #disconnect(): void {
     if (this.#disconnected) return;
     this.#disconnected = true;
+    // A dead port's frame is hidden at once (sweep PART-1): a second load means the frame's document was replaced
+    // (another frame on the page can navigate it), so whatever now shows in the launcher's spot isn't Hana's.
+    const launcherWasVisible = this.launcherVisible;
+    if (this.#frame) this.#hide(this.#frame);
     clearTimeout(this.#readyTimer);
     if (!this.#readyDone) this.#failReady();
     this.#readyDone = true;
@@ -281,7 +286,7 @@ export class VaultConnection {
       this.#port.close();
     }
     this.#port = null;
-    this.#o.onDisconnect();
+    this.#o.onDisconnect(launcherWasVisible);
   }
 
   /** Removes the iframe and closes the port; pending and later requests reject with 4900. */

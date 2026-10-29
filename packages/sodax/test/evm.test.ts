@@ -87,6 +87,15 @@ describe('creation', () => {
     expect(Object.isFrozen(base)).toBe(true);
   });
 
+  it('refuses a plaintext http receipts RPC outside loopback unless the client is a test app (PART-3, D115)', () => {
+    const hana = evmHana(port, net, EVM_CONFIG);
+    expect(() => createSodaxEvmProvider(hana, { chainId: BASE, rpcUrl: 'http://base.rpc.test' })).toThrow(/must be https for a live app/u);
+    expect(() => createSodaxEvmProvider({ ...hana, testApp: false }, { chainId: BASE, rpcUrl: 'http://base.rpc.test' })).toThrow(TypeError);
+    expect(() => createSodaxEvmProvider(hana, { chainId: BASE, rpcUrl: 'http://127.0.0.1:8545' })).not.toThrow();
+    expect(() => createSodaxEvmProvider({ ...hana, testApp: true }, { chainId: BASE, rpcUrl: 'http://base.rpc.test' })).not.toThrow();
+    expect(() => createSodaxEvmProvider({ ...hana, testApp: true }, { chainId: BASE, rpcUrl: 'ftp://base.rpc.test' })).toThrow(/http\(s\)/u);
+  });
+
   it("throws 4902 for a chain that isn't in the client's evm.chains, or without evm config", () => {
     const hana = evmHana(port, net, EVM_CONFIG);
     const e = (() => {

@@ -11,6 +11,7 @@
 // - getNetwork(): from `stellar.networkPassphrase`.
 import type { PortMethod, PortParamsMap, PortResultMap } from '@hana-id/core';
 import { HanaError, RpcCode } from './errors.ts';
+import { serviceUrl } from './urls.ts';
 
 export interface StellarConfig {
   networkPassphrase: string;
@@ -36,20 +37,14 @@ export interface StellarHost {
   request<M extends PortMethod>(method: M, params?: PortParamsMap[M]): Promise<PortResultMap[M]>;
 }
 
-export function validateStellarConfig(s: StellarConfig): StellarConfig {
+/** Validates `stellar` config; Horizon and Soroban RPC URLs by the service-URL rule (https for a live app, D115). */
+export function validateStellarConfig(s: StellarConfig, live = true): StellarConfig {
   if (typeof s !== 'object' || s === null || typeof s.networkPassphrase !== 'string' || s.networkPassphrase.length === 0 || s.networkPassphrase.length > 256) {
     throw new TypeError('stellar.networkPassphrase must be a non-empty string');
   }
   for (const k of ['horizonUrl', 'sorobanRpcUrl'] as const) {
     const v = s[k];
-    if (v === undefined) continue;
-    let url: URL;
-    try {
-      url = new URL(v);
-    } catch {
-      throw new TypeError(`stellar.${k} must be a URL`);
-    }
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new TypeError(`stellar.${k} must be http(s)`);
+    if (v !== undefined) serviceUrl(v, `stellar.${k}`, live);
   }
   return { ...s };
 }

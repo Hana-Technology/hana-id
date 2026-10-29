@@ -298,7 +298,7 @@ describe('Stellar transactions', () => {
     it.each(Object.entries(accountControlOps))('%s next to a listed changeTrust, a listed call or with another source', (_, op) => {
       expect(reason(match(stellarTx(txBytes([changeTrustOp(USDC), op()]))))).toBe('account_control');
       const sourced = op();
-      sourced.sourceAccount(Keypair.fromPublicKey(OTHER).xdrMuxedAccount());
+      sourced.sourceAccount(xdr.MuxedAccount.keyTypeEd25519(Keypair.fromPublicKey(OTHER).rawPublicKey()));
       expect(reason(match(stellarTx(txBytes([sourced]))))).toBe('account_control');
     });
 

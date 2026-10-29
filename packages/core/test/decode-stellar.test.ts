@@ -307,7 +307,7 @@ describe('decodeStellarTransaction: classic operations (CORE-1, D110)', () => {
       Operation.setOptions({
         inflationDest: OTHER,
         clearFlags: 2,
-        setFlags: 9,
+        setFlags: 9 as never,
         masterWeight: 0,
         lowThreshold: 1,
         medThreshold: 2,

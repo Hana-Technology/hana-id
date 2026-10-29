@@ -119,7 +119,11 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   `SIGNER_ACCOUNT`.
 - **Owner actions**: OIDC auth only, console audience, a current owner of the scope, change exists / unlocked, client
   proof matches; the token is reserved single-use before relaying and released only if the tx certainly didn't
-  execute; global caps 20/min, 200/day (`handlers.ts:30`, `handleOwnerAction` `:396`, `owner-actions.ts:31`).
+  execute; caps per owner identity (5/min, 30/day), per scope (10/min, 50/day) and global (20/min, 200/day), asked in
+  that order, and `cancel_change` outside all three with its own 5/min, 20/day per owner identity, so no other owner
+  or flood can starve a timelock's cancel window (D100; `handlers.ts` `ownerActionWindows`, `handleOwnerAction`,
+  `owner-actions.ts`). The off-chain check doesn't recompute `owner_action_nonce`: a token with a wrong nonce is
+  relayed and fails on chain, at the cost of its owner's own windows only.
 - **Origin rules** (`apps/api/src/origins.ts:81`): a Hana page (`Origin` = `VAULT_ORIGIN`/`AUTH_ORIGIN`) may call only
   its endpoints, and only for an `x-hana-parent-origin` the app allows. Partner origins: `GET /v1/app` always; the
   session endpoints only for `pk_test_` in dev envs. Loopback origins and `http://localhost:*` only for `pk_test_` in
@@ -165,7 +169,7 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   | `GET /v1/app` per IP per app | plan `per_ip_minute`, its own window |
   | Vault endpoints | 60/min per IP per app (*per location*); 10 × `per_minute` per app; 10/min per share (share actions, *per location*) |
   | Login relay per IP | writes 10/min, reads 120/min |
-  | Owner actions | 10/min per IP; 20/min and 200/day globally |
+  | Owner actions | 10/min per IP; per owner 5/min, 30/day; per scope 10/min, 50/day; global 20/min, 200/day; `cancel_change` only 5/min, 20/day per owner (D100) |
 
   Each request's windows are asked in turn: per IP first, and the per-app window only once the IP window accepted,
   so a request the IP window refuses never uses (or holds) any of the app's shared quota. On the relay endpoints the

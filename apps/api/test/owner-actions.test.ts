@@ -1,7 +1,16 @@
 import { runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { OWNER_ACTIONS_GLOBAL_MINUTE, OWNER_ACTIONS_PER_IP_MINUTE } from '../src/handlers.ts';
+import {
+  CANCELS_PER_OWNER_MINUTE,
+  OWNER_ACTIONS_GLOBAL_MINUTE,
+  OWNER_ACTIONS_PER_IP_MINUTE,
+  OWNER_ACTIONS_PER_OWNER_MINUTE,
+  OWNER_ACTIONS_PER_SCOPE_MINUTE,
+  ownerActionWindows,
+  ownerLimiterKey,
+  scopeLimiterKey,
+} from '../src/handlers.ts';
 import { clearJwksCache } from '../src/jwks.ts';
 import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { GOVERNANCE_METHODS, UPDATER_METHODS, parseRelayerKeys } from '../src/relayer-config.ts';
@@ -13,15 +22,33 @@ const GOOGLE = 'https://accounts.google.com';
 const CONSOLE = 'console.apps.googleusercontent.com';
 const NEW_CLIENT = 'new-client.apps.googleusercontent.com';
 const OWNER_SUB = '42';
+const OTHER_OWNER_SUB = '43';
 
 let google: RsaSigner;
 let seq = 0;
 beforeAll(async () => {
   google = await rsaSigner();
 });
-beforeEach(() => {
+/** Empties RateLimiter objects (storage is shared by the tests of this file). */
+async function clearLimiters(names: string[]): Promise<void> {
+  for (const name of names) {
+    await runInDurableObject(env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(name)), (_i, state) => {
+      for (const [key] of state.storage.kv.list()) state.storage.kv.delete(key);
+    });
+  }
+}
+const SCOPES = ['s1', 's2', 's3'];
+/** Every owner-action cap these tests touch: global, per scope, per owner identity. */
+const ownerLimiters = async (): Promise<string[]> => [
+  'owner-actions:global',
+  ...SCOPES.map(scopeLimiterKey),
+  ...(await Promise.all([OWNER_SUB, OTHER_OWNER_SUB].map((sub) => ownerLimiterKey({ provider: 'google', sub })))),
+];
+
+beforeEach(async () => {
   clearJwksCache();
   clearViewCaches();
+  await clearLimiters(await ownerLimiters());
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -56,7 +83,7 @@ function scope(): Record<string, unknown> {
 }
 
 function near(): NearMock & { scopes: Record<string, unknown> } {
-  const n = Object.assign(new NearMock(), { scopes: { s1: scope() } as Record<string, unknown> });
+  const n = Object.assign(new NearMock(), { scopes: Object.fromEntries(SCOPES.map((id) => [id, { ...scope(), id }])) as Record<string, unknown> });
   n.jwks = { keys: [google.jwk] };
   n.views.get_config = () => ({
     owner: 'admin.testnet',
@@ -303,33 +330,77 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
     expect(n.sent.filter((t) => t.args.change_id === 3)).toHaveLength(1);
   });
 
-  it('frees the token when the global cap turns the request away', async () => {
+  const execute = (scopeId: string, i: number) => post({ method: 'execute_change', args: { scope_id: scopeId, change_id: 3 } }, `198.51.100.${(i % 250) + 1}`);
+  const setOwners = async (sub = OWNER_SUB) => ({ method: 'propose_change', args: { scope_id: 's1', auth: await oidc({ sub }), change: { SetOwners: { owners: [{ Oidc: { provider: 'google', sub } }] } } } });
+  const fill = async (scopeId: string, count: number, from = 0) => {
+    for (let i = 0; i < count; i++) expect((await execute(scopeId, from + i)).status, `${scopeId} #${i}`).toBe(200);
+  };
+
+  it('frees the token when a cap turns the request away', async () => {
     const n = near();
-    const global = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName('owner-actions:global'));
-    await runInDurableObject(global, (_i, state) => {
-      for (const [key] of state.storage.kv.list()) state.storage.kv.delete(key);
-    });
-    for (let i = 0; i < OWNER_ACTIONS_GLOBAL_MINUTE; i++) expect((await post({ method: 'execute_change', args: { scope_id: 's1', change_id: 3 } }, `198.51.100.${i + 1}`)).status).toBe(200);
-    const body = { method: 'cancel_change', args: { scope_id: 's1', auth: await oidc(), change_id: 0 } };
-    expect((await post(body)).status).toBe(429);
-    await runInDurableObject(global, (_i, state) => {
-      for (const [key] of state.storage.kv.list()) state.storage.kv.delete(key);
-    });
+    await fill('s1', OWNER_ACTIONS_PER_SCOPE_MINUTE);
+    const body = await setOwners();
+    const refused = await post(body);
+    expect([refused.status, (await json(refused)).error]).toEqual([429, 'Rate limit exceeded (owner actions per scope per minute)']);
+    await clearLimiters([scopeLimiterKey('s1')]);
     expect((await post(body)).status).toBe(200);
-    expect(n.sent.filter((t) => t.method === 'cancel_change')).toHaveLength(1);
+    expect(n.sent.filter((t) => t.method === 'propose_change')).toHaveLength(1);
   });
 
-  it(`caps relayed owner actions globally (${OWNER_ACTIONS_GLOBAL_MINUTE} per minute), across IPs`, async () => {
+  it(`caps owner actions per scope (${OWNER_ACTIONS_PER_SCOPE_MINUTE} per minute), across IPs, without touching other scopes`, async () => {
     const n = near();
-    // Storage is shared by the tests of this file: start from an empty global window.
-    await runInDurableObject(env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName('owner-actions:global')), (_i, state) => {
-      for (const [key] of state.storage.kv.list()) state.storage.kv.delete(key);
-    });
     const statuses: number[] = [];
-    for (let i = 0; i < OWNER_ACTIONS_GLOBAL_MINUTE + 1; i++) statuses.push((await post({ method: 'execute_change', args: { scope_id: 's1', change_id: 3 } }, `198.51.100.${i + 1}`)).status);
-    expect(statuses.slice(0, -1)).toEqual(Array(OWNER_ACTIONS_GLOBAL_MINUTE).fill(200));
-    expect(statuses.at(-1)).toBe(429);
+    for (let i = 0; i < OWNER_ACTIONS_PER_SCOPE_MINUTE + 1; i++) statuses.push((await execute('s1', i)).status);
+    expect(statuses).toEqual([...Array(OWNER_ACTIONS_PER_SCOPE_MINUTE).fill(200), 429]);
+    expect((await execute('s2', 99)).status).toBe(200);
+    expect(n.sent).toHaveLength(OWNER_ACTIONS_PER_SCOPE_MINUTE + 1);
+  });
+
+  it(`caps owner actions per owner identity (${OWNER_ACTIONS_PER_OWNER_MINUTE} per minute), whatever the IP`, async () => {
+    const n = near();
+    (n.scopes.s1 as { owners: unknown[] }).owners.push({ Oidc: { provider: 'google', sub: OTHER_OWNER_SUB } });
+    const statuses: number[] = [];
+    for (let i = 0; i < OWNER_ACTIONS_PER_OWNER_MINUTE + 1; i++) statuses.push((await post(await setOwners())).status);
+    expect(statuses).toEqual([...Array(OWNER_ACTIONS_PER_OWNER_MINUTE).fill(200), 429]);
+    // A co-owner of the same scope has its own window.
+    expect((await post(await setOwners(OTHER_OWNER_SUB))).status).toBe(200);
+  });
+
+  it(`caps relayed owner actions globally (${OWNER_ACTIONS_GLOBAL_MINUTE} per minute) across scopes`, async () => {
+    const n = near();
+    await fill('s1', OWNER_ACTIONS_PER_SCOPE_MINUTE);
+    await fill('s2', OWNER_ACTIONS_GLOBAL_MINUTE - OWNER_ACTIONS_PER_SCOPE_MINUTE, 50);
+    const over = await execute('s3', 120);
+    expect([over.status, (await json(over)).error]).toEqual([429, 'Rate limit exceeded (owner actions per minute)']);
     expect(n.sent).toHaveLength(OWNER_ACTIONS_GLOBAL_MINUTE);
+  });
+
+  it('cancel_change is never starved: its own per-owner allowance, outside the scope, owner and global caps (APIW-3)', async () => {
+    const n = near();
+    (n.scopes.s1 as { owners: unknown[] }).owners.push({ Oidc: { provider: 'google', sub: OTHER_OWNER_SUB } });
+    // Someone fills the global ceiling and the victim scope's own window, and the owner has used up its own window.
+    await fill('s1', OWNER_ACTIONS_PER_SCOPE_MINUTE);
+    await fill('s2', OWNER_ACTIONS_GLOBAL_MINUTE - OWNER_ACTIONS_PER_SCOPE_MINUTE, 50);
+    for (let i = 0; i < OWNER_ACTIONS_PER_OWNER_MINUTE; i++) expect((await post(await setOwners())).status).toBe(429);
+    expect((await execute('s3', 200)).status).toBe(429);
+    // The honest owner can still cancel, up to its own small allowance.
+    const cancels: number[] = [];
+    for (let i = 0; i < CANCELS_PER_OWNER_MINUTE + 1; i++) cancels.push((await post({ method: 'cancel_change', args: { scope_id: 's1', auth: await oidc(), change_id: 5 } })).status);
+    expect(cancels).toEqual([...Array(CANCELS_PER_OWNER_MINUTE).fill(200), 429]);
+    // One owner using up its cancels leaves every other owner's untouched.
+    expect((await post({ method: 'cancel_change', args: { scope_id: 's1', auth: await oidc({ sub: OTHER_OWNER_SUB }), change_id: 5 } })).status).toBe(200);
+    expect(n.sent.filter((t) => t.method === 'cancel_change')).toHaveLength(CANCELS_PER_OWNER_MINUTE + 1);
+  });
+
+  it('ownerActionWindows: per owner, per scope, global; cancel_change only its own per-owner allowance; no Google sub in a name', async () => {
+    const owner = { provider: 'google', sub: '110248495921238986420' };
+    const propose = await ownerActionWindows('propose_change', { scopeId: 's1', owner });
+    expect(propose.map((w) => w.subject)).toEqual([await ownerLimiterKey(owner), 'owner-actions:scope:s1', 'owner-actions:global']);
+    expect(propose[0]!.subject).toMatch(/^owner-actions:owner:[0-9a-f]{64}$/u);
+    expect((await ownerActionWindows('execute_change', { scopeId: 's1', owner: null })).map((w) => w.subject)).toEqual(['owner-actions:scope:s1', 'owner-actions:global']);
+    const cancel = await ownerActionWindows('cancel_change', { scopeId: 's1', owner });
+    expect(cancel).toEqual([{ subject: await ownerLimiterKey(owner), label: 'cancels per owner', limits: [expect.objectContaining({ name: 'cancel:minute', max: CANCELS_PER_OWNER_MINUTE }), expect.objectContaining({ name: 'cancel:day' })] }]);
+    for (const w of [...propose, ...cancel]) expect(w.subject).not.toContain(owner.sub);
   });
 
   it('fails closed when the issuer keys or the registry cannot be read', async () => {
@@ -348,13 +419,6 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
 describe('owner actions: owner relayer pool and shared login', () => {
   const ownerPublicKeys = parseRelayerKeys(env.OWNER_RELAYER_KEYS).map((k) => KeyPair.fromString(k as KeyPairString).getPublicKey().toString());
   const sessionPublicKeys = parseRelayerKeys(env.RELAYER_KEYS).map((k) => KeyPair.fromString(k as KeyPairString).getPublicKey().toString());
-
-  // The global cap test above fills the shared window: start each test from an empty one.
-  beforeEach(async () => {
-    await runInDurableObject(env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName('owner-actions:global')), (_i, state) => {
-      for (const [key] of state.storage.kv.list()) state.storage.kv.delete(key);
-    });
-  });
 
   async function expectRejected(body: unknown, status: number, code: string, n: NearMock): Promise<void> {
     const res = await post(body);

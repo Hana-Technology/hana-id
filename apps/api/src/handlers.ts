@@ -10,8 +10,8 @@ import { placedStub } from './placement.ts';
 import { JwksUnavailableError, verifyIdToken } from './jwks.ts';
 import { keyObserver } from './key-observations.ts';
 import { type Caller, PARENT_ORIGIN_HEADER, RELAY_KEY_HEADER, checkCaller, preflightAllows } from './origins.ts';
-import { precheckOwnerAction } from './owner-actions.ts';
-import type { RateLimiter } from './rate-limiter.ts';
+import { precheckOwnerAction, sha256Hex } from './owner-actions.ts';
+import type { Limit, RateLimiter } from './rate-limiter.ts';
 import type { RelayInstance, RelayTiming } from './relayer-key.ts';
 import { relay } from './relayer-pool.ts';
 import { ckdPayload, revokePayload, sessionNonce, verifySessionSignature } from './session-crypto.ts';
@@ -25,11 +25,21 @@ const APP_METHODS = 'GET, POST, OPTIONS';
 /** Owner actions are unauthenticated at the API (the proof is in the args): keep them slow. */
 export const OWNER_ACTIONS_PER_IP_MINUTE = 10;
 /**
- * Global caps on relayed owner actions (only requests that passed every off-chain check count). They are paid from the
- * owner pool (OWNER_RELAYER_KEYS, small allowance), never from the login pool: this bounds what they can ever spend.
+ * Caps on relayed owner actions (only requests that passed every off-chain check count; D100, security sweep APIW-3).
+ * They are paid from the owner pool (OWNER_RELAYER_KEYS, small allowance), never from the login pool. Asked from the
+ * most specific in, so one owner's excess stops at its own window and never reaches what other scopes share:
+ * per owner identity (provider, sub; execute_change has none), then per scope, then the global ceiling that bounds the
+ * pool's spend. `cancel_change` counts against none of these: it has its own small allowance per owner identity
+ * (CANCELS_PER_OWNER_*), so no other owner, scope or flood can starve the timelock's cancel window.
  */
+export const OWNER_ACTIONS_PER_OWNER_MINUTE = 5;
+export const OWNER_ACTIONS_PER_OWNER_DAY = 30;
+export const OWNER_ACTIONS_PER_SCOPE_MINUTE = 10;
+export const OWNER_ACTIONS_PER_SCOPE_DAY = 50;
 export const OWNER_ACTIONS_GLOBAL_MINUTE = 20;
 export const OWNER_ACTIONS_GLOBAL_DAY = 200;
+export const CANCELS_PER_OWNER_MINUTE = 5;
+export const CANCELS_PER_OWNER_DAY = 20;
 /** Clock skew tolerated on an ID token's `exp` (the contract checks `exp` against the block time again). */
 export const TOKEN_EXP_SKEW_MS = 60_000;
 const MINUTE = 60_000;
@@ -469,6 +479,28 @@ export async function checkClientScope(env: Env, provider: string, aud: string, 
 
 // ---- Owner actions ----
 
+/** RateLimiter subject of an owner identity's caps: a hash, so no Google `sub` is part of an object name. */
+export const ownerLimiterKey = async (owner: { provider: string; sub: string }): Promise<string> => `owner-actions:owner:${await sha256Hex(`${owner.provider}#${owner.sub}`)}`;
+export const scopeLimiterKey = (scopeId: string): string => `owner-actions:scope:${scopeId}`;
+
+/** The windows a checked owner action counts against, in the order they are asked (see OWNER_ACTIONS_PER_OWNER_*). */
+export async function ownerActionWindows(method: string, check: { scopeId: string; owner: { provider: string; sub: string } | null }): Promise<{ subject: string; label: string; limits: Limit[] }[]> {
+  const pair = (prefix: string, minute: number, day: number): Limit[] => [
+    { name: `${prefix}minute`, windowMs: MINUTE, max: minute },
+    { name: `${prefix}day`, windowMs: DAY, max: day },
+  ];
+  const owner = check.owner ? await ownerLimiterKey(check.owner) : null;
+  if (method === 'cancel_change') {
+    // Always an OIDC owner (toOwnerAction requires auth); its own allowance, outside every shared window.
+    return owner ? [{ subject: owner, label: 'cancels per owner', limits: pair('cancel:', CANCELS_PER_OWNER_MINUTE, CANCELS_PER_OWNER_DAY) }] : [];
+  }
+  return [
+    ...(owner ? [{ subject: owner, label: 'owner actions per owner', limits: pair('', OWNER_ACTIONS_PER_OWNER_MINUTE, OWNER_ACTIONS_PER_OWNER_DAY) }] : []),
+    { subject: scopeLimiterKey(check.scopeId), label: 'owner actions per scope', limits: pair('', OWNER_ACTIONS_PER_SCOPE_MINUTE, OWNER_ACTIONS_PER_SCOPE_DAY) },
+    { subject: 'owner-actions:global', label: 'owner actions', limits: pair('', OWNER_ACTIONS_GLOBAL_MINUTE, OWNER_ACTIONS_GLOBAL_DAY) },
+  ];
+}
+
 export async function handleOwnerAction(request: Request, env: Env, requestId: string): Promise<Response> {
   const ctx = newCtx(env, requestId, '/v1/owner-actions', request, corsHeaders('*', 'content-type'));
   try {
@@ -510,13 +542,12 @@ export async function handleOwnerAction(request: Request, env: Env, requestId: s
     return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
   }
   try {
-    const global = await limiter(env, 'owner-actions:global').hit([
-      { name: 'minute', windowMs: MINUTE, max: OWNER_ACTIONS_GLOBAL_MINUTE },
-      { name: 'day', windowMs: DAY, max: OWNER_ACTIONS_GLOBAL_DAY },
-    ]);
-    if (!global.ok) {
-      await release();
-      return reject(ctx, 429, 'rate_limited', `Rate limit exceeded (owner actions per ${global.limit})`, { 'retry-after': String(global.retryAfterS) });
+    for (const w of await ownerActionWindows(call.method, check)) {
+      const hit = await limiter(env, w.subject).hit(w.limits);
+      if (!hit.ok) {
+        await release();
+        return reject(ctx, 429, 'rate_limited', `Rate limit exceeded (${w.label} per ${hit.limit.replace(/^cancel:/u, '')})`, { 'retry-after': String(hit.retryAfterS) });
+      }
     }
   } catch {
     await release();

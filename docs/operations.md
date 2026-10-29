@@ -502,7 +502,18 @@ Run as `corepack pnpm --filter @hana-id/scripts run admin <env> <command> …`. 
   TTL). Plans other than `free` need a manual D1 insert.
 
 Owner actions on a registered scope (add a client, change owners, enable shared login) go through
-`POST /v1/owner-actions` with a console-client token (`docs/api.md`); there is no CLI for them yet.
+`POST /v1/owner-actions` with a console-client token (`docs/api.md`); there is no CLI for them yet. The endpoint caps
+each owner identity, each scope and all owners together (D100); `cancel_change` has its own small allowance per owner
+(5/min, 20/day) outside those caps, so another owner or a flood can't use up a timelock's cancel window.
+
+**Cancelling a change when the API refuses (runbook).** OIDC owner auth doesn't depend on who sends the transaction:
+if `/v1/owner-actions` is down or answers 429 while a change you didn't make is in its timelock, call the contract
+directly from any funded testnet account with the same args (`{scope_id, auth: {"Oidc": {"jwt": "<fresh console
+token>"}}, change_id}`), e.g. `near contract call-function as-transaction <signer> cancel_change json-args '…'
+prepaid-gas '50 Tgas' attached-deposit '0 NEAR' sign-as <your account> network-config testnet sign-with-keychain
+send`. The token is the same one the API would take: a console-audience Google token whose nonce commits to this call and
+the scope's current `action_nonce` (`docs/contract-interface.md` "Owner-action nonce"). Never paste it anywhere it is
+logged.
 
 ## Key rotation
 

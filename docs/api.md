@@ -122,7 +122,7 @@ The per-IP subject is the IPv4 address or the IPv6 /64 (`src/ip.ts`).
 | `GET /v1/app` | plan `per_ip_minute` (own window `<appId>:config:minute`) | — | never touches the relay quota |
 | vault endpoints | 60/min, *per location* (binding `VAULT_IP_LIMIT`, key `<env>:vault-ip:<appId>:<ipSubject>`) | 10 × plan `per_minute` (`vault:minute`), global | share actions: 10/min per share, *per location* (binding `VAULT_SHARE_LIMIT`, key `<env>:vault-share:<appId>:<hex>`); asked in turn: IP, then app only once the IP accepted, then (after the body check) the share (D95) |
 | login relay | writes 10/min, reads 120/min | — | not per app |
-| `/v1/owner-actions` | 10/min | — | global 20/min and 200/day, counted only after every off-chain check passes |
+| `/v1/owner-actions` | 10/min | per scope 10/min, 50/day (`owner-actions:scope:<scopeId>`) | per owner identity 5/min, 30/day (`owner-actions:owner:<hex sha256(provider#sub)>`), then per scope, then global 20/min, 200/day; `cancel_change` counts against none of these, only its own 5/min, 20/day per owner identity (windows `cancel:minute`, `cancel:day`). All counted only after every off-chain check passes (D100) |
 | `/v1/health`, `GET /vault` | — | — | — |
 
 Seeded plan `free`: `per_minute` 60, `per_day` 5000, `per_ip_minute` 20.
@@ -489,7 +489,11 @@ No app key. `{"method", "args"}` only, `args` exactly as the contract takes them
 | 503 / 502 | `issuer_keys_unavailable` / `near_unavailable` | JWKS / chain read failed |
 
 The token's sha256 is reserved atomically (`RateLimiter` object `owner-actions:tokens`, until the token's `exp`)
-before relaying; it is released only if the global cap refuses the request or the relay certainly never executed
+before relaying. Then the caps are asked from the most specific in: the owner identity's window (none for
+`execute_change`, which has no `auth`), the scope's, the global one; `cancel_change` asks only its own per-owner
+allowance, so no other owner, scope or flood can starve a timelock's cancel window (`429 rate_limited`, the `error`
+names the window: `owner actions per owner per minute`, `… per scope …`, `owner actions per day`, `cancels per owner
+per minute`). The token is released only if a cap refuses the request or the relay certainly never executed
 (`method_not_allowed`, `relayer_unconfigured`, `near_unavailable`, `near_rejected`, `relayer_busy`). Without
 `OWNER_RELAYER_KEYS`: `503 relayer_unconfigured`. → `200 {"result": <contract return or null>, "nearTx", "requestId"}`.
 
@@ -561,7 +565,7 @@ All SQLite-backed (wrangler migrations `v1`: `RelayerKey`, `RateLimiter`; `v2`: 
 **Names and placement (`src/placement.ts`).** With manifest `cloudflare.durableObjectLocation` set (var
 `DO_LOCATION_HINT`, one of `wnam enam sam weur eeur apac oc afr me`), shared objects get the suffix `@<hint>` and are
 created there: `relayer-key-0@apac`, `owner-relayer-key-0@apac`, `app:<appId>@apac`, `owner-actions:global@apac`,
-`owner-actions:tokens@apac`. Unset or unknown hint: no suffix, Cloudflare places them. Changing
+`owner-actions:scope:<scopeId>@apac`, `owner-actions:owner:<hash>@apac`, `owner-actions:tokens@apac`. Unset or unknown hint: no suffix, Cloudflare places them. Changing
 the hint creates new objects (fresh limiter counters; new relayer objects read their nonce from chain once). Never
 suffixed: per-IP limiters `ip:v4:<addr>` / `ip:v6:<prefix>::/64` (created near the client) and `LoginRelay` objects
 (named by `relayId`).

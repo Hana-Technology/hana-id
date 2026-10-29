@@ -33,6 +33,7 @@ import {
   ckdAppId,
   decryptCkd,
   decryptRelayPayload,
+  isServerTimings,
   newAppKey,
   newSessionKey,
   randomBytes,
@@ -87,8 +88,8 @@ export interface LoginContext {
   progress(stage: LoginStage): void;
   /** The split fallback (/v1/sessions then /v1/derive counter 1) until the ship gate decides. */
   flow: 'combined' | 'split';
-  /** Device time for per-stage timings (pk_test_ apps only). */
-  deviceNow(): number;
+  /** Monotonic ms (performance.now) for per-stage timings (pk_test_ apps only). */
+  perfNow(): number;
 }
 
 export interface LoginSuccess {
@@ -99,7 +100,37 @@ export interface LoginSuccess {
   expiresAtMs: number;
   maxUses: number;
   sessionKey: SessionKey;
+  /** Stage and detail ms (timings.ts LOGIN_TIMING_*), up to `decrypt`; the vault adds `persist`, `finish`, `vault`. */
   timings: Record<string, number>;
+  /** perfNow at the end of `decrypt`, where `persist` starts. */
+  markedAt: number;
+}
+
+/** The login popup's stages that ride in the relay slot (pk_test_ apps), each a part of the vault's hello → token. */
+export const POPUP_STAGES = ['authCheck', 'callbackRedirect', 'callbackFetch', 'callbackBoot', 'callbackPrep'] as const;
+
+/**
+ * The API's own timings from a pk_test_ response, as detail entries `<prefix>Server` (its total) and
+ * `<prefix>Server<Name>` for each `name: [phases…]` (summed). Nothing when the response has none or a malformed one.
+ */
+export function serverDetail(prefix: string, raw: unknown, groups: Record<string, readonly string[]>): Record<string, number> {
+  if (!isServerTimings(raw)) return {};
+  const out: Record<string, number> = { [`${prefix}Server`]: raw.totalMs };
+  for (const [name, phases] of Object.entries(groups)) {
+    const present = phases.filter((p) => typeof raw.phases[p] === 'number');
+    if (present.length > 0) out[`${prefix}Server${name}`] = present.reduce((sum, p) => sum + (raw.phases[p] as number), 0);
+  }
+  return out;
+}
+
+/** The /v1/login phases (apps/api handlers.ts `lap`, `lapRelay`) behind each loginServer* detail. */
+export const LOGIN_SERVER_GROUPS = { Gate: ['app', 'limits'], Checks: ['checks'], Relay: ['relay'], Broadcast: ['relayDispatch'], Wait: ['relayOutcome'] } as const;
+
+/** The relay read's answer: the token (or Google's error), the popup's timings and how long the slot held it. */
+interface Relayed {
+  idToken: string;
+  popupTimings: Record<string, number> | null;
+  heldMs: number | null;
 }
 
 type AuthParams = {
@@ -135,6 +166,8 @@ export class PendingLogin {
   private resolveHello: (() => void) | null = null;
   private readonly helloSeen: Promise<void>;
   private readonly pendingTimer: unknown;
+  /** When the vault took the hana_login request (perfNow), for the `vault` total. */
+  readonly startedAt: number;
 
   constructor(
     private readonly ctx: LoginContext,
@@ -142,6 +175,7 @@ export class PendingLogin {
     /** The SDK sent `{popupBlocked: true}` (the launcher fallback): hana_cancelLogin then ends it with popup_blocked. */
     readonly popupBlocked = false,
   ) {
+    this.startedAt = ctx.perfNow();
     this.helloSeen = new Promise<void>((resolve) => {
       this.resolveHello = resolve;
     });
@@ -210,9 +244,9 @@ export class PendingLogin {
     const { ctx } = this;
     const { env, config } = ctx;
     const timings: Record<string, number> = {};
-    let lap = ctx.deviceNow();
+    let lap = this.startedAt;
     const mark = (name: string) => {
-      const t = ctx.deviceNow();
+      const t = ctx.perfNow();
       timings[name] = Math.max(0, t - lap);
       lap = t;
     };
@@ -229,10 +263,10 @@ export class PendingLogin {
     if (app.signer !== env.signer || app.scopeId !== config.scopeId) throw fail('config_mismatch', 'The app configuration does not match this vault');
     mark('app');
     // Q7, in the background: settled before the chain step, never an unhandled rejection.
-    const scopeStarted = ctx.deviceNow();
+    const scopeStarted = ctx.perfNow();
     const scopeCheck = this.checkScope(app).then(
-      (problem) => ({ problem, ms: ctx.deviceNow() - scopeStarted }),
-      () => ({ problem: 'unchecked' as const, ms: ctx.deviceNow() - scopeStarted }),
+      (problem) => ({ problem, ms: ctx.perfNow() - scopeStarted }),
+      () => ({ problem: 'unchecked' as const, ms: ctx.perfNow() - scopeStarted }),
     );
 
     const sessionKey = await newSessionKey();
@@ -264,6 +298,7 @@ export class PendingLogin {
         relayId,
         relayKey: Uint8Array.from(relayKey),
       };
+      mark('keygen');
 
       // Step 3: wait for the popup.
       await this.helloSeen;
@@ -274,9 +309,21 @@ export class PendingLogin {
       mark('popup');
 
       // Step 7: the token, through the relay.
-      const idToken = await this.readRelay(relayId, relayReadKey, relayKey);
+      const relayed = await this.readRelay(relayId, relayReadKey, relayKey);
+      const { idToken } = relayed;
       ctx.progress('token');
       mark('google');
+      // The popup's and the relay's own parts of hello → token, each measured on one clock and passed as a duration.
+      for (const stage of POPUP_STAGES) {
+        const ms = relayed.popupTimings?.[stage];
+        if (ms === undefined) continue;
+        timings[stage] = ms;
+        timings.google = Math.max(0, (timings.google ?? 0) - ms);
+      }
+      if (relayed.heldMs !== null) {
+        timings.relayHeld = relayed.heldMs;
+        timings.google = Math.max(0, (timings.google ?? 0) - relayed.heldMs);
+      }
       let jwksUnavailable = false;
       const verified = await verifyGoogleIdToken(idToken, {
         clientId: app.google.clientId,
@@ -311,9 +358,11 @@ export class PendingLogin {
 
       // Step 9: the chain.
       ctx.progress('chain');
+      const prepStarted = ctx.perfNow();
       const appKey = newAppKey();
       const { pk1, pk2 } = appKey.publicKey.AppPublicKeyPV;
-      const chain = new LoginChain(ctx, () => this.check(), this.abortCtl.signal, {
+      timings.chainPrep = ctx.perfNow() - prepStarted;
+      const chain = new LoginChain(ctx, () => this.check(), this.abortCtl.signal, timings, {
         sessionKey,
         path,
         maxUses,
@@ -338,7 +387,7 @@ export class PendingLogin {
       try {
         const addresses = deriveAddresses(prk);
         mark('decrypt');
-        return { prk, addresses, path, expiresAtMs, maxUses, sessionKey, timings };
+        return { prk, addresses, path, expiresAtMs, maxUses, sessionKey, timings, markedAt: lap };
       } catch (e) {
         prk.fill(0);
         throw e;
@@ -360,8 +409,8 @@ export class PendingLogin {
     return scope && scope.id === config.scopeId && scope.allow_shared ? null : 'mismatch';
   }
 
-  /** Long-polls the relay until it holds Google's answer; returns the ID token. */
-  private async readRelay(relayId: string, relayReadKey: Uint8Array, relayKey: Uint8Array): Promise<string> {
+  /** Long-polls the relay until it holds Google's answer; returns the ID token (and, pk_test_ apps, the popup's timings). */
+  private async readRelay(relayId: string, relayReadKey: Uint8Array, relayKey: Uint8Array): Promise<Relayed> {
     const { api, timers } = this.ctx;
     let backoff = 500;
     for (;;) {
@@ -390,7 +439,12 @@ export class PendingLogin {
       }
       this.check();
       if ('error' in payload) throw fail('google_error', 'Google returned an error', { error: payload.error });
-      return payload.idToken;
+      const held = read.value.heldMs;
+      return {
+        idToken: payload.idToken,
+        popupTimings: payload.timings ?? null,
+        heldMs: typeof held === 'number' && Number.isFinite(held) && held >= 0 ? held : null,
+      };
     }
   }
 }
@@ -419,6 +473,8 @@ export class LoginChain {
     private readonly ctx: LoginContext,
     private readonly check: () => void,
     private readonly signal: AbortSignal,
+    /** The login's timings: the chain adds its details (`chainPrep`, `loginRtt`, `loginServer*`). */
+    private readonly timings: Record<string, number>,
     private readonly i: ChainInput,
   ) {}
 
@@ -433,7 +489,9 @@ export class LoginChain {
   }
 
   private async body(): Promise<LoginBody> {
+    const started = this.ctx.perfNow();
     const signature = await signDerive(this.i.sessionKey.keyPair.privateKey, 1, this.i.pk1, this.i.pk2);
+    this.timings.chainPrep = (this.timings.chainPrep ?? 0) + (this.ctx.perfNow() - started);
     return { ...this.i.body, signature: Array.from(signature) };
   }
 
@@ -443,7 +501,11 @@ export class LoginChain {
     for (;;) {
       this.check();
       try {
+        const sent = this.ctx.perfNow();
         const r = await this.ctx.api.login(body);
+        // The successful attempt's round trip next to the API's own time for it (pk_test_ responses carry it).
+        this.timings.loginRtt = this.ctx.perfNow() - sent;
+        Object.assign(this.timings, serverDetail('login', r.timings, LOGIN_SERVER_GROUPS));
         this.noteTx(r.nearTx);
         return r.result;
       } catch (e) {

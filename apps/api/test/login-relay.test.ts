@@ -49,7 +49,9 @@ describe('login relay', () => {
     expect(got.status).toBe(200);
     expect(got.headers.get('access-control-allow-origin')).toBe(VAULT);
     const b = await body(got);
-    expect(b).toEqual({ iv: v.iv, ct: v.ct, serverTimeMs: expect.any(Number), requestId: expect.any(String) });
+    // heldMs: how long the value sat in the slot (a duration, never the write's timestamp).
+    expect(b).toEqual({ iv: v.iv, ct: v.ct, serverTimeMs: expect.any(Number), heldMs: expect.any(Number), requestId: expect.any(String) });
+    expect(b.heldMs).toBeGreaterThanOrEqual(0);
     const again = await read(r.id, r.readKey);
     expect([again.status, (await body(again)).code]).toEqual([410, 'relay_gone']);
     expect(await stored(r.id)).toMatchObject({ state: 'consumed' });

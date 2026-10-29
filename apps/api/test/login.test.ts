@@ -39,6 +39,8 @@ describe('POST /v1/login', () => {
       result: { big_y: 'bls12381g1:Y', big_c: 'bls12381g1:C' },
       session: { scope_id: app.scope, expires_at_ms: req.expiresAtMs, max_uses: 1, used: 1 },
       nearTx: expect.any(String),
+      // A pk_test_ app: the request's own timings (test/timings.test.ts).
+      timings: { totalMs: expect.any(Number), phases: expect.any(Object) },
       requestId: expect.any(String),
     });
     expect(res.headers.get('access-control-allow-origin')).toBe(VAULT);

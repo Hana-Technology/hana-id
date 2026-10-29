@@ -168,6 +168,8 @@ export interface SetupOptions {
   /** 'blocked': window.open returns null. */
   popup?: 'open' | 'blocked';
   fetch?: FetchLike;
+  /** The client's monotonic clock (pk_test_ timings). */
+  now?: () => number;
 }
 
 /**
@@ -197,7 +199,7 @@ export function setup(o: SetupOptions = {}): Setup {
   });
   window.open = open as unknown as typeof window.open;
   const fetch = vi.fn(o.fetch ?? (async () => new Response('{}')));
-  const client = new HanaClient({ publishableKey: PK, environment: 'test', ...o.config }, { win: window, origins: ORIGINS, fetch: fetch as unknown as FetchLike });
+  const client = new HanaClient({ publishableKey: PK, environment: 'test', ...o.config }, { win: window, origins: ORIGINS, fetch: fetch as unknown as FetchLike, ...(o.now ? { now: o.now } : {}) });
   const frame = document.querySelector('iframe[name^="hana-vault-"]') as HTMLIFrameElement;
   const vault = new FakeVault(frame);
   return { client, vault, frame, popups, open, fetch };

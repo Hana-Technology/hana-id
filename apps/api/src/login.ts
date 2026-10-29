@@ -11,6 +11,7 @@ import { TOKEN_EXP_SKEW_MS, appGate, checkClientScope, done, lap, lapRelay, limi
 import { readJson } from './http.ts';
 import { JwksUnavailableError, verifyIdToken } from './jwks.ts';
 import { log } from './log.ts';
+import { isTestKey } from './origins.ts';
 import type { RelayResult } from './relayer-key.ts';
 import { relay } from './relayer-pool.ts';
 import { ckdPayload, sessionNonce, verifySessionSignature } from './session-crypto.ts';
@@ -89,6 +90,8 @@ export async function handleLogin(request: Request, env: Env, requestId: string,
   const gate = await appGate(request, env, ctx, 'relay');
   if (!gate.ok) return gate.response;
   const { app } = gate;
+  // pk_test_ apps: the success response carries the request's own timings (apps/smoke's login breakdown).
+  ctx.exposeTimings = isTestKey(app.publishable_key);
 
   // 2–3. Size and shape.
   const parsed = await readJson(request, MAX_BODY);

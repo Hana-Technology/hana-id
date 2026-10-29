@@ -113,7 +113,7 @@ describe('vault results log storage', () => {
   it('exports both logs', () => {
     const v = run({});
     const d = direct({});
-    expect(JSON.parse(allResultsJson([v], [d]))).toMatchObject({ kind: 'hana-id-smoke-results', version: 2, vaultRuns: [v], directRuns: [d] });
+    expect(JSON.parse(allResultsJson([v], [d]))).toMatchObject({ kind: 'hana-id-smoke-results', version: 3, vaultRuns: [v], directRuns: [d] });
   });
 });
 

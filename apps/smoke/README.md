@@ -9,7 +9,7 @@ testnet** environment. They are test tooling, not the SDK and not an integration
 | `/direct.html` (`src/direct.ts`) | The in-page flow from before the vault: Google Identity Services → `POST /v1/sessions` → `POST /v1/derive` → CKD decryption in the page | The split-flow baseline for the ship gate, and what the vault can't do: `key_index` ≠ 0, choosing the Google client, derive again, revoke, replays |
 
 The vault page sees only what a partner sees: status, addresses, expiry, persistence, events and, for `pk_test_`
-apps, the login's per-stage timings. The Google token, the session key, the CKD secret and the chain keys stay in the
+apps, the login's and the unlock's per-stage timings (names and durations only, [Timings](#timings)). The Google token, the session key, the CKD secret and the chain keys stay in the
 Hana pages. The direct page sends the Google token only to `POST /v1/sessions` (kept in memory for the replay button)
 and zeroes the CKD secret and derived keys inside one function call; neither page displays, logs, stores or sends
 them anywhere else. Partners integrate through `@hana-id/web` like the vault page, never like the direct
@@ -36,7 +36,7 @@ page: see [`docs/integration.md`](../../docs/integration.md).
      `ckdNetworkKey` pinned (`pnpm --filter @hana-id/scripts fetch-ckd-key <env>`; the web build refuses the `UNSET`
      placeholder).
 2. **A scope and an app** that allows this page's origin. Use a `pk_test_` key: loopback origins (this page) work only
-   with `pk_test_` keys in `local*`/`sandbox*` envs, and only `pk_test_` logins return per-stage timings. For the
+   with `pk_test_` keys in `local*`/`sandbox*` envs, and only `pk_test_` apps get per-stage timings. For the
    isolation checks, create two (A and B) in different scopes:
 
    ```sh
@@ -87,12 +87,9 @@ pnpm --filter @hana-id/smoke typecheck
    *refused* with the code. One request runs at a time: the sign, auto-approve and export buttons stay disabled until
    it settles, so each label is that request's own. See [Auto-approve demo](#auto-approve-demo).
 
-Every login is a results-log run with the vault's stages (pk_test_ apps): **app** (Google client), **popup** (until
-the login popup connected), **google** (Google's pages and the relay, so it includes your clicks), **verify** (RS256
-and claims), **chain** (`POST /v1/login`, with any retries), **decrypt** (CKD decryption, pairing check, derivation
-v1), and **total** from the click to the addresses on this page (it also covers the share creation). Every mount that
-comes back logged in (page load, reload, new tab, *Remount*) is an **unlock** run, with **total** from `createHana`
-to `ready`: the iframe load, the vault page render and one `POST /v1/vault/unlock`.
+Every login is a results-log run with **total** from the click to the addresses on this page, and every mount that
+comes back logged in (page load, reload, new tab, *Remount*) is an **unlock** run with **total** from `createHana` to
+`ready`. For `pk_test_` apps both carry their stages ([Timings](#timings)) in the *Timings* table and the JSON.
 
 The results log keeps every run (public data, in `localStorage`) and checks it against the earlier ones of the same
 environment and signer:
@@ -109,6 +106,75 @@ vault's is always the manifest's `apiUrl`; the direct page's is `VITE_HANA_API_U
 *Copy results as JSON* copies both logs (vault and direct). Gas isn't in the vault log: the vault returns no
 transaction hash, so read `create_session_and_derive` gas from the relayer's transactions on nearblocks (linked under
 the environment).
+
+### Timings
+
+`pk_test_` apps only (`pk_live_` apps never get any: the vault, the login popup, the partner client and the API each
+check). Every number is a duration measured on one clock (a page's `performance.now()`, its navigation timing, or
+the API's own) and passed on as a duration, never a timestamp compared across pages. The names are
+`@hana-id/core`'s `LOGIN_TIMING_*` / `UNLOCK_TIMING_*` (`packages/core/src/timings.ts`).
+
+**Stages** follow one another: with **other** (added by this page: its total minus their sum) they add up to the run's
+**total**. If the stages ever pass the total, `other` is 0 and the excess is **overrun**. **Breakdown** values are parts
+of one stage (the API's own time inside a round trip) or run alongside the others; they are not added.
+
+Login stages, in order:
+
+| Stage | Clock | What it covers |
+|---|---|---|
+| `open` | partner page | `window.open` of the login popup in the click |
+| `wait` | partner page | until the vault's handshake was done and `hana_login` sent (0 once the page is ready) |
+| `app` | vault | `GET /v1/app` (normally cached since the vault loaded) |
+| `keygen` | vault | the session key, salt, nonce and relay keys |
+| `popup` | vault | until the login popup's hello (popup window, `/login` load) |
+| `authCheck` | `/login` | its `GET /v1/app` check and the nonce, until it navigates to Google |
+| `google` | vault | what is left of hello → token: the user at Google and Google's pages, **plus the relay's network legs** no single clock sees (the callback's CORS preflight and POST upstream, the vault's read response downstream, ≈ 1.5 API round trips) |
+| `callbackRedirect` | `/login/callback` | Google's redirect hops before the callback page was fetched (its navigation `fetchStart`) |
+| `callbackFetch` | `/login/callback` | DNS, TLS, the auth page Worker and the HTML (`fetchStart` → `responseEnd`) |
+| `callbackBoot` | `/login/callback` | parsing and loading the callback script (`responseEnd` → script start) |
+| `callbackPrep` | `/login/callback` | taking the relay key and encrypting, until the relay POST is sent |
+| `relayHeld` | API (relay object) | how long the token sat in the slot before the vault's read answered (≈ 0 while it long-polls) |
+| `verify` | vault | RS256 and claims (and Google's JWKS fetch on a cold vault) |
+| `scopeWait` | vault | the wait for the registry scope check (0 when it finished while the user was at Google) |
+| `chain` | vault | the BLS key, the counter-1 signature and `POST /v1/login` with any recovery (the ship gate's number) |
+| `decrypt` | vault | CKD decryption, pairing check, derivation v1 |
+| `persist` | vault | the share and record: `POST /v1/vault/shares` and IndexedDB ('session' persistence only) |
+| `finish` | vault | switching to the new session, revoking replaced shares (not awaited), the events |
+| `port` | partner page | the `hana_login` round trip minus the vault's own time (postMessage both ways, queueing) |
+
+Login breakdown: `scopeCheck` (the registry view itself, overlapped), `chainPrep` (BLS key + signature, inside
+`chain`), `loginRtt` / `loginServer` (`POST /v1/login` on the vault's clock / the API's own total, so `loginRtt −
+loginServer` is network, CORS preflight and Worker routing) with `loginServerGate` (D1 app + limiter objects),
+`loginServerChecks` (token, chain reads, signature), `loginServerRelay` (relayer key object round trip),
+`loginServerBroadcast` (until broadcast), `loginServerWait` (broadcast → outcome: the chain and the MPC); `shareRtt` /
+`shareServer` with `shareServerGate` and `shareServerSession` (the `get_session` read and its retries while the RPC
+lags, inside `persist`); `vault` (the vault's own total).
+
+Unlock stages, in order:
+
+| Stage | Clock | What it covers |
+|---|---|---|
+| `mount` | partner page | `createHana` until the iframe is in the document |
+| `frameStart` | partner page | the iframe's load as the page sees it, minus the four `vault*` stages: its navigation start |
+| `vaultFetch` | vault document | navigation start → the vault page's last byte (DNS, TLS, the page Worker, the API Worker's D1 reads, the HTML) |
+| `vaultScript` | vault document | parsing and loading `/vault.js` until it runs |
+| `vaultConfig` | vault document | reading the inlined config and constructing the vault |
+| `vaultLoad` | vault document | the rest of the document load (when the partner sends its hello) |
+| `store` | vault | opening IndexedDB |
+| `record` | vault | reading the record, its lock, and the checks |
+| `unlock` | vault | signing and `POST /v1/vault/unlock` |
+| `counter` | vault | writing the new counter to IndexedDB |
+| `unwrap` | vault | K_s → PRK (AES-GCM) |
+| `addresses` | vault | deriving and checking the addresses and the consent, then `ready` |
+| `port` | partner page | hello → `ready` minus the vault's own time |
+
+A load with no record (logged out) ends at `record`. Unlock breakdown: `unlockRtt` / `unlockServer` with
+`unlockServerGate` (D1 app + limiter objects), `unlockServerShare` (the share limiter, the KEK, the share and settings
+rows) and `unlockServerAdvance` (the counter update); `vault` (hello → `ready`).
+
+Results JSON version 3 adds `other` and these stages. Older runs keep what they had: login `app`, `popup`, `google`
+(which then included the callback and the relay), `verify`, `scopeCheck`, `scopeWait`, `chain`, `decrypt`, and no
+unlock stages; the table shows them as they are.
 
 ### Ship gate
 
@@ -184,8 +250,8 @@ Hana-held branded client without any address change (the path is `scope#provider
 ### Vault page
 
 - [ ] **Login through the vault**: one click on *Log in with Hana* → Google's account chooser → addresses. The run
-      has all six stages and the log shows no `/v1/sessions` or `/v1/derive` call from this page (DevTools →
-      Network, this page and the vault frame: one `POST /v1/login`).
+      has every login stage of [Timings](#timings) with a small `other`, and the log shows no `/v1/sessions` or
+      `/v1/derive` call from this page (DevTools → Network, this page and the vault frame: one `POST /v1/login`).
 - [ ] **openid-only token**: the login succeeds with `REJECT_PII_ON_SESSIONS` either way (the vault and `/v1/login`
       always apply the claim allow-list; a refused claim shows as `token_has_pii` with the claim).
 - [ ] **Vault agrees with the in-page derivation**: same Google account and scope, a direct-page run at `key_index` 0
@@ -197,8 +263,8 @@ Hana-held branded client without any address change (the path is `scope#provider
       client in a **separate Google Cloud project** from the shared one, or this doesn't prove the A.2 promise (the spike
       already matched `sub` across two projects, `docs/decisions.md` D42; this checks it end to end).
 - [ ] **Persistence 'session' (default), reload**: *Reload the page* → an unlock run "OK — unlock restored #n's
-      addresses" in well under a second (note the total), and DevTools shows no `/v1/derive`, no `/v1/login` and no
-      NEAR RPC call, only `POST /v1/vault/unlock`.
+      addresses" in well under a second (note the total and its stages), and DevTools shows no `/v1/derive`, no
+      `/v1/login` and no NEAR RPC call, only `POST /v1/vault/unlock`.
 - [ ] **New tab**: open `http://localhost:5173` in a second tab: it unlocks the same addresses. *Remount the vault*
       does the same within one tab.
 - [ ] **Logout**: *Log out* in one tab: the other tab of the app logs out too (`accountsChanged: logged out`), and a

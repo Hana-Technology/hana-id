@@ -1,16 +1,26 @@
 // The smoke page on the vault (docs/batch-b-spec.md, Order of work step 7): it mounts the partner client from
 // @hana-id/web and drives it the way a partner page would. The vault iframe and the Hana pages do everything secret
 // (session key, Google token, CKD, derivation v1, the server-held share); this page sees only what a partner sees:
-// status, addresses, expiry, persistence, events and, for pk_test_ apps, the login's per-stage timings.
+// status, addresses, expiry, persistence, events and, for pk_test_ apps, the login's and the unlock's per-stage
+// timings (stage names and durations only: @hana-id/core timings.ts, README "Timings").
 //
 // What it checks, with its results log (vault-runs.ts):
 // - login through the vault and POST /v1/login, with timings and the ship-gate medians (ship-gate.ts);
 // - persistence and unlock: every mount that comes back logged in (a page load, a reload, a new tab, the "Remount"
-//   button) is logged as an unlock with its createHana → ready time and must restore the last run's addresses;
+//   button) is logged as an unlock with its createHana → ready time (and, pk_test_, its stages) and must restore the
+//   last run's addresses;
 // - the auto-approve demo policy (demo-requests.ts): consent, covered and uncovered requests, the never-covered ones;
 // - logout, revoke other devices and export.
 // The client is injected (startVaultPage), so the tests drive the page against a fake one.
-import { ApiError, type AppConfig } from '@hana-id/core';
+import {
+  ApiError,
+  type AppConfig,
+  LOGIN_TIMING_DETAILS,
+  LOGIN_TIMING_STAGES,
+  UNLOCK_TIMING_DETAILS,
+  UNLOCK_TIMING_STAGES,
+  withOther,
+} from '@hana-id/core';
 import { policyId } from '@hana-id/core/policy';
 import type { HanaAddresses, HanaClient, HanaConfig } from '@hana-id/web';
 import { HanaApi } from './api.ts';
@@ -41,6 +51,7 @@ export type SmokeClient = Pick<
   | 'persistence'
   | 'warning'
   | 'lastLogin'
+  | 'readyTimings'
   | 'login'
   | 'cancelLogin'
   | 'logout'
@@ -67,7 +78,30 @@ export interface VaultPageDeps {
   now?: () => number;
 }
 
-const STAGES = ['app', 'popup', 'google', 'verify', 'chain', 'decrypt'] as const;
+/** Each kind's stages in order (they and `other` add up to the run's total) and its details (not added). */
+const TIMING_LISTS: Record<VaultRunRecord['kind'], { stages: readonly string[]; details: readonly string[] }> = {
+  login: { stages: [...LOGIN_TIMING_STAGES, 'other', 'overrun'], details: LOGIN_TIMING_DETAILS },
+  unlock: { stages: [...UNLOCK_TIMING_STAGES, 'other', 'overrun'], details: UNLOCK_TIMING_DETAILS },
+};
+
+/** "name ms · name ms" for the `names` present in `stages`, in that order. */
+function timingText(stages: Record<string, number>, names: readonly string[]): string {
+  return names
+    .filter((n) => typeof stages[n] === 'number')
+    .map((n) => `${n} ${ms(stages[n])}`)
+    .join(' · ');
+}
+
+/**
+ * A run's stages and details as table cells. Names neither list knows (runs logged before results version 3, whose
+ * `google` and `chain` still held what is now split out) go with the stages.
+ */
+function timingCells(kind: VaultRunRecord['kind'], stages: Record<string, number> | null): [string, string] {
+  if (!stages) return ['— (pk_test_ apps only)', ''];
+  const { stages: order, details } = TIMING_LISTS[kind];
+  const known = new Set([...order, ...details]);
+  return [timingText(stages, [...order, ...Object.keys(stages).filter((k) => !known.has(k))]), timingText(stages, details)];
+}
 /** The buttons that send a request which may need a Hana popup: one such request at a time. */
 const REQUEST_BUTTONS = ['export-stellar', 'export-evm', 'aa-request', 'aa-status', 'aa-revoke', 'sign-stellar-self', 'sign-stellar-other', 'sign-evm-self', 'sign-evm-other', 'sign-personal', 'sign-raw'] as const;
 const TEST_MESSAGE_HEX = `0x${[...new TextEncoder().encode('Hana ID smoke test: personal_sign')].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
@@ -233,16 +267,18 @@ export function startVaultPage(deps: VaultPageDeps): void {
   function renderRuns(): void {
     const direct = directRuns();
     $('timings').replaceChildren(
-      ...vaultRuns.map((r) =>
-        h(
+      ...vaultRuns.map((r) => {
+        const [stages, details] = timingCells(r.kind, r.timings.stages);
+        return h(
           'tr',
           {},
           h('td', {}, String(r.run)),
           h('td', {}, r.kind),
-          ...STAGES.map((s) => h('td', { class: 'num' }, ms(r.timings.stages?.[s]))),
           h('td', { class: 'num' }, ms(r.timings.totalMs)),
-        ),
-      ),
+          h('td', { class: 'mono' }, stages),
+          h('td', { class: 'mono' }, details),
+        );
+      }),
     );
     $('runs').replaceChildren(
       ...vaultRuns.map((r, i) => {
@@ -383,10 +419,14 @@ export function startVaultPage(deps: VaultPageDeps): void {
         if (!live()) return;
         const readyMs = now() - startedAt;
         const a = c.addresses;
+        // pk_test_ apps: the handshake's and the unlock's stages, with `other` (this page's own share of the total).
+        const ready = c.readyTimings;
+        const stages = ready ? withOther(ready, UNLOCK_TIMING_STAGES, readyMs) : null;
         if (c.status === 'logged_in' && a) {
-          logEvent(`Vault ready in ${ms(readyMs)} ms: unlocked ${a.stellar} (persistence ${c.persistence})`);
+          const unlockNote = stages?.unlockRtt === undefined ? '' : ` (POST /v1/vault/unlock ${ms(stages.unlockRtt)} ms, API ${ms(stages.unlockServer)} ms)`;
+          logEvent(`Vault ready in ${ms(readyMs)} ms${unlockNote}: unlocked ${a.stellar} (persistence ${c.persistence})`);
           void appLoading.then(() => {
-            if (live()) record('unlock', c, a, readyMs, accountLabel(), null);
+            if (live()) record('unlock', c, a, readyMs, accountLabel(), stages);
           });
         } else {
           logEvent(`Vault ready in ${ms(readyMs)} ms: logged out (no record, an expired or revoked share, or persistence 'none')${c.warning ? `, ${c.warning}` : ''}`);
@@ -488,9 +528,11 @@ export function startVaultPage(deps: VaultPageDeps): void {
           logEvent('Already logged in: no new login');
           return;
         }
-        logEvent(`Logged in through the vault in ${ms(totalMs)} ms (chain ${ms(result.timings?.chain)} ms): ${addresses.stellar} / ${addresses.evm}`);
-        if (!result.timings) logEvent('No per-stage timings: the vault returns them for pk_test_ apps only');
-        record('login', c, addresses, totalMs, account, result.timings ?? null);
+        // The vault's, the popup's and the client's stages, with `other`: they add up to this page's total.
+        const stages = result.timings ? withOther(result.timings, LOGIN_TIMING_STAGES, totalMs) : null;
+        logEvent(`Logged in through the vault in ${ms(totalMs)} ms (chain ${ms(stages?.chain)} ms, other ${ms(stages?.other)} ms): ${addresses.stellar} / ${addresses.evm}`);
+        if (!stages) logEvent('No per-stage timings: the vault returns them for pk_test_ apps only');
+        record('login', c, addresses, totalMs, account, stages);
       } catch (e) {
         const code = errorCode(e);
         if (code === 'token_has_pii') logEvent(`Login refused: the Google token carries a claim outside the allow-list (${describeError(e)})`, 'error');

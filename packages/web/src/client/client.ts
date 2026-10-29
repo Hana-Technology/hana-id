@@ -14,6 +14,7 @@
 // destroy() (React's HanaProvider unmount), and the `loginProgress`, `autoApproved` and `launcher` events.
 import {
   ErrorCode,
+  UNLOCK_TIMING_STAGES,
   type AutoApproveStatus,
   type LoginResult,
   type Persistence,
@@ -75,7 +76,12 @@ export interface HanaClientDeps {
   win: Window;
   origins: HanaOrigins;
   fetch: FetchLike;
+  /** Monotonic ms for pk_test_ timings; defaults to performance.now. */
+  now?: () => number;
 }
+
+/** The vault's own parts of the iframe's load (unlock timings), taken out of the frame load the partner sees. */
+const VAULT_LOAD_STAGES: readonly string[] = UNLOCK_TIMING_STAGES.filter((s) => s.startsWith('vault'));
 
 export class HanaClient extends Emitter<HanaEvents> {
   /** Resolves when the handshake is done and the status is known; rejects with `vault_unavailable`. */
@@ -94,6 +100,10 @@ export class HanaClient extends Emitter<HanaEvents> {
   #warning: 'storage_unavailable' | null = null;
   #error: HanaError | null = null;
   #lastLogin: LoginResult | null = null;
+  #readyTimings: Record<string, number> | null = null;
+  readonly #now: () => number;
+  readonly #createdAt: number;
+  readonly #testApp: boolean;
   #attempt: LoginAttempt | null = null;
   #destroyed = false;
   /** The handshake failed or the port died: status stays 'error'. */
@@ -102,11 +112,14 @@ export class HanaClient extends Emitter<HanaEvents> {
 
   constructor(config: HanaConfig, deps: HanaClientDeps) {
     super();
+    this.#now = deps.now ?? (() => performance.now());
+    this.#createdAt = this.#now();
     if (typeof config !== 'object' || config === null) throw new TypeError('createHana takes a config object');
     if (!isPublishableKey(config.publishableKey)) throw new TypeError('publishableKey must be a pk_test_… or pk_live_… key');
     const evm = config.evm === undefined ? undefined : validateEvmConfig(config.evm);
     const stellar = config.stellar === undefined ? undefined : validateStellarConfig(config.stellar);
     this.#win = deps.win;
+    this.#testApp = isTestPublishableKey(config.publishableKey);
     this.vaultOrigin = deps.origins.vaultOrigin;
     this.authOrigin = deps.origins.authOrigin;
 
@@ -127,6 +140,7 @@ export class HanaClient extends Emitter<HanaEvents> {
       sdkVersion: VERSION,
       onEvent: (e) => this.#onEvent(e),
       onDisconnect: () => this.#onDisconnect(),
+      now: this.#now,
     });
     this.ready = this.#conn.ready.then(
       (s) => this.#onReady(s),
@@ -177,6 +191,14 @@ export class HanaClient extends Emitter<HanaEvents> {
   }
 
   /**
+   * pk_test_ apps: the handshake's (and, after a reload, the unlock's) per-stage ms, from createHana to `ready`
+   * (`UNLOCK_TIMING_STAGES` and `UNLOCK_TIMING_DETAILS` in @hana-id/core). Null for pk_live_ apps and before `ready`.
+   */
+  get readyTimings(): Record<string, number> | null {
+    return this.#readyTimings === null ? null : { ...this.#readyTimings };
+  }
+
+  /**
    * Logs in and resolves with the addresses. Call it synchronously in a click handler: the popup is opened before
    * anything else, so the browser's user activation still holds. Already logged in: resolves at once, no popup. A
    * blocked popup falls back to the vault's "Sign in with Hana" launcher, and the call resolves after that login.
@@ -186,19 +208,22 @@ export class HanaClient extends Emitter<HanaEvents> {
     if (this.#destroyed) return Promise.reject(hanaError(ErrorCode.disconnected));
     if (this.#vaultDown && this.#error) return Promise.reject(this.#error);
     if (this.#status === 'logged_in' && this.#addresses) return Promise.resolve({ ...this.#addresses });
+    const calledAt = this.#now();
     const popup = openLoginPopup(this.#win, this.authOrigin, this.#conn.frameName);
+    const openedAt = this.#now();
     this.#attempt?.supersede();
     const attempt = new LoginAttempt(
       { ready: () => this.#conn.ready, send: (m, p) => this.#conn.send(m, p) },
       popup,
       () => this.#status === 'logged_in' || (this.#status === 'logging_in' && this.#addresses !== null),
+      this.#now,
     );
     this.#attempt = attempt;
     this.#setStatus('logging_in');
     return attempt.promise.then(
       (outcome) => {
         if (this.#attempt === attempt) this.#attempt = null;
-        if (outcome.kind === 'login') this.#applyLogin(outcome.result);
+        if (outcome.kind === 'login') this.#applyLogin(this.#withClientTimings(outcome.result, calledAt, openedAt, attempt));
         else if (this.#addresses) this.#setStatus('logged_in');
         if (!this.#addresses) throw hanaError(ErrorCode.unauthorized);
         return { ...this.#addresses };
@@ -272,7 +297,45 @@ export class HanaClient extends Emitter<HanaEvents> {
     return this.#conn.request(method, params);
   }
 
+  /**
+   * A pk_test_ login's timings with this page's stages added (timings.ts): `open` (window.open), `wait` (until the
+   * vault's handshake was done and hana_login sent) and `port` (the hana_login round trip minus the vault's own time).
+   */
+  #withClientTimings(r: LoginResult, calledAt: number, openedAt: number, attempt: LoginAttempt): LoginResult {
+    if (!this.#testApp) {
+      // pk_live_ apps never get timings (the vault sends none; this holds even if one did).
+      const { timings: _drop, ...rest } = r;
+      return rest;
+    }
+    if (!r.timings) return r;
+    const rtt = attempt.repliedAt - attempt.sentAt;
+    const vault = r.timings.vault ?? rtt;
+    return {
+      ...r,
+      timings: { ...r.timings, open: Math.max(0, openedAt - calledAt), wait: Math.max(0, attempt.sentAt - openedAt), port: Math.max(0, rtt - vault) },
+    };
+  }
+
+  /**
+   * A pk_test_ app's `ready` timings with this page's stages added (timings.ts): `mount` (createHana → the iframe in the
+   * document), `frameStart` (its load as seen here, minus the vault's own load stages) and `port` (iframe load → `ready`
+   * minus the vault's own time after the hello).
+   */
+  #handshakeTimings(s: ReadyStatus): Record<string, number> | null {
+    const marks = this.#conn.handshakeMarks;
+    if (!this.#testApp || !s.timings || !marks) return null;
+    const vaultLoad = VAULT_LOAD_STAGES.reduce((sum, k) => sum + (s.timings?.[k] ?? 0), 0);
+    const roundTrip = marks.readyAt - marks.loadAt;
+    return {
+      ...s.timings,
+      mount: Math.max(0, marks.appendedAt - this.#createdAt),
+      frameStart: Math.max(0, marks.loadAt - marks.appendedAt - vaultLoad),
+      port: Math.max(0, roundTrip - (s.timings.vault ?? roundTrip)),
+    };
+  }
+
   #onReady(s: ReadyStatus): void {
+    this.#readyTimings = this.#handshakeTimings(s);
     this.#persistence = s.persistence;
     this.#warning = s.warning ?? null;
     if (s.status === 'logged_in' && s.addresses) {

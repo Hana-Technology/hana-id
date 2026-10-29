@@ -54,6 +54,11 @@ export interface Ctx {
   /** The relayer key instance behind a relay (request log). */
   relayInstance?: RelayInstance;
   lapAt?: number;
+  /**
+   * A pk_test_ app's request to an endpoint that reports its timings (`/v1/login`, `/v1/vault/shares`,
+   * `/v1/vault/unlock`): a success carries `timings` (see `done`). Never set for pk_live_ apps.
+   */
+  exposeTimings?: boolean;
 }
 
 export function newCtx(env: Env, requestId: string, endpoint: string, request?: Request, cors: Headers_ = {}): Ctx {
@@ -95,10 +100,20 @@ export const settle = <T>(p: Promise<T>): Promise<Settled<T>> =>
     (error: unknown) => ({ ok: false as const, error }),
   );
 
+/**
+ * The request's own timings, as a pk_test_ app's response carries them (docs/api.md "Timings"): `totalMs` since the
+ * request reached this Worker and the logged phases. Durations only (the Workers clock moves on I/O, so CPU-only work
+ * shows as 0); nothing else from the request.
+ */
+export function serverTimings(ctx: Ctx, now = Date.now()): { totalMs: number; phases: Record<string, number> } {
+  return { totalMs: Math.max(0, now - ctx.started), phases: { ...(ctx.phases ?? {}) } };
+}
+
 export function done(ctx: Ctx, status: number, body: Record<string, unknown>, extra: Headers_ = {}): Response {
   const ok = status < 400;
   const code = typeof body.code === 'string' ? body.code : undefined;
   const nearTx = typeof body.nearTx === 'string' ? body.nearTx : undefined;
+  const timings = ok && ctx.exposeTimings ? serverTimings(ctx) : null;
   log(
     {
       event: 'request',
@@ -116,7 +131,7 @@ export function done(ctx: Ctx, status: number, body: Record<string, unknown>, ex
     },
     status >= 500 ? 'error' : 'info',
   );
-  return json(status, { ...body, requestId: ctx.requestId }, { ...ctx.cors, 'x-request-id': ctx.requestId, ...extra });
+  return json(status, { ...body, ...(timings ? { timings } : {}), requestId: ctx.requestId }, { ...ctx.cors, 'x-request-id': ctx.requestId, ...extra });
 }
 
 export const reject = (ctx: Ctx, status: number, code: string, error: string, extra: Headers_ = {}): Response => done(ctx, status, { error, code }, extra);

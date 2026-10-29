@@ -16,10 +16,11 @@
 import {
   ErrorCode,
   type PortEvent,
+  type PortEventMap,
   type PortMethod,
   type PortParamsMap,
   type PortResultMap,
-  type StatusResult,
+
   isPortEventShape,
   parsePortEvent,
   parsePortReply,
@@ -33,7 +34,7 @@ export const READY_TIMEOUT_MS = 5000;
 export const LAUNCHER_WIDTH_PX = 320;
 export const LAUNCHER_HEIGHT_PX = 72;
 
-export type ReadyStatus = StatusResult & { warning?: 'storage_unavailable' };
+export type ReadyStatus = PortEventMap['ready'];
 
 export interface VaultConnectionOptions {
   win: Window;
@@ -46,6 +47,18 @@ export interface VaultConnectionOptions {
   onEvent: (event: PortEvent) => void;
   /** The port died (frame replaced, or destroy()). Called once. */
   onDisconnect: () => void;
+  /** Monotonic ms for the handshake marks (pk_test_ timings); defaults to performance.now. */
+  now?: () => number;
+}
+
+/** When the handshake's steps happened, on the partner page's clock (ms, performance.now). */
+export interface HandshakeMarks {
+  /** The iframe was put in the document. */
+  appendedAt: number;
+  /** Its first `load`, when the hello is posted. */
+  loadAt: number;
+  /** `ready` arrived. */
+  readyAt: number;
 }
 
 interface Pending {
@@ -73,6 +86,10 @@ export class VaultConnection {
   #readyOk = false;
   #disconnected = false;
   #readyTimer: ReturnType<typeof setTimeout> | undefined;
+  readonly #now: () => number;
+  #appendedAt = 0;
+  #loadAt = 0;
+  #readyAt = 0;
   #resolveReady!: (s: ReadyStatus) => void;
   #rejectReady!: (e: HanaError) => void;
   readonly #onCsp = (e: Event) => this.#cspViolation(e as SecurityPolicyViolationEvent);
@@ -80,6 +97,7 @@ export class VaultConnection {
 
   constructor(o: VaultConnectionOptions) {
     this.#o = o;
+    this.#now = o.now ?? (() => performance.now());
     this.ready = new Promise<ReadyStatus>((resolve, reject) => {
       this.#resolveReady = resolve;
       this.#rejectReady = reject;
@@ -98,6 +116,11 @@ export class VaultConnection {
     return this.#disconnected;
   }
 
+  /** The handshake's marks once `ready` arrived, else null. */
+  get handshakeMarks(): HandshakeMarks | null {
+    return this.#readyOk ? { appendedAt: this.#appendedAt, loadAt: this.#loadAt, readyAt: this.#readyAt } : null;
+  }
+
   #mount(): void {
     if (this.#disconnected || this.#frame) return;
     const doc = this.#o.win.document;
@@ -111,6 +134,7 @@ export class VaultConnection {
     this.#frame = frame;
     this.#readyTimer = setTimeout(() => this.#failReady(), READY_TIMEOUT_MS);
     container.append(frame);
+    this.#appendedAt = this.#now();
   }
 
   #onLoad(): void {
@@ -125,6 +149,7 @@ export class VaultConnection {
       this.#failReady();
       return;
     }
+    this.#loadAt = this.#now();
     const channel = new MessageChannel();
     this.#port = channel.port1;
     channel.port1.onmessage = (e) => this.#onPortMessage(e.data);
@@ -157,6 +182,7 @@ export class VaultConnection {
       if (!event) return;
       if (event.event === 'ready') {
         if (this.#readyDone) return;
+        this.#readyAt = this.#now();
         this.#readyDone = true;
         this.#readyOk = true;
         clearTimeout(this.#readyTimer);

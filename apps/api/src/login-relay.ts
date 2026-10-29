@@ -7,7 +7,7 @@
 //
 //   POST /v1/login-relay/<relayId>            {iv, ct} (base64url)       authOrigin only     204 | 409 relay_used
 //   GET  /v1/login-relay/<relayId>?wait=1..25  x-hana-relay-key: <b64url> vaultOrigin, authOrigin
-//        200 {iv, ct, serverTimeMs} (consumed) | 204 (still empty after `wait` s) | 410 relay_gone | 403 relay_forbidden
+//        200 {iv, ct, serverTimeMs, heldMs} (consumed) | 204 (still empty after `wait` s) | 410 relay_gone | 403 relay_forbidden
 //
 // Not app-gated (no x-hana-key): the callback page doesn't know the app. Rate-limited per IP. Bodies, keys and relay
 // ids are never logged.
@@ -46,7 +46,8 @@ type Slot =
   | { state: 'consumed'; writtenAt: number; consumedAt: number }
   | { state: 'expired'; expiredAt: number };
 
-export type RelayRead = { kind: 'value'; iv: string; ct: string } | { kind: 'empty' } | { kind: 'gone' } | { kind: 'forbidden' };
+/** `heldMs`: how long the value sat in the slot before this read took it (the object's clock). */
+export type RelayRead = { kind: 'value'; iv: string; ct: string; heldMs: number } | { kind: 'empty' } | { kind: 'gone' } | { kind: 'forbidden' };
 
 /** Whether `readKey` (b64url, 32 bytes) is the read key of `relayId`. */
 export async function readKeyMatches(relayId: string, readKey: string | null): Promise<boolean> {
@@ -114,7 +115,7 @@ export class LoginRelay extends DurableObject<Env> {
     // Past its TTL but the alarm hasn't run yet: as good as gone (the alarm still moves it to the tombstone).
     if (slot.state !== 'full' || now >= slot.writtenAt + RELAY_TTL_MS) return { kind: 'gone' };
     kv.put('slot', { state: 'consumed', writtenAt: slot.writtenAt, consumedAt: now } satisfies Slot);
-    return { kind: 'value', iv: slot.iv, ct: slot.ct };
+    return { kind: 'value', iv: slot.iv, ct: slot.ct, heldMs: Math.max(0, now - slot.writtenAt) };
   }
 
   /** Resolves on the next write, or after `ms`. */
@@ -234,7 +235,8 @@ export async function handleLoginRelay(request: Request, env: Env, requestId: st
   }
   switch (got.kind) {
     case 'value':
-      return reply(200, { iv: got.iv, ct: got.ct, serverTimeMs: Date.now() });
+      // heldMs is a duration (no timestamp of the write): 0 while the vault long-polls, more when it read late.
+      return reply(200, { iv: got.iv, ct: got.ct, serverTimeMs: Date.now(), heldMs: got.heldMs });
     case 'empty':
       return reply(204, null);
     case 'gone':

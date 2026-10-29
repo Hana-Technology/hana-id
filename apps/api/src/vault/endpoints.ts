@@ -13,6 +13,7 @@ import { Rpc } from '../near/rpc.ts';
 import { type SessionView, isSessionView } from '../views.ts';
 import { type Keks, SHARE_KEY_BYTES, kekFor, loadKeks, unwrapShareKey, wrapShareKey } from './kek.ts';
 import { NO_SHARE_ID, SHARE_ID_BYTES, type ShareAction, actionPayload, createSharePayload, verifyVaultSignature } from './message.ts';
+import { isTestKey } from '../origins.ts';
 import { parentOriginAllowed } from './origins.ts';
 import { effectiveSettings, getSettingsRow } from './settings.ts';
 import { type ShareRow, type ShareUpdate, advanceShare, capExpiry, getShare, incrementUnlocks, insertShare, markRevoked, revokeAllFrom } from './shares.ts';
@@ -133,6 +134,8 @@ export async function handleVaultEndpoint(request: Request, env: Env, endpoint: 
   const ctx = newCtx(env, requestId, endpoint, request);
   const gate = await vaultGate(request, env, ctx);
   if (!gate.ok) return gate.response;
+  // pk_test_ apps: share creation and unlock answer with the request's own timings (apps/smoke's breakdowns).
+  ctx.exposeTimings = (endpoint === '/v1/vault/shares' || endpoint === '/v1/vault/unlock') && isTestKey(gate.app.publishable_key);
   const parsed = await readJson(request, MAX_VAULT_BODY);
   if (!parsed.ok) return reject(ctx, parsed.status, 'bad_request', parsed.error);
   if (endpoint === '/v1/vault/shares') return createShare(env, ctx, gate.app, gate.parentOrigin, parsed.body);
@@ -191,6 +194,7 @@ async function createShare(env: Env, ctx: Ctx, app: App, parentOrigin: string, b
   } catch {
     return reject(ctx, 503, 'config_unavailable', 'App config is unavailable, try again');
   }
+  lap(ctx, 'settings');
   if (settings.persistence !== 'session') return reject(ctx, 409, 'persistence_off', 'This app does not keep logins across reloads');
 
   // 2. The session key signed the create-share message for this app and this parent.
@@ -229,6 +233,7 @@ async function createShare(env: Env, ctx: Ctx, app: App, parentOrigin: string, b
       idleUntil,
       absExpiresAt,
     });
+    lap(ctx, 'insert');
     if (!created) return reject(ctx, 409, 'share_exists', 'This session key already has a share');
     return done(ctx, 201, { shareId: arr(shareId), ks: arr(ks), absExpiresAtMs: absExpiresAt, idleUntilMs: idleUntil });
   } catch {
@@ -284,6 +289,7 @@ async function shareAction(env: Env, ctx: Ctx, app: App, action: ShareAction, bo
   } catch {
     return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
   }
+  lap(ctx, 'shareLimit');
   const keks = action === 'unlock' ? await loadKeks(env) : null;
   if (action === 'unlock' && !keks) return vaultKeyUnavailable(ctx);
 
@@ -302,6 +308,7 @@ async function shareAction(env: Env, ctx: Ctx, app: App, action: ShareAction, bo
       const refused = await settingsRefusal(env, ctx, app, row, now);
       if (refused) return refused;
     }
+    lap(ctx, 'share');
     const signed = await verifyVaultSignature(row.session_pk, req.signature, {
       signer: env.SIGNER_ACCOUNT,
       appId: app.id,
@@ -346,6 +353,7 @@ async function unlock(env: Env, ctx: Ctx, app: App, row: ShareRow, counter: numb
   try {
     const rewrap = kek === keks.current ? undefined : { shareEnc: await wrapShareKey(keks.current, binding, ks), kekId: keks.current.id };
     const advanced = await advanceShare(env.DB, app.id, row.share_id, counter, now, { kind: 'slide', rewrap });
+    lap(ctx, 'advance');
     if (!advanced) return await refusal(env, ctx, app, row.share_id, now, true);
     const write = incrementUnlocks(env.DB, app.id, now).catch(() => {
       log({ event: 'usage_increment_failed', requestId: ctx.requestId, appId: app.id, endpoint: ctx.endpoint }, 'error');

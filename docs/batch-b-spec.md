@@ -218,7 +218,7 @@ Every cross-window message is a plain object sent by structured clone. Bytes tra
 
 The SDK answers some calls itself without the vault: `eth_chainId`, `wallet_switchEthereumChain`, `getNetwork` and read-only RPC methods. It also handles fee and nonce filling and broadcasting, using the partner's RPC.
 
-Events: `accountsChanged {addresses}`, `disconnect {code}`, `sessionExpired`, `loginProgress {stage: 'popup_connected' | 'google' | 'token' | 'chain' | 'done'}`, `ui {launcher: 'show' | 'hide', label}`. For `pk_test_` apps only, the login result also carries `timings` (per-stage ms, no secrets) for `apps/smoke`.
+Events: `accountsChanged {addresses}`, `disconnect {code}`, `sessionExpired`, `loginProgress {stage: 'popup_connected' | 'google' | 'token' | 'chain' | 'done'}`, `ui {launcher: 'show' | 'hide', label}`. For `pk_test_` apps only, the login result also carries `timings` (per-stage ms, no secrets) for `apps/smoke`, and `ready` carries the handshake and unlock's (`packages/core/src/timings.ts`).
 
 ## Login
 

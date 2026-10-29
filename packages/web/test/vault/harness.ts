@@ -30,7 +30,7 @@ import type { VaultConfig } from '../../src/vault/config.ts';
 import type { LauncherView } from '../../src/vault/launcher.ts';
 import { type RecordStore, openRecordStore } from '../../src/vault/record.ts';
 import { type Channel, type Locks, type Timers, type WindowMessageEvent, type WindowRef, localLocks } from '../../src/vault/runtime.ts';
-import { Vault, type VaultOptions } from '../../src/vault/vault.ts';
+import { type NavigationMarks, Vault, type VaultOptions } from '../../src/vault/vault.ts';
 
 // ---- constants ----
 
@@ -223,6 +223,12 @@ export class FakeBackend {
   /** The raw-signing setting in force that GET /v1/app answers (each new tab's page sets it, as for the policy). */
   rawSign: 'off' | 'approval' = 'off';
   serverNow: () => number = () => START_MS;
+  /** The API's own timings to answer /v1/login, /v1/vault/shares and /v1/vault/unlock with (a pk_test_ API), or none. */
+  serverTimings: { totalMs: number; phases: Record<string, number> } | null = null;
+  /** The relay read's `heldMs`, or none (an older API). */
+  relayHeldMs: number | null = null;
+  /** What the callback adds to the relay slot for a pk_test_ login (its own and /login's stage durations), or none. */
+  popupTimings: Record<string, number> | null = null;
   private txSeq = 0;
   private readonly relayWaiters = new Set<() => void>();
 
@@ -232,7 +238,8 @@ export class FakeBackend {
 
   /** Writes the relay slot as the callback page would (encrypted under relayKey). */
   async writeRelay(relayId: string, relayKey: Uint8Array, payload: { idToken: string } | { error: string }): Promise<void> {
-    this.relay.set(relayId, await encryptRelayPayload(relayKey, relayId, payload));
+    const withTimings = this.popupTimings ? { ...payload, timings: { ...this.popupTimings } } : payload;
+    this.relay.set(relayId, await encryptRelayPayload(relayKey, relayId, withTimings));
     for (const w of [...this.relayWaiters]) w();
   }
 
@@ -286,7 +293,7 @@ export class FakeBackend {
       const nearTx = this.nextTx();
       if (!r.ok) return apiError(409, 'session_exists', { nearTx: null });
       this.txs.set(nearTx, r.result);
-      return json(200, { result: r.result, session: { scope_id: SCOPE, expires_at_ms: b.expiresAtMs, max_uses: b.maxUses, used: 1 }, nearTx, requestId: 'rq' });
+      return json(200, { result: r.result, session: { scope_id: SCOPE, expires_at_ms: b.expiresAtMs, max_uses: b.maxUses, used: 1 }, nearTx, ...this.timingsField(), requestId: 'rq' });
     }
     if (call.path === '/v1/sessions') {
       const r = this.createSession(b, false);
@@ -325,12 +332,16 @@ export class FakeBackend {
       if (v === undefined) return new Response(null, { status: 204 });
       if (v === 'consumed') return apiError(410, 'relay_gone');
       this.relay.set(relayId, 'consumed');
-      return json(200, { ...v, serverTimeMs: this.serverNow() });
+      return json(200, { ...v, serverTimeMs: this.serverNow(), ...(this.relayHeldMs === null ? {} : { heldMs: this.relayHeldMs }) });
     }
     if (call.path === '/v1/vault/shares') return this.createShare(call);
     if (call.path.startsWith('/v1/vault/')) return this.shareAction(call, call.path.slice('/v1/vault/'.length));
     void url;
     return apiError(404, 'not_found');
+  }
+
+  private timingsField(): { timings?: unknown } {
+    return this.serverTimings ? { timings: structuredClone(this.serverTimings) } : {};
   }
 
   private async createShare(call: ApiCall): Promise<Response> {
@@ -345,7 +356,7 @@ export class FakeBackend {
     const shareId = crypto.getRandomValues(new Uint8Array(16));
     const ks = crypto.getRandomValues(new Uint8Array(32));
     this.shares.set(toHex(shareId), { shareId, ks, sessionPk: pk, appId: APP_ID, counter: 0, revoked: false, createdAt: this.serverNow() });
-    return json(201, { shareId: Array.from(shareId), ks: Array.from(ks), absExpiresAtMs: session.expires_at_ms, idleUntilMs: this.serverNow() + 2 * HOUR, requestId: 'rq' });
+    return json(201, { shareId: Array.from(shareId), ks: Array.from(ks), absExpiresAtMs: session.expires_at_ms, idleUntilMs: this.serverNow() + 2 * HOUR, ...this.timingsField(), requestId: 'rq' });
   }
 
   private async shareAction(call: ApiCall, action: string): Promise<Response> {
@@ -358,7 +369,8 @@ export class FakeBackend {
     if (share.revoked) return apiError(410, 'share_revoked');
     if (b.counter !== share.counter + 1) return apiError(409, 'bad_counter', { expected: share.counter + 1 });
     share.counter = b.counter;
-    if (action === 'unlock') return json(200, { ks: Array.from(share.ks), counter: share.counter, idleUntilMs: this.serverNow() + 2 * HOUR, absExpiresAtMs: this.serverNow() + 12 * HOUR, requestId: 'rq' });
+    if (action === 'unlock')
+      return json(200, { ks: Array.from(share.ks), counter: share.counter, idleUntilMs: this.serverNow() + 2 * HOUR, absExpiresAtMs: this.serverNow() + 12 * HOUR, ...this.timingsField(), requestId: 'rq' });
     if (action === 'touch') return json(200, { counter: share.counter, idleUntilMs: this.serverNow() + 2 * HOUR, requestId: 'rq' });
     if (action === 'revoke') {
       share.revoked = true;
@@ -543,6 +555,8 @@ export interface TabOptions {
   loginFlow?: 'combined' | 'split';
   googleJwk?: Google['jwk'];
   options?: Partial<VaultOptions>;
+  /** The vault document's navigation timing (unlock timings' `vault*` stages). */
+  navigation?: NavigationMarks;
 }
 
 export function openTab(browser: Browser, o: TabOptions = {}): Tab {
@@ -566,6 +580,7 @@ export function openTab(browser: Browser, o: TabOptions = {}): Tab {
         opened.push(w);
         return w;
       },
+      navigationTiming: () => o.navigation ?? null,
     },
     openStore: browser.openStore,
     locks: browser.locks,

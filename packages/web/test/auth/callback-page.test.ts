@@ -155,3 +155,47 @@ describe('login sessionStorage entry', () => {
     expect(takeLoginEntry(window.sessionStorage, state, 2)).toBeNull();
   });
 });
+
+describe('/login/callback timings (pk_test_ apps)', () => {
+  const nav = () => ({ fetchStart: 400, responseEnd: 650 });
+  /** A login /login started for a pk_test_ app (its entry carries authCheck). */
+  function startedTest(hash: (state: string) => string, timings: Record<string, number> | null = { authCheck: 310 }) {
+    const state = relayIdFor(crypto.getRandomValues(new Uint8Array(32)));
+    const relayKey = crypto.getRandomValues(new Uint8Array(32));
+    const win = new FakeWindow('/login/callback', '', hash(state));
+    storeLoginEntry(win.sessionStorage, state, relayKey, NOW, timings ?? undefined);
+    return { state, relayKey: Uint8Array.from(relayKey), win };
+  }
+
+  it('adds /login’s and its own stage durations to the encrypted slot, and nothing else', async () => {
+    const { state, relayKey, win } = startedTest((st) => `#id_token=${TOKEN}&state=${st}`);
+    let t = 700;
+    const a = api();
+    expect(await runCallbackPage({ win, api: a, now: () => NOW, perfNow: () => (t += 5), navigation: nav })).toBe('relayed');
+    const payload = await decryptRelayPayload(relayKey, state, a.writeRelay.mock.calls[0]?.[1] as RelayCiphertext);
+    // Redirect hops 0 → fetchStart, the auth page Worker fetchStart → responseEnd, then this script from 705.
+    expect(payload).toEqual({ idToken: TOKEN, timings: { authCheck: 310, callbackRedirect: 400, callbackFetch: 250, callbackBoot: 55, callbackPrep: 5 } });
+    // The timings hold no part of the token or the state.
+    expect(JSON.stringify((payload as { timings: unknown }).timings)).not.toMatch(new RegExp(`${state}|${TOKEN.split('.')[1]}`, 'u'));
+  });
+
+  it('a Google error carries the timings too; a pk_live_ login (no stored timings) carries none', async () => {
+    const err = startedTest((st) => `#error=access_denied&state=${st}`);
+    const a = api();
+    await runCallbackPage({ win: err.win, api: a, now: () => NOW, navigation: nav });
+    expect(await decryptRelayPayload(err.relayKey, err.state, a.writeRelay.mock.calls[0]?.[1] as RelayCiphertext)).toMatchObject({ error: 'access_denied', timings: { authCheck: 310 } });
+
+    const live = startedTest((st) => `#id_token=${TOKEN}&state=${st}`, null);
+    const b = api();
+    await runCallbackPage({ win: live.win, api: b, now: () => NOW, navigation: nav });
+    expect(await decryptRelayPayload(live.relayKey, live.state, b.writeRelay.mock.calls[0]?.[1] as RelayCiphertext)).toEqual({ idToken: TOKEN });
+  });
+
+  it('without navigation timing it still reports callbackPrep', async () => {
+    const { state, relayKey, win } = startedTest((st) => `#id_token=${TOKEN}&state=${st}`);
+    const a = api();
+    await runCallbackPage({ win, api: a, now: () => NOW, navigation: () => null });
+    const payload = (await decryptRelayPayload(relayKey, state, a.writeRelay.mock.calls[0]?.[1] as RelayCiphertext)) as { timings: Record<string, number> };
+    expect(Object.keys(payload.timings).sort()).toEqual(['authCheck', 'callbackPrep']);
+  });
+});

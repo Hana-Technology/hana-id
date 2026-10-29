@@ -18,6 +18,7 @@ export * from './networks.ts';
 export * from './protocol.ts';
 export * from './relay.ts';
 export * from './session.ts';
+export * from './timings.ts';
 export * from './signers/evm.ts';
 // The Stellar signers are `@hana-id/core/signers/stellar` only: they pull in @stellar/stellar-base (about 450 kB
 // minified), which pages that sign nothing on Stellar (apps/smoke, the login popup) must not bundle.

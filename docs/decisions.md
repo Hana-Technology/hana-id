@@ -1096,6 +1096,21 @@ can't collide with the entries the parallel API, contract and watchdog fixes add
   says why); keeping the key for as long as the tab is open (an unattended tab would hand the key to anyone at the
   device).
 
+### D112. Refused key requests don't count as activity for the in-memory idle limit
+- Date 2026-10-29 · Status: in force on branch `fix/sweep-web` (`packages/web/src/vault/vault.ts` `dispatch`,
+  `refuseEarly`, `dormantConsentInForce`) · Source: sweep finding VAUL-1 (Low); refines D55
+- Decision: before a key request counts as activity or unlocks a dormant session, the vault runs the checks that
+  need no key: a sign request goes through `approvalSubject` with raw signing allowed (another address, a malformed
+  request, a mainnet for a test app, a raw request from a test app), a second `hana_export` is `busy`, and
+  `hana_revokeOtherDevices` on a share that isn't fresh (a reload-unlocked share never is) is `share_not_fresh`. A
+  refused request changes nothing. `hana_requestAutoApprove` counts only when it shows the consent screen; with a
+  consent in force it answers without counting, and a dormant session answers it from its last known consent
+  without an unlock.
+- Threat model for D55, written down: the idle limit bounds an abandoned tab and stops a page from keeping PRK
+  in memory with requests that fail. It doesn't bound a hostile page that gets requests signed under an accepted
+  policy, or that reloads the vault frame (a reload unlocks a `'session'` record, as designed); the absolute expiry
+  bounds both.
+
 ## Superseded or amended
 
 | Was | Now | Source |

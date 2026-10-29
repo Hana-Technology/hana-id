@@ -235,8 +235,13 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   too (not a security boundary).
 - PRK leaves memory after the app's idle limit without a request that uses the key (signing, export,
   revoke-other-devices, an auto-approve consent request; D55, `goIdle`). Status, address and auto-approve-status reads
-  don't count and don't unlock a dormant session, so a page polling them can't keep the key in memory. A `'session'`
-  record is unlocked again before the next request that uses the key, only for the same share.
+  don't count and don't unlock a dormant session, so a page polling them can't keep the key in memory. Neither do key
+  requests refused by a check that needs no key (another address, a malformed request, a mainnet for a test app, a
+  second export, revoke-other-devices on a share that isn't fresh), nor an auto-approve consent request answered from
+  a consent already in force (D112, sweep VAUL-1; `vault.ts` `refuseEarly`). A `'session'` record is unlocked again
+  before the next request that uses the key, only for the same share. Residual: a hostile partner page can still
+  keep PRK in memory with requests it can get signed (an accepted policy) or by reloading the vault frame, which
+  unlocks a `'session'` record like any reload; the absolute expiry always holds.
 - The vault refuses to run top-level, accepts one hello, pins the parent origin (checked against the inlined origins
   and `ancestorOrigins`) and serves only that port. Popups and the vault authenticate each other by `event.origin` and
   `event.source`.

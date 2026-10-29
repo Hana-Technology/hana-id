@@ -610,18 +610,27 @@ export class Vault {
     return true;
   }
 
-  /** Requests that read or use the session: each one counts as activity for the in-memory idle limit. */
   /**
    * Requests that use the key, besides the sign methods: only these count as activity for the in-memory idle limit, and
    * a dormant session is unlocked before them. Reads (hana_status, eth_accounts, stellar_getAddress,
    * hana_autoApproveStatus) neither keep PRK in memory nor wake a dormant session: polling them can't hold the key.
+   * A key request refused by a check that needs no key (refuseEarly) doesn't count either, and neither does an auto-
+   * approve consent request answered from a consent already in force (sweep VAUL-1, D112).
    */
   private static readonly KEY_METHODS: ReadonlySet<string> = new Set(['hana_export', 'hana_revokeOtherDevices', 'hana_requestAutoApprove']);
 
   private async dispatch(r: PortRequest): Promise<unknown> {
     const usesKey = isSignMethod(r.method) || Vault.KEY_METHODS.has(r.method);
     if (usesKey) {
-      this.noteActivity();
+      this.refuseEarly(r);
+      if (r.method === 'hana_requestAutoApprove') {
+        // Counts as activity only when it shows the consent screen (requestAutoApprove); one already in force that a
+        // dormant session knows of is answered without waking it.
+        const known = this.dormantConsentInForce();
+        if (known) return known;
+      } else {
+        this.noteActivity();
+      }
       await this.wake();
     }
     const sign = isSignMethod(r.method);
@@ -1006,6 +1015,37 @@ export class Vault {
   private clearDormant(): void {
     if (this.dormant) this.timers.clearTimeout(this.dormant.expiryTimer);
     this.dormant = null;
+  }
+
+  /**
+   * The refusals a key request gets before it may unlock a dormant session or count as activity (sweep VAUL-1, D112):
+   * checks that need no key. A sign request is checked as approvalSubject would with raw signing allowed (another
+   * address, a malformed request, a mainnet for a test app, a raw request from a test app); a second export is busy;
+   * revoke-other-devices on a share that isn't fresh (an unlocked share never is) is share_not_fresh. Logged out, it
+   * does nothing: the handler answers.
+   */
+  private refuseEarly(r: PortRequest): void {
+    const addresses = this.addresses();
+    if (!addresses) return;
+    if (isSignMethod(r.method)) {
+      approvalSubject(r as SignRequest, addresses, { rawSign: 'approval', testApp: this.testApp });
+      return;
+    }
+    if (r.method === 'hana_export' && this.exportJob) throw new VaultError('busy', 'An export is already running');
+    if (r.method === 'hana_revokeOtherDevices') {
+      const s = this.session;
+      const share = s ? s.share : null;
+      const stale = s === null || (share !== null && !s.persist && (share.createdAt === null || this.clock.now() - share.createdAt >= FRESH_LOGIN_MS));
+      if (stale) throw new VaultError(ErrorCode.unauthorized, 'Only within 5 minutes of a fresh sign-in', { reason: 'share_not_fresh' });
+    }
+  }
+
+  /** A dormant session's consent still in force under the policy, as hana_requestAutoApprove answers it. */
+  private dormantConsentInForce(): PortResultMap['hana_requestAutoApprove'] | null {
+    const d = this.session ? null : this.liveDormant();
+    const policy = this.policy;
+    if (!d || !policy || !consentActive(d.consent, policy, this.clock.now(), d.expiresAtMs)) return null;
+    return { granted: true, policyId: policy.policyId, expiresAtMs: d.consent.expiresAtMs };
   }
 
   /** A request that uses the key: restarts the in-memory idle limit. */
@@ -1568,6 +1608,8 @@ export class Vault {
     if (!policy) throw new VaultError(ErrorCode.unauthorized, 'This app has no auto-approve policy in force');
     const active = await this.withConsent(s, async (c) => ({ value: consentActive(c, policy, this.clock.now(), s.expiresAtMs) ? c : null }));
     if (active) return { granted: true, policyId: policy.policyId, expiresAtMs: active.expiresAtMs };
+    // Only a consent screen actually shown counts as activity (D112).
+    this.noteActivity();
     const granted = await this.askConsent(s, policy);
     if (!granted) return { granted: false };
     const now = await this.withConsent(s, async (c) => ({ value: c }));

@@ -329,7 +329,9 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
 - Why: today `KEYS_UPDATER_KEY` (a Worker secret), the owner account or the signer's full-access key can each forge
   Google tokens or swap the contract and so derive any user's key.
 - Open: the delay length. Measure Google's key lead time first (record when each kid first appears in the JWKS);
-  the watchdog may approve early when the key matches Google's list. No address change.
+  the watchdog may approve early when the key matches Google's list. No address change. Measurement is running
+  (migration 0004 `issuer_key_observations`, 15-min cron; read with `admin <env> issuer-keys:lead-times --remote`,
+  `docs/operations.md` "Issuer key lead times").
 
 ### D34. Batch C MVP cut
 - Date 2026-10-28 · Status: confirmed by the user · Source: batch C MVP trim proposal (to be folded into

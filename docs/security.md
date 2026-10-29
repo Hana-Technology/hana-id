@@ -367,7 +367,11 @@ account's full-access key can upgrade the contract (no lock). `docs/contract-int
 contract account total control; the point here is that one of those powers sits in the API Worker's secrets. Confirmed
 plan (D33, not built): a delay on newly posted issuer keys with an independent watchdog that can cancel them, alerts
 on `issuer_key_set` for a kid Google doesn't publish, a multisig owner, and upgrades only through it with a timelock
-(the signer's full-access key removed). The delay length is open.
+(the signer's full-access key removed). The delay length is open. Measurement is running: the API records when
+each Google kid first appears in the JWKS (every 15 min), when a token signed with it first arrives, and when it
+leaves the JWKS (D1 `issuer_key_observations`, migration 0004, `apps/api/src/key-observations.ts`; kids and
+timestamps only); `admin <env> issuer-keys:lead-times --remote` prints the lead times (`docs/operations.md` "Issuer
+key lead times"). It changes nothing the contract trusts or how keys are posted.
 
 **(f) The API serves a stored auto-approve policy unvalidated. Fixed.** `effectiveSettings` serves a stored policy
 only if `parseAutoApprovePolicy` accepts it against the app's `session_ttl_ms`, and logs `auto_approve_policy_invalid`

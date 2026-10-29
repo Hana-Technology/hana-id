@@ -2,7 +2,7 @@
 import type { Env } from './env.ts';
 import { type AppEndpoint, APP_CONFIG_ENDPOINT, APP_ENDPOINTS, appPreflight, handleAppConfig, handleAppEndpoint, handleHealth, handleOwnerAction, openPreflight } from './handlers.ts';
 import { json } from './http.ts';
-import { syncIssuerKeys } from './issuer-keys.ts';
+import { observeIssuerJwks, syncIssuerKeys } from './issuer-keys.ts';
 import { log } from './log.ts';
 import { LOGIN_ENDPOINT, handleLogin } from './login.ts';
 import { LOGIN_RELAY_PREFIX, handleLoginRelay, loggedEndpoint } from './login-relay.ts';
@@ -16,6 +16,16 @@ export { RelayerKey } from './relayer-key.ts';
 export type { Env } from './env.ts';
 
 const ID_RE = /^[A-Za-z0-9-]{1,64}$/u;
+
+/**
+ * The cron fires every 15 min (one quarter-hourly trigger from gen-wrangler.ts: the free plan allows 5 per
+ * account). The run in the first quarter of each UTC hour is the hourly one (JWKS → contract sync, vault maintenance);
+ * the other three only record the JWKS for the key lead-time measurement. A Worker still on the old `0 * * * *`
+ * trigger only ever gets hourly runs.
+ */
+export function isHourlyRun(scheduledTime: number): boolean {
+  return new Date(scheduledTime).getUTCMinutes() < 15;
+}
 
 /** The router's own JSON errors (404, 405, 500), with `x-request-id` like every handled response. */
 function routeError(status: number, code: string, error: string, requestId: string, extra: Record<string, string> = {}): Response {
@@ -100,8 +110,12 @@ export default {
     }
   },
 
-  async scheduled(_controller, env, _ctx): Promise<void> {
-    // Independent jobs: one failing must not skip the other.
+  async scheduled(controller, env, _ctx): Promise<void> {
+    if (!isHourlyRun(controller.scheduledTime)) {
+      await observeIssuerJwks(env);
+      return;
+    }
+    // Independent jobs: one failing must not skip the other. The sync records the JWKS observation from its fetch.
     const [vault, issuerKeys] = await Promise.allSettled([vaultMaintenance(env), syncIssuerKeys(env)]);
     if (vault.status === 'rejected') log({ event: 'vault_maintenance', outcome: 'error', code: 'internal' }, 'error');
     if (issuerKeys.status === 'rejected') throw issuerKeys.reason;

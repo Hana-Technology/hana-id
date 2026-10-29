@@ -59,7 +59,8 @@ describe('POST /v1/sessions', () => {
     const exec = { waitUntil: (p: Promise<unknown>) => void pending.push(p), passThroughOnException: () => undefined, props: {} } as unknown as ExecutionContext;
     const res = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud), exec });
     expect(res.status).toBe(200);
-    expect(pending).toHaveLength(1);
+    // The JWKS fetch and the token's kid (key lead time, key-observations.ts), then usage: all after the response.
+    expect(pending).toHaveLength(3);
     await Promise.all(pending);
     expect(await usage(app.id)).toEqual({ sessions: 1, derives: 0 });
   });

@@ -156,6 +156,10 @@ describe('wrangler.jsonc', () => {
     ]);
   });
 
+  it('has one quarter-hourly cron trigger (the hourly jobs run at :00, src/index.ts isHourlyRun)', () => {
+    expect((wranglerConfig(manifest, LOCAL_D1_ID) as { triggers: unknown }).triggers).toEqual({ crons: ['*/15 * * * *'] });
+  });
+
   it('refuses an env without vaultOrigin and authOrigin', () => {
     const { vaultOrigin: _v, authOrigin: _a, ...bare } = manifest;
     expect(() => wranglerConfig(bare, LOCAL_D1_ID)).toThrow(/needs vaultOrigin and authOrigin/u);

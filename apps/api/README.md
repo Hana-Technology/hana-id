@@ -49,8 +49,9 @@ keys, e.g. the content of `.secrets/<env>/relayer-keys.json`) → `wrangler secr
 | `VAULT_KEK_PREVIOUS` | secret, rotation only | The previous `VAULT_KEK`. Rotate with `vault-kek <env> rotate --yes`: the current key goes to `VAULT_KEK_PREVIOUS` (and `.secrets/<env>/vault-kek.previous`), a new key with the next id to `VAULT_KEK` (and `vault-kek`); a run that stops part way resumes when re-run. Unlocks and the cron re-wrap old rows; once `SELECT COUNT(*) FROM vault_shares WHERE kek_id = <old id>` is 0, delete the secret and the `.previous` file (`docs/operations.md`, "Key rotation") |
 | `DB` | D1 | `migrations/` |
 | `RELAYER_KEY`, `RATE_LIMITER`, `LOGIN_RELAY` | Durable Objects | SQLite-backed classes `RelayerKey`, `RateLimiter` (migration `v1`), `LoginRelay` (`v2`) |
-| cron `0 * * * *` | trigger | Google JWKS → `set_issuer_key` / `remove_issuer_key` (a kid is removed only after it has been missing from the JWKS for ≥ 55 min, i.e. two hourly runs in a row; tracked in D1 `issuer_key_missing`) |
-| cron `0 * * * *` | trigger | Also vault maintenance (`src/vault/cron.ts`): deletes `vault_shares` rows past `abs_expires_at` or revoked, re-wraps up to 2000 rows per run from `VAULT_KEK_PREVIOUS` to `VAULT_KEK`, logs rows under an unknown KEK id |
+| cron `*/15 * * * *` | trigger | One trigger; the run at :00 (`isHourlyRun`) is the hourly one. Every run records Google's JWKS kids in D1 `issuer_key_observations` (D33 key lead time: `admin <env> issuer-keys:lead-times`, `docs/operations.md`) |
+| cron, hourly run | trigger | Google JWKS → `set_issuer_key` / `remove_issuer_key` (a kid is removed only after it has been missing from the JWKS for ≥ 55 min, i.e. two hourly runs in a row; tracked in D1 `issuer_key_missing`) |
+| cron, hourly run | trigger | Also vault maintenance (`src/vault/cron.ts`): deletes `vault_shares` rows past `abs_expires_at` or revoked, re-wraps up to 2000 rows per run from `VAULT_KEK_PREVIOUS` to `VAULT_KEK`, logs rows under an unknown KEK id |
 
 ## Endpoints
 

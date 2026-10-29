@@ -1,6 +1,8 @@
 // Hourly cron: copies Google's ID-token signing keys (JWKS) into hana-signer with the keys-updater key, a
-// function-call key on SIGNER_ACCOUNT limited to set_issuer_key / remove_issuer_key.
+// function-call key on SIGNER_ACCOUNT limited to set_issuer_key / remove_issuer_key. Every fetch (hourly here, every
+// 15 min in observeIssuerJwks) also records the kids it lists for the key lead-time measurement (key-observations.ts).
 import type { Env } from './env.ts';
+import { cacheMaxAgeS, recordJwksObservation } from './key-observations.ts';
 import { log } from './log.ts';
 import { Rpc, invalidNonce, isDefiniteRejection, type SendTxResult } from './near/rpc.ts';
 import { type ContractCall, parseKeyPair, signFunctionCall, waitForOutcome } from './near/tx.ts';
@@ -66,6 +68,40 @@ export function diffIssuerKeys(jwks: Jwk[], onChainKids: string[]): { add: Jwk[]
   return { add, remove };
 }
 
+/** One JWKS fetch: its usable keys and the response's Cache-Control max-age (seconds, null without one). Throws on HTTP or JSON errors. */
+async function fetchUsableJwks(jwksUrl: string): Promise<{ keys: Jwk[]; maxAgeS: number | null }> {
+  const res = await fetch(jwksUrl, { headers: { accept: 'application/json' } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return { keys: usableJwks(await res.json()), maxAgeS: cacheMaxAgeS(res.headers.get('cache-control')) };
+}
+
+export interface ObserveResult {
+  kids: string[];
+  maxAgeS: number | null;
+  skipped?: 'jwks_fetch_failed' | 'jwks_empty' | 'record_failed';
+}
+
+/**
+ * The 15-minute cron run (key lead-time measurement only): fetches the JWKS and records the kids it lists. Changes
+ * nothing on chain and needs no key.
+ */
+export async function observeIssuerJwks(env: Env, provider = GOOGLE_PROVIDER, jwksUrl = GOOGLE_JWKS_URL, now: number = Date.now()): Promise<ObserveResult> {
+  let fetched;
+  try {
+    fetched = await fetchUsableJwks(jwksUrl);
+  } catch {
+    log({ event: 'jwks_observe', outcome: 'error', code: 'jwks_fetch_failed' }, 'warn');
+    return { kids: [], maxAgeS: null, skipped: 'jwks_fetch_failed' };
+  }
+  const kids = fetched.keys.map((k) => k.kid);
+  if (kids.length === 0) {
+    log({ event: 'jwks_observe', outcome: 'error', code: 'jwks_empty' }, 'warn');
+    return { kids, maxAgeS: fetched.maxAgeS, skipped: 'jwks_empty' };
+  }
+  if (!(await recordJwksObservation(env.DB, provider, kids, fetched.maxAgeS, now))) return { kids, maxAgeS: fetched.maxAgeS, skipped: 'record_failed' };
+  return { kids, maxAgeS: fetched.maxAgeS };
+}
+
 export interface SyncResult {
   added: string[];
   removed: string[];
@@ -102,25 +138,26 @@ export async function dueForRemoval(db: D1Database, provider: string, missing: s
 
 export async function syncIssuerKeys(env: Env, provider = GOOGLE_PROVIDER, jwksUrl = GOOGLE_JWKS_URL, now: number = Date.now()): Promise<SyncResult> {
   const result: SyncResult = { added: [], removed: [], failed: [] };
-  if (!env.KEYS_UPDATER_KEY) {
-    log({ event: 'jwks_sync_skipped', code: 'no_keys_updater_key' }, 'warn');
-    return { ...result, skipped: 'no_keys_updater_key' };
-  }
-  const rpc = new Rpc(env.NEAR_RPC);
 
   let jwks: Jwk[];
   try {
-    const res = await fetch(jwksUrl, { headers: { accept: 'application/json' } });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    jwks = usableJwks(await res.json());
+    const fetched = await fetchUsableJwks(jwksUrl);
+    jwks = fetched.keys;
+    // Measurement only (never fails the sync): recorded whether or not this env can post keys.
+    await recordJwksObservation(env.DB, provider, jwks.map((k) => k.kid), fetched.maxAgeS, now);
   } catch {
     log({ event: 'jwks_sync_failed', code: 'jwks_fetch_failed' }, 'error');
     return { ...result, skipped: 'jwks_fetch_failed' };
+  }
+  if (!env.KEYS_UPDATER_KEY) {
+    log({ event: 'jwks_sync_skipped', code: 'no_keys_updater_key' }, 'warn');
+    return { ...result, skipped: 'no_keys_updater_key' };
   }
   if (jwks.length === 0) {
     log({ event: 'jwks_sync_failed', code: 'jwks_empty' }, 'error');
     return { ...result, skipped: 'jwks_empty' };
   }
+  const rpc = new Rpc(env.NEAR_RPC);
 
   let onChain: string[] | null;
   try {

@@ -246,6 +246,7 @@ admin <env> app:list [--remote]
 admin <env> app:settings <app id | publishable key> [--persistence session|none] [--session-ttl 12h] [--idle-ttl 2h]
              [--raw-sign off|approval] [--google-web-client <client id>|default] [--auto-approve <policy.json>|off] [--remote]
 admin <env> scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […] [--yes]
+admin <env> issuer-keys:lead-times [--remote]
 ```
 
 Run as `corepack pnpm --filter @hana-id/scripts run admin <env> <command> …`. Unknown flags are errors.
@@ -341,6 +342,42 @@ corepack pnpm --filter @hana-id/scripts run post-google-keys <env>              
 ```
 
 It adds before it removes, and refuses to sync if Google returns no usable RS256 key.
+
+### Issuer key lead times (D33)
+
+D33's issuer-key delay must stay shorter than the time between Google publishing a signing key and Google signing
+the tokens our users bring with it, or logins with a new key fail until the delay ends. The API measures it in D1
+`issuer_key_observations` (migration `0004_issuer_key_observations.sql`; kids and timestamps only):
+
+- **First / last seen in the JWKS, removed**: every cron run (every 15 min) fetches Google's JWKS and records each
+  kid; the run at :00 does so from the sync's own fetch. The API's verification fetches (on cache expiry, or on an
+  unknown kid at most once a minute per isolate) add sightings. "Removed" is the first fetch without the kid after
+  its last sighting; it is cleared if a later fetch lists the kid again (a stale Google frontend).
+- **First token**: the first token with a valid signature by that kid on `/v1/sessions` or `/v1/login`, written after
+  the response, at most once per kid per Worker isolate (the earliest write wins).
+- **max-age**: the JWKS response's Cache-Control max-age the last time the kid was listed.
+
+To turn it on in an env: apply the migration first (`wrangler d1 migrations apply <cloudflare.d1Name> --remote`), then
+`gen <env>` (the cron trigger becomes `*/15 * * * *`) and deploy the API. Deployed the other way round, writes fail
+with `key_observation_failed` warnings until the migration lands; logins are unaffected.
+
+```sh
+corepack pnpm --filter @hana-id/api run gen <env>        # wrangler.jsonc for the env, if not already
+corepack pnpm --filter @hana-id/scripts run admin <env> issuer-keys:lead-times --remote
+```
+
+It prints, per kid, first seen in the JWKS, first token, the lead time (first token − first seen), the lifetime in
+the JWKS (removed − first seen, or `…+ (listed)` while still published) and the last max-age, then the shortest lead
+time. Reading it:
+
+- A first sighting is up to 15 min after Google published the kid, so a lead time can read up to 15 min short.
+- The first token is the first one *we* saw, not Google's first use; logins are sparse on sandbox envs, so a lead
+  time there can read long. A rotation with no login in its window gives no lead time.
+- A negative lead time (token before any sighting) or a row with no first sighting means a token arrived before any
+  fetch listed the kid: Google used it within 15 min of publishing, and any delay longer than that breaks logins.
+- The kid present when measurement started has its first sighting at that point, not at Google's publication: ignore
+  its lead time. Collect several rotations (Google doesn't publish its schedule) before choosing the delay; set it
+  well under the shortest lead time seen.
 
 ### `VAULT_KEK`
 
@@ -514,6 +551,7 @@ Warm stage split: create = checks 0.2 s + relay 2.2 s (chain ~0.6 s); derive = r
 | `503 relayer_unconfigured` | `RELAYER_KEYS` (or `OWNER_RELAYER_KEYS` for owner actions) not set | `wrangler secret put` |
 | `422 contract_rejected` on every login after a deploy | contract has no Google keys, or keys out of date | `post-google-keys <env>`; check `KEYS_UPDATER_KEY` |
 | cron logs `jwks_sync_skipped` | no `KEYS_UPDATER_KEY` | upload it |
+| `key_observation_failed` warnings (`code` `jwks` / `token`) | a lead-time write to D1 failed (logins unaffected), often `issuer_key_observations` missing | apply migration 0004 (`migrations apply … --remote`) |
 | `503 vault_key_unavailable` | no `VAULT_KEK` (or the row's old key missing in `VAULT_KEK_PREVIOUS`) | set it |
 | `GET /vault` 503, log code `misconfigured` | `API_URL` missing: a `wrangler.jsonc` generated before `apiUrl` reached `gen` | `gen <env>` and redeploy |
 | `admin app:settings`: "The app's settings changed since they were read" | another `app:settings` or a D1 edit changed the app between the command's read and its write; nothing was written | run it again (it shows and plans from the current row) |

@@ -370,7 +370,7 @@ Status section is the summary for humans: https://claude.ai/artifact/GyQq6HZbaJB
 
 - `apps/e2e` has no live-app mode (it creates only `pk_test_` apps), so the raw approval popup isn't browser-tested
   (covered by `packages/web` unit tests).
-- `docs/batch-c-spec.md` still needs D34's MVP cut folded in.
+- `docs/batch-c-spec.md` (D34 cut and D73–D75 folded in) needs implementation review; its open questions need the user.
 - Open questions still to answer: `docs/decisions.md` "Proposed, not yet confirmed".
 
 Working rules: feature branch → PR into `develop` (an org ruleset requires one approving review from a teammate;

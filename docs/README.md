@@ -26,7 +26,8 @@ the batch merges, so where a spec and a reference doc disagree, the reference do
 | `batch-a-spec.md` | A: isolation (contract registry, API, environments) |
 | `batch-a2-shared-client.md` | A.2: shared Google client, sessions, follow-up fixes |
 | `batch-b-spec.md` | B: browser SDK, vault, one-transaction login, auto-approve policies (merged on `feat/batch-b`) |
-| `batch-c-spec.md` | C: developer dashboard (draft; the MVP cut is `decisions.md` D34, not yet folded in) |
+| `batch-c-spec.md` | C: developer dashboard (draft for implementation review; D34 MVP cut and D73–D75 folded in) |
+| `governance-spec.md` | Pre-mainnet governance (D33): delayed issuer keys with a watchdog, multisig owner, timelocked upgrades, pause (draft, for review) |
 | `hana-embed-ckd-results.md` | PoC measurements from wend-widget-demo |
 
 ## Where to put new knowledge

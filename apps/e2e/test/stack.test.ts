@@ -74,6 +74,10 @@ describe('the e2e env', () => {
     expect(portBase('4510')).toBe(4510);
     expect(portsFrom(4510)).toEqual({ partner: 4510, siteB: 4511, vault: 4520, auth: 4530, api: 4540, near: 4550, evm: 4560 });
     for (const bad of ['80', '65500', '45.5', '4510x', '-1', ' 0x1000']) expect(() => portBase(bad)).toThrow(/HANA_E2E_PORT_BASE/u);
+    // A base that puts a port on one browsers refuse (5010 + 50 = 5060, SIP) fails at once, not in the tests.
+    expect(() => portBase('5010')).toThrow(/port 5060, which browsers refuse/u);
+    expect(() => portBase('5059')).toThrow(/port 5060/u);
+    expect(portBase('5110')).toBe(5110);
     // This run's origins follow its base.
     const base = portBase();
     expect([PARTNER_ORIGIN, SITE_B_ORIGIN, VAULT_ORIGIN, AUTH_ORIGIN, API_URL].map((o) => Number(new URL(o).port))).toEqual([base, base + 1, base + 10, base + 20, base + 30]);

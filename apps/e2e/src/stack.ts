@@ -27,8 +27,18 @@ export function portBase(value: string | undefined = process.env.HANA_E2E_PORT_B
   if (!/^\d+$/u.test(value.trim()) || !Number.isSafeInteger(n) || n < 1024 || n + 50 > 65535) {
     throw new Error(`HANA_E2E_PORT_BASE must be an integer from 1024 to 65485 (the stack uses base … base + 50), not ${JSON.stringify(value)}`);
   }
+  const blocked = Object.values(portsFrom(n)).filter((p) => BROWSER_BLOCKED_PORTS.has(p));
+  if (blocked.length) {
+    throw new Error(`HANA_E2E_PORT_BASE ${n} puts the stack on port ${blocked.join(', ')}, which browsers refuse to connect to (the Fetch standard's bad ports): pick another base`);
+  }
   return n;
 }
+
+/**
+ * The Fetch standard's "bad ports" at or above 1024 (https://fetch.spec.whatwg.org/#port-blocking): every browser
+ * refuses requests to them, so a stack port there fails its tests (base 5010 puts the EVM RPC on 5060, SIP).
+ */
+export const BROWSER_BLOCKED_PORTS: ReadonlySet<number> = new Set([1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668, 6669, 6679, 6697, 10080]);
 
 /** The stack's ports for `base`. */
 export function portsFrom(base: number) {

@@ -7,7 +7,7 @@ approval and export bundles of `@hana-id/web`, and the partner client, in Chromi
 corepack pnpm --filter @hana-id/e2e e2e:install   # once: the browsers
 corepack pnpm --filter @hana-id/e2e e2e           # build + local stack + all three browsers
 corepack pnpm --filter @hana-id/e2e e2e --project webkit tests/approval.spec.ts
-HANA_E2E_PORT_BASE=4510 corepack pnpm --filter @hana-id/e2e e2e   # another worktree's run at the same time
+HANA_E2E_PORT_BASE=4510 corepack pnpm --filter @hana-id/e2e e2e   # another worktree's run at the same time (not 5010: see below)
 corepack pnpm --filter @hana-id/e2e test          # unit tests of the stack's mocks (part of `pnpm -r test`)
 ```
 
@@ -55,7 +55,9 @@ openid-only implicit flow and signs RS256 tokens with the claims Google sends fo
 hard-coded Google endpoints; nothing in them can select the stub.
 
 The ports are fixed for a run (the bundles inline the origins) and chosen by `HANA_E2E_PORT_BASE`, so worktrees that
-run the suite at the same time each set their own base (4410, 4510, …; the stack uses base … base + 50). Outside CI
+run the suite at the same time each set their own base (4410, 4510, …; the stack uses base … base + 50). A base
+whose ports include one of the Fetch standard's blocked ports (5060, 5061, 6000, 6665–6669, 10080, …) is refused, since
+no browser connects there. Outside CI
 Playwright reuses a stack that is already listening on them. `tests/global-setup.ts` fails the run unless that stack
 is this checkout's current code (`src/fingerprint.ts`: this package's path, the port base and the sources the stack
 is built from), so another worktree's stack, an unrelated server, or one started before an edit, is never tested by

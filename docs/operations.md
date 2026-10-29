@@ -416,6 +416,8 @@ HANA_E2E_PORT_BASE=4510 corepack pnpm --filter @hana-id/e2e e2e   # a second wor
 - Ports are `HANA_E2E_PORT_BASE` (default 4410) to base + 50. Outside CI Playwright reuses a stack already listening
   there; the global setup fails the run unless it is this checkout's current stack (fingerprint on
   `/__e2e/health`). On "not this checkout's current e2e stack": stop the other stack or use another base.
+- A base that puts a port on one of the Fetch standard's blocked ports (5060/5061 SIP, 6000, 6665–6669, 10080, …) is
+  refused at once: browsers never connect there. 5010 is one (its EVM RPC would be 5060); use 5110, for example.
 - CI (`.github/workflows/ci.yml`, job "Playwright") retries a failed test once to keep its trace, but a test that
   passes only on the retry fails the job (`failOnFlakyTests`). The report and traces are uploaded on failure.
 

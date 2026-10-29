@@ -158,6 +158,7 @@ describe('wrangler.jsonc', () => {
 
   it('has one quarter-hourly cron trigger (the hourly jobs run at :00, src/index.ts isHourlyRun)', () => {
     expect((wranglerConfig(manifest, LOCAL_D1_ID) as { triggers: unknown }).triggers).toEqual({ crons: ['*/15 * * * *'] });
+    expect((wranglerConfig(manifest, LOCAL_D1_ID) as { placement: unknown }).placement).toEqual({ mode: 'smart' });
   });
 
   it('refuses an env without vaultOrigin and authOrigin', () => {

@@ -41,6 +41,9 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
     // @near-js/crypto imports secp256k1 (CJS/native, unused: relayer keys are ed25519).
     alias: { secp256k1: './src/shims/secp256k1.ts' },
     observability: { enabled: true },
+    // Run next to D1 and the Durable Objects rather than where the request lands: workers.dev routing from
+    // Malaysia lands many requests in Europe (MRS), and each serial D1 query then crosses continents.
+    placement: { mode: 'smart' },
     vars: {
       NEAR_RPC: m.rpc,
       ...(m.rpcFallback ? { NEAR_RPC_FALLBACK: m.rpcFallback } : {}),

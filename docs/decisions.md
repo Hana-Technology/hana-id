@@ -942,7 +942,7 @@ answered question there points here.
 - Rejected: the alternatives each question listed.
 
 ### D94. Smart Placement for the API Worker
-- Date 2026-10-29 · Status: confirmed by the user, deployed to sandbox-dev · Source: `docs/operations.md` "Logs and
+- Date 2026-10-29 · Status: superseded by D97 (fixed region) · Source: `docs/operations.md` "Logs and
   latency"
 - Decision: the API Worker's generated config sets `placement: { mode: "smart" }`, so Cloudflare runs it near D1
   and the Durable Objects (APAC) rather than at the request's location.
@@ -993,6 +993,16 @@ answered question there points here.
   user's sessions, logins, errors and consents; it reveals no email or Google account and only works with Hana's
   secret. Partners escalate with the Support ID plus request IDs.
 - Rejected: an opt-in user contact email (partners own user communication).
+
+### D97. The API Worker runs in a fixed region next to D1 (replaces D94's Smart Placement)
+- Date 2026-10-29 · Status: deployed to sandbox-dev · Source: `docs/operations.md` "Logs and latency"
+- Decision: `placement: { region: "aws:ap-east-1" }` (Hong Kong, where Smart Placement had put it beside D1 APAC).
+- Why: Smart Placement only forwards from locations it has learned (up to 15 min of steady traffic after each
+  deploy); requests entering in CDG or MRS ran there and paid a Europe–Asia trip per D1 query. With the pin every
+  response showed `cf-placement: remote-HKG`.
+- Remaining: from Malaysia most workers.dev requests enter in FRA/CDG, so each request still crosses to Asia once
+  (about 1–1.7 s for `GET /v1/app`, 0.36 s when it enters in SIN). Fix by routing: a custom domain on a Hana zone,
+  tested on the free and a paid plan.
 
 ## Superseded or amended
 

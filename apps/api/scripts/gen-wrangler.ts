@@ -44,7 +44,9 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
     observability: { enabled: true },
     // Run next to D1 and the Durable Objects rather than where the request lands: workers.dev routing from
     // Malaysia lands many requests in Europe (MRS), and each serial D1 query then crosses continents.
-    placement: { mode: 'smart' },
+    // A fixed region next to D1 (APAC) and the Durable Objects: Smart Placement only moves requests from locations it
+    // has learned, so requests landing in Paris or Marseille kept running there after each deploy.
+    placement: { region: 'aws:ap-east-1' },
     vars: {
       NEAR_RPC: m.rpc,
       ...(m.rpcFallback ? { NEAR_RPC_FALLBACK: m.rpcFallback } : {}),

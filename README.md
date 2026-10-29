@@ -55,6 +55,7 @@ contracts/integration-tests/  near-workspaces sandbox tests (CI job "Sandbox e2e
 apps/api/                Cloudflare Worker + Durable Objects + D1: the relayer partners call (publishable keys)
 apps/smoke/              Local smoke-test pages (Vite, http://localhost:5173): login through the vault, plus the direct flow
 apps/e2e/                Playwright suite (Chromium, WebKit, Firefox) against a local stack: no testnet, no secrets
+apps/demo/               Hosted testnet demo for colleagues (Vite page + Worker): https://hana-id-demo-sandbox-dev.tingtc.workers.dev
 packages/env/            Environment manifest schema (zod) + loadEnv()
 packages/core/           SDK core (batch B, pure TS): layouts, CKD, derivation v1, signers, decoders, token checks
 packages/web/            Partner client (createHana) and the Hana pages (vault, login, approve, export), built per env
@@ -98,6 +99,7 @@ cd contracts/hana-signer && cargo test
 | `VAULT_KEK` | `pnpm --filter @hana-id/scripts run vault-kek <env> init\|put\|rotate [--yes]` |
 | Hana pages (vault, auth) | `pnpm --filter @hana-id/web build` · `pnpm --filter @hana-id/api run deploy:pages` |
 | Browser tests | `pnpm --filter @hana-id/e2e e2e` (`HANA_E2E_PORT_BASE` for a second worktree; `apps/e2e/README.md`) |
+| Hosted demo | `pnpm --filter @hana-id/demo run deploy` (`apps/demo/README.md`; its origin must be on the app first) |
 
 The `@hana-id/scripts` commands take the environment name (`envs/<env>.json`) first and print `--help`.
 

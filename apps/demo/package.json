@@ -1,0 +1,31 @@
+{
+  "name": "@hana-id/demo",
+  "version": "0.0.0",
+  "description": "Hosted testnet demo of Hana ID: a partner-style page on @hana-id/web, served by a Cloudflare Worker with static assets.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "gen:envs": "tsx ../../packages/web/scripts/gen-envs.ts",
+    "dev": "tsx ../../packages/web/scripts/gen-envs.ts && vite",
+    "build": "tsx ../../packages/web/scripts/gen-envs.ts && vite build",
+    "preview": "vite preview",
+    "gen": "tsx scripts/gen-wrangler.ts",
+    "deploy": "tsx ../../packages/web/scripts/gen-envs.ts && vite build && tsx scripts/gen-wrangler.ts && wrangler deploy",
+    "test": "tsx ../smoke/scripts/ensure-web-envs.ts && vitest run",
+    "typecheck": "tsx ../smoke/scripts/ensure-web-envs.ts && tsc --noEmit && tsc --noEmit -p tsconfig.node.json"
+  },
+  "dependencies": {
+    "@hana-id/core": "workspace:*",
+    "@hana-id/web": "workspace:*"
+  },
+  "devDependencies": {
+    "@hana-id/env": "workspace:*",
+    "@types/node": "22.20.5",
+    "happy-dom": "21.0.3",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vite": "7.3.7",
+    "vitest": "4.1.12",
+    "wrangler": "4.151.1"
+  }
+}

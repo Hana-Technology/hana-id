@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Hana ID testnet demo</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Hana ID demo</h1>
+        <span id="env-badge" class="badge"></span>
+      </header>
+
+      <p class="banner" id="testnet-banner"><strong>Testnet demo — test networks only, nothing here holds real funds.</strong></p>
+      <p class="lead">
+        Sign in with Google to get a Stellar and an EVM wallet, with no extension or seed phrase. This page is a partner
+        app built on <code>@hana-id/web</code>: your keys and your Google sign-in stay inside Hana’s own windows and
+        frame, and this page only sees your addresses and the signatures you approve. Every signature needs your
+        approval in a Hana window.
+      </p>
+
+      <p id="status" class="status" role="status" aria-live="polite">Connecting to the Hana vault…</p>
+      <p id="notice" class="notice" role="status" aria-live="polite" hidden></p>
+      <p id="error" class="error" role="alert" hidden></p>
+
+      <section aria-labelledby="h-account">
+        <h2 id="h-account">Account</h2>
+        <div class="row">
+          <button id="login" type="button" class="primary">Log in with Google</button>
+          <button id="cancel-login" type="button" hidden>Cancel sign-in</button>
+          <button id="logout" type="button" hidden>Log out</button>
+          <button id="revoke" type="button" hidden>Log out other devices</button>
+        </div>
+        <p id="progress" class="muted" hidden></p>
+        <p class="muted small" id="revoke-hint" hidden>“Log out other devices” signs this app out everywhere else; it works within 5 minutes of signing in.</p>
+      </section>
+
+      <section id="wallet" aria-labelledby="h-wallet" hidden>
+        <h2 id="h-wallet">Your addresses</h2>
+        <div class="address">
+          <span class="label">Stellar (testnet)</span>
+          <code id="stellar-address"></code>
+          <span class="actions">
+            <button id="copy-stellar" type="button" class="small-button">Copy</button>
+            <a id="stellar-link" target="_blank" rel="noopener noreferrer" hidden>View on StellarExpert ↗</a>
+          </span>
+        </div>
+        <div class="address">
+          <span class="label" id="evm-label">EVM</span>
+          <code id="evm-address"></code>
+          <span class="actions">
+            <button id="copy-evm" type="button" class="small-button">Copy</button>
+            <a id="evm-link" target="_blank" rel="noopener noreferrer" hidden>View on explorer ↗</a>
+          </span>
+        </div>
+        <p class="muted small">Same Google account, same addresses, on any device. Faucets can fund them, but you don’t need funds to try this page.</p>
+      </section>
+
+      <section id="signing" aria-labelledby="h-signing" hidden>
+        <h2 id="h-signing">Sign</h2>
+        <p class="muted small">Each request opens a Hana window where you review and approve it. Nothing is broadcast.</p>
+        <div class="row">
+          <button id="sign-personal" type="button">Sign a message (EVM personal_sign)</button>
+          <button id="sign-stellar" type="button">Sign a message (Stellar)</button>
+          <button id="sign-evm-tx" type="button">Sign a test transaction</button>
+        </div>
+        <ul id="results" class="results"></ul>
+      </section>
+
+      <section id="export" aria-labelledby="h-export" hidden>
+        <h2 id="h-export">Export key</h2>
+        <p class="muted small">Hana opens its own window, asks you to sign in with Google again and shows the key there. It never reaches this page.</p>
+        <div class="row">
+          <button id="export-stellar" type="button">Export Stellar key</button>
+          <button id="export-evm" type="button">Export EVM key</button>
+        </div>
+      </section>
+
+      <section aria-labelledby="h-report">
+        <h2 id="h-report">Report</h2>
+        <details id="timings-panel">
+          <summary>Login timings</summary>
+          <p class="muted small">Per-stage times from the vault (test apps only), in milliseconds. “google” includes your own clicks.</p>
+          <table>
+            <thead>
+              <tr><th>When</th><th>app</th><th>popup</th><th>google</th><th>verify</th><th>chain</th><th>decrypt</th><th>total</th></tr>
+            </thead>
+            <tbody id="timings"><tr><td colspan="8" class="muted">No login yet on this page.</td></tr></tbody>
+          </table>
+          <p id="unlock" class="muted small"></p>
+        </details>
+        <div class="row">
+          <button id="copy-diagnostics" type="button">Copy diagnostics</button>
+        </div>
+        <p class="muted small">Diagnostics hold the environment, the app key’s prefix, your addresses, timings, your browser and any errors. Never keys, tokens or signatures.</p>
+        <details id="diagnostics-panel">
+          <summary>Show diagnostics</summary>
+          <pre id="diagnostics"></pre>
+        </details>
+      </section>
+
+      <footer class="muted small">
+        <span id="footer-env"></span>
+      </footer>
+    </main>
+  </body>
+</html>

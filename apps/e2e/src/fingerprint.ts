@@ -5,7 +5,8 @@
 // GET /__e2e/health; tests/global-setup.ts compares it with the checkout's own and fails the run on a mismatch.
 //
 // It hashes this package's absolute path and every file the stack builds or runs from source: the e2e stack and
-// partner app, @hana-id/web and @hana-id/core (the bundles), and apps/api's Worker and migrations.
+// partner app, @hana-id/web and @hana-id/core (the bundles), apps/api's Worker and migrations, and the demo (its page,
+// sources and Worker).
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -16,11 +17,25 @@ const E2E_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
 /** Source trees the stack is made from, relative to the repo root. */
-export const FINGERPRINT_DIRS: readonly string[] = ['apps/e2e/src', 'apps/e2e/partner', 'packages/web/src', 'packages/web/scripts', 'packages/core/src', 'apps/api/src', 'apps/api/migrations'];
+export const FINGERPRINT_DIRS: readonly string[] = [
+  'apps/e2e/src',
+  'apps/e2e/partner',
+  'packages/web/src',
+  'packages/web/scripts',
+  'packages/core/src',
+  'apps/api/src',
+  'apps/api/migrations',
+  'apps/demo/src',
+  'apps/demo/worker',
+  'apps/demo/public',
+  'apps/demo/index.html',
+];
 
+/** The files under `dir` (or `dir` itself when it is a file), sorted. */
 function files(dir: string): string[] {
   let names: string[];
   try {
+    if (statSync(dir).isFile()) return [dir];
     names = readdirSync(dir);
   } catch {
     return [];

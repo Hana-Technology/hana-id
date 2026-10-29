@@ -19,6 +19,7 @@ Ports are `HANA_E2E_PORT_BASE` (default 4410) plus the offsets below: the table 
 |---|---|
 | `http://localhost:4410` | the partner test app (`partner/app.ts`): `createHana`, viem, wagmi, Stellar Wallets Kit 1.9.5 and 2.7.1 |
 | `http://site-b.localhost:4411` | the same app on a second partner site (the storage-partitioning case) |
+| `http://localhost:4412` | the hosted demo (`apps/demo`), built for the e2e env and served by its own Worker handler with its real CSP (`tests/demo.spec.ts`) |
 | `http://127.0.0.1:4420` | `vaultOrigin`: apps/api's vault host, and the vault page rendered by apps/api's `handleVaultPage` from D1 |
 | `http://127.0.0.1:4430` | `authOrigin`: apps/api's auth host over the built auth pages |
 | `http://127.0.0.1:4440` | the Hana API: apps/api's Worker, with `/v1/login` and `/v1/derive` mocked; plus `/__e2e/*` control endpoints |
@@ -43,6 +44,11 @@ raw request; `tests/approval.spec.ts` checks that a test app's raw request is 41
 The mocked NEAR RPC (`src/server/chain.ts`) answers the vault's and the export window's reads (`get_session`, tx
 status, and the login's registry check, `get_scope` / `scope_for_client`, D56) and the Worker's (`get_session`,
 `get_scope`, `get_config`).
+
+The demo (`apps/demo`) is bundled by esbuild from its own `index.html` and `src/main.ts` with a configuration for the
+stack (`DEMO_CONFIG` in `src/build.ts`: the e2e env, the mocked EVM chain). It bakes its key in at build time, as the
+deployed demo does, so its app has a fixed key (`DEMO_PK`): `POST /__e2e/apps` with `publishableKey` creates it once
+and returns it after that, and every demo test and browser shares it (each test still has its own browser context).
 
 The bundles are built by `@hana-id/web`'s own per-env build scripts for `local-e2e`, an env defined in `src/stack.ts`
 (not in `envs/`, so the published client never lists a loopback env). Its CKD key belongs to a test MPC

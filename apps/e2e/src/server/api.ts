@@ -7,7 +7,8 @@
 // API's own check has its own tests in apps/api).
 //
 // Control endpoints for the tests (`/__e2e/*`, no CORS, so no page can call them):
-//   POST /__e2e/apps                  {name?, scopeId?, origins, status?, settings?} → {appId, pk}
+//   POST /__e2e/apps                  {name?, scopeId?, origins, status?, settings?, publishableKey?} → {appId, pk}
+//                                     (with publishableKey: created once, then the same app is returned)
 //   POST /__e2e/apps/<pk>/revoke      every live share of the app is revoked (an unlock then gets 410 share_revoked)
 //   GET  /__e2e/apps/<pk>/shares      [{counter, revoked, partnerOrigin}], oldest first
 //   GET  /__e2e/health                {ok, fingerprint} (fingerprint.ts)
@@ -57,6 +58,8 @@ export interface AppSpec {
   origins: string[];
   status?: 'active' | 'suspended';
   settings?: { persistence?: 'session' | 'none'; rawSign?: 'off' | 'approval'; autoApprovePolicy?: Body | null };
+  /** A fixed key, for a page that bakes its key in at build time (the demo): the app is created on first use only. */
+  publishableKey?: string;
 }
 
 export interface MockApiOptions {
@@ -100,9 +103,14 @@ export class MockApi {
   // ---- apps (D1 rows, read back by apps/api's own queries) ----
 
   createApp(spec: AppSpec): { appId: string; pk: string } {
+    if (spec.publishableKey !== undefined) {
+      if (!/^pk_test_[1-9A-HJ-NP-Za-km-z]{16,64}$/u.test(spec.publishableKey)) throw new Error('publishableKey must be a pk_test_ key');
+      const existing = this.d1.db.prepare('SELECT id FROM apps WHERE publishable_key = ?').get(spec.publishableKey) as { id: string } | undefined;
+      if (existing) return { appId: existing.id, pk: spec.publishableKey };
+    }
     this.seq += 1;
     const appId = `app_e2e_${this.seq}_${toHex(crypto.getRandomValues(new Uint8Array(4)))}`;
-    const pk = `pk_test_${base58.encode(crypto.getRandomValues(new Uint8Array(16)))}`;
+    const pk = spec.publishableKey ?? `pk_test_${base58.encode(crypto.getRandomValues(new Uint8Array(16)))}`;
     const s = spec.settings ?? {};
     this.d1.db
       .prepare('INSERT INTO apps (id, name, scope_id, publishable_key, status, persistence, raw_sign, auto_approve_policy) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')

@@ -1,0 +1,87 @@
+// Plain-language messages for what the SDK rejects with (docs/integration.md section 13). `hana.*` rejects with a
+// HanaError (a numeric or string code), the EIP-1193 provider with a ProviderRpcError whose numeric code hides the
+// Hana code in `data.code`; a network failure inside the SDK can surface as a TypeError.
+
+export type DemoAction = 'load' | 'login' | 'logout' | 'revoke' | 'sign' | 'export' | 'copy';
+
+export interface ErrorInfo {
+  /** The most specific code: the Hana string code when there is one, else the numeric code, else null. */
+  code: string | number | null;
+  /** `data.reason` when the error carries one (`share_not_fresh`, `mainnet_not_allowed`, …). */
+  reason: string | null;
+  /** The error's own message (may name values: diagnostics scrub it). */
+  message: string;
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
+const CODE_RE = /^[a-z][a-z0-9_]{0,63}$/u;
+
+export function errorInfo(e: unknown): ErrorInfo {
+  const message = e instanceof Error ? e.message : isObj(e) && typeof e.message === 'string' ? e.message : String(e);
+  if (!isObj(e)) return { code: null, reason: null, message };
+  const data = isObj(e.data) ? e.data : null;
+  const inner = typeof data?.code === 'string' && CODE_RE.test(data.code) ? data.code : null;
+  const own = typeof e.code === 'number' && Number.isSafeInteger(e.code) ? e.code : typeof e.code === 'string' && CODE_RE.test(e.code) ? e.code : null;
+  const reason = typeof data?.reason === 'string' && CODE_RE.test(data.reason) ? data.reason : null;
+  return { code: inner ?? own, reason, message };
+}
+
+const REPORT = 'If it keeps happening, use “Copy diagnostics” and send it to the Hana team.';
+
+/** What to tell the user, for an error of `action`. */
+export function plainMessage(e: unknown, action: DemoAction): string {
+  const { code, reason } = errorInfo(e);
+  switch (code) {
+    case 'popup_blocked':
+      return 'Your browser blocked the Hana sign-in window. Allow pop-ups for this site and click “Log in with Google” again.';
+    case 'login_cancelled':
+      return 'Sign-in cancelled.';
+    case 'coop_blocks_popup':
+      return 'The Hana sign-in window closed before it finished loading. Try again and keep the window open.';
+    case 'login_timeout':
+      return 'The Hana sign-in window did not respond in time. Try again.';
+    case 'google_error':
+      return isObj(e) && isObj(e.data) && e.data.error === 'access_denied' ? 'You declined the Google sign-in.' : `Google returned an error. Try again. ${REPORT}`;
+    case 'vault_unavailable':
+      return 'Could not load the Hana vault. Check your connection and any content blocker, then reload the page.';
+    case 'api_unavailable':
+      return 'Could not reach Hana’s service. Check your connection and try again.';
+    case 'rate_limited':
+      return action === 'export' ? 'Too many key exports in the last hour. Try again later.' : 'Too many attempts. Wait a minute and try again.';
+    case 'origin_not_allowed':
+      return 'This site is not on the demo app’s allowed origins yet: ask the Hana team to add it.';
+    case 'app_suspended':
+      return 'The demo app is suspended.';
+    case 'no_google_client':
+      return 'The demo app has no Google sign-in configured. Tell the Hana team.';
+    case 'busy':
+      return 'A key export is already open. Finish or close it first.';
+    case 'session_consumed':
+      return 'Click “Continue signing in” on the Hana button at the bottom right to finish signing in.';
+    case 'token_invalid':
+    case 'token_has_pii':
+    case 'config_mismatch':
+    case 'ckd_failed':
+    case 'derive_failed':
+    case 'pairing_failed':
+    case 'address_mismatch':
+      return `Sign-in failed (${code}). Try again. ${REPORT}`;
+    case 4001:
+      if (action === 'login') return 'Sign-in did not complete (the window was closed or timed out).';
+      if (action === 'export') return 'Export cancelled.';
+      return 'Rejected in the Hana window: nothing was signed.';
+    case 4100:
+      if (reason === 'share_not_fresh') return '“Log out other devices” works only within 5 minutes of signing in. Log out, sign in again, then try it.';
+      if (reason === 'mainnet_not_allowed') return 'Refused: this demo app signs for test networks only.';
+      return 'Not allowed: you may have been logged out. Log in and try again.';
+    case 4900:
+      return 'The connection to the Hana vault was lost. Reload the page.';
+    case 4902:
+      return 'This EVM chain is not configured on the demo.';
+    default:
+      break;
+  }
+  if (e instanceof TypeError && /fetch|network|load failed/iu.test(e.message)) return 'Network error. Check your connection and try again.';
+  if (action === 'copy') return 'Could not copy to the clipboard. Select the text and copy it yourself.';
+  return `Something went wrong${code !== null ? ` (${code})` : ''}. ${REPORT}`;
+}

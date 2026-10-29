@@ -51,6 +51,8 @@ export function portsFrom(base: number) {
      * browser lets a [::1] page embed the vault through its frame-ancestors.
      */
     siteB: base + 1,
+    /** The hosted demo (apps/demo), served by its own Worker handler over its e2e build. */
+    demo: base + 2,
     vault: base + 10,
     auth: base + 20,
     api: base + 30,
@@ -67,6 +69,7 @@ export const PORTS = portsFrom(portBase());
 
 export const PARTNER_ORIGIN = `http://localhost:${PORTS.partner}`;
 export const SITE_B_ORIGIN = `http://site-b.localhost:${PORTS.siteB}`;
+export const DEMO_ORIGIN = `http://localhost:${PORTS.demo}`;
 export const VAULT_ORIGIN = `http://127.0.0.1:${PORTS.vault}`;
 export const AUTH_ORIGIN = `http://127.0.0.1:${PORTS.auth}`;
 export const API_URL = `http://127.0.0.1:${PORTS.api}`;
@@ -103,6 +106,12 @@ export const E2E_ENV: HanaEnv = Object.freeze({
 
 /** The scope's shared Google client (any string: the OIDC stub accepts any client id the API hands out). */
 export const GOOGLE_CLIENT_ID = 'e2e-shared.apps.googleusercontent.com';
+
+/**
+ * The demo's app key. The demo bakes its key in at build time, as the hosted one does, so its e2e app has this fixed
+ * key (POST /__e2e/apps with `publishableKey` creates it once and returns it after that). Public, like every pk.
+ */
+export const DEMO_PK = 'pk_test_DemoE2eDemoE2eDemoE2e';
 
 /** Where src/build.ts writes the bundles, and the servers read them. */
 export const BUILD_DIR = new URL('../.build/', import.meta.url);

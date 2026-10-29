@@ -692,6 +692,61 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
 - Decision: `create_session_and_derive` stays. Over 10 interleaved runs each, it saved 2.44 s of chain time at the
   median against `create_session` + `derive_key`, above the 1.5 s bar.
 
+### D77. The login popup makes no API call; it trusts the vault's app facts
+- Date 2026-10-29 · Status: in force (`packages/web/src/auth/login-page.ts`; `/login` CSP without `connect-src`,
+  `packages/web/src/auth/pages.ts`, `apps/api/src/pages/host.ts`) · Source: `docs/context.md` "Login timings with
+  stage breakdown" (`authCheck` 1.05 s); reasoning in `docs/security.md` "The login popup trusts the vault's app facts"
+- Decision: `/login` no longer calls `GET /v1/app` before going to Google. It uses the app name, parent origin, scope
+  and Google client from `hana:auth-params`, which it accepts only from the authenticated preparer (the vault on
+  `vaultOrigin` by `event.origin` and `event.source`, or `/export` on `authOrigin`), and still checks the pinned
+  `SIGNER` and recomputes the nonce. Its CSP drops `connect-src` (it fetches nothing).
+- Why: its own read added nothing a malicious party could not already get around. A compromised `vaultOrigin` or API
+  Worker already has every key (`docs/security.md` "What a compromise gives"), and the popup's read went to the same
+  API. The only things it caught were a vault config gone stale since the page loaded (app suspended, origin removed,
+  Google client changed), and `POST /v1/login` refuses all of those anyway before anything is relayed (app gate on the
+  current D1 row, `x-hana-parent-origin`, `checkClientScope`, the contract's scope check, the vault's registry check
+  D56). So such a login now fails after Google rather than before it. Measured cost removed: about 1.05 s per login.
+- Rejected: keeping the read but running it in parallel (the popup navigates to Google at once, which cancels it, and
+  moving it to the callback would put it back on the critical path for no added check).
+
+### D78. The vault endpoints cache the app per isolate for 30 s; the share limit runs alongside the gate's
+- Date 2026-10-29 · Status: in force (`apps/api/src/app-cache.ts`, `apps/api/src/vault/endpoints.ts` `vaultApp`,
+  `vaultLimits`; `RateLimiter.refund`) · Source: `docs/context.md` "Login timings with stage breakdown" (unlock gate
+  0.24 s)
+- Decision: `/v1/vault/*` reads the app (`getAppByKey`, two D1 queries) from an in-isolate cache whose entries live
+  30 s from the D1 read (at most 256 apps; unknown keys and failed reads never cached). Nothing in the Worker writes
+  `apps`, so the bound is the TTL: a suspension, a removed or changed publishable key, a removed origin, a scope
+  conflict or a plan change reaches the vault endpoints within 30 s per isolate. The relay endpoints, `GET /v1/app`
+  and the vault page still read D1 every time, so a suspension stops logins (gas) and new vault loads at once. Rate
+  limits keep their order and counts: the IP window, then the app window only once the IP window accepted (so a
+  request the IP refuses never holds any of the app's shared quota); the share window (`share:<id>`, 10/min) is asked
+  alongside them and refunded when the IP or app window refuses, so it counts exactly as before.
+- Why: a reload's unlock paid the D1 reads and three limiter round trips one after another; a warm unlock now pays two
+  limiter round trips. Suspension and key removal are operator actions where 30 s is acceptable; nothing on the vault
+  endpoints spends gas.
+- Rejected: asking the IP and app windows in parallel with a refund (a client the IP window refuses would hold app
+  quota while its requests are in flight, so one client with many requests open could lock out every user); caching
+  for the relay endpoints (a suspension must stop spending at once); an invalidation signal (no Worker code changes
+  apps today; revisit with batch C's console).
+
+### D79. Login success is reported before the share is made
+- Date 2026-10-29 · Status: in force (`packages/web/src/vault/vault.ts` `finishLogin`, `persistLogin`) · Source:
+  `docs/context.md` "Login timings with stage breakdown" (`persist` 0.48 s); amends `docs/batch-b-spec.md` "Login"
+  steps 11–12
+- Decision: in `'session'` mode the vault replies to `hana_login` (and emits `accountsChanged`) as soon as PRK and the
+  addresses exist, with `persistence: 'session'`, then makes the share (`POST /v1/vault/shares`, tried once more after
+  1 s) and the IndexedDB record in the background. If that gives up, the session keeps working in memory,
+  `hana_status` reports `persistence: 'none'` and the vault emits `persistenceChanged {persistence: 'none'}` (the
+  client's `hana.persistence` and `useHana()` follow), the share (if made) is revoked, the older session's record this login
+  replaces is deleted and its share revoked (the next reload is a full login), and the vault logs a reason code
+  (`console.warn`, no ids or keys). A session that ends first (logout, a newer login, expiry, idle, a revocation)
+  cancels it: no record is left and a share made for it is revoked; logout doesn't wait. Revoke-other-devices, touch
+  and every consent read or write wait for it to settle.
+- Why: about 0.48 s off every login, and the share only matters at the next page load.
+- Given up: a reload within that window (about one API round trip after the login reply) is a full login; the login
+  result's `persistence` is the mode intended, and `persistenceChanged` / `hana_status` say if it didn't happen. Share timings are no
+  longer in the login's timings (`persist`, `shareRtt`, `shareServer*` removed); the API's request log still has them.
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -707,6 +762,8 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
 | Contract upgradeable with no lock (batch A, PoC) | Still so on testnet; upgrade governance before mainnet (D2, D33) | `docs/batch-a-spec.md` |
 | Partners build the SDK from this repository and compile its TypeScript sources | Built tarballs (`pnpm pack`), installed with npm; no registry yet (D71, D72) | `docs/integration.md` "Install" |
 | Sodax Stellar `signAndSendTransaction(p)` is `sendTransaction(signTransaction(p.data))` | It signs as `p.from`: `sendTransaction(signTransaction(p.data, {address: p.from}))`, so a raw transaction built for another account (a muxed `M…` address included) is 4100 before any popup. Sodax builds every raw transaction for `getWalletAddress()`'s `G…` address. Confirmed (D67) | `docs/batch-b-spec.md` "Sodax adapter"; `packages/sodax/src/stellar.ts` |
+| `/login` calls `GET /v1/app` itself and cross-checks the vault's signer, scope and client before Google (batch B "Login" step 4) | It checks the pinned signer and the nonce only, makes no API call, and shows the vault's app name (D77) | `docs/security.md` "The login popup trusts the vault's app facts" |
+| The vault persists (share, record) before it replies to `hana_login` (batch B "Login" steps 11–12) | It replies first; the share and record follow in the background, and a failure turns `persistence` to `'none'` (`persistenceChanged`, D79) | `packages/web/src/vault/vault.ts` `persistLogin` |
 
 ## Proposed, not yet confirmed
 

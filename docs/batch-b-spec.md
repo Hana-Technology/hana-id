@@ -19,6 +19,7 @@ Everything in A, A.2 and `docs/contract-interface.md` stands except:
 | `batch-a2-shared-client.md` (`GET /v1/app`) | Adds `name` and `serverTimeMs` to the response, accepts `x-hana-parent-origin` from Hana origins, and uses the app's `google_web_client_id` when it is set. |
 | `batch-a2-shared-client.md` (`/v1/sessions` checks) | Adds the claim allow-list (`token_has_pii`), behind `REJECT_PII_ON_SESSIONS` until smoke moves (see [Order of work](#order-of-work)). |
 | `contract-interface.md` | New method `create_session_and_derive`, the `key_index` bound, the off-chain `hana-id-vault-v1:` prefix, and the note that the contract itself does not refuse PII claims. |
+| This spec, [Login](#login) steps 4 and 11–12 (2026-10-29, `docs/decisions.md` D77, D79) | `/login` makes no API call (no `GET /v1/app` cross-check; its CSP has no `connect-src`). The vault replies to `hana_login` before it makes the share and record, which follow in the background; a failure there emits `persistenceChanged {persistence: 'none'}`. |
 
 ## Goal
 
@@ -79,7 +80,7 @@ The decision records disagree in the places below. This spec takes one side each
 |---|---|---|---|---|
 | R1 | Origins | vault-architecture: `vaultOrigin` and `authOrigin`. google-flow: one `authOrigin` that also serves `/vault`. | Two origins. The vault page is `GET {vaultOrigin}/vault?pk=…`. Auth pages are `{authOrigin}/login`, `/login/callback`, `/approve`, `/export`. | Keeps the key-holding frame apart from the pages that handle tokens and UI. Popups authenticate the vault by `event.origin === vaultOrigin`. The callback path is google-flow's (exact redirect-URI match), not `/cb`. |
 | R2 | Token return | vault-architecture: relay only. google-flow: `window.opener` in the MVP, rendezvous as a later hook. | Relay only, end-to-end encrypted (`relayKey`), with a read capability (`relayReadKey`) only the vault holds, plus google-flow's `state` check in first-party `sessionStorage` and its COOP canary. | Google already sends `cross-origin-opener-policy-report-only: same-origin`. One return path means one path to test. Encryption keeps the API from reading or replacing the token. |
-| R3 | App config in the vault | vault-architecture: vault calls `GET /v1/app` with `x-hana-parent-origin`. google-flow: config inlined into the no-store vault page; it rejected the header. | The vault page inlines D1-only config (origins, settings, `scopeId`, `appName`, `serverTimeMs`), so a reload needs no chain RPC. The vault fetches `GET /v1/app` (Google client, read from chain) lazily, in the background after `ready`. The login popup also calls `GET /v1/app` for what it displays. API calls from Hana origins carry `x-hana-parent-origin`, which `appGate` checks with `originAllowed`. | The header is no weaker than today's `Origin` check, which only browsers enforce. It keeps per-app origin enforcement and lets removing an origin kill that origin's shares. The browser-enforced bindings are still `frame-ancestors` plus `event.origin`. |
+| R3 | App config in the vault | vault-architecture: vault calls `GET /v1/app` with `x-hana-parent-origin`. google-flow: config inlined into the no-store vault page; it rejected the header. | The vault page inlines D1-only config (origins, settings, `scopeId`, `appName`, `serverTimeMs`), so a reload needs no chain RPC. The vault fetches `GET /v1/app` (Google client, read from chain) lazily, in the background after `ready`. The login popup also calls `GET /v1/app` for what it displays (no longer since 2026-10-29: D77). API calls from Hana origins carry `x-hana-parent-origin`, which `appGate` checks with `originAllowed`. | The header is no weaker than today's `Origin` check, which only browsers enforce. It keeps per-app origin enforcement and lets removing an origin kill that origin's shares. The browser-enforced bindings are still `frame-ancestors` plus `event.origin`. |
 | R4 | When the BLS key `a` is made | vault-architecture and google-flow: before the click, with `sig1` pre-signed. single-tx-login: after the token arrives. | After the token arrives. The session key, salt, nonce, `relayKey` and `relayReadKey` are made when `hana_login` arrives. | `a` lives as briefly as possible, and making it costs a few ms. |
 | R5 | Persistence mechanism | vault-architecture §4: local AES-GCM of S, a session key with uses left, 8 h default. B-key-persistence: server share, `max_uses = 1`, 12 h absolute and 2 h idle. | B-key-persistence, with one AES-GCM layer under the server share (no local `K_l`, see Q35). vault-architecture §4 is superseded. | `derive_key` is permissionless, so a persisted session key with uses left makes the server limits bypassable on chain. |
 | R6 | `max_uses` | single-tx-login: SDK requires `maxUses ≥ 2` (default 500) so it can retry after `ckd_failed`. B-key-persistence: `max_uses = 1` in `'session'` mode. | `'session'`: `max_uses = 1`, and `ckd_failed` means a new login. `'none'`: `max_uses = 2` (one retry). Export: `max_uses = 1`. | single-tx-login itself calls `max_uses ≥ 2` "SDK policy, not a security property". The share precondition is a security property. See Q14. |
@@ -106,7 +107,7 @@ The Worker serves both through their own routes (or, for sandbox-dev on `workers
 | Page | Origin | Added to the base policy | Other headers | Purpose |
 |---|---|---|---|---|
 | `GET /vault?pk=<publishable key>` | `vaultOrigin` | `frame-ancestors <app's allowed origins>` (loopback only for `pk_test_` and only in `local*`/`sandbox*` envs, by the same rules as `originAllowed`; at most 20 origins per app); `connect-src {apiUrl} {rpc} https://www.googleapis.com` | `Cross-Origin-Resource-Policy: cross-origin` | Key vault (hidden iframe) and the launcher |
-| `GET /login` | `authOrigin` | `frame-ancestors 'none'; connect-src {apiUrl}` | No COOP header (`unsafe-none`) | Login popup start |
+| `GET /login` | `authOrigin` | `frame-ancestors 'none'` (no `connect-src`: it fetches nothing, D77) | No COOP header (`unsafe-none`) | Login popup start |
 | `GET /login/callback` | `authOrigin` | `frame-ancestors 'none'; connect-src {apiUrl}` | same | Google redirect target |
 | `GET /approve` | `authOrigin` | `frame-ancestors 'none'` | same | Approval popup |
 | `GET /export` | `authOrigin` | `frame-ancestors 'none'; connect-src {apiUrl} {rpc} https://www.googleapis.com` | same | Key export window |
@@ -218,7 +219,7 @@ Every cross-window message is a plain object sent by structured clone. Bytes tra
 
 The SDK answers some calls itself without the vault: `eth_chainId`, `wallet_switchEthereumChain`, `getNetwork` and read-only RPC methods. It also handles fee and nonce filling and broadcasting, using the partner's RPC.
 
-Events: `accountsChanged {addresses}`, `disconnect {code}`, `sessionExpired`, `loginProgress {stage: 'popup_connected' | 'google' | 'token' | 'chain' | 'done'}`, `ui {launcher: 'show' | 'hide', label}`. For `pk_test_` apps only, the login result also carries `timings` (per-stage ms, no secrets) for `apps/smoke`, and `ready` carries the handshake and unlock's (`packages/core/src/timings.ts`).
+Events: `accountsChanged {addresses}`, `disconnect {code}`, `sessionExpired`, `persistenceChanged {persistence}` (D79), `loginProgress {stage: 'popup_connected' | 'google' | 'token' | 'chain' | 'done'}`, `ui {launcher: 'show' | 'hide', label}`. For `pk_test_` apps only, the login result also carries `timings` (per-stage ms, no secrets) for `apps/smoke`, and `ready` carries the handshake and unlock's (`packages/core/src/timings.ts`).
 
 ## Login
 
@@ -256,7 +257,7 @@ Steps:
 
    It pins `event.source` and replies to it with `targetOrigin = authOrigin`:
    `{v:1, t:"hana:auth-params", pk, appName, parentOrigin, scopeId, signer: SIGNER, clientId, mode, sessionPublicKey, expiresAtMs, salt, keyIndex, maxUses, nonce, relayId, relayKey}`. Here `pk` is the publishable key; the session public key is always `sessionPublicKey`.
-4. **The popup checks the vault.** It accepts the reply only if `event.origin === vaultOrigin` and, in partner mode, `event.source === window.opener.frames[v]` and `event.source.parent === window.opener`, or, in vault mode, `event.source === window.opener`. It refuses (`config_mismatch`) if `signer !== SIGNER` (its own pinned constant). It then calls `GET /v1/app` itself (`x-hana-key: pk`, `x-hana-parent-origin: parentOrigin`, `Origin: authOrigin`), refuses if that response's `signer` isn't `SIGNER`, its `scopeId` isn't the vault's or its `clientId` isn't the vault's, recomputes the nonce with the same preimage and refuses on a mismatch. This call checks the vault's values against the API's view of the parent origin and supplies what the popup displays; it is not a defence against a compromised Worker. Otherwise it stores `{v, createdAt, relayKey}` under `hana.login.<relayId>` in its own `sessionStorage`, deletes any `hana.login.*` entry older than 10 min, and shows "Signing in to {appName} at {parentOrigin}" (via `textContent`).
+4. **The popup checks the vault.** It accepts the reply only if `event.origin === vaultOrigin` and, in partner mode, `event.source === window.opener.frames[v]` and `event.source.parent === window.opener`, or, in vault mode, `event.source === window.opener`. It refuses (`config_mismatch`) if `signer !== SIGNER` (its own pinned constant), recomputes the nonce with the same preimage and refuses on a mismatch. It makes no API call (amended 2026-10-29, D77): it used to call `GET /v1/app` itself and cross-check `signer`, `scopeId` and `clientId`, which only caught a vault config gone stale since the page loaded, and `POST /v1/login` refuses those before relaying anything (`docs/security.md` "The login popup trusts the vault's app facts"). Otherwise it stores `{v, createdAt, relayKey}` under `hana.login.<relayId>` in its own `sessionStorage`, deletes any `hana.login.*` entry older than 10 min, and shows "Signing in to {appName} at {parentOrigin}" (via `textContent`).
 5. **Google.** The popup navigates to `https://accounts.google.com/o/oauth2/v2/auth` with:
    - `client_id`
    - `redirect_uri={authOrigin}/login/callback`
@@ -278,8 +279,8 @@ Steps:
 8. **Path.** The vault sets `expectedPath = scopeId + "#google#" + sub + "#" + keyIndex`. It is the only path the vault ever uses for this session.
 9. **Chain.** The vault runs `newAppKey()` to get `a`, `pk1` and `pk2`, signs `sig1 = Ed25519(sessionMessage(1, ckdPayload(pk1, pk2)))`, and sends `POST /v1/login` (see [API changes](#api-changes-appsapi)).
 10. **Decrypt.** `S = decryptCkd(result, a, ckdAppId(SIGNER, expectedPath), pinnedKey)`, including the pairing check. Then `PRK = HKDF-Extract(...)`, S is zeroed, and the reference to `a` is dropped. Addresses come from PRK.
-11. **Persist.** In `'session'` mode the vault creates a share and writes the record (see [Key persistence](#key-persistence)). If storage fails it drops to `'none'` and reports `storage_unavailable`.
-12. **Result.** The vault replies `{addresses:{stellar, evm}, expiresAtMs, persistence}` and emits `accountsChanged`.
+11. **Result.** The vault replies `{addresses:{stellar, evm}, expiresAtMs, persistence}` and emits `accountsChanged`.
+12. **Persist** (after the result since 2026-10-29, D79). In `'session'` mode the vault then creates a share (`POST /v1/vault/shares`, tried once more after 1 s) and writes the record (see [Key persistence](#key-persistence)), in the background. If that gives up, the session keeps working in memory with persistence `'none'` (`persistenceChanged`, `hana_status`), the share is revoked if made, and the older session's record it replaced is cleared, so the next reload is a full login. A session that ends first (logout, a newer login, expiry, idle, a revocation) leaves no record and no live share; logout doesn't wait for it. Revoke-other-devices, touch and consent reads and writes wait for it to settle.
 
 ### Failure handling
 
@@ -534,7 +535,7 @@ Every account descriptor carries `{derivation: 1, keyIndex, namespace, curve, ac
 3. On a click inside the export window, the window makes its own session key (`max_uses = 1`), salt, nonce (same preimage, its own server-corrected clock from `GET /v1/app`'s `serverTimeMs`), `relayKey`, `relayReadKey` and `relayId`. It opens a child popup `/login?mode=export` with the name `hana-login-<random>`. In export mode `/login`:
    - posts `{v:1, t:"hana:auth-hello"}` to `window.opener` with `targetOrigin = authOrigin`;
    - accepts `hana:auth-params` only when `event.origin === authOrigin`, `event.source === window.opener` and `window.opener.location.pathname === '/export'` (readable: same origin);
-   - calls `GET /v1/app`, recomputes the nonce and checks `signer`, `scopeId` and `clientId` exactly as in step 4 of [Login](#login);
+   - recomputes the nonce and checks `signer` exactly as in step 4 of [Login](#login) (the export window itself read `GET /v1/app`);
    - then follows steps 5–6 unchanged, adding `max_age=0` to the Google request.
 
    The export window answers `auth-hello` only from the child it opened (`event.source === child`, `event.origin === authOrigin`). It long-polls the relay itself with its read key. Its keys stay in memory across the Google navigation, which happens in the child.
@@ -747,7 +748,7 @@ All take `x-hana-key` and `x-hana-parent-origin`, `Origin: vaultOrigin`, JSON bo
 
 1. Google delivers shared-client tokens only to `{authOrigin}/login/callback`. The production shared client has exactly that redirect URI and no JavaScript origins; this is a manual deploy-checklist item.
 2. The callback forwards a token only for a `state` that its own `/login` stored in first-party `sessionStorage`, and only encrypted under the `relayKey` stored with that state.
-3. `/login` built that state from a vault reply it authenticated by `event.origin === vaultOrigin` and the opener-mode source check. It cross-checked the reply's nonce, `signer` and `scopeId` against its pinned `SIGNER` and `GET /v1/app` for `parentOrigin`.
+3. `/login` built that state from a vault reply it authenticated by `event.origin === vaultOrigin` and the opener-mode source check. It recomputed the reply's nonce and checked its `signer` against its pinned `SIGNER` (since D77 it no longer reads `GET /v1/app`: a stale scope or client is refused by `POST /v1/login`, Login step 9).
 4. The vault serves only a parent that `frame-ancestors` (from the app's origins) and `event.origin` both allow. It computes the nonce from the pinned `SIGNER` and its inlined `scopeId`, over a session key that can't leave it.
 5. The vault reads only a relay slot it can decrypt, accepts only a token with its own nonce and a valid Google signature, and uses only the path it computed. The CKD result must pass the pairing check against the pinned key for `ckdAppId(SIGNER, path)`.
 
@@ -935,7 +936,7 @@ Run live logins with the real sandbox shared client and an openid-only implicit 
   - `ready` reports `storage_unavailable` when IndexedDB throws.
 - Login popup:
   - refuses a reply from the wrong origin or source, in each opener mode;
-  - refuses on a nonce, signer, scope or client mismatch;
+  - refuses on a nonce or signer mismatch, and makes no API call (D77);
   - shows the COOP error when `window.opener === null`;
   - export mode refuses `auth-params` from a non-`/export` opener, from another origin, or from a source other than `window.opener`.
 - Callback: refuses an unknown or reused `state`, clears the fragment, encrypts with the stored `relayKey`, awaits the POST before closing, stays open on 409 or a network error.

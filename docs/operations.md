@@ -269,7 +269,9 @@ Run as `corepack pnpm --filter @hana-id/scripts run admin <env> <command> …`. 
   ```
 
 - Suspension is D1-only (the contract has no suspension; D11). Removing an origin also kills that origin's vault
-  shares on their next use.
+  shares on their next use. Logins, relays, `GET /v1/app` and new vault page loads see a suspension or an origin
+  removal at once; the vault endpoints (unlock, touch, revoke, share creation) cache the app per Worker isolate, so
+  there it takes up to 30 s (D78).
 - `app:*` need `apps/api/wrangler.jsonc` for the env (`gen <env>` first) and run `wrangler d1 execute` from `apps/api`.
 - `app:settings` (app positionally or with `--app`, not both; no setting flags: show them): ranges as the migration's
   CHECKs; `--raw-sign approval` and a new `--auto-approve` policy are pending for 24 h (`changeDelayMs` in dev envs),
@@ -467,7 +469,7 @@ corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --status
 | Look at | Means |
 |---|---|
 | `colo` not near the user (e.g. US/EU for Malaysia) | Cloudflare routing (free-plan `workers.dev`); not fixable in code |
-| `app`, `limits` large | D1 or limiter objects far away (`durableObjectLocation`) |
+| `app`, `limits` large | D1 or limiter objects far away (`durableObjectLocation`); on a vault endpoint `app` is only paid when this isolate hasn't read the app in the last 30 s (D78) |
 | `checks` large | chain reads (scope, `session_key_in_use`, `get_session`) or a JWKS fetch |
 | `relayQueue` | waiting behind other txs of the same key |
 | `relayChainRead` with `relayInstance.coldChainRead` | object started without a stored reservation (new or replaced key) |

@@ -1,7 +1,8 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-10-28 (commit 58edee9).
+Last verified against code: 2026-10-29 (branch `perf/login-latency-impl`: the login flow, key persistence and the
+vault gate; the rest as of 2026-10-28, commit 58edee9).
 
 Byte layouts and contract methods are in `docs/contract-interface.md`; this file links to it rather than repeating
 them. The security model is `docs/security.md`, the decision log `docs/decisions.md`. Where a spec and the code
@@ -112,9 +113,12 @@ Browser steps: `packages/web/src/vault/login.ts`, `packages/web/src/auth/login-p
    own client `scope_for_client('google', clientId)` must be `scopeId`, shared client `get_scope(scopeId)` must exist
    with `allow_shared`. Its answer is awaited after the token check, before step 6: a mismatch is `config_mismatch`
    (`scope_mismatch`), no answer `api_unavailable` (`scope_unchecked`).
-3. The popup finds the vault (`opener.frames[v]`), gets `hana:auth-params`, checks `signer` against its own pinned
-   constant, calls `GET /v1/app` itself, recomputes the nonce, stores `{relayKey}` under `hana.login.<relayId>` in its
-   `sessionStorage`, and redirects to Google with `nonce` and `state = relayId`.
+3. The popup finds the vault (`opener.frames[v]`), gets `hana:auth-params` (accepted only from that window on
+   `vaultOrigin`), checks `signer` against its own pinned constant, recomputes the nonce, stores `{relayKey}` under
+   `hana.login.<relayId>` in its `sessionStorage`, and redirects to Google with `nonce` and `state = relayId`. It makes
+   no API call (D77): the app's name, parent origin, scope and Google client are the vault's, and `POST /v1/login`
+   checks them against the current app row before anything is relayed (`docs/security.md` "The login popup trusts the
+   vault's app facts").
 4. `/login/callback` reads `#id_token&state`, clears the fragment, requires and deletes `hana.login.<state>`,
    encrypts `{idToken}` under `relayKey` (AAD `"hana-id/relay/v1" ‖ relayId`) and posts it to
    `POST /v1/login-relay/<state>`. API: Hana-origin check, per-IP limit, one write per slot
@@ -142,7 +146,12 @@ Browser steps: `packages/web/src/vault/login.ts`, `packages/web/src/auth/login-p
 9. The vault decrypts: `S = decryptCkd(result, a, ckdAppId(SIGNER, expectedPath), pinnedKey)` with the pairing check
    (`ckd.ts:97`), `PRK = extractPrk(S)` (`packages/core/src/derivation.ts:46`, zeroes S), addresses from PRK. It never
    uses a path, session or counter from the API; recovery re-syncs `get_session` from NEAR RPC directly.
-10. `'session'` mode: share creation (below). Result `{addresses, expiresAtMs, persistence}` to the partner.
+10. Result `{addresses, expiresAtMs, persistence}` to the partner, and `accountsChanged`. In `'session'` mode the share
+    and record (below) are made afterwards, in the background (D79, `vault.ts` `persistLogin`): `POST /v1/vault/shares`
+    is tried once more after 1 s if it fails. Giving up leaves the session working in memory with `persistence:
+    'none'` (port event `persistenceChanged`, and `hana_status`), revokes the share if made and clears the older session's record (the next reload
+    is a full login); a session that ends first (logout, a newer login, expiry) cancels it and no record or share
+    survives it. Revoke-other-devices, touch and consent reads and writes wait for it.
 
 ### Login, two transactions (split path)
 
@@ -170,10 +179,13 @@ in the cached view. A counter ahead of `used + 1` is still relayed (it may succe
 `'session'` mode only (app setting `persistence`, default `'session'`, `apps/api/migrations/0003_vault.sql`). The
 session has `max_uses = 1`, so once the login's derive is spent, the share is the only way back to the key.
 
-Share creation, `POST /v1/vault/shares` (`apps/api/src/vault/endpoints.ts:179`):
+Share creation, `POST /v1/vault/shares` (`apps/api/src/vault/endpoints.ts` `createShare`), sent by the vault right
+after it reported the login (D79):
 
-1. `vaultGate` (`endpoints.ts:67`): app known and active, `Origin === VAULT_ORIGIN`, `x-hana-parent-origin` allowed for
-   the app, no `scope_conflict`, vault limits (60/min per IP per app, 10 × plan `per_minute` per app).
+1. The vault gate (`endpoints.ts` `vaultApp`, `vaultLimits`): app known and active (the app row cached per isolate
+   for 30 s, `apps/api/src/app-cache.ts`, D78), `Origin === VAULT_ORIGIN`, `x-hana-parent-origin` allowed for the app,
+   no `scope_conflict`, vault limits (60/min per IP per app, then 10 × plan `per_minute` per app; the share actions'
+   10/min per share is asked alongside the IP window and refunded if the IP or app window refuses).
 2. `VAULT_KEK` loaded, else 503 `vault_key_unavailable`. App `persistence` must be `'session'` (409 `persistence_off`).
 3. Signature by the session key over the vault message (shareId zero, counter 0, payload
    `"share" ‖ borsh(parentOrigin)`; `apps/api/src/vault/message.ts`).
@@ -188,8 +200,8 @@ The vault writes an IndexedDB record `hana-vault/records` keyed `<signer>|<appId
 non-extractable session `CryptoKeyPair`, `shareId`, counter, addresses, and `ct = AES-GCM(K_s, PRK, aad)` with the AAD
 of `recordAad` (`layouts.ts:143`; `packages/web/src/vault/record.ts`), then zeroes `K_s`.
 
-Unlock on reload or new tab, `POST /v1/vault/unlock` (`apps/api/src/vault/endpoints.ts`, `settingsRefusal`): per-share
-limit 10/min → share looked up by `share_id AND app_id` (another app's share is 404) → if the share's partner origin
+Unlock on reload or new tab, `POST /v1/vault/unlock` (`apps/api/src/vault/endpoints.ts`, `settingsRefusal`): the
+vault gate as above, with the per-share limit 10/min in the same round of limiter calls → share looked up by `share_id AND app_id` (another app's share is 404) → if the share's partner origin
 is no longer allowed, mark revoked, 410 → the app's settings as they are now: `persistence = 'none'` revokes the share
 (410 `share_revoked`), and the share ends at `min(abs_expires_at, created_at + current session_ttl_ms)` (410
 `share_expired`; the stored expiry is lowered) → vault signature with `counter = n + 1` → unwrap `K_s` (before the

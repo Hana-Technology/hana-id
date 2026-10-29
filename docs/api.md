@@ -1,6 +1,7 @@
 # API reference — every endpoint the `apps/api` Worker serves today
 
-Last verified against code: 2026-10-28 (commit 58edee9).
+Last verified against code: 2026-10-29 (branch `perf/login-latency-impl`: the vault endpoints' gate, the auth
+pages' CSP and the timings; the rest as of 2026-10-28, commit 58edee9).
 
 Current state, not a spec. Where the specs (`docs/batch-*.md`) and this file differ, this file follows the code.
 Contract methods and byte layouts: `docs/contract-interface.md`. How to run it: `docs/operations.md`.
@@ -100,7 +101,7 @@ is the IPv4 address or the IPv6 /64 (`src/ip.ts`). The day window is the UTC day
 | relay kind: `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke`, `/v1/login` (one shared window) | plan `per_ip_minute` (window `<appId>:minute`) | plan `per_minute` and `per_day` | IP checked first, so its rejects don't spend the app's quota |
 | key exports: `/v1/login` from `AUTH_ORIGIN` | — | — | 3 per hour per user path per app (subject `export:<appId>:<hex sha256(path)>`, window `export:hour`), counted once the token and nonce are verified, before anything is relayed (D59) |
 | `GET /v1/app` | plan `per_ip_minute` (own window `<appId>:config:minute`) | — | never touches the relay quota |
-| vault endpoints | 60/min (`<appId>:vault:minute`) | 10 × plan `per_minute` (`vault:minute`) | share actions: 10/min per share (`share:<hex>`) |
+| vault endpoints | 60/min (`<appId>:vault:minute`) | 10 × plan `per_minute` (`vault:minute`) | share actions: 10/min per share (`share:<hex>`); IP checked first, the app window only once it accepted; the share window asked alongside the IP window and refunded if the IP or app window refuses (D78) |
 | login relay | writes 10/min, reads 120/min | — | not per app |
 | `/v1/owner-actions` | 10/min | — | global 20/min and 200/day, counted only after every off-chain check passes |
 | `/v1/health`, `GET /vault` | — | — | — |
@@ -286,8 +287,8 @@ One thin Worker per Hana origin in every env (D66; `workers.dev` in dev envs, a 
 | Origin | Path | Response |
 |---|---|---|
 | vault | `/vault` | forwarded to the API Worker (service binding `API`), unchanged but for a `Set-Cookie` header, which is dropped; `503` page with no config if it is unreachable |
-| auth | `/login`, `/login/callback` | `<path>.html` with `frame-ancestors 'none'; connect-src <API_URL>` |
-| auth | `/approve` | `approve.html` with `frame-ancestors 'none'` |
+| auth | `/login/callback` | `login/callback.html` with `frame-ancestors 'none'; connect-src <API_URL>` |
+| auth | `/login`, `/approve` | `<path>.html` with `frame-ancestors 'none'` (neither fetches anything; the login popup makes no API call, D77) |
 | auth | `/export` | `export.html` with `frame-ancestors 'none'; connect-src <API_URL> <NEAR_RPC> [<NEAR_RPC_FALLBACK>] https://www.googleapis.com` |
 | both | any other path | a static asset, never HTML (`*.html` and `text/html` → `404`) |
 
@@ -309,7 +310,15 @@ sha256(payload)`, `appId` = the D1 `apps.id` (`docs/contract-interface.md`, "Vau
 
 Gate, in order: `401 missing_key` / `unknown_app` / `503 config_unavailable` → `403 app_suspended` → Origin is
 `VAULT_ORIGIN` (`403 origin_not_allowed`) → parent allowed (`403 origin_not_allowed`) → `403 scope_conflict` → vault
-limits. Storage errors: `503 config_unavailable`. Missing `VAULT_KEK`: `503 vault_key_unavailable`.
+limits (per IP, then per app) → body (`400 bad_request`) → share actions: the per-share limit. Storage errors:
+`503 config_unavailable`. Missing `VAULT_KEK`: `503 vault_key_unavailable`.
+
+The app row comes from a per-isolate cache (`src/app-cache.ts`, D78): an entry serves for 30 s after its D1 read, so
+a suspension, a removed or changed key, a removed origin or a scope conflict reaches these endpoints within 30 s per
+isolate (unknown keys and failed reads are never cached; at most 256 apps). Nothing else uses it: the app gate above
+(relay endpoints, `GET /v1/app`) and the vault page read D1 every time. The per-share limiter is called alongside
+the IP limiter and an accepted hit is refunded (`RateLimiter.refund`) when the IP or app window refuses, so each
+window counts as if they were asked in turn.
 
 | Endpoint | Body | Payload | 2xx |
 |---|---|---|---|
@@ -324,7 +333,7 @@ re-read every 300 ms for up to 2 s while missing or not used up (`404 unknown_se
 `409 session_not_spent`, `502 near_unavailable`) → insert (`409 share_exists`: one share per session key).
 `absExpiresAt = min(session expiry, now + session_ttl_ms)`, `idleUntil = min(now + idle_ttl_ms, absExpiresAt)`.
 
-Share actions, after the gate: per-share limit → `404 unknown_share` (missing or another app's) → share's origin no
+Share actions, after the gate (per-share limit included) → `404 unknown_share` (missing or another app's) → share's origin no
 longer allowed: revoked, `410 share_revoked` → unlock and touch only, the app's settings as they are now: persistence
 `none` revokes the share (`410 share_revoked`), and the share ends at `min(abs_expires_at, created_at +
 session_ttl_ms)` (a lowered TTL also lowers the stored `abs_expires_at`; `410 share_expired` once past it) →
@@ -525,7 +534,10 @@ Also generated: `name` = `cloudflare.workerName`, `compatibility_date` 2026-10-0
 
 A `pk_test_` app's successful `POST /v1/login`, `POST /v1/vault/shares` and `POST /v1/vault/unlock` answer with the
 request's own timings, so a test page can set the API's time against its own round trip (apps/smoke, README
-"Timings"):
+"Timings"). The vault reports the login's and the unlock's; share creation's arrive after the login reply (D79), so
+the vault drops them (the request log keeps them). Unlock's phases are `app` (the cached app row), `limits` (the IP,
+app and share limiters), `share` (the KEK, the share and settings rows) and `advance` (the counter update); there is
+no `shareLimit` phase any more (D78):
 
 ```json
 "timings": { "totalMs": 0, "phases": { "app": 0, "limits": 0, "…": 0 } }
@@ -554,13 +566,12 @@ signatures, bodies, keys, CKD responses, relay bodies or panic text.
 
 | Phase | Covers |
 |---|---|
-| `app` | D1 app lookup |
-| `limits` | rate-limiter round trips |
+| `app` | D1 app lookup (vault endpoints: ~0 when the per-isolate cache has the app, D78) |
+| `limits` | rate-limiter round trips (vault share actions: the per-share limiter too, called alongside the IP one) |
 | `checks` | body, token, nonce, chain reads, signature, pre-checks (everything before the relay) |
 | `settings` | share creation: the app's settings row (D1) |
 | `session` | share creation: signature check, then the session read and its retries (every 300 ms for up to 2 s while the node lags) |
 | `insert` | share creation: wrapping K_s and the D1 insert |
-| `shareLimit` | share actions: the per-share limiter |
 | `share` | share actions: the KEK, the share row and (unlock, touch) the settings row (D1) |
 | `advance` | unlock: re-wrap if needed and the counter update (D1) |
 | `relay` | round trip to the relayer key object |

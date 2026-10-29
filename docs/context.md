@@ -268,6 +268,11 @@ Every run, one-transaction and two-transaction, gave the same Stellar and EVM ad
 - **Reload unlock: 0.87 s warm** (856, 870 ms), **2.06 s** for the first after a while. Unlock call 0.66 s: server
   0.44 s (gate 0.24 s = key lookup and rate limiters, share 0.15 s, counter 0.05 s); vault page 0.13 s and script
   0.07 s.
+- **Fixes (branch `perf/login-latency-impl`, 2026-10-29; not yet measured on sandbox-dev):** `/login` no longer calls
+  `GET /v1/app` (D77; `authCheck` should drop from 1.05 s to a few ms), the vault replies before it makes the share
+  and record (D79; the `persist` stage is gone, about 0.48 s), and the vault endpoints cache the app row for 30 s per
+  isolate and ask the share limiter alongside the IP one (D78; a warm unlock skips the two D1 queries and one limiter
+  round trip). Re-measure with Smoke B after the next deploy.
 
 ## Testnet measurements (sandbox-dev, 2026-10-27, real MPC)
 

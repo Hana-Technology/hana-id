@@ -252,6 +252,24 @@ Every run, one-transaction and two-transaction, gave the same Stellar and EVM ad
   ~5 serial D1 queries and 3 limiter objects (2 placed in `apac`), each round trip longer when `workers.dev` routes
   Malaysia to a US/EU colo.
 
+## After the latency fixes D77–D79 (2026-10-29 afternoon, 5 + 5 interleaved, same account, Chrome, Malaysia)
+
+| Median (range) | One transaction (vault) | Two transactions (direct) |
+|---|---|---|
+| Chain | 7.86 s (6.87–8.75) | 10.56 s (9.97–11.46) |
+| Login without Google | 11.18 s | 10.65 s |
+| … also without Google's redirect back | **9.50 s** | (inside its Google time) |
+
+- `authCheck` 1.05 s → 0 s (D77) and the share save is off the login path (D79); every login kept `persistence:
+  session`. The vault login is now faster than the split flow once Google's own redirect is excluded.
+- Network legs were slower this session across the board (direct chain +0.7 s, popup 0.66 s vs 0.32 s, callback
+  boot 0.47 s vs 0.17 s, API gate 0.79 s vs 0.28 s), so absolute numbers aren't comparable with the morning's.
+- Reload unlock **regressed to 2.0–3.0 s** (morning 0.86–0.87 s warm): vault page 0.43 s and script 0.21 s, unlock
+  call 1.49 s with server 1.04 s (gate 0.43, share 0.35, counter 0.18). Every D1-bound phase was 2–3× the morning's,
+  which points at slower routing or D1 access this session rather than the code (the D78 app cache doesn't help the
+  first request in an isolate). To check: the request logs' `colo` for these unlocks, a repeat at another time, D1
+  read replicas, and the custom domain.
+
 ## Login timings with stage breakdown (2026-10-29, 10 + 10 interleaved, one account, Smoke B, Chrome, Malaysia)
 
 | Median (range) | One transaction (vault) | Two transactions (direct) |

@@ -1,23 +1,56 @@
 # Governance spec: delayed issuer keys, watchdog, multisig owner, timelocked upgrades (pre-mainnet)
 
-**Status: DRAFT (2026-10-29), for the user's review.** Implements `docs/decisions.md` D33 (confirmed 2026-10-28) and
-closes `docs/security.md` open issue (e). Every value marked *provisional* and every numbered open question needs the
-user's answer before implementation. Nothing here is built.
+**Status: DRAFT (2026-10-29); the user's decisions of 2026-10-29 (D80–D86) are applied below.** Implements
+`docs/decisions.md` D33 (confirmed 2026-10-28) and closes `docs/security.md` open issue (e). Still open: the mainnet
+issuer-key delay (provisional until the lead-time measurement is in), where the backup council key is held, the
+paging app, and open question 17. Nothing here is built.
 
 This file is the source of truth for the batch once approved. If code and this spec disagree, fix the code or raise
 the problem. Reference docs (`contract-interface.md`, `security.md`, `operations.md`, `architecture.md`, `api.md`)
 are updated in the same branch as the code, not now.
+
+## Confirmed by the user (2026-10-29)
+
+- **Delays (D80).** Mainnet `issuer_key_delay_ms` 2 h, provisional: set from the lead-time measurement now running
+  (`admin issuer-keys:lead-times`). Mainnet `governance_delay_ms` 72 h. sandbox-dev 2 min and 60 s. Fast emergency
+  response comes from pause, not short delays.
+- **Owner multisig (D81).** Sputnik DAO v2, 2-of-3 for **every** proposal kind (no 3-of-3: a lost Ledger would freeze
+  the council; the 72 h delay already guards owner actions). Mainnet council: the two founders (Ledgers) and one
+  offline backup key neither founder can reach alone (a third party such as the company's lawyer or accountant under
+  written instructions, or a dual-control safe deposit box; where is decided before mainnet); an independent member
+  replaces the backup later. sandbox-dev: Sputnik 2-of-3 with three throwaway testnet accounts, keys in
+  `.secrets/sandbox-dev/`, driven by scripts (propose and approve in one command), plus `near-workspaces` sandbox tests
+  of the full flow.
+- **Watchdog autonomy (D82).** Auto-cancel any pending key Google doesn't publish; auto-delete the updater key when it
+  proposes one; auto-pause **only** when a key Google doesn't publish is active on chain; everything else alert-only.
+  The owner multisig unpauses at once (no governance delay).
+- **Monitoring in the admin portal (D83).** A "Security & monitoring" view ([below](#monitoring-in-the-admin-portal)),
+  and a standing rule: every future watchdog check or alert must surface in the admin portal. The watchdog still sends
+  its alerts itself, so a compromised Hana Cloudflare account can't silence it; the portal reads the watchdog's status
+  and on-chain events.
+- **No upgrade guardian at launch (D84).** Revisit when an independent party (auditor, partner) exists; the watchdog
+  alerts on every upgrade proposal.
+- **Alerts (D85).** Critical: phone paging app (PagerDuty, Pushover or ntfy, chosen at setup) + Slack + email, to both
+  founders, re-sent every 15 min until acknowledged, acks recorded in the portal. Warning: Slack + email. Info: portal
+  + daily digest.
+- **Defaults (D86)**, the spec's proposals: a separate Cloudflare account and one watchdog at launch; single-watchdog
+  early activation now, k-of-n later; the watchdog-removal slowdown accepted; pause blocks derivation and new sessions
+  (every token path and the executors), never governance; sandbox-dev keeps the signer's full-access key, staging and
+  mainnet never have one; an owner-only timelocked withdrawal of surplus NEAR; public notice = partner email + a
+  pending-upgrades page in the admin and partner consoles; owner-posted keys use the updater's delay;
+  `set_console_audiences` additions timelocked; reproducible builds for mainnet upgrades; events `1.1.0`, additive.
 
 ## Amends
 
 | Document | Amendment |
 |---|---|
 | `contract-interface.md` "Issuers" | `set_issuer_key` queues a pending key instead of installing it; `remove_issuer_key` is owner-only; new pending-change, watchdog, pause, upgrade and owner-transfer methods (below). |
-| `contract-interface.md` "Config" | `set_owner` is replaced by `propose_owner` / `accept_owner` (delayed). New delays `issuer_key_delay_ms`, `governance_delay_ms`. |
+| `contract-interface.md` "Config" | `set_owner` is replaced by `propose_owner` / `accept_owner` (delayed). New delays `issuer_key_delay_ms`, `governance_delay_ms`. `set_console_audiences` additions wait `change_delay_ms`. New surplus withdrawal. |
 | `contract-interface.md` "Events" | New events; `issuer_key_set` now means "a key entered the active set" (emitted at execution, not at posting). Events version `1.0.0` → `1.1.0`. |
 | `security.md` "What a compromise gives", "Parties", key inventory, open issue (e) | Replaced by [What each party can do after this batch](#what-each-party-can-do-after-this-batch). |
 | `decisions.md` D33 | Delay formula and provisional values, the watchdog's exact powers, the multisig choice. D33's status moves to "in force" when merged. |
-| `operations.md` key rotation, deploy, upgrade | Upgrades through the owner multisig; no signer full-access key; watchdog service. |
+| `operations.md` key rotation, deploy, upgrade | Upgrades through the owner multisig; no signer full-access key (except sandbox-dev, D86); watchdog service; alert runbook. |
+| `batch-c-spec.md` "Hana admin console", console screens | The "Security & monitoring" view and the pending-upgrades page (D83, D86), built in this batch on batch C's admin and console Workers. |
 | `apps/api` JWKS cron | Proposes keys and removals, executes matured ones; runs every 15 min. |
 
 ## Goal
@@ -29,15 +62,17 @@ faster than a public, cancellable delay:
   (own NEAR account and key, own service, not on the API's Cloudflare account) cancels it if Google doesn't publish
   it. The watchdog may activate a key early when it matches Google's JWKS.
 - Every pending key for a kid Google doesn't publish raises an alert from the watchdog itself.
-- The contract owner is a 2-of-3 multisig (recommended: a Sputnik DAO v2 council).
-- The signer account has no full-access key. Code changes only through `propose_upgrade` (owner) → public notice →
-  `execute_upgrade` after `governance_delay_ms`.
+- The contract owner is a Sputnik DAO v2 council, 2 of 3 for every proposal kind (D81).
+- Outside sandbox-dev the signer account has no full-access key (D86). Code changes only through `propose_upgrade`
+  (owner) → public notice → `execute_upgrade` after `governance_delay_ms`.
 - An emergency pause stops derivation and every token check; it can't post keys or change code. Only the owner
-  unpauses.
+  unpauses, at once (D82).
+- Every watchdog check, action and alert shows in the admin portal (D83).
 
 Done when every behaviour under [Tests](#tests) has a passing test, sandbox-dev runs the new contract migrated in
-place (same signer account, same addresses), its owner is a testnet DAO, its signer account has no full-access key,
-and one upgrade has gone through the full propose → wait → execute path.
+place (same signer account, same addresses), its owner is a testnet DAO driven by the scripts, one upgrade has gone
+through the full propose → wait → execute path, the admin portal's "Security & monitoring" view shows the drills
+below, and `deploy-plan` refuses a signer full-access key on every manifest except sandbox-dev's.
 
 ## Address impact (read first)
 
@@ -79,12 +114,13 @@ all four:
 
 | Role | Account | Key held by | Calls |
 |---|---|---|---|
-| **owner** | multisig contract account (DAO), `envs/<env>.json` `owner` | 3 council members (hardware wallets) | config, `set_issuer_key` (delayed like the updater's), `remove_issuer_key`, watchdog set, updater keys, unpause, upgrades, owner transfer |
+| **owner** | Sputnik DAO v2 account, `envs/<env>.json` `owner` | mainnet: the two founders' Ledgers and the offline backup key; sandbox-dev: three throwaway accounts, keys in `.secrets/sandbox-dev/` (D81) | config, `set_issuer_key` (delayed like the updater's), `remove_issuer_key`, watchdog set, updater keys, unpause, upgrades, owner transfer, surplus withdrawal |
 | **watchdog** | 1..=3 accounts, manifest `watchdogs` | watchdog service: a function-call key on its own account (receiver signer) | cancel and confirm pending key changes, pause, delete an updater key |
 | **updater** ("self") | the signer account | API Worker `KEYS_UPDATER_KEY`, a function-call key the contract installs | `set_issuer_key`, `propose_issuer_key_removal`, `execute_issuer_key_change` |
-| **anyone** | — | — | `execute_issuer_key_change` and `execute_upgrade` once due; views |
+| **anyone** | — | — | `execute_issuer_key_change`, `execute_upgrade` and `execute_withdrawal` once due; views |
 
-The signer account has no full-access key. Its only access keys are updater keys the contract added itself.
+Outside sandbox-dev the signer account has no full-access key; its only access keys are updater keys the contract
+added itself. sandbox-dev keeps its full-access key for fast dev upgrades (D86).
 
 ## Contract changes (`contracts/hana-signer`)
 
@@ -107,6 +143,8 @@ pub struct HanaSigner {
     pub(crate) paused: bool,
     pub(crate) pending_upgrade: Option<PendingUpgrade>,
     pub(crate) pending_owner: Option<PendingOwner>,
+    pub(crate) pending_withdrawal: Option<PendingWithdrawal>,   // D86
+    pub(crate) pending_console_audiences: Vec<PendingSharedClient>,  // additions, due after change_delay_ms (D86)
 }
 
 pub struct Watchdog { pub account_id: AccountId, pub confirm_from_ms: u64 }  // may confirm from then on
@@ -117,10 +155,12 @@ pub struct PendingKeyChange {
 }
 pub struct PendingUpgrade { pub code_hash: Base58CryptoHash, pub executable_at_ms: u64, pub proposed_at_ms: u64 }
 pub struct PendingOwner { pub owner: AccountId, pub acceptable_at_ms: u64 }
+pub struct PendingWithdrawal { pub receiver: AccountId, pub amount: NearToken, pub executable_at_ms: u64 }
 ```
 
 Constants: `MAX_ISSUER_KEY_DELAY_MS = 7 days`, `MAX_GOVERNANCE_DELAY_MS = 30 days`, `MAX_UPDATER_ALLOWANCE = 1 NEAR`,
-`UPDATER_METHODS = "set_issuer_key,propose_issuer_key_removal,execute_issuer_key_change"`. Storage: a pending `Add`
+`UPDATER_METHODS = "set_issuer_key,propose_issuer_key_removal,execute_issuer_key_change"`, `SIGNER_RESERVE = 5 NEAR`
+(provisional). Storage: a pending `Add`
 is ≤ ~800 bytes (n ≤ 512, kid ≤ 128, provider ≤ 32, fixed fields), so the six-entry cap bounds contract-paid
 storage at ~5 KB (~0.05 NEAR).
 
@@ -135,9 +175,9 @@ key changes` (6), `Too many keys for this issuer` (active + pending adds ≤ 10)
 executable_at_ms = max(now + issuer_key_delay_ms, keys_slow_until_ms, no_watchdog ? now + governance_delay_ms : 0)
 ```
 
-where `no_watchdog` = `watchdogs` is empty. Event `issuer_key_proposed {id, provider, kid, n, e, executable_at_ms,
-by}` (`n`, `e` base64url, so monitors can compare with the JWKS without a view). Returns the id. Gas: ~3 Tgas burnt;
-the API attaches 30 Tgas as today.
+where `no_watchdog` = `watchdogs` is empty. The owner's posts use the same rule as the updater's (D86). Event
+`issuer_key_proposed {id, provider, kid, n, e, executable_at_ms, by}` (`n`, `e` base64url, so monitors can compare with
+the JWKS without a view). Returns the id. Gas: ~3 Tgas burnt; the API attaches 30 Tgas as today.
 
 `propose_issuer_key_removal(provider, kid) -> u64` — **owner or self**. Panics `Unknown issuer`, `No such key` (kid
 not active), `Kid already has a pending change`, `Too many pending key changes`, `Cannot remove the last key of an
@@ -152,7 +192,7 @@ the last key. Applies, drops the entry, emits `issuer_key_set {provider, kid, id
 `confirm_issuer_key_change(id)` — **a watchdog whose `confirm_from_ms ≤ now`** (`Only a watchdog can do this`,
 `This watchdog can't confirm yet`). Executes the change now, with the same re-checks; `how: "confirmed"`, plus
 `by`. The watchdog confirms only what it checked against Google's JWKS (see [Watchdog service](#watchdog-service)).
-This is the early activation; k-of-n confirmation is later (open question 5).
+This is the early activation, by one watchdog; k-of-n confirmation is later (D86).
 
 `cancel_issuer_key_change(id)` — **owner or any watchdog** (including one that can't confirm yet). Drops the entry.
 Event `issuer_key_change_cancelled {id, provider, kid, by}`.
@@ -203,22 +243,27 @@ With no full-access key, nobody but the contract can add or delete keys on the s
 
 ### Pause
 
-- `pause()` — owner or any watchdog. Sets `paused`; event `paused {by}`; no-op if already paused.
-- `unpause()` — owner only. Event `unpaused {}`.
+- `pause()` — owner or any watchdog. Sets `paused`; event `paused {by}`; no-op if already paused. The watchdog calls
+  it only for an active key Google doesn't publish (D82).
+- `unpause()` — owner only, immediate: no governance delay (D82). Event `unpaused {}`.
 - While paused, `verify_token` panics `Paused` (so `create_session`, `create_session_and_derive`, `register_scope`,
   `propose_change` with a client proof and every `OwnerAuth::Oidc` action stop), `derive_key` panics `Paused`, and
   `execute_change` and `execute_issuer_key_change` panic `Paused` (nothing that may rest on a forged token matures
   into force while frozen). Still allowed: `confirm_issuer_key_change` (a watchdog-checked Google key may go live
   while paused), `revoke_session`, `prune_sessions`, NEAR-account owner actions, cancels,
   every governance method, views. Pause can't post keys, change code or move anything: the worst it does is stop
-  logins.
+  logins. This is the scope D86 confirms: derivation and new sessions (every token path) and the two executors stop;
+  governance, revocation and cancels don't.
 
 ### Upgrades
 
 - `propose_upgrade(code_hash: Base58CryptoHash)` — owner. Replaces any pending upgrade (event
   `upgrade_cancelled` for the old one). `executable_at_ms = now + governance_delay_ms`. Event `upgrade_proposed
   {code_hash, executable_at_ms}`. The hash is NEAR's account `code_hash` format (base58 sha256 of the wasm), so
-  anyone can compare it with a reproducible build and, after execution, with `view_account`.
+  anyone can compare it with a reproducible build and, after execution, with `view_account`. On mainnet every
+  proposal is a reproducible build (`cargo near build reproducible-wasm`) whose hash, source commit and build command
+  are published before the proposal (D86); `upgrade-contract` refuses a non-reproducible build on a mainnet manifest.
+  No other party can cancel a pending upgrade (no guardian at launch, D84).
 - `cancel_upgrade()` — owner. Event `upgrade_cancelled {code_hash}`.
 - `execute_upgrade()` — **anyone**, input = the raw wasm bytes (not JSON: the method reads `env::input()`).
   Panics `No pending upgrade`, `Upgrade is still delayed`, `Code doesn't match the proposed hash` (`env::sha256`),
@@ -237,7 +282,8 @@ With no full-access key, nobody but the contract can add or delete keys on the s
   `deploy-contract --upgrade` sends `DeployContract` + `migrate_v1(issuer_key_delay_ms, governance_delay_ms)` in one
   transaction. v1 state has no `state_version` field: `migrate_v1` reads the exact v1 root struct (a copy kept in
   `src/migrate.rs` with a borsh round-trip test against a v1 state fixture) and starts with no watchdogs, no pending
-  anything, `paused = false`, `updater_keys = []` (the existing updater key is replaced, see migration plan).
+  anything (no pending withdrawal or console audiences), `paused = false`, `updater_keys = []` (the existing updater
+  key is replaced, see migration plan).
   `migrate_v1` is `#[private]` too and is deleted in the next version; on v2 state it can only fail (the v1 layout
   doesn't deserialize).
 
@@ -251,6 +297,27 @@ With no full-access key, nobody but the contract can add or delete keys on the s
   delayed`). Proves the new account (a DAO) can actually call the contract before it gets control. Event
   `owner_changed {old, new}`.
 
+### Surplus withdrawal (D86)
+
+- `propose_withdrawal(receiver, amount: NearToken)` — owner. Replaces a pending one. `executable_at_ms = now +
+  governance_delay_ms`. Event `withdrawal_proposed {receiver, amount, executable_at_ms}`.
+- `cancel_withdrawal()` — owner. Event `withdrawal_cancelled {receiver, amount}`.
+- `execute_withdrawal()` — anyone, once due (`Withdrawal is still delayed`, `No pending withdrawal`), not while
+  paused. Refuses `Withdrawal would leave too little` unless `account_balance − amount ≥ storage_usage ×
+  storage_byte_cost + SIGNER_RESERVE`, checked at execution. `Promise::new(receiver).transfer(amount)`; event
+  `withdrawal_executed {receiver, amount}`.
+- The watchdog alerts (critical) on every proposal. A compromised owner gains only what it already has after G (an
+  upgrade could move everything).
+
+### Console audiences (D86)
+
+`set_console_audiences(audiences)` keeps its signature. Removals apply at once; each addition is queued in
+`pending_console_audiences` and counts only after `change_delay_ms`, the same mechanism as `set_shared_clients`
+(`lib.rs` `pending_shared_clients`, folded in by `apply_matured_config`); the token check (`registry.rs`, `Token is
+not for the Hana console`) counts matured ones only. `get_config` shows pending ones. Event `console_audiences_set`.
+A console audience's tokens authorise OIDC owner actions, so a new one gets the same public window as a new shared
+client.
+
 ### `new` (fresh deployments, i.e. mainnet)
 
 `new(owner, mpc, ckd_domain_id, change_delay_ms, issuer_key_delay_ms, governance_delay_ms, watchdogs)`. Same panics
@@ -259,12 +326,12 @@ as today plus the delay bounds and `Too many watchdogs`.
 ### Views
 
 `get_config()` gains `issuer_key_delay_ms`, `pending_issuer_key_delay`, `governance_delay_ms`,
-`pending_governance_delay`, `paused`. New `get_governance() -> {watchdogs, keys_slow_until_ms, updater_keys,
-pending_upgrade, pending_owner, state_version}`.
+`pending_governance_delay`, `paused`, `pending_console_audiences`. New `get_governance() -> {watchdogs,
+keys_slow_until_ms, updater_keys, pending_upgrade, pending_owner, pending_withdrawal, state_version}`.
 
 ### Events
 
-Version `1.1.0` (additive; `issuer_key_set` / `issuer_key_removed` gain fields and move to execution time).
+Version `1.1.0` (additive, D86; `issuer_key_set` / `issuer_key_removed` gain fields and move to execution time).
 
 | event | data |
 |---|---|
@@ -279,16 +346,19 @@ Version `1.1.0` (additive; `issuer_key_set` / `issuer_key_removed` gain fields a
 | `upgrade_proposed` / `upgrade_cancelled` / `upgrade_executed` | `{code_hash, executable_at_ms}` / `{code_hash}` / `{code_hash}` |
 | `owner_proposed` / `owner_changed` | `{owner, acceptable_at_ms}` / `{old, new}` |
 | `delay_changed` | `{which: "issuer_key"\|"governance", value_ms, effective_at_ms}` |
+| `withdrawal_proposed` / `withdrawal_cancelled` / `withdrawal_executed` | `{receiver, amount, executable_at_ms}` / `{receiver, amount}` / `{receiver, amount}` |
+| `console_audiences_set` (new; like `shared_clients_set`) | `{console_audiences, pending_console_audiences}` |
 
 ### Panics (new)
 
-`Only a watchdog can do this`, `This watchdog can't confirm yet`, `Only the owner or a watchdog can do this`,
-`Kid is already active`, `Kid already has a pending change`, `Too many pending key changes`, `No such key`, `Cannot
-remove the last key of an issuer`, `No such key change`, `Key change is still delayed`, `Paused`, `Too many
-watchdogs`, `Already a watchdog`, `Not a watchdog`, `Too many updater keys`, `No pending upgrade`, `Upgrade is still
-delayed`, `Code doesn't match the proposed hash`, `Not the proposed owner`, `Owner change is still delayed`,
-`issuer_key_delay_ms must be at most 7 days`, `governance_delay_ms must be at most 30 days`, `Unexpected state
-version`. Governance methods use `Only the owner can do this` as today.
+`Only a watchdog can do this`, `This watchdog can't confirm yet`, `Only the owner or a watchdog can do this`, `Kid is
+already active`, `Kid already has a pending change`, `Too many pending key changes`, `No such key`, `Cannot remove the
+last key of an issuer`, `No such key change`, `Key change is still delayed`, `Paused`, `Too many watchdogs`, `Already a
+watchdog`, `Not a watchdog`, `Too many updater keys`, `No pending upgrade`, `Upgrade is still delayed`, `Code doesn't
+match the proposed hash`, `Not the proposed owner`, `Owner change is still delayed`, `issuer_key_delay_ms must be at
+most 7 days`, `governance_delay_ms must be at most 30 days`, `Unexpected state version`, `No pending withdrawal`,
+`Withdrawal is still delayed`, `Withdrawal would leave too little`. Governance methods use `Only the owner can do this`
+as today.
 
 ## Delay length (`issuer_key_delay_ms`)
 
@@ -303,18 +373,20 @@ min); **W** = the watchdog's poll interval; **M** = margin.
 With the watchdog up, new keys are confirmed within ~`P + W` of publication whatever D is; D only bounds the
 watchdog-down case.
 
-The lead-time measurement now being built (`feat/jwks-lead-time`) must record per kid: first time seen in the JWKS,
-first time a token with that kid reached `/v1/login` or `/v1/sessions` (the API already parses every token), last
-time seen in the JWKS, and the JWKS `Cache-Control: max-age`. Expected (assumption, to confirm): Google publishes a
-key at least one `max-age` before signing with it, or verifiers caching the JWKS by `max-age` would reject its
-tokens; the API caps that cache at 6 h (`apps/api/src/jwks.ts` `MAX_TTL_MS`).
+The lead-time measurement now running (`feat/jwks-lead-time`; report: `admin issuer-keys:lead-times`) records per kid:
+first time seen in the JWKS, first time a token with that kid reached `/v1/login` or `/v1/sessions` (the API already
+parses every token), last time seen in the JWKS, and the JWKS `Cache-Control: max-age`. Expected (assumption, to
+confirm): Google publishes a key at least one `max-age` before signing with it, or verifiers caching the JWKS by
+`max-age` would reject its tokens; the API caps that cache at 6 h (`apps/api/src/jwks.ts` `MAX_TTL_MS`).
 
-**Provisional values**, to replace once L_min is measured over at least two Google rotations:
+**Values confirmed by the user (D80).** The mainnet issuer-key delay stays provisional and is replaced by the
+formula's value once L_min is measured over at least two Google rotations; the rest of the table is set. Fast emergency
+response comes from pause, not from short delays, so a paused contract waiting up to 72 h for a fix is accepted.
 
 | | `issuer_key_delay_ms` | `governance_delay_ms` | P (updater) | W (watchdog) |
 |---|---|---|---|---|
 | sandbox-dev | 120 000 (2 min) | 60 000 (1 min) | 15 min | 5 min |
-| mainnet | **7 200 000 (2 h)**, valid if L_min ≥ ~4 h; if L_min turns out shorter, D = max(3·(W+T), L_min − P − T − M) and accept that a watchdog outage during a rotation delays new-kid logins | **259 200 000 (72 h)** | 15 min | 5 min |
+| mainnet | **7 200 000 (2 h)**, provisional; valid if L_min ≥ ~4 h; if L_min turns out shorter, D = max(3·(W+T), L_min − P − T − M) and accept that a watchdog outage during a rotation delays new-kid logins | **259 200 000 (72 h)** | 15 min | 5 min |
 
 The 2 h default satisfies the security bound (3·(5 + 1) min = 18 min) with a wide margin and the availability bound
 for any L_min ≥ 2 h 16 min + 1 h. The API's cron moves from hourly to every 15 min for the JWKS part (the vault
@@ -337,45 +409,86 @@ re-wrap stays hourly, gated on the minute).
 
 ## Watchdog service
 
-New package `apps/watchdog`: a Cloudflare Worker on a **separate Cloudflare account** (different login and MFA from
-the API's account; open question 3), cron every 5 min, its own D1 or KV for state. Secrets: `WATCHDOG_KEY`, a
-function-call key on the watchdog account, receiver the signer, methods `cancel_issuer_key_change`,
-`confirm_issuer_key_change`, `pause`, `delete_updater_key`, allowance 1 NEAR. The watchdog account's full-access key
+New package `apps/watchdog`: a Cloudflare Worker on its **own Cloudflare account** (different login and MFA from
+Hana's main account; D86), one watchdog at launch, cron every 5 min, its own D1 for state (seen kids, last snapshot,
+actions log, alerts and acks). Secrets: `WATCHDOG_KEY`, a function-call key on the watchdog account, receiver the
+signer, methods `cancel_issuer_key_change`, `confirm_issuer_key_change`, `pause`, `delete_updater_key`, allowance 1
+NEAR; its own Resend API key (D87), Slack webhook and paging-app token (D85). The watchdog account's full-access key
 stays with the operator (`~/.near-credentials`, like the other accounts). It reads the chain through its own RPC
 setting (manifest `rpc` and `rpcFallback`), never through the API. Each run:
 
 1. Fetch `https://www.googleapis.com/oauth2/v3/certs` directly (`cache: no-store`), keep RS256 keys
-   (`usableJwks`, shared from `packages/` rather than imported from `apps/api`). Record each kid's first-seen time.
+   (`usableJwks`, shared from `packages/` rather than imported from `apps/api`). Record each kid's first-seen time
+   and key material.
 2. Read `get_key_changes`, `get_issuer` for each provider it watches (Google only), `get_config`, `get_governance`.
 3. Pending `Add`:
    - kid in the JWKS with equal `n`, `e` (after stripping leading zeros) → `confirm_issuer_key_change`.
-   - kid in the JWKS with different `n`/`e`, or kid absent from two fetches ≥ 60 s apart → `cancel_issuer_key_change`,
-     then `delete_updater_key` for every updater key if `by` is the signer account, then a P1 alert.
-4. Pending `Remove`: kid absent from the JWKS → confirm; present → cancel + P1 alert.
-5. Active kid that the watchdog has never seen in Google's JWKS (activated by delay while the watchdog was down, or
-   by an upgrade) → `pause` + P1 alert. Active kid missing from the JWKS for > 3 h → P2 alert (the updater should have
-   proposed its removal).
-6. Diff `get_config` / `get_governance` against the last run: any `pending_upgrade`, `pending_owner`, watchdog or
-   updater-key change, delay change, `paused` → P1 alert with the values.
-7. Ping an external dead-man's switch (a heartbeat URL on a third provider); a missing heartbeat alerts by itself.
+   - kid in the JWKS with different `n`/`e`, or kid absent from two fetches ≥ 60 s apart (a key Google doesn't
+     publish) → `cancel_issuer_key_change`, then `delete_updater_key` for every updater key if `by` is the signer
+     account, then a critical alert (D82).
+4. Pending `Remove`: kid absent from the JWKS → confirm; present → critical alert only, no cancel (D82: the owner
+   decides and cancels).
+5. Active kid Google doesn't publish: never seen in Google's JWKS by this watchdog, or seen with other key material
+   (activated by delay while the watchdog was down, by an owner post, or by an upgrade) → `pause` + critical alert.
+   This is the only automatic pause (D82). A kid Google published and has since dropped is the normal rotation tail,
+   not a forgery: missing for > 3 h → warning (the updater should have proposed its removal). On its first run (empty
+   D1) the watchdog seeds "seen" from the current JWKS and alerts critical, without pausing, on any active kid not in
+   it, so a fresh deploy never pauses on history it can't know.
+6. Diff `get_config` / `get_governance` against the last run: any `pending_upgrade` (D84), `pending_owner`,
+   `pending_withdrawal`, watchdog or updater-key change, delay change, console-audience change, `paused` or
+   unpause → critical alert with the values. Alert only; no action.
+7. Ping an external dead-man's switch (a heartbeat URL on a third provider); a missing heartbeat alerts critical by
+   itself.
+8. Write the run (time, result, each check's outcome, actions taken) to its D1 for the status endpoint.
 
 Providers other than Google: the watchdog only alerts on them (no cancel or confirm) until it knows their JWKS URL.
 
+**Status endpoint (for the admin portal, D83).** `GET /status` and `GET /alerts?cursor`: last run and its checks,
+heartbeat state, seen kids with first-seen times, the actions log, alert history with acks. `POST /alerts/:id/ack
+{by}`: records an acknowledgement. Both need a bearer token that only the admin Worker holds (`WATCHDOG_STATUS_TOKEN`
+on both sides, from `.secrets/<env>/`). The endpoint can read and ack, nothing else: it can't change a check, stop a
+first alert or call the chain. A portal ack stops only the 15-min re-sends of that alert; the watchdog records who
+acked and from where (portal or paging app).
+
 ## Alerts
 
-- **Who sends**: the watchdog service, so a compromised API Worker or API Cloudflare account can't suppress them.
+- **Who sends**: the watchdog service, so a compromised API Worker or Hana Cloudflare account can't suppress them.
   The heartbeat service covers a dead watchdog.
-- **Who receives**: Hana operators (the user and the council members). Two channels so one outage doesn't hide an
-  alert: email (provider TBD, the same choice as D34's notice channel) and a second push channel (open question 15).
-- **P1** (act now): a pending key Google doesn't publish or with other key material; a forged-proposal response
-  taken (cancel, updater key deleted); an active kid never seen in the JWKS (pause taken); any upgrade, owner,
-  watchdog, updater-key or delay change; pause.
-- **P2**: watchdog RPC or JWKS fetch failing for 3 runs; a matured key change nobody executed for > 1 h; a stale active
-  kid.
-- **Public notice** of an upgrade or owner change: the on-chain event is authoritative. Additionally an email to
-  every scope owner with a NEAR or console identity (batch C notice channel, D34), and a public page listing pending
-  upgrades with the code hash, source commit, reproducible-build command and diff to the last release (open question
-  11). Partners and users then have `governance_delay_ms` to react, e.g. export keys (D41).
+- **Who receives**: both founders (D85).
+- **Severities (D85):**
+
+  | Severity | Channels | Re-send | Raised for |
+  |---|---|---|---|
+  | critical | phone paging app (PagerDuty, Pushover or ntfy, chosen at setup) + Slack + email | every 15 min until acknowledged (paging app or portal) | a pending key Google doesn't publish or with other key material; every automatic action (cancel, updater keys deleted, pause); a pending removal of a kid Google still publishes; an active kid Google doesn't publish, or not in the JWKS at the first run (step 5); any upgrade proposal (D84), owner, withdrawal, watchdog, updater-key, delay or console-audience change; pause and unpause; a missing heartbeat |
+  | warning | Slack + email | — | RPC or JWKS fetch failing for 3 runs; a matured key change nobody executed for > 1 h; a stale active kid (> 3 h missing) |
+  | info | admin portal + daily digest email | — | confirmations, executions, routine runs, delay-matured config |
+
+- **Public notice** of an upgrade, owner change or withdrawal (D86): the on-chain event is authoritative.
+  Additionally batch C's admin Worker emails every org's security contacts (its one notice channel, D34, through
+  Resend, D87), and the admin console and the partner console show a pending-upgrades page: code hash, source commit,
+  reproducible-build command, diff to the last release, countdown. Partners and users then have
+  `governance_delay_ms` to react, e.g. export keys (D41).
+- **Runbook** (`docs/operations.md`, written with the code): what each critical alert means, who unpauses, how to
+  cancel through the DAO.
+
+## Monitoring in the admin portal
+
+Built on batch C's admin Worker (D83). The admin Worker reads the watchdog's status endpoint and the chain
+(`get_key_changes`, `get_issuer`, `get_config`, `get_governance`, the signer's access-key list, NEP-297 events from
+its read-only RPC); it never alerts and never acts on chain. The "Security & monitoring" view shows:
+
+- watchdog heartbeat and last check time, with a warning banner when it has been silent for more than two intervals
+  (10 min);
+- pending issuer-key changes: provider, kid, add or remove, proposer, countdown to `executable_at_ms`, and whether the
+  key matches Google's JWKS (the admin Worker's own fetch beside the watchdog's verdict);
+- the watchdog's actions log (cancels, confirms, pauses, updater-key deletions) with transaction links;
+- pause state (who paused, when) and the current updater keys against the signer's access-key list;
+- pending upgrades, owner transfers, withdrawals, delay decreases and console-audience additions, with countdowns;
+- alert history by severity, with acknowledge (posted to the watchdog's ack endpoint, recorded with the Access
+  identity).
+
+**Standing rule (D83):** every future watchdog check or alert ships with its view here; a check that doesn't surface
+in the admin portal isn't done. The portal is a view: the watchdog's own alerts never depend on it.
 
 ## Owner = multisig
 
@@ -388,12 +501,20 @@ Providers other than Google: the watchdog only alerts on them (no cancel or conf
 | Plain account with several full-access keys | — | — | Not a multisig: each key acts alone |
 | A custom multisig in this repo | — | Exactly our needs | More audited code to own; no tooling |
 
-### Recommendation: Sputnik DAO v2, council 2-of-3
+### Decision: Sputnik DAO v2, council 2-of-3 for every kind (D81)
 
-- **Security**: the most-used and longest-running multisig code on NEAR; threshold and per-kind policy on chain;
-  members on hardware wallets. Set the policy so only the council may propose (removes the anyone-proposes bond
-  spam), `FunctionCall` proposals need 2 of 3, and `ChangePolicy`, `UpgradeSelf`, `UpgradeRemote`, `AddMember`,
-  `RemoveMember` need 3 of 3. The DAO's own code is never upgraded except by a 3-of-3 proposal.
+- **Security**: the most-used and longest-running multisig code on NEAR; threshold and policy on chain. Policy: only
+  the council may propose (removes the anyone-proposes bond spam); **every** proposal kind (`FunctionCall`,
+  `ChangePolicy`, `UpgradeSelf`, `UpgradeRemote`, `AddMember`, `RemoveMember`, transfers) needs 2 of 3. No 3-of-3: a
+  lost Ledger would freeze the council, and the contract's 72 h governance delay plus the watchdog's critical alerts
+  already guard every owner action that matters.
+- **Mainnet council**: the two founders, each on a Ledger, and one offline backup key that neither founder can reach
+  alone: held by a third party (e.g. the company's lawyer or accountant, under written instructions on when to sign)
+  or in a dual-control safe deposit box. Where it is held is decided before mainnet. A founder plus the backup holder
+  can act; the 72 h delay and the alerts to the other founder cover that. An independent member replaces the backup
+  later (`AddMember` + `RemoveMember`, 2 of 3).
+- **sandbox-dev council**: three throwaway testnet accounts (`hana-id-council-{a,b,c}-dev1.testnet` or as the
+  manifest names them), keys in `.secrets/sandbox-dev/council-*.json` (0600). Scripts drive them; no Ledger.
 - **Tooling**: proposals and votes through a web UI with Ledger, plus scripts (`add_proposal`, `act_proposal`) for
   `deploy-contract`/`admin`.
 - **Cost**: DAO creation ~5–6 NEAR of storage (verify on testnet), refundable proposal bonds, gas per vote. Negligible
@@ -404,16 +525,18 @@ Providers other than Google: the watchdog only alerts on them (no cancel or conf
 
 Each owner call (`set_sponsors`, `set_console_audiences`, `set_shared_clients`, `set_change_delay_ms`, the two new
 delays, `set_issuer`, `admin_register_scope`, `remove_issuer_key`, watchdog and updater-key methods, `unpause`,
-`propose_upgrade`, `cancel_upgrade`, `propose_owner`) becomes a DAO `FunctionCall` proposal to the signer (method,
-JSON args, 0 deposit, gas). It executes when the second vote lands. Contract-side checks are unchanged
-(`predecessor == owner`, the DAO account).
+`propose_upgrade`, `cancel_upgrade`, `propose_owner`, `propose_withdrawal`, `cancel_withdrawal`) becomes a DAO
+`FunctionCall` proposal to the signer (method, JSON args, 0 deposit, gas). It executes when the second vote lands.
+Contract-side checks are unchanged (`predecessor == owner`, the DAO account).
 
-Scripts: `scripts/lib/owner-tx.ts` with two backends chosen by manifest `ownerKind: "account" | "sputnik"`.
-`account` signs directly (local envs, tests). `sputnik` creates the proposal signed by one council member's key
-(`--member <account>`), prints the proposal id and its description (method, args, the plan line), and `admin
-owner:vote <id>` / `admin owner:proposals` list and vote. `deploy-contract` prints owner steps as proposals to create
-and, on a re-run, sees what executed. `post-google-keys --as-owner` is removed (the owner can't post faster than the
-updater anyway); `post-google-keys` keeps the updater path and gains `--execute` for matured changes.
+Scripts: `scripts/lib/owner-tx.ts` with two backends chosen by manifest `ownerKind: "account" | "sputnik"`. `account`
+signs directly (local envs, tests). `sputnik` creates the proposal signed by one council member's key (`--member
+<account>`), prints the proposal id and its description (method, args, the plan line), and `admin owner:vote <id>` /
+`admin owner:proposals` list and vote. On sandbox-dev, `--approve-with <member>` proposes with one `.secrets` council
+key and approves with a second in the same command (D81); the flag is refused on a manifest whose `network` isn't
+testnet, and council keys are never read from disk for mainnet (Ledgers only). `deploy-contract` prints owner steps as
+proposals to create and, on a re-run, sees what executed. `post-google-keys --as-owner` is removed (the owner can't post
+faster than the updater anyway); `post-google-keys` keeps the updater path and gains `--execute` for matured changes.
 
 ## The API's keys
 
@@ -431,28 +554,32 @@ updater anyway); `post-google-keys` keeps the updater path and gains `--execute`
 
 | Action | Bound |
 |---|---|
-| Propose a forged key | Delayed D (2 h); the watchdog cancels it within W and deletes the updater key; P1 alert. Forges only if every watchdog is down for D and the active-kid check (step 5) then pauses at the next watchdog run |
+| Propose a forged key | Delayed D (2 h); the watchdog cancels it within W and deletes the updater key; critical alert. Forges only if every watchdog is down for D and the active-kid check (step 5) then pauses at the next watchdog run |
 | Spam proposals | ≤ 6 pending changes in total; each call costs gas from the key's 1 NEAR allowance (from the signer's balance); the first forged proposal gets the key deleted |
 | Fill the queue so Google's next key can't be proposed | Same: the key is deleted at the first forged entry, the owner cancels the rest (or the watchdog does) |
-| Propose removing Google's live keys | Delayed; the watchdog cancels removals of kids still published; can't remove the last key |
+| Propose removing Google's live keys | Delayed D; the watchdog raises a critical alert (alert-only, D82) and the owner cancels; can't remove the last key. Its first forged *add* gets the key deleted |
 | Execute matured changes early | Not possible: execution checks `executable_at_ms`; executing on time is open to anyone anyway |
 | Cancel, confirm, pause, upgrade, config, add keys | Not in its method list, and the contract refuses "self" for them |
 | Burn signer balance | ≤ its allowance (1 NEAR) |
 
 ## Signer account full-access key
 
-- **sandbox-dev**: deleted as the last migration step, after an upgrade has gone through the DAO path (open question
-  9 asks whether to keep it on sandbox-dev for speed; this spec says delete it, for parity).
+- **sandbox-dev**: kept, for speed (D86). Dev upgrades may use `deploy-contract --upgrade` directly; the DAO path is
+  still exercised once in the migration plan. Its manifest sets `allowSignerFullAccessKey: true`.
+- **Any staging env and mainnet**: never one. The manifest schema refuses `allowSignerFullAccessKey` on a mainnet
+  network, and a test asserts that no committed manifest other than sandbox-dev's sets it.
 - **mainnet**: never left in place. The signer account's first transaction (signed by its creation key) is one batch:
   `DeployContract`, `new(owner = DAO, …, watchdogs)`, `AddKey(updater, function-call)`, `DeleteKey(creation key)`.
   It's atomic, so there is never a moment with code and a full-access key. (The `add_updater_key` path is for later
   rotations; at creation the batch adds the first key with the exact permission the contract would use.)
-- `deploy-plan.ts` gets a blocker: on an env with `ownerKind: "sputnik"`, any full-access key on the signer, or any key
-  that isn't in `get_governance().updater_keys` with exactly `UPDATER_METHODS`, stops the plan.
+- `deploy-plan.ts` gets a blocker: on an env with `ownerKind: "sputnik"`, any full-access key on the signer (unless
+  `allowSignerFullAccessKey`), or any function-call key that isn't in `get_governance().updater_keys` with exactly
+  `UPDATER_METHODS`, stops the plan.
 - With no full-access key, `deploy-contract --upgrade` no longer works on that env; `scripts/upgrade-contract.ts
   <env> propose|execute` replaces it (propose = a DAO proposal of `propose_upgrade(hash of the built wasm)`; execute =
   any funded account sends the wasm to `execute_upgrade`).
-- Surplus NEAR on the signer can't be withdrawn without a method for it (open question 10).
+- Surplus NEAR on the signer leaves only through the timelocked withdrawal ([Surplus
+  withdrawal](#surplus-withdrawal-d86)).
 
 ## What each party can do after this batch
 
@@ -461,13 +588,14 @@ Replaces the matching rows of `security.md` "What a compromise gives" (D = `issu
 
 | Compromised | Effect | Limits |
 |---|---|---|
-| Owner multisig (2 of 3 council keys) | After G: any upgrade (anything, including forging tokens), owner transfer. At once: config (sponsors, console audiences, shared clients after `change_delay_ms`, delays: increases), pause/unpause, remove issuer keys (DoS), remove watchdogs, add or delete updater keys | Can't install a key or code faster than G: key posts wait D and honest watchdogs cancel; removing the watchdogs pushes every key change to ≥ G; upgrades and owner transfers wait G with a public event, watched and alerted by the watchdog. Users and partners get G to react (export keys, D41) |
-| One council key | Propose and vote once | Nothing executes without a second key; policy changes need all three |
-| Signer account | No full-access key exists. Its only keys are updater keys (row below) | Code changes only through `execute_upgrade` with the owner-proposed hash after G |
+| Owner multisig (2 of 3 council keys; on mainnet two founders, or one founder and the backup holder) | After G: any upgrade (anything, including forging tokens), owner transfer, surplus withdrawal. At once: config (sponsors; console audiences and shared clients: removals now, additions after `change_delay_ms`; delays: increases), pause/unpause, remove issuer keys (DoS), remove watchdogs, add or delete updater keys | Can't install a key or code faster than G: key posts wait D and honest watchdogs cancel; removing the watchdogs pushes every key change to ≥ G; upgrades, owner transfers and withdrawals wait G with a public event and a critical alert to both founders. Users and partners get G to react (export keys, D41) |
+| One council key (or the backup key's holder alone) | Propose and vote once | Nothing executes without a second key, for every proposal kind (D81) |
+| Signer account | Outside sandbox-dev no full-access key exists; its only keys are updater keys (row below). sandbox-dev's full-access key is total control of that testnet env (D86) | Code changes only through `execute_upgrade` with the owner-proposed hash after G |
 | `KEYS_UPDATER_KEY` | Propose keys and removals (delayed D), execute matured ones | See [the table above](#what-a-stolen-updater-key-can-still-do-bounded). Forging needs every watchdog down for D, and the next watchdog run pauses |
 | One watchdog key | DoS: cancel every key change (Google's next key never activates → logins with it fail), pause, delete updater keys. Confirm early only a change that someone (updater or owner) proposed | Can't post a key. The owner removes it at once and unpauses; another watchdog keeps confirming Google's keys. Forging needs the updater key **and** a confirm-capable watchdog |
 | API Worker code, its secrets, or the API's Cloudflare account | The updater key (above); D1 and `VAULT_KEK` rows unchanged; **and still the vault and auth bundles**, so every key of every user who loads the vault while it is compromised | This batch removes the *contract-level* path (forging tokens for any `sub` without the user). The page-serving trust root is unchanged (`security.md` "API Worker code or all Worker secrets"); bounding it is a separate issue |
-| Watchdog service's Cloudflare account | One watchdog key (above) and its alert sending | Its silence is caught by the dead-man's switch |
+| Watchdog service's Cloudflare account | One watchdog key (above) and its alert sending | Its silence is caught by the dead-man's switch and the portal's silence warning |
+| Hana's main Cloudflare account (admin Worker included) | The API row above; the portal's view of governance and its acks | Can't stop the watchdog's alerts: a portal ack stops only re-sends of an alert already paged, and the watchdog records it (D83) |
 | Owner + one watchdog with confirm power | Install a key at once (owner proposes, watchdog confirms) | Two independent compromises; k-of-n confirmation later raises it |
 
 ## Migration plan
@@ -475,30 +603,36 @@ Replaces the matching rows of `security.md` "What a compromise gives" (D = `issu
 ### sandbox-dev (testnet, in place, no address change)
 
 1. Merge the contract, API, watchdog and script changes; `cargo test`, sandbox e2e and `pnpm -r test` pass.
-2. Create the watchdog account (`hana-id-watchdog-dev1.testnet`, manifest `watchdogs`) and a testnet DAO with a
-   3-member council (testnet accounts the user holds; manifest `owner` stays the old account until step 6).
+2. Create the watchdog account (`hana-id-watchdog-dev1.testnet`, manifest `watchdogs`) and a testnet Sputnik DAO
+   with three throwaway council accounts, 2-of-3 for every kind (keys in `.secrets/sandbox-dev/`, D81; manifest
+   `owner` stays the old account until step 6).
 3. `deploy-contract sandbox-dev --upgrade` (signer full-access key still present): `DeployContract` +
    `migrate_v1(issuer_key_delay_ms = 120000, governance_delay_ms = 60000)` in one transaction. Check every scope,
    session and issuer key survived (`get_scope("global")`, `get_issuer("google")`, a live session) and that an
    existing smoke wallet derives the same addresses.
 4. Owner (old account): `add_updater_key(new key)`; the API's `KEYS_UPDATER_KEY` is switched to it; the old updater
    key (with `remove_issuer_key`) is deleted with the signer's full-access key. `add_watchdog(watchdog)`; deploy
-   `apps/watchdog` to the separate Cloudflare account with `WATCHDOG_KEY`.
-5. Run a forced rotation drill: post a test kid with the updater (watchdog must cancel within W and delete the
-   updater key; re-add the updater key), then let a real Google kid flow through propose → confirm.
-6. `propose_owner(DAO)`; after G, a DAO proposal `accept_owner`. Manifest `owner` = the DAO, `ownerKind:
-   "sputnik"`.
+   `apps/watchdog` to its own Cloudflare account with `WATCHDOG_KEY`; alerts wired (paging app, Slack, email) and
+   the admin portal's "Security & monitoring" view reading it.
+5. Run a forced rotation drill: post a test kid with the updater (watchdog must cancel within W, delete the updater
+   key and page critical; the portal shows the action and the alert; re-add the updater key), then let a real Google
+   kid flow through propose → confirm. A pause drill: activate a test kid by delay with the watchdog stopped; on
+   restart it pauses; the DAO unpauses at once.
+6. `propose_owner(DAO)`; after G, a DAO proposal `accept_owner` (`owner-tx --approve-with`). Manifest `owner` = the
+   DAO, `ownerKind: "sputnik"`.
 7. A DAO `propose_upgrade(hash)` of the same code rebuilt with a no-op version bump; after G, `upgrade-contract
    execute`. Check `view_account.code_hash`.
-8. Delete the signer's full-access key. `deploy-contract sandbox-dev` must show no blockers.
+8. Keep the signer's full-access key (D86; `allowSignerFullAccessKey: true`). `deploy-contract sandbox-dev` must show
+   no blockers.
 
 ### Mainnet (at the address freeze; documented now, run by the user only, never by agents)
 
-1. Create the DAO (council on Ledgers, policy as above) and the watchdog account(s) first; deploy the watchdog
-   service and alerting; verify the heartbeat.
-2. Build reproducibly (`cargo near build reproducible-wasm`), record the hash.
+1. Decide where the backup council key is held (D81). Create the DAO (the founders' Ledgers and the backup key,
+   2-of-3 for every kind) and the watchdog account first; deploy the watchdog service and alerting; verify the
+   heartbeat, a test critical page to both founders, and the portal view.
+2. Build reproducibly (`cargo near build reproducible-wasm`), record and publish the hash (D86).
 3. Create the signer account and send the one-batch transaction (Deploy, `new(owner = DAO, change_delay_ms,
-   issuer_key_delay_ms = provisional 2 h, governance_delay_ms = provisional 72 h, watchdogs)`, AddKey updater,
+   issuer_key_delay_ms = 2 h or the measured value, governance_delay_ms = 72 h, watchdogs)`, AddKey updater,
    DeleteKey creation key).
 4. Owner proposals for config (issuer, sponsors, console audiences, shared clients, global scope). The first Google
    keys go through the normal path (watchdog confirms).
@@ -532,6 +666,12 @@ Replaces the matching rows of `security.md` "What a compromise gives" (D = `issu
   owner; `set_owner` no longer exists.
 - Updater keys: `add_updater_key` cap; `delete_updater_key` by owner and watchdog; the promise's permission is exactly
   `UPDATER_METHODS`, receiver self, allowance 1 NEAR (assert on the created promise actions in the mocked env).
+- Withdrawal: owner-only propose and cancel; execute before G panics, while paused panics, leaving less than storage
+  plus `SIGNER_RESERVE` panics (checked at execution, after the balance changed); the transfer promise goes to the
+  proposed receiver for the proposed amount.
+- Console audiences: a removal applies at once; an addition isn't accepted by the console-token check until
+  `change_delay_ms` has passed, then is; `get_config` lists it as pending meanwhile; event JSON exact.
+- Unpause by the owner takes effect in the same call (no delay).
 
 ### Sandbox e2e (`contracts/integration-tests`)
 
@@ -547,7 +687,8 @@ Replaces the matching rows of `security.md` "What a compromise gives" (D = `issu
   methods.
 - Full DAO flow with the Sputnik v2 wasm (imported from testnet with `near-workspaces` `import_contract`, or vendored
   with a pinned hash): create DAO, `propose_owner` → DAO `accept_owner`, DAO `propose_upgrade` → `execute_upgrade`,
-  a 1-of-3 vote doesn't execute, 2-of-3 does.
+  a 1-of-3 vote doesn't execute, 2-of-3 does, for a `FunctionCall`, a `ChangePolicy` and an `AddMember`/`RemoveMember`
+  (D81); a non-member can't propose; the policy JSON the scripts create is the one tested.
 - Login gas unchanged: `create_session` and `create_session_and_derive` burn within 2% of the batch B values.
 - Rotation end to end: updater proposes, watchdog key confirms, a token with the new kid opens a session; a forged
   proposal is cancelled and the updater key deleted.
@@ -562,57 +703,84 @@ Replaces the matching rows of `security.md` "What a compromise gives" (D = `issu
 
 ### Watchdog (`apps/watchdog`, vitest with a stub RPC and JWKS)
 
-- Each rule in [Watchdog service](#watchdog-service) steps 3–7: confirm on match, cancel + delete updater + P1 on
-  mismatch or absence (two fetches), removals, pause on a never-seen active kid, governance diffs alert, heartbeat
-  sent, no action on providers it doesn't know, no secret in any log line.
+- Each rule in [Watchdog service](#watchdog-service) steps 3–8: confirm on match; cancel + delete updater + critical
+  on mismatch or absence (two fetches); a pending removal of a published kid alerts critical and calls nothing; pause
+  only on an active kid never seen or with other key material, never on a dropped kid (warning) or at the first run
+  (critical, no pause); governance diffs alert and call nothing; heartbeat sent; no action on providers it doesn't
+  know; no secret in any log line.
+- Severities route to the right channels (stub paging app, Slack, email); a critical alert re-sends every 15 min
+  until acked and stops after an ack from the paging app or `POST /alerts/:id/ack`; an ack is recorded with who and
+  where; a failing channel doesn't block the others.
+- Status endpoint: refuses a missing or wrong bearer token; returns the last run, actions and alerts; can't change
+  state except acks.
+
+### Admin portal (`apps/admin`, with batch C's admin tests)
+
+- The "Security & monitoring" view renders each item in [Monitoring in the admin
+  portal](#monitoring-in-the-admin-portal) from a stub watchdog and stub RPC: silence warning after two missed
+  intervals, countdowns, JWKS match, actions log, pause state, updater keys against the access-key list, pending
+  upgrades and owner actions, alert history and ack.
+- Every watchdog check id has a portal rendering (a registry test fails when a check is added without one, D83).
+- The pending-upgrades page (admin and partner console) shows hash, commit, build command and countdown.
 
 ### Scripts
 
-- `deploy-plan`: blocker on a full-access key on the signer for `ownerKind: "sputnik"`; blocker on an untracked
-  signer key; owner steps rendered as proposals; mainnet-style plan refuses (testnet-only guard stays).
-- `owner-tx` both backends; `upgrade-contract` propose/execute against the stub RPC.
+- `deploy-plan`: blocker on a full-access key on the signer for `ownerKind: "sputnik"` unless
+  `allowSignerFullAccessKey`; the schema refuses that flag on mainnet and only sandbox-dev's committed manifest sets
+  it; blocker on an untracked signer key; owner steps rendered as proposals; mainnet-style plan refuses (testnet-only
+  guard stays).
+- `owner-tx` both backends; `--approve-with` proposes and approves in one command on testnet and is refused
+  elsewhere; `upgrade-contract` propose/execute against the stub RPC, refusing a non-reproducible build for a mainnet
+  manifest.
 
 ## Build order
 
-1. Contract: state, migrate_v1 with the v1 fixture, key changes, watchdogs, pause, upgrades, owner transfer, unit
-   tests. Sandbox: migrate and upgrade tests first (they decide whether the in-place path works at all).
-2. Sputnik DAO in sandbox: threshold and policy encoding test; then `owner-tx` and `upgrade-contract` scripts,
-   `deploy-plan` changes.
+1. Contract: state, migrate_v1 with the v1 fixture, key changes, watchdogs, pause, upgrades, owner transfer,
+   withdrawal, console-audience timelock, unit tests. Sandbox: migrate and upgrade tests first (they decide whether
+   the in-place path works at all).
+2. Sputnik DAO in sandbox: threshold and policy encoding test (2-of-3 for every kind); then `owner-tx` (with
+   `--approve-with`) and `upgrade-contract` scripts, `deploy-plan` changes.
 3. API sync and the `issuer_key_pending` precheck.
-4. `apps/watchdog` and alerting (blocked on the email provider for email; the push channel and heartbeat first).
-5. Lead-time numbers in → set the mainnet D (and confirm G) in `decisions.md`.
-6. sandbox-dev migration (plan above), rotation drill, upgrade drill, full-access key deletion.
-7. Reference docs updated in the same branches; `security.md` open issue (e) marked fixed.
+4. `apps/watchdog` and alerting: paging app, Slack and the heartbeat first, email through Resend (D87); status
+   endpoint.
+5. Admin portal "Security & monitoring" view and the pending-upgrades page (needs batch C's admin Worker and console).
+6. Lead-time numbers in → replace the provisional mainnet D in `decisions.md` (D80).
+7. sandbox-dev migration (plan above), rotation and pause drills, upgrade drill.
+8. Reference docs updated in the same branches; `security.md` open issue (e) marked fixed.
 
 ## Open questions for the user
 
-1. **Delays.** Mainnet `issuer_key_delay_ms` provisional 2 h (to be set by the formula once L_min is measured) and
-   `governance_delay_ms` 72 h (upgrades, owner transfer, watchdog confirm power). Is 72 h right, given that a paused
-   contract waits up to G for a fix?
-2. **Multisig.** Sputnik DAO v2 with a 2-of-3 council (3-of-3 for policy and member changes), or `multisig2` on the
-   existing owner account? Who are the three council members, and do all use Ledgers?
-3. **Watchdog hosting.** A second Cloudflare account (proposed), or an external host (VPS, another cloud)? One
-   watchdog at launch or two on different providers (two makes a rogue or dead watchdog a non-event)?
-4. **Watchdog automatic actions.** May it delete the updater key and pause on its own (proposed yes), or only alert
-   and wait for a human?
-5. **Early activation by one watchdog** (1-of-n) now, k-of-n independent confirmers later (D33's "later,
-   optionally")?
-6. **Watchdog removal slows key changes to G** (so the owner can't silence the watchdogs and post a key in D):
-   accept that after removing a rogue watchdog, Google's next key waits up to G unless another watchdog confirms it?
-7. **Pause scope.** Also stop `execute_change` and every token-authenticated owner action (proposed), or only
-   derivation?
-8. **Upgrade veto.** Should an independent guardian (a watchdog, or an outside party such as the auditor) be able to
-   cancel a pending upgrade? Not in this draft.
-9. **sandbox-dev's signer full-access key.** Delete it (proposed, parity with mainnet; every dev upgrade then takes
-   a DAO vote and G = 60 s) or keep it there?
-10. **Signer surplus.** Add an owner method to withdraw NEAR above storage plus a reserve, or leave surplus locked?
-11. **Public notice.** Partner email plus a public "pending upgrades" page with code hash and source commit:
-    enough? Where does the page live?
-12. **Owner-posted keys** use the same D as the updater (proposed), or G?
-13. **Console audiences.** `set_console_audiences` is immediate today, and a console audience's tokens authorize
-    OIDC owner actions. Timelock additions by `change_delay_ms` in this batch?
-14. **Reproducible builds** required for every mainnet `propose_upgrade` (proposed), with the hash published before
-    the proposal?
-15. **Alert channels and recipients.** Second channel besides email (Telegram, Slack, PagerDuty-style)? Who is on
-    call?
-16. **Events version.** `1.1.0` with `issuer_key_set` moved to execution time (proposed), or a new name and `2.0.0`?
+All sixteen were answered on 2026-10-29 (`docs/decisions.md` D80–D86); the answers are applied above.
+
+1. **Delays.** Answered (D80): mainnet issuer-key delay 2 h, provisional until the lead-time measurement; governance
+   delay 72 h; sandbox-dev 2 min / 60 s. Emergencies are handled by pause.
+2. **Multisig.** Answered (D81): Sputnik DAO v2, 2-of-3 for every kind; the founders' Ledgers plus an offline backup
+   key; sandbox-dev three throwaway accounts driven by scripts.
+3. **Watchdog hosting.** Answered (D86): its own Cloudflare account; one watchdog at launch.
+4. **Watchdog automatic actions.** Answered (D82): cancel a pending key Google doesn't publish, delete the updater key
+   that proposed it, pause only for such a key active on chain; everything else alert-only; the owner unpauses at
+   once. Plus the admin-portal monitoring requirement (D83).
+5. **Early activation by one watchdog.** Answered (D86): yes now; k-of-n later.
+6. **Watchdog removal slows key changes to G.** Answered (D86): accepted.
+7. **Pause scope.** Answered (D86): derivation and new sessions (every token path) and the executors; never
+   governance, revocation or cancels.
+8. **Upgrade veto.** Answered (D84): no guardian at launch; revisit with an independent party; critical alert on
+   every upgrade proposal.
+9. **sandbox-dev's signer full-access key.** Answered (D86): kept on sandbox-dev; never on staging or mainnet.
+10. **Signer surplus.** Answered (D86): owner-only withdrawal, timelocked by G.
+11. **Public notice.** Answered (D86): the event, partner email, and a pending-upgrades page in the admin and partner
+    consoles.
+12. **Owner-posted keys.** Answered (D86): same D as the updater.
+13. **Console audiences.** Answered (D86): additions wait `change_delay_ms`.
+14. **Reproducible builds.** Answered (D86): required for every mainnet upgrade, hash published first.
+15. **Alert channels and recipients.** Answered (D85): critical / warning / info; both founders.
+16. **Events version.** Answered (D86): `1.1.0`, additive.
+
+### Still open
+
+17. **Cancel by a compromised OIDC owner** (from `docs/batch-c-spec.md` open question 9): a hijacked owner can cancel
+    any pending change of its scope, including a `SetOwners` that would remove it. Limit cancel to the proposer, need
+    a second owner, or add a NEAR-owner veto? Decide before the address freeze (no address impact).
+18. Where the mainnet backup council key is held (D81), before mainnet.
+19. Which paging app (PagerDuty, Pushover or ntfy), at setup (D85).
+20. The measured mainnet issuer-key delay (D80), from `admin issuer-keys:lead-times` after two Google rotations.

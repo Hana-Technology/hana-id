@@ -38,9 +38,9 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 |---|---|---|
 | One session-pool relayer key | Burn its allowance (≤ 2 NEAR default); relay session methods | Receiver and method list fixed on chain; every method still needs a token or session signature. DoS only |
 | An owner-pool key | Burn ≤ 0.5 NEAR; relay owner methods | Every owner method needs an owner proof on chain; logins unaffected |
-| `KEYS_UPDATER_KEY` (Worker secret, function-call key on the signer account) | `set_issuer_key` with an attacker RSA key → mint Google tokens for any `sub` → **derive any user's key** | Visible on chain (`issuer_key_set` events); the hourly cron would not remove a forged kid until it has been missing from Google's JWKS for ≥ 55 min. Open issue (e), D33 |
+| `KEYS_UPDATER_KEY` (Worker secret, function-call key on the signer account) | `set_issuer_key` with an attacker RSA key → mint Google tokens for any `sub` → **derive any user's key** | Visible on chain (`issuer_key_set` events); the hourly cron would not remove a forged kid until it has been missing from Google's JWKS for ≥ 55 min. Open issue (e), D33; fix specified in `docs/governance-spec.md` (D80–D86) |
 | Owner account key | Same as above, plus config (shared clients after the delay, sponsors, change-delay increase, `set_owner`) | Can't shorten the timelock at once, can't touch registered clients |
-| Signer account full-access key | Redeploy the contract: anything, including MPC requests for any path | No upgrade lock in batch A/A.2/B. Open issue (e), D33 |
+| Signer account full-access key | Redeploy the contract: anything, including MPC requests for any path | No upgrade lock in batch A/A.2/B. Open issue (e), D33; fix specified in `docs/governance-spec.md` |
 | D1 | App origins (→ `frame-ancestors`, parent-origin checks), app scope, settings incl. bare writes of `raw_sign`/policy without the pending delay, suspensions; `share_enc` rows | `K_s` needs `VAULT_KEK`; a policy needs the user's consent to its `policyId`; raw requests still need approval |
 | `VAULT_KEK` | Unwrap every `K_s` in D1 | Useless without a device's IndexedDB record (PRK is encrypted under `K_s` only on the device) |
 | API Worker code or all Worker secrets, or the Cloudflare account | Everything: the API Worker renders the vault page (inlined config, `frame-ancestors`) and holds `KEYS_UPDATER_KEY`; the same account deploys the two page Workers that serve the vault and auth bundles | Single trust root. Mitigations: small vault bundle, strict CSP, no third-party script, narrow `frame-ancestors` |
@@ -365,9 +365,24 @@ Worker secret that can call `set_issuer_key` (`apps/api/src/issuer-keys.ts`), an
 can add an RSA key, mint a "Google" token for any `sub`, and derive any user's key in any scope. The contract
 account's full-access key can upgrade the contract (no lock). `docs/contract-interface.md` already calls the owner and
 contract account total control; the point here is that one of those powers sits in the API Worker's secrets. Confirmed
-plan (D33, not built): a delay on newly posted issuer keys with an independent watchdog that can cancel them, alerts
-on `issuer_key_set` for a kid Google doesn't publish, a multisig owner, and upgrades only through it with a timelock
-(the signer's full-access key removed). The delay length is open.
+plan (D33, not built), specified in `docs/governance-spec.md` and confirmed by the user on 2026-10-29 (D80–D86):
+
+- Delays (D80): a newly posted issuer key waits `issuer_key_delay_ms` (mainnet 2 h, provisional until Google's lead
+  time is measured with `admin issuer-keys:lead-times`); upgrades, owner transfer and surplus withdrawals wait
+  `governance_delay_ms` (mainnet 72 h). Emergencies are handled by pause, not short delays.
+- Owner (D81): a Sputnik DAO v2 council, 2-of-3 for every proposal kind; on mainnet the two founders' Ledgers and an
+  offline backup key neither founder can reach alone.
+- Watchdog (D82, D86): its own service, key and Cloudflare account. It cancels a pending key Google doesn't publish,
+  deletes the updater key that proposed one, and pauses only when such a key is active on chain; everything else is
+  alert-only. The owner unpauses at once. Pause stops derivation and every token path, never governance.
+- Monitoring (D83): every watchdog check, action and alert surfaces in the admin portal's "Security & monitoring"
+  view (a standing rule for future checks); the watchdog sends its own alerts, so a compromised Hana Cloudflare
+  account can't silence them.
+- Alerts (D85): critical (paging app + Slack + email to both founders, re-sent every 15 min until acknowledged),
+  warning (Slack + email), info (portal + daily digest). Every upgrade proposal is critical; no independent upgrade
+  guardian at launch (D84).
+- Signer full-access key: removed on staging and mainnet (mainnet: deleted in the creation batch); kept on sandbox-dev
+  for speed (D86). Mainnet upgrades need a reproducible build with its hash published first (D86).
 
 **(f) The API serves a stored auto-approve policy unvalidated. Fixed.** `effectiveSettings` serves a stored policy
 only if `parseAutoApprovePolicy` accepts it against the app's `session_ttl_ms`, and logs `auto_approve_policy_invalid`

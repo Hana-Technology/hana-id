@@ -68,14 +68,14 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | `relayKey`, `relayReadKey` | 32-byte AES-GCM key / read capability | Vault memory; `relayKey` also in the login popup's `sessionStorage` until `/login/callback` reads it (`packages/web/src/auth/login-storage.ts`) | vault, login popup | One login; slot lives 120 s |
 | Session-pool keys `RELAYER_KEYS` | ed25519 function-call keys on `relayer`, receiver `signer` | Worker secret; `.secrets/<env>/relayer-keys.json` | Hana | Default 3 × 2 NEAR. `deploy-contract` deletes and re-adds; mainnet needs allowance monitoring |
 | Owner-pool keys `OWNER_RELAYER_KEYS` | same, owner methods | Worker secret; `.secrets/<env>/owner-relayer-keys.json` | Hana | Default 1 × 0.5 NEAR |
-| `KEYS_UPDATER_KEY` | ed25519 function-call key on `signer` (`set_issuer_key`, `remove_issuer_key`) | Worker secret; `.secrets/<env>/keys-updater.json` | Hana | Default 1 NEAR allowance; see open issue (e) and D33 |
+| `KEYS_UPDATER_KEY` | ed25519 function-call key on `signer`. v1 contract: `set_issuer_key`, `remove_issuer_key`. Governance contract: exactly `set_issuer_key`, `propose_issuer_key_removal`, `execute_issuer_key_change`, installed only by the contract (`add_updater_key`); the API signs nothing else (`apps/api/src/relayer-config.ts` `UPDATER_METHODS`) | Worker secret; `.secrets/<env>/keys-updater.json` | Hana | 1 NEAR allowance. On the governance contract it can only propose (delayed, cancellable) and execute matured changes; a watchdog deletes it when it proposes a key Google doesn't publish. See open issue (e) and D33 |
 | `WATCHDOG_KEY` | ed25519 function-call key on the watchdog's account (manifest `watchdog.account`), receiver `signer`, methods `cancel_issuer_key_change`, `confirm_issuer_key_change`, `pause`, `delete_updater_key`, 1 NEAR | Watchdog Worker secret (its own Cloudflare account); `.secrets/<env>/watchdog-secrets.json` | Hana (operator) | Created by `watchdog secrets <env> init`; rotate by adding a new key, then deleting the old (`docs/operations.md` "Watchdog service"). DoS power only (cancel, confirm a proposed change, pause, delete updater keys) |
 | `WATCHDOG_STATUS_TOKEN` | random bearer token (32 bytes, base64url) | Watchdog and admin Worker secrets; same file | Hana | Read and acknowledge only: a holder can stop re-sends of an alert already paged, never a first alert or a check |
 | Watchdog alert credentials (`RESEND_API_KEY`, `SLACK_WEBHOOK_URL`, paging app, `HEARTBEAT_URL`) | API keys / capability URLs | Watchdog Worker secrets; same file | Hana | The watchdog's own, not the admin Worker's (D87). Losing one channel leaves two (D85) |
 | Watchdog's Cloudflare account | account credentials | the operator | the user | Separate login and MFA from the API's account (D86); a compromise gives the watchdog key and its alerting, caught by the dead-man's switch |
 | Owner, signer, relayer account keys | ed25519 full-access (not ml-dsa-65: `docs/decisions.md`) | `~/.near-credentials/testnet/` on the operator's machine | the user (Hana admin) | Manual. Agents never ask for or handle them |
 | Google ID tokens | RS256 JWT | Transient; public on chain once used | user's browser, relay (ciphertext), API (in transit) | Never logged or stored; openid-only claims |
-| Google RSA public keys | JWKS | On chain (issuers); API isolate cache (≤ 6 h stale on fetch failure) | public | Hourly cron sync |
+| Google RSA public keys | JWKS | On chain (issuers); API isolate cache (≤ 6 h stale on fetch failure) | public | v1 contract: hourly cron sync. Governance contract: the 15-min cron proposes and executes delayed changes, the watchdog checks them against its own JWKS copy |
 | Console owner-action tokens | RS256 JWT (console audience) | Transient; `sha256` marker in a `RateLimiter` until `exp` | partner owner | Single use (nonce bound to `action_nonce`) |
 | Publishable keys | `pk_test_` / `pk_live_` + base58 | D1, partner pages | public | Not secrets |
 | Cloudflare account / `wrangler login` | account credentials | operator's machine | the user | Deploys the Worker: a trust root |
@@ -428,7 +428,7 @@ Worker secret that can call `set_issuer_key` (`apps/api/src/issuer-keys.ts`), an
 can add an RSA key, mint a "Google" token for any `sub`, and derive any user's key in any scope. The contract
 account's full-access key can upgrade the contract (no lock). `docs/contract-interface.md` already calls the owner and
 contract account total control; the point here is that one of those powers sits in the API Worker's secrets. Confirmed
-plan (D33, not built), specified in `docs/governance-spec.md` and confirmed by the user on 2026-10-29 (D80–D86):
+plan (D33; built on branch `feat/governance`, not deployed), specified in `docs/governance-spec.md` and confirmed by the user on 2026-10-29 (D80–D86):
 
 - Delays (D80): a newly posted issuer key waits `issuer_key_delay_ms` (mainnet 2 h, provisional until Google's lead
   time is measured with `admin issuer-keys:lead-times`); upgrades, owner transfer and surplus withdrawals wait
@@ -438,7 +438,7 @@ plan (D33, not built), specified in `docs/governance-spec.md` and confirmed by t
 - Watchdog (D82, D86): its own service, key and Cloudflare account. It cancels a pending key Google doesn't publish,
   deletes the updater key that proposed one, and pauses only when such a key is active on chain; everything else is
   alert-only. The owner unpauses at once. Pause stops derivation and every token path, never governance. Built in
-  `apps/watchdog` (branch `gov/watchdog`), not deployed.
+  `apps/watchdog` (branch `feat/governance`), not deployed.
 - Monitoring (D83): every watchdog check, action and alert surfaces in the admin portal's "Security & monitoring"
   view (a standing rule for future checks); the watchdog sends its own alerts, so a compromised Hana Cloudflare
   account can't silence them.

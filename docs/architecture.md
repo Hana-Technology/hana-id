@@ -27,8 +27,10 @@ Batch B is merged on the integration branch `feat/batch-b` (not yet on `develop`
 | `apps/smoke` | `feat/batch-b` | `/` logs in through `@hana-id/web` (the vault); `/direct.html` keeps Google Identity Services and the split path for the ship gate |
 | `apps/e2e` (Playwright: Chromium, WebKit, Firefox; local builds against the real API Worker; CI job) | `feat/batch-b` | Code done |
 | Developer dashboard, admin console, billing-grade usage (batch C) | `docs/batch-c-spec.md` | Spec draft; MVP cut in `docs/decisions.md` D34 |
-| Governance contract (delayed issuer keys, watchdogs, pause, timelocked upgrades, DAO owner) | `gov/contract` | Code done; not deployed (`docs/governance-spec.md` "Migration plan") |
-| `apps/watchdog` (independent watchdog Worker, alerts, status endpoint for the admin portal) | `gov/watchdog` | Code done; not deployed (`docs/operations.md` "Watchdog service") |
+| Governance contract (delayed issuer keys, watchdogs, pause, timelocked upgrades, DAO owner) | `gov/contract`, integrated on `feat/governance` | Code done; not deployed (`docs/governance-spec.md` "Migration plan") |
+| `apps/watchdog` (independent watchdog Worker, alerts, status endpoint for the admin portal) | `gov/watchdog`, integrated on `feat/governance` | Code done; not deployed (`docs/operations.md` "Watchdog service") |
+| Governance API (delayed JWKS sync, `issuer_key_pending` / `paused` gate, `GET /v1/governance`) | `gov/api`, integrated on `feat/governance` | Code done; not deployed (`docs/operations.md` "Deploying the governance API") |
+| Governance scripts (owner council, DAO-routed owner calls, timelocked upgrades, migration, `admin governance:status`) | `gov/scripts`, integrated on `feat/governance` | Code done (`docs/operations.md` "Governance") |
 
 ## Components
 

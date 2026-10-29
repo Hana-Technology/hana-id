@@ -25,6 +25,9 @@ export interface LogFields {
   added?: number;
   removed?: number;
   kids?: string[];
+  /** Issuer key changes (issuer-keys.ts): a change id, and how many matured changes a run executed. */
+  changeId?: number;
+  executed?: number;
   /** Vault maintenance (vault/cron.ts): shares pruned, re-wrapped, unreadable, and under an unknown KEK id. */
   pruned?: number;
   rewrapped?: number;

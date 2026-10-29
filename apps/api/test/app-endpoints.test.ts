@@ -47,6 +47,9 @@ describe('POST /v1/sessions', () => {
       { method: 'scope_for_client', args: { provider: 'google', aud } },
       // The session key must not be in use already.
       { method: 'session_key_in_use', args: { session_public_key: req.sessionPublicKey } },
+      // Governance, alongside: not paused, and the token's kid is active on chain.
+      { method: 'get_config', args: {} },
+      { method: 'get_issuer', args: { provider: 'google' } },
     ]);
     expect(await usage(app.id)).toEqual({ sessions: 1, derives: 0 });
   });

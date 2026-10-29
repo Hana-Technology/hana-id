@@ -17,6 +17,56 @@ export const POOL_METHODS = {
   owner: ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change', 'register_scope', 'apply_pending_config'],
 } as const;
 
+/**
+ * The keys-updater key (KEYS_UPDATER_KEY, a function-call key on SIGNER_ACCOUNT itself, installed by the contract's
+ * `add_updater_key`): exactly the contract's `UPDATER_METHODS` (docs/contract-interface.md "Updater keys"). The cron
+ * (issuer-keys.ts) refuses to sign anything else, even if a key would allow it. `remove_issuer_key` is owner-only
+ * since the governance batch and is never here.
+ */
+export const UPDATER_METHODS = ['set_issuer_key', 'propose_issuer_key_removal', 'execute_issuer_key_change'] as const;
+export type UpdaterMethod = (typeof UPDATER_METHODS)[number];
+
+export function updaterAllows(method: string): method is UpdaterMethod {
+  return (UPDATER_METHODS as readonly string[]).includes(method);
+}
+
+/**
+ * Owner, watchdog and governance methods of hana-signer (docs/contract-interface.md "Governance"): no pool and not
+ * the updater ever relays them. Listed so the allowlist tests prove it.
+ */
+export const GOVERNANCE_METHODS = [
+  'remove_issuer_key',
+  'confirm_issuer_key_change',
+  'cancel_issuer_key_change',
+  'set_issuer_key_delay_ms',
+  'set_governance_delay_ms',
+  'add_watchdog',
+  'remove_watchdog',
+  'pause',
+  'unpause',
+  'add_updater_key',
+  'delete_updater_key',
+  'on_updater_key_added',
+  'propose_upgrade',
+  'cancel_upgrade',
+  'execute_upgrade',
+  'migrate',
+  'migrate_v1',
+  'propose_owner',
+  'cancel_owner_proposal',
+  'accept_owner',
+  'propose_withdrawal',
+  'cancel_withdrawal',
+  'execute_withdrawal',
+  'set_issuer',
+  'set_console_audiences',
+  'set_shared_clients',
+  'set_sponsors',
+  'set_change_delay_ms',
+  'enable_public_registration',
+  'admin_register_scope',
+] as const;
+
 export type Pool = keyof typeof POOL_METHODS;
 export type RelayMethod = (typeof POOL_METHODS)[Pool][number];
 export const POOLS: readonly Pool[] = ['session', 'owner'];

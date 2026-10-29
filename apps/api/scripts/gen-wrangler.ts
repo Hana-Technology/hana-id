@@ -75,8 +75,9 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
     ],
     // The vault's per-IP and per-share flood limits, counted where the request runs with no network hop (D95).
     ratelimits: VAULT_RATE_LIMITS.map((r) => ({ name: r.name, namespace_id: r.namespace_id, simple: { ...r.simple } })),
-    // Every 15 min, one trigger (the free plan allows 5 per account): the run at :00 syncs Google's JWKS into
-    // hana-signer and does vault maintenance; every run records the JWKS kids (src/index.ts isHourlyRun).
+    // Every 15 min, one trigger (the free plan allows 5 per account): every run syncs Google's JWKS with hana-signer
+    // (proposals and matured executions, src/issuer-keys.ts) and records the JWKS kids; the run at :00 also does
+    // vault maintenance (src/index.ts isHourlyRun).
     triggers: { crons: ['*/15 * * * *'] },
   };
 }

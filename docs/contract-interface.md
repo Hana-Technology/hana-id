@@ -915,6 +915,11 @@ signer key:
 The portal's other items (heartbeat, the watchdog's verdicts, alert history and acks) come from the watchdog
 service's `GET /status` and `GET /alerts` (`docs/governance-spec.md` "Watchdog service"), not from the contract.
 
+The API serves all of the table above in one read-only answer, `GET /v1/governance` (`docs/api.md`), normalised,
+with each pending key change's JWKS verdict, the access keys checked against `updater_keys` / `updater_methods`, and
+the JWKS cron's own last run; the portal may read it instead of the views (it runs on Hana's main Cloudflare account,
+like the admin Worker, so it is no more independent than the portal itself).
+
 ## Changed in the governance batch
 
 Layout v2, migrated **in place** (`migrate_v1`); no byte layout, path format, nonce or CKD request changed, so no

@@ -4,7 +4,7 @@ import { env } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_GAS_TGAS, MAX_CLIENT_PROOFS, MAX_TGAS, TGAS, gasEnvVar, gasFor, registerScopeTgas } from '../src/gas.ts';
-import { POOL_METHODS, type Pool } from '../src/relayer-config.ts';
+import { GOVERNANCE_METHODS, POOL_METHODS, type Pool, UPDATER_METHODS } from '../src/relayer-config.ts';
 import { NONCE_RESERVATION, type RelayerKey, type RelayResult, parseRelayerKeys } from '../src/relayer-key.ts';
 import { pickKeyIndex, relay, relayerKeyCount, relayerKeyName } from '../src/relayer-pool.ts';
 import { clearViewCaches } from '../src/views.ts';
@@ -376,7 +376,8 @@ describe('RelayerKey Durable Object', () => {
       session: ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions'],
       owner: ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change', 'register_scope', 'apply_pending_config'],
     });
-    const never = ['set_issuer_key', 'remove_issuer_key', 'admin_register_scope', 'set_owner', 'set_shared_clients', 'set_sponsors', 'enable_public_registration', 'sign', '__proto__'];
+    // Every governance and updater method of the governance batch too (docs/governance-spec.md "The API's keys").
+    const never = [...GOVERNANCE_METHODS, ...UPDATER_METHODS, 'set_owner', 'sign', '__proto__'];
     for (const method of [...never, ...POOL_METHODS.owner]) {
       expect((await freshKeyStub().relay('session', 0, { method, args: {} })) as RelayResult, `session ${method}`).toMatchObject({ ok: false, code: 'method_not_allowed' });
     }
@@ -385,6 +386,13 @@ describe('RelayerKey Durable Object', () => {
     }
     expect((await freshKeyStub().relay('admin' as Pool, 0, revokeCall(1))) as RelayResult).toMatchObject({ ok: false, code: 'method_not_allowed' });
     expect(near.sent).toHaveLength(0);
+  });
+
+  it('no pool shares a method with the updater key or the governance methods', () => {
+    const pooled = [...POOL_METHODS.session, ...POOL_METHODS.owner] as string[];
+    for (const m of [...GOVERNANCE_METHODS, ...UPDATER_METHODS]) expect(pooled, m).not.toContain(m);
+    expect(GOVERNANCE_METHODS as readonly string[]).not.toContain('execute_issuer_key_change');
+    expect(new Set(GOVERNANCE_METHODS).size).toBe(GOVERNANCE_METHODS.length);
   });
 
   it('signs with the pool’s own key, and an object never serves a second pool', async () => {

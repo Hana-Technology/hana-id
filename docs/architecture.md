@@ -67,7 +67,7 @@ Batch B is merged on the integration branch `feat/batch-b` (not yet on `develop`
  ┌─────────────────────────────────────────────────────────────────────────────┐
  │ API Worker (apiUrl; also renders GET {vaultOrigin}/vault)                   │
  │  /v1/app /v1/login /v1/login-relay/:id /v1/vault/* /v1/sessions /v1/derive  │
- │  /v1/sessions/revoke /v1/owner-actions /v1/health        cron: hourly       │
+ │  /v1/sessions/revoke /v1/owner-actions /v1/health        cron: 15 min       │
  │  DOs: RelayerKey (per key) · RateLimiter (per subject) · LoginRelay (per id)│
  │  D1: apps, app_origins, plans, usage, vault_shares, issuer_key_missing      │
  └──────────────┬──────────────────────────────────────────────────────────────┘
@@ -91,9 +91,9 @@ Who talks to whom:
 | Vault → NEAR RPC | JSON-RPC (manifest `rpc`; `rpcFallback` only when `rpc` errors or times out, one endpoint per answer: `packages/web/src/near-call.ts`) | `get_session` re-sync, the login's registry check (`scope_for_client` or `get_scope`), `EXPERIMENTAL_tx_status` polling; the export window the same |
 | Vault, export window → Google | `https://www.googleapis.com/oauth2/v3/certs` | JWKS for the defence-in-depth RS256 check |
 | Partner page → API | `fetch` from the partner origin | `GET /v1/app` (any key); `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` only for `pk_test_` in dev envs (`apps/smoke`) |
-| API → NEAR | NEAR RPC | Views (`get_config`, `get_scope`, `scope_for_client`, `get_session`, `session_key_in_use`), `send_tx`, `tx` |
+| API → NEAR | NEAR RPC | Views (`get_config`, `get_scope`, `scope_for_client`, `get_session`, `session_key_in_use`, `get_issuer`; for the cron and `GET /v1/governance` also `get_key_changes`, `get_governance`, `view_access_key_list`), `send_tx`, `tx` |
 | `hana-signer` → MPC | cross-contract call, 20 Tgas, 1 yocto | `request_app_private_key {derivation_path, app_public_key, domain_id}` |
-| API cron → Google, `hana-signer` | HTTPS, then `set_issuer_key`/`remove_issuer_key` signed with `KEYS_UPDATER_KEY` | JWKS sync (`apps/api/src/issuer-keys.ts:103`) |
+| API cron → Google, `hana-signer` | HTTPS, then `set_issuer_key` / `propose_issuer_key_removal` / `execute_issuer_key_change` signed with `KEYS_UPDATER_KEY` (delayed key changes, governance batch) | JWKS sync (`apps/api/src/issuer-keys.ts` `syncIssuerKeys`) |
 | Operator → `hana-signer`, D1, Worker | `scripts/`, `wrangler` | Deploy, register scopes, apps, origins, secrets |
 
 ## Flows
@@ -297,7 +297,7 @@ and a "View on {explorer}" link when the chain's explorer is known. The list and
 | Execute a matured change | anyone; `POST /v1/owner-actions` relays `execute_change` | same |
 | NEAR-account owners | call the contract directly (the API relays OIDC auth only, `apps/api/src/validate.ts`) | `contracts/hana-signer/src/registry.rs` |
 | Shared clients, sponsors, console audiences, issuers | owner account via `deploy-contract` | `scripts/deploy-contract.ts`, `scripts/lib/deploy-plan.ts` |
-| Google RSA keys | hourly cron with `KEYS_UPDATER_KEY`; a kid is removed only after ≥ 55 min missing | `apps/api/src/issuer-keys.ts:103`, migration 0002 |
+| Google RSA keys | the 15-min cron with `KEYS_UPDATER_KEY` proposes adds and (after ≥ 55 min missing, never the last key) removals, and executes matured changes that match Google's JWKS; a key is active only after `issuer_key_delay_ms` or a watchdog's confirmation | `apps/api/src/issuer-keys.ts`, migrations 0002, 0005 |
 
 Timelocks, quarantine and shared-client rules: `docs/contract-interface.md` "Registry" and "Shared clients".
 

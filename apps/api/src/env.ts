@@ -32,7 +32,10 @@ export interface Env {
   RELAYER_KEYS: string;
   /** Secret: owner pool. JSON array of `ed25519:...` secret keys, small allowance, used by /v1/owner-actions only. */
   OWNER_RELAYER_KEYS?: string;
-  /** Secret: function-call key on SIGNER_ACCOUNT limited to set_issuer_key / remove_issuer_key. */
+  /**
+   * Secret: the keys-updater key, a function-call key on SIGNER_ACCOUNT that the contract installed with exactly
+   * UPDATER_METHODS (set_issuer_key, propose_issuer_key_removal, execute_issuer_key_change; relayer-config.ts).
+   */
   KEYS_UPDATER_KEY?: string;
   /** The API's own URL (manifest apiUrl), for the vault page's CSP connect-src. */
   API_URL?: string;

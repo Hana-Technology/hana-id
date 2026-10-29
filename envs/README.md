@@ -38,4 +38,6 @@ sites (registrable domains, Public Suffix List rules), so the key-holding frame 
 pages that handle tokens or with the API. sandbox-dev's two `*.tingtc.workers.dev`
 hostnames are one site, which only a dev env allows. Google redirects to `{authOrigin}/login/callback`, so changing
 `authOrigin` breaks own-client partners' redirect registrations (not addresses). `@hana-id/web` builds its pages only
-for envs that set both.
+for envs that set both, and its published package (`build:lib`) carries exactly those envs. Both builds fail if one
+of them still has an `UNSET` value; the package build also fails on a `local*` env (`docs/operations.md` "Releasing
+the SDK packages").

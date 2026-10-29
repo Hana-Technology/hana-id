@@ -26,6 +26,9 @@ ESM only, with TypeScript declarations.
 | `@hana-id/core/decode` | the transaction and message decoders the approval popup uses |
 | `@hana-id/core/policy` | the auto-approve policy validator and matcher |
 
+The `signers/stellar` and `decode` declarations reference Node's `Buffer` through `@stellar/stellar-base`: if you
+import those in TypeScript, add `@types/node` or keep `skipLibCheck` on.
+
 The one most partners use: check an auto-approve policy before sending it to Hana, with the same validator Hana's
 vault runs.
 

@@ -20,8 +20,8 @@ Batch B is merged on the integration branch `feat/batch-b` (not yet on `develop`
 | Page Workers serving `vaultOrigin`/`authOrigin` (`apps/api/src/pages/`, `scripts/pages-wrangler.ts`) | `feat/batch-b` | Code done; deploying them is a user step |
 | `@hana-id/core` (layouts, CKD, derivation v1, signers, decoders, policies, verified contracts) | `feat/batch-b` | Code done |
 | `packages/env` `vaultOrigin`/`authOrigin`, `rpcFallback` | `feat/batch-b` | Code done |
-| `@hana-id/web`: vault, auth pages `/login`, `/login/callback`, `/approve`, `/export`, partner client `createHana` (EIP-1193, Stellar, SWK module) | `feat/batch-b` | Code done; not on npm (packages are private and export their sources) |
-| `@hana-id/react` (`HanaProvider`, `useHana`, `useWallet`), `@hana-id/sodax` (Stellar and EVM wallet-provider adapters) | `feat/batch-b` | Code done; not on npm |
+| `@hana-id/web`: vault, auth pages `/login`, `/login/callback`, `/approve`, `/export`, partner client `createHana` (EIP-1193, Stellar, SWK module) | `feat/batch-b`; packaging `feat/sdk-packaging` | Code done; built as installable tarballs (`pnpm run pack:check`, D71), not published (registry and licence open, D72) |
+| `@hana-id/react` (`HanaProvider`, `useHana`, `useWallet`), `@hana-id/sodax` (Stellar and EVM wallet-provider adapters) | `feat/batch-b`; packaging `feat/sdk-packaging` | Code done; tarballs as `@hana-id/web`, not published |
 | `admin app:settings` | `feat/batch-b` | Code done |
 | `apps/smoke` | `feat/batch-b` | `/` logs in through `@hana-id/web` (the vault); `/direct.html` keeps Google Identity Services and the split path for the ship gate |
 | `apps/e2e` (Playwright: Chromium, WebKit, Firefox; local builds against the real API Worker; CI job) | `feat/batch-b` | Code done |

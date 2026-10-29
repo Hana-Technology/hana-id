@@ -483,6 +483,71 @@ Warm stage split: create = checks 0.2 s + relay 2.2 s (chain ~0.6 s); derive = r
 | `deploy-contract` "Cannot deploy until these are fixed" | a key with the wrong receiver, methods, empty method list or too-large/unlimited allowance | run the printed `near account delete-keys …`, re-run |
 | A test fails after someone filled in `envs/sandbox-dev.json` | the test read the real manifest and expected `UNSET` placeholders | tests pin their own fixture manifest (see `scripts/test/deploy-plan.test.ts`, commit fdde123); never depend on live manifest values |
 | smoke refuses to derive: "UNSET placeholder" | `ckdNetworkKey` not pinned | `fetch-ckd-key <env>`, restart the dev server |
+| `build:lib` / `pack:check`: "Can't build the @hana-id/web package" | an env with both origins is a `local*` env, or none has both origins | keep loopback envs out of `envs/` (apps/e2e builds its own); set the origins |
+| `build:lib` / `pack:check` / page build: "… is still an UNSET placeholder" | an included env (both origins set) has an `UNSET` value | fill it in, or leave the env's origins out until it is deployed |
+| `pack:check`: "npm install … failed" | the registry is unreachable, or a pinned peer is younger than 7 days (`--before`) | retry; check the network or the pin |
+
+## Releasing the SDK packages
+
+`@hana-id/core`, `@hana-id/web`, `@hana-id/react` and `@hana-id/sodax` are built for installation outside this
+repository (D71) but **not published**: they are still `"private": true`, and the registry and licence are open
+decisions (below). Until then a partner gets tarballs.
+
+**How the build works.** Each package's `build:lib` runs `tsc -p tsconfig.build.json` through `scripts/sdk-build.ts`:
+ESM, `.d.ts` and source maps with inlined sources, into `dist/` (`@hana-id/web`: `dist/lib/`, since `dist/pages/` is
+the Hana pages build and is never packed). Inside the workspace, `exports` still point at `src/` (tests, the API, the
+pages and the apps import sources); `pnpm pack` replaces them with `publishConfig.exports` (dist), rewrites
+`workspace:^` to `^<version>`, and runs `prepack` (= `build:lib`) first, so a tarball is always freshly built. Only
+`dist`, `package.json` and `README.md` are packed (`files`). `@hana-id/web`'s `build:lib` first runs
+`gen-envs.ts --package`: the client knows every `envs/*.json` that sets both `vaultOrigin` and `authOrigin`, and the
+build fails if one of them has an `UNSET` value, if one is a `local*` env, or if there is none. Build a package's
+dependencies first (`corepack pnpm --filter @hana-id/react... run build:lib`): its build reads their `.d.ts`.
+
+**The check.** `corepack pnpm run pack:check` (also the CI job `packages`) packs the four into a temp dir, checks
+each tarball (only dist JS / `.d.ts` / maps plus `package.json` and `README.md`; no tests, fixtures, sources,
+`.secrets`, env files, raw `envs/*.json` or page bundles; relative, inlined map sources; no local absolute path in any
+file; packed `exports`, version and `@hana-id/*` ranges), installs them with plain npm into a fresh project in the
+system temp dir with the peer versions this repo tests, type-checks `scripts/pack-smoke/` there (NodeNext and Bundler
+resolution, `skipLibCheck` off) and runs `scripts/pack-smoke/run.mjs` in Node. `--keep` leaves the temp dir.
+
+**Tarballs for a partner (today).**
+
+```sh
+corepack pnpm run pack:check                         # must pass
+mkdir -p /tmp/hana-sdk && for p in core web react sodax; do
+  (cd packages/$p && corepack pnpm pack --pack-destination /tmp/hana-sdk)
+done                                                  # hana-id-{core,web,react,sodax}-<version>.tgz
+```
+
+Send the four files with their SHA-256 (`shasum -a 256 /tmp/hana-sdk/*.tgz`) and the release commit.
+
+**A release.**
+
+1. On a branch from `develop`: `corepack pnpm --filter @hana-id/scripts sdk-version <x.y.z>` (one version for all
+   four: each `package.json` and `VERSION` constant; D72). Say what changed for partners in the PR. Merge to
+   `develop`, then `develop` into `main`.
+2. Tag the release commit on `main` as `sdk-v<x.y.z>` and push the tag.
+3. Tarballs: as above, from the tag. Publishing (once enabled): Actions → "Publish SDK packages" → run on `main`
+   with the version, a dist-tag (`next` until a release should be the default install) and **dry run** first; check
+   the listing, then run again without dry run.
+
+**Publishing: what is left to enable it** (`.github/workflows/publish-sdk.yml`, manual dispatch only; its `gate` job
+skips everything while the `NPM_TOKEN` secret is missing, and npm refuses `"private": true` packages):
+
+- **Registry** (decision): public npm under an `@hana-id` org (anyone can install), or private (a paid npm org with
+  restricted access, or GitHub Packages). Then add to each package's `publishConfig` (which today holds only the
+  dist `exports`, `main` and `types`): `"access": "public"` (or `"restricted"`), and `"registry": "<url>"` if not
+  npmjs.org; set `NPM_ACCESS` and `registry-url` in the workflow to match.
+- **Licence** (decision): `license` is `UNLICENSED` (no rights granted) in all four. Set the SPDX id (and add a
+  `LICENSE` file to each package's `files`) before a public release.
+- **Provenance**: the workflow publishes with `--provenance` (`id-token: write`). npm accepts provenance only from a
+  public source repository; while `Hana-Technology/hana-id` is private, publish from a public mirror, or drop
+  `--provenance` for a private registry. npm trusted publishing (OIDC, no token) is the alternative to a token once
+  the repository is public.
+- **Token**: a granular npm token that can only publish the `@hana-id` packages, as the repository secret
+  `NPM_TOKEN`, ideally in a protected GitHub environment with required reviewers.
+- Remove `"private": true` from the four `package.json` files (`@hana-id/env`, `@hana-id/scripts` and the apps stay
+  private).
 
 ## CI and git
 
@@ -491,7 +556,8 @@ Warm stage split: create = checks 0.2 s + relay 2.2 s (chain ~0.6 s); derive = r
 - CI (`.github/workflows/ci.yml`, on PRs and pushes to `develop` / `main`): gitleaks over the full history;
   `cargo test --locked` + `cargo near build non-reproducible-wasm`; `pnpm install --frozen-lockfile`, `pnpm -r
   typecheck`, `pnpm -r test` (this includes `@hana-id/react`'s suite on React 18, `packages/react/react18`); the
-  Playwright suite (`apps/e2e`, three browsers); sandbox e2e (`contracts/integration-tests`).
+  Playwright suite (`apps/e2e`, three browsers); sandbox e2e (`contracts/integration-tests`); the SDK pack check
+  (`pnpm run pack:check`, [Releasing the SDK packages](#releasing-the-sdk-packages)).
 - The pre-commit hook runs `gitleaks git --staged` with `.gitleaks.toml`. Never bypass it (`--no-verify`). Scan
   locally with `corepack pnpm secrets:scan`.
 - Never commit `.secrets/`, `.env*`, `.dev.vars` or the generated `apps/api/wrangler.jsonc`, `wrangler.vault.jsonc`,

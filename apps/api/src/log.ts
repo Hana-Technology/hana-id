@@ -25,6 +25,13 @@ export interface LogFields {
   added?: number;
   removed?: number;
   kids?: string[];
+  /** Vault maintenance (vault/cron.ts): shares pruned, re-wrapped, unreadable, and under an unknown KEK id. */
+  pruned?: number;
+  rewrapped?: number;
+  unreadable?: number;
+  unknownKek?: number;
+  /** Why a stored auto-approve policy was refused (vault/settings.ts): validator paths and limits, at most 5. */
+  problems?: string[];
 }
 
 export function log(fields: LogFields, level: 'info' | 'warn' | 'error' = 'info'): void {

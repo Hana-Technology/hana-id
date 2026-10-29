@@ -18,6 +18,7 @@ function run(over: Partial<RunRecord>): RunRecord {
     counter: 1,
     sessionKeyPrefix: `00000${n}`,
     appIdHex: 'aa',
+    derivation: 1,
     stellar: 'GA',
     evm: '0xA',
     createSessionTx: null,
@@ -73,8 +74,11 @@ describe('results log comparisons', () => {
     const runs = [run({})];
     const json = JSON.parse(resultsJson(runs)) as { runs: RunRecord[]; derivation: string };
     expect(json.runs).toEqual(runs);
-    expect(json.derivation).toMatch(/PROVISIONAL/);
+    expect(json.derivation).toMatch(/^v1 /u);
     expect(parseStoredRuns(JSON.stringify(runs))).toEqual(runs);
+    // Runs logged under the PROVISIONAL derivation (no `derivation` field) are dropped: their addresses differ.
+    const { derivation: _, ...legacy } = runs[0]!;
+    expect(parseStoredRuns(JSON.stringify([legacy]))).toEqual([]);
     expect(parseStoredRuns('not json')).toEqual([]);
     expect(parseStoredRuns(JSON.stringify([{ x: 1 }]))).toEqual([]);
     expect(parseStoredRuns(null)).toEqual([]);

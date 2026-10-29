@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Hana ID smoke test (direct)</title>
+    <style>
+      :root { color-scheme: light dark; font: 14px/1.45 system-ui, sans-serif; }
+      body { max-width: 1100px; margin: 0 auto; padding: 16px; }
+      h1 { font-size: 20px; margin: 0 0 4px; }
+      h2 { font-size: 16px; margin: 24px 0 8px; }
+      section { border-top: 1px solid #8884; }
+      code, .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; word-break: break-all; }
+      label { display: inline-flex; gap: 6px; align-items: center; margin: 4px 12px 4px 0; }
+      input[type='text'], input[type='number'] { font: inherit; padding: 3px 6px; }
+      input#pk { width: 28em; }
+      input[type='number'] { width: 7em; }
+      button { font: inherit; padding: 4px 10px; margin: 4px 6px 4px 0; cursor: pointer; }
+      button:disabled { cursor: default; }
+      table { border-collapse: collapse; width: 100%; margin: 6px 0; }
+      th, td { border: 1px solid #8884; padding: 3px 6px; text-align: left; vertical-align: top; }
+      th { font-weight: 600; }
+      td.num { text-align: right; white-space: nowrap; }
+      dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 6px 0; }
+      dt { font-weight: 600; }
+      dd { margin: 0; }
+      .banner { padding: 8px 10px; border-radius: 4px; margin: 8px 0; }
+      .error { background: #d0303022; border: 1px solid #d03030; }
+      .warn { background: #d0a03022; border: 1px solid #d0a030; }
+      .ok { color: #1a8a3a; font-weight: 600; }
+      .fail { color: #d03030; font-weight: 600; }
+      .derivation { font-weight: 600; color: #b06000; }
+      #log { max-height: 240px; overflow: auto; background: #8881; padding: 6px; white-space: pre-wrap; }
+      .table-wrap { overflow-x: auto; }
+    </style>
+  </head>
+  <body>
+    <h1>Hana ID smoke test: direct flow</h1>
+    <p>
+      The in-page flow from before the vault: Google Identity Services → <code>POST /v1/sessions</code> →
+      <code>POST /v1/derive</code> → CKD decryption in this page. Kept as the split-flow baseline for the ship gate and
+      for key_index, client choice, revoke and replay tests; the <a href="./index.html">vault page</a> is the main one.
+      Shows public data only: no Google token, CKD secret or private key is ever displayed, logged, stored or sent
+      anywhere but the API.
+    </p>
+    <div class="banner warn">
+      Works only while the env's <code>REJECT_PII_ON_SESSIONS</code> is <code>"0"</code>: Google Identity Services
+      tokens carry <code>email</code>, which <code>/v1/sessions</code> refuses (400 <code>token_has_pii</code>) once it
+      is turned on.
+    </div>
+    <dl id="env"></dl>
+    <div id="env-problem" class="banner error" hidden></div>
+
+    <section>
+      <h2>1. App</h2>
+      <label>Publishable key <input id="pk" type="text" placeholder="pk_test_…" autocomplete="off" spellcheck="false" /></label>
+      <button id="load-app">Load app</button>
+      <dl id="app"></dl>
+      <div id="clients"></div>
+    </section>
+
+    <section>
+      <h2>2. Session</h2>
+      <label>key_index <input id="key-index" type="number" min="0" max="4294967295" step="1" value="0" /></label>
+      <label>max_uses <input id="max-uses" type="number" min="1" max="500" step="1" value="5" /></label>
+      <button id="start" disabled>Start session</button>
+      <dl id="pending"></dl>
+      <div id="google-button"></div>
+      <dl id="session"></dl>
+    </section>
+
+    <section>
+      <h2>3. Derive</h2>
+      <p class="derivation">
+        Addresses use derivation v1 (<code>@hana-id/core/derivation</code>, HKDF salt
+        <code>hana-id/chain-keys/v1/extract</code>). Testnet addresses are disposable until the address freeze.
+      </p>
+      <dl id="result"></dl>
+      <button id="derive-again" disabled>Derive again (counter + 1)</button>
+      <button id="revoke" disabled>Revoke session</button>
+      <button id="replay-session" disabled>Replay last create_session</button>
+      <button id="replay-derive" disabled>Replay last derive</button>
+      <button id="restart" disabled>New session (change key index / app)</button>
+    </section>
+
+    <section>
+      <h2>Timings (ms)</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Run</th><th>Google</th><th>create_session</th><th>derive_key</th><th>decrypt+verify</th><th>Total</th><th>create_session gas</th><th>derive_key gas</th></tr>
+          </thead>
+          <tbody id="timings"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>Results log</h2>
+      <button id="copy-json">Copy results as JSON</button>
+      <button id="clear-log">Clear log</button>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Run</th><th>pk</th><th>Client</th><th>key_index</th><th>Path</th><th>Stellar</th><th>EVM</th><th>app_id</th><th>Checks</th></tr>
+          </thead>
+          <tbody id="runs"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>Events</h2>
+      <div id="log" class="mono"></div>
+    </section>
+
+    <script type="module" src="/src/direct.ts"></script>
+  </body>
+</html>

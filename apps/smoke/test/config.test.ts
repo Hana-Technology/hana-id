@@ -1,27 +1,35 @@
+import { ckdKeyProblem } from '@hana-id/core';
 import { loadEnv } from '@hana-id/env';
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_ENV, ckdKeyProblem, pageEnvFrom } from '../src/config.ts';
+import { DEFAULT_ENV, pageEnvFrom } from '../src/config.ts';
 import { NearRpc, formatNear, formatTgas, googleOwnClients, googleSharedClients, sumGas } from '../src/near.ts';
 
 describe('page config', () => {
   it('takes only public fields from the default manifest', () => {
     const m = loadEnv(DEFAULT_ENV);
     const env = pageEnvFrom(m);
-    expect(Object.keys(env).sort()).toEqual(['apiUrl', 'apiUrlOverridden', 'ckdDomainId', 'ckdNetworkKey', 'mpc', 'name', 'network', 'relayer', 'rpc', 'signer']);
-    expect(env).toMatchObject({ name: DEFAULT_ENV, signer: m.signer, apiUrl: m.apiUrl, apiUrlOverridden: false });
+    expect(Object.keys(env).sort()).toEqual(['apiUrl', 'apiUrlOverridden', 'authOrigin', 'ckdDomainId', 'ckdNetworkKey', 'manifestApiUrl', 'mpc', 'name', 'network', 'relayer', 'rpc', 'signer', 'vaultOrigin']);
+    expect(env).toMatchObject({ name: DEFAULT_ENV, signer: m.signer, apiUrl: m.apiUrl, apiUrlOverridden: false, vaultOrigin: m.vaultOrigin, authOrigin: m.authOrigin });
+    expect(env.vaultOrigin).toMatch(/^https:\/\//u);
+  });
+
+  it('gives null Hana origins for an env without the vault pages', () => {
+    const m = loadEnv(DEFAULT_ENV);
+    const { vaultOrigin: _v, authOrigin: _a, ...rest } = m;
+    expect(pageEnvFrom(rest)).toMatchObject({ vaultOrigin: null, authOrigin: null });
   });
 
   it('accepts an https or localhost API override only', () => {
     const m = loadEnv(DEFAULT_ENV);
-    expect(pageEnvFrom(m, 'http://localhost:8787')).toMatchObject({ apiUrl: 'http://localhost:8787', apiUrlOverridden: true });
+    expect(pageEnvFrom(m, 'http://localhost:8787')).toMatchObject({ apiUrl: 'http://localhost:8787', apiUrlOverridden: true, manifestApiUrl: m.apiUrl });
     expect(pageEnvFrom(m, '  ')).toMatchObject({ apiUrl: m.apiUrl, apiUrlOverridden: false });
     expect(() => pageEnvFrom(m, 'http://api.example')).toThrow(/https/);
   });
 
   it('fails clearly while ckdNetworkKey is the UNSET placeholder', () => {
-    expect(ckdKeyProblem({ name: 'sandbox-dev', ckdNetworkKey: 'UNSET-run-scripts/fetch-ckd-key.ts' }, () => true)).toMatch(/UNSET placeholder.*fetch-ckd-key sandbox-dev/);
-    expect(ckdKeyProblem({ name: 'x', ckdNetworkKey: 'bls12381g2:zzz' }, () => false)).toMatch(/not a valid/);
-    expect(ckdKeyProblem({ name: 'x', ckdNetworkKey: 'bls12381g2:ok' }, () => true)).toBeNull();
+    // ckdKeyProblem lives in @hana-id/core (tested there); the page runs it on its own env.
+    expect(ckdKeyProblem({ ...pageEnvFrom(loadEnv(DEFAULT_ENV)), ckdNetworkKey: 'UNSET-run-scripts/fetch-ckd-key.ts' })).toMatch(/UNSET placeholder.*fetch-ckd-key sandbox-dev/);
+    expect(ckdKeyProblem(pageEnvFrom(loadEnv(DEFAULT_ENV)))).toBeNull();
   });
 });
 

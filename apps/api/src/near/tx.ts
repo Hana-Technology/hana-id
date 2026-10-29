@@ -61,12 +61,24 @@ export function isSettled(o: Partial<FinalOutcome> | null | undefined): o is Fin
   return !!s && ('SuccessValue' in s || 'Failure' in s);
 }
 
-/** The first failure anywhere in the receipt tree, as readable text. */
-export function failureText(outcome: FinalOutcome): string | null {
-  const failed = outcome.receipts_outcome?.find((r) => {
+const failedReceipt = (outcome: FinalOutcome): NonNullable<FinalOutcome['receipts_outcome']>[number] | undefined =>
+  outcome.receipts_outcome?.find((r) => {
     const s = r.outcome.status;
     return typeof s === 'object' && s !== null && 'Failure' in s && s.Failure;
   });
+
+/**
+ * The account that ran the first failed receipt (receipts in execution order), or null when no receipt failed (a
+ * transaction-level failure) or the RPC did not say. Tells a contract panic from a failure in a contract it called.
+ */
+export function failedExecutor(outcome: FinalOutcome): string | null {
+  const executor = failedReceipt(outcome)?.outcome.executor_id;
+  return typeof executor === 'string' && executor ? executor : null;
+}
+
+/** The first failure anywhere in the receipt tree, as readable text. */
+export function failureText(outcome: FinalOutcome): string | null {
+  const failed = failedReceipt(outcome);
   const failedStatus = failed?.outcome.status;
   const failure = statusObject(outcome.status)?.Failure ?? (typeof failedStatus === 'object' ? failedStatus.Failure : undefined);
   if (!failure) return null;
@@ -75,7 +87,11 @@ export function failureText(outcome: FinalOutcome): string | null {
   return (panic ?? text).slice(0, 500);
 }
 
-export type Outcome = { ok: true; value: unknown } | { ok: false; kind: 'failure' | 'rpc' | 'timeout' | 'dropped'; error: string };
+/** A `failure` carries the panic text in `error` and the failed receipt's executor (failedExecutor). */
+export type Outcome =
+  | { ok: true; value: unknown }
+  | { ok: false; kind: 'failure'; error: string; executor: string | null }
+  | { ok: false; kind: 'rpc' | 'timeout' | 'dropped'; error: string };
 
 /** How often (at most) to ask `superseded` while the tx is unknown, and how many answers in a row count. */
 export const DROP_CHECK_MS = 2_000;
@@ -125,7 +141,7 @@ export async function waitForOutcome(rpc: Rpc, txHash: string, senderId: string,
     }
   }
   const failure = failureText(outcome);
-  if (failure) return { ok: false, kind: 'failure', error: failure };
+  if (failure) return { ok: false, kind: 'failure', error: failure, executor: failedExecutor(outcome) };
   try {
     return { ok: true, value: decodeSuccessValue(statusObject(outcome.status)?.SuccessValue) };
   } catch {

@@ -146,7 +146,7 @@ describe('deploy-contract --yes gate', () => {
     const owner = perm(r.sent[1]);
     expect(session).toHaveLength(2);
     expect(owner).toHaveLength(2);
-    expect(session?.[0]).toMatchObject({ receiverId: m.signer, methodNames: ['create_session', 'derive_key', 'revoke_session', 'prune_sessions'], allowance: 3n * NEAR });
+    expect(session?.[0]).toMatchObject({ receiverId: m.signer, methodNames: ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions'], allowance: 3n * NEAR });
     expect(owner?.[0]).toMatchObject({
       receiverId: m.signer,
       methodNames: ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change', 'register_scope', 'apply_pending_config'],
@@ -228,6 +228,24 @@ describe('deploy-contract compares on-chain key permissions', () => {
     expect(r.code).toBe(1);
     expect(r.out).toContain('with the wrong permission for the session pool');
     expect(r.out).toContain(`has methods ${batchA.join(', ')}`);
+    expect(r.out).not.toContain(old.toString());
+    expect(r.sent).toEqual([]);
+  });
+
+  it('blocks a session key with an earlier allowlist (A.2, no create_session_and_derive) and says how to rotate it', async () => {
+    // Access-key permissions can't be edited: each allowlist change (docs/batch-b-spec.md "Relayer allowlists") is a
+    // delete and re-add of every session-pool key.
+    const old = KeyPair.fromRandom('ed25519');
+    writeRelayerKeys(m.name, [old], secretsRoot);
+    const a2 = ['create_session', 'derive_key', 'revoke_session', 'prune_sessions'];
+    const extraKeys = {
+      [m.relayer]: [{ public_key: old.getPublicKey().toString(), access_key: { nonce: 5, permission: { FunctionCall: { allowance: String(NEAR), receiver_id: m.signer, method_names: a2 } } } }],
+    };
+    const r = await deploy([m.name, '--yes'], { config: initialised, codeHash: 'abc', extraKeys });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('with the wrong permission for the session pool');
+    expect(r.out).toContain(`has methods ${a2.join(', ')}; expected create_session, create_session_and_derive, derive_key, revoke_session, prune_sessions`);
+    expect(r.out).toContain(`near account delete-keys ${m.relayer} public-keys ${old.getPublicKey().toString()}`);
     expect(r.out).not.toContain(old.toString());
     expect(r.sent).toEqual([]);
   });

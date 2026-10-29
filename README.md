@@ -11,9 +11,12 @@ to the scope); see [Shared vs own Google client](#shared-vs-own-google-client).
 
 **Testnet only.** Every account is a throwaway, and wallets derived on them are disposable.
 
-More: [`docs/context.md`](docs/context.md) (how it works, decisions), [`docs/batch-a-spec.md`](docs/batch-a-spec.md)
-and [`docs/batch-a2-shared-client.md`](docs/batch-a2-shared-client.md) (current work; A.2 wins where they differ),
-[`docs/contract-interface.md`](docs/contract-interface.md) (contract methods and byte layouts).
+More: [`docs/README.md`](docs/README.md) (index). Current state: [`docs/context.md`](docs/context.md) (background,
+status, next steps), [`docs/architecture.md`](docs/architecture.md), [`docs/security.md`](docs/security.md),
+[`docs/api.md`](docs/api.md), [`docs/contract-interface.md`](docs/contract-interface.md) (contract methods and byte
+layouts), [`docs/operations.md`](docs/operations.md) (runbook), [`docs/decisions.md`](docs/decisions.md),
+[`docs/integration.md`](docs/integration.md) (partner integration guide). The batch specs (`docs/batch-*.md`) are
+history; the reference docs and the code win where they differ.
 
 ## Shared vs own Google client
 
@@ -24,12 +27,13 @@ A partner app can log its users in two ways. Both land in the app's own scope, s
 | Google OAuth client | The partner creates one in its Google Cloud project | Hana's, from `sharedGoogleClientIds` in the manifest |
 | Consent screen shows | The partner's app name | Hana's |
 | How the contract finds the scope | The token's `aud` is registered to exactly one scope | `aud` is a shared client, so the API passes the app's `scope_id`, and the token's nonce commits to it. The scope must allow shared login. |
-| Who checks the app may use the scope | Google (only the partner's origins can get tokens for its client) | Hana's login page (batch B), which computes a nonce for scope X only for an opener origin allowed for app X |
+| Who checks the app may use the scope | Google (only the redirect URIs and origins registered on the partner's client can get its tokens) | Hana's vault (batch B), which computes a nonce for scope X only for a parent page whose origin app X allows; the login page checks it before relaying it to Google |
 | Register with | `admin scope:register --client <id>` | `admin scope:register --allow-shared` (no `--client` needed) |
 
 A scope can have both: its own client(s) and `allow_shared`. The path doesn't include the client ID, so a user gets the
-same address either way, as long as Google returns the same `sub` for both clients. Google documents `sub` as stable
-per account, but this is still to be confirmed on testnet with two clients. That also lets an app start on the
+same address either way, as long as Google returns the same `sub` for both clients. It does: the same account got
+the same `sub` through clients of one Cloud project (testnet smoke, 2026-10-27) and of two projects (spike,
+2026-10-28; `docs/decisions.md` D42). That also lets an app start on the
 shared client and add its own client later with a timelocked `propose_change(AddClient)`, without users' addresses
 changing. Forging a shared-client nonce gains nothing: it can only get the forger their own key for a scope, which
 they could get anyway.
@@ -46,13 +50,20 @@ Rules the contract enforces:
 
 ```
 contracts/hana-signer/   Rust NEAR contract (near-sdk 5): OIDC verification, scope registry, sessions, CKD
+contracts/mock-mpc/      Test MPC contract for the sandbox tests
+contracts/integration-tests/  near-workspaces sandbox tests (CI job "Sandbox e2e")
 apps/api/                Cloudflare Worker + Durable Objects + D1: the relayer partners call (publishable keys)
-apps/smoke/              Local smoke-test page (Vite, http://localhost:5173): real login + CKD against a deployed env
+apps/smoke/              Local smoke-test pages (Vite, http://localhost:5173): login through the vault, plus the direct flow
+apps/e2e/                Playwright suite (Chromium, WebKit, Firefox) against a local stack: no testnet, no secrets
 packages/env/            Environment manifest schema (zod) + loadEnv()
+packages/core/           SDK core (batch B, pure TS): layouts, CKD, derivation v1, signers, decoders, token checks
+packages/web/            Partner client (createHana) and the Hana pages (vault, login, approve, export), built per env
+packages/react/          React bindings (HanaProvider, useHana, useWallet)
+packages/sodax/          Optional Sodax wallet-provider adapters
 envs/                    One manifest per environment (sandbox-dev.json): every account name and endpoint
 scripts/                 Deploy, Google key sync, CKD key pinning, admin CLI (TypeScript, run with tsx)
 legacy/                  Read-only reference: the earlier PoC client and relayer
-docs/                    Spec, context, contract interface
+docs/                    Reference docs (current state) and batch specs (history): docs/README.md
 ```
 
 ## Setup
@@ -62,8 +73,8 @@ pre-commit hook (`.githooks/pre-commit`) that refuses commits containing secrets
 (`.gitleaks.toml`). Run `pnpm secrets:scan` to scan locally.
 
 Needs Node 22+, pnpm 11, Rust (the toolchain in `contracts/hana-signer/rust-toolchain.toml` with the
-`wasm32-unknown-unknown` target), ideally `cargo-near` (`cargo install cargo-near`), and near CLI
-(near-cli-rs 3.x) for creating accounts.
+`wasm32-unknown-unknown` target), ideally `cargo-near` (`cargo install cargo-near`; CI uses 0.22.0), and near CLI
+(near-cli-rs) for creating accounts. Versions: `docs/operations.md` "Prerequisites".
 
 ```sh
 pnpm install          # pnpm refuses packages younger than 7 days (minimumReleaseAge); pin older versions if needed
@@ -82,9 +93,13 @@ cd contracts/hana-signer && cargo test
 | Deploy the contract | `pnpm --filter @hana-id/scripts run deploy-contract <env> [--yes]` |
 | Sync Google keys once | `pnpm --filter @hana-id/scripts run post-google-keys <env> [--dry-run]` |
 | Pin the MPC CKD key | `pnpm --filter @hana-id/scripts run fetch-ckd-key <env> [--dry-run]` |
-| Admin (apps, scopes) | `pnpm --filter @hana-id/scripts run admin <env> <command> …` |
+| Admin (apps, scopes, app settings) | `pnpm --filter @hana-id/scripts run admin <env> <command> …` |
+| API Worker config | `pnpm --filter @hana-id/api run gen <env> [--d1-id <uuid>] [--dev-vars]` |
+| `VAULT_KEK` | `pnpm --filter @hana-id/scripts run vault-kek <env> init\|put\|rotate [--yes]` |
+| Hana pages (vault, auth) | `pnpm --filter @hana-id/web build` · `pnpm --filter @hana-id/api run deploy:pages` |
+| Browser tests | `pnpm --filter @hana-id/e2e e2e` (`HANA_E2E_PORT_BASE` for a second worktree; `apps/e2e/README.md`) |
 
-All scripts take the environment name (`envs/<env>.json`) first and print `--help`.
+The `@hana-id/scripts` commands take the environment name (`envs/<env>.json`) first and print `--help`.
 
 ### deploy-contract
 
@@ -103,8 +118,9 @@ missing, so it is safe to resume after a failure. Steps:
    (`--upgrade` redeploys code to an initialised contract without calling `new`.)
 3. Add two pools of function-call keys on `relayer`, both with receiver = `signer`, one transaction per pool:
    - **Session pool** (the API's `RELAYER_KEYS`, logins): `--relayer-keys` keys (default 3), limited to
-     `create_session`, `derive_key`, `revoke_session`, `prune_sessions`, allowance `--relayer-allowance` each
-     (default 2 NEAR).
+     `create_session`, `create_session_and_derive`, `derive_key`, `revoke_session`, `prune_sessions`, allowance
+     `--relayer-allowance` each (default 2 NEAR). A key already on chain with another method list (an earlier
+     allowlist) stops the plan with the commands to delete it; re-running then re-adds it with the current list.
    - **Owner pool** (the API's `OWNER_RELAYER_KEYS`, `/v1/owner-actions`): `--owner-relayer-keys` keys (default 1),
      limited to `propose_change`, `cancel_change`, `remove_client`, `disable_shared_login`, `execute_change`,
      `register_scope`, `apply_pending_config`, allowance `--owner-relayer-allowance` each (default 0.5 NEAR).
@@ -128,12 +144,12 @@ missing, so it is safe to resume after a failure. Steps:
 It does not create accounts. If one is missing, or its key is not in the keychain, the plan says so and shows the
 near CLI command to fix it.
 
-An allowance is charged each call's full prepaid gas, and refunds go to the account, not back to the allowance. The
-API attaches per-method gas (defaults `create_session` 50 Tgas, `derive_key` 60, `revoke_session` 20,
-`prune_sessions` 50, owner-pool methods 50; still to be measured on testnet). At testnet prices, 50 Tgas is about
-0.005 NEAR, so 2 NEAR covers roughly 350 session calls per key and 0.5 NEAR roughly 100 owner calls. Pass larger
-allowances for heavier testing. To replace a used-up key, delete it on chain with near CLI, remove it from its
-`.secrets` file, and re-run.
+An allowance drops by the gas each call burns, not the gas attached (refunds restore it; measured on testnet,
+`docs/context.md`). The API attaches per-method gas (`apps/api/src/gas.ts`: `create_session` 50 Tgas,
+`create_session_and_derive` 100, `derive_key` 60, `revoke_session` 20, `prune_sessions` 50, `register_scope` 30 + 25
+per client proof, other owner-pool methods 50). A split login burns ~40 Tgas (~0.004 NEAR), so 3 keys × 2 NEAR cover
+~1,500 logins. Pass larger allowances for heavier testing. To replace a used-up key,
+delete it on chain with near CLI, remove it from its `.secrets` file, and re-run.
 
 **Existing keys are checked, not trusted.** For every key in a pool file (and the keys-updater key), the plan
 compares the on-chain key's `receiver_id`, `method_names` and `allowance` with the intended permission. The plan
@@ -196,6 +212,8 @@ admin <env> app:origins:add    --app <app id | pk_test_…> --origin <origin> [�
 admin <env> app:origins:remove --app <app id | pk_test_…> --origin <origin> […] [--remote]
 admin <env> app:suspend|app:resume --app <app id | pk_test_…> [--remote]
 admin <env> app:list [--remote]
+admin <env> app:settings <app id | pk_test_…> [--persistence session|none] [--session-ttl 12h] [--idle-ttl 2h]
+             [--raw-sign off|approval] [--google-web-client <client id>|default] [--auto-approve <policy.json>|off] [--remote]
 admin <env> scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […] [--yes]
 ```
 
@@ -208,6 +226,15 @@ admin <env> scope:register [--client <google client id> …] [--allow-shared] (-
 - `app:create` checks that the scope exists on chain and the plan exists in D1. It generates the app id and a
   publishable key (`pk_test_` + base58 of 24 random bytes) and prints the key. Publishable keys are public: origins
   are what gate them.
+- `app:settings` sets the app's vault settings (`docs/batch-b-spec.md` "App settings"); without setting flags it
+  prints them. It checks every range (session TTL 1 h to 23 h 50 min, idle TTL 15 min to the session TTL), checks
+  `--google-web-client` against the scope's Google clients on chain (`default` unpins it: the scope's first one), and
+  validates `--auto-approve` with `@hana-id/core`'s `validateAutoApprovePolicy`, storing its normalized form and
+  printing its `policyId`. Loosening is delayed: `--raw-sign approval` and a new policy are written as pending, in
+  force after 24 h (the manifest's `changeDelayMs` in `local*`/`sandbox*` envs), and re-running doesn't restart the
+  delay. `--raw-sign off` and `--auto-approve off` are immediate. Every change is printed with its time. A relative
+  `--auto-approve` path is relative to where you ran `pnpm`, and the write applies only if nobody changed the app's
+  settings since the command read them (else it fails and writes nothing). `docs/operations.md` has the details.
 - `scope:register` calls `admin_register_scope(owners, clients, null, allow_shared)` with the owner's keychain key.
   Without `--yes` it prints the call and stops. It works only while `public_registration` is false, and the contract
   assigns the id (`s1`, `s2`, …), which the command prints. `--allow-shared` lets the app log in through Hana's
@@ -229,9 +256,11 @@ throwaway names. The signer account is part of every user's derived key, so chan
    `signer` holds the contract and pays its storage, including scope registrations, so keep a few NEAR on it.
    `relayer` pays gas for the API. `owner` is the Hana admin.
 2. **Create the Google OAuth clients** (Google Cloud console → APIs & Services → Credentials → OAuth client ID, type
-   "Web application"). You need one for Hana's own app, and a separate one as the shared login client. The shared
-   client's authorised JavaScript origins are Hana's login page origins (batch B), not partner origins. They must be
-   two different client IDs.
+   "Web application"). You need one for Hana's own app, and a separate one as the shared login client. They must be
+   two different client IDs. Hana's pages (batch B) use the redirect flow: the shared client's only Authorized
+   redirect URI is `{authOrigin}/login/callback` (step 7), never a partner origin. `apps/smoke`'s `direct.html`
+   still signs in with Google Identity Services, so a client it uses also needs `http://localhost:5173` as an
+   authorised JavaScript origin ([`apps/smoke/README.md`](apps/smoke/README.md)).
 3. **Fill in the manifest**: account names, `googleClientIds` (Hana's own app's client IDs, which become the `global`
    scope), `sharedGoogleClientIds` (the shared login client), `consoleAudiences` if any, `changeDelayMs`, and the
    Cloudflare names. Fill these in before the first deploy. Changing them later works, but adding a shared client
@@ -244,7 +273,7 @@ throwaway names. The signer account is part of every user's derived key, so chan
 7. **API**:
    ```sh
    pnpm --dir apps/api exec wrangler d1 create <cloudflare.d1Name>            # once; deployed envs only: prints the database id
-   pnpm --filter @hana-id/api run gen <env> --d1-id <id>                      # writes apps/api/wrangler.jsonc (omit --d1-id for local only)
+   pnpm --filter @hana-id/api run gen <env> --d1-id <id>                      # writes apps/api/wrangler.jsonc, gitignored (omit --d1-id for local only)
    pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --local   # or --remote
    # Upload secrets without echoing them (run from the repo root):
    node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/relayer-keys.json")))' \
@@ -254,9 +283,19 @@ throwaway names. The signer account is part of every user's derived key, so chan
    node -e 'process.stdout.write(require("./.secrets/<env>/keys-updater.json").private_key)' \
      | pnpm --dir apps/api exec wrangler secret put KEYS_UPDATER_KEY
    pnpm --filter @hana-id/api run deploy
+   pnpm --filter @hana-id/scripts run vault-kek <env> init --yes             # VAULT_KEK: kept in .secrets/<env>/vault-kek, set via stdin
    ```
    For local `wrangler dev`, the same three values go in `apps/api/.dev.vars` (gitignored, 0600):
    `pnpm --filter @hana-id/api run gen <env> --dev-vars` writes it from `.secrets/<env>/` without printing them.
+   Then the vault and auth pages (`vaultOrigin`, `authOrigin`), each a thin Worker with its built pages; the vault
+   Worker reaches the API through a service binding, so deploy the API first
+   ([`apps/api/README.md`](apps/api/README.md#page-workers)):
+   ```sh
+   pnpm --filter @hana-id/web build              # packages/web/dist/pages/<env>/{vault,auth}
+   pnpm --filter @hana-id/api run deploy:pages   # wrangler.vault.jsonc and wrangler.auth.jsonc, written by gen above
+   ```
+   Google redirects logins to `{authOrigin}/login/callback`: add it as an Authorized redirect URI on the shared client
+   and on every own client that logs in through the Hana pages.
 8. **Register a partner**, with its own Google client, or with Hana's shared one, or both:
    ```sh
    # own client
@@ -265,8 +304,9 @@ throwaway names. The signer account is part of every user's derived key, so chan
    pnpm --filter @hana-id/scripts run admin <env> scope:register --allow-shared --owner-near <partner-or-owner>.testnet --yes
    pnpm --filter @hana-id/scripts run admin <env> app:create --name "Partner" --scope s1 --origin https://partner.example --origin http://localhost:5173 [--remote]
    ```
-   Give the partner the printed `pk_test_…` key. With its own client, the partner also adds its origins to that
-   client's authorised JavaScript origins in Google Cloud.
+   Give the partner the printed `pk_test_…` key and [`docs/integration.md`](docs/integration.md). With its own
+   client, the partner adds `{authOrigin}/login/callback` as that client's only Authorized redirect URI, with no
+   JavaScript origins.
 
 ## Safety
 
@@ -282,5 +322,6 @@ throwaway names. The signer account is part of every user's derived key, so chan
   `deploy-contract` checks this on every run. A leaked relayer key can burn gas, but it cannot derive anyone's key,
   because every session needs a Google token committing to the user's own session key and scope. Session and owner
   keys are separate pools, so draining the owner pool can't stop logins.
-- Hana cannot change a scope's client IDs or owners after registration, or block derivation on chain. App suspension
-  happens only in D1, through the API.
+- Hana cannot change a scope's client IDs or owners after registration. On chain it can block derivation only for a
+  shared-only scope, by removing the shared clients (`docs/decisions.md` D11, D12). App suspension happens only in D1,
+  through the API.

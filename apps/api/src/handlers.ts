@@ -1,11 +1,14 @@
 // Request handlers: app endpoints (publishable key + origin), owner actions (OIDC proof in args), health.
-import { type App, PUBLISHABLE_KEY_RE, anyActiveAppAllowsOrigin, getAppByKey, incrementUsage, originAllowed } from './apps.ts';
+import { type App, PUBLISHABLE_KEY_RE, getAppByKey, incrementUsage } from './apps.ts';
+import { appKeyPairs } from './bls.ts';
+import { disallowedClaim } from './claims.ts';
 import type { Env } from './env.ts';
 import { type Headers_, corsHeaders, json, readJson } from './http.ts';
 import { ipSubject } from './ip.ts';
 import { log } from './log.ts';
 import { placedStub } from './placement.ts';
 import { JwksUnavailableError, verifyIdToken } from './jwks.ts';
+import { type Caller, PARENT_ORIGIN_HEADER, RELAY_KEY_HEADER, checkCaller, preflightAllows } from './origins.ts';
 import { precheckOwnerAction } from './owner-actions.ts';
 import type { RateLimiter } from './rate-limiter.ts';
 import type { RelayInstance, RelayTiming } from './relayer-key.ts';
@@ -13,9 +16,10 @@ import { relay } from './relayer-pool.ts';
 import { ckdPayload, revokePayload, sessionNonce, verifySessionSignature } from './session-crypto.ts';
 import { claimCounter, precheckSessionUse } from './session-use.ts';
 import { MAX_BODY, isError, toCreateSession, toDeriveKey, toOwnerAction, toRevokeSession } from './validate.ts';
+import { type AppSettings, effectiveSettings, getSettingsRow } from './vault/settings.ts';
 import { effectiveSharedClients, forgetScope, forgetSession, getConfig, getScope, isSessionView, isSharedClient, recordSessionUse, rememberSession, scopeForClient, sessionKeyInUse } from './views.ts';
 
-const APP_ALLOW_HEADERS = 'content-type, x-hana-key';
+const APP_ALLOW_HEADERS = `content-type, x-hana-key, ${PARENT_ORIGIN_HEADER}, ${RELAY_KEY_HEADER}`;
 const APP_METHODS = 'GET, POST, OPTIONS';
 /** Owner actions are unauthenticated at the API (the proof is in the args): keep them slow. */
 export const OWNER_ACTIONS_PER_IP_MINUTE = 10;
@@ -36,7 +40,7 @@ export type AppEndpoint = '/v1/sessions' | '/v1/derive' | '/v1/sessions/revoke';
 export const APP_ENDPOINTS: readonly string[] = ['/v1/sessions', '/v1/derive', '/v1/sessions/revoke'];
 export const APP_CONFIG_ENDPOINT = '/v1/app';
 
-interface Ctx {
+export interface Ctx {
   env: Env;
   requestId: string;
   endpoint: string;
@@ -52,14 +56,14 @@ interface Ctx {
   lapAt?: number;
 }
 
-function newCtx(env: Env, requestId: string, endpoint: string, request?: Request, cors: Headers_ = {}): Ctx {
+export function newCtx(env: Env, requestId: string, endpoint: string, request?: Request, cors: Headers_ = {}): Ctx {
   const started = Date.now();
   const colo = (request as Request<unknown, IncomingRequestCfProperties> | undefined)?.cf?.colo;
   return { env, requestId, endpoint, started, cors, colo: typeof colo === 'string' ? colo : undefined, phases: {}, lapAt: started };
 }
 
 /** Records the time since the previous lap (or the start) as stage `name`. */
-function lap(ctx: Ctx, name: string): void {
+export function lap(ctx: Ctx, name: string): void {
   const now = Date.now();
   if (ctx.phases) ctx.phases[name] = now - (ctx.lapAt ?? ctx.started);
   ctx.lapAt = now;
@@ -69,7 +73,7 @@ function lap(ctx: Ctx, name: string): void {
  * Records a relay's stages: the round trip to the relayer key object and, inside it, nonce + broadcast vs outcome,
  * with the broadcast split into queue / chain reads / signing / nonce reservation (see RelayTiming).
  */
-function lapRelay(ctx: Ctx, result: { timing?: RelayTiming; instance?: RelayInstance }): void {
+export function lapRelay(ctx: Ctx, result: { timing?: RelayTiming; instance?: RelayInstance }): void {
   lap(ctx, 'relay');
   ctx.relayInstance = result.instance;
   const t = result.timing;
@@ -85,13 +89,13 @@ function lapRelay(ctx: Ctx, result: { timing?: RelayTiming; instance?: RelayInst
 
 type Settled<T> = { ok: true; value: T } | { ok: false; error: unknown };
 /** Never rejects, so a check started early and then not needed can't become an unhandled rejection. */
-const settle = <T>(p: Promise<T>): Promise<Settled<T>> =>
+export const settle = <T>(p: Promise<T>): Promise<Settled<T>> =>
   p.then(
     (value) => ({ ok: true as const, value }),
     (error: unknown) => ({ ok: false as const, error }),
   );
 
-function done(ctx: Ctx, status: number, body: Record<string, unknown>, extra: Headers_ = {}): Response {
+export function done(ctx: Ctx, status: number, body: Record<string, unknown>, extra: Headers_ = {}): Response {
   const ok = status < 400;
   const code = typeof body.code === 'string' ? body.code : undefined;
   const nearTx = typeof body.nearTx === 'string' ? body.nearTx : undefined;
@@ -115,15 +119,15 @@ function done(ctx: Ctx, status: number, body: Record<string, unknown>, extra: He
   return json(status, { ...body, requestId: ctx.requestId }, { ...ctx.cors, 'x-request-id': ctx.requestId, ...extra });
 }
 
-const reject = (ctx: Ctx, status: number, code: string, error: string, extra: Headers_ = {}): Response => done(ctx, status, { error, code }, extra);
+export const reject = (ctx: Ctx, status: number, code: string, error: string, extra: Headers_ = {}): Response => done(ctx, status, { error, code }, extra);
 
 /** Per-IP limiter subject: IPv4 address, or the IPv6 /64 (see ip.ts). */
-function ipKey(request: Request): string {
+export function ipKey(request: Request): string {
   return `ip:${ipSubject(request.headers.get('cf-connecting-ip'))}`;
 }
 
 /** Per-IP limiters are created near their client; shared ones (per app, owner actions) in the configured region. */
-function limiter(env: Env, name: string): DurableObjectStub<RateLimiter> {
+export function limiter(env: Env, name: string): DurableObjectStub<RateLimiter> {
   return name.startsWith('ip:') ? env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(name)) : placedStub(env, env.RATE_LIMITER, name);
 }
 
@@ -131,7 +135,7 @@ function limiter(env: Env, name: string): DurableObjectStub<RateLimiter> {
 
 export async function appPreflight(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get('origin');
-  if (origin && (await anyActiveAppAllowsOrigin(env.DB, origin))) return new Response(null, { status: 204, headers: corsHeaders(origin, APP_ALLOW_HEADERS, APP_METHODS) });
+  if (origin && (await preflightAllows(env.DB, env, origin))) return new Response(null, { status: 204, headers: corsHeaders(origin, APP_ALLOW_HEADERS, APP_METHODS) });
   return new Response(null, { status: 403, headers: { vary: 'Origin' } });
 }
 
@@ -141,14 +145,16 @@ export function openPreflight(): Response {
 
 // ---- App checks shared by every app endpoint ----
 
-type Gate = { ok: true; app: App } | { ok: false; response: Response };
+/** `caller`: who called (a Hana page and the partner origin it acts for, or a partner page), see origins.ts. */
+export type Gate = { ok: true; app: App; caller: Caller } | { ok: false; response: Response };
 
 /**
- * Checks 1–3: the app exists and is active, the Origin is allowed, rate limits. `relay` endpoints count against the
- * plan's per-IP, per-app minute and per-app day limits; `config` (GET /v1/app, no transaction) only against a per-IP
+ * Checks 1–3: the app exists and is active, the caller may call this endpoint (`ctx.endpoint`) for it (origins.ts:
+ * Hana pages for an allowed `x-hana-parent-origin`, partner pages by key type and env), rate limits. `relay`
+ * endpoints count against the plan's per-IP, per-app minute and per-app day limits; `config` (GET /v1/app, no transaction) only against a per-IP
  * window of its own, so reading the config never uses up the app's relay quota.
  */
-async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay' | 'config'): Promise<Gate> {
+export async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay' | 'config'): Promise<Gate> {
   const fail = (status: number, code: string, error: string, extra: Headers_ = {}): Gate => ({ ok: false, response: reject(ctx, status, code, error, extra) });
   // 1. App exists and is active.
   const key = request.headers.get('x-hana-key');
@@ -163,13 +169,14 @@ async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay' | 'co
   lap(ctx, 'app');
   if (!app) return fail(401, 'unknown_app', 'Unknown publishable key');
   ctx.appId = app.id;
-  const origin = request.headers.get('origin');
-  const allowed = originAllowed(app, origin);
-  if (allowed && origin) ctx.cors = corsHeaders(origin, APP_ALLOW_HEADERS, APP_METHODS);
+  const caller = checkCaller(env, app, ctx.endpoint, request.headers);
+  if (caller.cors) ctx.cors = corsHeaders(caller.cors, APP_ALLOW_HEADERS, APP_METHODS);
   if (app.status !== 'active') return fail(403, 'app_suspended', 'This app is suspended');
+  // A test key on a scope that a live key also uses: its dev-env privileges must never reach live users.
+  if (app.scope_conflict) return fail(403, 'scope_conflict', 'This test key’s scope is also used by a live app');
 
-  // 2. Origin.
-  if (!allowed) return fail(403, 'origin_not_allowed', 'Origin not allowed for this app');
+  // 2. Origin (and, from a Hana page, the partner origin it acts for).
+  if (!caller.ok) return fail(403, 'origin_not_allowed', 'Origin not allowed for this app');
 
   // 3. Rate limits: per IP per minute first, then per app per minute and per day. The IP check comes first so a
   //    request it rejects never uses up the app's shared quota (one client could otherwise lock out every user).
@@ -188,32 +195,48 @@ async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay' | 'co
     return fail(503, 'rate_limiter_unavailable', 'Try again');
   }
   lap(ctx, 'limits');
-  return { ok: true, app };
+  return { ok: true, app, caller };
 }
 
 // ---- GET /v1/app ----
 
 /**
- * What the SDK needs to start a login: the app's scope, the signer contract and which Google client to use. `own`
- * when the scope has a Google client of its own (the first one), else `shared` (the first shared client in force)
- * when the scope allows shared login, else 409.
+ * What the SDK needs to start a login: the app's name and scope, the signer contract, which Google client to use and
+ * the server clock (`serverTimeMs`, which the vault corrects its clock with). `own` when the scope has a Google client
+ * of its own (the app's `google_web_client_id` when set, which must still be one of the scope's clients; else the
+ * first one), else `shared` (the first shared client in force) when the scope allows shared login, else 409.
+ * `autoApprovePolicy` is the policy in force now (D1, validated and normalized as the vault page inlines it), or null, and
+ * `rawSign` the raw-signing setting in force now: an open vault re-reads both (within 10 s of a request), so removing a
+ * policy stops auto-approval, and setting raw signing to 'off' stops raw requests, without a reload.
  */
 export async function handleAppConfig(request: Request, env: Env, requestId: string): Promise<Response> {
   const ctx = newCtx(env, requestId, APP_CONFIG_ENDPOINT, request);
   const gate = await appGate(request, env, ctx, 'config');
   if (!gate.ok) return gate.response;
   const { app } = gate;
+  let autoApprovePolicy: AppSettings['autoApprovePolicy'];
+  let rawSign: AppSettings['rawSign'];
+  try {
+    const row = await getSettingsRow(env.DB, app.id);
+    const settings = row ? await effectiveSettings(row, app.id, Date.now()) : null;
+    autoApprovePolicy = settings?.autoApprovePolicy ?? null;
+    rawSign = settings?.rawSign ?? 'off';
+  } catch {
+    return reject(ctx, 503, 'config_unavailable', 'App config is unavailable, try again');
+  }
   try {
     const scope = await getScope(env, app.scope_id);
     if (!scope) return reject(ctx, 409, 'scope_not_registered', 'The app’s scope is not registered on chain');
-    const own = scope.clients.find(([p]) => p === 'google');
+    const web = app.google_web_client_id;
+    const own = scope.clients.find(([p, aud]) => p === 'google' && (web === null || aud === web));
+    if (web !== null && !own) return reject(ctx, 409, 'no_google_client', 'The app’s Google web client is no longer one of its scope’s clients');
     let google: { clientId: string; mode: 'own' | 'shared' } | null = own ? { clientId: own[1], mode: 'own' } : null;
     if (!google && scope.allow_shared) {
       const shared = effectiveSharedClients(await getConfig(env)).find(([p]) => p === 'google');
       if (shared) google = { clientId: shared[1], mode: 'shared' };
     }
     if (!google) return reject(ctx, 409, 'no_google_client', 'The app has no Google client and shared login is not available');
-    return done(ctx, 200, { scopeId: app.scope_id, signer: env.SIGNER_ACCOUNT, google });
+    return done(ctx, 200, { name: app.name, scopeId: app.scope_id, signer: env.SIGNER_ACCOUNT, google, serverTimeMs: Date.now(), autoApprovePolicy, rawSign });
   } catch {
     return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');
   }
@@ -252,6 +275,9 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     }
     if (!verified.ok) return reject(ctx, verified.code === 'invalid_token' ? 401 : 400, verified.code, verified.error);
     const token = verified.token;
+    // The claim allow-list (claims.ts), here only once REJECT_PII_ON_SESSIONS is on: smoke's GIS tokens carry `email`.
+    const claim = env.REJECT_PII_ON_SESSIONS === '1' ? disallowedClaim(req.jwt) : null;
+    if (claim) return done(ctx, 400, { error: 'The ID token carries a claim outside the allow-list', code: 'token_has_pii', data: { claim } });
     if (token.nonce === null) return reject(ctx, 400, 'nonce_mismatch', 'The ID token has no nonce');
     // 6. ...that commits to this session in this app's scope on this signer.
     const expected = await sessionNonce({ signer: env.SIGNER_ACCOUNT, scopeId: app.scope_id, ...req });
@@ -312,6 +338,8 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     }
     const { rejection } = check;
     if (rejection) return done(ctx, rejection.status, { error: rejection.error, code: rejection.code, nextCounter: rejection.nextCounter });
+    // The app key's pairing check (bls.ts), last: it is the costly one.
+    if ('pk1' in call && env.BLS_PRECHECK === '1' && !(await appKeyPairs(call.pk1, call.pk2))) return reject(ctx, 400, 'invalid_app_key', 'pk1 and pk2 are not the same key');
     lap(ctx, 'checks');
 
     const result = await relay(env, 'session', { method: call.method, args: call.args }, requestId);
@@ -353,7 +381,7 @@ type ScopeRejection = { status: number; code: string; error: string };
  * Check 7: the client (provider, aud) may log in to `appScope`, or why not. A registered client must be the app's own;
  * otherwise it must be a shared client in force (config, cached 60 s) and the app's scope must allow shared login.
  */
-async function checkClientScope(env: Env, provider: string, aud: string, appScope: string, now: number): Promise<ScopeRejection | null> {
+export async function checkClientScope(env: Env, provider: string, aud: string, appScope: string, now: number): Promise<ScopeRejection | null> {
   const scope = await scopeForClient(env, provider, aud);
   if (scope !== null) return scope === appScope ? null : { status: 403, code: 'scope_mismatch', error: 'Token is for a different app' };
   if (!isSharedClient(await getConfig(env), provider, aud, now)) return { status: 403, code: 'unregistered_client', error: 'Token is for an unregistered app' };

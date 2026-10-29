@@ -1,0 +1,29 @@
+{
+  "name": "@hana-id/sodax",
+  "version": "0.0.0",
+  "description": "Optional Sodax wallet-provider adapters (IStellarWalletProvider, IEvmWalletProvider) over @hana-id/web.",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "tsx ../web/scripts/gen-envs.ts && vitest run",
+    "typecheck": "tsx ../web/scripts/gen-envs.ts && tsc --noEmit && tsc --noEmit -p tsconfig.node.json"
+  },
+  "dependencies": {
+    "@hana-id/core": "workspace:*",
+    "@hana-id/web": "workspace:*"
+  },
+  "peerDependencies": {
+    "@sodax/types": "^2.1.0"
+  },
+  "devDependencies": {
+    "@sodax/types": "2.1.0",
+    "@stellar/stellar-base": "15.0.0",
+    "@types/node": "22.20.5",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "4.1.12"
+  }
+}

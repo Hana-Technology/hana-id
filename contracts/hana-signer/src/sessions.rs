@@ -1,6 +1,6 @@
 //! Sessions (an ID token binds a browser-held Ed25519 key to a derivation path) and CKD key release.
 
-// create_session takes 7 arguments (8 with self): the JSON interface is flat on purpose.
+// create_session takes 7 arguments and create_session_and_derive 10 (plus self): the JSON interface is flat on purpose.
 #![allow(clippy::too_many_arguments)]
 
 use near_sdk::serde::{Deserialize, Serialize};
@@ -23,6 +23,8 @@ pub const REVOKE_PAYLOAD: &[u8] = b"revoke";
 
 pub const MAX_SESSION_MS: u64 = 24 * 60 * 60 * 1000;
 pub const MAX_USES: u32 = 500;
+/// `key_index` values from 2^31 up are reserved (for a later rotation scheme): `create_session` refuses them.
+pub const KEY_INDEX_LIMIT: u32 = 0x8000_0000;
 pub const MAX_PRUNE: u32 = 100;
 /// Expired sessions pruned by every `create_session`.
 const PRUNE_ON_CREATE: u32 = 3;
@@ -150,6 +152,7 @@ impl HanaSigner {
         let now = env::block_timestamp_ms();
         assert!(expires_at_ms > now && expires_at_ms <= now.saturating_add(MAX_SESSION_MS), "Session expiry must be within 24 hours");
         assert!(max_uses > 0 && max_uses <= MAX_USES, "max_uses must be 1-500");
+        assert!(key_index < KEY_INDEX_LIMIT, "key_index must be below 2^31");
         if let Some(existing) = self.sessions.get(&session_public_key) {
             assert!(existing.expires_at_ms <= now, "Session key already in use");
         }
@@ -194,6 +197,29 @@ impl HanaSigner {
             .with_attached_deposit(MPC_FEE)
             .with_static_gas(CKD_GAS)
             .request_app_private_key(CkdRequestArgs { derivation_path: path, app_public_key: CkdAppPublicKey::AppPublicKeyPV { pk1, pk2 }, domain_id: self.ckd_domain_id })
+    }
+
+    /// One-transaction login: exactly `create_session` followed by `derive_key` with counter 1, in one receipt.
+    /// `signature` is the session key's signature over session_message(1, "hana-id-ckd-v1:{pk1}:{pk2}"). Any panic
+    /// in either half (token, nonce, signature, BLS key length, ...) reverts the whole call, so no session is left
+    /// behind. Returns the MPC's `{big_y, big_c}`. If the MPC itself fails, the session stays with `used = 1` (the
+    /// MPC call is a separate receipt), and only a session with `max_uses ≥ 2` can retry, with `derive_key` and
+    /// counter 2.
+    pub fn create_session_and_derive(
+        &mut self,
+        jwt: String,
+        scope_id: String,
+        session_public_key: Vec<u8>,
+        expires_at_ms: u64,
+        salt: Vec<u8>,
+        key_index: u32,
+        max_uses: u32,
+        signature: Vec<u8>,
+        pk1: String,
+        pk2: String,
+    ) -> Promise {
+        self.create_session(jwt, scope_id, session_public_key.clone(), expires_at_ms, salt, key_index, max_uses);
+        self.derive_key(session_public_key, 1, signature, pk1, pk2)
     }
 
     /// Ends a session early. Signed by the session key over session_message(counter, "revoke").

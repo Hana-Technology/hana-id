@@ -8,6 +8,7 @@ import {
   findAppSql,
   normaliseOrigin,
   removeOriginsSql,
+  scopeConflictSql,
   setStatusSql,
 } from '../lib/admin-sql.ts';
 
@@ -55,6 +56,11 @@ describe('admin SQL', () => {
     expect(addOriginsSql('app_1', ['https://a.com'])).toContain("SELECT 'app_1', 'https://a.com' WHERE NOT EXISTS");
     expect(removeOriginsSql('app_1', ['https://a.com', 'https://b.com']).split(';\n')).toHaveLength(2);
     expect(setStatusSql('app_1', 'suspended')).toBe("UPDATE apps SET status = 'suspended' WHERE id = 'app_1'");
+  });
+
+  it('finds the other key type on a scope (pk_test_ and pk_live_ apps never share one)', () => {
+    expect(scopeConflictSql('s1', 'pk_test_abc')).toBe("SELECT id FROM apps WHERE scope_id = 's1' AND publishable_key LIKE 'pk\\_live\\_%' ESCAPE '\\'");
+    expect(scopeConflictSql("s'1", 'pk_live_abc')).toBe("SELECT id FROM apps WHERE scope_id = 's''1' AND publishable_key LIKE 'pk\\_test\\_%' ESCAPE '\\'");
   });
 
   it('normalises and validates origins', () => {

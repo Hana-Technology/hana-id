@@ -4,51 +4,107 @@ import { type AppEndpoint, APP_CONFIG_ENDPOINT, APP_ENDPOINTS, appPreflight, han
 import { json } from './http.ts';
 import { syncIssuerKeys } from './issuer-keys.ts';
 import { log } from './log.ts';
+import { LOGIN_ENDPOINT, handleLogin } from './login.ts';
+import { LOGIN_RELAY_PREFIX, handleLoginRelay, loggedEndpoint } from './login-relay.ts';
+import { vaultMaintenance } from './vault/cron.ts';
+import { handleVaultEndpoint, isVaultEndpoint, vaultPreflight } from './vault/endpoints.ts';
+import { BASE_CSP, handleVaultPage, isVaultPageRequest } from './vault/page.ts';
 
+export { LoginRelay } from './login-relay.ts';
 export { RateLimiter } from './rate-limiter.ts';
 export { RelayerKey } from './relayer-key.ts';
 export type { Env } from './env.ts';
 
 const ID_RE = /^[A-Za-z0-9-]{1,64}$/u;
 
+/** The router's own JSON errors (404, 405, 500), with `x-request-id` like every handled response. */
+function routeError(status: number, code: string, error: string, requestId: string, extra: Record<string, string> = {}): Response {
+  return json(status, { error, code, requestId }, { 'x-request-id': requestId, ...extra });
+}
+
 function newRequestId(request: Request): string {
   const ray = request.headers.get('cf-ray');
   return ray && ID_RE.test(ray) ? ray : crypto.randomUUID();
 }
 
+/**
+ * A Hana page origin (`VAULT_ORIGIN`, `AUTH_ORIGIN`) in the request URL. Those origins serve only their pages
+ * (docs/batch-b-spec.md "Origins and pages"), so here they get `/vault` (vault origin) and nothing else: never the
+ * API, which would otherwise be same-origin with the vault's storage.
+ */
+function onHanaPageOrigin(url: URL, env: Env): boolean {
+  return (!!env.VAULT_ORIGIN && url.origin === env.VAULT_ORIGIN) || (!!env.AUTH_ORIGIN && url.origin === env.AUTH_ORIGIN);
+}
+
+/** 404 on a Hana page origin, with the page Workers' headers: nothing to run, frame or sniff. */
+function pageOriginNotFound(head: boolean, requestId: string): Response {
+  return new Response(head ? null : 'Not found\n', {
+    status: 404,
+    headers: {
+      'content-type': 'text/plain; charset=utf-8',
+      'content-security-policy': [...BASE_CSP, "frame-ancestors 'none'"].join('; '),
+      'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer',
+      'x-content-type-options': 'nosniff',
+      'x-request-id': requestId,
+    },
+  });
+}
+
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     const requestId = newRequestId(request);
-    const { pathname } = new URL(request.url);
+    const url = new URL(request.url);
+    const { pathname } = url;
     try {
+      if (isVaultPageRequest(request, env)) {
+        if (request.method === 'GET' || request.method === 'HEAD') return await handleVaultPage(request, env, requestId);
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'GET, HEAD' });
+      }
+      if (onHanaPageOrigin(url, env)) return pageOriginNotFound(request.method === 'HEAD', requestId);
       if (pathname === '/v1/health') {
         if (request.method === 'GET' || request.method === 'HEAD') return handleHealth(env, requestId);
         if (request.method === 'OPTIONS') return openPreflight();
-        return json(405, { error: 'Method not allowed', code: 'method_not_allowed', requestId }, { allow: 'GET' });
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'GET' });
       }
       if (pathname === APP_CONFIG_ENDPOINT) {
         if (request.method === 'OPTIONS') return await appPreflight(request, env);
         if (request.method === 'GET') return await handleAppConfig(request, env, requestId);
-        return json(405, { error: 'Method not allowed', code: 'method_not_allowed', requestId }, { allow: 'GET, OPTIONS' });
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'GET, OPTIONS' });
       }
       if (APP_ENDPOINTS.includes(pathname)) {
         if (request.method === 'OPTIONS') return await appPreflight(request, env);
         if (request.method === 'POST') return await handleAppEndpoint(request, env, pathname as AppEndpoint, requestId, ctx);
-        return json(405, { error: 'Method not allowed', code: 'method_not_allowed', requestId }, { allow: 'POST, OPTIONS' });
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
+      }
+      if (pathname === LOGIN_ENDPOINT) {
+        if (request.method === 'OPTIONS') return await appPreflight(request, env);
+        if (request.method === 'POST') return await handleLogin(request, env, requestId, ctx);
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
+      }
+      if (pathname.startsWith(LOGIN_RELAY_PREFIX)) return await handleLoginRelay(request, env, requestId);
+      if (isVaultEndpoint(pathname)) {
+        if (request.method === 'OPTIONS') return vaultPreflight(request, env);
+        if (request.method === 'POST') return await handleVaultEndpoint(request, env, pathname, requestId, ctx);
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
       }
       if (pathname === '/v1/owner-actions') {
         if (request.method === 'OPTIONS') return openPreflight();
         if (request.method === 'POST') return await handleOwnerAction(request, env, requestId);
-        return json(405, { error: 'Method not allowed', code: 'method_not_allowed', requestId }, { allow: 'POST, OPTIONS' });
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
       }
-      return json(404, { error: 'Not found', code: 'not_found', requestId });
+      return routeError(404, 'not_found', 'Not found', requestId);
     } catch {
-      log({ event: 'request', requestId, endpoint: pathname, outcome: 'error', status: 500, code: 'internal' }, 'error');
-      return json(500, { error: 'Internal error', code: 'internal', requestId });
+      log({ event: 'request', requestId, endpoint: loggedEndpoint(pathname), outcome: 'error', status: 500, code: 'internal' }, 'error');
+      return routeError(500, 'internal', 'Internal error', requestId);
     }
   },
 
   async scheduled(_controller, env, _ctx): Promise<void> {
-    await syncIssuerKeys(env);
+    // Independent jobs: one failing must not skip the other.
+    const [vault, issuerKeys] = await Promise.allSettled([vaultMaintenance(env), syncIssuerKeys(env)]);
+    if (vault.status === 'rejected') log({ event: 'vault_maintenance', outcome: 'error', code: 'internal' }, 'error');
+    if (issuerKeys.status === 'rejected') throw issuerKeys.reason;
+    if (vault.status === 'rejected') throw vault.reason;
   },
 } satisfies ExportedHandler<Env>;

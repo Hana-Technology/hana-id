@@ -51,8 +51,19 @@ pub const OWNER_SUB: &str = "owner-111";
 pub const SHARED: &str = "hana-shared.apps.googleusercontent.com";
 pub const SHARED_2: &str = "hana-shared-2.apps.googleusercontent.com";
 
-/// Session pool (`RELAYER_KEYS`): the methods its function-call keys may call (docs/batch-a2-shared-client.md).
-pub const SESSION_RELAYER_METHODS: &[&str] = &["create_session", "derive_key", "revoke_session", "prune_sessions"];
+/// The session pool's allowlist moves through three planned states (docs/batch-b-spec.md "Relayer allowlists"),
+/// each a delete-and-re-add of every session-pool key: 1. at the batch B contract upgrade; 2. the ship gate passes
+/// (create_session leaves the relayer); 3. the ship gate fails (create_session_and_derive leaves, and later the
+/// contract).
+pub const SESSION_ALLOWLIST_STATES: [&[&str]; 3] = [
+    &["create_session", "create_session_and_derive", "derive_key", "revoke_session", "prune_sessions"],
+    &["create_session_and_derive", "derive_key", "revoke_session", "prune_sessions"],
+    &["create_session", "derive_key", "revoke_session", "prune_sessions"],
+];
+/// The state in force (index into SESSION_ALLOWLIST_STATES: state 1).
+pub const SESSION_ALLOWLIST_STATE: usize = 0;
+/// Session pool (`RELAYER_KEYS`): the methods its function-call keys may call now.
+pub const SESSION_RELAYER_METHODS: &[&str] = SESSION_ALLOWLIST_STATES[SESSION_ALLOWLIST_STATE];
 /// Owner pool (`OWNER_RELAYER_KEYS`): the methods its function-call keys may call.
 pub const OWNER_RELAYER_METHODS: &[&str] = &[
     "propose_change",
@@ -65,7 +76,7 @@ pub const OWNER_RELAYER_METHODS: &[&str] = &[
 ];
 pub const KEYS_UPDATER_METHODS: &[&str] = &["set_issuer_key", "remove_issuer_key"];
 
-/// Every change method of hana-signer (docs/batch-a-spec.md + docs/batch-a2-shared-client.md). The access-key test calls each one with each
+/// Every change method of hana-signer (docs/batch-a-spec.md, docs/batch-a2-shared-client.md, docs/batch-b-spec.md). The access-key test calls each one with each
 /// function-call key, so a method added to the contract should be added here too.
 pub const ALL_CHANGE_METHODS: &[&str] = &[
     "new",
@@ -87,6 +98,7 @@ pub const ALL_CHANGE_METHODS: &[&str] = &[
     "remove_client",
     "disable_shared_login",
     "create_session",
+    "create_session_and_derive",
     "derive_key",
     "revoke_session",
     "prune_sessions",
@@ -154,6 +166,24 @@ pub fn deploy_script_methods(name: &str) -> Result<Vec<String>> {
     let body = &src[start..];
     let open = body.find('[').unwrap() + 1;
     let close = body.find(']').with_context(|| format!("unterminated {name}"))?;
+    Ok(body[open..close]
+        .split(',')
+        .map(|s| s.trim().trim_matches(|c| c == '\'' || c == '"').to_string())
+        .filter(|s| !s.is_empty())
+        .collect())
+}
+
+/// Reads `POOL_METHODS.<pool>: [ '...', ... ]` from apps/api/src/relayer-config.ts: the methods the API's relayer
+/// Durable Objects will relay for that pool.
+pub fn api_pool_methods(pool: &str) -> Result<Vec<String>> {
+    let path = contracts_dir().parent().expect("repo root").join("apps").join("api").join("src").join("relayer-config.ts");
+    let src = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let start = src.find("export const POOL_METHODS = {").with_context(|| format!("POOL_METHODS not found in {}", path.display()))?;
+    let body = &src[start..];
+    let entry = body.find(&format!("\n  {pool}: [")).with_context(|| format!("POOL_METHODS.{pool} not found"))?;
+    let body = &body[entry..];
+    let open = body.find('[').unwrap() + 1;
+    let close = body.find(']').with_context(|| format!("unterminated POOL_METHODS.{pool}"))?;
     Ok(body[open..close]
         .split(',')
         .map(|s| s.trim().trim_matches(|c| c == '\'' || c == '"').to_string())
@@ -366,6 +396,18 @@ pub fn session_message(counter: u64, payload: &[u8]) -> Vec<u8> {
     m
 }
 
+/// Off-chain vault message (docs/batch-b-spec.md "Vault message layout"), which hana-signer must never accept:
+/// "hana-id-vault-v1:" ‖ borsh(signer) ‖ borsh(app_id) ‖ share_id (16) ‖ counter u64 LE ‖ sha256(payload).
+pub fn vault_message(signer: &str, app_id: &str, share_id: &[u8; 16], counter: u64, payload: &[u8]) -> Vec<u8> {
+    let mut m = b"hana-id-vault-v1:".to_vec();
+    m.extend(borsh_str(signer));
+    m.extend(borsh_str(app_id));
+    m.extend_from_slice(share_id);
+    m.extend_from_slice(&counter.to_le_bytes());
+    m.extend(sha256(payload));
+    m
+}
+
 pub fn ckd_payload(pk1: &str, pk2: &str) -> Vec<u8> {
     format!("hana-id-ckd-v1:{pk1}:{pk2}").into_bytes()
 }
@@ -462,6 +504,18 @@ impl TestSession {
             "pk1": pk1,
             "pk2": pk2,
         })
+    }
+
+    /// create_session_and_derive args: create_args plus a derive signature for counter 1 (which it sets as the last
+    /// counter used, as the call spends it).
+    pub fn login_args(&mut self, jwt: &str, pk1: &str, pk2: &str) -> Value {
+        self.counter = 1;
+        let sig = self.key.sign(&session_message(1, &ckd_payload(pk1, pk2)));
+        let mut args = self.create_args(jwt);
+        args["signature"] = json!(sig.to_bytes().to_vec());
+        args["pk1"] = json!(pk1);
+        args["pk2"] = json!(pk2);
+        args
     }
 
     pub fn revoke_args(&mut self) -> Value {
@@ -655,14 +709,40 @@ impl Env {
     /// A new session in `scope_id` expiring `ttl_ms` from now, and a token for `aud`/`sub` committing to it on the
     /// main deployment.
     pub async fn new_session(&self, aud: &str, sub: &str, scope_id: &str, key_index: u32, ttl_ms: u64) -> Result<(TestSession, String)> {
+        self.new_session_with_uses(aud, sub, scope_id, key_index, 5, ttl_ms).await
+    }
+
+    /// As `new_session`, with `max_uses` uses.
+    pub async fn new_session_with_uses(&self, aud: &str, sub: &str, scope_id: &str, key_index: u32, max_uses: u32, ttl_ms: u64) -> Result<(TestSession, String)> {
         let now = self.now_ms().await?;
-        let session = TestSession::new(scope_id, now + ttl_ms, key_index, 5);
+        let session = TestSession::new(scope_id, now + ttl_ms, key_index, max_uses);
         let jwt = self.issuer.jwt(aud, sub, Some(&session.nonce(self.signer.id())), now);
         Ok((session, jwt))
     }
 
     pub async fn create_session(&self, caller: &Account, session: &TestSession, jwt: &str) -> Result<ExecutionFinalResult> {
         Ok(caller.call(self.signer.id(), "create_session").args_json(session.create_args(jwt)).gas(api_gas("create_session")).transact().await?)
+    }
+
+    /// Sends create_session_and_derive `args` (from `TestSession::login_args`) as `caller`, with the gas the API attaches.
+    pub async fn login(&self, caller: &Account, args: &Value) -> Result<ExecutionFinalResult> {
+        Ok(caller.call(self.signer.id(), "create_session_and_derive").args_json(args.clone()).gas(api_gas("create_session_and_derive")).transact().await?)
+    }
+
+    /// The mock MPC's answer for `path` and (pk1, pk2), as `derive_key` must return it.
+    pub async fn expected_ckd(&self, path: &str, pk1: &str, pk2: &str) -> Result<CkdResponse> {
+        let request = json!({"derivation_path": path, "app_public_key": {"AppPublicKeyPV": {"pk1": pk1, "pk2": pk2}}, "domain_id": CKD_DOMAIN_ID});
+        Ok(self.mpc.view("expected_response").args_json(json!({"request": request})).await?.json()?)
+    }
+
+    /// Flips the mock MPC's failure switch (signed by the mock's own account).
+    pub async fn set_mpc_fail(&self, fail: bool) -> Result<()> {
+        self.mpc.call("set_fail").args_json(json!({"fail": fail})).transact().await?.into_result()?;
+        Ok(())
+    }
+
+    pub async fn session_key_in_use(&self, session: &TestSession) -> Result<bool> {
+        Ok(self.signer.view("session_key_in_use").args_json(json!({"session_public_key": session.public_key()})).await?.json()?)
     }
 
     pub async fn get_session(&self, session: &TestSession) -> Result<Option<SessionView>> {

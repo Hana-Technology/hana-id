@@ -6,9 +6,16 @@ Amends `docs/batch-a-spec.md`. Where they disagree, this file wins. Decided with
 
 Partners should be able to use Hana ID without creating their own Google OAuth client (like Privy's default
 credentials), while keeping per-app key isolation. With a shared client the token's `aud` is Hana's, so the scope can't
-come from `aud`. Instead the Google nonce commits to the scope, and Hana's login page (batch B, on a Hana origin) only
-computes a nonce for scope X after checking the opener's origin against app X's allowed origins. Anyone forging a nonce
-can only obtain *their own* key for a scope, which they are entitled to anyway.
+come from `aud`. Instead the Google nonce commits to the scope, and Hana's pages (batch B, on Hana origins) only
+compute a nonce for scope X for a partner page whose origin app X allows. Anyone forging a nonce can only obtain
+*their own* key for a scope, which they are entitled to anyway.
+
+> **Amended by batch B** (`docs/batch-b-spec.md`, "Amends" and "Login"): the **vault** computes the session nonce,
+> not the login page. The vault iframe on `vaultOrigin` is framed only by the app's allowed origins
+> (`frame-ancestors`) and accepts only a parent whose `event.origin` is one of them. It computes the nonce from the
+> pinned signer account and the app's scope over a session key that can't leave it. The login page on `authOrigin`
+> only relays that nonce to Google, after recomputing it and checking the signer, scope and client against
+> `GET /v1/app` for the parent origin. The layout below is unchanged.
 
 Google's `sub` is the same across client IDs, so an app can start on the shared client and later register its own
 client ID to the same scope without users' addresses changing (to be confirmed on testnet with two clients).

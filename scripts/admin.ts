@@ -1,9 +1,11 @@
 // admin.ts <env> <command> [options]
 //
 // Partner-app admin for one environment. App rows live in the env's D1 database (wrangler d1 execute, local by
-// default, --remote for the deployed database). scope:register calls admin_register_scope (with allow_shared from
+// default, --remote for the deployed database). app:settings sets the per-app vault settings (lib/admin-settings.ts).
+// scope:register calls admin_register_scope (with allow_shared from
 // --allow-shared) on the contract with the owner's full-access key from ~/.near-credentials/testnet/<owner>.json.
 import { loadEnv, type Manifest } from '@hana-id/env';
+import { assertCommandPositionals } from './lib/admin-args.ts';
 import {
   addOriginsSql,
   assertAppName,
@@ -15,8 +17,10 @@ import {
   normaliseOrigin,
   planExistsSql,
   removeOriginsSql,
+  scopeConflictSql,
   setStatusSql,
 } from './lib/admin-sql.ts';
+import { appSettings, defaultAppSettingsDeps, settingsAppArg } from './lib/admin-settings.ts';
 import { type Args, CliError, parseCli, run } from './lib/cli.ts';
 import { scopeRegister } from './lib/admin-scope.ts';
 import { tryView } from './lib/contract.ts';
@@ -31,14 +35,21 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
   app:suspend        --app <app id | publishable key>
   app:resume         --app <app id | publishable key>
   app:list
+  app:settings <app id | publishable key> [--persistence session|none] [--session-ttl <1h..23h50m>]
+               [--idle-ttl <15m..session TTL>] [--raw-sign off|approval] [--google-web-client <client id>|default]
+               [--auto-approve <policy.json>|off]   (no setting flags: show the settings)
   scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […] [--yes]
 
   --remote   act on the deployed D1 database (default: local, apps/api/.wrangler/state)
   --yes      scope:register only: send the transaction (without it, only print it)
   --allow-shared  scope:register only: the app may log in through Hana's shared Google client; with it, --client is
-                  optional (an app with no Google client of its own)`;
+                  optional (an app with no Google client of its own)
 
-const COMMANDS = ['app:create', 'app:origins:add', 'app:origins:remove', 'app:suspend', 'app:resume', 'app:list', 'scope:register'] as const;
+  app:settings: --raw-sign approval and a new --auto-approve policy apply after a 24 h delay (the manifest's
+  changeDelayMs in local*/sandbox* envs); --raw-sign off and --auto-approve off are immediate. Durations: 12h, 23h50m,
+  15m, 3600000ms. --google-web-client must be one of the scope's Google clients on chain (default: the first one).`;
+
+const COMMANDS = ['app:create', 'app:origins:add', 'app:origins:remove', 'app:suspend', 'app:resume', 'app:list', 'app:settings', 'scope:register'] as const;
 type Command = (typeof COMMANDS)[number];
 
 interface AppRow {
@@ -70,14 +81,16 @@ async function scopeExists(m: Manifest, scopeId: string): Promise<boolean> {
 
 async function main(): Promise<void> {
   const args = parseCli(process.argv.slice(2), {
-    strings: ['name', 'scope', 'plan', 'app'],
+    strings: ['name', 'scope', 'plan', 'app', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve'],
     multiple: ['origin', 'client', 'owner-near', 'owner-google'],
     booleans: ['remote', 'yes', 'allow-shared', 'help'],
   });
   if (args.flag('help')) return void console.log(USAGE);
   const [envName, command, ...rest] = args.positionals;
-  if (!envName || !command || rest.length) throw new CliError('Expected <env> <command>');
+  if (!envName || !command) throw new CliError('Expected <env> <command>');
   if (!COMMANDS.includes(command as Command)) throw new CliError(`Unknown command ${command}`);
+  // app:settings names its app positionally (docs/batch-b-spec.md) or with --app (settingsAppArg).
+  assertCommandPositionals(command, rest);
   const m = loadEnv(envName);
   const remote = args.flag('remote');
   const where = remote ? `remote D1 ${m.cloudflare.d1Name}` : `local D1 ${m.cloudflare.d1Name}`;
@@ -91,6 +104,9 @@ async function main(): Promise<void> {
       if (!(await scopeExists(m, scopeId))) throw new Error(`Scope ${scopeId} is not registered on ${m.signer} (admin.ts ${m.name} scope:register …)`);
       if (!d1Execute(m, planExistsSql(plan), { remote }).length) throw new Error(`No plan "${plan}" in ${where}`);
       const app = { id: newAppId(), name, scopeId, publishableKey: publishableKey(), plan, createdAt: Date.now(), origins: list };
+      // Test and live keys never share a scope (the API would refuse the test key: scope_conflict).
+      const conflict = d1Execute<{ id: string }>(m, scopeConflictSql(scopeId, app.publishableKey), { remote });
+      if (conflict.length) throw new Error(`Scope ${scopeId} is used by ${conflict.map((r) => r.id).join(', ')} with the other key type (pk_test_ and pk_live_ apps can't share a scope)`);
       d1Execute(m, createAppSql(app), { remote });
       console.log(`Created app ${app.id} "${name}" (scope ${scopeId}, plan ${plan}) in ${where}`);
       console.log(`Origins: ${list.join(' ')}`);
@@ -119,6 +135,10 @@ async function main(): Promise<void> {
       for (const r of rows) {
         console.log(`${r.id}  ${r.status.padEnd(9)} scope=${r.scope_id} plan=${r.plan}  ${r.publishable_key}  "${r.name}"\n    origins: ${r.origins ?? '(none)'}`);
       }
+      return;
+    }
+    case 'app:settings': {
+      await appSettings(m, settingsAppArg(rest, args.str('app')), args, where, defaultAppSettingsDeps(m, remote));
       return;
     }
     case 'scope:register':

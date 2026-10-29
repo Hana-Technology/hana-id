@@ -1,11 +1,12 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KeyPair } from '@near-js/crypto';
-import { loadEnv } from '@hana-id/env';
+import { loadEnv, manifestSchema, repoRoot } from '@hana-id/env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseRelayerKeys } from '../../src/relayer-config.ts';
-import { LOCAL_D1_ID, devVarsContent, existingD1Id, main, writeDevVars, writeWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
+import { LOCAL_D1_ID, TEST_MANIFEST, devVarsContent, existingD1Id, main, testWranglerConfig, writeDevVars, writeWranglerConfig, wranglerConfig } from '../gen-wrangler.ts';
 
 /**
  * dotenv 16.3.1 `parse`, exactly as bundled in wrangler 4.x (wrangler-dist/cli.js, used by tryLoadDotDevDotVars to
@@ -82,6 +83,28 @@ describe('.dev.vars', () => {
   });
 });
 
+describe('generated configs are never committed', () => {
+  const GENERATED = ['wrangler.jsonc', 'wrangler.vault.jsonc', 'wrangler.auth.jsonc', 'wrangler.vitest.jsonc'].map((f) => `apps/api/${f}`);
+
+  it('every generated wrangler config is gitignored and untracked', () => {
+    const git = (args: string[]) => spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8' });
+    if (git(['rev-parse', '--git-dir']).status !== 0) return; // not a checkout (e.g. an exported tree)
+    for (const path of GENERATED) expect(git(['check-ignore', '-q', '--no-index', path]).status, path).toBe(0);
+    expect(git(['ls-files', '--', ...GENERATED]).stdout.trim()).toBe('');
+  });
+
+  it('the tests’ config comes from the same generator, for a fixed manifest with no real account or D1 id', () => {
+    expect(manifestSchema.parse(TEST_MANIFEST)).toEqual(TEST_MANIFEST);
+    const test = testWranglerConfig() as Record<string, unknown> & { d1_databases: { database_id: string }[]; vars: Record<string, string> };
+    const real = wranglerConfig(manifest, '11111111-2222-4333-8444-555555555555') as Record<string, unknown>;
+    // Everything but the env's names, vars and D1 database is the same as any env gets.
+    for (const key of Object.keys(real).filter((k) => !['name', 'vars', 'd1_databases'].includes(k))) expect(test[key], key).toEqual(real[key]);
+    expect(test.d1_databases[0]!.database_id).toBe(LOCAL_D1_ID);
+    expect(test.vars).not.toHaveProperty('DO_LOCATION_HINT');
+    expect(JSON.stringify(test)).not.toMatch(/\.testnet|workers\.dev/u);
+  });
+});
+
 describe('wrangler.jsonc', () => {
   it('takes vars from the manifest and never contains a secret key', () => {
     const dir = tmp();
@@ -90,15 +113,53 @@ describe('wrangler.jsonc', () => {
     const config = JSON.parse(text.slice(text.indexOf('\n') + 1)) as { vars: Record<string, string>; d1_databases: { database_name: string; database_id: string }[] };
     expect(config.vars).toEqual({
       NEAR_RPC: manifest.rpc,
+      ...(manifest.rpcFallback ? { NEAR_RPC_FALLBACK: manifest.rpcFallback } : {}),
       SIGNER_ACCOUNT: manifest.signer,
       RELAYER_ACCOUNT: manifest.relayer,
       ENV_NAME: manifest.name,
+      MPC_ACCOUNT: manifest.mpc,
+      VAULT_ORIGIN: manifest.vaultOrigin,
+      AUTH_ORIGIN: manifest.authOrigin,
+      API_URL: manifest.apiUrl,
+      BLS_PRECHECK: '0',
+      REJECT_PII_ON_SESSIONS: '0',
       ...(manifest.cloudflare.durableObjectLocation ? { DO_LOCATION_HINT: manifest.cloudflare.durableObjectLocation } : {}),
     });
     expect(config.d1_databases[0]).toMatchObject({ database_name: manifest.cloudflare.d1Name, database_id: LOCAL_D1_ID });
     expect(text).not.toMatch(/ed25519:/u);
     expect(text).not.toMatch(/RELAYER_KEYS|KEYS_UPDATER_KEY/u);
     expect(text).not.toMatch(/OWNER_RELAYER_KEYS/u);
+    expect(text).not.toMatch(/VAULT_KEK/u);
+  });
+
+  it('passes rpcFallback as NEAR_RPC_FALLBACK only when the manifest sets it', () => {
+    const { rpcFallback: _, ...noFallback } = manifest;
+    expect((wranglerConfig(manifestSchema.parse(noFallback), LOCAL_D1_ID) as { vars: Record<string, string> }).vars).not.toHaveProperty('NEAR_RPC_FALLBACK');
+    const withFallback = manifestSchema.parse({ ...manifest, rpcFallback: 'https://rpc.fallback.example' });
+    expect((wranglerConfig(withFallback, LOCAL_D1_ID) as { vars: Record<string, string> }).vars.NEAR_RPC_FALLBACK).toBe('https://rpc.fallback.example');
+  });
+
+  it('binds the LoginRelay Durable Object, created by a v2 migration after v1', () => {
+    const config = wranglerConfig(manifest, LOCAL_D1_ID) as {
+      durable_objects: { bindings: { name: string; class_name: string }[] };
+      migrations: { tag: string; new_sqlite_classes: string[] }[];
+    };
+    expect(config.durable_objects.bindings).toEqual([
+      { name: 'RELAYER_KEY', class_name: 'RelayerKey' },
+      { name: 'RATE_LIMITER', class_name: 'RateLimiter' },
+      { name: 'LOGIN_RELAY', class_name: 'LoginRelay' },
+    ]);
+    // Deployed migrations are append-only: v1 stays exactly as it was.
+    expect(config.migrations).toEqual([
+      { tag: 'v1', new_sqlite_classes: ['RelayerKey', 'RateLimiter'] },
+      { tag: 'v2', new_sqlite_classes: ['LoginRelay'] },
+    ]);
+  });
+
+  it('refuses an env without vaultOrigin and authOrigin', () => {
+    const { vaultOrigin: _v, authOrigin: _a, ...bare } = manifest;
+    expect(() => wranglerConfig(bare, LOCAL_D1_ID)).toThrow(/needs vaultOrigin and authOrigin/u);
+    expect(() => wranglerConfig({ ...manifest, authOrigin: undefined }, LOCAL_D1_ID)).toThrow(/needs vaultOrigin and authOrigin/u);
   });
 
   it('sets DO_LOCATION_HINT only when the manifest names a Durable Object location', () => {
@@ -133,7 +194,22 @@ describe('wrangler.jsonc', () => {
     expect(Object.keys(dotenvParse(readFileSync(path, 'utf8')))).toEqual(['RELAYER_KEYS']);
   });
 
-  it('main writes both files and never prints secret values', () => {
+  it('main writes nothing when the page configs refuse the env (they are built first)', () => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const dir = tmp();
+    // workers.dev page origins outside dev envs: the schema accepts them, the page Workers don't.
+    const refused = manifestSchema.parse({
+      ...manifest,
+      name: 'prod-test',
+      apiUrl: 'https://api.hana.example',
+      vaultOrigin: 'https://v.acct1.workers.dev',
+      authOrigin: 'https://a.acct2.workers.dev',
+    });
+    expect(() => main(['prod-test'], { dir, loadManifest: () => refused })).toThrow(/workers\.dev hostnames are for local\*\/sandbox\* envs only/u);
+    for (const file of ['wrangler.jsonc', 'wrangler.vault.jsonc', 'wrangler.auth.jsonc', '.dev.vars']) expect(existsSync(join(dir, file)), file).toBe(false);
+  });
+
+  it('main writes the API and page Worker configs and .dev.vars, and never prints secret values', () => {
     const logs: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => void logs.push(a.join(' ')));
     vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => void logs.push(a.join(' ')));
@@ -141,9 +217,11 @@ describe('wrangler.jsonc', () => {
     const dir = tmp();
     seedSecrets(root);
     main([manifest.name, '--dev-vars'], { root, dir });
-    expect(logs).toHaveLength(2);
+    expect(logs).toHaveLength(4);
     expect(logs.join('\n')).not.toMatch(/ed25519:|[1-9A-HJ-NP-Za-km-z]{40,}/u);
     expect(statSync(join(dir, '.dev.vars')).mode & 0o777).toBe(0o600);
-    expect(readFileSync(join(dir, 'wrangler.jsonc'), 'utf8')).not.toMatch(/ed25519:/u);
+    for (const file of ['wrangler.jsonc', 'wrangler.vault.jsonc', 'wrangler.auth.jsonc']) {
+      expect(readFileSync(join(dir, file), 'utf8')).not.toMatch(/ed25519:|RELAYER_KEYS|VAULT_KEK/u);
+    }
   });
 });

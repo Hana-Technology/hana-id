@@ -1,4 +1,4 @@
-// Argument → contract-argument conversion for admin.ts scope:register.
+// admin.ts argument checks, and argument → contract-argument conversion for scope:register.
 import { CliError } from './cli.ts';
 import { GOOGLE_PROVIDER, type Owner } from './contract.ts';
 
@@ -31,4 +31,12 @@ export function clientsFromArgs(clients: string[], { allowShared = false, shared
     if (sharedClientIds.includes(c)) throw new CliError(`${c} is Hana's shared Google client; don't register it as a client, pass --allow-shared instead`);
   }
   return clients.map((aud) => [GOOGLE_PROVIDER, aud]);
+}
+
+/**
+ * Positionals after `<env> <command>`: only app:settings takes one (its app, checked by settingsAppArg in
+ * admin-settings.ts); any other command refuses them.
+ */
+export function assertCommandPositionals(command: string, rest: readonly string[]): void {
+  if (command !== 'app:settings' && rest.length > 0) throw new CliError(`Unexpected argument ${rest.join(' ')}`);
 }

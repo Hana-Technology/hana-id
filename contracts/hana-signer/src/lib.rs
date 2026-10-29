@@ -5,6 +5,7 @@
 //!   `(provider, aud)` picks a **scope** from the registry, so each partner app gets its own keys; its `nonce` commits
 //!   to a browser-held Ed25519 session key. Path = `{scope_id}#{provider}#{sub}#{key_index}`.
 //! - `derive_key` (signed by the session key) calls the MPC's `request_app_private_key` with that path.
+//!   `create_session_and_derive` does both in one transaction (a login with a single chain round trip).
 //! - The registry (`registry.rs`) maps client ids to scopes. Scope owners (NEAR accounts or OIDC identities) manage
 //!   their scope; adding clients, changing owners and enabling shared login are timelocked. Hana (the `owner`)
 //!   registers scopes while `public_registration` is off, and can never change a registered scope's clients or owners.

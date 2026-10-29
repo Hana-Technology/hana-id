@@ -3,18 +3,22 @@
 Cloudflare Worker that relays `hana-signer` calls for registered apps: it pays the gas, checks the app (publishable
 key, origin, plan limits, scope) before anything reaches the chain, and keeps relayer nonces in order with one
 Durable Object per relayer key. Spec: `docs/batch-a-spec.md` (API section) as amended by
-`docs/batch-a2-shared-client.md`; contract: `docs/contract-interface.md`.
+`docs/batch-a2-shared-client.md` and `docs/batch-b-spec.md` (API changes); contract: `docs/contract-interface.md`.
 
 ## Commands
 
 ```sh
-pnpm --filter @hana-id/api gen sandbox-dev [--d1-id <uuid>] [--dev-vars]  # wrangler.jsonc (+ .dev.vars) from envs/<env>.json
+pnpm --filter @hana-id/api gen sandbox-dev [--d1-id <uuid>] [--dev-vars]  # wrangler.jsonc, wrangler.{vault,auth}.jsonc (+ .dev.vars) from envs/<env>.json
 pnpm --filter @hana-id/api test        # vitest in workerd (@cloudflare/vitest-plugin), NEAR RPC mocked; then scripts/ tests in Node
 pnpm --filter @hana-id/api typecheck
 pnpm --filter @hana-id/api dev         # wrangler dev (local D1: `wrangler d1 migrations apply DB --local` first)
 ```
 
-`wrangler.jsonc` is generated: change `envs/<env>.json` or `scripts/gen-wrangler.ts`, not the file. Without `--d1-id`
+`wrangler.jsonc` (and the page Workers' `wrangler.vault.jsonc`, `wrangler.auth.jsonc`, see [Page Workers](#page-workers))
+are generated per env and gitignored (they can hold a real D1 id): run `gen <env>` before `dev`, `deploy` or the
+`admin app:*` commands, change `envs/<env>.json` or `scripts/gen-wrangler.ts`, never the files, and never commit them.
+The tests don't read them: `vitest.config.ts` writes `wrangler.vitest.jsonc` (gitignored) with the same generator from a
+fixed test manifest (`TEST_MANIFEST`), so CI needs no `gen` step and no env's values reach the tests. Without `--d1-id`
 the id already in the file is kept only if that file was generated for the same D1 database (`database_name`), else a
 local-only placeholder is written. `--dev-vars` writes `RELAYER_KEYS` (from `.secrets/<env>/relayer-keys.json`) and
 `OWNER_RELAYER_KEYS` (from `.secrets/<env>/owner-relayer-keys.json`) single-quoted (wrangler's dotenv parser takes them
@@ -23,41 +27,52 @@ literally), plus `KEYS_UPDATER_KEY`; files that don't exist are skipped.
 Deploy (testnet only): `wrangler d1 create <cloudflare.d1Name>` → `gen <env> --d1-id <id>` →
 `wrangler d1 migrations apply DB --remote` → `wrangler secret put RELAYER_KEYS` (JSON array of `ed25519:` secret
 keys, e.g. the content of `.secrets/<env>/relayer-keys.json`) → `wrangler secret put OWNER_RELAYER_KEYS` (same format,
-`.secrets/<env>/owner-relayer-keys.json`) → `wrangler secret put KEYS_UPDATER_KEY` → `wrangler deploy`.
+`.secrets/<env>/owner-relayer-keys.json`) → `wrangler secret put KEYS_UPDATER_KEY` → `wrangler deploy` →
+`pnpm --filter @hana-id/scripts run vault-kek <env> init --yes` (VAULT_KEK, below) → the page Workers (below).
+`docs/operations.md` has the full runbook.
 
 ## Config
 
 | Name | Kind | |
 |---|---|---|
-| `NEAR_RPC`, `SIGNER_ACCOUNT`, `RELAYER_ACCOUNT`, `ENV_NAME` | vars (manifest) | `rpc`, `signer`, `relayer`, `name` |
-| `RELAYER_KEYS` | secret | Session pool: JSON array of function-call keys on `RELAYER_ACCOUNT` (receiver `SIGNER_ACCOUNT`; `create_session`, `derive_key`, `revoke_session`, `prune_sessions`) |
+| `NEAR_RPC`, `SIGNER_ACCOUNT`, `RELAYER_ACCOUNT`, `ENV_NAME`, `MPC_ACCOUNT` | vars (manifest) | `rpc`, `signer`, `relayer`, `name`, `mpc`. `ENV_NAME` `local*`/`sandbox*` is a dev env (see Origins) |
+| `NEAR_RPC_FALLBACK` | optional var (manifest) | `rpcFallback`, written only when set: the vault and export pages' `connect-src` (D65); the API itself reads only `NEAR_RPC` |
+| `DO_LOCATION_HINT` | optional var (manifest) | `cloudflare.durableObjectLocation`: region of the shared Durable Objects (`src/placement.ts`) |
+| `VAULT_ORIGIN`, `AUTH_ORIGIN` | vars (manifest) | `vaultOrigin`, `authOrigin`; `gen` refuses an env without them |
+| `BLS_PRECHECK`, `REJECT_PII_ON_SESSIONS` | vars | `"0"` everywhere until their step in `docs/batch-b-spec.md` ("Order of work") |
+| `RELAYER_KEYS` | secret | Session pool: JSON array of function-call keys on `RELAYER_ACCOUNT` (receiver `SIGNER_ACCOUNT`; `create_session`, `create_session_and_derive`, `derive_key`, `revoke_session`, `prune_sessions`) |
 | `OWNER_RELAYER_KEYS` | secret | Owner pool (small allowance), same format: `propose_change`, `cancel_change`, `remove_client`, `disable_shared_login`, `execute_change`, `register_scope`, `apply_pending_config`. Without it `/v1/owner-actions` answers 503 and logins are unaffected |
 | `GAS_<METHOD>_TGAS` | optional vars | Per-method gas override in Tgas (integer 1..300), e.g. `GAS_DERIVE_KEY_TGAS=80`; invalid values are ignored (logged) |
 | `KEYS_UPDATER_KEY` | secret | function-call key on `SIGNER_ACCOUNT` (`set_issuer_key`, `remove_issuer_key`); cron skips without it |
+| `API_URL` | vars (manifest) | `apiUrl`: the API's own URL, in the vault page's CSP `connect-src` |
+| `VAULT_KEK` | secret | Vault share wrapping key, `<id>:<base64 of 32 bytes>` (`id` a positive integer). Create it with `pnpm --filter @hana-id/scripts run vault-kek <env> init --yes`: it generates key id 1, keeps it in `.secrets/<env>/vault-kek` (0600, never overwritten; the only copy, since Cloudflare can't give a secret back) and sets the secret through wrangler's stdin, printing no key. `vault-kek <env> put --yes` sets it again from the file. Without it the vault endpoints answer `503 vault_key_unavailable` |
+| `VAULT_KEK_PREVIOUS` | secret, rotation only | The previous `VAULT_KEK`. Rotate with `vault-kek <env> rotate --yes`: the current key goes to `VAULT_KEK_PREVIOUS` (and `.secrets/<env>/vault-kek.previous`), a new key with the next id to `VAULT_KEK` (and `vault-kek`); a run that stops part way resumes when re-run. Unlocks and the cron re-wrap old rows; once `SELECT COUNT(*) FROM vault_shares WHERE kek_id = <old id>` is 0, delete the secret and the `.previous` file (`docs/operations.md`, "Key rotation") |
 | `DB` | D1 | `migrations/` |
-| `RELAYER_KEY`, `RATE_LIMITER` | Durable Objects | SQLite-backed classes `RelayerKey`, `RateLimiter` |
+| `RELAYER_KEY`, `RATE_LIMITER`, `LOGIN_RELAY` | Durable Objects | SQLite-backed classes `RelayerKey`, `RateLimiter` (migration `v1`), `LoginRelay` (`v2`) |
 | cron `0 * * * *` | trigger | Google JWKS → `set_issuer_key` / `remove_issuer_key` (a kid is removed only after it has been missing from the JWKS for ≥ 55 min, i.e. two hourly runs in a row; tracked in D1 `issuer_key_missing`) |
+| cron `0 * * * *` | trigger | Also vault maintenance (`src/vault/cron.ts`): deletes `vault_shares` rows past `abs_expires_at` or revoked, re-wraps up to 2000 rows per run from `VAULT_KEK_PREVIOUS` to `VAULT_KEK`, logs rows under an unknown KEK id |
 
 ## Endpoints
 
 All JSON. Success: `{"result": …, "nearTx": "<base58 tx hash>", "requestId": "…"}`. Error:
-`{"error": "<message>", "code": "<code>", "nearTx"?: "…", "requestId": "…"}`. Every response has `x-request-id`.
+`{"error": "<message>", "code": "<code>", "nearTx"?: "…", "requestId": "…"}`. Every response except a CORS preflight
+(`OPTIONS`) has `x-request-id`, the router's own `404`/`405`/`500` included.
 
-### App endpoints: `x-hana-key: pk_test_…` + an allowed `Origin`
+### App endpoints: `x-hana-key: pk_…` + an allowed caller (see Origins)
 
 | Endpoint | Body (camelCase, byte arrays as JSON number arrays) | Contract call → `result` |
 |---|---|---|
-| `GET /v1/app` | — | none → `{scopeId, signer, google: {clientId, mode: "own" \| "shared"}, requestId}` (top level, no `result`) |
-| `POST /v1/sessions` | `{jwt, sessionPublicKey[32], expiresAtMs, salt[16..64], keyIndex (u32), maxUses (1..500)}`; `scopeId` is rejected | `create_session` with the app's `scope_id` (D1) → Session `{path, scope_id, expires_at_ms, max_uses, used}` |
+| `GET /v1/app` | — | none → `{name, scopeId, signer, google: {clientId, mode: "own" \| "shared"}, serverTimeMs, autoApprovePolicy, rawSign, requestId}` (top level, no `result`; `autoApprovePolicy` is the policy in force, validated and normalized, or `null`; `rawSign` is `"off"` or `"approval"` in force now; an open vault re-reads both within 10 s, D62, D68) |
+| `POST /v1/login` | a `/v1/sessions` body plus `{signature[64], pk1, pk2}` (the session key's signature over counter 1 of the CKD payload); nothing else | `create_session_and_derive` (100 Tgas) → `{big_y, big_c}`, plus `session: {scope_id, expires_at_ms, max_uses, used: 1}` (informational) |
+| `POST /v1/sessions` | `{jwt, sessionPublicKey[32], expiresAtMs, salt[16..64], keyIndex (0..2^31 − 1; higher is reserved), maxUses (1..500)}`; `scopeId` is rejected | `create_session` with the app's `scope_id` (D1) → Session `{path, scope_id, expires_at_ms, max_uses, used}` |
 | `POST /v1/derive` | `{sessionPublicKey[32], counter, signature[64], pk1 "bls12381g1:…", pk2 "bls12381g2:…"}` | `derive_key` → `{big_y, big_c}` |
 | `POST /v1/sessions/revoke` | `{sessionPublicKey[32], counter, signature[64]}` | `revoke_session` → `null` |
 
 Checks, in order (rejected before anything is relayed):
 
-1. Key present and known (`401 missing_key` / `unknown_app`), app `active` (`403 app_suspended`).
-2. `Origin` exactly equals one of the app's `app_origins` (`403 origin_not_allowed`). The entry
-   `http://localhost:*` allows any `http://localhost:<port>`, and loopback origins are honoured only for `pk_test_`
-   keys.
+1. Key present and known (`401 missing_key` / `unknown_app`), app `active` (`403 app_suspended`), and not a
+   `pk_test_` app on a scope a `pk_live_` app also uses (`403 scope_conflict`).
+2. The caller may call this endpoint for this app (`403 origin_not_allowed`; see Origins).
 3. Rate limits from the app's plan: per client IP (per app) per minute first, then per app per minute and per UTC day
    (`429 rate_limited` + `retry-after`). The IP check runs first so requests it rejects never use up the app's shared
    quota. "Client IP" is the IPv4 address, or the IPv6 /64 prefix (a host can rotate addresses inside its /64).
@@ -97,18 +112,158 @@ Checks, in order (rejected before anything is relayed):
    then is judged on its outcome.
 
 `GET /v1/app` runs checks 1–2 and a per-IP limit of its own (the plan's `per_ip_minute`, separate window), never the
-app's relay quota. `google` is `own` with the scope's first Google client, else `shared` with the first shared client
+app's relay quota. `google` is `own` with the scope's first Google client (or the app's `google_web_client_id`, set
+with `admin app:settings --google-web-client`; `409 no_google_client` if it is no longer one of the scope's
+clients), else `shared` with the first shared client
 in force when the scope has `allow_shared`, else `409 no_google_client` (`409 scope_not_registered` when the scope is
 not on chain, `502 near_unavailable` when the registry can't be read).
 
 Relay errors: `422 contract_rejected` (contract panic text in `error`), `502 near_rejected` (the node refused the tx
-as invalid: it never executed) / `near_error` / `near_unavailable`, `503 relayer_busy` / `relayer_unavailable`,
-`504 timeout`. Any other broadcast failure (dropped connection, non-JSON 5xx from a proxy) may still execute, so the
+as invalid: it never executed) / `near_error` / `near_unavailable` / `bad_contract_result` (it executed, but the
+result isn't the shape the endpoint returns), `503 relayer_busy` / `relayer_unavailable` / `relayer_unconfigured` (the
+pool's secret is missing or empty: nothing sent), `504 timeout`. Any other broadcast failure (dropped connection, non-JSON 5xx from a proxy) may still execute, so the
 tx hash is polled; transient errors while polling don't end the wait. Usage (`usage.sessions` /
 `usage.derives`, per app per UTC day) counts successful calls only.
 
 CORS: responses echo `Origin` (with `Vary: Origin`) only when it is allowed for the request's app. Preflight carries no
 key, so `OPTIONS` succeeds when any active app allows the origin; the real request is then checked against its own app.
+
+### Origins (`src/origins.ts`)
+
+- **Hana pages.** `Origin` = `VAULT_ORIGIN` or `AUTH_ORIGIN`, each only where it calls: `GET /v1/app` and
+  `/v1/login` both; `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` the vault only. The request acts for
+  `x-hana-parent-origin`, which must be one of the app's origins. CORS echoes the Hana origin (also when the parent is
+  refused, so the page can read why).
+- **Partner pages.** `Origin` exactly equals one of the app's `app_origins`: `GET /v1/app` for both key types in every
+  env; `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` only with `pk_test_` keys in dev envs (`apps/smoke`);
+  nothing else.
+- **Loopback** origins (`localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]`), and `http://localhost:<port>` through the
+  entry `http://localhost:*`, count only for `pk_test_` keys in dev envs (`ENV_NAME` starting with `local` or
+  `sandbox`), for partner origins and parent origins alike.
+- Preflight carries no key: it allows the two Hana origins, and any origin an active app allows (loopback only through
+  a `pk_test_` app in a dev env). Allowed headers: `content-type`, `x-hana-key`, `x-hana-parent-origin`,
+  `x-hana-relay-key`.
+- `admin app:create` refuses a scope already used by an app with the other key type.
+
+### `POST /v1/login` (`src/login.ts`)
+
+One transaction per login. Checks, in order: the gate (checks 1–3, `relay` quota); the body (`400 bad_request`); the
+token as for `/v1/sessions`, plus the claim allow-list (`src/claims.ts`: only `iss azp aud sub iat exp nonce nbf jti
+auth_time`; anything else is `400 token_has_pii` with `data: {claim}`) and the nonce; scope and `session_key_in_use`
+side by side (`403 …`, `409 session_exists`); the signature over counter 1 (`401 invalid_signature`); pk1/pk2 each one
+compressed, non-identity point (`400 invalid_app_key`); with `BLS_PRECHECK = "1"` (off everywhere, D64) the pairing
+`e(pk1, −g2) · e(g1, pk2) = 1` (`400 invalid_app_key`; the same var gates it on `/v1/derive`). Failures map by the
+failing receipt's executor: the signer → `422 contract_rejected` (with `reason: "session_key_in_use"` for that panic;
+the session was not created), `MPC_ACCOUNT` → `422 ckd_failed` with `session: {used: 1}` (the session is committed),
+else `502 near_error`; `504 timeout` and relayer errors keep their codes and `nearTx`. Usage: `sessions` and `derives`
+on success, `sessions` only on `ckd_failed`. `/v1/sessions` applies the claim allow-list too once
+`REJECT_PII_ON_SESSIONS = "1"`. From `AUTH_ORIGIN` (the export window, a key export) the call is also limited to 3 per
+hour per `(app, sha256(path))`, counted right after the nonce check and before anything is relayed (`429 rate_limited`
++ `retry-after`, `503 rate_limiter_unavailable`; D59).
+
+### `/v1/login-relay/<relayId>` (`src/login-relay.ts`, Durable Object `LoginRelay`)
+
+How the login callback page hands the (end-to-end encrypted) Google token to the vault. No `x-hana-key`; per IP, 10
+writes and 120 reads per minute. `relayId` is 43 base64url characters (`400 bad_relay_id`).
+
+- `POST` (`AUTH_ORIGIN` only) `{iv, ct}` base64url (12-byte iv, ≤ 8 KiB body, else `413`): `204`, or
+  `409 relay_used` if the slot was ever written.
+- `GET ?wait=1..25` (`VAULT_ORIGIN`, `AUTH_ORIGIN`) with `x-hana-relay-key` (b64url of the 32-byte read key; the
+  object checks `b64url(sha256(key)) === relayId` first, else `403 relay_forbidden` without consuming): `200 {iv, ct,
+  serverTimeMs}` and the slot becomes a tombstone; `204` while still empty after `wait` seconds (the long poll returns
+  on the write); `410 relay_gone` once read or expired.
+- 120 s after the write the value is deleted and a tombstone kept for 120 s more, then nothing. Only ciphertext the API
+  can't decrypt is stored; bodies, keys and relay ids are never logged.
+
+### Vault page: `GET {VAULT_ORIGIN}/vault?pk=<publishable key>`
+
+Served only on the vault origin (the request URL's origin must equal `VAULT_ORIGIN`; 404 elsewhere). The two Hana
+origins get nothing else from this Worker: any other path (or method) whose URL origin is `VAULT_ORIGIN` or
+`AUTH_ORIGIN`, `/v1/*` included, is a `404` with `frame-ancestors 'none'`, `nosniff` and no CORS, so the vault origin is
+never the API. Rendered per
+request from D1 only (no chain RPC): a non-executable `<script type="application/json" id="hana-config">` with
+`{v:1, appId, appName, scopeId, origins, settings:{persistence, sessionTtlMs, idleTtlMs, rawSign, autoApprovePolicy},
+publishableKey, serverTimeMs}` (JSON with `<`, `>`, `&`, U+2028, U+2029 escaped; no `signer`), then
+`<script type="module" src="/vault.js">` (the `@hana-id/web` bundle, a static asset). `rawSign` and
+`autoApprovePolicy` use their pending values only from `raw_sign_effective_at` / `auto_approve_effective_at`.
+Headers: `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none';
+form-action 'none'; frame-ancestors <app origins>; connect-src <API_URL> <NEAR_RPC> [<NEAR_RPC_FALLBACK>] https://www.googleapis.com`,
+`Cross-Origin-Resource-Policy: cross-origin`, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`,
+`X-Content-Type-Options: nosniff`. Origins: loopback ones (and `http://localhost:*`) only for `pk_test_` keys in
+`local*`/`sandbox*` envs; anything that isn't a bare lowercase http(s) origin is dropped; more than 20 → 403. 403 (no
+config script, `frame-ancestors 'none'`) for an unknown, suspended or scope-conflicting app; 503 when D1 fails or
+`API_URL`, `NEAR_RPC` or a set `NEAR_RPC_FALLBACK` is not a URL.
+
+### Page Workers (`src/pages/`, `wrangler.vault.jsonc`, `wrangler.auth.jsonc`)
+
+In every env each Hana origin is a thin Worker of its own, with only that origin's built pages as its static assets
+(on `workers.dev` in dev envs, a Custom Domain elsewhere; D66). This differs from `docs/batch-b-spec.md`, which has the
+API Worker serve both origins through its own routes and an assets binding outside sandbox-dev: one Worker per origin
+means neither origin can serve the other's files, and the API Worker never holds page assets. `gen` writes both
+configs from the manifest (`scripts/pages-wrangler.ts`):
+
+| | Vault Worker | Auth Worker |
+|---|---|---|
+| Serves | `GET`/`HEAD /vault` → this Worker through the `API` service binding, request unchanged (so it is rendered above, with the vault origin in its URL); any other path: a static asset (`/vault.js`) | `/login`, `/login/callback`, `/approve`, `/export` from `<path>.html`, with each page's CSP (`connect-src <API_URL>` on login and callback, none on approve, `<API_URL> <NEAR_RPC> [<NEAR_RPC_FALLBACK>] https://www.googleapis.com` on export), `frame-ancestors 'none'`, `no-store`, `no-referrer`, `nosniff` and no COOP; any other path: a static asset |
+| Assets | `packages/web/dist/pages/<env>/vault` | `packages/web/dist/pages/<env>/auth` |
+| Vars | `VAULT_ORIGIN` | `AUTH_ORIGIN`, `API_URL`, `NEAR_RPC`, `NEAR_RPC_FALLBACK` (only when the manifest sets `rpcFallback`) |
+
+Both answer only on their own origin (404 on any other host), only `GET`/`HEAD` (405), never serve an HTML file under
+its own name (404; pages exist only on their routes, with their headers), and add
+`content-security-policy: default-src 'none'; frame-ancestors 'none'; sandbox` (an SVG or XML asset opened as a
+document runs, loads and frames nothing; browsers don't apply it to the scripts and styles the pages load), `nosniff`,
+`no-referrer` and a same-origin CORP to every asset. No other path reaches the API, so `{vaultOrigin}/v1/*` is not the API. A missing page file
+or an unreachable API gives 503 with no config script. Neither sets a cookie: a `Set-Cookie` from a binding is
+dropped (`withoutCookies`, D70). Placement follows the origin: `<worker>.<subdomain>.workers.dev`
+→ a `workers.dev` Worker named `<worker>` (dev envs only; same subdomain as a `workers.dev` `apiUrl`, since the service
+binding needs one account), any other hostname → a Custom Domain on `<API worker>-vault`/`-auth`, loopback (`local*`
+envs) → `wrangler dev` on that host and port. Preview URLs are off.
+
+Deploy (testnet only), after this Worker, since the vault Worker binds to it:
+
+```sh
+pnpm --filter @hana-id/web build                 # writes packages/web/dist/pages/<env>/{vault,auth}
+pnpm --filter @hana-id/api gen <env> --d1-id <id> # also writes wrangler.vault.jsonc and wrangler.auth.jsonc
+pnpm --filter @hana-id/api run deploy:pages       # wrangler deploy -c wrangler.vault.jsonc, then -c wrangler.auth.jsonc
+```
+
+Locally, only for a `local*` env (loopback `vaultOrigin`/`authOrigin`; none is in `envs/` today, `apps/e2e` runs its
+own stack): run each Worker in its own process, `pnpm --dir apps/api exec wrangler dev` (the API, on `apiUrl`'s
+port), then `… wrangler dev -c wrangler.vault.jsonc` and `… wrangler dev -c wrangler.auth.jsonc` in other terminals;
+they find each other through wrangler's dev registry. One `wrangler dev -c a -c b` doesn't work: only its first config
+is reachable over HTTP, so the vault page couldn't call `{apiUrl}/v1/*`. With a sandbox env's configs the request URL
+is the local host, not the configured origin, so every page answers 404.
+
+### Vault endpoints: `Origin: VAULT_ORIGIN` + `x-hana-key` + `x-hana-parent-origin`
+
+Spec: `docs/batch-b-spec.md` ("Share creation", "Unlock", "Logout and lost device", "Vault endpoints"). Signatures are
+Ed25519 by the session key over `utf8("hana-id-vault-v1:") ‖ borsh(signer) ‖ borsh(appId) ‖ shareId(16) ‖
+u64le(counter) ‖ sha256(payload)` with the gate app's D1 id (`src/vault/message.ts`).
+
+| Endpoint | Body | 2xx |
+|---|---|---|
+| `POST /v1/vault/shares` | `{sessionPublicKey[32], signature[64]}` (share id 0×16, counter 0, payload `"share" ‖ borsh(parentOrigin)`) | 201 `{shareId[16], ks[32], absExpiresAtMs, idleUntilMs}` |
+| `POST /v1/vault/unlock` | `{shareId[16], counter, signature[64]}` (payload `"unlock"`) | `{ks[32], counter, idleUntilMs, absExpiresAtMs}` |
+| `POST /v1/vault/touch` | same (payload `"touch"`) | `{counter, idleUntilMs}` |
+| `POST /v1/vault/revoke` | same (payload `"revoke"`) | `{revoked: true}` |
+| `POST /v1/vault/revoke-all` | same (payload `"revoke-all"`); the share must be < 5 min old (`403 share_not_fresh`) | `{revoked: <other live shares of the same (app, path) revoked>}` |
+
+Gate: key and app (`401 missing_key`/`unknown_app`, `403 app_suspended`), `Origin` is `VAULT_ORIGIN` and the parent is
+allowed for the app (`403 origin_not_allowed`; loopback only for `pk_test_` in `local*`/`sandbox*` envs), no live app on
+a test app's scope (`403 scope_conflict`), then the vault's own limits, never the relay counters: 60 per IP per app
+per minute, 10 × the plan's `per_minute` per app, and 10 per share per minute. Shares: `409 persistence_off`, `401
+invalid_signature`, then `get_session` straight from the node (re-read every 300 ms for up to 2 s while missing or not
+used up): `404 unknown_session`, `403 scope_mismatch`, `409 session_not_spent`, `502 near_unavailable`; then
+`409 share_exists`. Share actions: `404 unknown_share` (missing, or another app's), `410 share_revoked` (also when the
+share's origin was removed from the app, which revokes it). Unlock and touch then follow the app's settings as they
+are now: `persistence = 'none'` revokes the share (`410 share_revoked`), and a share never outlives `created_at` + the
+current `session_ttl_ms` (a lowered TTL shortens live shares and lowers their stored expiry, `410 share_expired`; a
+raised one never lengthens them). Then `401 invalid_signature`, then one atomic counter update that re-checks those
+settings in the same statement: `409 bad_counter {expected}`, `410 share_expired`. `revoke-all` revokes the other
+shares and moves its counter in one D1 batch (one transaction), the revoke conditional on the counter move, so a
+failure changes neither and a replay revokes nothing. `503 vault_key_unavailable` when `VAULT_KEK` (or, for an older row,
+`VAULT_KEK_PREVIOUS`) is missing; unlock unwraps K_s before the counter moves. Usage counts `usage.unlocks`. D1 holds
+only `share_enc = iv ‖ AES-GCM(VAULT_KEK, iv, K_s, aad = share_id ‖ app_id ‖ session_pk)` (`src/vault/kek.ts`).
 
 ### `POST /v1/owner-actions` (no app auth; 10 per IP per minute, 20 per minute and 200 per day globally)
 
@@ -138,7 +293,8 @@ including the nonces):
   has not been relayed before (a token is bound to one action by its nonce; `409 token_used`). The token is reserved
   atomically in a Durable Object before relaying, so concurrent copies can't all pass; the reservation is released
   only when the request is turned away by the global cap or the transaction certainly never executed
-  (`near_rejected`, `relayer_busy`, a dispatch failure), and kept on an unknown outcome.
+  (`method_not_allowed`, `relayer_unconfigured`, `near_unavailable`, `near_rejected`, `relayer_busy`), and kept on
+  an unknown outcome (`relayer_unavailable`, `near_error`, `timeout`, a contract rejection).
 - `get_scope(scope_id)` (cached 10 s, dropped after each relayed action): exists (`404 unknown_scope`); the token's
   `(provider, sub)` is an `Oidc` owner (`403 not_owner`).
 - `cancel_change` / `execute_change`: the change is pending (`404 unknown_change`); `execute_change`: unlocked
@@ -161,22 +317,30 @@ Durable Object: the session pool (`RELAYER_KEYS`, objects `relayer-key-<index>`)
 (`OWNER_RELAYER_KEYS`, objects `owner-relayer-key-<index>`). Abuse of `/v1/owner-actions` can only drain the owner
 pool, never stop logins. `relayer-pool.ts` picks a key of the pool round-robin and calls its `RelayerKey` Durable
 Object; an object serves one pool and key only.
-Inside the object a promise-chain mutex covers only *next nonce → sign → dispatch `send_tx`*; the outcome
-(`send_tx` / `tx` with `wait_until: EXECUTED`, polled up to 60 s like the legacy relayer) is awaited outside it, so many
-transactions per key are in flight. The nonce is kept in memory and in DO storage; on cold start it is
-`max(stored, chain)` (transactions still in the pool aren't in the chain's nonce yet). On `InvalidNonce` the object
-re-reads the access key (`max(local, chain, ak_nonce from the error)`) and retries once; an expired block hash is
-refreshed and retried once. The object only relays its pool's methods, always to `SIGNER_ACCOUNT`, no deposit, with
-per-method gas from `src/gas.ts` (never the caller's): `create_session` 50 Tgas, `derive_key` 60, `revoke_session` 20,
-`prune_sessions` 50, owner-pool methods 50 except `register_scope`, which verifies one RS256 client proof per client:
-30 + 25 per proof, capped at 300 (280 for the contract's 10). **To measure on testnet**; override with
-`GAS_<METHOD>_TGAS`.
+Inside the object a promise-chain mutex covers only *next nonce → sign → reserve → dispatch `send_tx`*; the outcome
+(`send_tx` / `tx` with `wait_until: EXECUTED_OPTIMISTIC`, `tx` polled every 400 ms for up to 60 s) is awaited outside
+it, so many transactions per key are in flight. Nonces are reserved in blocks of 100 (`NONCE_RESERVATION`): storage
+holds a reservation R ("no tx of this key was ever sent above R"), and a nonce above R first writes R + 100 − 1 and
+waits for the write to be confirmed, so one relay in 100 waits for storage. A cold start (objects are evicted after
+~10 s idle) trusts the stored reservation for this key's public key with no chain read (skipping up to 99 nonces) and
+reuses the stored block hash while it is under 5 min old; only a key with no stored reservation (new, or a replaced
+secret at that index) reads the access-key nonce and a final block from chain. On `InvalidNonce` the object re-reads
+the access key (`max(local, chain, ak_nonce from the error)`) and retries once; an expired block hash is refreshed and
+retried once; a tx superseded twice 2 s apart while unknown is treated as dropped and resent once with a fresh nonce. The object only relays its pool's methods, always to `SIGNER_ACCOUNT`, no deposit, with
+per-method gas from `src/gas.ts` (never the caller's): `create_session` 50 Tgas, `create_session_and_derive` 100,
+`derive_key` 60, `revoke_session` 20, `prune_sessions` 50, owner-pool methods 50 except `register_scope`, which
+verifies one RS256 client proof per client: 30 + 25 per proof, capped at 300 (280 for the contract's 10). **To
+measure on testnet**; override with `GAS_<METHOD>_TGAS`.
 
 ## Logging
 
-One JSON line per request (`requestId`, `appId`, `endpoint`, `outcome`, `status`, `code`, `latencyMs`, `nearTx`) plus
-relay/cron events. The logger only accepts those typed fields: never JWTs, signatures, bodies, keys, CKD responses or
-contract panic text.
+One JSON line per request (`requestId`, `appId`, `endpoint`, `outcome`, `status`, `code`, `latencyMs`, `nearTx`, plus
+`phases` (ms per stage: `app`, `limits`, `checks`, `session`, `relay` and its `relayDispatch` / `relayQueue` /
+`relayChainRead` / `relaySign` / `relayPersist` / `relayOutcome` split), `colo` (the data center) and, for relays,
+`relayInstance` (`{cold, coldChainRead, blockRefresh, served, ageMs}` of the relayer key object)) plus relay, vault and
+cron events; field meanings in `docs/api.md` "Logs". The logger only accepts those typed fields: never JWTs,
+signatures, bodies, keys, CKD responses or contract panic text. A login relay request is always logged as
+`/v1/login-relay`, without its relayId (it is also the OAuth `state`), the top-level error line included.
 
 ## Notes
 

@@ -1,6 +1,8 @@
 packages:
   - apps/*
   - packages/*
+  # @hana-id/react's suite again on React 18 (its peer range is 18 or 19).
+  - packages/react/react18
   - scripts
 
 # Block packages published less than 7 days ago (in minutes): supply-chain protection, as in other Hana repos.
@@ -11,3 +13,11 @@ allowBuilds:
   workerd: true
   sharp: false
   secp256k1: false
+  # apps/e2e: Stellar Wallets Kit's wallet SDKs, used only in browser bundles; none of their install scripts is needed.
+  '@reown/appkit': false
+  blake-hash: false
+  bufferutil: false
+  protobufjs: false
+  tiny-secp256k1: false
+  usb: false
+  utf-8-validate: false

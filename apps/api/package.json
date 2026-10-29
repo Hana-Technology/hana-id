@@ -7,14 +7,17 @@
     "gen": "tsx scripts/gen-wrangler.ts",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "deploy:pages": "wrangler deploy -c wrangler.vault.jsonc && wrangler deploy -c wrangler.auth.jsonc",
     "cf-typegen": "wrangler types --env-interface Env src/worker-configuration.d.ts",
     "test": "vitest run && vitest run -c vitest.scripts.config.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p scripts"
   },
   "dependencies": {
+    "@hana-id/core": "workspace:*",
     "@near-js/crypto": "2.5.1",
     "@near-js/transactions": "2.5.1",
-    "@near-js/utils": "2.5.1"
+    "@near-js/utils": "2.5.1",
+    "@noble/curves": "1.9.7"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.4",

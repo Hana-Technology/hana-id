@@ -4,7 +4,10 @@
 export const DEFAULT_ENV = 'sandbox-dev';
 
 /** The manifest fields the page reads (a structural slice of @hana-id/env's Manifest, which needs Node to load). */
-export type ManifestFields = Pick<PageEnv, 'name' | 'network' | 'signer' | 'relayer' | 'mpc' | 'ckdDomainId' | 'ckdNetworkKey' | 'rpc' | 'apiUrl'>;
+export type ManifestFields = Pick<PageEnv, 'name' | 'network' | 'signer' | 'relayer' | 'mpc' | 'ckdDomainId' | 'ckdNetworkKey' | 'rpc' | 'apiUrl'> & {
+  vaultOrigin?: string | undefined;
+  authOrigin?: string | undefined;
+};
 
 export interface PageEnv {
   name: string;
@@ -18,9 +21,16 @@ export interface PageEnv {
   /** Pinned MPC CKD public key (`bls12381g2:…`). */
   ckdNetworkKey: string;
   rpc: string;
+  /** The API this page calls: VITE_HANA_API_URL when set, else the manifest's. */
   apiUrl: string;
   /** True when VITE_HANA_API_URL overrode the manifest's apiUrl (e.g. a local `wrangler dev`). */
   apiUrlOverridden: boolean;
+  /** The manifest's apiUrl: the one the vault and login pages were built with, whatever this page calls. */
+  manifestApiUrl: string;
+  /** The vault page's origin (manifest `vaultOrigin`), or null when the env has no Hana pages. */
+  vaultOrigin: string | null;
+  /** The login, approval and export pages' origin (manifest `authOrigin`), or null. */
+  authOrigin: string | null;
 }
 
 /** Only the fields the page needs; `apiUrlOverride` (VITE_HANA_API_URL) replaces `apiUrl` when set. */
@@ -43,14 +53,10 @@ export function pageEnvFrom(m: ManifestFields, apiUrlOverride?: string): PageEnv
     rpc: m.rpc,
     apiUrl: override || m.apiUrl,
     apiUrlOverridden: Boolean(override),
+    manifestApiUrl: m.apiUrl,
+    vaultOrigin: m.vaultOrigin ?? null,
+    authOrigin: m.authOrigin ?? null,
   };
 }
 
-/** Why the pinned CKD key can't be used, or null. `isValidKey` checks the point (ckd.ts isValidNetworkKey). */
-export function ckdKeyProblem(env: Pick<PageEnv, 'name' | 'ckdNetworkKey'>, isValidKey: (key: string) => boolean): string | null {
-  if (env.ckdNetworkKey.includes('UNSET')) {
-    return `envs/${env.name}.json ckdNetworkKey is still the UNSET placeholder. Pin it with \`pnpm --filter @hana-id/scripts fetch-ckd-key ${env.name}\` and restart the dev server.`;
-  }
-  if (!isValidKey(env.ckdNetworkKey)) return `envs/${env.name}.json ckdNetworkKey is not a valid bls12381g2 point.`;
-  return null;
-}
+// The pinned-key check (`ckdKeyProblem`) moved to @hana-id/core (ckd.ts).

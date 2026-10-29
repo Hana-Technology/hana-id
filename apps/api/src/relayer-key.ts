@@ -78,9 +78,10 @@ export interface RelayInstance {
   ageMs: number;
 }
 
+/** `executor`: on `contract_rejected`, the account whose receipt failed (null when the RPC did not say). */
 export type RelayResult = (
   | { ok: true; result: unknown; nearTx: string }
-  | { ok: false; status: number; code: string; error: string; nearTx?: string }
+  | { ok: false; status: number; code: string; error: string; nearTx?: string; executor?: string | null }
 ) & { timing?: RelayTiming; instance?: RelayInstance };
 
 interface Dispatched {
@@ -191,7 +192,7 @@ export class RelayerKey extends DurableObject<Env> {
           }
           return { ok: false, status: 503, code: 'relayer_busy', error: 'The transaction was dropped, try again', nearTx: sent.hash };
         }
-        if (outcome.kind === 'failure') return { ok: false, status: 422, code: 'contract_rejected', error: outcome.error, nearTx: sent.hash };
+        if (outcome.kind === 'failure') return { ok: false, status: 422, code: 'contract_rejected', error: outcome.error, nearTx: sent.hash, executor: outcome.executor };
         if (outcome.kind === 'timeout') return { ok: false, status: 504, code: 'timeout', error: outcome.error, nearTx: sent.hash };
         return { ok: false, status: 502, code: 'near_error', error: outcome.error, nearTx: sent.hash };
       }

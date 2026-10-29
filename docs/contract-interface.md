@@ -1,9 +1,11 @@
-# hana-signer contract interface (batch A + A.2)
+# hana-signer contract interface (batch A, A.2 and B)
 
 The exact on-chain interface of `contracts/hana-signer`. The API, scripts, console and SDK must match this file.
 If the code and this file disagree, the code is wrong: raise it. Batch A.2 (`docs/batch-a2-shared-client.md`) added
 shared clients, `allow_shared`, `disable_shared_login`, `apply_pending_config`, the `scope_id` argument of
-`create_session`, and binds every nonce to the contract account. **Every byte layout changed in A.2.**
+`create_session`, and binds every nonce to the contract account. **Every byte layout changed in A.2.** Batch B
+(`docs/batch-b-spec.md`) added `create_session_and_derive` and reserved `key_index ≥ 2^31`; no layout, path or
+state changed (see [Changed in batch B](#changed-in-batch-b)).
 
 Conventions:
 
@@ -17,8 +19,11 @@ Conventions:
 - Panic messages are listed so callers can map them; a panic aborts the whole call (no state change).
 - Methods not marked payable reject any attached deposit (`Method ... doesn't accept deposit`).
 - Gas: `derive_key` forwards a fixed 20 Tgas to the MPC and needs ≥ 50 Tgas attached. The API's per-method defaults
-  (batch A.2, **to measure on testnet**): `create_session` 50 Tgas, `derive_key` 60, `revoke_session` 20,
-  `prune_sessions` 50, owner-pool methods 50. 300 Tgas always works. View methods cost nothing.
+  (`apps/api/src/gas.ts`, overridable per env with `GAS_<METHOD>_TGAS`): `create_session` 50 Tgas,
+  `create_session_and_derive` 100, `derive_key` 60, `revoke_session` 20, `prune_sessions` 50, owner-pool methods 50
+  except `register_scope` (30 + 25 per client proof, ≤ 280). Measured on testnet (`docs/context.md`): `create_session`
+  and `derive_key` each burn ~20 Tgas over all receipts; `create_session_and_derive` is **not yet measured**. 300 Tgas
+  always works. View methods cost nothing.
 
 ## Types (JSON)
 
@@ -77,6 +82,9 @@ Identifiers:
 - **aud** (client id): 1..=256 bytes. **sub**: 1..=255 bytes, must not contain `#`.
 - **path** (MPC derivation path): `{scope_id}#{provider}#{sub}#{key_index}`, key_index in decimal without leading
   zeros. Example `s1#google#110248495921238986420#0`. Changing anything in this format changes every address.
+- **key_index**: `u32`, `0 ..= 2^31 − 1` (`0x7fff_ffff`). Values `≥ 2^31` are reserved (for a later rotation or
+  versioning scheme): `create_session` and `create_session_and_derive` refuse them, and so do the API and the SDK.
+  The MVP uses 0 only.
 - **signer account id**: `env::current_account_id()`, the account the contract is deployed on (e.g.
   `hana-signer-dev1.testnet`). Every nonce commits to it, so a token used on one deployment can't be replayed on
   another.
@@ -85,7 +93,7 @@ Limits: 1..=5 owners per scope, 0..=10 clients per scope (at least one client **
 clients (effective + pending), ≤ 10 pending changes per scope (≤ 2 queued by a sponsor on a scope without clients),
 ≤ 10 RSA keys per issuer,
 ≤ 4 iss values per issuer, ≤ 10 console audiences, ≤ 10 sponsors, JWT ≤ 7168 bytes, kid ≤ 128 bytes,
-session ≤ 24 h, `max_uses` 1..=500, `change_delay_ms` ≤ 7 days.
+session ≤ 24 h, `max_uses` 1..=500, `key_index` < 2^31, `change_delay_ms` ≤ 7 days.
 
 ## Token verification (all methods that take a JWT)
 
@@ -105,6 +113,12 @@ The verified token yields `(provider, aud, sub, nonce)`; `(provider, aud)` is th
 then checks `nonce` against the commitment below (`... nonce ...` panics). Tokens are public once used on-chain; every use is bound by its nonce to
 one purpose, so a published token can't be reused for anything else.
 
+**No claim allow-list on chain.** Claims other than the ones above are ignored, whatever they are: the contract
+accepts a token carrying `email`, `name`, `hd` or any other claim, on any method. This is deliberate: console
+owner-action tokens (batch C) may legitimately carry `email`. Keeping personal data off the chain is an API and vault
+rule (batch B's claim allow-list, `token_has_pii`), and it binds only tokens the API relays (`/v1/login`, and
+`/v1/sessions` once `REJECT_PII_ON_SESSIONS` is on); a direct caller can still put any valid token on chain.
+
 ## Byte layouts (nonces, commitments, signed messages)
 
 Every layout below is implemented twice: in Rust (`registry.rs`, `sessions.rs`) and independently in JS
@@ -117,7 +131,7 @@ nonces and signed messages against them byte for byte. An SDK can also compare i
 All nonces are `b64url(sha256(preimage))` (43 characters). `signer` below is borsh(signer account id) =
 borsh(`env::current_account_id()` as a String).
 
-### Session nonce (`create_session`)
+### Session nonce (`create_session`, `create_session_and_derive`)
 
 ```
 preimage = "hana-id/session/v1"
@@ -131,7 +145,9 @@ preimage = "hana-id/session/v1"
 ```
 
 `scope_id` is the `scope_id` argument of `create_session` (the app's scope); `max_uses` is committed, so a
-front-runner can't open the session with another cap.
+front-runner can't open the session with another cap. Since batch B the Hana vault computes this nonce from its
+pinned signer account and the app's scope (`@hana-id/core` `sessionNonce`), and the login page recomputes it before
+sending it to Google.
 
 ### Register proof (`register_scope`)
 
@@ -185,7 +201,7 @@ does every `execute_change` (anyone may call it). So a used owner token can neve
 call that failed only because of the scope's state can't be replayed once that state changes, and a token (or client
 proof) prepared before another action or an execute must be re-obtained.
 
-### Session message (`derive_key`, `revoke_session`)
+### Session message (`derive_key`, `create_session_and_derive`, `revoke_session`)
 
 The session key (Ed25519) signs:
 
@@ -197,8 +213,23 @@ session_message(counter, payload) = "hana-id-session-v1:" ‖ counter u64 LE ‖
 
 - `derive_key`: `payload` = the CKD payload `"hana-id-ckd-v1:" ‖ pk1 ‖ ":" ‖ pk2` (UTF-8 of the two strings exactly as
   passed; unchanged in A.2).
+- `create_session_and_derive`: the same message as `derive_key`, always with `counter = 1`.
 - `revoke_session`: `payload = "revoke"`.
 - `counter` must equal `used + 1`. The view `session_message(counter, payload)` returns these bytes.
+
+### Vault message (off-chain only; the contract never accepts it)
+
+The session key also signs requests to the API's vault endpoints (batch B, `docs/batch-b-spec.md` "Vault message
+layout"). The contract has no method that takes one; it is listed here so that its domain is never reused:
+
+```
+vault_message(share_id, counter, payload) = "hana-id-vault-v1:" ‖ borsh(signer account id) ‖ borsh(app_id)
+                                          ‖ share_id (16 bytes) ‖ counter u64 LE ‖ sha256(payload)
+```
+
+`app_id` is the API's app id (D1 `apps.id`), not the CKD `app_id`. The prefix differs from `"hana-id-session-v1:"`,
+so a vault signature never verifies as a `derive_key`, `create_session_and_derive` or `revoke_session` signature
+(`Invalid session signature`; unit and sandbox tests check this with the worked example below).
 
 ### Borsh encodings used above
 
@@ -316,6 +347,17 @@ counter u64 LE (2)            0200000000000000
 sha256(payload)               777ac4ea0a6e6f4d1301fd1cf8aa9183f44f435be43c75a6615ba307c266e5a7
 ```
 
+**Vault message (off-chain only, never a session message): app "app_test", shareId 01…10, counter 1, payload "unlock"**
+
+```
+domain "hana-id-vault-v1:"           68616e612d69642d7661756c742d76313a
+borsh(signer) "hana-signer.testnet"  1300000068616e612d7369676e65722e746573746e6574
+borsh(appId) "app_test"              080000006170705f74657374
+shareId (16 bytes)                   0102030405060708090a0b0c0d0e0f10
+counter u64 LE (1)                   0100000000000000
+sha256(payload)                      787600ebe6d6c75b6bc0b2db0bfd6aeec78897b67d3192e2208bc8b714237841
+```
+
 ## Methods
 
 Caller roles: **owner** = `config.owner` (Hana admin), **self** = the contract account itself (a function-call key on
@@ -351,9 +393,11 @@ Views: `get_config()` → Config.
 
 #### Shared clients
 
-A **shared client** is a `(provider, aud)` Hana runs for partners without their own OAuth client (Hana's login page,
-on a Hana origin). Its tokens are not tied to one scope: `create_session` takes the scope from its `scope_id`
-argument, which the session nonce commits to, and accepts it only for scopes with `allow_shared`.
+A **shared client** is a `(provider, aud)` Hana runs for partners without their own OAuth client (since batch B its
+only redirect URI is Hana's `{authOrigin}/login/callback`). Its tokens are not tied to one scope: `create_session`
+(and `create_session_and_derive`) takes the scope from its `scope_id` argument, which the session nonce commits to,
+and accepts it only for scopes with `allow_shared`. Hana's vault computes that nonce only for a parent page the app
+allows (see Security notes).
 
 `set_shared_clients(clients)`, owner only, sets the target list (≤ 5, `Too many shared clients`):
 
@@ -548,6 +592,7 @@ Apply to `propose_change`, `cancel_change`, `remove_client` and `disable_shared_
 
 Returns Session. Checks, in order: `Session key must be a 32-byte Ed25519 public key`, `Salt must be 16-64 bytes`,
 `Session expiry must be within 24 hours` (now < expires_at_ms ≤ now + 24 h), `max_uses must be 1-500`,
+`key_index must be below 2^31` (batch B),
 `Session key already in use` (an unexpired session, including a revoked one, exists for this key), token
 verification, scope resolution for the token's client `(provider, aud)`:
 
@@ -577,6 +622,36 @@ one (Google's `sub` is the same across client ids). Then prunes up to 3 expired 
 ```
 
 Returns the MPC's result unchanged: `{"big_y":"bls12381g1:...","big_c":"bls12381g1:..."}`.
+
+#### `create_session_and_derive(jwt, scope_id, session_public_key, expires_at_ms, salt, key_index, max_uses, signature, pk1, pk2)` — anyone
+
+```json
+{"jwt":"eyJ...","scope_id":"s1","session_public_key":[...32],"expires_at_ms":1800003600000,
+ "salt":[9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9],"key_index":0,"max_uses":1,
+ "signature":[...64],"pk1":"bls12381g1:...","pk2":"bls12381g2:..."}
+```
+
+Batch B's one-transaction login (`POST /v1/login`): exactly `create_session` with the first seven arguments, then
+`derive_key(session_public_key, 1, signature, pk1, pk2)`, in one receipt:
+
+```rust
+self.create_session(jwt, scope_id, session_public_key.clone(), expires_at_ms, salt, key_index, max_uses);
+self.derive_key(session_public_key, 1, signature, pk1, pk2)
+```
+
+- No counter argument (always 1) and no callback. `signature` is over `session_message(1, CKD payload)`.
+- Panics: every `create_session` panic, in its order, then every `derive_key` panic. Any of them aborts the whole
+  call: no session, no queue entry, no MPC request. So a bad signature, a 63-byte signature, a signature over
+  another counter or other BLS keys, or `BLS key too long` leaves the token reusable for a corrected call.
+- The transaction result is the MPC's `{big_y, big_c}`, as for `derive_key`. On success the session has `used = 1`.
+- If the MPC receipt fails (a later receipt, executor = the MPC account), the session stays committed with
+  `used = 1`. Only a session with `max_uses ≥ 2` can then retry, with `derive_key` and counter 2.
+- Replaying the same arguments fails with `Session key already in use`. A front-run `create_session` with the same
+  token makes the combined call fail the same way; the session key holder then derives with counter `used + 1`.
+  A front-run replay of the whole combined call opens the session and spends counter 1 (its MPC answer is encrypted
+  to the caller's `pk1`/`pk2`, useless to anyone else); with `max_uses = 1` that use is gone.
+- Not payable. Prunes up to 3 expired sessions, as `create_session` does.
+- `create_session` and `derive_key` are unchanged and stay callable on their own (the split flow).
 
 #### `revoke_session(session_public_key, counter, signature)` — anyone
 
@@ -621,6 +696,16 @@ one-element array, as in NEP-171).
 `by: Owner` is the authenticated owner (`{"Near":{...}}` or `{"Oidc":{...}}`). Enabling shared login shows up as
 `change_proposed` / `change_executed` with a `SetAllowShared` change.
 
+## Changed in batch B
+
+New method `create_session_and_derive` (a literal composition of `create_session` and `derive_key` with counter 1).
+`create_session` (and so the combined call) refuses `key_index ≥ 2^31` (`key_index must be below 2^31`); nobody uses
+those indices, so no address changes. The off-chain vault message prefix `hana-id-vault-v1:` is recorded above. No
+byte layout, path format or state field changed, so this is a code upgrade (`deploy-contract --upgrade`). The relayer's
+session-pool keys gain `create_session_and_derive` (allowlist state 1 in `docs/batch-b-spec.md` "Relayer allowlists"):
+access-key permissions can't be edited, so every session-pool key is deleted and re-added. If the ship gate fails,
+the method is removed again before the audit.
+
 ## Changed in batch A.2
 
 `create_session` gained `scope_id` (2nd argument); `admin_register_scope` and `register_scope` gained `allow_shared`;
@@ -641,15 +726,16 @@ prepays them. New view `session_key_in_use` (also covers revoked, unexpired sess
 ## Security notes (for reviewers)
 
 - **Hana's trust surface.** The owner (and the contract account) controls issuer keys: whoever can post a Google key
-  can mint any token, so this is total control in the PoC, as is contract upgrade (no lock in batch A). Beyond
+  can mint any token, so this is total control, as is contract upgrade (no lock yet; bounding both before mainnet is
+  `docs/decisions.md` D33). Beyond
   that, Hana cannot change a scope's clients or owners, and cannot block derivation for a scope that has its own
   client (it can for a shared-only scope: see Shared login).
 - **Shared login.** A scope with `allow_shared` accepts tokens of Hana's shared clients, with the scope taken from
   the session nonce. Whoever can get a shared-client token with a nonce of their choosing for a user can open a
-  session for that user in any `allow_shared` scope: Hana's login page (it decides which nonces to compute after
-  checking the opener's origin against the app's allowed origins), and the user themself (who only gets their own
-  key, which they are entitled to). So enabling shared login on a scope trusts Hana's login page with that scope's
-  keys; that is why enabling it on an existing scope is timelocked (`SetAllowShared`, co-owners can cancel) while
+  session for that user in any `allow_shared` scope: Hana's vault and login page (since batch B the vault computes
+  the nonce, for a parent page the app's allowed origins permit, and the login page only relays it after checking
+  it), and the user themself (who only gets their own key, which they are entitled to). So enabling shared login on a
+  scope trusts Hana's vault and login pages (and whoever can change the bundles they serve) with that scope's keys; that is why enabling it on an existing scope is timelocked (`SetAllowShared`, co-owners can cancel) while
   disabling is immediate. Hana can also stop logins to a shared-only scope by removing its shared clients
   (removal is immediate). A client can't be shared and a scope client at once, and Hana can't list a client that a
   scope has registered, has a pending `AddClient` for, or has quarantined after a removal, so Hana can't turn a
@@ -691,7 +777,13 @@ prepays them. New view `session_key_in_use` (also covers revoked, unexpired sess
   give other owners time to cancel; NEAR-account owners avoid this.
 - **Front-running.** Tokens and proofs are visible in the mempool. Replaying the same args has the same effect
   (harmless). Since A.2 the session nonce commits to `scope_id` and `max_uses`, and a register proof to the owners,
-  the full client list and `allow_shared`, so a front-runner can't change any of them.
+  the full client list and `allow_shared`, so a front-runner can't change any of them. A replay of
+  `create_session_and_derive` is not quite harmless: it spends counter 1 for the session key holder (the MPC answer
+  is still encrypted to their BLS key), so a `max_uses = 1` session needs a new login. The attacker pays the gas and
+  learns nothing.
+- **No PII check on chain.** The contract ignores claims it doesn't use (see Token verification), so it never
+  refuses a token for carrying `email`, `name` or `hd`. The API and the vault refuse such tokens on the paths they
+  control; a direct caller isn't bound by that.
 - **Storage.** Scopes and pending changes are paid by the caller (sponsors exempt); counts per scope are capped.
   A sponsor (the relayer) gives free storage to whoever it relays for, so the API must not relay `register_scope`
   without its own authentication and rate limit. Since a shared-only scope needs no proof, scopes are no longer

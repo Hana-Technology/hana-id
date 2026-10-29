@@ -1,6 +1,6 @@
 //! Known-answer checks of this crate's byte layouts (tests/common/mod.rs) against vectors computed by a separate
-//! Python implementation of docs/batch-a2-shared-client.md (hashlib + struct, written from the spec table, not from
-//! either Rust implementation). No sandbox needed:
+//! Python implementation of docs/batch-a2-shared-client.md and the vault message of docs/batch-b-spec.md (hashlib +
+//! struct, written from the spec tables, not from either Rust implementation). No sandbox needed:
 //!
 //!   cargo test --test layouts
 
@@ -16,6 +16,21 @@ fn session_nonce_vector() {
     let pk: Vec<u8> = (0u8..32).collect();
     let salt = [9u8; 16];
     assert_eq!(session_nonce(SIGNER, "s1", &pk, 1_800_003_600_000, 7, 3, &salt), "TebGXW7fg2yLAZNQ7FAp_OVGET5oTuqpVuJkMv7XquY");
+    // The highest key_index create_session accepts (2^31 - 1), with max_uses 1 (a 'session'-mode login, batch B).
+    assert_eq!(session_nonce(SIGNER, "s1", &pk, 1_800_003_600_000, 0x7fff_ffff, 1, &salt), "Xmr66HxtWjh1HoRIJFQ98nVeBVVgjmPHJW6LLF2qpw0");
+}
+
+#[test]
+fn vault_message_vector() {
+    let share_id: [u8; 16] = std::array::from_fn(|i| i as u8 + 1);
+    let msg = vault_message(SIGNER, "app_test", &share_id, 1, b"unlock");
+    let hex: String = msg.iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(
+        hex,
+        "68616e612d69642d7661756c742d76313a100000007369676e65722e746573742e6e656172080000006170705f746573740102030405060708090a0b0c0d0e0f100100000000000000787600ebe6d6c75b6bc0b2db0bfd6aeec78897b67d3192e2208bc8b714237841"
+    );
+    // It can never be mistaken for a session message (derive_key / revoke_session).
+    assert!(!msg.starts_with(b"hana-id-session-v1:"));
 }
 
 #[test]

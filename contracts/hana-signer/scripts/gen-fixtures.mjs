@@ -3,7 +3,8 @@
 // memory, never written anywhere), for the contract's unit tests. It never touches a real Google key.
 //
 // It is also an independent JS implementation of every byte layout in docs/contract-interface.md (session nonce,
-// register proof, client proof, owner-action nonce, session message, CKD payload). It writes worked examples
+// register proof, client proof, owner-action nonce, session message, CKD payload) plus the off-chain vault message
+// (batch B, which the contract must never accept as a session message). It writes worked examples
 // (`layouts`: each part, the whole preimage and the nonce) that the Rust tests compare with their own bytes, and that
 // docs/contract-interface.md quotes. The two implementations must agree byte for byte.
 //
@@ -105,6 +106,16 @@ const sessionMessageParts = (counter, payload) => [
   [`counter u64 LE (${counter})`, u64(counter)],
   ['sha256(payload)', sha256(payload)],
 ];
+// Off-chain only (docs/batch-b-spec.md "Vault message layout"): what the session key signs for the API's vault
+// endpoints. Its domain differs from the session message's, so the contract must reject it as a derive or a revoke.
+const vaultMessageParts = ({ signer = SIGNER, appId, shareId, counter, payload }) => [
+  ['domain "hana-id-vault-v1:"', ascii('hana-id-vault-v1:')],
+  [`borsh(signer) "${signer}"`, str(signer)],
+  [`borsh(appId) "${appId}"`, str(appId)],
+  ['shareId (16 bytes)', shareId],
+  [`counter u64 LE (${counter})`, u64(counter)],
+  ['sha256(payload)', sha256(payload)],
+];
 
 const concat = (parts) => Buffer.concat(parts.map(([, bytes]) => bytes));
 const nonceOf = (parts) => b64url(sha256(concat(parts)));
@@ -127,9 +138,9 @@ const otherKey = generateKeyPairSync('rsa', { modulusLength: 2048, publicExponen
 const jwk = createPublicKey(testKey).export({ format: 'jwk' });
 const otherJwk = createPublicKey(otherKey).export({ format: 'jwk' });
 
-const jwt = ({ aud, sub = USER, nonce, iss = ISS, exp = TOKEN_EXP, kid = KID, alg = 'RS256', key = testKey }) => {
+const jwt = ({ aud, sub = USER, nonce, iss = ISS, exp = TOKEN_EXP, kid = KID, alg = 'RS256', key = testKey, extra = {} }) => {
   const header = b64url(JSON.stringify({ alg, kid, typ: 'JWT' }));
-  const claims = { iss, azp: aud, aud, sub, iat: NOW_S - 60, exp };
+  const claims = { iss, azp: aud, aud, sub, iat: NOW_S - 60, exp, ...extra };
   if (nonce !== undefined) claims.nonce = nonce;
   const input = `${header}.${b64url(JSON.stringify(claims))}`;
   return `${input}.${b64url(sign('sha256', Buffer.from(input), key))}`;
@@ -162,6 +173,12 @@ const nonces = {
   session_s4_pk7_k0: sess(S4, PK7),
   session_s4_pk8_k0: sess(S4, PK8),
   session_s1_pk8_late_k0: sess(S1, PK8, { expiresAtMs: EXPIRES_LATE_MS }),
+  // create_session_and_derive (batch B): max_uses 1 and 2, and key_index at and above the reserved bound 2^31
+  session_s1_pk7_k0_m1: sess(S1, PK7, { maxUses: 1 }),
+  session_s1_pk7_k0_m2: sess(S1, PK7, { maxUses: 2 }),
+  session_s1_pk7_k7fffffff: sess(S1, PK7, { keyIndex: 0x7fff_ffff }),
+  session_s1_pk7_k80000000: sess(S1, PK7, { keyIndex: 0x8000_0000 }),
+  session_s1_pk7_kffffffff: sess(S1, PK7, { keyIndex: 0xffff_ffff }),
   register_reg_c: registerNonce({ ownerList: REG_OWNERS, clients: [g(C)] }),
   register_reg_cd: registerNonce({ ownerList: REG_OWNERS, clients: [g(C), g(D)] }),
   register_reg_a: registerNonce({ ownerList: REG_OWNERS, clients: [g(A)] }),
@@ -202,6 +219,13 @@ const tokens = {
   shared_s4: jwt({ aud: SHARED, nonce: nonces.session_s4_pk8_k0 }),
   session_c_s4: jwt({ aud: C, nonce: nonces.session_s4_pk7_k0 }),
   shared_s1_late: jwt({ aud: SHARED, nonce: nonces.session_s1_pk8_late_k0 }),
+  session_a_m1: jwt({ aud: A, nonce: nonces.session_s1_pk7_k0_m1 }),
+  session_a_m2: jwt({ aud: A, nonce: nonces.session_s1_pk7_k0_m2 }),
+  session_a_k_last: jwt({ aud: A, nonce: nonces.session_s1_pk7_k7fffffff }),
+  session_a_k_reserved: jwt({ aud: A, nonce: nonces.session_s1_pk7_k80000000 }),
+  session_a_k_max: jwt({ aud: A, nonce: nonces.session_s1_pk7_kffffffff }),
+  // claims the API and vault refuse (batch B allow-list) but the contract ignores
+  session_a_pii: jwt({ aud: A, nonce: n7, extra: { email: 'user@example.com', email_verified: true, name: 'A User', hd: 'example.com', picture: 'https://example.com/u.png' } }),
   // register_scope proofs
   reg_c: jwt({ aud: C, sub: OWNER, nonce: nonces.register_reg_c }),
   reg_cd_c: jwt({ aud: C, sub: OWNER, nonce: nonces.register_reg_cd }),
@@ -256,6 +280,8 @@ const example = (title, parts, { nonce = true } = {}) => ({
   preimage_hex: hex(concat(parts)),
   ...(nonce ? { nonce: nonceOf(parts) } : {}),
 });
+const VAULT_APP_ID = 'app_test';
+const VAULT_SHARE_ID = Buffer.from(Array.from({ length: 16 }, (_, i) => i + 1));
 const CKD_PK1 = 'bls12381g1:A';
 const CKD_PK2 = 'bls12381g2:B';
 const ckd = ckdPayload(CKD_PK1, CKD_PK2);
@@ -274,6 +300,8 @@ const layouts = {
   ckd_payload: example(`CKD payload: pk1 "${CKD_PK1}", pk2 "${CKD_PK2}"`, [['"hana-id-ckd-v1:" ‖ pk1 ‖ ":" ‖ pk2', ckd]], { nonce: false }),
   session_message_ckd: example('Session message for derive_key: counter 1, payload = the CKD payload above', sessionMessageParts(1, ckd), { nonce: false }),
   session_message_revoke: example('Session message for revoke_session: counter 2, payload "revoke"', sessionMessageParts(2, ascii('revoke')), { nonce: false }),
+  vault_message_unlock: example('Vault message (off-chain only, never a session message): app "app_test", shareId 01…10, counter 1, payload "unlock"',
+    vaultMessageParts({ appId: VAULT_APP_ID, shareId: VAULT_SHARE_ID, counter: 1, payload: ascii('unlock') }), { nonce: false }),
 };
 layouts.ckd_payload.pk1 = CKD_PK1;
 layouts.ckd_payload.pk2 = CKD_PK2;

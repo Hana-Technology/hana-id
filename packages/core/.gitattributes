@@ -1,0 +1,2 @@
+# The frozen derivation vectors are hashed byte for byte by test/derivation.test.ts: never convert line endings.
+test/vectors/*.json -text

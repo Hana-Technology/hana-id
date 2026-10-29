@@ -212,7 +212,8 @@ cross-project `sub` test passed (spike above, D42). After the smoke run on the v
 - **Developer dashboard, like Privy's.** Partners manage orgs, members, apps, origins, keys and on-chain owner actions
   (`/v1/owner-actions` with a console-client token). Replaces `admin app:*` after the pilot.
 - **Invite-only.** No public sign-up: a Hana admin issues email-bound, single-use, expiring invites (stored hashed);
-  sign-in with Google through the console client; no accepted invite → refused. `public_registration` stays off.
+  sign-in with Google through the console client; no accepted invite → refused. `public_registration` stays off. Amended
+  2026-10-29 (D89): owners also invite teammates; a new owner waits 24 h as a viewer.
 - **Hana admin console**, separate, behind Cloudflare Access. Contract-billing reports per org/app by day and month
   (logins, derives, monthly active users, new users, gas burnt + USD, failures, latency), CSV statement. Billing-grade
   totals in D1 (Analytics Engine keeps 3 months: operational metrics only).
@@ -358,10 +359,13 @@ Status section is the summary for humans: https://claude.ai/artifact/GyQq6HZbaJB
 
 **Before mainnet:**
 
-- Bound issuer-key and upgrade power (D33; the delay length is open).
+- Bound issuer-key and upgrade power (D33): `docs/governance-spec.md`, decisions confirmed 2026-10-29 (D80–D86:
+  2 h / 72 h delays, Sputnik 2-of-3 owner, watchdog autonomy and admin-portal monitoring, alert severities). Open:
+  the measured mainnet issuer-key delay, where the backup council key is held, the paging app, governance open
+  question 17.
 - Hana Home: key export for every shared-login app and cross-device consent revocation (D40, D45).
-- A Hana Cloudflare account and the two registrable domains for `vaultOrigin`/`authOrigin` (D38, D18), and an email
-  provider (batch C notices, D34).
+- A Hana Cloudflare account and the two registrable domains for `vaultOrigin`/`authOrigin` (D38, D18). Email
+  provider: Resend (D87), set up on a sending subdomain once the domain exists.
 - External audit.
 - Address freeze: final accounts deployed (D2, D5); after it, nothing may change a path or key derivation.
 - Mainnet launch date: not set (D39).
@@ -370,7 +374,9 @@ Status section is the summary for humans: https://claude.ai/artifact/GyQq6HZbaJB
 
 - `apps/e2e` has no live-app mode (it creates only `pk_test_` apps), so the raw approval popup isn't browser-tested
   (covered by `packages/web` unit tests).
-- `docs/batch-c-spec.md` (D34 cut and D73–D75 folded in) needs implementation review; its open questions need the user.
+- `docs/batch-c-spec.md` (D34 cut, D73–D75 and the 2026-10-29 decisions D87–D93 folded in) needs implementation
+  review. Still open there: Q1 (console code flow `openid`-only check, to test), Q3 (Hana Cloudflare account, zone,
+  domains), Q4's Access fallback emails, Q5 (Neon setup). Retention periods (D90) need the company's accountant.
 - Open questions still to answer: `docs/decisions.md` "Proposed, not yet confirmed".
 
 Working rules: feature branch → PR into `develop` (an org ruleset requires one approving review from a teammate;

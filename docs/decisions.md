@@ -294,8 +294,8 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
   console-client token). Replaces `admin app:*` after the pilot.
 
 ### D29. Invite-only sign-up
-- Date 2026-10-27, reconfirmed 2026-10-28 · Status: confirmed, not built · Source: `docs/context.md` "Batch C
-  decisions"; conversation
+- Date 2026-10-27, reconfirmed 2026-10-28 · Status: confirmed, not built; amended by D89 (owners invite teammates
+  too) · Source: `docs/context.md` "Batch C decisions"; conversation
 - Decision: no public sign-up. A Hana admin issues email-bound, single-use, expiring invites (stored hashed); sign-in
   with Google through the console client; no accepted invite means refused. `public_registration` stays off.
 
@@ -332,6 +332,8 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
   the watchdog may approve early when the key matches Google's list. No address change. Measurement is running
   (migration 0004 `issuer_key_observations`, 15-min cron; read with `admin <env> issuer-keys:lead-times --remote`,
   `docs/operations.md` "Issuer key lead times").
+- 2026-10-29: specified in `docs/governance-spec.md`; delays D80 (mainnet issuer-key delay provisional until the
+  lead-time measurement is in), multisig D81, watchdog D82–D83, no upgrade guardian D84, alerts D85, the rest D86.
 
 ### D34. Batch C MVP cut
 - Date 2026-10-28 · Status: confirmed by the user · Source: batch C MVP trim proposal (to be folded into
@@ -748,6 +750,196 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
 - Given up: a reload within that window (about one API round trip after the login reply) is a full login; the login
   result's `persistence` is the mode intended, and `persistenceChanged` / `hana_status` say if it didn't happen. Share timings are no
   longer in the login's timings (`persist`, `shareRtt`, `shareServer*` removed); the API's request log still has them.
+## Governance and batch C, confirmed by the user 2026-10-29
+
+Each entry below was decided by the user on 2026-10-29 (source: conversation, "confirmed by the user"). D80–D86
+answer `docs/governance-spec.md` "Open questions" and D87–D93 answer `docs/batch-c-spec.md` "Open questions"; each
+answered question there points here.
+
+### D80. Governance delays: issuer keys 2 h (provisional), governance 72 h on mainnet
+- Date 2026-10-29 · Status: confirmed by the user (mainnet issuer-key delay provisional), not built · Source:
+  `docs/governance-spec.md` "Delay length", open question 1
+- Decision: mainnet `issuer_key_delay_ms` = 2 h, provisional: it is set by the spec's formula from the lead-time
+  measurement now running (`admin issuer-keys:lead-times`) once two Google rotations are recorded.
+  `governance_delay_ms` = 72 h on mainnet (upgrades, owner transfer, a new watchdog's confirm power, delay decreases,
+  surplus withdrawals). sandbox-dev: 2 min and 60 s.
+- Why: 72 h gives partners and users time to see an upgrade and export keys (D41). A paused contract waiting up to
+  72 h for a fix is accepted: fast emergency response comes from pause (owner or watchdog, at once; the owner unpauses
+  at once), not from short delays.
+- Rejected: a governance delay short enough to ship fixes fast (it shortens everyone's reaction window; pause covers
+  emergencies); fixing the issuer-key delay before Google's lead time is measured.
+
+### D81. Owner multisig: Sputnik DAO v2, 2-of-3 for every proposal kind
+- Date 2026-10-29 · Status: confirmed by the user, not built · Source: `docs/governance-spec.md` "Owner = multisig",
+  open question 2
+- Decision: the contract owner is a Sputnik DAO v2 council: 2 of 3 votes for **every** proposal kind (function calls,
+  policy, member changes, the DAO's own upgrades); only council members propose. Mainnet council: the two founders
+  (each on a Ledger) and one offline backup key that neither founder can reach alone, held by a third party (e.g. the
+  company's lawyer or accountant, under written instructions) or in a dual-control safe deposit box; where it is held
+  is decided before mainnet. The backup is replaced by an independent member later. sandbox-dev: Sputnik 2-of-3 with
+  three throwaway testnet member accounts whose keys live in `.secrets/sandbox-dev/` (0600) and that scripts drive
+  (propose and approve in one command); `near-workspaces` sandbox tests cover the full flow.
+- Why: 3-of-3 for policy would freeze the council if one Ledger is lost; the contract's 72 h governance delay (D80)
+  and the watchdog's alerts (D85) already guard every owner action.
+- Rejected: 3-of-3 for policy and member changes (the draft); `multisig2` on the owner account (no named audit, no UI,
+  little maintenance); a backup key either founder can reach alone (that founder would hold 2 of 3).
+
+### D82. The watchdog acts alone only on clear forgeries; the owner unpauses at once
+- Date 2026-10-29 · Status: confirmed by the user, not built · Source: `docs/governance-spec.md` "Watchdog service",
+  open question 4
+- Decision: on its own the watchdog cancels any pending issuer key Google doesn't publish (kid absent from two
+  fetches ≥ 60 s apart, or other key material), deletes every updater key when the updater proposed such a key, and
+  pauses **only** when a key Google doesn't publish is active on chain. It also confirms keys that match Google's JWKS
+  (D86). Everything else is alert-only (D85), including a pending removal of a kid Google still publishes. The owner
+  multisig can unpause at once, with no governance delay.
+- Why: these responses are unambiguous and DoS-only; anything that needs judgment waits for a human, so a buggy or
+  rogue watchdog can at most delay a rotation or stop logins until the owner unpauses.
+- Rejected: an alert-only watchdog (a forged key goes live if nobody answers within the delay); pausing on any anomaly
+  (too much DoS power for one service).
+
+### D83. Every watchdog check and alert surfaces in the admin portal (standing rule)
+- Date 2026-10-29 · Status: confirmed by the user (requirement and standing rule), not built · Source: conversation;
+  `docs/governance-spec.md` "Monitoring in the admin portal"
+- Decision: the admin console gets a "Security & monitoring" view: watchdog heartbeat and last check, with a warning
+  when it has been silent past its interval; pending issuer-key changes with a countdown and whether each matches
+  Google's JWKS; the watchdog's actions log; pause state and the updater keys; pending upgrades and owner actions with
+  countdowns; alert history with acknowledge. **Standing rule:** every future watchdog check or alert must surface in
+  the admin portal; a check without its portal view isn't done. The watchdog still sends its own alerts (D85), so a
+  compromised Hana Cloudflare account can't silence it; the portal reads the watchdog's status and on-chain state and
+  events.
+- Why: one place for staff to see governance state; the portal is a view, never the alert path.
+- Rejected: alerts only through the portal (it runs in the account an attacker would want); a watchdog with no status
+  surface.
+
+### D84. No independent upgrade guardian at launch
+- Date 2026-10-29 · Status: confirmed by the user · Source: `docs/governance-spec.md` open question 8
+- Decision: only the owner can cancel a pending upgrade. The watchdog sends a critical alert on every upgrade
+  proposal. Revisit when an independent party exists (the auditor, a partner).
+- Why: a guardian helps only if it is independent of the founders; none exists yet. The 72 h delay, the public event,
+  the alerts and key export (D41) remain.
+- Rejected: the watchdog as guardian (run by Hana, so not independent; a compromised watchdog could block every fix).
+
+### D85. Alert severities: critical, warning, info
+- Date 2026-10-29 · Status: confirmed by the user, not built · Source: `docs/governance-spec.md` "Alerts", open
+  question 15
+- Decision: **critical** goes to a phone paging app (PagerDuty, Pushover or ntfy, chosen at setup), Slack and email,
+  to both founders, and is re-sent every 15 min until acknowledged; acknowledgements are recorded in the admin portal.
+  **Warning** goes to Slack and email. **Info** goes to the admin portal and a daily digest. The watchdog sends them
+  itself.
+- Why: a forged key or an upgrade needs a human within the delay, at any hour; two people and three channels mean one
+  outage or one person asleep doesn't hide it.
+- Rejected: email only; one severity for everything.
+
+### D86. Governance spec: the remaining open questions take the spec's proposals
+- Date 2026-10-29 · Status: defaults approved by the user, not built · Source: `docs/governance-spec.md` open
+  questions 3, 5, 6, 7, 9, 10, 11, 12, 13, 14, 16
+- Decision, by question:
+  - Q3: the watchdog runs on its own Cloudflare account (separate login and MFA); one watchdog at launch.
+  - Q5: one watchdog may confirm (activate early) a key that matches Google's JWKS; k-of-n confirmers later.
+  - Q6: removing a watchdog slows key changes to `governance_delay_ms` unless another watchdog confirms; accepted.
+  - Q7: pause blocks derivation and new sessions: every token path (sessions, scope registration, token-authenticated
+    owner actions), `derive_key`, and the executors (`execute_change`, `execute_issuer_key_change`); never
+    governance, revocation, cancels or views.
+  - Q9: sandbox-dev keeps the signer's full-access key (speed); any staging env and mainnet never have one.
+  - Q10: an owner-only withdrawal of surplus NEAR from the signer (above storage plus a reserve), timelocked by
+    `governance_delay_ms`.
+  - Q11: public notice of an upgrade or owner change = the on-chain event, an email to every partner (the orgs'
+    security contacts), and a pending-upgrades page in the admin and partner consoles.
+  - Q12: owner-posted issuer keys wait the same `issuer_key_delay_ms` as the updater's.
+  - Q13: `set_console_audiences` additions wait `change_delay_ms`; removals stay immediate.
+  - Q14: every mainnet `propose_upgrade` needs a reproducible build, its hash published before the proposal.
+  - Q16: events version `1.1.0`, additive.
+- Rejected: the alternatives each question listed.
+
+### D87. Email: Resend, from a dedicated sending subdomain
+- Date 2026-10-29 · Status: confirmed by the user, not built · Source: `docs/batch-c-spec.md` "Email", open question 2
+- Decision: Resend, sending from a dedicated subdomain of the Hana domain with SPF, DKIM and DMARC, behind a small
+  sender interface (send one message → accepted or an error) so switching (e.g. to Postmark) is one adapter. The
+  admin Worker's fail-closed notices count a send as done only when Resend accepts it. The watchdog sends its alert
+  emails with its own Resend API key, not the admin Worker's.
+- Why: sends to any address from a Worker over HTTPS; the subdomain keeps notice reputation apart from the main
+  domain's mail.
+- Rejected for now: Cloudflare Email Sending, Postmark (the fallback behind the interface), SES.
+
+### D88. Admin access: GitHub team `hana-admins`, exact-email fallback, staff allowlist kept
+- Date 2026-10-29 · Status: confirmed by the user (fallback addresses to come), not built · Source:
+  `docs/batch-c-spec.md` "Hana admin console", open question 4
+- Decision: the Cloudflare Access policy includes the GitHub team `hana-admins` in `Hana-Technology`, with 2FA
+  required org-wide, and a fallback rule of exact Google email addresses (the user provides them later; never a domain
+  rule). The admin Worker keeps its own `admin.staffEmails` allowlist as a second check on every request.
+- Why: GitHub carries MFA and offboarding; with the allowlist, one mistaken Access edit alone lets nobody in. The cost
+  is offboarding in two places.
+- Rejected: dropping the Worker allowlist; a domain rule; the draft's assumed team name `hana-id-staff`.
+
+### D89. Owners invite teammates; a new owner is a viewer for 24 h (amends D29)
+- Date 2026-10-29 · Status: confirmed by the user, not built · Source: `docs/batch-c-spec.md` "Invites", open
+  question 6
+- Decision: still invite-only, no sign-up. Hana creates orgs and invites the first owner. Owners can then invite
+  viewers and owners to their own org. Every invite needs a fresh Google sign-in and notifies every owner and security
+  contact of the org. A new owner is a viewer for 24 h, then becomes an owner unless cancelled (by an owner, Hana
+  staff, or the cancel link in the notice). Hana staff can add and remove members in the admin portal.
+- Why: partner self-service for teammates without a Hana ticket; the wait and the notice give the other owners and
+  contacts the same window as guarded changes, so a hijacked owner account can't quietly add a co-owner.
+- Rejected: Hana-issued invites only (D29 as first written); owner invites without the 24 h wait.
+
+### D90. Retention: statements 7 years, raw usage 24 months, audit 5 years
+- Date 2026-10-29 · Status: confirmed by the user; periods to be confirmed by the company's accountant before launch;
+  not built · Source: `docs/batch-c-spec.md` "Retention", open question 10
+- Decision: monthly statements and settlement records (statement files, `usage.statements`, `near_usd_rates`,
+  `gas_settlements`) 7 years. Raw usage events 24 months; then the uid hash is removed and the de-identified rows are
+  kept. Audit logs (`audit_log`, `app_changes`, `guarded_changes`) 5 years. An automatic monthly purge job applies it,
+  and the admin portal shows its runs.
+- Why: Hana is an Australian company: the ATO requires business records for 5 years, and APP 11 (Privacy Act) requires
+  personal information to be destroyed or de-identified once no longer needed. 7 years leaves room for disputes over
+  billed periods.
+- Rejected: the draft's 400-day ledger and 36-month audit (shorter than the ATO's 5 years); keeping uids for good.
+
+### D91. Gas of relayed-then-rejected calls isn't billed by default
+- Date 2026-10-29 · Status: confirmed by the user, not built · Source: `docs/batch-c-spec.md` open question 11
+- Decision: not billed by default; shown as its own statement line. The admin portal alerts when a partner's
+  rejection rate exceeds a threshold (provisional: 5% of relayed attempts). Contract terms may bill partner-caused
+  rejections above it.
+- Why: third parties can trigger rejections (~2.2 Tgas each, e.g. replays of public signed derives), so billing them
+  by default charges partners for others' traffic; the alert catches a partner bug that causes them.
+- Rejected: billing every rejected call; hiding the cost inside the gas total.
+
+### D92. Statements: CSV, on-screen and PDF with the same totals and hash
+- Date 2026-10-29 · Status: confirmed by the user, not built · Source: `docs/batch-c-spec.md` "Monthly statements",
+  open questions 14 and 16
+- Decision: each frozen monthly statement is a CSV, an on-screen statement (admin and partner consoles) and a PDF
+  generated with `pdf-lib`; all three carry the same totals and the statement hash (the CSV's sha256). Tax invoices
+  come from the accounting software and quote the statement.
+- Why: finance teams want a PDF; one hash ties the three together; Hana ID doesn't invoice (D31).
+- Rejected: CSV only; invoices issued by Hana ID.
+
+### D93. Batch C spec: the remaining open questions take the spec's recommendations
+- Date 2026-10-29 · Status: defaults approved by the user, not built · Source: `docs/batch-c-spec.md` open
+  questions 7, 8, 12, 13, 14, 15, 17–25 and part of 3
+- Decision, by question:
+  - Q3 (part): sandbox-dev runs on `workers.dev` with the thin-Worker origins until the Hana account exists.
+  - Q7: the console sink scope, rolled out on sandbox-dev before the address freeze.
+  - Q8: seven Workers (console-auth and files as thin Workers, D66).
+  - Q12: production `change_delay_ms` 24 h (= `appChangeDelayMs`); partners don't set their own delays in batch C.
+  - Q13: the daily nonce cross-check as read (each relayer key's latest landed nonce must have a ledger row); daily,
+    no indexer.
+  - Q14: `pg` and `pdf-lib` as runtime dependencies, exact-pinned.
+  - Q15: logos PNG, JPEG or WebP only, re-encoded (Cloudflare Images binding), never SVG.
+  - Q17: a daily NEAR/USD rate from a single source (e.g. CoinGecko) named in the service contract, with an audited
+    manual override; testnet pilot statements valued at the mainnet price and labelled.
+  - Q18: no hash chain in the MVP; the accounts are the trust root.
+  - Q19: coarse network data on console sessions for 90 days.
+  - Q20: Cloudflare's Workers rate-limiting binding in the console Worker; the API's `RateLimiter` only if the binding
+    isn't available on the account's plan.
+  - Q21: breaker 5 per org and 20 across orgs per hour, counted per call.
+  - Q22: settlement reads `tx` once per relayed transaction; revisit at scale.
+  - Q23: owner-action caps as designed (20 per scope per day; safety budget 10 per scope per day, 100 global).
+  - Q24: no two-staff rule for staff proposals in the MVP.
+  - Q25: partners test locally against a Hana-run testnet env with its own console; production keeps refusing
+    loopback.
+- Still open: Q1 (the console code flow's `openid`-only token, to test), Q3 (Hana Cloudflare account, zone, domains,
+  who holds access), Q4's fallback email addresses, Q5 (Neon project setup), Q9 (moved to `docs/governance-spec.md`
+  open question 17).
+- Rejected: the alternatives each question listed.
 
 ## Superseded or amended
 
@@ -763,6 +955,9 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
 | Login page computes the shared-mode nonce (A.2) | The vault computes it; the login page only checks and relays it (D47) | `docs/batch-b-spec.md` "Amends" |
 | Contract upgradeable with no lock (batch A, PoC) | Still so on testnet; upgrade governance before mainnet (D2, D33) | `docs/batch-a-spec.md` |
 | Partners build the SDK from this repository and compile its TypeScript sources | Built tarballs (`pnpm pack`), installed with npm; no registry yet (D71, D72) | `docs/integration.md` "Install" |
+| Only Hana staff issue invites (D29) | Hana invites each org's first owner; owners invite viewers and owners, a new owner waits 24 h as a viewer (D89) | `docs/batch-c-spec.md` "Invites" |
+| Governance draft: owner DAO 3-of-3 for policy and member changes; sandbox-dev signer full-access key deleted | 2-of-3 for every kind (D81); sandbox-dev keeps the key, staging and mainnet never have one (D86) | `docs/governance-spec.md` |
+| Batch C draft retention: ledger 400 days, uid stripped 35 days after the month, audit 36 months | Statements and settlements 7 years, raw usage 24 months then de-identified, audit 5 years (D90) | `docs/batch-c-spec.md` "Retention" |
 | Sodax Stellar `signAndSendTransaction(p)` is `sendTransaction(signTransaction(p.data))` | It signs as `p.from`: `sendTransaction(signTransaction(p.data, {address: p.from}))`, so a raw transaction built for another account (a muxed `M…` address included) is 4100 before any popup. Sodax builds every raw transaction for `getWalletAddress()`'s `G…` address. Confirmed (D67) | `docs/batch-b-spec.md` "Sodax adapter"; `packages/sodax/src/stellar.ts` |
 | `/login` calls `GET /v1/app` itself and cross-checks the vault's signer, scope and client before Google (batch B "Login" step 4) | It checks the pinned signer and the nonce only, makes no API call, and shows the vault's app name (D77) | `docs/security.md` "The login popup trusts the vault's app facts" |
 | The vault persists (share, record) before it replies to `hana_login` (batch B "Login" steps 11–12) | It replies first; the share and record follow in the background, and a failure turns `persistence` to `'none'` (`persistenceChanged`, D79) | `packages/web/src/vault/vault.ts` `persistLogin` |
@@ -774,5 +969,10 @@ retention, to measure), Q6 (a "remember this device" option), Q10 (the ship gate
 MPC's timeout and failure behaviour), Q13 (dropping partner-origin CORS for `pk_test_` in sandbox envs), Q15 (the
 production domain names and Cloudflare account; only "two registrable domains" is decided, D38), Q17 (approval popup
 lifetime and mobile behaviour), Q24 (mobile and in-app webviews), Q25 (SWK 1.9.x and 2.x), Q26 (the EIP-6963 `rdns`,
-after Q15), Q29 (runtime dependencies and bundle budget). Also open: D33's delay length and the mainnet launch date
-(D39). Every decision in `docs/batch-c-spec.md` beyond D28–D32 and D34 is a draft.
+after Q15), Q29 (runtime dependencies and bundle budget). Also open: the mainnet launch date (D39); the mainnet
+issuer-key delay is provisional until the lead-time measurement is in (D80).
+
+Still open in `docs/governance-spec.md`: where the mainnet backup council key is held (D81, before mainnet), the
+paging app (D85, at setup), and open question 17 (cancel by a compromised OIDC owner, from batch C Q9). Still open in
+`docs/batch-c-spec.md`: Q1, Q3, Q4's fallback addresses, Q5 (D93). Everything else in both specs follows D80–D93 or
+is a proposal there.

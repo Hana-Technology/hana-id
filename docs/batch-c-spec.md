@@ -1,8 +1,9 @@
 # Batch C spec: developer dashboard (partner console, Hana admin console, usage and billing)
 
-**Status: DRAFT for implementation review (2026-10-29); decisions confirmed: D28, D29, D30 (as amended by D73),
-D31, D32, D34, D51, D52, D73, D74, D75.** Everything else in this file is a proposal that follows from them; the open
-questions at the end are what still needs the user. The 2026-10-27 multi-agent draft (four decision records, a
+**Status: DRAFT for implementation review (2026-10-29); decisions confirmed: D28, D29 (as amended by D89), D30 (as
+amended by D73), D31, D32, D34, D51, D52, D73, D74, D75, and on 2026-10-29 D87–D93.** Everything else in this file is
+a proposal that follows from them; the open questions at the end say what still needs the user (Q1, Q3, Q4's
+fallback addresses, Q5). The 2026-10-27 multi-agent draft (four decision records, a
 reconciliation table, passkeys, four roles, two notice channels, a queue, rollups) is superseded by this rewrite; its
 history is in git.
 
@@ -10,12 +11,42 @@ This is the source of truth for batch C. If the code and this spec disagree, fix
 diverge. It amends `docs/batch-a-spec.md`, `docs/batch-a2-shared-client.md` and `docs/batch-b-spec.md` where it says
 so. Plan doc: https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi
 
+## Confirmed by the user (2026-10-29)
+
+- **Email (D87).** Resend, from a dedicated sending subdomain with SPF, DKIM and DMARC, behind a small sender
+  interface so switching (e.g. to Postmark) is cheap. The fail-closed notices use it.
+- **Admin Access (D88).** GitHub team `hana-admins` in `Hana-Technology`, 2FA required org-wide; exact-email Google
+  fallback (addresses to come); the admin Worker's own staff allowlist stays as a second check.
+- **Invites (D89, amends D29).** Hana creates orgs and invites the first owner; owners then invite viewers and owners
+  themselves. Every invite needs a fresh sign-in and notifies every owner and security contact. A new owner is a viewer
+  for 24 h, then becomes owner unless cancelled (cancel link). Hana staff add and remove members in the admin portal
+  (§Invites and owner grants).
+- **Retention (D90).** Statements and settlement records 7 years; raw usage events 24 months, then the uid hash is
+  removed and the de-identified rows kept; audit logs 5 years; an automatic monthly purge job shown in the admin
+  portal. Periods to be confirmed by the company's accountant before launch (ATO 5-year record keeping, Privacy Act
+  APP 11) (§Retention).
+- **Rejected-transaction gas (D91).** Not billed by default; its own statement line; an admin alert when a partner's
+  rejection rate passes a threshold (provisional 5% of relayed attempts); contract terms may bill partner-caused
+  rejections above it.
+- **Statements (D92).** CSV, on-screen statement and PDF (`pdf-lib`), all with the same totals and the statement hash;
+  tax invoices come from the accounting software and quote the statement.
+- **Defaults (D93)**, the spec's recommendations: 24 h production `change_delay_ms`; logos PNG/JPEG/WebP only,
+  re-encoded, no SVG; a daily NEAR/USD rate from one source (e.g. CoinGecko) with an audited manual override; seven
+  Workers; the console sink scope; the daily nonce cross-check as read; `pg` and `pdf-lib` exact-pinned; the other
+  answers listed under §Open questions.
+- **Governance (D80–D86, `docs/governance-spec.md`)** adds two admin-console screens built in that batch: "Security &
+  monitoring" (D83) and the pending-upgrades page, also in the partner console (D86).
+- **Still open:** Q1 (the code flow's `openid`-only token, to test), Q3 (Hana Cloudflare account, zone, domains), Q4's
+  fallback email addresses, Q5 (Neon project setup).
+
 ## Decisions this spec implements
 
 - **Dashboard like Privy's (D28).** Partners manage their org's members, apps, origins, keys, app settings, the
   auto-approve policy and on-chain owner actions. Replaces `admin app:*` after the pilot.
-- **Invite-only (D29).** Hana staff issue email-bound, single-use, 7-day invites, stored as sha256. No sign-up path;
-  no accepted invite means 403. `public_registration` stays off.
+- **Invite-only (D29, amended by D89).** Hana staff create orgs and invite the first owner; owners invite viewers and
+  owners to their own org (fresh sign-in, notice to every owner and security contact, a new owner waits 24 h as a
+  viewer). Invites are email-bound, single-use, 7-day, stored as sha256. No sign-up path; no accepted invite means 403.
+  `public_registration` stays off.
 - **MVP cut (D34).** Three main Workers with separate duties and databases, the script-free auth origin, the
   server-side Google code flow, origin safety (change-bound token, 24 h delay, notice, cancel), the on-chain watcher,
   settlement at FINAL, the uid HMAC for MAU and the admin billing reports are kept. Simplified: two roles (owner,
@@ -156,13 +187,13 @@ popups, console ─▶ hana-id-files-<env>  LOGOS (R2, read)
 | console | `CONSOLE_DB` | — | `LOGOS` (read/write), `STATEMENTS` (read only by code) | `API` → `ConsoleRpc` | `NEAR_RPC`, `SIGNER_ACCOUNT`, origins | `CONSOLE_GOOGLE_CLIENT_SECRET` |
 | console-auth | — | — | — | `CONSOLE` → `AuthHandler` | `AUTH_ORIGIN` | — |
 | files | — | — | `LOGOS` (read only by code) | — | `FILES_ORIGIN` | — |
-| admin | — | `USAGE_DB` (role `usage_admin`) | `STATEMENTS`, `EXPORTS` | `API` → `AdminRpc`, `CONSOLE` → `StaffRpc` | `NEAR_RPC`, `SIGNER_ACCOUNT`, `RELAYER_ACCOUNT`, Access ids | `EMAIL_API_KEY`, `CANCEL_LINK_KEY` |
+| admin | — | `USAGE_DB` (role `usage_admin`) | `STATEMENTS`, `EXPORTS` | `API` → `AdminRpc`, `CONSOLE` → `StaffRpc` | `NEAR_RPC`, `SIGNER_ACCOUNT`, `RELAYER_ACCOUNT`, Access ids | `EMAIL_API_KEY` (Resend, D87), `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` |
 
 - **Hyperdrive.** Two configs per env (`hana-id-usage-writer-<env>`, `hana-id-usage-admin-<env>`), each with its own
   Neon role and password. The credentials live in the Hyperdrive config, created by `scripts/usage-setup.ts` from
   `.secrets/<env>/neon-*.url` (0600); a Worker's binding carries only the config id (passed to `gen-wrangler` like
   `--d1-id`, never committed). Query caching is disabled on both (writes, and reports that must be fresh). Driver:
-  `pg` (open question 14).
+  `pg`, exact-pinned (D93).
 - **Only the API's usage writer and the admin Worker bind Neon (D73).** Partner usage views go through `ConsoleRpc`,
   which calls `SECURITY DEFINER` report functions over the writer binding; the writer role has no table privilege.
 - `USAGE_DB` is optional in the API's `Env`: when it is absent, capture is a no-op and logins work.
@@ -171,12 +202,17 @@ popups, console ─▶ hana-id-files-<env>  LOGOS (R2, read)
 
 - **API, hourly (existing trigger):** JWKS sync, vault maintenance, drift detection, recording activations of guarded
   changes, the owner-pool allowance check.
-- **Console, hourly:** invite expiry (`invite.expired` audit rows), purges (§Retention), logo objects replaced more
-  than 30 days ago.
-- **Admin, every 5 min:** blocking notices (`AdminRpc.pendingNotices` → send → `ackNotice`), the security feed
+- **Console, hourly:** invite expiry (`invite.expired` audit rows), recording matured owner grants (§Invites and owner
+  grants), short-lived purges (§Retention), logo objects replaced more than 30 days ago.
+- **Admin, every 5 min:** blocking notices (`AdminRpc.pendingNotices` → send → `ackNotice`; invites and owner grants:
+  `StaffRpc.pendingMemberNotices` → send → `ackMemberNotice`), the security feed
   (`AdminRpc.changesSince`, `StaffRpc.auditSince`, `AdminRpc.securityEvents`), the on-chain watcher.
 - **Admin, every 15 min:** gas settlement.
-- **Admin, daily 00:30 UTC:** the nonce cross-check, the NEAR/USD rate, `usage.ensure_partitions`, ledger retention.
+- **Admin, daily 00:30 UTC:** the nonce cross-check, the NEAR/USD rate (one source, e.g. CoinGecko, named in the
+  service contract; audited manual override `PUT /api/rates/:day`; D93), `usage.ensure_partitions`, the rejection-rate
+  check (D91).
+- **Admin, monthly (the 1st, 01:00 UTC):** the retention purge job (D90, §Retention); its runs show in the admin
+  console.
 
 ## Data
 
@@ -259,7 +295,7 @@ CREATE TABLE app_changes (                    -- append-only ledger: one row per
   actor_id TEXT NOT NULL, actor_sub TEXT,     -- the verified step-up sub when there is one
   request_id TEXT NOT NULL UNIQUE
 );
--- BEFORE UPDATE on app_changes: RAISE(ABORT). BEFORE DELETE: RAISE(ABORT) unless OLD.at < now − 36 months.
+-- BEFORE UPDATE on app_changes: RAISE(ABORT). BEFORE DELETE: RAISE(ABORT) unless OLD.at < now − 60 months (D90).
 
 CREATE TABLE security_events (                -- written by the API; the admin Worker emails and marks them
   id TEXT PRIMARY KEY, detected_at INTEGER NOT NULL,
@@ -365,15 +401,34 @@ CREATE TABLE members (
 );                                            -- every org with members keeps at least one owner
 CREATE TABLE invites (
   id TEXT PRIMARY KEY,                        -- inv_…
-  token_hash BLOB NOT NULL UNIQUE,            -- sha256 of 32 random bytes
+  token_hash BLOB UNIQUE,                     -- sha256(T), §Nonce layouts; NULL until the admin notice is accepted
   email_norm TEXT NOT NULL,                   -- lowercased; no dot/plus normalisation
-  org_id TEXT, new_org_name TEXT,             -- exactly one; new_org_name creates the org on acceptance
+  org_id TEXT, new_org_name TEXT,             -- exactly one; new_org_name creates the org on acceptance (staff only)
   role TEXT NOT NULL CHECK (role IN ('owner','viewer')),
-  created_by TEXT NOT NULL,                   -- staff Access sub
+  created_by_kind TEXT NOT NULL CHECK (created_by_kind IN ('member','hana')),
+  created_by TEXT NOT NULL,                   -- user id (with step_up_id) or staff Access sub
+  step_up_id TEXT,                            -- member invites: the pending action that authorised it
+  notified_at INTEGER,                        -- the admin notice (invitee, owners, contacts) was accepted
   created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,   -- + 7 d
   accepted_at INTEGER, accepted_user_id TEXT, accepted_by_sub TEXT,
   revoked_at INTEGER, expired_logged_at INTEGER,
-  CHECK ((org_id IS NULL) <> (new_org_name IS NULL))
+  CHECK ((org_id IS NULL) <> (new_org_name IS NULL)),
+  CHECK ((created_by_kind = 'member') = (step_up_id IS NOT NULL)),
+  CHECK (created_by_kind = 'hana' OR new_org_name IS NULL)
+);
+CREATE TABLE owner_grants (                   -- D89: a new owner of an org that has one is a viewer until owner_from
+  id TEXT PRIMARY KEY,                        -- og_…
+  org_id TEXT NOT NULL,
+  user_id TEXT,                               -- NULL until the owner invite is accepted
+  invite_id TEXT,                             -- an owner invite; NULL for a promotion of a viewer
+  granted_by_kind TEXT NOT NULL CHECK (granted_by_kind IN ('member','hana')),
+  granted_by TEXT NOT NULL, step_up_id TEXT, created_at INTEGER NOT NULL,
+  notified_at INTEGER,                        -- the blocking notice was accepted
+  owner_from INTEGER,                         -- acceptance (invite) or notified_at (promotion) + ownerGrantDelayMs
+  cancel_token_hash BLOB UNIQUE,              -- sha256 of the emailed cancel token
+  cancelled_at INTEGER, cancelled_by TEXT,
+  applied_at INTEGER,                         -- the console cron set members.role = 'owner'
+  CHECK (invite_id IS NOT NULL OR user_id IS NOT NULL)   -- a promotion names its user from the start
 );
 CREATE TABLE auth_flows (
   state_hash BLOB PRIMARY KEY,                -- sha256(state); state is 32 random bytes
@@ -401,7 +456,7 @@ CREATE TABLE console_sessions (
   auth_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL,    -- written at most every 5 min
   absolute_expires_at INTEGER NOT NULL,       -- auth_at + 12 h
   revoked_at INTEGER,
-  country TEXT, asn INTEGER, ip_prefix TEXT   -- /24 or /48; staff-only forensics, 90 days (open question 19)
+  country TEXT, asn INTEGER, ip_prefix TEXT   -- /24 or /48; staff-only forensics, 90 days (D93)
 );
 CREATE TABLE pending_actions (
   id TEXT PRIMARY KEY,                        -- act_…
@@ -428,7 +483,7 @@ CREATE TABLE audit_log (
   outcome TEXT NOT NULL CHECK (outcome IN ('ok','failed'))
 );
 CREATE INDEX audit_log_org_seq ON audit_log (org_id, seq);
--- BEFORE UPDATE: RAISE(ABORT). BEFORE DELETE: RAISE(ABORT) unless OLD.at < now − 36 months.
+-- BEFORE UPDATE: RAISE(ABORT). BEFORE DELETE: RAISE(ABORT) unless OLD.at < now − 60 months (D90).
 ```
 
 No staff table and no org-to-app table: `apps.org_id` (through `scopes.org_id`) in the hot DB is the only source of
@@ -518,6 +573,10 @@ CREATE TABLE ops.scope_watch (scope_id text NOT NULL, change_id bigint NOT NULL,
 CREATE TABLE ops.nonce_checks (relayer_pk text NOT NULL, checked_at timestamptz NOT NULL, chain_nonce bigint NOT NULL,
   explained boolean NOT NULL, ledger_relayed_since_last bigint NOT NULL, alerted_at timestamptz,
   PRIMARY KEY (relayer_pk, checked_at));
+CREATE TABLE ops.retention_runs (id bigserial PRIMARY KEY, started_at timestamptz NOT NULL, finished_at timestamptz,
+  rows jsonb NOT NULL DEFAULT '{}', error text);                                   -- D90, shown in the admin console
+CREATE TABLE ops.rejection_alerts (org_id text NOT NULL, day date NOT NULL, relayed bigint NOT NULL,
+  rejected bigint NOT NULL, alerted_at timestamptz, PRIMARY KEY (org_id, day));    -- D91
 ```
 
 Functions (owner-defined, `SECURITY DEFINER`, `SET search_path = usage, pg_temp`):
@@ -529,9 +588,10 @@ Functions (owner-defined, `SECURITY DEFINER`, `SET search_path = usage, pg_temp`
 | `usage.org_statements(org text)` | Statement metadata (month, `as_of`, keys, hashes, totals) | `usage_writer`, `usage_admin` |
 | `usage.org_ledger(org text, month date, as_of timestamptz, after text, lim int)` | Ledger rows for the ledger CSV, keyset-paged by `request_id` | `usage_writer`, `usage_admin` |
 | `usage.ensure_partitions(months_ahead int)` | Creates missing monthly partitions up to N months ahead (3 by default) | `usage_admin` |
-| `usage.drop_expired_partitions()` | Detaches and drops partitions whose upper bound is more than 400 days ago | `usage_admin` |
-| `usage.strip_uids()` | Sets `uid = NULL` on events of every month that ended more than 35 days ago (per partition, batches of 10 000) | `usage_admin` |
+| `usage.drop_expired_partitions()` | Detaches and drops partitions whose upper bound is more than 7 years ago, and `gas_settlements` rows of those months (D90) | `usage_admin` |
+| `usage.strip_uids()` | Sets `uid = NULL` on events of every month that ended more than 24 months ago (per partition, batches of 10 000), and deletes `app_users` rows whose `last_seen` is more than 24 months ago (D90) | `usage_admin` |
 | `usage.purge_app_users(app text)` | Deletes an app's `app_users` rows (app deleted + 30 days) | `usage_admin` |
+| `usage.rejection_rates(day date)` | Per org: relayed attempts and relayed-then-rejected ones for the day (D91) | `usage_admin` |
 | `usage.erase_uid(app_ids text[], uid bytea)` | `uid:erase`: deletes the user's `app_users` rows and NULLs the uid on their events | `usage_admin` (from the script) |
 
 Roles:
@@ -545,7 +605,8 @@ GRANT SELECT ON ALL TABLES IN SCHEMA usage TO usage_admin;
 GRANT INSERT ON usage.gas_settlements, usage.near_usd_rates, usage.statements TO usage_admin;
 GRANT UPDATE (usd_micros, source, entered_by, fetched_at) ON usage.near_usd_rates TO usage_admin;
 GRANT EXECUTE ON FUNCTION usage.org_report, usage.org_statements, usage.org_ledger, usage.ensure_partitions,
-  usage.drop_expired_partitions, usage.strip_uids, usage.purge_app_users, usage.erase_uid TO usage_admin;
+  usage.drop_expired_partitions, usage.strip_uids, usage.purge_app_users, usage.erase_uid, usage.rejection_rates
+  TO usage_admin;
 GRANT USAGE, CREATE ON SCHEMA ops TO usage_admin;
 ALTER ROLE usage_writer SET statement_timeout = '5s';
 ALTER ROLE usage_admin  SET statement_timeout = '60s';
@@ -565,7 +626,7 @@ ALTER ROLE usage_admin  SET statement_timeout = '60s';
 | Bucket | Holds | Writer | Readers | Rules |
 |---|---|---|---|---|
 | `LOGOS` | `logos/<app_id>/<sha256 hex>.png`, re-encoded | console | files Worker | Content-addressed, never overwritten; replaced objects deleted after 30 days |
-| `STATEMENTS` | `statements/<org_id>/<YYYY-MM>/<as_of>.{csv,pdf}` | admin | admin, console (`get` only) | A bucket lock rule (retention 36 months) blocks overwrite and delete; the sha256 is in Neon |
+| `STATEMENTS` | `statements/<org_id>/<YYYY-MM>/<as_of>.{csv,pdf}` | admin | admin, console (`get` only) | A bucket lock rule (retention 7 years, D90) blocks overwrite and delete; the sha256s are in Neon |
 | `EXPORTS` | on-demand ledger CSVs, the one legacy-usage export | admin | admin | Lifecycle: delete after 30 days, except `legacy/` |
 
 R2 bindings can't be read-only, so "read only by code" is a code rule with a test (no `put`/`delete` call on that
@@ -586,6 +647,8 @@ binding in that Worker); the bucket lock and the Neon hash are what make a state
 | Owner action | the contract layout: `"hana-id/owner-action/v1" ‖ borsh(signer) ‖ borsh(scope_id) ‖ borsh(method) ‖ borsh(args without auth) ‖ action_nonce u64 LE` | console, API precheck, contract |
 | Client proof | the contract layout: `"hana-id/client-proof/v1" ‖ borsh(signer) ‖ borsh(scope_id) ‖ action_nonce u64 LE` | console, API precheck, contract |
 | Cancel link token | `T = HMAC-SHA256(CANCEL_LINK_KEY, "hana-id/cancel-link/v1" ‖ borsh(change_id))`; the hot DB stores `sha256(T)` | API |
+| Invite token | `T = HMAC-SHA256(INVITE_LINK_KEY, "hana-console/invite/v1" ‖ borsh(invite_id))`; `CONSOLE_DB` stores `sha256(T)` | console |
+| Owner-grant cancel token | `T = HMAC-SHA256(CANCEL_LINK_KEY, "hana-console/owner-grant-cancel/v1" ‖ borsh(grant_id))`; `CONSOLE_DB` stores `sha256(T)` | console |
 | uid | `HMAC-SHA256(USER_ID_KEY, "hana-id/uid/v1" ‖ borsh(scope_id) ‖ borsh(provider) ‖ borsh(sub))[0..16]` | API |
 
 - Generic action objects contain `v: 1`, `env` (the manifest `name`) and `org_id`; the origin, settings and on-chain
@@ -678,6 +741,10 @@ existing API callers ignore them.
         WHERE token_hash = ?h AND accepted_at = ?t AND accepted_by_sub = ?sub;
   ```
 
+  For an owner invite with an `owner_grants` row (§Invites and owner grants), the member insert uses `role =
+  'viewer'` and one more statement sets the grant's `user_id` and `owner_from`. `V(i)` also needs `i.token_hash IS
+  NOT NULL` (the notice was accepted).
+
   D1 runs a batch as one serialised transaction, so a concurrent second acceptance inserts nothing. Email matching is
   exact after lowercasing. The server then reads the invite and creates a session only if `accepted_by_sub = sub`;
   otherwise 403 `invite_invalid` (one generic code).
@@ -691,7 +758,9 @@ existing API callers ignore them.
   freezing their only org deletes the user's sessions at once.
 - **CSRF.** Every non-GET request needs `Sec-Fetch-Site: same-origin`, `Origin` equal to `console.origin`,
   `x-hana-console: 1` and `content-type: application/json`; otherwise 403 `csrf`.
-- **Rate limits:** `/api/auth/*` and the auth-origin routes, 10 per minute per IP (IPv6 /64) (open question 20).
+- **Rate limits:** `/api/auth/*` and the auth-origin routes, 10 per minute per IP (IPv6 /64), with the Workers
+  rate-limiting binding in the console Worker (the auth origin's requests reach it through `AuthHandler`); the API's
+  `RateLimiter` only if the binding isn't available on the account's plan (D93).
 
 ## Roles and permissions
 
@@ -716,13 +785,46 @@ Worker's notice must be accepted before the clock starts; "feed" means the admin
 | `execute_change` (anyone may call it) | ✓ | — | ✓ | — | — | watcher |
 | Change a member's role, remove a member | ✓ | — | ✓ | ✓ (not H) | — | feed |
 | Org `required_hd` | ✓ | — | ✓ | ✓ (not H) | — | feed |
-| Invite (owner or viewer, any org or a new org) | — | — | ✓ | — | — | invitee + feed |
+| Invite an owner or viewer to the org (D89) | ✓ | — | ✓ (any org, or a new org) | ✓ (not H) | a new owner: 24 h as a viewer, unless the org has no owner | blocking: invitee, every owner, security contacts |
+| Promote a viewer to owner (D89) | ✓ | — | ✓ | ✓ (not H) | 24 h | blocking: every owner, security contacts |
+| Cancel a pending invite or owner grant | ✓ | — | ✓ | — | — | feed |
 | Set an org's security contacts | — | — | ✓ | — | — | old and new contacts |
 | Create an app; assign a legacy scope; delete an app; freeze an org; suspend an org (bit 2); disable a user | — | — | ✓ | — | — | feed |
 
-- The last owner of an org can't be removed or demoted.
+- The last owner of an org can't be removed or demoted. A pending owner (inside the 24 h) counts as a viewer.
 - Owners who aren't on-chain owners can do everything in the owner column except the "on-chain" rows; for those they
   ask Hana for a staff proposal or add themselves on chain with `SetOwners` (timelocked).
+
+## Invites and owner grants (D89)
+
+- **Who invites.** Hana staff create an org by inviting its first owner (`StaffRpc.issueInvite` with `newOrgName`),
+  and may invite to any org. Owners invite viewers and owners to their own org only: step-up kind `member.invite`
+  (`{email, role}`), so every owner-issued invite is a fresh Google sign-in bound to that invite. Staff invites are
+  authorised by the staffer's Access session (staff have no Google step-up). At most 10 open invites per org
+  (`conflict` otherwise). Viewers can't invite.
+- **Notice first (fails closed).** An invite is created with `token_hash` NULL, so no link works yet. The admin
+  Worker's 5-minute cron reads `StaffRpc.pendingMemberNotices`, computes the invite token `T` (§Nonce layouts), emails
+  the invitee the link `<console.origin>/invite#t=<T>`, and emails the notice (who invited whom, which role, request
+  country, the cancel instructions) to every owner of the org, its security contacts (`AdminRpc.getSecurityContacts`)
+  and the security alias. Only after every send is accepted does it call `ackMemberNotice({inviteId, tokenHash})`,
+  which sets `token_hash` and `notified_at`. The invite's 7 days count from creation.
+- **New owners wait.** An owner invite to an org that already has an owner also creates an `owner_grants` row. On
+  acceptance the member row is written with `role = 'viewer'`, and the grant gets `user_id` and `owner_from =
+  accepted_at + ownerGrantDelayMs` (24 h in production) in the same batch. A promotion of a viewer (`member.role` to
+  owner, by an owner with a step-up or by staff) creates a grant at once; its notice goes to every owner, the contacts
+  and the alias, and `owner_from = notified_at + ownerGrantDelayMs`. Every grant notice carries a cancel link
+  `<console.origin>/cancel-owner/<grantId>#t=<T>` (a page with a POST confirm, like guarded-change links).
+- **Becoming owner.** A member is an owner when `role = 'owner'`, or by predicate when an uncancelled grant has
+  `owner_from <= now`; the console's hourly cron records it (`members.role = 'owner'`, `applied_at`, audit
+  `member.owner_granted`). Until then they are a viewer and don't count for the last-owner rule.
+- **Cancel.** Any owner (console), Hana staff (`StaffRpc.cancelOwnerGrant`, admin console) or the emailed link, until
+  `owner_from`. Cancelling leaves the person a viewer; removing them is a separate, immediate action. Revoking an
+  unaccepted owner invite cancels its grant.
+- **Exception.** The first owner of an org (no owner exists: a new org, or an org whose owners were all removed by
+  Hana) is an owner on acceptance; the notice still goes to the contacts and the alias.
+- **Staff membership changes.** Hana staff add and remove members in the admin console (`StaffRpc.setMember`): a
+  removal is immediate; adding an owner to an org that has one goes through a grant like any other.
+- Every invite, grant, cancel and removal writes `audit_log` and goes to the feed.
 
 ## Fresh sign-in (step-up)
 
@@ -749,7 +851,9 @@ live session confirms in one click).
   change one row. For console-DB-only kinds (`member.role`, `member.remove`, `org.policy`) the consumption, the change
   and the audit row are one guarded batch.
 - **Kinds:** `origin.add` (with any removes in the same change), `policy.set`, `raw_sign.on`, `app.resume`,
-  `app.settings`, `owner_action`, `member.role`, `member.remove`, `org.policy`.
+  `app.settings`, `owner_action`, `member.invite`, `member.role`, `member.remove`, `org.policy`. `member.invite` and a
+  `member.role` promotion to owner create an `invites` or `owner_grants` row; the notice and the 24 h follow
+  (§Invites and owner grants).
 - Every step-up action writes an `audit_log` row with `step_up_id`.
 
 ## Guarded changes (origin adds, policies, raw signing)
@@ -861,7 +965,7 @@ it doesn't catch an insider who also forges `guarded_changes` rows.
   - type by magic bytes: PNG, JPEG or WebP; SVG, GIF, AVIF and everything else refused (`logo_type`);
   - ≤ 512 KiB; decoded size 128 to 2048 px per side; aspect ratio ≤ 1.25;
   - re-encoded to a 256 × 256 PNG (fit contain, transparent padding, no metadata) through the Cloudflare Images
-    binding (open question 15); the output must decode again, be a PNG and be ≤ 128 KiB;
+    binding (D93); the output must decode again, be a PNG and be ≤ 128 KiB;
   - stored at `logos/<app_id>/<sha256 hex>.png` (`contentType: image/png`), recorded in `logo_objects`, then
     `ConsoleRpc.setLogo` points `apps.logo_key` at it (CAS). The replaced object is deleted 30 days later.
 - **Files Worker** serves only `GET /logos/<app_id>/<64 hex>.png`: the object must exist, have `contentType`
@@ -1012,6 +1116,7 @@ interface AdminRpc {
   securityEvents(c: Ctx & { unnotifiedOnly: boolean; limit: number }): Rpc<{ events: SecurityEvent[] }>;
   markSecurityEventNotified(c: Ctx & { ids: string[] }): Rpc<{}>;
   relayerKeys(c: Ctx): Rpc<{ keys: { pool: 'session' | 'owner'; publicKey: string }[] }>;   // public keys only
+  purgeAudit(c: Ctx & { before: number; limit: number }): Rpc<{ appChanges: number; guardedChanges: number }>;  // D90
   deletedApps(c: Ctx & { before: number }): Rpc<{ appIds: string[] }>;                       // for app_users purge
 }
 // apps/console, bound only by the admin Worker. Every method takes a Hana actor.
@@ -1019,14 +1124,20 @@ interface StaffRpc {
   listOrgs(c: Ctx & { cursor?: string; limit: number }): Rpc<{ orgs: OrgView[]; next?: string }>;
   getOrg(c: Ctx & { orgId }): Rpc<{ org: OrgView; members: MemberView[]; invites: InviteView[] }>;
   issueInvite(c: Ctx & { email: string; role: Role; orgId?: string; newOrgName?: string; kind?: 'partner' | 'internal' })
-    : Rpc<{ invite: InviteView; token: string }>;   // token returned once, to be emailed; never stored or logged
+    : Rpc<{ invite: InviteView }>;   // unusable until ackMemberNotice; the admin Worker computes and emails the token
   revokeInvite(c: Ctx & { inviteId }): Rpc<{}>;
+  pendingMemberNotices(c: Ctx & { limit: number })
+    : Rpc<{ notices: { kind: 'invite' | 'owner_grant'; invite?: InviteView; grant?: OwnerGrantView;
+                       owners: { email: string }[] }[] }>;
+  ackMemberNotice(c: Ctx & { inviteId?: string; grantId?: string; tokenHash: string /* b64url sha256 */ }): Rpc<{}>;
+  cancelOwnerGrant(c: Ctx & { grantId }): Rpc<{}>;
   listMembers(c: Ctx & { orgId }): Rpc<{ members: MemberView[] }>;   // includes sub, for orgOwnerSubs
   setMember(c: Ctx & { orgId; userId; role: Role | null /* null = remove */ }): Rpc<{}>;
   disableUser(c: Ctx & { userId; disabled: boolean }): Rpc<{}>;
   freezeOrg(c: Ctx & { orgId; frozen: boolean }): Rpc<{}>;
   auditSince(c: Ctx & { seq: number; limit: number }): Rpc<{ rows: AuditRow[] }>;
   queryAudit(c: Ctx & { filters: AuditFilters; cursor?: string; limit: number }): Rpc<{ rows: AuditRow[]; next?: string }>;
+  purgeAudit(c: Ctx & { before: number; limit: number }): Rpc<{ auditLog: number; ownerGrants: number }>;      // D90
 }
 ```
 
@@ -1047,10 +1158,10 @@ interface StaffRpc {
 - **Trust in the actor.** `ConsoleRpc` trusts its `actor` and `orgId` except where the API verifies a token (guarded
   changes, owner actions). The `orgId` filter is a backstop against console bugs, not against a compromise.
 - **Destructive-call breaker.** `setSuspended(true)`, `revokeKey`, `rotateKey` and `removeOrigins` calls through
-  `ConsoleRpc` are counted in the `RateLimiter` DO before the write: 5 per org and 20 across orgs per rolling hour
-  (open question 21). Over either, `rate_limited` and a `breaker` security event. Cancels and `turnOff` aren't counted:
-  a cancel never touches a live origin, and turning the policy or raw signing off only sends signatures back to the
-  popup. `AdminRpc` isn't limited.
+  `ConsoleRpc` are counted in the `RateLimiter` DO before the write: 5 per org and 20 across orgs per rolling hour (D93:
+  counted per call). Over either, `rate_limited` and a `breaker` security event. Cancels and `turnOff` aren't counted: a
+  cancel never touches a live origin, and turning the policy or raw signing off only sends signatures back to the popup.
+  `AdminRpc` isn't limited.
 - **Hot-DB budget.** Each `ConsoleRpc` call runs at most two reads and one batch of ≤ 8 indexed statements
   (multi-row `INSERT … VALUES` for several origins), charged
   to a token bucket in the `RateLimiter` DO (`console-rpc:hotdb`: 30 statements/s, burst 60); over it,
@@ -1088,7 +1199,9 @@ interface SecurityEvent { id; detectedAt: number; kind: 'drift' | 'breaker' | 'o
 interface ScopeRow { scopeId; orgId; environment: 'test' | 'live'; assignedAt: number }
 interface OwnerActionBody { method: 'propose_change' | 'execute_change' | 'cancel_change' | 'remove_client'
   | 'disable_shared_login'; args: Record<string, unknown> /* includes auth.Oidc.jwt where needed */ }
-// StaffRpc views mirror their CONSOLE_DB rows with allowlisted columns only: never token_hash or cookies.
+// StaffRpc views mirror their CONSOLE_DB rows with allowlisted columns only: never token_hash, cancel_token_hash or
+// cookies. OwnerGrantView: { id; orgId; userId?; inviteId?; grantedByKind; grantedBy; createdAt; notifiedAt?;
+//   ownerFrom?; cancelledAt?; appliedAt? } (D89).
 ```
 
 ### RpcCode → HTTP status (console and admin BFFs)
@@ -1131,6 +1244,10 @@ Console-only codes: `unauthenticated` 401, `csrf` 403, `not_invited` 403, `invit
 | `GET /api/orgs/:org/usage?from&to&by&apps` | viewer | — | `UsageRow[]` |
 | `GET /api/orgs/:org/statements`, `/statements/:month.csv`, `/statements/:month.pdf`, `/ledger/:month.csv` | viewer | — | metadata; files from `STATEMENTS`; ledger streamed from `ConsoleRpc.ledger` |
 | `GET /cancel/:changeId` (SPA), `POST /api/cancel` | none (CSRF rules) | — | `{changeId, token}` → `GuardedChange` |
+| `POST /api/orgs/:org/invites/:id/revoke`, `POST /api/orgs/:org/owner-grants/:id/cancel` | owner | — | `{}` (D89; issuing an invite is the `member.invite` action) |
+| `GET /cancel-owner/:grantId` (SPA), `POST /api/owner-grants/cancel` | none (CSRF rules) | — | `{grantId, token}` → `{}` |
+| `GET /api/orgs/:org/statements/:month` | viewer | — | the on-screen statement (D92) |
+| `GET /api/governance/pending-upgrades` | session | — | pending upgrades and owner actions (governance batch, D86) |
 
 ### Admin BFF routes (`admin.origin`; every route needs a valid Access JWT and a staff email)
 
@@ -1149,24 +1266,32 @@ Console-only codes: `unauthenticated` 401, `csrf` 403, `not_invited` 403, `invit
 | `GET /api/security` | security events, feed lag, notice backlog, breaker state, nonce checks, watcher state |
 | `GET /api/reports?org&from&to&by`, `POST /api/statements/:org/:month/issue`, `GET /api/statements/:org/:month.{csv,pdf}`, `POST /api/exports/:org/:month` | reports, statements, ledger exports |
 | `PUT /api/rates/:day` | audited rate override (refused once the month has a statement) |
+| `POST /api/owner-grants/:id/cancel`; `GET /api/orgs/:org/members` pending invites and grants | D89 |
+| `GET /api/retention` | the monthly purge runs (D90) |
+| `GET /api/monitoring`, `POST /api/monitoring/alerts/:id/ack`, `GET /api/governance/pending-upgrades` | governance batch (D83, D86) |
 
 ## Hana admin console (D75)
 
-- **Access.** Production: a self-hosted Access application on `admin.origin` (Custom Domain); a dev env without a
-  Hana zone uses Worker-level Access on `workers.dev`. Policy: include members of the `Hana-Technology` GitHub team
-  `hana-id-staff` (open question 4), the GitHub org requiring 2FA for every member; fallback rule: exact-email Google
-  identities listed in the policy (never a domain rule). Application session 1 h. `workers_dev` off in production,
-  `preview_urls` off everywhere.
-- **JWT check on every `/api/*` request** (`packages/oidc`, JWKS from `https://<accessTeamDomain>/cdn-cgi/access/certs`):
-  RS256, a `kid` in the set, `iss = https://<accessTeamDomain>`, `aud = accessAud`, unexpired, non-empty `sub` (no
-  service tokens), `type = 'app'`, and the lowercased `email` in the manifest's `admin.staffEmails` (defence in depth
-  behind the Access policy). Otherwise 401/403, fail closed. `ctx.access` isn't relied on.
+- **Access (D88).** Production: a self-hosted Access application on `admin.origin` (Custom Domain); a dev env without
+  a Hana zone uses Worker-level Access on `workers.dev`. Policy: include members of the `Hana-Technology` GitHub team
+  `hana-admins`, the GitHub org requiring 2FA for every member; fallback rule: exact-email Google identities listed in
+  the policy (never a domain rule; the addresses are still to come, open question 4). Application session 1 h.
+  `workers_dev` off in production, `preview_urls` off everywhere.
+- **JWT check on every `/api/*` request** (`packages/oidc`, JWKS from
+  `https://<accessTeamDomain>/cdn-cgi/access/certs`): RS256, a `kid` in the set, `iss = https://<accessTeamDomain>`,
+  `aud = accessAud`, unexpired, non-empty `sub` (no service tokens), `type = 'app'`, and the lowercased `email` in the
+  manifest's `admin.staffEmails` (a second check behind the Access policy, kept by D88; offboarding removes a person
+  from both). Otherwise 401/403, fail closed. `ctx.access` isn't relied on.
 - The actor `{kind: 'hana', id: sub, email}` travels as an explicit RPC argument into `audit_log` and `app_changes`.
 - The console's CSRF rules and CSP apply.
 - **Screens:** orgs (invite, freeze, suspend, security contacts, assign legacy scopes, owner/contact mismatch flag);
-  members (roles, disable); apps (create, suspend/resume, staff proposals, removals, cancel, expedite, key revoke,
-  delete); audit (filter, CSV); security (events, feed lag, notices, breaker, nonce checks, watcher); reports and
-  statements; rates.
+  members (add, remove, roles, pending invites and owner grants with cancel, disable; D89); apps (create,
+  suspend/resume, staff proposals, removals, cancel, expedite, key revoke, delete); audit (filter, CSV); security
+  (events, feed lag, notices, breaker, nonce checks, watcher, rejection-rate alerts, D91); reports and statements
+  (on-screen statement, D92); rates; retention (each monthly purge run: time, rows per table, failures, next run;
+  D90). Added by the governance batch: "Security & monitoring" (watchdog, pending key changes, pause, pending upgrades
+  and owner actions, alert history with acknowledge; D83, `docs/governance-spec.md` "Monitoring in the admin portal")
+  and the pending-upgrades page (D86, also in the partner console).
 - **No NEAR keys.** `admin_register_scope` and contract admin stay in `scripts/`. NEAR calls are read-only: `tx` for
   settlement, `get_scope` for the watcher, `view_access_key` for the nonce check.
 
@@ -1219,6 +1344,14 @@ Relayed events from the last 3 days without a `gas_settlements` row (≤ 500 per
 written with `result = 'final'` and the sums (`INSERT … ON CONFLICT DO NOTHING`). After 24 h without a final result
 it is written as `unsettled` and counted on the statement, never estimated. Non-archival RPC keeps about 2.5 days.
 
+### Rejection-rate check (admin, 00:30 UTC; D91)
+
+For the previous UTC day, `usage.rejection_rates` gives each org's relayed attempts and relayed-then-rejected ones.
+An org with ≥ 100 relayed attempts and a rejected share above 5% (provisional, a constant until real traffic sets
+it) gets one `ops.rejection_alerts` row and one `rejection_rate` email to the security alias, and shows in the admin
+security screen. The partner isn't billed for it by default (D91); the service contract may bill partner-caused
+rejections above the threshold.
+
 ### Daily nonce cross-check (admin, 00:30 UTC; D34)
 
 For each relayer key (`AdminRpc.relayerKeys`, both pools): read `view_access_key` at `finality: final`; its nonce N
@@ -1233,8 +1366,7 @@ relayer_nonce)`, so:
 The check also records the ledger's relayed rows since the last check against `N − N_prev` (shown, not alerted: nonce
 reservations skip up to 99 nonces per cold start, D21). It proves the newest transaction of each key is billed and
 detects foreign use that ends a day; it doesn't prove that no row in the middle of a day is missing. A missing row
-under-bills Hana; it never over-bills a partner. Open question 13 asks whether to run it hourly or add an indexer
-count.
+under-bills Hana; it never over-bills a partner. Confirmed as read, daily, no indexer count (D93).
 
 ### Reports (on demand; admin for any org, partners for their own)
 
@@ -1264,7 +1396,7 @@ count(*) FILTER (WHERE e.relayed AND (g.request_id IS NULL OR g.result = 'unsett
   `tokens_burnt` paid by the relayer; the 30% function-call reward credited to the signer isn't netted off.
 - The gas split: relayed ok (paid), rejected but relayed (paid, for example third-party replays of public signed
   derives), refused before relay (no gas), and error (a settled timeout or `near_error`).
-- Uids are stripped 35 days after a month ends, so MAU for older months comes from the frozen statements.
+- Uids are stripped 24 months after a month ends (D90), so MAU for older months comes from the frozen statements.
 - Partners see only their org (the function filters by `org_id`); `ConsoleRpc.usage` refuses ranges over 400 days or
   more than 100 apps and is rate-limited per member.
 
@@ -1272,19 +1404,25 @@ count(*) FILTER (WHERE e.relayed AND (g.request_id IS NULL OR g.result = 'unsett
 
 - **Issue** (`POST /api/statements/:org/:month/issue`, staff), allowed from the 3rd of the next month 00:00 UTC once no
   relayed event of the month lacks a settlement and every day has a rate. The admin Worker computes the rows with
-  `received_at <= as_of` (`as_of` = now), renders the CSV (and a PDF summary of the same totals; open question 16),
-  uploads both to `STATEMENTS` under new keys, then inserts `usage.statements` with the sha256s and totals. The insert
+  `received_at <= as_of` (`as_of` = now), renders the CSV and a PDF (`pdf-lib`) of the same totals that prints the
+  CSV's sha256 (the statement hash, D92), uploads both to `STATEMENTS` under new keys, then inserts
+  `usage.statements` with both sha256s and the totals. The insert
   is the commit point: the PK refuses a second statement for the org and month. It is audited (`statement.issued`)
   and the feed emails the security contacts and `billing_email` with the CSV's sha256.
 - **Late events** (`received_at > as_of`, an event delayed past the issue) stay in the ledger and show in the admin
   report as "after statement" for that month; Hana handles them under the service contract. Nothing is recomputed.
 - Partners download the same files read-only from the console (`STATEMENTS`, `get` only) with the sha256 beside them.
+- **On-screen statement** (console and admin, D92): rendered from `usage.statements.totals`, the same numbers as the
+  CSV and PDF, with the statement hash. A test renders all three from one statement and compares the totals.
+- **Rejected gas (D91)** is its own line on all three (Tgas, NEAR, USD), marked "not billed" by default; the billed
+  line excludes it unless the service contract says otherwise.
+- **Tax invoices** come from the accounting software and quote the statement (org, month, hash); Hana ID issues none.
 - **CSV:** RFC 4180, UTF-8, LF, decimal strings. Injection guard: a cell matching `^-?\d+(\.\d+)?$` is left as is; any
   other cell starting with `=`, `+`, `-`, `@`, tab or CR is prefixed with `'`. Rows: one per app per day, then one per
   scope per day for owner actions (`app_id` empty), then one total per app and per scope (`day = total`, MAU on app
   totals). Columns:
 
-  `month,org_id,org_name,scope_id,app_id,app_name,environment,day,logins,derives,revokes,unlocks,owner_actions,mau,new_users,failures_by_code,tgas,relayed_rejected_tgas,error_tgas,near,near_usd_rate,rate_source,usd,login_p50_ms,login_p95_ms,derive_p50_ms,derive_p95_ms,unsettled,as_of`
+  `month,org_id,org_name,scope_id,app_id,app_name,environment,day,logins,derives,revokes,unlocks,owner_actions,mau,new_users,failures_by_code,tgas,relayed_rejected_tgas,error_tgas,near,relayed_rejected_near,near_usd_rate,rate_source,usd,relayed_rejected_usd,login_p50_ms,login_p95_ms,derive_p50_ms,derive_p95_ms,unsettled,as_of`
 
   `tgas` is all settled gas of the row (ok + rejected + error) as an exact decimal of Tgas; `relayed_rejected_tgas`
   and `error_tgas` are parts of it; `near` is all settled `tokens_burnt` as exact NEAR; `failures_by_code` is
@@ -1315,13 +1453,19 @@ is unauthenticated, and uid-to-address pairs would re-identify users through cha
 - **Allowlist:** `details_json`/`detail_json` hold allowlisted fields only; tokens, secrets, cookies and full IPs are
   never written.
 - **Tamper evidence:** the append-only triggers, D1 Time Travel (30 days), Neon point-in-time restore, the R2 bucket
-  lock and partner-held statement hashes. Not cryptographic (open question 18).
+  lock and partner-held statement hashes. Not cryptographic; no hash chain in the MVP (D93).
 
 ## Email (one channel: the admin Worker)
 
-- **Provider:** open question 2; SPF, DKIM and DMARC on the Hana domain. Only the admin Worker holds `EMAIL_API_KEY`.
+- **Provider (D87):** Resend, from a dedicated sending subdomain of the Hana domain (`email.from`) with SPF, DKIM and
+  DMARC. Code calls a small `EmailSender` interface (one message in; accepted with the provider's id, or an error),
+  with a Resend adapter and a test fake; switching provider (e.g. to Postmark) is a new adapter. Only the admin Worker
+  holds `EMAIL_API_KEY`; the governance watchdog has its own key.
 - **Blocking (fails closed):** `change_pending` for every guarded change, to the security alias and the org's security
-  contacts, with the cancel link. The change's clock starts only after every send is accepted.
+  contacts, with the cancel link. The change's clock starts only after every send is accepted. Likewise
+  `member_invite` (the link to the invitee; the notice to every owner, the security contacts and the alias) and
+  `owner_grant` (every owner, the contacts and the alias, with the cancel link): the invite works, and the grant's
+  24 h starts, only after every send is accepted (§Invites and owner grants).
 - **Feed (best effort, at least once):** the 5-minute cron walks `AdminRpc.changesSince`, `StaffRpc.auditSince`
   and `AdminRpc.securityEvents` from cursors in `ops.state` and emails the security contacts (and the alias for
   security events): origin and policy removals, raw signing off, cancels, activations, expedites, suspensions and
@@ -1329,7 +1473,8 @@ is unauthenticated, and uid-to-address pairs would re-identify users through cha
   security contacts changes (to old and new contacts), refused sign-ins in bulk once per hour, statements issued. A
   cursor advances only after a row's sends are accepted; the admin console shows the lag.
 - **Watcher:** `scope_pending_change`, `scope_changed` (§On-chain owner actions).
-- **Direct:** `invite` (to the invitee, with the link `<console.origin>/invite#t=…`), `nonce_unexplained`.
+- **Direct:** `nonce_unexplained`, `rejection_rate` (D91), `retention_failed` (D90), to the security alias. The invite
+  link (`<console.origin>/invite#t=…`) goes in the blocking `member_invite` send.
 - Plain text plus simple HTML, no remote images; links only to `console.origin`; never approve links.
 
 ## Response headers
@@ -1362,14 +1507,15 @@ is unauthenticated, and uid-to-address pairs would re-identify users through cha
            "staffEmails": ["…"] },                     // lowercased, non-empty
 "usage": { "neonRegion": "aws-ap-southeast-2", "writerHyperdrive": "hana-id-usage-writer-<env>",
            "adminHyperdrive": "hana-id-usage-admin-<env>" },
-"email": { "from": "Hana ID <no-reply@…>", "securityAlias": "security@…" }
+"email": { "from": "Hana ID <no-reply@mail.…>", "securityAlias": "security@…" },  // sending subdomain (D87)
+"ownerGrantDelayMs": 86400000                          // D89; = appChangeDelayMs (60 000 on sandbox-dev)
 ```
 
 - All origins are distinct from each other, from `vaultOrigin`, `authOrigin` and `apiUrl`; `https` outside
   `local*` envs.
 - `appChangeDelayMs` replaces batch B's raw-sign/policy delay rule (24 h, or `changeDelayMs` in dev envs) for the API
   and the CLI; sandbox-dev uses 60 000 (its `changeDelayMs`). On a production network `changeDelayMs ≥
-  appChangeDelayMs` (a refinement, added with the mainnet network value).
+  appChangeDelayMs` (a refinement, added with the mainnet network value); production `changeDelayMs` is 24 h (D93).
 - `console`, `files`, `admin`, `usage` and `email` are present together or not at all (guarded changes need the
   admin notice; the console needs the files origin), so an env without a dashboard still validates and deploys the API.
 - `gen-wrangler` emits every Worker config and `.dev.vars` placeholders; for the API `APP_CHANGE_DELAY_MS`, `NETWORK`,
@@ -1411,18 +1557,19 @@ Trust boundaries, most to least trusted:
 | XSS on the console origin | Requests with the victim's session: reads, kill switches, settings proposals for step-up | CSP `'self'`; no JS origins on the console client; script-free auth origin that never redirects without `state` and `code` and ends Locations with `#`; server-chosen nonces; the vault on another origin | It can submit its own action and phish one Google click; then the API's change binding, the blocking notice, the delay and `app_changes` protect |
 | Stolen console cookie | As XSS, from elsewhere | HttpOnly, Strict, 2 h idle / 12 h absolute; fresh sign-in per security-critical change; the breaker | DoS by kill switches, recoverable through the delay (origins, policy) or a new key |
 | Phished Google password of a member (no 2SV), or a hijacked Google session | Console access as that member, and fresh sign-ins | `required_hd` per org; invites only; the delay and blocking notice on guarded changes; the watcher; the breaker | **No second factor** (passkeys deferred): the console is as strong as the member's Google account. For an on-chain owner this also gives owner-action and guarded-change tokens. Accepted for the single-partner pilot only (§Deferred) |
-| Hijacked live Google session of an on-chain owner | Owner tokens with any nonce, outside our console | The contract timelock, cancel by any owner, the watcher's emails; guarded changes need the notice and delay | It can cancel its own removal (open question 9). Immediate `remove_client`/`disable_shared_login` give a DoS on its own scope; per-scope caps limit spam; the safety budget is separate |
+| Hijacked live Google session of an on-chain owner | Owner tokens with any nonce, outside our console | The contract timelock, cancel by any owner, the watcher's emails; guarded changes need the notice and delay | It can cancel its own removal (`docs/governance-spec.md` open question 17). Immediate `remove_client`/`disable_shared_login` give a DoS on its own scope; per-scope caps limit spam; the safety budget is separate |
 | Compromised console Worker | It chooses the nonce at every sign-in, so it can mint owner-action and guarded-change tokens from a routine sign-in; show A and request B; call every `ConsoleRpc` the API doesn't verify; overwrite logos; read every org's usage | The API verifies guarded changes against on-chain owners and the exact change; their clock starts only after the admin Worker's notice to security contacts the console can't edit; the watcher emails every on-chain change independently; the timelock; console audiences are clients of a sink scope only; the breaker; Hana clears suspension bits; `app_changes`; logos are re-checked by the files Worker and served sandboxed; statements are bucket-locked | Someone must read the notice and cancel within the delay (≥ 24 h on mainnet). Kill switches up to the breaker limits are a DoS; removed origins and policies come back only through the delay; revoked keys need a new key |
 | Compromised Hana staff account | Staff powers | Access with GitHub team + org 2FA and the staff allowlist; staff proposals always get the full delay and notice; staff can't move a scope out of a real org; owner checks in `createApp`/`assignScopeOrg`; staff proposals refused for `appChangeDelayMs` after a move; expedite only for member proposals; everything in `app_changes` and the feed | Social engineering of expedites (reason names the confirming contact). A staffer can set an org's security contacts, notified to old and new contacts |
 | Insider with Cloudflare account, D1 write or Neon owner access | Insert active origin rows or policies, drop triggers, edit contacts or ledger rows | Drift detection; partner-held statement hashes; R2 bucket lock; Neon PITR | The trust root is account hygiene. Not cryptographic |
-| Leaked relayer key | Burn its allowance; relay pool methods | Contract allowlists (D19); the nonce cross-check flags its transactions when they end a day | Mid-day foreign use isn't flagged (open question 13) |
+| Leaked relayer key | Burn its allowance; relay pool methods | Contract allowlists (D19); the nonce cross-check flags its transactions when they end a day | Mid-day foreign use isn't flagged (accepted, D93) |
 | Mail scanners | Fetch links | A GET never cancels; no approve links | — |
 | Lookalike origins | An IDN homograph passes human review | ASCII-only storage; `xn--` flagged with the decoded form; mixed-script refused on live scopes | Same-script confusables rely on the reader |
 | Malicious logo upload | Script on a Hana origin; brand impersonation in popups | Type by magic bytes, SVG banned, re-encoding, a separate files origin with `sandbox` CSP and `nosniff`; logo changes in the feed | Impersonating another brand's logo is caught only by review of the feed |
 | Replay of a public on-chain owner token | Login or a step-up | Random server-held login nonces; domain-separated layouts; token reservation | — |
 | Cross-environment replay | — | `env` and the signer in every digest | — |
-| Usage inflation | Billable-looking usage | Only post-gate events; plan `per_day`; the splits | Relayed-rejected gas is real cost (open question 11) |
-| Re-identifying users from `uid` | Linking uids to paths | Keyed HMAC on the API only; stripped after month + 35 days; no user list; the writer role can't read the ledger | Hana, holding the key, can always re-identify; a key leak re-links uids |
+| Usage inflation | Billable-looking usage | Only post-gate events; plan `per_day`; the splits | Relayed-rejected gas is real cost, borne by Hana by default (D91); the rejection-rate alert |
+| Re-identifying users from `uid` | Linking uids to paths | Keyed HMAC on the API only; stripped after month + 24 months (D90); no user list; the writer role can't read the ledger | Hana, holding the key, can always re-identify within 24 months; a key leak re-links uids |
+| Hijacked owner account adds a co-owner | A second owner identity in the org | Fresh sign-in per invite; blocking notice to every owner and security contact; 24 h as a viewer with cancel by any owner, Hana or the link (D89) | Someone must read the notice within 24 h; console ownership alone isn't on-chain ownership |
 | Dashboard load or bug | Logins | Separate Workers and databases; RPC-only access; bounded hot-DB budget; usage writes after the response; Neon failure is a logged no-op | RPC runs in the API's isolate (logical, not physical, isolation) |
 
 ## Trade-offs accepted
@@ -1441,7 +1588,7 @@ Trust boundaries, most to least trusted:
 | Fixed 24 h key grace | Partners can't choose a longer overlap | Revoke and re-create if they need a different timing |
 | No partner request queue | Apps are requested by email or call | Hana creates apps from the admin console |
 | No secret keys | No server-side partner API | None needed in batch C (no `/v1` endpoint takes one) |
-| Hana-issued invites only (D29) | Owners can't add teammates themselves | Hana issues invites on request (open question 6) |
+| A new owner waits 24 h (D89) | A partner's new co-owner can't act as owner the same day | Viewer access at once; Hana staff can add members directly |
 | Stale `apps.status`/`publishable_key` columns kept | Schema clutter; a future reader could trust them | Triggers keep `status` in step; a test fails if code reads `publishable_key` |
 | We own security-critical auth code (OIDC client, sessions) | Bugs are ours | The test list; the external audit; no passkey code yet |
 | A console client secret | One more secret | Worker secret, kept only in `.secrets/` |
@@ -1449,7 +1596,7 @@ Trust boundaries, most to least trusted:
 | Guarded changes depend on on-chain owners and NEAR RPC | Fail closed when RPC is down | Removals still work; staff proposals for NEAR-only scopes |
 | Staff proposals skip owner sign-in (a power the CLI has today) | Staff can propose any guarded change | Full delay, blocking notice, refused after a scope move |
 | The `no_session` waiver relies on the API seeing the first session | `create_session` can be called on the contract directly | Such sessions still needed an allowed origin or the partner's own client; staff get the waiver only on a scope the same call created; waived changes are still notified |
-| Settlement calls `tx` per relayed transaction | RPC load at scale | Bounded batches; open question 22 |
+| Settlement calls `tx` per relayed transaction | RPC load at scale | Bounded batches; revisit at scale (D93) |
 | `USER_ID_KEY` is a single point | Losing it breaks new-user continuity; a leak re-links users | Offline backup; API-only; never logged |
 | `app_users` is a lasting pseudonymous per-user record | Needed for new-user counts | Deleted with the app + 30 days; `uid:erase` |
 | uid is per scope | Two apps in one scope share pseudonyms | Same partner, same wallets |
@@ -1477,7 +1624,6 @@ Trust boundaries, most to least trusted:
 - **R2 and Analytics Engine copies.** Gives up the monthly R2 export of the audit log and `app_changes` (off-Cloudflare
   tamper evidence beyond Time Travel and PITR) and the AE operational metrics with their sampled cross-check.
 - **Stripe, plans, invoicing.** Billing stays manual under the service contract (D31).
-- **Owner-issued invites and role grants with a timelock.** Gives up partner self-service for teammates.
 - **Dropping `apps.status` and `apps.publishable_key`.** Needs rebuilding `app_origins`, `vault_shares` and legacy
   `usage` without their `ON DELETE CASCADE` first; no gain in batch C.
 
@@ -1494,7 +1640,7 @@ Trust boundaries, most to least trusted:
 - **D1 or Supabase for the ledger** (D73); **Supabase Storage** (D74).
 - **Extending the D1 `usage` counters; rounded pNEAR/Mgas totals; HyperLogLog MAU; MAU from an indexer.**
 - **Unkeyed `sha256(sub)`; user lists or SDK-reported addresses; recording gate rejections in the ledger.**
-- **Ledger retention of 40 or 100 days.**
+- **Ledger retention of 40 or 100 days, or 400 days** (D90).
 - **Delay rules per mode or key type; exempting own-client or test-key apps.**
 - **Applying a change when its notice fails; GET cancel links; approve links in email.**
 - **Step-up for removal, suspension or turning things off.**
@@ -1506,14 +1652,18 @@ Trust boundaries, most to least trusted:
 
 ## Retention
 
+Confirmed by the user (D90); **the periods are to be confirmed by the company's accountant before launch** (Hana is
+an Australian company: ATO 5-year record keeping; Privacy Act APP 11, destroy or de-identify personal information no
+longer needed). The service contract names the same periods.
+
 | Data | Kept for | Who purges |
 |---|---|---|
-| `usage.events` | 400 days (whole monthly partitions; open question 10); uid NULLed 35 days after the month ends | Admin daily: `drop_expired_partitions`, `strip_uids` |
-| `usage.app_users` | Life of the app + 30 days | Admin daily: `purge_app_users` for `AdminRpc.deletedApps` |
-| `usage.gas_settlements` | 400 days | Admin daily (same function as partitions) |
-| `usage.statements`, `near_usd_rates`, statement files | Contract term + 24 months (bucket lock 36 months) | By hand after review |
-| `audit_log`, `app_changes`, `guarded_changes` | 36 months (the triggers' constant) | Console (`audit_log`), API (`app_changes`, `guarded_changes`) monthly, in batches |
-| `ops.*` | Snapshots and cursors: current; `nonce_checks` 400 days | Admin daily |
+| `usage.events` | Raw (with uid) 24 months after the month ends; then the uid is NULLed and the de-identified rows kept with the settlement records, 7 years (whole monthly partitions) | Monthly job: `strip_uids`, `drop_expired_partitions` |
+| `usage.app_users` | Until `last_seen` is 24 months old, or the app is deleted + 30 days | Monthly job: `strip_uids`, `purge_app_users` for `AdminRpc.deletedApps` |
+| `usage.gas_settlements` | 7 years (settlement records) | Monthly job (with the partitions) |
+| `usage.statements`, `near_usd_rates`, statement files | 7 years (bucket lock 7 years) | Monthly job lists what is due; deleted by hand after review |
+| `audit_log`, `app_changes`, `guarded_changes`, `owner_grants` | 5 years (the triggers' constant, 60 months) | Monthly job: console (`audit_log`, `owner_grants`), API (`app_changes`, `guarded_changes`), in batches |
+| `ops.*` | Snapshots and cursors: current; `nonce_checks` 400 days | Monthly job |
 | `invites` | 90 days after acceptance, revocation or expiry | Console hourly |
 | `console_sessions` | 30 days after expiry; network data 90 days | Console hourly |
 | `auth_flows`, `handoff_codes`, `pending_actions` | 24 h after expiry | Console hourly |
@@ -1521,7 +1671,13 @@ Trust boundaries, most to least trusted:
 | `EXPORTS` | 30 days (`legacy/` kept) | R2 lifecycle |
 | D1 Time Travel / Neon PITR | 30 days / the plan's window | — |
 
-Purges run in batches under the per-invocation limits and never touch statements.
+- **Monthly purge job (D90).** The admin Worker's monthly cron runs the Neon functions above and calls
+  `AdminRpc.purgeAudit` and `StaffRpc.purgeAudit` for the hot-DB and console tables (5-year rows). Each run is
+  recorded in `ops.retention_runs` (started, finished, rows per table, error) and shown in the admin console's
+  retention screen with the next run; a failed or skipped run emails `retention_failed` to the security alias and
+  shows as a warning until a run succeeds. The hourly console purges (sessions, flows, invites, logos) are
+  housekeeping, not retention, and stay hourly.
+- Purges run in batches under the per-invocation limits and never delete statements.
 
 ## Tests (one per behaviour)
 
@@ -1565,7 +1721,14 @@ endpoint, the JWKS, the Access JWKS, NEAR RPC, the Images binding and the email 
 
 **Invites and roles**
 
-- Refused: expired, revoked, reused, wrong email, wrong `hd`.
+- Refused: expired, revoked, reused, wrong email, wrong `hd`, not yet notified (`token_hash` NULL).
+- Owner invites (D89): need the `member.invite` step-up; a viewer can't invite; an owner can't invite to another org
+  or create one; the 11th open invite is refused; the link works only after every notice send is accepted (invitee,
+  every owner, contacts, alias), and a failed send leaves it unusable.
+- Owner grants: an accepted owner invite to an org with an owner is a viewer until `owner_from`, then an owner by
+  predicate and recorded once by the cron; a promotion likewise from its notice; cancel by an owner, by staff and by
+  the link (POST only, single use, refused after `owner_from`) leaves a viewer; a pending owner doesn't count for the
+  last-owner rule; the first owner of a new org is an owner at once.
 - Two concurrent acceptances give exactly one member; a refused acceptance inserts no user, org, member or audit row.
 - A removed member re-invited keeps their user id; a disabled user's acceptance is refused and the invite stays
   unconsumed; a member of org A joins org B; `already_member`.
@@ -1690,8 +1853,14 @@ endpoint, the JWKS, the Access JWKS, NEAR RPC, the Images binding and the email 
   DELETE refused; a rate change refused once the month has a statement; late events excluded by `as_of` and listed.
 - Golden CSV, byte-stable: quoting, injection cases (`=cmd`, `@x`, `-x`), negative numbers unprefixed, scope rows,
   totals; the ledger CSV's `final` gas for the same `as_of` equals the statement's `tgas` and `near`.
-- Retention: partitions past 400 days dropped; uids NULL after month + 35 days; `app_users` purged 30 days after
-  deletion; `uid:erase` through its function only.
+- Retention (D90): uids NULL after month + 24 months, the rows kept; partitions and settlements past 7 years
+  dropped; `app_users` rows with `last_seen` past 24 months and 30 days after app deletion purged; audit rows
+  deletable only after 60 months (trigger); each monthly run recorded in `ops.retention_runs`, a failure alerted and
+  shown; `uid:erase` through its function only.
+- Rejection rate (D91): an org over 5% relayed-then-rejected (with ≥ 100 relayed attempts that day) raises one
+  `rejection_rate` alert per org per day, shown in the security screen; below it, nothing.
+- Statements (D92): the CSV, the PDF and the on-screen statement show identical totals and the CSV's sha256; the
+  rejected line is separate and marked not billed.
 
 **Headers**
 
@@ -1699,12 +1868,13 @@ endpoint, the JWKS, the Access JWKS, NEAR RPC, the Images binding and the email 
 
 **Testnet smoke (sandbox-dev, after deploy)**
 
-Prerequisites: open questions 1, 2, 3 and 5 answered (or sandbox-dev's workers.dev fallbacks accepted); the console
+Prerequisites: open questions 1, 3 (sandbox-dev's workers.dev fallback is accepted, D93) and 5 answered, Resend set
+up (D87); the console
 sink scope exists (§Address impact); a partner org with an accepted owner and a security contact; a new test scope
 registered with `scope:register --owners-from-org`; a test app on it via `AdminRpc.createApp`. `s1` and `s2` are owned
 only by `Owner::Near`, so they stay as batch A references.
 
-- Invite and sign-in.
+- Invite and sign-in; an owner invites a second owner, who is a viewer until the grant matures; a cancel by link.
 - On the smoke scope: an origin add (notice received, delay, activation) and a cancel by link; a policy set, the
   consent prompt for its `policyId`, and its removal.
 - Propose, execute and cancel through the console; the watcher's email arrives.
@@ -1719,18 +1889,19 @@ only by `Owner::Near`, so they stay as batch A references.
    vectors, `normaliseOrigin`, types), the owner-action refactor and caps, relay results with key and nonce, gas
    fields, migration 0005 with the gate and preflight SQL and triggers, `first_session_at`, the new vars.
 2. **Usage ledger** (~1.5k, 3 d): Neon project, roles and Hyperdrive configs (`usage:setup`), DDL and functions,
-   `recordUsage` with one retry, uid, removal of the D1 counters, `usage:legacy-export`. Blocked by open question 5.
+   `recordUsage` with one retry, uid, removal of the D1 counters, `usage:legacy-export`, the monthly retention
+   functions. Blocked by open question 5.
 3. **`ConsoleRpc` and `AdminRpc`** (~3k, 6 d): guarded changes (origins, policy, raw signing) with CAS, ack,
    activation and promotion, cancel links, waivers, expedite, drift, settings, keys, logo pointer, `security_events`,
    the breaker, the hot-DB budget, the sink-scope deploy step.
 4. **Console Worker and console-auth** (~4.5k, 9 d): dispatch, code flow, invites, sessions, CSRF, fresh sign-in,
    screens (apps, origins, policy editor with consent preview, settings, keys, members, usage, statements, owner
    actions and the helper, cancel page), logo upload. Blocked by open questions 1, 3 and 5.
-5. **Files Worker and R2** (~0.3k, 1 d): buckets, lock and lifecycle rules, the logo route. Blocked by open
-   question 15.
+5. **Files Worker and R2** (~0.3k, 1 d): buckets, lock and lifecycle rules, the logo route.
 6. **Admin Worker** (~3.5k, 7 d): Access check, `StaffRpc`, screens, security contacts, blocking notices, the feed,
-   the watcher, settlement, the nonce check, rates, reports, statements (CSV, PDF), exports, retention calls. Blocked
-   by open questions 2, 4 and 5.
+   the watcher, settlement, the nonce check, rates, reports, statements (CSV, PDF, on-screen), exports, the monthly
+   retention job and its screen, the rejection-rate alert, invite and owner-grant notices, the Resend adapter. Blocked
+   by open question 5 and the Access fallback addresses (4).
 7. **CLI** (~0.6k, 2 d) and batch B page touches (`logoUrl`, `img-src`) (~0.1k, 0.5 d).
 8. **Testnet smoke** (2 d).
 
@@ -1741,11 +1912,13 @@ About 16k lines and 35 engineer-days; steps 2–3 and 5 can run beside 4 once st
 - Everything in §Deferred.
 - Public registration and self-serve scope registration (`public_registration` stays off).
 - Per-user lists, wallet addresses, opt-in address reporting.
-- Hash-chained or externally anchored audit (open question 18).
+- Hash-chained or externally anchored audit (D93).
 - Origins or policies on chain; NEAR events from `create_session`/`derive_key` as a billing cross-check (contract
   change, needs the external audit).
 - SAML/SSO for partners, mobile app identifiers, webhooks.
-- Email login (D4). Mainnet deploy. Contract governance changes (open question 9; pre-mainnet D33).
+- Email login (D4). Mainnet deploy. Contract governance changes (`docs/governance-spec.md`, D33, D80–D86; batch C's
+  open question 9 moved there as its open question 17). The governance batch adds two screens to the consoles built
+  here (§Hana admin console).
 - Hana Home (D40, D45): its own batch before mainnet.
 
 ## Address impact
@@ -1754,7 +1927,8 @@ About 16k lines and 35 engineer-days; steps 2–3 and 5 can run beside 4 once st
 
 - **Unchanged:** no path (`scope#provider#sub#key_index`), key index, HKDF salt or info, CKD domain, signer account,
   session layout or contract nonce layout changes.
-- **The console client moves from `global` to a Hana console sink scope** (open question 7).
+- **The console client moves from `global` to a Hana console sink scope** (confirmed, D93; rolled out on sandbox-dev
+  before the address freeze).
   - **Why.** Today `consoleAudiences` are clients of `global` (`scripts/lib/deploy-plan.ts` `register-global`), Hana's
     own app scope with real wallets. Through `session_scope`, a console-client token whose nonce follows the session
     layout would open a `global` session and `derive_key` would give that user's `global` wallet key; a compromised
@@ -1780,7 +1954,8 @@ None. `console_audiences`, `Owner::Oidc`/`OwnerAuth::Oidc`, `get_scope`/`action_
 `admin_register_scope`, the timelock (AddClient, SetOwners, SetAllowShared) and the `change_proposed` events cover this
 design. Operational requirement: on mainnet `changeDelayMs ≥ appChangeDelayMs` (≥ 24 h), a manifest refinement.
 Flagged for the governance spec: a compromised OIDC owner can cancel any pending change, including a `SetOwners` that
-would remove them (open question 9); fixing it before the address freeze has no address impact.
+would remove them (moved to `docs/governance-spec.md` open question 17); fixing it before the address freeze has no
+address impact.
 
 ## Open questions
 
@@ -1792,63 +1967,66 @@ Neon), hardware keys for staff (D75: GitHub team with org 2FA), the batch B logi
 vault page and parent-origin checks already use D1 origins in both modes), the reconciliation of the four decision
 records (superseded by this rewrite).
 
+Answered on 2026-10-29 (`docs/decisions.md` D87–D93), applied above; the numbers are kept so references stay valid.
+
 **Blocking implementation or the smoke**
 
-1. Does Google's code flow return an ID token without `email` for `scope=openid` with the console client? D25 showed
-   it for Hana's clients in the implicit flow; confirm for the code flow on sandbox-dev. If Google always adds email,
-   step-ups and owner actions stop until decided; fallback: accept the email after an explicit partner disclosure.
-   **Blocks steps 4 and the smoke.**
-2. Email provider (Cloudflare Email Sending, Resend, Postmark or SES): sending to arbitrary addresses, cost,
-   SPF/DKIM/DMARC on the Hana domain. **Blocks steps 4 (invites) and 6.**
-3. The Hana-owned Cloudflare account and zone, and the console, console-auth, files and admin domains (D18, D38; the
-   console auth host and the passkey RP ID later depend on it). Who holds member and API-token access, given any
-   Worker in the account can bind `AdminRpc`? Until then, is sandbox-dev on `workers.dev` with the thin-Worker origins
-   acceptable? **Blocks steps 4–6 and the smoke.**
-4. The GitHub team name and members for Access (`hana-id-staff` assumed), the Google fallback emails, and whether the
-   Worker's `admin.staffEmails` allowlist should stay beside the Access policy (it doubles offboarding work).
-5. Neon: one project per env and plan (PITR window, compute always on in production or scale-to-zero with the retry),
-   who holds the owner role, and Hyperdrive availability on the target account's plan. **Blocks step 2.**
+1. **Still open (to test).** Does Google's code flow return an ID token without `email` for `scope=openid` with the
+   console client? D25 showed it for Hana's clients in the implicit flow; confirm for the code flow on sandbox-dev. If
+   Google always adds email, step-ups and owner actions stop until decided; fallback: accept the email after an
+   explicit partner disclosure. **Blocks steps 4 and the smoke.**
+2. Email provider. **Answered (D87):** Resend, dedicated sending subdomain with SPF/DKIM/DMARC, behind a sender
+   interface.
+3. **Still open:** the Hana-owned Cloudflare account and zone, and the console, console-auth, files and admin domains
+   (D18, D38; the console auth host and the passkey RP ID later depend on it); who holds member and API-token access,
+   given any Worker in the account can bind `AdminRpc`. **Answered in part (D93):** until then sandbox-dev runs on
+   `workers.dev` with the thin-Worker origins. **Blocks steps 4–6 on production envs.**
+4. Access team and allowlist. **Answered (D88):** team `hana-admins` in `Hana-Technology`, org-wide 2FA; the Worker's
+   `admin.staffEmails` allowlist stays. **Still open:** the exact Google fallback addresses (the user provides them).
+5. **Still open:** Neon: one project per env and plan (PITR window, compute always on in production or scale-to-zero
+   with the retry), who holds the owner role, and Hyperdrive availability on the target account's plan. **Blocks step
+   2.**
 
 **Confirm**
 
-6. Invites only from Hana staff (D29), or should owners invite teammates (owner or viewer) with a fresh sign-in and a
-   feed notice?
-7. The console sink scope (§Address impact) and its rollout on sandbox-dev before the address freeze.
-8. Seven Workers: the console's auth origin and the files origin as thin Workers (D66 pattern), rather than routes on
-   a zone. D34's "three Workers" read as the three with bindings.
+6. Owner invites. **Answered (D89, amends D29):** owners invite viewers and owners with a fresh sign-in and a notice
+   to every owner and security contact; a new owner is a viewer for 24 h unless cancelled; staff add and remove
+   members (§Invites and owner grants).
+7. The console sink scope. **Answered (D93):** yes, rolled out on sandbox-dev before the address freeze.
+8. Seven Workers. **Answered (D93):** accepted.
 
 **Policy and contract**
 
-9. Contract governance: should cancel be limited to the proposer, need a second owner, or have a NEAR-owner veto?
-   Decide in the governance spec before the address freeze.
-10. The ledger retention and dispute window to name in the service contract (400 days here; partners keep their
-    statement hashes).
-11. Is gas burnt by relayed-then-rejected calls billable to the partner? Third parties can trigger it (~2.2 Tgas each).
-12. Production `change_delay_ms`: 24 or 48 h (must be ≥ `appChangeDelayMs`)? May partners raise their own delays?
+9. Contract governance (cancel by a compromised OIDC owner). **Moved** to `docs/governance-spec.md` open question 17;
+   decide there before the address freeze.
+10. Ledger retention. **Answered (D90):** statements and settlements 7 years, raw usage 24 months then de-identified,
+    audit 5 years, a monthly purge job; to be confirmed by the company's accountant before launch.
+11. Relayed-then-rejected gas. **Answered (D91):** not billed by default, its own statement line, an admin alert above
+    5% of relayed attempts; contract terms may bill partner-caused rejections above it.
+12. Production `change_delay_ms`. **Answered (D93):** 24 h (= `appChangeDelayMs`); partners don't set their own delays
+    in batch C.
 
 **Reporting and billing**
 
-13. The daily nonce cross-check is read here as "each relayer key's latest landed nonce must have a ledger row" (it
-    catches lost tail writes and foreign key use that ends a day). Is that what D34 meant? Should it run hourly (same
-    cost, more coverage) or add an exact daily count from an indexer?
-14. New runtime dependencies: `pg` (Hyperdrive's recommended driver) in the API and admin Worker, and a PDF library
-    (`pdf-lib`) in the admin Worker. Approve, or CSV-only statements?
-15. Logo re-encoding through the Cloudflare Images binding (plan and cost) or a wasm codec in the console Worker?
-16. PDF statements: needed for Sodax, or is the CSV with its sha256 enough?
-17. Which NEAR/USD source the service contract names, daily (as designed) or monthly; and are testnet pilot
-    statements billed at the mainnet price?
+13. The daily nonce cross-check. **Answered (D93):** as read here (each relayer key's latest landed nonce must have a
+    ledger row); daily; no indexer.
+14. Runtime dependencies. **Answered (D93):** `pg` and `pdf-lib`, exact-pinned.
+15. Logo re-encoding. **Answered (D93):** PNG, JPEG or WebP only, re-encoded through the Cloudflare Images binding; no
+    SVG.
+16. PDF statements. **Answered (D92):** CSV + on-screen + PDF with the same totals and hash; tax invoices from the
+    accounting software.
+17. NEAR/USD source. **Answered (D93):** daily, one source (e.g. CoinGecko) named in the service contract, audited
+    manual override; testnet pilot statements at the mainnet price, labelled.
 
 **Data and governance**
 
-18. Tamper evidence beyond triggers, Time Travel, PITR and the bucket lock: a hash chain anchored outside Cloudflare,
-    or accept the accounts as the trust root?
-19. Keep coarse network data (country, ASN, IP prefix) on console sessions for 90 days, or store nothing?
-20. Is the Cloudflare rate-limiting binding available for `/api/auth/*`, or use a hit on the API's `RateLimiter`?
-21. The breaker thresholds (5 per org per hour, 20 globally); should origin removals count per origin, not per call?
-22. Settlement calls `tx` once per relayed transaction: fine at pilot volume; at scale, sample or batch through an
-    archival provider?
-23. The per-scope owner-action cap (20/day) and safety budget (10 per scope per day, 100 globally): right for
-    partners with several apps on one scope?
-24. Should staff proposals for shared-login live apps need two staff (a second Access identity confirming)?
-25. Where do partners test locally once production envs refuse loopback: a Hana-run testnet env with its own
-    console, or loopback on test scopes in production?
+18. Tamper evidence. **Answered (D93):** no hash chain in the MVP; the accounts are the trust root.
+19. Network data on console sessions. **Answered (D93):** coarse data (country, ASN, IP prefix) for 90 days.
+20. Auth rate limiting. **Answered (D93):** the Workers rate-limiting binding in the console Worker; the API's
+    `RateLimiter` only if the binding isn't available.
+21. Breaker thresholds. **Answered (D93):** 5 per org and 20 across orgs per hour, per call.
+22. Settlement at scale. **Answered (D93):** one `tx` per relayed transaction for now; revisit at scale.
+23. Owner-action caps. **Answered (D93):** as designed.
+24. Two staff for shared-login live-app proposals. **Answered (D93):** no, not in the MVP.
+25. Local testing. **Answered (D93):** against a Hana-run testnet env with its own console; production keeps refusing
+    loopback.

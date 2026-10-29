@@ -323,10 +323,10 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   };
 }
 
-/** The client and screen coordinates of a pointer event (each only when it is a number). */
+/** The client coordinates of a pointer event (each only when it is a number). */
 function position(o: Partial<PointerEvent>): Coords {
   const out: Coords = {};
-  for (const k of ['clientX', 'clientY', 'screenX', 'screenY'] as const) if (typeof o[k] === 'number') out[k] = o[k];
+  for (const k of ['clientX', 'clientY'] as const) if (typeof o[k] === 'number') out[k] = o[k];
   return out;
 }
 

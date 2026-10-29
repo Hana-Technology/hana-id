@@ -255,6 +255,11 @@ progress or not started), **deferred**, **superseded**, **proposed** (in a draft
   neither; a window move changes only the screen position; so neither of the last two arms, nor does the first
   zero-movement move (nothing to compare with). Hardened after a security review of the first version, which compared
   client coordinates only and kept the position across requests.
+- Amended 2026-10-29: the screen position is no longer compared, only the client position (still reset on every
+  guard reset). WebKit on Linux (CI) reports fixed screen coordinates, so Approve never armed there. The client
+  position is what separates the threat: a layout change or scroll under a still cursor leaves it unchanged; it changes
+  only when the cursor moves or the user moves the window under it (no other page can move the popup). The earlier
+  note that a window move changes only the screen position was backwards.
 - Why: the spec's `pointermove`-only rule never arms on a stationary tap or from the keyboard, so phone and
   keyboard-only users could not approve. Keeping mouse on `pointermove` means clicking in place never approves, and
   keeping Enter and Space out means a held key never approves.

@@ -1641,8 +1641,13 @@ export class Vault {
       } catch {
         // Treat an unreadable handle as closed.
       }
-      if (closed || this.deviceNow() - started >= EXPORT_MAX_MS) {
+      if (closed) {
         this.finishExport(job, job.contextSent ? null : userRejected('The export window was closed'));
+        return;
+      }
+      if (this.deviceNow() - started >= EXPORT_MAX_MS) {
+        // The job's own limit: the window is told to end too, so it never outlives the vault's view of it (D111).
+        this.cancelExport(userRejected('The export window was closed'));
         return;
       }
       job.poll = this.timers.setTimeout(tick, 1_000);
@@ -1654,7 +1659,8 @@ export class Vault {
     const job = this.exportJob;
     if (!job || !job.window || job.contextSent || e.source !== job.window || e.origin !== this.env.authOrigin) return;
     // The session may have ended (expiry with a delayed timer) since the export started: no context for it.
-    if (!this.live()) {
+    const s = this.live();
+    if (!s) {
       this.cancelExport(disconnected());
       return;
     }
@@ -1671,10 +1677,12 @@ export class Vault {
         keyIndex: 0,
         chain: job.chain,
         address: job.address,
+        sessionExpiresAtMs: s.expiresAtMs,
       },
       this.env.authOrigin,
     );
-    // The vault's part is done; the job stays (busy) until the export window closes.
+    // The vault's part is done; the job stays (busy) until the export window closes, and the session's end still
+    // reaches the window (cancelExport).
     job.resolve();
   }
 
@@ -1687,12 +1695,18 @@ export class Vault {
     if (error) job.reject(error);
   }
 
+  /**
+   * Ends a running export with the session (logout, revoke, expiry, a newer login) or at EXPORT_MAX_MS. A window that
+   * has its context (it may already hold the key) is told `hana:export-end` and erases the key (D111, sweep AUTH-1);
+   * it stays open to say why. One that hasn't is closed.
+   */
   private cancelExport(error: VaultError): void {
     const job = this.exportJob;
     if (!job) return;
-    if (job.window && !job.contextSent) {
+    if (job.window) {
       try {
-        job.window.close();
+        if (job.contextSent) job.window.postMessage({ v: 1, t: 'hana:export-end' }, this.env.authOrigin);
+        else job.window.close();
       } catch {
         // Already gone.
       }

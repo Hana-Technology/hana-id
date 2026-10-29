@@ -44,6 +44,14 @@ describe('auth page policies', () => {
     const html = pageHtml(sandbox, AUTH_PAGES[0]!, '/assets/a"b.js', '/assets/c.css');
     expect(html).toContain('src="/assets/a&quot;b.js"');
   });
+
+  it('every page opts out of browser auto-translation (AUTH-4)', () => {
+    for (const page of AUTH_PAGES) {
+      const html = pageHtml(sandbox, page, '/assets/a.js', '/assets/c.css');
+      expect(html).toContain('<html lang="en" translate="no">');
+      expect(html).toContain('<meta name="google" content="notranslate">');
+    }
+  });
 });
 
 describe('per-env build', () => {

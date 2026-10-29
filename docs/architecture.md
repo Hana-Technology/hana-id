@@ -324,7 +324,10 @@ Timelocks, quarantine and shared-client rules: `docs/contract-interface.md` "Reg
 `packages/web/src/auth/export-page.ts`: `hana_export {chain}` → launcher → top-level `{authOrigin}/export` window,
 which runs its own fresh login (`/login?mode=export`, `max_age=0`, `max_uses = 1`) through `/v1/login`, decrypts
 against its own path, aborts if the address differs from the vault's, and shows the key (SEP-23 `S…` or `0x` hex)
-while a button is held after a typed confirmation. The vault's PRK is never used for export. The `auth_time` freshness
+while a button is held after a typed confirmation. The key is erased 5 min after it is derived, or earlier when the
+vault session ends: the context carries `sessionExpiresAtMs`, and the vault's `cancelExport` posts
+`hana:export-end` on logout, revoke, expiry, a newer login or its 15 min job limit; the window also ends if its vault
+frame goes away (D111). The vault's PRK is never used for export. The `auth_time` freshness
 check is off (Google returns no `auth_time`, D27; `maxAuthAgeMs`, `packages/core/src/id-token.ts`). Encodings:
 `packages/core/src/export.ts`. The export window takes its context only from the vault frame that opened it (its
 `opener`, origin `vaultOrigin`), and the vault opens it only from its own launcher's click, so a partner page can't

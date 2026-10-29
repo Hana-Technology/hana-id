@@ -193,7 +193,8 @@ button.addEventListener('click', async () => {
   fresh login, so offer it right after one.
 - `await hana.exportKey('stellar' | 'evm')` lets the user take their key elsewhere. Hana shows a button; the key
   appears only in a top-level Hana window, after a fresh Google sign-in and a typed confirmation, and never reaches
-  your page. Stellar keys export as `S…`, EVM keys as `0x…` hex. There is no recovery phrase. Each export is a NEAR
+  your page. That window keeps the key for 5 minutes at most, and erases it as soon as the user's session in your
+  app ends (`logout()`, revoke, expiry); exporting again starts over with a new sign-in. Stellar keys export as `S…`, EVM keys as `0x…` hex. There is no recovery phrase. Each export is a NEAR
   transaction Hana pays for, so one account can export at most 3 times an hour per app (`rate_limited` after that).
 
 ## 5. Your page: origins, CSP, popups

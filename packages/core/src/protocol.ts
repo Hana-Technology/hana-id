@@ -575,7 +575,17 @@ export interface WindowMessageMap {
     keyIndex: number;
     chain: 'stellar' | 'evm';
     address: string;
+    /**
+     * The vault session's end (server-corrected ms): the export window erases the key and ends no later than this
+     * (D111). Optional so an older vault bundle's context still parses.
+     */
+    sessionExpiresAtMs?: number;
   };
+  /**
+   * Vault → export window: the session ended (logout, revoke, expiry, a newer login) or the vault's export job did;
+   * the window erases the key and ends the export (D111).
+   */
+  'hana:export-end': Record<string, never>;
   /** Vault → approval popup: the consent screen for the app's auto-approve policy (docs/batch-b-spec.md "Consent"). */
   'hana:consent-request': {
     id: string;
@@ -683,8 +693,10 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:approve-bye': (m) => exactKeys(m, ['v', 't']),
   'hana:approve-close': (m) => exactKeys(m, ['v', 't']),
   'hana:export-hello': (m) => exactKeys(m, ['v', 't']),
+  'hana:export-end': (m) => exactKeys(m, ['v', 't']),
   'hana:export-context': (m) =>
-    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'keyIndex', 'chain', 'address']) &&
+    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'keyIndex', 'chain', 'address'], ['sessionExpiresAtMs']) &&
+    (m.sessionExpiresAtMs === undefined || isMs(m.sessionExpiresAtMs)) &&
     isPublishableKey(m.pk) &&
     isAppName(m.appName) &&
     isOrigin(m.parentOrigin) &&

@@ -1074,6 +1074,28 @@ can't collide with the entries the parallel API, contract and watchdog fixes add
 - Rejected: keeping "shown by type with raw XDR" for classic operations (a compromised partner page plus one click
   could add a signer or merge the account away).
 
+### D111. The export window keeps the key 5 minutes at most, and never past the session
+- Date 2026-10-29 · Status: in force on branch `fix/sweep-web` (`packages/web/src/auth/export-page.ts`
+  `EXPORT_KEY_LIFETIME_MS`, `end`; `packages/web/src/vault/vault.ts` `cancelExport`, `onExportHello`;
+  `hana:export-end` and `export-context.sessionExpiresAtMs` in `packages/core/src/protocol.ts`) · Source: user
+  decision on sweep finding AUTH-1 (merged with VAUL-5); amends `docs/batch-b-spec.md` "Key export" step 5
+- Decision: the export window erases the derived key from memory and from the screen at the first of: 5 min after
+  it is derived; the vault session's end, from the context's `sessionExpiresAtMs` (server-corrected) or a
+  `{v:1, t:"hana:export-end"}` the vault posts from `cancelExport` (logout, revoke, expiry, a newer login, and the
+  vault's 15 min job limit, now also for a window that already has its context); its vault frame going away
+  (`opener.closed`); and the window closing. The deadline is a timer (which a device clock change can't move) plus a
+  server-clock check before every confirm and reveal and when the tab becomes visible again. The window then shows
+  "Export ended" with the reason and no button: exporting again needs a new export from the app, so a new window and
+  a new Google sign-in. `hana:export-end` is accepted only from the opener with origin `vaultOrigin`.
+- Also (sweep AUTH-6, AUTH-4): the revealed key is no longer in an `aria-live` region, so a screen reader reads it
+  only when the user moves to it; the key element and every auth page are `translate="no"` (plus
+  `<meta name="google" content="notranslate">`), so a page translator neither rewords a request nor sends a key out.
+- Not changed: idle (D55) dims the vault's PRK but doesn't end the session, so it doesn't end an export; the
+  5 min limit bounds that case.
+- Rejected: closing the window from the vault (no explanation for the user; the message does the same and the page
+  says why); keeping the key for as long as the tab is open (an unattended tab would hand the key to anyone at the
+  device).
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -1096,6 +1118,7 @@ can't collide with the entries the parallel API, contract and watchdog fixes add
 | `/login` calls `GET /v1/app` itself and cross-checks the vault's signer, scope and client before Google (batch B "Login" step 4) | It checks the pinned signer and the nonce only, makes no API call, and shows the vault's app name (D77) | `docs/security.md` "The login popup trusts the vault's app facts" |
 | Every approval popup opens from the vault's "Review in Hana" launcher (batch B "Approval flow" steps 1–2) | A signing call from a click opens it in that click (`/approve?from=partner&v=…`); the launcher is the fallback without user activation or when `window.open` returns null (D99) | `docs/batch-b-spec.md` "Approval flow" |
 | Stellar classic operations other than changeTrust, payment and createAccount shown by type with their raw XDR (batch B "Approval flow" step 4) | Every operation decoded field by field; account-control operations get a red banner and per-operation warning and are never auto-approved (D110) | `packages/core/src/decode/stellar.ts` |
+| The export window shows the key while a button is held until the window closes (batch B "Key export" step 5) | The key is erased 5 min after it is derived or when the session ends, whichever is first; a new export needs a new sign-in (D111) | `packages/web/src/auth/export-page.ts` |
 | The vault persists (share, record) before it replies to `hana_login` (batch B "Login" steps 11–12) | It replies first; the share and record follow in the background, and a failure turns `persistence` to `'none'` (`persistenceChanged`, D79) | `packages/web/src/vault/vault.ts` `persistLogin` |
 
 ## Proposed, not yet confirmed

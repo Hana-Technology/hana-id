@@ -138,7 +138,7 @@ describe('renderApproval: other Stellar classic operations', () => {
     expect(text(plainClassicOps.manageSellOffer?.() as xdr.Operation)).toContain('Offerchanges offer 7');
     expect(text(plainClassicOps.manageBuyOffer?.() as xdr.Operation)).toContain('Offernew offer');
     expect(text(plainClassicOps.setOptions?.() as xdr.Operation)).toContain('Home domainexample.com');
-    expect(text(Operation.setOptions({ setFlags: 9, clearFlags: 2 }))).toContain('Sets flagsauth required, clawback enabled (9)');
+    expect(text(Operation.setOptions({ setFlags: 9 as never, clearFlags: 2 as never }))).toContain('Sets flagsauth required, clawback enabled (9)');
     expect(text(plainClassicOps.allowTrust?.() as xdr.Operation)).toContain('Authorizationauthorized (1)');
     expect(text(plainClassicOps.manageData?.() as xdr.Operation)).toContain('Nameconfig');
     expect(text(plainClassicOps.manageData?.() as xdr.Operation)).toContain('Value0102');

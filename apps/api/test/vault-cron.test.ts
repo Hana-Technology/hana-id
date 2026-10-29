@@ -67,6 +67,28 @@ describe('vault cron', () => {
     expect(await pruneShares(env.DB, Date.now())).toBe(0);
   });
 
+  it('runs only in the first quarter of a UTC hour; the other 15-minute runs only sync the JWKS', async () => {
+    const { app, near } = await vaultSetup();
+    const revoked = await createShare(app, near);
+    await setShare(revoked.shareId, { revoked_at: Date.now() });
+    vi.restoreAllMocks();
+    const jwks = new NearMock();
+    jwks.views.get_issuer = () => ({ provider: 'google', iss_values: [], kids: [] });
+    jwks.views.get_key_changes = () => [];
+    jwks.views.get_config = () => ({ paused: false });
+    jwks.jwks = { keys: [{ kid: 'q', n: 'AQAB', e: 'AQAB', kty: 'RSA' }] };
+    jwks.install();
+    for (const minute of [15, 30, 45]) {
+      const ctx = createExecutionContext();
+      await worker.scheduled(createScheduledController({ cron: '*/15 * * * *', scheduledTime: Date.UTC(2026, 9, 29, 12, minute) }), env, ctx);
+      await waitOnExecutionContext(ctx);
+    }
+    // Not pruned, but every run fetched the JWKS and read the chain.
+    expect(await storedShare(revoked.shareId)).not.toBeNull();
+    expect(jwks.jwksFetches).toBe(3);
+    expect(jwks.viewCalls.filter((v) => v.method === 'get_key_changes')).toHaveLength(3);
+  });
+
   it('re-wraps rows under the previous KEK, which then unlock under the current one alone', async () => {
     const { app, near } = await vaultSetup();
     const shares = [await createShare(app, near), await createShare(app, near), await createShare(app, near)];

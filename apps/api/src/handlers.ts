@@ -18,7 +18,7 @@ import { ckdPayload, revokePayload, sessionNonce, verifySessionSignature } from 
 import { claimCounter, precheckSessionUse } from './session-use.ts';
 import { MAX_BODY, isError, toCreateSession, toDeriveKey, toOwnerAction, toRevokeSession } from './validate.ts';
 import { type AppSettings, effectiveSettings, getSettingsRow } from './vault/settings.ts';
-import { effectiveSharedClients, forgetScope, forgetSession, getConfig, getScope, isSessionView, isSharedClient, recordSessionUse, rememberSession, scopeForClient, sessionKeyInUse } from './views.ts';
+import { effectiveSharedClients, forgetScope, forgetSession, getConfig, getScope, isIssuerKeyActive, isSessionView, isSharedClient, recordSessionUse, rememberSession, scopeForClient, sessionKeyInUse } from './views.ts';
 
 const APP_ALLOW_HEADERS = `content-type, x-hana-key, ${PARENT_ORIGIN_HEADER}, ${RELAY_KEY_HEADER}`;
 const APP_METHODS = 'GET, POST, OPTIONS';
@@ -36,6 +36,13 @@ const MINUTE = 60_000;
 /** Relay failures after which the transaction certainly did not execute (see relayer-key.ts / relayer-pool.ts). */
 const NOT_EXECUTED: ReadonlySet<string> = new Set(['method_not_allowed', 'relayer_unconfigured', 'near_unavailable', 'near_rejected', 'relayer_busy']);
 const DAY = 24 * 60 * MINUTE;
+/**
+ * Retry-After of a token refused because its signing key is still in the contract's issuer-key delay
+ * (`issuer_key_pending`): the vault retries the login once after it (docs/governance-spec.md "Rotation and logins").
+ */
+export const ISSUER_KEY_PENDING_RETRY_S = 30;
+/** Retry-After while the contract is paused (`paused`): only the owner multisig unpauses. */
+export const PAUSED_RETRY_S = 60;
 
 export type AppEndpoint = '/v1/sessions' | '/v1/derive' | '/v1/sessions/revoke';
 export const APP_ENDPOINTS: readonly string[] = ['/v1/sessions', '/v1/derive', '/v1/sessions/revoke'];
@@ -303,14 +310,17 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     // 7. Scope: a registered client must be this app's; a shared client needs a scope that allows shared login.
     // 8. The session key is not in use already (a replayed request would only fail on chain, at the relayer's
     //    cost). session_key_in_use also covers revoked sessions that have not expired, which get_session hides.
-    const [scope, inUse] = await Promise.all([
+    // 9. The contract isn't paused and the token's kid is active on chain (not still in its issuer-key delay).
+    const [scope, inUse, gov] = await Promise.all([
       settle(checkClientScope(env, token.provider, token.aud, app.scope_id, now)),
       settle(sessionKeyInUse(env, req.sessionPublicKey, now)),
+      chainGate(env, token, requestId),
     ]);
     if (!scope.ok) return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');
     if (scope.value) return reject(ctx, scope.value.status, scope.value.code, scope.value.error);
     if (!inUse.ok) return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');
     if (inUse.value) return reject(ctx, 409, 'session_exists', 'This session key is already in use');
+    if (gov) return chainGateResponse(ctx, gov);
     lap(ctx, 'checks');
 
     const result = await relay(env, 'session', { method: call.method, args: call.args }, requestId);
@@ -346,6 +356,9 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
   //    A second request for the same counter waits here for the first.
   const release = await claimCounter(call.sessionPublicKey, call.counter);
   try {
+    // derive_key panics while the contract is paused; revoke_session doesn't (revocation always works). Read beside
+    // the session check (chainGate never rejects), reported after it.
+    const paused = 'pk1' in call ? chainGate(env, null, requestId) : Promise.resolve(null);
     let check;
     try {
       check = await precheckSessionUse(env, app.scope_id, call.method, call.sessionPublicKey, call.counter);
@@ -354,6 +367,8 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     }
     const { rejection } = check;
     if (rejection) return done(ctx, rejection.status, { error: rejection.error, code: rejection.code, nextCounter: rejection.nextCounter });
+    const gov = await paused;
+    if (gov) return chainGateResponse(ctx, gov);
     // The app key's pairing check (bls.ts), last: it is the costly one.
     if ('pk1' in call && env.BLS_PRECHECK === '1' && !(await appKeyPairs(call.pk1, call.pk2))) return reject(ctx, 400, 'invalid_app_key', 'pk1 and pk2 are not the same key');
     lap(ctx, 'checks');
@@ -392,6 +407,30 @@ async function countUsage(env: Env, appId: string, field: 'sessions' | 'derives'
 }
 
 type ScopeRejection = { status: number; code: string; error: string };
+
+/** A 503 the client may retry after `retryAfterS` (also sent as Retry-After). */
+export type ChainGateRejection = ScopeRejection & { retryAfterS: number };
+
+/**
+ * Governance checks before a relay that verifies `token` on chain or derives (docs/governance-spec.md "Pause",
+ * "Rotation and logins"): the contract isn't paused (`get_config`, cached ≤ 60 s, ≤ 10 s while paused) and, with a
+ * token, its kid is an active issuer key on chain (`get_issuer`, cached ≤ 60 s, re-read on an unknown kid). Either
+ * would only make the transaction panic at the relayer's cost. Fails open (null) when the views can't be read: these
+ * checks only save gas, the contract decides. Never rejects.
+ */
+export async function chainGate(env: Env, token: { provider: string; kid: string } | null, requestId?: string): Promise<ChainGateRejection | null> {
+  const [config, active] = await Promise.all([settle(getConfig(env)), token ? settle(isIssuerKeyActive(env, token.provider, token.kid)) : Promise.resolve(null)]);
+  if (!config.ok || (active && !active.ok)) log({ event: 'chain_gate_unavailable', requestId, code: !config.ok ? 'get_config_failed' : 'get_issuer_failed' }, 'warn');
+  if (config.ok && config.value.paused) return { status: 503, code: 'paused', error: 'Hana ID is paused, try again later', retryAfterS: PAUSED_RETRY_S };
+  if (active?.ok && !active.value) {
+    return { status: 503, code: 'issuer_key_pending', error: 'The token’s signing key is not active on chain yet, try again shortly', retryAfterS: ISSUER_KEY_PENDING_RETRY_S };
+  }
+  return null;
+}
+
+/** The response for a chainGate rejection: `retryAfterS` in the body and the Retry-After header. */
+export const chainGateResponse = (ctx: Ctx, r: ChainGateRejection): Response =>
+  done(ctx, r.status, { error: r.error, code: r.code, retryAfterS: r.retryAfterS }, { 'retry-after': String(r.retryAfterS) });
 
 /**
  * Check 7: the client (provider, aud) may log in to `appScope`, or why not. A registered client must be the app's own;

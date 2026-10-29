@@ -70,8 +70,9 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
       { tag: 'v1', new_sqlite_classes: ['RelayerKey', 'RateLimiter'] },
       { tag: 'v2', new_sqlite_classes: ['LoginRelay'] },
     ],
-    // Every 15 min, one trigger (the free plan allows 5 per account): the run at :00 syncs Google's JWKS into
-    // hana-signer and does vault maintenance; every run records the JWKS kids (src/index.ts isHourlyRun).
+    // Every 15 min, one trigger (the free plan allows 5 per account): every run syncs Google's JWKS with hana-signer
+    // (proposals and matured executions, src/issuer-keys.ts) and records the JWKS kids; the run at :00 also does
+    // vault maintenance (src/index.ts isHourlyRun).
     triggers: { crons: ['*/15 * * * *'] },
   };
 }

@@ -43,15 +43,14 @@ keys, e.g. the content of `.secrets/<env>/relayer-keys.json`) → `wrangler secr
 | `RELAYER_KEYS` | secret | Session pool: JSON array of function-call keys on `RELAYER_ACCOUNT` (receiver `SIGNER_ACCOUNT`; `create_session`, `create_session_and_derive`, `derive_key`, `revoke_session`, `prune_sessions`) |
 | `OWNER_RELAYER_KEYS` | secret | Owner pool (small allowance), same format: `propose_change`, `cancel_change`, `remove_client`, `disable_shared_login`, `execute_change`, `register_scope`, `apply_pending_config`. Without it `/v1/owner-actions` answers 503 and logins are unaffected |
 | `GAS_<METHOD>_TGAS` | optional vars | Per-method gas override in Tgas (integer 1..300), e.g. `GAS_DERIVE_KEY_TGAS=80`; invalid values are ignored (logged) |
-| `KEYS_UPDATER_KEY` | secret | function-call key on `SIGNER_ACCOUNT` (`set_issuer_key`, `remove_issuer_key`); cron skips without it |
+| `KEYS_UPDATER_KEY` | secret | function-call key on `SIGNER_ACCOUNT` (governance contract: exactly `set_issuer_key`, `propose_issuer_key_removal`, `execute_issuer_key_change`, installed by `add_updater_key`); cron skips without it |
 | `API_URL` | vars (manifest) | `apiUrl`: the API's own URL, in the vault page's CSP `connect-src` |
 | `VAULT_KEK` | secret | Vault share wrapping key, `<id>:<base64 of 32 bytes>` (`id` a positive integer). Create it with `pnpm --filter @hana-id/scripts run vault-kek <env> init --yes`: it generates key id 1, keeps it in `.secrets/<env>/vault-kek` (0600, never overwritten; the only copy, since Cloudflare can't give a secret back) and sets the secret through wrangler's stdin, printing no key. `vault-kek <env> put --yes` sets it again from the file. Without it the vault endpoints answer `503 vault_key_unavailable` |
 | `VAULT_KEK_PREVIOUS` | secret, rotation only | The previous `VAULT_KEK`. Rotate with `vault-kek <env> rotate --yes`: the current key goes to `VAULT_KEK_PREVIOUS` (and `.secrets/<env>/vault-kek.previous`), a new key with the next id to `VAULT_KEK` (and `vault-kek`); a run that stops part way resumes when re-run. Unlocks and the cron re-wrap old rows; once `SELECT COUNT(*) FROM vault_shares WHERE kek_id = <old id>` is 0, delete the secret and the `.previous` file (`docs/operations.md`, "Key rotation") |
 | `DB` | D1 | `migrations/` |
 | `RELAYER_KEY`, `RATE_LIMITER`, `LOGIN_RELAY` | Durable Objects | SQLite-backed classes `RelayerKey`, `RateLimiter` (migration `v1`), `LoginRelay` (`v2`) |
-| cron `*/15 * * * *` | trigger | One trigger; the run at :00 (`isHourlyRun`) is the hourly one. Every run records Google's JWKS kids in D1 `issuer_key_observations` (D33 key lead time: `admin <env> issuer-keys:lead-times`, `docs/operations.md`) |
-| cron, hourly run | trigger | Google JWKS → `set_issuer_key` / `remove_issuer_key` (a kid is removed only after it has been missing from the JWKS for ≥ 55 min, i.e. two hourly runs in a row; tracked in D1 `issuer_key_missing`) |
-| cron, hourly run | trigger | Also vault maintenance (`src/vault/cron.ts`): deletes `vault_shares` rows past `abs_expires_at` or revoked, re-wraps up to 2000 rows per run from `VAULT_KEK_PREVIOUS` to `VAULT_KEK`, logs rows under an unknown KEK id |
+| cron `*/15 * * * *` | trigger | One trigger. Every run syncs Google's JWKS with hana-signer (`src/issuer-keys.ts`): proposes new kids (`set_issuer_key`, which queues them for `issuer_key_delay_ms`), proposes the removal of kids missing from the JWKS for ≥ 55 min (`propose_issuer_key_removal`, tracked in D1 `issuer_key_missing`, never the issuer's last key), executes matured changes that agree with the JWKS (`execute_issuer_key_change`), never calls `remove_issuer_key`; remembers its proposals in `issuer_key_proposals` (a cancelled one is held 1 h) and its last run in `issuer_key_sync_runs`. Every run records Google's JWKS kids in D1 `issuer_key_observations` (D33 key lead time: `admin <env> issuer-keys:lead-times`, `docs/operations.md`) |
+| cron, run at :00 | trigger | Also vault maintenance (`src/vault/cron.ts`, `isHourlyRun`): deletes `vault_shares` rows past `abs_expires_at` or revoked, re-wraps up to 2000 rows per run from `VAULT_KEK_PREVIOUS` to `VAULT_KEK`, logs rows under an unknown KEK id |
 
 ## Endpoints
 
@@ -96,6 +95,10 @@ Checks, in order (rejected before anything is relayed):
    - The session key is not in use: `session_key_in_use` is false (`409 session_exists`; a replayed body would only
      fail on chain). Unlike `get_session`, it also counts revoked sessions that have not expired. A cached unexpired
      session answers without a view call; "not in use" is always read from chain.
+   - Governance (also on `/v1/login`): the contract isn't paused (`get_config().paused`, `503 paused`, `retry-after:
+     60`) and the token's `kid` is an active key on chain (`get_issuer`, cached 60 s, re-read on an unknown kid at most
+     every 10 s; `503 issuer_key_pending`, `retry-after: 30`: a new Google key still in its issuer-key delay). Fails
+     open when the views can't be read (the contract decides). `/v1/derive` checks the pause only.
 6. `/v1/derive`, `/v1/sessions/revoke`: the Ed25519 signature (WebCrypto) of `sessionPublicKey` over
    `"hana-id-session-v1:" ‖ counter u64 LE ‖ sha256(payload)` must verify, payload `"hana-id-ckd-v1:{pk1}:{pk2}"` or
    `"revoke"` (`401 invalid_signature`). Then `get_session` (cached 10 s, misses not cached) must exist, belong to the
@@ -310,6 +313,13 @@ including the nonces):
 ### `GET /v1/health`
 
 `{"ok": true, "env", "signer"}`.
+
+### `GET /v1/governance`
+
+Read-only governance snapshot (`src/governance-status.ts`, `docs/api.md`): pause state, delays, pending issuer-key
+changes with `executableAtMs` and Google's JWKS verdict, watchdogs, updater keys against the signer's access keys,
+pending upgrade / owner / withdrawal / console audiences, the JWKS cron's last run. Public, cached 10 s per isolate;
+the source batch C's admin portal reads for the contract side of "Security & monitoring".
 
 ## Relayer keys and nonces
 

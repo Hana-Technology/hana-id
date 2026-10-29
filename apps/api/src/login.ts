@@ -7,7 +7,7 @@ import { appKeyPairs, appKeyProblem } from './bls.ts';
 import { disallowedClaim } from './claims.ts';
 import type { Env } from './env.ts';
 import { hex, sha256 } from './bytes.ts';
-import { TOKEN_EXP_SKEW_MS, appGate, checkClientScope, done, lap, lapRelay, limiter, newCtx, reject, settle } from './handlers.ts';
+import { TOKEN_EXP_SKEW_MS, appGate, chainGate, chainGateResponse, checkClientScope, done, lap, lapRelay, limiter, newCtx, reject, settle } from './handlers.ts';
 import { readJson } from './http.ts';
 import { JwksUnavailableError, verifyIdToken } from './jwks.ts';
 import { keyObserver } from './key-observations.ts';
@@ -133,15 +133,18 @@ export async function handleLogin(request: Request, env: Env, requestId: string,
   // beside it (at most one can succeed), and is then refused by session_key_in_use.
   const release = await claimCounter(req.sessionPublicKey, 1);
   try {
-    // 5. Scope and session key, side by side (both read the chain).
-    const [scope, inUse] = await Promise.all([
+    // 5. Scope, session key, and governance (not paused; the token's kid active on chain, not still in its
+    //    issuer-key delay), side by side (all read the chain).
+    const [scope, inUse, gov] = await Promise.all([
       settle(checkClientScope(env, token.provider, token.aud, app.scope_id, now)),
       settle(sessionKeyInUse(env, req.sessionPublicKey, now)),
+      chainGate(env, token, requestId),
     ]);
     if (!scope.ok) return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');
     if (scope.value) return reject(ctx, scope.value.status, scope.value.code, scope.value.error);
     if (!inUse.ok) return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');
     if (inUse.value) return reject(ctx, 409, 'session_exists', 'This session key is already in use');
+    if (gov) return chainGateResponse(ctx, gov);
 
     // 6. The session key signed the CKD request with counter 1.
     if (!(await verifySessionSignature(req.sessionPublicKey, 1, req.signature, ckdPayload(req.pk1, req.pk2)))) {

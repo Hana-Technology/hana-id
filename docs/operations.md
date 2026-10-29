@@ -310,8 +310,20 @@ only sender (another sender costs an `InvalidNonce` retry).
 
 ### Keys-updater key
 
-Same steps with `.secrets/<env>/keys-updater.json` (key on `signer`), then re-upload `KEYS_UPDATER_KEY`. The plan
-blocks on any other function-call key on `signer` that can call `set_issuer_key` / `remove_issuer_key`.
+v1 contract: same steps with `.secrets/<env>/keys-updater.json` (key on `signer`), then re-upload
+`KEYS_UPDATER_KEY`. The plan blocks on any other function-call key on `signer` that can call `set_issuer_key` /
+`remove_issuer_key`.
+
+Governance contract (layout v2): the key's methods are exactly `set_issuer_key`, `propose_issuer_key_removal`,
+`execute_issuer_key_change` (receiver `signer`, allowance ≤ 1 NEAR), and only the contract adds it: the owner calls
+`add_updater_key(<public key>)` (on a DAO owner, a 2-of-3 `FunctionCall` proposal), uploads the new private key as
+`KEYS_UPDATER_KEY`, then removes the old one with `delete_updater_key(<old public key>)` (≤ 2 tracked at a time, so
+rotation has an overlap). Access-key permissions can't be edited, so the v1 key (with `remove_issuer_key`) is
+deleted, not changed. The API refuses to sign any other method with it (`apps/api/src/relayer-config.ts`
+`UPDATER_METHODS`); `GET /v1/governance` shows `signerAccessKeys` with `updaterKey` / `updaterPermission` for the
+check. If a watchdog deleted the key (it does when it sees a proposal from the signer that Google doesn't publish),
+the cron's sends fail (`jwks_tx` `send_failed`) until the owner adds a new one: find out why first (the watchdog's
+alert has the change).
 
 ### Owner
 
@@ -341,8 +353,33 @@ Scope owners (`--owner-near` / `--owner-google`) are separate: they change by a 
 
 ### Google signing keys (JWKS)
 
-The hourly cron adds new kids and removes kids missing from Google's JWKS for ≥ 55 min. To sync now (after a deploy,
-or when the cron has no `KEYS_UPDATER_KEY`):
+**Governance contract (layout v2).** Issuer keys change only through a public, cancellable delay
+(`docs/governance-spec.md` "Rotation and logins"). The API cron (every 15 min, `apps/api/src/issuer-keys.ts`,
+`docs/api.md` "Cron") proposes each new Google kid (`set_issuer_key` queues it), proposes the removal of a kid
+missing from the JWKS for ≥ 55 min (never the last key), and executes matured changes that agree with Google's JWKS.
+A watchdog normally confirms a new key within minutes; without one it goes live `issuer_key_delay_ms` after the
+proposal, at the next cron run (or whoever executes it). Until then a token signed with it gets `503
+issuer_key_pending` with `retry-after: 30` on `/v1/login` and `/v1/sessions`, and nothing is relayed. The cron never
+cancels: a pending change it disagrees with (`jwks_sync_note` `unpublished_change` / `pending_mismatch` /
+`removal_of_published_kid`) is the watchdog's and the owner's (`cancel_issuer_key_change`). A proposal of ours that
+is cancelled logs `issuer_key_change_cancelled` once and is held for 1 h before the cron proposes it again.
+The spec has the vault retry an `issuer_key_pending` login once after `retryAfterS`; `packages/web` doesn't do that
+yet (it shows its generic error and the user signs in again): open, for the vault's next change.
+
+To see the state: `curl -s <apiUrl>/v1/governance | jq '{paused, keyChanges, issuers, updater}'` (below). To execute
+a matured change now (anyone may, the contract checks the delay):
+
+```sh
+near contract call-function as-transaction <signer> execute_issuer_key_change json-args '{"id":<id>}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as <any funded account> network-config testnet sign-with-legacy-keychain send
+```
+
+`post-google-keys` (below) predates the delay: on a v2 contract its `set_issuer_key` only queues, and its
+`remove_issuer_key` works only `--as-owner` (immediate; on a DAO owner, a proposal). Its v2 form (`--execute`, no
+`--as-owner`) comes with the governance scripts.
+
+**v1 contract.** The hourly cron run added new kids and removed kids missing from Google's JWKS for ≥ 55 min. The
+governance API keeps syncing a v1 contract only for reads: without `get_key_changes` its cron skips
+(`key_changes_unavailable`) and sends nothing, so on v1 sync by hand:
 
 ```sh
 corepack pnpm --filter @hana-id/scripts run post-google-keys <env> --dry-run
@@ -351,14 +388,61 @@ corepack pnpm --filter @hana-id/scripts run post-google-keys <env>              
 
 It adds before it removes, and refuses to sync if Google returns no usable RS256 key.
 
+### Governance status (`GET /v1/governance`)
+
+A read-only JSON snapshot of the contract's governance state (`docs/api.md` "GET /v1/governance"): pause state,
+delays and pending decreases, pending issuer-key changes with `executableAtMs`, `due` and Google's JWKS verdict
+(`match` / `mismatch` / `absent` / `present`), watchdogs and their confirm power, updater keys against the signer's
+access-key list, pending upgrade / owner transfer / withdrawal / console-audience and shared-client additions, and the
+JWKS cron's last run and tracked proposals. Public, no key, cached 10 s.
+
+```sh
+curl -s <apiUrl>/v1/governance | jq '{paused, delays, keyChanges, pendingUpgrade, pendingOwner, pendingWithdrawal}'
+curl -s <apiUrl>/v1/governance | jq '.signerAccessKeys[] | select(.updaterPermission | not)'   # outside sandbox-dev: must be empty
+curl -s <apiUrl>/v1/governance | jq '.updater'                                                # the cron's last run
+```
+
+**Hand-off to batch C.** The admin portal's "Security & monitoring" view and the admin and partner consoles'
+pending-upgrades page (D83, D86) don't exist yet. Their contract-side items read this endpoint (one request, already
+normalised, with countdown inputs and JWKS verdicts), or the same views through the admin Worker's own RPC
+(`docs/contract-interface.md` "Monitoring hand-off"); the portal should warn when a snapshot is older than
+`readAtMs + 20 s` and must not treat the API as independent (it runs on Hana's main Cloudflare account). The watchdog's heartbeat,
+verdicts, actions log, alerts and acks come only from the watchdog service's `GET /status` and `GET /alerts`.
+Nothing here alerts: alerts are the watchdog's (D85).
+
+### Deploying the governance API
+
+Order for an env moving to the governance contract (`docs/governance-spec.md` "Migration plan"):
+
+1. Apply D1 migration `0005_issuer_key_sync.sql` (`wrangler d1 migrations apply <cloudflare.d1Name> --remote`), then
+   deploy the API. It is safe on a v1 contract: logins work as before (v1 has no `paused`, and its `get_issuer` lists
+   the same keys `verify_token` uses), the cron fetches and records the JWKS but proposes nothing
+   (`key_changes_unavailable`, sync by hand meanwhile), and `/v1/governance` answers `502 near_unavailable`.
+   Deployed before the migration, the cron logs `proposals_unavailable` / `proposal_record_failed` /
+   `run_record_failed` (it still proposes, without the cancel hold) and `/v1/governance` has `updater: null`.
+2. Upgrade the contract (`migrate_v1`). From then on the v1 updater key can still call `set_issuer_key` (it now
+   queues) but not the new methods: executions fail (`jwks_tx` `send_failed`) until step 3.
+3. `add_updater_key(<new key>)`, upload it as `KEYS_UPDATER_KEY`, delete the v1 key ("Keys-updater key" above).
+4. Check: `curl -s <apiUrl>/v1/governance | jq '{stateVersion, updaterKeys, signerAccessKeys, updater}'`.
+
+### Pause
+
+While `get_config().paused`, `/v1/sessions`, `/v1/login` and `/v1/derive` answer `503 paused` with `retry-after: 60`
+and relay nothing (the contract would panic `Paused`); `/v1/sessions/revoke` and the vault's share endpoints are
+unaffected, and the cron keeps proposing (executions wait). `/v1/owner-actions` isn't gated: its console-token
+actions and `execute_change` fail on chain while paused (`422 contract_rejected`, paid from the small owner pool). The API reads the
+pause state with `get_config`, cached 60 s (10 s while paused), so logins resume within 10 s of `unpause()`. Who
+pauses and unpauses, and what each watchdog alert means, is the watchdog runbook (`docs/governance-spec.md`
+"Alerts"); the API raises no alert.
+
 ### Issuer key lead times (D33)
 
 D33's issuer-key delay must stay shorter than the time between Google publishing a signing key and Google signing
 the tokens our users bring with it, or logins with a new key fail until the delay ends. The API measures it in D1
 `issuer_key_observations` (migration `0004_issuer_key_observations.sql`; kids and timestamps only):
 
-- **First / last seen in the JWKS, removed**: every cron run (every 15 min) fetches Google's JWKS and records each
-  kid; the run at :00 does so from the sync's own fetch. The API's verification fetches (on cache expiry, or on an
+- **First / last seen in the JWKS, removed**: every cron run (every 15 min) fetches Google's JWKS for the sync and
+  records each kid from that fetch. The API's verification fetches (on cache expiry, or on an
   unknown kid at most once a minute per isolate) add sightings. "Removed" is the first fetch without the kid after
   its last sighting; it is cleared if a later fetch lists the kid again (a stale Google frontend).
 - **First token**: the first token with a valid signature by that kid on `/v1/sessions` or `/v1/login`, written after
@@ -564,7 +648,15 @@ Warm stage split: create = checks 0.2 s + relay 2.2 s (chain ~0.6 s); derive = r
 | `relay_retry` `invalid_nonce` warnings | a pool key was used outside its object, or was deleted and re-added on chain (new nonce) | one per re-added key is expected; otherwise don't use pool keys elsewhere |
 | `503 relayer_unconfigured` | `RELAYER_KEYS` (or `OWNER_RELAYER_KEYS` for owner actions) not set | `wrangler secret put` |
 | `422 contract_rejected` on every login after a deploy | contract has no Google keys, or keys out of date | `post-google-keys <env>`; check `KEYS_UPDATER_KEY` |
+| `503 issuer_key_pending` on logins (with `retry-after: 30`) | the token's kid is in Google's JWKS but still in its issuer-key delay on chain (a rotation), or the contract has no Google issuer | expected for minutes after a rotation; check `/v1/governance` `keyChanges` (a pending Add with `jwks: match`): the watchdog confirms it, or it goes live at `executableAtMs` and the next cron run. No pending change for the kid: check the cron (`updater.lastRuns`) and `KEYS_UPDATER_KEY` |
+| `503 paused` on logins and derives | the contract is paused (owner or a watchdog) | see "Pause"; only the owner multisig unpauses |
 | cron logs `jwks_sync_skipped` | no `KEYS_UPDATER_KEY` | upload it |
+| cron logs `jwks_sync_failed` `key_changes_unavailable` | `get_key_changes` failed or is malformed, or the contract is still v1 | v1: sync by hand (`post-google-keys`); v2: check the RPC |
+| cron logs `issuer_key_change_cancelled` (error) | a change the cron proposed was cancelled on chain (the watchdog's alert says why) | if the watchdog cancelled, it also deleted the updater key: see "Keys-updater key". The cron holds that kid for 1 h |
+| cron logs `jwks_sync_note` `unpublished_change` / `pending_mismatch` (error) | a pending Add for a kid Google doesn't publish, or with other key material | the cron won't execute it; the watchdog cancels it (critical alert). If no watchdog: the owner cancels it now (`cancel_issuer_key_change`) |
+| cron logs `jwks_sync_note` `removal_of_published_kid` | a pending Remove of a kid Google still publishes | the owner decides and cancels (the watchdog alerts, D82) |
+| cron logs `jwks_sync_note` `last_key_kept` / `queue_full` / `issuer_full` | removing the issuer's last key, or the contract's caps (6 pending, 10 per issuer) | `last_key_kept` clears once the new key is active; caps clear as changes execute or are cancelled |
+| cron logs `jwks_tx` `send_failed` for `execute_issuer_key_change` / `propose_issuer_key_removal` | the updater key lacks the v2 methods (still the v1 key), was deleted, or its allowance is spent | "Keys-updater key" |
 | `key_observation_failed` warnings (`code` `jwks` / `token`) | a lead-time write to D1 failed (logins unaffected), often `issuer_key_observations` missing | apply migration 0004 (`migrations apply … --remote`) |
 | `503 vault_key_unavailable` | no `VAULT_KEK` (or the row's old key missing in `VAULT_KEK_PREVIOUS`) | set it |
 | `GET /vault` 503, log code `misconfigured` | `API_URL` missing: a `wrangler.jsonc` generated before `apiUrl` reached `gen` | `gen <env>` and redeploy |

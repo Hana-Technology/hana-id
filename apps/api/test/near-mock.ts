@@ -63,6 +63,8 @@ export class NearMock {
   txPollFailures = 0;
   /** Delay before answering access key views and block reads (to time the relayer's chain reads). */
   readDelayMs = 0;
+  /** `view_access_key_list` of any account: `[{public_key, access_key: {nonce, permission}}]`. */
+  accessKeyList: unknown[] = [];
   jwks: unknown = { keys: [] };
   jwksStatus = 200;
   /** Cache-Control of the JWKS response (Google sends `public, max-age=…`). */
@@ -136,6 +138,7 @@ export class NearMock {
     if (params.request_type === 'view_access_key') {
       return { result: { nonce: Number(this.nonceOf(params.public_key as string)), block_hash: this.blockHash, block_height: 1000, permission: 'FullAccess' } };
     }
+    if (params.request_type === 'view_access_key_list') return { result: { keys: this.accessKeyList, block_height: 1000 } };
     if (params.request_type === 'call_function') {
       const name = params.method_name as string;
       const args = JSON.parse(new TextDecoder().decode(base64Decode(params.args_base64 as string))) as Record<string, unknown>;

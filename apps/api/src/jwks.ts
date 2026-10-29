@@ -2,7 +2,8 @@
 // Cache-Control max-age, refetched on an unknown kid at most once a minute; while refetches fail, the expired set
 // keeps serving the kids it holds for a bounded grace period). Used wherever the API must not relay a
 // forged token: logins (/v1/sessions) and owner actions. The contract verifies again against the keys it holds on
-// chain (synced hourly from the same JWKS by the cron). An optional observer records each fetch's kids and the kid of
+// chain (proposed from the same JWKS by the cron every 15 min, active only after the governance delay or a watchdog's
+// confirmation, so a login also checks the token's kid is active on chain: handlers.ts chainGate). An optional observer records each fetch's kids and the kid of
 // each verified token, for the key lead-time measurement (key-observations.ts).
 import { base64UrlDecode } from './bytes.ts';
 import { GOOGLE_JWKS_URL, type Jwk, usableJwks } from './issuer-keys.ts';
@@ -99,6 +100,8 @@ async function jwkFor(provider: string, kid: string, now: number, observer?: Key
 
 export interface VerifiedToken {
   provider: string;
+  /** The JWS header's key id (the API checks it is active on chain before relaying, handlers.ts chainGate). */
+  kid: string;
   iss: string;
   aud: string;
   sub: string;
@@ -155,7 +158,28 @@ export async function verifyIdToken(jwt: string, now: number = Date.now(), opts:
   }
   if (!valid) return fail('invalid_token', 'Invalid token signature');
   opts.observer?.token(provider, header.kid, now);
-  return { ok: true, token: { provider, iss, aud, sub, exp, nonce: typeof nonce === 'string' ? nonce : null } };
+  return { ok: true, token: { provider, kid: header.kid, iss, aud, sub, exp, nonce: typeof nonce === 'string' ? nonce : null } };
+}
+
+/**
+ * The issuer's published keys as this isolate holds them (fetched when the cache is cold or expired, with the same
+ * failure backoff and stale grace as token checks), or null when they can't be had. For GET /v1/governance's JWKS
+ * comparison only.
+ */
+export async function publishedKeys(provider: string, now: number = Date.now()): Promise<Jwk[] | null> {
+  if (!JWKS_URLS[provider]) return null;
+  let entry = cache.get(provider);
+  if (!entry || entry.until <= now) {
+    const failedAt = lastFailure.get(provider);
+    if (failedAt === undefined || now - failedAt >= RETRY_AFTER_FAILURE_MS) {
+      try {
+        entry = await fetchJwks(provider, now);
+      } catch {
+        // Served stale below, within the grace period.
+      }
+    }
+  }
+  return usableStale(entry, now) ? [...entry.keys.values()] : null;
 }
 
 /** Tests only. */

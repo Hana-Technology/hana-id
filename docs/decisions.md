@@ -852,7 +852,7 @@ answered question there points here.
 - Rejected: the alternatives each question listed.
 
 ### D87. Email: Resend, from a dedicated sending subdomain
-- Date 2026-10-29 · Status: confirmed by the user, not built · Source: `docs/batch-c-spec.md` "Email", open question 2
+- Date 2026-10-29 · Status: confirmed by the user, provisional: to re-confirm with the colleague (2026-10-29), not built · Source: `docs/batch-c-spec.md` "Email", open question 2
 - Decision: Resend, sending from a dedicated subdomain of the Hana domain with SPF, DKIM and DMARC, behind a small
   sender interface (send one message → accepted or an error) so switching (e.g. to Postmark) is one adapter. The
   admin Worker's fail-closed notices count a send as done only when Resend accepts it. The watchdog sends its alert

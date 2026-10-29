@@ -376,7 +376,9 @@ API and both page Workers deployed, ship gate measured (D76), latency fixes meas
 4. Add `{authOrigin}/login/callback` to Smoke A's own Google client (own-client login tests).
 5. Backup Google addresses for admin-portal access (D88); where the offline backup council key is held (D81, before
    mainnet).
-6. Create the Neon project (Sydney, `aws-ap-southeast-2`) and the Resend account to unblock batch C (D73, D87).
+6. Create the Neon project (Sydney, `aws-ap-southeast-2`) to unblock batch C (D73).
+7. **Confirm the email provider with the colleague** before creating any account: Resend is recorded (D87) but
+   another provider may be used instead. The email code sits behind one small interface, so a switch is cheap.
 
 **Before mainnet:**
 

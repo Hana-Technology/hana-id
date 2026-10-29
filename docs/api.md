@@ -93,15 +93,24 @@ A test app's other limits are the vault's, never the API's: no raw signing and n
 
 ## Rate limits
 
-Fixed windows in `RateLimiter` Durable Objects; a hit counts only if every window checked has room. The per-IP subject
-is the IPv4 address or the IPv6 /64 (`src/ip.ts`). The day window is the UTC day.
+Two kinds of counter (D95):
+
+- **Global, exact**: fixed windows in `RateLimiter` Durable Objects; a hit counts only if every window checked has
+  room. The day window is the UTC day. Every limit below is this kind unless marked *per location*.
+- **Per location, approximate** (*per location* below): Cloudflare's Rate Limiting bindings (`ratelimits` in the
+  generated wrangler config, `src/vault/limits.ts`). Each Cloudflare location counts on its own from a locally
+  cached count, with no network hop; counts sync in the background, so a burst can briefly pass the limit, and a
+  client served from two locations gets the limit in each. Used only for the vault endpoints' flood limits. A
+  refusal's `retry-after` is the binding's period (60 s): the binding doesn't say when its window ends.
+
+The per-IP subject is the IPv4 address or the IPv6 /64 (`src/ip.ts`).
 
 | Endpoint | Per IP | Per app | Other |
 |---|---|---|---|
 | relay kind: `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke`, `/v1/login` (one shared window) | plan `per_ip_minute` (window `<appId>:minute`) | plan `per_minute` and `per_day` | IP checked first, so its rejects don't spend the app's quota |
 | key exports: `/v1/login` from `AUTH_ORIGIN` | — | — | 3 per hour per user path per app (subject `export:<appId>:<hex sha256(path)>`, window `export:hour`), counted once the token and nonce are verified, before anything is relayed (D59) |
 | `GET /v1/app` | plan `per_ip_minute` (own window `<appId>:config:minute`) | — | never touches the relay quota |
-| vault endpoints | 60/min (`<appId>:vault:minute`) | 10 × plan `per_minute` (`vault:minute`) | share actions: 10/min per share (`share:<hex>`); IP checked first, the app window only once it accepted; the share window asked alongside the IP window and refunded if the IP or app window refuses (D78) |
+| vault endpoints | 60/min, *per location* (binding `VAULT_IP_LIMIT`, key `<env>:vault-ip:<appId>:<ipSubject>`) | 10 × plan `per_minute` (`vault:minute`), global | share actions: 10/min per share, *per location* (binding `VAULT_SHARE_LIMIT`, key `<env>:vault-share:<appId>:<hex>`); asked in turn: IP, then app only once the IP accepted, then (after the body check) the share (D95) |
 | login relay | writes 10/min, reads 120/min | — | not per app |
 | `/v1/owner-actions` | 10/min | — | global 20/min and 200/day, counted only after every off-chain check passes |
 | `/v1/health`, `GET /vault` | — | — | — |
@@ -317,9 +326,9 @@ limits (per IP, then per app) → body (`400 bad_request`) → share actions: th
 The app row comes from a per-isolate cache (`src/app-cache.ts`, D78): an entry serves for 30 s after its D1 read, so
 a suspension, a removed or changed key, a removed origin or a scope conflict reaches these endpoints within 30 s per
 isolate (unknown keys and failed reads are never cached; at most 256 apps). Nothing else uses it: the app gate above
-(relay endpoints, `GET /v1/app`) and the vault page read D1 every time. The per-share limiter is called alongside
-the IP limiter and an accepted hit is refunded (`RateLimiter.refund`) when the IP or app window refuses, so each
-window counts as if they were asked in turn.
+(relay endpoints, `GET /v1/app`) and the vault page read D1 every time. The per-IP and per-share limits are Rate
+Limiting bindings, checked in the Worker's location with no network hop; the per-app quota is the one limiter object
+call (`app:<id>`), made only once the IP limit accepted (D95).
 
 | Endpoint | Body | Payload | 2xx |
 |---|---|---|---|
@@ -443,7 +452,7 @@ All SQLite-backed (wrangler migrations `v1`: `RelayerKey`, `RateLimiter`; `v2`: 
 **Names and placement (`src/placement.ts`).** With manifest `cloudflare.durableObjectLocation` set (var
 `DO_LOCATION_HINT`, one of `wnam enam sam weur eeur apac oc afr me`), shared objects get the suffix `@<hint>` and are
 created there: `relayer-key-0@apac`, `owner-relayer-key-0@apac`, `app:<appId>@apac`, `owner-actions:global@apac`,
-`owner-actions:tokens@apac`, `share:<hex>@apac`. Unset or unknown hint: no suffix, Cloudflare places them. Changing
+`owner-actions:tokens@apac`. Unset or unknown hint: no suffix, Cloudflare places them. Changing
 the hint creates new objects (fresh limiter counters; new relayer objects read their nonce from chain once). Never
 suffixed: per-IP limiters `ip:v4:<addr>` / `ip:v6:<prefix>::/64` (created near the client) and `LoginRelay` objects
 (named by `relayId`).
@@ -528,6 +537,7 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 | `VAULT_KEK_PREVIOUS` | secret, rotation only | `.secrets/<env>/vault-kek.previous`, from `vault-kek rotate` | |
 | `DB` | D1 | `cloudflare.d1Name`, id from `--d1-id` | `migrations_dir: migrations` |
 | `RELAYER_KEY`, `RATE_LIMITER`, `LOGIN_RELAY` | Durable Objects | classes `RelayerKey`, `RateLimiter`, `LoginRelay` | |
+| `VAULT_IP_LIMIT`, `VAULT_SHARE_LIMIT` | Rate Limiting (`ratelimits`) | `gen` writes them (`src/vault/limits.ts`): namespaces `95001`, `95002`; 60 and 10 per 60 s | vault per-IP and per-share limits, per location (D95); a namespace id is account-wide, keys carry the env name |
 
 `gen` also writes the page Workers' `wrangler.vault.jsonc` (var `VAULT_ORIGIN`, assets, service binding `API` to this
 Worker) and `wrangler.auth.jsonc` (vars `AUTH_ORIGIN`, `API_URL`, `NEAR_RPC`, `NEAR_RPC_FALLBACK` when set; assets),
@@ -541,9 +551,9 @@ Also generated: `name` = `cloudflare.workerName`, `compatibility_date` 2026-10-0
 A `pk_test_` app's successful `POST /v1/login`, `POST /v1/vault/shares` and `POST /v1/vault/unlock` answer with the
 request's own timings, so a test page can set the API's time against its own round trip (apps/smoke, README
 "Timings"). The vault reports the login's and the unlock's; share creation's arrive after the login reply (D79), so
-the vault drops them (the request log keeps them). Unlock's phases are `app` (the cached app row), `limits` (the IP,
-app and share limiters), `share` (the KEK, the share and settings rows) and `advance` (the counter update); there is
-no `shareLimit` phase any more (D78):
+the vault drops them (the request log keeps them). Unlock's phases are `app` (the cached app row), `limits` (the IP
+and share limits, local bindings, and the app quota object; D95), `share` (the KEK, the share and settings rows) and
+`advance` (the counter update); there is no `shareLimit` phase any more (D78):
 
 ```json
 "timings": { "totalMs": 0, "phases": { "app": 0, "limits": 0, "…": 0 } }
@@ -573,7 +583,7 @@ signatures, bodies, keys, CKD responses, relay bodies or panic text.
 | Phase | Covers |
 |---|---|
 | `app` | D1 app lookup (vault endpoints: ~0 when the per-isolate cache has the app, D78) |
-| `limits` | rate-limiter round trips (vault share actions: the per-share limiter too, called alongside the IP one) |
+| `limits` | rate-limiter round trips (vault endpoints: the IP and share limits are local bindings with no round trip, then the app quota object; the body read is in it too, D95) |
 | `checks` | body, token, nonce, chain reads, signature, pre-checks (everything before the relay) |
 | `settings` | share creation: the app's settings row (D1) |
 | `session` | share creation: signature check, then the session read and its retries (every 300 ms for up to 2 s while the node lags) |

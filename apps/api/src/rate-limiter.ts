@@ -30,20 +30,6 @@ export class RateLimiter extends DurableObject<Env> {
   }
 
   /**
-   * Takes back one accepted `hit(limits, now)` (the same `now`, so the same windows): a request whose hit was sent
-   * alongside another limiter's, which then refused it, so that the hit counts exactly as if the limiters had been
-   * asked one after the other (vault/endpoints.ts). A window already gone, or at 0, is left alone.
-   */
-  refund(limits: Limit[], now: number): void {
-    const kv = this.ctx.storage.kv;
-    for (const l of limits) {
-      const key = `${l.name}@${Math.floor(now / l.windowMs) * l.windowMs}`;
-      const count = kv.get<number>(key);
-      if (count !== undefined && count > 0) kv.put(key, count - 1);
-    }
-  }
-
-  /**
    * One-time markers (e.g. an owner token reserved for, or already used by, one relay). `reserve` is an atomic
    * test-and-set: true (and marked until `untilMs`) only if no unexpired marker exists, so concurrent requests with
    * the same key can't all pass. Expired markers are dropped on the next `reserve`.

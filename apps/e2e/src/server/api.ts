@@ -27,7 +27,7 @@ import type { ApiApp, ApiCtx, ApiEnv, ApiModules } from './api-modules.ts';
 import { type Chain, mpcAnswer } from './chain.ts';
 import type { D1Shim } from './d1.ts';
 import { json } from './http.ts';
-import { ExecContext, MemoryNamespace, allowAllLimiter } from './workers.ts';
+import { ExecContext, MemoryNamespace, allowAllLimiter, allowAllRateLimit } from './workers.ts';
 
 const KEY_INDEX_LIMIT = 0x8000_0000;
 
@@ -95,6 +95,8 @@ export class MockApi {
       VAULT_KEK: newVaultKek(),
       DO_LOCATION_HINT: '',
       RATE_LIMITER: allowAllLimiter,
+      VAULT_IP_LIMIT: allowAllRateLimit,
+      VAULT_SHARE_LIMIT: allowAllRateLimit,
     };
     env.LOGIN_RELAY = new MemoryNamespace(api.LoginRelay, () => env);
     this.env = env;

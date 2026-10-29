@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { forgetCachedApps } from '../src/app-cache.ts';
 import { hex } from '../src/bytes.ts';
 import { REVOKE_ALL_FRESH_MS, SHARE_PER_MINUTE, VAULT_APP_MINUTE_FACTOR, VAULT_PER_IP_MINUTE } from '../src/vault/endpoints.ts';
+import { VAULT_LIMIT_PERIOD_S, vaultIpKey, vaultShareKey } from '../src/vault/limits.ts';
 import { clearKekCache } from '../src/vault/kek.ts';
 import { advanceShare } from '../src/vault/shares.ts';
 import { NO_SHARE_ID, createSharePayload, vaultMessage } from '../src/vault/message.ts';
@@ -296,7 +297,7 @@ describe('vault gate', () => {
     expect(new Set(statuses)).toEqual(new Set([400]));
     const limited = await call('/v1/vault/unlock', { headers: { ...vaultHeaders(app), 'cf-connecting-ip': ip }, body: await actionBody(share, app.id, 'unlock', 1) });
     expect(limited.status).toBe(429);
-    expect(limited.headers.get('retry-after')).toMatch(/^\d+$/u);
+    expect(limited.headers.get('retry-after')).toBe(String(VAULT_LIMIT_PERIOD_S));
     expect((await act(app, share, 'unlock', 1)).status).toBe(200);
 
     const plan = `p${uid()}`;
@@ -337,7 +338,7 @@ describe('vault gate', () => {
     expect((await (await from(ipB)).json()) as object).toMatchObject({ error: 'Rate limit exceeded (app per minute)' });
   });
 
-  it('a share hit sent alongside the gate is taken back when the IP or app window refuses', async () => {
+  it('the share limit counts only requests the IP and app limits accepted', async () => {
     const plan = `p${uid()}`;
     await seedPlan(plan, 1, 1000, 1000);
     const near = chain();
@@ -347,7 +348,7 @@ describe('vault gate', () => {
     for (let i = 1; i < VAULT_APP_MINUTE_FACTOR; i++) expect((await call('/v1/vault/unlock', { headers: vaultHeaders(app), body: {} })).status).toBe(400);
     // Well-formed share requests the app window refuses: more than the share's own limit.
     for (let i = 0; i <= SHARE_PER_MINUTE; i++) expect((await (await act(app, share, 'touch', 1)).json()) as object).toMatchObject({ error: 'Rate limit exceeded (app per minute)' });
-    // Fill an IP's window, then more share requests from it: refused by the IP window.
+    // Fill an IP's window, then more share requests from it: refused by the IP limit.
     const ip = `10.6.${Math.floor(Math.random() * 250)}.3`;
     const other = await seedApp();
     const otherShare = await createShare(other, near);
@@ -359,29 +360,82 @@ describe('vault gate', () => {
     // Neither share's window counted those: each still takes its full SHARE_PER_MINUTE.
     for (let c = 1; c <= SHARE_PER_MINUTE; c++) expect((await act(other, otherShare, 'touch', c)).status).toBe(200);
     expect((await act(other, otherShare, 'touch', SHARE_PER_MINUTE + 1)).status).toBe(429);
-    const { RATE_LIMITER } = env;
-    const stub = RATE_LIMITER.get(RATE_LIMITER.idFromName(`share:${hex(Uint8Array.from(share.shareId))}`));
-    const shareWindow = [{ name: 'minute', windowMs: MIN, max: SHARE_PER_MINUTE }];
-    for (let i = 0; i < SHARE_PER_MINUTE; i++) expect(await stub.hit(shareWindow)).toEqual({ ok: true });
-    expect((await stub.hit(shareWindow)).ok).toBe(false);
+    const key = vaultShareKey(env.ENV_NAME, app.id, hex(Uint8Array.from(share.shareId)));
+    for (let i = 0; i < SHARE_PER_MINUTE; i++) expect(await env.VAULT_SHARE_LIMIT.limit({ key })).toEqual({ success: true });
+    expect(await env.VAULT_SHARE_LIMIT.limit({ key })).toEqual({ success: false });
   });
 
-  it('a refund takes back one accepted hit of the same window, never below 0', async () => {
-    const { RATE_LIMITER } = env;
-    const stub = RATE_LIMITER.get(RATE_LIMITER.idFromName(`test:${uid()}`));
-    const limits = [{ name: 'minute', windowMs: MIN, max: 2 }];
-    const now = Date.now();
-    expect(await stub.hit(limits, now)).toEqual({ ok: true });
-    expect(await stub.hit(limits, now)).toEqual({ ok: true });
-    expect((await stub.hit(limits, now)).ok).toBe(false);
-    await stub.refund(limits, now);
-    expect(await stub.hit(limits, now)).toEqual({ ok: true });
-    // Another window (the next minute) is not touched by a refund of this one, and an empty window stays at 0.
-    await stub.refund(limits, now + MIN);
-    await stub.refund(limits, now + MIN);
-    expect(await stub.hit(limits, now + MIN)).toEqual({ ok: true });
-    expect(await stub.hit(limits, now + MIN)).toEqual({ ok: true });
-    expect((await stub.hit(limits, now + MIN)).ok).toBe(false);
+  it('the per-IP and per-share limits are the Rate Limiting bindings; the RateLimiter object is asked only for the app quota', async () => {
+    const { app, near } = await vaultSetup();
+    const objects = vi.spyOn(env.RATE_LIMITER, 'idFromName');
+    const share = await createShare(app, near);
+    for (const action of ['unlock', 'touch', 'revoke'] as const) expect((await act(app, share, action, ['unlock', 'touch', 'revoke'].indexOf(action) + 1)).status).toBe(200);
+    // One object call per request (share creation and three share actions), always the app's.
+    expect(objects.mock.calls.map(([name]) => name)).toEqual(Array<string>(4).fill(`app:${app.id}`));
+  });
+
+  it('keys the bindings by env, app and IP subject (IPv6 by /64), and by env, app and share', async () => {
+    const { app, near } = await vaultSetup();
+    const share = await createShare(app, near);
+    const ipKeys: string[] = [];
+    const shareKeys: string[] = [];
+    const recording = (keys: string[]): RateLimit => ({ limit: async ({ key }) => (keys.push(key), { success: true }) });
+    const bindings = { VAULT_IP_LIMIT: recording(ipKeys), VAULT_SHARE_LIMIT: recording(shareKeys) };
+    expect((await act(app, share, 'touch', 1, { env: bindings, headers: { 'cf-connecting-ip': '2001:db8:1:2:aaaa::1' } })).status).toBe(200);
+    expect((await act(app, share, 'touch', 2, { env: bindings, headers: { 'cf-connecting-ip': '2001:db8:1:2:bbbb::2' } })).status).toBe(200);
+    expect((await act(app, share, 'touch', 3, { env: { ...bindings, ENV_NAME: 'sandbox-other' }, headers: { 'cf-connecting-ip': '192.0.2.7' } })).status).toBe(200);
+    const shareHex = hex(Uint8Array.from(share.shareId));
+    expect(ipKeys).toEqual([
+      `sandbox-test:vault-ip:${app.id}:v6:2001:db8:1:2::/64`,
+      `sandbox-test:vault-ip:${app.id}:v6:2001:db8:1:2::/64`,
+      `sandbox-other:vault-ip:${app.id}:v4:192.0.2.7`,
+    ]);
+    expect(shareKeys).toEqual([`sandbox-test:vault-share:${app.id}:${shareHex}`, `sandbox-test:vault-share:${app.id}:${shareHex}`, `sandbox-other:vault-share:${app.id}:${shareHex}`]);
+    expect(vaultIpKey('e', 'a', 'v4:1.2.3.4')).toBe('e:vault-ip:a:v4:1.2.3.4');
+  });
+
+  it('a binding that refuses answers 429 rate_limited with retry-after; one that fails answers 503; neither lets the request through', async () => {
+    const { app, near } = await vaultSetup();
+    const share = await createShare(app, near);
+    const no: RateLimit = { limit: async () => ({ success: false }) };
+    const down: RateLimit = {
+      limit: async () => {
+        throw new Error('rate limiting unavailable');
+      },
+    };
+    const objects = vi.spyOn(env.RATE_LIMITER, 'idFromName');
+    // The IP limit refuses before the app quota is asked: no object call at all.
+    for (const path of ['/v1/vault/shares', '/v1/vault/unlock', '/v1/vault/touch', '/v1/vault/revoke', '/v1/vault/revoke-all']) {
+      const res = await call(path, { headers: vaultHeaders(app), body: {}, env: { VAULT_IP_LIMIT: no } });
+      expect([res.status, res.headers.get('retry-after')], path).toEqual([429, String(VAULT_LIMIT_PERIOD_S)]);
+      expect(await res.json()).toMatchObject({ code: 'rate_limited', error: 'Rate limit exceeded (per IP per minute)' });
+      const failed = await call(path, { headers: vaultHeaders(app), body: {}, env: { VAULT_IP_LIMIT: down } });
+      expect([failed.status, ((await failed.json()) as { code: string }).code], path).toEqual([503, 'rate_limiter_unavailable']);
+    }
+    expect(objects).not.toHaveBeenCalled();
+    // The share limit, asked last.
+    for (const action of ['unlock', 'touch', 'revoke', 'revoke-all'] as const) {
+      const res = await act(app, share, action, 1, { env: { VAULT_SHARE_LIMIT: no } });
+      expect([res.status, res.headers.get('retry-after')], action).toEqual([429, String(VAULT_LIMIT_PERIOD_S)]);
+      expect(await res.json()).toMatchObject({ code: 'rate_limited', error: 'Rate limit exceeded (share per minute)' });
+      const failed = await act(app, share, action, 1, { env: { VAULT_SHARE_LIMIT: down } });
+      expect([failed.status, ((await failed.json()) as { code: string }).code], action).toEqual([503, 'rate_limiter_unavailable']);
+    }
+    // Nothing moved: the share is still at counter 0 and live.
+    expect((await storedShare(share.shareId))!).toMatchObject({ counter: 0, revoked_at: null });
+    expect((await act(app, share, 'unlock', 1)).status).toBe(200);
+  });
+
+  it('the app quota object failing answers 503 (after the IP limit accepted)', async () => {
+    const { app, near } = await vaultSetup();
+    const share = await createShare(app, near);
+    vi.spyOn(env.RATE_LIMITER, 'idFromName').mockImplementation(() => {
+      throw new Error('DO down');
+    });
+    const res = await act(app, share, 'unlock', 1);
+    expect([res.status, ((await res.json()) as { code: string }).code]).toEqual([503, 'rate_limiter_unavailable']);
+    vi.restoreAllMocks();
+    expect((await storedShare(share.shareId))!.counter).toBe(0);
   });
 
   it(`per share: ${SHARE_PER_MINUTE} requests per minute`, async () => {

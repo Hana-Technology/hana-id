@@ -149,7 +149,8 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   `Set-Cookie` from their bindings (`src/pages/host.ts` `withoutCookies`; D70). Tests:
   `apps/api/test/no-cookies.test.ts`, `packages/web/test/no-cookies.test.ts`, the Playwright `noCookies` fixture
   (`apps/e2e/tests/fixtures.ts`).
-- **Rate limits** (fixed windows, `rate-limiter.ts`; IPv6 keyed by /64, `ip.ts`):
+- **Rate limits** (fixed windows in `RateLimiter` objects, `rate-limiter.ts`, global and exact, unless marked *per
+  location*; IPv6 keyed by /64, `ip.ts`):
 
   | Window | Limit |
   |---|---|
@@ -157,15 +158,25 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   | Key exports per user path per app | 3/hour |
   | Relay endpoints per app | plan `per_minute` / `per_day` (free: 60 / 5000) |
   | `GET /v1/app` per IP per app | plan `per_ip_minute`, its own window |
-  | Vault endpoints | 60/min per IP per app; 10 × `per_minute` per app; 10/min per share (share actions) |
+  | Vault endpoints | 60/min per IP per app (*per location*); 10 × `per_minute` per app; 10/min per share (share actions, *per location*) |
   | Login relay per IP | writes 10/min, reads 120/min |
   | Owner actions | 10/min per IP; 20/min and 200/day globally |
 
-  Each request's windows count as if asked in turn: per IP first, and the per-app window only once the IP window
-  accepted, so a request the IP window refuses never uses (or holds) any of the app's shared quota. The vault
-  endpoints ask the per-share window alongside the IP window and refund an accepted share hit when the IP or app
-  window refuses (`RateLimiter.refund`, `apps/api/src/vault/endpoints.ts` `vaultLimits`, D78): the counts are
-  unchanged, one round trip less.
+  Each request's windows are asked in turn: per IP first, and the per-app window only once the IP window accepted,
+  so a request the IP window refuses never uses (or holds) any of the app's shared quota. On the vault endpoints the
+  per-share limit comes last, after the body check, so it counts only requests both others accepted. A limiter that
+  fails refuses the request (`503 rate_limiter_unavailable`); none fails open.
+
+  **Per-location limits (D95).** The vault's per-IP and per-share limits are Cloudflare Rate Limiting bindings
+  (`apps/api/src/vault/limits.ts`): each Cloudflare location counts on its own from a cached count that syncs in the
+  background, so they cost no network hop but are approximate. Trade-off: a client can pass them by up to the
+  sync lag, and gets the limit once per location it reaches (an IP usually reaches one; with Smart Placement, D94,
+  most requests run in the placed location anyway). That is acceptable because they are flood limits only: every
+  share action also needs the session key's signature over a fresh counter (a flood can't unlock anything), and the
+  limit that protects other users, the app's shared vault quota, stays exact and global on the object. If one
+  client exceeding its per-IP share of that quota becomes a real problem, move the per-IP limit back to an object
+  (one extra round trip per vault request). Every limit that needs an exact count (relay quotas, key exports,
+  owner actions, the login relay, owner-token single-use markers) stays on the objects.
 - **App cache (vault endpoints only, D78).** `/v1/vault/*` takes the app row (status, key, origins, scope conflict,
   plan) from a per-isolate cache whose entries live 30 s from their D1 read (`apps/api/src/app-cache.ts`; unknown keys
   and failed reads never cached; at most 256 apps). Nothing in the Worker writes `apps`, so the staleness bound is the

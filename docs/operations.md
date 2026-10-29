@@ -156,6 +156,13 @@ the signer is part of every address. Dev-only privileges (loopback origins, part
    `database_name`, else it writes the local placeholder `00000000-0000-4000-8000-000000000000`. The generated files
    are gitignored (`wrangler.jsonc` holds the env's D1 id): re-run `gen <env>` whenever you switch envs, and never commit them.
 
+   `gen` also writes the two Rate Limiting bindings of the vault's per-IP and per-share limits (`ratelimits`:
+   `VAULT_IP_LIMIT` namespace `95001`, `VAULT_SHARE_LIMIT` namespace `95002`; D95). They need no setup in the
+   dashboard and aren't shown there. A namespace id is shared across the whole Cloudflare account: don't give
+   another Worker on the account a binding with these ids (it would share counters for equal keys; this API's keys
+   start with the env name, so two Hana ID envs on one account stay apart). The first deploy of an account
+   confirms the plan accepts the binding: a refusal fails that deploy as a whole.
+
 7. **Worker secrets** (from the repo root; values go through a pipe, never the terminal):
 
    ```sh
@@ -512,7 +519,7 @@ corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --status
 | Look at | Means |
 |---|---|
 | `colo` not near the user (e.g. US/EU for Malaysia) | Cloudflare routing (free-plan `workers.dev`); not fixable in code |
-| `app`, `limits` large | D1 or limiter objects far away (`durableObjectLocation`); on a vault endpoint `app` is only paid when this isolate hasn't read the app in the last 30 s (D78) |
+| `app`, `limits` large | D1 or limiter objects far away (`durableObjectLocation`); on a vault endpoint `app` is only paid when this isolate hasn't read the app in the last 30 s (D78), and `limits` holds one object call (the app quota; the IP and share limits are local bindings, D95) |
 | `checks` large | chain reads (scope, `session_key_in_use`, `get_session`) or a JWKS fetch |
 | `relayQueue` | waiting behind other txs of the same key |
 | `relayChainRead` with `relayInstance.coldChainRead` | object started without a stored reservation (new or replaced key) |
@@ -568,6 +575,7 @@ Warm stage split: create = checks 0.2 s + relay 2.2 s (chain ~0.6 s); derive = r
 | `403 origin_not_allowed` from a loopback origin | `pk_live_` key or a non-dev env name; or no `x-hana-parent-origin` from a Hana page | use `pk_test_` in `sandbox*`/`local*`; list the origin |
 | `403 scope_conflict` | a `pk_test_` app shares its scope with a `pk_live_` app | separate scopes |
 | 4100 `raw_not_allowed_for_test_apps` / `mainnet_not_allowed` from the vault | a `pk_test_` app asked for a raw signature (whatever `raw_sign` says), or for a mainnet Stellar passphrase or an EVM chain outside the testnet allowlist (D39) | expected for test apps; use a test network |
+| `429 rate_limited` "(per IP per minute)" or "(share per minute)" on `/v1/vault/*` with `retry-after: 60` | the vault's per-location flood limits (60/min per IP per app, 10/min per share; D95), counted per Cloudflare location and approximate | wait; not visible in the dashboard, so count the 429s in the request logs |
 | `429 rate_limited` "Too many key exports" on `/v1/login` from the export window | more than 3 exports in an hour for one user path in one app (D59) | wait for `retry-after` |
 | `409 no_google_client` on `/v1/app` | scope has no Google client and no usable shared client (or shared client still in its timelock) | add a client, or `--allow-shared` + wait `changeDelayMs` |
 | `admin`: "No wrangler config in apps/api" | `wrangler.jsonc` missing | `corepack pnpm --filter @hana-id/api run gen <env>` |

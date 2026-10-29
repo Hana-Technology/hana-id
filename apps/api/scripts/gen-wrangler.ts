@@ -16,6 +16,7 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type Manifest, loadEnv, repoRoot } from '@hana-id/env';
+import { VAULT_RATE_LIMITS } from '../src/vault/limits.ts';
 import { writePagesWranglerConfigs } from './pages-wrangler.ts';
 
 const apiDir = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -70,6 +71,8 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
       { tag: 'v1', new_sqlite_classes: ['RelayerKey', 'RateLimiter'] },
       { tag: 'v2', new_sqlite_classes: ['LoginRelay'] },
     ],
+    // The vault's per-IP and per-share flood limits, counted where the request runs with no network hop (D95).
+    ratelimits: VAULT_RATE_LIMITS.map((r) => ({ name: r.name, namespace_id: r.namespace_id, simple: { ...r.simple } })),
     // Every 15 min, one trigger (the free plan allows 5 per account): the run at :00 syncs Google's JWKS into
     // hana-signer and does vault maintenance; every run records the JWKS kids (src/index.ts isHourlyRun).
     triggers: { crons: ['*/15 * * * *'] },

@@ -714,9 +714,9 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
   moving it to the callback would put it back on the critical path for no added check).
 
 ### D78. The vault endpoints cache the app per isolate for 30 s; the share limit runs alongside the gate's
-- Date 2026-10-29 · Status: in force (`apps/api/src/app-cache.ts`, `apps/api/src/vault/endpoints.ts` `vaultApp`,
-  `vaultLimits`; `RateLimiter.refund`) · Source: `docs/context.md` "Login timings with stage breakdown" (unlock gate
-  0.24 s)
+- Date 2026-10-29 · Status: the app cache in force (`apps/api/src/app-cache.ts`, `apps/api/src/vault/endpoints.ts`
+  `vaultApp`); the share limit alongside the gate's, with its refund, superseded by D95 · Source: `docs/context.md`
+  "Login timings with stage breakdown" (unlock gate 0.24 s)
 - Decision: `/v1/vault/*` reads the app (`getAppByKey`, two D1 queries) from an in-isolate cache whose entries live
   30 s from the D1 read (at most 256 apps; unknown keys and failed reads never cached). Nothing in the Worker writes
   `apps`, so the bound is the TTL: a suspension, a removed or changed publishable key, a removed origin, a scope
@@ -950,6 +950,40 @@ answered question there points here.
   query crossed continents, taking reload unlock from about 0.9 s to 2–3 s.
 - Next if not enough: D1 read replicas (Sessions API); a custom domain once the Hana domain exists.
 
+### D95. The vault's per-IP and per-share flood limits use Cloudflare's Rate Limiting binding
+- Date 2026-10-29 · Status: in force on branch `perf/native-ratelimit`, not yet deployed (`apps/api/src/vault/limits.ts`,
+  `apps/api/src/vault/endpoints.ts` `vaultLimits`, `shareLimit`; `ratelimits` written by
+  `apps/api/scripts/gen-wrangler.ts`) · Source: sandbox-dev re-measure after D94 (`unlockServerGate` 0.12–0.13 s in
+  some runs, 0.60–0.73 s in most: the limiter object round trips)
+- Decision: on `/v1/vault/*` the per-IP limit (60/min per IP per app) and the per-share limit (10/min per share) move
+  from `RateLimiter` objects to two Workers Rate Limiting bindings, `VAULT_IP_LIMIT` (namespace `95001`, 60 per 60 s)
+  and `VAULT_SHARE_LIMIT` (namespace `95002`, 10 per 60 s). Keys are `<env>:vault-ip:<appId>:<ipSubject>` and
+  `<env>:vault-share:<appId>:<shareIdHex>`. The order is the one before D78, with no refund: IP limit, then the
+  app's vault quota (still the `app:<id>` object, 10 × `per_minute`), then the body, then the share limit, so a
+  request the IP limit refuses never touches the app quota and the share limit counts only requests that passed
+  both. `RateLimiter.refund` is removed. A refusal is still `429 rate_limited` with the same messages; its
+  `retry-after` is the binding's period (60), since the binding doesn't say when its window ends. A binding that
+  throws refuses (`503 rate_limiter_unavailable`). An unlock now makes one limiter object call (the app's), not two.
+- Effective change: nominal limits and periods are the same (both were per minute; the binding allows 10 or 60 s).
+  The bindings count per Cloudflare location and are approximate (eventually consistent, can admit more than the
+  limit while counts sync), where the objects counted globally and exactly. That is acceptable for flood limits:
+  a share action still needs the session key's signature over a fresh counter, and the app quota, which bounds what
+  one client can take from every other user of the app, stays exact. With Smart Placement (D94) most requests run in
+  the placed location, so per-location counting is close to global in practice.
+- Stays on the `RateLimiter` object (exact, global): the vault's per-app quota; the relay endpoints' and
+  `GET /v1/app`'s limits (per IP, per app minute and day); key exports (3/hour per user path, D59); the login
+  relay's per-IP limits; owner actions (per IP and global) and the owner-token single-use markers. These are either
+  quotas other users share, limits small enough that drift matters, or test-and-set state the binding can't hold.
+- Plan and tests: Cloudflare's docs (bindings page, Workers pricing and limits) list no plan restriction for the
+  binding and no charge beyond Worker requests; GA since 2025-09-19, wrangler ≥ 4.36. It can't be confirmed on the
+  free sandbox-dev account without a deploy: a deploy the plan refused would fail as a whole, never run without the
+  limits. Miniflare simulates it locally (`wrangler dev`, `@cloudflare/vitest-plugin`), counting exactly, so the
+  tests exercise the real limits.
+- Rejected: asking the IP and share objects in parallel and the app after (D78's shape, still one extra hop and
+  the refund); moving the app quota to the binding (it is shared by every user of the app and must be exact);
+  a 10 s period (60 per minute as 10 per 10 s would refuse bursts the minute limit allows, such as several users
+  behind one address reloading at once).
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -966,6 +1000,7 @@ answered question there points here.
 | Partners build the SDK from this repository and compile its TypeScript sources | Built tarballs (`pnpm pack`), installed with npm; no registry yet (D71, D72) | `docs/integration.md` "Install" |
 | Only Hana staff issue invites (D29) | Hana invites each org's first owner; owners invite viewers and owners, a new owner waits 24 h as a viewer (D89) | `docs/batch-c-spec.md` "Invites" |
 | Governance draft: owner DAO 3-of-3 for policy and member changes; sandbox-dev signer full-access key deleted | 2-of-3 for every kind (D81); sandbox-dev keeps the key, staging and mainnet never have one (D86) | `docs/governance-spec.md` |
+| Vault per-IP and per-share limits on `RateLimiter` objects, the share hit sent alongside the IP one and refunded (D78) | Rate Limiting bindings `VAULT_IP_LIMIT` and `VAULT_SHARE_LIMIT`, per location and approximate, asked in turn with no refund; the app quota stays on the object (D95) | `docs/api.md` "Rate limits" |
 | Batch C draft retention: ledger 400 days, uid stripped 35 days after the month, audit 36 months | Statements and settlements 7 years, raw usage 24 months then de-identified, audit 5 years (D90) | `docs/batch-c-spec.md` "Retention" |
 | Sodax Stellar `signAndSendTransaction(p)` is `sendTransaction(signTransaction(p.data))` | It signs as `p.from`: `sendTransaction(signTransaction(p.data, {address: p.from}))`, so a raw transaction built for another account (a muxed `M…` address included) is 4100 before any popup. Sodax builds every raw transaction for `getWalletAddress()`'s `G…` address. Confirmed (D67) | `docs/batch-b-spec.md` "Sodax adapter"; `packages/sodax/src/stellar.ts` |
 | `/login` calls `GET /v1/app` itself and cross-checks the vault's signer, scope and client before Google (batch B "Login" step 4) | It checks the pinned signer and the nonce only, makes no API call, and shows the vault's app name (D77) | `docs/security.md` "The login popup trusts the vault's app facts" |

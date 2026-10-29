@@ -9,6 +9,7 @@ import {
   ckdKeyProblem,
   decryptCkd,
   decryptRelayPayload,
+  isScopeId,
   encryptRelayPayload,
   newAppKey,
   newSessionKey,
@@ -25,12 +26,12 @@ import {
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { stackFingerprint } from '../src/fingerprint.ts';
-import { CALLBACK_URL, GOOGLE_AUTH_URL, GoogleStub, checkAuthRequest } from '../src/google-stub.ts';
+import { CALLBACK_URL, CALLBACK_URLS, GOOGLE_AUTH_URL, GoogleStub, checkAuthRequest } from '../src/google-stub.ts';
 import { MockApi } from '../src/server/api.ts';
 import { type ApiModules, loadApiModules } from '../src/server/api-modules.ts';
 import { Chain, mpcAnswer } from '../src/server/chain.ts';
 import { D1Shim } from '../src/server/d1.ts';
-import { serve } from '../src/server/http.ts';
+import { serve, servedAt } from '../src/server/http.ts';
 import { MemoryNamespace, type MemoryStorage } from '../src/server/workers.ts';
 import {
   API_URL,
@@ -39,6 +40,18 @@ import {
   DEMO_ORIGIN,
   E2E_ENV,
   GOOGLE_CLIENT_ID,
+  LIVE_API_URL,
+  LIVE_AUTH_ORIGIN,
+  LIVE_ENV,
+  LIVE_ENV_NAME,
+  LIVE_EVM_RPC,
+  LIVE_NEAR_RPC,
+  LIVE_PARTNER_ORIGIN,
+  LIVE_SCOPE_ID,
+  LIVE_UPSTREAMS,
+  LIVE_VAULT_ORIGIN,
+  NEAR_RPC,
+  EVM_RPC,
   PARTNER_ORIGIN,
   PORTS,
   SITE_B_ORIGIN,
@@ -73,7 +86,7 @@ describe('the e2e env', () => {
     expect(portBase(undefined)).toBe(DEFAULT_PORT_BASE);
     expect(portBase('')).toBe(DEFAULT_PORT_BASE);
     expect(portBase('4510')).toBe(4510);
-    expect(portsFrom(4510)).toEqual({ partner: 4510, siteB: 4511, demo: 4512, vault: 4520, auth: 4530, api: 4540, near: 4550, evm: 4560 });
+    expect(portsFrom(4510)).toEqual({ partner: 4510, siteB: 4511, demo: 4512, vault: 4520, liveVault: 4521, auth: 4530, liveAuth: 4531, api: 4540, liveApi: 4541, near: 4550, evm: 4560 });
     for (const bad of ['80', '65500', '45.5', '4510x', '-1', ' 0x1000']) expect(() => portBase(bad)).toThrow(/HANA_E2E_PORT_BASE/u);
     // A base that puts a port on one browsers refuse (5010 + 50 = 5060, SIP) fails at once, not in the tests.
     expect(() => portBase('5010')).toThrow(/port 5060, which browsers refuse/u);
@@ -83,7 +96,33 @@ describe('the e2e env', () => {
     const base = portBase();
     expect([PARTNER_ORIGIN, SITE_B_ORIGIN, VAULT_ORIGIN, AUTH_ORIGIN, API_URL].map((o) => Number(new URL(o).port))).toEqual([base, base + 1, base + 10, base + 20, base + 30]);
     expect(Number(new URL(DEMO_ORIGIN).port)).toBe(base + 2);
-    expect(new Set(Object.values(PORTS)).size).toBe(8);
+    expect(new Set(Object.values(PORTS)).size).toBe(11);
+  });
+
+  it('gives live mode an env of its own whose every origin is https, not loopback, and routed to the stack', () => {
+    const live = [LIVE_PARTNER_ORIGIN, LIVE_VAULT_ORIGIN, LIVE_AUTH_ORIGIN, LIVE_API_URL, LIVE_NEAR_RPC, LIVE_EVM_RPC];
+    for (const o of live) {
+      const u = new URL(o);
+      expect(u.origin).toBe(o);
+      expect(u.protocol).toBe('https:');
+      // A reserved `.test` name: no browser treats it as the local machine, and apps/api's loopback rule doesn't match it.
+      expect(u.hostname).toMatch(/^[a-z0-9-]+\.[a-z0-9-]+\.test$/u);
+      expect(modules.isLoopbackOrigin(o)).toBe(false);
+    }
+    expect(new Set(live).size).toBe(live.length);
+    // The partner is cross-site to both Hana pages (its registrable domain differs), as deployed.
+    const site = (o: string) => new URL(o).hostname.split('.').slice(-2).join('.');
+    expect([site(LIVE_VAULT_ORIGIN), site(LIVE_AUTH_ORIGIN)]).not.toContain(site(LIVE_PARTNER_ORIGIN));
+    expect(Object.keys(LIVE_UPSTREAMS).sort()).toEqual([...live].sort());
+    expect(LIVE_UPSTREAMS[LIVE_PARTNER_ORIGIN]).toBe(PARTNER_ORIGIN);
+    expect(LIVE_UPSTREAMS[LIVE_NEAR_RPC]).toBe(NEAR_RPC);
+    expect(LIVE_UPSTREAMS[LIVE_EVM_RPC]).toBe(EVM_RPC);
+    for (const o of [LIVE_VAULT_ORIGIN, LIVE_AUTH_ORIGIN, LIVE_API_URL]) expect(LIVE_UPSTREAMS[o]).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/u);
+    // The same chain, accounts and test MPC as the e2e env; its own name and origins.
+    expect(LIVE_ENV).toEqual({ ...E2E_ENV, name: LIVE_ENV_NAME, apiUrl: LIVE_API_URL, vaultOrigin: LIVE_VAULT_ORIGIN, authOrigin: LIVE_AUTH_ORIGIN, rpc: LIVE_NEAR_RPC });
+    expect(ckdKeyProblem(LIVE_ENV)).toBeNull();
+    expect(isScopeId(LIVE_SCOPE_ID)).toBe(true);
+    expect(LIVE_SCOPE_ID).not.toBe('e2e');
   });
 
   it("the stack's fingerprint covers the port base the bundles are built for", () => {
@@ -129,9 +168,12 @@ describe('Google stub', () => {
   };
 
   it('accepts the spec’s request (and max_age=0) and refuses anything else', () => {
-    expect(checkAuthRequest(authUrl())).toMatchObject({ ok: true, request: { clientId: 'c', nonce: 'n', state: 's', maxAge: null } });
+    expect(checkAuthRequest(authUrl())).toMatchObject({ ok: true, request: { clientId: 'c', nonce: 'n', state: 's', maxAge: null, redirectUri: CALLBACK_URL } });
+    // Each env's authOrigin callback is a registered redirect URI (live mode's included), nothing else.
+    expect(CALLBACK_URLS).toEqual([CALLBACK_URL, `${LIVE_AUTH_ORIGIN}/login/callback`]);
+    expect(checkAuthRequest(authUrl({ redirect_uri: `${LIVE_AUTH_ORIGIN}/login/callback` }))).toMatchObject({ ok: true, request: { redirectUri: `${LIVE_AUTH_ORIGIN}/login/callback` } });
     expect(checkAuthRequest(authUrl({ max_age: '0' }))).toMatchObject({ ok: true, request: { maxAge: '0' } });
-    const bads: Record<string, string | null>[] = [{ scope: 'openid email' }, { response_type: 'code' }, { response_mode: 'query' }, { prompt: null }, { redirect_uri: `${AUTH_ORIGIN}/cb` }, { nonce: null }, { state: null }, { max_age: '60' }, { login_hint: 'x' }];
+    const bads: Record<string, string | null>[] = [{ scope: 'openid email' }, { response_type: 'code' }, { response_mode: 'query' }, { prompt: null }, { redirect_uri: `${AUTH_ORIGIN}/cb` }, { redirect_uri: `${LIVE_VAULT_ORIGIN}/login/callback` }, { redirect_uri: null }, { nonce: null }, { state: null }, { max_age: '60' }, { login_hint: 'x' }];
     for (const bad of bads) {
       expect(checkAuthRequest(authUrl(bad)).ok).toBe(false);
     }
@@ -139,7 +181,7 @@ describe('Google stub', () => {
 
   it('signs tokens the vault’s verifier accepts, with only allow-listed claims', async () => {
     const g = new GoogleStub();
-    const token = await g.idToken({ clientId: 'c', nonce: 'n', state: 's', maxAge: null }, { sub: '42', label: 'x' });
+    const token = await g.idToken({ clientId: 'c', nonce: 'n', state: 's', maxAge: null, redirectUri: CALLBACK_URL }, { sub: '42', label: 'x' });
     const { keys } = await g.jwks();
     const r = await verifyGoogleIdToken(token, { clientId: 'c', nonce: 'n', nowMs: Date.now(), jwks: keys as never });
     expect(r).toMatchObject({ ok: true, token: { sub: '42' } });
@@ -153,6 +195,10 @@ describe('Google stub', () => {
     expect(ok.body).toContain('id="account-0"');
     expect(ok.body).toContain(`${CALLBACK_URL}#state=s&amp;id_token=`);
     expect(ok.body).toContain('error=access_denied');
+    // The links go back to the callback the request named.
+    const live = await g.authorize(authUrl({ redirect_uri: `${LIVE_AUTH_ORIGIN}/login/callback` }));
+    expect(live.body).toContain(`${LIVE_AUTH_ORIGIN}/login/callback#state=s&amp;id_token=`);
+    expect(live.body).not.toContain(CALLBACK_URL);
     g.coop = 'same-origin';
     expect((await g.authorize(authUrl())).headers['cross-origin-opener-policy']).toBe('same-origin');
     expect((await g.authorize(authUrl({ scope: 'openid profile' }))).status).toBe(400);
@@ -355,10 +401,60 @@ describe('the Hana API: apps/api’s Worker, /v1/login and /v1/derive mocked', (
     expect(() => api.createApp({ origins: [PARTNER_ORIGIN], publishableKey: 'pk_live_DemoE2eDemoE2eDemoE2e' })).toThrow(/pk_test_/u);
   });
 
+  it('creates live apps: a pk_live_ key on the live scope, which test apps on the e2e scope never conflict with', async () => {
+    const { d1, api } = setup();
+    const live = api.createApp({ origins: [LIVE_PARTNER_ORIGIN], live: true, settings: { rawSign: 'approval' } });
+    expect(live.pk).toMatch(/^pk_live_[1-9A-HJ-NP-Za-km-z]{16,64}$/u);
+    expect(await modules.getAppByKey(d1, live.pk)).toMatchObject({ scope_id: LIVE_SCOPE_ID, scope_conflict: false });
+    const test = api.createApp({ origins: [PARTNER_ORIGIN] });
+    expect(await modules.getAppByKey(d1, test.pk)).toMatchObject({ scope_id: 'e2e', scope_conflict: false });
+    // On a live app's scope, a test app is refused (D51): why live apps get a scope of their own.
+    const onLive = api.createApp({ origins: [PARTNER_ORIGIN], scopeId: LIVE_SCOPE_ID });
+    expect(await modules.getAppByKey(d1, onLive.pk)).toMatchObject({ scope_conflict: true });
+    expect(() => api.createApp({ origins: [LIVE_PARTNER_ORIGIN], live: true, publishableKey: 'pk_test_DemoE2eDemoE2eDemoE2e' })).toThrow(/fresh key/u);
+    // The control endpoints take live keys too.
+    expect(await (await call(api, `/__e2e/apps/${live.pk}/shares`)).json()).toEqual([]);
+    expect(await (await call(api, `/__e2e/apps/${live.pk}/revoke`, { method: 'POST' })).json()).toEqual({ revoked: 0 });
+  });
+
+  it('serves live mode from a second Worker on the same D1, under the production origin rule for live keys', async () => {
+    const { d1, api } = setup();
+    const liveApi = new MockApi(d1, chain, modules, { nearRpc, serves: { envName: LIVE_ENV_NAME, vaultOrigin: LIVE_VAULT_ORIGIN, authOrigin: LIVE_AUTH_ORIGIN, apiUrl: LIVE_API_URL } });
+    // A live app listing a loopback origin too: the rule (unchanged) still refuses it for a pk_live_ key.
+    const { pk } = api.createApp({ origins: [LIVE_PARTNER_ORIGIN, PARTNER_ORIGIN], live: true });
+    const ok = await call(liveApi, '/v1/app', { origin: LIVE_VAULT_ORIGIN, parent: LIVE_PARTNER_ORIGIN, pk });
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get('access-control-allow-origin')).toBe(LIVE_VAULT_ORIGIN);
+    expect(await ok.json()).toMatchObject({ scopeId: LIVE_SCOPE_ID, rawSign: 'off' });
+    expect((await call(liveApi, '/v1/app', { origin: LIVE_VAULT_ORIGIN, parent: PARTNER_ORIGIN, pk })).status).toBe(403);
+    expect((await call(liveApi, '/v1/app', { origin: PARTNER_ORIGIN, pk })).status).toBe(403);
+    expect((await call(api, '/v1/app', { origin: VAULT_ORIGIN, parent: PARTNER_ORIGIN, pk })).status).toBe(403);
+    // Each Worker answers only its own env's Hana pages.
+    expect((await call(liveApi, '/v1/app', { origin: VAULT_ORIGIN, parent: LIVE_PARTNER_ORIGIN, pk })).headers.get('access-control-allow-origin')).toBeNull();
+    // The live Worker has no control endpoints: apps are created through the stack's default one.
+    expect((await call(liveApi, '/__e2e/health')).status).toBe(404);
+    expect((await call(liveApi, '/__e2e/apps', { method: 'POST', body: { origins: [] } })).status).toBe(404);
+  });
+
   it('reports the fingerprint it was given on /__e2e/health, to requests without an Origin only', async () => {
     const api = new MockApi(new D1Shim(), chain, modules, { nearRpc, fingerprint: 'f00d' });
     expect(await (await call(api, '/__e2e/health')).json()).toEqual({ ok: true, fingerprint: 'f00d' });
     expect((await call(api, '/__e2e/health', { origin: PARTNER_ORIGIN })).status).toBe(403);
+  });
+});
+
+describe('servedAt (live mode’s TLS-terminating front)', () => {
+  it('hands the handler the request at the https origin, with its method, headers, query and body', async () => {
+    let seen: { url: string; method: string; origin: string | null; body: string } | null = null;
+    const handler = servedAt(LIVE_API_URL, async (req) => {
+      seen = { url: req.url, method: req.method, origin: req.headers.get('origin'), body: await req.text() };
+      return new Response('ok');
+    });
+    const res = await handler(new Request('http://127.0.0.1:1234/v1/login?x=1', { method: 'POST', headers: { origin: LIVE_VAULT_ORIGIN }, body: '{"a":1}' }), new AbortController().signal);
+    expect(await res.text()).toBe('ok');
+    expect(seen).toEqual({ url: `${LIVE_API_URL}/v1/login?x=1`, method: 'POST', origin: LIVE_VAULT_ORIGIN, body: '{"a":1}' });
+    await handler(new Request('http://127.0.0.1:1234/vault?pk=p'), new AbortController().signal);
+    expect(seen).toMatchObject({ url: `${LIVE_API_URL}/vault?pk=p`, method: 'GET', body: '' });
   });
 });
 

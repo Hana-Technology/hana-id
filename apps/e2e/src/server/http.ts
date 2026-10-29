@@ -86,5 +86,23 @@ export async function serve(port: number, hosts: readonly string[], handler: Han
   return servers;
 }
 
+/**
+ * `handler` as served at `origin` behind a TLS-terminating front: each request's URL is rewritten to `origin` (path
+ * and query kept), so apps/api's hosts, which serve only their own origin, see the URL the browser used. Live mode's
+ * https origins reach the stack this way (src/stack.ts LIVE_UPSTREAMS).
+ */
+export function servedAt(origin: string, handler: Handler): Handler {
+  return (request, signal) => {
+    const url = new URL(request.url);
+    const method = request.method;
+    const init: RequestInit & { duplex?: 'half' } = { method, headers: request.headers, signal: request.signal };
+    if (method !== 'GET' && method !== 'HEAD') {
+      init.body = request.body;
+      init.duplex = 'half';
+    }
+    return handler(new Request(`${origin}${url.pathname}${url.search}`, init), signal);
+  };
+}
+
 export const json = (status: number, body: unknown, headers: Record<string, string> = {}): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });

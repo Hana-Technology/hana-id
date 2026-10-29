@@ -59,6 +59,8 @@ export interface ApiModules {
   /** A JSON answer with the request's CORS and request id, logged as the Worker logs it. */
   done(ctx: ApiCtx, status: number, body: Record<string, unknown>): Response;
   getAppByKey(db: D1Like, publishableKey: string): Promise<ApiApp | null>;
+  /** apps/api/src/origins.ts: the hosts the origin rule treats as loopback (pk_test_ keys in dev envs only). */
+  isLoopbackOrigin(origin: string): boolean;
   /** apps/api/src/vault/page.ts: GET {vaultOrigin}/vault?pk=… */
   handleVaultPage(request: Request, env: ApiEnv, requestId: string): Promise<Response>;
   /** apps/api/src/pages/host.ts: the vault and auth origins' Workers. */
@@ -73,10 +75,11 @@ const load = async <T>(path: string): Promise<T> => (await import(new URL(path, 
 export async function loadApiModules(): Promise<ApiModules> {
   // The Worker's Durable Object classes extend `cloudflare:workers`' DurableObject.
   registerCloudflareModule();
-  const [index, handlers, apps, page, host] = await Promise.all([
+  const [index, handlers, apps, origins, page, host] = await Promise.all([
     load<{ default: ApiModules['worker']; LoginRelay: ApiModules['LoginRelay'] }>('index.ts'),
     load<Pick<ApiModules, 'appGate' | 'newCtx' | 'done'>>('handlers.ts'),
     load<Pick<ApiModules, 'getAppByKey'>>('apps.ts'),
+    load<Pick<ApiModules, 'isLoopbackOrigin'>>('origins.ts'),
     load<Pick<ApiModules, 'handleVaultPage'>>('vault/page.ts'),
     load<Pick<ApiModules, 'handleVaultHost' | 'handleAuthHost'>>('pages/host.ts'),
   ]);
@@ -87,6 +90,7 @@ export async function loadApiModules(): Promise<ApiModules> {
     newCtx: handlers.newCtx,
     done: handlers.done,
     getAppByKey: apps.getAppByKey,
+    isLoopbackOrigin: origins.isLoopbackOrigin,
     handleVaultPage: page.handleVaultPage,
     handleVaultHost: host.handleVaultHost,
     handleAuthHost: host.handleAuthHost,

@@ -191,7 +191,8 @@ Merged on the integration branch `feat/batch-b` (not yet on `develop`), all test
 - `apps/smoke` on the vault (the spec's step 7): `/` logs in through `@hana-id/web`, `/direct.html` keeps the split
   flow for the ship gate (`apps/smoke/README.md`).
 - `apps/e2e`: the Playwright suite (Chromium, WebKit, Firefox) against local builds and the real `apps/api` Worker,
-  with its CI job.
+  with its CI job. Its live mode (a second e2e env on routed https origins) runs `pk_live_` apps, so the raw approval
+  popup is browser-tested too.
 - Scripts: `admin app:settings` for the per-app settings, `vault-kek` (`init`/`put`/`rotate`, D54), session-pool
   allowlist state 1 in `deploy-contract`. `.github/CODEOWNERS` (D58).
 - Docs: the reference docs (`docs/README.md`), including `docs/integration.md` (partner guide).
@@ -390,8 +391,6 @@ Status section is the summary for humans: https://claude.ai/artifact/GyQq6HZbaJB
 
 **Known follow-ups:**
 
-- `apps/e2e` has no live-app mode (it creates only `pk_test_` apps), so the raw approval popup isn't browser-tested
-  (covered by `packages/web` unit tests).
 - `docs/batch-c-spec.md` (D34 cut, D73–D75 and the 2026-10-29 decisions D87–D93 folded in) needs implementation
   review. Still open there: Q1 (console code flow `openid`-only check, to test), Q3 (Hana Cloudflare account, zone,
   domains), Q4's Access fallback emails, Q5 (Neon setup). Retention periods (D90) need the company's accountant.

@@ -50,8 +50,9 @@ describe('ckdNetworkKeySource', () => {
     expect(issues({ ...raw(), ckdNetworkKeySource: { ...source, extra: 1 } })).toHaveLength(1);
   });
 
-  it('only beside a pinned key', () => {
-    expect(issues({ ...raw(), ckdNetworkKey: 'UNSET', ckdNetworkKeySource: source })).toEqual(['ckdNetworkKeySource: ckdNetworkKeySource is recorded only with a pinned ckdNetworkKey']);
+  it('is optional (an env pinned before D100 has none)', () => {
+    const { ckdNetworkKeySource: _s, ...rest } = raw();
+    expect(issues(rest)).toEqual([]);
   });
 });
 

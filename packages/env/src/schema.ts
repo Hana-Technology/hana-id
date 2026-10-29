@@ -185,7 +185,7 @@ export const manifestSchema = z
       const problem = value === undefined ? null : endpointUrlProblem(value, m.name);
       if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: `${field} ${problem}` });
     }
-    if (m.ckdNetworkKeySource) ckdSourceRules(m.ckdNetworkKey, m.ckdNetworkKeySource, ctx);
+    if (m.ckdNetworkKeySource) ckdSourceRules(m.ckdNetworkKeySource, ctx);
     hanaOrigins(m, ctx);
     if (m.watchdog) watchdogRules(m, m.watchdog, ctx);
     governance(m, ctx);
@@ -224,11 +224,12 @@ export function endpointUrlProblem(value: string, envName: string): string | nul
   return 'must be an https URL (http only for a loopback host in local* envs)';
 }
 
-/** A recorded CKD key source needs a pinned key and distinct hosts on ≥ MIN_CKD_SOURCES registrable domains. */
-function ckdSourceRules(key: string, source: { rpcs: string[] }, ctx: z.RefinementCtx): void {
-  if (!key.startsWith('bls12381g2:')) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ckdNetworkKeySource'], message: 'ckdNetworkKeySource is recorded only with a pinned ckdNetworkKey' });
-  }
+/**
+ * A recorded CKD key source names distinct hosts on ≥ MIN_CKD_SOURCES registrable domains. (A key reset to a
+ * placeholder by hand may leave a stale source; fetch-ckd-key rewrites both together, and the build refuses the
+ * placeholder anyway.)
+ */
+function ckdSourceRules(source: { rpcs: string[] }, ctx: z.RefinementCtx): void {
   if (new Set(source.rpcs).size !== source.rpcs.length) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ckdNetworkKeySource', 'rpcs'], message: 'ckdNetworkKeySource.rpcs must be distinct' });
   }

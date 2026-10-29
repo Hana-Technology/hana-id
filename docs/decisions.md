@@ -1138,6 +1138,18 @@ can't collide with the entries the parallel API, contract and watchdog fixes add
   the build's pinned envs, is the only way to build a client.
 - Effect on partners: none in the documented API (`createHana` returns the same `HanaClient`).
 
+### D115. A live app's RPC, Horizon and Soroban URLs must be https (loopback excepted)
+- Date 2026-10-29 · Status: in force on branch `fix/sweep-web` (`packages/web/src/client/urls.ts` `serviceUrl`, used by
+  `validateEvmConfig`, `validateStellarConfig` and `packages/sodax/src/http.ts` `httpUrl`; `HanaClient.testApp`) ·
+  Source: sweep finding PART-3 (Low)
+- Decision: for a `pk_live_` key, createHana and the Sodax adapters refuse an `http://` RPC, Horizon or Soroban RPC URL
+  unless its host is loopback (`localhost`, `*.localhost`, 127.0.0.0/8, `[::1]`). `pk_test_` keys keep accepting
+  `http://` anywhere (local and LAN test stacks). Every key refuses other schemes and URLs with credentials (which
+  `fetch` refuses anyway). The adapters read the new `hana.testApp` getter; a client object without it gets the
+  strict rule.
+- Why: over plaintext http an on-path attacker fills fees and nonces, answers every read (balances, quotes) and sees
+  every broadcast; for real funds that is never acceptable, while test stacks often run a node on another machine.
+
 ## Superseded or amended
 
 | Was | Now | Source |

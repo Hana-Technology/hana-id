@@ -45,7 +45,7 @@ export interface SodaxEvmConfig {
 }
 
 /** What the adapter needs from the client: `hana.ethereum` and the logged-in addresses. */
-export type SodaxEvmHana = Pick<HanaClient, 'ethereum' | 'addresses'> & Partial<Pick<HanaClient, 'prepareApproval'>>;
+export type SodaxEvmHana = Pick<HanaClient, 'ethereum' | 'addresses'> & Partial<Pick<HanaClient, 'prepareApproval' | 'testApp'>>;
 
 const HASH = /^0x[0-9a-fA-F]{64}$/u;
 const HEX_DATA = /^0x(?:[0-9a-fA-F]{2})*$/u;
@@ -64,7 +64,7 @@ export function createSodaxEvmProvider(hana: SodaxEvmHana, config: SodaxEvmConfi
   if (!isObject(config)) throw new TypeError('createSodaxEvmProvider takes {chainId, rpcUrl}');
   const { chainId } = config;
   if (typeof chainId !== 'number' || !Number.isSafeInteger(chainId) || chainId <= 0) throw new TypeError('chainId must be a positive integer');
-  const rpcUrl = httpUrl(config.rpcUrl, 'rpcUrl');
+  const rpcUrl = httpUrl(config.rpcUrl, 'rpcUrl', hana);
   const eth = hana.ethereum;
   const target = chainHex(chainId);
   if (!eth.chainIds.includes(chainId)) {

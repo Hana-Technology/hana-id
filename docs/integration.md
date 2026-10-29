@@ -133,6 +133,11 @@ hana.addresses;   // { stellar: 'G…', evm: '0x…' } or null
 Create one client per page and keep it. `hana.destroy()` removes the iframe and its listeners (for example on an SPA
 unmount).
 
+RPC, Horizon and Soroban RPC URLs (`evm.chains[].rpcUrl`, `stellar.horizonUrl`, `stellar.sorobanRpcUrl`, and the
+Sodax adapters' `rpcUrl`, `horizonUrl`, `sorobanRpcUrl`) must be `https://` for a `pk_live_` key; plaintext `http://`
+is accepted only on `localhost` and other loopback hosts (a local node), and for `pk_test_` keys anywhere. URLs with
+credentials (`https://user:key@…`) are refused for every key (D115). `hana.testApp` says which rule applies.
+
 `environment` names the Hana deployment. The client takes the Hana origins from its own build, so no configuration
 can point it at another vault. `sandbox-dev` (testnet) uses:
 

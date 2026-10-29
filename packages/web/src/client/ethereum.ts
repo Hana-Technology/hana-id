@@ -24,6 +24,7 @@ import { type NormalizedTx, fillTransaction, normalizeTxInput, toQuantity } from
 import type { ApprovalTicket } from './approval-window.ts';
 import { HANA_ID_ICON, HANA_ID_NAME } from './icon.ts';
 import { type FetchLike, jsonRpc } from './rpc.ts';
+import { serviceUrl } from './urls.ts';
 
 type Hex = `0x${string}`;
 
@@ -112,22 +113,18 @@ export const READ_ONLY_METHODS: ReadonlySet<string> = new Set([
   'web3_sha3',
 ]);
 
-/** Validates `evm` config: positive unique chain IDs, http(s) RPC URLs, a listed default. Throws TypeError. */
-export function validateEvmConfig(evm: EvmConfig): EvmConfig {
+/**
+ * Validates `evm` config: positive unique chain IDs, RPC URLs by the service-URL rule (http(s); https for a live app
+ * unless on loopback, D115), a listed default. Throws TypeError.
+ */
+export function validateEvmConfig(evm: EvmConfig, live = true): EvmConfig {
   if (typeof evm !== 'object' || evm === null || !Array.isArray(evm.chains) || evm.chains.length === 0) throw new TypeError('evm.chains must be a non-empty array');
   const ids = new Set<number>();
   const chains = evm.chains.map((c, i) => {
     if (typeof c !== 'object' || c === null || !Number.isSafeInteger(c.id) || c.id <= 0) throw new TypeError(`evm.chains[${i}].id must be a positive integer`);
     if (ids.has(c.id)) throw new TypeError(`evm.chains lists chain ${c.id} twice`);
     ids.add(c.id);
-    let url: URL;
-    try {
-      url = new URL(c.rpcUrl);
-    } catch {
-      throw new TypeError(`evm.chains[${i}].rpcUrl must be a URL`);
-    }
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new TypeError(`evm.chains[${i}].rpcUrl must be http(s)`);
-    return { id: c.id, rpcUrl: c.rpcUrl };
+    return { id: c.id, rpcUrl: serviceUrl(c.rpcUrl, `evm.chains[${i}].rpcUrl`, live) };
   });
   if (!ids.has(evm.defaultChainId)) throw new TypeError('evm.defaultChainId must be one of evm.chains');
   return { chains, defaultChainId: evm.defaultChainId };

@@ -126,8 +126,10 @@ export class HanaClient extends Emitter<HanaEvents> {
     this.#createdAt = this.#now();
     if (typeof config !== 'object' || config === null) throw new TypeError('createHana takes a config object');
     if (!isPublishableKey(config.publishableKey)) throw new TypeError('publishableKey must be a pk_test_… or pk_live_… key');
-    const evm = config.evm === undefined ? undefined : validateEvmConfig(config.evm);
-    const stellar = config.stellar === undefined ? undefined : validateStellarConfig(config.stellar);
+    // A live app's RPC, Horizon and Soroban RPC URLs must be https (loopback excepted, D115).
+    const live = !isTestPublishableKey(config.publishableKey);
+    const evm = config.evm === undefined ? undefined : validateEvmConfig(config.evm, live);
+    const stellar = config.stellar === undefined ? undefined : validateStellarConfig(config.stellar, live);
     this.#win = deps.win;
     this.#testApp = isTestPublishableKey(config.publishableKey);
     this.vaultOrigin = deps.origins.vaultOrigin;
@@ -176,6 +178,11 @@ export class HanaClient extends Emitter<HanaEvents> {
 
   get status(): HanaStatus {
     return this.#status;
+  }
+
+  /** True for a `pk_test_` key: test networks only, and plaintext http RPC URLs allowed (the adapters read it, D115). */
+  get testApp(): boolean {
+    return this.#testApp;
   }
 
   /** `{stellar, evm}` while logged in, else null. */

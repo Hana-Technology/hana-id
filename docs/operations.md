@@ -504,7 +504,8 @@ Run as `corepack pnpm --filter @hana-id/scripts run admin <env> <command> …`. 
 Owner actions on a registered scope (add a client, change owners, enable shared login) go through
 `POST /v1/owner-actions` with a console-client token (`docs/api.md`); there is no CLI for them yet. The endpoint caps
 each owner identity, each scope and all owners together (D100); `cancel_change` has its own small allowance per owner
-(5/min, 20/day) outside those caps, so another owner or a flood can't use up a timelock's cancel window.
+(5/min, 20/day) and a cancel-only ceiling outside those caps, so another owner or a flood can't use up a timelock's
+cancel window.
 
 **Cancelling a change when the API refuses (runbook).** OIDC owner auth doesn't depend on who sends the transaction:
 if `/v1/owner-actions` is down or answers 429 while a change you didn't make is in its timelock, call the contract

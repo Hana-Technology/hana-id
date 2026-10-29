@@ -2,7 +2,11 @@ import { runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  CANCEL_GLOBAL_LIMITER,
+  CANCELS_GLOBAL_MINUTE,
   CANCELS_PER_OWNER_MINUTE,
+  EXECUTES_PER_SCOPE_MINUTE,
+  executeLimiterKey,
   OWNER_ACTIONS_GLOBAL_MINUTE,
   OWNER_ACTIONS_PER_IP_MINUTE,
   OWNER_ACTIONS_PER_OWNER_MINUTE,
@@ -41,7 +45,9 @@ const SCOPES = ['s1', 's2', 's3'];
 /** Every owner-action cap these tests touch: global, per scope, per owner identity. */
 const ownerLimiters = async (): Promise<string[]> => [
   'owner-actions:global',
+  CANCEL_GLOBAL_LIMITER,
   ...SCOPES.map(scopeLimiterKey),
+  ...SCOPES.map(executeLimiterKey),
   ...(await Promise.all([OWNER_SUB, OTHER_OWNER_SUB].map((sub) => ownerLimiterKey({ provider: 'google', sub })))),
 ];
 
@@ -332,13 +338,26 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
 
   const execute = (scopeId: string, i: number) => post({ method: 'execute_change', args: { scope_id: scopeId, change_id: 3 } }, `198.51.100.${(i % 250) + 1}`);
   const setOwners = async (sub = OWNER_SUB) => ({ method: 'propose_change', args: { scope_id: 's1', auth: await oidc({ sub }), change: { SetOwners: { owners: [{ Oidc: { provider: 'google', sub } }] } } } });
+  const cancel = async (sub = OWNER_SUB) => post({ method: 'cancel_change', args: { scope_id: 's1', auth: await oidc({ sub }), change_id: 5 } });
   const fill = async (scopeId: string, count: number, from = 0) => {
     for (let i = 0; i < count; i++) expect((await execute(scopeId, from + i)).status, `${scopeId} #${i}`).toBe(200);
   };
+  /** Fills a RateLimiter object's minute window directly (traffic the test doesn't need to send). */
+  const exhaust = async (subject: string, max: number): Promise<void> => {
+    const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(subject));
+    for (let i = 0; i < max; i++) expect((await stub.hit([{ name: 'minute', windowMs: 60_000, max }])).ok).toBe(true);
+  };
+  /** The count a RateLimiter object holds in its current window `name`. */
+  const countIn = async (subject: string, name: string): Promise<number> =>
+    runInDurableObject(env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(subject)), (_i, state) => {
+      let n = 0;
+      for (const [key, value] of state.storage.kv.list<number>()) if (key.startsWith(`${name}@`)) n += value;
+      return n;
+    });
 
   it('frees the token when a cap turns the request away', async () => {
     const n = near();
-    await fill('s1', OWNER_ACTIONS_PER_SCOPE_MINUTE);
+    await exhaust(scopeLimiterKey('s1'), OWNER_ACTIONS_PER_SCOPE_MINUTE);
     const body = await setOwners();
     const refused = await post(body);
     expect([refused.status, (await json(refused)).error]).toEqual([429, 'Rate limit exceeded (owner actions per scope per minute)']);
@@ -347,13 +366,28 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
     expect(n.sent.filter((t) => t.method === 'propose_change')).toHaveLength(1);
   });
 
-  it(`caps owner actions per scope (${OWNER_ACTIONS_PER_SCOPE_MINUTE} per minute), across IPs, without touching other scopes`, async () => {
+  it(`unauthenticated execute_change has its own per-scope window (${EXECUTES_PER_SCOPE_MINUTE}/min), never the owners'`, async () => {
     const n = near();
     const statuses: number[] = [];
-    for (let i = 0; i < OWNER_ACTIONS_PER_SCOPE_MINUTE + 1; i++) statuses.push((await execute('s1', i)).status);
-    expect(statuses).toEqual([...Array(OWNER_ACTIONS_PER_SCOPE_MINUTE).fill(200), 429]);
+    for (let i = 0; i < EXECUTES_PER_SCOPE_MINUTE + 1; i++) statuses.push((await execute('s1', i)).status);
+    expect(statuses).toEqual([...Array(EXECUTES_PER_SCOPE_MINUTE).fill(200), 429]);
+    expect((await json(await execute('s1', 30))).error).toBe('Rate limit exceeded (executes per scope per minute)');
+    // The execute flood left the scope's owner window alone, and other scopes' execute windows.
+    expect(await countIn(scopeLimiterKey('s1'), 'minute')).toBe(0);
+    expect((await post(await setOwners())).status).toBe(200);
     expect((await execute('s2', 99)).status).toBe(200);
-    expect(n.sent).toHaveLength(OWNER_ACTIONS_PER_SCOPE_MINUTE + 1);
+    expect(n.sent.filter((t) => t.method === 'execute_change')).toHaveLength(EXECUTES_PER_SCOPE_MINUTE + 1);
+  });
+
+  it(`caps owner actions per scope (${OWNER_ACTIONS_PER_SCOPE_MINUTE} per minute), across owners`, async () => {
+    const n = near();
+    const owners = (n.scopes.s1 as { owners: unknown[] }).owners;
+    const subs = Array.from({ length: 3 }, (_, i) => `7${i}`);
+    for (const sub of subs) owners.push({ Oidc: { provider: 'google', sub } });
+    const statuses: number[] = [];
+    for (let i = 0; i < OWNER_ACTIONS_PER_SCOPE_MINUTE + 1; i++) statuses.push((await post(await setOwners([OWNER_SUB, ...subs][i % 4]))).status);
+    expect(statuses).toEqual([...Array(OWNER_ACTIONS_PER_SCOPE_MINUTE).fill(200), 429]);
+    await clearLimiters(await Promise.all(subs.map((sub) => ownerLimiterKey({ provider: 'google', sub }))));
   });
 
   it(`caps owner actions per owner identity (${OWNER_ACTIONS_PER_OWNER_MINUTE} per minute), whatever the IP`, async () => {
@@ -368,39 +402,69 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
 
   it(`caps relayed owner actions globally (${OWNER_ACTIONS_GLOBAL_MINUTE} per minute) across scopes`, async () => {
     const n = near();
-    await fill('s1', OWNER_ACTIONS_PER_SCOPE_MINUTE);
-    await fill('s2', OWNER_ACTIONS_GLOBAL_MINUTE - OWNER_ACTIONS_PER_SCOPE_MINUTE, 50);
+    await fill('s1', EXECUTES_PER_SCOPE_MINUTE);
+    await fill('s2', OWNER_ACTIONS_GLOBAL_MINUTE - EXECUTES_PER_SCOPE_MINUTE, 50);
     const over = await execute('s3', 120);
     expect([over.status, (await json(over)).error]).toEqual([429, 'Rate limit exceeded (owner actions per minute)']);
     expect(n.sent).toHaveLength(OWNER_ACTIONS_GLOBAL_MINUTE);
   });
 
-  it('cancel_change is never starved: its own per-owner allowance, outside the scope, owner and global caps (APIW-3)', async () => {
+  it('a request a later window refuses is taken back from the earlier ones (a refusal costs no window)', async () => {
+    near();
+    await exhaust('owner-actions:global', OWNER_ACTIONS_GLOBAL_MINUTE);
+    // Twice the owner's own allowance, all refused by the global ceiling...
+    for (let i = 0; i < 2 * OWNER_ACTIONS_PER_OWNER_MINUTE; i++) expect((await post(await setOwners())).status).toBe(429);
+    expect((await execute('s1', 1)).status).toBe(429);
+    // ...leave the owner's, the scope's and the execute window untouched.
+    expect(await countIn(await ownerLimiterKey({ provider: 'google', sub: OWNER_SUB }), 'minute')).toBe(0);
+    expect(await countIn(scopeLimiterKey('s1'), 'minute')).toBe(0);
+    expect(await countIn(executeLimiterKey('s1'), 'minute')).toBe(0);
+    await clearLimiters(['owner-actions:global']);
+    for (let i = 0; i < OWNER_ACTIONS_PER_OWNER_MINUTE; i++) expect((await post(await setOwners())).status).toBe(200);
+  });
+
+  it('cancel_change is never starved: its own per-owner allowance and ceiling, outside every other cap (APIW-3)', async () => {
     const n = near();
     (n.scopes.s1 as { owners: unknown[] }).owners.push({ Oidc: { provider: 'google', sub: OTHER_OWNER_SUB } });
-    // Someone fills the global ceiling and the victim scope's own window, and the owner has used up its own window.
-    await fill('s1', OWNER_ACTIONS_PER_SCOPE_MINUTE);
-    await fill('s2', OWNER_ACTIONS_GLOBAL_MINUTE - OWNER_ACTIONS_PER_SCOPE_MINUTE, 50);
-    for (let i = 0; i < OWNER_ACTIONS_PER_OWNER_MINUTE; i++) expect((await post(await setOwners())).status).toBe(429);
-    expect((await execute('s3', 200)).status).toBe(429);
+    // Someone fills the global ceiling, the victim scope's owner window and its execute window.
+    await exhaust('owner-actions:global', OWNER_ACTIONS_GLOBAL_MINUTE);
+    await exhaust(scopeLimiterKey('s1'), OWNER_ACTIONS_PER_SCOPE_MINUTE);
+    await exhaust(executeLimiterKey('s1'), EXECUTES_PER_SCOPE_MINUTE);
+    expect((await post(await setOwners())).status).toBe(429);
+    expect((await execute('s1', 200)).status).toBe(429);
     // The honest owner can still cancel, up to its own small allowance.
     const cancels: number[] = [];
-    for (let i = 0; i < CANCELS_PER_OWNER_MINUTE + 1; i++) cancels.push((await post({ method: 'cancel_change', args: { scope_id: 's1', auth: await oidc(), change_id: 5 } })).status);
+    for (let i = 0; i < CANCELS_PER_OWNER_MINUTE + 1; i++) cancels.push((await cancel()).status);
     expect(cancels).toEqual([...Array(CANCELS_PER_OWNER_MINUTE).fill(200), 429]);
+    expect((await json(await cancel())).error).toBe('Rate limit exceeded (cancels per owner per minute)');
     // One owner using up its cancels leaves every other owner's untouched.
-    expect((await post({ method: 'cancel_change', args: { scope_id: 's1', auth: await oidc({ sub: OTHER_OWNER_SUB }), change_id: 5 } })).status).toBe(200);
+    expect((await cancel(OTHER_OWNER_SUB)).status).toBe(200);
     expect(n.sent.filter((t) => t.method === 'cancel_change')).toHaveLength(CANCELS_PER_OWNER_MINUTE + 1);
   });
 
-  it('ownerActionWindows: per owner, per scope, global; cancel_change only its own per-owner allowance; no Google sub in a name', async () => {
+  it(`cancels have a global ceiling of their own (${CANCELS_GLOBAL_MINUTE}/min); a refused cancel keeps the owner's allowance`, async () => {
+    near();
+    await exhaust(CANCEL_GLOBAL_LIMITER, CANCELS_GLOBAL_MINUTE);
+    const refused = await cancel();
+    expect([refused.status, (await json(refused)).error]).toEqual([429, 'Rate limit exceeded (cancels per minute)']);
+    expect(await countIn(await ownerLimiterKey({ provider: 'google', sub: OWNER_SUB }), 'cancel:minute')).toBe(0);
+    // The shared owner-action ceiling is a different object: filling one never fills the other.
+    expect(await countIn('owner-actions:global', 'minute')).toBe(0);
+  });
+
+  it('ownerActionWindows: the windows of each method, fail closed without an owner, no Google sub in a name', async () => {
     const owner = { provider: 'google', sub: '110248495921238986420' };
-    const propose = await ownerActionWindows('propose_change', { scopeId: 's1', owner });
+    const propose = (await ownerActionWindows('propose_change', { scopeId: 's1', owner }))!;
     expect(propose.map((w) => w.subject)).toEqual([await ownerLimiterKey(owner), 'owner-actions:scope:s1', 'owner-actions:global']);
     expect(propose[0]!.subject).toMatch(/^owner-actions:owner:[0-9a-f]{64}$/u);
-    expect((await ownerActionWindows('execute_change', { scopeId: 's1', owner: null })).map((w) => w.subject)).toEqual(['owner-actions:scope:s1', 'owner-actions:global']);
-    const cancel = await ownerActionWindows('cancel_change', { scopeId: 's1', owner });
-    expect(cancel).toEqual([{ subject: await ownerLimiterKey(owner), label: 'cancels per owner', limits: [expect.objectContaining({ name: 'cancel:minute', max: CANCELS_PER_OWNER_MINUTE }), expect.objectContaining({ name: 'cancel:day' })] }]);
-    for (const w of [...propose, ...cancel]) expect(w.subject).not.toContain(owner.sub);
+    expect((await ownerActionWindows('execute_change', { scopeId: 's1', owner: null }))!.map((w) => w.subject)).toEqual(['owner-actions:execute:s1', 'owner-actions:global']);
+    const cancelWindows = (await ownerActionWindows('cancel_change', { scopeId: 's1', owner }))!;
+    expect(cancelWindows.map((w) => w.subject)).toEqual([await ownerLimiterKey(owner), CANCEL_GLOBAL_LIMITER]);
+    expect(cancelWindows[0]!.limits).toEqual([expect.objectContaining({ name: 'cancel:minute', max: CANCELS_PER_OWNER_MINUTE }), expect.objectContaining({ name: 'cancel:day' })]);
+    for (const method of ['cancel_change', 'propose_change', 'remove_client', 'disable_shared_login']) {
+      expect(await ownerActionWindows(method, { scopeId: 's1', owner: null }), method).toBeNull();
+    }
+    for (const w of [...propose, ...cancelWindows]) expect(w.subject).not.toContain(owner.sub);
   });
 
   it('fails closed when the issuer keys or the registry cannot be read', async () => {

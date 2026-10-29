@@ -27,19 +27,28 @@ export const OWNER_ACTIONS_PER_IP_MINUTE = 10;
 /**
  * Caps on relayed owner actions (only requests that passed every off-chain check count; D100, security sweep APIW-3).
  * They are paid from the owner pool (OWNER_RELAYER_KEYS, small allowance), never from the login pool. Asked from the
- * most specific in, so one owner's excess stops at its own window and never reaches what other scopes share:
- * per owner identity (provider, sub; execute_change has none), then per scope, then the global ceiling that bounds the
- * pool's spend. `cancel_change` counts against none of these: it has its own small allowance per owner identity
- * (CANCELS_PER_OWNER_*), so no other owner, scope or flood can starve the timelock's cancel window.
+ * most specific in, so one owner's excess stops at its own window and never reaches what other scopes share; a
+ * request refused by a later window is taken back from the earlier ones (`unhit`), so a refusal costs nothing:
+ * - authenticated actions (propose_change, remove_client, disable_shared_login): per owner identity (provider, sub),
+ *   then per scope, then the global ceiling that bounds the pool's spend;
+ * - execute_change (no auth, anyone may send it): its own per-scope window, never the one the scope's owners use, then
+ *   the global ceiling;
+ * - cancel_change: none of the above, only its own small allowance per owner identity and a cancel-only global
+ *   ceiling, so no other owner's actions, no scope's traffic and no execute flood can starve a timelock's cancel
+ *   window; a cancel without an owner identity is refused (fail closed).
  */
 export const OWNER_ACTIONS_PER_OWNER_MINUTE = 5;
 export const OWNER_ACTIONS_PER_OWNER_DAY = 30;
 export const OWNER_ACTIONS_PER_SCOPE_MINUTE = 10;
 export const OWNER_ACTIONS_PER_SCOPE_DAY = 50;
+export const EXECUTES_PER_SCOPE_MINUTE = 10;
+export const EXECUTES_PER_SCOPE_DAY = 50;
 export const OWNER_ACTIONS_GLOBAL_MINUTE = 20;
 export const OWNER_ACTIONS_GLOBAL_DAY = 200;
 export const CANCELS_PER_OWNER_MINUTE = 5;
 export const CANCELS_PER_OWNER_DAY = 20;
+export const CANCELS_GLOBAL_MINUTE = 30;
+export const CANCELS_GLOBAL_DAY = 300;
 /** Clock skew tolerated on an ID token's `exp` (the contract checks `exp` against the block time again). */
 export const TOKEN_EXP_SKEW_MS = 60_000;
 const MINUTE = 60_000;
@@ -482,23 +491,68 @@ export async function checkClientScope(env: Env, provider: string, aud: string, 
 /** RateLimiter subject of an owner identity's caps: a hash, so no Google `sub` is part of an object name. */
 export const ownerLimiterKey = async (owner: { provider: string; sub: string }): Promise<string> => `owner-actions:owner:${await sha256Hex(`${owner.provider}#${owner.sub}`)}`;
 export const scopeLimiterKey = (scopeId: string): string => `owner-actions:scope:${scopeId}`;
+/** execute_change's own per-scope subject: unauthenticated, so it never shares the window the scope's owners use. */
+export const executeLimiterKey = (scopeId: string): string => `owner-actions:execute:${scopeId}`;
+export const CANCEL_GLOBAL_LIMITER = 'owner-actions:cancel-global';
 
-/** The windows a checked owner action counts against, in the order they are asked (see OWNER_ACTIONS_PER_OWNER_*). */
-export async function ownerActionWindows(method: string, check: { scopeId: string; owner: { provider: string; sub: string } | null }): Promise<{ subject: string; label: string; limits: Limit[] }[]> {
+export interface OwnerActionWindow {
+  subject: string;
+  label: string;
+  limits: Limit[];
+}
+
+/**
+ * The windows a checked owner action counts against, in the order they are asked (see OWNER_ACTIONS_PER_OWNER_*), or
+ * null when it must be refused: an action that needs an owner identity (every method but execute_change) without one.
+ */
+export async function ownerActionWindows(method: string, check: { scopeId: string; owner: { provider: string; sub: string } | null }): Promise<OwnerActionWindow[] | null> {
   const pair = (prefix: string, minute: number, day: number): Limit[] => [
     { name: `${prefix}minute`, windowMs: MINUTE, max: minute },
     { name: `${prefix}day`, windowMs: DAY, max: day },
   ];
-  const owner = check.owner ? await ownerLimiterKey(check.owner) : null;
+  const global = { subject: 'owner-actions:global', label: 'owner actions', limits: pair('', OWNER_ACTIONS_GLOBAL_MINUTE, OWNER_ACTIONS_GLOBAL_DAY) };
+  if (method === 'execute_change') {
+    return [{ subject: executeLimiterKey(check.scopeId), label: 'executes per scope', limits: pair('', EXECUTES_PER_SCOPE_MINUTE, EXECUTES_PER_SCOPE_DAY) }, global];
+  }
+  // Every other method carries an OIDC owner proof (toOwnerAction, precheckOwnerAction); without one, fail closed.
+  if (!check.owner) return null;
+  const owner = await ownerLimiterKey(check.owner);
   if (method === 'cancel_change') {
-    // Always an OIDC owner (toOwnerAction requires auth); its own allowance, outside every shared window.
-    return owner ? [{ subject: owner, label: 'cancels per owner', limits: pair('cancel:', CANCELS_PER_OWNER_MINUTE, CANCELS_PER_OWNER_DAY) }] : [];
+    return [
+      { subject: owner, label: 'cancels per owner', limits: pair('cancel:', CANCELS_PER_OWNER_MINUTE, CANCELS_PER_OWNER_DAY) },
+      { subject: CANCEL_GLOBAL_LIMITER, label: 'cancels', limits: pair('', CANCELS_GLOBAL_MINUTE, CANCELS_GLOBAL_DAY) },
+    ];
   }
   return [
-    ...(owner ? [{ subject: owner, label: 'owner actions per owner', limits: pair('', OWNER_ACTIONS_PER_OWNER_MINUTE, OWNER_ACTIONS_PER_OWNER_DAY) }] : []),
+    { subject: owner, label: 'owner actions per owner', limits: pair('', OWNER_ACTIONS_PER_OWNER_MINUTE, OWNER_ACTIONS_PER_OWNER_DAY) },
     { subject: scopeLimiterKey(check.scopeId), label: 'owner actions per scope', limits: pair('', OWNER_ACTIONS_PER_SCOPE_MINUTE, OWNER_ACTIONS_PER_SCOPE_DAY) },
-    { subject: 'owner-actions:global', label: 'owner actions', limits: pair('', OWNER_ACTIONS_GLOBAL_MINUTE, OWNER_ACTIONS_GLOBAL_DAY) },
+    global,
   ];
+}
+
+/**
+ * Asks `windows` in turn at one instant; the first refusal takes back the hits the earlier ones accepted (`unhit`), so
+ * a refused request uses up no window. Returns the refusal, or null when every window accepted. Throws when a limiter
+ * can't be reached (the caller refuses: fail closed); a failed take-back is logged and leaves that count in place.
+ */
+export async function hitAll(env: Env, windows: readonly OwnerActionWindow[], requestId?: string): Promise<{ window: OwnerActionWindow; limit: string; retryAfterS: number } | null> {
+  const now = Date.now();
+  const accepted: OwnerActionWindow[] = [];
+  for (const w of windows) {
+    const hit = await limiter(env, w.subject).hit(w.limits, now);
+    if (!hit.ok) {
+      for (const a of accepted) {
+        try {
+          await limiter(env, a.subject).unhit(a.limits, now);
+        } catch {
+          log({ event: 'rate_limit_unhit_failed', requestId, endpoint: '/v1/owner-actions' }, 'warn');
+        }
+      }
+      return { window: w, limit: hit.limit, retryAfterS: hit.retryAfterS };
+    }
+    accepted.push(w);
+  }
+  return null;
 }
 
 export async function handleOwnerAction(request: Request, env: Env, requestId: string): Promise<Response> {
@@ -542,12 +596,15 @@ export async function handleOwnerAction(request: Request, env: Env, requestId: s
     return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
   }
   try {
-    for (const w of await ownerActionWindows(call.method, check)) {
-      const hit = await limiter(env, w.subject).hit(w.limits);
-      if (!hit.ok) {
-        await release();
-        return reject(ctx, 429, 'rate_limited', `Rate limit exceeded (${w.label} per ${hit.limit.replace(/^cancel:/u, '')})`, { 'retry-after': String(hit.retryAfterS) });
-      }
+    const windows = await ownerActionWindows(call.method, check);
+    if (!windows) {
+      await release();
+      return reject(ctx, 403, 'not_owner', 'This owner action needs an owner token');
+    }
+    const refused = await hitAll(env, windows, requestId);
+    if (refused) {
+      await release();
+      return reject(ctx, 429, 'rate_limited', `Rate limit exceeded (${refused.window.label} per ${refused.limit.replace(/^cancel:/u, '')})`, { 'retry-after': String(refused.retryAfterS) });
     }
   } catch {
     await release();

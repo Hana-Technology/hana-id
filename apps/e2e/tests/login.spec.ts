@@ -134,8 +134,14 @@ test('an IdP that enforces COOP same-origin still completes through the relay', 
   await openPartner(page, app);
   const popupP = page.waitForEvent('popup');
   await clickAction(page, 'login', 'login');
-  const popup = await popupP;
-  await popup.waitForURL(/accounts\.google\.com/u);
+  // A COOP switch can replace the popup's page (Playwright closes the old Page and opens a new one), so follow
+  // whichever page reaches Google.
+  const first = await popupP;
+  const replaced = page
+    .context()
+    .waitForEvent('page')
+    .then(async (p) => (await p.waitForURL(/accounts\.google\.com/u), p));
+  const popup = await Promise.any([first.waitForURL(/accounts\.google\.com/u).then(() => first), replaced]);
   const severed = await popup.evaluate(() => window.opener === null);
   if (browserName === 'webkit') {
     // Playwright's WebKit doesn't apply COOP to a route-fulfilled response (it does to served ones: see the partner

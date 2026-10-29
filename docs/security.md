@@ -216,8 +216,8 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   requests (D35); the popup says those signatures aren't tied to one network. The launcher only opens the popup.
 - The Approve guard (`packages/web/src/auth/approve-guard.ts`, D36): disabled until 1 s after render and 1 s after
   the window last gained focus or became visible, then an arming gesture: a mouse `pointermove` that moved (non-zero
-  `movementX`/`Y`; or, as WebKit always reports 0, both a client and a screen position other than those of the last
-  pointer event in the same request and focus period, so a layout change or a window move never arms), a touch or
+  `movementX`/`Y`; or, as WebKit always reports 0, a client position other than that of the last pointer event in the
+  same request and focus period, so a layout change or scroll under a still cursor never arms), a touch or
   pen `pointerdown`, or Tab/Shift+Tab/an arrow key (never Enter, Space or a repeated key). Approve acts only on a click
   whose own pointerdown or keydown came after the arming gesture, and the page never focuses it. So a double-click
   across the opening, clicking in place, a held Enter and a request slipped in at a click never approve. Residual

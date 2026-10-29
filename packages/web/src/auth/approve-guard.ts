@@ -8,11 +8,12 @@
 // What arms it depends on the input:
 // - mouse: only a `pointermove` that moved (a press never arms; Chromium's synthetic moves after a layout change carry
 //   zero movement and are ignored). So clicking in place, however often, never approves. A move counts as moved when
-//   its movementX/Y is non-zero, or, when both are 0 (WebKit reports 0 on every pointermove), when BOTH its client
-//   position and its screen position differ from the last pointer event's, recorded within the current request and
-//   focus period (any reset of the guard forgets it). A real cursor move changes both; a layout change under a still
-//   cursor changes neither; a window move changes only the screen position. Missing or non-finite coordinates, or no
-//   recorded position yet, never arm.
+//   its movementX/Y is non-zero, or, when both are 0 (WebKit reports 0 on every pointermove), when its client
+//   (viewport) position differs from the last pointer event's, recorded within the current request and focus period
+//   (any reset of the guard forgets it). A layout change or scroll under a still cursor leaves the client position
+//   unchanged, so it never arms; only the cursor moving, or the user moving the window under it, changes it (no other
+//   page can move this window). Screen coordinates aren't used: some engines (WebKit on Linux) report them as fixed.
+//   Missing or non-finite client coordinates, or no recorded position yet, never arm.
 // - touch and pen: a `pointerdown` (a stationary tap fires no pointermove), or a move.
 // - keyboard: only Tab, Shift+Tab and the arrow keys, the keys that move focus. Enter and Space never arm, and a
 //   key's auto-repeat never counts, so a held Enter never approves.
@@ -35,24 +36,21 @@ export type GuardInput =
   | ({ type: 'pointerdown'; pointerType?: string } & Coords)
   | { type: 'keydown'; key?: string; repeat?: boolean };
 
-/** A pointer event's client and screen coordinates, as the page read them. */
+/** A pointer event's client (viewport) coordinates, as the page read them. */
 export interface Coords {
   clientX?: number;
   clientY?: number;
-  screenX?: number;
-  screenY?: number;
 }
 
-type Point = { cx: number; cy: number; sx: number; sy: number };
+type Point = { cx: number; cy: number };
 
 const finite = (v: number | undefined): v is number => typeof v === 'number' && Number.isFinite(v);
 
-/** All four coordinates, or null when any is missing or not finite. */
-const pointOf = (c: Coords): Point | null =>
-  finite(c.clientX) && finite(c.clientY) && finite(c.screenX) && finite(c.screenY) ? { cx: c.clientX, cy: c.clientY, sx: c.screenX, sy: c.screenY } : null;
+/** Both client coordinates, or null when either is missing or not finite. */
+const pointOf = (c: Coords): Point | null => (finite(c.clientX) && finite(c.clientY) ? { cx: c.clientX, cy: c.clientY } : null);
 
-/** The cursor really moved: both the client and the screen position changed. */
-const moved = (p: Point, last: Point): boolean => (p.cx !== last.cx || p.cy !== last.cy) && (p.sx !== last.sx || p.sy !== last.sy);
+/** The cursor moved within the viewport. */
+const moved = (p: Point, last: Point): boolean => p.cx !== last.cx || p.cy !== last.cy;
 
 /** Whether this input, after both marks, arms the guard. `lastPoint` is the previous pointer event's position. */
 function arms(input: GuardInput, lastPoint: Point | null): boolean {
@@ -61,8 +59,8 @@ function arms(input: GuardInput, lastPoint: Point | null): boolean {
       if (input.pointerType === 'touch' || input.pointerType === 'pen') return true;
       if (!(input.movementX === 0 && input.movementY === 0)) return true;
       // Zero movement: a synthetic move under a still cursor (layout change), or WebKit, which reports 0 for every
-      // move. Only a move whose client and screen positions both changed since the last pointer event (of this request
-      // and focus period) counts; with no known position, or incomplete coordinates, it doesn't.
+      // move. Only a move whose client position changed since the last pointer event (of this request and focus
+      // period) counts; with no known position, or incomplete coordinates, it doesn't.
       const p = pointOf(input);
       return p !== null && lastPoint !== null && moved(p, lastPoint);
     }

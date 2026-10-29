@@ -263,9 +263,12 @@ written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-comm
   `movementX`/`Y`; or, as WebKit always reports 0, a client position other than that of the last pointer event in the
   same request and focus period, so a layout change or scroll under a still cursor never arms), a touch or
   pen `pointerdown`, or Tab/Shift+Tab/an arrow key (never Enter, Space or a repeated key). Approve acts only on a click
-  whose own pointerdown or keydown came after the arming gesture, and the page never focuses it. So a double-click
-  across the opening, clicking in place, a held Enter and a request slipped in at a click never approve. Residual
-  risk (accepted): tap-spam on a phone for more than 1 s after the popup tab opens can approve in two taps.
+  whose own pointerdown or keydown came after the arming gesture, and the page never focuses it; a keyboard click
+  also needs Approve to have held focus for 500 ms before its keydown (`KEYBOARD_DWELL_MS`, D113, sweep AUTH-3). So a
+  double-click across the opening, clicking in place, a held Enter, "Tab, Tab, Enter" typed in one go and a request
+  slipped in at a click never approve. Residual risk (accepted): tap-spam on a phone for more than 1 s after the popup
+  tab opens can approve in two taps; a desktop user coached to Tab to Approve, pause and press Enter approves, as one
+  coached to click Approve does.
 - The vault's approval queue holds at most 100 requests (`4100 too_many_pending`), and refuses at once
   (`4100 invalid_request`) a request whose popup message the popup's own validator would drop, so nothing waits out
   the 5 min timeout unseen (`packages/web/src/vault/approvals.ts`). A popup that gets a new request while one is

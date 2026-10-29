@@ -3,7 +3,7 @@
 // against the last pointer event recorded in the current request and focus period. Screen coordinates are ignored
 // (WebKit on Linux reports them as fixed).
 import { describe, expect, it } from 'vitest';
-import { ApproveGuard, type Coords, GUARD_DELAY_MS } from '../../src/auth/approve-guard.ts';
+import { ApproveGuard, type Coords, GUARD_DELAY_MS, KEYBOARD_DWELL_MS } from '../../src/auth/approve-guard.ts';
 
 /** A guard past both 1 s marks (rendered and focused at 0, now 1 s later), on a controllable clock. */
 function ready(): { guard: ApproveGuard; clock: { t: number } } {
@@ -84,5 +84,48 @@ describe('ApproveGuard: zero-movement mouse moves', () => {
     const { guard } = ready();
     guard.gesture({ type: 'pointermove', pointerType: 'mouse', movementX: 3, movementY: 0 });
     expect(guard.armed()).toBe(true);
+  });
+});
+
+describe('ApproveGuard: keyboard clicks need Approve focused for KEYBOARD_DWELL_MS (AUTH-3, D113)', () => {
+  const tab = { type: 'keydown' as const, key: 'Tab' };
+  const enter = { type: 'keydown' as const, key: 'Enter' };
+
+  it('refuses Enter right after Approve gains focus, accepts it after the dwell', () => {
+    const { guard, clock } = ready();
+    guard.gesture(tab);
+    guard.primaryFocused();
+    clock.t += KEYBOARD_DWELL_MS - 1;
+    guard.gesture(enter);
+    expect(guard.mayActivate(true)).toBe(false);
+    clock.t += 1;
+    guard.gesture(enter);
+    expect(guard.mayActivate(true)).toBe(true);
+  });
+
+  it('refuses Enter while Approve has no focus, and a blur restarts the dwell', () => {
+    const { guard, clock } = ready();
+    guard.gesture(tab);
+    clock.t += KEYBOARD_DWELL_MS;
+    guard.gesture(enter);
+    expect(guard.mayActivate(true)).toBe(false);
+    guard.primaryFocused();
+    clock.t += KEYBOARD_DWELL_MS;
+    guard.primaryBlurred();
+    guard.primaryFocused();
+    guard.gesture(enter);
+    expect(guard.mayActivate(true)).toBe(false);
+  });
+
+  it('a new request forgets the focus; pointer clicks are unaffected', () => {
+    const { guard, clock } = ready();
+    guard.primaryFocused();
+    guard.rendered();
+    clock.t += GUARD_DELAY_MS + KEYBOARD_DWELL_MS;
+    guard.gesture(tab);
+    guard.gesture(enter);
+    expect(guard.mayActivate(true)).toBe(false);
+    guard.gesture({ type: 'pointerdown', pointerType: 'mouse', clientX: 1, clientY: 1 });
+    expect(guard.mayActivate(false)).toBe(true);
   });
 });

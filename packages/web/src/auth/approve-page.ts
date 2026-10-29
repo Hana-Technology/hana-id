@@ -224,6 +224,9 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     });
     const ok = d.h('button', { class: 'primary', attrs: { type: 'button' } }, primaryLabel);
     ok.disabled = true;
+    // A keyboard click acts only once Approve has held focus for a moment (D113).
+    ok.addEventListener('focus', () => guard.primaryFocused());
+    ok.addEventListener('blur', () => guard.primaryBlurred());
     ok.addEventListener('click', (e) => {
       // The guard is checked here too, not only through `disabled`, and the click must have started (pointerdown, or
       // keydown for a keyboard click, whose detail is 0) after the gesture that armed it.

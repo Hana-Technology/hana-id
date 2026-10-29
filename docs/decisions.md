@@ -1111,6 +1111,21 @@ can't collide with the entries the parallel API, contract and watchdog fixes add
   policy, or that reloads the vault frame (a reload unlocks a `'session'` record, as designed); the absolute expiry
   bounds both.
 
+### D113. A keyboard Approve needs Approve to hold focus for 500 ms first
+- Date 2026-10-29 · Status: in force on branch `fix/sweep-web` (`packages/web/src/auth/approve-guard.ts`
+  `KEYBOARD_DWELL_MS`, `primaryFocused`, `mayActivate`; `approve-page.ts`) · Source: sweep finding AUTH-3 (Low);
+  extends D36
+- Decision: on top of D36 (1 s after render and focus, an arming gesture, a click whose own keydown came after it), a
+  keyboard click on Approve or Allow acts only if its keydown came at least 500 ms after the button gained focus. A
+  blur of the button, and every new request or consent screen, restarts the wait. Pointer and touch clicks are
+  unchanged.
+- Why: on a plain screen the focus order is Reject, then Approve, so a partner page could coach a user into a
+  "Tab, Tab, Enter" rhythm and then trigger a request; typed in one go, Enter now lands too soon and does nothing.
+- Residual (accepted, as D36's tap-spam case): a user coached to Tab to Approve, pause and press Enter still
+  approves, as a user coached to click Approve does.
+- Not done: the guard's marks still use the page clock (`Date.now`), not `performance.now()`; a device clock change
+  during the 1 s or 500 ms waits can only shorten them by that change, and needs local access.
+
 ## Superseded or amended
 
 | Was | Now | Source |

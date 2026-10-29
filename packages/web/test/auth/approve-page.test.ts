@@ -16,7 +16,7 @@ import {
 import { STELLAR_MAINNET_PASSPHRASE, shortAddress } from '@hana-id/core';
 import { policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { GUARD_DELAY_MS } from '../../src/auth/approve-guard.ts';
+import { GUARD_DELAY_MS, KEYBOARD_DWELL_MS } from '../../src/auth/approve-guard.ts';
 import {
   ADOPT_TIMEOUT_MS,
   AUTO_APPROVE_REASON_TEXT,
@@ -113,9 +113,13 @@ const tap = (b: Element | null) => {
 };
 /** A click on the button with no pointerdown of its own (a pointer click whose press began earlier). */
 const bareClick = (b: Element | null) => b?.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
-/** Enter on a focused button: keydown, then a click with detail 0. */
+/** Enter on a focused button: focus held KEYBOARD_DWELL_MS (D113), keydown, then a click with detail 0. */
 const keyClick = (b: Element | null, key = 'Enter') => {
   if (!b) return;
+  if (document.activeElement !== b) {
+    (b as HTMLElement).focus();
+    vi.advanceTimersByTime(KEYBOARD_DWELL_MS);
+  }
   win.dispatch('keydown', { key });
   b.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
 };
@@ -343,6 +347,50 @@ describe('/approve', () => {
       expect(primary()?.disabled).toBe(false);
       keyClick(primary());
       expect(results()[0]).toMatchObject({ id: r.id, approved: true });
+    });
+
+    it('keyboard: Tab, Tab, Enter in one go does nothing; Enter acts only once Approve held focus 500 ms (AUTH-3, D113)', () => {
+      const r = evmRequest();
+      send(r);
+      vi.advanceTimersByTime(GUARD_DELAY_MS);
+      const b = primary() as HTMLButtonElement;
+      const enter = () => {
+        win.dispatch('keydown', { key: 'Enter' });
+        b.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+      };
+      // Tab to Reject, Tab to Approve, Enter at once: refused, and again a moment later.
+      win.dispatch('keydown', { key: 'Tab' });
+      secondary()?.focus();
+      win.dispatch('keydown', { key: 'Tab' });
+      b.focus();
+      enter();
+      vi.advanceTimersByTime(KEYBOARD_DWELL_MS - 100);
+      enter();
+      expect(results()).toEqual([]);
+      // Focus that leaves Approve and comes back restarts the wait.
+      b.blur();
+      vi.advanceTimersByTime(200);
+      b.focus();
+      enter();
+      expect(results()).toEqual([]);
+      vi.advanceTimersByTime(KEYBOARD_DWELL_MS);
+      enter();
+      expect(results()[0]).toMatchObject({ id: r.id, approved: true });
+    });
+
+    it('keyboard: a new request resets the focus wait', () => {
+      send(evmRequest());
+      vi.advanceTimersByTime(GUARD_DELAY_MS);
+      win.dispatch('keydown', { key: 'Tab' });
+      (primary() as HTMLButtonElement).focus();
+      vi.advanceTimersByTime(KEYBOARD_DWELL_MS);
+      send(evmRequest({ position: 2, queued: 2 }));
+      vi.advanceTimersByTime(GUARD_DELAY_MS);
+      win.dispatch('keydown', { key: 'Tab' });
+      // The new screen's Approve never had focus.
+      win.dispatch('keydown', { key: 'Enter' });
+      primary()?.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+      expect(results().filter((m) => m.approved === true)).toEqual([]);
     });
 
     it.each(['Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'])('keyboard: %s arms it', (key) => {

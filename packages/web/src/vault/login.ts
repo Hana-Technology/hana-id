@@ -14,7 +14,9 @@
 //     exist and allow shared login. A mismatch is `config_mismatch` (reason `scope_mismatch`); no answer from either
 //     RPC endpoint is `api_unavailable` (reason `scope_unchecked`). Nothing is relayed in either case.
 //  9. It runs POST /v1/login and, on failure, recovers exactly as the "Failure handling" table says, re-syncing from
-//     NEAR directly (never from the API).
+//     NEAR directly (never from the API). A `503 issuer_key_pending` (Google signed with a key still in the contract's
+//     issuer-key delay, docs/governance-spec.md "Rotation and logins" step 3) is retried once after the API's
+//     `retryAfterS` (at most KEY_PENDING_MAX_WAIT_S), with `loginProgress: key_pending` meanwhile.
 // 10. It decrypts the CKD with the pairing check against the pinned key for ckdAppId(SIGNER, path), extracts PRK
 //     (zeroing S) and derives the addresses.
 //
@@ -65,9 +67,13 @@ export const RELAYER_UNAVAILABLE_WAIT_MS = 3_000;
 export const NOT_EXECUTED: ReadonlySet<string> = new Set(['method_not_allowed', 'relayer_unconfigured', 'near_unavailable', 'near_rejected', 'relayer_busy']);
 /** A resend needs the token and the session expiry to stay valid for at least this long. */
 const RESEND_MARGIN_MS = 30_000;
+/** The longest wait before the one retry of an `issuer_key_pending` login, whatever `retryAfterS` the API sends. */
+export const KEY_PENDING_MAX_WAIT_S = 30;
+/** The wait when the API's answer carries no usable `retryAfterS` (the API sends 30). */
+export const KEY_PENDING_DEFAULT_WAIT_S = 30;
 
 export type LoginMode = 'partner' | 'vault';
-export type LoginStage = 'popup_connected' | 'google' | 'token' | 'chain' | 'done';
+export type LoginStage = 'popup_connected' | 'google' | 'token' | 'chain' | 'key_pending' | 'done';
 
 export interface LoginContext {
   env: HanaEnv;
@@ -468,6 +474,8 @@ interface ChainInput {
 export class LoginChain {
   private readonly nearTxs: string[] = [];
   private resent = false;
+  /** The one retry of an `issuer_key_pending` answer is spent (separate from the not-executed resend). */
+  private keyPendingRetried = false;
 
   constructor(
     private readonly ctx: LoginContext,
@@ -482,10 +490,30 @@ export class LoginChain {
     if (tx && !this.nearTxs.includes(tx)) this.nearTxs.push(tx);
   }
 
-  /** True while the token and the session expiry stay valid long enough for a resend. */
-  private resendable(): boolean {
-    const now = this.ctx.clock.now();
+  /** True while the token and the session expiry stay valid long enough for a resend (after waiting `afterMs`). */
+  private resendable(afterMs = 0): boolean {
+    const now = this.ctx.clock.now() + afterMs;
     return this.i.tokenExpMs > now + RESEND_MARGIN_MS && this.i.expiresAtMs > now + RESEND_MARGIN_MS;
+  }
+
+  /**
+   * 503 issuer_key_pending: nothing was relayed (the API refused before the relayer). Google rotated and its new key
+   * is still in the contract's issuer-key delay, normally confirmed by the watchdog within minutes. Waits the API's
+   * `retryAfterS` (1 to KEY_PENDING_MAX_WAIT_S s) while telling the page (`key_pending`), then resends the same body
+   * once. A second refusal, or a token that wouldn't outlive the wait, ends the login with a "try again" error.
+   */
+  private async keyPending(e: ApiError): Promise<'resend'> {
+    const raw = e.details.retryAfterS;
+    const waitS = typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? Math.min(Math.ceil(raw), KEY_PENDING_MAX_WAIT_S) : KEY_PENDING_DEFAULT_WAIT_S;
+    if (this.keyPendingRetried || !this.resendable(waitS * 1000)) {
+      throw fail('api_unavailable', 'Google just changed its signing key and Hana ID has not activated it yet; try signing in again in a few minutes', { api: `${e.status} ${e.code}` });
+    }
+    this.keyPendingRetried = true;
+    this.ctx.progress('key_pending');
+    await sleep(this.ctx.timers, waitS * 1000, this.signal);
+    this.check();
+    this.ctx.progress('chain');
+    return 'resend';
   }
 
   private async body(): Promise<LoginBody> {
@@ -548,6 +576,7 @@ export class LoginChain {
     }
     this.noteTx(e.nearTx);
     const reason = e.details.reason;
+    if (e.code === 'issuer_key_pending') return this.keyPending(e);
     if (e.code === 'session_exists' || (e.code === 'contract_rejected' && reason === 'session_key_in_use')) return this.recoverExisting();
     if (e.code === 'contract_rejected') throw fail('derive_failed', 'The contract refused the sign-in');
     if (e.code === 'ckd_failed') {

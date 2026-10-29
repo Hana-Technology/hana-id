@@ -266,8 +266,8 @@ contract would refuse these, so nothing is relayed:
 Reads: `get_config` (cached 60 s, 10 s while paused, shared with the scope check) and `get_issuer(provider)`
 (cached 60 s; a kid not in the cached set re-reads it at most once per 10 s per isolate, concurrent misses share one
 read). Fail open: when either read fails the request goes on and the contract decides (these checks only save the
-relayer a doomed transaction). The vault retries an `issuer_key_pending` login once after `retryAfterS` (spec;
-`packages/web` doesn't yet, see `docs/operations.md`), else shows its "try again" error. `revoke_session` works while
+relayer a doomed transaction). The vault retries an `issuer_key_pending` login once after `retryAfterS` (at most
+30 s, with `loginProgress: key_pending` meanwhile), else ends it with `api_unavailable` ("try signing in again"). `revoke_session` works while
 paused and is never gated.
 
 ### `POST /v1/derive` — relays `derive_key` (session pool)

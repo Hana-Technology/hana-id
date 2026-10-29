@@ -148,11 +148,16 @@ hana.on('statusChanged', (status) => {});
 hana.on('accountsChanged', (addresses) => {}); // { stellar, evm } or null
 hana.on('sessionExpired', () => {});            // the session reached its limit: log in again
 hana.on('disconnect', ({ code }) => {});        // 4900: the vault connection is gone
-hana.on('loginProgress', ({ stage }) => {});    // 'popup_connected' | 'google' | 'token' | 'chain' | 'done'
+hana.on('loginProgress', ({ stage }) => {});    // 'popup_connected' | 'google' | 'token' | 'chain' | 'key_pending' | 'done'
 hana.on('launcher', ({ visible, label }) => {}); // Hana's button is shown or hidden ("Review in Hana", …)
 hana.on('autoApproved', ({ kind, chain, contract, function: fn }) => {});
 hana.on('persistenceChanged', (persistence) => {}); // 'none': this login won't survive a reload (see "Sessions")
 ```
+
+`loginProgress: key_pending` means Google has just started signing with a new key that Hana ID hasn't activated yet
+(it goes live within minutes): the vault waits up to 30 s and tries once more, then reports `chain` again. Show
+something like "Google just rotated its signing key; finishing in a few seconds". If the retry is refused too, the
+login rejects with `api_unavailable`; ask the user to sign in again in a few minutes.
 
 `hana.ready` rejects with `vault_unavailable` if the vault doesn't answer within 5 s: usually your CSP's
 `frame-src`, an origin Hana hasn't allowed for your app, or the network ([section 5](#5-your-page-origins-csp-popups)).

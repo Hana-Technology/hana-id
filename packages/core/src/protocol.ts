@@ -455,7 +455,12 @@ export function parsePortReply<M extends PortMethod>(data: unknown, method: M): 
   return { v: 1, id: data.id, result: data.result as PortResultMap[M] };
 }
 
-export const LOGIN_STAGES = ['popup_connected', 'google', 'token', 'chain', 'done'] as const;
+/**
+ * `key_pending`: the token is signed with a Google key that isn't active on chain yet (the API's `503
+ * issuer_key_pending`, D80): the vault waits the API's `retryAfterS` (at most 30 s) and tries once more, then reports
+ * `chain` again. An SDK that predates it drops the event (the stage list is validated).
+ */
+export const LOGIN_STAGES = ['popup_connected', 'google', 'token', 'chain', 'key_pending', 'done'] as const;
 
 export interface PortEventMap {
   /** `timings`: pk_test_ apps only, the vault's boot and unlock stages (timings.ts, UNLOCK_TIMING_STAGES). */

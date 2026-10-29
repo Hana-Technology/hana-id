@@ -494,7 +494,17 @@ plan (D33; built on branch `feat/governance`, not deployed), specified in `docs/
   runbook raises the owner's session floor (`set_sessions_valid_from_ms`) past the pause before unpausing, which
   retires every older session. Scope changes proposed with a forged key's owner tokens or client proofs can't be
   cancelled by OIDC owners while paused, so each unpause gives every pending change a full `change_delay_ms` again
-  (`changes_unlock_floor_ms`) before anyone may execute it.
+  (`changes_unlock_floor_ms`) before anyone may execute it. *Review follow-ups (branch `gov/followups`):* a key change
+  waits `governance_delay_ms` while no watchdog **may confirm** yet, not only while there is none, so a compromised
+  owner adding its own fresh watchdog to an empty list gains nothing for `governance_delay_ms`; a watchdog can delete
+  only updater keys whose `AddKey` the contract saw succeed (`pending_updater_keys` until then), so it can never delete a
+  key that was already on the account with another permission (e.g. a full-access key); the watchdog cancels any change
+  the updater proposes for a provider other than Google (the updater only serves Google) and deletes the updater keys;
+  it re-reads the chain when its cancel finds the change gone and pages `protective_action_failed` if the forged change
+  was executed instead (then pauses in the same run); it alerts critical on the owner's immediate `remove_issuer_key`
+  and `set_issuer` (no pending state to see); and every on-chain string in an alert (kid, provider, proposer) goes
+  through an allow-list or an escaped form, with header-safe titles and Slack-escaped text, so a hostile kid can't
+  break a page, inject headers or `<!channel>`.
 - Monitoring (D83): every watchdog check, action and alert surfaces in the admin portal's "Security & monitoring"
   view (a standing rule for future checks); the watchdog sends its own alerts, so a compromised Hana Cloudflare
   account can't silence them.

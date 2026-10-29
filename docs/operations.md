@@ -301,8 +301,11 @@ manifest's owner:
   proposes and prints, per member, the `near contract call-function as-transaction <dao> act_proposal … sign-with-ledger`
   command to sign. `--approve-with` is refused outside dev envs.
 - `accept_owner` always goes through the council (the account accepting is the proposed owner, the DAO).
-- An open proposal for exactly the same call is reused, so a re-run never duplicates one. A call the contract refuses
-  leaves the proposal `Failed` and the command fails.
+- An open proposal for exactly the same call is reused, so a re-run never duplicates one: same receiver, method,
+  args, deposit (none) and gas, and a description starting `hana-id <env>: ` (the scripts' own). An open proposal for
+  the same method and args that differs in gas, deposit or description is never reused: the command prints `WARNING:
+  open proposal #N … a different gas / deposit / description; not reusing it`, then proposes anew. Reject the stray one
+  (or let it expire) if nobody wants it. A call the contract refuses leaves the proposal `Failed` and the command fails.
 
 ```sh
 corepack pnpm --filter @hana-id/scripts run admin sandbox-dev owner:call unpause --approve-with hana-id-council-b-dev1.testnet --yes
@@ -580,8 +583,9 @@ issuer_key_pending` with `retry-after: 30` on `/v1/login` and `/v1/sessions`, an
 cancels: a pending change it disagrees with (`jwks_sync_note` `unpublished_change` / `pending_mismatch` /
 `removal_of_published_kid`) is the watchdog's and the owner's (`cancel_issuer_key_change`). A proposal of ours that
 is cancelled logs `issuer_key_change_cancelled` once and is held for 1 h before the cron proposes it again.
-The spec has the vault retry an `issuer_key_pending` login once after `retryAfterS`; `packages/web` doesn't do that
-yet (it shows its generic error and the user signs in again): open, for the vault's next change.
+The vault retries an `issuer_key_pending` login (`/v1/login`, or `/v1/sessions` in the split flow) once, after the
+API's `retryAfterS` capped at 30 s, telling the partner page `loginProgress: key_pending` meanwhile; a second refusal
+ends the login with `api_unavailable` ("try signing in again in a few minutes", `data.api: "503 issuer_key_pending"`).
 
 To see the state: `curl -s <apiUrl>/v1/governance | jq '{paused, keyChanges, issuers, updater}'` (below). To execute
 a matured change now (anyone may, the contract checks the delay):
@@ -870,13 +874,13 @@ attached-deposit '0 NEAR' sign-as <owner> network-config testnet sign-with-legac
 
 | Kind | What it means | What to do |
 |---|---|---|
-| `forged_key_change` | A pending issuer key Google doesn't publish (or with other material). The watchdog cancelled it and, if the updater proposed it, deleted every updater key | Treat `KEYS_UPDATER_KEY` (the API Worker's secrets) as stolen: find how, rotate. Re-add a fresh updater key (`add_updater_key`) and set it on the API. If the owner proposed it, treat the owner council as compromised |
+| `forged_key_change` | A pending issuer key Google doesn't publish (or with other material), or any change the updater (the signer account) proposed for a provider other than Google (`reason: updater_other_provider`: the updater only serves Google). The watchdog cancelled it and, if the updater proposed it, deleted every updater key. The title and `details.outcome` say what happened: `cancelled`; `gone` (someone else cancelled it first); `executed` (it took effect before the cancel: also a `protective_action_failed`, and the run pauses on the now-active key); `unknown` (gone, and the re-read failed); `failed`; `not_sent` (the watchdog couldn't act) | Treat `KEYS_UPDATER_KEY` (the API Worker's secrets) as stolen: find how, rotate. Re-add a fresh updater key (`add_updater_key`) and set it on the API. If the owner proposed it, treat the owner council as compromised. On `executed`: follow `forged_active_key` |
 | `forged_active_key` | A key Google doesn't publish is **active**: the contract is paused (logins and derivation stop). While it was active, anyone holding its private key could open sessions for any user's path and post OIDC-owner tokens and client proofs | Stay paused until all three steps are done, in this order: (1) the owner removes the key (`remove_issuer_key {provider, kid}`); (2) the owner raises the session floor past the pause: `set_sessions_valid_from_ms {sessions_valid_from_ms: <block time of the "paused" event, ms> + 1}`. Sessions opened with the forged key otherwise keep deriving after the unpause, for up to 24 h (`MAX_SESSION_MS`) with whatever `max_uses` the attacker chose; with the floor every session opened before the pause is gone (users log in again); (3) `unpause {}` (at once). Then review every scope change proposed while the key was active (`change_proposed` events since its `issuer_key_set`): the unpause gives each pending change a full `change_delay_ms` again (`get_config().changes_unlock_floor_ms`), and its OIDC owners cancel the ones they didn't make (`cancel_change`); Hana can't cancel scope changes. Changes that already executed or immediate actions (`remove_client`, `disable_shared_login`) by forged owner tokens are reverted by the scope's owners. Find how the key got there: delay while the watchdog was down, an owner post, or an upgrade. The watchdog pauses again while the key stays active |
 | `published_key_removal` | A pending removal of a kid Google still publishes (logins with it would break) | The owner cancels it (`cancel_issuer_key_change {id}`) unless it is intended; then as for a stolen updater key |
 | `unknown_active_key_first_run` | First run only: an active kid not in Google's JWKS today (often an old kid Google dropped), or with other material | Check the kid against Google's history; remove it if it isn't Google's (with other material the next run pauses) |
-| `unverifiable_key_change` | A pending change for an issuer other than Google (the watchdog has no JWKS for it) | Check it by hand; the owner cancels anything unexpected |
-| `governance_change` | An upgrade proposal or execution, owner transfer, withdrawal, watchdog, updater-key, delay or console-audience change, pause or unpause (`unpaused_at_ms` shows one that fell between two runs), a raised session floor (`sessions_valid_from_ms`), or a change of the owner DAO's code or policy (`owner_code_hash`, `owner_policy`: a `ChangePolicy`, `AddMember` or `RemoveMember`) | Confirm that the council did it on purpose. If not: `cancel_upgrade`, `cancel_owner_proposal`, `cancel_withdrawal`, a delay change back, and treat the council as compromised. Nobody but the owner can cancel an upgrade (D84). A DAO policy that is no longer exactly the manifest's council at 2 of 3 for every kind also blocks every `deploy-contract` run and shows in `governance:status` |
-| `automatic_action`, `protective_action_failed` | The watchdog acted again (e.g. paused after an unpause), or a cancel, pause or deletion it sent failed | Failed: do it through the owner at once (cancel the change, pause); check the watchdog key's allowance and RPC |
+| `unverifiable_key_change` | A pending change the owner proposed for an issuer other than Google (the watchdog has no JWKS for it; one the updater proposed is a `forged_key_change`) | Check it by hand; the owner cancels anything unexpected |
+| `governance_change` | An upgrade proposal or execution, owner transfer, withdrawal, watchdog, updater-key, delay or console-audience change, pause or unpause (`unpaused_at_ms` shows one that fell between two runs), a raised session floor (`sessions_valid_from_ms`), a change of the owner DAO's code or policy (`owner_code_hash`, `owner_policy`: a `ChangePolicy`, `AddMember` or `RemoveMember`), or the owner's immediate issuer actions, which leave no pending state: `issuer` (`set_issuer` changed Google's iss values) and `issuer_keys` (an active kid disappeared without a pending removal leaving the queue: `remove_issuer_key`; also a removal proposed and confirmed by another watchdog between two runs) | Confirm that the council did it on purpose. If not: `cancel_upgrade`, `cancel_owner_proposal`, `cancel_withdrawal`, a delay change back, and treat the council as compromised. Nobody but the owner can cancel an upgrade (D84). A DAO policy that is no longer exactly the manifest's council at 2 of 3 for every kind also blocks every `deploy-contract` run and shows in `governance:status`. A removed Google kid Google still publishes breaks logins signed with it until the updater re-proposes it |
+| `automatic_action`, `protective_action_failed` | The watchdog acted again (e.g. paused after an unpause), or a cancel, pause or deletion it sent failed, or a forged change it tried to cancel was executed first (or it couldn't tell) | Failed: do it through the owner at once (cancel the change, pause); check the watchdog key's allowance and RPC. Executed: the key is active, see `forged_active_key` |
 | `not_a_watchdog`, `watchdog_key_missing`, `wrong_network` | The watchdog can't act: its account isn't a contract watchdog, its key is missing or bad, or its RPC is on another chain | Fix the config (`add_watchdog`, `WATCHDOG_KEY`, the manifest `rpc`); until then nothing cancels forged keys |
 | warning `rpc_failing`, `jwks_failing`, `heartbeat_failing`, `channel_not_configured` | The watchdog is partly blind or mute | Fix the RPC, the secret or the channel; a dead watchdog is caught by the dead-man's switch |
 | warning `unexecuted_key_change`, `stale_active_key` | A matured key change nobody executed (> 1 h), or an active kid Google dropped > 3 h ago | Check the API cron (it executes due changes and proposes removals) |
@@ -885,7 +889,9 @@ A paused contract: only the owner unpauses (`unpause`, no delay, D82). An unpaus
 no `execute_change` before `unpause time + change_delay_ms` (`changes_unlock_floor_ms`, also in `get_scope` as each
 pending change's `unlock_at_ms`), since OIDC owners couldn't cancel while paused. A fix that needs new code waits
 `governance_delay_ms` (the upgrade path works while paused). Removing a rogue watchdog (`remove_watchdog`) is
-immediate but slows every key change to `governance_delay_ms` unless another watchdog confirms (D86).
+immediate but slows every key change to `governance_delay_ms` unless another watchdog confirms (D86). Likewise a key
+change proposed while no watchdog may confirm yet (none, or only ones added less than `governance_delay_ms` ago)
+waits `governance_delay_ms`: after adding the first watchdog, rotations go slow until its `confirm_from_ms`.
 
 ## Logs and latency
 

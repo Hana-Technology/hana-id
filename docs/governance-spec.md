@@ -175,7 +175,12 @@ key changes` (6), `Too many keys for this issuer` (active + pending adds ≤ 10)
 executable_at_ms = max(now + issuer_key_delay_ms, keys_slow_until_ms, no_watchdog ? now + governance_delay_ms : 0)
 ```
 
-where `no_watchdog` = `watchdogs` is empty. The owner's posts use the same rule as the updater's (D86). Event
+where `no_watchdog` = no watchdog may confirm yet (`watchdogs` has none with `confirm_from_ms ≤ now`). *Amended in
+review (2026-10-29):* the draft had "`watchdogs` is empty", under which a compromised owner adding its own fresh
+watchdog to an empty list shortened new key changes to `issuer_key_delay_ms` at once, although that watchdog can't
+confirm (or be trusted) for `governance_delay_ms`. Counting only watchdogs that may confirm keeps the rule stateless
+(the alternative, raising `keys_slow_until_ms` in `add_watchdog` on an empty list, needs one more special case and
+misses a list whose only watchdogs are all new). The owner's posts use the same rule as the updater's (D86). Event
 `issuer_key_proposed {id, provider, kid, n, e, executable_at_ms, by}` (`n`, `e` base64url, so monitors can compare with
 the JWKS without a view). Returns the id. Gas: ~3 Tgas burnt; the API attaches 30 Tgas as today.
 
@@ -239,7 +244,11 @@ With no full-access key, nobody but the contract can add or delete keys on the s
 - `delete_updater_key(public_key)` — owner or any watchdog. `Promise::delete_key`. The watchdog uses it the moment it
   sees a forged proposal from "self". Event `updater_key_deleted {public_key, by}`.
 - `updater_keys` tracks what the contract asked for; a failed promise (key already present) leaves it out of sync,
-  so `deploy-contract` compares it with `view_access_key_list` and blocks on any other key.
+  so `deploy-contract` compares it with `view_access_key_list` and blocks on any other key. *Built (review
+  follow-up):* a requested key waits in `pending_updater_keys` until the `AddKey` callback confirms success, and only
+  then joins `updater_keys`; a failed `AddKey` drops it. A watchdog deletes only confirmed keys, so in the window before
+  the callback it can never delete a key that was already on the account with another permission (e.g. a full-access
+  key). The cap of 2 counts pending and confirmed keys.
 
 ### Pause
 
@@ -422,7 +431,8 @@ re-wrap stays hourly, gated on the minute).
 3. A token signed with K2 before K2 is active fails on chain with `Unknown signing key`. The API prechecks: it reads
    `get_issuer` (cached 60 s, refetched on an unknown kid) and refuses a token whose kid isn't active on chain with
    `503 issuer_key_pending` + `Retry-After` instead of relaying a transaction that would fail. The vault retries the
-   login once after `Retry-After` (≤ 60 s), else shows the existing "try again" error.
+   login once after `Retry-After` (built: capped at 30 s, the API's value; `loginProgress: key_pending` while it
+   waits), else shows the existing "try again" error (`api_unavailable`).
 4. Google stops publishing K1. After 55 min missing (unchanged `REMOVE_AFTER_MISSING_MS`) the cron calls
    `propose_issuer_key_removal(K1)`; the watchdog confirms it once K1 is absent from its own fetch, or it executes
    after D. Tokens signed with K1 expire ≤ 1 h after issue, so a delayed removal costs nothing.
@@ -469,6 +479,12 @@ setting (manifest `rpc` and `rpcFallback`), never through the API. Each run:
 8. Write the run (time, result, each check's outcome, actions taken) to its D1 for the status endpoint.
 
 Providers other than Google: the watchdog only alerts on them (no cancel or confirm) until it knows their JWKS URL.
+*Amended in review:* except a change the updater (`by` = the signer account) proposed for one: the updater only
+serves Google, so that is cancelled and the updater keys deleted as in step 3. Also added in review: a cancel that
+finds the change gone re-reads the chain and raises `protective_action_failed` if it was executed instead; step 6 also
+diffs `get_issuer("google")` (iss values, and active kids that vanished without a queued removal), since the owner's
+`set_issuer` and `remove_issuer_key` act at once and leave no pending state; on-chain strings in alerts are
+allow-listed or escaped (`apps/watchdog/README.md`).
 
 **Status endpoint (for the admin portal, D83).** `GET /status`, `GET /alerts?cursor` and `GET /actions?cursor`
 (built: field list in `apps/watchdog/README.md`): last run and its checks,

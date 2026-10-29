@@ -1,13 +1,32 @@
-# Code owners (docs/decisions.md, Q23). These paths decide every user's address or key, or every environment's
-# accounts: a change to any of them needs @tzechuen's review. Branch protection on `develop` and `main` must have
-# "Require review from Code Owners" on for this to block a merge.
+# Code owners (docs/decisions.md, Q23; security sweep OPER-1, OPER-3). These paths decide every user's address or key,
+# every environment's accounts and pinned keys, or what the secret scan and CI enforce: a change to any of them needs
+# a code owner's review. Branch protection on `develop` and `main` must have "Require review from Code Owners" on (and
+# the author's own approval not counting) for this to block a merge. A later matching line replaces an earlier one,
+# so each path lists all of its owners.
+#
+# Second owner (decided 2026-10-29, security sweep owner answers): a colleague gets write access before mainnet;
+# derivation, contract, env-schema and /envs/ changes then need the other person's approval. Their handle goes on
+# each line marked TODO below.
 
 # Derivation v1 and its golden vectors: a change here changes every address (frozen after the address freeze).
 /packages/core/src/derivation*  @tzechuen
+# TODO: add the colleague's GitHub handle (decided 2026-10-29)
 /packages/core/test/vectors/    @tzechuen
+# TODO: add the colleague's GitHub handle (decided 2026-10-29)
 
 # The signer contract: token checks, the registry, sessions and the MPC request.
 /contracts/hana-signer/         @tzechuen
+# TODO: add the colleague's GitHub handle (decided 2026-10-29)
 
-# The manifest schema: account names, origins and the pinned CKD key every bundle is built with.
+# The manifest schema: account names, origins and the rules for the pinned CKD key every bundle is built with.
 /packages/env/src/              @tzechuen
+# TODO: add the colleague's GitHub handle (decided 2026-10-29)
+
+# The manifests themselves: account names, RPCs and the pinned CKD network key (`ckdNetworkKey`) every bundle trusts.
+/envs/                          @tzechuen
+# TODO: add the colleague's GitHub handle (decided 2026-10-29)
+
+# Secret scanning, hooks and CI (what blocks a leaked key or an untested change).
+/.gitleaks.toml                 @tzechuen
+/.githooks/                     @tzechuen
+/.github/                       @tzechuen

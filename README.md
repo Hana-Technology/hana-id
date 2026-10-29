@@ -97,7 +97,7 @@ cd contracts/hana-signer && cargo test
 | Create the dev owner council (Sputnik DAO) | `pnpm --filter @hana-id/scripts run council-setup <env> [--yes]` |
 | Owner call through the owner or the council | `pnpm --filter @hana-id/scripts run admin <env> owner:call <method> --args '<json>' [--approve-with <member>] [--yes]` |
 | Sync Google keys once | `pnpm --filter @hana-id/scripts run post-google-keys <env> [--dry-run] [--execute]` |
-| Pin the MPC CKD key | `pnpm --filter @hana-id/scripts run fetch-ckd-key <env> [--dry-run]` |
+| Pin the MPC CKD key (≥ 3 RPC providers must agree) | `pnpm --filter @hana-id/scripts run fetch-ckd-key <env> [--rpc <url>]... [--dry-run]` |
 | Admin (apps, scopes, app settings) | `pnpm --filter @hana-id/scripts run admin <env> <command> …` |
 | API Worker config | `pnpm --filter @hana-id/api run gen <env> [--d1-id <uuid>] [--dev-vars]` |
 | `VAULT_KEK` | `pnpm --filter @hana-id/scripts run vault-kek <env> init\|put\|rotate [--yes]` |
@@ -254,9 +254,11 @@ the same delay, D86) and refuses to sync if Google returns no usable RS256 key.
 
 ### fetch-ckd-key
 
-Reads `state` from the MPC contract (`manifest.mpc`), takes the BLS12-381 G2 public key of `ckdDomainId`, and writes
-it to `ckdNetworkKey` in `envs/<env>.json`, leaving the rest of the file as it was. Clients pin this key. If it ever
-changes, every derived key changes with it.
+Reads `state` from the MPC contract (`manifest.mpc`) at one final block from at least three independent RPC providers
+(`rpc`, `rpcFallback`, each `--rpc <https url>`, then built-in public endpoints), takes the BLS12-381 G2 public key of
+`ckdDomainId`, and refuses unless every provider reports the same block hash and key. It writes the key to
+`ckdNetworkKey` and the block and provider hosts to `ckdNetworkKeySource` in `envs/<env>.json`, leaving the rest of
+the file as it was (D100). Clients pin this key. If it ever changes, every derived key changes with it.
 
 ### admin
 

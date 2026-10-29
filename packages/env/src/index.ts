@@ -3,8 +3,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type Manifest, manifestSchema } from './schema.ts';
 
-export { DO_LOCATION_HINTS, type Manifest, manifestSchema, PAGER_PROVIDERS } from './schema.ts';
-export { hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, siteOf } from './origins.ts';
+export { DO_LOCATION_HINTS, endpointUrlProblem, type Manifest, manifestSchema, MIN_CKD_SOURCES, PAGER_PROVIDERS } from './schema.ts';
+export { hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, LOCALHOST_WILDCARD, partnerOriginProblem, siteOf } from './origins.ts';
 export {
   type DelayValues,
   governanceDelayProblems,

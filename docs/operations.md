@@ -67,7 +67,8 @@ Every name comes from `envs/<env>.json` (schema: `packages/env/src/schema.ts`; n
 | `allowSignerFullAccessKey` | the signer may keep a full-access key (D86) | only `local*` / `sandbox*` testnet envs; sandbox-dev only among committed manifests |
 | `mpc` | the NEAR MPC contract (exists already; not ours) | — |
 | `ckdDomainId`, `ckdNetworkKey` | CKD domain and the pinned MPC public key | pin with `fetch-ckd-key` |
-| `rpc`, `apiUrl` | NEAR RPC; the deployed Worker URL | `apiUrl` is known only after the first deploy |
+| `ckdNetworkKeySource` | where the pin was read: `{blockHeight, blockHash, rpcs}`, the final block and the hosts of the ≥ 3 independent providers that agreed (D100) | written by `fetch-ckd-key`; hosts only, never a URL |
+| `rpc`, `apiUrl` | NEAR RPC; the deployed Worker URL | https (the schema allows http only for a loopback host in `local*` envs); `apiUrl` is known only after the first deploy |
 | `rpcFallback` (optional) | a second NEAR RPC from another provider, https; the vault and the export window read from it only when `rpc` fails or times out | not `rpc` itself; built into the vault and auth bundles and in the API's and auth Worker's CSP (`NEAR_RPC_FALLBACK`), so a change needs `gen`, a page build and a redeploy of the API and both page Workers (D65) |
 | `vaultOrigin`, `authOrigin` | Hana page origins (batch B) | both or neither; `gen` refuses an env without them |
 | `googleClientIds` | Hana's own app clients → reserved `global` scope | |
@@ -127,11 +128,19 @@ the signer is part of every address. Dev-only privileges (loopback origins, part
 2. **Manifest**: accounts, Google client IDs, `consoleAudiences`, `changeDelayMs`, Cloudflare names, `vaultOrigin` /
    `authOrigin`. Fill the client lists before the first deploy (a shared client added later waits out the timelock;
    a console audience added after `global` exists needs a timelocked `propose_change`).
-3. **Pin the MPC key** (writes `ckdNetworkKey`; `--dry-run` only prints):
+3. **Pin the MPC key** (writes `ckdNetworkKey` and `ckdNetworkKeySource`; `--dry-run` only prints):
 
    ```sh
-   corepack pnpm --filter @hana-id/scripts run fetch-ckd-key <env>
+   corepack pnpm --filter @hana-id/scripts run fetch-ckd-key <env> [--rpc https://<another provider>]
    ```
+
+   It reads the key at one final block from at least three independent providers (distinct registrable domains: the
+   manifest's `rpc` and `rpcFallback`, each `--rpc`, then the built-in public endpoints `rpc.testnet.near.org`,
+   `test.rpc.fastnear.com`, `near-testnet.drpc.org`) and refuses to write unless every one reports the env's chain,
+   the same block hash and the same key (D100, security sweep OPER-1). A provider that is down or disagrees stops it:
+   find out why before pinning, never drop the disagreeing source. Different domains are only a proxy for different
+   operators; before a mainnet pin also compare the key with the MPC key material NEAR publishes and record that in
+   the PR. The manifest change goes through a code-owner review (`/envs/` in `.github/CODEOWNERS`).
 
 4. **Deploy the contract.** Prints the plan and changes nothing without `--yes`; re-running plans only what's
    missing. What each step does and why it blocks: root `README.md`, "deploy-contract".

@@ -53,7 +53,7 @@ describe('setManifestString', () => {
 
   it('handles $ in values and rejects unknown fields', () => {
     const text = readFileSync(manifestPath('sandbox-dev'), 'utf8');
-    expect(JSON.parse(setManifestString(text, 'ckdNetworkKey', "a$&b$'")).ckdNetworkKey).toBe("a$&b$'");
+    expect(JSON.parse(setManifestString(text, 'ckdNetworkKey', "bls12381g2:a$&b$'")).ckdNetworkKey).toBe("bls12381g2:a$&b$'");
     expect(() => setManifestString(text, 'nope', 'x')).toThrow();
   });
 });

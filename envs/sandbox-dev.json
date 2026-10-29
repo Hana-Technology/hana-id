@@ -15,6 +15,7 @@
   "mpc": "v1.signer-prod.testnet",
   "ckdDomainId": 2,
   "ckdNetworkKey": "bls12381g2:xeYho48G2Sr9oJz4gw9sLGZGspeeKpHZvMDAwWvoNTRnVMFJH96GxX98TT2MRhTtsot1wcGR1Ti2Xh8PCsbYJ2enbLNdJXDvTYSK8aTE3nJ5NZXU7Kt1F6mFtReWs5pR4kj",
+  "ckdNetworkKeySource": { "blockHeight": 275289946, "blockHash": "4AxqjyDe8oE7QEapoe8jmjdXHKDS7utPzCJgkfoFvWmk", "rpcs": ["test.rpc.fastnear.com", "rpc.testnet.near.org", "near-testnet.drpc.org"] },
   "rpc": "https://test.rpc.fastnear.com",
   "rpcFallback": "https://rpc.testnet.near.org",
   "apiUrl": "https://hana-id-api-sandbox-dev.tingtc.workers.dev",

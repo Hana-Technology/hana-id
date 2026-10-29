@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import { hanaOriginProblem, isDevEnv, siteOf } from './origins.ts';
+import { hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, siteOf } from './origins.ts';
+
+/** Independent RPC providers the pinned CKD network key must be read from, all agreeing (OPER-1, D100). */
+export const MIN_CKD_SOURCES = 3;
 
 const nearAccount = z.string().regex(/^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/u, 'Invalid NEAR account id');
 
@@ -73,17 +76,32 @@ export const manifestSchema = z
     ckdDomainId: z.number().int().nonnegative(),
     /** The MPC's CKD public key, pinned (fetch with scripts/fetch-ckd-key.ts). */
     ckdNetworkKey: z.string(),
+    /**
+     * Where `ckdNetworkKey` was read (scripts/fetch-ckd-key.ts writes it): the final block every source answered at,
+     * and the hosts of the ≥ MIN_CKD_SOURCES RPC endpoints of independent providers (distinct registrable domains)
+     * that all returned the same key and block hash there. Hosts only, never a URL that could carry an API key.
+     * Optional until each env re-pins with the multi-source fetch.
+     */
+    ckdNetworkKeySource: z
+      .object({
+        blockHeight: z.number().int().nonnegative(),
+        blockHash: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u, 'blockHash is a base58 block hash'),
+        rpcs: z
+          .array(z.string().regex(/^[a-z0-9.-]+(:\d{1,5})?$/u, 'rpcs are host names (no scheme, path or query)'))
+          .min(MIN_CKD_SOURCES)
+          .max(10),
+      })
+      .strict()
+      .optional(),
+    /** NEAR RPC: https outside `local*` envs (there, http only for a loopback host). */
     rpc: z.string().url(),
     /**
-     * Optional second NEAR RPC (https only, not `rpc` itself), from an independent provider. The vault and the export
+     * Optional second NEAR RPC (https, not `rpc` itself), from an independent provider. The vault and the export
      * window read from it only when `rpc` errors or times out (get_session re-syncs, registry views, tx polling), and
      * each read's answer comes from one endpoint. It joins `rpc` in those pages' CSP `connect-src`.
      */
-    rpcFallback: z
-      .string()
-      .url()
-      .refine((u) => u.startsWith('https://'), 'rpcFallback must be an https URL')
-      .optional(),
+    rpcFallback: z.string().url().optional(),
+    /** The API's base URL: https outside `local*` envs (there, http only for a loopback host). */
     apiUrl: z.string().url(),
     /**
      * Origin of the key vault page (`GET /vault`, a hidden iframe in partner pages). Optional until every deployed env
@@ -162,6 +180,12 @@ export const manifestSchema = z
     watchdog: watchdogSchema.optional(),
   })
   .superRefine((m, ctx) => {
+    for (const field of ['rpc', 'rpcFallback', 'apiUrl'] as const) {
+      const value = m[field];
+      const problem = value === undefined ? null : endpointUrlProblem(value, m.name);
+      if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: `${field} ${problem}` });
+    }
+    if (m.ckdNetworkKeySource) ckdSourceRules(m.ckdNetworkKey, m.ckdNetworkKeySource, ctx);
     hanaOrigins(m, ctx);
     if (m.watchdog) watchdogRules(m, m.watchdog, ctx);
     governance(m, ctx);
@@ -182,6 +206,41 @@ export const manifestSchema = z
       }
     }
   });
+
+/**
+ * Why an RPC or API URL can't be used in env `envName`, or null: https everywhere; plain http only for a loopback host
+ * in a `local*` env (a local sandbox). Over http anyone on the path answers every view, the pinned CKD key's fetch
+ * included (OPER-1).
+ */
+export function endpointUrlProblem(value: string, envName: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return 'is not a URL';
+  }
+  if (url.protocol === 'https:') return null;
+  if (url.protocol === 'http:' && isLocalEnv(envName) && isLoopbackHost(url.hostname)) return null;
+  return 'must be an https URL (http only for a loopback host in local* envs)';
+}
+
+/** A recorded CKD key source needs a pinned key and distinct hosts on ≥ MIN_CKD_SOURCES registrable domains. */
+function ckdSourceRules(key: string, source: { rpcs: string[] }, ctx: z.RefinementCtx): void {
+  if (!key.startsWith('bls12381g2:')) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ckdNetworkKeySource'], message: 'ckdNetworkKeySource is recorded only with a pinned ckdNetworkKey' });
+  }
+  if (new Set(source.rpcs).size !== source.rpcs.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ckdNetworkKeySource', 'rpcs'], message: 'ckdNetworkKeySource.rpcs must be distinct' });
+  }
+  const sites = new Set(source.rpcs.map((h) => siteOf(`https://${h}`)));
+  if (sites.size < MIN_CKD_SOURCES) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['ckdNetworkKeySource', 'rpcs'],
+      message: `ckdNetworkKeySource.rpcs must span at least ${MIN_CKD_SOURCES} providers (registrable domains), got ${sites.size}`,
+    });
+  }
+}
 
 interface GovernanceFields {
   name: string;

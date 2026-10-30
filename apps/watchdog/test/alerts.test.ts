@@ -137,6 +137,7 @@ describe('alert text', () => {
     expect(text).not.toContain('LONGMODULUS');
     expect(text).toContain('#7');
     expect(text).toContain('until acknowledged');
+    expect(text.split('\n').at(-1)).toBe('Playbook: forged-key-change (admin portal "Security & monitoring" > Playbooks; docs/playbooks.md#forged-key-change)');
   });
 
   it('shows governance changes as one readable line each, not JSON', async () => {

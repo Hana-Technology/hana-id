@@ -61,6 +61,7 @@ packages/core/           SDK core (batch B, pure TS): layouts, CKD, derivation v
 packages/web/            Partner client (createHana) and the Hana pages (vault, login, approve, export), built per env
 packages/react/          React bindings (HanaProvider, useHana, useWallet)
 packages/sodax/          Optional Sodax wallet-provider adapters
+packages/playbooks/      Recovery playbooks for every watchdog alert and incident (D126): docs/playbooks.md, admin portal
 envs/                    One manifest per environment (sandbox-dev.json): every account name and endpoint
 contracts/sputnik/       The pinned Sputnik DAO v2 code and the owner-council policy (2 of 3, D81)
 scripts/                 Deploy, owner council, Google key sync, CKD key pinning, admin CLI (TypeScript, run with tsx)
@@ -102,6 +103,7 @@ cd contracts/hana-signer && cargo test
 | API Worker config | `pnpm --filter @hana-id/api run gen <env> [--d1-id <uuid>] [--dev-vars]` |
 | `VAULT_KEK` | `pnpm --filter @hana-id/scripts run vault-kek <env> init\|put\|rotate [--yes]` |
 | Hana pages (vault, auth) | `pnpm --filter @hana-id/web build` · `pnpm --filter @hana-id/api run deploy:pages` |
+| Recovery playbooks doc | `pnpm --filter @hana-id/playbooks gen-docs` (writes `docs/playbooks.md`; edit `packages/playbooks`) |
 | SDK tarballs: build, check, install outside the repo | `pnpm run pack:check` · version: `pnpm --filter @hana-id/scripts run sdk-version <x.y.z>` (`docs/operations.md` "Releasing the SDK packages") |
 | Browser tests | `pnpm --filter @hana-id/e2e e2e` (`HANA_E2E_PORT_BASE` for a second worktree; `apps/e2e/README.md`) |
 | Hosted demo | `pnpm --filter @hana-id/demo run deploy` (`apps/demo/README.md`; its origin must be on the app first) |

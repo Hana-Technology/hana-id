@@ -60,6 +60,7 @@ describe('GET /status', () => {
     expect((body.actions as { method: string }[]).map((a) => a.method)).toEqual(['delete_updater_key', 'delete_updater_key', 'cancel_issuer_key_change']);
     expect((body.open_alerts as { kind: string }[]).map((a) => a.kind)).toContain('forged_key_change');
     expect(Object.keys(body.checks as object)).toEqual(CHECK_IDS);
+    expect((body.alert_kinds as Record<string, { playbook: string }>).forged_active_key).toMatchObject({ severity: 'critical', playbook: 'forged-active-key' });
   });
 
   it('says silent when the last run is older than two intervals', async () => {

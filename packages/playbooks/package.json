@@ -1,0 +1,17 @@
+{
+  "name": "@hana-id/playbooks",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Step-by-step recovery playbooks for every watchdog alert kind and incident scenario (D126): the one source of the admin portal's \"Security & monitoring\" playbooks and of docs/playbooks.md.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./markdown": "./src/markdown.ts"
+  },
+  "scripts": {
+    "gen-docs": "tsx scripts/gen-docs.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": { "@types/node": "^22.0.0", "tsx": "4.23.15", "typescript": "^5.7.0", "vitest": "4.1.12" }
+}

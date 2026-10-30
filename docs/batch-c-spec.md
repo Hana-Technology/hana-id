@@ -35,7 +35,8 @@ so. Plan doc: https://claude.ai/artifact/GyQq6HZbaJBtznXyRa2Vbi
   Workers; the console sink scope; the daily nonce cross-check as read; `pg` and `pdf-lib` exact-pinned; the other
   answers listed under §Open questions.
 - **Governance (D80–D86, `docs/governance-spec.md`)** adds two admin-console screens built in that batch: "Security &
-  monitoring" (D83) and the pending-upgrades page, also in the partner console (D86).
+  monitoring" (D83) and the pending-upgrades page, also in the partner console (D86). "Security & monitoring" also
+  renders a recovery playbook for every watchdog alert kind and incident, from `@hana-id/playbooks` (D126).
 - **Still open:** Q1 (the code flow's `openid`-only token, to test), Q3 (Hana Cloudflare account, zone, domains), Q4's
   fallback email addresses, Q5 (Neon project setup).
 - **Support ID (D96).** The admin portal gets a Support ID lookup: paste a user's `HANA-XXXX-XXXX` code to see that
@@ -1300,6 +1301,27 @@ Console-only codes: `unauthenticated` 401, `csrf` 403, `not_invited` 403, `invit
   and the chain views in `docs/contract-interface.md` "Monitoring hand-off" (also served normalised by the API's
   `GET /v1/governance`, `docs/api.md`; the council DAO's open proposals and the `admin <env> governance:status --json`
   reference snapshot: `docs/operations.md` "Governance status for the admin portal").
+- **Security & monitoring: recovery playbooks (D126).** Every incident scenario has a step-by-step recovery guide in
+  this view, from one source: `@hana-id/playbooks` (`packages/playbooks`; the same data generates
+  `docs/playbooks.md`). The admin SPA imports the package at build time (plain data, no dependencies) and renders
+  every playbook in `PLAYBOOKS`; nothing is copied by hand, so a playbook edit ships with the next admin deploy.
+  Requirements:
+  - A **Playbooks page** (`/security/playbooks`, one route per playbook: `/security/playbooks/<id>`) listing every
+    playbook, alert and incident, with its severity, title, summary and (alert playbooks) the alert kinds it covers;
+    `status: 'planned'` ones are marked "planned: not built yet". Incident playbooks are listed and **searchable**
+    (client-side, over title, summary, signals and impact), and filterable by kind (alert / incident) and severity.
+  - Each playbook shows, in order: signals, impact, the ordered steps, verify, follow-ups, refs (decision ids and doc
+    anchors as links to the repo docs) and the related playbooks (links). **Each step shows who must act** (`who`:
+    `council (2 of 3)`, `a founder`, `anyone`, `the watchdog`, `the API cron`, `scope owners`, `the user`; the package's
+    `ACTORS`) as a badge, its detail,
+    and its commands in copyable code blocks, verbatim (placeholders such as `<env>` are not filled in, and the page
+    never renders a secret). The "Before you start" notes (`NOTES`) are shown above every playbook.
+  - **Every alert links to its playbook**: each alert in the alert history and the open alerts, and each kind in the
+    registry view, links to `/security/playbooks/<playbook>`, the `playbook` id the watchdog serves per kind in `GET
+    /status` `alert_kinds` (fallback: `playbookForAlertKind(kind)` from the package). An alert kind whose playbook is
+    missing renders a visible "no playbook" error, never a blank link.
+  - Read-only: the page sends nothing; owner calls stay in `scripts/` and the council's own signing (no NEAR keys in
+    the portal).
 - **No NEAR keys.** `admin_register_scope` and contract admin stay in `scripts/`. NEAR calls are read-only: `tx` for
   settlement, `get_scope` for the watcher, `view_access_key` for the nonce check.
 
@@ -1827,6 +1849,10 @@ endpoint, the JWKS, the Access JWKS, NEAR RPC, the Images binding and the email 
 - The feed emails each `app_changes`, `audit_log` and `security_events` row once, advances its cursor only after
   success, and works with the console Worker down.
 - `details_json` allowlist snapshots; the append-only triggers on `audit_log` and `app_changes`.
+- Playbooks (D126): every playbook in `@hana-id/playbooks` `PLAYBOOKS` has a page that shows each step's `who`,
+  detail and commands; every watchdog alert kind (`ALERT_KINDS` from `apps/watchdog/src/checks.ts`) and every alert in
+  the history links to its playbook's page; the search finds an incident playbook by a word of its signals; a kind
+  with no playbook renders the "no playbook" error (the watchdog's `test/registry.test.ts` already forbids one).
 
 **Hot DB and gate**
 

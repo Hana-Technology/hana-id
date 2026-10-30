@@ -1428,7 +1428,13 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   6-slot pending-change queue (blocking Google's real rotations) and post again after an unpause if the council forgot
   to rotate it. A needless deletion costs one council vote in a recovery that needs council votes anyway.
 - Also decided: every incident scenario gets a step-by-step recovery guide in the admin portal's "Security &
-  monitoring" view (D83), from one source that a test keeps complete for every watchdog alert kind.
+  monitoring" view (D83), from one source that a test keeps complete for every watchdog alert kind. Built (branch
+  `feat/recovery-playbooks`): the source is `packages/playbooks` (`@hana-id/playbooks`), rendered as
+  `docs/playbooks.md` by `gen-docs` (a test fails when it is stale); `apps/watchdog/test/registry.test.ts` fails when
+  an alert kind has no playbook; `GET /status` serves each kind's `playbook` id and every alert text names it; the
+  portal's Playbooks page is specified in `docs/batch-c-spec.md` (batch C, not built). `admin owner:call` now also
+  sends `set_sessions_valid_from_ms` (the `forged_active_key` recovery needs it; it was missing from
+  `OWNER_METHODS`).
 
 ## Superseded or amended
 

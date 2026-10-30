@@ -131,7 +131,7 @@ describe('alert texts', () => {
       'e',
     );
     const lines = text.split('\n');
-    expect(lines).toHaveLength(6);
+    expect(lines).toHaveLength(7); // five details, the alert line, the playbook line
     for (const l of lines) expect(l).toMatch(PRINTABLE_ASCII);
     expect(lines[0]).toBe('kid: "k1\\r\\nX-Injected: yes\\n\\nfake body"');
     expect(lines[2]).toBe('by: signer.test.near');

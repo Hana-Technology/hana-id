@@ -17,3 +17,16 @@ describe('contract limits copied into the API', () => {
     expect(apiConst('CONTRACT_MAX_PENDING')).toBe(rustConst('MAX_PENDING'));
   });
 });
+
+// `admin owner:call` refuses any method not in OWNER_METHODS, and the recovery playbooks send every owner-only call
+// through it (`set_sessions_valid_from_ms` in forged-active-key, D126): keep it a superset of the contract's list.
+describe('OWNER_METHODS', () => {
+  it("covers every owner-only call of the contract's own test list", async () => {
+    const { OWNER_METHODS } = await import('../lib/contract.ts');
+    const tests = readFileSync(join(repoRoot, 'contracts', 'hana-signer', 'src', 'tests.rs'), 'utf8');
+    const body = /fn owner_only_calls\(\)[\s\S]*?\n\}\n/u.exec(tests)?.[0] ?? '';
+    const contractOwnerOnly = [...body.matchAll(/\(\s*"([a-z_]+)",\s*Box::new/gu)].map((m) => m[1]!);
+    expect(contractOwnerOnly.length).toBeGreaterThan(20);
+    for (const method of contractOwnerOnly) expect(OWNER_METHODS as readonly string[], method).toContain(method);
+  });
+});

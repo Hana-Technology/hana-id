@@ -14,6 +14,7 @@ the batch merges, so where a spec and a reference doc disagree, the reference do
 | `api.md` | Every HTTP endpoint, auth, errors, rate limits; D1 schema, Durable Objects, bindings, request logs |
 | `integration.md` | Partner guide: getting an app, `createHana`, page requirements, Google client, app settings, signing, auto-approve, React, Sodax, test and live keys, errors |
 | `operations.md` | Setting up and deploying an environment, Google clients, key rotation, smoke tests, the hosted demo, logs, common failures |
+| `playbooks.md` | Step-by-step recovery for every watchdog alert kind and every incident (signals, impact, steps with who acts, commands, verify); generated from `packages/playbooks` (D126), the same source as the admin portal's "Security & monitoring" playbooks |
 | `decisions.md` | Every decision: when, why, what was rejected, status |
 | `context.md` | Project background, batch B status, testnet measurements, next steps |
 | `../envs/README.md`, `../apps/api/README.md`, `../apps/smoke/README.md`, `../apps/e2e/README.md`, `../apps/demo/README.md` | Per-package quick starts (`apps/demo`: the hosted testnet demo for colleagues) |
@@ -39,3 +40,6 @@ the batch merges, so where a spec and a reference doc disagree, the reference do
 - A decision made in conversation: a new entry in `decisions.md`.
 - A new security property, key or open issue: `security.md`.
 - A new command, deploy step or failure mode: `operations.md`.
+- A new watchdog alert kind or incident scenario, or a changed recovery step: a playbook in `packages/playbooks`, then
+  `corepack pnpm --filter @hana-id/playbooks gen-docs` (a test fails when `playbooks.md` is stale or an alert kind has
+  no playbook).

@@ -1,6 +1,8 @@
 // The registry of everything the watchdog checks and every alert it can raise. It is the hand-off to batch C's admin
 // portal (D83): the portal renders each check id and alert kind listed here, and its registry test imports this file
 // and fails when an id has no rendering. Adding a check or an alert kind here without its portal view isn't done.
+// Every alert kind also has a recovery playbook in `@hana-id/playbooks` (D126): test/registry.test.ts fails otherwise.
+import { playbookForAlertKind } from '@hana-id/playbooks';
 
 export type Severity = 'critical' | 'warning' | 'info';
 
@@ -68,6 +70,17 @@ export const ALERT_KINDS = {
   first_run: { severity: 'info', check: 'active_keys', description: "First run: the current JWKS recorded as known" },
 } as const satisfies Record<string, AlertKindInfo>;
 export type AlertKind = keyof typeof ALERT_KINDS;
+export const ALERT_KIND_IDS = Object.keys(ALERT_KINDS) as AlertKind[];
+
+/** The id of the playbook that answers an alert kind (`@hana-id/playbooks`; null only if one is missing, which a test forbids). */
+export function alertPlaybook(kind: AlertKind): string | null {
+  return playbookForAlertKind(kind)?.id ?? null;
+}
+
+/** `ALERT_KINDS` with each kind's playbook id: what `GET /status` serves as `alert_kinds`. */
+export const ALERT_KINDS_WITH_PLAYBOOKS = Object.fromEntries(ALERT_KIND_IDS.map((k) => [k, { ...ALERT_KINDS[k], playbook: alertPlaybook(k) }])) as {
+  [K in AlertKind]: (typeof ALERT_KINDS)[K] & { playbook: string | null };
+};
 
 export type Channel = 'pager' | 'slack' | 'email';
 

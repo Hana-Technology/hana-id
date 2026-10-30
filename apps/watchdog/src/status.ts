@@ -5,7 +5,7 @@
 //   POST /alerts/:id/ack {by}  records who acknowledged (via "portal"); stops only the 15-minute re-sends
 // Every request needs `Authorization: Bearer <WATCHDOG_STATUS_TOKEN>` (the admin Worker holds the other copy). Nothing
 // here can change a check, stop a first delivery or call the chain.
-import { ALERT_KINDS, CHANNELS, CHECKS, RESEND_MS, RUN_INTERVAL_MS, type Severity } from './checks.ts';
+import { ALERT_KINDS_WITH_PLAYBOOKS, CHANNELS, CHECKS, RESEND_MS, RUN_INTERVAL_MS, type Severity } from './checks.ts';
 import type { Notifier } from './channels.ts';
 import type { Env } from './env.ts';
 import { log } from './log.ts';
@@ -153,6 +153,7 @@ async function status(d: StatusDeps) {
     actions,
     open_alerts: open.map(alertView),
     checks: CHECKS,
-    alert_kinds: ALERT_KINDS,
+    // Each kind with its severity, check, description and `playbook` id (`@hana-id/playbooks`, D126).
+    alert_kinds: ALERT_KINDS_WITH_PLAYBOOKS,
   };
 }

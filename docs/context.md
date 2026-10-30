@@ -379,7 +379,10 @@ watchdog account `hana-id-watchdog-dev1.testnet` added, council DAO `hana-id-cou
 (2 of 3, throwaway members) **owns the signer**, and one upgrade went propose → 60 s → execute through the DAO
 (code `3TSDwkMqPUhZtzFCvvaJ39nQWXUQK4LExPhsaS9tScoz`, contract 0.1.1). `governance:status`: no findings. Left: step 4,
 the watchdog service: on sandbox-dev it goes on the API's Cloudflare account (D125; production on its own account,
-AWS Lambda kept as the alternative).
+AWS Lambda kept as the alternative). The watchdog was deployed and drilled the same day (`docs/operations.md`
+"Watchdog service"). Post-governance smoke (2026-10-30, after the migration, the owner handover, the 0.1.1
+upgrade and the drills): Google login on the demo gives the same Stellar and EVM addresses as on 2026-10-29, and an
+EVM `personal_sign` was approved and returned.
 
 1. **Deferred: one-month Pro plan test on `ting.rocks`** to see whether a paid zone keeps Malaysian traffic in SIN
    (free plan and workers.dev enter in FRA/CDG/LHR; Enterprise sites enter in SIN). The user is discussing it with
@@ -389,7 +392,9 @@ AWS Lambda kept as the alternative).
 4. Add `{authOrigin}/login/callback` to Smoke A's own Google client (own-client login tests).
 5. Backup Google addresses for admin-portal access (D88); where the offline backup council key is held (D81, before
    mainnet).
-6. Create the Neon project (Sydney, `aws-ap-southeast-2`) to unblock batch C (D73).
+6. ~~Create the Neon project~~ Done 2026-10-30: project `hana-id` (`aged-cell-90359381`, org
+   `org-red-heart-13914393`), AWS Sydney `aws-ap-southeast-2`, Postgres 18; branches `production` (default, kept for
+   mainnet) and `sandbox-dev`. Neon Auth and Neon's other services are not used (D75, D74). Batch C is unblocked.
 7. **Confirm the email provider with the colleague** before creating any account: Resend is recorded (D87) but
    another provider may be used instead. The email code sits behind one small interface, so a switch is cheap.
 8. **Choose the watchdog's paging app with the colleague** (paused 2026-10-30). Candidates: Pushover (30-day trial,

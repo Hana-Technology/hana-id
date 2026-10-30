@@ -392,7 +392,9 @@ EVM `personal_sign` was approved and returned.
 4. Add `{authOrigin}/login/callback` to Smoke A's own Google client (own-client login tests).
 5. Backup Google addresses for admin-portal access (D88); where the offline backup council key is held (D81, before
    mainnet).
-6. Create the Neon project (Sydney, `aws-ap-southeast-2`) to unblock batch C (D73).
+6. ~~Create the Neon project~~ Done 2026-10-30: project `hana-id` (`aged-cell-90359381`, org
+   `org-red-heart-13914393`), AWS Sydney `aws-ap-southeast-2`, Postgres 18; branches `production` (default, kept for
+   mainnet) and `sandbox-dev`. Neon Auth and Neon's other services are not used (D75, D74). Batch C is unblocked.
 7. **Confirm the email provider with the colleague** before creating any account: Resend is recorded (D87) but
    another provider may be used instead. The email code sits behind one small interface, so a switch is cheap.
 8. **Choose the watchdog's paging app with the colleague** (paused 2026-10-30). Candidates: Pushover (30-day trial,

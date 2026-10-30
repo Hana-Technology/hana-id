@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9).
+Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 on 2026-10-30 (branch `feat/batch-c-1`).
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -1429,6 +1429,33 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   to rotate it. A needless deletion costs one council vote in a recovery that needs council votes anyway.
 - Also decided: every incident scenario gets a step-by-step recovery guide in the admin portal's "Security &
   monitoring" view (D83), from one source that a test keeps complete for every watchdog alert kind.
+
+### D140. The ledger's Postgres tests run on PGlite
+- Date 2026-10-30 · Status: in force on `feat/batch-c-1` (`apps/api/test-usage`, `scripts/test/usage-migrate.test.ts`)
+  · Source: batch C1 (`docs/batch-c-build-plan.md`); the spec's "Tests" said a real Postgres 17 (a Neon branch in CI
+  or a local container)
+- Decision: the usage ledger's DDL, roles, grants, functions and the migration runner are tested on PGlite
+  (`@electric-sql/pglite` 0.5.11, exact-pinned: Postgres 18.6 compiled to WASM, in process), so `pnpm -r test` needs no
+  network, container or Neon branch, locally and in CI. The same suite runs against a real Postgres 18 through `pg`
+  when `USAGE_TEST_DATABASE_URL` names a superuser connection to a local server (a container); never Neon. Tests switch
+  roles with `SET ROLE`, as the Hyperdrive connections of each role would run.
+- Why: PGlite is the same server code as Neon's Postgres 18, so privileges, partitioning, PL/pgSQL and triggers behave
+  the same; a Neon branch per CI run would put a Neon credential in CI and a network dependency in every test run.
+- Not covered by PGlite: Neon's own role rules (the owner is `neon_superuser`, not a superuser) and Hyperdrive. The
+  first `usage-migrate` on sandbox-dev and C4's capture smoke check those.
+- Rejected: a Neon branch per CI run; a Postgres container as the default (needs Docker locally and in CI).
+
+### D141. Ledger roles: created without login, no credential in the DDL, nothing for PUBLIC
+- Date 2026-10-30 · Status: in force on `feat/batch-c-1` (`apps/api/migrations-usage/0001_ledger.sql`) · Source:
+  batch C1; amends `docs/batch-c-spec.md` "Usage ledger" roles
+- Decision: the migration creates `usage_writer` and `usage_admin` `NOLOGIN` if they don't exist; `usage-setup` (C4)
+  gives each `LOGIN` and a generated password. Every migration ends with `REVOKE EXECUTE ON ALL FUNCTIONS … FROM
+  PUBLIC` (Postgres grants EXECUTE on new functions to PUBLIC, which would have let the admin role call `record_event`
+  and any role call the retention functions); a test checks each role's exact function list and that a role with no
+  grants has none. The admin role gets `SELECT, INSERT, UPDATE, DELETE` on the `ops` tables instead of `CREATE` on the
+  schema (it never creates objects, and owner-created tables weren't writable by it).
+- Why: no secret in a committed file; the DDL runs unchanged on Neon, a container and PGlite; least privilege as the
+  spec intended.
 
 ## Superseded or amended
 

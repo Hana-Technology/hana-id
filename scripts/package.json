@@ -13,7 +13,8 @@
     "pack:check": "tsx pack-check.ts",
     "sdk-version": "tsx sdk-version.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "usage-migrate": "tsx usage-migrate.ts"
   },
   "dependencies": {
     "@hana-id/core": "workspace:*",
@@ -21,10 +22,13 @@
     "@near-js/crypto": "2.5.1",
     "@near-js/transactions": "2.5.1",
     "@near-js/utils": "2.5.1",
+    "pg": "8.23.1",
     "tsx": "4.23.15"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.11",
     "@types/node": "^22.0.0",
+    "@types/pg": "8.23.1",
     "typescript": "^5.7.0",
     "vitest": "^3.2.0"
   }

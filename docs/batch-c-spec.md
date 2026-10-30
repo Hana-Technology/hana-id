@@ -628,7 +628,7 @@ ALTER ROLE usage_writer SET statement_timeout = '5s';
 ALTER ROLE usage_admin  SET statement_timeout = '60s';
 ```
 
-- The migrations hold no credential. Roles are created `NOLOGIN` (idempotently), so the DDL runs the same on Neon, a
+- The migrations hold no credential (D141). Roles are created `NOLOGIN` (idempotently), so the DDL runs the same on Neon, a
   container and PGlite; `usage-setup` sets `LOGIN` and a generated password per role. Without the `REVOKE … FROM
   PUBLIC`, every role could call `record_event` and the retention functions; a test checks each role's function list.
   The admin role gets table privileges on `ops` rather than `CREATE` on the schema: it never needs to create objects.
@@ -1708,7 +1708,7 @@ longer needed). The service contract names the same periods.
 
 `@cloudflare/vitest-plugin` (`cloudflareTest`, as in `apps/api/vitest.config.ts`) with auxiliary Workers over real
 service bindings (Miniflare). Neon tests run in Node against PGlite (Postgres compiled to WASM, in process, no network
-or container; D127); the same suite runs against a real Postgres 18 through `pg` when `USAGE_TEST_DATABASE_URL` points
+or container; D140); the same suite runs against a real Postgres 18 through `pg` when `USAGE_TEST_DATABASE_URL` points
 at a superuser connection (a local container, never Neon); Hyperdrive is replaced by a direct connection string in tests. Google's token
 endpoint, the JWKS, the Access JWKS, NEAR RPC, the Images binding and the email provider are mocked with fixed keys.
 

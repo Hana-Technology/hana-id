@@ -1,6 +1,7 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-10-30 (branch `docs/watchdog-hosting`: watchdog hosting, D125; before it
+Last verified against code: 2026-10-30 (branch `feat/batch-c-1`: "Usage ledger (Neon, batch C)", the batch C
+manifest fields; branch `docs/watchdog-hosting`: watchdog hosting, D125; before it
 `gov/sandbox-handover`: sandbox-dev's owner is now its council DAO, council-setup's DAO check, the upgrade drill).
 
 Commands and flags are from `scripts/`, `apps/api/scripts/gen-wrangler.ts`, `apps/api/scripts/pages-wrangler.ts`,
@@ -427,6 +428,31 @@ read these sources, all read-only:
   run ([below](#governance-status-get-v1governance)); not independent of Hana's main Cloudflare account.
 - **Watchdog**: its own status (heartbeat, verdicts, actions, alerts, acks) from its `GET /status`, `/alerts`,
   `/actions` and `POST /alerts/:id/ack` (`apps/watchdog/README.md` "Status endpoint").
+
+## Usage ledger (Neon, batch C)
+
+The ledger's schema is `apps/api/migrations-usage/` (Postgres; D73), applied by `scripts/usage-migrate.ts`. Nothing
+writes to it yet: capture starts in batch C4 (`docs/batch-c-build-plan.md`). Neon Auth and Neon's other services
+aren't used, only Postgres.
+
+```sh
+corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev         # lists the pending files, changes nothing
+corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev --yes   # applies them
+```
+
+- It connects as the owner role with `DATABASE_URL_DIRECT` from `.secrets/<env>/neon.json` (0600), and refuses a URL
+  that isn't a direct (non-`-pooler`) endpoint in `aws-ap-southeast-2` with `sslmode=require` (or `verify-full`). It
+  never prints the URL or its password.
+- Each file runs in its own transaction with its sha256 recorded in `hana_migrations.applied`, under an advisory lock.
+  A file changed after it was applied, or an applied file the repo doesn't have, stops the run: add a new file instead.
+- The schema creates the roles `usage_writer` (the API) and `usage_admin` (the admin Worker) `NOLOGIN`, with no
+  password; giving them `LOGIN` and passwords, and the Hyperdrive configs, is batch C4's `usage-setup`
+  (`docs/batch-c-build-plan.md` "Setup steps").
+- The first migration creates the monthly partitions of `usage.events` for the current month and the next three;
+  `usage.ensure_partitions(3)` adds the rest (the admin Worker's daily cron, from C12; until then by hand as the owner
+  if the ledger is in use).
+- Tests run on PGlite in process (`apps/api/test-usage`, D140); set `USAGE_TEST_DATABASE_URL` to a superuser URL of a
+  local Postgres 18 (a container, never Neon) to run the same suite there.
 
 ## Local API (`wrangler dev`)
 

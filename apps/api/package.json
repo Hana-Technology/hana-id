@@ -9,8 +9,8 @@
     "deploy": "wrangler deploy",
     "deploy:pages": "wrangler deploy -c wrangler.vault.jsonc && wrangler deploy -c wrangler.auth.jsonc",
     "cf-typegen": "wrangler types --env-interface Env src/worker-configuration.d.ts",
-    "test": "vitest run && vitest run -c vitest.scripts.config.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts"
+    "test": "vitest run && vitest run -c vitest.scripts.config.ts && vitest run -c vitest.usage.config.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p test-usage"
   },
   "dependencies": {
     "@hana-id/core": "workspace:*",
@@ -23,8 +23,12 @@
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.4",
     "@cloudflare/workers-types": "5.20261016.1",
+    "@electric-sql/pglite": "0.5.11",
+    "@hana-id/console-core": "workspace:*",
     "@hana-id/env": "workspace:*",
     "@types/node": "^22.0.0",
+    "@types/pg": "8.23.1",
+    "pg": "8.23.1",
     "tsx": "4.23.15",
     "typescript": "^5.7.0",
     "vitest": "4.1.12",

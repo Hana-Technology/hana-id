@@ -1,6 +1,7 @@
 # API reference — every endpoint the `apps/api` Worker serves today
 
-Last verified against code: 2026-10-29 (branch `gov/api`: the governance batch's cron, `issuer_key_pending` /
+Last verified against code: 2026-10-30 (branch `feat/batch-c-1`: the batch C vars in "Configuration"); 2026-10-29
+(branch `gov/api`: the governance batch's cron, `issuer_key_pending` /
 `paused`, `GET /v1/governance`; branch `perf/login-latency-impl`: the vault endpoints' gate, the auth pages' CSP and
 the timings; the rest as of 2026-10-28, commit 58edee9).
 

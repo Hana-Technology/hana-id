@@ -92,7 +92,7 @@ manifest blocks, tables or vars yet.
   `domainToUnicode`, uid path parsing (wrong prefix, part count, `key_index` ignored), zod round trips and refusals.
   `CONSOLE_DB` on local D1 (Miniflare): every CHECK, the invite and auth-flow invariants, `org_legacy`, the
   `audit_log` triggers (UPDATE refused, DELETE refused under 60 months, allowed after), the CHECK lists equal the
-  `console-core` enums. Neon on PGlite (D127): the migration applies on an empty database and twice through
+  `console-core` enums. Neon on PGlite (D140): the migration applies on an empty database and twice through
   `usage-migrate`; the writer can execute only `record_event` (direct `INSERT`, `SELECT`, `UPDATE`, `DELETE` on every
   table refused); the admin can't update or delete events, statements or settlements and can't call `record_event`;
   `record_event` idempotent on retry, refuses a bad shape, `first_seen` is the minimum out of order, an event outside

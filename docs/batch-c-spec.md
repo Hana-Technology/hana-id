@@ -1081,7 +1081,7 @@ interface Ctx { actor: Actor; requestId: string; clientIp: string }
 type RpcCode = 'bad_request' | 'not_found' | 'forbidden' | 'version_conflict' | 'already_applied' | 'not_owner'
   | 'origin_refused' | 'policy_invalid' | 'token_used' | 'near_unavailable' | 'rate_limited' | 'key_limit'
   | 'env_mismatch' | 'scope_conflict' | 'not_pending' | 'conflict' | 'no_security_contact' | 'invalid_client_proof'
-  | 'owner_nonce_mismatch' | 'internal';
+  | 'owner_nonce_mismatch' | 'passkeys_required' | 'internal';
 
 // apps/api, bound only by the console. Every org method takes orgId; every query has WHERE org_id = ?.
 interface ConsoleRpc {
@@ -1223,7 +1223,7 @@ interface OwnerActionBody { method: 'propose_change' | 'execute_change' | 'cance
 | RpcCode | HTTP |
 |---|---|
 | `bad_request`, `origin_refused`, `policy_invalid`, `env_mismatch`, `invalid_client_proof` | 400 |
-| `forbidden`, `not_owner` | 403 |
+| `forbidden`, `not_owner`, `passkeys_required` (§Deferred: `StaffRpc.issueInvite`) | 403 |
 | `not_found` | 404 |
 | `version_conflict`, `already_applied`, `token_used`, `scope_conflict`, `not_pending`, `conflict`, `key_limit`, `no_security_contact`, `owner_nonce_mismatch` | 409 |
 | `rate_limited` | 429 |

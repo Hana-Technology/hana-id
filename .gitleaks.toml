@@ -54,6 +54,14 @@ description = "Test-only JWT fixtures"
 targetRules = ["jwt"]
 paths = ['''^contracts/hana-signer/src/test_fixture\.json$''']
 
+# Console layout vectors (packages/console-core/scripts/gen-vectors.mjs): link tokens and their hashes computed under
+# fixed fake keys written in the file itself (32 bytes of 0x11, 0x22, 0x33). Only the generic rule is waived, only
+# for this generated file; any other secret shape in it still fails.
+[[allowlists]]
+description = "Test-only console layout vectors (fixed fake keys)"
+targetRules = ["generic-api-key"]
+paths = ['''^packages/console-core/test/vectors\.json$''']
+
 # Hana ID publishable test keys (`pk_test_` + base58): public by design, shipped in partner pages, protected by the
 # app's origins (docs/integration.md section 1). Only the generic rule is waived, only for a whole match of that
 # shape; `pk_live_` keys and every other key shape still fail.

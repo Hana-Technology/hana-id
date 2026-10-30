@@ -43,7 +43,7 @@ export class SimChain {
 
   constructor(
     readonly signer: string,
-    readonly opts: { now: number; factory?: string; daoCodeHash: string },
+    readonly opts: { now: number; factory?: string; daoCodeHash: string; factoryRefuses?: boolean },
   ) {
     this.now = opts.now;
     this.factoryCodeHash = opts.daoCodeHash;
@@ -205,10 +205,12 @@ export class SimChain {
     const init = JSON.parse(Buffer.from(String(args.args), 'base64').toString('utf8')) as { policy: SputnikPolicy };
     const dao = `${String(args.name)}.${this.opts.factory}`;
     if (deposit < 5_396_790n * 10n ** 18n) throw new Error('ERR_NOT_ENOUGH_DEPOSIT');
-    if (this.accounts.has(dao)) return false;
+    // The testnet factory doesn't return its promise: the transaction's value is empty, and the `on_create` result
+    // (false when the name is taken, deposit refunded) lands only in a callback receipt.
+    if (this.accounts.has(dao) || this.opts.factoryRefuses) return null;
     this.addDao(dao, init.policy, this.factoryCodeHash);
     this.accounts.get(dao)!.amount = deposit;
-    return true;
+    return null;
   }
 
   private daoCall(predecessor: string, dao: string, method: string, args: Record<string, unknown>, deposit: bigint): unknown {

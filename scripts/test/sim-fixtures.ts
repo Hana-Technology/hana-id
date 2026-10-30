@@ -10,6 +10,9 @@ export const NEAR = 10n ** 24n;
 export const NOW = 1_800_000_000_000;
 export const UPDATER = ['set_issuer_key', 'propose_issuer_key_removal', 'execute_issuer_key_change'];
 export const V1_UPDATER = ['set_issuer_key', 'remove_issuer_key'];
+/** The owner as envs/sandbox-dev.json had it before the handover to the council DAO: tests that start from an account
+ * owner spread this over the real manifest, whose `owner` is now the DAO. */
+export const ACCOUNT_OWNER = { owner: 'hana-id-admin-dev1.testnet', ownerKind: 'account' as const };
 
 export const GOVERNANCE_DEFAULT: GovernanceView = {
   state_version: 2,

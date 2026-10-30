@@ -1,7 +1,7 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-10-29 (branch `gov/scripts`, on `gov/contract` 5dc91cf; the governance sections
-are new there).
+Last verified against code: 2026-10-30 (branch `gov/sandbox-handover`: sandbox-dev's owner is now its council DAO;
+council-setup's DAO check; the upgrade drill).
 
 Commands and flags are from `scripts/`, `apps/api/scripts/gen-wrangler.ts`, `apps/api/scripts/pages-wrangler.ts`,
 `apps/demo/scripts/gen-wrangler.ts`, the `package.json` scripts and their tests. Endpoints:
@@ -288,8 +288,9 @@ corepack pnpm --filter @hana-id/scripts run council-setup sandbox-dev --yes    #
 ```
 
 It generates each member key into `.secrets/sandbox-dev/council/<member>.json` (0600) **before** the account exists,
-creates the accounts from the funder (default the manifest `owner`, from the keychain; ~12.4 NEAR in all), then the
-DAO, and checks the stored policy. Re-running checks what exists: a factory whose default code isn't the pin (re-pin
+creates the accounts from the funder (default the manifest `owner`, from the keychain; ~12.4 NEAR in all; once the
+owner is the DAO, pass `--funder`), then the DAO, and checks it exists and its stored policy. The factory's `create`
+doesn't return its promise, so its transaction value is always empty: the script checks the DAO account instead. Re-running checks what exists: a factory whose default code isn't the pin (re-pin
 and re-run the sandbox test first), a member that exists without its key file, or a DAO with other code or another
 council, threshold, roles or permissions stops the plan.
 
@@ -350,7 +351,8 @@ address changes (the signer id, the path and the CKD request are untouched).
    `governance_delay_ms` (60 s): `deploy-contract sandbox-dev --transfer-owner --approve-with <member> --yes`: the DAO's
    `accept_owner` proposal, approved by two members. On success the script sets `"owner": "<dao>"` and
    `"ownerKind": "sputnik"` in `envs/sandbox-dev.json`; commit that change.
-6. Upgrade drill: rebuild with a no-op change, `deploy-contract sandbox-dev --upgrade --approve-with <member> --yes`
+6. Upgrade drill: rebuild with a no-op change (a patch bump of `contracts/hana-signer/Cargo.toml` `version` changes
+   the hash: cargo-near embeds it in the wasm), `deploy-contract sandbox-dev --upgrade --approve-with <member> --yes`
    (the DAO's `propose_upgrade(hash)`), wait `governance_delay_ms`, then `deploy-contract sandbox-dev --upgrade
    --skip-build --yes` (`execute_upgrade`). Check `view_account.code_hash`.
 7. The signer keeps its full-access key (D86, `allowSignerFullAccessKey: true`); `deploy-contract sandbox-dev` must

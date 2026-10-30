@@ -33,6 +33,8 @@ export interface LogFields {
   rewrapped?: number;
   unreadable?: number;
   unknownKek?: number;
+  /** The identity token's signing key (RFC 7638 thumbprint, public). */
+  kid?: string;
   /** Why a stored auto-approve policy was refused (vault/settings.ts): validator paths and limits, at most 5. */
   problems?: string[];
 }

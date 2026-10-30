@@ -102,6 +102,7 @@ cd contracts/hana-signer && cargo test
 | Admin (apps, scopes, app settings) | `pnpm --filter @hana-id/scripts run admin <env> <command> …` |
 | API Worker config | `pnpm --filter @hana-id/api run gen <env> [--d1-id <uuid>] [--dev-vars]` |
 | `VAULT_KEK` | `pnpm --filter @hana-id/scripts run vault-kek <env> init\|put\|rotate [--yes]` |
+| Identity token keys (`IDENTITY_SIGNING_KEY`, `…_STANDBY`, `IDENTITY_SUB_KEY`) | `pnpm --filter @hana-id/scripts run identity-key <env> init [--local]\|put\|show [--yes]` (`docs/operations.md` "Identity token keys") |
 | Hana pages (vault, auth) | `pnpm --filter @hana-id/web build` · `pnpm --filter @hana-id/api run deploy:pages` |
 | Recovery playbooks doc | `pnpm --filter @hana-id/playbooks gen-docs` (writes `docs/playbooks.md`; edit `packages/playbooks`) |
 | SDK tarballs: build, check, install outside the repo | `pnpm run pack:check` · version: `pnpm --filter @hana-id/scripts run sdk-version <x.y.z>` (`docs/operations.md` "Releasing the SDK packages") |

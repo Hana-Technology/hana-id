@@ -69,7 +69,7 @@ hana.ready.then(
     readyError = e instanceof HanaError ? e.code : String(e);
   },
 );
-for (const name of ['statusChanged', 'accountsChanged', 'sessionExpired', 'disconnect', 'launcher', 'loginProgress', 'autoApproved'] as const) {
+for (const name of ['statusChanged', 'accountsChanged', 'sessionExpired', 'disconnect', 'launcher', 'loginProgress', 'autoApproved', 'identityTokenChanged'] as const) {
   hana.on(name, (...args: unknown[]) => events.push({ name, data: args[0] ?? null }));
 }
 
@@ -163,6 +163,7 @@ const actions: Record<string, (...args: never[]) => Promise<unknown>> = {
   cancelLogin: async () => hana.cancelLogin(),
   exportKey: (chainName: 'stellar' | 'evm') => hana.exportKey(chainName),
   revokeOtherDevices: () => hana.revokeOtherDevices(),
+  identityToken: (maxAgeMs?: number) => hana.getIdentityToken(maxAgeMs === undefined ? {} : { maxAgeMs }),
   requestAutoApprove: () => hana.requestAutoApprove(),
   signRaw: (params: Parameters<typeof hana.signRaw>[0]) => hana.signRaw(params),
   stellarSignMessage: (message: string) => hana.stellar.signMessage(message),

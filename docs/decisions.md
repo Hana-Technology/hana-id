@@ -1438,7 +1438,8 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   `OWNER_METHODS`).
 
 ### D127. Partner identity token: the spec's recommendations, all 16 questions
-- Date 2026-10-30 · Status: confirmed by the user, not built · Source: `docs/identity-token-spec.md` open questions
+- Date 2026-10-30 · Status: confirmed by the user; build steps 1–4 (no email claim) built on `feat/identity-token-1`
+  (D170–D175) · Source: `docs/identity-token-spec.md` open questions
 - Decision: `sub` per scope (`"u1_"` + HMAC with a separate, never-rotated `IDENTITY_SUB_KEY`); ES256; minted by the
   API Worker; mainnet key in AWS KMS (non-exportable, own IAM user, D121's account; a Worker secret on testnet and
   `local*` only); lifetime 1 h capped at the session's end, `maxAgeMs` for fresher proof; email asked once per app at
@@ -1562,6 +1563,87 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 - Decision: manifest `ownerGrantDelayMs` (a new owner is a viewer until it passes; owners can cancel) is separate
   from `appChangeDelayMs`, with the same bounds (at least 24 h on mainnet).
 - Why: the two waits can be tuned independently; changing one never silently changes the other.
+
+## Partner identity token, build steps 1–4 (2026-10-30)
+
+Choices made while building `docs/identity-token-spec.md` steps 1–4 on `feat/identity-token-1`, where the spec left a
+detail open or a safer reading was needed. Each follows the spec's intent; the user can revisit any of them.
+
+### D170. Identity token layout details the spec left open
+- Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`packages/core/src/identity.ts`, frozen in
+  `packages/core/test/vectors/identity-v1.json`) · Source: build step 1
+- Decision: the session proof's prefix is the spec's `"hana-id-identity-v1:"` (the build brief said
+  `hana-identity-v1:`; the spec wins). `wallet_proofs_hash`, which the spec names but doesn't define, is
+  `sha256("hana-id/identity-wallet-proofs/v1" ‖ 0x00 ‖ for stellar then evm: borsh(chain) ‖ borsh(address) ‖
+  borsh(Vec<u8> signature))`. The EVM address in a wallet-proof message is EIP-55; the API accepts any valid case in
+  the body and canonicalizes before checking. `sub`'s root identity is the session path after the app's `scope#`:
+  exactly `provider#sub#key_index` with a lowercase provider, a non-empty sub and a decimal `key_index`, else no token
+  (`502 bad_contract_result`). `login_methods` is `[root provider]` until account linking exists (email login, D119).
+  The claims are built in the spec's order and the builder throws on anything off-spec.
+- Why: a frozen, unambiguous layout before any vault signs one; the proofs hash commits to the chain names, addresses
+  and signatures so a session proof can't be paired with other proofs.
+
+### D171. A mint in an app that keeps logins needs the session's live share
+- Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`apps/api/src/identity/token.ts` `checkShare`,
+  `packages/web/src/vault/vault.ts` `mintIdentity`) · Source: build step 2; the spec's "Minting" step 2
+- Decision: when the app's persistence is `session`, `/v1/identity/token` requires a share for the session key, made
+  for the requesting parent, judged as unlock judges it without writing anything (`410 session_ended` with `reason`
+  `unknown_share`, `share_revoked`, `persistence_off`, `share_expired`); a session key with no share passes on the
+  chain check alone only while the app's persistence is `none`. The vault answers `identity_unavailable` with
+  `reason: no_share` (no API call) for a session in a `session` app that has no share (storage blocked, or the
+  background persist gave up, D79), and waits for a login's persist before minting. A `410 session_ended` from the
+  mint ends the vault session as a revoked share does (`sessionExpired`). A missing on-chain session is re-read every
+  300 ms for up to 2 s before the refusal (a node a block behind the login would otherwise log the user out).
+- Why: the share is what a logout, `revokeOtherDevices()` or a removed origin kills; the hourly cron deletes revoked
+  shares, so "no share" can't be told from "revoked" and must refuse in a `session` app. Accepted: a browser that
+  can't store the session gets no identity token in such an app (`docs/security.md` open issue (l)).
+
+### D172. Identity counts in their own tables, migration 0008
+- Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`apps/api/migrations/0008_identity_token.sql`) ·
+  Source: build step 2; `docs/batch-c-build-plan.md` reserves 0006 and 0007
+- Decision: migration 0008 creates `identity_issuance_hourly (hour, kid, count)` and `identity_usage (app_id, day,
+  tokens)` (the spec's `usage.identity_tokens`), both kept 24 months by the hourly cron. It doesn't touch the legacy
+  `usage` table (batch C's 0007 drops it) and holds no user data. The email claim's `apps.identity_email`,
+  `identity_email_consents` and `identity_emails` count come with build step 5's migration.
+- Why: 0008 applies the same before or after batch C's 0006/0007; an `ALTER TABLE usage` would fail on a fresh
+  database once 0007 drops `usage`.
+
+### D173. Identity signing configuration: `activeKid` in the manifest, `iss` under the API
+- Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`packages/env/src/identity.ts`,
+  `apps/api/scripts/gen-wrangler.ts`, `scripts/lib/identity-key.ts`) · Source: build step 2; the spec's "Manifest"
+- Decision: the Worker-secret signer is `{kind: "worker-secret", activeKid}`: the API signs with whichever of
+  `IDENTITY_SIGNING_KEY` / `IDENTITY_SIGNING_KEY_STANDBY` has that RFC 7638 thumbprint, so the rotation playbook's
+  "switch to the standby" is a manifest change and a deploy. The schema requires every `publicKeys` kid to be its
+  key's thumbprint, refuses any private member, requires the signer's kids in the list and refuses a Worker-secret
+  signer off testnet; `identityToken.iss` must be `{apiUrl}/v1/identity` until the production hostname exists (D127
+  Q14). `gen` refuses the `aws-kms` shape until build step 7 and, with `--dev-vars`, signing keys the manifest
+  doesn't publish. The API verifies each signature with the published key before answering, and serves the JWKS from
+  the manifest's list alone. The global hourly ceiling is 100 000 mints (var `IDENTITY_GLOBAL_HOURLY_MAX` overrides).
+- Why: the standby switch must not need a secret upload in an incident, and a secret that doesn't match the published
+  key must never produce a token.
+
+### D174. Identity token cache rule and SDK surface details
+- Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`packages/web/src/vault/identity.ts`,
+  `packages/web/src/client/client.ts`, `packages/react/src/identity.ts`) · Source: build step 3
+- Decision: the vault hands out its cached token while more than `min(5 min, half the token's life)` remains (a token
+  the session's end made short doesn't cause a mint per call) and, with `maxAgeMs`, it is at most that old. The SDK
+  clamps `maxAgeMs` to 30 s–1 h (the port refuses anything else) and rejects a non-positive one with `-32602`. The
+  port result and `identityTokenChanged` carry `{identityToken, expiresAtMs}`; the client exposes
+  `hana.identityToken` and `hana.identityTokenExpiresAtMs`. `410 session_ending` (< 30 s left) is `session_ended` with
+  `data.reason: 'session_ending'`, without ending the session (its own timers do). `useIdentityToken` retries a failed
+  refresh after 60 s. The record format 2 stores the proofs; the session key stays with a dormant session so it can
+  mint without PRK.
+- Why: the spec's 5-minute margin alone would mint on every call near a session's end; the rest fills in shapes the
+  spec named but didn't fix.
+
+### D175. A tested partner example, quoted exactly by the guide
+- Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`examples/identity-verify`, a workspace member) ·
+  Source: build step 4; the spec's "Example verifier"
+- Decision: `examples/identity-verify/src/verify.ts` is the guide's verifier (`jose` 6.2.13, ES256 pinned); its tests
+  run it against a local issuer (expired, stale, wrong `aud`/`iss`/`typ`/key, `alg: none`, HS256) and fail when
+  `docs/integration.md` section 15 doesn't quote the file exactly. The Playwright suite verifies real tokens from the
+  local stack with `jose` against its JWKS.
+- Why: the published guide always runs.
 
 ## Superseded or amended
 

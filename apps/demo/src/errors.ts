@@ -2,7 +2,7 @@
 // HanaError (a numeric or string code), the EIP-1193 provider with a ProviderRpcError whose numeric code hides the
 // Hana code in `data.code`; a network failure inside the SDK can surface as a TypeError.
 
-export type DemoAction = 'load' | 'login' | 'logout' | 'revoke' | 'sign' | 'export' | 'copy';
+export type DemoAction = 'load' | 'login' | 'logout' | 'revoke' | 'sign' | 'export' | 'copy' | 'identity';
 
 export interface ErrorInfo {
   /** The most specific code: the Hana string code when there is one, else the numeric code, else null. */
@@ -56,6 +56,10 @@ export function plainMessage(e: unknown, action: DemoAction): string {
       return 'The demo app has no Google sign-in configured. Tell the Hana team.';
     case 'busy':
       return 'A key export is already open. Finish or close it first.';
+    case 'identity_unavailable':
+      return 'Hana could not issue an identity token right now. Try again in a minute.';
+    case 'session_ended':
+      return 'Your Hana session has ended. Log in again.';
     case 'session_consumed':
       return 'Click “Continue signing in” on the Hana button at the bottom right to finish signing in.';
     case 'token_invalid':

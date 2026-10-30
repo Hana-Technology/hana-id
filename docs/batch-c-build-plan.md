@@ -18,6 +18,9 @@ Batches merge one at a time. Deploys happen at the milestones at the end; a merg
   batch C's are **0006** (expand) and **0007** (drop legacy `usage`); `CONSOLE_DB`'s start at `apps/console/migrations/
   0001`; Neon's start at `apps/api/migrations-usage/0001`. A migration is immutable once merged; later batches add
   files. Another batch that needs a hot-DB migration first takes the next free number and renumbers what is unmerged.
+  Taken outside batch C: **0008** (`0008_identity_token.sql`, the partner identity token, `feat/identity-token-1`,
+  D172): its own tables only, so 0006 and 0007 keep their numbers and apply before or after it; batch C's usage
+  ledger (C4) should also count `identity_tokens` per app and day (today `identity_usage` in D1).
 - Setup and deploy steps are instructions for the user. No batch's agent connects to Neon, creates Hyperdrive or D1
   resources, runs wrangler against an account, deploys or sends a chain transaction.
 - Neon is Postgres only, reached through Hyperdrive. Neon Auth, Better Auth and Neon's other services are not used

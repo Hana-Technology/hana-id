@@ -101,6 +101,8 @@ export interface Ctx {
    * `/v1/vault/unlock`): a success carries `timings` (see `done`). Never set for pk_live_ apps.
    */
   exposeTimings?: boolean;
+  /** POST /v1/identity/token: the signing key's kid (logged; never the token, `sub` or `sid`). */
+  kid?: string;
 }
 
 export function newCtx(env: Env, requestId: string, endpoint: string, request?: Request, cors: Headers_ = {}): Ctx {
@@ -170,6 +172,7 @@ export function done(ctx: Ctx, status: number, body: Record<string, unknown>, ex
       phases: ctx.phases && Object.keys(ctx.phases).length > 0 ? ctx.phases : undefined,
       colo: ctx.colo,
       relayInstance: ctx.relayInstance,
+      kid: ctx.kid,
     },
     status >= 500 ? 'error' : 'info',
   );
@@ -340,7 +343,7 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     // 5. The token is a genuine, unexpired Google ID token (RS256 against Google's JWKS) with a nonce...
     let verified;
     try {
-      verified = await verifyIdToken(req.jwt, now, { skewMs: TOKEN_EXP_SKEW_MS, observer: keyObserver(env, exec) });
+      verified = await verifyIdToken(req.jwt, now, { skewMs: TOKEN_EXP_SKEW_MS, observer: keyObserver(env, exec), identityIssuer: env.IDENTITY_ISS });
     } catch (err) {
       if (err instanceof JwksUnavailableError) return reject(ctx, 503, 'issuer_keys_unavailable', 'Could not read the token issuer keys, try again');
       throw err;

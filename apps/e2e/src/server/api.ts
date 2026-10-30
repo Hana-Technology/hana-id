@@ -22,6 +22,7 @@ import {
   toHex,
   verifyEd25519,
 } from '@hana-id/core';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import { base58 } from '@scure/base';
 import { API_URL, AUTH_ORIGIN, E2E_ENV, ENV_NAME, LIVE_SCOPE_ID, NEAR_RPC, VAULT_ORIGIN } from '../stack.ts';
 import type { ApiApp, ApiCtx, ApiEnv, ApiModules } from './api-modules.ts';
@@ -52,6 +53,28 @@ const bytes = (v: number[]): Uint8Array => Uint8Array.from(v);
 
 /** A fresh VAULT_KEK per stack (`<id>:<base64 of 32 bytes>`, vault/kek.ts): shares live only as long as the stack. */
 const newVaultKek = (): string => `1:${Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64')}`;
+
+/**
+ * The identity token's configuration per stack (docs/identity-token-spec.md; what gen-wrangler and identity-key.ts set
+ * on a real env): a fresh P-256 signing key and a standby, their JWKS, and a sub key. Throwaway, never written anywhere.
+ */
+function identityBindings(apiUrl: string): Record<string, string> {
+  const key = () => {
+    const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const jwk = privateKey.export({ format: 'jwk' }) as { x: string; y: string; d: string };
+    const kid = createHash('sha256').update(JSON.stringify({ crv: 'P-256', kty: 'EC', x: jwk.x, y: jwk.y })).digest('base64url');
+    return { private: JSON.stringify({ kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y, d: jwk.d }), public: { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y, kid, use: 'sig', alg: 'ES256' } };
+  };
+  const [active, standby] = [key(), key()];
+  return {
+    IDENTITY_ISS: `${apiUrl}/v1/identity`,
+    IDENTITY_PUBLIC_KEYS: JSON.stringify([active.public, standby.public]),
+    IDENTITY_ACTIVE_KID: active.public.kid,
+    IDENTITY_SIGNING_KEY: active.private,
+    IDENTITY_SIGNING_KEY_STANDBY: standby.private,
+    IDENTITY_SUB_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64'),
+  };
+}
 
 export interface AppSpec {
   name?: string;
@@ -112,6 +135,8 @@ export class MockApi {
       RATE_LIMITER: allowAllLimiter,
       VAULT_IP_LIMIT: allowAllRateLimit,
       VAULT_SHARE_LIMIT: allowAllRateLimit,
+      IDENTITY_SESSION_LIMIT: allowAllRateLimit,
+      ...identityBindings(serves.apiUrl),
     };
     env.LOGIN_RELAY = new MemoryNamespace(api.LoginRelay, () => env);
     this.env = env;

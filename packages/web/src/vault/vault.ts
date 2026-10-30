@@ -34,6 +34,8 @@ import {
   type PortRequest,
   type PortResultMap,
   type StatusResult,
+  type VaultBroadcast,
+  type WalletProofs,
   ApiError,
   type Bytes,
   badCounterExpected,
@@ -53,6 +55,7 @@ import { deriveAddresses } from '@hana-id/core/derivation';
 import { type AutoApproveResult, matchAutoApprovePolicy, recordAutoApproveUse } from '@hana-id/core/policy';
 import type { HanaEnv } from '../hana-env.ts';
 import { VaultApi } from './api.ts';
+import { type CachedIdentity, cacheUsable, copyProofs, makeWalletProofs, mintBody, tokenIatMs } from './identity.ts';
 import { type ApprovalOutcome, Approvals } from './approvals.ts';
 import { autoApproveStatus, consentActive, consentEnd, newConsent, withUsage } from './auto-approve.ts';
 import { type Persistence, type PolicyInForce, type RawSign, type VaultConfig, parentAllowed, policyInForce } from './config.ts';
@@ -63,6 +66,7 @@ import { NearView } from './near.ts';
 import {
   type ConsentV1,
   DERIVATION_VERSION,
+  RECORD_VERSION,
   type RecordStore,
   type RecordV1,
   openConsent,
@@ -196,6 +200,11 @@ interface Session {
    * this tab read or wrote, kept so hana_autoApproveStatus can answer while the session is dormant.
    */
   consent: ConsentV1 | null;
+  /**
+   * The identity token's proofs of `addresses` for this session key and app (vault/identity.ts), made at login or at
+   * the unlock of a format-1 record; null only if making them failed (the session then gets no identity token).
+   */
+  walletProofs: WalletProofs | null;
   lastTouchAt: number;
   /** Server-corrected time of the partner page's last request for this session (the in-memory idle limit). */
   lastActivityAt: number;
@@ -232,8 +241,24 @@ interface Dormant {
   shareId: Uint8Array;
   /** The consent this tab last read or wrote (not secret: policy id, end time, counters), for hana_autoApproveStatus. */
   consent: ConsentV1 | null;
+  /**
+   * The session key (non-extractable, as in the record) and the wallet proofs: an identity token needs the session key
+   * but no PRK, so it can be refreshed while the session is dormant.
+   */
+  keyPair: CryptoKeyPair;
+  walletProofs: WalletProofs | null;
   /** Ends it at expiresAtMs, as a live session's expiry timer would. */
   expiryTimer: unknown;
+}
+
+/** The session an identity token is minted for (vault.identityTarget). */
+interface IdentityTarget {
+  sessionPk: Uint8Array;
+  keyPair: CryptoKeyPair;
+  proofs: WalletProofs | null;
+  live: Session | null;
+  dormant: Dormant | null;
+  hasShare: boolean;
 }
 
 interface ExportJob {
@@ -318,6 +343,9 @@ export class Vault {
   private declinedPolicyId: string | null = null;
   private readonly seenIds = new Set<string>();
   private jwksCache: { keys: Jwk[]; at: number } | null = null;
+  /** The session's current identity token (this tab's mint or another tab's, over the channel), or null. */
+  private identity: CachedIdentity | null = null;
+  private readonly identityLockName: string;
 
   constructor(private readonly o: VaultOptions) {
     this.env = o.env;
@@ -334,6 +362,8 @@ export class Vault {
     this.testApp = isTestPublishableKey(o.config.publishableKey);
     this.launcher = new Launcher(o.launcherView, (ui) => this.emit('ui', ui), this.timers);
     this.lockName = `hana-vault-unlock:${o.config.appId}`;
+    // Tabs of the app mint one at a time: the second finds the first's token (shared over the channel).
+    this.identityLockName = `hana-identity:${o.config.appId}`;
     this.recordId = recordKey(o.env.signer, o.config.appId, o.config.scopeId, 0);
     this.bundleCkdKeyHash = ckdKeyHash(o.env.ckdNetworkKey);
     o.host.onMessage((e) => this.onWindowMessage(e));
@@ -675,6 +705,10 @@ export class Vault {
       case 'hana_revokeAutoApprove':
         await this.revokeAutoApprove();
         return null;
+      case 'hana_identityToken':
+        // Silent tier, as hana_status: the session key but never PRK, no approval, and not activity (no wake, no idle
+        // restart), so a background tab refreshing its token can't keep the session or the key alive (D55, D112).
+        return this.identityToken(r.params?.maxAgeMs);
       default:
         throw new VaultError(ErrorCode.unsupportedMethod, 'Unsupported method');
     }
@@ -802,6 +836,7 @@ export class Vault {
       share: null,
       persist: null,
       consent: null,
+      walletProofs: this.walletProofsFor(success.prk, success.sessionKey.publicKey, success.addresses),
       lastTouchAt: this.clock.now(),
       lastActivityAt: this.clock.now(),
       expiryTimer: null,
@@ -898,7 +933,8 @@ export class Vault {
         ks.fill(0);
       }
       const record: RecordV1 = {
-        v: 1,
+        v: s.walletProofs ? RECORD_VERSION : 1,
+        ...(s.walletProofs ? { walletProofs: copyProofs(s.walletProofs) } : {}),
         ...binding,
         scopeId: this.config.scopeId,
         keyIndex: 0,
@@ -1016,6 +1052,7 @@ export class Vault {
   private expireDormant(d: Dormant): void {
     if (this.dormant !== d) return;
     this.clearDormant();
+    this.dropIdentity();
     void this.deleteRecordIf({ sessionPk: d.sessionPk, share: { shareId: d.shareId, counter: 0, createdAt: null } }).catch(() => undefined);
     this.emit('sessionExpired', null);
     this.emit('accountsChanged', { addresses: null });
@@ -1091,9 +1128,12 @@ export class Vault {
       sessionPk: s.sessionPk,
       shareId: Uint8Array.from(s.share.shareId),
       consent: s.consent ? { ...s.consent, valueWeiByChain: { ...s.consent.valueWeiByChain } } : null,
+      keyPair: s.keyPair,
+      walletProofs: s.walletProofs,
       expiryTimer: null,
     };
-    this.endSession(false);
+    // The same session goes on, dormant: its identity token stays valid.
+    this.endSession(false, ErrorCode.disconnected, true);
     this.dormant = dormant;
     const delay = Math.max(0, s.expiresAtMs - this.clock.now());
     dormant.expiryTimer = this.timers.setTimeout(() => this.expireDormant(dormant), Math.min(delay, 0x7fffffff));
@@ -1115,6 +1155,7 @@ export class Vault {
       }
       if (this.dormant === d) {
         this.clearDormant();
+        this.dropIdentity();
         this.emit('sessionExpired', null);
         this.emit('accountsChanged', { addresses: null });
       }
@@ -1128,6 +1169,7 @@ export class Vault {
   private dropDormant(announce: boolean): void {
     if (!this.dormant) return;
     this.clearDormant();
+    this.dropIdentity();
     if (announce) {
       this.emit('disconnect', { code: ErrorCode.disconnected });
       this.emit('accountsChanged', { addresses: null });
@@ -1147,11 +1189,15 @@ export class Vault {
     this.scheduleIdle(s);
   }
 
-  /** Zeroes PRK and drops the session; pending approvals and an export end. */
-  private endSession(announce: boolean, code: number = ErrorCode.disconnected): void {
+  /**
+   * Zeroes PRK and drops the session; pending approvals and an export end, and so does its identity token unless the
+   * session only goes dormant (`keepIdentity`).
+   */
+  private endSession(announce: boolean, code: number = ErrorCode.disconnected, keepIdentity = false): void {
     const s = this.session;
     if (!s) return;
     this.session = null;
+    if (!keepIdentity) this.dropIdentity();
     // A share or record still being made for this session must not outlive it (persistLogin checks this).
     if (s.persist) s.persist.cancelled = true;
     this.timers.clearTimeout(s.expiryTimer);
@@ -1296,6 +1342,9 @@ export class Vault {
       await this.deleteRecord().catch(() => undefined);
       return;
     }
+    // A format-1 record gets its identity proofs now (PRK is here), written back if the record is still this session's.
+    const walletProofs = record.walletProofs ? copyProofs(record.walletProofs) : this.walletProofsFor(prk, record.sessionPk, record.addresses);
+    if (!record.walletProofs && walletProofs) void this.upgradeRecord(record, walletProofs).catch(() => undefined);
     this.adopt({
       prk,
       addresses: { ...record.addresses },
@@ -1307,6 +1356,7 @@ export class Vault {
       share: { shareId: record.shareId, counter: record.counter, createdAt: null },
       persist: null,
       consent: null,
+      walletProofs,
       lastTouchAt: this.clock.now(),
       lastActivityAt: this.clock.now(),
       expiryTimer: null,
@@ -1375,6 +1425,10 @@ export class Vault {
   private onBroadcast(data: unknown): void {
     const m = parseVaultBroadcast(data);
     if (!m) return;
+    if (m.t === 'identity') {
+      this.adoptBroadcastIdentity(m);
+      return;
+    }
     const s = this.session;
     if (m.t === 'counter') {
       if (s?.share && bytesEqual(s.share.shareId, m.shareId)) s.share.counter = Math.max(s.share.counter, m.counter);
@@ -1469,6 +1523,159 @@ export class Vault {
         this.endSession(true);
       }
     });
+  }
+
+  // ---- partner identity token (docs/identity-token-spec.md) ----
+
+  /** The wallet proofs for a session, or null if they can't be made (no identity token then; logged as a code). */
+  private walletProofsFor(prk: Uint8Array, sessionPk: Uint8Array, addresses: { stellar: string; evm: string }): WalletProofs | null {
+    try {
+      return makeWalletProofs(prk, { signer: this.env.signer, appId: this.config.appId, sessionPublicKey: sessionPk }, addresses);
+    } catch {
+      console.warn('[Hana ID vault] Could not make the identity wallet proofs (wallet_proofs); identity tokens are unavailable for this session.');
+      return null;
+    }
+  }
+
+  /** Writes the proofs into a format-1 record (making it format 2), under the lock, if it is still this session's. */
+  private async upgradeRecord(of: RecordV1, walletProofs: WalletProofs): Promise<void> {
+    const store = this.store;
+    if (!store) return;
+    await this.o.locks.request(this.lockName, async () => {
+      const r = await this.readRecord();
+      if (r === null || r === 'invalid' || !sameSession(r, of) || r.walletProofs) return;
+      await store.put(this.recordId, { ...r, v: RECORD_VERSION, walletProofs: copyProofs(walletProofs) });
+    });
+  }
+
+  /** The session an identity token is for: the live one, or the dormant one (no PRK needed), with its key and proofs. */
+  private identityTarget(): IdentityTarget | null {
+    const s = this.live();
+    if (s) return { sessionPk: s.sessionPk, keyPair: s.keyPair, proofs: s.walletProofs, live: s, dormant: null, hasShare: s.share !== null };
+    const d = this.liveDormant();
+    if (d) return { sessionPk: d.sessionPk, keyPair: d.keyPair, proofs: d.walletProofs, live: null, dormant: d, hasShare: true };
+    return null;
+  }
+
+  private cachedIdentity(sessionPk: Uint8Array, maxAgeMs?: number): PortResultMap['hana_identityToken'] | null {
+    const c = this.identity;
+    if (!c || !bytesEqual(c.sessionPk, sessionPk) || !cacheUsable(c, this.clock.now(), maxAgeMs)) return null;
+    return { identityToken: c.token, expiresAtMs: c.expiresAtMs };
+  }
+
+  /** Drops the identity token (the session ended or was replaced) and tells the partner page. */
+  private dropIdentity(): void {
+    if (!this.identity) return;
+    this.identity = null;
+    this.emit('identityTokenChanged', { identityToken: null, expiresAtMs: null });
+  }
+
+  /** Another tab's token for this tab's session (live or dormant): cached and reported, if it is newer. */
+  private adoptBroadcastIdentity(m: Extract<VaultBroadcast, { t: 'identity' }>): void {
+    const s = this.session ?? this.dormant;
+    if (!s || !bytesEqual(s.sessionPk, m.sessionPk)) return;
+    const c = this.identity;
+    if (c && bytesEqual(c.sessionPk, m.sessionPk) && c.iatMs >= m.iatMs) return;
+    this.identity = { sessionPk: Uint8Array.from(m.sessionPk), token: m.identityToken, iatMs: m.iatMs, expiresAtMs: m.expiresAtMs };
+    this.emit('identityTokenChanged', { identityToken: m.identityToken, expiresAtMs: m.expiresAtMs });
+  }
+
+  /**
+   * hana_identityToken: the cached token while it is fresh enough (cacheUsable), else a mint under the per-app Web
+   * Lock (a tab that waited finds the token another tab just minted). Logged out: nulls, never an error.
+   */
+  private async identityToken(maxAgeMs?: number): Promise<PortResultMap['hana_identityToken']> {
+    const none = { identityToken: null, expiresAtMs: null };
+    const first = this.identityTarget();
+    if (!first) return none;
+    const hit = this.cachedIdentity(first.sessionPk, maxAgeMs);
+    if (hit) return hit;
+    // Right after a login the share may still be in the making (D79): the API needs it in 'session' mode.
+    if (first.live) await this.persisted(first.live);
+    return this.o.locks.request(this.identityLockName, async () => {
+      const t = this.identityTarget();
+      if (!t) return none;
+      const cached = this.cachedIdentity(t.sessionPk, maxAgeMs);
+      if (cached) return cached;
+      return this.mintIdentity(t);
+    });
+  }
+
+  private async mintIdentity(t: IdentityTarget): Promise<PortResultMap['hana_identityToken']> {
+    // An app that keeps logins checks the session's share: a session this browser couldn't persist has none (D79).
+    if (this.config.settings.persistence === 'session' && !t.hasShare) {
+      throw new VaultError('identity_unavailable', 'This browser could not keep the Hana session, so it has no identity token', { reason: 'no_share' });
+    }
+    const proofs = t.proofs;
+    if (!proofs) throw new VaultError('identity_unavailable', 'Identity tokens are unavailable for this session', { reason: 'no_wallet_proofs' });
+    const sessionPk = Uint8Array.from(t.sessionPk);
+    for (let attempt = 0; ; attempt++) {
+      const body = await mintBody(t.keyPair.privateKey, {
+        signer: this.env.signer,
+        appId: this.config.appId,
+        sessionPublicKey: sessionPk,
+        parentOrigin: this.parentOrigin!,
+        issuedAtMs: this.clock.now(),
+        proofs,
+      });
+      let res;
+      try {
+        res = await this.api!.identityToken(body);
+      } catch (e) {
+        if (!(e instanceof ApiError)) throw new VaultError('identity_unavailable', 'Identity tokens are unavailable, try again later');
+        // A clock that drifted: the API's time comes with the refusal. A replay can only be a nonce collision. Once each.
+        if (attempt === 0 && e.code === 'stale_proof') {
+          this.clock.refresh(e.details.serverTimeMs);
+          continue;
+        }
+        if (attempt === 0 && e.code === 'proof_replayed') continue;
+        throw this.identityError(e, t);
+      }
+      const now = this.identityTarget();
+      // The session ended or changed while the request was in flight: its token is no longer anyone's.
+      if (!now || !bytesEqual(now.sessionPk, sessionPk)) return { identityToken: null, expiresAtMs: null };
+      const iatMs = tokenIatMs(res.identityToken) ?? this.clock.now();
+      this.identity = { sessionPk, token: res.identityToken, iatMs, expiresAtMs: res.expiresAtMs };
+      this.channel?.postMessage({ v: 1, t: 'identity', sessionPk: Uint8Array.from(sessionPk), identityToken: res.identityToken, iatMs, expiresAtMs: res.expiresAtMs });
+      const state = { identityToken: res.identityToken, expiresAtMs: res.expiresAtMs };
+      this.emit('identityTokenChanged', state);
+      return state;
+    }
+  }
+
+  /**
+   * A refused mint as a port error. `410 session_ended`: the share or the on-chain session is gone, so the session ends
+   * here too (record deleted, other tabs told, `sessionExpired`). `410 session_ending`: less than 30 s left; the session
+   * ends on its own timers.
+   */
+  private identityError(e: ApiError, t: IdentityTarget): VaultError {
+    if (e.code === 'session_ended') {
+      this.endIdentitySession(t);
+      return new VaultError('session_ended', 'The Hana session has ended');
+    }
+    if (e.code === 'session_ending') return new VaultError('session_ended', 'The Hana session ends in less than 30 seconds', { reason: 'session_ending' });
+    if (e.status === 429) return new VaultError('rate_limited', 'Too many identity token requests, try again later');
+    if (e.code === 'app_suspended' || e.code === 'origin_not_allowed' || e.code === 'scope_conflict') return apiErrorToVault(e);
+    return new VaultError('identity_unavailable', 'Identity tokens are unavailable, try again later', { api: `${e.status} ${e.code}`.slice(0, 80) });
+  }
+
+  private endIdentitySession(t: IdentityTarget): void {
+    const s = t.live;
+    if (s && this.session === s) {
+      const share = s.share;
+      if (share) {
+        void this.deleteRecordIf(s).catch(() => undefined);
+        this.broadcastRevoked(share.shareId);
+      }
+      this.endSession(false);
+    } else if (t.dormant && this.dormant === t.dormant) {
+      const d = t.dormant;
+      void this.deleteRecordIf({ sessionPk: d.sessionPk, share: { shareId: d.shareId, counter: 0, createdAt: null } }).catch(() => undefined);
+      this.broadcastRevoked(d.shareId);
+      this.dropDormant(false);
+    } else return;
+    this.emit('sessionExpired', null);
+    this.emit('accountsChanged', { addresses: null });
   }
 
   // ---- signing ----

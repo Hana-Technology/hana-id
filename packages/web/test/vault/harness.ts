@@ -18,12 +18,16 @@ import {
   consentDigest,
   encryptRelayPayload,
   fromUtf8,
+  identityMessage,
+  identityTokenPayload,
   relayIdFor,
   toHex,
   utf8,
   vaultMessage,
   vaultPayload,
   verifyEd25519,
+  verifyWalletProof,
+  walletProofsHash,
 } from '@hana-id/core';
 import type { HanaEnv } from '../../src/hana-env.ts';
 import type { VaultConfig } from '../../src/vault/config.ts';
@@ -231,7 +235,10 @@ export class FakeBackend {
   relayHeldMs: number | null = null;
   /** What the callback adds to the relay slot for a pk_test_ login (its own and /login's stage durations), or none. */
   popupTimings: Record<string, number> | null = null;
+  /** The identity tokens' lifetime this fake API mints with (seconds); the real one caps it at the session's end. */
+  identityTtlS = 3600;
   private txSeq = 0;
+  private mintSeq = 0;
   private readonly relayWaiters = new Set<() => void>();
 
   count(path: string): number {
@@ -336,6 +343,7 @@ export class FakeBackend {
       this.relay.set(relayId, 'consumed');
       return json(200, { ...v, serverTimeMs: this.serverNow(), ...(this.relayHeldMs === null ? {} : { heldMs: this.relayHeldMs }) });
     }
+    if (call.path === '/v1/identity/token') return this.identityToken(call);
     if (call.path === '/v1/vault/shares') return this.createShare(call);
     if (call.path.startsWith('/v1/vault/')) return this.shareAction(call, call.path.slice('/v1/vault/'.length));
     void url;
@@ -344,6 +352,36 @@ export class FakeBackend {
 
   private timingsField(): { timings?: unknown } {
     return this.serverTimings ? { timings: structuredClone(this.serverTimings) } : {};
+  }
+
+  /**
+   * POST /v1/identity/token as the API judges it, in short: the session proof (signature, ±60 s), a live chain session,
+   * an unrevoked share in 'session' mode, both wallet proofs. The token is a fake ES256 JWS: its payload has `iat`, `exp`
+   * and a mint number `n`; the vault only reads `iat`.
+   */
+  private async identityToken(call: ApiCall): Promise<Response> {
+    const b = call.body as { sessionPublicKey: number[]; issuedAtMs: number; nonce: number[]; signature: number[]; walletProofs: Record<'stellar' | 'evm', { address: string; signature: number[] }> };
+    const pk = Uint8Array.from(b.sessionPublicKey);
+    const proofs = {
+      stellar: { address: b.walletProofs.stellar.address, signature: Uint8Array.from(b.walletProofs.stellar.signature) },
+      evm: { address: b.walletProofs.evm.address, signature: Uint8Array.from(b.walletProofs.evm.signature) },
+    };
+    if (Math.abs(this.serverNow() - b.issuedAtMs) > 60_000) return apiError(400, 'stale_proof', { serverTimeMs: this.serverNow() });
+    const payload = identityTokenPayload({ parentOrigin: call.headers['x-hana-parent-origin'] ?? '', walletProofsHash: walletProofsHash(proofs) });
+    const msg = identityMessage({ signer: ENV.signer, appId: APP_ID, sessionPublicKey: pk, issuedAtMs: b.issuedAtMs, nonce: Uint8Array.from(b.nonce), payload });
+    if (!(await verifyEd25519(pk, Uint8Array.from(b.signature), msg))) return apiError(401, 'invalid_signature');
+    const share = [...this.shares.values()].find((s) => toHex(s.sessionPk) === toHex(pk));
+    if (share?.revoked) return apiError(410, 'session_ended', { reason: 'share_revoked' });
+    if (!this.sessions.has(toHex(pk))) return apiError(410, 'session_ended', { reason: 'no_session' });
+    for (const chain of ['stellar', 'evm'] as const) {
+      if (verifyWalletProof({ signer: ENV.signer, appId: APP_ID, sessionPublicKey: pk }, chain, proofs[chain]) === null) return apiError(400, 'bad_wallet_proof', { chain });
+    }
+    const iat = Math.floor(this.serverNow() / 1000);
+    const exp = iat + this.identityTtlS;
+    this.mintSeq += 1;
+    const part = (o: unknown) => base64UrlEncode(utf8(JSON.stringify(o)));
+    const identityToken = `${part({ alg: 'ES256', kid: 'k'.repeat(43), typ: 'hana-identity+jwt' })}.${part({ iat, exp, n: this.mintSeq, wallets: [proofs.stellar.address, proofs.evm.address] })}.${'A'.repeat(86)}`;
+    return json(200, { identityToken, expiresAtMs: exp * 1000, emailStatus: 'off', requestId: 'rq' });
   }
 
   private async createShare(call: ApiCall): Promise<Response> {

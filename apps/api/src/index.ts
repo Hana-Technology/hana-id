@@ -4,6 +4,9 @@ import { type AppEndpoint, APP_CONFIG_ENDPOINT, APP_ENDPOINTS, appPreflight, han
 import { GOVERNANCE_ENDPOINT, handleGovernance } from './governance-status.ts';
 import { json } from './http.ts';
 import { syncIssuerKeys } from './issuer-keys.ts';
+import { identityMaintenance } from './identity/maintenance.ts';
+import { IDENTITY_PUBLIC_ENDPOINTS, handleIdentityPublic } from './identity/public.ts';
+import { IDENTITY_TOKEN_ENDPOINT, handleIdentityToken } from './identity/token.ts';
 import { log } from './log.ts';
 import { LOGIN_ENDPOINT, handleLogin } from './login.ts';
 import { LOGIN_RELAY_PREFIX, handleLoginRelay, loggedEndpoint } from './login-relay.ts';
@@ -21,7 +24,8 @@ const ID_RE = /^[A-Za-z0-9-]{1,64}$/u;
 /**
  * The cron fires every 15 min (one quarter-hourly trigger from gen-wrangler.ts: the free plan allows 5 per
  * account). Every run syncs Google's JWKS with hana-signer (proposals and matured executions, issuer-keys.ts; the
- * governance spec's P = 15 min). The run in the first quarter of each UTC hour also does vault maintenance. A Worker
+ * governance spec's P = 15 min). The run in the first quarter of each UTC hour also does vault maintenance and prunes
+ * the identity token's counts past their retention. A Worker
  * still on the old `0 * * * *` trigger only ever gets hourly runs.
  */
 export function isHourlyRun(scheduledTime: number): boolean {
@@ -104,6 +108,17 @@ export default {
         if (request.method === 'POST') return await handleVaultEndpoint(request, env, pathname, requestId, ctx);
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
       }
+      if (pathname === IDENTITY_TOKEN_ENDPOINT) {
+        // Vault only, like /v1/vault/* (same preflight: Origin must be VAULT_ORIGIN).
+        if (request.method === 'OPTIONS') return vaultPreflight(request, env);
+        if (request.method === 'POST') return await handleIdentityToken(request, env, requestId, ctx);
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
+      }
+      if (IDENTITY_PUBLIC_ENDPOINTS.includes(pathname)) {
+        if (request.method === 'GET' || request.method === 'HEAD') return handleIdentityPublic(request, env, pathname, requestId);
+        if (request.method === 'OPTIONS') return openPreflight();
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'GET, HEAD, OPTIONS' });
+      }
       if (pathname === '/v1/owner-actions') {
         if (request.method === 'OPTIONS') return openPreflight();
         if (request.method === 'POST') return await handleOwnerAction(request, env, requestId);
@@ -119,10 +134,12 @@ export default {
   async scheduled(controller, env, _ctx): Promise<void> {
     // Independent jobs: one failing must not skip the other. The sync records the JWKS observation from its fetch.
     const jobs: Promise<unknown>[] = [syncIssuerKeys(env)];
-    if (isHourlyRun(controller.scheduledTime)) jobs.push(vaultMaintenance(env));
-    const [issuerKeys, vault] = await Promise.allSettled(jobs);
+    if (isHourlyRun(controller.scheduledTime)) jobs.push(vaultMaintenance(env), identityMaintenance(env));
+    const [issuerKeys, vault, identity] = await Promise.allSettled(jobs);
     if (vault?.status === 'rejected') log({ event: 'vault_maintenance', outcome: 'error', code: 'internal' }, 'error');
+    if (identity?.status === 'rejected') log({ event: 'identity_maintenance', outcome: 'error', code: 'internal' }, 'error');
     if (issuerKeys?.status === 'rejected') throw issuerKeys.reason;
     if (vault?.status === 'rejected') throw vault.reason;
+    if (identity?.status === 'rejected') throw identity.reason;
   },
 } satisfies ExportedHandler<Env>;

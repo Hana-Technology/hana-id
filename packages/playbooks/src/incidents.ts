@@ -263,15 +263,22 @@ const watchdogDown: Playbook = {
       commands: [c.watchdogGen, c.watchdogSecretBulk, c.watchdogDeploy],
     },
     {
-      title: 'If its D1 was lost',
+      title: 'If its D1 was lost or damaged: restore it',
       who: 'a founder',
-      detail: "The next run is a first run: it records Google's current JWKS as known and alerts, without pausing, on any active kid not in it. Check every first-run alert by hand (unknown-active-key-first-run); a forged key active at that moment is not paused.",
+      detail: "Logged in to the watchdog's account: Time Travel back to a minute before the loss (30 days). A point after its first run keeps `initialized_at`, so the pause still works; first compare the active kids with Google's JWKS (an active kid Google published and dropped entirely inside the gap would look never published and be paused). The next runs re-alert every governance change since the point (check, then acknowledge) and re-raise conditions still true.",
+      commands: [c.governanceStatus, c.watchdogD1Bookmark, c.watchdogD1BookmarkAt, c.watchdogD1Restore],
+    },
+    {
+      title: 'If it can\'t be restored: the first-run caveat',
+      who: 'a founder',
+      detail: "Past 30 days, a point before its first run, or a new database: the next run is a first run. It records Google's current JWKS as known and alerts, without pausing, on any active kid not in it. Check every first-run alert by hand (unknown-active-key-first-run) and the pending queue; a forged key active at that moment is not paused.",
+      commands: [c.apiGovernancePending],
     },
   ],
   verify: ['`/status`: `last_run.outcome: "ok"`, `silent: false`, `heartbeat.ok`; the heartbeat provider shows the check up.'],
   followUps: ['A second watchdog on another provider (D125 later option) removes this single point.'],
-  refs: ['docs/operations.md#watchdog-service-appswatchdog', 'apps/watchdog/README.md#alerts-d85', 'D83', 'D125'],
-  related: ['watchdog-degraded', 'watchdog-compromised', 'forged-active-key'],
+  refs: ['docs/operations.md#watchdog-service-appswatchdog', 'docs/operations.md#the-watchdogs-d1', 'apps/watchdog/README.md#alerts-d85', 'D83', 'D125', 'D152'],
+  related: ['watchdog-degraded', 'watchdog-compromised', 'forged-active-key', 'unknown-active-key-first-run'],
 };
 
 const watchdogCompromised: Playbook = {
@@ -324,10 +331,10 @@ const watchdogCompromised: Playbook = {
       commands: [c.watchdogSecretsInit, c.watchdogSecretsCheck, c.watchdogSecretBulk],
     },
     {
-      title: 'A lost D1: check the first run',
+      title: 'A lost D1: restore it, or check the first run',
       who: 'a founder',
-      detail: 'Redeploy against a fresh D1 if needed (setup step 5) and check every first-run alert by hand (unknown-active-key-first-run).',
-      commands: [c.watchdogGen, c.watchdogDeploy],
+      detail: "Restore its D1 with Time Travel to a minute before the intrusion (operations \"The watchdog's D1\"; a point after its first run keeps the pause working). Past 30 days or with nothing to restore: redeploy against a fresh D1 (setup step 5) and check every first-run alert by hand (unknown-active-key-first-run).",
+      commands: [c.watchdogD1BookmarkAt, c.watchdogD1Restore, c.watchdogGen, c.watchdogDeploy],
     },
   ],
   verify: ['`/status`: every check ok, channels configured; only the new key on `watchdog.account` besides its full-access key.', '`admin <env> governance:status`: no findings, the watchdog listed (or re-added).'],
@@ -579,19 +586,25 @@ const d1Loss: Playbook = {
     {
       title: 'Restore from Time Travel',
       who: 'a founder',
-      detail: "Not in the runbook yet: Cloudflare D1 Time Travel keeps 30 days; restore the database to a time before the loss (Cloudflare's docs give the command; rehearse it on sandbox-dev first). Restored shares need the `VAULT_KEK` they were wrapped under (`vault-kek <env> put --yes` sets both secrets again from the files).",
-      commands: [c.vaultKekPut],
+      detail: "D1 Time Travel restores any minute of the last 30 days (7 on the Free plan), in place. Note the current bookmark first (it undoes the restore), get the bookmark of a time before the loss, export the damaged state to `.secrets/` (it holds wrapped vault shares: 0600), then restore. Everything written after that point is lost, including suspensions and share revocations made since.",
+      commands: [c.apiD1Bookmark, c.apiD1BookmarkAt, c.apiD1Export, c.apiD1Restore],
+    },
+    {
+      title: 'Re-run what the restore undid',
+      who: 'a founder',
+      detail: "In order: apply the migrations (a point before a later migration has the older schema); re-apply security writes made since the point (`app:suspend`, `app:origins:remove`, and the revoke-all if every share was revoked since: before anything else); then the other app changes. A KEK rotated since: restored rows need the old key (`vault-kek <env> put --yes` sets both secrets from the files), else those users sign in again. The issuer-key cron rebuilds its own state from chain on its next run.",
+      commands: [c.d1Migrate, c.appSuspend, c.appOriginsRemove, c.revokeAllShares, c.vaultKekPut],
     },
     {
       title: 'Without a restore: rebuild',
       who: 'a founder',
-      detail: 'Re-apply the migrations, then re-create each app, its origins and settings from what partners and the audit trail say. Not built yet: an export or restore tool for apps.',
+      detail: 'Past 30 days, or nothing to restore: re-apply the migrations, then re-create each app, its origins and settings from what partners and the audit trail say. Not built yet: a scheduled export of the apps tables kept outside Cloudflare.',
       commands: [c.d1Migrate, 'corepack pnpm --filter @hana-id/scripts run admin <env> app:create --name <name> --scope <scope_id> --origin <origin> --remote', c.appSettings],
     },
   ],
-  verify: ['`admin <env> app:list --remote` matches the known apps; a smoke login and a reload unlock work.'],
-  followUps: ['Batch C moves the ledger to Neon with point-in-time restore (D73); the API\'s D1 still needs its own backup routine.'],
-  refs: ['docs/architecture.md#data-stores', 'docs/operations.md#admin-cli-scriptsadmints', 'docs/operations.md#vault_kek'],
+  verify: ['`admin <env> app:list --remote` matches the known apps; suspended apps are still suspended; a smoke login and a reload unlock work.'],
+  followUps: ['Batch C moves the ledger to Neon with point-in-time restore (D73); the API\'s D1 still needs a backup kept beyond Time Travel\'s 30 days.', 'Rehearse a Time Travel restore on sandbox-dev (D152).'],
+  refs: ['docs/operations.md#restoring-a-d1-database-time-travel', 'docs/architecture.md#data-stores', 'docs/operations.md#admin-cli-scriptsadmints', 'docs/operations.md#vault_kek', 'D152'],
   related: ['vault-kek-leaked', 'api-or-cloudflare-compromised'],
 };
 

@@ -677,12 +677,13 @@ const watchdogFirstRun: Playbook = {
     {
       title: 'Not after a deploy: investigate',
       who: 'a founder',
-      detail: 'Its D1 was emptied or replaced: follow watchdog-compromised.',
+      detail: "Its D1 was emptied or replaced: follow watchdog-compromised. A restore of its D1 to a minute before (Time Travel, 30 days; operations \"The watchdog's D1\") brings its history back; until then this first run's baseline stands.",
+      commands: [c.watchdogD1BookmarkAt, c.watchdogD1Restore],
     },
   ],
   verify: ['The next runs report `first_run: false` and every check ok.'],
   followUps: [],
-  refs: ['docs/operations.md#setting-it-up-once-per-env'],
+  refs: ['docs/operations.md#setting-it-up-once-per-env', 'docs/operations.md#the-watchdogs-d1'],
   related: ['unknown-active-key-first-run', 'watchdog-compromised'],
 };
 

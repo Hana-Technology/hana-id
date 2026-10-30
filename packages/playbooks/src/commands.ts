@@ -74,6 +74,16 @@ export const apiTailErrors = 'corepack pnpm --dir apps/api exec wrangler tail <c
 export const apiTail = 'corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --format pretty';
 export const d1Migrate = 'corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --remote';
 
+/** D1 Time Travel (`docs/operations.md` "Restoring a D1 database (Time Travel)"): the API's `DB`. */
+export const apiD1Bookmark = 'corepack pnpm --dir apps/api exec wrangler d1 time-travel info <cloudflare.d1Name>';
+export const apiD1BookmarkAt = 'corepack pnpm --dir apps/api exec wrangler d1 time-travel info <cloudflare.d1Name> --timestamp=<RFC 3339 time before the loss>';
+export const apiD1Export = 'corepack pnpm --dir apps/api exec wrangler d1 export <cloudflare.d1Name> --remote --output=../../.secrets/<env>/d1-before-restore-<yyyymmdd>.sql';
+export const apiD1Restore = 'corepack pnpm --dir apps/api exec wrangler d1 time-travel restore <cloudflare.d1Name> --bookmark=<bookmark>';
+/** The same for the watchdog's D1, from apps/watchdog on the watchdog's Cloudflare account. */
+export const watchdogD1Bookmark = 'corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel info <watchdog.cloudflare.d1Name>';
+export const watchdogD1BookmarkAt = 'corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel info <watchdog.cloudflare.d1Name> --timestamp=<RFC 3339 time before the loss>';
+export const watchdogD1Restore = 'corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel restore <watchdog.cloudflare.d1Name> --bookmark=<bookmark>';
+
 /** Revoke every live vault share (`docs/operations.md` "`VAULT_KEK`", KEK compromised). */
 export const revokeAllShares =
   "corepack pnpm --dir apps/api exec wrangler d1 execute <cloudflare.d1Name> --remote --command \"UPDATE vault_shares SET revoked_at = CAST(strftime('%s','now') AS INTEGER) * 1000 WHERE revoked_at IS NULL\"";

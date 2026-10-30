@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9).
+Last verified against code: 2026-10-28 (commit 58edee9); D150–D152 2026-10-30 (branch `feat/playbook-gaps`).
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -1487,6 +1487,23 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   shows the new council keeps `deploy-contract`'s policy check (`policyProblems`) meaningful.
 - Rejected: one `ChangePolicy` proposal with the whole new policy (it can change anything else in the policy at the
   same time, which is harder to review than a member change); add first (needs three votes for the removal).
+
+### D152. D1 recovery is D1 Time Travel, with a runbook for both databases
+- Date 2026-10-30 · Status: documented (branch `feat/playbook-gaps`), not rehearsed · Source: conversation (closing
+  the recovery playbooks' "not built yet" steps)
+- Decision: a lost or damaged D1 (the API's `DB` or the watchdog's) is restored in place with `wrangler d1
+  time-travel restore --bookmark` (30 days on the paid plan), after noting the current bookmark (the undo) and, for
+  the API, exporting the damaged state to `.secrets/` (it holds wrapped vault shares). The runbook
+  (`docs/operations.md` "Restoring a D1 database (Time Travel)") lists what a restore loses and what to re-run, in
+  order: migrations, then security writes made since the point (suspensions, origin removals, a revoke-all) before
+  anything else, then a KEK rotated since, then other app changes. For the watchdog it spells out the first-run
+  baseline caveat (a point after the first run keeps the pause; before it, or no restore, means a first run that
+  only alerts) and the gap caveat (a kid published and dropped inside the gap looks never published and pauses).
+  The `d1-data-loss`, `watchdog-down`, `watchdog-compromised` and `watchdog-first-run` playbooks use it.
+- Why: Time Travel is on by default for production-backend D1 databases and needs no code; the dangerous part of a
+  restore is silently undoing a security response, so the runbook orders that first.
+- Still open: a rehearsal on sandbox-dev (no wrangler or chain actions were run for this), and a backup kept beyond
+  30 days and outside Cloudflare (an export of the apps tables, or batch C's Neon ledger, D73).
 
 ## Superseded or amended
 

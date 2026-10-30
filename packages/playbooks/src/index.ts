@@ -10,7 +10,7 @@ export type { Actor, Playbook, Severity, Step } from './types.ts';
 export { ACTORS } from './types.ts';
 
 /** Bumped whenever the playbooks are re-checked against the code and the runbooks. */
-export const LAST_VERIFIED = '2026-10-30 (branch `feat/recovery-playbooks`)';
+export const LAST_VERIFIED = '2026-10-30 (branch `feat/playbook-gaps`)';
 
 /** Shown above every playbook: how its commands are meant to be run. */
 export const NOTES: readonly string[] = [

@@ -1,6 +1,7 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-10-30 (branch `feat/recovery-playbooks`: the watchdog alerts runbook now points at
+Last verified against code: 2026-10-30 (branch `feat/playbook-gaps`: relayer funds monitoring in the watchdog,
+`owner:vote --reject`, `council:replace-member`, the D1 Time Travel restore runbook; before it `feat/recovery-playbooks`: the watchdog alerts runbook now points at
 `docs/playbooks.md`, `owner:call` takes `set_sessions_valid_from_ms`; before it `docs/watchdog-hosting`: watchdog
 hosting, D125; `gov/sandbox-handover`: sandbox-dev's owner is now its council DAO, council-setup's DAO check, the
 upgrade drill).
@@ -1029,6 +1030,95 @@ pending change's `unlock_at_ms`), since OIDC owners couldn't cancel while paused
 immediate but slows every key change to `governance_delay_ms` unless another watchdog confirms (D86). Likewise a key
 change proposed while no watchdog may confirm yet (none, or only ones added less than `governance_delay_ms` ago)
 waits `governance_delay_ms`: after adding the first watchdog, rotations go slow until its `confirm_from_ms`.
+
+## Restoring a D1 database (Time Travel)
+
+Both D1 databases, the API's `DB` (`cloudflare.d1Name`) and the watchdog's (`watchdog.cloudflare.d1Name`, on the
+watchdog's Cloudflare account), are restored with **D1 Time Travel**
+(<https://developers.cloudflare.com/d1/reference/time-travel/>; commands:
+<https://developers.cloudflare.com/workers/wrangler/commands/d1/#d1-time-travel-info>, checked 2026-10-30). What
+Cloudflare guarantees: a restore to any minute of the last 30 days on the Workers Paid plan (7 days on Free); a
+timestamp is Unix seconds or RFC 3339 with an offset (UTC); `time-travel` commands always act on the remote
+database (no `--remote`); a restore is **destructive and in place** (queries in flight are cancelled and fail) and
+prints a bookmark that undoes it; there is no restore into a new database (no fork). Bookmarks older than 30 days are
+invalid: past that only an export kept elsewhere helps. Wrangler ≥ 3.4 (the repo pins 4.x). Not rehearsed on
+sandbox-dev yet (D152): do that once before relying on it.
+
+### The API's `DB`
+
+From the repo root, with `apps/api/wrangler.jsonc` generated for the env (`gen <env>`) and logged in to the API's
+Cloudflare account:
+
+```sh
+corepack pnpm --dir apps/api exec wrangler d1 time-travel info <cloudflare.d1Name>                                        # the current bookmark: note it (it undoes everything below)
+corepack pnpm --dir apps/api exec wrangler d1 time-travel info <cloudflare.d1Name> --timestamp=<RFC 3339 time before the loss>   # the bookmark to restore
+corepack pnpm --dir apps/api exec wrangler d1 export <cloudflare.d1Name> --remote --output=../../.secrets/<env>/d1-before-restore-<yyyymmdd>.sql
+chmod 600 .secrets/<env>/d1-before-restore-<yyyymmdd>.sql
+corepack pnpm --dir apps/api exec wrangler d1 time-travel restore <cloudflare.d1Name> --bookmark=<bookmark>
+```
+
+The export keeps the damaged state for the investigation and for re-applying later writes; it holds `vault_shares`
+(wrapped under `VAULT_KEK`), so it lives under `.secrets/` (0600) and is deleted with the KEK's retention rules in
+mind (`VAULT_KEK` above). Skip it only when the database is gone altogether.
+
+**What is lost**: every write after the restore point. Apps created then (their publishable keys stop working), origin
+and settings changes (a pending `raw_sign` / `auto_approve` change scheduled then is gone: the partner asks again),
+**suspensions and revocations made then are undone**, usage counters, `vault_shares` created then (those users sign
+in with Google again; their addresses are on chain and unchanged), and the issuer-key cron's state
+(`issuer_key_observations`, `issuer_key_missing`, `issuer_key_proposals`, `issuer_key_sync_runs`). The cron rebuilds
+the last from chain: a pending change by the signer account it has no row for is adopted, a missing kid's 55-min
+timer starts again (its removal proposal comes up to 55 min later), and D33's lead-time data loses the gap.
+
+**Re-run afterwards**, in this order:
+
+1. `corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --remote`: a point before a
+   later migration has the older schema (its `d1_migrations` table comes back with it, so only the missing ones run).
+2. Security writes made after the point: `admin <env> app:suspend` for every app suspended since, `app:origins:remove`
+   for every origin removed since, and, if every share was revoked since (a KEK compromise), the revoke-all command in
+   "`VAULT_KEK`" above **before** anything else touches the database. Never leave a restored database un-revoking
+   what a security response revoked.
+3. A KEK rotated after the point: the restored rows are under the old key id. While `VAULT_KEK_PREVIOUS` still holds
+   it they unlock and get re-wrapped; if the rotation already finished (`VAULT_KEK_PREVIOUS` deleted), those rows are
+   `unknownKek` (the users sign in again) unless the old key file is still there: `vault-kek <env> put --yes` sets
+   both secrets from the files.
+4. Other app changes since the point (new apps with `app:create`, which issues new publishable keys the partners
+   must use; origins; settings), from what partners and the audit trail say.
+5. Check: `admin <env> app:list --remote` against the known apps, `GET /v1/governance` `.updater` (the cron's next
+   run), a smoke login and a reload unlock.
+
+### The watchdog's D1
+
+From `apps/watchdog`, logged in to the **watchdog's** Cloudflare account (`gen <env>` first, for its
+`wrangler.jsonc`). Until it runs again, watch the issuer-key queue by hand (playbook `watchdog-down`).
+
+```sh
+corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel info <watchdog.cloudflare.d1Name>
+corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel info <watchdog.cloudflare.d1Name> --timestamp=<RFC 3339 time before the loss>
+corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel restore <watchdog.cloudflare.d1Name> --bookmark=<bookmark>
+```
+
+**What is lost**: runs, alerts (and their acks), deliveries and the actions log after the point; kids first seen
+since, and the `last_seen_at` updates (`seen_kids`); absences; the stored chain snapshot, failure counters, heartbeat
+and digest state go back to the point. A run lock held at the point is taken over after 10 min (one or two runs skip).
+**What the next runs do**: diff the chain against the older snapshot, so every governance change since the point is
+alerted again (critical `governance_change`, its own pauses and updater-key deletions included: check them against
+`owner:proposals` and the actions you know, then acknowledge); alerts that were open at the point and are no longer
+true resolve; conditions still true are raised again (critical ones page until acknowledged); a second digest may go
+out.
+
+**The first-run baseline caveat.** A restore to a point **after** the first run keeps `initialized_at`: no first run,
+and the pause on a forged active key still works. Before restoring, compare the active kids
+(`admin <env> governance:status`) with Google's JWKS today: an active kid that Google published and stopped publishing
+entirely **inside the gap** is missing from the restored `seen_kids`, and the next run takes it for never published
+and pauses (Google keeps a kid published for weeks, so only a long gap can hit this; the API cron proposes removing a
+dropped kid after 55 min). A restore to a point **before** the first run, or no restore at all (past 30 days, a new
+database): the next run is a first run. It records Google's current JWKS as known and only **alerts**, never pauses,
+on an active kid not in it, so a forged key active at that moment is not paused: check every
+`unknown_active_key_first_run` alert by hand (playbook `unknown-active-key-first-run`) and the pending queue
+(`GET /v1/governance` `.keyChanges`) before acknowledging.
+
+After either restore: `/status` shows `last_run.outcome: "ok"`, the expected `first_run` and `initialized_at`, and
+`heartbeat.ok` within two runs.
 
 ## Logs and latency
 

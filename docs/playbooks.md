@@ -1,7 +1,7 @@
 # Recovery playbooks
 
 Generated from `packages/playbooks` (D126) by `corepack pnpm --filter @hana-id/playbooks gen-docs`: edit the package,
-not this file (a test fails when it is stale). Last verified against code: 2026-10-30 (branch `feat/recovery-playbooks`).
+not this file (a test fails when it is stale). Last verified against code: 2026-10-30 (branch `feat/playbook-gaps`).
 
 One step-by-step guide for every watchdog alert kind and for every incident the watchdog does not raise. The admin
 portal's "Security & monitoring" view renders the same playbooks (`docs/batch-c-spec.md`), and every watchdog
@@ -811,13 +811,18 @@ The first run with an empty D1 recorded Google's current JWKS as known.
    curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" https://<workerName>.<subdomain>.workers.dev/status
    ```
 
-2. **Not after a deploy: investigate** (who: a founder). Its D1 was emptied or replaced: follow [watchdog-compromised](#watchdog-compromised).
+2. **Not after a deploy: investigate** (who: a founder). Its D1 was emptied or replaced: follow [watchdog-compromised](#watchdog-compromised). A restore of its D1 to a minute before (Time Travel, 30 days; operations "The watchdog's D1") brings its history back; until then this first run's baseline stands.
+
+   ```sh
+   corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel info <watchdog.cloudflare.d1Name> --timestamp=<RFC 3339 time before the loss>
+   corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel restore <watchdog.cloudflare.d1Name> --bookmark=<bookmark>
+   ```
 
 **Verify**
 
 - The next runs report `first_run: false` and every check ok.
 
-**Refs:** [`docs/operations.md#setting-it-up-once-per-env`](operations.md#setting-it-up-once-per-env) · **See also:** [unknown-active-key-first-run](#unknown-active-key-first-run), [watchdog-compromised](#watchdog-compromised)
+**Refs:** [`docs/operations.md#setting-it-up-once-per-env`](operations.md#setting-it-up-once-per-env), [`docs/operations.md#the-watchdogs-d1`](operations.md#the-watchdogs-d1) · **See also:** [unknown-active-key-first-run](#unknown-active-key-first-run), [watchdog-compromised](#watchdog-compromised)
 
 <a id="relayer-out-of-funds"></a>
 
@@ -1213,7 +1218,20 @@ The watchdog stopped running: no cancels of forged keys, no pause, no confirmati
    corepack pnpm --dir apps/watchdog exec wrangler deploy
    ```
 
-4. **If its D1 was lost** (who: a founder). The next run is a first run: it records Google's current JWKS as known and alerts, without pausing, on any active kid not in it. Check every first-run alert by hand ([unknown-active-key-first-run](#unknown-active-key-first-run)); a forged key active at that moment is not paused.
+4. **If its D1 was lost or damaged: restore it** (who: a founder). Logged in to the watchdog's account: Time Travel back to a minute before the loss (30 days). A point after its first run keeps `initialized_at`, so the pause still works; first compare the active kids with Google's JWKS (an active kid Google published and dropped entirely inside the gap would look never published and be paused). The next runs re-alert every governance change since the point (check, then acknowledge) and re-raise conditions still true.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run admin <env> governance:status
+   corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel info <watchdog.cloudflare.d1Name>
+   corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel info <watchdog.cloudflare.d1Name> --timestamp=<RFC 3339 time before the loss>
+   corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel restore <watchdog.cloudflare.d1Name> --bookmark=<bookmark>
+   ```
+
+5. **If it can't be restored: the first-run caveat** (who: a founder). Past 30 days, a point before its first run, or a new database: the next run is a first run. It records Google's current JWKS as known and alerts, without pausing, on any active kid not in it. Check every first-run alert by hand ([unknown-active-key-first-run](#unknown-active-key-first-run)) and the pending queue; a forged key active at that moment is not paused.
+
+   ```sh
+   curl -s <apiUrl>/v1/governance | jq '{paused, delays, keyChanges, pendingUpgrade, pendingOwner, pendingWithdrawal}'
+   ```
 
 **Verify**
 
@@ -1223,7 +1241,7 @@ The watchdog stopped running: no cancels of forged keys, no pause, no confirmati
 
 - A second watchdog on another provider (D125 later option) removes this single point.
 
-**Refs:** [`docs/operations.md#watchdog-service-appswatchdog`](operations.md#watchdog-service-appswatchdog), [`apps/watchdog/README.md#alerts-d85`](../apps/watchdog/README.md#alerts-d85), D83 (`docs/decisions.md`), D125 (`docs/decisions.md`) · **See also:** [watchdog-degraded](#watchdog-degraded), [watchdog-compromised](#watchdog-compromised), [forged-active-key](#forged-active-key)
+**Refs:** [`docs/operations.md#watchdog-service-appswatchdog`](operations.md#watchdog-service-appswatchdog), [`docs/operations.md#the-watchdogs-d1`](operations.md#the-watchdogs-d1), [`apps/watchdog/README.md#alerts-d85`](../apps/watchdog/README.md#alerts-d85), D83 (`docs/decisions.md`), D125 (`docs/decisions.md`), D152 (`docs/decisions.md`) · **See also:** [watchdog-degraded](#watchdog-degraded), [watchdog-compromised](#watchdog-compromised), [forged-active-key](#forged-active-key), [unknown-active-key-first-run](#unknown-active-key-first-run)
 
 <a id="watchdog-compromised"></a>
 
@@ -1278,9 +1296,11 @@ Someone holds the watchdog's key, its status token or its Cloudflare account. It
    corepack pnpm --dir apps/watchdog exec wrangler secret bulk ../../.secrets/<env>/watchdog-secrets.json
    ```
 
-6. **A lost D1: check the first run** (who: a founder). Redeploy against a fresh D1 if needed (setup step 5) and check every first-run alert by hand ([unknown-active-key-first-run](#unknown-active-key-first-run)).
+6. **A lost D1: restore it, or check the first run** (who: a founder). Restore its D1 with Time Travel to a minute before the intrusion (operations "The watchdog's D1"; a point after its first run keeps the pause working). Past 30 days or with nothing to restore: redeploy against a fresh D1 (setup step 5) and check every first-run alert by hand ([unknown-active-key-first-run](#unknown-active-key-first-run)).
 
    ```sh
+   corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel info <watchdog.cloudflare.d1Name> --timestamp=<RFC 3339 time before the loss>
+   corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel restore <watchdog.cloudflare.d1Name> --bookmark=<bookmark>
    corepack pnpm --filter @hana-id/watchdog gen <env>
    corepack pnpm --dir apps/watchdog exec wrangler deploy
    ```
@@ -1613,13 +1633,26 @@ The API's D1 (apps, origins, settings, usage, vault shares, issuer-key sync stat
 
 **Steps**
 
-1. **Restore from Time Travel** (who: a founder). Not in the runbook yet: Cloudflare D1 Time Travel keeps 30 days; restore the database to a time before the loss (Cloudflare's docs give the command; rehearse it on sandbox-dev first). Restored shares need the `VAULT_KEK` they were wrapped under (`vault-kek <env> put --yes` sets both secrets again from the files).
+1. **Restore from Time Travel** (who: a founder). D1 Time Travel restores any minute of the last 30 days (7 on the Free plan), in place. Note the current bookmark first (it undoes the restore), get the bookmark of a time before the loss, export the damaged state to `.secrets/` (it holds wrapped vault shares: 0600), then restore. Everything written after that point is lost, including suspensions and share revocations made since.
 
    ```sh
+   corepack pnpm --dir apps/api exec wrangler d1 time-travel info <cloudflare.d1Name>
+   corepack pnpm --dir apps/api exec wrangler d1 time-travel info <cloudflare.d1Name> --timestamp=<RFC 3339 time before the loss>
+   corepack pnpm --dir apps/api exec wrangler d1 export <cloudflare.d1Name> --remote --output=../../.secrets/<env>/d1-before-restore-<yyyymmdd>.sql
+   corepack pnpm --dir apps/api exec wrangler d1 time-travel restore <cloudflare.d1Name> --bookmark=<bookmark>
+   ```
+
+2. **Re-run what the restore undid** (who: a founder). In order: apply the migrations (a point before a later migration has the older schema); re-apply security writes made since the point (`app:suspend`, `app:origins:remove`, and the revoke-all if every share was revoked since: before anything else); then the other app changes. A KEK rotated since: restored rows need the old key (`vault-kek <env> put --yes` sets both secrets from the files), else those users sign in again. The issuer-key cron rebuilds its own state from chain on its next run.
+
+   ```sh
+   corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --remote
+   corepack pnpm --filter @hana-id/scripts run admin <env> app:suspend --app <app id | publishable key> --remote
+   corepack pnpm --filter @hana-id/scripts run admin <env> app:origins:remove --app <app id | publishable key> --origin <origin> --remote
+   corepack pnpm --dir apps/api exec wrangler d1 execute <cloudflare.d1Name> --remote --command "UPDATE vault_shares SET revoked_at = CAST(strftime('%s','now') AS INTEGER) * 1000 WHERE revoked_at IS NULL"
    corepack pnpm --filter @hana-id/scripts run vault-kek <env> put --yes
    ```
 
-2. **Without a restore: rebuild** (who: a founder). Re-apply the migrations, then re-create each app, its origins and settings from what partners and the audit trail say. Not built yet: an export or restore tool for apps.
+3. **Without a restore: rebuild** (who: a founder). Past 30 days, or nothing to restore: re-apply the migrations, then re-create each app, its origins and settings from what partners and the audit trail say. Not built yet: a scheduled export of the apps tables kept outside Cloudflare.
 
    ```sh
    corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --remote
@@ -1629,13 +1662,14 @@ The API's D1 (apps, origins, settings, usage, vault shares, issuer-key sync stat
 
 **Verify**
 
-- `admin <env> app:list --remote` matches the known apps; a smoke login and a reload unlock work.
+- `admin <env> app:list --remote` matches the known apps; suspended apps are still suspended; a smoke login and a reload unlock work.
 
 **Follow-ups**
 
-- Batch C moves the ledger to Neon with point-in-time restore (D73); the API's D1 still needs its own backup routine.
+- Batch C moves the ledger to Neon with point-in-time restore (D73); the API's D1 still needs a backup kept beyond Time Travel's 30 days.
+- Rehearse a Time Travel restore on sandbox-dev (D152).
 
-**Refs:** [`docs/architecture.md#data-stores`](architecture.md#data-stores), [`docs/operations.md#admin-cli-scriptsadmints`](operations.md#admin-cli-scriptsadmints), [`docs/operations.md#vault_kek`](operations.md#vault_kek) · **See also:** [vault-kek-leaked](#vault-kek-leaked), [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)
+**Refs:** [`docs/operations.md#restoring-a-d1-database-time-travel`](operations.md#restoring-a-d1-database-time-travel), [`docs/architecture.md#data-stores`](architecture.md#data-stores), [`docs/operations.md#admin-cli-scriptsadmints`](operations.md#admin-cli-scriptsadmints), [`docs/operations.md#vault_kek`](operations.md#vault_kek), D152 (`docs/decisions.md`) · **See also:** [vault-kek-leaked](#vault-kek-leaked), [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)
 
 <a id="partner-google-client-compromised"></a>
 

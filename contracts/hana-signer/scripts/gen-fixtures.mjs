@@ -8,6 +8,10 @@
 // (`layouts`: each part, the whole preimage and the nonce) that the Rust tests compare with their own bytes, and that
 // docs/contract-interface.md quotes. The two implementations must agree byte for byte.
 //
+// Regenerating replaces the Google test key, which src/v1_state_fixture.json and src/v2_state_fixture.json embed
+// (their migrate tests verify fixture tokens after migrating): rebuild those too, or add new fixtures elsewhere (email
+// login's are in gen-email-fixtures.mjs for that reason).
+//
 //   node contracts/hana-signer/scripts/gen-fixtures.mjs           # writes src/test_fixture.json
 //   node contracts/hana-signer/scripts/gen-fixtures.mjs --doc     # also prints the worked examples as Markdown
 //

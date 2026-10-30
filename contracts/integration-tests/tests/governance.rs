@@ -151,7 +151,7 @@ async fn v1_world() -> Result<V1World> {
     // A session (5 uses, 30 min), used once.
     let mut session = TestSession::new(&scope_a, now + 1_800_000, 0, 5);
     let jwt = issuer.jwt(APP_A, USER_SUB, Some(&session.nonce(signer.id())), now);
-    relayer.call(signer.id(), "create_session").args_json(session.create_args(&jwt)).gas(GAS).transact().await?.into_result()?;
+    relayer.call(signer.id(), "create_session").args_json(session.create_args(signer.id(), &jwt)).gas(GAS).transact().await?.into_result()?;
     relayer.call(signer.id(), "derive_key").args_json(session.derive_args(PK1, PK2)).gas(GAS).transact().await?.into_result()?;
     Ok(V1World { worker, signer, admin, alice, relayer, mpc, issuer, scope_a, session })
 }
@@ -316,7 +316,7 @@ async fn login_gas_is_unchanged_from_v1() -> Result<()> {
         for _ in 0..2 {
             let s = TestSession::new(&scope, now + 600_000, 0, 1);
             let jwt = issuer.jwt(APP_A, USER_SUB, Some(&s.nonce(signer.id())), now);
-            let outcome = relayer.call(signer.id(), "create_session").args_json(s.create_args(&jwt)).gas(api_gas("create_session")).transact().await?;
+            let outcome = relayer.call(signer.id(), "create_session").args_json(s.create_args(signer.id(), &jwt)).gas(api_gas("create_session")).transact().await?;
             gas.push(outcome.total_gas_burnt.as_gas());
             outcome.into_result()?;
             let mut s = TestSession::new(&scope, now + 600_000, 0, 1);

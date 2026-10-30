@@ -2,10 +2,10 @@
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
 Last verified against code: 2026-10-30 (branch `feat/identity-token-1`: the partner identity token in Status,
-Components, the "Partner identity token" flow, Data stores and the Glossary; `feat/playbook-gaps`: the watchdog's
-relayer funds reads and D1 meta; before it `feat/recovery-playbooks`: the playbooks package in Components;
-before it `perf/login-latency-impl`, 2026-10-29: the login flow, key persistence and the vault gate; the rest as of
-2026-10-28, commit 58edee9).
+Components, the "Partner identity token" flow, Data stores and the Glossary; `feat/email-login-1-r2`: contract v3
+email login status and path identity; `feat/playbook-gaps`: the watchdog's relayer funds reads and D1 meta;
+`feat/recovery-playbooks`: the playbooks package in Components; before it `perf/login-latency-impl`, 2026-10-29:
+the login flow, key persistence and the vault gate; the rest as of 2026-10-28, commit 58edee9).
 
 Byte layouts and contract methods are in `docs/contract-interface.md`; this file links to it rather than repeating
 them. The security model is `docs/security.md`, the decision log `docs/decisions.md`. Where a spec and the code
@@ -35,6 +35,7 @@ Batch B is merged on the integration branch `feat/batch-b` (not yet on `develop`
 | Governance API (delayed JWKS sync, `issuer_key_pending` / `paused` gate, `GET /v1/governance`) | `gov/api`, integrated on `feat/governance` | Code done; not deployed (`docs/operations.md` "Deploying the governance API") |
 | Governance scripts (owner council, DAO-routed owner calls, timelocked upgrades, migration, `admin governance:status`) | `gov/scripts`, integrated on `feat/governance` | Code done (`docs/operations.md` "Governance") |
 | Partner identity token, build steps 1–4 (`docs/identity-token-spec.md`, D127): core layouts and ids, `POST /v1/identity/token`, JWKS and discovery, Worker-secret ES256 signer, migration 0008, `hana.getIdentityToken()`, `useIdentityToken()`, `scripts/identity-key.ts`, `examples/identity-verify` | `feat/identity-token-1` | Code done; not deployed (`docs/operations.md` "Identity token keys"). No `email` claim yet (steps 5–6), no KMS signer (step 7) or watchdog pin check (step 8) |
+| Email login, contract v3 (self-issued email issuer with a signer policy, JWS JSON tokens, accounts and links, `migrate` v2 → v3) | `feat/email-login-1` | Code done, unit-tested; not deployed. Every off-chain part (issuer, API, web, watchdog) is a later batch of `docs/email-login-build-plan.md`; until then nothing calls the new methods |
 
 ## Components
 
@@ -406,6 +407,12 @@ What decides an address, and when it freezes:
 | HKDF labels, tuples, key rules (derivation v1) | yes, all | names confirmed 2026-10-28; frozen at the address freeze |
 | New chain tuples, new `account` values | no (additive) | open |
 | `vaultOrigin`, `authOrigin`, `create_session_and_derive`, persistence, own vs shared client | no | `authOrigin` still breaks own-client redirect registrations if changed |
+
+Contract v3 (email login, `feat/email-login-1`, not deployed) adds no input to this table for existing identities:
+the path's `(provider, sub)` is the session's path identity, which is the token's own unless the identity is a member
+of an account, when it is the account root's (an existing path, so linking never creates or moves an address). Email
+identities use provider `email` and a `sub` derived off chain (`docs/email-login-spec.md` "Address impact"; frozen
+at the address freeze).
 
 Before the freeze, anything that changes an address must be called out (CLAUDE.md); after it, never. A scheme change
 would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.

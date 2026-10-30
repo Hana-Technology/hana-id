@@ -489,7 +489,7 @@ pub fn borsh_opt_str(s: Option<&str>) -> Vec<u8> {
 /// Session nonce: "hana-id/session/v1" ‖ borsh(signer) ‖ borsh(scope_id) ‖ pk (32) ‖ expires_at_ms u64 LE ‖
 /// key_index u32 LE ‖ max_uses u32 LE ‖ salt.
 #[allow(clippy::too_many_arguments)]
-pub fn session_nonce(signer: &str, scope_id: &str, pk: &[u8], expires_at_ms: u64, key_index: u32, max_uses: u32, salt: &[u8]) -> String {
+pub fn session_nonce_preimage(signer: &str, scope_id: &str, pk: &[u8], expires_at_ms: u64, key_index: u32, max_uses: u32, salt: &[u8]) -> Vec<u8> {
     let mut m = b"hana-id/session/v1".to_vec();
     m.extend(borsh_str(signer));
     m.extend(borsh_str(scope_id));
@@ -498,7 +498,11 @@ pub fn session_nonce(signer: &str, scope_id: &str, pk: &[u8], expires_at_ms: u64
     m.extend_from_slice(&key_index.to_le_bytes());
     m.extend_from_slice(&max_uses.to_le_bytes());
     m.extend_from_slice(salt);
-    b64url(&sha256(&m))
+    m
+}
+
+pub fn session_nonce(signer: &str, scope_id: &str, pk: &[u8], expires_at_ms: u64, key_index: u32, max_uses: u32, salt: &[u8]) -> String {
+    b64url(&sha256(&session_nonce_preimage(signer, scope_id, pk, expires_at_ms, key_index, max_uses, salt)))
 }
 
 /// Register proof: "hana-id/register/v1" ‖ borsh(signer) ‖ borsh(owners) ‖ borsh(clients, in client_proofs order) ‖
@@ -634,7 +638,8 @@ impl TestSession {
         session_nonce(signer.as_str(), &self.scope_id, &self.public_key(), self.expires_at_ms, self.key_index, self.max_uses, &self.salt)
     }
 
-    pub fn create_args(&self, jwt: &str) -> Value {
+    /// The session fields shared by create_session and create_session_and_derive.
+    fn base_args(&self, jwt: &str) -> Value {
         json!({
             "jwt": jwt,
             "scope_id": self.scope_id,
@@ -644,6 +649,19 @@ impl TestSession {
             "key_index": self.key_index,
             "max_uses": self.max_uses,
         })
+    }
+
+    /// create_session args for the deployment `signer`, with the session key's proof of possession (`signature`:
+    /// session_message(0, "hana-id-create-v1:" ‖ sha256(session nonce preimage)), required since contract v3, D137;
+    /// older contracts ignore the extra field).
+    pub fn create_args(&self, signer: &AccountId, jwt: &str) -> Value {
+        let preimage = session_nonce_preimage(signer.as_str(), &self.scope_id, &self.public_key(), self.expires_at_ms, self.key_index, self.max_uses, &self.salt);
+        let mut payload = b"hana-id-create-v1:".to_vec();
+        payload.extend_from_slice(&sha256(&preimage));
+        let pop = self.key.sign(&session_message(0, &payload));
+        let mut args = self.base_args(jwt);
+        args["signature"] = json!(pop.to_bytes().to_vec());
+        args
     }
 
     /// derive_key args for the next counter (fake BLS keys: the mock MPC doesn't check them).
@@ -664,7 +682,7 @@ impl TestSession {
     pub fn login_args(&mut self, jwt: &str, pk1: &str, pk2: &str) -> Value {
         self.counter = 1;
         let sig = self.key.sign(&session_message(1, &ckd_payload(pk1, pk2)));
-        let mut args = self.create_args(jwt);
+        let mut args = self.base_args(jwt);
         args["signature"] = json!(sig.to_bytes().to_vec());
         args["pk1"] = json!(pk1);
         args["pk2"] = json!(pk2);
@@ -929,7 +947,7 @@ impl Env {
     }
 
     pub async fn create_session(&self, caller: &Account, session: &TestSession, jwt: &str) -> Result<ExecutionFinalResult> {
-        Ok(caller.call(self.signer.id(), "create_session").args_json(session.create_args(jwt)).gas(api_gas("create_session")).transact().await?)
+        Ok(caller.call(self.signer.id(), "create_session").args_json(session.create_args(self.signer.id(), jwt)).gas(api_gas("create_session")).transact().await?)
     }
 
     /// Sends create_session_and_derive `args` (from `TestSession::login_args`) as `caller`, with the gas the API attaches.

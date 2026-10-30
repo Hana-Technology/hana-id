@@ -8,7 +8,7 @@ monitoring, D150) and for the `KEYS_UPDATER_KEY` and owner rows and open issue
 (e) (governance deployed on sandbox-dev, D126); otherwise 2026-10-29 (branch `perf/login-latency-impl`; the login popup, the
 background persist and the vault gate were re-checked, the rest as of 2026-10-28, commit 58edee9; the approval popup
 opened by the partner page, branch `feat/approve-in-click`, D99; the API rate limits, owner-action caps, CKD key pin,
-secret scan and admin CLI after the 2026-10-29 security sweep, D100; the browser, core and SDK sweep fixes, D110–D118).
+secret scan and admin CLI after the 2026-10-29 security sweep, D100; the browser, core and SDK sweep fixes, D110–D118; the contract v3 email-login invariants, 2026-10-30, branches `feat/email-login-1` and `-r2`, D130–D139).
 
 Component map and flows: `docs/architecture.md`. On-chain layouts and the contract's own security notes:
 `docs/contract-interface.md` ("Security notes (for reviewers)"). Browser parts (vault, auth pages, partner client)
@@ -120,6 +120,41 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   tombstone), `counter == used + 1`, Ed25519 over `"hana-id-session-v1:" ‖ counter ‖ sha256(payload)`; the off-chain
   vault prefix `hana-id-vault-v1:` can never verify as a session message.
 - `create_session_and_derive` is atomic up to the MPC receipt: any signer-side panic reverts the session.
+- Email login, contract v3 (branch `feat/email-login-1`, not deployed; `docs/email-login-build-plan.md` batch 1):
+  - Self-issued issuers (email): keys owner-posted only (never the updater key), each change waits ≥
+    `governance_delay_ms`, never confirmed early; one RSA modulus once per issuer (no key counts as two signers);
+    tokens are JWS JSON with ≤ 3 signatures, every one valid, from ≥ `required` distinct signers (1-of-1 `hana` at
+    launch); the signer list and `required` change only by a governed upgrade, with a 10-minute overlap. Google and
+    every other issuer stay compact-only. Trust: whoever makes the `hana` key sign can mint any email token, so reach
+    every email wallet and every account linked to one (`docs/email-login-spec.md` "Trust statement").
+  - Accounts: a member opens its root's path; an identity in no account opens the v2 path unchanged. Automatic links
+    only inside a login and bound both ways (D133): the issuer's `auto_link` nonce binds the token to that session
+    and to one join (session preimage hash, session identity, join, joiner, target root, target epoch, mode), and the
+    session key's counter-1 signature covers the link token and its mode, so whoever submits a published login can't
+    add, swap, change or strip a link. Case B (email joining a Google wallet) pending `change_delay_ms` unless the
+    issuer's mode says at once; case A must be immediate; both-have-a-wallet is never merged; unlinked pairs are never
+    re-matched (a cancel keeps the match, D132). Explicit links need fresh proofs of both identities and wait
+    `change_delay_ms` (and the unpause floor). Every link change bumps the account epoch, which every link nonce
+    commits to.
+  - `opened` ("has a wallet") is set at derivation, so a copied token in a bare `create_session` can't create a
+    wallet (D130); a linked identity's own path never derives (D136); after a migration from pre-v3 state every link
+    waits for the owner's `accept_unrecorded_wallets` (D135). Unlinking stops future sessions only; open ones run to
+    their end.
+  - Only `email` can be self-issued (D134); keys a governed upgrade adds to a signer policy are checked like
+    `set_issuer_key`'s (no padded duplicate as a second signer), and a "replace the signer" upgrade can drop the old
+    signer's keys with no overlap (D136).
+  - A bare `create_session` needs the session key's proof of possession, bound to that call's session parameters
+    (D137), so a published token can't be used to occupy its session key; a replacing signer-policy upgrade must use
+    new signer ids and cancels dropped signers' pending keys (D138).
+  - Off-chain obligations (later batches): the vault verifies a link token and recomputes its `auto_link` nonce before
+    signing the linked CKD payload; it signs a case-B join (`join = 2`) only when this same popup ran the user's
+    email-code step and the link token's `sub` is the address verified there (D139), so a compromised issuer service
+    can't attach an email identity during a plain Google login; a session it meant to link is revoked and restarted,
+    never derived with the plain payload (D137). The issuer mints the nonce with the join it decided; the API
+    prechecks both and relays the split path's proof of possession; the watchdog alerts critical if
+    `unrecorded_wallets` is ever true outside dev envs (D139).
+  - Contract security notes: `docs/contract-interface.md` "Security notes (for reviewers)"; readings made in the build:
+    D130, D131; review fixes D133–D138, off-chain obligations D139.
 
 ### API (`apps/api`)
 

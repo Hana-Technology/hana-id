@@ -4,6 +4,15 @@ import { fileURLToPath } from 'node:url';
 import { type Manifest, manifestSchema } from './schema.ts';
 
 export { DO_LOCATION_HINTS, endpointUrlProblem, type Manifest, manifestSchema, MIN_CKD_SOURCES, PAGER_PROVIDERS } from './schema.ts';
+export {
+  appChangeDelayProblems,
+  DASHBOARD_BLOCKS,
+  emailFromProblem,
+  hanaOwnOrigins,
+  MAX_APP_CHANGE_DELAY_MS,
+  MIN_APP_CHANGE_DELAY_MS,
+  PRODUCTION_APP_CHANGE_DELAY_MS,
+} from './dashboard.ts';
 export { hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, LOCALHOST_WILDCARD, partnerOriginProblem, siteOf } from './origins.ts';
 export {
   type DelayValues,

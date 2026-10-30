@@ -76,6 +76,8 @@ Every name comes from `envs/<env>.json` (schema: `packages/env/src/schema.ts`; n
 | `sharedGoogleClientIds` | Hana's shared login clients (≤ 5) | never also in `googleClientIds` / `consoleAudiences` |
 | `consoleAudiences` | `[provider, aud]` accepted for OIDC owner actions | set before the first deploy |
 | `changeDelayMs` | contract timelock (0..7 days) | sandbox-dev: 60 s |
+| `appChangeDelayMs` | batch C guarded-change delay (60 s..7 days; ≥ 24 h and ≤ `changeDelayMs` on a production network) | sandbox-dev: 60 s; read by the API and CLI from batch C3 |
+| `console`, `files`, `admin`, `usage`, `email`, `ownerGrantDelayMs` | batch C dashboard: console, files and admin Workers and origins, R2 buckets, Access, Hyperdrive names, sender (`envs/README.md`) | all or none; sandbox-dev has none yet (`docs/batch-c-build-plan.md` "Setup steps") |
 | `cloudflare.workerName`, `cloudflare.d1Name` | Worker and D1 names | |
 | `cloudflare.durableObjectLocation` | optional DO region hint (`apac`, `weur`, …) | changing it creates new objects |
 

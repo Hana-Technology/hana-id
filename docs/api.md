@@ -680,6 +680,10 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 | `API_URL` | var | `apiUrl` | vault page `connect-src` |
 | `DO_LOCATION_HINT` | var | `cloudflare.durableObjectLocation` | only written when set |
 | `BLS_PRECHECK`, `REJECT_PII_ON_SESSIONS` | var | `gen` writes `"0"` | `"1"` turns each on |
+| `APP_CHANGE_DELAY_MS` | var | `appChangeDelayMs` | batch C guarded-change delay; not read yet (batch C3) |
+| `NETWORK` | var | `network` | batch C origin rules; not read yet (batch C3) |
+| `REFUSED_ORIGINS` | var | every Hana origin (`@hana-id/env` `hanaOwnOrigins`), JSON array | refused as app origins; not read yet (batch C3) |
+| `FILES_ORIGIN` | var, optional | `files.origin` | only with the dashboard blocks; `logoUrl` (batch C11) |
 | `GAS_<METHOD>_TGAS` | var, optional | not generated | per-method gas |
 | `RELAYER_KEYS` | secret | `.secrets/<env>/relayer-keys.json` | JSON array of `ed25519:` secret keys |
 | `OWNER_RELAYER_KEYS` | secret | `.secrets/<env>/owner-relayer-keys.json` | same format; absent → owner actions 503 |

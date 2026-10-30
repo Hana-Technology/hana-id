@@ -17,6 +17,7 @@ export const MANIFEST: Manifest = manifestSchema.parse({
   vaultOrigin: 'https://hana-id-vault-sandbox-dev.tingtc.workers.dev',
   authOrigin: 'https://hana-id-auth-sandbox-dev.tingtc.workers.dev',
   changeDelayMs: 60_000,
+  appChangeDelayMs: 60_000,
   googleClientIds: [],
   sharedGoogleClientIds: [],
   consoleAudiences: [],

@@ -68,6 +68,7 @@ export const TEST_MANIFEST: Manifest = {
   rpcFallback: 'https://rpc-fallback.test.invalid',
   apiUrl: 'https://api.test',
   changeDelayMs: 60_000,
+  appChangeDelayMs: 60_000,
   googleClientIds: [],
   sharedGoogleClientIds: [],
   consoleAudiences: [],

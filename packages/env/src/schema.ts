@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { adminSchema, consoleSchema, dashboardRules, delayMs, emailSchema, filesSchema, usageSchema } from './dashboard.ts';
 import { hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, siteOf } from './origins.ts';
 
 /** Independent RPC providers the pinned CKD network key must be read from, all agreeing (OPER-1, D100). */
@@ -116,6 +117,23 @@ export const manifestSchema = z
     authOrigin: z.string().optional(),
     /** Timelock for adding client IDs / changing owners, in ms (contract allows 0..7 days). */
     changeDelayMs: z.number().int().min(0).max(7 * 24 * 60 * 60 * 1000),
+    /**
+     * Batch C's delay for guarded changes (origin adds, auto-approve policies, raw-signing enables), in ms: 60 s to
+     * 7 days; at least 24 h on a production network, where `changeDelayMs` must be no shorter (docs/batch-c-spec.md
+     * "Manifest"). It replaces batch B's raw-sign/policy delay rule for the API and the CLI (from batch C3).
+     */
+    appChangeDelayMs: delayMs,
+    /**
+     * Batch C's dashboard (docs/batch-c-spec.md "Manifest"): set together with `files`, `admin`, `usage`, `email` and
+     * `ownerGrantDelayMs`, or none of them (`dashboard.ts`). Without them the env runs the API only.
+     */
+    console: consoleSchema.optional(),
+    files: filesSchema.optional(),
+    admin: adminSchema.optional(),
+    usage: usageSchema.optional(),
+    email: emailSchema.optional(),
+    /** How long a new owner stays a viewer (D89), in ms; same bounds as `appChangeDelayMs`. */
+    ownerGrantDelayMs: delayMs.optional(),
     /** Hana's own Google client IDs, registered to the reserved `global` scope at deploy. */
     googleClientIds: z.array(clientId),
     /**
@@ -189,6 +207,7 @@ export const manifestSchema = z
     hanaOrigins(m, ctx);
     if (m.watchdog) watchdogRules(m, m.watchdog, ctx);
     governance(m, ctx);
+    dashboardRules(m, ctx);
     if (m.rpcFallback !== undefined && m.rpcFallback === m.rpc) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['rpcFallback'], message: 'rpcFallback must be a different endpoint from rpc' });
     }

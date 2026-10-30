@@ -1436,6 +1436,20 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   sends `set_sessions_valid_from_ms` (the `forged_active_key` recovery needs it; it was missing from
   `OWNER_METHODS`).
 
+### D127. Partner identity token: the spec's recommendations, all 16 questions
+- Date 2026-10-30 · Status: confirmed by the user, not built · Source: `docs/identity-token-spec.md` open questions
+- Decision: `sub` per scope (`"u1_"` + HMAC with a separate, never-rotated `IDENTITY_SUB_KEY`); ES256; minted by the
+  API Worker; mainnet key in AWS KMS (non-exportable, own IAM user, D121's account; a Worker secret on testnet and
+  `local*` only); lifetime 1 h capped at the session's end, `maxAgeMs` for fresher proof; email asked once per app at
+  the first login in the Hana popup, always optional (no mandatory setting in v1), `requestEmailSharing()` to ask
+  again; wallet addresses proven by a signature from each address's key once per session (no server registry);
+  tokens on for every app (the email claim opt-in); no introspection endpoint; no cookie on the partner's domain;
+  `login_methods` only (no `amr`/`auth_time` yet); trust by JWKS URL with optional pinned thumbprints and a watchdog
+  pin check; `iss` = `{apiUrl}/v1/identity` on sandbox-dev and a stable Hana hostname in production, fixed before
+  any partner goes live; a new `sid` at every interactive login.
+- Why: each question's trade-offs are in the spec. Optional email sharing never affects which wallet a person gets
+  (linking is D119/D122, from Google's verified address read transiently inside Hana).
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -1487,3 +1501,5 @@ is a proposal there.
 
 Still open from `docs/email-login-spec.md`: the user-mail provider (Resend unless the colleague picks another,
 D87). Everything else follows D4, D119 and D121–D123.
+
+

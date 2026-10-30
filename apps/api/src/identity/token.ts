@@ -158,10 +158,14 @@ async function checkChainSession(env: Env, ctx: Ctx, app: App, sessionPk: Uint8A
 /** Counts one token per signing key and hour, and per app and day (after the response when it can). Never rejects. */
 async function countIssuance(env: Env, ctx: Ctx, appId: string, kid: string, now: number, exec?: ExecutionContext): Promise<void> {
   const hour = Math.floor(now / HOUR) * HOUR;
-  const write = env.DB.batch([
-    env.DB.prepare('INSERT INTO identity_issuance_hourly (hour, kid, count) VALUES (?1, ?2, 1) ON CONFLICT (hour, kid) DO UPDATE SET count = count + 1').bind(hour, kid),
-    env.DB.prepare('INSERT INTO identity_usage (app_id, day, tokens) VALUES (?1, ?2, 1) ON CONFLICT (app_id, day) DO UPDATE SET tokens = tokens + 1').bind(appId, usageDay(now)),
-  ])
+  // Wrapped so that even a synchronous failure is a logged count, never a failed mint.
+  const write = Promise.resolve()
+    .then(() =>
+      env.DB.batch([
+        env.DB.prepare('INSERT INTO identity_issuance_hourly (hour, kid, count) VALUES (?1, ?2, 1) ON CONFLICT (hour, kid) DO UPDATE SET count = count + 1').bind(hour, kid),
+        env.DB.prepare('INSERT INTO identity_usage (app_id, day, tokens) VALUES (?1, ?2, 1) ON CONFLICT (app_id, day) DO UPDATE SET tokens = tokens + 1').bind(appId, usageDay(now)),
+      ]),
+    )
     .then(() => undefined)
     .catch(() => {
       log({ event: 'identity_count_failed', requestId: ctx.requestId, appId, endpoint: ctx.endpoint }, 'error');

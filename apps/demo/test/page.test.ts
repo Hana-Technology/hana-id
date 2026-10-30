@@ -15,6 +15,9 @@ import { ADDRESSES, CONFIG } from './fixtures.ts';
 const html = readFileSync(join(import.meta.dirname, '..', 'index.html'), 'utf8');
 const body = /<body>([\s\S]*)<\/body>/u.exec(html)![1]!;
 const TIMINGS = { app: 120, popup: 900, google: 4000, verify: 15, chain: 6200, decrypt: 40 };
+const b64url = (o: unknown) => btoa(JSON.stringify(o)).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '');
+const IDENTITY_CLAIMS = { iss: 'https://hana-id-api-sandbox-dev.tingtc.workers.dev/v1/identity', aud: 'app_demo1', sub: 'u1_8pQm3yR0tZ1vW5xA7cB2dE', sid: 's1_Jf2kL9mN0pQ3rS6tU8vW1x', iat: 1_800_000_000, exp: 1_800_003_600 };
+const IDENTITY_TOKEN = `${b64url({ alg: 'ES256', kid: 'k', typ: 'hana-identity+jwt' })}.${b64url(IDENTITY_CLAIMS)}.${'A'.repeat(86)}`;
 
 type Listener = (...args: unknown[]) => void;
 
@@ -39,6 +42,7 @@ class FakeClient {
   });
   readonly exportKey = vi.fn(async (_chain: 'stellar' | 'evm') => null);
   readonly revokeOtherDevices = vi.fn(async () => ({ revoked: 2 }));
+  readonly getIdentityToken = vi.fn(async (): Promise<string | null> => IDENTITY_TOKEN);
   readonly stellar = { signMessage: vi.fn(async (_m: string, _o: unknown) => ({ signedMessage: 'c2lnbmVk', signerAddress: ADDRESSES.stellar })) };
   readonly ethereum = { request: vi.fn(async (_a: { method: string; params?: unknown }): Promise<unknown> => `0x${'ab'.repeat(65)}`) };
 
@@ -265,6 +269,32 @@ describe('demo page', () => {
     expect($('wallet').hidden).toBe(true);
     expect($('login').hidden).toBe(false);
     expect($('status').textContent).toBe('Logged out.');
+  });
+
+  it('gets an identity token without a popup, shows its decoded claims and a verify snippet for its iss and aud', async () => {
+    boot();
+    expect($('identity').hidden).toBe(true);
+    await loginFlow();
+    expect($('identity').hidden).toBe(false);
+    expect($('identity-result').hidden).toBe(true);
+    click('identity-token');
+    await flush();
+    expect(fake.getIdentityToken).toHaveBeenCalledTimes(1);
+    expect($('identity-result').hidden).toBe(false);
+    expect(JSON.parse($('identity-claims').textContent!)).toEqual({ header: { alg: 'ES256', kid: 'k', typ: 'hana-identity+jwt' }, claims: IDENTITY_CLAIMS });
+    const snippet = $('identity-snippet').textContent!;
+    expect(snippet).toContain(`new URL('${IDENTITY_CLAIMS.iss}/jwks.json')`);
+    expect(snippet).toContain(`audience: '${IDENTITY_CLAIMS.aud}'`);
+    expect(snippet).toContain("algorithms: ['ES256']");
+    // A failure is shown in plain words; a logout hides the token.
+    fake.getIdentityToken.mockRejectedValueOnce(hanaError('identity_unavailable'));
+    click('identity-token');
+    await flush();
+    expect($('error').textContent).toMatch(/could not issue an identity token/u);
+    click('logout');
+    await flush();
+    expect($('identity').hidden).toBe(true);
+    expect($('identity-claims').textContent).toBe('');
   });
 
   it('records an unlock on a logged-in page load', async () => {

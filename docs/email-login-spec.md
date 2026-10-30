@@ -1,19 +1,19 @@
 # Email login and account linking spec (pre-mainnet)
 
-**Status: DRAFT (2026-10-29).** Two decisions are the user's (below); everything else is proposed and needs the user's
-review before implementation. Nothing here is built. Implements `docs/decisions.md` D4 (email login "as its own trust
-decision") and updates D25 and D96 (see [Decision text to record](#decision-text-to-record)).
+**Status: APPROVED (2026-10-30), not built.** Every open question is answered (below and
+[Open questions](#open-questions-for-the-user)): `docs/decisions.md` D4 (confirmed), D119, D121–D123, and the
+amendments to D25 and D96.
 
 This file is the source of truth for the batch once approved. If code and this spec disagree, fix the code or raise
 the problem. Reference docs (`contract-interface.md`, `security.md`, `architecture.md`, `api.md`, `integration.md`,
 `operations.md`) are updated in the same branches as the code, not now.
 
-## Confirmed by the user (2026-10-29)
+## Confirmed by the user (2026-10-29/30)
 
-1. **Hana runs the email issuer.** An email one-time-code flow on `authOrigin` plus a Hana issuer service that mints
-   RS256 OIDC-shaped ID tokens, verified on chain like Google's. Vendors (Auth0, Stytch, Firebase) were considered and
-   rejected ([Vendors considered and rejected](#vendors-considered-and-rejected)). The email provider behind the sender
-   interface is still to confirm with the colleague (D87 is provisional).
+1. **Hana runs the email issuer** (D4). No vendor. An email one-time-code flow on `authOrigin` plus a Hana issuer
+   service that mints RS256 OIDC-shaped ID tokens, verified on chain like Google's. Vendors (Auth0, Stytch, Firebase)
+   were considered and rejected ([Vendors considered and rejected](#vendors-considered-and-rejected)). The email
+   provider behind the sender interface is still to confirm with the colleague (D87 is provisional).
 2. **Automatic linking like Privy, with the email kept off chain** (option B; replaces an earlier "explicit linking
    only" instruction of the same day). The user tested `demo.privy.io`: an email login and then a Google login with the
    same Gmail address landed on the same Privy user and wallets. Hana does the same:
@@ -25,20 +25,46 @@ the problem. Reference docs (`contract-interface.md`, `security.md`, `architectu
      email token for it and the contract links the two identities using pseudonymous ids only; an email login whose
      address belongs to a Google-linked account resolves to that account;
    - explicit "add a login method" (`hana.linkAccount()`) stays available for identities whose emails differ;
-   - safeguards: a notice on every new link, never merging two identities that both already have a wallet (switcher
-     instead; "has a wallet" is an on-chain fact, defined below), the Workspace-domain risk documented and a default
-     for non-Gmail domains ([Automatic linking](#automatic-linking-privy-style)).
+   - safeguards: a notice on every new link, never a second wallet for a matched person (decision 5), the
+     Workspace-domain rule of decision 4 ([Automatic linking](#automatic-linking-privy-style)).
+3. **Signing key (Q2, D121).** Testnet now: an RSA key held as a Cloudflare Worker secret of the issuer. Before
+   mainnet: AWS KMS `RSA_2048` in a dedicated AWS account; root access held by both founders with hardware security
+   keys, recovery details offline; the issuer Worker's IAM access key limited to `kms:Sign` on the issuer's keys with
+   the algorithm pinned, rotated every 90 days and on suspicion; CloudTrail; an hourly reconciliation of the KMS `Sign`
+   count against the issuer's own login log; volume and budget alarms; alerts on any IAM or KMS policy change. The
+   contract's email issuer config and the token format are **two-signer-ready from day one**: signers with their keys
+   plus a required count (1-of-1 at launch), tokens that can carry several signatures, the watchdog pinning every
+   signer key. Staged plan: Level 1 (an independent audit-and-throttle co-signer on another cloud) once email users
+   hold meaningful funds; Level 2 (the code split between two senders) only if "no single Hana compromise" becomes a
+   product promise; Level 3 (TEE) later ([Signing key](#signing-key-staged)).
+4. **Automatic linking rules (Q15, Q16, D119)**, decided by whether Google hosts the mailbox in the same account.
+   **Google-hosted** = an `@gmail.com` / `@googlemail.com` address, or a Workspace account whose `hd` equals the
+   email's domain; `hd` absent or different = not Google-hosted.
+   - Case A (an email-login wallet exists, a Google login with the same email joins): Google-hosted → linked at once;
+     otherwise a one-time code to the address first, then linked at once. Always a notice.
+   - Case B (a Google wallet exists, an email login joins): the user continues with Google and reaches the wallet at
+     once; the email → wallet link is created from that Google sign-in. Google-hosted → linked at once; otherwise the
+     link takes effect after 24 h (`change_delay_ms`), with a notice in the wallet and in the partner app (not only by
+     mail: the mailbox may be the attacker's), cancellable within the window.
+5. **No second wallet for a matched person (Q18, D122).** When a match is detected the popup offers only "Link and
+   continue" (under decision 4's rules) or "Sign in with {the other method}". No switcher (its build step is removed).
+   Case D (both already have a wallet) can't arise: sandbox-dev's test data is discarded at the address freeze, and
+   different emails or different apps are separate wallets by design ([The four cases](#the-four-cases)).
+6. **Every other open question takes this spec's recommendation** (D123, listed under
+   [Open questions](#open-questions-for-the-user)): the separate issuer Worker, per-scope `aud` (a partner turns
+   email off with `remove_client`), disposable-email domains blocked, 72 h delay for email issuer keys, links per
+   scope, partners enable email per app, no stored user email addresses (D96), the proposed limits and budget.
 
 ## Amends
 
 | Document | Amendment |
 |---|---|
-| `decisions.md` D4 | Email login specified here; status moves to "confirmed" when the user approves this spec. |
-| `decisions.md` D25 | Hana now asks Google for the `email` scope in the login popup and handles the verified address **off chain, transiently**, keeping only an HMAC of it; the on-chain token stays openid-only. Proposed text under [Decision text to record](#decision-text-to-record). |
-| `decisions.md` D96 | Hana still stores no user email. It now sends end users two kinds of message they triggered themselves: sign-in codes and link notices. |
-| `contract-interface.md` | New issuer kind (self-issued), identity-link registry, `opened` wallets, link methods and layouts, session path resolution; state layout v3. No change to any existing byte layout or to the path of an unlinked identity. |
+| `decisions.md` D4 | Email login specified here; confirmed 2026-10-30 (with D119, D121–D123). |
+| `decisions.md` D25 | Hana now asks Google for the `email` scope in the login popup and handles the verified address **off chain, transiently**, keeping only an HMAC of it; the on-chain token stays openid-only. Amended 2026-10-30 ([Decisions recorded](#decisions-recorded)). |
+| `decisions.md` D96 | Hana still stores no user email address. It now sends end users two kinds of message they triggered themselves: sign-in codes and link notices. |
+| `contract-interface.md` | New issuer kind (self-issued, with a signer policy: signers, keys, required count), multi-signature tokens for it, identity-link registry, `opened` wallets, link methods and layouts, session path resolution; state layout v3. No change to any existing byte layout or to the path of an unlinked identity. |
 | `batch-b-spec.md` "Login" | The popup offers Google and email; Google adds the `email` scope (off-chain use only); the vault resolves the path through the link registry instead of fixing `scope#google#sub#k`. |
-| `governance-spec.md` "Watchdog service" | Checks the email issuer's keys against pinned fingerprints; email keys are owner-posted only and wait `governance_delay_ms`. |
+| `governance-spec.md` "Watchdog service" | Checks every email signer's keys and the signer policy against pins; email keys are owner-posted only and wait `governance_delay_ms`; the signer list and required count change only through a governed upgrade. |
 | `batch-c-spec.md` admin and partner consoles | Email-issuer and link monitoring views; per-app email toggle ([Admin portal hooks](#admin-portal-hooks-batch-c)). |
 
 ## Goal
@@ -49,12 +75,15 @@ and use Google and email interchangeably on one wallet. Concretely, the batch is
 - An app with email enabled shows "Continue with Google" and an email field in the Hana login popup. An email login
   sends a 6-digit code, the user types it in the popup, and the wallet appears with no PII on chain (the token carries
   `iss aud sub iat exp nonce jti` only; `sub` is a pseudonym).
-- The same person signing in with email and then Google (same Gmail address) gets the same addresses, and the reverse
-  order does too (with one Google step the first time, see [case B](#the-four-cases)).
+- The same person signing in with email and then Google (same address) gets the same addresses after "Link and
+  continue" (a code first unless Google-hosted), and the reverse order does too (through a Google step, see
+  [case B](#the-four-cases)). A matched person never gets a second wallet.
 - `hana.linkAccount()` adds a login method with different credentials after a delay and a notice.
 - An existing Google user who never touches email keeps the same address, bit for bit.
-- The email issuer's signing key is non-exportable (AWS KMS), its key changes are owner-only, public for
-  `governance_delay_ms`, and cancelled by the watchdog unless they match pinned fingerprints.
+- The email issuer's key changes are owner-only, public for `governance_delay_ms`, and cancelled by the watchdog
+  unless they match pinned fingerprints; the contract verifies email tokens against a signer policy (1-of-1 at launch)
+  that can require more signers without a format change. The signing key is a Worker secret on testnet and
+  non-exportable (AWS KMS) before mainnet.
 - Every behaviour under [Tests](#tests) has a passing test, including a Playwright run with a stub email sender.
 
 ## Address impact (read first)
@@ -75,8 +104,8 @@ address on sandbox-dev and must be called out):
 
 Linking never changes an address either: a linked identity opens its account's root path, which is the root
 identity's existing path; unlinking returns an identity to its own path. A wallet's address is always the path of the
-identity that created it. The switcher ([Switcher](#switcher-both-identities-already-have-a-wallet)) only chooses
-between existing paths.
+identity that created it. The signing key and the signer policy don't feed `sub` or the path, so adding a co-signer
+or moving the key to KMS changes no address.
 
 ## Current state (verified against the code, `develop` at 97388f3)
 
@@ -107,36 +136,40 @@ between existing paths.
 
 ### Components and trust boundaries
 
-A new Worker, **`apps/email-issuer`**, separate from the API Worker, on Hana's main Cloudflare account, routed at
-`{apiUrl}/v1/email/*` (or its own hostname; Q5). It alone holds the AWS credential that can call KMS `Sign`, `K_sub`,
-the email provider key for user mail and the code-hash key. The API Worker holds none of them, so the API's large
-attack surface (relays, vault, owner actions) doesn't reach the signing path. The issuer has no chain-write keys; it
+A new Worker, **`apps/email-issuer`**, separate from the API Worker (Q1), on Hana's main Cloudflare account, routed at
+`{apiUrl}/v1/email/*` (Q5). It alone holds the signing credential (the key itself on testnet, the AWS credential
+that can call KMS `Sign` before mainnet), `K_sub`, the email provider key for user mail and the code-hash key. The
+API Worker holds none of them, so the API's large attack surface (relays, vault, owner actions) doesn't reach the
+signing path. The issuer has no chain-write keys; it
 reads chain views through the manifest `rpc`.
 
 | Part | Holds | Can |
 |---|---|---|
 | Login popup (`authOrigin`, `/login/email`) | the email address the user typed, the code, the challenge id, `relayKey` | start and verify a challenge; relay the token to the vault (as batch B's callback does) |
-| `apps/email-issuer` | `ISSUER_AWS_*` (KMS `Sign` only), `K_sub`, `K_code`, `USER_EMAIL_API_KEY` | send codes, mint tokens for the purposes below, publish its JWKS |
+| `apps/email-issuer` | `ISSUER_SIGNING_KEY` (testnet: the RSA private JWK) or `ISSUER_AWS_*` (mainnet: KMS `Sign` only), `K_sub`, `K_code`, `USER_EMAIL_API_KEY` | send codes, mint tokens for the purposes below, publish its JWKS |
 | `EmailChallenge` Durable Object (in the issuer) | per challenge: email (for resend only), code HMAC, purpose, commitment, attempts, expiry | single-use code check |
-| AWS KMS (own AWS account) | the RSA private key, non-exportable | sign a 32-byte digest for the issuer's IAM principal |
+| AWS KMS (dedicated AWS account; before mainnet) | the RSA private keys, non-exportable | sign a 32-byte digest for the issuer's IAM principal |
+| Co-signer (Level 1, later; another cloud) | its own key | audit, throttle and co-sign ([Signing key](#signing-key-staged)) |
 | Email provider | each message while it delivers it | see every code it delivers (a trust root, below) |
 
 ### Issuer configuration
 
-- Manifest (`packages/env`): `emailIssuer: { iss, kmsKeyArns: [primary, standby], awsRegion, from, pinnedKeys }`.
-  `iss` = `{apiUrl}/v1/email` on sandbox-dev, `https://<api-domain>/v1/email` in production; `iss` is not in the path,
-  so it may change later (`set_issuer` keeps up to 4 values).
-- On chain: `set_issuer("email", [iss])`, `mark_self_issued("email")` ([Contract changes](#contract-changes-contractshana-signer)),
-  then one `set_issuer_key` per KMS key, posted by the owner DAO.
+- Manifest (`packages/env`): `emailIssuer: { iss, signer: { kind: "worker-secret" } | { kind: "aws-kms",
+  kmsKeyArns: [primary, standby], awsRegion }, from }`; `local*` and testnet envs take `worker-secret`, mainnet only
+  `aws-kms` (`gen` refuses otherwise). `iss` = `{apiUrl}/v1/email` on sandbox-dev, `https://<api-domain>/v1/email` in
+  production; `iss` is not in the path, so it may change later (`set_issuer` keeps up to 4 values).
+- On chain: `set_issuer("email", [iss])`, `mark_self_issued("email")`, which sets the signer policy `{signers:
+  ["hana"], required: 1}` ([Contract changes](#contract-changes-contractshana-signer)), then one
+  `set_issuer_key("email", key, signer: "hana")` per key (primary, standby), posted by the owner DAO.
 - Per app: the scope gets the client `("email", "email:" + scope_id)`. Registered by Hana in `admin_register_scope`
   for new scopes, or by `propose_change(AddClient)` with a client proof the issuer mints for staff only (below).
   `remove_client` turns email off for that app at once (the partner's on-chain veto); re-adding is timelocked like
-  any client. A per-scope `aud` (instead of one shared email client) means email works in scopes without
+  any client. A per-scope `aud` (instead of one shared email client, Q4) means email works in scopes without
   `allow_shared` (Enterprise own-client apps, D42), keeps `Token is for another app` isolation, and needs no change to
-  `session_scope`. Q4 offers the shared-client alternative.
-- `GET /v1/email/.well-known/openid-configuration` and `GET /v1/email/jwks.json` publish `iss`, the JWKS (both KMS
-  keys, `kid` = RFC 7638 JWK thumbprint), `id_token_signing_alg_values_supported: ["RS256"]`. Informational: the
-  contract never fetches it and the watchdog doesn't trust it (it pins).
+  `session_scope`.
+- `GET /v1/email/.well-known/openid-configuration` and `GET /v1/email/jwks.json` publish `iss`, the JWKS (every
+  signer's keys, `kid` = RFC 7638 JWK thumbprint), `id_token_signing_alg_values_supported: ["RS256"]`. Informational:
+  the contract never fetches it and the watchdog doesn't trust it (it pins).
 
 ### Endpoints
 
@@ -145,10 +178,10 @@ All are `POST` with JSON, CORS-allowed for `authOrigin` only, no cookies (D70), 
 
 | Endpoint | Body | Result |
 |---|---|---|
-| `/v1/email/start` | `{pk, email, purpose, commitment}` | always `202 {challengeId, expiresAtMs, resendAfterMs}` for any syntactically valid address (enumeration-safe); `400 invalid_email`; `429 rate_limited` (same body and timing whatever the address) |
+| `/v1/email/start` | `{pk, email, purpose, commitment}` | always `202 {challengeId, expiresAtMs, resendAfterMs}` for any syntactically valid address on an allowed domain (enumeration-safe); `400 invalid_email`; `400 email_domain_not_allowed` (a disposable-address domain: says nothing about the user); `429 rate_limited` (same body and timing whatever the address) |
 | `/v1/email/resend` | `{challengeId}` | `202` (a new code, the old one dies; ≤ 2 resends) |
 | `/v1/email/verify` | `{challengeId, code}` | `200 {idToken, googleWallet: bool, linkTicket?}`; `400 code_invalid {attemptsLeft}`; `410 challenge_expired` (expired, used, or out of attempts); `429`. `googleWallet` is the `email_hints` lookup (case B); `linkTicket` (32 random bytes, single use, 10 min, bound to the app and this address's `sub`) lets the following Google step join this email identity without a second code |
-| `/v1/email/google-match` | `{pk, accessToken, googleIdToken, commitment, linkTicket?}` | `200 {decision, emailToken?}` ([Automatic linking](#automatic-linking-privy-style)); `emailToken` is an `auto_link` token for the joining email identity, minted only when the case allows it (Gmail case A, or a `linkTicket` whose `sub` equals the Google account's verified address) |
+| `/v1/email/google-match` | `{pk, accessToken, googleIdToken, commitment, linkTicket?, link: bool}` | `200 {decision, googleHosted, emailToken?}` ([Automatic linking](#automatic-linking-privy-style)); `emailToken` is an `auto_link` token for the joining email identity, minted only when the user chose "Link and continue" (`link`) and the case allows it (Google-hosted case A, or a `linkTicket` whose `sub` equals the Google account's verified address) |
 | `/v1/email/jwks.json`, `/.well-known/openid-configuration` | — | public keys |
 | `/v1/email/admin/client-proof` | `{scopeId, actionNonce}` | a token for `("email","email:"+scopeId)` whose nonce is `client_proof_nonce(signer, scopeId, actionNonce)`; behind Cloudflare Access plus the staff allowlist (D88), audited |
 
@@ -162,7 +195,16 @@ active, have email on (D1 `login_methods`), and its scope must hold the email cl
 
 ### The token
 
-Header `{"alg":"RS256","typ":"JWT","kid":"<thumbprint>"}`. Claims, exactly:
+**Two-signer-ready format: JWS General JSON Serialization** (RFC 7515 §7.2.1) from day one, with one signature at
+launch:
+
+```json
+{"payload":"<b64url(claims)>","signatures":[{"protected":"<b64url({\"alg\":\"RS256\",\"kid\":\"<thumbprint>\"})>","signature":"<b64url>"}]}
+```
+
+Each entry signs `protected_i ‖ "." ‖ payload` (ASCII) on its own, so a co-signer needs only the payload and adds an
+entry; no header is shared between signers. The string goes where a JWT goes today (`jwt`, `link_jwt`, `/v1/login`
+`idToken`); Google tokens stay compact. At most 3 entries, each `kid` distinct. Claims, exactly:
 
 | Claim | Value |
 |---|---|
@@ -173,18 +215,20 @@ Header `{"alg":"RS256","typ":"JWT","kid":"<thumbprint>"}`. Claims, exactly:
 | `nonce` | computed by the issuer for the purpose ([Byte layouts](#byte-layouts-new)) |
 | `jti` | 16 random bytes, b64url |
 
-Every claim is in the batch B allow-list, so `/v1/login` accepts it unchanged; no `email`, `email_verified` or name
-claim ever appears. Signing: `digest = sha256(b64url(header) ‖ "." ‖ b64url(claims))`, KMS `Sign` with
-`MessageType=DIGEST`, `SigningAlgorithm=RSASSA_PKCS1_V1_5_SHA_256` (exactly what `oidc.rs` `verify_rs256` checks).
-The issuer verifies the returned signature with the public key before answering (a KMS or wiring fault never reaches
-the chain). It logs `jti`, purpose, app, `kid`, time; never the email, code, `sub` or the token.
+Every claim is in the batch B allow-list, so `/v1/login` applies it unchanged to the payload (it parses the JSON form
+for self-issued providers); no `email`, `email_verified` or name claim ever appears. Signing: `digest =
+sha256(protected ‖ "." ‖ payload)`, RS256 (PKCS #1 v1.5 over SHA-256, exactly what `oidc.rs` `verify_rs256`
+checks): WebCrypto with the Worker-secret key on testnet, KMS `Sign` with `MessageType=DIGEST`,
+`SigningAlgorithm=RSASSA_PKCS1_V1_5_SHA_256` before mainnet. The issuer verifies each signature with the public key
+before answering (a KMS or wiring fault never reaches the chain). It logs `jti`, purpose, app, `kid`, time; never the
+email, code, `sub` or the token.
 
-### `sub`: HMAC of the normalized email (recommended) vs a stored random id
+### `sub`: HMAC of the normalized email (decided, Q6) vs a stored random id
 
 The contract only sees `sub`. It must be stable across apps (the path already separates apps), never reveal the
 address on chain, and be recomputable whenever the user returns.
 
-| | HMAC with `K_sub` (recommended) | Random id in an issuer table |
+| | HMAC with `K_sub` (decided) | Random id in an issuer table |
 |---|---|---|
 | Stable across apps and devices | yes, a pure function of the address | yes, while the row exists |
 | What reveals the email | `K_sub` plus a guess (offline dictionary over on-chain subs) | the table (it maps an address hash to the id) |
@@ -244,7 +288,9 @@ Keys use `email_key = HMAC-SHA256(K_rl, normalized)` (a separate key, so limiter
 
 Email bombing is bounded by the per-address limits; cost abuse by the per-app and global budgets. Cloudflare
 Turnstile would add a third-party script to `authOrigin`, against batch B's "no third-party script" rule, so it is not
-used (Q9). Disposable-address domains are not blocked by default (Q10).
+used (Q9). Disposable-address domains are blocked (Q10): a vendored, pinned domain list in `packages/email`
+(updated by PR, reviewed like code; never containing a Google-hosted domain, guard test), checked at `start` after
+normalization; `400 email_domain_not_allowed`. Partners can't turn the block off in the MVP.
 
 ### Enumeration resistance
 
@@ -281,40 +327,67 @@ Bounce and complaint rates per day are shown in the admin portal and alert above
 |---|---|---|
 | The email address | issuer memory during `start`; the challenge object (for resend) until it ends (≤ 10 min); the provider while it delivers (its log retention set to the minimum the plan allows) | never in D1, logs or chain |
 | `email_key` (HMAC under `K_rl`) | limiter objects, `email_suppressions` | limiter windows; suppressions until the user asks (by entering the address on a Hana page) |
-| `sub` (HMAC under `K_sub`) | chain (paths, tokens in tx args), `email_hints` | chain: forever (public); hints: 13 months after the last Google login |
+| `sub` (HMAC under `K_sub`) | chain (paths, tokens in tx args), `email_hints` | chain: forever (public); hints: while the scope exists, refreshed at every Google login (an expired hint would let a matched person get a second wallet, D122) |
 | Issuance log `email_issuance(jti, app_id, purpose, kid, iat)` | issuer D1 | 24 months (D90 raw usage) |
 | The Google email (auto-linking) | issuer memory during one `google-match` call | never stored; only the `sub` derived from it |
 
 On chain: tokens (with `sub`), paths in MPC requests and link records are public forever. Linking reveals that two
 pseudonymous ids belong to one person ([Privacy of links](#privacy-of-links)). D90's retention applies to the logs.
 
-### Signing key: AWS KMS (recommended) vs alternatives
+### Signing key (staged)
 
-**Recommended: AWS KMS asymmetric key, `RSA_2048`, `SIGN_VERIFY`, in a dedicated AWS account.**
+Decided by the user (Q2, D121). `IssuerSigner` (`sign(digest) → signature`, `publicKeys()`) has a WebCrypto adapter
+(Worker-secret key) and a KMS adapter; the manifest's `emailIssuer.signer` picks one.
 
+| Stage | Signer(s) | Policy on chain | When |
+|---|---|---|---|
+| Testnet now | `hana`: an RSA-2048 private JWK as the Worker secret `ISSUER_SIGNING_KEY`, backed up in `.secrets/<env>/email-issuer-signing-key.json` (0600), never printed (`scripts/email-issuer.ts init`) | 1-of-1 | `local*`, sandbox-dev |
+| Mainnet launch | `hana`: AWS KMS, below | 1-of-1 | before mainnet (rehearsed on staging) |
+| Level 1 | `hana` plus an independent **audit-and-throttle co-signer** on another cloud (e.g. Google Cloud KMS in a separate project and account, its own admins): it gets the payload from the issuer, enforces a per-`sub` hourly cap and a global daily cap, keeps its own log, and co-signs | 2-of-2 | once email users hold meaningful funds |
+| Level 2 | the 6-digit code split between two senders (each signer sends and checks its half) | 2-of-2 | only if "no single Hana compromise" becomes a product promise |
+| Level 3 | an issuer in a TEE with attested code holding a sealed key | to decide | later |
+
+A Worker-secret key is exportable: anyone who can deploy the Worker or read its secrets can copy it once and forge
+undetected. Accepted for testnet only (no real funds); mainnet never takes `worker-secret` (`gen` refuses).
+
+**Signer policy (two-signer-ready from day one).** The contract keeps, per self-issued provider, `signers` (ids, each
+with its active keys: `hana` has the primary and the standby) and `required` (1 at launch). A token passes when
+signatures from at least `required` **distinct** signers verify, each against an active key of that signer (two
+`hana` keys count once); a signature whose `kid` isn't a listed signer's active key is refused. Signer keys rotate
+through `set_issuer_key(provider, key, signer)` (owner, 72 h, pinned). The signer list and `required` change only
+through a governed contract upgrade (`migrate`, 2-of-3 DAO, `governance_delay_ms`, D33, D81), never a method: going
+to 2-of-2 is one upgrade that adds the co-signer with its keys (pinned by the watchdog before it executes) and sets
+`required: 2` with a ~10-minute overlap (`overlap_until_ms = now + 600 s`, the token lifetime) during which tokens
+valid under the previous policy (one `hana` signature) still pass; the issuer adds the co-signature as soon as it reads the new policy. No
+address changes: `sub` doesn't depend on any signing key.
+
+**Mainnet: AWS KMS asymmetric keys, `RSA_2048`, `SIGN_VERIFY`, in a dedicated AWS account.**
+
+- Account: root access held by both founders, each with hardware security keys; recovery details kept offline.
 - Non-exportable: the private key never leaves KMS's HSMs in plaintext; only `Sign` with the issuer's credential uses
   it. A stolen Worker secret is then a credential to revoke, not a key to remove from the chain, and every use is
   logged.
 - How the Worker calls it: `POST https://kms.<region>.amazonaws.com/` with `X-Amz-Target: TrentService.Sign`, SigV4
   signed with `aws4fetch` (a small, dependency-free SigV4 client for Workers), body `{KeyId, Message: base64(digest),
-  MessageType: "DIGEST", SigningAlgorithm: "RSASSA_PKCS1_V1_5_SHA_256"}`. A `IssuerSigner` interface (`sign(digest) →
-  signature`, `publicKeys()`) has a KMS adapter and a local WebCrypto adapter for `local*` envs and tests.
+  MessageType: "DIGEST", SigningAlgorithm: "RSASSA_PKCS1_V1_5_SHA_256"}`.
 - IAM: a dedicated IAM user (Workers can't assume roles without another long-lived secret) whose only permission is
-  `kms:Sign` on the two key ARNs, with conditions `kms:SigningAlgorithm = RSASSA_PKCS1_V1_5_SHA_256` and
+  `kms:Sign` on the issuer's key ARNs, with conditions `kms:SigningAlgorithm = RSASSA_PKCS1_V1_5_SHA_256` and
   `kms:MessageType = DIGEST`. The key policy grants administration to a break-glass role with MFA, denies
   `kms:ScheduleKeyDeletion`, `kms:PutKeyPolicy`, `kms:CreateGrant` to everyone else, and `kms:Sign` to every principal
-  but the issuer user. The access key rotates every 90 days (`scripts/email-issuer.ts rotate-aws-key`), stored as a
-  Worker secret and in `.secrets/<env>/email-issuer-aws.json` (0600).
+  but the issuer user. The access key rotates every 90 days and at once on any suspicion
+  (`scripts/email-issuer.ts rotate-aws-key`), stored as a Worker secret and in `.secrets/<env>/email-issuer-aws.json`
+  (0600).
 - Audit: CloudTrail (management events, which include KMS `Sign`) to a separate log-archive account; EventBridge
-  rules alert on `PutKeyPolicy`, `CreateGrant`, `DisableKey`, `ScheduleKeyDeletion`, and on `Sign` by any other
-  principal. An hourly reconciliation compares the count of `Sign` events with `email_issuance` rows; a gap is a
-  critical alert (a signature Hana's issuer didn't log).
+  rules alert on any IAM or KMS policy change (`PutKeyPolicy`, `CreateGrant`, `DisableKey`, `ScheduleKeyDeletion`,
+  `Put/Attach/CreateUserPolicy`, `CreateAccessKey`, …) and on `Sign` by any other principal. An hourly
+  reconciliation compares the count of `Sign` events with the issuer's own `email_issuance` rows; a gap is a critical
+  alert (a signature Hana's issuer didn't log). Volume and budget alarms on `Sign` per hour and on the AWS bill.
 - Region and latency: the API runs in `aws:ap-east-1` (D97); the issuer Worker gets the same placement and KMS in
   `ap-east-1`, one HTTPS round trip per token. Budget for `verify` (server side): challenge object ≤ 50 ms, KMS ≤
-  100 ms p95, total ≤ 250 ms; to measure on sandbox-dev. It is small next to the user reading their mail.
+  100 ms p95, total ≤ 250 ms; to measure on staging. It is small next to the user reading their mail.
 - Cost and limits: see [KMS figures (verified)](#kms-figures-verified). At one signature per login it is a rounding
   error next to gas (~$0.02 per login, `docs/context.md`).
-- Standby key: two KMS keys, both active on chain, the standby in a second region (or AWS account, Q11), so a
+- Standby key: two KMS keys of signer `hana`, both active on chain, the standby in a second region (Q11), so a
   suspected key compromise is `remove_issuer_key(email, primary)` (owner, immediate) with email logins continuing on
   the standby while a replacement waits its delay.
 
@@ -347,39 +420,42 @@ Checked against AWS's docs and price list on 2026-10-29:
 - `aws4fetch` is Cloudflare's suggested SigV4 client for Workers (no Node dependencies, `fetch` and SubtleCrypto)
   ([Cloudflare](https://developers.cloudflare.com/r2/examples/aws/aws4fetch/), [repo](https://github.com/mhart/aws4fetch)).
 
-| Alternative | Why not (for now) |
+| Alternative to KMS for the mainnet key | Why not (for now) |
 |---|---|
-| RSA private key as a Cloudflare Worker secret (WebCrypto sign) | Fast (< 5 ms) and free, but exportable: anyone who can deploy the Worker or read its secrets copies the key once and forges forever, undetected (no signing log). Acceptable for `local*` envs only |
+| RSA private key as a Cloudflare Worker secret (WebCrypto sign) | Fast (< 5 ms) and free, but exportable: anyone who can deploy the Worker or read its secrets copies the key once and forges forever, undetected (no signing log). Used on `local*` and testnet only (above) |
 | Cloudflare Secrets Store | Same: the Worker reads the value itself (`await env.BINDING.get()`, [docs](https://developers.cloudflare.com/secrets-store/integrations/workers/)); Cloudflare's HSM support found is for Keyless SSL only, no signing service for Workers |
 | AWS CloudHSM | Single-tenant HSM, far more than the MVP needs in cost and operation |
-| Google Cloud KMS (HSM protection level) | Equivalent: `RSA_SIGN_PKCS1_2048_SHA256` at HSM level ([algorithms](https://docs.cloud.google.com/kms/docs/algorithms)), about $1 per key version a month and $0.03 per 10,000 HSM operations ([pricing](https://cloud.google.com/kms/pricing)). AWS is already the planned home for HSM-grade keys (`docs/context.md` batch C infra note), and Google already signs the Google tokens: keeping the email key off Google spreads trust (Q12) |
+| Google Cloud KMS (HSM protection level) | Equivalent: `RSA_SIGN_PKCS1_2048_SHA256` at HSM level ([algorithms](https://docs.cloud.google.com/kms/docs/algorithms)), about $1 per key version a month and $0.03 per 10,000 HSM operations ([pricing](https://cloud.google.com/kms/pricing)). AWS is already the planned home for HSM-grade keys (`docs/context.md` batch C infra note), and Google already signs the Google tokens: keeping the email key off Google spreads trust (Q12). Its natural use is the Level 1 co-signer |
 | Azure Key Vault Premium | Equivalent: RSA-HSM keys, RS256 over a 32-byte digest, no export ([keys](https://learn.microsoft.com/en-us/azure/key-vault/keys/about-keys), [details](https://learn.microsoft.com/en-us/azure/key-vault/keys/about-keys-details)); no other Azure use |
 
 ### Trust statement
 
-**Whoever can make the KMS key sign (the issuer's AWS credential, the AWS account's administrators, AWS itself) or
-can change what the issuer Worker does (Hana's Cloudflare account) can mint email tokens for any `sub`, and so derive
-the wallet of any email user, and of any account an email identity is linked to.** That is the price of email login
-and the reason D4 made it its own decision. Bounds:
+**While the policy is 1-of-1, whoever can make the `hana` key sign (on testnet: anyone who can read the Worker's
+secrets; on mainnet: the issuer's AWS credential, the AWS account's administrators, AWS itself) or can change what the
+issuer Worker does (Hana's Cloudflare account) can mint email tokens for any `sub`, and so derive the wallet of any
+email user, and of any account an email identity is linked to.** That is the price of email login and the reason D4
+made it its own decision. Level 1 caps that power by the co-signer's limits and leaves an independent log; Level 2
+removes it. Bounds:
 
 - A key **swap** (installing an attacker's key on chain) is bounded by governance: email keys are owner-posted only,
   wait `governance_delay_ms` (72 h on mainnet) and can't be confirmed early, and the watchdog cancels any key whose
-  thumbprint isn't in its pinned list (its own Cloudflare account, D86) and pauses if one is ever active. So a
-  compromised owner DAO can't add its own email key.
-- **Use of the real key** by a compromised issuer isn't bounded by the chain: it is detected (CloudTrail
+  thumbprint isn't in its pinned list for that signer (its own Cloudflare account, D86) and pauses if one is ever
+  active. So a compromised owner DAO can't add its own email key. Weakening the policy (fewer signers, a lower
+  `required`) needs a governed upgrade, public for 72 h.
+- **Use of the real key** by a compromised issuer isn't bounded by the chain at 1-of-1: it is detected (CloudTrail
   reconciliation, link-volume alerts) and stopped by revoking the AWS credential or removing the key on chain
-  (immediate), then `set_sessions_valid_from_ms` for sessions it opened.
+  (immediate), then `set_sessions_valid_from_ms` for sessions it opened. On testnet there is no signing log.
 - Linking never lets the email issuer reach a Google wallet the user didn't choose to open by email: case B needs the
-  user's own Google sign-in and waits a delay ([The four cases](#the-four-cases)).
+  user's own Google sign-in, and waits 24 h unless the address is Google-hosted ([The four cases](#the-four-cases)).
+  For a Google-hosted case B link the user accepted that the email issuer reaches that Google wallet at once.
 - The **email provider** and the **user's mail service** are trust roots too: whoever reads the code can log in.
   Anyone can start a challenge for any address, so a provider that logs message bodies is a credential store for the
   10 minutes a code lives. A Workspace (or any custom-domain) administrator controls every mailbox of the domain and so
   every email-login wallet on it, with or without linking.
 - The page-serving trust root (vault and auth bundles) is unchanged from batch B.
-- **Later, optional:** k-of-n co-signing (the contract requires tokens from k of n independent issuers with the same
-  `sub` and nonce; each co-signer runs its own code check or at least logs every issuance publicly), or an issuer in a
-  TEE with attested code holding a sealed key (removes Hana's operators but not the email provider). Both need a
-  contract change; neither changes addresses if `sub` stays the same.
+- **Later:** the staged plan above. Level 1 and 2 need only a governed upgrade of the signer policy (the token format
+  and the verifier are multi-signer from day one); Level 3 removes Hana's operators but not the email provider. None
+  changes an address.
 
 ## Vendors considered and rejected
 
@@ -408,7 +484,7 @@ the account's wallet) and up to 3 **members** (identities that open the root's p
 account per scope. An identity **has a wallet** in a scope when a session was ever opened on its own path there: the
 contract records that in `opened` at every `create_session*` (it is the only definition the rules use: testable on
 chain, independent of RPCs and balances). Links are per scope: logging in to app X never changes which wallet an
-identity opens in app Y (Q14 discusses a Hana Home "link everywhere" later).
+identity opens in app Y (Q14; a Hana Home "link everywhere" may come later).
 
 What Privy does, for comparison (docs read 2026-10-29):
 
@@ -425,8 +501,8 @@ What Privy does, for comparison (docs read 2026-10-29):
   The docs don't describe merging two users that both have wallets.
 - Automatic merging: the user's own test on `demo.privy.io` (2026-10-29): an email login then a Google login with the
   same Gmail address gave the same user and wallets (Privy asks Google for the email and profile). Hana copies the
-  outcome for Gmail without putting the address on chain, and is stricter where a merge could expose a funded wallet
-  (cases B and D).
+  outcome for Google-hosted addresses without putting the address on chain, with one "Link and continue" click, and is
+  stricter elsewhere (a code first in case A, 24 h in case B).
 
 ### How the popup gets Google's verified email
 
@@ -450,49 +526,75 @@ What Privy does, for comparison (docs read 2026-10-29):
 
 ### The four cases
 
-The issuer reads `get_identity(scope, "google", G)` and `get_identity(scope, "email", sub_E)` and answers with a
-`decision`. Linking happens inside the login's own `create_session_and_derive`, through its new `link_jwt` argument
-(an email token whose `auto_link` nonce commits to this session's nonce, the Google identity and the target account's
-epoch), so it needs this live Google login and can't be replayed into another session.
+Decided by the user (Q15, Q16, Q18; D119, D122). The issuer reads `get_identity(scope, "google", G)` and
+`get_identity(scope, "email", sub_E)` and answers with a `decision` and `googleHosted`. Linking happens inside the
+login's own `create_session_and_derive`, through its new `link_jwt` argument (an email token whose `auto_link` nonce
+commits to this session's nonce, the Google identity, the target account's epoch and the link mode), so it needs this
+live Google login and can't be replayed into another session.
 
-| Case | Google identity G | Email identity E | Gmail address (`gmail.com`) | Any other domain |
+**Google-hosted** (computed by the issuer from Google's userinfo, never stored): the normalized address's domain is
+`gmail.com` (after the Gmail canonical form, so `googlemail.com` too), or userinfo's `hd` is present and equal to the
+address's normalized domain (a Workspace account whose mailbox Google hosts). `hd` absent or different (a Google
+account registered with an outside address, or a Workspace account using another domain's address): not
+Google-hosted.
+
+**A match** is a Google identity and an email identity with the same verified address in the scope, one of which has
+a wallet, that aren't an `unlinked` pair. On a match the popup never creates a second wallet: it offers only **"Link
+and continue"** (the rules below) or **"Sign in with {the other method}"** (the identity that has the wallet), and
+explains why. The token of the identity without a wallet is never used for a session unless it links, so it never
+gets a wallet. The vault runs `google-match` before any chain call, so a Google login's choice is made first.
+
+| Case | Google identity G | Email identity E | Google-hosted | Not Google-hosted |
 |---|---|---|---|---|
-| A | no wallet, not linked | has a wallet (root or account) | **G joins E's account now**; the login opens E's wallet | the popup offers "Open your existing wallet: we'll send a code to a…@domain"; with the code, G joins now; without, G gets its own wallet |
-| B | has a wallet | no wallet, not linked | nothing on chain; the issuer stores the hint `email_hints(sub_E, scope_id)`. When the user later signs in **with email**, the popup sees the hint after the code and asks "Continue with Google to open your wallet"; that Google login carries the email token as `link_jwt` and E joins G's account **pending for `change_delay_ms`** | same |
-| C | no wallet | no wallet | nothing linked; G becomes a root; hint stored | same |
-| D | has a wallet | has a wallet | no merge: the popup says the app has two wallets for this person and offers the [switcher](#switcher-both-identities-already-have-a-wallet) | same |
+| A | no wallet, not linked | has a wallet (root or account) | "Link and continue": G joins E's account **at once**; the login opens E's wallet | "Link and continue": a code to a…@domain first (purpose `auto_link`), then G joins **at once** |
+| B | has a wallet | no wallet, not linked | after the email code (`verify` says `googleWallet`), "Link and continue" = continue with Google: the login opens G's wallet at once and E joins **at once** | the same Google step opens G's wallet at once; E joins **pending 24 h** (`change_delay_ms`), cancellable |
+| C | no wallet | no wallet | nothing linked; whichever logs in becomes a root (a Google login stores the hint) | same |
+| D | has a wallet | has a wallet | can't arise (below) | same |
+
+Both cases send a notice ([Notices](#notices)) on every link. "Sign in with {the other method}" in case A is an email
+login to E's wallet; in case B a Google login to G's wallet without linking. A case A join that the contract refuses
+(`Account already has a sign-in method of this kind`: E's account already has another Google member) shows only "Sign
+in with email".
 
 Why each rule:
 
-- **A, Gmail, immediate.** Google is the mailbox provider for a Gmail address, so whoever passes Google's sign-in as G
-  can already read E's codes, and Google says deleted Gmail usernames are never reissued (to verify, Q7). The link adds
-  no power to anyone: Google could already reach E's wallet, and the email issuer already could. This is Privy's
-  demo case and needs no extra click.
-- **A, other domains, a code first.** For a non-Gmail address Google's `email_verified` only says the address was
-  verified once (when the account was made or the address added), not that the person still holds the mailbox (a
-  former employee's or a recycled address), and a Workspace or Cloud Identity administrator can create a Google
-  account for any address on the domain. A fresh code proves current control of the same address, which is exactly
-  what an email login proves. Default proposed; Q15 offers "a delay instead" or "Gmail-only, no offer".
-- **B, the user's own Google step and a delay.** Making a Google wallet reachable by email is the one direction that
-  extends the email issuer's power: afterwards a forged email token opens the Google wallet. So it happens only when
-  the user signs in with email and confirms with Google (never silently at a Google login: pre-linking every Gmail user
-  would hand the email issuer every such Google wallet), and it waits `change_delay_ms` (24 h in production, D93) with
-  a notice, so a forged join can be cancelled. The login itself opens G's wallet at once (its session token is G's);
-  only later email-only logins wait for the link. Q16: silent pre-linking or no delay, if the user accepts the trust.
-- **C.** Nothing to merge yet; whichever identity later finds the other's wallet follows A or B.
-- **D.** Merging would hide one of two funded wallets behind the other, so it never happens automatically.
+- **A, Google-hosted, at once.** Google hosts the mailbox in that same account, so whoever passes Google's sign-in as
+  G can already read E's codes, and Google says deleted Gmail usernames are never reissued (to verify, Q7). The link
+  adds no power to anyone: Google could already reach E's wallet, and the email issuer already could.
+- **A, not Google-hosted, a code first.** Google's `email_verified` then only says the address was verified once
+  (when the account was made or the address added), not that the person still holds the mailbox (a former employee's
+  or a recycled address), and a Workspace or Cloud Identity administrator can create a Google account for any address
+  on the domain. A fresh code proves current control of the same address, which is exactly what an email login proves.
+- **B, the user's own Google step.** Making a Google wallet reachable by email is the one direction that extends the
+  email issuer's power: afterwards a forged email token opens the Google wallet. So it happens only when the user signs
+  in with email and continues with Google (never silently at a Google login: pre-linking every Gmail user would hand
+  the email issuer every such Google wallet). Google-hosted: at once, since the mailbox and the Google account are the
+  same account (the user accepts the issuer trust for that wallet). Otherwise the mailbox may be the attacker's (a
+  recycled or administrator-controlled address), so the link waits 24 h with a notice in the wallet and in the partner
+  app, not only by mail, and any active identity can cancel it. The login itself opens G's wallet at once (its
+  session token is G's); only later email-only logins wait for the link.
+- **C.** Nothing to match yet; whichever identity later finds the other's wallet follows A or B.
+- **D can't arise.** Every login after v3 checks for a match in both directions (case A from Google's userinfo at
+  each Google login; case B from the hint every Google login writes), and a match never opens a second wallet. Wallets
+  opened on sandbox-dev before v3 aren't in `opened` and are test data, discarded at the address freeze; mainnet
+  starts with v3. Different emails, or the same email in different apps, are separate wallets by design (explicit
+  `linkAccount` joins the former). If a Google account's address changes between logins, its old hint no longer
+  matches and the new address is a different email: two wallets can then exist, and nothing merges them (the contract
+  refuses `Both sign-in methods already have a wallet`); each method keeps opening its own. An `unlinked` pair is not
+  a match.
 
-How the email side proves itself in each flow: Gmail case A needs nothing more (the issuer mints from Google's
-answer); case A on another domain sends a code with purpose `auto_link` whose commitment is this login's
-`auto_link` fields, so `verify` returns the `auto_link` token itself; case B starts as an email login (purpose
-`session`), and `verify`'s `linkTicket` is handed to the Google step's `google-match`, which mints the `auto_link`
-token only if the Google account's verified address normalizes to the same `sub`. If the user picks a Google account
-with another address, nothing is joined and the popup offers explicit linking.
+How the email side proves itself in each flow: Google-hosted case A needs nothing more (the issuer mints from
+Google's answer); case A otherwise sends a code with purpose `auto_link` whose commitment is this login's `auto_link`
+fields, so `verify` returns the `auto_link` token itself; case B starts as an email login (purpose `session`), and
+`verify`'s `linkTicket` is handed to the Google step's `google-match`, which mints the `auto_link` token only if the
+Google account's verified address normalizes to the same `sub`. If the user picks a Google account with another
+address, nothing is joined and the popup offers explicit linking. The link mode (`immediate` or after
+`change_delay_ms`) is in the `auto_link` nonce, set by the issuer: immediate for case A and Google-hosted case B.
 
 A pending link refuses logins by the joining identity with `link_pending` (the popup shows when it activates and a
 Cancel). The issuer mints an `auto_link` email token only after checking `email_verified = true`, the normalized
-address equality, the domain rule and the chain state; the contract can't see any of that and trusts the issuer's
-purpose, which is why the `auto_link` nonce domain exists only in the issuer.
+address equality, the Google-hosted rule and the chain state; the contract can't see any of that and trusts the
+issuer's purpose and mode, which is why the `auto_link` nonce domain exists only in the issuer.
 
 ### Explicit linking ("add a login method")
 
@@ -517,11 +619,12 @@ is the real protection, unlinking only stops future access.
 | When | Who gets it, how |
 |---|---|
 | Any link created (auto or explicit, pending or active) | Every Hana popup and the vault of the account show a banner "A sign-in method was added: {provider} on {date}" with Cancel (pending) or Remove (active), from `get_account` on the vault's own RPC; the SDK emits `linkChanged` to the partner page; on-chain event `identity_linked` / `identity_link_proposed` |
+| A pending link (case B not Google-hosted, explicit) | Also in the partner app, not only by mail (the mailbox may be the attacker's): `linkChanged {status: "pending", effectiveAtMs}` and `hana.account()`, which `integration.md` asks partners to show with a link to cancel; Hana Home lists it |
 | A link that joins an email identity | A mail to that address at once (the issuer has it during that call): "This email now opens a Hana wallet in {app} together with a Google sign-in. Not you? {authOrigin}/link/cancel" (cancel needs a code for that address) |
 | Unlink, cancel | banner and event; the API revokes the account's vault shares in that scope |
 
-Hana stores no address, so a Google-only account gets no out-of-band notice (D96). Keeping an encrypted address of
-email members for security notices only would change that (Q17).
+Hana stores no address, so a Google-only account gets no out-of-band notice (D96). No encrypted address is kept for
+security notices (Q17): in-product notices only in the MVP.
 
 ### Unlink and cancel
 
@@ -529,22 +632,11 @@ email members for security notices only would change that (Q17).
   itself. Immediate.
 - `unlink_identity`: an active member is removed by the root or by itself. Immediate. The root can't be removed (its
   path is the wallet); moving the root is out of scope. After an unlink the member opens its own path again (a new
-  wallet unless it had one before), and an `unlinked` mark stops automatic linking of that pair from re-adding it
-  (an explicit link still can).
+  wallet unless it had one before: the user's explicit choice), and an `unlinked` mark stops automatic linking of
+  that pair from matching again (an explicit link still can).
 - The API, which relays both, revokes every vault share of the account's path in that scope (`vault_shares.path_hash`)
   after success, so other devices log out. A direct contract caller can skip that; the user's devices then end at
   their absolute limit (≤ 12 h by default).
-
-### Switcher (both identities already have a wallet)
-
-Case D, and an explicit link where both sides have wallets, can make one account with **two wallets**: each member
-then chooses the wallet at login (the popup lists them by address; default its own). Contract: an account's `wallets`
-list (identity keys whose own path is a wallet of the account) and an optional `wallet` argument of
-`create_session_and_derive` naming one of them. A front-runner can't use it to steal: the combined call needs the
-session key's signature, and the vault checks the path it gets. Building it is the last step of this batch
-([Build order](#build-order)); until then case D refuses with a clear message and the two wallets stay separate. Such a
-merge always waits `change_delay_ms` (it makes each wallet reachable by the other identity) and needs a fresh proof
-from both.
 
 ### Privacy of links
 
@@ -562,8 +654,9 @@ fields; no record rewritten). Events version `1.2.0`, additive.
 ### New state (appended to the root struct)
 
 ```rust
-/// Providers whose keys Hana itself holds (one way): owner-posted keys only, governance delay, no early confirm.
-self_issued: Vec<String>,                         // ≤ 4
+/// Providers whose keys Hana itself holds (one way): owner-posted keys only, governance delay, no early confirm,
+/// and a signer policy.
+self_issued: Vec<SelfIssued>,                     // ≤ 4
 /// identity key → account root key, for members (pending or active).
 links: LookupMap<[u8; 32], MemberRecord>,        // StorageKey::Links
 /// root identity key → account.
@@ -571,11 +664,17 @@ accounts: LookupMap<[u8; 32], Account>,          // StorageKey::Accounts
 /// identity keys that opened a session on their own path in their scope.
 opened: LookupSet<[u8; 32]>,                     // StorageKey::Opened
 
+struct SelfIssued {
+    provider: String,
+    signers: Vec<String>,                          // signer ids, ≤ 3; ["hana"] at launch; changed only by migrate
+    key_signer: Vec<(String, String)>,             // (kid, signer id) for the provider's keys, ≤ 8
+    required: u8,                                  // distinct signers a token needs; 1 at launch
+    overlap: Option<(Vec<String>, u8, u64)>,       // previous (signers, required) and until_ms: set by the migrate that changes the policy
+}
 struct MemberRecord { root: [u8; 32], effective_at_ms: u64 }
 struct Account {
     root_provider: String, root_sub: String,       // the path's identity (public anyway)
     members: Vec<Member>,                          // ≤ 3
-    wallets: Vec<[u8; 32]>,                        // switcher: extra wallets (identity keys), ≤ 1 in the MVP
     unlinked: Vec<[u8; 32]>,                       // pairs auto-linking must not re-add, ≤ 8 (oldest dropped)
     epoch: u64,                                    // bumped by every link change
 }
@@ -586,10 +685,19 @@ Identity key: `ik = sha256("hana-id/identity/v1" ‖ borsh(scope_id) ‖ borsh(p
 
 ### Self-issued issuers
 
-- `mark_self_issued(provider)`, owner, one way, `Unknown issuer`. Event `issuer_self_issued {provider}`.
-- For such a provider: `set_issuer_key` by "self" panics `Only the owner posts keys for this issuer`;
-  `executable_at_ms` is also at least `now + governance_delay_ms`; `confirm_issuer_key_change` panics `Keys of a
-  self-issued issuer can't be confirmed early`. Removal by the owner stays immediate (DoS only).
+- `mark_self_issued(provider)`, owner, one way, `Unknown issuer`; sets `{signers: ["hana"], required: 1}`. Event
+  `issuer_self_issued {provider}`.
+- For such a provider: `set_issuer_key` takes `signer` (one of `signers`, else `Unknown signer`); by "self" it panics
+  `Only the owner posts keys for this issuer`; `executable_at_ms` is also at least `now + governance_delay_ms`;
+  `confirm_issuer_key_change` panics `Keys of a self-issued issuer can't be confirmed early`. Removal by the owner
+  stays immediate (DoS only).
+- `verify_token` for such a provider takes the JWS General JSON form only ([The token](#the-token)): ≤ 3 signatures,
+  distinct `kid`s, each an active key of a listed signer (`Unknown key` otherwise), each RS256-valid; it passes when
+  the distinct signers ≥ `required`, or, while `now < overlap.until_ms`, it satisfies the previous policy (its
+  signers and count) (`Not enough signatures`). The claim checks are today's. Other providers are unchanged (compact only).
+- No method changes `signers` or `required`: a governed upgrade's `migrate` does (D121), adding the new signer's
+  `key_signer` entries and keys with it. View `get_self_issued(provider)` → `{signers: [{id, kids}], required,
+  overlap_until_ms?}` (the watchdog pins it).
 
 ### Sessions
 
@@ -602,12 +710,13 @@ Identity key: `ik = sha256("hana-id/identity/v1" ‖ borsh(scope_id) ‖ borsh(p
    proves old callers are unaffected):
    - `link_jwt: Option<String>`: an email token for the scope's email client (`verify_token`, provider in
      `self_issued`, `session_scope` gives the same scope) whose nonce is the `auto_link` nonce over this call's session
-     nonce, X and the target epoch. Then the [four cases](#the-four-cases) on chain: E has a wallet and X none → X
-     joins E's account, active now (`auto: true`); X has a wallet (or is getting one in this call) and E none → E joins
-     X's account, pending `change_delay_ms`; both have wallets → `Both sign-in methods already have a wallet`;
+     nonce, X, the target epoch and `link_immediate: Option<bool>` (a second new argument, default `false`). Then the
+     [four cases](#the-four-cases) on chain: E has a wallet and X none → X joins E's account, active now (`auto:
+     true`; the issuer sets `link_immediate` for case A); X has a wallet (or is getting one in this call) and E none →
+     E joins X's account, active now if `link_immediate`, else pending `max(now + change_delay_ms,
+     changes_unlock_floor_ms)`; both have wallets → `Both sign-in methods already have a wallet`;
      an `unlinked` pair → `This sign-in method was unlinked`. Panics also: `Link token nonce doesn't match`,
      `Account is full`, `Account already has a sign-in method of this kind`.
-   - `wallet: Option<[u8; 32]>` (switcher): one of the account's wallets, else `Not a wallet of this account`.
 3. Path = `{scope}#{path provider}#{path sub}#{key_index}`, unchanged format. If the path identity's key isn't in
    `opened`, insert it.
 
@@ -622,7 +731,7 @@ vault's read and the transaction) makes the vault's pairing check fail; the vaul
 | `cancel_link(scope_id, jwt, member_key, epoch, salt)` | an active identity of the account, or the pending identity | removes a pending member |
 | `unlink_identity(scope_id, jwt, member_key, epoch, salt)` | the root or the member itself | removes an active member, adds the pair to `unlinked` |
 | `get_identity(scope_id, provider, sub)` view | — | `{key, status: "own" \| "member" \| "pending", opened, root?: {provider, sub}, effective_at_ms?, account_epoch}` |
-| `get_account(scope_id, provider, sub)` view | — | `{root: {provider, sub}, members: [{key, provider, effective_at_ms, active, auto}], wallets, epoch}` or `null` |
+| `get_account(scope_id, provider, sub)` view | — | `{root: {provider, sub}, members: [{key, provider, effective_at_ms, active, auto}], epoch}` or `null` |
 | `identity_key(scope_id, provider, sub)` view | — | hex `ik` (for monitors and tests) |
 
 Every token passes `verify_token` and `session_scope` for `scope_id` (so a member is always a client of that scope or
@@ -646,10 +755,12 @@ examples in `test_fixture.json` (D14).
 link_new     = "hana-id/link-new/v1"     ‖ borsh(signer) ‖ borsh(scope_id) ‖ root_ik ‖ borsh(new provider) ‖ epoch u64 LE ‖ salt
 link_account = "hana-id/link-account/v1" ‖ borsh(signer) ‖ borsh(scope_id) ‖ root_ik ‖ new_ik ‖ epoch u64 LE ‖ salt
 link_change  = "hana-id/link-change/v1"  ‖ borsh(signer) ‖ borsh(scope_id) ‖ borsh("cancel" | "unlink") ‖ root_ik ‖ member_ik ‖ epoch u64 LE ‖ salt
-auto_link    = "hana-id/auto-link/v1"    ‖ borsh(signer) ‖ borsh(scope_id) ‖ sha256(session nonce preimage) ‖ session_ik ‖ target epoch u64 LE
+auto_link    = "hana-id/auto-link/v1"    ‖ borsh(signer) ‖ borsh(scope_id) ‖ sha256(session nonce preimage) ‖ session_ik ‖ target epoch u64 LE ‖ mode u8
 ```
 
-`salt` 16..=64 bytes. `target epoch` is the epoch of the account the joining identity joins (0 for none yet).
+`salt` 16..=64 bytes. `target epoch` is the epoch of the account the joining identity joins (0 for none yet). `mode`
+is 1 for `link_immediate`, else 0. `signer` is the signer contract's account id (as in the existing layouts), not an
+email signer id.
 
 ### Gas and storage (estimates, to measure in the sandbox and on testnet)
 
@@ -657,6 +768,7 @@ auto_link    = "hana-id/auto-link/v1"    ‖ borsh(signer) ‖ borsh(scope_id) �
 |---|---|
 | `create_session*`, no link | one `links` read and one `opened` check (+ one insert at an identity's first login, ≈ 113 bytes ≈ 0.0011 NEAR, contract-paid): ≈ +1–2 Tgas |
 | `create_session_and_derive` with `link_jwt` | one more RS256 verification and the account writes: ≈ +8–12 Tgas; attach 150 Tgas (was 100) |
+| any email token at 2-of-2 (Level 1) | one more RS256 verification per token: to measure before that upgrade, and the attached gas raised with it |
 | `link_identity` | two RS256 verifications and ≤ ~800 bytes: ≈ 25–35 Tgas burnt, attach 100; ≈ 0.008 NEAR storage, relayer-sponsored |
 | `cancel_link`, `unlink_identity` | one verification: ≈ 15 Tgas |
 
@@ -664,7 +776,8 @@ auto_link    = "hana-id/auto-link/v1"    ‖ borsh(signer) ‖ borsh(scope_id) �
 
 - `ISSUER_PROVIDERS` gains the email `iss`; `/v1/login` and `/v1/sessions` accept email tokens (same allow-list,
   nonce and scope checks; the JWKS from the issuer's endpoint, cached like Google's); `/v1/login` accepts and
-  prechecks `linkJwt` (verifies it, recomputes the `auto_link` nonce) and `wallet`.
+  prechecks `linkJwt` and `linkImmediate` (verifies it, recomputes the `auto_link` nonce). Email tokens are the JWS
+  JSON form, checked against `get_self_issued("email")` like the contract (signers, `required`, overlap).
 - `GET /v1/app`: `loginMethods: ("google" | "email")[]` (D1 setting ∩ the scope's on-chain clients), `email: {aud}`
   when on. 409 `no_login_method` replaces `no_google_client` when nothing is available (the old code stays for
   Google-only apps).
@@ -679,8 +792,9 @@ auto_link    = "hana-id/auto-link/v1"    ‖ borsh(signer) ‖ borsh(scope_id) �
 - **Popup** `/login`: a method chooser when the app has more than one ("Continue with Google", an email field). The
   email path navigates to `/login/email` in the same window (keeping `/login` fetch-free, D77), whose CSP adds
   `connect-src {issuer origin}`: address → code → `verify` → relay `{idToken}` to the vault through the existing slot.
-  Codes are typed in, `autocomplete="one-time-code"`. After a Google login the popup shows the auto-link outcome
-  (case A done, A-other "send a code?", B "continue with Google", D switcher).
+  Codes are typed in, `autocomplete="one-time-code"`. On a match the popup shows only "Link and continue" and "Sign
+  in with {the other method}" ([The four cases](#the-four-cases)): case A sends a code first unless Google-hosted;
+  case B continues with Google; a pending link shows when it activates and a Cancel.
 - **Vault**: verifies email tokens against the on-chain email keys (`get_issuer_keys("email")`, defence in depth);
   computes the path from `get_identity` on its own RPC (never from the API), so `login.ts`, `export-page.ts` and the
   record check in `vault.ts` stop assuming `#google#`; runs `google-match` after a Google token and before the chain
@@ -688,8 +802,9 @@ auto_link    = "hana-id/auto-link/v1"    ‖ borsh(signer) ‖ borsh(scope_id) �
 - **SDK**: `createHana({ ..., loginMethods?: ('google' | 'email')[] })` narrows what the popup offers (it can't add a
   method the app hasn't enabled); `hana.login({ method?, emailHint? })` preselects (an `emailHint` the partner page
   knows prefills the field; the page then knows the address, its own business); `hana.linkAccount({ method })` (in a
-  click, like login); `hana.account()` → `{ methods: [{provider, status, effectiveAtMs}], wallets }` (no subs, no
-  addresses of mailboxes); events `linkChanged`, `loginProgress` gains `email_code` and `linking`. Errors:
+  click, like login); `hana.account()` → `{ methods: [{provider, status, effectiveAtMs}] }` (no subs, no addresses of
+  mailboxes); events `linkChanged` (with `status: "pending" | "active" | "removed"`, `effectiveAtMs`; partners show
+  pending ones, [Notices](#notices)), `loginProgress` gains `email_code` and `linking`. Errors:
   `link_pending`, `link_refused {reason}`, `code_invalid`, `challenge_expired`.
 - **Export** resolves the path the same way; Hana Home (D40) lists methods per app.
 
@@ -698,54 +813,66 @@ auto_link    = "hana-id/auto-link/v1"    ‖ borsh(signer) ‖ borsh(scope_id) �
 Following D83 (every check surfaces in the portal):
 
 - **Email issuer view** (admin console): issuance per app and day by purpose, `start`/`verify` refusals by limit,
-  bounce and complaint rates, the CloudTrail reconciliation result and its last run, the AWS key age, both KMS keys
-  with on-chain and pinned thumbprints.
+  bounce and complaint rates, the CloudTrail reconciliation result and its last run, the AWS key age, the signer
+  policy (signers, `required`) and every signer key with on-chain and pinned thumbprints, the `Sign` volume and budget
+  alarms.
 - **Links view**: links proposed, activated, cancelled and unlinked per app and day (counts only), auto vs explicit,
   an alert when an app's link rate jumps (provisional: 5× its 7-day median); Support ID (D96) lookups show a user's
   methods by provider and pending links, never a `sub` or address. Staff can't create or cancel links (they need the
   user's proofs).
 - **Partner console**: the email toggle per app (D1 `login_methods` plus the on-chain `AddClient`, guarded like an
-  origin change, D32; removal immediate through `remove_client`), and email deliverability for the app.
+  origin change, D32; removal immediate through `remove_client`), and email deliverability for the app. Partners
+  enable email themselves (Q20).
 
 ## Watchdog (`apps/watchdog`)
 
-- Manifest `watchdog.pinnedIssuerKeys: { email: [thumbprint, …] }`, set on the watchdog's own account (a pin change is
-  a watchdog redeploy by the operator, outside Hana's main account).
-- Pending change for `email`: an `Add` whose thumbprint isn't pinned → cancel and critical `forged_key_change`; a
+- Manifest `watchdog.pinnedIssuerKeys: { email: { required: 1, signers: { hana: [thumbprint, …] } } }`, set on the
+  watchdog's own account (a pin change is a watchdog redeploy by the operator, outside Hana's main account). Every
+  signer's keys are pinned; Level 1 adds `cosign: […]` and `required: 2` before its upgrade executes.
+- Pending change for `email`: an `Add` whose thumbprint isn't pinned for its signer → cancel and critical
+  `forged_key_change`; a
   pinned one → no confirm (self-issued keys can't be confirmed early), info. A change by "self" for `email` stays
   `updater_other_provider` (cancel, delete updater keys).
 - Active `email` key not pinned → pause and critical `forged_active_key` (the same rule as Google, D82).
-- `get_issuer("email")` and `self_issued` diffed each run (critical on any change); Hana's published JWKS compared with
-  the pins (warning on a mismatch: informational, Hana controls it).
+- `get_issuer("email")` and `get_self_issued("email")` diffed each run against the pins (signers, `required`; critical
+  on any difference, pause on a weaker policy); a pending upgrade is already checked by the governance rules (D82).
+  Hana's published JWKS compared with the pins (warning on a mismatch: informational, Hana controls it).
 - Link-volume check from `identity_link_*` events (warning above the threshold); new check ids and alert kinds
   registered in `checks.ts` with their portal rendering (D83).
 
 ## Migration
 
 - **sandbox-dev:** contract v3 through the DAO upgrade path (`upgrade-contract propose|execute`); `set_issuer`,
-  `mark_self_issued`, two `set_issuer_key` proposals by the owner (they wait 60 s there); a test AWS account and KMS
-  keys; `K_sub`, `K_code`, `K_rl` generated by `scripts/email-issuer.ts init` into `.secrets/sandbox-dev/` and the
-  Worker (never printed); `AddClient` for `s1` and `s2`; D1 migration; watchdog pins. Sessions and wallets opened
-  before v3 aren't in `opened`, so on sandbox-dev an old wallet can be merged over by mistake (disposable wallets;
-  mainnet starts with v3).
+  `mark_self_issued`, two `set_issuer_key(…, "hana")` proposals by the owner (they wait 60 s there); the signing keys
+  (primary, standby) as Worker secrets, `K_sub`, `K_code`, `K_rl`, all generated by `scripts/email-issuer.ts init` into
+  `.secrets/sandbox-dev/` (0600) and the Worker (never printed); `AddClient` for `s1` and `s2`; D1 migration;
+  watchdog pins. Sessions and wallets opened before v3 aren't in `opened`, so on sandbox-dev an old wallet can be
+  merged over by mistake: test data, discarded at the address freeze (mainnet starts with v3).
+- **Staging, before mainnet:** the dedicated AWS account and KMS keys set up as in [Signing key](#signing-key-staged),
+  the reconciliation and alarms running, KMS latency measured.
 - **Mainnet:** the signer is created with v3 code at the address freeze (`docs/governance-spec.md` "Mainnet"), so
   `opened` is complete from the first login. `K_sub` is generated offline, backed up twice before the first email
-  login, and never changed.
+  login, and never changed. Email keys are KMS keys only.
 
 ## Tests
 
 ### Contract unit (`tests.rs`)
 
 - Self-issued: self can't post, owner's post waits `governance_delay_ms`, confirm refused, one-way flag, Google
-  unaffected.
+  unaffected; `set_issuer_key` needs a listed signer.
+- Signer policy: the JSON form only for email (compact refused), ≤ 3 signatures, duplicate `kid` refused, unknown
+  `kid` refused, two keys of one signer count once, 1-of-1 passes, 2-of-2 refuses one signature after the overlap
+  and accepts it during it, a `migrate` fixture raising `required` sets the overlap, no method changes the policy.
 - Resolution: an unlinked Google and email identity's path is byte-identical to v2's (golden paths); a member opens
   the root path; a pending member is refused; lazy activation respects `changes_unlock_floor_ms`; `opened` set once.
 - The four cases with `link_jwt`, each panic, `unlinked` blocking, epoch replay refused, front-run of the combined call
   without the session signature reverts everything (no link left behind).
 - `link_identity` / `cancel_link` / `unlink_identity`: every rule and panic in order, storage charged, sponsor free,
   limits, events.
-- Layouts: the four new nonces and `ik` against `gen-fixtures.mjs`; switcher `wallet` argument; old JSON without the
-  new arguments still deserializes.
+- `link_immediate`: case B active at once with it, pending without it; a token minted for one mode refused with the
+  other (nonce).
+- Layouts: the four new nonces (with `mode`) and `ik` against `gen-fixtures.mjs`; multi-signature fixtures; old JSON
+  without the new arguments still deserializes.
 - `migrate` v2 → v3 from a v2 state fixture keeps every field.
 
 ### Sandbox (`contracts/integration-tests`)
@@ -756,15 +883,18 @@ Following D83 (every check surfaces in the portal):
 
 ### Issuer (`apps/email-issuer`, vitest with miniflare and a fake KMS)
 
-- Normalization and `sub` vectors (frozen file, guard test); Gmail canonical form.
+- Normalization and `sub` vectors (frozen file, guard test); Gmail canonical form; the disposable-domain list
+  (pinned, no Google-hosted domain on it, `email_domain_not_allowed`).
 - Codes: entropy source, HMAC storage, attempts, expiry, single use, resend rules, constant-time compare.
 - Each rate limit, enumeration-identical responses (body and a timing tolerance), suppressions.
 - Purpose-bound nonces: the issuer computes each purpose's nonce from the commitment; a request for another app's
   scope is refused; `client-proof` only behind Access.
 - KMS adapter: SigV4 request shape against recorded vectors, `DIGEST` mode, signature self-check, error mapping;
-  local adapter parity.
-- `google-match`: tokeninfo `aud` mismatch refused, `email_verified=false` refused, every case's decision, the access
-  token revoked, nothing logged (a log-capture test greps for the address, code, `sub` and token).
+  Worker-secret adapter parity; `gen` refuses `worker-secret` for mainnet; the JWS JSON form with one and two
+  signatures; the reconciliation job (a missing `email_issuance` row alerts).
+- `google-match`: tokeninfo `aud` mismatch refused, `email_verified=false` refused, the Google-hosted rule (Gmail,
+  googlemail, `hd` equal, `hd` absent, `hd` different), every case's decision and link mode, no token without `link`,
+  the access token revoked, nothing logged (a log-capture test greps for the address, code, `sub` and token).
 
 ### API, web, watchdog
 
@@ -772,20 +902,23 @@ Following D83 (every check surfaces in the portal):
   methods.
 - Web unit: chooser, `/login/email` CSP and flow, vault path resolution (no `#google#` left), banners, SDK methods and
   events.
-- Watchdog: pinned and unpinned email keys (cancel, pause), self-issued confirm skipped, issuer diff, link volume.
+- Watchdog: pinned and unpinned email keys per signer (cancel, pause), self-issued confirm skipped, issuer and
+  signer-policy diff, link volume.
 
 ### Playwright (Chromium, WebKit, Firefox)
 
 An email stub (`EMAIL_SENDER=outbox`, only in `local*` envs, refused by `gen` elsewhere) writes messages to a test-only
 Durable Object that the suite reads through a binding, never a public route. Flows: email login; email then Google
-(Gmail, case A) gives the same addresses; Google then email (case B) with the Google step and the pending banner;
-case D shows the switcher; `linkAccount` with delay (manifest `changeDelayMs` short); cancel from the mail's link;
-unlink logs out the other tab. Google is stubbed with the existing e2e test issuer.
+(Google-hosted, case A, "Link and continue") gives the same addresses; case A on another domain with the code; "Sign
+in with email" opens E's wallet and G gets none; Google then email (case B) Google-hosted (at once) and not (the
+pending banner in the popup and the partner page's `linkChanged`, then cancel); `linkAccount` with delay (manifest
+`changeDelayMs` short); cancel from the mail's link; unlink logs out the other tab. Google is stubbed with the
+existing e2e test issuer (its userinfo stub returns `hd` as set by the test).
 
 ### Testnet (sandbox-dev)
 
-Email login latency (issuer server time, KMS p95), gas of each new call, the Google `email` scope spike (ID token
-claims, consent text) before any web code.
+Email login latency (issuer server time), gas of each new call, the Google `email` scope spike (ID token claims,
+consent text, userinfo `hd` for a personal and a Workspace account) before any web code. KMS p95 on staging.
 
 ## Build order
 
@@ -793,76 +926,59 @@ Rough sizes (lines with tests, engineer-days). Step 0 decides the Google flow.
 
 0. **Spike** (0.2k, 1 d): Google `response_type=id_token token` with `scope=openid email`: ID token claims and
    consent text for a personal and a Workspace account; tokeninfo and userinfo answers.
-1. **Contract v3** (2.2k, 5 d): self-issued issuers, identity keys, `opened`, resolution, `link_jwt`, link methods,
-   layouts and fixtures, migrate, unit and sandbox tests.
-2. **`packages/email`** (0.4k, 1 d): normalization, vectors, guard.
-3. **`apps/email-issuer`** (2.8k, 6 d): challenges, limits, sender adapter (user-mail subdomain), token minting,
-   `google-match`, KMS and local signers, JWKS, client proofs, CloudTrail reconciliation job.
-4. **AWS and secrets tooling** (0.4k, 1.5 d): `scripts/email-issuer.ts` (init, rotate-aws-key, key thumbprints),
-   KMS key and IAM policy templates, `operations.md` steps.
+1. **Contract v3** (2.5k, 6 d): self-issued issuers with the signer policy and multi-signature verification,
+   identity keys, `opened`, resolution, `link_jwt` and `link_immediate`, link methods, layouts and fixtures, migrate,
+   unit and sandbox tests.
+2. **`packages/email`** (0.5k, 1 d): normalization, vectors, guard, disposable-domain list.
+3. **`apps/email-issuer`** (2.8k, 6 d): challenges, limits, sender adapter (user-mail subdomain), token minting (JWS
+   JSON), `google-match` with the Google-hosted rule, Worker-secret and KMS signers, JWKS, client proofs, CloudTrail
+   reconciliation job.
+4. **AWS and secrets tooling** (0.4k, 1.5 d; needed before mainnet, not for testnet): `scripts/email-issuer.ts`
+   (init, rotate-aws-key, key thumbprints), KMS key, IAM policy and alarm templates, `operations.md` steps.
 5. **API** (0.9k, 2 d): issuer map, `/v1/app`, `/v1/login` link fields, link relays, D1 migration, allowlist state.
 6. **Web** (2.6k, 6 d): chooser, `/login/email`, Google `email` scope and relay, vault resolution, banners, export,
    SDK methods, errors.
 7. **Watchdog** (0.6k, 1.5 d): pins, self-issued rules, diff, link volume, check registry.
 8. **Admin and partner console views** (0.6k, 1.5 d; needs batch C's Workers).
 9. **Playwright, sandbox-dev deploy and measurements** (0.9k, 3 d).
-10. **Switcher** (0.8k, 2 d): contract `wallets`/`wallet` are in step 1; this is the popup chooser and its tests.
 
-About 12.4k lines and 30 engineer-days; steps 2–4 can run beside 1.
+No switcher (D122). About 12.0k lines and 30 engineer-days; steps 2–4 can run beside 1.
 
-## Decision text to record
+## Decisions recorded
 
-Proposed entries for `docs/decisions.md` once the user approves this spec:
-
-- **D25 (amended 2026-10-29).** Google Workspace accounts are allowed; the on-chain Google token stays openid-only
-  (allow-list unchanged). Since email login: the Hana login popup also requests Google's `email` scope and an access
-  token; the email issuer reads the verified address from Google's userinfo endpoint in memory, only to link a Google
-  identity with the same person's email identity, keeps only its HMAC (`sub` under `K_sub`, hints and limits under
-  their own keys), revokes the access token and never logs, stores or puts the address on chain. The consent screen
-  shows the email permission.
-- **D4 (confirmed).** Email login through a Hana-run issuer (`apps/email-issuer`, AWS KMS RSA-2048 key, owner-posted
-  keys with the governance delay and watchdog pins); `sub` = HMAC of the normalized address under `K_sub`; per-scope
-  `aud`; codes, not links.
-- **D119 (new). Automatic account linking, Privy-style, with pseudonymous ids on chain.** The four cases above; Gmail
-  auto-joins at once; other domains need a code; joining an email identity to an existing Google wallet needs the
-  user's Google step and waits `change_delay_ms`; never merge two wallets automatically; explicit `linkAccount` with
-  both proofs and the delay; per-scope links.
-- **D96 (amended).** Hana still stores no end-user address; it sends sign-in codes and link notices that the user's own
-  action triggered.
+In `docs/decisions.md` (2026-10-30): D4 confirmed; D25 and D96 amended; D119 automatic linking; D121 signing key and
+signer policy; D122 no second wallet, no switcher; D123 the remaining questions' defaults.
 
 ## Open questions for the user
 
-1. **Issuer choice** confirmed (decision 1). Confirm the separate `apps/email-issuer` Worker (vs routes inside the API
-   Worker).
-2. **KMS vendor**: AWS KMS in a dedicated AWS account (recommended) vs Google Cloud KMS; and who holds the AWS root and
-   break-glass access (the two founders, like the council?).
-3. **Email provider** for user mail: Resend (D87, provisional) or the colleague's choice; one adapter either way. Its
-   message-log retention must be set to the minimum.
-4. **`aud` per scope** (`email:<scope_id>`, a scope client; partners can switch email off on chain) vs one shared email
-   client for every `allow_shared` scope (simpler, but off-chain per-app enablement only).
-5. Issuer hostname: under `apiUrl` or its own (separate CORS and DNS)?
-6. **`sub` derivation**: HMAC with `K_sub` (recommended) vs a stored random id; and `K_sub` as a Worker secret with two
-   offline backups (recommended) vs KMS-held HMAC with imported material.
-7. **Gmail canonical form** (dots and `+tag` ignored) and the rule that deleted Gmail usernames aren't reissued: confirm
-   from Google's help pages before freezing.
-8. Code in the mail subject or not (recommended not).
-9. No Turnstile on `authOrigin` (recommended), relying on rate limits.
-10. Block disposable-address domains? Default no; partners could opt in later.
-11. Standby KMS key in a second region or a second AWS account?
-12. Accept that Google signs Google tokens and AWS holds the email key (spread), or keep everything on one cloud?
-13. Delay for email issuer keys: `governance_delay_ms` (72 h, recommended: rotation is planned) or the issuer-key
-    delay (2 h).
-14. **Links per scope** (recommended) vs global; a Hana Home "link in all my apps" later.
-15. **Non-Gmail domains in case A**: a code first (recommended), a delay instead, or no offer at all.
-16. **Case B**: the user's Google step plus `change_delay_ms` (recommended) vs silent pre-linking at every Google login
-    (fully Privy-like, but the email issuer could then reach every Gmail user's Google wallet) or no delay.
-17. Store an encrypted address of email members for security notices (changes D96), or in-product notices only
-    (recommended for the MVP)?
-18. **Linking policy for already-funded wallets**: never merge (recommended) with the switcher as step 10; or ship
-    without the switcher.
-19. **Delay length** for explicit and case-B links: `change_delay_ms` (24 h production, D93) or a separate
-    `link_delay_ms`.
-20. **Email enabled per app by partners** (partner console toggle with the on-chain client) or Hana-only enablement
-    during the pilot?
-21. Limits: one method per provider per account and 3 members (Privy-like) — enough?
-22. Rate-limit values and the global daily budget (provisional above).
+All answered (2026-10-29/30). The defaults the user approved are D123.
+
+1. **Issuer choice**: Hana-run (decision 1, D4); the separate `apps/email-issuer` Worker (D123).
+2. **Signing key**: Worker secret on testnet; AWS KMS in a dedicated AWS account before mainnet, root held by both
+   founders with hardware security keys; two-signer-ready policy and the staged plan (decision 3, D121).
+3. **Email provider** for user mail: Resend (D87, still provisional until the colleague confirms), behind the one
+   adapter; message-log retention at the minimum (D123).
+4. **`aud` per scope** (`email:<scope_id>`; a partner turns email off with `remove_client`) (D123).
+5. Issuer hostname: under `apiUrl` (`{apiUrl}/v1/email`) (D123).
+6. **`sub`**: HMAC with `K_sub`; `K_sub` a Worker secret with two offline backups (D123).
+7. **Gmail canonical form** and "deleted Gmail usernames aren't reissued": adopted; cited from Google's help pages in
+   the guard test before the freeze (D123).
+8. Code not in the mail subject (D123).
+9. No Turnstile on `authOrigin`; rate limits instead (D123).
+10. **Disposable-address domains blocked** (D123).
+11. Standby KMS key in a second region (D123).
+12. Trust spread: Google signs Google tokens, AWS holds the email key; Google Cloud KMS only as a Level 1 co-signer
+    (D123, D121).
+13. Email issuer keys wait `governance_delay_ms` (72 h on mainnet) (D123).
+14. **Links per scope**; a Hana Home "link in all my apps" maybe later (D123).
+15. **Case A**: Google-hosted → linked at once; otherwise a code first, then at once; always a notice (decision 4,
+    D119).
+16. **Case B**: the user's Google step; Google-hosted → at once; otherwise 24 h, notice in the wallet and the partner
+    app, cancellable (decision 4, D119).
+17. No stored addresses for security notices; in-product notices only (D96, D123).
+18. **Never a second wallet** for a match; "Link and continue" or "Sign in with {the other method}"; no switcher
+    (decision 5, D122).
+19. Delay for explicit and non-Google-hosted case B links: `change_delay_ms` (24 h production, D93) (D123).
+20. **Partners enable email per app** (partner console toggle with the on-chain client) (D123).
+21. One method per provider per account and 3 members (D123).
+22. Rate limits and the global daily budget as proposed (provisional values, tuned on sandbox-dev) (D123).

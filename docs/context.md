@@ -386,8 +386,8 @@ API and both page Workers deployed, ship gate measured (D76), latency fixes meas
    another provider may be used instead. The email code sits behind one small interface, so a switch is cheap.
 
 **Roadmap after governance (decided 2026-10-29):** email login with a Hana-run issuer and automatic, Privy-style account
-linking (`docs/email-login-spec.md` on branch `docs/email-login-spec`, open questions in review), and the partner
-identity token with opt-in verified email per app (D120).
+linking (`docs/email-login-spec.md`, approved 2026-10-30: D4, D119, D121–D123; signing key a Worker secret on
+testnet, AWS KMS before mainnet), and the partner identity token with opt-in verified email per app (D120).
 
 **Before mainnet:**
 

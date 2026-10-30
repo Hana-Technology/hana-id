@@ -379,7 +379,10 @@ watchdog account `hana-id-watchdog-dev1.testnet` added, council DAO `hana-id-cou
 (2 of 3, throwaway members) **owns the signer**, and one upgrade went propose → 60 s → execute through the DAO
 (code `3TSDwkMqPUhZtzFCvvaJ39nQWXUQK4LExPhsaS9tScoz`, contract 0.1.1). `governance:status`: no findings. Left: step 4,
 the watchdog service: on sandbox-dev it goes on the API's Cloudflare account (D125; production on its own account,
-AWS Lambda kept as the alternative).
+AWS Lambda kept as the alternative). The watchdog was deployed and drilled the same day (`docs/operations.md`
+"Watchdog service"). Post-governance smoke (2026-10-30, after the migration, the owner handover, the 0.1.1
+upgrade and the drills): Google login on the demo gives the same Stellar and EVM addresses as on 2026-10-29, and an
+EVM `personal_sign` was approved and returned.
 
 1. **Deferred: one-month Pro plan test on `ting.rocks`** to see whether a paid zone keeps Malaysian traffic in SIN
    (free plan and workers.dev enter in FRA/CDG/LHR; Enterprise sites enter in SIN). The user is discussing it with

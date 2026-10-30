@@ -4,7 +4,8 @@ import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { governanceDelayProblems, loadEnv, MAINNET_GOVERNANCE_DELAY_MS, manifestPath, manifestSchema, MIN_GOVERNANCE_DELAY_MS, MIN_ISSUER_KEY_DELAY_MS, WATCHDOG_INTERVAL_MS } from './index.ts';
 
-const raw = () => JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Record<string, unknown>;
+// sandbox-dev with an account owner, as before its handover to the council DAO (the schema cases below vary the owner).
+const raw = (): Record<string, unknown> => ({ ...JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')), owner: 'hana-id-admin-dev1.testnet', ownerKind: 'account' });
 const issues = (m: Record<string, unknown>) => manifestSchema.safeParse(m).error?.issues.map((i) => `${i.path.join('.')}: ${i.message}`) ?? [];
 const council = { factory: 'sputnikv2.testnet', dao: 'c.sputnikv2.testnet', members: ['a.testnet', 'b.testnet', 'cc.testnet'] };
 
@@ -22,7 +23,8 @@ describe('manifestSchema: governance fields', () => {
     expect(env.council?.members).toHaveLength(3);
     expect(env.council?.dao.endsWith(`.${env.council.factory}`)).toBe(true);
     expect(env.watchdogs).toHaveLength(1);
-    expect(env.ownerKind).toBe('account'); // until the DAO accepts ownership (migration step 6)
+    expect(env.ownerKind).toBe('sputnik'); // the DAO accepted ownership 2026-10-30 (migration step 5)
+    expect(env.owner).toBe(env.council?.dao);
     expect(env.issuerKeyDelayMs).toBe(120_000);
     expect(env.governanceDelayMs).toBe(60_000);
     expect(env.allowSignerFullAccessKey).toBe(true);

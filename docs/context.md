@@ -373,6 +373,13 @@ Status section is the summary for humans: https://claude.ai/artifact/GyQq6HZbaJB
 Done 2026-10-29: callback registered, testnet contract upgraded, migrations 0003/0004 applied, `VAULT_KEK` set,
 API and both page Workers deployed, ship gate measured (D76), latency fixes measured (D77–D79, D94–D97).
 
+Done 2026-10-30: **governance on sandbox-dev** (`docs/operations.md` "Governance migration (sandbox-dev)" steps
+1–3, 5–7): the contract migrated in place to v2 (same signer, same addresses), a new updater key (v1 key deleted),
+watchdog account `hana-id-watchdog-dev1.testnet` added, council DAO `hana-id-council-dev1.sputnikv2.testnet`
+(2 of 3, throwaway members) **owns the signer**, and one upgrade went propose → 60 s → execute through the DAO
+(code `3TSDwkMqPUhZtzFCvvaJ39nQWXUQK4LExPhsaS9tScoz`, contract 0.1.1). `governance:status`: no findings. Left: step 4,
+the watchdog service (needs a separate Cloudflare account, alert channels and a heartbeat URL from the user).
+
 1. **Deferred: one-month Pro plan test on `ting.rocks`** to see whether a paid zone keeps Malaysian traffic in SIN
    (free plan and workers.dev enter in FRA/CDG/LHR; Enterprise sites enter in SIN). The user is discussing it with
    their colleague. **Remind the user if it hasn't been decided.**

@@ -3,8 +3,8 @@
   "network": "testnet",
   "signer": "hana-id-signer-dev1.testnet",
   "relayer": "hana-id-relayer-dev1.testnet",
-  "owner": "hana-id-admin-dev1.testnet",
-  "ownerKind": "account",
+  "owner": "hana-id-council-dev1.sputnikv2.testnet",
+  "ownerKind": "sputnik",
   "council": {
     "factory": "sputnikv2.testnet",
     "dao": "hana-id-council-dev1.sputnikv2.testnet",

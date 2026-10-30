@@ -6,9 +6,11 @@ import { buildDeployPlan, checkFunctionKey, creationPlan, type DeployObserved, t
 import { type AccessKeyListEntry, EMPTY_CODE_HASH } from '../lib/near.ts';
 import { POOL_METHODS as API_POOL_METHODS } from '../../apps/api/src/relayer-config.ts';
 import { councilPolicy } from '../lib/sputnik.ts';
+import { ACCOUNT_OWNER } from './sim-fixtures.ts';
 
 const base = {
   ...loadEnv('sandbox-dev'),
+  ...ACCOUNT_OWNER,
   // The Google fields as an undeployed manifest has them; the real envs/sandbox-dev.json changes as it is deployed.
   googleClientIds: ['UNSET.apps.googleusercontent.com'],
   sharedGoogleClientIds: ['UNSET-shared.apps.googleusercontent.com'],

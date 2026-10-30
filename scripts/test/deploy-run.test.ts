@@ -12,10 +12,11 @@ import { scopeRegister, SCOPE_DRY_RUN_LINE } from '../lib/admin-scope.ts';
 import { DRY_RUN_LINE, type DeployRpc, deployMain } from '../lib/deploy-run.ts';
 import { keysUpdaterFile, poolKeysFile, readKeysUpdater, readPoolKeys, readRelayerKeys, relayerKeysFile, writeRelayerKeys } from '../lib/keys.ts';
 import type { AccessKeyListEntry, AccountView, TxSigner } from '../lib/near.ts';
-import { GOVERNANCE_DEFAULT, NOW } from './sim-fixtures.ts';
+import { ACCOUNT_OWNER, GOVERNANCE_DEFAULT, NOW } from './sim-fixtures.ts';
 
 const m = {
   ...loadEnv('sandbox-dev'),
+  ...ACCOUNT_OWNER,
   // The Google fields as an undeployed manifest has them; the real envs/sandbox-dev.json changes as it is deployed.
   googleClientIds: ['UNSET.apps.googleusercontent.com'],
   sharedGoogleClientIds: ['UNSET-shared.apps.googleusercontent.com'],

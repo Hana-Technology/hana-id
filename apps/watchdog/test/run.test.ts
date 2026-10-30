@@ -1,7 +1,8 @@
 // Every rule of docs/governance-spec.md "Watchdog service" steps 3–8 and every action D82 allows, against a stub
 // chain, a scripted JWKS and recording channels.
 import { describe, expect, it } from 'vitest';
-import { ABSENCE_RECHECK_MS } from '../src/run.ts';
+import type { KeyChange } from '../src/chain.ts';
+import { ABSENCE_RECHECK_MS, RETIRED_KEY_GRACE_MS, retiredAt } from '../src/run.ts';
 import { alertsOf, councilPolicy, HOUR, initialized, jwk, MIN, OWNER, SIGNER, T0, UPDATER_KEYS, WATCHDOG, world } from './helpers.ts';
 
 const channelsOf = (w: { notifier: { sent: { channel: string; msg: { kind: string } }[] } }, kind: string) =>
@@ -212,6 +213,81 @@ describe('pending additions (step 3)', () => {
     const [alert] = await alertsOf(w.store, 'forged_key_change');
     expect(alert?.title).toMatch(/; the cancel failed$/u);
     expect(alert?.details.outcome).toBe('failed');
+  });
+});
+
+describe("a key Google just retired (D153)", () => {
+  // Google published k2 at the first run; it's gone now, and the API cron's fetch still had it when it proposed.
+  async function retiring() {
+    const k2 = jwk('k2', 2);
+    const w = await initialized({ jwks: [jwk('k1', 1), k2] });
+    w.jwks.keys = [jwk('k1', 1)];
+    return { w, k2 };
+  }
+
+  it("cancels the updater's Add of a kid Google published with the same material, keeps the updater keys, warns", async () => {
+    const { w, k2 } = await retiring();
+    const c = w.chain.propose('Add', 'k2', { key: k2 });
+    await w.run();
+    expect(w.writer.methods()).toEqual(['cancel_issuer_key_change']);
+    expect(w.writer.calls[0]?.args).toEqual({ id: c.id });
+    expect(await alertsOf(w.store, 'forged_key_change')).toEqual([]);
+    const [alert] = await alertsOf(w.store, 'retired_key_change');
+    expect(alert?.severity).toBe('warning');
+    expect(alert?.title).toContain('updater key kept');
+    expect(alert?.details).toMatchObject({ id: c.id, kid: 'k2', outcome: 'cancelled', last_seen_jwks_at: T0 });
+    expect(channelsOf(w, 'retired_key_change')).toEqual(['email', 'slack']);
+  });
+
+  it('treats the same kid with other key material as forged', async () => {
+    const { w } = await retiring();
+    w.chain.propose('Add', 'k2', { key: jwk('k2', 66) });
+    await w.run();
+    expect(w.writer.methods()).toEqual(['cancel_issuer_key_change', ...UPDATER_KEYS.map(() => 'delete_updater_key')]);
+    expect(await alertsOf(w.store, 'retired_key_change')).toEqual([]);
+    const [alert] = await alertsOf(w.store, 'forged_key_change');
+    expect(alert?.details).toMatchObject({ reason: 'not_published', updater_proposed: true });
+  });
+
+  it("falls back to forged when the watchdog can't read what Google published", async () => {
+    const { w, k2 } = await retiring();
+    w.chain.propose('Add', 'k2', { key: k2 });
+    const real = w.store.seenKids.bind(w.store);
+    let reads = 0;
+    w.store.seenKids = async (p) => {
+      if (reads++ === 0) throw new Error('D1 down');
+      return real(p);
+    };
+    await w.run();
+    expect(w.writer.methods()).toContain('delete_updater_key');
+    expect(await alertsOf(w.store, 'forged_key_change')).toHaveLength(1);
+  });
+
+  it('treats a kid Google last published more than 24 h ago as forged', async () => {
+    const { w, k2 } = await retiring();
+    w.clock.t += RETIRED_KEY_GRACE_MS + MIN;
+    w.chain.propose('Add', 'k2', { key: k2 });
+    await w.run();
+    expect(w.writer.methods()).toContain('delete_updater_key');
+    expect(await alertsOf(w.store, 'forged_key_change')).toHaveLength(1);
+  });
+
+  it("keeps the owner's Add of a retired kid on the forged path (it never deletes updater keys)", async () => {
+    const { w, k2 } = await retiring();
+    w.chain.propose('Add', 'k2', { key: k2, by: OWNER });
+    await w.run();
+    expect(w.writer.methods()).toEqual(['cancel_issuer_key_change']);
+    expect(await alertsOf(w.store, 'forged_key_change')).toHaveLength(1);
+  });
+
+  it('retiredAt ignores baseline kids, kids without material, and changes without material', () => {
+    const c = { id: 1, provider: 'google', kid: 'k2', op: 'Add', by: SIGNER, proposed_at_ms: T0, executable_at_ms: T0, n: jwk('k2', 2).n, e: 'AQAB' } as KeyChange;
+    const seen = { provider: 'google', kid: 'k2', n: jwk('k2', 2).n, e: 'AQAB', source: 'jwks' as const, first_seen_at: T0, last_seen_at: T0 };
+    expect(retiredAt(seen, c, T0 + HOUR)).toBe(T0);
+    expect(retiredAt({ ...seen, source: 'baseline', last_seen_at: null }, c, T0)).toBeNull();
+    expect(retiredAt({ ...seen, n: null }, c, T0)).toBeNull();
+    expect(retiredAt(seen, { ...c, n: null }, T0)).toBeNull();
+    expect(retiredAt(undefined, c, T0)).toBeNull();
   });
 });
 

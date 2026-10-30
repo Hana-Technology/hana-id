@@ -1,7 +1,8 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-10-30 for the partner identity token (branch
+known open issues. Last verified against code: 2026-10-30 for the watchdog's retired-key rule (branch
+`fix/watchdog-retired-key-race`, D153), for the partner identity token (branch
 `feat/identity-token-2`: the review fixes D176–D179 in the identity rows, invariants and open issue (l); branch
 `feat/identity-token-1`: the partner-backend party, its compromise rows, the three identity secrets), for the relayer pool rows (branch `feat/playbook-gaps`: the watchdog's relayer funds
 monitoring, D150) and for the `KEYS_UPDATER_KEY` and owner rows and open issue
@@ -655,7 +656,8 @@ plan (D33; built on branch `feat/governance`, not deployed), specified in `docs/
   the contract, and the watchdog alerts critical on any later change of the owner DAO's policy or code (a
   `ChangePolicy`, `AddMember` or `RemoveMember`).
 - Watchdog (D82, D86): its own service, key and Cloudflare account. It cancels a pending key Google doesn't publish,
-  deletes the updater key that proposed one, and pauses only when such a key is active on chain; everything else is
+  deletes the updater key that proposed one (not when it is Google's own material from the last 24 h, a retirement race:
+  D153), and pauses only when such a key is active on chain; everything else is
   alert-only. The owner unpauses at once. Pause stops derivation and every token path, never governance. Built in
   `apps/watchdog` (branch `feat/governance`), not deployed. Pause stops derivation only for as long as it lasts:
   sessions a forged key opened before the pause would derive again after it (up to 24 h, any `max_uses`), so the

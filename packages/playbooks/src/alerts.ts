@@ -12,7 +12,7 @@ const forgedKeyChange: Playbook = {
   severity: 'critical',
   status: 'live',
   summary:
-    "A pending issuer key Google doesn't publish (or with other key material), or a non-Google key the updater proposed: the watchdog cancelled it and, when the updater proposed it, deleted every updater key.",
+    "A pending issuer key Google doesn't publish (or with other key material), or a non-Google key the updater proposed: the watchdog cancelled it and, when the updater proposed it, deleted every updater key. A key Google published with the same material in the last 24 h is a retired-key-change instead (D153).",
   signals: [
     'Critical `forged_key_change` page (paging app, Slack, email), re-sent every 15 min until acknowledged. The title and `details.outcome` say what happened: `cancelled`, `gone` (someone else cancelled it first), `executed` (it took effect before the cancel), `unknown`, `failed` or `not_sent`.',
     "`details.by` is the proposer: the signer account means `KEYS_UPDATER_KEY`; the owner means the council. `reason: updater_other_provider`: the updater proposed a key for a provider other than Google (it only serves Google).",
@@ -476,6 +476,35 @@ const watchdogDegraded: Playbook = {
   related: ['near-rpc-outage', 'google-jwks-outage', 'watchdog-down'],
 };
 
+const retiredKeyChange: Playbook = {
+  id: 'retired-key-change',
+  title: 'Retired Google key proposed and cancelled',
+  kind: 'alert',
+  alertKinds: ['retired_key_change'],
+  severity: 'warning',
+  status: 'live',
+  summary:
+    "The updater proposed a key Google stopped publishing but did publish, with the same key material, within the last 24 h: the API cron's fetch raced Google's retirement of the kid (D153). The watchdog cancelled it and kept the updater keys.",
+  signals: [
+    'Warning `retired_key_change` (Slack, email): "Retired Google key <kid> proposed (change <id>): Google stopped publishing it after <time>; cancelled, updater key kept".',
+    "`details.last_seen_jwks_at` is the watchdog's last fetch that listed the kid; `details.outcome` is `cancelled`, `gone`, `failed` (retried next run) or `not_sent`.",
+  ],
+  impact: ["None for logins: the key was Google's own, and the kid is retired. The API cron holds a re-proposal of a cancelled kid for 1 h and proposes only kids Google lists."],
+  steps: [
+    {
+      title: 'Check it was a retirement',
+      who: 'a founder',
+      detail:
+        "Google's JWKS no longer lists the kid, and `details.n` matches what the watchdog recorded for it (`/status` `seen_kids`). Repeats for the same kid more than an hour apart, or any `forged_key_change`, are not a race: see forged-key-change.",
+      commands: [c.watchdogAlerts, c.apiGovernance],
+    },
+  ],
+  verify: ['`keyChanges` no longer lists the change; `issuers` matches Google\'s JWKS.'],
+  followUps: [],
+  refs: ['docs/operations.md#watchdog-alerts-runbook', 'D153'],
+  related: ['forged-key-change', 'key-sync-stalled'],
+};
+
 const keySyncStalled: Playbook = {
   id: 'key-sync-stalled',
   title: 'Google key sync stalled',
@@ -754,6 +783,7 @@ export const ALERT_PLAYBOOKS: readonly Playbook[] = [
   watchdogCannotAct,
   watchdogDegraded,
   keySyncStalled,
+  retiredKeyChange,
   activeKeyMaterialUnavailable,
   configChange,
   confirmFailed,

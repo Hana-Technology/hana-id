@@ -1534,6 +1534,27 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 - Still open: a rehearsal on sandbox-dev (no wrangler or chain actions were run for this), and a backup kept beyond
   30 days and outside Cloudflare (an export of the apps tables, or batch C's Neon ledger, D73).
 
+### D153. A key Google just retired isn't a forgery: cancel, keep the updater key, warn
+- Date 2026-10-30 · Status: built (branch `fix/watchdog-retired-key-race`) · Source: a false
+  positive on sandbox-dev (watchdog alert #10)
+- What happened: at 16:30:07 (UTC+8) the API cron's JWKS fetch still listed Google kid `f10f8740…`, which wasn't on
+  chain, so it proposed adding it (change 2). Google dropped the kid at about that time: the watchdog's next two
+  fetches didn't list it, so it cancelled the change as forged and deleted the updater key. The proposed `n`/`e` were
+  byte-for-byte what the watchdog itself had fetched from Google at 16:10. No attack: the two services saw Google's
+  JWKS a few minutes apart, across a key retirement.
+- Decision: an Add **by the updater** of a kid Google doesn't publish now, whose `n`/`e` equal what this watchdog
+  fetched from Google (`seen_kids`, source `jwks`, not a first-run baseline) within the last 24 h
+  (`RETIRED_KEY_GRACE_MS`), is a `retired_key_change`: the watchdog cancels it (a retired key has no use), keeps the
+  updater keys, and raises a **warning** (Slack, email; no page). Everything else that was forged stays forged: a kid
+  Google never published, other key material, a kid last seen more than 24 h ago, an owner proposal (the owner path
+  never deletes updater keys), and any non-Google change from the updater. If the watchdog can't read `seen_kids` the
+  change is treated as forged (fail safe).
+- Why: a stolen updater key gains nothing from it. It can only re-propose Google's own key material, which is useless
+  without Google's private key, and it would be cancelled anyway. Deleting the updater key on every retirement race
+  stops Google key sync until a council member reprovisions it, and pages someone for nothing.
+- Playbook: `retired-key-change`. The incident's alert #10 was acknowledged; the deleted updater key is reprovisioned
+  through the council (`forged-key-change` step 5).
+
 ### D142. Loopback origins only in `sandbox-*` environments
 - Date 2026-10-30 · Status: confirmed by the user · Source: batch C1 open question 1 (`docs/batch-c-build-plan.md`)
 - Decision: `localhost` / loopback origins are accepted only in dev environments (`sandbox-*`, `local*`), both when an

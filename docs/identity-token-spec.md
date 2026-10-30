@@ -1,9 +1,8 @@
 # Partner identity token spec (pre-mainnet)
 
-**Status: DRAFT (2026-10-30), for review. Nothing here is built.** Specifies `docs/decisions.md` D120 (a short-lived
-JWT a partner's backend can verify, with an opt-in verified email per app). Every proposal and the
-[open questions](#open-questions-for-the-user) need the user's answer before implementation; answers will be recorded
-as new decisions (D127 onwards at the time of writing).
+**Status: APPROVED (2026-10-30), not built.** Specifies `docs/decisions.md` D120 (a short-lived JWT a partner's
+backend can verify, with an opt-in verified email per app). The user answered all 16
+[open questions](#open-questions-for-the-user) on 2026-10-30, each with the recommended option A; recorded as D127.
 
 This file becomes the source of truth for the batch once approved. If code and this spec disagree, fix the code or
 raise the problem. Reference docs (`architecture.md`, `security.md`, `api.md`, `integration.md`, `operations.md`,
@@ -959,6 +958,11 @@ External (read 2026-10-30):
 
 ## Open questions for the user
 
+All answered 2026-10-30 (D127): A for every question. While answering Q7 the user asked whether optional sharing could
+split a person into two wallets: it can't. Wallet matching and linking (D119, D122) run inside Hana at every Google
+login from Google's verified address, read transiently and kept only as an HMAC, whether or not the user shares the
+email with any partner; sharing only adds the `email` claim to that app's tokens.
+
 Each question stands alone: the options, what each costs, and the recommendation. Answer by number ("Q3: B").
 
 1. **How wide is a `sub`?** The pseudonymous user id must stay stable for a user and must not let two partners match
@@ -970,7 +974,7 @@ Each question stands alone: the options, what each costs, and the recommendation
    - C. Per partner organization (batch C orgs): one `sub` across all the org's scopes. Lets a partner link a user's
      wallets across its own scopes, which have different wallets precisely to keep them apart; and an org's scopes can
      change owners.
-   Recommendation: A.
+   **Answered 2026-10-30: A (D127).** Recommendation was A.
 
 2. **Signing algorithm.**
    - A. **ES256** (recommended): Privy parity (Wend's code changes one line), 64-byte signatures, every library, KMS
@@ -979,7 +983,7 @@ Each question stands alone: the options, what each costs, and the recommendation
      342-character signatures and no parity with Privy.
    - C. EdDSA (Ed25519): compact and fast, but KMS supports Ed25519 keys only recently and some partner stacks
      (older `jsonwebtoken`) don't verify it.
-   Recommendation: A; the cost difference is small at our scale.
+   **Answered 2026-10-30: A (D127).** Recommendation was A; the cost difference is small at our scale.
 
 3. **Which Worker mints the token?**
    - A. **The API Worker** (recommended): it already has the app rows, shares, chain views and vault gate; the key is
@@ -990,14 +994,14 @@ Each question stands alone: the options, what each costs, and the recommendation
      separation.
    - C. Inside the email issuer: the issuer is the most sensitive Worker (it can reach email wallets); putting a
      high-volume, partner-facing path there enlarges its surface.
-   Recommendation: A.
+   **Answered 2026-10-30: A (D127).** Recommendation was A.
 
 4. **Key storage on mainnet.**
    - A. **AWS KMS, non-exportable, in D121's AWS account with its own IAM user** (recommended): a stolen credential is
      revocable and every signature counted; about $1 per key per month plus requests.
    - B. A Worker secret in production too: free and < 5 ms, but anyone who can read the Worker's secrets once can forge
      every user's identity at every partner forever, undetected.
-   Recommendation: A (and B only on `local*`/testnet, as for the email issuer).
+   **Answered 2026-10-30: A (D127).** Recommendation was A (and B only on `local*`/testnet, as for the email issuer).
 
 5. **Token lifetime.**
    - A. **1 hour, capped at the session's end** (recommended): D120's ceiling, Privy's access-token default; one KMS
@@ -1006,7 +1010,7 @@ Each question stands alone: the options, what each costs, and the recommendation
      more refresh traffic from background tabs.
    - C. Longer (Privy's identity-token default is 10 hours): fewer mints, but exceeds D120 and lets a token outlive
      logouts by hours.
-   Recommendation: A, with `maxAgeMs` for partners that need fresher proof.
+   **Answered 2026-10-30: A (D127).** Recommendation was A, with `maxAgeMs` for partners that need fresher proof.
 
 6. **When is the user asked to share their email?**
    - A. **At the first login for that app, in the Hana popup, optional, remembered per app** (recommended): one extra
@@ -1016,7 +1020,7 @@ Each question stands alone: the options, what each costs, and the recommendation
      onboarding, and partners that ask after an `await` hit the launcher fallback.
    - C. No Hana screen; Google's consent screen is enough: with Hana's shared Google client that screen names Hana, not
      the partner, and appears only once per Google client, so users wouldn't know which apps get their address.
-   Recommendation: A, plus `requestEmailSharing()` to ask again after a decline.
+   **Answered 2026-10-30: A (D127).** Recommendation was A, plus `requestEmailSharing()` to ask again after a decline.
 
 7. **Can a partner make email sharing mandatory?**
    - A. **No, always optional in v1** (recommended): "Not now" always continues the login; the wallet stays usable;
@@ -1024,7 +1028,7 @@ Each question stands alone: the options, what each costs, and the recommendation
    - B. A `required` app setting where declining ends the login: some partners (credit programs, KYC flows) want it,
      but it makes wallet access conditional on handing over an email, and users who decline are locked out of funds
      they may already hold in that app.
-   Recommendation: A; revisit B with a concrete partner need (and then with an "export your key" path on the decline
+   **Answered 2026-10-30: A (D127).** Recommendation was A; revisit B with a concrete partner need (and then with an "export your key" path on the decline
    screen).
 
 8. **How are wallet addresses proven?**
@@ -1033,13 +1037,13 @@ Each question stands alone: the options, what each costs, and the recommendation
    - B. An address registry in D1, pinned at first proof: detects a later change, but creates a durable "pseudonym →
      addresses" table that, with `IDENTITY_SUB_KEY`, links Google accounts to on-chain activity.
    - C. Trust the vault's word (no proof): a user with devtools could claim any address, including a victim's.
-   Recommendation: A.
+   **Answered 2026-10-30: A (D127).** Recommendation was A.
 
 9. **Identity tokens for every app by default?**
    - A. **On for every app** (recommended): without email the token holds no personal data a partner's page doesn't
      already see, and it costs nothing until called.
    - B. Opt-in per app: one more setting and support question for little gain.
-   Recommendation: A; the email claim stays opt-in (D120).
+   **Answered 2026-10-30: A (D127).** Recommendation was A; the email claim stays opt-in (D120).
 
 10. **Do partners get a revocation or introspection endpoint?**
     - A. **No; `maxAgeMs` fresh mints instead** (recommended): a partner that needs "is this session live now" asks
@@ -1047,14 +1051,14 @@ Each question stands alone: the options, what each costs, and the recommendation
     - B. A public `POST /v1/identity/introspect` answering whether a token's session is still live: immediate logout
        visibility, but every partner request may hit Hana (latency, availability coupling, a per-request cost), and it
        needs abuse limits without a partner credential.
-    Recommendation: A for v1; B only if a partner shows a need the 1-hour bound and `maxAgeMs` don't meet.
+    **Answered 2026-10-30: A (D127).** Recommendation was A for v1; B only if a partner shows a need the 1-hour bound and `maxAgeMs` don't meet.
 
 11. **Should the SDK set a cookie on the partner's domain (like Privy's `privy-id-token`)?**
     - A. **No** (recommended): partners send a header; no cookie semantics (SameSite, CSRF, domain scope) for Hana to
        get right on someone else's domain.
     - B. An opt-in `createHana({ identityCookie: 'hana-id-token' })` that writes a first-party cookie on the partner's
        origin: easier server-rendered apps, but a JS-written cookie can't be HttpOnly and adds CSRF exposure.
-    Recommendation: A.
+    **Answered 2026-10-30: A (D127).** Recommendation was A.
 
 12. **How much login detail goes in the token?**
     - A. **`login_methods` only** (the account's methods, no identifiers) (recommended).
@@ -1062,7 +1066,7 @@ Each question stands alone: the options, what each costs, and the recommendation
        step-up rules, but `auth_time` is only known in `'session'` mode (the share's creation) and `amr` needs the API to
        remember the login's provider.
     - C. Nothing about methods.
-    Recommendation: A; add B's claims later if a partner needs step-up.
+    **Answered 2026-10-30: A (D127).** Recommendation was A; add B's claims later if a partner needs step-up.
 
 13. **JWKS trust for partners.**
     - A. **JWKS URL by default, optional pinned thumbprints, and a watchdog pin check** (recommended): rotation needs no
@@ -1070,24 +1074,24 @@ Each question stands alone: the options, what each costs, and the recommendation
        security-sensitive partners pin and get 14 days' notice of rotations.
     - B. Pinned keys only (as Wend does with Privy's PEM): strongest against a Hana account takeover, but every rotation
        and every emergency switch is a config change at every partner.
-    Recommendation: A.
+    **Answered 2026-10-30: A (D127).** Recommendation was A.
 
 14. **The `iss` URL.** Partners configure it once; changing it later breaks their verification.
     - A. **`{apiUrl}/v1/identity` on sandbox-dev now; in production a stable Hana hostname chosen with the production
        domains (batch B Q15), e.g. `https://id.<hana domain>`**, fixed before any partner goes live (recommended).
     - B. Always under `apiUrl`: simplest, but ties partners to the API's hostname, which may move (D18, D97).
-    Recommendation: A.
+    **Answered 2026-10-30: A (D127).** Recommendation was A.
 
 15. **Should `sid` survive a new interactive login on the same device?**
     - A. **No: one `sid` per session key**, new at every interactive login (recommended): matches Privy and what Wend's
        "kicked browser stays kicked" rule relies on.
     - B. One per device (a device id kept across logins): would let a partner recognise a returning device, which is a
        tracking id Hana would then own.
-    Recommendation: A.
+    **Answered 2026-10-30: A (D127).** Recommendation was A.
 
 16. **A new secret for `sub`, or reuse batch C's `USER_ID_KEY`?**
     - A. **A separate `IDENTITY_SUB_KEY`** (recommended): partner-held ids and internal billing ids have different
        exposure and lifetimes; a leak of one doesn't re-link the other. One more secret to back up.
     - B. Reuse `USER_ID_KEY` with a different label: one secret fewer, but one leak exposes both, and batch C allows
        rotating `USER_ID_KEY` between contract terms, which `sub` must never do.
-    Recommendation: A.
+    **Answered 2026-10-30: A (D127).** Recommendation was A.

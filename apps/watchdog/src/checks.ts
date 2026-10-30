@@ -38,7 +38,7 @@ export const ALERT_KINDS = {
   forged_key_change: {
     severity: 'critical',
     check: 'pending_key_changes',
-    description: "A pending key Google doesn't publish (absent from two fetches ≥ 60 s apart) or with other key material: cancelled, and the updater keys deleted when the updater proposed it",
+    description: "A pending key Google doesn't publish (absent from two fetches ≥ 60 s apart; not one it published with the same material within 24 h, see retired_key_change) or with other key material: cancelled, and the updater keys deleted when the updater proposed it",
   },
   published_key_removal: { severity: 'critical', check: 'pending_key_changes', description: 'A pending removal of a kid Google still publishes (alert only: the owner decides and cancels)' },
   unverifiable_key_change: { severity: 'critical', check: 'pending_key_changes', description: 'A pending key change for a provider whose JWKS the watchdog does not know (alert only)' },
@@ -64,6 +64,11 @@ export const ALERT_KINDS = {
   stale_active_key: { severity: 'warning', check: 'active_keys', description: 'An active kid Google stopped publishing more than 3 h ago (the updater should have proposed its removal)' },
   active_key_material_unavailable: { severity: 'warning', check: 'active_keys', description: 'The contract has no get_issuer_keys: active keys are checked by kid only' },
   config_change: { severity: 'warning', check: 'governance_diff', description: 'Shared clients, sponsors or public registration changed' },
+  retired_key_change: {
+    severity: 'warning',
+    check: 'pending_key_changes',
+    description: "A pending Add by the updater of a key Google no longer publishes but published with the same material within 24 h (a race with Google's key retirement): cancelled, the updater keys kept",
+  },
   confirm_failed: { severity: 'warning', check: 'pending_key_changes', description: 'A confirmation the watchdog sent failed' },
   channel_not_configured: { severity: 'warning', check: 'config', description: 'An alert channel (paging app, Slack, email) or the heartbeat has no credentials' },
   heartbeat_failing: { severity: 'warning', check: 'heartbeat', description: "The dead-man's switch ping failed for 3 runs in a row" },

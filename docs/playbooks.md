@@ -1,7 +1,7 @@
 # Recovery playbooks
 
 Generated from `packages/playbooks` (D126) by `corepack pnpm --filter @hana-id/playbooks gen-docs`: edit the package,
-not this file (a test fails when it is stale). Last verified against code: 2026-10-30 (branch `feat/playbook-gaps`).
+not this file (a test fails when it is stale). Last verified against code: 2026-10-30 (branch `fix/watchdog-retired-key-race`).
 
 One step-by-step guide for every watchdog alert kind and for every incident the watchdog does not raise. The admin
 portal's "Security & monitoring" view renders the same playbooks (`docs/batch-c-spec.md`), and every watchdog
@@ -31,6 +31,7 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [The watchdog can't act](#watchdog-cannot-act) | critical | `not_a_watchdog`, `watchdog_key_missing`, `wrong_network` |
 | [The watchdog is partly blind or mute](#watchdog-degraded) | warning | `rpc_failing`, `jwks_failing`, `heartbeat_failing`, `channel_not_configured` |
 | [Google key sync stalled](#key-sync-stalled) | warning | `unexecuted_key_change`, `stale_active_key` |
+| [Retired Google key proposed and cancelled](#retired-key-change) | warning | `retired_key_change` |
 | [Active keys checked by kid only](#active-key-material-unavailable) | warning | `active_key_material_unavailable` |
 | [Shared clients, sponsors or public registration changed](#config-change) | warning | `config_change` |
 | [The watchdog's confirmation of a Google key failed](#confirm-failed) | warning | `confirm_failed` |
@@ -141,7 +142,7 @@ A key Google doesn't publish is active on chain: the watchdog paused the contrac
 
 `forged-key-change` · critical · alert kinds: `forged_key_change`
 
-A pending issuer key Google doesn't publish (or with other key material), or a non-Google key the updater proposed: the watchdog cancelled it and, when the updater proposed it, deleted every updater key.
+A pending issuer key Google doesn't publish (or with other key material), or a non-Google key the updater proposed: the watchdog cancelled it and, when the updater proposed it, deleted every updater key. A key Google published with the same material in the last 24 h is a [retired-key-change](#retired-key-change) instead (D153).
 
 **Signals**
 
@@ -616,6 +617,38 @@ A matured key change nobody executed for over 1 h, or an active kid Google dropp
 - `keyChanges` empty or not yet due; `issuers` matches Google's JWKS; the warning resolves.
 
 **Refs:** [`docs/operations.md#google-signing-keys-jwks`](operations.md#google-signing-keys-jwks), [`docs/operations.md#common-failures`](operations.md#common-failures) · **See also:** [google-jwks-outage](#google-jwks-outage), [updater-key-stolen](#updater-key-stolen)
+
+<a id="retired-key-change"></a>
+
+### Retired Google key proposed and cancelled
+
+`retired-key-change` · warning · alert kinds: `retired_key_change`
+
+The updater proposed a key Google stopped publishing but did publish, with the same key material, within the last 24 h: the API cron's fetch raced Google's retirement of the kid (D153). The watchdog cancelled it and kept the updater keys.
+
+**Signals**
+
+- Warning `retired_key_change` (Slack, email): "Retired Google key <kid> proposed (change <id>): Google stopped publishing it after <time>; cancelled, updater key kept".
+- `details.last_seen_jwks_at` is the watchdog's last fetch that listed the kid; `details.outcome` is `cancelled`, `gone`, `failed` (retried next run) or `not_sent`.
+
+**Impact**
+
+- None for logins: the key was Google's own, and the kid is retired. The API cron holds a re-proposal of a cancelled kid for 1 h and proposes only kids Google lists.
+
+**Steps**
+
+1. **Check it was a retirement** (who: a founder). Google's JWKS no longer lists the kid, and `details.n` matches what the watchdog recorded for it (`/status` `seen_kids`). Repeats for the same kid more than an hour apart, or any `forged_key_change`, are not a race: see [forged-key-change](#forged-key-change).
+
+   ```sh
+   curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" 'https://<workerName>.<subdomain>.workers.dev/alerts?severity=critical'
+   curl -s <apiUrl>/v1/governance | jq '{paused, keyChanges, issuers, updater}'
+   ```
+
+**Verify**
+
+- `keyChanges` no longer lists the change; `issuers` matches Google's JWKS.
+
+**Refs:** [`docs/operations.md#watchdog-alerts-runbook`](operations.md#watchdog-alerts-runbook), D153 (`docs/decisions.md`) · **See also:** [forged-key-change](#forged-key-change), [key-sync-stalled](#key-sync-stalled)
 
 <a id="active-key-material-unavailable"></a>
 

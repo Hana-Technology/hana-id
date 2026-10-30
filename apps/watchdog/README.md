@@ -24,7 +24,9 @@ every run and sends nothing on a mismatch.
    (once this watchdog's `confirm_from_ms` has passed). A kid with other key material, or absent from two fetches at
    least 60 s apart (the run re-fetches after 60 s; or the absence recorded by an earlier run counts) →
    `cancel_issuer_key_change`, then `delete_updater_key` for every updater key when the signer account (the updater)
-   proposed it, then one critical alert with the results. A cancel that panics `No such key change` re-reads the
+   proposed it, then one critical alert with the results. Except (D153): an Add by the updater whose `n`/`e` equal what
+   this watchdog fetched from Google within the last 24 h (`seen_kids`, not a baseline kid) is Google retiring the kid
+   while the API cron still saw it: cancelled, the updater keys kept, one `retired_key_change` warning. A cancel that panics `No such key change` re-reads the
    chain: gone without effect (someone else cancelled it) is fine; **executed** (an Add's kid is now active) raises
    `protective_action_failed` and step 6 judges the re-read active set, so it pauses in the same run. The alert's
    title and `details.outcome` (`cancelled`, `gone`, `executed`, `unknown`, `failed`, `not_sent`) never claim a cancel

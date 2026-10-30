@@ -22,10 +22,15 @@ import { log } from './log.ts';
 import { formatNear, level, RELAYER_POOLS, type RelayerFunds, type RelayerThresholds, type Threshold } from './relayer.ts';
 import { ident } from './sanitize.ts';
 import { iso } from './time.ts';
-import type { CheckResult, Store } from './store.ts';
+import type { CheckResult, SeenKid, Store } from './store.ts';
 
 /** A kid with a pending change counts as not published once absent from two fetches at least this far apart. */
 export const ABSENCE_RECHECK_MS = 60_000;
+/**
+ * A pending Add of a kid Google doesn't publish now, but did publish with the same key material within this window,
+ * is a race with Google's key retirement (the API cron's fetch still listed it), not a forgery (D153).
+ */
+export const RETIRED_KEY_GRACE_MS = 24 * 60 * 60_000;
 /** An active kid Google stopped publishing longer ago than this is stale (warning). */
 export const STALE_ACTIVE_KID_MS = 3 * 60 * 60_000;
 /** A change executable for longer than this that nobody executed (warning). */
@@ -320,6 +325,11 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
         }
       }
 
+      // Read for D153 only. A failed read must not hold back a cancel: without it every unpublished Add is forged.
+      const seen = await store.seenKids(GOOGLE_PROVIDER).catch(() => {
+        log({ event: 'seen_kids_read_failed', runId }, 'error');
+        return new Map<string, SeenKid>();
+      });
       for (const c of pending) {
         const jwk = jwksNow.get(c.kid);
         if (c.op === 'Add') {
@@ -330,6 +340,11 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
           const reason = jwk ? 'other_key_material' : absent.has(c.kid) ? 'not_published' : null;
           if (!reason) {
             run.check('pending_key_changes', 'ok', `${ident(c.kid)} absent once, rechecking next run`);
+            continue;
+          }
+          const lastSeen = reason === 'not_published' && c.by === cfg.signer ? retiredAt(seen.get(c.kid), c, d.now()) : null;
+          if (lastSeen !== null) {
+            await retiredPending(run, c, lastSeen, canAct, settled);
             continue;
           }
           await forgedPending(run, s, c, reason, jwk ?? null, canAct, settled, deleted, self);
@@ -454,6 +469,37 @@ async function confirm(run: Run, c: KeyChange, settled: Set<number>): Promise<vo
   } else {
     await run.event('confirm_failed', `confirm_failed:${a.id}`, `Confirming change ${c.id} (${ident(c.op)} ${ident(c.kid)}) failed`, { ...changeDetails(c), ...actionDetail(a) });
   }
+}
+
+/**
+ * When Google last published this Add's kid with the same key material, if within RETIRED_KEY_GRACE_MS of `now`
+ * (D153); null otherwise. Only kids the watchdog fetched itself count, not first-run baseline kids.
+ */
+export function retiredAt(s: SeenKid | undefined, c: KeyChange, now: number): number | null {
+  if (!s || s.source !== 'jwks' || s.last_seen_at === null || !s.n || !s.e || !c.n || !c.e) return null;
+  if (now - s.last_seen_at > RETIRED_KEY_GRACE_MS) return null;
+  return sameRsaKey({ n: c.n, e: c.e }, { n: s.n, e: s.e }) ? s.last_seen_at : null;
+}
+
+/**
+ * D153: the updater proposed a key Google published, with this material, until recently. The API cron's fetch raced
+ * Google's retirement of the kid. Cancelled (a retired key has no use), the updater keys kept, one warning.
+ */
+async function retiredPending(run: Run, c: KeyChange, lastSeen: number, canAct: boolean, settled: Set<number>): Promise<void> {
+  let outcome: 'cancelled' | 'gone' | 'failed' | 'not_sent' = 'not_sent';
+  let cancel: ActionSummary | null = null;
+  if (canAct) {
+    cancel = await run.act('cancel_issuer_key_change', { id: c.id }, `${ident(c.kid)}: retired by Google`);
+    outcome = cancel.ok ? 'cancelled' : CHANGE_GONE.test(cancel.error ?? '') ? 'gone' : 'failed';
+    if (outcome !== 'failed') settled.add(c.id);
+  }
+  const what = { cancelled: 'cancelled', gone: 'already gone from the queue', failed: 'the cancel failed (retried next run)', not_sent: 'the watchdog could not act' }[outcome];
+  await run.event('retired_key_change', `retired_key_change:${c.id}`, `Retired Google key ${ident(c.kid)} proposed (change ${c.id}): Google stopped publishing it after ${iso(lastSeen)}; ${what}, updater key kept`, {
+    ...changeDetails(c),
+    last_seen_jwks_at: lastSeen,
+    outcome,
+    actions: cancel ? [actionDetail(cancel)] : [],
+  });
 }
 
 /** Why a pending change is treated as forged and cancelled. */

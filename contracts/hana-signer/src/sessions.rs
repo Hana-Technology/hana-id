@@ -25,9 +25,19 @@ pub const SESSION_DOMAIN: &[u8] = b"hana-id-session-v1:";
 /// Domain-separates session nonces from the other nonces (registry.rs).
 const SESSION_NONCE_DOMAIN: &[u8] = b"hana-id/session/v1";
 pub const REVOKE_PAYLOAD: &[u8] = b"revoke";
-/// What the session key signs, with counter 0, to prove possession in a bare `create_session` (D137). Counter 0 is
-/// never accepted by `derive_key` or `revoke_session` (they need `used + 1` ≥ 1), and no other payload is this string.
-pub const CREATE_PAYLOAD: &[u8] = b"hana-id-create-v1";
+/// Domain of the proof of possession of a bare `create_session` (D137).
+pub const CREATE_PREFIX: &[u8] = b"hana-id-create-v1:";
+
+/// What the session key signs, with counter 0, to prove possession in a bare `create_session` (D137):
+/// "hana-id-create-v1:" ‖ sha256(session nonce preimage). It binds the proof to this session's parameters (signer,
+/// scope, session key, expiry, key_index, max_uses, salt), so a proof seen once can't open the key with other ones.
+/// Counter 0 is never accepted by `derive_key` or `revoke_session` (they need `used + 1` ≥ 1), and its domain differs
+/// from every other signed payload ("hana-id-ckd-v1:", "hana-id-ckd-link-v1:", "revoke").
+pub fn create_proof_bytes(session_preimage_hash: &[u8; 32]) -> Vec<u8> {
+    let mut payload = CREATE_PREFIX.to_vec();
+    payload.extend_from_slice(session_preimage_hash);
+    payload
+}
 
 pub const MAX_SESSION_MS: u64 = 24 * 60 * 60 * 1000;
 pub const MAX_USES: u32 = 500;
@@ -218,8 +228,9 @@ impl HanaSigner {
     /// must equal session_nonce(...), which commits to this deployment, the scope and every other argument. The path
     /// is the path identity's (the account root's for a member); a pending member is refused (`Sign-in method link is
     /// pending`). `signature` is the session key's proof of possession: Ed25519 over session_message(0,
-    /// "hana-id-create-v1") (D137). Only the key holder can open the session, so a token copied from a published
-    /// login (for instance a case-A login with a link) can't be used to occupy its session key with a plain session.
+    /// `create_proof_bytes(sha256(session nonce preimage))`) (D137). Only the key holder can open the session, and only
+    /// with the parameters it signed, so a token copied from a published login (for instance a case-A login with a
+    /// link) can't be used to occupy its session key with a plain session.
     pub fn create_session(
         &mut self,
         jwt: String,
@@ -231,8 +242,18 @@ impl HanaSigner {
         max_uses: u32,
         signature: Vec<u8>,
     ) -> Session {
-        let session = self.open_session(jwt, scope_id, session_public_key.clone(), expires_at_ms, salt, key_index, max_uses, None);
-        verify_session_signature(&session_public_key, signature, &session_message_bytes(0, CREATE_PAYLOAD));
+        let session = self.open_session(jwt, scope_id, session_public_key.clone(), expires_at_ms, salt.clone(), key_index, max_uses, None);
+        let signer = env::current_account_id();
+        let preimage = session_nonce_preimage(&SessionCommitment {
+            signer: signer.as_str(),
+            scope_id: &session.scope_id,
+            session_public_key: &session_public_key,
+            expires_at_ms,
+            key_index,
+            max_uses,
+            salt: &salt,
+        });
+        verify_session_signature(&session_public_key, signature, &session_message_bytes(0, &create_proof_bytes(&env::sha256_array(&preimage))));
         session
     }
 

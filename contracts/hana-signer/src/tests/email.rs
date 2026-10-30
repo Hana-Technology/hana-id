@@ -314,10 +314,10 @@ fn js_signed_jws_tokens_verify() {
     // A 1-of-1 token, and the same claims with an extra co-signature (a signer not in the policy can't be counted:
     // its kid isn't an active key of this issuer).
     ctx(RELAYER, NOW_MS);
-    let s = c.create_session(efix_tok("email_session_s1"), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3, create_sig(&pk(7)));
+    let s = c.create_session_signed(efix_tok("email_session_s1"), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3);
     assert_eq!(s.path, format!("s1#email#{sub}#0"));
     ctx(RELAYER, NOW_MS);
-    expect_panic("Unknown signing key", || drop(c.create_session(efix_tok("email_session_s1_cosigned"), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3, create_sig(&pk(8)))));
+    expect_panic("Unknown signing key", || drop(c.create_session_signed(efix_tok("email_session_s1_cosigned"), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3)));
     // With the co-signer in a 2-of-2 policy (a governed upgrade's migrate), the two-signature token passes and the
     // co-signer alone doesn't.
     let mut c = email_setup();
@@ -330,8 +330,8 @@ fn js_signed_jws_tokens_verify() {
         vec![(f["cosign_kid"].as_str().unwrap().into(), "cosign".into(), js_key("cosign"))], true,
     );
     ctx(RELAYER, NOW_MS);
-    expect_panic("Not enough signatures", || drop(c.create_session(efix_tok("email_session_s1_cosign_only"), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3, create_sig(&pk(7)))));
-    let s = c.create_session(efix_tok("email_session_s1_cosigned"), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3, create_sig(&pk(7)));
+    expect_panic("Not enough signatures", || drop(c.create_session_signed(efix_tok("email_session_s1_cosign_only"), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3)));
+    let s = c.create_session_signed(efix_tok("email_session_s1_cosigned"), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3);
     assert_eq!(s.path, format!("s1#email#{sub}#0"));
 }
 
@@ -497,7 +497,7 @@ fn removing_a_self_issued_key_forgets_its_signer() {
     assert!(c.remove_issuer_key(EMAIL.into(), HANA_KID.into()));
     assert_eq!(c.get_self_issued(EMAIL.into()).unwrap().signers[0].kids, Vec::<String>::new());
     ctx(RELAYER, NOW_MS);
-    expect_panic("Unknown signing key", || drop(c.create_session(e_session(&esub("a"), 7), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3, create_sig(&pk(7)))));
+    expect_panic("Unknown signing key", || drop(c.create_session_signed(e_session(&esub("a"), 7), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3)));
 }
 
 // ===================================================================================================================
@@ -506,7 +506,7 @@ fn removing_a_self_issued_key_forgets_its_signer() {
 
 fn try_open(c: &mut HanaSigner, jwt: String) -> Result<Session, String> {
     ctx(RELAYER, NOW_MS);
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| c.create_session(jwt, "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3, create_sig(&pk(7))))).map_err(panic_msg)
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| c.create_session_signed(jwt, "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3))).map_err(panic_msg)
 }
 
 fn assert_refused(c: &mut HanaSigner, jwt: String, expected: &str) {
@@ -638,10 +638,10 @@ fn a_policy_change_accepts_the_previous_policy_for_the_overlap_only() {
     // A hana-only token minted just before the upgrade still passes during the overlap...
     let one = jws(&cl, &[(rk(0), HANA_KID)]);
     ctx(RELAYER, NOW_MS + POLICY_OVERLAP_MS - 1);
-    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| c.create_session(one.clone(), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3, create_sig(&pk(7))))).is_ok());
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| c.create_session_signed(one.clone(), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3))).is_ok());
     // ...and not after it (the view drops the overlap too).
     ctx(RELAYER, NOW_MS + POLICY_OVERLAP_MS);
-    expect_panic("Not enough signatures", || drop(c.create_session(one.clone(), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3, create_sig(&pk(8)))));
+    expect_panic("Not enough signatures", || drop(c.create_session_signed(one.clone(), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3)));
     assert_eq!(c.get_self_issued(EMAIL.into()).unwrap().overlap_until_ms, None);
     // A co-signer alone never satisfies the previous policy (it wasn't in it).
     let mut c = two_of_two(NOW_MS);
@@ -699,7 +699,7 @@ fn golden_paths_of_identities_outside_every_account_are_unchanged() {
     assert_eq!(open(&mut c, "session_b", "s2", 8, 0).path, "s2#google#1098765432#0");
     let mut c = setup();
     ctx(RELAYER, NOW_MS);
-    assert_eq!(c.create_session(tok("session_a_k1"), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 1, 3, create_sig(&pk(8))).path, "s1#google#1098765432#1");
+    assert_eq!(c.create_session_signed(tok("session_a_k1"), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 1, 3).path, "s1#google#1098765432#1");
     let mut c = shared_setup();
     ctx(RELAYER, NOW_MS);
     assert_eq!(open(&mut c, "shared_s3", "s3", 7, 0).path, "s3#google#1098765432#0");
@@ -726,7 +726,7 @@ fn opened_is_recorded_once_when_a_path_is_first_derived() {
     assert!(!view(&c).opened);
     // A session alone doesn't make a wallet: nobody can derive without the session key (D130).
     ctx(RELAYER, NOW_MS);
-    c.create_session(g_session(G, 7), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3, create_sig(&pk(7)));
+    c.create_session_signed(g_session(G, 7), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3);
     assert!(!view(&c).opened);
     ctx(RELAYER, NOW_MS);
     derive(&mut c, 7, 1);
@@ -755,7 +755,7 @@ fn a_bare_create_session_front_run_does_not_create_a_wallet() {
     assert!(err.unwrap().contains("Invalid session signature"));
     // ...and even a bare session the key holder opens gives no wallet until it derives (D130).
     ctx(MALLORY, NOW_MS);
-    c.create_session(g_session(G, 8), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3, create_sig(&pk(8)));
+    c.create_session_signed(g_session(G, 8), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3);
     assert!(!c.get_identity("s1".into(), "google".into(), G.into()).opened);
     login(&mut c, g_session(G, 9), 9, Some(auto_link_tok(&e, 9, &gik(G), 0, true, ja(&e))), Some(true));
     assert_eq!(path_of(&c, 9), format!("s1#email#{e}#0"));
@@ -1517,7 +1517,7 @@ fn migrate_v2_to_v3_keeps_every_field_and_every_path() {
     // ...a fresh Google login gives the same path the v2 code gave...
     post_key(&mut c, "google", GOOGLE_KID, &rk(4).n_b64(), &rk(4).e_b64());
     ctx(RELAYER, NOW_MS);
-    let s = c.create_session(google_tok(B, USER, &sess_nonce("s2", 9)), "s2".into(), pk(9), EXPIRES_MS, SALT.to_vec(), 0, 3, create_sig(&pk(9)));
+    let s = c.create_session_signed(google_tok(B, USER, &sess_nonce("s2", 9)), "s2".into(), pk(9), EXPIRES_MS, SALT.to_vec(), 0, 3);
     assert_eq!(s.path, format!("s2#google#{USER}#0"));
     // ...and email login can be set up on it (owner-posted key after the governance delay).
     ctx(ADMIN, NOW_MS);
@@ -1644,7 +1644,7 @@ fn review_high_1b_the_link_of_a_case_a_login_can_be_neither_stripped_nor_changed
         assert_eq!(c.get_identity("s1".into(), "google".into(), G.into()).status, "own");
     }
     ctx(MALLORY, NOW_MS);
-    c.create_session(g_session(G, 8), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3, create_sig(&pk(8)));
+    c.create_session_signed(g_session(G, 8), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3);
     expect_panic("Invalid session signature", || {
         let _ = c.derive_key(pk(8), 1, sig.clone(), PK1.into(), PK2.into());
     });
@@ -1712,7 +1712,7 @@ fn review_low_2_a_member_cannot_derive_its_own_path_through_an_old_session() {
     let e = esub("alice@gmail.com");
     email_wallet(&mut c, &e, 7);
     ctx(RELAYER, NOW_MS);
-    c.create_session(g_session(G, 8), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3, create_sig(&pk(8)));
+    c.create_session_signed(g_session(G, 8), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3);
     login(&mut c, g_session(G, 9), 9, Some(auto_link_tok(&e, 9, &gik(G), 0, true, ja(&e))), Some(true));
     ctx(RELAYER, NOW_MS);
     expect_panic("Sign-in method is linked to an account", || derive(&mut c, 8, 1));
@@ -1721,7 +1721,7 @@ fn review_low_2_a_member_cannot_derive_its_own_path_through_an_old_session() {
     let mut c = email_setup();
     google_wallet(&mut c, G, 7);
     ctx(RELAYER, NOW_MS);
-    c.create_session(e_session(&e, 8), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3, create_sig(&pk(8)));
+    c.create_session_signed(e_session(&e, 8), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3);
     login(&mut c, g_session(G, 9), 9, Some(auto_link_tok(&e, 9, &gik(G), 0, false, jb(G))), None);
     ctx(RELAYER, NOW_MS);
     expect_panic("Sign-in method is linked to an account", || derive(&mut c, 8, 1));
@@ -1816,7 +1816,8 @@ fn a_cancelled_automatic_link_still_matches() {
 #[test]
 fn review2_n1_the_proof_of_possession_layout_matches_the_js_implementation() {
     ctx(ADMIN, NOW_MS);
-    check_email_layout("session_message_create", &sessions::session_message_bytes(0, sessions::CREATE_PAYLOAD), None);
+    let hash = env::sha256_array(sess_preimage("s1", 7, 0));
+    check_email_layout("session_message_create", &sessions::session_message_bytes(0, &sessions::create_proof_bytes(&hash)), None);
 }
 
 #[test]
@@ -1831,7 +1832,7 @@ fn review2_n1_a_bare_create_session_needs_the_session_key() {
     let link = auto_link_tok(&e, 8, &gik(G), 0, true, ja(&e));
     let linked_sig = login_sig(8, Some(&link), Some(true));
     // Neither nothing, nor the user's linked CKD signature, nor another key's proof opens the session.
-    for sig in [vec![0u8; 64], linked_sig.clone(), create_sig(&pk(9)), session_sig(8, 1, sessions::CREATE_PAYLOAD)] {
+    for sig in [vec![0u8; 64], linked_sig.clone(), pop_sig(9, "s1", EXPIRES_MS, &SALT, 0, 3), session_sig(8, 1, &sessions::create_proof_bytes(&env::sha256_array(sess_preimage("s1", 8, 0))))] {
         let (c2, err) = as_receipt(c, |c| drop(c.create_session(g_session(G, 8), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3, sig.clone())));
         c = c2;
         assert!(err.as_deref().unwrap_or_default().contains("Invalid session signature"), "{err:?}");
@@ -1848,8 +1849,8 @@ fn review2_n1_the_proof_of_possession_is_never_a_derive_or_revoke_signature() {
     // Counter 0 is never accepted after a session exists, so a published proof can't spend a session.
     let mut c = email_setup();
     ctx(RELAYER, NOW_MS);
-    c.create_session(g_session(G, 8), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3, create_sig(&pk(8)));
-    let pop = create_sig(&pk(8));
+    c.create_session_signed(g_session(G, 8), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3);
+    let pop = pop_sig(8, "s1", EXPIRES_MS, &SALT, 0, 3);
     expect_panic("Wrong counter", || drop(c.derive_key(pk(8), 0, pop.clone(), PK1.into(), PK2.into())));
     expect_panic("Wrong counter", || c.revoke_session(pk(8), 0, pop.clone()));
     expect_panic("Invalid session signature", || drop(c.derive_key(pk(8), 1, pop.clone(), PK1.into(), PK2.into())));
@@ -1895,4 +1896,33 @@ fn review2_n3b_a_dropped_signers_pending_key_never_revives() {
     ctx(ME, NOW_MS);
     c.set_signer_policy(EMAIL, vec!["hana".into()], 1, vec![], true);
     assert!(c.get_key_changes().iter().any(|k| k.id == id));
+}
+
+/// A Google session token whose nonce commits to exactly these session parameters (key `seed`).
+fn g_tok_for(scope: &str, seed: u8, expires_at_ms: u64, salt: &[u8], key_index: u32, max_uses: u32) -> String {
+    let key = pk(seed);
+    let c = SessionCommitment { signer: ME, scope_id: scope, session_public_key: &key, expires_at_ms, key_index, max_uses, salt };
+    google_tok(if scope == "s2" { B } else { A }, G, &sessions::session_nonce(&c))
+}
+
+#[test]
+fn review2_n1_a_proof_of_possession_serves_only_its_session_parameters() {
+    // A proof is bound to the session nonce preimage (signer, scope, key, expiry, key_index, max_uses, salt): seen once
+    // (it is public in the transaction), it can't open the same key with any other parameters.
+    let mut c = email_setup();
+    let proof = pop_sig(8, "s1", EXPIRES_MS, &SALT, 0, 3);
+    let other_salt = [8u8; 16];
+    let cases: Vec<(&str, u64, &[u8], u32, u32)> =
+        vec![("s1", EXPIRES_LATE_MS, &SALT, 0, 3), ("s1", EXPIRES_MS, &other_salt, 0, 3), ("s1", EXPIRES_MS, &SALT, 1, 3), ("s1", EXPIRES_MS, &SALT, 0, 1), ("s2", EXPIRES_MS, &SALT, 0, 3)];
+    for (scope, expires, salt, key_index, max_uses) in cases {
+        let token = g_tok_for(scope, 8, expires, salt, key_index, max_uses);
+        let (c2, err) = as_receipt(c, |c| drop(c.create_session(token.clone(), scope.into(), pk(8), expires, salt.to_vec(), key_index, max_uses, proof.clone())));
+        c = c2;
+        assert!(err.as_deref().unwrap_or_default().contains("Invalid session signature"), "{scope} {expires} {key_index} {max_uses}: {err:?}");
+        assert!(!c.session_key_in_use(pk(8)));
+    }
+    // With the parameters it signed, it opens the session.
+    ctx(RELAYER, NOW_MS);
+    let s = c.create_session(g_tok_for("s1", 8, EXPIRES_MS, &SALT, 0, 3), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3, proof);
+    assert_eq!(s.path, format!("s1#google#{G}#0"));
 }

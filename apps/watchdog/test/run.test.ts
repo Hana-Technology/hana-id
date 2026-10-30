@@ -278,16 +278,20 @@ describe('pending removals (step 4)', () => {
 });
 
 describe('active keys (step 5)', () => {
-  it('pauses on an active key Google never published, and alerts critical', async () => {
+  it('pauses on an active key Google never published, deletes every updater key, and alerts critical', async () => {
     const w = await initialized();
     w.chain.active.set('forged', { n: jwk('forged', 50).n, e: 'AQAB' }); // e.g. by delay while the watchdog was down
     await w.run();
-    expect(w.writer.methods()).toEqual(['pause']);
+    // Pause first (every login stops at once), then the updater keys: whoever proposed the key, a stolen updater key
+    // can't post again.
+    expect(w.writer.methods()).toEqual(['pause', 'delete_updater_key', 'delete_updater_key']);
     expect(w.chain.config.paused).toBe(true);
+    expect(w.chain.governance.updater_keys).toEqual([]);
     const [alert] = await alertsOf(w.store, 'forged_active_key');
     expect(alert).toMatchObject({ severity: 'critical' });
     expect(alert?.details).toMatchObject({ kid: 'forged', reason: 'never_published' });
-    expect(alert?.title).toContain('paused');
+    expect(alert?.title).toContain('paused, 2 updater key(s) deleted');
+    expect(alert?.details.actions).toHaveLength(3);
     expect(channelsOf(w, 'forged_active_key')).toEqual(['email', 'pager', 'slack']);
   });
 
@@ -295,7 +299,7 @@ describe('active keys (step 5)', () => {
     const w = await initialized({ active: [jwk('k1', 1), jwk('k2', 2)] });
     w.chain.active.set('k2', { n: jwk('k2', 77).n, e: 'AQAB' });
     await w.run();
-    expect(w.writer.methods()).toEqual(['pause']);
+    expect(w.writer.methods()).toEqual(['pause', 'delete_updater_key', 'delete_updater_key']);
     expect((await alertsOf(w.store, 'forged_active_key'))[0]?.details).toMatchObject({ reason: 'other_key_material' });
   });
 
@@ -304,7 +308,7 @@ describe('active keys (step 5)', () => {
     w.jwks.keys = [jwk('k1', 1)];
     w.chain.active.set('k2', { n: jwk('k2', 77).n, e: 'AQAB' });
     await w.run();
-    expect(w.writer.methods()).toEqual(['pause']);
+    expect(w.writer.methods()).toEqual(['pause', 'delete_updater_key', 'delete_updater_key']);
   });
 
   it("doesn't pause again while paused, and doesn't re-alert while the condition lasts", async () => {
@@ -312,7 +316,7 @@ describe('active keys (step 5)', () => {
     w.chain.active.set('forged', { n: jwk('forged', 50).n, e: 'AQAB' });
     await w.run();
     await w.run();
-    expect(w.writer.methods()).toEqual(['pause']);
+    expect(w.writer.methods()).toEqual(['pause', 'delete_updater_key', 'delete_updater_key']);
     expect(await alertsOf(w.store, 'forged_active_key')).toHaveLength(1);
   });
 
@@ -322,8 +326,18 @@ describe('active keys (step 5)', () => {
     await w.run();
     w.chain.config.paused = false; // the owner unpauses at once (D82)
     await w.run();
-    expect(w.writer.methods()).toEqual(['pause', 'pause']);
+    expect(w.writer.methods()).toEqual([...['pause', 'delete_updater_key', 'delete_updater_key'], 'pause']);
     expect((await alertsOf(w.store, 'automatic_action')).map((a) => a.title)).toEqual([expect.stringContaining('Paused again')]);
+  });
+
+  it('deletes an updater key re-added while the forged key is still active (recover in order: remove, re-add, unpause)', async () => {
+    const w = await initialized();
+    w.chain.active.set('forged', { n: jwk('forged', 50).n, e: 'AQAB' });
+    await w.run();
+    w.chain.governance.updater_keys = ['ed25519:readded']; // re-added before the forged key was removed
+    await w.run();
+    expect(w.writer.methods()).toEqual([...['pause', 'delete_updater_key', 'delete_updater_key'], 'delete_updater_key']);
+    expect((await alertsOf(w.store, 'automatic_action')).map((a) => a.title)).toEqual([expect.stringContaining('delete_updater_key')]);
   });
 
   it('only warns (Slack + email) on a kid Google dropped more than 3 h ago, and never pauses on it', async () => {
@@ -380,7 +394,7 @@ describe('first run', () => {
     expect(w.writer.calls).toEqual([]);
     expect((await alertsOf(w.store, 'unknown_active_key_first_run'))[0]?.details).toMatchObject({ reason: 'other_key_material' });
     await w.run();
-    expect(w.writer.methods()).toEqual(['pause']);
+    expect(w.writer.methods()).toEqual(['pause', 'delete_updater_key', 'delete_updater_key']);
   });
 
   it("isn't the first run until both the chain and the JWKS were read", async () => {

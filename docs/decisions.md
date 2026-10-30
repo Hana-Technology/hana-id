@@ -1417,6 +1417,19 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 - Why: the separate Cloudflare account gives the independence that matters (separate credentials) with no new
   platform to learn or port to; AWS Lambda is kept documented in case provider diversity is wanted before mainnet.
 
+### D126. The watchdog's pause for an active forged key also deletes every updater key
+- Date 2026-10-30 · Status: confirmed by the user, built · Source: conversation (sandbox-dev pause drill)
+- Decision: when the watchdog pauses because a key Google doesn't publish is active, it then deletes every updater key
+  in `updater_keys`, whoever proposed the key (the executed change record is gone, and only the updater or the owner
+  can post keys). An updater key added while such a key is still active is deleted at the next run, so recovery runs
+  in order: remove the key, raise the session floor, install a fresh updater key, unpause (`docs/operations.md`
+  "Watchdog alerts"). The pending path is unchanged (cancel, and delete the updater keys when the updater proposed).
+- Why: in the drill the pause left the proposing updater key installed. A stolen updater key could then fill the
+  6-slot pending-change queue (blocking Google's real rotations) and post again after an unpause if the council forgot
+  to rotate it. A needless deletion costs one council vote in a recovery that needs council votes anyway.
+- Also decided: every incident scenario gets a step-by-step recovery guide in the admin portal's "Security &
+  monitoring" view (D83), from one source that a test keeps complete for every watchdog alert kind.
+
 ## Superseded or amended
 
 | Was | Now | Source |

@@ -4,7 +4,9 @@
 //     other key material, and then deletes every updater key if the updater (the signer account) proposed it;
 //   - cancels any pending change the updater proposed for a provider other than Google (the updater only serves
 //     Google, so its key is stolen), and deletes every updater key;
-//   - pauses the contract, and only when a key Google doesn't publish is ACTIVE on chain (never at its first run);
+//   - pauses the contract, and only when a key Google doesn't publish is ACTIVE on chain (never at its first run),
+//     and deletes every updater key (whoever proposed it: by then the change record is gone, and only the updater
+//     or the owner can post keys; a needless deletion costs one council vote in a recovery that needs one anyway);
 //   - confirms pending changes that match Google's JWKS (D86).
 // Everything else is an alert (D85). Dependencies are injected so every path is tested against stubs.
 import { GOOGLE_PROVIDER, type Jwk, sameRsaKey } from '@hana-id/jwks';
@@ -325,7 +327,7 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
 
       // ---- step 5: active keys ----
       run.evaluate('forged_active_key', 'stale_active_key', 'active_key_material_unavailable');
-      await checkActiveKeys(run, s, jwksNow, firstRun, canAct, self);
+      await checkActiveKeys(run, s, jwksNow, firstRun, canAct, self, deleted);
       if (firstRun) {
         await run.event('first_run', 'first_run', 'First run: the current JWKS is recorded as known', { kids: [...jwksNow.keys()], active: s.issuer?.kids ?? [] });
         await store.setMeta(META.initializedAt, d.now());
@@ -518,18 +520,7 @@ async function forgedPending(
             : `Forged key change ${c.id} (${ident(c.kid)}) left the queue and the watchdog could not tell whether it was executed`;
       await run.condition('protective_action_failed', `protective_action_failed:cancel:${c.id}`, what, { ...changeDetails(c), outcome, ...actionDetail(cancel) });
     }
-    if (c.by === signer) {
-      for (const publicKey of s.governance.updater_keys) {
-        if (deleted.has(publicKey)) continue;
-        const del = await run.act('delete_updater_key', { public_key: publicKey }, `the updater proposed forged key change ${c.id}`);
-        actions.push(del);
-        if (del.ok) {
-          deleted.add(publicKey);
-          self.deletedUpdaterKeys.push(publicKey);
-        } else if (ALREADY_DONE.test(del.error ?? '')) deleted.add(publicKey);
-        else await run.condition('protective_action_failed', `protective_action_failed:delete_updater_key:${publicKey}`, `Deleting updater key ${ident(publicKey)} failed`, actionDetail(del));
-      }
-    }
+    if (c.by === signer) actions.push(...(await deleteUpdaterKeys(run, s, deleted, self, `the updater proposed forged key change ${c.id}`)));
   }
   const subject = reason === 'updater_other_provider' ? `${ident(c.op)} of ${ident(c.provider)} key ${ident(c.kid)} by the updater` : `issuer key ${ident(c.kid)}`;
   const title = `Forged ${subject} (change ${c.id}): ${FORGED_WHY[reason]}; ${OUTCOME_TEXT[outcome]}`;
@@ -539,7 +530,23 @@ async function forgedPending(
   if (!ev) for (const a of actions.filter((x) => x.ok)) await run.event('automatic_action', `automatic_action:${a.id}`, `Automatic action for forged change ${c.id}: ${a.method}`, actionDetail(a));
 }
 
-async function checkActiveKeys(run: Run, s: ChainSnapshot, jwks: Map<string, Jwk>, firstRun: boolean, canAct: boolean, self: SelfChanges): Promise<void> {
+/** Deletes every updater key not deleted yet in this run (a stolen updater key can't post again). */
+async function deleteUpdaterKeys(run: Run, s: ChainSnapshot, deleted: Set<string>, self: SelfChanges, reason: string): Promise<ActionSummary[]> {
+  const actions: ActionSummary[] = [];
+  for (const publicKey of s.governance.updater_keys) {
+    if (deleted.has(publicKey)) continue;
+    const del = await run.act('delete_updater_key', { public_key: publicKey }, reason);
+    actions.push(del);
+    if (del.ok) {
+      deleted.add(publicKey);
+      self.deletedUpdaterKeys.push(publicKey);
+    } else if (ALREADY_DONE.test(del.error ?? '')) deleted.add(publicKey);
+    else await run.condition('protective_action_failed', `protective_action_failed:delete_updater_key:${publicKey}`, `Deleting updater key ${ident(publicKey)} failed`, actionDetail(del));
+  }
+  return actions;
+}
+
+async function checkActiveKeys(run: Run, s: ChainSnapshot, jwks: Map<string, Jwk>, firstRun: boolean, canAct: boolean, self: SelfChanges, deleted: Set<string>): Promise<void> {
   const { store } = run.d;
   const now = run.d.now();
   if (!s.issuer) {
@@ -579,15 +586,19 @@ async function checkActiveKeys(run: Run, s: ChainSnapshot, jwks: Map<string, Jwk
           self.paused = true;
         } else await run.condition('protective_action_failed', 'protective_action_failed:pause', `Pausing for active key ${ident(kid)} failed`, actionDetail(action));
       }
+      // Pause first (it stops every login at once), then the updater keys, so a stolen one can't post again.
+      const deletions = canAct ? await deleteUpdaterKeys(run, s, deleted, self, `active key ${ident(kid)}: ${reason}`) : [];
       const why = reason === 'never_published' ? 'Google never published it' : 'Google publishes other key material for it';
       const state = action?.ok ? 'paused' : s.config.paused ? 'already paused' : canAct ? 'pause failed' : 'the watchdog could not act';
-      const cond = await run.condition('forged_active_key', `forged_active_key:${GOOGLE_PROVIDER}:${kid}`, `Active issuer key ${ident(kid)}: ${why}; ${state}`, {
+      const removed = deletions.filter((a) => a.ok).length;
+      const acted = [...(action ? [action] : []), ...deletions];
+      const cond = await run.condition('forged_active_key', `forged_active_key:${GOOGLE_PROVIDER}:${kid}`, `Active issuer key ${ident(kid)}: ${why}; ${state}${removed ? `, ${removed} updater key(s) deleted` : ''}`, {
         kid,
         reason,
         ...(onChain ? { n: onChain.n, e: onChain.e } : {}),
-        ...(action ? { actions: [actionDetail(action)] } : {}),
+        ...(acted.length ? { actions: acted.map(actionDetail) } : {}),
       });
-      if (!cond.isNew && action?.ok) await run.event('automatic_action', `automatic_action:${action.id}`, `Paused again: active key ${ident(kid)} (${why})`, actionDetail(action));
+      if (!cond.isNew) for (const a of acted.filter((x) => x.ok)) await run.event('automatic_action', `automatic_action:${a.id}`, a.method === 'pause' ? `Paused again: active key ${ident(kid)} (${why})` : `Automatic action for active key ${ident(kid)}: ${a.method}`, actionDetail(a));
       continue;
     }
     if (!jwk && s0) {

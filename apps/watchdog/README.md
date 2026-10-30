@@ -30,7 +30,9 @@ sends nothing on a mismatch.
    that didn't happen.
 5. **Pending removals**: kid absent from two fetches → confirm. Kid still published → critical alert, nothing called.
 6. **Active keys**: a kid this watchdog never saw in Google's JWKS, or whose on-chain material (`get_issuer_keys`)
-   differs from Google's → `pause` + critical alert. **The only automatic pause.** A kid Google published and later
+   differs from Google's → `pause`, then `delete_updater_key` for every updater key (whoever proposed it: the change
+   record is gone by then, and only the updater or the owner can post keys; D126), + critical alert. **The only
+   automatic pause.** An updater key re-added while such a key is still active is deleted again at the next run. A kid Google published and later
    dropped is the normal rotation tail: a warning after 3 h. On the **first run** (empty D1) the current JWKS is
    recorded as known and any active kid not in it raises a critical alert, without pausing; such kids are kept as
    `baseline` so later runs never pause on that history. (An active kid that Google *does* publish but with other

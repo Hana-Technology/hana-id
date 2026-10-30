@@ -1533,6 +1533,21 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 - Still open: a rehearsal on sandbox-dev (no wrangler or chain actions were run for this), and a backup kept beyond
   30 days and outside Cloudflare (an export of the apps tables, or batch C's Neon ledger, D73).
 
+### D142. Loopback origins only in `sandbox-*` environments
+- Date 2026-10-30 · Status: confirmed by the user · Source: batch C1 open question 1 (`docs/batch-c-build-plan.md`)
+- Decision: `localhost` / loopback origins are accepted only in dev environments (`sandbox-*`, `local*`), both when an
+  origin is registered and at the login gate; partners develop locally against Hana's sandbox environment. This
+  replaces the spec's "any test scope in any non-production network" rule for origin input.
+- Why: one rule enforced the same way in both places; otherwise a partner could register an origin that silently
+  fails at login.
+
+### D143. Production's usage ledger gets its own Neon project before mainnet
+- Date 2026-10-30 · Status: confirmed by the user · Source: batch C1 open question 2
+- Decision: the current Neon project (`hana-id`, branches `production` and `sandbox-dev`) serves dev and test; before
+  mainnet a separate Neon project (AWS Sydney) holds the production ledger, with its own credentials, restore window
+  and access list. The `production` branch of the current project is not used for mainnet.
+- Why: a sandbox credential leak or a project-level mistake can never reach production billing data.
+
 ## Superseded or amended
 
 | Was | Now | Source |

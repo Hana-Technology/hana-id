@@ -37,6 +37,8 @@ import {
   type VaultBroadcast,
   type WalletProofs,
   ApiError,
+  sha256,
+  walletProofMessage,
   type Bytes,
   badCounterExpected,
   bytesEqual,
@@ -1074,7 +1076,7 @@ export class Vault {
     const addresses = this.addresses();
     if (!addresses) return;
     if (isSignMethod(r.method)) {
-      approvalSubject(r as SignRequest, addresses, { rawSign: 'approval', testApp: this.testApp });
+      approvalSubject(r as SignRequest, addresses, { rawSign: 'approval', testApp: this.testApp, reservedEvmDigests: this.reservedEvmDigests(addresses.evm) });
       return;
     }
     if (r.method === 'hana_export' && this.exportJob) throw new VaultError('busy', 'An export is already running');
@@ -1527,6 +1529,12 @@ export class Vault {
 
   // ---- partner identity token (docs/identity-token-spec.md) ----
 
+  /** The digest the session's EVM wallet proof signs: a raw EVM request for it is refused (signing.ts, D179). */
+  private reservedEvmDigests(evm: string): Uint8Array[] {
+    const pk = (this.session ?? this.dormant)?.sessionPk;
+    return pk ? [sha256(walletProofMessage({ signer: this.env.signer, appId: this.config.appId, sessionPublicKey: pk }, 'evm', evm))] : [];
+  }
+
   /** The wallet proofs for a session, or null if they can't be made (no identity token then; logged as a code). */
   private walletProofsFor(prk: Uint8Array, sessionPk: Uint8Array, addresses: { stellar: string; evm: string }): WalletProofs | null {
     try {
@@ -1687,7 +1695,7 @@ export class Vault {
     // A test app's raw request is refused outright (approvalSubject), with no API read.
     const rawSign: RawSign = request.method === 'hana_signRaw' && !this.testApp ? await this.freshRawSign() : 'off';
     if (this.live() !== s) throw disconnected();
-    const subject = approvalSubject(request, s.addresses, { rawSign, testApp: this.testApp });
+    const subject = approvalSubject(request, s.addresses, { rawSign, testApp: this.testApp, reservedEvmDigests: this.reservedEvmDigests(s.addresses.evm) });
     const policy = NEVER_AUTO_APPROVED_KINDS.has(subject.kind) ? null : await this.freshPolicy();
     if (this.live() !== s) throw disconnected();
     let note: { label: string; active: boolean; reason?: string } | undefined;

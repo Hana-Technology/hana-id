@@ -1,7 +1,8 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-10-30 (branch `feat/identity-token-1`: the partner identity token in Status,
+Last verified against code: 2026-10-30 (branch `feat/identity-token-2`: the identity mint's checks and limits, share
+tombstones, the offline standby key, D176–D179; branch `feat/identity-token-1`: the partner identity token in Status,
 Components, the "Partner identity token" flow, Data stores and the Glossary; `feat/email-login-1-r2`: contract v3
 email login status and path identity; `feat/playbook-gaps`: the watchdog's relayer funds reads and D1 meta;
 `feat/recovery-playbooks`: the playbooks package in Components; before it `perf/login-latency-impl`, 2026-10-29:
@@ -236,7 +237,8 @@ never a derive.
 
 `/v1/vault/touch` follows the same settings rules and slides `idle_until` without returning `K_s` (the vault sends it
 at most every 10 min after an approved signature, `TOUCH_EVERY_MS`). The hourly cron deletes shares past
-`abs_expires_at` or revoked and re-wraps up to 2000 rows from `VAULT_KEK_PREVIOUS` (`apps/api/src/vault/cron.ts:63`).
+`abs_expires_at` or revoked once they are older than 24 h (dead shares are the identity token's tombstones, D178) and
+re-wraps up to 2000 rows from `VAULT_KEK_PREVIOUS` (`apps/api/src/vault/cron.ts:63`).
 
 In-memory idle limit (D55, `packages/web/src/vault/vault.ts` `goIdle`/`wake`): every request that uses the key
 (signing, export, revoke-other-devices, an auto-approve consent request) restarts a timer of the app's `idle_ttl_ms`;
@@ -330,9 +332,10 @@ and a "View on {explorer}" link when the chain's explorer is known. The list and
    (`"hana-id-identity-v1:" ‖ signer ‖ appId ‖ sessionPk ‖ issuedAtMs ‖ nonce ‖ sha256("identity-token" ‖ parentOrigin ‖
    walletProofsHash ‖ sha256(""))`, with its server-corrected clock) and calls `POST /v1/identity/token`. In an app
    that keeps logins it first waits for the login's background persist (D79): the API needs the share.
-4. **The API** checks the proof (±60 s, signature, single use), that the contract isn't paused, the share (in a
-   `session` app: live, read-only, nothing moves), the on-chain session (live, in the app's scope), both wallet proofs,
-   its limits; computes `sub` (HMAC of the path's root identity with `IDENTITY_SUB_KEY`, per scope, `key_index`
+4. **The API** checks the proof (±60 s, signature), that the contract isn't paused, the share (never another app's;
+   in a `session` app: live, read-only, nothing moves), the on-chain session (live, in the app's scope), both wallet
+   proofs, then single use and its limits (per session, per account, per app and per scope before a global breaker,
+   D176); computes `sub` (HMAC of the path's root identity with `IDENTITY_SUB_KEY`, per scope, `key_index`
    dropped) and `sid` (HMAC of app and session key); sets `exp = min(iat + 1 h, session end)`; signs ES256 with the
    active key and checks the signature with the published key before answering.
 5. The vault caches the token, announces it on `hana-vault:<appId>` (`{t: 'identity', sessionPk, token, iatMs,
@@ -430,9 +433,9 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
 | Per-isolate memory (API) | JWKS (≤ max-age, stale ≤ 6 h on fetch failure), config / scope / client views (≤ 60 s; "no scope" ≤ 10 s), sessions (≤ 10 s), parsed KEKs, counter holds | — |
 | Browser, `vaultOrigin` | IndexedDB `hana-vault` records (partitioned by top-level site; format 2 adds the identity wallet proofs); memory: session key, PRK, consent and counters, the current identity token | S, `a` (memory only, dropped), plaintext PRK on disk, an identity token on disk |
 | Browser, `authOrigin` | `sessionStorage` `hana.login.<relayId>` = `{v, createdAt, relayKey}` (≤ 10 min, single use) | Tokens |
-| `.secrets/<env>/` (operator machine, gitignored, 0700/0600) | `relayer-keys.json`, `owner-relayer-keys.json`, `keys-updater.json` (`scripts/lib/secrets.ts:66`), `vault-kek` (+ `vault-kek.previous` during a rotation; `scripts/lib/vault-kek.ts`), `identity-signing-key.json`, `identity-signing-key-standby.json`, `identity-sub-key` (`scripts/lib/identity-key.ts`) | — |
+| `.secrets/<env>/` (operator machine, gitignored, 0700/0600) | `relayer-keys.json`, `owner-relayer-keys.json`, `keys-updater.json` (`scripts/lib/secrets.ts:66`), `vault-kek` (+ `vault-kek.previous` during a rotation; `scripts/lib/vault-kek.ts`), `identity-signing-key.json` (active), `identity-signing-key-standby.json` (published, never uploaded; keep it offline), `-next.json` / `-previous.json` during a rotation, `identity-slots.json`, `identity-sub-key` (`scripts/lib/identity-key.ts`, D177) | — |
 | `~/.near-credentials/testnet/` (operator machine) | Full-access keys of the owner, signer and relayer accounts (`scripts/lib/keys.ts`) | — |
-| Worker secrets | `RELAYER_KEYS`, `OWNER_RELAYER_KEYS`, `KEYS_UPDATER_KEY`, `VAULT_KEK`, `VAULT_KEK_PREVIOUS`, `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`, `IDENTITY_SUB_KEY` | — |
+| Worker secrets | `RELAYER_KEYS`, `OWNER_RELAYER_KEYS`, `KEYS_UPDATER_KEY`, `VAULT_KEK`, `VAULT_KEK_PREVIOUS`, `IDENTITY_SIGNING_KEY` / `IDENTITY_SIGNING_KEY_STANDBY` (two slots: the active identity key, and during a switch the incoming one), `IDENTITY_SUB_KEY` | — |
 | Watchdog D1 (its own Cloudflare account) | `meta` (last chain snapshot, failure counters, heartbeat, digest, run lock, the last relayer funds reading), `seen_kids` (kid, `n`, `e`, first/last seen; `baseline` kids from the first run), `absences`, `runs` (30 days), `actions` (method, args, tx hash), `alerts` (severity, details, acks), `deliveries` | Secrets, tokens |
 | Watchdog Worker secrets | `WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, `RESEND_API_KEY`, `SLACK_WEBHOOK_URL`, the paging app's credentials, `HEARTBEAT_URL` (from `.secrets/<env>/watchdog-secrets.json`) | — |
 | `apps/api/.dev.vars` (local, gitignored, 0600) | Relayer and updater keys and the identity token's secrets for `wrangler dev` (`gen-wrangler --dev-vars`) | — |

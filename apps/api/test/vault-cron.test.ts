@@ -2,7 +2,7 @@ import { createExecutionContext, createScheduledController, waitOnExecutionConte
 import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index.ts';
-import { pruneShares, rewrapShares, vaultMaintenance } from '../src/vault/cron.ts';
+import { SHARE_TOMBSTONE_MS, pruneShares, rewrapShares, vaultMaintenance } from '../src/vault/cron.ts';
 import { clearKekCache, loadKeks, parseKek, unwrapShareKey, wrapShareKey } from '../src/vault/kek.ts';
 import { NearMock } from './near-mock.ts';
 import { act, createShare, newKek, setShare, storedShare, vaultSetup } from './vault-helpers.ts';
@@ -43,15 +43,21 @@ describe('KEK envelope', () => {
 });
 
 describe('vault cron', () => {
-  it('runs from the scheduled trigger: prunes revoked and absolutely expired shares, keeps live and idle-expired ones', async () => {
+  it('runs from the scheduled trigger: prunes revoked and absolutely expired shares once past the tombstone time, keeps live, idle-expired and young dead ones', async () => {
     const { app, near } = await vaultSetup();
     const live = await createShare(app, near);
     const revoked = await createShare(app, near);
     const expired = await createShare(app, near);
     const idle = await createShare(app, near);
-    await setShare(revoked.shareId, { revoked_at: Date.now() });
-    await setShare(expired.shareId, { abs_expires_at: Date.now() - 1 });
+    const youngRevoked = await createShare(app, near);
+    const youngExpired = await createShare(app, near);
+    const old = Date.now() - SHARE_TOMBSTONE_MS - 1000;
+    await setShare(revoked.shareId, { revoked_at: Date.now(), created_at: old });
+    await setShare(expired.shareId, { abs_expires_at: Date.now() - 1, created_at: old });
     await setShare(idle.shareId, { idle_until: Date.now() - 1 });
+    // Dead, but younger than the longest on-chain session: kept as tombstones (D178).
+    await setShare(youngRevoked.shareId, { revoked_at: Date.now() });
+    await setShare(youngExpired.shareId, { abs_expires_at: Date.now() - 1 });
     vi.restoreAllMocks();
     // The JWKS sync runs alongside (and needs its own chain answers).
     const jwks = new NearMock();
@@ -64,7 +70,12 @@ describe('vault cron', () => {
     expect(await storedShare(idle.shareId)).not.toBeNull();
     expect(await storedShare(revoked.shareId)).toBeNull();
     expect(await storedShare(expired.shareId)).toBeNull();
+    expect(await storedShare(youngRevoked.shareId)).not.toBeNull();
+    expect(await storedShare(youngExpired.shareId)).not.toBeNull();
     expect(await pruneShares(env.DB, Date.now())).toBe(0);
+    // Once past the tombstone time they go too.
+    expect(await pruneShares(env.DB, Date.now() + SHARE_TOMBSTONE_MS + 1000)).toBeGreaterThanOrEqual(2);
+    expect(await storedShare(youngRevoked.shareId)).toBeNull();
   });
 
   it('runs only in the first quarter of a UTC hour; the other 15-minute runs only sync the JWKS', async () => {
@@ -135,7 +146,7 @@ describe('vault cron', () => {
   it('without VAULT_KEK it still prunes, and warns', async () => {
     const { app, near } = await vaultSetup();
     const revoked = await createShare(app, near);
-    await setShare(revoked.shareId, { revoked_at: Date.now() });
+    await setShare(revoked.shareId, { revoked_at: Date.now(), created_at: Date.now() - SHARE_TOMBSTONE_MS - 1000 });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const result = await vaultMaintenance({ ...env, VAULT_KEK: undefined });
     expect(result.pruned).toBeGreaterThanOrEqual(1);

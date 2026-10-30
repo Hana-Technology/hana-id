@@ -75,11 +75,18 @@ export function identityTokenRules(m: { network: string; apiUrl: string }, t: Id
 }
 
 /**
- * The identity token's secret files in `.secrets/<env>/` (0600, written by scripts/identity-key.ts, read by
- * `gen --dev-vars`). The signing keys are P-256 private JWKs (JSON); the sub key is base64 of 32 bytes.
+ * The identity token's files in `.secrets/<env>/` (0600, written by scripts/identity-key.ts; D177). The signing keys
+ * are P-256 private JWKs (JSON) by role: `signingKey` signs now (a Worker secret), `standbyKey` is published in the
+ * JWKS but kept off the Worker (offline, uploaded only by a switch), `nextKey` is a rotation's incoming key (published,
+ * not uploaded), `previousKey` the key a switch replaced (until `retire`). `slots` records which Worker secret slot
+ * (`IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`) holds which kid (public data). The sub key is base64 of 32
+ * bytes.
  */
 export const IDENTITY_SECRET_FILES = {
   signingKey: 'identity-signing-key.json',
   standbyKey: 'identity-signing-key-standby.json',
+  nextKey: 'identity-signing-key-next.json',
+  previousKey: 'identity-signing-key-previous.json',
+  slots: 'identity-slots.json',
   subKey: 'identity-sub-key',
 } as const;

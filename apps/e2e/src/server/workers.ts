@@ -99,7 +99,13 @@ export class MemoryNamespace<T extends object> {
  */
 export const allowAllLimiter = {
   idFromName: (name: string): string => name,
-  get: (_id: string) => ({ hit: async () => ({ ok: true as const }), reserve: async () => true, release: async () => undefined }),
+  get: (_id: string) => ({
+    hit: async () => ({ ok: true as const }),
+    hitSliding: async () => ({ ok: true as const }),
+    unhitSliding: async () => undefined,
+    reserve: async () => true,
+    release: async () => undefined,
+  }),
 };
 
 /** A Rate Limiting binding (the vault's VAULT_IP_LIMIT, VAULT_SHARE_LIMIT) that always allows, for the same reason. */

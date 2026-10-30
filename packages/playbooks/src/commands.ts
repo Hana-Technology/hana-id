@@ -30,6 +30,13 @@ export const postGoogleKeysDry = `${SCRIPTS} post-google-keys <env> --dry-run`;
 export const postGoogleKeys = `${SCRIPTS} post-google-keys <env>`;
 export const postGoogleKeysExecute = `${SCRIPTS} post-google-keys <env> --execute`;
 export const vaultKekRotate = `${SCRIPTS} vault-kek <env> rotate --yes`;
+/** The identity token's signing keys (`docs/operations.md` "Identity token keys", D177). */
+export const identityKeyShow = `${SCRIPTS} identity-key <env> show`;
+export const identityKeyNext = `${SCRIPTS} identity-key <env> next --yes`;
+export const identityKeySwitchStandby = `${SCRIPTS} identity-key <env> switch --to standby --yes`;
+export const identityKeySwitchNext = `${SCRIPTS} identity-key <env> switch --to next --yes`;
+export const identityKeyRetirePrevious = `${SCRIPTS} identity-key <env> retire --key previous --yes`;
+export const identityKeyRetireStandby = `${SCRIPTS} identity-key <env> retire --key standby --yes`;
 export const vaultKekPut = `${SCRIPTS} vault-kek <env> put --yes`;
 export const appList = `${SCRIPTS} admin <env> app:list --remote`;
 export const appSettings = `${SCRIPTS} admin <env> app:settings <app id | publishable key> --remote`;

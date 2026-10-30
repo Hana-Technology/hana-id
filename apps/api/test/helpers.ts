@@ -264,3 +264,24 @@ export function chain(clients: Record<string, string> = {}, opts: { shared?: str
   near.install();
   return near;
 }
+
+/**
+ * For tests of fixed per-minute windows (RateLimiter objects): shifts this isolate's clock (the Worker and its objects
+ * share it with the test) so the test starts a second into a minute, with time still running, so a run never straddles
+ * a window boundary. Undone by vi.restoreAllMocks().
+ */
+export async function startOfMinuteClock(): Promise<void> {
+  const { vi } = await import('vitest');
+  const real = Date.now.bind(Date);
+  const offset = (real() % 60_000) - 1000;
+  vi.spyOn(Date, 'now').mockImplementation(() => real() - offset);
+}
+
+/**
+ * For tests of Cloudflare Rate Limiting bindings (their own clock, outside this isolate): waits, if needed, until at
+ * least `headroomMs` remain in the current minute, so the counted requests fall into one window.
+ */
+export async function minuteHeadroom(headroomMs = 8000): Promise<void> {
+  const left = 60_000 - (Date.now() % 60_000);
+  if (left < headroomMs) await new Promise((r) => setTimeout(r, left + 250));
+}

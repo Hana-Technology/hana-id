@@ -16,9 +16,20 @@ export interface VaultMaintenance {
   unknownKek: number;
 }
 
-/** Deletes shares past their absolute expiry or revoked. */
+/** The contract's longest session (`MAX_SESSION_MS`, sessions.rs): no session outlives its share row by more. */
+export const SHARE_TOMBSTONE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Deletes shares that are revoked or past their absolute expiry, once they are older than SHARE_TOMBSTONE_MS (D178).
+ * Until then the row is a tombstone: the session key's on-chain session may still be live, and the identity token's
+ * mint refuses a session key whose share is dead or belongs to another app (identity/token.ts), which it can only do
+ * while the row exists.
+ */
 export async function pruneShares(db: D1Database, now: number): Promise<number> {
-  const res = await db.prepare('DELETE FROM vault_shares WHERE abs_expires_at < ?1 OR revoked_at IS NOT NULL').bind(now).run();
+  const res = await db
+    .prepare('DELETE FROM vault_shares WHERE (abs_expires_at < ?1 OR revoked_at IS NOT NULL) AND created_at < ?2')
+    .bind(now, now - SHARE_TOMBSTONE_MS)
+    .run();
   return res.meta.changes;
 }
 

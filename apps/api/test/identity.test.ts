@@ -12,8 +12,8 @@ import { JWKS_MAX_AGE_S } from '../src/identity/public.ts';
 import { IdentitySignerError, WorkerSecretSigner, clearIdentitySignerCache, identityConfig, publicIdentityConfig, verifyEs256, workerSecretSigner } from '../src/identity/signer.ts';
 import { toMintRequest } from '../src/identity/token.ts';
 import { clearViewCaches } from '../src/views.ts';
-import { GOOGLE_ISS, ORIGIN, appHeaders, call, google, newSessionKey, seedApp, sessionBody, uid } from './helpers.ts';
-import { mint, mintBody, publishedKids, randomPrk, verifyToken } from './identity-helpers.ts';
+import { GOOGLE_ISS, ORIGIN, appHeaders, call, google, newSessionKey, seedApp, sessionBody, uid, minuteHeadroom } from './helpers.ts';
+import { limiterKeys, mint, mintBody, publishedKids, randomPrk, setSlidingBucket, verifyToken } from './identity-helpers.ts';
 import { hanaHeaders, loginBody } from './login-helpers.ts';
 import { HOUR, VAULT, act, createShare, setSettings, setShare, spentSession, storedShare, vaultHeaders, vaultSetup } from './vault-helpers.ts';
 
@@ -254,12 +254,14 @@ describe('POST /v1/identity/token: refusals, in order', () => {
   });
 
   it('429 rate_limited after IDENTITY_PER_SESSION_MINUTE mints of one session key in a minute', async () => {
+    // A Rate Limiting binding (its own clock): all the mints in one minute window.
+    await minuteHeadroom();
     const { app, spk } = await sessionSetup();
     for (let i = 0; i < IDENTITY_PER_SESSION_MINUTE; i++) expect((await mint(app, spk)).status).toBe(200);
     const res = await mint(app, spk);
     await expectCode(res, 429, 'rate_limited');
     expect(res.headers.get('retry-after')).toBe('60');
-  });
+  }, 20_000);
 
   it('503 paused while the contract is paused', async () => {
     const { app, near, spk } = await sessionSetup();
@@ -370,21 +372,21 @@ describe('POST /v1/identity/token: refusals, in order', () => {
     expect((await expectCode(await mint(app, spk, { proofApp: 'app_other' }), 400, 'bad_wallet_proof')).chain).toBe('stellar');
   });
 
-  it('503 identity_busy once the global hourly ceiling is reached (critical log)', async () => {
+  it('503 identity_busy once the global hourly ceiling is reached (critical log), and it clears as the window slides', async () => {
     const errors: string[] = [];
     vi.spyOn(console, 'error').mockImplementation((l: unknown) => void errors.push(String(l)));
     const { app, spk } = await sessionSetup();
-    const now = Date.now();
-    // The ceiling is the object's window: fill it to the overridden maximum.
-    const max = 3 + Math.floor(Math.random() * 3);
-    for (let i = 0; i < max; i++) await limiter(env, IDENTITY_GLOBAL_LIMITER).hit([{ name: 'hour', windowMs: HOUR, max: 1_000_000 }], now);
-    const ceiling = { IDENTITY_GLOBAL_HOURLY_MAX: String(max) };
-    const res = await mint(app, spk, { env: ceiling });
-    await expectCode(res, 503, 'identity_busy');
-    expect(Number(res.headers.get('retry-after'))).toBeGreaterThan(0);
-    expect(errors.some((l) => l.includes('"identity_ceiling"'))).toBe(true);
-    // Raised (as the default is), the same request shape passes.
-    expect((await mint(app, spk, { env: { IDENTITY_GLOBAL_HOURLY_MAX: String(max + 1_000_000) } })).status).toBe(200);
+    await setSlidingBucket(IDENTITY_GLOBAL_LIMITER, 'hour', HOUR, 500);
+    try {
+      const res = await mint(app, spk, { env: { IDENTITY_GLOBAL_HOURLY_MAX: '400' } });
+      await expectCode(res, 503, 'identity_busy');
+      expect(Number(res.headers.get('retry-after'))).toBeGreaterThan(0);
+      expect(errors.some((l) => l.includes('"identity_ceiling"'))).toBe(true);
+      // Raised (as the default is), the same request shape passes.
+      expect((await mint(app, spk, { env: { IDENTITY_GLOBAL_HOURLY_MAX: '1000000' } })).status).toBe(200);
+    } finally {
+      await setSlidingBucket(IDENTITY_GLOBAL_LIMITER, 'hour', HOUR, null);
+    }
   });
 
   it('503 identity_signer_unavailable when no signing key has the active kid, or it is unusable', async () => {

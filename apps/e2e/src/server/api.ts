@@ -136,6 +136,7 @@ export class MockApi {
       VAULT_IP_LIMIT: allowAllRateLimit,
       VAULT_SHARE_LIMIT: allowAllRateLimit,
       IDENTITY_SESSION_LIMIT: allowAllRateLimit,
+      IDENTITY_ROOT_LIMIT: allowAllRateLimit,
       ...identityBindings(serves.apiUrl),
     };
     env.LOGIN_RELAY = new MemoryNamespace(api.LoginRelay, () => env);

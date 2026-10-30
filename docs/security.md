@@ -2,8 +2,8 @@
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
 known open issues. Last verified against code: 2026-10-30 for the partner identity token (branch
-`feat/identity-token-1`: the partner-backend party, its compromise rows, the three identity secrets, the identity
-invariants and open issue (l)), for the relayer pool rows (branch `feat/playbook-gaps`: the watchdog's relayer funds
+`feat/identity-token-2`: the review fixes D176–D179 in the identity rows, invariants and open issue (l); branch
+`feat/identity-token-1`: the partner-backend party, its compromise rows, the three identity secrets), for the relayer pool rows (branch `feat/playbook-gaps`: the watchdog's relayer funds
 monitoring, D150) and for the `KEYS_UPDATER_KEY` and owner rows and open issue
 (e) (governance deployed on sandbox-dev, D126); otherwise 2026-10-29 (branch `perf/login-latency-impl`; the login popup, the
 background persist and the vault gate were re-checked, the rest as of 2026-10-28, commit 58edee9; the approval popup
@@ -58,10 +58,10 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | A partner's Google client (own-client mode) | Tokens with chosen nonces for that scope → that scope's users' keys | Other scopes |
 | Hana's shared Google client or its Cloud project | Break isolation of every `allow_shared` scope | Own-client-only scopes |
 | Leaked in-memory PRK | Every v1 chain and account under that `key_index` | Other `key_index` values; rotation is the only remedy |
-| `IDENTITY_SIGNING_KEY` (or the standby) | Forge identity tokens for any user of any app: be anyone at every partner that uses them as login evidence, while partners trust the key | No key, no signature, nothing at Hana or on chain (no Hana API accepts the token). Testnet only: mainnet signs with a non-exportable AWS KMS key (build step 7). Recovery: switch to the standby (manifest `activeKid`, deploy), remove the key from the JWKS (partners reject it within 10 min), tell partners (`docs/operations.md` "Identity token keys") |
+| An identity signing key (the active one on the Worker, or a published standby or next key from `.secrets/`) | Forge identity tokens for any user of any app: be anyone at every partner that uses them as login evidence, while partners trust the key | No key, no signature, nothing at Hana or on chain (no Hana API accepts the token). The standby is never on the Worker (D177), so a Worker or Cloudflare leak exposes the active key only. Testnet only: mainnet signs with a non-exportable AWS KMS key (build step 7). Recovery (playbook `identity-signing-key-compromised`): switch to a key the incident didn't touch (the standby, or a fresh one when both may be exposed), unpublish the exposed ones (partners reject them within 10 min), tell partners |
 | `IDENTITY_SUB_KEY` | Map partners' `sub`s back to on-chain paths, so to the Google `sub` (privacy) | Funds and keys unaffected. Never rotated: a new key changes every user's `sub` at every partner (a `u2_` scheme with a 90-day `legacy_sub` window if it ever leaks) |
 | One identity token (a partner's log, transit) | Act as that user at that partner's backend until `exp` (≤ 1 h) | That partner only (`aud`); never at Hana or on chain |
-| A session key (with its vault record) | Also: mint identity tokens while the session is live | The same session's limits; a logout or revoke stops new tokens (the share check), the 1 h `exp` bounds the old ones |
+| A session key (with its vault record) | Also: mint identity tokens while the session is live | The same session's limits, its app only; a logout or revoke stops new tokens in every app of the scope (the share check, D178: a share is kept 24 h after it dies), the 1 h `exp` bounds the old ones |
 
 ## Key and secret inventory
 
@@ -89,7 +89,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Google RSA public keys | JWKS | On chain (issuers); API isolate cache (≤ 6 h stale on fetch failure) | public | v1 contract: hourly cron sync. Governance contract: the 15-min cron proposes and executes delayed changes, the watchdog checks them against its own JWKS copy |
 | Console owner-action tokens | RS256 JWT (console audience) | Transient; `sha256` marker in a `RateLimiter` until `exp` | partner owner | Single use (nonce bound to `action_nonce`) |
 | Publishable keys | `pk_test_` / `pk_live_` + base58 | D1, partner pages | public | Not secrets |
-| `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY` | P-256 private JWKs (ES256), testnet and `local*` only | API Worker secrets; `.secrets/<env>/identity-signing-key.json`, `identity-signing-key-standby.json`, 0600, the only copies | Hana | Generated and set by `scripts/identity-key.ts init` (wrangler stdin, never printed, files never overwritten); public halves in the manifest's `identityToken.publicKeys` (the JWKS). `activeKid` picks the signer; the standby is the compromise switch. Mainnet: AWS KMS `ECC_NIST_P256`, non-exportable, its own IAM user (build step 7, D127) |
+| Identity signing keys (Worker slots `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`) | P-256 private JWKs (ES256), testnet and `local*` only | The active key: a Worker secret and `.secrets/<env>/identity-signing-key.json`. The standby: `identity-signing-key-standby.json` only, kept offline, never uploaded until a switch (D177). During a rotation a `next` and a `previous` key. 0600, the only copies | Hana | `scripts/identity-key.ts`: `init`, `next`, `switch --to next|standby`, `retire --key previous|standby` (wrangler stdin, never printed, files never overwritten); public halves in the manifest's `identityToken.publicKeys` (the JWKS). `activeKid` picks the signer. Mainnet: AWS KMS `ECC_NIST_P256`, non-exportable, its own IAM user (build step 7, D127) |
 | `IDENTITY_SUB_KEY` | 32 random bytes (base64) | API Worker secret; `.secrets/<env>/identity-sub-key` (0600), with an offline backup alongside the council backup (D81) | Hana | Never rotated (it fixes every user's `sub` at every partner); never logged |
 | Identity tokens | ES256 JWT, ≤ 1 h | Vault memory (and its per-app channel), the partner page, the partner backend | the user's session, the partner | Not stored by Hana: no per-token record, never logged; refused by every Hana API (`bad_token`) |
 | Cloudflare account / `wrangler login` | account credentials | operator's machine | the user | Deploys the Worker: a trust root |
@@ -270,14 +270,22 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   `apps/api/test/identity.test.ts`):
   - a token is minted only for a session live on chain (`get_session`, a refusal re-read fresh) and, in an app that
     keeps logins, whose share is live (judged as unlock judges it), in the app's scope, while the contract isn't
-    paused (an unreadable config refuses), with a fresh (±60 s), single-use (a marker per signature) session-key
-    signature over the identity message, which binds the signer, the app, the parent origin and the wallet proofs;
+    paused (an unreadable config refuses), with a fresh (±60 s), single-use session-key signature over the identity
+    message, which binds the signer, the app, the parent origin and the wallet proofs. The single-use marker is
+    `sha256(sessionPk ‖ issuedAtMs ‖ nonce)`, reserved only once the session is known live (D176);
+  - a session key whose share belongs to another app never mints, whatever this app's persistence, and dead shares stay
+    as tombstones for 24 h (the longest on-chain session), so a revocation in one app of a scope reaches all (D178);
+  - no tenant can use up what others share: per session key, per account root, per app (its own windows, never the
+    vault endpoints' quota) and per scope before a global breaker set ≥ 10 × any app's ceiling; the global soft line
+    only alerts (D176);
   - a mint writes nothing to the share: no counter moves, `idle_until` doesn't slide, and the vault doesn't count it as
     activity (D55, D112);
   - `exp ≤ iat + 3600` and never past the on-chain expiry, the share's idle limit or its absolute cap; less than 30 s
     left mints nothing;
   - every address in `wallets` is proven by a signature of its own key over a message bound to this session key and
-    app; the claim set is exactly the spec's (`buildIdentityClaims` throws on anything else);
+    app: the session's holder controls it (not proof that it is the Hana-derived wallet of that `sub`; D179). The vault
+    never raw-signs bytes starting `hana-id` or its own wallet-proof digest, so an approved raw signature can't serve
+    as a proof; the claim set is exactly the spec's (`buildIdentityClaims` throws on anything else);
   - `sub` depends only on (scope, root provider, root sub): never the login method, client, device or `key_index`, and
     never the Google `sub` in the clear;
   - the signature is checked against the published key for its `kid` before the token is answered; the JWKS comes
@@ -716,7 +724,8 @@ user's identity at every partner until the key is removed from the JWKS. Step 7 
 non-exportable AWS KMS key with its own IAM user, CloudTrail and a reconciliation against `identity_issuance_hourly`
 (`gen` and the schema already refuse a Worker-secret key outside testnet); step 8 adds the watchdog's JWKS pin check
 (an unpinned key in the JWKS is a critical alert) and the "identity key on chain" check. Until then partners must not
-use identity tokens for anything of value. Also accepted for now: in an app that keeps logins, a browser that can't
+use identity tokens for anything of value. The testnet standby is kept off the Worker, and `identity-key next / switch /
+retire` rotate or replace keys (D177; playbook `identity-signing-key-compromised`). Also accepted for now: in an app that keeps logins, a browser that can't
 store the session (no share) gets `identity_unavailable` (`data.reason: 'no_share'`): the share check is what makes a
 logout or a revocation stop new tokens, and a missing share can't be told from a revoked and pruned one.
 

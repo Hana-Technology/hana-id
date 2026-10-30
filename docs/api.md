@@ -1,6 +1,7 @@
 # API reference — every endpoint the `apps/api` Worker serves today
 
-Last verified against code: 2026-10-29 (branch `gov/api`: the governance batch's cron, `issuer_key_pending` /
+Last verified against code: 2026-10-30 (branch `feat/batch-c-1`: the batch C vars in "Configuration"); 2026-10-29
+(branch `gov/api`: the governance batch's cron, `issuer_key_pending` /
 `paused`, `GET /v1/governance`; branch `perf/login-latency-impl`: the vault endpoints' gate, the auth pages' CSP and
 the timings; the rest as of 2026-10-28, commit 58edee9).
 
@@ -680,6 +681,10 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 | `API_URL` | var | `apiUrl` | vault page `connect-src` |
 | `DO_LOCATION_HINT` | var | `cloudflare.durableObjectLocation` | only written when set |
 | `BLS_PRECHECK`, `REJECT_PII_ON_SESSIONS` | var | `gen` writes `"0"` | `"1"` turns each on |
+| `APP_CHANGE_DELAY_MS` | var | `appChangeDelayMs` | batch C guarded-change delay; not read yet (batch C3) |
+| `NETWORK` | var | `network` | batch C origin rules; not read yet (batch C3) |
+| `REFUSED_ORIGINS` | var | every Hana origin (`@hana-id/env` `hanaOwnOrigins`), JSON array | refused as app origins; not read yet (batch C3) |
+| `FILES_ORIGIN` | var, optional | `files.origin` | only with the dashboard blocks; `logoUrl` (batch C11) |
 | `GAS_<METHOD>_TGAS` | var, optional | not generated | per-method gas |
 | `RELAYER_KEYS` | secret | `.secrets/<env>/relayer-keys.json` | JSON array of `ed25519:` secret keys |
 | `OWNER_RELAYER_KEYS` | secret | `.secrets/<env>/owner-relayer-keys.json` | same format; absent → owner actions 503 |

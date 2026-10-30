@@ -32,6 +32,12 @@
 # The manifest schema: account names, origins and the rules for the pinned CKD key every bundle is built with.
 /packages/env/src/              @tzechuen @mj-hana
 
+# Batch C: the console's nonce and digest layouts, origin rules and RPC types; the usage ledger's roles, grants and
+# functions; the console database (sessions, invites, audit triggers).
+/packages/console-core/         @tzechuen @mj-hana
+/apps/api/migrations-usage/     @tzechuen @mj-hana
+/apps/console/migrations/       @tzechuen @mj-hana
+
 # The manifests themselves: account names, RPCs and the pinned CKD network key (`ckdNetworkKey`) every bundle trusts.
 /envs/                          @tzechuen @mj-hana
 

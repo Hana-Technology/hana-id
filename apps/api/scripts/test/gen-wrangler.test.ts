@@ -158,6 +158,9 @@ describe('wrangler.jsonc', () => {
       BLS_PRECHECK: '0',
       REJECT_PII_ON_SESSIONS: '0',
       ...(manifest.cloudflare.durableObjectLocation ? { DO_LOCATION_HINT: manifest.cloudflare.durableObjectLocation } : {}),
+      APP_CHANGE_DELAY_MS: String(manifest.appChangeDelayMs),
+      NETWORK: 'testnet',
+      REFUSED_ORIGINS: JSON.stringify([new URL(manifest.apiUrl).origin, manifest.vaultOrigin, manifest.authOrigin].sort()),
     });
     expect(config.d1_databases[0]).toMatchObject({ database_name: manifest.cloudflare.d1Name, database_id: LOCAL_D1_ID });
     expect(text).not.toMatch(/ed25519:/u);
@@ -221,6 +224,25 @@ describe('wrangler.jsonc', () => {
     const { vaultOrigin: _v, authOrigin: _a, ...bare } = manifest;
     expect(() => wranglerConfig(bare, LOCAL_D1_ID)).toThrow(/needs vaultOrigin and authOrigin/u);
     expect(() => wranglerConfig({ ...manifest, authOrigin: undefined }, LOCAL_D1_ID)).toThrow(/needs vaultOrigin and authOrigin/u);
+  });
+
+  it('passes batch C’s delay, network and refused origins; FILES_ORIGIN only with the dashboard blocks', () => {
+    const vars = (m: typeof manifest) => wranglerConfig(m, LOCAL_D1_ID).vars as Record<string, string>;
+    expect(vars({ ...manifest, appChangeDelayMs: 86_400_000 }).APP_CHANGE_DELAY_MS).toBe('86400000');
+    expect(vars(manifest)).not.toHaveProperty('FILES_ORIGIN');
+    const host = (w: string) => `https://${w}.tingtc.workers.dev`;
+    const full = manifestSchema.parse({
+      ...manifest,
+      console: { workerName: 'c', d1Name: 'c', origin: host('c'), authWorkerName: 'ca', authOrigin: host('ca') },
+      files: { workerName: 'f', origin: host('f'), logosBucket: 'logos', statementsBucket: 'statements', exportsBucket: 'exports' },
+      admin: { workerName: 'a', origin: host('a'), accessTeamDomain: 'hana.cloudflareaccess.com', accessAud: 'UNSET', staffEmails: ['s@example.com'] },
+      usage: { neonRegion: 'aws-ap-southeast-2', writerHyperdrive: 'uw', adminHyperdrive: 'ua' },
+      email: { from: 'no-reply@mail.example.com', securityAlias: 'security@example.com' },
+      ownerGrantDelayMs: 60_000,
+    });
+    expect(vars(full).FILES_ORIGIN).toBe(host('f'));
+    const refused = JSON.parse(vars(full).REFUSED_ORIGINS!) as string[];
+    expect(refused).toEqual([new URL(manifest.apiUrl).origin, manifest.vaultOrigin, manifest.authOrigin, host('c'), host('ca'), host('f'), host('a')].sort());
   });
 
   it('sets DO_LOCATION_HINT only when the manifest names a Durable Object location', () => {

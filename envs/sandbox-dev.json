@@ -29,6 +29,7 @@
   "vaultOrigin": "https://hana-id-vault-sandbox-dev.tingtc.workers.dev",
   "authOrigin": "https://hana-id-auth-sandbox-dev.tingtc.workers.dev",
   "changeDelayMs": 60000,
+  "appChangeDelayMs": 60000,
   "issuerKeyDelayMs": 120000,
   "governanceDelayMs": 60000,
   "googleClientIds": ["875896396522-g5q9419kksfvn7gdshlgae7t3buab12a.apps.googleusercontent.com"],

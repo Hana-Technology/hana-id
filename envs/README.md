@@ -31,6 +31,29 @@ Governance fields (`docs/governance-spec.md`, `docs/operations.md` "Governance")
 Values containing `UNSET` are placeholders: `deploy-contract` skips the step that needs them (with a warning) until
 they are filled in.
 
+Batch C fields (`docs/batch-c-spec.md` "Manifest", `packages/env/src/dashboard.ts`; plan: `docs/batch-c-build-plan.md`):
+
+- `appChangeDelayMs` (required, 60 000 … 7 days): how long a guarded change (an origin add, an auto-approve policy, a
+  raw-signing enable) waits after its notice. At least 24 h on a production network, where `changeDelayMs` must be no
+  shorter. sandbox-dev: 60 000 (its `changeDelayMs`). `gen` passes it to the API as `APP_CHANGE_DELAY_MS`; nothing
+  reads it until batch C3.
+- `console`, `files`, `admin`, `usage`, `email`, `ownerGrantDelayMs` (optional, all or none): the dashboard. Without
+  them the env runs the API only (sandbox-dev today, until its console, files and admin origins exist).
+  - `console`: `{workerName, d1Name, origin, authWorkerName, authOrigin}` (the partner console and its script-free
+    Google sign-in origin; the console client's only redirect URI is `authOrigin + "/callback"`).
+  - `files`: `{workerName, origin, logosBucket, statementsBucket, exportsBucket}` (logos origin and the R2 buckets).
+  - `admin`: `{workerName, origin, accessTeamDomain, accessAud, staffEmails}`: `accessTeamDomain` is
+    `<team>.cloudflareaccess.com`, `accessAud` the Access application's 64-hex AUD tag (or `UNSET`), `staffEmails`
+    the admin Worker's own lowercased allowlist behind the Access policy (D88).
+  - `usage`: `{neonRegion: "aws-ap-southeast-2", writerHyperdrive, adminHyperdrive}` (D73).
+  - `email`: `{from, securityAlias}`: `from` is `Name <address>` or an address on the sending subdomain (D87), with no
+    line break, quote or second address; `securityAlias` gets every blocking notice and direct alert.
+  - `ownerGrantDelayMs`: how long a new owner stays a viewer (D89); the bounds of `appChangeDelayMs`.
+  - Every dashboard origin is a Hana origin by the `vaultOrigin` rules, distinct from every other Hana origin (the
+    API's, `vaultOrigin`, `authOrigin`) and, outside dev envs, on a different site from `vaultOrigin` (D38). Worker,
+    D1, bucket and Hyperdrive names are distinct (the API's and the watchdog's included). `gen` passes the list of
+    all Hana origins to the API as `REFUSED_ORIGINS` (`hanaOwnOrigins`) and `files.origin` as `FILES_ORIGIN`.
+
 `cloudflare.durableObjectLocation` (optional): the region for the Durable Objects every login shares (relayer keys, the
 per-app and owner-action limiters), as a Cloudflare location hint (`apac`, `weur`, `enam`, …). Without it each object
 lives wherever its first request happened to arrive. Pick the region of most users (sandbox-dev: `apac`, next to its

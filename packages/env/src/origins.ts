@@ -31,7 +31,7 @@ export function isLoopbackHost(hostname: string): boolean {
  * trailing dot is never one: the browser would treat it as the local machine, as an IP, or as a site of its own, so
  * neither the loopback rule nor the same-site rule would hold.
  */
-function dnsNameProblem(hostname: string): string | null {
+export function dnsNameProblem(hostname: string): string | null {
   if (hostname.endsWith('.')) return 'must be a DNS name without a trailing dot';
   const parsed = parse(hostname, { allowPrivateDomains: true });
   if (parsed.isIp) return 'must be a DNS name, not an IP address';

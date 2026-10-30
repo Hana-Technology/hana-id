@@ -16,7 +16,7 @@ import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Manifest, loadEnv, repoRoot } from '@hana-id/env';
+import { type Manifest, hanaOwnOrigins, loadEnv, repoRoot } from '@hana-id/env';
 import { VAULT_RATE_LIMITS } from '../src/vault/limits.ts';
 import { writePagesWranglerConfigs } from './pages-wrangler.ts';
 
@@ -64,6 +64,13 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
       API_URL: m.apiUrl,
       ...FLAG_DEFAULTS,
       ...(m.cloudflare.durableObjectLocation ? { DO_LOCATION_HINT: m.cloudflare.durableObjectLocation } : {}),
+      // Batch C (docs/batch-c-spec.md "Bindings"): the guarded-change delay, the network for the production origin
+      // rules, and every Hana origin, which no app may list as its own. Read from batch C3 on.
+      APP_CHANGE_DELAY_MS: String(m.appChangeDelayMs),
+      NETWORK: m.network,
+      REFUSED_ORIGINS: JSON.stringify(hanaOwnOrigins(m)),
+      // The logo origin for `GET /v1/app`'s logoUrl (batch C11); only with the dashboard blocks.
+      ...(m.files ? { FILES_ORIGIN: m.files.origin } : {}),
     },
     d1_databases: [{ binding: 'DB', database_name: m.cloudflare.d1Name, database_id: d1Id, migrations_dir: 'migrations' }],
     durable_objects: {
@@ -105,6 +112,7 @@ export const TEST_MANIFEST: Manifest = {
   vaultOrigin: 'https://vault.test',
   authOrigin: 'https://auth.test',
   changeDelayMs: 60_000,
+  appChangeDelayMs: 60_000,
   googleClientIds: [],
   sharedGoogleClientIds: [],
   consoleAudiences: [],

@@ -1,0 +1,22 @@
+{
+  "name": "@hana-id/console",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The partner console (docs/batch-c-spec.md). Batch C1: only its database migrations (CONSOLE_DB) and their tests; the Worker comes in C7 (docs/batch-c-build-plan.md).",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hana-id/console-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.4",
+    "@cloudflare/workers-types": "5.20261016.1",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "4.1.12",
+    "wrangler": "4.151.1"
+  }
+}

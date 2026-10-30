@@ -1,9 +1,9 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-10-30 (branch `feat/recovery-playbooks`: the watchdog alerts runbook now points at
-`docs/playbooks.md`, `owner:call` takes `set_sessions_valid_from_ms`; before it `docs/watchdog-hosting`: watchdog
-hosting, D125; `gov/sandbox-handover`: sandbox-dev's owner is now its council DAO, council-setup's DAO check, the
-upgrade drill).
+Last verified against code: 2026-10-30 (branch `feat/batch-c-1`: "Usage ledger (Neon, batch C)", the batch C
+manifest fields; `feat/recovery-playbooks`: the watchdog alerts runbook now points at `docs/playbooks.md`,
+`owner:call` takes `set_sessions_valid_from_ms`; `docs/watchdog-hosting`: watchdog hosting, D125;
+`gov/sandbox-handover`: sandbox-dev's owner is now its council DAO, council-setup's DAO check, the upgrade drill).
 
 Commands and flags are from `scripts/`, `apps/api/scripts/gen-wrangler.ts`, `apps/api/scripts/pages-wrangler.ts`,
 `apps/demo/scripts/gen-wrangler.ts`, the `package.json` scripts and their tests. Endpoints:
@@ -78,6 +78,8 @@ Every name comes from `envs/<env>.json` (schema: `packages/env/src/schema.ts`; n
 | `sharedGoogleClientIds` | Hana's shared login clients (≤ 5) | never also in `googleClientIds` / `consoleAudiences` |
 | `consoleAudiences` | `[provider, aud]` accepted for OIDC owner actions | set before the first deploy |
 | `changeDelayMs` | contract timelock (0..7 days) | sandbox-dev: 60 s |
+| `appChangeDelayMs` | batch C guarded-change delay (60 s..7 days; ≥ 24 h and ≤ `changeDelayMs` on a production network) | sandbox-dev: 60 s; read by the API and CLI from batch C3 |
+| `console`, `files`, `admin`, `usage`, `email`, `ownerGrantDelayMs` | batch C dashboard: console, files and admin Workers and origins, R2 buckets, Access, Hyperdrive names, sender (`envs/README.md`) | all or none; sandbox-dev has none yet (`docs/batch-c-build-plan.md` "Setup steps") |
 | `cloudflare.workerName`, `cloudflare.d1Name` | Worker and D1 names | |
 | `cloudflare.durableObjectLocation` | optional DO region hint (`apac`, `weur`, …) | changing it creates new objects |
 
@@ -428,6 +430,31 @@ read these sources, all read-only:
   run ([below](#governance-status-get-v1governance)); not independent of Hana's main Cloudflare account.
 - **Watchdog**: its own status (heartbeat, verdicts, actions, alerts, acks) from its `GET /status`, `/alerts`,
   `/actions` and `POST /alerts/:id/ack` (`apps/watchdog/README.md` "Status endpoint").
+
+## Usage ledger (Neon, batch C)
+
+The ledger's schema is `apps/api/migrations-usage/` (Postgres; D73), applied by `scripts/usage-migrate.ts`. Nothing
+writes to it yet: capture starts in batch C4 (`docs/batch-c-build-plan.md`). Neon Auth and Neon's other services
+aren't used, only Postgres.
+
+```sh
+corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev         # lists the pending files, changes nothing
+corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev --yes   # applies them
+```
+
+- It connects as the owner role with `DATABASE_URL_DIRECT` from `.secrets/<env>/neon.json` (0600), and refuses a URL
+  that isn't a direct (non-`-pooler`) endpoint in `aws-ap-southeast-2` with `sslmode=require` (or `verify-full`). It
+  never prints the URL or its password.
+- Each file runs in its own transaction with its sha256 recorded in `hana_migrations.applied`, under an advisory lock.
+  A file changed after it was applied, or an applied file the repo doesn't have, stops the run: add a new file instead.
+- The schema creates the roles `usage_writer` (the API) and `usage_admin` (the admin Worker) `NOLOGIN`, with no
+  password; giving them `LOGIN` and passwords, and the Hyperdrive configs, is batch C4's `usage-setup`
+  (`docs/batch-c-build-plan.md` "Setup steps").
+- The first migration creates the monthly partitions of `usage.events` for the current month and the next three;
+  `usage.ensure_partitions(3)` adds the rest (the admin Worker's daily cron, from C12; until then by hand as the owner
+  if the ledger is in use).
+- Tests run on PGlite in process (`apps/api/test-usage`, D140); set `USAGE_TEST_DATABASE_URL` to a superuser URL of a
+  local Postgres 18 (a container, never Neon) to run the same suite there.
 
 ## Local API (`wrangler dev`)
 

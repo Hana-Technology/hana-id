@@ -6,7 +6,9 @@ open question is answered (below and [Open questions](#open-questions-for-the-us
 security review** (D130–D136; the current contract is `docs/contract-interface.md`): `opened` is recorded at
 derivation; the session key's signature binds `link_jwt` and its mode, and the `auto_link` nonce commits to the join;
 only `email` can be self-issued; links wait for the owner after a migration from pre-v3 state; a linked identity's
-own path never derives; a cancelled link keeps the match (D132). The obligations this puts on the vault, the issuer
+own path never derives; a cancelled link keeps the match (D132); after the second review, a bare `create_session`
+needs a proof of possession bound to its parameters (D137), a replacing signer policy needs new signer ids (D138), and
+the vault signs case B only after its own email step (D139). The obligations this puts on the vault, the issuer
 and the API are marked "(D133)" etc. below.
 
 This file is the source of truth for the batch once approved. If code and this spec disagree, fix the code or raise
@@ -829,7 +831,10 @@ payload is what the session key signs (counter 1) in a combined login that carri
   call; shows link banners from `get_account`. With a link token (D133) it checks the token's signatures against the
   on-chain email keys, recomputes the expected `auto_link` nonce from its own chain reads (join, joiner, target root,
   epoch, mode) and refuses on any mismatch, then signs the linked CKD payload; without one it signs the plain payload.
-  It never signs a linked payload for a link the popup didn't show (or, for Google-hosted case A, decide silently).
+  It never signs a linked payload for a link the popup didn't show (or, for Google-hosted case A, decide silently),
+  signs `join = 2` (case B) only when this popup ran the user's email-code step and the link token's `sub` is the address
+  verified there (D139), and never derives on a session it meant to link with the plain payload: on `Session key
+  already in use` it revokes that session and restarts with fresh keys and tokens (D137).
 - **SDK**: `createHana({ ..., loginMethods?: ('google' | 'email')[] })` narrows what the popup offers (it can't add a
   method the app hasn't enabled); `hana.login({ method?, emailHint? })` preselects (an `emailHint` the partner page
   knows prefills the field; the page then knows the address, its own business); `hana.linkAccount({ method })` (in a

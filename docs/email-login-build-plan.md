@@ -1,6 +1,6 @@
 # Email login build plan (batches)
 
-**Status: batch 1 done on branch `feat/email-login-1` (not merged, not deployed); batches 2–10 not started.** Splits `docs/email-login-spec.md` "Build order"
+**Status: batch 1 done on branch `feat/email-login-1-r2` (not merged, not deployed); batches 2–10 not started.** Splits `docs/email-login-spec.md` "Build order"
 (approved 2026-10-30; D4, D119, D121–D123, D25 and D96 amended) into reviewable batches. The spec stays the source of
 truth for *what* to build; this file says *in which order*, *what each batch ships* and *what users see after it*.
 Like a spec it is history once the work merges: the current state lives in the reference docs (`docs/README.md`).
@@ -122,7 +122,10 @@ Steps 0, 3 and 5 can run beside 1–2. About 12k lines in all, as the spec estim
   email key changes (cancel, `forged_key_change`), no confirm for self-issued keys, `updater_other_provider` unchanged
   for "self", active unpinned email key → pause and `forged_active_key`, `get_issuer("email")` and
   `get_self_issued("email")` diffed against the pins (pause on a weaker policy), Hana's JWKS compared with the pins
-  (warning), the link-volume check from `identity_link_*` events, check ids and portal rendering (D83).
+  (warning), the link-volume check from `identity_link_*` events, check ids and portal rendering (D83). Also
+  (D139): a **critical** alert whenever `get_config().unrecorded_wallets` is `true` on an env that isn't a dev env
+  (it may only be true on sandbox-dev between the v3 upgrade and `accept_unrecorded_wallets`; mainnet is created with
+  `new` and must never show it), not only the runbook check.
 - **Order.** Must be deployed to sandbox-dev **before** batch 6 posts the email keys, or the current watchdog's
   `unverifiable_key_change` alert fires for a legitimate change.
 - **User-visible.** Nothing.
@@ -133,7 +136,11 @@ Steps 0, 3 and 5 can run beside 1–2. About 12k lines in all, as the spec estim
   `get_self_issued("email")` and the issuer's JWKS; `/v1/login` accepts and prechecks `linkJwt` and `linkImmediate`
   (recomputes the `auto_link` nonce with the join from its own chain reads, and verifies the session signature
   against the linked CKD payload, D133, so a malformed or swapped link is refused before gas is spent); the relay's
-  `Links wait until the owner accepts…` and `Sign-in method is linked to an account` panics mapped to errors;
+  `Links wait until the owner accepts…` and `Sign-in method is linked to an account` panics mapped to errors; the
+  split path's `create_session` relay (`/v1/sessions`) passes the session key's proof of possession (`signature` over
+  session_message(0, "hana-id-create-v1:" ‖ sha256(session nonce preimage)), D137; required by v3, so the API, `packages/web`'s split path and
+  `apps/smoke/src/direct.ts` send it **before** the v3 upgrade lands; v2 ignores the extra field), and the API
+  verifies it before relaying;
   `GET /v1/app` returns `loginMethods` and `email.aud`, `409 no_login_method`;
   relays `/v1/link`, `/v1/link/cancel`, `/v1/link/unlink` with share revocation; the session-pool allowlist gains the
   three link methods (keys deleted and re-added); attached gas from batch 2's measurement; D1 migration
@@ -167,6 +174,17 @@ Steps 0, 3 and 5 can run beside 1–2. About 12k lines in all, as the spec estim
   (`"hana-id-ckd-link-v1:" ‖ sha256(link_jwt) ‖ mode ‖ pk1 ‖ ":" ‖ pk2`) for counter 1; without a link it signs the
   plain payload. A session opened on an identity's own path is dropped once that identity is linked (derivation is
   refused, D136); the vault opens a new session instead.
+- **Recovery rule (D137).** A session the vault meant to carry a link is never derived on with the plain payload. If
+  the linked combined login fails `Session key already in use` (or any failure after the transaction was published),
+  the vault revokes that session (`revoke_session`, counter 1, `"revoke"`) and restarts with a fresh session key, a
+  fresh Google token and a fresh link token. Without a link, the existing "derive with counter `used + 1`" recovery
+  stays.
+- **Case B only after this popup's email step (D139).** The vault signs a linked payload with `join = 2` (the email
+  identity joins the Google identity's account) only when this same popup ran the user's email-code step
+  (`verify` → `linkTicket`) for this login and the link token's `sub` equals the `sub` of the address verified there
+  (the issuer's `verify` answer). A case-B token offered during a plain Google login (no email step in this popup) is
+  refused, so a compromised issuer service can't attach an email identity to a Google wallet by serving one. Case A
+  (`join = 1`) is signed only for the Google-hosted silent rule or after the popup's own code step for that address.
 - **Deploy.** Turn email on (D1 `login_methods`) for sandbox-dev's test apps only; measure email-login latency and gas
   of each new call on testnet (spec "Testnet").
 - **User-visible.** Email login and automatic linking on sandbox-dev apps that turn it on.
@@ -203,18 +221,23 @@ Branch `feat/email-login-1`, not deployed.
   checked signer-policy keys (LOW-1) and no derivation for a linked identity's own path (LOW-2) (D136), email-only
   self-issuing (LOW-3, D134), links wait for the owner after a pre-v3 migration (LOW-4, D135), and the overlap choice
   for a signer-replacing upgrade (info, D136).
-- **Tests.** 287 unit tests (`cargo test`), 59 of them new in `src/tests/email.rs`, the 228 existing ones unchanged
+- **Second review (2026-10-30)** of e225d2e: HIGH-1, MEDIUM-1 and LOW-1..4 confirmed closed; new findings fixed on
+  `feat/email-login-1-r2` as commits on top: a bare `create_session` needs the session key's proof of possession,
+  bound to its session parameters after an automated review flagged a constant proof as replayable (N1, D137); a
+  replacing signer policy needs new signer ids and cancels dropped signers' pending keys (N3, D138); vault and
+  watchdog obligations (N1 recovery rule, N2 case-B signing, N4 alert; D137, D139).
+- **Tests.** 293 unit tests (`cargo test`), 65 of them new in `src/tests/email.rs`, the 228 existing ones unchanged
   in substance (new optional arguments, event version, state version, `unrecorded_wallets` in `get_config`). Tokens: `scripts/gen-email-fixtures.mjs`
   (independent JS implementation of the identity key and the four link nonces, and JWS JSON tokens signed by Node's
   crypto) and `src/test_rsa.rs` (deterministic RSA test keys generated at test time, so no private key is committed).
   `src/v2_state_fixture.json` is storage written by the v2 code (develop d1837ec) for the migration tests.
-- **Wasm.** `cargo near build non-reproducible-wasm`: 627.4 KB (v2 on develop: 520.5 KB).
+- **Wasm.** `cargo near build non-reproducible-wasm`: 628.5 KB (v2 on develop: 520.5 KB).
 - **Address safety.** Golden tests: the fixture's Google user opens `s1#google#1098765432#0`, `s2#…#0`, `s1#…#1` and
   `s3#…#0` (shared client), and the MPC request carries exactly that path; sessions written by v2 code keep their
   paths through `migrate` and derive with them; a fresh login after the migration gives the v2 path; every
   pre-existing test (which asserts paths and MPC requests) passes unchanged. The CKD request, nonce layouts, derivation
   v1 and the signer account are untouched.
-- **Docs.** `contract-interface.md`, `security.md`, `architecture.md`, `email-login-spec.md` (review amendments), `decisions.md` (D130–D136).
+- **Docs.** `contract-interface.md`, `security.md`, `architecture.md`, `email-login-spec.md` (review amendments), `decisions.md` (D130–D139); `contracts/integration-tests` sends the proof of possession.
 - **Left for later batches.** Sandbox tests, gas measurements and deleting `migrate_v1` (batch 2); `packages/email`
   (3); the issuer (4); the watchdog (5); the API, relayer allowlist and sandbox-dev deployment (6); web (7, 8);
   consoles (9); KMS (10).

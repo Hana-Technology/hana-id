@@ -6,7 +6,7 @@ the watchdog's relayer funds monitoring, D150) and the `KEYS_UPDATER_KEY` and ow
 (e) (governance deployed on sandbox-dev, D126); otherwise 2026-10-29 (branch `perf/login-latency-impl`; the login popup, the
 background persist and the vault gate were re-checked, the rest as of 2026-10-28, commit 58edee9; the approval popup
 opened by the partner page, branch `feat/approve-in-click`, D99; the API rate limits, owner-action caps, CKD key pin,
-secret scan and admin CLI after the 2026-10-29 security sweep, D100; the browser, core and SDK sweep fixes, D110–D118; the contract v3 email-login invariants, 2026-10-30, branch `feat/email-login-1`, D130–D136).
+secret scan and admin CLI after the 2026-10-29 security sweep, D100; the browser, core and SDK sweep fixes, D110–D118; the contract v3 email-login invariants, 2026-10-30, branches `feat/email-login-1` and `-r2`, D130–D139).
 
 Component map and flows: `docs/architecture.md`. On-chain layouts and the contract's own security notes:
 `docs/contract-interface.md` ("Security notes (for reviewers)"). Browser parts (vault, auth pages, partner client)
@@ -132,10 +132,18 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   - Only `email` can be self-issued (D134); keys a governed upgrade adds to a signer policy are checked like
     `set_issuer_key`'s (no padded duplicate as a second signer), and a "replace the signer" upgrade can drop the old
     signer's keys with no overlap (D136).
+  - A bare `create_session` needs the session key's proof of possession, bound to that call's session parameters
+    (D137), so a published token can't be used to occupy its session key; a replacing signer-policy upgrade must use
+    new signer ids and cancels dropped signers' pending keys (D138).
   - Off-chain obligations (later batches): the vault verifies a link token and recomputes its `auto_link` nonce before
-    signing the linked CKD payload; the issuer mints the nonce with the join it decided; the API prechecks both.
+    signing the linked CKD payload; it signs a case-B join (`join = 2`) only when this same popup ran the user's
+    email-code step and the link token's `sub` is the address verified there (D139), so a compromised issuer service
+    can't attach an email identity during a plain Google login; a session it meant to link is revoked and restarted,
+    never derived with the plain payload (D137). The issuer mints the nonce with the join it decided; the API
+    prechecks both and relays the split path's proof of possession; the watchdog alerts critical if
+    `unrecorded_wallets` is ever true outside dev envs (D139).
   - Contract security notes: `docs/contract-interface.md` "Security notes (for reviewers)"; readings made in the build:
-    D130, D131; review fixes D133–D136.
+    D130, D131; review fixes D133–D138, off-chain obligations D139.
 
 ### API (`apps/api`)
 

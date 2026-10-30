@@ -1,6 +1,6 @@
 # hana-signer contract interface (batch A, A.2, B, governance and email login)
 
-Last verified against code: 2026-10-30 (branch `feat/email-login-1`: contract v3, email login batch 1, with the security review fixes D133–D136).
+Last verified against code: 2026-10-30 (branch `feat/email-login-1`: contract v3, email login batch 1, with the security review fixes D133–D138).
 
 The exact on-chain interface of `contracts/hana-signer`. The API, scripts, console and SDK must match this file.
 If the code and this file disagree, the code is wrong: raise it. Batch A.2 (`docs/batch-a2-shared-client.md`) added
@@ -312,9 +312,13 @@ session_message(counter, payload) = "hana-id-session-v1:" ‖ counter u64 LE ‖
 
 - `derive_key`: `payload` = the CKD payload `"hana-id-ckd-v1:" ‖ pk1 ‖ ":" ‖ pk2` (UTF-8 of the two strings exactly as
   passed; unchanged in A.2).
-- `create_session_and_derive`: the same message as `derive_key`, always with `counter = 1`.
+- `create_session_and_derive`: the same message as `derive_key`, always with `counter = 1`; with `link_jwt`, the
+  linked CKD payload instead (D133).
 - `revoke_session`: `payload = "revoke"`.
-- `counter` must equal `used + 1`. The view `session_message(counter, payload)` returns these bytes.
+- `create_session` (v3, D137): the proof of possession, `counter = 0`, `payload = "hana-id-create-v1:" ‖
+  sha256(session nonce preimage)` (the preimage of "Session nonce" above, for this call's parameters). Counter 0
+  is never accepted by `derive_key` or `revoke_session`, so the proof can't spend a session.
+- `counter` must equal `used + 1` (derive, revoke). The view `session_message(counter, payload)` returns these bytes.
 
 ### Vault message (off-chain only; the contract never accepts it)
 
@@ -472,6 +476,14 @@ target_root_ik (32 bytes)                  8982b5c1e573b4e0d83402db6be98f0153f32
 target epoch u64 LE (3)                    0300000000000000
 mode u8 (0)                                00
 nonce                                      3yN6rNWXt9zQQKQAXZyRlq8HCs9JOQlN21gWCZ6pulo
+```
+
+**Session message for a bare create_session (proof of possession): counter 0, payload "hana-id-create-v1:" ‖ sha256(the session nonce preimage of the session nonce example, key 7)**
+
+```
+domain "hana-id-session-v1:"  68616e612d69642d73657373696f6e2d76313a
+counter u64 LE (0)            0000000000000000
+sha256(payload)               9a4cb9b247a068248d1acff378ea700a497efdbcd4e2f1d6e6edfa81277e66fb
 ```
 
 **Linked CKD payload: link_jwt {"payload":"e30","signatures":[]}, mode 1, pk1 "bls12381g1:A", pk2 "bls12381g2:B"**
@@ -775,7 +787,11 @@ user's token with such a key, so the contract bounds who installs its keys and h
   1) it opens a 10-minute overlap (`overlap_until_ms = now + 600 000`, the email token lifetime) during which tokens
   satisfying the previous policy still pass; signers dropped from the policy keep their keys (still listed by
   `get_issuer_keys`, never counted once the overlap ends) until the owner removes them. With `overlap = false`
-  (replacing a compromised signer) there is no overlap and every dropped signer's keys are removed at once (D136).
+  (replacing a compromised signer) there is no overlap, every dropped signer's keys are removed at once (D136), and
+  new keys may only go to signer ids the previous policy didn't list (`A replacing policy adds keys only for new signer
+  ids`: keeping the id `cosign` with a new key would leave the compromised old `cosign` key counting). Either way,
+  pending key additions (`AddForSigner`) of signers that leave the policy are cancelled (`issuer_key_change_cancelled`
+  with `by` = the contract), so they can't revive if a later upgrade lists the id again (D138).
   1-of-1 at launch; Level 1 (a co-signer, 2-of-2) is one such upgrade, public for `governance_delay_ms`.
 - `get_self_issued(provider)` → `{provider, signers: [{id, kids}], required, overlap_until_ms}` (`overlap_until_ms`
   only while the overlap lasts), `null` for a provider that isn't self-issued. The watchdog pins it.
@@ -1029,11 +1045,11 @@ Apply to `propose_change`, `cancel_change`, `remove_client` and `disable_shared_
 
 ### Sessions and CKD
 
-#### `create_session(jwt, scope_id, session_public_key, expires_at_ms, salt, key_index, max_uses)` — anyone
+#### `create_session(jwt, scope_id, session_public_key, expires_at_ms, salt, key_index, max_uses, signature)` — anyone
 
 ```json
 {"jwt":"eyJ...","scope_id":"s1","session_public_key":[234,74,...32 bytes],"expires_at_ms":1800003600000,
- "salt":[9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9],"key_index":0,"max_uses":3}
+ "salt":[9,9,9,9,9,9,9,9,9,9,9,9,9,9,9,9],"key_index":0,"max_uses":3,"signature":[...64]}
 ```
 
 Returns Session. Checks, in order: `Paused`, `Session key must be a 32-byte Ed25519 public key`, `Salt must be 16-64 bytes`,
@@ -1056,6 +1072,15 @@ the token came from the scope's own client or a shared one (Google's `sub` is th
 identity in no account exactly the v2 path. Then prunes up to 3 expired sessions. Not payable; the contract pays
 session storage (≈ 250 bytes, freed by pruning). `create_session` alone does **not** record a wallet (`opened`):
 `derive_key` does (D130).
+
+Last, the **proof of possession** (v3, D137): `signature` = Ed25519 by the session key over `session_message(0,
+"hana-id-create-v1:" ‖ sha256(session nonce preimage))` (`Bad session key`, `Signature must be 64 bytes`, `Invalid
+session signature`). The proof is bound to this call's parameters (signer, scope, session key, expiry, key_index,
+max_uses, salt), so one seen in a transaction can't open the key with any other ones; its domain differs from every
+other signed payload. Only the key
+holder can open a session on its key, so a token copied from a published login (a case-A login with a link, say) can't
+be used to occupy its session key with a plain session. A v2 caller without `signature` fails to deserialize; the API's
+split-path relay sends it (build-plan batch 6).
 
 The stored record (borsh) is `path ‖ scope_id ‖ expires_at_ms u64 ‖ max_uses u32 ‖ used u32 ‖ revoked u8 ‖
 created_at_ms u64` (`sessions.rs` `StoredSession`). Sessions opened by v1 code end after `revoked` (no creation
@@ -1120,12 +1145,16 @@ build-plan batch 2).
 - The transaction result is the MPC's `{big_y, big_c}`, as for `derive_key`. On success the session has `used = 1`.
 - If the MPC receipt fails (a later receipt, executor = the MPC account), the session stays committed with
   `used = 1`. Only a session with `max_uses ≥ 2` can then retry, with `derive_key` and counter 2.
-- Replaying the same arguments fails with `Session key already in use`. A front-run `create_session` with the same
-  token makes the combined call fail the same way; the session key holder then derives with counter `used + 1`.
-  A front-run replay of the whole combined call opens the session and spends counter 1 (its MPC answer is encrypted
-  to the caller's `pk1`/`pk2`, useless to anyone else); with `max_uses = 1` that use is gone.
+- Replaying the same arguments fails with `Session key already in use`. A bare `create_session` with the same token
+  can no longer be front-run by anyone but the session key holder (D137). A front-run replay of the whole combined call
+  opens the session and spends counter 1 exactly as signed (its MPC answer is encrypted to the caller's `pk1`/`pk2`,
+  useless to anyone else); with `max_uses = 1` that use is gone.
+- **Recovery rule for callers (D137).** When a combined login fails `Session key already in use`, a caller that meant
+  the session to carry a link must **never** derive on it with the plain payload (that would derive the token's own
+  path without the link): it revokes it (`revoke_session`, counter 1, `"revoke"`) and starts over with a fresh session
+  key, a fresh token and a fresh link token. Without a link, deriving with counter `used + 1` stays fine.
 - Not payable. Prunes up to 3 expired sessions, as `create_session` does.
-- `create_session` and `derive_key` are unchanged and stay callable on their own (the split flow).
+- `create_session` (now with its proof of possession) and `derive_key` stay callable on their own (the split flow).
 
 #### `revoke_session(session_public_key, counter, signature)` — anyone
 
@@ -1326,10 +1355,13 @@ sessions opened by v2 code keep their stored paths after `migrate`). In detail:
   CKD payload. `get_config` gains `unrecorded_wallets`.
 - **Security review fixes (2026-10-30, D133–D136)** before anything shipped: the link bound by the session signature
   and the join in the `auto_link` nonce, email-only self-issuing, the pre-v3 wallet guard, no derivation for a linked
-  identity's own path, checked policy keys and the overlap choice.
+  identity's own path, checked policy keys and the overlap choice. Second review (D137, D138): `create_session`
+  gains a required proof of possession (`signature`; the one change to an existing method's interface: v2 callers of
+  the split path must add it), and a replacing signer policy needs new signer ids and cancels dropped signers' pending
+  keys.
 - **Events** 1.2.0 (additive).
 - `migrate` v2 → v3 (and v3 → v3); `migrate_v1` now goes v1 → v3.
-- **Wasm**: 627.4 KB (v2: 520.5 KB), `cargo near build non-reproducible-wasm`, toolchain 1.85.1.
+- **Wasm**: 628.5 KB (v2: 520.5 KB), `cargo near build non-reproducible-wasm`, toolchain 1.85.1.
 
 ## Changed in the governance batch
 
@@ -1488,7 +1520,9 @@ prepays them. New view `session_key_in_use` (also covers revoked, unexpired sess
   the full client list and `allow_shared`, so a front-runner can't change any of them. A replay of
   `create_session_and_derive` is not quite harmless: it spends counter 1 for the session key holder (the MPC answer
   is still encrypted to their BLS key), so a `max_uses = 1` session needs a new login. The attacker pays the gas and
-  learns nothing.
+  learns nothing. Since v3 a bare `create_session` needs the session key's proof of possession (D137), so a published
+  token can't be used to occupy a session key with another session (which, for a linked login, a careless recovery
+  could have turned into an unlinked derivation; callers follow the recovery rule under `create_session_and_derive`).
 - **No PII check on chain.** The contract ignores claims it doesn't use (see Token verification), so it never
   refuses a token for carrying `email`, `name` or `hd`. The API and the vault refuse such tokens on the paths they
   control; a direct caller isn't bound by that.

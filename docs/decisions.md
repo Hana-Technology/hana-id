@@ -2,7 +2,7 @@
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
 Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 and D150–D152 on 2026-10-30 (branches
-`feat/batch-c-1`, `feat/playbook-gaps`); D130–D136 on 2026-10-30 (branch `feat/email-login-1`).
+`feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`).
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -1670,6 +1670,55 @@ points for the user"; none changes an address.
     `false` (replacing a compromised signer) opens no overlap and removes the dropped signers' keys at once.
 - Why: each closes a path the review reproduced; none changes an address.
 
+### D137. A bare create_session needs the session key's proof of possession; linked logins never recover unlinked
+- Date 2026-10-30 · Status: built (`feat/email-login-1-r2`), from the second review (N1) and the automated review of
+  its first form · Source: review of e225d2e
+- Decision:
+  - `create_session` takes `signature`: Ed25519 by the session key over `session_message(0, "hana-id-create-v1:" ‖
+    sha256(session nonce preimage))`. Only the key holder can open a session, and the proof is bound to that call's
+    parameters (signer, scope, key, expiry, key_index, max_uses, salt), so a proof seen in one transaction can't open
+    the key with any other parameters. Counter 0 is never accepted by `derive_key` or `revoke_session`, and the domain
+    differs from every other signed payload. `create_session_and_derive` is unchanged (its counter-1 signature already
+    proves possession).
+  - Recovery rule for the vault (batch 8): a session it meant to carry a link is never derived on with the plain
+    payload; on `Session key already in use` (or any failure after publishing) it revokes that session and restarts
+    with a fresh session key, Google token and link token.
+- Why: a front-runner could copy the Google token of a published case-A linked login into a bare `create_session`
+  with the same session key and no link. The user's call then failed `Session key already in use`, and the documented
+  recovery (derive with counter `used + 1`, plain payload) derived the Google identity's own path, splitting the person
+  into two wallets (D122). A constant proof (the first form of this fix) would still have been replayable for that key
+  with other parameters.
+- Interface: the one change to an existing method. The API's split-path relay, `packages/web`'s split path and the
+  smoke page's direct flow must send `signature` before the v3 upgrade lands (v2 ignores the extra field); batch 6.
+  No path, CKD request or derivation changes.
+- Rejected: relying on the vault rule alone (the contract can make the bad recovery impossible to set up).
+
+### D138. A replacing signer policy needs new signer ids and cancels dropped signers' pending keys
+- Date 2026-10-30 · Status: built (`feat/email-login-1-r2`), from the second review (N3)
+- Decision: in `set_signer_policy` with `overlap = false`, new keys may only go to signer ids the previous policy
+  didn't list (`A replacing policy adds keys only for new signer ids`); in either mode, pending `AddForSigner`
+  changes of signers that leave the policy are cancelled (event `issuer_key_change_cancelled`, `by` = the contract).
+- Why: a replacing upgrade that kept the id `cosign` with a new key left the compromised old `cosign` key counting
+  (keys were dropped by signer id only); and a dropped signer's owner-posted pending key would revive, executable by
+  anyone, if a later upgrade listed the id again.
+- Rejected: an explicit list of kids to remove (the owner can already remove any key at once with
+  `remove_issuer_key`; a new id makes the replacement visible in the policy itself).
+
+### D139. Off-chain guards from the second review: case-B signing only after the popup's own email step; a watchdog alert
+- Date 2026-10-30 · Status: obligations for later batches (`docs/email-login-build-plan.md` batches 5 and 8), from
+  the second review (N2, N4)
+- Decision:
+  - The vault signs a linked payload with `join = 2` (an email identity joining the Google identity's account) only
+    when this same popup ran the user's email-code step for this login (`verify` → `linkTicket`) and the link token's
+    `sub` equals the `sub` of the address verified there. A case-B token offered during a plain Google login is
+    refused.
+  - The watchdog raises a critical alert whenever `get_config().unrecorded_wallets` is `true` on an env that isn't a
+    dev env.
+- Why: since D133 a case-B join happens only when the vault signs the linked payload, so the vault is the last check
+  that the user really proved the email address in this flow; without it a compromised issuer service could serve a
+  case-B token during a plain Google login. The flag must never be true on mainnet (D135); a runbook check alone can be
+  skipped.
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -1706,6 +1755,7 @@ points for the user"; none changes an address.
 | Email spec: `opened` recorded at every `create_session*` | Recorded at derivation (D130) | `docs/contract-interface.md` "Accounts and links" |
 | Email spec: `auto_link` nonce over the session, the session identity, the target epoch and the mode; the combined login signed over the plain CKD payload | The nonce also commits to the join (who joins which account), and with a link the session key signs the linked CKD payload (D133) | `docs/email-login-spec.md` "Byte layouts (new)", "Sessions" |
 | Email spec: `mark_self_issued(provider)` for any issuer | Only `email` (D134) | `docs/contract-interface.md` "Self-issued issuers" |
+| `create_session` opens a session for anyone holding the token; after a front-run `create_session` the key holder derives with counter `used + 1` | A bare `create_session` needs the session key's proof of possession bound to its parameters; a session meant to carry a link is revoked and restarted, never derived plainly (D137) | `docs/contract-interface.md` "Sessions and CKD" |
 
 ## Proposed, not yet confirmed
 
@@ -1725,4 +1775,4 @@ is a proposal there.
 Still open from `docs/email-login-spec.md`: the user-mail provider (Resend unless the colleague picks another,
 D87). Everything else follows D4, D119 and D121–D123. The contract readings made while building it, D130 and D131,
 wait for the user's confirmation (`docs/email-login-build-plan.md` "Open points for the user"; point 3 is confirmed, D132);
-D133–D136 are the security review's fixes.
+D133–D138 are the security reviews' fixes, D139 their off-chain obligations.

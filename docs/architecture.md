@@ -1,7 +1,8 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-10-30 (branch `feat/recovery-playbooks`: the playbooks package in Components;
+Last verified against code: 2026-10-30 (branch `feat/playbook-gaps`: the watchdog's relayer funds reads and D1
+meta; before it `feat/recovery-playbooks`: the playbooks package in Components;
 before it `perf/login-latency-impl`, 2026-10-29: the login flow, key persistence and the vault gate; the rest as of
 2026-10-28, commit 58edee9).
 
@@ -53,7 +54,7 @@ Batch B is merged on the integration branch `feat/batch-b` (not yet on `develop`
 | `hana-signer` | `contracts/hana-signer` | NEAR testnet, manifest `signer` | Issuers (Google RSA keys), scope registry, sessions, calls the MPC |
 | NEAR MPC | external, manifest `mpc` | NEAR testnet MPC network | CKD (`request_app_private_key`, domain `ckdDomainId` = 2) |
 | Google OIDC | external | `accounts.google.com`, `www.googleapis.com` | Issues ID tokens whose `nonce` commits to the session |
-| Watchdog Worker | `apps/watchdog/src/index.ts` | Cloudflare Workers on **its own account** (manifest `watchdog.cloudflare`, D86) | Every 5 min: Google's JWKS against the contract's pending and active issuer keys; cancels forged pending keys, deletes the updater keys that proposed one, pauses on a forged active key, confirms matches (D82); alerts on governance changes; pages, Slack, email (D85); dead-man's switch; read-only `GET /status`, `/alerts`, `/actions` and `POST /alerts/:id/ack` for the admin portal (D83) |
+| Watchdog Worker | `apps/watchdog/src/index.ts` | Cloudflare Workers on **its own account** (manifest `watchdog.cloudflare`, D86) | Every 5 min: Google's JWKS against the contract's pending and active issuer keys; cancels forged pending keys, deletes the updater keys that proposed one, pauses on a forged active key, confirms matches (D82); alerts on governance changes and on the relayer's balance and pool-key allowances (read-only, D150); pages, Slack, email (D85); dead-man's switch; read-only `GET /status`, `/alerts`, `/actions` and `POST /alerts/:id/ack` for the admin portal (D83) |
 | Watchdog D1 | `apps/watchdog/migrations/` | Cloudflare D1 on the watchdog's account | Seen kids, absences, runs and their checks, actions log, alerts, deliveries, acks |
 | `packages/jwks` | `packages/jwks/src/index.ts` | API and watchdog | JWKS parsing (`usableJwks`), RSA key comparison |
 | `packages/playbooks` | `packages/playbooks/src/` | watchdog (playbook ids), admin portal (batch C), `docs/playbooks.md` | Recovery playbooks for every watchdog alert kind and incident (D126); the watchdog serves each alert kind's playbook id in `GET /status` and names it in every alert text |
@@ -105,7 +106,7 @@ Who talks to whom:
 | `hana-signer` → MPC | cross-contract call, 20 Tgas, 1 yocto | `request_app_private_key {derivation_path, app_public_key, domain_id}` |
 | API cron → Google, `hana-signer` | HTTPS, then `set_issuer_key` / `propose_issuer_key_removal` / `execute_issuer_key_change` signed with `KEYS_UPDATER_KEY` (delayed key changes, governance batch) | JWKS sync (`apps/api/src/issuer-keys.ts` `syncIssuerKeys`) |
 | Watchdog → Google | `https://www.googleapis.com/oauth2/v3/certs`, `cache: no-store`, every 5 min (and once more 60 s later when a pending kid is missing) | Its own JWKS copy, never the API's |
-| Watchdog → NEAR | its own RPC (manifest `rpc`, then `rpcFallback`): `status`, views `get_key_changes`, `get_issuer`, `get_issuer_keys`, `get_config`, `get_governance`, the owner's `view_account` and (a DAO) `get_policy` (final); `send_tx` from `WATCHDOG_KEY` on `watchdog.account` | `cancel_issuer_key_change`, `confirm_issuer_key_change`, `pause`, `delete_updater_key` only |
+| Watchdog → NEAR | its own RPC (manifest `rpc`, then `rpcFallback`): `status`, views `get_key_changes`, `get_issuer`, `get_issuer_keys`, `get_config`, `get_governance`, the owner's `view_account` and (a DAO) `get_policy`, the relayer's `view_account` and `view_access_key_list` (final; alert only, D150); `send_tx` from `WATCHDOG_KEY` on `watchdog.account` | `cancel_issuer_key_change`, `confirm_issuer_key_change`, `pause`, `delete_updater_key` only |
 | Watchdog → paging app, Slack, Resend, heartbeat | HTTPS with its own credentials (`apps/watchdog/src/channels.ts`) | Critical: page + Slack + email, re-sent every 15 min until acknowledged; warning: Slack + email; daily digest; dead-man's switch ping |
 | Admin portal (batch C) → watchdog | `GET /status`, `/alerts`, `/actions`, `POST /alerts/:id/ack`, bearer `WATCHDOG_STATUS_TOKEN` | The "Security & monitoring" view; acks stop re-sends only |
 | Operator → `hana-signer`, D1, Worker | `scripts/`, `wrangler` | Deploy, register scopes, apps, origins, secrets |
@@ -389,7 +390,7 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
 | `.secrets/<env>/` (operator machine, gitignored, 0700/0600) | `relayer-keys.json`, `owner-relayer-keys.json`, `keys-updater.json` (`scripts/lib/secrets.ts:66`), `vault-kek` (+ `vault-kek.previous` during a rotation; `scripts/lib/vault-kek.ts`) | — |
 | `~/.near-credentials/testnet/` (operator machine) | Full-access keys of the owner, signer and relayer accounts (`scripts/lib/keys.ts`) | — |
 | Worker secrets | `RELAYER_KEYS`, `OWNER_RELAYER_KEYS`, `KEYS_UPDATER_KEY`, `VAULT_KEK`, `VAULT_KEK_PREVIOUS` | — |
-| Watchdog D1 (its own Cloudflare account) | `meta` (last chain snapshot, failure counters, heartbeat, digest, run lock), `seen_kids` (kid, `n`, `e`, first/last seen; `baseline` kids from the first run), `absences`, `runs` (30 days), `actions` (method, args, tx hash), `alerts` (severity, details, acks), `deliveries` | Secrets, tokens |
+| Watchdog D1 (its own Cloudflare account) | `meta` (last chain snapshot, failure counters, heartbeat, digest, run lock, the last relayer funds reading), `seen_kids` (kid, `n`, `e`, first/last seen; `baseline` kids from the first run), `absences`, `runs` (30 days), `actions` (method, args, tx hash), `alerts` (severity, details, acks), `deliveries` | Secrets, tokens |
 | Watchdog Worker secrets | `WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, `RESEND_API_KEY`, `SLACK_WEBHOOK_URL`, the paging app's credentials, `HEARTBEAT_URL` (from `.secrets/<env>/watchdog-secrets.json`) | — |
 | `apps/api/.dev.vars` (local, gitignored, 0600) | Relayer and updater keys for `wrangler dev` (`gen-wrangler --dev-vars`) | — |
 

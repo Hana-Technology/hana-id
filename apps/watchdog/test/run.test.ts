@@ -691,7 +691,7 @@ describe("dead-man's switch (step 7) and the run record (step 8)", () => {
     const last = await w.store.lastRun();
     expect(last?.id).toBe(r.runId);
     expect(last?.outcome).toBe('ok');
-    expect(last?.checks.map((c) => c.id)).toEqual(['config', 'jwks_fetch', 'chain_read', 'watchdog_role', 'pending_key_changes', 'active_keys', 'governance_diff', 'unexecuted_changes', 'alert_delivery', 'digest', 'heartbeat']);
+    expect(last?.checks.map((c) => c.id)).toEqual(['config', 'jwks_fetch', 'chain_read', 'watchdog_role', 'pending_key_changes', 'active_keys', 'governance_diff', 'unexecuted_changes', 'relayer_funds', 'alert_delivery', 'digest', 'heartbeat']);
     expect(last?.checks.every((c) => c.outcome !== 'error')).toBe(true);
   });
 

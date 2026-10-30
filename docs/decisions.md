@@ -1,7 +1,8 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 on 2026-10-30 (branch `feat/batch-c-1`).
+Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 and D150–D152 on 2026-10-30 (branches
+`feat/batch-c-1`, `feat/playbook-gaps`).
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -1476,6 +1477,61 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   schema (it never creates objects, and owner-created tables weren't writable by it).
 - Why: no secret in a committed file; the DDL runs unchanged on Neon, a container and PGlite; least privilege as the
   spec intended.
+
+### D150. The watchdog monitors the relayer's funds (read-only), with default thresholds and manifest overrides
+- Date 2026-10-30 · Status: built (branch `feat/playbook-gaps`), defaults for review · Source: conversation (closing
+  the recovery playbooks' "not built yet" steps)
+- Decision: every run reads the relayer account (`view_account`, `view_access_key_list`, final) and raises condition
+  alerts: available balance (`amount` minus storage) below 5 NEAR → warning `relayer_balance_low`, below 1 NEAR or no
+  account → critical `relayer_balance_critical`; each pool key's remaining allowance below its pool's thresholds
+  (session 0.5 / 0.1 NEAR of 2 NEAR, owner 0.1 / 0.02 NEAR of 0.5 NEAR) → `relayer_allowance_low` /
+  `relayer_allowance_critical`; a pool with no key → critical `relayer_pool_empty`. Keys are assigned to a pool by a
+  marker method (`derive_key` session, `propose_change` owner), so the session pool's planned allowlist states keep
+  working. Thresholds can be overridden per pair in the manifest's `watchdog.relayerFunds` (NEAR). The watchdog never
+  tops anything up: it holds no key on the relayer account, and funding stays a founder's manual step. Playbook:
+  `relayer-out-of-funds` (now an alert playbook).
+- Why: `docs/security.md` listed allowance monitoring as a mainnet requirement, and the relayer playbook could only
+  say "you notice from failed logins". The watchdog already reads the chain every 5 min through its own RPC and pages
+  both founders; a second monitor would duplicate that. Critical for the balance and per key, because a used-up key
+  stops the logins of every app routed to it.
+- Rejected: a total-allowance-per-pool threshold (one key running out still fails its apps); auto top-up from a
+  funded account (it would put a spending key on the watchdog's account, against D82's minimal powers); thresholds as
+  code constants only (a busier env or raised allowances need their own).
+
+### D151. Council member replacement: remove first, then add, through the admin CLI; reject votes in the scripts
+- Date 2026-10-30 · Status: built (branch `feat/playbook-gaps`), for review · Source: conversation (closing the
+  recovery playbooks' "not built yet" steps)
+- Decision: `admin <env> council:replace-member --remove <old> --add <new>` makes two Sputnik proposals on the
+  council DAO, `RemoveMemberFromRole(<old>, council)` then `AddMemberToRole(<new>, council)`, signed and approved only
+  by remaining members. It refuses unless the DAO's group is the manifest's council (or a half-done replacement it
+  carries on from) with otherwise exactly the 2-of-3 council policy, the new account exists, and the manifest still
+  validates with the new member in the old one's place. Dev envs may `--approve-with` (both execute in one command);
+  elsewhere it proposes and prints each remaining member's `act_proposal`. Once the DAO has the new council, `--yes`
+  writes `council.members` in `envs/<env>.json` (only that list; without `--yes` it prints the edit). `owner:vote
+  --reject` casts a `VoteReject`.
+- Why: removing first cuts a lost or stolen key off at once. Sputnik recomputes the threshold from the group's size
+  (2 members: 2 of 2), so the window needs both remaining members, which the replacement needs anyway; adding first
+  instead makes the removal 3 of 4, which needs the new member's vote too. Writing the manifest only after the chain
+  shows the new council keeps `deploy-contract`'s policy check (`policyProblems`) meaningful.
+- Rejected: one `ChangePolicy` proposal with the whole new policy (it can change anything else in the policy at the
+  same time, which is harder to review than a member change); add first (needs three votes for the removal).
+
+### D152. D1 recovery is D1 Time Travel, with a runbook for both databases
+- Date 2026-10-30 · Status: documented (branch `feat/playbook-gaps`), not rehearsed · Source: conversation (closing
+  the recovery playbooks' "not built yet" steps)
+- Decision: a lost or damaged D1 (the API's `DB` or the watchdog's) is restored in place with `wrangler d1
+  time-travel restore --bookmark` (30 days on the paid plan), after noting the current bookmark (the undo) and, for
+  the API, exporting the damaged state to `.secrets/` (it holds wrapped vault shares). The runbook
+  (`docs/operations.md` "Restoring a D1 database (Time Travel)") lists what a restore loses and what to re-run, in
+  order: migrations, then security writes made since the point (suspensions, origin removals, a revoke-all) before
+  anything else, then a KEK rotated since, then other app changes. For the watchdog it spells out the first-run
+  baseline caveat (a point after the first run keeps the pause; before it, or no restore, means a first run that
+  only alerts) and the gap caveat (a kid published and dropped inside the gap looks never published and pauses).
+  The `d1-data-loss`, `watchdog-down`, `watchdog-compromised` and `watchdog-first-run` playbooks use it.
+- Why: Time Travel is on by default for production-backend D1 databases and needs no code; the dangerous part of a
+  restore is silently undoing a security response, so the runbook orders that first.
+- Still open: a rehearsal on sandbox-dev (no wrangler or chain actions were run for this), and a backup kept beyond
+  30 days and outside Cloudflare (an export of the apps tables, or batch C's Neon ledger, D73).
 
 ## Superseded or amended
 

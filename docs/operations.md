@@ -1,8 +1,9 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-10-30 (branch `feat/batch-c-1`: "Usage ledger (Neon, batch C)", the batch C
-manifest fields; `feat/recovery-playbooks`: the watchdog alerts runbook now points at `docs/playbooks.md`,
-`owner:call` takes `set_sessions_valid_from_ms`; `docs/watchdog-hosting`: watchdog hosting, D125;
+Last verified against code: 2026-10-30 (branch `feat/playbook-gaps`: relayer funds monitoring in the watchdog,
+`owner:vote --reject`, `council:replace-member`, the D1 Time Travel restore runbook; `feat/batch-c-1`: "Usage ledger
+(Neon, batch C)", the batch C manifest fields; `feat/recovery-playbooks`: the watchdog alerts runbook now points at
+`docs/playbooks.md`, `owner:call` takes `set_sessions_valid_from_ms`; `docs/watchdog-hosting`: watchdog hosting, D125;
 `gov/sandbox-handover`: sandbox-dev's owner is now its council DAO, council-setup's DAO check, the upgrade drill).
 
 Commands and flags are from `scripts/`, `apps/api/scripts/gen-wrangler.ts`, `apps/api/scripts/pages-wrangler.ts`,
@@ -252,7 +253,8 @@ issuer keys and code changes behind public delays and makes the owner a 2-of-3 S
 |---|---|
 | Create the dev council (accounts + DAO) | `council-setup <env> [--yes] [--funder <account>] [--member-balance 2]` |
 | Any owner call through the owner | `admin <env> owner:call <method> --args '<json>' [--member <m>] [--approve-with <m>] [--yes]` |
-| Vote / list council proposals | `admin <env> owner:vote <id> --member <m> [--yes]` · `admin <env> owner:proposals [--json]` |
+| Vote / list council proposals | `admin <env> owner:vote <id> --member <m> [--reject] [--yes]` · `admin <env> owner:proposals [--json]` |
+| Replace a council member | `admin <env> council:replace-member --remove <old> --add <new> [--member <m>] [--approve-with <m>] [--yes]` |
 | Governance state and findings | `admin <env> governance:status [--json]` |
 | Migrate v1 → v2, upgrade, hand the contract to the DAO | `deploy-contract <env> --upgrade` · `--transfer-owner [--approve-with <m>]` |
 | Print the mainnet-style signer creation batch | `deploy-contract <env> --creation-plan [--wasm <reproducible build>]` |
@@ -327,11 +329,48 @@ goes through it, `set_sessions_valid_from_ms` included) through the manifest's o
 corepack pnpm --filter @hana-id/scripts run admin sandbox-dev owner:call unpause --approve-with hana-id-council-b-dev1.testnet --yes
 corepack pnpm --filter @hana-id/scripts run admin sandbox-dev owner:proposals
 corepack pnpm --filter @hana-id/scripts run admin sandbox-dev owner:vote 4 --member hana-id-council-c-dev1.testnet --yes
+corepack pnpm --filter @hana-id/scripts run admin sandbox-dev owner:vote 5 --member hana-id-council-c-dev1.testnet --reject --yes
 ```
+
+`owner:vote` casts one vote per member (the DAO refuses a second: it says what the member already voted):
+`VoteApprove`, or `VoteReject` with `--reject`. Two rejections (2 of 3) close the proposal as `Rejected`: it never
+executes, and the proposer's bond is refunded. `owner:proposals` shows approvals and rejections. Off dev envs a member
+rejects with the same `act_proposal` command as an approval, `"action":"VoteReject"`. Reject every proposal nobody
+explained, rather than letting it sit open for its 7 days.
 
 `deploy-contract` and `admin scope:register` route their owner steps the same way (both take `--member` /
 `--approve-with`). With a council owner and no `--approve-with`, `deploy-contract` stops after the first step that
 was only proposed; re-run it once that proposal is approved.
+
+### Replacing a council member
+
+`admin <env> council:replace-member --remove <old> --add <new>` (D151) replaces one member and keeps the policy the
+scripts verify (one `council` Group of three, 2 of 3 for every kind: `policyProblems`). Sputnik has no swap, so it
+makes two proposals on the council DAO, in this order: `RemoveMemberFromRole(<old>, council)`, then
+`AddMemberToRole(<new>, council)`. Between the two the council is 2 of 2 (the threshold follows the group's size), so
+both remaining members approve the addition; removing first cuts a lost or stolen key off at once. The old member
+never proposes or approves (`--member` and `--approve-with` refuse it). Before sending anything it checks that the new
+member's account exists, that `envs/<env>.json` still validates with the new `council.members` (the new member in the
+old one's place), and that the DAO's group is the manifest's council (or a half-done replacement: removed only, or
+added only, which it carries on from) with otherwise exactly the council policy. Open identical proposals are reused.
+
+- Without `--yes`: the plan, including the exact manifest edit (`"council": "members": [...] -> [...]`).
+- Dev envs on testnet, `--approve-with <second remaining member>`: both proposals are approved in the same command,
+  so they execute; then it writes `council.members` in the manifest.
+- Elsewhere: it only proposes, and prints the `act_proposal` `VoteApprove` command for each remaining member and
+  each proposal (approve the removal first). After both executed, run it again with `--yes`: it finds the new council
+  on chain and writes `council.members`.
+
+```sh
+corepack pnpm --filter @hana-id/scripts run admin sandbox-dev council:replace-member --remove hana-id-council-c-dev1.testnet --add hana-id-council-d-dev1.testnet --approve-with hana-id-council-b-dev1.testnet          # plan
+corepack pnpm --filter @hana-id/scripts run admin sandbox-dev council:replace-member --remove hana-id-council-c-dev1.testnet --add hana-id-council-d-dev1.testnet --approve-with hana-id-council-b-dev1.testnet --yes
+corepack pnpm --filter @hana-id/scripts run admin <env> council:replace-member --remove <old member> --add <new member> --member <member> --yes
+```
+
+Each executed change raises the watchdog's critical `governance_change` (`owner_policy`): expected, acknowledge it.
+On a dev env the new member's key belongs in `.secrets/<env>/council/<new member>.json` for the scripts to sign as it
+(the command notes when it is missing). Commit the manifest edit (code-owner review), then check `governance:status`
+(no findings) and a `deploy-contract <env>` dry run (no council blocker).
 
 ### Governance migration (sandbox-dev)
 
@@ -497,12 +536,14 @@ admin <env> scope:register [--client <google client id> …] [--allow-shared] (-
              [--member <council member>] [--approve-with <council member>] [--yes]
 admin <env> issuer-keys:lead-times [--remote]
 admin <env> owner:call <method> [--args '<json>'] [--gas <Tgas>] [--member <m>] [--approve-with <m>] [--yes]
-admin <env> owner:vote <proposal id> --member <m> [--yes]
+admin <env> owner:vote <proposal id> --member <m> [--reject] [--yes]
 admin <env> owner:proposals [--limit 20] [--json]
 admin <env> governance:status [--json]
+admin <env> council:replace-member --remove <old member> --add <new member> [--member <m>] [--approve-with <m>] [--yes]
 ```
 
-The `owner:*` and `governance:status` commands: [Governance](#governance-owner-council-upgrades-migration).
+The `owner:*`, `council:*` and `governance:status` commands: [Governance](#governance-owner-council-upgrades-migration)
+("Owner actions through the council", "Replacing a council member").
 
 Run as `corepack pnpm --filter @hana-id/scripts run admin <env> <command> …`. Unknown flags are errors.
 
@@ -580,6 +621,21 @@ A used-up allowance is replaced the same way. Allowances drop by gas burnt (refu
 3 × 2 NEAR covered ~1,500 logins on testnet. Don't use pool keys outside the API: the objects assume they are the
 only sender (another sender costs an `InvalidNonce` retry).
 
+**Monitoring (D150).** The watchdog reads the relayer account every 5 min (check `relayer_funds`, read-only) and
+alerts on its available balance (warning `relayer_balance_low` below 5 NEAR, critical `relayer_balance_critical`
+below 1 NEAR) and on each pool key's remaining allowance (`relayer_allowance_low` / `relayer_allowance_critical`:
+session pool below 0.5 / 0.1 NEAR, owner pool below 0.1 / 0.02 NEAR), and pages when a pool has no key
+(`relayer_pool_empty`). The thresholds are the manifest's `watchdog.relayerFunds` (`apps/watchdog/README.md`
+"Configuration"; raise the allowance pairs together with `--relayer-allowance` / `--owner-relayer-allowance`).
+`/status` `relayer_funds` shows the last reading. The watchdog never tops anything up; a low balance is funded by
+hand from a funded testnet account (never a mainnet one):
+
+```sh
+near tokens <funded testnet account> send-near <relayer> '<amount> NEAR' network-config testnet sign-with-legacy-keychain send
+```
+
+Recovery for each alert: [`relayer-out-of-funds`](playbooks.md#relayer-out-of-funds).
+
 ### Keys-updater key
 
 On the governance contract (layout v2) the key's methods are exactly `set_issuer_key`, `propose_issuer_key_removal`,
@@ -625,8 +681,9 @@ keys with `.secrets/<env>/keys-updater.json`, then re-upload `KEYS_UPDATER_KEY`)
   (`docs/contract-interface.md` "Owner transfer"). For the council DAO that is `deploy-contract <env>
   --transfer-owner` (twice: propose, then accept through a 2-of-3 proposal; [Governance
   migration](#governance-migration-sandbox-dev) step 5), which also rewrites `owner` / `ownerKind` in the manifest.
-- **A council member**: `AddMemberToRole` + `RemoveMemberFromRole` proposals (2 of 3 each), through a UI or near CLI
-  (`add_proposal` with that kind); then update `council.members` in the manifest and check with `admin <env>
+- **A council member**: `admin <env> council:replace-member --remove <old> --add <new>` ([Replacing a council
+  member](#replacing-a-council-member)): a `RemoveMemberFromRole` and an `AddMemberToRole` proposal (2 of 3, then
+  2 of 2), and the `council.members` edit in the manifest once both executed; then check with `admin <env>
   governance:status` and a `council-setup <env>` dry run (dev envs), which compares the DAO's policy with the manifest.
 
 Scope owners (`--owner-near` / `--owner-google`) are separate: they change by a timelocked `SetOwners` owner action.
@@ -983,6 +1040,7 @@ This table only says what each kind means:
 | warning `unexecuted_key_change`, `stale_active_key` | A matured key change nobody executed (> 1 h), or an active kid Google dropped > 3 h ago | [`key-sync-stalled`](playbooks.md#key-sync-stalled) |
 | warning `active_key_material_unavailable` | The contract has no `get_issuer_keys` (older code): active keys are checked by kid only | [`active-key-material-unavailable`](playbooks.md#active-key-material-unavailable) |
 | warning `config_change` | Shared clients, sponsors or public registration changed | [`config-change`](playbooks.md#config-change) |
+| `relayer_balance_critical`, `relayer_allowance_critical`, `relayer_pool_empty`; warning `relayer_balance_low`, `relayer_allowance_low` | The relayer account's available balance, or a pool key's remaining allowance, is below its threshold (defaults: balance 5 / 1 NEAR; session key 0.5 / 0.1; owner key 0.1 / 0.02; manifest `watchdog.relayerFunds`), or a pool has no key: relays from it fail once it runs out. Read-only: the watchdog never tops up | [`relayer-out-of-funds`](playbooks.md#relayer-out-of-funds) |
 | warning `confirm_failed` | A confirmation of a key that matches Google's JWKS failed: it goes live only after the full delay | [`confirm-failed`](playbooks.md#confirm-failed) |
 | info `key_change_confirmed`, `key_change_executed`, `key_change_cancelled` | Routine key-change events | [`key-change-lifecycle`](playbooks.md#key-change-lifecycle) |
 | info `config_matured` | A scheduled delay decrease or console-audience addition came into force | [`config-matured`](playbooks.md#config-matured) |
@@ -999,6 +1057,95 @@ pending change's `unlock_at_ms`), since OIDC owners couldn't cancel while paused
 immediate but slows every key change to `governance_delay_ms` unless another watchdog confirms (D86). Likewise a key
 change proposed while no watchdog may confirm yet (none, or only ones added less than `governance_delay_ms` ago)
 waits `governance_delay_ms`: after adding the first watchdog, rotations go slow until its `confirm_from_ms`.
+
+## Restoring a D1 database (Time Travel)
+
+Both D1 databases, the API's `DB` (`cloudflare.d1Name`) and the watchdog's (`watchdog.cloudflare.d1Name`, on the
+watchdog's Cloudflare account), are restored with **D1 Time Travel**
+(<https://developers.cloudflare.com/d1/reference/time-travel/>; commands:
+<https://developers.cloudflare.com/workers/wrangler/commands/d1/#d1-time-travel-info>, checked 2026-10-30). What
+Cloudflare guarantees: a restore to any minute of the last 30 days on the Workers Paid plan (7 days on Free); a
+timestamp is Unix seconds or RFC 3339 with an offset (UTC); `time-travel` commands always act on the remote
+database (no `--remote`); a restore is **destructive and in place** (queries in flight are cancelled and fail) and
+prints a bookmark that undoes it; there is no restore into a new database (no fork). Bookmarks older than 30 days are
+invalid: past that only an export kept elsewhere helps. Wrangler ≥ 3.4 (the repo pins 4.x). Not rehearsed on
+sandbox-dev yet (D152): do that once before relying on it.
+
+### The API's `DB`
+
+From the repo root, with `apps/api/wrangler.jsonc` generated for the env (`gen <env>`) and logged in to the API's
+Cloudflare account:
+
+```sh
+corepack pnpm --dir apps/api exec wrangler d1 time-travel info <cloudflare.d1Name>                                        # the current bookmark: note it (it undoes everything below)
+corepack pnpm --dir apps/api exec wrangler d1 time-travel info <cloudflare.d1Name> --timestamp=<RFC 3339 time before the loss>   # the bookmark to restore
+corepack pnpm --dir apps/api exec wrangler d1 export <cloudflare.d1Name> --remote --output=../../.secrets/<env>/d1-before-restore-<yyyymmdd>.sql
+chmod 600 .secrets/<env>/d1-before-restore-<yyyymmdd>.sql
+corepack pnpm --dir apps/api exec wrangler d1 time-travel restore <cloudflare.d1Name> --bookmark=<bookmark>
+```
+
+The export keeps the damaged state for the investigation and for re-applying later writes; it holds `vault_shares`
+(wrapped under `VAULT_KEK`), so it lives under `.secrets/` (0600) and is deleted with the KEK's retention rules in
+mind (`VAULT_KEK` above). Skip it only when the database is gone altogether.
+
+**What is lost**: every write after the restore point. Apps created then (their publishable keys stop working), origin
+and settings changes (a pending `raw_sign` / `auto_approve` change scheduled then is gone: the partner asks again),
+**suspensions and revocations made then are undone**, usage counters, `vault_shares` created then (those users sign
+in with Google again; their addresses are on chain and unchanged), and the issuer-key cron's state
+(`issuer_key_observations`, `issuer_key_missing`, `issuer_key_proposals`, `issuer_key_sync_runs`). The cron rebuilds
+the last from chain: a pending change by the signer account it has no row for is adopted, a missing kid's 55-min
+timer starts again (its removal proposal comes up to 55 min later), and D33's lead-time data loses the gap.
+
+**Re-run afterwards**, in this order:
+
+1. `corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --remote`: a point before a
+   later migration has the older schema (its `d1_migrations` table comes back with it, so only the missing ones run).
+2. Security writes made after the point: `admin <env> app:suspend` for every app suspended since, `app:origins:remove`
+   for every origin removed since, and, if every share was revoked since (a KEK compromise), the revoke-all command in
+   "`VAULT_KEK`" above **before** anything else touches the database. Never leave a restored database un-revoking
+   what a security response revoked.
+3. A KEK rotated after the point: the restored rows are under the old key id. While `VAULT_KEK_PREVIOUS` still holds
+   it they unlock and get re-wrapped; if the rotation already finished (`VAULT_KEK_PREVIOUS` deleted), those rows are
+   `unknownKek` (the users sign in again) unless the old key file is still there: `vault-kek <env> put --yes` sets
+   both secrets from the files.
+4. Other app changes since the point (new apps with `app:create`, which issues new publishable keys the partners
+   must use; origins; settings), from what partners and the audit trail say.
+5. Check: `admin <env> app:list --remote` against the known apps, `GET /v1/governance` `.updater` (the cron's next
+   run), a smoke login and a reload unlock.
+
+### The watchdog's D1
+
+From `apps/watchdog`, logged in to the **watchdog's** Cloudflare account (`gen <env>` first, for its
+`wrangler.jsonc`). Until it runs again, watch the issuer-key queue by hand (playbook `watchdog-down`).
+
+```sh
+corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel info <watchdog.cloudflare.d1Name>
+corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel info <watchdog.cloudflare.d1Name> --timestamp=<RFC 3339 time before the loss>
+corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel restore <watchdog.cloudflare.d1Name> --bookmark=<bookmark>
+```
+
+**What is lost**: runs, alerts (and their acks), deliveries and the actions log after the point; kids first seen
+since, and the `last_seen_at` updates (`seen_kids`); absences; the stored chain snapshot, failure counters, heartbeat
+and digest state go back to the point. A run lock held at the point is taken over after 10 min (one or two runs skip).
+**What the next runs do**: diff the chain against the older snapshot, so every governance change since the point is
+alerted again (critical `governance_change`, its own pauses and updater-key deletions included: check them against
+`owner:proposals` and the actions you know, then acknowledge); alerts that were open at the point and are no longer
+true resolve; conditions still true are raised again (critical ones page until acknowledged); a second digest may go
+out.
+
+**The first-run baseline caveat.** A restore to a point **after** the first run keeps `initialized_at`: no first run,
+and the pause on a forged active key still works. Before restoring, compare the active kids
+(`admin <env> governance:status`) with Google's JWKS today: an active kid that Google published and stopped publishing
+entirely **inside the gap** is missing from the restored `seen_kids`, and the next run takes it for never published
+and pauses (Google keeps a kid published for weeks, so only a long gap can hit this; the API cron proposes removing a
+dropped kid after 55 min). A restore to a point **before** the first run, or no restore at all (past 30 days, a new
+database): the next run is a first run. It records Google's current JWKS as known and only **alerts**, never pauses,
+on an active kid not in it, so a forged key active at that moment is not paused: check every
+`unknown_active_key_first_run` alert by hand (playbook `unknown-active-key-first-run`) and the pending queue
+(`GET /v1/governance` `.keyChanges`) before acknowledging.
+
+After either restore: `/status` shows `last_run.outcome: "ok"`, the expected `first_run` and `initialized_at`, and
+`heartbeat.ok` within two runs.
 
 ## Logs and latency
 

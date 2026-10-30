@@ -8,8 +8,11 @@
 //   (`ERR_NOT_ENOUGH_DEPOSIT`), is moved to the DAO, and is refunded to the caller if `new` fails. `get_default_code_hash`.
 // - DAO `add_proposal({proposal: {description, kind}})` with the policy's `proposal_bond` attached (`ERR_MIN_BOND`,
 //   `ERR_PERMISSION_DENIED`); returns the id. The proposer's call is not a vote.
-// - DAO `act_proposal(id, action: "VoteApprove" | …, memo)`; the vote that reaches the threshold executes the proposal
-//   in the same call (`FunctionCall` → status `Approved`, or `Failed` if the call panicked) and refunds the bond.
+// - DAO `act_proposal(id, action: "VoteApprove" | "VoteReject" | …, memo)`; the vote that reaches the threshold
+//   executes the proposal in the same call (`FunctionCall` → status `Approved`, or `Failed` if the call panicked) and
+//   refunds the bond; reject votes reaching it make it `Rejected` (bond refunded too). Each member votes once
+//   (`ERR_ALREADY_VOTED`). The threshold is recomputed from the group's size at every vote (`proposal_status`).
+// - `AddMemberToRole {member_id, role}` / `RemoveMemberFromRole {member_id, role}` proposals change the role's Group.
 // - views `get_policy`, `get_last_proposal_id` (the number of proposals = next id), `get_proposals(from_index, limit)`,
 //   `get_proposal(id)` → `{id, proposer, description, kind, status, vote_counts, votes, submission_time}`.
 // - Threshold `Ratio(a, b)` on a group of n: min(⌊a·n/b⌋ + 1, n) votes (policy.rs `to_weight`): [1, 2] on 3 → 2.
@@ -213,6 +216,37 @@ export function callDifferences(p: DaoProposal, want: ExpectedCall): ('args' | '
   if (asBigInt(action.gas) !== want.gas) diffs.push('gas');
   if (typeof p.description !== 'string' || !p.description.startsWith(want.descriptionPrefix)) diffs.push('description');
   return diffs;
+}
+
+/**
+ * A council membership change (sputnikdao2 proposals.rs `ProposalKind::AddMemberToRole` / `RemoveMemberFromRole`):
+ * executing it adds or removes `member_id` in the role's `Group` (policy.rs; a missing role only logs
+ * `ERR_ROLE_NOT_FOUND`, adding a present member or removing an absent one is a no-op).
+ */
+export type MemberChangeKind = { AddMemberToRole: { member_id: string; role: string } } | { RemoveMemberFromRole: { member_id: string; role: string } };
+
+export function memberChangeKind(op: 'add' | 'remove', member: string, role: string): MemberChangeKind {
+  return op === 'add' ? { AddMemberToRole: { member_id: member, role } } : { RemoveMemberFromRole: { member_id: member, role } };
+}
+
+/** A proposal's membership change, or null for any other kind. */
+export function decodeMemberChange(kind: unknown): { op: 'add' | 'remove'; member: string; role: string } | null {
+  if (!kind || typeof kind !== 'object') return null;
+  const k = kind as { AddMemberToRole?: { member_id?: unknown; role?: unknown }; RemoveMemberFromRole?: { member_id?: unknown; role?: unknown } };
+  const body = k.AddMemberToRole ?? k.RemoveMemberFromRole;
+  if (!body || typeof body.member_id !== 'string' || typeof body.role !== 'string' || Object.keys(kind).length !== 1) return null;
+  return { op: k.AddMemberToRole ? 'add' : 'remove', member: body.member_id, role: body.role };
+}
+
+/** True if the proposal is exactly this membership change, and its description starts with `descriptionPrefix`. */
+export function isMemberChange(p: DaoProposal, want: MemberChangeKind, descriptionPrefix: string): boolean {
+  return canonical(p.kind) === canonical(want) && typeof p.description === 'string' && p.description.startsWith(descriptionPrefix);
+}
+
+/** The council role's members (the policy's first role's `Group`), or null when it isn't a Group. */
+export function councilGroup(policy: SputnikPolicy): string[] | null {
+  const kind = policy.roles?.[0]?.kind;
+  return kind && typeof kind === 'object' && Array.isArray((kind as { Group?: unknown }).Group) ? [...(kind as { Group: string[] }).Group] : null;
 }
 
 /** Members who voted to approve. */

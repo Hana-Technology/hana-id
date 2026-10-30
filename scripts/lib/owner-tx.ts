@@ -116,9 +116,14 @@ export function describeOwnerCall(m: Manifest, call: OwnerCall, opts: OwnerTxOpt
   return `${callText(call)} [DAO proposal on ${route.dao} by ${member}, ${votes}]`;
 }
 
-function voteCommands(m: Manifest, dao: string, id: number, pending: string[]): string[] {
-  if (councilKeysOnDisk(m)) return pending.map((a) => `    pnpm --filter @hana-id/scripts run admin ${m.name} owner:vote ${id} --member ${a} --yes`);
-  const args = JSON.stringify({ id, action: 'VoteApprove', memo: null });
+/** A council vote the scripts cast (sputnikdao2 `Action`). */
+export type VoteAction = 'VoteApprove' | 'VoteReject';
+
+/** What each of `pending` runs to cast `action` on proposal `id`: the admin CLI on dev envs, else near CLI with a Ledger. */
+export function voteCommands(m: Manifest, dao: string, id: number, pending: string[], action: VoteAction = 'VoteApprove'): string[] {
+  const reject = action === 'VoteReject' ? ' --reject' : '';
+  if (councilKeysOnDisk(m)) return pending.map((a) => `    pnpm --filter @hana-id/scripts run admin ${m.name} owner:vote ${id} --member ${a}${reject} --yes`);
+  const args = JSON.stringify({ id, action, memo: null });
   return pending.map(
     (a) => `    near contract call-function as-transaction ${dao} act_proposal json-args '${args}' prepaid-gas '300 Tgas' attached-deposit '0 NEAR' sign-as ${a} network-config ${m.network} sign-with-ledger send`,
   );
@@ -164,15 +169,20 @@ export async function findOpenProposal(
   return { match, mismatched };
 }
 
-/** One VoteApprove by `member` on proposal `id`; returns the proposal's status afterwards. */
-export async function voteApprove(m: Manifest, dao: string, id: number, member: string, deps: OwnerTxDeps): Promise<string> {
+/** One vote by `member` on proposal `id` (key per `loadMemberKey`); returns the proposal's status afterwards. */
+export async function castVote(m: Manifest, dao: string, id: number, member: string, action: VoteAction, deps: OwnerTxDeps): Promise<string> {
   const key = loadMemberKey(m, member, deps);
   const { hash } = await deps.rpc.sendTx({ accountId: key.accountId, keyPair: key.keyPair }, dao, [
-    actionCreators.functionCall('act_proposal', { id, action: 'VoteApprove', memo: null }, VOTE_GAS, 0n),
+    actionCreators.functionCall('act_proposal', { id, action, memo: null }, VOTE_GAS, 0n),
   ]);
-  deps.log(`    ${member} approved #${id}: ${explorerTx(hash)}`);
+  deps.log(`    ${member} ${action === 'VoteApprove' ? 'approved' : 'rejected'} #${id}: ${explorerTx(hash)}`);
   const p = await deps.rpc.view<DaoProposal>(dao, 'get_proposal', { id });
   return p.status;
+}
+
+/** One VoteApprove by `member` on proposal `id`; returns the proposal's status afterwards. */
+export async function voteApprove(m: Manifest, dao: string, id: number, member: string, deps: OwnerTxDeps): Promise<string> {
+  return castVote(m, dao, id, member, 'VoteApprove', deps);
 }
 
 /** Sends (account) or proposes and, with approveWith, approves (sputnik) one owner call. */

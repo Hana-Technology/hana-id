@@ -15,6 +15,12 @@ const clientId = z.string().min(1).max(255).regex(/^\S+$/u, 'Client IDs contain 
 /** Paging apps the watchdog can page through (D85: chosen at setup). */
 export const PAGER_PROVIDERS = ['ntfy', 'pushover', 'pagerduty'] as const;
 
+/** A warning and a critical threshold in NEAR (critical below warn), for the watchdog's relayer funds check. */
+const nearThresholds = z
+  .object({ warn: z.number().positive().max(100_000), critical: z.number().nonnegative().max(100_000) })
+  .strict()
+  .refine((t) => t.critical < t.warn, { message: 'critical must be below warn' });
+
 const workerName = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u, 'A Worker name is 1-63 lowercase letters, digits and inner hyphens');
 
 const watchdogSchema = z.object({
@@ -38,6 +44,16 @@ const watchdogSchema = z.object({
   pager: z.enum(PAGER_PROVIDERS),
   /** Hour (UTC, 0-23) after which the daily info digest is sent; default 0. */
   digestHourUtc: z.number().int().min(0).max(23).optional(),
+  /**
+   * Thresholds (NEAR) of the relayer funds check (`relayer` account balance, each pool key's remaining allowance);
+   * each pair optional. Defaults (apps/watchdog/src/relayer.ts): balance 5 / 1, session-pool key 0.5 / 0.1 (of its 2 NEAR
+   * allowance), owner-pool key 0.1 / 0.02 (of 0.5 NEAR). Raise the allowance pairs if deploy-contract ran with a
+   * larger `--relayer-allowance` / `--owner-relayer-allowance`.
+   */
+  relayerFunds: z
+    .object({ balance: nearThresholds.optional(), sessionAllowance: nearThresholds.optional(), ownerAllowance: nearThresholds.optional() })
+    .strict()
+    .optional(),
 });
 
 /**

@@ -1,7 +1,7 @@
 # Recovery playbooks
 
 Generated from `packages/playbooks` (D126) by `corepack pnpm --filter @hana-id/playbooks gen-docs`: edit the package,
-not this file (a test fails when it is stale). Last verified against code: 2026-10-30 (branch `feat/recovery-playbooks`).
+not this file (a test fails when it is stale). Last verified against code: 2026-10-30 (branch `feat/playbook-gaps`).
 
 One step-by-step guide for every watchdog alert kind and for every incident the watchdog does not raise. The admin
 portal's "Security & monitoring" view renders the same playbooks (`docs/batch-c-spec.md`), and every watchdog
@@ -37,9 +37,9 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [Key change confirmed, executed or cancelled (info)](#key-change-lifecycle) | info | `key_change_confirmed`, `key_change_executed`, `key_change_cancelled` |
 | [A scheduled config change came into force (info)](#config-matured) | info | `config_matured` |
 | [The watchdog's first run (info)](#watchdog-first-run) | info | `first_run` |
+| [Relayer running out of funds (balance or a pool key's allowance)](#relayer-out-of-funds) | critical | `relayer_balance_critical`, `relayer_allowance_critical`, `relayer_pool_empty`, `relayer_balance_low`, `relayer_allowance_low` |
 | [`KEYS_UPDATER_KEY` stolen (API secrets leaked)](#updater-key-stolen) | critical | — |
 | [A relayer key stolen (session pool or owner pool)](#relayer-key-stolen) | warning | — |
-| [Relayer out of funds (allowance or balance)](#relayer-out-of-funds) | warning | — |
 | [`VAULT_KEK` leaked (and routine rotation)](#vault-kek-leaked) | critical | — |
 | [API Worker code or Hana's Cloudflare account compromised](#api-or-cloudflare-compromised) | critical | — |
 | [Vault or auth origin compromised (domain or DNS)](#hana-origin-compromised) | critical | — |
@@ -811,13 +811,89 @@ The first run with an empty D1 recorded Google's current JWKS as known.
    curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" https://<workerName>.<subdomain>.workers.dev/status
    ```
 
-2. **Not after a deploy: investigate** (who: a founder). Its D1 was emptied or replaced: follow [watchdog-compromised](#watchdog-compromised).
+2. **Not after a deploy: investigate** (who: a founder). Its D1 was emptied or replaced: follow [watchdog-compromised](#watchdog-compromised). A restore of its D1 to a minute before (Time Travel, 30 days; operations "The watchdog's D1") brings its history back; until then this first run's baseline stands.
+
+   ```sh
+   corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel info <watchdog.cloudflare.d1Name> --timestamp=<RFC 3339 time before the loss>
+   corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel restore <watchdog.cloudflare.d1Name> --bookmark=<bookmark>
+   ```
 
 **Verify**
 
 - The next runs report `first_run: false` and every check ok.
 
-**Refs:** [`docs/operations.md#setting-it-up-once-per-env`](operations.md#setting-it-up-once-per-env) · **See also:** [unknown-active-key-first-run](#unknown-active-key-first-run), [watchdog-compromised](#watchdog-compromised)
+**Refs:** [`docs/operations.md#setting-it-up-once-per-env`](operations.md#setting-it-up-once-per-env), [`docs/operations.md#the-watchdogs-d1`](operations.md#the-watchdogs-d1) · **See also:** [unknown-active-key-first-run](#unknown-active-key-first-run), [watchdog-compromised](#watchdog-compromised)
+
+<a id="relayer-out-of-funds"></a>
+
+### Relayer running out of funds (balance or a pool key's allowance)
+
+`relayer-out-of-funds` · critical · alert kinds: `relayer_balance_critical`, `relayer_allowance_critical`, `relayer_pool_empty`, `relayer_balance_low`, `relayer_allowance_low`
+
+The relayer account's available balance, or a pool key's remaining allowance, is below its threshold, or a pool has no key: relays from it fail when it runs out.
+
+**Signals**
+
+- Watchdog alerts (read-only check `relayer_funds`, every 5 min): `relayer_balance_low` (warning, < 5 NEAR available by default) and `relayer_balance_critical` (< 1 NEAR, or the account doesn't exist); `relayer_allowance_low` / `relayer_allowance_critical` per pool key (session pool < 0.5 / 0.1 NEAR of its 2 NEAR, owner pool < 0.1 / 0.02 NEAR of its 0.5 NEAR); `relayer_pool_empty` (no key of a pool for the signer). Thresholds: the manifest's `watchdog.relayerFunds`.
+- `/status` `relayer_funds`: the last reading (available balance, each pool key with its allowance, the thresholds).
+- Once it has run out: relays failing with `502 near_rejected` for one key or all; logins and derives fail for the apps routed to those keys.
+
+**Impact**
+
+- Session pool: logins and derives fail for the apps on a used-up key (all apps when the balance is gone). Owner pool: OIDC owner actions fail. No security impact.
+- The watchdog only alerts: it holds no key on the relayer account and never tops anything up. The alerts resolve by themselves at the first run after the refill.
+
+**Steps**
+
+1. **Read what is low** (who: a founder). The alert's details name the account, the pool and the key (`public_key`), what is left and the thresholds; `/status` `relayer_funds` lists every pool key. A drop that the request logs (`relayInstance` per relay) don't explain: follow [relayer-key-stolen](#relayer-key-stolen). 3 keys × 2 NEAR covered ~1,500 logins on testnet; allowances drop by gas burnt.
+
+   ```sh
+   curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" https://<workerName>.<subdomain>.workers.dev/status
+   corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --status error
+   ```
+
+2. **Low balance: fund the relayer account** (who: a founder). Send NEAR to `<relayer>` from a funded testnet account (testnet only, never a mainnet account). `relayer_balance_critical` saying the account does not exist: create it again first (operations "Create an environment" step 1), then re-run `deploy-contract` for its keys.
+
+   ```sh
+   near tokens <funded testnet account> send-near <relayer> '<amount> NEAR' network-config testnet sign-with-legacy-keychain send
+   ```
+
+3. **Low allowance: replace the key** (who: a founder). Same as a leaked key: delete it on chain, remove it from its `.secrets` file, re-run `deploy-contract` (pass larger `--relayer-allowance` / `--owner-relayer-allowance` if needed, and the same flags on every later re-run), upload the pool. Delete the used-up key: left there it keeps its last allowance and its alert stays open.
+
+   ```sh
+   near account delete-keys <relayer> public-keys <ed25519:…> network-config testnet sign-with-legacy-keychain send
+   corepack pnpm --filter @hana-id/scripts run deploy-contract <env>
+   corepack pnpm --filter @hana-id/scripts run deploy-contract <env> --yes
+   node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put RELAYER_KEYS
+   node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/owner-relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put OWNER_RELAYER_KEYS
+   ```
+
+4. **No key in a pool: add the pool again** (who: a founder). `deploy-contract` adds every key of `.secrets/<env>/relayer-keys.json` / `owner-relayer-keys.json` that isn't on chain. Only the relayer account's full-access key can delete keys: if nobody here did, treat that key as compromised (follow [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)).
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run deploy-contract <env>
+   corepack pnpm --filter @hana-id/scripts run deploy-contract <env> --yes
+   node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put RELAYER_KEYS
+   node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/owner-relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put OWNER_RELAYER_KEYS
+   ```
+
+5. **Thresholds that no longer fit** (who: a founder). After raising the allowances (or for a busier env), set `watchdog.relayerFunds` in `envs/<env>.json` (NEAR; `balance`, `sessionAllowance`, `ownerAllowance`, each `{warn, critical}` with critical below warn), then regenerate the watchdog's config and redeploy it.
+
+   ```sh
+   corepack pnpm --filter @hana-id/watchdog gen <env>
+   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   ```
+
+**Verify**
+
+- The next watchdog run resolves the alert (`/status` `open_alerts` without it; `relayer_funds` above the thresholds).
+- Relays succeed; the request logs show no `near_rejected`.
+
+**Follow-ups**
+
+- A used-up key replaced: delete its line from the secrets file only after the on-chain deletion is confirmed.
+
+**Refs:** [`docs/operations.md#relayer-keys-either-pool`](operations.md#relayer-keys-either-pool), [`docs/api.md#relay-errors-any-relayed-call`](api.md#relay-errors-any-relayed-call), [`apps/watchdog/README.md#what-a-run-does-every-5-min`](../apps/watchdog/README.md#what-a-run-does-every-5-min), D150 (`docs/decisions.md`) · **See also:** [relayer-key-stolen](#relayer-key-stolen), [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)
 
 ## Incident playbooks
 
@@ -890,7 +966,7 @@ A function-call key of the relayer account (`RELAYER_KEYS` or `OWNER_RELAYER_KEY
 
 **Signals**
 
-- Allowance or relayer balance dropping without matching logins; `relay_retry` `invalid_nonce` warnings (another sender used a pool key).
+- A watchdog `relayer_allowance_*` or `relayer_balance_*` alert without matching logins (allowance or balance dropping faster than the request logs explain); `relay_retry` `invalid_nonce` warnings (another sender used a pool key).
 - The API Worker secrets or `.secrets/<env>/relayer-keys.json` / `owner-relayer-keys.json` were exposed.
 
 **Impact**
@@ -932,51 +1008,6 @@ A function-call key of the relayer account (`RELAYER_KEYS` or `OWNER_RELAYER_KEY
 - If the leak came from the Worker or the Cloudflare account: [api-or-cloudflare-compromised](#api-or-cloudflare-compromised).
 
 **Refs:** [`docs/operations.md#relayer-keys-either-pool`](operations.md#relayer-keys-either-pool), [`docs/security.md#what-a-compromise-gives`](security.md#what-a-compromise-gives), [`docs/architecture.md#relayer-design`](architecture.md#relayer-design) · **See also:** [relayer-out-of-funds](#relayer-out-of-funds), [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)
-
-<a id="relayer-out-of-funds"></a>
-
-### Relayer out of funds (allowance or balance)
-
-`relayer-out-of-funds` · warning
-
-A pool key's allowance is used up or the relayer account's balance is too low: relays from it fail.
-
-**Signals**
-
-- Relays failing with `502 near_rejected` (the node refuses the transaction) for one key or all; logins and derives fail for the apps routed to those keys.
-- Not built yet: allowance and balance monitoring (`docs/security.md` key inventory: "mainnet needs allowance monitoring"). Today you notice from failed logins or the request logs.
-
-**Impact**
-
-- Logins (session pool) or owner actions (owner pool) fail until refilled. No security impact.
-
-**Steps**
-
-1. **Find which key or the account** (who: a founder). The request logs show `code` and `relayInstance` per relay. 3 keys × 2 NEAR covered ~1,500 logins on testnet; allowances drop by gas burnt.
-
-   ```sh
-   corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --status error
-   ```
-
-2. **Replace a used-up key** (who: a founder). Same as a leaked key: delete it on chain, remove it from its `.secrets` file, re-run `deploy-contract` (pass larger `--relayer-allowance` / `--owner-relayer-allowance` if needed, and the same flags on every later re-run), upload the pool.
-
-   ```sh
-   near account delete-keys <relayer> public-keys <ed25519:…> network-config testnet sign-with-legacy-keychain send
-   corepack pnpm --filter @hana-id/scripts run deploy-contract <env> --yes
-   node -e 'process.stdout.write(JSON.stringify(require("./.secrets/<env>/relayer-keys.json")))' | corepack pnpm --dir apps/api exec wrangler secret put RELAYER_KEYS
-   ```
-
-3. **Fund the account** (who: a founder). A low relayer balance: send NEAR to it from a funded testnet account (near CLI; testnet only, never a mainnet account).
-
-**Verify**
-
-- Relays succeed; the request logs show no `near_rejected`.
-
-**Follow-ups**
-
-- Before mainnet: build allowance and balance monitoring with an alert.
-
-**Refs:** [`docs/operations.md#relayer-keys-either-pool`](operations.md#relayer-keys-either-pool), [`docs/api.md#relay-errors-any-relayed-call`](api.md#relay-errors-any-relayed-call) · **See also:** [relayer-key-stolen](#relayer-key-stolen)
 
 <a id="vault-kek-leaked"></a>
 
@@ -1187,7 +1218,20 @@ The watchdog stopped running: no cancels of forged keys, no pause, no confirmati
    corepack pnpm --dir apps/watchdog exec wrangler deploy
    ```
 
-4. **If its D1 was lost** (who: a founder). The next run is a first run: it records Google's current JWKS as known and alerts, without pausing, on any active kid not in it. Check every first-run alert by hand ([unknown-active-key-first-run](#unknown-active-key-first-run)); a forged key active at that moment is not paused.
+4. **If its D1 was lost or damaged: restore it** (who: a founder). Logged in to the watchdog's account: Time Travel back to a minute before the loss (30 days). A point after its first run keeps `initialized_at`, so the pause still works; first compare the active kids with Google's JWKS (an active kid Google published and dropped entirely inside the gap would look never published and be paused). The next runs re-alert every governance change since the point (check, then acknowledge) and re-raise conditions still true.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run admin <env> governance:status
+   corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel info <watchdog.cloudflare.d1Name>
+   corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel info <watchdog.cloudflare.d1Name> --timestamp=<RFC 3339 time before the loss>
+   corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel restore <watchdog.cloudflare.d1Name> --bookmark=<bookmark>
+   ```
+
+5. **If it can't be restored: the first-run caveat** (who: a founder). Past 30 days, a point before its first run, or a new database: the next run is a first run. It records Google's current JWKS as known and alerts, without pausing, on any active kid not in it. Check every first-run alert by hand ([unknown-active-key-first-run](#unknown-active-key-first-run)) and the pending queue; a forged key active at that moment is not paused.
+
+   ```sh
+   curl -s <apiUrl>/v1/governance | jq '{paused, delays, keyChanges, pendingUpgrade, pendingOwner, pendingWithdrawal}'
+   ```
 
 **Verify**
 
@@ -1197,7 +1241,7 @@ The watchdog stopped running: no cancels of forged keys, no pause, no confirmati
 
 - A second watchdog on another provider (D125 later option) removes this single point.
 
-**Refs:** [`docs/operations.md#watchdog-service-appswatchdog`](operations.md#watchdog-service-appswatchdog), [`apps/watchdog/README.md#alerts-d85`](../apps/watchdog/README.md#alerts-d85), D83 (`docs/decisions.md`), D125 (`docs/decisions.md`) · **See also:** [watchdog-degraded](#watchdog-degraded), [watchdog-compromised](#watchdog-compromised), [forged-active-key](#forged-active-key)
+**Refs:** [`docs/operations.md#watchdog-service-appswatchdog`](operations.md#watchdog-service-appswatchdog), [`docs/operations.md#the-watchdogs-d1`](operations.md#the-watchdogs-d1), [`apps/watchdog/README.md#alerts-d85`](../apps/watchdog/README.md#alerts-d85), D83 (`docs/decisions.md`), D125 (`docs/decisions.md`), D152 (`docs/decisions.md`) · **See also:** [watchdog-degraded](#watchdog-degraded), [watchdog-compromised](#watchdog-compromised), [forged-active-key](#forged-active-key), [unknown-active-key-first-run](#unknown-active-key-first-run)
 
 <a id="watchdog-compromised"></a>
 
@@ -1252,9 +1296,11 @@ Someone holds the watchdog's key, its status token or its Cloudflare account. It
    corepack pnpm --dir apps/watchdog exec wrangler secret bulk ../../.secrets/<env>/watchdog-secrets.json
    ```
 
-6. **A lost D1: check the first run** (who: a founder). Redeploy against a fresh D1 if needed (setup step 5) and check every first-run alert by hand ([unknown-active-key-first-run](#unknown-active-key-first-run)).
+6. **A lost D1: restore it, or check the first run** (who: a founder). Restore its D1 with Time Travel to a minute before the intrusion (operations "The watchdog's D1"; a point after its first run keeps the pause working). Past 30 days or with nothing to restore: redeploy against a fresh D1 (setup step 5) and check every first-run alert by hand ([unknown-active-key-first-run](#unknown-active-key-first-run)).
 
    ```sh
+   corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel info <watchdog.cloudflare.d1Name> --timestamp=<RFC 3339 time before the loss>
+   corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel restore <watchdog.cloudflare.d1Name> --bookmark=<bookmark>
    corepack pnpm --filter @hana-id/watchdog gen <env>
    corepack pnpm --dir apps/watchdog exec wrangler deploy
    ```
@@ -1289,17 +1335,25 @@ One of the three council keys (a founder's Ledger or the offline backup) is lost
 
 **Steps**
 
-1. **Reject or let expire the member's stray proposals** (who: council (2 of 3)). List open proposals; never approve one nobody explained. Not built yet: a reject vote in the scripts (`owner:vote` only approves); reject with the DAO's `act_proposal` `VoteReject` through a UI or near CLI, or let it expire (7-day proposals).
+1. **Reject the member's stray proposals** (who: council (2 of 3)). List open proposals; never approve one nobody explained. Two remaining members each cast a `VoteReject` (`owner:vote --reject`): two rejections close it as `Rejected`, so it can never execute even if the lost key turns up again. Off dev envs each member signs the same `act_proposal` command as an approval, with `"action":"VoteReject"`.
 
    ```sh
    corepack pnpm --filter @hana-id/scripts run admin <env> owner:proposals
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:vote <proposal id> --member <member> --reject --yes
    ```
 
-2. **Replace the member** (who: council (2 of 3)). An `AddMemberToRole` proposal for the new member and a `RemoveMemberFromRole` for the old one, 2 of 3 each, through a DAO UI or near CLI (`add_proposal` with that kind). Not built yet: a script for member-change proposals. Each raises a critical `governance_change` (`owner_policy`): expected, acknowledge it.
-
-3. **Update the manifest** (who: a founder). `council.members` in `envs/<env>.json` (code-owner review); `deploy-contract` blocks until the DAO's policy is exactly the manifest's council at 2 of 3.
+2. **Replace the member** (who: council (2 of 3)). The new member creates their account first (a Ledger key on mainnet). `council:replace-member` proposes `RemoveMemberFromRole` for the old member, then `AddMemberToRole` for the new one, signed by a remaining member (the old one never signs): read the plan without `--yes`. The removal goes first and cuts the key off; until the addition executes the council is 2 of 2, so both remaining members approve it straight away. Dev envs: add `--approve-with <second member>` to approve both in the same command; elsewhere it prints each remaining member's `act_proposal` for each proposal. Each executed change raises a critical `governance_change` (`owner_policy`): expected, acknowledge it.
 
    ```sh
+   corepack pnpm --filter @hana-id/scripts run admin <env> council:replace-member --remove <old member> --add <new member> --member <member>
+   corepack pnpm --filter @hana-id/scripts run admin <env> council:replace-member --remove <old member> --add <new member> --member <member> --yes
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:proposals
+   ```
+
+3. **Update the manifest** (who: a founder). Once both proposals executed, run `council:replace-member` again with `--yes` (on dev envs with `--approve-with` the first run already did): it checks the DAO's group is the new council at 2 of 3 and writes `council.members` in `envs/<env>.json`, the new member in the old one's place. Commit it (code-owner review); `deploy-contract` blocks until the DAO's policy is exactly the manifest's council at 2 of 3.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run admin <env> council:replace-member --remove <old member> --add <new member> --member <member> --yes
    corepack pnpm --filter @hana-id/scripts run admin <env> governance:status
    corepack pnpm --filter @hana-id/scripts run council-setup <env>
    corepack pnpm --filter @hana-id/scripts run deploy-contract <env>
@@ -1314,7 +1368,7 @@ One of the three council keys (a founder's Ledger or the offline backup) is lost
 
 - Mainnet: where the backup key is held is decided before mainnet (D81); record the replacement.
 
-**Refs:** [`docs/operations.md#owner`](operations.md#owner), [`docs/operations.md#owner-council-sputnik-dao-v2-d81`](operations.md#owner-council-sputnik-dao-v2-d81), D81 (`docs/decisions.md`) · **See also:** [unexpected-owner-action](#unexpected-owner-action), [governance-change](#governance-change)
+**Refs:** [`docs/operations.md#replacing-a-council-member`](operations.md#replacing-a-council-member), [`docs/operations.md#owner`](operations.md#owner), [`docs/operations.md#owner-council-sputnik-dao-v2-d81`](operations.md#owner-council-sputnik-dao-v2-d81), D81 (`docs/decisions.md`), D151 (`docs/decisions.md`) · **See also:** [unexpected-owner-action](#unexpected-owner-action), [governance-change](#governance-change)
 
 <a id="unexpected-owner-action"></a>
 
@@ -1345,7 +1399,14 @@ A council call nobody on the council made: two council keys were used. Cancel wh
    curl -s <apiUrl>/v1/governance | jq '{paused, delays, keyChanges, pendingUpgrade, pendingOwner, pendingWithdrawal}'
    ```
 
-2. **Cancel what is pending** (who: council (2 of 3)). With the two honest keys, if there are two.
+2. **Reject open proposals nobody explained** (who: council (2 of 3)). Before a second key approves them: each honest member casts a `VoteReject`; two rejections close a proposal for good.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:proposals
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:vote <proposal id> --member <member> --reject --yes
+   ```
+
+3. **Cancel what is pending** (who: council (2 of 3)). With the two honest keys, if there are two.
 
    ```sh
    corepack pnpm --filter @hana-id/scripts run admin <env> owner:call cancel_upgrade --yes
@@ -1353,9 +1414,9 @@ A council call nobody on the council made: two council keys were used. Cancel wh
    corepack pnpm --filter @hana-id/scripts run admin <env> owner:call cancel_withdrawal --yes
    ```
 
-3. **Replace the compromised member** (who: council (2 of 3)). One key compromised: [council-member-key](#council-member-key). Two: there is no honest majority; go to the next step.
+4. **Replace the compromised member** (who: council (2 of 3)). One key compromised: [council-member-key](#council-member-key). Two: there is no honest majority; go to the next step.
 
-4. **Warn partners and users within the delay** (who: a founder). Before the pending action's executable time: partners' security contacts, and users told to export keys and move funds (D41). Not built yet: batch C's notice email to every org's security contacts and the pending-upgrades page (D86).
+5. **Warn partners and users within the delay** (who: a founder). Before the pending action's executable time: partners' security contacts, and users told to export keys and move funds (D41). Not built yet: batch C's notice email to every org's security contacts and the pending-upgrades page (D86).
 
 **Verify**
 
@@ -1572,13 +1633,26 @@ The API's D1 (apps, origins, settings, usage, vault shares, issuer-key sync stat
 
 **Steps**
 
-1. **Restore from Time Travel** (who: a founder). Not in the runbook yet: Cloudflare D1 Time Travel keeps 30 days; restore the database to a time before the loss (Cloudflare's docs give the command; rehearse it on sandbox-dev first). Restored shares need the `VAULT_KEK` they were wrapped under (`vault-kek <env> put --yes` sets both secrets again from the files).
+1. **Restore from Time Travel** (who: a founder). D1 Time Travel restores any minute of the last 30 days (7 on the Free plan), in place. Note the current bookmark first (it undoes the restore), get the bookmark of a time before the loss, export the damaged state to `.secrets/` (it holds wrapped vault shares: 0600), then restore. Everything written after that point is lost, including suspensions and share revocations made since.
 
    ```sh
+   corepack pnpm --dir apps/api exec wrangler d1 time-travel info <cloudflare.d1Name>
+   corepack pnpm --dir apps/api exec wrangler d1 time-travel info <cloudflare.d1Name> --timestamp=<RFC 3339 time before the loss>
+   corepack pnpm --dir apps/api exec wrangler d1 export <cloudflare.d1Name> --remote --output=../../.secrets/<env>/d1-before-restore-<yyyymmdd>.sql
+   corepack pnpm --dir apps/api exec wrangler d1 time-travel restore <cloudflare.d1Name> --bookmark=<bookmark>
+   ```
+
+2. **Re-run what the restore undid** (who: a founder). In order: apply the migrations (a point before a later migration has the older schema); re-apply security writes made since the point (`app:suspend`, `app:origins:remove`, and the revoke-all if every share was revoked since: before anything else); then the other app changes. A KEK rotated since: restored rows need the old key (`vault-kek <env> put --yes` sets both secrets from the files), else those users sign in again. The issuer-key cron rebuilds its own state from chain on its next run.
+
+   ```sh
+   corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --remote
+   corepack pnpm --filter @hana-id/scripts run admin <env> app:suspend --app <app id | publishable key> --remote
+   corepack pnpm --filter @hana-id/scripts run admin <env> app:origins:remove --app <app id | publishable key> --origin <origin> --remote
+   corepack pnpm --dir apps/api exec wrangler d1 execute <cloudflare.d1Name> --remote --command "UPDATE vault_shares SET revoked_at = CAST(strftime('%s','now') AS INTEGER) * 1000 WHERE revoked_at IS NULL"
    corepack pnpm --filter @hana-id/scripts run vault-kek <env> put --yes
    ```
 
-2. **Without a restore: rebuild** (who: a founder). Re-apply the migrations, then re-create each app, its origins and settings from what partners and the audit trail say. Not built yet: an export or restore tool for apps.
+3. **Without a restore: rebuild** (who: a founder). Past 30 days, or nothing to restore: re-apply the migrations, then re-create each app, its origins and settings from what partners and the audit trail say. Not built yet: a scheduled export of the apps tables kept outside Cloudflare.
 
    ```sh
    corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --remote
@@ -1588,13 +1662,14 @@ The API's D1 (apps, origins, settings, usage, vault shares, issuer-key sync stat
 
 **Verify**
 
-- `admin <env> app:list --remote` matches the known apps; a smoke login and a reload unlock work.
+- `admin <env> app:list --remote` matches the known apps; suspended apps are still suspended; a smoke login and a reload unlock work.
 
 **Follow-ups**
 
-- Batch C moves the ledger to Neon with point-in-time restore (D73); the API's D1 still needs its own backup routine.
+- Batch C moves the ledger to Neon with point-in-time restore (D73); the API's D1 still needs a backup kept beyond Time Travel's 30 days.
+- Rehearse a Time Travel restore on sandbox-dev (D152).
 
-**Refs:** [`docs/architecture.md#data-stores`](architecture.md#data-stores), [`docs/operations.md#admin-cli-scriptsadmints`](operations.md#admin-cli-scriptsadmints), [`docs/operations.md#vault_kek`](operations.md#vault_kek) · **See also:** [vault-kek-leaked](#vault-kek-leaked), [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)
+**Refs:** [`docs/operations.md#restoring-a-d1-database-time-travel`](operations.md#restoring-a-d1-database-time-travel), [`docs/architecture.md#data-stores`](architecture.md#data-stores), [`docs/operations.md#admin-cli-scriptsadmints`](operations.md#admin-cli-scriptsadmints), [`docs/operations.md#vault_kek`](operations.md#vault_kek), D152 (`docs/decisions.md`) · **See also:** [vault-kek-leaked](#vault-kek-leaked), [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)
 
 <a id="partner-google-client-compromised"></a>
 

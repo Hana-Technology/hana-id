@@ -120,6 +120,17 @@ describe('manifestSchema: watchdog', () => {
     expect(issues(watchdog({ account: 'Not An Account' })).length).toBeGreaterThan(0);
   });
 
+  it('takes optional relayer funds thresholds in NEAR, critical below warn', () => {
+    expect(issues(watchdog({ relayerFunds: {} }))).toEqual([]);
+    expect(issues(watchdog({ relayerFunds: { balance: { warn: 10, critical: 2 }, sessionAllowance: { warn: 1, critical: 0.2 }, ownerAllowance: { warn: 0.2, critical: 0 } } }))).toEqual([]);
+    expect(issues(watchdog({ relayerFunds: { balance: { warn: 1, critical: 1 } } }))).toEqual(['critical must be below warn']);
+    expect(issues(watchdog({ relayerFunds: { balance: { warn: 1, critical: 2 } } }))).toEqual(['critical must be below warn']);
+    expect(issues(watchdog({ relayerFunds: { balance: { warn: -1, critical: 0 } } })).length).toBeGreaterThan(0);
+    expect(issues(watchdog({ relayerFunds: { balance: { warn: 1e9, critical: 0 } } })).length).toBeGreaterThan(0);
+    expect(issues(watchdog({ relayerFunds: { balance: { warn: 5 } } })).length).toBeGreaterThan(0);
+    expect(issues(watchdog({ relayerFunds: { topUp: true } })).length).toBeGreaterThan(0);
+  });
+
   it('is a different account from those it watches, and a different Worker from the API', () => {
     const m = raw();
     for (const field of ['signer', 'relayer', 'owner', 'mpc']) {

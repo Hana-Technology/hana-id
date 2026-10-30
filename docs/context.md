@@ -330,7 +330,7 @@ Every run, one-transaction and two-transaction, gave the same Stellar and EVM ad
   caught by InvalidNonce and one re-read) and the stored block hash while under 5 min old: no chain read. Each cold
   start still skips up to 99 nonces and writes one reservation (~3–30 ms).
 - Function-call key allowances drop by gas **burnt**, not attached (refunds restore them): 3 × 2 NEAR covers ~1,500
-  logins. Mainnet needs allowance monitoring and key rotation.
+  logins. Mainnet needs allowance monitoring (built: the watchdog's `relayer_funds` check, D150) and key rotation.
 - Google `sub` is the same across the partner and shared clients (same Google Cloud project; across two projects too,
   2026-10-28, D42).
 - Rejected derives (counter replayed, `max_uses` reached) cost ~2.2 Tgas each, and signed derive requests are public

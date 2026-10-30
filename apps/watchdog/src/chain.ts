@@ -1,5 +1,8 @@
 // What the watchdog reads from and sends to hana-signer (docs/contract-interface.md), behind two small interfaces so
 // the run logic is tested against a stub chain. The real implementation is near.ts.
+import type { RelayerFunds } from './relayer.ts';
+
+export type { RelayerFunds } from './relayer.ts';
 
 /** `get_key_changes()` entry. */
 export interface KeyChange {
@@ -117,6 +120,11 @@ export interface ChainReader {
   /** The RPC's `chain_id` (`testnet`). */
   chainId(): Promise<string>;
   snapshot(provider: string): Promise<ChainSnapshot>;
+  /**
+   * The relayer account's balance and its pool keys' allowances (`view_account`, `view_access_key_list`; read-only).
+   * An account that doesn't exist reads as `exists: false` with no balance and no keys; other failures throw.
+   */
+  relayerFunds(account: string): Promise<RelayerFunds>;
 }
 
 /** The only methods the watchdog key may call (its access-key permission lists exactly these). */

@@ -5,7 +5,8 @@
 // scope:register calls admin_register_scope (with allow_shared from
 // --allow-shared) through the manifest's owner (lib/owner-tx.ts: the owner's full-access key from
 // ~/.near-credentials/testnet/<owner>.json, or a council DAO proposal). owner:* and governance:status drive and read
-// the governance contract (lib/admin-owner.ts). issuer-keys:lead-times reads the issuer key observations
+// the governance contract (lib/admin-owner.ts); council:replace-member proposes a council member change
+// (lib/council-members.ts). issuer-keys:lead-times reads the issuer key observations
 // (lib/admin-lead-times.ts) for D33's issuer-key delay.
 import { loadEnv, type Manifest } from '@hana-id/env';
 import { assertCommandPositionals } from './lib/admin-args.ts';
@@ -30,6 +31,7 @@ import { appSettings, defaultAppSettingsDeps, settingsAppArg } from './lib/admin
 import { type Args, CliError, parseCli, run } from './lib/cli.ts';
 import { scopeRegister } from './lib/admin-scope.ts';
 import { governanceStatusCmd, ownerCallCmd, ownerProposalsCmd, ownerVoteCmd } from './lib/admin-owner.ts';
+import { councilReplaceMemberCmd } from './lib/council-members.ts';
 import { tryView } from './lib/contract.ts';
 import { d1Execute } from './lib/d1.ts';
 import { NearRpc } from './lib/near.ts';
@@ -52,12 +54,19 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
                an owner call on the contract through the manifest's owner: signed by the owner account, or a
                council DAO proposal by --member; --approve-with (dev envs on testnet only) approves it with a
                second member in the same command, so it executes; elsewhere it prints what members must sign
-  owner:vote <proposal id> --member <m> [--yes]    approve a council proposal (dev envs: key from .secrets)
+  owner:vote <proposal id> --member <m> [--reject] [--yes]
+               approve (or with --reject, reject) a council proposal (dev envs: key from .secrets)
   owner:proposals [--limit 20] [--json]           the council's recent proposals, decoded
   governance:status [--json]                       contract governance state, signer keys, council, findings
+  council:replace-member --remove <old member> --add <new member> [--member <m>] [--approve-with <m>] [--yes]
+               replace a council member: a RemoveMemberFromRole and an AddMemberToRole proposal on the council DAO
+               (2 of 3 kept); --approve-with (dev envs on testnet only) approves both in the same command; elsewhere
+               it prints what each remaining member must sign. Once the DAO has the new council, --yes writes
+               council.members in envs/<env>.json (without --yes: prints that edit)
 
   --remote   act on the deployed D1 database (default: local, apps/api/.wrangler/state)
-  --yes      scope:register, owner:call, owner:vote: send the transaction (without it, only print it)
+  --yes      scope:register, owner:call, owner:vote, council:replace-member: send the transaction (without it, only
+             print it)
   --allow-shared  scope:register only: the app may log in through Hana's shared Google client; with it, --client is
                   optional (an app with no Google client of its own)
 
@@ -79,6 +88,7 @@ const COMMANDS = [
   'owner:vote',
   'owner:proposals',
   'governance:status',
+  'council:replace-member',
 ] as const;
 type Command = (typeof COMMANDS)[number];
 
@@ -113,9 +123,9 @@ async function scopeExists(m: Manifest, scopeId: string): Promise<boolean> {
 
 async function main(): Promise<void> {
   const args = parseCli(process.argv.slice(2), {
-    strings: ['name', 'scope', 'plan', 'app', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve', 'args', 'gas', 'member', 'approve-with', 'limit'],
+    strings: ['name', 'scope', 'plan', 'app', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve', 'args', 'gas', 'member', 'approve-with', 'limit', 'remove', 'add'],
     multiple: ['origin', 'client', 'owner-near', 'owner-google'],
-    booleans: ['remote', 'yes', 'allow-shared', 'json', 'help'],
+    booleans: ['remote', 'yes', 'allow-shared', 'json', 'reject', 'help'],
   });
   if (args.flag('help')) return void console.log(USAGE);
   const [envName, command, ...rest] = args.positionals;
@@ -193,6 +203,9 @@ async function main(): Promise<void> {
       return;
     case 'governance:status':
       await governanceStatusCmd(m, args, ownerDeps(m));
+      return;
+    case 'council:replace-member':
+      await councilReplaceMemberCmd(m, args, ownerDeps(m));
       return;
   }
 }

@@ -6,6 +6,7 @@ import { type Manifest, PAGER_PROVIDERS, manifestSchema, WATCHDOG_INTERVAL_MS } 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RUN_INTERVAL_MS } from '../../src/checks.ts';
 import { PAGER_PROVIDERS as WORKER_PAGERS, SECRET_NAMES } from '../../src/names.ts';
+import { relayerThresholds } from '../../src/relayer.ts';
 import { CRON, LOCAL_D1_ID, TEST_MANIFEST, devVarsContent, existingD1Id, main, testWranglerConfig, wranglerConfig, writeWranglerConfig } from '../gen-wrangler.ts';
 import { SECRET_RULES } from '../secrets.ts';
 
@@ -40,6 +41,7 @@ describe('wranglerConfig', () => {
         NEAR_RPC_FALLBACK: 'https://rpc-fallback.test.invalid',
         SIGNER_ACCOUNT: 'signer.test.near',
         WATCHDOG_ACCOUNT: 'watchdog.test.near',
+        RELAYER_ACCOUNT: 'relayer.test.near',
         PAGER_PROVIDER: 'ntfy',
         ALERT_EMAILS: 'founder-a@example.com,founder-b@example.com',
         ALERT_FROM: 'alerts@notify.example.com',
@@ -62,6 +64,19 @@ describe('wranglerConfig', () => {
     expect(() => wranglerConfig(noWatchdog as Manifest, D1)).toThrow(/no watchdog block/u);
     const unset = { ...TEST_MANIFEST, watchdog: { ...TEST_MANIFEST.watchdog!, cloudflare: { ...TEST_MANIFEST.watchdog!.cloudflare, accountId: 'UNSET' } } };
     expect(() => wranglerConfig(unset, D1)).toThrow(/UNSET/u);
+  });
+
+  it('passes the relayer funds thresholds only when the manifest overrides them, in a form the Worker reads', () => {
+    expect((wranglerConfig(TEST_MANIFEST, D1).vars as Record<string, string>).RELAYER_FUNDS).toBeUndefined();
+    const relayerFunds = { balance: { warn: 10, critical: 2 }, ownerAllowance: { warn: 0.2, critical: 0.05 } };
+    const m = { ...TEST_MANIFEST, watchdog: { ...TEST_MANIFEST.watchdog!, relayerFunds } };
+    expect(manifestSchema.safeParse(m).success).toBe(true);
+    const json = (wranglerConfig(m, D1).vars as Record<string, string>).RELAYER_FUNDS;
+    const { thresholds, problems } = relayerThresholds(json);
+    expect(problems).toEqual([]);
+    expect(thresholds.balance).toEqual({ warn: 10n * 10n ** 24n, critical: 2n * 10n ** 24n });
+    expect(thresholds.owner).toEqual({ warn: 2n * 10n ** 23n, critical: 5n * 10n ** 22n });
+    expect(thresholds.session).toEqual(relayerThresholds(undefined).thresholds.session);
   });
 
   it('omits the fallback RPC when the manifest has none', () => {

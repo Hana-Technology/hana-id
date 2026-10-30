@@ -6,6 +6,7 @@ import { baseDecode, baseEncode } from '@near-js/utils';
 import type { ChainReader, ChainSnapshot, ChainWriter, ConfigView, GovernanceView, IssuerKey, IssuerView, KeyChange, OwnerAccount, TxResult, WatchdogMethod } from './chain.ts';
 import { WATCHDOG_METHODS } from './chain.ts';
 import { log } from './log.ts';
+import { type AccessKeyEntry, type RelayerFunds, relayerFundsFrom } from './relayer.ts';
 
 /** Per RPC request. */
 export const RPC_TIMEOUT_MS = 8_000;
@@ -130,6 +131,20 @@ export class NearChain implements ChainReader {
     }
     const owner = typeof config.owner === 'string' ? await this.ownerAccount(config.owner) : null;
     return { keyChanges, issuer, issuerKeys, config, governance, owner };
+  }
+
+  async relayerFunds(account: string): Promise<RelayerFunds> {
+    let view: { amount?: unknown; locked?: unknown; storage_usage?: unknown } | null;
+    try {
+      view = await this.rpc.call<{ amount?: unknown; locked?: unknown; storage_usage?: unknown }>('query', { request_type: 'view_account', finality: 'final', account_id: account });
+    } catch (err) {
+      if (err instanceof RpcError && !err.transient && /UNKNOWN_ACCOUNT/u.test(err.message)) return relayerFundsFrom(account, this.signer, null, []);
+      throw err;
+    }
+    if (typeof view?.amount !== 'string') throw new RpcError('Unexpected view_account shape', false);
+    const list = await this.rpc.call<{ keys?: unknown }>('query', { request_type: 'view_access_key_list', finality: 'final', account_id: account });
+    if (!Array.isArray(list?.keys)) throw new RpcError('Unexpected view_access_key_list shape', false);
+    return relayerFundsFrom(account, this.signer, view, list.keys as AccessKeyEntry[]);
   }
 
   /** The owner's code hash and, if it runs a contract with `get_policy` (a Sputnik DAO), its policy. */

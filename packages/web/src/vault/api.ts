@@ -20,7 +20,10 @@ import {
   type ShareActionBody,
   type TouchResponse,
   type UnlockResponse,
+  type IdentityTokenBody,
+  type IdentityTokenResponse,
   base64UrlEncode,
+  isIdentityTokenResponse,
   isAppConfig,
   isCkdResult,
   isCreateShareResponse,
@@ -147,5 +150,10 @@ export class VaultApi {
 
   async revokeAll(body: ShareActionBody): Promise<RevokeAllResponse> {
     return (await this.post('/v1/vault/revoke-all', body, isRevokeAllResponse)).value;
+  }
+
+  /** POST /v1/identity/token: a partner identity token for the session that signed `body` (identity.ts). */
+  async identityToken(body: IdentityTokenBody): Promise<IdentityTokenResponse> {
+    return (await this.post('/v1/identity/token', body, isIdentityTokenResponse)).value;
   }
 }

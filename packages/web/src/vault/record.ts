@@ -14,8 +14,14 @@
 // that starts with a length prefix, never with this text), and its AAD is the record's AAD under its own domain, so a
 // consent can't be moved to another record. A consent that fails to open deletes the record like any other tamper.
 //
+// Record format 2 (docs/identity-token-spec.md "D1 schema, manifest and secrets") adds `walletProofs`: the identity
+// token's proofs of the two addresses, made once per session with PRK (vault/identity.ts), so a token refresh while the
+// session is dormant needs no PRK. They are not secret (bound to this session key and app). A format-1 record is read
+// as is and gets its proofs at its next unlock, which has PRK.
+//
 // SECURITY: PRK and K_s are full private-key material. Every buffer here is zeroed by its owner; nothing is logged.
-import { type Bytes, bytesEqual, concatBytes, recordAad, toBytes, utf8 } from '@hana-id/core';
+import { type Bytes, type WalletProofs, bytesEqual, concatBytes, recordAad, toBytes, utf8 } from '@hana-id/core';
+import { proofsMatch } from './identity.ts';
 import type { AutoApproveUsage } from '@hana-id/core/policy';
 
 export const DB_NAME = 'hana-vault';
@@ -36,8 +42,9 @@ export interface SealedConsent {
   ct: Uint8Array;
 }
 
+/** The stored record: format 1, or 2 with `walletProofs` (written from now on). */
 export interface RecordV1 {
-  v: 1;
+  v: 1 | 2;
   signer: string;
   appId: string;
   path: string;
@@ -56,7 +63,12 @@ export interface RecordV1 {
   addresses: RecordAddresses;
   expiresAtMs: number;
   consent?: SealedConsent;
+  /** Format 2: the identity token's wallet proofs for `addresses`, bound to `sessionPk` and `appId`. */
+  walletProofs?: WalletProofs;
 }
+
+/** The record format written now. */
+export const RECORD_VERSION = 2;
 
 export interface ConsentV1 extends AutoApproveUsage {
   policyId: string;
@@ -122,13 +134,15 @@ const isKeyPair = (v: unknown): v is CryptoKeyPair =>
 
 /** The stored value as a RecordV1, or null when its shape is wrong (the caller deletes it). */
 export function parseRecord(v: unknown): RecordV1 | null {
-  if (!isObj(v) || v.v !== 1) return null;
+  if (!isObj(v) || (v.v !== 1 && v.v !== 2)) return null;
   if (!isStr(v.signer) || !isStr(v.appId) || !isStr(v.path) || !isStr(v.scopeId) || !isStr(v.parentOrigin)) return null;
   if (!Number.isSafeInteger(v.keyIndex) || !Number.isSafeInteger(v.derivationVersion) || !isMs(v.counter) || !isMs(v.expiresAtMs)) return null;
   if (!isBytes(v.ckdKeyHash, 32) || !isBytes(v.sessionPk, 32) || !isBytes(v.shareId, 16) || !isBytes(v.iv, IV_BYTES) || !isBytes(v.ct)) return null;
   if (!isKeyPair(v.sessionKeyPair)) return null;
   if (!isObj(v.addresses) || !isStr(v.addresses.stellar) || !isStr(v.addresses.evm)) return null;
   if (v.consent !== undefined && !(isObj(v.consent) && isBytes(v.consent.iv, IV_BYTES) && isBytes(v.consent.ct))) return null;
+  // Format 2 always has proofs, of the record's own addresses; format 1 never has them.
+  if (v.v === 2 ? !proofsMatch(v.walletProofs, v.addresses as unknown as RecordAddresses) : v.walletProofs !== undefined) return null;
   return v as unknown as RecordV1;
 }
 

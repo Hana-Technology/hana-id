@@ -54,6 +54,7 @@ const VALID_PARAMS: Record<(typeof PORT_METHODS)[number], unknown> = {
   hana_requestAutoApprove: undefined,
   hana_autoApproveStatus: undefined,
   hana_revokeAutoApprove: undefined,
+  hana_identityToken: { maxAgeMs: 60_000 },
 };
 
 describe('port requests', () => {

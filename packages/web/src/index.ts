@@ -18,6 +18,7 @@ export {
   type HanaEvents,
   type HanaOrigins,
   type HanaStatus,
+  type IdentityTokenOptions,
   type SignRawParams,
 } from './client/client.ts';
 export { type ApprovalTicket } from './client/approval-window.ts';

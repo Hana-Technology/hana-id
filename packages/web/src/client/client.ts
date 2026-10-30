@@ -7,6 +7,7 @@
 //   hana.login();                // call synchronously in a click handler
 //   hana.prepareApproval();      // in a click handler, before awaiting a quote: opens the approval popup now (D99)
 //   hana.logout(); hana.exportKey(chain); hana.revokeOtherDevices();
+//   await hana.getIdentityToken();  // a short-lived JWT for the partner's backend, or null (no popup; any handler)
 //   hana.stellar; hana.ethereum; hana.signRaw(params);
 //
 // The client holds no key material and no token: it mounts the vault iframe (vault-connection.ts), opens the login
@@ -16,6 +17,8 @@
 // destroy() (React's HanaProvider unmount), and the `loginProgress`, `autoApproved` and `launcher` events.
 import {
   ErrorCode,
+  IDENTITY_MAX_MAX_AGE_MS,
+  IDENTITY_MIN_MAX_AGE_MS,
   UNLOCK_TIMING_STAGES,
   isApprovalPopupMethod,
   type AutoApproveStatus,
@@ -32,7 +35,7 @@ import {
 import { VERSION } from '../version.ts';
 import { type ApprovalTicket, ApprovalWindows } from './approval-window.ts';
 import { Emitter } from './emitter.ts';
-import { type HanaError, asHanaError, hanaError } from './errors.ts';
+import { type HanaError, RpcCode, asHanaError, hanaError } from './errors.ts';
 import { type EvmConfig, HanaEthereumProvider, announceEip6963, rdnsFor, validateEvmConfig } from './ethereum.ts';
 import { LoginAttempt, openLoginPopup } from './login.ts';
 import { type FetchLike } from './rpc.ts';
@@ -71,6 +74,19 @@ export interface HanaEvents {
    * keeps working on this page; the next page load needs a new login.
    */
   persistenceChanged: [Persistence];
+  /**
+   * The identity token changed: a new one was minted (here or in another tab of the session), or null once the
+   * session ended (logout, expiry, revocation, a newer login).
+   */
+  identityTokenChanged: [string | null];
+}
+
+export interface IdentityTokenOptions {
+  /**
+   * A token minted at most this long ago, else a fresh one (a partner backend checking `iat` for a sensitive action).
+   * At least 30 s (smaller values count as 30 s), at most 1 h.
+   */
+  maxAgeMs?: number;
 }
 
 export type SignRawParams = PortParamsMap['hana_signRaw'];
@@ -110,6 +126,7 @@ export class HanaClient extends Emitter<HanaEvents> {
   #error: HanaError | null = null;
   #lastLogin: LoginResult | null = null;
   #readyTimings: Record<string, number> | null = null;
+  #identity: { token: string; expiresAtMs: number } | null = null;
   readonly #now: () => number;
   readonly #createdAt: number;
   readonly #testApp: boolean;
@@ -210,6 +227,16 @@ export class HanaClient extends Emitter<HanaEvents> {
     return this.#error;
   }
 
+  /** The last identity token this page received (getIdentityToken or identityTokenChanged), or null. */
+  get identityToken(): string | null {
+    return this.#identity?.token ?? null;
+  }
+
+  /** When that token expires (ms since the epoch), or null. */
+  get identityTokenExpiresAtMs(): number | null {
+    return this.#identity?.expiresAtMs ?? null;
+  }
+
   /** The last login's full result (pk_test_ apps also get per-stage `timings`). */
   get lastLogin(): LoginResult | null {
     return this.#lastLogin;
@@ -284,6 +311,7 @@ export class HanaClient extends Emitter<HanaEvents> {
 
   async logout(): Promise<void> {
     await this.#request('hana_logout');
+    this.#setIdentity(null);
     this.#setAddresses(null);
     this.#expiresAtMs = null;
     if (this.#status !== 'logging_in') this.#setStatus('logged_out');
@@ -315,6 +343,29 @@ export class HanaClient extends Emitter<HanaEvents> {
 
   revokeAutoApprove(): Promise<null> {
     return this.#request('hana_revokeAutoApprove');
+  }
+
+  /**
+   * The partner identity token (docs/integration.md "Identity token"): an ES256 JWT for this app that the partner's
+   * backend verifies against Hana's JWKS. Resolves null while logged out (never rejects for that). Silent: no popup, no
+   * user activation needed, and it doesn't count as activity. The vault caches the token across this session's tabs
+   * and mints a new one when less than 5 min remain or the cached one is older than `maxAgeMs`. Rejects with
+   * `identity_unavailable` (retryable), `session_ended` (the session is over; `sessionExpired` fires too) or
+   * `rate_limited`.
+   */
+  async getIdentityToken(opts: IdentityTokenOptions = {}): Promise<string | null> {
+    if (this.#destroyed) throw hanaError(ErrorCode.disconnected);
+    if (typeof opts !== 'object' || opts === null) throw new TypeError('getIdentityToken takes an options object');
+    let maxAgeMs: number | undefined;
+    if (opts.maxAgeMs !== undefined) {
+      if (typeof opts.maxAgeMs !== 'number' || !Number.isFinite(opts.maxAgeMs) || opts.maxAgeMs <= 0) {
+        throw hanaError(RpcCode.invalidParams, 'maxAgeMs must be a positive number of milliseconds');
+      }
+      maxAgeMs = Math.min(IDENTITY_MAX_MAX_AGE_MS, Math.max(IDENTITY_MIN_MAX_AGE_MS, Math.ceil(opts.maxAgeMs)));
+    }
+    const r = await this.#request('hana_identityToken', maxAgeMs === undefined ? undefined : { maxAgeMs });
+    this.#setIdentity(r.identityToken === null || r.expiresAtMs === null ? null : { token: r.identityToken, expiresAtMs: r.expiresAtMs });
+    return r.identityToken;
   }
 
   /** Removes the vault iframe and every listener; pending and later calls reject with 4900. */
@@ -432,10 +483,21 @@ export class HanaClient extends Emitter<HanaEvents> {
         this.#persistence = e.data.persistence;
         this.emit('persistenceChanged', e.data.persistence);
         return;
+      case 'identityTokenChanged':
+        this.#setIdentity(e.data.identityToken === null || e.data.expiresAtMs === null ? null : { token: e.data.identityToken, expiresAtMs: e.data.expiresAtMs });
+        return;
     }
   }
 
+  /** Records the current identity token and emits identityTokenChanged when it is a different one. */
+  #setIdentity(next: { token: string; expiresAtMs: number } | null): void {
+    if ((this.#identity?.token ?? null) === (next?.token ?? null)) return;
+    this.#identity = next;
+    this.emit('identityTokenChanged', next?.token ?? null);
+  }
+
   #loggedOut(): void {
+    this.#setIdentity(null);
     this.#setAddresses(null);
     this.#expiresAtMs = null;
     if (this.#status === 'logged_in') this.#setStatus('logged_out');
@@ -447,6 +509,7 @@ export class HanaClient extends Emitter<HanaEvents> {
     if (launcherWasVisible && !this.#destroyed) this.emit('launcher', { visible: false, label: '' });
     this.#attempt?.abort(hanaError(ErrorCode.disconnected));
     this.#attempt = null;
+    this.#setIdentity(null);
     this.#setAddresses(null);
     this.#expiresAtMs = null;
     if (!this.#destroyed) {

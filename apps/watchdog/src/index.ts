@@ -6,6 +6,7 @@ import { type Notifier, notifierFromEnv } from './channels.ts';
 import { type Env, digestHourUtc } from './env.ts';
 import { log } from './log.ts';
 import { NearChain, NearWriter, Rpc } from './near.ts';
+import { relayerThresholds } from './relayer.ts';
 import { type RunDeps, runWatchdog } from './run.ts';
 import { handleRequest } from './status.ts';
 import { Store } from './store.ts';
@@ -40,7 +41,15 @@ export function runDeps(env: Env, notifier: Notifier = notifierFromEnv(env)): Ru
     notifier,
     now: Date.now,
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-    config: { envName: env.ENV_NAME, network: env.NEAR_NETWORK, signer: env.SIGNER_ACCOUNT, watchdogAccount: env.WATCHDOG_ACCOUNT, digestHourUtc: digestHourUtc(env) },
+    config: {
+      envName: env.ENV_NAME,
+      network: env.NEAR_NETWORK,
+      signer: env.SIGNER_ACCOUNT,
+      watchdogAccount: env.WATCHDOG_ACCOUNT,
+      digestHourUtc: digestHourUtc(env),
+      relayer: env.RELAYER_ACCOUNT?.trim() || null,
+      relayerThresholds: relayerThresholds(env.RELAYER_FUNDS),
+    },
   };
 }
 

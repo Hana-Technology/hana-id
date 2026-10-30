@@ -64,7 +64,7 @@ const relayerKeyStolen: Playbook = {
   status: 'live',
   summary: "A function-call key of the relayer account (`RELAYER_KEYS` or `OWNER_RELAYER_KEYS`) leaked: it can burn its allowance, nothing more.",
   signals: [
-    'Allowance or relayer balance dropping without matching logins; `relay_retry` `invalid_nonce` warnings (another sender used a pool key).',
+    'A watchdog `relayer_allowance_*` or `relayer_balance_*` alert without matching logins (allowance or balance dropping faster than the request logs explain); `relay_retry` `invalid_nonce` warnings (another sender used a pool key).',
     'The API Worker secrets or `.secrets/<env>/relayer-keys.json` / `owner-relayer-keys.json` were exposed.',
   ],
   impact: [
@@ -100,43 +100,6 @@ const relayerKeyStolen: Playbook = {
   followUps: ['If the leak came from the Worker or the Cloudflare account: api-or-cloudflare-compromised.'],
   refs: ['docs/operations.md#relayer-keys-either-pool', 'docs/security.md#what-a-compromise-gives', 'docs/architecture.md#relayer-design'],
   related: ['relayer-out-of-funds', 'api-or-cloudflare-compromised'],
-};
-
-const relayerOutOfFunds: Playbook = {
-  id: 'relayer-out-of-funds',
-  title: 'Relayer out of funds (allowance or balance)',
-  kind: 'incident',
-  severity: 'warning',
-  status: 'live',
-  summary: "A pool key's allowance is used up or the relayer account's balance is too low: relays from it fail.",
-  signals: [
-    'Relays failing with `502 near_rejected` (the node refuses the transaction) for one key or all; logins and derives fail for the apps routed to those keys.',
-    'Not built yet: allowance and balance monitoring (`docs/security.md` key inventory: "mainnet needs allowance monitoring"). Today you notice from failed logins or the request logs.',
-  ],
-  impact: ['Logins (session pool) or owner actions (owner pool) fail until refilled. No security impact.'],
-  steps: [
-    {
-      title: 'Find which key or the account',
-      who: 'a founder',
-      detail: 'The request logs show `code` and `relayInstance` per relay. 3 keys × 2 NEAR covered ~1,500 logins on testnet; allowances drop by gas burnt.',
-      commands: [c.apiTailErrors],
-    },
-    {
-      title: 'Replace a used-up key',
-      who: 'a founder',
-      detail: "Same as a leaked key: delete it on chain, remove it from its `.secrets` file, re-run `deploy-contract` (pass larger `--relayer-allowance` / `--owner-relayer-allowance` if needed, and the same flags on every later re-run), upload the pool.",
-      commands: [c.deleteRelayerKey, c.deployContract, c.uploadRelayerKeys],
-    },
-    {
-      title: 'Fund the account',
-      who: 'a founder',
-      detail: 'A low relayer balance: send NEAR to it from a funded testnet account (near CLI; testnet only, never a mainnet account).',
-    },
-  ],
-  verify: ['Relays succeed; the request logs show no `near_rejected`.'],
-  followUps: ['Before mainnet: build allowance and balance monitoring with an alert.'],
-  refs: ['docs/operations.md#relayer-keys-either-pool', 'docs/api.md#relay-errors-any-relayed-call'],
-  related: ['relayer-key-stolen'],
 };
 
 const vaultKekLeaked: Playbook = {
@@ -747,7 +710,6 @@ const emailIssuerKey: Playbook = {
 export const INCIDENT_PLAYBOOKS: readonly Playbook[] = [
   updaterKeyStolen,
   relayerKeyStolen,
-  relayerOutOfFunds,
   vaultKekLeaked,
   apiCompromised,
   originCompromised,

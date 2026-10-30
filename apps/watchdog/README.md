@@ -51,7 +51,18 @@ every run and sends nothing on a mismatch.
    are not alerted twice. At the first run anything already pending is alerted.
 8. Key changes executable for more than 1 h that nobody executed → warning. Changes that left the queue without
    this watchdog (executed after the delay, cancelled by the owner) → info.
-9. **Alerts out** (`src/alerts.ts`), the daily digest (`src/digest.ts`), the **dead-man's switch** ping, and the run
+9. **Relayer funds** (`src/relayer.ts`, read-only, D150): `view_account` and `view_access_key_list` of the relayer
+   account (`RELAYER_ACCOUNT`, the manifest's `relayer`) at final finality. Its available balance (`amount` minus
+   `storage_usage` × 10^19 yocto) and the remaining allowance of each pool key (function-call keys for the signer,
+   by methods: `derive_key` → session pool, `propose_change` → owner pool; other keys are listed, never judged; an
+   unlimited allowance is bounded by the balance only) against the thresholds: balance below 5 NEAR → warning
+   `relayer_balance_low`, below 1 NEAR (or no account) → critical `relayer_balance_critical`; a session-pool key below
+   0.5 / 0.1 NEAR and an owner-pool key below 0.1 / 0.02 NEAR → `relayer_allowance_low` / `relayer_allowance_critical`
+   (one alert per key); a pool with no key → critical `relayer_pool_empty`. Conditions: raised once, the warning
+   replaced by the critical when it drops further, resolved by the first run after a refill or a replaced key. The
+   watchdog never tops anything up (it holds no key on the relayer account). A failed read marks the check `error`
+   and the run `degraded`, and resolves nothing. Thresholds: manifest `watchdog.relayerFunds` (below).
+10. **Alerts out** (`src/alerts.ts`), the daily digest (`src/digest.ts`), the **dead-man's switch** ping, and the run
    record (`runs`, each check's outcome).
 
 Everything not listed in steps 4–6 is alert-only (D82). Actions use exactly four methods, the permission of the
@@ -110,7 +121,7 @@ route answers 503. Responses are JSON, `cache-control: no-store`.
 
 | Route | Returns |
 |---|---|
-| `GET /status` | `env`, `network`, `signer`, `watchdog_account`, `now`, `run_interval_ms` (300000), `resend_ms`, `initialized_at`, `last_run` (`{id, started_at, finished_at, outcome, first_run, checks: [{id, outcome, detail?}]}`), `silent` (no finished run within two intervals: the portal's warning banner), `heartbeat` (`{configured, last_ping_at, last_ok_at, ok, failures}`), `channels` (configured or not, pager provider), `seen_kids` (`{provider, kid, n, e, source, first_seen_at, last_seen_at}`), `actions` (last 50), `open_alerts` (unacknowledged critical and open conditions), `checks` and `alert_kinds` (the registry: per kind `{severity, check, description, playbook}`, `playbook` = the id of its `@hana-id/playbooks` playbook, the portal's link target) |
+| `GET /status` | `env`, `network`, `signer`, `watchdog_account`, `now`, `run_interval_ms` (300000), `resend_ms`, `initialized_at`, `last_run` (`{id, started_at, finished_at, outcome, first_run, checks: [{id, outcome, detail?}]}`), `silent` (no finished run within two intervals: the portal's warning banner), `heartbeat` (`{configured, last_ping_at, last_ok_at, ok, failures}`), `channels` (configured or not, pager provider), `seen_kids` (`{provider, kid, n, e, source, first_seen_at, last_seen_at}`), `relayer_funds` (the last relayer reading or null: `{account, exists, amount, locked, storage_usage, available, keys: [{public_key, pool, allowance}], other_keys, at, thresholds: {balance, session, owner: {warn, critical}}}`, amounts in yoctoNEAR as decimal strings, `allowance` null = unlimited), `actions` (last 50), `open_alerts` (unacknowledged critical and open conditions), `checks` and `alert_kinds` (the registry: per kind `{severity, check, description, playbook}`, `playbook` = the id of its `@hana-id/playbooks` playbook, the portal's link target) |
 | `GET /alerts?cursor=<id>&limit=<1..200>&severity=<critical\|warning\|info>` | `{alerts: [{id, kind, severity, title, details, created_at, resolved_at, acked_at, acked_by, acked_via, last_sent_at, send_count, pending_channels, channels, resends_until_ack, deliveries: [{channel, kind, at, ok, error}]}], next_cursor}`, newest first |
 | `GET /actions?cursor=<id>&limit=<1..200>` | `{actions: [{id, run_id, at, method, args, reason, ok, tx_hash, error}], next_cursor}`, newest first (`tx_hash` for transaction links) |
 | `POST /alerts/:id/ack` `{"by": "<who>"}` | Records the acknowledgement once (`acked_via: "portal"`, `acked_by` 1–200 characters: the Access identity), `200 {alert}`; `409` if already acknowledged (the first ack is kept); `404`, `400`, `413`, `415` |
@@ -130,9 +141,16 @@ Manifest block (`envs/<env>.json`, schema `packages/env/src/schema.ts`, optional
   "alertEmails": ["founder-a@…", "founder-b@…"],
   "alertFrom": "alerts@<sending subdomain>",
   "pager": "ntfy",
-  "digestHourUtc": 0
+  "digestHourUtc": 0,
+  "relayerFunds": { "balance": { "warn": 5, "critical": 1 }, "sessionAllowance": { "warn": 0.5, "critical": 0.1 }, "ownerAllowance": { "warn": 0.1, "critical": 0.02 } }
 }
 ```
+
+`relayerFunds` is optional, and so is each pair (NEAR, `critical` below `warn`): the values above are the defaults
+(`src/relayer.ts` `DEFAULT_RELAYER_FUNDS`). Raise the allowance pairs when `deploy-contract` ran with a larger
+`--relayer-allowance` / `--owner-relayer-allowance`. `gen` passes the manifest's `relayer` as `RELAYER_ACCOUNT` and an
+override as `RELAYER_FUNDS` (JSON); a Worker without `RELAYER_ACCOUNT` (generated before this check) skips it, and an
+unreadable `RELAYER_FUNDS` pair falls back to its default and is named in the `config` check's detail.
 
 Worker secrets, all in `.secrets/<env>/watchdog-secrets.json` (0600, a flat `{NAME: value}` object):
 
@@ -163,7 +181,7 @@ Setup and deploy steps are in `docs/operations.md` "Watchdog service".
 JWKS and recording channels; `alerts.test.ts` routing, re-sends, acks and failing channels; `channels.test.ts` each
 adapter's request; `registry.test.ts` that every alert kind has exactly one playbook (and its line in the alert text);
 `sanitize.test.ts` hostile kids (line breaks, `<!channel>`, 128 bytes, non-ASCII) through every
-channel and a full run; `status.test.ts` the endpoints; `near.test.ts` the RPC client (fallback) and the signed
+channel and a full run; `status.test.ts` the endpoints; `relayer.test.ts` the relayer funds check (thresholds, escalation, resolution, a missing account or pool, a failed read, escaped key strings); `near.test.ts` the RPC client (fallback, the relayer reads) and the signed
 transactions; `worker.test.ts` the cron handler end to end with the real wiring behind one stubbed `fetch`, and that
 no secret value appears in any log line or stored row. `scripts/test/` covers the config generator and the secrets
-file.
+file; `relayer-pools.test.ts` that the pool classification matches the API's allowlists.

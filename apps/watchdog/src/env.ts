@@ -17,6 +17,13 @@ export interface Env {
   SIGNER_ACCOUNT: string;
   /** This watchdog's own account (one of the contract's watchdogs). */
   WATCHDOG_ACCOUNT: string;
+  /**
+   * The relayer account whose balance and pool-key allowances are monitored (the manifest's `relayer`). Optional: a
+   * Worker configured before relayer monitoring skips the `relayer_funds` check until `gen` and a redeploy.
+   */
+  RELAYER_ACCOUNT?: string;
+  /** JSON of the manifest's `watchdog.relayerFunds` (thresholds in NEAR); absent: the defaults (relayer.ts). */
+  RELAYER_FUNDS?: string;
   PAGER_PROVIDER: string;
   /** Comma-separated alert email recipients (both founders, D85). */
   ALERT_EMAILS: string;

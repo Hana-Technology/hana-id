@@ -59,6 +59,10 @@ D1 database). Per-IP limiters always stay near their client. Changing it creates
 - `alertEmails`: both founders (D85); `alertFrom`: an address on the dedicated sending subdomain (D87).
 - `pager`: `ntfy`, `pushover` or `pagerduty` (D85, chosen at setup); its credentials are Worker secrets.
 - `digestHourUtc` (0–23, default 0): the daily digest goes out on the first run after this hour (UTC).
+- `relayerFunds` (optional, D150): thresholds in NEAR of the watchdog's read-only relayer funds check, each pair
+  optional, `critical` below `warn`: `balance` (the `relayer` account's available balance; default 5 / 1),
+  `sessionAllowance` (each session-pool key; 0.5 / 0.1), `ownerAllowance` (each owner-pool key; 0.1 / 0.02). Raise the
+  allowance pairs when `deploy-contract` runs with larger allowances. A change needs `watchdog gen` and a redeploy.
 
 `rpcFallback` (optional): a second NEAR JSON-RPC endpoint, `https` only and not `rpc` itself, ideally from another
 provider. The vault and the export window read from it (session re-syncs, the login's registry check, transaction

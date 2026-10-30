@@ -553,6 +553,21 @@ A used-up allowance is replaced the same way. Allowances drop by gas burnt (refu
 3 × 2 NEAR covered ~1,500 logins on testnet. Don't use pool keys outside the API: the objects assume they are the
 only sender (another sender costs an `InvalidNonce` retry).
 
+**Monitoring (D150).** The watchdog reads the relayer account every 5 min (check `relayer_funds`, read-only) and
+alerts on its available balance (warning `relayer_balance_low` below 5 NEAR, critical `relayer_balance_critical`
+below 1 NEAR) and on each pool key's remaining allowance (`relayer_allowance_low` / `relayer_allowance_critical`:
+session pool below 0.5 / 0.1 NEAR, owner pool below 0.1 / 0.02 NEAR), and pages when a pool has no key
+(`relayer_pool_empty`). The thresholds are the manifest's `watchdog.relayerFunds` (`apps/watchdog/README.md`
+"Configuration"; raise the allowance pairs together with `--relayer-allowance` / `--owner-relayer-allowance`).
+`/status` `relayer_funds` shows the last reading. The watchdog never tops anything up; a low balance is funded by
+hand from a funded testnet account (never a mainnet one):
+
+```sh
+near tokens <funded testnet account> send-near <relayer> '<amount> NEAR' network-config testnet sign-with-legacy-keychain send
+```
+
+Recovery for each alert: [`relayer-out-of-funds`](playbooks.md#relayer-out-of-funds).
+
 ### Keys-updater key
 
 On the governance contract (layout v2) the key's methods are exactly `set_issuer_key`, `propose_issuer_key_removal`,
@@ -956,6 +971,7 @@ This table only says what each kind means:
 | warning `unexecuted_key_change`, `stale_active_key` | A matured key change nobody executed (> 1 h), or an active kid Google dropped > 3 h ago | [`key-sync-stalled`](playbooks.md#key-sync-stalled) |
 | warning `active_key_material_unavailable` | The contract has no `get_issuer_keys` (older code): active keys are checked by kid only | [`active-key-material-unavailable`](playbooks.md#active-key-material-unavailable) |
 | warning `config_change` | Shared clients, sponsors or public registration changed | [`config-change`](playbooks.md#config-change) |
+| `relayer_balance_critical`, `relayer_allowance_critical`, `relayer_pool_empty`; warning `relayer_balance_low`, `relayer_allowance_low` | The relayer account's available balance, or a pool key's remaining allowance, is below its threshold (defaults: balance 5 / 1 NEAR; session key 0.5 / 0.1; owner key 0.1 / 0.02; manifest `watchdog.relayerFunds`), or a pool has no key: relays from it fail once it runs out. Read-only: the watchdog never tops up | [`relayer-out-of-funds`](playbooks.md#relayer-out-of-funds) |
 | warning `confirm_failed` | A confirmation of a key that matches Google's JWKS failed: it goes live only after the full delay | [`confirm-failed`](playbooks.md#confirm-failed) |
 | info `key_change_confirmed`, `key_change_executed`, `key_change_cancelled` | Routine key-change events | [`key-change-lifecycle`](playbooks.md#key-change-lifecycle) |
 | info `config_matured` | A scheduled delay decrease or console-audience addition came into force | [`config-matured`](playbooks.md#config-matured) |

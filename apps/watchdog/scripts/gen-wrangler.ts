@@ -44,6 +44,9 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
       ...(m.rpcFallback ? { NEAR_RPC_FALLBACK: m.rpcFallback } : {}),
       SIGNER_ACCOUNT: m.signer,
       WATCHDOG_ACCOUNT: w.account,
+      // Relayer funds check (read-only): the account and, when the manifest overrides them, the thresholds.
+      RELAYER_ACCOUNT: m.relayer,
+      ...(w.relayerFunds ? { RELAYER_FUNDS: JSON.stringify(w.relayerFunds) } : {}),
       PAGER_PROVIDER: w.pager,
       ALERT_EMAILS: w.alertEmails.join(','),
       ALERT_FROM: w.alertFrom,

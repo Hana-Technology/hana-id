@@ -1450,6 +1450,26 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 - Why: each question's trade-offs are in the spec. Optional email sharing never affects which wallet a person gets
   (linking is D119/D122, from Google's verified address read transiently inside Hana).
 
+### D150. The watchdog monitors the relayer's funds (read-only), with default thresholds and manifest overrides
+- Date 2026-10-30 · Status: built (branch `feat/playbook-gaps`), defaults for review · Source: conversation (closing
+  the recovery playbooks' "not built yet" steps)
+- Decision: every run reads the relayer account (`view_account`, `view_access_key_list`, final) and raises condition
+  alerts: available balance (`amount` minus storage) below 5 NEAR → warning `relayer_balance_low`, below 1 NEAR or no
+  account → critical `relayer_balance_critical`; each pool key's remaining allowance below its pool's thresholds
+  (session 0.5 / 0.1 NEAR of 2 NEAR, owner 0.1 / 0.02 NEAR of 0.5 NEAR) → `relayer_allowance_low` /
+  `relayer_allowance_critical`; a pool with no key → critical `relayer_pool_empty`. Keys are assigned to a pool by a
+  marker method (`derive_key` session, `propose_change` owner), so the session pool's planned allowlist states keep
+  working. Thresholds can be overridden per pair in the manifest's `watchdog.relayerFunds` (NEAR). The watchdog never
+  tops anything up: it holds no key on the relayer account, and funding stays a founder's manual step. Playbook:
+  `relayer-out-of-funds` (now an alert playbook).
+- Why: `docs/security.md` listed allowance monitoring as a mainnet requirement, and the relayer playbook could only
+  say "you notice from failed logins". The watchdog already reads the chain every 5 min through its own RPC and pages
+  both founders; a second monitor would duplicate that. Critical for the balance and per key, because a used-up key
+  stops the logins of every app routed to it.
+- Rejected: a total-allowance-per-pool threshold (one key running out still fails its apps); auto top-up from a
+  funded account (it would put a spending key on the watchdog's account, against D82's minimal powers); thresholds as
+  code constants only (a busier env or raised allowances need their own).
+
 ## Superseded or amended
 
 | Was | Now | Source |

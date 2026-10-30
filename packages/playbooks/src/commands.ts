@@ -73,6 +73,8 @@ export const countOldKekRows =
   'corepack pnpm --dir apps/api exec wrangler d1 execute <cloudflare.d1Name> --remote --command "SELECT COUNT(*) AS n FROM vault_shares WHERE kek_id = <old id>"';
 export const deletePreviousKek = 'corepack pnpm --dir apps/api exec wrangler secret delete VAULT_KEK_PREVIOUS --name <cloudflare.workerName>';
 
+/** Fund the relayer account (`docs/operations.md` "Relayer keys (either pool)"); testnet only. */
+export const fundRelayer = "near tokens <funded testnet account> send-near <relayer> '<amount> NEAR' network-config testnet sign-with-legacy-keychain send";
 export const deleteRelayerKey = 'near account delete-keys <relayer> public-keys <ed25519:…> network-config testnet sign-with-legacy-keychain send';
 export const deleteWatchdogKey = 'near account delete-keys <watchdog.account> public-keys <ed25519:…> network-config testnet sign-with-legacy-keychain send';
 export const executeIssuerKeyChange =

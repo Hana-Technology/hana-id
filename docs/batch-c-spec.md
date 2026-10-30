@@ -495,6 +495,12 @@ CREATE INDEX audit_log_org_seq ON audit_log (org_id, seq);
 No staff table and no org-to-app table: `apps.org_id` (through `scopes.org_id`) in the hot DB is the only source of
 which app belongs to which org. The console sends no email (one channel: §Email).
 
+The migration (`apps/console/migrations/0001_init.sql`) also writes the constraints these comments imply, so a bug
+can't store them: 32-byte hashes, JSON-valid JSON columns, lowercased emails, `token_hash` set exactly with
+`notified_at`, an invite's acceptance columns set together, one grant per invite, `owner_from` only with a user,
+never both cancelled and applied, a login flow's `scope = 'openid email'`, invites only on login flows, `used_at` only
+after `started_at`, `pending_actions.kind` from the step-up list and owner-action fields exactly on owner actions.
+
 ### Usage ledger (Neon Postgres, `aws-ap-southeast-2`; migrations in `apps/api/migrations-usage`)
 
 Postgres 18, point-in-time restore on. The project exists (2026-10-30): `hana-id` in AWS Sydney, branches `production`

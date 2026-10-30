@@ -78,7 +78,7 @@ export function base58(bytes: Uint8Array): string {
   return out;
 }
 
-const subtle = (): SubtleCrypto => globalThis.crypto.subtle;
+const subtle = (): SubtleCrypto => crypto.subtle;
 
 /** Copies into a fresh ArrayBuffer-backed array (WebCrypto's BufferSource typing refuses SharedArrayBuffer views). */
 const own = (b: Uint8Array): Uint8Array<ArrayBuffer> => new Uint8Array(b);
@@ -94,7 +94,7 @@ export async function hmacSha256(key: Uint8Array, message: Uint8Array): Promise<
 }
 
 export function randomBytes(n: number): Uint8Array {
-  return globalThis.crypto.getRandomValues(new Uint8Array(n));
+  return crypto.getRandomValues(new Uint8Array(n));
 }
 
 /** Lexicographic byte order (the order origins are sorted in before hashing). */

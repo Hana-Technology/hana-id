@@ -1548,6 +1548,21 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   and access list. The `production` branch of the current project is not used for mainnet.
 - Why: a sandbox credential leak or a project-level mistake can never reach production billing data.
 
+### D144. Support ID lookup is built from data Hana already keeps
+- Date 2026-10-30 · Status: confirmed by the user, not built · Source: batch C1 open question 4 (D96)
+- Decision: staff resolve a user's Support ID in the admin console from the usage ledger's pseudonymous user id plus
+  each app's change history (`app_changes`): which apps it used, recent logins, errors and app setting changes. No
+  dedicated support table and no email or name stored. A short spec section, reviewed by the user, comes before
+  batch C15.
+- Why: no new store of user data to protect or keep under retention rules.
+- Rejected: a dedicated support table with more detail per user.
+
+### D145. The owner-invite waiting period has its own setting
+- Date 2026-10-30 · Status: confirmed by the user, built in batch C1 · Source: batch C1 open question 5 (D89)
+- Decision: manifest `ownerGrantDelayMs` (a new owner is a viewer until it passes; owners can cancel) is separate
+  from `appChangeDelayMs`, with the same bounds (at least 24 h on mainnet).
+- Why: the two waits can be tuned independently; changing one never silently changes the other.
+
 ## Superseded or amended
 
 | Was | Now | Source |

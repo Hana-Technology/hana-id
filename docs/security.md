@@ -6,7 +6,7 @@ the watchdog's relayer funds monitoring, D150) and the `KEYS_UPDATER_KEY` and ow
 (e) (governance deployed on sandbox-dev, D126); otherwise 2026-10-29 (branch `perf/login-latency-impl`; the login popup, the
 background persist and the vault gate were re-checked, the rest as of 2026-10-28, commit 58edee9; the approval popup
 opened by the partner page, branch `feat/approve-in-click`, D99; the API rate limits, owner-action caps, CKD key pin,
-secret scan and admin CLI after the 2026-10-29 security sweep, D100; the browser, core and SDK sweep fixes, D110–D118; the contract v3 email-login invariants, 2026-10-30, branch `feat/email-login-1`, D130–D131).
+secret scan and admin CLI after the 2026-10-29 security sweep, D100; the browser, core and SDK sweep fixes, D110–D118; the contract v3 email-login invariants, 2026-10-30, branch `feat/email-login-1`, D130–D136).
 
 Component map and flows: `docs/architecture.md`. On-chain layouts and the contract's own security notes:
 `docs/contract-interface.md` ("Security notes (for reviewers)"). Browser parts (vault, auth pages, partner client)
@@ -117,15 +117,25 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
     every other issuer stay compact-only. Trust: whoever makes the `hana` key sign can mint any email token, so reach
     every email wallet and every account linked to one (`docs/email-login-spec.md` "Trust statement").
   - Accounts: a member opens its root's path; an identity in no account opens the v2 path unchanged. Automatic links
-    only inside a login, bound to that session by the issuer's `auto_link` nonce (session preimage hash, session
-    identity, target epoch, mode); case B (email joining a Google wallet) pending `change_delay_ms` unless the
-    issuer's mode says at once; case A must be immediate; both-have-a-wallet is never merged; unlinked pairs are
-    never re-matched. Explicit links need fresh proofs of both identities and wait `change_delay_ms` (and the unpause
-    floor). Every link change bumps the account epoch, which every link nonce commits to.
+    only inside a login and bound both ways (D133): the issuer's `auto_link` nonce binds the token to that session
+    and to one join (session preimage hash, session identity, join, joiner, target root, target epoch, mode), and the
+    session key's counter-1 signature covers the link token and its mode, so whoever submits a published login can't
+    add, swap, change or strip a link. Case B (email joining a Google wallet) pending `change_delay_ms` unless the
+    issuer's mode says at once; case A must be immediate; both-have-a-wallet is never merged; unlinked pairs are never
+    re-matched (a cancel keeps the match, D132). Explicit links need fresh proofs of both identities and wait
+    `change_delay_ms` (and the unpause floor). Every link change bumps the account epoch, which every link nonce
+    commits to.
   - `opened` ("has a wallet") is set at derivation, so a copied token in a bare `create_session` can't create a
-    wallet (D130). Unlinking stops future sessions only; open ones run to their end.
+    wallet (D130); a linked identity's own path never derives (D136); after a migration from pre-v3 state every link
+    waits for the owner's `accept_unrecorded_wallets` (D135). Unlinking stops future sessions only; open ones run to
+    their end.
+  - Only `email` can be self-issued (D134); keys a governed upgrade adds to a signer policy are checked like
+    `set_issuer_key`'s (no padded duplicate as a second signer), and a "replace the signer" upgrade can drop the old
+    signer's keys with no overlap (D136).
+  - Off-chain obligations (later batches): the vault verifies a link token and recomputes its `auto_link` nonce before
+    signing the linked CKD payload; the issuer mints the nonce with the join it decided; the API prechecks both.
   - Contract security notes: `docs/contract-interface.md` "Security notes (for reviewers)"; readings made in the build:
-    D130, D131.
+    D130, D131; review fixes D133–D136.
 
 ### API (`apps/api`)
 

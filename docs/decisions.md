@@ -1597,7 +1597,7 @@ points for the user"; none changes an address.
     token rather than being ignored).
   - Case A (Google joining an email wallet) must carry `link_immediate = true` (`This link must be immediate`): a
     delayed case A would have to open the Google identity's own path, a second wallet.
-  - `cancel_link` doesn't mark the pair `unlinked` (the spec names unlink only); lazy activation of a pending member
+  - `cancel_link` doesn't mark the pair `unlinked` (the spec names unlink only; confirmed by the user, D132); lazy activation of a pending member
     doesn't bump the epoch; an account record is never deleted (its epoch must not restart).
   - `get_account` also returns `unlinked` (hex keys), so the issuer can apply "an unlinked pair is not a match".
   - The panic for an unlisted kid stays today's `Unknown signing key` (the spec writes `Unknown key`); a
@@ -1607,6 +1607,68 @@ points for the user"; none changes an address.
 - Why: each is the stricter of the readings the spec allows, or fills a gap without a product choice.
 - Rejected: the looser readings (accepting a delayed case A, ignoring unknown extra signatures, letting the updater
   propose email key removals).
+
+### D132. A cancelled link keeps the match (open point 3 → A)
+- Date 2026-10-30 · Status: confirmed by the user, built (`feat/email-login-1`) · Source: conversation
+  (`docs/email-login-build-plan.md` open point 3)
+- Decision: `cancel_link` does **not** mark the pair `unlinked`. After a user cancels a pending link, the next login
+  with the other method still sees the match and offers only "Link and continue" or "Sign in with {the other
+  method}": no second wallet. Only `unlink_identity` marks a pair.
+- Rejected: marking cancelled pairs (an email login would then make its own wallet after a cancel).
+
+### D133. The user's session signature binds the link, and the auto_link nonce binds the join
+- Date 2026-10-30 · Status: built (`feat/email-login-1`), from the independent security review (HIGH-1, MEDIUM-1) ·
+  Source: review of contract v3 at ba45b91
+- Decision:
+  - In `create_session_and_derive` with `link_jwt`, the session key's counter-1 signature is over the **linked CKD
+    payload** `"hana-id-ckd-link-v1:" ‖ sha256(link_jwt) ‖ mode u8 ‖ pk1 ‖ ":" ‖ pk2` instead of the plain one. The
+    plain payload is unchanged for logins without a link. The vault verifies the link token and recomputes its
+    `auto_link` nonce before signing.
+  - The `auto_link` nonce also commits to the join the issuer decided: `join` (1 = the session identity joins the link
+    identity's account, case A; 2 = the link identity joins the session identity's, cases B/C), `joiner_ik` and
+    `target_root_ik`, before the epoch and mode. The contract recomputes the join from chain state and checks it.
+- Why: before, nothing the user signed bound the link. Whoever submitted a published login chose whether and which
+  link was attached: a stolen email-issuer key could replay a failed Google login with its own case-B token and join
+  its email identity to the Google wallet (against D119 and the spec's trust statement), and anyone could strip the
+  link from a case-A login so the Google identity derived its own path (two wallets, against D122). A token minted for
+  case A could also execute as case B after the chain state changed at the same epoch. Its own domain keeps the linked
+  payload from ever reading as a plain CKD payload (a suffix on the plain payload could collide with a crafted `pk2`).
+- No path, CKD request, derivation or existing layout changes; the `auto_link` layout was never deployed.
+- Rejected: the reviewer's suffix form (`plain payload ‖ ":link:" ‖ …`), for the collision above.
+
+### D134. Only the email provider can be self-issued
+- Date 2026-10-30 · Status: built (`feat/email-login-1`), from the review (LOW-3)
+- Decision: `mark_self_issued` accepts only `SELF_ISSUABLE = ["email"]` (`Only the email issuer can be self-issued`).
+  Another provider needs a governed upgrade.
+- Why: marking is one way. An owner could remove Google's keys and mark `google` self-issued, which would stop every
+  Google login until a governed upgrade. The email provider name is frozen anyway (it is in every email path).
+- Rejected: a governance delay on marking (more machinery for a provider list that is one name).
+
+### D135. Links wait for the owner after a migration from pre-v3 state
+- Date 2026-10-30 · Status: built (`feat/email-login-1`), from the review (LOW-4)
+- Decision: `migrate` (v2 → v3) and `migrate_v1` set `unrecorded_wallets = true`; while it is set every link, automatic
+  or explicit, panics `Links wait until the owner accepts the wallets opened before v3`. The owner's
+  `accept_unrecorded_wallets()` (one way, event) clears it. `new` starts with `false`. sandbox-dev accepts after its
+  v3 upgrade (its pre-v3 wallets are test data, D122); the mainnet runbook creates the signer with `new` on v3 and
+  checks `get_config().unrecorded_wallets == false`.
+- Why: wallets derived before v3 aren't in `opened`, so "has a wallet" would be wrong for them and a funded pre-v3
+  Google wallet could be silently joined to an email account in case A. A migration argument isn't possible: v2's
+  `execute_upgrade` calls `migrate` with empty input.
+- Rejected: documenting it only (the review's point); a migrate argument (above).
+
+### D136. A linked identity's own path never derives; signer-policy keys are checked like any key
+- Date 2026-10-30 · Status: built (`feat/email-login-1`), from the review (LOW-1, LOW-2, info)
+- Decision:
+  - `derive_key` (and the derive half of `create_session_and_derive`) refuses a session whose path identity is a
+    member of an account, pending or active (`Sign-in method is linked to an account`): a session an identity opened
+    on its own path before it joined can't make a second wallet.
+  - `set_signer_policy` (a governed upgrade's `migrate` only) checks every new key with `set_issuer_key`'s rules
+    (leading zeros stripped, 2048–4096 bits, odd exponent other than 1), so a zero-padded copy of hana's modulus can't
+    pass as a co-signer's key.
+  - `set_signer_policy` takes `overlap`: `true` (adding a signer) keeps the 10-minute overlap and leaves dropped
+    signers' keys until the owner removes them (they can't count once it ends; `get_issuer_keys` still lists them);
+    `false` (replacing a compromised signer) opens no overlap and removes the dropped signers' keys at once.
+- Why: each closes a path the review reproduced; none changes an address.
 
 ## Superseded or amended
 
@@ -1641,6 +1703,9 @@ points for the user"; none changes an address.
 | Email spec draft: AWS KMS key from the start, single-signature tokens | Worker-secret key on testnet, AWS KMS before mainnet; a signer policy and multi-signature JWS JSON tokens from day one (D121) | `docs/email-login-spec.md` "Signing key (staged)" |
 | Email spec draft: Gmail-only immediate linking, case B always 24 h, a switcher for two wallets (case D) | Google-hosted (Gmail or matching `hd`) links at once in cases A and B, others need a code (A) or 24 h (B) (D119); never a second wallet, no switcher (D122) | `docs/email-login-spec.md` "The four cases" |
 | Email spec draft: disposable-address domains allowed | Blocked (D123) | `docs/email-login-spec.md` "Rate limits and abuse" |
+| Email spec: `opened` recorded at every `create_session*` | Recorded at derivation (D130) | `docs/contract-interface.md` "Accounts and links" |
+| Email spec: `auto_link` nonce over the session, the session identity, the target epoch and the mode; the combined login signed over the plain CKD payload | The nonce also commits to the join (who joins which account), and with a link the session key signs the linked CKD payload (D133) | `docs/email-login-spec.md` "Byte layouts (new)", "Sessions" |
+| Email spec: `mark_self_issued(provider)` for any issuer | Only `email` (D134) | `docs/contract-interface.md` "Self-issued issuers" |
 
 ## Proposed, not yet confirmed
 
@@ -1659,4 +1724,5 @@ is a proposal there.
 
 Still open from `docs/email-login-spec.md`: the user-mail provider (Resend unless the colleague picks another,
 D87). Everything else follows D4, D119 and D121–D123. The contract readings made while building it, D130 and D131,
-wait for the user's confirmation (`docs/email-login-build-plan.md` "Open points for the user").
+wait for the user's confirmation (`docs/email-login-build-plan.md` "Open points for the user"; point 3 is confirmed, D132);
+D133–D136 are the security review's fixes.

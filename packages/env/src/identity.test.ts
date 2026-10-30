@@ -1,6 +1,7 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { identityTokenRules } from './identity.ts';
 import { identityIssuerFor, manifestPath, manifestSchema, p256Thumbprint } from './index.ts';
 
 const raw = () => JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Record<string, unknown>;
@@ -61,5 +62,16 @@ describe('manifestSchema: identityToken', () => {
     const [a, b] = [publicKey(), publicKey()];
     const kms = block({ signer: { kind: 'aws-kms', awsRegion: 'ap-east-1', keys: { active: a.kid, standby: b.kid } }, publicKeys: [a, b] });
     expect(manifestSchema.safeParse(kms).success).toBe(true);
+  });
+
+  it('refuses a Worker-secret signer off testnet (the rule gen relies on once mainnet manifests exist)', () => {
+    const t = (block().identityToken as unknown) as Parameters<typeof identityTokenRules>[1];
+    const messages: string[] = [];
+    const ctx = { addIssue: (i: { message: string }) => void messages.push(i.message) } as unknown as Parameters<typeof identityTokenRules>[2];
+    identityTokenRules({ network: 'mainnet', apiUrl: raw().apiUrl as string }, t, ctx);
+    expect(messages.join()).toMatch(/testnet only/u);
+    messages.length = 0;
+    identityTokenRules({ network: 'testnet', apiUrl: raw().apiUrl as string }, t, ctx);
+    expect(messages).toEqual([]);
   });
 });

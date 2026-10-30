@@ -135,7 +135,7 @@ export class IdentitySignerError extends Error {
 }
 
 /** One signer per isolate for the same secrets and active kid (importKey once). */
-let cached: { activeKid: string; primary: string | undefined; standby: string | undefined; signer: Promise<IdentitySigner> } | null = null;
+let cached: { activeKid: string; published: string; primary: string | undefined; standby: string | undefined; signer: Promise<IdentitySigner> } | null = null;
 
 /**
  * The signer for `activeKid`: whichever of IDENTITY_SIGNING_KEY and IDENTITY_SIGNING_KEY_STANDBY has that thumbprint
@@ -143,7 +143,17 @@ let cached: { activeKid: string; primary: string | undefined; standby: string | 
  * neither does, or the key won't import.
  */
 export function workerSecretSigner(env: Pick<Env, 'IDENTITY_SIGNING_KEY' | 'IDENTITY_SIGNING_KEY_STANDBY'>, config: Pick<IdentityConfig, 'activeKid' | 'keys'>): Promise<IdentitySigner> {
-  if (cached && cached.activeKid === config.activeKid && cached.primary === env.IDENTITY_SIGNING_KEY && cached.standby === env.IDENTITY_SIGNING_KEY_STANDBY) return cached.signer;
+  const publishedKey = config.keys.find((k) => k.kid === config.activeKid);
+  const published = publishedKey ? `${publishedKey.x}.${publishedKey.y}` : '';
+  if (
+    cached &&
+    cached.activeKid === config.activeKid &&
+    cached.published === published &&
+    cached.primary === env.IDENTITY_SIGNING_KEY &&
+    cached.standby === env.IDENTITY_SIGNING_KEY_STANDBY
+  ) {
+    return cached.signer;
+  }
   const signer = (async () => {
     const published = config.keys.find((k) => k.kid === config.activeKid);
     if (!published) throw new IdentitySignerError('active_kid_not_published');
@@ -155,7 +165,7 @@ export function workerSecretSigner(env: Pick<Env, 'IDENTITY_SIGNING_KEY' | 'IDEN
       throw new IdentitySignerError('signing_key_unusable');
     }
   })();
-  cached = { activeKid: config.activeKid, primary: env.IDENTITY_SIGNING_KEY, standby: env.IDENTITY_SIGNING_KEY_STANDBY, signer };
+  cached = { activeKid: config.activeKid, published, primary: env.IDENTITY_SIGNING_KEY, standby: env.IDENTITY_SIGNING_KEY_STANDBY, signer };
   signer.catch((e: unknown) => {
     if (cached?.signer === signer) cached = null;
     log({ event: 'identity_signer_unavailable', code: e instanceof IdentitySignerError ? e.reason : 'internal' }, 'error');

@@ -153,6 +153,15 @@ describe('hana_identityToken', () => {
     expect((await identity(first)).result).toEqual({ identityToken: null, expiresAtMs: null });
   });
 
+  it('the session’s expiry drops the token (identityTokenChanged null)', async () => {
+    const { browser, first } = await loggedIn();
+    browser.backend.serverNow = () => browser.timers.now;
+    await tokenOf(first);
+    browser.timers.advance(12 * HOUR);
+    await first.waitUntil(() => first.events.some((e) => e.event === 'identityTokenChanged' && (e.data as { identityToken: unknown }).identityToken === null), 'the null token');
+    expect((await identity(first)).result).toEqual({ identityToken: null, expiresAtMs: null });
+  });
+
   it('a newer login drops the old session’s token; the new session gets a fresh one', async () => {
     const { browser, first } = await loggedIn();
     const one = await tokenOf(first);

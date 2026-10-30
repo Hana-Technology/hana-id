@@ -122,7 +122,7 @@ Done when:
 
 ```
 apps/api/                    + src/rpc/{console,admin}.ts (WorkerEntrypoints), src/changes/ (guarded changes, CAS,
-                               notices, drift), src/usage/ (event, uid, writer), migrations/0005_*.sql, 0006_*.sql,
+                               notices, drift), src/usage/ (event, uid, writer), migrations/0006_*.sql, 0007_*.sql,
                                migrations-usage/ (Neon DDL, owned here)
 apps/console/                hana-id-console-<env>: partner SPA (React 18.3.1, Vite, React Router, client-only) +
                                /api/* backend-for-frontend, AuthHandler entrypoint, hourly cron, AddClient helper
@@ -171,7 +171,7 @@ popups, console ─▶ hana-id-files-<env>  LOGOS (R2, read)
   `vaultOrigin` and `authOrigin`, and `apiUrl`. The API refuses all of them as app origins. The console never shares
   an origin with the vault, so a console XSS can't reach key material. D70 (no cookies) covers batch B's origins and
   the API; the console origin and `console.authOrigin` set the `__Host-` cookies below; `files.origin` sets none.
-- **Deploy order:** hot-DB migration 0005 (expand-only), Neon migrations, then the API, the console, console-auth,
+- **Deploy order:** hot-DB migration 0006 (expand-only), Neon migrations, then the API, the console, console-auth,
   files, the admin Worker. RPC changes are additive, so an older console or admin keeps working against a newer API.
 - **Static assets.** The console and admin Workers use `assets: {directory, binding: "ASSETS",
   not_found_handling: "single-page-application", run_worker_first: true}`; the Worker runs first on every request,
@@ -193,9 +193,10 @@ popups, console ─▶ hana-id-files-<env>  LOGOS (R2, read)
 | admin | — | `USAGE_DB` (role `usage_admin`) | `STATEMENTS`, `EXPORTS` | `API` → `AdminRpc`, `CONSOLE` → `StaffRpc` | `NEAR_RPC`, `SIGNER_ACCOUNT`, `RELAYER_ACCOUNT`, Access ids | `EMAIL_API_KEY` (Resend, D87), `CANCEL_LINK_KEY`, `INVITE_LINK_KEY` |
 
 - **Hyperdrive.** Two configs per env (`hana-id-usage-writer-<env>`, `hana-id-usage-admin-<env>`), each with its own
-  Neon role and password. The credentials live in the Hyperdrive config, created by `scripts/usage-setup.ts` from
-  `.secrets/<env>/neon-*.url` (0600); a Worker's binding carries only the config id (passed to `gen-wrangler` like
-  `--d1-id`, never committed). Query caching is disabled on both (writes, and reports that must be fresh). Driver:
+  Neon role and password. The credentials live in the Hyperdrive config, created by `scripts/usage-setup.ts`, which
+  sets each role's password over the owner's direct connection (`.secrets/<env>/neon.json` `DATABASE_URL_DIRECT`) and
+  keeps the role URLs in `.secrets/<env>/neon-usage-writer.url` and `neon-usage-admin.url` (0600); a Worker's binding
+  carries only the config id (passed to `gen-wrangler` like `--d1-id`, never committed). Query caching is disabled on both (writes, and reports that must be fresh). Driver:
   `pg`, exact-pinned (D93).
 - **Only the API's usage writer and the admin Worker bind Neon (D73).** Partner usage views go through `ConsoleRpc`,
   which calls `SECURITY DEFINER` report functions over the writer binding; the writer role has no table privilege.
@@ -224,16 +225,18 @@ unless stated. No foreign keys cross databases; `app_id` and `org_id` integrity 
 
 ### Hot `DB` (`hana-id-<env>`; API only; migrations in `apps/api/migrations`)
 
-It holds what a login reads. Batch B's 0003 (vault) and the lead-time table's 0004 (`issuer_key_observations`) exist, so batch C's migrations are 0005 and 0006.
+It holds what a login reads. Batch B's 0003 (vault), the lead-time table's 0004 (`issuer_key_observations`) and the
+governance batch's 0005 (`issuer_key_sync`) exist, so batch C's migrations are 0006 and 0007 (renumbered 2026-10-30;
+the first draft said 0005 and 0006, which collided with the governance batch's 0005).
 
-**Why 0005 rebuilds no table.** 0001 declares `app_origins.app_id` and `usage.app_id`, and 0003 declares
+**Why 0006 rebuilds no table.** 0001 declares `app_origins.app_id` and `usage.app_id`, and 0003 declares
 `vault_shares.app_id`, as `REFERENCES apps(id) ON DELETE CASCADE`, and D1 enforces foreign keys. A SQLite rebuild of
 `apps` runs an implicit `DELETE FROM apps`, which fires the cascades (`PRAGMA defer_foreign_keys` defers checks, not
-actions) and would wipe every origin, legacy usage row and vault share. So 0005 is **expand-only**: `ADD COLUMN` and
+actions) and would wipe every origin, legacy usage row and vault share. So 0006 is **expand-only**: `ADD COLUMN` and
 new tables with no FK to `apps` (`BEFORE INSERT` triggers check the app exists). `apps.status` and
 `apps.publishable_key` stay, kept consistent by triggers; dropping them is deferred (§Deferred).
 
-Migration `0005` (expand):
+Migration `0006` (expand):
 
 ```sql
 CREATE TABLE scopes (
@@ -328,7 +331,7 @@ CREATE INDEX security_events_unnotified ON security_events (notified_at);
 --   app_origins, guarded_changes BEFORE INSERT: abort unless the app exists.
 ```
 
-Backfill in `0005`, in order:
+Backfill in `0006`, in order:
 
 1. `INSERT INTO scopes` one row per distinct `(apps.scope_id, environment)`, the environment from the key prefix.
    `org_id = 'org_legacy'`; `first_session_at`, `created_at` and `assigned_at` = the migration time, so no existing
@@ -340,12 +343,12 @@ Backfill in `0005`, in order:
 5. One `app_changes` row per app, `kind = 'migration.baseline'`, listing its origins, the `policyId` of
    `auto_approve_policy`/`auto_approve_pending` and `raw_sign`/`raw_sign_pending`, so drift detection can explain them.
 
-`0006` drops the legacy `usage` table once `scripts/usage-legacy-export.ts` has written it once to `EXPORTS` as CSV
+`0007` drops the legacy `usage` table once `scripts/usage-legacy-export.ts` has written it once to `EXPORTS` as CSV
 (row counts verified). Batch C stops writing it (§Usage).
 
-**Order (README):** apply 0005 → deploy the API (it writes `suspended_by` and reads both) → deploy the rest → export
-legacy usage → apply 0006. A migration test on a sandbox-dev snapshot asserts unchanged app, origin, key, share and
-usage row counts. After 0005 only the new CLI runs (§CLI); the old `app:origins:add` would insert rows with
+**Order (README):** apply 0006 → deploy the API (it writes `suspended_by` and reads both) → deploy the rest → export
+legacy usage → apply 0007. A migration test on a sandbox-dev snapshot asserts unchanged app, origin, key, share and
+usage row counts. After 0006 only the new CLI runs (§CLI); the old `app:origins:add` would insert rows with
 `active_from` NULL, which never match.
 
 **Invariants (in the RPC and tested):** test and live apps never share a scope (D51); a key's prefix matches its
@@ -494,7 +497,8 @@ which app belongs to which org. The console sends no email (one channel: §Email
 
 ### Usage ledger (Neon Postgres, `aws-ap-southeast-2`; migrations in `apps/api/migrations-usage`)
 
-One Neon project per env (production in its own project), Postgres 17, point-in-time restore on. Migrations run from
+Postgres 18, point-in-time restore on. The project exists (2026-10-30): `hana-id` in AWS Sydney, branches `production`
+and `sandbox-dev`; whether production moves to a project of its own stays open question 5. Migrations run from
 `scripts/usage-migrate.ts` with the owner role over a direct connection, never from a Worker. Least privilege is by
 role, not convention: the API's writer role can only call functions; nothing but the owner role can update or delete
 ledger rows, and retention runs through owner-defined functions.
@@ -600,8 +604,9 @@ Functions (owner-defined, `SECURITY DEFINER`, `SET search_path = usage, pg_temp`
 Roles:
 
 ```sql
-CREATE ROLE usage_writer LOGIN;   -- API's Hyperdrive config
-CREATE ROLE usage_admin  LOGIN;   -- admin Worker's Hyperdrive config, and scripts/uid-erase.ts
+CREATE ROLE usage_writer NOLOGIN; -- API's Hyperdrive config; usage-setup gives it LOGIN and a password
+CREATE ROLE usage_admin  NOLOGIN; -- admin Worker's Hyperdrive config, and scripts/uid-erase.ts; likewise
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA usage FROM PUBLIC;   -- Postgres grants EXECUTE to PUBLIC by default
 GRANT USAGE ON SCHEMA usage TO usage_writer, usage_admin;
 GRANT EXECUTE ON FUNCTION usage.record_event, usage.org_report, usage.org_statements, usage.org_ledger TO usage_writer;
 GRANT SELECT ON ALL TABLES IN SCHEMA usage TO usage_admin;
@@ -610,11 +615,17 @@ GRANT UPDATE (usd_micros, source, entered_by, fetched_at) ON usage.near_usd_rate
 GRANT EXECUTE ON FUNCTION usage.org_report, usage.org_statements, usage.org_ledger, usage.ensure_partitions,
   usage.drop_expired_partitions, usage.strip_uids, usage.purge_app_users, usage.erase_uid, usage.rejection_rates
   TO usage_admin;
-GRANT USAGE, CREATE ON SCHEMA ops TO usage_admin;
+GRANT USAGE ON SCHEMA ops TO usage_admin;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ops TO usage_admin;   -- the owner creates every ops table
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA ops TO usage_admin;
 ALTER ROLE usage_writer SET statement_timeout = '5s';
 ALTER ROLE usage_admin  SET statement_timeout = '60s';
 ```
 
+- The migrations hold no credential. Roles are created `NOLOGIN` (idempotently), so the DDL runs the same on Neon, a
+  container and PGlite; `usage-setup` sets `LOGIN` and a generated password per role. Without the `REVOKE … FROM
+  PUBLIC`, every role could call `record_event` and the retention functions; a test checks each role's function list.
+  The admin role gets table privileges on `ops` rather than `CREATE` on the schema: it never needs to create objects.
 - Partitions: the first migration creates the current and next 3 months; the admin's daily cron calls
   `ensure_partitions(3)`. There is no default partition, so an event outside every partition fails loudly
   (`usage_write_failed`), and the admin console alerts when fewer than 2 future partitions exist.
@@ -952,7 +963,7 @@ contact, other than the proposer, who confirmed the change out of band and how. 
 
 ### Drift detection (API hourly cron)
 
-Every origin with `active_from <= now` must be explained by an active `origin_add`, the 0005 baseline or an
+Every origin with `active_from <= now` must be explained by an active `origin_add`, the 0006 baseline or an
 `app.created` row; every in-force or pending policy's `policyId` and every `raw_sign`/`raw_sign_pending =
 'approval'` by a `policy_set`/`raw_sign_on` change that was announced, or the baseline. A mismatch writes
 `security_events` (`drift`), which the admin feed emails. It catches direct D1 writes (manual SQL, a buggy script);
@@ -1690,8 +1701,9 @@ longer needed). The service contract names the same periods.
 ## Tests (one per behaviour)
 
 `@cloudflare/vitest-plugin` (`cloudflareTest`, as in `apps/api/vitest.config.ts`) with auxiliary Workers over real
-service bindings (Miniflare). Neon tests run against a real Postgres 17 (a Neon branch in CI, or a local container)
-through the same `pg` driver; Hyperdrive is replaced by a direct connection string in tests. Google's token
+service bindings (Miniflare). Neon tests run in Node against PGlite (Postgres compiled to WASM, in process, no network
+or container; D127); the same suite runs against a real Postgres 18 through `pg` when `USAGE_TEST_DATABASE_URL` points
+at a superuser connection (a local container, never Neon); Hyperdrive is replaced by a direct connection string in tests. Google's token
 endpoint, the JWKS, the Access JWKS, NEAR RPC, the Images binding and the email provider are mocked with fixed keys.
 
 **Topology and config**
@@ -1830,10 +1842,10 @@ endpoint, the JWKS, the Access JWKS, NEAR RPC, the Images binding and the email 
 
 **Hot DB and gate**
 
-- 0005 on an empty DB and on a sandbox-dev snapshot (origins, legacy usage, vault shares): row counts unchanged;
+- 0006 on an empty DB and on a sandbox-dev snapshot (origins, legacy usage, vault shares): row counts unchanged;
   legacy apps keep working; origins get `active_from = 0`; every scope gets `first_session_at`; baseline rows exist;
   `apps_scope_id` and `app_origins_origin` still exist.
-- The batch B gate, preflight and share SQL give the same answers on the post-0005 schema; a `suspended_by` write
+- The batch B gate, preflight and share SQL give the same answers on the post-0006 schema; a `suspended_by` write
   shows as `status = 'suspended'`.
 - A test/live mix in one scope is refused by the migration and by the RPC. Org A asking for org B's app gets
   `not_found` on every `ConsoleRpc` org method.
@@ -1895,7 +1907,7 @@ only by `Owner::Near`, so they stay as batch A references.
 
 1. **Shared and API prerequisites** (~2.5k, 5 d): `packages/oidc` (new claims), `packages/console-core` (layouts,
    vectors, `normaliseOrigin`, types), the owner-action refactor and caps, relay results with key and nonce, gas
-   fields, migration 0005 with the gate and preflight SQL and triggers, `first_session_at`, the new vars.
+   fields, migration 0006 with the gate and preflight SQL and triggers, `first_session_at`, the new vars.
 2. **Usage ledger** (~1.5k, 3 d): Neon project, roles and Hyperdrive configs (`usage:setup`), DDL and functions,
    `recordUsage` with one retry, uid, removal of the D1 counters, `usage:legacy-export`, the monthly retention
    functions. Blocked by open question 5.

@@ -1856,6 +1856,13 @@ points for the user"; none changes an address.
   address can appear under several `sub`s (an exported or reused key, an old `key_index`), so partners must not treat
   wallet → `sub` as unique (per-wallet credits).
 - Why: defence in depth for the wallet proof; the guide overstated the claim.
+- Accepted residual (automated review, 2026-10-30): the EVM check covers only this session's own proof digest. A raw
+  EVM digest is opaque, so a user who approves a raw signature over another session's wallet-proof digest lets that
+  session list their address. Not fixable at the source: raw signing signs any digest, whatever structure (EIP-191,
+  EIP-712) the proof used, and the API can't check that an address is the account's Hana-derived wallet (CKD output
+  is never on chain). The approval already authorizes arbitrary signatures (transactions included, with the popup's
+  warning), and partners must not treat wallet → `sub` as unique, so the impact is within what the guide states.
+  Revisit if addresses are ever recorded on chain.
 
 ## Superseded or amended
 

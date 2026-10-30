@@ -82,6 +82,20 @@ when Safari blocks the popup after an `await`) the vault shows a "Review in Hana
 `hana.prepareApproval()` opens it early for a handler that must await something first. You build, simulate and submit transactions; Hana only signs (`eth_sendTransaction` fills and
 broadcasts through your `evm.chains` RPC).
 
+### Identity token (for your backend)
+
+```ts
+const token = await hana.getIdentityToken(); // ES256 JWT, or null while logged out; no popup, call it anywhere
+await fetch('/api/session', { headers: { authorization: `Bearer ${token}` } });
+hana.on('identityTokenChanged', (t) => { /* a fresh token, or null after logout or expiry */ });
+```
+
+Your backend verifies it against Hana's JWKS (`{iss}/jwks.json`) with any JOSE library, pinned to ES256, checking
+`iss`, `aud` (your app id) and `typ: hana-identity+jwt`. It says who the user is in your app (`sub`), which session
+this is (`sid`) and which wallets they hold (`wallets`, each proven by its key). Lifetime ≤ 1 h; the SDK caches it
+across tabs and refreshes it 5 min before `exp` (`{ maxAgeMs }` for a fresher one). Hana's partner guide has the
+verification code.
+
 ## Your page must
 
 | Requirement | If not |

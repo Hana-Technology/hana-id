@@ -35,7 +35,10 @@ The API is `apps/api/src/index.ts` itself, run in Node: routing, CORS, the app g
 the vault endpoints (KEK wrapping, counters and the real SQL on `vault_shares`) and the login relay (the `LoginRelay`
 Durable Object class, on in-memory storage). Only `/v1/login` and `/v1/derive` are mocked (`src/server/api.ts`), after
 the Worker's own app gate, since they need the relayer and the MPC. The rate limiter object and the vault's Rate
-Limiting bindings always allow: every page in the suite is one client, and apps/api's tests cover the limits.
+Limiting bindings always allow (and the limiter grants every single-use marker): every page in the suite is one
+client, and apps/api's tests cover the limits. The partner identity token is the real one: the stack gives the Worker
+a fresh throwaway P-256 key pair, a standby and a sub key per run (`identityBindings`), and `tests/identity.spec.ts`
+verifies the tokens the page gets with `jose` against the stack's own JWKS (`{API}/v1/identity/jwks.json`).
 
 The mocked NEAR RPC (`src/server/chain.ts`) answers the vault's and the export window's reads (`get_session`, tx
 status, and the login's registry check, `get_scope` / `scope_for_client`, D56) and the Worker's (`get_session`,

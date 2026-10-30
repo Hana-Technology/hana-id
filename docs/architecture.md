@@ -1,7 +1,9 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-10-30 (branch `feat/recovery-playbooks`: the playbooks package in Components;
+Last verified against code: 2026-10-30 (branch `feat/identity-token-1`: the partner identity token in Status,
+Components, the "Partner identity token" flow, Data stores and the Glossary; branch `feat/recovery-playbooks`: the
+playbooks package in Components;
 before it `perf/login-latency-impl`, 2026-10-29: the login flow, key persistence and the vault gate; the rest as of
 2026-10-28, commit 58edee9).
 
@@ -32,6 +34,7 @@ Batch B is merged on the integration branch `feat/batch-b` (not yet on `develop`
 | `apps/watchdog` (independent watchdog Worker, alerts, status endpoint for the admin portal) | `gov/watchdog`, integrated on `feat/governance` | Code done; not deployed (`docs/operations.md` "Watchdog service") |
 | Governance API (delayed JWKS sync, `issuer_key_pending` / `paused` gate, `GET /v1/governance`) | `gov/api`, integrated on `feat/governance` | Code done; not deployed (`docs/operations.md` "Deploying the governance API") |
 | Governance scripts (owner council, DAO-routed owner calls, timelocked upgrades, migration, `admin governance:status`) | `gov/scripts`, integrated on `feat/governance` | Code done (`docs/operations.md` "Governance") |
+| Partner identity token, build steps 1–4 (`docs/identity-token-spec.md`, D127): core layouts and ids, `POST /v1/identity/token`, JWKS and discovery, Worker-secret ES256 signer, migration 0008, `hana.getIdentityToken()`, `useIdentityToken()`, `scripts/identity-key.ts`, `examples/identity-verify` | `feat/identity-token-1` | Code done; not deployed (`docs/operations.md` "Identity token keys"). No `email` claim yet (steps 5–6), no KMS signer (step 7) or watchdog pin check (step 8) |
 
 ## Components
 
@@ -39,17 +42,18 @@ Batch B is merged on the integration branch `feat/batch-b` (not yet on `develop`
 |---|---|---|---|
 | Partner page | partner's own | partner origin | Embeds the SDK; never sees keys or tokens |
 | `@hana-id/web` client | `packages/web/src/client` | partner origin | Mounts the vault iframe, opens the login popup and (in the click, D99) the approval popup, exposes EIP-1193, Stellar signer, raw signer, SWK module |
-| `@hana-id/react`, `@hana-id/sodax` | `packages/react`, `packages/sodax` | partner origin | `HanaProvider`/`useHana`/`useWallet`; Sodax `IStellarWalletProvider`/`IEvmWalletProvider` adapters |
+| `@hana-id/react`, `@hana-id/sodax` | `packages/react`, `packages/sodax` | partner origin | `HanaProvider`/`useHana`/`useWallet`/`useIdentityToken`; Sodax `IStellarWalletProvider`/`IEvmWalletProvider` adapters |
+| Partner backend | partner's own (guide: `examples/identity-verify`) | partner servers | Verifies identity tokens against the API's JWKS with any JOSE library; never calls Hana |
 | Vault | `packages/web/src/vault`; page HTML `apps/api/src/vault/page.ts` | hidden iframe on `vaultOrigin` | Holds the session key and PRK, computes nonces and paths, signs |
 | Auth pages | `packages/web/src/auth` | popups / top-level windows on `authOrigin` | Google login, approval, consent, key export |
 | `@hana-id/core` | `packages/core` | everywhere (no DOM) | Layouts, CKD, derivation v1, signers, approval decoders, policy validator/matcher, ID-token check, message schemas |
-| API Worker | `apps/api/src/index.ts` | Cloudflare Workers (`apiUrl`) | Gate (key, origin, limits), verify-before-relay, relayer, vault shares, login relay, vault page HTML, crons |
+| API Worker | `apps/api/src/index.ts` | Cloudflare Workers (`apiUrl`) | Gate (key, origin, limits), verify-before-relay, relayer, vault shares, login relay, vault page HTML, crons; the identity token issuer (`src/identity/`: mint, JWKS, discovery; the signer behind `IdentitySigner`) |
 | Page Workers | `apps/api/src/pages/` (`vault-worker.ts`, `auth-worker.ts`, `host.ts`) | one Cloudflare Worker per Hana origin (D66) | `vaultOrigin`: forwards `GET /vault` to the API Worker (service binding `API`), serves the vault bundle; `authOrigin`: the four auth pages with their CSP, and their assets. Nothing else; never a cookie (D70) |
 | `RelayerKey` DO | `apps/api/src/relayer-key.ts` | one object per relayer access key | Serialises that key's nonces, signs and broadcasts |
-| `RateLimiter` DO | `apps/api/src/rate-limiter.ts` | one object per subject (`ip:…`, `app:…`, `export:…`, `owner-actions:…`) | Fixed-window counters, global and exact; owner-token single-use markers |
-| Rate Limiting bindings | `apps/api/src/vault/limits.ts` (`VAULT_IP_LIMIT`, `VAULT_SHARE_LIMIT`) | each Cloudflare location, no network hop | The vault's per-IP and per-share flood limits, approximate (D95) |
+| `RateLimiter` DO | `apps/api/src/rate-limiter.ts` | one object per subject (`ip:…`, `app:…`, `export:…`, `owner-actions:…`, `identity:global`, `identity-proof:<sessionPk>`) | Fixed-window counters, global and exact; owner-token and identity-proof single-use markers |
+| Rate Limiting bindings | `apps/api/src/vault/limits.ts` (`VAULT_IP_LIMIT`, `VAULT_SHARE_LIMIT`), `apps/api/src/identity/limits.ts` (`IDENTITY_SESSION_LIMIT`) | each Cloudflare location, no network hop | The vault's per-IP and per-share and the identity token's per-session flood limits, approximate (D95) |
 | `LoginRelay` DO | `apps/api/src/login-relay.ts` | one object per `relayId` | Write-once, read-once slot for the encrypted Google token, 120 s |
-| D1 `DB` | `apps/api/migrations/` | Cloudflare D1 | Apps, origins, plans, settings, usage, vault shares |
+| D1 `DB` | `apps/api/migrations/` | Cloudflare D1 | Apps, origins, plans, settings, usage, vault shares, identity token counts |
 | `hana-signer` | `contracts/hana-signer` | NEAR testnet, manifest `signer` | Issuers (Google RSA keys), scope registry, sessions, calls the MPC |
 | NEAR MPC | external, manifest `mpc` | NEAR testnet MPC network | CKD (`request_app_private_key`, domain `ckdDomainId` = 2) |
 | Google OIDC | external | `accounts.google.com`, `www.googleapis.com` | Issues ID tokens whose `nonce` commits to the session |
@@ -307,6 +311,39 @@ and a "View on {explorer}" link when the chain's explorer is known. The list and
 | Origin removed | the next unlock of each share made for that origin marks it revoked (410) | none |
 | App switched to `persistence = 'none'` | the next unlock or touch of each of its shares marks it revoked (410) | none |
 
+### Partner identity token
+
+`docs/identity-token-spec.md` (D120, D127); endpoints and order of checks: `docs/api.md` "Identity token".
+
+1. **At login** (and at the unlock of a record written before this, which has no proofs), while PRK is in memory, the
+   vault makes one **wallet proof** per address: the Stellar and the EVM key (each derived for one signature inside
+   `withChainKey` and zeroed) sign `"hana-id/identity-wallet/v1" ‖ 0x00 ‖ signer ‖ appId ‖ sessionPk ‖ chain ‖
+   address`. They are kept in the session and in the IndexedDB record (format 2, `vault/record.ts`), and copied to a
+   dormant session, so no later step needs PRK.
+2. **The partner page calls `hana.getIdentityToken({maxAgeMs?})`** → port `hana_identityToken`, a silent method like
+   `hana_status`: no popup, no PRK, never activity (it doesn't wake a dormant session or restart the idle timer).
+   Logged out: `{identityToken: null}`.
+3. The vault returns its cached token while more than 5 min remain (or half the token's life when the session's end
+   made it short) and it is within `maxAgeMs`. Otherwise, under the Web Lock `hana-identity:<appId>` (so the app's
+   tabs mint one at a time; a tab that waited finds the other's token), it signs the **session proof**
+   (`"hana-id-identity-v1:" ‖ signer ‖ appId ‖ sessionPk ‖ issuedAtMs ‖ nonce ‖ sha256("identity-token" ‖ parentOrigin ‖
+   walletProofsHash ‖ sha256(""))`, with its server-corrected clock) and calls `POST /v1/identity/token`. In an app
+   that keeps logins it first waits for the login's background persist (D79): the API needs the share.
+4. **The API** checks the proof (±60 s, signature, single use), that the contract isn't paused, the share (in a
+   `session` app: live, read-only, nothing moves), the on-chain session (live, in the app's scope), both wallet proofs,
+   its limits; computes `sub` (HMAC of the path's root identity with `IDENTITY_SUB_KEY`, per scope, `key_index`
+   dropped) and `sid` (HMAC of app and session key); sets `exp = min(iat + 1 h, session end)`; signs ES256 with the
+   active key and checks the signature with the published key before answering.
+5. The vault caches the token, announces it on `hana-vault:<appId>` (`{t: 'identity', sessionPk, token, iatMs,
+   expiresAtMs}`: the session's other tabs cache it too) and emits `identityTokenChanged` to its partner page. A `410
+   session_ended` ends the session in the vault as a revoked share does (`sessionExpired`).
+6. **The partner backend** verifies the token against `{iss}/jwks.json` (cached 10 min): `alg` ES256, `typ`
+   `hana-identity+jwt`, `iss`, `aud` = its app id, `exp`. The token is never accepted by any Hana API or the contract.
+
+The cache is dropped (and `identityTokenChanged(null)` sent) at logout, expiry, revocation, a newer login, and when a
+dormant session ends; it survives a session going dormant. The React hook `useIdentityToken` refreshes at `exp` − 5
+min while the page is visible.
+
 ### Owner and registry changes
 
 | Change | Who / how | Code |
@@ -379,19 +416,20 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
 |---|---|---|
 | `hana-signer` state (public) | Config (owner, mpc, domain, sponsors, console audiences, shared clients, change delay), issuers and Google RSA public keys, scopes (owners, clients, pending changes, `action_nonce`), client index, quarantine / retired-client records, sessions (`path`, `scope_id`, `expires_at_ms`, `max_uses`, `used`), revoke tombstones, expiry FIFO | Keys, S, PRK |
 | NEAR transaction args (public forever) | Google ID tokens used in `create_session*`, register proofs, owner tokens; session signatures; BLS `pk1`/`pk2`; MPC responses (encrypted to `a`) | Anything usable without the session key or `a` |
-| D1 `DB` | `plans`, `apps` (+ 0003 settings: `persistence`, `session_ttl_ms`, `idle_ttl_ms`, `raw_sign*`, `auto_approve_*`, `google_web_client_id`), `app_origins`, `usage` (`sessions`, `derives`, `unlocks` per app per UTC day), `issuer_key_missing`, `vault_shares` (`share_enc` under `VAULT_KEK`, `session_pk`, `path_hash`, `partner_origin`, counter, times) | Plaintext `K_s`, tokens, user ids (only `sha256(path)`) |
+| D1 `DB` | `plans`, `apps` (+ 0003 settings: `persistence`, `session_ttl_ms`, `idle_ttl_ms`, `raw_sign*`, `auto_approve_*`, `google_web_client_id`), `app_origins`, `usage` (`sessions`, `derives`, `unlocks` per app per UTC day), `issuer_key_missing`, `vault_shares` (`share_enc` under `VAULT_KEK`, `session_pk`, `path_hash`, `partner_origin`, counter, times), `identity_issuance_hourly` (tokens per signing key and hour), `identity_usage` (tokens per app and day) | Plaintext `K_s`, tokens, user ids (only `sha256(path)`), identity tokens, `sub`, `sid`, addresses |
 | `RelayerKey` DO storage | Per key: `publicKey`, nonce reservation, last block hash and time | Secret keys (they are Worker secrets) |
-| `RateLimiter` DO storage | `<window>@<start>` counters; `mark:<sha256(owner token)>` single-use markers until the token's `exp` | Tokens |
+| `RateLimiter` DO storage | `<window>@<start>` counters; `mark:<sha256(owner token)>` single-use markers until the token's `exp`; `mark:<sha256(identity proof signature)>` until the proof's `issuedAtMs` + 120 s | Tokens |
 | `LoginRelay` DO storage | One slot: `{iv, ct}` for ≤ 120 s, then a tombstone for 120 s | Plaintext tokens (the API has no `relayKey`) |
 | Per-isolate memory (API) | JWKS (≤ max-age, stale ≤ 6 h on fetch failure), config / scope / client views (≤ 60 s; "no scope" ≤ 10 s), sessions (≤ 10 s), parsed KEKs, counter holds | — |
-| Browser, `vaultOrigin` | IndexedDB `hana-vault` records (partitioned by top-level site); memory: session key, PRK, consent and counters | S, `a` (memory only, dropped), plaintext PRK on disk |
+| Browser, `vaultOrigin` | IndexedDB `hana-vault` records (partitioned by top-level site; format 2 adds the identity wallet proofs); memory: session key, PRK, consent and counters, the current identity token | S, `a` (memory only, dropped), plaintext PRK on disk, an identity token on disk |
 | Browser, `authOrigin` | `sessionStorage` `hana.login.<relayId>` = `{v, createdAt, relayKey}` (≤ 10 min, single use) | Tokens |
-| `.secrets/<env>/` (operator machine, gitignored, 0700/0600) | `relayer-keys.json`, `owner-relayer-keys.json`, `keys-updater.json` (`scripts/lib/secrets.ts:66`), `vault-kek` (+ `vault-kek.previous` during a rotation; `scripts/lib/vault-kek.ts`) | — |
+| `.secrets/<env>/` (operator machine, gitignored, 0700/0600) | `relayer-keys.json`, `owner-relayer-keys.json`, `keys-updater.json` (`scripts/lib/secrets.ts:66`), `vault-kek` (+ `vault-kek.previous` during a rotation; `scripts/lib/vault-kek.ts`), `identity-signing-key.json`, `identity-signing-key-standby.json`, `identity-sub-key` (`scripts/lib/identity-key.ts`) | — |
 | `~/.near-credentials/testnet/` (operator machine) | Full-access keys of the owner, signer and relayer accounts (`scripts/lib/keys.ts`) | — |
-| Worker secrets | `RELAYER_KEYS`, `OWNER_RELAYER_KEYS`, `KEYS_UPDATER_KEY`, `VAULT_KEK`, `VAULT_KEK_PREVIOUS` | — |
+| Worker secrets | `RELAYER_KEYS`, `OWNER_RELAYER_KEYS`, `KEYS_UPDATER_KEY`, `VAULT_KEK`, `VAULT_KEK_PREVIOUS`, `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`, `IDENTITY_SUB_KEY` | — |
 | Watchdog D1 (its own Cloudflare account) | `meta` (last chain snapshot, failure counters, heartbeat, digest, run lock), `seen_kids` (kid, `n`, `e`, first/last seen; `baseline` kids from the first run), `absences`, `runs` (30 days), `actions` (method, args, tx hash), `alerts` (severity, details, acks), `deliveries` | Secrets, tokens |
 | Watchdog Worker secrets | `WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, `RESEND_API_KEY`, `SLACK_WEBHOOK_URL`, the paging app's credentials, `HEARTBEAT_URL` (from `.secrets/<env>/watchdog-secrets.json`) | — |
-| `apps/api/.dev.vars` (local, gitignored, 0600) | Relayer and updater keys for `wrangler dev` (`gen-wrangler --dev-vars`) | — |
+| `apps/api/.dev.vars` (local, gitignored, 0600) | Relayer and updater keys and the identity token's secrets for `wrangler dev` (`gen-wrangler --dev-vars`) | — |
+| Partner backends | Identity tokens they received (≤ 1 h each), and whatever they keep from them (`sub`, `sid`, addresses) | Anything that reaches a key |
 
 ## Environments and manifests
 
@@ -487,3 +525,7 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
 | publishable key | `pk_test_…` / `pk_live_…`, public, identifies an app in D1; a test key never shares a scope with a live key |
 | sponsor | Account the contract pays storage for (the relayer) |
 | ship gate | If `create_session_and_derive` saves < 1.5 s median over 10 testnet runs, it is removed before the audit |
+| identity token | An ES256 JWT (≤ 1 h, `typ: hana-identity+jwt`) for a partner's backend: `sub`, `sid`, proven `wallets`, `login_methods`; minted by the API for the vault's live session |
+| `sub` (identity token) | `u1_` + HMAC-SHA256(`IDENTITY_SUB_KEY`, scope ‖ root provider ‖ root sub)[0..16]: per scope and account, never the Google `sub` |
+| `sid` | `s1_` + HMAC-SHA256(`IDENTITY_SUB_KEY`, app id ‖ session key)[0..16]: one per session, new at each interactive login |
+| wallet proof | A signature by an address's own key over the identity wallet message, bound to the session key and app |

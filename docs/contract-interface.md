@@ -274,6 +274,24 @@ vault_message(share_id, counter, payload) = "hana-id-vault-v1:" ‖ borsh(signer
 so a vault signature never verifies as a `derive_key`, `create_session_and_derive` or `revoke_session` signature
 (`Invalid session signature`; unit and sandbox tests check this with the worked example below).
 
+### Identity token messages (off-chain only; the contract never accepts them)
+
+The partner identity token (`docs/identity-token-spec.md`, D120, D127; `docs/api.md` "Identity token") adds two
+off-chain messages, listed here so their domains are never reused. Nothing on chain changes, and the contract never
+accepts the token itself (it is ES256 under a key the contract never holds; `verify_token` takes RS256 issuer keys):
+
+```
+identity_message = "hana-id-identity-v1:" ‖ borsh(signer account id) ‖ borsh(app_id) ‖ session_public_key (32)
+                   ‖ issued_at_ms u64 LE ‖ nonce (16) ‖ sha256(payload)     signed by the session key (Ed25519)
+wallet_proof     = "hana-id/identity-wallet/v1" ‖ 0x00 ‖ borsh(signer account id) ‖ borsh(app_id)
+                   ‖ session_public_key (32) ‖ borsh(chain) ‖ borsh(address)  signed by the chain key
+```
+
+The identity prefix differs from `"hana-id-session-v1:"` and `"hana-id-vault-v1:"`, so a mint signature never
+verifies as a session message. A wallet proof is a 0x00-separated text domain: no Stellar transaction hash or SEP-53
+message, and no EVM transaction (keccak of RLP) or EIP-191 message, has that shape. Worked examples:
+`packages/core/test/vectors/identity-v1.json`.
+
 ### Borsh encodings used above
 
 | Type | Encoding |

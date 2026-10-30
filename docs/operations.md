@@ -1,6 +1,7 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-10-30 (branch `feat/batch-c-1`: "Usage ledger (Neon, batch C)", the batch C
+Last verified against code: 2026-10-30 (branch `feat/identity-token-1`: the identity token secrets, "Identity token
+keys", `gen --dev-vars`, migration 0008); 2026-10-30 (branch `feat/batch-c-1`: "Usage ledger (Neon, batch C)", the batch C
 manifest fields; `feat/recovery-playbooks`: the watchdog alerts runbook now points at `docs/playbooks.md`,
 `owner:call` takes `set_sessions_valid_from_ms`; `docs/watchdog-hosting`: watchdog hosting, D125;
 `gov/sandbox-handover`: sandbox-dev's owner is now its council DAO, council-setup's DAO check, the upgrade drill).
@@ -24,6 +25,8 @@ Never print, log, paste or commit any of these. The scripts never print them eit
 | Keys-updater key (`KEYS_UPDATER_KEY`) | `.secrets/<env>/keys-updater.json` (`private_key`) | `deploy-contract` (generated, then installed on `signer` by the contract's `add_updater_key`) |
 | Council member keys (dev envs only, D81) | `.secrets/<env>/council/<member>.json` (`{account_id, public_key, private_key}`), full-access keys of throwaway testnet accounts | `council-setup`; other envs' members hold their own keys (mainnet: Ledgers, never on disk) |
 | `VAULT_KEK` (and, during a rotation, `VAULT_KEK_PREVIOUS`) | `.secrets/<env>/vault-kek` (and `vault-kek.previous`); the only copy, since Cloudflare can't give a secret back | `vault-kek` (below) |
+| Identity token signing keys (`IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`; testnet and `local*` only) | `.secrets/<env>/identity-signing-key.json`, `identity-signing-key-standby.json` (P-256 private JWKs); the only copies | `identity-key <env> init` ("Identity token keys" below); upload again with `identity-key <env> put --yes` |
+| Identity token sub key (`IDENTITY_SUB_KEY`) | `.secrets/<env>/identity-sub-key` (base64 of 32 bytes); never rotated, also backed up offline with the council backup (D81) | `identity-key <env> init`; upload again with `identity-key <env> put --yes` |
 | Neon Postgres connection strings (batch C ledger, D73): pooled `DATABASE_URL` and `DATABASE_URL_DIRECT` of the env's Neon branch | `.secrets/<env>/neon.json` (`{project_id, branch, DATABASE_URL, DATABASE_URL_DIRECT, …}`); role `neondb_owner` until batch C creates least-privilege roles | `neon connection-string <branch> --project-id <id> [--pooled]` (Neon CLI, `neon login`) |
 | Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its Resend key, Slack webhook, paging-app credentials, `HEARTBEAT_URL`) | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
 | Worker copies of the above | Cloudflare Worker secrets (the watchdog's on its own Cloudflare account) | `wrangler secret put` (watchdog: `wrangler secret bulk`) |
@@ -208,6 +211,10 @@ the signer is part of every address. Dev-only privileges (loopback origins, part
    else, and sets the secret on `cloudflare.workerName` through wrangler's stdin; it prints no key and refuses to
    overwrite an existing file. If the secret step fails, `vault-kek <env> put --yes` sets it again from the file. Keep
    the file: a rotation needs the current value.
+
+   The identity token's keys (optional; without them `/v1/identity/*` answers 503 `identity_unavailable`):
+   `identity-key <env> init --yes`, commit the manifest's new `identityToken` block, re-run `gen` ("Identity token
+   keys" under "Key rotation").
 
 8. **Deploy the API**, then put the Worker URL in `apiUrl` and re-run `gen` + deploy if it changed (the vault page's
    CSP and the page bundles use it):
@@ -465,8 +472,9 @@ corepack pnpm --filter @hana-id/api dev                          # http://localh
 ```
 
 `gen` writes the gitignored `apps/api/wrangler.jsonc` for that env (needed by `dev` and `admin app:*`). `--dev-vars`
-writes `RELAYER_KEYS`, `OWNER_RELAYER_KEYS` (single-quoted) and `KEYS_UPDATER_KEY` from `.secrets/<env>/`, skipping
-missing files, and prints only a count. It rewrites the whole file and has no `VAULT_KEK`; for local vault endpoints
+writes `RELAYER_KEYS`, `OWNER_RELAYER_KEYS` (single-quoted), `KEYS_UPDATER_KEY` and the identity token's
+`IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY` and `IDENTITY_SUB_KEY` (refused when the signing keys aren't the
+manifest's `identityToken` keys) from `.secrets/<env>/`, skipping missing files, and prints only a count. It rewrites the whole file and has no `VAULT_KEK`; for local vault endpoints
 append a throwaway one (never a deployed env's) after each `gen --dev-vars`:
 
 ```sh
@@ -792,6 +800,60 @@ corepack pnpm --filter @hana-id/scripts run vault-kek <env> rotate --yes
 Every user with a persisted login signs in with Google again on their next visit (their device records can no longer
 be unlocked). D1 backups and Time Travel still hold the old rows under the old KEK for their retention: treat them as
 exposed for that long.
+
+### Identity token keys
+
+The partner identity token (`docs/identity-token-spec.md`, D127; `docs/api.md` "Identity token") needs three API
+Worker secrets and a manifest block. All three are generated by `scripts/identity-key.ts`, kept in `.secrets/<env>/`
+(0600, never overwritten: the files are the only copies) and set through wrangler's stdin; no command prints a private
+value. Testnet and `local*` only: mainnet signs with AWS KMS (build step 7; `gen` and the schema refuse a Worker-secret
+key there).
+
+| Secret | File | What |
+|---|---|---|
+| `IDENTITY_SIGNING_KEY` | `identity-signing-key.json` | P-256 private JWK: the first active key |
+| `IDENTITY_SIGNING_KEY_STANDBY` | `identity-signing-key-standby.json` | P-256 private JWK: the standby, already in every partner's JWKS cache |
+| `IDENTITY_SUB_KEY` | `identity-sub-key` | base64 of 32 bytes: the `sub`/`sid` HMAC key. **Never rotated** (a new key changes every user's `sub` at every partner); back it up offline with the council backup (D81) |
+
+**First setup (once per env):**
+
+```sh
+corepack pnpm --filter @hana-id/scripts run identity-key <env> init          # read the plan
+corepack pnpm --filter @hana-id/scripts run identity-key <env> init --yes    # files, manifest block, three Worker secrets
+git add envs/<env>.json && git commit -m "envs: <env> identity token keys"   # public keys only
+corepack pnpm --filter @hana-id/api run gen <env> --d1-id <id>              # IDENTITY_ISS, IDENTITY_PUBLIC_KEYS, IDENTITY_ACTIVE_KID, the binding
+corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --remote   # 0008_identity_token.sql
+corepack pnpm --filter @hana-id/api run deploy
+curl -s <apiUrl>/v1/identity/jwks.json             # {"keys":[{…active…},{…standby…}]}, no "d"
+curl -s <apiUrl>/v1/identity/.well-known/openid-configuration
+```
+
+`init` refuses when any of the three files exists or the manifest already has `identityToken`. It writes the files
+first, then `identityToken` (`iss` = `{apiUrl}/v1/identity`, `signer: {kind: "worker-secret", activeKid}` = the first
+key, `publicKeys` = both keys' JWKS entries) into `envs/<env>.json` after `apiUrl`, then sets the secrets on
+`cloudflare.workerName`. `init --local --yes` skips the Worker (a `local*` env, or to upload later); `identity-key
+<env> put --yes` sets all three again from the files, after checking both keys against the manifest's public keys and
+active kid. `identity-key <env> show` prints the published kids and which one signs. `gen --dev-vars` writes the three
+into `apps/api/.dev.vars` too (refusing keys the manifest doesn't publish). Then rebuild and redeploy the demo and
+the page Workers as usual when the SDK changed (the vault bundle carries `hana_identityToken`).
+
+**Switch to the standby (suspected compromise of the active key, `docs/identity-token-spec.md` "Rotation playbook"):**
+
+1. Set `identityToken.signer.activeKid` in `envs/<env>.json` to the standby's kid (`identity-key <env> show`), `gen`,
+   deploy: new tokens are signed by the standby, which partners already trust.
+2. Remove the suspect key from `identityToken.publicKeys`, `gen`, deploy: partners using the JWKS URL reject its
+   tokens within 10 minutes. Delete the suspect secret (`wrangler secret delete IDENTITY_SIGNING_KEY --name
+   <workerName>` if it was the first key) and keep its file aside for the post-mortem (never commit it).
+3. Tell partners (security contacts): the `kid` and the window in which forged tokens may have been accepted.
+4. A new standby: `scripts/identity-key.ts` has no `rotate`/`--next` command yet (open point). Until it has, the env
+   runs on one key after a switch; add the next key with that tooling before relying on a standby again. Never hand-
+   edit a private key into the manifest (the schema refuses a `d` member; gitleaks blocks one in a commit).
+
+Scheduled rotation (every 12 months, 14 days' notice to partners that pin thumbprints) comes with that tooling and the
+KMS signer (build step 7).
+
+**Sub key leak.** Privacy, not funds: the holder can map partners' `sub`s to on-chain paths. Not rotatable without a
+`u2_` scheme and a 90-day `legacy_sub` window (spec "`sub`").
 
 ### A user's leaked key (`key_index`)
 

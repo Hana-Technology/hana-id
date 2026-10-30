@@ -29,6 +29,9 @@ your page ──iframe──▶ vaultOrigin/vault      holds the key (in memory;
 4. A signing call made in your click handler opens the Hana approval popup in that click, as `login()` does. It shows
    the decoded request and the user approves it there. If the browser doesn't allow the popup (no click, or Safari
    after an `await`), the vault shows a small "Review in Hana" button instead, which opens the same popup.
+5. `hana.getIdentityToken()` gives your backend a short-lived signed token saying who the user is in your app, which
+   wallets they hold and which session this is, verified against Hana's published keys
+   ([section 15](#15-identity-token-your-backend)).
 
 The address depends on your app's **scope** and the user's Google account, never on the browser. The same user
 gets the same addresses on every device, and different addresses in another partner's app.
@@ -562,7 +565,7 @@ emits `autoApproved` and its button briefly shows "Signed by Hana under {label}"
 `@hana-id/react`:
 
 ```tsx
-import { HanaProvider, useHana, useWallet } from '@hana-id/react';
+import { HanaProvider, useHana, useIdentityToken, useWallet } from '@hana-id/react';
 
 <HanaProvider config={{ publishableKey: 'pk_test_…', environment: 'sandbox-dev', evm, stellar }}>
   <App />
@@ -575,6 +578,7 @@ function SignIn() {
 
 const { address, signer } = useWallet('stellar'); // signer is hana.stellar
 const { address, provider } = useWallet('evm');   // provider is hana.ethereum (EIP-1193)
+const { identityToken, refresh, error } = useIdentityToken(); // for your backend, kept fresh (section 15)
 ```
 
 - `HanaProvider` creates one client, also under strict mode, and destroys it on unmount. It reads `config` once; to
@@ -675,6 +679,8 @@ account **different addresses** (D51). Wallets made with test keys are disposabl
 | `session_consumed` | Someone replayed the login transaction first | the vault offers "Continue signing in" |
 | `rate_limited`, `app_suspended`, `origin_not_allowed`, `api_unavailable` | From Hana's API (`rate_limited` also after 3 key exports of one account in an hour), or NEAR's RPC couldn't be read | back off, or contact Hana |
 | `busy` | An export is already running | wait |
+| `identity_unavailable` | `getIdentityToken()`: Hana's API or signer is unavailable, or this browser couldn't keep the session (`data.reason: 'no_share'`) | retry later |
+| `session_ended` | `getIdentityToken()`: the Hana session is over (`sessionExpired` fires too), or ends within 30 s (`data.reason: 'session_ending'`) | treat as logged out |
 
 ## 14. Security notes for integrators
 
@@ -695,3 +701,151 @@ account **different addresses** (D51). Wallets made with test keys are disposabl
 - With your own Google client, your client's settings are part of your users' security ([section 6](#6-google-client-shared-or-your-own)).
 - Testnet pilot keys are disposable. Until the address freeze, Hana may still change what a key derives from, and
   each such change gives every user new addresses.
+
+## 15. Identity token (your backend)
+
+Your backend can learn **who** the user is in your app, **which wallets** they hold and **which Hana session** a
+request belongs to, without calling Hana and without a wallet signature: ask the page for an identity token and verify
+it on your server against Hana's published keys (`docs/identity-token-spec.md`, D120, D127). It is the Hana
+counterpart of Privy's identity token (see "Migrating from Privy" below).
+
+```ts
+const token = await hana.getIdentityToken(); // string, or null while logged out
+await fetch('/api/session', { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+```
+
+- **Silent.** No popup, no user activation: call it from any handler, an effect or a timer. It doesn't count as
+  activity, so polling it never keeps a session alive.
+- **Cached.** The vault keeps one token per session, shared by every tab of that session; a new one is minted when
+  less than 5 minutes remain. `getIdentityToken({ maxAgeMs })` forces a fresh one when the cached token is older
+  (30 s minimum, 1 h maximum): use it before a sensitive action, with `maxAgeSec` on your server.
+- **Events.** `hana.on('identityTokenChanged', (token) => …)` fires after every mint (in this tab or another tab of the
+  session) and with `null` at logout, expiry, revocation or a newer login. `hana.identityToken` is the last one.
+- **Errors.** `getIdentityToken()` resolves `null` while logged out; it rejects with `identity_unavailable` (Hana's API
+  or signer is down, or this browser couldn't keep the session in an app that keeps logins: `data.reason: 'no_share'`;
+  retry later), `session_ended` (the session is over: `sessionExpired` fires too; `data.reason: 'session_ending'` when
+  less than 30 s remain) or `rate_limited` (more than 10 mints a minute for one session).
+- **React.** `const { identityToken, refresh, error } = useIdentityToken();` mints on first use while logged in, keeps
+  the token fresh (a timer at `exp` − 5 min, only while the page is visible) and re-renders on `identityTokenChanged`.
+  `refresh({ maxAgeMs })` gets one now.
+
+### What's in it
+
+An ES256 JWT (`typ: hana-identity+jwt`, `kid` = the key's RFC 7638 thumbprint), valid for at most 1 hour and never
+past the Hana session:
+
+| Claim | Value |
+|---|---|
+| `iss` | `{Hana API}/v1/identity` (sandbox-dev: `https://hana-id-api-sandbox-dev.tingtc.workers.dev/v1/identity`; a stable Hana hostname replaces it before any partner goes live, D127) |
+| `aud` | your app id (`app_…`), not your publishable key |
+| `sub` | `u1_…` (25 characters): stable per user in your app's scope, the same for every login method of their account and after a key rotation; different at every other partner; never the Google `sub` |
+| `sid` | `s1_…`: one per Hana session, shared by its tabs and reloads, new at every interactive login, never repeated |
+| `iat`, `exp`, `jti` | seconds; `exp` ≤ `iat` + 3600 and never past the session's end; `jti` is random |
+| `wallets` | `[{chain: 'stellar', address: 'G…'}, {chain: 'evm', address: '0x…'}]`, a real JSON array; each address proven by a signature of its own key for this session and app |
+| `login_methods` | the account's login providers, sorted (`["google"]` today) |
+| `email`, `email_verified` | not issued yet: an opt-in verified email per app comes with email login (the claim pair then appears only for users who agreed to share it with you) |
+
+A user who tampers with their own Hana vault can only ever attach a key they control, never someone else's address.
+If a request must come from one exact wallet, keep checking that the wallet that authenticated it is in `wallets`
+(`assertWallet` below).
+
+### Verify it (Node, `jose`)
+
+The JWKS is at `{iss}/jwks.json` (cached 10 minutes; `jose` refetches on an unknown `kid`), the discovery document at
+`{iss}/.well-known/openid-configuration`. This is `examples/identity-verify/src/verify.ts`, tested against a local
+issuer on every run:
+
+```ts
+import { createRemoteJWKSet, errors, jwtVerify, type JWTPayload } from 'jose';
+
+// From Hana's partner console / your Hana app page. Not secrets.
+const HANA_ISSUER = process.env.HANA_IDENTITY_ISSUER!; // e.g. https://<hana api>/v1/identity
+const HANA_APP_ID = process.env.HANA_APP_ID!; // app_…
+
+// Caches the keys for 10 minutes and refetches on an unknown kid (at most every 30 s).
+const hanaKeys = createRemoteJWKSet(new URL(`${HANA_ISSUER}/jwks.json`));
+
+export interface HanaIdentity {
+  userId: string; // sub: stable per user in your app
+  sessionId: string; // sid: one per Hana session (device)
+  wallets: { chain: 'stellar' | 'evm'; address: string }[];
+  email: string | null; // only if the user agreed to share it with you
+  loginMethods: string[];
+  issuedAt: number; // seconds
+}
+
+export class HanaTokenError extends Error {
+  constructor(readonly code: 'expired' | 'invalid' | 'stale') {
+    super(code);
+  }
+}
+
+export async function verifyHanaIdentityToken(token: string, opts: { maxAgeSec?: number } = {}): Promise<HanaIdentity> {
+  let payload: JWTPayload;
+  try {
+    ({ payload } = await jwtVerify(token, hanaKeys, {
+      issuer: HANA_ISSUER,
+      audience: HANA_APP_ID, // mandatory: a token for another app must fail
+      algorithms: ['ES256'],
+      typ: 'hana-identity+jwt',
+      requiredClaims: ['sub', 'sid', 'iat', 'exp', 'wallets'],
+      clockTolerance: 30,
+      ...(opts.maxAgeSec ? { maxTokenAge: opts.maxAgeSec } : {}),
+    }));
+  } catch (e) {
+    if (e instanceof errors.JWTExpired) throw new HanaTokenError(opts.maxAgeSec && e.claim === 'iat' ? 'stale' : 'expired');
+    throw new HanaTokenError('invalid'); // fail closed
+  }
+  const wallets = Array.isArray(payload.wallets) ? (payload.wallets as HanaIdentity['wallets']) : [];
+  return {
+    userId: payload.sub!,
+    sessionId: payload.sid as string,
+    wallets,
+    email: payload.email_verified === true && typeof payload.email === 'string' ? payload.email : null,
+    loginMethods: Array.isArray(payload.login_methods) ? (payload.login_methods as string[]) : [],
+    issuedAt: payload.iat!,
+  };
+}
+
+// Bind the token to the request's wallet when the wallet also authenticated (e.g. a signed challenge):
+export function assertWallet(identity: HanaIdentity, chain: 'stellar' | 'evm', address: string): void {
+  const ok = identity.wallets.some((w) => w.chain === chain && (chain === 'evm' ? w.address.toLowerCase() === address.toLowerCase() : w.address === address));
+  if (!ok) throw new HanaTokenError('invalid');
+}
+```
+
+Rules:
+
+1. Always check `aud` (your app id), `iss`, `typ` and `alg` (pinned to ES256); use the JWKS URL, or pinned thumbprints,
+   never a key named in the token's header.
+2. Key users by `sub`, not by email or address. Store `sid` to run one session per device and to block a signed-out
+   `sid`; a new interactive login always brings a new `sid`. Unlinking a login method later gives a different wallet
+   and so a different `sub`: to you that is a different user.
+3. The token is evidence of identity at `iat`, not your session: run your own session and end it when your page
+   reports a Hana logout (`statusChanged`, `identityTokenChanged(null)`). For sensitive actions require a fresh token
+   (`maxAgeSec` here, `maxAgeMs` on the page).
+4. Never log tokens; treat them like any bearer credential (≤ 1 h, your app only).
+5. On `expired`, answer 401 with a distinct code: the page calls `getIdentityToken()` again and retries once (`null`
+   means the user is logged out). On `invalid`, answer 401 and never fall back to "no token".
+6. Verifying takes under 1 ms once the JWKS is cached.
+
+Other languages: any JOSE/OIDC library works with the same checks: compact JWS, `alg` ES256 only, a key from the JWKS
+by `kid`, `typ` `hana-identity+jwt`, `iss`, `aud`, `exp` (and `iat` for freshness), with up to 30 s of clock skew.
+
+**Key rotation.** Hana publishes a standby key next to the active one, so an emergency switch needs nothing from you
+when you use the JWKS URL. Partners who pin thumbprints instead get 14 days' notice of a scheduled rotation.
+
+### Migrating from Privy
+
+| Privy | Hana |
+|---|---|
+| access token `sid` | `sid` (same semantics; a Hana session lasts ≤ 12 h by default, 2 h idle) |
+| `sub` (`did:privy:…`) | `sub` (`u1_…`, per scope). Users get new wallets with Hana; map existing users to new `sub`s yourself |
+| `iss: "privy.io"` | `iss: "{Hana API}/v1/identity"` |
+| `aud: <Privy app id>` | `aud: app_…` |
+| access + identity token, one key pasted from the dashboard | one identity token, keys from the JWKS URL |
+| `linked_accounts` (stringified JSON) | `wallets` (a JSON array), `login_methods` |
+| `linked_accounts[type=wallet, chain_type=stellar / ethereum].address` | `wallets[chain=stellar / evm].address` |
+| `getAccessToken()`, `getIdentityToken()`, `useIdentityToken()` | `hana.getIdentityToken()`, `useIdentityToken()` |
+| `privy-id-token` cookie | a header you send (`Authorization: Bearer`); Hana sets no cookie |
+| refresh token | none: the live Hana session refreshes |

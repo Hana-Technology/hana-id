@@ -23,6 +23,9 @@ One page: a testnet banner and a short explainer, then
   transfer to yourself, fully filled, `eth_signTransaction`). Each needs the user's Approve in the Hana popup, and
   nothing is ever broadcast, so no funds are needed;
 - **Export key** (Stellar or EVM) through Hana's export window: the key is shown only there;
+- **Identity token**: *Get identity token* (`hana.getIdentityToken()`, no popup) shows the token's decoded header and
+  claims (display only: the page never trusts them) and a "verify it yourself" `jose` snippet with the token's own
+  `iss` and `aud` (`docs/integration.md` section 15);
 - **Login timings** (collapsible): the vault's per-stage times (`app`, `popup`, `google`, `verify`, `chain`,
   `decrypt`, which `pk_test_` apps get) and the total from the click, plus the unlock time when a page load restored
   the session;

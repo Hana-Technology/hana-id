@@ -39,7 +39,7 @@ export const ALERT_KINDS = {
   },
   published_key_removal: { severity: 'critical', check: 'pending_key_changes', description: 'A pending removal of a kid Google still publishes (alert only: the owner decides and cancels)' },
   unverifiable_key_change: { severity: 'critical', check: 'pending_key_changes', description: 'A pending key change for a provider whose JWKS the watchdog does not know (alert only)' },
-  forged_active_key: { severity: 'critical', check: 'active_keys', description: "An active key Google never published, or with other key material: the contract is paused" },
+  forged_active_key: { severity: 'critical', check: 'active_keys', description: "An active key Google never published, or with other key material: the contract is paused and every updater key deleted" },
   unknown_active_key_first_run: { severity: 'critical', check: 'active_keys', description: 'At the first run, an active key not in the JWKS (alert only: history the watchdog cannot judge)' },
   governance_change: {
     severity: 'critical',

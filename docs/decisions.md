@@ -1470,6 +1470,24 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   funded account (it would put a spending key on the watchdog's account, against D82's minimal powers); thresholds as
   code constants only (a busier env or raised allowances need their own).
 
+### D151. Council member replacement: remove first, then add, through the admin CLI; reject votes in the scripts
+- Date 2026-10-30 · Status: built (branch `feat/playbook-gaps`), for review · Source: conversation (closing the
+  recovery playbooks' "not built yet" steps)
+- Decision: `admin <env> council:replace-member --remove <old> --add <new>` makes two Sputnik proposals on the
+  council DAO, `RemoveMemberFromRole(<old>, council)` then `AddMemberToRole(<new>, council)`, signed and approved only
+  by remaining members. It refuses unless the DAO's group is the manifest's council (or a half-done replacement it
+  carries on from) with otherwise exactly the 2-of-3 council policy, the new account exists, and the manifest still
+  validates with the new member in the old one's place. Dev envs may `--approve-with` (both execute in one command);
+  elsewhere it proposes and prints each remaining member's `act_proposal`. Once the DAO has the new council, `--yes`
+  writes `council.members` in `envs/<env>.json` (only that list; without `--yes` it prints the edit). `owner:vote
+  --reject` casts a `VoteReject`.
+- Why: removing first cuts a lost or stolen key off at once. Sputnik recomputes the threshold from the group's size
+  (2 members: 2 of 2), so the window needs both remaining members, which the replacement needs anyway; adding first
+  instead makes the removal 3 of 4, which needs the new member's vote too. Writing the manifest only after the chain
+  shows the new council keeps `deploy-contract`'s policy check (`policyProblems`) meaningful.
+- Rejected: one `ChangePolicy` proposal with the whole new policy (it can change anything else in the policy at the
+  same time, which is harder to review than a member change); add first (needs three votes for the removal).
+
 ## Superseded or amended
 
 | Was | Now | Source |

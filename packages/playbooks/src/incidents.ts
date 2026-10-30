@@ -350,27 +350,28 @@ const councilMemberKey: Playbook = {
   ],
   steps: [
     {
-      title: "Reject or let expire the member's stray proposals",
+      title: "Reject the member's stray proposals",
       who: 'council (2 of 3)',
-      detail: "List open proposals; never approve one nobody explained. Not built yet: a reject vote in the scripts (`owner:vote` only approves); reject with the DAO's `act_proposal` `VoteReject` through a UI or near CLI, or let it expire (7-day proposals).",
-      commands: [c.ownerProposals],
+      detail: "List open proposals; never approve one nobody explained. Two remaining members each cast a `VoteReject` (`owner:vote --reject`): two rejections close it as `Rejected`, so it can never execute even if the lost key turns up again. Off dev envs each member signs the same `act_proposal` command as an approval, with `\"action\":\"VoteReject\"`.",
+      commands: [c.ownerProposals, c.ownerVoteReject],
     },
     {
       title: 'Replace the member',
       who: 'council (2 of 3)',
       detail:
-        "An `AddMemberToRole` proposal for the new member and a `RemoveMemberFromRole` for the old one, 2 of 3 each, through a DAO UI or near CLI (`add_proposal` with that kind). Not built yet: a script for member-change proposals. Each raises a critical `governance_change` (`owner_policy`): expected, acknowledge it.",
+        "The new member creates their account first (a Ledger key on mainnet). `council:replace-member` proposes `RemoveMemberFromRole` for the old member, then `AddMemberToRole` for the new one, signed by a remaining member (the old one never signs): read the plan without `--yes`. The removal goes first and cuts the key off; until the addition executes the council is 2 of 2, so both remaining members approve it straight away. Dev envs: add `--approve-with <second member>` to approve both in the same command; elsewhere it prints each remaining member's `act_proposal` for each proposal. Each executed change raises a critical `governance_change` (`owner_policy`): expected, acknowledge it.",
+      commands: [c.councilReplaceMemberPlan, c.councilReplaceMember, c.ownerProposals],
     },
     {
       title: 'Update the manifest',
       who: 'a founder',
-      detail: "`council.members` in `envs/<env>.json` (code-owner review); `deploy-contract` blocks until the DAO's policy is exactly the manifest's council at 2 of 3.",
-      commands: [c.governanceStatus, 'corepack pnpm --filter @hana-id/scripts run council-setup <env>', c.deployContractPlan],
+      detail: "Once both proposals executed, run `council:replace-member` again with `--yes` (on dev envs with `--approve-with` the first run already did): it checks the DAO's group is the new council at 2 of 3 and writes `council.members` in `envs/<env>.json`, the new member in the old one's place. Commit it (code-owner review); `deploy-contract` blocks until the DAO's policy is exactly the manifest's council at 2 of 3.",
+      commands: [c.councilReplaceMember, c.governanceStatus, 'corepack pnpm --filter @hana-id/scripts run council-setup <env>', c.deployContractPlan],
     },
   ],
   verify: ['`admin <env> governance:status`: no findings (the policy is the manifest\'s council, 2 of 3 for every kind).', '`deploy-contract <env>` dry run without blockers (`council-setup <env>` dry run on dev envs).'],
   followUps: ['Mainnet: where the backup key is held is decided before mainnet (D81); record the replacement.'],
-  refs: ['docs/operations.md#owner', 'docs/operations.md#owner-council-sputnik-dao-v2-d81', 'D81'],
+  refs: ['docs/operations.md#replacing-a-council-member', 'docs/operations.md#owner', 'docs/operations.md#owner-council-sputnik-dao-v2-d81', 'D81', 'D151'],
   related: ['unexpected-owner-action', 'governance-change'],
 };
 
@@ -393,6 +394,12 @@ const unexpectedOwnerAction: Playbook = {
       who: 'a founder',
       detail: 'The proposal\'s votes name the members; talk to each of them on a channel you trust.',
       commands: [c.ownerProposals, c.governanceStatus, c.apiGovernancePending],
+    },
+    {
+      title: 'Reject open proposals nobody explained',
+      who: 'council (2 of 3)',
+      detail: "Before a second key approves them: each honest member casts a `VoteReject`; two rejections close a proposal for good.",
+      commands: [c.ownerProposals, c.ownerVoteReject],
     },
     {
       title: 'Cancel what is pending',

@@ -240,7 +240,9 @@ a DAO with other code or another policy. `docs/operations.md` "Owner council".
 `admin <env> owner:call <method> --args '<json>'` sends one owner-only method through the manifest's owner: the owner's
 keychain key signs it, or (`ownerKind: "sputnik"`) it becomes a DAO `FunctionCall` proposal by `--member`. On dev envs
 `--approve-with <second member>` approves it with both members in the same command, so it executes; elsewhere the
-command only proposes and prints the vote each member signs. `owner:vote <id> --member <m>` approves one proposal,
+command only proposes and prints the vote each member signs. `owner:vote <id> --member <m>` approves one proposal
+(`--reject`: rejects it), `council:replace-member --remove <old> --add <new>` proposes replacing a council member
+(remove, then add; 2 of 3 kept; it writes `council.members` in the manifest once the DAO has the new council),
 `owner:proposals` lists them decoded, `governance:status [--json]` prints the contract's governance state, the
 signer's keys against the updater keys, the council's open proposals and the findings (the source batch C's admin
 portal reads; `docs/operations.md` "Governance status for the admin portal").
@@ -275,9 +277,10 @@ admin <env> app:settings <app id | pk_test_…> [--persistence session|none] [--
 admin <env> scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […]
              [--member <council member>] [--approve-with <council member>] [--yes]
 admin <env> owner:call <method> [--args '<json>'] [--gas <Tgas>] [--member <m>] [--approve-with <m>] [--yes]
-admin <env> owner:vote <proposal id> --member <m> [--yes]
+admin <env> owner:vote <proposal id> --member <m> [--reject] [--yes]
 admin <env> owner:proposals [--limit 20] [--json]
 admin <env> governance:status [--json]
+admin <env> council:replace-member --remove <old member> --add <new member> [--member <m>] [--approve-with <m>] [--yes]
 ```
 
 - `app:*` commands write the env's D1 database with `wrangler d1 execute`, run from `apps/api`. They use the local

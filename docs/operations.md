@@ -250,7 +250,8 @@ issuer keys and code changes behind public delays and makes the owner a 2-of-3 S
 |---|---|
 | Create the dev council (accounts + DAO) | `council-setup <env> [--yes] [--funder <account>] [--member-balance 2]` |
 | Any owner call through the owner | `admin <env> owner:call <method> --args '<json>' [--member <m>] [--approve-with <m>] [--yes]` |
-| Vote / list council proposals | `admin <env> owner:vote <id> --member <m> [--yes]` · `admin <env> owner:proposals [--json]` |
+| Vote / list council proposals | `admin <env> owner:vote <id> --member <m> [--reject] [--yes]` · `admin <env> owner:proposals [--json]` |
+| Replace a council member | `admin <env> council:replace-member --remove <old> --add <new> [--member <m>] [--approve-with <m>] [--yes]` |
 | Governance state and findings | `admin <env> governance:status [--json]` |
 | Migrate v1 → v2, upgrade, hand the contract to the DAO | `deploy-contract <env> --upgrade` · `--transfer-owner [--approve-with <m>]` |
 | Print the mainnet-style signer creation batch | `deploy-contract <env> --creation-plan [--wasm <reproducible build>]` |
@@ -325,11 +326,48 @@ goes through it, `set_sessions_valid_from_ms` included) through the manifest's o
 corepack pnpm --filter @hana-id/scripts run admin sandbox-dev owner:call unpause --approve-with hana-id-council-b-dev1.testnet --yes
 corepack pnpm --filter @hana-id/scripts run admin sandbox-dev owner:proposals
 corepack pnpm --filter @hana-id/scripts run admin sandbox-dev owner:vote 4 --member hana-id-council-c-dev1.testnet --yes
+corepack pnpm --filter @hana-id/scripts run admin sandbox-dev owner:vote 5 --member hana-id-council-c-dev1.testnet --reject --yes
 ```
+
+`owner:vote` casts one vote per member (the DAO refuses a second: it says what the member already voted):
+`VoteApprove`, or `VoteReject` with `--reject`. Two rejections (2 of 3) close the proposal as `Rejected`: it never
+executes, and the proposer's bond is refunded. `owner:proposals` shows approvals and rejections. Off dev envs a member
+rejects with the same `act_proposal` command as an approval, `"action":"VoteReject"`. Reject every proposal nobody
+explained, rather than letting it sit open for its 7 days.
 
 `deploy-contract` and `admin scope:register` route their owner steps the same way (both take `--member` /
 `--approve-with`). With a council owner and no `--approve-with`, `deploy-contract` stops after the first step that
 was only proposed; re-run it once that proposal is approved.
+
+### Replacing a council member
+
+`admin <env> council:replace-member --remove <old> --add <new>` (D151) replaces one member and keeps the policy the
+scripts verify (one `council` Group of three, 2 of 3 for every kind: `policyProblems`). Sputnik has no swap, so it
+makes two proposals on the council DAO, in this order: `RemoveMemberFromRole(<old>, council)`, then
+`AddMemberToRole(<new>, council)`. Between the two the council is 2 of 2 (the threshold follows the group's size), so
+both remaining members approve the addition; removing first cuts a lost or stolen key off at once. The old member
+never proposes or approves (`--member` and `--approve-with` refuse it). Before sending anything it checks that the new
+member's account exists, that `envs/<env>.json` still validates with the new `council.members` (the new member in the
+old one's place), and that the DAO's group is the manifest's council (or a half-done replacement: removed only, or
+added only, which it carries on from) with otherwise exactly the council policy. Open identical proposals are reused.
+
+- Without `--yes`: the plan, including the exact manifest edit (`"council": "members": [...] -> [...]`).
+- Dev envs on testnet, `--approve-with <second remaining member>`: both proposals are approved in the same command,
+  so they execute; then it writes `council.members` in the manifest.
+- Elsewhere: it only proposes, and prints the `act_proposal` `VoteApprove` command for each remaining member and
+  each proposal (approve the removal first). After both executed, run it again with `--yes`: it finds the new council
+  on chain and writes `council.members`.
+
+```sh
+corepack pnpm --filter @hana-id/scripts run admin sandbox-dev council:replace-member --remove hana-id-council-c-dev1.testnet --add hana-id-council-d-dev1.testnet --approve-with hana-id-council-b-dev1.testnet          # plan
+corepack pnpm --filter @hana-id/scripts run admin sandbox-dev council:replace-member --remove hana-id-council-c-dev1.testnet --add hana-id-council-d-dev1.testnet --approve-with hana-id-council-b-dev1.testnet --yes
+corepack pnpm --filter @hana-id/scripts run admin <env> council:replace-member --remove <old member> --add <new member> --member <member> --yes
+```
+
+Each executed change raises the watchdog's critical `governance_change` (`owner_policy`): expected, acknowledge it.
+On a dev env the new member's key belongs in `.secrets/<env>/council/<new member>.json` for the scripts to sign as it
+(the command notes when it is missing). Commit the manifest edit (code-owner review), then check `governance:status`
+(no findings) and a `deploy-contract <env>` dry run (no council blocker).
 
 ### Governance migration (sandbox-dev)
 
@@ -470,12 +508,14 @@ admin <env> scope:register [--client <google client id> …] [--allow-shared] (-
              [--member <council member>] [--approve-with <council member>] [--yes]
 admin <env> issuer-keys:lead-times [--remote]
 admin <env> owner:call <method> [--args '<json>'] [--gas <Tgas>] [--member <m>] [--approve-with <m>] [--yes]
-admin <env> owner:vote <proposal id> --member <m> [--yes]
+admin <env> owner:vote <proposal id> --member <m> [--reject] [--yes]
 admin <env> owner:proposals [--limit 20] [--json]
 admin <env> governance:status [--json]
+admin <env> council:replace-member --remove <old member> --add <new member> [--member <m>] [--approve-with <m>] [--yes]
 ```
 
-The `owner:*` and `governance:status` commands: [Governance](#governance-owner-council-upgrades-migration).
+The `owner:*`, `council:*` and `governance:status` commands: [Governance](#governance-owner-council-upgrades-migration)
+("Owner actions through the council", "Replacing a council member").
 
 Run as `corepack pnpm --filter @hana-id/scripts run admin <env> <command> …`. Unknown flags are errors.
 
@@ -613,8 +653,9 @@ keys with `.secrets/<env>/keys-updater.json`, then re-upload `KEYS_UPDATER_KEY`)
   (`docs/contract-interface.md` "Owner transfer"). For the council DAO that is `deploy-contract <env>
   --transfer-owner` (twice: propose, then accept through a 2-of-3 proposal; [Governance
   migration](#governance-migration-sandbox-dev) step 5), which also rewrites `owner` / `ownerKind` in the manifest.
-- **A council member**: `AddMemberToRole` + `RemoveMemberFromRole` proposals (2 of 3 each), through a UI or near CLI
-  (`add_proposal` with that kind); then update `council.members` in the manifest and check with `admin <env>
+- **A council member**: `admin <env> council:replace-member --remove <old> --add <new>` ([Replacing a council
+  member](#replacing-a-council-member)): a `RemoveMemberFromRole` and an `AddMemberToRole` proposal (2 of 3, then
+  2 of 2), and the `council.members` edit in the manifest once both executed; then check with `admin <env>
   governance:status` and a `council-setup <env>` dry run (dev envs), which compares the DAO's policy with the manifest.
 
 Scope owners (`--owner-near` / `--owner-google`) are separate: they change by a timelocked `SetOwners` owner action.

@@ -14,6 +14,14 @@ export const ownerCall = (method: string, args?: string): string => `${SCRIPTS} 
 export const governanceStatus = `${SCRIPTS} admin <env> governance:status`;
 export const ownerProposals = `${SCRIPTS} admin <env> owner:proposals`;
 export const ownerVote = `${SCRIPTS} admin <env> owner:vote <proposal id> --member <member> --yes`;
+/** A `VoteReject` (dev envs: key from .secrets; elsewhere the member's own key). Two rejections close a proposal. */
+export const ownerVoteReject = `${SCRIPTS} admin <env> owner:vote <proposal id> --member <member> --reject --yes`;
+/**
+ * Replace a council member (`docs/operations.md` "Replacing a council member"): RemoveMemberFromRole, then
+ * AddMemberToRole. Dev envs add `--approve-with <second member>`; elsewhere it proposes and prints each member's vote.
+ */
+export const councilReplaceMemberPlan = `${SCRIPTS} admin <env> council:replace-member --remove <old member> --add <new member> --member <member>`;
+export const councilReplaceMember = `${SCRIPTS} admin <env> council:replace-member --remove <old member> --add <new member> --member <member> --yes`;
 export const deployContractPlan = `${SCRIPTS} deploy-contract <env>`;
 export const deployContract = `${SCRIPTS} deploy-contract <env> --yes`;
 export const upgradePropose = `${SCRIPTS} deploy-contract <env> --upgrade --yes`;

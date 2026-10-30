@@ -57,3 +57,27 @@ export function setManifestObject(text: string, key: string, value: Record<strin
   manifestSchema.parse(check);
   return out;
 }
+
+/**
+ * Replaces `council.members` in manifest JSON text, keeping the rest of the file's formatting (the list is written on
+ * one line, `["a", "b", "c"]`); the whole file is rewritten only when the field can't be placed unambiguously. The
+ * result must validate.
+ */
+export function setCouncilMembers(text: string, members: readonly string[]): string {
+  const parsed = JSON.parse(text) as { council?: Record<string, unknown> };
+  if (!parsed.council || typeof parsed.council !== 'object') throw new Error('Manifest has no council');
+  const list = `[${members.map((x) => JSON.stringify(x)).join(', ')}]`;
+  const block = /("council"\s*:\s*)\{[^{}]*\}/gu;
+  const blocks = text.match(block) ?? [];
+  let out: string | null = null;
+  if (blocks.length === 1) {
+    const inner = blocks[0]!;
+    const field = /("members"\s*:\s*)\[[^\]]*\]/gu;
+    if ((inner.match(field) ?? []).length === 1) out = text.replace(inner, () => inner.replace(field, (_m, head: string) => `${head}${list}`));
+  }
+  out ??= `${JSON.stringify({ ...parsed, council: { ...parsed.council, members: [...members] } }, null, 2)}\n`;
+  const check = JSON.parse(out) as { council?: { members?: unknown } };
+  if (JSON.stringify(check.council?.members) !== JSON.stringify(members)) throw new Error('Failed to set council.members in the manifest');
+  manifestSchema.parse(check);
+  return out;
+}

@@ -1315,17 +1315,25 @@ One of the three council keys (a founder's Ledger or the offline backup) is lost
 
 **Steps**
 
-1. **Reject or let expire the member's stray proposals** (who: council (2 of 3)). List open proposals; never approve one nobody explained. Not built yet: a reject vote in the scripts (`owner:vote` only approves); reject with the DAO's `act_proposal` `VoteReject` through a UI or near CLI, or let it expire (7-day proposals).
+1. **Reject the member's stray proposals** (who: council (2 of 3)). List open proposals; never approve one nobody explained. Two remaining members each cast a `VoteReject` (`owner:vote --reject`): two rejections close it as `Rejected`, so it can never execute even if the lost key turns up again. Off dev envs each member signs the same `act_proposal` command as an approval, with `"action":"VoteReject"`.
 
    ```sh
    corepack pnpm --filter @hana-id/scripts run admin <env> owner:proposals
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:vote <proposal id> --member <member> --reject --yes
    ```
 
-2. **Replace the member** (who: council (2 of 3)). An `AddMemberToRole` proposal for the new member and a `RemoveMemberFromRole` for the old one, 2 of 3 each, through a DAO UI or near CLI (`add_proposal` with that kind). Not built yet: a script for member-change proposals. Each raises a critical `governance_change` (`owner_policy`): expected, acknowledge it.
-
-3. **Update the manifest** (who: a founder). `council.members` in `envs/<env>.json` (code-owner review); `deploy-contract` blocks until the DAO's policy is exactly the manifest's council at 2 of 3.
+2. **Replace the member** (who: council (2 of 3)). The new member creates their account first (a Ledger key on mainnet). `council:replace-member` proposes `RemoveMemberFromRole` for the old member, then `AddMemberToRole` for the new one, signed by a remaining member (the old one never signs): read the plan without `--yes`. The removal goes first and cuts the key off; until the addition executes the council is 2 of 2, so both remaining members approve it straight away. Dev envs: add `--approve-with <second member>` to approve both in the same command; elsewhere it prints each remaining member's `act_proposal` for each proposal. Each executed change raises a critical `governance_change` (`owner_policy`): expected, acknowledge it.
 
    ```sh
+   corepack pnpm --filter @hana-id/scripts run admin <env> council:replace-member --remove <old member> --add <new member> --member <member>
+   corepack pnpm --filter @hana-id/scripts run admin <env> council:replace-member --remove <old member> --add <new member> --member <member> --yes
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:proposals
+   ```
+
+3. **Update the manifest** (who: a founder). Once both proposals executed, run `council:replace-member` again with `--yes` (on dev envs with `--approve-with` the first run already did): it checks the DAO's group is the new council at 2 of 3 and writes `council.members` in `envs/<env>.json`, the new member in the old one's place. Commit it (code-owner review); `deploy-contract` blocks until the DAO's policy is exactly the manifest's council at 2 of 3.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run admin <env> council:replace-member --remove <old member> --add <new member> --member <member> --yes
    corepack pnpm --filter @hana-id/scripts run admin <env> governance:status
    corepack pnpm --filter @hana-id/scripts run council-setup <env>
    corepack pnpm --filter @hana-id/scripts run deploy-contract <env>
@@ -1340,7 +1348,7 @@ One of the three council keys (a founder's Ledger or the offline backup) is lost
 
 - Mainnet: where the backup key is held is decided before mainnet (D81); record the replacement.
 
-**Refs:** [`docs/operations.md#owner`](operations.md#owner), [`docs/operations.md#owner-council-sputnik-dao-v2-d81`](operations.md#owner-council-sputnik-dao-v2-d81), D81 (`docs/decisions.md`) · **See also:** [unexpected-owner-action](#unexpected-owner-action), [governance-change](#governance-change)
+**Refs:** [`docs/operations.md#replacing-a-council-member`](operations.md#replacing-a-council-member), [`docs/operations.md#owner`](operations.md#owner), [`docs/operations.md#owner-council-sputnik-dao-v2-d81`](operations.md#owner-council-sputnik-dao-v2-d81), D81 (`docs/decisions.md`), D151 (`docs/decisions.md`) · **See also:** [unexpected-owner-action](#unexpected-owner-action), [governance-change](#governance-change)
 
 <a id="unexpected-owner-action"></a>
 
@@ -1371,7 +1379,14 @@ A council call nobody on the council made: two council keys were used. Cancel wh
    curl -s <apiUrl>/v1/governance | jq '{paused, delays, keyChanges, pendingUpgrade, pendingOwner, pendingWithdrawal}'
    ```
 
-2. **Cancel what is pending** (who: council (2 of 3)). With the two honest keys, if there are two.
+2. **Reject open proposals nobody explained** (who: council (2 of 3)). Before a second key approves them: each honest member casts a `VoteReject`; two rejections close a proposal for good.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:proposals
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:vote <proposal id> --member <member> --reject --yes
+   ```
+
+3. **Cancel what is pending** (who: council (2 of 3)). With the two honest keys, if there are two.
 
    ```sh
    corepack pnpm --filter @hana-id/scripts run admin <env> owner:call cancel_upgrade --yes
@@ -1379,9 +1394,9 @@ A council call nobody on the council made: two council keys were used. Cancel wh
    corepack pnpm --filter @hana-id/scripts run admin <env> owner:call cancel_withdrawal --yes
    ```
 
-3. **Replace the compromised member** (who: council (2 of 3)). One key compromised: [council-member-key](#council-member-key). Two: there is no honest majority; go to the next step.
+4. **Replace the compromised member** (who: council (2 of 3)). One key compromised: [council-member-key](#council-member-key). Two: there is no honest majority; go to the next step.
 
-4. **Warn partners and users within the delay** (who: a founder). Before the pending action's executable time: partners' security contacts, and users told to export keys and move funds (D41). Not built yet: batch C's notice email to every org's security contacts and the pending-upgrades page (D86).
+5. **Warn partners and users within the delay** (who: a founder). Before the pending action's executable time: partners' security contacts, and users told to export keys and move funds (D41). Not built yet: batch C's notice email to every org's security contacts and the pending-upgrades page (D86).
 
 **Verify**
 

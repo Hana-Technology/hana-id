@@ -4,7 +4,7 @@
 //! or, for a member of an account (`links.rs`), the account root's. An identity in no account opens exactly the path
 //! it opened before accounts existed.
 
-// create_session takes 7 arguments and create_session_and_derive 12 (plus self): the JSON interface is flat on purpose.
+// create_session takes 8 arguments and create_session_and_derive 12 (plus self): the JSON interface is flat on purpose.
 #![allow(clippy::too_many_arguments)]
 
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
@@ -25,6 +25,9 @@ pub const SESSION_DOMAIN: &[u8] = b"hana-id-session-v1:";
 /// Domain-separates session nonces from the other nonces (registry.rs).
 const SESSION_NONCE_DOMAIN: &[u8] = b"hana-id/session/v1";
 pub const REVOKE_PAYLOAD: &[u8] = b"revoke";
+/// What the session key signs, with counter 0, to prove possession in a bare `create_session` (D137). Counter 0 is
+/// never accepted by `derive_key` or `revoke_session` (they need `used + 1` ≥ 1), and no other payload is this string.
+pub const CREATE_PAYLOAD: &[u8] = b"hana-id-create-v1";
 
 pub const MAX_SESSION_MS: u64 = 24 * 60 * 60 * 1000;
 pub const MAX_USES: u32 = 500;
@@ -214,7 +217,9 @@ impl HanaSigner {
     /// `(provider, aud)` must be a client of that scope, or a shared client if the scope has `allow_shared`; its nonce
     /// must equal session_nonce(...), which commits to this deployment, the scope and every other argument. The path
     /// is the path identity's (the account root's for a member); a pending member is refused (`Sign-in method link is
-    /// pending`).
+    /// pending`). `signature` is the session key's proof of possession: Ed25519 over session_message(0,
+    /// "hana-id-create-v1") (D137). Only the key holder can open the session, so a token copied from a published
+    /// login (for instance a case-A login with a link) can't be used to occupy its session key with a plain session.
     pub fn create_session(
         &mut self,
         jwt: String,
@@ -224,8 +229,11 @@ impl HanaSigner {
         salt: Vec<u8>,
         key_index: u32,
         max_uses: u32,
+        signature: Vec<u8>,
     ) -> Session {
-        self.open_session(jwt, scope_id, session_public_key, expires_at_ms, salt, key_index, max_uses, None)
+        let session = self.open_session(jwt, scope_id, session_public_key.clone(), expires_at_ms, salt, key_index, max_uses, None);
+        verify_session_signature(&session_public_key, signature, &session_message_bytes(0, CREATE_PAYLOAD));
+        session
     }
 
     /// Full-key mode: asks the MPC's CKD domain for the session path's secret, encrypted to the browser's BLS key

@@ -207,11 +207,20 @@ fn fixture_key() -> (String, String) {
 
 /// Opens a session with `token` in `scope` (expiry EXPIRES_MS, salt SALT, max_uses 3: what the fixture nonces commit to).
 fn open(c: &mut HanaSigner, token: &str, scope: &str, seed: u8, key_index: u32) -> Session {
-    c.create_session(tok(token), scope.into(), pk(seed), EXPIRES_MS, SALT.to_vec(), key_index, 3)
+    c.create_session(tok(token), scope.into(), pk(seed), EXPIRES_MS, SALT.to_vec(), key_index, 3, create_sig(&pk(seed)))
 }
 
 fn session_sig(seed: u8, counter: u64, payload: &[u8]) -> Vec<u8> {
     sk(seed).sign(&session_message_bytes(counter, payload)).to_bytes().to_vec()
+}
+
+/// The session key's proof of possession for a bare `create_session` (session_message(0, "hana-id-create-v1"), D137),
+/// for the test key whose public key is `key` (seeds 0..=255); 64 zero bytes for any other key.
+fn create_sig(key: &[u8]) -> Vec<u8> {
+    (0..=255u8)
+        .find(|&s| pk(s) == key)
+        .map(|s| session_sig(s, 0, crate::sessions::CREATE_PAYLOAD))
+        .unwrap_or_else(|| vec![0; 64])
 }
 
 fn ckd_sig(seed: u8, counter: u64, pk1: &str, pk2: &str) -> Vec<u8> {
@@ -399,7 +408,7 @@ fn rejects_forged_claims() {
     let jwt = tok("session_a");
     let parts: Vec<&str> = jwt.split('.').collect();
     let claims = oidc::b64url(format!(r#"{{"iss":"https://accounts.google.com","aud":"{A}","sub":"victim","exp":1800010800,"nonce":"{}"}}"#, fixture_nonce("session_s1_pk7_k0")).as_bytes());
-    c.create_session(format!("{}.{}.{}", parts[0], claims, parts[2]), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3);
+    c.create_session(format!("{}.{}.{}", parts[0], claims, parts[2]), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3, create_sig(&pk(7)));
 }
 
 #[test]
@@ -413,7 +422,7 @@ fn rejects_non_rs256() {
 #[should_panic(expected = "JWT must have three parts")]
 fn rejects_malformed_token() {
     let mut c = setup();
-    c.create_session("abc.def".into(), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3);
+    c.create_session("abc.def".into(), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3, create_sig(&pk(7)));
 }
 
 #[test]
@@ -516,7 +525,7 @@ fn session_argument_bounds() {
     ];
     for (key, expires, salt, max_uses, expected) in cases {
         let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            c.create_session(tok("session_a"), "s1".into(), key.clone(), expires, salt.clone(), 0, max_uses);
+            c.create_session(tok("session_a"), "s1".into(), key.clone(), expires, salt.clone(), 0, max_uses, create_sig(&key.clone()));
         }))
         .expect_err(expected);
         let msg = panic_msg(err);
@@ -624,7 +633,7 @@ fn session_key_can_be_reused_after_expiry() {
     c.execute_change("s1".into(), 0);
     // The old session (same key) has expired, so a new token may reuse the key. Its queue entry is now stale:
     // the prune in create_session pops it but must not delete the new session.
-    let s = c.create_session(tok("session_e_late"), "s1".into(), pk(7), EXPIRES_LATE_MS, SALT.to_vec(), 0, 3);
+    let s = c.create_session(tok("session_e_late"), "s1".into(), pk(7), EXPIRES_LATE_MS, SALT.to_vec(), 0, 3, create_sig(&pk(7)));
     assert_eq!(s.expires_at_ms, EXPIRES_LATE_MS);
     assert_eq!(c.queue_head, 1);
     assert_eq!(c.get_session(pk(7)), Some(s));
@@ -895,7 +904,7 @@ fn combined_login_prunes_up_to_three() {
 fn key_index_below_2_31_is_accepted() {
     let mut c = setup();
     assert_eq!(KEY_INDEX_LIMIT, 1 << 31);
-    let s = c.create_session(tok("session_a_k_last"), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0x7fff_ffff, 3);
+    let s = c.create_session(tok("session_a_k_last"), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0x7fff_ffff, 3, create_sig(&pk(7)));
     assert_eq!(s.path, format!("s1#google#{USER}#2147483647"));
 }
 
@@ -905,7 +914,7 @@ fn key_index_2_31_and_above_is_reserved() {
     // Each token's nonce commits to its key_index, so the bound (not the nonce) is what refuses them.
     for (token, key_index) in [("session_a_k_reserved", 0x8000_0000u32), ("session_a_k_max", u32::MAX)] {
         let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            c.create_session(tok(token), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), key_index, 3);
+            c.create_session(tok(token), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), key_index, 3, create_sig(&pk(7)));
         }))
         .unwrap_err();
         assert_eq!(panic_msg(err), "key_index must be below 2^31");
@@ -1442,7 +1451,7 @@ fn add_client_after_the_timelock() {
     assert_eq!(s1.clients.len(), 3);
 
     // E's users now land in s1, with the same keys as A's users.
-    let s = c.create_session(tok("session_e_late"), "s1".into(), pk(7), EXPIRES_LATE_MS, SALT.to_vec(), 0, 3);
+    let s = c.create_session(tok("session_e_late"), "s1".into(), pk(7), EXPIRES_LATE_MS, SALT.to_vec(), 0, 3, create_sig(&pk(7)));
     assert_eq!(s.path, format!("s1#google#{USER}#0"));
 }
 
@@ -2092,7 +2101,7 @@ fn shared_and_own_client_give_the_same_path() {
 #[should_panic(expected = "Scope does not allow shared login")]
 fn shared_client_is_rejected_by_a_scope_without_allow_shared() {
     let mut c = shared_setup();
-    c.create_session(tok("shared_s2"), "s2".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3);
+    c.create_session(tok("shared_s2"), "s2".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3, create_sig(&pk(8)));
 }
 
 #[test]
@@ -2126,7 +2135,7 @@ fn own_client_token_with_another_scope_id_fails() {
 #[should_panic(expected = "nonce doesn't commit to this session")]
 fn max_uses_is_committed_by_the_nonce() {
     let mut c = setup();
-    c.create_session(tok("session_a"), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 2);
+    c.create_session(tok("session_a"), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 2, create_sig(&pk(7)));
 }
 
 #[test]
@@ -2336,14 +2345,14 @@ fn enabling_shared_login_is_timelocked() {
     let id = c.propose_change("s1".into(), OwnerAuth::Near, allow_shared(), None);
     assert_eq!(events()[0]["data"][0]["change"], serde_json::json!({"SetAllowShared":{"allow":true}}));
     expect_panic("Scope does not allow shared login", || {
-        c.create_session(tok("shared_s1_late"), "s1".into(), pk(8), EXPIRES_LATE_MS, SALT.to_vec(), 0, 3);
+        c.create_session(tok("shared_s1_late"), "s1".into(), pk(8), EXPIRES_LATE_MS, SALT.to_vec(), 0, 3, create_sig(&pk(8)));
     });
     expect_panic("Change is still timelocked", || c.execute_change("s1".into(), id));
     ctx(MALLORY, NOW_MS + DELAY_MS);
     c.execute_change("s1".into(), id);
     assert!(c.get_scope("s1".into()).unwrap().allow_shared);
     // The shared client now lands on the same key as s1's own clients.
-    let s = c.create_session(tok("shared_s1_late"), "s1".into(), pk(8), EXPIRES_LATE_MS, SALT.to_vec(), 0, 3);
+    let s = c.create_session(tok("shared_s1_late"), "s1".into(), pk(8), EXPIRES_LATE_MS, SALT.to_vec(), 0, 3, create_sig(&pk(8)));
     assert_eq!(s.path, format!("s1#google#{USER}#0"));
 }
 
@@ -2363,7 +2372,7 @@ fn disabling_shared_login_is_immediate() {
     assert!(!s1.allow_shared);
     assert_eq!(s1.action_nonce, 3, "propose, execute and disable each move it on");
     expect_panic("Scope does not allow shared login", || {
-        c.create_session(tok("shared_s1_late"), "s1".into(), pk(8), EXPIRES_LATE_MS, SALT.to_vec(), 0, 3);
+        c.create_session(tok("shared_s1_late"), "s1".into(), pk(8), EXPIRES_LATE_MS, SALT.to_vec(), 0, 3, create_sig(&pk(8)));
     });
     expect_panic("Shared login is not enabled", || c.disable_shared_login("s1".into(), OwnerAuth::Near));
 }
@@ -3229,7 +3238,7 @@ fn pause_stops_every_token_path_derivation_and_the_executors() {
         expect_panic("Paused", || call(c));
     };
     paused(RELAYER, &mut c, &|c| {
-        c.create_session(tok("session_a2"), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3);
+        c.create_session(tok("session_a2"), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3, create_sig(&pk(8)));
     });
     paused(RELAYER, &mut c, &|c| {
         let _ = c.create_session_and_derive(
@@ -3470,7 +3479,7 @@ fn the_session_floor_is_owner_only_raised_only_and_never_in_the_future() {
     expect_panic("sessions_valid_from_ms can only be raised", || c.set_sessions_valid_from_ms(NOW_MS));
     // Sessions opened from the floor on work (a login right after the incident); older ones don't.
     ctx(RELAYER, NOW_MS + 1);
-    c.create_session(tok("session_a2"), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3);
+    c.create_session(tok("session_a2"), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3, create_sig(&pk(8)));
     derive(&mut c, 8, 1);
     expect_panic("No such session", || derive(&mut c, 7, 2));
     expect_panic("No such session", || c.revoke_session(pk(7), 2, session_sig(7, 2, crate::sessions::REVOKE_PAYLOAD)));

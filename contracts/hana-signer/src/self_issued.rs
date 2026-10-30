@@ -198,7 +198,9 @@ impl HanaSigner {
     /// `overlap` (D136): `true` (adding a co-signer) keeps tokens that satisfy the previous policy valid for
     /// `POLICY_OVERLAP_MS`, so tokens minted just before the upgrade aren't lost; signers dropped from the policy keep
     /// their keys until the owner removes them (they can't count once the overlap ends). `false` (replacing a
-    /// compromised signer) opens no overlap and removes the keys of every dropped signer at once.
+    /// compromised signer) opens no overlap and removes the keys of every dropped signer at once; the replacement must
+    /// come under a new signer id (`A replacing policy adds keys only for new signer ids`). Either way, pending key
+    /// additions of signers that leave the policy are cancelled (D138).
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn set_signer_policy(&mut self, provider: &str, signers: Vec<String>, required: u8, new_keys: Vec<(String, String, RsaKey)>, overlap: bool) {
         assert!(!signers.is_empty() && signers.len() <= MAX_SIGNERS, "A policy needs 1 to 3 signers");
@@ -211,12 +213,28 @@ impl HanaSigner {
         let mut issuer = self.issuers.get(provider).cloned().unwrap_or_else(|| env::panic_str("Unknown issuer"));
         let mut si = self.self_issued_of(provider).cloned().unwrap_or_else(|| env::panic_str("Not a self-issued issuer"));
         if !overlap {
+            // A replacing upgrade gives a replacement signer a new id: keys added to an id the policy already lists
+            // would leave that id's old (possibly compromised) keys counting (D138).
+            assert!(new_keys.iter().all(|(_, signer, _)| !si.signers.contains(signer)), "A replacing policy adds keys only for new signer ids");
             // Drop the keys of every signer that leaves the policy, at once.
             let dropped: Vec<String> = si.key_signer.iter().filter(|(_, s)| !signers.contains(s)).map(|(k, _)| k.clone()).collect();
             for kid in &dropped {
                 issuer.keys.remove(kid);
             }
             si.key_signer.retain(|(k, _)| !dropped.contains(k));
+        }
+        // Either way, pending additions for signers that leave the policy are dropped: they could otherwise revive (and
+        // anyone could execute them) if a later upgrade listed the id again (D138).
+        let stale: Vec<usize> = self
+            .key_changes
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.provider == provider && matches!(&c.op, KeyOp::AddForSigner { signer, .. } if !signers.contains(signer)))
+            .map(|(i, _)| i)
+            .collect();
+        for i in stale.into_iter().rev() {
+            let change = self.key_changes.remove(i);
+            events::emit("issuer_key_change_cancelled", json!({ "id": change.id, "provider": change.provider, "kid": change.kid, "by": env::current_account_id() }));
         }
         for (kid, signer, key) in new_keys {
             assert!(signers.contains(&signer), "Unknown signer");

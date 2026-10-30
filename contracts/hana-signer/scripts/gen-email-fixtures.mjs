@@ -124,6 +124,12 @@ const linkedCkdParts = ({ pk1, pk2, linkJwt, immediate }) => [
   [`pk2 "${pk2}"`, ascii(pk2)],
 ];
 const LINK_JWT_EXAMPLE = '{"payload":"e30","signatures":[]}';
+// The session message a bare create_session's proof of possession signs (D137): counter 0, payload "hana-id-create-v1".
+const sessionMessageParts = (counter, payload) => [
+  ['domain "hana-id-session-v1:"', ascii('hana-id-session-v1:')],
+  [`counter u64 LE (${counter})`, u64(counter)],
+  ['sha256(payload)', sha256(payload)],
+];
 
 // ---- tokens: the JWS General JSON Serialization (RFC 7515 §7.2.1) ----
 
@@ -182,6 +188,8 @@ const layouts = {
     autoLinkParts({ scopeId: S1, sessionHash: SESSION_HASH, sessionIk: GOOGLE_IK, join: 1, joiner: GOOGLE_IK, targetRoot: EMAIL_IK, epoch: 3, immediate: true })),
   auto_link_delayed: example('auto_link, case B: as above with join 2 (the link identity joins), joiner = the email key, target root = the google key, mode 0 (after change_delay_ms)',
     autoLinkParts({ scopeId: S1, sessionHash: SESSION_HASH, sessionIk: GOOGLE_IK, join: 2, joiner: EMAIL_IK, targetRoot: GOOGLE_IK, epoch: 3, immediate: false })),
+  session_message_create: example('Session message for a bare create_session (proof of possession): counter 0, payload "hana-id-create-v1"',
+    sessionMessageParts(0, ascii('hana-id-create-v1')), { nonce: false }),
   ckd_link_payload: example(`Linked CKD payload: link_jwt ${LINK_JWT_EXAMPLE}, mode 1, pk1 "bls12381g1:A", pk2 "bls12381g2:B"`,
     linkedCkdParts({ pk1: 'bls12381g1:A', pk2: 'bls12381g2:B', linkJwt: LINK_JWT_EXAMPLE, immediate: true }), { nonce: false }),
 };

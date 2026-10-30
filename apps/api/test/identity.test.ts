@@ -334,6 +334,14 @@ describe('POST /v1/identity/token: refusals, in order', () => {
     expect((await mint(app, spk)).status).toBe(200);
   });
 
+  it('a session the node doesn’t show yet (a block behind the login) is re-read before refusing', async () => {
+    const { app, near } = await vaultSetup();
+    await setSettings(app.id, { persistence: 'none' });
+    const spk = newSessionKey();
+    setTimeout(() => near.sessions.set(JSON.stringify(spk), { path: `${app.scope}#google#9#0`, scope_id: app.scope, expires_at_ms: Date.now() + HOUR, max_uses: 1, used: 1 }), 400);
+    expect((await mint(app, spk)).status).toBe(200);
+  });
+
   it('403 scope_mismatch for a session in another scope', async () => {
     const { app, near } = await vaultSetup();
     await setSettings(app.id, { persistence: 'none' });

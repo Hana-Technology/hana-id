@@ -32,7 +32,7 @@ import type { Env } from '../env.ts';
 import { PAUSED_RETRY_S, type Ctx, done, lap, limiter, newCtx, reject } from '../handlers.ts';
 import { readJson } from '../http.ts';
 import { log } from '../log.ts';
-import { vaultApp, vaultLimits } from '../vault/endpoints.ts';
+import { SESSION_RETRY_FOR_MS, SESSION_RETRY_INTERVAL_MS, vaultApp, vaultLimits } from '../vault/endpoints.ts';
 import { parentOriginAllowed } from '../vault/origins.ts';
 import { getSettingsRow } from '../vault/settings.ts';
 import { getShareBySessionPk } from '../vault/shares.ts';
@@ -130,19 +130,27 @@ type ChainCheck = { ok: true; session: SessionView } | { ok: false; response: Re
 
 /**
  * The on-chain session (step 3): live (get_session answers null for a revoked session and for one before
- * `sessions_valid_from_ms`), in the app's scope, not expired. A cached answer that would refuse is re-read fresh.
+ * `sessions_valid_from_ms`), in the app's scope, not expired. A cached answer that would refuse is re-read fresh, and
+ * a missing one is re-read for a while (SESSION_RETRY_FOR_MS, as share creation does): the node that answers may be a
+ * block behind the login that created the session, and a wrong "no session" would end the user's session in the vault.
  */
 async function checkChainSession(env: Env, ctx: Ctx, app: App, sessionPk: Uint8Array, now: number): Promise<ChainCheck> {
-  const judge = (s: SessionView | null): 'ok' | 'no_session' | 'scope_mismatch' => (!s || s.expires_at_ms <= now ? 'no_session' : s.scope_id !== app.scope_id ? 'scope_mismatch' : 'ok');
+  const judge = (s: SessionView | null): 'ok' | 'missing' | 'expired' | 'scope_mismatch' =>
+    !s ? 'missing' : s.expires_at_ms <= now ? 'expired' : s.scope_id !== app.scope_id ? 'scope_mismatch' : 'ok';
   let read;
   try {
     read = await getSession(env, [...sessionPk]);
     if (read.cached && judge(read.session) !== 'ok') read = await getSession(env, [...sessionPk], { fresh: true });
+    const deadline = Date.now() + SESSION_RETRY_FOR_MS;
+    while (judge(read.session) === 'missing' && Date.now() + SESSION_RETRY_INTERVAL_MS <= deadline) {
+      await new Promise((resolve) => setTimeout(resolve, SESSION_RETRY_INTERVAL_MS));
+      read = await getSession(env, [...sessionPk], { fresh: true });
+    }
   } catch {
     return { ok: false, response: reject(ctx, 502, 'near_unavailable', 'Could not read the session') };
   }
   const verdict = judge(read.session);
-  if (verdict === 'no_session') return { ok: false, response: sessionEnded(ctx, 'no_session') };
+  if (verdict === 'missing' || verdict === 'expired') return { ok: false, response: sessionEnded(ctx, 'no_session') };
   if (verdict === 'scope_mismatch') return { ok: false, response: reject(ctx, 403, 'scope_mismatch', 'The session is for another scope') };
   return { ok: true, session: read.session! };
 }

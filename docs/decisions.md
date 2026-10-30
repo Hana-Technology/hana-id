@@ -1276,8 +1276,9 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   the on-chain records hold pseudonymous ids only. A Google identity and an email identity with the same verified
   address match. **Google-hosted** = an `@gmail.com` / `@googlemail.com` address, or a Workspace account whose `hd`
   equals the email's domain; `hd` absent or different = not Google-hosted.
-  - Case A (an email-login wallet exists, a Google login with the same email joins): Google-hosted → linked at once;
-    otherwise a one-time code to the address first, then linked at once. Always a notice.
+  - Case A (an email-login wallet exists, a Google login with the same email joins): Google-hosted → linked at once,
+    silently (no screen or click, as Privy; decided 2026-10-30); otherwise a one-time code to the address first, then
+    linked at once. Always a notice.
   - Case B (a Google wallet exists, an email login joins): the user continues with Google and reaches the wallet at
     once; the email → wallet link is created from that Google sign-in (never silently at a Google login).
     Google-hosted → linked at once; otherwise it takes effect after `change_delay_ms` (24 h in production) with a
@@ -1326,8 +1327,8 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 ### D122. A matched person never gets a second wallet; no switcher
 - Date 2026-10-30 · Status: confirmed by the user, not built · Source: conversation; `docs/email-login-spec.md`
   "The four cases", Q18
-- Decision: when a match is detected the popup offers only "Link and continue" (D119's rules) or "Sign in with {the
-  other method}"; the identity without a wallet never opens a session on its own path. No switcher: the contract has
+- Decision: when a match is detected, Google-hosted case A links silently (D119); every other match offers only
+  "Link and continue" (D119's rules) or "Sign in with {the other method}"; the identity without a wallet never opens a session on its own path. No switcher: the contract has
   no `wallets` list or `wallet` argument, and its build step is removed. Case D (both already have a wallet) can't
   arise: sandbox-dev wallets opened before v3 are test data discarded at the address freeze, mainnet starts with v3,
   and different emails or different apps are separate wallets by design. Email hints don't expire while the scope
@@ -1363,6 +1364,26 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   - Q22: the proposed rate limits (codes per address 3 per 15 min and 10 per day, wrong codes 10 per hour → 1 h lock,
     per-IP, per-app and a global daily send budget with a breaker), provisional until sandbox-dev measurements.
 - Rejected: the alternatives each question listed.
+
+### D124. Sign in with Apple on the roadmap, after email login
+- Date 2026-10-30 · Status: confirmed by the user (roadmap), not specced · Source: conversation
+- Decision: Apple is the next login method after email login and the partner identity token. It plugs into the
+  provider-neutral core: the wallet path `scope#provider#sub#key_index` (provider `apple`, so no existing address
+  changes), `set_issuer("apple", ["https://appleid.apple.com"])` with its keys through the same delayed, cancellable
+  key changes (D33), RS256 (already the contract's one algorithm), and accounts with one member per provider (D119).
+  New per provider: the popup flow, client lookup in the API, manifest and partner-console client fields, the
+  watchdog's JWKS check, and a Hana Home export path.
+- Constraints for the spec:
+  - Apple's `sub` is stable per Apple developer **team**, not globally (Google's is the same in every project). Every
+    Apple client must sit in Hana's team: a partner's own team would give its users other subs and other wallets.
+    Branded Apple clients only as Hana-held Services IDs (the D42 Enterprise tier).
+  - Hide My Email (`…@privaterelay.appleid.com`) never matches by email; such users link by hand (`linkAccount`).
+  - Requesting `email` makes Apple answer with `response_mode=form_post`, so the callback needs a POST route (today's
+    `/login/callback` is a static page reading the fragment).
+  - Automatic linking gets an "Apple-hosted" twin of D119's Google-hosted rule (`icloud.com`, `me.com`, `mac.com`),
+    to be checked against Apple's documentation when specced.
+- Why: the App Store generally expects iOS apps that offer a third-party login such as Google to also offer Sign in
+  with Apple, so partners with native apps will ask for it.
 
 ## Superseded or amended
 

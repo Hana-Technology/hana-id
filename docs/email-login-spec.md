@@ -40,8 +40,9 @@ the problem. Reference docs (`contract-interface.md`, `security.md`, `architectu
 4. **Automatic linking rules (Q15, Q16, D119)**, decided by whether Google hosts the mailbox in the same account.
    **Google-hosted** = an `@gmail.com` / `@googlemail.com` address, or a Workspace account whose `hd` equals the
    email's domain; `hd` absent or different = not Google-hosted.
-   - Case A (an email-login wallet exists, a Google login with the same email joins): Google-hosted → linked at once;
-     otherwise a one-time code to the address first, then linked at once. Always a notice.
+   - Case A (an email-login wallet exists, a Google login with the same email joins): Google-hosted → linked at once,
+     silently (no screen, no click, as Privy; user decision 2026-10-30); otherwise a one-time code to the address
+     first, then linked at once. Always a notice.
    - Case B (a Google wallet exists, an email login joins): the user continues with Google and reaches the wallet at
      once; the email → wallet link is created from that Google sign-in. Google-hosted → linked at once; otherwise the
      link takes effect after 24 h (`change_delay_ms`), with a notice in the wallet and in the partner app (not only by
@@ -181,7 +182,7 @@ All are `POST` with JSON, CORS-allowed for `authOrigin` only, no cookies (D70), 
 | `/v1/email/start` | `{pk, email, purpose, commitment}` | always `202 {challengeId, expiresAtMs, resendAfterMs}` for any syntactically valid address on an allowed domain (enumeration-safe); `400 invalid_email`; `400 email_domain_not_allowed` (a disposable-address domain: says nothing about the user); `429 rate_limited` (same body and timing whatever the address) |
 | `/v1/email/resend` | `{challengeId}` | `202` (a new code, the old one dies; ≤ 2 resends) |
 | `/v1/email/verify` | `{challengeId, code}` | `200 {idToken, googleWallet: bool, linkTicket?}`; `400 code_invalid {attemptsLeft}`; `410 challenge_expired` (expired, used, or out of attempts); `429`. `googleWallet` is the `email_hints` lookup (case B); `linkTicket` (32 random bytes, single use, 10 min, bound to the app and this address's `sub`) lets the following Google step join this email identity without a second code |
-| `/v1/email/google-match` | `{pk, accessToken, googleIdToken, commitment, linkTicket?, link: bool}` | `200 {decision, googleHosted, emailToken?}` ([Automatic linking](#automatic-linking-privy-style)); `emailToken` is an `auto_link` token for the joining email identity, minted only when the user chose "Link and continue" (`link`) and the case allows it (Google-hosted case A, or a `linkTicket` whose `sub` equals the Google account's verified address) |
+| `/v1/email/google-match` | `{pk, accessToken, googleIdToken, commitment, linkTicket?, link: bool}` | `200 {decision, googleHosted, emailToken?}` ([Automatic linking](#automatic-linking-privy-style)); `emailToken` is an `auto_link` token for the joining email identity, minted only when `link` is set (the vault sets it on its own for Google-hosted case A, and from the user's "Link and continue" otherwise) and the case allows it (Google-hosted case A, or a `linkTicket` whose `sub` equals the Google account's verified address) |
 | `/v1/email/jwks.json`, `/.well-known/openid-configuration` | — | public keys |
 | `/v1/email/admin/client-proof` | `{scopeId, actionNonce}` | a token for `("email","email:"+scopeId)` whose nonce is `client_proof_nonce(signer, scopeId, actionNonce)`; behind Cloudflare Access plus the staff allowlist (D88), audited |
 
@@ -501,8 +502,8 @@ What Privy does, for comparison (docs read 2026-10-29):
   The docs don't describe merging two users that both have wallets.
 - Automatic merging: the user's own test on `demo.privy.io` (2026-10-29): an email login then a Google login with the
   same Gmail address gave the same user and wallets (Privy asks Google for the email and profile). Hana copies the
-  outcome for Google-hosted addresses without putting the address on chain, with one "Link and continue" click, and is
-  stricter elsewhere (a code first in case A, 24 h in case B).
+  outcome for Google-hosted addresses without putting the address on chain, silently in case A (no screen, a notice
+  only), and is stricter elsewhere (a code first in case A, 24 h in case B).
 
 ### How the popup gets Google's verified email
 
@@ -539,28 +540,30 @@ account registered with an outside address, or a Workspace account using another
 Google-hosted.
 
 **A match** is a Google identity and an email identity with the same verified address in the scope, one of which has
-a wallet, that aren't an `unlinked` pair. On a match the popup never creates a second wallet: it offers only **"Link
-and continue"** (the rules below) or **"Sign in with {the other method}"** (the identity that has the wallet), and
-explains why. The token of the identity without a wallet is never used for a session unless it links, so it never
+a wallet, that aren't an `unlinked` pair. On a match the popup never creates a second wallet. Google-hosted case A
+links silently (no screen; the notice tells the user). Every other match offers only **"Link and continue"** (the
+rules below) or **"Sign in with {the other method}"** (the identity that has the wallet), and explains why. The token of the identity without a wallet is never used for a session unless it links, so it never
 gets a wallet. The vault runs `google-match` before any chain call, so a Google login's choice is made first.
 
 | Case | Google identity G | Email identity E | Google-hosted | Not Google-hosted |
 |---|---|---|---|---|
-| A | no wallet, not linked | has a wallet (root or account) | "Link and continue": G joins E's account **at once**; the login opens E's wallet | "Link and continue": a code to a…@domain first (purpose `auto_link`), then G joins **at once** |
+| A | no wallet, not linked | has a wallet (root or account) | **silently**, no screen: G joins E's account **at once**; the login opens E's wallet | "Link and continue": a code to a…@domain first (purpose `auto_link`), then G joins **at once** |
 | B | has a wallet | no wallet, not linked | after the email code (`verify` says `googleWallet`), "Link and continue" = continue with Google: the login opens G's wallet at once and E joins **at once** | the same Google step opens G's wallet at once; E joins **pending 24 h** (`change_delay_ms`), cancellable |
 | C | no wallet | no wallet | nothing linked; whichever logs in becomes a root (a Google login stores the hint) | same |
 | D | has a wallet | has a wallet | can't arise (below) | same |
 
-Both cases send a notice ([Notices](#notices)) on every link. "Sign in with {the other method}" in case A is an email
-login to E's wallet; in case B a Google login to G's wallet without linking. A case A join that the contract refuses
+Both cases send a notice ([Notices](#notices)) on every link. "Sign in with {the other method}" in case A (not
+Google-hosted) is an email login to E's wallet; in case B a Google login to G's wallet without linking. A case A join that the contract refuses
 (`Account already has a sign-in method of this kind`: E's account already has another Google member) shows only "Sign
 in with email".
 
 Why each rule:
 
-- **A, Google-hosted, at once.** Google hosts the mailbox in that same account, so whoever passes Google's sign-in as
-  G can already read E's codes, and Google says deleted Gmail usernames are never reissued (to verify, Q7). The link
-  adds no power to anyone: Google could already reach E's wallet, and the email issuer already could.
+- **A, Google-hosted, at once and silently.** Google hosts the mailbox in that same account, so whoever passes
+  Google's sign-in as G can already read E's codes, and Google says deleted Gmail usernames are never reissued (to
+  verify, Q7). The link adds no power to anyone: Google could already reach E's wallet, and the email issuer already
+  could. A confirmation click would add no security either, so there is none (user decision 2026-10-30); the notice
+  tells the user.
 - **A, not Google-hosted, a code first.** Google's `email_verified` then only says the address was verified once
   (when the account was made or the address added), not that the person still holds the mailbox (a former employee's
   or a recycled address), and a Workspace or Cloud Identity administrator can create a Google account for any address
@@ -792,8 +795,9 @@ email signer id.
 - **Popup** `/login`: a method chooser when the app has more than one ("Continue with Google", an email field). The
   email path navigates to `/login/email` in the same window (keeping `/login` fetch-free, D77), whose CSP adds
   `connect-src {issuer origin}`: address → code → `verify` → relay `{idToken}` to the vault through the existing slot.
-  Codes are typed in, `autocomplete="one-time-code"`. On a match the popup shows only "Link and continue" and "Sign
-  in with {the other method}" ([The four cases](#the-four-cases)): case A sends a code first unless Google-hosted;
+  Codes are typed in, `autocomplete="one-time-code"`. Google-hosted case A links with no screen. Any other match
+  shows only "Link and continue" and "Sign in with {the other method}" ([The four cases](#the-four-cases)): case A
+  sends a code first;
   case B continues with Google; a pending link shows when it activates and a Cancel.
 - **Vault**: verifies email tokens against the on-chain email keys (`get_issuer_keys("email")`, defence in depth);
   computes the path from `get_identity` on its own RPC (never from the API), so `login.ts`, `export-page.ts` and the
@@ -909,8 +913,8 @@ Following D83 (every check surfaces in the portal):
 
 An email stub (`EMAIL_SENDER=outbox`, only in `local*` envs, refused by `gen` elsewhere) writes messages to a test-only
 Durable Object that the suite reads through a binding, never a public route. Flows: email login; email then Google
-(Google-hosted, case A, "Link and continue") gives the same addresses; case A on another domain with the code; "Sign
-in with email" opens E's wallet and G gets none; Google then email (case B) Google-hosted (at once) and not (the
+(Google-hosted, case A, no screen) gives the same addresses and a notice; case A on another domain with the code;
+"Sign in with email" opens E's wallet and G gets none; Google then email (case B) Google-hosted (at once) and not (the
 pending banner in the popup and the partner page's `linkChanged`, then cancel); `linkAccount` with delay (manifest
 `changeDelayMs` short); cancel from the mail's link; unlink logs out the other tab. Google is stubbed with the
 existing e2e test issuer (its userinfo stub returns `hd` as set by the test).
@@ -971,12 +975,13 @@ All answered (2026-10-29/30). The defaults the user approved are D123.
     (D123, D121).
 13. Email issuer keys wait `governance_delay_ms` (72 h on mainnet) (D123).
 14. **Links per scope**; a Hana Home "link in all my apps" maybe later (D123).
-15. **Case A**: Google-hosted → linked at once; otherwise a code first, then at once; always a notice (decision 4,
-    D119).
+15. **Case A**: Google-hosted → linked at once, silently (no click; 2026-10-30); otherwise a code first, then at
+    once; always a notice (decision 4, D119).
 16. **Case B**: the user's Google step; Google-hosted → at once; otherwise 24 h, notice in the wallet and the partner
     app, cancellable (decision 4, D119).
 17. No stored addresses for security notices; in-product notices only (D96, D123).
-18. **Never a second wallet** for a match; "Link and continue" or "Sign in with {the other method}"; no switcher
+18. **Never a second wallet** for a match; silent in Google-hosted case A, otherwise "Link and continue" or "Sign in
+    with {the other method}"; no switcher
     (decision 5, D122).
 19. Delay for explicit and non-Google-hosted case B links: `change_delay_ms` (24 h production, D93) (D123).
 20. **Partners enable email per app** (partner console toggle with the on-chain client) (D123).

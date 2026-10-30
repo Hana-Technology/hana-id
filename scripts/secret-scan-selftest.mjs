@@ -43,6 +43,10 @@ const secretKey = () => `ed25519:${base58(randomBytes(64))}`;
 const publicKey = () => `ed25519:${base58(randomBytes(32))}`;
 /** A fake VAULT_KEK as scripts/lib/vault-kek.ts writes it. */
 const kek = (id) => `${id}:${randomBytes(32).toString('base64')}`;
+/** A fake P-256 private JWK as scripts/lib/identity-key.ts writes it (random coordinates: only the shape matters). */
+const privateJwk = () => JSON.stringify({ kty: 'EC', crv: 'P-256', x: randomBytes(32).toString('base64url'), y: randomBytes(32).toString('base64url'), d: randomBytes(32).toString('base64url') });
+/** A fake public JWKS entry (no `d`): public, must not be flagged. */
+const publicJwk = () => JSON.stringify({ kty: 'EC', crv: 'P-256', x: randomBytes(32).toString('base64url'), y: randomBytes(32).toString('base64url'), kid: randomBytes(32).toString('base64url'), use: 'sig', alg: 'ES256' });
 const keyFile = (account) => `${JSON.stringify({ account_id: account, public_key: publicKey(), private_key: secretKey() }, null, 2)}\n`;
 
 /** Each case: files to write, and the rule ids gitleaks must report for them (at least these). */
@@ -64,6 +68,14 @@ const CASES = [
   { name: 'KEK value in an innocent file', files: { 'kek-backup.txt': `${kek(3)}\n` }, expect: ['hana-vault-kek'] },
   { name: 'council key file (force-added .secrets)', files: { '.secrets/sandbox-dev/council/hana-id-council-a-dev1.testnet.json': keyFile('hana-id-council-a-dev1.testnet') }, expect: ['hana-secret-file', 'near-ed25519-secret-key'] },
   { name: 'council key file copied elsewhere', files: { 'council-member.json': keyFile('hana-id-council-b-dev1.testnet') }, expect: ['near-ed25519-secret-key'] },
+  { name: 'identity signing key file copied out of .secrets', files: { 'backup/identity-signing-key.json': `${privateJwk()}\n`, 'backup/identity-signing-key-standby.json': `${privateJwk()}\n` }, expect: ['hana-secret-file', 'hana-private-jwk'] },
+  { name: 'identity sub key file', files: { 'copy/identity-sub-key': `${randomBytes(32).toString('base64')}\n` }, expect: ['hana-secret-file'] },
+  { name: 'private JWK pasted into an innocent file', files: { 'src/key.ts': `export const KEY = ${privateJwk()};\n` }, expect: ['hana-private-jwk'] },
+  {
+    name: 'identity secrets as gen-wrangler --dev-vars writes them, pasted into a doc',
+    files: { 'docs/dev.md': `IDENTITY_SIGNING_KEY='${privateJwk()}'\nIDENTITY_SUB_KEY='${randomBytes(32).toString('base64')}'\n` },
+    expect: ['hana-worker-secret-assignment', 'hana-private-jwk'],
+  },
   { name: 'watchdog secrets file', files: { '.secrets/sandbox-dev/watchdog-secrets.json': `{"WATCHDOG_STATUS_TOKEN":"${randomBytes(32).toString('base64url')}"}\n` }, expect: ['hana-secret-file'] },
 ];
 
@@ -73,7 +85,8 @@ const NEGATIVE = {
   'docs/ops.md': "VAULT_KEK=1:<base64 of 32 bytes>\nRELAYER_KEYS='[\"ed25519:…\"]'\nKEYS_UPDATER_KEY=$(jq -r .private_key .secrets/<env>/keys-updater.json)\n",
   'test/fixture.ts': `const placeholder = "1:${'A'.repeat(43)}=";\n`,
   'scripts/vault-kek.ts': '// vault-kek.ts <env> <init | put | rotate>\n',
-  'envs/x.json': `{ "watchdogs": ["${publicKey()}"] }\n`,
+  'envs/x.json': `{ "watchdogs": ["${publicKey()}"], "identityToken": { "publicKeys": [${publicJwk()}] } }\n`,
+  'docs/jwks.md': `IDENTITY_SIGNING_KEY=<a P-256 private JWK>\nIDENTITY_SUB_KEY=<base64 of 32 bytes>\n`,
 };
 
 function scan(dir) {

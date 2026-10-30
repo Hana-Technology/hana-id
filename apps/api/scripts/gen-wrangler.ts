@@ -11,12 +11,15 @@
 // --dev-vars   Also write apps/api/.dev.vars (0600, gitignored) from .secrets/<env>/relayer-keys.json (session pool,
 //              JSON array of ed25519 secret keys), .secrets/<env>/owner-relayer-keys.json (owner pool, same format) and
 //              .secrets/<env>/keys-updater.json ({account_id, public_key, private_key}), as written by
-//              scripts/deploy-contract.ts, when they exist. Never prints secrets.
+//              scripts/deploy-contract.ts, and the identity token's IDENTITY_SIGNING_KEY, IDENTITY_SIGNING_KEY_STANDBY and
+//              IDENTITY_SUB_KEY from .secrets/<env>/identity-* (scripts/identity-key.ts), when they exist; the signing
+//              keys must be the manifest's `identityToken` keys. Never prints secrets.
 import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Manifest, hanaOwnOrigins, loadEnv, repoRoot } from '@hana-id/env';
+import { IDENTITY_SECRET_FILES, type Manifest, hanaOwnOrigins, loadEnv, p256Thumbprint, repoRoot } from '@hana-id/env';
+import { IDENTITY_RATE_LIMITS } from '../src/identity/limits.ts';
 import { VAULT_RATE_LIMITS } from '../src/vault/limits.ts';
 import { writePagesWranglerConfigs } from './pages-wrangler.ts';
 
@@ -30,6 +33,19 @@ export const COMPATIBILITY_DATE = '2026-10-01';
  * Workers Paid plan.
  */
 export const FLAG_DEFAULTS = { BLS_PRECHECK: '0', REJECT_PII_ON_SESSIONS: '0' } as const;
+
+/**
+ * The identity token's vars (docs/identity-token-spec.md): its `iss`, the JWKS (public keys only) and the kid that
+ * signs. Empty when the manifest has no `identityToken` (the API then answers 503 identity_unavailable). The AWS KMS
+ * signer is build step 7: refused until the API has it, rather than deployed as a Worker that can't sign.
+ */
+export function identityVars(m: Manifest): Record<string, string> {
+  const t = m.identityToken;
+  if (!t) return {};
+  if (t.signer.kind !== 'worker-secret') throw new Error(`envs/${m.name}.json: identityToken.signer.kind "${t.signer.kind}" is not supported by the API yet (build step 7)`);
+  if (m.network !== 'testnet') throw new Error(`envs/${m.name}.json: a Worker-secret identity signing key is testnet only (D127)`);
+  return { IDENTITY_ISS: t.iss, IDENTITY_PUBLIC_KEYS: JSON.stringify(t.publicKeys), IDENTITY_ACTIVE_KID: t.signer.activeKid };
+}
 
 export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknown> {
   // The API checks callers against both Hana origins (and the login relay serves only them).
@@ -71,6 +87,8 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
       REFUSED_ORIGINS: JSON.stringify(hanaOwnOrigins(m)),
       // The logo origin for `GET /v1/app`'s logoUrl (batch C11); only with the dashboard blocks.
       ...(m.files ? { FILES_ORIGIN: m.files.origin } : {}),
+      // The partner identity token (its secrets come from scripts/identity-key.ts).
+      ...identityVars(m),
     },
     d1_databases: [{ binding: 'DB', database_name: m.cloudflare.d1Name, database_id: d1Id, migrations_dir: 'migrations' }],
     durable_objects: {
@@ -84,8 +102,9 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
       { tag: 'v1', new_sqlite_classes: ['RelayerKey', 'RateLimiter'] },
       { tag: 'v2', new_sqlite_classes: ['LoginRelay'] },
     ],
-    // The vault's per-IP and per-share flood limits, counted where the request runs with no network hop (D95).
-    ratelimits: VAULT_RATE_LIMITS.map((r) => ({ name: r.name, namespace_id: r.namespace_id, simple: { ...r.simple } })),
+    // The vault's per-IP and per-share flood limits and the identity token's per-session one, counted where the
+    // request runs with no network hop (D95).
+    ratelimits: [...VAULT_RATE_LIMITS, ...IDENTITY_RATE_LIMITS].map((r) => ({ name: r.name, namespace_id: r.namespace_id, simple: { ...r.simple } })),
     // Every 15 min, one trigger (the free plan allows 5 per account): every run syncs Google's JWKS with hana-signer
     // (proposals and matured executions, src/issuer-keys.ts) and records the JWKS kids; the run at :00 also does
     // vault maintenance (src/index.ts isHourlyRun).
@@ -151,7 +170,57 @@ function poolLine(name: 'RELAYER_KEYS' | 'OWNER_RELAYER_KEYS', file: string, key
  * dotenv takes single-quoted values literally, whereas inside double quotes it does not unescape `\"`, so a JSON
  * string there would not parse.
  */
-export function devVarsContent(secrets: { relayerKeys?: unknown; ownerRelayerKeys?: unknown; keysUpdaterKey?: string }): string {
+export interface IdentityDevSecrets {
+  signingKey?: unknown;
+  standbyKey?: unknown;
+  subKey?: string;
+}
+
+const COORD_RE = /^[A-Za-z0-9_-]{43}$/u;
+const SUB_KEY_RE = /^[A-Za-z0-9+/]{43}=$/u;
+
+/** A P-256 private JWK as a single-quoted dotenv value (its JSON has no quote of the single kind). */
+function identityKeyLine(name: 'IDENTITY_SIGNING_KEY' | 'IDENTITY_SIGNING_KEY_STANDBY', file: string, jwk: unknown): { line: string; kid: string } {
+  const k = jwk as { kty?: unknown; crv?: unknown; x?: unknown; y?: unknown; d?: unknown } | null;
+  if (!k || k.kty !== 'EC' || k.crv !== 'P-256' || ![k.x, k.y, k.d].every((v) => typeof v === 'string' && COORD_RE.test(v))) {
+    throw new Error(`${file} must be a P-256 private JWK {kty: "EC", crv: "P-256", x, y, d}`);
+  }
+  const value = JSON.stringify({ kty: 'EC', crv: 'P-256', x: k.x, y: k.y, d: k.d });
+  return { line: `${name}='${value}'`, kid: p256Thumbprint({ kty: 'EC', crv: 'P-256', x: k.x as string, y: k.y as string }) };
+}
+
+/**
+ * The identity token's .dev.vars lines. The signing keys must be the manifest's (`identityToken.publicKeys`, the
+ * active kid among them): a key the JWKS doesn't publish would sign tokens no partner can verify.
+ */
+export function identityDevVarsLines(m: Pick<Manifest, 'name' | 'identityToken'>, secrets: IdentityDevSecrets): string[] {
+  const lines: string[] = [];
+  const kids: string[] = [];
+  for (const [name, file, jwk] of [
+    ['IDENTITY_SIGNING_KEY', IDENTITY_SECRET_FILES.signingKey, secrets.signingKey],
+    ['IDENTITY_SIGNING_KEY_STANDBY', IDENTITY_SECRET_FILES.standbyKey, secrets.standbyKey],
+  ] as const) {
+    if (jwk === undefined) continue;
+    const { line, kid } = identityKeyLine(name, file, jwk);
+    lines.push(line);
+    kids.push(kid);
+  }
+  if (kids.length > 0) {
+    const t = m.identityToken;
+    if (!t) throw new Error(`.secrets/${m.name} has identity signing keys but envs/${m.name}.json has no identityToken (run scripts/identity-key.ts ${m.name} init)`);
+    const published = new Set(t.publicKeys.map((k) => k.kid));
+    if (!kids.every((k) => published.has(k))) throw new Error(`The identity signing keys in .secrets/${m.name} don't match envs/${m.name}.json identityToken.publicKeys`);
+    if (t.signer.kind === 'worker-secret' && !kids.includes(t.signer.activeKid)) throw new Error(`No identity signing key in .secrets/${m.name} has the active kid ${t.signer.activeKid}`);
+  }
+  if (secrets.subKey !== undefined) {
+    const v = secrets.subKey.trim();
+    if (!SUB_KEY_RE.test(v) || Buffer.from(v, 'base64').length !== 32) throw new Error(`${IDENTITY_SECRET_FILES.subKey} must be base64 of 32 bytes`);
+    lines.push(`IDENTITY_SUB_KEY='${v}'`);
+  }
+  return lines;
+}
+
+export function devVarsContent(secrets: { relayerKeys?: unknown; ownerRelayerKeys?: unknown; keysUpdaterKey?: string; identity?: string[] }): string {
   const lines: string[] = [];
   if (secrets.relayerKeys !== undefined) lines.push(poolLine('RELAYER_KEYS', 'relayer-keys.json', secrets.relayerKeys));
   if (secrets.ownerRelayerKeys !== undefined) lines.push(poolLine('OWNER_RELAYER_KEYS', 'owner-relayer-keys.json', secrets.ownerRelayerKeys));
@@ -159,6 +228,7 @@ export function devVarsContent(secrets: { relayerKeys?: unknown; ownerRelayerKey
     if (!SECRET_KEY_RE.test(secrets.keysUpdaterKey)) throw new Error('keys-updater.json has no ed25519 private_key');
     lines.push(`KEYS_UPDATER_KEY=${secrets.keysUpdaterKey}`);
   }
+  lines.push(...(secrets.identity ?? []));
   return lines.length ? lines.join('\n') + '\n' : '';
 }
 
@@ -178,8 +248,16 @@ function readSecretJsonIfExists(path: string): unknown {
   }
 }
 
+/** A secret text file from .secrets/, or undefined when absent (0600 enforced as for the JSON ones). */
+function readSecretTextIfExists(path: string): string | undefined {
+  if (!existsSync(path)) return undefined;
+  const mode = statSync(path).mode & 0o777;
+  if ((mode & 0o077) !== 0) throw new Error(`${path} has mode ${mode.toString(8)}; secret files must be 0600 (chmod 600 ${path})`);
+  return readFileSync(path, 'utf8');
+}
+
 /** Writes <apiDir>/.dev.vars (0600) from <root>/.secrets/<env>/. Returns the number of secrets; never their values. */
-export function writeDevVars(envName: string, root: string = repoRoot, dir: string = apiDir): { path: string; count: number } {
+export function writeDevVars(envName: string, root: string = repoRoot, dir: string = apiDir, manifest?: Pick<Manifest, 'name' | 'identityToken'>): { path: string; count: number } {
   const secrets = join(root, '.secrets', envName);
   const relayerKeys = readSecretJsonIfExists(join(secrets, 'relayer-keys.json'));
   const ownerRelayerKeys = readSecretJsonIfExists(join(secrets, 'owner-relayer-keys.json'));
@@ -190,14 +268,19 @@ export function writeDevVars(envName: string, root: string = repoRoot, dir: stri
     if (typeof updater?.private_key !== 'string') throw new Error(`${updaterFile} has no ed25519 private_key`);
     keysUpdaterKey = updater.private_key;
   }
-  const content = devVarsContent({ relayerKeys, ownerRelayerKeys, keysUpdaterKey });
+  const identity = identityDevVarsLines(manifest ?? { name: envName, identityToken: undefined }, {
+    signingKey: readSecretJsonIfExists(join(secrets, IDENTITY_SECRET_FILES.signingKey)),
+    standbyKey: readSecretJsonIfExists(join(secrets, IDENTITY_SECRET_FILES.standbyKey)),
+    subKey: readSecretTextIfExists(join(secrets, IDENTITY_SECRET_FILES.subKey)),
+  });
+  const content = devVarsContent({ relayerKeys, ownerRelayerKeys, keysUpdaterKey, identity });
   const path = join(dir, '.dev.vars');
   // A fresh 0600 file renamed over the old one: an existing world-readable .dev.vars never holds the new secrets.
   const tmp = `${path}.${randomBytes(6).toString('hex')}.tmp`;
   writeFileSync(tmp, content, { mode: 0o600, flag: 'wx' });
   chmodSync(tmp, 0o600);
   renameSync(tmp, path);
-  return { path, count: [relayerKeys, ownerRelayerKeys, keysUpdaterKey].filter((v) => v !== undefined).length };
+  return { path, count: [relayerKeys, ownerRelayerKeys, keysUpdaterKey].filter((v) => v !== undefined).length + identity.length };
 }
 
 /** Writes <dir>/wrangler.jsonc for the env. */
@@ -228,7 +311,7 @@ export function main(argv: string[], opts: { root?: string; dir?: string; loadMa
   for (const p of pages) console.log(`wrote ${p}`);
 
   if (argv.includes('--dev-vars')) {
-    const { path: devVars, count } = writeDevVars(manifest.name, opts.root, opts.dir);
+    const { path: devVars, count } = writeDevVars(manifest.name, opts.root, opts.dir, manifest);
     console.log(`wrote ${devVars} (${count} secret(s), values not shown)`);
   }
 }

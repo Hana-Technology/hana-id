@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { adminSchema, consoleSchema, dashboardRules, delayMs, emailSchema, filesSchema, usageSchema } from './dashboard.ts';
+import { identityTokenRules, identityTokenSchema } from './identity.ts';
 import { hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, siteOf } from './origins.ts';
 
 /** Independent RPC providers the pinned CKD network key must be read from, all agreeing (OPER-1, D100). */
@@ -196,6 +197,12 @@ export const manifestSchema = z
      * has no watchdog Worker (`gen` for apps/watchdog refuses it). It runs on its own Cloudflare account (D86).
      */
     watchdog: watchdogSchema.optional(),
+    /**
+     * The partner identity token (docs/identity-token-spec.md, D127): issuer, signer and the public keys of the JWKS.
+     * Optional: without it the API answers `/v1/identity/*` with 503 identity_unavailable.
+     * `scripts/identity-key.ts <env> init` writes it.
+     */
+    identityToken: identityTokenSchema.optional(),
   })
   .superRefine((m, ctx) => {
     for (const field of ['rpc', 'rpcFallback', 'apiUrl'] as const) {
@@ -206,6 +213,7 @@ export const manifestSchema = z
     if (m.ckdNetworkKeySource) ckdSourceRules(m.ckdNetworkKeySource, ctx);
     hanaOrigins(m, ctx);
     if (m.watchdog) watchdogRules(m, m.watchdog, ctx);
+    if (m.identityToken) identityTokenRules(m, m.identityToken, ctx);
     governance(m, ctx);
     dashboardRules(m, ctx);
     if (m.rpcFallback !== undefined && m.rpcFallback === m.rpc) {

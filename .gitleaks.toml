@@ -33,18 +33,29 @@ entropy = 4.0
 [[rules]]
 id = "hana-worker-secret-assignment"
 description = "Hana Worker secret assigned a value (.dev.vars line)"
-regex = '''(?m)^[ \t]*(?:export[ \t]+)?(?:RELAYER_KEYS|OWNER_RELAYER_KEYS|KEYS_UPDATER_KEY|VAULT_KEK|VAULT_KEK_PREVIOUS|WATCHDOG_KEY|WATCHDOG_STATUS_TOKEN|RESEND_API_KEY|SLACK_WEBHOOK_URL|HEARTBEAT_URL|PAGER_TOKEN)[ \t]*=[ \t]*([^\s<>…]{16,})'''
+regex = '''(?m)^[ \t]*(?:export[ \t]+)?(?:RELAYER_KEYS|OWNER_RELAYER_KEYS|KEYS_UPDATER_KEY|VAULT_KEK|VAULT_KEK_PREVIOUS|WATCHDOG_KEY|WATCHDOG_STATUS_TOKEN|RESEND_API_KEY|SLACK_WEBHOOK_URL|HEARTBEAT_URL|PAGER_TOKEN|IDENTITY_SIGNING_KEY|IDENTITY_SIGNING_KEY_STANDBY|IDENTITY_SUB_KEY)[ \t]*=[ \t]*([^\s<>…]{16,})'''
 secretGroup = 1
 entropy = 3.5
-keywords = ["relayer_keys", "keys_updater_key", "vault_kek", "watchdog_key", "watchdog_status_token", "resend_api_key", "slack_webhook_url", "heartbeat_url", "pager_token"]
+keywords = ["relayer_keys", "keys_updater_key", "vault_kek", "watchdog_key", "watchdog_status_token", "resend_api_key", "slack_webhook_url", "heartbeat_url", "pager_token", "identity_signing_key", "identity_sub_key"]
+
+# A private JWK's `d` (an EC P-256 or OKP key: 32 bytes, 43 base64url characters), as the identity token's signing keys
+# are kept (.secrets/<env>/identity-signing-key*.json, IDENTITY_SIGNING_KEY*). Public JWKs (the JWKS, the manifest's
+# identityToken.publicKeys) have no `d` and pass.
+[[rules]]
+id = "hana-private-jwk"
+description = "Private JWK (d member)"
+regex = '''"d"[ \t]*:[ \t]*"([A-Za-z0-9_-]{43})"'''
+secretGroup = 1
+entropy = 3.5
+keywords = ["\"d\""]
 
 # Hana's secret files, whatever they contain: anything under a .secrets/ directory (the council key files
 # .secrets/<env>/council/<account>.json included), .dev.vars, the relayer and keys-updater key files, the watchdog's
-# secrets file and the vault KEK files, wherever they are. All gitignored; this catches `git add -f` and copies.
+# secrets file, the vault KEK files and the identity token's key files, wherever they are. All gitignored; this catches `git add -f` and copies.
 [[rules]]
 id = "hana-secret-file"
 description = "Hana secret file (.secrets/, .dev.vars, key files, vault KEK)"
-path = '''(^|/)(\.secrets/|\.dev\.vars$|(owner-)?relayer-keys\.json$|keys-updater\.json$|watchdog-secrets\.json$|vault-kek(\.previous|\.next)?$)'''
+path = '''(^|/)(\.secrets/|\.dev\.vars$|(owner-)?relayer-keys\.json$|keys-updater\.json$|watchdog-secrets\.json$|vault-kek(\.previous|\.next)?$|identity-signing-key(-standby)?\.json$|identity-sub-key$)'''
 
 # Contract test fixtures: Google-style ID tokens signed by a throwaway RSA key whose private half is discarded
 # (contracts/hana-signer/scripts/gen-fixtures.mjs). Only the `jwt` rule is waived here; any other secret in the

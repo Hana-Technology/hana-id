@@ -63,16 +63,16 @@ export function vaultPreflight(request: Request, env: Env): Response {
 
 // ---- Gate ----
 
-type Gate = { ok: true; app: App; parentOrigin: string } | { ok: false; response: Response };
+export type VaultGate = { ok: true; app: App; parentOrigin: string } | { ok: false; response: Response };
 
 /**
  * Checks 1 and 2 of the `'vault'` kind of the app gate: the app exists and is active, the caller is the vault origin,
  * the parent it serves is allowed for the app (dev-env loopback rule included). The app comes from this isolate's
  * cache when it was read from D1 in the last APP_CACHE_TTL_MS (app-cache.ts, D78), so a warm request makes no D1 read
- * here.
+ * here. Also the gate of POST /v1/identity/token (identity/token.ts).
  */
-async function vaultApp(request: Request, env: Env, ctx: Ctx): Promise<Gate> {
-  const fail = (status: number, code: string, error: string, extra: Headers_ = {}): Gate => ({ ok: false, response: reject(ctx, status, code, error, extra) });
+export async function vaultApp(request: Request, env: Env, ctx: Ctx): Promise<VaultGate> {
+  const fail = (status: number, code: string, error: string, extra: Headers_ = {}): VaultGate => ({ ok: false, response: reject(ctx, status, code, error, extra) });
   const origin = request.headers.get('origin');
   const fromVault = !!env.VAULT_ORIGIN && origin === env.VAULT_ORIGIN;
   // The vault can read every answer, including the ones before the app lookup.
@@ -108,7 +108,7 @@ const bindingRefusal = (ctx: Ctx, which: string): Response =>
  * only once the IP accepted, so a request the IP limit refuses never uses up the app's shared quota (one client could
  * otherwise lock out every user). Null when both accept. A limiter that fails refuses (503), never lets through.
  */
-async function vaultLimits(request: Request, env: Env, ctx: Ctx, app: App): Promise<Response | null> {
+export async function vaultLimits(request: Request, env: Env, ctx: Ctx, app: App): Promise<Response | null> {
   try {
     const ip = await env.VAULT_IP_LIMIT.limit({ key: vaultIpKey(env.ENV_NAME, app.id, ipSubject(request.headers.get('cf-connecting-ip'))) });
     if (!ip.success) return bindingRefusal(ctx, 'per IP');

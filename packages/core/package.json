@@ -17,6 +17,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./derivation": "./src/derivation.ts",
+    "./identity": "./src/identity.ts",
     "./signers/stellar": "./src/signers/stellar.ts",
     "./decode": "./src/decode/index.ts",
     "./policy": "./src/policy/index.ts"
@@ -34,6 +35,10 @@
       "./derivation": {
         "types": "./dist/derivation.d.ts",
         "import": "./dist/derivation.js"
+      },
+      "./identity": {
+        "types": "./dist/identity.d.ts",
+        "import": "./dist/identity.js"
       },
       "./signers/stellar": {
         "types": "./dist/signers/stellar.d.ts",

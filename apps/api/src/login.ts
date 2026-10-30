@@ -105,7 +105,7 @@ export async function handleLogin(request: Request, env: Env, requestId: string,
   //    this app's scope on this signer.
   let verified;
   try {
-    verified = await verifyIdToken(req.jwt, now, { skewMs: TOKEN_EXP_SKEW_MS, observer: keyObserver(env, exec) });
+    verified = await verifyIdToken(req.jwt, now, { skewMs: TOKEN_EXP_SKEW_MS, observer: keyObserver(env, exec), identityIssuer: env.IDENTITY_ISS });
   } catch (err) {
     if (err instanceof JwksUnavailableError) return reject(ctx, 503, 'issuer_keys_unavailable', 'Could not read the token issuer keys, try again');
     throw err;

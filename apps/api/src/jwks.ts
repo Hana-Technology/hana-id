@@ -109,9 +109,13 @@ export interface VerifiedToken {
   nonce: string | null;
 }
 
-export type VerifyResult = { ok: true; token: VerifiedToken } | { ok: false; code: 'invalid_token' | 'unsupported_issuer' | 'token_expired'; error: string };
+export type VerifyFailure = 'invalid_token' | 'unsupported_issuer' | 'token_expired' | 'bad_token';
+export type VerifyResult = { ok: true; token: VerifiedToken } | { ok: false; code: VerifyFailure; error: string };
 
-const fail = (code: 'invalid_token' | 'unsupported_issuer' | 'token_expired', error: string): VerifyResult => ({ ok: false, code, error });
+const fail = (code: VerifyFailure, error: string): VerifyResult => ({ ok: false, code, error });
+
+/** The partner identity token's JWS `typ` (@hana-id/core IDENTITY_TOKEN_TYP; docs/identity-token-spec.md "Refusals elsewhere"). */
+export const IDENTITY_TOKEN_TYP = 'hana-identity+jwt';
 
 const decodeJson = (part: string): Record<string, unknown> | null => {
   try {
@@ -127,12 +131,16 @@ export interface VerifyOptions {
   skewMs?: number;
   /** Told about each JWKS fetch and each valid signature's kid (key lead-time measurement); never about the token. */
   observer?: KeyObserver;
+  /** The env's identity token issuer (IDENTITY_ISS): a token with this `iss` is refused as `bad_token`. */
+  identityIssuer?: string | undefined;
 }
 
 /**
  * Verifies an ID token the way the contract does (docs/contract-interface.md, "Token verification"): RS256 only,
  * known issuer, known kid, valid signature, not expired, single-string aud. Throws JwksUnavailableError only when
- * the JWKS cannot be fetched (callers answer 503: fail closed). `aud` and `nonce` are the caller's to check.
+ * the JWKS cannot be fetched (callers answer 503: fail closed). `aud` and `nonce` are the caller's to check. Before
+ * anything else, a partner identity token (`typ` hana-identity+jwt, or `iss` the env's identity issuer) is refused as
+ * `bad_token`: no Hana API accepts one (D120), whatever its signature.
  */
 export async function verifyIdToken(jwt: string, now: number = Date.now(), opts: VerifyOptions = {}): Promise<VerifyResult> {
   const parts = jwt.split('.');
@@ -140,6 +148,7 @@ export async function verifyIdToken(jwt: string, now: number = Date.now(), opts:
   const header = decodeJson(parts[0]);
   const claims = decodeJson(parts[1]);
   if (!header || !claims) return fail('invalid_token', 'Malformed token');
+  if (header.typ === IDENTITY_TOKEN_TYP || (!!opts.identityIssuer && claims.iss === opts.identityIssuer)) return fail('bad_token', 'A Hana identity token is not accepted here');
   if (header.alg !== 'RS256' || typeof header.kid !== 'string') return fail('invalid_token', 'Unsupported token algorithm');
   const { iss, aud, sub, exp, nonce } = claims;
   if (typeof iss !== 'string' || typeof aud !== 'string' || typeof sub !== 'string' || typeof exp !== 'number') return fail('invalid_token', 'Malformed token claims');

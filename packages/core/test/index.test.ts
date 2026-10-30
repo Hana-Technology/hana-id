@@ -45,10 +45,11 @@ describe('@hana-id/core', () => {
     expect(VERSION).toBe(pkg.version);
   });
 
-  it('publishes the derivation, Stellar signer, decode and policy subpaths, and they exist', () => {
+  it('publishes the derivation, identity, Stellar signer, decode and policy subpaths, and they exist', () => {
     expect(pkg.exports).toEqual({
       '.': './src/index.ts',
       './derivation': './src/derivation.ts',
+      './identity': './src/identity.ts',
       './signers/stellar': './src/signers/stellar.ts',
       './decode': './src/decode/index.ts',
       './policy': './src/policy/index.ts',

@@ -56,6 +56,7 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [Hana's shared Google client or its Cloud project compromised](#shared-google-client-compromised) | critical | — |
 | [A user's key leaked or exposed](#user-key-leaked) | warning | — |
 | [Email-login issuer key compromised (planned)](#email-issuer-key-compromised) | critical (planned) | — |
+| [Identity token signing key compromised (testnet Worker-secret key)](#identity-signing-key-compromised) | critical | — |
 
 ## Alert playbooks
 
@@ -1817,3 +1818,74 @@ Email login isn't built (`docs/email-login-spec.md`). When it is: whoever can ma
 - Turn this playbook live with the email issuer's own commands when it ships.
 
 **Refs:** [`docs/email-login-spec.md#signing-key-staged`](email-login-spec.md#signing-key-staged), [`docs/email-login-spec.md#trust-statement`](email-login-spec.md#trust-statement), D121 (`docs/decisions.md`) · **See also:** [forged-active-key](#forged-active-key)
+
+<a id="identity-signing-key-compromised"></a>
+
+### Identity token signing key compromised (testnet Worker-secret key)
+
+`identity-signing-key-compromised` · critical
+
+Whoever holds an identity signing key can forge any user's identity token for any app, until the key is out of the JWKS. Switch to a key the incident didn't touch, unpublish the exposed ones, tell partners.
+
+**Signals**
+
+- The API Worker's secrets, `.secrets/<env>/identity-signing-key*.json` or the operator's machine were exposed; a partner reports a token they didn't expect (a valid signature for a session that never existed).
+- Not built yet (build steps 7–8): the KMS `Sign` reconciliation against `identity_issuance_hourly` and the watchdog's JWKS pin check.
+
+**Impact**
+
+- Forged tokens pass at every partner that trusts the JWKS URL, as any user of any app (identity at partners: credits, referrals, their own accounts), until the key is removed and their JWKS caches refresh (≤ 10 min). No wallet, key or Hana API is reachable with a token.
+- Tokens already accepted can't be recalled: partners must re-check what they granted in the window.
+
+**Steps**
+
+1. **Decide which keys are exposed** (who: a founder). The standby is published but never uploaded (D177): a leak of the Worker's secrets or the Cloudflare account exposes only the active key (and a `next` key already switched in). A leak of `.secrets/<env>/` or the operator's machine exposes every key whose file was there, the standby included unless it was moved offline. Unless the incident provably touches only the active key, treat BOTH as exposed.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run identity-key <env> show
+   ```
+
+2. **Only the active key exposed: switch to the standby** (who: a founder). Uploads the standby into the free Worker slot and makes it the manifest's active kid. Put the manifest change in the repo, `gen`, deploy: new tokens are signed by the standby, which partners already trust.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run identity-key <env> switch --to standby --yes
+   corepack pnpm --filter @hana-id/api run gen <env>
+   corepack pnpm --filter @hana-id/api run deploy
+   ```
+
+3. **Both keys exposed: retire the standby and rotate to a fresh key** (who: a founder). Unpublish the standby, generate and publish a fresh key, switch to it, deploy. Partners using the JWKS URL pick up the new kid at once (jose refetches on an unknown kid); partners that pin thumbprints need the new one from you.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run identity-key <env> retire --key standby --yes
+   corepack pnpm --filter @hana-id/scripts run identity-key <env> next --yes
+   corepack pnpm --filter @hana-id/scripts run identity-key <env> switch --to next --yes
+   corepack pnpm --filter @hana-id/api run gen <env>
+   corepack pnpm --filter @hana-id/api run deploy
+   ```
+
+4. **Unpublish the exposed active key** (who: a founder). Removes it from the JWKS and deletes its Worker secret, after the deploy of the switch; its file is set aside for the post-mortem (never put it in the repo). Deploy: partners reject its tokens within 10 minutes. Don't wait the 2 h of a scheduled rotation.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run identity-key <env> retire --key previous --yes
+   corepack pnpm --filter @hana-id/api run gen <env>
+   corepack pnpm --filter @hana-id/api run deploy
+   ```
+
+5. **Tell partners** (who: a founder). Their security contacts: the `kid`, the window in which forged tokens may have been accepted, and what to re-check (emails recorded, credits granted, sessions opened). Pinning partners update their pins.
+
+6. **A new standby** (who: a founder). After a switch to the standby there is none: `next` publishes a new key (not uploaded); move its file offline and keep it as the next standby.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run identity-key <env> next --yes
+   ```
+
+**Verify**
+
+- The API's JWKS lists no exposed kid, and a fresh mint's header `kid` is the new active key.
+- `identity-key <env> show`: the active kid is in a Worker slot, no exposed kid is published.
+
+**Follow-ups**
+
+- If the Worker or the Cloudflare account was the way in: [api-or-cloudflare-compromised](#api-or-cloudflare-compromised). Before mainnet the key moves to AWS KMS (build step 7).
+
+**Refs:** [`docs/operations.md#identity-token-keys`](operations.md#identity-token-keys), [`docs/security.md#what-a-compromise-gives`](security.md#what-a-compromise-gives), D177 (`docs/decisions.md`) · **See also:** [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)

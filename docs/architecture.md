@@ -2,9 +2,9 @@
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
 Last verified against code: 2026-10-30 (branch `feat/playbook-gaps`: the watchdog's relayer funds reads and D1
-meta; before it `feat/recovery-playbooks`: the playbooks package in Components;
-before it `perf/login-latency-impl`, 2026-10-29: the login flow, key persistence and the vault gate; the rest as of
-2026-10-28, commit 58edee9).
+meta; branch `feat/email-login-1`: contract v3 email login status and path identity; before them
+`feat/recovery-playbooks`: the playbooks package in Components; before it `perf/login-latency-impl`, 2026-10-29: the
+login flow, key persistence and the vault gate; the rest as of 2026-10-28, commit 58edee9).
 
 Byte layouts and contract methods are in `docs/contract-interface.md`; this file links to it rather than repeating
 them. The security model is `docs/security.md`, the decision log `docs/decisions.md`. Where a spec and the code
@@ -33,6 +33,7 @@ Batch B is merged on the integration branch `feat/batch-b` (not yet on `develop`
 | `apps/watchdog` (independent watchdog Worker, alerts, status endpoint for the admin portal) | `gov/watchdog`, integrated on `feat/governance` | Code done; not deployed (`docs/operations.md` "Watchdog service") |
 | Governance API (delayed JWKS sync, `issuer_key_pending` / `paused` gate, `GET /v1/governance`) | `gov/api`, integrated on `feat/governance` | Code done; not deployed (`docs/operations.md` "Deploying the governance API") |
 | Governance scripts (owner council, DAO-routed owner calls, timelocked upgrades, migration, `admin governance:status`) | `gov/scripts`, integrated on `feat/governance` | Code done (`docs/operations.md` "Governance") |
+| Email login, contract v3 (self-issued email issuer with a signer policy, JWS JSON tokens, accounts and links, `migrate` v2 → v3) | `feat/email-login-1` | Code done, unit-tested; not deployed. Every off-chain part (issuer, API, web, watchdog) is a later batch of `docs/email-login-build-plan.md`; until then nothing calls the new methods |
 
 ## Components
 
@@ -370,6 +371,12 @@ What decides an address, and when it freezes:
 | HKDF labels, tuples, key rules (derivation v1) | yes, all | names confirmed 2026-10-28; frozen at the address freeze |
 | New chain tuples, new `account` values | no (additive) | open |
 | `vaultOrigin`, `authOrigin`, `create_session_and_derive`, persistence, own vs shared client | no | `authOrigin` still breaks own-client redirect registrations if changed |
+
+Contract v3 (email login, `feat/email-login-1`, not deployed) adds no input to this table for existing identities:
+the path's `(provider, sub)` is the session's path identity, which is the token's own unless the identity is a member
+of an account, when it is the account root's (an existing path, so linking never creates or moves an address). Email
+identities use provider `email` and a `sub` derived off chain (`docs/email-login-spec.md` "Address impact"; frozen
+at the address freeze).
 
 Before the freeze, anything that changes an address must be called out (CLAUDE.md); after it, never. A scheme change
 would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.

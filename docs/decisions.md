@@ -2,7 +2,7 @@
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
 Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 and D150–D152 on 2026-10-30 (branches
-`feat/batch-c-1`, `feat/playbook-gaps`).
+`feat/batch-c-1`, `feat/playbook-gaps`); D130–D136 on 2026-10-30 (branch `feat/email-login-1`).
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -1563,6 +1563,51 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   from `appChangeDelayMs`, with the same bounds (at least 24 h on mainnet).
 - Why: the two waits can be tuned independently; changing one never silently changes the other.
 
+## Email login build, batch 1 (contract v3), 2026-10-30
+
+Made while building `docs/email-login-build-plan.md` batch 1 (branch `feat/email-login-1`), where the spec was silent,
+ambiguous or unsafe as written. Each takes the safest reading and is listed for the user under the plan's "Open
+points for the user"; none changes an address.
+
+### D130. A wallet is recorded when its path is derived, not when a session opens
+- Date 2026-10-30 · Status: in force on `feat/email-login-1` (not deployed), **to confirm** · Source: build of
+  `docs/email-login-spec.md` "Sessions" step 3 and "Model" ("the contract records that in `opened` at every
+  `create_session*`")
+- Decision: `opened` (an identity "has a wallet") is set by `derive_key` and `create_session_and_derive` for the
+  session's path identity, not by a bare `create_session`.
+- Why: tokens are public in the mempool and in failed transactions. Copying a Google token that was sent for a case-A
+  link into a bare `create_session` would open a session nobody can use but mark the Google identity as having a
+  wallet, so the user's retry hits "both have a wallet" and the person ends up with two wallets, which D122 forbids.
+  Nobody can derive without the session key, so marking at derivation can't be forged. For every real login (the
+  combined call) the result is the same as the spec's.
+- Rejected: the spec's wording (marking in `create_session`).
+
+### D131. Contract readings of the email login spec (batch 1)
+- Date 2026-10-30 · Status: in force on `feat/email-login-1` (not deployed), **to confirm** · Source: build of
+  `docs/email-login-spec.md` "Contract changes", "Sessions", "Link methods"
+- Decision:
+  - `mark_self_issued` refuses an issuer that already has keys, active or pending (`Issuer already has keys`), and a
+    second call (`Issuer is already self-issued`), so it can never reset an upgraded policy.
+  - The updater key ("self") can't propose **any** key change of a self-issued issuer, removals included.
+  - One RSA modulus is registered once per self-issued issuer, whatever its kid, exponent or signer (`Key is already
+    registered`), including keys a future `migrate` installs: one stolen key never counts as two signers.
+  - A self-issued key change waits `max(the usual rule, now + governance_delay_ms)`.
+  - JWS JSON is parsed strictly: no flattened form, no unprotected `header`, no `crit`, no duplicate members; every
+    signature must verify and every kid must be a counting signer's active key (an unknown extra signature fails the
+    token rather than being ignored).
+  - Case A (Google joining an email wallet) must carry `link_immediate = true` (`This link must be immediate`): a
+    delayed case A would have to open the Google identity's own path, a second wallet.
+  - `cancel_link` doesn't mark the pair `unlinked` (the spec names unlink only); lazy activation of a pending member
+    doesn't bump the epoch; an account record is never deleted (its epoch must not restart).
+  - `get_account` also returns `unlinked` (hex keys), so the issuer can apply "an unlinked pair is not a match".
+  - The panic for an unlisted kid stays today's `Unknown signing key` (the spec writes `Unknown key`); a
+    `link_immediate` without `link_jwt` panics `link_immediate needs a link_jwt`; unlinking by another member panics
+    `Only the root or the member itself can unlink`.
+  - `migrate_v1` stays (now v1 → v3) until the sandbox suite moves to v2 → v3 (build-plan batch 2).
+- Why: each is the stricter of the readings the spec allows, or fills a gap without a product choice.
+- Rejected: the looser readings (accepting a delayed case A, ignoring unknown extra signatures, letting the updater
+  propose email key removals).
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -1613,6 +1658,5 @@ paging app (D85, at setup), and open question 17 (cancel by a compromised OIDC o
 is a proposal there.
 
 Still open from `docs/email-login-spec.md`: the user-mail provider (Resend unless the colleague picks another,
-D87). Everything else follows D4, D119 and D121–D123.
-
-
+D87). Everything else follows D4, D119 and D121–D123. The contract readings made while building it, D130 and D131,
+wait for the user's confirmation (`docs/email-login-build-plan.md` "Open points for the user").

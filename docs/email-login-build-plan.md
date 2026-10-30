@@ -1,6 +1,6 @@
 # Email login build plan (batches)
 
-**Status: batch 1 in progress (branch `feat/email-login-1`).** Splits `docs/email-login-spec.md` "Build order"
+**Status: batch 1 done on branch `feat/email-login-1` (not merged, not deployed); batches 2–10 not started.** Splits `docs/email-login-spec.md` "Build order"
 (approved 2026-10-30; D4, D119, D121–D123, D25 and D96 amended) into reviewable batches. The spec stays the source of
 truth for *what* to build; this file says *in which order*, *what each batch ships* and *what users see after it*.
 Like a spec it is history once the work merges: the current state lives in the reference docs (`docs/README.md`).
@@ -171,8 +171,69 @@ Steps 0, 3 and 5 can run beside 1–2. About 12k lines in all, as the spec estim
 
 ## Batch 1 result
 
-(Filled in when batch 1 is done.)
+Branch `feat/email-login-1`, not deployed.
+
+- **Code.** `contracts/hana-signer/src/self_issued.rs` (marking, signer policy, JWS signature checks, the
+  `migrate`-only `set_signer_policy`), `links.rs` (identity keys, accounts, the four cases, `link_identity`,
+  `cancel_link`, `unlink_identity`, views, nonces), `oidc.rs` (JWS General JSON parsing), `issuers.rs` (`signer`,
+  self-issued rules, format dispatch), `sessions.rs` (path identity, `link_jwt` / `link_immediate`, `opened` at
+  derivation), `migrate.rs` (v2 → v3, v3 → v3; `migrate_v1` now v1 → v3), events 1.2.0, `STATE_VERSION` 3.
+  `scripts/lib/contract.ts`: `mark_self_issued` in `OWNER_METHODS`.
+- **Tests.** 278 unit tests (`cargo test`), 50 of them new in `src/tests/email.rs`, the 228 existing ones unchanged
+  in substance (new optional arguments, event version, state version). Tokens: `scripts/gen-email-fixtures.mjs`
+  (independent JS implementation of the identity key and the four link nonces, and JWS JSON tokens signed by Node's
+  crypto) and `src/test_rsa.rs` (deterministic RSA test keys generated at test time, so no private key is committed).
+  `src/v2_state_fixture.json` is storage written by the v2 code (develop d1837ec) for the migration tests.
+- **Wasm.** `cargo near build non-reproducible-wasm`: 625.5 KB (v2 on develop: 520.5 KB).
+- **Address safety.** Golden tests: the fixture's Google user opens `s1#google#1098765432#0`, `s2#…#0`, `s1#…#1` and
+  `s3#…#0` (shared client), and the MPC request carries exactly that path; sessions written by v2 code keep their
+  paths through `migrate` and derive with them; a fresh login after the migration gives the v2 path; every
+  pre-existing test (which asserts paths and MPC requests) passes unchanged. The CKD request, nonce layouts, derivation
+  v1 and the signer account are untouched.
+- **Docs.** `contract-interface.md`, `security.md`, `architecture.md`, `decisions.md` (D130, D131).
+- **Left for later batches.** Sandbox tests, gas measurements and deleting `migrate_v1` (batch 2); `packages/email`
+  (3); the issuer (4); the watchdog (5); the API, relayer allowlist and sandbox-dev deployment (6); web (7, 8);
+  consoles (9); KMS (10).
 
 ## Open points for the user
 
-(Filled in as batch 1 meets them: each is an ambiguity in the spec, the reading chosen and why.)
+Each is a place where the spec was silent, ambiguous or (in one case) unsafe as written; batch 1 took the reading
+shown. Recorded as D130 and D131 ("to confirm"). None changes an address.
+
+1. **`opened` at derivation, not at `create_session` (D130).** The spec says every `create_session*` records it. A
+   bare `create_session` with a copied Google token (public in the mempool, or in a failed login) would then mark the
+   Google identity as having a wallet without anyone being able to derive it, and turn the user's case-A retry into
+   "both have a wallet": a second wallet, which D122 forbids. Marking at derivation can't be forged. Same result for
+   every real login.
+2. **Delayed case A refused.** The spec says case A is "active now" and that the issuer sets `link_immediate` for it,
+   but not what the contract does with `link_immediate = false` there. A pending case A would have to open the
+   Google identity's own path (a second wallet), so the contract refuses it (`This link must be immediate`).
+3. **`cancel_link` does not mark the pair `unlinked`** (the spec names unlink only). Consequence: after a user cancels
+   a pending case-B link, the next email login still sees a match and offers only "Link and continue" / "Sign in with
+   Google" (never a second wallet). Marking it would let that email login make its own wallet instead. Which do you
+   want?
+4. **`get_account` also returns `unlinked`** (hex keys): the issuer needs it to apply "an unlinked pair is not a
+   match" before minting; the spec's view shape doesn't list it.
+5. **Strict JWS JSON.** Unprotected headers, the flattened form, `crit` and duplicate members are refused; every
+   signature in a token must verify and come from a counting signer, so an extra signature from a signer the policy
+   doesn't list fails the token (rather than being ignored). The issuer must therefore add a co-signature only once the
+   chain lists the co-signer (as the spec already says).
+6. **One modulus per self-issued issuer.** The same RSA key can't be registered under two kids or two signers
+   (`Key is already registered`), including by a future `migrate`, so one stolen key never counts as two signers. Not
+   in the spec; no product effect.
+7. **The updater key can't propose removals of email keys either** (the spec names `set_issuer_key`); and
+   `mark_self_issued` refuses an issuer that already has keys or pending changes, and a second call.
+8. **Self-issued key delay = `max(usual rule, now + governance_delay_ms)`**: when `issuer_key_delay_ms` is longer than
+   the governance delay, the longer one wins.
+9. **Panic text.** An unlisted kid keeps today's `Unknown signing key` (the spec writes `Unknown key`); new texts:
+   `link_immediate needs a link_jwt`, `Only the root or the member itself can unlink`, `Link token must come from a
+   self-issued issuer`, `Issuer already has keys`, `Issuer is already self-issued`, `Key is already registered`,
+   `Duplicate signature kid`, `Too many signatures`, `Unsupported JWS header`, `Wrong token format for this issuer`.
+10. **Lazy activation doesn't bump the epoch**, and account records are never deleted (so an epoch never restarts and
+    old link proofs can't be replayed).
+11. **Registering a new scope's email client in `admin_register_scope`** needs its aud `email:<scope_id>` before the
+    contract assigns the id; Hana can predict it (`next_scope` is sequential) or add the client after registration
+    through `propose_change(AddClient)` with an issuer client proof (spec "Issuer configuration"). The contract
+    doesn't check that an email client's aud names its own scope (a mismatch only breaks that app's email login).
+12. **Spec wording nit.** "Account already has a sign-in method of this kind" is applied to the root's provider too
+    (an email identity can't join an email root), which the spec implies ("one per provider") but doesn't state.

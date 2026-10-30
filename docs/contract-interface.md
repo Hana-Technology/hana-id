@@ -1,4 +1,6 @@
-# hana-signer contract interface (batch A, A.2, B and governance)
+# hana-signer contract interface (batch A, A.2, B, governance and email login)
+
+Last verified against code: 2026-10-30 (branch `feat/email-login-1`: contract v3, email login batch 1).
 
 The exact on-chain interface of `contracts/hana-signer`. The API, scripts, console and SDK must match this file.
 If the code and this file disagree, the code is wrong: raise it. Batch A.2 (`docs/batch-a2-shared-client.md`) added
@@ -8,7 +10,12 @@ shared clients, `allow_shared`, `disable_shared_login`, `apply_pending_config`, 
 state changed (see [Changed in batch B](#changed-in-batch-b)). The governance batch (`docs/governance-spec.md`,
 D33, D80–D86) delays issuer-key changes behind a watchdog, adds pause, timelocked upgrades, owner transfer and
 surplus withdrawal, and migrates state to layout v2 in place; no byte layout, path or derivation changed, so **no
-address changes** (see [Changed in the governance batch](#changed-in-the-governance-batch)).
+address changes** (see [Changed in the governance batch](#changed-in-the-governance-batch)). The email login batch
+(`docs/email-login-spec.md`, D4, D119, D121–D123; built in `docs/email-login-build-plan.md` batch 1) adds
+self-issued issuers with a signer policy and JWS JSON tokens, accounts of linked sign-in methods, and migrates state
+to layout v3 in place; no existing byte layout, path or derivation changed, and an identity in no account opens
+exactly the path it opened before, so **no address changes** (see [Changed in the email login
+batch](#changed-in-the-email-login-batch-v3)). Not deployed yet.
 
 Conventions:
 
@@ -95,12 +102,33 @@ Conventions:
   {"id":7,"provider":"google","kid":"e5f6","op":"Add","n":"<JWK n, base64url, leading zeros stripped>","e":"AQAB",
    "by":"hana-signer-dev1.testnet","proposed_at_ms":1800000000000,"executable_at_ms":1800007200000},
   {"id":8,"provider":"google","kid":"a1b2","op":"Remove","n":null,"e":null,
-   "by":"hana-signer-dev1.testnet","proposed_at_ms":1800000000000,"executable_at_ms":1800007200000}
+   "by":"hana-signer-dev1.testnet","proposed_at_ms":1800000000000,"executable_at_ms":1800007200000},
+  // a self-issued issuer's key addition also names its signer (the field is absent on every other change)
+  {"id":9,"provider":"email","kid":"<RFC 7638 thumbprint>","op":"Add","n":"...","e":"AQAB","signer":"hana",
+   "by":"hana-council.sputnikv2.testnet","proposed_at_ms":1800000000000,"executable_at_ms":1800259200000}
 ]
+
+// Signer policy of a self-issued issuer (get_self_issued); null for any other provider
+{"provider":"email","signers":[{"id":"hana","kids":["<primary>","<standby>"]}],"required":1,
+ "overlap_until_ms":null}                       // set for 10 min after a governed upgrade changed the policy
+
+// Identity (get_identity): where (scope, provider, sub) stands
+{"key":"8982b5c1…07",                            // identity key, hex
+ "status":"own",                                 // "own" (opens its own path) | "member" (opens root's path) | "pending"
+ "opened":true,                                  // its own path was derived ("has a wallet")
+ "root":null,                                    // {"provider","sub"} of the account root, for member and pending
+ "effective_at_ms":null,                         // pending: when logins start working (unpause floor counted); member: when it became effective
+ "account_epoch":0}                              // epoch of its account (0: none); link nonces commit to it
+
+// Account (get_account): the account an identity is in (as root or member), or null
+{"root":{"provider":"google","sub":"110248495921238986420"},
+ "members":[{"key":"<hex>","provider":"email","effective_at_ms":1800086400000,"active":false,"auto":true}],
+ "epoch":1,
+ "unlinked":["<hex>"]}                           // identities automatic linking must not re-add
 
 // Governance (get_governance)
 {
-  "state_version": 2,
+  "state_version": 3,
   "watchdogs": [{"account_id":"hana-id-watchdog-dev1.testnet","confirm_from_ms":1800259200000}],  // may confirm from then on
   "keys_slow_until_ms": 0,                      // time-based key activation waits at least until here (raised by remove_watchdog)
   "updater_keys": ["ed25519:6E8s..."],          // keys the contract added on its own account (their AddKey succeeded)
@@ -120,7 +148,12 @@ Identifiers:
 - **provider**: `^[a-z0-9_-]{1,32}$` (e.g. `google`). Never contains `#`.
 - **aud** (client id): 1..=256 bytes. **sub**: 1..=255 bytes, must not contain `#`.
 - **path** (MPC derivation path): `{scope_id}#{provider}#{sub}#{key_index}`, key_index in decimal without leading
-  zeros. Example `s1#google#110248495921238986420#0`. Changing anything in this format changes every address.
+  zeros. Example `s1#google#110248495921238986420#0`. Changing anything in this format changes every address. The
+  `(provider, sub)` is the session's **path identity**: the token's own identity, or, for a member of an account, the
+  account root's ([Accounts and links](#accounts-and-links)). An identity in no account opens exactly this path.
+  Email identities: `s1#email#e1.<43 base64url characters>#0`.
+- **identity key** (`ik`): `sha256("hana-id/identity/v1" ‖ borsh(scope_id) ‖ borsh(provider) ‖ borsh(sub))`, 32
+  bytes, hex in JSON (64 lowercase characters). Account state and link events are keyed by it.
 - **key_index**: `u32`, `0 ..= 2^31 − 1` (`0x7fff_ffff`). Values `≥ 2^31` are reserved (for a later rotation or
   versioning scheme): `create_session` and `create_session_and_derive` refuse them, and so do the API and the SDK.
   The MVP uses 0 only.
@@ -134,7 +167,10 @@ clients (effective + pending), ≤ 10 pending changes per scope (≤ 2 queued by
 ≤ 4 iss values per issuer, ≤ 10 console audiences, ≤ 10 sponsors, JWT ≤ 7168 bytes, kid ≤ 128 bytes,
 session ≤ 24 h, `max_uses` 1..=500, `key_index` < 2^31, `change_delay_ms` ≤ 7 days. Governance: ≤ 6 pending key
 changes over all issuers (active + pending additions ≤ 10 per issuer), ≤ 3 watchdogs, ≤ 2 updater keys,
-`issuer_key_delay_ms` ≤ 7 days, `governance_delay_ms` ≤ 30 days.
+`issuer_key_delay_ms` ≤ 7 days, `governance_delay_ms` ≤ 30 days. Email login: ≤ 4 self-issued issuers, ≤ 3 signers
+per policy, ≤ 8 keys per self-issued issuer (active + pending additions), ≤ 3 signatures per JWS JSON token, ≤ 3
+members per account (one sign-in method per provider, the root's included), ≤ 8 remembered unlinked identities per
+account, link `salt` 16..=64 bytes.
 
 ## Token verification (all methods that take a JWT)
 
@@ -151,6 +187,25 @@ A JWT is accepted when, in this order:
 5. The signature verifies (RSASSA-PKCS1-v1_5 / SHA-256 over `header.payload`) (`Invalid token signature`).
 6. `exp * 1000 > block_timestamp_ms` (`Token expired`).
 7. `sub` is 1..=255 bytes without `#` (`Invalid sub`); `aud` is 1..=256 bytes (`Invalid aud`).
+
+**Self-issued issuers (email) take the JWS General JSON Serialization instead** (RFC 7515 §7.2.1), and every other
+issuer the compact form only (`Wrong token format for this issuer` either way). A token starting with `{` is parsed
+as `{"payload":"<b64url(claims)>","signatures":[{"protected":"<b64url({\"alg\":\"RS256\",\"kid\":\"…\"})>","signature":"<b64url>"}, …]}`:
+
+1. ≤ 7168 bytes (`JWT too large`); exactly the members `payload` and `signatures` at the top level and `protected` and
+   `signature` in each entry: no flattened form, no unprotected `header`, no duplicate members (`Malformed JWS`);
+   1..=3 entries (`Malformed JWS`, `Too many signatures`); claims as above (`Malformed base64url`, `Malformed JWT
+   claims`); each protected header has `alg` and `kid` (`Malformed JWS header`) and no `crit` (`Unsupported JWS
+   header`; e.g. RFC 7797 `b64`, which would change what is signed).
+2. `iss` → provider as above, and the provider must be self-issued.
+3. For each entry in order: its `kid` differs from every other entry's (`Duplicate signature kid`); it is an
+   **active** key of the issuer whose signer counts now (listed in the policy, or in the previous policy while the
+   overlap lasts) (`Unknown signing key`); `alg` is `RS256` (`Unsupported JWT algorithm`); the signature over
+   `protected ‖ "." ‖ payload` (ASCII) verifies (`Invalid token signature`). **One bad entry fails the token.**
+4. The distinct signers of the entries number at least the policy's `required`, or, while `now < overlap_until_ms`,
+   at least the previous policy's count among its signers (`Not enough signatures`). Two keys of one signer count
+   once.
+5. Then steps 6–7 above (`Token expired`, `Invalid sub`, `Invalid aud`).
 
 The verified token yields `(provider, aud, sub, nonce)`; `(provider, aud)` is the token's **client**. Each method
 then checks `nonce` against the commitment below (`... nonce ...` panics). Tokens are public once used on-chain; every use is bound by its nonce to
@@ -273,6 +328,134 @@ vault_message(share_id, counter, payload) = "hana-id-vault-v1:" ‖ borsh(signer
 `app_id` is the API's app id (D1 `apps.id`), not the CKD `app_id`. The prefix differs from `"hana-id-session-v1:"`,
 so a vault signature never verifies as a `derive_key`, `create_session_and_derive` or `revoke_session` signature
 (`Invalid session signature`; unit and sandbox tests check this with the worked example below).
+
+### Identity key and link nonces (email login; `link_identity`, `cancel_link`, `unlink_identity`, `link_jwt`)
+
+Implemented in Rust (`links.rs`) and independently in JS (`scripts/gen-email-fixtures.mjs`, which writes the worked
+examples below to `src/email_fixture.json`; the Rust tests compare byte for byte). `root_ik`, `new_ik`, `member_ik`
+and `session_ik` are raw 32-byte identity keys; `signer` is the signer contract's account id, as everywhere (not an
+email signer id).
+
+```
+identity key = sha256("hana-id/identity/v1" ‖ borsh(scope_id) ‖ borsh(provider) ‖ borsh(sub))
+link_new     = "hana-id/link-new/v1"     ‖ borsh(signer) ‖ borsh(scope_id) ‖ root_ik ‖ borsh(new provider) ‖ epoch u64 LE ‖ salt
+link_account = "hana-id/link-account/v1" ‖ borsh(signer) ‖ borsh(scope_id) ‖ root_ik ‖ new_ik ‖ epoch u64 LE ‖ salt
+link_change  = "hana-id/link-change/v1"  ‖ borsh(signer) ‖ borsh(scope_id) ‖ borsh("cancel" | "unlink") ‖ root_ik ‖ member_ik ‖ epoch u64 LE ‖ salt
+auto_link    = "hana-id/auto-link/v1"    ‖ borsh(signer) ‖ borsh(scope_id) ‖ sha256(session nonce preimage) ‖ session_ik ‖ target epoch u64 LE ‖ mode u8
+```
+
+- `link_new` is the nonce of the **new** identity's token (its `sub` isn't known when the popup asks for it, so it
+  commits to the provider); `link_account` that of the token of an active identity of the account. `root_ik` is the
+  root of that identity's account (the identity itself if it is in none). `epoch` is the account's (0: no account
+  yet); `salt` 16..=64 bytes, the method's `salt` argument.
+- `link_change` is the nonce of the token that proves who cancels or unlinks.
+- `auto_link` is the nonce of the self-issued `link_jwt` of `create_session_and_derive`: the hash of **this call's**
+  session nonce preimage, `session_ik` = the identity key of the session token (not of the path identity), the epoch
+  of the account the joining identity joins (0 for none yet), `mode` 1 for `link_immediate`, else 0. The email issuer
+  computes it; nothing else should ever mint a token with this nonce.
+
+**Worked examples** (`node contracts/hana-signer/scripts/gen-email-fixtures.mjs --doc`; same conventions as the
+worked examples below, salt `[9; 16]`, the session preimage is the session nonce example's):
+
+**Identity key: scope s1, provider "google", sub "1098765432" (the key is sha256 of the preimage)**
+
+```
+domain "hana-id/identity/v1"  68616e612d69642f6964656e746974792f7631
+borsh(scope_id) "s1"          020000007331
+borsh(provider) "google"      06000000676f6f676c65
+borsh(sub) "1098765432"       0a00000031303938373635343332
+ik = sha256                   8982b5c1e573b4e0d83402db6be98f0153f32c9568423342c6734d7e787ae607
+```
+
+**Identity key: scope s1, provider "email", sub "e1.7IruQ0pNsF3Ut6d1cNQiqYXVZTwdGYkaUIN8viJdvZE"**
+
+```
+domain "hana-id/identity/v1"                                 68616e612d69642f6964656e746974792f7631
+borsh(scope_id) "s1"                                         020000007331
+borsh(provider) "email"                                      05000000656d61696c
+borsh(sub) "e1.7IruQ0pNsF3Ut6d1cNQiqYXVZTwdGYkaUIN8viJdvZE"  2e00000065312e374972755130704e7346335574366431634e5169715958565a54776447596b6155494e3876694a64765a45
+ik = sha256                                                  e2604fc38c4cf47fc03824687ec4a69653243aa5511b98c8b659084b0a2c7ece
+```
+
+**link_new: scope s1, root = the google identity key above, new provider "email", epoch 7, salt [9; 16]**
+
+```
+domain "hana-id/link-new/v1"         68616e612d69642f6c696e6b2d6e65772f7631
+borsh(signer) "hana-signer.testnet"  1300000068616e612d7369676e65722e746573746e6574
+borsh(scope_id) "s1"                 020000007331
+root_ik (32 bytes)                   8982b5c1e573b4e0d83402db6be98f0153f32c9568423342c6734d7e787ae607
+borsh(new provider) "email"          05000000656d61696c
+epoch u64 LE (7)                     0700000000000000
+salt (16 bytes)                      09090909090909090909090909090909
+nonce                                ecyEONGVaq_QVDWlpzrcygYnGM6uIGajCR1zLgGJvpg
+```
+
+**link_account: scope s1, root = the google identity key, new = the email identity key, epoch 7, salt [9; 16]**
+
+```
+domain "hana-id/link-account/v1"     68616e612d69642f6c696e6b2d6163636f756e742f7631
+borsh(signer) "hana-signer.testnet"  1300000068616e612d7369676e65722e746573746e6574
+borsh(scope_id) "s1"                 020000007331
+root_ik (32 bytes)                   8982b5c1e573b4e0d83402db6be98f0153f32c9568423342c6734d7e787ae607
+new_ik (32 bytes)                    e2604fc38c4cf47fc03824687ec4a69653243aa5511b98c8b659084b0a2c7ece
+epoch u64 LE (7)                     0700000000000000
+salt (16 bytes)                      09090909090909090909090909090909
+nonce                                _wne28aQrbIMOj3SndQQnzeYpD7uboRaDSg_o3unFvA
+```
+
+**link_change "cancel": scope s1, root = the google identity key, member = the email identity key, epoch 8, salt [9; 16]**
+
+```
+domain "hana-id/link-change/v1"      68616e612d69642f6c696e6b2d6368616e67652f7631
+borsh(signer) "hana-signer.testnet"  1300000068616e612d7369676e65722e746573746e6574
+borsh(scope_id) "s1"                 020000007331
+borsh(action) "cancel"               0600000063616e63656c
+root_ik (32 bytes)                   8982b5c1e573b4e0d83402db6be98f0153f32c9568423342c6734d7e787ae607
+member_ik (32 bytes)                 e2604fc38c4cf47fc03824687ec4a69653243aa5511b98c8b659084b0a2c7ece
+epoch u64 LE (8)                     0800000000000000
+salt (16 bytes)                      09090909090909090909090909090909
+nonce                                ALgWcNGrd3TkHC_4TMMFWp36nTwRF4gkdR3MNERRPoM
+```
+
+**link_change "unlink": as above with action "unlink"**
+
+```
+domain "hana-id/link-change/v1"      68616e612d69642f6c696e6b2d6368616e67652f7631
+borsh(signer) "hana-signer.testnet"  1300000068616e612d7369676e65722e746573746e6574
+borsh(scope_id) "s1"                 020000007331
+borsh(action) "unlink"               06000000756e6c696e6b
+root_ik (32 bytes)                   8982b5c1e573b4e0d83402db6be98f0153f32c9568423342c6734d7e787ae607
+member_ik (32 bytes)                 e2604fc38c4cf47fc03824687ec4a69653243aa5511b98c8b659084b0a2c7ece
+epoch u64 LE (8)                     0800000000000000
+salt (16 bytes)                      09090909090909090909090909090909
+nonce                                vNwwBtTfNKUROgGODgguR4yUQPMj0vm_Hh6y1VOfL8U
+```
+
+**auto_link: scope s1, the session nonce preimage of the session nonce example (key 7), session identity = the google identity key, target epoch 3, mode 1 (link_immediate)**
+
+```
+domain "hana-id/auto-link/v1"              68616e612d69642f6175746f2d6c696e6b2f7631
+borsh(signer) "hana-signer.testnet"        1300000068616e612d7369676e65722e746573746e6574
+borsh(scope_id) "s1"                       020000007331
+sha256(session nonce preimage) (32 bytes)  6626c420e609ef05ddb3153fee121d0ffb297805bccfb7264a0a0887c5dec6c1
+session_ik (32 bytes)                      8982b5c1e573b4e0d83402db6be98f0153f32c9568423342c6734d7e787ae607
+target epoch u64 LE (3)                    0300000000000000
+mode u8 (1)                                01
+nonce                                      XHJ9D2QQYPFFQoXkCSunya-9ZvlwcZ68qR-pFtP32dQ
+```
+
+**auto_link: as above with mode 0 (after change_delay_ms)**
+
+```
+domain "hana-id/auto-link/v1"              68616e612d69642f6175746f2d6c696e6b2f7631
+borsh(signer) "hana-signer.testnet"        1300000068616e612d7369676e65722e746573746e6574
+borsh(scope_id) "s1"                       020000007331
+sha256(session nonce preimage) (32 bytes)  6626c420e609ef05ddb3153fee121d0ffb297805bccfb7264a0a0887c5dec6c1
+session_ik (32 bytes)                      8982b5c1e573b4e0d83402db6be98f0153f32c9568423342c6734d7e787ae607
+target epoch u64 LE (3)                    0300000000000000
+mode u8 (0)                                00
+nonce                                      5CkO87ojd6D0pttIXV_YeCwFgBrUmcMCz88KDarubsc
+```
 
 ### Borsh encodings used above
 
@@ -422,7 +605,7 @@ Panics: `change_delay_ms must be at most 7 days`, `issuer_key_delay_ms must be a
 `governance_delay_ms must be at most 30 days`, `Too many watchdogs` (> 3), `Already a watchdog` (duplicate),
 `Too many updater keys` (> 2), `Already an updater key` (duplicate). Starts with no issuers, no scopes,
 `public_registration = false`, no sponsors, no console audiences, no shared clients, `paused = false`,
-`state_version = 2`. Watchdogs given here may confirm at once (`confirm_from_ms = 0`). Each updater key is added to
+`state_version = 3`, no self-issued issuer, no accounts. Watchdogs given here may confirm at once (`confirm_from_ms = 0`). Each updater key is added to
 the contract account by the contract itself, exactly as `add_updater_key` does (a promise; the key is pending until
 the callback confirms its `AddKey` succeeded, and dropped if it failed), so the mainnet creation batch is `DeployContract` + `new(...)` + `DeleteKey(creation
 key)`, signed by the creation key, with no `AddKey` action of its own (see [Changed in the governance
@@ -480,7 +663,9 @@ allows (see Security notes).
 | Method | Who | Args example |
 |---|---|---|
 | `set_issuer(provider, iss_values)` | owner | `{"provider":"google","iss_values":["https://accounts.google.com","accounts.google.com"]}` |
-| `set_issuer_key(provider, kid, n, e)` | owner **or self** | `{"provider":"google","kid":"a1b2","n":"<JWK n, base64url>","e":"AQAB"}` → returns the key change id (`u64`) |
+| `set_issuer_key(provider, kid, n, e, signer)` | owner **or self** (owner only for a self-issued issuer) | `{"provider":"google","kid":"a1b2","n":"<JWK n, base64url>","e":"AQAB"}` → returns the key change id (`u64`). `signer` (optional, absent = `null`) is required for a self-issued issuer and refused for any other: `{"provider":"email","kid":"<thumbprint>","n":"…","e":"AQAB","signer":"hana"}` |
+| `mark_self_issued(provider)` | owner | `{"provider":"email"}` (one way) |
+| `get_self_issued(provider)` | view | → signer policy (Types above) or `null` |
 | `propose_issuer_key_removal(provider, kid)` | owner **or self** | `{"provider":"google","kid":"a1b2"}` → returns the key change id |
 | `execute_issuer_key_change(id)` | **anyone**, once due, not while paused | `{"id":7}` |
 | `confirm_issuer_key_change(id)` | a watchdog whose `confirm_from_ms ≤ now` | `{"id":7}` |
@@ -530,6 +715,35 @@ reads active keys only, so logins cost the same gas as before.
   `issuer_key_removed {provider, kid, how: "owner"}` only when an active key was removed.
 - Other panics: `Only the owner or the contract account can do this` (propose methods), `Invalid provider`,
   `An issuer needs 1 to 4 iss values`, `Invalid iss value` (empty or > 256 bytes), `Duplicate iss value`.
+
+#### Self-issued issuers (email login, D121)
+
+An issuer whose keys Hana itself holds (the email issuer) is marked **self-issued**, one way. Hana could mint any
+user's token with such a key, so the contract bounds who installs its keys and how tokens are signed:
+
+- `mark_self_issued(provider)`: owner (`Only the owner can do this`), `Invalid provider`, `Unknown issuer`, `Issuer is
+  already self-issued` (a second call can't reset a policy), `Issuer already has keys` (active or pending: every key
+  of a self-issued issuer is posted under the rules below, with its signer), `Too many self-issued issuers` (4). Sets
+  the policy `{signers: ["hana"], required: 1}`. Event `issuer_self_issued {provider}`.
+- `set_issuer_key` for it: `Only the owner posts keys for this issuer` (the updater key, "self", is refused; so is its
+  `propose_issuer_key_removal`), `Unknown signer` (`signer` missing or not in the policy), `Too many keys for this
+  issuer` (8, active + pending additions), `Key is already registered` (the modulus of an active or pending key of the
+  issuer, whatever the exponent or signer: one RSA key never counts as two signers). For any other issuer `signer`
+  must be absent (`Only a self-issued issuer takes a signer`). Event `issuer_key_proposed` gains `signer`.
+- Its key changes wait at least `governance_delay_ms` on top of the usual rule (`executable_at_ms = max(the rule
+  above, now + governance_delay_ms)`), and `confirm_issuer_key_change` refuses them (`Keys of a self-issued issuer
+  can't be confirmed early`): no outside JWKS vouches for Hana's keys, so the watchdog can only cancel (it pins every
+  signer's thumbprints). The owner and watchdogs cancel as usual; `remove_issuer_key` stays immediate (DoS only).
+  Executing an addition re-checks `Key is already registered` and `Unknown signer`.
+- **Signer policy.** `signers` (≤ 3 ids, each with its active keys) and `required` (distinct signers a token needs).
+  Its tokens are JWS JSON ([Token verification](#token-verification-all-methods-that-take-a-jwt)). **No method changes
+  the signer list or `required`**: only a governed upgrade's `migrate` does (internal `set_signer_policy`: 1..=3
+  distinct signer ids, `required` 1..=signers, new keys installed with their signers, the same uniqueness checks; event
+  `signer_policy_set {provider, signers, required, overlap_until_ms}`), and it opens a 10-minute overlap
+  (`overlap_until_ms = now + 600 000`, the email token lifetime) during which tokens satisfying the previous policy
+  still pass. 1-of-1 at launch; Level 1 (a co-signer, 2-of-2) is one such upgrade, public for `governance_delay_ms`.
+- `get_self_issued(provider)` → `{provider, signers: [{id, kids}], required, overlap_until_ms}` (`overlap_until_ms`
+  only while the overlap lasts), `null` for a provider that isn't self-issued. The watchdog pins it.
 
 ### Governance
 
@@ -592,8 +806,8 @@ can add or delete keys on it.
 | `propose_upgrade(code_hash)` | owner | `{"code_hash":"8Tf3..."}` (base58 sha256 of the wasm, NEAR's account `code_hash` format) | `executable_at_ms = now + governance_delay_ms`. Replaces a pending upgrade (event `upgrade_cancelled` for the old one). Event `upgrade_proposed {code_hash, executable_at_ms}`. Nobody but the owner can cancel (no guardian at launch, D84). Mainnet: a reproducible build whose hash, commit and build command are published first (D86). |
 | `cancel_upgrade()` | owner | `{}` | `No pending upgrade`. Event `upgrade_cancelled {code_hash}`. |
 | `execute_upgrade()` | **anyone**, once due | **raw wasm bytes** as the input (not JSON) | `No pending upgrade`, `Upgrade is still delayed`, `Code doesn't match the proposed hash` (`sha256(input)`). Not blocked by pause (a fix must be deployable). Clears `pending_upgrade`, emits `upgrade_executed {code_hash}`, and returns one promise to the contract account with two actions: `DeployContract(code)` then `FunctionCall migrate({}, 0 deposit, 50 Tgas)`. They are one receipt: if the new code's `migrate` panics (or doesn't exist), the deploy is rolled back with it and the old code stays. The pending upgrade is consumed either way (re-propose a fixed build); `upgrade_executed` is logged by the committed execute receipt, so success is the deploy receipt's outcome, `state_migrated` in its logs, and `view_account.code_hash`. Attach 300 Tgas; the transaction must fit NEAR's 1.5 MiB limit; the account balance must cover the new code's storage. |
-| `migrate()` | the contract account only (`#[private]`, `#[init(ignore_state)]`) | — | Called by `execute_upgrade`'s deploy receipt on the **new** code. This version (layout v2, no change since): reads the state as v2 and panics `Unexpected state version` unless `state_version == 2`; keeps it as is. Event `state_migrated {from_version: 2, to_version: 2}`. Each future version ships its own `migrate` reading a copy of the previous layout. |
-| `migrate_v1(issuer_key_delay_ms, governance_delay_ms)` | the contract account only (`#[private]`, `#[init(ignore_state)]`) | `{"issuer_key_delay_ms":120000,"governance_delay_ms":60000}` | The one-off v1 → v2 migration, sent by `deploy-contract --upgrade` as `DeployContract` + `migrate_v1` in one transaction while the signer still has its full-access key. Reads the exact v1 root struct (`src/migrate.rs`, checked against a v1 state fixture), keeps every field, starts with no watchdogs, no updater keys, nothing pending, `paused = false`. Delay bounds as `new`. Panics `Unexpected state version` on anything but v1 state (a re-run on v2 can only fail). Event `state_migrated {from_version: 1, to_version: 2}`. Deleted in the next version. |
+| `migrate()` | the contract account only (`#[private]`, `#[init(ignore_state)]`) | — | Called by `execute_upgrade`'s deploy receipt on the **new** code. This version (layout v3): on a v2 state (the exact v2 root struct, `src/migrate.rs` `HanaSignerV2`, checked against a v2 state fixture built by the v2 code) with `state_version == 2`, keeps every field and appends the v3 ones empty (no self-issued issuer, no account, nothing in `opened`), event `state_migrated {from_version: 2, to_version: 3}`; on a v3 state with `state_version == 3` (a later v3 fix), keeps it, event `{3, 3}`; anything else panics `Unexpected state version`, reverting the deploy. A v3 state doesn't parse as v2, so a later upgrade back to v2 code fails in v2's `migrate` and is reverted (the way back is a fixed v3). Each future version ships its own `migrate` reading a copy of the previous layout. |
+| `migrate_v1(issuer_key_delay_ms, governance_delay_ms)` | the contract account only (`#[private]`, `#[init(ignore_state)]`) | `{"issuer_key_delay_ms":120000,"governance_delay_ms":60000}` | The one-off v1 → v2 migration, sent by `deploy-contract --upgrade` as `DeployContract` + `migrate_v1` in one transaction while the signer still has its full-access key. Reads the exact v1 root struct (`src/migrate.rs`, checked against a v1 state fixture), keeps every field, starts with no watchdogs, no updater keys, nothing pending, `paused = false`. Delay bounds as `new`. Panics `Unexpected state version` on anything but v1 state (a re-run on v2 or v3 can only fail). In v3 code it migrates v1 straight to v3 (the v3 fields empty); event `state_migrated {from_version: 1, to_version: 3}`. No deployment is on v1 any more; it goes with the sandbox suite's move to v2 → v3 (`docs/email-login-build-plan.md` batch 2). |
 
 Gas (sandbox, `governance.rs`, measured 2026-10-29): `execute_upgrade` of the 499 KB v2 wasm burns 84 Tgas over all
 receipts (attach 300); `DeployContract` + `migrate_v1` burns 39 Tgas (attach 100 to `migrate_v1`). Logins on v2 burn
@@ -798,9 +1012,15 @@ verification, scope resolution for the token's client `(provider, aud)`:
    have `allow_shared` (`Scope does not allow shared login`).
 3. Else `Token is for an unregistered app`.
 
-Then `Token nonce doesn't commit to this session` (Session nonce above, with this `scope_id`). Path =
-`{scope_id}#{provider}#{sub}#{key_index}`, the same whether the token came from the scope's own client or a shared
-one (Google's `sub` is the same across client ids). Then prunes up to 3 expired sessions. Not payable; the contract pays session storage (≈ 250 bytes, freed by pruning).
+Then `Token nonce doesn't commit to this session` (Session nonce above, with this `scope_id`). Then the path
+identity (email login, v3): the token's identity key X in this scope; if X is a **pending** member of an account,
+`Sign-in method link is pending`; if X is an active member (or a pending one past its `effective_at_ms` and
+`changes_unlock_floor_ms`, which this call marks active, event `identity_link_activated`), the account root's
+`(provider, sub)`; otherwise X's own. Path = `{scope_id}#{path provider}#{path sub}#{key_index}`, the same whether
+the token came from the scope's own client or a shared one (Google's `sub` is the same across client ids); for an
+identity in no account exactly the v2 path. Then prunes up to 3 expired sessions. Not payable; the contract pays
+session storage (≈ 250 bytes, freed by pruning). `create_session` alone does **not** record a wallet (`opened`):
+`derive_key` does (D130).
 
 The stored record (borsh) is `path ‖ scope_id ‖ expires_at_ms u64 ‖ max_uses u32 ‖ used u32 ‖ revoked u8 ‖
 created_at_ms u64` (`sessions.rs` `StoredSession`). Sessions opened by v1 code end after `revoked` (no creation
@@ -817,7 +1037,8 @@ layout change of sessions keeps that codec.
 `Paused` (first),
 `No such session` (missing, revoked, or opened before `sessions_valid_from_ms`), `Session expired`, `Session use limit reached`,
 `Wrong counter (replayed or out of order)`, `Bad session key`, `Signature must be 64 bytes`, `Invalid session signature`,
-`BLS key too long` (pk1/pk2 > 512 bytes). Increments `used`, then calls the MPC:
+`BLS key too long` (pk1/pk2 > 512 bytes). Increments `used`, records the path identity's key in `opened` if it isn't
+there yet (it "has a wallet"; ≈ 113 bytes once per identity, contract-paid), then calls the MPC:
 
 ```json
 // mpc.request_app_private_key, 1 yoctoNEAR (paid by the contract), 20 Tgas
@@ -826,7 +1047,7 @@ layout change of sessions keeps that codec.
 
 Returns the MPC's result unchanged: `{"big_y":"bls12381g1:...","big_c":"bls12381g1:..."}`.
 
-#### `create_session_and_derive(jwt, scope_id, session_public_key, expires_at_ms, salt, key_index, max_uses, signature, pk1, pk2)` — anyone
+#### `create_session_and_derive(jwt, scope_id, session_public_key, expires_at_ms, salt, key_index, max_uses, signature, pk1, pk2, link_jwt, link_immediate)` — anyone
 
 ```json
 {"jwt":"eyJ...","scope_id":"s1","session_public_key":[...32],"expires_at_ms":1800003600000,
@@ -841,6 +1062,12 @@ Batch B's one-transaction login (`POST /v1/login`): exactly `create_session` wit
 self.create_session(jwt, scope_id, session_public_key.clone(), expires_at_ms, salt, key_index, max_uses);
 self.derive_key(session_public_key, 1, signature, pk1, pk2)
 ```
+
+`link_jwt` (string) and `link_immediate` (bool), both optional (missing = `null`; callers that send neither are
+unaffected), make email login's **automatic link** inside the login, after the session nonce check and before the
+path is chosen ([Accounts and links](#accounts-and-links), "Automatic links"). `link_immediate` without `link_jwt`
+panics `link_immediate needs a link_jwt`. With a link the call attaches more gas (one more RS256 verification and the
+account writes; the spec estimates +8–12 Tgas; measured in the sandbox in build-plan batch 2).
 
 - No counter argument (always 1) and no callback. `signature` is over `session_message(1, CKD payload)`.
 - Panics: every `create_session` panic, in its order, then every `derive_key` panic. Any of them aborts the whole
@@ -878,12 +1105,77 @@ longer-lived one for at most 24 h.
 | `session_key_in_use(session_public_key)` | `{"session_public_key":[...32]}` | `bool`: `true` while a session for this key (revoked or not) has not expired, i.e. when `create_session` would panic `Session key already in use` |
 | `session_message(counter, payload)` | `{"counter":1,"payload":[...]}` | bytes to sign (`Vec<u8>`) |
 
+### Accounts and links
+
+Email login's account linking (`docs/email-login-spec.md` "Automatic linking"; D119, D122). Per scope, identities
+form **accounts**: a root (the identity whose own path is the wallet) and ≤ 3 members, one sign-in method per provider
+(the root's included). A member opens the root's path; an identity is in at most one account per scope; links never
+cross scopes. An identity **has a wallet** when its own path was derived (`opened`, recorded by `derive_key`, D130).
+Every link change (join, cancel, unlink) bumps the account's `epoch`, which every link nonce commits to; an account
+record is never deleted, so the epoch never restarts. Activation of a pending member is not a link change (no bump).
+
+State (v3): `links` (member ik → `{root, effective_at_ms}`), `accounts` (root ik → `{root_provider, root_sub, members:
+[{key, provider, effective_at_ms, active, auto}], unlinked: [ik] ≤ 8, epoch}`), `opened` (set of ik), `self_issued`.
+
+**Automatic links** (`create_session_and_derive` with `link_jwt`). X = the session token's identity (already checked:
+not pending), E = the link token's. Checks, in order: token verification of `link_jwt` (a self-issued issuer's JWS
+JSON; `Link token must come from a self-issued issuer`), its client opens sessions in this scope (`Token is for
+another app`, `Token is for an unregistered app`, `Scope does not allow shared login`), `Identities must differ`, E
+pending (`Sign-in method link is pending`), X and E already in one account (`Sign-in method is already linked`),
+both reach a wallet (`Both sign-in methods already have a wallet`; an active member reaches its root's), then the
+case:
+
+| E reaches a wallet | X | Result |
+|---|---|---|
+| yes (case A) | no wallet and in no account (`Sign-in method is already linked` otherwise) | X joins E's account **at once**, `auto: true`; `link_immediate` must be `true` (`This link must be immediate`); the session opens E's root's path |
+| no (cases B, C) | any (it has or gets a wallet in this call) | E (in no account, `Sign-in method is already linked` otherwise) joins X's account (X's root's), at once with `link_immediate`, else pending until `max(now + change_delay_ms, changes_unlock_floor_ms)`; the session opens X's root's path |
+
+then the nonce (`auto_link` over this session's nonce preimage, X, the target account's epoch and the mode; `Link
+token nonce doesn't match`), the mode (case A), an unlinked pair (`This sign-in method was unlinked`: either identity
+is in the other's account's `unlinked`), room (`Account is full`, `Account already has a sign-in method of this
+kind`). Events `identity_linked` (at once) or `identity_link_proposed` (pending). Any panic reverts the whole login,
+including a bad session signature later in the same call (no link is ever left behind). Contract-paid storage.
+
+| Method | Who | Args | Effect |
+|---|---|---|---|
+| `link_identity(scope_id, account_jwt, new_jwt, epoch, salt)` | anyone with both tokens; **payable** (as `register_scope`: the caller pays the added storage, sponsors pay nothing, excess refunded) | `{"scope_id":"s1","account_jwt":"…","new_jwt":"…","epoch":0,"salt":[…16..64]}` | the new identity N joins the account of A (`account_jwt`), pending until `max(now + change_delay_ms, changes_unlock_floor_ms)`; returns that time (`u64`); event `identity_link_proposed` (`auto: false`) |
+| `cancel_link(scope_id, jwt, member_key, epoch, salt)` | the pending identity itself or an active identity of the account; payable | `member_key` = hex ik | removes a pending member; event `identity_link_cancelled` |
+| `unlink_identity(scope_id, jwt, member_key, epoch, salt)` | the root or the member itself; payable | same | removes an active member and adds it to the account's `unlinked` (≤ 8, oldest dropped); event `identity_unlinked` |
+| `get_identity(scope_id, provider, sub)` | view | | Identity (Types above) |
+| `get_account(scope_id, provider, sub)` | view | | Account (Types above) or `null` |
+| `identity_key(scope_id, provider, sub)` | view | | hex ik |
+
+Panics (each method checks in this order where they apply):
+
+- `link_identity`: `Paused`; `Salt must be 16-64 bytes`; token panics (`account_jwt` first); `Token is for another
+  app` (either token's client must open sessions in `scope_id`); `Link nonce doesn't match` (`new_jwt` = `link_new`,
+  `account_jwt` = `link_account`, root = A's root, this `epoch` and `salt`); `Identities must differ`; `Sign-in method
+  link is pending` (A); `Sign-in method already has a wallet` (N in `opened`); `Sign-in method is already linked` (N a
+  member, or a root with members); `Account is full`; `Account already has a sign-in method of this kind`; `Wrong
+  epoch` (`epoch` ≠ the account's); `Attached deposit doesn't cover storage: need … yoctoNEAR`.
+- `cancel_link`: `Paused`; salt; token panics; `Token is for another app`; `Invalid identity key` (not 64 lowercase
+  hex characters); `No such member` (no link record); `Link nonce doesn't match` (`link_change` "cancel", root = the
+  member's root); `Sign-in method is not in this account` / `Sign-in method link is pending` (the caller, unless it is
+  the member itself); `Wrong epoch`; `No such member` (the member is active, or past its time: unlink it instead).
+  Cancelling does **not** mark the pair `unlinked`.
+- `unlink_identity`: `Paused`; salt; token panics; `Token is for another app`; `Invalid identity key`; `No such member`
+  (neither a member nor a root); `Link nonce doesn't match` ("unlink"); `Sign-in method is not in this account` (the
+  caller is in no account with it) / `Only the root or the member itself can unlink` (another member); `Wrong epoch`;
+  `Cannot unlink the root`; `No such member` (pending: cancel it instead).
+- Views: `Invalid provider`, `Invalid sub`.
+
+Unlinking (or cancelling) stops **future** sessions of the member on the root's path; sessions it already opened keep
+deriving until they end (the API revokes the vault shares of the account, build-plan batch 6). After an unlink the
+member opens its own path again (a new wallet unless it had one).
+
 ## Events (NEP-297)
 
-Logged as `EVENT_JSON:{"standard":"hana-id","version":"1.1.0","event":"<name>","data":[{...}]}` (`data` is a
+Logged as `EVENT_JSON:{"standard":"hana-id","version":"1.2.0","event":"<name>","data":[{...}]}` (`data` is a
 one-element array, as in NEP-171). Version `1.1.0` (governance batch, D86) is additive over `1.0.0`: new events,
 and `issuer_key_set` / `issuer_key_removed` gain fields and are now emitted when a key enters or leaves the active
-set (execution or confirmation, or an owner removal), no longer when a key is posted.
+set (execution or confirmation, or an owner removal), no longer when a key is posted. Version `1.2.0` (email login)
+is additive over `1.1.0`: the self-issued and link events below, and `issuer_key_proposed` gains `signer` for a
+self-issued issuer's key. Link events carry identity keys in hex, never `sub`s.
 
 | event | data |
 |---|---|
@@ -896,7 +1188,12 @@ set (execution or confirmation, or an owner removal), no longer when a key is po
 | `shared_clients_set` | `{"shared_clients":[[provider,aud]],"pending_shared_clients":[{"provider","aud","effective_at_ms"}]}` (state after the call) |
 | `console_audiences_set` | `{"console_audiences":[[provider,aud]],"pending_console_audiences":[{"provider","aud","effective_at_ms"}]}` (state after the call) |
 | `public_registration_enabled` | `{}` |
-| `issuer_key_proposed` | `{"id","provider","kid","n","e","executable_at_ms","by":"account"}` (`n`, `e` JWK base64url, leading zeros stripped) |
+| `issuer_key_proposed` | `{"id","provider","kid","n","e","executable_at_ms","by":"account","signer"?}` (`n`, `e` JWK base64url, leading zeros stripped; `signer` for a self-issued issuer only) |
+| `issuer_self_issued` | `{"provider"}` |
+| `signer_policy_set` | `{"provider","signers":[id],"required","overlap_until_ms"}` (only from a governed upgrade's `migrate`) |
+| `identity_linked` / `identity_link_proposed` | `{"scope_id","root","member","provider","effective_at_ms","auto":bool}` (keys hex; `identity_linked` = active at once) |
+| `identity_link_activated` | `{"scope_id","root","member","provider"}` (a pending member's first login after its time) |
+| `identity_link_cancelled` / `identity_unlinked` | `{"scope_id","root","member","provider","by":"<hex ik of the caller's identity>"}` |
 | `issuer_key_removal_proposed` | `{"id","provider","kid","executable_at_ms","by":"account"}` |
 | `issuer_key_set` | `{"provider","kid","id","how":"delay"\|"confirmed","by"?}` (`by` = the watchdog, for `"confirmed"` only) |
 | `issuer_key_removed` | `{"provider","kid","id","how":"delay"\|"confirmed","by"?}` or `{"provider","kid","how":"owner"}` |
@@ -946,6 +1243,31 @@ the JWKS cron's own last run; the portal may read it instead of the views (it ru
 like the admin Worker, so it is no more independent than the portal itself). `scripts/admin.ts <env>
 governance:status --json` is an operator-side reference snapshot of the same chain state plus the council's open
 proposals, with the findings to show (`docs/operations.md` "Governance status for the admin portal").
+
+## Changed in the email login batch (v3)
+
+Layout v3, migrated **in place** by `migrate` (`execute_upgrade`), not deployed yet. **No existing byte layout,
+nonce, signed message, CKD request or path changed**: an identity in no account opens exactly the v2 path
+`{scope_id}#{provider}#{sub}#{key_index}` (golden tests in `src/tests/email.rs`: the fixture's Google user opens
+`s1#google#1098765432#0`, `s2#…#0`, `s1#…#1`, `s3#…#0` through a shared client, and the MPC receives exactly that path;
+sessions opened by v2 code keep their stored paths after `migrate`). In detail:
+
+- **State**: `self_issued`, `links`, `accounts`, `opened` appended to the root struct (storage prefixes 8, 9, 10,
+  after the v1/v2 ones). Pending key changes stored by v2 code (`KeyOp::Add`, variant 0) read as before; v3 adds the
+  variant `AddForSigner {n, e, signer}` (2).
+- **Issuers**: `mark_self_issued`, `get_self_issued`; `set_issuer_key` takes an optional `signer` (required for, and
+  only for, a self-issued issuer); self-issued keys are owner-only (also their removal proposals), wait at least
+  `governance_delay_ms`, are never confirmed early, are unique by modulus, ≤ 8; `get_key_changes` shows `signer` on
+  such additions only (absent otherwise, so Google's view is byte-identical).
+- **Tokens**: self-issued issuers take the JWS General JSON Serialization (≤ 3 signatures, signer policy); every other
+  issuer only the compact form, as before (`Wrong token format for this issuer`).
+- **Sessions**: the path identity (account root for a member); `Sign-in method link is pending`;
+  `create_session_and_derive` gains `link_jwt` and `link_immediate` (optional); `derive_key` records `opened`.
+- **Accounts and links**: `link_identity`, `cancel_link`, `unlink_identity` (payable), `get_identity`,
+  `get_account`, `identity_key`; the identity key and the four link nonces.
+- **Events** 1.2.0 (additive).
+- `migrate` v2 → v3 (and v3 → v3); `migrate_v1` now goes v1 → v3.
+- **Wasm**: 625.5 KB (v2: 520.5 KB), `cargo near build non-reproducible-wasm`, toolchain 1.85.1.
 
 ## Changed in the governance batch
 
@@ -1027,6 +1349,25 @@ prepays them. New view `session_key_in_use` (also covers revoked, unexpired sess
   party can do after this batch"). Pause stops every token path at once and only the owner (a 2-of-3 DAO) lifts it.
   Beyond that, Hana cannot change a scope's clients or owners, and cannot block derivation for a scope that has its
   own client (it can for a shared-only scope: see Shared login).
+- **Self-issued (email) keys are a trust root equal to Google's** (`docs/email-login-spec.md` "Trust statement").
+  While the policy is 1-of-1, whoever can make the `hana` key sign can mint an email token for any `sub`, and so
+  reach every email wallet and every account an email identity is linked to. The contract bounds key **swaps** only:
+  owner-posted, `governance_delay_ms`, no early confirm, one modulus never counted as two signers, the policy changed
+  only by a governed upgrade. Use of the real key is detected off chain (watchdog, issuer logs, KMS reconciliation).
+- **Linking extends reach, by design.** A member's tokens open the root's wallet. Case B (an email identity joining a
+  Google wallet) is the direction that lets the email issuer reach a Google wallet, so the contract makes it pending
+  for `change_delay_ms` unless the issuer's `auto_link` nonce says `link_immediate` (the issuer's Google-hosted rule,
+  which the contract can't check: it trusts the issuer's mode, D119). Case A (Google joining an email wallet) must be
+  immediate and adds no power the email issuer didn't have. An `auto_link` token is bound to one login (session nonce
+  preimage hash, session identity, target epoch, mode); a front-run of the combined call without the session key
+  reverts the link with it.
+- **`opened` is recorded at derivation, not at `create_session`** (D130): a published Google token copied into a bare
+  `create_session` opens a session nobody can use and gives the identity no wallet, so it can't turn a later
+  automatic link into "both have a wallet" (a second wallet for one person, which D122 forbids). Wallets opened before
+  v3 aren't in `opened` until their path is derived again (sandbox-dev test data; mainnet starts with v3).
+- **Unlink stops future sessions only.** A member's sessions already open on the root's path derive until they end;
+  the API revokes the account's vault shares after relaying an unlink (build-plan batch 6). Links are public (both
+  tokens with both `sub`s are in the transaction); events and state carry identity keys, not `sub`s.
 - **Shared login.** A scope with `allow_shared` accepts tokens of Hana's shared clients, with the scope taken from
   the session nonce. Whoever can get a shared-client token with a nonce of their choosing for a user can open a
   session for that user in any `allow_shared` scope: Hana's vault and login page (since batch B the vault computes

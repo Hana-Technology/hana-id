@@ -6,7 +6,7 @@ the watchdog's relayer funds monitoring, D150) and the `KEYS_UPDATER_KEY` and ow
 (e) (governance deployed on sandbox-dev, D126); otherwise 2026-10-29 (branch `perf/login-latency-impl`; the login popup, the
 background persist and the vault gate were re-checked, the rest as of 2026-10-28, commit 58edee9; the approval popup
 opened by the partner page, branch `feat/approve-in-click`, D99; the API rate limits, owner-action caps, CKD key pin,
-secret scan and admin CLI after the 2026-10-29 security sweep, D100; the browser, core and SDK sweep fixes, D110–D118).
+secret scan and admin CLI after the 2026-10-29 security sweep, D100; the browser, core and SDK sweep fixes, D110–D118; the contract v3 email-login invariants, 2026-10-30, branch `feat/email-login-1`, D130–D131).
 
 Component map and flows: `docs/architecture.md`. On-chain layouts and the contract's own security notes:
 `docs/contract-interface.md` ("Security notes (for reviewers)"). Browser parts (vault, auth pages, partner client)
@@ -109,6 +109,23 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   tombstone), `counter == used + 1`, Ed25519 over `"hana-id-session-v1:" ‖ counter ‖ sha256(payload)`; the off-chain
   vault prefix `hana-id-vault-v1:` can never verify as a session message.
 - `create_session_and_derive` is atomic up to the MPC receipt: any signer-side panic reverts the session.
+- Email login, contract v3 (branch `feat/email-login-1`, not deployed; `docs/email-login-build-plan.md` batch 1):
+  - Self-issued issuers (email): keys owner-posted only (never the updater key), each change waits ≥
+    `governance_delay_ms`, never confirmed early; one RSA modulus once per issuer (no key counts as two signers);
+    tokens are JWS JSON with ≤ 3 signatures, every one valid, from ≥ `required` distinct signers (1-of-1 `hana` at
+    launch); the signer list and `required` change only by a governed upgrade, with a 10-minute overlap. Google and
+    every other issuer stay compact-only. Trust: whoever makes the `hana` key sign can mint any email token, so reach
+    every email wallet and every account linked to one (`docs/email-login-spec.md` "Trust statement").
+  - Accounts: a member opens its root's path; an identity in no account opens the v2 path unchanged. Automatic links
+    only inside a login, bound to that session by the issuer's `auto_link` nonce (session preimage hash, session
+    identity, target epoch, mode); case B (email joining a Google wallet) pending `change_delay_ms` unless the
+    issuer's mode says at once; case A must be immediate; both-have-a-wallet is never merged; unlinked pairs are
+    never re-matched. Explicit links need fresh proofs of both identities and wait `change_delay_ms` (and the unpause
+    floor). Every link change bumps the account epoch, which every link nonce commits to.
+  - `opened` ("has a wallet") is set at derivation, so a copied token in a bare `create_session` can't create a
+    wallet (D130). Unlinking stops future sessions only; open ones run to their end.
+  - Contract security notes: `docs/contract-interface.md` "Security notes (for reviewers)"; readings made in the build:
+    D130, D131.
 
 ### API (`apps/api`)
 

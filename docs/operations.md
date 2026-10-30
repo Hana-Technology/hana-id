@@ -857,7 +857,13 @@ What it checks and its status API: `apps/watchdog/README.md`. **Deployed on sand
 `https://hana-id-watchdog-sandbox-dev.tingtc.workers.dev`, cron `*/5 * * * *`, on the API's Cloudflare account
 (D125), D1 `hana-id-watchdog-sandbox-dev`. Alert channels and the heartbeat aren't set yet (the manifest's alert
 addresses are `example.com` placeholders), so every run reports them as `channel_not_configured`. First run
-2026-10-30 04:50 UTC, every check ok; the cron trigger started ~10 min after the first deploy (two slots skipped). Other envs: not
+2026-10-30 04:50 UTC, every check ok; the cron trigger started ~10 min after the first deploy (two slots skipped).
+Pager: a random ntfy.sh topic plus a healthchecks.io heartbeat (secrets only). **ntfy.sh's public server rate-limits
+publishers per IP, and Workers send from shared IPs**: in the forged-key drill (2026-10-30) the critical page got
+HTTP 429 at 05:06 and 05:40 and went through at 05:10 and 05:25, so it is not a production pager (the choice is
+open: `docs/context.md` "Next steps" 8). Forged-key drill: change #0 posted 05:01:17, cancelled and the updater
+key deleted at 05:06 (one run); a new updater key was installed through the council (proposal #2) and uploaded as
+`KEYS_UPDATER_KEY`; the old key file is kept as `.secrets/sandbox-dev/keys-updater.revoked-20261030-drill.json`. Other envs: not
 deployed; each needs the governance contract (`migrate_v1`) first.
 
 ### Setting it up (once per env)

@@ -392,6 +392,12 @@ AWS Lambda kept as the alternative).
 6. Create the Neon project (Sydney, `aws-ap-southeast-2`) to unblock batch C (D73).
 7. **Confirm the email provider with the colleague** before creating any account: Resend is recorded (D87) but
    another provider may be used instead. The email code sits behind one small interface, so a switch is cheap.
+8. **Choose the watchdog's paging app with the colleague** (paused 2026-10-30). Candidates: Pushover (30-day trial,
+   then $4.99 one-time per platform per user; adapter reads its acks), PagerDuty free (≤ 5 users; adapter exists, acks
+   stay in PagerDuty), incident.io (free Basic on-call for one team; needs a new adapter, built around Slack/Teams).
+   Self-built push app rejected for now (TestFlight builds expire every 90 days, the team APNs key could push to
+   Hana Wallet and Wend users, Critical Alerts need Apple's approval). Slack ruled out as the pager. Meanwhile
+   sandbox-dev pages through a random public ntfy.sh topic, which is unreliable from Workers (below).
 
 **Roadmap after governance (decided 2026-10-29):** email login with a Hana-run issuer and automatic, Privy-style account
 linking (`docs/email-login-spec.md`, approved 2026-10-30: D4, D119, D121–D123; signing key a Worker secret on

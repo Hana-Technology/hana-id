@@ -11,6 +11,13 @@
     "members": ["hana-id-council-a-dev1.testnet", "hana-id-council-b-dev1.testnet", "hana-id-council-c-dev1.testnet"]
   },
   "watchdogs": ["hana-id-watchdog-dev1.testnet"],
+  "watchdog": {
+    "account": "hana-id-watchdog-dev1.testnet",
+    "cloudflare": { "accountId": "f0b1e2c42c3e5bd63992958a19d4abca", "workerName": "hana-id-watchdog-sandbox-dev", "d1Name": "hana-id-watchdog-sandbox-dev" },
+    "alertEmails": ["alerts@example.com"],
+    "alertFrom": "watchdog@example.com",
+    "pager": "ntfy"
+  },
   "allowSignerFullAccessKey": true,
   "mpc": "v1.signer-prod.testnet",
   "ckdDomainId": 2,

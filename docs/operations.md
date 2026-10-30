@@ -853,8 +853,12 @@ The independent watchdog of the governance batch (`docs/governance-spec.md` "Wat
 5 min it compares the contract's pending and active issuer keys with Google's JWKS, cancels a pending key Google
 doesn't publish (and deletes the updater keys if the updater proposed it), pauses only when such a key is **active**,
 confirms keys that match, alerts on every governance change, and serves a read-only status for the admin portal.
-What it checks and its status API: `apps/watchdog/README.md`. **Not deployed yet**; it needs the governance contract
-(`migrate_v1`) on the env.
+What it checks and its status API: `apps/watchdog/README.md`. **Deployed on sandbox-dev (2026-10-30)**:
+`https://hana-id-watchdog-sandbox-dev.tingtc.workers.dev`, cron `*/5 * * * *`, on the API's Cloudflare account
+(D125), D1 `hana-id-watchdog-sandbox-dev`. Alert channels and the heartbeat aren't set yet (the manifest's alert
+addresses are `example.com` placeholders), so every run reports them as `channel_not_configured`. First run
+2026-10-30 04:50 UTC, every check ok; the cron trigger started ~10 min after the first deploy (two slots skipped). Other envs: not
+deployed; each needs the governance contract (`migrate_v1`) first.
 
 ### Setting it up (once per env)
 

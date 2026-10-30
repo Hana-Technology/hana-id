@@ -4,8 +4,12 @@ import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { governanceDelayProblems, loadEnv, MAINNET_GOVERNANCE_DELAY_MS, manifestPath, manifestSchema, MIN_GOVERNANCE_DELAY_MS, MIN_ISSUER_KEY_DELAY_MS, WATCHDOG_INTERVAL_MS } from './index.ts';
 
-// sandbox-dev with an account owner, as before its handover to the council DAO (the schema cases below vary the owner).
-const raw = (): Record<string, unknown> => ({ ...JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')), owner: 'hana-id-admin-dev1.testnet', ownerKind: 'account' });
+// sandbox-dev with an account owner, as before its handover to the council DAO, and without its watchdog service block
+// (the schema cases below vary the owner and the watchdogs; the block's own rules are in index.test.ts).
+const raw = (): Record<string, unknown> => {
+  const { watchdog: _w, ...m } = JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Record<string, unknown>;
+  return { ...m, owner: 'hana-id-admin-dev1.testnet', ownerKind: 'account' };
+};
 const issues = (m: Record<string, unknown>) => manifestSchema.safeParse(m).error?.issues.map((i) => `${i.path.join('.')}: ${i.message}`) ?? [];
 const council = { factory: 'sputnikv2.testnet', dao: 'c.sputnikv2.testnet', members: ['a.testnet', 'b.testnet', 'cc.testnet'] };
 

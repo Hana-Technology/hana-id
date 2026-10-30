@@ -416,8 +416,9 @@ read these sources, all read-only:
   checks the portal must show as problems: untracked signer keys, a full-access key where none is allowed, a tracked
   key with the wrong permission or missing, paused, a pending upgrade / owner transfer / withdrawal, no watchdog, a
   due key change nobody executed, a contract owner other than the manifest's, a missing DAO, a council DAO whose
-  `get_policy` isn't exactly the manifest's council at 2 of 3 for every kind (or can't be read), and on-chain
-  delays below the non-dev floors. The portal's Worker
+  `get_policy` isn't exactly the manifest's council at 2 of 3 for every kind (or can't be read), on-chain
+  delays below the non-dev floors, and any active google key or pending google Add that Google's JWKS doesn't
+  publish (or a JWKS it couldn't read; fetched only when there is a google key to check). The portal's Worker
   makes the same reads itself (`scripts/lib/admin-owner.ts` `governanceStatus` is the reference implementation).
 - **API**: `GET /v1/governance` serves the contract part already normalised, with JWKS verdicts and the cron's last
   run ([below](#governance-status-get-v1governance)); not independent of Hana's main Cloudflare account.
@@ -863,7 +864,13 @@ publishers per IP, and Workers send from shared IPs**: in the forged-key drill (
 HTTP 429 at 05:06 and 05:40 and went through at 05:10 and 05:25, so it is not a production pager (the choice is
 open: `docs/context.md` "Next steps" 8). Forged-key drill: change #0 posted 05:01:17, cancelled and the updater
 key deleted at 05:06 (one run); a new updater key was installed through the council (proposal #2) and uploaded as
-`KEYS_UPDATER_KEY`; the old key file is kept as `.secrets/sandbox-dev/keys-updater.revoked-20261030-drill.json`. Other envs: not
+`KEYS_UPDATER_KEY`; the old key file is kept as `.secrets/sandbox-dev/keys-updater.revoked-20261030-drill.json`.
+Pause drill (same day): the cron trigger removed, a forged key posted 05:51:58 and executed 05:54:25 (active);
+the trigger removal hadn't propagated, so a run at 05:55:05 found it and paused within 40 s; the council removed it
+(`owner:call remove_issuer_key`, proposal #3) and unpaused (#4). Heartbeat: last ping 05:55:15, healthchecks.io
+reported the check down at 06:10:15 (period 5 min + grace 10 min) by email. **Cron trigger changes take minutes to
+apply** (start ~10 min after the first deploy; one run after removal): stop a watchdog by deleting the Worker's
+trigger and checking `/status` `last_run`, not by assuming. Other envs: not
 deployed; each needs the governance contract (`migrate_v1`) first.
 
 ### Setting it up (once per env)

@@ -18,20 +18,44 @@ const HIDDEN_FIELDS = new Set(['n', 'e']);
 /** Detail fields that hold an on-chain identifier: shown through the allow-list (`ident`). */
 const IDENT_FIELDS = new Set(['kid', 'provider', 'by', 'op', 'public_key', 'account', 'chain_id', 'owner']);
 
+const valueText = (v: unknown) => printable(typeof v === 'string' ? v : (JSON.stringify(v) ?? String(v)));
+
 /** One detail value, printable ASCII only: identifiers allow-listed, everything else escaped (`sanitize.ts`). */
 function fieldText(key: string, value: unknown): string {
   if (IDENT_FIELDS.has(key) && typeof value === 'string') return ident(value);
-  return printable(typeof value === 'string' ? value : (JSON.stringify(value) ?? String(value)));
+  return valueText(value);
+}
+
+/**
+ * One governance or config change as a readable line: lists as what was removed and added ("updater_keys: removed
+ * ed25519:3PXt…"), anything else as "before -> after".
+ */
+function changeText(c: unknown): string {
+  if (!c || typeof c !== 'object' || !('field' in c)) return valueText(c);
+  const { field, before, after } = c as { field: unknown; before?: unknown; after?: unknown };
+  const name = printable(String(field));
+  if (Array.isArray(before) && Array.isArray(after)) {
+    const key = (x: unknown) => JSON.stringify(x);
+    const was = new Set(before.map(key));
+    const now = new Set(after.map(key));
+    const removed = before.filter((x) => !now.has(key(x))).map(valueText);
+    const added = after.filter((x) => !was.has(key(x))).map(valueText);
+    const parts = [removed.length ? `removed ${removed.join(', ')}` : '', added.length ? `added ${added.join(', ')}` : ''].filter(Boolean);
+    return `${name}: ${parts.length ? parts.join('; ') : 'reordered'}`;
+  }
+  return `${name}: ${valueText(before)} -> ${valueText(after)}`;
 }
 
 /**
  * Plain-text body of an alert: its details, the alert id and how to acknowledge. Built from public data only; every
- * line is printable ASCII (on-chain strings can't add lines or control characters).
+ * line is printable ASCII (on-chain strings can't add lines or control characters). A `changes` list (governance and
+ * config changes) gets one readable line per change instead of its JSON.
  */
 export function alertText(alert: Pick<AlertRow, 'id' | 'kind' | 'severity' | 'details' | 'created_at'>, envName: string): string {
   const lines = Object.entries(alert.details)
     .filter(([k]) => !HIDDEN_FIELDS.has(k))
-    .map(([k, v]) => `${printable(k)}: ${fieldText(k, v)}`.slice(0, 600));
+    .flatMap(([k, v]) => (k === 'changes' && Array.isArray(v) ? v.map(changeText) : [`${printable(k)}: ${fieldText(k, v)}`]))
+    .map((line) => line.slice(0, 600));
   lines.push(`alert: #${alert.id} (${alert.kind}, ${alert.severity}), env ${envName}, raised ${iso(alert.created_at)}`);
   if (alert.severity === 'critical') lines.push('Re-sent every 15 min until acknowledged (admin portal "Security & monitoring", or the paging app). Runbook: docs/operations.md "Watchdog alerts".');
   return lines.join('\n');

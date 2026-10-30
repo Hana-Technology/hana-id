@@ -62,7 +62,9 @@ touched, and the contract refuses them to a watchdog).
 On-chain strings in alerts (kids, providers, proposers, public keys) are attacker-chosen (any 1–128 bytes for a kid).
 `src/sanitize.ts`: titles and texts show an identifier as is only if it is `[A-Za-z0-9._:-]` and ≤ 80 characters,
 else JSON-quoted with control and non-ASCII characters escaped (`\n`, `\u00e9`), cut to 80; every other value in a
-text is escaped the same way, one line per field. Each channel then makes the whole message safe for its format: the
+text is escaped the same way, one line per field, and a `changes` list one line per change (`updater_keys: removed
+ed25519:…; added ed25519:…`, `paused: false -> true`). Every subject is `SEVERITY: title [Hana ID <env>]`: severity
+and title first, because a phone's lock screen shows only the first ~30 characters (sandbox-dev drill, 2026-10-30). Each channel then makes the whole message safe for its format: the
 ntfy title header, the Pushover and PagerDuty titles and the email subject drop CR, LF and non-ASCII (a header fetch
 can't refuse to page); Slack gets `&`, `<`, `>` as entities (no `<!channel>`, mention or link injection). The stored
 alert details keep the exact on-chain value for the portal.

@@ -1,7 +1,7 @@
 // Alert delivery (D85): first delivery on every channel of the alert's severity, retried until it succeeds (also
 // after an acknowledgement: an ack never stops a first alert), re-sends of unacknowledged critical alerts every
 // 15 min on every channel, and acknowledgements polled from the paging app. A failing channel never blocks the others.
-import { CHANNELS, type Channel, RESEND_MS } from './checks.ts';
+import { alertPlaybook, CHANNELS, type Channel, RESEND_MS } from './checks.ts';
 import type { AlertMessage, Notifier, Sender, SendResult } from './channels.ts';
 import { log } from './log.ts';
 import { ident, printable } from './sanitize.ts';
@@ -47,9 +47,9 @@ function changeText(c: unknown): string {
 }
 
 /**
- * Plain-text body of an alert: its details, the alert id and how to acknowledge. Built from public data only; every
- * line is printable ASCII (on-chain strings can't add lines or control characters). A `changes` list (governance and
- * config changes) gets one readable line per change instead of its JSON.
+ * Plain-text body of an alert: its details, the alert id, how to acknowledge, and its recovery playbook. Built from
+ * public data only; every line is printable ASCII (on-chain strings can't add lines or control characters). A
+ * `changes` list (governance and config changes) gets one readable line per change instead of its JSON.
  */
 export function alertText(alert: Pick<AlertRow, 'id' | 'kind' | 'severity' | 'details' | 'created_at'>, envName: string): string {
   const lines = Object.entries(alert.details)
@@ -57,7 +57,9 @@ export function alertText(alert: Pick<AlertRow, 'id' | 'kind' | 'severity' | 'de
     .flatMap(([k, v]) => (k === 'changes' && Array.isArray(v) ? v.map(changeText) : [`${printable(k)}: ${fieldText(k, v)}`]))
     .map((line) => line.slice(0, 600));
   lines.push(`alert: #${alert.id} (${alert.kind}, ${alert.severity}), env ${envName}, raised ${iso(alert.created_at)}`);
-  if (alert.severity === 'critical') lines.push('Re-sent every 15 min until acknowledged (admin portal "Security & monitoring", or the paging app). Runbook: docs/operations.md "Watchdog alerts".');
+  if (alert.severity === 'critical') lines.push('Re-sent every 15 min until acknowledged (admin portal "Security & monitoring", or the paging app).');
+  const playbook = alertPlaybook(alert.kind);
+  if (playbook) lines.push(`Playbook: ${playbook} (admin portal "Security & monitoring" > Playbooks; docs/playbooks.md#${playbook})`);
   return lines.join('\n');
 }
 

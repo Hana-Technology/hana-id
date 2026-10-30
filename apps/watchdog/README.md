@@ -5,8 +5,9 @@ service", `docs/decisions.md` D33, D82–D86). A Cloudflare Worker on **its own 
 MFA from the API's, D86), its own NEAR account and key, its own D1, its own Resend key, Slack webhook and paging-app
 credentials. It reads the chain through its own RPC (manifest `rpc`, then `rpcFallback`), never through the API.
 
-Not deployed anywhere yet. Testnet only: it checks the RPC's `chain_id` against the manifest's `network` every run and
-sends nothing on a mismatch.
+Deployed on sandbox-dev (2026-10-30, on the API's Cloudflare account for the drills only, D125; `docs/operations.md`
+"Watchdog service"); no other env yet. Testnet only: it checks the RPC's `chain_id` against the manifest's `network`
+every run and sends nothing on a mismatch.
 
 ## What a run does (every 5 min)
 
@@ -84,7 +85,11 @@ the heartbeat so the dead-man's switch pages.
 | warning | Slack + email | no |
 | info | status endpoint + daily digest email (after `watchdog.digestHourUtc`, UTC) | no |
 
-Every alert kind with its severity is in `src/checks.ts` `ALERT_KINDS`. A condition alert (e.g. `rpc_failing`) is
+Every alert kind with its severity is in `src/checks.ts` `ALERT_KINDS`, and every kind has a recovery playbook in
+`@hana-id/playbooks` (`packages/playbooks`, D126; rendered as `docs/playbooks.md` and in the admin portal):
+`alertPlaybook(kind)` gives its id, each alert text ends with `Playbook: <id> (admin portal "Security & monitoring" >
+Playbooks; docs/playbooks.md#<id>)`, and `test/registry.test.ts` fails when a kind has none, when a playbook names a
+kind the watchdog doesn't raise, or when a playbook's severity isn't the highest of its kinds. A condition alert (e.g. `rpc_failing`) is
 raised once while its condition lasts and resolved when a run no longer sees it; an event alert (e.g. a cancelled
 forgery) once ever. A first delivery is retried on each run until every channel accepted it, **also after an
 acknowledgement**: an ack stops only the re-sends, never the first alert. A failing channel never blocks the others.
@@ -105,14 +110,14 @@ route answers 503. Responses are JSON, `cache-control: no-store`.
 
 | Route | Returns |
 |---|---|
-| `GET /status` | `env`, `network`, `signer`, `watchdog_account`, `now`, `run_interval_ms` (300000), `resend_ms`, `initialized_at`, `last_run` (`{id, started_at, finished_at, outcome, first_run, checks: [{id, outcome, detail?}]}`), `silent` (no finished run within two intervals: the portal's warning banner), `heartbeat` (`{configured, last_ping_at, last_ok_at, ok, failures}`), `channels` (configured or not, pager provider), `seen_kids` (`{provider, kid, n, e, source, first_seen_at, last_seen_at}`), `actions` (last 50), `open_alerts` (unacknowledged critical and open conditions), `checks` and `alert_kinds` (the registry) |
+| `GET /status` | `env`, `network`, `signer`, `watchdog_account`, `now`, `run_interval_ms` (300000), `resend_ms`, `initialized_at`, `last_run` (`{id, started_at, finished_at, outcome, first_run, checks: [{id, outcome, detail?}]}`), `silent` (no finished run within two intervals: the portal's warning banner), `heartbeat` (`{configured, last_ping_at, last_ok_at, ok, failures}`), `channels` (configured or not, pager provider), `seen_kids` (`{provider, kid, n, e, source, first_seen_at, last_seen_at}`), `actions` (last 50), `open_alerts` (unacknowledged critical and open conditions), `checks` and `alert_kinds` (the registry: per kind `{severity, check, description, playbook}`, `playbook` = the id of its `@hana-id/playbooks` playbook, the portal's link target) |
 | `GET /alerts?cursor=<id>&limit=<1..200>&severity=<critical\|warning\|info>` | `{alerts: [{id, kind, severity, title, details, created_at, resolved_at, acked_at, acked_by, acked_via, last_sent_at, send_count, pending_channels, channels, resends_until_ack, deliveries: [{channel, kind, at, ok, error}]}], next_cursor}`, newest first |
 | `GET /actions?cursor=<id>&limit=<1..200>` | `{actions: [{id, run_id, at, method, args, reason, ok, tx_hash, error}], next_cursor}`, newest first (`tx_hash` for transaction links) |
 | `POST /alerts/:id/ack` `{"by": "<who>"}` | Records the acknowledgement once (`acked_via: "portal"`, `acked_by` 1–200 characters: the Access identity), `200 {alert}`; `409` if already acknowledged (the first ack is kept); `404`, `400`, `413`, `415` |
 
 Nothing else is writable: the endpoint can't change a check, stop a first delivery or call the chain. The portal's
-registry test imports `CHECK_IDS` and `ALERT_KINDS` from `src/checks.ts` and fails when one has no rendering (D83's
-standing rule).
+registry test (batch C, not built yet) imports `CHECK_IDS` and `ALERT_KINDS` from `src/checks.ts` and fails when one
+has no rendering (D83's standing rule); the portal links each alert to its playbook by the kind's `playbook` id.
 
 ## Configuration
 
@@ -156,7 +161,8 @@ Setup and deploy steps are in `docs/operations.md` "Watchdog service".
 
 `test/` runs in workerd with a real (local) D1: `run.test.ts` covers every rule above against a stub chain, a scripted
 JWKS and recording channels; `alerts.test.ts` routing, re-sends, acks and failing channels; `channels.test.ts` each
-adapter's request; `sanitize.test.ts` hostile kids (line breaks, `<!channel>`, 128 bytes, non-ASCII) through every
+adapter's request; `registry.test.ts` that every alert kind has exactly one playbook (and its line in the alert text);
+`sanitize.test.ts` hostile kids (line breaks, `<!channel>`, 128 bytes, non-ASCII) through every
 channel and a full run; `status.test.ts` the endpoints; `near.test.ts` the RPC client (fallback) and the signed
 transactions; `worker.test.ts` the cron handler end to end with the real wiring behind one stubbed `fetch`, and that
 no secret value appears in any log line or stored row. `scripts/test/` covers the config generator and the secrets

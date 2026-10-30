@@ -182,6 +182,9 @@ importers:
       '@hana-id/jwks':
         specifier: workspace:*
         version: link:../../packages/jwks
+      '@hana-id/playbooks':
+        specifier: workspace:*
+        version: link:../../packages/playbooks
       '@near-js/crypto':
         specifier: 2.5.1
         version: 2.5.1(@near-js/types@2.5.1)(@near-js/utils@2.5.1(@near-js/types@2.5.1))
@@ -272,6 +275,21 @@ importers:
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.5
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.12
+        version: 4.1.12(@types/node@22.20.5)(happy-dom@21.0.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15))
+
+  packages/playbooks:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.5
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

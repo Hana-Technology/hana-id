@@ -1,7 +1,9 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-10-30 (branch `docs/watchdog-hosting`: watchdog hosting, D125; before it
-`gov/sandbox-handover`: sandbox-dev's owner is now its council DAO, council-setup's DAO check, the upgrade drill).
+Last verified against code: 2026-10-30 (branch `feat/recovery-playbooks`: the watchdog alerts runbook now points at
+`docs/playbooks.md`, `owner:call` takes `set_sessions_valid_from_ms`; before it `docs/watchdog-hosting`: watchdog
+hosting, D125; `gov/sandbox-handover`: sandbox-dev's owner is now its council DAO, council-setup's DAO check, the
+upgrade drill).
 
 Commands and flags are from `scripts/`, `apps/api/scripts/gen-wrangler.ts`, `apps/api/scripts/pages-wrangler.ts`,
 `apps/demo/scripts/gen-wrangler.ts`, the `package.json` scripts and their tests. Endpoints:
@@ -302,8 +304,9 @@ disk for mainnet.
 
 ### Owner actions through the council
 
-`owner:call` sends one owner-only method (the list is `OWNER_METHODS` in `scripts/lib/contract.ts`) through the
-manifest's owner:
+`owner:call` sends one owner-only method (the list is `OWNER_METHODS` in `scripts/lib/contract.ts`, kept a superset of
+the contract's owner-only methods by `scripts/test/contract-constants.test.ts`, so every recovery playbook's owner call
+goes through it, `set_sessions_valid_from_ms` included) through the manifest's owner:
 
 - `ownerKind: "account"`: the owner's keychain key signs it.
 - `ownerKind: "sputnik"`: a `FunctionCall` proposal (receiver `signer`, the JSON args, no deposit, 100 Tgas or
@@ -929,23 +932,38 @@ replace in the file and `wrangler secret put`.
 
 Critical alerts page both founders (paging app + Slack + email) and are re-sent every 15 min until someone
 acknowledges them in the admin portal (or in Pushover). Acknowledging stops only the re-sends. Every alert's text
-names its id and kind; the full details are in `GET /alerts`. Owner actions below go through the owner: on an env
-whose owner is the DAO, a 2-of-3 `FunctionCall` proposal to `signer` (D81); on an env still owned by an account,
-`near contract call-function as-transaction <signer> <method> json-args '<args>' prepaid-gas '30 Tgas'
-attached-deposit '0 NEAR' sign-as <owner> network-config testnet sign-with-legacy-keychain send`.
+names its id, its kind and its playbook (`Playbook: <id>`); the full details are in `GET /alerts`, and `GET /status`
+`alert_kinds` gives each kind's `playbook`.
 
-| Kind | What it means | What to do |
+**What to do is in the playbooks**: [`docs/playbooks.md`](playbooks.md), generated from `packages/playbooks` (D126),
+the same source the admin portal's "Security & monitoring" view renders. Each one has the signals, the impact, the
+ordered steps with who acts (the council, a founder, anyone, the watchdog, the API cron, scope owners, the user) and the real commands, how
+to verify, and the follow-ups. A test fails when an alert kind has no playbook (`apps/watchdog/test/registry.test.ts`).
+This table only says what each kind means:
+
+| Kind | What it means | Playbook |
 |---|---|---|
-| `forged_key_change` | A pending issuer key Google doesn't publish (or with other material), or any change the updater (the signer account) proposed for a provider other than Google (`reason: updater_other_provider`: the updater only serves Google). The watchdog cancelled it and, if the updater proposed it, deleted every updater key. The title and `details.outcome` say what happened: `cancelled`; `gone` (someone else cancelled it first); `executed` (it took effect before the cancel: also a `protective_action_failed`, and the run pauses on the now-active key); `unknown` (gone, and the re-read failed); `failed`; `not_sent` (the watchdog couldn't act) | Treat `KEYS_UPDATER_KEY` (the API Worker's secrets) as stolen: find how, rotate. Re-add a fresh updater key (`add_updater_key`) and set it on the API. If the owner proposed it, treat the owner council as compromised. On `executed`: follow `forged_active_key` |
-| `forged_active_key` | A key Google doesn't publish is **active**: the contract is paused (logins and derivation stop) and every updater key deleted (D126). While it was active, anyone holding its private key could open sessions for any user's path and post OIDC-owner tokens and client proofs | Stay paused until all four steps are done, in this order: (1) the owner removes the key (`remove_issuer_key {provider, kid}`); (2) the owner raises the session floor past the pause: `set_sessions_valid_from_ms {sessions_valid_from_ms: <block time of the "paused" event, ms> + 1}`. Sessions opened with the forged key otherwise keep deriving after the unpause, for up to 24 h (`MAX_SESSION_MS`) with whatever `max_uses` the attacker chose; with the floor every session opened before the pause is gone (users log in again); (3) a fresh updater key: move `.secrets/<env>/keys-updater.json` aside, `deploy-contract <env>` (the owner's `add_updater_key`), upload it as `KEYS_UPDATER_KEY` (an updater key added while the forged key is still active is deleted again by the watchdog: hence after step 1); (4) `unpause {}` (at once). Then review every scope change proposed while the key was active (`change_proposed` events since its `issuer_key_set`): the unpause gives each pending change a full `change_delay_ms` again (`get_config().changes_unlock_floor_ms`), and its OIDC owners cancel the ones they didn't make (`cancel_change`); Hana can't cancel scope changes. Changes that already executed or immediate actions (`remove_client`, `disable_shared_login`) by forged owner tokens are reverted by the scope's owners. Find how the key got there: delay while the watchdog was down, an owner post, or an upgrade. The watchdog pauses again while the key stays active |
-| `published_key_removal` | A pending removal of a kid Google still publishes (logins with it would break) | The owner cancels it (`cancel_issuer_key_change {id}`) unless it is intended; then as for a stolen updater key |
-| `unknown_active_key_first_run` | First run only: an active kid not in Google's JWKS today (often an old kid Google dropped), or with other material | Check the kid against Google's history; remove it if it isn't Google's (with other material the next run pauses) |
-| `unverifiable_key_change` | A pending change the owner proposed for an issuer other than Google (the watchdog has no JWKS for it; one the updater proposed is a `forged_key_change`) | Check it by hand; the owner cancels anything unexpected |
-| `governance_change` | An upgrade proposal or execution, owner transfer, withdrawal, watchdog, updater-key, delay or console-audience change, pause or unpause (`unpaused_at_ms` shows one that fell between two runs), a raised session floor (`sessions_valid_from_ms`), a change of the owner DAO's code or policy (`owner_code_hash`, `owner_policy`: a `ChangePolicy`, `AddMember` or `RemoveMember`), or the owner's immediate issuer actions, which leave no pending state: `issuer` (`set_issuer` changed Google's iss values) and `issuer_keys` (an active kid disappeared without a pending removal leaving the queue: `remove_issuer_key`; also a removal proposed and confirmed by another watchdog between two runs) | Confirm that the council did it on purpose. If not: `cancel_upgrade`, `cancel_owner_proposal`, `cancel_withdrawal`, a delay change back, and treat the council as compromised. Nobody but the owner can cancel an upgrade (D84). A DAO policy that is no longer exactly the manifest's council at 2 of 3 for every kind also blocks every `deploy-contract` run and shows in `governance:status`. A removed Google kid Google still publishes breaks logins signed with it until the updater re-proposes it |
-| `automatic_action`, `protective_action_failed` | The watchdog acted again (e.g. paused after an unpause), or a cancel, pause or deletion it sent failed, or a forged change it tried to cancel was executed first (or it couldn't tell) | Failed: do it through the owner at once (cancel the change, pause); check the watchdog key's allowance and RPC. Executed: the key is active, see `forged_active_key` |
-| `not_a_watchdog`, `watchdog_key_missing`, `wrong_network` | The watchdog can't act: its account isn't a contract watchdog, its key is missing or bad, or its RPC is on another chain | Fix the config (`add_watchdog`, `WATCHDOG_KEY`, the manifest `rpc`); until then nothing cancels forged keys |
-| warning `rpc_failing`, `jwks_failing`, `heartbeat_failing`, `channel_not_configured` | The watchdog is partly blind or mute | Fix the RPC, the secret or the channel; a dead watchdog is caught by the dead-man's switch |
-| warning `unexecuted_key_change`, `stale_active_key` | A matured key change nobody executed (> 1 h), or an active kid Google dropped > 3 h ago | Check the API cron (it executes due changes and proposes removals) |
+| `forged_key_change` | A pending issuer key Google doesn't publish (or with other material), or any change the updater (the signer account) proposed for a provider other than Google (`reason: updater_other_provider`: the updater only serves Google). The watchdog cancelled it and, if the updater proposed it, deleted every updater key. The title and `details.outcome` say what happened: `cancelled`; `gone` (someone else cancelled it first); `executed` (it took effect before the cancel: also a `protective_action_failed`, and the run pauses on the now-active key); `unknown` (gone, and the re-read failed); `failed`; `not_sent` (the watchdog couldn't act) | [`forged-key-change`](playbooks.md#forged-key-change) |
+| `forged_active_key` | A key Google doesn't publish is **active**: the contract is paused (logins and derivation stop) and every updater key deleted (D126). While it was active, anyone holding its private key could open sessions for any user's path and post OIDC-owner tokens and client proofs. Recovery runs in a fixed order: remove the key, raise the session floor past the pause (`set_sessions_valid_from_ms`), a fresh updater key, unpause; the watchdog pauses again (and deletes any new updater key) while the key stays active | [`forged-active-key`](playbooks.md#forged-active-key) |
+| `published_key_removal` | A pending removal of a kid Google still publishes (logins with it would break). Alert only: the owner decides and cancels | [`published-key-removal`](playbooks.md#published-key-removal) |
+| `unknown_active_key_first_run` | First run only: an active kid not in Google's JWKS today (often an old kid Google dropped), or with other material (then the next run pauses) | [`unknown-active-key-first-run`](playbooks.md#unknown-active-key-first-run) |
+| `unverifiable_key_change` | A pending change the owner proposed for an issuer other than Google (the watchdog has no JWKS for it; one the updater proposed is a `forged_key_change`) | [`unverifiable-key-change`](playbooks.md#unverifiable-key-change) |
+| `governance_change` | An upgrade proposal or execution, owner transfer, withdrawal, watchdog, updater-key, delay or console-audience change, pause or unpause (`unpaused_at_ms` shows one that fell between two runs), a raised session floor (`sessions_valid_from_ms`), a change of the owner DAO's code or policy (`owner_code_hash`, `owner_policy`: a `ChangePolicy`, `AddMember` or `RemoveMember`), `mpc`, `ckd_domain_id` or `state_version`, or the owner's immediate issuer actions, which leave no pending state: `issuer` (`set_issuer` changed Google's iss values) and `issuer_keys` (an active kid disappeared without a pending removal leaving the queue: `remove_issuer_key`; also a removal proposed and confirmed by another watchdog between two runs). Alert only. Nobody but the owner can cancel an upgrade (D84) | [`governance-change`](playbooks.md#governance-change) |
+| `automatic_action` | The watchdog acted again for an incident it already alerted (e.g. paused again after an unpause, or deleted an updater key added while a forged key is still active) | [`watchdog-acted-again`](playbooks.md#watchdog-acted-again) |
+| `protective_action_failed` | A cancel, pause or updater-key deletion the watchdog sent failed, or a forged change it tried to cancel was executed first (or it couldn't tell) | [`protective-action-failed`](playbooks.md#protective-action-failed) |
+| `not_a_watchdog`, `watchdog_key_missing`, `wrong_network` | The watchdog can't act: its account isn't a contract watchdog, its key is missing or bad, or its RPC is on another chain; until fixed nothing cancels forged keys | [`watchdog-cannot-act`](playbooks.md#watchdog-cannot-act) |
+| warning `rpc_failing`, `jwks_failing`, `heartbeat_failing`, `channel_not_configured` | The watchdog is partly blind or mute (a dead watchdog is caught by the dead-man's switch: [`watchdog-down`](playbooks.md#watchdog-down)) | [`watchdog-degraded`](playbooks.md#watchdog-degraded) |
+| warning `unexecuted_key_change`, `stale_active_key` | A matured key change nobody executed (> 1 h), or an active kid Google dropped > 3 h ago | [`key-sync-stalled`](playbooks.md#key-sync-stalled) |
+| warning `active_key_material_unavailable` | The contract has no `get_issuer_keys` (older code): active keys are checked by kid only | [`active-key-material-unavailable`](playbooks.md#active-key-material-unavailable) |
+| warning `config_change` | Shared clients, sponsors or public registration changed | [`config-change`](playbooks.md#config-change) |
+| warning `confirm_failed` | A confirmation of a key that matches Google's JWKS failed: it goes live only after the full delay | [`confirm-failed`](playbooks.md#confirm-failed) |
+| info `key_change_confirmed`, `key_change_executed`, `key_change_cancelled` | Routine key-change events | [`key-change-lifecycle`](playbooks.md#key-change-lifecycle) |
+| info `config_matured` | A scheduled delay decrease or console-audience addition came into force | [`config-matured`](playbooks.md#config-matured) |
+| info `first_run` | The first run recorded Google's current JWKS as known | [`watchdog-first-run`](playbooks.md#watchdog-first-run) |
+
+Incidents the watchdog doesn't raise (a stolen updater or relayer key, `VAULT_KEK`, a compromised API, origin,
+watchdog or council member, a pause, Google, RPC, MPC or D1 outages, compromised Google clients, a leaked user key,
+and the planned email issuer) have their playbooks in the same file.
 
 A paused contract: only the owner unpauses (`unpause`, no delay, D82). An unpause re-arms the scope-change timelock:
 no `execute_change` before `unpause time + change_delay_ms` (`changes_unlock_floor_ms`, also in `get_scope` as each

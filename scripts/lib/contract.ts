@@ -36,6 +36,8 @@ export const UPDATER_ALLOWANCE_YOCTO = 10n ** 24n;
 /**
  * Owner-only methods of the governance contract (`Only the owner can do this`), the only ones owner-tx proposes or
  * signs (docs/governance-spec.md "How owner actions work through it"). `accept_owner` is the proposed owner's.
+ * A superset of the contract's owner-only calls (`owner_only_calls()` in contracts/hana-signer/src/tests.rs): a test
+ * keeps it so, since the recovery playbooks (`@hana-id/playbooks`) send them all through `admin owner:call`.
  */
 export const OWNER_METHODS = [
   'set_sponsors',
@@ -57,6 +59,7 @@ export const OWNER_METHODS = [
   'delete_updater_key',
   'pause',
   'unpause',
+  'set_sessions_valid_from_ms',
   'propose_upgrade',
   'cancel_upgrade',
   'propose_owner',

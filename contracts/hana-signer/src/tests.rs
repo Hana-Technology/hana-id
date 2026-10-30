@@ -1148,6 +1148,7 @@ fn owner_only_calls() -> Vec<(&'static str, Box<dyn Fn(&mut HanaSigner)>)> {
         ("set_shared_clients", Box::new(|c| c.set_shared_clients(vec![]))),
         ("set_issuer", Box::new(|c| c.set_issuer("evil".into(), vec!["https://evil.example".into()]))),
         ("mark_self_issued", Box::new(|c| c.mark_self_issued("google".into()))),
+        ("accept_unrecorded_wallets", Box::new(|c| c.accept_unrecorded_wallets())),
         (
             "admin_register_scope",
             Box::new(|c| {

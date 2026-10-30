@@ -49,6 +49,7 @@ export const OWNER_METHODS = [
   'enable_public_registration',
   'set_issuer',
   'mark_self_issued',
+  'accept_unrecorded_wallets',
   'admin_register_scope',
   'set_issuer_key',
   'propose_issuer_key_removal',

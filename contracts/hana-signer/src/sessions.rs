@@ -183,6 +183,23 @@ pub fn ckd_request_bytes(pk1: &str, pk2: &str) -> Vec<u8> {
     format!("{}{}:{}", CKD_PREFIX, pk1, pk2).into_bytes()
 }
 
+/// Domain of the CKD payload of a combined login that carries an automatic link (D133).
+pub const CKD_LINK_PREFIX: &str = "hana-id-ckd-link-v1:";
+
+/// What the session key signs for the CKD request of a `create_session_and_derive` that carries `link_jwt`:
+/// "hana-id-ckd-link-v1:" ‖ sha256(link_jwt) ‖ mode u8 (1 = `link_immediate`) ‖ pk1 ‖ ":" ‖ pk2. The user's own
+/// signature thus decides whether a link is attached, which one and in which mode: nobody can add, swap or strip it.
+/// Its own domain (and fixed-length fields before the strings) keeps it from ever reading as a plain CKD payload.
+pub fn linked_ckd_request_bytes(pk1: &str, pk2: &str, link_jwt: &str, immediate: bool) -> Vec<u8> {
+    let mut payload = CKD_LINK_PREFIX.as_bytes().to_vec();
+    payload.extend_from_slice(&env::sha256(link_jwt.as_bytes()));
+    payload.push(u8::from(immediate));
+    payload.extend_from_slice(pk1.as_bytes());
+    payload.push(b':');
+    payload.extend_from_slice(pk2.as_bytes());
+    payload
+}
+
 /// "hana-id-session-v1:" ‖ counter u64 LE ‖ sha256(payload).
 pub fn session_message_bytes(counter: u64, payload: &[u8]) -> Vec<u8> {
     let mut message = SESSION_DOMAIN.to_vec();
@@ -214,16 +231,12 @@ impl HanaSigner {
     /// Full-key mode: asks the MPC's CKD domain for the session path's secret, encrypted to the browser's BLS key
     /// (`pk1`, `pk2`). `signature` is the session key's Ed25519 signature over
     /// session_message(counter, "hana-id-ckd-v1:{pk1}:{pk2}"). Returns the MPC's `{big_y, big_c}`. Not while paused.
-    /// Records that the path's identity has a wallet (`opened`).
+    /// Records that the path's identity has a wallet (`opened`). Refused once the path's identity is a member of an
+    /// account (`Sign-in method is linked to an account`): a session opened on its own path before it joined can't
+    /// make a second wallet (D136).
     pub fn derive_key(&mut self, session_public_key: Vec<u8>, counter: u64, signature: Vec<u8>, pk1: String, pk2: String) -> Promise {
-        self.assert_not_paused();
-        assert!(pk1.len() <= MAX_BLS_KEY_BYTES && pk2.len() <= MAX_BLS_KEY_BYTES, "BLS key too long");
-        let path = self.use_session(&session_public_key, counter, signature, &ckd_request_bytes(&pk1, &pk2));
-        self.note_opened(&path);
-        mpc_contract::ext(self.mpc.clone())
-            .with_attached_deposit(MPC_FEE)
-            .with_static_gas(CKD_GAS)
-            .request_app_private_key(CkdRequestArgs { derivation_path: path, app_public_key: CkdAppPublicKey::AppPublicKeyPV { pk1, pk2 }, domain_id: self.ckd_domain_id })
+        let payload = ckd_request_bytes(&pk1, &pk2);
+        self.derive_with(session_public_key, counter, signature, pk1, pk2, &payload)
     }
 
     /// One-transaction login: exactly `create_session` followed by `derive_key` with counter 1, in one receipt.
@@ -234,9 +247,11 @@ impl HanaSigner {
     /// counter 2.
     ///
     /// `link_jwt` (optional, email login's automatic linking): a self-issued token for this scope whose nonce is the
-    /// `auto_link` nonce over this session's nonce preimage, the session identity, the target account's epoch and
-    /// `link_immediate` (default false). It links the two identities before the path is chosen (`links.rs`
-    /// `auto_link`); a panic there reverts the whole login too. Callers that pass neither are unaffected.
+    /// `auto_link` nonce over this session's nonce preimage, the session identity, the join (who joins which account),
+    /// the target account's epoch and `link_immediate` (default false). It links the two identities before the path is
+    /// chosen (`links.rs` `auto_link`); a panic there reverts the whole login too. With a link, `signature` is over
+    /// session_message(1, `linked_ckd_request_bytes`) instead, so the session key holder alone decides the link (D133).
+    /// Callers that pass neither are unaffected.
     pub fn create_session_and_derive(
         &mut self,
         jwt: String,
@@ -254,8 +269,12 @@ impl HanaSigner {
     ) -> Promise {
         assert!(link_jwt.is_some() || link_immediate.is_none(), "link_immediate needs a link_jwt");
         let link = link_jwt.map(|jwt| (jwt, link_immediate.unwrap_or(false)));
+        let payload = match &link {
+            Some((link_jwt, immediate)) => linked_ckd_request_bytes(&pk1, &pk2, link_jwt, *immediate),
+            None => ckd_request_bytes(&pk1, &pk2),
+        };
         self.open_session(jwt, scope_id, session_public_key.clone(), expires_at_ms, salt, key_index, max_uses, link);
-        self.derive_key(session_public_key, 1, signature, pk1, pk2)
+        self.derive_with(session_public_key, 1, signature, pk1, pk2, &payload)
     }
 
     /// Ends a session early. Signed by the session key over session_message(counter, "revoke").
@@ -296,6 +315,18 @@ fn verify_session_signature(session_public_key: &[u8], signature: Vec<u8>, messa
 }
 
 impl HanaSigner {
+    /// `derive_key` with the signed `payload` given (the plain or the linked CKD payload).
+    fn derive_with(&mut self, session_public_key: Vec<u8>, counter: u64, signature: Vec<u8>, pk1: String, pk2: String, payload: &[u8]) -> Promise {
+        self.assert_not_paused();
+        assert!(pk1.len() <= MAX_BLS_KEY_BYTES && pk2.len() <= MAX_BLS_KEY_BYTES, "BLS key too long");
+        let path = self.use_session(&session_public_key, counter, signature, payload);
+        self.note_opened(&path);
+        mpc_contract::ext(self.mpc.clone())
+            .with_attached_deposit(MPC_FEE)
+            .with_static_gas(CKD_GAS)
+            .request_app_private_key(CkdRequestArgs { derivation_path: path, app_public_key: CkdAppPublicKey::AppPublicKeyPV { pk1, pk2 }, domain_id: self.ckd_domain_id })
+    }
+
     /// `create_session`, with an optional automatic link `(link_jwt, link_immediate)` made before the path is chosen.
     fn open_session(
         &mut self,

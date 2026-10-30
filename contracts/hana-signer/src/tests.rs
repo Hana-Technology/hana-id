@@ -1133,7 +1133,7 @@ fn config_view() {
             "change_delay_ms":DELAY_MS,"pending_change_delay":null,"public_registration":false,
             "issuer_key_delay_ms":KEY_DELAY_MS,"pending_issuer_key_delay":null,
             "governance_delay_ms":GOV_DELAY_MS,"pending_governance_delay":null,
-            "paused":false,"unpaused_at_ms":0,"changes_unlock_floor_ms":0,"sessions_valid_from_ms":0
+            "paused":false,"unpaused_at_ms":0,"changes_unlock_floor_ms":0,"sessions_valid_from_ms":0,"unrecorded_wallets":false
         })
     );
 }
@@ -4078,7 +4078,7 @@ fn migrate_v1_keeps_every_scope_client_session_and_issuer_key() {
             "public_registration":false,
             "issuer_key_delay_ms":KEY_DELAY_MS,"pending_issuer_key_delay":null,
             "governance_delay_ms":GOV_DELAY_MS,"pending_governance_delay":null,
-            "paused":false,"unpaused_at_ms":0,"changes_unlock_floor_ms":0,"sessions_valid_from_ms":0
+            "paused":false,"unpaused_at_ms":0,"changes_unlock_floor_ms":0,"sessions_valid_from_ms":0,"unrecorded_wallets":true
         })
     );
     assert_eq!(

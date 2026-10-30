@@ -237,6 +237,8 @@ impl HanaSigner {
             links: LookupMap::new(StorageKey::Links),
             accounts: LookupMap::new(StorageKey::Accounts),
             opened: LookupSet::new(StorageKey::Opened),
+            // Wallets derived by v1/v2 code aren't in `opened`: no link until the owner accepts that (D135).
+            unrecorded_wallets: true,
         }
     }
 }

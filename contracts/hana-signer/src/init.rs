@@ -81,6 +81,7 @@ impl HanaSigner {
             links: LookupMap::new(StorageKey::Links),
             accounts: LookupMap::new(StorageKey::Accounts),
             opened: LookupSet::new(StorageKey::Opened),
+            unrecorded_wallets: false,
         };
         for public_key in updater_keys {
             this.install_updater_key(public_key).detach();

@@ -46,7 +46,7 @@ pub use governance::{
 pub use issuers::{Issuer, IssuerKeyView, IssuerView, KeyChangeView, KeyOp, PendingKeyChange, RsaKey, MAX_PENDING_KEY_CHANGES};
 pub use links::{Account, AccountView, IdentityRef, IdentityView, Member, MemberRecord, MemberView, MAX_MEMBERS, MAX_UNLINKED};
 pub use registry::{Change, Owner, OwnerAuth, PendingChange, RemovedClient, Scope};
-pub use self_issued::{SelfIssued, SelfIssuedView, SignerView, MAX_SELF_ISSUED, MAX_SELF_ISSUED_KEYS, MAX_SIGNERS, POLICY_OVERLAP_MS};
+pub use self_issued::{SelfIssued, SelfIssuedView, SignerView, MAX_SELF_ISSUED_KEYS, MAX_SIGNERS, POLICY_OVERLAP_MS, SELF_ISSUABLE};
 pub use sessions::{CkdAppPublicKey, CkdRequestArgs, Session};
 
 use near_sdk::store::{LookupMap, LookupSet};
@@ -131,6 +131,9 @@ pub struct ConfigView {
     pub changes_unlock_floor_ms: u64,
     /// Sessions opened before this can't derive and read as absent (`set_sessions_valid_from_ms`; 0: none).
     pub sessions_valid_from_ms: u64,
+    /// Links are refused until the owner accepts the wallets opened before v3 (`accept_unrecorded_wallets`; only after a
+    /// migration from pre-v3 state).
+    pub unrecorded_wallets: bool,
 }
 
 /// Contract state, layout version 3 (`state_version`). The fields before `state_version` are the v1 layout, then the
@@ -221,8 +224,8 @@ pub struct HanaSigner {
     pub(crate) pending_updater_keys: Vec<PublicKey>,
 
     // ---- v3 (email login, docs/email-login-spec.md) ----
-    /// Providers whose keys Hana itself holds (one way, ≤ `MAX_SELF_ISSUED`): owner-posted keys only, governance
-    /// delay, no early confirm, and a signer policy.
+    /// Providers whose keys Hana itself holds (one way, `SELF_ISSUABLE` only): owner-posted keys only, governance
+    /// delay, no early confirm, and a signer policy. Only `SELF_ISSUABLE` providers.
     pub(crate) self_issued: Vec<self_issued::SelfIssued>,
     /// Identity key → its account's root, for members (pending or active).
     pub(crate) links: LookupMap<links::IdentityKey, links::MemberRecord>,
@@ -230,6 +233,9 @@ pub struct HanaSigner {
     pub(crate) accounts: LookupMap<links::IdentityKey, links::Account>,
     /// Identity keys whose own path was used to derive (they "have a wallet").
     pub(crate) opened: LookupSet<links::IdentityKey>,
+    /// True after a migration from pre-v3 state (wallets derived before v3 aren't in `opened`): links are refused until
+    /// the owner calls `accept_unrecorded_wallets` (D135). False from `new`.
+    pub(crate) unrecorded_wallets: bool,
 }
 
 #[near]
@@ -387,6 +393,7 @@ impl HanaSigner {
             unpaused_at_ms: self.unpaused_at_ms,
             changes_unlock_floor_ms: self.changes_unlock_floor_ms,
             sessions_valid_from_ms: self.sessions_valid_from_ms,
+            unrecorded_wallets: self.unrecorded_wallets,
         }
     }
 }

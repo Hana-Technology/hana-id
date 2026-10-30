@@ -10,7 +10,10 @@ use near_sdk::test_utils::get_created_receipts;
 use near_sdk::{env, NearToken};
 
 use super::*;
-use crate::links::{auto_link_preimage, identity_key_preimage, ik, link_account_preimage, link_change_preimage, link_new_preimage, nonce_of, IdentityKey};
+use crate::links::{
+    auto_link_preimage, identity_key_preimage, ik, link_account_preimage, link_change_preimage, link_new_preimage, nonce_of, IdentityKey, JOIN_LINK_IDENTITY, JOIN_SESSION_IDENTITY,
+};
+use crate::sessions::linked_ckd_request_bytes;
 use crate::test_rsa::{key as rk, TestRsaKey};
 
 const EMAIL: &str = "email";
@@ -121,17 +124,49 @@ fn e_session_at(sub: &str, seed: u8, ms: u64) -> String {
     email_tok("email:s1", sub, &nonce_of(&preimage))
 }
 
-/// The `auto_link` token for a login in s1 with key `seed` by `session_ik`, joining the email identity `sub`.
-fn auto_link_tok(sub: &str, seed: u8, session_ik: &IdentityKey, target_epoch: u64, immediate: bool) -> String {
+/// The join an `auto_link` token commits to (as the issuer decides it): case A, the session identity joins the
+/// account of root `.0`; case B (or C), the link identity joins the account of root `.0`.
+#[derive(Clone, Copy)]
+enum Join {
+    A(IdentityKey),
+    B(IdentityKey),
+}
+
+/// Case A into E's account (root `eik(sub)`).
+fn ja(sub: &str) -> Join {
+    Join::A(eik(sub))
+}
+
+/// Case B into the Google identity `g`'s account (root `gik(g)`).
+fn jb(g: &str) -> Join {
+    Join::B(gik(g))
+}
+
+/// The `auto_link` token for a login in s1 with key `seed` by `session_ik`, for the email identity `sub`, with `join`.
+fn auto_link_tok(sub: &str, seed: u8, session_ik: &IdentityKey, target_epoch: u64, immediate: bool, join: Join) -> String {
     let hash = env::sha256_array(sess_preimage("s1", seed, 0));
-    email_tok("email:s1", sub, &nonce_of(&auto_link_preimage(ME, "s1", &hash, session_ik, target_epoch, immediate)))
+    let (code, joiner, target) = match join {
+        Join::A(target) => (JOIN_SESSION_IDENTITY, *session_ik, target),
+        Join::B(target) => (JOIN_LINK_IDENTITY, eik(sub), target),
+    };
+    email_tok("email:s1", sub, &nonce_of(&auto_link_preimage(ME, "s1", &hash, session_ik, code, &joiner, &target, target_epoch, immediate)))
+}
+
+/// The session key's counter-1 signature of a combined login: over the plain CKD payload, or with a link over the
+/// linked one (D133).
+fn login_sig(seed: u8, link_jwt: Option<&str>, immediate: Option<bool>) -> Vec<u8> {
+    match link_jwt {
+        Some(link) => session_sig(seed, 1, &linked_ckd_request_bytes(PK1, PK2, link, immediate.unwrap_or(false))),
+        None => ckd_sig(seed, 1, PK1, PK2),
+    }
 }
 
 /// `create_session_and_derive` in s1 for key `seed` (key_index 0, max_uses 3, expiry `expiry_at(ms)`) as RELAYER at
-/// `ms`.
+/// `ms`, signed by the session key as the vault signs it.
 fn login_at(c: &mut HanaSigner, ms: u64, jwt: String, seed: u8, link_jwt: Option<String>, immediate: Option<bool>) {
     ctx(RELAYER, ms);
-    let _ = c.create_session_and_derive(jwt, "s1".into(), pk(seed), expiry_at(ms), SALT.to_vec(), 0, 3, ckd_sig(seed, 1, PK1, PK2), PK1.into(), PK2.into(), link_jwt, immediate);
+    let sig = login_sig(seed, link_jwt.as_deref(), immediate);
+    let _ = c.create_session_and_derive(jwt, "s1".into(), pk(seed), expiry_at(ms), SALT.to_vec(), 0, 3, sig, PK1.into(), PK2.into(), link_jwt, immediate);
 }
 
 fn login(c: &mut HanaSigner, jwt: String, seed: u8, link_jwt: Option<String>, immediate: Option<bool>) {
@@ -243,10 +278,13 @@ fn email_layouts_match_the_js_implementation() {
     let p = link_change_preimage(ME, "s1", "unlink", &g, &e, 8, &SALT);
     check_email_layout("link_change_unlink", &p, Some(nonce_of(&p)));
     let hash = env::sha256_array(sess_preimage("s1", 7, 0));
-    let p = auto_link_preimage(ME, "s1", &hash, &g, 3, true);
+    let p = auto_link_preimage(ME, "s1", &hash, &g, JOIN_SESSION_IDENTITY, &g, &e, 3, true);
     check_email_layout("auto_link_immediate", &p, Some(nonce_of(&p)));
-    let p = auto_link_preimage(ME, "s1", &hash, &g, 3, false);
+    let p = auto_link_preimage(ME, "s1", &hash, &g, JOIN_LINK_IDENTITY, &e, &g, 3, false);
     check_email_layout("auto_link_delayed", &p, Some(nonce_of(&p)));
+    check_email_layout("ckd_link_payload", &linked_ckd_request_bytes("bls12381g1:A", "bls12381g2:B", r#"{"payload":"e30","signatures":[]}"#, true), None);
+    // The linked payload can never equal a plain CKD payload (other domain).
+    assert!(!linked_ckd_request_bytes(PK1, PK2, "x", true).starts_with(b"hana-id-ckd-v1:"));
     // The view gives the same key.
     let c = email_setup();
     assert_eq!(c.identity_key("s1".into(), "google".into(), USER.into()), h(&g));
@@ -289,7 +327,7 @@ fn js_signed_jws_tokens_verify() {
         EMAIL,
         vec!["hana".into(), "cosign".into()],
         2,
-        vec![(f["cosign_kid"].as_str().unwrap().into(), "cosign".into(), js_key("cosign"))],
+        vec![(f["cosign_kid"].as_str().unwrap().into(), "cosign".into(), js_key("cosign"))], true,
     );
     ctx(RELAYER, NOW_MS);
     expect_panic("Not enough signatures", || drop(c.create_session(efix_tok("email_session_s1_cosign_only"), "s1".into(), pk(7), EXPIRES_MS, SALT.to_vec(), 0, 3)));
@@ -314,8 +352,8 @@ fn mark_self_issued_is_one_way_on_a_fresh_issuer() {
     expect_panic("Only the owner can do this", || c.mark_self_issued(EMAIL.into()));
     ctx(ADMIN, NOW_MS);
     expect_panic("Unknown issuer", || c.mark_self_issued(EMAIL.into()));
-    // An issuer with keys (Google), or with a pending key change, can't become self-issued.
-    expect_panic("Issuer already has keys", || c.mark_self_issued("google".into()));
+    // Only the email provider; an email issuer with a pending key change can't become self-issued.
+    expect_panic("Only the email issuer can be self-issued", || c.mark_self_issued("google".into()));
     c.set_issuer(EMAIL.into(), vec![email_iss()]);
     let id = c.set_issuer_key(EMAIL.into(), "early".into(), rk(0).n_b64(), rk(0).e_b64(), None);
     expect_panic("Issuer already has keys", || c.mark_self_issued(EMAIL.into()));
@@ -329,15 +367,21 @@ fn mark_self_issued_is_one_way_on_a_fresh_issuer() {
     assert_eq!(c.get_self_issued("google".into()), None);
     // One way, and a second call can't reset a policy.
     expect_panic("Issuer is already self-issued", || c.mark_self_issued(EMAIL.into()));
-    // At most 4 self-issued issuers.
-    for p in ["e2", "e3", "e4", "e5"] {
-        c.set_issuer(p.into(), vec![format!("https://{p}.example")]);
-    }
-    for p in ["e2", "e3", "e4"] {
-        c.mark_self_issued(p.into());
-    }
-    expect_panic("Too many self-issued issuers", || c.mark_self_issued("e5".into()));
-    assert!(c.get_self_issued("e5".into()).is_none());
+}
+
+#[test]
+fn google_can_never_be_marked_self_issued() {
+    // Review LOW-3: an owner who removes Google's keys can't then mark google self-issued (one way), which would stop
+    // every Google login until a governed upgrade. Nor any other provider but email.
+    let mut c = setup();
+    ctx(ADMIN, NOW_MS);
+    assert!(c.remove_issuer_key("google".into(), "test-kid".into()));
+    assert!(c.get_issuer("google".into()).unwrap().kids.is_empty());
+    expect_panic("Only the email issuer can be self-issued", || c.mark_self_issued("google".into()));
+    c.set_issuer("other".into(), vec!["https://other.example".into()]);
+    expect_panic("Only the email issuer can be self-issued", || c.mark_self_issued("other".into()));
+    assert_eq!(c.get_self_issued("google".into()), None);
+    assert_eq!(SELF_ISSUABLE, ["email"]);
 }
 
 #[test]
@@ -407,13 +451,13 @@ fn one_rsa_key_never_belongs_to_two_signers_or_two_kids() {
     // A governed upgrade can't install it for another signer either.
     ctx(ME, NOW_MS);
     expect_panic("Key is already registered", || {
-        c.set_signer_policy(EMAIL, vec!["hana".into(), "cosign".into()], 2, vec![("cosign-1".into(), "cosign".into(), crate::issuers::RsaKey { n: rk(0).n.to_bytes_be(), e: rk(0).e.to_bytes_be() })]);
+        c.set_signer_policy(EMAIL, vec!["hana".into(), "cosign".into()], 2, vec![("cosign-1".into(), "cosign".into(), crate::issuers::RsaKey { n: rk(0).n.to_bytes_be(), e: rk(0).e.to_bytes_be() })], true);
     });
     // And a pending addition whose key a governed upgrade installed meanwhile can't execute.
     let mut c = email_setup();
     let id = post_owner_key(&mut c, EMAIL, "hana-3", rk(3), Some("hana"));
     ctx(ME, NOW_MS);
-    c.set_signer_policy(EMAIL, vec!["hana".into(), "cosign".into()], 2, vec![("cosign-1".into(), "cosign".into(), crate::issuers::RsaKey { n: rk(3).n.to_bytes_be(), e: rk(3).e.to_bytes_be() })]);
+    c.set_signer_policy(EMAIL, vec!["hana".into(), "cosign".into()], 2, vec![("cosign-1".into(), "cosign".into(), crate::issuers::RsaKey { n: rk(3).n.to_bytes_be(), e: rk(3).e.to_bytes_be() })], true);
     ctx(ANYONE, NOW_MS + GOV_DELAY_MS);
     expect_panic("Key is already registered", || c.execute_issuer_key_change(id));
 }
@@ -558,7 +602,7 @@ fn hostile_jws_json_tokens_are_refused() {
 fn two_of_two(at: u64) -> HanaSigner {
     let mut c = email_setup();
     ctx(ME, at);
-    c.set_signer_policy(EMAIL, vec!["hana".into(), "cosign".into()], 2, vec![(COSIGN_KID.into(), "cosign".into(), crate::issuers::RsaKey { n: rk(2).n.to_bytes_be(), e: rk(2).e.to_bytes_be() })]);
+    c.set_signer_policy(EMAIL, vec!["hana".into(), "cosign".into()], 2, vec![(COSIGN_KID.into(), "cosign".into(), crate::issuers::RsaKey { n: rk(2).n.to_bytes_be(), e: rk(2).e.to_bytes_be() })], true);
     c
 }
 
@@ -610,15 +654,15 @@ fn a_signer_policy_is_validated() {
     ctx(ME, NOW_MS);
     let key = |i: usize| crate::issuers::RsaKey { n: rk(i).n.to_bytes_be(), e: rk(i).e.to_bytes_be() };
     let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-    expect_panic("A policy needs 1 to 3 signers", || c.set_signer_policy(EMAIL, vec![], 1, vec![]));
-    expect_panic("A policy needs 1 to 3 signers", || c.set_signer_policy(EMAIL, s(&["a", "b", "c", "d"]), 1, vec![]));
-    expect_panic("Duplicate signer", || c.set_signer_policy(EMAIL, s(&["hana", "hana"]), 1, vec![]));
-    expect_panic("Invalid signer id", || c.set_signer_policy(EMAIL, s(&["Hana"]), 1, vec![]));
-    expect_panic("required must be 1 to the number of signers", || c.set_signer_policy(EMAIL, s(&["hana"]), 0, vec![]));
-    expect_panic("required must be 1 to the number of signers", || c.set_signer_policy(EMAIL, s(&["hana"]), 2, vec![]));
-    expect_panic("Unknown signer", || c.set_signer_policy(EMAIL, s(&["hana"]), 1, vec![("x".into(), "cosign".into(), key(2))]));
-    expect_panic("Kid is already active", || c.set_signer_policy(EMAIL, s(&["hana", "cosign"]), 2, vec![(HANA_KID.into(), "cosign".into(), key(2))]));
-    expect_panic("Not a self-issued issuer", || c.set_signer_policy("google", s(&["hana"]), 1, vec![]));
+    expect_panic("A policy needs 1 to 3 signers", || c.set_signer_policy(EMAIL, vec![], 1, vec![], true));
+    expect_panic("A policy needs 1 to 3 signers", || c.set_signer_policy(EMAIL, s(&["a", "b", "c", "d"]), 1, vec![], true));
+    expect_panic("Duplicate signer", || c.set_signer_policy(EMAIL, s(&["hana", "hana"]), 1, vec![], true));
+    expect_panic("Invalid signer id", || c.set_signer_policy(EMAIL, s(&["Hana"]), 1, vec![], true));
+    expect_panic("required must be 1 to the number of signers", || c.set_signer_policy(EMAIL, s(&["hana"]), 0, vec![], true));
+    expect_panic("required must be 1 to the number of signers", || c.set_signer_policy(EMAIL, s(&["hana"]), 2, vec![], true));
+    expect_panic("Unknown signer", || c.set_signer_policy(EMAIL, s(&["hana"]), 1, vec![("x".into(), "cosign".into(), key(2))], true));
+    expect_panic("Kid is already active", || c.set_signer_policy(EMAIL, s(&["hana", "cosign"]), 2, vec![(HANA_KID.into(), "cosign".into(), key(2))], true));
+    expect_panic("Not a self-issued issuer", || c.set_signer_policy("google", s(&["hana"]), 1, vec![], true));
     // Nothing changed.
     assert_eq!(c.get_self_issued(EMAIL.into()).unwrap().required, 1);
     assert_eq!(c.get_self_issued(EMAIL.into()).unwrap().signers.len(), 1);
@@ -708,7 +752,7 @@ fn a_bare_create_session_front_run_does_not_create_a_wallet() {
     ctx(MALLORY, NOW_MS);
     c.create_session(g_session(G, 8), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3);
     assert!(!c.get_identity("s1".into(), "google".into(), G.into()).opened);
-    login(&mut c, g_session(G, 9), 9, Some(auto_link_tok(&e, 9, &gik(G), 0, true)), Some(true));
+    login(&mut c, g_session(G, 9), 9, Some(auto_link_tok(&e, 9, &gik(G), 0, true, ja(&e))), Some(true));
     assert_eq!(path_of(&c, 9), format!("s1#email#{e}#0"));
 }
 
@@ -731,7 +775,7 @@ fn case_a_google_joins_the_email_wallet_at_once() {
     let mut c = email_setup();
     let e = esub("alice@gmail.com");
     email_wallet(&mut c, &e, 7);
-    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true)), Some(true));
+    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true, ja(&e))), Some(true));
     // The login opens E's wallet; G is an active automatic member of E's account.
     assert_eq!(mpc_path(), format!("s1#email#{e}#0"));
     assert_eq!(path_of(&c, 8), format!("s1#email#{e}#0"));
@@ -772,7 +816,7 @@ fn case_a_must_be_immediate() {
     let e = esub("alice@corp.example");
     email_wallet(&mut c, &e, 7);
     ctx(RELAYER, NOW_MS);
-    expect_panic("This link must be immediate", || login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, false)), None));
+    expect_panic("This link must be immediate", || login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, false, ja(&e))), None));
 }
 
 #[test]
@@ -780,7 +824,7 @@ fn case_b_with_link_immediate_joins_the_email_identity_to_the_google_wallet_at_o
     let mut c = email_setup();
     let e = esub("alice@gmail.com");
     google_wallet(&mut c, G, 7);
-    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true)), Some(true));
+    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true, jb(G))), Some(true));
     assert_eq!(mpc_path(), format!("s1#google#{G}#0"));
     assert_eq!(events_named("identity_linked")[0]["member"], h(&eik(&e)));
     // E's email logins now open G's wallet.
@@ -794,7 +838,7 @@ fn case_b_without_link_immediate_waits_the_change_delay() {
     let mut c = email_setup();
     let e = esub("alice@corp.example");
     google_wallet(&mut c, G, 7);
-    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, false)), None);
+    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, false, jb(G))), None);
     // This login (G's own) opens G's wallet at once.
     assert_eq!(mpc_path(), format!("s1#google#{G}#0"));
     assert_eq!(
@@ -824,7 +868,7 @@ fn lazy_activation_waits_for_the_unpause_floor() {
     let mut c = email_setup();
     let e = esub("alice@corp.example");
     google_wallet(&mut c, G, 7);
-    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, false)), None);
+    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, false, jb(G))), None);
     // A pause and unpause at NOW + 10 re-arms the change floor to NOW + 10 + DELAY: the pending link waits for it.
     ctx(ADMIN, NOW_MS + 10);
     c.pause();
@@ -836,7 +880,7 @@ fn lazy_activation_waits_for_the_unpause_floor() {
     expect_panic("Sign-in method link is pending", || login_at(&mut c, NOW_MS + DELAY_MS, e_session_at(&e, 9, NOW_MS + DELAY_MS), 9, None, None));
     let mut c = email_setup();
     google_wallet(&mut c, G, 7);
-    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, false)), None);
+    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, false, jb(G))), None);
     ctx(ADMIN, NOW_MS + 10);
     c.pause();
     c.unpause();
@@ -848,7 +892,7 @@ fn lazy_activation_waits_for_the_unpause_floor() {
 fn case_c_neither_has_a_wallet_the_session_identity_becomes_the_root() {
     let mut c = email_setup();
     let e = esub("alice@gmail.com");
-    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true)), Some(true));
+    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true, jb(G))), Some(true));
     assert_eq!(mpc_path(), format!("s1#google#{G}#0"));
     assert!(c.get_identity("s1".into(), "google".into(), G.into()).opened);
     assert_eq!(c.get_identity("s1".into(), EMAIL.into(), e).status, "member");
@@ -861,7 +905,7 @@ fn both_with_wallets_are_never_merged() {
     email_wallet(&mut c, &e, 7);
     google_wallet(&mut c, G, 8);
     ctx(RELAYER, NOW_MS);
-    expect_panic("Both sign-in methods already have a wallet", || login(&mut c, g_session(G, 9), 9, Some(auto_link_tok(&e, 9, &gik(G), 0, true)), Some(true)));
+    expect_panic("Both sign-in methods already have a wallet", || login(&mut c, g_session(G, 9), 9, Some(auto_link_tok(&e, 9, &gik(G), 0, true, ja(&e))), Some(true)));
 }
 
 #[test]
@@ -871,13 +915,13 @@ fn a_link_token_serves_only_its_session_mode_epoch_and_identity() {
     email_wallet(&mut c, &e, 7);
     let cases: Vec<(String, u8, Option<bool>, &str)> = vec![
         // Minted for the other mode.
-        (auto_link_tok(&e, 8, &gik(G), 0, false), 8, Some(true), "Link token nonce doesn't match"),
+        (auto_link_tok(&e, 8, &gik(G), 0, false, ja(&e)), 8, Some(true), "Link token nonce doesn't match"),
         // Another session key (another session nonce).
-        (auto_link_tok(&e, 9, &gik(G), 0, true), 8, Some(true), "Link token nonce doesn't match"),
+        (auto_link_tok(&e, 9, &gik(G), 0, true, ja(&e)), 8, Some(true), "Link token nonce doesn't match"),
         // Another session identity.
-        (auto_link_tok(&e, 8, &gik(G2), 0, true), 8, Some(true), "Link token nonce doesn't match"),
+        (auto_link_tok(&e, 8, &gik(G2), 0, true, ja(&e)), 8, Some(true), "Link token nonce doesn't match"),
         // A stale epoch.
-        (auto_link_tok(&e, 8, &gik(G), 1, true), 8, Some(true), "Link token nonce doesn't match"),
+        (auto_link_tok(&e, 8, &gik(G), 1, true, ja(&e)), 8, Some(true), "Link token nonce doesn't match"),
         // A session token (session nonce) as a link token.
         (e_session(&e, 8), 8, Some(true), "Link token nonce doesn't match"),
     ];
@@ -889,9 +933,9 @@ fn a_link_token_serves_only_its_session_mode_epoch_and_identity() {
         assert_eq!(c.get_account("s1".into(), EMAIL.into(), e.clone()), None, "nothing linked");
     }
     // Replaying a used link token after the account moved on (epoch 1) fails.
-    let used = auto_link_tok(&e, 8, &gik(G), 0, true);
+    let used = auto_link_tok(&e, 8, &gik(G), 0, true, ja(&e));
     login(&mut c, g_session(G, 8), 8, Some(used), Some(true));
-    let used_again = auto_link_tok(&e, 9, &gik(G2), 0, true);
+    let used_again = auto_link_tok(&e, 9, &gik(G2), 0, true, ja(&e));
     ctx(RELAYER, NOW_MS);
     expect_panic("Link token nonce doesn't match", || login(&mut c, g_session(G2, 9), 9, Some(used_again), Some(true)));
 }
@@ -902,7 +946,7 @@ fn link_token_checks() {
     let e = esub("alice@gmail.com");
     email_wallet(&mut c, &e, 7);
     let hash = env::sha256_array(sess_preimage("s1", 8, 0));
-    let nonce = nonce_of(&auto_link_preimage(ME, "s1", &hash, &gik(G), 0, true));
+    let nonce = nonce_of(&auto_link_preimage(ME, "s1", &hash, &gik(G), JOIN_SESSION_IDENTITY, &gik(G), &eik(&e), 0, true));
     let cases: Vec<(String, &str)> = vec![
         // Not a self-issued issuer's token.
         (google_tok(A, G2, &nonce), "Link token must come from a self-issued issuer"),
@@ -953,7 +997,7 @@ fn the_link_and_the_session_are_one_receipt() {
     let e = esub("alice@gmail.com");
     email_wallet(&mut c, &e, 7);
     let queue = (c.queue_head, c.queue_tail);
-    let link = auto_link_tok(&e, 8, &gik(G), 0, true);
+    let link = auto_link_tok(&e, 8, &gik(G), 0, true, ja(&e));
     let (c, err) = as_receipt(c, |c| {
         let _ = c.create_session_and_derive(g_session(G, 8), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3, ckd_sig(9, 1, PK1, PK2), PK1.into(), PK2.into(), Some(link.clone()), Some(true));
     });
@@ -968,13 +1012,13 @@ fn a_pending_session_identity_or_link_identity_is_refused() {
     let mut c = email_setup();
     let e = esub("alice@corp.example");
     google_wallet(&mut c, G, 7);
-    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, false)), None);
+    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, false, jb(G))), None);
     // E is pending in G's account: an email login with any link token is refused before the link is looked at.
     ctx(RELAYER, NOW_MS);
-    expect_panic("Sign-in method link is pending", || login(&mut c, e_session(&e, 9), 9, Some(auto_link_tok(&e, 9, &eik(&e), 1, true)), Some(true)));
+    expect_panic("Sign-in method link is pending", || login(&mut c, e_session(&e, 9), 9, Some(auto_link_tok(&e, 9, &eik(&e), 1, true, jb(G))), Some(true)));
     // A second Google identity linking E (pending elsewhere) is refused too.
     ctx(RELAYER, NOW_MS);
-    expect_panic("Sign-in method link is pending", || login(&mut c, g_session(G2, 9), 9, Some(auto_link_tok(&e, 9, &gik(G2), 1, true)), Some(true)));
+    expect_panic("Sign-in method link is pending", || login(&mut c, g_session(G2, 9), 9, Some(auto_link_tok(&e, 9, &gik(G2), 1, true, jb(G))), Some(true)));
 }
 
 #[test]
@@ -982,25 +1026,25 @@ fn already_linked_identities_and_identities_of_the_same_kind_are_refused() {
     let mut c = email_setup();
     let e = esub("alice@gmail.com");
     email_wallet(&mut c, &e, 7);
-    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true)), Some(true));
+    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true, ja(&e))), Some(true));
     // The same pair again (a race the vault retries without the link).
     ctx(RELAYER, NOW_MS);
-    expect_panic("Sign-in method is already linked", || login(&mut c, g_session(G, 9), 9, Some(auto_link_tok(&e, 9, &gik(G), 1, true)), Some(true)));
+    expect_panic("Sign-in method is already linked", || login(&mut c, g_session(G, 9), 9, Some(auto_link_tok(&e, 9, &gik(G), 1, true, ja(&e))), Some(true)));
     // A second Google identity can't join E's account: one sign-in method per provider.
     ctx(RELAYER, NOW_MS);
-    expect_panic("Account already has a sign-in method of this kind", || login(&mut c, g_session(G2, 10), 10, Some(auto_link_tok(&e, 10, &gik(G2), 1, true)), Some(true)));
+    expect_panic("Account already has a sign-in method of this kind", || login(&mut c, g_session(G2, 10), 10, Some(auto_link_tok(&e, 10, &gik(G2), 1, true, ja(&e))), Some(true)));
     // An email identity can't join a Google root that already has an email member, nor a root that is email.
     let mut c = email_setup();
     google_wallet(&mut c, G, 7);
-    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true)), Some(true));
+    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true, jb(G))), Some(true));
     ctx(RELAYER, NOW_MS);
     let e2 = esub("bob@gmail.com");
-    expect_panic("Account already has a sign-in method of this kind", || login(&mut c, g_session(G, 9), 9, Some(auto_link_tok(&e2, 9, &gik(G), 1, true)), Some(true)));
+    expect_panic("Account already has a sign-in method of this kind", || login(&mut c, g_session(G, 9), 9, Some(auto_link_tok(&e2, 9, &gik(G), 1, true, jb(G))), Some(true)));
     let mut c = email_setup();
     email_wallet(&mut c, &e, 7);
     ctx(RELAYER, NOW_MS);
-    expect_panic("Account already has a sign-in method of this kind", || login(&mut c, e_session(&e, 8), 8, Some(auto_link_tok(&e2, 8, &eik(&e), 0, true)), Some(true)));
-    expect_panic("Identities must differ", || login(&mut c, e_session(&e, 8), 8, Some(auto_link_tok(&e, 8, &eik(&e), 0, true)), Some(true)));
+    expect_panic("Account already has a sign-in method of this kind", || login(&mut c, e_session(&e, 8), 8, Some(auto_link_tok(&e2, 8, &eik(&e), 0, true, Join::B(eik(&e)))), Some(true)));
+    expect_panic("Identities must differ", || login(&mut c, e_session(&e, 8), 8, Some(auto_link_tok(&e, 8, &eik(&e), 0, true, Join::B(eik(&e)))), Some(true)));
 }
 
 // ===================================================================================================================
@@ -1128,7 +1172,7 @@ fn an_account_holds_three_members_of_three_other_providers() {
     let (a, n) = link_tokens(&root, EMAIL, &eik(&e), 3);
     ctx(RELAYER, NOW_MS);
     expect_panic("Account is full", || { let _ = c.link_identity("s1".into(), google_tok(A, G, &a), email_tok("email:s1", &e, &n), 3, SALT.to_vec()); });
-    expect_panic("Account is full", || login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 3, true)), Some(true)));
+    expect_panic("Account is full", || login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 3, true, jb(G))), Some(true)));
     // A provider the account already has (p1 again, another sub).
     let mut c = email_setup();
     google_wallet(&mut c, G, 7);
@@ -1144,7 +1188,7 @@ fn an_active_member_can_vouch_for_a_new_member() {
     let mut c = email_setup();
     let e = esub("alice@gmail.com");
     google_wallet(&mut c, G, 7);
-    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true)), Some(true));
+    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true, jb(G))), Some(true));
     // E (an active member) proves the account for p1's new identity; root = G.
     let root = gik(G);
     let (a, n) = (nonce_of(&link_account_preimage(ME, "s1", &root, &ik("s1", "p1", "u1"), 1, &SALT)), nonce_of(&link_new_preimage(ME, "s1", &root, "p1", 1, &SALT)));
@@ -1249,7 +1293,7 @@ fn unlink_by_the_root_or_the_member_and_never_automatic_again() {
     for by_member in [false, true] {
         let mut c = email_setup();
         google_wallet(&mut c, G, 7);
-        login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true)), Some(true));
+        login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true, jb(G))), Some(true));
         let jwt = if by_member { change_tok_email(&e, "unlink", &root, &member, 1) } else { change_tok_google(G, "unlink", &root, &member, 1) };
         ctx(RELAYER, NOW_MS);
         c.unlink_identity("s1".into(), jwt, h(&member), 1, SALT.to_vec());
@@ -1259,7 +1303,7 @@ fn unlink_by_the_root_or_the_member_and_never_automatic_again() {
         assert_eq!((account.members.len(), account.epoch, account.unlinked.clone()), (0, 2, vec![h(&member)]));
         // The pair is never matched automatically again, in either direction...
         ctx(RELAYER, NOW_MS);
-        expect_panic("This sign-in method was unlinked", || login(&mut c, g_session(G, 9), 9, Some(auto_link_tok(&e, 9, &gik(G), 2, true)), Some(true)));
+        expect_panic("This sign-in method was unlinked", || login(&mut c, g_session(G, 9), 9, Some(auto_link_tok(&e, 9, &gik(G), 2, true, jb(G))), Some(true)));
         // ...the member opens its own path (a new wallet: the user's explicit choice)...
         login(&mut c, e_session(&e, 10), 10, None, None);
         assert_eq!(mpc_path(), format!("s1#email#{e}#0"));
@@ -1267,7 +1311,7 @@ fn unlink_by_the_root_or_the_member_and_never_automatic_again() {
     // ...and an explicit link can still re-add it (if it has no wallet of its own).
     let mut c = email_setup();
     google_wallet(&mut c, G, 7);
-    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true)), Some(true));
+    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true, jb(G))), Some(true));
     ctx(RELAYER, NOW_MS);
     c.unlink_identity("s1".into(), change_tok_google(G, "unlink", &root, &member, 1), h(&member), 1, SALT.to_vec());
     assert_eq!(link_email_to_google(&mut c, G, &e, 2, RELAYER), NOW_MS + DELAY_MS);
@@ -1281,12 +1325,12 @@ fn a_google_member_unlinked_from_an_email_account_is_not_rematched() {
     let (root, member) = (eik(&e), gik(G));
     let mut c = email_setup();
     email_wallet(&mut c, &e, 7);
-    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true)), Some(true));
+    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true, ja(&e))), Some(true));
     ctx(RELAYER, NOW_MS);
     c.unlink_identity("s1".into(), change_tok_email(&e, "unlink", &root, &member, 1), h(&member), 1, SALT.to_vec());
     assert!(!c.get_identity("s1".into(), "google".into(), G.into()).opened);
     ctx(RELAYER, NOW_MS);
-    expect_panic("This sign-in method was unlinked", || login(&mut c, g_session(G, 9), 9, Some(auto_link_tok(&e, 9, &gik(G), 2, true)), Some(true)));
+    expect_panic("This sign-in method was unlinked", || login(&mut c, g_session(G, 9), 9, Some(auto_link_tok(&e, 9, &gik(G), 2, true, ja(&e))), Some(true)));
 }
 
 #[test]
@@ -1295,7 +1339,7 @@ fn unlink_refusals() {
     let (root, member) = (gik(G), eik(&e));
     let mut c = email_setup();
     google_wallet(&mut c, G, 7);
-    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true)), Some(true));
+    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true, jb(G))), Some(true));
     // A second member, p1 (pending).
     let (a, n) = (nonce_of(&link_account_preimage(ME, "s1", &root, &ik("s1", "p1", "u1"), 1, &SALT)), nonce_of(&link_new_preimage(ME, "s1", &root, "p1", 1, &SALT)));
     ctx(RELAYER, NOW_MS);
@@ -1426,7 +1470,7 @@ fn migrate_v2_to_v3_keeps_every_field_and_every_path() {
             "public_registration":false,
             "issuer_key_delay_ms":KEY_DELAY_MS,"pending_issuer_key_delay":{"change_delay_ms":0,"effective_at_ms":NOW_MS + GOV_DELAY_MS},
             "governance_delay_ms":GOV_DELAY_MS,"pending_governance_delay":{"change_delay_ms":HOUR_MS,"effective_at_ms":NOW_MS + GOV_DELAY_MS},
-            "paused":false,"unpaused_at_ms":NOW_MS,"changes_unlock_floor_ms":NOW_MS + DELAY_MS,"sessions_valid_from_ms":NOW_MS - HOUR_MS
+            "paused":false,"unpaused_at_ms":NOW_MS,"changes_unlock_floor_ms":NOW_MS + DELAY_MS,"sessions_valid_from_ms":NOW_MS - HOUR_MS,"unrecorded_wallets":true
         })
     );
     let gov = c.get_governance();
@@ -1511,7 +1555,7 @@ fn migrate_on_a_v3_state_keeps_accounts_and_policies() {
     let mut c = email_setup();
     let e = esub("alice@gmail.com");
     email_wallet(&mut c, &e, 7);
-    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true)), Some(true));
+    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true, ja(&e))), Some(true));
     let (policy, account) = (c.get_self_issued(EMAIL.into()), c.get_account("s1".into(), EMAIL.into(), e.clone()));
     env::state_write(&c);
     drop(c);
@@ -1542,4 +1586,220 @@ fn derivation_is_unchanged_for_v2_sessions_after_the_migration() {
     ctx(RELAYER, NOW_MS);
     derive(&mut c, 8, 1);
     assert_eq!(mpc_path(), format!("s2#google#{USER}#0"));
+}
+
+// ===================================================================================================================
+// Security review of batch 1 (2026-10-30): one regression test per finding, each failing on the code before the fix
+// ===================================================================================================================
+
+/// The combined login, with every argument given (as a front-runner or a replayer would send it).
+fn combined_with(c: &mut HanaSigner, jwt: String, seed: u8, sig: Vec<u8>, link_jwt: Option<String>, immediate: Option<bool>) {
+    let _ = c.create_session_and_derive(jwt, "s1".into(), pk(seed), EXPIRES_MS, SALT.to_vec(), 0, 3, sig, PK1.into(), PK2.into(), link_jwt, immediate);
+}
+
+#[test]
+fn review_high_1a_a_replayed_google_login_cannot_get_an_attacker_link() {
+    // A Google combined login whose arguments are public (failed, or seen in the mempool): token valid, session key
+    // unused, signature valid. Whoever can mint email tokens (a stolen issuer key) resubmits it with its own
+    // auto_link token for a fresh email identity, immediate: case B would join that email identity to G's wallet. The
+    // user's signature covers only the plain CKD payload, so the replay fails and nothing is linked (D133).
+    let mut c = email_setup();
+    google_wallet(&mut c, G, 7);
+    let user_sig = login_sig(8, None, None);
+    let attacker = esub("attacker@evil.example");
+    let link = auto_link_tok(&attacker, 8, &gik(G), 0, true, jb(G));
+    let queue = (c.queue_head, c.queue_tail);
+    let (c, err) = as_receipt(c, |c| combined_with(c, g_session(G, 8), 8, user_sig.clone(), Some(link.clone()), Some(true)));
+    assert!(err.as_deref().unwrap_or_default().contains("Invalid session signature"), "{err:?}");
+    assert_nothing_left(&c, 8, queue);
+    assert_eq!(c.get_account("s1".into(), "google".into(), G.into()), None);
+    // The user's own call (no link) still works with that signature.
+    let (c, err) = as_receipt(c, |c| combined_with(c, g_session(G, 8), 8, user_sig.clone(), None, None));
+    assert_eq!(err, None);
+    assert_eq!(c.get_session(pk(8)).unwrap().path, format!("s1#google#{G}#0"));
+}
+
+#[test]
+fn review_high_1b_the_link_of_a_case_a_login_can_be_neither_stripped_nor_changed() {
+    // The user's case-A login (G joins E's wallet) is public. Resubmitting it without the link would derive G's own
+    // path and give G a wallet, so every later case-A link fails with "both have a wallet" (D122). The signature
+    // covers the link and its mode, so stripping or changing either fails, and so does a bare create_session plus
+    // derive_key with that signature.
+    let mut c = email_setup();
+    let e = esub("alice@gmail.com");
+    email_wallet(&mut c, &e, 7);
+    let link = auto_link_tok(&e, 8, &gik(G), 0, true, ja(&e));
+    let sig = login_sig(8, Some(&link), Some(true));
+    let g_opened = |c: &HanaSigner| c.get_identity("s1".into(), "google".into(), G.into()).opened;
+    for (link_jwt, immediate) in [(None, None), (Some(link.clone()), Some(false)), (Some(auto_link_tok(&e, 8, &gik(G), 0, true, ja(&e)) + " "), Some(true))] {
+        let (c2, err) = as_receipt(c, |c| combined_with(c, g_session(G, 8), 8, sig.clone(), link_jwt.clone(), immediate));
+        c = c2;
+        assert!(err.is_some(), "accepted {link_jwt:?} {immediate:?}");
+        assert!(!g_opened(&c));
+        assert_eq!(c.get_identity("s1".into(), "google".into(), G.into()).status, "own");
+    }
+    ctx(MALLORY, NOW_MS);
+    c.create_session(g_session(G, 8), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3);
+    expect_panic("Invalid session signature", || {
+        let _ = c.derive_key(pk(8), 1, sig.clone(), PK1.into(), PK2.into());
+    });
+    assert!(!g_opened(&c));
+    // The user's call as signed links G into E's account (with a fresh session key: 8 is now taken).
+    login(&mut c, g_session(G, 9), 9, Some(auto_link_tok(&e, 9, &gik(G), 0, true, ja(&e))), Some(true));
+    assert_eq!(mpc_path(), format!("s1#email#{e}#0"));
+}
+
+#[test]
+fn review_medium_1_a_case_a_token_cannot_execute_as_case_b() {
+    // The issuer minted a case-A token (G joins E's account) while E had a wallet. If the chain state then says case
+    // B (E joins G's account) at the same epoch, the old nonce (session, G, epoch, mode) matched it. The nonce now
+    // commits to the join (who joins which account), so the token fails.
+    let mut c = email_setup();
+    let e = esub("bob@corp.example");
+    // G: no wallet, the root of an empty account at epoch 2 (a p1 identity linked, then unlinked).
+    let (g, p) = (gik(G), ik("s1", "p1", "u1"));
+    let (a, n) = (nonce_of(&link_account_preimage(ME, "s1", &g, &p, 0, &SALT)), nonce_of(&link_new_preimage(ME, "s1", &g, "p1", 0, &SALT)));
+    ctx(RELAYER, NOW_MS);
+    c.link_identity("s1".into(), google_tok(A, G, &a), p_tok("p1", "u1", &n), 0, SALT.to_vec());
+    ctx(RELAYER, NOW_MS + DELAY_MS);
+    c.unlink_identity("s1".into(), change_tok_google(G, "unlink", &g, &p, 1), h(&p), 1, SALT.to_vec());
+    assert_eq!(c.get_identity("s1".into(), "google".into(), G.into()).account_epoch, 2);
+    // A case-A token at epoch 2 while E has no wallet: the chain sees case B at epoch 2; refused.
+    let token = auto_link_tok(&e, 8, &g, 2, true, Join::A(eik(&e)));
+    let (c, err) = as_receipt(c, |c| login(c, g_session(G, 8), 8, Some(token.clone()), Some(true)));
+    assert!(err.as_deref().unwrap_or_default().contains("Link token nonce doesn't match"), "{err:?}");
+    assert!(c.get_account("s1".into(), "google".into(), G.into()).unwrap().members.is_empty());
+    // The case-B token the issuer would mint for this state works.
+    let mut c = c;
+    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &g, 2, true, jb(G))), Some(true));
+    assert_eq!(c.get_identity("s1".into(), EMAIL.into(), e).status, "member");
+}
+
+#[test]
+fn review_low_1_a_padded_or_weak_key_never_enters_a_signer_policy() {
+    // A zero-padded copy of hana's modulus as the co-signer's key would let one private key satisfy 2-of-2. The
+    // upgrade path now checks keys exactly as set_issuer_key does.
+    let mut c = email_setup();
+    ctx(ME, NOW_MS);
+    let mut padded = vec![0u8, 0u8];
+    padded.extend(rk(0).n.to_bytes_be());
+    let e = rk(0).e.to_bytes_be();
+    let policy = |c: &mut HanaSigner, n: Vec<u8>, e: Vec<u8>| {
+        c.set_signer_policy(EMAIL, vec!["hana".into(), "cosign".into()], 2, vec![(COSIGN_KID.into(), "cosign".into(), crate::issuers::RsaKey { n, e })], true);
+    };
+    expect_panic("Key is already registered", || policy(&mut c, padded.clone(), e.clone()));
+    expect_panic("Invalid RSA exponent", || policy(&mut c, rk(2).n.to_bytes_be(), vec![1]));
+    expect_panic("Invalid RSA exponent", || policy(&mut c, rk(2).n.to_bytes_be(), vec![0, 1]));
+    expect_panic("RSA modulus must be 2048-4096 bits", || policy(&mut c, vec![0xff; 128], e.clone()));
+    assert_eq!(c.get_self_issued(EMAIL.into()).unwrap().required, 1);
+    // A padded copy of a real new key is stored stripped.
+    let mut padded_new = vec![0u8];
+    padded_new.extend(rk(2).n.to_bytes_be());
+    policy(&mut c, padded_new, e);
+    let keys = c.get_issuer_keys(EMAIL.into()).unwrap();
+    assert_eq!(keys.iter().find(|k| k.kid == COSIGN_KID).unwrap().n, rk(2).n_b64());
+}
+
+#[test]
+fn review_low_2_a_member_cannot_derive_its_own_path_through_an_old_session() {
+    // Active member: G opened a session on its own path (never derived), then joined E's account (case A).
+    let mut c = email_setup();
+    let e = esub("alice@gmail.com");
+    email_wallet(&mut c, &e, 7);
+    ctx(RELAYER, NOW_MS);
+    c.create_session(g_session(G, 8), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3);
+    login(&mut c, g_session(G, 9), 9, Some(auto_link_tok(&e, 9, &gik(G), 0, true, ja(&e))), Some(true));
+    ctx(RELAYER, NOW_MS);
+    expect_panic("Sign-in method is linked to an account", || derive(&mut c, 8, 1));
+    assert!(!c.get_identity("s1".into(), "google".into(), G.into()).opened);
+    // Pending member: E opened a session on its own path (never derived), then joined G's account pending (case B).
+    let mut c = email_setup();
+    google_wallet(&mut c, G, 7);
+    ctx(RELAYER, NOW_MS);
+    c.create_session(e_session(&e, 8), "s1".into(), pk(8), EXPIRES_MS, SALT.to_vec(), 0, 3);
+    login(&mut c, g_session(G, 9), 9, Some(auto_link_tok(&e, 9, &gik(G), 0, false, jb(G))), None);
+    ctx(RELAYER, NOW_MS);
+    expect_panic("Sign-in method is linked to an account", || derive(&mut c, 8, 1));
+    assert!(!c.get_identity("s1".into(), EMAIL.into(), e).opened);
+    // A member's own session on the root's path still derives.
+    ctx(RELAYER, NOW_MS);
+    derive(&mut c, 9, 2);
+    assert_eq!(mpc_path(), format!("s1#google#{G}#0"));
+}
+
+#[test]
+fn review_low_4_links_wait_for_the_owner_after_a_pre_v3_migration() {
+    // After a v1/v2 → v3 migration, wallets derived before v3 aren't in `opened`: every link is refused until the
+    // owner accepts that (`migrate_v2_to_v3_keeps_every_field_and_every_path` shows the migration sets the flag).
+    let mut c = email_setup();
+    c.unrecorded_wallets = true;
+    let e = esub("alice@gmail.com");
+    email_wallet(&mut c, &e, 7);
+    google_wallet(&mut c, G2, 6);
+    ctx(RELAYER, NOW_MS);
+    expect_panic("Links wait until the owner accepts the wallets opened before v3", || {
+        login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, true, ja(&e))), Some(true));
+    });
+    let (a, n) = link_tokens(&gik(G2), EMAIL, &eik(&esub("w")), 0);
+    ctx(RELAYER, NOW_MS);
+    expect_panic("Links wait until the owner accepts the wallets opened before v3", || {
+        let _ = c.link_identity("s1".into(), google_tok(A, G2, &a), email_tok("email:s1", &esub("w"), &n), 0, SALT.to_vec());
+    });
+    // Logins without a link are unaffected; only the owner accepts, once.
+    login(&mut c, g_session(G, 9), 9, None, None);
+    ctx(MALLORY, NOW_MS);
+    expect_panic("Only the owner can do this", || c.accept_unrecorded_wallets());
+    ctx(ADMIN, NOW_MS);
+    c.accept_unrecorded_wallets();
+    assert_eq!(events_named("unrecorded_wallets_accepted"), vec![json!({})]);
+    assert!(!c.get_config().unrecorded_wallets);
+    ctx(ADMIN, NOW_MS);
+    c.accept_unrecorded_wallets();
+    assert!(events_named("unrecorded_wallets_accepted").is_empty());
+    login(&mut c, g_session(G2, 10), 10, Some(auto_link_tok(&esub("w2"), 10, &gik(G2), 0, true, jb(G2))), Some(true));
+    assert_eq!(c.get_identity("s1".into(), EMAIL.into(), esub("w2")).status, "member");
+}
+
+#[test]
+fn review_info_a_replacing_upgrade_can_drop_the_old_signer_at_once() {
+    // A "replace the compromised co-signer" upgrade chooses no overlap: the old co-signer's keys go at once and its
+    // signatures stop counting immediately. With the overlap (adding a signer), dropped signers' keys stay until the
+    // owner removes them, but can't count once the overlap ends.
+    let mut c = two_of_two(NOW_MS - POLICY_OVERLAP_MS);
+    ctx(ME, NOW_MS);
+    c.set_signer_policy(
+        EMAIL,
+        vec!["hana".into(), "cosign2".into()],
+        2,
+        vec![("cosign2-1".into(), "cosign2".into(), crate::issuers::RsaKey { n: rk(3).n.to_bytes_be(), e: rk(3).e.to_bytes_be() })],
+        false,
+    );
+    let view = c.get_self_issued(EMAIL.into()).unwrap();
+    assert_eq!(view.overlap_until_ms, None);
+    assert!(!c.get_issuer_keys(EMAIL.into()).unwrap().iter().any(|k| k.kid == COSIGN_KID));
+    let cl = claims(&email_iss(), "email:s1", &esub("a"), &sess_nonce("s1", 7));
+    assert_refused(&mut c, jws(&cl, &[(rk(0), HANA_KID), (rk(2), COSIGN_KID)]), "Unknown signing key");
+    assert!(try_open(&mut c, jws(&cl, &[(rk(0), HANA_KID), (rk(3), "cosign2-1")])).is_ok());
+    // With the overlap, the dropped signer's key stays listed but can't count after the overlap.
+    let mut c = two_of_two(NOW_MS - 2 * POLICY_OVERLAP_MS);
+    ctx(ME, NOW_MS - POLICY_OVERLAP_MS);
+    c.set_signer_policy(EMAIL, vec!["hana".into()], 1, vec![], true);
+    assert!(c.get_issuer_keys(EMAIL.into()).unwrap().iter().any(|k| k.kid == COSIGN_KID));
+    assert_refused(&mut c, jws(&cl, &[(rk(2), COSIGN_KID)]), "Unknown signing key");
+    assert!(try_open(&mut c, jws(&cl, &[(rk(0), HANA_KID)])).is_ok());
+}
+
+#[test]
+fn a_cancelled_automatic_link_still_matches() {
+    // User decision 2026-10-30 (D132): cancel_link doesn't mark the pair unlinked; the match stays (no second wallet).
+    let mut c = email_setup();
+    let e = esub("alice@corp.example");
+    let (root, member) = (gik(G), eik(&e));
+    google_wallet(&mut c, G, 7);
+    login(&mut c, g_session(G, 8), 8, Some(auto_link_tok(&e, 8, &gik(G), 0, false, jb(G))), None);
+    ctx(RELAYER, NOW_MS);
+    c.cancel_link("s1".into(), change_tok_google(G, "cancel", &root, &member, 1), h(&member), 1, SALT.to_vec());
+    assert!(c.get_account("s1".into(), "google".into(), G.into()).unwrap().unlinked.is_empty());
+    login(&mut c, g_session(G, 9), 9, Some(auto_link_tok(&e, 9, &gik(G), 2, false, jb(G))), None);
+    assert_eq!(c.get_identity("s1".into(), EMAIL.into(), e).status, "pending");
 }

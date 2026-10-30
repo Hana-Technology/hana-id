@@ -100,15 +100,30 @@ const linkChangeParts = ({ scopeId, action, root, member, epoch, salt = SALT }) 
   [`epoch u64 LE (${epoch})`, u64(epoch)],
   [`salt (${salt.length} bytes)`, salt],
 ];
-const autoLinkParts = ({ scopeId, sessionHash, sessionIk, epoch, immediate }) => [
+// join: 1 = the session identity joins the link identity's account (case A), 2 = the link identity joins the
+// session identity's account (cases B, C).
+const autoLinkParts = ({ scopeId, sessionHash, sessionIk, join, joiner, targetRoot, epoch, immediate }) => [
   ['domain "hana-id/auto-link/v1"', ascii('hana-id/auto-link/v1')],
   [`borsh(signer) "${SIGNER}"`, str(SIGNER)],
   [`borsh(scope_id) "${scopeId}"`, str(scopeId)],
   ['sha256(session nonce preimage) (32 bytes)', sessionHash],
   ['session_ik (32 bytes)', sessionIk],
+  [`join u8 (${join})`, u8(join)],
+  ['joiner_ik (32 bytes)', joiner],
+  ['target_root_ik (32 bytes)', targetRoot],
   [`target epoch u64 LE (${epoch})`, u64(epoch)],
   [`mode u8 (${immediate ? 1 : 0})`, u8(immediate ? 1 : 0)],
 ];
+// The CKD payload the session key signs for a combined login that carries a link (D133).
+const linkedCkdParts = ({ pk1, pk2, linkJwt, immediate }) => [
+  ['domain "hana-id-ckd-link-v1:"', ascii('hana-id-ckd-link-v1:')],
+  ['sha256(link_jwt) (32 bytes)', sha256(ascii(linkJwt))],
+  [`mode u8 (${immediate ? 1 : 0})`, u8(immediate ? 1 : 0)],
+  [`pk1 "${pk1}"`, ascii(pk1)],
+  ['":"', ascii(':')],
+  [`pk2 "${pk2}"`, ascii(pk2)],
+];
+const LINK_JWT_EXAMPLE = '{"payload":"e30","signatures":[]}';
 
 // ---- tokens: the JWS General JSON Serialization (RFC 7515 §7.2.1) ----
 
@@ -163,10 +178,12 @@ const layouts = {
     linkChangeParts({ scopeId: S1, action: 'cancel', root: GOOGLE_IK, member: EMAIL_IK, epoch: 8 })),
   link_change_unlink: example('link_change "unlink": as above with action "unlink"',
     linkChangeParts({ scopeId: S1, action: 'unlink', root: GOOGLE_IK, member: EMAIL_IK, epoch: 8 })),
-  auto_link_immediate: example('auto_link: scope s1, the session nonce preimage of the session nonce example (key 7), session identity = the google identity key, target epoch 3, mode 1 (link_immediate)',
-    autoLinkParts({ scopeId: S1, sessionHash: SESSION_HASH, sessionIk: GOOGLE_IK, epoch: 3, immediate: true })),
-  auto_link_delayed: example('auto_link: as above with mode 0 (after change_delay_ms)',
-    autoLinkParts({ scopeId: S1, sessionHash: SESSION_HASH, sessionIk: GOOGLE_IK, epoch: 3, immediate: false })),
+  auto_link_immediate: example('auto_link, case A: scope s1, the session nonce preimage of the session nonce example (key 7), session identity = the google identity key, join 1 (the session identity joins), joiner = the google key, target root = the email key, target epoch 3, mode 1 (link_immediate)',
+    autoLinkParts({ scopeId: S1, sessionHash: SESSION_HASH, sessionIk: GOOGLE_IK, join: 1, joiner: GOOGLE_IK, targetRoot: EMAIL_IK, epoch: 3, immediate: true })),
+  auto_link_delayed: example('auto_link, case B: as above with join 2 (the link identity joins), joiner = the email key, target root = the google key, mode 0 (after change_delay_ms)',
+    autoLinkParts({ scopeId: S1, sessionHash: SESSION_HASH, sessionIk: GOOGLE_IK, join: 2, joiner: EMAIL_IK, targetRoot: GOOGLE_IK, epoch: 3, immediate: false })),
+  ckd_link_payload: example(`Linked CKD payload: link_jwt ${LINK_JWT_EXAMPLE}, mode 1, pk1 "bls12381g1:A", pk2 "bls12381g2:B"`,
+    linkedCkdParts({ pk1: 'bls12381g1:A', pk2: 'bls12381g2:B', linkJwt: LINK_JWT_EXAMPLE, immediate: true }), { nonce: false }),
 };
 layouts.identity_key_google.ik = hex(GOOGLE_IK);
 layouts.identity_key_email.ik = hex(EMAIL_IK);

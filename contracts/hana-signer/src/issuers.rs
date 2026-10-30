@@ -120,6 +120,17 @@ fn strip_leading_zeros(mut bytes: Vec<u8>) -> Vec<u8> {
     bytes
 }
 
+/// The one validation of every RSA key the contract installs (`set_issuer_key`, and a governed upgrade's
+/// `set_signer_policy`): leading zeros stripped (so one modulus has one byte form and the one-modulus rule can't be
+/// dodged by padding), a 2048..=4096-bit modulus, an odd exponent of 1..=8 bytes other than 1.
+pub(crate) fn checked_rsa_key(n: Vec<u8>, e: Vec<u8>) -> RsaKey {
+    let n = strip_leading_zeros(n);
+    let e = strip_leading_zeros(e);
+    assert!((256..=512).contains(&n.len()), "RSA modulus must be 2048-4096 bits");
+    assert!(!e.is_empty() && e.len() <= 8 && e[e.len() - 1] & 1 == 1 && e != [1], "Invalid RSA exponent");
+    RsaKey { n, e }
+}
+
 impl PendingKeyChange {
     fn view(&self) -> KeyChangeView {
         let (op, n, e, signer) = match &self.op {
@@ -183,10 +194,9 @@ impl HanaSigner {
     pub fn set_issuer_key(&mut self, provider: String, kid: String, n: String, e: String, signer: Option<String>) -> u64 {
         let by = self.assert_owner_or_self();
         assert!(!kid.is_empty() && kid.len() <= MAX_KID_BYTES, "Invalid kid");
-        let n = strip_leading_zeros(oidc::decode_jwk_part(&n).unwrap_or_else(|err| env::panic_str(&err)));
-        let e = strip_leading_zeros(oidc::decode_jwk_part(&e).unwrap_or_else(|err| env::panic_str(&err)));
-        assert!((256..=512).contains(&n.len()), "RSA modulus must be 2048-4096 bits");
-        assert!(!e.is_empty() && e.len() <= 8 && e[e.len() - 1] & 1 == 1 && e != [1], "Invalid RSA exponent");
+        let n = oidc::decode_jwk_part(&n).unwrap_or_else(|err| env::panic_str(&err));
+        let e = oidc::decode_jwk_part(&e).unwrap_or_else(|err| env::panic_str(&err));
+        let RsaKey { n, e } = checked_rsa_key(n, e);
         let issuer = self.issuers.get(&provider).unwrap_or_else(|| env::panic_str("Unknown issuer"));
         assert!(!issuer.keys.contains_key(&kid), "Kid is already active");
         self.assert_key_change_room(&provider, &kid);

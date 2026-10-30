@@ -18,8 +18,9 @@ use crate::issuers::{Issuer, KeyOp, RsaKey};
 use crate::oidc::{self, JwsSignature, RsaPublicKey};
 use crate::{assert_provider, events, valid_provider, HanaSigner, HanaSignerExt};
 
-/// Self-issued providers, at most.
-pub const MAX_SELF_ISSUED: usize = 4;
+/// The providers that may be marked self-issued: Hana's email issuer only (its path provider name is frozen at the
+/// address freeze). Another one needs a governed upgrade.
+pub const SELF_ISSUABLE: [&str; 1] = ["email"];
 /// Signers in one policy, at most (= `oidc::MAX_JWS_SIGNATURES`).
 pub const MAX_SIGNERS: usize = 3;
 /// Keys of a self-issued provider (all signers, active and pending additions together), at most.
@@ -89,16 +90,17 @@ fn valid_signer_id(id: &str) -> bool {
 
 #[near]
 impl HanaSigner {
-    /// Owner, one way: makes `provider` self-issued with the policy `{signers: ["hana"], required: 1}`. The issuer must
-    /// exist and have no keys yet, active or pending (its keys are then all posted under the self-issued rules, each
-    /// with its signer).
+    /// Owner, one way: makes `provider` self-issued with the policy `{signers: ["hana"], required: 1}`. Only the
+    /// `email` provider (`SELF_ISSUABLE`, D134): marking an outside issuer such as Google would break its logins until
+    /// a governed upgrade. The issuer must exist and have no keys yet, active or pending (its keys are then all posted
+    /// under the self-issued rules, each with its signer).
     pub fn mark_self_issued(&mut self, provider: String) {
         self.assert_owner();
         assert_provider(&provider);
+        assert!(SELF_ISSUABLE.contains(&provider.as_str()), "Only the email issuer can be self-issued");
         let issuer = self.issuers.get(&provider).unwrap_or_else(|| env::panic_str("Unknown issuer"));
         assert!(self.self_issued_of(&provider).is_none(), "Issuer is already self-issued");
         assert!(issuer.keys.is_empty() && !self.key_changes.iter().any(|c| c.provider == provider), "Issuer already has keys");
-        assert!(self.self_issued.len() < MAX_SELF_ISSUED, "Too many self-issued issuers");
         self.self_issued.push(SelfIssued { provider: provider.clone(), signers: vec![LAUNCH_SIGNER.to_string()], key_signer: vec![], required: 1, overlap: None });
         events::emit("issuer_self_issued", json!({ "provider": provider }));
     }
@@ -187,13 +189,18 @@ impl HanaSigner {
     }
 
     /// For a governed upgrade's `migrate` only (no method calls it, D121): replaces the signer policy of a self-issued
-    /// provider and installs `new_keys` (kid, signer, key) as active at once, with an overlap of `POLICY_OVERLAP_MS`
-    /// during which tokens that satisfy the previous policy still pass. The upgrade itself was public for
+    /// provider and installs `new_keys` (kid, signer, key) as active at once. The upgrade itself was public for
     /// `governance_delay_ms` and the watchdog pins the new signer's keys before it executes. Panics on an invalid
-    /// policy: 1..=3 distinct valid signer ids, `required` in 1..=signers, every key's signer listed, kids new, key
-    /// material new, ≤ `MAX_SELF_ISSUED_KEYS` keys.
+    /// policy: 1..=3 distinct valid signer ids, `required` in 1..=signers, every key's signer listed, kids new, every
+    /// key valid as `set_issuer_key` checks it (`issuers::checked_rsa_key`: no zero padding, 2048–4096 bits, a sane
+    /// exponent) and its modulus new, ≤ `MAX_SELF_ISSUED_KEYS` keys.
+    ///
+    /// `overlap` (D136): `true` (adding a co-signer) keeps tokens that satisfy the previous policy valid for
+    /// `POLICY_OVERLAP_MS`, so tokens minted just before the upgrade aren't lost; signers dropped from the policy keep
+    /// their keys until the owner removes them (they can't count once the overlap ends). `false` (replacing a
+    /// compromised signer) opens no overlap and removes the keys of every dropped signer at once.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn set_signer_policy(&mut self, provider: &str, signers: Vec<String>, required: u8, new_keys: Vec<(String, String, RsaKey)>) {
+    pub(crate) fn set_signer_policy(&mut self, provider: &str, signers: Vec<String>, required: u8, new_keys: Vec<(String, String, RsaKey)>, overlap: bool) {
         assert!(!signers.is_empty() && signers.len() <= MAX_SIGNERS, "A policy needs 1 to 3 signers");
         for (i, s) in signers.iter().enumerate() {
             assert!(valid_signer_id(s), "Invalid signer id");
@@ -203,17 +210,28 @@ impl HanaSigner {
         let now = env::block_timestamp_ms();
         let mut issuer = self.issuers.get(provider).cloned().unwrap_or_else(|| env::panic_str("Unknown issuer"));
         let mut si = self.self_issued_of(provider).cloned().unwrap_or_else(|| env::panic_str("Not a self-issued issuer"));
+        if !overlap {
+            // Drop the keys of every signer that leaves the policy, at once.
+            let dropped: Vec<String> = si.key_signer.iter().filter(|(_, s)| !signers.contains(s)).map(|(k, _)| k.clone()).collect();
+            for kid in &dropped {
+                issuer.keys.remove(kid);
+            }
+            si.key_signer.retain(|(k, _)| !dropped.contains(k));
+        }
         for (kid, signer, key) in new_keys {
             assert!(signers.contains(&signer), "Unknown signer");
             assert!(!kid.is_empty() && kid.len() <= 128 && !issuer.keys.contains_key(&kid), "Kid is already active");
+            let key = crate::issuers::checked_rsa_key(key.n, key.e);
             assert!(!key_material_in_use(&issuer, &key.n), "Key is already registered");
             assert!(issuer.keys.len() < MAX_SELF_ISSUED_KEYS, "Too many keys for this issuer");
             issuer.keys.insert(kid.clone(), key);
             si.key_signer.push((kid, signer));
         }
-        if si.signers != signers || si.required != required {
-            si.overlap = Some((si.signers.clone(), si.required, now.saturating_add(POLICY_OVERLAP_MS)));
-        }
+        si.overlap = if overlap && (si.signers != signers || si.required != required) {
+            Some((si.signers.clone(), si.required, now.saturating_add(POLICY_OVERLAP_MS)))
+        } else {
+            None
+        };
         si.signers = signers;
         si.required = required;
         events::emit("signer_policy_set", json!({ "provider": provider, "signers": si.signers, "required": si.required, "overlap_until_ms": si.overlap.as_ref().map(|o| o.2) }));

@@ -218,14 +218,35 @@ pub fn link_change_preimage(signer: &str, scope_id: &str, action: &str, root: &I
     preimage
 }
 
-/// "hana-id/auto-link/v1" ‖ borsh(signer) ‖ borsh(scope_id) ‖ sha256(session nonce preimage) ‖ session_ik ‖
-/// target epoch u64 LE ‖ mode u8 (1 = `link_immediate`, else 0).
-pub fn auto_link_preimage(signer: &str, scope_id: &str, session_preimage_hash: &[u8; 32], session_ik: &IdentityKey, target_epoch: u64, immediate: bool) -> Vec<u8> {
+/// The `join` byte of the `auto_link` nonce: the session identity joins the link identity's account (case A).
+pub const JOIN_SESSION_IDENTITY: u8 = 1;
+/// The `join` byte of the `auto_link` nonce: the link identity joins the session identity's account (cases B, C).
+pub const JOIN_LINK_IDENTITY: u8 = 2;
+
+/// "hana-id/auto-link/v1" ‖ borsh(signer) ‖ borsh(scope_id) ‖ sha256(session nonce preimage) ‖ session_ik ‖ join u8
+/// (`JOIN_SESSION_IDENTITY` | `JOIN_LINK_IDENTITY`) ‖ joiner_ik ‖ target_root_ik ‖ target epoch u64 LE ‖ mode u8
+/// (1 = `link_immediate`, else 0). The issuer commits to the whole join it decided (who joins which account), so a
+/// change of chain state between minting and use can only make the token fail, never turn it into another join (D133).
+#[allow(clippy::too_many_arguments)]
+pub fn auto_link_preimage(
+    signer: &str,
+    scope_id: &str,
+    session_preimage_hash: &[u8; 32],
+    session_ik: &IdentityKey,
+    join: u8,
+    joiner: &IdentityKey,
+    target_root: &IdentityKey,
+    target_epoch: u64,
+    immediate: bool,
+) -> Vec<u8> {
     let mut preimage = AUTO_LINK_DOMAIN.to_vec();
     preimage.extend(borsh_str(signer));
     preimage.extend(borsh_str(scope_id));
     preimage.extend_from_slice(session_preimage_hash);
     preimage.extend_from_slice(session_ik);
+    preimage.push(join);
+    preimage.extend_from_slice(joiner);
+    preimage.extend_from_slice(target_root);
     preimage.extend_from_slice(&target_epoch.to_le_bytes());
     preimage.push(u8::from(immediate));
     preimage
@@ -258,6 +279,7 @@ impl HanaSigner {
         self.assert_not_paused();
         let storage_before = env::storage_usage();
         assert_salt(&salt);
+        self.assert_wallets_recorded();
         let account_token = self.verify_token(&account_jwt);
         let new_token = self.verify_token(&new_jwt);
         let scope_id = self.session_scope(&account_token.provider, &account_token.aud, &scope_id);
@@ -404,6 +426,18 @@ impl HanaSigner {
         })
     }
 
+    /// Owner, one way: declares that the wallets opened before this deployment had v3 code (when `opened` didn't
+    /// exist yet) may be ignored, which lets links be made. Needed only after a migration from v1 or v2 (sandbox-dev,
+    /// whose pre-v3 wallets are test data, D135); a deployment created with `new` records every wallet from the start
+    /// and never needs it. Event `unrecorded_wallets_accepted`.
+    pub fn accept_unrecorded_wallets(&mut self) {
+        self.assert_owner();
+        if self.unrecorded_wallets {
+            self.unrecorded_wallets = false;
+            events::emit("unrecorded_wallets_accepted", json!({}));
+        }
+    }
+
     /// The identity key of `(provider, sub)` in `scope_id`, hex (for monitors and tests).
     pub fn identity_key(&self, scope_id: String, provider: String, sub: String) -> String {
         assert_provider(&provider);
@@ -413,6 +447,13 @@ impl HanaSigner {
 }
 
 impl HanaSigner {
+    /// Links need `opened` to be complete: after a migration from pre-v3 state, until the owner accepts the wallets it
+    /// can't see (`accept_unrecorded_wallets`), every link is refused, so a funded pre-v3 wallet is never silently
+    /// joined to another identity's account.
+    fn assert_wallets_recorded(&self) {
+        assert!(!self.unrecorded_wallets, "Links wait until the owner accepts the wallets opened before v3");
+    }
+
     /// The root of `key`'s account (itself unless it is a member, pending or active).
     pub(crate) fn root_of(&self, key: &IdentityKey) -> IdentityKey {
         self.links.get(key).map_or(*key, |r| r.root)
@@ -577,6 +618,7 @@ impl HanaSigner {
         session_hash: &[u8; 32],
         now: u64,
     ) -> AutoLinked {
+        self.assert_wallets_recorded();
         let link = self.verify_token(link_jwt);
         assert!(self.self_issued_of(&link.provider).is_some(), "Link token must come from a self-issued issuer");
         let link_scope = self.session_scope(&link.provider, &link.aud, scope_id);
@@ -600,7 +642,8 @@ impl HanaSigner {
         };
         let target_epoch = self.epoch_of(&target);
         let signer = env::current_account_id();
-        let expected = nonce_of(&auto_link_preimage(signer.as_str(), scope_id, session_hash, &x, target_epoch, immediate));
+        let join = if case_a { JOIN_SESSION_IDENTITY } else { JOIN_LINK_IDENTITY };
+        let expected = nonce_of(&auto_link_preimage(signer.as_str(), scope_id, session_hash, &x, join, &joiner, &target, target_epoch, immediate));
         assert!(link.nonce.as_deref() == Some(expected.as_str()), "Link token nonce doesn't match");
         assert!(!case_a || immediate, "This link must be immediate");
         assert!(!self.unlinked_pair(&joiner, &target), "This sign-in method was unlinked");
@@ -620,10 +663,14 @@ impl HanaSigner {
     }
 
     /// Records that the identity whose own path is `path` (`{scope}#{provider}#{sub}#{key_index}`) has a wallet.
+    /// Panics if that identity is now a member (pending or active) of an account: a session it opened on its own
+    /// path before joining must not make a second wallet (D136). A path identity of a member's session is the root,
+    /// which is never a member.
     pub(crate) fn note_opened(&mut self, path: &str) {
         let parts: Vec<&str> = path.split('#').collect();
         if let [scope_id, provider, sub, _key_index] = parts.as_slice() {
             let key = ik(scope_id, provider, sub);
+            assert!(!self.links.contains_key(&key), "Sign-in method is linked to an account");
             if !self.opened.contains(&key) {
                 self.opened.insert(key);
             }

@@ -9,9 +9,9 @@ import { TGAS } from '../lib/near.ts';
 import { checkOwnerTxOptions, describeOwnerCall, ownerRoute, sendOwnerCall } from '../lib/owner-tx.ts';
 import { councilPolicy, readPin } from '../lib/sputnik.ts';
 import { SimChain } from './sim-chain.ts';
-import { fullEntry, keychainKey, NOW, secretFragments, tempRoots } from './sim-fixtures.ts';
+import { ACCOUNT_OWNER, fullEntry, keychainKey, NOW, secretFragments, tempRoots } from './sim-fixtures.ts';
 
-const base = loadEnv('sandbox-dev');
+const base: Manifest = { ...loadEnv('sandbox-dev'), ...ACCOUNT_OWNER };
 const council = base.council!;
 const [A, B, C] = council.members as [string, string, string];
 const dao = council.dao;

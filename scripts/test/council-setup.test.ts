@@ -9,9 +9,9 @@ import { councilDir, councilKeyFile, readCouncilKey, writeCouncilKey } from '../
 import { buildCouncilPlan, COUNCIL_DRY_RUN_LINE, type CouncilObserved, councilSetupMain, memberVia } from '../lib/council-setup.ts';
 import { councilPolicy, daoCreateDeposit, daoInitArgs, readPin } from '../lib/sputnik.ts';
 import { SimChain } from './sim-chain.ts';
-import { fullEntry, keychainKey, NEAR, NOW, secretFragments, tempRoots } from './sim-fixtures.ts';
+import { ACCOUNT_OWNER, fullEntry, keychainKey, NEAR, NOW, secretFragments, tempRoots } from './sim-fixtures.ts';
 
-const m = loadEnv('sandbox-dev');
+const m: Manifest = { ...loadEnv('sandbox-dev'), ...ACCOUNT_OWNER };
 const council = m.council!;
 const PIN = readPin();
 const mode = (p: string) => statSync(p).mode & 0o777;
@@ -120,6 +120,12 @@ describe('council-setup run', () => {
     const again = await setup([m.name, '--yes']);
     expect(again.sent).toEqual([]);
     expect(again.out).toContain('Nothing to do.');
+  });
+
+  it('fails when the factory left no DAO, although its transaction succeeded with an empty value', async () => {
+    chain.opts.factoryRefuses = true;
+    await expect(setup([m.name, '--yes'])).rejects.toThrow(`${council.factory}.create did not create ${council.dao} (deposit refunded)`);
+    expect(chain.daos.has(council.dao)).toBe(false);
   });
 
   it('reuses a key saved by an interrupted run instead of generating another', async () => {

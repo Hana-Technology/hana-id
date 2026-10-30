@@ -15,9 +15,9 @@ import { keysUpdaterFile, readKeysUpdater, writeKeysUpdater, writePoolKeys } fro
 import { codeHashOf, TGAS } from '../lib/near.ts';
 import { councilPolicy, readPin } from '../lib/sputnik.ts';
 import { SimChain } from './sim-chain.ts';
-import { fcEntry, fullEntry, keychainKey, NOW, secretFragments, tempRoots, UPDATER, V1_UPDATER } from './sim-fixtures.ts';
+import { ACCOUNT_OWNER, fcEntry, fullEntry, keychainKey, NOW, secretFragments, tempRoots, UPDATER, V1_UPDATER } from './sim-fixtures.ts';
 
-const base = loadEnv('sandbox-dev');
+const base: Manifest = { ...loadEnv('sandbox-dev'), ...ACCOUNT_OWNER };
 const council = base.council!;
 const [A, B] = council.members as [string, string, string];
 const dao = council.dao;

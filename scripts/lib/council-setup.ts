@@ -254,11 +254,13 @@ export async function councilSetupMain(argv: readonly string[], deps: CouncilDep
       }
       log(`    created ${step.account} (key ${publicKey.toString()})`);
     } else {
-      const { hash, value } = await rpc.sendTx(tx, m.council.factory, [
+      const { hash } = await rpc.sendTx(tx, m.council.factory, [
         actionCreators.functionCall('create', factoryCreateArgs(m.council, `hana-signer owner council for ${m.name} (D81)`, template), FACTORY_CREATE_GAS, step.depositYocto),
       ]);
       log(`    tx ${explorerTx(hash)}`);
-      if (value !== true) throw new Error(`${m.council.factory}.create returned ${JSON.stringify(value)}: the DAO was not created (deposit refunded)`);
+      // The factory doesn't return its promise, so the transaction's value is always empty (its `on_create` result is
+      // in a callback receipt): the DAO account existing is the check. The plan refused a DAO that already existed.
+      if (!(await rpc.account(m.council.dao))) throw new Error(`${m.council.factory}.create did not create ${m.council.dao} (deposit refunded)`);
       const policy = await rpc.view<SputnikPolicy>(m.council.dao, 'get_policy');
       const problems = policyProblems(policy, m.council.members, template);
       if (problems.blockers.length) throw new Error(`${m.council.dao} was created but its policy is not the council policy: ${problems.blockers.join('; ')}`);

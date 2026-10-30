@@ -1,6 +1,10 @@
 //! Sessions (an ID token binds a browser-held Ed25519 key to a derivation path) and CKD key release.
+//!
+//! The path is `{scope_id}#{provider}#{sub}#{key_index}` of the session's **path identity**: the token's own identity,
+//! or, for a member of an account (`links.rs`), the account root's. An identity in no account opens exactly the path
+//! it opened before accounts existed.
 
-// create_session takes 7 arguments and create_session_and_derive 10 (plus self): the JSON interface is flat on purpose.
+// create_session takes 7 arguments and create_session_and_derive 12 (plus self): the JSON interface is flat on purpose.
 #![allow(clippy::too_many_arguments)]
 
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
@@ -167,7 +171,9 @@ pub fn session_nonce_preimage(c: &SessionCommitment) -> Vec<u8> {
     preimage
 }
 
-/// nonce = b64url(sha256(session_nonce_preimage)).
+/// nonce = b64url(sha256(session_nonce_preimage)). (`create_session` hashes the preimage itself: the `auto_link` nonce
+/// commits to that hash too.)
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn session_nonce(c: &SessionCommitment) -> String {
     oidc::b64url(&env::sha256(session_nonce_preimage(c)))
 }
@@ -189,7 +195,9 @@ pub fn session_message_bytes(counter: u64, payload: &[u8]) -> Vec<u8> {
 impl HanaSigner {
     /// Opens a session in scope `scope_id` for the user in `jwt`, bound to `session_public_key`. The token's
     /// `(provider, aud)` must be a client of that scope, or a shared client if the scope has `allow_shared`; its nonce
-    /// must equal session_nonce(...), which commits to this deployment, the scope and every other argument.
+    /// must equal session_nonce(...), which commits to this deployment, the scope and every other argument. The path
+    /// is the path identity's (the account root's for a member); a pending member is refused (`Sign-in method link is
+    /// pending`).
     pub fn create_session(
         &mut self,
         jwt: String,
@@ -200,55 +208,18 @@ impl HanaSigner {
         key_index: u32,
         max_uses: u32,
     ) -> Session {
-        self.assert_not_paused();
-        assert!(session_public_key.len() == 32, "Session key must be a 32-byte Ed25519 public key");
-        assert!((16..=64).contains(&salt.len()), "Salt must be 16-64 bytes");
-        let now = env::block_timestamp_ms();
-        assert!(expires_at_ms > now && expires_at_ms <= now.saturating_add(MAX_SESSION_MS), "Session expiry must be within 24 hours");
-        assert!(max_uses > 0 && max_uses <= MAX_USES, "max_uses must be 1-500");
-        assert!(key_index < KEY_INDEX_LIMIT, "key_index must be below 2^31");
-        if let Some(existing) = self.sessions.get(&session_public_key) {
-            assert!(existing.expires_at_ms <= now, "Session key already in use");
-        }
-
-        let token = self.verify_token(&jwt);
-        let scope_id = self.session_scope(&token.provider, &token.aud, &scope_id);
-        let signer = env::current_account_id();
-        let nonce = session_nonce(&SessionCommitment {
-            signer: signer.as_str(),
-            scope_id: &scope_id,
-            session_public_key: &session_public_key,
-            expires_at_ms,
-            key_index,
-            max_uses,
-            salt: &salt,
-        });
-        assert!(token.nonce.as_deref() == Some(nonce.as_str()), "Token nonce doesn't commit to this session");
-
-        let stored = StoredSession {
-            path: format!("{}#{}#{}#{}", scope_id, token.provider, token.sub, key_index),
-            scope_id,
-            expires_at_ms,
-            max_uses,
-            used: 0,
-            revoked: false,
-            created_at_ms: Some(now),
-        };
-        let session = stored.view();
-        self.sessions.insert(session_public_key.clone(), stored);
-        self.session_queue.insert(self.queue_tail, QueueEntry { expires_at_ms, key: session_public_key });
-        self.queue_tail += 1;
-        self.prune(PRUNE_ON_CREATE);
-        session
+        self.open_session(jwt, scope_id, session_public_key, expires_at_ms, salt, key_index, max_uses, None)
     }
 
     /// Full-key mode: asks the MPC's CKD domain for the session path's secret, encrypted to the browser's BLS key
     /// (`pk1`, `pk2`). `signature` is the session key's Ed25519 signature over
     /// session_message(counter, "hana-id-ckd-v1:{pk1}:{pk2}"). Returns the MPC's `{big_y, big_c}`. Not while paused.
+    /// Records that the path's identity has a wallet (`opened`).
     pub fn derive_key(&mut self, session_public_key: Vec<u8>, counter: u64, signature: Vec<u8>, pk1: String, pk2: String) -> Promise {
         self.assert_not_paused();
         assert!(pk1.len() <= MAX_BLS_KEY_BYTES && pk2.len() <= MAX_BLS_KEY_BYTES, "BLS key too long");
         let path = self.use_session(&session_public_key, counter, signature, &ckd_request_bytes(&pk1, &pk2));
+        self.note_opened(&path);
         mpc_contract::ext(self.mpc.clone())
             .with_attached_deposit(MPC_FEE)
             .with_static_gas(CKD_GAS)
@@ -261,6 +232,11 @@ impl HanaSigner {
     /// behind. Returns the MPC's `{big_y, big_c}`. If the MPC itself fails, the session stays with `used = 1` (the
     /// MPC call is a separate receipt), and only a session with `max_uses ≥ 2` can retry, with `derive_key` and
     /// counter 2.
+    ///
+    /// `link_jwt` (optional, email login's automatic linking): a self-issued token for this scope whose nonce is the
+    /// `auto_link` nonce over this session's nonce preimage, the session identity, the target account's epoch and
+    /// `link_immediate` (default false). It links the two identities before the path is chosen (`links.rs`
+    /// `auto_link`); a panic there reverts the whole login too. Callers that pass neither are unaffected.
     pub fn create_session_and_derive(
         &mut self,
         jwt: String,
@@ -273,8 +249,12 @@ impl HanaSigner {
         signature: Vec<u8>,
         pk1: String,
         pk2: String,
+        link_jwt: Option<String>,
+        link_immediate: Option<bool>,
     ) -> Promise {
-        self.create_session(jwt, scope_id, session_public_key.clone(), expires_at_ms, salt, key_index, max_uses);
+        assert!(link_jwt.is_some() || link_immediate.is_none(), "link_immediate needs a link_jwt");
+        let link = link_jwt.map(|jwt| (jwt, link_immediate.unwrap_or(false)));
+        self.open_session(jwt, scope_id, session_public_key.clone(), expires_at_ms, salt, key_index, max_uses, link);
         self.derive_key(session_public_key, 1, signature, pk1, pk2)
     }
 
@@ -316,6 +296,69 @@ fn verify_session_signature(session_public_key: &[u8], signature: Vec<u8>, messa
 }
 
 impl HanaSigner {
+    /// `create_session`, with an optional automatic link `(link_jwt, link_immediate)` made before the path is chosen.
+    fn open_session(
+        &mut self,
+        jwt: String,
+        scope_id: String,
+        session_public_key: Vec<u8>,
+        expires_at_ms: u64,
+        salt: Vec<u8>,
+        key_index: u32,
+        max_uses: u32,
+        link: Option<(String, bool)>,
+    ) -> Session {
+        self.assert_not_paused();
+        assert!(session_public_key.len() == 32, "Session key must be a 32-byte Ed25519 public key");
+        assert!((16..=64).contains(&salt.len()), "Salt must be 16-64 bytes");
+        let now = env::block_timestamp_ms();
+        assert!(expires_at_ms > now && expires_at_ms <= now.saturating_add(MAX_SESSION_MS), "Session expiry must be within 24 hours");
+        assert!(max_uses > 0 && max_uses <= MAX_USES, "max_uses must be 1-500");
+        assert!(key_index < KEY_INDEX_LIMIT, "key_index must be below 2^31");
+        if let Some(existing) = self.sessions.get(&session_public_key) {
+            assert!(existing.expires_at_ms <= now, "Session key already in use");
+        }
+
+        let token = self.verify_token(&jwt);
+        let scope_id = self.session_scope(&token.provider, &token.aud, &scope_id);
+        let signer = env::current_account_id();
+        let preimage = session_nonce_preimage(&SessionCommitment {
+            signer: signer.as_str(),
+            scope_id: &scope_id,
+            session_public_key: &session_public_key,
+            expires_at_ms,
+            key_index,
+            max_uses,
+            salt: &salt,
+        });
+        let nonce = oidc::b64url(&env::sha256(&preimage));
+        assert!(token.nonce.as_deref() == Some(nonce.as_str()), "Token nonce doesn't commit to this session");
+
+        // The path identity: the token's own, or its account root's (a pending member is refused).
+        let x = crate::links::ik(&scope_id, &token.provider, &token.sub);
+        let mut root = self.settle(&scope_id, &x, now);
+        if let Some((link_jwt, immediate)) = link {
+            root = self.auto_link(&scope_id, x, root, &token, &link_jwt, immediate, &env::sha256_array(&preimage), now).path_root;
+        }
+        let (path_provider, path_sub) = self.path_identity(&root, (&token.provider, &token.sub));
+
+        let stored = StoredSession {
+            path: format!("{}#{}#{}#{}", scope_id, path_provider, path_sub, key_index),
+            scope_id,
+            expires_at_ms,
+            max_uses,
+            used: 0,
+            revoked: false,
+            created_at_ms: Some(now),
+        };
+        let session = stored.view();
+        self.sessions.insert(session_public_key.clone(), stored);
+        self.session_queue.insert(self.queue_tail, QueueEntry { expires_at_ms, key: session_public_key });
+        self.queue_tail += 1;
+        self.prune(PRUNE_ON_CREATE);
+        session
+    }
+
     /// Not revoked, and not opened before the owner's `sessions_valid_from_ms` floor. Expiry is checked by the caller.
     fn in_force(&self, s: &StoredSession) -> bool {
         !s.revoked && s.opened_no_earlier_than() >= self.sessions_valid_from_ms

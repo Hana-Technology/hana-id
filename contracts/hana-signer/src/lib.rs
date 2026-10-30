@@ -1,9 +1,14 @@
-//! Hana ID signer: turns an OIDC (Google) ID token into a session that can ask the NEAR MPC for the user's key
-//! through Confidential Key Derivation (CKD), encrypted to a key only the user's browser holds.
+//! Hana ID signer: turns an OIDC (Google, or Hana's own email issuer) ID token into a session that can ask the NEAR
+//! MPC for the user's key through Confidential Key Derivation (CKD), encrypted to a key only the user's browser holds.
 //!
 //! - `create_session` verifies the ID token on-chain (RS256 against issuer keys stored in this contract). The token's
 //!   `(provider, aud)` picks a **scope** from the registry, so each partner app gets its own keys; its `nonce` commits
-//!   to a browser-held Ed25519 session key. Path = `{scope_id}#{provider}#{sub}#{key_index}`.
+//!   to a browser-held Ed25519 session key. Path = `{scope_id}#{provider}#{sub}#{key_index}` of the token's identity,
+//!   or of its account root for a linked sign-in method (`links.rs`).
+//! - Self-issued issuers (`self_issued.rs`, email login): Hana holds their keys, so they are owner-posted only, wait
+//!   `governance_delay_ms`, are never confirmed early, and tokens are JWS JSON checked against a signer policy.
+//! - Accounts (`links.rs`): per scope, a root identity and ≤ 3 members, one per provider, linked automatically at
+//!   login (`link_jwt`) or explicitly (`link_identity`, delayed); a member opens the root's path.
 //! - `derive_key` (signed by the session key) calls the MPC's `request_app_private_key` with that path.
 //!   `create_session_and_derive` does both in one transaction (a login with a single chain round trip).
 //! - The registry (`registry.rs`) maps client ids to scopes. Scope owners (NEAR accounts or OIDC identities) manage
@@ -23,10 +28,14 @@ mod events;
 mod governance;
 mod init;
 mod issuers;
+mod links;
 mod migrate;
 mod oidc;
 mod registry;
+mod self_issued;
 mod sessions;
+#[cfg(test)]
+mod test_rsa;
 #[cfg(test)]
 mod tests;
 
@@ -35,10 +44,12 @@ pub use governance::{
     MAX_UPDATER_ALLOWANCE, MAX_UPDATER_KEYS, MAX_WATCHDOGS, MIGRATE_GAS, SIGNER_RESERVE, STATE_VERSION, UPDATER_METHODS,
 };
 pub use issuers::{Issuer, IssuerKeyView, IssuerView, KeyChangeView, KeyOp, PendingKeyChange, RsaKey, MAX_PENDING_KEY_CHANGES};
+pub use links::{Account, AccountView, IdentityRef, IdentityView, Member, MemberRecord, MemberView, MAX_MEMBERS, MAX_UNLINKED};
 pub use registry::{Change, Owner, OwnerAuth, PendingChange, RemovedClient, Scope};
+pub use self_issued::{SelfIssued, SelfIssuedView, SignerView, MAX_SELF_ISSUED, MAX_SELF_ISSUED_KEYS, MAX_SIGNERS, POLICY_OVERLAP_MS};
 pub use sessions::{CkdAppPublicKey, CkdRequestArgs, Session};
 
-use near_sdk::store::LookupMap;
+use near_sdk::store::{LookupMap, LookupSet};
 use near_sdk::{env, near, AccountId, BorshStorageKey, NearToken, PanicOnDefault, Promise, PublicKey};
 
 pub const MAX_CHANGE_DELAY_MS: u64 = 7 * 24 * 60 * 60 * 1000;
@@ -57,6 +68,10 @@ pub(crate) enum StorageKey {
     SessionQueue,
     RemovedClients,
     PendingAdds,
+    // v3 (email login). Appended: the borsh tags of the keys above don't change.
+    Links,
+    Accounts,
+    Opened,
 }
 
 /// A scheduled decrease of a delay (increases apply at once): of `change_delay_ms`, `issuer_key_delay_ms` or
@@ -118,9 +133,9 @@ pub struct ConfigView {
     pub sessions_valid_from_ms: u64,
 }
 
-/// Contract state, layout version 2 (`state_version`). The fields before `state_version` are the v1 layout,
-/// unchanged (`migrate.rs` keeps a copy of v1 for `migrate_v1`). The next layout change ships a `migrate` that reads
-/// a copy of this exact struct.
+/// Contract state, layout version 3 (`state_version`). The fields before `state_version` are the v1 layout, then the
+/// v2 fields (governance), then the v3 fields (email login), each unchanged by the next (`migrate.rs` keeps copies of
+/// v1 and v2 for the migrations). The next layout change ships a `migrate` that reads a copy of this exact struct.
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct HanaSigner {
@@ -204,6 +219,17 @@ pub struct HanaSigner {
     /// Updater keys whose `AddKey` receipt hasn't resolved yet: `on_updater_key_added` moves each to `updater_keys`
     /// on success or drops it on failure (e.g. the key was already on the account, possibly as a full-access key).
     pub(crate) pending_updater_keys: Vec<PublicKey>,
+
+    // ---- v3 (email login, docs/email-login-spec.md) ----
+    /// Providers whose keys Hana itself holds (one way, ≤ `MAX_SELF_ISSUED`): owner-posted keys only, governance
+    /// delay, no early confirm, and a signer policy.
+    pub(crate) self_issued: Vec<self_issued::SelfIssued>,
+    /// Identity key → its account's root, for members (pending or active).
+    pub(crate) links: LookupMap<links::IdentityKey, links::MemberRecord>,
+    /// Root identity key → account. Never deleted (its epoch must not restart).
+    pub(crate) accounts: LookupMap<links::IdentityKey, links::Account>,
+    /// Identity keys whose own path was used to derive (they "have a wallet").
+    pub(crate) opened: LookupSet<links::IdentityKey>,
 }
 
 #[near]

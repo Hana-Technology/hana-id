@@ -1481,3 +1481,8 @@ is a proposal there.
 
 Still open from `docs/email-login-spec.md`: the user-mail provider (Resend unless the colleague picks another,
 D87). Everything else follows D4, D119 and D121–D123.
+
+Still open in `docs/identity-token-spec.md` (D120's design, draft 2026-10-30): all 16 of its open questions (the
+`sub` sector, the algorithm, the minting Worker, mainnet key storage, lifetime, the email consent moment and whether
+it can be mandatory, the address proof, default availability, introspection, cookies, login detail claims, JWKS
+pinning, the `iss` URL, `sid` granularity, the `sub` key).

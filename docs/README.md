@@ -30,6 +30,7 @@ the batch merges, so where a spec and a reference doc disagree, the reference do
 | `governance-spec.md` | Pre-mainnet governance (D33): delayed issuer keys with a watchdog, multisig owner, timelocked upgrades, pause (draft, for review) |
 | `hana-home-spec.md` | Pre-mainnet Hana Home (D40, D45): cross-app wallets and key export for shared-login apps, consent revocation from any device (draft, for review) |
 | `email-login-spec.md` | Pre-mainnet email login (D4): Hana-run email issuer (Worker-secret key on testnet, AWS KMS before mainnet, two-signer-ready), automatic Privy-style account linking with pseudonymous ids on chain, explicit `linkAccount` (approved 2026-10-30: D119, D121–D123; not built) |
+| `identity-token-spec.md` | Pre-mainnet partner identity token (D120): a ≤ 1 h ES256 JWT for partner backends with a per-scope pseudonymous `sub`, proven wallet addresses, `sid`, opt-in verified email per app (sealed, never stored); JWKS, staged signing key (Worker secret on testnet, AWS KMS before mainnet), Privy migration (draft, 16 open questions) |
 | `hana-embed-ckd-results.md` | PoC measurements from wend-widget-demo |
 
 ## Where to put new knowledge

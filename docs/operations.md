@@ -1,7 +1,7 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-10-30 (branch `gov/sandbox-handover`: sandbox-dev's owner is now its council DAO;
-council-setup's DAO check; the upgrade drill).
+Last verified against code: 2026-10-30 (branch `docs/watchdog-hosting`: watchdog hosting, D125; before it
+`gov/sandbox-handover`: sandbox-dev's owner is now its council DAO, council-setup's DAO check, the upgrade drill).
 
 Commands and flags are from `scripts/`, `apps/api/scripts/gen-wrangler.ts`, `apps/api/scripts/pages-wrangler.ts`,
 `apps/demo/scripts/gen-wrangler.ts`, the `package.json` scripts and their tests. Endpoints:
@@ -858,8 +858,11 @@ What it checks and its status API: `apps/watchdog/README.md`. **Not deployed yet
 
 ### Setting it up (once per env)
 
-It runs on **its own Cloudflare account** (separate login and MFA from the API's account, D86); `gen` writes that
-account's id into the config, so `wrangler deploy` can't land it on the API's account. Run every `wrangler` command
+It runs on **its own Cloudflare account** (separate login and MFA from the API's account, D86, D125); `gen` writes
+that account's id into the config, so `wrangler deploy` lands it only on that account. **sandbox-dev is the
+exception** (D125): its watchdog uses the same Cloudflare account as its API, for the drills only. Deploy it by hand
+from a founder's machine, never from CI. The alternative host kept on file is AWS Lambda in a dedicated AWS account
+(D125, with what the port changes). Run every `wrangler` command
 below logged in to the watchdog's account (`wrangler login` there, or `CLOUDFLARE_API_TOKEN` for it).
 
 1. Create the watchdog's NEAR account (`watchdog.account`, e.g. `hana-id-watchdog-dev1.testnet`, ≈ 2 NEAR; its

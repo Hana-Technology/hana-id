@@ -378,7 +378,8 @@ Done 2026-10-30: **governance on sandbox-dev** (`docs/operations.md` "Governance
 watchdog account `hana-id-watchdog-dev1.testnet` added, council DAO `hana-id-council-dev1.sputnikv2.testnet`
 (2 of 3, throwaway members) **owns the signer**, and one upgrade went propose → 60 s → execute through the DAO
 (code `3TSDwkMqPUhZtzFCvvaJ39nQWXUQK4LExPhsaS9tScoz`, contract 0.1.1). `governance:status`: no findings. Left: step 4,
-the watchdog service (needs a separate Cloudflare account, alert channels and a heartbeat URL from the user).
+the watchdog service: on sandbox-dev it goes on the API's Cloudflare account (D125; production on its own account,
+AWS Lambda kept as the alternative).
 
 1. **Deferred: one-month Pro plan test on `ting.rocks`** to see whether a paid zone keeps Malaysian traffic in SIN
    (free plan and workers.dev enter in FRA/CDG/LHR; Enterprise sites enter in SIN). The user is discussing it with

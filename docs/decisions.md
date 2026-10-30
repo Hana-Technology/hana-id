@@ -1385,6 +1385,38 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 - Why: the App Store generally expects iOS apps that offer a third-party login such as Google to also offer Sign in
   with Apple, so partners with native apps will ask for it.
 
+### D125. Watchdog hosting: its own Cloudflare account in production; sandbox-dev shares the API's account
+- Date 2026-10-30 · Status: confirmed by the user · Source: conversation (hosting options researched and ranked)
+- Decision: production watchdogs run on their own Cloudflare account, separate login and MFA from the API's (D86 Q3
+  stands). sandbox-dev's watchdog runs on the same Cloudflare account as its API and page Workers (the personal
+  account, `tingtc.workers.dev`), for the drills only: on that env a compromise of the API's account can also silence
+  the watchdog. The watchdog is deployed by hand from a founder's machine, never from CI (a GitHub compromise must not
+  be able to ship watchdog code).
+- Options considered (ranked 2026-10-30):
+  1. **AWS Lambda + EventBridge Scheduler in a dedicated AWS account**: the strongest single option. Another
+     provider than the API, security-key root login, CloudTrail and IAM, a reliable scheduler, free (EventBridge
+     Scheduler 14M invocations/month and Lambda's 1M requests/month free tiers). Its own account, not the email
+     issuer's KMS account (D121). Port: the Worker's platform code is ~425 of ~2,420 lines (`src/index.ts`,
+     `src/store.ts`, `src/env.ts`); `store.ts` moves from D1's SQL to DynamoDB, the cron handler becomes a Lambda
+     handler on a 5-min EventBridge schedule, `/status` and `/alerts` a Lambda function URL, the secrets Secrets
+     Manager or encrypted environment variables, plus a deploy script. Everything else (checks, chain, channels,
+     alerts) is `fetch`-based and moves unchanged.
+  2. **A separate Cloudflare account** (chosen): no port, free, reliable; the residual risk is a Cloudflare-wide
+     outage taking down the API and the watchdog together, which the heartbeat (dead-man's switch) on a third
+     provider reports.
+  3. Deno Deploy: the smallest port off Cloudflare (Workers-like runtime, Deno KV), free; `Deno.cron` is still marked
+     unstable, at-least-once with up to 1 min drift, a younger platform with fewer account controls.
+  4. Google Cloud Run jobs + Cloud Scheduler: workable, a container build, a fourth cloud for no gain over AWS.
+  5. Fly.io (one always-on machine, SQLite on a volume, ~$2/month) and 6. a VPS: our own uptime and patching.
+  - Rejected: GitHub Actions schedules (best-effort, often 15–30+ min late or dropped, and GitHub also hosts the
+    code), Vercel cron (Hobby runs once a day; per-minute needs Pro at $20/month), Netlify scheduled functions
+    (unclear cadence, short runtimes).
+- Later option: a second watchdog on another provider (the contract takes up to 3, D86 launches with one), e.g. the
+  Cloudflare one plus AWS Lambda, so one provider's outage or breach silences neither. The code is shared, so it is
+  the port above plus a second NEAR watchdog account.
+- Why: the separate Cloudflare account gives the independence that matters (separate credentials) with no new
+  platform to learn or port to; AWS Lambda is kept documented in case provider diversity is wanted before mainnet.
+
 ## Superseded or amended
 
 | Was | Now | Source |

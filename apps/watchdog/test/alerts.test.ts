@@ -138,4 +138,31 @@ describe('alert text', () => {
     expect(text).toContain('#7');
     expect(text).toContain('until acknowledged');
   });
+
+  it('shows governance changes as one readable line each, not JSON', async () => {
+    const changes = [
+      { field: 'updater_keys', before: ['ed25519:OLD'], after: ['ed25519:NEW'] },
+      { field: 'watchdogs', before: ['w1.testnet'], after: ['w1.testnet', 'w2.testnet'] },
+      { field: 'paused', before: false, after: true },
+      { field: 'owner', before: 'a.testnet', after: 'b.testnet' },
+      { field: 'pending_upgrade', before: null, after: { code_hash: 'H1' } },
+    ];
+    const lines = alertText({ id: 8, kind: 'governance_change', severity: 'critical', created_at: T0, details: { changes } }, 'sandbox-test').split('\n');
+    expect(lines.slice(0, 5)).toEqual([
+      'updater_keys: removed ed25519:OLD; added ed25519:NEW',
+      'watchdogs: added w2.testnet',
+      'paused: false -> true',
+      'owner: a.testnet -> b.testnet',
+      'pending_upgrade: null -> {"code_hash":"H1"}',
+    ]);
+    expect(lines.join('\n')).not.toContain('"field"');
+  });
+
+  it('keeps change lines printable and bounded (hostile values)', async () => {
+    const changes = [{ field: 'updater_keys\nX-Injected: 1', before: [], after: ['k\r\n<!channel>'.padEnd(2000, 'x')] }];
+    const [line] = alertText({ id: 9, kind: 'governance_change', severity: 'critical', created_at: T0, details: { changes } }, 'e').split('\n');
+    expect(line!.length).toBeLessThanOrEqual(600);
+    expect(line).not.toMatch(/[\r\n]/u);
+    expect(line).toMatch(/^updater_keys.*X-Injected: 1: added /u);
+  });
 });

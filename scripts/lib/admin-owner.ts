@@ -13,6 +13,7 @@ import { governanceDelayProblems, type Manifest } from '@hana-id/env';
 import { type Args, CliError } from './cli.ts';
 import { type ContractConfig, GOOGLE_PROVIDER, type GovernanceView, type KeyChangeView, normaliseIssuer, tryView, UPDATER_ALLOWANCE_YOCTO, UPDATER_METHODS } from './contract.ts';
 import { checkFunctionKey, signerFullAccessAllowed } from './deploy-plan.ts';
+import { fetchGoogleJwks, usableKeys } from './jwks.ts';
 import { type AccessKeyListEntry, describePermission, type NearRpc, TGAS } from './near.ts';
 import { describeOwnerCall, isOwnerMethod, type OwnerTxDeps, type OwnerTxOptions, sendOwnerCall, voteApprove } from './owner-tx.ts';
 import { approvers, type DaoProposal, decodeFunctionCall, isOpen, policyProblems, recentProposals, type SputnikPolicy, votesNeeded } from './sputnik.ts';
@@ -21,6 +22,8 @@ export const OWNER_DRY_RUN_LINE = 'Dry run: re-run with --yes to send.';
 
 export interface AdminOwnerDeps extends Omit<OwnerTxDeps, 'rpc'> {
   rpc: Pick<NearRpc, 'chainId' | 'view' | 'sendTx' | 'accessKeys' | 'account'>;
+  /** Google's JWKS (default: fetched), to check the contract's google keys against what Google publishes. */
+  fetchJwks?: () => Promise<{ keys?: unknown }>;
 }
 
 function ownerTxOptions(args: Args): OwnerTxOptions {
@@ -155,6 +158,24 @@ export async function governanceStatus(m: Manifest, deps: AdminOwnerDeps): Promi
     findings.push(`No watchdog may confirm yet (the first from ${new Date(first).toISOString()}): every key change proposed until then waits governance_delay_ms.`);
   }
   for (const c of keyChanges) if (nowMs >= c.executable_at_ms) findings.push(`Key change #${c.id} (${c.op} ${c.provider}/${c.kid}) is due and not executed.`);
+  // Google keys Google doesn't publish: an active one is the attack the delay exists to stop (tokens signed by it log
+  // in; the watchdog pauses on it), a pending Add one the watchdog should cancel within one run. Fetched only when
+  // there is a key to check.
+  const pendingAdds = keyChanges.filter((c) => c.provider === GOOGLE_PROVIDER && c.op === 'Add');
+  if (issuer?.kids.length || pendingAdds.length) {
+    let published: Set<string> | null = null;
+    try {
+      published = new Set(usableKeys(await (deps.fetchJwks ?? fetchGoogleJwks)()).map((k) => k.kid));
+    } catch (err) {
+      findings.push(`Couldn't read Google's JWKS to check the google keys: ${(err as Error).message}.`);
+    }
+    if (published) {
+      for (const kid of issuer?.kids ?? []) {
+        if (!published.has(kid)) findings.push(`Active google key ${kid} is not in Google's JWKS: tokens signed by it log in. Pause, then remove it through the owner (docs/operations.md "Watchdog alerts").`);
+      }
+      for (const c of pendingAdds) if (!published.has(c.kid)) findings.push(`Key change #${c.id} adds google/${c.kid}, which Google doesn't publish: cancel it (owner or a watchdog).`);
+    }
+  }
   if (config && config.owner !== m.owner) findings.push(`The contract owner is ${String(config.owner)}, envs/${m.name}.json says ${m.owner}.`);
 
   let council: GovernanceStatus['council'] = null;

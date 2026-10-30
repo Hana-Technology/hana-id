@@ -48,7 +48,7 @@ describe('Slack', () => {
     const res = await slackSender('https://hooks.slack.com/services/T/B/secret1', 'sandbox-test').send(msg());
     expect(res).toEqual({ ok: true });
     expect(calls[0]?.url).toBe('https://hooks.slack.com/services/T/B/secret1');
-    expect(JSON.parse(calls[0]!.body).text).toBe('*[Hana ID sandbox-test] CRITICAL: Forged key k9*\nkid: k9');
+    expect(JSON.parse(calls[0]!.body).text).toBe('*CRITICAL: Forged key k9 [Hana ID sandbox-test]*\nkid: k9');
   });
 
   it('reports the HTTP status, never the URL', async () => {
@@ -78,7 +78,7 @@ describe('Email (Resend)', () => {
     expect(await email.send(msg({ resend: true }))).toEqual({ ok: true, ref: 'msg_1' });
     expect(calls[0]?.url).toBe(RESEND_URL);
     expect(calls[0]?.headers.authorization).toBe('Bearer re_throwaway_key');
-    expect(JSON.parse(calls[0]!.body)).toEqual({ from: 'alerts@notify.example.com', to: ['a@example.com', 'b@example.com'], subject: '[Hana ID sandbox-test] CRITICAL (re-sent): Forged key k9', text: 'kid: k9' });
+    expect(JSON.parse(calls[0]!.body)).toEqual({ from: 'alerts@notify.example.com', to: ['a@example.com', 'b@example.com'], subject: 'CRITICAL (re-sent): Forged key k9 [Hana ID sandbox-test]', text: 'kid: k9' });
   });
 
   it('fails on a 2xx without an id, and on an error status', async () => {
@@ -100,7 +100,7 @@ describe('paging apps', () => {
     const calls = stubFetch();
     expect(await ntfyPager('https://ntfy.example.com/topic-abcdefghijklmnop', 'tk_throwaway', 'e').send(msg())).toEqual({ ok: true });
     expect(calls[0]).toMatchObject({ url: 'https://ntfy.example.com/topic-abcdefghijklmnop', method: 'POST', body: 'kid: k9' });
-    expect(calls[0]?.headers).toMatchObject({ priority: 'urgent', authorization: 'Bearer tk_throwaway', title: '[Hana ID e] CRITICAL: Forged key k9' });
+    expect(calls[0]?.headers).toMatchObject({ priority: 'urgent', authorization: 'Bearer tk_throwaway', title: 'CRITICAL: Forged key k9 [Hana ID e]' });
   });
 
   it('Pushover: emergency priority with retry and expire, and the receipt as reference', async () => {
@@ -109,7 +109,7 @@ describe('paging apps', () => {
     expect(await p.send(msg())).toEqual({ ok: true, ref: 'rcpt123' });
     expect(calls[0]?.url).toBe(PUSHOVER_MESSAGES_URL);
     const form = new URLSearchParams(calls[0]!.body);
-    expect(Object.fromEntries(form)).toMatchObject({ priority: '2', retry: String(PUSHOVER_RETRY_S), expire: String(PUSHOVER_EXPIRE_S), user: 'u'.repeat(30), title: '[Hana ID e] CRITICAL: Forged key k9' });
+    expect(Object.fromEntries(form)).toMatchObject({ priority: '2', retry: String(PUSHOVER_RETRY_S), expire: String(PUSHOVER_EXPIRE_S), user: 'u'.repeat(30), title: 'CRITICAL: Forged key k9 [Hana ID e]' });
   });
 
   it('Pushover: reads acknowledgements from the receipt', async () => {

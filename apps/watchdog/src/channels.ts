@@ -69,7 +69,12 @@ const failed = (r: Response | { error: string }): SendResult | null => ('error' 
 
 const notConfigured: SendResult = { ok: false, error: 'not configured' };
 
-const subjectPrefix = (env: string, severity: Severity) => `[Hana ID ${env}] ${severity.toUpperCase()}`;
+/**
+ * One alert's subject: the severity and title first, so a phone's lock screen (which shows ~30 characters) says what
+ * happened, and the env last.
+ */
+const subjectLine = (env: string, severity: Severity, title: string, resend = false) =>
+  `${severity.toUpperCase()}${resend ? ' (re-sent)' : ''}: ${title} [Hana ID ${env}]`;
 
 // ---- Slack ----
 
@@ -82,7 +87,7 @@ export function slackSender(webhookUrl: string | undefined, envName: string): Se
       const res = await post(webhookUrl, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text: `*${subjectPrefix(envName, msg.severity)}${msg.resend ? ' (re-sent)' : ''}: ${slackEscape(headerValue(msg.title, 500))}*\n${slackEscape(msg.text)}` }),
+        body: JSON.stringify({ text: `*${slackEscape(headerValue(subjectLine(envName, msg.severity, msg.title, msg.resend), 550))}*\n${slackEscape(msg.text)}` }),
       });
       const f = failed(res);
       if (f) return f;
@@ -123,7 +128,7 @@ export function emailSender(email: Email & { configured: boolean }, to: string[]
     channel: 'email',
     configured: email.configured && to.length > 0,
     send: (msg) =>
-      email.send({ to, subject: headerValue(`${subjectPrefix(envName, msg.severity)}${msg.resend ? ' (re-sent)' : ''}: ${msg.title}`, 250), text: msg.text }),
+      email.send({ to, subject: headerValue(subjectLine(envName, msg.severity, msg.title, msg.resend), 250), text: msg.text }),
   };
 }
 
@@ -138,7 +143,7 @@ export function ntfyPager(topicUrl: string | undefined, token: string | undefine
       if (!topicUrl) return notConfigured;
       const headers: Record<string, string> = {
         // An HTTP header: CR/LF and non-ASCII removed (fetch would throw on them, and the page would never go out).
-        title: headerValue(`${subjectPrefix(envName, msg.severity)}: ${msg.title}`, 250),
+        title: headerValue(subjectLine(envName, msg.severity, msg.title), 250),
         priority: msg.severity === 'critical' ? 'urgent' : 'default',
         tags: 'rotating_light',
       };
@@ -169,7 +174,7 @@ export function pushoverPager(token: string | undefined, user: string | undefine
       const form = new URLSearchParams({
         token,
         user,
-        title: headerValue(`${subjectPrefix(envName, msg.severity)}: ${msg.title}`, 250),
+        title: headerValue(subjectLine(envName, msg.severity, msg.title), 250),
         message: msg.text.slice(0, 1024),
         priority: msg.severity === 'critical' ? '2' : '0',
       });
@@ -216,7 +221,7 @@ export function pagerDutyPager(routingKey: string | undefined, envName: string):
           routing_key: routingKey,
           event_action: 'trigger',
           dedup_key: dedupKey,
-          payload: { summary: headerValue(`${subjectPrefix(envName, msg.severity)}: ${msg.title}`, 1024), source: `hana-id-watchdog-${envName}`, severity: msg.severity === 'critical' ? 'critical' : 'warning', custom_details: { text: msg.text } },
+          payload: { summary: headerValue(subjectLine(envName, msg.severity, msg.title), 1024), source: `hana-id-watchdog-${envName}`, severity: msg.severity === 'critical' ? 'critical' : 'warning', custom_details: { text: msg.text } },
         }),
       });
       const f = failed(res);

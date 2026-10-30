@@ -23,6 +23,7 @@ let out: string[];
 let rpcCalls: number;
 
 beforeEach(() => {
+  published = ['k'];
   roots = tempRoots();
   chain = new SimChain(base.signer, { now: NOW, daoCodeHash: readPin().code_hash });
   keys = [];
@@ -56,8 +57,11 @@ const deps = () => {
     home: roots.home,
     secretsRoot: roots.secretsRoot,
     now: () => chain.now,
+    fetchJwks: async () => ({ keys: published.map((kid) => ({ kid, kty: 'RSA', alg: 'RS256', use: 'sig', n: 'AQAB', e: 'AQAB' })) }),
   };
 };
+/** The kids Google's (stub) JWKS publishes (reset in beforeEach). */
+let published: string[] = [];
 
 describe('admin owner:call', () => {
   it('without --yes prints the proposal and touches nothing', async () => {
@@ -152,6 +156,22 @@ describe('admin governance:status (the batch C portal source)', () => {
     out = [];
     await governanceStatusCmd(daoOwned, argv([]), deps());
     expect(out.join('\n')).toContain('Findings:');
+  });
+
+  it('flags google keys Google does not publish: active (the attack) and pending', async () => {
+    published = ['real'];
+    chain.issuer = { iss_values: ['https://accounts.google.com'], kids: ['real', 'forged'] };
+    chain.keyChanges = [{ id: 4, provider: 'google', kid: 'forged2', op: 'Add', n: 'n', e: 'AQAB', by: base.signer, proposed_at_ms: NOW, executable_at_ms: NOW + 120_000 }];
+    const findings = (await governanceStatus(daoOwned, deps())).findings.join('\n');
+    expect(findings).toContain("Active google key forged is not in Google's JWKS");
+    expect(findings).toContain("Key change #4 adds google/forged2, which Google doesn't publish");
+    expect(findings).not.toContain('key real');
+  });
+
+  it('reports an unreadable JWKS instead of skipping the check', async () => {
+    chain.issuer = { iss_values: ['https://accounts.google.com'], kids: ['real'] };
+    const s = await governanceStatus(daoOwned, { ...deps(), fetchJwks: async () => { throw new Error('GET jwks: HTTP 503'); } });
+    expect(s.findings).toContain("Couldn't read Google's JWKS to check the google keys: GET jwks: HTTP 503.");
   });
 
   it('flags a v1 contract and a missing DAO', async () => {

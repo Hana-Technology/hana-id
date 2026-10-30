@@ -6,42 +6,36 @@
 # The LAST matching line wins and replaces the earlier ones, so the broad paths come first and each specific path
 # below lists all of its owners.
 #
-# Second owner (decided 2026-10-29, security sweep owner answers): a colleague gets write access before mainnet;
-# derivation, contract, env-schema and /envs/ changes then need the other person's approval. Their handle goes on
-# each line marked TODO below.
+# Two owners (decided 2026-10-29, security sweep owner answers): @tzechuen and @mj-hana. With "Require review from
+# Code Owners" on, a change by one needs the other's approval.
 
 # Code that handles tokens, keys and the vault: the API, the browser SDK and vault, core crypto and policy, the
 # watchdog, and the operator scripts (access-key method lists, secret files, deploys).
-/apps/api/src/                  @tzechuen
-/apps/watchdog/src/             @tzechuen
-/packages/web/src/              @tzechuen
-/packages/core/src/             @tzechuen
-/scripts/                       @tzechuen
+/apps/api/src/                  @tzechuen @mj-hana
+/apps/watchdog/src/             @tzechuen @mj-hana
+/packages/web/src/              @tzechuen @mj-hana
+/packages/core/src/             @tzechuen @mj-hana
+/scripts/                       @tzechuen @mj-hana
 
 # Dependencies: a changed lockfile can swap any crypto library.
-/pnpm-lock.yaml                 @tzechuen
-/pnpm-workspace.yaml            @tzechuen
-/contracts/**/Cargo.lock        @tzechuen
+/pnpm-lock.yaml                 @tzechuen @mj-hana
+/pnpm-workspace.yaml            @tzechuen @mj-hana
+/contracts/**/Cargo.lock        @tzechuen @mj-hana
 
 # Derivation v1 and its golden vectors: a change here changes every address (frozen after the address freeze).
-/packages/core/src/derivation*  @tzechuen
-# TODO: add the colleague's GitHub handle (decided 2026-10-29)
-/packages/core/test/vectors/    @tzechuen
-# TODO: add the colleague's GitHub handle (decided 2026-10-29)
+/packages/core/src/derivation*  @tzechuen @mj-hana
+/packages/core/test/vectors/    @tzechuen @mj-hana
 
 # The signer contract: token checks, the registry, sessions and the MPC request.
-/contracts/hana-signer/         @tzechuen
-# TODO: add the colleague's GitHub handle (decided 2026-10-29)
+/contracts/hana-signer/         @tzechuen @mj-hana
 
 # The manifest schema: account names, origins and the rules for the pinned CKD key every bundle is built with.
-/packages/env/src/              @tzechuen
-# TODO: add the colleague's GitHub handle (decided 2026-10-29)
+/packages/env/src/              @tzechuen @mj-hana
 
 # The manifests themselves: account names, RPCs and the pinned CKD network key (`ckdNetworkKey`) every bundle trusts.
-/envs/                          @tzechuen
-# TODO: add the colleague's GitHub handle (decided 2026-10-29)
+/envs/                          @tzechuen @mj-hana
 
 # Secret scanning, hooks and CI (what blocks a leaked key or an untested change).
-/.gitleaks.toml                 @tzechuen
-/.githooks/                     @tzechuen
-/.github/                       @tzechuen
+/.gitleaks.toml                 @tzechuen @mj-hana
+/.githooks/                     @tzechuen @mj-hana
+/.github/                       @tzechuen @mj-hana

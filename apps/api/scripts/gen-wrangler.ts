@@ -11,9 +11,9 @@
 // --dev-vars   Also write apps/api/.dev.vars (0600, gitignored) from .secrets/<env>/relayer-keys.json (session pool,
 //              JSON array of ed25519 secret keys), .secrets/<env>/owner-relayer-keys.json (owner pool, same format) and
 //              .secrets/<env>/keys-updater.json ({account_id, public_key, private_key}), as written by
-//              scripts/deploy-contract.ts, and the identity token's IDENTITY_SIGNING_KEY, IDENTITY_SIGNING_KEY_STANDBY and
+//              scripts/deploy-contract.ts, and the identity token's IDENTITY_SIGNING_KEY and
 //              IDENTITY_SUB_KEY from .secrets/<env>/identity-* (scripts/identity-key.ts), when they exist; the signing
-//              keys must be the manifest's `identityToken` keys. Never prints secrets.
+//              key must be the manifest's active key, and the offline standby is never written. Never prints secrets.
 import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -171,8 +171,8 @@ function poolLine(name: 'RELAYER_KEYS' | 'OWNER_RELAYER_KEYS', file: string, key
  * string there would not parse.
  */
 export interface IdentityDevSecrets {
+  /** The key that signs now (`identity-signing-key.json`). The standby stays offline, never in .dev.vars (D177). */
   signingKey?: unknown;
-  standbyKey?: unknown;
   subKey?: string;
 }
 
@@ -180,7 +180,7 @@ const COORD_RE = /^[A-Za-z0-9_-]{43}$/u;
 const SUB_KEY_RE = /^[A-Za-z0-9+/]{43}=$/u;
 
 /** A P-256 private JWK as a single-quoted dotenv value (its JSON has no quote of the single kind). */
-function identityKeyLine(name: 'IDENTITY_SIGNING_KEY' | 'IDENTITY_SIGNING_KEY_STANDBY', file: string, jwk: unknown): { line: string; kid: string } {
+function identityKeyLine(name: 'IDENTITY_SIGNING_KEY', file: string, jwk: unknown): { line: string; kid: string } {
   const k = jwk as { kty?: unknown; crv?: unknown; x?: unknown; y?: unknown; d?: unknown } | null;
   if (!k || k.kty !== 'EC' || k.crv !== 'P-256' || ![k.x, k.y, k.d].every((v) => typeof v === 'string' && COORD_RE.test(v))) {
     throw new Error(`${file} must be a P-256 private JWK {kty: "EC", crv: "P-256", x, y, d}`);
@@ -190,27 +190,19 @@ function identityKeyLine(name: 'IDENTITY_SIGNING_KEY' | 'IDENTITY_SIGNING_KEY_ST
 }
 
 /**
- * The identity token's .dev.vars lines. The signing keys must be the manifest's (`identityToken.publicKeys`, the
- * active kid among them): a key the JWKS doesn't publish would sign tokens no partner can verify.
+ * The identity token's .dev.vars lines: the key that signs now and the sub key. The signing key must be the manifest's
+ * active key (`identityToken.signer.activeKid`, in `publicKeys`): a key the JWKS doesn't publish would sign tokens no
+ * partner can verify. The standby is never written: it stays off the Worker until a switch (D177).
  */
 export function identityDevVarsLines(m: Pick<Manifest, 'name' | 'identityToken'>, secrets: IdentityDevSecrets): string[] {
   const lines: string[] = [];
-  const kids: string[] = [];
-  for (const [name, file, jwk] of [
-    ['IDENTITY_SIGNING_KEY', IDENTITY_SECRET_FILES.signingKey, secrets.signingKey],
-    ['IDENTITY_SIGNING_KEY_STANDBY', IDENTITY_SECRET_FILES.standbyKey, secrets.standbyKey],
-  ] as const) {
-    if (jwk === undefined) continue;
-    const { line, kid } = identityKeyLine(name, file, jwk);
-    lines.push(line);
-    kids.push(kid);
-  }
-  if (kids.length > 0) {
+  if (secrets.signingKey !== undefined) {
+    const { line, kid } = identityKeyLine('IDENTITY_SIGNING_KEY', IDENTITY_SECRET_FILES.signingKey, secrets.signingKey);
     const t = m.identityToken;
-    if (!t) throw new Error(`.secrets/${m.name} has identity signing keys but envs/${m.name}.json has no identityToken (run scripts/identity-key.ts ${m.name} init)`);
-    const published = new Set(t.publicKeys.map((k) => k.kid));
-    if (!kids.every((k) => published.has(k))) throw new Error(`The identity signing keys in .secrets/${m.name} don't match envs/${m.name}.json identityToken.publicKeys`);
-    if (t.signer.kind === 'worker-secret' && !kids.includes(t.signer.activeKid)) throw new Error(`No identity signing key in .secrets/${m.name} has the active kid ${t.signer.activeKid}`);
+    if (!t) throw new Error(`.secrets/${m.name} has an identity signing key but envs/${m.name}.json has no identityToken (run scripts/identity-key.ts ${m.name} init)`);
+    if (!t.publicKeys.some((k) => k.kid === kid)) throw new Error(`The identity signing key in .secrets/${m.name} doesn't match envs/${m.name}.json identityToken.publicKeys`);
+    if (t.signer.kind === 'worker-secret' && kid !== t.signer.activeKid) throw new Error(`The identity signing key in .secrets/${m.name} doesn't have the active kid ${t.signer.activeKid}`);
+    lines.push(line);
   }
   if (secrets.subKey !== undefined) {
     const v = secrets.subKey.trim();
@@ -270,7 +262,6 @@ export function writeDevVars(envName: string, root: string = repoRoot, dir: stri
   }
   const identity = identityDevVarsLines(manifest ?? { name: envName, identityToken: undefined }, {
     signingKey: readSecretJsonIfExists(join(secrets, IDENTITY_SECRET_FILES.signingKey)),
-    standbyKey: readSecretJsonIfExists(join(secrets, IDENTITY_SECRET_FILES.standbyKey)),
     subKey: readSecretTextIfExists(join(secrets, IDENTITY_SECRET_FILES.subKey)),
   });
   const content = devVarsContent({ relayerKeys, ownerRelayerKeys, keysUpdaterKey, identity });

@@ -75,12 +75,12 @@ export async function getShare(db: D1Database, appId: string, shareId: Uint8Arra
 }
 
 /**
- * The share of a session key in this app, or null (POST /v1/identity/token judges a session's share without moving
- * it). `session_pk` is UNIQUE, so there is at most one.
+ * The share of a session key in any app, with its app id, or null (POST /v1/identity/token judges a session's share
+ * without moving it, and refuses a key whose share is another app's). `session_pk` is UNIQUE, so there is at most one.
  */
-export async function getShareBySessionPk(db: D1Database, appId: string, sessionPk: Uint8Array): Promise<ShareRow | null> {
-  const row = await db.prepare(`SELECT ${SHARE_COLUMNS} FROM vault_shares WHERE session_pk = ?1 AND app_id = ?2`).bind(sessionPk, appId).first<Record<string, unknown>>();
-  return row ? toShareRow(row) : null;
+export async function getShareBySessionPk(db: D1Database, sessionPk: Uint8Array): Promise<(ShareRow & { app_id: string }) | null> {
+  const row = await db.prepare(`SELECT app_id, ${SHARE_COLUMNS} FROM vault_shares WHERE session_pk = ?1`).bind(sessionPk).first<Record<string, unknown>>();
+  return row ? { ...toShareRow(row), app_id: row.app_id as string } : null;
 }
 
 /** Marks a share revoked (no-op if it already is). */

@@ -103,6 +103,19 @@ const bindingRefusal = (ctx: Ctx, which: string): Response =>
   reject(ctx, 429, 'rate_limited', `Rate limit exceeded (${which} per minute)`, { 'retry-after': String(VAULT_LIMIT_PERIOD_S) });
 
 /**
+ * The vault gate's per-IP flood limit alone (`VAULT_IP_LIMIT`, D95), for POST /v1/identity/token, which counts its app
+ * quota in windows of its own (identity/limits.ts, D176). Null when it accepts; a limiter that fails refuses (503).
+ */
+export async function vaultIpLimit(request: Request, env: Env, ctx: Ctx, app: App): Promise<Response | null> {
+  try {
+    const ip = await env.VAULT_IP_LIMIT.limit({ key: vaultIpKey(env.ENV_NAME, app.id, ipSubject(request.headers.get('cf-connecting-ip'))) });
+    return ip.success ? null : bindingRefusal(ctx, 'per IP');
+  } catch {
+    return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
+  }
+}
+
+/**
  * Check 3, the IP and app limits, asked in turn: the per-IP flood limit (`VAULT_IP_LIMIT` binding, counted in this
  * location with no network hop, D95), then the app's vault quota (RateLimiter object `app:<id>`, exact and global)
  * only once the IP accepted, so a request the IP limit refuses never uses up the app's shared quota (one client could

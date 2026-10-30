@@ -6,7 +6,7 @@ import { KeyPair } from '@near-js/crypto';
 import { loadEnv, manifestSchema, repoRoot } from '@hana-id/env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseRelayerKeys } from '../../src/relayer-config.ts';
-import { IDENTITY_PER_SESSION_MINUTE } from '../../src/identity/limits.ts';
+import { IDENTITY_PER_ROOT_MINUTE, IDENTITY_PER_SESSION_MINUTE } from '../../src/identity/limits.ts';
 import { SHARE_PER_MINUTE, VAULT_PER_IP_MINUTE } from '../../src/vault/limits.ts';
 import { generateKeyPairSync, randomBytes } from 'node:crypto';
 import { IDENTITY_SECRET_FILES, identityIssuerFor, p256Thumbprint, type Manifest } from '@hana-id/env';
@@ -218,8 +218,9 @@ describe('wrangler.jsonc', () => {
       { name: 'VAULT_IP_LIMIT', namespace_id: '95001', simple: { limit: 60, period: 60 } },
       { name: 'VAULT_SHARE_LIMIT', namespace_id: '95002', simple: { limit: 10, period: 60 } },
       { name: 'IDENTITY_SESSION_LIMIT', namespace_id: '95003', simple: { limit: 10, period: 60 } },
+      { name: 'IDENTITY_ROOT_LIMIT', namespace_id: '95004', simple: { limit: 30, period: 60 } },
     ]);
-    expect(config.ratelimits.map((r) => r.simple.limit)).toEqual([VAULT_PER_IP_MINUTE, SHARE_PER_MINUTE, IDENTITY_PER_SESSION_MINUTE]);
+    expect(config.ratelimits.map((r) => r.simple.limit)).toEqual([VAULT_PER_IP_MINUTE, SHARE_PER_MINUTE, IDENTITY_PER_SESSION_MINUTE, IDENTITY_PER_ROOT_MINUTE]);
     expect(new Set(config.ratelimits.map((r) => r.namespace_id)).size).toBe(config.ratelimits.length);
     for (const r of config.ratelimits) {
       // Cloudflare's rules: a positive integer namespace id (a string), a period of 10 or 60 s.
@@ -356,17 +357,18 @@ describe('the identity token', () => {
     expect(() => identityVars(kms)).toThrow(/not supported by the API yet/u);
   });
 
-  it('.dev.vars: both signing keys and the sub key, round-tripped through wrangler’s parser', () => {
-    const parsed = dotenvParse(devVarsContent({ identity: identityDevVarsLines(withIdentity(), { signingKey: active.priv, standbyKey: standby.priv, subKey: `${subKey}\n` }) }));
+  it('.dev.vars: the active signing key and the sub key, round-tripped through wrangler’s parser; never the standby', () => {
+    const parsed = dotenvParse(devVarsContent({ identity: identityDevVarsLines(withIdentity(), { signingKey: active.priv, subKey: `${subKey}\n` }) }));
     expect(JSON.parse(parsed.IDENTITY_SIGNING_KEY!)).toEqual(active.priv);
-    expect(JSON.parse(parsed.IDENTITY_SIGNING_KEY_STANDBY!)).toEqual(standby.priv);
+    expect(parsed.IDENTITY_SIGNING_KEY_STANDBY).toBeUndefined();
     expect(parsed.IDENTITY_SUB_KEY).toBe(subKey);
   });
 
   it('refuses signing keys the manifest doesn’t publish, or none with the active kid', () => {
     const other = p256();
-    expect(() => identityDevVarsLines(withIdentity(), { signingKey: other.priv })).toThrow(/don't match/u);
-    expect(() => identityDevVarsLines(withIdentity(), { standbyKey: standby.priv })).toThrow(/active kid/u);
+    expect(() => identityDevVarsLines(withIdentity(), { signingKey: other.priv })).toThrow(/doesn't match/u);
+    // The standby is published but not the active key: refused as the signing key.
+    expect(() => identityDevVarsLines(withIdentity(), { signingKey: standby.priv })).toThrow(/active kid/u);
     const { identityToken: _, ...bare } = manifest;
     expect(() => identityDevVarsLines(bare as Manifest, { signingKey: active.priv })).toThrow(/no identityToken/u);
     expect(() => identityDevVarsLines(withIdentity(), { signingKey: { ...active.priv, d: undefined } })).toThrow(/private JWK/u);
@@ -382,9 +384,10 @@ describe('the identity token', () => {
     writeFileSync(join(dir, IDENTITY_SECRET_FILES.standbyKey), JSON.stringify(standby.priv), { mode: 0o600 });
     writeFileSync(join(dir, IDENTITY_SECRET_FILES.subKey), subKey, { mode: 0o600 });
     const { path, count } = writeDevVars(manifest.name, root, out, withIdentity());
-    expect(count).toBe(6);
+    expect(count).toBe(5);
     const parsed = dotenvParse(readFileSync(path, 'utf8'));
     expect(parsed.IDENTITY_SUB_KEY).toBe(subKey);
+    expect(parsed.IDENTITY_SIGNING_KEY_STANDBY).toBeUndefined();
     chmodSync(join(dir, IDENTITY_SECRET_FILES.subKey), 0o644);
     expect(() => writeDevVars(manifest.name, root, tmp(), withIdentity())).toThrow(/mode 644/u);
   });

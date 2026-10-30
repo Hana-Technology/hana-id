@@ -27,6 +27,8 @@ export interface MintOptions {
   signWith?: number[];
   /** Sends the EVM address lowercased (the proofs and the session proof cover it as sent). */
   lowercaseEvm?: boolean;
+  /** A fixed proof nonce (16 bytes), e.g. to replay a proof's (key, time, nonce) with another signature. */
+  nonce?: Uint8Array;
 }
 
 export function walletProofs(prk: Uint8Array, ctx: { signer: string; appId: string; sessionPublicKey: Uint8Array }): Record<IdentityChain, { address: string; signature: number[] }> {
@@ -44,7 +46,7 @@ export async function mintBody(app: { id: string }, spk: number[], o: MintOption
   const sessionPublicKey = Uint8Array.from(spk);
   const proofs = walletProofs(prk, { signer: env.SIGNER_ACCOUNT, appId: o.proofApp ?? app.id, sessionPublicKey: Uint8Array.from(o.proofSpk ?? spk) });
   if (o.lowercaseEvm) proofs.evm.address = proofs.evm.address.toLowerCase();
-  const nonce = crypto.getRandomValues(new Uint8Array(16));
+  const nonce = o.nonce ?? crypto.getRandomValues(new Uint8Array(16));
   const issuedAtMs = o.issuedAtMs ?? Date.now();
   const hashed = { stellar: { address: proofs.stellar.address, signature: Uint8Array.from(proofs.stellar.signature) }, evm: { address: proofs.evm.address, signature: Uint8Array.from(proofs.evm.signature) } };
   const payload = identityTokenPayload({ parentOrigin: o.parent ?? ORIGIN, walletProofsHash: walletProofsHash(hashed), sealedEmail: o.sealedEmail ?? null });
@@ -81,3 +83,27 @@ export async function verifyToken(token: string, bindings: Partial<typeof env> =
 }
 
 export const publishedKids = (): string[] => (JSON.parse(env.IDENTITY_PUBLIC_KEYS!) as { kid: string }[]).map((k) => k.kid);
+
+/**
+ * Sets a RateLimiter object's sliding window bucket for `now` (subject as `limiter()` names it) to `count`, or deletes
+ * it with null: fills a ceiling without thousands of requests, and empties it again for the next test.
+ */
+export async function setSlidingBucket(subject: string, name: string, windowMs: number, count: number | null, now = Date.now()): Promise<void> {
+  const { runInDurableObject } = await import('cloudflare:test');
+  const { limiter } = await import('../src/handlers.ts');
+  const start = Math.floor(now / windowMs) * windowMs;
+  await runInDurableObject(limiter(env, subject), (_i, state) => {
+    for (const at of [start, start - windowMs]) {
+      const key = `slide:${name}@${at}`;
+      if (count === null || at !== start) state.storage.kv.delete(key);
+      else state.storage.kv.put(key, count);
+    }
+  });
+}
+
+/** The keys a RateLimiter object holds (`mark:` markers, `slide:` buckets, fixed windows). */
+export async function limiterKeys(subject: string): Promise<string[]> {
+  const { runInDurableObject } = await import('cloudflare:test');
+  const { limiter } = await import('../src/handlers.ts');
+  return runInDurableObject(limiter(env, subject), (_i, state) => [...state.storage.kv.list()].map(([k]) => k));
+}

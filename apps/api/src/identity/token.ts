@@ -21,29 +21,45 @@ import {
   identitySid,
   identitySigningInput,
   identitySub,
+  identitySubBytes,
   identityTokenHeader,
   identityTokenPayload,
   verifyWalletProof,
   walletProofsHash,
 } from '@hana-id/core/identity';
 import { type App, usageDay } from '../apps.ts';
-import { base64UrlEncode, hex, sha256 } from '../bytes.ts';
+import { base64UrlEncode, concatBytes, hex, sha256, u64le } from '../bytes.ts';
 import type { Env } from '../env.ts';
 import { PAUSED_RETRY_S, type Ctx, done, lap, limiter, newCtx, reject } from '../handlers.ts';
 import { readJson } from '../http.ts';
 import { log } from '../log.ts';
-import { SESSION_RETRY_FOR_MS, SESSION_RETRY_INTERVAL_MS, vaultApp, vaultLimits } from '../vault/endpoints.ts';
+import type { Limit } from '../rate-limiter.ts';
+import { SESSION_RETRY_FOR_MS, SESSION_RETRY_INTERVAL_MS, vaultApp, vaultIpLimit } from '../vault/endpoints.ts';
 import { parentOriginAllowed } from '../vault/origins.ts';
 import { getSettingsRow } from '../vault/settings.ts';
 import { getShareBySessionPk } from '../vault/shares.ts';
 import { type SessionView, getConfig, getSession } from '../views.ts';
-import { IDENTITY_GLOBAL_LIMITER, IDENTITY_GLOBAL_PER_HOUR, IDENTITY_LIMIT_PERIOD_S, identityProofLimiter, identitySessionKey } from './limits.ts';
+import {
+  HOUR_MS,
+  IDENTITY_APP_MINUTE_FACTOR,
+  IDENTITY_GLOBAL_ALERT_PER_HOUR,
+  IDENTITY_GLOBAL_LIMITER,
+  IDENTITY_GLOBAL_PER_HOUR,
+  IDENTITY_LIMIT_PERIOD_S,
+  IDENTITY_SCOPE_HOUR_FACTOR,
+  MINUTE_MS,
+  identityAppHourMax,
+  identityProofLimiter,
+  identityRootKey,
+  identityScopeLimiter,
+  identitySessionKey,
+} from './limits.ts';
 import { type IdentityConfig, IdentitySignerError, identityConfig, workerSecretSigner } from './signer.ts';
 
 export const IDENTITY_TOKEN_ENDPOINT = '/v1/identity/token';
 /** The body is a few byte arrays and two addresses. */
 export const MAX_IDENTITY_BODY = 4096;
-const HOUR = 3_600_000;
+const HOUR = HOUR_MS;
 const MAX_SEALED_EMAIL = 1024;
 
 // ---- body ----
@@ -105,19 +121,23 @@ const sessionEnded = (ctx: Ctx, reason: string): Response => done(ctx, 410, { er
 /**
  * The share in 'session' mode, judged as unlock judges it but read-only (docs/identity-token-spec.md "Minting" step 2):
  * not revoked, made for this parent (and its origin still allowed), the app still keeps logins, `now < idle_until` and
- * `now < min(abs_expires_at, created_at + current session_ttl_ms)`. A session key without a share passes only while the
- * app's persistence is 'none' (the session lives in the vault's memory alone, and the chain check decides).
+ * `now < min(abs_expires_at, created_at + current session_ttl_ms)`. A session key whose share is another app's is
+ * refused whatever this app's persistence (D178: a session revoked in one app of a scope must not go on minting in a
+ * 'none' app of the same scope; the cron keeps dead shares as tombstones for the session's longest life). A session
+ * key with no share anywhere passes only while the app's persistence is 'none' (the session lives in the vault's memory
+ * alone, and the chain check decides).
  */
 async function checkShare(env: Env, ctx: Ctx, app: App, parentOrigin: string, sessionPk: Uint8Array, now: number): Promise<ShareCheck> {
   let settings;
   let row;
   try {
-    [settings, row] = await Promise.all([getSettingsRow(env.DB, app.id), getShareBySessionPk(env.DB, app.id, sessionPk)]);
+    [settings, row] = await Promise.all([getSettingsRow(env.DB, app.id), getShareBySessionPk(env.DB, sessionPk)]);
   } catch {
     return { ok: false, response: reject(ctx, 503, 'config_unavailable', 'App config is unavailable, try again') };
   }
   if (!settings) return { ok: false, response: reject(ctx, 401, 'unknown_app', 'Unknown publishable key') };
   if (!row) return settings.persistence === 'session' ? { ok: false, response: sessionEnded(ctx, 'unknown_share') } : { ok: true, share: null };
+  if (row.app_id !== app.id) return { ok: false, response: sessionEnded(ctx, 'unknown_share') };
   if (row.revoked_at !== null || !parentOriginAllowed(env.ENV_NAME, app, row.partner_origin)) return { ok: false, response: sessionEnded(ctx, 'share_revoked') };
   if (row.partner_origin !== parentOrigin) return { ok: false, response: sessionEnded(ctx, 'unknown_share') };
   if (settings.persistence !== 'session') return { ok: false, response: sessionEnded(ctx, 'persistence_off') };
@@ -180,6 +200,72 @@ export function globalCeiling(env: Pick<Env, 'IDENTITY_GLOBAL_HOURLY_MAX'>): num
   return Number.isSafeInteger(v) && v > 0 ? v : IDENTITY_GLOBAL_PER_HOUR;
 }
 
+/** The single-use marker of a session proof: sha256(sessionPk ‖ u64le(issuedAtMs) ‖ nonce), whatever the signature's encoding (D176). */
+export async function proofMarker(req: Pick<MintRequest, 'sessionPk' | 'issuedAtMs' | 'nonce'>): Promise<string> {
+  return hex(await sha256(concatBytes(req.sessionPk, u64le(req.issuedAtMs), req.nonce)));
+}
+
+/** At most one critical "past the alert line" log per isolate per 10 minutes. */
+let lastGlobalAlertAt = 0;
+
+interface QuotaWindow {
+  subject: string;
+  label: string;
+  limits: Limit[];
+}
+
+/**
+ * The quota windows, asked in turn (identity/limits.ts, D176): per app (minute and hour, its own windows), per scope
+ * (hour), then global (the hard breaker, and a soft alert line). Sliding windows, counted only for a request that passed
+ * every other check; a refusal by a later window takes the hit back from the earlier ones. Null when all accept.
+ */
+async function identityQuota(env: Env, ctx: Ctx, app: App, now: number): Promise<Response | null> {
+  const appHour = identityAppHourMax(app);
+  const windows: QuotaWindow[] = [
+    {
+      subject: `app:${app.id}`,
+      label: 'app',
+      limits: [
+        { name: 'identity:minute', windowMs: MINUTE_MS, max: IDENTITY_APP_MINUTE_FACTOR * app.per_minute },
+        { name: 'identity:hour', windowMs: HOUR_MS, max: appHour },
+      ],
+    },
+    { subject: identityScopeLimiter(app.scope_id), label: 'scope', limits: [{ name: 'identity:hour', windowMs: HOUR_MS, max: IDENTITY_SCOPE_HOUR_FACTOR * appHour }] },
+    {
+      subject: IDENTITY_GLOBAL_LIMITER,
+      label: 'global',
+      limits: [
+        { name: 'hour', windowMs: HOUR_MS, max: globalCeiling(env) },
+        { name: 'alert:hour', windowMs: HOUR_MS, max: IDENTITY_GLOBAL_ALERT_PER_HOUR, soft: true },
+      ],
+    },
+  ];
+  const accepted: QuotaWindow[] = [];
+  try {
+    for (const w of windows) {
+      const hit = await limiter(env, w.subject).hitSliding(w.limits, now);
+      if (!hit.ok) {
+        for (const a of accepted) await limiter(env, a.subject).unhitSliding(a.limits, now).catch(() => undefined);
+        if (w.label === 'global') {
+          log({ event: 'identity_ceiling', requestId: ctx.requestId, appId: app.id, code: 'identity_busy' }, 'error');
+          return reject(ctx, 503, 'identity_busy', 'Identity tokens are paused for a while, try again later', { 'retry-after': String(hit.retryAfterS) });
+        }
+        return reject(ctx, 429, 'rate_limited', `Rate limit exceeded (identity tokens per ${w.label} per ${hit.limit.endsWith('minute') ? 'minute' : 'hour'})`, {
+          'retry-after': String(hit.retryAfterS),
+        });
+      }
+      if (hit.soft && now - lastGlobalAlertAt >= 10 * MINUTE_MS) {
+        lastGlobalAlertAt = now;
+        log({ event: 'identity_volume_alert', requestId: ctx.requestId, appId: app.id, code: 'past_alert_line' }, 'error');
+      }
+      accepted.push(w);
+    }
+  } catch {
+    return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
+  }
+  return null;
+}
+
 const bad = (ctx: Ctx): Response =>
   reject(ctx, 400, 'bad_request', 'Body must be {sessionPublicKey: 32 bytes, issuedAtMs, nonce: 16 bytes, signature: 64 bytes, walletProofs: {stellar, evm}[, sealedEmail]}');
 
@@ -189,7 +275,8 @@ export async function handleIdentityToken(request: Request, env: Env, requestId:
   const gate = await vaultApp(request, env, ctx);
   if (!gate.ok) return gate.response;
   const { app, parentOrigin } = gate;
-  const limited = await vaultLimits(request, env, ctx, app);
+  // Per IP only: the app's quota is counted in windows of its own, after verification (identityQuota, D176).
+  const limited = await vaultIpLimit(request, env, ctx, app);
   if (limited) return limited;
   // An env without the identity configuration (or with a broken one) can't mint: say so before any work.
   const config = identityConfig(env);
@@ -214,19 +301,14 @@ export async function handleIdentityToken(request: Request, env: Env, requestId:
   if (!(await verifyEd25519(req.sessionPk, req.signature, message))) return reject(ctx, 401, 'invalid_signature', 'Invalid session signature');
   lap(ctx, 'proof');
 
-  // Per session key: a flood limit (binding, per location), then the proof's single-use marker.
+  // Per session key: a flood limit (binding, per location). Only the key's holder gets this far.
   const pkHex = hex(req.sessionPk);
   try {
     const hit = await env.IDENTITY_SESSION_LIMIT.limit({ key: identitySessionKey(env.ENV_NAME, app.id, pkHex) });
     if (!hit.success) return reject(ctx, 429, 'rate_limited', 'Rate limit exceeded (session per minute)', { 'retry-after': String(IDENTITY_LIMIT_PERIOD_S) });
-    const marker = hex(await sha256(req.signature));
-    if (!(await limiter(env, identityProofLimiter(pkHex)).reserve(marker, req.issuedAtMs + IDENTITY_PROOF_MARKER_MS, now))) {
-      return reject(ctx, 409, 'proof_replayed', 'This session proof was already used');
-    }
   } catch {
     return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
   }
-  lap(ctx, 'limits');
 
   // Not paused (a forged-key incident stops identity tokens with logins). Fails closed: the pause is a security stop.
   try {
@@ -262,16 +344,21 @@ export async function handleIdentityToken(request: Request, env: Env, requestId:
   }
   lap(ctx, 'wallets');
 
-  // The global hourly ceiling: a breaker against a mint flood (on mainnet, paid KMS signatures).
+  // Single use, once the proof is known to be a live session's (D176): an atomic test-and-set on the session's own
+  // object (swept by an alarm), so random keys never create markers. Then the account root's flood limit.
   try {
-    const hit = await limiter(env, IDENTITY_GLOBAL_LIMITER).hit([{ name: 'hour', windowMs: HOUR, max: globalCeiling(env) }], now);
-    if (!hit.ok) {
-      log({ event: 'identity_ceiling', requestId, appId: app.id, code: 'identity_busy' }, 'error');
-      return reject(ctx, 503, 'identity_busy', 'Identity tokens are paused for a while, try again later', { 'retry-after': String(hit.retryAfterS) });
+    if (!(await limiter(env, identityProofLimiter(pkHex)).reserve(await proofMarker(req), req.issuedAtMs + IDENTITY_PROOF_MARKER_MS, now))) {
+      return reject(ctx, 409, 'proof_replayed', 'This session proof was already used');
     }
+    const subBytes = identitySubBytes(config.subKey, app.scope_id, root);
+    const hit = await env.IDENTITY_ROOT_LIMIT.limit({ key: identityRootKey(env.ENV_NAME, app.scope_id, hex(subBytes)) });
+    if (!hit.success) return reject(ctx, 429, 'rate_limited', 'Rate limit exceeded (account per minute)', { 'retry-after': String(IDENTITY_LIMIT_PERIOD_S) });
   } catch {
     return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
   }
+  const quota = await identityQuota(env, ctx, app, now);
+  if (quota) return quota;
+  lap(ctx, 'limits');
 
   return sign(env, ctx, config, app, { ...lifetime, root, sessionPk: req.sessionPk, wallets: wallets as Record<IdentityChain, string> }, exec);
 }

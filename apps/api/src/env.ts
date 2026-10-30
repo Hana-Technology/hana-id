@@ -72,4 +72,6 @@ export interface Env {
   VAULT_SHARE_LIMIT: RateLimit;
   /** POST /v1/identity/token's per-session-key flood limit (identity/limits.ts). */
   IDENTITY_SESSION_LIMIT: RateLimit;
+  /** POST /v1/identity/token's per-account-root flood limit (identity/limits.ts, D176). */
+  IDENTITY_ROOT_LIMIT: RateLimit;
 }

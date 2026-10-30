@@ -409,7 +409,9 @@ await hana.signRaw({ chain: 'evm', digest });      // secp256k1 over 32 bytes �
 
 The user always approves raw requests, under a red warning that raw signing can authorize any transaction on that
 chain. No policy ever covers them. Ask for it only if a standard method can't do the job. With raw signing off,
-`signRaw` is `4100` (`data.reason: 'raw_sign_off'`), also in a tab opened before it was turned off. If the vault can't
+`signRaw` is `4100` (`data.reason: 'raw_sign_off'`), also in a tab opened before it was turned off. Bytes in Hana's
+own signing domains are never raw-signed: Stellar bytes starting with `hana-id`, and the session's identity
+wallet-proof digest on EVM, are `4100` (`data.reason: 'raw_reserved_domain'`) before any popup (D179). If the vault can't
 confirm the setting with Hana's API (it re-reads it at most every 10 s), the request fails with `api_unavailable`
 rather than going ahead.
 
@@ -724,7 +726,9 @@ await fetch('/api/session', { method: 'POST', headers: { authorization: `Bearer 
 - **Errors.** `getIdentityToken()` resolves `null` while logged out; it rejects with `identity_unavailable` (Hana's API
   or signer is down, or this browser couldn't keep the session in an app that keeps logins: `data.reason: 'no_share'`;
   retry later), `session_ended` (the session is over: `sessionExpired` fires too; `data.reason: 'session_ending'` when
-  less than 30 s remain) or `rate_limited` (more than 10 mints a minute for one session).
+  less than 30 s remain) or `rate_limited` (more than 10 mints a minute for one session or 30 for one user, or your
+  app's own identity-token quota: 10 × your plan's per-minute rate a minute and your plan's daily rate an hour, apart
+  from the quota your logins and unlocks use; D176).
 - **React.** `const { identityToken, refresh, error } = useIdentityToken();` mints on first use while logged in, keeps
   the token fresh (a timer at `exp` − 5 min, only while the page is visible) and re-renders on `identityTokenChanged`.
   `refresh({ maxAgeMs })` gets one now.
@@ -741,13 +745,16 @@ past the Hana session:
 | `sub` | `u1_…` (25 characters): stable per user in your app's scope, the same for every login method of their account and after a key rotation; different at every other partner; never the Google `sub` |
 | `sid` | `s1_…`: one per Hana session, shared by its tabs and reloads, new at every interactive login, never repeated |
 | `iat`, `exp`, `jti` | seconds; `exp` ≤ `iat` + 3600 and never past the session's end; `jti` is random |
-| `wallets` | `[{chain: 'stellar', address: 'G…'}, {chain: 'evm', address: '0x…'}]`, a real JSON array; each address proven by a signature of its own key for this session and app |
+| `wallets` | `[{chain: 'stellar', address: 'G…'}, {chain: 'evm', address: '0x…'}]`, a real JSON array; the holder of this Hana session proved control of each address's key (a signature bound to this session and app) |
 | `login_methods` | the account's login providers, sorted (`["google"]` today) |
 | `email`, `email_verified` | not issued yet: an opt-in verified email per app comes with email login (the claim pair then appears only for users who agreed to share it with you) |
 
-A user who tampers with their own Hana vault can only ever attach a key they control, never someone else's address.
-If a request must come from one exact wallet, keep checking that the wallet that authenticated it is in `wallets`
-(`assertWallet` below).
+What `wallets` proves, and what it doesn't: the session's holder controls each key. It is **not** proof that the
+address is the Hana-derived wallet of that `sub`: a user who tampers with their own vault can attach another key they
+control (never someone else's address), and one address can appear under several `sub`s (a key the user exported and
+reuses elsewhere, an old key after a rotation). So never treat wallet → `sub` as unique, for example for per-wallet
+credits or sign-up bonuses: key those on `sub`, and dedupe wallets yourself. If a request must come from one exact
+wallet, keep checking that the wallet that authenticated it is in `wallets` (`assertWallet` below).
 
 ### Verify it (Node, `jose`)
 

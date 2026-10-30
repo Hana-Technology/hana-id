@@ -1584,8 +1584,9 @@ detail open or a safer reading was needed. Each follows the spec's intent; the u
   and signatures so a session proof can't be paired with other proofs.
 
 ### D171. A mint in an app that keeps logins needs the session's live share
-- Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`apps/api/src/identity/token.ts` `checkShare`,
-  `packages/web/src/vault/vault.ts` `mintIdentity`) · Source: build step 2; the spec's "Minting" step 2
+- Date 2026-10-30 · Status: in force; amended by D178 (other apps' shares, tombstones) · Source: build step 2; the
+  spec's "Minting" step 2 (`apps/api/src/identity/token.ts` `checkShare`, `packages/web/src/vault/vault.ts`
+  `mintIdentity`)
 - Decision: when the app's persistence is `session`, `/v1/identity/token` requires a share for the session key, made
   for the requesting parent, judged as unlock judges it without writing anything (`410 session_ended` with `reason`
   `unknown_share`, `share_revoked`, `persistence_off`, `share_expired`); a session key with no share passes on the
@@ -1609,7 +1610,7 @@ detail open or a safer reading was needed. Each follows the spec's intent; the u
   database once 0007 drops `usage`.
 
 ### D173. Identity signing configuration: `activeKid` in the manifest, `iss` under the API
-- Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`packages/env/src/identity.ts`,
+- Date 2026-10-30 · Status: in force; the global ceiling amended by D176, the standby slot by D177 · Was on `feat/identity-token-1` (`packages/env/src/identity.ts`,
   `apps/api/scripts/gen-wrangler.ts`, `scripts/lib/identity-key.ts`) · Source: build step 2; the spec's "Manifest"
 - Decision: the Worker-secret signer is `{kind: "worker-secret", activeKid}`: the API signs with whichever of
   `IDENTITY_SIGNING_KEY` / `IDENTITY_SIGNING_KEY_STANDBY` has that RFC 7638 thumbprint, so the rotation playbook's
@@ -1800,6 +1801,61 @@ points for the user"; none changes an address.
   that the user really proved the email address in this flow; without it a compromised issuer service could serve a
   case-B token during a plain Google login. The flag must never be true on mainnet (D135); a runbook check alone can be
   skipped.
+
+### D176. Identity mint limits: narrow to wide, sliding, none shared with the vault; the replay marker last
+- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`apps/api/src/identity/limits.ts`, `token.ts`
+  `identityQuota`, `rate-limiter.ts` `hitSliding`) · Source: the identity token's security review (M1, L2, L3, L5)
+- Decision: `/v1/identity/token` asks, in turn: the vault gate's per-IP binding (only: the app's `vault:minute` quota
+  is no longer used, so mints can't starve unlocks) → … → the session proof's signature → per session key 10/min
+  (binding) → not paused → share → chain session → wallet proofs → the single-use marker → per account root 30/min
+  (binding `IDENTITY_ROOT_LIMIT`, keyed by the HMAC `sub` bytes) → per app `identity:minute` (10 × plan `per_minute`)
+  and `identity:hour` (plan `per_day`, at most 100 000) → per scope `identity:hour` (2 × the app's) → global: a hard
+  breaker of 1 000 000/h (≥ 10 × any app's ceiling, so no one tenant can trip it) and a soft line at 100 000/h that
+  logs `identity_volume_alert` (critical) without refusing. The app, scope and global windows are sliding (the
+  previous bucket weighted by its overlap) and counted only for a request that passed every other check; a refusal by
+  a later window takes the hit back from the earlier ones. The marker is reserved only once the proof is known to be a
+  live session's (random keys create none), keyed `sha256(sessionPk ‖ u64le(issuedAtMs) ‖ nonce)` (independent of the
+  signature's encoding), and an alarm on the marker object deletes expired markers.
+- Why: the global hourly breaker was reachable by one tenant (three free apps at 600/min) and then refused every app
+  for up to an hour. Amends D173's global ceiling (100 000/h, refusing).
+- Rejected: one exact per-root object (a Durable Object per user per hour; the binding is a flood limit anyway).
+
+### D177. Testnet identity keys: the standby stays off the Worker; rotation and retirement commands
+- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`scripts/lib/identity-key.ts`,
+  `packages/playbooks` `identity-signing-key-compromised`) · Source: the identity token's security review (M2)
+- Decision: `identity-key init` uploads only the active key and the sub key; the standby is published in the JWKS
+  but never uploaded (operators move its file offline), so a leak of the Worker's secrets or the Cloudflare account
+  doesn't reach it. New commands: `next` (generate and publish a rotation key, upload nothing), `switch --to
+  next|standby` (upload it into the Worker slot the active key isn't in, make it the manifest's `activeKid`; the old
+  active key becomes `previous`, still published), `retire --key previous|standby` (unpublish, delete its Worker
+  secret if it has one, set its file aside). `.secrets/<env>/identity-slots.json` records which slot holds which kid.
+  `gen --dev-vars` writes only the active key. The compromise playbook (operations.md, `docs/playbooks.md`): treat
+  both keys as exposed unless the incident provably touches only the active one; then retire the standby too and
+  rotate to a fresh key.
+- Why: two keys side by side on one Worker and uploaded together made "switch to the standby" keep a compromised
+  key. Amends D173 (the standby slot is now a rotation slot) and the spec's rotation playbook.
+
+### D178. A dead or other app's share stops mints in every app of the scope; shares kept as tombstones for 24 h
+- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`apps/api/src/identity/token.ts` `checkShare`,
+  `vault/cron.ts` `pruneShares`) · Source: the identity token's security review (L1)
+- Decision: the mint looks a session key's share up in any app: a share that belongs to another app refuses the mint
+  (`410 session_ended`, `reason: unknown_share`) whatever this app's persistence, so a session revoked (or simply
+  persisted) in a `session` app of a scope never mints in a `none` app of the same scope. The hourly cron deletes a
+  revoked or absolutely expired share only once it is older than 24 h (the contract's `MAX_SESSION_MS`), so the row
+  outlives any on-chain session it could stand for.
+- Why: `getShareBySessionPk` was per app and the cron deleted revoked rows within the hour, so a revoked session kept
+  minting in a `none` app until its on-chain expiry, against D171 and `docs/security.md`. Amends D171.
+
+### D179. Raw signing never covers Hana's signing domains; `wallets` proves control, not derivation
+- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`packages/web/src/vault/signing.ts`
+  `refuseReservedRaw`, `docs/integration.md` section 15) · Source: the identity token's security review (L4, L6)
+- Decision: in apps with raw signing on, the vault refuses (4100, `reason: raw_reserved_domain`, before any popup) a
+  Stellar raw request whose bytes start with `hana-id`, and an EVM raw digest equal to the session's own identity
+  wallet-proof digest, so an approved raw signature can't serve as a wallet proof. The guide says what `wallets`
+  proves: the session's holder controls each address's key, not that it is the Hana-derived wallet of that `sub`; one
+  address can appear under several `sub`s (an exported or reused key, an old `key_index`), so partners must not treat
+  wallet → `sub` as unique (per-wallet credits).
+- Why: defence in depth for the wallet proof; the guide overstated the claim.
 
 ## Superseded or amended
 

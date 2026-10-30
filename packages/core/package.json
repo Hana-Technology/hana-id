@@ -56,7 +56,7 @@
     "build:lib": "tsx ../../scripts/sdk-build.ts",
     "prepack": "pnpm run build:lib",
     "test": "vitest run",
-    "gen-vectors": "node scripts/gen-layout-vectors.mjs && node scripts/gen-derivation-vectors.mjs",
+    "gen-vectors": "node scripts/gen-layout-vectors.mjs && node scripts/gen-derivation-vectors.mjs && node scripts/gen-identity-vectors.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json"
   },
   "dependencies": {

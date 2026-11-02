@@ -33,15 +33,42 @@ export async function seedPlan(id: string, perMinute: number, perDay: number, pe
   await env.DB.prepare('INSERT INTO plans (id, per_minute, per_day, per_ip_minute) VALUES (?1, ?2, ?3, ?4)').bind(id, perMinute, perDay, perIpMinute).run();
 }
 
-export async function seedApp(opts: { scope?: string; key?: string; status?: string; plan?: string; origins?: string[] } = {}): Promise<SeededApp> {
+/**
+ * An app as the hot DB holds it after migration 0006: its scope row (created when missing, in `org_legacy`, with the
+ * environment its key's prefix names and `first_session_at` set unless `firstSession: null`), the app row, its key in
+ * `app_keys`, and its origins in force (`active_from = 0`). A key on a scope of the other environment is refused by
+ * the 0006 triggers, as in a deployed env.
+ */
+export async function seedApp(
+  opts: { scope?: string; key?: string; status?: string; suspendedBy?: number; plan?: string; origins?: string[]; firstSession?: number | null; db?: D1Database } = {},
+): Promise<SeededApp> {
+  const db = opts.db ?? env.DB;
   const id = `app_${uid()}`;
   const key = opts.key ?? newKey();
   const scope = opts.scope ?? `s${uid()}`;
-  await env.DB.prepare('INSERT INTO apps (id, name, scope_id, publishable_key, status, plan) VALUES (?1, ?2, ?3, ?4, ?5, ?6)')
+  const now = Date.now();
+  const environment = key.startsWith('pk_live_') ? 'live' : 'test';
+  await db
+    .prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES (?1, 'org_legacy', ?2, ?3, ?4, ?4)")
+    .bind(scope, environment, opts.firstSession === undefined ? now : opts.firstSession, now)
+    .run();
+  await db.prepare('INSERT INTO apps (id, name, scope_id, publishable_key, status, plan) VALUES (?1, ?2, ?3, ?4, ?5, ?6)')
     .bind(id, `Test ${id}`, scope, key, opts.status ?? 'active', opts.plan ?? 'free')
     .run();
-  for (const origin of opts.origins ?? [ORIGIN]) await env.DB.prepare('INSERT INTO app_origins (app_id, origin) VALUES (?1, ?2)').bind(id, origin).run();
+  if (opts.suspendedBy) await db.prepare('UPDATE apps SET suspended_by = ?2 WHERE id = ?1').bind(id, opts.suspendedBy).run();
+  await db.prepare("INSERT INTO app_keys (id, app_id, key, created_by, created_at) VALUES (?1, ?2, ?3, 'test', ?4)").bind(`key_${uid()}`, id, key, now).run();
+  for (const origin of opts.origins ?? [ORIGIN]) await db.prepare('INSERT INTO app_origins (app_id, origin, active_from) VALUES (?1, ?2, 0)').bind(id, origin).run();
   return { id, key, scope };
+}
+
+/**
+ * Gives the app's key the other environment's prefix by a direct D1 edit (app_keys has no update trigger), so the
+ * gate's scope_conflict check, which the 0006 triggers otherwise make unreachable, can be tested.
+ */
+export async function forgeKeyEnvironment(app: SeededApp): Promise<SeededApp> {
+  const key = newKey(app.key.startsWith('pk_live_') ? 'pk_test_' : 'pk_live_');
+  await env.DB.prepare('UPDATE app_keys SET key = ?2 WHERE key = ?1').bind(app.key, key).run();
+  return { ...app, key };
 }
 
 export async function call(

@@ -157,6 +157,12 @@ manifest blocks, tables or vars yet.
   (`countUsage`, `incrementUsage` removed); optional `USAGE_DB` binding (`gen --usage-hyperdrive-id`); `pg`
   exact-pinned in the API; `scripts/usage-setup.ts` (role passwords and the two Hyperdrive configs) and
   `USER_ID_KEY` generation in `.secrets/<env>/user-id-key` (0600, never printed).
+- **Carried over from C3 (forward obligation, D205):** the `no_session` waiver (`scripts/lib/admin-sql.ts`
+  `noSessionWaiver`; the same rule in `AdminRpc.ackNotice` from C5) treats a D1 `usage` row of any app of the scope
+  as a sign of a user. Once C4 stops writing those counters, and before C4b's 0007 drops the table, replace that
+  check with one that still sees new sessions: e.g. a hot-DB marker the API writes beside the relay (as it already
+  does for `scopes.first_session_at`), not a Neon read (the hot path and the waiver must not depend on Neon). Its test
+  rows move with it.
 - **Tests**: spec "Topology and config" first two rows (logins with no binding; logins identical with a refusing
   server, `usage_write_failed` once after one retry); "Usage ledger" capture rows (one event per post-gate outcome,
   none for gate rejections or `GET /v1/app`, allowlist snapshot, `org_id` from the gate row, `relayer_pk`/

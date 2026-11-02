@@ -42,10 +42,13 @@ page: see [`docs/integration.md`](../../docs/integration.md).
    ```sh
    pnpm --filter @hana-id/scripts admin <env> scope:register --client <google client id> --owner-near <account> --yes
    # or a shared-only scope:  scope:register --allow-shared --owner-near <account> --yes
-   pnpm --filter @hana-id/scripts admin <env> app:create --name smoke-a --scope s1 --origin http://localhost:5173 --remote
+   pnpm --filter @hana-id/scripts admin <env> app:create --org org_legacy --name smoke-a --scope s1 --environment test --origin http://localhost:5173 --remote
+   pnpm --filter @hana-id/scripts admin <env> app:changes:announce <gc id> --remote   # each origin's gc_… id, printed above
    ```
 
-   `app:create` prints the publishable key (`pk_test_…`; public).
+   `app:create` prints the publishable key (`pk_test_…`; public) and each origin's proposal id; an origin is in force
+   once announced (at once on a scope with no login yet, else `appChangeDelayMs` later; `docs/operations.md` "Admin
+   CLI"). `--environment` is needed only for a scope with no app yet.
 3. **Google OAuth clients.** Vault page: every client the app logs in with (its own, or Hana's shared one) lists
    `{authOrigin}/login/callback` under *Authorized redirect URIs*. Direct page: the client also lists
    `http://localhost:5173` under *Authorized JavaScript origins* (Google also recommends `http://localhost`). Changes

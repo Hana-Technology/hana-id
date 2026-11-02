@@ -47,7 +47,10 @@ Hana registers apps during the pilot (the self-serve dashboard comes with batch 
 - whether you use Hana's shared Google client or your own ([section 6](#6-google-client-shared-or-your-own));
 - any [settings](#7-app-settings) other than the defaults.
 
-You get a **publishable key** (`pk_test_…`). It is public: ship it in your page. Your origins are what protect it.
+You get a **publishable key** (`pk_test_…` for a test app, `pk_live_…` for a live one; a scope is test or live for
+good, so test and live apps never share addresses). It is public: ship it in your page. Your origins are what protect
+it. A new origin takes effect after the same delay as a policy (24 h in production; 60 s on sandbox-dev) once Hana
+has announced it (on a new app, before anyone has logged in to it, at once); removing one takes effect at once.
 
 ## 2. Install
 
@@ -278,7 +281,8 @@ Hana sets these per app on request (`admin app:settings` now, the dashboard in b
 | Auto-approve policy | none, or a policy ([section 9](#9-auto-approve-policies)) | none |
 | Google web client | your scope's web client, when it has several | the first one |
 
-Loosening takes effect after a delay (24 h in production; 60 s on sandbox-dev): raw signing `'approval'`, and setting
+Loosening takes effect after a delay (24 h in production; 60 s on sandbox-dev), counted from when the change is
+announced (by Hana by hand during the pilot; by email to your security contacts once the admin console runs): raw signing `'approval'` (live apps only: a test app never signs raw), and setting
 or changing a policy. Tightening takes effect at once for new page loads: raw signing `'off'`, and removing a policy.
 In a tab that is already open, a removed policy stops auto-signing within 10 s ([section 9](#9-auto-approve-policies)),
 and raw signing `'off'` refuses raw requests within 10 s too (the vault re-reads the setting before each one).

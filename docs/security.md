@@ -1,8 +1,8 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-02 for the watchdog's email issuer rules, link volume and
-`unrecorded_wallets` alert (branch `feat/email-login-5`, D190–D193); 2026-10-30 for the watchdog's retired-key rule (branch
+known open issues. Last verified against code: 2026-11-02 for the watchdog's email issuer rules, the link-cap alerts
+and the `unrecorded_wallets` alert (branch `feat/email-login-5`, D190–D193, D200); 2026-10-30 for the watchdog's retired-key rule (branch
 `fix/watchdog-retired-key-race`, D153), for the partner identity token (branch
 `feat/identity-token-2`: the review fixes D176–D179 in the identity rows, invariants and open issue (l); branch
 `feat/identity-token-1`: the partner-backend party, its compromise rows, the three identity secrets), for the relayer pool rows (branch `feat/playbook-gaps`: the watchdog's relayer funds
@@ -128,7 +128,11 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
     tokens are JWS JSON with ≤ 3 signatures, every one valid, from ≥ `required` distinct signers (1-of-1 `hana` at
     launch); the signer list and `required` change only by a governed upgrade, with a 10-minute overlap. Google and
     every other issuer stay compact-only. Trust: whoever makes the `hana` key sign can mint any email token, so reach
-    every email wallet and every account linked to one (`docs/email-login-spec.md` "Trust statement").
+    every email wallet and every account linked to one (`docs/email-login-spec.md` "Trust statement"). Taking over a
+    Google wallet that way needs a new link (D119), and the contract caps new links per scope and in all per UTC hour
+    (D200; default 50 / 500, raising waits `governance_delay_ms`), so a stolen email key takes over at most the cap's
+    worth of accounts per hour before the watchdog pages `link_cap_reached`; opening email-only wallets makes no link
+    and is bounded only by the key's custody (KMS, a second signer, D121).
   - Accounts: a member opens its root's path; an identity in no account opens the v2 path unchanged. Automatic links
     only inside a login and bound both ways (D133): the issuer's `auto_link` nonce binds the token to that session
     and to one join (session preimage hash, session identity, join, joiner, target root, target epoch, mode), and the
@@ -694,12 +698,13 @@ plan (D33; built on branch `feat/governance`, not deployed), specified in `docs/
   weakening the policy is paused on as it executes (it was already public and alerted for `governance_delay_ms`).
   Hana's published email JWKS is compared with the pins as a warning only (Hana controls it), and is read only after
   every protective step, the alert delivery, the heartbeat, the run record and the lock release, with its body
-  capped: Hana's API can't stall the watchdog's cancel or pause, or hold its lock (D86). Every third-party answer the watchdog parses (RPC, both JWKS, the indexer) is
-  size-capped. The **use of Hana's real key** by a compromised issuer isn't bounded on chain at 1-of-1: the
-  link-volume warning (D192, new links per scope and hour from `identity_link_*` events) is the watchdog's detection.
-  Its events come from a third-party transactions indexer (FastNear), read last and guarded, which can hide or invent
-  events (a missed or a false warning) but can't make the watchdog act; it reads at most 1 MB per run, and a block
-  padded past what one scan can read is counted as far as it goes, skipped, and paged (`link_block_unscanned`). A v2 contract reads as "no email issuer".
+  capped: Hana's API can't stall the watchdog's cancel or pause, or hold its lock (D86). Every third-party answer
+  the watchdog parses (RPC, both JWKS) is size-capped. The **use of Hana's real key** by a compromised issuer isn't
+  prevented on chain at 1-of-1, but its account takeovers are rate-limited there (D200): the contract refuses new
+  links past the hourly cap, and the watchdog reads `get_link_stats()` with the chain each run (current and previous
+  hour, so nothing falls between runs) and pages `link_cap_reached`; half the total cap warns, a cap raise is a
+  critical governance change. No third party is involved (the FastNear indexer scan of D192 is gone). A v2 contract
+  reads as "no email issuer", and as "no link stats".
 - Monitoring (D83): every watchdog check, action and alert surfaces in the admin portal's "Security & monitoring"
   view (a standing rule for future checks); the watchdog sends its own alerts, so a compromised Hana Cloudflare
   account can't silence them.

@@ -56,20 +56,6 @@ const signerPolicyPins = z
     if (new Set(all).size !== all.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['signers'], message: 'A key is pinned once, for one signer' });
   });
 
-/** Link volume thresholds: new links (`identity_linked`, `identity_link_proposed`) in the last hour. */
-const linkVolumeSchema = z
-  .object({
-    /**
-     * The NEAR transactions indexer the watchdog reads the signer's `identity_link_*` events from (FastNear's
-     * transactions API: `https://tx.test.fastnear.com` on testnet). Detection only: it can hide events, never act.
-     */
-    indexerUrl: z.string(),
-    perHour: z.number().int().min(1).max(1_000_000).optional(),
-    perScopePerHour: z.number().int().min(1).max(1_000_000).optional(),
-  })
-  .strict()
-  .refine((l) => l.perHour === undefined || l.perScopePerHour === undefined || l.perScopePerHour <= l.perHour, { message: 'perScopePerHour must not exceed perHour' });
-
 const watchdogSchema = z.object({
   /**
    * The watchdog's own NEAR account: one of the contract's watchdogs (`add_watchdog`). Its Worker secret
@@ -109,8 +95,6 @@ const watchdogSchema = z.object({
    * posts the first email key (`docs/email-login-build-plan.md` batch 6).
    */
   pinnedIssuerKeys: z.object({ email: signerPolicyPins.optional() }).strict().optional(),
-  /** The link-volume check (`identity_link_*` events). Absent: the check is skipped, and alerts once email is on chain. */
-  linkVolume: linkVolumeSchema.optional(),
 });
 
 /**
@@ -119,7 +103,7 @@ const watchdogSchema = z.object({
  * whose account the contract doesn't know can't cancel or pause anything.
  */
 function watchdogRules(
-  m: { name: string; network: string; signer: string; relayer: string; owner: string; mpc: string; watchdogs?: string[] | undefined; cloudflare: { workerName: string } },
+  m: { name: string; signer: string; relayer: string; owner: string; mpc: string; watchdogs?: string[] | undefined; cloudflare: { workerName: string } },
   w: z.infer<typeof watchdogSchema>,
   ctx: z.RefinementCtx,
 ): void {
@@ -133,27 +117,9 @@ function watchdogRules(
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'cloudflare', 'workerName'], message: "watchdog.cloudflare.workerName must differ from the API's Worker name" });
   }
   if (new Set(w.alertEmails).size !== w.alertEmails.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'alertEmails'], message: 'Duplicate alert email' });
-  const urls = [
-    [['watchdog', 'pinnedIssuerKeys', 'email', 'jwksUrl'], w.pinnedIssuerKeys?.email?.jwksUrl],
-    [['watchdog', 'linkVolume', 'indexerUrl'], w.linkVolume?.indexerUrl],
-  ] as const;
-  for (const [path, value] of urls) {
-    const problem = value === undefined ? null : endpointUrlProblem(value, m.name);
-    if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [...path], message: `${path.join('.')} ${problem}` });
-  }
-  // A mainnet indexer on a testnet env (or the reverse) would watch another chain's signer account: refused.
-  const indexer = w.linkVolume?.indexerUrl;
-  const host = indexer === undefined ? null : (() => {
-    try {
-      return new URL(indexer).hostname;
-    } catch {
-      return null;
-    }
-  })();
-  const other = m.network === 'testnet' ? /(?:^|[.-])(?:main|mainnet)(?:[.-]|$)/u : /(?:^|[.-])(?:test|testnet)(?:[.-]|$)/u;
-  if (host && other.test(host)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'linkVolume', 'indexerUrl'], message: `watchdog.linkVolume.indexerUrl ${host} names another network than ${m.network}` });
-  }
+  const jwksUrl = w.pinnedIssuerKeys?.email?.jwksUrl;
+  const problem = jwksUrl === undefined ? null : endpointUrlProblem(jwksUrl, m.name);
+  if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'pinnedIssuerKeys', 'email', 'jwksUrl'], message: `watchdog.pinnedIssuerKeys.email.jwksUrl ${problem}` });
 }
 
 /** One environment's accounts and endpoints. Every account name the code uses comes from here. */

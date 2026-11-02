@@ -21,8 +21,7 @@ import type { ChainReader, ChainSnapshot, ChainWriter, KeyChange, WatchdogMethod
 import type { Notifier } from './channels.ts';
 import { ALERT_KINDS, type AlertKind, CHANNELS, CHECK_IDS, type CheckId } from './checks.ts';
 import { maybeSendDigest } from './digest.ts';
-import { diffChain, type StoredSnapshot } from './diff.ts';
-import { type LinkEventSource, NEW_LINK_EVENTS } from './links.ts';
+import { diffChain, linkLimitsOf, type StoredSnapshot } from './diff.ts';
 import { log } from './log.ts';
 import { EMAIL_KEY_WHY, EMAIL_PROVIDER, type EmailKeyReason, emailKeyVerdict, pinnedSignersOf, policyFindings, policyId, type SignerPins, signerOfKid } from './pins.ts';
 import { formatNear, level, RELAYER_POOLS, type RelayerFunds, type RelayerThresholds, type Threshold } from './relayer.ts';
@@ -43,17 +42,8 @@ export const STALE_ACTIVE_KID_MS = 3 * 60 * 60_000;
 export const UNEXECUTED_AFTER_MS = 60 * 60_000;
 /** RPC or JWKS failures in a row before a warning. */
 export const FAILING_RUNS = 3;
-/** Link events are kept this long in D1 (the volume check looks at the last hour). */
-export const LINK_EVENT_RETENTION_MS = 8 * 24 * 60 * 60_000;
-/** The link-volume window. */
-export const LINK_WINDOW_MS = 60 * 60_000;
-/** A link event dated more than this past the wall clock is bad indexer data: ignored and pruned. */
-export const LINK_FUTURE_SLACK_MS = 5 * 60_000;
-/** A skipped block's critical `link_block_unscanned` stays open this long. */
-export const UNSCANNED_KEPT_MS = 7 * 24 * 60 * 60_000;
-const MAX_UNSCANNED = 20;
-/** A link scan further behind the chain than this can't see a burst in time (warning). */
-export const LINK_SCAN_BEHIND_MS = 60 * 60_000;
+/** `link_volume_high` once the current window's links reach this share of `total_per_hour` (D200). */
+export const LINK_VOLUME_WARN_SHARE = 0.5;
 /** A run lock older than this is taken over (a run that died without releasing it). */
 export const LOCK_STALE_MS = 10 * 60_000;
 /**
@@ -78,8 +68,6 @@ export interface RunConfig {
   emailPins: { pins: SignerPins | null; problems: string[] };
   /** A dev env (`local*`, `sandbox*`): `unrecorded_wallets` may be true there (D139). */
   devEnv: boolean;
-  /** New links per hour above which the link-volume check warns. */
-  linkVolume: { thresholds: { perHour: number; perScopePerHour: number }; problems: string[] };
 }
 
 export interface RunDeps {
@@ -91,8 +79,6 @@ export interface RunDeps {
   fetchJwks: () => Promise<Jwk[]>;
   /** Hana's published email JWKS (usable RS256 keys; may be empty), or null when no URL is configured. Throws on failure. */
   fetchEmailJwks: (() => Promise<Jwk[]>) | null;
-  /** The link-volume check's event source (the indexer), or null when none is configured. */
-  linkEvents: LinkEventSource | null;
   notifier: Notifier;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
@@ -130,26 +116,11 @@ export const META = {
   /** The last relayer reading with the thresholds it was judged against (`GET /status` `relayer_funds`). */
   relayerFunds: 'relayer_funds',
   emailJwksFailures: 'email_jwks_failures',
-  /** The link scan's cursor and last result (`GET /status` `link_volume`). */
-  linkScan: 'link_scan',
+  /** The last `get_link_stats()` with when it was read (`GET /status` `link_stats`). */
+  linkStats: 'link_stats',
   /** The pins and the chain's email issuer at the last run (`GET /status` `email`). */
   emailPolicy: 'email_policy',
 } as const;
-
-/** What `GET /status` serves as `link_volume`. */
-export interface LinkScanState {
-  /** Last block height scanned (null: the next scan starts at the chain's head). */
-  cursor: number | null;
-  /** Blocks the scan skipped (too big to read whole), each kept a week with its critical condition. */
-  unscanned?: { height: number; at: number }[];
-  failures: number;
-  at: number | null;
-  latest_height: number | null;
-  behind_ms: number | null;
-  /** The last hour: new links in all and per scope, and every link event by name. */
-  last_hour: { new_links: number; by_scope: Record<string, number>; by_event: Record<string, number> } | null;
-  thresholds: { perHour: number; perScopePerHour: number };
-}
 
 /** What `GET /status` serves as `email`: the pins in force and the chain's email issuer at the last run. */
 export interface EmailPolicyStatus {
@@ -273,7 +244,7 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
 
     // ---- config ----
     run.evaluate('watchdog_key_missing', 'channel_not_configured', 'pins_invalid');
-    run.check('config', 'ok', [...cfg.relayerThresholds.problems, ...cfg.emailPins.problems, ...cfg.linkVolume.problems].join('; ') || undefined);
+    run.check('config', 'ok', [...cfg.relayerThresholds.problems, ...cfg.emailPins.problems].join('; ') || undefined);
     if (cfg.emailPins.problems.length) {
       // Fail closed: every email key then counts as unpinned (cancel, pause), so say why at once (L4).
       await run.condition('pins_invalid', 'pins_invalid', "The watchdog's email pins (EMAIL_PINS) are unreadable: every email key is treated as unpinned", { problems: cfg.emailPins.problems });
@@ -369,6 +340,8 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
       await emailActiveKeys(run, snap, canAct, self, deleted);
       await signerPolicy(run, snap, canAct, self);
       await unrecordedWallets(run, snap);
+      // D200: links per hour from one chain view, judged before the run is recorded and the lock released.
+      await linkStats(run, snap);
     }
 
     const firstJwks = google.jwks;
@@ -478,10 +451,11 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
         owner: s.owner,
         issuer: s.issuer,
         email: { issuer: s.email.issuer, selfIssued: s.email.selfIssued },
+        linkStats: linkLimitsOf(s.linkStats),
       } satisfies StoredSnapshot);
       await store.setMeta(META.selfChanges, self);
     } else {
-      for (const id of ['signer_policy', 'governance_diff', 'unexecuted_changes'] as const) run.check(id, 'skipped', 'no chain read');
+      for (const id of ['signer_policy', 'links', 'governance_diff', 'unexecuted_changes'] as const) run.check(id, 'skipped', 'no chain read');
     }
     // ---- relayer funds (alert only) ----
     let relayerRead = true;
@@ -501,7 +475,7 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
 
     // The advisory checks run after the run is recorded and the lock released (below).
     advisorySnap = snap;
-    for (const id of ['email_jwks', 'links'] as const) run.check(id, 'skipped', snap ? 'advisory: runs after the run is recorded' : 'no chain read');
+    run.check('email_jwks', 'skipped', snap ? 'advisory: runs after the run is recorded' : 'no chain read');
   } catch (err) {
     outcome = 'error';
     log({ event: 'run_failed', runId, code: err instanceof Error ? err.name : 'error' }, 'error');
@@ -530,24 +504,19 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
   await store.releaseLock(runId).catch(() => log({ event: 'run_lock_release_failed', runId }, 'error'));
   log({ event: 'run', runId, outcome: outcome === 'error' ? 'error' : 'ok', code: outcome, checks: checks.length, actions: run.actions.length, alerts: run.alerts.length, latencyMs: d.now() - startedAt });
 
-  // ---- step 9: advisory checks (warning only), after the run is recorded and the lock released ----
-  // Their third-party reads (Hana's email JWKS: Hana's API is a party the watchdog must survive, D86; the indexer)
-  // can't hold back a cancel, a pause, the snapshot, an alert, the heartbeat, the run record or the lock: a CPU kill
-  // or a hang here costs only these checks. Each runs guarded, resolves only its own kinds, then updates the run's
-  // record; what they raise goes out in a second delivery. A run that took protective actions skips the link scan.
+  // ---- step 9: the advisory check (warning only), after the run is recorded and the lock released ----
+  // Its third-party read (Hana's email JWKS: Hana's API is a party the watchdog must survive, D86) can't hold back a
+  // cancel, a pause, the snapshot, an alert, the heartbeat, the run record or the lock: a CPU kill or a hang here
+  // costs only this check. It runs guarded, resolves only its own kinds, then updates the run's record; what it
+  // raises goes out in a second delivery.
   if (advisorySnap && outcome !== 'error') {
     const s: ChainSnapshot = advisorySnap;
     try {
       run.evaluated.clear();
       run.checks.delete('email_jwks');
-      run.checks.delete('links');
       run.raisedKeys.clear();
       const raised = run.alerts.length;
       await advisory(run, 'email_jwks', () => emailJwks(run, s));
-      let linksRead = true;
-      if (run.actions.length) run.check('links', 'skipped', 'protective actions this run: the link scan waits for the next run');
-      else if (!(await advisory(run, 'links', async () => void (linksRead = await checkLinks(run, s))))) linksRead = false;
-      if (!linksRead && outcome === 'ok') outcome = 'degraded';
       await store.resolveConditions(run.evaluated, run.raisedKeys, d.now());
       if (run.alerts.length > raised) {
         const more = await deliverAlerts(store, d.notifier, d.now(), cfg.envName);
@@ -1028,12 +997,6 @@ async function emailJwks(run: Run, s: ChainSnapshot): Promise<void> {
   run.check('email_jwks', problems.length ? 'alert' : 'ok', `${keys.length} published, ${active.length} active`);
 }
 
-/**
- * The link-volume check (identity_link_* events through the indexer) and D139's `unrecorded_wallets`. Links need an
- * email identity, so while no email issuer is on chain nothing is scanned and the cursor stays unset: the first scan
- * after the email issuer appears starts at the chain's head (no link can precede its first key, which waits
- * `governance_delay_ms`). Returns false when the indexer read failed (the run is then degraded).
- */
 /** D139: `unrecorded_wallets` must never be true outside a dev env (critical, alert only). Chain data only. */
 async function unrecordedWallets(run: Run, s: ChainSnapshot): Promise<void> {
   const cfg = run.d.config;
@@ -1049,92 +1012,55 @@ async function unrecordedWallets(run: Run, s: ChainSnapshot): Promise<void> {
   });
 }
 
-async function checkLinks(run: Run, s: ChainSnapshot): Promise<boolean> {
-  const { store, config: cfg } = run.d;
-  const now = run.d.now();
-  const state: LinkScanState = (await store.getMeta<LinkScanState>(META.linkScan)) ?? { cursor: null, failures: 0, at: null, latest_height: null, behind_ms: null, last_hour: null, thresholds: cfg.linkVolume.thresholds };
-  state.thresholds = cfg.linkVolume.thresholds;
+/**
+ * D200: the contract counts every new link per scope and in total in fixed UTC-hour windows, and refuses a link once
+ * a cap is reached. `get_link_stats()` reports the current and the previous window, so a cap reached between two runs
+ * is still seen. A cap reached is critical (detection, and the contract already brakes: no pause); the current total
+ * at half the total cap is a warning. A contract without the view reads as "no link stats": quiet while no email
+ * issuer is on chain (no link is possible), a warning once one is.
+ */
+async function linkStats(run: Run, s: ChainSnapshot): Promise<void> {
+  run.evaluate('link_cap_reached', 'link_volume_high', 'link_stats_unavailable');
+  const v = s.linkStats;
   const emailLive = s.email.issuer !== null || s.email.selfIssued !== null;
-  const src = run.d.linkEvents;
-  if (!src) {
-    run.evaluate('link_events_unavailable');
-    if (emailLive) await run.condition('link_events_unavailable', 'link_events_unavailable:not_configured', 'Link volume is not monitored: an email issuer is on chain and no indexer is configured (watchdog.linkVolume)', { signer: cfg.signer });
-    run.check('links', 'skipped', 'no indexer configured');
-    return true;
+  if (!v) {
+    if (emailLive) {
+      await run.condition('link_stats_unavailable', 'link_stats_unavailable', 'An email issuer is on chain but the contract has no get_link_stats: links per hour are neither capped nor monitored (D200)', { signer: run.d.config.signer });
+    } else run.check('links', 'skipped', 'no get_link_stats (pre-D200 contract) and no email issuer: no link possible');
+    return;
   }
-  if (!emailLive) {
-    // No email identity can exist, so no link: nothing to read (and the next scan starts at the head).
-    run.evaluate('link_events_unavailable', 'link_volume_high', 'link_block_unscanned');
-    await store.setMeta(META.linkScan, { ...state, cursor: null, failures: 0, unscanned: [], last_hour: null } satisfies LinkScanState);
-    run.check('links', 'ok', 'no email issuer on chain: no link possible, nothing scanned');
-    return true;
+  await run.d.store.setMeta(META.linkStats, { at: run.d.now(), ...v });
+  const lim = v.limits;
+  for (const w of [v.current, v.previous]) {
+    if (!w) continue;
+    const window = { window_start_ms: w.window_start_ms, window_ms: v.window_ms, limits: lim };
+    if (w.total_cap_reached) {
+      await run.condition('link_cap_reached', `link_cap_reached:total:${w.window_start_ms}`, `Link cap reached in all scopes for the hour from ${iso(w.window_start_ms)} (${w.total} links, cap ${lim.total_per_hour}): new links are refused until the hour ends`, {
+        ...window,
+        scope: null,
+        total: w.total,
+      });
+    }
+    for (const scope of w.capped_scopes) {
+      await run.condition('link_cap_reached', `link_cap_reached:scope:${scope}:${w.window_start_ms}`, `Link cap reached in scope ${ident(scope)} for the hour from ${iso(w.window_start_ms)} (cap ${lim.per_scope_per_hour}): its new links are refused until the hour ends`, {
+        ...window,
+        scope,
+        total: w.total,
+      });
+    }
+    if (w.capped_scopes_truncated) {
+      await run.condition('link_cap_reached', `link_cap_reached:more_scopes:${w.window_start_ms}`, `More scopes reached their link cap in the hour from ${iso(w.window_start_ms)} than the view lists`, { ...window, listed: w.capped_scopes });
+    }
   }
-  let scan;
-  try {
-    scan = await src.scan(state.cursor === null ? null : state.cursor + 1, now);
-  } catch {
-    const failures = state.failures + 1;
-    await store.setMeta(META.linkScan, { ...state, failures } satisfies LinkScanState);
-    run.evaluatePrefix('link_events_unavailable', 'link_events_unavailable:failing');
-    if (failures >= FAILING_RUNS) await run.condition('link_events_unavailable', 'link_events_unavailable:failing', `The link-event indexer failed ${failures} runs in a row: link volume is not monitored`, { failures });
-    run.check('links', 'error', `indexer read failed (${failures} run(s) in a row)`);
-    log({ event: 'link_scan', outcome: 'error', runId: run.id }, 'warn');
-    return false;
-  }
-  // An event dated in the future (block time past the wall clock plus slack) is bad data: never stored, and pruned.
-  await store.recordLinkEvents(scan.events.filter((e) => e.at <= now + LINK_FUTURE_SLACK_MS));
-  await store.pruneLinkEvents(now - LINK_EVENT_RETENTION_MS, now + LINK_FUTURE_SLACK_MS);
-  const counts = await store.linkCounts(now - LINK_WINDOW_MS);
-  const byScope = new Map<string, number>();
-  const byEvent = new Map<string, number>();
-  let total = 0;
-  for (const c of counts) {
-    byEvent.set(c.event, (byEvent.get(c.event) ?? 0) + c.n);
-    if (!(NEW_LINK_EVENTS as readonly string[]).includes(c.event)) continue;
-    byScope.set(c.scope_id, (byScope.get(c.scope_id) ?? 0) + c.n);
-    total += c.n;
-  }
-  run.evaluate('link_volume_high', 'link_events_unavailable');
-  const t = cfg.linkVolume.thresholds;
-  // Blocks skipped because no run could read them whole stay critical for a week (M2): the scan moves on, the gap
-  // stays visible. Read again by hand (`docs/playbooks.md` link-volume).
-  const unscanned = [...(state.unscanned ?? []), ...(scan.skipped !== null ? [{ height: scan.skipped, at: now }] : [])]
-    .filter((u, i, all) => now - u.at < UNSCANNED_KEPT_MS && all.findIndex((x) => x.height === u.height) === i)
-    .slice(-MAX_UNSCANNED);
-  run.evaluate('link_block_unscanned');
-  for (const u of unscanned) {
-    await run.condition('link_block_unscanned', `link_block_unscanned:${u.height}`, `Block ${u.height} holds more of the signer's transactions than a scan can read: its links were not counted (padding a block to hide links?)`, {
-      block_height: u.height,
-      skipped_at: u.at,
-      latest_height: scan.latestHeight,
+  const c = v.current;
+  if (lim.total_per_hour > 0 && c.total >= lim.total_per_hour * LINK_VOLUME_WARN_SHARE && !c.total_cap_reached) {
+    await run.condition('link_volume_high', `link_volume_high:${c.window_start_ms}`, `${c.total} new links this hour, at least half the total cap of ${lim.total_per_hour}`, {
+      window_start_ms: c.window_start_ms,
+      total: c.total,
+      limits: lim,
     });
   }
-  for (const [scope, n] of byScope) {
-    if (n <= t.perScopePerHour) continue;
-    const auto = counts.filter((c) => c.scope_id === scope && c.auto === 1).reduce((a, c) => a + c.n, 0);
-    await run.condition('link_volume_high', `link_volume_high:scope:${scope}`, `${n} new links in scope ${ident(scope)} in the last hour (threshold ${t.perScopePerHour}; ${auto} automatic)`, { scope_id: scope, new_links: n, automatic: auto, threshold: t.perScopePerHour, window_ms: LINK_WINDOW_MS });
-  }
-  if (total > t.perHour) await run.condition('link_volume_high', 'link_volume_high:total', `${total} new links in the last hour in all scopes (threshold ${t.perHour})`, { new_links: total, by_scope: Object.fromEntries(byScope), threshold: t.perHour, window_ms: LINK_WINDOW_MS });
-  if (scan.behindMs > LINK_SCAN_BEHIND_MS) {
-    await run.condition('link_events_unavailable', 'link_events_unavailable:behind', `The link scan is ${Math.round(scan.behindMs / 60_000)} min behind the chain${scan.truncated ? ' (more transactions than one run reads)' : ''}: a burst is seen late`, {
-      behind_ms: scan.behindMs,
-      truncated: scan.truncated,
-      scanned_to: scan.scannedTo,
-      latest_height: scan.latestHeight,
-    });
-  }
-  await store.setMeta(META.linkScan, {
-    cursor: scan.scannedTo,
-    failures: 0,
-    unscanned,
-    at: now,
-    latest_height: scan.latestHeight,
-    behind_ms: scan.behindMs,
-    last_hour: { new_links: total, by_scope: Object.fromEntries(byScope), by_event: Object.fromEntries(byEvent) },
-    thresholds: t,
-  } satisfies LinkScanState);
-  run.check('links', 'ok', `${scan.events.length} new link event(s) read; ${total} new link(s) in the last hour`);
-  return true;
+  run.check('links', 'ok', `${c.total} new link(s) this hour (caps ${lim.per_scope_per_hour} per scope, ${lim.total_per_hour} in all); ${v.links_total} in all time`);
 }
 
 const thresholdText = (t: Threshold) => ({ warn_below: formatNear(t.warn), critical_below: formatNear(t.critical) });

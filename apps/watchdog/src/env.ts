@@ -37,10 +37,6 @@ export interface Env {
   EMAIL_PINS?: string;
   /** Hana's published email JWKS (set with the pins; default `{apiUrl}/v1/email/jwks.json`). */
   EMAIL_JWKS_URL?: string;
-  /** The transactions indexer of the link-volume check (manifest `watchdog.linkVolume.indexerUrl`); absent: skipped. */
-  LINK_INDEXER_URL?: string;
-  /** JSON `{perHour?, perScopePerHour?}` link-volume thresholds; absent: the defaults (links.ts). */
-  LINK_VOLUME?: string;
 
   // ---- secrets ----
   /** `ed25519:<base58>` function-call key on WATCHDOG_ACCOUNT (receiver SIGNER_ACCOUNT, the four watchdog methods). */

@@ -68,6 +68,8 @@ describe('NearChain', () => {
   const GOOGLE_ISSUER = { provider: 'google', iss_values: [], kids: ['k1'] };
   const EMAIL_ISSUER = { provider: 'email', iss_values: ['https://api.test/v1/email'], kids: ['tp1'] };
   const POLICY = { provider: 'email', signers: [{ id: 'hana', kids: ['tp1'] }], required: 1, overlap_until_ms: null };
+  const WINDOW = { window_start_ms: 3_600_000, total: 3, total_cap_reached: false, capped_scopes: [] };
+  const STATS = { window_ms: 3_600_000, limits: { per_scope_per_hour: 50, total_per_hour: 500 }, pending_limits: null, links_total: 9, current: WINDOW, previous: null };
   /**
    * hana-signer's views by provider. `v3: false` is today's sandbox-dev contract: no get_self_issued, and
    * get_issuer("email") answers null (no such issuer), as v2's provider-generic view does.
@@ -80,6 +82,7 @@ describe('NearChain', () => {
     if (name === 'get_issuer') return viewResult(provider === 'google' ? GOOGLE_ISSUER : o.email ? EMAIL_ISSUER : null);
     if (name === 'get_issuer_keys') return viewResult(provider === 'google' ? [{ kid: 'k1', n: 'n1', e: 'AQAB' }] : o.email ? [{ kid: 'tp1', n: 'n2', e: 'AQAB' }] : null);
     if (name === 'get_self_issued') return o.v3 === false ? NOT_FOUND : viewResult(o.email ? POLICY : null);
+    if (name === 'get_link_stats') return o.v3 === false ? NOT_FOUND : viewResult(STATS);
     return viewResult(views[name]);
   };
 
@@ -101,12 +104,23 @@ describe('NearChain', () => {
       ['get_issuer_keys', { provider: 'email' }, 'final'],
     ]);
     expect(s.owner).toBeNull(); // this get_config names no owner
+    expect(s.linkStats).toEqual(STATS);
+    expect(calls.find((c) => c.params.method_name === 'get_link_stats')?.params).toMatchObject({ finality: 'final' });
+  });
+
+  it('fails the read on a get_link_stats of another shape (D200)', async () => {
+    for (const bad of [{ ...STATS, limits: { per_scope_per_hour: -1, total_per_hour: 500 } }, { ...STATS, current: { ...WINDOW, capped_scopes: 's1' } }, { ...STATS, previous: 'x' }, { ...STATS, pending_limits: { per_scope_per_hour: 1, total_per_hour: 2 } }]) {
+      vi.restoreAllMocks();
+      stubRpc(contract({ email: true, over: { get_link_stats: bad } }));
+      await expect(new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot(), JSON.stringify(bad)).rejects.toBeInstanceOf(RpcError);
+    }
   });
 
   it('reads a v2 contract (no get_self_issued, no email issuer) as no email issuer, not as an error', async () => {
     const calls = stubRpc(contract({ v3: false }));
     const s = await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot();
     expect(s.email).toEqual({ issuer: null, issuerKeys: null, selfIssued: null, hasSelfIssuedView: false });
+    expect(s.linkStats).toBeNull();
     expect(s.config.unrecorded_wallets).toBeUndefined();
     // No email issuer: get_issuer_keys("email") isn't read.
     expect(calls.filter((c) => c.params.method_name === 'get_issuer_keys').map((c) => viewArgs(c.params))).toEqual([{ provider: 'google' }]);

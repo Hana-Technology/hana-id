@@ -1674,7 +1674,11 @@ detail open or a safer reading was needed. Each follows the spec's intent; the u
   per hour, 500 in total per hour, changed by the owner (council). The scope or total that reaches its cap is
   recorded by the call that reaches it, and a view reports the current and previous windows. The watchdog reads that
   view each run: a cap reached is critical, a count past half the cap is a warning; raising a cap is a critical
-  governance change. The FastNear indexer scan (D192) is removed.
+  governance change. The FastNear indexer scan (D192) is removed. Watchdog side (`feat/email-login-5`): the view is
+  read with the chain snapshot, before the run is recorded and its lock released; `link_cap_reached` (critical, per
+  capped scope and for the total, keyed by window, current and previous hour, no pause), `link_volume_high` (warning,
+  current total ≥ half `total_per_hour`), `link_stats_unavailable` (warning: an email issuer and no view); playbook
+  `link-cap`.
 - Why: exact, on chain, no third party or data budget, and it turns detection into a brake: a thief can take over at
   most the cap's worth of accounts per hour before the page and the pause. v3 isn't deployed anywhere, so the
   contract change is cheap now.
@@ -2082,11 +2086,11 @@ change no address.
 
 Made while building `docs/email-login-build-plan.md` batch 5 (branch `feat/email-login-5`), where the spec's
 "Watchdog (`apps/watchdog`)" section was silent or ambiguous. Each takes the stricter reading; none changes an
-address. All wait for the user's confirmation.
+address. D190, D191 and D193 are confirmed by the user (2026-11-02); D192 is superseded by D200.
 
 ### D190. Email pins: absent means nothing pinned; a pin is the key's thumbprint, its kid and its signer
-- Date 2026-11-02 · Status: to confirm; built (`feat/email-login-5`, `apps/watchdog/src/pins.ts`, `run.ts`), not
-  deployed · Source: build of `docs/email-login-spec.md` "Watchdog"
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); built, not deployed (`feat/email-login-5`,
+  `apps/watchdog/src/pins.ts`, `run.ts`) · Source: build of `docs/email-login-spec.md` "Watchdog"
 - Decision:
   - The manifest's `watchdog.pinnedIssuerKeys.email` absent (sandbox-dev today, until batch 4 creates the key) means
     **nothing is pinned**, not "unchecked": a pending email Add is cancelled (`forged_key_change`, reason
@@ -2112,7 +2116,8 @@ address. All wait for the user's confirmation.
     reason `pins_unreadable`, so the page names the config rather than a forgery.
   - Order (review H1, re-review): Hana's email JWKS is read after every protective step, the first alert delivery,
     the heartbeat, the run record and the lock release, guarded, with its body capped (64 KB); every body is capped:
-    Google's JWKS, every RPC answer (4 MB) and the indexer (1 MB per run in all).
+    Google's JWKS and every RPC answer (4 MB). (The link scan that also ran there is gone with D200: link caps are a
+    chain view, judged in the protective phase.)
     Hana's API is a party the watchdog must survive (D86): a huge or hostile body is a failed fetch.
   - `scripts/pin.ts` (`pnpm --filter @hana-id/watchdog pin <public key>`) prints a public key's pin with the same
     function the Worker uses, so batch 4's kid and the manifest's pin can't disagree.
@@ -2123,7 +2128,8 @@ address. All wait for the user's confirmation.
   chosen by whoever posts the key).
 
 ### D191. A weaker signer policy, and the order to change the pins around a policy upgrade
-- Date 2026-11-02 · Status: to confirm; built (`feat/email-login-5`, `pins.ts` `policyFindings`) · Source: build of
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); built, not deployed (`feat/email-login-5`, `pins.ts`
+  `policyFindings`) · Source: build of
   `docs/email-login-spec.md` "Watchdog" ("critical on any difference, pause on a weaker policy") and "Signing key
   (staged)" ("Level 1 adds `cosign: […]` and `required: 2` before its upgrade executes")
 - **This overrides `docs/email-login-spec.md` line 867** ("Level 1 adds `cosign: […]` and `required: 2` before its
@@ -2152,8 +2158,10 @@ address. All wait for the user's confirmation.
   its length.
 
 ### D192. Link volume through a transactions indexer, detection only, with provisional thresholds
-- Date 2026-11-02 · Status: to confirm; built (`feat/email-login-5`, `apps/watchdog/src/links.ts`, migration
-  `0002_link_events.sql`) · Source: build of `docs/email-login-spec.md` "Watchdog" ("Link-volume check from
+- Date 2026-11-02 · Status: **superseded by D200** (2026-11-02): the indexer scan, `apps/watchdog/src/links.ts`, the
+  never-applied migration `0002_link_events.sql`, `watchdog.linkVolume`, `link_events_unavailable` and
+  `link_block_unscanned` are removed; the contract counts and caps links and the watchdog reads `get_link_stats()`.
+  Kept below as history · Source: build of `docs/email-login-spec.md` "Watchdog" ("Link-volume check from
   `identity_link_*` events (warning above the threshold)"; the spec names no threshold or event source)
 - Decision:
   - Events are receipt logs, which no JSON-RPC view lists, and a block scan is far beyond a Worker run's budget. The
@@ -2187,14 +2195,17 @@ address. All wait for the user's confirmation.
   now: absolute thresholds work from the first day.
 
 ### D193. D139's unrecorded_wallets alert, and the email issuer in the governance diff
-- Date 2026-11-02 · Status: to confirm; built (`feat/email-login-5`) · Source: D139; build of
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); built, not deployed (`feat/email-login-5`) · Source: D139; build of
   `docs/email-login-spec.md` "Watchdog"
 - Decision: every run with `get_config().unrecorded_wallets == true` on an env that isn't a dev env (`local*`,
   `sandbox*`, the same rule as `@hana-id/env` `isDevEnv`) raises the critical condition `unrecorded_wallets` (alert
   only), resolved once the owner accepts. The governance diff also treats as critical: `unrecorded_wallets` changing
   (an upgrade setting it, `accept_unrecorded_wallets` clearing it), `email_issuer` (`set_issuer("email")` creating it or
   changing its iss values), `email_issuer_keys` (an active email kid gone without a queued removal), and
-  `email_signer_policy` (`mark_self_issued`, or signers or `required` changed by an upgrade).
+  `email_signer_policy` (`mark_self_issued`, or signers or `required` changed by an upgrade). With D200 the diff also
+  carries the link caps from `get_link_stats()`: `link_limits` rising (or appearing with the view) and a
+  `pending_limits` raise appearing or changing are critical; lowering, or a pending raise cancelled, is a warning; a
+  pending raise coming into force as scheduled is info.
 - Why: D139 asks for the alert on every non-dev env; the owner's immediate email issuer actions leave no pending
   state, like Google's (`issuer`, `issuer_keys`), so the diff is the only place they show.
 
@@ -2254,5 +2265,5 @@ is a proposal there.
 
 Still open from `docs/email-login-spec.md`: nothing; the user-mail provider is SendGrid (D194). The contract readings
 D130 and D131, batch 2's D154 and D155, and the `packages/email` readings D156 and D159 are confirmed (2026-11-02);
-D157 (disposable list) and D158 (`hd` compared exactly) wait for the user's confirmation, as do the watchdog's
-D190–D193 (batch 5).
+D157 (disposable list) and D158 (`hd` compared exactly) wait for the user's confirmation. The watchdog's D190, D191 and
+D193 (batch 5) are confirmed (2026-11-02); D192 is superseded by D200.

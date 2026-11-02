@@ -422,7 +422,16 @@ Branch `feat/email-login-5`, not deployed (no transactions sent).
   run); the indexer's answers share a 1 MB budget per run; pages of 200; a block no scan can read whole is skipped
   with a critical `link_block_unscanned` open for a week instead of stalling the scan; `unrecorded_wallets` now
   belongs to `governance_diff`; `pin` accepts a PEM with leading text (openssl "Bag Attributes").
-- **Left open.** The thresholds are guesses until sandbox-dev and staging traffic (D192). The link scan reads at most
-  100 signer transactions per run (every login is one), so a busy signer falls behind (alerted) on the free plan's
-  subrequest budget; a contract view counting links would remove the indexer. The admin portal's rendering of the new
-  checks and kinds is batch C/9 (the registry and `/status` carry them).
+- **D200 (link counter and cap in the contract) replaces the link scan.** Everything above about the FastNear indexer,
+  `links.ts`, migration `0002_link_events.sql` (never applied, deleted), `watchdog.linkVolume`, `link_events_unavailable`,
+  `link_block_unscanned` and the advisory link phase is removed. The watchdog reads `get_link_stats()` (built on
+  `feat/link-cap`) with the chain snapshot, in the protective phase: critical `link_cap_reached` per capped scope and
+  for the total, keyed by window, for the current and the previous hour (no pause: the contract brakes); warning
+  `link_volume_high` at half `total_per_hour`; warning `link_stats_unavailable` when an email issuer exists and the
+  view doesn't. A cap raise (`link_limits` up, a `pending_limits` raise) is a critical governance change, lowering a
+  warning. Playbook `link-cap` replaces `link-volume`. The advisory phase now holds only Hana's email JWKS read. D190,
+  D191 and D193 are confirmed by the user; D192 is superseded by D200.
+- **Left open.** The caps are provisional until sandbox-dev and staging traffic (D200), and the watchdog's
+  `get_link_stats` shape must match `feat/link-cap` when it merges (a mismatch fails the chain read loudly). The
+  `set_link_limits` owner call isn't in `scripts/lib/contract.ts` `OWNER_METHODS` yet (the link-cap branch adds it).
+  The admin portal's rendering of the new checks and kinds is batch C/9 (the registry and `/status` carry them).

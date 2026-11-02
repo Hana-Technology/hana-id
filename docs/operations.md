@@ -1121,7 +1121,7 @@ Rotating its secrets: `WATCHDOG_KEY`: add a new function-call key (as in step 3)
 put WATCHDOG_KEY`, then delete the old key on chain. `WATCHDOG_STATUS_TOKEN`: change it on both Workers. The others:
 replace in the file and `wrangler secret put`.
 
-### Email login: pins, link volume, unrecorded wallets
+### Email login: pins, link caps, unrecorded wallets
 
 The watchdog also checks Hana's email issuer (`docs/email-login-spec.md` "Watchdog", D190–D193), against the
 manifest's `watchdog.pinnedIssuerKeys.email` (`envs/README.md`). The pins are public thumbprints, not secrets; they
@@ -1131,9 +1131,8 @@ come only from the watchdog's own manifest, never from the chain or Hana's JWKS.
   active one. So the order on an env is: write the thumbprints of the issuer's keys (primary, standby: batch 4's
   `scripts/email-issuer.ts init` prints them; `corepack pnpm --filter @hana-id/watchdog pin <public key file>` prints
   the pin of any public JWK, JWKS or PEM with the Worker's own function, and says whether a JWKS kid matches) under `pinnedIssuerKeys.email.signers.hana` with `required: 1`, then
-  `corepack pnpm --filter @hana-id/watchdog gen <env>`, `corepack pnpm --dir apps/watchdog exec wrangler d1 migrations
-  apply <d1Name> --remote` (migration `0002_link_events.sql`) and `corepack pnpm --dir apps/watchdog exec wrangler
-  deploy`, and check `/status` `email.pinned`; only then does the council run `set_issuer("email", …)`,
+  `corepack pnpm --filter @hana-id/watchdog gen <env>` and `corepack pnpm --dir apps/watchdog exec wrangler deploy`
+  (no new D1 migration), and check `/status` `email.pinned`; only then does the council run `set_issuer("email", …)`,
   `mark_self_issued("email")` and `set_issuer_key(…, signer: "hana")` (build plan batch 6). Between `set_issuer` and
   `mark_self_issued` a `signer_policy_transition` warning and the `governance_change` alerts are expected.
   A v2 contract (sandbox-dev today) reads as "no email issuer": nothing is alerted, pins or not.
@@ -1143,9 +1142,12 @@ come only from the watchdog's own manifest, never from the chain or Hana's JWKS.
   executes with the current `required`; raise the pinned `required` (or drop the old signer) after it executed (D191).
   The reverse order reads as a weaker policy and pauses. The upgrade's 10-minute overlap shows as a
   `signer_policy_transition` warning; a longer one pauses (D191).
-- **Link volume** (D192): `watchdog.linkVolume.indexerUrl` (sandbox-dev: `https://tx.test.fastnear.com`, FastNear's
-  transactions API, no key) is read only while an email issuer is on chain; the first scan starts at the chain's head.
-  `/status` `link_volume` shows the cursor, how far behind it is, and the last hour by scope and event.
+- **Link caps** (D200): the contract counts new links per scope and in all per UTC hour and refuses a new link once a
+  cap is reached (default 50 per scope, 500 in all; `set_link_limits` by the council: lowering applies at once, raising
+  waits `governance_delay_ms`). The watchdog reads `get_link_stats()` each run: a cap reached pages
+  `link_cap_reached`, half the total cap warns `link_volume_high`, a raise is a critical `governance_change`. `/status`
+  `link_stats` shows both windows. A contract without the view warns `link_stats_unavailable` once an email issuer is on
+  chain, so the D200 contract must be deployed before email goes live.
 - **`unrecorded_wallets`** (D135, D139): sandbox-dev accepts after its v3 upgrade (`admin <env> owner:call
   accept_unrecorded_wallets`); on any env that isn't `local*` or `sandbox*` the watchdog pages while it is true.
 
@@ -1183,7 +1185,7 @@ This table only says what each kind means:
 | `relayer_balance_critical`, `relayer_allowance_critical`, `relayer_pool_empty`; warning `relayer_balance_low`, `relayer_allowance_low` | The relayer account's available balance, or a pool key's remaining allowance, is below its threshold (defaults: balance 5 / 1 NEAR; session key 0.5 / 0.1; owner key 0.1 / 0.02; manifest `watchdog.relayerFunds`), or a pool has no key: relays from it fail once it runs out. Read-only: the watchdog never tops up | [`relayer-out-of-funds`](playbooks.md#relayer-out-of-funds) |
 | warning `confirm_failed` | A confirmation of a key that matches Google's JWKS failed: it goes live only after the full delay | [`confirm-failed`](playbooks.md#confirm-failed) |
 | warning `email_jwks_mismatch` | Hana's published email JWKS lists a key that isn't pinned (or whose kid isn't its thumbprint), lacks an active email key, or failed 3 fetches while email keys are active. Informational: the contract never reads it | [`email-jwks-mismatch`](playbooks.md#email-jwks-mismatch) |
-| warning `link_volume_high`, `link_events_unavailable`; critical `link_block_unscanned` | More new links (`identity_linked`, `identity_link_proposed`) in the last hour than `watchdog.linkVolume` allows (default 20 per scope, 100 in all; D192), or the check can't see: no indexer while email is on chain, the indexer failing 3 runs, or the scan > 1 h behind (1 MB of indexer answers per run, ~13 logins); critical `link_block_unscanned`: a block too big for one scan (≥ 200 of the signer's transactions, or over 1 MB) was skipped after counting what fit, open for a week: read it by hand | [`link-volume`](playbooks.md#link-volume) |
+| `link_cap_reached`; warning `link_volume_high`, `link_stats_unavailable` | `get_link_stats()` (D200): a link cap was reached in the current or previous UTC hour, in one scope or in all, so the contract refuses further links there until the hour ends (a partner launch, or a stolen email key taking over accounts at the cap's pace; alert only, the cap is the brake); the current hour at half the total cap; or an email issuer on chain and a contract without the view | [`link-cap`](playbooks.md#link-cap) |
 | info `key_change_confirmed`, `key_change_executed`, `key_change_cancelled` | Routine key-change events | [`key-change-lifecycle`](playbooks.md#key-change-lifecycle) |
 | info `self_issued_key_change` | A pending email key pinned for its signer, or a pending email key removal: never confirmed (self-issued keys wait `governance_delay_ms`) | [`self-issued-key-change`](playbooks.md#self-issued-key-change) |
 | info `config_matured` | A scheduled delay decrease or console-audience addition came into force | [`config-matured`](playbooks.md#config-matured) |

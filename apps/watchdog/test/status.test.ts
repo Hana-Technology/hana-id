@@ -6,7 +6,7 @@ import type { Env } from '../src/env.ts';
 import worker from '../src/index.ts';
 import { handleRequest, SILENT_AFTER_MS } from '../src/status.ts';
 import { Store } from '../src/store.ts';
-import { alertsOf, emailJwk, initialized, jwk, linkEvent, MIN, pinsOf, RecordingNotifier } from './helpers.ts';
+import { alertsOf, emailJwk, initialized, jwk, linkStats, linkWindow, MIN, pinsOf, RecordingNotifier } from './helpers.ts';
 
 const TOKEN = 'status-token-for-tests-only-0123456789abcdef';
 const testEnv = (over: Partial<Env> = {}): Env => ({ ...(env as unknown as Env), WATCHDOG_STATUS_TOKEN: TOKEN, ...over });
@@ -79,28 +79,27 @@ describe('GET /status', () => {
     for (const k of ['relayer_balance_low', 'relayer_allowance_low']) expect(kinds[k]).toMatchObject({ severity: 'warning', playbook: 'relayer-out-of-funds' });
   });
 
-  it('serves the email pins, the chain email issuer at the last run, and the link-volume scan', async () => {
+  it('serves the email pins, the chain email issuer at the last run, and the last link stats', async () => {
     const hana = await emailJwk(201);
     const pins = pinsOf({ hana: [hana] });
     const w = await initialized({ pins, before: (x) => void x.chain.emailIssuer([hana]) });
-    // The first run (in `initialized`) started the scan at the head; this one reads one link.
-    w.links.queue.push(linkEvent('s1', w.clock.t - MIN));
+    w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t, 7), links_total: 12 });
     await w.run();
-    const e = testEnv({ EMAIL_PINS: JSON.stringify(pins), EMAIL_JWKS_URL: 'https://api.test/v1/email/jwks.json', LINK_INDEXER_URL: 'https://tx.test.fastnear.com' });
+    const e = testEnv({ EMAIL_PINS: JSON.stringify(pins), EMAIL_JWKS_URL: 'https://api.test/v1/email/jwks.json' });
     const { body } = await call('/status', {}, w.clock.t, e);
     expect(body.email).toMatchObject({
       pinned: pins,
       jwks_url: 'https://api.test/v1/email/jwks.json',
       last: { pinned: pins, chain: { issuer: true, pre_v3: false, self_issued: { signers: [{ id: 'hana', kids: [hana.kid] }], required: 1 }, active_kids: [hana.kid] }, differences: [], weaker: [] },
     });
-    expect(body.link_volume).toMatchObject({ indexer: 'https://tx.test.fastnear.com', last: { failures: 0, last_hour: { new_links: 1, by_scope: { s1: 1 } }, thresholds: { perHour: 100, perScopePerHour: 20 } } });
+    expect(body.link_stats).toMatchObject({ limits: { per_scope_per_hour: 50, total_per_hour: 500 }, links_total: 12, current: { total: 7 } });
     const kinds = body.alert_kinds as Record<string, { severity: string; playbook: string }>;
     expect(kinds.signer_policy_mismatch).toMatchObject({ severity: 'critical', check: 'signer_policy', playbook: 'signer-policy-mismatch' });
-    expect(kinds.link_volume_high).toMatchObject({ severity: 'warning', check: 'links', playbook: 'link-volume' });
-    // Without pins or an indexer: nothing pinned, nothing scanned.
+    expect(kinds.link_cap_reached).toMatchObject({ severity: 'critical', check: 'links', playbook: 'link-cap' });
+    expect(kinds.link_volume_high).toMatchObject({ severity: 'warning', check: 'links', playbook: 'link-cap' });
+    // Without pins: nothing pinned.
     const bare = (await call('/status', {}, w.clock.t)).body;
     expect(bare.email).toMatchObject({ pinned: null, jwks_url: null });
-    expect((bare.link_volume as { indexer: unknown }).indexer).toBeNull();
   });
 
   it('says silent when the last run is older than two intervals', async () => {

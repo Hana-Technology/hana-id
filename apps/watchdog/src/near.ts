@@ -4,7 +4,7 @@ import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { actionCreators, createTransaction, encodeTransaction, Signature, SignedTransaction } from '@near-js/transactions';
 import { baseDecode, baseEncode } from '@near-js/utils';
 import { GOOGLE_PROVIDER } from '@hana-id/jwks';
-import type { ChainReader, ChainSnapshot, ChainWriter, ConfigView, GovernanceView, IssuerKey, IssuerView, KeyChange, OwnerAccount, SelfIssuedView, TxResult, WatchdogMethod } from './chain.ts';
+import type { ChainReader, ChainSnapshot, ChainWriter, ConfigView, GovernanceView, IssuerKey, IssuerView, KeyChange, LinkLimits, LinkStatsView, LinkWindow, OwnerAccount, SelfIssuedView, TxResult, WatchdogMethod } from './chain.ts';
 import { WATCHDOG_METHODS } from './chain.ts';
 import { EMAIL_PROVIDER } from './pins.ts';
 import { BODY_LIMITS, readJsonCapped } from './http.ts';
@@ -106,6 +106,36 @@ const validIssuer = (v: unknown): boolean =>
   v === null || (typeof v === 'object' && typeof (v as IssuerView).provider === 'string' && isStringArray((v as IssuerView).iss_values) && isStringArray((v as IssuerView).kids));
 const validKeys = (v: unknown): boolean =>
   v === null || (Array.isArray(v) && v.every((k) => typeof k === 'object' && k !== null && typeof k.kid === 'string' && typeof k.n === 'string' && typeof k.e === 'string'));
+const count = (v: unknown): boolean => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+const validLimits = (v: unknown): boolean => typeof v === 'object' && v !== null && count((v as LinkLimits).per_scope_per_hour) && count((v as LinkLimits).total_per_hour);
+const validWindow = (v: unknown): boolean => {
+  const w = v as LinkWindow;
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    count(w.window_start_ms) &&
+    count(w.total) &&
+    typeof w.total_cap_reached === 'boolean' &&
+    isStringArray(w.capped_scopes) &&
+    w.capped_scopes.length <= 1000 &&
+    (w.capped_scopes_truncated === undefined || typeof w.capped_scopes_truncated === 'boolean')
+  );
+};
+/** `get_link_stats()`'s shape (D200). */
+export const validLinkStats = (v: unknown): v is LinkStatsView => {
+  const l = v as LinkStatsView;
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    count(l.window_ms) &&
+    validLimits(l.limits) &&
+    (l.pending_limits === null || (validLimits(l.pending_limits) && count(l.pending_limits.effective_at_ms))) &&
+    count(l.links_total) &&
+    validWindow(l.current) &&
+    (l.previous === null || validWindow(l.previous))
+  );
+};
+
 const validSelfIssued = (v: unknown): boolean => {
   if (v === null) return true;
   const s = v as SelfIssuedView;
@@ -151,9 +181,12 @@ export class NearChain implements ChainReader {
     if (!validIssuer(issuer) || !validIssuer(emailIssuer) || !validKeys(issuerKeys.value) || !validKeys(emailKeys.value) || !validSelfIssued(selfIssued.value)) {
       throw new RpcError('Unexpected issuer view shape', false);
     }
+    // D200's link counter: one cheap view. A contract without it (v2, or v3 before the link cap) reads as no stats.
+    const linkStats = await this.optionalView<LinkStatsView>('get_link_stats', {});
+    if (linkStats.value !== null && !validLinkStats(linkStats.value)) throw new RpcError('Unexpected get_link_stats shape', false);
     const owner = typeof config.owner === 'string' ? await this.ownerAccount(config.owner) : null;
     const email = { issuer: emailIssuer, issuerKeys: emailKeys.value, selfIssued: selfIssued.value, hasSelfIssuedView: selfIssued.exists };
-    return { keyChanges, issuer, issuerKeys: issuerKeys.value, email, config, governance, owner };
+    return { keyChanges, issuer, issuerKeys: issuerKeys.value, email, linkStats: linkStats.value, config, governance, owner };
   }
 
   /** A view that older contract code may not have: `exists: false` (value null) on MethodNotFound; other errors throw. */

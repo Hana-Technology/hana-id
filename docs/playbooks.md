@@ -42,7 +42,7 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [Email signer policy differs from the pins](#signer-policy-mismatch) | critical | `signer_policy_mismatch`, `signer_policy_transition` |
 | [unrecorded_wallets is set outside a dev env](#unrecorded-wallets) | critical | `unrecorded_wallets` |
 | [Hana's email JWKS differs from the pins](#email-jwks-mismatch) | warning | `email_jwks_mismatch` |
-| [Link volume high, or not monitored](#link-volume) | critical | `link_volume_high`, `link_events_unavailable`, `link_block_unscanned` |
+| [Link cap reached, or link volume high](#link-cap) | critical | `link_cap_reached`, `link_volume_high`, `link_stats_unavailable` |
 | [Pending email key change (info)](#self-issued-key-change) | info | `self_issued_key_change` |
 | [`KEYS_UPDATER_KEY` stolen (API secrets leaked)](#updater-key-stolen) | critical | — |
 | [A relayer key stolen (session pool or owner pool)](#relayer-key-stolen) | warning | — |
@@ -1087,60 +1087,53 @@ Hana's published email JWKS (`{apiUrl}/v1/email/jwks.json`) lists a key that isn
 
 **Refs:** [`docs/email-login-spec.md#issuer-configuration`](email-login-spec.md#issuer-configuration), [`docs/email-login-spec.md#watchdog-appswatchdog`](email-login-spec.md#watchdog-appswatchdog), D190 (`docs/decisions.md`) · **See also:** [email-issuer-key-compromised](#email-issuer-key-compromised), [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)
 
-<a id="link-volume"></a>
+<a id="link-cap"></a>
 
-### Link volume high, or not monitored
+### Link cap reached, or link volume high
 
-`link-volume` · critical · alert kinds: `link_volume_high`, `link_events_unavailable`, `link_block_unscanned`
+`link-cap` · critical · alert kinds: `link_cap_reached`, `link_volume_high`, `link_stats_unavailable`
 
-More new links (`identity_linked`, `identity_link_proposed`) in the last hour than the threshold, in one scope or in all; or the watchdog cannot read link events (no indexer while email is on chain, the indexer failing, the scan more than 1 h behind), or it had to skip a block too big to read (critical).
+The contract counts every new link per scope and in total per UTC hour and refuses new links once a cap is reached (D200; default 50 per scope, 500 in all). A cap reached is critical: a partner launch, or a stolen email key taking over accounts at the cap's pace. Half the total cap is a warning.
 
 **Signals**
 
-- Warning `link_volume_high` (`link_volume_high:scope:<scope>` or `:total`): the count, how many were automatic, the threshold (`watchdog.linkVolume`, default 20 per scope and 100 in all per hour).
-- Warning `link_events_unavailable` (`:not_configured`, `:failing`, `:behind`). `/status` `link_volume` has the last scan, the cursor, the skipped blocks (`unscanned`) and the last hour by scope and event.
-- Critical `link_block_unscanned:<height>`: a block held more of the signer's transactions than one scan reads whole (≥ 200, or more than the 1 MB per-run budget of indexer answers). The scan counted what it could of it and moved on; the alert stays open for a week.
+- Critical `link_cap_reached` (`:total:<hour>`, `:scope:<scope>:<hour>`, `:more_scopes:<hour>`), from `get_link_stats()` each run for the current and the previous hour, so a cap reached between two runs is seen. It resolves once that hour is neither window.
+- Warning `link_volume_high:<hour>`: the hour's links in all scopes reached half of `total_per_hour`. Warning `link_stats_unavailable`: an email issuer is on chain but the contract has no `get_link_stats` (deploy the D200 contract).
+- Users of the capped scope (or of every scope, for the total) whose login carries a link get `Link rate limit reached`: the whole call reverts, so the login is refused rather than completed without its link (D122). `/status` `link_stats` has the limits, a pending raise and both windows.
 
 **Impact**
 
-- A burst of links is how a compromised email issuer would use the real key at 1-of-1 (docs/email-login-spec.md "Trust statement"): each link joins an identity it minted to someone's wallet. Pending links wait `change_delay_ms` and can be cancelled by their users; automatic ones are active at once.
-- Unmonitored: such a burst goes unnoticed by the watchdog (the CloudTrail reconciliation, once built, still sees unlogged signatures on mainnet).
+- A stolen email signing key (1-of-1 at launch) can link an email identity it mints to a victim's Google identity at once (D119) and so derive the victim's wallet. The cap bounds that to the cap's worth of accounts per hour per scope and in all, and pages; it doesn't stop it.
+- While capped, legitimate linking logins in that scope (or everywhere) are refused until the hour ends; logins without a link are unaffected.
 
 **Steps**
 
-1. **Is it real traffic?** (who: a founder). Check the scope's app: a launch, a migration of its users or a marketing push explains a jump. The API's usage counts show logins for the same window. If it is legitimate, raise the threshold for the env (`watchdog.linkVolume.perScopePerHour` / `perHour`), regenerate and redeploy the watchdog.
-
-   ```sh
-   curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" https://<workerName>.<subdomain>.workers.dev/status
-   corepack pnpm --filter @hana-id/watchdog gen <env>
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
-   ```
-
-2. **Unexplained: treat the email issuer as compromised** (who: a founder). Follow [email-issuer-key-compromised](#email-issuer-key-compromised): remove the issuer key on chain (immediate), retire the sessions it opened, and tell the affected scopes so their users cancel pending links.
-
-3. **Not monitored: restore the event source** (who: a founder). `not_configured`: set `watchdog.linkVolume.indexerUrl` (FastNear's transactions API, `https://tx.test.fastnear.com` on testnet), regenerate, redeploy. `failing`: check the indexer's `/status`; it is a third party, so pick another if it stays down. `behind`: more signer transactions than a run reads (a 1 MB budget of indexer answers, ~13 logins of ~75 KB each): raise `SCAN_BUDGET_BYTES` in `apps/watchdog/src/links.ts` on the paid plan, or replace the indexer with a contract view counting links.
-
-   ```sh
-   corepack pnpm --filter @hana-id/watchdog gen <env>
-   corepack pnpm --dir apps/watchdog exec wrangler deploy
-   ```
-
-4. **`link_block_unscanned`: read the skipped block by hand** (who: a founder). Someone (or a real burst) filled one block with the signer's transactions; padding a block is how a link would be hidden from the scan. Open the block on an explorer (`details.block_height`; nearblocks lists its receipts) and look for `identity_linked` / `identity_link_proposed` logs from the signer; treat links you can't explain as in the burst step above. Acknowledge once read; the condition resolves after a week.
+1. **Partner launch or compromise?** (who: a founder). Ask the scope's partner whether they launched or migrated users this hour, and compare with the API's logins for the window. Many automatic links (case B) for Google-hosted addresses the partner can't explain, links in scopes with no traffic, or every scope at once point to a stolen email key.
 
    ```sh
    curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" https://<workerName>.<subdomain>.workers.dev/status
    curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" 'https://<workerName>.<subdomain>.workers.dev/alerts?severity=critical'
    ```
 
+2. **Compromise: pause and take the email key out** (who: council (2 of 3)). Pause at once (stops every login and derive), remove the email issuer key on chain (immediate), then follow [email-issuer-key-compromised](#email-issuer-key-compromised) for the credential, the session floor and the affected users; [forged-active-key](#forged-active-key) has the recovery order before an unpause.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:call pause --yes
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:call remove_issuer_key --args '{"provider":"email","kid":"<kid>"}' --yes
+   ```
+
+3. **Legitimate: raise the cap** (who: council (2 of 3)). `set_link_limits` on the contract (an owner action through the council; `admin <env> owner:call` once the scripts list it): lowering applies at once, raising waits `governance_delay_ms` (72 h on mainnet) and pages as a `governance_change` (`pending_limits`) when proposed. Until then the partner's linking logins are refused for the rest of each capped hour: tell them.
+
 **Verify**
 
-- The next run resolves the alert (`/status` `link_volume.last_hour` under the thresholds, `failures` 0, `behind_ms` small).
+- The next hour shows `link_stats.current.total` under the caps and the alerts resolve after the window passes.
+- A compromise: the email key is gone from `get_issuer("email")` and the contract stays paused until the recovery order is done.
 
 **Follow-ups**
 
-- Tune the provisional thresholds (D192) from sandbox-dev and staging traffic before mainnet.
+- Tune the provisional caps (D200) from sandbox-dev and staging traffic before mainnet.
 
-**Refs:** [`docs/email-login-spec.md#watchdog-appswatchdog`](email-login-spec.md#watchdog-appswatchdog), [`docs/email-login-spec.md#trust-statement`](email-login-spec.md#trust-statement), [`apps/watchdog/README.md#what-a-run-does-every-5-min`](../apps/watchdog/README.md#what-a-run-does-every-5-min), D192 (`docs/decisions.md`) · **See also:** [email-issuer-key-compromised](#email-issuer-key-compromised)
+**Refs:** [`docs/email-login-spec.md#watchdog-appswatchdog`](email-login-spec.md#watchdog-appswatchdog), [`docs/email-login-spec.md#trust-statement`](email-login-spec.md#trust-statement), [`apps/watchdog/README.md#what-a-run-does-every-5-min`](../apps/watchdog/README.md#what-a-run-does-every-5-min), D200 (`docs/decisions.md`), D119 (`docs/decisions.md`) · **See also:** [email-issuer-key-compromised](#email-issuer-key-compromised), [forged-active-key](#forged-active-key), [governance-change](#governance-change)
 
 <a id="self-issued-key-change"></a>
 
@@ -2078,7 +2071,7 @@ Email login isn't built (`docs/email-login-spec.md`). When it is: whoever can ma
 
 **Signals**
 
-- The watchdog's [link-volume](#link-volume) warning (`link_volume_high`, [link-volume](#link-volume)) and its pins (a swapped key is cancelled, [forged-key-change](#forged-key-change); an active one pauses, [forged-active-key](#forged-active-key)). Planned: the hourly CloudTrail reconciliation finds a `Sign` the issuer didn't log (critical); an IAM or KMS policy change alert. On testnet (Worker-secret key) there is no signing log: you notice only a leak of the Worker's secrets or a link burst.
+- The contract's hourly link cap and the watchdog's `link_cap_reached` page ([link-cap](#link-cap), D200) and its pins (a swapped key is cancelled, [forged-key-change](#forged-key-change); an active one pauses, [forged-active-key](#forged-active-key)). Planned: the hourly CloudTrail reconciliation finds a `Sign` the issuer didn't log (critical); an IAM or KMS policy change alert. On testnet (Worker-secret key) there is no signing log: you notice only a leak of the Worker's secrets or a link burst.
 
 **Impact**
 
@@ -2100,7 +2093,7 @@ Email login isn't built (`docs/email-login-spec.md`). When it is: whoever can ma
 
 - Turn this playbook live with the email issuer's own commands when it ships.
 
-**Refs:** [`docs/email-login-spec.md#signing-key-staged`](email-login-spec.md#signing-key-staged), [`docs/email-login-spec.md#trust-statement`](email-login-spec.md#trust-statement), D121 (`docs/decisions.md`) · **See also:** [forged-active-key](#forged-active-key), [link-volume](#link-volume), [signer-policy-mismatch](#signer-policy-mismatch)
+**Refs:** [`docs/email-login-spec.md#signing-key-staged`](email-login-spec.md#signing-key-staged), [`docs/email-login-spec.md#trust-statement`](email-login-spec.md#trust-statement), D121 (`docs/decisions.md`) · **See also:** [forged-active-key](#forged-active-key), [link-cap](#link-cap), [signer-policy-mismatch](#signer-policy-mismatch)
 
 <a id="identity-signing-key-compromised"></a>
 

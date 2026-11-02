@@ -6,7 +6,6 @@ import { isDevEnv, type Manifest, PAGER_PROVIDERS, manifestSchema, WATCHDOG_INTE
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RUN_INTERVAL_MS } from '../../src/checks.ts';
 
-import { DEFAULT_LINK_VOLUME, linkVolumeConfig } from '../../src/links.ts';
 import { parsePins } from '../../src/pins.ts';
 import { isDevEnvName, PAGER_PROVIDERS as WORKER_PAGERS, SECRET_NAMES } from '../../src/names.ts';
 import { relayerThresholds } from '../../src/relayer.ts';
@@ -82,7 +81,7 @@ describe('wranglerConfig', () => {
     expect(thresholds.session).toEqual(relayerThresholds(undefined).thresholds.session);
   });
 
-  it('passes no email pins and no link indexer when the manifest has none (the Worker then pins nothing)', () => {
+  it('passes no email pins when the manifest has none (the Worker then pins nothing), and no indexer var (D200)', () => {
     const vars = wranglerConfig(TEST_MANIFEST, D1).vars as Record<string, string>;
     for (const k of ['EMAIL_PINS', 'EMAIL_JWKS_URL', 'LINK_INDEXER_URL', 'LINK_VOLUME']) expect(vars[k], k).toBeUndefined();
     expect(parsePins(vars.EMAIL_PINS)).toEqual({ pins: null, problems: [] });
@@ -99,17 +98,6 @@ describe('wranglerConfig', () => {
     const own = { ...m, watchdog: { ...m.watchdog, pinnedIssuerKeys: { email: { ...email, jwksUrl: 'https://issuer.example.com/jwks.json' } } } };
     expect((wranglerConfig(own, D1).vars as Record<string, string>).EMAIL_JWKS_URL).toBe('https://issuer.example.com/jwks.json');
     expect(JSON.parse((wranglerConfig(own, D1).vars as Record<string, string>).EMAIL_PINS!)).not.toHaveProperty('jwksUrl');
-  });
-
-  it('passes the link indexer and threshold overrides in a form the Worker reads', () => {
-    const m = (linkVolume: { indexerUrl: string; perHour?: number; perScopePerHour?: number }) => ({ ...TEST_MANIFEST, watchdog: { ...TEST_MANIFEST.watchdog!, linkVolume } });
-    const plain = wranglerConfig(m({ indexerUrl: 'https://tx.test.fastnear.com' }), D1).vars as Record<string, string>;
-    expect(plain.LINK_INDEXER_URL).toBe('https://tx.test.fastnear.com');
-    expect(plain.LINK_VOLUME).toBeUndefined();
-    expect(linkVolumeConfig(plain.LINK_VOLUME)).toEqual({ thresholds: DEFAULT_LINK_VOLUME, problems: [] });
-    const over = m({ indexerUrl: 'https://tx.test.fastnear.com', perScopePerHour: 5 });
-    expect(manifestSchema.safeParse(over).success).toBe(true);
-    expect(linkVolumeConfig((wranglerConfig(over, D1).vars as Record<string, string>).LINK_VOLUME)).toEqual({ thresholds: { perHour: DEFAULT_LINK_VOLUME.perHour, perScopePerHour: 5 }, problems: [] });
   });
 
   it("decides a dev env as @hana-id/env does (D139's unrecorded_wallets alert is for other envs)", () => {

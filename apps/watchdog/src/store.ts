@@ -1,8 +1,7 @@
-// The watchdog's D1 state (migrations/0001_init.sql, 0002_link_events.sql). Everything here is public data: kids, key material, change
+// The watchdog's D1 state (migrations/0001_init.sql). Everything here is public data: kids, key material, change
 // ids, transaction hashes, alert texts built from on-chain values.
 import type { Jwk } from '@hana-id/jwks';
 import { ALERT_KINDS, type AlertKind, type Channel, type CheckId, type Severity } from './checks.ts';
-import type { LinkEvent } from './links.ts';
 
 export interface SeenKid {
   provider: string;
@@ -204,34 +203,6 @@ export class Store {
 
   async actionsSince(at: number): Promise<ActionRow[]> {
     return (await this.db.prepare('SELECT * FROM actions WHERE at >= ?1 ORDER BY id').bind(at).all<RawAction>()).results.map(actionRow);
-  }
-
-  // ---- link events ----
-
-  /** Records link events; an id seen before is ignored (a scan may re-read a block). */
-  async recordLinkEvents(events: LinkEvent[]): Promise<void> {
-    if (events.length === 0) return;
-    await this.db.batch(
-      events.map((e) =>
-        this.db
-          .prepare('INSERT INTO link_events (id, event, scope_id, provider, auto, at, block_height) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT (id) DO NOTHING')
-          .bind(e.id, e.event, e.scope_id, e.provider, e.auto === null ? null : e.auto ? 1 : 0, e.at, e.block_height),
-      ),
-    );
-  }
-
-  /** Link events since `at` (block time), counted per scope, event and auto flag. */
-  async linkCounts(at: number): Promise<{ scope_id: string; event: string; auto: number | null; n: number }[]> {
-    const rows = await this.db
-      .prepare('SELECT scope_id, event, auto, COUNT(*) AS n FROM link_events WHERE at >= ?1 GROUP BY scope_id, event, auto ORDER BY scope_id, event')
-      .bind(at)
-      .all<{ scope_id: string; event: string; auto: number | null; n: number }>();
-    return rows.results;
-  }
-
-  /** Drops events older than `before` and any dated after `after` (bad data from the indexer). */
-  async pruneLinkEvents(before: number, after: number): Promise<void> {
-    await this.db.prepare('DELETE FROM link_events WHERE at < ?1 OR at > ?2').bind(before, after).run();
   }
 
   // ---- alerts ----

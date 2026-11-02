@@ -913,55 +913,50 @@ const emailJwksMismatch: Playbook = {
   related: ['email-issuer-key-compromised', 'api-or-cloudflare-compromised'],
 };
 
-const linkVolume: Playbook = {
-  id: 'link-volume',
-  title: 'Link volume high, or not monitored',
+const linkCap: Playbook = {
+  id: 'link-cap',
+  title: 'Link cap reached, or link volume high',
   kind: 'alert',
-  alertKinds: ['link_volume_high', 'link_events_unavailable', 'link_block_unscanned'],
+  alertKinds: ['link_cap_reached', 'link_volume_high', 'link_stats_unavailable'],
   severity: 'critical',
   status: 'live',
   summary:
-    'More new links (`identity_linked`, `identity_link_proposed`) in the last hour than the threshold, in one scope or in all; or the watchdog cannot read link events (no indexer while email is on chain, the indexer failing, the scan more than 1 h behind), or it had to skip a block too big to read (critical).',
+    "The contract counts every new link per scope and in total per UTC hour and refuses new links once a cap is reached (D200; default 50 per scope, 500 in all). A cap reached is critical: a partner launch, or a stolen email key taking over accounts at the cap's pace. Half the total cap is a warning.",
   signals: [
-    'Warning `link_volume_high` (`link_volume_high:scope:<scope>` or `:total`): the count, how many were automatic, the threshold (`watchdog.linkVolume`, default 20 per scope and 100 in all per hour).',
-    'Warning `link_events_unavailable` (`:not_configured`, `:failing`, `:behind`). `/status` `link_volume` has the last scan, the cursor, the skipped blocks (`unscanned`) and the last hour by scope and event.',
-    "Critical `link_block_unscanned:<height>`: a block held more of the signer's transactions than one scan reads whole (≥ 200, or more than the 1 MB per-run budget of indexer answers). The scan counted what it could of it and moved on; the alert stays open for a week.",
+    'Critical `link_cap_reached` (`:total:<hour>`, `:scope:<scope>:<hour>`, `:more_scopes:<hour>`), from `get_link_stats()` each run for the current and the previous hour, so a cap reached between two runs is seen. It resolves once that hour is neither window.',
+    "Warning `link_volume_high:<hour>`: the hour's links in all scopes reached half of `total_per_hour`. Warning `link_stats_unavailable`: an email issuer is on chain but the contract has no `get_link_stats` (deploy the D200 contract).",
+    'Users of the capped scope (or of every scope, for the total) whose login carries a link get `Link rate limit reached`: the whole call reverts, so the login is refused rather than completed without its link (D122). `/status` `link_stats` has the limits, a pending raise and both windows.',
   ],
   impact: [
-    "A burst of links is how a compromised email issuer would use the real key at 1-of-1 (docs/email-login-spec.md \"Trust statement\"): each link joins an identity it minted to someone's wallet. Pending links wait `change_delay_ms` and can be cancelled by their users; automatic ones are active at once.",
-    'Unmonitored: such a burst goes unnoticed by the watchdog (the CloudTrail reconciliation, once built, still sees unlogged signatures on mainnet).',
+    "A stolen email signing key (1-of-1 at launch) can link an email identity it mints to a victim's Google identity at once (D119) and so derive the victim's wallet. The cap bounds that to the cap's worth of accounts per hour per scope and in all, and pages; it doesn't stop it.",
+    'While capped, legitimate linking logins in that scope (or everywhere) are refused until the hour ends; logins without a link are unaffected.',
   ],
   steps: [
     {
-      title: 'Is it real traffic?',
-      who: 'a founder',
-      detail: "Check the scope's app: a launch, a migration of its users or a marketing push explains a jump. The API's usage counts show logins for the same window. If it is legitimate, raise the threshold for the env (`watchdog.linkVolume.perScopePerHour` / `perHour`), regenerate and redeploy the watchdog.",
-      commands: [c.watchdogStatus, c.watchdogGen, c.watchdogDeploy],
-    },
-    {
-      title: 'Unexplained: treat the email issuer as compromised',
-      who: 'a founder',
-      detail: 'Follow email-issuer-key-compromised: remove the issuer key on chain (immediate), retire the sessions it opened, and tell the affected scopes so their users cancel pending links.',
-    },
-    {
-      title: 'Not monitored: restore the event source',
+      title: 'Partner launch or compromise?',
       who: 'a founder',
       detail:
-        '`not_configured`: set `watchdog.linkVolume.indexerUrl` (FastNear\'s transactions API, `https://tx.test.fastnear.com` on testnet), regenerate, redeploy. `failing`: check the indexer\'s `/status`; it is a third party, so pick another if it stays down. `behind`: more signer transactions than a run reads (a 1 MB budget of indexer answers, ~13 logins of ~75 KB each): raise `SCAN_BUDGET_BYTES` in `apps/watchdog/src/links.ts` on the paid plan, or replace the indexer with a contract view counting links.',
-      commands: [c.watchdogGen, c.watchdogDeploy],
-    },
-    {
-      title: '`link_block_unscanned`: read the skipped block by hand',
-      who: 'a founder',
-      detail:
-        "Someone (or a real burst) filled one block with the signer's transactions; padding a block is how a link would be hidden from the scan. Open the block on an explorer (`details.block_height`; nearblocks lists its receipts) and look for `identity_linked` / `identity_link_proposed` logs from the signer; treat links you can't explain as in the burst step above. Acknowledge once read; the condition resolves after a week.",
+        "Ask the scope's partner whether they launched or migrated users this hour, and compare with the API's logins for the window. Many automatic links (case B) for Google-hosted addresses the partner can't explain, links in scopes with no traffic, or every scope at once point to a stolen email key.",
       commands: [c.watchdogStatus, c.watchdogAlerts],
     },
+    {
+      title: 'Compromise: pause and take the email key out',
+      who: 'council (2 of 3)',
+      detail:
+        "Pause at once (stops every login and derive), remove the email issuer key on chain (immediate), then follow email-issuer-key-compromised for the credential, the session floor and the affected users; forged-active-key has the recovery order before an unpause.",
+      commands: [c.ownerCall('pause'), c.ownerCall('remove_issuer_key', '{"provider":"email","kid":"<kid>"}')],
+    },
+    {
+      title: 'Legitimate: raise the cap',
+      who: 'council (2 of 3)',
+      detail:
+        "`set_link_limits` on the contract (an owner action through the council; `admin <env> owner:call` once the scripts list it): lowering applies at once, raising waits `governance_delay_ms` (72 h on mainnet) and pages as a `governance_change` (`pending_limits`) when proposed. Until then the partner's linking logins are refused for the rest of each capped hour: tell them.",
+    },
   ],
-  verify: ['The next run resolves the alert (`/status` `link_volume.last_hour` under the thresholds, `failures` 0, `behind_ms` small).'],
-  followUps: ['Tune the provisional thresholds (D192) from sandbox-dev and staging traffic before mainnet.'],
-  refs: ['docs/email-login-spec.md#watchdog-appswatchdog', 'docs/email-login-spec.md#trust-statement', 'apps/watchdog/README.md#what-a-run-does-every-5-min', 'D192'],
-  related: ['email-issuer-key-compromised'],
+  verify: ['The next hour shows `link_stats.current.total` under the caps and the alerts resolve after the window passes.', 'A compromise: the email key is gone from `get_issuer("email")` and the contract stays paused until the recovery order is done.'],
+  followUps: ['Tune the provisional caps (D200) from sandbox-dev and staging traffic before mainnet.'],
+  refs: ['docs/email-login-spec.md#watchdog-appswatchdog', 'docs/email-login-spec.md#trust-statement', 'apps/watchdog/README.md#what-a-run-does-every-5-min', 'D200', 'D119'],
+  related: ['email-issuer-key-compromised', 'forged-active-key', 'governance-change'],
 };
 
 const selfIssuedKeyChange: Playbook = {
@@ -1017,6 +1012,6 @@ export const ALERT_PLAYBOOKS: readonly Playbook[] = [
   signerPolicyMismatch,
   unrecordedWallets,
   emailJwksMismatch,
-  linkVolume,
+  linkCap,
   selfIssuedKeyChange,
 ];

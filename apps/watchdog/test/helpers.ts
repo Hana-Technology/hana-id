@@ -2,10 +2,9 @@
 // fake clock and a scripted JWKS. Nothing here reaches the network.
 import { type Jwk, rsaThumbprint } from '@hana-id/jwks';
 import { env } from 'cloudflare:workers';
-import type { ChainReader, ChainSnapshot, ChainWriter, ConfigView, GovernanceView, KeyChange, TxResult, WatchdogMethod } from '../src/chain.ts';
+import type { ChainReader, ChainSnapshot, ChainWriter, ConfigView, GovernanceView, KeyChange, LinkStatsView, LinkWindow, TxResult, WatchdogMethod } from '../src/chain.ts';
 import type { AlertMessage, Notifier, Pager, Sender, SendResult } from '../src/channels.ts';
 import type { Channel } from '../src/checks.ts';
-import { DEFAULT_LINK_VOLUME, type LinkEvent, type LinkEventSource, type LinkScan } from '../src/links.ts';
 import type { SignerPins } from '../src/pins.ts';
 import { type AccessKeyEntry, nearToYocto, type RelayerFunds, relayerFundsFrom, relayerThresholds } from '../src/relayer.ts';
 import { type RunDeps, type RunReport, runWatchdog } from '../src/run.ts';
@@ -106,6 +105,19 @@ export function pinsOf(signers: Record<string, Jwk[]>, required = 1): SignerPins
 
 export const EMAIL_ISS = 'https://api.test/v1/email';
 
+/** The UTC hour `at` falls in. */
+export const hourOf = (at: number) => at - (at % HOUR);
+
+/** One window of `get_link_stats()`. */
+export function linkWindow(at: number, total = 0, over: Partial<LinkWindow> = {}): LinkWindow {
+  return { window_start_ms: hourOf(at), total, total_cap_reached: false, capped_scopes: [], ...over };
+}
+
+/** `get_link_stats()` as D200's contract answers it: the default caps, nothing linked yet. */
+export function linkStats(over: Partial<LinkStatsView> = {}): LinkStatsView {
+  return { window_ms: HOUR, limits: { per_scope_per_hour: 50, total_per_hour: 500 }, pending_limits: null, links_total: 0, current: linkWindow(T0), previous: null, ...over };
+}
+
 export function baseGovernance(): GovernanceView {
   return {
     state_version: 2,
@@ -141,6 +153,8 @@ export class StubChain implements ChainReader {
   emailIss: string[] | null = null;
   /** Active email keys: kid → material and the signer it was posted for. */
   emailActive = new Map<string, { n: string; e: string; signer: string | null }>();
+  /** `get_link_stats()` (D200); null: a contract without the view (v2, or v3 before the link cap). */
+  linkStats: LinkStatsView | null = linkStats();
   /** The email signer policy (null: not self-issued). */
   selfIssued: { signers: string[]; required: number; overlap_until_ms?: number | null } | null = null;
   failReads = false;
@@ -181,6 +195,7 @@ export class StubChain implements ChainReader {
           : null,
         hasSelfIssuedView: this.v3,
       },
+      linkStats: this.linkStats && clone(this.linkStats),
       config,
       governance: clone(this.governance),
       owner: { account_id: this.config.owner, ...clone(this.owner) },
@@ -210,6 +225,7 @@ export class StubChain implements ChainReader {
   asV2(): this {
     this.v3 = false;
     this.selfIssued = null;
+    this.linkStats = null;
     return this;
   }
 
@@ -378,31 +394,6 @@ export class StubEmailJwks {
   };
 }
 
-/** The indexer as the link-volume check sees it: queued events, a scripted lag, failures. */
-export class StubLinkEvents implements LinkEventSource {
-  queue: LinkEvent[] = [];
-  fail = false;
-  behindMs = 0;
-  truncated = false;
-  skipped: number | null = null;
-  head = 1000;
-  scans: (number | null)[] = [];
-  async scan(fromHeight: number | null): Promise<LinkScan> {
-    this.scans.push(fromHeight);
-    if (this.fail) throw new Error('indexer down');
-    this.head += 10;
-    const events = fromHeight === null ? [] : this.queue.splice(0);
-    return { events, scannedTo: this.head, latestHeight: this.head + 60, behindMs: this.behindMs, truncated: this.truncated, skipped: this.skipped };
-  }
-}
-
-let linkSeq = 0;
-/** One link event at `at` (block time). */
-export function linkEvent(scope: string, at: number, event: LinkEvent['event'] = 'identity_link_proposed', auto = false): LinkEvent {
-  linkSeq++;
-  return { id: `r${linkSeq}:0:0`, event, scope_id: scope, provider: 'email', auto: event === 'identity_linked' || event === 'identity_link_proposed' ? auto : null, at, block_height: 1000 + linkSeq };
-}
-
 export interface World {
   chain: StubChain;
   writer: StubWriter;
@@ -413,7 +404,6 @@ export interface World {
   sleeps: number[];
   deps: RunDeps;
   emailJwks: StubEmailJwks;
-  links: StubLinkEvents;
   /** One run at the current time; then the clock moves 5 min. */
   run(): Promise<RunReport>;
 }
@@ -425,8 +415,6 @@ export interface WorldOpts {
   at?: number;
   /** The manifest's email pins (default: none, as on sandbox-dev today). */
   pins?: SignerPins | null;
-  /** A link indexer configured (default true). */
-  links?: boolean;
 }
 
 export function world(opts: WorldOpts = {}): World {
@@ -438,14 +426,12 @@ export function world(opts: WorldOpts = {}): World {
   const clock = { t: opts.at ?? T0 };
   const sleeps: number[] = [];
   const emailJwks = new StubEmailJwks(chain);
-  const links = new StubLinkEvents();
   const deps: RunDeps = {
     store,
     chain,
     writer: opts.writer === false ? null : writer,
     fetchJwks: jwks.fetch,
     fetchEmailJwks: emailJwks.fetch,
-    linkEvents: opts.links === false ? null : links,
     notifier,
     now: () => clock.t,
     sleep: async (ms) => {
@@ -462,7 +448,6 @@ export function world(opts: WorldOpts = {}): World {
       relayerThresholds: relayerThresholds(undefined),
       emailPins: { pins: opts.pins ?? null, problems: [] },
       devEnv: true,
-      linkVolume: { thresholds: { ...DEFAULT_LINK_VOLUME }, problems: [] },
     },
   };
   const w: World = {
@@ -475,7 +460,6 @@ export function world(opts: WorldOpts = {}): World {
     sleeps,
     deps,
     emailJwks,
-    links,
     async run() {
       const r = await runWatchdog(deps);
       clock.t += 5 * MIN;

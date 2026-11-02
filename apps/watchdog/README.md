@@ -16,11 +16,11 @@ every run and sends nothing on a mismatch.
 
 1. **Config**: is `WATCHDOG_KEY` usable, is each channel (paging app, Slack, email) and the heartbeat configured.
 2. **Chain** (`src/near.ts`): `status` (`chain_id`), `get_key_changes`, `get_issuer` and `get_issuer_keys` for
-   `google` and `email` (the email keys only when the email issuer exists), `get_self_issued("email")`, `get_config`,
-   `get_governance`, and the owner account (`get_config().owner`): `view_account` (code hash) and, when it runs a
+   `google` and `email` (the email keys only when the email issuer exists), `get_self_issued("email")`,
+   `get_link_stats()` (D200), `get_config`, `get_governance`, and the owner account (`get_config().owner`): `view_account` (code hash) and, when it runs a
    contract, the DAO's `get_policy` (null for a contract without one), at final finality. A contract without
    `get_self_issued` (v2, sandbox-dev today) reads as "no email issuer is self-issued", never as an error; v2's
-   `get_issuer("email")` answers null.
+   `get_issuer("email")` answers null. Likewise a contract without `get_link_stats` reads as "no link stats".
 3. **Google's JWKS**, fetched directly with no cache; every kid's first-seen time and key material go to D1
    (`seen_kids`). RS256 keys only (`usableJwks`, shared with the API in `packages/jwks`).
 4. **Pending additions**: a kid in the JWKS with equal `n`, `e` (leading zeros stripped) → `confirm_issuer_key_change`
@@ -59,6 +59,14 @@ every run and sends nothing on a mismatch.
      keys before its upgrade executes, raise the pinned `required` after.
    - `get_config().unrecorded_wallets` true on an env that isn't `local*` or `sandbox*` → critical condition
      `unrecorded_wallets` (D139, D193; alert only; check `governance_diff`).
+   - Link caps (check `links`, D200): the contract counts every new link (immediate or pending) per scope and in all
+     in fixed UTC-hour windows and refuses a new link once a cap is reached (default 50 per scope, 500 in all).
+     `get_link_stats()` reports the current and the previous window, so a cap reached between two runs is seen: a cap
+     reached → critical condition `link_cap_reached` (`:total:<hour>`, `:scope:<scope>:<hour>`, `:more_scopes:<hour>`
+     when the view truncated its list), alert only (the contract is the brake: no pause); the current hour at half
+     `total_per_hour` or more → warning `link_volume_high:<hour>`. An email issuer on chain and no `get_link_stats` →
+     warning `link_stats_unavailable`; with no email issuer, nothing (no link is possible). Judged with the chain read,
+     before the run is recorded and its lock released.
 6. **Active keys**: a kid this watchdog never saw in Google's JWKS, or whose on-chain material (`get_issuer_keys`)
    differs from Google's → `pause`, then `delete_updater_key` for every updater key (whoever proposed it: the change
    record is gone by then, and only the updater or the owner can post keys; D126), + critical alert. **The only
@@ -97,36 +105,18 @@ every run and sends nothing on a mismatch.
    and the run `degraded`, and resolves nothing. Thresholds: manifest `watchdog.relayerFunds` (below).
 10. **Alerts out** (`src/alerts.ts`), the daily digest (`src/digest.ts`), the **dead-man's switch** ping, and the run
    record (`runs`, each check's outcome).
-11. **Advisory checks** (warning only, except `link_block_unscanned`), **after the run is recorded and its lock
-   released**, so a CPU kill or a hang there costs only these checks: the next cron run starts on time and every
-   protective step already ran and was recorded. Each runs guarded (a throw marks its check `error`, resolves nothing
-   and leaves the run `degraded`, never `error`), resolves only its own kinds, then updates the run's record; what
-   they raise goes out in a second delivery. Their reads are third-party (Hana's API is a party the watchdog must
-   survive, D86).
+11. **The advisory check** (warning only), **after the run is recorded and its lock released**, so a CPU kill or a
+   hang there costs only this check: the next cron run starts on time and every protective step already ran and was
+   recorded. It runs guarded (a throw marks it `error` and resolves nothing), resolves only its own kind, then
+   updates the run's record; what it raises goes out in a second delivery. Its read is third-party (Hana's API is a
+   party the watchdog must survive, D86).
    - Hana's JWKS (check `email_jwks`, only with pins and a URL): `EMAIL_JWKS_URL` (manifest `jwksUrl`, default
      `{apiUrl}/v1/email/jwks.json`), fetched with no cache; a published key not pinned (or kid ≠ thumbprint) or an
      active email key not published → warning `email_jwks_mismatch`; 3 failed fetches while an email key is active →
      the same warning (`:fetch`). Never trusted, never acted on.
-   - Link volume (`src/links.ts`, check `links`, D192): skipped in a run that took protective actions (subrequests).
-     While an email issuer is on chain (links need one), the signer's transactions since the last scan are read from
-     the transactions indexer (`LINK_INDEXER_URL`, manifest `watchdog.linkVolume.indexerUrl`: FastNear's `/status`,
-     `/v0/account` pages of 200, `/v0/transactions` 5 at a time across blocks, 60 blocks behind its head, which is
-     clamped to the RPC's final block; **1 MB of indexer answers per run in all**, ~13 logins of ~75 KB each, stopping
-     between blocks) and every `EVENT_JSON` `identity_link_*` / `identity_linked` / `identity_unlinked`
-     event the signer emitted in a receipt that succeeded goes to D1 `link_events` (scope, provider, auto, block
-     time; 8 days; deduplicated by receipt and log; at most 2 000 per scan; receipt ids must be NEAR ids; events dated
-     in the future are dropped). New links (`identity_linked`, `identity_link_proposed`) in the last hour above
-     `perScopePerHour` (default 20) in a scope, or `perHour` (100) in all → warning `link_volume_high`. No indexer
-     while email is on chain, 3 failed reads, or a scan more than 1 h behind → warning `link_events_unavailable`. A
-     block the scan can't read whole even with a fresh run's budget (≥ 200 of the signer's transactions, or over 1 MB)
-     is counted as far as the budget goes and skipped, so the scan moves on, with a **critical**
-     `link_block_unscanned:<height>` kept open for a week (padding a block must neither stall detection nor pass
-     quietly).
-     The first scan after the email issuer appears starts at the chain's head (no backfill: no link can precede its
-     first key). The indexer can hide or invent events (a missed or false warning), never make the watchdog act.
 
 Every third-party body the watchdog parses is size-capped before parsing (`src/http.ts`: both JWKS 64 KB, an RPC
-answer 4 MB, the indexer 16 KB / 512 KB / 2 MB), by `Content-Length` and while streaming: over the cap is a failed
+answer 4 MB), by `Content-Length` and while streaming: over the cap is a failed
 fetch (an RPC answer then tries the fallback).
 
 Everything not listed in steps 4–6 is alert-only (D82). Actions use exactly four methods, the permission of the
@@ -185,7 +175,7 @@ route answers 503. Responses are JSON, `cache-control: no-store`.
 
 | Route | Returns |
 |---|---|
-| `GET /status` | `env`, `network`, `signer`, `watchdog_account`, `now`, `run_interval_ms` (300000), `resend_ms`, `initialized_at`, `email` (`{pinned, jwks_url, last}`: the pins in force and, at the last run, `{at, pinned, chain: {issuer, pre_v3, self_issued, active_kids}, differences, weaker}`), `link_volume` (`{indexer, last}`: `{cursor, failures, at, latest_height, behind_ms, last_hour: {new_links, by_scope, by_event}, thresholds}`), `last_run` (`{id, started_at, finished_at, outcome, first_run, checks: [{id, outcome, detail?}]}`), `silent` (no finished run within two intervals: the portal's warning banner), `heartbeat` (`{configured, last_ping_at, last_ok_at, ok, failures}`), `channels` (configured or not, pager provider), `seen_kids` (`{provider, kid, n, e, source, first_seen_at, last_seen_at}`), `relayer_funds` (the last relayer reading or null: `{account, exists, amount, locked, storage_usage, available, keys: [{public_key, pool, allowance}], other_keys, at, thresholds: {balance, session, owner: {warn, critical}}}`, amounts in yoctoNEAR as decimal strings, `allowance` null = unlimited), `actions` (last 50), `open_alerts` (unacknowledged critical and open conditions), `checks` and `alert_kinds` (the registry: per kind `{severity, check, description, playbook}`, `playbook` = the id of its `@hana-id/playbooks` playbook, the portal's link target) |
+| `GET /status` | `env`, `network`, `signer`, `watchdog_account`, `now`, `run_interval_ms` (300000), `resend_ms`, `initialized_at`, `email` (`{pinned, jwks_url, last}`: the pins in force and, at the last run, `{at, pinned, chain: {issuer, pre_v3, self_issued, active_kids}, differences, weaker}`), `link_stats` (the last `get_link_stats()` with its read time `at`: `{window_ms, limits, pending_limits, links_total, current, previous}`, or null), `last_run` (`{id, started_at, finished_at, outcome, first_run, checks: [{id, outcome, detail?}]}`), `silent` (no finished run within two intervals: the portal's warning banner), `heartbeat` (`{configured, last_ping_at, last_ok_at, ok, failures}`), `channels` (configured or not, pager provider), `seen_kids` (`{provider, kid, n, e, source, first_seen_at, last_seen_at}`), `relayer_funds` (the last relayer reading or null: `{account, exists, amount, locked, storage_usage, available, keys: [{public_key, pool, allowance}], other_keys, at, thresholds: {balance, session, owner: {warn, critical}}}`, amounts in yoctoNEAR as decimal strings, `allowance` null = unlimited), `actions` (last 50), `open_alerts` (unacknowledged critical and open conditions), `checks` and `alert_kinds` (the registry: per kind `{severity, check, description, playbook}`, `playbook` = the id of its `@hana-id/playbooks` playbook, the portal's link target) |
 | `GET /alerts?cursor=<id>&limit=<1..200>&severity=<critical\|warning\|info>` | `{alerts: [{id, kind, severity, title, details, created_at, resolved_at, acked_at, acked_by, acked_via, last_sent_at, send_count, pending_channels, channels, resends_until_ack, deliveries: [{channel, kind, at, ok, error}]}], next_cursor}`, newest first |
 | `GET /actions?cursor=<id>&limit=<1..200>` | `{actions: [{id, run_id, at, method, args, reason, ok, tx_hash, error}], next_cursor}`, newest first (`tx_hash` for transaction links) |
 | `POST /alerts/:id/ack` `{"by": "<who>"}` | Records the acknowledgement once (`acked_via: "portal"`, `acked_by` 1–200 characters: the Access identity), `200 {alert}`; `409` if already acknowledged (the first ack is kept); `404`, `400`, `413`, `415` |
@@ -207,17 +197,14 @@ Manifest block (`envs/<env>.json`, schema `packages/env/src/schema.ts`, optional
   "pager": "ntfy",
   "digestHourUtc": 0,
   "relayerFunds": { "balance": { "warn": 5, "critical": 1 }, "sessionAllowance": { "warn": 0.5, "critical": 0.1 }, "ownerAllowance": { "warn": 0.1, "critical": 0.02 } },
-  "pinnedIssuerKeys": { "email": { "required": 1, "signers": { "hana": ["<primary thumbprint>", "<standby thumbprint>"] } } },
-  "linkVolume": { "indexerUrl": "https://tx.test.fastnear.com", "perScopePerHour": 20, "perHour": 100 }
+  "pinnedIssuerKeys": { "email": { "required": 1, "signers": { "hana": ["<primary thumbprint>", "<standby thumbprint>"] } } }
 }
 ```
 
 `pinnedIssuerKeys.email` (optional, D190): `gen` passes `{required, signers}` as `EMAIL_PINS` (JSON) and the JWKS URL
 (`jwksUrl`, else `{apiUrl}/v1/email/jwks.json`) as `EMAIL_JWKS_URL`. Absent (sandbox-dev until batch 4 creates the
 key): nothing is pinned, so it must be set, generated and deployed before the owner posts the first email key; an
-unreadable `EMAIL_PINS` is read as nothing pinned and named in the `config` check. `linkVolume` (optional, D192): `gen`
-passes `LINK_INDEXER_URL` and any threshold override as `LINK_VOLUME`; absent, the link check is skipped (a warning
-once an email issuer is on chain). Both need migration `0002_link_events.sql` applied before the deploy.
+unreadable `EMAIL_PINS` is read as nothing pinned and named in the `config` check. The link caps need no configuration here: they are the contract's own (`set_link_limits`, D200).
 
 `relayerFunds` is optional, and so is each pair (NEAR, `critical` below `warn`): the values above are the defaults
 (`src/relayer.ts` `DEFAULT_RELAYER_FUNDS`). Raise the allowance pairs when `deploy-contract` ran with a larger
@@ -253,11 +240,11 @@ Setup and deploy steps are in `docs/operations.md` "Watchdog service".
 
 `test/` runs in workerd with a real (local) D1: `run.test.ts` covers every rule above against a stub chain, a scripted
 JWKS and recording channels; `email.test.ts` the email issuer's rules (pinned and unpinned keys per signer, no
-confirm, the signer-policy diff and its pauses, Hana's JWKS, link volume, `unrecorded_wallets`, a v2 contract read as
-no email issuer, D153 unchanged beside it, the review hardening: advisory order, guarded link check, `pins_invalid`,
+confirm, the signer-policy diff and its pauses, Hana's JWKS, the link caps (`get_link_stats`), `unrecorded_wallets`, a v2 contract read as
+no email issuer, D153 unchanged beside it, the review hardening: advisory order and the lock, `pins_invalid`,
 `bad_material`); `http.test.ts` the body caps on every third-party read; `scripts/test/pin.test.ts` the pin command
-(RFC 7638 vector, leading zeros, PEM, private keys refused); `links.test.ts` the indexer source (request shapes, failed receipts and
-other executors ignored, a full page) and the pin parsing; `alerts.test.ts` routing, re-sends, acks and failing channels; `channels.test.ts` each
+(RFC 7638 vector, leading zeros, PEM, private keys refused); `pins.test.ts` the pin parsing and the per-key and
+policy verdicts; `alerts.test.ts` routing, re-sends, acks and failing channels; `channels.test.ts` each
 adapter's request; `registry.test.ts` that every alert kind has exactly one playbook (and its line in the alert text);
 `sanitize.test.ts` hostile kids (line breaks, `<!channel>`, 128 bytes, non-ASCII) through every
 channel and a full run; `status.test.ts` the endpoints; `relayer.test.ts` the relayer funds check (thresholds, escalation, resolution, a missing account or pool, a failed read, escaped key strings); `near.test.ts` the RPC client (fallback, the relayer reads) and the signed

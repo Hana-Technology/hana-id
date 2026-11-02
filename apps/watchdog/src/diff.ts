@@ -8,10 +8,11 @@
 //             kid gone without a pending removal of it leaving the queue: field `issuer_keys`); the same for the email
 //             issuer (`email_issuer`, `email_issuer_keys`), and its signer policy (`email_signer_policy`: marked
 //             self-issued, or signers or required changed by an upgrade's migrate). `unrecorded_wallets` (contract v3,
-//             D135): the owner's accept_unrecorded_wallets, or an upgrade that set it.
-//   warning:  shared clients, sponsors, public registration.
+//             D135): the owner's accept_unrecorded_wallets, or an upgrade that set it. The link caps (D200): a raise
+//             (`link_limits` up, or a `pending_limits` raise appearing or changing) is critical.
+//   warning:  shared clients, sponsors, public registration; the link caps lowered, or a pending raise cancelled.
 //   matured:  a scheduled delay decrease or audience addition coming into force as scheduled (info).
-import type { ChainSnapshot, ConfigView, GovernanceView, IssuerView, KeyChange, OwnerAccount, PendingClient, SelfIssuedView } from './chain.ts';
+import type { ChainSnapshot, ConfigView, GovernanceView, IssuerView, KeyChange, LinkLimits, LinkStatsView, OwnerAccount, PendingClient, SelfIssuedView } from './chain.ts';
 import { EMAIL_PROVIDER } from './pins.ts';
 
 export interface StoredSnapshot {
@@ -25,7 +26,12 @@ export interface StoredSnapshot {
   issuer?: IssuerView | null;
   /** The email issuer and its signer policy. Absent in snapshots stored before the email checks: that run's is the baseline. */
   email?: { issuer: IssuerView | null; selfIssued: SelfIssuedView | null };
+  /** The link caps (D200; null: no get_link_stats). Absent in older snapshots: that run's caps are the baseline. */
+  linkStats?: { limits: LinkLimits; pending_limits: LinkStatsView['pending_limits'] } | null;
 }
+
+/** What the snapshot keeps of `get_link_stats()`: the caps, not the counts. */
+export const linkLimitsOf = (v: LinkStatsView | null): StoredSnapshot['linkStats'] => (v ? { limits: v.limits, pending_limits: v.pending_limits } : null);
 
 export interface FieldChange {
   field: string;
@@ -101,7 +107,31 @@ function emptyBaseline(cur: ChainSnapshot): StoredSnapshot {
     owner: cur.owner,
     issuer: cur.issuer,
     email: { issuer: cur.email.issuer, selfIssued: cur.email.selfIssued },
+    linkStats: cur.linkStats ? { limits: cur.linkStats.limits, pending_limits: null } : null,
   };
+}
+
+const capsOf = (l: LinkLimits | null | undefined) => (l ? { per_scope_per_hour: l.per_scope_per_hour, total_per_hour: l.total_per_hour } : null);
+const above = (a: LinkLimits, b: LinkLimits | null) => !b || a.per_scope_per_hour > b.per_scope_per_hour || a.total_per_hour > b.total_per_hour;
+
+/**
+ * The link caps (D200). Raising is the dangerous direction (more takeovers per hour with a stolen key): limits that
+ * went up (or appeared, with the view) and a pending raise appearing or changing are critical; lowering, or a pending
+ * raise cancelled, is a warning; a pending raise coming into force as scheduled is info.
+ */
+function linkLimitChanges(prev: StoredSnapshot, cur: ChainSnapshot, now: number, out: ChainDiff): void {
+  if (prev.linkStats === undefined) return;
+  const pl = capsOf(prev.linkStats?.limits);
+  const cl = capsOf(cur.linkStats?.limits);
+  const pp = prev.linkStats?.pending_limits ?? null;
+  const cp = cur.linkStats?.pending_limits ?? null;
+  const matured = pp !== null && pp.effective_at_ms <= now && cp === null && same(capsOf(pp), cl);
+  if (matured) {
+    out.matured.push({ field: 'link_limits', before: pl, after: cl });
+    return;
+  }
+  if (!same(pl, cl)) (cl && above(cl, pl) ? out.critical : !cl ? out.critical : out.warning).push({ field: 'link_limits', before: pl, after: cl });
+  if (!same(pp, cp)) (cp && above(cp, cl) ? out.critical : out.warning).push({ field: 'pending_limits', before: pp, after: cp });
 }
 
 /**
@@ -176,6 +206,7 @@ export function diffChain(prevIn: StoredSnapshot | null, cur: ChainSnapshot, now
     const after = policyShape(cur.email.selfIssued);
     if (!same(before, after)) out.critical.push({ field: 'email_signer_policy', before, after });
   }
+  linkLimitChanges(prev, cur, now, out);
   for (const f of WARNING_CONFIG) if (!handled.has(f) && !same(pc[f], cc[f])) out.warning.push({ field: f, before: pc[f], after: cc[f] });
   return out;
 }

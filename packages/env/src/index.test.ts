@@ -178,19 +178,4 @@ describe('manifestSchema: watchdog', () => {
     });
   });
 
-  it('takes an optional link-volume check: an https indexer and thresholds per hour', () => {
-    expect(issues(watchdog({ linkVolume: { indexerUrl: 'https://tx.test.fastnear.com' } }))).toEqual([]);
-    expect(issues(watchdog({ linkVolume: { indexerUrl: 'https://tx.test.fastnear.com', perHour: 100, perScopePerHour: 20 } }))).toEqual([]);
-    expect(issues(watchdog({ linkVolume: { indexerUrl: 'http://tx.test.fastnear.com' } }))[0]).toContain('watchdog.linkVolume.indexerUrl must be an https URL');
-    expect(issues(watchdog({ linkVolume: { indexerUrl: 'https://tx.test.fastnear.com', perHour: 10, perScopePerHour: 20 } }))).toEqual(['perScopePerHour must not exceed perHour']);
-    expect(issues(watchdog({ linkVolume: { indexerUrl: 'https://tx.test.fastnear.com', perHour: 0 } })).length).toBeGreaterThan(0);
-    expect(issues(watchdog({ linkVolume: { perHour: 10 } })).length).toBeGreaterThan(0);
-  });
-
-  it("refuses an indexer of another network than the env's", () => {
-    for (const host of ['tx.main.fastnear.com', 'api-mainnet.example.com', 'mainnet.indexer.example.com']) {
-      expect(issues(watchdog({ linkVolume: { indexerUrl: `https://${host}` } })), host).toEqual([`watchdog.linkVolume.indexerUrl ${host} names another network than testnet`]);
-    }
-    for (const host of ['tx.test.fastnear.com', 'domain.example.com', 'maintenance.example.com']) expect(issues(watchdog({ linkVolume: { indexerUrl: `https://${host}` } })), host).toEqual([]);
-  });
 });

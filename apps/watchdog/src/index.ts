@@ -4,7 +4,6 @@
 import { GOOGLE_JWKS_URL, type Jwk, usableJwks } from '@hana-id/jwks';
 import { type Notifier, notifierFromEnv } from './channels.ts';
 import { type Env, digestHourUtc, isDevEnvName } from './env.ts';
-import { FastNearLinkEvents, linkVolumeConfig } from './links.ts';
 import { BODY_LIMITS, readJsonCapped } from './http.ts';
 import { log } from './log.ts';
 import { NearChain, NearWriter, Rpc } from './near.ts';
@@ -47,8 +46,6 @@ export function runDeps(env: Env, notifier: Notifier = notifierFromEnv(env)): Ru
     }
   }
   const emailJwksUrl = env.EMAIL_JWKS_URL?.trim();
-  const indexer = env.LINK_INDEXER_URL?.trim();
-  const linkVolume = linkVolumeConfig(env.LINK_VOLUME);
   const emailPins = parsePins(env.EMAIL_PINS);
   return {
     store: new Store(env.DB),
@@ -56,7 +53,6 @@ export function runDeps(env: Env, notifier: Notifier = notifierFromEnv(env)): Ru
     writer,
     fetchJwks: fetchGoogleJwks,
     fetchEmailJwks: emailJwksUrl ? () => fetchEmailJwks(emailJwksUrl) : null,
-    linkEvents: indexer ? new FastNearLinkEvents(indexer, env.SIGNER_ACCOUNT, () => rpc.call<{ header?: { height?: unknown } }>('block', { finality: 'final' }).then((b) => Number(b.header?.height))) : null,
     notifier,
     now: Date.now,
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -70,7 +66,6 @@ export function runDeps(env: Env, notifier: Notifier = notifierFromEnv(env)): Ru
       relayerThresholds: relayerThresholds(env.RELAYER_FUNDS),
       emailPins,
       devEnv: isDevEnvName(env.ENV_NAME),
-      linkVolume,
     },
   };
 }

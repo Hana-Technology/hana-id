@@ -1,9 +1,9 @@
 // The email issuer's rules (docs/email-login-spec.md "Watchdog", D190–D193) against the stub chain: pinned and
 // unpinned email keys per signer (cancel, pause), no confirm for self-issued keys, the signer-policy diff, Hana's
-// email JWKS, the link-volume check, D139's unrecorded_wallets, and a v2 contract read as "no email issuer".
+// email JWKS, the link caps (get_link_stats, D200), D139's unrecorded_wallets, and a v2 contract read as "no email issuer".
 import { describe, expect, it } from 'vitest';
-import { LINK_SCAN_BEHIND_MS, LINK_WINDOW_MS, runWatchdog } from '../src/run.ts';
-import { alertsOf, emailJwk, HOUR, initialized, jwk, linkEvent, MIN, OWNER, pinsOf, SIGNER, T0, UPDATER_KEYS, world } from './helpers.ts';
+import { runWatchdog } from '../src/run.ts';
+import { alertsOf, emailJwk, HOUR, initialized, jwk, linkStats, linkWindow, MIN, OWNER, pinsOf, SIGNER, T0, UPDATER_KEYS, world } from './helpers.ts';
 
 const severityOf = async (w: Awaited<ReturnType<typeof initialized>>, kind: string) => (await alertsOf(w.store, kind)).map((a) => a.severity);
 const openKinds = async (w: Awaited<ReturnType<typeof initialized>>) => (await w.store.openAlerts()).map((a) => a.kind).sort();
@@ -13,7 +13,7 @@ const checkOf = (r: { checks: { id: string; outcome: string; detail?: string }[]
 
 describe('a v2 contract (sandbox-dev today) reads as no email issuer', () => {
   for (const pinned of [false, true]) {
-    it(`raises nothing email-related, ${pinned ? 'with' : 'without'} pins, and scans no link events`, async () => {
+    it(`raises nothing email-related, ${pinned ? 'with' : 'without'} pins; no get_link_stats is quiet without an email issuer`, async () => {
       const hana = await emailJwk(201);
       const w = await initialized({ pins: pinned ? pinsOf({ hana: [hana] }) : null, before: (x) => void x.chain.asV2() });
       w.deps.config.devEnv = false; // the D139 alert is about the field, which v2 doesn't have
@@ -24,8 +24,7 @@ describe('a v2 contract (sandbox-dev today) reads as no email issuer', () => {
       expect(await openKinds(w)).toEqual([]);
       expect(await alertsOf(w.store, 'governance_change')).toEqual([]);
       expect(checkOf(r, 'signer_policy')).toMatchObject({ outcome: 'ok', detail: expect.stringContaining('pre-v3') });
-      expect(checkOf(r, 'links')?.outcome).toBe('ok');
-      expect(w.links.scans).toEqual([]);
+      expect(checkOf(r, 'links')).toMatchObject({ outcome: 'skipped', detail: expect.stringContaining('no get_link_stats') });
       // No email issuer, so Hana's JWKS isn't compared (pins) or is skipped (none); never an error.
       expect(checkOf(r, 'email_jwks')?.outcome).not.toBe('error');
     });
@@ -427,79 +426,118 @@ describe("Hana's email JWKS (warning only)", () => {
   });
 });
 
-describe('link volume (identity_link_* events)', () => {
-  const live = async (o: { links?: boolean } = {}) => {
+describe('link caps (get_link_stats, D200)', () => {
+  const live = async () => {
     const hana = await emailJwk(201);
-    return initialized({ pins: pinsOf({ hana: [hana] }), ...o, before: (x) => void x.chain.emailIssuer([hana]) });
+    return initialized({ pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer([hana]) });
   };
 
-  it('scans nothing while no email issuer is on chain; starts at the head once one is', async () => {
-    const w = await initialized();
-    await w.run();
-    expect(w.links.scans).toEqual([]);
-    w.chain.emailIssuer();
-    await w.run();
-    await w.run();
-    expect(w.links.scans).toEqual([null, 1011]);
+  it('quiet under half the total cap; reports the hour in the links check and /status meta', async () => {
+    const w = await live();
+    w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t, 249), links_total: 300 });
+    const r = await w.run();
+    expect(await alertsOf(w.store, 'link_volume_high')).toEqual([]);
+    expect(checkOf(r, 'links')).toMatchObject({ outcome: 'ok', detail: expect.stringContaining('249 new link(s) this hour') });
+    expect(await w.store.getMeta('link_stats')).toMatchObject({ links_total: 300, current: { total: 249 } });
   });
 
-  it('warns above the per-scope threshold, then resolves when the hour has passed', async () => {
+  it('warns at half the total cap, once per hour', async () => {
     const w = await live();
-    for (let i = 0; i < 21; i++) w.links.queue.push(linkEvent('s1', w.clock.t - MIN, i % 2 ? 'identity_linked' : 'identity_link_proposed', i % 2 === 1));
-    w.links.queue.push(linkEvent('s1', w.clock.t - MIN, 'identity_link_cancelled'));
-    w.links.queue.push(linkEvent('s2', w.clock.t - MIN));
-    const r = await w.run();
-    const [a] = await alertsOf(w.store, 'link_volume_high');
-    expect(a).toMatchObject({ key: 'link_volume_high:scope:s1', severity: 'warning', details: { new_links: 21, automatic: 10, threshold: 20 } });
-    expect(checkOf(r, 'links')?.detail).toContain('22 new link(s) in the last hour');
+    w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t, 250) });
+    await w.run();
+    await w.run();
+    const a = await alertsOf(w.store, 'link_volume_high');
+    expect(a.map((x) => [x.key, x.severity])).toEqual([[`link_volume_high:${linkWindow(w.clock.t).window_start_ms}`, 'warning']]);
     expect(w.writer.calls).toEqual([]);
-    w.clock.t += LINK_WINDOW_MS;
-    await w.run();
-    expect((await alertsOf(w.store, 'link_volume_high'))[0]?.resolved_at).not.toBeNull();
   });
 
-  it('warns above the total threshold, and counts an event read twice once', async () => {
+  it('pages a cap reached, in all and per scope, keyed by window; never pauses (the contract already brakes)', async () => {
     const w = await live();
-    w.deps.config.linkVolume.thresholds = { perHour: 3, perScopePerHour: 3 };
-    const events = ['a', 'b', 'c', 'd'].map((s) => linkEvent(s, w.clock.t - MIN));
-    w.links.queue.push(...events);
+    const h = linkWindow(w.clock.t).window_start_ms;
+    w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t, 500, { total_cap_reached: true, capped_scopes: ['s1', 's2'] }) });
     await w.run();
-    expect((await alertsOf(w.store, 'link_volume_high')).map((a) => a.key)).toEqual(['link_volume_high:total']);
-    // Re-read (a block scanned again): still 4.
-    w.links.queue.push(...events);
-    await w.run();
-    expect((await alertsOf(w.store, 'link_volume_high'))[0]?.details.new_links).toBe(4);
+    expect(w.writer.calls).toEqual([]);
+    const keys = (await alertsOf(w.store, 'link_cap_reached')).map((x) => x.key).sort();
+    expect(keys).toEqual([`link_cap_reached:scope:s1:${h}`, `link_cap_reached:scope:s2:${h}`, `link_cap_reached:total:${h}`]);
+    expect((await alertsOf(w.store, 'link_cap_reached')).every((x) => x.severity === 'critical')).toBe(true);
+    expect(w.notifier.on('pager').filter((x) => x.msg.kind === 'link_cap_reached')).toHaveLength(3);
+    // A cap reached and no longer at half: no extra warning for the same hour.
+    expect(await alertsOf(w.store, 'link_volume_high')).toEqual([]);
   });
 
-  it('warns when the indexer fails 3 runs in a row (run degraded), resolved once it reads again', async () => {
+  it("sees a cap reached in the previous window (between two runs), and resolves once it is neither window", async () => {
     const w = await live();
-    w.links.fail = true;
-    const r = await w.run();
-    expect(r.outcome).toBe('degraded');
-    expect(checkOf(r, 'links')?.outcome).toBe('error');
+    const prevHour = linkWindow(w.clock.t - HOUR);
+    w.chain.linkStats = linkStats({ previous: { ...prevHour, total: 40, capped_scopes: ['s9'], capped_scopes_truncated: true }, current: linkWindow(w.clock.t, 1) });
     await w.run();
+    const keys = (await alertsOf(w.store, 'link_cap_reached')).map((x) => x.key).sort();
+    expect(keys).toEqual([`link_cap_reached:more_scopes:${prevHour.window_start_ms}`, `link_cap_reached:scope:s9:${prevHour.window_start_ms}`]);
+    w.chain.linkStats = linkStats({ previous: linkWindow(w.clock.t, 1), current: linkWindow(w.clock.t + HOUR) });
     await w.run();
-    expect((await alertsOf(w.store, 'link_events_unavailable'))[0]).toMatchObject({ key: 'link_events_unavailable:failing', severity: 'warning' });
-    w.links.fail = false;
-    await w.run();
-    expect((await alertsOf(w.store, 'link_events_unavailable'))[0]?.resolved_at).not.toBeNull();
+    expect((await alertsOf(w.store, 'link_cap_reached')).every((x) => x.resolved_at !== null)).toBe(true);
   });
 
-  it('warns when the scan is more than an hour behind', async () => {
-    const w = await live();
-    w.links.behindMs = LINK_SCAN_BEHIND_MS + MIN;
-    w.links.truncated = true;
+  it('warns when an email issuer is on chain but the contract has no get_link_stats', async () => {
+    const w = await initialized();
+    w.chain.linkStats = null;
     await w.run();
-    expect((await alertsOf(w.store, 'link_events_unavailable'))[0]).toMatchObject({ key: 'link_events_unavailable:behind', details: { truncated: true } });
-  });
-
-  it('warns when no indexer is configured while email is on chain, and not before', async () => {
-    const w = await initialized({ links: false });
-    expect(checkOf(await w.run(), 'links')).toMatchObject({ outcome: 'skipped', detail: 'no indexer configured' });
-    expect(await alertsOf(w.store, 'link_events_unavailable')).toEqual([]);
+    expect(await alertsOf(w.store, 'link_stats_unavailable')).toEqual([]);
     w.chain.emailIssuer();
     await w.run();
-    expect((await alertsOf(w.store, 'link_events_unavailable'))[0]).toMatchObject({ key: 'link_events_unavailable:not_configured', severity: 'warning' });
+    expect((await alertsOf(w.store, 'link_stats_unavailable'))[0]).toMatchObject({ severity: 'warning', resolved_at: null });
+    w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t) });
+    await w.run();
+    expect((await alertsOf(w.store, 'link_stats_unavailable'))[0]?.resolved_at).not.toBeNull();
+  });
+
+  it('is judged before the run is recorded and its lock released (the protective phase)', async () => {
+    const w = await live();
+    w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t, 500, { total_cap_reached: true }) });
+    let recorded: unknown = 'not yet';
+    const finish = w.store.finishRun.bind(w.store);
+    w.store.finishRun = async (...a) => {
+      recorded = (await alertsOf(w.store, 'link_cap_reached')).length;
+      return finish(...a);
+    };
+    await w.run();
+    expect(recorded).toBe(1);
+  });
+
+  describe('governance diff of the caps', () => {
+    const fields = async (w: Awaited<ReturnType<typeof initialized>>, kind: string) => (await alertsOf(w.store, kind)).flatMap((g) => (g.details.changes as { field: string }[]).map((c) => c.field));
+
+    it('a pending raise appearing is critical; it coming into force as scheduled is info', async () => {
+      const w = await live();
+      const effective = w.clock.t + 72 * HOUR;
+      w.chain.linkStats = linkStats({ pending_limits: { per_scope_per_hour: 100, total_per_hour: 500, effective_at_ms: effective } });
+      await w.run();
+      expect(await fields(w, 'governance_change')).toEqual(['pending_limits']);
+      w.clock.t = effective + MIN;
+      w.chain.linkStats = linkStats({ limits: { per_scope_per_hour: 100, total_per_hour: 500 } });
+      await w.run();
+      expect(await fields(w, 'config_matured')).toEqual(['link_limits']);
+      expect(await fields(w, 'governance_change')).toEqual(['pending_limits']);
+    });
+
+    it('limits rising at once are critical; lowering is a warning', async () => {
+      const w = await live();
+      w.chain.linkStats = linkStats({ limits: { per_scope_per_hour: 10, total_per_hour: 100 } });
+      await w.run();
+      expect(await fields(w, 'config_change')).toEqual(['link_limits']);
+      expect(await fields(w, 'governance_change')).toEqual([]);
+      w.chain.linkStats = linkStats({ limits: { per_scope_per_hour: 10, total_per_hour: 1000 } });
+      await w.run();
+      expect(await fields(w, 'governance_change')).toEqual(['link_limits']);
+    });
+
+    it('a pending raise cancelled is a warning', async () => {
+      const w = await live();
+      w.chain.linkStats = linkStats({ pending_limits: { per_scope_per_hour: 100, total_per_hour: 500, effective_at_ms: w.clock.t + 72 * HOUR } });
+      await w.run();
+      w.chain.linkStats = linkStats();
+      await w.run();
+      expect(await fields(w, 'config_change')).toEqual(['pending_limits']);
+    });
   });
 });
 
@@ -529,7 +567,7 @@ describe('unrecorded_wallets (D139)', () => {
   });
 });
 
-describe('review hardening (H1, M1, M2, L1, L4, L8)', () => {
+describe('review hardening (H1, M1, L1, L4, L8)', () => {
   it("Hana's email JWKS is read only after the protective work, the delivery and the heartbeat, and its failure blocks none of them", async () => {
     const hana = await emailJwk(201);
     const w = await initialized({ pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer([hana]) });
@@ -545,58 +583,6 @@ describe('review hardening (H1, M1, M2, L1, L4, L8)', () => {
     expect(seen).toEqual({ actions: 3, pings: pingsBefore + 1, sent: 1 });
     expect(r.outcome).toBe('ok');
     expect(w.writer.methods()).toEqual(['cancel_issuer_key_change', 'delete_updater_key', 'delete_updater_key']);
-  });
-
-  it('a link check that throws ends the run degraded, never in error: the snapshot is saved, nothing resolves, the heartbeat pings', async () => {
-    const hana = await emailJwk(201);
-    const w = await initialized({ pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer([hana]) });
-    w.deps.config.linkVolume.thresholds = { perHour: 100, perScopePerHour: 1 };
-    w.links.queue.push(linkEvent('s1', w.clock.t - MIN), linkEvent('s1', w.clock.t - MIN));
-    await w.run();
-    expect(await alertsOf(w.store, 'link_volume_high')).toHaveLength(1);
-    w.store.linkCounts = async () => {
-      throw new Error('bad data');
-    };
-    const pings = w.notifier.pings;
-    const r = await w.run();
-    expect(r.outcome).toBe('degraded');
-    expect(r.checks.find((c) => c.id === 'links')?.outcome).toBe('error');
-    expect(w.notifier.pings).toBe(pings + 1);
-    expect((await alertsOf(w.store, 'link_volume_high'))[0]?.resolved_at).toBeNull();
-    expect((await w.store.getMeta<{ at: number }>('snapshot'))?.at).toBe(w.clock.t - 5 * MIN);
-  });
-
-  it('a run that took protective actions skips the link scan (subrequest budget); the next one catches up', async () => {
-    const hana = await emailJwk(201);
-    const w = await initialized({ pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer([hana]) });
-    const scans = w.links.scans.length;
-    w.chain.propose('Add', 'k1x', { key: jwk('k1x', 66) });
-    w.jwks.keys = [jwk('k1', 1), jwk('k1x', 7)];
-    const r = await w.run();
-    expect(w.links.scans.length).toBe(scans);
-    expect(r.checks.find((c) => c.id === 'links')).toMatchObject({ outcome: 'skipped', detail: expect.stringContaining('protective actions') });
-    await w.run();
-    expect(w.links.scans.length).toBe(scans + 1);
-  });
-
-  it('a block the scan had to skip pages critical and stays open for a week while the scan moves on (M2)', async () => {
-    const hana = await emailJwk(201);
-    const w = await initialized({ pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer([hana]) });
-    w.links.skipped = 7_000;
-    await w.run();
-    w.links.skipped = null;
-    const [a] = await alertsOf(w.store, 'link_block_unscanned');
-    expect(a).toMatchObject({ key: 'link_block_unscanned:7000', severity: 'critical', details: { block_height: 7_000 } });
-    expect(w.notifier.on('pager').some((x) => x.msg.kind === 'link_block_unscanned')).toBe(true);
-    // The scan moved on (the cursor isn't held), and the condition stays open on later runs.
-    const before = w.links.scans.length;
-    await w.run();
-    expect(w.links.scans.length).toBe(before + 1);
-    expect((await alertsOf(w.store, 'link_block_unscanned'))[0]?.resolved_at).toBeNull();
-    // After a week it resolves.
-    w.clock.t += 7 * 24 * HOUR;
-    await w.run();
-    expect((await alertsOf(w.store, 'link_block_unscanned'))[0]?.resolved_at).not.toBeNull();
   });
 
   it('records the run and releases the lock before the advisory phase: a hanging advisory read holds nothing (lock M1)', async () => {
@@ -639,25 +625,6 @@ describe('review hardening (H1, M1, M2, L1, L4, L8)', () => {
     expect(r.outcome).toBe('ok');
     expect(await w.store.getMeta('run_lock')).toBeNull();
     expect((await w.store.lastRun())?.finished_at).not.toBeNull();
-  });
-
-  it('ignores and prunes link events dated in the future (L2)', async () => {
-    const hana = await emailJwk(201);
-    const w = await initialized({ pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer([hana]) });
-    w.deps.config.linkVolume.thresholds = { perHour: 1, perScopePerHour: 1 };
-    w.links.queue.push(linkEvent('s1', w.clock.t + 2 * HOUR), linkEvent('s1', w.clock.t + 2 * HOUR));
-    await w.run();
-    expect(await alertsOf(w.store, 'link_volume_high')).toEqual([]);
-    expect(await w.store.linkCounts(0)).toEqual([]);
-  });
-
-  it('a scope id like __proto__ is counted like any other (L6)', async () => {
-    const hana = await emailJwk(201);
-    const w = await initialized({ pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer([hana]) });
-    w.deps.config.linkVolume.thresholds = { perHour: 100, perScopePerHour: 1 };
-    w.links.queue.push(linkEvent('__proto__', w.clock.t - MIN), linkEvent('__proto__', w.clock.t - MIN));
-    await w.run();
-    expect((await alertsOf(w.store, 'link_volume_high'))[0]?.details).toMatchObject({ scope_id: '__proto__', new_links: 2 });
   });
 
   it('unreadable pins page as pins_invalid, and email keys are cancelled as pins_unreadable, not "forged" (L4)', async () => {

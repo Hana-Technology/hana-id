@@ -87,6 +87,35 @@ export interface SelfIssuedView {
   overlap_until_ms?: number | null;
 }
 
+/** Link caps per window (D200). */
+export interface LinkLimits {
+  per_scope_per_hour: number;
+  total_per_hour: number;
+}
+
+/** One fixed UTC-hour window of `get_link_stats()`. */
+export interface LinkWindow {
+  window_start_ms: number;
+  /** New links (immediate or pending) in the window, all scopes. */
+  total: number;
+  total_cap_reached: boolean;
+  /** Scopes that reached their cap in the window (recorded by the call that reached it). */
+  capped_scopes: string[];
+  /** More scopes reached their cap than the view lists. */
+  capped_scopes_truncated?: boolean;
+}
+
+/** `get_link_stats()` (contract with D200's link counter and cap). */
+export interface LinkStatsView {
+  window_ms: number;
+  limits: LinkLimits;
+  /** A raise waiting `governance_delay_ms` (lowering is immediate). */
+  pending_limits: (LinkLimits & { effective_at_ms: number }) | null;
+  links_total: number;
+  current: LinkWindow;
+  previous: LinkWindow | null;
+}
+
 /** The email issuer as the chain shows it. A v2 contract reads as no email issuer (no `get_self_issued`). */
 export interface EmailSnapshot {
   /** `get_issuer("email")` (null: no email issuer). */
@@ -142,6 +171,8 @@ export interface ChainSnapshot {
   issuerKeys: IssuerKey[] | null;
   /** The email issuer (self-issued, D121). */
   email: EmailSnapshot;
+  /** `get_link_stats()` (D200), or null on a contract without the view (v2, or v3 before the link cap). */
+  linkStats: LinkStatsView | null;
   config: ConfigView;
   governance: GovernanceView;
   /** The owner account (null when `get_config` names none). */

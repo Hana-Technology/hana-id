@@ -123,10 +123,13 @@ export function normalizeEmail(input: string): NormalizeResult {
 
   if ((EMAIL_V1.gmailDomains as readonly string[]).includes(domain)) {
     domain = EMAIL_V1.gmailCanonicalDomain;
+    // Dots are dropped from the username only; a `+tag` is kept as typed (lowercased), so each tag is its own
+    // identity, and an empty tag (`name+@gmail.com`) is the plain username (D159).
     const plus = local.indexOf('+');
-    if (plus !== -1) local = local.slice(0, plus);
-    local = local.replaceAll('.', '');
-    if (local.length === 0) return { ok: false, reason: 'local_empty' };
+    const tag = plus === -1 ? '' : local.slice(plus + 1);
+    const user = (plus === -1 ? local : local.slice(0, plus)).replaceAll('.', '');
+    if (user.length === 0) return { ok: false, reason: 'local_empty' };
+    local = tag.length === 0 ? user : `${user}+${tag}`;
   }
 
   const email = `${local}@${domain}`;

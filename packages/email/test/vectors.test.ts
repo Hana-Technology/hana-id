@@ -26,9 +26,9 @@ import { UNICODE_AGE_SOURCE } from '../src/unicode-age.ts';
 import { PKG, V, VECTORS_TEXT, readText, sha256Hex, testKey } from './helpers.ts';
 
 /** sha256 of vectors/email-v1.json, byte for byte. */
-const VECTORS_SHA256 = 'fea30ad09d8288aed3c71b9441d3c293bf49b4576064400dae1ec1289198d488';
+const VECTORS_SHA256 = '7a58a737ee01eddbfb7cbccd8460a469c824551b07885b9eccad68de1d3efe61';
 /** sha256 of JSON.stringify(EMAIL_V1). */
-const CONSTANTS_SHA256 = 'cbb067bb7624caf6e182bb0298b249c4ef4980206352b60310827bcbc0c1b2eb';
+const CONSTANTS_SHA256 = 'b6baca6ba60dfb9c0f10ec68be30795c7db17c9cec61ad03c131deab042a33b0';
 /** sha256 of src/unicode-age.ts (code points refused as newer than Unicode 15.0, from DerivedAge-18.0.0.txt). */
 const UNICODE_AGE_SHA256 = '0344aa1c296659c7ff4734c845aa4f47e710c539a47a1f6a86daafafc208ae15';
 
@@ -102,15 +102,19 @@ describe('sub vectors', () => {
     expect(await emailSub(await importSubKey(testKey()), email)).toBe(sub);
   });
 
-  it('every input of one person gives one sub (Gmail dots, +tag, googlemail, case, whitespace)', async () => {
+  it('every input of one person gives one sub (Gmail dots, empty +tag, googlemail, case, whitespace)', async () => {
     const key = await importSubKey(testKey());
     const subOf = async (input: string) => {
       const r = normalizeEmail(input);
       if (!r.ok) throw new Error(r.reason);
       return emailSub(key, r.email);
     };
-    const gmail = ['abc@gmail.com', 'A.B.C+Tag@Gmail.com', 'a.b.c@googlemail.com', 'ABC+x+y@GOOGLEMAIL.COM.', '  A.B.C@gmail.com\n'];
+    const gmail = ['abc@gmail.com', 'A.B.C@Gmail.com', 'abc+@gmail.com', 'a.b.c@googlemail.com', 'ABC@GOOGLEMAIL.COM.', '  A.B.C@gmail.com\n'];
     expect(new Set(await Promise.all(gmail.map(subOf))).size).toBe(1);
+    // Each Gmail +tag is its own identity (D159); the same tag in any spelling of the username is one.
+    const tags = ['abc@gmail.com', 'abc+1@gmail.com', 'abc+2@gmail.com', 'abc+x+y@gmail.com'];
+    expect(new Set(await Promise.all(tags.map(subOf))).size).toBe(tags.length);
+    expect(new Set(await Promise.all(['abc+1@gmail.com', 'A.B.C+1@GoogleMail.com'].map(subOf))).size).toBe(1);
     const plain = ['alice@example.com', 'Alice@Example.COM', ' \t\r\n\falice@example.com \t\r\n\f', 'alice@example.com.', 'alice@example.com。'];
     expect(new Set(await Promise.all(plain.map(subOf))).size).toBe(1);
     const idn = ['x@Bücher.example', 'x@xn--bcher-kva.example', 'x@XN--BCHER-KVA.EXAMPLE'];

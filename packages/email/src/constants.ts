@@ -27,9 +27,13 @@ export const EMAIL_V1 = Object.freeze({
   /** DNS limits on the ASCII domain (no trailing dot). */
   maxDomainBytes: 253,
   maxLabelBytes: 63,
-  /** Gmail canonical form: these domains become `gmailCanonicalDomain`, `+tag` and dots dropped from the local part. */
+  /**
+   * Gmail canonical form: these domains become `gmailCanonicalDomain`; dots are dropped from the username (the part
+   * before the first `+`), a non-empty `+tag` is kept as typed, so each tag is its own identity (D159).
+   */
   gmailDomains: Object.freeze(['gmail.com', 'googlemail.com'] as const),
   gmailCanonicalDomain: 'gmail.com',
+  gmailPlusTag: 'kept',
   idna: Object.freeze({ library: 'tr46', version: '7.0.0', unicode: '18.0.0', options: IDNA_OPTIONS }),
   /**
    * Code points assigned after this Unicode version are refused anywhere in the address (src/unicode-age.ts), so the

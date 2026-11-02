@@ -3,7 +3,8 @@
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
 Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 and D150–D152 on 2026-10-30 (branches
 `feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`);
-D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-login-3`) on 2026-11-02.
+D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-login-3`) on 2026-11-02; D159's `+tag`
+change (branch `fix/email-plus-tags`) on 2026-11-02.
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -1351,7 +1352,7 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   - Q5: the issuer under `{apiUrl}/v1/email`.
   - Q6: `sub` = HMAC with `K_sub`; `K_sub` a Worker secret with two offline backups, never rotated.
   - Q7: the Gmail canonical form (dots and `+tag` ignored); Google's help pages cited in the guard test before the
-    freeze.
+    freeze. Amended 2026-11-02 (D159): a `+tag` is kept, each tag its own identity.
   - Q8: the code never in the mail subject.
   - Q9: no Turnstile on `authOrigin`; rate limits instead.
   - Q10: disposable-address domains blocked (a pinned list, `email_domain_not_allowed`).
@@ -1557,7 +1558,7 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   through the council (`forged-key-change` step 5).
 
 ### D154. No v1 migration in contract v3: `migrate_v1` removed, `deploy-contract` refuses a v1 contract
-- Date 2026-11-02 · Status: to confirm (built on `feat/email-login-2`) · Source: email-login build plan batch 2
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); merged · Source: email-login build plan batch 2
 - Decision: contract v3 drops `migrate_v1`, the v1 layout copy (`HanaSignerV1`) and the v1 state fixture, as the build
   plan says. The plan doesn't say what the deploy tooling does with a v1 contract once the code can't migrate it; the
   stricter reading is built: `deploy-contract` refuses a v1 contract with or without `--upgrade`, with a blocker that
@@ -1572,8 +1573,8 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   `migrate_v1`: refusing a method that no longer exists is harmless, and batch 6 edits that file.
 
 ### D155. Attached gas for the email-login calls covers 4096-bit keys
-- Date 2026-11-02 · Status: to confirm (measured on `feat/email-login-2`; the API sets the values in build-plan batch
-  6) · Source: email-login build plan batch 2, the spec's "Gas and storage"; batch 2 review (L3)
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); measured in batch 2, the API sets the values in build-plan
+  batch 6 · Source: email-login build plan batch 2, the spec's "Gas and storage"; batch 2 review (L3)
 - Decision: attach 250 Tgas to `create_session_and_derive` with a `link_jwt` (the spec said 150), 250 to
   `link_identity` (spec: 100), and 150 to `cancel_link` and `unlink_identity` (the spec gives no value). Measured in the
   sandbox (`docs/contract-interface.md` "Gas of the email login calls"): one RS256 verification costs ≈ 17–18 Tgas at
@@ -1962,7 +1963,7 @@ the address freeze; until then a change moves every sandbox-dev email address an
 change no address.
 
 ### D156. Email normalization v1: the stricter readings, and a pinned UTS #46 library
-- Date 2026-11-02 · Status: to confirm (built on `feat/email-login-3`, not merged) · Source: build of
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); merged · Source: build of
   `docs/email-login-spec.md` "Email normalization"
 - Decision (`packages/email/src/normalize.ts`, frozen by `vectors/email-v1.json`):
   - "ASCII whitespace" is the WHATWG set (TAB, LF, FF, CR, SPACE), trimmed at the ends only; anything else (VT, NBSP,
@@ -2029,19 +2030,29 @@ change no address.
   links silently. Google returns `hd` as the Workspace's lowercase ASCII domain, so the exact form is the expected one.
 - Rejected: normalizing `hd` with `normalizeDomain`; matching `hd` against parent domains.
 
-### D159. Gmail canonical form: Google's pages as cited, and what they don't cover
-- Date 2026-11-02 · Status: to confirm (built on `feat/email-login-3`, not merged) · Source: spec Q7 (D123), checked
-  against Google's help pages on 2026-11-02 (cited in `packages/email/test/vectors.test.ts`)
-- Decision: keep the spec's rule unchanged (`gmail.com` and `googlemail.com` → `gmail.com`, drop from the first `+`,
-  drop dots). Cited: dots don't matter (support.google.com/mail/answer/7436150); `+word` reaches the same inbox
-  (support.google.com/a/users/answer/9308648, a Workspace Learning Center page; Gmail usernames can't contain `+`,
-  support.google.com/mail/answer/9211434); a deleted Gmail address can't be used by anyone in the future
-  (support.google.com/mail/answer/61177, /56256).
-- Open for the user: no current Google help page says `googlemail.com` is the same mailbox as `gmail.com` (it is,
-  historically: Gmail's name in Germany and the UK); and Google now lets a Gmail user change their address, the old
-  one becoming an alternate that still receives mail (support.google.com/accounts/answer/19870), so the same person
-  then has two email identities (the spec's "address changes between logins" case; nothing merges them).
-- Rejected: Gmail rules for Workspace domains (spec step 5: `+tags` elsewhere may be distinct mailboxes).
+### D159. Gmail canonical form: dots ignored, each `+tag` its own identity
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02), amending Q7 (D123) · Source: spec Q7 (D123), checked
+  against Google's help pages on 2026-11-02 (cited in `packages/email/test/vectors.test.ts`); the user's choice of
+  `+tag` behaviour
+- Decision: `gmail.com` and `googlemail.com` → `gmail.com`; every dot in the username (before the first `+`) is
+  dropped; a non-empty `+tag` is kept as typed (lowercased, its dots and further `+` kept), so `name+1@gmail.com`
+  and `name+2@gmail.com` are separate identities with separate wallets; an empty tag (`name+@gmail.com`) is the plain
+  username; an empty username (`+tag@gmail.com`) is refused. Other domains keep dots and `+` as typed.
+- Why dots: Gmail delivers every dot spelling to one inbox and nobody can register another spelling
+  (support.google.com/mail/answer/7436150), so ignoring dots keeps one person from getting a second, empty wallet
+  by typing their address differently, and keeps D119 matching against Google's reported address working.
+- Why `+tags` kept (the user's choice): a tag is typed on purpose, so it can't split a wallet by accident, and it
+  gives one inbox many wallets for testing and for users who want them, as Privy does. Security is unchanged: only
+  the inbox owner receives a tag's codes. Costs: one person can hold many email wallets (partners running rewards
+  should know); a Google login links automatically only with the untagged email identity; the identity token's email
+  for a tagged login carries the tag.
+- Cited and open: a deleted Gmail address can't be used by anyone in the future (support.google.com/mail/answer/61177,
+  /56256); no current Google page says `googlemail.com` is the same mailbox as `gmail.com` (it is, historically); a
+  Gmail user can now change their address, the old one becoming an alternate that still receives mail
+  (support.google.com/accounts/answer/19870), so the same person can then have two email identities (the spec's
+  "address changes between logins" case; nothing merges them).
+- Rejected: dropping `+tags` (the spec's rule: one wallet per inbox); keeping dots significant (an accidental second
+  wallet); Gmail rules for Workspace domains (`+tags` elsewhere may be distinct mailboxes).
 
 ## Superseded or amended
 
@@ -2079,6 +2090,7 @@ change no address.
 | Email spec: `opened` recorded at every `create_session*` | Recorded at derivation (D130) | `docs/contract-interface.md` "Accounts and links" |
 | Email spec: `auto_link` nonce over the session, the session identity, the target epoch and the mode; the combined login signed over the plain CKD payload | The nonce also commits to the join (who joins which account), and with a link the session key signs the linked CKD payload (D133) | `docs/email-login-spec.md` "Byte layouts (new)", "Sessions" |
 | Email spec: `mark_self_issued(provider)` for any issuer | Only `email` (D134) | `docs/contract-interface.md` "Self-issued issuers" |
+| Email spec Q7: Gmail `+tag` dropped (one wallet per inbox) | Each `+tag` its own identity; dots still ignored (D159) | `packages/email/README.md` |
 | `create_session` opens a session for anyone holding the token; after a front-run `create_session` the key holder derives with counter `used + 1` | A bare `create_session` needs the session key's proof of possession bound to its parameters; a session meant to carry a link is revoked and restarted, never derived plainly (D137) | `docs/contract-interface.md` "Sessions and CKD" |
 
 ## Proposed, not yet confirmed
@@ -2096,9 +2108,7 @@ paging app (D85, at setup), and open question 17 (cancel by a compromised OIDC o
 `docs/batch-c-spec.md`: Q1, Q3, Q4's fallback addresses, Q5 (D93). Everything else in both specs follows D80–D93 or
 is a proposal there.
 
-Still open from `docs/email-login-spec.md`: the user-mail provider (Resend unless the colleague picks another,
-D87). Everything else follows D4, D119 and D121–D123. The contract readings made while building it, D130 and D131,
-wait for the user's confirmation (`docs/email-login-build-plan.md` "Open points for the user"; point 3 is confirmed, D132);
-D133–D138 are the security reviews' fixes, D139 their off-chain obligations. Batch 2's readings, D154 (no v1
-migration; `deploy-contract` refuses v1) and D155 (attached gas of the email-login calls), and the `packages/email`
-readings (batch 3), D156–D159, wait for the user's confirmation; D156 and D159 decide every email address.
+Still open from `docs/email-login-spec.md`: nothing; the user-mail provider is SendGrid (D194). The contract readings
+D130 and D131, batch 2's D154 and D155, and the `packages/email` readings D156 and D159 are confirmed (2026-11-02);
+D157 (disposable list) and D158 (`hd` compared exactly) wait for the user's confirmation, as do the watchdog's
+D190–D193 (batch 5).

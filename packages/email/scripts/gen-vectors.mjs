@@ -89,8 +89,11 @@ function normalize(input) {
   local = local.toLowerCase();
   if (domain === 'gmail.com' || domain === 'googlemail.com') {
     domain = 'gmail.com';
-    local = local.split('+')[0].split('.').join('');
-    if (local === '') return null;
+    const [user, ...rest] = local.split('+');
+    const tag = rest.join('+');
+    const base = user.split('.').join('');
+    if (base === '') return null;
+    local = tag === '' ? base : base + '+' + tag;
   }
   const out = `${local}@${domain}`;
   return out.length > 254 ? null : out;
@@ -120,7 +123,10 @@ const ACCEPT = [
   ['every atext character', "!#$%&'*+-/=?^_`{|}~@example.com"],
   ['digits, underscore, hyphen, multi-label domain', 'first_last-1@sub.example.co.uk'],
   ['apostrophe', "O'Brien@Example.ie"],
-  ['Gmail: dots and +tag dropped, lowercased', 'A.B.C+Tag@Gmail.com'],
+  ['Gmail: dots dropped from the username, +tag kept, lowercased', 'A.B.C+Tag@Gmail.com'],
+  ['Gmail: a +tag is its own identity', 'amdcopper+1@gmail.com'],
+  ['Gmail: dots inside the +tag are kept', 'a.b+x.y@gmail.com'],
+  ['Gmail: an empty +tag is the plain username', 'abc+@gmail.com'],
   ['Gmail canonical form itself', 'abc@gmail.com'],
   ['googlemail.com becomes gmail.com', 'a.b.c@googlemail.com'],
   ['googlemail.com, uppercase, two +, trailing dot', 'ABC+x+y@GOOGLEMAIL.COM.'],

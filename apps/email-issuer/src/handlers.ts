@@ -330,6 +330,10 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
   const box = mailboxLimiter(deps, live.mailboxKey);
   const guess = await box.reserveGuess(ip, now);
   if (!guess.ok) return tryLater(ctx, guess.retryAfterMs, guess.reason);
+  // A mailbox whose backstop tripped or that reached its ceiling is being guessed at: logged at error level, once per
+  // trip, with a pseudonymous prefix of its key (an HMAC under K_rl, never the address) so staff can see targeted
+  // mailboxes. Until the UTC day ends it answers "try again later" (D198).
+  if (guess.tripped) log({ event: 'mailbox_guess_limit', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'error', code: guess.tripped, subject: live.mailboxKey.slice(0, 12) }, 'error');
   const keys = await deps.keys();
   const v = await stub.verify(await codeMac(keys, b.challengeId, b.code), now);
   if (v.result === 'gone') {

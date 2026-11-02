@@ -1,7 +1,8 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-10-30 for the watchdog's retired-key rule (branch
+known open issues. Last verified against code: 2026-11-02 for the email issuer (branch `feat/email-login-4`: its keys and
+secrets rows and "Email issuer" invariants, D195–D199); 2026-10-30 for the watchdog's retired-key rule (branch
 `fix/watchdog-retired-key-race`, D153), for the partner identity token (branch
 `feat/identity-token-2`: the review fixes D176–D179 in the identity rows, invariants and open issue (l); branch
 `feat/identity-token-1`: the partner-backend party, its compromise rows, the three identity secrets), for the relayer pool rows (branch `feat/playbook-gaps`: the watchdog's relayer funds
@@ -93,6 +94,11 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Identity signing keys (Worker slots `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`) | P-256 private JWKs (ES256), testnet and `local*` only | The active key: a Worker secret and `.secrets/<env>/identity-signing-key.json`. The standby: `identity-signing-key-standby.json` only, kept offline, never uploaded until a switch (D177). During a rotation a `next` and a `previous` key. 0600, the only copies | Hana | `scripts/identity-key.ts`: `init`, `next`, `switch --to next|standby`, `retire --key previous|standby` (wrangler stdin, never printed, files never overwritten); public halves in the manifest's `identityToken.publicKeys` (the JWKS). `activeKid` picks the signer. Mainnet: AWS KMS `ECC_NIST_P256`, non-exportable, its own IAM user (build step 7, D127) |
 | `IDENTITY_SUB_KEY` | 32 random bytes (base64) | API Worker secret; `.secrets/<env>/identity-sub-key` (0600), with an offline backup alongside the council backup (D81) | Hana | Never rotated (it fixes every user's `sub` at every partner); never logged |
 | Identity tokens | ES256 JWT, ≤ 1 h | Vault memory (and its per-app channel), the partner page, the partner backend | the user's session, the partner | Not stored by Hana: no per-token record, never logged; refused by every Hana API (`bad_token`) |
+| Email issuer signing key `ISSUER_SIGNING_KEY` (signer `hana`) | RSA-2048 private JWK (RS256), testnet and `local*` only | The primary: an issuer Worker secret and `.secrets/<env>/email-issuer-signing-key.json`. The standby: `email-issuer-signing-key-standby.json` only, offline, never uploaded (D196). 0600, the only copies | Hana | `scripts/email-issuer.ts init` / `put` (wrangler stdin, never printed, never overwritten); public halves in `emailIssuer.publicKeys` (the JWKS, kid = RFC 7638 thumbprint, the watchdog's pin). On chain owner-posted only, after `governance_delay_ms`, pinned by the watchdog. **Whoever can read the Worker's secrets can mint any email user's token** (1-of-1, D121); mainnet: AWS KMS (adapter built, not wired, batch 10) |
+| `EMAIL_SUB_KEY` (K_sub) | 32 random bytes | Issuer Worker secret; `.secrets/<env>/email-sub-key` (0600) plus two offline backups (D81) | Hana | **Never rotated**: it fixes every email user's `sub` and so their address; losing it locks them all out. A leak lets the holder test guessed addresses against on-chain subs (privacy), never mint |
+| `EMAIL_CODE_KEY` (K_code), `EMAIL_RL_KEY` (K_rl) | 32 random bytes each | Issuer Worker secrets; `.secrets/<env>/email-code-key`, `email-rl-key` | Hana | K_code hashes codes in the challenge objects; K_rl keys the limiters and suppressions. Rotating either only resets live challenges or limit windows |
+| `SENDGRID_API_KEY` | SendGrid API key, Mail Send only (D194) | Issuer Worker secret; `.secrets/<env>/email-issuer-sendgrid-key` | Hana | Its own key, not Hana Wallet's or Wend's; rotate in SendGrid, then `put`. A leak sends mail as Hana's user-mail subdomain (phishing, reputation), not tokens |
+| Sign-in codes | 6 digits | The user's mailbox and SendGrid while it delivers; the challenge object holds only HMAC(K_code, challengeId ‖ code) | the user | ≤ 10 min, single use, 5 attempts; never logged |
 | Cloudflare account / `wrangler login` | account credentials | operator's machine | the user | Deploys the Worker: a trust root |
 
 Rule (CLAUDE.md): derived keys, CKD secrets, relayer keys, owner keys and Google tokens are never logged, printed,
@@ -294,6 +300,22 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   - no Hana API accepts an identity token: `verifyIdToken` refuses `typ: hana-identity+jwt` or `iss` =
     `IDENTITY_ISS` first (`400 bad_token`), and the contract takes RS256 issuer keys only;
   - logs carry the app id, outcome, code, kid and timings, never a token, `sub`, `sid`, address or body.
+
+### Email issuer (`apps/email-issuer`, not deployed)
+
+| Invariant | Where |
+|---|---|
+| Only the issuer computes `sub` (`@hana-id/email` `emailSub` over `normalizeEmail().email`, `+tag` kept, D159); mail goes to that normalized address, byte for byte | `src/handlers.ts` `handleStart`, `handleVerify`, `handleGoogleMatch` |
+| Every token's nonce is computed by the issuer from the commitment with the pinned signer, so a token serves only its purpose (never a register proof or another app's client proof); the commitment's scope must be the app's | `src/commitment.ts`, `src/layouts.ts` (checked against `email_fixture.json`) |
+| An `auto_link` token commits to the join read from the chain at minting (D133); it is minted only for Google-hosted case A with `link`, case B with a `linkTicket` for the same `sub`, or a case-A code challenge google-match prepared with Google's verified address (D195); never while `unrecorded_wallets` | `src/decide.ts` (the contract's `auto_link` rules), `handleGoogleMatch`, `handleVerify` |
+| Every signature verifies against the published key before the token leaves; every token is an `email_issuance` row before it is signed | `src/jws.ts` `mintJws`, `handlers.ts` `mint` |
+| Codes: 6 digits by rejection sampling; stored only as an HMAC; compared in constant time; 5 attempts and single use counted atomically in the challenge object; each check reserved in the mailbox limiter before the comparison (refused while locked, refunded on success), so parallel guesses can't outrun a lock (D198) | `src/keys.ts`, `src/challenge.ts`, `src/rate-limiter.ts` `reserveGuess` |
+| No targeted lockout: code mails and wrong-code locks are per (mailbox, requester); the mailbox-wide backstop never stops a requester with no failed check on the mailbox (D198) | `src/rate-limiter.ts` |
+| Enumeration: `start` answers the same 202 (or the same 429) for every valid address; a suppressed address takes the same limiter path, only the mail is skipped | `handleStart`, `handleResend`; `test/limits.test.ts` |
+| No address, code, `sub`, token, access token or key in any log line (typed fields only); the address only in a live challenge (≤ 10 min) and in memory | `src/log.ts`; `test/privacy.test.ts` greps every flow |
+| Suppressions per exact address, limits per mailbox (address without `+tag`): a bounce on `victim+x@` never suppresses `victim@` (D199) | `src/keys.ts` `addressKey`, `mailboxKey`; `src/webhook.ts` (signed SendGrid events only) |
+| The Google access token is checked (tokeninfo aud/azp and sub = the ID token's), used for userinfo, then revoked whatever the outcome; tokens never in a URL | `src/google.ts`, `handleGoogleMatch` |
+| CORS: `start`/`resend`/`verify` only from `authOrigin`, `google-match` only from `vaultOrigin`, no credentials; client proofs only behind Cloudflare Access plus the staff allowlist (D88), audited | `handlers.ts` `route`, `src/access.ts` |
 
 ### Vault page (`apps/api/src/vault/page.ts`)
 

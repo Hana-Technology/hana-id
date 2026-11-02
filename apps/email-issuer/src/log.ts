@@ -16,6 +16,8 @@ export interface LogFields {
   jti?: string;
   kid?: string;
   decision?: string;
+  /** A mailbox's pseudonymous key prefix (12 characters of an HMAC under K_rl; never the address), for targeted-mailbox logs. */
+  subject?: string;
   /** Which limit refused (a name such as `ip:start:10m`, never its key). */
   limit?: string;
   /** Provider HTTP status (SendGrid, Google, KMS, NEAR RPC). */

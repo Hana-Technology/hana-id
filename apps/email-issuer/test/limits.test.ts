@@ -180,41 +180,125 @@ describe('wrong codes: per requester, with a mailbox-wide backstop', () => {
     expect((await start(h2, app2, b, ip2)).status).toBe(202);
   });
 
-  it('the mailbox-wide backstop: 50 checks a day from all requesters, then none for anyone', async () => {
+  // The hard ceiling (D198): ≤ 25 failed checks per mailbox per UTC day, whoever asks. The clock is set to a UTC
+  // morning so no test crosses midnight by accident.
+  const morning = Date.UTC(2027, 0, 15, 8, 0, 0);
+  const guessWrong = async (h: Harness, id: unknown, code: string, ip: string) => (await h.call('/v1/email/verify', { challengeId: id, code: wrongFor(code) }, { ip })).status;
+
+  it('many requesters: the backstop stops everyone at 20 failed checks but owner-slot requesters, and nothing passes 25', async () => {
     const h = await harness();
+    h.clock.now = morning;
     const app = await seedApp(h);
-    const a = addr('k');
-    let checks = 0;
-    for (let round = 0; round < 12 && checks < 50; round++) {
-      const ip = freshIp();
+    const a = addr('cx');
+    let failed = 0;
+    // Four requesters start a challenge before anything trips (each a would-be owner).
+    const early = Array.from({ length: 4 }, freshIp);
+    const earlyIds: unknown[] = [];
+    for (const ip of early) {
       const s = await start(h, app, a, ip);
-      if (s.status !== 202) {
-        h.clock.now += 10 * 60_000 + 1;
-        continue;
-      }
-      for (let k = 0; k < 5 && checks < 50; k++, checks++) expect((await h.call('/v1/email/verify', { challengeId: s.body.challengeId, code: wrongFor(h.sender.codeFor(a)) }, { ip })).status).toBe(400);
-      h.clock.now += 3 * 60_000;
+      expect(s.status).toBe(202);
+      earlyIds.push(s.body.challengeId);
     }
-    expect(checks).toBe(50);
-    // The backstop stops whoever guessed: a requester that already failed on this mailbox is refused.
-    const guesser = freshIp();
-    h.clock.now += 10 * 60_000 + 1;
-    const g = await start(h, app, a, guesser);
-    expect(g.status).toBe(202);
-    expect((await h.call('/v1/email/verify', { challengeId: g.body.challengeId, code: wrongFor(h.sender.codeFor(a)) }, { ip: guesser })).status).toBe(400);
-    expect((await h.call('/v1/email/verify', { challengeId: g.body.challengeId, code: h.sender.codeFor(a) }, { ip: guesser })).status).toBe(429);
-    expect((await start(h, app, a, guesser)).status).toBe(429);
-    // The owner, with no failure on this mailbox, still signs in.
+    const { result, lines } = await captureLogs(async () => {
+      // Fifty attackers, each: start, then five wrong codes.
+      for (let i = 0; i < 50; i++) {
+        const ip = freshIp();
+        const s = await start(h, app, a, ip);
+        if (s.status !== 202) continue;
+        for (let k = 0; k < 5; k++) if ((await guessWrong(h, s.body.challengeId, h.sender.codeFor(a), ip)) === 400) failed++;
+      }
+      // The early requesters guess wrong too, in parallel, five each on their own challenge: each gets one owner-slot
+      // check, and its first failure ends its exemption.
+      const statuses = await Promise.all(early.flatMap((ip, n) => Array.from({ length: 5 }, () => guessWrong(h, earlyIds[n], h.sender.codeFor(a), ip))));
+      failed += statuses.filter((s) => s === 400).length;
+      // Twenty more fresh requesters: nothing.
+      for (let i = 0; i < 20; i++) expect((await start(h, app, a, freshIp())).status).toBe(429);
+      return failed;
+    });
+    expect(result).toBeLessThanOrEqual(25);
+    expect(result).toBe(20 + early.length);
+    expect(lines.some((l) => l.includes('"mailbox_guess_limit"') && l.includes('"code":"backstop"') && l.includes('"level":"error"'))).toBe(true);
+    for (const l of lines) expect(l).not.toContain(a);
+    // The next UTC day starts afresh.
+    h.clock.now = morning + 86_400_000;
+    const ip = freshIp();
+    const s = await start(h, app, a, ip);
+    expect(s.status).toBe(202);
+    expect((await h.call('/v1/email/verify', { challengeId: s.body.challengeId, code: h.sender.codeFor(a) }, { ip })).status).toBe(200);
+  });
+
+  it('the owner slot: a requester that started before the trip still signs in; one that started after can’t', async () => {
+    const h = await harness();
+    h.clock.now = morning;
+    const app = await seedApp(h);
+    const a = addr('co');
     const owner = freshIp();
     const o = await start(h, app, a, owner);
-    expect(o.status).toBe(202);
-    expect((await h.call('/v1/email/verify', { challengeId: o.body.challengeId, code: h.sender.codeFor(a) }, { ip: owner })).status).toBe(200);
-    // Parallel guesses from one new requester past the backstop: at most one is checked.
-    const burst = freshIp();
-    const b = await start(h, app, a, burst);
-    const wrong = wrongFor(h.sender.codeFor(a));
-    const statuses = await Promise.all(Array.from({ length: 10 }, () => h.call('/v1/email/verify', { challengeId: b.body.challengeId, code: wrong }, { ip: burst }).then((r) => r.status)));
-    expect(statuses.filter((x) => x === 400)).toHaveLength(1);
+    for (let i = 0; i < 4; i++) {
+      const ip = freshIp();
+      const s = await start(h, app, a, ip);
+      for (let k = 0; k < 5; k++) await guessWrong(h, s.body.challengeId, h.sender.codeFor(a), ip);
+    }
+    const late = freshIp();
+    expect((await start(h, app, a, late)).status).toBe(429);
+    expect((await h.call('/v1/email/verify', { challengeId: o.body.challengeId, code: '123456' }, { ip: late })).status).toBe(429);
+    // The owner's code (its challenge's) still verifies.
+    const ownerCode = h.sender.to(a)[0]!.text.match(/\n(\d{6})\n/u)![1]!;
+    expect((await h.call('/v1/email/verify', { challengeId: o.body.challengeId, code: ownerCode }, { ip: owner })).status).toBe(200);
+  });
+
+  it('the ceiling: 20 + the 5 owner-slot checks, then nobody until the UTC day ends; logged', async () => {
+    const h = await harness();
+    h.clock.now = morning;
+    const app = await seedApp(h);
+    const a = addr('cc');
+    const early = Array.from({ length: 6 }, freshIp);
+    // Five early starters (the live cap), their challenges then expire; a sixth starts once one has.
+    for (const ip of early.slice(0, 5)) expect((await start(h, app, a, ip)).status).toBe(202);
+    h.clock.now += 10 * 60_000 + 1;
+    expect((await start(h, app, a, early[5]!)).status).toBe(202);
+    h.clock.now += 10 * 60_000 + 1;
+    for (let i = 0; i < 4; i++) {
+      const ip = freshIp();
+      const s = await start(h, app, a, ip);
+      expect(s.status).toBe(202);
+      for (let k = 0; k < 5; k++) expect(await guessWrong(h, s.body.challengeId, h.sender.codeFor(a), ip)).toBe(400);
+    }
+    h.clock.now += 15 * 60_000 + 1;
+    const { lines } = await captureLogs(async () => {
+      for (const ip of early.slice(0, 5)) {
+        const s = await start(h, app, a, ip);
+        expect(s.status).toBe(202);
+        expect(await guessWrong(h, s.body.challengeId, h.sender.codeFor(a), ip)).toBe(400);
+      }
+    });
+    expect(lines.some((l) => l.includes('"mailbox_guess_limit"') && l.includes('"code":"ceiling"'))).toBe(true);
+    // 25 failed checks: the sixth early starter, clean and pre-trip, is refused too, as is everyone, until midnight UTC.
+    const r = await h.call('/v1/email/start', startBody(h, app, a), { ip: early[5]! });
+    expect(r.status).toBe(429);
+    expect(Number(r.headers.get('retry-after'))).toBe(Math.ceil((Date.UTC(2027, 0, 16) - h.clock.now) / 1000));
+    expect((await start(h, app, a, freshIp())).status).toBe(429);
+    h.clock.now = Date.UTC(2027, 0, 16, 0, 0, 1);
+    expect((await start(h, app, a, early[5]!)).status).toBe(202);
+  });
+
+  it('challenges per mailbox per day are capped at 35, every kind', async () => {
+    const h = await harness();
+    h.clock.now = morning;
+    const app = await seedApp(h);
+    const a = addr('cd');
+    let made = 0;
+    for (let i = 0; i < 45; i++) {
+      const ip = freshIp();
+      const s = await start(h, app, a, ip);
+      if (s.status === 202) {
+        made++;
+        await h.call('/v1/email/verify', { challengeId: s.body.challengeId, code: h.sender.codeFor(a) }, { ip });
+      }
+      if (i % 9 === 8) h.clock.now += 15 * 60_000 + 1;
+    }
+    // 30 mailbox-wide plus the 5-a-day reserve: the code limits and the challenge cap agree at 35.
+    expect(made).toBe(35);
   });
 
   it('concurrent wrong guesses: one challenge compares at most 5 codes; one requester checks at most 10', async () => {

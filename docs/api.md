@@ -922,7 +922,8 @@ address is normalized by `@hana-id/email` (`400 invalid_email`); a disposable do
 email_domain_not_allowed`. Then the IP limit, the app limit, the global budget and, in one atomic call, the mailbox's
 (the address without its `+tag`): the requester's lock, at most 5 live challenges, and the code limits per (mailbox,
 requester) and per mailbox (D198). Any of these refuses with the same `429 rate_limited` body and stores nothing. A
-suppressed address gets the same 202 with a challenge that holds no address and no code, and no mail. The code mail
+suppressed address (its exact address, `+tag` included, bounced or complained) takes the same path, counted and never
+refunded, and gets the same answer; only the mail is skipped, and its challenge holds no address and no code. The code mail
 goes to the normalized address (its `+tag` kept), after the response.
 
 ### `POST /v1/email/resend` · E
@@ -939,7 +940,8 @@ sends its first code (not counted as a resend). The challenge still ends 10 min 
 mailbox's limiter before the code is compared (one atomic call, refunded when the code is right), and the challenge
 counts its attempts atomically, so parallel guesses can't outrun either (D198). Errors: `400 code_invalid
 {attemptsLeft}` (5 wrong codes kill the challenge; 10 wrong from one requester lock it out of that mailbox for an hour;
-50 checks a day per mailbox from everyone stop all checks until the day's window ends), `410 challenge_expired`, `429
+past 50 checks a day per mailbox from everyone, only requesters with no failed check on it that day may check, until
+their first wrong code), `410 challenge_expired`, `429
 rate_limited` (IP, or a lock), `403 email_not_enabled` (the app was suspended
 or turned email off meanwhile: nothing is minted). A correct code is single use: the challenge is deleted before the
 token is minted.
@@ -998,7 +1000,7 @@ contract never fetches them and the watchdog pins instead of trusting them.
 SendGrid's signed Event Webhook (D199): `x-twilio-email-event-webhook-signature` (base64 DER ECDSA P-256) over
 `x-twilio-email-event-webhook-timestamp` ‖ body, verified with `SENDGRID_WEBHOOK_PUBLIC_KEY` (`401 bad_signature`;
 older than 10 min refused). Body ≤ 1 MB, ≤ 1000 events. `bounce` (not `blocked`) and `spamreport` events become
-`email_suppressions` rows keyed by the mailbox key (a tagged address suppresses its mailbox); `200 {stored}`. `404` when no key is configured.
+`email_suppressions` rows keyed by the exact normalized address (a bounce on `x+tag@` suppresses only that address); `200 {stored}`. `404` when no key is configured.
 
 ### Limits (D198; provisional, D123 Q22)
 
@@ -1012,7 +1014,7 @@ subject. Every mailbox decision is one atomic call (D198).
 | Mailbox: code mails | 10 per 15 min, 30 per day; then 5 a day for requesters new to it that day | 429 |
 | Mailbox: live challenges | 5 at once | 429 |
 | Mailbox × requester: wrong codes | 10 per hour → that requester locked out of the mailbox for 1 h | 429 (start, resend, verify) |
-| Mailbox: code checks | 50 per day from everyone (the backstop) | 429 until the day's window ends |
+| Mailbox: code checks | 50 per day from everyone (the backstop); past it, only requesters with no failed check on the mailbox that day, each until its first wrong code | 429 |
 | Challenge | 10 min from creation; 5 wrong codes; ≤ 2 resends ≥ 30 s apart | 410 / 429 |
 | IP (IPv4 address, IPv6 /64): `start` | 10 per 10 min, 50 per day | 429 |
 | IP: `verify` / `resend` / `google-match` | 30 / 10 / 30 per 10 min | 429 |
@@ -1030,7 +1032,7 @@ subject. Every mailbox decision is one atomic call (D198).
 
 Issuer D1 (`apps/email-issuer/migrations/0001_init.sql`): `email_issuance(jti, app_id, purpose, kid, iat)` (24 months,
 D90), `email_hints(scope_id, email_sub, google_sub, updated_at_ms)` (kept while the scope exists, D122),
-`email_suppressions(email_key = the mailbox key, reason bounce|complaint, at_ms)`, `email_admin_audit(at_ms, staff, scope_id,
+`email_suppressions(email_key = HMAC(K_rl, exact normalized address), reason bounce|complaint, at_ms)`, `email_admin_audit(at_ms, staff, scope_id,
 action_nonce, jti)`. No address is stored anywhere. `APP_DB` is the API's D1, read only (`apps`, `plans`).
 
 Vars (from `emailIssuer`, `scripts/gen-wrangler.ts`): `ENV_NAME`, `NEAR_RPC`, `NEAR_RPC_FALLBACK`, `SIGNER_ACCOUNT`,

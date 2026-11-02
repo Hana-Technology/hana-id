@@ -2141,8 +2141,8 @@ is computed by `@hana-id/email` alone, from the normalized address including any
   address's owner out) · Source: build of the spec's "Rate limits and abuse" and "Enumeration resistance"
 - Decision:
   - **Mailbox** = `normalizeEmail(...).mailbox`, the normalized address without its `+tag` (D159), keyed as
-    HMAC(K_rl, mailbox): every per-mailbox limit and every suppression uses it, so cycling tags neither mails one inbox
-    without bound nor escapes a bounce. Mail still goes to the tagged address.
+    HMAC(K_rl, "mailbox" ‖ 0x00 ‖ mailbox): every per-mailbox limit uses it, so cycling tags can't mail one inbox without
+    bound. It is a rate-limit key only: suppressions use the exact address (D199). Mail still goes to the tagged address.
   - **Atomic.** Every limit decision is one Durable Object call whose checks and writes run before any await. `verify`
     reserves the check in the mailbox's limiter (refused while locked) before the code is compared, and gets it back
     when the code was right; the challenge object counts its own attempts the same way, so concurrent guesses compare
@@ -2152,11 +2152,21 @@ is computed by `@hana-id/email` alone, from the normalized address including any
     mailbox that day, so whoever used the allowance can't keep the owner out. At most 5 live challenges per mailbox. A
     start that is over any of these, or locked, stores nothing (no challenge, no code).
   - **Wrong codes**: 5 kill a challenge; 10 per hour from one requester lock that requester out of that mailbox for an
-    hour (the owner elsewhere is not affected); the mailbox-wide backstop is 50 checks a day from everyone, then none
-    until the day's window ends (≤ 50 guesses per mailbox per day, 5 × 10⁻⁵: the spec's bound).
+    hour (the owner elsewhere is not affected). The mailbox-wide backstop: past 50 checks in the day's window from
+    everyone, only a requester with **no failed check on this mailbox that day** may check (start, resend, verify), and
+    each of its checks counts, so its first wrong code stops it too. The backstop thus stops whoever has been guessing,
+    never an owner who hasn't. Odds: up to the backstop, 50 guesses × 10⁻⁶ = 5 × 10⁻⁵ per mailbox per day (the spec's
+    bound); past it, one more guess per requester new to the mailbox that day, so N fresh IPs add N × 10⁻⁶ (a thousand
+    fresh IPs a day double the figure, to 10⁻³ in all). Independently of IPs, every guess needs a challenge, every
+    challenge a code mail (≤ 35 a day per mailbox) and gets 5 attempts: ≤ 175 guesses per mailbox per day, 1.75 × 10⁻⁴,
+    whatever the attacker's IPs.
   - **Refusals are a generic 429** (`rate_limited`, the same body as an IP or app limit), so the popup says "try again
     later" instead of waiting for a code that never comes. It tells the caller only that the mailbox is limited, never
-    whether it has a wallet. Suppressed addresses keep the silent 202 (their mail could never arrive).
+    whether it has a wallet.
+  - **Suppressed addresses take the same path**: `start` and `resend` reserve and count exactly as for any address
+    (mailbox limits, live challenges, the global budget; never refunded) and answer alike, 202 or the same 429; only the
+    provider call is skipped, and the challenge holds no address and no code. So no limiter answer tells a suppressed
+    address apart.
   - Exact counts everywhere, per IP too: Cloudflare's Rate Limiting binding only has 10 s and 60 s periods (D95 is the
     vault's). Per IP: `start` 10 per 10 min and 50 per day, `verify` 30, `resend` 10 and `google-match` 30 per 10 min.
     Per app: `start` 20 × the plan's `per_minute` per minute (the spec's value, read literally) and the plan's
@@ -2168,9 +2178,8 @@ is computed by `@hana-id/email` alone, from the normalized address including any
   "10 wrong per hour → 1 h lock" for the whole address; a limited address answers 429 rather than a silent 202.
 - Why: the spec's per-address counters let anyone who knows an address use up its owner's codes, or lock it with ten
   wrong guesses; and a lock checked in one object and counted in another could be outrun by parallel guesses.
-- Residual: a requester with many IPs can still fill a mailbox's daily allowance and reserve (35 mails), and spread 50
-  wrong guesses to stop checks for the rest of that day; both are bounded and leave the guess probability at the
-  spec's figure.
+- Residual: a requester with many IPs can still fill a mailbox's daily allowance and reserve (35 mails), which leaves
+  the owner without a code for the rest of that day; the backstop no longer locks the owner out.
 - To check with the user: whether "20 × per_minute" was meant (1,200 starts a minute for a free-plan app; the global
   budget is then the binding cost bound).
 
@@ -2199,7 +2208,9 @@ is computed by `@hana-id/email` alone, from the normalized address including any
     `emailIssuer.access` (its own Access application on that path, D88's second check); every proof is a row in
     `email_admin_audit` and `email_issuance`.
   - Suppressions are fed by SendGrid's **signed** Event Webhook (`POST /v1/email/webhooks/sendgrid`, ECDSA P-256 over
-    timestamp ‖ body, ≤ 10 min old): hard bounces and spam reports, stored by mailbox key only (D198).
+    timestamp ‖ body, ≤ 10 min old): hard bounces and spam reports, stored as `email_key` = HMAC(K_rl, the exact
+    normalized address, `+tag` included), the spec's definition. Not the mailbox key: on a domain where `+` isn't
+    sub-addressing, `victim+x@domain` is someone else's mailbox, and making it bounce must not suppress `victim@domain`.
   - A chain or Google outage after a correct code (verify of `session` reading hints, or `auto_link`) answers 502 and
     the code is spent: the user starts again (never a guessed `googleWallet: false`, which could make a second wallet).
 - Why: each closes a gap the spec left, on the side that keeps a matched person to one wallet and addresses off logs

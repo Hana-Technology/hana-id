@@ -1,6 +1,7 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-02 (branch `feat/email-login-2`: `deploy-contract` refuses a v1 contract, D154; the v2 → v3
+Last verified against code: 2026-11-02 (branch `feat/email-login-4`: "Email issuer" setup and runbook, the issuer's
+secrets rows); 2026-11-02 (branch `feat/email-login-2`: `deploy-contract` refuses a v1 contract, D154; the v2 → v3
 upgrade path sandbox-tested, "Upgrading the governance contract"); 2026-10-30 (branch `fix/watchdog-retired-key-race`: the `retired_key_change` alert, D153;
 branch `feat/identity-token-2`: "Identity token keys" rewritten for the
 offline standby and `identity-key next / switch / retire` (D177), the identity secrets rows, `gen --dev-vars`;
@@ -31,10 +32,13 @@ Never print, log, paste or commit any of these. The scripts never print them eit
 | `VAULT_KEK` (and, during a rotation, `VAULT_KEK_PREVIOUS`) | `.secrets/<env>/vault-kek` (and `vault-kek.previous`); the only copy, since Cloudflare can't give a secret back | `vault-kek` (below) |
 | Identity token signing keys (Worker slots `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`; testnet and `local*` only) | `.secrets/<env>/identity-signing-key.json` (active), `identity-signing-key-standby.json` (published, **never uploaded**: keep it offline), and during a rotation `identity-signing-key-next.json` / `-previous.json` (P-256 private JWKs); `identity-slots.json` says which slot holds which kid; the only copies | `identity-key <env> init`, `next`, `switch`, `retire` ("Identity token keys" below); `put --yes` uploads the active key again |
 | Identity token sub key (`IDENTITY_SUB_KEY`) | `.secrets/<env>/identity-sub-key` (base64 of 32 bytes); never rotated, also backed up offline with the council backup (D81) | `identity-key <env> init`; upload again with `identity-key <env> put --yes` |
+| Email issuer signing key (`ISSUER_SIGNING_KEY`; testnet and `local*` only) | `.secrets/<env>/email-issuer-signing-key.json` (active), `email-issuer-signing-key-standby.json` (published and on chain, **never uploaded**: keep it offline); RSA-2048 private JWKs, the only copies | `email-issuer <env> init`; upload with `email-issuer <env> put --yes` ("Email issuer" below) |
+| Email issuer HMAC keys (`EMAIL_SUB_KEY` = K_sub, `EMAIL_CODE_KEY`, `EMAIL_RL_KEY`) | `.secrets/<env>/email-sub-key`, `email-code-key`, `email-rl-key` (base64 of 32 bytes); K_sub is never rotated and is backed up offline twice (D81) | `email-issuer <env> init`; `put --yes` |
+| SendGrid key for user mail (`SENDGRID_API_KEY`, Mail Send only, D194) | `.secrets/<env>/email-issuer-sendgrid-key` | pasted by hand; `email-issuer <env> put --yes` |
 | Neon Postgres connection strings (batch C ledger, D73): pooled `DATABASE_URL` and `DATABASE_URL_DIRECT` of the env's Neon branch | `.secrets/<env>/neon.json` (`{project_id, branch, DATABASE_URL, DATABASE_URL_DIRECT, …}`); role `neondb_owner` until batch C creates least-privilege roles | `neon connection-string <branch> --project-id <id> [--pooled]` (Neon CLI, `neon login`) |
 | Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its Resend key, Slack webhook, paging-app credentials, `HEARTBEAT_URL`) | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
 | Worker copies of the above | Cloudflare Worker secrets (the watchdog's on its own Cloudflare account) | `wrangler secret put` (watchdog: `wrangler secret bulk`) |
-| Local dev copies | `apps/api/.dev.vars`, `apps/watchdog/.dev.vars` (0600) | `gen --dev-vars` |
+| Local dev copies | `apps/api/.dev.vars`, `apps/watchdog/.dev.vars`, `apps/email-issuer/.dev.vars` (0600) | `gen --dev-vars` |
 
 `.secrets/` is gitignored, directories 0700, files 0600 (`scripts/lib/secrets.ts` refuses to read a file that group
 or others can read). Google ID tokens, CKD outputs and derived keys are never stored anywhere.
@@ -1165,6 +1169,70 @@ pending change's `unlock_at_ms`), since OIDC owners couldn't cancel while paused
 immediate but slows every key change to `governance_delay_ms` unless another watchdog confirms (D86). Likewise a key
 change proposed while no watchdog may confirm yet (none, or only ones added less than `governance_delay_ms` ago)
 waits `governance_delay_ms`: after adding the first watchdog, rotations go slow until its `confirm_from_ms`.
+
+## Email issuer (`apps/email-issuer`)
+
+The email login's issuer (`docs/api.md` "Email issuer", `apps/email-issuer/README.md`, D195–D199): its own Worker,
+separate from the API, holding the email signing key, K_sub, K_code, K_rl and the SendGrid key. **Not deployed on any
+env yet.** Order matters (build plan batch 6): the watchdog's email pins (batch 5) are live before the owner posts any
+email key, and no app enables email (`apps.login_methods`) before batch 8.
+
+### Setting it up (once per env; testnet and `local*` only)
+
+1. **Keys and manifest block** (uploads nothing, prints no secret):
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts email-issuer <env> init --from "Hana <login@<user-mail subdomain>>"   # plan
+   corepack pnpm --filter @hana-id/scripts email-issuer <env> init --from "Hana <login@<user-mail subdomain>>" --yes
+   ```
+
+   Writes `.secrets/<env>/email-issuer-signing-key.json` (RSA-2048 primary, the Worker secret),
+   `email-issuer-signing-key-standby.json` (published and posted on chain, **never uploaded**: move it offline),
+   `email-sub-key`, `email-code-key`, `email-rl-key` (base64 of 32 bytes each), all 0600 and never overwritten, and the
+   `emailIssuer` block in `envs/<env>.json` (iss `{apiUrl}/v1/email`, Worker and D1 `hana-id-email-issuer-<env>`, both
+   public keys with kid = RFC 7638 thumbprint, the primary active, sender `sendgrid`; `--outbox` for the test stub in
+   `local*` envs only). It prints the watchdog pin block. **Back up `email-sub-key` offline twice** (with the council
+   backup, D81) before the first email login: losing K_sub locks every email user out, and a new one moves every email
+   address. Commit the manifest.
+2. **Watchdog pins** (batch 5, D190): add the printed block as `watchdog.pinnedIssuerKeys.email` and redeploy the
+   watchdog (its own account) **before** step 6. `email-issuer <env> show` prints it again, with the `set_issuer_key`
+   arguments.
+3. **SendGrid** (D194): domain authentication (SPF, DKIM, DMARC `p=quarantine`) for the dedicated user-mail sending
+   subdomain; a subuser for user mail if the account allows it; an API key with **Mail Send only**, used by this Worker
+   alone, pasted into `.secrets/<env>/email-issuer-sendgrid-key` (0600; never in chat or a shell history). Set the
+   message-log retention to the minimum the plan allows. Optional: the signed Event Webhook (bounce, spam report) to
+   `{apiUrl}/v1/email/webhooks/sendgrid`, its verification key in `emailIssuer.sendgridWebhookPublicKey` (public).
+4. **D1 and config**: `wrangler d1 create hana-id-email-issuer-<env>`, then
+   `corepack pnpm --filter @hana-id/email-issuer gen <env> --d1-id <issuer uuid> --app-d1-id <the API's D1 uuid>` and
+   `wrangler d1 migrations apply hana-id-email-issuer-<env> --remote` from `apps/email-issuer`. `gen` refuses a
+   Worker-secret signer off testnet, the `aws-kms` signer (until batch 10) and the outbox outside `local*`.
+5. **Secrets** (the user runs this): `corepack pnpm --filter @hana-id/scripts email-issuer <env> put` (plan), then
+   `--yes`: sets `ISSUER_SIGNING_KEY`, `EMAIL_SUB_KEY`, `EMAIL_CODE_KEY`, `EMAIL_RL_KEY` and, when its file exists,
+   `SENDGRID_API_KEY` on the issuer Worker through wrangler's stdin. The standby is never uploaded.
+6. **Chain** (batch 6, owner DAO): `set_issuer("email", [iss])`, `mark_self_issued("email")`, one `set_issuer_key("email",
+   key, signer: "hana")` per published key (each waits `governance_delay_ms`), then `AddClient ("email", "email:" +
+   scope)` per scope with a staff client proof (`POST {apiUrl}/v1/email/admin/client-proof`, behind Access; configure
+   `emailIssuer.access`).
+7. **Deploy**: `corepack pnpm --filter @hana-id/email-issuer deploy`, and route `{apiUrl}/v1/email/*` to it (batch 6:
+   a service binding from the API on `workers.dev`, or a zone route).
+
+Local: `gen <env> --dev-vars` writes `apps/email-issuer/.dev.vars` (0600) from the files (the active key only), then
+`corepack pnpm --filter @hana-id/email-issuer dev`.
+
+### Runbook
+
+| Symptom | Meaning | Action |
+|---|---|---|
+| `503 signer_unavailable` | ISSUER_SIGNING_KEY missing, malformed, not the manifest's `activeKid`, or a signature failed its self-check | `email-issuer <env> show`; `put --yes` again; never edit the kid by hand |
+| `503 issuer_unavailable` | an HMAC key is missing or two are equal | `put --yes`; never generate a new K_sub for an env that has email users |
+| `send_budget_exhausted` (error log) | the day's `dailySendBudget` is spent: `start` and `resend` answer 429 | look for abuse (per-app `limit` logs); raise `dailySendBudget` in the manifest only if the traffic is real, then `gen` and deploy |
+| `code_mail` errors with `misconfigured` / provider 401/403 | the SendGrid key is wrong, revoked or lacks Mail Send | new key into the file, `put --yes` |
+| `code_mail` errors with `unavailable` | SendGrid 429 or 5xx (the counts were taken back) | SendGrid status; users can resend after 30 s |
+| `google_revoke` warnings | Google's revoke endpoint failed (the access token expires within the hour anyway) | none, unless sustained |
+| A suspected key leak | anyone with the Worker's secrets can mint email tokens (1-of-1, D121) | owner `remove_issuer_key("email", primary)` (immediate; logins continue on the standby once it is on the Worker: upload it as ISSUER_SIGNING_KEY with `activeKid` switched, then deploy), then a new key through the 72 h path and new pins; `set_sessions_valid_from_ms` for sessions opened meanwhile |
+
+Limits are in `docs/api.md` "Email issuer" (D198): per (mailbox, requester), per mailbox with a reserve for new
+requesters, live challenges, the wrong-code locks and the backstop.
 
 ## Restoring a D1 database (Time Travel)
 

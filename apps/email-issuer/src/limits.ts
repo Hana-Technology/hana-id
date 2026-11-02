@@ -34,16 +34,25 @@ export const MAILBOX_CODE_LIMITS: Limit[] = [
 export const MAILBOX_RESERVE_LIMIT: Limit = { name: 'reserve:1d', windowMs: DAY, max: 5 };
 /** Live challenges per mailbox at once. */
 export const MAX_LIVE_CHALLENGES = 5;
+/** Challenges created per mailbox per UTC day, every kind (google-match's prepared ones included): a hard cap. */
+export const MAILBOX_CHALLENGES_PER_DAY: Limit = { name: 'challenges:1d', windowMs: DAY, max: 35 };
 /** Wrong codes per mailbox and requester: the 10th in an hour locks that requester out of that mailbox for an hour. */
 export const MAILBOX_IP_WRONG_LIMIT: Limit = { name: 'wrong:1h', windowMs: HOUR, max: 10 };
 export const MAILBOX_IP_LOCK_MS = HOUR;
-/** Failed checks per mailbox and requester in the day's window (no cap of its own: it decides who the backstop stops). */
+/** Failed checks per mailbox and requester in the UTC day (no cap of its own: it decides who may use the owner slot). */
 export const MAILBOX_IP_WRONG_DAY: Limit = { name: 'wrong:1d', windowMs: DAY, max: Number.MAX_SAFE_INTEGER };
 /**
- * The mailbox-wide brute-force backstop: past 50 code checks in the day's window from all requesters together, only a
- * requester with no failed check on this mailbox that day may check, and its first wrong code stops it too (D198).
+ * The hard ceiling (D198): failed (or in-flight) code checks per mailbox per UTC day, from every requester and every
+ * path together. Nothing passes it. 25 a day × 365 days × 10⁻⁶ per guess ≈ 0.91% a year against a 6-digit code.
  */
-export const MAILBOX_WRONG_BACKSTOP: Limit = { name: 'wrong:1d', windowMs: DAY, max: 50 };
+export const MAILBOX_WRONG_CEILING: Limit = { name: 'wrong:all:1d', windowMs: DAY, max: 25 };
+/** Within the ceiling: the checks open to any requester. When they are used up the backstop has tripped. */
+export const MAILBOX_WRONG_BACKSTOP: Limit = { name: 'wrong:any:1d', windowMs: DAY, max: 20 };
+/**
+ * Within the ceiling, counted on its own: the owner slot, open only to a requester that started a challenge on this
+ * mailbox before the backstop tripped and has no failed check on it that day (ceiling = backstop + owner slot).
+ */
+export const MAILBOX_OWNER_SLOT: Limit = { name: 'wrong:owner:1d', windowMs: DAY, max: 5 };
 
 /** `start` (and google-match's prepared challenges) per IP: 10 per 10 min, 50 per day. */
 export const IP_START_LIMITS: Limit[] = [

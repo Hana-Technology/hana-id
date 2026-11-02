@@ -36,6 +36,12 @@ export interface App {
   origins: string[];
 }
 
+/**
+ * The hot-DB migration this build's reads need (0006: keys in app_keys, origins in force by active_from, the
+ * suspension bits). Reported by GET /v1/health; the admin CLI checks it before it writes a guarded proposal.
+ */
+export const HOT_DB_SCHEMA = 6;
+
 export const PUBLISHABLE_KEY_RE = /^pk_(test|live)_[1-9A-HJ-NP-Za-km-z]{16,64}$/u;
 
 // Origin rules live in origins.ts (dev envs, Hana pages); re-exported for callers that only need these.
@@ -67,18 +73,23 @@ export async function getAppByKey(db: D1Database, publishableKey: string, now = 
 }
 
 /**
- * After a successful /v1/sessions or /v1/login on a scope with no first session yet: records it (after the response
- * when there is an execution context). Set once; a failure is only logged, and the next login retries. Never rejects.
+ * Records the scope's first session attempt: called when a session-pool relay (`/v1/sessions`, `/v1/login`,
+ * `/v1/derive`, `/v1/sessions/revoke`) is about to be sent, on a scope with no `first_session_at` yet, and run beside
+ * the relay. At the attempt, not the success, so a relay whose answer is lost (a timeout, a 5xx after the transaction
+ * landed) still ends the `no_session` waiver (fail closed). Set once; a failure is only logged (the next attempt
+ * retries, and the waiver also needs no usage, vault share or identity row in the scope). The promise never rejects;
+ * null when there is nothing to write.
  */
-export async function noteFirstSession(db: D1Database, app: Pick<App, 'scope_id' | 'first_session_at'>, onError: () => void, exec?: ExecutionContext, now = Date.now()): Promise<void> {
-  if (app.first_session_at !== null) return;
-  const write = db
+export function startFirstSession(db: D1Database, app: Pick<App, 'scope_id' | 'first_session_at'>, onError: () => void, now = Date.now()): Promise<void> | null {
+  if (app.first_session_at !== null) return null;
+  return db
     .prepare('UPDATE scopes SET first_session_at = ?1 WHERE scope_id = ?2 AND first_session_at IS NULL')
     .bind(now, app.scope_id)
     .run()
-    .then(() => undefined, onError);
-  if (exec) exec.waitUntil(write);
-  else await write;
+    .then(
+      () => undefined,
+      () => onError(),
+    );
 }
 
 export const usageDay = (now: number): string => new Date(now).toISOString().slice(0, 10);

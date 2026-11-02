@@ -1,6 +1,7 @@
 // A hot DB for the CLI tests: node:sqlite with every apps/api migration applied in name order (as a fresh D1 gets
-// them), and a `d1` function that runs a command as `wrangler d1 execute --command` would against D1: a write (its
-// statements plus the read-back of its commit row, admin-sql.ts writeCommand) in one transaction, then the read-back.
+// them), and a `d1` function that runs a command as `wrangler d1 execute --command` would. Deliberately without a
+// transaction around a command (each statement commits on its own): the CLI's commit protocol (admin-sql.ts "writes")
+// must hold whether or not D1 runs a multi-statement command atomically (D207).
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -20,14 +21,8 @@ export function d1Of(db: DatabaseSync): (command: string) => Record<string, unkn
   return (command) => {
     const at = command.lastIndexOf(COMMIT_READ);
     if (at >= 0) {
-      db.exec('BEGIN');
-      try {
-        db.exec(`${command.slice(0, at)};`);
-        db.exec('COMMIT');
-      } catch (e) {
-        db.exec('ROLLBACK');
-        throw e;
-      }
+      // No BEGIN: statements run one after another, each in autocommit (a failing one stops the rest).
+      db.exec(`${command.slice(0, at)};`);
       return db.prepare(command.slice(at + 2).replace(/;\s*$/u, '')).all() as Record<string, unknown>[];
     }
     if (/^\s*SELECT/iu.test(command) || /\bRETURNING\b/iu.test(command)) return db.prepare(command).all() as Record<string, unknown>[];

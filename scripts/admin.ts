@@ -13,7 +13,20 @@
 // (lib/admin-lead-times.ts) for D33's issuer-key delay.
 import { loadEnv, type Manifest } from '@hana-id/env';
 import { assertCommandPositionals } from './lib/admin-args.ts';
-import { type AppCmdDeps, appChangesAnnounce, appCreate, appList, appOriginsAdd, appOriginsRemove, appSuspension, cliActor, cliIds } from './lib/admin-apps.ts';
+import {
+  type AppCmdDeps,
+  appChangesAnnounce,
+  appCreate,
+  appList,
+  appOriginsAdd,
+  appOriginsPark,
+  appOriginsRemove,
+  appOriginsUnpark,
+  appSuspension,
+  cliActor,
+  cliIds,
+  requireC3ApiFor,
+} from './lib/admin-apps.ts';
 import { LEAD_TIMES_SQL, type ObservationRow, leadTimesReport } from './lib/admin-lead-times.ts';
 import { appSettings, defaultAppSettingsDeps, settingsAppArg } from './lib/admin-settings.ts';
 import { CliError, parseCli, run } from './lib/cli.ts';
@@ -35,6 +48,9 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
   app:changes:announce <change id>
                only in an env with no admin Worker, never on a production network: announces a pending staff
                proposal (it goes live appChangeDelayMs later; nobody is emailed)
+  app:origins:park [--yes]     before running an API from before batch C3 on this database (a rollback): deletes the
+               origin rows not yet in force, which such an API would treat as in force (dry run without --yes)
+  app:origins:unpark [--yes]   after redeploying batch C3 or later: rebuilds them from their guarded changes
   app:settings <app id | publishable key> [--persistence session|none] [--session-ttl <1h..23h50m>]
                [--idle-ttl <15m..session TTL>] [--raw-sign off|approval] [--google-web-client <client id>|default]
                [--auto-approve <policy.json>|off]   (no setting flags: show the settings)
@@ -57,9 +73,13 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
 
   --remote   act on the deployed D1 database (default: local, apps/api/.wrangler/state)
   --yes      scope:register, owner:call, owner:vote, council:replace-member: send the transaction (without it, only
-             print it)
+             print it); app:origins:park, app:origins:unpark: write (without it, only list)
   --allow-shared  scope:register only: the app may log in through Hana's shared Google client; with it, --client is
                   optional (an app with no Google client of its own)
+
+  Proposals (app:create's origins, app:origins:add, app:settings --raw-sign approval and a new --auto-approve policy)
+  and announcements are refused with --remote until the deployed API reports the batch C3 schema (GET /v1/health
+  hotDb ≥ 6).
 
   app:settings: --raw-sign approval (live apps only) and a new --auto-approve policy are staff proposals that apply
   appChangeDelayMs after their announcement; --raw-sign off, --auto-approve off and the other settings are immediate.
@@ -74,6 +94,8 @@ const COMMANDS = [
   'app:resume',
   'app:list',
   'app:changes:announce',
+  'app:origins:park',
+  'app:origins:unpark',
   'app:settings',
   'scope:register',
   'issuer-keys:lead-times',
@@ -93,6 +115,7 @@ function appDeps(m: Manifest, remote: boolean): AppCmdDeps {
     log: (line) => console.log(line),
     actor: cliActor(),
     ids: cliIds,
+    requireC3Api: requireC3ApiFor(m, remote),
   };
 }
 
@@ -123,7 +146,7 @@ async function main(): Promise<void> {
       await appCreate(m, args, where, appDeps(m, remote));
       return;
     case 'app:origins:add':
-      appOriginsAdd(m, args, where, appDeps(m, remote));
+      await appOriginsAdd(m, args, where, appDeps(m, remote));
       return;
     case 'app:origins:remove':
       appOriginsRemove(args, where, appDeps(m, remote));
@@ -136,7 +159,13 @@ async function main(): Promise<void> {
       appList(where, appDeps(m, remote));
       return;
     case 'app:changes:announce':
-      appChangesAnnounce(m, rest[0]!, where, appDeps(m, remote));
+      await appChangesAnnounce(m, rest[0]!, where, appDeps(m, remote));
+      return;
+    case 'app:origins:park':
+      appOriginsPark(args.flag('yes'), where, appDeps(m, remote));
+      return;
+    case 'app:origins:unpark':
+      await appOriginsUnpark(args.flag('yes'), where, appDeps(m, remote));
       return;
     case 'app:settings': {
       const deps = appDeps(m, remote);
@@ -145,6 +174,7 @@ async function main(): Promise<void> {
         actor: deps.actor,
         newRequestId: deps.ids.request,
         newChangeId: deps.ids.change,
+        requireC3Api: deps.requireC3Api,
       });
       return;
     }

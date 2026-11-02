@@ -16,10 +16,14 @@ import {
   cliActor,
   cliIds,
   findApp,
+  appOriginsPark,
+  appOriginsUnpark,
+  REQUIRED_HOT_DB,
+  requireC3ApiFor,
   STALE_WRITE,
   suspensionBits,
 } from '../lib/admin-apps.ts';
-import { addOriginsWrite, writeCommand } from '../lib/admin-sql.ts';
+import { addOriginsWrite, removeOriginsWrite, suspensionWrite, writeCommand } from '../lib/admin-sql.ts';
 import { parseCli } from '../lib/cli.ts';
 import { d1Of, newHotDb, seedHotApp, testIds } from './hot-db.ts';
 
@@ -39,13 +43,14 @@ interface H {
   out: string[];
   now: number;
   onChain: Set<string>;
+  apiChecks: number;
   deps: AppCmdDeps;
 }
 let h: H;
 
 beforeEach(() => {
   const db = newHotDb();
-  const state = { db, out: [] as string[], now: NOW, onChain: new Set(['s1', 's7', 's8', 'global']) } as H;
+  const state = { db, out: [] as string[], now: NOW, onChain: new Set(['s1', 's7', 's8', 'global']), apiChecks: 0 } as H;
   state.deps = {
     d1: d1Of(db),
     scopeOnChain: async (s) => state.onChain.has(s),
@@ -53,6 +58,9 @@ beforeEach(() => {
     log: (l) => state.out.push(l),
     actor: { id: 'cli:tester' },
     ids: testIds(),
+    requireC3Api: async () => {
+      state.apiChecks++;
+    },
   };
   h = state;
 });
@@ -140,9 +148,9 @@ describe('app:changes:announce', () => {
 
   it('starts the clock: active_from = now + appChangeDelayMs on the change and its origin row; recorded with channel cli, emailed none', async () => {
     seedHotApp(h.db, { id: 'app_a', key: APP_KEY, scope: 's1', origins: ['https://old.example.com'] });
-    appOriginsAdd(sandbox, args(['--app', 'app_a', '--origin', 'https://new.example.com']), 'local D1 test', h.deps);
+    await appOriginsAdd(sandbox, args(['--app', 'app_a', '--origin', 'https://new.example.com']), 'local D1 test', h.deps);
     h.now = NOW + 5;
-    announce('gc_1');
+    await announce('gc_1');
     expect(change('gc_1')).toMatchObject({ status: 'pending', notified_at: NOW + 5, active_from: NOW + 5 + DELAY, waiver: null });
     expect(origins('app_a')).toContainEqual({ origin: 'https://new.example.com', active_from: NOW + 5 + DELAY, change_id: 'gc_1' });
     expect(ledger('app_a').at(-1)).toMatchObject({ kind: 'change.announced', detail: { changeId: 'gc_1', channel: 'cli', emailed: 'none', activeFrom: NOW + 5 + DELAY } });
@@ -151,27 +159,82 @@ describe('app:changes:announce', () => {
     expect(inForce('app_a', NOW + 5 + DELAY - 1)).toEqual(['https://old.example.com']);
     expect(inForce('app_a', NOW + 5 + DELAY)).toEqual(['https://new.example.com', 'https://old.example.com']);
     // Once only.
-    expect(() => announce('gc_1')).toThrow('was already announced');
+    await expect(announce('gc_1')).rejects.toThrow('was already announced');
   });
 
   it('no_session waiver: in force at once while the scope has no login; the full delay once it has', async () => {
     await create(['--org', 'org_legacy', '--name', 'W', '--scope', 's7', '--environment', 'test', '--origin', 'https://a.example.com', '--origin', 'https://b.example.com']);
-    announce('gc_1');
+    await announce('gc_1');
     expect(change('gc_1')).toMatchObject({ active_from: NOW, waiver: 'no_session' });
     h.db.exec("UPDATE scopes SET first_session_at = 1 WHERE scope_id = 's7'");
-    announce('gc_2');
+    await announce('gc_2');
     expect(change('gc_2')).toMatchObject({ active_from: NOW + DELAY, waiver: null });
+  });
+
+  it('no_session waiver: both initial origins of one app:create get it (they don’t count against each other)', async () => {
+    await create(['--org', 'org_legacy', '--name', 'W', '--scope', 's7', '--environment', 'test', '--origin', 'https://a.example.com', '--origin', 'https://b.example.com']);
+    await announce('gc_1');
+    await announce('gc_2');
+    expect([change('gc_1'), change('gc_2')]).toMatchObject([
+      { active_from: NOW, waiver: 'no_session' },
+      { active_from: NOW, waiver: 'no_session' },
+    ]);
+  });
+
+  it('no_session waiver fails closed on any sign of a user in the scope, even with first_session_at lost (NULL)', async () => {
+    const signs: [string, string][] = [
+      ['a usage row', "INSERT INTO usage (app_id, day, sessions) VALUES ('app_1', '2026-11-02', 1)"],
+      ['a vault share', "INSERT INTO vault_shares (share_id, app_id, session_pk, path_hash, partner_origin, share_enc, kek_id, created_at, idle_until, abs_expires_at) VALUES (x'01', 'app_1', x'02', x'03', 'https://a.example.com', x'04', 1, 1, 2, 3)"],
+      ['an identity count', "INSERT INTO identity_usage (app_id, day, tokens) VALUES ('app_1', '2026-11-02', 1)"],
+      ['another app of the scope with an origin in force', "INSERT INTO app_origins (app_id, origin, active_from) VALUES ('app_1', 'https://other.example.com', 0)"],
+    ];
+    for (const [what, sql] of signs) {
+      h = { ...h, db: newHotDb(), out: [] };
+      h.deps = { ...h.deps, d1: d1Of(h.db), ids: testIds() };
+      await create(['--org', 'org_legacy', '--name', 'W', '--scope', 's7', '--environment', 'test', '--origin', 'https://a.example.com']);
+      h.db.exec(sql);
+      await announce('gc_1');
+      expect(change('gc_1'), what).toMatchObject({ active_from: NOW + DELAY, waiver: null });
+      expect(JSON.parse((ledger('app_1').at(-1)!.detail_json))).toMatchObject({ waiver: null, activeFrom: NOW + DELAY });
+    }
+  });
+
+  it('no_session waiver: an announced origin of another proposal on the scope ends it', async () => {
+    await create(['--org', 'org_legacy', '--name', 'W', '--scope', 's7', '--environment', 'test', '--origin', 'https://a.example.com']);
+    // A second app on the scope, its origin proposed and announced (full delay), then due.
+    h.now = NOW + DELAY;
+    await create(['--org', 'org_legacy', '--name', 'W2', '--scope', 's7', '--origin', 'https://b.example.com']);
+    await announce('gc_2');
+    h.now = NOW + 2 * DELAY;
+    await announce('gc_1');
+    expect(change('gc_1')).toMatchObject({ active_from: NOW + 3 * DELAY, waiver: null });
+  });
+
+  it('no_session waiver is decided inside the write: a login landing between the CLI’s read and its write ends it (TOCTOU)', async () => {
+    await create(['--org', 'org_legacy', '--name', 'W', '--scope', 's7', '--environment', 'test', '--origin', 'https://a.example.com']);
+    const real = h.deps.d1;
+    let raced = false;
+    h.deps.d1 = (statement) => {
+      if (!raced && statement.includes("'change.announced'")) {
+        raced = true;
+        h.db.exec("UPDATE scopes SET first_session_at = 5 WHERE scope_id = 's7'");
+      }
+      return real(statement);
+    };
+    await announce('gc_1');
+    expect(raced).toBe(true);
+    expect(change('gc_1')).toMatchObject({ active_from: NOW + DELAY, waiver: null });
   });
 
   it('is refused with an admin Worker, on a production network, and for a change that is not pending', async () => {
     seedHotApp(h.db, { id: 'app_a', key: APP_KEY, scope: 's1' });
-    appOriginsAdd(sandbox, args(['--app', 'app_a', '--origin', 'https://new.example.com']), 'local D1 test', h.deps);
+    await appOriginsAdd(sandbox, args(['--app', 'app_a', '--origin', 'https://new.example.com']), 'local D1 test', h.deps);
     const withAdmin = { ...sandbox, admin: {} as NonNullable<typeof sandbox.admin> };
-    expect(() => announce('gc_1', withAdmin)).toThrow('has an admin Worker');
-    expect(() => announce('gc_1', { ...sandbox, network: 'mainnet' as 'testnet' })).toThrow('refused on a production network');
-    expect(() => announce('gc_nope')).toThrow('No guarded change gc_nope');
+    await expect(announce('gc_1', withAdmin)).rejects.toThrow('has an admin Worker');
+    await expect(announce('gc_1', { ...sandbox, network: 'mainnet' as 'testnet' })).rejects.toThrow('refused on a production network');
+    await expect(announce('gc_nope')).rejects.toThrow('No guarded change gc_nope');
     appOriginsRemove(args(['--app', 'app_a', '--origin', 'https://new.example.com']), 'local D1 test', h.deps);
-    expect(() => announce('gc_1')).toThrow('is cancelled, not pending');
+    await expect(announce('gc_1')).rejects.toThrow('is cancelled, not pending');
     expect(change('gc_1')).toMatchObject({ notified_at: null });
   });
 });
@@ -180,8 +243,8 @@ describe('app:origins:add', () => {
   beforeEach(() => seedHotApp(h.db, { id: 'app_a', key: APP_KEY, scope: 's1', origins: ['https://old.example.com'] }));
   const add = (...o: string[]) => appOriginsAdd(sandbox, args(['--app', 'app_a', ...o.flatMap((x) => ['--origin', x])]), 'local D1 test', h.deps);
 
-  it('is a staff proposal: active_from NULL, a pending guarded change, one version bump and one app_changes row; never in force by itself', () => {
-    add('https://new.example.com', 'http://localhost:5173');
+  it('is a staff proposal: active_from NULL, a pending guarded change, one version bump and one app_changes row; never in force by itself', async () => {
+    await add('https://new.example.com', 'http://localhost:5173');
     expect(origins('app_a')).toEqual([
       { origin: 'http://localhost:5173', active_from: null, change_id: 'gc_2' },
       { origin: 'https://new.example.com', active_from: null, change_id: 'gc_1' },
@@ -193,22 +256,22 @@ describe('app:origins:add', () => {
     expect(inForce('app_a', NOW + 100 * DELAY)).toEqual(['https://old.example.com']);
   });
 
-  it('skips origins already listed or proposed, and caps active-or-pending origins at 20', () => {
-    add('https://new.example.com');
-    add('https://new.example.com', 'https://old.example.com');
+  it('skips origins already listed or proposed, and caps active-or-pending origins at 20', async () => {
+    await add('https://new.example.com');
+    await add('https://new.example.com', 'https://old.example.com');
     expect(out()).toContain('https://new.example.com: already proposed, not announced (gc_1)');
     expect(out()).toContain('https://old.example.com: already in force (from before 0006)');
     expect(h.db.prepare("SELECT COUNT(*) AS n FROM guarded_changes WHERE app_id = 'app_a'").get()).toEqual({ n: 1 });
-    expect(() => add(...Array.from({ length: 19 }, (_, i) => `https://m${i}.example.com`))).toThrow('At most 20 active or pending origins');
-    add(...Array.from({ length: 18 }, (_, i) => `https://m${i}.example.com`));
+    await expect(add(...Array.from({ length: 19 }, (_, i) => `https://m${i}.example.com`))).rejects.toThrow('At most 20 active or pending origins');
+    await add(...Array.from({ length: 18 }, (_, i) => `https://m${i}.example.com`));
     expect(h.db.prepare("SELECT COUNT(*) AS n FROM app_origins WHERE app_id = 'app_a'").get()).toEqual({ n: 20 });
   });
 
-  it('refuses by the console-core rules, a deleted app, and a stale read', () => {
-    expect(() => add('http://plain.example.com')).toThrow(/not_https/u);
-    expect(() => add(sandbox.authOrigin!)).toThrow(/refused \(refused\)/u);
+  it('refuses by the console-core rules, a deleted app, and a stale read', async () => {
+    await expect(add('http://plain.example.com')).rejects.toThrow(/not_https/u);
+    await expect(add(sandbox.authOrigin!)).rejects.toThrow(/refused \(refused\)/u);
     h.db.exec("UPDATE apps SET deleted_at = 1 WHERE id = 'app_a'");
-    expect(() => add('https://new.example.com')).toThrow('is deleted');
+    await expect(add('https://new.example.com')).rejects.toThrow('is deleted');
     h.db.exec("UPDATE apps SET deleted_at = NULL WHERE id = 'app_a'");
     const app = findApp(h.deps, 'app_a');
     h.db.exec("UPDATE apps SET origins_version = 1 WHERE id = 'app_a'");
@@ -220,10 +283,10 @@ describe('app:origins:add', () => {
 });
 
 describe('app:origins:remove', () => {
-  it('is immediate: rows gone, an origin in force ends, a pending one is cancelled, one version bump', () => {
+  it('is immediate: rows gone, an origin in force ends, a pending one is cancelled, one version bump', async () => {
     seedHotApp(h.db, { id: 'app_a', key: APP_KEY, scope: 's1', origins: ['https://old.example.com'] });
-    appOriginsAdd(sandbox, args(['--app', 'app_a', '--origin', 'https://p.example.com', '--origin', 'https://q.example.com']), 'local D1 test', h.deps);
-    appChangesAnnounce(sandbox, 'gc_2', 'local D1 test', h.deps);
+    await appOriginsAdd(sandbox, args(['--app', 'app_a', '--origin', 'https://p.example.com', '--origin', 'https://q.example.com']), 'local D1 test', h.deps);
+    await appChangesAnnounce(sandbox, 'gc_2', 'local D1 test', h.deps);
     h.now = NOW + DELAY;
     appOriginsRemove(args(['--app', APP_KEY, '--origin', 'https://old.example.com', '--origin', 'https://P.example.com', '--origin', 'https://q.example.com', '--origin', 'https://never.example.com']), 'local D1 test', h.deps);
     expect(origins('app_a')).toEqual([]);
@@ -234,7 +297,7 @@ describe('app:origins:remove', () => {
     expect(out()).toContain('https://never.example.com: not listed');
   });
 
-  it('removes an entry the rules would now refuse, matched as given', () => {
+  it('removes an entry the rules would now refuse, matched as given', async () => {
     seedHotApp(h.db, { id: 'app_a', key: APP_KEY, scope: 's1', origins: ['https://a;b.example.com'] });
     appOriginsRemove(args(['--app', 'app_a', '--origin', 'https://a;b.example.com']), 'local D1 test', h.deps);
     expect(origins('app_a')).toEqual([]);
@@ -242,7 +305,7 @@ describe('app:origins:remove', () => {
 });
 
 describe('app:suspend and app:resume', () => {
-  it('set and clear Hana’s bit only; status follows the bitmask (trigger); resume keeps the org and partner bits', () => {
+  it('set and clear Hana’s bit only; status follows the bitmask (trigger); resume keeps the org and partner bits', async () => {
     seedHotApp(h.db, { id: 'app_a', key: APP_KEY, scope: 's1' });
     const run = (suspend: boolean) => appSuspension(suspend, args(['--app', 'app_a']), 'local D1 test', h.deps);
     const state = () => h.db.prepare("SELECT status, suspended_by FROM apps WHERE id = 'app_a'").get();
@@ -269,7 +332,7 @@ describe('app:suspend and app:resume', () => {
 describe('app:list', () => {
   it('shows the org, environment, suspension bits, keys (revoked marked), origins in force and pending changes', async () => {
     seedHotApp(h.db, { id: 'app_a', key: APP_KEY, scope: 's1', origins: ['https://old.example.com'] });
-    appOriginsAdd(sandbox, args(['--app', 'app_a', '--origin', 'https://new.example.com']), 'local D1 test', h.deps);
+    await appOriginsAdd(sandbox, args(['--app', 'app_a', '--origin', 'https://new.example.com']), 'local D1 test', h.deps);
     h.db.prepare("INSERT INTO app_keys (id, app_id, key, created_by, created_at, revoked_at) VALUES ('key_r', 'app_a', ?, 't', 2, 3)").run(REVOKED_KEY);
     h.db.exec("UPDATE apps SET suspended_by = 2 WHERE id = 'app_a'");
     appList('local D1 test', h.deps);
@@ -280,8 +343,93 @@ describe('app:list', () => {
   });
 });
 
+describe('the deployed API must read the C3 schema before any proposal (M2)', () => {
+  it('app:create, app:origins:add and app:changes:announce ask it; a refusal writes nothing', async () => {
+    seedHotApp(h.db, { id: 'app_a', key: APP_KEY, scope: 's1' });
+    await create(['--org', 'org_legacy', '--name', 'W', '--scope', 's7', '--environment', 'test', '--origin', 'https://a.example.com']);
+    await appOriginsAdd(sandbox, args(['--app', 'app_a', '--origin', 'https://new.example.com']), 'local D1 test', h.deps);
+    await appChangesAnnounce(sandbox, 'gc_1', 'local D1 test', h.deps);
+    expect(h.apiChecks).toBe(3);
+    h.deps.requireC3Api = async () => {
+      throw new Error('old API');
+    };
+    const before = h.db.prepare('SELECT (SELECT COUNT(*) FROM guarded_changes) AS g, (SELECT COUNT(*) FROM app_changes) AS c, (SELECT COUNT(*) FROM apps) AS a').get();
+    await expect(appOriginsAdd(sandbox, args(['--app', 'app_a', '--origin', 'https://x.example.com']), 'local D1 test', h.deps)).rejects.toThrow('old API');
+    await expect(create(['--org', 'org_legacy', '--name', 'W', '--scope', 's1', '--origin', 'https://y.example.com'])).rejects.toThrow('old API');
+    await expect(appChangesAnnounce(sandbox, 'gc_2', 'local D1 test', h.deps)).rejects.toThrow('old API');
+    expect(h.db.prepare('SELECT (SELECT COUNT(*) FROM guarded_changes) AS g, (SELECT COUNT(*) FROM app_changes) AS c, (SELECT COUNT(*) FROM apps) AS a').get()).toEqual(before);
+    // Removals and suspensions never need it.
+    await appOriginsRemove(args(['--app', 'app_a', '--origin', 'https://new.example.com']), 'local D1 test', h.deps);
+  });
+
+  it('requireC3ApiFor: no check for the local database; GET /v1/health hotDb ≥ 6 with --remote', async () => {
+    const health = (body: unknown, ok = true) => (async () => ({ ok, json: async () => body })) as unknown as typeof fetch;
+    let fetched = 0;
+    const counting = (async () => {
+      fetched++;
+      return { ok: true, json: async () => ({ hotDb: 6 }) };
+    }) as unknown as typeof fetch;
+    await requireC3ApiFor(sandbox, false, counting)();
+    expect(fetched).toBe(0);
+    await requireC3ApiFor(sandbox, true, counting)();
+    expect(fetched).toBe(1);
+    expect(REQUIRED_HOT_DB).toBe(6);
+    await expect(requireC3ApiFor(sandbox, true, health({ ok: true }))()).rejects.toThrow('hotDb null, need ≥ 6');
+    await expect(requireC3ApiFor(sandbox, true, health({ hotDb: 5 }))()).rejects.toThrow('hotDb 5');
+    await expect(requireC3ApiFor(sandbox, true, health({}, false))()).rejects.toThrow('does not report');
+    const down = (async () => {
+      throw new Error('ECONNREFUSED');
+    }) as unknown as typeof fetch;
+    await expect(requireC3ApiFor(sandbox, true, down)()).rejects.toThrow('Could not read');
+  });
+});
+
+describe('app:origins:park and app:origins:unpark (rollback below C3)', () => {
+  it('park deletes exactly the origin rows not in force (dry run first), unpark rebuilds them from their changes', async () => {
+    seedHotApp(h.db, { id: 'app_a', key: APP_KEY, scope: 's1', origins: ['https://old.example.com'] });
+    await appOriginsAdd(sandbox, args(['--app', 'app_a', '--origin', 'https://p.example.com', '--origin', 'https://q.example.com', '--origin', 'https://r.example.com']), 'local D1 test', h.deps);
+    await appChangesAnnounce(sandbox, 'gc_2', 'local D1 test', h.deps); // q: pending until NOW + DELAY
+    h.now = NOW + DELAY;
+    await appChangesAnnounce(sandbox, 'gc_3', 'local D1 test', h.deps); // r: pending until NOW + 2 DELAY
+    h.now = NOW + DELAY + 1; // q now in force
+    const all = () => (h.db.prepare("SELECT origin, active_from FROM app_origins WHERE app_id = 'app_a' ORDER BY origin").all() as { origin: string; active_from: number | null }[]);
+    appOriginsPark(false, 'local D1 test', h.deps);
+    expect(out()).toContain('2 origin row(s) to park');
+    expect(all()).toHaveLength(4);
+    appOriginsPark(true, 'local D1 test', h.deps);
+    expect(all()).toEqual([
+      { origin: 'https://old.example.com', active_from: 0 },
+      { origin: 'https://q.example.com', active_from: NOW + DELAY },
+    ]);
+    expect(ledger('app_a').at(-1)).toMatchObject({ kind: 'origin.parked', detail: { origins: ['https://p.example.com', 'https://r.example.com'] } });
+    // What a pre-C3 API would read (every row): only origins in force.
+    appOriginsPark(true, 'local D1 test', h.deps);
+    expect(out()).toContain('No origin rows to park');
+    await appOriginsUnpark(true, 'local D1 test', h.deps);
+    expect(all()).toEqual([
+      { origin: 'https://old.example.com', active_from: 0 },
+      { origin: 'https://p.example.com', active_from: null },
+      { origin: 'https://q.example.com', active_from: NOW + DELAY },
+      { origin: 'https://r.example.com', active_from: NOW + 2 * DELAY },
+    ]);
+    expect(ledger('app_a').at(-1)).toMatchObject({ kind: 'origin.unparked' });
+  });
+});
+
+describe('the commit protocol (D207)', () => {
+  it('no write depends on changes() or on a transaction around the command', () => {
+    const app = { id: 'app_a', org_id: 'org_legacy', scope_id: 's1', origins_version: 0, suspended_by: 0 };
+    const opts = { now: NOW, actor: { id: 'x' }, requestId: 'r' };
+    const writes = [addOriginsWrite(app, [{ changeId: 'gc', origin: 'https://a.example.com' }], opts), removeOriginsWrite(app, [], opts), suspensionWrite(app, true, opts)];
+    for (const w of writes) {
+      expect(w.statements.join('\n')).not.toMatch(/changes\(\)/u);
+      expect(w.statements[0]).toMatch(/^INSERT INTO app_changes/u);
+    }
+  });
+});
+
 describe('ids and actor', () => {
-  it('uses console-core ids and the operator login as the actor', () => {
+  it('uses console-core ids and the operator login as the actor', async () => {
     expect(cliIds.change()).toMatch(/^gc_[1-9A-HJ-NP-Za-km-z]{12,17}$/u);
     expect(cliIds.key()).toMatch(/^key_/u);
     expect(cliIds.app()).toMatch(/^app_/u);

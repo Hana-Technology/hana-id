@@ -95,7 +95,8 @@ function activationBatch(db: D1Database, c: DueChange, now: number): D1PreparedS
           `INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, request_id)
            SELECT ?3, a.org_id, a.id, a.scope_id, 'policy.ended', json_object('changeId', g.id, 'policyId', g.policy_id, 'replacedBy', ?1), 'system', 'cron', 'cron:ended:' || g.id
              FROM guarded_changes g JOIN apps a ON a.id = g.app_id
-            WHERE g.app_id = ?2 AND g.kind = 'policy_set' AND g.status = 'ended' AND g.ended_at = ?3 AND g.id != ?1`,
+            WHERE g.app_id = ?2 AND g.kind = 'policy_set' AND g.status = 'ended' AND g.ended_at = ?3 AND g.id != ?1
+              AND NOT EXISTS (SELECT 1 FROM app_changes WHERE request_id = 'cron:ended:' || g.id)`,
         )
         .bind(c.id, c.app_id, now),
     );

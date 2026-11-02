@@ -1650,31 +1650,52 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   Source: spec §CLI, §Guarded changes
 - Decision: `app:create` needs `--environment test|live` for a scope with no app yet (no default: the choice is
   permanent for the scope) and takes the scope's own otherwise. The actor is `cli:<operator login>` (`hana` kind). The
-  `no_session` waiver is recorded on the initial origins of an `app:create` that created the scope row and applies
-  at the announcement only if `first_session_at` is still NULL (else it is dropped and the full delay applies); CLI
-  proposals never get the `loopback` waiver (the spec gives staff proposals none but `no_session`). The
+  `no_session` waiver is recorded as a candidate on the initial origins of an `app:create` that created the scope row
+  and is granted or dropped inside the announcement's own SQL (review M1: no check-then-write gap), fail closed: only
+  while `first_session_at` is NULL (the API writes it at every session-pool relay attempt, not only on a 200), no
+  origin of the scope's apps is or was in force other than the same `app:create`'s initial ones (an announced, due
+  `origin_add`, or an `app_origins` row in force), and no app of the scope has a vault share, a usage row or an
+  identity count. The same `app:create`'s initial origins don't count against each other, so each of them gets it.
+  CLI proposals never get the `loopback` waiver (the spec gives staff proposals none but `no_session`). The
   `assigned_at` + `appChangeDelayMs` refusal applies to `app:create` on an existing scope too. Each write records one
   `app_changes` row (a settings write that changes several things lists them under `parts`). A change whose clock has
   passed but which the cron hasn't recorded yet counts as in force: it doesn't block a new proposal ("at most one
   pending") and ends, not cancels, when removed. There is no `app:changes:cancel`: removing the origin or turning the
   setting off cancels a pending change. `app:changes:announce` keeps a matured pending policy as the stored one before
-  writing the new pending one (as batch B's CLI did). `--raw-sign approval` is refused for a test app (D39).
+  writing the new pending one (as batch B's CLI did), and likewise a matured pending raw-signing value. Re-setting the
+  policy in force over a pending proposal also keeps a matured pending policy as the stored one before clearing the
+  columns (review H1: clearing them alone brought the older stored policy back with no delay). `--raw-sign approval`
+  is refused for a test app: the spec's "test apps never sign raw", which is D39 as amended on 2026-10-28 (the vault
+  refuses raw signing for every `pk_test_` app); refusing it at the CLI too is a C3 reading, to confirm.
+- The deployed API's build gates proposals (review M2): with `--remote`, every proposal and announcement first needs
+  `GET /v1/health` to report `hotDb` ≥ 6 (the batch C3 reads; `apps/api/src/apps.ts` `HOT_DB_SCHEMA`), because an older
+  API would treat a proposed origin as in force. The rollback floor is batch C3: running an older API on the 0006
+  database first needs `app:origins:park --yes` (deletes every origin row not in force; `app:origins:unpark`
+  rebuilds them from their guarded changes; `docs/operations.md` "Rolling the API back below batch C3").
+- Obligation for `apps/email-issuer` (branch `feat/email-login-4`), recorded here (review L4): it finds apps by
+  `apps.publishable_key` and checks only `status`. That is right on today's data (the trigger keeps `status` equal to
+  the bitmask; the column holds each app's first key), but it must move to `app_keys` (an unrevoked key),
+  `deleted_at IS NULL` and `suspended_by = 0` before batch C5 ships key rotation, revocation and app deletion. The
+  "no code reads `apps.publishable_key`" check (`apps/api/scripts/test/hot-db-reads.test.ts`) scans every
+  `apps/*/src` and allowlists `apps/email-issuer` until then.
 - Why: the spec's table lists the commands but not these edges; each choice keeps the CLI's writes the ones
   `AdminRpc` will make, and never makes a change live sooner than the spec allows.
 
-### D207. CLI writes: a commit row gated on `changes()`, read back
+### D207. CLI writes: the commit row first, everything else gated on it, read back
 - Date 2026-11-02 · Status: to confirm (the remote behaviour, below); built and tested on SQLite · Source: spec §RPC
-  "CAS" applied to the CLI; batch B's settings guard
-- Decision: every CLI write is one `wrangler d1 execute --command` of several statements: the compare-and-swap guard
-  (bump the version read, or for settings also match every settings column), then the write's `app_changes` row
-  inserted only if the guard changed a row (`WHERE changes() = 1`), then every other statement only if that row
-  exists; the CLI reads the row back and reports a stale write. So a stale plan writes nothing even when another
-  writer moved the version to the same number.
-- To confirm: that D1 runs a multi-statement `--command` in one transaction on the remote database, as Miniflare and
-  the tests' SQLite do (the tests apply each command in a transaction). If not, a failure halfway could leave part of
-  a write; the guard still keeps a stale write from applying.
-- Rejected: a bare version check on each later statement (`version = read + 1`), which another writer's bump to the
-  same number would satisfy.
+  "CAS" applied to the CLI; batch B's settings guard; review L2
+- Decision: every CLI write is one `wrangler d1 execute --command` of several statements: first the write's
+  `app_changes` row, inserted only while the compare-and-swap predicate holds (the version read, or for settings also
+  every settings column as read); then the version bump with the same predicate and only if that row exists; then
+  every other statement only if that row exists. The CLI reads the row back and reports a stale write. No statement
+  depends on another's row count (`changes()`), so the protocol holds whether or not D1 runs the command in one
+  transaction; the CLI tests run each command statement by statement, with no transaction around it.
+- To confirm: whether remote D1 runs a multi-statement `--command` atomically. If not, a statement failing halfway
+  (a constraint) could leave part of a write after its commit row; the write's statements are ordered so that the
+  ones that can fail (a new scope's primary key, the triggers) come first.
+- Rejected: a guard UPDATE followed by `WHERE changes() = 1` (relies on SQLite's per-connection row count across
+  statements); a bare version check on each later statement (`version = read + 1`), which another writer's bump to
+  the same number would satisfy.
 
 ### D208. The vault endpoints' app cache keeps its 30 s
 - Date 2026-11-02 · Status: to confirm; built (`apps/api/src/app-cache.ts` unchanged, `getAppByKey` filters) · Source:
@@ -1687,18 +1708,21 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   activation) or what D78 accepted (a removal on the vault endpoints). Lowering it costs a D1 read per reload unlock
   per 10 s per isolate; a one-line change if wanted.
 
-### D209. The gate keeps `scope_conflict` as a second check; `first_session_at` only on a 200
+### D209. The gate keeps `scope_conflict` as a second check; `first_session_at` at the relay attempt
 - Date 2026-11-02 · Status: to confirm; built (`apps/api/src/apps.ts`, `handlers.ts`, `login.ts`, `vault/*`) · Source:
   spec §Hot DB "Login-path reads"
 - Decision: the batch B `scope_conflict` subquery is gone (replaced by `scopes.environment`, as the spec says), but
   the gate still answers `403 scope_conflict` when the key's prefix names the other environment than its scope (only
   a direct `app_keys` edit can produce it: the triggers refuse it otherwise). The dev-env partner calls and the
-  timings in success bodies follow `environment = 'test'` like the loopback rule. `first_session_at` is set after a
-  `200` from `/v1/sessions` or `/v1/login` only, not after a `422 ckd_failed` (no key was derived). The hourly job
+  timings in success bodies follow `environment = 'test'` like the loopback rule. `first_session_at` is written when
+  a session-pool relay (`/v1/sessions`, `/v1/login`, `/v1/derive`, `/v1/sessions/revoke`) is about to be sent, beside
+  it (review M1; first built as "after a 200", which a lost answer or a timeout followed by `/v1/derive` would miss).
+  The hourly job also skips a `policy.ended` row already written (two `policy_set` changes due in one run, review
+  L1). The hourly job
   cancels (`system`, reason `not_in_force`) a due change whose value is no longer pending or stored in `apps`, rather
   than recording it active.
-- Why: a test key's dev-env privileges must never reach a live scope even after a manual write; "no user has a key in
-  the scope" is what the `no_session` waiver needs.
+- Why: a test key's dev-env privileges must never reach a live scope even after a manual write; the `no_session`
+  waiver must fail closed, so any attempt to open a session ends it.
 
 ## Partner identity token, build steps 1–4 (2026-10-30)
 

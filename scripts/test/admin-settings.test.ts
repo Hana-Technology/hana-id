@@ -100,10 +100,11 @@ interface Harness {
   chainReads: string[];
   clients: [string, string][] | null;
   now: number;
+  apiChecks: number;
   ids: ReturnType<typeof testIds>;
   run: (argv: string[], m?: typeof sandbox) => Promise<void>;
   /** app:changes:announce <id> at the harness's time. */
-  announce: (changeId: string) => void;
+  announce: (changeId: string) => Promise<void>;
 }
 
 let h: Harness;
@@ -121,6 +122,7 @@ beforeEach(() => {
       ['apple', 'not-google.example'],
     ],
     now: NOW,
+    apiChecks: 0,
     ids: testIds(),
     run: async (argv, m = sandbox) => {
       const args = parseCli(argv, {
@@ -144,13 +146,16 @@ beforeEach(() => {
         log: (line) => state.out.push(line),
         actor: { id: 'cli:tester' },
         newRequestId: state.ids.request,
+        requireC3Api: async () => {
+          state.apiChecks++;
+        },
         newChangeId: state.ids.change,
       };
       await appSettings(m, args.positionals[0] ?? KEY, args, 'local D1 test', deps);
     },
     announce: (changeId) => {
-      const deps: AppCmdDeps = { d1: d1Of(db), scopeOnChain: async () => true, now: () => state.now, log: (l) => state.out.push(l), actor: { id: 'cli:tester' }, ids: state.ids };
-      appChangesAnnounce(sandbox, changeId, 'local D1 test', deps);
+      const deps: AppCmdDeps = { d1: d1Of(db), scopeOnChain: async () => true, now: () => state.now, log: (l) => state.out.push(l), actor: { id: 'cli:tester' }, ids: state.ids, requireC3Api: async () => undefined };
+      return appChangesAnnounce(sandbox, changeId, 'local D1 test', deps);
     },
   };
   h = state;
@@ -161,7 +166,7 @@ const set = (fields: Record<string, string | number | null>, id = APP) =>
   h.db.prepare(`UPDATE apps SET ${Object.keys(fields).map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...Object.values(fields), id);
 
 describe('durations', () => {
-  it('parses h/m/s combinations and ms, and refuses bare numbers and junk', () => {
+  it('parses h/m/s combinations and ms, and refuses bare numbers and junk', async () => {
     expect(parseDuration('12h', 'x')).toBe(12 * HOUR);
     expect(parseDuration('23h50m', 'x')).toBe(SESSION_TTL_MAX_MS);
     expect(parseDuration('15m', 'x')).toBe(IDLE_TTL_MIN_MS);
@@ -170,7 +175,7 @@ describe('durations', () => {
     for (const bad of ['', '3600000', '1.5h', '-1h', '1d', '1h ', 'h', '1m2h']) expect(() => parseDuration(bad, 'session-ttl')).toThrow('--session-ttl must be a duration');
   });
 
-  it('formats back exactly', () => {
+  it('formats back exactly', async () => {
     expect(formatDuration(SESSION_TTL_MAX_MS)).toBe('23h50m');
     expect(formatDuration(12 * HOUR)).toBe('12h');
     expect(formatDuration(HOUR - 1000)).toBe('59m59s');
@@ -248,7 +253,7 @@ describe('app:settings --raw-sign', () => {
     expect(output()).toContain('app:changes:announce gc_1 (nobody is emailed)');
     expect(ledger(h.db, LIVE).map((r) => r.kind)).toEqual(['raw_sign.proposed']);
     h.now = NOW + 1000;
-    h.announce('gc_1');
+    await h.announce('gc_1');
     const r = row(h.db, LIVE);
     expect(r).toMatchObject({ raw_sign: 'off', raw_sign_pending: 'approval', raw_sign_effective_at: NOW + 1000 + DELAY, settings_version: 1 });
     expect(rawSignInForce(r, NOW + 1000 + DELAY - 1)).toBe('off');
@@ -259,7 +264,7 @@ describe('app:settings --raw-sign', () => {
     await h.run([LIVE, '--raw-sign', 'approval']);
     await h.run([LIVE, '--raw-sign', 'approval']);
     expect(output()).toContain('approval already proposed as gc_1, waiting for its announcement');
-    h.announce('gc_1');
+    await h.announce('gc_1');
     h.now = NOW + 1000;
     await h.run([LIVE, '--raw-sign', 'approval']);
     expect(row(h.db, LIVE).raw_sign_effective_at).toBe(NOW + DELAY);
@@ -276,13 +281,13 @@ describe('app:settings --raw-sign', () => {
     await h.run([LIVE, '--raw-sign', 'off']);
     expect(h.db.prepare("SELECT status, cancelled_by FROM guarded_changes WHERE id = 'gc_1'").get()).toEqual({ status: 'cancelled', cancelled_by: 'cli:tester' });
     await h.run([LIVE, '--raw-sign', 'approval']);
-    h.announce('gc_2');
+    await h.announce('gc_2');
     await h.run([LIVE, '--raw-sign', 'off']);
     expect(row(h.db, LIVE)).toMatchObject({ raw_sign: 'off', raw_sign_pending: null, raw_sign_effective_at: null });
     expect(h.db.prepare("SELECT status FROM guarded_changes WHERE id = 'gc_2'").get()).toEqual({ status: 'cancelled' });
     // In force (matured, not yet recorded by the API cron): it ends rather than being cancelled.
     await h.run([LIVE, '--raw-sign', 'approval']);
-    h.announce('gc_3');
+    await h.announce('gc_3');
     h.now = NOW + DELAY;
     await h.run([LIVE, '--raw-sign', 'off']);
     expect(h.db.prepare("SELECT status, ended_at FROM guarded_changes WHERE id = 'gc_3'").get()).toEqual({ status: 'ended', ended_at: NOW + DELAY });
@@ -336,7 +341,7 @@ describe('app:settings --auto-approve', () => {
     expect(c!.policy_json).toContain('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48');
     expect(policyId(JSON.parse(c!.policy_json!))).toBe(id);
     expect(output()).toContain(`policy ${id} ("Approvals") from ${WORK}/p.json, proposed as gc_1`);
-    h.announce('gc_1');
+    await h.announce('gc_1');
     const r = row(h.db);
     expect(r).toMatchObject({ auto_approve_policy: null, auto_approve_pending: c!.policy_json, auto_approve_effective_at: NOW + DELAY });
     // Nothing in force until the delay has passed.
@@ -370,7 +375,7 @@ describe('app:settings --auto-approve', () => {
   it('refuses lowering --session-ttl under a proposed or stored policy’s maxConsentMs, unless the policy goes too', async () => {
     await h.run(['--auto-approve', file('p.json', policy())]);
     await expect(h.run(['--session-ttl', '6h'])).rejects.toThrow('maxConsentMs over the new session TTL 6h');
-    h.announce('gc_1');
+    await h.announce('gc_1');
     await expect(h.run(['--session-ttl', '6h'])).rejects.toThrow('maxConsentMs over the new session TTL 6h');
     await h.run(['--session-ttl', '6h', '--auto-approve', 'off']);
     expect(row(h.db)).toMatchObject({ session_ttl_ms: 6 * HOUR, auto_approve_pending: null });
@@ -380,7 +385,7 @@ describe('app:settings --auto-approve', () => {
     await h.run(['--auto-approve', file('p.json', policy())]);
     await h.run(['--auto-approve', 'p.json']);
     expect(output()).toContain('already proposed as gc_1');
-    h.announce('gc_1');
+    await h.announce('gc_1');
     h.now = NOW + 1000;
     await h.run(['--auto-approve', 'p.json']);
     expect(row(h.db).auto_approve_effective_at).toBe(NOW + DELAY);
@@ -388,7 +393,7 @@ describe('app:settings --auto-approve', () => {
     // Mature it, then propose another policy, announce it, and change our mind.
     h.now = NOW + DELAY;
     await h.run(['--auto-approve', file('p2.json', policy('Wider'))]);
-    h.announce('gc_2');
+    await h.announce('gc_2');
     await h.run(['--auto-approve', 'p.json']);
     const r = row(h.db);
     expect(policyId(JSON.parse(r.auto_approve_policy!))).toBe(policyId(policy()));
@@ -401,10 +406,49 @@ describe('app:settings --auto-approve', () => {
     ]);
   });
 
+  it('H1: re-setting the policy in force (matured, not yet promoted by the cron) over a pending proposal keeps it in force', async () => {
+    // A stored and in force; B proposed, announced and matured, but the API cron hasn't promoted it (still pending in
+    // the columns); C proposed, not announced. Re-setting B must keep B, never bring A back.
+    set({ auto_approve_policy: JSON.stringify(policy('A')) });
+    await h.run(['--auto-approve', file('b.json', policy('B'))]);
+    await h.announce('gc_1');
+    h.now = NOW + DELAY;
+    await h.run(['--auto-approve', file('c.json', policy('C'))]);
+    expect(policyId(JSON.parse(policyInForce(row(h.db), h.now)!))).toBe(policyId(policy('B')));
+    await h.run(['--auto-approve', 'b.json']);
+    const r = row(h.db);
+    expect(r).toMatchObject({ auto_approve_pending: null, auto_approve_effective_at: null });
+    expect(policyId(JSON.parse(r.auto_approve_policy!))).toBe(policyId(policy('B')));
+    expect(policyId(JSON.parse(policyInForce(r, h.now)!))).toBe(policyId(policy('B')));
+    expect(h.db.prepare("SELECT id, status FROM guarded_changes WHERE kind = 'policy_set' ORDER BY id").all()).toEqual([
+      { id: 'gc_1', status: 'pending' },
+      { id: 'gc_2', status: 'cancelled' },
+    ]);
+  });
+
+  it('the announcement keeps a matured pending raw-signing value in force (the raw analog of H1)', async () => {
+    // raw_sign approval matured in the pending columns (not promoted), and an unannounced raw_sign_on proposal.
+    set({ raw_sign_pending: 'approval', raw_sign_effective_at: NOW - 1 }, LIVE);
+    h.db.exec(`INSERT INTO guarded_changes (id, app_id, kind, status, proposed_by_kind, proposed_by, proposed_at, request_id) VALUES ('gc_raw', '${LIVE}', 'raw_sign_on', 'pending', 'hana', 't', 1, 'r_raw')`);
+    await h.announce('gc_raw');
+    const r = row(h.db, LIVE);
+    expect(r).toMatchObject({ raw_sign: 'approval', raw_sign_pending: 'approval', raw_sign_effective_at: NOW + DELAY });
+    expect(rawSignInForce(r, NOW)).toBe('approval');
+  });
+
+  it('a proposal asks that the deployed API reads the C3 schema; an immediate change doesn’t', async () => {
+    await h.run(['--persistence', 'none']);
+    await h.run(['--auto-approve', 'off']);
+    expect(h.apiChecks).toBe(0);
+    await h.run(['--auto-approve', file('p.json', policy())]);
+    await h.run([LIVE, '--raw-sign', 'approval']);
+    expect(h.apiChecks).toBe(2);
+  });
+
   it('at most one pending policy per app: another proposal is refused until the first is in force or cancelled', async () => {
     await h.run(['--auto-approve', file('p.json', policy())]);
     await expect(h.run(['--auto-approve', file('p2.json', policy('Wider'))])).rejects.toThrow('Another policy is pending (gc_1)');
-    h.announce('gc_1');
+    await h.announce('gc_1');
     await expect(h.run(['--auto-approve', 'p2.json'])).rejects.toThrow('Another policy is pending (gc_1)');
     h.now = NOW + DELAY;
     await h.run(['--auto-approve', 'p2.json']);
@@ -413,10 +457,10 @@ describe('app:settings --auto-approve', () => {
 
   it('a new policy after a matured one keeps the matured one in force until the new one’s time', async () => {
     await h.run(['--auto-approve', file('p.json', policy())]);
-    h.announce('gc_1');
+    await h.announce('gc_1');
     h.now = NOW + DELAY + 5;
     await h.run(['--auto-approve', file('p2.json', policy('Wider'))]);
-    h.announce('gc_2');
+    await h.announce('gc_2');
     const r = row(h.db);
     expect(policyId(JSON.parse(r.auto_approve_policy!))).toBe(policyId(policy()));
     expect(policyId(JSON.parse(r.auto_approve_pending!))).toBe(policyId(policy('Wider')));
@@ -426,10 +470,10 @@ describe('app:settings --auto-approve', () => {
 
   it('off is immediate: removes the policy in force and any pending one, and closes their changes', async () => {
     await h.run(['--auto-approve', file('p.json', policy())]);
-    h.announce('gc_1');
+    await h.announce('gc_1');
     h.now = NOW + DELAY;
     await h.run(['--auto-approve', file('p2.json', policy('Wider'))]);
-    h.announce('gc_2');
+    await h.announce('gc_2');
     await h.run(['--auto-approve', 'off']);
     expect(row(h.db)).toMatchObject({ auto_approve_policy: null, auto_approve_pending: null, auto_approve_effective_at: null });
     expect(output()).toContain('policy removed (immediate)');
@@ -454,10 +498,10 @@ describe('app:settings writes only over the row it read', () => {
 
   it('a stale plan (P in force, P2 pending) run after another operator’s --auto-approve off changes nothing', async () => {
     await h.run(['--auto-approve', file('p.json', policy())]);
-    h.announce('gc_1');
+    await h.announce('gc_1');
     h.now = NOW + DELAY;
     await h.run(['--auto-approve', file('p2.json', policy('Wider'))]);
-    h.announce('gc_2');
+    await h.announce('gc_2');
     // This CLI reads the row: P in force, P2 pending. It plans "re-set P" (drop the pending P2).
     const stale = row(h.db);
     const plan = planSettings(stale, { autoApprove: { text: JSON.stringify(policy()), file: 'p.json' } }, { now: h.now, openChanges: changes(h.db), requestId: 'stale' });
@@ -472,7 +516,7 @@ describe('app:settings writes only over the row it read', () => {
 
   it('appSettings refuses (and writes nothing) when the row changed between its read and its write', async () => {
     await h.run(['--auto-approve', file('p.json', policy())]);
-    h.announce('gc_1');
+    await h.announce('gc_1');
     h.now = NOW + DELAY;
     // A d1 that runs another operator's change right after this CLI's read.
     const real = d1Of(h.db);
@@ -506,7 +550,7 @@ describe('app:settings writes only over the row it read', () => {
     expect(row(h.db).session_ttl_ms).toBe(12 * HOUR);
   });
 
-  it('a version moved by another writer, even to the same number, commits nothing', () => {
+  it('a version moved by another writer, even to the same number, commits nothing', async () => {
     const before = row(h.db);
     const mine = planSettings(before, { persistence: 'none' }, { now: NOW, requestId: 'mine' });
     const theirs = planSettings(before, { idleTtlMs: HOUR }, { now: NOW, requestId: 'theirs' });
@@ -515,7 +559,7 @@ describe('app:settings writes only over the row it read', () => {
     expect(row(h.db)).toMatchObject({ persistence: 'session', idle_ttl_ms: HOUR, settings_version: 1 });
   });
 
-  it('an unchanged row is written, once, and the guard matches NULLs', () => {
+  it('an unchanged row is written, once, and the guard matches NULLs', async () => {
     const before = row(h.db);
     expect(before.auto_approve_policy).toBeNull();
     const plan = planSettings(before, { persistence: 'none' }, { now: NOW, requestId: 'once' });
@@ -558,7 +602,7 @@ describe('app:settings --auto-approve path', () => {
 });
 
 describe('app:settings app selection and on-chain clients', () => {
-  it('takes the app positionally or with --app, exactly one of them', () => {
+  it('takes the app positionally or with --app, exactly one of them', async () => {
     expect(settingsAppArg([APP], undefined)).toBe(APP);
     expect(settingsAppArg([], KEY)).toBe(KEY);
     expect(() => settingsAppArg([APP], KEY)).toThrow('not both');
@@ -566,7 +610,7 @@ describe('app:settings app selection and on-chain clients', () => {
     expect(() => settingsAppArg([APP, 'extra'], undefined)).toThrow('Unexpected argument extra');
   });
 
-  it('maps get_scope to the scope’s clients: null scope, missing or malformed clients, mixed providers', () => {
+  it('maps get_scope to the scope’s clients: null scope, missing or malformed clients, mixed providers', async () => {
     expect(scopeClientsFrom(null)).toBeNull();
     expect(scopeClientsFrom(undefined)).toBeNull();
     expect(scopeClientsFrom({})).toEqual([]);
@@ -622,7 +666,7 @@ describe('app:settings output and arguments', () => {
     await expect(h.run([APP, '--persistence', 'none'])).rejects.toThrow('is deleted');
   });
 
-  it('parses --auto-approve off without reading a file', () => {
+  it('parses --auto-approve off without reading a file', async () => {
     const args = parseCli(['--auto-approve', 'off'], { strings: ['auto-approve'] });
     expect(parseSettingsArgs(args, () => {
       throw new Error('read');
@@ -634,7 +678,7 @@ describe('readPolicyFile', () => {
   const dir = mkdtempSync(join(tmpdir(), 'hana-settings-'));
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-  it('reads a policy file, and refuses a missing file, a directory and an oversized file', () => {
+  it('reads a policy file, and refuses a missing file, a directory and an oversized file', async () => {
     const p = join(dir, 'p.json');
     writeFileSync(p, '{"v":1}');
     expect(readPolicyFile(p)).toBe('{"v":1}');

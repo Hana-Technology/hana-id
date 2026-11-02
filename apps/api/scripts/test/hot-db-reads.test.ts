@@ -25,9 +25,18 @@ const READS = [/\b(?:a|l|apps)\.publishable_key\b/u, /\bpublishable_key\s*(?:=|L
 /** The only expression allowed to name the column on a read path: the alias of app_keys.key in the gate. */
 const ALLOWED = 'k.key AS publishable_key';
 
+/**
+ * Packages still allowed to read the legacy column, each with the batch that must remove it.
+ * - `apps/email-issuer` (branch `feat/email-login-4`): finds apps by `apps.publishable_key` and checks only `status`.
+ *   It must move to `app_keys` (unrevoked key), `deleted_at IS NULL` and `suspended_by = 0` before batch C5 ships key
+ *   rotation, revocation and app deletion, or it would keep serving a revoked key or a deleted app (D206).
+ */
+const ALLOWLIST = new Set(['apps/email-issuer']);
+
 describe('no code reads apps.publishable_key (it stays only for the legacy column)', () => {
-  it('apps/api/src, apps/e2e/src, scripts and the other Workers', () => {
-    const roots = ['apps/api/src', 'apps/e2e/src', 'apps/watchdog/src', 'apps/demo/src', 'apps/smoke/src', 'scripts'].map((d) => join(repoRoot, d));
+  it('every apps/*/src and scripts', () => {
+    const apps = readdirSync(join(repoRoot, 'apps')).filter((d) => !ALLOWLIST.has(`apps/${d}`));
+    const roots = [...apps.map((d) => `apps/${d}/src`), 'scripts'].map((d) => join(repoRoot, d));
     const offenders: string[] = [];
     let scanned = 0;
     for (const root of roots) {

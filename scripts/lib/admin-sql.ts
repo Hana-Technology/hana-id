@@ -202,19 +202,18 @@ export function listAppsSql(now: number): string {
 
 // ---- writes ----
 //
-// The commit protocol of every write that has a guard: the guard (a compare-and-swap UPDATE), then the write's commit
-// row in `app_changes` with its own request id, inserted only if the guard changed a row (`changes() = 1`: SQLite's
-// count of rows the previous statement changed), then every other statement only if that commit row exists. So a write
-// planned from a stale read changes nothing, even if another writer moved the same version meanwhile, and the CLI
-// reads the commit row back (`committedSql`) to tell.
+// The commit protocol of every write that has a guard (D207): first the write's commit row in `app_changes`, with its
+// own request id, inserted only if the compare-and-swap predicate holds (the version the CLI read, or for settings also
+// every settings column as read); then the guarded UPDATE, with the same predicate and only if that commit row exists;
+// then every other statement only if the commit row exists. No statement depends on another's row count (`changes()`),
+// so the protocol holds whether or not D1 runs the command in one transaction. A write planned from a stale read
+// commits nothing, even if another writer moved the version to the same number, and the CLI reads the commit row back
+// (`committedSql`) to tell.
 
 /** Who wrote: the CLI acts as Hana staff (`hana`), identified by the operator's login name. */
 export interface CliActor {
   id: string;
 }
-
-/** The previous statement (the guard) changed exactly one row. */
-const GUARD_HELD = 'changes() = 1';
 
 /** This write's commit row exists. */
 export const committed = (requestId: string): string => `EXISTS (SELECT 1 FROM app_changes WHERE ${sql`request_id = ${requestId}`})`;
@@ -226,6 +225,17 @@ function ledger(
 ): string {
   const values = sql`${r.at}, ${r.orgId}, ${r.appId}, ${r.scopeId}, ${r.kind}, ${JSON.stringify(r.detail)}, ${'hana'}, ${r.actor.id}, ${r.requestId}`;
   return `INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, request_id) SELECT ${values}${when ? ` WHERE ${when}` : ''}`;
+}
+
+type LedgerRow = { at: number; orgId: string; appId: string; scopeId: string; kind: string; detail: Record<string, unknown>; actor: CliActor; requestId: string };
+
+/** A guarded write on one `apps` row: commit row if `where` holds, then `UPDATE apps SET <set> WHERE <where>`, then `rest`. */
+function guardedAppWrite(appId: string, where: string, set: readonly string[], row: LedgerRow, rest: readonly string[]): HotWrite {
+  const holds = `EXISTS (SELECT 1 FROM apps WHERE ${sql`id = ${appId}`} AND ${where})`;
+  return {
+    statements: [ledger(row, holds), `UPDATE apps SET ${set.join(', ')} WHERE ${sql`id = ${appId}`} AND ${where} AND ${committed(row.requestId)}`, ...rest],
+    requestId: row.requestId,
+  };
 }
 
 /** In force by the API's predicate: recorded active, or pending with its clock passed (the cron records it later). */
@@ -266,11 +276,11 @@ export interface NewApp {
 }
 
 /**
- * app:create (as AdminRpc.createApp): the scope row when `createScope` (a plain INSERT, so a scope created meanwhile
- * aborts the write), the app with its first key (`apps.publishable_key` = that key, kept for the legacy column), the
- * origins as staff proposals (`active_from` NULL; the `no_session` waiver only on a scope this call creates), and the
- * ledger. The 0006 triggers refuse another org or environment for an existing scope. Nothing to guard: every row is
- * new, and any conflict aborts the batch.
+ * app:create (as AdminRpc.createApp): the scope row when `createScope` (a plain INSERT, first, so a scope created
+ * meanwhile stops the write before anything else runs), the app with its first key (`apps.publishable_key` = that key,
+ * kept for the legacy column), the origins as staff proposals (`active_from` NULL; the `no_session` waiver candidate
+ * only on a scope this call creates, granted or not at the announcement), and the ledger. The 0006 triggers refuse
+ * another org or environment for an existing scope. Nothing to guard: every row is new.
  */
 export function createAppWrite(app: NewApp, opts: { createScope: boolean; now: number; actor: CliActor; requestId: string }): HotWrite {
   const { now, actor, requestId } = opts;
@@ -310,17 +320,17 @@ type AppRef = Pick<AppRow, 'id' | 'org_id' | 'scope_id'>;
 export function addOriginsWrite(app: AppRef & Pick<AppRow, 'origins_version'>, origins: { changeId: string; origin: string }[], opts: { now: number; actor: CliActor; requestId: string }): HotWrite {
   const { now, actor, requestId } = opts;
   const when = committed(requestId);
-  const s = [
-    sql`UPDATE apps SET origins_version = ${app.origins_version + 1} WHERE id = ${app.id} AND origins_version = ${app.origins_version} AND deleted_at IS NULL`,
-    ledger({ at: now, orgId: app.org_id, appId: app.id, scopeId: app.scope_id, kind: 'origin.proposed', detail: { changes: origins }, actor, requestId }, GUARD_HELD),
-  ];
-  for (const { changeId, origin } of origins) {
-    s.push(
-      `INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, request_id) SELECT ${sql`${changeId}, ${app.id}, ${'origin_add'}, ${origin}, ${'pending'}, ${'hana'}, ${actor.id}, ${now}, ${requestId}`} WHERE ${when}`,
-      `INSERT INTO app_origins (app_id, origin, active_from, change_id) SELECT ${sql`${app.id}, ${origin}, ${null}, ${changeId}`} WHERE ${when}`,
-    );
-  }
-  return { statements: s, requestId };
+  const rest = origins.flatMap(({ changeId, origin }) => [
+    `INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, request_id) SELECT ${sql`${changeId}, ${app.id}, ${'origin_add'}, ${origin}, ${'pending'}, ${'hana'}, ${actor.id}, ${now}, ${requestId}`} WHERE ${when}`,
+    `INSERT INTO app_origins (app_id, origin, active_from, change_id) SELECT ${sql`${app.id}, ${origin}, ${null}, ${changeId}`} WHERE ${when}`,
+  ]);
+  return guardedAppWrite(
+    app.id,
+    `${sql`origins_version = ${app.origins_version}`} AND deleted_at IS NULL`,
+    [sql`origins_version = ${app.origins_version + 1}`],
+    { at: now, orgId: app.org_id, appId: app.id, scopeId: app.scope_id, kind: 'origin.proposed', detail: { changes: origins }, actor, requestId },
+    rest,
+  );
 }
 
 /**
@@ -331,17 +341,17 @@ export function removeOriginsWrite(app: AppRef & Pick<AppRow, 'origins_version'>
   const { now, actor, requestId } = opts;
   const when = committed(requestId);
   const detail = { origins: origins.map((o) => ({ origin: o.origin, wasInForce: o.active_from !== null && o.active_from <= now })) };
-  const s = [
-    sql`UPDATE apps SET origins_version = ${app.origins_version + 1} WHERE id = ${app.id} AND origins_version = ${app.origins_version}`,
-    ledger({ at: now, orgId: app.org_id, appId: app.id, scopeId: app.scope_id, kind: 'origin.removed', detail, actor, requestId }, GUARD_HELD),
-  ];
-  for (const { origin } of origins) {
-    s.push(
-      closeChanges(sql`app_id = ${app.id} AND kind = ${'origin_add'} AND origin = ${origin}`, 'all', { now, actor }, when),
-      `DELETE FROM app_origins WHERE ${sql`app_id = ${app.id} AND origin = ${origin}`} AND ${when}`,
-    );
-  }
-  return { statements: s, requestId };
+  const rest = origins.flatMap(({ origin }) => [
+    closeChanges(sql`app_id = ${app.id} AND kind = ${'origin_add'} AND origin = ${origin}`, 'all', { now, actor }, when),
+    `DELETE FROM app_origins WHERE ${sql`app_id = ${app.id} AND origin = ${origin}`} AND ${when}`,
+  ]);
+  return guardedAppWrite(
+    app.id,
+    sql`origins_version = ${app.origins_version}`,
+    [sql`origins_version = ${app.origins_version + 1}`],
+    { at: now, orgId: app.org_id, appId: app.id, scopeId: app.scope_id, kind: 'origin.removed', detail, actor, requestId },
+    rest,
+  );
 }
 
 /** Hana's suspension bit (spec §Apps: hana = 1, org = 2, partner = 4). */
@@ -354,64 +364,76 @@ export const HANA_SUSPENSION_BIT = 1;
 export function suspensionWrite(app: AppRef & Pick<AppRow, 'suspended_by'>, suspend: boolean, opts: { now: number; actor: CliActor; requestId: string }): HotWrite {
   const { now, actor, requestId } = opts;
   const next = suspend ? app.suspended_by | HANA_SUSPENSION_BIT : app.suspended_by & ~HANA_SUSPENSION_BIT;
-  return {
-    statements: [
-      sql`UPDATE apps SET suspended_by = ${next} WHERE id = ${app.id} AND suspended_by = ${app.suspended_by}`,
-      ledger(
-        { at: now, orgId: app.org_id, appId: app.id, scopeId: app.scope_id, kind: suspend ? 'suspension.set' : 'suspension.cleared', detail: { bit: HANA_SUSPENSION_BIT, suspendedBy: next }, actor, requestId },
-        GUARD_HELD,
-      ),
-    ],
-    requestId,
-  };
+  return guardedAppWrite(
+    app.id,
+    sql`suspended_by = ${app.suspended_by}`,
+    [sql`suspended_by = ${next}`],
+    { at: now, orgId: app.org_id, appId: app.id, scopeId: app.scope_id, kind: suspend ? 'suspension.set' : 'suspension.cleared', detail: { bit: HANA_SUSPENSION_BIT, suspendedBy: next }, actor, requestId },
+    [],
+  );
 }
 
-/** The waiver and `active_from` an announcement gives (spec "Waivers"; the notice itself still blocks). */
-export function announcedAt(
-  change: Pick<ChangeRow, 'waiver'>,
-  scope: { first_session_at: number | null; environment: Environment },
-  ctx: { now: number; delayMs: number; network: string; devEnv: boolean },
-): { activeFrom: number; waiver: ChangeRow['waiver'] } {
-  if (change.waiver === 'no_session' && scope.first_session_at === null) return { activeFrom: ctx.now, waiver: 'no_session' };
-  if (change.waiver === 'loopback' && scope.environment === 'test' && ctx.devEnv && ctx.network !== 'mainnet') return { activeFrom: ctx.now, waiver: 'loopback' };
-  return { activeFrom: ctx.now + ctx.delayMs, waiver: null };
+/**
+ * Whether change `t` (a `guarded_changes` row reference) gets the `no_session` waiver at its announcement (spec
+ * "Waivers"), decided in the announcing statement itself, so nothing can change in between: it was proposed with it
+ * (the initial origins of an app:create that created the scope row), and the scope shows no sign that a user has a
+ * key in it: `first_session_at` is NULL, no origin of any app of the scope is or was in force other than this
+ * app:create's own initial ones (a guarded `origin_add` announced and due, or an `app_origins` row in force), and no
+ * app of the scope has a vault share, a usage row or an identity count. Any one of these signs means the full delay.
+ */
+function noSessionWaiver(t: string, now: number): string {
+  const scope = `(SELECT scope_id FROM apps WHERE id = ${t}.app_id)`;
+  const scopeApps = `(SELECT id FROM apps WHERE scope_id = ${scope})`;
+  return `(${t}.waiver = 'no_session'
+    AND (SELECT first_session_at FROM scopes WHERE scope_id = ${scope}) IS NULL
+    AND NOT EXISTS (SELECT 1 FROM guarded_changes o WHERE o.app_id IN ${scopeApps} AND o.kind = 'origin_add'
+                     AND o.active_from IS NOT NULL AND o.active_from <= ${now} AND o.request_id != ${t}.request_id)
+    AND NOT EXISTS (SELECT 1 FROM app_origins ao WHERE ao.app_id IN ${scopeApps} AND ao.active_from IS NOT NULL AND ao.active_from <= ${now}
+                     AND (ao.change_id IS NULL OR ao.change_id NOT IN (SELECT gr.id FROM guarded_changes gr WHERE gr.request_id = ${t}.request_id)))
+    AND NOT EXISTS (SELECT 1 FROM vault_shares WHERE app_id IN ${scopeApps})
+    AND NOT EXISTS (SELECT 1 FROM usage WHERE app_id IN ${scopeApps})
+    AND NOT EXISTS (SELECT 1 FROM identity_usage WHERE app_id IN ${scopeApps}))`;
 }
 
 /**
  * app:changes:announce (envs with no admin Worker): what AdminRpc.ackNotice does once the notice is accepted, with no
- * email sent: `notified_at`, `active_from` on the change and on its origin row, or the app's pending policy or raw
- * signing with `*_effective_at = active_from` (a matured pending policy is first kept as the stored one). No version
- * bump (announcements never invalidate a step-up in flight).
+ * email sent. The commit row first (only for a change still pending and unannounced), then `notified_at` and
+ * `active_from` (now under the `no_session` waiver as decided in SQL, else now + `delayMs`), then the origin row's
+ * `active_from`, or the app's pending policy or raw signing with `*_effective_at = active_from` (a matured pending
+ * value is first kept as the stored one, so the announcement never takes a policy or raw signing in force away). No
+ * version bump (announcements never invalidate a step-up in flight). The CLI reads the change back for what it got.
  */
-export function announceWrite(change: ChangeRow, app: AppRef, at: { activeFrom: number; waiver: ChangeRow['waiver'] }, opts: { now: number; actor: CliActor; requestId: string }): HotWrite {
+export function announceWrite(change: ChangeRow, app: AppRef, delayMs: number, opts: { now: number; actor: CliActor; requestId: string }): HotWrite {
   const { now, actor, requestId } = opts;
   const when = committed(requestId);
+  const waived = (t: string) => noSessionWaiver(t, now);
+  const activeFrom = `(SELECT active_from FROM guarded_changes WHERE ${sql`id = ${change.id}`})`;
+  const detail = `json_object('changeId', g.id, 'kind', g.kind, 'origin', g.origin, 'policyId', g.policy_id,
+      'activeFrom', CASE WHEN ${waived('g')} THEN ${now} ELSE ${now + delayMs} END,
+      'waiver', CASE WHEN ${waived('g')} THEN 'no_session' END, 'channel', 'cli', 'emailed', 'none')`;
   const s = [
-    sql`UPDATE guarded_changes SET notified_at = ${now}, active_from = ${at.activeFrom}, waiver = ${at.waiver} WHERE id = ${change.id} AND status = 'pending' AND notified_at IS NULL`,
-    ledger(
-      {
-        at: now,
-        orgId: app.org_id,
-        appId: app.id,
-        scopeId: app.scope_id,
-        kind: 'change.announced',
-        detail: { changeId: change.id, kind: change.kind, origin: change.origin, policyId: change.policy_id, activeFrom: at.activeFrom, waiver: at.waiver, channel: 'cli', emailed: 'none' },
-        actor,
-        requestId,
-      },
-      GUARD_HELD,
-    ),
+    `INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, request_id)
+     SELECT ${now}, ${sql`${app.org_id}, ${app.id}, ${app.scope_id}, ${'change.announced'}`}, ${detail}, 'hana', ${sql`${actor.id}, ${requestId}`}
+       FROM guarded_changes g WHERE ${sql`g.id = ${change.id}`} AND g.status = 'pending' AND g.notified_at IS NULL`,
+    `UPDATE guarded_changes SET notified_at = ${now},
+            active_from = CASE WHEN ${waived('guarded_changes')} THEN ${now} ELSE ${now + delayMs} END,
+            waiver = CASE WHEN ${waived('guarded_changes')} THEN 'no_session' END
+      WHERE ${sql`id = ${change.id}`} AND status = 'pending' AND notified_at IS NULL AND ${when}`,
   ];
   if (change.kind === 'origin_add') {
-    s.push(`UPDATE app_origins SET ${sql`active_from = ${at.activeFrom}`} WHERE ${sql`app_id = ${app.id} AND change_id = ${change.id}`} AND active_from IS NULL AND ${when}`);
+    s.push(`UPDATE app_origins SET active_from = ${activeFrom} WHERE ${sql`app_id = ${app.id} AND change_id = ${change.id}`} AND active_from IS NULL AND ${when}`);
   } else if (change.kind === 'policy_set') {
     s.push(
       `UPDATE apps SET auto_approve_policy = CASE WHEN auto_approve_pending IS NOT NULL AND ${sql`auto_approve_effective_at <= ${now}`} THEN auto_approve_pending ELSE auto_approve_policy END,
-              ${sql`auto_approve_pending = ${change.policy_json}, auto_approve_effective_at = ${at.activeFrom}`}
+              ${sql`auto_approve_pending = ${change.policy_json}`}, auto_approve_effective_at = ${activeFrom}
         WHERE ${sql`id = ${app.id}`} AND ${when}`,
     );
   } else {
-    s.push(`UPDATE apps SET ${sql`raw_sign_pending = ${'approval'}, raw_sign_effective_at = ${at.activeFrom}`} WHERE ${sql`id = ${app.id}`} AND ${when}`);
+    s.push(
+      `UPDATE apps SET raw_sign = CASE WHEN raw_sign_pending = 'approval' AND ${sql`raw_sign_effective_at <= ${now}`} THEN 'approval' ELSE raw_sign END,
+              raw_sign_pending = 'approval', raw_sign_effective_at = ${activeFrom}
+        WHERE ${sql`id = ${app.id}`} AND ${when}`,
+    );
   }
   return { statements: s, requestId };
 }
@@ -426,19 +448,73 @@ export function proposalSql(
 }
 
 /**
- * A settings write (admin-settings.ts): the guard, then its commit row (`kind`, `detail`) if the guard held, then
- * `rest`, each of which the caller conditions on `committed(requestId)`.
+ * A settings write (admin-settings.ts): its commit row (`kind`, `detail`) if `where` (the version and every settings
+ * column as read) holds, then `UPDATE apps SET <set> WHERE <where>`, then `rest`, each of which the caller conditions
+ * on `committed(requestId)`.
  */
 export function settingsWrite(
   app: { id: string; org_id: string; scope_id: string },
-  guard: string,
+  guard: { where: string; set: readonly string[] },
   commitRow: { kind: string; detail: Record<string, unknown> },
   rest: string[],
   opts: { now: number; actor: CliActor; requestId: string },
 ): HotWrite {
   const { now, actor, requestId } = opts;
+  return guardedAppWrite(app.id, guard.where, guard.set, { at: now, orgId: app.org_id, appId: app.id, scopeId: app.scope_id, kind: commitRow.kind, detail: commitRow.detail, actor, requestId }, rest);
+}
+
+// ---- rollback parking (docs/operations.md "Rolling the API back below batch C3") ----
+
+/** Origin rows not in force: a pre-C3 API would treat each as in force. */
+const NOT_IN_FORCE_ORIGIN = (now: number) => `(active_from IS NULL OR active_from > ${now})`;
+
+/** The rows `app:origins:park` would delete (read). */
+export function parkableOriginsSql(now: number): string {
+  return `SELECT app_id, origin, active_from, change_id FROM app_origins WHERE ${NOT_IN_FORCE_ORIGIN(now)} ORDER BY app_id, origin`;
+}
+
+/**
+ * app:origins:park: before an API from before batch C3 runs on the 0006 database, deletes every origin row not yet in
+ * force (one `origin.parked` row per app first). Each is rebuilt from its guarded change by `app:origins:unpark`.
+ */
+export function parkOriginsWrite(opts: { now: number; actor: CliActor; requestId: string }): HotWrite {
+  const { now, actor, requestId } = opts;
   return {
-    statements: [guard, ledger({ at: now, orgId: app.org_id, appId: app.id, scopeId: app.scope_id, kind: commitRow.kind, detail: commitRow.detail, actor, requestId }, GUARD_HELD), ...rest],
+    statements: [
+      `INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, request_id)
+       SELECT ${now}, a.org_id, a.id, a.scope_id, 'origin.parked',
+              (SELECT json_object('origins', json_group_array(origin)) FROM app_origins WHERE app_id = a.id AND ${NOT_IN_FORCE_ORIGIN(now)}),
+              'hana', ${sql`${actor.id}, ${requestId}`} || ':' || a.id
+         FROM apps a WHERE EXISTS (SELECT 1 FROM app_origins WHERE app_id = a.id AND ${NOT_IN_FORCE_ORIGIN(now)})`,
+      `DELETE FROM app_origins WHERE ${NOT_IN_FORCE_ORIGIN(now)}`,
+    ],
+    requestId,
+  };
+}
+
+/** Pending or active `origin_add` changes with no origin row (parked; read). */
+export function unparkableSql(): string {
+  return `SELECT g.id, g.app_id, g.origin, g.active_from FROM guarded_changes g
+           WHERE g.kind = 'origin_add' AND g.status IN ('pending', 'active')
+             AND NOT EXISTS (SELECT 1 FROM app_origins o WHERE o.app_id = g.app_id AND o.origin = g.origin) ORDER BY g.app_id, g.origin`;
+}
+
+/**
+ * app:origins:unpark: once the API is back at batch C3 or later, re-creates the origin row of every pending or active
+ * `origin_add` that has none (with the change's `active_from`; NULL while unannounced), one `origin.unparked` row per app.
+ */
+export function unparkOriginsWrite(opts: { now: number; actor: CliActor; requestId: string }): HotWrite {
+  const { now, actor, requestId } = opts;
+  const missing = `g.kind = 'origin_add' AND g.status IN ('pending', 'active') AND NOT EXISTS (SELECT 1 FROM app_origins o WHERE o.app_id = g.app_id AND o.origin = g.origin)`;
+  return {
+    statements: [
+      `INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, request_id)
+       SELECT ${now}, a.org_id, a.id, a.scope_id, 'origin.unparked',
+              (SELECT json_object('changes', json_group_array(g.id)) FROM guarded_changes g WHERE g.app_id = a.id AND ${missing}),
+              'hana', ${sql`${actor.id}, ${requestId}`} || ':' || a.id
+         FROM apps a WHERE EXISTS (SELECT 1 FROM guarded_changes g WHERE g.app_id = a.id AND ${missing})`,
+      `INSERT INTO app_origins (app_id, origin, active_from, change_id) SELECT g.app_id, g.origin, g.active_from, g.id FROM guarded_changes g WHERE ${missing}`,
+    ],
     requestId,
   };
 }

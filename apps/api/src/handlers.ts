@@ -1,6 +1,6 @@
 // Request handlers: app endpoints (publishable key + origin), owner actions (OIDC proof in args), health.
 import { JwksUnavailableError, verifyIdToken } from '@hana-id/oidc';
-import { type App, PUBLISHABLE_KEY_RE, appSuspended, getAppByKey, incrementUsage, noteFirstSession } from './apps.ts';
+import { type App, HOT_DB_SCHEMA, PUBLISHABLE_KEY_RE, appSuspended, getAppByKey, incrementUsage, startFirstSession } from './apps.ts';
 import { appKeyPairs, appKeyProblem } from './bls.ts';
 import { disallowedClaim } from './claims.ts';
 import type { Env } from './env.ts';
@@ -379,13 +379,14 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     const quota = await appQuota(env, ctx, app);
     if (quota) return quota;
 
+    const noted = firstSession(env, app, ctx, exec);
     const result = await relay(env, 'session', { method: call.method, args: call.args }, requestId);
+    await noted;
     lapRelay(ctx, result);
     if (!result.ok) return done(ctx, result.status, { error: result.error, code: result.code, nearTx: result.nearTx });
     if (!isSessionView(result.result)) return done(ctx, 502, { error: 'The contract returned no session', code: 'bad_contract_result', nearTx: result.nearTx });
     rememberSession(req.sessionPublicKey, result.result);
     await countUsage(env, app.id, 'sessions', ctx, exec);
-    await firstSession(env, app, ctx, exec);
     return done(ctx, 200, { result: result.result, nearTx: result.nearTx });
   }
 
@@ -439,7 +440,9 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     const quota = await appQuota(env, ctx, app);
     if (quota) return quota;
 
+    const noted = firstSession(env, app, ctx, exec);
     const result = await relay(env, 'session', { method: call.method, args: call.args }, requestId);
+    await noted;
     lapRelay(ctx, result);
     // A derive that succeeded used its counter: count it in the cached session, if that is still the session it was
     // judged against (the key may have opened a new one while the derive ran). Anything else may have changed the
@@ -472,14 +475,19 @@ async function countUsage(env: Env, appId: string, field: 'sessions' | 'derives'
   else await write;
 }
 
-/** The scope's first successful login (apps.ts noteFirstSession), after the response when it can. Never rejects. */
-export async function firstSession(env: Env, app: App, ctx: { requestId: string; endpoint: string }, exec?: ExecutionContext): Promise<void> {
-  await noteFirstSession(
-    env.DB,
-    app,
-    () => log({ event: 'first_session_write_failed', requestId: ctx.requestId, appId: app.id, endpoint: ctx.endpoint }, 'error'),
-    exec,
-  );
+/**
+ * Starts the scope's first-session write (apps.ts startFirstSession) beside a relay. With an execution context it
+ * finishes after the response (the returned promise is already resolved); without one, await the returned promise
+ * after the relay. Never rejects.
+ */
+export function firstSession(env: Env, app: App, ctx: { requestId: string; endpoint: string }, exec?: ExecutionContext): Promise<void> {
+  const write = startFirstSession(env.DB, app, () => log({ event: 'first_session_write_failed', requestId: ctx.requestId, appId: app.id, endpoint: ctx.endpoint }, 'error'));
+  if (!write) return Promise.resolve();
+  if (exec) {
+    exec.waitUntil(write);
+    return Promise.resolve();
+  }
+  return write;
 }
 
 type ScopeRejection = { status: number; code: string; error: string };
@@ -662,6 +670,11 @@ export async function handleOwnerAction(request: Request, env: Env, requestId: s
 
 // ---- Health ----
 
+/**
+ * `hotDb`: the hot-DB migration whose reads this build makes (apps.ts HOT_DB_SCHEMA). The admin CLI refuses guarded
+ * proposals until the deployed API reports 6 or more: an API from before batch C3 would treat an origin that is only
+ * proposed as in force (docs/operations.md "Rolling the API back below batch C3").
+ */
 export function handleHealth(env: Env, requestId: string): Response {
-  return json(200, { ok: true, env: env.ENV_NAME, signer: env.SIGNER_ACCOUNT, requestId }, { 'access-control-allow-origin': '*', 'x-request-id': requestId });
+  return json(200, { ok: true, env: env.ENV_NAME, signer: env.SIGNER_ACCOUNT, hotDb: HOT_DB_SCHEMA, requestId }, { 'access-control-allow-origin': '*', 'x-request-id': requestId });
 }

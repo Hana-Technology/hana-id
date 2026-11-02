@@ -7,7 +7,7 @@
 import { randomUUID } from 'node:crypto';
 import { userInfo } from 'node:os';
 import { type Environment, MAX_APP_ORIGINS, newId, newPublishableKey } from '@hana-id/console-core';
-import { hanaOwnOrigins, isDevEnv, type Manifest } from '@hana-id/env';
+import { hanaOwnOrigins, type Manifest } from '@hana-id/env';
 import {
   type AppRow,
   type ChangeRow,
@@ -18,7 +18,6 @@ import {
   type ScopeRow,
   addOriginsWrite,
   announceWrite,
-  announcedAt,
   assertAppName,
   assertAppOrigins,
   assertEnvironment,
@@ -31,6 +30,10 @@ import {
   listAppsSql,
   normaliseOrigin,
   originsSql,
+  parkableOriginsSql,
+  parkOriginsWrite,
+  unparkableSql,
+  unparkOriginsWrite,
   planExistsSql,
   printable,
   removeOriginsWrite,
@@ -79,6 +82,34 @@ export interface AppCmdDeps {
   log: (line: string) => void;
   actor: CliActor;
   ids: CliIds;
+  /**
+   * Throws unless the API serving this database reads the batch C3 schema (GET /v1/health `hotDb` ≥ 6): an older API
+   * would treat a proposed origin as in force. A no-op for the local database (`requireC3ApiFor`).
+   */
+  requireC3Api: () => Promise<void>;
+}
+
+/** The hot-DB schema the API must report before the CLI writes a guarded proposal (apps/api/src/apps.ts HOT_DB_SCHEMA). */
+export const REQUIRED_HOT_DB = 6;
+
+/** `requireC3Api` for an env: against the deployed API with `--remote`, nothing for the local database. */
+export function requireC3ApiFor(m: Pick<Manifest, 'apiUrl' | 'name'>, remote: boolean, fetchFn: typeof fetch = fetch): () => Promise<void> {
+  return async () => {
+    if (!remote) return;
+    const url = new URL('/v1/health', m.apiUrl).toString();
+    let hotDb: unknown;
+    try {
+      const res = await fetchFn(url, { signal: AbortSignal.timeout(10_000) });
+      hotDb = res.ok ? ((await res.json()) as { hotDb?: unknown }).hotDb : undefined;
+    } catch {
+      throw new Error(`Could not read ${url}: guarded proposals need the deployed API to report the batch C3 schema first`);
+    }
+    if (typeof hotDb !== 'number' || hotDb < REQUIRED_HOT_DB) {
+      throw new Error(
+        `The API of ${m.name} does not report the batch C3 hot-DB reads (GET /v1/health hotDb ${JSON.stringify(hotDb ?? null)}, need ≥ ${REQUIRED_HOT_DB}): deploy it before proposing origins, policies or raw signing (an older API would treat a proposed origin as in force)`,
+      );
+    }
+  };
 }
 
 type M = Pick<Manifest, 'name' | 'network' | 'signer' | 'apiUrl' | 'vaultOrigin' | 'authOrigin' | 'appChangeDelayMs' | 'admin' | 'console' | 'files'>;
@@ -131,6 +162,7 @@ export async function appCreate(m: M, args: Args, where: string, deps: AppCmdDep
   const origins = originArgs(args);
   const now = deps.now();
   if (!(await deps.scopeOnChain(scopeId))) throw new Error(`Scope ${scopeId} is not registered on ${m.signer} (admin.ts ${m.name} scope:register …)`);
+  await deps.requireC3Api();
   if (!deps.d1(planExistsSql(plan)).length) throw new Error(`No plan "${plan}" in ${where}`);
   const scope = (deps.d1(scopeSql(scopeId)) as unknown as ScopeRow[])[0];
   let environment: Environment;
@@ -166,7 +198,7 @@ export async function appCreate(m: M, args: Args, where: string, deps: AppCmdDep
 }
 
 /** app:origins:add --app <app> --origin <o>…: staff proposals. */
-export function appOriginsAdd(m: M, args: Args, where: string, deps: AppCmdDeps): void {
+export async function appOriginsAdd(m: M, args: Args, where: string, deps: AppCmdDeps): Promise<void> {
   const app = liveApp(deps, args.required('app'));
   const wanted = originArgs(args);
   const now = deps.now();
@@ -182,6 +214,7 @@ export function appOriginsAdd(m: M, args: Args, where: string, deps: AppCmdDeps)
   if (!fresh.length) return void deps.log(`${app.id}: no change (${where})`);
   if (rows.length + fresh.length > MAX_APP_ORIGINS) throw new Error(`At most ${MAX_APP_ORIGINS} active or pending origins per app (${app.id} has ${rows.length})`);
   assertAppOrigins(originContext(m), app.environment, fresh);
+  await deps.requireC3Api();
   const proposals = fresh.map((origin) => ({ changeId: deps.ids.change(), origin }));
   if (!commit(deps, addOriginsWrite(app, proposals, { now, actor: deps.actor, requestId: deps.ids.request() }))) throw new Error(STALE_WRITE);
   deps.log(`${at(now)} Proposed for ${app.id} "${printable(app.name)}" (${where}); not in force until announced and appChangeDelayMs has passed:`);
@@ -274,20 +307,51 @@ export function appList(where: string, deps: AppCmdDeps): void {
  * app:changes:announce <change id>: in an env with no admin Worker, does what its acknowledged notice does (nobody is
  * emailed). Refused where an admin Worker exists (it announces) and on a production network.
  */
-export function appChangesAnnounce(m: M, changeId: string, where: string, deps: AppCmdDeps): void {
+export async function appChangesAnnounce(m: M, changeId: string, where: string, deps: AppCmdDeps): Promise<void> {
   if (m.admin) throw new Error(`${m.name} has an admin Worker: it announces changes once their notice is accepted (app:changes:announce is only for envs without one)`);
   if ((m.network as string) === 'mainnet') throw new Error('app:changes:announce is refused on a production network');
   const change = (deps.d1(changeSql(changeId)) as unknown as ChangeRow[])[0];
   if (!change) throw new Error(`No guarded change ${changeId}`);
   if (change.status !== 'pending') throw new Error(`${changeId} is ${change.status}, not pending`);
   if (change.notified_at !== null) throw new Error(`${changeId} was already announced at ${at(change.notified_at)} (in force from ${at(change.active_from ?? change.notified_at)})`);
+  await deps.requireC3Api();
   const app = findApp(deps, change.app_id);
   const now = deps.now();
-  const scope = { first_session_at: app.first_session_at, environment: app.environment };
-  const when = announcedAt(change, scope, { now, delayMs: m.appChangeDelayMs, network: m.network, devEnv: isDevEnv(m.name) });
-  if (!commit(deps, announceWrite(change, app, when, { now, actor: deps.actor, requestId: deps.ids.request() }))) throw new Error(`${changeId} changed since it was read: nothing was written`);
+  // The waiver is decided inside the write (admin-sql.ts noSessionWaiver), from the database as it is then.
+  if (!commit(deps, announceWrite(change, app, m.appChangeDelayMs, { now, actor: deps.actor, requestId: deps.ids.request() }))) throw new Error(`${changeId} changed since it was read: nothing was written`);
+  const after = (deps.d1(changeSql(changeId)) as unknown as ChangeRow[])[0]!;
   const what = change.kind === 'origin_add' ? `origin ${printable(change.origin ?? '')}` : change.kind === 'policy_set' ? `policy ${change.policy_id}` : 'raw signing approval';
   deps.log(`${at(now)} Announced ${changeId} (${what}) for ${app.id} "${printable(app.name)}" by the CLI (${where}).`);
   deps.log('  Nobody was emailed: this env has no admin Worker (app_changes records channel cli, emailed none).');
-  deps.log(`  In force from ${at(when.activeFrom)}${when.waiver ? ` (waiver ${when.waiver})` : ` (appChangeDelayMs ${m.appChangeDelayMs} ms)`}.`);
+  deps.log(`  In force from ${at(after.active_from ?? now)}${after.waiver ? ` (waiver ${after.waiver})` : ` (appChangeDelayMs ${m.appChangeDelayMs} ms)`}.`);
+}
+
+/**
+ * app:origins:park [--yes]: the mandatory step before an API from before batch C3 runs on the 0006 database (a
+ * rollback): such an API reads every `app_origins` row, so a proposed origin would be in force for it. Deletes every
+ * origin row not yet in force (`active_from` NULL or in the future); their guarded changes keep everything needed to
+ * rebuild them (`app:origins:unpark`). Dry run without `--yes`.
+ */
+export function appOriginsPark(yes: boolean, where: string, deps: AppCmdDeps): void {
+  const now = deps.now();
+  const rows = deps.d1(parkableOriginsSql(now)) as unknown as (OriginRow & { app_id: string })[];
+  if (!rows.length) return void deps.log(`No origin rows to park in ${where}: an API from before batch C3 sees only origins in force.`);
+  for (const r of rows) deps.log(`  ${r.app_id}  ${printable(r.origin)}  ${r.active_from === null ? 'not announced' : `pending until ${at(r.active_from)}`}  (${r.change_id ?? 'no change'})`);
+  if (!yes) return void deps.log(`${rows.length} origin row(s) to park in ${where}. Run again with --yes to delete them (app:origins:unpark rebuilds them).`);
+  deps.d1(`${parkOriginsWrite({ now, actor: deps.actor, requestId: deps.ids.request() }).statements.join(';\n')};`);
+  const left = deps.d1(parkableOriginsSql(now)).length;
+  if (left) throw new Error(`${left} origin row(s) not in force are still there: run app:origins:park --yes again before the rollback`);
+  deps.log(`${at(now)} Parked ${rows.length} origin row(s) in ${where}. Safe to run an API from before batch C3; after redeploying batch C3 or later, run app:origins:unpark --yes.`);
+}
+
+/** app:origins:unpark [--yes]: re-creates the origin rows of pending or active origin_add changes that have none. */
+export async function appOriginsUnpark(yes: boolean, where: string, deps: AppCmdDeps): Promise<void> {
+  const now = deps.now();
+  const missing = deps.d1(unparkableSql()) as unknown as { id: string; app_id: string; origin: string; active_from: number | null }[];
+  if (!missing.length) return void deps.log(`No parked origins in ${where}.`);
+  for (const c of missing) deps.log(`  ${c.app_id}  ${printable(c.origin)}  ${c.id}  ${c.active_from === null ? 'not announced' : `from ${at(c.active_from)}`}`);
+  if (!yes) return void deps.log(`${missing.length} origin row(s) to rebuild in ${where}. Run again with --yes (the API must be at batch C3 or later).`);
+  await deps.requireC3Api();
+  deps.d1(`${unparkOriginsWrite({ now, actor: deps.actor, requestId: deps.ids.request() }).statements.join(';\n')};`);
+  deps.log(`${at(now)} Rebuilt ${missing.length} origin row(s) in ${where}.`);
 }

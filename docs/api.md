@@ -119,9 +119,13 @@ flood can make the checks cost.
 
 A test app's other limits are the vault's, never the API's: no raw signing and no mainnet chains for `pk_test_` (D39).
 
-After a successful `/v1/sessions` or `/v1/login` on a scope whose `scopes.first_session_at` is NULL (no user has a key
-in it yet), the API sets it, after the response (`waitUntil`; a failure is logged as `first_session_write_failed` and
-retried by the next login). It decides the `no_session` waiver of guarded changes (below).
+When a session-pool relay (`/v1/sessions`, `/v1/login`, `/v1/derive`, `/v1/sessions/revoke`) is about to be sent on a
+scope whose `scopes.first_session_at` is NULL, the API sets it, beside the relay (no added latency; with an execution
+context it finishes after the response). At the attempt, not the success, so a relay whose answer fails or is lost still
+marks the scope. A failure is logged as `first_session_write_failed` and retried by the next attempt. It is one of the
+signs that end the `no_session` waiver of guarded changes, which is decided inside the announcement's own SQL: no
+`first_session_at`, no other origin of the scope ever in force, no vault share, usage or identity row for the scope's
+apps (`scripts/lib/admin-sql.ts` `noSessionWaiver`).
 
 ## Rate limits
 
@@ -155,7 +159,9 @@ Seeded plan `free`: `per_minute` 60, `per_day` 5000, `per_ip_minute` 20.
 
 ### `GET /v1/health`
 
-No auth, no limits, `access-control-allow-origin: *`. → `200 {"ok": true, "env": ENV_NAME, "signer": SIGNER_ACCOUNT, "requestId"}`.
+No auth, no limits, `access-control-allow-origin: *`. → `200 {"ok": true, "env": ENV_NAME, "signer": SIGNER_ACCOUNT, "hotDb": 6, "requestId"}`.
+`hotDb` is the hot-DB migration whose reads the build makes (`apps.ts` `HOT_DB_SCHEMA`; 6 from batch C3, absent
+before): the admin CLI refuses guarded proposals and announcements on `--remote` until the deployed API reports ≥ 6.
 
 ### `GET /v1/governance` · G
 
@@ -744,7 +750,7 @@ this key's public key, start at R with no chain read (skips up to 99 nonces) and
 | `issuer_key_sync_runs` (G) | `provider` PK, `at_ms`, `outcome` `ok`/`error`/`skipped`, `code`, `summary` (JSON `SyncResult`): the cron's last run, for `GET /v1/governance` | 0005 |
 | `identity_issuance_hourly` (I) | (`hour` ms at the UTC hour, `kid`) PK, `count`: tokens signed per key and hour (the KMS reconciliation, build step 7); 24 months | 0008 |
 | `identity_usage` (I) | (`app_id` → apps, `day` `YYYY-MM-DD` UTC) PK, `tokens`: the spec's `usage.identity_tokens`, kept out of the legacy `usage` table batch C's 0007 drops; 24 months | 0008 |
-| `scopes` (C) | `scope_id` PK, `org_id`, `environment` `test`/`live` (fixed: a trigger refuses a change), `first_session_at` ms (NULL until the first successful login), `created_at`, `assigned_at` ms (the last org change) | 0006 |
+| `scopes` (C) | `scope_id` PK, `org_id`, `environment` `test`/`live` (fixed: a trigger refuses a change), `first_session_at` ms (NULL until the first session-pool relay attempt), `created_at`, `assigned_at` ms (the last org change) | 0006 |
 | `apps` (added, C) | `org_id` (default `org_legacy`; a trigger keeps it equal to its scope's), `suspended_by` 0..7 (bitmask; a trigger sets `status` from it), `origins_version`, `settings_version` (compare-and-swap counters), `logo_key`, `deleted_at` (soft delete); index `apps_org_id`. Inserting an app needs its `scopes` row in its org with the environment its key's prefix names (trigger); changing one app's `org_id` or `scope_id` alone is refused, moving a scope's org moves all its apps | 0006 |
 | `app_keys` (C) | `id` PK (`key_…`; `key_legacy_<app id>` for the key each app had before 0006), `app_id`, `key` UNIQUE, `created_by`, `created_at`, `revoked_at` (may be in the future), `revoked_by`; the insert trigger needs the app and the prefix of its scope's environment | 0006 |
 | `app_origins` (added, C) | `active_from` ms (NULL: not announced, never matches; 0: migrated), `change_id` → `guarded_changes.id` | 0006 |

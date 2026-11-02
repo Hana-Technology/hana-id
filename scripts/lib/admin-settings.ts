@@ -53,7 +53,7 @@ export interface SettingsRow {
   name: string;
   scope_id: string;
   org_id: string;
-  /** The scope's environment: raw signing is refused for test apps (D39). */
+  /** The scope's environment: raw signing is refused for test apps (D39, as amended 2026-10-28). */
   environment: 'test' | 'live';
   settings_version: number;
   deleted_at: number | null;
@@ -304,7 +304,7 @@ export function planSettings(row: SettingsRow, change: SettingsChange, ctx: Plan
       lines.push(`raw signing: ${rawSignInForce(row, now)}${waiting ? ' (approval pending)' : ''} → off (immediate)`);
     }
   } else if (change.rawSign === 'approval') {
-    if (row.environment === 'test') throw new CliError('--raw-sign approval is refused for a test app: test apps never sign raw (D39)');
+    if (row.environment === 'test') throw new CliError('--raw-sign approval is refused for a test app: test apps never sign raw (D39, as amended 2026-10-28)');
     warnings.push(RAW_SIGN_WARNING);
     if (rawSignInForce(row, now) === 'approval') lines.push('raw signing: already approval');
     else if (row.raw_sign_pending === 'approval' && row.raw_sign_effective_at !== null) {
@@ -354,9 +354,15 @@ export function planSettings(row: SettingsRow, change: SettingsChange, ctx: Plan
     if (storedPolicyId(inForce) === policy.id) {
       lines.push(`auto-approve: policy ${policy.id} ("${policy.label}") already in force`);
       if (pendingOpen || policyPending.length) {
-        // Re-setting the policy in force cancels a pending change to another one. Only the pending columns are
-        // written: the policy in force is left as D1 holds it (never rewritten from this read).
-        set.push('auto_approve_pending = NULL', 'auto_approve_effective_at = NULL');
+        // Re-setting the policy in force cancels a pending change to another one. The policy in force may be a
+        // matured pending one the cron hasn't promoted yet: it becomes the stored one before the pending columns are
+        // cleared (in the statement itself, from the row as D1 holds it; SET expressions all read the old row), so
+        // clearing them never brings an older stored policy back with no delay.
+        set.push(
+          sql`auto_approve_policy = CASE WHEN auto_approve_pending IS NOT NULL AND auto_approve_effective_at <= ${now} THEN auto_approve_pending ELSE auto_approve_policy END`,
+          'auto_approve_pending = NULL',
+          'auto_approve_effective_at = NULL',
+        );
         after.push(closeChangesSql(row.id, 'policy_set', 'not_in_force', { now, actor }, when));
         ledgerRows.push({ kind: 'policy.pending_dropped', detail: { cancelled: policyPending.map((c) => c.id) } });
         lines.push('  The pending policy is dropped.');
@@ -396,9 +402,10 @@ export function planSettings(row: SettingsRow, change: SettingsChange, ctx: Plan
 
   if (Object.keys(changed).length) ledgerRows.unshift({ kind: 'settings.changed', detail: changed });
   if (!set.length && !after.length) return { write: null, lines, warnings };
-  // The guard: this app, its version and every settings column still as read; it bumps the version and applies the
-  // immediate values. The write's one app_changes row follows only if it held, and the rest only after that row.
-  const guard = `UPDATE apps SET ${[sql`settings_version = ${to}`, ...set].join(', ')} WHERE ${unchangedSince(row)} AND ${sql`settings_version = ${row.settings_version}`} AND deleted_at IS NULL`;
+  // The guard: this app, its version and every settings column still as read. The write's one app_changes row is
+  // inserted only while it holds; then the UPDATE (the version bump and the immediate values) and the rest run only if
+  // that row exists (admin-sql.ts "writes").
+  const guard = { where: `${unchangedSince(row)} AND ${sql`settings_version = ${row.settings_version}`} AND deleted_at IS NULL`, set: [sql`settings_version = ${to}`, ...set] };
   const commitRow = ledgerRows.length === 1 ? ledgerRows[0]! : { kind: 'settings.changed', detail: { parts: ledgerRows } };
   return { write: settingsWrite(row, guard, commitRow, after, { now, actor, requestId }), lines, warnings };
 }
@@ -457,6 +464,8 @@ export interface AppSettingsDeps {
   actor?: CliActor;
   newRequestId?: () => string;
   newChangeId?: () => string;
+  /** Throws unless the deployed API reads the batch C3 schema; asked only before a write that proposes (admin-apps.ts). */
+  requireC3Api?: () => Promise<void>;
 }
 
 /**
@@ -532,6 +541,8 @@ export async function appSettings(m: Manifest, idOrKey: string, args: Args, wher
   });
   for (const w of plan.warnings) deps.log(w);
   if (plan.write) {
+    // A proposal needs the deployed API at batch C3 or later (admin-apps.ts requireC3ApiFor).
+    if (plan.write.statements.some((st) => st.startsWith('INSERT INTO guarded_changes'))) await deps.requireC3Api?.();
     const result = deps.d1(writeCommand(plan.write));
     if (Number(result[result.length - 1]?.committed ?? 0) !== 1) throw new Error(SETTINGS_CHANGED);
   }

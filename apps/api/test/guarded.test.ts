@@ -11,7 +11,8 @@ import { ANNOUNCE_WITHIN_MS, guardedChangesMaintenance } from '../src/guarded/cr
 import { MAX_APP_CHANGE_DELAY_MS, MIN_APP_CHANGE_DELAY_MS, changeConfig } from '../src/guarded/config.ts';
 import worker from '../src/index.ts';
 import { preflightAllows } from '../src/origins.ts';
-import { ORIGIN, type SeededApp, appHeaders, call, chain, newKey, seedApp, sessionBody, uid } from './helpers.ts';
+import { ORIGIN, type SeededApp, appHeaders, call, chain, deriveBody, newKey, newSessionKey, seedApp, sessionBody, uid } from './helpers.ts';
+import { panic } from './near-mock.ts';
 import { hanaHeaders, loginBody, withCombinedCall } from './login-helpers.ts';
 import { autoApprovePolicy, vaultHeaders } from './vault-helpers.ts';
 
@@ -182,6 +183,30 @@ describe('a pending policy or raw-signing value is not served until effective', 
 describe('first_session_at', () => {
   const scopeRow = (scope: string) => env.DB.prepare('SELECT first_session_at FROM scopes WHERE scope_id = ?1').bind(scope).first<{ first_session_at: number | null }>();
 
+  it('is set at the relay attempt, so a relay whose answer fails still ends the waiver; a request refused before it doesn’t', async () => {
+    const app = await seedApp({ firstSession: null });
+    const aud = newAud();
+    const near = chain({ [aud]: app.scope });
+    near.contract.create_session = () => panic('Nonce mismatch');
+    // Refused before any relay (bad token nonce): nothing written.
+    expect((await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud, {}, { nonce: 'wrong' }) })).status).toBe(400);
+    expect(await scopeRow(app.scope)).toEqual({ first_session_at: null });
+    // Relayed, and the transaction fails (or its answer is lost): written anyway.
+    const res = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud) });
+    expect(res.status).not.toBe(200);
+    expect((await scopeRow(app.scope))!.first_session_at).not.toBeNull();
+  });
+
+  it('a non-200 /v1/sessions then a successful /v1/derive: the scope is marked (by either relay)', async () => {
+    const app = await seedApp({ firstSession: null });
+    const near = chain({});
+    // The session landed on chain even though the client never saw a 200 (as after a timeout).
+    const spk = newSessionKey();
+    near.sessions.set(JSON.stringify(spk), { path: `${app.scope}#google#1#0`, scope_id: app.scope, expires_at_ms: Date.now() + 3_600_000, max_uses: 10, used: 0 });
+    expect((await call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(spk) })).status).toBe(200);
+    expect((await scopeRow(app.scope))!.first_session_at).not.toBeNull();
+  });
+
   it('is set once by the first successful /v1/login on the scope (after the response), never by a failed one', async () => {
     const app = await seedApp({ firstSession: null });
     const aud = newAud();
@@ -262,6 +287,25 @@ describe('the hourly guarded-change job', () => {
     expect((await ledger(app.id)).map((r) => r.kind)).toEqual(['policy.activated', 'policy.ended', 'policy.activated']);
     const after = await body(await getApp(appHeaders(app)));
     expect({ ...after, serverTimeMs: 0, requestId: '' }).toEqual({ ...served, serverTimeMs: 0, requestId: '' });
+  });
+
+  it('two policy_set changes due in one run: both recorded, each replaced one ended once (no duplicate ledger row)', async () => {
+    const app = await seedApp();
+    const now = Date.now();
+    // X active (recorded earlier); A due with its JSON stored (an announcement promoted it), B due and pending.
+    const x = await propose(app, { kind: 'policy_set', policy: autoApprovePolicy('X'), activeFrom: now - 30 });
+    await guardedChangesMaintenance(env, now - 20);
+    const a = await propose(app, { kind: 'policy_set', policy: autoApprovePolicy('A'), activeFrom: now - 10 });
+    await env.DB.prepare('UPDATE apps SET auto_approve_policy = auto_approve_pending WHERE id = ?1').bind(app.id).run();
+    const b = await propose(app, { kind: 'policy_set', policy: autoApprovePolicy('B'), activeFrom: now - 5 });
+    expect(await guardedChangesMaintenance(env, now)).toMatchObject({ activated: 2, superseded: 0 });
+    expect(await changeRow(x)).toMatchObject({ status: 'ended' });
+    expect(await changeRow(a)).toMatchObject({ status: 'ended' });
+    expect(await changeRow(b)).toMatchObject({ status: 'active' });
+    const kinds = (await ledger(app.id)).map((r) => r.kind);
+    expect(kinds.filter((k) => k === 'policy.ended')).toHaveLength(2);
+    expect(kinds.filter((k) => k === 'policy.activated')).toHaveLength(3);
+    expect(await env.DB.prepare('SELECT auto_approve_policy FROM apps WHERE id = ?1').bind(app.id).first()).toEqual({ auto_approve_policy: JSON.stringify(autoApprovePolicy('B')) });
   });
 
   it('promotes matured raw signing', async () => {

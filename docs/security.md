@@ -294,15 +294,22 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   which can carry an API key): `near_unavailable`, `near_rejected` and `relayer_unavailable` answer a fixed message
   and log a code.
 - **Admin CLI writes** (`scripts/lib/admin-apps.ts`, `admin-settings.ts`, `admin-sql.ts`; batch C3): every write is
-  a compare-and-swap. Its first statement bumps the version the command read (`origins_version`, `settings_version`,
-  or for settings also every settings column as read), its `app_changes` row follows only if that statement changed a
-  row (`changes() = 1`), and every other statement only if that row exists; the CLI reads the row back. So a change
-  made in between (another operator's `--auto-approve off`) is never overwritten with values planned from the old
-  row, even when the other writer moved the version to the same number. The CLI never puts a guarded change in force:
+  a compare-and-swap. Its first statement inserts its `app_changes` row only while the version the command read still
+  holds (`origins_version`, `settings_version`, or for settings also every settings column as read); the version bump
+  and every other statement run only if that row exists; the CLI reads the row back. No statement depends on another's
+  row count, so this holds whether or not D1 runs the command as one transaction (D207). A change made in between
+  (another operator's `--auto-approve off`) is never overwritten with values planned from the old row, even when the
+  other writer moved the version to the same number. Re-setting the policy in force keeps a matured pending policy as
+  the stored one before clearing the pending columns, and an announcement keeps a matured pending policy or raw-signing
+  value in force, so neither ever brings an older value back. The `no_session` waiver is decided inside the
+  announcement's SQL from the database as it is then, and fails closed on any sign of a user in the scope
+  (`first_session_at`, written at every session-pool relay attempt; another origin ever in force; a vault share, usage
+  or identity row). Proposals and announcements are refused with `--remote` until the deployed API reports the batch
+  C3 reads (`GET /v1/health` `hotDb` ≥ 6): an older API would treat a proposed origin as in force. The CLI never puts a guarded change in force:
   origin adds, policies and raw-signing enables are staff proposals (`hana`, full `appChangeDelayMs`, refused within
   `appChangeDelayMs` of the scope's org assignment); `app:changes:announce` (only without an admin Worker, never on
   a production network) starts the clock and records that nobody was emailed. Raw signing is refused for test apps
-  (D39). Removals, turn-offs and suspensions are immediate.
+  (D39 as amended 2026-10-28). Removals, turn-offs and suspensions are immediate.
 
 - **Identity token** (`src/identity/`; `docs/identity-token-spec.md` "Invariants"; tests in
   `apps/api/test/identity.test.ts`):

@@ -159,7 +159,9 @@ export async function handleLogin(request: Request, env: Env, requestId: string,
     const quota = await appQuota(env, ctx, app);
     if (quota) return quota;
 
+    const noted = firstSession(env, app, ctx, exec);
     const result = await relay(env, 'session', { method: call.method, args: call.args }, requestId);
+    await noted;
     lapRelay(ctx, result);
     // Whatever happened, the session (if any) is read from chain next time.
     forgetSession(req.sessionPublicKey);
@@ -172,7 +174,6 @@ export async function handleLogin(request: Request, env: Env, requestId: string,
     const r = result.result as { big_y?: unknown; big_c?: unknown } | null;
     if (!r || typeof r.big_y !== 'string' || typeof r.big_c !== 'string') return done(ctx, 502, { error: 'The contract returned no key', code: 'bad_contract_result', nearTx: result.nearTx });
     await countLogin(env, app.id, true, ctx, exec);
-    await firstSession(env, app, ctx, exec);
     return done(ctx, 200, {
       result: { big_y: r.big_y, big_c: r.big_c },
       // Informational: what the session must look like now. The vault reads the chain, never this.

@@ -33,8 +33,10 @@ export const OWNER_ACTIONS_PER_IP_MINUTE = 10;
  * excess stops at its own window and never reaches what other scopes share; a request refused by a later window is
  * taken back from the earlier ones (`unhit`), so a refusal costs nothing. Day windows are UTC days. Reaching a cap
  * writes an `owner_cap` security event (once per window, ownerCapEvent):
- * - propose_change: per owner identity (provider, sub), then per scope (20 a UTC day), then the global ceiling that
- *   bounds the pool's spend;
+ * - propose_change: per owner identity (provider, sub), then per scope (10 a minute, 20 a UTC day), then the global
+ *   ceiling that bounds the pool's spend. The per-owner windows are the scope's divided by CONTRACT_MAX_OWNERS (2 a
+ *   minute, 4 a day; D236), so no one owner, nor any four of five, can use up the scope's proposals: within a scope
+ *   only all of its owners together can fill them, as with the safety budget;
  * - execute_change (no auth, anyone may send it): its own per-scope window, never the one the scope's owners use, then
  *   the global ceiling;
  * - the safety budget, cancel_change, remove_client and disable_shared_login: none of the above. Its own allowance per
@@ -45,8 +47,9 @@ export const OWNER_ACTIONS_PER_IP_MINUTE = 10;
  *   without an owner identity is refused (fail closed). Each one is also bounded by the scope's state: a cancel needs
  *   a pending change (≤ CONTRACT_MAX_PENDING), a removal one of the scope's clients, a disable shared login on.
  */
-export const OWNER_ACTIONS_PER_OWNER_MINUTE = 5;
-export const OWNER_ACTIONS_PER_OWNER_DAY = 30;
+/** The scope's windows divided by CONTRACT_MAX_OWNERS (a test keeps scope ≥ owners × owner), so co-owners can't be starved. */
+export const OWNER_ACTIONS_PER_OWNER_MINUTE = 2;
+export const OWNER_ACTIONS_PER_OWNER_DAY = 4;
 export const OWNER_ACTIONS_PER_SCOPE_MINUTE = 10;
 /** The spec's 20 owner actions per scope per UTC day (docs/batch-c-spec.md "On-chain owner actions", D93 Q23). */
 export const OWNER_ACTIONS_PER_SCOPE_DAY = 20;

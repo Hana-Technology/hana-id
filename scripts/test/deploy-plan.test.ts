@@ -759,9 +759,31 @@ describe('buildDeployPlan', () => {
     expect(p.steps.map((s) => s.kind)).not.toContain('register-global');
     expect(p.blockers).toEqual([]);
     expect(describeStep(withAud, sinkSteps[0]!)).toContain('Remove console audience');
-    // A long quarantine (a mainnet-like change_delay_ms) stops the run after the removal: a warning says to re-run.
+    // A quarantine longer than one run waits (a mainnet-like change_delay_ms): no removal at all, a blocker. The
+    // audiences are never left in no scope with nobody running the registration.
     const slow = buildDeployPlan(withAud, deployed({ config: { ...configOk, change_delay_ms: 86_400_000 }, globalScope, ...at('global') }), opts);
-    expect(slow.warnings.join()).toContain('re-run deploy-contract');
+    expect(slow.blockers.join()).toContain('Refusing to remove the console audiences');
+    expect(slow.steps.map((s) => s.kind)).not.toContain('remove-console-client');
+    // Just within the wait: planned.
+    const ok = buildDeployPlan(withAud, deployed({ config: { ...configOk, change_delay_ms: 10 * 60_000 }, globalScope, ...at('global') }), opts);
+    expect(ok.blockers.join()).not.toContain('Refusing to remove');
+  });
+
+  it('a council-owned env removes from "global" only with --approve-with (no council vote between the removal and the sink)', () => {
+    const dao = m.council!.dao;
+    const daoOwned = { ...withAud, owner: dao, ownerKind: 'sputnik' as const };
+    const globalScope = { id: 'global', owners: [{ Near: { account_id: dao } }], clients: [HANA, CONSOLE_AUD], allow_shared: false };
+    const obs = deployed({ config: { ...configOk, owner: dao }, globalScope, ...at('global') });
+    const noVotes = buildDeployPlan(daoOwned, obs, opts);
+    expect(noVotes.blockers.join()).toContain('council');
+    expect(noVotes.steps.map((s) => s.kind)).not.toContain('remove-console-client');
+    // The same with "global" owned by the pre-transfer account: its removal is direct, but the sink's registration
+    // still waits for votes.
+    const oldGlobal = { ...globalScope, owners: [{ Near: { account_id: 'old-owner.testnet' } }] };
+    expect(buildDeployPlan(daoOwned, deployed({ config: { ...configOk, owner: dao }, globalScope: oldGlobal, ...at('global'), globalOwnerKeys: { 'old-owner.testnet': true } }), opts).blockers.join()).toContain('council');
+    const voted = buildDeployPlan(daoOwned, obs, { ...opts, ownerTx: { approveWith: m.council!.members[1] } });
+    expect(voted.blockers.join()).not.toContain('Refusing to remove');
+    expect(voted.steps.map((s) => s.kind)).toContain('remove-console-client');
   });
 
   it('"global" owned by the owner of the time (before a transfer): that account signs remove_client, else a blocker', () => {
@@ -789,10 +811,18 @@ describe('buildDeployPlan', () => {
     const done = buildDeployPlan(withAud, deployed({ ...at('s7'), consoleSinkScopes: { s7: sink } }), opts);
     expect(done.steps.filter((s) => s.kind === 'register-console-sink' || s.kind === 'remove-console-client')).toEqual([]);
     expect(done.done.join()).toContain('Console sink scope "s7" holds');
-    // Registered before an owner transfer: still the sink, with a warning.
-    const old = buildDeployPlan(withAud, deployed({ ...at('s7'), consoleSinkScopes: { s7: { ...sink, owners: [{ Near: { account_id: 'old-owner.testnet' } }] } } }), opts);
-    expect(old.blockers).toEqual([]);
-    expect(old.warnings.join()).toContain('not the current owner');
+    // Owned by the council DAO: a known Hana owner.
+    expect(buildDeployPlan(withAud, deployed({ ...at('s7'), consoleSinkScopes: { s7: { ...sink, owners: [{ Near: { account_id: m.council!.dao } }] } } }), opts).blockers).toEqual([]);
+    // Registered by the owner before a transfer: a sink only once that account is named as a known Hana owner.
+    const oldSink = { s7: { ...sink, owners: [{ Near: { account_id: 'old-owner.testnet' } }] } };
+    expect(buildDeployPlan(withAud, deployed({ ...at('s7'), consoleSinkScopes: oldSink }), opts).blockers.join()).toContain('--known-owner');
+    const known = buildDeployPlan(withAud, deployed({ ...at('s7'), consoleSinkScopes: oldSink }), { ...opts, knownOwners: ['old-owner.testnet'] });
+    expect(known.blockers).toEqual([]);
+    expect(known.done.join()).toContain('Console sink scope "s7" holds');
+    // Any other NEAR account among the owners, even beside Hana's, is not a sink.
+    const mixed = { s7: { ...sink, owners: [{ Near: { account_id: m.owner } }, { Near: { account_id: 'mallory.testnet' } }] } };
+    expect(buildDeployPlan(withAud, deployed({ ...at('s7'), consoleSinkScopes: mixed }), opts).blockers.join()).toContain('not a Hana console sink');
+    expect(buildDeployPlan(withAud, deployed({ ...at('s7'), consoleSinkScopes: { s7: { ...sink, owners: [{ Near: { account_id: 'mallory.testnet' } }] } } }), opts).blockers.join()).toContain('not a Hana console sink');
   });
 
   it('a console audience claimed by another scope (an OIDC owner, other clients or shared login) is a blocker', () => {

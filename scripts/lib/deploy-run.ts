@@ -46,6 +46,7 @@ export const DEPLOY_USAGE = `Usage: deploy-contract.ts <env> [--yes] [--relayer-
                           [--owner-relayer-keys 1] [--owner-relayer-allowance 0.5]
                           [--upgrade] [--wasm <file>] [--skip-build]
                           [--transfer-owner] [--member <council member>] [--approve-with <council member>]
+                          [--known-owner <account,…>]
        deploy-contract.ts <env> --creation-plan [--wasm <reproducible build>] [--updater-public-key <pk>] [--creation-public-key <pk>]
   --yes                       apply the plan (without it, only print it)
   --relayer-keys N            session-pool keys on the relayer (RELAYER_KEYS: logins) (default 3)
@@ -58,6 +59,8 @@ export const DEPLOY_USAGE = `Usage: deploy-contract.ts <env> [--yes] [--relayer-
   --skip-build                use the last built wasm (its hash is then known when planning)
   --transfer-owner            hand the contract to the council DAO: propose_owner(DAO), then the DAO's accept_owner
   --member <account>          council member who proposes owner steps (dev envs default: the first member)
+  --known-owner <a,b>         former Hana owner accounts a console sink scope may be owned by (e.g. the owner before
+                              the council transfer); a sink owned by anyone else is a blocker
   --approve-with <account>    dev envs on testnet only: a second member approves each proposal in the same run
   --creation-plan             print (never send) the mainnet-style signer creation batch for this manifest`;
 
@@ -393,7 +396,7 @@ export async function deployMain(argv: readonly string[], deps: DeployDeps = def
   const { log } = deps;
   const args = parseCli(argv, {
     booleans: ['yes', 'upgrade', 'skip-build', 'transfer-owner', 'creation-plan', 'help'],
-    strings: ['relayer-keys', 'relayer-allowance', 'owner-relayer-keys', 'owner-relayer-allowance', 'wasm', 'member', 'approve-with', 'updater-public-key', 'creation-public-key'],
+    strings: ['relayer-keys', 'relayer-allowance', 'owner-relayer-keys', 'owner-relayer-allowance', 'wasm', 'member', 'approve-with', 'updater-public-key', 'creation-public-key', 'known-owner'],
   });
   if (args.flag('help')) {
     log(DEPLOY_USAGE);
@@ -458,6 +461,7 @@ export async function deployMain(argv: readonly string[], deps: DeployDeps = def
     ownerTx,
     sputnikCodeHash: deps.sputnikCodeHash ?? readPin().code_hash,
     sputnikPolicy: readPolicyTemplate(),
+    knownOwners: (args.str('known-owner') ?? '').split(',').map((a) => a.trim()).filter(Boolean),
   };
   if (options.skipBuild && !wasmArg && !existingWasm()) throw new CliError('--skip-build but no built wasm found');
 

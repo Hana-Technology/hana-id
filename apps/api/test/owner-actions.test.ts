@@ -9,6 +9,7 @@ import {
   forgetCapEvents,
   OWNER_ACTIONS_GLOBAL_MINUTE,
   OWNER_ACTIONS_PER_IP_MINUTE,
+  OWNER_ACTIONS_PER_OWNER_DAY,
   OWNER_ACTIONS_PER_OWNER_MINUTE,
   OWNER_ACTIONS_PER_SCOPE_DAY,
   OWNER_ACTIONS_PER_SCOPE_MINUTE,
@@ -506,12 +507,33 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   it(`caps owner actions per scope (${OWNER_ACTIONS_PER_SCOPE_MINUTE} per minute), across owners`, async () => {
     const n = near();
     const owners = (n.scopes.s1 as { owners: unknown[] }).owners;
-    const subs = Array.from({ length: 3 }, (_, i) => `7${i}`);
+    // The contract's MAX_OWNERS owners, each at its own cap: together exactly the scope's window.
+    const subs = Array.from({ length: CONTRACT_MAX_OWNERS - 1 }, (_, i) => `7${i}`);
     for (const sub of subs) owners.push({ Oidc: { provider: 'google', sub } });
+    const all = [OWNER_SUB, ...subs];
     const statuses: number[] = [];
-    for (let i = 0; i < OWNER_ACTIONS_PER_SCOPE_MINUTE + 1; i++) statuses.push((await post(await setOwners([OWNER_SUB, ...subs][i % 4]))).status);
-    expect(statuses).toEqual([...Array(OWNER_ACTIONS_PER_SCOPE_MINUTE).fill(200), 429]);
-    await clearLimiters(await Promise.all(subs.map((sub) => ownerLimiterKey({ provider: 'google', sub }))));
+    for (let i = 0; i < OWNER_ACTIONS_PER_SCOPE_MINUTE; i++) statuses.push((await post(await setOwners(all[i % all.length]))).status);
+    expect(statuses).toEqual(Array(OWNER_ACTIONS_PER_SCOPE_MINUTE).fill(200));
+    // A sixth identity (an owner the chain added) finds the scope's window full.
+    owners.push({ Oidc: { provider: 'google', sub: '79' } });
+    const over = await post(await setOwners('79'));
+    expect([over.status, (await json(over)).error]).toEqual([429, 'Rate limit exceeded (owner actions per scope per minute)']);
+    await clearLimiters(await Promise.all([...subs, '79'].map((sub) => ownerLimiterKey({ provider: 'google', sub }))));
+  });
+
+  it('the per-owner windows are the scope’s divided by the contract’s MAX_OWNERS: one owner can’t use up a scope’s proposals (D236)', async () => {
+    expect(OWNER_ACTIONS_PER_SCOPE_MINUTE).toBeGreaterThanOrEqual(CONTRACT_MAX_OWNERS * OWNER_ACTIONS_PER_OWNER_MINUTE);
+    expect(OWNER_ACTIONS_PER_SCOPE_DAY).toBeGreaterThanOrEqual(CONTRACT_MAX_OWNERS * OWNER_ACTIONS_PER_OWNER_DAY);
+    // One owner spends its whole day; a co-owner still proposes.
+    const n = near();
+    (n.scopes.s1 as { owners: unknown[] }).owners.push({ Oidc: { provider: 'google', sub: OTHER_OWNER_SUB } });
+    const ownerDay = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(await ownerLimiterKey({ provider: 'google', sub: OWNER_SUB })));
+    for (let i = 0; i < OWNER_ACTIONS_PER_OWNER_DAY; i++) expect((await ownerDay.hit([{ name: 'day', windowMs: 24 * 60 * 60_000, max: OWNER_ACTIONS_PER_OWNER_DAY }])).ok).toBe(true);
+    const stopped = await post(await setOwners());
+    expect([stopped.status, (await json(stopped)).error]).toEqual([429, 'Rate limit exceeded (owner actions per owner per day)']);
+    expect((await post(await setOwners(OTHER_OWNER_SUB))).status).toBe(200);
+    // The first owner's spent day took only its share of the scope's.
+    expect(await countIn(scopeLimiterKey('s1'), 'day')).toBe(1);
   });
 
   it(`caps owner actions per owner identity (${OWNER_ACTIONS_PER_OWNER_MINUTE} per minute), whatever the IP`, async () => {

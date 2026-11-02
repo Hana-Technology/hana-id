@@ -1787,8 +1787,14 @@ detail open or a safer reading was needed. Each follows the spec's intent; all f
   - **Caps.** The spec's numbers (D93 Q23: 20 per scope per UTC day; a safety budget of 10/min and 100/day globally,
     10 per scope per day) and D100's (decided later the same day, after the security sweep) are combined so that
     neither is weakened where it protects something:
-    - `propose_change`: per owner 5/min, 30/day (D100), per scope 10/min (D100) and **20 a UTC day** (the spec,
-      replacing D100's 50), global 20/min, 200/day (both);
+    - `propose_change`: per scope 10/min (D100) and **20 a UTC day** (the spec, replacing D100's 50), global 20/min,
+      200/day (both), and per owner **2/min, 4/day**: the scope's windows divided by the contract's `MAX_OWNERS` (5),
+      so the per-scope windows are at least `MAX_OWNERS` × the per-owner ones, as for the safety budget. With D100's
+      5/min, 30/day per owner under a 20/day scope cap, one owner (a compromised or careless one) could use up the
+      scope's day and block its co-owners' proposals. The alternative, the scope at 5 × 30 = 150/day, was rejected: it
+      gives up the spec's 20/day and lets one scope take most of the shared 200/day ceiling. Four proposals a day per
+      owner is ample for timelocked changes (at most `MAX_PENDING` = 10 pending per scope); more goes through Hana's
+      staff relay (`owner:relay`). Within a scope only all five owners together can fill its proposals;
     - the **safety budget** is the spec's set of methods, `cancel_change`, `remove_client` and `disable_shared_login`
       (D100 had only `cancel_change` there), on D100's cancel windows: 5/min, 20/day per owner, 25/min, 100/day per
       scope, 100/min, 1000/day globally. Not the spec's 10 per scope per day: one compromised owner of a scope could
@@ -1836,16 +1842,22 @@ detail open or a safer reading was needed. Each follows the spec's intent; all f
     the seconds between") can't run back to back: `remove_client` quarantines the client for `change_delay_ms`, and
     `admin_register_scope` refuses a client removed from another scope until then (`Client was recently removed from
     another scope`). The run waits it out when it is at most 10 min (sandbox-dev: 60 s) and otherwise stops after the
-    removals; a re-run inside the quarantine fails on chain and changes nothing. During the gap the audiences open no
+    removals; a re-run inside the quarantine fails on chain and changes nothing. (Amended the same day: a longer
+    quarantine is now refused before any removal, below.) During the gap the audiences open no
     session anywhere and the contract still refuses an `AddClient` of them; after it, a claim is timelocked and seen
     by the watcher.
   - **Who removes.** `remove_client` takes `OwnerAuth::Near`, so the sender must be an `Owner::Near` of `global`: the
     manifest's owner (a council proposal on a council env), or else the account that owned the contract when `global`
     was registered, if its key is in `~/.near-credentials`; otherwise a blocker. owner-tx sends `remove_client` like
     an owner call (`SCOPE_OWNER_CALLS`); `admin owner:call` still takes owner-only methods.
-  - **What counts as the sink.** Found through `scope_for_client`. A scope with NEAR-account owners only, console
-    audiences only and no shared login (a warning if its owner isn't the current one: registered before an owner
-    transfer). An audience in any other scope is a blocker. An audience added to the manifest later gets a sink of its
+  - **What counts as the sink.** Found through `scope_for_client`. A scope whose every owner is an `Owner::Near` of a
+    known Hana owner account (the manifest's `owner`, its council DAO, or one named with `--known-owner`, such as the
+    owner before a council transfer), console audiences only and no shared login. An audience in any other scope,
+    a sink with any other owner included, is a blocker (automated scan, after the first review).
+  - **No unattended gap.** The plan refuses to remove anything from `global` (a blocker, before `remove_client` runs)
+    unless the same run can register the sink right after: the quarantine is at most 10 min and no council vote stands
+    between the removal and the registration (on a council env, `--approve-with`). Elsewhere (staging, mainnet) the
+    move is done by hand, back to back. An audience added to the manifest later gets a sink of its
     own (`admin_register_scope` can't add a client to an existing scope).
   - A console audience that is also one of `googleClientIds` is a blocker; `register-global` counts only
     `googleClientIds` toward its 10 clients.

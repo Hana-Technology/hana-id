@@ -103,6 +103,11 @@ export interface PoolOptions {
 }
 
 export interface DeployOptions {
+  /**
+   * Hana owner accounts besides the manifest's `owner` (and its council DAO) that may own a console sink scope:
+   * typically the owner before a council transfer (`--known-owner`). A sink owned by anyone else is a blocker (D238).
+   */
+  knownOwners?: string[];
   /** session = RELAYER_KEYS (logins), owner = OWNER_RELAYER_KEYS (/v1/owner-actions). */
   pools: Record<KeyPool, PoolOptions>;
   /**
@@ -644,7 +649,7 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
   // env: the sink is registered before "global". Existing env: each console audience in "global" is removed from it
   // (remove_client, immediate), then the sink is registered once the removed clients' quarantine (change_delay_ms)
   // is over: until then only "global" could take them back.
-  const sink = consoleSinkPlan(m, o, audiences);
+  const sink = consoleSinkPlan(m, o, audiences, { knownOwners: opts.knownOwners ?? [], approveWith: !!opts.ownerTx.approveWith });
   blockers.push(...sink.blockers);
   warnings.push(...sink.warnings);
   done.push(...sink.done);
@@ -730,7 +735,7 @@ export function describeStep(m: Manifest, s: DeployStep, ownerTx: OwnerTxOptions
     case 'register-console-sink':
       return (
         `Register the console sink scope (a new sN: ${pairText(s.clients)}, owner ${m.owner}, no shared login): ${describeOwnerCall(m, owner!, ownerTx)}` +
-        (s.quarantineMs > 0 ? `; after the removed clients' quarantine (${s.quarantineMs} ms), which this run waits out when it is at most ${SINK_WAIT_MAX_MS / 60_000} min.` : '.')
+        (s.quarantineMs > 0 ? `; after the removed clients' quarantine (${s.quarantineMs} ms), which this run waits out.` : '.')
       );
     case 'set-shared-clients': {
       const changes = [s.added.length ? `adds ${pairText(s.added)} after the ${m.changeDelayMs} ms timelock` : '', s.removed.length ? `removes ${pairText(s.removed)} at once` : '']
@@ -749,12 +754,24 @@ export const clientKey = ([provider, aud]: readonly [string, string]): string =>
 /** Longest quarantine deploy-contract waits out inside one run before registering the sink; longer means re-run. */
 export const SINK_WAIT_MAX_MS = 10 * 60_000;
 
+/** The accounts a console sink may be owned by: the manifest's owner, its council DAO, and `knownOwners`. */
+export function hanaOwnerAccounts(m: Manifest, knownOwners: readonly string[] = []): Set<string> {
+  return new Set([m.owner, ...(m.council ? [m.council.dao] : []), ...knownOwners]);
+}
+
 /**
  * The console sink steps (see buildDeployPlan): which console audiences to remove from "global", which to register in a
  * new sink, and whether every one already sits in a sink. A console audience in any other scope is a blocker: someone
- * claimed it, and only its scope's owners can give it back.
+ * claimed it, and only its scope's owners can give it back. So is a removal from "global" this run could not follow
+ * with the sink's registration (a quarantine longer than it waits, or a registration that waits for council votes):
+ * the audiences are never left unregistered without someone running the next step.
  */
-export function consoleSinkPlan(m: Manifest, o: DeployObserved, audiences: readonly [string, string][]): { steps: DeployStep[]; blockers: string[]; warnings: string[]; done: string[] } {
+export function consoleSinkPlan(
+  m: Manifest,
+  o: DeployObserved,
+  audiences: readonly [string, string][],
+  opts: { knownOwners?: readonly string[]; approveWith?: boolean } = {},
+): { steps: DeployStep[]; blockers: string[]; warnings: string[]; done: string[] } {
   const steps: DeployStep[] = [];
   const blockers: string[] = [];
   const warnings: string[] = [];
@@ -767,30 +784,30 @@ export function consoleSinkPlan(m: Manifest, o: DeployObserved, audiences: reado
   const inGlobal = audiences.filter((a) => scopes[clientKey(a)] === GLOBAL_SCOPE);
   const unregistered = audiences.filter((a) => (scopes[clientKey(a)] ?? null) === null);
   const sinkOwner: Owner = { Near: { account_id: m.owner } };
+  const trusted = hanaOwnerAccounts(m, opts.knownOwners);
   const inSink = new Map<string, [string, string][]>();
   for (const a of audiences) {
     const id = scopes[clientKey(a)];
     if (id === undefined || id === null || id === GLOBAL_SCOPE) continue;
     const view = (o.consoleSinkScopes ?? {})[id] as { owners?: unknown[]; clients?: [string, string][]; allow_shared?: boolean } | null | undefined;
     const audienceSet = new Set(audiences.map(clientKey));
-    // A sink: NEAR-account owners only (Hana's owner, or the owner of the time it was registered), console audiences
-    // only, no shared login.
+    // A sink: every owner an Owner::Near that is a known Hana owner account (the manifest's owner, its council DAO, or
+    // one named with --known-owner, e.g. the owner before a transfer), console audiences only, no shared login.
     const nearOwners = Array.isArray(view?.owners) ? view.owners.map((x) => (x as { Near?: { account_id?: unknown } } | null)?.Near?.account_id) : [];
     const isSink =
       !!view &&
       nearOwners.length > 0 &&
-      nearOwners.every((x) => typeof x === 'string') &&
+      nearOwners.every((x) => typeof x === 'string' && trusted.has(x)) &&
       Array.isArray(view.clients) &&
       view.clients.every((c) => audienceSet.has(clientKey(c))) &&
       view.allow_shared === false;
     if (!isSink) {
       blockers.push(
-        `Console audience ${pairText([a])} is a client of scope "${id}", which is not a Hana console sink (NEAR-account owners only, console audiences only, no shared login). ` +
-          `Find out who registered it there: only that scope's owners can remove it (D238).`,
+        `Console audience ${pairText([a])} is a client of scope "${id}", which is not a Hana console sink (owners only known Hana accounts: ${[...trusted].join(', ')}; console audiences only; no shared login). ` +
+          `If its owner is a former Hana owner account, name it with --known-owner; otherwise find out who registered it there: only that scope's owners can remove it (D238).`,
       );
       continue;
     }
-    if (!nearOwners.includes(m.owner) && !inSink.has(id)) warnings.push(`Console sink scope "${id}" is owned by ${nearOwners.join(', ')}, not the current owner ${m.owner} (registered before an owner transfer?).`);
     inSink.set(id, [...(inSink.get(id) ?? []), a]);
   }
   for (const [id, list] of inSink) done.push(`Console sink scope "${id}" holds ${pairText(list)}.`);
@@ -811,10 +828,23 @@ export function consoleSinkPlan(m: Manifest, o: DeployObserved, audiences: reado
       const account = nearOwners.find((a) => o.globalOwnerKeys?.[a]);
       if (account) via = { kind: 'account', account };
     }
+    // The removal starts the clients' quarantine; the sink can be registered only after it. Refuse to remove unless this
+    // run can wait it out and then register the sink itself: no unattended gap with the audiences in no scope.
+    const quarantineMs = Number(o.config?.change_delay_ms ?? m.changeDelayMs);
+    const registerByCouncil = ownerRoute(m, 'admin_register_scope').kind === 'sputnik';
+    const removeByCouncil = via?.kind === 'owner' && ownerRoute(m, 'remove_client').kind === 'sputnik';
+    let gap: string | null = null;
+    if (quarantineMs > SINK_WAIT_MAX_MS) gap = `the removed clients stay quarantined for change_delay_ms (${quarantineMs} ms), longer than one run waits (${SINK_WAIT_MAX_MS / 60_000} min)`;
+    else if ((registerByCouncil || removeByCouncil) && !opts.approveWith) gap = `the council's votes would come between the removal and the sink's registration (run with --approve-with on a dev env)`;
     if (!via) {
       blockers.push(
         `"${GLOBAL_SCOPE}" is owned by ${nearOwners.join(', ') || 'no NEAR account'}, not ${m.owner}, and none of their keys is in ~/.near-credentials/${m.network}/: ` +
           `remove_client(${GLOBAL_SCOPE}, Near, …) must come from an Owner::Near of the scope.`,
+      );
+    } else if (gap) {
+      blockers.push(
+        `Refusing to remove the console audiences from "${GLOBAL_SCOPE}" in a run that can't register their sink right after: ${gap}. ` +
+          `Move them by hand with the removal and the registration back to back, once the quarantine allows (D238).`,
       );
     } else {
       for (const [provider, aud] of inGlobal) steps.push({ kind: 'remove-console-client', provider, aud, via });
@@ -824,9 +854,6 @@ export function consoleSinkPlan(m: Manifest, o: DeployObserved, audiences: reado
   if (toRegister.length) {
     const quarantineMs = inGlobal.length ? Number(o.config?.change_delay_ms ?? m.changeDelayMs) : 0;
     steps.push({ kind: 'register-console-sink', owners: [sinkOwner], clients: toRegister.map(([p, a]) => [p, a] as [string, string]), quarantineMs });
-    if (inGlobal.length && quarantineMs > SINK_WAIT_MAX_MS) {
-      warnings.push(`The removed console audiences stay quarantined for change_delay_ms (${quarantineMs} ms): this run stops after removing them; re-run deploy-contract ${m.name} once that has passed to register the sink.`);
-    }
   }
   return { steps, blockers, warnings, done };
 }

@@ -247,7 +247,8 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   scope's current `action_nonce` (an **uncached** `get_scope`; `owner_nonce_mismatch` 409, D236), change exists /
   unlocked, client proof for that client with the scope's client-proof nonce (`invalid_client_proof`); the token is
   reserved single-use before relaying and released only if the tx certainly didn't execute; caps per owner identity
-  (5/min, 30/day), per scope (10/min, 20 a UTC day) and global (20/min, 200/day) for `propose_change`, asked in that
+  (2/min, 4/day: the scope's divided by `MAX_OWNERS`, so one owner can't use up its co-owners' proposals), per scope
+  (10/min, 20 a UTC day) and global (20/min, 200/day) for `propose_change`, asked in that
   order and taken back from the earlier windows when a later one refuses (`hitAll`, `RateLimiter.unhit`);
   unauthenticated `execute_change` has its own per-scope window, never the owners'; the safety budget
   (`cancel_change`, `remove_client`, `disable_shared_login`) is outside all of these: 5/min, 20/day per owner identity,
@@ -310,7 +311,7 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   | `GET /v1/app` per IP per app | plan `per_ip_minute`, its own window |
   | Vault endpoints | 60/min per IP per app (*per location*); 10 × `per_minute` per app; 10/min per share (share actions, *per location*) |
   | Login relay per IP | writes 10/min, reads 120/min |
-  | Owner actions (and `ConsoleRpc.ownerAction`, its `clientIp` on the same per-IP limiter) | 10/min per IP; `propose_change` per owner 5/min, 30/day, per scope 10/min, 20 a UTC day, global 20/min, 200/day; `execute_change` its own 10/min, 50/day per scope; the safety budget (`cancel_change`, `remove_client`, `disable_shared_login`) only 5/min, 20/day per owner, 25/min, 100/day per scope and 100/min, 1000/day for all of them (D100, D236) |
+  | Owner actions (and `ConsoleRpc.ownerAction`, its `clientIp` on the same per-IP limiter) | 10/min per IP; `propose_change` per owner 2/min, 4/day, per scope 10/min, 20 a UTC day, global 20/min, 200/day; `execute_change` its own 10/min, 50/day per scope; the safety budget (`cancel_change`, `remove_client`, `disable_shared_login`) only 5/min, 20/day per owner, 25/min, 100/day per scope and 100/min, 1000/day for all of them (D100, D236) |
 
   Each request's windows are asked in turn: per IP first, and the per-app window only once the IP window accepted,
   so a request the IP window refuses never uses (or holds) any of the app's shared quota. On the relay endpoints the

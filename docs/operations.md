@@ -1,6 +1,7 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-02 (branch `feat/batch-c-6`: "Console sink scope (batch C6, milestone M3)", the
+Last verified against code: 2026-11-02 (branch `feat/batch-c-6`: "Console sink scope (batch C6, milestone M3)" with
+the scan fixes (known owner accounts only, `--known-owner`, no removal a run can't follow with the registration), the
 console audiences no longer in `global` in the manifest and Google tables, the owner-pool allowance event and
 `OWNER_POOL_ALLOWANCE_YOCTO`; D235–D239); 2026-11-02 (branch `feat/batch-c-4`: "Usage capture (batch C4, milestone M2)" (the
 setup steps for the user: `usage-setup`, Hyperdrive, `USER_ID_KEY`, migration 0009, `gen --usage-hyperdrive-id`), the
@@ -753,16 +754,19 @@ impact"); console tokens lose that unused ability.
   only `googleClientIds`.
 - **Existing env with the audiences in `global` (sandbox-dev):** one run sends `remove_client(global, "Near",
   provider, aud)` for each (immediate), then waits out the removed clients' quarantine (`change_delay_ms`: 60 s on
-  sandbox-dev; the contract refuses to register a quarantined client in another scope) and registers the sink. With a
-  quarantine over 10 min the run stops after the removals; re-run after it. Between the two, the audiences are
-  clients of no scope: the contract still refuses an `AddClient` of them until the quarantine ends, and later one is
-  timelocked and seen by the watcher. `remove_client` takes `OwnerAuth::Near`, so it is sent by an `Owner::Near` of
+  sandbox-dev; the contract refuses to register a quarantined client in another scope) and registers the sink. The
+  plan refuses (a blocker, before any removal) when this run couldn't register the sink right after: a quarantine
+  over 10 min, or on a council env without `--approve-with` (the votes would come in between). Then move them by
+  hand, removal and registration back to back. During the wait the audiences are clients of no scope: the contract
+  still refuses an `AddClient` of them until the quarantine ends. `remove_client` takes `OwnerAuth::Near`, so it is sent by an `Owner::Near` of
   `global`: the manifest's owner (on a council env, a DAO proposal), or the account that owned the contract when
-  `global` was registered, when its key is in `~/.near-credentials/testnet/` (the plan says which; neither is a
-  blocker).
-- **Re-runs:** an audience in a sink is reported as done (a sink registered before an owner transfer gets a warning);
-  an audience registered in any other scope (an OIDC owner, other clients or shared login) is a blocker: someone
-  claimed it, and only that scope's owners can remove it.
+  `global` was registered, when its key is in `~/.near-credentials/testnet/` (the plan says which; when neither can
+  send it, that is a blocker).
+- **Re-runs:** an audience in a sink is reported as done. A sink is a scope whose every owner is a known Hana owner
+  account: the manifest's `owner`, its council DAO, or one named with `--known-owner <a,b>` (e.g. the owner before
+  the council transfer, if the sink was registered then). An audience registered in any other scope (another owner,
+  an OIDC owner, other clients or shared login) is a blocker: someone claimed it, and only that scope's owners can
+  remove it.
 
 Setup on sandbox-dev (for the user, after the API with batch C6 is deployed; run from the main checkout):
 

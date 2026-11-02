@@ -202,7 +202,8 @@ describe('owner transfer to the council DAO', () => {
 
     // With the manifest updated, the env is clean; the DAO is the owner from now on.
     const daoOwned: Manifest = { ...base, owner: dao, ownerKind: 'sputnik' };
-    const after = await deploy([base.name, '--transfer-owner'], daoOwned);
+    // The console sink was registered by the owner before the transfer: a known Hana owner, named (D238).
+    const after = await deploy([base.name, '--transfer-owner', '--known-owner', base.owner], daoOwned);
     expect(after.code).toBe(0);
     expect(after.out).toContain(`The council DAO ${dao} owns ${base.signer}`);
     expect(after.out).toContain('Nothing to do.');
@@ -240,6 +241,7 @@ describe('a council-owned env', () => {
 
   it('without --approve-with: proposes the first owner step and stops until it is approved; a re-run reuses the proposal', async () => {
     v2(daoOwned);
+    chain.scopes.s8!.owners = [{ Near: { account_id: dao } }];
     chain.config = { ...chain.config, owner: dao, governance_delay_ms: 600_000 };
     chain.governance!.watchdogs = [];
     const r = await deploy([base.name, '--yes'], daoOwned);
@@ -283,6 +285,19 @@ describe('the console sink scope on an existing env (D238)', () => {
     const again = await deploy([base.name]);
     expect(again.out).toContain('Console sink scope "s9" holds');
     expect(again.out).toContain('Nothing to do.');
+  });
+
+  it('a quarantine longer than one run waits: nothing is removed from "global" (no unattended gap)', async () => {
+    v2();
+    const audiences = base.consoleAudiences.map(([p, a]) => [p, a] as [string, string]);
+    chain.globalScope = { id: 'global', owners: [{ Near: { account_id: base.owner } }], clients: [...base.googleClientIds.map((aud) => ['google', aud]), ...audiences], allow_shared: false };
+    chain.scopes = {};
+    chain.config = { ...chain.config, change_delay_ms: 86_400_000 };
+    const run = await deploy([base.name, '--yes']);
+    expect(run.code).toBe(1);
+    expect(run.out).toContain('Refusing to remove the console audiences');
+    expect(run.sent).toEqual([]);
+    expect((chain.globalScope as { clients: unknown[] }).clients).toHaveLength(base.googleClientIds.length + audiences.length);
   });
 
   it('a re-run inside the quarantine fails on chain and changes nothing; after it, the sink is registered', async () => {

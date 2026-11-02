@@ -118,6 +118,7 @@ deploy-contract <env> [--yes] [--relayer-keys 3] [--relayer-allowance 2]
                       [--owner-relayer-keys 1] [--owner-relayer-allowance 0.5]
                       [--upgrade] [--wasm <file>] [--skip-build]
                       [--transfer-owner] [--member <council member>] [--approve-with <council member>]
+                      [--known-owner <account,…>]
 deploy-contract <env> --creation-plan [--wasm <reproducible build>] [--updater-public-key <pk>] [--creation-public-key <pk>]
 ```
 

@@ -33,11 +33,12 @@ async function pinOfJwk(k: unknown): Promise<PinLine> {
 /** The pin of every public key in `text` (a JWK, a JWKS or a PEM). */
 export async function pinsOfText(text: string): Promise<PinLine[]> {
   const trimmed = text.trim();
+  // Anywhere in the file (openssl writes "Bag Attributes" and other text before the block): never parse a file that
+  // holds a private key, whatever else it holds.
   if (PRIVATE_PEM.test(trimmed)) throw new Error('This is a private key: pass the public key PEM only');
-  if (trimmed.startsWith('-----BEGIN')) {
-    const jwk = createPublicKey(trimmed).export({ format: 'jwk' });
-    return [await pinOfJwk(jwk)];
-  }
+  const pem = /-----BEGIN (RSA )?PUBLIC KEY-----[\s\S]*?-----END \1?PUBLIC KEY-----/u.exec(trimmed)?.[0];
+  if (pem) return [await pinOfJwk(createPublicKey(pem).export({ format: 'jwk' }))];
+  if (trimmed.includes('-----BEGIN')) throw new Error('No PUBLIC KEY block found (a certificate? export its public key first)');
   let v: unknown;
   try {
     v = JSON.parse(trimmed);

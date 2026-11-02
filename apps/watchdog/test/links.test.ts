@@ -2,7 +2,7 @@
 // parsing and policy verdicts. No network.
 import { describe, expect, it } from 'vitest';
 import type { EmailSnapshot } from '../src/chain.ts';
-import { FastNearLinkEvents, linkEventsOf, linkVolumeConfig, MAX_TXS, SETTLE_BLOCKS, TX_BATCH } from '../src/links.ts';
+import { FastNearLinkEvents, linkEventsOf, linkVolumeConfig, PAGE_TXS, SCAN_BUDGET_BYTES, SETTLE_BLOCKS, TX_BATCH } from '../src/links.ts';
 import { emailKeyVerdict, OVERLAP_SLACK_MS, parsePins, POLICY_OVERLAP_MS, policyFindings, policyId } from '../src/pins.ts';
 import { emailJwk, pinsOf } from './helpers.ts';
 
@@ -56,7 +56,8 @@ describe('linkEventsOf', () => {
 });
 
 type Call = { url: string; body: Record<string, unknown> | null };
-function indexer(o: { latest?: number; final?: number; txs?: { transaction_hash: string; tx_block_height: number; tx_block_timestamp: string }[]; tx?: (hash: string) => object; fail?: string; huge?: string }) {
+type Tx = { transaction_hash: string; tx_block_height: number; tx_block_timestamp: string };
+function indexer(o: { latest?: number; final?: number; txs?: Tx[]; tx?: (hash: string) => object; fail?: string; huge?: string; pad?: number }) {
   const calls: Call[] = [];
   const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -66,53 +67,70 @@ function indexer(o: { latest?: number; final?: number; txs?: { transaction_hash:
     if (o.fail === path) return new Response('down', { status: 503 });
     if (o.huge === path) return new Response(new ReadableStream({ pull: (c) => c.enqueue(new Uint8Array(1024 * 1024).fill(32)) }));
     if (path === '/status') return Response.json({ status: 'ok', latest_block_height: o.latest ?? 10_000, latest_tx_block_height: o.latest ?? 10_000, latest_block_timestamp: NS.toString() });
-    if (path === '/v0/account') return Response.json({ account_txs: o.txs ?? [], txs_count: (o.txs ?? []).length });
-    if (path === '/v0/transactions') return Response.json({ transactions: (body!.tx_hashes as string[]).map((h) => o.tx?.(h) ?? { receipts: [] }) });
+    if (path === '/v0/account') {
+      const lim = body!.limit as number;
+      return Response.json({ account_txs: (o.txs ?? []).filter((t) => !(t.tx_block_height < (body!.from_tx_block_height as number))).slice(0, lim), txs_count: (o.txs ?? []).length });
+    }
+    // `pad`: bytes per transaction, as a login's MPC receipts make it (~75 KB on testnet).
+    if (path === '/v0/transactions') return Response.json({ transactions: (body!.tx_hashes as string[]).map((h) => ({ ...(o.tx?.(h) ?? { receipts: [] }), ...(o.pad ? { pad: 'x'.repeat(o.pad) } : {}) })) });
     return new Response('?', { status: 404 });
   }) as typeof fetch;
   return { calls, src: new FastNearLinkEvents('https://tx.test.fastnear.com/', SIGNER, async () => o.final ?? 1_000_000, fetchFn) };
 }
 const now = Number(NS / 1_000_000n) + 2_000;
+const txsOf = (n: number, height: (i: number) => number, ts = NS.toString()): Tx[] => Array.from({ length: n }, (_, i) => ({ transaction_hash: id58('H', i), tx_block_height: height(i), tx_block_timestamp: ts }));
+const hashesFetched = (calls: Call[]) => calls.filter((c) => c.url.endsWith('/v0/transactions')).flatMap((c) => c.body!.tx_hashes as string[]);
 
 describe('FastNearLinkEvents', () => {
   it('starts at the head without reading transactions (no backfill)', async () => {
     const { calls, src } = indexer({});
-    expect(await src.scan(null, now)).toEqual({ events: [], scannedTo: 10_000 - SETTLE_BLOCKS, latestHeight: 10_000, behindMs: 2_000, truncated: false, stuck: false });
+    expect(await src.scan(null, now)).toEqual({ events: [], scannedTo: 10_000 - SETTLE_BLOCKS, latestHeight: 10_000, behindMs: 2_000, truncated: false, skipped: null });
     expect(calls.map((c) => c.url)).toEqual(['https://tx.test.fastnear.com/status']);
   });
 
-  it("reads the signer's transactions from the cursor to the settled head, in batches of 20", async () => {
-    const txs = Array.from({ length: 25 }, (_, i) => ({ transaction_hash: id58('H', i), tx_block_height: 9_000 + i, tx_block_timestamp: NS.toString() }));
+  it("reads the signer's transactions from the cursor to the settled head, in batches across blocks", async () => {
+    const txs = txsOf(25, (i) => 9_000 + i);
     const { calls, src } = indexer({ txs, tx: (h) => ({ receipts: h === id58('H', 3) ? [receipt({ logs: [ev('identity_linked', { scope_id: 's1', provider: 'google', auto: true })] })] : [] }) });
     const scan = await src.scan(9_000, now);
     expect(scan.events.map((e) => e.scope_id)).toEqual(['s1']);
-    expect(scan).toMatchObject({ scannedTo: 10_000 - SETTLE_BLOCKS, truncated: false });
-    expect(calls[1]).toEqual({ url: 'https://tx.test.fastnear.com/v0/account', body: { account_id: SIGNER, from_tx_block_height: 9_000, to_tx_block_height: 10_000 - SETTLE_BLOCKS, desc: false, limit: MAX_TXS } });
-    expect(calls.slice(2).map((c) => (c.body!.tx_hashes as string[]).length)).toEqual([TX_BATCH, 5]);
+    expect(scan).toMatchObject({ scannedTo: 10_000 - SETTLE_BLOCKS, truncated: false, skipped: null });
+    expect(calls[1]).toEqual({ url: 'https://tx.test.fastnear.com/v0/account', body: { account_id: SIGNER, from_tx_block_height: 9_000, to_tx_block_height: 10_000 - SETTLE_BLOCKS, desc: false, limit: PAGE_TXS } });
+    expect(calls.slice(2).map((c) => (c.body!.tx_hashes as string[]).length)).toEqual([TX_BATCH, TX_BATCH, TX_BATCH, TX_BATCH, TX_BATCH]);
   });
 
   it('a full page stops before its last block (re-read next run) and reports how far behind it is', async () => {
     const old = (NS - 2n * 3_600_000_000_000n).toString();
-    const txs = Array.from({ length: MAX_TXS }, (_, i) => ({ transaction_hash: id58('H', i), tx_block_height: 5_000 + Math.floor(i / 2), tx_block_timestamp: old }));
-    const { calls, src } = indexer({ txs });
+    const { calls, src } = indexer({ txs: txsOf(PAGE_TXS, (i) => 5_000 + Math.floor(i / 2), old) });
     const scan = await src.scan(5_000, now);
-    expect(scan.truncated).toBe(true);
-    expect(scan.scannedTo).toBe(5_000 + 49 - 1);
+    expect(scan).toMatchObject({ truncated: true, skipped: null, scannedTo: 5_000 + PAGE_TXS / 2 - 2 });
     expect(scan.behindMs).toBeGreaterThan(2 * 3_600_000);
     // The last block's two transactions aren't fetched: the next scan starts at that block.
-    const fetched = calls.slice(2).flatMap((c) => c.body!.tx_hashes as string[]);
-    expect(fetched).toHaveLength(MAX_TXS - 2);
-    expect(scan.stuck).toBe(false);
+    expect(hashesFetched(calls)).toHaveLength(PAGE_TXS - 2);
   });
 
-  it('a full page inside one block holds the cursor before that block and reports it stuck (padding hides no link, M2)', async () => {
-    const txs = Array.from({ length: MAX_TXS }, (_, i) => ({ transaction_hash: id58('H', i), tx_block_height: 7_000, tx_block_timestamp: NS.toString() }));
+  it('reads at most SCAN_BUDGET_BYTES of indexer answers per run and stops between blocks', async () => {
+    const pad = 75_000;
+    const { calls, src } = indexer({ txs: txsOf(40, (i) => 8_000 + i), pad });
+    const scan = await src.scan(8_000, now);
+    const read = Math.floor(SCAN_BUDGET_BYTES / pad);
+    // Whole batches that fit: the scan ends at the last block read and the rest waits for the next run.
+    expect(scan.truncated).toBe(true);
+    expect(scan.skipped).toBeNull();
+    expect(scan.scannedTo).toBe(8_000 + hashesFetched(calls).length - 1 - TX_BATCH);
+    expect(hashesFetched(calls).length).toBeLessThanOrEqual(read + TX_BATCH);
+    expect(calls.length).toBeLessThan(2 + 40 / TX_BATCH);
+  });
+
+  it('skips a first block no run can read whole, keeping what it read of it, so the scan moves on (M2)', async () => {
     const linked = ev('identity_linked', { scope_id: 's9', provider: 'email', auto: true });
-    const { src } = indexer({ txs, tx: (h) => ({ receipts: h === id58('H', 0) ? [receipt({ logs: [linked] })] : [] }) });
-    const scan = await src.scan(6_990, now);
-    expect(scan).toMatchObject({ stuck: true, truncated: true, scannedTo: 6_999 });
-    // What the page held is still read (deduplicated by id when the block is re-read next run).
+    // ≥ PAGE_TXS of the signer's transactions in one block: the page is all that block.
+    const big = indexer({ txs: txsOf(PAGE_TXS, () => 7_000), tx: (h) => ({ receipts: h === id58('H', 0) ? [receipt({ logs: [linked] })] : [] }) });
+    const scan = await big.src.scan(6_990, now);
+    expect(scan).toMatchObject({ skipped: 7_000, scannedTo: 7_000 });
     expect(scan.events.map((e) => e.scope_id)).toEqual(['s9']);
+    // A block over the byte budget (fewer transactions, but each huge) is skipped the same way.
+    const heavy = indexer({ txs: [...txsOf(30, () => 7_500), { transaction_hash: id58('Z'), tx_block_height: 7_501, tx_block_timestamp: NS.toString() }], pad: 75_000 });
+    expect(await heavy.src.scan(7_400, now)).toMatchObject({ skipped: 7_500, scannedTo: 7_500, truncated: true });
   });
 
   it("clamps the indexer's head to the RPC's final block", async () => {

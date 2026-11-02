@@ -2,7 +2,7 @@
 // unpinned email keys per signer (cancel, pause), no confirm for self-issued keys, the signer-policy diff, Hana's
 // email JWKS, the link-volume check, D139's unrecorded_wallets, and a v2 contract read as "no email issuer".
 import { describe, expect, it } from 'vitest';
-import { LINK_SCAN_BEHIND_MS, LINK_WINDOW_MS } from '../src/run.ts';
+import { LINK_SCAN_BEHIND_MS, LINK_WINDOW_MS, runWatchdog } from '../src/run.ts';
 import { alertsOf, emailJwk, HOUR, initialized, jwk, linkEvent, MIN, OWNER, pinsOf, SIGNER, T0, UPDATER_KEYS, world } from './helpers.ts';
 
 const severityOf = async (w: Awaited<ReturnType<typeof initialized>>, kind: string) => (await alertsOf(w.store, kind)).map((a) => a.severity);
@@ -525,7 +525,7 @@ describe('unrecorded_wallets (D139)', () => {
     const w = await initialized({ before: (x) => void (x.chain.unrecordedWallets = true) });
     const r = await w.run();
     expect(await alertsOf(w.store, 'unrecorded_wallets')).toEqual([]);
-    expect(checkOf(r, 'links')?.detail).toContain('dev env');
+    expect(checkOf(r, "governance_diff")?.detail).toContain('dev env');
   });
 });
 
@@ -579,12 +579,66 @@ describe('review hardening (H1, M1, M2, L1, L4, L8)', () => {
     expect(w.links.scans.length).toBe(scans + 1);
   });
 
-  it('a stuck link scan (one block over a page) warns truncated and keeps warning', async () => {
+  it('a block the scan had to skip pages critical and stays open for a week while the scan moves on (M2)', async () => {
     const hana = await emailJwk(201);
     const w = await initialized({ pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer([hana]) });
-    w.links.stuck = true;
+    w.links.skipped = 7_000;
     await w.run();
-    expect((await alertsOf(w.store, 'link_events_unavailable'))[0]).toMatchObject({ key: 'link_events_unavailable:truncated', severity: 'warning', details: { reason: 'truncated' } });
+    w.links.skipped = null;
+    const [a] = await alertsOf(w.store, 'link_block_unscanned');
+    expect(a).toMatchObject({ key: 'link_block_unscanned:7000', severity: 'critical', details: { block_height: 7_000 } });
+    expect(w.notifier.on('pager').some((x) => x.msg.kind === 'link_block_unscanned')).toBe(true);
+    // The scan moved on (the cursor isn't held), and the condition stays open on later runs.
+    const before = w.links.scans.length;
+    await w.run();
+    expect(w.links.scans.length).toBe(before + 1);
+    expect((await alertsOf(w.store, 'link_block_unscanned'))[0]?.resolved_at).toBeNull();
+    // After a week it resolves.
+    w.clock.t += 7 * 24 * HOUR;
+    await w.run();
+    expect((await alertsOf(w.store, 'link_block_unscanned'))[0]?.resolved_at).not.toBeNull();
+  });
+
+  it('records the run and releases the lock before the advisory phase: a hanging advisory read holds nothing (lock M1)', async () => {
+    const hana = await emailJwk(201);
+    const w = await initialized({ pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer([hana]) });
+    let release!: () => void;
+    let entered!: () => void;
+    const inAdvisory = new Promise<void>((r) => (entered = r));
+    w.deps.fetchEmailJwks = () => {
+      entered();
+      return new Promise<never>((_, reject) => (release = () => reject(new Error('timed out'))));
+    };
+    const running = runWatchdog(w.deps);
+    await inAdvisory;
+    // Mid-advisory: the run is recorded with every protective check, and the lock is free for the next cron run.
+    const last = await w.store.lastRun();
+    expect(last?.finished_at).not.toBeNull();
+    expect(last?.checks.find((c) => c.id === 'email_jwks')?.detail).toContain('advisory');
+    expect(await w.store.getMeta('run_lock')).toBeNull();
+    w.deps.fetchEmailJwks = async () => [hana];
+    const next = await runWatchdog(w.deps);
+    expect(next.outcome).not.toBe("error");
+
+    release();
+    const r = await running;
+    expect(r.outcome).toBe('ok');
+    expect((await w.store.lastRun())?.id).toBeGreaterThan(r.runId);
+    // The advisory outcome was written to its own run afterwards.
+    const rows = await w.store.runsSince(0);
+    expect(rows.find((x) => x.id === r.runId)?.checks.find((c) => c.id === 'email_jwks')?.outcome).toBe('error');
+  });
+
+  it('a throwing advisory phase leaves the run recorded and the lock released', async () => {
+    const hana = await emailJwk(201);
+    const w = await initialized({ pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer([hana]) });
+    w.store.updateRun = async () => {
+      throw new Error('D1 down');
+    };
+    const r = await w.run();
+    expect(r.outcome).toBe('ok');
+    expect(await w.store.getMeta('run_lock')).toBeNull();
+    expect((await w.store.lastRun())?.finished_at).not.toBeNull();
   });
 
   it('ignores and prunes link events dated in the future (L2)', async () => {

@@ -693,13 +693,13 @@ plan (D33; built on branch `feat/governance`, not deployed), specified in `docs/
   warning, and every overlap is reported. So a compromised owner DAO can't install its own email key, and an upgrade
   weakening the policy is paused on as it executes (it was already public and alerted for `governance_delay_ms`).
   Hana's published email JWKS is compared with the pins as a warning only (Hana controls it), and is read only after
-  every protective step, the alert delivery and the heartbeat, with its body capped: Hana's API can't stall the
-  watchdog's cancel or pause (D86). Every third-party answer the watchdog parses (RPC, both JWKS, the indexer) is
+  every protective step, the alert delivery, the heartbeat, the run record and the lock release, with its body
+  capped: Hana's API can't stall the watchdog's cancel or pause, or hold its lock (D86). Every third-party answer the watchdog parses (RPC, both JWKS, the indexer) is
   size-capped. The **use of Hana's real key** by a compromised issuer isn't bounded on chain at 1-of-1: the
   link-volume warning (D192, new links per scope and hour from `identity_link_*` events) is the watchdog's detection.
   Its events come from a third-party transactions indexer (FastNear), read last and guarded, which can hide or invent
-  events (a missed or a false warning) but can't make the watchdog act; a block padded past one scan page is alerted
-  (`truncated`), not skipped. A v2 contract reads as "no email issuer".
+  events (a missed or a false warning) but can't make the watchdog act; it reads at most 1 MB per run, and a block
+  padded past what one scan can read is counted as far as it goes, skipped, and paged (`link_block_unscanned`). A v2 contract reads as "no email issuer".
 - Monitoring (D83): every watchdog check, action and alert surfaces in the admin portal's "Security & monitoring"
   view (a standing rule for future checks); the watchdog sends its own alerts, so a compromised Hana Cloudflare
   account can't silence them.

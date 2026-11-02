@@ -384,7 +384,7 @@ export class StubLinkEvents implements LinkEventSource {
   fail = false;
   behindMs = 0;
   truncated = false;
-  stuck = false;
+  skipped: number | null = null;
   head = 1000;
   scans: (number | null)[] = [];
   async scan(fromHeight: number | null): Promise<LinkScan> {
@@ -392,7 +392,7 @@ export class StubLinkEvents implements LinkEventSource {
     if (this.fail) throw new Error('indexer down');
     this.head += 10;
     const events = fromHeight === null ? [] : this.queue.splice(0);
-    return { events, scannedTo: this.head, latestHeight: this.head + 60, behindMs: this.behindMs, truncated: this.truncated || this.stuck, stuck: this.stuck };
+    return { events, scannedTo: this.head, latestHeight: this.head + 60, behindMs: this.behindMs, truncated: this.truncated, skipped: this.skipped };
   }
 }
 

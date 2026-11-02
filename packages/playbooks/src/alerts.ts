@@ -917,14 +917,15 @@ const linkVolume: Playbook = {
   id: 'link-volume',
   title: 'Link volume high, or not monitored',
   kind: 'alert',
-  alertKinds: ['link_volume_high', 'link_events_unavailable'],
-  severity: 'warning',
+  alertKinds: ['link_volume_high', 'link_events_unavailable', 'link_block_unscanned'],
+  severity: 'critical',
   status: 'live',
   summary:
-    'More new links (`identity_linked`, `identity_link_proposed`) in the last hour than the threshold, in one scope or in all; or the watchdog cannot read link events (no indexer while email is on chain, the indexer failing, or the scan more than 1 h behind).',
+    'More new links (`identity_linked`, `identity_link_proposed`) in the last hour than the threshold, in one scope or in all; or the watchdog cannot read link events (no indexer while email is on chain, the indexer failing, the scan more than 1 h behind), or it had to skip a block too big to read (critical).',
   signals: [
     'Warning `link_volume_high` (`link_volume_high:scope:<scope>` or `:total`): the count, how many were automatic, the threshold (`watchdog.linkVolume`, default 20 per scope and 100 in all per hour).',
-    'Warning `link_events_unavailable` (`:not_configured`, `:failing`, `:behind`, `:truncated`: one block holds more of the signer\'s transactions than a scan page, so the scan holds before it and stays blind past it). `/status` `link_volume` has the last scan, the cursor and the last hour by scope and event.',
+    'Warning `link_events_unavailable` (`:not_configured`, `:failing`, `:behind`). `/status` `link_volume` has the last scan, the cursor, the skipped blocks (`unscanned`) and the last hour by scope and event.',
+    "Critical `link_block_unscanned:<height>`: a block held more of the signer's transactions than one scan reads whole (≥ 200, or more than the 1 MB per-run budget of indexer answers). The scan counted what it could of it and moved on; the alert stays open for a week.",
   ],
   impact: [
     "A burst of links is how a compromised email issuer would use the real key at 1-of-1 (docs/email-login-spec.md \"Trust statement\"): each link joins an identity it minted to someone's wallet. Pending links wait `change_delay_ms` and can be cancelled by their users; automatic ones are active at once.",
@@ -946,8 +947,15 @@ const linkVolume: Playbook = {
       title: 'Not monitored: restore the event source',
       who: 'a founder',
       detail:
-        '`not_configured`: set `watchdog.linkVolume.indexerUrl` (FastNear\'s transactions API, `https://tx.test.fastnear.com` on testnet), regenerate, redeploy. `failing`: check the indexer\'s `/status`; it is a third party, so pick another if it stays down. `behind`: more signer transactions than a run reads (100 per run): raise it in code or move the watchdog to the paid plan. `truncated`: someone filled a block with the signer\'s transactions (padding to hide links); the check stays blind past that block until the scan pages within a block (not built): watch links by hand meanwhile and treat it as hostile.',
+        '`not_configured`: set `watchdog.linkVolume.indexerUrl` (FastNear\'s transactions API, `https://tx.test.fastnear.com` on testnet), regenerate, redeploy. `failing`: check the indexer\'s `/status`; it is a third party, so pick another if it stays down. `behind`: more signer transactions than a run reads (a 1 MB budget of indexer answers, ~13 logins of ~75 KB each): raise `SCAN_BUDGET_BYTES` in `apps/watchdog/src/links.ts` on the paid plan, or replace the indexer with a contract view counting links.',
       commands: [c.watchdogGen, c.watchdogDeploy],
+    },
+    {
+      title: '`link_block_unscanned`: read the skipped block by hand',
+      who: 'a founder',
+      detail:
+        "Someone (or a real burst) filled one block with the signer's transactions; padding a block is how a link would be hidden from the scan. Open the block on an explorer (`details.block_height`; nearblocks lists its receipts) and look for `identity_linked` / `identity_link_proposed` logs from the signer; treat links you can't explain as in the burst step above. Acknowledge once read; the condition resolves after a week.",
+      commands: [c.watchdogStatus, c.watchdogAlerts],
     },
   ],
   verify: ['The next run resolves the alert (`/status` `link_volume.last_hour` under the thresholds, `failures` 0, `behind_ms` small).'],

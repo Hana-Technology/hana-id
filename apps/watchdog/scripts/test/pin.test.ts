@@ -20,6 +20,8 @@ describe('pin', () => {
     expect(await pinsOfText(pem)).toEqual([{ kid: null, thumbprint: RFC }]);
     const pkcs1 = createPublicKey({ key: jwk, format: 'jwk' }).export({ format: 'pem', type: 'pkcs1' }).toString();
     expect(await pinsOfText(pkcs1)).toEqual([{ kid: null, thumbprint: RFC }]);
+    // openssl's leading "Bag Attributes" (and any other text) around the block.
+    expect(await pinsOfText(`Bag Attributes\n    localKeyID: 01 02 03\nsubject=CN = hana\n${pem}\ntrailing text\n`)).toEqual([{ kid: null, thumbprint: RFC }]);
   });
 
   it('matches the Worker for a fresh key, and says when a JWKS kid is not the thumbprint', async () => {
@@ -37,6 +39,10 @@ describe('pin', () => {
   it('refuses private keys and anything that is not an RSA public key, printing no key material', async () => {
     const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
     await expect(pinsOfText(privateKey.export({ format: 'pem', type: 'pkcs8' }).toString())).rejects.toThrow(/private key/u);
+    // A private key anywhere in the file is refused, even next to a public one.
+    const pub = createPublicKey(privateKey).export({ format: 'pem', type: 'spki' }).toString();
+    await expect(pinsOfText(`Bag Attributes\n${pub}\n${privateKey.export({ format: 'pem', type: 'pkcs1' }).toString()}`)).rejects.toThrow(/private key/u);
+    await expect(pinsOfText('-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----')).rejects.toThrow(/No PUBLIC KEY block/u);
     await expect(pinsOfText(JSON.stringify(privateKey.export({ format: 'jwk' })))).rejects.toThrow(/private key/u);
     await expect(pinsOfText(JSON.stringify({ kty: 'EC', x: 'a', y: 'b' }))).rejects.toThrow(/RSA public JWK/u);
     await expect(pinsOfText('hello')).rejects.toThrow(/Not a JWK/u);

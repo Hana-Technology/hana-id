@@ -28,12 +28,17 @@ export class BodyTooLarge extends Error {
  * lying header can't get past the limit). The stream is cancelled at the limit.
  */
 export async function readCapped(res: Response, maxBytes: number): Promise<string> {
+  return (await readCappedSized(res, maxBytes)).text;
+}
+
+/** `readCapped`, with the number of bytes read (for a budget across calls). */
+export async function readCappedSized(res: Response, maxBytes: number): Promise<{ text: string; bytes: number }> {
   const declared = Number(res.headers.get('content-length') ?? '');
   if (Number.isFinite(declared) && declared > maxBytes) {
     await res.body?.cancel().catch(() => undefined);
     throw new BodyTooLarge(maxBytes);
   }
-  if (!res.body) return '';
+  if (!res.body) return { text: '', bytes: 0 };
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -53,7 +58,7 @@ export async function readCapped(res: Response, maxBytes: number): Promise<strin
     all.set(c, at);
     at += c.byteLength;
   }
-  return new TextDecoder().decode(all);
+  return { text: new TextDecoder().decode(all), bytes: total };
 }
 
 /** `readCapped` then `JSON.parse`. */

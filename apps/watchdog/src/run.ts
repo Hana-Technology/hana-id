@@ -49,6 +49,9 @@ export const LINK_EVENT_RETENTION_MS = 8 * 24 * 60 * 60_000;
 export const LINK_WINDOW_MS = 60 * 60_000;
 /** A link event dated more than this past the wall clock is bad indexer data: ignored and pruned. */
 export const LINK_FUTURE_SLACK_MS = 5 * 60_000;
+/** A skipped block's critical `link_block_unscanned` stays open this long. */
+export const UNSCANNED_KEPT_MS = 7 * 24 * 60 * 60_000;
+const MAX_UNSCANNED = 20;
 /** A link scan further behind the chain than this can't see a burst in time (warning). */
 export const LINK_SCAN_BEHIND_MS = 60 * 60_000;
 /** A run lock older than this is taken over (a run that died without releasing it). */
@@ -137,6 +140,8 @@ export const META = {
 export interface LinkScanState {
   /** Last block height scanned (null: the next scan starts at the chain's head). */
   cursor: number | null;
+  /** Blocks the scan skipped (too big to read whole), each kept a week with its critical condition. */
+  unscanned?: { height: number; at: number }[];
   failures: number;
   at: number | null;
   latest_height: number | null;
@@ -255,6 +260,7 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
   let outcome: RunReport['outcome'] = 'ok';
   let firstRun = false;
   let delivery: DeliveryReport | null = null;
+  let advisorySnap: ChainSnapshot | null = null;
   if (!(await store.acquireLock(runId, startedAt, LOCK_STALE_MS))) {
     // Another run is still going (a slow one overlaps the next cron tick): it does the work, and the heartbeat.
     const checks = CHECK_IDS.map((id) => ({ id, outcome: 'skipped' as const, detail: 'another run in progress' }));
@@ -341,7 +347,6 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
     const self: SelfChanges = { paused: false, deletedUpdaterKeys: [] };
     const settled = new Set<number>(); // change ids cancelled or confirmed by this run
     const deleted = new Set<string>(); // updater keys deleted (or found gone) by this run
-    let linksRead = true;
 
     // ---- watchdog role ----
     let canAct = false;
@@ -494,24 +499,9 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
     // ---- step 7: dead-man's switch ----
     await heartbeat(run);
 
-    // ---- advisory checks (warning only), after every protective step, the first delivery and the heartbeat ----
-    // Their third-party reads (Hana's email JWKS: Hana's API is a party the watchdog must survive, D86; the indexer)
-    // can't hold back a cancel, a pause, the snapshot, an alert or the heartbeat. Each runs guarded; what they raise
-    // goes out in a second delivery. A run that took protective actions skips the link scan (its subrequests).
-    if (snap) {
-      const s: ChainSnapshot = snap;
-      const raised = run.alerts.length;
-      await advisory(run, 'email_jwks', () => emailJwks(run, s));
-      if (run.actions.length) run.check('links', 'skipped', 'protective actions this run: the link scan waits for the next run');
-      else if (!(await advisory(run, 'links', async () => void (linksRead = await checkLinks(run, s))))) linksRead = false;
-      if (!linksRead && outcome === 'ok') outcome = 'degraded';
-      if (run.alerts.length > raised) {
-        const more = await deliverAlerts(store, d.notifier, d.now(), cfg.envName);
-        run.check('alert_delivery', more.failed ? 'error' : 'ok', `advisory: ${more.first} first, ${more.failed} failed`);
-      }
-    } else {
-      for (const id of ['email_jwks', 'links'] as const) run.check(id, 'skipped', 'no chain read');
-    }
+    // The advisory checks run after the run is recorded and the lock released (below).
+    advisorySnap = snap;
+    for (const id of ['email_jwks', 'links'] as const) run.check(id, 'skipped', snap ? 'advisory: runs after the run is recorded' : 'no chain read');
   } catch (err) {
     outcome = 'error';
     log({ event: 'run_failed', runId, code: err instanceof Error ? err.name : 'error' }, 'error');
@@ -539,6 +529,37 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
   }
   await store.releaseLock(runId).catch(() => log({ event: 'run_lock_release_failed', runId }, 'error'));
   log({ event: 'run', runId, outcome: outcome === 'error' ? 'error' : 'ok', code: outcome, checks: checks.length, actions: run.actions.length, alerts: run.alerts.length, latencyMs: d.now() - startedAt });
+
+  // ---- step 9: advisory checks (warning only), after the run is recorded and the lock released ----
+  // Their third-party reads (Hana's email JWKS: Hana's API is a party the watchdog must survive, D86; the indexer)
+  // can't hold back a cancel, a pause, the snapshot, an alert, the heartbeat, the run record or the lock: a CPU kill
+  // or a hang here costs only these checks. Each runs guarded, resolves only its own kinds, then updates the run's
+  // record; what they raise goes out in a second delivery. A run that took protective actions skips the link scan.
+  if (advisorySnap && outcome !== 'error') {
+    const s: ChainSnapshot = advisorySnap;
+    try {
+      run.evaluated.clear();
+      run.checks.delete('email_jwks');
+      run.checks.delete('links');
+      run.raisedKeys.clear();
+      const raised = run.alerts.length;
+      await advisory(run, 'email_jwks', () => emailJwks(run, s));
+      let linksRead = true;
+      if (run.actions.length) run.check('links', 'skipped', 'protective actions this run: the link scan waits for the next run');
+      else if (!(await advisory(run, 'links', async () => void (linksRead = await checkLinks(run, s))))) linksRead = false;
+      if (!linksRead && outcome === 'ok') outcome = 'degraded';
+      await store.resolveConditions(run.evaluated, run.raisedKeys, d.now());
+      if (run.alerts.length > raised) {
+        const more = await deliverAlerts(store, d.notifier, d.now(), cfg.envName);
+        run.check('alert_delivery', more.failed ? 'error' : 'ok', `advisory: ${more.first} first, ${more.failed} failed`);
+      }
+      const final = CHECK_IDS.map((id) => run.checks.get(id) ?? { id, outcome: 'skipped' as const });
+      await store.updateRun(runId, outcome, final);
+      return { runId, outcome, firstRun, checks: final, actions: run.actions, alerts: run.alerts, delivery };
+    } catch {
+      log({ event: 'advisory_phase_failed', runId }, 'error');
+    }
+  }
   return { runId, outcome, firstRun, checks, actions: run.actions, alerts: run.alerts, delivery };
 }
 
@@ -1019,7 +1040,7 @@ async function unrecordedWallets(run: Run, s: ChainSnapshot): Promise<void> {
   run.evaluate('unrecorded_wallets');
   if (s.config.unrecorded_wallets !== true) return;
   if (cfg.devEnv) {
-    run.check('links', 'ok', 'unrecorded_wallets is true (a dev env: allowed until accept_unrecorded_wallets)');
+    run.check('governance_diff', 'ok', 'unrecorded_wallets is true (a dev env: allowed until accept_unrecorded_wallets)');
     return;
   }
   await run.condition('unrecorded_wallets', 'unrecorded_wallets', `unrecorded_wallets is true on ${ident(cfg.envName)}, which is not a dev env: links are refused until the owner accepts, and mainnet must never show it`, {
@@ -1043,8 +1064,8 @@ async function checkLinks(run: Run, s: ChainSnapshot): Promise<boolean> {
   }
   if (!emailLive) {
     // No email identity can exist, so no link: nothing to read (and the next scan starts at the head).
-    run.evaluate('link_events_unavailable', 'link_volume_high');
-    await store.setMeta(META.linkScan, { ...state, cursor: null, failures: 0, last_hour: null } satisfies LinkScanState);
+    run.evaluate('link_events_unavailable', 'link_volume_high', 'link_block_unscanned');
+    await store.setMeta(META.linkScan, { ...state, cursor: null, failures: 0, unscanned: [], last_hour: null } satisfies LinkScanState);
     run.check('links', 'ok', 'no email issuer on chain: no link possible, nothing scanned');
     return true;
   }
@@ -1075,10 +1096,16 @@ async function checkLinks(run: Run, s: ChainSnapshot): Promise<boolean> {
   }
   run.evaluate('link_volume_high', 'link_events_unavailable');
   const t = cfg.linkVolume.thresholds;
-  if (scan.stuck) {
-    await run.condition('link_events_unavailable', 'link_events_unavailable:truncated', `One block holds more of the signer's transactions than a scan page (${scan.scannedTo + 1}): the scan holds before it and can't see past it`, {
-      reason: 'truncated',
-      block_height: scan.scannedTo + 1,
+  // Blocks skipped because no run could read them whole stay critical for a week (M2): the scan moves on, the gap
+  // stays visible. Read again by hand (`docs/playbooks.md` link-volume).
+  const unscanned = [...(state.unscanned ?? []), ...(scan.skipped !== null ? [{ height: scan.skipped, at: now }] : [])]
+    .filter((u, i, all) => now - u.at < UNSCANNED_KEPT_MS && all.findIndex((x) => x.height === u.height) === i)
+    .slice(-MAX_UNSCANNED);
+  run.evaluate('link_block_unscanned');
+  for (const u of unscanned) {
+    await run.condition('link_block_unscanned', `link_block_unscanned:${u.height}`, `Block ${u.height} holds more of the signer's transactions than a scan can read: its links were not counted (padding a block to hide links?)`, {
+      block_height: u.height,
+      skipped_at: u.at,
       latest_height: scan.latestHeight,
     });
   }
@@ -1099,6 +1126,7 @@ async function checkLinks(run: Run, s: ChainSnapshot): Promise<boolean> {
   await store.setMeta(META.linkScan, {
     cursor: scan.scannedTo,
     failures: 0,
+    unscanned,
     at: now,
     latest_height: scan.latestHeight,
     behind_ms: scan.behindMs,

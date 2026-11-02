@@ -164,6 +164,11 @@ export class Store {
     await this.db.prepare('UPDATE runs SET finished_at = ?2, outcome = ?3, first_run = ?4, checks = ?5 WHERE id = ?1').bind(id, at, outcome, firstRun ? 1 : 0, JSON.stringify(checks)).run();
   }
 
+  /** The advisory checks' outcome, written after the run was recorded and its lock released. */
+  async updateRun(id: number, outcome: 'ok' | 'degraded' | 'error', checks: CheckResult[]): Promise<void> {
+    await this.db.prepare('UPDATE runs SET outcome = ?2, checks = ?3 WHERE id = ?1').bind(id, outcome, JSON.stringify(checks)).run();
+  }
+
   async lastRun(): Promise<RunRow | null> {
     const row = await this.db.prepare('SELECT * FROM runs WHERE finished_at IS NOT NULL ORDER BY id DESC LIMIT 1').first<RawRun>();
     return row ? runRow(row) : null;

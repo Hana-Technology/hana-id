@@ -58,7 +58,7 @@ every run and sends nothing on a mismatch.
      higher `required` on chain, a normal overlap) → warning `signer_policy_transition`, no pause: pin a new signer's
      keys before its upgrade executes, raise the pinned `required` after.
    - `get_config().unrecorded_wallets` true on an env that isn't `local*` or `sandbox*` → critical condition
-     `unrecorded_wallets` (D139, D193; alert only; check `links`).
+     `unrecorded_wallets` (D139, D193; alert only; check `governance_diff`).
 6. **Active keys**: a kid this watchdog never saw in Google's JWKS, or whose on-chain material (`get_issuer_keys`)
    differs from Google's → `pause`, then `delete_updater_key` for every updater key (whoever proposed it: the change
    record is gone by then, and only the updater or the owner can post keys; D126), + critical alert. **The only
@@ -97,10 +97,12 @@ every run and sends nothing on a mismatch.
    and the run `degraded`, and resolves nothing. Thresholds: manifest `watchdog.relayerFunds` (below).
 10. **Alerts out** (`src/alerts.ts`), the daily digest (`src/digest.ts`), the **dead-man's switch** ping, and the run
    record (`runs`, each check's outcome).
-11. **Advisory checks** (warning only), after every protective step, the snapshot, the first delivery and the
-   heartbeat, each guarded (a throw marks its check `error`, resolves nothing and leaves the run `degraded`, never
-   `error`); what they raise goes out in a second delivery. Their reads are third-party (Hana's API is a party the
-   watchdog must survive, D86), so they can't hold back a cancel, a pause, an alert or the heartbeat.
+11. **Advisory checks** (warning only, except `link_block_unscanned`), **after the run is recorded and its lock
+   released**, so a CPU kill or a hang there costs only these checks: the next cron run starts on time and every
+   protective step already ran and was recorded. Each runs guarded (a throw marks its check `error`, resolves nothing
+   and leaves the run `degraded`, never `error`), resolves only its own kinds, then updates the run's record; what
+   they raise goes out in a second delivery. Their reads are third-party (Hana's API is a party the watchdog must
+   survive, D86).
    - Hana's JWKS (check `email_jwks`, only with pins and a URL): `EMAIL_JWKS_URL` (manifest `jwksUrl`, default
      `{apiUrl}/v1/email/jwks.json`), fetched with no cache; a published key not pinned (or kid ≠ thumbprint) or an
      active email key not published → warning `email_jwks_mismatch`; 3 failed fetches while an email key is active →
@@ -108,14 +110,18 @@ every run and sends nothing on a mismatch.
    - Link volume (`src/links.ts`, check `links`, D192): skipped in a run that took protective actions (subrequests).
      While an email issuer is on chain (links need one), the signer's transactions since the last scan are read from
      the transactions indexer (`LINK_INDEXER_URL`, manifest `watchdog.linkVolume.indexerUrl`: FastNear's `/status`,
-     `/v0/account` at most 100 per run, `/v0/transactions` 20 at a time, 60 blocks behind its head, which is clamped
-     to the RPC's final block) and every `EVENT_JSON` `identity_link_*` / `identity_linked` / `identity_unlinked`
+     `/v0/account` pages of 200, `/v0/transactions` 5 at a time across blocks, 60 blocks behind its head, which is
+     clamped to the RPC's final block; **1 MB of indexer answers per run in all**, ~13 logins of ~75 KB each, stopping
+     between blocks) and every `EVENT_JSON` `identity_link_*` / `identity_linked` / `identity_unlinked`
      event the signer emitted in a receipt that succeeded goes to D1 `link_events` (scope, provider, auto, block
      time; 8 days; deduplicated by receipt and log; at most 2 000 per scan; receipt ids must be NEAR ids; events dated
      in the future are dropped). New links (`identity_linked`, `identity_link_proposed`) in the last hour above
      `perScopePerHour` (default 20) in a scope, or `perHour` (100) in all → warning `link_volume_high`. No indexer
-     while email is on chain, 3 failed reads, a scan more than 1 h behind, or a full page that is all one block (the
-     cursor then holds before that block, never skipping its rest: `:truncated`) → warning `link_events_unavailable`.
+     while email is on chain, 3 failed reads, or a scan more than 1 h behind → warning `link_events_unavailable`. A
+     block the scan can't read whole even with a fresh run's budget (≥ 200 of the signer's transactions, or over 1 MB)
+     is counted as far as the budget goes and skipped, so the scan moves on, with a **critical**
+     `link_block_unscanned:<height>` kept open for a week (padding a block must neither stall detection nor pass
+     quietly).
      The first scan after the email issuer appears starts at the chain's head (no backfill: no link can precede its
      first key). The indexer can hide or invent events (a missed or false warning), never make the watchdog act.
 

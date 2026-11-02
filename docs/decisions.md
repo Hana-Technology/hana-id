@@ -2027,8 +2027,9 @@ address. All wait for the user's confirmation.
   - Fail closed (review L1, L4): on-chain material that can't be hashed is `bad_material` (never judged by its kid); a
     malformed `EMAIL_PINS` raises the critical `pins_invalid` (check `config`) and the email key alerts it causes carry
     reason `pins_unreadable`, so the page names the config rather than a forgery.
-  - Order (review H1): Hana's email JWKS is read after every protective step, the first alert delivery and the
-    heartbeat, guarded, with its body capped (64 KB); so are Google's JWKS, every RPC answer (4 MB) and the indexer.
+  - Order (review H1, re-review): Hana's email JWKS is read after every protective step, the first alert delivery,
+    the heartbeat, the run record and the lock release, guarded, with its body capped (64 KB); every body is capped:
+    Google's JWKS, every RPC answer (4 MB) and the indexer (1 MB per run in all).
     Hana's API is a party the watchdog must survive (D86): a huge or hostile body is a failed fetch.
   - `scripts/pin.ts` (`pnpm --filter @hana-id/watchdog pin <public key>`) prints a public key's pin with the same
     function the Worker uses, so batch 4's kid and the manifest's pin can't disagree.
@@ -2085,13 +2086,17 @@ address. All wait for the user's confirmation.
     3 failed reads, or when the scan is more than 1 h behind.
   - Detection only: the indexer can hide events (a missed warning) or invent some (a false warning), never make the
     watchdog act.
-  - Hardening (review M1, M2, L2, L8): the check runs after the snapshot is saved, the alerts delivered and the
-    heartbeat sent, guarded (a throw marks `links` `error`, resolves nothing, and leaves the run `degraded`); it is
-    skipped in a run that took protective actions (subrequests). Answers are size-capped, receipt ids must be NEAR ids,
-    at most 2 000 events per scan. The indexer's head is clamped to the RPC's final block, and events dated more than 5
-    min in the future are ignored and pruned. A full page that is all one block can't be finished: the cursor holds
-    before that block (never skipping its rest, so padding a block can't hide a link) and the run warns
-    `link_events_unavailable:truncated` until it clears. The schema refuses an indexer host naming another network.
+  - Hardening (review M1, M2, L2, L8 and the re-review): the check runs after the run is recorded and the lock
+    released (a CPU kill there can't hold the lock and skip the next run's protections), guarded (a throw marks
+    `links` `error`, resolves nothing, and leaves the run `degraded`); it is skipped in a run that took protective
+    actions (subrequests). The indexer answers of one scan share a 1 MB budget (a testnet login with its MPC
+    receipts is ~75 KB, so ~13 per run: a busy signer falls behind, which warns); each answer is also capped, receipt
+    ids must be NEAR ids, at most 2 000 events per scan. The indexer's head is clamped to the RPC's final block, and
+    events dated more than 5 min in the future are ignored and pruned. Pages hold 200 transactions; a block the scan
+    can't read whole even with a fresh budget (≥ 200 of the signer's transactions, or over 1 MB) is counted as far as
+    the budget goes and skipped, so the scan moves on, with a critical `link_block_unscanned:<height>` open for a week
+    (holding the cursor instead would stop detection for good). The schema refuses an indexer host naming another
+    network.
 - Why: the spec wants link bursts (the visible trace of a compromised issuer using the real key at 1-of-1) to alert;
   an indexer is the only source of events within the free plan's limits, and nothing on chain depends on it.
 - Rejected: a contract view counting links (a contract change, outside this batch); scanning blocks through the

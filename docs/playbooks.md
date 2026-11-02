@@ -42,7 +42,7 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [Email signer policy differs from the pins](#signer-policy-mismatch) | critical | `signer_policy_mismatch`, `signer_policy_transition` |
 | [unrecorded_wallets is set outside a dev env](#unrecorded-wallets) | critical | `unrecorded_wallets` |
 | [Hana's email JWKS differs from the pins](#email-jwks-mismatch) | warning | `email_jwks_mismatch` |
-| [Link volume high, or not monitored](#link-volume) | warning | `link_volume_high`, `link_events_unavailable` |
+| [Link volume high, or not monitored](#link-volume) | critical | `link_volume_high`, `link_events_unavailable`, `link_block_unscanned` |
 | [Pending email key change (info)](#self-issued-key-change) | info | `self_issued_key_change` |
 | [`KEYS_UPDATER_KEY` stolen (API secrets leaked)](#updater-key-stolen) | critical | — |
 | [A relayer key stolen (session pool or owner pool)](#relayer-key-stolen) | warning | — |
@@ -1091,14 +1091,15 @@ Hana's published email JWKS (`{apiUrl}/v1/email/jwks.json`) lists a key that isn
 
 ### Link volume high, or not monitored
 
-`link-volume` · warning · alert kinds: `link_volume_high`, `link_events_unavailable`
+`link-volume` · critical · alert kinds: `link_volume_high`, `link_events_unavailable`, `link_block_unscanned`
 
-More new links (`identity_linked`, `identity_link_proposed`) in the last hour than the threshold, in one scope or in all; or the watchdog cannot read link events (no indexer while email is on chain, the indexer failing, or the scan more than 1 h behind).
+More new links (`identity_linked`, `identity_link_proposed`) in the last hour than the threshold, in one scope or in all; or the watchdog cannot read link events (no indexer while email is on chain, the indexer failing, the scan more than 1 h behind), or it had to skip a block too big to read (critical).
 
 **Signals**
 
 - Warning `link_volume_high` (`link_volume_high:scope:<scope>` or `:total`): the count, how many were automatic, the threshold (`watchdog.linkVolume`, default 20 per scope and 100 in all per hour).
-- Warning `link_events_unavailable` (`:not_configured`, `:failing`, `:behind`, `:truncated`: one block holds more of the signer's transactions than a scan page, so the scan holds before it and stays blind past it). `/status` `link_volume` has the last scan, the cursor and the last hour by scope and event.
+- Warning `link_events_unavailable` (`:not_configured`, `:failing`, `:behind`). `/status` `link_volume` has the last scan, the cursor, the skipped blocks (`unscanned`) and the last hour by scope and event.
+- Critical `link_block_unscanned:<height>`: a block held more of the signer's transactions than one scan reads whole (≥ 200, or more than the 1 MB per-run budget of indexer answers). The scan counted what it could of it and moved on; the alert stays open for a week.
 
 **Impact**
 
@@ -1117,11 +1118,18 @@ More new links (`identity_linked`, `identity_link_proposed`) in the last hour th
 
 2. **Unexplained: treat the email issuer as compromised** (who: a founder). Follow [email-issuer-key-compromised](#email-issuer-key-compromised): remove the issuer key on chain (immediate), retire the sessions it opened, and tell the affected scopes so their users cancel pending links.
 
-3. **Not monitored: restore the event source** (who: a founder). `not_configured`: set `watchdog.linkVolume.indexerUrl` (FastNear's transactions API, `https://tx.test.fastnear.com` on testnet), regenerate, redeploy. `failing`: check the indexer's `/status`; it is a third party, so pick another if it stays down. `behind`: more signer transactions than a run reads (100 per run): raise it in code or move the watchdog to the paid plan. `truncated`: someone filled a block with the signer's transactions (padding to hide links); the check stays blind past that block until the scan pages within a block (not built): watch links by hand meanwhile and treat it as hostile.
+3. **Not monitored: restore the event source** (who: a founder). `not_configured`: set `watchdog.linkVolume.indexerUrl` (FastNear's transactions API, `https://tx.test.fastnear.com` on testnet), regenerate, redeploy. `failing`: check the indexer's `/status`; it is a third party, so pick another if it stays down. `behind`: more signer transactions than a run reads (a 1 MB budget of indexer answers, ~13 logins of ~75 KB each): raise `SCAN_BUDGET_BYTES` in `apps/watchdog/src/links.ts` on the paid plan, or replace the indexer with a contract view counting links.
 
    ```sh
    corepack pnpm --filter @hana-id/watchdog gen <env>
    corepack pnpm --dir apps/watchdog exec wrangler deploy
+   ```
+
+4. **`link_block_unscanned`: read the skipped block by hand** (who: a founder). Someone (or a real burst) filled one block with the signer's transactions; padding a block is how a link would be hidden from the scan. Open the block on an explorer (`details.block_height`; nearblocks lists its receipts) and look for `identity_linked` / `identity_link_proposed` logs from the signer; treat links you can't explain as in the burst step above. Acknowledge once read; the condition resolves after a week.
+
+   ```sh
+   curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" https://<workerName>.<subdomain>.workers.dev/status
+   curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" 'https://<workerName>.<subdomain>.workers.dev/alerts?severity=critical'
    ```
 
 **Verify**

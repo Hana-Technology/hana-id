@@ -5,11 +5,12 @@
 // succeeded. Detection only (D192): the indexer can hide events (a missed warning) or invent some (a false warning),
 // never make the watchdog act; nothing on chain depends on it.
 //
-// Per run (the free plan's 50 subrequests): the RPC's final block, one `/status`, one `/v0/account` page of at most
-// MAX_TXS transactions, and at most MAX_TXS / TX_BATCH `/v0/transactions` calls. A busier signer falls behind, which
-// the run alerts. Every answer is size-capped (http.ts), receipt ids and the events per scan are bounded, and the
-// indexer's head is clamped to the RPC's final block, so bad indexer data can only make the check fail.
-import { BODY_LIMITS, readJsonCapped } from './http.ts';
+// Per run: the RPC's final block, one `/status`, one `/v0/account` page of at most PAGE_TXS transactions, and
+// `/v0/transactions` batches of TX_BATCH, all within SCAN_BUDGET_BYTES of indexer answers (a login transaction with
+// its MPC receipts is ~75 KB). A busier signer falls behind, which the run alerts. Every answer is size-capped
+// (http.ts), receipt ids and the events per scan are bounded, and the indexer's head is clamped to the RPC's final
+// block, so bad indexer data can only make the check fail or skip a block, which pages.
+import { BODY_LIMITS, BodyTooLarge, readCappedSized } from './http.ts';
 import { log } from './log.ts';
 
 /** The contract's link events (`docs/contract-interface.md` "Events", standard `hana-id` 1.2.0). */
@@ -39,13 +40,14 @@ export interface LinkScan {
   latestHeight: number;
   /** How far the scan is behind the chain (ms of block time): large when the indexer or the scan lags. */
   behindMs: number;
-  /** More transactions than one run reads were waiting. */
+  /** More transactions than one run reads were waiting (a full page, or the byte budget ran out). */
   truncated: boolean;
   /**
-   * A full page held one block's transactions only: the scan can't finish that block in one page, so it holds the
-   * cursor before it (it is re-read every run) and the run alerts (`link_events_unavailable:truncated`, D192).
+   * A block this scan could not read whole even with a fresh run's budget (≥ PAGE_TXS of the signer's transactions,
+   * or more bytes than SCAN_BUDGET_BYTES): the scan moves past it, so padding one block can't stall detection, and
+   * the run keeps a critical `link_block_unscanned` condition open for it (D192). Null when none.
    */
-  stuck: boolean;
+  skipped: number | null;
 }
 
 export interface LinkEventSource {
@@ -76,10 +78,12 @@ export function linkVolumeConfig(raw: string | undefined): { thresholds: { perHo
   return { thresholds, problems };
 }
 
-/** Transactions read per run, at most. */
-export const MAX_TXS = 100;
-/** `/v0/transactions` takes at most 20 hashes. */
-export const TX_BATCH = 20;
+/** Transactions listed per `/v0/account` page (FastNear's maximum). */
+export const PAGE_TXS = 200;
+/** Hashes per `/v0/transactions` call (FastNear allows 20; 5 keeps one call ~375 KB, so the budget stops between calls). */
+export const TX_BATCH = 5;
+/** Bytes of indexer answers one scan may read in all (review: a run must not parse ~10 MB of JSON). */
+export const SCAN_BUDGET_BYTES = 1024 * 1024;
 /** Blocks left behind the indexer's head, so every receipt of a scanned transaction has executed and is indexed. */
 export const SETTLE_BLOCKS = 60;
 /** Events kept from one scan, at most (far above any threshold: more means the scan is flooded). */
@@ -161,7 +165,11 @@ export class FastNearLinkEvents implements LinkEventSource {
     private readonly fetchFn: typeof fetch = (...a) => fetch(...a),
   ) {}
 
-  private async request<T>(path: '/status' | '/v0/account' | '/v0/transactions', body?: unknown): Promise<T> {
+  /**
+   * One indexer call within the scan's byte budget. Over the path's own cap: an error. Over what is left of the budget
+   * (but within the cap): `BudgetOut`, so the scan stops between calls.
+   */
+  private async request<T>(path: '/status' | '/v0/account' | '/v0/transactions', budget: { left: number }, body?: unknown): Promise<T> {
     const url = `${this.baseUrl.replace(/\/+$/u, '')}${path}`;
     const res = await this.fetchFn(url, {
       method: body === undefined ? 'GET' : 'POST',
@@ -173,12 +181,22 @@ export class FastNearLinkEvents implements LinkEventSource {
       await res.body?.cancel().catch(() => undefined);
       throw new Error(`indexer ${path} HTTP ${res.status}`);
     }
-    const limit = path === '/status' ? BODY_LIMITS.indexerStatus : path === '/v0/account' ? BODY_LIMITS.indexerAccount : BODY_LIMITS.indexerTransactions;
-    return readJsonCapped<T>(res, limit);
+    const cap = path === '/status' ? BODY_LIMITS.indexerStatus : path === '/v0/account' ? BODY_LIMITS.indexerAccount : BODY_LIMITS.indexerTransactions;
+    const limit = Math.min(cap, budget.left);
+    let read: { text: string; bytes: number };
+    try {
+      read = await readCappedSized(res, limit);
+    } catch (err) {
+      if (err instanceof BodyTooLarge && limit < cap) throw new BudgetOut();
+      throw err;
+    }
+    budget.left -= read.bytes;
+    return JSON.parse(read.text) as T;
   }
 
   async scan(fromHeight: number | null, now: number): Promise<LinkScan> {
-    const status = await this.request<{ latest_tx_block_height?: unknown; latest_block_height?: unknown; latest_block_timestamp?: unknown }>('/status');
+    const budget = { left: SCAN_BUDGET_BYTES };
+    const status = await this.request<{ latest_tx_block_height?: unknown; latest_block_height?: unknown; latest_block_timestamp?: unknown }>('/status', budget);
     const latest = typeof status.latest_tx_block_height === 'number' ? status.latest_tx_block_height : status.latest_block_height;
     const latestAt = nsToMs(status.latest_block_timestamp);
     if (!Number.isSafeInteger(latest) || latestAt === null) throw new Error('indexer /status: unexpected shape');
@@ -187,35 +205,68 @@ export class FastNearLinkEvents implements LinkEventSource {
     // An indexer claiming a head past the chain's final block is clamped (L2): it can't push the cursor ahead.
     const upTo = Math.min(latest as number, final) - SETTLE_BLOCKS;
     const head = { latestHeight: latest as number, behindMs: Math.max(0, now - latestAt) };
-    if (fromHeight === null) return { events: [], scannedTo: upTo, truncated: false, stuck: false, ...head };
-    if (fromHeight > upTo) return { events: [], scannedTo: fromHeight - 1, truncated: false, stuck: false, ...head };
+    const none = { events: [], truncated: false, skipped: null, ...head };
+    if (fromHeight === null) return { ...none, scannedTo: upTo };
+    if (fromHeight > upTo) return { ...none, scannedTo: fromHeight - 1 };
 
-    const page = await this.request<{ account_txs?: unknown }>('/v0/account', { account_id: this.signer, from_tx_block_height: fromHeight, to_tx_block_height: upTo, desc: false, limit: MAX_TXS });
-    if (!Array.isArray(page.account_txs) || page.account_txs.length > MAX_TXS || !page.account_txs.every(validAccountTx)) throw new Error('indexer /v0/account: unexpected shape');
-    let txs = (page.account_txs as AccountTx[]).filter((t) => t.tx_block_height >= fromHeight && t.tx_block_height <= upTo).sort((a, b) => a.tx_block_height - b.tx_block_height);
-    const truncated = page.account_txs.length >= MAX_TXS;
-    let scannedTo = upTo;
-    let behindMs = head.behindMs;
-    let stuck = false;
-    if (truncated && txs.length) {
-      // The page may have cut a block's transactions short: re-read the last block next run (events dedupe by id).
-      // A page that is all one block can't be finished in one page: the cursor stays before it (never skipping the
-      // rest of the block: padding a block with transactions must not hide a link, M2) and the run alerts.
-      const last = txs[txs.length - 1]!;
-      stuck = txs.every((t) => t.tx_block_height === last.tx_block_height);
-      scannedTo = last.tx_block_height - 1;
-      if (!stuck) txs = txs.filter((t) => t.tx_block_height <= scannedTo);
-      const lastAt = nsToMs(last.tx_block_timestamp);
-      if (lastAt !== null) behindMs = Math.max(behindMs, now - lastAt);
+    const page = await this.request<{ account_txs?: unknown }>('/v0/account', budget, { account_id: this.signer, from_tx_block_height: fromHeight, to_tx_block_height: upTo, desc: false, limit: PAGE_TXS });
+    if (!Array.isArray(page.account_txs) || page.account_txs.length > PAGE_TXS || !page.account_txs.every(validAccountTx)) throw new Error('indexer /v0/account: unexpected shape');
+    const pageFull = page.account_txs.length >= PAGE_TXS;
+    const txs = (page.account_txs as AccountTx[]).filter((t) => t.tx_block_height >= fromHeight && t.tx_block_height <= upTo).sort((a, b) => a.tx_block_height - b.tx_block_height);
+    // Blocks in order, each with its transactions. A full page may cut its last block short: that block is read in a
+    // later scan, unless it is the page's only block (≥ PAGE_TXS transactions: it can never be read whole).
+    const blocks: { height: number; at: number | null; hashes: string[] }[] = [];
+    for (const t of txs) {
+      const b = blocks[blocks.length - 1];
+      if (b?.height === t.tx_block_height) {
+        if (!b.hashes.includes(t.transaction_hash)) b.hashes.push(t.transaction_hash);
+      } else blocks.push({ height: t.tx_block_height, at: nsToMs(t.tx_block_timestamp), hashes: [t.transaction_hash] });
     }
-    const hashes = [...new Set(txs.map((t) => t.transaction_hash))];
+    const cut = pageFull && blocks.length > 1 ? blocks.pop()! : null;
+    const oversized = pageFull && blocks.length === 1 ? blocks[0]!.height : null;
+
+    // Batches of TX_BATCH hashes across blocks, in block order, until the budget runs out; a block counts as read once
+    // its last transaction's batch came back.
+    const flat = blocks.flatMap((b, bi) => b.hashes.map((h) => ({ h, bi })));
     const events: LinkEvent[] = [];
-    for (let i = 0; i < hashes.length && events.length < MAX_EVENTS_PER_SCAN; i += TX_BATCH) {
-      const got = await this.request<{ transactions?: unknown }>('/v0/transactions', { tx_hashes: hashes.slice(i, i + TX_BATCH) });
+    let fetched = 0;
+    for (let j = 0; j < flat.length && events.length < MAX_EVENTS_PER_SCAN; j += TX_BATCH) {
+      let got: { transactions?: unknown };
+      try {
+        got = await this.request<{ transactions?: unknown }>('/v0/transactions', budget, { tx_hashes: flat.slice(j, j + TX_BATCH).map((x) => x.h) });
+      } catch (err) {
+        if (!(err instanceof BudgetOut)) throw err;
+        break;
+      }
       if (!Array.isArray(got.transactions) || got.transactions.length > TX_BATCH) throw new Error('indexer /v0/transactions: unexpected shape');
       for (const tx of got.transactions) if (tx && typeof tx === 'object') events.push(...linkEventsOf(tx as { receipts?: unknown }, this.signer).slice(0, MAX_EVENTS_PER_SCAN - events.length));
+      fetched = Math.min(flat.length, j + TX_BATCH);
     }
-    log({ event: 'link_scan', outcome: 'ok', code: stuck ? 'stuck' : truncated ? 'truncated' : 'complete' });
-    return { events, scannedTo, latestHeight: head.latestHeight, behindMs, truncated, stuck };
+    // Blocks read whole: those whose every transaction was fetched (an oversized block never is).
+    let whole = 0;
+    while (whole < blocks.length && blocks[whole]!.height !== oversized && flat.findLastIndex((x) => x.bi === whole) < fetched) whole++;
+    let scannedTo = cut ? cut.height - 1 : upTo;
+    let unread: { height: number; at: number | null } | null = cut;
+    let skipped: number | null = null;
+    if (whole < blocks.length) {
+      const block = blocks[whole]!;
+      if (whole === 0) {
+        // Not even a fresh run's budget reads this block whole (it is the scan's first): skip it, loudly, rather
+        // than stall for good (M2). What was fetched of it is still counted.
+        skipped = block.height;
+        scannedTo = block.height;
+        unread = blocks[1] ?? cut;
+      } else {
+        scannedTo = blocks[whole - 1]!.height;
+        unread = block;
+      }
+    }
+    const truncated = unread !== null;
+    const behindMs = unread?.at != null ? Math.max(head.behindMs, now - unread.at) : head.behindMs;
+    log({ event: 'link_scan', outcome: 'ok', code: skipped !== null ? 'skipped_block' : truncated ? 'truncated' : 'complete' });
+    return { events, scannedTo, latestHeight: head.latestHeight, behindMs, truncated, skipped };
   }
 }
+
+/** The scan's byte budget ran out between calls (not an error: the scan stops there). */
+class BudgetOut extends Error {}

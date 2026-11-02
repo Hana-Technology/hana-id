@@ -373,6 +373,11 @@ Branch `feat/email-login-5`, not deployed (no transactions sent).
   `pnpm --filter @hana-id/watchdog pin`; L8 an indexer of another network refused by the schema, and
   `pending_key_changes` stays ok when email was judged without Google's JWKS. D190–D192 amended; D191 states that it
   overrides spec line 867.
+- **Re-review fixes.** The run is recorded and its lock released before the advisory checks (Hana's JWKS, the link
+  scan), which then resolve only their own kinds and update the run's record (a CPU kill there can't skip the next
+  run); the indexer's answers share a 1 MB budget per run; pages of 200; a block no scan can read whole is skipped
+  with a critical `link_block_unscanned` open for a week instead of stalling the scan; `unrecorded_wallets` now
+  belongs to `governance_diff`; `pin` accepts a PEM with leading text (openssl "Bag Attributes").
 - **Left open.** The thresholds are guesses until sandbox-dev and staging traffic (D192). The link scan reads at most
   100 signer transactions per run (every login is one), so a busy signer falls behind (alerted) on the free plan's
   subrequest budget; a contract view counting links would remove the indexer. The admin portal's rendering of the new

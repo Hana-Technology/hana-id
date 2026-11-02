@@ -1,9 +1,10 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-02 for the hourly link counter (branch `feat/link-cap`, D200, in
-the email-login invariants) and the watchdog's email issuer rules, the link alarms and the `unrecorded_wallets` alert
-(branch `feat/email-login-5`, D190–D193, D200); 2026-10-30 for the watchdog's retired-key rule (branch
+known open issues. Last verified against code: 2026-11-02 for the token check's move to `packages/oidc` and its
+typed optional claims (branch `feat/batch-c-2`, D201, in "Verify before relay"), for the hourly link counter
+(branch `feat/link-cap`, D200, in the email-login invariants) and the watchdog's email issuer rules, the link alarms
+and the `unrecorded_wallets` alert (branch `feat/email-login-5`, D190–D193, D200); 2026-10-30 for the watchdog's retired-key rule (branch
 `fix/watchdog-retired-key-race`, D153), for the partner identity token (branch
 `feat/identity-token-2`: the review fixes D176–D179 in the identity rows, invariants and open issue (l); branch
 `feat/identity-token-1`: the partner-backend party, its compromise rows, the three identity secrets), for the relayer pool rows (branch `feat/playbook-gaps`: the watchdog's relayer funds
@@ -180,7 +181,10 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
 ### API (`apps/api`)
 
 - **Verify before relay.** Nothing reaches the chain unless the off-chain checks pass: RS256 + claims + recomputed
-  nonce (`/v1/sessions`, `/v1/login`), scope check (`checkClientScope`, `handlers.ts:384`), `session_key_in_use`,
+  nonce (`/v1/sessions`, `/v1/login`; `verifyIdToken` in `packages/oidc`, which also types `email`,
+  `email_verified`, `iat`, `hd`, `azp`, `amr` and `auth_time` when present and refuses a token carrying one with the
+  wrong type, D201; the API reads none of them and never logs, returns or stores them, D25, D96, checked by
+  `apps/api/test/session-flags.test.ts`), scope check (`checkClientScope`, `handlers.ts:384`), `session_key_in_use`,
   session signature, session-use precheck mirroring the contract's counter and `max_uses` rules (`session-use.ts:29`,
   D20), BLS key shape. The scope is always the app's D1 `scope_id`, never the client's.
 - **Replay precheck.** A cached session view never refuses on its own: it is re-read fresh first. A second request

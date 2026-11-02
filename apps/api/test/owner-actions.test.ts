@@ -22,7 +22,7 @@ import {
   ownerLimiterKey,
   scopeLimiterKey,
 } from '../src/handlers.ts';
-import { clearJwksCache } from '../src/jwks.ts';
+import { clearJwksCache } from '@hana-id/oidc';
 import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { GOVERNANCE_METHODS, UPDATER_METHODS, parseRelayerKeys } from '../src/relayer-config.ts';
 import { clearViewCaches, parsePendingShared } from '../src/views.ts';

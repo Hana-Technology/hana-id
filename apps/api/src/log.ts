@@ -45,3 +45,6 @@ export function log(fields: LogFields, level: 'info' | 'warn' | 'error' = 'info'
   else if (level === 'warn') console.warn(line);
   else console.log(line);
 }
+
+/** `onStaleKeys` for @hana-id/oidc verifyIdToken: an expired Google JWKS was served because its refetch failed. */
+export const logStaleJwks = (): void => log({ event: 'jwks_stale', code: 'issuer_keys_unavailable' }, 'warn');

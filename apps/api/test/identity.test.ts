@@ -523,7 +523,7 @@ describe('no Hana API accepts an identity token (400 bad_token)', () => {
   it('a token claiming the identity issuer is refused even without the identity typ', async () => {
     // An RS256 token from the test Google key, but with iss = the identity issuer.
     const forged = await google.sign({ iss: env.IDENTITY_ISS, aud: 'x', sub: '1', exp: Math.floor(Date.now() / 1000) + 60 });
-    const { verifyIdToken } = await import('../src/jwks.ts');
+    const { verifyIdToken } = await import('@hana-id/oidc');
     expect(await verifyIdToken(forged, Date.now(), { identityIssuer: env.IDENTITY_ISS })).toMatchObject({ ok: false, code: 'bad_token' });
     expect(await verifyIdToken(forged, Date.now())).toMatchObject({ ok: false, code: 'unsupported_issuer' });
     const real = await google.sign({ iss: GOOGLE_ISS, aud: 'x', sub: '1', exp: Math.floor(Date.now() / 1000) + 60 });

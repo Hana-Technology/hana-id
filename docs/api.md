@@ -1,6 +1,7 @@
 # API reference — every endpoint the `apps/api` Worker serves today
 
-Last verified against code: 2026-10-30 (branch `feat/identity-token-2`: the identity token's order of checks,
+Last verified against code: 2026-11-02 (branch `feat/batch-c-2`: the token check and the governance read's JWKS
+cache now in `@hana-id/oidc`, a wrongly typed optional claim is `invalid_token`, D201); 2026-10-30 (branch `feat/identity-token-2`: the identity token's order of checks,
 limits, marker, cross-app share check, share tombstones in the cron, the new binding and log event, D176–D178);
 2026-10-30 (branch `feat/identity-token-1`: "Identity token", its routes, limits,
 Durable Objects, D1 tables, cron job, bindings, log fields and the `bad_token` refusals); 2026-10-30 (branch
@@ -147,8 +148,8 @@ No auth, no limits, `access-control-allow-origin: *`. → `200 {"ok": true, "env
 
 No auth, no limits, `access-control-allow-origin: *`, `cache-control: public, max-age=10`. Read-only: it reads
 hana-signer's views (`get_config`, `get_governance`, `get_key_changes`, `get_issuer("google")`), the signer's
-`view_access_key_list`, Google's JWKS (the token-check cache, `jwks.ts`) and the JWKS cron's D1 tables, and sends no
-transaction. One snapshot per isolate serves every request for 10 s (concurrent misses share one read); `readAtMs`
+`view_access_key_list`, Google's JWKS (the token-check cache, `@hana-id/oidc` `publishedKeys`) and the JWKS
+cron's D1 tables, and sends no transaction. One snapshot per isolate serves every request for 10 s (concurrent misses share one read); `readAtMs`
 says when it was taken, so countdowns are the reader's (`executableAtMs − now`).
 
 This is the machine-readable source batch C's admin portal ("Security & monitoring", the pending-upgrades page;
@@ -259,7 +260,9 @@ Body (extra keys ignored, except `scopeId` / `scope_id`, which are refused):
 The scope is always the app's (D1). Checks after the gate and shape (`400 bad_request`):
 
 1. RS256 against Google's JWKS, `iss` → provider, `exp` + 60 s skew: `401 invalid_token`, `400 unsupported_issuer`,
-   `400 token_expired`, `503 issuer_keys_unavailable`. A valid signature's `kid` is recorded once per isolate after the
+   `400 token_expired`, `503 issuer_keys_unavailable` (`verifyIdToken`, `packages/oidc`). `email`, `email_verified`,
+   `iat`, `hd`, `azp`, `amr` and `auth_time` are not read, but one of the wrong JSON type (say a string
+   `email_verified`) is `401 invalid_token` (D201). A valid signature's `kid` is recorded once per isolate after the
    response (`issuer_key_observations.first_token_ms`, here and on `/v1/login`; the kid only, never the token).
 2. Only with `REJECT_PII_ON_SESSIONS = "1"`: claim allow-list (`iss azp aud sub iat exp nonce nbf jti auth_time`),
    else `400 token_has_pii` with `data: {claim}`.

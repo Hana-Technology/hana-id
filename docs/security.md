@@ -430,7 +430,7 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   (the API checks the token, D228, D229); the owner-grant cancel compares sha256(token) with the stored
   `cancel_token_hash` inside the write's guard: single use, refused once `owner_from` passed, a wrong token, an unknown
   or unannounced grant all `forbidden` alike. Both are limited per IP (10 a minute, IPv6 by /64) before the body is
-  read, with bodies capped at 4 KiB.
+  read, with bodies capped at 4 KiB (1 KiB when chunked), counted as a stream and cut off at the cap, never buffered whole.
 - **Invites fail closed** (D240, D241): created with no token hash, so no link works until the admin Worker's ack
   (`system` actor only) after every notice send was accepted; an owner invite to an existing org also needs its
   grant's notice (with the cancel link) acked before acceptance. The console never holds `INVITE_LINK_KEY` or

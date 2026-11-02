@@ -34,12 +34,53 @@ export function errorResponse(code: ErrorCode, message?: string, headers: Record
 /** The biggest JSON body any session-less route takes (a link confirm is ~100 bytes). */
 export const MAX_JSON_BODY = 4096;
 
-/** The request's JSON body, at most `max` bytes, or an error code. CSRF has already required `application/json`. */
+/** The cap for a body sent without a Content-Length (chunked): stricter, since nothing was declared up front. */
+export const MAX_UNDECLARED_BODY = 1024;
+
+/**
+ * The request's body bytes, read as a stream and counted as they arrive: the read stops (and the stream is cancelled)
+ * as soon as the count passes the cap, so an oversized body is never buffered whole. A malformed `Content-Length` is
+ * `bad_request`; one over `max` is refused before reading, and a body longer than it declared is refused at the
+ * declared length. A body with none (chunked) gets the stricter `MAX_UNDECLARED_BODY`.
+ */
+export async function readBodyCapped(request: Request, max = MAX_JSON_BODY): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; code: ErrorCode }> {
+  const header = request.headers.get('content-length');
+  let cap: number;
+  if (header === null) cap = Math.min(max, MAX_UNDECLARED_BODY);
+  else {
+    if (!/^\d{1,15}$/u.test(header.trim())) return { ok: false, code: 'bad_request' };
+    const declared = Number(header.trim());
+    if (declared > max) return { ok: false, code: 'payload_too_large' };
+    cap = declared;
+  }
+  if (!request.body) return { ok: true, bytes: new Uint8Array(0) };
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > cap) {
+      await reader.cancel().catch(() => {});
+      return { ok: false, code: 'payload_too_large' };
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) {
+    bytes.set(c, at);
+    at += c.byteLength;
+  }
+  return { ok: true, bytes };
+}
+
+/** The request's JSON body, at most `max` bytes (readBodyCapped), or an error code. CSRF has already required JSON. */
 export async function readJson(request: Request, max = MAX_JSON_BODY): Promise<{ ok: true; value: unknown } | { ok: false; code: ErrorCode }> {
-  const declared = Number(request.headers.get('content-length') ?? '0');
-  if (declared > max) return { ok: false, code: 'payload_too_large' };
-  const buf = await request.arrayBuffer();
-  if (buf.byteLength > max) return { ok: false, code: 'payload_too_large' };
+  const body = await readBodyCapped(request, max);
+  if (!body.ok) return body;
+  const buf = body.bytes;
   try {
     return { ok: true, value: JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(buf)) as unknown };
   } catch {

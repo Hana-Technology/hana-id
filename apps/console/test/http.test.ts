@@ -1,6 +1,7 @@
 // The console Worker's fetch (docs/batch-c-spec.md "Static assets", "Response headers", "Sessions" CSRF): host
 // dispatch, the security headers on every response (assets included, since the Worker runs first), the CSRF checks on
 // every non-GET request, the session-less routes only, and the per-IP limit of the link routes.
+import { exports } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 import { consoleCsp } from '../src/headers.ts';
 import { CSRF, ORIGIN, post, request } from './helpers.ts';
@@ -154,5 +155,39 @@ describe('the link routes’ per-IP limit (10 a minute)', () => {
   it('refuses an oversized body', async () => {
     const res = await post('/api/owner-grants/cancel', { grantId: 'og_x', token: 'A'.repeat(43), pad: 'x'.repeat(5000) });
     expect(res.status).toBe(413);
+  });
+
+  /** A chunked body (no Content-Length) of `chunks` pieces of `size` bytes, counting the pieces pulled from it. */
+  function chunked(chunks: number, size: number) {
+    const pulled = { n: 0 };
+    const piece = new TextEncoder().encode('x'.repeat(size));
+    const stream = new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (pulled.n >= chunks) return c.close();
+        pulled.n++;
+        c.enqueue(piece);
+      },
+    });
+    return { stream, pulled };
+  }
+
+  const sendStream = (body: ReadableStream<Uint8Array>) =>
+    (exports as unknown as { default: Fetcher }).default.fetch(
+      new Request(`${ORIGIN}/api/owner-grants/cancel`, { method: 'POST', headers: { ...CSRF, 'cf-connecting-ip': `10.9.${Math.floor(Math.random() * 250)}.1` }, body, duplex: 'half' } as RequestInit),
+    );
+
+  it('reads a chunked over-cap body as a stream and stops at the cap (413) without reading it all', async () => {
+    const { stream, pulled } = chunked(10_000, 1024);
+    const res = await sendStream(stream);
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({ error: { code: 'payload_too_large' } });
+    expect(pulled.n).toBeLessThan(10_000);
+  });
+
+  it('gives a chunked body the stricter undeclared cap (1 KiB); a small one reaches its route', async () => {
+    expect((await sendStream(chunked(2, 700).stream)).status).toBe(413);
+    const small = new TextEncoder().encode(JSON.stringify({ grantId: 'og_x', token: 'A'.repeat(43) }));
+    const ok = await sendStream(new ReadableStream<Uint8Array>({ start: (c) => (c.enqueue(small), c.close()) }));
+    expect(ok.status).toBe(403);
   });
 });

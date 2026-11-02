@@ -1083,7 +1083,7 @@ are `{error: {code, message}}` with the RpcCode → HTTP map of console-core (`R
 | `POST /api/cancel` | `{changeId: "gc_…", token: <b64url of 32 bytes>}` → the cancelled `GuardedChange` | The guarded change's emailed link (`/cancel/:changeId#t=…` posts it). Calls `ConsoleRpc.cancelChangeByLink` (`link` actor, the request's `cf-ray` as request id, `cf-connecting-ip`); its answer's code maps to the status (`403 forbidden` for a wrong token, `409 not_pending` once cancelled or in force). Audited (`change.link_cancel`) for a cancel or a refusal of a real link only |
 | `POST /api/owner-grants/cancel` | `{grantId: "og_…", token: <b64url of 32 bytes>}` → `{}` | An owner grant's emailed link (`/cancel-owner/:grantId#t=…`). sha256(token) must equal the grant's `cancel_token_hash`; single use; `409 not_pending` once cancelled, applied or past `owner_from`; `403 forbidden` for a wrong token or an unknown or unannounced grant |
 
-Both: `400 bad_request` for any other body shape (strict), `413` over 4 KiB, `429 rate_limited` (`retry-after: 60`) past
+Both: `400 bad_request` for any other body shape (strict), `413` over 4 KiB (1 KiB without a `Content-Length`; the body is read as a stream and cut off at the cap), `429 rate_limited` (`retry-after: 60`) past
 10 requests a minute per IP (IPv6 by /64; the `CONSOLE_IP_LIMIT` rate-limiting binding, namespace `95101`, key
 `<env>:console-link:<ip subject>`), checked before the body is read.
 

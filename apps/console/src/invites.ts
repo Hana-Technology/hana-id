@@ -16,7 +16,7 @@ import { type InviteView, LEGACY_ORG_ID, type MemberNotice, type OwnerGrantView,
 import { type Writer, auditInsert, entry, replayOf } from './audit.ts';
 import { PASSKEYS_SHIPPED } from './config.ts';
 import { refuse } from './errors.ts';
-import { applied, frag, gate, gated, lit, orgHasOwner, ownerNow, runBatch } from './sql.ts';
+import { applied, frag, gate, gated, isReplay, lit, orgHasOwner, ownerNow, runBatch } from './sql.ts';
 import { GRANT_COLUMNS, type GrantRow, INVITE_COLUMNS, type InviteRow, grantView, inviteView } from './views.ts';
 
 /** An invite is open while unaccepted, unrevoked and unexpired. */
@@ -306,7 +306,7 @@ export type AcceptanceOutcome =
 /**
  * Accepts an invite in one D1 batch (docs/batch-c-spec.md "Membership rules at sign-in"): every id is resolved from
  * (provider, sub) inside it, so an existing user row is reused and a new one is created only when none exists; D1 runs
- * the batch as one serialised transaction. Its first statement is the `invite.accepted` audit row, inserted only while
+ * the batch as one serialised transaction. After a replay probe, its first statement is the `invite.accepted` audit row, inserted only while
  * the invite is acceptable (V below): the commit row the other statements are gated on (sql.ts), so a concurrent second
  * acceptance, even by the same person in the same millisecond, inserts nothing. A refused acceptance writes no user,
  * org, member, grant or audit row and leaves the invite unconsumed. The caller (C9) has already checked the token's
@@ -333,6 +333,16 @@ export async function acceptInvite(db: D1Database, a: Acceptance, delayMs: () =>
   const g = gate(a.requestId, 'invite.accepted');
   const hasOwner = orgHasOwner('og2.org_id', t);
   const stmts = [
+    // Replay probe (fails closed): if this request id already committed an acceptance, insert a second row with it, which
+    // violates `audit_log_request_action` and aborts the whole batch. Without it, the gate below would find the earlier
+    // row and let the later statements run for whatever token this call presents.
+    db
+      .prepare(
+        `INSERT INTO audit_log (at, actor_kind, actor_id, action, details_json, request_id, outcome)
+         SELECT ?, 'system', 'replay-probe', 'invite.accepted', '{}', ?, 'failed'
+          WHERE EXISTS (SELECT 1 FROM audit_log WHERE request_id = ? AND action = 'invite.accepted')`,
+      )
+      .bind(t, a.requestId, a.requestId),
     db
       .prepare(
         `INSERT INTO audit_log (at, actor_kind, actor_id, actor_email, actor_sub, org_id, action, target, details_json, request_id, ip_prefix, country, outcome)
@@ -347,8 +357,10 @@ export async function acceptInvite(db: D1Database, a: Acceptance, delayMs: () =>
       .bind(newUserId, a.provider, a.sub, a.email, t, ...g.binds),
     gated(
       db,
-      'UPDATE invites SET accepted_at = ?, accepted_by_sub = ?, accepted_user_id = (SELECT id FROM console_users WHERE provider = ? AND sub = ?) WHERE token_hash = ? AND accepted_at IS NULL',
-      [t, a.sub, a.provider, a.sub, a.tokenHash],
+      // The open-invite conditions again (defence in depth: the commit row already required them in this transaction).
+      `UPDATE invites SET accepted_at = ?, accepted_by_sub = ?, accepted_user_id = (SELECT id FROM console_users WHERE provider = ? AND sub = ?)
+        WHERE token_hash = ? AND email_norm = ? AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ${lit(t)}`,
+      [t, a.sub, a.provider, a.sub, a.tokenHash, a.email],
       g,
     ),
     gated(db, 'INSERT INTO orgs (id, name, kind, created_at) SELECT ?, new_org_name, new_org_kind, ? FROM invites WHERE token_hash = ? AND new_org_name IS NOT NULL', [newOrgId, t, a.tokenHash], g),
@@ -374,8 +386,16 @@ export async function acceptInvite(db: D1Database, a: Acceptance, delayMs: () =>
       g,
     ),
   ];
-  const results = await db.batch(stmts);
-  if (applied(results)) {
+  let results: D1Result[];
+  try {
+    results = await db.batch(stmts);
+  } catch (err) {
+    // A reused request id: the probe aborted the batch, nothing was written.
+    if (isReplay(err)) return { ok: false, code: 'invite_invalid' };
+    throw err;
+  }
+  // results[0] is the replay probe; results[1] the commit row.
+  if (applied(results.slice(1))) {
     const row = (await db.prepare('SELECT org_id, accepted_user_id FROM invites WHERE token_hash = ?').bind(a.tokenHash).first<{ org_id: string | null; accepted_user_id: string }>())!;
     const orgId = row.org_id ?? newOrgId;
     const m = (await db.prepare('SELECT role FROM members WHERE org_id = ? AND user_id = ?').bind(orgId, row.accepted_user_id).first<{ role: Role }>())!;

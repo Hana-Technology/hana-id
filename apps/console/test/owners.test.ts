@@ -24,8 +24,8 @@ async function announcedOwnerInvite(org: string, email: string) {
   return { inviteId: r.invite.id, invite, cancel, grantId };
 }
 
-const accept = (tokenHash: Uint8Array, u: { email: string; sub: string }, o: { hd?: string | null; now?: number } = {}): Promise<AcceptanceOutcome> =>
-  acceptInvite(db, { tokenHash, email: u.email, provider: 'google', sub: u.sub, hd: o.hd ?? null, requestId: `req_${Math.random().toString(36).slice(2)}`, now: o.now ?? Date.now(), ipPrefix: ipPrefix('203.0.113.9'), country: 'AU' }, delay);
+const accept = (tokenHash: Uint8Array, u: { email: string; sub: string }, o: { hd?: string | null; now?: number; requestId?: string } = {}): Promise<AcceptanceOutcome> =>
+  acceptInvite(db, { tokenHash, email: u.email, provider: 'google', sub: u.sub, hd: o.hd ?? null, requestId: o.requestId ?? `req_${Math.random().toString(36).slice(2)}`, now: o.now ?? Date.now(), ipPrefix: ipPrefix('203.0.113.9'), country: 'AU' }, delay);
 
 const person = () => ({ email: `${Math.random().toString(36).slice(2)}@partner.example`, sub: `g-${Math.random().toString(36).slice(2)}` });
 
@@ -311,5 +311,58 @@ describe('acceptance (one batch; the data path of C9)', () => {
     expect((await staffRpc().setMember({ ...hana(), orgId: org, userId: u.id, role: null })).ok).toBe(true);
     const { pair } = await announcedInvite(org, u.email);
     expect(await accept(pair.hash, u)).toMatchObject({ ok: true, userId: u.id, role: 'viewer' });
+  });
+});
+
+describe('acceptance fails closed (scan findings)', () => {
+  async function announced(email: string) {
+    const org = await seedOrg();
+    const r = await staffRpc().issueInvite({ ...hana(), email, role: 'viewer', orgId: org });
+    if (!r.ok) throw new Error(r.code);
+    const pair = await linkPair();
+    expect((await staffRpc().ackMemberNotice({ ...system(), inviteId: r.invite.id, tokenHash: pair.hashB64 })).ok).toBe(true);
+    return { org, id: r.invite.id, pair };
+  }
+  const userCount = (sub: string) => db.prepare('SELECT COUNT(*) AS n FROM console_users WHERE sub = ?').bind(sub).first<number>('n');
+  const acceptedAt = (id: string) => db.prepare('SELECT accepted_at FROM invites WHERE id = ?').bind(id).first('accepted_at');
+
+  it('a reused request id aborts the batch: another valid invite, a revoked one, an unknown token, the same one again', async () => {
+    const requestId = `req_replay_${Math.random().toString(36).slice(2)}`;
+    const p1 = person();
+    const a = await announced(p1.email);
+    expect(await accept(a.pair.hash, p1, { requestId })).toMatchObject({ ok: true });
+    // Another person's valid invite under the same request id.
+    const p2 = person();
+    const b = await announced(p2.email);
+    expect(await accept(b.pair.hash, p2, { requestId })).toEqual({ ok: false, code: 'invite_invalid' });
+    expect(await acceptedAt(b.id)).toBeNull();
+    expect(await userCount(p2.sub)).toBe(0);
+    // A revoked invite under it: without the probe, the gate found the earlier commit row and the later statements ran.
+    const p3 = person();
+    const c = await announced(p3.email);
+    expect((await staffRpc().revokeInvite({ ...hana(), inviteId: c.id })).ok).toBe(true);
+    expect(await accept(c.pair.hash, p3, { requestId })).toEqual({ ok: false, code: 'invite_invalid' });
+    expect(await acceptedAt(c.id)).toBeNull();
+    expect(await userCount(p3.sub)).toBe(0);
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM members WHERE org_id IN (?, ?)').bind(b.org, c.org).first('n')).toBe(0);
+    // A token matching no invite: no stray user row either.
+    const p4 = person();
+    expect(await accept((await linkPair()).hash, p4, { requestId })).toEqual({ ok: false, code: 'invite_invalid' });
+    expect(await userCount(p4.sub)).toBe(0);
+    // The same acceptance replayed: still one audit row for the request.
+    expect(await accept(a.pair.hash, p1, { requestId })).toEqual({ ok: false, code: 'invite_invalid' });
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE request_id = ? AND action = 'invite.accepted'").bind(requestId).first('n')).toBe(1);
+  });
+
+  it('an invite revoked between its notice and the acceptance is refused and writes nothing', async () => {
+    const p = person();
+    const { id, pair, org } = await announced(p.email);
+    expect((await staffRpc().revokeInvite({ ...hana(), inviteId: id })).ok).toBe(true);
+    const before = await counts();
+    expect(await accept(pair.hash, p)).toEqual({ ok: false, code: 'invite_invalid' });
+    expect(await acceptedAt(id)).toBeNull();
+    expect(await userCount(p.sub)).toBe(0);
+    expect(await counts()).toEqual(before);
+    expect(await auditRows("action = 'invite.accepted' AND org_id = ?", org)).toEqual([]);
   });
 });

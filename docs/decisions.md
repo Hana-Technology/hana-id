@@ -1771,7 +1771,7 @@ detail open or two of its lines pull apart. Each follows the spec's intent; all 
     the invitee) and the grant's (with its cancel link, carrying the invite). Acceptance needs both acked, so the
     owners and contacts hold the cancel link before the 24 h can start.
   - Acceptance writes its `invite.accepted` audit row first and gates every other statement on it (D243), so two
-    concurrent acceptances, even by one person in the same millisecond, give one member and one audit row.
+    concurrent acceptances, even by one person in the same millisecond, give one member and one audit row. A probe statement before it aborts the batch when the request id already committed an acceptance (a reused id never runs the gated statements for another token), and the invite update re-checks the open-invite conditions.
 - Why: deciding at issue would be wrong whenever the org's owners change between issue and acceptance (up to 7
   days); acceptance runs in one serialised batch, so the decision there is exact. Accepting before the grant's notice
   would start a wait nobody can cancel by link.

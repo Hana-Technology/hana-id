@@ -1,0 +1,17 @@
+{
+  "name": "@hana-id/email",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Email login identity rules: address normalization, the frozen e1. sub derivation, the Google-hosted rule and the pinned disposable-domain list. Runs in Workers and browsers (Web Crypto only).",
+  "type": "module",
+  "sideEffects": false,
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "gen-vectors": "node scripts/gen-vectors.mjs",
+    "update-disposable": "node scripts/update-disposable-domains.mjs"
+  },
+  "dependencies": { "tr46": "7.0.0" },
+  "devDependencies": { "@types/node": "22.20.5", "esbuild": "0.28.2", "typescript": "5.9.3", "vitest": "4.1.12" }
+}

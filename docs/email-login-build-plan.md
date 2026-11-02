@@ -291,3 +291,28 @@ listed under "Batch 1 result"; the one choice in them that is yours to revisit i
     plain payload, which a crafted `pk2` could collide with (D133); the vault (batch 8) and the API precheck (batch 6)
     sign and check exactly this. The pre-v3 wallet guard (D135) means sandbox-dev's v3 upgrade needs one more owner
     (council) call, `accept_unrecorded_wallets`, before any link works there.
+
+## Batch 3 result
+
+Branch `feat/email-login-3`, not merged, nothing deployed; nothing imports the package yet (the issuer, batch 4, will).
+
+- **Code.** `packages/email` (`@hana-id/email`): `normalizeEmail` / `normalizeDomain` / `isNormalizedEmail`,
+  `emailSub` / `importSubKey` / `subMessage` / `isEmailSub` (`K_sub` always an input), `isGoogleHosted`,
+  `isDisposableDomain` / `disposableDomains`, the frozen `EMAIL_V1` constants. Web Crypto only: a test bundles it
+  for the browser with esbuild and runs the vectors in a bare V8 context (no `require`, `process`, `Buffer`).
+- **IDNA.** `tr46` 7.0.0 (UTS #46 revision 36, Unicode 18.0.0), pinned exactly, every check on, non-transitional;
+  the platform `URL` parser was rejected for its unpinned Unicode version and looser flags (package README, D156).
+- **Disposable list.** `disposable-email-domains/disposable-email-domains` at `e4f0910adf5a` (2026-10-23), 9927
+  domains, vendored byte for byte with its sha256 checked; parents match (D157); `gmail.com`, `googlemail.com`,
+  `google.com` guarded off it (test and update script).
+- **Vectors.** `vectors/email-v1.json` from `scripts/gen-vectors.mjs`, an independent implementation (Node's
+  `domainToASCII`, its own syntax rules, `node:crypto`): 33 normalization, 46 rejection and 22 `sub` vectors with a
+  public test key; the guard test pins the file's sha256, the `EMAIL_V1` hash and the installed `tr46` / `punycode`
+  versions. 177 tests in the package. Google's help pages for the Gmail canonical form are cited in the guard (Q7).
+- **Address impact.** This batch defines every email user's `sub` (frozen at the address freeze). The stricter
+  readings taken where the spec was open are D156 (normalization) and D159 (Gmail rule as cited); D157 and D158
+  (disposable matching, exact `hd`) change no address. All four wait for the user's confirmation.
+- **Open for the user.** No current Google help page states that `googlemail.com` is the same mailbox; Gmail address
+  changes leave the old address as a receiving alternate (two email identities for one person; D159).
+- **Docs.** `architecture.md` (Status, Components), `README.md` (index), `decisions.md` (D156–D159),
+  `packages/email/README.md`.

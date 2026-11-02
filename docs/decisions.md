@@ -1367,7 +1367,7 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 - Rejected: the alternatives each question listed.
 
 ### D124. Sign in with Apple on the roadmap, after email login
-- Date 2026-10-30 · Status: confirmed by the user (roadmap), not specced · Source: conversation
+- Date 2026-10-30 · Status: confirmed by the user (roadmap); specced (`docs/apple-login-spec.md`), paused 2026-11-02 (D160) · Source: conversation
 - Decision: Apple is the next login method after email login and the partner identity token. It plugs into the
   provider-neutral core: the wallet path `scope#provider#sub#key_index` (provider `apple`, so no existing address
   changes), `set_issuer("apple", ["https://appleid.apple.com"])` with its keys through the same delayed, cancellable
@@ -1589,6 +1589,26 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 
 Choices made while building `docs/identity-token-spec.md` steps 1–4 on `feat/identity-token-1`, where the spec left a
 detail open or a safer reading was needed. Each follows the spec's intent; the user can revisit any of them.
+
+### D160. Sign in with Apple paused; the initial build is Google and email
+- Date 2026-11-02 · Status: confirmed by the user · Source: conversation (Apple spec questions)
+- Decision: Sign in with Apple is not built for the initial launch; it is built when partners ask for it. The spec
+  (`docs/apple-login-spec.md`) stays as the starting point. Answers given so far:
+  - Q1 = B: Apple users' emails through a second, email-only Apple client whose tokens never go on chain (like Privy:
+    partners get the email), at the cost of a second Apple prompt at an identity's first login in an app.
+  - Q2, provisional: the Apple developer team of the company that publishes Hana Wallet and Wend, for testnet. To be
+    confirmed or changed at the production-readiness check, before the address freeze.
+  - Q3 = A: every Apple client in Hana's team; partner-held Apple accounts only if customers ask, for partners that
+    start on them.
+  - Q4 = A: the shared client in a Hana app group, each Enterprise client in its own group.
+  - Q5 = A: partners' native iOS apps use the web flow (`ASWebAuthenticationSession`). A native-sheet
+    "partner-managed Apple" tier only if customers ask: with the native sheet the partner's app receives the Apple
+    token and can open sessions for its own users' wallets (partner custody within its scope), and those wallets
+    differ from the same users' wallets in Hana's team.
+  - Q6–Q18: open, asked again when the work resumes.
+- Why: focus the initial build on Google and email; Apple adds an issuer, a second client, a POST route, watchdog
+  and playbook work for a method no partner has asked for yet. Nothing built so far depends on Apple: the path format
+  and the issuer model already take a new provider without moving any address (D124).
 
 ### D170. Identity token layout details the spec left open
 - Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`packages/core/src/identity.ts`, frozen in

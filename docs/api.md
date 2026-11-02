@@ -1,6 +1,8 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's)
 
-Last verified against code: 2026-11-02 (branch `feat/email-login-6`: email tokens on `/v1/sessions` and `/v1/login`, the
+Last verified against code: 2026-11-02 (branch `feat/email-login-8a`: the auth page Worker's `/login/email` and its
+`EMAIL_ISSUER_URL`, the web as the caller of `start` / `resend` / `verify` and of `GET /v1/app`'s `loginMethods`;
+D245–D249); 2026-11-02 (branch `feat/email-login-6`: email tokens on `/v1/sessions` and `/v1/login`, the
 create_session proof of possession, `/v1/login`'s `linkJwt` precheck, the link relays `/v1/link*`, the email-login
 panics as errors, `GET /v1/app`'s `loginMethods`, the gas values, migration 0010, the issuer's URL and app lookup,
 D230–D234); 2026-11-02 (branch `feat/batch-c-4`: "Usage capture" (one ledger event per post-gate
@@ -277,7 +279,9 @@ here, never in the gate; a database before 0010 reads as Google-only) and the sc
 google, email: Google as below; email only with the scope's client `("email", "email:<scopeId>")`, then `email:
 {aud}` is present. A Google-only app (every app until build plan batch 8) answers exactly as before with
 `loginMethods: ["google"]` added, and keeps its `409 no_google_client`. An app with email on gets `google: null` when
-only email is available and `409 no_login_method` when neither is.
+only email is available and `409 no_login_method` when neither is. The vault (batch 8a) offers email in the popup
+only for `["google","email"]` with `email.aud = "email:<scopeId>"` in an env whose bundle pins an email issuer; it
+refuses an answer with `google: null` for now (D247).
 
 `name`, `serverTimeMs`, `autoApprovePolicy` and `rawSign` are new in B. `autoApprovePolicy` is the policy in force now
 (read from D1 on every request, validated and normalized as the vault page inlines it), or null; an open vault
@@ -548,6 +552,7 @@ One thin Worker per Hana origin in every env (D66; `workers.dev` in dev envs, a 
 | vault | `/vault` | forwarded to the API Worker (service binding `API`), unchanged but for a `Set-Cookie` header, which is dropped; `503` page with no config if it is unreachable |
 | auth | `/login/callback` | `login/callback.html` with `frame-ancestors 'none'; connect-src <API_URL>` |
 | auth | `/login`, `/approve` | `<path>.html` with `frame-ancestors 'none'` (neither fetches anything; the login popup makes no API call, D77) |
+| auth | `/login/email` | `login/email.html` with `frame-ancestors 'none'; connect-src [<EMAIL_ISSUER_URL origin>] <API_URL>` (the email step, batch 8a: the issuer's `start`, `resend`, `verify` and the relay write; the auth Worker's `EMAIL_ISSUER_URL` is set by `gen` from `emailIssuer`, and a malformed one is a `503` page) |
 | auth | `/export` | `export.html` with `frame-ancestors 'none'; connect-src <API_URL> <NEAR_RPC> [<NEAR_RPC_FALLBACK>] https://www.googleapis.com` |
 | both | any other path | a static asset, never HTML (`*.html` and `text/html` → `404`) |
 
@@ -1241,7 +1246,9 @@ D195–D199). It is a separate Worker from the API (Q1): it alone holds the emai
 the SendGrid key; the API holds none of them. It serves `{url}/v1/email/*`, `url` being `emailIssuer.url` (on a
 `workers.dev` env the issuer's own `workers.dev` URL) or, absent, the API's URL with a zone route that sends those paths
 to this Worker; its iss is `{url}/v1/email`. Requests never pass through the API Worker (D230). Below, `/v1/email/…`
-is under that `url`. **Not deployed**; no app's `login_methods` includes email yet, so nothing calls it. It reads the chain (views only) and
+is under that `url`. Its browser caller is the login popup's `/login/email` (`packages/web/src/auth/email-api.ts`,
+batch 8a: `start` with purpose `session`, the session commitment and this device's ticket for the address, then
+`resend` and `verify`; it never calls `google-match` yet). **Not deployed**; no app's `login_methods` includes email yet, so nothing calls it. It reads the chain (views only) and
 the API's D1 (read only); it writes nothing on chain.
 
 ### Conventions

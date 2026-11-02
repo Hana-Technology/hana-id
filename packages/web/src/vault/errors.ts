@@ -45,6 +45,9 @@ export function apiErrorToVault(e: ApiError): VaultError {
       return new VaultError('no_google_client', 'This app has no usable Google client');
     case 'app_suspended':
       return new VaultError('app_suspended', 'This app is suspended');
+    // Email login (D231): the app turned email off between GET /v1/app and the login.
+    case 'login_method_disabled':
+      return new VaultError('login_method_unavailable', 'This sign-in method is not available for this app', { api: status });
     case 'origin_not_allowed':
     case 'scope_conflict':
       return new VaultError('origin_not_allowed', 'This site is not allowed for this app', { api: status });

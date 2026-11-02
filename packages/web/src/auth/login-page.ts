@@ -1,7 +1,11 @@
 // `GET {authOrigin}/login` (docs/batch-b-spec.md "Login" steps 3–5): the login popup. It finds whoever prepared the
 // login (the vault, or the export window), authenticates its reply by origin and window, checks it against the pinned
 // SIGNER, recomputes the nonce, stores the relayKey under the state in its own sessionStorage and navigates to Google.
-// It never sees a token: /login/callback relays Google's answer. It makes no API call (D77): the app's facts it shows
+// It never sees a token: /login/callback relays Google's answer. When the vault offers email too (build plan batch 8a;
+// `methods` in auth-params, sent only when the app's `loginMethods` include email), it shows a method chooser instead:
+// "Continue with Google" goes to Google as above, "Continue with email" stores the email context (email-storage.ts)
+// and navigates this window to /login/email, which runs the code step and relays the email token through the same
+// slot. A preselected `method` (`hana.login({method})`) skips the chooser. It makes no API call (D77): the app's facts it shows
 // and uses (name, parent origin, scope, Google client) are the authenticated preparer's, which read them from the API
 // itself, and the API checks them again on POST /v1/login before anything is relayed (docs/security.md "The login
 // popup trusts the vault's app facts").
@@ -13,10 +17,11 @@
 //
 // SECURITY: auth-params carries relayKey, the one session secret that crosses postMessage. It is accepted only from
 // the authenticated sender, kept only in sessionStorage, and the in-memory copy is zeroed.
-import { type WindowMessage, isTestPublishableKey, parseWindowMessage, sessionNonce } from '@hana-id/core';
+import { type LoginMethod, type WindowMessage, isTestPublishableKey, parseWindowMessage, sessionNonce } from '@hana-id/core';
 import type { HanaEnv } from '../hana-env.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import { PageError } from './errors.ts';
+import { storeEmailContext } from './email-storage.ts';
 import { googleAuthUrl } from './google.ts';
 import { storeLoginEntry } from './login-storage.ts';
 import { type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed } from './page-window.ts';
@@ -27,6 +32,8 @@ export { VAULT_FRAME_NAME };
 export const HELLO_INTERVAL_MS = 100;
 export const HELLO_TIMEOUT_MS = 15_000;
 export const EXPORT_PATH = '/export';
+/** The email step (auth/email-page.ts), reached by navigating this window; the fragment names the login (`#<relayId>`). */
+export const EMAIL_PATH = '/login/email';
 
 export interface LoginPageDeps {
   win: PageWindow;
@@ -40,12 +47,14 @@ export interface LoginPageDeps {
 export type LoginPageState =
   | { readonly stage: 'connecting'; readonly mode: OpenerMode }
   | { readonly stage: 'checking'; readonly mode: OpenerMode }
+  /** The method chooser is shown (an app with email); a click moves on to `redirecting`. */
+  | { readonly stage: 'choosing'; readonly mode: OpenerMode }
   | { readonly stage: 'redirecting'; readonly mode: OpenerMode; readonly url: string }
   | { readonly stage: 'error'; readonly code: string };
 
 export interface LoginPage {
   readonly state: LoginPageState;
-  /** Resolves when the page reached `redirecting` or `error`. */
+  /** Resolves when the page reached `choosing`, `redirecting` or `error`. */
   readonly done: Promise<LoginPageState>;
   stop(): void;
 }
@@ -151,18 +160,73 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
         msg.relayKey.fill(0);
       }
       const url = googleAuthUrl({ clientId: msg.clientId, authOrigin: env.authOrigin, nonce: msg.nonce, state: msg.relayId, forceReauth: mode === 'export' });
-      d.show(
-        d.h(
-          'section',
-          { class: 'panel' },
-          d.h('h1', {}, mode === 'export' ? 'Confirm it’s you' : 'Signing in'),
-          d.h('p', {}, 'Signing in to ', d.h('strong', {}, msg.appName), ' at ', d.h('span', { class: 'origin' }, msg.parentOrigin)),
-          d.h('p', { class: 'muted' }, 'Continuing to Google…'),
-        ),
-      );
-      state = { stage: 'redirecting', mode, url };
+      const intro = () => d.h('p', {}, 'Signing in to ', d.h('strong', {}, msg.appName), ' at ', d.h('span', { class: 'origin' }, msg.parentOrigin));
+      const toGoogle = () => {
+        d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, mode === 'export' ? 'Confirm it’s you' : 'Signing in'), intro(), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
+        state = { stage: 'redirecting', mode, url };
+        finish(state);
+        win.location.assign(url);
+      };
+      // Email is offered only by the vault (never in export mode), only for an env with an email issuer.
+      const methods: readonly LoginMethod[] = mode !== 'export' && msg.methods && env.emailIssuerUrl ? msg.methods : ['google'];
+      if (!methods.includes('email') || msg.method === 'google') {
+        toGoogle();
+        return;
+      }
+      const toEmail = () => {
+        try {
+          storeEmailContext(
+            win.sessionStorage,
+            msg.relayId,
+            {
+              pk: msg.pk,
+              appName: msg.appName,
+              parentOrigin: msg.parentOrigin,
+              scopeId: msg.scopeId,
+              sessionPublicKey: Uint8Array.from(msg.sessionPublicKey),
+              expiresAtMs: msg.expiresAtMs,
+              salt: Uint8Array.from(msg.salt),
+              keyIndex: msg.keyIndex,
+              maxUses: msg.maxUses,
+              nonce: msg.nonce,
+              clientId: methods.includes('google') ? msg.clientId : null,
+              methods: [...methods],
+              emailHint: msg.emailHint ?? null,
+              opener: mode === 'vault' ? 'vault' : 'partner',
+              vaultFrame: parsed?.vaultFrame ?? null,
+              challengeId: null,
+            },
+            now(),
+          );
+        } catch {
+          fail('storage_unavailable', 'Sign-in stopped', 'This browser blocked the storage the sign-in needs.');
+          return;
+        }
+        const target = `${EMAIL_PATH}#${msg.relayId}`;
+        state = { stage: 'redirecting', mode, url: target };
+        finish(state);
+        win.location.assign(target);
+      };
+      if (msg.method === 'email' || !methods.includes('google')) {
+        toEmail();
+        return;
+      }
+      // The chooser: two buttons, nothing fetched. The relay key entry is already stored for either path.
+      const google = d.h('button', { class: 'primary', attrs: { type: 'button', id: 'continue-google' } }, 'Continue with Google');
+      const email = d.h('button', { attrs: { type: 'button', id: 'continue-email' } }, 'Continue with email');
+      google.addEventListener('click', () => {
+        google.setAttribute('disabled', '');
+        email.setAttribute('disabled', '');
+        toGoogle();
+      });
+      email.addEventListener('click', () => {
+        google.setAttribute('disabled', '');
+        email.setAttribute('disabled', '');
+        toEmail();
+      });
+      d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Sign in'), intro(), d.h('div', { class: 'actions choose' }, google, email)));
+      state = { stage: 'choosing', mode };
       finish(state);
-      win.location.assign(url);
     } catch (err) {
       msg.relayKey.fill(0);
       const e = err instanceof PageError ? err : new PageError('config_mismatch', 'The sign-in request could not be checked.');

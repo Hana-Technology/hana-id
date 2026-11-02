@@ -1,7 +1,9 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-02 (branch `feat/email-login-6`: the API's email login part in Status, the login
+Last verified against code: 2026-11-02 (branch `feat/email-login-8a`: email login in the popup and the vault in
+Status, Components and the login flow (the chooser, `/login/email`, the vault's on-chain email-token check, the
+`#email#` path, the record check), D245–D249); 2026-11-02 (branch `feat/email-login-6`: the API's email login part in Status, the login
 flows (email tokens, `linkJwt`, the create_session proof of possession, the D155 gas), the link relays, the issuer's
 URL and app lookup, D230–D234); 2026-11-02 (branch `feat/batch-c-4`: usage capture to the Neon ledger (Components, Data
 stores, the login flow's step 8), the D1 `usage` counters no longer written, `session_markers` in the waiver);
@@ -64,6 +66,7 @@ runs there. Contract v3 and batch C (C1–C3) are merged but **not deployed**; t
 | `apps/email-issuer` (build-plan batch 4: `start`/`resend`/`verify`/`google-match`, JWKS and discovery, staff client proofs, unlock and unsuppress, owner device tickets, the `Challenge` and `RateLimiter` objects, its D1, SendGrid and outbox senders, the Worker-secret signer and an unwired KMS adapter), manifest `emailIssuer`, `scripts/email-issuer.ts` | `feat/email-login-4` | Code done and tested (miniflare, fake KMS, fake Google and chain); not deployed; no app enables email. Batch 6 (`feat/email-login-6`): reached at its own URL (`emailIssuer.url`, D230), finds apps by `app_keys` (D233) |
 | Email login, watchdog (batch 5): email pins and signer policy, the link alarms from `get_link_stats()` (D200), `unrecorded_wallets` (D190–D193) | `develop` (from `feat/email-login-5`) | Deployed on sandbox-dev 2026-11-02 (version b156e1b5, no new migration). On the v2 contract it reads "no email issuer" and skips the link check; the manifest has no email pins yet (they must be set before batch 6 posts email keys) |
 | Email login, the email issuer (batch 4: `apps/email-issuer`, login codes by mail through SendGrid, D194) | `develop` (from `feat/email-login-4`) | Merged, not deployed |
+| Email login in the web, plain (batch 8a): the popup's method chooser and `/login/email` (address, code, resend, a different email, case B continues with Google, the device ticket on `authOrigin`), the vault's email-token check against the chain (`get_issuer_keys` / `get_self_issued("email")`, `scope_for_client("email", …)`), the `{scope}#email#{sub}#0` path and record check, `hana.login({method, emailHint})`, `loginProgress: email_code`, the new error codes; no linking | `feat/email-login-8a` (on batch 6's branch) | Built and tested (unit and Playwright with the issuer's `outbox` stub), not merged; nothing deployed. Every deployed app stays Google-only |
 | Email login, API (batch 6): email tokens on `/v1/sessions` and `/v1/login` (`apps/api/src/email-token.ts`), the `create_session` proof of possession (D137) in the API, the vault's split path and the smoke page, `/v1/login`'s `linkJwt` precheck (D133), the link relays `/v1/link*` with share revocation, the email-login panics as errors, `GET /v1/app` `loginMethods`, D155's gas, migration 0010 (`apps.login_methods`, `email_usage`), the issuer on its own URL (D230) and its `app_keys` lookup (D233) | `feat/email-login-6` | Built and tested, not merged; nothing deployed (the user's steps: `docs/operations.md` "Email login on sandbox-dev"). Every app stays Google-only (`login_methods` `'google'`), no scope has an email client |
 
 ## Components
@@ -75,7 +78,7 @@ runs there. Contract v3 and batch C (C1–C3) are merged but **not deployed**; t
 | `@hana-id/react`, `@hana-id/sodax` | `packages/react`, `packages/sodax` | partner origin | `HanaProvider`/`useHana`/`useWallet`/`useIdentityToken`; Sodax `IStellarWalletProvider`/`IEvmWalletProvider` adapters |
 | Partner backend | partner's own (guide: `examples/identity-verify`) | partner servers | Verifies identity tokens against the API's JWKS with any JOSE library; never calls Hana |
 | Vault | `packages/web/src/vault`; page HTML `apps/api/src/vault/page.ts` | hidden iframe on `vaultOrigin` | Holds the session key and PRK, computes nonces and paths, signs |
-| Auth pages | `packages/web/src/auth` | popups / top-level windows on `authOrigin` | Google login, approval, consent, key export |
+| Auth pages | `packages/web/src/auth` | popups / top-level windows on `authOrigin` | Login (the method chooser, Google, `/login/email`'s code step against the email issuer), approval, consent, key export |
 | `@hana-id/core` | `packages/core` | everywhere (no DOM) | Layouts, CKD, derivation v1, signers, approval decoders, policy validator/matcher, ID-token check, message schemas |
 | API Worker | `apps/api/src/index.ts` | Cloudflare Workers (`apiUrl`) | Gate (key, origin, limits), verify-before-relay, relayer, vault shares, login relay, vault page HTML, crons; the identity token issuer (`src/identity/`: mint, JWKS, discovery; the signer behind `IdentitySigner`: a Worker-secret P-256 key on testnet, AWS KMS `Sign` on staging and mainnet, picked by `IDENTITY_SIGNER`); the `ConsoleRpc` and `AdminRpc` entrypoints (`src/rpc/`, `src/changes/`: the only writers of app config besides the CLI, no route) |
 | Page Workers | `apps/api/src/pages/` (`vault-worker.ts`, `auth-worker.ts`, `host.ts`) | one Cloudflare Worker per Hana origin (D66) | `vaultOrigin`: forwards `GET /vault` to the API Worker (service binding `API`), serves the vault bundle; `authOrigin`: the four auth pages with their CSP, and their assets. Nothing else; never a cookie (D70) |
@@ -219,6 +222,36 @@ Browser steps: `packages/web/src/vault/login.ts`, `packages/web/src/auth/login-p
     'none'` (port event `persistenceChanged`, and `hana_status`), revokes the share if made and clears the older session's record (the next reload
     is a full login); a session that ends first (logout, a newer login, expiry) cancels it and no record or share
     survives it. Revoke-other-devices, touch and consent reads and writes wait for it.
+
+### Email login in the popup (build plan batch 8a)
+
+Browser steps: `packages/web/src/auth/login-page.ts`, `email-page.ts`, `email-api.ts`, `email-storage.ts`,
+`packages/web/src/vault/login.ts`, `packages/core/src/email-token.ts`. Differences from the Google login above:
+
+1. Only when `GET /v1/app` answers `loginMethods` with `email` and `email.aud = "email:<scopeId>"`, and the env's
+   bundle pins an email issuer (manifest `emailIssuer`: `emailIssuerUrl`, `emailIss`), does the vault add `methods:
+   ["google", "email"]` (and `method`, `emailHint` from `hana.login(options)`) to `hana:auth-params`. A Google-only
+   app's message is batch B's, key for key. `method: 'email'` for an app without email ends the login with
+   `login_method_unavailable`. In the background it reads `scope_for_client("email", "email:<scopeId>")`,
+   `get_issuer_keys("email")` and `get_self_issued("email")` from its own RPC.
+2. `/login` (still fetch-free, D77) shows "Continue with Google" / "Continue with email" (or skips to the preselected
+   method). Email: it stores the email context (public facts: app, parent origin, the session commitment, the Google
+   client for case B; `hana.email.<relayId>` in `sessionStorage`, beside the relay key entry) and navigates the same
+   window to `/login/email#<relayId>`.
+3. `/login/email` (CSP `connect-src` = the issuer's origin and the API only): address → `POST {issuer}/v1/email/start`
+   `{pk, email, purpose: "session", commitment, deviceTicket?}` (the issuer computes the nonce from the commitment) →
+   it posts `hana:auth-progress` to the vault (`loginProgress: email_code`) → the 6-digit code →
+   `POST /v1/email/verify` → the email token, encrypted under `relayKey` into the same relay slot as Google's answer;
+   the device ticket goes to `localStorage` under a hash of the address. "Resend code", "Use a different email",
+   inline wrong and expired codes, one generic "Too many attempts. Try again later." for every limit. Case B
+   (`googleWallet: true`, no token) offers "Continue with Google": a plain Google login on the same slot, no link.
+   Cancel relays `{error: "email_…"}`, which the vault maps (D245).
+4. The vault takes a JWS-JSON token only in a login that offered email, checks it with `verifyEmailIdToken` (exact
+   form, pinned `iss`, `aud`, nonce, time, claim set, RS256 with the chain's active email keys, the signer policy; a
+   kid the chain doesn't list is "try again later"), requires the scope's email client on chain to be this scope, and
+   fixes `expectedPath = scopeId#email#sub#0`. From step 6 on it is the Google login's: the same `POST /v1/login`
+   body with the email token as `jwt`, never `linkJwt` (batch 8a links nothing), the same recovery, CKD decrypt and
+   persistence. Linking (google-match, the four cases, banners) is batch 8b.
 
 ### Login, two transactions (split path)
 
@@ -473,7 +506,9 @@ Contract v3 (email login, merged on `develop`, not deployed) adds no input to th
 the path's `(provider, sub)` is the session's path identity, which is the token's own unless the identity is a member
 of an account, when it is the account root's (an existing path, so linking never creates or moves an address). Email
 identities use provider `email` and a `sub` derived off chain (`docs/email-login-spec.md` "Address impact"; frozen
-at the address freeze).
+at the address freeze). The web derives an email identity on `scope#email#sub#0` (`loginPath`, batch 8a) and Google
+on `scope#google#sub#0` byte for byte as before (golden test, `packages/web/test/vault/email-login.test.ts`); with no
+links on chain (none exist while no app enables linking) that is each identity's own path.
 
 Before the freeze, anything that changes an address must be called out (CLAUDE.md); after it, never. A scheme change
 would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.

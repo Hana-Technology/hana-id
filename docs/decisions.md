@@ -12,7 +12,7 @@ day) on 2026-11-02. D230–D234 (branch `feat/email-login-6`, to confirm) on 202
 D199 and D206. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
 provider note, two "Superseded or amended" rows, the user-mail line under "Proposed", and the headings from D125 on, checked against `develop` @ 1c6a124 and what sandbox-dev runs (`docs/operations.md`) on
 2026-11-02 (branch `docs/consistency-pass`); no decision changed. D220–D224 (branch `feat/batch-c-4`, to confirm) on
-2026-11-02.
+2026-11-02. D245–D249 (branch `feat/email-login-8a`, to confirm) on 2026-11-02.
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -3424,6 +3424,78 @@ five are **to confirm** by the user. None changes an address: no path, derivatio
 - Rejected: the plan's order with the issuer before the migration (every app lookup would fail until the migration);
   minting the client proofs by turning email on for the test apps in batch 6 (against "nothing ships half-wired").
 
+## Email login build, batch 8a (plain email login in the popup), 2026-11-02
+
+Spec ambiguities met while building the minimal slice of batch 8 (no linking). All to confirm.
+
+### D245. The email step handles wrong and expired codes itself; a cancel tells the partner why; `email_code` comes from the popup
+- Date 2026-11-02 · Status: to confirm; built (`packages/web/src/auth/email-page.ts`, `vault/login.ts`
+  `EMAIL_RELAY_ERRORS`, `acceptProgress`; core `hana:auth-progress`) · Source: spec "Vault, popup and SDK changes"
+  (errors `code_invalid`, `challenge_expired`; `loginProgress` gains `email_code`)
+- Decision: the popup keeps the user on wrong codes (tries left shown), expired or used challenges (back to the
+  address, "Send a new code"), resend limits and every rate limit (one generic "Too many attempts. Try again later.").
+  Those never end the login by themselves. "Cancel" in the email step writes `{error}` to the relay slot:
+  `email_cancelled`, or `email_code_invalid` / `email_challenge_expired` / `email_rate_limited` when that was the
+  last thing shown; the vault turns them into `login_cancelled`, `code_invalid`, `challenge_expired`, `rate_limited`,
+  only in a login that offered email (Google's OAuth error codes never start with `email_`; elsewhere they stay
+  `google_error`). `loginProgress: email_code` is emitted when the popup posts `hana:auth-progress` after a `start`
+  answered; the vault takes it only from the window whose hello it answered, on `authOrigin`. A closed popup during
+  the code step still ends as today (`login_timeout` after 5 min).
+- Rejected: ending the login on the first wrong code (the spec's codes allow 5 tries); a popup → vault channel for
+  each step (only the one progress signal is needed).
+
+### D246. No key export for an email wallet in batch 8a
+- Date 2026-11-02 · Status: to confirm; built (`vault.ts` `startExport`) · Source: spec "Export resolves the path the
+  same way"
+- Decision: `hana.exportKey()` on a session whose path isn't `#google#` is refused before any window opens (`4200`,
+  `data.reason: 'email_export'`). The export window re-authenticates with Google only (export mode); an email
+  re-authentication there (the code step in export mode, an email-token check in `export-page.ts`) comes with a later
+  batch. Refusing is safe: the export window would otherwise sign in with Google and stop at its address check.
+- Rejected: building export's email step now (not needed for a plain email login).
+
+### D247. The SDK surface: `login_method_unavailable`, `emailHint` rules, Google plus email only
+- Date 2026-11-02 · Status: to confirm; built (core `protocol.ts`, `api-types.ts`; `client/login.ts`) · Source: spec
+  "SDK"
+- Decision: `hana.login({method?, emailHint?})`. `method` is `'google'` or `'email'`; one the app doesn't offer here
+  (its `login_methods`, its scope's email client, or an env whose bundle pins no email issuer) rejects with the new
+  code `login_method_unavailable`. `emailHint` (3–254 characters, an `@`, no space, control, bidi or invisible
+  character) only prefills the field; it is refused with `method: 'google'`. Bad options reject with `-32602` before
+  any popup opens. `GET /v1/app`'s `loginMethods` is accepted only as `["google"]` or `["google","email"]`, with
+  `email.aud = "email:<scopeId>"` exactly when email is listed: an email-only app (`google: null`) is refused by
+  `isAppConfig` (the vault answers `api_unavailable`) until the vault and the popup support it. `createHana({
+  loginMethods })` (the spec's narrowing option) is not built yet.
+- Rejected: falling back to the chooser on an unavailable method (the partner asked for one method; it should know).
+
+### D248. Turning email on for the demo app is by hand on sandbox-dev
+- Date 2026-11-02 · Status: to confirm (who owns the demo's scope, and the owner's `propose_change` command) ·
+  Source: D234 (batch 8's order), `docs/operations.md` "Email login demo on sandbox-dev (batch 8a)"
+- Decision: `login_methods = 'google,email'` for the demo app by a D1 statement, then the scope's email client
+  through the staff client proof and the scope owner's `propose_change(AddClient)` (timelocked), then the 8a pages
+  and API. There is no CLI command for either yet (the console toggle is batch 9). Real mail needs SendGrid; the
+  `outbox` stub stays `local*`-only. Before SendGrid, the internal demo runs on the local e2e stack (the outbox,
+  mocked chain and MPC), said as such.
+- Rejected: allowing the outbox on sandbox-dev (codes in a store operators can read on a shared env); a temporary
+  sender (more code that would ship to a real env).
+
+### D249. Batch 8a's paths come from the token, not `get_identity`; the popup's storage
+- Date 2026-11-02 · Status: to confirm · Source: build plan batch 7 ("compute the path from `get_identity`"), batch 8;
+  spec "Codes, attempts, expiry, replay" (`challengeId` in `sessionStorage`), D198 (device tickets)
+- Decision:
+  - Batch 7 isn't built. The vault fixes `{scope}#{provider}#{sub}#0` from the token it verified (`loginPath`; Google
+    byte for byte as before, golden test), the record check accepts `#google#` and `#email#` paths of its scope, and
+    the export window keeps `#google#`. While no link exists on chain (none can: no app enables linking and the vault
+    never sends `linkJwt`), that is each identity's own path; a linked identity's login would fail the pairing check
+    (and D136 refuses derivation on a linked identity's own path), never derive another key. `get_identity`
+    resolution must come before any app enables linking (batch 7/8b).
+  - `/login` → `/login/email` hands over the public login facts in `sessionStorage` (`hana.email.<relayId>`, 10 min:
+    app, parent origin, the session commitment, the Google client for case B, the `challengeId` once started; never
+    the relay key, address, code or token). Device tickets go to `localStorage` on `authOrigin`, keyed by
+    `sha256(trimmed lowercased address)` (not the issuer's full normalization: a key that misses only means no ticket
+    is sent; the issuer checks the exact address), at most 5, 30 days.
+  - Case B (`verify` says the address belongs to a Google wallet here) continues as a plain Google login on the same
+    relay slot; no `linkTicket` is used.
+- Rejected: building `get_identity` resolution now (not needed while no links exist, and batch 6 is still in review).
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -3500,6 +3572,9 @@ To confirm from email login batch 6 (`feat/email-login-6`): D230 (the issuer on 
 D231 (email tokens at the API, `login_methods`, `GET /v1/app`), D232 (the link precheck, relays and panics), D233
 (share revocation, `email_usage`, the issuer's app lookup) and D234 (the corrected deploy order, the email clients in
 batch 8).
+To confirm from email login batch 8a (`feat/email-login-8a`): D245 (the email step's cancel codes and progress), D246
+(no key export for email wallets yet), D247 (the SDK surface: `login_method_unavailable`, hints, no email-only apps),
+D248 (turning email on for the demo by hand) and D249 (paths without `get_identity`, the popup's storage).
 To confirm from the identity token's step 7 (the KMS signer's code): D215 (the manifest shape and credentials), D216
 (`DIGEST`), D217 (strict DER, the self-check), D218 (one `Sign`, no retry, limits) and D219 (the standby's region, the
 IAM policy on the active key only).

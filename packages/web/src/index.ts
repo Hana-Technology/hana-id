@@ -22,6 +22,7 @@ export {
   type SignRawParams,
 } from './client/client.ts';
 export { type ApprovalTicket } from './client/approval-window.ts';
+export type { LoginOptions } from './client/login.ts';
 export { HanaError, ProviderRpcError, RpcCode, type ClientErrorCode, type SwkError } from './client/errors.ts';
 export {
   HanaEthereumProvider,

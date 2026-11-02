@@ -35,9 +35,9 @@ import {
 import { VERSION } from '../version.ts';
 import { type ApprovalTicket, ApprovalWindows } from './approval-window.ts';
 import { Emitter } from './emitter.ts';
-import { type HanaError, RpcCode, asHanaError, hanaError } from './errors.ts';
+import { HanaError, RpcCode, asHanaError, hanaError } from './errors.ts';
 import { type EvmConfig, HanaEthereumProvider, announceEip6963, rdnsFor, validateEvmConfig } from './ethereum.ts';
-import { LoginAttempt, openLoginPopup } from './login.ts';
+import { LoginAttempt, type LoginOptions, loginRequest, openLoginPopup } from './login.ts';
 import { type FetchLike } from './rpc.ts';
 import { partnerPageIssues } from './requirements.ts';
 import { HanaStellarSigner, type StellarConfig, validateStellarConfig } from './stellar.ts';
@@ -255,9 +255,14 @@ export class HanaClient extends Emitter<HanaEvents> {
    * anything else, so the browser's user activation still holds. Already logged in: resolves at once, no popup. A
    * blocked popup falls back to the vault's "Sign in with Hana" launcher, and the call resolves after that login.
    * A second call while one is pending supersedes it (the first rejects with `login_cancelled`).
+   *
+   * `options.method` ('google' | 'email') opens that method directly; without it, an app with email on shows the
+   * popup's chooser ("Continue with Google", "Continue with email"). `options.emailHint` prefills the email field.
    */
-  login(): Promise<HanaAddresses> {
+  login(options?: LoginOptions): Promise<HanaAddresses> {
     if (this.#destroyed) return Promise.reject(hanaError(ErrorCode.disconnected));
+    const request = loginRequest(options);
+    if (request instanceof HanaError) return Promise.reject(request);
     if (this.#vaultDown && this.#error) return Promise.reject(this.#error);
     if (this.#status === 'logged_in' && this.#addresses) return Promise.resolve({ ...this.#addresses });
     const calledAt = this.#now();
@@ -269,6 +274,7 @@ export class HanaClient extends Emitter<HanaEvents> {
       popup,
       () => this.#status === 'logged_in' || (this.#status === 'logging_in' && this.#addresses !== null),
       this.#now,
+      request,
     );
     this.#attempt = attempt;
     this.#setStatus('logging_in');

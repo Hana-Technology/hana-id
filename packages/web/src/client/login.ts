@@ -13,14 +13,36 @@
 // - A newer login supersedes this one (`login_cancelled`); the partner's cancelLogin() ends it with `login_cancelled`,
 //   or `popup_blocked` when it was waiting on the launcher. Either way the vault is told (`hana_cancelLogin`) when it
 //   has the request, so it drops its pending state.
-import type { LoginResult, PortMethod, PortParamsMap, PortResultMap } from '@hana-id/core';
-import { type HanaError, asHanaError, hanaError } from './errors.ts';
+import { type LoginMethod, type LoginResult, type PortMethod, type PortParamsMap, type PortResultMap, isEmailHint, isLoginMethod } from '@hana-id/core';
+import { type HanaError, RpcCode, asHanaError, hanaError } from './errors.ts';
 import { randomHex } from './random.ts';
 
 export const POPUP_POLL_MS = 100;
 /** `popup_connected` must arrive this long after window.open. */
 export const POPUP_CONNECT_TIMEOUT_MS = 15_000;
 export const LOGIN_POPUP_FEATURES = 'popup,width=480,height=640';
+
+/**
+ * `hana.login(options)` (build plan batch 8a): `method` opens that sign-in method directly instead of the popup's
+ * chooser (an app with only Google never shows one); `emailHint` prefills the email field. A method the app doesn't
+ * offer rejects with `login_method_unavailable`.
+ */
+export interface LoginOptions {
+  method?: LoginMethod;
+  emailHint?: string;
+}
+
+/** The options as hana_login params, or a HanaError (-32602) for bad ones. Synchronous: it runs before window.open. */
+export function loginRequest(options: unknown): { method?: LoginMethod; emailHint?: string } | HanaError {
+  if (options === undefined) return {};
+  const bad = (m: string) => hanaError(RpcCode.invalidParams, m);
+  if (typeof options !== 'object' || options === null || Array.isArray(options)) return bad('login options must be an object');
+  const o = options as Record<string, unknown>;
+  for (const k of Object.keys(o)) if (k !== 'method' && k !== 'emailHint') return bad(`Unknown login option: ${k.slice(0, 32)}`);
+  if (o.method !== undefined && !isLoginMethod(o.method)) return bad("method must be 'google' or 'email'");
+  if (o.emailHint !== undefined && (!isEmailHint(o.emailHint) || o.method === 'google')) return bad("emailHint must be an email address (and method not 'google')");
+  return { ...(o.method !== undefined ? { method: o.method as LoginMethod } : {}), ...(o.emailHint !== undefined ? { emailHint: o.emailHint as string } : {}) };
+}
 
 /** Opens the login popup. Returns null when the browser blocked it (or window.open threw). Synchronous. */
 export function openLoginPopup(win: Window, authOrigin: string, vaultFrameName: string): Window | null {
@@ -68,6 +90,8 @@ export class LoginAttempt {
     popup: Window | null,
     isLoggedIn: () => boolean,
     private readonly now: () => number = () => performance.now(),
+    /** hana_login's method and email hint (`hana.login(options)`). */
+    private readonly request: { method?: LoginMethod; emailHint?: string } = {},
   ) {
     this.#port = port;
     this.#popup = popup;
@@ -111,7 +135,8 @@ export class LoginAttempt {
     let result: LoginResult;
     try {
       this.sentAt = this.now();
-      result = await this.#port.send('hana_login', this.popupBlocked ? { popupBlocked: true } : undefined);
+      const params = { ...(this.popupBlocked ? { popupBlocked: true } : {}), ...this.request };
+      result = await this.#port.send('hana_login', Object.keys(params).length > 0 ? params : undefined);
       this.repliedAt = this.now();
     } catch (e) {
       this.#fail(asHanaError(e), false);

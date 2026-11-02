@@ -60,6 +60,8 @@ export function portsFrom(base: number) {
     liveAuth: base + 21,
     api: base + 30,
     liveApi: base + 31,
+    /** The email issuer (apps/email-issuer's Worker), on its own origin as on sandbox-dev (D230). */
+    issuer: base + 32,
     near: base + 40,
     evm: base + 50,
   });
@@ -77,6 +79,9 @@ export const DEMO_ORIGIN = `http://localhost:${PORTS.demo}`;
 export const VAULT_ORIGIN = `http://127.0.0.1:${PORTS.vault}`;
 export const AUTH_ORIGIN = `http://127.0.0.1:${PORTS.auth}`;
 export const API_URL = `http://127.0.0.1:${PORTS.api}`;
+export const ISSUER_URL = `http://127.0.0.1:${PORTS.issuer}`;
+/** The email tokens' iss (`{emailIssuer.url}/v1/email`, D230). */
+export const EMAIL_ISS = `${ISSUER_URL}/v1/email`;
 export const NEAR_RPC = `http://127.0.0.1:${PORTS.near}`;
 export const EVM_RPC = `http://127.0.0.1:${PORTS.evm}`;
 /** A foreign site, served by Playwright routes only (see tests/fixtures.ts): it never runs Hana code. */
@@ -106,6 +111,8 @@ export const E2E_ENV: HanaEnv = Object.freeze({
   rpc: NEAR_RPC,
   ckdNetworkKey: TEST_CKD_NETWORK_KEY,
   devEnv: true,
+  emailIssuerUrl: ISSUER_URL,
+  emailIss: EMAIL_ISS,
 });
 
 // ---- live mode: a pk_live_ app end to end ----
@@ -141,9 +148,15 @@ export const LIVE_UPSTREAMS: Readonly<Record<string, string>> = Object.freeze({
   [LIVE_EVM_RPC]: EVM_RPC,
 });
 
+/** An env's constants without the email issuer (live mode runs no issuer). */
+function withoutEmail(e: HanaEnv): HanaEnv {
+  const { emailIssuerUrl: _u, emailIss: _i, ...rest } = e;
+  return rest;
+}
+
 /** The live-mode env: E2E_ENV's chain accounts and test MPC, with the https origins above. */
 export const LIVE_ENV: HanaEnv = Object.freeze({
-  ...E2E_ENV,
+  ...withoutEmail(E2E_ENV),
   name: LIVE_ENV_NAME,
   apiUrl: LIVE_API_URL,
   vaultOrigin: LIVE_VAULT_ORIGIN,

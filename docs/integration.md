@@ -11,6 +11,9 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 > for mainnet chains at all ([section 12](#12-test-and-live-keys)). This guide follows the code; the original
 > specification is `docs/batch-b-spec.md`.
 
+Last verified against code: 2026-11-02 (branch `feat/email-login-8a`: email login, "Email login" in section 4, the
+new error codes and the `email_code` progress stage).
+
 ## How it works
 
 ```
@@ -204,6 +207,21 @@ button.addEventListener('click', async () => {
   the session for reloads in the background (one API call). If that fails, the wallet keeps working in this tab,
   `hana.persistence` becomes `'none'` (with a `persistenceChanged` event; `useHana()` re-renders), and the next page
   load needs a new login; a reload within that moment after `login()` resolved is a new login too.
+- **Email login** (build plan batch 8a; off until Hana turns it on for your app, `login_methods`). With email on,
+  `hana.login()` shows a chooser in the Hana popup: "Continue with Google" or "Continue with email". The email path
+  asks for the address, mails a 6-digit code, and the user types it into the same Hana popup (never into your page).
+  To skip the chooser, pass the method; to prefill the address you already know, pass `emailHint`:
+
+  ```ts
+  await hana.login({ method: 'email', emailHint: 'ada@example.com' }); // or { method: 'google' }; still in the click
+  ```
+
+  An email wallet is a separate wallet from the same person's Google wallet (linking them comes later). A method your
+  app doesn't offer rejects with `login_method_unavailable`; bad options reject with `-32602` before any popup opens.
+  `loginProgress` adds `email_code` (the code was sent). The popup handles wrong and expired codes, "Resend code" and
+  "Use a different email" itself; if the user then cancels, `login()` rejects with `code_invalid`,
+  `challenge_expired`, `rate_limited` or `login_cancelled`. Key export (`exportKey`) is not available yet for an email
+  wallet (`4200`, `data.reason: 'email_export'`). Your page never sees the address unless you passed it.
 - `await hana.logout()` signs this app out on this device, in every tab. It sends no transaction.
 - `await hana.revokeOtherDevices()` signs the user out of your app everywhere else. It works only within 5 min of a
   fresh login, so offer it right after one.
@@ -669,14 +687,16 @@ account **different addresses** (D51). Wallets made with test keys are disposabl
 |---|---|---|
 | `4001` | The user rejected, closed the popup, or let it time out | nothing; let them retry |
 | `4100` | Not logged in, wrong address, or not allowed for this app (raw signing off, no policy, a mainnet for a test app: `data.reason`) | log in, or check the call |
-| `4200` | Unsupported method (`eth_sign`, …) | use a supported method |
+| `4200` | Unsupported method (`eth_sign`, …; `exportKey` for an email wallet, `data.reason: 'email_export'`) | use a supported method |
 | `4900` | The vault is gone (logged out, session ended, frame replaced) | create the client again, or log in |
 | `4902` | EVM chain not in `evm.chains` | add it to `createHana` |
 | `vault_unavailable` | The vault didn't load in 5 s | check `frame-src`, your origins, the network |
 | `popup_blocked` | The browser blocked the popup and the sign-in was cancelled | call `login()` in a click |
 | `coop_blocks_popup` | The popup closed before it connected (COOP `same-origin`, or the user closed it at once) | fix COOP |
 | `login_timeout` | The popup never connected (15 s), or the sign-in took over 5 min | retry |
-| `login_cancelled` | `cancelLogin()`, or a newer `login()` | nothing |
+| `login_cancelled` | `cancelLogin()`, or a newer `login()`, or the user cancelled the email step | nothing |
+| `login_method_unavailable` | `login({method})` named a method your app doesn't offer (email not turned on) | offer the other method |
+| `code_invalid`, `challenge_expired` | Email login: the user cancelled after a wrong or expired code | let them retry |
 | `google_error` | Google returned an error (`data.error`) | retry; `access_denied` means the user declined |
 | `no_google_client` | Your scope has no usable Google client | ask Hana |
 | `token_invalid`, `token_has_pii` | The Google token failed Hana's checks | retry; report it if it persists |

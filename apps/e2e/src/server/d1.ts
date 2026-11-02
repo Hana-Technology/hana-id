@@ -52,10 +52,12 @@ class Statement {
 export class D1Shim {
   readonly db: DatabaseSync;
 
-  constructor() {
+  /** `migrations`: the directory whose `*.sql` files are applied in name order (apps/api's by default). */
+  constructor(migrations: string = MIGRATIONS) {
     this.db = new DatabaseSync(':memory:');
     this.db.exec('PRAGMA foreign_keys = ON');
-    for (const file of readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql')).sort()) this.db.exec(readFileSync(`${MIGRATIONS}${file}`, 'utf8'));
+    const dir = migrations.endsWith('/') ? migrations : `${migrations}/`;
+    for (const file of readdirSync(dir).filter((f) => f.endsWith('.sql')).sort()) this.db.exec(readFileSync(`${dir}${file}`, 'utf8'));
   }
 
   prepare(sql: string): Statement {

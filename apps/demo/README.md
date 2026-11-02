@@ -13,7 +13,11 @@ static assets. It is not a Hana page and holds nothing secret.
 
 One page: a testnet banner and a short explainer, then
 
-- **Log in with Google** (`hana.login()` in the click handler), with the login's progress, *Cancel sign-in*, *Log
+- **Log in with email** (`hana.login({ method: 'email' })`, batch 8a): the Hana popup's email step (address, mailed
+  code). It works once the demo app's `login_methods` include email and its scope holds its email client
+  (`docs/operations.md` "Email login demo on sandbox-dev (batch 8a)"); until then it says email isn't turned on.
+- **Log in with Google** (`hana.login({ method: 'google' })` in the click handler, so the popup skips its chooser once
+  email is on), with the login's progress, *Cancel sign-in*, *Log
   out* and *Log out other devices* (`revokeOtherDevices`, which works within 5 minutes of a fresh login);
 - a **status line**: logged in or out, when the session ends and the app's persistence (`session`: survives reloads
   and new tabs; `none`, or the browser's storage fallback);

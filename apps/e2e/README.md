@@ -23,6 +23,7 @@ Ports are `HANA_E2E_PORT_BASE` (default 4410) plus the offsets below: the table 
 | `http://127.0.0.1:4420` | `vaultOrigin`: apps/api's vault host, and the vault page rendered by apps/api's `handleVaultPage` from D1 |
 | `http://127.0.0.1:4430` | `authOrigin`: apps/api's auth host over the built auth pages |
 | `http://127.0.0.1:4440` | the Hana API: apps/api's Worker, with `/v1/login` and `/v1/derive` mocked; plus `/__e2e/*` control endpoints |
+| `http://127.0.0.1:4442` | the email issuer: apps/email-issuer's Worker with the `outbox` stub; plus `GET /__e2e/outbox` (the mails, for the tests) |
 | `http://127.0.0.1:4450`, `:4460` | mocked NEAR RPC and EVM chain RPC |
 | `http://127.0.0.1:4421`, `:4431`, `:4441` | live mode's vault, auth and API hosts (below): reached only through the tests' routes |
 
@@ -53,6 +54,17 @@ The bundles are built by `@hana-id/web`'s own per-env build scripts for `local-e
 (not in `envs/`, so the published client never lists a loopback env). Its CKD key belongs to a test MPC
 (`src/server/chain.ts`, real BLS12-381), so the vault's pairing check runs as on testnet. D1 is node:sqlite with
 apps/api's migrations.
+
+Email login (`tests/email.spec.ts`, build plan batch 8a) runs apps/email-issuer's own Worker in Node
+(`src/server/issuer.ts`) on its own origin, as on sandbox-dev (D230): its handlers, its `Challenge`, `RateLimiter` and
+`Outbox` objects on in-memory storage, its D1 migrations, and the API's D1 as `APP_DB`. Mail goes to the `outbox` stub
+(`local*` envs only), which the tests read through `GET /__e2e/outbox?to=<address>` (no CORS, refused with an
+`Origin`). The stack makes a throwaway RSA signing key and HMAC keys per run; the mocked chain lists the key as the
+active `email` key of signer `hana` and gives every scope its email client, so the vault's on-chain token check passes,
+and `POST /__e2e/apps` takes `loginMethods: 'google,email'` to turn email on for one app. Each issuer request gets a
+fresh client address from 198.18.0.0/15 (`cf-connecting-ip`), since every page in the suite is one client; the
+per-address limits stay real, so each test uses its own address. The mocked `/v1/login` derives `#email#` paths for
+email tokens and refuses any login that carries a link (batch 8a never links).
 
 Google is never contacted: each test's browser context routes `accounts.google.com/o/oauth2/v2/auth` and
 `www.googleapis.com/oauth2/v3/certs` to an OIDC stub (`src/google-stub.ts`) that checks the request is the spec's

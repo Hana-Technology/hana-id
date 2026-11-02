@@ -1,3 +1,4 @@
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -75,6 +76,28 @@ describe('page Worker configs', () => {
     // rpcFallback joins the export page's connect-src when the manifest sets it.
     const fb = pagesWranglerConfig(variant({ rpcFallback: 'https://rpc.fallback.example' }), 'auth', COMPATIBILITY_DATE);
     expect(fb.vars).toEqual({ AUTH_ORIGIN: manifest.authOrigin, API_URL: manifest.apiUrl, NEAR_RPC: manifest.rpc, NEAR_RPC_FALLBACK: 'https://rpc.fallback.example' });
+  });
+
+  it('auth: EMAIL_ISSUER_URL, /login/email’s connect-src, with an emailIssuer block (batch 8a)', () => {
+    const { publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048, publicExponent: 65537 });
+    const jwk = publicKey.export({ format: 'jwk' }) as { n: string; e: string };
+    const kid = createHash('sha256').update(`{"e":"${jwk.e}","kty":"RSA","n":"${jwk.n}"}`).digest('base64url');
+    const url = `https://hana-id-email-issuer-sandbox-dev.${new URL(manifest.apiUrl).hostname.split('.')[1]}.workers.dev`;
+    const m = variant({
+      emailIssuer: {
+        url,
+        iss: `${url}/v1/email`,
+        cloudflare: { workerName: 'hana-id-email-issuer-sandbox-dev', d1Name: 'hana-id-email-issuer-sandbox-dev' },
+        signer: { kind: 'worker-secret', activeKid: kid },
+        publicKeys: [{ kty: 'RSA', n: jwk.n, e: jwk.e, kid, use: 'sig', alg: 'RS256' }],
+        from: 'Hana <login@mail.example.com>',
+        sender: 'sendgrid',
+        dailySendBudget: 100,
+      },
+    } as Partial<Manifest>);
+    expect(pagesWranglerConfig(m, 'auth', COMPATIBILITY_DATE).vars).toMatchObject({ EMAIL_ISSUER_URL: url });
+    expect(pagesWranglerConfig(m, 'vault', COMPATIBILITY_DATE).vars).toEqual({ VAULT_ORIGIN: manifest.vaultOrigin });
+    expect(pagesWranglerConfig(manifest, 'auth', COMPATIBILITY_DATE).vars).not.toHaveProperty('EMAIL_ISSUER_URL');
   });
 
   it('carries no secret, D1 or Durable Object binding', () => {

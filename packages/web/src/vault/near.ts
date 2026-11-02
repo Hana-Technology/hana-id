@@ -4,7 +4,7 @@
 // `sender_account_id` the pinned RELAYER. It never takes session state from the API. A lying RPC can fail or delay a
 // login, never forge one: every CKD result still passes the pairing check against the pinned key. Each read goes to
 // the manifest `rpc`, and to `rpcFallback` only when the primary fails (../near-call.ts), one endpoint per answer.
-import { type CkdResult, type SessionView, base64Decode, base64Encode, fromUtf8, isCkdResult, isSessionView, utf8 } from '@hana-id/core';
+import { type CkdResult, type EmailChainKey, type EmailSignerPolicy, type SessionView, base64Decode, base64Encode, fromUtf8, isCkdResult, isSessionView, utf8 } from '@hana-id/core';
 import { type NearEndpoints, isPendingTxError, nearCall } from '../near-call.ts';
 
 type Fetch = typeof fetch;
@@ -83,6 +83,32 @@ export class NearView {
       throw new Error('NEAR RPC: malformed config');
     }
     return list as [string, string][];
+  }
+
+  /** `get_issuer_keys(provider)`: the provider's active keys with their material (`{kid, n, e}`), or null for none. */
+  async issuerKeys(provider: string): Promise<EmailChainKey[] | null> {
+    const value = await this.view('get_issuer_keys', { provider });
+    if (value === null) return null;
+    if (!Array.isArray(value) || !value.every((k) => isObj(k) && typeof k.kid === 'string' && typeof k.n === 'string' && typeof k.e === 'string')) {
+      throw new Error('NEAR RPC: malformed get_issuer_keys');
+    }
+    return value.map((k) => ({ kid: k.kid as string, n: k.n as string, e: k.e as string }));
+  }
+
+  /** `get_self_issued(provider)`: the signer policy, or null (not a self-issued provider; a contract before v3 throws). */
+  async selfIssued(provider: string): Promise<EmailSignerPolicy | null> {
+    const value = await this.view('get_self_issued', { provider });
+    if (value === null) return null;
+    const signers = isObj(value) ? value.signers : undefined;
+    if (
+      !isObj(value) ||
+      !Number.isSafeInteger(value.required) ||
+      !Array.isArray(signers) ||
+      !signers.every((s) => isObj(s) && typeof s.id === 'string' && Array.isArray(s.kids) && s.kids.every((k) => typeof k === 'string'))
+    ) {
+      throw new Error('NEAR RPC: malformed get_self_issued');
+    }
+    return { required: value.required as number, signers: signers.map((s) => ({ id: s.id as string, kids: [...(s.kids as string[])] })) };
   }
 
   /** The outcome of a relayed transaction (sender: the pinned RELAYER). Network errors throw. */

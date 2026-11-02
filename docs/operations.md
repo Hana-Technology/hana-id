@@ -1,6 +1,7 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-02 (branch `feat/email-login-6`: "Email login on sandbox-dev (build plan batch 6)",
+Last verified against code: 2026-11-02 (branch `feat/email-login-8a`: "Email login demo on sandbox-dev (batch 8a)",
+the auth page Worker's `EMAIL_ISSUER_URL`, the local demo on the e2e stack's outbox; D245–D249); 2026-11-02 (branch `feat/email-login-6`: "Email login on sandbox-dev (build plan batch 6)",
 the user's deploy order with the corrections of D234, the issuer on its own URL (D230), migration 0010 beside 0006,
 the session pool's link methods, the email clients left for batch 8; branch `feat/batch-c-4`: "Usage capture (batch C4, milestone M2)" (the
 setup steps for the user: `usage-setup`, Hyperdrive, `USER_ID_KEY`, migration 0009, `gen --usage-hyperdrive-id`), the
@@ -2141,6 +2142,67 @@ below batch C3 see "Rolling the API back below batch C3"). Step 5 re-adds the sa
 `migrate` failure leaves v2 in place (re-propose a fixed build); a v3 that misbehaves can't go back to v2 (its
 `migrate` refuses v3 state): fix forward. Steps 7 and 9 are one-way owner calls; an email key posted by mistake is
 removed at once by the owner (`remove_issuer_key`, DoS only), and the watchdog cancels or pauses on any unpinned one.
+
+## Email login demo on sandbox-dev (batch 8a)
+
+What turns plain email login on for **the demo app only**, on top of "Email login on sandbox-dev (build plan batch 6)"
+above (steps 1–9 done: v3, the issuer Worker and its keys on chain). Testnet only; for the user to run. Every other
+app stays Google-only. Nothing here is automated yet (the partner console toggle is batch 9).
+
+**SendGrid is required for real mail.** The issuer sends code mails only through SendGrid (`emailIssuer.sender:
+"sendgrid"`, D194); the `outbox` stub is `local*`-only by design (the manifest schema and `gen` refuse it on
+sandbox-dev, so codes never land in a store an operator can read on a shared env) and stays that way. Without
+`SENDGRID_API_KEY` on the issuer, `start` still answers `202` (enumeration-safe) but no mail goes out, so nobody can
+sign in with email there (the issuer logs `code_mail` `misconfigured`). Set SendGrid up first (batch 6 step 8: subuser, Mail-Send key in
+`.secrets/sandbox-dev/email-issuer-sendgrid-key`, `email-issuer sandbox-dev put --yes`, the signed webhook).
+
+Checklist, in order (each check before the next):
+
+1. **The issuer's staff route for client proofs**: `emailIssuer.access` in `envs/sandbox-dev.json` (the Cloudflare
+   Access application in front of `{url}/v1/email/admin/*` and the staff allowlist, D88), `email-issuer gen`, issuer
+   deploy. Check: `POST {url}/v1/email/admin/client-proof` without Access is refused.
+2. **`login_methods` for the demo app** (D1; no CLI command yet). Find its id with `admin sandbox-dev app:list
+   --remote`, then
+
+   ```sh
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev --remote --command "UPDATE apps SET login_methods = 'google,email' WHERE id = '<demo app id>'"
+   ```
+
+   Nothing changes for users yet: `GET /v1/app` lists email only once the scope holds its email client (step 3).
+   Check: `SELECT id, login_methods FROM apps WHERE login_methods <> 'google'` is the demo app alone.
+3. **The scope's email client** `AddClient ("email", "email:<demo scope>")` (D234): read the scope's `action_nonce`
+   (`get_scope`), ask the issuer for the client proof (`POST {url}/v1/email/admin/client-proof {scopeId, actionNonce,
+   ticket}` through Access, "Staff calls" in "Email issuer"), then the scope's owner sends `propose_change(scope,
+   auth, {"AddClient":{"provider":"email","aud":"email:<scope>"}}, client_proof)` (`docs/contract-interface.md`;
+   0.01 NEAR attached), waits the scope's `change_delay_ms`, and anyone calls `execute_change`. Which account owns
+   the demo's scope, and the exact command, are to confirm (D248: there is no CLI command for an owner's
+   `propose_change` yet). Check: `get_scope` lists `["email","email:<scope>"]`; `GET /v1/app` for the demo's key has
+   `"loginMethods":["google","email"]` and `"email":{"aud":"email:<scope>"}`.
+4. **The pages and the API with batch 8a**: `corepack pnpm --filter @hana-id/web build` (the bundles pin
+   `emailIssuer.url` and `iss` from the manifest), `corepack pnpm --filter @hana-id/api run gen sandbox-dev` (the auth
+   page Worker gets `EMAIL_ISSUER_URL`, `/login/email`'s connect-src), `run deploy` and `run deploy:pages`, then the
+   demo (`apps/demo`, its own deploy). Check: `curl -sI {authOrigin}/login/email` shows `connect-src
+   https://hana-id-email-issuer-sandbox-dev.tingtc.workers.dev https://hana-id-api-sandbox-dev.tingtc.workers.dev`;
+   on the demo, "Log in with email" → address → the mailed code → the wallet; "Log in with Google" is unchanged.
+5. **Undo**: `UPDATE apps SET login_methods = 'google' …` turns email off at once (`GET /v1/app`, the issuer's
+   `start` and the API all read it; an email token is then `403 login_method_disabled`). The scope's email client
+   can stay (it serves nothing without `login_methods`) or go through `remove_client`.
+
+**Before SendGrid: an internal demo on the local stack.** The Playwright stack (`apps/e2e`) runs the real popup,
+vault, SDK, API Worker and email issuer Worker on loopback, with the `outbox` stub, a mocked NEAR chain and a test MPC
+(not testnet: the keys are throwaway, and Google login there only works under Playwright's stub). For showing the email
+UX:
+
+```sh
+HANA_E2E_PORT_BASE=4410 corepack pnpm --filter @hana-id/e2e serve
+curl -s -X POST http://127.0.0.1:4440/__e2e/apps -H 'content-type: application/json' \
+  -d '{"name":"Hana ID demo","origins":["http://localhost:4412"],"publishableKey":"pk_test_DemoE2eDemoE2eDemoE2e","loginMethods":"google,email"}'
+# open http://localhost:4412 → "Log in with email"; the code is in:
+curl -s 'http://127.0.0.1:4442/__e2e/outbox?to=<address, lowercased>'
+```
+
+Create the app before anything else on a fresh stack (a second create with the same key returns the first app
+unchanged). This is a demo of the screens and the flow, not of sandbox-dev; say so when showing it.
 
 ## Restoring a D1 database (Time Travel)
 

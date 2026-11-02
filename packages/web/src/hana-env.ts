@@ -26,4 +26,11 @@ export interface HanaEnv {
   readonly ckdNetworkKey: string;
   /** `isDevEnv(name)` from @hana-id/env (`local*`/`sandbox*`): dev-only privileges such as same-site Hana origins. */
   readonly devEnv: boolean;
+  /**
+   * Email login (manifest `emailIssuer`, D230): the issuer's origin, which `/login/email` calls (its CSP `connect-src`),
+   * and the email tokens' pinned `iss`, which the vault checks. Both or neither; without them the vault offers Google
+   * only, whatever the app's `loginMethods` say.
+   */
+  readonly emailIssuerUrl?: string;
+  readonly emailIss?: string;
 }

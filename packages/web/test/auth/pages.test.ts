@@ -31,9 +31,20 @@ describe('auth page policies', () => {
     }
   });
 
-  it('serves the four pages at the spec’s paths', () => {
+  it('the email step’s connect-src is the issuer and the API only (batch 8a), the API only without an issuer', () => {
+    expect(authPageCsp(sandbox, 'email')).toBe(`${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev; frame-ancestors 'none'`);
+    const withIssuer = { ...sandbox, emailIssuerUrl: 'https://hana-id-email-sandbox-dev.tingtc.workers.dev', emailIss: 'https://hana-id-email-sandbox-dev.tingtc.workers.dev/v1/email' };
+    expect(authPageCsp(withIssuer, 'email')).toBe(
+      `${BASE}; connect-src https://hana-id-email-sandbox-dev.tingtc.workers.dev https://hana-id-api-sandbox-dev.tingtc.workers.dev; frame-ancestors 'none'`,
+    );
+    // The chooser stays fetch-free with email on (D77).
+    expect(authPageCsp(withIssuer, 'login')).toBe(`${BASE}; frame-ancestors 'none'`);
+  });
+
+  it('serves the five pages at the spec’s paths', () => {
     expect(AUTH_PAGES.map((p) => [p.path, p.file])).toEqual([
       ['/login', 'login.html'],
+      ['/login/email', 'login/email.html'],
       ['/login/callback', 'login/callback.html'],
       ['/approve', 'approve.html'],
       ['/export', 'export.html'],
@@ -131,7 +142,7 @@ describe('per-env build', () => {
     // Nothing is written next to the origin roots, so the vault root (<env>/vault) holds only the vault's files.
     expect(readdirSync(join(out, 'sandbox-dev'))).toEqual(['auth']);
     expect(readdirSync(built.dir).sort()).toEqual([ASSET_DIR, 'approve.html', 'export.html', 'login', 'login.html'].sort());
-    expect(readdirSync(join(built.dir, 'login'))).toEqual(['callback.html']);
+    expect(readdirSync(join(built.dir, 'login')).sort()).toEqual(['callback.html', 'email.html']);
   });
 
   it('replaces only its own root on a rebuild: stale auth files go, the vault’s root stays', async () => {

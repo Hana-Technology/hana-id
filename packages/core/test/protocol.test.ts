@@ -72,6 +72,12 @@ describe('port requests', () => {
     expect(parsePortRequest(req('hana_login'))!.params).toBeUndefined();
   });
 
+  it('hana_login takes a method and, unless it is Google, an email hint (batch 8a)', () => {
+    for (const p of [{ method: 'email' }, { method: 'google' }, { method: 'email', emailHint: 'ada@example.com' }, { emailHint: 'ada@example.com' }, { popupBlocked: true, method: 'email' }]) {
+      expect(parsePortRequest(req('hana_login', p))!.params, JSON.stringify(p)).toEqual(p);
+    }
+  });
+
   it.each([
     ['v 2', { v: 2, id: 'a', method: 'hana_status' }],
     ['no id', { v: 1, method: 'hana_status' }],
@@ -106,6 +112,11 @@ describe('port requests', () => {
     ['hana_signRaw', { chain: 'stellar', bytes: new Uint8Array(4097) }],
     ['hana_signRaw', { chain: 'stellar', bytes: [1, 2, 3] }],
     ['hana_login', { popupBlocked: 'yes' }],
+    ['hana_login', { method: 'apple' }],
+    ['hana_login', { method: 'google', emailHint: 'ada@example.com' }],
+    ['hana_login', { method: 'email', emailHint: 'not-an-address' }],
+    ['hana_login', { method: 'email', emailHint: 'a\nb@example.com' }],
+    ['hana_login', { method: 'email', extra: 1 }],
   ])('refuses %s with bad params %j', (method, params) => {
     expect(parsePortRequest(req(method, params))).toBeNull();
   });
@@ -285,6 +296,7 @@ const VALID_WINDOW: Record<WindowMessageType, Record<string, unknown>> = {
   'hana:hello': { v: 1, t: 'hana:hello', sdk: '0.0.0' },
   'hana:auth-hello': { v: 1, t: 'hana:auth-hello' },
   'hana:auth-params': AUTH_PARAMS,
+  'hana:auth-progress': { v: 1, t: 'hana:auth-progress', stage: 'email_code' },
   'hana:approve-hello': { v: 1, t: 'hana:approve-hello' },
   'hana:approve-request': APPROVE_REQUEST,
   'hana:approve-result': { v: 1, t: 'hana:approve-result', id: newRequestId(), approved: true, digest: new Uint8Array(32) },
@@ -353,6 +365,42 @@ describe('window messages', () => {
     ['an over-long appName', { appName: 'x'.repeat(201) }],
   ])('auth-params refuses %s', (_, change) => {
     expect(parseWindowMessage({ ...AUTH_PARAMS, ...change }, ['hana:auth-params'])).toBeNull();
+  });
+
+  // Email login (batch 8a): the offered methods ride only when email is among them; a Google-only message is batch B's.
+  it('auth-params takes the email methods, a preselected method and an email hint', () => {
+    for (const extra of [
+      { methods: ['google', 'email'] },
+      { methods: ['google', 'email'], method: 'email' },
+      { methods: ['google', 'email'], method: 'google' },
+      { methods: ['google', 'email'], method: 'email', emailHint: 'ada@example.com' },
+      { methods: ['google', 'email'], emailHint: 'ada@example.com' },
+    ]) {
+      expect(parseWindowMessage({ ...AUTH_PARAMS, ...extra }, ['hana:auth-params']), JSON.stringify(extra)).not.toBeNull();
+    }
+  });
+
+  it.each([
+    ['Google alone as the offered methods', { methods: ['google'] }],
+    ['methods out of order', { methods: ['email', 'google'] }],
+    ['a repeated method', { methods: ['google', 'email', 'email'] }],
+    ['an unknown method', { methods: ['google', 'apple'] }],
+    ['a method without methods', { method: 'email' }],
+    ['a method not offered', { methods: ['email'], method: 'google' }],
+    ['a hint without methods', { emailHint: 'ada@example.com' }],
+    ['a hint with Google preselected', { methods: ['google', 'email'], method: 'google', emailHint: 'ada@example.com' }],
+    ['a hint with no @', { methods: ['google', 'email'], emailHint: 'ada.example.com' }],
+    ['a hint with a space', { methods: ['google', 'email'], emailHint: 'ada @example.com' }],
+    ['a hint with a bidi control', { methods: ['google', 'email'], emailHint: 'ada\u202e@example.com' }],
+    ['an over-long hint', { methods: ['google', 'email'], emailHint: `${'a'.repeat(250)}@b.co` }],
+  ])('auth-params refuses %s', (_, change) => {
+    expect(parseWindowMessage({ ...AUTH_PARAMS, ...change }, ['hana:auth-params'])).toBeNull();
+  });
+
+  it('auth-progress carries only the email_code stage', () => {
+    expect(parseWindowMessage({ v: 1, t: 'hana:auth-progress', stage: 'email_code' }, ['hana:auth-progress'])).not.toBeNull();
+    expect(parseWindowMessage({ v: 1, t: 'hana:auth-progress', stage: 'done' }, ['hana:auth-progress'])).toBeNull();
+    expect(parseWindowMessage({ v: 1, t: 'hana:auth-progress', stage: 'email_code', code: '123456' }, ['hana:auth-progress'])).toBeNull();
   });
 
   it.each([

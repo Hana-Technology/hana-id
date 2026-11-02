@@ -63,7 +63,7 @@ import { autoApproveStatus, consentActive, consentEnd, newConsent, withUsage } f
 import { type Persistence, type PolicyInForce, type RawSign, type VaultConfig, parentAllowed, policyInForce } from './config.ts';
 import { VaultError, apiErrorToVault, disconnected, notLoggedIn, toProtocolError, userRejected } from './errors.ts';
 import { Launcher, type LauncherHandle, type LauncherView } from './launcher.ts';
-import { type LoginMode, type LoginStage, type LoginSuccess, PendingLogin, serverDetail } from './login.ts';
+import { type LoginMode, type LoginRequest, type LoginStage, type LoginSuccess, PendingLogin, isOwnLoginPath, serverDetail } from './login.ts';
 import { NearView } from './near.ts';
 import {
   type ConsentV1,
@@ -391,6 +391,10 @@ export class Vault {
       if (this.pending && parseWindowMessage(e.data, ['hana:auth-hello'])) this.pending.acceptHello(e);
       return;
     }
+    if (t === 'hana:auth-progress') {
+      if (this.pending && parseWindowMessage(e.data, ['hana:auth-progress'])) this.pending.acceptProgress(e);
+      return;
+    }
     if (t === 'hana:export-hello') {
       if (parseWindowMessage(e.data, ['hana:export-hello'])) this.onExportHello(e);
       return;
@@ -680,7 +684,10 @@ export class Vault {
       case 'hana_status':
         return this.statusResult();
       case 'hana_login':
-        return this.login(r.params?.popupBlocked === true);
+        return this.login(r.params?.popupBlocked === true, {
+          ...(r.params?.method ? { method: r.params.method } : {}),
+          ...(r.params?.emailHint ? { emailHint: r.params.emailHint } : {}),
+        });
       case 'hana_cancelLogin':
         this.pending?.abort(this.pending.popupBlocked ? new VaultError('popup_blocked', 'The sign-in window was blocked') : new VaultError('login_cancelled', 'The sign-in was cancelled'));
         return null;
@@ -718,7 +725,7 @@ export class Vault {
 
   // ---- login ----
 
-  private newPending(mode: LoginMode, popupBlocked: boolean): PendingLogin {
+  private newPending(mode: LoginMode, popupBlocked: boolean, request: LoginRequest = {}): PendingLogin {
     this.pending?.abort(new VaultError('login_cancelled', 'A newer sign-in replaced this one'));
     this.continueIntent?.remove();
     this.continueIntent = null;
@@ -743,6 +750,7 @@ export class Vault {
       },
       mode,
       popupBlocked,
+      request,
     );
     this.pending = pending;
     return pending;
@@ -757,8 +765,8 @@ export class Vault {
     return true;
   }
 
-  private async login(popupBlocked: boolean): Promise<LoginResult> {
-    const pending = this.newPending(popupBlocked ? 'vault' : 'partner', popupBlocked);
+  private async login(popupBlocked: boolean, request: LoginRequest = {}): Promise<LoginResult> {
+    const pending = this.newPending(popupBlocked ? 'vault' : 'partner', popupBlocked, request);
     let intent: LauncherHandle | null = null;
     if (popupBlocked) {
       intent = this.launcher.push('Sign in with Hana', () => {
@@ -1253,7 +1261,7 @@ export class Vault {
       r.keyIndex === 0 &&
       r.derivationVersion === DERIVATION_VERSION &&
       bytesEqual(r.ckdKeyHash, this.bundleCkdKeyHash) &&
-      r.path.startsWith(`${this.config.scopeId}#google#`) &&
+      isOwnLoginPath(r.path, this.config.scopeId) &&
       this.clock.now() < r.expiresAtMs
     );
   }
@@ -1868,6 +1876,11 @@ export class Vault {
   private startExport(chain: 'stellar' | 'evm'): Promise<null> {
     const s = this.live();
     if (!s) return Promise.reject(notLoggedIn());
+    // The export window signs in again with Google (export mode); an email wallet's export needs the email step there,
+    // which comes later (D246). Refused before any window opens.
+    if (!s.path.startsWith(`${this.config.scopeId}#google#`)) {
+      return Promise.reject(new VaultError(ErrorCode.unsupportedMethod, 'Key export is not available yet for wallets opened with email', { reason: 'email_export' }));
+    }
     if (this.exportJob) return Promise.reject(new VaultError('busy', 'An export is already running'));
     return new Promise<null>((resolve, reject) => {
       const job: ExportJob = {

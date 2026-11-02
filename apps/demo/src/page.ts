@@ -202,6 +202,8 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     el('status').textContent = statusText(c, clock());
     show('login', !loggedIn);
     disable('login', c === null || status === 'unlocking' || status === 'logging_in' || status === 'error');
+    show('login-email', !loggedIn);
+    disable('login-email', c === null || status === 'unlocking' || status === 'logging_in' || status === 'error');
     show('cancel-login', status === 'logging_in');
     show('logout', loggedIn);
     show('revoke', loggedIn);
@@ -327,11 +329,15 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
 
   // ---- actions ----
 
-  /** Synchronous up to client.login(), so the click's user activation still opens the popup. */
-  function login(): void {
+  /**
+   * Synchronous up to client.login(), so the click's user activation still opens the popup. Each button names its
+   * method, so the popup skips its chooser: "Log in with email" works once the demo app's `login_methods` include
+   * email (docs/operations.md "Email login demo on sandbox-dev"); until then it fails with login_method_unavailable.
+   */
+  function login(method: 'google' | 'email'): void {
     const before = c.lastLogin;
     const start = now();
-    const p = c.login();
+    const p = c.login({ method });
     clearError();
     notice(null);
     render();
@@ -388,7 +394,8 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     });
   }
 
-  el('login').addEventListener('click', login);
+  el('login').addEventListener('click', () => login('google'));
+  el('login-email').addEventListener('click', () => login('email'));
   el('cancel-login').addEventListener('click', () => c.cancelLogin());
   el('logout').addEventListener('click', () =>
     run('logout', async () => {

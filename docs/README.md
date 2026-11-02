@@ -17,6 +17,7 @@ the batch merges, so where a spec and a reference doc disagree, the reference do
 | `playbooks.md` | Step-by-step recovery for every watchdog alert kind and every incident (signals, impact, steps with who acts, commands, verify); generated from `packages/playbooks` (D126), the same source as the admin portal's "Security & monitoring" playbooks |
 | `decisions.md` | Every decision: when, why, what was rejected, status |
 | `context.md` | Project background, batch B status, testnet measurements, next steps |
+| `mainnet-readiness.md` | Everything that must be true before mainnet: each item's status, owner and source, grouped (open decisions, keys, governance, infrastructure, monitoring, reviews, builds, address freeze, legal), the top blockers, and inconsistencies found between docs |
 | `../envs/README.md`, `../apps/api/README.md`, `../apps/smoke/README.md`, `../apps/e2e/README.md`, `../apps/demo/README.md` | Per-package quick starts (`apps/demo`: the hosted testnet demo for colleagues) |
 | `../packages/{core,web,react,sodax}/README.md` | The partner-facing READMEs shipped in the SDK tarballs (install, minimal usage) |
 | `../packages/email/README.md` | Email normalization v1, the `e1.` `sub`, the Google-hosted rule, the disposable-domain list: API, the frozen rules, the `tr46` choice, the list's pinned source and how to update it |

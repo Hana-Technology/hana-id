@@ -1,7 +1,8 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-02 (branch `docs/identity-token-deployed`: the identity token deployed on
+Last verified against code: 2026-11-02 (branch `feat/batch-c-2`: `packages/oidc` in Components and the login
+flow's RS256 reference, duplicate watchdog and `packages/jwks` rows removed; branch `docs/identity-token-deployed`: the identity token deployed on
 sandbox-dev; branch `feat/email-login-5`: the watchdog's email issuer, link-alarm and
 `unrecorded_wallets` checks in Status, Components and the watchdog's reads; branch `feat/email-login-2`: the email
 login contract row in Status: sandbox tests, the v2 → v3 upgrade path, `migrate_v1` removed; branch
@@ -65,13 +66,11 @@ Batch B is merged on the integration branch `feat/batch-b` (not yet on `develop`
 | `hana-signer` | `contracts/hana-signer` | NEAR testnet, manifest `signer` | Issuers (Google RSA keys), scope registry, sessions, calls the MPC |
 | NEAR MPC | external, manifest `mpc` | NEAR testnet MPC network | CKD (`request_app_private_key`, domain `ckdDomainId` = 2) |
 | Google OIDC | external | `accounts.google.com`, `www.googleapis.com` | Issues ID tokens whose `nonce` commits to the session |
-| Watchdog Worker | `apps/watchdog/src/index.ts` | Cloudflare Workers on **its own account** (manifest `watchdog.cloudflare`, D86) | Every 5 min: Google's JWKS against the contract's pending and active issuer keys; cancels forged pending keys, deletes the updater keys that proposed one, pauses on a forged active key, confirms matches (D82); alerts on governance changes and on the relayer's balance and pool-key allowances (read-only, D150); pages, Slack, email (D85); dead-man's switch; read-only `GET /status`, `/alerts`, `/actions` and `POST /alerts/:id/ack` for the admin portal (D83) |
-| Watchdog D1 | `apps/watchdog/migrations/` | Cloudflare D1 on the watchdog's account | Seen kids, absences, runs and their checks, actions log, alerts, deliveries, acks |
-| `packages/jwks` | `packages/jwks/src/index.ts` | API and watchdog | JWKS parsing (`usableJwks`), RSA key comparison |
 | `packages/email` | `packages/email/src/` | email issuer (batch 4); Workers and browsers (Web Crypto, no Node API) | Email normalization v1 (UTS #46 via pinned `tr46`, characters newer than Unicode 15.0 refused, Gmail canonical form), `sub = "e1." ‖ b64url(HMAC-SHA256(K_sub, …))` with `K_sub` as an input, the Google-hosted rule, the pinned disposable-domain list; frozen at the address freeze by `vectors/email-v1.json`, tested in Node and workerd (D156–D159) |
 | Watchdog Worker | `apps/watchdog/src/index.ts` | Cloudflare Workers on **its own account** (manifest `watchdog.cloudflare`, D86) | Every 5 min: Google's JWKS against the contract's pending and active issuer keys; cancels forged pending keys, deletes the updater keys that proposed one, pauses on a forged active key, confirms matches (D82); the email issuer's pending and active keys and signer policy against the manifest's pins (`watchdog.pinnedIssuerKeys.email`: cancels unpinned pending keys, pauses on an unpinned active key or a weaker policy, never confirms one, D190, D191), the contract's hourly link counts from `get_link_stats()` (an alarm threshold reached critical, half the total threshold a warning, a raise a critical governance change; alarms only, nothing is refused; D200); Hana's email JWKS against the pins (warning), read after the run is recorded and its lock released, guarded and size-capped; `unrecorded_wallets` outside dev envs (critical, D193); alerts on governance changes and on the relayer's balance and pool-key allowances (read-only, D150); pages, Slack, email (D85); dead-man's switch; read-only `GET /status`, `/alerts`, `/actions` and `POST /alerts/:id/ack` for the admin portal (D83) |
 | Watchdog D1 | `apps/watchdog/migrations/` | Cloudflare D1 on the watchdog's account | Seen kids, absences, runs and their checks, actions log, alerts, deliveries, acks |
-| `packages/jwks` | `packages/jwks/src/index.ts` | API and watchdog | JWKS parsing (`usableJwks`), RSA key comparison, RFC 7638 RSA thumbprints (`rsaThumbprint`, the watchdog's email pins) |
+| `packages/jwks` | `packages/jwks/src/index.ts` | API, watchdog, `packages/oidc` | JWKS parsing (`usableJwks`), RSA key comparison, RFC 7638 RSA thumbprints (`rsaThumbprint`, the watchdog's email pins) |
+| `packages/oidc` | `packages/oidc/src/` | API (console and admin Workers in batch C); Workers (Web Crypto, no Node API) | Google ID-token checks moved out of the API: `verifyIdToken` (RS256, known `iss`, known `kid`, a finite `exp`, single-string `aud`; the identity-token refusal; the optional `email`, `email_verified`, `iat`, `hd`, `azp`, `amr`, `auth_time` returned when well typed, a wrong type dropped by default or refused with `optionalClaims: 'strict'`, the console's mode; the API ignores them), the isolate's Google JWKS cache (max-age 5 min..6 h, unknown-kid refetch ≤ 1/min, 10 s failure backoff, ≤ 6 h stale on fetch failure, 8 s timeout, 64 KiB cap) and `publishedKeys`; `AccessJwtVerifier` for the admin Worker's Cloudflare Access JWT (`type`, `iss`, `aud`, `exp`/`nbf`, non-empty `sub` and `email`; certs ≤ 10 min old, never stale; one per isolate); tested in Node and workerd (D201–D203) |
 | `packages/playbooks` | `packages/playbooks/src/` | watchdog (playbook ids), admin portal (batch C), `docs/playbooks.md` | Recovery playbooks for every watchdog alert kind and incident (D126); the watchdog serves each alert kind's playbook id in `GET /status` and names it in every alert text |
 | Scripts | `scripts/`, `apps/api/scripts/gen-wrangler.ts`, `apps/watchdog/scripts/` | operator's machine | Deploy contract and keys, JWKS one-off sync, CKD key fetch, `VAULT_KEK` init/rotate, admin CLI, watchdog config and secrets |
 
@@ -163,7 +162,7 @@ Browser steps: `packages/web/src/vault/login.ts`, `packages/web/src/auth/login-p
 6. The vault makes the BLS app key (`newAppKey`, `packages/core/src/ckd.ts:84`), signs `sessionMessage(1,
    ckdPayload(pk1, pk2))` and sends `POST /v1/login` (`handleLogin`, `apps/api/src/login.ts:85`). The API, in order:
    `appGate` kind `relay` (`handlers.ts:157`; key, active, `scope_conflict`, caller rule, limits); body shape incl.
-   `keyIndex ≤ 2^31 − 1` (`toLogin`, `login.ts:49`); RS256 + claims (`apps/api/src/jwks.ts:129`); claim allow-list
+   `keyIndex ≤ 2^31 − 1` (`toLogin`, `login.ts:49`); RS256 + claims (`verifyIdToken`, `packages/oidc/src/id-token.ts`); claim allow-list
    (`apps/api/src/claims.ts`); nonce recomputed with `SIGNER_ACCOUNT` and the app's D1 `scope_id`; from `authOrigin`
    (an export) the export limit, 3 per hour per `(app, sha256(path))` (D59); per-isolate hold on counter 1
    (`apps/api/src/session-use.ts:76`); in parallel `checkClientScope` (`handlers.ts:384`) and `session_key_in_use`

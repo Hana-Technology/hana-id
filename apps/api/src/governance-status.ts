@@ -7,10 +7,10 @@
 // status endpoint (docs/governance-spec.md "Watchdog service"), never from here, and the API is not independent of
 // Hana's Cloudflare account. The on-chain views it summarises are documented in docs/contract-interface.md
 // "Monitoring hand-off"; a reader that must not trust the API reads them itself through its own RPC.
+import { publishedKeys } from '@hana-id/oidc';
 import type { Env } from './env.ts';
 import { done, newCtx } from './handlers.ts';
 import { GOOGLE_PROVIDER, type KeyChange, parseKeyChanges, sameKeyMaterial, issuerKids } from './issuer-keys.ts';
-import { publishedKeys } from './jwks.ts';
 import { type AccessKeyListEntry, Rpc } from './near/rpc.ts';
 import { UPDATER_METHODS } from './relayer-config.ts';
 

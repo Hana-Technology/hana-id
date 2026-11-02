@@ -2,19 +2,15 @@
 // the issuer's JWKS, when it leaves it, and when a token signed with it first reaches the API. D1 table
 // `issuer_key_observations` (migration 0004); read with `admin.ts <env> issuer-keys:lead-times`. Public data only:
 // kids, timestamps and the JWKS max-age, never a token, `sub` or anything about a user. Writes never fail a caller.
+import type { KeyObserver } from '@hana-id/oidc';
 import type { Env } from './env.ts';
 import { log } from './log.ts';
 
-/** Largest max-age stored (an INTEGER column; a silly header must not become a float). */
-const MAX_AGE_CAP_S = 2 ** 31 - 1;
+// Parsed in @hana-id/oidc (the token check reports each fetch's max-age to the observer); the JWKS cron uses it too.
+export { cacheMaxAgeS } from '@hana-id/oidc';
+
 /** Bound on the per-isolate set of kids whose first token was already written (only verified kids reach it). */
 const NOTED_CAP = 256;
-
-/** The `max-age` directive of a Cache-Control header in seconds, or null without one. */
-export function cacheMaxAgeS(cacheControl: string | null): number | null {
-  const m = /(?:^|[\s,])max-age=(\d+)/iu.exec(cacheControl ?? '');
-  return m?.[1] ? Math.min(MAX_AGE_CAP_S, Number(m[1])) : null;
-}
 
 /**
  * Records one successful JWKS fetch at `now`: every listed kid gets `first_seen_jwks_ms` (kept if earlier),
@@ -73,21 +69,13 @@ export async function recordTokenKid(db: D1Database, provider: string, kid: stri
   }
 }
 
-/** What token verification reports (jwks.ts `VerifyOptions.observer`). Both calls return at once. */
-export interface KeyObserver {
-  /** A successful JWKS fetch listing `kids`. */
-  jwks(provider: string, kids: readonly string[], maxAgeS: number | null, now: number): void;
-  /** A token with a valid signature by `kid`. */
-  token(provider: string, kid: string, now: number): void;
-}
-
 /** provider + kid pairs whose first token this isolate has already written (or tried to). */
 const notedTokenKids = new Set<string>();
 
 /**
- * Observer for a request's token verification: the D1 writes run after the response (`exec.waitUntil`), and a kid's
- * first token is written at most once per isolate. Without an execution context nothing is recorded (the write
- * would be cut off with the response, and the request must not wait for it).
+ * Observer (@hana-id/oidc `KeyObserver`) for a request's token verification: the D1 writes run after the response
+ * (`exec.waitUntil`), and a kid's first token is written at most once per isolate. Without an execution context
+ * nothing is recorded (the write would be cut off with the response, and the request must not wait for it).
  */
 export function keyObserver(env: Env, exec?: ExecutionContext): KeyObserver | undefined {
   if (!exec) return undefined;

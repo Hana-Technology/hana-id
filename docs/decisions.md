@@ -5,7 +5,7 @@ Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 and D150–
 `feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`);
 D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-login-3`) on 2026-11-02; D159's `+tag`
 change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 (branch `feat/email-login-5`) and D200 (branches
-`feat/link-cap`, `feat/email-login-5`) on 2026-11-02.
+`feat/link-cap`, `feat/email-login-5`) on 2026-11-02; D201–D203 (branch `feat/batch-c-2`) on 2026-11-02.
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -2224,6 +2224,73 @@ address. D190, D191 and D193 are confirmed by the user (2026-11-02); D192 is sup
 - Why: D139 asks for the alert on every non-dev env; the owner's immediate email issuer actions leave no pending
   state, like Google's (`issuer`, `issuer_keys`), so the diff is the only place they show.
 
+## Batch C build, step C2 (`packages/oidc`), 2026-11-02
+
+Made while building `docs/batch-c-build-plan.md` C2 (branch `feat/batch-c-2`), where `docs/batch-c-spec.md` was silent
+or allowed two readings. None changes a derivation path or an address.
+
+### D201. The new ID-token claims: typed on request (strict for the console), ignored by the API
+- Date 2026-11-02 · Status: **to confirm** · Source: build of `docs/batch-c-spec.md` "Code flow" (`verifyIdToken`
+  gains `email`, `email_verified`, `iat`, `hd`, `azp`, `amr`, `auth_time`); C2 review M1, L1
+- Decision (`packages/oidc/src/id-token.ts`, `VerifyOptions.optionalClaims`): each claim is optional and is returned
+  only when the token carries it with the right type: a JSON string (`email`, `hd`, `azp`), a finite number (`iat`,
+  `auth_time`), an array of strings (`amr`), or for `email_verified` a boolean or the string `"true"` / `"false"`,
+  returned as a boolean. Absent claims have no key in `VerifiedToken`. A wrongly typed claim:
+  - `'ignore'` (the default, every API call): dropped, the token kept. The API's answers are develop's: a token with
+    `email_verified: "x"` on `/v1/sessions` still gets to the claim allow-list (`token_has_pii` with the flag on).
+  - `'strict'` (the console, C9, which reads them): the token is `invalid_token` ("Malformed token claims").
+  The claims are checked after the expiry check, so the order of refusals (format, issuer, expiry, then these, then
+  the JWKS) is develop's. `nonce` keeps its rule (a non-string is `null`, which every caller refuses). The checks stop
+  at types: `email_verified === true`, the `iat` age (120 s), the step-up's "no `email`" and the `hd` membership rule
+  are C9's.
+- Why strict for the console: its step-up rule ("must carry no `email`") must not pass a token whose `email` is only of
+  the wrong type, as dropping it would. Why ignore for the API: it reads none of these claims, and the C2 brief is "no
+  change in behaviour for the API". Why accept the strings: Google's OpenID Connect documentation shows
+  `"email_verified": "true"` in its example ID token payload; current tokens carry a JSON boolean, but a check that
+  refused the documented form could lock out a real sign-in.
+- Also (review L2): an `exp` that isn't finite (`1e400` parses as Infinity, a token that never expires) is
+  `invalid_token` in both modes. On develop it passed the API's check; the contract would still refuse it.
+- Rejected: strict by default (the first C2 draft), which changed the API's answers; a boolean-only `email_verified`.
+
+### D202. The Access JWT check: aud as string or array, 60 s skew, certs ≤ 10 min old, staff list outside
+- Date 2026-11-02 · Status: **to confirm** · Source: build of `docs/batch-c-spec.md` "Hana admin console" (JWT check on
+  every `/api/*` request) and "Admin and email" tests; C2 review M2, L3
+- Decision (`packages/oidc/src/access.ts` `AccessJwtVerifier`, for C8): RS256 only, a non-empty `kid` in the team's
+  certs (`https://<accessTeamDomain>/cdn-cgi/access/certs`, through an injected fetcher), `type === 'app'`, `iss ===
+  https://<accessTeamDomain>`, `aud` the AUD tag or an array containing it (Access sends a one-element array; RFC 7519
+  allows either), `exp` with 60 s skew, `nbf` (when present) with the same skew, `iat` optional but numeric, a
+  non-empty string `sub` and `email`; a token over 8 KiB or with invalid UTF-8 is malformed. Every claim is checked
+  before the certs are read. The result carries `sub`, `email` as sent, `kid`, `exp`, `iat`; the lowercased-email
+  check against `admin.staffEmails` stays in C8 (with "an email not on the list" as its test).
+- The certs: each fetch has an 8 s timeout (body included) and a 64 KiB body cap; a set is fresh for its `max-age`
+  with no floor (`max-age=0`, `no-cache` or `no-store` mean every request refetches) and at most 10 min
+  (`ACCESS_CERTS_MAX_TTL_MS`; 10 min without a header); an unknown kid refetches at most once a minute; after a
+  failure, no new attempt for 10 s. A set is never served past its freshness: a failed fetch throws
+  `JwksUnavailableError` (fail closed; C8 chooses 503 or 401). **Staleness bound:** a cert Cloudflare withdraws is
+  trusted by an isolate for at most min(its max-age, 10 min) after that isolate's last successful fetch.
+- **Construct once per isolate** (module scope, or built on the first request and kept): the cache lives in the
+  instance, so one verifier per request fetches the certs on every request.
+- Why: the spec lists the checks without the encoding details; the skew covers Access minting `nbf = iat = now` on
+  another machine; the admin path should never trust a set Cloudflare may have withdrawn for long, and Google's
+  5-minute floor and 6-hour grace exist for login availability, which the admin console doesn't need.
+- Rejected: a strict one-element `aud` array; no skew; Google's cache rules for Access; putting the staff list in the
+  package (the manifest is C8's).
+
+### D203. The package logs nothing: the API passes its stale-JWKS log in; fetch limits on Google's JWKS too
+- Date 2026-11-02 · Status: **to confirm** · Source: build of `docs/batch-c-build-plan.md` C2 ("unchanged in behaviour
+  for the API"); C2 review M2
+- Decision: `@hana-id/oidc` keeps the module-level, per-isolate Google JWKS cache and the same exports as
+  `apps/api/src/{jwt,jwks}.ts` (`verifyIdToken`, `publishedKeys`, `clearJwksCache`, `JwksUnavailableError`,
+  `providerForIssuer`, `IDENTITY_TOKEN_TYP`, …); the `jwks_stale` warning becomes a `VerifyOptions.onStaleKeys` hook,
+  which every API call site sets to `logStaleJwks` (`apps/api/src/log.ts`), so the log line is unchanged.
+  `KeyObserver` and `cacheMaxAgeS` moved into the package (`key-observations.ts` re-exports the latter). JWKS
+  parsing stays in `@hana-id/jwks`, which the package depends on; the watchdog is untouched. Google's JWKS fetch
+  keeps its TTL rules (max-age clamped to 5 min..6 h, `no-cache` ignored, 6 h stale grace) and gains the same 8 s
+  timeout and 64 KiB body cap as Access (a hung or oversized answer is a failed fetch: stale grace, then 503).
+- Why: a shared package can't import an app's logger, and an injected hook keeps it testable without log scraping;
+  an unbounded fetch could hold a login for the Worker's whole time limit.
+- Rejected: the package writing the API's log format itself; an API wrapper module around the package.
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -2281,3 +2348,5 @@ is a proposal there.
 Still open from `docs/email-login-spec.md`: nothing; the user-mail provider is SendGrid (D194). The contract readings
 D130 and D131, batch 2's D154 and D155, and the `packages/email` readings D156–D159 are confirmed (2026-11-02).
 The watchdog's D190, D191 and D193 (batch 5) are confirmed (2026-11-02); D192 is superseded by D200.
+To confirm from batch C step C2 (`packages/oidc`): D201 (the new claims typed on request, ignored by the API), D202
+(the Access JWT check and its cert cache) and D203 (the package's logging hook, Google's fetch limits).

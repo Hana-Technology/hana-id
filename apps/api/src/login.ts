@@ -2,6 +2,7 @@
 // create_session_and_derive, a literal composition of create_session and derive_key with counter 1, so a login costs
 // one transaction instead of two. Called by the vault (and the export window on authOrigin) with the token it got
 // through the relay; the vault computes the path itself and never uses what this returns beyond `result`.
+import { JwksUnavailableError, verifyIdToken } from '@hana-id/oidc';
 import { usageDay } from './apps.ts';
 import { appKeyPairs, appKeyProblem } from './bls.ts';
 import { disallowedClaim } from './claims.ts';
@@ -9,9 +10,8 @@ import type { Env } from './env.ts';
 import { hex, sha256 } from './bytes.ts';
 import { TOKEN_EXP_SKEW_MS, appGate, appQuota, chainGate, chainGateResponse, checkClientScope, done, lap, lapRelay, limiter, newCtx, reject, settle } from './handlers.ts';
 import { readJson } from './http.ts';
-import { JwksUnavailableError, verifyIdToken } from './jwks.ts';
 import { keyObserver } from './key-observations.ts';
-import { log } from './log.ts';
+import { log, logStaleJwks } from './log.ts';
 import { isTestKey } from './origins.ts';
 import type { RelayResult } from './relayer-key.ts';
 import { relay } from './relayer-pool.ts';
@@ -105,7 +105,7 @@ export async function handleLogin(request: Request, env: Env, requestId: string,
   //    this app's scope on this signer.
   let verified;
   try {
-    verified = await verifyIdToken(req.jwt, now, { skewMs: TOKEN_EXP_SKEW_MS, observer: keyObserver(env, exec), identityIssuer: env.IDENTITY_ISS });
+    verified = await verifyIdToken(req.jwt, now, { skewMs: TOKEN_EXP_SKEW_MS, observer: keyObserver(env, exec), onStaleKeys: logStaleJwks, identityIssuer: env.IDENTITY_ISS });
   } catch (err) {
     if (err instanceof JwksUnavailableError) return reject(ctx, 503, 'issuer_keys_unavailable', 'Could not read the token issuer keys, try again');
     throw err;

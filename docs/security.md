@@ -1,7 +1,9 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-02 for batch C's RPC writers (branch `feat/batch-c-5`:
+known open issues. Last verified against code: 2026-11-02 for the RPC budgets (branch `fix/c5-budgets`: the per-org
+share of the global reserve, empty kill switches charged to their org, the link cancel's read budget); 2026-11-02 for
+batch C's RPC writers (branch `feat/batch-c-5`:
 `ConsoleRpc` / `AdminRpc` in "Invariants", the breaker and hot-DB budget, the waivers at the notice ack, drift
 detection now built (and what it doesn't cover), the legacy `apps.publishable_key` kept on a valid key, the review
 fixes to admission, D225–D229); 2026-11-02 for the watchdog's identity JWKS pin check, the outside probe and the
@@ -356,10 +358,14 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
     `removeOrigins`, a `googleWebClientId` change) at 5 per org and 20 across orgs per rolling hour (`rate_limited`,
     and one `breaker` event per limit and hour; a call that changed nothing gets its slot back). Every call fits a
     hot-DB budget: per-org buckets (10/s, burst 40) under the global one (30/s, burst 60), with the last 10 and 20
-    tokens kept for the kill switches. Every call is also held to two reads and one batch of ≤ 8 statements;
-  - emailed-link cancels (unauthenticated) have their own limits, per client IP (IPv6 by /64) and a global link
-    bucket, taken before the token is read and never from the members' budget. A link flood can't block anyone's
-    kill switches;
+    tokens kept for the kill switches. One org takes at most 12 tokens of the global reserve a minute, and a kill
+    switch that changed nothing is charged to its org's own bucket, not the reserve. Every call is also held to two
+    reads and one batch of ≤ 8 statements;
+  - emailed-link cancels (unauthenticated) have their own limits, never the members' budget: per client IP (IPv6 by
+    /64), then a link-read budget sized for D1 (50/s, burst 100), both before the token is read. A cancel whose token
+    verifies on a pending change is never refused after that. Residual: denying a valid link cancel takes a sustained
+    50 bogus reads a second from at least 600 IPv4 addresses or IPv6 /64s (5 a minute each); the owner and Hana staff
+    can still cancel in the console;
   - a replayed request id is `already_applied` only for the same write (kind, app, actor), otherwise `conflict`;
     `ackNotice` takes only the admin Worker's cron (`system`); the console never acts for `org_legacy`;
   - `relayerKeys` returns public keys only; RPC logs carry the method, request id, outcome and code, never the input;

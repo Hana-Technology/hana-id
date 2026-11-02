@@ -107,7 +107,14 @@ export async function cancelChange(db: HotDb, w: Writer, i: { orgId: string; cha
 export async function cancelChangeByLink(db: HotDb, w: Writer, i: { changeId: string; token: string }) {
   expectReplay(w, ['change.cancelled'], undefined, { kind: 'link', id: i.changeId });
   const c = await planChange(db, { changeId: i.changeId, orgId: null, w });
-  const presented = await sha256(fromB64url(i.token));
+  // A token that isn't canonical b64url of 32 bytes can't be any link's: refused like a wrong one, never `internal`.
+  let raw: Uint8Array;
+  try {
+    raw = fromB64url(i.token);
+  } catch {
+    return refuse('forbidden', 'This cancel link is not valid for this change');
+  }
+  const presented = await sha256(raw);
   // An unannounced change has no link yet; a wrong token and no token look the same to the caller.
   if (c.token_hash_hex === null || !bytesEqual(presented, hexBytes(c.token_hash_hex))) refuse('forbidden', 'This cancel link is not valid for this change');
   if (c.deleted_at !== null) refuse('not_found', 'The app is deleted');

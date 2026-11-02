@@ -8,7 +8,7 @@ import type { Env } from '../env.ts';
 import { log } from '../log.ts';
 import { RpcRefusal, type Writer } from '../changes/cas.ts';
 import { CONSOLE_DB_LIMITS, HotDb } from '../changes/db.ts';
-import { admitLinkCall, admitMemberCall, refundBreaker } from '../changes/guard.ts';
+import { admitLinkCall, admitMemberCall, settleMemberCall } from '../changes/guard.ts';
 
 export type Answer<T extends object> = ({ ok: true } & T) | RpcFail;
 
@@ -36,7 +36,7 @@ export interface InputSchema<I> {
   safeParse(v: unknown): { success: true; data: I } | { success: false; error: { issues: { path: (string | number)[]; message: string }[] } };
 }
 
-/** Outcomes after which a breaker slot is given back: the call found nothing it could destroy. */
+/** Outcomes after which a call is settled (breaker slot and reserve tokens back): it found nothing it could destroy. */
 const REFUNDED: ReadonlySet<RpcCode> = new Set(['not_found', 'conflict', 'version_conflict', 'already_applied', 'bad_request']);
 
 export async function runRpc<I extends { actor: Actor; requestId: string; clientIp: string }, T extends object>(
@@ -62,11 +62,12 @@ export async function runRpc<I extends { actor: Actor; requestId: string; client
   const now = Date.now();
   const w: Writer = { actor: input.actor, requestId: input.requestId, now };
   let breakerTaken = false;
+  let reserveUsed = 0;
   let code: RpcCode | null = null;
   try {
     if (setup.link) await admitLinkCall(env, input.clientIp, now);
     else if (consoleCall) {
-      await admitMemberCall(env, { org: orgId!, cost: setup.cost!, ...(setup.killSwitch ? { killSwitch: true } : {}), ...(setup.breaker ? { breaker: true } : {}) }, now);
+      ({ reserveUsed } = await admitMemberCall(env, { org: orgId!, cost: setup.cost!, ...(setup.killSwitch ? { killSwitch: true } : {}), ...(setup.breaker ? { breaker: true } : {}) }, now));
       breakerTaken = !!setup.breaker;
     }
     const db = new HotDb(env.DB, consoleCall ? CONSOLE_DB_LIMITS : undefined);
@@ -83,6 +84,7 @@ export async function runRpc<I extends { actor: Actor; requestId: string; client
     log({ event: 'rpc', ...fields, outcome: 'error', code: 'internal' }, 'error');
     return { ok: false, code: 'internal' };
   } finally {
-    if (breakerTaken && ((code === null && !w.wrote) || (code !== null && REFUNDED.has(code)))) await refundBreaker(env, orgId!, now);
+    const changedNothing = (code === null && !w.wrote) || (code !== null && REFUNDED.has(code));
+    if (changedNothing && (breakerTaken || reserveUsed > 0)) await settleMemberCall(env, { org: orgId!, at: now, breaker: breakerTaken, reserveUsed });
   }
 }

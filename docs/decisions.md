@@ -1683,8 +1683,13 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   - The budget, after the C5 review (H2): per-org buckets (10/s, burst 40) under the spec's global one (30/s, burst
     60). The kill switches (`removeOrigins`, `turnOff`, `revokeKey`, `setSuspended(true)`) alone may spend the last
     10 of an org's bucket and the last 20 of the global one.
-  - Emailed-link cancels (review H1) never touch the members' budget. They take a per-client-IP limiter (5 a minute,
-    50 a day; IPv6 by /64) and a global link bucket (1/s, burst 20), before the token is read.
+  - The global reserve after the follow-up scan (`fix/c5-budgets`):
+    - one org takes at most 12 tokens of it in any minute (two kill switches);
+    - a kill switch that changed nothing (`not_found`, `conflict`, `version_conflict`, `already_applied`,
+      `bad_request`, a no-op) gives back what it took of the reserve, charged to its org's own bucket instead (which
+      may go below zero), so empty kill switches can't drain what every org's kill switches rely on.
+  - Emailed-link cancels (review H1) never touch the members' budget: they take a per-client-IP limiter (5 a minute,
+    50 a day; IPv6 by /64) before the token is read. The read budget is D229.
   - The breaker (review M2, M3, L6):
     - it also counts a `googleWebClientId` change, which can stop an app's logins;
     - it gives the slot back when a call changed nothing (`not_found`, `conflict`, `version_conflict`,
@@ -1702,7 +1707,13 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
     `AdminRpc` takes `hana`; the methods the admin Worker's crons call also take `system`, and `ackNotice` takes
     `system` only (a staffer can't start a clock by hand). Any other actor is `forbidden`.
   - **Replays.** A request id used before answers `already_applied` only when the stored row is the same write (one of
-    the method's ledger kinds, the same app, the same actor); otherwise `conflict`. `actor_sub` is left
+    the method's ledger kinds, the same app, the same actor); otherwise `conflict`.
+  - **The link cancel's read budget** (follow-up scan, `fix/c5-budgets`): after its per-IP limit, a link cancel takes
+    one token of a global link-read budget sized to protect D1 (one plan read each: 50/s, burst 100), then reads the
+    token. Nothing limits it after that: a cancel whose token verifies on a pending change always runs. This replaces
+    the 1/s, burst 20 link bucket, which many addresses each within their limit could drain, refusing the token
+    holder. Residual: denial needs a sustained 50 bogus reads a second from ≥ 600 IPv4 addresses or IPv6 /64s. A token
+    that isn't canonical b64url of 32 bytes is `forbidden`, like a wrong one (it was `internal`). `actor_sub` is left
     NULL in C5: it holds only an API-verified step-up's sub (C6).
   - **Codes the spec doesn't name.** `conflict` for a staff proposal inside `appChangeDelayMs` of the scope's
     assignment (also `createApp` with origins on an existing scope, D206), a duplicate origin, the 20-origin cap,

@@ -37,6 +37,13 @@ export interface Env {
   EMAIL_PINS?: string;
   /** Hana's published email JWKS (set with the pins; default `{apiUrl}/v1/email/jwks.json`). */
   EMAIL_JWKS_URL?: string;
+  /**
+   * The partner identity token's issuer (the manifest's `identityToken.iss`): the watchdog reads `{iss}/jwks.json` and
+   * `{iss}/.well-known/openid-configuration` (D210). Absent: the env has no identity token, the check is skipped.
+   */
+  IDENTITY_ISS?: string;
+  /** JSON array of the manifest's `watchdog.pinnedIdentityKeys` (RFC 7638 thumbprints). Absent: nothing pinned. */
+  IDENTITY_PINS?: string;
 
   // ---- secrets ----
   /** `ed25519:<base58>` function-call key on WATCHDOG_ACCOUNT (receiver SIGNER_ACCOUNT, the four watchdog methods). */

@@ -172,7 +172,7 @@ Setup for the user: `docs/operations.md` "Usage capture (batch C4, milestone M2)
   check with one that still sees new sessions: e.g. a hot-DB marker the API writes beside the relay (as it already
   does for `scopes.first_session_at`), not a Neon read (the hot path and the waiver must not depend on Neon). Its test
   rows move with it. **Done** (D220): `session_markers` (migration 0009), written once the first session-pool relay
-  settled; the CLI's waiver reads it. C5's `AdminRpc.ackNotice` must read it too, never `usage`.
+  settled; the CLI's waiver and C5's `AdminRpc.ackNotice` (`changes/lifecycle.ts`) both read it.
 - **Tests**: spec "Topology and config" first two rows (logins with no binding; logins identical with a refusing
   server, `usage_write_failed` once after one retry); "Usage ledger" capture rows (one event per post-gate outcome,
   none for gate rejections or `GET /v1/app`, allowlist snapshot, `org_id` from the gate row, `relayer_pk`/

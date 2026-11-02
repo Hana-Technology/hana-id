@@ -384,7 +384,12 @@ describe('the identity token', () => {
   const standby = p256();
   const subKey = randomBytes(32).toString('base64');
   const withIdentity = (): Manifest =>
-    manifestSchema.parse({ ...manifest, identityToken: { iss: identityIssuerFor(manifest.apiUrl), signer: { kind: 'worker-secret', activeKid: active.pub.kid }, publicKeys: [active.pub, standby.pub] } });
+    manifestSchema.parse({
+      ...manifest,
+      // The watchdog pins every published identity key (D211).
+      ...(manifest.watchdog ? { watchdog: { ...manifest.watchdog, pinnedIdentityKeys: [active.pub.kid, standby.pub.kid] } } : {}),
+      identityToken: { iss: identityIssuerFor(manifest.apiUrl), signer: { kind: 'worker-secret', activeKid: active.pub.kid }, publicKeys: [active.pub, standby.pub] },
+    });
 
   it('vars: the issuer, the public keys only and the active kid; none without the block', () => {
     const vars = (wranglerConfig(withIdentity(), LOCAL_D1_ID) as { vars: Record<string, string> }).vars;

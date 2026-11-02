@@ -22,14 +22,19 @@ function sources(dir: string): string[] {
 
 /** A read of the legacy column: qualified, compared, or selected from `apps`. Writes (INSERT INTO apps) are fine. */
 const READS = [/\b(?:a|l|apps)\.publishable_key\b/u, /\bpublishable_key\s*(?:=|LIKE\b|IS\b|IN\b)/iu, /SELECT\b[^`'";]*\bpublishable_key\b[^`'";]*\bFROM\s+apps\b/iu];
-/** The only expression allowed to name the column on a read path: the alias of app_keys.key in the gate. */
-const ALLOWED = 'k.key AS publishable_key';
+/**
+ * The only expressions allowed to name the column outside an INSERT: the alias of app_keys.key in the gate, and the
+ * RPC's two assignments that keep the legacy column on a valid key or a tombstone (changes/keys.ts syncLegacyKey,
+ * changes/suspension.ts deleteApp; D225). Both write it; neither reads it.
+ */
+const ALLOWED = ['k.key AS publishable_key', 'UPDATE apps SET publishable_key = COALESCE(', 'publishable_key = ${legacyKeyTombstone('];
 
 /**
  * Packages still allowed to read the legacy column, each with the batch that must remove it.
  * - `apps/email-issuer` (branch `feat/email-login-4`): finds apps by `apps.publishable_key` and checks only `status`.
- *   It must move to `app_keys` (unrevoked key), `deleted_at IS NULL` and `suspended_by = 0` before batch C5 ships key
- *   rotation, revocation and app deletion, or it would keep serving a revoked key or a deleted app (D206).
+ *   It must move to `app_keys` (unrevoked key), `deleted_at IS NULL` and `suspended_by = 0` (D206). Until then batch C5
+ *   keeps the column on a valid key or a tombstone and deleted apps suspended, so it never serves a revoked, rotating
+ *   or deleted app's key, though it gives a rotated key no grace (D225).
  */
 const ALLOWLIST = new Set(['apps/email-issuer']);
 
@@ -53,7 +58,7 @@ describe('no code reads apps.publishable_key (it stays only for the legacy colum
           .forEach((line, i) => {
             // Comments may name the column (to say it isn't read).
             if (/^\s*(\/\/|\/\*|\*)/u.test(line)) return;
-            const text = line.replaceAll(ALLOWED, '');
+            const text = ALLOWED.reduce((t, a) => t.replaceAll(a, ''), line);
             if (READS.some((re) => re.test(text))) offenders.push(`${relative(repoRoot, file)}:${i + 1}: ${line.trim()}`);
           });
       }

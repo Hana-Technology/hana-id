@@ -334,6 +334,9 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
     devDependencies:
+      '@hana-id/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.5
@@ -623,6 +626,9 @@ importers:
       '@hana-id/env':
         specifier: workspace:*
         version: link:../packages/env
+      '@hana-id/jwks':
+        specifier: workspace:*
+        version: link:../packages/jwks
       '@near-js/crypto':
         specifier: 2.5.1
         version: 2.5.1(@near-js/types@2.5.1)(@near-js/utils@2.5.1(@near-js/types@2.5.1))

@@ -2,7 +2,10 @@
 
 Last verified against code: 2026-11-02 (branch `feat/batch-c-4`: "Usage capture (batch C4, milestone M2)" (the
 setup steps for the user: `usage-setup`, Hyperdrive, `USER_ID_KEY`, migration 0009, `gen --usage-hyperdrive-id`), the
-ledger and uid secrets, the waiver's session marker; D220–D224); 2026-11-02 (branch `feat/email-login-4`: "Email issuer" setup and runbook, the issuer's secrets rows, after the
+ledger and uid secrets, the waiver's session marker; D220–D224); 2026-11-02 (branch `feat/batch-c-5`: `app:suspend` / `app:resume` refuse a deleted
+app; the API's RPC entrypoints need no setup step of their own, D225; branch `feat/identity-token-8`: "Identity token
+keys" gains the watchdog pin steps and their deploy order (the `kms-*` commands too); "Identity token: pins and the
+JWKS check" with the outside probe; the identity alerts in "Watchdog alerts (runbook)"; D210–D214; branch `feat/email-login-4`: "Email issuer" setup and runbook, the issuer's secrets rows, after the
 reviews (Access SameSite=Strict, staff calls, unsuppress, the exact key-leak steps with `put --standby`, the budget
 and complaint logs) and the abuse re-check (`init --budget`, mailed unlock and unsuppress, revoke-tickets, the owner
 pool, the 503 window of a standby switch, SendGrid's suppression lists); branch `feat/identity-token-7`: "Identity token keys on AWS KMS", the KMS
@@ -856,7 +859,8 @@ above.
   ```
 
 - `app:suspend` / `app:resume` set and clear Hana's suspension bit (1) only; the org (2) and partner (4) bits belong to
-  the admin and partner consoles (batch C), and an app stays suspended while any bit is set. Suspension is D1-only (the
+  the admin and partner consoles (batch C), and an app stays suspended while any bit is set. Both refuse a deleted app
+  (`AdminRpc.deleteApp`): it keeps bit 1 for good (D225). Suspension is D1-only (the
   contract has no suspension; D11). Removing an origin also kills that origin's vault shares on their next use.
   Logins, relays, `GET /v1/app` and new vault page loads see a suspension or an origin removal at once; the vault
   endpoints (unlock, touch, revoke, share creation) cache the app per Worker isolate, so there it takes up to 30 s
@@ -1176,6 +1180,27 @@ below; `gen` and the schema refuse a Worker-secret key off testnet).
 Every command below prints its plan without `--yes`. After `init`, `next`, `switch` and `retire`, put the changed
 `envs/<env>.json` in the repo, run `gen` and deploy the API: the JWKS and the active kid come from the manifest.
 
+**Watchdog pins first** (D210, D211). The watchdog pages critical (`identity_key_unpinned`) for any key in the JWKS
+whose thumbprint isn't in `watchdog.pinnedIdentityKeys`, and the schema refuses a manifest that publishes an unpinned
+key. On an env with a `watchdog` block, `identity-key` writes the pins with the keys: `init` and `next` pin the new
+keys, `retire` unpins the key it unpublishes, `switch` changes no pin. The deploy order follows:
+
+- after `init` or `next` (a key added): **deploy the watchdog first**, then the API. Between the two the watchdog
+  warns `identity_key_missing` (pinned, not yet published): expected.
+- after `retire` (a key removed): **deploy the API first**, then the watchdog. The other order pages
+  `identity_key_unpinned` until the API deploy.
+
+The watchdog deploy runs on the watchdog's own Cloudflare account ("Watchdog service" below; logged in
+there, not to the API's account; sandbox-dev's watchdog shares the API's account, D125):
+
+```sh
+corepack pnpm --filter @hana-id/watchdog gen <env>              # IDENTITY_PINS, IDENTITY_ISS (and the rest)
+corepack pnpm --dir apps/watchdog exec wrangler deploy
+```
+
+Check `/status` `identity.pinned` after the watchdog deploy and `identity.jwks` (`unpinned: 0`, `missing: []`) after
+the next run.
+
 ```sh
 S="corepack pnpm --filter @hana-id/scripts run identity-key <env>"
 $S show                                   # the published kids, their roles and Worker slots (public values only)
@@ -1184,11 +1209,13 @@ $S show                                   # the published kids, their roles and 
 **First setup (once per env):**
 
 ```sh
-$S init --yes        # active + standby + sub key files; identityToken in envs/<env>.json; uploads the active key and IDENTITY_SUB_KEY
+$S init --yes        # active + standby + sub key files; identityToken in envs/<env>.json (both keys pinned for the watchdog); uploads the active key and IDENTITY_SUB_KEY
+# the watchdog first (its own account): watchdog gen <env>, wrangler deploy (above)
 corepack pnpm --filter @hana-id/api run gen <env> --d1-id <id>   # IDENTITY_ISS, IDENTITY_PUBLIC_KEYS, IDENTITY_ACTIVE_KID, the bindings
 corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --remote   # 0008_identity_token.sql
 corepack pnpm --filter @hana-id/api run deploy
 curl -s <apiUrl>/v1/identity/jwks.json             # {"keys":[{…active…},{…standby…}]}, no "d"
+curl -s <apiUrl>/v1/identity/.well-known/openid-configuration   # issuer = identityToken.iss, jwks_uri = {iss}/jwks.json
 ```
 
 Then move `identity-signing-key-standby.json` offline. `init` refuses when any identity file exists or the manifest
@@ -1199,11 +1226,11 @@ into `apps/api/.dev.vars`, never the standby, and refuses a key that isn't the m
 **Scheduled rotation** (every 12 months; 14 days' notice to partners that pin thumbprints, 24 h on testnet):
 
 ```sh
-$S next --yes                 # a new key, published (manifest), uploaded nowhere → gen, deploy
+$S next --yes                 # a new key, published and pinned (manifest), uploaded nowhere → watchdog gen + deploy, THEN API gen + deploy
 # … wait the notice period …
-$S switch --to next --yes     # uploads it into the free slot, makes it the active kid; the old key becomes "previous" → gen, deploy
+$S switch --to next --yes     # uploads it into the free slot, makes it the active kid; the old key becomes "previous" → API gen, deploy (no pin change)
 # … ≥ 2 h later (tokens signed by the old key expire within 1 h) …
-$S retire --key previous --yes   # unpublishes the old key, deletes its Worker secret, sets its file aside → gen, deploy
+$S retire --key previous --yes   # unpublishes and unpins the old key, deletes its Worker secret, sets its file aside → API gen + deploy, THEN watchdog gen + deploy
 ```
 
 `switch` leaves both keys on the Worker until `retire`, so whichever manifest is deployed, a key with its active kid
@@ -1216,13 +1243,20 @@ is there. Run `retire` only after the switch's deploy. Retired key files are kep
    (the standby was never uploaded). A leak of `.secrets/<env>/` or the operator's machine exposes every key whose
    file was there, the standby too unless it was offline. **Unless the incident provably touches only the active key,
    treat both as exposed.**
-2. Only the active key exposed: `$S switch --to standby --yes`, gen, deploy, then at once `$S retire --key previous
-   --yes`, gen, deploy (no 2 h wait). Make a new standby with `$S next --yes` and move its file offline.
-3. Both exposed: `$S retire --key standby --yes`, `$S next --yes`, `$S switch --to next --yes`, gen, deploy, then
-   `$S retire --key previous --yes`, gen, deploy. Partners using the JWKS URL pick up the new kid at once and reject
-   the removed ones within 10 minutes; tokens with up to 1 h left die then too.
+2. Only the active key exposed: `$S switch --to standby --yes`, API gen, deploy, then at once `$S retire --key previous
+   --yes`, API gen, deploy, then watchdog gen, deploy (no 2 h wait). Make a new standby with `$S next --yes`
+   (watchdog gen and deploy first, then the API) and move its file offline.
+3. Both exposed: `$S retire --key standby --yes` and `$S next --yes` (one unpins, one pins): deploy the watchdog, then
+   the API, and acknowledge the `identity_key_unpinned` page for the standby while the old API is still live (or
+   deploy the API between the two commands to avoid it); then `$S switch --to next --yes`, API gen, deploy; then
+   `$S retire --key previous --yes`, API gen, deploy, watchdog gen, deploy. Partners using the JWKS URL pick up the
+   new kid at once and reject the removed ones within 10 minutes; tokens with up to 1 h left die then too.
 4. Tell partners (security contacts): the `kid`, the window in which forged tokens may have been accepted, what to
    re-check. Pinning partners update their pins.
+
+A key in the JWKS nobody on the team published is the watchdog's critical `identity_key_unpinned` (or
+`identity_private_key_published`, `identity_discovery_mismatch`): playbook `identity-jwks-forged`, which treats the API
+Worker or the Cloudflare account as compromised and rotates as above.
 
 **Sub key leak.** Privacy, not funds: the holder can map partners' `sub`s to on-chain paths. Not rotatable without a
 `u2_` scheme and a 90-day `legacy_sub` window (spec "`sub`").
@@ -1381,8 +1415,8 @@ There is no source-IP condition: Workers have no fixed egress addresses. The use
    --policy-name identity-sign --policy-document file://signer-policy.json` (the active key's ARN).
 4. **Manifest and sub key.** `$S kms-init --active active.json --standby standby.json --iam-user <iamUser> --yes`
    writes `identityToken` (refused unless the two keys are in two regions of one account), creates
-   `.secrets/<env>/identity-sub-key` and sets `IDENTITY_SUB_KEY`. Commit the manifest; add both thumbprints to the
-   watchdog's pins (build step 8).
+   `.secrets/<env>/identity-sub-key` and sets `IDENTITY_SUB_KEY`; with a `watchdog` block it also pins both keys in
+   `watchdog.pinnedIdentityKeys` (D211). Commit the manifest; deploy the watchdog (gen, deploy) before the API.
 5. **Access key.** `(umask 077; aws iam create-access-key --user-name <iamUser> > .secrets/<env>/identity-aws-access-key.json)`,
    then `$S kms-put-aws-key --yes`. It checks that the file is 0600, that the key belongs to the manifest's user, and
    that it is an active `AKIA…` key.
@@ -1419,15 +1453,17 @@ and refuses a leftover private signing key file). Local development uses a `loca
 **Scheduled key rotation** (every 12 months; 14 days' notice to partners that pin thumbprints):
 
 1. Create the new key in the **active key's region** (the standby keeps the other one), with the same key policy;
-   `get-public-key` → `next.json`; `$S kms-add --role next --key next.json --yes` → gen, deploy (the JWKS lists it,
-   nothing signs with it). Add its thumbprint to the watchdog's pins.
+   `get-public-key` → `next.json`; `$S kms-add --role next --key next.json --yes` (it also pins the key in
+   `watchdog.pinnedIdentityKeys`, D211) → **watchdog gen and deploy first**, then API gen and deploy (the JWKS lists it,
+   nothing signs with it).
 2. Wait the notice period.
 3. IAM: list both ARNs (active and next) in the signer user's policy, in `SignWithTheActiveIdentityKey` and
    `NoOtherKey`.
 4. **Pre-switch check** (below) on the next key.
 5. `$S kms-switch --to next --yes` → gen, deploy. The old key is now `previous`, still published.
-6. After ≥ 2 h: `$S kms-retire --key previous --yes` → gen, deploy. IAM: the new active ARN alone. KMS: `aws kms
-   disable-key` and `aws kms schedule-key-deletion --pending-window-in-days 30` on the old key. Remove its pin.
+6. After ≥ 2 h: `$S kms-retire --key previous --yes` (it also unpins the key) → API gen and deploy, **then** watchdog gen
+   and deploy. IAM: the new active ARN alone. KMS: `aws kms disable-key` and `aws kms schedule-key-deletion
+   --pending-window-in-days 30` on the old key.
 
 **Pre-switch check** (before any `kms-switch`, once the IAM policy lists the target key): prove that the signer user
 can sign with the target and that its signature verifies against the public key the manifest publishes for it. Only
@@ -1472,10 +1508,10 @@ unexplained `Sign` in CloudTrail, a forged token reported by a partner; planned 
    listed it, sessions can't sign); confirm it has no successful `Sign` events.
 3. **Switch:** the IAM policy → the standby's ARN (both statements); a new access key → the pre-switch check →
    `$S kms-put-aws-key --yes`; `$S kms-switch --to standby --yes` → gen, deploy.
-4. **Unpublish:** `$S kms-retire --key previous --yes` → gen, deploy (no 2 h wait); disable the old key and schedule
-   its deletion; remove its pin.
+4. **Unpublish:** `$S kms-retire --key previous --yes` (unpublishes and unpins) → API gen and deploy, then watchdog gen
+   and deploy (no 2 h wait); disable the old key and schedule its deletion.
 5. **New standby:** a new key in another region than the new active key; `$S kms-add --role standby --key <file>
-   --yes` → gen, deploy; pin it.
+   --yes` (publishes and pins) → watchdog gen and deploy first, then API gen and deploy.
 6. **Tell partners:** the `kid`, the window and count from CloudTrail, what to re-check. Post-mortem (D83).
 
 A KMS outage in the active region (`kms_unreachable`, `kms_internal` or `kms_timeout` in the logs, mints at 503) isn't
@@ -1589,7 +1625,8 @@ The independent watchdog of the governance batch (`docs/governance-spec.md` "Wat
 doesn't publish (and deletes the updater keys if the updater proposed it), pauses only when such a key is **active**,
 confirms keys that match, alerts on every governance change, and serves a read-only status for the admin portal.
 What it checks and its status API: `apps/watchdog/README.md`. **Deployed on sandbox-dev (2026-10-30; redeployed 2026-11-02
-with batch 5's email rules and link alarms, version b156e1b5, no new migration: on the v2 contract it reads "no email
+with batch 5's email rules and link alarms, version b156e1b5, then with identity token step 8's identity JWKS
+checks, version 67fe97cb (first run: 2 keys published, all pinned, discovery ok), no new migration: on the v2 contract it reads "no email
 issuer" and skips the link check)**:
 `https://hana-id-watchdog-sandbox-dev.tingtc.workers.dev`, cron `*/5 * * * *`, on the API's Cloudflare account
 (D125), D1 `hana-id-watchdog-sandbox-dev`. First deployed with no channel and no heartbeat; first run
@@ -1699,6 +1736,38 @@ come only from the watchdog's own manifest, never from the chain or Hana's JWKS.
 - **`unrecorded_wallets`** (D135, D139): sandbox-dev accepts after its v3 upgrade (`admin <env> owner:call
   accept_unrecorded_wallets`); on any env that isn't `local*` or `sandbox*` the watchdog pages while it is true.
 
+### Identity token: pins and the JWKS check
+
+The watchdog checks the partner identity token's published keys (`docs/identity-token-spec.md` "JWKS and discovery",
+D210–D214) against `watchdog.pinnedIdentityKeys` (`envs/README.md`): public thumbprints (the kids), set only in the
+watchdog's own manifest block and deployed on its own account, never taken from Hana's JWKS. `watchdog gen` passes
+them as `IDENTITY_PINS` and `identityToken.iss` as `IDENTITY_ISS`; an env without `identityToken` skips the check.
+
+- Every run, after the protective work (D86), it reads `{iss}/jwks.json` and `{iss}/.well-known/openid-configuration`
+  (no cache, no redirect followed, 64 KB cap). An unpinned key (or one with members beyond the public ones), private
+  key material, a wrong `issuer` / `jwks_uri`, or an answer that can't be judged (a redirect, padding, not JSON,
+  duplicate members, the wrong shape) pages critical at once; 3 failed fetches in a row page critical too; a pinned key
+  not published (or under another kid) warns. **It never pauses for these**: partners verify identity tokens, the
+  contract never does.
+- **What that catches, and what it doesn't** (D210): an attacker who publishes the same JWKS to everyone. Someone who
+  controls Hana's Cloudflare account can recognise the watchdog's fetches (they come from Cloudflare's network) and
+  serve them a clean JWKS while partners get another, or publish a key for less than a run. The **outside probe**
+  narrows the first: the GitHub Actions workflow `identity-probe` (`.github/workflows/identity-probe.yml`, every
+  15 min, no secrets) fetches each non-`local*` env's JWKS and discovery document from GitHub's network with a `jose`
+  User-Agent and the same rules (`@hana-id/jwks/identity`), against `watchdog.pinnedIdentityKeys` in the repo's
+  manifests, and fails on any finding (every value from Hana's answers is printed JSON-quoted, escaped to printable
+  ASCII with `%` too, and cut, and no line can start with `::`, so a hostile JWKS can't inject a workflow command);
+  GitHub emails the failure to whoever last changed the workflow's schedule, so
+  that must be a founder (and scheduled workflows run only on the default branch). Run it by hand:
+  `corepack pnpm --filter @hana-id/scripts run identity-probe <env>`. Neither closes the gap: an attacker can still
+  single out partners' traffic. Partners that pin thumbprints (`docs/integration.md` section 15, the recommended
+  default for anything of value) are the only ones safe from it.
+- It also alerts critical (`identity_key_on_chain`) if an issuer key on chain has an identity key's thumbprint as its
+  kid (D212); the Google and email rules act on such a key as on any other forged one.
+- Pin changes follow "Identity token keys" above: `identity-key` writes them; the watchdog deploys first after a pin,
+  last after an unpin. sandbox-dev pins its active and standby keys; its watchdog needs a `watchdog gen` and
+  redeploy to start the check (not done on this branch).
+
 ### Watchdog alerts (runbook)
 
 Critical alerts page both founders (paging app + Slack + email) and are re-sent every 15 min until someone
@@ -1725,7 +1794,7 @@ This table only says what each kind means:
 | `governance_change` | An upgrade proposal or execution, owner transfer, withdrawal, watchdog, updater-key, delay or console-audience change, pause or unpause (`unpaused_at_ms` shows one that fell between two runs), a raised session floor (`sessions_valid_from_ms`), a change of the owner DAO's code or policy (`owner_code_hash`, `owner_policy`: a `ChangePolicy`, `AddMember` or `RemoveMember`), `mpc`, `ckd_domain_id` or `state_version`, `unrecorded_wallets`, or the owner's immediate issuer actions, which leave no pending state: `issuer` (`set_issuer` changed Google's iss values) and `issuer_keys` (an active kid disappeared without a pending removal leaving the queue: `remove_issuer_key`; also a removal proposed and confirmed by another watchdog between two runs), and the same for the email issuer (`email_issuer`, `email_issuer_keys`) and its signer policy (`email_signer_policy`: `mark_self_issued`, or an upgrade's `migrate`). Alert only. Nobody but the owner can cancel an upgrade (D84) | [`governance-change`](playbooks.md#governance-change) |
 | `automatic_action` | The watchdog acted again for an incident it already alerted (e.g. paused again after an unpause, or deleted an updater key added while a forged key is still active) | [`watchdog-acted-again`](playbooks.md#watchdog-acted-again) |
 | `protective_action_failed` | A cancel, pause or updater-key deletion the watchdog sent failed, or a forged change it tried to cancel was executed first (or it couldn't tell) | [`protective-action-failed`](playbooks.md#protective-action-failed) |
-| `not_a_watchdog`, `watchdog_key_missing`, `wrong_network`, `pins_invalid` | The watchdog can't act: its account isn't a contract watchdog, its key is missing or bad, or its RPC is on another chain; until fixed nothing cancels forged keys. `pins_invalid`: `EMAIL_PINS` is unreadable, so every email key counts as unpinned (cancelled, paused on; their alerts say `pins_unreadable`) | [`watchdog-cannot-act`](playbooks.md#watchdog-cannot-act) |
+| `not_a_watchdog`, `watchdog_key_missing`, `wrong_network`, `pins_invalid` | The watchdog can't act: its account isn't a contract watchdog, its key is missing or bad, or its RPC is on another chain; until fixed nothing cancels forged keys. `pins_invalid`: `EMAIL_PINS` is unreadable, so every email key counts as unpinned (cancelled, paused on; their alerts say `pins_unreadable`); `pins_invalid:identity`: `IDENTITY_PINS` is unreadable, so every published identity key pages as unpinned; `pins_invalid:identity_no_iss`: `IDENTITY_PINS` without `IDENTITY_ISS`, so the identity check can't run (it then resolves nothing) | [`watchdog-cannot-act`](playbooks.md#watchdog-cannot-act) |
 | warning `rpc_failing`, `jwks_failing`, `heartbeat_failing`, `channel_not_configured` | The watchdog is partly blind or mute (a dead watchdog is caught by the dead-man's switch: [`watchdog-down`](playbooks.md#watchdog-down)) | [`watchdog-degraded`](playbooks.md#watchdog-degraded) |
 | warning `unexecuted_key_change`, `stale_active_key` | A matured key change nobody executed (> 1 h), or an active kid Google dropped > 3 h ago | [`key-sync-stalled`](playbooks.md#key-sync-stalled) |
 | warning `active_key_material_unavailable` | The contract has no `get_issuer_keys` (older code): active keys are checked by kid only | [`active-key-material-unavailable`](playbooks.md#active-key-material-unavailable) |
@@ -1733,6 +1802,9 @@ This table only says what each kind means:
 | `relayer_balance_critical`, `relayer_allowance_critical`, `relayer_pool_empty`; warning `relayer_balance_low`, `relayer_allowance_low` | The relayer account's available balance, or a pool key's remaining allowance, is below its threshold (defaults: balance 5 / 1 NEAR; session key 0.5 / 0.1; owner key 0.1 / 0.02; manifest `watchdog.relayerFunds`), or a pool has no key: relays from it fail once it runs out. Read-only: the watchdog never tops up | [`relayer-out-of-funds`](playbooks.md#relayer-out-of-funds) |
 | warning `confirm_failed` | A confirmation of a key that matches Google's JWKS failed: it goes live only after the full delay | [`confirm-failed`](playbooks.md#confirm-failed) |
 | warning `email_jwks_mismatch` | Hana's published email JWKS lists a key that isn't pinned (or whose kid isn't its thumbprint), lacks an active email key, or failed 3 fetches while email keys are active. Informational: the contract never reads it | [`email-jwks-mismatch`](playbooks.md#email-jwks-mismatch) |
+| `identity_key_unpinned`, `identity_private_key_published`, `identity_discovery_mismatch`, `identity_jwks_unreadable` | Hana's partner identity JWKS (`{iss}/jwks.json`) publishes a key whose RFC 7638 thumbprint isn't in `watchdog.pinnedIdentityKeys` (or that isn't P-256, or has members beyond `kty crv x y kid use alg`; with nothing pinned every key is unpinned), or private key material, or its discovery document names another `issuer` or `jwks_uri` (D210, D213); or an answer can't be judged: a redirect, a 200 over 64 KB, not JSON, duplicate members, the wrong shape (at once), or 3 failed fetches in a row (`:sustained`). Partners trusting the JWKS URL would accept tokens for any user. Alert only, **no pause** (the chain isn't involved). A rotation deployed in the wrong order (API before the watchdog after `next`, the watchdog before the API after `retire`) also raises it | [`identity-jwks-forged`](playbooks.md#identity-jwks-forged) |
+| warning `identity_key_missing` | A pinned identity key isn't in the JWKS under its thumbprint as kid with public members only (a rotation half deployed, a kid changed, or extra members: then also `identity_key_unpinned`) | [`identity-jwks-degraded`](playbooks.md#identity-jwks-degraded) |
+| `identity_key_on_chain` | An active Google or email issuer key, or a pending key addition, has an identity token key's thumbprint as its kid (D212). Alert only: the same run's issuer-key rules cancel or pause on it | [`identity-key-on-chain`](playbooks.md#identity-key-on-chain) |
 | `link_threshold_reached`; warning `link_volume_high`, `link_stats_unavailable` | `get_link_stats()` (D200): links reached an alarm threshold in the current or previous UTC hour, in one scope or in all; they went through (the contract refuses nothing): a partner launch, or a stolen email key taking over Google wallets by linking (alert only; the council decides whether to pause); the current hour at half the total threshold; or the view is missing with an email issuer on chain, malformed or failing (`link_stats_unavailable:missing` / `:malformed` / `:read_failed`; only the link check is affected, every protective step still runs) | [`link-volume`](playbooks.md#link-volume) |
 | info `key_change_confirmed`, `key_change_executed`, `key_change_cancelled` | Routine key-change events | [`key-change-lifecycle`](playbooks.md#key-change-lifecycle) |
 | info `self_issued_key_change` | A pending email key pinned for its signer, or a pending email key removal: never confirmed (self-issued keys wait `governance_delay_ms`) | [`self-issued-key-change`](playbooks.md#self-issued-key-change) |

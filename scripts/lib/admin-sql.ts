@@ -367,7 +367,8 @@ export function suspensionWrite(app: AppRef & Pick<AppRow, 'suspended_by'>, susp
   const next = suspend ? app.suspended_by | HANA_SUSPENSION_BIT : app.suspended_by & ~HANA_SUSPENSION_BIT;
   return guardedAppWrite(
     app.id,
-    sql`suspended_by = ${app.suspended_by}`,
+    // A deleted app keeps Hana's bit for good (AdminRpc.deleteApp; D225): never resumed, never rewritten.
+    `${sql`suspended_by = ${app.suspended_by}`} AND deleted_at IS NULL`,
     [sql`suspended_by = ${next}`],
     { at: now, orgId: app.org_id, appId: app.id, scopeId: app.scope_id, kind: suspend ? 'suspension.set' : 'suspension.cleared', detail: { bit: HANA_SUSPENSION_BIT, suspendedBy: next }, actor, requestId },
     [],

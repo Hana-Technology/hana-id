@@ -3,7 +3,14 @@
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
 known open issues. Last verified against code: 2026-11-02 for usage capture (branch `feat/batch-c-4`: the ledger's
 writer credential and `USER_ID_KEY` in the inventory and the compromise table, "Usage capture fails open" in the API
-invariants, the waiver's session marker, the secret-scan rules for the new files; D220–D224); 2026-11-02 for the email issuer (branch `feat/email-login-4`: its keys and secrets rows and "Email issuer"
+invariants, the waiver's session marker, the secret-scan rules for the new files; D220–D224); 2026-11-02 for the RPC budgets (branch `fix/c5-budgets`: the per-org
+share of the global reserve, empty kill switches charged to their org, the link cancel's read budget); 2026-11-02 for
+batch C's RPC writers (branch `feat/batch-c-5`:
+`ConsoleRpc` / `AdminRpc` in "Invariants", the breaker and hot-DB budget, the waivers at the notice ack, drift
+detection now built (and what it doesn't cover), the legacy `apps.publishable_key` kept on a valid key, the review
+fixes to admission, D225–D229); 2026-11-02 for the watchdog's identity JWKS pin check, the outside probe and the
+"identity key on chain" check (branch `feat/identity-token-8`, D210–D214: the compromise rows, the identity
+invariants, the watchdog paragraph and open issue (l)); 2026-11-02 for the email issuer (branch `feat/email-login-4`: its keys and secrets rows and "Email issuer"
 invariants, D195–D199, with the review fixes and the abuse re-check: K_sup, K_device, per-address device tickets with
 revocation, the owner pool, mailed unlock/unsuppress, the growing domain cap, encrypted challenge addresses, the 0.92%
 bound); for the identity token's AWS KMS signer (branch
@@ -64,7 +71,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | `KEYS_UPDATER_KEY` (Worker secret, function-call key on the signer account) | Governance contract (sandbox-dev since 2026-10-30): **propose** an attacker RSA key (`set_issuer_key`), which waits `issuer_key_delay_ms` (mainnet 2 h) in public. v1 contract: set it at once → mint Google tokens for any `sub` → derive any user's key | The watchdog cancels a pending key Google doesn't publish within one run and deletes every updater key; an active one (the watchdog was down) makes it pause and delete every updater key (D82, D126). Full table: `docs/governance-spec.md` "What a compromise gives"; recovery: `docs/playbooks.md` `updater-key-stolen`, `forged-active-key` |
 | Owner key (governance contract: the council DAO, 2 of 3) | Two council keys: issuer keys (delayed like the updater's), config, pause/unpause, upgrades and owner transfer (after `governance_delay_ms`, mainnet 72 h), surplus withdrawal | Every delayed action is public and cancellable by the owner; the watchdog alerts on each (`governance_change`). See `docs/governance-spec.md` and `docs/playbooks.md` `unexpected-owner-action` |
 | Signer account full-access key | Redeploy the contract: anything, including MPC requests for any path | No upgrade lock in batch A/A.2/B. Open issue (e), D33; fix specified in `docs/governance-spec.md` |
-| D1 | App origins (→ `frame-ancestors`, parent-origin checks; a bare write of an `app_origins` row with `active_from` set skips the guarded-change delay), app scope, settings incl. bare writes of `raw_sign`/policy without the pending delay, suspensions; `share_enc` rows. Batch C's drift detection (C5) will flag such writes against `guarded_changes` and the 0006 baseline; it can't catch an insider who also forges those rows | `K_s` needs `VAULT_KEK`; a policy needs the user's consent to its `policyId`; raw requests still need approval |
+| D1 | App origins (→ `frame-ancestors`, parent-origin checks; a bare write of an `app_origins` row with `active_from` set skips the guarded-change delay), app scope, settings incl. bare writes of `raw_sign`/policy without the pending delay, suspensions; `share_enc` rows. The API's hourly drift detection (`changes/drift.ts`) flags such writes of origins, policies and raw signing against `guarded_changes` and the 0006 baseline (only while no later `app_changes` row ended a baseline value) as `drift` security events; it can't catch an insider who also forges those rows, and doesn't cover keys, suspension bits or deletion (a bare write of `app_keys`, `suspended_by` or `deleted_at` goes unflagged; `app_changes` has no row for it) | `K_s` needs `VAULT_KEK`; a policy needs the user's consent to its `policyId`; raw requests still need approval |
 | `VAULT_KEK` | Unwrap every `K_s` in D1 | Useless without a device's IndexedDB record (PRK is encrypted under `K_s` only on the device) |
 | API Worker code or all Worker secrets, or the Cloudflare account | Everything: the API Worker renders the vault page (inlined config, `frame-ancestors`) and holds `KEYS_UPDATER_KEY`; the same account deploys the two page Workers that serve the vault and auth bundles | Single trust root. Mitigations: small vault bundle, strict CSP, no third-party script, narrow `frame-ancestors` |
 | `vaultOrigin` | Every key of every user that loads it (PRK in memory) | — |
@@ -73,7 +80,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | A partner's Google client (own-client mode) | Tokens with chosen nonces for that scope → that scope's users' keys | Other scopes |
 | Hana's shared Google client or its Cloud project | Break isolation of every `allow_shared` scope | Own-client-only scopes |
 | Leaked in-memory PRK | Every v1 chain and account under that `key_index` | Other `key_index` values; rotation is the only remedy |
-| An identity signing key (the active one on the Worker, or a published standby or next key from `.secrets/`) | Forge identity tokens for any user of any app: be anyone at every partner that uses them as login evidence, while partners trust the key | No key, no signature, nothing at Hana or on chain (no Hana API accepts the token). The standby is never on the Worker (D177), so a Worker or Cloudflare leak exposes the active key only. Testnet only: staging and mainnet sign with a non-exportable AWS KMS key (next row). Recovery (playbook `identity-signing-key-compromised`): switch to a key the incident didn't touch (the standby, or a fresh one when both may be exposed), unpublish the exposed ones (partners reject them within 10 min), tell partners |
+| An identity signing key (the active one on the Worker, or a published standby or next key from `.secrets/`) | Forge identity tokens for any user of any app: be anyone at every partner that uses them as login evidence, while partners trust the key | No key, no signature, nothing at Hana or on chain (no Hana API accepts the token). The standby is never on the Worker (D177), so a Worker or Cloudflare leak exposes the active key only. Testnet only: staging and mainnet sign with a non-exportable AWS KMS key (next row). Recovery (playbook `identity-signing-key-compromised`): switch to a key the incident didn't touch (the standby, or a fresh one when both may be exposed), unpublish the exposed ones (partners reject them within 10 min), tell partners. A key of the attacker's own put in the JWKS (through the API Worker or the Cloudflare account) pages critical from the watchdog's pin check within one run, and fails the outside probe within 15 min, **if** it is served to them too: the same attacker can serve the watchdog and the probe a clean JWKS, or publish for less than a run (D210). Partners trusting the JWKS URL accept it until it is removed; partners pinning thumbprints never. A stolen key of Hana's own is invisible to both (its kid is pinned) |
 | The KMS signer's AWS access key (`IDENTITY_AWS_*`, or the API Worker itself on a KMS env; none yet) | Have KMS sign forged identity tokens for any user of any app while the access key is active. The key itself can't be read or exported | Only `kms:Sign` on the active key with `ECDSA_SHA_256` and `DIGEST` (IAM policy; the key policy refuses `Sign` by any other principal, grants to everyone, key changes to all but the break-glass role). The standby isn't in the IAM policy (which also denies `Sign` on any other key), so it stays clean for the switch (D219). Only long-term credentials sign: the key policy denies `Sign` to session credentials, because the holder can always call `GetSessionToken` (no policy can deny it), its sessions keep the user's live permissions, and deactivating the access key isn't proven to end them (confirm on staging). Every signature is in CloudTrail, matched by `userIdentity.arn` (the planned reconciliation and alarms find unexplained ones; `GetSessionToken` by the signer user is an alarm). Recovery (planned playbook `identity-kms-signer-compromised`): deactivate the access key, check the `NoSessionCredentials` deny is on every key, switch to the standby, unpublish the suspect key, tell partners with CloudTrail's window and count |
 | `IDENTITY_SUB_KEY` | Map partners' `sub`s back to on-chain paths, so to the Google `sub` (privacy) | Funds and keys unaffected. Never rotated: a new key changes every user's `sub` at every partner (a `u2_` scheme with a 90-day `legacy_sub` window if it ever leaks) |
 | The ledger writer's credential (`usage_writer`: the Hyperdrive config, `.secrets/<env>/neon-usage-writer.url`) | Insert made-up usage events (any org, app, uid) and identity counts; call the report functions (C12) for any org | No read or change of any table (functions only, D141); events can't be altered or deleted, so real ones stay. Billed gas comes from settlement, which reads each `near_tx` at FINAL from chain (C12): a made-up hash never settles, and C12 must also refuse a real transaction that isn't the event's own (a `near_tx` already in the ledger, or a transaction whose signer key and nonce differ from the event's `relayer_pk` and `relayer_nonce`; `docs/batch-c-build-plan.md` C12). Rotate with `usage-setup roles` after deleting the role files, then update the Hyperdrive config |
@@ -344,7 +351,42 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   origin adds, policies and raw-signing enables are staff proposals (`hana`, full `appChangeDelayMs`, refused within
   `appChangeDelayMs` of the scope's org assignment); `app:changes:announce` (only without an admin Worker, never on
   a production network) starts the clock and records that nobody was emailed. Raw signing is refused for test apps
-  (D39 as amended 2026-10-28). Removals, turn-offs and suspensions are immediate.
+  (D39 as amended 2026-10-28). Removals, turn-offs and suspensions are immediate. `app:resume` refuses a deleted
+  app, which keeps Hana's bit for good (D225).
+- **RPC writers** (`apps/api/src/rpc/`, `src/changes/`; batch C5; tests `apps/api/test/rpc-*.test.ts`), unbound until
+  the console (C7) and admin (C8) Workers bind them, never reachable through `fetch`:
+  - every input is validated with its strict console-core schema before anything is read; `ConsoleRpc` takes only a
+    `member` actor (the emailed-link cancel only `link`), `AdminRpc` only `hana` (its cron methods also `system`);
+  - every org method filters `org_id`, so another org's app or change is `not_found` and nothing is written;
+  - every write is one D1 batch with its `app_changes` row first, inserted only while the compare-and-swap predicate
+    holds or when its request id was used before (which then fails on `request_id UNIQUE` and rolls the batch back);
+    every other statement runs only if that row exists. A replay is `already_applied`, a moved state
+    `version_conflict`, and no applied change lacks its ledger row (fault injection on every statement);
+  - a member never touches suspension bits 1 or 2; `deleteApp` revokes every key and leaves the app suspended for
+    good; staff proposals get the full delay, no waiver but `createApp`'s `no_session`, and are refused within
+    `appChangeDelayMs` of a scope assignment; expedite only for an announced member proposal, with a reason;
+  - the `no_session` waiver is decided inside the acking statements and fails closed exactly as the CLI's does (a
+    member candidate also needs an API-verified `proposer_sub`); `loopback` only for a member's loopback origin on a
+    test scope in a dev env on a non-production network;
+  - the cancel link is checked as `sha256(token)` against the stored hash, single use, until `active_from`;
+  - a compromised console is bounded: destructive calls (`setSuspended(true)`, `revokeKey`, `rotateKey`,
+    `removeOrigins`, a `googleWebClientId` change) at 5 per org and 20 across orgs per rolling hour (`rate_limited`,
+    and one `breaker` event per limit and hour; a call that changed nothing gets its slot back). Every call fits a
+    hot-DB budget: per-org buckets (10/s, burst 40) under the global one (30/s, burst 60), with the last 10 and 20
+    tokens kept for the kill switches. One org takes at most 12 tokens of the global reserve a minute, and a kill
+    switch that changed nothing is charged to its org's own bucket, not the reserve. Every call is also held to two
+    reads and one batch of ≤ 8 statements;
+  - emailed-link cancels (unauthenticated) have their own limits, never the members' budget: per client IP (IPv6 by
+    /64), then a link-read budget sized for D1 (50/s, burst 100), both before the token is read. A cancel whose token
+    verifies on a pending change is never refused after that. Residual: denying a valid link cancel takes a sustained
+    50 bogus reads a second from at least 600 IPv4 addresses or IPv6 /64s (5 a minute each); the owner and Hana staff
+    can still cancel in the console;
+  - a replayed request id is `already_applied` only for the same write (kind, app, actor), otherwise `conflict`;
+    `ackNotice` takes only the admin Worker's cron (`system`); the console never acts for `org_legacy`;
+  - `relayerKeys` returns public keys only; RPC logs carry the method, request id, outcome and code, never the input;
+  - the legacy `apps.publishable_key` is kept on the app's oldest unrevoked key or an unusable tombstone, so a reader
+    of the column and `status` (`apps/email-issuer` until it moves to `app_keys`, D206) never accepts a revoked,
+    rotating or deleted app's key (D225).
 
 - **Identity token** (`src/identity/`; `docs/identity-token-spec.md` "Invariants"; tests in
   `apps/api/test/identity.test.ts`):
@@ -369,7 +411,11 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   - `sub` depends only on (scope, root provider, root sub): never the login method, client, device or `key_index`, and
     never the Google `sub` in the clear;
   - the signature is checked against the published key for its `kid` before the token is answered, whichever signer
-    made it; the JWKS comes from the manifest's public keys alone and refuses a private member;
+    made it; the JWKS comes from the manifest's public keys alone and refuses a private member; every key it publishes must
+    be pinned in `watchdog.pinnedIdentityKeys` (the schema, D211), and the watchdog, on its own account, pages critical
+    for a published key it doesn't pin, any private member, a discovery document whose `issuer` or `jwks_uri` differs, or
+    an answer it can't judge (`packages/jwks/src/identity.ts`, shared with the outside probe; D210, D213, D214). This
+    detects a key served to everyone; it can't see one cloaked from the watchdog and the probe (D210);
   - the KMS signer (`src/identity/kms.ts`, `signers.ts`; tests in `apps/api/test/identity-kms.test.ts`) sends only the
     32-byte digest (no claim reaches AWS), one `Sign` per mint with no retry, under a 3 s deadline and a 4 KiB answer
     cap; it accepts only an answer for its own key ARN and algorithm and a strict DER signature (D216–D218); any other
@@ -699,7 +745,7 @@ Status: **fixed** (a), (b), (c), (d), (f); **fixed on sandbox-dev** (e) (the gov
 since 2026-10-30; mainnet ships with them once its delay, council and watchdog account are set up: D80, D81, D86);
 **accepted** (k), and the residual risks named under (b)–(d) and
 "Auto-approve policies"; **fixed for the CLI** (i); **open** (g), (h), (j) (sandbox-dev only; production envs
-need D38's two domains), (l) (pre-mainnet: the identity token's KMS signer and JWKS pin check). The 2026-10-29 security sweep's items in the API, tooling and CI: "Security sweep
+need D38's two domains), (l) (pre-mainnet: the identity token's KMS signer; the JWKS pin check is built as detection only, D210). The 2026-10-29 security sweep's items in the API, tooling and CI: "Security sweep
 2026-10-29" below.
 
 **(a) Unlock and touch don't re-check the app's current settings. Fixed.** Unlock and touch now read the app's
@@ -810,6 +856,23 @@ plan (D33; built, and deployed on sandbox-dev 2026-10-30), specified in `docs/go
   are alarms, not limits: the links went through. Logins into email-rooted wallets, or Google wallets that already
   have an email member, need no link and aren't seen; custody is their defence (D121). No third party is involved (the FastNear indexer scan of D192 is gone). A v2 contract
   reads as "no email issuer", and as "no link stats".
+- Watchdog and the partner identity token (D210–D214; branch `feat/identity-token-8`, not deployed): Hana's identity
+  JWKS is served by Hana's Cloudflare account, so the watchdog pins the keys' RFC 7638 thumbprints in its own manifest
+  block (`watchdog.pinnedIdentityKeys`, a redeploy on its own account to change; no pins = nothing pinned) and reads
+  the JWKS and the discovery document every run, after every protective step, with bodies capped and no redirect
+  followed. Each key is judged by its material, never its kid, and only the public members are allowed. Unpinned keys,
+  private members, a wrong `issuer` or `jwks_uri`, and any answer that can't be judged (a redirect, padding, not JSON,
+  duplicate members, the wrong shape, 3 failed fetches) are critical, so content can't be shaped to downgrade a
+  finding; nothing is paused (partners verify the token; the contract never holds or accepts an identity key: it
+  stores RSA keys only). The schema refuses a manifest that publishes an unpinned key, and `identity-key` pins with
+  `next` and unpins with `retire`, so a retired, possibly leaked key can't be republished silently.
+  **Detection against a non-cloaking attacker only.** Whoever controls Hana's Cloudflare account can recognise the
+  watchdog's fetches (Cloudflare's network, the watchdog's Worker) and serve them a clean JWKS while partners get
+  another, or publish a key between two runs. A scheduled GitHub Actions probe (`scripts/identity-probe.ts`, every
+  15 min, same rules, no secrets) reads from outside Cloudflare like a partner's `jose` verifier, which narrows the
+  first; neither stops an attacker who singles out partners' traffic or times the key. Residual: partners that trust
+  the JWKS URL can accept a forged key without Hana being alerted. Partner-side thumbprint pinning
+  (`docs/integration.md`, the recommended default for anything of value) is the only prevention.
 - Monitoring (D83): every watchdog check, action and alert surfaces in the admin portal's "Security & monitoring"
   view (a standing rule for future checks); the watchdog sends its own alerts, so a compromised Hana Cloudflare
   account can't silence them.
@@ -840,7 +903,7 @@ leaked key can call them directly within its allowance.
 
 **(i) The 20-origin cap is enforced only by the vault page. Fixed for the CLI (batch C3).** `admin app:create` and
 `app:origins:add` refuse more than 20 active-or-pending origins per app (`MAX_APP_ORIGINS`, `@hana-id/console-core`);
-`AdminRpc` and `ConsoleRpc` (C5) apply the same cap. A direct D1 write can still exceed it; the vault page then answers
+`AdminRpc.addOrigins` applies the same cap (batch C5; the member path, `changeOrigins`, comes with C6). A direct D1 write can still exceed it; the vault page then answers
 403 `too_many_origins` (availability, not safety).
 
 **(j) sandbox-dev's two Hana origins are one site. Open (sandbox-dev only; outside dev envs the schema refuses a
@@ -857,7 +920,7 @@ with the partner page; there, short unlock windows and zeroing PRK are the mitig
 `approvalContextString`). Typed data carries its chain in its domain; messages and raw requests name no network, and
 the approve popup now says "This signature isn't tied to one network." on them.
 
-**(l) Identity token: testnet signing key and no JWKS pin check yet. Open (pre-mainnet).** Build steps 1–4 sign with
+**(l) Identity token: testnet signing key. Open (pre-mainnet).** Build steps 1–4 sign with
 a Worker-secret P-256 key (`IDENTITY_SIGNING_KEY`): anyone who can read the API Worker's secrets once can forge any
 user's identity at every partner until the key is removed from the JWKS. Step 7's code is built (branch
 `feat/identity-token-7`, D215–D219): the AWS KMS signer, the manifest's `aws-kms` signer and the `identity-key kms-*`
@@ -865,9 +928,15 @@ commands, tested against a fake KMS. Still open before mainnet: the AWS account'
 CloudTrail and alarms, and the hourly reconciliation of `Sign` events against `identity_issuance_hourly` (not built;
 `docs/operations.md` "Identity token keys on AWS KMS"). A KMS credential still lets its holder forge tokens until it is
 revoked; KMS makes the key unexportable and every signature visible, not misuse impossible. `gen` and the schema
-already refuse a Worker-secret key outside testnet; step 8 adds the watchdog's JWKS pin check
-(an unpinned key in the JWKS is a critical alert) and the "identity key on chain" check. Until then partners must not
-use identity tokens for anything of value. The testnet standby is kept off the Worker, and `identity-key next / switch /
+already refuse a Worker-secret key outside testnet. Step 8 is built (branch `feat/identity-token-8`, D210–D214): the
+watchdog pages critical for an unpinned or private key in the JWKS and a wrong discovery `issuer` or `jwks_uri`, an
+answer it can't judge, and an identity key's thumbprint as an issuer kid on chain; it never pauses for them (the chain
+isn't involved), and an outside probe from GitHub Actions applies the same rules every 15 min. Both detect, neither
+prevents, and only an attacker who serves everyone the same JWKS: one who controls Hana's Cloudflare account can cloak a
+key from both or publish it between reads, and partners that trust the JWKS URL accept it until it is removed (≤ 10 min
+of cache after). Partner-side thumbprint pinning is the recommended default for anything of value
+(`docs/integration.md`). Until the KMS signer runs in production partners must not use identity tokens for anything
+of value. The testnet standby is kept off the Worker, and `identity-key next / switch /
 retire` rotate or replace keys (D177; playbook `identity-signing-key-compromised`). Also accepted for now: in an app that keeps logins, a browser that can't
 store the session (no share) gets `identity_unavailable` (`data.reason: 'no_share'`): the share check is what makes a
 logout or a revocation stop new tokens, and a missing share can't be told from a revoked and pruned one.

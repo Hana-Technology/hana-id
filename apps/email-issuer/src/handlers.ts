@@ -543,15 +543,13 @@ export async function handleGoogleMatch(request: Request, ctx: Ctx): Promise<Res
     const keys = await deps.keys();
     const sub = await emailSub(keys.sub, r.email);
     const googleSub = id.value.sub;
-    // The hint a Google login writes (D122: kept while the scope exists), only for a Google-hosted address (tokens
-    // review L1, D199): for any other, Google's word that the account has the address says nothing about the mailbox.
-    if (googleHosted) {
-      await deps.env.DB.prepare(
-        'INSERT INTO email_hints (scope_id, email_sub, google_sub, updated_at_ms) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (scope_id, email_sub, google_sub) DO UPDATE SET updated_at_ms = excluded.updated_at_ms',
-      )
-        .bind(app.scopeId, sub, googleSub, now)
-        .run();
-    }
+    // The hint a Google login writes for every Google-verified address (D119, D122: kept while the scope exists). A
+    // non-Google-hosted match links as case B only after 24 h (mode 0 below), with link notices (D199's residual risk).
+    await deps.env.DB.prepare(
+      'INSERT INTO email_hints (scope_id, email_sub, google_sub, updated_at_ms) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (scope_id, email_sub, google_sub) DO UPDATE SET updated_at_ms = excluded.updated_at_ms',
+    )
+      .bind(app.scopeId, sub, googleSub, now)
+      .run();
 
     const j = await judgeChain(deps, app.scopeId, googleSub, sub);
     // A ticket is single use: any google-match that presents it spends it. It counts only for this address and for one

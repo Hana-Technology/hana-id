@@ -2456,11 +2456,16 @@ is computed by `@hana-id/email` alone, from the normalized address including any
     `link_account`, `link_change` and `auto_link`; the spec is history and is not edited.
   - **Case B on the server (tokens review L1):** when `verify` finds that a hinted Google identity has the wallet
     (case B), it returns no `idToken` (`{googleWallet: true, linkTicket?, deviceTicket}`), so an email login can't open a
-    second wallet even if the popup misbehaves. Hints are written only for **Google-hosted** addresses: for any other,
-    Google's word that the account has the address says nothing about the mailbox. **Consequence, to confirm:** a
-    non-Google-hosted address is never matched in case B any more, so D119's delayed (24 h) case-B link isn't reached by
-    automatic linking; such a person gets two wallets unless they link explicitly (`linkAccount`). The minting path for
-    it stays in the code.
+    second wallet even if the popup misbehaves. Hints are written for every Google-verified address (D119, as the user
+    decided): a Google-hosted case B links at once, any other only after 24 h (mode 0), with a link notice to the
+    address. (A first version of this fix wrote hints only for Google-hosted addresses; it was reverted because it
+    overrode D119.)
+  - **Residual risk, to confirm (tokens review L1):** for a non-Google-hosted address, Google's word that an account
+    has the address says nothing about who reads the mailbox today. A stale Google account still holding an old address
+    (a former employee's, a recycled domain's) can steer the address's new owner, at their email login, to that Google
+    account's wallet in a scope: the new owner gets no email wallet of their own there and is offered the link. Mitigated
+    by the 24 h delay before such a join takes effect (cancellable meanwhile) and by the link notices sent to the
+    address; Google-hosted addresses don't have it (Google hosts the mailbox, or the domain admin controls both, D158).
   - **Link tickets (tokens review L2):** a `linkTicket` is bound to the app, the address's `sub` **and** the hinted Google
     identities found in case B; google-match accepts it only for one of those (binding the relayId is left for batch 8).
   - **Retention (independent review L3):** SendGrid's Email Activity keeps each message's recipient and events (3 days,

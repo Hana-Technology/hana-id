@@ -423,7 +423,7 @@ Branch `feat/email-login-4`, not merged, nothing deployed, no secret uploaded, n
   per mailbox; the webhook's category filter, 30-day bounce expiry, header checks before the body, cached key, per-IP
   limit; suppressions keyed by K_sup (from K_sub); the challenge's address encrypted under the client-held half of the
   challengeId; `missing_client_ip` refused; uniform `retry-after`; Access negative cache; per-purpose mail texts; case
-  B's `idToken` withheld, hints only for Google-hosted addresses, link tickets bound to the hinted Google identities;
+  B's `idToken` withheld (hints still for every verified address, D119), link tickets bound to the hinted Google identities;
   client proofs at the scope's current `action_nonce` with an email app; `email-issuer <env> put --standby` and the
   exact key-leak runbook; issuer-minted tokens checked in the real contract (`contracts/hana-signer` tests only, 4
   tests, `issuer_tokens_fixture.json`); gitleaks `hana-private-jwk` also matches an unquoted `d: '…'`.

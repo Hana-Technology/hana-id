@@ -973,8 +973,7 @@ off meanwhile: nothing is minted). A correct code is single use: the challenge i
 
 - `deviceTicket`: `dt1.` + 54 characters, the owner device ticket for this mailbox (30 days); batch 8's popup keeps it
   on `authOrigin` and sends it with the next `start`.
-- `session`: case B is when a Google identity that reported this address (`email_hints`, written only for Google-hosted
-  addresses) has the wallet in this scope and the email identity has none. The email login then gets no `idToken`, so
+- `session`: case B is when a Google identity that reported this address as verified (`email_hints`) has the wallet in this scope and the email identity has none. The email login then gets no `idToken`, so
   it can't open a second wallet; the popup continues with Google. `linkTicket` (32 random bytes, single use, 10 min,
   bound to the app, this address's `sub` and the hinted Google identities) only when the contract would accept the join.
 - `link_new`, `link_account`, `link_change`: `googleWallet: false`. `409 links_unavailable` while
@@ -996,8 +995,8 @@ off meanwhile: nothing is minted). A correct code is single use: the challenge i
    endpoint afterwards, whatever the outcome. Tokens never appear in a URL or a log.
 3. `email_verified` not true (or an address that doesn't normalize): `{decision: "none", googleHosted: false,
    linkable: false}`, no hint. Otherwise the address's `sub` (the Gmail `+tag` kept, dots dropped, D159) and the
-   Google-hosted rule (`@hana-id/email` `isGoogleHosted`, D158); the hint `(scope, sub, Google sub)` is upserted only
-   for a Google-hosted address (D199).
+   Google-hosted rule (`@hana-id/email` `isGoogleHosted`, D158); the hint `(scope, sub, Google sub)` is upserted for every
+   verified address (D119; a non-Google-hosted case B then links only after 24 h, D199's residual risk).
 4. The case, from `get_identity` and `get_account` of both identities, as the contract judges it (D199): `none` (case
    C), `linked`, `pending`, `both_wallets`, `unlinked`, `case_a`, `case_b`; `linkable` false when the contract would
    refuse the join or `unrecorded_wallets` is set.

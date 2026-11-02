@@ -266,19 +266,31 @@ describe('the four cases', () => {
     expect((await match(h, app, other, { linkTicket: login.linkTicket! })).body.emailToken).toBeUndefined();
   });
 
-  it('not Google-hosted: no hint is written, so an email login is never told of a Google wallet (tokens review L1, D199)', async () => {
+  it('case B, not Google-hosted: the hint is written, verify withholds the token, the join is delayed 24 h (D119)', async () => {
     const h = await harness();
     const app = await seedApp(h);
     const email = `nh${uid()}@corp.example`;
     const acc = gAccount(email, { hd: 'other.example' });
-    await match(h, app, acc);
+    const first = await match(h, app, acc);
+    expect(first.body.googleHosted).toBe(false);
     h.chain.open(app.scope, 'google', acc.sub);
-    expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM email_hints WHERE scope_id = ?1').bind(app.scope).first('n')).toBe(0);
+    expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM email_hints WHERE scope_id = ?1').bind(app.scope).first('n')).toBe(1);
     const login = await emailLogin(h, app, email);
-    expect(login.googleWallet).toBe(false);
-    expect(login.idToken).toBeDefined();
+    expect(login.googleWallet).toBe(true);
+    expect(login.idToken).toBeUndefined();
+    expect(login.linkTicket).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    const { body, commitment } = await match(h, app, acc, { linkTicket: login.linkTicket! });
+    expect(body.decision).toBe('case_b');
+    expect(body.linkImmediate).toBe(false);
+    const eSub = await sub(h, email);
+    const t = await decodeToken(body.emailToken!);
+    const gIk = identityKey(app.scope, 'google', acc.sub);
+    const eIk = identityKey(app.scope, 'email', eSub);
+    const hash = sha256(sessionPreimage(env.SIGNER_ACCOUNT, commitment));
+    // Mode 0: the contract records the join as pending for 24 h (D119); the address gets a notice it can act on.
+    expect(t.claims.nonce).toBe(nonceOf(autoLinkPreimage(env.SIGNER_ACCOUNT, app.scope, hash, gIk, { join: 2, joinerIk: eIk, targetRootIk: gIk, targetEpoch: 0, mode: 0 })));
+    expect(h.sender.to(email).some((m) => m.kind === 'link_notice')).toBe(true);
   });
-
   it('case B: a ticket for another address, or another app, mints nothing; link=false mints nothing', async () => {
     const h = await harness();
     const app = await seedApp(h);

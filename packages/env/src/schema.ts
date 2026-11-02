@@ -182,12 +182,12 @@ export const manifestSchema = z
     /** Watchdog accounts (≤ 3) the contract lets cancel, confirm and pause (docs/governance-spec.md "Watchdogs"). */
     watchdogs: z.array(nearAccount).max(3).optional(),
     /**
-     * `issuer_key_delay_ms` for `new` / `migrate_v1` (contract allows 0..7 days; D80). deploy-contract refuses less
+     * `issuer_key_delay_ms` for `new` (contract allows 0..7 days; D80). deploy-contract refuses less
      * than the security bound 3·(W + T) = 18 min outside dev envs (`delays.ts` `governanceDelayProblems`).
      */
     issuerKeyDelayMs: z.number().int().min(0).max(7 * 24 * 60 * 60 * 1000).optional(),
     /**
-     * `governance_delay_ms` for `new` / `migrate_v1` (contract allows 0..30 days; D80). deploy-contract refuses less
+     * `governance_delay_ms` for `new` (contract allows 0..30 days; D80). deploy-contract refuses less
      * than 24 h outside dev envs (72 h on mainnet).
      */
     governanceDelayMs: z.number().int().min(0).max(30 * 24 * 60 * 60 * 1000).optional(),

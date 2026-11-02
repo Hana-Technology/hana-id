@@ -3098,7 +3098,7 @@ fn with_no_watchdog_every_key_change_waits_the_governance_delay() {
 
 #[test]
 fn a_watchdog_that_cannot_confirm_yet_does_not_shorten_key_changes() {
-    // No watchdog (as after migrate_v1), then the owner adds one: it may cancel at once but confirms only from
+    // No watchdog (as a deployment created without one), then the owner adds one: it may cancel at once but confirms only from
     // NOW + G. Until then it doesn't count, so a fresh (possibly yes-man) watchdog never cuts the wait to D.
     ctx_with_storage(ADMIN, NOW_MS, Default::default());
     let mut c = HanaSigner::new(acc(ADMIN), acc("v1.signer-prod.testnet"), 2, DELAY_MS, KEY_DELAY_MS, GOV_DELAY_MS, vec![], vec![]);
@@ -3504,12 +3504,14 @@ fn the_session_floor_is_owner_only_raised_only_and_never_in_the_future() {
 }
 
 #[test]
-fn a_v1_session_counts_as_opened_max_session_ms_before_its_expiry() {
+fn a_session_without_created_at_counts_as_opened_max_session_ms_before_its_expiry() {
     use crate::sessions::MAX_SESSION_MS;
-    // The v1 fixture's session for pk(7) (no created_at_ms) expires at EXPIRES_MS: it was opened no earlier than
-    // EXPIRES_MS - 24 h, and that is what the floor is compared with.
-    ctx_with_storage(ME, NOW_MS, v1_storage());
-    let mut c = HanaSigner::migrate_v1(KEY_DELAY_MS, GOV_DELAY_MS);
+    // A session record written by v1 code has no created_at_ms (a deployment migrated from v1, as sandbox-dev was,
+    // may still hold one). This one expires at EXPIRES_MS: it was opened no earlier than EXPIRES_MS - 24 h, and that
+    // is what the floor is compared with.
+    let mut c = setup();
+    let record = sessions::StoredSession { path: format!("s1#google#{USER}#0"), scope_id: "s1".into(), expires_at_ms: EXPIRES_MS, max_uses: 3, used: 1, revoked: false, created_at_ms: None };
+    c.sessions.insert(pk(7), record);
     assert_eq!(c.sessions.get(&pk(7)).unwrap().created_at_ms, None);
     ctx(ADMIN, NOW_MS);
     c.set_sessions_valid_from_ms(EXPIRES_MS - MAX_SESSION_MS);
@@ -4055,133 +4057,24 @@ fn governance_view() {
     );
 }
 
-// ---- migration (v1 → v2) ----
+// ---- migration ----
 
 fn unhex(s: &str) -> Vec<u8> {
     (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
 }
 
-/// The v1 storage in src/v1_state_fixture.json (built by the v1 code, develop 3fd4964; see its "about").
-fn v1_storage() -> std::collections::HashMap<Vec<u8>, Vec<u8>> {
-    let f: Value = serde_json::from_str(include_str!("v1_state_fixture.json")).unwrap();
-    f["storage"].as_array().unwrap().iter().map(|kv| (unhex(kv[0].as_str().unwrap()), unhex(kv[1].as_str().unwrap()))).collect()
-}
-
-#[test]
-fn the_v1_layout_copy_round_trips_the_v1_state_fixture() {
-    use near_sdk::borsh::BorshDeserialize;
-    let storage = v1_storage();
-    let raw = &storage[b"STATE".as_slice()];
-    let v1 = crate::migrate::HanaSignerV1::try_from_slice(raw).expect("the v1 layout reads the v1 state");
-    assert_eq!(&near_sdk::borsh::to_vec(&v1).unwrap(), raw);
-    // The current layout doesn't read v1 state, and the v1 layout doesn't read the current state.
-    assert!(HanaSigner::try_from_slice(raw).is_err());
-    let c = setup();
-    let v2 = near_sdk::borsh::to_vec(&c).unwrap();
-    assert!(crate::migrate::HanaSignerV1::try_from_slice(&v2).is_err());
-    // The current layout = the v1 prefix, unchanged, followed by the newer fields.
-    let v1_part = crate::migrate::HanaSignerV1::deserialize(&mut v2.as_slice()).unwrap();
-    assert_eq!(near_sdk::borsh::to_vec(&v1_part).unwrap(), v2[..near_sdk::borsh::to_vec(&v1_part).unwrap().len()].to_vec());
-}
-
-#[test]
-fn migrate_v1_keeps_every_scope_client_session_and_issuer_key() {
-    ctx_with_storage(ME, NOW_MS, v1_storage());
-    let mut c = HanaSigner::migrate_v1(KEY_DELAY_MS, GOV_DELAY_MS);
-    assert_eq!(events(), vec![ev("state_migrated", serde_json::json!({"from_version":1,"to_version":3}))]);
-    // Every v1 field as the fixture's v1 code left it, plus the new delays and nothing pending.
-    assert_eq!(
-        serde_json::to_value(c.get_config()).unwrap(),
-        serde_json::json!({
-            "owner":ADMIN,"mpc":"v1.signer-prod.testnet","ckd_domain_id":2,
-            "console_audiences":[["google",CONSOLE]],"pending_console_audiences":[],
-            "sponsors":[RELAYER],
-            "shared_clients":[["google",SHARED]],
-            "pending_shared_clients":[{"provider":"google","aud":D,"effective_at_ms":NOW_MS + DELAY_MS}],
-            "change_delay_ms":DELAY_MS,"pending_change_delay":{"change_delay_ms":0,"effective_at_ms":NOW_MS + DELAY_MS},
-            "public_registration":false,
-            "issuer_key_delay_ms":KEY_DELAY_MS,"pending_issuer_key_delay":null,
-            "governance_delay_ms":GOV_DELAY_MS,"pending_governance_delay":null,
-            "paused":false,"unpaused_at_ms":0,"changes_unlock_floor_ms":0,"sessions_valid_from_ms":0,"unrecorded_wallets":true
-        })
-    );
-    assert_eq!(
-        c.get_governance(),
-        GovernanceView {
-            state_version: 3,
-            watchdogs: vec![],
-            keys_slow_until_ms: 0,
-            updater_keys: vec![],
-            pending_updater_keys: vec![],
-            updater_methods: UPDATER_METHOD_LIST.map(String::from).to_vec(),
-            pending_upgrade: None,
-            pending_owner: None,
-            pending_withdrawal: None
-        }
-    );
-    assert!(c.get_key_changes().is_empty());
-    assert_eq!(kids(&c), vec!["test-kid".to_string()]);
-    assert_eq!(c.get_issuer("other".into()).unwrap().kids, vec!["test-kid2".to_string()]);
-    let s1 = c.get_scope("s1".into()).unwrap();
-    assert_eq!(s1.owners, vec![near_owner(ALICE), oidc_owner(OWNER_SUB)]);
-    assert_eq!(s1.clients, vec![google(A)]);
-    assert_eq!(s1.pending, vec![PendingChange { id: 0, change: add(E), unlock_at_ms: NOW_MS + DELAY_MS }]);
-    assert_eq!(s1.action_nonce, 2);
-    assert_eq!(c.get_scope("s2".into()).unwrap().clients, vec![google(B)]);
-    let s3 = c.get_scope("s3".into()).unwrap();
-    assert!(s3.allow_shared && s3.clients.is_empty());
-    assert_eq!(c.scope_for_client("google".into(), A.into()), Some("s1".into()));
-    assert_eq!(c.scope_for_client("google".into(), A2.into()), None);
-    assert_eq!(c.scope_for_client("google".into(), B.into()), Some("s2".into()));
-    assert_eq!(c.get_session(pk(7)), Some(Session { path: format!("s1#google#{USER}#0"), scope_id: "s1".into(), expires_at_ms: EXPIRES_MS, max_uses: 3, used: 1 }));
-    assert_eq!(c.get_session(pk(8)).unwrap().path, format!("s2#google#{USER}#0"));
-    // The migrated state round-trips through storage as v2.
-    env::state_write(&c);
-    let stored: HanaSigner = env::state_read().unwrap();
-    assert_eq!(stored.state_version, 3);
-
-    // It keeps working: the session opened before the upgrade derives with the same path...
-    ctx(RELAYER, NOW_MS);
-    derive(&mut c, 7, 2);
-    let receipts = get_created_receipts();
-    let MockAction::FunctionCallWeight { args, .. } = &receipts[0].actions[0] else { panic!() };
-    let args: Value = serde_json::from_slice(args).unwrap();
-    assert_eq!(args["request"]["derivation_path"], format!("s1#google#{USER}#0"));
-    // ...the A2 quarantine and the pending AddClient carry on...
-    ctx(BOB, NOW_MS);
-    expect_panic("Client was recently removed from another scope", || {
-        c.propose_change("s2".into(), OwnerAuth::Near, add(A2), Some(tok("cp_a2_s2_0")));
-    });
-    ctx(MALLORY, NOW_MS + DELAY_MS);
-    c.execute_change("s1".into(), 0);
-    assert_eq!(c.scope_for_client("google".into(), E.into()), Some("s1".into()));
-    // ...and with no watchdog yet, key changes wait the governance delay.
-    let (n, e) = fixture_key();
-    ctx(ADMIN, NOW_MS + DELAY_MS);
-    c.set_issuer_key("google".into(), "k2".into(), n, e, None);
-    assert_eq!(c.get_key_changes()[0].executable_at_ms, NOW_MS + DELAY_MS + GOV_DELAY_MS);
-}
-
-#[test]
-fn migrate_v1_bounds_its_delays() {
-    ctx_with_storage(ME, NOW_MS, v1_storage());
-    expect_panic("issuer_key_delay_ms must be at most 7 days", || drop(HanaSigner::migrate_v1(MAX_ISSUER_KEY_DELAY_MS + 1, 0)));
-    expect_panic("governance_delay_ms must be at most 30 days", || drop(HanaSigner::migrate_v1(0, MAX_GOVERNANCE_DELAY_MS + 1)));
-}
-
 #[test]
 fn migrations_refuse_a_state_they_do_not_migrate_from() {
-    // migrate_v1 on v3 state (a stray re-run).
+    // migrate on a state that is neither the v2 nor the v3 layout: here a v3 state cut short by one byte (corrupt).
+    // A v1 state, which has no migration any more, is refused the same way (tests/email.rs
+    // migrate_refuses_every_state_it_does_not_migrate_from: a state shorter than the v2 layout).
     let c = setup();
-    env::state_write(&c);
-    expect_panic("Unexpected state version", || drop(HanaSigner::migrate_v1(0, 0)));
-    // migrate on v1 state.
-    ctx_with_storage(ME, NOW_MS, v1_storage());
+    let bytes = near_sdk::borsh::to_vec(&c).unwrap();
+    env::storage_write(b"STATE", &bytes[..bytes.len() - 1]);
     expect_panic("Unexpected state version", || drop(HanaSigner::migrate()));
-    // Either on no state at all.
+    // On no state at all.
     ctx_with_storage(ME, NOW_MS, Default::default());
     expect_panic("Unexpected state version", || drop(HanaSigner::migrate()));
-    expect_panic("Unexpected state version", || drop(HanaSigner::migrate_v1(0, 0)));
     // migrate on a v3 layout that claims another version.
     let mut c = setup();
     c.state_version = 4;

@@ -2,8 +2,8 @@
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
 Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 and D150–D152 on 2026-10-30 (branches
-`feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`); D156–D159
-on 2026-11-02 (branch `feat/email-login-3`).
+`feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`);
+D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-login-3`) on 2026-11-02.
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -1556,6 +1556,41 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 - Playbook: `retired-key-change`. The incident's alert #10 was acknowledged; the deleted updater key is reprovisioned
   through the council (`forged-key-change` step 5).
 
+### D154. No v1 migration in contract v3: `migrate_v1` removed, `deploy-contract` refuses a v1 contract
+- Date 2026-11-02 · Status: to confirm (built on `feat/email-login-2`) · Source: email-login build plan batch 2
+- Decision: contract v3 drops `migrate_v1`, the v1 layout copy (`HanaSignerV1`) and the v1 state fixture, as the build
+  plan says. The plan doesn't say what the deploy tooling does with a v1 contract once the code can't migrate it; the
+  stricter reading is built: `deploy-contract` refuses a v1 contract with or without `--upgrade`, with a blocker that
+  names the ways out (upgrade it with the v2 code, develop 26fb70a, first; or a fresh signer account, which changes
+  every address), instead of planning `DeployContract` + `migrate_v1`, which would now fail on chain (`MethodNotFound`,
+  the receipt reverts). The plan's `migrate-v1` step and the simulated chain's `migrate_v1` are gone; the v1 plan
+  and run tests became refusal tests.
+- Why: no deployment is on v1 (sandbox-dev migrated on 2026-10-30; every other env is created with `new`), and the
+  tooling shouldn't offer a plan that can't succeed. v3 still reads v1-era session records (`created_at_ms` absent):
+  a deployment migrated from v1 may hold some, so that unit test stays, built without the v1 fixture.
+- Not changed: the API's never-relay list (`apps/api/src/relayer-config.ts` `GOVERNANCE_METHODS`) still names
+  `migrate_v1`: refusing a method that no longer exists is harmless, and batch 6 edits that file.
+
+### D155. Attached gas for the email-login calls covers 4096-bit keys
+- Date 2026-11-02 · Status: to confirm (measured on `feat/email-login-2`; the API sets the values in build-plan batch
+  6) · Source: email-login build plan batch 2, the spec's "Gas and storage"; batch 2 review (L3)
+- Decision: attach 250 Tgas to `create_session_and_derive` with a `link_jwt` (the spec said 150), 250 to
+  `link_identity` (spec: 100), and 150 to `cancel_link` and `unlink_identity` (the spec gives no value). Measured in the
+  sandbox (`docs/contract-interface.md` "Gas of the email login calls"): one RS256 verification costs ≈ 17–18 Tgas at
+  2048 bits and ≈ 67 at 4096, the largest modulus `set_issuer_key` accepts. A linked login needs ≈ 59 Tgas at 2048
+  bits and ≈ 156 at 4096 (two verifications plus the MPC's 20); `link_identity` burns 37.2 / 134.6; `cancel_link` and
+  `unlink_identity` 19.8 / 68.5. The values cover the 4096-bit worst case with ≥ 1.6 times the need.
+- Also: at 4096 bits the plain logins outgrow the API's current values (`create_session` 68.8 burnt against 50
+  attached; `create_session_and_derive` ≈ 89 needed of 100). Batch 6 raises them (100 and 150) unless the issuer keys
+  are kept at 2048 bits (below).
+- Why: unused gas is refunded and the prepaid amount only counts against the relayer key's allowance while the call
+  runs, so a high value costs nothing; a low one fails logins the moment an issuer (Google, or Hana's email key)
+  rotates to a larger key, which the contract allows.
+- Alternative for the user: cap self-issued (email) keys at 2048 bits in a later contract version (Hana chooses that
+  key size: the spec's KMS keys are `RSA_2048`), and keep the gas values for Google's 2048-bit keys with a check in
+  the watchdog. Not done here: no contract change in this batch.
+- Rejected: the spec's 150 for the linked login (fails with 4096-bit keys); 100 for `link_identity` (likewise).
+
 ### D142. Loopback origins only in `sandbox-*` environments
 - Date 2026-10-30 · Status: confirmed by the user · Source: batch C1 open question 1 (`docs/batch-c-build-plan.md`)
 - Decision: `localhost` / loopback origins are accepted only in dev environments (`sandbox-*`, `local*`), both when an
@@ -2051,5 +2086,6 @@ is a proposal there.
 Still open from `docs/email-login-spec.md`: the user-mail provider (Resend unless the colleague picks another,
 D87). Everything else follows D4, D119 and D121–D123. The contract readings made while building it, D130 and D131,
 wait for the user's confirmation (`docs/email-login-build-plan.md` "Open points for the user"; point 3 is confirmed, D132);
-D133–D138 are the security reviews' fixes, D139 their off-chain obligations. The `packages/email` readings
-(batch 3), D156–D159, wait for the user's confirmation; D156 and D159 decide every email address.
+D133–D138 are the security reviews' fixes, D139 their off-chain obligations. Batch 2's readings, D154 (no v1
+migration; `deploy-contract` refuses v1) and D155 (attached gas of the email-login calls), and the `packages/email`
+readings (batch 3), D156–D159, wait for the user's confirmation; D156 and D159 decide every email address.

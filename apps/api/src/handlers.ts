@@ -1,5 +1,5 @@
 // Request handlers: app endpoints (publishable key + origin), owner actions (OIDC proof in args), health.
-import { type App, PUBLISHABLE_KEY_RE, getAppByKey, incrementUsage } from './apps.ts';
+import { type App, PUBLISHABLE_KEY_RE, appSuspended, getAppByKey, incrementUsage, noteFirstSession } from './apps.ts';
 import { appKeyPairs, appKeyProblem } from './bls.ts';
 import { disallowedClaim } from './claims.ts';
 import type { Env } from './env.ts';
@@ -234,9 +234,10 @@ export async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay
   ctx.appId = app.id;
   const caller = checkCaller(env, app, ctx.endpoint, request.headers);
   if (caller.cors) ctx.cors = corsHeaders(caller.cors, APP_ALLOW_HEADERS, APP_METHODS);
-  if (app.status !== 'active') return fail(403, 'app_suspended', 'This app is suspended');
-  // A test key on a scope that a live key also uses: its dev-env privileges must never reach live users.
-  if (app.scope_conflict) return fail(403, 'scope_conflict', 'This test key’s scope is also used by a live app');
+  if (appSuspended(app)) return fail(403, 'app_suspended', 'This app is suspended');
+  // A key whose prefix names the other environment than its scope (refused by the 0006 triggers; a second check):
+  // a test key's dev-env privileges must never reach live users.
+  if (app.scope_conflict) return fail(403, 'scope_conflict', 'This key’s environment is not its scope’s');
 
   // 2. Origin (and, from a Hana page, the partner origin it acts for).
   if (!caller.ok) return fail(403, 'origin_not_allowed', 'Origin not allowed for this app');
@@ -384,6 +385,7 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     if (!isSessionView(result.result)) return done(ctx, 502, { error: 'The contract returned no session', code: 'bad_contract_result', nearTx: result.nearTx });
     rememberSession(req.sessionPublicKey, result.result);
     await countUsage(env, app.id, 'sessions', ctx, exec);
+    await firstSession(env, app, ctx, exec);
     return done(ctx, 200, { result: result.result, nearTx: result.nearTx });
   }
 
@@ -468,6 +470,16 @@ async function countUsage(env: Env, appId: string, field: 'sessions' | 'derives'
   });
   if (exec) exec.waitUntil(write);
   else await write;
+}
+
+/** The scope's first successful login (apps.ts noteFirstSession), after the response when it can. Never rejects. */
+export async function firstSession(env: Env, app: App, ctx: { requestId: string; endpoint: string }, exec?: ExecutionContext): Promise<void> {
+  await noteFirstSession(
+    env.DB,
+    app,
+    () => log({ event: 'first_session_write_failed', requestId: ctx.requestId, appId: app.id, endpoint: ctx.endpoint }, 'error'),
+    exec,
+  );
 }
 
 type ScopeRejection = { status: number; code: string; error: string };

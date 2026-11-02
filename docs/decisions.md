@@ -5,7 +5,7 @@ Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 and D150–
 `feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`);
 D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-login-3`) on 2026-11-02; D159's `+tag`
 change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 (branch `feat/email-login-5`) and D200 (branches
-`feat/link-cap`, `feat/email-login-5`) on 2026-11-02.
+`feat/link-cap`, `feat/email-login-5`) on 2026-11-02; D205–D209 (branch `feat/batch-c-3`, to confirm) on 2026-11-02.
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -1623,6 +1623,82 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   from `appChangeDelayMs`, with the same bounds (at least 24 h on mainnet).
 - Why: the two waits can be tuned independently; changing one never silently changes the other.
 
+## Batch C3: hot DB expand, the gate on it, the CLI on it (2026-11-02)
+
+Readings made while building `docs/batch-c-build-plan.md` C3 on `feat/batch-c-3`, where `docs/batch-c-spec.md` left a
+detail open. Each follows the spec's intent; all five are **to confirm** by the user.
+
+### D205. Migration 0006 details: the baseline keeps policies as stored; four extra checks
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/migrations/0006_dashboard_expand.sql`) · Source: spec §Hot DB
+  "Migration 0006"
+- Decision: (1) the `migration.baseline` row lists each app's stored `auto_approve_policy` / `auto_approve_pending`
+  JSON (and their effective time, the raw-signing values and `suspended_by`) instead of their `policyId`: SQL can't
+  compute a `policyId` (SHA-256 of the canonical form), and the JSON is what drift detection (C5) derives it from.
+  (2) The insert and org/scope update triggers on `apps` also refuse a `publishable_key` whose prefix isn't the
+  scope's environment (the spec names this check only for `app_keys`; it is the "trigger" through which the legacy
+  column is still read). (3) A trigger keeps `scopes.environment` fixed. (4) `detail_json` columns must be valid JSON
+  and `org_security_contacts.email` lowercase (CHECKs). Also: the migration times are `unixepoch('now') * 1000`, the
+  backfilled keys' `created_at` is their app's, the baseline's request id is `migration-0006:<app id>`, and the
+  triggers are created after the backfill (which satisfies each).
+- Why: each only refuses rows the spec says must never exist (a test/live mix, a changed environment, malformed
+  ledger rows); none changes an existing row or answer.
+- Rejected: computing ids in the migration through a Worker step (a migration must be plain SQL that runs in order).
+
+### D206. CLI readings: environment, actor, waivers, one ledger row per write, no cancel command
+- Date 2026-11-02 · Status: to confirm; built (`scripts/lib/admin-apps.ts`, `admin-sql.ts`, `admin-settings.ts`) ·
+  Source: spec §CLI, §Guarded changes
+- Decision: `app:create` needs `--environment test|live` for a scope with no app yet (no default: the choice is
+  permanent for the scope) and takes the scope's own otherwise. The actor is `cli:<operator login>` (`hana` kind). The
+  `no_session` waiver is recorded on the initial origins of an `app:create` that created the scope row and applies
+  at the announcement only if `first_session_at` is still NULL (else it is dropped and the full delay applies); CLI
+  proposals never get the `loopback` waiver (the spec gives staff proposals none but `no_session`). The
+  `assigned_at` + `appChangeDelayMs` refusal applies to `app:create` on an existing scope too. Each write records one
+  `app_changes` row (a settings write that changes several things lists them under `parts`). A change whose clock has
+  passed but which the cron hasn't recorded yet counts as in force: it doesn't block a new proposal ("at most one
+  pending") and ends, not cancels, when removed. There is no `app:changes:cancel`: removing the origin or turning the
+  setting off cancels a pending change. `app:changes:announce` keeps a matured pending policy as the stored one before
+  writing the new pending one (as batch B's CLI did). `--raw-sign approval` is refused for a test app (D39).
+- Why: the spec's table lists the commands but not these edges; each choice keeps the CLI's writes the ones
+  `AdminRpc` will make, and never makes a change live sooner than the spec allows.
+
+### D207. CLI writes: a commit row gated on `changes()`, read back
+- Date 2026-11-02 · Status: to confirm (the remote behaviour, below); built and tested on SQLite · Source: spec §RPC
+  "CAS" applied to the CLI; batch B's settings guard
+- Decision: every CLI write is one `wrangler d1 execute --command` of several statements: the compare-and-swap guard
+  (bump the version read, or for settings also match every settings column), then the write's `app_changes` row
+  inserted only if the guard changed a row (`WHERE changes() = 1`), then every other statement only if that row
+  exists; the CLI reads the row back and reports a stale write. So a stale plan writes nothing even when another
+  writer moved the version to the same number.
+- To confirm: that D1 runs a multi-statement `--command` in one transaction on the remote database, as Miniflare and
+  the tests' SQLite do (the tests apply each command in a transaction). If not, a failure halfway could leave part of
+  a write; the guard still keeps a stale write from applying.
+- Rejected: a bare version check on each later statement (`version = read + 1`), which another writer's bump to the
+  same number would satisfy.
+
+### D208. The vault endpoints' app cache keeps its 30 s
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/app-cache.ts` unchanged, `getAppByKey` filters) · Source:
+  spec §Hot DB "Login-path reads" ("any future app-config cache … TTL ≤ 10 s"); D78
+- Decision: D78's cache stays at 30 s. It caches what `getAppByKey` returns, the origins in force at the read, so it
+  never serves a pending origin early; one that comes into force is served from the next read (≤ 30 s late), and a
+  removal, suspension or key revocation reaches the vault endpoints within 30 s, as since D78. `GET /v1/app`, the
+  relay endpoints and the vault page don't use it.
+- Why: the spec's 10 s is for a future cache; this one predates it and its bound only delays what is already safe (an
+  activation) or what D78 accepted (a removal on the vault endpoints). Lowering it costs a D1 read per reload unlock
+  per 10 s per isolate; a one-line change if wanted.
+
+### D209. The gate keeps `scope_conflict` as a second check; `first_session_at` only on a 200
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/apps.ts`, `handlers.ts`, `login.ts`, `vault/*`) · Source:
+  spec §Hot DB "Login-path reads"
+- Decision: the batch B `scope_conflict` subquery is gone (replaced by `scopes.environment`, as the spec says), but
+  the gate still answers `403 scope_conflict` when the key's prefix names the other environment than its scope (only
+  a direct `app_keys` edit can produce it: the triggers refuse it otherwise). The dev-env partner calls and the
+  timings in success bodies follow `environment = 'test'` like the loopback rule. `first_session_at` is set after a
+  `200` from `/v1/sessions` or `/v1/login` only, not after a `422 ckd_failed` (no key was derived). The hourly job
+  cancels (`system`, reason `not_in_force`) a due change whose value is no longer pending or stored in `apps`, rather
+  than recording it active.
+- Why: a test key's dev-env privileges must never reach a live scope even after a manual write; "no user has a key in
+  the scope" is what the `no_session` waiver needs.
+
 ## Partner identity token, build steps 1–4 (2026-10-30)
 
 Choices made while building `docs/identity-token-spec.md` steps 1–4 on `feat/identity-token-1`, where the spec left a
@@ -2281,3 +2357,5 @@ is a proposal there.
 Still open from `docs/email-login-spec.md`: nothing; the user-mail provider is SendGrid (D194). The contract readings
 D130 and D131, batch 2's D154 and D155, and the `packages/email` readings D156–D159 are confirmed (2026-11-02).
 The watchdog's D190, D191 and D193 (batch 5) are confirmed (2026-11-02); D192 is superseded by D200.
+
+Batch C3's readings D205–D209 (hot DB 0006, the gate, the CLI) are to confirm.

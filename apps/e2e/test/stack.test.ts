@@ -408,9 +408,9 @@ describe('the Hana API: apps/api’s Worker, /v1/login and /v1/derive mocked', (
     expect(await modules.getAppByKey(d1, live.pk)).toMatchObject({ scope_id: LIVE_SCOPE_ID, scope_conflict: false });
     const test = api.createApp({ origins: [PARTNER_ORIGIN] });
     expect(await modules.getAppByKey(d1, test.pk)).toMatchObject({ scope_id: 'e2e', scope_conflict: false });
-    // On a live app's scope, a test app is refused (D51): why live apps get a scope of their own.
-    const onLive = api.createApp({ origins: [PARTNER_ORIGIN], scopeId: LIVE_SCOPE_ID });
-    expect(await modules.getAppByKey(d1, onLive.pk)).toMatchObject({ scope_conflict: true });
+    // On a live app's scope, a test app is refused (D51): the hot DB's triggers (migration 0006) refuse the row, which
+    // is why live apps get a scope of their own.
+    expect(() => api.createApp({ origins: [PARTNER_ORIGIN], scopeId: LIVE_SCOPE_ID })).toThrow(/key prefix does not match the scope environment/u);
     expect(() => api.createApp({ origins: [LIVE_PARTNER_ORIGIN], live: true, publishableKey: 'pk_test_DemoE2eDemoE2eDemoE2e' })).toThrow(/fresh key/u);
     // The control endpoints take live keys too.
     expect(await (await call(api, `/__e2e/apps/${live.pk}/shares`)).json()).toEqual([]);

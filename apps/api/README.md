@@ -142,16 +142,18 @@ key, so `OPTIONS` succeeds when any active app allows the origin; the real reque
   `/v1/login` both; `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` the vault only. The request acts for
   `x-hana-parent-origin`, which must be one of the app's origins. CORS echoes the Hana origin (also when the parent is
   refused, so the page can read why).
-- **Partner pages.** `Origin` exactly equals one of the app's `app_origins`: `GET /v1/app` for both key types in every
-  env; `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` only with `pk_test_` keys in dev envs (`apps/smoke`);
+- **Partner pages.** `Origin` exactly equals one of the app's origins in force (`app_origins.active_from <= now`; a
+  pending origin, `active_from` NULL or in the future, never matches): `GET /v1/app` for both key types in every env;
+  `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` only for apps on a test scope in dev envs (`apps/smoke`);
   nothing else.
 - **Loopback** origins (`localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]`), and `http://localhost:<port>` through the
-  entry `http://localhost:*`, count only for `pk_test_` keys in dev envs (`ENV_NAME` starting with `local` or
-  `sandbox`), for partner origins and parent origins alike.
-- Preflight carries no key: it allows the two Hana origins, and any origin an active app allows (loopback only through
-  a `pk_test_` app in a dev env). Allowed headers: `content-type`, `x-hana-key`, `x-hana-parent-origin`,
-  `x-hana-relay-key`.
-- `admin app:create` refuses a scope already used by an app with the other key type.
+  entry `http://localhost:*`, count only for apps on a test scope (`scopes.environment`, the scope of every `pk_test_`
+  key) in dev envs (`ENV_NAME` starting with `local` or `sandbox`), for partner origins and parent origins alike.
+- Preflight carries no key: it allows the two Hana origins, and any origin in force for an active, undeleted app
+  (loopback only through a test-scope app in a dev env). Allowed headers: `content-type`, `x-hana-key`,
+  `x-hana-parent-origin`, `x-hana-relay-key`.
+- The key comes from `app_keys` (revoked: `401 unknown_app`), the suspension from `suspended_by` and `status`, and test
+  and live apps never share a scope (migration 0006's `scopes` and triggers; `docs/api.md` "The app gate").
 
 ### `POST /v1/login` (`src/login.ts`)
 

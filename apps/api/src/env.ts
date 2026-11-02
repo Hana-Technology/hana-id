@@ -61,6 +61,16 @@ export interface Env {
   IDENTITY_SUB_KEY?: string;
   /** Optional var: the global hourly mint ceiling (identity/limits.ts IDENTITY_GLOBAL_PER_HOUR by default). */
   IDENTITY_GLOBAL_HOURLY_MAX?: string;
+  /**
+   * Batch C (manifest `appChangeDelayMs`, `network`, the Hana origins; scripts/gen-wrangler.ts): the guarded-change
+   * delay in ms, the NEAR network, and every Hana origin as a JSON array, which no app may list as its own. A missing or
+   * out-of-range delay makes every guarded change refuse with `internal` (guarded/config.ts).
+   */
+  APP_CHANGE_DELAY_MS?: string;
+  NETWORK?: string;
+  REFUSED_ORIGINS?: string;
+  /** The logo origin (manifest `files.origin`), from batch C11; unset without the dashboard blocks. */
+  FILES_ORIGIN?: string;
   /** Optional per-method gas overrides in Tgas (see gas.ts), e.g. GAS_DERIVE_KEY_TGAS. */
   [gasOverride: `GAS_${string}_TGAS`]: string | undefined;
   DB: D1Database;

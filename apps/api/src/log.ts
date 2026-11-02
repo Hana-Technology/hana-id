@@ -37,6 +37,12 @@ export interface LogFields {
   kid?: string;
   /** Why a stored auto-approve policy was refused (vault/settings.ts): validator paths and limits, at most 5. */
   problems?: string[];
+  /** The hourly guarded-change job (guarded/cron.ts): a change id (`gc_…`), what failed, and the run's counts. */
+  guardedChangeId?: string;
+  what?: string;
+  activated?: number;
+  superseded?: number;
+  expired?: number;
 }
 
 export function log(fields: LogFields, level: 'info' | 'warn' | 'error' = 'info'): void {

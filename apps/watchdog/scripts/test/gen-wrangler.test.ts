@@ -99,6 +99,9 @@ describe('wranglerConfig', () => {
     const own = { ...m, watchdog: { ...m.watchdog, pinnedIssuerKeys: { email: { ...email, jwksUrl: 'https://issuer.example.com/jwks.json' } } } };
     expect((wranglerConfig(own, D1).vars as Record<string, string>).EMAIL_JWKS_URL).toBe('https://issuer.example.com/jwks.json');
     expect(JSON.parse((wranglerConfig(own, D1).vars as Record<string, string>).EMAIL_PINS!)).not.toHaveProperty('jwksUrl');
+    // An issuer on its own URL (emailIssuer.url, D230): the default follows it.
+    const issuerUrl = { ...m, emailIssuer: { url: 'https://hana-id-email-issuer-x.sub.workers.dev' } } as unknown as typeof m;
+    expect((wranglerConfig(issuerUrl, D1).vars as Record<string, string>).EMAIL_JWKS_URL).toBe('https://hana-id-email-issuer-x.sub.workers.dev/v1/email/jwks.json');
   });
 
   it('passes the identity issuer and pins in a form the Worker reads; none without them (D210)', () => {

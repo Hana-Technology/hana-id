@@ -118,12 +118,13 @@ const tryLater = (ctx: Ctx, why: string): Response => {
 };
 
 /**
- * The app behind `pk`, with email on: active, `login_methods` lists email, and its scope holds the email client
+ * The app behind `pk` (an unrevoked or in-grace key of an undeleted app, apps.ts), with email on: active (no
+ * suspension bit), `login_methods` lists email, and its scope holds the email client
  * `("email", "email:" + scope_id)` on chain (cached 60 s).
  */
 async function emailApp(ctx: Ctx, pk: unknown): Promise<{ ok: true; app: IssuerApp } | { ok: false; response: Response }> {
   if (!isPublishableKey(pk)) return { ok: false, response: fail(ctx, 401, 'invalid_key', 'Unknown publishable key') };
-  const app = await appByKey(ctx.deps.env.APP_DB, pk);
+  const app = await appByKey(ctx.deps.env.APP_DB, pk, ctx.deps.now());
   if (!app) return { ok: false, response: fail(ctx, 401, 'invalid_key', 'Unknown publishable key') };
   if (!app.active) return { ok: false, response: fail(ctx, 403, 'app_suspended', 'The app is suspended') };
   if (!app.emailOn) return { ok: false, response: fail(ctx, 403, 'email_not_enabled', 'Email login is not enabled for this app') };

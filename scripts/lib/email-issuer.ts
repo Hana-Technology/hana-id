@@ -26,7 +26,7 @@ import { spawnSync } from 'node:child_process';
 import { generateKeyPairSync, randomBytes as nodeRandomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { EMAIL_ISSUER_SECRET_FILES, type EmailPublicKey, type Manifest, emailIssuerFor, isLocalEnv, loadEnv, manifestPath, repoRoot, rsaJwkThumbprint } from '@hana-id/env';
+import { EMAIL_ISSUER_SECRET_FILES, type EmailPublicKey, type Manifest, emailIssuerFor, isLocalEnv, loadEnv, manifestPath, repoRoot, rsaJwkThumbprint, workersDevIssuerUrl } from '@hana-id/env';
 import { CliError, parseCli } from './cli.ts';
 import { insertManifestBlock, replaceManifestBlock } from './identity-key.ts';
 import { assertPrivate, parseSecretJson, secretsDir } from './secrets.ts';
@@ -168,9 +168,13 @@ export function emailIssuer(argv: readonly string[], deps: EmailIssuerDeps): voi
     }
     if (m.emailIssuer) throw new Error(`envs/${m.name}.json already has emailIssuer: refusing to replace published keys`);
     const worker = `hana-id-email-issuer-${m.name}`;
+    // Where the issuer is reached (D230): its own workers.dev URL when the API is on workers.dev (no zone to route on),
+    // else the API's URL, with a route sending /v1/email/* to the issuer Worker.
+    const url = workersDevIssuerUrl(m.apiUrl, worker);
+    const iss = emailIssuerFor(url ?? m.apiUrl);
     deps.log(
       `Plan (env ${m.name}): generate two RSA-2048 keys (primary, standby) and K_sub, K_code, K_rl (32 bytes each); write ${shown('signingKey')}, ` +
-        `${shown('standbyKey')}, ${shown('subKey')}, ${shown('codeKey')} and ${shown('rlKey')} (0600); add emailIssuer (iss ${emailIssuerFor(m.apiUrl)}, ` +
+        `${shown('standbyKey')}, ${shown('subKey')}, ${shown('codeKey')} and ${shown('rlKey')} (0600); add emailIssuer (iss ${iss}${url ? `, served at ${url}` : `, routed under ${m.apiUrl}`}, ` +
         `Worker and D1 ${worker}, both public keys, the primary active, sender ${outbox ? 'outbox' : 'sendgrid'}) to envs/${m.name}.json. Nothing is uploaded.`,
     );
     if (!apply) return void deps.log(DRY_RUN_LINE);
@@ -187,7 +191,8 @@ export function emailIssuer(argv: readonly string[], deps: EmailIssuerDeps): voi
     deps.log(`Wrote ${shown('signingKey')}, ${shown('standbyKey')}, ${shown('subKey')}, ${shown('codeKey')} and ${shown('rlKey')} (0600, values not shown).`);
     deps.log(`Back up ${shown('subKey')} offline twice (with the council backup, D81) before the first email login, and move the standby key file offline.`);
     const block = {
-      iss: emailIssuerFor(m.apiUrl),
+      ...(url ? { url } : {}),
+      iss,
       cloudflare: { workerName: worker, d1Name: worker },
       signer: { kind: 'worker-secret', activeKid: publicEntry(primary).kid },
       publicKeys: [publicEntry(primary), publicEntry(standby)],

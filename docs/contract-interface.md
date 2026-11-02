@@ -1,6 +1,7 @@
 # hana-signer contract interface (batch A, A.2, B, governance and email login)
 
-Last verified against code: 2026-11-02 (branch `docs/consistency-pass`: the conventions' gas note points at the
+Last verified against code: 2026-11-02 (branch `feat/email-login-6`: the API's gas values in the conventions and in "Gas
+of the email login calls", D155); 2026-11-02 (branch `docs/consistency-pass`: the conventions' gas note points at the
 sandbox measurement of `create_session_and_derive`); 2026-11-02 (branch `feat/link-cap`: the hourly link counter, D200: `set_link_thresholds`,
 `get_link_stats`, `link_threshold_reached`, gas; it never refuses a link); 2026-11-02 (branch `feat/email-login-2`: contract v3 with `migrate_v1` removed, the email
 login calls and the v2 → v3 upgrade measured in the sandbox, [Gas of the email login calls](#gas-of-the-email-login-calls-sandbox)).
@@ -32,8 +33,9 @@ Conventions:
 - Panic messages are listed so callers can map them; a panic aborts the whole call (no state change).
 - Methods not marked payable reject any attached deposit (`Method ... doesn't accept deposit`).
 - Gas: `derive_key` forwards a fixed 20 Tgas to the MPC and needs ≥ 50 Tgas attached. The API's per-method defaults
-  (`apps/api/src/gas.ts`, overridable per env with `GAS_<METHOD>_TGAS`): `create_session` 50 Tgas,
-  `create_session_and_derive` 100, `derive_key` 60, `revoke_session` 20, `prune_sessions` 50, owner-pool methods 50
+  (`apps/api/src/gas.ts`, overridable per env with `GAS_<METHOD>_TGAS`): `create_session` 100 Tgas,
+  `create_session_and_derive` 150 (250 with a `link_jwt`), `link_identity` 250, `cancel_link` and `unlink_identity` 150
+  (D155, from email login batch 6), `derive_key` 60, `revoke_session` 20, `prune_sessions` 50, owner-pool methods 50
   except `register_scope` (30 + 25 per client proof, ≤ 280). Measured on testnet (`docs/context.md`): `create_session`
   and `derive_key` each burn ~20 Tgas over all receipts. `create_session_and_derive` is measured in the sandbox with
   the mock MPC (email-login batch 2), not yet on testnet: ≈ 20.5 Tgas in the signer's receipt, 22–23 Tgas in all with a
@@ -1377,7 +1379,8 @@ is most of every token-taking call. The spec's estimates were low (`link_identit
 `unlink_identity` ≈ 15, the link in a login +8–12 Tgas) and its 150 Tgas for a linked login is enough only with
 2048-bit keys. The values in the last column cover the 4096-bit worst case with ≥ 1.6 times the need (unused gas is
 refunded; the prepaid gas only counts against the relayer key's allowance while the call runs). The plain logins'
-API values (50 and 100) don't cover 4096-bit keys: batch 6 raises them or the issuer keys stay at 2048 bits (D155).
+old API values (50 and 100) didn't cover 4096-bit keys: batch 6 raised them to 100 and 150 (`apps/api/src/gas.ts`,
+D155, D232).
 An email token at 2-of-2 (Level 1) adds one more verification to every call that takes it: raise the attached gas
 with that upgrade.
 

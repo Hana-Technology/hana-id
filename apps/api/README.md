@@ -68,9 +68,10 @@ All JSON. Success: `{"result": …, "nearTx": "<base58 tx hash>", "requestId": "
 
 | Endpoint | Body (camelCase, byte arrays as JSON number arrays) | Contract call → `result` |
 |---|---|---|
-| `GET /v1/app` | — | none → `{name, scopeId, signer, google: {clientId, mode: "own" \| "shared"}, serverTimeMs, autoApprovePolicy, rawSign, requestId}` (top level, no `result`; `autoApprovePolicy` is the policy in force, validated and normalized, or `null`; `rawSign` is `"off"` or `"approval"` in force now; an open vault re-reads both within 10 s, D62, D68) |
-| `POST /v1/login` | a `/v1/sessions` body plus `{signature[64], pk1, pk2}` (the session key's signature over counter 1 of the CKD payload); nothing else | `create_session_and_derive` (100 Tgas) → `{big_y, big_c}`, plus `session: {scope_id, expires_at_ms, max_uses, used: 1}` (informational) |
-| `POST /v1/sessions` | `{jwt, sessionPublicKey[32], expiresAtMs, salt[16..64], keyIndex (0..2^31 − 1; higher is reserved), maxUses (1..500)}`; `scopeId` is rejected | `create_session` with the app's `scope_id` (D1) → Session `{path, scope_id, expires_at_ms, max_uses, used}` |
+| `GET /v1/app` | — | none → `{name, scopeId, signer, google: {clientId, mode: "own" \| "shared"} \| null, loginMethods, email?: {aud}, serverTimeMs, autoApprovePolicy, rawSign, requestId}` (top level, no `result`; `loginMethods` is the app's D1 `login_methods` ∩ what the scope serves on chain, `["google"]` for every app today, D231; `autoApprovePolicy` is the policy in force, validated and normalized, or `null`; `rawSign` is `"off"` or `"approval"` in force now; an open vault re-reads both within 10 s, D62, D68) |
+| `POST /v1/login` | a `/v1/sessions` body (without its proof) plus `{signature[64], pk1, pk2}` (the session key's signature over counter 1 of the CKD payload), and optionally `linkJwt` (an email token) with `linkImmediate` (then the signature is over the linked CKD payload, D133); nothing else | `create_session_and_derive` (150 Tgas; 250 with a link) → `{big_y, big_c}`, plus `session: {scope_id, expires_at_ms, max_uses, used: 1}` (informational) |
+| `POST /v1/sessions` | `{jwt, sessionPublicKey[32], expiresAtMs, salt[16..64], keyIndex (0..2^31 − 1; higher is reserved), maxUses (1..500), signature[64]}` (`signature`: the session key's proof of possession, D137); `scopeId` is rejected | `create_session` with the app's `scope_id` (D1) and the proof → Session `{path, scope_id, expires_at_ms, max_uses, used}` |
+| `POST /v1/link`, `/v1/link/cancel`, `/v1/link/unlink` | `{accountJwt, newJwt, epoch, salt}`; `{jwt, memberKey, epoch, salt}` (Hana pages only) | `link_identity` (250 Tgas) → `{effectiveAtMs}`; `cancel_link`, `unlink_identity` (150) → `null`; then the account's vault shares are revoked (`docs/api.md` "Link relays") |
 | `POST /v1/derive` | `{sessionPublicKey[32], counter, signature[64], pk1 "bls12381g1:…", pk2 "bls12381g2:…"}` | `derive_key` → `{big_y, big_c}` |
 | `POST /v1/sessions/revoke` | `{sessionPublicKey[32], counter, signature[64]}` | `revoke_session` → `null` |
 
@@ -122,7 +123,9 @@ Checks, in order (rejected before anything is relayed):
    then is judged on its outcome.
 
 `GET /v1/app` runs checks 1–2 and a per-IP limit of its own (the plan's `per_ip_minute`, separate window), never the
-app's relay quota. `google` is `own` with the scope's first Google client (or the app's `google_web_client_id`, set
+app's relay quota. An email token (JWS JSON) on `/v1/sessions` or `/v1/login` is checked against the manifest's
+email keys (`EMAIL_ISS`, `EMAIL_PUBLIC_KEYS`) and the on-chain signer policy, and only for an app whose
+`login_methods` lists `email` (`403 login_method_disabled`; `docs/api.md` "Email tokens"). `google` is `own` with the scope's first Google client (or the app's `google_web_client_id`, set
 with `admin app:settings --google-web-client`; `409 no_google_client` if it is no longer one of the scope's
 clients), else `shared` with the first shared client
 in force when the scope has `allow_shared`, else `409 no_google_client` (`409 scope_not_registered` when the scope is
@@ -348,7 +351,8 @@ reuses the stored block hash while it is under 5 min old; only a key with no sto
 secret at that index) reads the access-key nonce and a final block from chain. On `InvalidNonce` the object re-reads
 the access key (`max(local, chain, ak_nonce from the error)`) and retries once; an expired block hash is refreshed and
 retried once; a tx superseded twice 2 s apart while unknown is treated as dropped and resent once with a fresh nonce. The object only relays its pool's methods, always to `SIGNER_ACCOUNT`, no deposit, with
-per-method gas from `src/gas.ts` (never the caller's): `create_session` 50 Tgas, `create_session_and_derive` 100,
+per-method gas from `src/gas.ts` (never the caller's): `create_session` 100 Tgas, `create_session_and_derive` 150 (250
+with a `link_jwt`), `link_identity` 250, `cancel_link` and `unlink_identity` 150 (D155: 4096-bit issuer keys),
 `derive_key` 60, `revoke_session` 20, `prune_sessions` 50, owner-pool methods 50 except `register_scope`, which
 verifies one RS256 client proof per client: 30 + 25 per proof, capped at 300 (280 for the contract's 10). **To
 measure on testnet**; override with `GAS_<METHOD>_TGAS`.

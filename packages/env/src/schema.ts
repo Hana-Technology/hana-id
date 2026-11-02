@@ -45,7 +45,7 @@ const signerPolicyPins = z
   .object({
     required: z.number().int().min(1).max(MAX_PINNED_SIGNERS),
     signers: z.record(signerId, z.array(keyThumbprint).min(1).max(MAX_PINNED_KEYS)),
-    /** Where Hana publishes the issuer's JWKS (compared with the pins, warning only). Default `{apiUrl}/v1/email/jwks.json`. */
+    /** Where Hana publishes the issuer's JWKS (compared with the pins, warning only). Default `{emailIssuer.url}/v1/email/jwks.json` (under `apiUrl` without one, D230). */
     jwksUrl: z.string().optional(),
   })
   .strict()

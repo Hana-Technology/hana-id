@@ -1058,7 +1058,7 @@ The email issuer on chain (`get_issuer("email")`, `get_self_issued("email")`) do
 
 `email-jwks-mismatch` · warning · alert kinds: `email_jwks_mismatch`
 
-Hana's published email JWKS (`{apiUrl}/v1/email/jwks.json`) lists a key that isn't pinned, or lacks an active email key, or can't be fetched while email keys are active. Informational: the contract never reads it and the watchdog doesn't trust it.
+Hana's published email JWKS (`{emailIssuer.url}/v1/email/jwks.json`, the watchdog's `jwksUrl`) lists a key that isn't pinned, or lacks an active email key, or can't be fetched while email keys are active. Informational: the contract never reads it and the watchdog doesn't trust it.
 
 **Signals**
 

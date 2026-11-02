@@ -88,6 +88,11 @@ export interface ConfigView {
   pending_shared_clients: PendingSharedClient[];
   /** The contract is paused (governance batch): token paths, derive_key and the executors panic `Paused`. */
   paused: boolean;
+  /**
+   * Links can be made (contract v3, `unrecorded_wallets` false; D135). False on a contract before v3 (no such field)
+   * and while the owner hasn't accepted the wallets opened before v3: every link panics then.
+   */
+  links_open: boolean;
 }
 
 export interface PendingChangeView {
@@ -138,13 +143,15 @@ export async function getConfig(env: Env): Promise<ConfigView> {
   if (cached) return cached;
   if (configRead) return configRead;
   configRead = (async () => {
-    const raw = await new Rpc(env.NEAR_RPC).view<{ console_audiences?: unknown; shared_clients?: unknown; paused?: unknown } | null>(env.SIGNER_ACCOUNT, 'get_config', {});
+    const raw = await new Rpc(env.NEAR_RPC).view<{ console_audiences?: unknown; shared_clients?: unknown; paused?: unknown; unrecorded_wallets?: unknown } | null>(env.SIGNER_ACCOUNT, 'get_config', {});
     const value: ConfigView = {
       console_audiences: Array.isArray(raw?.console_audiences) ? raw.console_audiences.filter(isPair) : [],
       shared_clients: Array.isArray(raw?.shared_clients) ? raw.shared_clients.filter(isPair) : [],
       pending_shared_clients: parsePendingShared(raw),
       // Only an explicit true pauses (a v1 contract has no such field and is never paused).
       paused: raw?.paused === true,
+      // Only an explicit false opens links (a pre-v3 contract has no such field: fail closed).
+      links_open: raw?.unrecorded_wallets === false,
     };
     configCache.set('config', value, Date.now(), value.paused ? PAUSED_CONFIG_TTL_MS : undefined);
     return value;

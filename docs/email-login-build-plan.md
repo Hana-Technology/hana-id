@@ -542,3 +542,57 @@ Branch `feat/email-login-5`, not deployed (no transactions sent).
   `get_link_stats` shape must match `feat/link-cap` when it merges (a mismatch marks only the link check). The
   `set_link_thresholds` owner call isn't in `scripts/lib/contract.ts` `OWNER_METHODS` yet (the link-cap branch adds it).
   The admin portal's rendering of the new checks and kinds is batch C/9 (the registry and `/status` carry them).
+
+## Batch 6 result
+
+Branch `feat/email-login-6`, not merged, nothing deployed, no secret uploaded, no testnet transaction. The user's
+sandbox-dev steps are `docs/operations.md` "Email login on sandbox-dev (build plan batch 6)" (D234 corrects this
+plan's order: the D1 migration before the issuer, the issuer's Worker before its keys go on chain, the email clients
+in batch 8; and its `upgrade-contract propose|execute` is `deploy-contract <env> --upgrade`, then `--upgrade
+--skip-build`).
+
+- **API** (`apps/api`): email tokens on `/v1/sessions` and `/v1/login` (`src/email-token.ts`, `login-token.ts`:
+  the issuer's exact JWS JSON form, the manifest's keys `EMAIL_ISS` / `EMAIL_PUBLIC_KEYS`, the on-chain policy
+  `get_self_issued("email")`, the app's `login_methods`, D231); the `create_session` proof of possession required and
+  relayed on `/v1/sessions` (D137); `/v1/login`'s `linkJwt` / `linkImmediate` with the linked CKD payload and the
+  `auto_link` precheck from fresh `get_identity` / `get_account` reads (`link-precheck.ts`, D133, D232); the
+  email-login panics as errors (`panics.ts`: `links_unavailable`, `identity_linked`, `link_pending`, link `reason`s);
+  `GET /v1/app` `loginMethods` and `email: {aud}`, `409 no_login_method`; the relays `/v1/link`, `/v1/link/cancel`,
+  `/v1/link/unlink` (`links.ts`: Hana pages only, adds and removals in their own limits, the share revocation of D233);
+  the session pool's three link methods (`relayer-config.ts`, `scripts/lib/contract.ts`, the sandbox allowlist states);
+  D155's gas (100, 150, a linked login 250, `link_identity` 250, `cancel_link` / `unlink_identity` 150); migration
+  `0010_login_methods.sql` (`apps.login_methods` default `'google'`, `email_usage`); `migrate_v1` off the never-relay
+  list (D154).
+- **Proof of possession, before v3** (D137): `@hana-id/core` `createProofPayload` / `signCreate` (checked against the
+  contract's `session_message_create` vector), the vault's `split()` and `apps/smoke/src/direct.ts` send `signature`.
+  Proven safe on v2 by the sandbox test `v2_ignores_the_create_session_proof_that_v3_requires`
+  (`contracts/integration-tests/tests/governance.rs`): the v2 wasm sandbox-dev runs (`V2_COMMIT`) opens the session
+  with the proof, without it and with a wrong one; after the upgrade to v3 on the same deployment, only the right proof
+  does.
+- **Issuer** (`apps/email-issuer/src/apps.ts`): apps found by the gate's model (`app_keys` revoked or in its grace,
+  `deleted_at IS NULL`, `suspended_by = 0` and `status`); the source check's allowlist entry is gone (D233).
+- **Routing** (D230): manifest `emailIssuer.url` (required on a `workers.dev` API: the issuer's own `workers.dev` URL,
+  written by `init`; absent: a zone route under `apiUrl`), `iss` = `{url}/v1/email`; the watchdog's default `jwksUrl`
+  follows it. The API serves nothing under `/v1/email/`.
+- **Tests.** API: 637 Worker tests (`email-layouts.test.ts` against `email_fixture.json`'s layouts and tokens,
+  `email-login.test.ts` for the endpoints, `login-methods.test.ts`), 52 script tests (`gas-literal`, `gen-wrangler`,
+  `hot-db-reads` with no allowlist) and 48 usage tests; the issuer 118 + 7; `packages/core` 1127, `packages/web` 819,
+  `apps/smoke` 85, `packages/env` 107, `scripts` 371, the watchdog 233 + 27; `pnpm -r typecheck` and
+  `pnpm -r test` green; `cargo test` in `contracts/hana-signer` green; sandbox: the new v2/v3 test, `email` (the link
+  methods now relayed by the session-pool key) and `access_keys_are_limited`.
+- **Decisions (to confirm).** D230 (routing), D231 (email tokens and login methods), D232 (link precheck, relays,
+  panics, limits), D233 (share revocation, `email_usage`, the issuer's lookup), D234 (the corrected deploy order).
+- **Review fixes** (both batch 6 reviews, D250–D252): pending members refused before relaying and link-state panics
+  remembered per isolate; one relay per link request (`link_in_flight`); per-account link limits, app-wide removal
+  caps as an alarm, a global daily cap on adds; gas per extra token signature; `token_stale` for an email kid no
+  pending change adds; `/v1/sessions` refuses unknown fields; exports keyed on the derived path; removals take email
+  tokens whatever `login_methods` say; the link relays as usage events (migrations-usage 0005); `/v1/health`
+  `capabilities.createProof` and `deploy-contract --upgrade` refusing without it; `owner:call set_issuer_key` for email
+  only for a pinned, published key; the issuer's lookup joins `scopes`, its `workers_dev` only with a `workers.dev`
+  `url`, a source check that it never writes `APP_DB` (D251); the runbook redone against the merged develop.
+- **Left for later.** Batch 8: `login_methods` for the test apps, the staff client proofs and `AddClient ("email",
+  "email:<scope>")`, the web's use of `loginMethods`, `linkJwt`, the link relays and the new error codes, the popup's
+  CSP for the issuer origin, and the share revocation's caller pages. Merged with develop after batch C4: the email
+  counts stay in D1 `email_usage` and are copied hourly to the ledger (`usage.email_counts`, migrations-usage 0004,
+  D233), as the identity counts are; the link relays aren't usage events yet (C12).
+  The link limits (D232) are provisional until sandbox-dev traffic.

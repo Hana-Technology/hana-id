@@ -23,7 +23,7 @@ export interface Env {
   NEAR_RPC_FALLBACK?: string;
   /** The hana-signer account: every nonce commits to it (`borsh(signer)`). */
   SIGNER_ACCOUNT: string;
-  /** The token's `iss` (`{apiUrl}/v1/email`). */
+  /** The token's `iss` (`{emailIssuer.url}/v1/email`, the URL defaulting to the API's, D230). */
   EMAIL_ISS: string;
   /** JSON array of the public RSA JWKs the JWKS serves (manifest `emailIssuer.publicKeys`). */
   EMAIL_PUBLIC_KEYS: string;

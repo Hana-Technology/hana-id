@@ -70,7 +70,14 @@ export const EMAIL_SENDERS = ['sendgrid', 'outbox'] as const;
 
 export const emailIssuerSchema = z
   .object({
-    /** The token's `iss`: `{apiUrl}/v1/email`. Not in any path, so it may change later (`set_issuer` keeps 4 values). */
+    /**
+     * The origin the issuer Worker is reached at; it serves `{url}/v1/email/*` (D230). Absent: the API's URL, through a
+     * route on the API's zone that sends `/v1/email/*` to the issuer Worker (production: the API Worker never sees an
+     * address or a code, D199). Required when the API is on `workers.dev` (no zone, so no route): then the issuer's own
+     * `workers.dev` URL, `https://<issuer Worker>.<the API's subdomain>.workers.dev` (sandbox-dev).
+     */
+    url: z.string().optional(),
+    /** The token's `iss`: `{url}/v1/email` (`url` defaulting to the API's). Not in any path, so it may change later (`set_issuer` keeps 4 values). */
     iss: z.string(),
     /** The issuer Worker and its own D1 (`email_issuance`, `email_hints`, `email_suppressions`), on Hana's main account. */
     cloudflare: z.object({ workerName, d1Name: z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u) }).strict(),
@@ -109,8 +116,31 @@ export const emailIssuerSchema = z
 export type EmailIssuerConfig = z.infer<typeof emailIssuerSchema>;
 export type EmailPublicKey = z.infer<typeof emailPublicKeySchema>;
 
-/** The `iss` an env's issuer serves (the issuer answers `/v1/email/*` under the API's URL, Q5). */
-export const emailIssuerFor = (apiUrl: string): string => `${apiUrl.replace(/\/+$/u, '')}/v1/email`;
+/** The `iss` of an issuer reached at `baseUrl` (it answers `{baseUrl}/v1/email/*`: under the API's URL by a route, Q5, or its own, D230). */
+export const emailIssuerFor = (baseUrl: string): string => `${baseUrl.replace(/\/+$/u, '')}/v1/email`;
+
+const WORKERS_DEV = /^([a-z0-9-]+)\.([a-z0-9-]+)\.workers\.dev$/u;
+
+/**
+ * The issuer's own `workers.dev` origin when the API is on `workers.dev` (`https://<workerName>.<the API's
+ * subdomain>.workers.dev`, the same Cloudflare account), else undefined (the issuer is then routed under the API's URL).
+ */
+export function workersDevIssuerUrl(apiUrl: string, workerName: string): string | undefined {
+  let host: string;
+  try {
+    host = new URL(apiUrl).hostname;
+  } catch {
+    return undefined;
+  }
+  const m = WORKERS_DEV.exec(host);
+  return m ? `https://${workerName}.${m[2]}.workers.dev` : undefined;
+}
+
+/** Where the env's issuer is reached: `emailIssuer.url`, else the API's origin (a zone route), D230. */
+export const emailIssuerUrl = (m: { apiUrl: string; emailIssuer?: { url?: string | undefined } | undefined }): string => (m.emailIssuer?.url ?? m.apiUrl).replace(/\/+$/u, '');
+
+/** The issuer's JWKS URL (`{emailIssuerUrl}/v1/email/jwks.json`): the watchdog's default `jwksUrl`. */
+export const emailJwksUrl = (m: { apiUrl: string; emailIssuer?: { url?: string | undefined } | undefined }): string => `${emailIssuerUrl(m)}/v1/email/jwks.json`;
 
 /** Modulus size in bits (leading zero bytes ignored), or 0 when it isn't base64url. */
 export function rsaModulusBits(n: string): number {
@@ -129,13 +159,37 @@ export function rsaModulusBits(n: string): number {
  * watchdog's.
  */
 export function emailIssuerRules(
-  m: { name: string; network: string; apiUrl: string; cloudflare: { workerName: string; d1Name: string }; watchdog?: { cloudflare: { workerName: string } } | undefined },
+  m: {
+    name: string;
+    network: string;
+    apiUrl: string;
+    vaultOrigin?: string | undefined;
+    authOrigin?: string | undefined;
+    cloudflare: { workerName: string; d1Name: string };
+    watchdog?: { cloudflare: { workerName: string } } | undefined;
+  },
   t: EmailIssuerConfig,
   ctx: z.RefinementCtx,
 ): void {
   const at = (...path: (string | number)[]) => ['emailIssuer', ...path];
   const issue = (path: (string | number)[], message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, path: at(...path), message });
-  if (t.iss !== emailIssuerFor(m.apiUrl)) issue(['iss'], `emailIssuer.iss must be ${emailIssuerFor(m.apiUrl)} (the issuer serves /v1/email/*)`);
+  // Where the issuer is reached (D230): its own origin, or the API's through a zone route, never a workers.dev API's.
+  const ownWorkersDev = workersDevIssuerUrl(m.apiUrl, t.cloudflare.workerName);
+  if (t.url !== undefined) {
+    let u: URL | null = null;
+    try {
+      u = new URL(t.url);
+    } catch {
+      issue(['url'], 'emailIssuer.url is not a URL');
+    }
+    if (u && (u.protocol !== 'https:' || u.origin !== t.url)) issue(['url'], 'emailIssuer.url must be an https origin (no path, no trailing slash)');
+    if (u && [m.vaultOrigin, m.authOrigin].includes(u.origin)) issue(['url'], 'emailIssuer.url must not be a Hana page origin (vaultOrigin, authOrigin)');
+    if (ownWorkersDev !== undefined && t.url !== ownWorkersDev) issue(['url'], `emailIssuer.url must be the issuer's own workers.dev URL ${ownWorkersDev} (the API is on workers.dev: no zone route, D230)`);
+  } else if (ownWorkersDev !== undefined) {
+    issue(['url'], `emailIssuer.url is required when the API is on workers.dev (no zone to route /v1/email/* on): ${ownWorkersDev} (D230)`);
+  }
+  const base = emailIssuerUrl({ apiUrl: m.apiUrl, emailIssuer: t });
+  if (t.iss !== emailIssuerFor(base)) issue(['iss'], `emailIssuer.iss must be ${emailIssuerFor(base)} (the issuer serves /v1/email/*)`);
   const kids = new Set<string>();
   const moduli = new Set<string>();
   t.publicKeys.forEach((k, i) => {

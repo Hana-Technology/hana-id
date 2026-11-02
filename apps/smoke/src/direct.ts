@@ -12,7 +12,7 @@ import { deriveOnce } from './flow.ts';
 import { readClaims, renderGoogleButton } from './google.ts';
 import { NearRpc, formatNear, formatTgas, googleOwnClients, googleSharedClients, type ScopeView } from './near.ts';
 import { type RunRecord, type StepTimings, compareRun, parseStoredRuns, pkPrefix, resultsJson } from './runs.ts';
-import { type PendingSession, newPendingSession, signRevoke } from './session.ts';
+import { type PendingSession, newPendingSession, signCreateProof, signRevoke } from './session.ts';
 import { PK_STORAGE, RUNS_STORAGE, isPublishableKey } from './storage-keys.ts';
 
 const env: PageEnv = __HANA_SMOKE_ENV__;
@@ -325,6 +325,8 @@ async function openSessionAndDerive(s: ActiveSession, jwt: string, runStart: num
     salt: jsonBytes(s.pending.salt),
     keyIndex: s.pending.keyIndex,
     maxUses: s.pending.maxUses,
+    // The session key's proof of possession (D137): required by contract v3, ignored by v2.
+    signature: jsonBytes(await signCreateProof(s.pending)),
   };
   s.lastCreateBody = body;
   const t0 = performance.now();

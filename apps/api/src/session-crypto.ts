@@ -28,7 +28,12 @@ export interface SessionNonceInput {
  * ‖ key_index u32 LE ‖ max_uses u32 LE ‖ salt)).
  */
 export async function sessionNonce(i: SessionNonceInput): Promise<string> {
-  const preimage = concatBytes(
+  return base64UrlEncode(await sha256(sessionNoncePreimage(i)));
+}
+
+/** The session nonce's preimage (its sha256 is in the create proof and the auto_link nonce). */
+export function sessionNoncePreimage(i: SessionNonceInput): Uint8Array {
+  return concatBytes(
     utf8(SESSION_NONCE_DOMAIN),
     borshString(i.signer),
     borshString(i.scopeId),
@@ -38,7 +43,97 @@ export async function sessionNonce(i: SessionNonceInput): Promise<string> {
     u32le(i.maxUses),
     Uint8Array.from(i.salt),
   );
-  return base64UrlEncode(await sha256(preimage));
+}
+
+export const CREATE_PROOF_PREFIX = 'hana-id-create-v1:';
+
+/**
+ * create_session's proof-of-possession payload (D137), signed with counter 0: "hana-id-create-v1:" ‖ sha256(session
+ * nonce preimage). Contract v3 requires the signature; v2 ignores the extra argument.
+ */
+export async function createProofPayload(i: SessionNonceInput): Promise<Uint8Array> {
+  return concatBytes(utf8(CREATE_PROOF_PREFIX), await sha256(sessionNoncePreimage(i)));
+}
+
+export const CKD_LINK_PREFIX = 'hana-id-ckd-link-v1:';
+
+/**
+ * The counter-1 payload of a combined login that carries a link (D133): "hana-id-ckd-link-v1:" ‖ sha256(link_jwt) ‖
+ * mode u8 (1 = link_immediate) ‖ pk1 ‖ ":" ‖ pk2.
+ */
+export async function linkedCkdPayload(pk1: string, pk2: string, linkJwt: string, immediate: boolean): Promise<Uint8Array> {
+  return concatBytes(utf8(CKD_LINK_PREFIX), await sha256(utf8(linkJwt)), Uint8Array.of(immediate ? 1 : 0), utf8(`${pk1}:${pk2}`));
+}
+
+// ---- Identity keys and link nonces (docs/contract-interface.md "Identity key, link nonces and the linked CKD payload") ----
+
+export const IDENTITY_DOMAIN = 'hana-id/identity/v1';
+export const LINK_NEW_DOMAIN = 'hana-id/link-new/v1';
+export const LINK_ACCOUNT_DOMAIN = 'hana-id/link-account/v1';
+export const LINK_CHANGE_DOMAIN = 'hana-id/link-change/v1';
+export const AUTO_LINK_DOMAIN = 'hana-id/auto-link/v1';
+/** `join` of the auto_link nonce: the session identity joins the link identity's account (case A). */
+export const JOIN_SESSION_IDENTITY = 1;
+/** The link identity joins the session identity's account (cases B, C). */
+export const JOIN_LINK_IDENTITY = 2;
+
+/** ik = sha256("hana-id/identity/v1" ‖ borsh(scope_id) ‖ borsh(provider) ‖ borsh(sub)). */
+export async function identityKey(scopeId: string, provider: string, sub: string): Promise<Uint8Array> {
+  return sha256(concatBytes(utf8(IDENTITY_DOMAIN), borshString(scopeId), borshString(provider), borshString(sub)));
+}
+
+const nonceOf = async (preimage: Uint8Array): Promise<string> => base64UrlEncode(await sha256(preimage));
+const ik32 = (k: Uint8Array): Uint8Array => {
+  if (k.length !== 32) throw new Error('An identity key is 32 bytes');
+  return k;
+};
+
+/** link_new = "hana-id/link-new/v1" ‖ borsh(signer) ‖ borsh(scope_id) ‖ root_ik ‖ borsh(new provider) ‖ epoch u64 LE ‖ salt */
+export const linkNewNonce = (signer: string, scopeId: string, rootIk: Uint8Array, newProvider: string, epoch: number, salt: Uint8Array): Promise<string> =>
+  nonceOf(concatBytes(utf8(LINK_NEW_DOMAIN), borshString(signer), borshString(scopeId), ik32(rootIk), borshString(newProvider), u64le(epoch), salt));
+
+/** link_account = "hana-id/link-account/v1" ‖ borsh(signer) ‖ borsh(scope_id) ‖ root_ik ‖ new_ik ‖ epoch u64 LE ‖ salt */
+export const linkAccountNonce = (signer: string, scopeId: string, rootIk: Uint8Array, newIk: Uint8Array, epoch: number, salt: Uint8Array): Promise<string> =>
+  nonceOf(concatBytes(utf8(LINK_ACCOUNT_DOMAIN), borshString(signer), borshString(scopeId), ik32(rootIk), ik32(newIk), u64le(epoch), salt));
+
+/** link_change = "hana-id/link-change/v1" ‖ borsh(signer) ‖ borsh(scope_id) ‖ borsh(action) ‖ root_ik ‖ member_ik ‖ epoch u64 LE ‖ salt */
+export const linkChangeNonce = (signer: string, scopeId: string, action: 'cancel' | 'unlink', rootIk: Uint8Array, memberIk: Uint8Array, epoch: number, salt: Uint8Array): Promise<string> =>
+  nonceOf(concatBytes(utf8(LINK_CHANGE_DOMAIN), borshString(signer), borshString(scopeId), borshString(action), ik32(rootIk), ik32(memberIk), u64le(epoch), salt));
+
+export interface AutoLinkInput {
+  signer: string;
+  scopeId: string;
+  /** sha256 of this login's session nonce preimage. */
+  sessionHash: Uint8Array;
+  sessionIk: Uint8Array;
+  join: 1 | 2;
+  joinerIk: Uint8Array;
+  targetRootIk: Uint8Array;
+  /** The target account's epoch (0: no account yet). */
+  targetEpoch: number;
+  immediate: boolean;
+}
+
+/**
+ * auto_link = "hana-id/auto-link/v1" ‖ borsh(signer) ‖ borsh(scope_id) ‖ sha256(session nonce preimage) ‖ session_ik
+ *             ‖ join u8 ‖ joiner_ik ‖ target_root_ik ‖ target epoch u64 LE ‖ mode u8
+ */
+export function autoLinkNonce(i: AutoLinkInput): Promise<string> {
+  if (i.sessionHash.length !== 32) throw new Error('The session hash is 32 bytes');
+  return nonceOf(
+    concatBytes(
+      utf8(AUTO_LINK_DOMAIN),
+      borshString(i.signer),
+      borshString(i.scopeId),
+      i.sessionHash,
+      ik32(i.sessionIk),
+      Uint8Array.of(i.join),
+      ik32(i.joinerIk),
+      ik32(i.targetRootIk),
+      u64le(i.targetEpoch),
+      Uint8Array.of(i.immediate ? 1 : 0),
+    ),
+  );
 }
 
 /** What a session key signs: "hana-id-session-v1:" ‖ counter u64 LE ‖ sha256(payload). */

@@ -37,6 +37,14 @@ export function hex(bytes: Uint8Array): string {
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/** Lowercase or uppercase hex (even length) → bytes. Throws on anything else. */
+export function fromHex(text: string): Uint8Array {
+  if (!/^(?:[0-9a-fA-F]{2})*$/u.test(text)) throw new Error('Invalid hex');
+  const out = new Uint8Array(text.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = Number.parseInt(text.slice(2 * i, 2 * i + 2), 16);
+  return out;
+}
+
 /** bytes → base64url without padding (RFC 4648 §5, as JWT and Google's `nonce` claim use). */
 export function base64UrlEncode(bytes: Uint8Array): string {
   return base64Encode(bytes).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '');

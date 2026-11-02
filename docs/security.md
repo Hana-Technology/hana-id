@@ -1,7 +1,9 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-02 for what runs on sandbox-dev (branch `docs/consistency-pass`:
+known open issues. Last verified against code: 2026-11-02 for the identity token's AWS KMS signer (branch
+`feat/identity-token-7`, D215–D219: its compromise row, the AWS access key in the inventory, the signer invariants and
+open issue (l)); 2026-11-02 for what runs on sandbox-dev (branch `docs/consistency-pass`:
 open issue (e) and its watchdog notes, the Q22 note, OPER-3, against `develop` @ 1c6a124 and `docs/operations.md`);
 2026-11-02 for the hot DB after migration 0006 (branch
 `feat/batch-c-3`: the gate on `app_keys` and `scopes`, origins in force by `active_from`, staff-proposed guarded
@@ -66,7 +68,8 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | A partner's Google client (own-client mode) | Tokens with chosen nonces for that scope → that scope's users' keys | Other scopes |
 | Hana's shared Google client or its Cloud project | Break isolation of every `allow_shared` scope | Own-client-only scopes |
 | Leaked in-memory PRK | Every v1 chain and account under that `key_index` | Other `key_index` values; rotation is the only remedy |
-| An identity signing key (the active one on the Worker, or a published standby or next key from `.secrets/`) | Forge identity tokens for any user of any app: be anyone at every partner that uses them as login evidence, while partners trust the key | No key, no signature, nothing at Hana or on chain (no Hana API accepts the token). The standby is never on the Worker (D177), so a Worker or Cloudflare leak exposes the active key only. Testnet only: mainnet signs with a non-exportable AWS KMS key (build step 7). Recovery (playbook `identity-signing-key-compromised`): switch to a key the incident didn't touch (the standby, or a fresh one when both may be exposed), unpublish the exposed ones (partners reject them within 10 min), tell partners |
+| An identity signing key (the active one on the Worker, or a published standby or next key from `.secrets/`) | Forge identity tokens for any user of any app: be anyone at every partner that uses them as login evidence, while partners trust the key | No key, no signature, nothing at Hana or on chain (no Hana API accepts the token). The standby is never on the Worker (D177), so a Worker or Cloudflare leak exposes the active key only. Testnet only: staging and mainnet sign with a non-exportable AWS KMS key (next row). Recovery (playbook `identity-signing-key-compromised`): switch to a key the incident didn't touch (the standby, or a fresh one when both may be exposed), unpublish the exposed ones (partners reject them within 10 min), tell partners |
+| The KMS signer's AWS access key (`IDENTITY_AWS_*`, or the API Worker itself on a KMS env; none yet) | Have KMS sign forged identity tokens for any user of any app while the access key is active. The key itself can't be read or exported | Only `kms:Sign` on the active key with `ECDSA_SHA_256` and `DIGEST` (IAM policy; the key policy refuses `Sign` by any other principal, grants to everyone, key changes to all but the break-glass role). The standby isn't in the IAM policy (which also denies `Sign` on any other key), so it stays clean for the switch (D219). Only long-term credentials sign: the key policy denies `Sign` to session credentials, because the holder can always call `GetSessionToken` (no policy can deny it), its sessions keep the user's live permissions, and deactivating the access key isn't proven to end them (confirm on staging). Every signature is in CloudTrail, matched by `userIdentity.arn` (the planned reconciliation and alarms find unexplained ones; `GetSessionToken` by the signer user is an alarm). Recovery (planned playbook `identity-kms-signer-compromised`): deactivate the access key, check the `NoSessionCredentials` deny is on every key, switch to the standby, unpublish the suspect key, tell partners with CloudTrail's window and count |
 | `IDENTITY_SUB_KEY` | Map partners' `sub`s back to on-chain paths, so to the Google `sub` (privacy) | Funds and keys unaffected. Never rotated: a new key changes every user's `sub` at every partner (a `u2_` scheme with a 90-day `legacy_sub` window if it ever leaks) |
 | One identity token (a partner's log, transit) | Act as that user at that partner's backend until `exp` (≤ 1 h) | That partner only (`aud`); never at Hana or on chain |
 | A session key (with its vault record) | Also: mint identity tokens while the session is live | The same session's limits, its app only; a logout or revoke stops new tokens in every app of the scope (the share check, D178: a share is kept 24 h after it dies), the 1 h `exp` bounds the old ones |
@@ -97,7 +100,9 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Google RSA public keys | JWKS | On chain (issuers); API isolate cache (≤ 6 h stale on fetch failure) | public | v1 contract: hourly cron sync. Governance contract: the 15-min cron proposes and executes delayed changes, the watchdog checks them against its own JWKS copy |
 | Console owner-action tokens | RS256 JWT (console audience) | Transient; `sha256` marker in a `RateLimiter` until `exp` | partner owner | Single use (nonce bound to `action_nonce`) |
 | Publishable keys | `pk_test_` / `pk_live_` + base58 | D1, partner pages | public | Not secrets |
-| Identity signing keys (Worker slots `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`) | P-256 private JWKs (ES256), testnet and `local*` only | The active key: a Worker secret and `.secrets/<env>/identity-signing-key.json`. The standby: `identity-signing-key-standby.json` only, kept offline, never uploaded until a switch (D177). During a rotation a `next` and a `previous` key. 0600, the only copies | Hana | `scripts/identity-key.ts`: `init`, `next`, `switch --to next|standby`, `retire --key previous|standby` (wrangler stdin, never printed, files never overwritten); public halves in the manifest's `identityToken.publicKeys` (the JWKS). `activeKid` picks the signer. Mainnet: AWS KMS `ECC_NIST_P256`, non-exportable, its own IAM user (build step 7, D127) |
+| Identity signing keys (Worker slots `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`) | P-256 private JWKs (ES256), testnet and `local*` only | The active key: a Worker secret and `.secrets/<env>/identity-signing-key.json`. The standby: `identity-signing-key-standby.json` only, kept offline, never uploaded until a switch (D177). During a rotation a `next` and a `previous` key. 0600, the only copies | Hana | `scripts/identity-key.ts`: `init`, `next`, `switch --to next|standby`, `retire --key previous|standby` (wrangler stdin, never printed, files never overwritten); public halves in the manifest's `identityToken.publicKeys` (the JWKS). `activeKid` picks the signer. Staging and mainnet: AWS KMS (next row) |
+| Identity KMS keys (`identityToken.signer.keys`: `active`, `standby`, during a rotation `next`, `previous`); none yet | AWS KMS `ECC_NIST_P256` `SIGN_VERIFY`, origin `AWS_KMS`, single-region; the standby in another region (D219) | AWS KMS in D121's dedicated account; never exportable, never on the Worker. The manifest holds their ARNs and public keys only | Hana (break-glass role with MFA administers; the key policy in `docs/operations.md` "Identity token keys on AWS KMS") | Created in AWS by the operator; published with `identity-key kms-init / kms-add`, switched with `kms-switch`, unpublished with `kms-retire` (then disabled and deleted in KMS, 30 days); scheduled rotation every 12 months |
+| KMS signer's AWS access key (`IDENTITY_AWS_ACCESS_KEY_ID`, `IDENTITY_AWS_SECRET_ACCESS_KEY`) | Long-term IAM user key (`AKIA…`) of the env's signer user (`identityToken.signer.credentials.iamUser`) | API Worker secrets; `.secrets/<env>/identity-aws-access-key.json` (0600) only between `aws iam create-access-key` and the checked upload, then deleted | Hana | `identity-key kms-put-aws-key` (one `wrangler secret bulk`, never printed); rotated every 90 days and on suspicion; the user can only `kms:Sign` the active key (D215, D219); never logged |
 | `IDENTITY_SUB_KEY` | 32 random bytes (base64) | API Worker secret; `.secrets/<env>/identity-sub-key` (0600), with an offline backup alongside the council backup (D81) | Hana | Never rotated (it fixes every user's `sub` at every partner); never logged |
 | Identity tokens | ES256 JWT, ≤ 1 h | Vault memory (and its per-app channel), the partner page, the partner backend | the user's session, the partner | Not stored by Hana: no per-token record, never logged; refused by every Hana API (`bad_token`) |
 | Cloudflare account / `wrangler login` | account credentials | operator's machine | the user | Deploys the Worker: a trust root |
@@ -337,8 +342,13 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
     as a proof; the claim set is exactly the spec's (`buildIdentityClaims` throws on anything else);
   - `sub` depends only on (scope, root provider, root sub): never the login method, client, device or `key_index`, and
     never the Google `sub` in the clear;
-  - the signature is checked against the published key for its `kid` before the token is answered; the JWKS comes
-    from the manifest's public keys alone and refuses a private member;
+  - the signature is checked against the published key for its `kid` before the token is answered, whichever signer
+    made it; the JWKS comes from the manifest's public keys alone and refuses a private member;
+  - the KMS signer (`src/identity/kms.ts`, `signers.ts`; tests in `apps/api/test/identity-kms.test.ts`) sends only the
+    32-byte digest (no claim reaches AWS), one `Sign` per mint with no retry, under a 3 s deadline and a 4 KiB answer
+    cap; it accepts only an answer for its own key ARN and algorithm and a strict DER signature (D216–D218); any other
+    outcome, and any missing or malformed configuration, is `503 identity_signer_unavailable`, never a fallback to a
+    Worker-secret key; AWS credentials, requests and signatures are never logged;
   - no Hana API accepts an identity token: `verifyIdToken` refuses `typ: hana-identity+jwt` or `iss` =
     `IDENTITY_ISS` first (`400 bad_token`), and the contract takes RS256 issuer keys only;
   - logs carry the app id, outcome, code, kid and timings, never a token, `sub`, `sid`, address or body.
@@ -800,9 +810,13 @@ the approve popup now says "This signature isn't tied to one network." on them.
 
 **(l) Identity token: testnet signing key and no JWKS pin check yet. Open (pre-mainnet).** Build steps 1–4 sign with
 a Worker-secret P-256 key (`IDENTITY_SIGNING_KEY`): anyone who can read the API Worker's secrets once can forge any
-user's identity at every partner until the key is removed from the JWKS. Step 7 moves mainnet signing to a
-non-exportable AWS KMS key with its own IAM user, CloudTrail and a reconciliation against `identity_issuance_hourly`
-(`gen` and the schema already refuse a Worker-secret key outside testnet); step 8 adds the watchdog's JWKS pin check
+user's identity at every partner until the key is removed from the JWKS. Step 7's code is built (branch
+`feat/identity-token-7`, D215–D219): the AWS KMS signer, the manifest's `aws-kms` signer and the `identity-key kms-*`
+commands, tested against a fake KMS. Still open before mainnet: the AWS account's keys, IAM user and policies,
+CloudTrail and alarms, and the hourly reconciliation of `Sign` events against `identity_issuance_hourly` (not built;
+`docs/operations.md` "Identity token keys on AWS KMS"). A KMS credential still lets its holder forge tokens until it is
+revoked; KMS makes the key unexportable and every signature visible, not misuse impossible. `gen` and the schema
+already refuse a Worker-secret key outside testnet; step 8 adds the watchdog's JWKS pin check
 (an unpinned key in the JWKS is a critical alert) and the "identity key on chain" check. Until then partners must not
 use identity tokens for anything of value. The testnet standby is kept off the Worker, and `identity-key next / switch /
 retire` rotate or replace keys (D177; playbook `identity-signing-key-compromised`). Also accepted for now: in an app that keeps logins, a browser that can't

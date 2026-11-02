@@ -29,6 +29,7 @@ import {
   findAppSql,
   listAppsSql,
   normaliseOrigin,
+  openChangesSql,
   originsSql,
   parkableOriginsSql,
   parkOriginsWrite,
@@ -87,6 +88,16 @@ export interface AppCmdDeps {
    * would treat a proposed origin as in force. A no-op for the local database (`requireC3ApiFor`).
    */
   requireC3Api: () => Promise<void>;
+}
+
+/**
+ * `--d1-name <name>`: run the command on a rehearsal database instead of the env's (docs/operations.md "Hot DB
+ * migration 0006", step 3). Only a name containing "rehearsal", so it can't point a command at another env's database.
+ */
+export function withRehearsalD1<T extends Pick<Manifest, 'cloudflare'>>(m: T, d1Name: string | undefined): T {
+  if (d1Name === undefined) return m;
+  if (!/^[a-z0-9-]{1,64}$/u.test(d1Name) || !d1Name.includes('rehearsal')) throw new CliError('--d1-name is for rehearsal databases: a D1 name containing "rehearsal"');
+  return { ...m, cloudflare: { ...m.cloudflare, d1Name } };
 }
 
 /** The hot-DB schema the API must report before the CLI writes a guarded proposal (apps/api/src/apps.ts HOT_DB_SCHEMA). */
@@ -241,7 +252,13 @@ export function appOriginsRemove(args: Args, where: string, deps: AppCmdDeps): v
   if (!wanted.length) throw new CliError('At least one --origin is required');
   const now = deps.now();
   const rows = deps.d1(originsSql(app.id)) as unknown as OriginRow[];
-  const present = rows.filter((r) => wanted.includes(r.origin));
+  // An origin whose row was parked (app:origins:park) has no app_origins row but still an open origin_add: removing it
+  // closes that change too, so app:origins:unpark never brings it back.
+  const open = (deps.d1(openChangesSql(app.id)) as unknown as ChangeRow[]).filter((c) => c.kind === 'origin_add' && c.origin !== null);
+  const present: OriginRow[] = [
+    ...rows.filter((r) => wanted.includes(r.origin)),
+    ...open.filter((c) => wanted.includes(c.origin!) && !rows.some((r) => r.origin === c.origin)).map((c) => ({ origin: c.origin!, active_from: null, change_id: c.id })),
+  ];
   for (const o of wanted) if (!present.some((r) => r.origin === o)) deps.log(`${o}: not listed for ${app.id}`);
   if (!present.length) return void deps.log(`${app.id}: no change (${where})`);
   if (!commit(deps, removeOriginsWrite(app, present, { now, actor: deps.actor, requestId: deps.ids.request() }))) throw new Error(STALE_WRITE);

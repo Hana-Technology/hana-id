@@ -296,8 +296,10 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
 - **Admin CLI writes** (`scripts/lib/admin-apps.ts`, `admin-settings.ts`, `admin-sql.ts`; batch C3): every write is
   a compare-and-swap. Its first statement inserts its `app_changes` row only while the version the command read still
   holds (`origins_version`, `settings_version`, or for settings also every settings column as read); the version bump
-  and every other statement run only if that row exists; the CLI reads the row back. No statement depends on another's
-  row count, so this holds whether or not D1 runs the command as one transaction (D207). A change made in between
+  and every other statement run only if that row exists; the CLI reads the row back. The CAS is safe because D1 runs
+  each query (one `--command` with all its statements) as one implicit transaction, so nothing else writes between the
+  predicate and the bump and a failing statement aborts the whole write; the M1 rehearsal checks it on remote D1 (D207).
+  A change made in between
   (another operator's `--auto-approve off`) is never overwritten with values planned from the old row, even when the
   other writer moved the version to the same number. Re-setting the policy in force keeps a matured pending policy as
   the stored one before clearing the pending columns, and an announcement keeps a matured pending policy or raw-signing

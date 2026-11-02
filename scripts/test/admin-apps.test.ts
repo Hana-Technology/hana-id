@@ -21,6 +21,7 @@ import {
   REQUIRED_HOT_DB,
   requireC3ApiFor,
   STALE_WRITE,
+  withRehearsalD1,
   suspensionBits,
 } from '../lib/admin-apps.ts';
 import { addOriginsWrite, removeOriginsWrite, suspensionWrite, writeCommand } from '../lib/admin-sql.ts';
@@ -401,7 +402,10 @@ describe('app:origins:park and app:origins:unpark (rollback below C3)', () => {
       { origin: 'https://old.example.com', active_from: 0 },
       { origin: 'https://q.example.com', active_from: NOW + DELAY },
     ]);
-    expect(ledger('app_a').at(-1)).toMatchObject({ kind: 'origin.parked', detail: { origins: ['https://p.example.com', 'https://r.example.com'] } });
+    expect(ledger('app_a').at(-1)).toMatchObject({
+      kind: 'origin.parked',
+      detail: { rows: [{ origin: 'https://p.example.com', changeId: 'gc_1' }, { origin: 'https://r.example.com', changeId: 'gc_3' }] },
+    });
     // What a pre-C3 API would read (every row): only origins in force.
     appOriginsPark(true, 'local D1 test', h.deps);
     expect(out()).toContain('No origin rows to park');
@@ -413,6 +417,45 @@ describe('app:origins:park and app:origins:unpark (rollback below C3)', () => {
       { origin: 'https://r.example.com', active_from: NOW + 2 * DELAY },
     ]);
     expect(ledger('app_a').at(-1)).toMatchObject({ kind: 'origin.unparked' });
+  });
+});
+
+describe('unpark restores only what park removed, and only while its change is open', () => {
+  const rows = () => (h.db.prepare("SELECT origin FROM app_origins WHERE app_id = 'app_a' ORDER BY origin").all() as { origin: string }[]).map((r) => r.origin);
+  beforeEach(() => seedHotApp(h.db, { id: 'app_a', key: APP_KEY, scope: 's1', origins: ['https://old.example.com'] }));
+
+  it('park → remove → unpark: the removed origin stays removed (its change is closed even with no row)', async () => {
+    await appOriginsAdd(sandbox, args(['--app', 'app_a', '--origin', 'https://p.example.com', '--origin', 'https://q.example.com']), 'local D1 test', h.deps);
+    appOriginsPark(true, 'local D1 test', h.deps);
+    expect(rows()).toEqual(['https://old.example.com']);
+    await appOriginsRemove(args(['--app', 'app_a', '--origin', 'https://p.example.com']), 'local D1 test', h.deps);
+    expect(change('gc_1')).toMatchObject({ status: 'cancelled', cancelled_by: 'cli:tester' });
+    expect(out()).not.toContain('https://p.example.com: not listed');
+    await appOriginsUnpark(true, 'local D1 test', h.deps);
+    expect(rows()).toEqual(['https://old.example.com', 'https://q.example.com']);
+    expect(ledger('app_a').at(-1)).toMatchObject({ kind: 'origin.unparked', detail: { changes: ['gc_2'] } });
+    // Once restored, an older park list never restores it again after a later delete.
+    h.db.exec("DELETE FROM app_origins WHERE origin = 'https://q.example.com'");
+    await appOriginsUnpark(true, 'local D1 test', h.deps);
+    expect(rows()).toEqual(['https://old.example.com']);
+  });
+
+  it('an origin row deleted directly (not parked) is never resurrected', async () => {
+    await appOriginsAdd(sandbox, args(['--app', 'app_a', '--origin', 'https://p.example.com']), 'local D1 test', h.deps);
+    h.db.exec("DELETE FROM app_origins WHERE origin = 'https://p.example.com'");
+    expect(change('gc_1')).toMatchObject({ status: 'pending' });
+    await appOriginsUnpark(true, 'local D1 test', h.deps);
+    expect(out()).toContain('No parked origins');
+    expect(rows()).toEqual(['https://old.example.com']);
+  });
+});
+
+describe('--d1-name (rehearsal databases)', () => {
+  it('points the command at a database whose name contains "rehearsal", nothing else', () => {
+    expect(withRehearsalD1(sandbox, undefined)).toBe(sandbox);
+    expect(withRehearsalD1(sandbox, 'hana-id-sandbox-dev-rehearsal-0006').cloudflare.d1Name).toBe('hana-id-sandbox-dev-rehearsal-0006');
+    expect(sandbox.cloudflare.d1Name).toBe('hana-id-sandbox-dev');
+    for (const bad of ['hana-id-sandbox-dev', 'hana-id-prod', 'Rehearsal', 'x rehearsal']) expect(() => withRehearsalD1(sandbox, bad), bad).toThrow('rehearsal databases');
   });
 });
 

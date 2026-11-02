@@ -1644,6 +1644,9 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
 - Why: each only refuses rows the spec says must never exist (a test/live mix, a changed environment, malformed
   ledger rows); none changes an existing row or answer.
 - Rejected: computing ids in the migration through a Worker step (a migration must be plain SQL that runs in order).
+- Forward obligation (C3 re-check): the `no_session` waiver (D206) reads the legacy D1 `usage` table, which C4 stops
+  writing and C4b's 0007 drops. Before 0007, C4 replaces that check with one that still sees new sessions (a hot-DB
+  marker the API writes beside the relay, not a Neon read); written in `docs/batch-c-build-plan.md` C4.
 
 ### D206. CLI readings: environment, actor, waivers, one ledger row per write, no cancel command
 - Date 2026-11-02 · Status: to confirm; built (`scripts/lib/admin-apps.ts`, `admin-sql.ts`, `admin-settings.ts`) ·
@@ -1670,8 +1673,9 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
 - The deployed API's build gates proposals (review M2): with `--remote`, every proposal and announcement first needs
   `GET /v1/health` to report `hotDb` ≥ 6 (the batch C3 reads; `apps/api/src/apps.ts` `HOT_DB_SCHEMA`), because an older
   API would treat a proposed origin as in force. The rollback floor is batch C3: running an older API on the 0006
-  database first needs `app:origins:park --yes` (deletes every origin row not in force; `app:origins:unpark`
-  rebuilds them from their guarded changes; `docs/operations.md` "Rolling the API back below batch C3").
+  database first needs `app:origins:park --yes` (deletes every origin row not in force, listing them in
+  `origin.parked`; `app:origins:unpark` restores exactly those, only while their change is still open, and
+  `app:origins:remove` closes a parked origin's change even with no row; `docs/operations.md` "Rolling the API back below batch C3").
 - Obligation for `apps/email-issuer` (branch `feat/email-login-4`), recorded here (review L4): it finds apps by
   `apps.publishable_key` and checks only `status`. That is right on today's data (the trigger keeps `status` equal to
   the bitmask; the column holds each app's first key), but it must move to `app_keys` (an unrevoked key),
@@ -1682,17 +1686,19 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   `AdminRpc` will make, and never makes a change live sooner than the spec allows.
 
 ### D207. CLI writes: the commit row first, everything else gated on it, read back
-- Date 2026-11-02 · Status: to confirm (the remote behaviour, below); built and tested on SQLite · Source: spec §RPC
-  "CAS" applied to the CLI; batch B's settings guard; review L2
+- Date 2026-11-02 · Status: to confirm (settled by the M1 rehearsal, below); built and tested on SQLite · Source:
+  spec §RPC "CAS" applied to the CLI; batch B's settings guard; review L2 and its re-check
 - Decision: every CLI write is one `wrangler d1 execute --command` of several statements: first the write's
   `app_changes` row, inserted only while the compare-and-swap predicate holds (the version read, or for settings also
   every settings column as read); then the version bump with the same predicate and only if that row exists; then
   every other statement only if that row exists. The CLI reads the row back and reports a stale write. No statement
-  depends on another's row count (`changes()`), so the protocol holds whether or not D1 runs the command in one
-  transaction; the CLI tests run each command statement by statement, with no transaction around it.
-- To confirm: whether remote D1 runs a multi-statement `--command` atomically. If not, a statement failing halfway
-  (a constraint) could leave part of a write after its commit row; the write's statements are ordered so that the
-  ones that can fail (a new scope's primary key, the triggers) come first.
+  depends on another's row count (`changes()`). The CAS is safe because D1 runs each query (one `--command`, all its
+  statements) as one implicit transaction: nothing else writes between the predicate and the bump, and a failing
+  statement aborts the whole write. (The CLI tests run each command statement by statement, with no transaction
+  around it, which shows the ordering needs nothing more within one writer.)
+- To confirm: the M1 rehearsal (`docs/operations.md` step 3) checks on a scratch remote D1 that a `--command` whose
+  last statement fails leaves its first one unapplied, and runs one CLI CAS write (`app:suspend`, `app:resume`)
+  through the real path; that settles this decision.
 - Rejected: a guard UPDATE followed by `WHERE changes() = 1` (relies on SQLite's per-connection row count across
   statements); a bare version check on each later statement (`version = read + 1`), which another writer's bump to
   the same number would satisfy.

@@ -26,6 +26,7 @@ import {
   cliActor,
   cliIds,
   requireC3ApiFor,
+  withRehearsalD1,
 } from './lib/admin-apps.ts';
 import { LEAD_TIMES_SQL, type ObservationRow, leadTimesReport } from './lib/admin-lead-times.ts';
 import { appSettings, defaultAppSettingsDeps, settingsAppArg } from './lib/admin-settings.ts';
@@ -72,6 +73,7 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
                council.members in envs/<env>.json (without --yes: prints that edit)
 
   --remote   act on the deployed D1 database (default: local, apps/api/.wrangler/state)
+  --d1-name <name>  act on a rehearsal database (name containing "rehearsal") instead of the env's
   --yes      scope:register, owner:call, owner:vote, council:replace-member: send the transaction (without it, only
              print it); app:origins:park, app:origins:unpark: write (without it, only list)
   --allow-shared  scope:register only: the app may log in through Hana's shared Google client; with it, --client is
@@ -127,7 +129,7 @@ async function scopeExists(m: Manifest, scopeId: string): Promise<boolean> {
 
 async function main(): Promise<void> {
   const args = parseCli(process.argv.slice(2), {
-    strings: ['name', 'scope', 'plan', 'app', 'org', 'environment', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve', 'args', 'gas', 'member', 'approve-with', 'limit', 'remove', 'add'],
+    strings: ['name', 'scope', 'plan', 'app', 'org', 'environment', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve', 'args', 'gas', 'member', 'approve-with', 'limit', 'remove', 'add', 'd1-name'],
     multiple: ['origin', 'client', 'owner-near', 'owner-google'],
     booleans: ['remote', 'yes', 'allow-shared', 'json', 'reject', 'help'],
   });
@@ -137,7 +139,7 @@ async function main(): Promise<void> {
   if (!COMMANDS.includes(command as Command)) throw new CliError(`Unknown command ${command}`);
   // app:settings names its app positionally (docs/batch-b-spec.md) or with --app (settingsAppArg).
   assertCommandPositionals(command, rest);
-  const m = loadEnv(envName);
+  const m = withRehearsalD1(loadEnv(envName), args.str('d1-name'));
   const remote = args.flag('remote');
   const where = remote ? `remote D1 ${m.cloudflare.d1Name}` : `local D1 ${m.cloudflare.d1Name}`;
 

@@ -568,20 +568,35 @@ Cloudflare account, with `corepack pnpm --filter @hana-id/api run gen sandbox-de
    chmod 600 .secrets/sandbox-dev/d1-before-0006-<yyyymmdd>.sql
    ```
 
-3. **Rehearse on a scratch remote D1** restored from that export (it proves the file on remote D1 and on the real
-   data, and shows whether a failure would be atomic there):
+3. **Rehearse on a scratch remote D1** restored from that export, through the same path as the real apply (`wrangler
+   d1 migrations apply` on the generated config's D1 binding) and the CLI. Note sandbox-dev's own `database_id` first
+   (in `apps/api/wrangler.jsonc`, or `wrangler d1 info hana-id-sandbox-dev`): step d puts it back.
 
    ```sh
+   # a. a scratch database holding the export (it prints the scratch id)
    corepack pnpm --dir apps/api exec wrangler d1 create hana-id-sandbox-dev-rehearsal-0006
    corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev-rehearsal-0006 --remote --file=../../.secrets/sandbox-dev/d1-before-0006-<yyyymmdd>.sql
-   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev-rehearsal-0006 --remote --file=migrations/0006_dashboard_expand.sql
+   # b. the config's D1 binding on the scratch database, then the real command (it lists 0006 alone)
+   corepack pnpm --filter @hana-id/api run gen sandbox-dev --d1-name hana-id-sandbox-dev-rehearsal-0006 --d1-id <scratch id>
+   corepack pnpm --dir apps/api exec wrangler d1 migrations apply hana-id-sandbox-dev-rehearsal-0006 --remote
+   # c. D1's implicit transaction per query (D207): the second statement fails, so the first must not be there (expect 0)
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev-rehearsal-0006 --remote --command "INSERT INTO plans (id, per_minute, per_day) VALUES ('rehearsal', 1, 1); INSERT INTO plans (id, per_minute, per_day) VALUES ('rehearsal', 1, 1)"
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev-rehearsal-0006 --remote --command "SELECT COUNT(*) AS n FROM plans WHERE id = 'rehearsal'"
+   #    and one CLI compare-and-swap write each way, read back by the CLI (any app id from app:list)
+   corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:list --remote --d1-name hana-id-sandbox-dev-rehearsal-0006
+   corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:suspend --app <app id> --remote --d1-name hana-id-sandbox-dev-rehearsal-0006
+   corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:resume --app <app id> --remote --d1-name hana-id-sandbox-dev-rehearsal-0006
+   # d. the config back on sandbox-dev's own database (before anything else, above all a deploy), then drop the scratch one
+   corepack pnpm --filter @hana-id/api run gen sandbox-dev --d1-id <sandbox-dev database id>
+   corepack pnpm --dir apps/api exec wrangler d1 delete hana-id-sandbox-dev-rehearsal-0006
    ```
 
-   Then run step 1's counts and step 5's checks against `hana-id-sandbox-dev-rehearsal-0006`: the counts equal, and
-   the step 5 numbers as expected. If the third command fails, stop: nothing touched sandbox-dev; read the error (step
-   1's checks name the usual causes) and check whether the scratch database got some of the new tables (a non-atomic
-   failure). Delete it either way (it holds the export's vault shares):
-   `corepack pnpm --dir apps/api exec wrangler d1 delete hana-id-sandbox-dev-rehearsal-0006`.
+   Between b and d, run step 1's counts and step 5's checks against `hana-id-sandbox-dev-rehearsal-0006`: the counts
+   equal, the step 5 numbers as expected, the count in c is 0, and each CLI write prints its new state (a stale or
+   lost write would say "nothing was written"). If the migration fails, stop: nothing touched sandbox-dev; read the
+   error (step 1's checks name the usual causes) and note whether the scratch database kept any new table. If the count
+   in c is 1, D1 didn't run that query as one transaction: stop and report it (D207). Delete the scratch database either
+   way (it holds the export's vault shares), after step d.
 
 4. **Apply 0006**: `corepack pnpm --dir apps/api exec wrangler d1 migrations apply hana-id-sandbox-dev --remote`
    (it lists `0006_dashboard_expand.sql` alone; confirm).
@@ -619,8 +634,10 @@ corepack pnpm --dir apps/api exec wrangler rollback                             
 
 Park again right before the rollback if anyone proposed since. While the older API runs, make no proposals (the CLI
 refuses them: `/v1/health` reports no `hotDb`). When batch C3 or later is deployed again,
-`admin sandbox-dev app:origins:unpark --remote --yes` rebuilds the parked rows from their guarded changes (each with
-its own `active_from`). Proposals not announced within 7 days are cancelled by the cron as usual, parked or not.
+`admin sandbox-dev app:origins:unpark --remote --yes` restores exactly the rows the park listed (`origin.parked` in
+`app_changes`), each with its change's `active_from`, and only while that change is still open: an origin removed
+while parked (`app:origins:remove` closes its change even with no row) or cancelled stays gone, and a row deleted any
+other way is never brought back. Proposals not announced within 7 days are cancelled by the cron as usual, parked or not.
 
 **Undo of the migration**: it only adds; a restore to the bookmark of step 2 (`time-travel restore`, "Restoring a D1
 database" below) returns the database to before it, and the API from before batch C3 then works as it did. Writes
@@ -665,6 +682,7 @@ admin <env> app:list [--remote]
 admin <env> app:changes:announce <change id> [--remote]
 admin <env> app:origins:park [--yes] [--remote]      # before running an API from before batch C3 (rollback floor)
 admin <env> app:origins:unpark [--yes] [--remote]    # after redeploying batch C3 or later
+admin <env> <app:* command> … --d1-name <name containing "rehearsal">   # on a rehearsal database (M1 step 3)
 admin <env> app:settings <app id | publishable key> [--persistence session|none] [--session-ttl 12h] [--idle-ttl 2h]
              [--raw-sign off|approval] [--google-web-client <client id>|default] [--auto-approve <policy.json>|off] [--remote]
 admin <env> scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […]

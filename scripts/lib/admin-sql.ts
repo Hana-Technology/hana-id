@@ -205,10 +205,11 @@ export function listAppsSql(now: number): string {
 // The commit protocol of every write that has a guard (D207): first the write's commit row in `app_changes`, with its
 // own request id, inserted only if the compare-and-swap predicate holds (the version the CLI read, or for settings also
 // every settings column as read); then the guarded UPDATE, with the same predicate and only if that commit row exists;
-// then every other statement only if the commit row exists. No statement depends on another's row count (`changes()`),
-// so the protocol holds whether or not D1 runs the command in one transaction. A write planned from a stale read
-// commits nothing, even if another writer moved the version to the same number, and the CLI reads the commit row back
-// (`committedSql`) to tell.
+// then every other statement only if the commit row exists. No statement depends on another's row count (`changes()`).
+// The CAS is safe because D1 runs each query (one `--command`, all its statements) as one implicit transaction: no
+// other write runs between the predicate and the bump, and a statement failing aborts the whole write. The M1
+// rehearsal (docs/operations.md) checks that on remote D1. A write planned from a stale read commits nothing, even if
+// another writer moved the version to the same number, and the CLI reads the commit row back (`committedSql`) to tell.
 
 /** Who wrote: the CLI acts as Hana staff (`hana`), identified by the operator's login name. */
 export interface CliActor {
@@ -475,7 +476,8 @@ export function parkableOriginsSql(now: number): string {
 
 /**
  * app:origins:park: before an API from before batch C3 runs on the 0006 database, deletes every origin row not yet in
- * force (one `origin.parked` row per app first). Each is rebuilt from its guarded change by `app:origins:unpark`.
+ * force, after one `origin.parked` row per app that lists each deleted row (`rows`: origin and change id).
+ * `app:origins:unpark` restores exactly those rows, and only while their change is still open.
  */
 export function parkOriginsWrite(opts: { now: number; actor: CliActor; requestId: string }): HotWrite {
   const { now, actor, requestId } = opts;
@@ -483,7 +485,8 @@ export function parkOriginsWrite(opts: { now: number; actor: CliActor; requestId
     statements: [
       `INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, request_id)
        SELECT ${now}, a.org_id, a.id, a.scope_id, 'origin.parked',
-              (SELECT json_object('origins', json_group_array(origin)) FROM app_origins WHERE app_id = a.id AND ${NOT_IN_FORCE_ORIGIN(now)}),
+              (SELECT json_object('rows', json_group_array(json_object('origin', origin, 'changeId', change_id)))
+                 FROM app_origins WHERE app_id = a.id AND ${NOT_IN_FORCE_ORIGIN(now)}),
               'hana', ${sql`${actor.id}, ${requestId}`} || ':' || a.id
          FROM apps a WHERE EXISTS (SELECT 1 FROM app_origins WHERE app_id = a.id AND ${NOT_IN_FORCE_ORIGIN(now)})`,
       `DELETE FROM app_origins WHERE ${NOT_IN_FORCE_ORIGIN(now)}`,
@@ -492,28 +495,44 @@ export function parkOriginsWrite(opts: { now: number; actor: CliActor; requestId
   };
 }
 
-/** Pending or active `origin_add` changes with no origin row (parked; read). */
+/**
+ * The changes `app:origins:unpark` restores a row for: listed in an `origin.parked` row with no later `origin.unparked`
+ * row listing them (so a row restored once isn't restored again from an older park), still `pending` or `active` (a
+ * removal or a cancel since closes the change: `app:origins:remove` closes it even without a row), with no origin row
+ * now. An origin row deleted any other way is never in a park list, so it is never brought back.
+ */
+const PARKED = `SELECT DISTINCT g.id, g.app_id, g.origin, g.active_from
+    FROM app_changes p, json_each(p.detail_json, '$.rows') r, guarded_changes g
+   WHERE p.kind = 'origin.parked' AND g.id = json_extract(r.value, '$.changeId') AND g.app_id = p.app_id
+     AND g.kind = 'origin_add' AND g.origin = json_extract(r.value, '$.origin') AND g.status IN ('pending', 'active')
+     AND NOT EXISTS (SELECT 1 FROM app_changes u, json_each(u.detail_json, '$.changes') c
+                      WHERE u.kind = 'origin.unparked' AND u.app_id = p.app_id AND u.seq > p.seq AND c.value = g.id)
+     AND NOT EXISTS (SELECT 1 FROM app_origins o WHERE o.app_id = g.app_id AND o.origin = g.origin)`;
+
+/** The parked origins `app:origins:unpark` would restore (read). */
 export function unparkableSql(): string {
-  return `SELECT g.id, g.app_id, g.origin, g.active_from FROM guarded_changes g
-           WHERE g.kind = 'origin_add' AND g.status IN ('pending', 'active')
-             AND NOT EXISTS (SELECT 1 FROM app_origins o WHERE o.app_id = g.app_id AND o.origin = g.origin) ORDER BY g.app_id, g.origin`;
+  return `${PARKED} ORDER BY g.app_id, g.origin`;
 }
 
 /**
- * app:origins:unpark: once the API is back at batch C3 or later, re-creates the origin row of every pending or active
- * `origin_add` that has none (with the change's `active_from`; NULL while unannounced), one `origin.unparked` row per app.
+ * app:origins:unpark: once the API is back at batch C3 or later, restores the parked rows (above) with their change's
+ * `active_from` (NULL while unannounced), after one `origin.unparked` row per app listing the changes.
  */
 export function unparkOriginsWrite(opts: { now: number; actor: CliActor; requestId: string }): HotWrite {
   const { now, actor, requestId } = opts;
-  const missing = `g.kind = 'origin_add' AND g.status IN ('pending', 'active') AND NOT EXISTS (SELECT 1 FROM app_origins o WHERE o.app_id = g.app_id AND o.origin = g.origin)`;
   return {
+    // First the ledger rows (from PARKED), then the origin rows of exactly the changes this request's ledger rows list.
     statements: [
       `INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, request_id)
        SELECT ${now}, a.org_id, a.id, a.scope_id, 'origin.unparked',
-              (SELECT json_object('changes', json_group_array(g.id)) FROM guarded_changes g WHERE g.app_id = a.id AND ${missing}),
+              (SELECT json_object('changes', json_group_array(x.id)) FROM (${PARKED}) x WHERE x.app_id = a.id),
               'hana', ${sql`${actor.id}, ${requestId}`} || ':' || a.id
-         FROM apps a WHERE EXISTS (SELECT 1 FROM guarded_changes g WHERE g.app_id = a.id AND ${missing})`,
-      `INSERT INTO app_origins (app_id, origin, active_from, change_id) SELECT g.app_id, g.origin, g.active_from, g.id FROM guarded_changes g WHERE ${missing}`,
+         FROM apps a WHERE EXISTS (SELECT 1 FROM (${PARKED}) x WHERE x.app_id = a.id)`,
+      `INSERT INTO app_origins (app_id, origin, active_from, change_id)
+       SELECT g.app_id, g.origin, g.active_from, g.id
+         FROM app_changes u, json_each(u.detail_json, '$.changes') c, guarded_changes g
+        WHERE u.kind = 'origin.unparked' AND u.request_id = ${sql`${requestId}`} || ':' || u.app_id AND g.id = c.value
+          AND NOT EXISTS (SELECT 1 FROM app_origins o WHERE o.app_id = g.app_id AND o.origin = g.origin)`,
     ],
     requestId,
   };

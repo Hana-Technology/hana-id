@@ -1,7 +1,7 @@
 // A hot DB for the CLI tests: node:sqlite with every apps/api migration applied in name order (as a fresh D1 gets
-// them), and a `d1` function that runs a command as `wrangler d1 execute --command` would. Deliberately without a
-// transaction around a command (each statement commits on its own): the CLI's commit protocol (admin-sql.ts "writes")
-// must hold whether or not D1 runs a multi-statement command atomically (D207).
+// them), and a `d1` function that runs a command as `wrangler d1 execute --command` would, but without a transaction
+// around it (each statement commits on its own), so the tests also show the write order needs no `changes()` and stops
+// at the first failing statement. On D1 each query is one implicit transaction (D207).
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';

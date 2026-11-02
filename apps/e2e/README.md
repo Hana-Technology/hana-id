@@ -7,6 +7,7 @@ approval and export bundles of `@hana-id/web`, and the partner client, in Chromi
 corepack pnpm --filter @hana-id/e2e e2e:install   # once: the browsers
 corepack pnpm --filter @hana-id/e2e e2e           # build + local stack + all three browsers
 corepack pnpm --filter @hana-id/e2e e2e --project webkit tests/approval.spec.ts
+cd apps/e2e && corepack pnpm exec playwright test --project=chromium tests/email.spec.ts   # one spec, one browser
 HANA_E2E_PORT_BASE=4510 corepack pnpm --filter @hana-id/e2e e2e   # another worktree's run at the same time (not 5010: see below)
 corepack pnpm --filter @hana-id/e2e test          # unit tests of the stack's mocks (part of `pnpm -r test`)
 ```

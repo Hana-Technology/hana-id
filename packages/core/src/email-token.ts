@@ -105,6 +105,8 @@ export async function verifyEmailIdToken(token: string, expect: EmailTokenExpect
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return invalid('Malformed token');
   const { payload, signatures } = body as Record<string, unknown>;
   if (typeof payload !== 'string' || !Array.isArray(signatures) || signatures.length < 1 || signatures.length > EMAIL_TOKEN_MAX_SIGNATURES) return invalid('Malformed token');
+  // Every entry a plain object before anything reads it (`[null]` or `[1]` would otherwise survive the canonical form).
+  if (!signatures.every((e) => typeof e === 'object' && e !== null && !Array.isArray(e))) return invalid('Malformed token');
   // Exactly the form the issuer writes (JSON.stringify of {payload, signatures: [{protected, signature}]}): no extra or
   // duplicate member, no unprotected header, no whitespace.
   const canonical = JSON.stringify({

@@ -12,10 +12,17 @@
 //   next `start`, so its owner's code mail gets past the shared limits (D198).
 // - Case B (`googleWallet`: a Google identity that reported this address has the wallet, the email identity has none):
 //   no token; the page offers "Continue with Google", a plain Google login (batch 8a links nothing, so no `linkJwt`).
+//   In batch 8a this screen is never reached: the issuer learns hints only from google-match (batch 8b), so nothing
+//   writes `email_hints` yet, and an address with a Google wallet gets a separate email wallet (D249). Kept for 8b.
+// - A step the user can't finish here (email unavailable for the app, no issuer in this env, case B without Google)
+//   tells the vault at once (`email_unavailable`), so the partner's login() ends instead of waiting out its 5 minutes;
+//   and the page itself stops at the vault's deadline (EMAIL_STEP_LIMIT_MS from the context's creation).
 // - "Cancel" ends the login: the relay gets `{error}` (`email_cancelled`, or `email_code_invalid` /
 //   `email_challenge_expired` / `email_rate_limited` when that was the last thing the user saw), which the vault turns
 //   into `login_cancelled`, `code_invalid`, `challenge_expired` or `rate_limited` (D245).
-// - After `start` answered, it tells the vault (`hana:auth-progress`, `loginProgress: email_code`).
+// - After `start` answered, it tells the vault (`hana:auth-progress`, `loginProgress: email_code`); before going to
+//   Google (case B) it says `google`.
+// - The partner's `emailHint` prefills the field; it is dropped from the stored context on load (kept in memory only).
 //
 // It calls only the issuer and the API's relay (its CSP's connect-src, pages.ts).
 //
@@ -27,7 +34,7 @@ import type { HanaEnv } from '../hana-env.ts';
 import type { AuthApi } from './api.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import type { EmailApi, SessionCommitment } from './email-api.ts';
-import { type EmailContext, deviceTicketFor, dropEmailContext, readEmailContext, saveDeviceTicket, storeEmailContext } from './email-storage.ts';
+import { EMAIL_STEP_LIMIT_MS, type EmailContext, deviceTicketFor, dropEmailContext, readEmailContext, saveDeviceTicket, storeEmailContext } from './email-storage.ts';
 import { googleAuthUrl } from './google.ts';
 import { takeLogin } from './login-storage.ts';
 import { type PageWindow, childFrame, isFramed } from './page-window.ts';
@@ -47,8 +54,8 @@ export interface EmailPageDeps {
 
 export type EmailStage = 'address' | 'sending' | 'code' | 'verifying' | 'google_wallet' | 'relaying' | 'done' | 'error';
 
-/** What the user saw last that the vault should hear if they cancel now (D245). */
-type Reason = 'email_cancelled' | 'email_code_invalid' | 'email_challenge_expired' | 'email_rate_limited';
+/** What the user saw last that the vault should hear if they cancel now (D245), or why the step can't go on. */
+type Reason = 'email_cancelled' | 'email_code_invalid' | 'email_challenge_expired' | 'email_rate_limited' | 'email_unavailable';
 
 export interface EmailPage {
   readonly stage: EmailStage;
@@ -120,13 +127,11 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     fatal('Sign-in stopped', 'This sign-in has expired or was already used. Start again from the app.', 'login_timeout');
     return page;
   }
-  if (!env.emailIssuerUrl) {
-    fatal('Sign-in stopped', 'Email sign-in is not set up here.', 'config_mismatch');
-    return page;
-  }
   const ctx: EmailContext = read.context;
   const rid: string = relayId;
   const createdAt = read.createdAt;
+  /** The vault ends its pending login 5 min after hana_login; this page stops by then too (EMAIL_STEP_LIMIT_MS). */
+  const deadlineAt = createdAt + EMAIL_STEP_LIMIT_MS;
   const commitment: SessionCommitment = {
     scopeId: ctx.scopeId,
     sessionPublicKey: ctx.sessionPublicKey,
@@ -137,6 +142,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   };
   let address = ctx.emailHint ?? '';
   let resendTimer: unknown = null;
+  let deadlineTimer: unknown = null;
 
   const remember = (patch: Partial<EmailContext>) => {
     Object.assign(ctx, patch);
@@ -146,6 +152,43 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       // The step goes on in memory; only a reload would lose it.
     }
   };
+  // The partner's hint stays in memory only from here on (a reload shows an empty field).
+  if (ctx.emailHint !== null) remember({ emailHint: null });
+
+  /**
+   * Ends the step where the user can't go on: the vault hears `reason` now (if the relay key is still here), the page
+   * shows why and stays open. Best effort: a failed write only means the vault times out as before.
+   */
+  async function abandon(why: Reason | null, title: string, text: string, code: string): Promise<void> {
+    clearT(resendTimer);
+    clearT(deadlineTimer);
+    const taken = why ? takeLogin(win.sessionStorage, rid, now()) : null;
+    dropEmailContext(win.sessionStorage, rid);
+    fatal(title, text, code);
+    if (!taken) return;
+    try {
+      await api.writeRelay(rid, await encryptRelayPayload(taken.relayKey, rid, { error: why as string }));
+    } catch {
+      // The vault ends at its own deadline.
+    } finally {
+      taken.relayKey.fill(0);
+    }
+  }
+
+  const pastDeadline = (): boolean => {
+    if (now() < deadlineAt) return false;
+    void abandon(null, 'Sign-in stopped', 'This sign-in took too long. Close this window and start again from the app.', 'login_timeout');
+    return true;
+  };
+
+  if (!env.emailIssuerUrl) {
+    void abandon('email_unavailable', 'Sign-in stopped', 'Email sign-in is not set up here.', 'config_mismatch');
+    return page;
+  }
+  if (pastDeadline()) return page;
+  deadlineTimer = setT(() => {
+    if (stage !== 'done' && stage !== 'error' && stage !== 'relaying') pastDeadline();
+  }, Math.max(0, deadlineAt - now()));
 
   const header = () =>
     d.h('p', {}, 'Signing in to ', d.h('strong', {}, ctx.appName), ' at ', d.h('span', { class: 'origin' }, ctx.parentOrigin));
@@ -156,13 +199,13 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     return b;
   };
 
-  /** Tells the vault the code was sent (a progress signal only; the vault checks the sender). */
-  const tellVault = () => {
+  /** Tells the vault where the user is (a progress signal only; the vault checks the sender). */
+  const tellVault = (progress: 'email_code' | 'google' = 'email_code') => {
     const opener = win.opener;
     if (!opener) return;
     try {
       const target = ctx.opener === 'partner' && ctx.vaultFrame ? childFrame(opener, ctx.vaultFrame) : opener;
-      (target as Window | null)?.postMessage({ v: 1, t: 'hana:auth-progress', stage: 'email_code' }, env.vaultOrigin);
+      (target as Window | null)?.postMessage({ v: 1, t: 'hana:auth-progress', stage: progress }, env.vaultOrigin);
     } catch {
       // The opener went away: the login still finishes through the relay.
     }
@@ -250,9 +293,11 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     return { notice: err.code, text: TEXT.unreachable };
   }
 
-  const unavailable = () => fatal('Email sign-in unavailable', 'Email sign-in isn’t available for this app right now. Close this window and try another way to sign in.', 'login_method_unavailable');
+  const unavailable = () =>
+    void abandon('email_unavailable', 'Email sign-in unavailable', 'Email sign-in isn’t available for this app right now. Close this window and try another way to sign in.', 'login_method_unavailable');
 
   async function sendCode(): Promise<void> {
+    if (pastDeadline()) return;
     if (address.length < 3 || address.length > 254 || !address.includes('@') || /\s/u.test(address)) {
       notice = 'invalid_email';
       showAddress(TEXT.invalidEmail);
@@ -288,11 +333,13 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   async function resendCode(): Promise<void> {
     const challengeId = ctx.challengeId;
     if (!challengeId) return showAddress();
+    if (pastDeadline()) return;
     busy('Check your email', 'Sending a new code…', 'sending');
     try {
       const c = await issuer.resend(challengeId);
       remember({ challengeId: c.challengeId });
       notice = null;
+      reason = 'email_cancelled';
       showCode(c.resendAfterMs, 'A new code is on its way. The old one no longer works.');
     } catch (err) {
       if (err instanceof ApiError && err.code === 'challenge_expired') {
@@ -318,6 +365,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   async function verifyCode(code: string, resendAfterMs: number): Promise<void> {
     const challengeId = ctx.challengeId;
     if (!challengeId) return showAddress();
+    if (pastDeadline()) return;
     busy('Check your email', 'Checking the code…', 'verifying');
     let verified;
     try {
@@ -351,6 +399,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     }
     if (verified.deviceTicket) saveDeviceTicket(deps.tickets, address, verified.deviceTicket, now());
     remember({ challengeId: null });
+    notice = null;
+    reason = 'email_cancelled';
     if (verified.kind === 'google_wallet') return showGoogleWallet();
     await relay({ idToken: verified.idToken });
   }
@@ -359,14 +409,16 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   function showGoogleWallet(): void {
     const clientId = ctx.clientId;
     if (!clientId) {
-      fatal('Sign in with Google', 'This email already opens a wallet you created with Google, and this app doesn’t offer Google sign-in here.', 'login_method_unavailable');
+      void abandon('email_unavailable', 'Sign in with Google', 'This email already opens a wallet you created with Google, and this app doesn’t offer Google sign-in here.', 'login_method_unavailable');
       return;
     }
     const go = d.h('button', { class: 'primary', attrs: { type: 'button', id: 'email-google' } }, 'Continue with Google');
     go.addEventListener('click', () => {
       go.setAttribute('disabled', '');
       // The relay key entry stays for /login/callback; this page's context is done.
+      clearT(deadlineTimer);
       dropEmailContext(win.sessionStorage, rid);
+      tellVault('google');
       win.location.assign(googleAuthUrl({ clientId, authOrigin: env.authOrigin, nonce: ctx.nonce, state: rid, forceReauth: false }));
     });
     d.show(
@@ -386,6 +438,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   /** Encrypts `payload` under the login's relay key (taken now, single use) and writes it to the slot. */
   async function relay(payload: RelayPayload): Promise<void> {
     clearT(resendTimer);
+    clearT(deadlineTimer);
     busy('Signing in', 'Finishing sign-in…', 'relaying');
     const taken = takeLogin(win.sessionStorage, rid, now());
     dropEmailContext(win.sessionStorage, rid);

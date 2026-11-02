@@ -162,7 +162,7 @@ hana.on('statusChanged', (status) => {});
 hana.on('accountsChanged', (addresses) => {}); // { stellar, evm } or null
 hana.on('sessionExpired', () => {});            // the session reached its limit: log in again
 hana.on('disconnect', ({ code }) => {});        // 4900: the vault connection is gone
-hana.on('loginProgress', ({ stage }) => {});    // 'popup_connected' | 'google' | 'token' | 'chain' | 'key_pending' | 'done'
+hana.on('loginProgress', ({ stage }) => {});    // 'popup_connected' | 'google' | 'email_code' | 'token' | 'chain' | 'key_pending' | 'done'
 hana.on('launcher', ({ visible, label }) => {}); // Hana's button is shown or hidden ("Review in Hana", …)
 hana.on('autoApproved', ({ kind, chain, contract, function: fn }) => {});
 hana.on('persistenceChanged', (persistence) => {}); // 'none': this login won't survive a reload (see "Sessions")
@@ -218,7 +218,9 @@ button.addEventListener('click', async () => {
 
   An email wallet is a separate wallet from the same person's Google wallet (linking them comes later). A method your
   app doesn't offer rejects with `login_method_unavailable`; bad options reject with `-32602` before any popup opens.
-  `loginProgress` adds `email_code` (the code was sent). The popup handles wrong and expired codes, "Resend code" and
+  `loginProgress` adds `email_code` (the code was sent); with email on, `google` fires only when the user goes to
+  Google. In this release email is enabled only on Hana's demo and test apps: an email wallet can't be joined to the
+  same person's Google wallet later. The popup handles wrong and expired codes, "Resend code" and
   "Use a different email" itself; if the user then cancels, `login()` rejects with `code_invalid`,
   `challenge_expired`, `rate_limited` or `login_cancelled`. Key export (`exportKey`) is not available yet for an email
   wallet (`4200`, `data.reason: 'email_export'`). Your page never sees the address unless you passed it.

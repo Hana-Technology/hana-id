@@ -3503,10 +3503,16 @@ Spec ambiguities met while building the minimal slice of batch 8 (no linking). A
   address, "Send a new code"), resend limits and every rate limit (one generic "Too many attempts. Try again later.").
   Those never end the login by themselves. "Cancel" in the email step writes `{error}` to the relay slot:
   `email_cancelled`, or `email_code_invalid` / `email_challenge_expired` / `email_rate_limited` when that was the
-  last thing shown; the vault turns them into `login_cancelled`, `code_invalid`, `challenge_expired`, `rate_limited`,
+  last thing shown (reset to `email_cancelled` after a successful `resend` or `verify`); a step the user can't
+  finish there (email unavailable for the app, no issuer in the env, case B without Google) writes `email_unavailable`
+  at once (`login_method_unavailable`), and the page stops at the vault's deadline (5 min from `hana_login`, less the
+  popup's 15 s connect window, from the context's creation). The vault turns them into `login_cancelled`,
+  `code_invalid`, `challenge_expired`, `rate_limited`, `login_method_unavailable`,
   only in a login that offered email (Google's OAuth error codes never start with `email_`; elsewhere they stay
-  `google_error`). `loginProgress: email_code` is emitted when the popup posts `hana:auth-progress` after a `start`
-  answered; the vault takes it only from the window whose hello it answered, on `authOrigin`. A closed popup during
+  `google_error`; looked up as own properties only). `loginProgress: email_code` is emitted when the popup posts
+  `hana:auth-progress` after a `start` answered, and in a login that offered email `google` only when the popup says
+  the user went to Google (the chooser, case B) or `method: 'google'` was asked; the vault takes them only from the
+  window whose hello it answered, on `authOrigin`, each once. A Google-only app reports `google` at connect as before. A closed popup during
   the code step still ends as today (`login_timeout` after 5 min).
 - Rejected: ending the login on the first wrong code (the spec's codes allow 5 tries); a popup → vault channel for
   each step (only the one progress signal is needed).
@@ -3539,6 +3545,9 @@ Spec ambiguities met while building the minimal slice of batch 8 (no linking). A
 ### D248. Turning email on for the demo app is by hand on sandbox-dev
 - Date 2026-11-02 · Status: to confirm (who owns the demo's scope, and the owner's `propose_change` command) ·
   Source: D234 (batch 8's order), `docs/operations.md` "Email login demo on sandbox-dev (batch 8a)"
+- **Only demo and test scopes get email in 8a.** Every email identity opened in 8a is a wallet of its own, and it can never join a Google account later (the contract refuses a link to an identity that already has a wallet: "Sign-in method already has a wallet"). Nothing writes `email_hints` before google-match (batch 8b), so case B never happens in 8a: a Google user who picks email with their Gmail address gets that second wallet. So email is turned on only for scopes whose
+  users are Hana's own testers (the demo's), never for a scope with real Google users, until google-match's hint
+  writes or a merge path ship (`docs/mainnet-readiness.md` row 7.1g).
 - Decision: `login_methods = 'google,email'` for the demo app by a D1 statement, then the scope's email client
   through the staff client proof and the scope owner's `propose_change(AddClient)` (timelocked), then the 8a pages
   and API. There is no CLI command for either yet (the console toggle is batch 9). Real mail needs SendGrid; the
@@ -3553,17 +3562,23 @@ Spec ambiguities met while building the minimal slice of batch 8 (no linking). A
 - Decision:
   - Batch 7 isn't built. The vault fixes `{scope}#{provider}#{sub}#0` from the token it verified (`loginPath`; Google
     byte for byte as before, golden test), the record check accepts `#google#` and `#email#` paths of its scope, and
-    the export window keeps `#google#`. While no link exists on chain (none can: no app enables linking and the vault
-    never sends `linkJwt`), that is each identity's own path; a linked identity's login would fail the pairing check
-    (and D136 refuses derivation on a linked identity's own path), never derive another key. `get_identity`
-    resolution must come before any app enables linking (batch 7/8b).
+    the export window keeps `#google#`. Batch 8a creates no link (the vault never sends `linkJwt`), but links can still
+    exist on chain: an explicit `/v1/link` relay, or a link made by another client of the scope. For a linked identity
+    the computed path is not the session's (its root's): the vault refuses on its own checks, never derives another
+    key. A re-synced session whose path isn't the computed one is `derive_failed`, a CKD answer for the root's path
+    fails the pairing check (both tested in `packages/web/test/vault/email-login.test.ts`), and D136 refuses derivation
+    on a linked identity's own path. So a linked user can't log in through 8a's web until `get_identity` resolution
+    (batch 7/8b), which must come before any app enables linking.
   - `/login` → `/login/email` hands over the public login facts in `sessionStorage` (`hana.email.<relayId>`, 10 min:
-    app, parent origin, the session commitment, the Google client for case B, the `challengeId` once started; never
-    the relay key, address, code or token). Device tickets go to `localStorage` on `authOrigin`, keyed by
+    app, parent origin, the session commitment, the Google client for case B, the `challengeId` once started, and the
+    partner's `emailHint` only until /login/email loads, which drops it from storage and keeps it in memory; never
+    the relay key, a typed address, a code or a token). Device tickets go to `localStorage` on `authOrigin`, keyed by
     `sha256(trimmed lowercased address)` (not the issuer's full normalization: a key that misses only means no ticket
     is sent; the issuer checks the exact address), at most 5, 30 days.
-  - Case B (`verify` says the address belongs to a Google wallet here) continues as a plain Google login on the same
-    relay slot; no `linkTicket` is used.
+  - Case B (`verify` says the address belongs to a Google wallet here) would continue as a plain Google login on the
+    same relay slot, with no `linkTicket`. It can't happen in 8a: the issuer learns hints only from google-match, which
+    8a doesn't call, so nothing writes `email_hints` (see D248: email identities opened in 8a stay separate wallets).
+    The screen is built and unit-tested for 8b.
 - Rejected: building `get_identity` resolution now (not needed while no links exist, and batch 6 is still in review).
 
 ## Superseded or amended

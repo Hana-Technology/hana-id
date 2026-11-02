@@ -100,6 +100,8 @@ describe('/login method chooser', () => {
     // The relay key is stored already, for either path.
     expect(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + params.relayId)).not.toBeNull();
     click('continue-google');
+    // The vault reports `google` only when the popup says so, in a login that offered email.
+    expect(s.vault.postMessage).toHaveBeenCalledWith({ v: 1, t: 'hana:auth-progress', stage: 'google' }, ENV.vaultOrigin);
     const url = new URL(s.win.location.assigned[0] as string);
     expect(url.origin + url.pathname).toBe('https://accounts.google.com/o/oauth2/v2/auth');
     expect(url.searchParams.get('scope')).toBe('openid');
@@ -172,7 +174,7 @@ interface EmailSetup {
   timers: (() => void)[];
 }
 
-function emailSetup(opts: { hint?: string | null; clientId?: string | null; env?: HanaEnv; storeEntry?: boolean; framed?: boolean; f?: Fakes } = {}): EmailSetup {
+function emailSetup(opts: { hint?: string | null; clientId?: string | null; env?: HanaEnv; storeEntry?: boolean; framed?: boolean; f?: Fakes; now?: number } = {}): EmailSetup {
   const p = authParams();
   const relayId = p.relayId;
   const relayKey = Uint8Array.from(p.relayKey);
@@ -218,7 +220,7 @@ function emailSetup(opts: { hint?: string | null; clientId?: string | null; env?
     issuer: f.issuer as unknown as EmailApi,
     api: f.api,
     tickets: window.localStorage,
-    now: () => NOW,
+    now: () => opts.now ?? NOW,
     setTimeout: (fn) => timers.push(fn),
     clearTimeout: () => {},
   });
@@ -426,6 +428,90 @@ describe('/login/email', () => {
     submit('email-verify');
     await vi.waitFor(() => expect(s.page.stage).toBe('error'));
     expect(s.win.closed).toBe(false);
+  });
+});
+
+describe('review fixes (L4, L5, L8)', () => {
+  const relayed = async (s: EmailSetup) => {
+    await vi.waitFor(() => expect(s.f.api.writeRelay).toHaveBeenCalled());
+    return decryptRelayPayload(s.relayKey, s.relayId, s.f.api.writeRelay.mock.calls[0]?.[1] as RelayCiphertext);
+  };
+
+  it('the cancel reason resets after a successful resend and a successful verify', async () => {
+    const s = emailSetup();
+    await toCode(s);
+    s.f.issuer.verify.mockRejectedValueOnce(new ApiError(400, 'code_invalid', 'Wrong code', null, null, { attemptsLeft: 4 }));
+    typeInto('email-code', '000000');
+    submit('email-verify');
+    await flush();
+    for (const t of s.timers) t();
+    click('email-resend');
+    await flush();
+    click('email-cancel');
+    expect(await relayed(s)).toEqual({ error: 'email_cancelled' });
+
+    resetDom();
+    const b = emailSetup();
+    await toCode(b);
+    b.f.issuer.verify.mockRejectedValueOnce(new ApiError(400, 'code_invalid', 'Wrong code', null, null, { attemptsLeft: 4 }));
+    typeInto('email-code', '000000');
+    submit('email-verify');
+    await flush();
+    b.f.issuer.verify.mockResolvedValueOnce({ kind: 'google_wallet', deviceTicket: null });
+    typeInto('email-code', '123456');
+    submit('email-verify');
+    await flush();
+    expect(b.page.stage).toBe('google_wallet');
+    click('email-cancel');
+    expect(await relayed(b)).toEqual({ error: 'email_cancelled' });
+  });
+
+  it('an app without email tells the vault at once (email_unavailable) and keeps the window open', async () => {
+    const s = emailSetup();
+    s.f.issuer.start.mockRejectedValueOnce(new ApiError(403, 'email_not_enabled', 'x', null, null));
+    typeInto('email-address', 'ada@example.com');
+    submit('email-send');
+    expect(await relayed(s)).toEqual({ error: 'email_unavailable' });
+    expect(s.page.stage).toBe('error');
+    expect(s.win.closed).toBe(false);
+    expect(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + s.relayId)).toBeNull();
+  });
+
+  it('an env without an issuer tells the vault too; case B without Google too', async () => {
+    const s = emailSetup({ env: ENV });
+    expect(await relayed(s)).toEqual({ error: 'email_unavailable' });
+    resetDom();
+    const b = emailSetup({ clientId: null });
+    b.f.issuer.verify.mockResolvedValueOnce({ kind: 'google_wallet', deviceTicket: null });
+    await toCode(b);
+    typeInto('email-code', '123456');
+    submit('email-verify');
+    expect(await relayed(b)).toEqual({ error: 'email_unavailable' });
+  });
+
+  it('stops at the vault’s deadline: nothing is sent to the issuer after it', async () => {
+    const s = emailSetup({ now: NOW + 5 * 60_000 });
+    expect(s.page.stage).toBe('error');
+    expect(s.page.notice).toBe('login_timeout');
+    expect(s.f.issuer.start).not.toHaveBeenCalled();
+    expect(s.win.sessionStorage.getItem(EMAIL_ENTRY_PREFIX + s.relayId)).toBeNull();
+  });
+
+  it('case B tells the vault the user went to Google', async () => {
+    const s = emailSetup();
+    s.f.issuer.verify.mockResolvedValueOnce({ kind: 'google_wallet', deviceTicket: null });
+    await toCode(s);
+    typeInto('email-code', '123456');
+    submit('email-verify');
+    await flush();
+    click('email-google');
+    expect(s.vault.postMessage).toHaveBeenCalledWith({ v: 1, t: 'hana:auth-progress', stage: 'google' }, ENV.vaultOrigin);
+  });
+
+  it('keeps the partner’s hint in memory only: the stored context drops it on load', () => {
+    const s = emailSetup({ hint: 'ada@example.com' });
+    expect((document.getElementById('email-address') as HTMLInputElement).value).toBe('ada@example.com');
+    expect(s.win.sessionStorage.getItem(EMAIL_ENTRY_PREFIX + s.relayId)).not.toContain('ada@example.com');
   });
 });
 

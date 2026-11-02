@@ -617,14 +617,22 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   in such a login, and are Google's answer otherwise.
 - **No link, ever, in batch 8a**: the vault never sends `linkJwt` / `linkImmediate` and signs only the plain CKD
   payload; the e2e mock refuses a login that carries a link. Case B (the address belongs to a Google wallet here, the
-  issuer mints no token) continues as a plain Google login, so no email identity is attached to a Google wallet
-  (D139 is batch 8b's).
+  issuer mints no token) would continue as a plain Google login, but it can't happen in 8a: nothing writes
+  `email_hints` before google-match (batch 8b). D139 is batch 8b's.
+- **Only demo and test scopes get email in 8a (D248).** Every email identity opened in 8a is a wallet of its own, and it can never join a Google account later (the contract refuses a link to an identity that already has a wallet: "Sign-in method already has a wallet"). Nothing writes `email_hints` before google-match (batch 8b), so case B never happens in 8a: a Google user who picks email with their Gmail address gets that second wallet. Turning email on is a hand `UPDATE`
+  of `login_methods` plus the scope's email client; do it for no scope with real Google users until google-match's
+  hint writes or a merge path ship (`docs/mainnet-readiness.md` row 7.1g).
+- **A linked identity can't log in through 8a's web** (D249): links can exist on chain (`/v1/link`, other clients),
+  and the vault, which fixes the identity's own path, then refuses (`derive_failed` on a re-synced root path, the
+  pairing check on a root CKD answer); it never derives another key.
 - **`/login/email` reaches only the issuer and the API** (CSP `connect-src {issuer origin} {api}`; the auth Worker's
   `EMAIL_ISSUER_URL`, `packages/web/src/auth/pages.ts`); `/login` stays fetch-free (D77). The address goes only to
   the issuer's `start`, the code only to `verify`; neither is stored or logged. The token is held only until
   encrypted under `relayKey`, which is taken (single use) at that moment. The email context in `sessionStorage`
-  (`hana.email.<relayId>`, 10 min) holds public facts and the `challengeId` (spec: kept in the popup), never the
-  relay key, address, code or token.
+  (`hana.email.<relayId>`, 10 min) holds public facts and the `challengeId` (spec: kept in the popup), and the
+  partner's `emailHint` only until `/login/email` loads (then in memory only); never the relay key, a typed address,
+  a code or a token. A step that can't go on tells the vault at once (`email_unavailable`), and the page stops at the
+  vault's deadline, so no relay key outlives the login.
 - **Device tickets on `authOrigin`**: `localStorage` `hana.dt.<b64url(sha256(trimmed lowercased address))>`, at
   most 5, 30 days. A ticket only lets its owner's code mail past the shared limits (D198); it can't sign anyone in.
   Residual: anyone with script on `authOrigin` (or the device) can read them, and the hash of a guessable address can

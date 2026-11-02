@@ -161,7 +161,16 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
       }
       const url = googleAuthUrl({ clientId: msg.clientId, authOrigin: env.authOrigin, nonce: msg.nonce, state: msg.relayId, forceReauth: mode === 'export' });
       const intro = () => d.h('p', {}, 'Signing in to ', d.h('strong', {}, msg.appName), ' at ', d.h('span', { class: 'origin' }, msg.parentOrigin));
-      const toGoogle = () => {
+      const toGoogle = (tell: boolean) => {
+        // In a login that offered email, the vault reports `google` only when the popup says so (hana:auth-progress).
+        if (tell) {
+          try {
+            const target = mode === 'partner' ? childFrame(opener as Window, parsed?.vaultFrame as string) : opener;
+            (target as Window | null)?.postMessage({ v: 1, t: 'hana:auth-progress', stage: 'google' }, env.vaultOrigin);
+          } catch {
+            // The vault is gone: the login fails there anyway.
+          }
+        }
         d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, mode === 'export' ? 'Confirm it’s you' : 'Signing in'), intro(), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
         state = { stage: 'redirecting', mode, url };
         finish(state);
@@ -170,7 +179,8 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
       // Email is offered only by the vault (never in export mode), only for an env with an email issuer.
       const methods: readonly LoginMethod[] = mode !== 'export' && msg.methods && env.emailIssuerUrl ? msg.methods : ['google'];
       if (!methods.includes('email') || msg.method === 'google') {
-        toGoogle();
+        // A preselected Google (`method: 'google'`): the vault reported `google` itself.
+        toGoogle(false);
         return;
       }
       const toEmail = () => {
@@ -217,7 +227,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
       google.addEventListener('click', () => {
         google.setAttribute('disabled', '');
         email.setAttribute('disabled', '');
-        toGoogle();
+        toGoogle(true);
       });
       email.addEventListener('click', () => {
         google.setAttribute('disabled', '');

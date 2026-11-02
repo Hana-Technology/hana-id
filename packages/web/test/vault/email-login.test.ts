@@ -1,9 +1,10 @@
 // Email login, vault side (build plan batch 8a): the offer in auth-params (only for an app with email, in an env with
 // an email issuer), the email token's check against the chain, the `{scope}#email#{sub}#0` path, the email step's
 // cancel codes, the progress message, the record check and the export refusal; and the golden Google path.
-import { addressesFromCkdSecret, ckdAppId, decryptCkd, newAppKey } from '@hana-id/core';
+import { addressesFromCkdSecret, ckdAppId, decryptCkd, newAppKey, toHex } from '@hana-id/core';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { isOwnLoginPath, loginPath } from '../../src/vault/login.ts';
+import { LOGIN_PENDING_MS, isOwnLoginPath, loginPath } from '../../src/vault/login.ts';
+import { EMAIL_STEP_LIMIT_MS } from '../../src/auth/email-storage.ts';
 import {
   Browser,
   EMAIL_ENV,
@@ -243,3 +244,84 @@ describe('hana:auth-progress', () => {
     expect(u.events.some((e) => e.event === 'loginProgress' && (e.data as { stage: string }).stage === 'email_code')).toBe(false);
   });
 });
+
+const stagesOf = (t: Tab) => t.events.filter((e) => e.event === 'loginProgress').map((e) => (e.data as { stage: string }).stage);
+
+describe('google progress (only on the Google path)', () => {
+  it('with email offered, `google` comes from the popup, once; `method: google` reports it itself and reads no email views', async () => {
+    const t = await tab(emailBrowser());
+    const pending = t.request('hana_login');
+    const run = await popupHello(t);
+    await t.waitEvent('loginProgress');
+    expect(stagesOf(t)).toEqual(['popup_connected']);
+    const google = { v: 1, t: 'hana:auth-progress', stage: 'google' };
+    t.dispatch({ data: google, origin: ENV.authOrigin, source: run.popup });
+    t.dispatch({ data: google, origin: ENV.authOrigin, source: run.popup });
+    await deliverToken(t, g, run);
+    expect((await pending).error).toBeUndefined();
+    expect(stagesOf(t).filter((s) => s === 'google')).toHaveLength(1);
+
+    const u = await tab(emailBrowser());
+    const p2 = u.request('hana_login', { method: 'google' });
+    const run2 = await popupHello(u);
+    await deliverToken(u, g, run2);
+    expect((await p2).error).toBeUndefined();
+    expect(stagesOf(u)).toContain('google');
+    const views = u.browser.backend.rpcCalls.map((c) => c.params.method_name);
+    expect(views).not.toContain('get_issuer_keys');
+    expect(views).not.toContain('get_self_issued');
+  });
+
+  it('a Google-only app reports `google` at connect, as before', async () => {
+    const t = await tab();
+    await login(t, g);
+    expect(stagesOf(t)).toEqual(['popup_connected', 'google', 'token', 'chain', 'done']);
+  });
+});
+
+describe('relay errors and the account root (L2, L6)', () => {
+  it('email_unavailable ends the login with login_method_unavailable; inherited names are Google errors', async () => {
+    for (const [error, code] of [
+      ['email_unavailable', 'login_method_unavailable'],
+      ['__proto__', 'google_error'],
+      ['constructor', 'google_error'],
+    ] as const) {
+      const t = await tab(emailBrowser());
+      const pending = t.request('hana_login');
+      const run = await popupHello(t);
+      await t.browser.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { error });
+      expect((await pending).error?.code, error).toBe(code);
+    }
+  });
+
+  it('a chain session on an account root’s path (a linked identity) is refused: derive_failed, never another key', async () => {
+    const b = emailBrowser();
+    const root = `${SCOPE}#google#${SUB}#0`;
+    b.backend.overrides.set('/v1/login', (call) => {
+      const body = call.body as { sessionPublicKey: number[]; expiresAtMs: number };
+      b.backend.sessions.set(toHex(Uint8Array.from(body.sessionPublicKey)), { path: root, scope_id: SCOPE, expires_at_ms: body.expiresAtMs, max_uses: 1, used: 0 });
+      return new Response(JSON.stringify({ error: 'exists', code: 'session_exists', requestId: 'rq' }), { status: 409 });
+    });
+    const t = await tab(b);
+    expect((await emailLogin(t)).reply.error?.code).toBe('derive_failed');
+    expect(t.browser.backend.count('/v1/derive')).toBe(0);
+  });
+
+  it('a CKD answer for the account root’s path fails the pairing check', async () => {
+    const b = emailBrowser();
+    b.backend.overrides.set('/v1/login', (call) => {
+      const body = call.body as { pk1: string; expiresAtMs: number };
+      const result = mpcAnswer(body.pk1, `${SCOPE}#google#${SUB}#0`);
+      return new Response(JSON.stringify({ result, session: { scope_id: SCOPE, expires_at_ms: body.expiresAtMs, max_uses: 1, used: 1 }, nearTx: 'tx', requestId: 'rq' }), { status: 200 });
+    });
+    const t = await tab(b);
+    expect((await emailLogin(t)).reply.error?.code).toBe('pairing_failed');
+  });
+});
+
+describe('the email step’s deadline', () => {
+  it('ends before the vault’s pending limit, allowing for the popup’s 15 s connect window', () => {
+    expect(EMAIL_STEP_LIMIT_MS).toBe(LOGIN_PENDING_MS - 15_000);
+  });
+});
+

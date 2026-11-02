@@ -244,8 +244,11 @@ Browser steps: `packages/web/src/auth/login-page.ts`, `email-page.ts`, `email-ap
    `POST /v1/email/verify` → the email token, encrypted under `relayKey` into the same relay slot as Google's answer;
    the device ticket goes to `localStorage` under a hash of the address. "Resend code", "Use a different email",
    inline wrong and expired codes, one generic "Too many attempts. Try again later." for every limit. Case B
-   (`googleWallet: true`, no token) offers "Continue with Google": a plain Google login on the same slot, no link.
-   Cancel relays `{error: "email_…"}`, which the vault maps (D245).
+   (`googleWallet: true`, no token) would offer "Continue with Google", a plain Google login on the same slot; it
+   can't happen in 8a (nothing writes `email_hints` before google-match), so an email identity is a separate wallet
+   that can't join a Google account later: only demo and test scopes get email (D248). Cancel relays `{error:
+   "email_…"}`, which the vault maps (D245); a step that can't go on relays `email_unavailable`, and the page stops
+   at the vault's deadline. `/login` and case B post `hana:auth-progress` `google` when the user goes to Google.
 4. The vault takes a JWS-JSON token only in a login that offered email, checks it with `verifyEmailIdToken` (exact
    form, pinned `iss`, `aud`, nonce, time, claim set, RS256 with the chain's active email keys, the signer policy; a
    kid the chain doesn't list is "try again later"), requires the scope's email client on chain to be this scope, and

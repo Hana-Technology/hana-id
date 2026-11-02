@@ -134,6 +134,10 @@ describe('auth origin Worker', () => {
     // A malformed issuer URL is a misconfiguration, never a page with a looser policy.
     const bad = await call(authWorker, authEnv({ EMAIL_ISSUER_URL: 'not a url' }), `${AUTH}/login/email`);
     expect(bad.status).toBe(503);
+    // …and only that page: the chooser and Google's callback keep working.
+    for (const path of ['/login', '/login/callback', '/approve', '/export']) {
+      expect((await call(authWorker, authEnv({ EMAIL_ISSUER_URL: 'not a url' }), `${AUTH}${path}`)).status, path).toBe(200);
+    }
   });
 
   it('HEAD gives the page headers and no body', async () => {

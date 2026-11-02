@@ -392,7 +392,8 @@ export class Vault {
       return;
     }
     if (t === 'hana:auth-progress') {
-      if (this.pending && parseWindowMessage(e.data, ['hana:auth-progress'])) this.pending.acceptProgress(e);
+      const m = this.pending ? parseWindowMessage(e.data, ['hana:auth-progress']) : null;
+      if (m) this.pending?.acceptProgress(e, m.stage);
       return;
     }
     if (t === 'hana:export-hello') {

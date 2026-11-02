@@ -2213,6 +2213,10 @@ any unpinned one.
 
 ## Email login demo on sandbox-dev (batch 8a)
 
+**Only demo and test scopes get email in 8a (D248).** Every email identity opened in 8a is a wallet of its own, and it can never join a Google account later (the contract refuses a link to an identity that already has a wallet: "Sign-in method already has a wallet"). Nothing writes `email_hints` before google-match (batch 8b), so case B never happens in 8a: a Google user who picks email with their Gmail address gets that second wallet. So turn it on only for the demo's scope
+(Hana's own testers), never for a scope with real Google users, until google-match's hint writes or a merge path ship
+(`docs/mainnet-readiness.md` row 7.1g).
+
 What turns plain email login on for **the demo app only**, on top of "Email login on sandbox-dev (build plan batch 6)"
 above (steps 1–9 done: v3, the issuer Worker and its keys on chain). Testnet only; for the user to run. Every other
 app stays Google-only. Nothing here is automated yet (the partner console toggle is batch 9).

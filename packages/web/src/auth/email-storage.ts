@@ -14,6 +14,12 @@ import { RELAY_ID_PATTERN, type LoginMethod, base64UrlDecode, base64UrlEncode, i
 import { LOGIN_ENTRY_MAX_AGE_MS } from './login-storage.ts';
 
 export const EMAIL_ENTRY_PREFIX = 'hana.email.';
+/**
+ * How long /login/email keeps going after /login stored its context: the vault's pending limit (vault/login.ts
+ * LOGIN_PENDING_MS, 5 min from hana_login) less the popup's connect window (the SDK's 15 s), so the page never outlives
+ * the vault's wait. Tested against LOGIN_PENDING_MS.
+ */
+export const EMAIL_STEP_LIMIT_MS = 5 * 60_000 - 15_000;
 export const DEVICE_TICKET_PREFIX = 'hana.dt.';
 /** The issuer's device tickets live 30 days (D198); one older than that is dropped unsent. */
 export const DEVICE_TICKET_MAX_AGE_MS = 30 * 24 * 3_600_000;
@@ -41,10 +47,14 @@ export interface EmailContext {
   /** The Google client, for the case-B "Continue with Google"; null when the app offers no Google. */
   clientId: string | null;
   methods: LoginMethod[];
-  emailHint: string | null;
   /** How /login was opened, so /login/email can tell the vault the code was sent (`hana:auth-progress`). */
   opener: OpenerKind;
   vaultFrame: string | null;
+  /**
+   * The partner's `emailHint`: stored only for the navigation from /login, then dropped from storage by /login/email on
+   * load (kept in its memory).
+   */
+  emailHint: string | null;
   /** The live challenge, once `start` answered (resend and verify need only this). */
   challengeId: string | null;
 }

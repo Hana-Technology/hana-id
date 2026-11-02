@@ -623,10 +623,11 @@ export interface WindowMessageMap {
     emailHint?: string;
   };
   /**
-   * Login popup (`/login/email`) → vault: the code was sent (`loginProgress: email_code`). A progress signal only: it
-   * carries nothing, and the vault takes it only from the window its pending login answered.
+   * Login popup → vault, in a login that offered email: the user went to Google (`google`, from the chooser or case B)
+   * or the code was sent (`email_code`, from `/login/email`). A progress signal only: it carries nothing, and the vault
+   * takes it only from the window its pending login answered.
    */
-  'hana:auth-progress': { stage: 'email_code' };
+  'hana:auth-progress': { stage: 'google' | 'email_code' };
   'hana:approve-hello': Record<string, never>;
   'hana:approve-request': {
     id: string;
@@ -765,7 +766,7 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
     isNonce(m.nonce) &&
     isRelayId(m.relayId) &&
     isBytes(m.relayKey, 32, 32),
-  'hana:auth-progress': (m) => exactKeys(m, ['v', 't', 'stage']) && m.stage === 'email_code',
+  'hana:auth-progress': (m) => exactKeys(m, ['v', 't', 'stage']) && (m.stage === 'email_code' || m.stage === 'google'),
   'hana:approve-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:approve-request': (m) => {
     if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp'])) return false;

@@ -113,11 +113,13 @@ export const isOwnLoginPath = (path: string, scopeId: string): boolean => path.s
  * What /login/email relays as `{error}` when the user cancels the email step (D245), and the code the login ends with.
  * Google's own error codes (OAuth's) never start with `email_`.
  */
-export const EMAIL_RELAY_ERRORS: Readonly<Record<string, 'login_cancelled' | 'code_invalid' | 'challenge_expired' | 'rate_limited'>> = Object.freeze({
+export const EMAIL_RELAY_ERRORS: Readonly<Record<string, 'login_cancelled' | 'code_invalid' | 'challenge_expired' | 'rate_limited' | 'login_method_unavailable'>> = Object.freeze({
   email_cancelled: 'login_cancelled',
   email_code_invalid: 'code_invalid',
   email_challenge_expired: 'challenge_expired',
   email_rate_limited: 'rate_limited',
+  /** The step can't go on here (email unavailable for the app or this env, case B without Google). */
+  email_unavailable: 'login_method_unavailable',
 });
 
 export interface LoginContext {
@@ -224,6 +226,8 @@ export class PendingLogin {
   private helloSource: unknown = null;
   /** Email is offered in this login (set once the app config is read). */
   private emailOffered = false;
+  /** The popup's progress stages already reported (each once). */
+  private readonly progressed = new Set<string>();
   /** When the vault took the hana_login request (perfNow), for the `vault` total. */
   readonly startedAt: number;
 
@@ -301,10 +305,12 @@ export class PendingLogin {
    * after its hello was answered, from authOrigin and from that same window (a navigation keeps the window). Only a
    * progress event follows; nothing else depends on it.
    */
-  acceptProgress(e: WindowMessageEvent): boolean {
+  acceptProgress(e: WindowMessageEvent, stage: 'google' | 'email_code'): boolean {
     if (this.abortError || !this.helloAccepted || !this.emailOffered) return false;
     if (e.origin !== this.ctx.env.authOrigin || !e.source || e.source !== this.helloSource) return false;
-    this.ctx.progress('email_code');
+    if (this.progressed.has(stage)) return false;
+    this.progressed.add(stage);
+    this.ctx.progress(stage);
     return true;
   }
 
@@ -348,7 +354,9 @@ export class PendingLogin {
       () => ({ problem: 'unchecked' as const, ms: ctx.perfNow() - scopeStarted }),
     );
     // Email: the scope's email client and the on-chain email keys and policy, read while the user types the code.
-    const emailChain: Promise<EmailChain | 'unchecked'> | null = emailOn ? this.readEmailChain(emailAud).catch(() => 'unchecked' as const) : null;
+    // Not for `method: 'google'`: that popup never takes the email path.
+    const emailChain: Promise<EmailChain | 'unchecked'> | null =
+      emailOn && this.request.method !== 'google' ? this.readEmailChain(emailAud).catch(() => 'unchecked' as const) : null;
 
     const sessionKey = await newSessionKey();
     this.check();
@@ -393,7 +401,9 @@ export class PendingLogin {
       this.check();
       this.dropSecrets();
       ctx.progress('popup_connected');
-      ctx.progress('google');
+      // With email offered the user may not go to Google: the popup says so itself (hana:auth-progress), except for
+      // `method: 'google'`, which goes straight there.
+      if (!emailOn || this.request.method === 'google') ctx.progress('google');
       mark('popup');
 
       // Step 7: the token, through the relay.
@@ -557,9 +567,10 @@ export class PendingLogin {
       this.check();
       if ('error' in payload) {
         // The email step's cancel (D245), only in a login that offered email; anything else is Google's answer.
-        const email = this.emailOffered ? EMAIL_RELAY_ERRORS[payload.error] : undefined;
+        const email = this.emailOffered && Object.hasOwn(EMAIL_RELAY_ERRORS, payload.error) ? EMAIL_RELAY_ERRORS[payload.error] : undefined;
         if (email === 'login_cancelled') throw fail('login_cancelled', 'The sign-in was cancelled');
         if (email === 'rate_limited') throw fail('rate_limited', 'Too many attempts, try again later');
+        if (email === 'login_method_unavailable') throw fail('login_method_unavailable', 'Email sign-in is not available for this app');
         if (email) throw fail(email, email === 'code_invalid' ? 'The sign-in code was wrong' : 'The sign-in code expired');
         throw fail('google_error', 'Google returned an error', { error: payload.error });
       }

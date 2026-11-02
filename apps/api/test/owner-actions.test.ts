@@ -2,26 +2,29 @@ import { runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  CANCEL_GLOBAL_LIMITER,
-  CANCELS_GLOBAL_MINUTE,
-  CANCELS_GLOBAL_DAY,
-  CANCELS_PER_OWNER_DAY,
-  CANCELS_PER_OWNER_MINUTE,
-  CANCELS_PER_SCOPE_DAY,
-  CANCELS_PER_SCOPE_MINUTE,
   CONTRACT_MAX_OWNERS,
   CONTRACT_MAX_PENDING,
   EXECUTES_PER_SCOPE_MINUTE,
-  cancelScopeLimiterKey,
   executeLimiterKey,
+  forgetCapEvents,
   OWNER_ACTIONS_GLOBAL_MINUTE,
   OWNER_ACTIONS_PER_IP_MINUTE,
   OWNER_ACTIONS_PER_OWNER_MINUTE,
+  OWNER_ACTIONS_PER_SCOPE_DAY,
   OWNER_ACTIONS_PER_SCOPE_MINUTE,
   ownerActionWindows,
   ownerLimiterKey,
+  SAFETY_GLOBAL_DAY,
+  SAFETY_GLOBAL_LIMITER,
+  SAFETY_GLOBAL_MINUTE,
+  SAFETY_PER_OWNER_DAY,
+  SAFETY_PER_OWNER_MINUTE,
+  SAFETY_PER_SCOPE_DAY,
+  SAFETY_PER_SCOPE_MINUTE,
+  safetyScopeLimiterKey,
   scopeLimiterKey,
 } from '../src/handlers.ts';
+import { clientProofNonce, ownerActionNonce } from '@hana-id/console-core';
 import { clearJwksCache } from '@hana-id/oidc';
 import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { GOVERNANCE_METHODS, UPDATER_METHODS, parseRelayerKeys } from '../src/relayer-config.ts';
@@ -53,30 +56,75 @@ const SCOPES = ['s1', 's2', 's3'];
 /** Every owner-action cap these tests touch: global, per scope, per owner identity. */
 const ownerLimiters = async (): Promise<string[]> => [
   'owner-actions:global',
-  CANCEL_GLOBAL_LIMITER,
+  SAFETY_GLOBAL_LIMITER,
   ...SCOPES.map(scopeLimiterKey),
   ...SCOPES.map(executeLimiterKey),
-  ...SCOPES.map(cancelScopeLimiterKey),
+  ...SCOPES.map(safetyScopeLimiterKey),
   ...(await Promise.all([OWNER_SUB, OTHER_OWNER_SUB].map((sub) => ownerLimiterKey({ provider: 'google', sub })))),
 ];
 
 beforeEach(async () => {
   clearJwksCache();
   clearViewCaches();
+  forgetCapEvents();
   await clearLimiters(await ownerLimiters());
 });
 afterEach(() => vi.restoreAllMocks());
 
 const exp = (): number => Math.floor(Date.now() / 1000) + 3600;
-/** A genuine console token of the scope owner (fresh each time: a token is only relayed once). */
+/** A genuine console token of the scope owner (fresh each time: a token is only relayed once), with any nonce. */
 const ownerJwt = (claims: Record<string, unknown> = {}): Promise<string> =>
   google.sign({ iss: GOOGLE, aud: CONSOLE, sub: OWNER_SUB, nonce: `n${seq++}`, exp: exp(), ...claims });
-const oidc = async (claims: Record<string, unknown> = {}): Promise<{ Oidc: { jwt: string } }> => ({ Oidc: { jwt: await ownerJwt(claims) } });
-const clientProof = (claims: Record<string, unknown> = {}): Promise<string> => google.sign({ iss: GOOGLE, aud: NEW_CLIENT, sub: OWNER_SUB, nonce: `p${seq++}`, exp: exp(), ...claims });
+
+/**
+ * A token signed when its body is first posted (materialize), with the nonce the precheck expects: the owner-action
+ * nonce of exactly that body at the mock scope's action_nonce, or for a client proof the scope's client-proof nonce.
+ * A `nonce` in `claims` overrides it. Once signed it stays (the body object is updated in place), so posting the same
+ * body twice replays the same token.
+ */
+class Later {
+  constructor(
+    readonly claims: Record<string, unknown>,
+    readonly kind: 'owner' | 'proof',
+  ) {}
+}
+const oidc = async (claims: Record<string, unknown> = {}): Promise<{ Oidc: { jwt: string } }> => ({ Oidc: { jwt: new Later(claims, 'owner') as unknown as string } });
+const clientProof = async (claims: Record<string, unknown> = {}): Promise<string> => new Later(claims, 'proof') as unknown as string;
+
+/** The mock of the running test (near()), whose scopes give the action_nonce the tokens commit to. */
+let current: (NearMock & { scopes: Record<string, unknown> }) | null = null;
+const actionNonceOf = (scopeId: unknown): number => ((current?.scopes[scopeId as string] as { action_nonce?: number } | undefined)?.action_nonce ?? 0);
+
+async function materialize(body: unknown): Promise<void> {
+  const args = (body as { args?: Record<string, unknown> } | null)?.args;
+  if (!args || typeof args !== 'object') return;
+  const n = actionNonceOf(args.scope_id);
+  if (args.client_proof instanceof Later) {
+    const l = args.client_proof;
+    const nonce = await clientProofNonce({ signer: env.SIGNER_ACCOUNT, scopeId: args.scope_id as string, actionNonce: n });
+    args.client_proof = await google.sign({ iss: GOOGLE, aud: NEW_CLIENT, sub: OWNER_SUB, nonce, exp: exp(), jti: `p${seq++}`, ...l.claims });
+  }
+  const auth = (args.auth as { Oidc?: { jwt?: unknown } } | undefined)?.Oidc;
+  if (auth && auth.jwt instanceof Later) {
+    const l = auth.jwt;
+    const method = (body as { method: string }).method;
+    let nonce: string;
+    try {
+      nonce = await ownerActionNonce({ signer: env.SIGNER_ACCOUNT, method, args, actionNonce: n });
+    } catch {
+      nonce = `unencodable-${seq++}`;
+    }
+    // A distinct jti: two tokens for the same action are still two tokens (a replay test reposts the same body).
+    auth.jwt = await google.sign({ iss: GOOGLE, aud: CONSOLE, sub: OWNER_SUB, nonce, exp: exp(), jti: `n${seq++}`, ...l.claims });
+  }
+}
 
 let ipSeq = 1;
 const ip = (): string => `203.0.113.${ipSeq++ % 250}`;
-const post = (body: unknown, from = ip()): Promise<Response> => call('/v1/owner-actions', { body, headers: { 'cf-connecting-ip': from } });
+const post = async (body: unknown, from = ip()): Promise<Response> => {
+  await materialize(body);
+  return call('/v1/owner-actions', { body, headers: { 'cf-connecting-ip': from } });
+};
 
 const NOW = Date.now();
 function scope(): Record<string, unknown> {
@@ -111,6 +159,7 @@ function near(): NearMock & { scopes: Record<string, unknown> } {
   n.views.get_scope = (a) => n.scopes[a.scope_id as string] ?? null;
   n.contract.propose_change = () => 7;
   n.install();
+  current = n;
   return n;
 }
 
@@ -476,13 +525,18 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   });
 
   it(`caps relayed owner actions globally (${OWNER_ACTIONS_GLOBAL_MINUTE} per minute) across scopes`, async () => {
+    // 21 relays must land in one minute window, even on a loaded machine: move the clock a second into the next
+    // minute (forward, so the fixture's unlock times stay in the past and every window starts empty).
+    const real = Date.now.bind(Date);
+    const ahead = 61_000 - (real() % 60_000);
+    vi.spyOn(Date, 'now').mockImplementation(() => real() + ahead);
     const n = near();
     await fill('s1', EXECUTES_PER_SCOPE_MINUTE);
     await fill('s2', OWNER_ACTIONS_GLOBAL_MINUTE - EXECUTES_PER_SCOPE_MINUTE, 50);
     const over = await execute('s3', 120);
     expect([over.status, (await json(over)).error]).toEqual([429, 'Rate limit exceeded (owner actions per minute)']);
     expect(n.sent).toHaveLength(OWNER_ACTIONS_GLOBAL_MINUTE);
-  });
+  }, 20_000);
 
   it('a request a later window refuses is taken back from the earlier ones (a refusal costs no window)', async () => {
     near();
@@ -509,57 +563,57 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
     expect((await execute('s1', 200)).status).toBe(429);
     // The honest owner can still cancel, up to its own small allowance.
     const cancels: number[] = [];
-    for (let i = 0; i < CANCELS_PER_OWNER_MINUTE + 1; i++) cancels.push((await cancel()).status);
-    expect(cancels).toEqual([...Array(CANCELS_PER_OWNER_MINUTE).fill(200), 429]);
-    expect((await json(await cancel())).error).toBe('Rate limit exceeded (cancels per owner per minute)');
+    for (let i = 0; i < SAFETY_PER_OWNER_MINUTE + 1; i++) cancels.push((await cancel()).status);
+    expect(cancels).toEqual([...Array(SAFETY_PER_OWNER_MINUTE).fill(200), 429]);
+    expect((await json(await cancel())).error).toBe('Rate limit exceeded (safety actions per owner per minute)');
     // One owner using up its cancels leaves every other owner's untouched.
     expect((await cancel(OTHER_OWNER_SUB)).status).toBe(200);
-    expect(n.sent.filter((t) => t.method === 'cancel_change')).toHaveLength(CANCELS_PER_OWNER_MINUTE + 1);
+    expect(n.sent.filter((t) => t.method === 'cancel_change')).toHaveLength(SAFETY_PER_OWNER_MINUTE + 1);
   });
 
-  it(`cancels have a high global ceiling of their own (${CANCELS_GLOBAL_MINUTE}/min); a refused cancel keeps the owner's and scope's allowance`, async () => {
+  it(`cancels have a high global ceiling of their own (${SAFETY_GLOBAL_MINUTE}/min); a refused cancel keeps the owner's and scope's allowance`, async () => {
     near();
-    await exhaust(CANCEL_GLOBAL_LIMITER, CANCELS_GLOBAL_MINUTE);
+    await exhaust(SAFETY_GLOBAL_LIMITER, SAFETY_GLOBAL_MINUTE);
     const refused = await cancel();
-    expect([refused.status, (await json(refused)).error]).toEqual([429, 'Rate limit exceeded (cancels per minute)']);
-    expect(await countIn(await ownerLimiterKey({ provider: 'google', sub: OWNER_SUB }), 'cancel:minute')).toBe(0);
-    expect(await countIn(cancelScopeLimiterKey('s1'), 'minute')).toBe(0);
+    expect([refused.status, (await json(refused)).error]).toEqual([429, 'Rate limit exceeded (safety actions per minute)']);
+    expect(await countIn(await ownerLimiterKey({ provider: 'google', sub: OWNER_SUB }), 'safety:minute')).toBe(0);
+    expect(await countIn(safetyScopeLimiterKey('s1'), 'minute')).toBe(0);
     // The shared owner-action ceiling is a different object: filling one never fills the other.
     expect(await countIn('owner-actions:global', 'minute')).toBe(0);
   });
 
   it('the cancel ceilings are sized from the contract: per scope = every owner at its cap, global needs ≥ 20 identities', () => {
-    expect(CANCELS_PER_SCOPE_MINUTE).toBe(CONTRACT_MAX_OWNERS * CANCELS_PER_OWNER_MINUTE);
-    expect(CANCELS_PER_SCOPE_DAY).toBe(CONTRACT_MAX_OWNERS * CANCELS_PER_OWNER_DAY);
+    expect(SAFETY_PER_SCOPE_MINUTE).toBe(CONTRACT_MAX_OWNERS * SAFETY_PER_OWNER_MINUTE);
+    expect(SAFETY_PER_SCOPE_DAY).toBe(CONTRACT_MAX_OWNERS * SAFETY_PER_OWNER_DAY);
     // Identities at their own cap needed to fill the global ceiling, and the scopes they need (≤ MAX_OWNERS each).
-    expect(CANCELS_GLOBAL_MINUTE / CANCELS_PER_OWNER_MINUTE).toBeGreaterThanOrEqual(4 * CONTRACT_MAX_OWNERS);
-    expect(CANCELS_GLOBAL_DAY / CANCELS_PER_OWNER_DAY).toBeGreaterThanOrEqual(10 * CONTRACT_MAX_OWNERS);
+    expect(SAFETY_GLOBAL_MINUTE / SAFETY_PER_OWNER_MINUTE).toBeGreaterThanOrEqual(4 * CONTRACT_MAX_OWNERS);
+    expect(SAFETY_GLOBAL_DAY / SAFETY_PER_OWNER_DAY).toBeGreaterThanOrEqual(10 * CONTRACT_MAX_OWNERS);
     // More cancellable changes than ≥ 100 scopes hold at once.
-    expect(CANCELS_GLOBAL_DAY).toBeGreaterThanOrEqual(100 * CONTRACT_MAX_PENDING);
+    expect(SAFETY_GLOBAL_DAY).toBeGreaterThanOrEqual(100 * CONTRACT_MAX_PENDING);
   });
 
-  it(`a scope's cancel window (${CANCELS_PER_SCOPE_MINUTE}/min) is filled only by that scope's owners, and never by fewer than all of them`, async () => {
+  it(`a scope's cancel window (${SAFETY_PER_SCOPE_MINUTE}/min) is filled only by that scope's owners, and never by fewer than all of them`, async () => {
     const n = near();
     const coOwners = ['81', '82', '83', '84']; // with OWNER_SUB: the contract's MAX_OWNERS
     await clearLimiters([...(await Promise.all([...coOwners, 'mallory'].map((sub) => ownerLimiterKey({ provider: 'google', sub }))))]);
     (n.scopes.s1 as { owners: unknown[] }).owners = [{ Oidc: { provider: 'google', sub: OWNER_SUB } }, ...coOwners.map((sub) => ({ Oidc: { provider: 'google', sub } }))];
     (n.scopes.s2 as { owners: unknown[] }).owners = [{ Oidc: { provider: 'google', sub: OTHER_OWNER_SUB } }];
     // An owner of another scope cancels at its full allowance there: s1's cancel window is untouched.
-    for (let i = 0; i < CANCELS_PER_OWNER_MINUTE; i++) expect((await post({ method: 'cancel_change', args: { scope_id: 's2', auth: await oidc({ sub: OTHER_OWNER_SUB }), change_id: 5 } })).status).toBe(200);
-    expect(await countIn(cancelScopeLimiterKey('s1'), 'minute')).toBe(0);
+    for (let i = 0; i < SAFETY_PER_OWNER_MINUTE; i++) expect((await post({ method: 'cancel_change', args: { scope_id: 's2', auth: await oidc({ sub: OTHER_OWNER_SUB }), change_id: 5 } })).status).toBe(200);
+    expect(await countIn(safetyScopeLimiterKey('s1'), 'minute')).toBe(0);
     // A non-owner's cancel is refused by the owner check before any window counts it.
     expect((await cancel('mallory')).status).toBe(403);
-    expect(await countIn(cancelScopeLimiterKey('s1'), 'minute')).toBe(0);
-    expect(await countIn(await ownerLimiterKey({ provider: 'google', sub: 'mallory' }), 'cancel:minute')).toBe(0);
+    expect(await countIn(safetyScopeLimiterKey('s1'), 'minute')).toBe(0);
+    expect(await countIn(await ownerLimiterKey({ provider: 'google', sub: 'mallory' }), 'safety:minute')).toBe(0);
     // Four malicious co-owners at their own caps leave the honest owner room.
-    for (const sub of coOwners) for (let i = 0; i < CANCELS_PER_OWNER_MINUTE; i++) expect((await cancel(sub)).status).toBe(200);
+    for (const sub of coOwners) for (let i = 0; i < SAFETY_PER_OWNER_MINUTE; i++) expect((await cancel(sub)).status).toBe(200);
     expect((await cancel()).status).toBe(200);
-    expect(await countIn(cancelScopeLimiterKey('s1'), 'minute')).toBe(coOwners.length * CANCELS_PER_OWNER_MINUTE + 1);
+    expect(await countIn(safetyScopeLimiterKey('s1'), 'minute')).toBe(coOwners.length * SAFETY_PER_OWNER_MINUTE + 1);
     // A full scope window refuses that scope's cancels only.
-    await clearLimiters([cancelScopeLimiterKey('s1'), await ownerLimiterKey({ provider: 'google', sub: OWNER_SUB })]);
-    await exhaust(cancelScopeLimiterKey('s1'), CANCELS_PER_SCOPE_MINUTE);
-    expect((await json(await cancel())).error).toBe('Rate limit exceeded (cancels per scope per minute)');
-    expect(await countIn(await ownerLimiterKey({ provider: 'google', sub: OWNER_SUB }), 'cancel:minute')).toBe(0);
+    await clearLimiters([safetyScopeLimiterKey('s1'), await ownerLimiterKey({ provider: 'google', sub: OWNER_SUB })]);
+    await exhaust(safetyScopeLimiterKey('s1'), SAFETY_PER_SCOPE_MINUTE);
+    expect((await json(await cancel())).error).toBe('Rate limit exceeded (safety actions per scope per minute)');
+    expect(await countIn(await ownerLimiterKey({ provider: 'google', sub: OWNER_SUB }), 'safety:minute')).toBe(0);
     await clearLimiters(await Promise.all(coOwners.map((sub) => ownerLimiterKey({ provider: 'google', sub }))));
   });
 
@@ -570,12 +624,108 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
     expect(propose[0]!.subject).toMatch(/^owner-actions:owner:[0-9a-f]{64}$/u);
     expect((await ownerActionWindows('execute_change', { scopeId: 's1', owner: null }))!.map((w) => w.subject)).toEqual(['owner-actions:execute:s1', 'owner-actions:global']);
     const cancelWindows = (await ownerActionWindows('cancel_change', { scopeId: 's1', owner }))!;
-    expect(cancelWindows.map((w) => w.subject)).toEqual([await ownerLimiterKey(owner), 'owner-actions:cancel:s1', CANCEL_GLOBAL_LIMITER]);
-    expect(cancelWindows[0]!.limits).toEqual([expect.objectContaining({ name: 'cancel:minute', max: CANCELS_PER_OWNER_MINUTE }), expect.objectContaining({ name: 'cancel:day' })]);
+    expect(cancelWindows.map((w) => w.subject)).toEqual([await ownerLimiterKey(owner), 'owner-actions:safety:s1', SAFETY_GLOBAL_LIMITER]);
+    expect(cancelWindows[0]!.limits).toEqual([expect.objectContaining({ name: 'safety:minute', max: SAFETY_PER_OWNER_MINUTE }), expect.objectContaining({ name: 'safety:day' })]);
     for (const method of ['cancel_change', 'propose_change', 'remove_client', 'disable_shared_login']) {
       expect(await ownerActionWindows(method, { scopeId: 's1', owner: null }), method).toBeNull();
     }
     for (const w of [...propose, ...cancelWindows]) expect(w.subject).not.toContain(owner.sub);
+  });
+
+  it('the safety budget also covers remove_client and disable_shared_login; propose_change keeps the general windows', async () => {
+    const owner = { provider: 'google', sub: OWNER_SUB };
+    for (const method of ['remove_client', 'disable_shared_login']) {
+      const w = (await ownerActionWindows(method, { scopeId: 's1', owner }))!;
+      expect(w.map((x) => x.subject), method).toEqual([await ownerLimiterKey(owner), safetyScopeLimiterKey('s1'), SAFETY_GLOBAL_LIMITER]);
+    }
+    expect((await ownerActionWindows('propose_change', { scopeId: 's1', owner }))!.map((x) => x.subject)).toEqual([await ownerLimiterKey(owner), scopeLimiterKey('s1'), 'owner-actions:global']);
+    // A proposal flood that filled every general window leaves a client removal and a shared-login disable possible.
+    const n = near();
+    (n.scopes.s1 as Record<string, unknown>).allow_shared = true;
+    await exhaust('owner-actions:global', OWNER_ACTIONS_GLOBAL_MINUTE);
+    await exhaust(scopeLimiterKey('s1'), OWNER_ACTIONS_PER_SCOPE_MINUTE);
+    expect((await post(await setOwners())).status).toBe(429);
+    expect((await post({ method: 'remove_client', args: { scope_id: 's1', auth: await oidc(), provider: 'google', aud: 'old.apps.googleusercontent.com' } })).status).toBe(200);
+    expect((await post({ method: 'disable_shared_login', args: { scope_id: 's1', auth: await oidc() } })).status).toBe(200);
+    expect(n.sent.map((t) => t.method)).toEqual(['remove_client', 'disable_shared_login']);
+  });
+
+  it(`caps owner actions per scope at ${OWNER_ACTIONS_PER_SCOPE_DAY} a UTC day (the spec's cap)`, async () => {
+    near();
+    expect(OWNER_ACTIONS_PER_SCOPE_DAY).toBe(20);
+    const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(scopeLimiterKey('s1')));
+    for (let i = 0; i < OWNER_ACTIONS_PER_SCOPE_DAY; i++) expect((await stub.hit([{ name: 'day', windowMs: 24 * 60 * 60_000, max: OWNER_ACTIONS_PER_SCOPE_DAY }])).ok).toBe(true);
+    const refused = await post(await setOwners());
+    expect([refused.status, (await json(refused)).error]).toEqual([429, 'Rate limit exceeded (owner actions per scope per day)']);
+  });
+
+  it('reaching a cap writes one owner_cap security event per window, with the scope and its org, and no owner identity', async () => {
+    near();
+    await env.DB.prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES ('s3', 'org_cap_test', 'test', NULL, 0, 0)").run();
+    await env.DB.prepare("DELETE FROM security_events WHERE kind = 'owner_cap'").run();
+    await exhaust(scopeLimiterKey('s3'), OWNER_ACTIONS_PER_SCOPE_MINUTE);
+    const body = async () => ({ method: 'propose_change', args: { scope_id: 's3', auth: await oidc(), change: { SetOwners: { owners: [{ Oidc: { provider: 'google', sub: OWNER_SUB } }] } } } });
+    for (let i = 0; i < 3; i++) expect((await post(await body())).status).toBe(429);
+    forgetCapEvents(); // another isolate: the deterministic id still dedups in D1
+    expect((await post(await body())).status).toBe(429);
+    const events = (await env.DB.prepare("SELECT * FROM security_events WHERE kind = 'owner_cap'").all<Record<string, unknown>>()).results;
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ org_id: 'org_cap_test', scope_id: 's3', app_id: null, notified_at: null });
+    expect(JSON.parse(events[0]!.detail_json as string)).toMatchObject({ method: 'propose_change', window: 'owner actions per scope', limit: 'minute', max: OWNER_ACTIONS_PER_SCOPE_MINUTE });
+    expect(JSON.stringify(events)).not.toContain(OWNER_SUB);
+    // A safety window's refusal is its own event.
+    await exhaust(SAFETY_GLOBAL_LIMITER, SAFETY_GLOBAL_MINUTE);
+    expect((await cancel()).status).toBe(429);
+    const kinds = (await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'owner_cap'").all<{ detail_json: string }>()).results.map((r) => JSON.parse(r.detail_json).window);
+    expect(kinds.sort()).toEqual(['owner actions per scope', 'safety actions']);
+  });
+
+  it('owner_nonce_mismatch: a token for another action, or for an action_nonce that moved since, is refused before any reservation (uncached re-read)', async () => {
+    const n = near();
+    // Signed for change 5 but sent for change 3 (the args it commits to differ).
+    const wrongArgs = { method: 'cancel_change', args: { scope_id: 's1', auth: await oidc(), change_id: 5 } };
+    await materialize(wrongArgs);
+    wrongArgs.args.change_id = 3;
+    const r1 = await post(wrongArgs);
+    expect([r1.status, (await json(r1)).code]).toEqual([409, 'owner_nonce_mismatch']);
+    // Signed at action_nonce 6; the scope moved to 7 since. The cached view (warmed by the refusal above) still says 6:
+    // the precheck reads the scope uncached.
+    const body = { method: 'cancel_change', args: { scope_id: 's1', auth: await oidc(), change_id: 5 } };
+    await materialize(body);
+    (n.scopes.s1 as Record<string, unknown>).action_nonce = 7;
+    const r2 = await post(body);
+    const b2 = await json(r2);
+    expect([r2.status, b2.code]).toEqual([409, 'owner_nonce_mismatch']);
+    expect(b2.error).toContain('action_nonce 7');
+    expect(n.sent).toHaveLength(0);
+    // Nothing was reserved or counted: back at 6, the same token is relayed.
+    expect(await countIn(await ownerLimiterKey({ provider: 'google', sub: OWNER_SUB }), 'safety:minute')).toBe(0);
+    (n.scopes.s1 as Record<string, unknown>).action_nonce = 6;
+    expect((await post(body)).status).toBe(200);
+    // A nonce from another method with the same arguments (the contract's own example) is refused too.
+    const other = { method: 'cancel_change', args: { scope_id: 's1', auth: await oidc({ nonce: await ownerActionNonce({ signer: env.SIGNER_ACCOUNT, method: 'disable_shared_login', args: { scope_id: 's1' }, actionNonce: 6 }) }), change_id: 5 } };
+    expect((await json(await post(other))).code).toBe('owner_nonce_mismatch');
+    // A view without an action_nonce fails closed.
+    delete (n.scopes.s1 as Record<string, unknown>).action_nonce;
+    const noNonce = await post({ method: 'cancel_change', args: { scope_id: 's1', auth: await oidc({ nonce: 'x' }), change_id: 5 } });
+    expect([noNonce.status, (await json(noNonce)).code]).toEqual([502, 'near_unavailable']);
+    expect(n.sent).toHaveLength(1);
+  });
+
+  it('propose_change AddClient: a client proof whose nonce is not the scope’s client-proof nonce is invalid_client_proof', async () => {
+    const n = near();
+    const change = { AddClient: { provider: 'google', aud: NEW_CLIENT } };
+    // A genuine proof for the client, minted for another scope's (or an older) client-proof nonce.
+    const stale = await clientProofNonce({ signer: env.SIGNER_ACCOUNT, scopeId: 's1', actionNonce: 5 });
+    const res = await post({ method: 'propose_change', args: { scope_id: 's1', auth: await oidc(), change, client_proof: await clientProof({ nonce: stale }) } });
+    const b = await json(res);
+    expect([res.status, b.code]).toEqual([400, 'invalid_client_proof']);
+    expect(b.error).toContain('action_nonce 6');
+    const otherScope = await clientProofNonce({ signer: env.SIGNER_ACCOUNT, scopeId: 's2', actionNonce: 6 });
+    expect((await json(await post({ method: 'propose_change', args: { scope_id: 's1', auth: await oidc(), change, client_proof: await clientProof({ nonce: otherScope }) } }))).code).toBe('invalid_client_proof');
+    expect(n.sent).toHaveLength(0);
+    // The right nonce passes.
+    expect((await post({ method: 'propose_change', args: { scope_id: 's1', auth: await oidc(), change, client_proof: await clientProof() } })).status).toBe(200);
   });
 
   it('fails closed when the issuer keys or the registry cannot be read', async () => {

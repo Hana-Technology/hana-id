@@ -6,7 +6,7 @@ Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 and D150–
 D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-login-3`) on 2026-11-02; D159's `+tag`
 change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 (branch `feat/email-login-5`) and D200 (branches
 `feat/link-cap`, `feat/email-login-5`) on 2026-11-02; D201–D203 (branch `feat/batch-c-2`) on 2026-11-02; D205–D209
-(branch `feat/batch-c-3`, to confirm) on 2026-11-02. D215–D219 (branch `feat/identity-token-7`, to confirm) on
+(branch `feat/batch-c-3`, to confirm) on 2026-11-02. D235–D239 (branch `feat/batch-c-6`, to confirm) on 2026-11-02. D215–D219 (branch `feat/identity-token-7`, to confirm) on
 2026-11-02. D210–D214 (branch `feat/identity-token-8`, to confirm, amended after its review the same
 day) on 2026-11-02. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
 provider note, two "Superseded or amended" rows, the user-mail line under "Proposed", and the headings from D125 on, checked against `develop` @ 1c6a124 and what sandbox-dev runs (`docs/operations.md`) on
@@ -1086,8 +1086,9 @@ answered question there points here.
   relay requests to the popup (the popup would have to trust the partner page).
 
 ### D100. Security sweep fixes (API, operator tooling, CI): quotas after verification, owner-action caps per owner and scope, CKD key from three providers
-- Date 2026-10-29 · Status: in force (branch `fix/sweep-api`); the second code owner `@mj-hana` is in `.github/CODEOWNERS`
-  on every owned path since 2026-10-30 · Source: security sweep 2026-10-29 (OPER-1, APIW-1,
+- Date 2026-10-29 · Status: in force (branch `fix/sweep-api`); the owner-action caps amended by D236 (batch C6: the
+  per-scope day cap 20, `remove_client` and `disable_shared_login` on the cancel windows, the nonce recomputed off
+  chain); the second code owner `@mj-hana` is in `.github/CODEOWNERS` on every owned path since 2026-10-30 · Source: security sweep 2026-10-29 (OPER-1, APIW-1,
   APIW-3, OPER-2, OPER-3, APIW-4, APIV-3, APIV-7, OPER-5, OPER-6, OPER-11; `docs/security.md` "Security sweep
   2026-10-29"); owner answers of the same day; amends D58
 - Decision:
@@ -1734,6 +1735,132 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   - **App names** follow console-core `normaliseAppName`: NFC, trimmed, 1–64 code points, and
     `@hana-id/core` `isDisplaySafeLine`'s rule. It is copied, because the Worker can't typecheck core's root entry; a
     test compares the two on every code point.
+
+## Batch C6: owner-verified changes, owner actions, the console sink scope (2026-11-02)
+
+Readings made while building `docs/batch-c-build-plan.md` C6 on `feat/batch-c-6`, where `docs/batch-c-spec.md` left a
+detail open or a safer reading was needed. Each follows the spec's intent; all five are **to confirm** by the user.
+
+### D235. The API's step-up check for member proposals: order, codes, and what it adds to the spec's six steps
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/changes/step-up.ts`, `changes/origins.ts`
+  `changeOrigins`, `changes/settings.ts` `proposeSettingByMember`, `changes/lifecycle.ts` `noSessionWaiver`,
+  `changes/drift.ts`, `scripts/lib/admin-sql.ts`) · Source: spec "API verification", "Waivers", "Lifecycle"
+- Decision:
+  - **Order.** Steps 1–3 (signature, console audience, `iat`) run before the plan read; then the plan read (a replayed
+    `requestId` is `already_applied` before the token is touched; a moved version `version_conflict`) and every input
+    and state check (origin rules, duplicates, the 20-origin cap, the policy, raw signing on a test app); then step 4
+    (the nonce over the stored version), step 5 (owner, `get_scope` uncached) and step 6 (the reservation), last, so a
+    refusal never uses the token up. A batch that then writes nothing (a race, a D1 error) gives the token back.
+  - **Codes.** Steps 1–4 `forbidden`, 5 `not_owner`, 6 `token_used`; NEAR RPC or Google's JWKS unreachable
+    `near_unavailable` (RpcCode has no other "upstream down, retry" code; the BFF answers 503).
+  - **Added checks.** The token's `sub` must equal the member actor's (the console's callback already requires it;
+    a mismatch is a console bug or compromise). `iat` must be present and at most 60 s ahead. A token carrying
+    `email`, `email_verified` or `hd` is refused (the step-up asks for `scope=openid`), with the optional claims
+    checked strictly (D201). The console audiences are read with a fresh `get_config`, not the 60 s cache, so an
+    audience the owner just dropped stops counting at once. The reservation shares `owner-actions:tokens` with
+    `/v1/owner-actions`: one token, one use, anywhere.
+  - **`changeOrigins` writes one ledger row**, `origin.proposed`, with the adds (`changes`) and the removes
+    (`removed`, each with `wasInForce`): `app_changes.request_id` is unique, so one request can't have two rows. Drift
+    detection reads a baseline origin as ended by such a row as by `origin.removed`.
+  - **The `no_session` waiver stays fail-closed for member proposals that remove origins.** A remove sent with an
+    add deletes the row of an origin that was in force; with only the row checks, a baseline origin (or any row
+    without a `guarded_changes` row) would vanish from the waiver's view in the same request. The waiver (API and
+    CLI, still one rule) now also refuses when any ledger row of the scope's apps records an origin removed while in
+    force (`origin.removed`, or the `removed` of an `origin.proposed`). `proposer_sub` is written only after this
+    verification, never by another path.
+  - Member proposals are not held back by the scope-assignment wait (staff-only per the spec); `changeOrigins` isn't
+    counted by the breaker (nothing applies without an on-chain owner's token for exactly that change); the removes
+    count in the 20-origin check. `request_country` stays NULL (the RPC context carries no country).
+- Rejected: verifying the whole token after the plan read (a replay would then need a valid token to get
+  `already_applied`); a distinct RpcCode for a wrong nonce (the spec's list has none; `forbidden` with the reason).
+
+### D236. Owner actions: the precheck's nonce, and the caps reconciled with D100
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/owner-actions.ts`, `handlers.ts` `ownerActionWindows`,
+  `ownerCapEvent`, `owner-pool.ts`, `@hana-id/console-core` `owner-actions.ts`) · Source: spec "On-chain owner
+  actions" (Limits, Allowance alert), D93 Q23, D100
+- Decision:
+  - **Nonce.** The precheck reads the scope with an uncached `get_scope`, then, after the owner check and before the
+    method's checks, recomputes `owner_action_nonce` from the body at the scope's `action_nonce` (`409
+    owner_nonce_mismatch`) and, for AddClient, the client-proof nonce (`400 invalid_client_proof`). A view without a
+    readable `action_nonce` fails closed (`502 near_unavailable`). This closes D100's "rejected for now" item: a wrong
+    nonce no longer costs gas or the owner's windows. Applies to `/v1/owner-actions` too.
+  - **Caps.** The spec's numbers (D93 Q23: 20 per scope per UTC day; a safety budget of 10/min and 100/day globally,
+    10 per scope per day) and D100's (decided later the same day, after the security sweep) are combined so that
+    neither is weakened where it protects something:
+    - `propose_change`: per owner 5/min, 30/day (D100), per scope 10/min (D100) and **20 a UTC day** (the spec,
+      replacing D100's 50), global 20/min, 200/day (both);
+    - the **safety budget** is the spec's set of methods, `cancel_change`, `remove_client` and `disable_shared_login`
+      (D100 had only `cancel_change` there), on D100's cancel windows: 5/min, 20/day per owner, 25/min, 100/day per
+      scope, 100/min, 1000/day globally. Not the spec's 10 per scope per day: one compromised owner of a scope could
+      then propose and cancel its own changes to use the scope's whole safety budget and block the honest owners'
+      cancels for the day, the starvation D100 closed. Not the spec's 100/day global: an attacker fully owning about
+      ten scopes could fill it and block every other scope's cancels. Each safety action is also bounded by the
+      scope's state (a pending change, a client, shared login on);
+    - `execute_change` keeps its own windows (D100), outside the per-scope owner cap.
+  - **`owner_cap` events**: one per (window, limit, window start), a deterministic id, deduplicated per isolate too;
+    detail `{method, window, limit, max, windowStart}`, the scope and its org (from `scopes`), never the owner's
+    identity.
+  - **Allowance alert**: one `view_access_key_list` of the relayer account per hourly run (the spec says
+    `view_access_key` per key: same data, one read); a key under 25% of 0.5 NEAR (deploy-contract's default
+    `--owner-relayer-allowance`, `OWNER_POOL_ALLOWANCE_YOCTO`; a test keeps them equal; the Worker var of the same
+    name overrides) or missing from the account writes `owner_allowance_low`, once per key and UTC day.
+- To confirm: whether the user wants the spec's lower safety numbers anyway (a smaller spend bound, at the cost
+  above).
+
+### D237. `ConsoleRpc.ownerAction`: one path with `/v1/owner-actions`, plus three console rules
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/rpc/console.ts`, `handlers.ts` `runOwnerAction`) ·
+  Source: spec "On-chain owner actions" (steps 4–5, API changes), §RPC `ownerAction`
+- Decision:
+  - The RPC runs the HTTP endpoint's code (`runOwnerAction`): the per-IP limiter fed `clientIp` (the same object as
+    the endpoint's, so a console user and a direct caller from one address share it), the precheck, the reservation,
+    the caps, the usage event (endpoint `owner_action`, with the org), the request log line (`endpoint:
+    ConsoleRpc.ownerAction`).
+  - Console rules: the scope must be a row of `scopes` with the caller's org (`not_found`, before any chain read), so a
+    scope with no app in the hot DB can't be acted on through the console; the owner token's optional claims are
+    checked strictly and it must carry no `email`, `email_verified` or `hd` (`forbidden`), because it is public once
+    relayed (the client proof may carry them: it is the partner's own token, pasted after the console's warning).
+  - A refusal before the relay is `{ok: false, code}` with an RpcCode (`owner_nonce_mismatch`, `invalid_client_proof`,
+    `token_used`, `not_owner`, `rate_limited`, `not_found`, `conflict`, `forbidden`, `near_unavailable`,
+    `bad_request`), the precheck's own code first in `error`. Once relayed, `{ok: true, status, result?, nearTx?,
+    code?, error?}`: the spec's shape plus `error` (a contract panic's text, like the endpoint's).
+  - The safety methods may spend the budget's kill-switch reserve; no breaker (the on-chain caps bound them); cost 2
+    hot-DB statements (the org read and a cap's event).
+- Rejected: a separate RPC implementation of the relay (two paths would drift); refusing email-carrying tokens on
+  `/v1/owner-actions` too (a behaviour change for its other callers, and nothing there stores them).
+
+### D238. The console sink scope in deploy-contract: the quarantine, who removes, what counts as a sink
+- Date 2026-11-02 · Status: to confirm; built (`scripts/lib/deploy-plan.ts` `consoleSinkPlan`, `scripts/lib/
+  deploy-run.ts`, `scripts/lib/contract.ts` `SCOPE_OWNER_CALLS`) · Source: spec "Address impact", D93 Q7
+- Decision:
+  - **The quarantine.** The spec's existing-env plan (`remove_client` from `global`, then `admin_register_scope` "in
+    the seconds between") can't run back to back: `remove_client` quarantines the client for `change_delay_ms`, and
+    `admin_register_scope` refuses a client removed from another scope until then (`Client was recently removed from
+    another scope`). The run waits it out when it is at most 10 min (sandbox-dev: 60 s) and otherwise stops after the
+    removals; a re-run inside the quarantine fails on chain and changes nothing. During the gap the audiences open no
+    session anywhere and the contract still refuses an `AddClient` of them; after it, a claim is timelocked and seen
+    by the watcher.
+  - **Who removes.** `remove_client` takes `OwnerAuth::Near`, so the sender must be an `Owner::Near` of `global`: the
+    manifest's owner (a council proposal on a council env), or else the account that owned the contract when `global`
+    was registered, if its key is in `~/.near-credentials`; otherwise a blocker. owner-tx sends `remove_client` like
+    an owner call (`SCOPE_OWNER_CALLS`); `admin owner:call` still takes owner-only methods.
+  - **What counts as the sink.** Found through `scope_for_client`. A scope with NEAR-account owners only, console
+    audiences only and no shared login (a warning if its owner isn't the current one: registered before an owner
+    transfer). An audience in any other scope is a blocker. An audience added to the manifest later gets a sink of its
+    own (`admin_register_scope` can't add a client to an existing scope).
+  - A console audience that is also one of `googleClientIds` is a blocker; `register-global` counts only
+    `googleClientIds` toward its 10 clients.
+- No user address changes (the path has no client id).
+
+### D239. What the API keeps of an owner or step-up token (PII, D25, D96)
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/changes/step-up.ts`, `owner-actions.ts`, `changes/cas.ts`)
+  · Source: spec "Fresh sign-in" (a step-up token carries no `email`), D25, D96
+- Decision: of a step-up or owner token the API keeps only its sha256 (the single-use marker until `exp`) and, for a
+  verified member proposal, its `sub` (`guarded_changes.proposer_sub`, `app_changes.actor_sub`; the on-chain
+  `Owner::Oidc` holds the same `sub`). The token, its `email` and its `hd` are never logged, returned or stored; on
+  the console paths (`changeOrigins`, `proposeChange`, `ownerAction`) a token carrying them is refused, so a console
+  bug can't put a member's address on chain or in the hot DB. `/v1/owner-actions` keeps ignoring them, as before.
+  Tests: the PII sweeps of `apps/api/test/owner-actions.test.ts` and `rpc-owner.test.ts` (logs, answers, every D1
+  table).
 
 ## Partner identity token, build steps 1–4 (2026-10-30)
 
@@ -3299,6 +3426,8 @@ uses the KMS signer yet. None changes a derivation path or an address.
 | Every approval popup opens from the vault's "Review in Hana" launcher (batch B "Approval flow" steps 1–2) | A signing call from a click opens it in that click (`/approve?from=partner&v=…`); the launcher is the fallback without user activation or when `window.open` returns null (D99) | `docs/batch-b-spec.md` "Approval flow" |
 | CODEOWNERS on derivation, vectors, the contract and the env schema (D58) | Also `/envs/`, the API, web, core and watchdog sources, `scripts/`, lockfiles, `.gitleaks.toml`, `.githooks/`, `.github/`; two owners, `@tzechuen` and `@mj-hana` (D100) | `.github/CODEOWNERS` |
 | One global owner-action cap (20/min, 200/day); the relay quota counted in the gate, before verification | Caps per owner, per scope and global, `execute_change` and `cancel_change` on windows of their own; the relay quota counted right before the relay (D100) | `docs/api.md` "Rate limits" |
+| D100's owner-action caps: 50/day per scope, only `cancel_change` outside the general windows, the owner nonce left to the contract | 20 a UTC day per scope; a safety budget (`cancel_change`, `remove_client`, `disable_shared_login`) on the former cancel windows; the precheck recomputes the owner and client-proof nonces on an uncached scope (D236) | `docs/api.md` "Rate limits", "`POST /v1/owner-actions`" |
+| Console audiences registered as clients of `global` (deploy-contract, batch A) | Their own console sink scope, never `global` (D93 Q7, D238) | `docs/operations.md` "Console sink scope" |
 | `fetch-ckd-key` reads the CKD key from the manifest's `rpc` | From ≥ 3 independent providers at one final block, all agreeing, with the block recorded (D100) | `docs/operations.md` "Create an environment" step 3 |
 | Stellar classic operations other than changeTrust, payment and createAccount shown by type with their raw XDR (batch B "Approval flow" step 4) | Every operation decoded field by field; account-control operations get a red banner and per-operation warning and are never auto-approved (D110) | `packages/core/src/decode/stellar.ts` |
 | The export window shows the key while a button is held until the window closes (batch B "Key export" step 5) | The key is erased 5 min after it is derived or when the session ends, whichever is first; a new export needs a new sign-in (D111) | `packages/web/src/auth/export-page.ts` |

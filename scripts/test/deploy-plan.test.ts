@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { loadEnv } from '@hana-id/env';
 import { OWNER_RELAYER_METHODS, SESSION_RELAYER_METHODS, sharedClientsOf } from '../lib/contract.ts';
 import { type GovernanceView, UPDATER_METHODS } from '../lib/contract.ts';
-import { buildDeployPlan, checkFunctionKey, creationPlan, type DeployObserved, type DeployOptions, type DeployStep, describeStep, CLOCK_MARGIN_MS, signerFullAccessAllowed } from '../lib/deploy-plan.ts';
-import { type AccessKeyListEntry, EMPTY_CODE_HASH } from '../lib/near.ts';
-import { POOL_METHODS as API_POOL_METHODS } from '../../apps/api/src/relayer-config.ts';
+import { buildDeployPlan, checkFunctionKey, creationPlan, type DeployObserved, type DeployOptions, type DeployStep, describeStep, CLOCK_MARGIN_MS, ownerCallOf, signerFullAccessAllowed } from '../lib/deploy-plan.ts';
+import { type AccessKeyListEntry, EMPTY_CODE_HASH, nearToYocto } from '../lib/near.ts';
+import { DEFAULT_OWNER_ALLOWANCE_NEAR } from '../lib/deploy-run.ts';
+import { OWNER_POOL_ALLOWANCE_YOCTO, POOL_METHODS as API_POOL_METHODS } from '../../apps/api/src/relayer-config.ts';
 import { councilPolicy } from '../lib/sputnik.ts';
 import { ACCOUNT_OWNER } from './sim-fixtures.ts';
 
@@ -717,23 +718,95 @@ describe('buildDeployPlan', () => {
     expect(p.steps).toContainEqual({ kind: 'set-console-audiences', audiences: [['google', 'console.apps.googleusercontent.com']] });
   });
 
-  it('registers console audiences in the global scope (deduplicated) so no scope owner can claim them', () => {
-    const aud: [string, string][] = [['google', 'console.apps.googleusercontent.com'], ['google', 'hana.apps.googleusercontent.com']];
-    const p = buildDeployPlan({ ...m, consoleAudiences: aud }, fresh(), opts);
-    expect(p.steps).toContainEqual({
-      kind: 'register-global',
-      owners: [{ Near: { account_id: m.owner } }],
-      clients: [['google', 'hana.apps.googleusercontent.com'], ['google', 'console.apps.googleusercontent.com']],
-      allowShared: false,
-    });
+  it('the owner pool’s default allowance is the base of the API’s owner_allowance_low check', () => {
+    expect(nearToYocto(DEFAULT_OWNER_ALLOWANCE_NEAR)).toBe(OWNER_POOL_ALLOWANCE_YOCTO);
   });
 
-  it('warns when an existing global scope lacks a console audience', () => {
-    const aud: [string, string][] = [['google', 'console.apps.googleusercontent.com']];
-    const missing = buildDeployPlan({ ...m, consoleAudiences: aud }, fresh({ globalScope: { id: 'global', clients: [['google', 'hana.apps.googleusercontent.com']] } }), opts);
-    expect(missing.warnings.join()).toContain('google/console.apps.googleusercontent.com');
-    const present = buildDeployPlan({ ...m, consoleAudiences: aud }, fresh({ globalScope: { id: 'global', clients: aud } }), opts);
-    expect(present.warnings.join()).not.toContain('Console audience');
+  // The console sink scope (docs/batch-c-spec.md "Address impact", D238).
+  const CONSOLE_AUD: [string, string] = ['google', 'console.apps.googleusercontent.com'];
+  const HANA: [string, string] = ['google', 'hana.apps.googleusercontent.com'];
+  const withAud = { ...m, consoleAudiences: [CONSOLE_AUD] };
+  const at = (scope: string | null) => ({ consoleAudienceScopes: { 'google/console.apps.googleusercontent.com': scope } });
+
+  it('fresh env: the sink is registered before "global", which gets only googleClientIds', () => {
+    const p = buildDeployPlan(withAud, fresh(), opts);
+    const kinds = p.steps.map((s) => s.kind);
+    expect(kinds.indexOf('register-console-sink')).toBeGreaterThan(-1);
+    expect(kinds.indexOf('register-console-sink')).toBeLessThan(kinds.indexOf('register-global'));
+    expect(p.steps).toContainEqual({ kind: 'register-console-sink', owners: [{ Near: { account_id: m.owner } }], clients: [CONSOLE_AUD], quarantineMs: 0 });
+    expect(p.steps).toContainEqual({ kind: 'register-global', owners: [{ Near: { account_id: m.owner } }], clients: [HANA], allowShared: false });
+    const sink = p.steps.find((s) => s.kind === 'register-console-sink')!;
+    expect(ownerCallOf(sink)).toEqual({ method: 'admin_register_scope', args: { owners: [{ Near: { account_id: m.owner } }], clients: [CONSOLE_AUD], scope_id: null, allow_shared: false } });
+    expect(p.blockers).toEqual([]);
+  });
+
+  it('register-global stops counting console audiences toward its 10 clients', () => {
+    const ten = Array.from({ length: 10 }, (_, i) => `own-${i}.apps.googleusercontent.com`);
+    const p = buildDeployPlan({ ...withAud, googleClientIds: ten }, fresh(), opts);
+    expect(p.blockers.join()).not.toContain('allows 10');
+    expect(buildDeployPlan({ ...withAud, googleClientIds: [...ten, 'eleven.apps.googleusercontent.com'] }, fresh(), opts).blockers.join()).toContain('allows 10');
+  });
+
+  it('existing env with a console audience in "global": remove_client (by the owner, auth Near), then the sink after the quarantine', () => {
+    const globalScope = { id: 'global', owners: [{ Near: { account_id: m.owner } }], clients: [HANA, CONSOLE_AUD], allow_shared: false };
+    const p = buildDeployPlan(withAud, deployed({ globalScope, ...at('global') }), opts);
+    const sinkSteps = p.steps.filter((s) => s.kind === 'remove-console-client' || s.kind === 'register-console-sink');
+    expect(sinkSteps).toEqual([
+      { kind: 'remove-console-client', provider: 'google', aud: CONSOLE_AUD[1], via: { kind: 'owner' } },
+      { kind: 'register-console-sink', owners: [{ Near: { account_id: m.owner } }], clients: [CONSOLE_AUD], quarantineMs: configOk.change_delay_ms },
+    ]);
+    expect(ownerCallOf(sinkSteps[0]!)).toEqual({ method: 'remove_client', args: { scope_id: 'global', auth: 'Near', provider: 'google', aud: CONSOLE_AUD[1] } });
+    expect(p.steps.map((s) => s.kind)).not.toContain('register-global');
+    expect(p.blockers).toEqual([]);
+    expect(describeStep(withAud, sinkSteps[0]!)).toContain('Remove console audience');
+    // A long quarantine (a mainnet-like change_delay_ms) stops the run after the removal: a warning says to re-run.
+    const slow = buildDeployPlan(withAud, deployed({ config: { ...configOk, change_delay_ms: 86_400_000 }, globalScope, ...at('global') }), opts);
+    expect(slow.warnings.join()).toContain('re-run deploy-contract');
+  });
+
+  it('"global" owned by the owner of the time (before a transfer): that account signs remove_client, else a blocker', () => {
+    const globalScope = { id: 'global', owners: [{ Near: { account_id: 'old-owner.testnet' } }], clients: [HANA, CONSOLE_AUD], allow_shared: false };
+    const withKey = buildDeployPlan(withAud, deployed({ globalScope, ...at('global'), globalOwnerKeys: { 'old-owner.testnet': true } }), opts);
+    const remove = withKey.steps.find((s) => s.kind === 'remove-console-client')!;
+    expect(remove).toMatchObject({ via: { kind: 'account', account: 'old-owner.testnet' } });
+    expect(ownerCallOf(remove)).toBeNull();
+    expect(describeStep(withAud, remove)).toContain('[signed by old-owner.testnet');
+    expect(withKey.blockers).toEqual([]);
+    const noKey = buildDeployPlan(withAud, deployed({ globalScope, ...at('global'), globalOwnerKeys: { 'old-owner.testnet': false } }), opts);
+    expect(noKey.blockers.join()).toContain('must come from an Owner::Near');
+    expect(noKey.steps.map((s) => s.kind)).not.toContain('remove-console-client');
+  });
+
+  it('refuses to leave "global" without a client', () => {
+    const globalScope = { id: 'global', owners: [{ Near: { account_id: m.owner } }], clients: [CONSOLE_AUD], allow_shared: false };
+    expect(buildDeployPlan(withAud, deployed({ globalScope, ...at('global') }), opts).blockers.join()).toContain('without a client');
+  });
+
+  it('a console audience removed earlier (unregistered) is registered in a sink with no wait; one already in a sink is done', () => {
+    const unregistered = buildDeployPlan(withAud, deployed(at(null)), opts);
+    expect(unregistered.steps).toContainEqual({ kind: 'register-console-sink', owners: [{ Near: { account_id: m.owner } }], clients: [CONSOLE_AUD], quarantineMs: 0 });
+    const sink = { id: 's7', owners: [{ Near: { account_id: m.owner } }], clients: [CONSOLE_AUD], allow_shared: false };
+    const done = buildDeployPlan(withAud, deployed({ ...at('s7'), consoleSinkScopes: { s7: sink } }), opts);
+    expect(done.steps.filter((s) => s.kind === 'register-console-sink' || s.kind === 'remove-console-client')).toEqual([]);
+    expect(done.done.join()).toContain('Console sink scope "s7" holds');
+    // Registered before an owner transfer: still the sink, with a warning.
+    const old = buildDeployPlan(withAud, deployed({ ...at('s7'), consoleSinkScopes: { s7: { ...sink, owners: [{ Near: { account_id: 'old-owner.testnet' } }] } } }), opts);
+    expect(old.blockers).toEqual([]);
+    expect(old.warnings.join()).toContain('not the current owner');
+  });
+
+  it('a console audience claimed by another scope (an OIDC owner, other clients or shared login) is a blocker', () => {
+    const claimed = [
+      { id: 's5', owners: [{ Oidc: { provider: 'google', sub: '1' } }], clients: [CONSOLE_AUD], allow_shared: false },
+      { id: 's5', owners: [{ Near: { account_id: m.owner } }], clients: [CONSOLE_AUD, ['google', 'partner.apps.googleusercontent.com']], allow_shared: false },
+      { id: 's5', owners: [{ Near: { account_id: m.owner } }], clients: [CONSOLE_AUD], allow_shared: true },
+    ];
+    for (const view of claimed) {
+      const p = buildDeployPlan(withAud, deployed({ ...at('s5'), consoleSinkScopes: { s5: view } }), opts);
+      expect(p.blockers.join(), JSON.stringify(view)).toContain('not a Hana console sink');
+    }
+    // A console audience that is also one of Hana's own clients can't be kept out of "global".
+    expect(buildDeployPlan({ ...m, consoleAudiences: [HANA] }, fresh(), opts).blockers.join()).toContain('both a console audience and one of googleClientIds');
   });
 
   it('warns when the signer balance looks too low for the wasm', () => {

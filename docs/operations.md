@@ -1,6 +1,8 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-02 (branch `feat/batch-c-4`: "Usage capture (batch C4, milestone M2)" (the
+Last verified against code: 2026-11-02 (branch `feat/batch-c-6`: "Console sink scope (batch C6, milestone M3)", the
+console audiences no longer in `global` in the manifest and Google tables, the owner-pool allowance event and
+`OWNER_POOL_ALLOWANCE_YOCTO`; D235–D239); 2026-11-02 (branch `feat/batch-c-4`: "Usage capture (batch C4, milestone M2)" (the
 setup steps for the user: `usage-setup`, Hyperdrive, `USER_ID_KEY`, migration 0009, `gen --usage-hyperdrive-id`), the
 ledger and uid secrets, the waiver's session marker; D220–D224); 2026-11-02 (branch `feat/batch-c-5`: `app:suspend` / `app:resume` refuse a deleted
 app; the API's RPC entrypoints need no setup step of their own, D225; branch `feat/identity-token-8`: "Identity token
@@ -105,7 +107,7 @@ Every name comes from `envs/<env>.json` (schema: `packages/env/src/schema.ts`; n
 | `vaultOrigin`, `authOrigin` | Hana page origins (batch B) | both or neither; `gen` refuses an env without them |
 | `googleClientIds` | Hana's own app clients → reserved `global` scope | |
 | `sharedGoogleClientIds` | Hana's shared login clients (≤ 5) | never also in `googleClientIds` / `consoleAudiences` |
-| `consoleAudiences` | `[provider, aud]` accepted for OIDC owner actions | set before the first deploy |
+| `consoleAudiences` | `[provider, aud]` accepted for OIDC owner actions and guarded-change step-ups | set before the first deploy; registered only in the console sink scope, never in `global` (below) |
 | `changeDelayMs` | contract timelock (0..7 days) | sandbox-dev: 60 s |
 | `appChangeDelayMs` | batch C guarded-change delay (60 s..7 days; ≥ 24 h and ≤ `changeDelayMs` on a production network) | sandbox-dev: 60 s; read by the API and CLI from batch C3 |
 | `console`, `files`, `admin`, `usage`, `email`, `ownerGrantDelayMs` | batch C dashboard: console, files and admin Workers and origins, R2 buckets, Access, Hyperdrive names, sender (`envs/README.md`) | all or none; sandbox-dev has none yet (`docs/batch-c-build-plan.md` "Setup steps") |
@@ -132,7 +134,7 @@ mode with test users.
 |---|---|---|
 | Hana's own app | `googleClientIds` | becomes a client of `global` |
 | Shared login client | `sharedGoogleClientIds` | a different client ID from the above |
-| Hana console | `consoleAudiences` (`["google", "<id>"]`) | batch C signs in with it |
+| Hana console | `consoleAudiences` (`["google", "<id>"]`) | batch C signs in with it; becomes the only client of the console sink scope (never of `global`) |
 | Partner test client(s) | `scope:register --client` | for own-client tests; for the own-vs-shared address test use a separate Google Cloud project (the cross-project `sub` match was confirmed 2026-10-28, D42) |
 
 Register on each client:
@@ -161,7 +163,7 @@ the signer is part of every address. Dev-only privileges (loopback origins, part
 
 2. **Manifest**: accounts, Google client IDs, `consoleAudiences`, `changeDelayMs`, Cloudflare names, `vaultOrigin` /
    `authOrigin`. Fill the client lists before the first deploy (a shared client added later waits out the timelock;
-   a console audience added after `global` exists needs a timelocked `propose_change`).
+   a console audience added later gets its own sink scope on the next deploy-contract run).
 3. **Pin the MPC key** (writes `ckdNetworkKey` and `ckdNetworkKeySource`; `--dry-run` only prints):
 
    ```sh
@@ -738,6 +740,46 @@ other way is never brought back. Proposals not announced within 7 days are cance
 **Undo of the migration**: it only adds; a restore to the bookmark of step 2 (`time-travel restore`, "Restoring a D1
 database" below) returns the database to before it, and the API from before batch C3 then works as it did. Writes
 made after step 4 are lost with it.
+
+## Console sink scope (batch C6, milestone M3)
+
+`deploy-contract` keeps the manifest's `consoleAudiences` as the only clients of a dedicated Hana scope (`sN`, owner
+`Owner::Near` = the manifest's `owner`, no shared login, no app, no origins; D93 Q7, D238), never of `global`. Before
+batch C6 they were clients of `global`, where a console-client token whose nonce followed the session layout could
+open a `global` session and derive that user's key. No user address changes (the path has no client id; spec "Address
+impact"); console tokens lose that unused ability.
+
+- **Fresh env:** one run registers the sink (`admin_register_scope`, contract-assigned id) before `global`, which gets
+  only `googleClientIds`.
+- **Existing env with the audiences in `global` (sandbox-dev):** one run sends `remove_client(global, "Near",
+  provider, aud)` for each (immediate), then waits out the removed clients' quarantine (`change_delay_ms`: 60 s on
+  sandbox-dev; the contract refuses to register a quarantined client in another scope) and registers the sink. With a
+  quarantine over 10 min the run stops after the removals; re-run after it. Between the two, the audiences are
+  clients of no scope: the contract still refuses an `AddClient` of them until the quarantine ends, and later one is
+  timelocked and seen by the watcher. `remove_client` takes `OwnerAuth::Near`, so it is sent by an `Owner::Near` of
+  `global`: the manifest's owner (on a council env, a DAO proposal), or the account that owned the contract when
+  `global` was registered, when its key is in `~/.near-credentials/testnet/` (the plan says which; neither is a
+  blocker).
+- **Re-runs:** an audience in a sink is reported as done (a sink registered before an owner transfer gets a warning);
+  an audience registered in any other scope (an OIDC owner, other clients or shared login) is a blocker: someone
+  claimed it, and only that scope's owners can remove it.
+
+Setup on sandbox-dev (for the user, after the API with batch C6 is deployed; run from the main checkout):
+
+```sh
+corepack pnpm --filter @hana-id/scripts run deploy-contract sandbox-dev                    # dry run: the remove and register steps
+corepack pnpm --filter @hana-id/scripts run deploy-contract sandbox-dev --approve-with <second council member> --yes
+corepack pnpm --filter @hana-id/scripts run deploy-contract sandbox-dev                    # "Console sink scope "sN" holds …"
+```
+
+Check: `scope_for_client("google", <console aud>)` is the new `sN`, `get_scope("global").clients` has only
+`googleClientIds`. The API itself needs no change: it checks console tokens against `get_config().console_audiences`,
+not against `global`.
+
+The API's hourly cron also watches the owner pool that pays for owner actions: each `OWNER_RELAYER_KEYS` key below 25%
+of its initial allowance (0.5 NEAR, deploy-contract's default; set the Worker var `OWNER_POOL_ALLOWANCE_YOCTO` when the
+keys were added with another `--owner-relayer-allowance`) writes an `owner_allowance_low` security event, once a day.
+Top it up by re-adding the key with a fresh allowance ("Relayer keys (either pool)").
 
 ## Local API (`wrangler dev`)
 

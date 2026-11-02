@@ -11,7 +11,21 @@ import { actionCreators } from '@near-js/transactions';
 import { CliError, parseCli } from './cli.ts';
 import { type ContractConfig, GLOBAL_SCOPE, GOOGLE_PROVIDER, type GovernanceView, normaliseIssuer, tryView } from './contract.ts';
 import { councilKeysOnDisk, readCouncilKey } from './council.ts';
-import { buildDeployPlan, creationPlan, type DeployObserved, type DeployOptions, type DeployStep, describeStep, ownerCallOf, type Role, ROLES, stepSigner } from './deploy-plan.ts';
+import {
+  buildDeployPlan,
+  clientKey,
+  creationPlan,
+  type DeployObserved,
+  type DeployOptions,
+  type DeployStep,
+  describeStep,
+  ownerCallOf,
+  removeConsoleClientArgs,
+  type Role,
+  ROLES,
+  SINK_WAIT_MAX_MS,
+  stepSigner,
+} from './deploy-plan.ts';
 import {
   findLegacyCredential,
   generateKey,
@@ -48,6 +62,11 @@ export const DEPLOY_USAGE = `Usage: deploy-contract.ts <env> [--yes] [--relayer-
   --creation-plan             print (never send) the mainnet-style signer creation batch for this manifest`;
 
 export const DRY_RUN_LINE = 'Dry run: nothing changed. Re-run with --yes to apply.';
+/**
+ * Each owner-pool key's allowance by default: the API's hourly `owner_allowance_low` check measures against it
+ * (apps/api/src/relayer-config.ts OWNER_POOL_ALLOWANCE_YOCTO; a test keeps the two equal).
+ */
+export const DEFAULT_OWNER_ALLOWANCE_NEAR = '0.5';
 
 const CONTRACT_DIR = join(repoRoot, 'contracts', 'hana-signer');
 const WASM_CANDIDATES = [join(CONTRACT_DIR, 'target', 'near', 'hana_signer.wasm'), join(CONTRACT_DIR, 'target', 'wasm32-unknown-unknown', 'release', 'hana_signer.wasm')];
@@ -71,6 +90,8 @@ export interface DeployDeps {
   /** Sets string fields of envs/<name>.json (after the DAO accepted ownership). Default: edits the file in place. */
   updateManifest?: (name: string, fields: Record<string, string>) => void;
   now?: () => number;
+  /** Waits `ms` (the console sink's quarantine, D238). Default: a timer. */
+  sleep?: (ms: number) => Promise<void>;
   /** The pinned Sputnik DAO code hash (default: contracts/sputnik/pin.json). */
   sputnikCodeHash?: string;
 }
@@ -114,6 +135,7 @@ interface Ctx {
   buildWasm: (log: (line: string) => void) => string;
   existingWasm: () => string | null;
   now: () => number;
+  sleep: (ms: number) => Promise<void>;
   ownerTx: OwnerTxOptions;
   updateManifest: (name: string, fields: Record<string, string>) => void;
 }
@@ -142,6 +164,22 @@ async function observe(c: Ctx, wasmPath: string | null): Promise<{ observed: Dep
     for (const aud of m.sharedGoogleClientIds.filter((id) => !/UNSET/u.test(id))) {
       const scope = await tryView<unknown>(rpc, m.signer, 'scope_for_client', { provider: GOOGLE_PROVIDER, aud });
       sharedClientScopes[aud] = typeof scope === 'string' ? scope : null;
+    }
+  }
+  // The console sink (D238): where each console audience is registered, those scopes' views, and the keys of
+  // "global"'s NEAR owners (remove_client from "global" must come from one of them).
+  const consoleAudienceScopes: Record<string, string | null> = {};
+  const consoleSinkScopes: Record<string, unknown> = {};
+  const globalOwnerKeys: Record<string, boolean> = {};
+  if (config) {
+    for (const [provider, aud] of m.consoleAudiences) {
+      const scope = await tryView<unknown>(rpc, m.signer, 'scope_for_client', { provider, aud });
+      consoleAudienceScopes[clientKey([provider, aud])] = typeof scope === 'string' ? scope : null;
+      if (typeof scope === 'string' && scope !== GLOBAL_SCOPE && !(scope in consoleSinkScopes)) consoleSinkScopes[scope] = await tryView<unknown>(rpc, m.signer, 'get_scope', { scope_id: scope });
+    }
+    for (const owner of ((globalScope as { owners?: unknown[] } | null)?.owners ?? [])) {
+      const account = (owner as { Near?: { account_id?: unknown } } | null)?.Near?.account_id;
+      if (typeof account === 'string' && account !== m.owner) globalOwnerKeys[account] = !!findLegacyCredential(account, m.network, c.home);
     }
   }
   const watchdogAccounts: Record<string, boolean> = {};
@@ -179,6 +217,9 @@ async function observe(c: Ctx, wasmPath: string | null): Promise<{ observed: Dep
       googleIssuer,
       globalScope,
       sharedClientScopes,
+      consoleAudienceScopes,
+      consoleSinkScopes,
+      globalOwnerKeys,
       wasmBytes: wasm ? wasm.length : null,
       wasmCodeHash: wasm ? codeHashOf(wasm) : null,
       watchdogAccounts,
@@ -188,10 +229,22 @@ async function observe(c: Ctx, wasmPath: string | null): Promise<{ observed: Dep
   };
 }
 
-/** What a step ended as: done, or only proposed to the council (the run stops there; re-run after the votes). */
-type StepOutcome = 'done' | 'proposed';
+/**
+ * What a step ended as: done, only proposed to the council (the run stops there; re-run after the votes), or waiting for
+ * a quarantine longer than one run waits out (the run stops; re-run after it).
+ */
+type StepOutcome = 'done' | 'proposed' | 'waiting';
 
-async function execute(c: Ctx, step: DeployStep, creds: Partial<Record<Role, LoadedKey>>, state: { wasmPath: string | null }): Promise<StepOutcome> {
+interface RunState {
+  wasmPath: string | null;
+  /** When this run removed a console audience from "global" (its quarantine starts then). */
+  removedAt?: number;
+}
+
+/** A little past the quarantine's end, for the gap between our clock and the block time. */
+const QUARANTINE_MARGIN_MS = 5_000;
+
+async function execute(c: Ctx, step: DeployStep, creds: Partial<Record<Role, LoadedKey>>, state: RunState): Promise<StepOutcome> {
   const { m, rpc, log } = c;
   const role = stepSigner(step);
   const send = async (receiver: string, actions: Parameters<NearRpc['sendTx']>[2]) => {
@@ -301,6 +354,35 @@ async function execute(c: Ctx, step: DeployStep, creds: Partial<Record<Role, Loa
       }
       return outcome;
     }
+    case 'remove-console-client': {
+      if (step.via.kind === 'account') {
+        // Another Owner::Near of "global" (the owner when it was registered): its own key from the legacy keychain.
+        const key = loadLegacyCredential(step.via.account, m.network, c.home);
+        const { hash } = await rpc.sendTx({ accountId: key.accountId, keyPair: key.keyPair }, m.signer, [actionCreators.functionCall('remove_client', removeConsoleClientArgs(step), 100n * TGAS, 0n)]);
+        log(`    tx ${explorerTx(hash)}`);
+        state.removedAt = c.now();
+        return 'done';
+      }
+      const outcome = await owner(step);
+      if (outcome === 'done') state.removedAt = c.now();
+      return outcome;
+    }
+    case 'register-console-sink': {
+      if (step.quarantineMs > 0 && state.removedAt !== undefined) {
+        const waitMs = state.removedAt + step.quarantineMs + QUARANTINE_MARGIN_MS - c.now();
+        if (waitMs > SINK_WAIT_MAX_MS) {
+          log(`    the removed console audiences are quarantined until ${new Date(state.removedAt + step.quarantineMs).toISOString()}; re-run deploy-contract ${m.name} after that to register the sink`);
+          return 'waiting';
+        }
+        if (waitMs > 0) {
+          log(`    waiting ${Math.ceil(waitMs / 1000)} s for the removed console audiences' quarantine (change_delay_ms) to end`);
+          await c.sleep(waitMs);
+        }
+      }
+      const outcome = await owner(step);
+      if (outcome === 'done') log('    console sink registered: the console audiences are its only clients');
+      return outcome;
+    }
     default:
       return owner(step);
   }
@@ -351,6 +433,7 @@ export async function deployMain(argv: readonly string[], deps: DeployDeps = def
     buildWasm: deps.buildWasm ?? cargoBuildWasm,
     existingWasm,
     now: deps.now ?? Date.now,
+    sleep: deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))),
     ownerTx,
     updateManifest: deps.updateManifest ?? writeManifestFields,
   };
@@ -367,7 +450,7 @@ export async function deployMain(argv: readonly string[], deps: DeployDeps = def
   const options: DeployOptions = {
     pools: {
       session: { count: args.int('relayer-keys', 3, { min: 1, max: 20 }), allowanceYocto: allowance('relayer-allowance', '2') },
-      owner: { count: args.int('owner-relayer-keys', 1, { min: 1, max: 5 }), allowanceYocto: allowance('owner-relayer-allowance', '0.5') },
+      owner: { count: args.int('owner-relayer-keys', 1, { min: 1, max: 5 }), allowanceYocto: allowance('owner-relayer-allowance', DEFAULT_OWNER_ALLOWANCE_NEAR) },
     },
     upgrade: args.flag('upgrade'),
     skipBuild: args.flag('skip-build') || !!wasmArg,
@@ -403,11 +486,16 @@ export async function deployMain(argv: readonly string[], deps: DeployDeps = def
     return 0;
   }
 
-  const state = { wasmPath: wasmArg ?? null };
+  const state: RunState = { wasmPath: wasmArg ?? null };
   for (const [i, step] of plan.steps.entries()) {
     log(`\n[${i + 1}/${plan.steps.length}] ${describeStep(m, step, ownerTx)}`);
-    if ((await execute(c, step, creds, state)) === 'proposed') {
+    const outcome = await execute(c, step, creds, state);
+    if (outcome === 'proposed') {
       log(`\nStopped: step ${i + 1} waits for council votes. Re-run deploy-contract ${m.name} once it is approved; the plan picks up from there.`);
+      return 0;
+    }
+    if (outcome === 'waiting') {
+      log(`\nStopped: step ${i + 1} waits for the quarantine above. Re-run deploy-contract ${m.name} after it; the plan picks up from there.`);
       return 0;
     }
   }

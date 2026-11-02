@@ -7,7 +7,7 @@ import { env } from 'cloudflare:workers';
 import { vi } from 'vitest';
 import { AdminRpc } from '../src/rpc/admin.ts';
 import { ConsoleRpc } from '../src/rpc/console.ts';
-import { ORIGIN, type SeededApp, newKey, seedApp, uid } from './helpers.ts';
+import { type Chain, GOOGLE_ISS, ORIGIN, type SeededApp, chain, google, newKey, seedApp, uid } from './helpers.ts';
 
 export const HOUR = 60 * 60 * 1000;
 /** The test manifest's appChangeDelayMs (scripts/gen-wrangler.ts TEST_MANIFEST). */
@@ -161,3 +161,38 @@ export function countingDb(base: D1Database, count: DbCount, opts: { faultAt?: n
 
 /** An entrypoint over a counted hot DB (each call's own count). */
 export const counted = <T>(make: (ctx: ExecutionContext, e: typeof env) => T, count: DbCount): T => make(createExecutionContext(), { ...env, DB: countingDb(env.DB, count) });
+
+// ---- batch C6: step-up tokens and an owner-aware chain ----
+
+/** The console audience the C6 tests' chain has in force, and the member's Google sub (member()'s default). */
+export const CONSOLE_AUD = 'console-test.apps.googleusercontent.com';
+export const STEP_UP_SUB = 'owner-sub-1';
+
+/**
+ * NEAR (helpers.ts chain) with the console audience in force and every scope owned by `owners` (Oidc google subs,
+ * default the member's) at `actionNonce` (default 4), two clients, one pending change (id 2) and no shared login.
+ */
+export function ownerChain(o: { owners?: string[]; actionNonce?: number; audiences?: [string, string][] } = {}): Chain & { actionNonce: number } {
+  const n = Object.assign(chain(), { actionNonce: o.actionNonce ?? 4 });
+  const base = n.views.get_config!;
+  n.views.get_config = () => ({ ...(base({}) as object), console_audiences: o.audiences ?? [['google', CONSOLE_AUD]] });
+  n.views.get_scope = (a) => ({
+    id: a.scope_id,
+    owners: [{ Near: { account_id: 'owner.test.near' } }, ...(o.owners ?? [STEP_UP_SUB]).map((sub) => ({ Oidc: { provider: 'google', sub } }))],
+    clients: [
+      ['google', 'own.apps.googleusercontent.com'],
+      ['google', 'old.apps.googleusercontent.com'],
+    ],
+    pending: [{ id: 2, change: { SetAllowShared: { allow: true } }, unlock_at_ms: Date.now() + 3_600_000 }],
+    action_nonce: n.actionNonce,
+    created_at_ms: 1,
+    allow_shared: false,
+  });
+  n.contract.propose_change = () => 9;
+  return n;
+}
+
+let jti = 0;
+/** A console step-up token (`openid` only: no email, hd or email_verified) for `nonce`, issued now. */
+export const stepUp = (nonce: string, claims: Record<string, unknown> = {}): Promise<string> =>
+  google.sign({ iss: GOOGLE_ISS, aud: CONSOLE_AUD, azp: CONSOLE_AUD, sub: STEP_UP_SUB, nonce, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 3600, jti: `j${jti++}`, ...claims });

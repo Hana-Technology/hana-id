@@ -133,10 +133,14 @@ export function parsePendingShared(raw: unknown): PendingSharedClient[] {
 /** A get_config read in flight: concurrent misses (a login's scope and governance checks) share it. */
 let configRead: Promise<ConfigView> | null = null;
 
-export async function getConfig(env: Env): Promise<ConfigView> {
-  const cached = configCache.get('config');
+/**
+ * `fresh`: skip the cache and any read in flight (the guarded-change and owner-action checks read the console audiences
+ * as they are now, so a console audience the owner just dropped stops counting at once).
+ */
+export async function getConfig(env: Env, opts: { fresh?: boolean } = {}): Promise<ConfigView> {
+  const cached = opts.fresh ? undefined : configCache.get('config');
   if (cached) return cached;
-  if (configRead) return configRead;
+  if (configRead && !opts.fresh) return configRead;
   configRead = (async () => {
     const raw = await new Rpc(env.NEAR_RPC).view<{ console_audiences?: unknown; shared_clients?: unknown; paused?: unknown } | null>(env.SIGNER_ACCOUNT, 'get_config', {});
     const value: ConfigView = {
@@ -149,10 +153,11 @@ export async function getConfig(env: Env): Promise<ConfigView> {
     configCache.set('config', value, Date.now(), value.paused ? PAUSED_CONFIG_TTL_MS : undefined);
     return value;
   })();
+  const read = configRead;
   try {
-    return await configRead;
+    return await read;
   } finally {
-    configRead = null;
+    if (configRead === read) configRead = null;
   }
 }
 
@@ -223,7 +228,8 @@ export async function getScope(env: Env, scopeId: string, opts: { fresh?: boolea
       pending: raw.pending.filter(
         (p): p is PendingChangeView => typeof p === 'object' && p !== null && Number.isSafeInteger((p as PendingChangeView).id) && typeof (p as PendingChangeView).unlock_at_ms === 'number',
       ),
-      action_nonce: typeof raw.action_nonce === 'number' ? raw.action_nonce : 0,
+      // -1 when unreadable: the owner-action precheck then fails closed rather than computing a nonce at 0.
+      action_nonce: typeof raw.action_nonce === 'number' ? raw.action_nonce : -1,
       allow_shared: raw.allow_shared === true,
     };
   }

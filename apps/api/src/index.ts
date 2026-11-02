@@ -10,6 +10,7 @@ import { identityMaintenance } from './identity/maintenance.ts';
 import { IDENTITY_PUBLIC_ENDPOINTS, handleIdentityPublic } from './identity/public.ts';
 import { IDENTITY_TOKEN_ENDPOINT, handleIdentityToken } from './identity/token.ts';
 import { log } from './log.ts';
+import { checkOwnerPoolAllowance } from './owner-pool.ts';
 import { LOGIN_ENDPOINT, handleLogin } from './login.ts';
 import { LOGIN_RELAY_PREFIX, handleLoginRelay, loggedEndpoint } from './login-relay.ts';
 import { syncIdentityUsage } from './usage/identity-sync.ts';
@@ -34,7 +35,8 @@ const ID_RE = /^[A-Za-z0-9-]{1,64}$/u;
  * governance spec's P = 15 min). The run in the first quarter of each UTC hour also does vault maintenance, prunes
  * the identity token's counts past their retention, records guarded changes' activations and expiries
  * (guarded/cron.ts), runs drift detection (changes/drift.ts), keeps the usage ledger's monthly partitions 12
- * months ahead (usage/partitions.ts) and copies the recent identity token counts to it (usage/identity-sync.ts). A Worker
+ * months ahead (usage/partitions.ts), copies the recent identity token counts to it (usage/identity-sync.ts) and
+ * checks the owner pool's allowance (owner-pool.ts, never fails the run). A Worker
  * still on the old `0 * * * *` trigger only ever gets hourly runs.
  */
 export function isHourlyRun(scheduledTime: number): boolean {
@@ -148,6 +150,8 @@ export default {
       // Usage fails open: these log their own failures and never fail the run (the next hour tries again). Partitions
       // first, so the copy and the hour's events have their months. Pushed last: the destructuring below is positional.
       jobs.push(ensureUsagePartitions(env).then(() => syncIdentityUsage(env)));
+      // Logs its own failures too; also positional-last.
+      jobs.push(checkOwnerPoolAllowance(env));
     }
     const [issuerKeys, vault, identity, guarded, drift] = await Promise.allSettled(jobs);
     if (vault?.status === 'rejected') log({ event: 'vault_maintenance', outcome: 'error', code: 'internal' }, 'error');

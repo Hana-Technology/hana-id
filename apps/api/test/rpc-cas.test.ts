@@ -12,7 +12,28 @@ import { removeOrigins } from '../src/changes/origins.ts';
 import { AdminRpc } from '../src/rpc/admin.ts';
 import { CONSOLE_COSTS, ConsoleRpc } from '../src/rpc/console.ts';
 import { ORIGIN, call } from './helpers.ts';
-import { type DbCount, adminRpc, appRow, consoleRpc, counted, countingDb, hana, ledgerCount, link, linkToken, member, newOrg, orgApp, ownClock, rid, rows, system } from './rpc-helpers.ts';
+import { nonceOf, originChangeDigest, ownerActionNonce, settingsChangeDigest } from '@hana-id/console-core';
+import {
+  type DbCount,
+  adminRpc,
+  appRow,
+  consoleRpc,
+  counted,
+  countingDb,
+  hana,
+  ledgerCount,
+  link,
+  linkToken,
+  member,
+  newOrg,
+  orgApp,
+  ownClock,
+  ownerChain,
+  rid,
+  rows,
+  stepUp,
+  system,
+} from './rpc-helpers.ts';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -194,7 +215,9 @@ describe('suspension bits', () => {
 describe('the hot-DB budget', () => {
   it('each ConsoleRpc method stays within two reads and one batch of at most eight statements, and its declared cost', async () => {
     const clock = ownClock();
+    ownerChain();
     const app = await orgApp({ origins: [ORIGIN, SECOND] });
+    const live = await orgApp({ live: true, org: app.org });
     const key = (await rows<{ id: string }>('SELECT id FROM app_keys WHERE app_id = ?1', app.id))[0]!.id;
     const pending = await adminRpc().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: ['https://pending.example.com'], expectedVersion: 0 });
     if (!pending.ok) throw new Error(pending.code);
@@ -221,6 +244,23 @@ describe('the hot-DB budget', () => {
       }],
       ['rotateKey', (rpc) => rpc.rotateKey({ ...member(), orgId: app.org, appId: app.id, keyId: key })],
       ['revokeKey', (rpc) => rpc.revokeKey({ ...member(), orgId: app.org, appId: app.id, keyId: created!.key.id })],
+      // Batch C6: the step-up proposals (their removes too) and an owner action (its scope-in-org read).
+      ['changeOrigins', async (rpc) => {
+        const v = (await appRow(app.id)).origins_version as number;
+        const add = ['https://c6-a.example.com', 'https://c6-b.example.com'];
+        const nonce = nonceOf(await originChangeDigest({ signer: env.SIGNER_ACCOUNT, appId: app.id, add, remove: [ORIGIN], originsVersion: v }));
+        return rpc.changeOrigins({ ...member(), orgId: app.org, appId: app.id, add, remove: [ORIGIN], expectedVersion: v, stepUpJwt: await stepUp(nonce) });
+      }],
+      ['proposeChange', async (rpc) => {
+        const v = (await appRow(live.id)).settings_version as number;
+        const nonce = nonceOf(await settingsChangeDigest({ signer: env.SIGNER_ACCOUNT, appId: live.id, kind: 'raw_sign_on', settingsVersion: v }));
+        return rpc.proposeChange({ ...member(), orgId: live.org, appId: live.id, kind: 'raw_sign_on', expectedVersion: v, stepUpJwt: await stepUp(nonce) });
+      }],
+      ['ownerAction', async (rpc) => {
+        const args = { scope_id: app.scope, change_id: 2 };
+        const nonce = await ownerActionNonce({ signer: env.SIGNER_ACCOUNT, method: 'cancel_change', args, actionNonce: 4 });
+        return rpc.ownerAction({ ...member(), orgId: app.org, body: { method: 'cancel_change', args: { ...args, auth: { Oidc: { jwt: await stepUp(nonce) } } } } });
+      }],
     ];
     expect(new Set(calls.map(([m]) => m))).toEqual(new Set(Object.keys(CONSOLE_COSTS)));
     for (const [method, run] of calls) {
@@ -493,7 +533,8 @@ describe('entrypoints', () => {
 
   it('ConsoleRpc has none of AdminRpc’s staff methods', () => {
     const consoleMethods = Object.getOwnPropertyNames(ConsoleRpc.prototype);
-    for (const m of ['createApp', 'assignScopeOrg', 'deleteApp', 'suspendOrg', 'addOrigins', 'proposeChange', 'expediteChange', 'pendingNotices', 'ackNotice', 'setSecurityContacts', 'getSecurityContacts', 'listScopes', 'changesSince', 'securityEvents', 'markSecurityEventNotified', 'relayerKeys']) {
+    // proposeChange is on both: a member's (with the step-up) and a staff proposal.
+    for (const m of ['createApp', 'assignScopeOrg', 'deleteApp', 'suspendOrg', 'addOrigins', 'expediteChange', 'pendingNotices', 'ackNotice', 'setSecurityContacts', 'getSecurityContacts', 'listScopes', 'changesSince', 'securityEvents', 'markSecurityEventNotified', 'relayerKeys']) {
       expect(consoleMethods, m).not.toContain(m);
       expect(Object.getOwnPropertyNames(AdminRpc.prototype), m).toContain(m);
     }
@@ -511,6 +552,7 @@ describe('entrypoints', () => {
   });
 
   it('org A asking for org B’s app is not_found on every ConsoleRpc org method, and nothing is written', async () => {
+    const near = ownerChain();
     const b = await orgApp({ origins: [ORIGIN, SECOND] });
     const a = await orgApp();
     const key = (await rows<{ id: string }>('SELECT id FROM app_keys WHERE app_id = ?1', b.id))[0]!.id;
@@ -530,8 +572,33 @@ describe('entrypoints', () => {
       createKey: await rpc.createKey({ ...member(), ...as }),
       rotateKey: await rpc.rotateKey({ ...member(), ...as, keyId: key }),
       revokeKey: await rpc.revokeKey({ ...member(), ...as, keyId: key }),
+      // Batch C6: with tokens valid for org B's app and scope.
+      changeOrigins: await rpc.changeOrigins({
+        ...member(),
+        ...as,
+        add: ['https://c6.example.com'],
+        remove: [],
+        expectedVersion: 1,
+        stepUpJwt: await stepUp(nonceOf(await originChangeDigest({ signer: env.SIGNER_ACCOUNT, appId: b.id, add: ['https://c6.example.com'], remove: [], originsVersion: 1 }))),
+      }),
+      proposeChange: await rpc.proposeChange({
+        ...member(),
+        ...as,
+        kind: 'raw_sign_on',
+        expectedVersion: 0,
+        stepUpJwt: await stepUp(nonceOf(await settingsChangeDigest({ signer: env.SIGNER_ACCOUNT, appId: b.id, kind: 'raw_sign_on', settingsVersion: 0 }))),
+      }),
+      ownerAction: await rpc.ownerAction({
+        ...member(),
+        orgId: a.org,
+        body: {
+          method: 'cancel_change',
+          args: { scope_id: b.scope, change_id: 2, auth: { Oidc: { jwt: await stepUp(await ownerActionNonce({ signer: env.SIGNER_ACCOUNT, method: 'cancel_change', args: { scope_id: b.scope, change_id: 2 }, actionNonce: 4 })) } } },
+        },
+      }),
     };
     for (const [m, r] of Object.entries(answers)) expect(r, m).toMatchObject({ ok: false, code: 'not_found' });
+    expect(near.sent).toEqual([]);
     expect(await rpc.listApps({ ...member(), orgId: a.org })).toMatchObject({ ok: true, apps: [{ id: a.id }] });
     const changes = await rpc.listChanges({ ...member(), orgId: a.org, limit: 200 });
     expect(changes.ok && changes.changes.every((c) => c.orgId === a.org)).toBe(true);

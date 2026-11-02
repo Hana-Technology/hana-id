@@ -34,6 +34,11 @@ export class SimChain {
   keyChanges: KeyChangeView[] = [];
   issuer: { iss_values: string[]; kids: string[] } | null = null;
   globalScope: unknown = null;
+  /** Other scopes by id (the console sink, D238); admin_register_scope adds `s<next>`. */
+  scopes: Record<string, { id: string; owners: unknown[]; clients: [string, string][]; allow_shared: boolean }> = {};
+  nextScope = 9;
+  /** Clients removed from a scope: only that scope may take one back before `freeAt` (the contract's quarantine). */
+  removedClients: Record<string, { scopeId: string; freeAt: number }> = {};
   /** DAO state by account. */
   readonly daos = new Map<string, { policy: SputnikPolicy; proposals: DaoProposal[] }>();
   /** When set, the next `migrate` after execute_upgrade panics (the deploy rolls back). */
@@ -113,7 +118,13 @@ export class SimChain {
       case 'get_issuer':
         return structuredClone(this.issuer);
       case 'get_scope':
-        return structuredClone(this.globalScope);
+        return structuredClone(args.scope_id === 'global' ? this.globalScope : (this.scopes[String(args.scope_id)] ?? null));
+      case 'scope_for_client': {
+        const key = `${String(args.provider)}/${String(args.aud)}`;
+        const has = (clients: unknown) => Array.isArray(clients) && clients.some((c) => Array.isArray(c) && `${c[0]}/${c[1]}` === key);
+        if (has((this.globalScope as { clients?: unknown } | null)?.clients)) return 'global';
+        return Object.values(this.scopes).find((sc) => has(sc.clients))?.id ?? null;
+      }
       default:
         return null;
     }
@@ -142,6 +153,7 @@ export class SimChain {
       accounts: structuredClone([...this.accounts.entries()]),
       config: structuredClone(this.config),
       governance: structuredClone(this.governance),
+      registry: structuredClone({ globalScope: this.globalScope, scopes: this.scopes, removed: this.removedClients, next: this.nextScope }),
     };
   }
 
@@ -150,6 +162,10 @@ export class SimChain {
     for (const [k, v] of s.accounts) this.accounts.set(k, v);
     this.config = s.config;
     this.governance = s.governance;
+    this.globalScope = s.registry.globalScope;
+    this.scopes = s.registry.scopes;
+    this.removedClients = s.registry.removed;
+    this.nextScope = s.registry.next;
   }
 
   private apply(predecessor: string, receiver: string, a: Action): unknown {
@@ -336,9 +352,37 @@ export class SimChain {
       case 'execute_issuer_key_change':
       case 'remove_issuer_key':
         return method === 'remove_issuer_key' ? true : 7;
-      case 'admin_register_scope':
+      case 'admin_register_scope': {
         this.assertOwner(predecessor);
-        return 's9';
+        const clients = (args.clients ?? []) as [string, string][];
+        for (const [p, a] of clients) {
+          const key = `${p}/${a}`;
+          if (this.view(this.signer, 'scope_for_client', { provider: p, aud: a }) !== null) throw new Error('Smart contract panicked: Client is already registered');
+          const removed = this.removedClients[key];
+          if (removed && this.now < removed.freeAt) throw new Error('Smart contract panicked: Client was recently removed from another scope');
+        }
+        const id = args.scope_id === 'global' ? 'global' : `s${this.nextScope++}`;
+        const scope = { id, owners: (args.owners ?? []) as unknown[], clients, allow_shared: args.allow_shared === true };
+        if (id === 'global') this.globalScope = scope;
+        else this.scopes[id] = scope;
+        for (const [p, a] of clients) delete this.removedClients[`${p}/${a}`];
+        return id;
+      }
+      case 'remove_client': {
+        // OwnerAuth::Near only here: the predecessor must be an Owner::Near of the scope.
+        const id = String(args.scope_id);
+        const scope = (id === 'global' ? this.globalScope : this.scopes[id]) as { owners: unknown[]; clients: [string, string][]; allow_shared: boolean } | null;
+        if (!scope) throw new Error('Smart contract panicked: No such scope');
+        if (args.auth !== 'Near' || !scope.owners.some((o) => (o as { Near?: { account_id?: string } }).Near?.account_id === predecessor)) {
+          throw new Error('Smart contract panicked: Caller is not a NEAR owner of this scope');
+        }
+        const key = `${String(args.provider)}/${String(args.aud)}`;
+        if (!scope.clients.some(([p, a]) => `${p}/${a}` === key)) throw new Error('Smart contract panicked: Client is not in this scope');
+        if (scope.clients.length <= 1 && !scope.allow_shared) throw new Error('Smart contract panicked: Cannot remove the last client of a scope without shared login');
+        scope.clients = scope.clients.filter(([p, a]) => `${p}/${a}` !== key);
+        this.removedClients[key] = { scopeId: id, freeAt: this.now + Number(this.config?.change_delay_ms ?? 0) };
+        return null;
+      }
       default:
         if (method.startsWith('set_') || method === 'pause' || method === 'unpause') {
           this.assertOwner(predecessor);

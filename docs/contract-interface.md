@@ -1,6 +1,8 @@
 # hana-signer contract interface (batch A, A.2, B, governance and email login)
 
-Last verified against code: 2026-11-02 (branch `docs/consistency-pass`: the conventions' gas note points at the
+Last verified against code: 2026-11-02 (branch `feat/batch-c-6`: the security note on unregistered clients names the
+console sink scope; the owner-action nonce is now also recomputed by the API's precheck, against the contract's
+`test_fixture.json`); 2026-11-02 (branch `docs/consistency-pass`: the conventions' gas note points at the
 sandbox measurement of `create_session_and_derive`); 2026-11-02 (branch `feat/link-cap`: the hourly link counter, D200: `set_link_thresholds`,
 `get_link_stats`, `link_threshold_reached`, gas; it never refuses a link); 2026-11-02 (branch `feat/email-login-2`: contract v3 with `migrate_v1` removed, the email
 login calls and the v2 → v3 upgrade measured in the sandbox, [Gas of the email login calls](#gas-of-the-email-login-calls-sandbox)).
@@ -299,7 +301,11 @@ concatenated (no extra length prefix around the whole):
 | `remove_client` | `borsh(scope_id: String) ‖ borsh(provider: String) ‖ borsh(aud: String)` |
 | `disable_shared_login` | `borsh(scope_id: String)` |
 
-(`scope_id` therefore appears twice in the preimage: once after the signer, once as the first argument.)
+(`scope_id` therefore appears twice in the preimage: once after the signer, once as the first argument.) `Change` is a
+Borsh enum: `AddClient` = 0 {provider, aud}, `SetOwners` = 1 {owners: `Vec<Owner>`, `Near` = 0 {account_id},
+`Oidc` = 1 {provider, sub}}, `SetAllowShared` = 2 {allow: u8}; `Option<String>` is 0, or 1 then the string. The TS port
+is `@hana-id/console-core` `ownerActionArgsBorsh` / `ownerActionNonce` / `clientProofNonce`, tested against
+`test_fixture.json`; the API's owner-action precheck recomputes both nonces with it before relaying.
 
 For `propose_change(AddClient)` the owner token therefore commits to the exact client-proof JWT: obtain the client
 proof first, then the owner token. `action_nonce` is the scope's current value; any successful `propose_change`,
@@ -1629,8 +1635,9 @@ prepays them. New view `session_key_in_use` (also covers revoked, unexpired sess
   exists**, not only once `public_registration` is on: `propose_change(AddClient)` is open to every scope owner
   whatever the registration state, so while registration is closed any owner of an admin-registered scope can claim
   a client nobody has registered yet (another partner's client before Hana onboards it, or a Hana console audience
-  not in `global`), and Hana can't undo it after `execute_change`. Mitigation: register Hana's console audiences and
-  known partner clients early; watch `change_proposed` events (the timelock leaves time to register the client
+  not yet in its sink scope), and Hana can't undo it after `execute_change`. Mitigation: register Hana's console
+  audiences (in the console sink scope, an `sN` with no other client, owned by Hana, no shared login: never in
+  `global`, where a console token could open a session; `deploy-contract`, D238) and known partner clients early; watch `change_proposed` events (the timelock leaves time to register the client
   first with `admin_register_scope`, which wins: the pending add then fails at execute). Revisit before enabling
   public registration.
 - **Removing a client.** `remove_client` is immediate, but the client id is quarantined for `change_delay_ms` so

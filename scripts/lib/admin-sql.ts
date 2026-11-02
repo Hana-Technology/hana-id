@@ -380,7 +380,8 @@ export function suspensionWrite(app: AppRef & Pick<AppRow, 'suspended_by'>, susp
  * "Waivers"), decided in the announcing statement itself, so nothing can change in between: it was proposed with it
  * (the initial origins of an app:create that created the scope row), and the scope shows no sign that a user has a
  * key in it: `first_session_at` is NULL, no origin of any app of the scope is or was in force other than this
- * app:create's own initial ones (a guarded `origin_add` announced and due, or an `app_origins` row in force), and no
+ * app:create's own initial ones (a guarded `origin_add` announced and due, an `app_origins` row in force, or an origin
+ * a ledger row records as removed while in force: `origin.removed`, or the removes of a console `origin.proposed`), and no
  * app of the scope has a vault share, a session marker (migration 0009, written by the API once a session-pool relay
  * settled; it replaced the legacy `usage` counters in batch C4, D205) or an identity count. Any one of these signs
  * means the full delay. Nothing here reads the usage ledger (Neon): the waiver depends on the hot DB only.
@@ -394,6 +395,8 @@ function noSessionWaiver(t: string, now: number): string {
                      AND o.active_from IS NOT NULL AND o.active_from <= ${now} AND o.request_id != ${t}.request_id)
     AND NOT EXISTS (SELECT 1 FROM app_origins ao WHERE ao.app_id IN ${scopeApps} AND ao.active_from IS NOT NULL AND ao.active_from <= ${now}
                      AND (ao.change_id IS NULL OR ao.change_id NOT IN (SELECT gr.id FROM guarded_changes gr WHERE gr.request_id = ${t}.request_id)))
+    AND NOT EXISTS (SELECT 1 FROM app_changes rc, json_each(rc.detail_json, CASE WHEN rc.kind = 'origin.removed' THEN '$.origins' ELSE '$.removed' END) rr
+                     WHERE rc.app_id IN ${scopeApps} AND rc.kind IN ('origin.removed', 'origin.proposed') AND json_extract(rr.value, '$.wasInForce') = 1)
     AND NOT EXISTS (SELECT 1 FROM vault_shares WHERE app_id IN ${scopeApps})
     AND NOT EXISTS (SELECT 1 FROM session_markers WHERE app_id IN ${scopeApps})
     AND NOT EXISTS (SELECT 1 FROM identity_usage WHERE app_id IN ${scopeApps}))`;

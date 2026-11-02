@@ -1,6 +1,9 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's)
 
-Last verified against code: 2026-11-02 (branch `feat/batch-c-4`: "Usage capture" (one ledger event per post-gate
+Last verified against code: 2026-11-02 (branch `feat/batch-c-6`: `ConsoleRpc.changeOrigins` / `proposeChange` with the
+API's own step-up verification, `ConsoleRpc.ownerAction`, the owner-action precheck's nonce recompute on an uncached
+scope (`owner_nonce_mismatch`, the client-proof nonce), the safety budget and the 20-a-day per-scope cap, `owner_cap`
+and `owner_allowance_low` events, `OWNER_POOL_ALLOWANCE_YOCTO`, fresh `get_config` reads; D235–D239); 2026-11-02 (branch `feat/batch-c-4`: "Usage capture" (one ledger event per post-gate
 request, written after the response through `USAGE_DB`), the D1 `usage` counters no longer written, migration 0009
 `session_markers` and the waiver on it, the relay result's key, nonce and gas, the identity-count copy in the cron,
 `USAGE_DB` / `USER_ID_KEY`, the usage log events; D220–D224); 2026-11-02 (branch `fix/c5-budgets`: "RPC entrypoints" breaker and budget: the
@@ -165,7 +168,7 @@ The per-IP subject is the IPv4 address or the IPv6 /64 (`src/ip.ts`).
 | vault endpoints | 60/min, *per location* (binding `VAULT_IP_LIMIT`, key `<env>:vault-ip:<appId>:<ipSubject>`) | 10 × plan `per_minute` (`vault:minute`), global | share actions: 10/min per share, *per location* (binding `VAULT_SHARE_LIMIT`, key `<env>:vault-share:<appId>:<hex>`); asked in turn: IP, then app only once the IP accepted, then (after the body check) the share (D95) |
 | `/v1/identity/token` (I, D176) | the vault endpoints' 60/min binding, before the body | its own windows on `app:<id>`, never `vault:minute`: `identity:minute` 10 × plan `per_minute`, `identity:hour` plan `per_day` (at most 100 000), sliding, counted after every other check | per session key 10/min, *per location* (`IDENTITY_SESSION_LIMIT`, key `<env>:identity-session:<appId>:<hex sessionPk>`), after the signature; per account root 30/min, *per location* (`IDENTITY_ROOT_LIMIT`, key `<env>:identity-root:<scopeId>:<hex sub bytes>`); per scope `identity:hour` 2 × the app's (`identity:scope:<scopeId>`, sliding); then global on `identity:global`, sliding: a hard breaker of 1 000 000/h (`503 identity_busy`; `IDENTITY_GLOBAL_HOURLY_MAX` overrides; ≥ 10 × any app's ceiling) and a soft line at 100 000/h that only logs `identity_volume_alert`. A refusal by a later window takes the hit back from the earlier ones |
 | login relay | writes 10/min, reads 120/min | — | not per app |
-| `/v1/owner-actions` | 10/min | per scope 10/min, 50/day (`owner-actions:scope:<scopeId>`), authenticated actions only | authenticated actions (`propose_change`, `remove_client`, `disable_shared_login`): per owner identity 5/min, 30/day (`owner-actions:owner:<hex sha256(provider#sub)>`), then per scope, then global 20/min, 200/day (`owner-actions:global`). `execute_change` (no auth): its own 10/min, 50/day per scope (`owner-actions:execute:<scopeId>`), then global. `cancel_change`: none of those; 5/min, 20/day per owner identity (windows `cancel:minute`, `cancel:day`), then 25/min, 100/day per target scope (`owner-actions:cancel:<scopeId>`: the contract's `MAX_OWNERS` = 5 owners at their own cap), then a spend-bound ceiling of 100/min, 1000/day (`owner-actions:cancel-global`). Counted only after every off-chain check passes, the owner proof against the target scope's on-chain owners included; a request a later window refuses is taken back from the earlier ones (D100) |
+| `/v1/owner-actions`, `ConsoleRpc.ownerAction` (one limiter: the RPC's `clientIp`) | 10/min | per scope 10/min, 20 a UTC day (`owner-actions:scope:<scopeId>`), `propose_change` only | `propose_change`: per owner identity 5/min, 30/day (`owner-actions:owner:<hex sha256(provider#sub)>`), then per scope, then global 20/min, 200/day (`owner-actions:global`). `execute_change` (no auth): its own 10/min, 50/day per scope (`owner-actions:execute:<scopeId>`), then global. The safety budget, `cancel_change`, `remove_client` and `disable_shared_login`: none of those; 5/min, 20/day per owner identity (windows `safety:minute`, `safety:day`), then 25/min, 100/day per target scope (`owner-actions:safety:<scopeId>`: the contract's `MAX_OWNERS` = 5 owners at their own cap), then a spend-bound ceiling of 100/min, 1000/day (`owner-actions:safety-global`). Counted only after every off-chain check passes, the owner proof against the target scope's on-chain owners included; a request a later window refuses is taken back from the earlier ones (D100, D236). A refusal writes an `owner_cap` security event, once per window |
 | `/v1/health`, `GET /vault` | — | — | — |
 
 Seeded plan `free`: `per_minute` 60, `per_day` 5000, `per_ip_minute` 20.
@@ -621,38 +624,48 @@ No app key. `{"method", "args"}` only, `args` exactly as the contract takes them
 | 403 | `not_console_token` | `(provider, aud)` not in `get_config().console_audiences` |
 | 404 | `unknown_scope` | |
 | 403 | `not_owner` | token's `(provider, sub)` not an `Oidc` owner |
+| 409 | `owner_nonce_mismatch` | the token's nonce isn't `owner_action_nonce(signer, scope_id, method, borsh(args without auth), action_nonce)` for this body at the scope's current `action_nonce` (another action, other args, or the nonce moved): rebuild and sign again |
+| 502 | `near_unavailable` | the scope view has no readable `action_nonce` (fail closed) |
 | 404 / 409 | `unknown_change` / `change_locked` | cancel, execute |
 | 404 / 409 | `unknown_client` / `last_client` | `remove_client` |
 | 409 | `shared_login_disabled` / `last_client` | `disable_shared_login` |
-| 400 / 409 | `invalid_client_proof` / `client_registered`, `shared_client` | `AddClient` |
+| 400 / 409 | `invalid_client_proof` / `client_registered`, `shared_client` | `AddClient`: the proof's signature, its `(provider, aud)`, and its nonce = `client_proof_nonce(signer, scope_id, action_nonce)` |
 | 409 | `shared_login_enabled` | `SetAllowShared` already on |
 | 409 | `token_used` | this exact token was reserved before |
 | 503 / 502 | `issuer_keys_unavailable` / `near_unavailable` | JWKS / chain read failed |
 
-The `auth` token and the `client_proof` are checked like a login token (RS256, issuer, `exp` without skew, a finite
-`exp`), the proof for its `(provider, aud)`. Their other claims are not read: an `email`, `email_verified` or `hd`
+The scope is read with an **uncached** `get_scope` (D236): both nonces commit to its `action_nonce` as it is now, so an
+action built before another one landed is refused here, for free, instead of burning gas on chain. The nonce check
+comes after the owner check and before the method's own checks; nothing is reserved or counted before every check
+passed. The arguments are encoded by `@hana-id/console-core` `ownerActionArgsBorsh` (tested against the contract's
+`test_fixture.json`). The `auth` token and the `client_proof` are checked like a login token (RS256, issuer, `exp`
+without skew, a finite `exp`), the proof for its `(provider, aud)`. Their other claims are not read: an `email`, `email_verified` or `hd`
 (a console token should be `openid` only, but nothing refuses one that isn't) is ignored, as is any of the
 optional claims with the wrong JSON type (D201), and none is logged, returned or stored; only the token's sha256
 is kept. The token itself is relayed to the contract unchanged.
 
 The token's sha256 is reserved atomically (`RateLimiter` object `owner-actions:tokens`, until the token's `exp`)
 before relaying. Then the caps (table above) are asked from the most specific in, at one instant; when one refuses,
-the hits the earlier ones accepted are taken back (`RateLimiter.unhit`), so a refused request uses up no window.
-`execute_change`, which anyone may send, never counts against the window the scope's owners use, and
-`cancel_change` counts only against cancel windows: the owner's, the target scope's and a high cancel-only ceiling.
-Only a verified owner of the target scope on chain (`get_scope().owners`, checked before any window) reaches the
-scope's cancel window, and it is sized for all of them at their own cap at once.
+the hits the earlier ones accepted are taken back (`RateLimiter.unhit`), so a refused request uses up no window, and an
+`owner_cap` security event is written (`{method, window, limit, max, windowStart}`, the scope and its org; once per
+window, by a deterministic id; never the owner's identity). `execute_change`, which anyone may send, never counts
+against the window the scope's owners use, and the safety budget (`cancel_change`, `remove_client`,
+`disable_shared_login`) counts only against safety windows: the owner's, the target scope's and a high safety-only
+ceiling. Only a verified owner of the target scope on chain (`get_scope().owners`, checked before any window) reaches
+the scope's safety window, and it is sized for all of them at their own cap at once.
 
-Remaining starvation limits for `cancel_change` (APIW-3): within a scope, only all 5 of its owners together (the
-contract's `MAX_OWNERS`), each at its own cap, can fill the scope's cancel window; any 4 leave the fifth room. The
-global cancel ceiling needs 20 owner identities at their cap per minute (≥ 4 scopes an attacker fully owns) or 50 per
-day (≥ 10 such scopes) plus 1000 cancellable changes (`MAX_PENDING` = 10 per scope, so ≥ 100 scopes' worth at once,
-or more proposals than the shared 200/day ceiling allows in five days). Registration is invite-only, and an owner can
+Remaining starvation limits for the safety budget (APIW-3): within a scope, only all 5 of its owners together (the
+contract's `MAX_OWNERS`), each at its own cap, can fill the scope's safety window; any 4 leave the fifth room. The
+global safety ceiling needs 20 owner identities at their cap per minute (≥ 4 scopes an attacker fully owns) or 50 per
+day (≥ 10 such scopes) plus 1000 actions the scopes' state allows (a cancel needs a pending change, `MAX_PENDING` = 10
+per scope; a removal one of the scope's clients; a disable shared login on), so ≥ 100 scopes' worth at once, or more
+proposals than the shared 200/day ceiling allows in five days. Registration is invite-only, and an owner can
 always cancel directly on chain (`docs/operations.md` "Cancelling a change when the API refuses"). The owner pool's
 allowance is the hard spend bound for all of these. A `cancel_change` (or any authenticated action) without an
 owner identity is refused, `403 not_owner` (fail closed; the shape check already requires `auth`). `429
 rate_limited` names the window in `error`: `owner actions per owner per minute`, `… per scope …`, `executes per scope
-…`, `owner actions per day`, `cancels per owner per minute`, `cancels per minute`. The token is released only if a
+…`, `owner actions per day`, `safety actions per owner per minute`, `safety actions per scope per day`, `safety actions
+per minute`. The token is released only if a
 cap refuses the request or the relay certainly never executed
 (`method_not_allowed`, `relayer_unconfigured`, `near_unavailable`, `near_rejected`, `relayer_busy`). Without
 `OWNER_RELAYER_KEYS`: `503 relayer_unconfigured`. → `200 {"result": <contract return or null>, "nearTx", "requestId"}`.
@@ -728,7 +741,7 @@ attempt}`, never with the connection string or the driver's message. Without `US
 Tests: `apps/api/test/usage.test.ts` (a refusing server: every endpoint answers the same status, body and headers;
 a ledger that never answers delays no response).
 
-## RPC entrypoints (`src/rpc/`, `src/changes/`, batch C5) · C
+## RPC entrypoints (`src/rpc/`, `src/changes/`, batches C5 and C6) · C
 
 `ConsoleRpc` and `AdminRpc` are `WorkerEntrypoint` classes exported by the API Worker (`docs/batch-c-spec.md` "RPC
 interfaces"). No route reaches them; the console Worker (batch C7) binds `ConsoleRpc` and the admin Worker (C8)
@@ -756,9 +769,24 @@ method: an unexpected error is logged (`event: "rpc"`, method, request id, `code
 | `cancelChangeByLink` | The same, by the emailed link: `sha256(token)` must equal the change's `cancel_token_hash` (else `forbidden`, also before the ack), valid until `active_from`, single use; actor `link` |
 | `setSuspended` | The partner bit (4) only, set or cleared; a member never touches bits 1 and 2 |
 | `createKey`, `rotateKey`, `revokeKey` | A new `pk_<environment>_` key (at most 5 with `revoked_at` NULL, `key_limit`); rotate: a new key and the old one `revoked_at = now + 24 h`; revoke: `revoked_at = now` (also in the grace), the last valid key included (`warning: 'last_key'`) |
+| `changeOrigins` (C6) | A member's origin adds with any removes sent with them, and `stepUpJwt`, which the API verifies itself (below). The adds are pending `origin_add`s like a staff proposal's, recorded `proposed_by_kind = 'member'` with the verified `proposer_sub`; the removes apply at once in the same batch (their origin_adds end or are cancelled, their rows go); one `origins_version` bump; one `origin.proposed` row (`changes`, and `removed` with `wasInForce`) with `actor_sub`. `bad_request` for an origin both added and removed or a remove that isn't the app's; the add rules are `addOrigins`'s (duplicates, 20 origins counting the removes, `origin_refused`), except the scope-assignment wait, which is staff-only. Not counted by the breaker |
+| `proposeChange` (C6) | A member's `policy_set` or `raw_sign_on` with `stepUpJwt` (verified as for `changeOrigins`, the settings-change layout): the staff proposal's rules without the assignment wait; `proposer_sub` and `actor_sub` set |
+| `ownerAction` (C6) | `{orgId, body}`: an on-chain owner action relayed through the owner pool exactly as `POST /v1/owner-actions` relays it (the same per-IP limiter fed `clientIp`, precheck, token reservation, caps, usage event, endpoint `ConsoleRpc.ownerAction` in the request log). Console rules on top (D237): the scope must be in `scopes` with the org (`not_found`, before any chain read); the owner token's optional claims are checked strictly and it must carry no `email`, `email_verified` or `hd` (`forbidden`: it is public once relayed). A refusal before the relay is an RpcCode (the precheck's code first in `error`: `unknown_change: …`): `owner_nonce_mismatch`, `invalid_client_proof`, `token_used`, `not_owner`, `rate_limited`, `not_found` (scope, change, client), `conflict` (locked, last client, shared login state, a registered or shared client), `forbidden` (token), `near_unavailable` (NEAR or Google's keys), `bad_request`. Once relayed: `{ok: true, status, result?, nearTx?, code?, error?}`, the relay's own answer, a contract panic included (`status: 422`, `code: contract_rejected`). The safety methods may spend the kill-switch reserve |
 
-Not built yet: `changeOrigins`, `proposeChange`, `ownerAction` (C6, the API-verified step-up and the owner-action
-precheck) and `usage`, `statements`, `ledger` (C12); calling them is an RPC error (no such method).
+Not built yet: `usage`, `statements`, `ledger` (C12); calling them is an RPC error (no such method).
+
+**The API's step-up verification (`changes/step-up.ts`, spec "API verification", D235).** In order, failing closed, before
+anything is written or reserved: (1) RS256 signature, issuer and expiry (`@hana-id/oidc`, optional claims strict); (2)
+`(provider, aud)` in the on-chain `console_audiences` in force, `get_config` read fresh; (3) `iat` at most 300 s old
+and at most 60 s ahead; the token's `sub` equal to the member actor's; no `email`, `email_verified` or `hd`; (4) after
+the plan read (a replayed `requestId` is `already_applied` here, a moved version `version_conflict`, then every input
+and state check), the nonce equal to `b64url` of the origin-change layout (signer, app id, sorted normalised adds and
+removes, the stored `origins_version`) or the settings-change layout (signer, app id, kind, the 32 `policyId` bytes or
+zeros, the stored `settings_version`); (5) `sub` an `Owner::Oidc` of the app's scope, `get_scope` uncached; (6)
+`sha256(jwt)` reserved in `owner-actions:tokens` until `exp` (shared with `/v1/owner-actions`). Steps 1–4 are
+`forbidden`, 5 `not_owner` (`near_unavailable` when NEAR or Google's keys can't be read), 6 `token_used`. A batch that
+then fails or finds the version moved gives the token back (nothing was written). The token, its email and hd are never
+logged, returned or stored.
 
 `AdminRpc` has the org methods above for any org (`listApps`, `getApp`, `listChanges`, `removeOrigins`, `turnOff`,
 `updateSettings`, `setLogo`, `cancelChange`, `createKey`, `rotateKey`, `revokeKey`), with a Hana actor, no breaker and
@@ -782,10 +810,12 @@ Not built yet: `purgeAudit`, `deletedApps` (C13).
 
 **Waivers at `ackNotice`.** `loopback`: a member's loopback origin (or `http://localhost:*`) on a test scope in a dev
 env on a non-production network. `no_session`: a candidate is a member proposal with an API-verified step-up
-(`proposer_sub` set, C6) or one of `createApp`'s initial origins on a scope row it created. It is granted inside the
-acking statements while the scope shows no user: `first_session_at` NULL, no origin of the scope's apps in force
-except those of the same request, and no vault share, session marker (migration 0009; the legacy `usage` rows until
-batch C4, D220) or identity count for an app of the scope.
+(`proposer_sub` set, only by `changeOrigins` / `proposeChange` after the verification above) or one of `createApp`'s
+initial origins on a scope row it created. It is granted inside the acking statements while the scope shows no user:
+`first_session_at` NULL, no origin of the scope's apps in force except those of the same request, none that a ledger
+row records as removed while in force (`origin.removed`, or the `removed` of an `origin.proposed`, D235), and no vault
+share, session marker (migration 0009; the legacy `usage` rows until batch C4, D220) or identity count for an app of
+the scope.
 Anything else gets the full delay. Hana proposals never get `loopback`.
 
 **Compare-and-swap writes (`changes/cas.ts`).** Every write is one D1 batch. Its first statement inserts the write's
@@ -804,15 +834,15 @@ accept a revoked, rotating or deleted app's key.
 
 **Breaker and budget (`changes/guard.ts`, object `console-rpc`).**
 - **Budget.** Every member call first takes its cost (`CONSOLE_COSTS`: its plan read, batch and one diagnostic read,
-  1–6 statements). It comes from its org's bucket (10/s, burst 40) and from the global one (the spec's 30/s, burst
+  1–8 statements; `ownerAction` 2: its scope-in-org read and a cap's event). It comes from its org's bucket (10/s, burst 40) and from the global one (the spec's 30/s, burst
   60). The kill switches (`removeOrigins`, `turnOff`, `revokeKey`, `setSuspended(true)`) may spend the last 10 of
   the org's bucket and the last 20 of the global one; every other call must leave them. One org takes at most 12
   tokens of the global reserve in any minute. A kill switch that changed nothing (the outcomes below, or a no-op)
   gives back what it took of the global reserve, which is charged to its org's own bucket instead (that bucket may go
   below zero, and the org's ordinary calls then wait). So neither one org nor a flood of reads, settings writes or
   empty kill switches can starve another org's kill switches.
-- **Breaker.** `setSuspended(true)`, `revokeKey`, `rotateKey`, `removeOrigins` and a `googleWebClientId` change also
-  take a slot in their org's rolling hour (5) and the global one (20). A call that changed nothing gets its slot
+- **Breaker.** `setSuspended(true)`, `revokeKey`, `rotateKey`, `removeOrigins` and a `googleWebClientId` change (not
+  `changeOrigins`' removes, which need an on-chain owner's token) also take a slot in their org's rolling hour (5) and the global one (20). A call that changed nothing gets its slot
   back: `not_found`, `conflict`, `version_conflict`, `already_applied`, `bad_request`, or a no-op.
 - **Refusals.** Over any limit, the call is `rate_limited` and writes nothing. The first breaker refusal of a limit
   in a clock hour writes a `breaker` security event; the object remembers it, so later refusals write nothing.
@@ -886,8 +916,8 @@ this key's public key, start at R with no chain read (skips up to 99 nonces) and
 | `get_session` | 10 s; misses not cached; a refusal from cache is re-read fresh |
 | `session_key_in_use` | "in use" from a cached unexpired session; "not in use" always fresh |
 | `scope_for_client` | 60 s, a miss 10 s; dropped for the scope after an owner action relayed here |
-| `get_scope` | 10 s; dropped after an owner action |
-| `get_config` | 60 s; 10 s while it says `paused` (G); concurrent misses share one read |
+| `get_scope` | 10 s; dropped after an owner action. Read uncached by the owner-action precheck (its `action_nonce`) and by the RPC's owner and client checks |
+| `get_config` | 60 s; 10 s while it says `paused` (G); concurrent misses share one read. Read fresh (and the cache refreshed) by the guarded-change step-up check (its `console_audiences`) |
 | `get_issuer` (G) | 60 s per provider; a kid not in the set re-reads it at most every 10 s; concurrent misses share one read |
 | `GET /v1/governance` snapshot (G) | 10 s, `governance-status.ts` |
 | Google JWKS | `max-age` clamped to 5 min..6 h; unknown kid refetches at most once a minute; 10 s back-off after a failure; a stale set serves its kids up to 6 h past expiry. Each successful fetch is recorded in `issuer_key_observations` after the response |
@@ -972,13 +1002,19 @@ jobs (one failing doesn't skip the others):
   `not_announced`): its `app_origins` row is deleted and the app's version bumped. Each change is one D1 batch whose
   writes after the first depend on the first, and each ledger row has a request id derived from the change, so
   overlapping runs record a change once.
+- **Owner-pool allowance, the same hourly run** (`owner-pool.ts`, C6). One `view_access_key_list` of `RELAYER_ACCOUNT`:
+  each `OWNER_RELAYER_KEYS` key below 25% of its initial allowance (`OWNER_POOL_ALLOWANCE_YOCTO`, default 0.5 NEAR,
+  deploy-contract's `--owner-relayer-allowance` default), or missing from the account, writes an `owner_allowance_low`
+  security event (`{publicKey, allowanceYocto, missing, initialYocto, thresholdPct, day}`), once per key and UTC day.
+  A full-access key or an unlimited allowance is skipped. NEAR down is logged (`owner_allowance_check`) and never
+  fails the run.
 - **Drift detection, the same hourly run** (`changes/drift.ts`, C5). It checks that every origin in force is explained
   by an announced `origin_add` whose clock had passed when the row came into force, or by the 0006 baseline
   (`active_from = 0`, listed in `migration.baseline`). It checks that every stored or pending policy and every
   raw-signing enable is explained by an announced change (a stored value by one in force by then; a pending value by
   one whose `active_from` is no later than its `*_effective_at`), or by the baseline. A baseline value counts only
-  while no later `app_changes` row ended it (`origin.removed`, `policy.removed` / `.activated` / `.pending_dropped`,
-  `raw_sign.off`). Keys, suspension bits and deletion aren't checked. Anything else is a direct D1
+  while no later `app_changes` row ended it (`origin.removed` or the `removed` of a member's `origin.proposed`,
+  `policy.removed` / `.activated` / `.pending_dropped`, `raw_sign.off`). Keys, suspension bits and deletion aren't checked. Anything else is a direct D1
   write: it gets a `drift` security event, once per finding (the id is derived from the finding), at most 100 per
   kind per run. An `app.created` row alone explains nothing (D228).
 
@@ -1007,6 +1043,7 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 | `GAS_<METHOD>_TGAS` | var, optional | not generated | per-method gas |
 | `RELAYER_KEYS` | secret | `.secrets/<env>/relayer-keys.json` | JSON array of `ed25519:` secret keys |
 | `OWNER_RELAYER_KEYS` | secret | `.secrets/<env>/owner-relayer-keys.json` | same format; absent → owner actions 503 |
+| `OWNER_POOL_ALLOWANCE_YOCTO` (C6) | var, optional | not generated | the allowance (decimal yocto) the owner-pool keys were added with, when deploy-contract ran with another `--owner-relayer-allowance` than 0.5 NEAR: the base of the hourly `owner_allowance_low` check |
 | `KEYS_UPDATER_KEY` | secret | `.secrets/<env>/keys-updater.json` `private_key` | function-call key on the signer with exactly the updater methods (installed by `add_updater_key`, G); absent → cron skips JWKS sync |
 | `VAULT_KEK` | secret | `.secrets/<env>/vault-kek`, from `scripts/vault-kek.ts init` | `<id>:<base64 of 32 bytes>`; absent → vault 503 |
 | `VAULT_KEK_PREVIOUS` | secret, rotation only | `.secrets/<env>/vault-kek.previous`, from `vault-kek rotate` | |
@@ -1115,8 +1152,10 @@ the KMS signer `no_kms_key_arn`, `no_aws_credentials`, `kms_bad_key_arn`, `kms_b
 credential, a request or a signature), `identity_ceiling` (error), `identity_volume_alert` (error: past the global soft line),
 `identity_bad_session_path` (error), `identity_count_failed`, `identity_maintenance` (`pruned`), batch C's `rpc`
 (`method`, `requestId`, `orgId`, `actorKind`, `outcome`, `code`: one per RPC call, never its input or the actor's id
-or email), `drift_detection` (`added`; error `code: internal`) and `console_rpc` (`code: breaker_event_failed`,
-`settle_failed`), and from the page
+or email), `drift_detection` (`added`; error `code: internal`), `console_rpc` (`code: breaker_event_failed`,
+`settle_failed`), C6's `owner_cap_event_failed` and `owner_allowance_check` (`code` `owner_allowance_low` (warn),
+`near_unavailable` / `event_write_failed` (error)), and `owner_token_release_failed` with `endpoint: step_up`; a console
+owner action's request line has `endpoint: ConsoleRpc.ownerAction`; and from the page
 Workers `vault_host` and `auth_page` (`code`).
 
 ## Email issuer (`apps/email-issuer`, its own Worker) · E

@@ -74,6 +74,15 @@ export interface DeployObserved {
   globalScope: unknown;
   /** scope_for_client("google", id) for each manifest shared client ID: a scope id, or null if unregistered. */
   sharedClientScopes: Record<string, string | null>;
+  /**
+   * scope_for_client(provider, aud) for each manifest console audience, keyed `provider/aud` (clientKey): a scope id,
+   * or null if unregistered. Absent (or an audience missing): not read, e.g. no contract yet.
+   */
+  consoleAudienceScopes?: Record<string, string | null>;
+  /** get_scope of each scope other than "global" a console audience is a client of (the sink check). */
+  consoleSinkScopes?: Record<string, unknown>;
+  /** The Owner::Near accounts of "global" whose key is in ~/.near-credentials (remove_client when the owner moved). */
+  globalOwnerKeys?: Record<string, boolean>;
   /** Size of an already-built wasm, if known (for the storage estimate). */
   wasmBytes: number | null;
   /** NEAR code hash (base58 sha256) of that wasm. */
@@ -139,6 +148,10 @@ export type DeployStep =
   | { kind: 'set-console-audiences'; audiences: [string, string][] }
   | { kind: 'set-shared-clients'; clients: [string, string][]; added: [string, string][]; removed: [string, string][] }
   | { kind: 'register-global'; owners: Owner[]; clients: [string, string][]; allowShared: boolean }
+  /** The console sink (D238): a console audience out of "global", by the owner or another Owner::Near of it. */
+  | { kind: 'remove-console-client'; provider: string; aud: string; via: { kind: 'owner' } | { kind: 'account'; account: string } }
+  /** The sink scope itself; `quarantineMs` > 0 when this run removes its clients from "global" first. */
+  | { kind: 'register-console-sink'; owners: Owner[]; clients: [string, string][]; quarantineMs: number }
   /** propose_upgrade of the wasm's hash (null: the hash of the wasm this run builds). */
   | { kind: 'propose-upgrade'; codeHash: string | null; replaces: string | null; current: string }
   | { kind: 'execute-upgrade'; codeHash: string }
@@ -166,6 +179,9 @@ export function stepSigner(step: DeployStep): Role | null {
     case 'relayer-keys':
     case 'execute-upgrade':
       return 'relayer';
+    case 'remove-console-client':
+      // Another Owner::Near of "global" signs with its own key (deploy-run); its key was checked when planning.
+      return step.via.kind === 'owner' ? 'owner' : null;
     default:
       return 'owner';
   }
@@ -192,6 +208,10 @@ export function ownerCallOf(s: DeployStep, newKey = '<new key in keys-updater.js
       return { method: 'set_shared_clients', args: { clients: s.clients } };
     case 'register-global':
       return { method: 'admin_register_scope', args: registerGlobalArgs(s) };
+    case 'register-console-sink':
+      return { method: 'admin_register_scope', args: registerSinkArgs(s) };
+    case 'remove-console-client':
+      return s.via.kind === 'owner' ? { method: 'remove_client', args: removeConsoleClientArgs(s) } : null;
     case 'propose-upgrade':
       return { method: 'propose_upgrade', args: { code_hash: s.codeHash ?? '<hash of the built wasm>' } };
     case 'propose-owner':
@@ -616,25 +636,28 @@ export function buildDeployPlan(m: Manifest, o: DeployObserved, opts: DeployOpti
     }
   }
 
-  // Hana's console audiences are registered as clients of "global" too, so no scope owner can claim them with
-  // propose_change(AddClient) (docs/contract-interface.md, Security notes).
+  // The console sink scope (docs/batch-c-spec.md "Address impact", D93 Q7, D238): Hana's console audiences are clients
+  // of a dedicated `sN` scope owned by the manifest's owner (Owner::Near), with no other client, no shared login, no
+  // app and no origins, so no scope owner can claim them with propose_change(AddClient), and a console-client token
+  // can open no session in a scope with real wallets. They are never clients of "global": a console token whose nonce
+  // followed the session layout would open a `global` session there and derive_key that user's `global` key. Fresh
+  // env: the sink is registered before "global". Existing env: each console audience in "global" is removed from it
+  // (remove_client, immediate), then the sink is registered once the removed clients' quarantine (change_delay_ms)
+  // is over: until then only "global" could take them back.
+  const sink = consoleSinkPlan(m, o, audiences);
+  blockers.push(...sink.blockers);
+  warnings.push(...sink.warnings);
+  done.push(...sink.done);
+  steps.push(...sink.steps);
+
   if (o.globalScope !== null && o.globalScope !== undefined) {
     done.push(`Scope "${GLOBAL_SCOPE}" registered.`);
-    const globalClients = (o.globalScope as { clients?: [string, string][] }).clients ?? [];
-    const missing = audiences.filter(([p, a]) => !globalClients.some(([gp, ga]) => gp === p && ga === a));
-    if (missing.length) {
-      warnings.push(
-        `Console audience(s) not in the "${GLOBAL_SCOPE}" scope: ${missing.map(([p, a]) => `${p}/${a}`).join(', ')}. ` +
-          `Until registered, any scope owner can claim them with propose_change(AddClient); add them to "${GLOBAL_SCOPE}" (or another Hana scope) early.`,
-      );
-    }
   } else if (m.googleClientIds.length === 0 || m.googleClientIds.some(isPlaceholder)) {
     warnings.push(`googleClientIds is empty or a placeholder: skipping the "${GLOBAL_SCOPE}" scope. Set it in envs/${m.name}.json and re-run.`);
   } else {
+    // Hana's own app logs in with its own clients only (never the shared one, never a console audience).
     const clients: [string, string][] = m.googleClientIds.map((aud) => [GOOGLE_PROVIDER, aud] as [string, string]);
-    for (const [p, a] of audiences) if (!clients.some(([cp, ca]) => cp === p && ca === a)) clients.push([p, a]);
-    if (clients.length > 10) blockers.push(`The "${GLOBAL_SCOPE}" scope would get ${clients.length} clients (googleClientIds + consoleAudiences); the contract allows 10.`);
-    // Hana's own app logs in with its own client, not the shared one.
+    if (clients.length > 10) blockers.push(`The "${GLOBAL_SCOPE}" scope would get ${clients.length} clients (googleClientIds); the contract allows 10.`);
     steps.push({ kind: 'register-global', owners: [{ Near: { account_id: m.owner } }], clients, allowShared: false });
   }
 
@@ -700,6 +723,15 @@ export function describeStep(m: Manifest, s: DeployStep, ownerTx: OwnerTxOptions
       return `execute_upgrade(<wasm ${s.codeHash}>) on ${m.signer}: deploys it and runs its migrate in one receipt [anyone; signed by ${m.relayer}].`;
     case 'propose-upgrade':
       return `${s.codeHash ? '' : 'propose_upgrade of the wasm built above (its hash is computed after the build): '}${describeOwnerCall(m, owner!, ownerTx)}; executable after governance_delay_ms, then re-run with --upgrade --skip-build.`;
+    case 'remove-console-client':
+      return s.via.kind === 'owner'
+        ? `Remove console audience ${pairText([[s.provider, s.aud]])} from "${GLOBAL_SCOPE}" (immediate; quarantined for change_delay_ms): ${describeOwnerCall(m, owner!, ownerTx)}.`
+        : `Remove console audience ${pairText([[s.provider, s.aud]])} from "${GLOBAL_SCOPE}" (immediate; quarantined for change_delay_ms): remove_client(${JSON.stringify(removeConsoleClientArgs(s))}) [signed by ${s.via.account}, an Owner::Near of "${GLOBAL_SCOPE}"].`;
+    case 'register-console-sink':
+      return (
+        `Register the console sink scope (a new sN: ${pairText(s.clients)}, owner ${m.owner}, no shared login): ${describeOwnerCall(m, owner!, ownerTx)}` +
+        (s.quarantineMs > 0 ? `; after the removed clients' quarantine (${s.quarantineMs} ms), which this run waits out when it is at most ${SINK_WAIT_MAX_MS / 60_000} min.` : '.')
+      );
     case 'set-shared-clients': {
       const changes = [s.added.length ? `adds ${pairText(s.added)} after the ${m.changeDelayMs} ms timelock` : '', s.removed.length ? `removes ${pairText(s.removed)} at once` : '']
         .filter(Boolean)
@@ -709,6 +741,104 @@ export function describeStep(m: Manifest, s: DeployStep, ownerTx: OwnerTxOptions
     default:
       return `${describeOwnerCall(m, owner!, ownerTx)}.`;
   }
+}
+
+/** The key of a client pair in `DeployObserved.consoleAudienceScopes`. */
+export const clientKey = ([provider, aud]: readonly [string, string]): string => `${provider}/${aud}`;
+
+/** Longest quarantine deploy-contract waits out inside one run before registering the sink; longer means re-run. */
+export const SINK_WAIT_MAX_MS = 10 * 60_000;
+
+/**
+ * The console sink steps (see buildDeployPlan): which console audiences to remove from "global", which to register in a
+ * new sink, and whether every one already sits in a sink. A console audience in any other scope is a blocker: someone
+ * claimed it, and only its scope's owners can give it back.
+ */
+export function consoleSinkPlan(m: Manifest, o: DeployObserved, audiences: readonly [string, string][]): { steps: DeployStep[]; blockers: string[]; warnings: string[]; done: string[] } {
+  const steps: DeployStep[] = [];
+  const blockers: string[] = [];
+  const warnings: string[] = [];
+  const done: string[] = [];
+  if (!audiences.length) return { steps, blockers, warnings, done };
+  const own = new Set(m.googleClientIds.map((aud) => clientKey([GOOGLE_PROVIDER, aud])));
+  const both = audiences.filter((a) => own.has(clientKey(a)));
+  if (both.length) blockers.push(`${pairText(both)} is both a console audience and one of googleClientIds: a console audience must never be a client of "${GLOBAL_SCOPE}".`);
+  const scopes = o.consoleAudienceScopes ?? {};
+  const inGlobal = audiences.filter((a) => scopes[clientKey(a)] === GLOBAL_SCOPE);
+  const unregistered = audiences.filter((a) => (scopes[clientKey(a)] ?? null) === null);
+  const sinkOwner: Owner = { Near: { account_id: m.owner } };
+  const inSink = new Map<string, [string, string][]>();
+  for (const a of audiences) {
+    const id = scopes[clientKey(a)];
+    if (id === undefined || id === null || id === GLOBAL_SCOPE) continue;
+    const view = (o.consoleSinkScopes ?? {})[id] as { owners?: unknown[]; clients?: [string, string][]; allow_shared?: boolean } | null | undefined;
+    const audienceSet = new Set(audiences.map(clientKey));
+    // A sink: NEAR-account owners only (Hana's owner, or the owner of the time it was registered), console audiences
+    // only, no shared login.
+    const nearOwners = Array.isArray(view?.owners) ? view.owners.map((x) => (x as { Near?: { account_id?: unknown } } | null)?.Near?.account_id) : [];
+    const isSink =
+      !!view &&
+      nearOwners.length > 0 &&
+      nearOwners.every((x) => typeof x === 'string') &&
+      Array.isArray(view.clients) &&
+      view.clients.every((c) => audienceSet.has(clientKey(c))) &&
+      view.allow_shared === false;
+    if (!isSink) {
+      blockers.push(
+        `Console audience ${pairText([a])} is a client of scope "${id}", which is not a Hana console sink (NEAR-account owners only, console audiences only, no shared login). ` +
+          `Find out who registered it there: only that scope's owners can remove it (D238).`,
+      );
+      continue;
+    }
+    if (!nearOwners.includes(m.owner) && !inSink.has(id)) warnings.push(`Console sink scope "${id}" is owned by ${nearOwners.join(', ')}, not the current owner ${m.owner} (registered before an owner transfer?).`);
+    inSink.set(id, [...(inSink.get(id) ?? []), a]);
+  }
+  for (const [id, list] of inSink) done.push(`Console sink scope "${id}" holds ${pairText(list)}.`);
+
+  if (inGlobal.length) {
+    const g = o.globalScope as { owners?: unknown[]; clients?: [string, string][]; allow_shared?: boolean } | null;
+    const left = (g?.clients ?? []).filter((c) => !inGlobal.some((a) => clientKey(a) === clientKey(c)));
+    if (!left.length && !g?.allow_shared) blockers.push(`Removing the console audiences would leave "${GLOBAL_SCOPE}" without a client: add one of googleClientIds to it first.`);
+    // remove_client takes OwnerAuth::Near: the predecessor must be an Owner::Near of "global" (registered with the owner
+    // of the time, which may since have moved to the council).
+    const nearOwners = (g?.owners ?? []).flatMap((x) => {
+      const id = (x as { Near?: { account_id?: unknown } } | null)?.Near?.account_id;
+      return typeof id === 'string' ? [id] : [];
+    });
+    let via: { kind: 'owner' } | { kind: 'account'; account: string } | null = null;
+    if (nearOwners.includes(m.owner)) via = { kind: 'owner' };
+    else {
+      const account = nearOwners.find((a) => o.globalOwnerKeys?.[a]);
+      if (account) via = { kind: 'account', account };
+    }
+    if (!via) {
+      blockers.push(
+        `"${GLOBAL_SCOPE}" is owned by ${nearOwners.join(', ') || 'no NEAR account'}, not ${m.owner}, and none of their keys is in ~/.near-credentials/${m.network}/: ` +
+          `remove_client(${GLOBAL_SCOPE}, Near, …) must come from an Owner::Near of the scope.`,
+      );
+    } else {
+      for (const [provider, aud] of inGlobal) steps.push({ kind: 'remove-console-client', provider, aud, via });
+    }
+  }
+  const toRegister = [...inGlobal, ...unregistered];
+  if (toRegister.length) {
+    const quarantineMs = inGlobal.length ? Number(o.config?.change_delay_ms ?? m.changeDelayMs) : 0;
+    steps.push({ kind: 'register-console-sink', owners: [sinkOwner], clients: toRegister.map(([p, a]) => [p, a] as [string, string]), quarantineMs });
+    if (inGlobal.length && quarantineMs > SINK_WAIT_MAX_MS) {
+      warnings.push(`The removed console audiences stay quarantined for change_delay_ms (${quarantineMs} ms): this run stops after removing them; re-run deploy-contract ${m.name} once that has passed to register the sink.`);
+    }
+  }
+  return { steps, blockers, warnings, done };
+}
+
+/** admin_register_scope arguments for a console sink: a contract-assigned `sN`, no shared login. */
+export function registerSinkArgs(s: Extract<DeployStep, { kind: 'register-console-sink' }>) {
+  return { owners: s.owners, clients: s.clients, scope_id: null, allow_shared: false };
+}
+
+/** remove_client of a console audience from "global", as an Owner::Near of it. */
+export function removeConsoleClientArgs(s: Extract<DeployStep, { kind: 'remove-console-client' }>) {
+  return { scope_id: GLOBAL_SCOPE, auth: 'Near', provider: s.provider, aud: s.aud };
 }
 
 /** admin_register_scope arguments for the reserved global scope. */

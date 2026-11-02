@@ -3,7 +3,7 @@
 Everything that must be true before Hana ID runs on mainnet with real funds. This is a current-state doc for the
 two founders to track. Update a row in the same branch as the change that moves it (rule in `CLAUDE.md`).
 
-Last verified: 2026-11-02 for rows 1.5, 1.16, 4.18 and 7.14 (branch `feat/batch-c-4`, usage capture, D220–D224);
+Last verified: 2026-11-02 for row 7.10 (branch `feat/batch-c-6`, the console sink scope, D238); 2026-11-02 for rows 1.5, 1.16, 4.18 and 7.14 (branch `feat/batch-c-4`, usage capture, D220–D224);
 2026-11-02 for row 2.6 (branch `feat/identity-token-7`, the KMS signer code); 2026-11-02, against `develop` @ 3c4e920 (batch C3 merged) and the docs on it; the inconsistencies, rows
 1.14–1.16, 6.7 and 7.5 on 2026-11-02 against `develop` @ 1c6a124 (branch `docs/consistency-pass`). Today only
 sandbox-dev (testnet) runs.
@@ -178,7 +178,7 @@ These have the longest lead time, or other rows wait on them.
 | 7.7 | User key rotation (`key_index` move) | Recovery after a leaked user key | not built ("key rotation hooks before mainnet") | Claude build | D8, D60; playbooks `user-key-leaked` |
 | 7.8 | Passkeys for partner console members | Required before a second partner joins | not built (deferred, D34) | Claude build | D34; batch-c-spec "Deferred" |
 | 7.9 | Origin timelock for shared mode in the partner console | Origins decide which pages get nonces | not built in the console (CLI proposals built in C3) | Claude build | D32, D34, D52 |
-| 7.10 | Console sink scope | Must roll out before the address freeze | not built | Claude build | D93 Q7 |
+| 7.10 | Console sink scope | Must roll out before the address freeze | built on `feat/batch-c-6` (deploy-contract's sink steps), not run on sandbox-dev (milestone M3) | Claude build, founder (runs the plan) | D93 Q7, D238 |
 | 7.11 | Support ID data path: a short spec section before C15 | Staff support without storing user data | not built | Claude build, founder | D96, D144; batch-c-build-plan P4 |
 | 7.12 | Batch C usage ledger counts identity tokens per app and day | Billing of identity tokens | not built | Claude build | batch-c-build-plan "Conventions"; D172 |
 | 7.13 | API-side NEAR RPC fallback | The API reads only `NEAR_RPC` | not built (whether a mainnet blocker isn't stated) | Claude build | playbooks `near-rpc-outage` |

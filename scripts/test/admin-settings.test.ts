@@ -1,12 +1,16 @@
-// admin.ts app:settings (docs/batch-b-spec.md "Tests → Scripts"), against a real SQLite database with apps/api's
-// migrations applied, so every write also passes (or is refused by) the migration's CHECKs.
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+// admin.ts app:settings (docs/batch-b-spec.md "Tests → Scripts", docs/batch-c-spec.md §CLI), against a real SQLite
+// database with apps/api's migrations applied (0006 included), so every write also passes (or is refused by) the
+// migrations' CHECKs and triggers. Raw signing and new policies are staff proposals, announced here with
+// app:changes:announce (sandbox-dev has no admin Worker).
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import { policyId } from '@hana-id/core/policy';
-import { loadEnv, repoRoot } from '@hana-id/env';
+import { loadEnv } from '@hana-id/env';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { type AppCmdDeps, appChangesAnnounce } from '../lib/admin-apps.ts';
+import { openChangesSql, type ChangeRow } from '../lib/admin-sql.ts';
 import {
   type AppSettingsDeps,
   appSettings,
@@ -17,7 +21,6 @@ import {
   scopeClientsFrom,
   SETTINGS_CHANGED,
   settingsAppArg,
-  changeDelayMsFor,
   describeSettings,
   formatDuration,
   IDLE_TTL_MIN_MS,
@@ -25,37 +28,41 @@ import {
   parseSettingsArgs,
   POLICY_FILE_MAX_BYTES,
   policyInForce,
-  RAW_SIGN_DELAY_MS,
   RAW_SIGN_WARNING,
   rawSignInForce,
   readPolicyFile,
   SESSION_TTL_MAX_MS,
   SESSION_TTL_MIN_MS,
+  settingsSql,
   type SettingsRow,
 } from '../lib/admin-settings.ts';
 import { parseCli } from '../lib/cli.ts';
+import { d1Of, newHotDb, seedHotApp, testIds } from './hot-db.ts';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 const NOW = Date.UTC(2026, 9, 28, 12);
 const APP = 'app_settings1';
-const KEY = 'pk_test_settings1';
+const KEY = 'pk_test_settings1abcdefgh';
 const SCOPE = 's1';
+const LIVE = 'app_settingslive';
+const LIVE_KEY = 'pk_live_settingslive1abcd';
+const LIVE_SCOPE = 's2';
 const WEB = '111-web.apps.googleusercontent.com';
 const IOS = '222-ios.apps.googleusercontent.com';
 const WORK = '/work/dir';
 
-/** A fresh in-memory database with every apps/api migration and one app at the defaults. */
+/** A fresh in-memory database with every apps/api migration, a test app and a live app at the defaults. */
 function newDb(): DatabaseSync {
-  const db = new DatabaseSync(':memory:');
-  const dir = join(repoRoot, 'apps', 'api', 'migrations');
-  for (const f of readdirSync(dir).filter((n) => n.endsWith('.sql')).sort()) db.exec(readFileSync(join(dir, f), 'utf8'));
-  db.prepare("INSERT INTO apps (id, name, scope_id, publishable_key) VALUES (?, 'Settings test', ?, ?)").run(APP, SCOPE, KEY);
+  const db = newHotDb();
+  seedHotApp(db, { id: APP, key: KEY, scope: SCOPE });
+  seedHotApp(db, { id: LIVE, key: LIVE_KEY, scope: LIVE_SCOPE });
   return db;
 }
 
-const SETTINGS = 'persistence, session_ttl_ms, idle_ttl_ms, raw_sign, raw_sign_pending, raw_sign_effective_at, auto_approve_policy, auto_approve_pending, auto_approve_effective_at, google_web_client_id';
-const row = (db: DatabaseSync): SettingsRow => ({ ...(db.prepare(`SELECT id, name, scope_id, ${SETTINGS} FROM apps WHERE id = ?`).get(APP) as unknown as SettingsRow) });
+const row = (db: DatabaseSync, id = APP): SettingsRow => ({ ...(db.prepare(settingsSql(id)).get() as unknown as SettingsRow) });
+const changes = (db: DatabaseSync, id = APP): ChangeRow[] => db.prepare(openChangesSql(id)).all() as unknown as ChangeRow[];
+const ledger = (db: DatabaseSync, id = APP) => db.prepare('SELECT kind, detail_json, actor_kind, actor_id FROM app_changes WHERE app_id = ? AND kind != ? ORDER BY seq').all(id, 'migration.baseline') as { kind: string; detail_json: string; actor_kind: string; actor_id: string }[];
 
 /** An AutoApprovePolicyV1: ERC-20 approve on one Base contract, under the address rule. */
 const policy = (label = 'Approvals', extra: Record<string, unknown> = {}) => ({
@@ -84,7 +91,7 @@ const policy = (label = 'Approvals', extra: Record<string, unknown> = {}) => ({
 });
 
 const sandbox = loadEnv('sandbox-dev');
-const prod = { ...sandbox, name: 'prod' };
+const DELAY = sandbox.appChangeDelayMs;
 
 interface Harness {
   db: DatabaseSync;
@@ -93,7 +100,11 @@ interface Harness {
   chainReads: string[];
   clients: [string, string][] | null;
   now: number;
+  apiChecks: number;
+  ids: ReturnType<typeof testIds>;
   run: (argv: string[], m?: typeof sandbox) => Promise<void>;
+  /** app:changes:announce <id> at the harness's time. */
+  announce: (changeId: string) => Promise<void>;
 }
 
 let h: Harness;
@@ -111,14 +122,15 @@ beforeEach(() => {
       ['apple', 'not-google.example'],
     ],
     now: NOW,
+    apiChecks: 0,
+    ids: testIds(),
     run: async (argv, m = sandbox) => {
       const args = parseCli(argv, {
         strings: ['app', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve'],
         booleans: ['remote'],
       });
       const deps: AppSettingsDeps = {
-        // Rows for a SELECT and for an UPDATE … RETURNING (as wrangler d1 execute --json gives them).
-        d1: (statement) => (/^\s*SELECT|\bRETURNING\b/iu.test(statement) ? (db.prepare(statement).all() as Record<string, unknown>[]) : (db.exec(statement), [])),
+        d1: d1Of(db),
         scopeClients: async (scopeId) => {
           state.chainReads.push(scopeId);
           return state.clients;
@@ -132,19 +144,29 @@ beforeEach(() => {
         },
         now: () => state.now,
         log: (line) => state.out.push(line),
+        actor: { id: 'cli:tester' },
+        newRequestId: state.ids.request,
+        requireC3Api: async () => {
+          state.apiChecks++;
+        },
+        newChangeId: state.ids.change,
       };
       await appSettings(m, args.positionals[0] ?? KEY, args, 'local D1 test', deps);
+    },
+    announce: (changeId) => {
+      const deps: AppCmdDeps = { d1: d1Of(db), scopeOnChain: async () => true, now: () => state.now, log: (l) => state.out.push(l), actor: { id: 'cli:tester' }, ids: state.ids, requireC3Api: async () => undefined };
+      return appChangesAnnounce(sandbox, changeId, 'local D1 test', deps);
     },
   };
   h = state;
 });
 
 const output = () => h.out.join('\n');
-const set = (fields: Record<string, string | number | null>) =>
-  h.db.prepare(`UPDATE apps SET ${Object.keys(fields).map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...Object.values(fields), APP);
+const set = (fields: Record<string, string | number | null>, id = APP) =>
+  h.db.prepare(`UPDATE apps SET ${Object.keys(fields).map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...Object.values(fields), id);
 
 describe('durations', () => {
-  it('parses h/m/s combinations and ms, and refuses bare numbers and junk', () => {
+  it('parses h/m/s combinations and ms, and refuses bare numbers and junk', async () => {
     expect(parseDuration('12h', 'x')).toBe(12 * HOUR);
     expect(parseDuration('23h50m', 'x')).toBe(SESSION_TTL_MAX_MS);
     expect(parseDuration('15m', 'x')).toBe(IDLE_TTL_MIN_MS);
@@ -153,7 +175,7 @@ describe('durations', () => {
     for (const bad of ['', '3600000', '1.5h', '-1h', '1d', '1h ', 'h', '1m2h']) expect(() => parseDuration(bad, 'session-ttl')).toThrow('--session-ttl must be a duration');
   });
 
-  it('formats back exactly', () => {
+  it('formats back exactly', async () => {
     expect(formatDuration(SESSION_TTL_MAX_MS)).toBe('23h50m');
     expect(formatDuration(12 * HOUR)).toBe('12h');
     expect(formatDuration(HOUR - 1000)).toBe('59m59s');
@@ -198,60 +220,80 @@ describe('app:settings ranges', () => {
     expect(row(h.db)).toMatchObject({ session_ttl_ms: HOUR, idle_ttl_ms: HOUR });
   });
 
-  it('sets --persistence, and refuses other values', async () => {
+  it('sets --persistence (immediate, version bumped, one app_changes row), and refuses other values', async () => {
     await h.run(['--persistence', 'none']);
-    expect(row(h.db).persistence).toBe('none');
+    expect(row(h.db)).toMatchObject({ persistence: 'none', settings_version: 1 });
     expect(output()).toContain('persistence: session → none (immediate)');
+    expect(ledger(h.db)).toEqual([{ kind: 'settings.changed', detail_json: '{"persistence":"none"}', actor_kind: 'hana', actor_id: 'cli:tester' }]);
     await h.run(['--persistence', 'session']);
-    expect(row(h.db).persistence).toBe('session');
+    expect(row(h.db)).toMatchObject({ persistence: 'session', settings_version: 2 });
     await expect(h.run(['--persistence', 'local'])).rejects.toThrow("--persistence must be 'session' or 'none'");
   });
 
   it('refuses the whole call when one value is bad (nothing is written)', async () => {
     await expect(h.run(['--persistence', 'none', '--session-ttl', '30m'])).rejects.toThrow('--session-ttl');
-    expect(row(h.db).persistence).toBe('session');
+    expect(row(h.db)).toMatchObject({ persistence: 'session', settings_version: 0 });
+    expect(ledger(h.db)).toEqual([]);
   });
 });
 
 describe('app:settings --raw-sign', () => {
-  it('approval writes the pending value and its effective time, with the warning; the vault sees off until then', async () => {
-    await h.run(['--raw-sign', 'approval']);
-    const r = row(h.db);
-    expect(r).toMatchObject({ raw_sign: 'off', raw_sign_pending: 'approval', raw_sign_effective_at: NOW + sandbox.changeDelayMs });
-    expect(h.out).toContain(RAW_SIGN_WARNING);
-    expect(RAW_SIGN_WARNING).toContain('can authorize any transaction on that chain');
-    expect(rawSignInForce(r, NOW + sandbox.changeDelayMs - 1)).toBe('off');
-    expect(rawSignInForce(r, NOW + sandbox.changeDelayMs)).toBe('approval');
+  it('approval is refused for a test app (D39: test apps never sign raw)', async () => {
+    await expect(h.run(['--raw-sign', 'approval'])).rejects.toThrow('refused for a test app');
+    expect(changes(h.db)).toEqual([]);
   });
 
-  it('uses 24 h outside local*/sandbox* envs, and the manifest changeDelayMs in them', async () => {
-    expect(changeDelayMsFor(prod)).toBe(RAW_SIGN_DELAY_MS);
-    expect(RAW_SIGN_DELAY_MS).toBe(24 * HOUR);
-    expect(changeDelayMsFor({ name: 'local', changeDelayMs: 5 })).toBe(5);
-    expect(changeDelayMsFor({ name: 'sandbox-dev', changeDelayMs: 60_000 })).toBe(60_000);
-    await h.run(['--raw-sign', 'approval'], prod);
-    expect(row(h.db).raw_sign_effective_at).toBe(NOW + 24 * HOUR);
+  it('approval on a live app is a staff proposal: nothing in apps until it is announced, then pending for appChangeDelayMs', async () => {
+    await h.run([LIVE, '--raw-sign', 'approval']);
+    expect(h.out).toContain(RAW_SIGN_WARNING);
+    expect(RAW_SIGN_WARNING).toContain('can authorize any transaction on that chain');
+    expect(row(h.db, LIVE)).toMatchObject({ raw_sign: 'off', raw_sign_pending: null, raw_sign_effective_at: null, settings_version: 1 });
+    expect(changes(h.db, LIVE)).toMatchObject([{ id: 'gc_1', kind: 'raw_sign_on', status: 'pending', proposed_by_kind: 'hana', proposed_by: 'cli:tester', notified_at: null, active_from: null }]);
+    expect(output()).toContain('proposed as gc_1');
+    expect(output()).toContain('app:changes:announce gc_1 (nobody is emailed)');
+    expect(ledger(h.db, LIVE).map((r) => r.kind)).toEqual(['raw_sign.proposed']);
+    h.now = NOW + 1000;
+    await h.announce('gc_1');
+    const r = row(h.db, LIVE);
+    expect(r).toMatchObject({ raw_sign: 'off', raw_sign_pending: 'approval', raw_sign_effective_at: NOW + 1000 + DELAY, settings_version: 1 });
+    expect(rawSignInForce(r, NOW + 1000 + DELAY - 1)).toBe('off');
+    expect(rawSignInForce(r, NOW + 1000 + DELAY)).toBe('approval');
   });
 
   it('re-running approval does not restart the delay; approval in force is a no-op', async () => {
-    await h.run(['--raw-sign', 'approval']);
+    await h.run([LIVE, '--raw-sign', 'approval']);
+    await h.run([LIVE, '--raw-sign', 'approval']);
+    expect(output()).toContain('approval already proposed as gc_1, waiting for its announcement');
+    await h.announce('gc_1');
     h.now = NOW + 1000;
-    await h.run(['--raw-sign', 'approval']);
-    expect(row(h.db).raw_sign_effective_at).toBe(NOW + sandbox.changeDelayMs);
+    await h.run([LIVE, '--raw-sign', 'approval']);
+    expect(row(h.db, LIVE).raw_sign_effective_at).toBe(NOW + DELAY);
     expect(output()).toContain('approval already pending');
-    h.now = NOW + sandbox.changeDelayMs;
-    await h.run(['--raw-sign', 'approval']);
+    h.now = NOW + DELAY;
+    await h.run([LIVE, '--raw-sign', 'approval']);
     expect(output()).toContain('raw signing: already approval');
     expect(output()).toMatch(/no change/u);
+    expect(changes(h.db, LIVE)).toHaveLength(1);
   });
 
-  it('off is immediate and drops a pending approval', async () => {
-    await h.run(['--raw-sign', 'approval']);
-    await h.run(['--raw-sign', 'off']);
-    expect(row(h.db)).toMatchObject({ raw_sign: 'off', raw_sign_pending: null, raw_sign_effective_at: null });
-    set({ raw_sign: 'approval' });
-    await h.run(['--raw-sign', 'off']);
-    expect(row(h.db).raw_sign).toBe('off');
+  it('off is immediate: drops a pending approval and cancels its proposal, announced or not', async () => {
+    await h.run([LIVE, '--raw-sign', 'approval']);
+    await h.run([LIVE, '--raw-sign', 'off']);
+    expect(h.db.prepare("SELECT status, cancelled_by FROM guarded_changes WHERE id = 'gc_1'").get()).toEqual({ status: 'cancelled', cancelled_by: 'cli:tester' });
+    await h.run([LIVE, '--raw-sign', 'approval']);
+    await h.announce('gc_2');
+    await h.run([LIVE, '--raw-sign', 'off']);
+    expect(row(h.db, LIVE)).toMatchObject({ raw_sign: 'off', raw_sign_pending: null, raw_sign_effective_at: null });
+    expect(h.db.prepare("SELECT status FROM guarded_changes WHERE id = 'gc_2'").get()).toEqual({ status: 'cancelled' });
+    // In force (matured, not yet recorded by the API cron): it ends rather than being cancelled.
+    await h.run([LIVE, '--raw-sign', 'approval']);
+    await h.announce('gc_3');
+    h.now = NOW + DELAY;
+    await h.run([LIVE, '--raw-sign', 'off']);
+    expect(h.db.prepare("SELECT status, ended_at FROM guarded_changes WHERE id = 'gc_3'").get()).toEqual({ status: 'ended', ended_at: NOW + DELAY });
+    set({ raw_sign: 'approval' }, LIVE);
+    await h.run([LIVE, '--raw-sign', 'off']);
+    expect(row(h.db, LIVE).raw_sign).toBe('off');
     expect(output()).toContain('approval → off (immediate)');
     await expect(h.run(['--raw-sign', 'app_signed'])).rejects.toThrow("--raw-sign must be 'off' or 'approval'");
   });
@@ -289,19 +331,22 @@ describe('app:settings --auto-approve', () => {
     return name;
   };
 
-  it('validates the policy and writes it, normalized, as pending with its effective time', async () => {
+  it('validates the policy and proposes it, normalized; the announcement makes it pending for appChangeDelayMs', async () => {
     await h.run(['--auto-approve', file('p.json', policy())]);
-    const r = row(h.db);
     const id = policyId(policy());
-    expect(r.auto_approve_policy).toBeNull();
-    expect(r.auto_approve_effective_at).toBe(NOW + sandbox.changeDelayMs);
+    expect(row(h.db)).toMatchObject({ auto_approve_policy: null, auto_approve_pending: null, auto_approve_effective_at: null });
+    const [c] = changes(h.db);
     // Stored as the validator's canonical form (EIP-55 address), so its id is the one users consent to.
-    expect(r.auto_approve_pending).toContain('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48');
-    expect(policyId(JSON.parse(r.auto_approve_pending!))).toBe(id);
-    expect(output()).toContain(`policy ${id} ("Approvals") from ${WORK}/p.json, pending until`);
+    expect(c).toMatchObject({ id: 'gc_1', kind: 'policy_set', policy_id: id, status: 'pending' });
+    expect(c!.policy_json).toContain('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48');
+    expect(policyId(JSON.parse(c!.policy_json!))).toBe(id);
+    expect(output()).toContain(`policy ${id} ("Approvals") from ${WORK}/p.json, proposed as gc_1`);
+    await h.announce('gc_1');
+    const r = row(h.db);
+    expect(r).toMatchObject({ auto_approve_policy: null, auto_approve_pending: c!.policy_json, auto_approve_effective_at: NOW + DELAY });
     // Nothing in force until the delay has passed.
-    expect(policyInForce(r, NOW + sandbox.changeDelayMs - 1)).toBeNull();
-    expect(policyInForce(r, NOW + sandbox.changeDelayMs)).toBe(r.auto_approve_pending);
+    expect(policyInForce(r, NOW + DELAY - 1)).toBeNull();
+    expect(policyInForce(r, NOW + DELAY)).toBe(r.auto_approve_pending);
   });
 
   it('refuses an invalid policy with the validator’s problems, and writes nothing', async () => {
@@ -313,56 +358,129 @@ describe('app:settings --auto-approve', () => {
     const dup = JSON.stringify(policy()).replace('"label":"Approvals"', '"label":"Approvals","label":"Other"');
     await expect(h.run(['--auto-approve', file('dup.json', dup)])).rejects.toThrow('Duplicate JSON key');
     expect(row(h.db)).toMatchObject({ auto_approve_policy: null, auto_approve_pending: null, auto_approve_effective_at: null });
+    expect(changes(h.db)).toEqual([]);
   });
 
   it('refuses maxConsentMs over the app’s session TTL (the one in force after the call)', async () => {
     set({ session_ttl_ms: 2 * HOUR, idle_ttl_ms: HOUR });
     await expect(h.run(['--auto-approve', file('long.json', policy())])).rejects.toThrow('policy.maxConsentMs: must be between');
     await h.run(['--auto-approve', file('long.json', policy()), '--session-ttl', '12h']);
-    expect(row(h.db)).toMatchObject({ session_ttl_ms: 12 * HOUR, auto_approve_effective_at: NOW + sandbox.changeDelayMs });
+    expect(row(h.db).session_ttl_ms).toBe(12 * HOUR);
+    expect(changes(h.db)).toMatchObject([{ kind: 'policy_set', status: 'pending' }]);
+    // Both parts in one write: one app_changes row listing them.
+    expect(ledger(h.db).map((r) => r.kind)).toEqual(['settings.changed']);
+    expect(JSON.parse(ledger(h.db)[0]!.detail_json).parts.map((p: { kind: string }) => p.kind)).toEqual(['settings.changed', 'policy.proposed']);
   });
 
-  it('refuses lowering --session-ttl under a stored policy’s maxConsentMs, unless the policy goes too', async () => {
+  it('refuses lowering --session-ttl under a proposed or stored policy’s maxConsentMs, unless the policy goes too', async () => {
     await h.run(['--auto-approve', file('p.json', policy())]);
+    await expect(h.run(['--session-ttl', '6h'])).rejects.toThrow('maxConsentMs over the new session TTL 6h');
+    await h.announce('gc_1');
     await expect(h.run(['--session-ttl', '6h'])).rejects.toThrow('maxConsentMs over the new session TTL 6h');
     await h.run(['--session-ttl', '6h', '--auto-approve', 'off']);
     expect(row(h.db)).toMatchObject({ session_ttl_ms: 6 * HOUR, auto_approve_pending: null });
   });
 
-  it('re-setting the pending policy keeps its clock; re-setting the policy in force drops a pending change', async () => {
+  it('re-setting the proposed policy keeps its clock; re-setting the policy in force drops a pending one', async () => {
     await h.run(['--auto-approve', file('p.json', policy())]);
+    await h.run(['--auto-approve', 'p.json']);
+    expect(output()).toContain('already proposed as gc_1');
+    await h.announce('gc_1');
     h.now = NOW + 1000;
     await h.run(['--auto-approve', 'p.json']);
-    expect(row(h.db).auto_approve_effective_at).toBe(NOW + sandbox.changeDelayMs);
-    expect(output()).toContain('already pending');
-    // Mature it, then queue another policy and change our mind.
-    h.now = NOW + sandbox.changeDelayMs;
+    expect(row(h.db).auto_approve_effective_at).toBe(NOW + DELAY);
+    expect(output()).toContain('already pending as gc_1');
+    // Mature it, then propose another policy, announce it, and change our mind.
+    h.now = NOW + DELAY;
     await h.run(['--auto-approve', file('p2.json', policy('Wider'))]);
+    await h.announce('gc_2');
     await h.run(['--auto-approve', 'p.json']);
     const r = row(h.db);
     expect(policyId(JSON.parse(r.auto_approve_policy!))).toBe(policyId(policy()));
     expect(r).toMatchObject({ auto_approve_pending: null, auto_approve_effective_at: null });
     expect(output()).toContain('The pending policy is dropped.');
+    // The dropped one is cancelled; the one in force (matured, not yet recorded by the cron) is untouched.
+    expect(h.db.prepare("SELECT id, status FROM guarded_changes WHERE kind = 'policy_set' ORDER BY id").all()).toEqual([
+      { id: 'gc_1', status: 'pending' },
+      { id: 'gc_2', status: 'cancelled' },
+    ]);
+  });
+
+  it('H1: re-setting the policy in force (matured, not yet promoted by the cron) over a pending proposal keeps it in force', async () => {
+    // A stored and in force; B proposed, announced and matured, but the API cron hasn't promoted it (still pending in
+    // the columns); C proposed, not announced. Re-setting B must keep B, never bring A back.
+    set({ auto_approve_policy: JSON.stringify(policy('A')) });
+    await h.run(['--auto-approve', file('b.json', policy('B'))]);
+    await h.announce('gc_1');
+    h.now = NOW + DELAY;
+    await h.run(['--auto-approve', file('c.json', policy('C'))]);
+    expect(policyId(JSON.parse(policyInForce(row(h.db), h.now)!))).toBe(policyId(policy('B')));
+    await h.run(['--auto-approve', 'b.json']);
+    const r = row(h.db);
+    expect(r).toMatchObject({ auto_approve_pending: null, auto_approve_effective_at: null });
+    expect(policyId(JSON.parse(r.auto_approve_policy!))).toBe(policyId(policy('B')));
+    expect(policyId(JSON.parse(policyInForce(r, h.now)!))).toBe(policyId(policy('B')));
+    expect(h.db.prepare("SELECT id, status FROM guarded_changes WHERE kind = 'policy_set' ORDER BY id").all()).toEqual([
+      { id: 'gc_1', status: 'pending' },
+      { id: 'gc_2', status: 'cancelled' },
+    ]);
+  });
+
+  it('the announcement keeps a matured pending raw-signing value in force (the raw analog of H1)', async () => {
+    // raw_sign approval matured in the pending columns (not promoted), and an unannounced raw_sign_on proposal.
+    set({ raw_sign_pending: 'approval', raw_sign_effective_at: NOW - 1 }, LIVE);
+    h.db.exec(`INSERT INTO guarded_changes (id, app_id, kind, status, proposed_by_kind, proposed_by, proposed_at, request_id) VALUES ('gc_raw', '${LIVE}', 'raw_sign_on', 'pending', 'hana', 't', 1, 'r_raw')`);
+    await h.announce('gc_raw');
+    const r = row(h.db, LIVE);
+    expect(r).toMatchObject({ raw_sign: 'approval', raw_sign_pending: 'approval', raw_sign_effective_at: NOW + DELAY });
+    expect(rawSignInForce(r, NOW)).toBe('approval');
+  });
+
+  it('a proposal asks that the deployed API reads the C3 schema; an immediate change doesn’t', async () => {
+    await h.run(['--persistence', 'none']);
+    await h.run(['--auto-approve', 'off']);
+    expect(h.apiChecks).toBe(0);
+    await h.run(['--auto-approve', file('p.json', policy())]);
+    await h.run([LIVE, '--raw-sign', 'approval']);
+    expect(h.apiChecks).toBe(2);
+  });
+
+  it('at most one pending policy per app: another proposal is refused until the first is in force or cancelled', async () => {
+    await h.run(['--auto-approve', file('p.json', policy())]);
+    await expect(h.run(['--auto-approve', file('p2.json', policy('Wider'))])).rejects.toThrow('Another policy is pending (gc_1)');
+    await h.announce('gc_1');
+    await expect(h.run(['--auto-approve', 'p2.json'])).rejects.toThrow('Another policy is pending (gc_1)');
+    h.now = NOW + DELAY;
+    await h.run(['--auto-approve', 'p2.json']);
+    expect(output()).toContain('proposed as gc_2');
   });
 
   it('a new policy after a matured one keeps the matured one in force until the new one’s time', async () => {
     await h.run(['--auto-approve', file('p.json', policy())]);
-    h.now = NOW + sandbox.changeDelayMs + 5;
+    await h.announce('gc_1');
+    h.now = NOW + DELAY + 5;
     await h.run(['--auto-approve', file('p2.json', policy('Wider'))]);
+    await h.announce('gc_2');
     const r = row(h.db);
     expect(policyId(JSON.parse(r.auto_approve_policy!))).toBe(policyId(policy()));
     expect(policyId(JSON.parse(r.auto_approve_pending!))).toBe(policyId(policy('Wider')));
-    expect(r.auto_approve_effective_at).toBe(h.now + sandbox.changeDelayMs);
+    expect(r.auto_approve_effective_at).toBe(h.now + DELAY);
     expect(policyInForce(r, h.now)).toBe(r.auto_approve_policy);
   });
 
-  it('off is immediate: removes the policy in force and any pending one', async () => {
+  it('off is immediate: removes the policy in force and any pending one, and closes their changes', async () => {
     await h.run(['--auto-approve', file('p.json', policy())]);
-    h.now = NOW + sandbox.changeDelayMs;
+    await h.announce('gc_1');
+    h.now = NOW + DELAY;
     await h.run(['--auto-approve', file('p2.json', policy('Wider'))]);
+    await h.announce('gc_2');
     await h.run(['--auto-approve', 'off']);
     expect(row(h.db)).toMatchObject({ auto_approve_policy: null, auto_approve_pending: null, auto_approve_effective_at: null });
     expect(output()).toContain('policy removed (immediate)');
+    expect(h.db.prepare("SELECT id, status FROM guarded_changes WHERE kind = 'policy_set' ORDER BY id").all()).toEqual([
+      { id: 'gc_1', status: 'ended' },
+      { id: 'gc_2', status: 'cancelled' },
+    ]);
     await h.run(['--auto-approve', 'off']);
     expect(output()).toContain('auto-approve: already off');
   });
@@ -373,66 +491,82 @@ describe('app:settings writes only over the row it read', () => {
     h.files.set(name, JSON.stringify(value));
     return name;
   };
+  const exec = (write: { statements: string[]; requestId: string } | null) => {
+    const rows = d1Of(h.db)(`${[...write!.statements, `SELECT COUNT(*) AS committed FROM app_changes WHERE request_id = '${write!.requestId}'`].join(';\n')};`);
+    return Number(rows[0]!.committed);
+  };
 
   it('a stale plan (P in force, P2 pending) run after another operator’s --auto-approve off changes nothing', async () => {
     await h.run(['--auto-approve', file('p.json', policy())]);
-    h.now = NOW + sandbox.changeDelayMs;
+    await h.announce('gc_1');
+    h.now = NOW + DELAY;
     await h.run(['--auto-approve', file('p2.json', policy('Wider'))]);
+    await h.announce('gc_2');
     // This CLI reads the row: P in force, P2 pending. It plans "re-set P" (drop the pending P2).
     const stale = row(h.db);
-    expect(policyId(JSON.parse(stale.auto_approve_policy!))).toBe(policyId(policy()));
-    const plan = planSettings(stale, { autoApprove: { text: JSON.stringify(policy()), file: 'p.json' } }, { now: h.now, delayMs: sandbox.changeDelayMs });
+    const plan = planSettings(stale, { autoApprove: { text: JSON.stringify(policy()), file: 'p.json' } }, { now: h.now, openChanges: changes(h.db), requestId: 'stale' });
     expect(plan.lines.join('\n')).toContain('The pending policy is dropped.');
-    expect(plan.sql).not.toMatch(/auto_approve_policy = '/u);
+    expect(plan.write!.statements.join('\n')).not.toMatch(/auto_approve_policy = '/u);
     // Meanwhile another operator removes every policy.
     await h.run(['--auto-approve', 'off']);
-    // The stale write matches no row: the removed policy is not put back in force.
-    expect(h.db.prepare(plan.sql!).all()).toEqual([]);
+    // The stale write commits nothing: the removed policy is not put back in force.
+    expect(exec(plan.write)).toBe(0);
     expect(row(h.db)).toMatchObject({ auto_approve_policy: null, auto_approve_pending: null, auto_approve_effective_at: null });
   });
 
   it('appSettings refuses (and writes nothing) when the row changed between its read and its write', async () => {
     await h.run(['--auto-approve', file('p.json', policy())]);
-    h.now = NOW + sandbox.changeDelayMs;
-    await h.run(['--auto-approve', file('p2.json', policy('Wider'))]);
+    await h.announce('gc_1');
+    h.now = NOW + DELAY;
     // A d1 that runs another operator's change right after this CLI's read.
-    const real = h.db;
+    const real = d1Of(h.db);
     let interleaved = false;
     const deps: AppSettingsDeps = {
       d1: (statement) => {
-        if (/^\s*SELECT/iu.test(statement)) {
-          const rows = real.prepare(statement).all() as Record<string, unknown>[];
-          if (!interleaved) {
-            interleaved = true;
-            real.exec(`UPDATE apps SET auto_approve_policy = NULL, auto_approve_pending = NULL, auto_approve_effective_at = NULL WHERE id = '${APP}'`);
-          }
-          return rows;
+        const rows = real(statement);
+        if (/^\s*SELECT/iu.test(statement) && !interleaved) {
+          interleaved = true;
+          h.db.exec(`UPDATE apps SET auto_approve_policy = NULL, auto_approve_pending = NULL, auto_approve_effective_at = NULL WHERE id = '${APP}'`);
         }
-        return real.prepare(statement).all() as Record<string, unknown>[];
+        return rows;
       },
       scopeClients: async () => null,
-      readFile: () => JSON.stringify(policy()),
+      readFile: () => JSON.stringify(policy('Wider')),
       baseDir: WORK,
       now: () => h.now,
       log: (line) => h.out.push(line),
+      newRequestId: () => 'interleaved',
+      newChangeId: () => 'gc_x',
     };
-    const args = parseCli(['--auto-approve', 'p.json'], { strings: ['auto-approve'] });
+    const args = parseCli(['--auto-approve', 'p2.json'], { strings: ['auto-approve'] });
     await expect(appSettings(sandbox, APP, args, 'local D1 test', deps)).rejects.toThrow(SETTINGS_CHANGED);
     expect(row(h.db)).toMatchObject({ auto_approve_policy: null, auto_approve_pending: null });
+    expect(h.db.prepare("SELECT COUNT(*) AS n FROM guarded_changes WHERE id = 'gc_x'").get()).toEqual({ n: 0 });
     // Every column is in the guard, so any concurrent change is caught (here: persistence).
     const before = row(h.db);
-    real.exec(`UPDATE apps SET persistence = 'none' WHERE id = '${APP}'`);
-    const p2 = planSettings(before, { sessionTtlMs: 6 * HOUR }, { now: h.now, delayMs: 0 });
-    expect(real.prepare(p2.sql!).all()).toEqual([]);
+    h.db.exec(`UPDATE apps SET persistence = 'none' WHERE id = '${APP}'`);
+    const p2 = planSettings(before, { sessionTtlMs: 6 * HOUR }, { now: h.now, requestId: 'p2' });
+    expect(exec(p2.write)).toBe(0);
     expect(row(h.db).session_ttl_ms).toBe(12 * HOUR);
+  });
+
+  it('a version moved by another writer, even to the same number, commits nothing', async () => {
+    const before = row(h.db);
+    const mine = planSettings(before, { persistence: 'none' }, { now: NOW, requestId: 'mine' });
+    const theirs = planSettings(before, { idleTtlMs: HOUR }, { now: NOW, requestId: 'theirs' });
+    expect(exec(theirs.write)).toBe(1);
+    expect(exec(mine.write)).toBe(0);
+    expect(row(h.db)).toMatchObject({ persistence: 'session', idle_ttl_ms: HOUR, settings_version: 1 });
   });
 
   it('an unchanged row is written, once, and the guard matches NULLs', async () => {
     const before = row(h.db);
     expect(before.auto_approve_policy).toBeNull();
-    const plan = planSettings(before, { persistence: 'none' }, { now: NOW, delayMs: 0 });
-    expect(h.db.prepare(plan.sql!).all()).toEqual([{ id: APP }]);
-    expect(h.db.prepare(plan.sql!).all()).toEqual([]);
+    const plan = planSettings(before, { persistence: 'none' }, { now: NOW, requestId: 'once' });
+    expect(exec(plan.write)).toBe(1);
+    expect(exec(plan.write)).toBe(1);
+    expect(row(h.db).settings_version).toBe(1);
+    expect(h.db.prepare("SELECT COUNT(*) AS n FROM app_changes WHERE request_id = 'once'").get()).toEqual({ n: 1 });
   });
 });
 
@@ -451,7 +585,7 @@ describe('app:settings --auto-approve path', () => {
       expect(change.autoApprove).toEqual({ text: JSON.stringify(policy()), file: join(dir, 'policy.json') });
       // Through appSettings, with the real file reader.
       const deps: AppSettingsDeps = {
-        d1: (statement) => h.db.prepare(statement).all() as Record<string, unknown>[],
+        d1: d1Of(h.db),
         scopeClients: async () => null,
         readFile: readPolicyFile,
         baseDir: dir,
@@ -459,8 +593,8 @@ describe('app:settings --auto-approve path', () => {
         log: (line) => h.out.push(line),
       };
       await appSettings(sandbox, APP, args, 'local D1 test', deps);
-      expect(output()).toContain(`from ${join(dir, 'policy.json')}, pending until`);
-      expect(row(h.db).auto_approve_pending).not.toBeNull();
+      expect(output()).toContain(`from ${join(dir, 'policy.json')}, proposed as`);
+      expect(changes(h.db)).toHaveLength(1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -468,7 +602,7 @@ describe('app:settings --auto-approve path', () => {
 });
 
 describe('app:settings app selection and on-chain clients', () => {
-  it('takes the app positionally or with --app, exactly one of them', () => {
+  it('takes the app positionally or with --app, exactly one of them', async () => {
     expect(settingsAppArg([APP], undefined)).toBe(APP);
     expect(settingsAppArg([], KEY)).toBe(KEY);
     expect(() => settingsAppArg([APP], KEY)).toThrow('not both');
@@ -476,7 +610,7 @@ describe('app:settings app selection and on-chain clients', () => {
     expect(() => settingsAppArg([APP, 'extra'], undefined)).toThrow('Unexpected argument extra');
   });
 
-  it('maps get_scope to the scope’s clients: null scope, missing or malformed clients, mixed providers', () => {
+  it('maps get_scope to the scope’s clients: null scope, missing or malformed clients, mixed providers', async () => {
     expect(scopeClientsFrom(null)).toBeNull();
     expect(scopeClientsFrom(undefined)).toBeNull();
     expect(scopeClientsFrom({})).toEqual([]);
@@ -495,8 +629,10 @@ describe('app:settings app selection and on-chain clients', () => {
 });
 
 describe('app:settings output and arguments', () => {
-  it('with no setting flags, shows the settings as stored and in force (no write)', async () => {
+  it('with no setting flags, shows the settings as stored and in force, and the proposals (no write)', async () => {
     set({ raw_sign_pending: 'approval', raw_sign_effective_at: NOW + HOUR, auto_approve_pending: '{"v":2}', auto_approve_effective_at: NOW + HOUR });
+    h.files.set('p.json', JSON.stringify(policy()));
+    await h.run(['--session-ttl', '12h']);
     const before = row(h.db);
     await h.run([]);
     expect(row(h.db)).toEqual(before);
@@ -509,6 +645,8 @@ describe('app:settings output and arguments', () => {
     expect(output()).toContain('pending until');
     expect(output()).toContain('INVALID, not served');
     expect(describeSettings(before, NOW + HOUR)).toContain('raw signing: approval');
+    const proposed: ChangeRow = { id: 'gc_9', app_id: APP, kind: 'policy_set', origin: null, policy_json: '{}', policy_id: 'abc', status: 'pending', proposed_by_kind: 'hana', proposed_by: 'cli', proposed_at: NOW, waiver: null, notified_at: null, active_from: null };
+    expect(describeSettings(before, NOW, [proposed])).toContain('proposed: gc_9 policy abc, not announced yet');
   });
 
   it('logs each change with its time and app, never the policy body', async () => {
@@ -518,13 +656,17 @@ describe('app:settings output and arguments', () => {
     expect(output()).not.toContain('approve(address,uint256)');
   });
 
-  it('finds the app by id or publishable key, and refuses an unknown one', async () => {
+  it('finds the app by id or by any of its publishable keys, and refuses an unknown or deleted one', async () => {
     await h.run([APP, '--persistence', 'none']);
     expect(row(h.db).persistence).toBe('none');
+    await h.run([KEY, '--persistence', 'session']);
+    expect(row(h.db).persistence).toBe('session');
     await expect(h.run(['pk_test_nope', '--persistence', 'none'])).rejects.toThrow('No app pk_test_nope');
+    set({ deleted_at: NOW });
+    await expect(h.run([APP, '--persistence', 'none'])).rejects.toThrow('is deleted');
   });
 
-  it('parses --auto-approve off without reading a file', () => {
+  it('parses --auto-approve off without reading a file', async () => {
     const args = parseCli(['--auto-approve', 'off'], { strings: ['auto-approve'] });
     expect(parseSettingsArgs(args, () => {
       throw new Error('read');
@@ -536,7 +678,7 @@ describe('readPolicyFile', () => {
   const dir = mkdtempSync(join(tmpdir(), 'hana-settings-'));
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-  it('reads a policy file, and refuses a missing file, a directory and an oversized file', () => {
+  it('reads a policy file, and refuses a missing file, a directory and an oversized file', async () => {
     const p = join(dir, 'p.json');
     writeFileSync(p, '{"v":1}');
     expect(readPolicyFile(p)).toBe('{"v":1}');

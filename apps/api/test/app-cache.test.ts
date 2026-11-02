@@ -107,7 +107,7 @@ describe('the vault gate', () => {
 
     const other = await vaultSetup();
     const kept = await createShare(other.app, other.near);
-    await env.DB.prepare('UPDATE apps SET publishable_key = ?2 WHERE id = ?1').bind(other.app.id, newKey()).run();
+    await env.DB.prepare('UPDATE app_keys SET revoked_at = ?2 WHERE app_id = ?1').bind(other.app.id, start).run();
     vi.spyOn(Date, 'now').mockImplementation(() => start + 2 * APP_CACHE_TTL_MS + 2);
     expect(await (await act(other.app, kept, 'unlock', 1)).json()).toMatchObject({ code: 'unknown_app' });
   });

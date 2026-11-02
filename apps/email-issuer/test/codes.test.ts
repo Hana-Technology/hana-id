@@ -236,6 +236,7 @@ describe('purpose-bound nonces and the app gate', () => {
 
   it('before the API’s login_methods migration, no app has email on', async () => {
     const { appByKey } = await import('../src/apps.ts');
+    await env.APP_DB_OLD.prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, created_at, assigned_at) VALUES ('s9', 'org_legacy', 'test', 0, 0)").run();
     await env.APP_DB_OLD.prepare("INSERT INTO apps (id, name, scope_id, publishable_key) VALUES ('old1', 'Old', 's9', 'pk_test_1111111111111111111111111111111a')").run();
     const app = await appByKey(env.APP_DB_OLD, 'pk_test_1111111111111111111111111111111a');
     expect(app).toMatchObject({ id: 'old1', emailOn: false, active: true });

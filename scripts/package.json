@@ -19,6 +19,7 @@
     "usage-migrate": "tsx usage-migrate.ts"
   },
   "dependencies": {
+    "@hana-id/console-core": "workspace:*",
     "@hana-id/core": "workspace:*",
     "@hana-id/env": "workspace:*",
     "@near-js/crypto": "2.5.1",

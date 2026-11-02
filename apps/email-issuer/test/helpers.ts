@@ -277,6 +277,8 @@ export async function seedApp(h: Harness, opts: { methods?: string; status?: str
   const pk = newPk();
   const scope = `s${uid().replace(/[^a-z0-9]/gu, '')}`.slice(0, 40);
   const name = opts.name ?? 'Test Wallet';
+  // The API's migration 0006: an app's scope row exists in its org, with the environment its key names.
+  await env.APP_DB.prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, created_at, assigned_at) VALUES (?1, 'org_legacy', 'test', 0, 0)").bind(scope).run();
   await env.APP_DB.prepare('INSERT INTO apps (id, name, scope_id, publishable_key, status, plan, login_methods) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)')
     .bind(id, name, scope, pk, opts.status ?? 'active', opts.plan ?? 'free', opts.methods ?? 'google,email')
     .run();

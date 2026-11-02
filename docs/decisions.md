@@ -5,7 +5,8 @@ Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 and D150–
 `feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`);
 D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-login-3`) on 2026-11-02; D159's `+tag`
 change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 (branch `feat/email-login-5`) and D200 (branches
-`feat/link-cap`, `feat/email-login-5`) on 2026-11-02; D201–D203 (branch `feat/batch-c-2`) on 2026-11-02.
+`feat/link-cap`, `feat/email-login-5`) on 2026-11-02; D201–D203 (branch `feat/batch-c-2`) on 2026-11-02; D205–D209
+(branch `feat/batch-c-3`, to confirm) on 2026-11-02.
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -1623,6 +1624,112 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   from `appChangeDelayMs`, with the same bounds (at least 24 h on mainnet).
 - Why: the two waits can be tuned independently; changing one never silently changes the other.
 
+## Batch C3: hot DB expand, the gate on it, the CLI on it (2026-11-02)
+
+Readings made while building `docs/batch-c-build-plan.md` C3 on `feat/batch-c-3`, where `docs/batch-c-spec.md` left a
+detail open. Each follows the spec's intent; all five are **to confirm** by the user.
+
+### D205. Migration 0006 details: the baseline keeps policies as stored; four extra checks
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/migrations/0006_dashboard_expand.sql`) · Source: spec §Hot DB
+  "Migration 0006"
+- Decision: (1) the `migration.baseline` row lists each app's stored `auto_approve_policy` / `auto_approve_pending`
+  JSON (and their effective time, the raw-signing values and `suspended_by`) instead of their `policyId`: SQL can't
+  compute a `policyId` (SHA-256 of the canonical form), and the JSON is what drift detection (C5) derives it from.
+  (2) The insert and org/scope update triggers on `apps` also refuse a `publishable_key` whose prefix isn't the
+  scope's environment (the spec names this check only for `app_keys`; it is the "trigger" through which the legacy
+  column is still read). (3) A trigger keeps `scopes.environment` fixed. (4) `detail_json` columns must be valid JSON
+  and `org_security_contacts.email` lowercase (CHECKs). Also: the migration times are `unixepoch('now') * 1000`, the
+  backfilled keys' `created_at` is their app's, the baseline's request id is `migration-0006:<app id>`, and the
+  triggers are created after the backfill (which satisfies each).
+- Why: each only refuses rows the spec says must never exist (a test/live mix, a changed environment, malformed
+  ledger rows); none changes an existing row or answer.
+- Rejected: computing ids in the migration through a Worker step (a migration must be plain SQL that runs in order).
+- Forward obligation (C3 re-check): the `no_session` waiver (D206) reads the legacy D1 `usage` table, which C4 stops
+  writing and C4b's 0007 drops. Before 0007, C4 replaces that check with one that still sees new sessions (a hot-DB
+  marker the API writes beside the relay, not a Neon read); written in `docs/batch-c-build-plan.md` C4.
+
+### D206. CLI readings: environment, actor, waivers, one ledger row per write, no cancel command
+- Date 2026-11-02 · Status: to confirm; built (`scripts/lib/admin-apps.ts`, `admin-sql.ts`, `admin-settings.ts`) ·
+  Source: spec §CLI, §Guarded changes
+- Decision: `app:create` needs `--environment test|live` for a scope with no app yet (no default: the choice is
+  permanent for the scope) and takes the scope's own otherwise. The actor is `cli:<operator login>` (`hana` kind). The
+  `no_session` waiver is recorded as a candidate on the initial origins of an `app:create` that created the scope row
+  and is granted or dropped inside the announcement's own SQL (review M1: no check-then-write gap), fail closed: only
+  while `first_session_at` is NULL (the API writes it at every session-pool relay attempt, not only on a 200), no
+  origin of the scope's apps is or was in force other than the same `app:create`'s initial ones (an announced, due
+  `origin_add`, or an `app_origins` row in force), and no app of the scope has a vault share, a usage row or an
+  identity count. The same `app:create`'s initial origins don't count against each other, so each of them gets it.
+  CLI proposals never get the `loopback` waiver (the spec gives staff proposals none but `no_session`). The
+  `assigned_at` + `appChangeDelayMs` refusal applies to `app:create` on an existing scope too. Each write records one
+  `app_changes` row (a settings write that changes several things lists them under `parts`). A change whose clock has
+  passed but which the cron hasn't recorded yet counts as in force: it doesn't block a new proposal ("at most one
+  pending") and ends, not cancels, when removed. There is no `app:changes:cancel`: removing the origin or turning the
+  setting off cancels a pending change. `app:changes:announce` keeps a matured pending policy as the stored one before
+  writing the new pending one (as batch B's CLI did), and likewise a matured pending raw-signing value. Re-setting the
+  policy in force over a pending proposal also keeps a matured pending policy as the stored one before clearing the
+  columns (review H1: clearing them alone brought the older stored policy back with no delay). `--raw-sign approval`
+  is refused for a test app: the spec's "test apps never sign raw", which is D39 as amended on 2026-10-28 (the vault
+  refuses raw signing for every `pk_test_` app); refusing it at the CLI too is a C3 reading, to confirm.
+- The deployed API's build gates proposals (review M2): with `--remote`, every proposal and announcement first needs
+  `GET /v1/health` to report `hotDb` ≥ 6 (the batch C3 reads; `apps/api/src/apps.ts` `HOT_DB_SCHEMA`), because an older
+  API would treat a proposed origin as in force. The rollback floor is batch C3: running an older API on the 0006
+  database first needs `app:origins:park --yes` (deletes every origin row not in force, listing them in
+  `origin.parked`; `app:origins:unpark` restores exactly those, only while their change is still open, and
+  `app:origins:remove` closes a parked origin's change even with no row; `docs/operations.md` "Rolling the API back below batch C3").
+- Obligation for `apps/email-issuer` (branch `feat/email-login-4`), recorded here (review L4): it finds apps by
+  `apps.publishable_key` and checks only `status`. That is right on today's data (the trigger keeps `status` equal to
+  the bitmask; the column holds each app's first key), but it must move to `app_keys` (an unrevoked key),
+  `deleted_at IS NULL` and `suspended_by = 0` before batch C5 ships key rotation, revocation and app deletion. The
+  "no code reads `apps.publishable_key`" check (`apps/api/scripts/test/hot-db-reads.test.ts`) scans every
+  `apps/*/src` and allowlists `apps/email-issuer` until then.
+- Why: the spec's table lists the commands but not these edges; each choice keeps the CLI's writes the ones
+  `AdminRpc` will make, and never makes a change live sooner than the spec allows.
+
+### D207. CLI writes: the commit row first, everything else gated on it, read back
+- Date 2026-11-02 · Status: to confirm (settled by the M1 rehearsal, below); built and tested on SQLite · Source:
+  spec §RPC "CAS" applied to the CLI; batch B's settings guard; review L2 and its re-check
+- Decision: every CLI write is one `wrangler d1 execute --command` of several statements: first the write's
+  `app_changes` row, inserted only while the compare-and-swap predicate holds (the version read, or for settings also
+  every settings column as read); then the version bump with the same predicate and only if that row exists; then
+  every other statement only if that row exists. The CLI reads the row back and reports a stale write. No statement
+  depends on another's row count (`changes()`). The CAS is safe because D1 runs each query (one `--command`, all its
+  statements) as one implicit transaction: nothing else writes between the predicate and the bump, and a failing
+  statement aborts the whole write. (The CLI tests run each command statement by statement, with no transaction
+  around it, which shows the ordering needs nothing more within one writer.)
+- To confirm: the M1 rehearsal (`docs/operations.md` step 3) checks on a scratch remote D1 that a `--command` whose
+  last statement fails leaves its first one unapplied, and runs one CLI CAS write (`app:suspend`, `app:resume`)
+  through the real path; that settles this decision.
+- Rejected: a guard UPDATE followed by `WHERE changes() = 1` (relies on SQLite's per-connection row count across
+  statements); a bare version check on each later statement (`version = read + 1`), which another writer's bump to
+  the same number would satisfy.
+
+### D208. The vault endpoints' app cache keeps its 30 s
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/app-cache.ts` unchanged, `getAppByKey` filters) · Source:
+  spec §Hot DB "Login-path reads" ("any future app-config cache … TTL ≤ 10 s"); D78
+- Decision: D78's cache stays at 30 s. It caches what `getAppByKey` returns, the origins in force at the read, so it
+  never serves a pending origin early; one that comes into force is served from the next read (≤ 30 s late), and a
+  removal, suspension or key revocation reaches the vault endpoints within 30 s, as since D78. `GET /v1/app`, the
+  relay endpoints and the vault page don't use it.
+- Why: the spec's 10 s is for a future cache; this one predates it and its bound only delays what is already safe (an
+  activation) or what D78 accepted (a removal on the vault endpoints). Lowering it costs a D1 read per reload unlock
+  per 10 s per isolate; a one-line change if wanted.
+
+### D209. The gate keeps `scope_conflict` as a second check; `first_session_at` at the relay attempt
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/apps.ts`, `handlers.ts`, `login.ts`, `vault/*`) · Source:
+  spec §Hot DB "Login-path reads"
+- Decision: the batch B `scope_conflict` subquery is gone (replaced by `scopes.environment`, as the spec says), but
+  the gate still answers `403 scope_conflict` when the key's prefix names the other environment than its scope (only
+  a direct `app_keys` edit can produce it: the triggers refuse it otherwise). The dev-env partner calls and the
+  timings in success bodies follow `environment = 'test'` like the loopback rule. `first_session_at` is written when
+  a session-pool relay (`/v1/sessions`, `/v1/login`, `/v1/derive`, `/v1/sessions/revoke`) is about to be sent, beside
+  it (review M1; first built as "after a 200", which a lost answer or a timeout followed by `/v1/derive` would miss).
+  The hourly job also skips a `policy.ended` row already written (two `policy_set` changes due in one run, review
+  L1). The hourly job
+  cancels (`system`, reason `not_in_force`) a due change whose value is no longer pending or stored in `apps`, rather
+  than recording it active.
+- Why: a test key's dev-env privileges must never reach a live scope even after a manual write; the `no_session`
+  waiver must fail closed, so any attempt to open a session ends it.
+
 ## Partner identity token, build steps 1–4 (2026-10-30)
 
 Choices made while building `docs/identity-token-spec.md` steps 1–4 on `feat/identity-token-1`, where the spec left a
@@ -2672,3 +2779,5 @@ The watchdog's D190, D191 and D193 (batch 5) are confirmed (2026-11-02); D192 is
 issuer's D195–D199 (batch 4) wait for the user's confirmation.
 To confirm from batch C step C2 (`packages/oidc`): D201 (the new claims typed on request, ignored by the API), D202
 (the Access JWT check and its cert cache) and D203 (the package's logging hook, Google's fetch limits).
+
+Batch C3's readings D205–D209 (hot DB 0006, the gate, the CLI) are to confirm.

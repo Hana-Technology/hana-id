@@ -8,11 +8,11 @@ import { appKeyPairs, appKeyProblem } from './bls.ts';
 import { disallowedClaim } from './claims.ts';
 import type { Env } from './env.ts';
 import { hex, sha256 } from './bytes.ts';
-import { TOKEN_EXP_SKEW_MS, appGate, appQuota, chainGate, chainGateResponse, checkClientScope, done, lap, lapRelay, limiter, newCtx, reject, settle } from './handlers.ts';
+import { TOKEN_EXP_SKEW_MS, appGate, appQuota, chainGate, chainGateResponse, checkClientScope, done, firstSession, lap, lapRelay, limiter, newCtx, reject, settle } from './handlers.ts';
 import { readJson } from './http.ts';
 import { keyObserver } from './key-observations.ts';
 import { log, logStaleJwks } from './log.ts';
-import { isTestKey } from './origins.ts';
+import { isTestApp } from './origins.ts';
 import type { RelayResult } from './relayer-key.ts';
 import { relay } from './relayer-pool.ts';
 import { ckdPayload, sessionNonce, verifySessionSignature } from './session-crypto.ts';
@@ -91,8 +91,8 @@ export async function handleLogin(request: Request, env: Env, requestId: string,
   const gate = await appGate(request, env, ctx, 'relay');
   if (!gate.ok) return gate.response;
   const { app } = gate;
-  // pk_test_ apps: the success response carries the request's own timings (apps/smoke's login breakdown).
-  ctx.exposeTimings = isTestKey(app.publishable_key);
+  // Test-scope apps: the success response carries the request's own timings (apps/smoke's login breakdown).
+  ctx.exposeTimings = isTestApp(app);
 
   // 2–3. Size and shape.
   const parsed = await readJson(request, MAX_BODY);
@@ -159,7 +159,9 @@ export async function handleLogin(request: Request, env: Env, requestId: string,
     const quota = await appQuota(env, ctx, app);
     if (quota) return quota;
 
+    const noted = firstSession(env, app, ctx, exec);
     const result = await relay(env, 'session', { method: call.method, args: call.args }, requestId);
+    await noted;
     lapRelay(ctx, result);
     // Whatever happened, the session (if any) is read from chain next time.
     forgetSession(req.sessionPublicKey);

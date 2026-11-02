@@ -682,14 +682,24 @@ plan (D33; built on branch `feat/governance`, not deployed), specified in `docs/
   redeploy, outside Hana's main account). A pending email key whose RFC 7638 thumbprint isn't pinned for its signer
   (or whose kid isn't that thumbprint) is cancelled; an active one pauses and deletes every updater key, also at the
   first run; it never confirms an email key (the contract refuses too). No pins means nothing is pinned, never "not
-  checked" (D190). `get_issuer("email")` / `get_self_issued("email")` against the pins: any difference is critical; a
-  weaker policy (lower `required`, an unpinned signer, active keys with no policy) pauses (D191). So a compromised
-  owner DAO can't install its own email key, and an upgrade weakening the policy is paused on as it executes (it was
-  already public and alerted for `governance_delay_ms`). Hana's published email JWKS is compared with the pins as a
-  warning only (Hana controls it). The **use of Hana's real key** by a compromised issuer isn't bounded on chain at
-  1-of-1: the link-volume warning (D192, new links per scope and hour from `identity_link_*` events) is the
-  watchdog's detection. Its events come from a third-party transactions indexer (FastNear), which can hide or invent
-  events (a missed or a false warning) but can't make the watchdog act. A v2 contract reads as "no email issuer".
+  checked" (D190); unreadable pins page `pins_invalid`, and unhashable on-chain key material fails closed.
+  `get_issuer("email")` / `get_self_issued("email")` against the pins (D191): a **weaker** policy pauses with a
+  critical alert: a lower `required`, an unpinned signer, active keys with no policy, or an overlap with the previous
+  policy longer than the contract's 10 minutes plus one run (a `migrate` setting a long overlap to a weaker previous
+  policy would otherwise keep, say, 1-of-1 tokens valid indefinitely; `get_self_issued` shows only the overlap's end,
+  not the previous policy, so its length is what the watchdog can judge). An email issuer nobody pinned is critical
+  without a pause. Differences a planned change passes through and that aren't weaker (a pinned signer not in the
+  policy yet, the `set_issuer` → `mark_self_issued` gap, a higher `required` on chain, a normal-length overlap) are a
+  warning, and every overlap is reported. So a compromised owner DAO can't install its own email key, and an upgrade
+  weakening the policy is paused on as it executes (it was already public and alerted for `governance_delay_ms`).
+  Hana's published email JWKS is compared with the pins as a warning only (Hana controls it), and is read only after
+  every protective step, the alert delivery and the heartbeat, with its body capped: Hana's API can't stall the
+  watchdog's cancel or pause (D86). Every third-party answer the watchdog parses (RPC, both JWKS, the indexer) is
+  size-capped. The **use of Hana's real key** by a compromised issuer isn't bounded on chain at 1-of-1: the
+  link-volume warning (D192, new links per scope and hour from `identity_link_*` events) is the watchdog's detection.
+  Its events come from a third-party transactions indexer (FastNear), read last and guarded, which can hide or invent
+  events (a missed or a false warning) but can't make the watchdog act; a block padded past one scan page is alerted
+  (`truncated`), not skipped. A v2 contract reads as "no email issuer".
 - Monitoring (D83): every watchdog check, action and alert surfaces in the admin portal's "Security & monitoring"
   view (a standing rule for future checks); the watchdog sends its own alerts, so a compromised Hana Cloudflare
   account can't silence them.

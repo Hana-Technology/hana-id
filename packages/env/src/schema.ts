@@ -119,7 +119,7 @@ const watchdogSchema = z.object({
  * whose account the contract doesn't know can't cancel or pause anything.
  */
 function watchdogRules(
-  m: { name: string; signer: string; relayer: string; owner: string; mpc: string; watchdogs?: string[] | undefined; cloudflare: { workerName: string } },
+  m: { name: string; network: string; signer: string; relayer: string; owner: string; mpc: string; watchdogs?: string[] | undefined; cloudflare: { workerName: string } },
   w: z.infer<typeof watchdogSchema>,
   ctx: z.RefinementCtx,
 ): void {
@@ -140,6 +140,19 @@ function watchdogRules(
   for (const [path, value] of urls) {
     const problem = value === undefined ? null : endpointUrlProblem(value, m.name);
     if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [...path], message: `${path.join('.')} ${problem}` });
+  }
+  // A mainnet indexer on a testnet env (or the reverse) would watch another chain's signer account: refused.
+  const indexer = w.linkVolume?.indexerUrl;
+  const host = indexer === undefined ? null : (() => {
+    try {
+      return new URL(indexer).hostname;
+    } catch {
+      return null;
+    }
+  })();
+  const other = m.network === 'testnet' ? /(?:^|[.-])(?:main|mainnet)(?:[.-]|$)/u : /(?:^|[.-])(?:test|testnet)(?:[.-]|$)/u;
+  if (host && other.test(host)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'linkVolume', 'indexerUrl'], message: `watchdog.linkVolume.indexerUrl ${host} names another network than ${m.network}` });
   }
 }
 

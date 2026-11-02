@@ -5,8 +5,11 @@
 // succeeded. Detection only (D192): the indexer can hide events (a missed warning) or invent some (a false warning),
 // never make the watchdog act; nothing on chain depends on it.
 //
-// Per run (the free plan's 50 subrequests): one `/status`, one `/v0/account` page of at most MAX_TXS transactions,
-// and at most MAX_TXS / TX_BATCH `/v0/transactions` calls. A busier signer falls behind, which the run alerts.
+// Per run (the free plan's 50 subrequests): the RPC's final block, one `/status`, one `/v0/account` page of at most
+// MAX_TXS transactions, and at most MAX_TXS / TX_BATCH `/v0/transactions` calls. A busier signer falls behind, which
+// the run alerts. Every answer is size-capped (http.ts), receipt ids and the events per scan are bounded, and the
+// indexer's head is clamped to the RPC's final block, so bad indexer data can only make the check fail.
+import { BODY_LIMITS, readJsonCapped } from './http.ts';
 import { log } from './log.ts';
 
 /** The contract's link events (`docs/contract-interface.md` "Events", standard `hana-id` 1.2.0). */
@@ -38,6 +41,11 @@ export interface LinkScan {
   behindMs: number;
   /** More transactions than one run reads were waiting. */
   truncated: boolean;
+  /**
+   * A full page held one block's transactions only: the scan can't finish that block in one page, so it holds the
+   * cursor before it (it is re-read every run) and the run alerts (`link_events_unavailable:truncated`, D192).
+   */
+  stuck: boolean;
 }
 
 export interface LinkEventSource {
@@ -74,9 +82,13 @@ export const MAX_TXS = 100;
 export const TX_BATCH = 20;
 /** Blocks left behind the indexer's head, so every receipt of a scanned transaction has executed and is indexed. */
 export const SETTLE_BLOCKS = 60;
+/** Events kept from one scan, at most (far above any threshold: more means the scan is flooded). */
+export const MAX_EVENTS_PER_SCAN = 2_000;
 const INDEXER_TIMEOUT_MS = 8_000;
 const MAX_SCOPE_BYTES = 64;
 const MAX_PROVIDER_BYTES = 32;
+/** A NEAR receipt id is a base58 SHA-256 (43–44 characters). */
+const RECEIPT_ID_RE = /^[1-9A-HJ-NP-Za-km-z]{32,64}$/u;
 
 interface ReceiptOutcome {
   execution_outcome?: {
@@ -106,10 +118,10 @@ export function linkEventsOf(tx: { receipts?: unknown }, signer: string): LinkEv
   for (const r of tx.receipts as ReceiptOutcome[]) {
     const eo = r?.execution_outcome;
     const o = eo?.outcome;
-    if (!eo || !o || o.executor_id !== signer || typeof eo.id !== 'string' || !Array.isArray(o.logs)) continue;
+    if (!eo || !o || o.executor_id !== signer || typeof eo.id !== 'string' || !RECEIPT_ID_RE.test(eo.id) || !Array.isArray(o.logs)) continue;
     if (typeof o.status !== 'object' || o.status === null || 'Failure' in o.status) continue;
     const at = nsToMs(eo.block_timestamp);
-    const height = typeof eo.block_height === 'number' ? eo.block_height : null;
+    const height = typeof eo.block_height === 'number' && Number.isSafeInteger(eo.block_height) ? eo.block_height : null;
     if (at === null || height === null) continue;
     o.logs.forEach((line: unknown, li: number) => {
       if (typeof line !== 'string' || !line.startsWith('EVENT_JSON:')) return;
@@ -122,6 +134,7 @@ export function linkEventsOf(tx: { receipts?: unknown }, signer: string): LinkEv
       if (ev?.standard !== 'hana-id' || !(LINK_EVENTS as readonly unknown[]).includes(ev.event) || !Array.isArray(ev.data)) return;
       ev.data.forEach((d: { scope_id?: unknown; provider?: unknown; auto?: unknown } | null, di: number) => {
         if (!d || !shortString(d.scope_id, MAX_SCOPE_BYTES) || !shortString(d.provider, MAX_PROVIDER_BYTES)) return;
+        if (out.length >= MAX_EVENTS_PER_SCAN) return;
         out.push({ id: `${eo.id}:${li}:${di}`, event: ev.event as LinkEventName, scope_id: d.scope_id, provider: d.provider, auto: typeof d.auto === 'boolean' ? d.auto : null, at, block_height: height });
       });
     });
@@ -136,17 +149,19 @@ interface AccountTx {
 }
 
 const validAccountTx = (t: unknown): t is AccountTx =>
-  typeof t === 'object' && t !== null && typeof (t as AccountTx).transaction_hash === 'string' && Number.isSafeInteger((t as AccountTx).tx_block_height);
+  typeof t === 'object' && t !== null && typeof (t as AccountTx).transaction_hash === 'string' && RECEIPT_ID_RE.test((t as AccountTx).transaction_hash) && Number.isSafeInteger((t as AccountTx).tx_block_height);
 
 /** FastNear's transactions API (`/status`, `/v0/account`, `/v0/transactions`). No key: public data only. */
 export class FastNearLinkEvents implements LinkEventSource {
   constructor(
     private readonly baseUrl: string,
     private readonly signer: string,
+    /** The watchdog's own RPC's final block height: the indexer's head is never trusted past it. */
+    private readonly finalHeight: () => Promise<number>,
     private readonly fetchFn: typeof fetch = (...a) => fetch(...a),
   ) {}
 
-  private async request<T>(path: string, body?: unknown): Promise<T> {
+  private async request<T>(path: '/status' | '/v0/account' | '/v0/transactions', body?: unknown): Promise<T> {
     const url = `${this.baseUrl.replace(/\/+$/u, '')}${path}`;
     const res = await this.fetchFn(url, {
       method: body === undefined ? 'GET' : 'POST',
@@ -154,8 +169,12 @@ export class FastNearLinkEvents implements LinkEventSource {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(INDEXER_TIMEOUT_MS),
     });
-    if (!res.ok) throw new Error(`indexer ${path} HTTP ${res.status}`);
-    return (await res.json()) as T;
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new Error(`indexer ${path} HTTP ${res.status}`);
+    }
+    const limit = path === '/status' ? BODY_LIMITS.indexerStatus : path === '/v0/account' ? BODY_LIMITS.indexerAccount : BODY_LIMITS.indexerTransactions;
+    return readJsonCapped<T>(res, limit);
   }
 
   async scan(fromHeight: number | null, now: number): Promise<LinkScan> {
@@ -163,34 +182,40 @@ export class FastNearLinkEvents implements LinkEventSource {
     const latest = typeof status.latest_tx_block_height === 'number' ? status.latest_tx_block_height : status.latest_block_height;
     const latestAt = nsToMs(status.latest_block_timestamp);
     if (!Number.isSafeInteger(latest) || latestAt === null) throw new Error('indexer /status: unexpected shape');
-    const upTo = (latest as number) - SETTLE_BLOCKS;
+    const final = await this.finalHeight();
+    if (!Number.isSafeInteger(final)) throw new Error('RPC final block: unexpected shape');
+    // An indexer claiming a head past the chain's final block is clamped (L2): it can't push the cursor ahead.
+    const upTo = Math.min(latest as number, final) - SETTLE_BLOCKS;
     const head = { latestHeight: latest as number, behindMs: Math.max(0, now - latestAt) };
-    if (fromHeight === null) return { events: [], scannedTo: upTo, truncated: false, ...head };
-    if (fromHeight > upTo) return { events: [], scannedTo: fromHeight - 1, truncated: false, ...head };
+    if (fromHeight === null) return { events: [], scannedTo: upTo, truncated: false, stuck: false, ...head };
+    if (fromHeight > upTo) return { events: [], scannedTo: fromHeight - 1, truncated: false, stuck: false, ...head };
 
     const page = await this.request<{ account_txs?: unknown }>('/v0/account', { account_id: this.signer, from_tx_block_height: fromHeight, to_tx_block_height: upTo, desc: false, limit: MAX_TXS });
-    if (!Array.isArray(page.account_txs) || !page.account_txs.every(validAccountTx)) throw new Error('indexer /v0/account: unexpected shape');
+    if (!Array.isArray(page.account_txs) || page.account_txs.length > MAX_TXS || !page.account_txs.every(validAccountTx)) throw new Error('indexer /v0/account: unexpected shape');
     let txs = (page.account_txs as AccountTx[]).filter((t) => t.tx_block_height >= fromHeight && t.tx_block_height <= upTo).sort((a, b) => a.tx_block_height - b.tx_block_height);
     const truncated = page.account_txs.length >= MAX_TXS;
     let scannedTo = upTo;
     let behindMs = head.behindMs;
+    let stuck = false;
     if (truncated && txs.length) {
-      // The page may have cut a block's transactions short: re-read the last block next run (events dedupe by id),
-      // unless the whole page is that one block.
+      // The page may have cut a block's transactions short: re-read the last block next run (events dedupe by id).
+      // A page that is all one block can't be finished in one page: the cursor stays before it (never skipping the
+      // rest of the block: padding a block with transactions must not hide a link, M2) and the run alerts.
       const last = txs[txs.length - 1]!;
-      scannedTo = txs.every((t) => t.tx_block_height === last.tx_block_height) ? last.tx_block_height : last.tx_block_height - 1;
-      txs = txs.filter((t) => t.tx_block_height <= scannedTo);
+      stuck = txs.every((t) => t.tx_block_height === last.tx_block_height);
+      scannedTo = last.tx_block_height - 1;
+      if (!stuck) txs = txs.filter((t) => t.tx_block_height <= scannedTo);
       const lastAt = nsToMs(last.tx_block_timestamp);
       if (lastAt !== null) behindMs = Math.max(behindMs, now - lastAt);
     }
     const hashes = [...new Set(txs.map((t) => t.transaction_hash))];
     const events: LinkEvent[] = [];
-    for (let i = 0; i < hashes.length; i += TX_BATCH) {
+    for (let i = 0; i < hashes.length && events.length < MAX_EVENTS_PER_SCAN; i += TX_BATCH) {
       const got = await this.request<{ transactions?: unknown }>('/v0/transactions', { tx_hashes: hashes.slice(i, i + TX_BATCH) });
-      if (!Array.isArray(got.transactions)) throw new Error('indexer /v0/transactions: unexpected shape');
-      for (const tx of got.transactions) if (tx && typeof tx === 'object') events.push(...linkEventsOf(tx as { receipts?: unknown }, this.signer));
+      if (!Array.isArray(got.transactions) || got.transactions.length > TX_BATCH) throw new Error('indexer /v0/transactions: unexpected shape');
+      for (const tx of got.transactions) if (tx && typeof tx === 'object') events.push(...linkEventsOf(tx as { receipts?: unknown }, this.signer).slice(0, MAX_EVENTS_PER_SCAN - events.length));
     }
-    log({ event: 'link_scan', outcome: 'ok', code: truncated ? 'truncated' : 'complete' });
-    return { events, scannedTo, latestHeight: head.latestHeight, behindMs, truncated };
+    log({ event: 'link_scan', outcome: 'ok', code: stuck ? 'stuck' : truncated ? 'truncated' : 'complete' });
+    return { events, scannedTo, latestHeight: head.latestHeight, behindMs, truncated, stuck };
   }
 }

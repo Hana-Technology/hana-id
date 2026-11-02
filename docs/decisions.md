@@ -2024,6 +2024,14 @@ address. All wait for the user's confirmation.
     active email keys, warning `email_jwks_mismatch` only; a failed fetch warns after 3 runs and only while an email
     key is active (the issuer may not be deployed before that).
   - A v2 contract (no `get_self_issued`, `get_issuer("email")` null) reads as "no email issuer": no alert, pins or not.
+  - Fail closed (review L1, L4): on-chain material that can't be hashed is `bad_material` (never judged by its kid); a
+    malformed `EMAIL_PINS` raises the critical `pins_invalid` (check `config`) and the email key alerts it causes carry
+    reason `pins_unreadable`, so the page names the config rather than a forgery.
+  - Order (review H1): Hana's email JWKS is read after every protective step, the first alert delivery and the
+    heartbeat, guarded, with its body capped (64 KB); so are Google's JWKS, every RPC answer (4 MB) and the indexer.
+    Hana's API is a party the watchdog must survive (D86): a huge or hostile body is a failed fetch.
+  - `scripts/pin.ts` (`pnpm --filter @hana-id/watchdog pin <public key>`) prints a public key's pin with the same
+    function the Worker uses, so batch 4's kid and the manifest's pin can't disagree.
 - Why: the pins are the only truth for self-issued keys (no outside JWKS vouches for them); treating "no pins" as
   "skip the check" would let an owner post an email key unchecked on any env that forgot the block. A kid other than
   the thumbprint, or a key pinned for one signer posted for another, isn't what Hana's issuer produces.
@@ -2034,19 +2042,30 @@ address. All wait for the user's confirmation.
 - Date 2026-11-02 · Status: to confirm; built (`feat/email-login-5`, `pins.ts` `policyFindings`) · Source: build of
   `docs/email-login-spec.md` "Watchdog" ("critical on any difference, pause on a weaker policy") and "Signing key
   (staged)" ("Level 1 adds `cosign: […]` and `required: 2` before its upgrade executes")
-- Decision: every difference between the pins and `get_issuer("email")` / `get_self_issued("email")` (signers,
-  `required`; kids are judged per key) is one critical `signer_policy_mismatch` condition per chain policy state. The
-  chain's policy is **weaker**, and the watchdog pauses, when its `required` is below the pinned one, when it lists a
-  signer the pins don't, or when email keys are active with no signer policy at all. A pinned signer the chain doesn't
-  list, or a higher `required` on chain, is a difference only (alert, no pause). So the operator changes the pins
-  around a policy upgrade in this order: pin the new signer's keys (with the current `required`) before the upgrade
-  executes, raise the pinned `required` after it executed; replacing a signer: pin the new id first, drop the old id
-  after.
+- **This overrides `docs/email-login-spec.md` line 867** ("Level 1 adds `cosign: […]` and `required: 2` before its
+  upgrade executes"): the pinned `required` is raised only **after** the upgrade executed. The spec is history and is
+  not edited.
+- Decision: the pins are compared with `get_issuer("email")` / `get_self_issued("email")` (signers, `required` and
+  `overlap_until_ms`; kids are judged per key). The chain's policy is **weaker**, and the watchdog pauses with a
+  critical `signer_policy_mismatch`, when its `required` is below the pinned one, when it lists a signer the pins
+  don't, when email keys are active with no signer policy at all, or when an overlap with the previous policy lasts
+  longer than the contract's `POLICY_OVERLAP_MS` (10 min) plus one run interval (5 min): a `migrate` could otherwise
+  keep a weaker previous policy (say 1-of-1) valid indefinitely, and `get_self_issued` shows only the end time, not
+  the previous policy. An email issuer on chain with nothing pinned, or a pre-v3 email issuer, is also a critical
+  `signer_policy_mismatch` (no pause). What a planned change passes through, none of it weaker, is a **warning**
+  `signer_policy_transition` (no page, no pause, review L5): a pinned signer the chain doesn't list yet, the
+  `set_issuer` → `mark_self_issued` gap with no key, a higher `required` on chain, an overlap of normal length. So the
+  operator changes the pins around a policy upgrade in this order: pin the new signer's keys (with the current
+  `required`) before the upgrade executes, raise the pinned `required` after it executed; replacing a signer: pin the
+  new id first, drop the old id after. The governance diff's `email_signer_policy` includes `overlap_until_ms`.
 - Why: the spec's literal order (pins at `required: 2` while the chain is still 1-of-1 for the upgrade's 72 h) would
   read as a weaker chain policy and pause every login for the whole wait. Pinning the new keys first is what matters
   (migrate installs them active at once, and an unpinned active key pauses).
 - Rejected: no pause on policy at all (the spec asks for it); pausing on any difference (the planned transitions
-  above would pause).
+  above would pause); a critical page for the transitions (it would repeat for the upgrade's 72 h).
+- Contract note (not changed): `get_self_issued` exposes `overlap_until_ms` but not the previous policy's signers and
+  `required`; a view that also returned them would let the watchdog judge the overlap's policy itself instead of only
+  its length.
 
 ### D192. Link volume through a transactions indexer, detection only, with provisional thresholds
 - Date 2026-11-02 · Status: to confirm; built (`feat/email-login-5`, `apps/watchdog/src/links.ts`, migration
@@ -2066,6 +2085,13 @@ address. All wait for the user's confirmation.
     3 failed reads, or when the scan is more than 1 h behind.
   - Detection only: the indexer can hide events (a missed warning) or invent some (a false warning), never make the
     watchdog act.
+  - Hardening (review M1, M2, L2, L8): the check runs after the snapshot is saved, the alerts delivered and the
+    heartbeat sent, guarded (a throw marks `links` `error`, resolves nothing, and leaves the run `degraded`); it is
+    skipped in a run that took protective actions (subrequests). Answers are size-capped, receipt ids must be NEAR ids,
+    at most 2 000 events per scan. The indexer's head is clamped to the RPC's final block, and events dated more than 5
+    min in the future are ignored and pruned. A full page that is all one block can't be finished: the cursor holds
+    before that block (never skipping its rest, so padding a block can't hide a link) and the run warns
+    `link_events_unavailable:truncated` until it clears. The schema refuses an indexer host naming another network.
 - Why: the spec wants link bursts (the visible trace of a compromised issuer using the real key at 1-of-1) to alert;
   an indexer is the only source of events within the free plan's limits, and nothing on chain depends on it.
 - Rejected: a contract view counting links (a contract change, outside this batch); scanning blocks through the

@@ -56,11 +56,17 @@ export function pinnedSignersOf(pins: SignerPins | null, thumbprint: string | nu
     .map(([id]) => id);
 }
 
-/** Why an email key (pending or active) isn't the pinned key it claims to be. */
-export type EmailKeyReason = 'not_pinned' | 'kid_not_thumbprint' | 'other_signer' | 'no_signer';
+/**
+ * Why an email key (pending or active) isn't the pinned key it claims to be. `pins_unreadable`: `not_pinned` while the
+ * manifest's pins couldn't be read (the `config` check pages `pins_invalid`): the key may be fine, the config isn't.
+ * `bad_material`: on-chain `n`/`e` that can't be hashed (fail closed: never judged by its kid alone).
+ */
+export type EmailKeyReason = 'not_pinned' | 'pins_unreadable' | 'bad_material' | 'kid_not_thumbprint' | 'other_signer' | 'no_signer';
 
 export const EMAIL_KEY_WHY: Record<EmailKeyReason, string> = {
   not_pinned: 'its key is not pinned',
+  pins_unreadable: "the watchdog's email pins are unreadable (EMAIL_PINS), so no key counts as pinned",
+  bad_material: 'its key material cannot be hashed',
   kid_not_thumbprint: 'its kid is not the RFC 7638 thumbprint of its key',
   other_signer: 'its key is pinned for another signer',
   no_signer: 'it names no signer (the email issuer is not self-issued)',
@@ -69,7 +75,7 @@ export const EMAIL_KEY_WHY: Record<EmailKeyReason, string> = {
 export interface EmailKeyVerdict {
   /** null: the pinned key it claims to be. */
   reason: EmailKeyReason | null;
-  /** RFC 7638 thumbprint of the key material (null without material). */
+  /** RFC 7638 thumbprint of the key material (null without material, or unhashable material). */
   thumbprint: string | null;
   /** The pinned signers that list it. */
   pinnedFor: string[];
@@ -79,11 +85,13 @@ export interface EmailKeyVerdict {
  * One email key against the pins: its material's thumbprint must be pinned, its kid must be that thumbprint (Hana's
  * issuer names each key so), and it must be pinned for its signer. `signer` is the change's `signer` for a pending
  * Add (`requireSigner`: a pending Add with none is `no_signer`), or the signer `get_self_issued` lists the active kid
- * under (null: unattributed, e.g. a dropped signer's key, then any pinned signer will do). Without material (a
- * contract without `get_issuer_keys`) only the kid is judged.
+ * under (null: unattributed, e.g. a dropped signer's key, then any pinned signer will do). Only a key with no material
+ * at all (a contract without `get_issuer_keys`) is judged by its kid; material that can't be hashed is `bad_material`.
  */
 export async function emailKeyVerdict(pins: SignerPins | null, key: { kid: string; n: string | null; e: string | null }, signer: string | null, requireSigner: boolean): Promise<EmailKeyVerdict> {
+  const hasMaterial = key.n !== null || key.e !== null;
   const thumbprint = key.n && key.e ? await rsaThumbprint({ n: key.n, e: key.e }) : null;
+  if (hasMaterial && thumbprint === null) return { reason: 'bad_material', thumbprint: null, pinnedFor: [] };
   const pinnedFor = pinnedSignersOf(pins, thumbprint ?? key.kid);
   let reason: EmailKeyReason | null = null;
   if (pinnedFor.length === 0) reason = 'not_pinned';
@@ -98,54 +106,70 @@ export function signerOfKid(si: SelfIssuedView | null, kid: string): string | nu
   return si?.signers.find((s) => s.kids.includes(kid))?.id ?? null;
 }
 
+/** The contract's policy overlap (`POLICY_OVERLAP_MS` in `self_issued.rs`, the email token lifetime). */
+export const POLICY_OVERLAP_MS = 600_000;
+/** Clock skew and run spacing allowed on top of it before an overlap counts as too long (one run interval). */
+export const OVERLAP_SLACK_MS = 300_000;
+
 export interface PolicyFindings {
-  /** Every difference between the chain's email issuer and signer policy and the pins (critical). */
+  /** Every difference between the chain's email issuer and signer policy and the pins. */
   differences: string[];
-  /** The ones that make the chain's policy weaker than the pins (pause). */
+  /** Differences that make the chain's policy weaker than the pins: critical, and the watchdog pauses. */
   weaker: string[];
+  /** Other critical differences (an email issuer nobody pinned, a pre-v3 email issuer): critical, no pause. */
+  critical: string[];
+  /**
+   * Expected while the pins and the chain move through a planned change (L5): a pinned signer not in the policy yet,
+   * the gap between `set_issuer` and `mark_self_issued`, a higher `required` on chain, an overlap of normal length.
+   * A warning, no pause.
+   */
+  transition: string[];
 }
 
 const describePolicy = (si: SelfIssuedView) => `{signers: [${si.signers.map((s) => ident(s.id)).join(', ')}], required: ${si.required}}`;
 
 /**
- * `get_issuer("email")` and `get_self_issued("email")` against the pins (signers and `required`; kids are judged per
- * key). Weaker (D191): a lower `required` than pinned, a signer the pins don't list, or active email keys with no
- * signer policy at all. A pinned signer the chain doesn't list yet, or a higher `required`, is a difference only: the
- * operator pins a new signer before the upgrade that adds it executes, and raises the pinned `required` after.
+ * `get_issuer("email")` and `get_self_issued("email")` against the pins (signers, `required` and the overlap; kids
+ * are judged per key). Weaker (D191): a lower `required` than pinned, a signer the pins don't list, active email keys
+ * with no signer policy, or an overlap with the previous policy lasting longer than the contract's 10 minutes plus
+ * one run (a `migrate` could otherwise keep a weaker previous policy valid indefinitely). `now` is wall-clock ms.
  */
-export function policyFindings(pins: SignerPins | null, email: EmailSnapshot): PolicyFindings {
+export function policyFindings(pins: SignerPins | null, email: EmailSnapshot, now: number): PolicyFindings {
   const { issuer, selfIssued: si } = email;
-  const differences: string[] = [];
-  const weaker: string[] = [];
-  if (!issuer && !si) return { differences, weaker };
+  const f: PolicyFindings = { differences: [], weaker: [], critical: [], transition: [] };
+  const add = (level: 'weaker' | 'critical' | 'transition', text: string) => {
+    f.differences.push(text);
+    f[level].push(text);
+  };
+  if (!issuer && !si) return f;
   if (!pins) {
-    differences.push('an email issuer is on chain but the watchdog pins no email keys (watchdog.pinnedIssuerKeys.email)');
-    if (si) differences.push(`its signer policy ${describePolicy(si)} is not pinned`);
-    return { differences, weaker };
+    add('critical', 'an email issuer is on chain but the watchdog pins no email keys (watchdog.pinnedIssuerKeys.email)');
+    if (si) add('critical', `its signer policy ${describePolicy(si)} is not pinned`);
+    return f;
   }
   if (!si) {
-    differences.push(email.hasSelfIssuedView ? 'the email issuer is not self-issued (no signer policy)' : 'the contract has no get_self_issued (pre-v3): the email issuer has no signer policy');
     const active = email.issuerKeys?.length ?? issuer?.kids.length ?? 0;
-    if (active > 0) weaker.push(`${active} active email key(s) with no signer policy`);
-    return { differences, weaker };
+    if (active > 0) add('weaker', `${active} active email key(s) with no signer policy`);
+    else if (email.hasSelfIssuedView) add('transition', 'the email issuer is not self-issued yet (no signer policy, no key)');
+    else add('critical', 'the contract has no get_self_issued (pre-v3): the email issuer has no signer policy');
+    return f;
   }
   const chainIds = si.signers.map((s) => s.id);
   const pinIds = Object.keys(pins.signers);
-  for (const id of pinIds) if (!chainIds.includes(id)) differences.push(`pinned signer ${ident(id)} is not in the policy`);
-  for (const id of chainIds) {
-    if (pinIds.includes(id)) continue;
-    differences.push(`signer ${ident(id)} is not pinned`);
-    weaker.push(`signer ${ident(id)} is not pinned`);
+  for (const id of pinIds) if (!chainIds.includes(id)) add('transition', `pinned signer ${ident(id)} is not in the policy`);
+  for (const id of chainIds) if (!pinIds.includes(id)) add('weaker', `signer ${ident(id)} is not pinned`);
+  if (si.required < pins.required) add('weaker', `required ${si.required} is below the pinned ${pins.required}`);
+  else if (si.required > pins.required) add('transition', `required is ${si.required}, pinned ${pins.required}`);
+  const until = si.overlap_until_ms;
+  if (typeof until === 'number' && until > now) {
+    const text = `tokens valid under the previous policy still pass until ${new Date(until).toISOString()}`;
+    add(until > now + POLICY_OVERLAP_MS + OVERLAP_SLACK_MS ? 'weaker' : 'transition', until > now + POLICY_OVERLAP_MS + OVERLAP_SLACK_MS ? `${text} (longer than the contract's 10-minute overlap)` : text);
   }
-  if (si.required !== pins.required) {
-    differences.push(`required is ${si.required}, pinned ${pins.required}`);
-    if (si.required < pins.required) weaker.push(`required ${si.required} is below the pinned ${pins.required}`);
-  }
-  return { differences, weaker };
+  return f;
 }
 
-/** A short stable id of the chain's email policy, for the mismatch alert's key (a new state is a new alert). */
+/** A short stable id of the chain's email policy, for the alerts' keys (a new state is a new alert). */
 export function policyId(email: EmailSnapshot): string {
-  if (email.selfIssued) return `${email.selfIssued.signers.map((s) => s.id).join('+')}/${email.selfIssued.required}`;
+  if (email.selfIssued) return `${email.selfIssued.signers.map((s) => s.id).join('+')}/${email.selfIssued.required}${email.selfIssued.overlap_until_ms ? '+overlap' : ''}`;
   return email.issuer ? 'not-self-issued' : 'none';
 }

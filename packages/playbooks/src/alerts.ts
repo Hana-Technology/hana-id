@@ -16,7 +16,7 @@ const forgedKeyChange: Playbook = {
   signals: [
     'Critical `forged_key_change` page (paging app, Slack, email), re-sent every 15 min until acknowledged. The title and `details.outcome` say what happened: `cancelled`, `gone` (someone else cancelled it first), `executed` (it took effect before the cancel), `unknown`, `failed` or `not_sent`.',
     "`details.by` is the proposer: the signer account means `KEYS_UPDATER_KEY`; the owner means the council. `reason: updater_other_provider`: the updater proposed a key for a provider other than Google (it only serves Google).",
-    "`provider: email` (only the owner can post email keys, so the council proposed it): `reason` is `not_pinned` (its thumbprint isn't in `watchdog.pinnedIssuerKeys.email`; `details.pinned: false` means nothing is pinned at all), `other_signer` (pinned for another signer), `kid_not_thumbprint` or `no_signer` (the email issuer isn't self-issued). `details.thumbprint` is the key's RFC 7638 thumbprint.",
+    "`provider: email` (only the owner can post email keys, so the council proposed it): `reason` is `not_pinned` (its thumbprint isn't in `watchdog.pinnedIssuerKeys.email`; `details.pinned: false` means nothing is pinned at all), `pins_unreadable` (the pins themselves are broken: a `pins_invalid` page names it, see watchdog-cannot-act), `bad_material` (on-chain `n`/`e` that can't be hashed), `other_signer` (pinned for another signer), `kid_not_thumbprint` or `no_signer` (the email issuer isn't self-issued). `details.thumbprint` is the key's RFC 7638 thumbprint.",
     'The API cron logs `jwks_sync_note` `unpublished_change` / `pending_mismatch` (error) while it is pending, then `issuer_key_change_cancelled`, and `jwks_tx` `send_failed` once its updater key is gone.',
   ],
   impact: [
@@ -407,11 +407,15 @@ const watchdogCannotAct: Playbook = {
   id: 'watchdog-cannot-act',
   title: "The watchdog can't act",
   kind: 'alert',
-  alertKinds: ['not_a_watchdog', 'watchdog_key_missing', 'wrong_network'],
+  alertKinds: ['not_a_watchdog', 'watchdog_key_missing', 'wrong_network', 'pins_invalid'],
   severity: 'critical',
   status: 'live',
-  summary: "Its account isn't a contract watchdog, its key is missing or malformed, or its RPC is on another chain: it can alert at most, never cancel or pause.",
-  signals: ['Critical `not_a_watchdog`, `watchdog_key_missing` or `wrong_network` (condition alerts: open until a run no longer sees them).', '`/status` `last_run.checks`: `watchdog_role` or `config` not ok.'],
+  summary:
+    "Its account isn't a contract watchdog, its key is missing or malformed, or its RPC is on another chain: it can alert at most, never cancel or pause. Or its email pins are unreadable: it then cancels or pauses on every email key (fail closed).",
+  signals: [
+    'Critical `not_a_watchdog`, `watchdog_key_missing`, `wrong_network` or `pins_invalid` (condition alerts: open until a run no longer sees them).',
+    '`/status` `last_run.checks`: `watchdog_role` or `config` not ok. With `pins_invalid`, email key alerts carry `reason: pins_unreadable`.',
+  ],
   impact: ["Until fixed nothing cancels a forged pending key or pauses on a forged active one; with `wrong_network` nothing is sent at all. Google's rotations also wait their full delay (no confirmations)."],
   steps: [
     {
@@ -439,6 +443,13 @@ const watchdogCannotAct: Playbook = {
       who: 'a founder',
       detail: 'The manifest `rpc` (or `rpcFallback`) answers another `chain_id`. Fix `envs/<env>.json` (code-owner review), regenerate the watchdog config and redeploy it, logged in to the watchdog\'s Cloudflare account.',
       commands: [c.watchdogGen, c.watchdogDeploy],
+    },
+    {
+      title: '`pins_invalid`: regenerate the pins',
+      who: 'a founder',
+      detail:
+        "`EMAIL_PINS` doesn't parse, so no email key counts as pinned: pending email keys are cancelled and an active one pauses (D190). `gen` writes it from `watchdog.pinnedIssuerKeys.email`, which the schema validates: a broken value was set by hand or by a broken deploy. Regenerate and redeploy; if the watchdog paused on Hana's own keys meanwhile, the council unpauses once the next run is clean, and re-posts any email key it cancelled.",
+      commands: [c.watchdogGen, c.watchdogDeploy, c.watchdogStatus],
     },
   ],
   verify: ['`/status` `last_run.outcome: "ok"` with every check ok; the condition alert resolves.'],
@@ -783,15 +794,15 @@ const signerPolicyMismatch: Playbook = {
   id: 'signer-policy-mismatch',
   title: 'Email signer policy differs from the pins',
   kind: 'alert',
-  alertKinds: ['signer_policy_mismatch'],
+  alertKinds: ['signer_policy_mismatch', 'signer_policy_transition'],
   severity: 'critical',
   status: 'live',
   summary:
-    "The email issuer on chain (`get_issuer(\"email\")`, `get_self_issued(\"email\")`) doesn't match the watchdog's pins: an email issuer with nothing pinned, one that isn't self-issued, or other signers or another `required`. Paused when the chain's policy is weaker; otherwise alert only.",
+    "The email issuer on chain (`get_issuer(\"email\")`, `get_self_issued(\"email\")`) doesn't match the watchdog's pins. Weaker (paused) or unexplained (an email issuer with nothing pinned, a pre-v3 one): critical `signer_policy_mismatch`. Mid-way through a planned change and none of it weaker: warning `signer_policy_transition`.",
   signals: [
     'Critical `signer_policy_mismatch` page: "Email signer policy differs from the pins: <differences>; <weaker, paused | alert only>". `details.pinned` and `details.chain` show both sides.',
-    'Weaker (D191): `required` below the pinned one, a signer the pins don\'t list, or active email keys without a signer policy. Then every login answers `503 paused`.',
-    "During batch 6's setup, between `set_issuer(\"email\")` and `mark_self_issued(\"email\")`, it is expected (alert only, no keys yet): it resolves once the issuer is marked.",
+    "Weaker (D191): `required` below the pinned one, a signer the pins don't list, active email keys without a signer policy, or an overlap with the previous policy longer than the contract's 10 minutes (a `migrate` keeping a weaker policy valid). Then every login answers `503 paused`.",
+    "Warning `signer_policy_transition` (no page, no pause): a pinned signer not in the policy yet, the gap between `set_issuer(\"email\")` and `mark_self_issued(\"email\")` (batch 6's setup), a higher `required` on chain than pinned, or an overlap of normal length after a policy upgrade. It resolves once pins and chain match.",
   ],
   impact: [
     'A weaker policy lets fewer signers (or a signer nobody pinned) mint email tokens, and so derive every email wallet and every wallet linked to one. The signer list and `required` change only through a governed upgrade (`migrate`, public for `governance_delay_ms`), so a weaker one means an upgrade nobody reviewed for this, or a compromised council.',
@@ -913,7 +924,7 @@ const linkVolume: Playbook = {
     'More new links (`identity_linked`, `identity_link_proposed`) in the last hour than the threshold, in one scope or in all; or the watchdog cannot read link events (no indexer while email is on chain, the indexer failing, or the scan more than 1 h behind).',
   signals: [
     'Warning `link_volume_high` (`link_volume_high:scope:<scope>` or `:total`): the count, how many were automatic, the threshold (`watchdog.linkVolume`, default 20 per scope and 100 in all per hour).',
-    'Warning `link_events_unavailable` (`:not_configured`, `:failing`, `:behind`). `/status` `link_volume` has the last scan, the cursor and the last hour by scope and event.',
+    'Warning `link_events_unavailable` (`:not_configured`, `:failing`, `:behind`, `:truncated`: one block holds more of the signer\'s transactions than a scan page, so the scan holds before it and stays blind past it). `/status` `link_volume` has the last scan, the cursor and the last hour by scope and event.',
   ],
   impact: [
     "A burst of links is how a compromised email issuer would use the real key at 1-of-1 (docs/email-login-spec.md \"Trust statement\"): each link joins an identity it minted to someone's wallet. Pending links wait `change_delay_ms` and can be cancelled by their users; automatic ones are active at once.",
@@ -935,7 +946,7 @@ const linkVolume: Playbook = {
       title: 'Not monitored: restore the event source',
       who: 'a founder',
       detail:
-        '`not_configured`: set `watchdog.linkVolume.indexerUrl` (FastNear\'s transactions API, `https://tx.test.fastnear.com` on testnet), regenerate, redeploy. `failing`: check the indexer\'s `/status`; it is a third party, so pick another if it stays down. `behind`: more signer transactions than a run reads (100 per run): raise it in code or move the watchdog to the paid plan.',
+        '`not_configured`: set `watchdog.linkVolume.indexerUrl` (FastNear\'s transactions API, `https://tx.test.fastnear.com` on testnet), regenerate, redeploy. `failing`: check the indexer\'s `/status`; it is a third party, so pick another if it stays down. `behind`: more signer transactions than a run reads (100 per run): raise it in code or move the watchdog to the paid plan. `truncated`: someone filled a block with the signer\'s transactions (padding to hide links); the check stays blind past that block until the scan pages within a block (not built): watch links by hand meanwhile and treat it as hostile.',
       commands: [c.watchdogGen, c.watchdogDeploy],
     },
   ],

@@ -224,8 +224,9 @@ export class Store {
     return rows.results;
   }
 
-  async pruneLinkEvents(before: number): Promise<void> {
-    await this.db.prepare('DELETE FROM link_events WHERE at < ?1').bind(before).run();
+  /** Drops events older than `before` and any dated after `after` (bad data from the indexer). */
+  async pruneLinkEvents(before: number, after: number): Promise<void> {
+    await this.db.prepare('DELETE FROM link_events WHERE at < ?1 OR at > ?2').bind(before, after).run();
   }
 
   // ---- alerts ----

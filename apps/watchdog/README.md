@@ -42,20 +42,23 @@ every run and sends nothing on a mismatch.
    - Pending changes: by the updater (the signer account) → `updater_other_provider` as for any non-Google provider
      (cancel, delete every updater key). An Add whose key isn't pinned for its `signer`, whose kid isn't its
      thumbprint, or that names no signer → `cancel_issuer_key_change` + critical `forged_key_change` (`reason`
-     `not_pinned`, `other_signer`, `kid_not_thumbprint`, `no_signer`). A pinned Add, and any email removal → info
+     `not_pinned`, `other_signer`, `kid_not_thumbprint`, `no_signer`; `bad_material` when its `n`/`e` can't be hashed,
+     never judged by kid; `pins_unreadable` while `EMAIL_PINS` is malformed, which also pages `pins_invalid` from the
+     `config` check). A pinned Add, and any email removal → info
      `self_issued_key_change`; **never confirmed** (self-issued keys wait `governance_delay_ms`; the contract refuses).
    - Active keys (`get_issuer_keys("email")`, signer from `get_self_issued`): one that isn't pinned (for the signer
      that lists it, kid = thumbprint) → `pause` + delete every updater key + critical `forged_active_key`
      (`forged_active_key:email:<kid>`), as for Google, **also at the first run** (pins are configuration, not history).
-   - Signer policy (check `signer_policy`): `get_issuer("email")` and `get_self_issued("email")` against the pins.
-     Any difference → critical condition `signer_policy_mismatch` (one per chain policy state). **Weaker** (D191: a
-     lower `required` than pinned, a signer the pins don't list, active email keys with no signer policy) → `pause`
-     as well. A pinned signer not in the policy yet, or a higher `required` on chain, is alert only: pin a new signer's
+   - Signer policy (check `signer_policy`): `get_issuer("email")` and `get_self_issued("email")` (signers,
+     `required`, `overlap_until_ms`) against the pins, one condition per chain policy state. **Weaker** (D191: a lower
+     `required` than pinned, a signer the pins don't list, active email keys with no signer policy, an overlap with
+     the previous policy longer than the contract's 10 min + 5 min) → `pause` + critical `signer_policy_mismatch`. An
+     email issuer with nothing pinned, or a pre-v3 one → the same critical, no pause. What a planned change passes
+     through, none of it weaker (a pinned signer not in the policy yet, the `set_issuer` → `mark_self_issued` gap, a
+     higher `required` on chain, a normal overlap) → warning `signer_policy_transition`, no pause: pin a new signer's
      keys before its upgrade executes, raise the pinned `required` after.
-   - Hana's JWKS (check `email_jwks`, only with pins and a URL): `EMAIL_JWKS_URL` (manifest `jwksUrl`, default
-     `{apiUrl}/v1/email/jwks.json`), fetched with no cache; a published key not pinned (or kid ≠ thumbprint) or an
-     active email key not published → warning `email_jwks_mismatch`; 3 failed fetches while an email key is active →
-     the same warning (`:fetch`). Never trusted, never acted on.
+   - `get_config().unrecorded_wallets` true on an env that isn't `local*` or `sandbox*` → critical condition
+     `unrecorded_wallets` (D139, D193; alert only; check `links`).
 6. **Active keys**: a kid this watchdog never saw in Google's JWKS, or whose on-chain material (`get_issuer_keys`)
    differs from Google's → `pause`, then `delete_updater_key` for every updater key (whoever proposed it: the change
    record is gone by then, and only the updater or the owner can post keys; D126), + critical alert. **The only
@@ -81,18 +84,6 @@ every run and sends nothing on a mismatch.
 8. Key changes executable for more than 1 h that nobody executed → warning. Changes that left the queue without
    this watchdog (executed after the delay, cancelled by the owner) → info (Google's and the email issuer's tell
    executed from cancelled).
-8a. **Links** (`src/links.ts`, check `links`; D192, D193): `get_config().unrecorded_wallets` true on an env that
-   isn't `local*` or `sandbox*` → critical condition `unrecorded_wallets` (D139; alert only). Link volume: while an
-   email issuer is on chain (links need one), the signer's transactions since the last scan are read from the
-   transactions indexer (`LINK_INDEXER_URL`, manifest `watchdog.linkVolume.indexerUrl`: FastNear's `/status`,
-   `/v0/account` at most 100 per run, `/v0/transactions` 20 at a time, 60 blocks behind its head) and every
-   `EVENT_JSON` `identity_link_*` / `identity_linked` / `identity_unlinked` event the signer emitted in a receipt that
-   succeeded goes to D1 `link_events` (scope, provider, auto, block time; 8 days; deduplicated by receipt and log).
-   New links (`identity_linked`, `identity_link_proposed`) in the last hour above `perScopePerHour` (default 20) in a
-   scope, or `perHour` (100) in all → warning `link_volume_high`. No indexer while email is on chain, 3 failed reads
-   (the run is then `degraded`), or a scan more than 1 h behind → warning `link_events_unavailable`. The first scan
-   after the email issuer appears starts at the chain's head (no backfill: no link can precede its first key). The
-   indexer is a third party: it can hide or invent events (a missed or false warning), never make the watchdog act.
 9. **Relayer funds** (`src/relayer.ts`, read-only, D150): `view_account` and `view_access_key_list` of the relayer
    account (`RELAYER_ACCOUNT`, the manifest's `relayer`) at final finality. Its available balance (`amount` minus
    `storage_usage` × 10^19 yocto) and the remaining allowance of each pool key (function-call keys for the signer,
@@ -106,6 +97,31 @@ every run and sends nothing on a mismatch.
    and the run `degraded`, and resolves nothing. Thresholds: manifest `watchdog.relayerFunds` (below).
 10. **Alerts out** (`src/alerts.ts`), the daily digest (`src/digest.ts`), the **dead-man's switch** ping, and the run
    record (`runs`, each check's outcome).
+11. **Advisory checks** (warning only), after every protective step, the snapshot, the first delivery and the
+   heartbeat, each guarded (a throw marks its check `error`, resolves nothing and leaves the run `degraded`, never
+   `error`); what they raise goes out in a second delivery. Their reads are third-party (Hana's API is a party the
+   watchdog must survive, D86), so they can't hold back a cancel, a pause, an alert or the heartbeat.
+   - Hana's JWKS (check `email_jwks`, only with pins and a URL): `EMAIL_JWKS_URL` (manifest `jwksUrl`, default
+     `{apiUrl}/v1/email/jwks.json`), fetched with no cache; a published key not pinned (or kid ≠ thumbprint) or an
+     active email key not published → warning `email_jwks_mismatch`; 3 failed fetches while an email key is active →
+     the same warning (`:fetch`). Never trusted, never acted on.
+   - Link volume (`src/links.ts`, check `links`, D192): skipped in a run that took protective actions (subrequests).
+     While an email issuer is on chain (links need one), the signer's transactions since the last scan are read from
+     the transactions indexer (`LINK_INDEXER_URL`, manifest `watchdog.linkVolume.indexerUrl`: FastNear's `/status`,
+     `/v0/account` at most 100 per run, `/v0/transactions` 20 at a time, 60 blocks behind its head, which is clamped
+     to the RPC's final block) and every `EVENT_JSON` `identity_link_*` / `identity_linked` / `identity_unlinked`
+     event the signer emitted in a receipt that succeeded goes to D1 `link_events` (scope, provider, auto, block
+     time; 8 days; deduplicated by receipt and log; at most 2 000 per scan; receipt ids must be NEAR ids; events dated
+     in the future are dropped). New links (`identity_linked`, `identity_link_proposed`) in the last hour above
+     `perScopePerHour` (default 20) in a scope, or `perHour` (100) in all → warning `link_volume_high`. No indexer
+     while email is on chain, 3 failed reads, a scan more than 1 h behind, or a full page that is all one block (the
+     cursor then holds before that block, never skipping its rest: `:truncated`) → warning `link_events_unavailable`.
+     The first scan after the email issuer appears starts at the chain's head (no backfill: no link can precede its
+     first key). The indexer can hide or invent events (a missed or false warning), never make the watchdog act.
+
+Every third-party body the watchdog parses is size-capped before parsing (`src/http.ts`: both JWKS 64 KB, an RPC
+answer 4 MB, the indexer 16 KB / 512 KB / 2 MB), by `Content-Length` and while streaming: over the cap is a failed
+fetch (an RPC answer then tries the fallback).
 
 Everything not listed in steps 4–6 is alert-only (D82). Actions use exactly four methods, the permission of the
 watchdog's function-call key: `cancel_issuer_key_change`, `confirm_issuer_key_change`, `pause`, `delete_updater_key`.
@@ -219,6 +235,7 @@ Worker secrets, all in `.secrets/<env>/watchdog-secrets.json` (0600, a flat `{NA
 ```sh
 corepack pnpm --filter @hana-id/watchdog secrets <env> init     # creates WATCHDOG_KEY + WATCHDOG_STATUS_TOKEN, prints the public key and the add-key command
 corepack pnpm --filter @hana-id/watchdog secrets <env> check    # names of the secrets set and missing (never values)
+corepack pnpm --filter @hana-id/watchdog pin <public key file>   # the pin (RFC 7638 thumbprint) of a JWK, JWKS or PEM public key; refuses private keys
 corepack pnpm --filter @hana-id/watchdog gen <env> [--d1-id <uuid>] [--dev-vars]   # writes wrangler.jsonc (gitignored)
 corepack pnpm --filter @hana-id/watchdog dev                    # wrangler dev --test-scheduled (GET /__scheduled runs the cron)
 corepack pnpm --filter @hana-id/watchdog test
@@ -231,7 +248,9 @@ Setup and deploy steps are in `docs/operations.md` "Watchdog service".
 `test/` runs in workerd with a real (local) D1: `run.test.ts` covers every rule above against a stub chain, a scripted
 JWKS and recording channels; `email.test.ts` the email issuer's rules (pinned and unpinned keys per signer, no
 confirm, the signer-policy diff and its pauses, Hana's JWKS, link volume, `unrecorded_wallets`, a v2 contract read as
-no email issuer, D153 unchanged beside it); `links.test.ts` the indexer source (request shapes, failed receipts and
+no email issuer, D153 unchanged beside it, the review hardening: advisory order, guarded link check, `pins_invalid`,
+`bad_material`); `http.test.ts` the body caps on every third-party read; `scripts/test/pin.test.ts` the pin command
+(RFC 7638 vector, leading zeros, PEM, private keys refused); `links.test.ts` the indexer source (request shapes, failed receipts and
 other executors ignored, a full page) and the pin parsing; `alerts.test.ts` routing, re-sends, acks and failing channels; `channels.test.ts` each
 adapter's request; `registry.test.ts` that every alert kind has exactly one playbook (and its line in the alert text);
 `sanitize.test.ts` hostile kids (line breaks, `<!channel>`, 128 bytes, non-ASCII) through every

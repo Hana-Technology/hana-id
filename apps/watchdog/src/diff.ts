@@ -122,7 +122,7 @@ function issuerChanges(field: string, provider: string, before: IssuerView | nul
 }
 
 /** The signer policy without its kids (they change as keys execute, which the queue check reports). */
-const policyShape = (si: SelfIssuedView | null | undefined) => (si ? { signers: si.signers.map((s) => s.id), required: si.required } : null);
+const policyShape = (si: SelfIssuedView | null | undefined) => (si ? { signers: si.signers.map((s) => s.id), required: si.required, overlap_until_ms: si.overlap_until_ms ?? null } : null);
 
 export function diffChain(prevIn: StoredSnapshot | null, cur: ChainSnapshot, now: number, self: { paused: boolean; deletedUpdaterKeys: string[] }): ChainDiff {
   const prev = prevIn ?? emptyBaseline(cur);

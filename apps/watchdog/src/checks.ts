@@ -14,15 +14,16 @@ export const CHECKS = {
   watchdog_role: 'This account is one of the contract watchdogs, and whether it may confirm yet',
   pending_key_changes: "Each pending key change: Google's against Google's JWKS (confirm matches, cancel keys Google doesn't publish); the email issuer's against the pinned thumbprints of its signer (cancel unpinned ones, never confirm: self-issued keys wait their delay)",
   active_keys: "Each active key: Google's against every key Google has published, the email issuer's against the pins; pause on a key that is neither",
-  signer_policy: 'get_issuer("email") and get_self_issued("email") against the pinned signer policy (signers, required): critical on any difference, pause on a weaker policy',
-  email_jwks: "Hana's published email JWKS against the pins and the active email keys (warning only: Hana controls it, the contract never reads it)",
+  signer_policy: 'get_issuer("email") and get_self_issued("email") against the pinned signer policy (signers, required, overlap): pause on a weaker policy, warning while pins and chain move through a planned change',
   governance_diff: "Config and governance against the last run: upgrades, owner, withdrawals, watchdogs, updater keys, delays, audiences, pause and unpause, the session floor, unrecorded_wallets, the owner DAO's code and policy, the owner's immediate issuer actions (Google and email)",
   unexecuted_changes: 'Key changes past their executable time that nobody executed',
-  links: "identity_link_* events from the indexer: new links per scope and in all against the thresholds; and get_config().unrecorded_wallets outside a dev env (D139)",
   relayer_funds: "The relayer account's available balance and each pool key's remaining allowance (session and owner pools) against their thresholds; read-only, never tops up",
   alert_delivery: 'First deliveries, 15-minute re-sends of unacknowledged critical alerts, paging-app acknowledgements',
   digest: 'Daily info digest email',
   heartbeat: "Ping the dead-man's switch",
+  // Advisory checks: after every protective step, the delivery and the heartbeat, guarded (their third-party reads can't hold those back).
+  email_jwks: "Hana's published email JWKS against the pins and the active email keys (warning only: Hana controls it, the contract never reads it)",
+  links: "get_config().unrecorded_wallets outside a dev env (D139, judged with the chain read); identity_link_* events from the indexer: new links per scope and in all against the thresholds",
 } as const;
 export type CheckId = keyof typeof CHECKS;
 export const CHECK_IDS = Object.keys(CHECKS) as CheckId[];
@@ -50,8 +51,9 @@ export const ALERT_KINDS = {
     severity: 'critical',
     check: 'signer_policy',
     description:
-      "The email issuer on chain differs from the pins: an email issuer without pins, not self-issued, or a signer policy whose signers or required differ. Paused when the chain's policy is weaker (lower required, an unpinned signer, active email keys without a policy); otherwise alert only",
+      "The email issuer on chain differs from the pins in a way that isn't a planned transition: an email issuer with nothing pinned, a pre-v3 email issuer, or a weaker policy (lower required, an unpinned signer, active email keys without a policy, an overlap longer than the contract's 10 minutes), which is paused on",
   },
+  pins_invalid: { severity: 'critical', check: 'config', description: "EMAIL_PINS (the manifest's watchdog.pinnedIssuerKeys.email) is unreadable: every email key is treated as unpinned (fail closed), so legitimate keys are cancelled or paused on" },
   unrecorded_wallets: { severity: 'critical', check: 'links', description: 'get_config().unrecorded_wallets is true on an env that is not a dev env (D139): links are refused, and it must never be true on mainnet (alert only)' },
   forged_active_key: {
     severity: 'critical',
@@ -90,8 +92,13 @@ export const ALERT_KINDS = {
     check: 'email_jwks',
     description: "Hana's published email JWKS lists a key that isn't pinned (or whose kid isn't its thumbprint) or lacks an active email key, or it failed 3 fetches in a row while email keys are active (informational)",
   },
+  signer_policy_transition: {
+    severity: 'warning',
+    check: 'signer_policy',
+    description: 'The email issuer and the pins are mid-way through a planned change, none of it weaker: a pinned signer not in the policy yet, the set_issuer to mark_self_issued gap, a higher required on chain, an overlap of normal length (no pause)',
+  },
   link_volume_high: { severity: 'warning', check: 'links', description: 'More new links (identity_linked, identity_link_proposed) in the last hour than the threshold, in one scope or in all' },
-  link_events_unavailable: { severity: 'warning', check: 'links', description: "The link-volume check can't see the chain: no indexer configured while an email issuer is on chain, the indexer failed 3 runs in a row, or the scan is more than 1 h behind" },
+  link_events_unavailable: { severity: 'warning', check: 'links', description: "The link-volume check can't see the chain: no indexer configured while an email issuer is on chain, the indexer failed 3 runs in a row, the scan is more than 1 h behind, or one block holds more of the signer's transactions than a scan page (truncated: the scan holds before it)" },
   channel_not_configured: { severity: 'warning', check: 'config', description: 'An alert channel (paging app, Slack, email) or the heartbeat has no credentials' },
   heartbeat_failing: { severity: 'warning', check: 'heartbeat', description: "The dead-man's switch ping failed for 3 runs in a row" },
   relayer_balance_low: { severity: 'warning', check: 'relayer_funds', description: "The relayer account's available balance is below the warning threshold (default 5 NEAR)" },

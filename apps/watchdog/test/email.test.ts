@@ -3,10 +3,12 @@
 // email JWKS, the link-volume check, D139's unrecorded_wallets, and a v2 contract read as "no email issuer".
 import { describe, expect, it } from 'vitest';
 import { LINK_SCAN_BEHIND_MS, LINK_WINDOW_MS } from '../src/run.ts';
-import { alertsOf, emailJwk, HOUR, initialized, jwk, linkEvent, MIN, OWNER, pinsOf, SIGNER, UPDATER_KEYS, world } from './helpers.ts';
+import { alertsOf, emailJwk, HOUR, initialized, jwk, linkEvent, MIN, OWNER, pinsOf, SIGNER, T0, UPDATER_KEYS, world } from './helpers.ts';
 
 const severityOf = async (w: Awaited<ReturnType<typeof initialized>>, kind: string) => (await alertsOf(w.store, kind)).map((a) => a.severity);
 const openKinds = async (w: Awaited<ReturnType<typeof initialized>>) => (await w.store.openAlerts()).map((a) => a.kind).sort();
+/** The overlap the policy-upgrade test sets: `initialized` runs once at T0, the test's first run at T0 + 5 min. */
+const T0OVERLAP = T0 + 10 * MIN + 10 * MIN;
 const checkOf = (r: { checks: { id: string; outcome: string; detail?: string }[] }, id: string) => r.checks.find((c) => c.id === id);
 
 describe('a v2 contract (sandbox-dev today) reads as no email issuer', () => {
@@ -283,29 +285,45 @@ describe('signer policy against the pins', () => {
     expect((await alertsOf(w.store, 'signer_policy_mismatch'))[0]?.details.weaker).toEqual(['signer rogue is not pinned']);
   });
 
-  it('alerts without pausing while the pins are ahead of a policy upgrade (a new signer pinned first, D191)', async () => {
+  it('warns without pausing while the pins are ahead of a policy upgrade (a new signer pinned first, D191, L5)', async () => {
     const { w } = await setup({ pinned: 'hana+cosign', required: 1, chain: { signers: ['hana'], required: 1 } });
     const r = await w.run();
     expect(w.writer.calls).toEqual([]);
-    const [a] = await alertsOf(w.store, 'signer_policy_mismatch');
-    expect(a).toMatchObject({ severity: 'critical', details: { differences: ['pinned signer cosign is not in the policy'], weaker: [] } });
-    expect(a?.title).toContain('alert only');
+    expect(await alertsOf(w.store, 'signer_policy_mismatch')).toEqual([]);
+    const [a] = await alertsOf(w.store, 'signer_policy_transition');
+    expect(a).toMatchObject({ severity: 'warning', details: { differences: ['pinned signer cosign is not in the policy'], weaker: [] } });
     expect(checkOf(r, 'signer_policy')?.outcome).toBe('alert');
-    // The upgrade executes (2-of-2): a higher required than pinned is a difference, not weaker.
-    w.chain.selfIssued = { signers: ['hana', 'cosign'], required: 2 };
+    // No page, and no repeat while it lasts.
+    expect(w.notifier.on('pager')).toEqual([]);
+    // The upgrade executes (2-of-2, with the contract's 10-minute overlap): still a transition, not weaker.
+    w.chain.selfIssued = { signers: ['hana', 'cosign'], required: 2, overlap_until_ms: w.clock.t + 10 * MIN };
     await w.run();
     expect(w.writer.calls).toEqual([]);
-    const all = await alertsOf(w.store, 'signer_policy_mismatch');
-    expect(all.map((x) => [x.key, x.resolved_at === null])).toEqual([
-      ['signer_policy_mismatch:email:hana+cosign/2', true],
-      ['signer_policy_mismatch:email:hana/1', false],
+    expect(await alertsOf(w.store, 'signer_policy_mismatch')).toEqual([]);
+    expect((await alertsOf(w.store, 'signer_policy_transition')).map((x) => [x.key, x.resolved_at === null])).toEqual([
+      ['signer_policy_transition:email:hana+cosign/2+overlap', true],
+      ['signer_policy_transition:email:hana/1', false],
     ]);
-    // The operator raises the pinned required: everything matches, resolved.
+    // The overlap ends and the operator raises the pinned required: everything matches, resolved.
+    w.chain.selfIssued = { signers: ['hana', 'cosign'], required: 2 };
     w.deps.config.emailPins.pins!.required = 2;
     await w.run();
-    expect((await alertsOf(w.store, 'signer_policy_mismatch')).every((a) => a.resolved_at !== null)).toBe(true);
-    // The upgrade itself was a governance change (alerted when it executed).
-    expect((await alertsOf(w.store, 'governance_change'))[0]?.details.changes).toEqual([{ field: 'email_signer_policy', before: { signers: ['hana'], required: 1 }, after: { signers: ['hana', 'cosign'], required: 2 } }]);
+    expect((await alertsOf(w.store, 'signer_policy_transition')).every((x) => x.resolved_at !== null)).toBe(true);
+    // The upgrade itself was a governance change, the overlap included (M3).
+    expect((await alertsOf(w.store, 'governance_change')).map((g) => g.details.changes)).toEqual([
+      [{ field: 'email_signer_policy', before: { signers: ['hana', 'cosign'], required: 2, overlap_until_ms: T0OVERLAP }, after: { signers: ['hana', 'cosign'], required: 2, overlap_until_ms: null } }],
+      [{ field: 'email_signer_policy', before: { signers: ['hana'], required: 1, overlap_until_ms: null }, after: { signers: ['hana', 'cosign'], required: 2, overlap_until_ms: T0OVERLAP } }],
+    ]);
+  });
+
+  it('pauses on an overlap longer than the contract allows (a weaker previous policy kept alive, M3)', async () => {
+    const { w } = await setup({ pinned: 'hana+cosign', required: 2 });
+    w.chain.selfIssued = { signers: ['hana', 'cosign'], required: 2, overlap_until_ms: w.clock.t + 30 * 24 * HOUR };
+    await w.run();
+    expect(w.writer.methods()).toEqual(['pause']);
+    const [a] = await alertsOf(w.store, 'signer_policy_mismatch');
+    expect(a?.severity).toBe('critical');
+    expect(a?.details.weaker).toEqual([expect.stringContaining("longer than the contract's 10-minute overlap")]);
   });
 
   it('an email issuer with nothing pinned is critical, no pause while no key is active', async () => {
@@ -319,16 +337,17 @@ describe('signer policy against the pins', () => {
     });
   });
 
-  it('an email issuer not self-issued yet is critical, no pause while no key is active; resolved once marked', async () => {
+  it('an email issuer not self-issued yet (the set_issuer to mark_self_issued gap) is a warning, no pause; resolved once marked', async () => {
     const hana = await emailJwk(201);
     const v = await initialized({ pins: pinsOf({ hana: [hana] }), before: (x) => void (x.chain.emailIss = ['https://api.test/v1/email']) });
     await v.run();
     expect(v.writer.calls).toEqual([]);
-    expect((await alertsOf(v.store, 'signer_policy_mismatch'))[0]?.details).toMatchObject({ differences: ['the email issuer is not self-issued (no signer policy)'], weaker: [] });
+    expect(await alertsOf(v.store, 'signer_policy_mismatch')).toEqual([]);
+    expect((await alertsOf(v.store, 'signer_policy_transition'))[0]).toMatchObject({ severity: 'warning', details: { differences: ['the email issuer is not self-issued yet (no signer policy, no key)'], weaker: [] } });
     // mark_self_issued (batch 6's next step): resolved.
     v.chain.selfIssued = { signers: ['hana'], required: 1 };
     await v.run();
-    expect(await alertsOf(v.store, 'signer_policy_mismatch').then((a) => a.every((x) => x.resolved_at !== null))).toBe(true);
+    expect(await alertsOf(v.store, 'signer_policy_transition').then((a) => a.every((x) => x.resolved_at !== null))).toBe(true);
   });
 
   it('pauses when email keys are active with no signer policy (weaker), even if each key is pinned', async () => {
@@ -507,6 +526,116 @@ describe('unrecorded_wallets (D139)', () => {
     const r = await w.run();
     expect(await alertsOf(w.store, 'unrecorded_wallets')).toEqual([]);
     expect(checkOf(r, 'links')?.detail).toContain('dev env');
+  });
+});
+
+describe('review hardening (H1, M1, M2, L1, L4, L8)', () => {
+  it("Hana's email JWKS is read only after the protective work, the delivery and the heartbeat, and its failure blocks none of them", async () => {
+    const hana = await emailJwk(201);
+    const w = await initialized({ pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer([hana]) });
+    w.chain.propose('Add', 'k1x', { key: jwk('k1x', 66) });
+    w.jwks.keys = [jwk('k1', 1), jwk('k1x', 7)];
+    let seen: { actions: number; pings: number; sent: number } | null = null;
+    w.deps.fetchEmailJwks = async () => {
+      seen = { actions: w.writer.calls.length, pings: w.notifier.pings, sent: w.notifier.on('pager').length };
+      throw new Error('a huge or hostile body');
+    };
+    const pingsBefore = w.notifier.pings;
+    const r = await w.run();
+    expect(seen).toEqual({ actions: 3, pings: pingsBefore + 1, sent: 1 });
+    expect(r.outcome).toBe('ok');
+    expect(w.writer.methods()).toEqual(['cancel_issuer_key_change', 'delete_updater_key', 'delete_updater_key']);
+  });
+
+  it('a link check that throws ends the run degraded, never in error: the snapshot is saved, nothing resolves, the heartbeat pings', async () => {
+    const hana = await emailJwk(201);
+    const w = await initialized({ pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer([hana]) });
+    w.deps.config.linkVolume.thresholds = { perHour: 100, perScopePerHour: 1 };
+    w.links.queue.push(linkEvent('s1', w.clock.t - MIN), linkEvent('s1', w.clock.t - MIN));
+    await w.run();
+    expect(await alertsOf(w.store, 'link_volume_high')).toHaveLength(1);
+    w.store.linkCounts = async () => {
+      throw new Error('bad data');
+    };
+    const pings = w.notifier.pings;
+    const r = await w.run();
+    expect(r.outcome).toBe('degraded');
+    expect(r.checks.find((c) => c.id === 'links')?.outcome).toBe('error');
+    expect(w.notifier.pings).toBe(pings + 1);
+    expect((await alertsOf(w.store, 'link_volume_high'))[0]?.resolved_at).toBeNull();
+    expect((await w.store.getMeta<{ at: number }>('snapshot'))?.at).toBe(w.clock.t - 5 * MIN);
+  });
+
+  it('a run that took protective actions skips the link scan (subrequest budget); the next one catches up', async () => {
+    const hana = await emailJwk(201);
+    const w = await initialized({ pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer([hana]) });
+    const scans = w.links.scans.length;
+    w.chain.propose('Add', 'k1x', { key: jwk('k1x', 66) });
+    w.jwks.keys = [jwk('k1', 1), jwk('k1x', 7)];
+    const r = await w.run();
+    expect(w.links.scans.length).toBe(scans);
+    expect(r.checks.find((c) => c.id === 'links')).toMatchObject({ outcome: 'skipped', detail: expect.stringContaining('protective actions') });
+    await w.run();
+    expect(w.links.scans.length).toBe(scans + 1);
+  });
+
+  it('a stuck link scan (one block over a page) warns truncated and keeps warning', async () => {
+    const hana = await emailJwk(201);
+    const w = await initialized({ pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer([hana]) });
+    w.links.stuck = true;
+    await w.run();
+    expect((await alertsOf(w.store, 'link_events_unavailable'))[0]).toMatchObject({ key: 'link_events_unavailable:truncated', severity: 'warning', details: { reason: 'truncated' } });
+  });
+
+  it('ignores and prunes link events dated in the future (L2)', async () => {
+    const hana = await emailJwk(201);
+    const w = await initialized({ pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer([hana]) });
+    w.deps.config.linkVolume.thresholds = { perHour: 1, perScopePerHour: 1 };
+    w.links.queue.push(linkEvent('s1', w.clock.t + 2 * HOUR), linkEvent('s1', w.clock.t + 2 * HOUR));
+    await w.run();
+    expect(await alertsOf(w.store, 'link_volume_high')).toEqual([]);
+    expect(await w.store.linkCounts(0)).toEqual([]);
+  });
+
+  it('a scope id like __proto__ is counted like any other (L6)', async () => {
+    const hana = await emailJwk(201);
+    const w = await initialized({ pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer([hana]) });
+    w.deps.config.linkVolume.thresholds = { perHour: 100, perScopePerHour: 1 };
+    w.links.queue.push(linkEvent('__proto__', w.clock.t - MIN), linkEvent('__proto__', w.clock.t - MIN));
+    await w.run();
+    expect((await alertsOf(w.store, 'link_volume_high'))[0]?.details).toMatchObject({ scope_id: '__proto__', new_links: 2 });
+  });
+
+  it('unreadable pins page as pins_invalid, and email keys are cancelled as pins_unreadable, not "forged" (L4)', async () => {
+    const hana = await emailJwk(201);
+    const w = await initialized({ before: (x) => void x.chain.emailIssuer() });
+    w.deps.config.emailPins = { pins: null, problems: ['EMAIL_PINS is malformed: every email key is treated as unpinned'] };
+    w.chain.propose('Add', hana.kid, { key: hana, by: OWNER, provider: 'email', signer: 'hana' });
+    const r = await w.run();
+    expect((await alertsOf(w.store, 'pins_invalid'))[0]).toMatchObject({ severity: 'critical', resolved_at: null });
+    expect(r.checks.find((c) => c.id === 'config')?.outcome).toBe('alert');
+    expect(w.writer.methods()).toEqual(['cancel_issuer_key_change']);
+    const [f] = await alertsOf(w.store, 'forged_key_change');
+    expect(f?.details.reason).toBe('pins_unreadable');
+    expect(f?.title).toContain('unreadable');
+  });
+
+  it('an active email key with material that cannot be hashed pauses (bad_material, L1)', async () => {
+    const hana = await emailJwk(201);
+    const w = await initialized({ pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer([hana]) });
+    w.chain.emailActive.set(hana.kid, { n: 'not*base64', e: 'AQAB', signer: 'hana' });
+    await w.run();
+    expect(w.writer.methods()[0]).toBe('pause');
+    expect((await alertsOf(w.store, 'forged_active_key'))[0]?.details.reason).toBe('bad_material');
+  });
+
+  it("pending_key_changes stays ok when the email changes were judged though Google's JWKS failed (L8)", async () => {
+    const hana = await emailJwk(201);
+    const w = await initialized({ pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer() });
+    w.chain.propose('Add', hana.kid, { key: hana, by: OWNER, provider: 'email', signer: 'hana' });
+    w.jwks.queue = ['fail'];
+    const r = await w.run();
+    expect(r.checks.find((c) => c.id === 'pending_key_changes')).toMatchObject({ outcome: 'ok', detail: expect.stringContaining("Google's half skipped") });
   });
 });
 

@@ -47,6 +47,8 @@ export const FAILING_RUNS = 3;
 export const LINK_EVENT_RETENTION_MS = 8 * 24 * 60 * 60_000;
 /** The link-volume window. */
 export const LINK_WINDOW_MS = 60 * 60_000;
+/** A link event dated more than this past the wall clock is bad indexer data: ignored and pruned. */
+export const LINK_FUTURE_SLACK_MS = 5 * 60_000;
 /** A link scan further behind the chain than this can't see a burst in time (warning). */
 export const LINK_SCAN_BEHIND_MS = 60 * 60_000;
 /** A run lock older than this is taken over (a run that died without releasing it). */
@@ -264,8 +266,12 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
     const initialized = (await store.getMeta<number>(META.initializedAt)) !== null;
 
     // ---- config ----
-    run.evaluate('watchdog_key_missing', 'channel_not_configured');
+    run.evaluate('watchdog_key_missing', 'channel_not_configured', 'pins_invalid');
     run.check('config', 'ok', [...cfg.relayerThresholds.problems, ...cfg.emailPins.problems, ...cfg.linkVolume.problems].join('; ') || undefined);
+    if (cfg.emailPins.problems.length) {
+      // Fail closed: every email key then counts as unpinned (cancel, pause), so say why at once (L4).
+      await run.condition('pins_invalid', 'pins_invalid', "The watchdog's email pins (EMAIL_PINS) are unreadable: every email key is treated as unpinned", { problems: cfg.emailPins.problems });
+    }
     if (!d.writer) await run.condition('watchdog_key_missing', 'watchdog_key_missing', 'The watchdog has no usable key: it can alert but not act', { account: cfg.watchdogAccount });
     const channels = { pager: d.notifier.pager.configured, slack: d.notifier.slack.configured, email: d.notifier.email.configured, heartbeat: d.notifier.heartbeat.configured };
     for (const [name, ok] of Object.entries(channels)) {
@@ -357,7 +363,7 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
       await emailPendingChanges(run, snap, canAct, settled, deleted, self);
       await emailActiveKeys(run, snap, canAct, self, deleted);
       await signerPolicy(run, snap, canAct, self);
-      await emailJwks(run, snap);
+      await unrecordedWallets(run, snap);
     }
 
     const firstJwks = google.jwks;
@@ -430,7 +436,11 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
       }
       run.evaluate('protective_action_failed');
     } else {
-      for (const id of ['pending_key_changes', 'active_keys'] as const) run.check(id, 'skipped', snap ? 'no JWKS' : 'no chain read');
+      for (const id of ['pending_key_changes', 'active_keys'] as const) {
+        // The email half may have been judged already (it needs no Google JWKS): keep its outcome.
+        const judged = run.checks.get(id);
+        run.check(id, judged ? judged.outcome : 'skipped', snap ? "Google's half skipped: no JWKS" : 'no chain read');
+      }
     }
 
     if (snap) {
@@ -455,9 +465,6 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
         await run.condition('unexecuted_key_change', `unexecuted_key_change:${c.id}`, `Key change ${c.id} (${ident(c.op)} ${ident(c.kid)}) executable since ${iso(c.executable_at_ms)} and not executed`, changeDetails(c));
       }
 
-      // ---- links: identity_link_* volume, and D139's unrecorded_wallets ----
-      linksRead = await checkLinks(run, s);
-
       await store.setMeta(META.snapshot, {
         at: d.now(),
         config: s.config,
@@ -469,14 +476,14 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
       } satisfies StoredSnapshot);
       await store.setMeta(META.selfChanges, self);
     } else {
-      for (const id of ['signer_policy', 'email_jwks', 'governance_diff', 'unexecuted_changes', 'links'] as const) run.check(id, 'skipped', 'no chain read');
+      for (const id of ['signer_policy', 'governance_diff', 'unexecuted_changes'] as const) run.check(id, 'skipped', 'no chain read');
     }
     // ---- relayer funds (alert only) ----
     let relayerRead = true;
     if (!networkOk) run.check('relayer_funds', 'skipped', 'no chain read');
     else if (!cfg.relayer) run.check('relayer_funds', 'skipped', 'RELAYER_ACCOUNT not set');
     else relayerRead = await checkRelayerFunds(run, cfg.relayer, cfg.relayerThresholds.thresholds);
-    if (!complete || !relayerRead || !linksRead) outcome = 'degraded';
+    if (!complete || !relayerRead) outcome = 'degraded';
 
     // ---- alerts out (first deliveries, re-sends, pager acks) ----
     delivery = await deliverAlerts(store, d.notifier, d.now(), cfg.envName);
@@ -486,6 +493,25 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
 
     // ---- step 7: dead-man's switch ----
     await heartbeat(run);
+
+    // ---- advisory checks (warning only), after every protective step, the first delivery and the heartbeat ----
+    // Their third-party reads (Hana's email JWKS: Hana's API is a party the watchdog must survive, D86; the indexer)
+    // can't hold back a cancel, a pause, the snapshot, an alert or the heartbeat. Each runs guarded; what they raise
+    // goes out in a second delivery. A run that took protective actions skips the link scan (its subrequests).
+    if (snap) {
+      const s: ChainSnapshot = snap;
+      const raised = run.alerts.length;
+      await advisory(run, 'email_jwks', () => emailJwks(run, s));
+      if (run.actions.length) run.check('links', 'skipped', 'protective actions this run: the link scan waits for the next run');
+      else if (!(await advisory(run, 'links', async () => void (linksRead = await checkLinks(run, s))))) linksRead = false;
+      if (!linksRead && outcome === 'ok') outcome = 'degraded';
+      if (run.alerts.length > raised) {
+        const more = await deliverAlerts(store, d.notifier, d.now(), cfg.envName);
+        run.check('alert_delivery', more.failed ? 'error' : 'ok', `advisory: ${more.first} first, ${more.failed} failed`);
+      }
+    } else {
+      for (const id of ['email_jwks', 'links'] as const) run.check(id, 'skipped', 'no chain read');
+    }
   } catch (err) {
     outcome = 'error';
     log({ event: 'run_failed', runId, code: err instanceof Error ? err.name : 'error' }, 'error');
@@ -514,6 +540,24 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
   await store.releaseLock(runId).catch(() => log({ event: 'run_lock_release_failed', runId }, 'error'));
   log({ event: 'run', runId, outcome: outcome === 'error' ? 'error' : 'ok', code: outcome, checks: checks.length, actions: run.actions.length, alerts: run.alerts.length, latencyMs: d.now() - startedAt });
   return { runId, outcome, firstRun, checks, actions: run.actions, alerts: run.alerts, delivery };
+}
+
+/**
+ * Runs a warning-only check guarded: a throw marks its check `error` and undoes what it marked as evaluated (so a
+ * half-run check resolves nothing); returns false then.
+ */
+async function advisory(run: Run, id: CheckId, fn: () => Promise<void>): Promise<boolean> {
+  const evaluated = new Map(run.evaluated);
+  try {
+    await fn();
+    return true;
+  } catch (err) {
+    run.evaluated.clear();
+    for (const [k, v] of evaluated) run.evaluated.set(k, v);
+    run.check(id, 'error', 'the check failed');
+    log({ event: 'advisory_check_failed', runId: run.id, code: `${id}:${err instanceof Error ? err.name : 'error'}` }, 'error');
+    return false;
+  }
 }
 
 function changeDetails(c: KeyChange): Record<string, unknown> {
@@ -831,8 +875,9 @@ async function emailPendingChanges(run: Run, s: ChainSnapshot, canAct: boolean, 
       continue;
     }
     const v = await emailKeyVerdict(pins, { kid: c.kid, n: c.n, e: c.e }, c.signer ?? null, true);
-    if (v.reason) {
-      await forgedPending(run, s, c, v.reason, null, canAct, settled, deleted, self, { thumbprint: v.thumbprint, pinned_for: v.pinnedFor, pinned: pins !== null });
+    const reason = pinsReason(run, v.reason);
+    if (reason) {
+      await forgedPending(run, s, c, reason, null, canAct, settled, deleted, self, { thumbprint: v.thumbprint, pinned_for: v.pinnedFor, pinned: pins !== null });
       continue;
     }
     await run.event('self_issued_key_change', `self_issued_key_change:${c.id}`, `Pending pinned email key ${ident(c.kid)} for signer ${ident(c.signer ?? '')} (change ${c.id}): waits until ${iso(c.executable_at_ms)}, never confirmed early`, {
@@ -841,6 +886,9 @@ async function emailPendingChanges(run: Run, s: ChainSnapshot, canAct: boolean, 
     });
   }
 }
+
+/** `not_pinned` while the pins are unreadable is `pins_unreadable`: the alert then names the config, not a forgery. */
+const pinsReason = (run: Run, r: EmailKeyReason | null): EmailKeyReason | null => (r === 'not_pinned' && run.d.config.emailPins.problems.length ? 'pins_unreadable' : r);
 
 /**
  * Active email keys against the pins: each key's thumbprint pinned, its kid that thumbprint, and pinned for the signer
@@ -857,9 +905,10 @@ async function emailActiveKeys(run: Run, s: ChainSnapshot, canAct: boolean, self
   for (const k of keys) {
     const signer = signerOfKid(selfIssued, k.kid);
     const v = await emailKeyVerdict(pins, k, signer, false);
-    if (!v.reason) continue;
+    const reason = pinsReason(run, v.reason);
+    if (!reason) continue;
     const onChain = k.n && k.e ? { n: k.n, e: k.e } : null;
-    await forgedActive(run, s, EMAIL_PROVIDER, k.kid, v.reason, EMAIL_KEY_WHY[v.reason], onChain, canAct, self, deleted, { signer, thumbprint: v.thumbprint, pinned_for: v.pinnedFor, pinned: pins !== null });
+    await forgedActive(run, s, EMAIL_PROVIDER, k.kid, reason, EMAIL_KEY_WHY[reason], onChain, canAct, self, deleted, { signer, thumbprint: v.thumbprint, pinned_for: v.pinnedFor, pinned: pins !== null });
   }
 }
 
@@ -868,10 +917,10 @@ async function emailActiveKeys(run: Run, s: ChainSnapshot, canAct: boolean, self
  * policy (D191). One condition per chain policy state, so a later, different mismatch is a new alert.
  */
 async function signerPolicy(run: Run, s: ChainSnapshot, canAct: boolean, self: SelfChanges): Promise<void> {
-  run.evaluate('signer_policy_mismatch');
+  run.evaluate('signer_policy_mismatch', 'signer_policy_transition');
   const pins = run.d.config.emailPins.pins;
   const e = s.email;
-  const f = policyFindings(pins, e);
+  const f = policyFindings(pins, e, run.d.now());
   const si = e.selfIssued;
   await run.d.store.setMeta(META.emailPolicy, {
     at: run.d.now(),
@@ -890,6 +939,12 @@ async function signerPolicy(run: Run, s: ChainSnapshot, canAct: boolean, self: S
     run.check('signer_policy', 'ok', `${state}; ${pins ? `pinned: ${Object.keys(pins.signers).length} signer(s), required ${pins.required}` : 'nothing pinned'}`);
     return;
   }
+  const details = { provider: EMAIL_PROVIDER, pinned: pins, chain: { issuer: e.issuer, self_issued: si, pre_v3: !e.hasSelfIssuedView }, differences: f.differences, weaker: f.weaker };
+  if (!f.weaker.length && !f.critical.length) {
+    // Pins and chain mid-way through a planned change (L5): a warning, no pause, no repeated page.
+    await run.condition('signer_policy_transition', `signer_policy_transition:${EMAIL_PROVIDER}:${policyId(e)}`, `Email signer policy in transition: ${f.transition.join('; ')} (no pause)`, details);
+    return;
+  }
   let action: ActionSummary | null = null;
   if (f.weaker.length && canAct && !s.config.paused && !self.paused) {
     action = await run.act('pause', {}, `email signer policy weaker than the pins: ${f.weaker.join('; ')}`);
@@ -899,11 +954,7 @@ async function signerPolicy(run: Run, s: ChainSnapshot, canAct: boolean, self: S
   const state = !f.weaker.length ? 'alert only' : action?.ok ? 'paused' : s.config.paused || self.paused ? 'already paused' : canAct ? 'pause failed' : 'the watchdog could not act';
   const title = `Email signer policy differs from the pins: ${f.differences.join('; ')}; ${f.weaker.length ? 'weaker, ' : ''}${state}`;
   const cond = await run.condition('signer_policy_mismatch', `signer_policy_mismatch:${EMAIL_PROVIDER}:${policyId(e)}${f.weaker.length ? ':weaker' : ''}`, title, {
-    provider: EMAIL_PROVIDER,
-    pinned: pins,
-    chain: { issuer: e.issuer, self_issued: si, pre_v3: !e.hasSelfIssuedView },
-    differences: f.differences,
-    weaker: f.weaker,
+    ...details,
     ...(action ? { actions: [actionDetail(action)] } : {}),
   });
   if (!cond.isNew && action?.ok) await run.event('automatic_action', `automatic_action:${action.id}`, 'Paused again: the email signer policy is weaker than the pins', actionDetail(action));
@@ -962,19 +1013,24 @@ async function emailJwks(run: Run, s: ChainSnapshot): Promise<void> {
  * after the email issuer appears starts at the chain's head (no link can precede its first key, which waits
  * `governance_delay_ms`). Returns false when the indexer read failed (the run is then degraded).
  */
+/** D139: `unrecorded_wallets` must never be true outside a dev env (critical, alert only). Chain data only. */
+async function unrecordedWallets(run: Run, s: ChainSnapshot): Promise<void> {
+  const cfg = run.d.config;
+  run.evaluate('unrecorded_wallets');
+  if (s.config.unrecorded_wallets !== true) return;
+  if (cfg.devEnv) {
+    run.check('links', 'ok', 'unrecorded_wallets is true (a dev env: allowed until accept_unrecorded_wallets)');
+    return;
+  }
+  await run.condition('unrecorded_wallets', 'unrecorded_wallets', `unrecorded_wallets is true on ${ident(cfg.envName)}, which is not a dev env: links are refused until the owner accepts, and mainnet must never show it`, {
+    env: cfg.envName,
+    signer: cfg.signer,
+  });
+}
+
 async function checkLinks(run: Run, s: ChainSnapshot): Promise<boolean> {
   const { store, config: cfg } = run.d;
   const now = run.d.now();
-  run.evaluate('unrecorded_wallets');
-  if (s.config.unrecorded_wallets === true) {
-    if (cfg.devEnv) run.check('links', 'ok', 'unrecorded_wallets is true (a dev env: allowed until accept_unrecorded_wallets)');
-    else {
-      await run.condition('unrecorded_wallets', 'unrecorded_wallets', `unrecorded_wallets is true on ${ident(cfg.envName)}, which is not a dev env: links are refused until the owner accepts, and mainnet must never show it`, {
-        env: cfg.envName,
-        signer: cfg.signer,
-      });
-    }
-  }
   const state: LinkScanState = (await store.getMeta<LinkScanState>(META.linkScan)) ?? { cursor: null, failures: 0, at: null, latest_height: null, behind_ms: null, last_hour: null, thresholds: cfg.linkVolume.thresholds };
   state.thresholds = cfg.linkVolume.thresholds;
   const emailLive = s.email.issuer !== null || s.email.selfIssued !== null;
@@ -1004,26 +1060,34 @@ async function checkLinks(run: Run, s: ChainSnapshot): Promise<boolean> {
     log({ event: 'link_scan', outcome: 'error', runId: run.id }, 'warn');
     return false;
   }
-  await store.recordLinkEvents(scan.events);
-  await store.pruneLinkEvents(now - LINK_EVENT_RETENTION_MS);
+  // An event dated in the future (block time past the wall clock plus slack) is bad data: never stored, and pruned.
+  await store.recordLinkEvents(scan.events.filter((e) => e.at <= now + LINK_FUTURE_SLACK_MS));
+  await store.pruneLinkEvents(now - LINK_EVENT_RETENTION_MS, now + LINK_FUTURE_SLACK_MS);
   const counts = await store.linkCounts(now - LINK_WINDOW_MS);
-  const byScope: Record<string, number> = {};
-  const byEvent: Record<string, number> = {};
+  const byScope = new Map<string, number>();
+  const byEvent = new Map<string, number>();
   let total = 0;
   for (const c of counts) {
-    byEvent[c.event] = (byEvent[c.event] ?? 0) + c.n;
+    byEvent.set(c.event, (byEvent.get(c.event) ?? 0) + c.n);
     if (!(NEW_LINK_EVENTS as readonly string[]).includes(c.event)) continue;
-    byScope[c.scope_id] = (byScope[c.scope_id] ?? 0) + c.n;
+    byScope.set(c.scope_id, (byScope.get(c.scope_id) ?? 0) + c.n);
     total += c.n;
   }
   run.evaluate('link_volume_high', 'link_events_unavailable');
   const t = cfg.linkVolume.thresholds;
-  for (const [scope, n] of Object.entries(byScope)) {
+  if (scan.stuck) {
+    await run.condition('link_events_unavailable', 'link_events_unavailable:truncated', `One block holds more of the signer's transactions than a scan page (${scan.scannedTo + 1}): the scan holds before it and can't see past it`, {
+      reason: 'truncated',
+      block_height: scan.scannedTo + 1,
+      latest_height: scan.latestHeight,
+    });
+  }
+  for (const [scope, n] of byScope) {
     if (n <= t.perScopePerHour) continue;
     const auto = counts.filter((c) => c.scope_id === scope && c.auto === 1).reduce((a, c) => a + c.n, 0);
     await run.condition('link_volume_high', `link_volume_high:scope:${scope}`, `${n} new links in scope ${ident(scope)} in the last hour (threshold ${t.perScopePerHour}; ${auto} automatic)`, { scope_id: scope, new_links: n, automatic: auto, threshold: t.perScopePerHour, window_ms: LINK_WINDOW_MS });
   }
-  if (total > t.perHour) await run.condition('link_volume_high', 'link_volume_high:total', `${total} new links in the last hour in all scopes (threshold ${t.perHour})`, { new_links: total, by_scope: byScope, threshold: t.perHour, window_ms: LINK_WINDOW_MS });
+  if (total > t.perHour) await run.condition('link_volume_high', 'link_volume_high:total', `${total} new links in the last hour in all scopes (threshold ${t.perHour})`, { new_links: total, by_scope: Object.fromEntries(byScope), threshold: t.perHour, window_ms: LINK_WINDOW_MS });
   if (scan.behindMs > LINK_SCAN_BEHIND_MS) {
     await run.condition('link_events_unavailable', 'link_events_unavailable:behind', `The link scan is ${Math.round(scan.behindMs / 60_000)} min behind the chain${scan.truncated ? ' (more transactions than one run reads)' : ''}: a burst is seen late`, {
       behind_ms: scan.behindMs,
@@ -1038,7 +1102,7 @@ async function checkLinks(run: Run, s: ChainSnapshot): Promise<boolean> {
     at: now,
     latest_height: scan.latestHeight,
     behind_ms: scan.behindMs,
-    last_hour: { new_links: total, by_scope: byScope, by_event: byEvent },
+    last_hour: { new_links: total, by_scope: Object.fromEntries(byScope), by_event: Object.fromEntries(byEvent) },
     thresholds: t,
   } satisfies LinkScanState);
   run.check('links', 'ok', `${scan.events.length} new link event(s) read; ${total} new link(s) in the last hour`);

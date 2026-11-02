@@ -99,7 +99,8 @@ D1 database). Per-IP limiters always stay near their client. Changing it creates
 - `linkVolume` (optional; D192): `indexerUrl` (https), the NEAR transactions indexer the link-volume check reads the
   signer's `identity_link_*` events from (FastNear's transactions API, `https://tx.test.fastnear.com` on testnet;
   sandbox-dev sets it), and the thresholds of new links per hour `perScopePerHour` (default 20) and `perHour` (100).
-  Absent: the check is skipped, with a warning once an email issuer is on chain.
+  Absent: the check is skipped, with a warning once an email issuer is on chain. A host naming another network
+  (`main`/`mainnet` on a testnet env) is refused.
 
 `rpcFallback` (optional): a second NEAR JSON-RPC endpoint, `https` only and not `rpc` itself, ideally from another
 provider. The vault and the export window read from it (session re-syncs, the login's registry check, transaction

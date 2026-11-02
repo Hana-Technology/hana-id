@@ -5,6 +5,7 @@ import { GOOGLE_JWKS_URL, type Jwk, usableJwks } from '@hana-id/jwks';
 import { type Notifier, notifierFromEnv } from './channels.ts';
 import { type Env, digestHourUtc, isDevEnvName } from './env.ts';
 import { FastNearLinkEvents, linkVolumeConfig } from './links.ts';
+import { BODY_LIMITS, readJsonCapped } from './http.ts';
 import { log } from './log.ts';
 import { NearChain, NearWriter, Rpc } from './near.ts';
 import { parsePins } from './pins.ts';
@@ -19,7 +20,7 @@ export type { Env } from './env.ts';
 export async function fetchGoogleJwks(): Promise<Jwk[]> {
   const res = await fetch(GOOGLE_JWKS_URL, { headers: { accept: 'application/json' }, cache: 'no-store', signal: AbortSignal.timeout(10_000) });
   if (!res.ok) throw new Error(`JWKS HTTP ${res.status}`);
-  const keys = usableJwks(await res.json());
+  const keys = usableJwks(await readJsonCapped<unknown>(res, BODY_LIMITS.jwks));
   if (keys.length === 0) throw new Error('JWKS has no usable key');
   return keys;
 }
@@ -31,7 +32,7 @@ export async function fetchGoogleJwks(): Promise<Jwk[]> {
 export async function fetchEmailJwks(url: string): Promise<Jwk[]> {
   const res = await fetch(url, { headers: { accept: 'application/json' }, cache: 'no-store', signal: AbortSignal.timeout(10_000) });
   if (!res.ok) throw new Error(`email JWKS HTTP ${res.status}`);
-  return usableJwks(await res.json());
+  return usableJwks(await readJsonCapped<unknown>(res, BODY_LIMITS.jwks));
 }
 
 /** The real dependencies of a run, from the Worker's bindings. */
@@ -55,7 +56,7 @@ export function runDeps(env: Env, notifier: Notifier = notifierFromEnv(env)): Ru
     writer,
     fetchJwks: fetchGoogleJwks,
     fetchEmailJwks: emailJwksUrl ? () => fetchEmailJwks(emailJwksUrl) : null,
-    linkEvents: indexer ? new FastNearLinkEvents(indexer, env.SIGNER_ACCOUNT) : null,
+    linkEvents: indexer ? new FastNearLinkEvents(indexer, env.SIGNER_ACCOUNT, () => rpc.call<{ header?: { height?: unknown } }>('block', { finality: 'final' }).then((b) => Number(b.header?.height))) : null,
     notifier,
     now: Date.now,
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),

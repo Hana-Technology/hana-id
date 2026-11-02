@@ -362,6 +362,17 @@ Branch `feat/email-login-5`, not deployed (no transactions sent).
   setup. Between `set_issuer` and `mark_self_issued` a `signer_policy_mismatch` (alert only) is expected.
 - **Docs.** `apps/watchdog/README.md`, `docs/operations.md` (alerts runbook table, "Email login: pins, link volume,
   unrecorded wallets"), `docs/security.md`, `docs/architecture.md`, `envs/README.md`, `docs/decisions.md`.
+- **Review fixes (2026-11-02, after `origin/develop` was merged in).** H1: Hana's email JWKS is read after every
+  protective step, the first delivery and the heartbeat, guarded; every third-party body (both JWKS, RPC, indexer) is
+  size-capped (`src/http.ts`). M1: the link check runs last, guarded (a throw gives `degraded`, never `error`), skipped
+  in runs with protective actions; ids, events and bodies bounded. M2: a full page inside one block holds the cursor
+  before it and warns `link_events_unavailable:truncated`. M3: an overlap longer than the contract's 10 min + 5 min is
+  weaker (pause), any overlap is reported, and `email_signer_policy` includes it. L1 `bad_material`; L2 the indexer's
+  head clamped to the RPC's final block, future events dropped; L4 critical `pins_invalid` and reason
+  `pins_unreadable`; L5 warning `signer_policy_transition` for planned transitions; L6 `Map` counts; L7
+  `pnpm --filter @hana-id/watchdog pin`; L8 an indexer of another network refused by the schema, and
+  `pending_key_changes` stays ok when email was judged without Google's JWKS. D190–D192 amended; D191 states that it
+  overrides spec line 867.
 - **Left open.** The thresholds are guesses until sandbox-dev and staging traffic (D192). The link scan reads at most
   100 signer transactions per run (every login is one), so a busy signer falls behind (alerted) on the free plan's
   subrequest budget; a contract view counting links would remove the indexer. The admin portal's rendering of the new

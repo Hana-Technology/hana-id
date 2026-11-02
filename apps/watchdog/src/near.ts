@@ -7,6 +7,7 @@ import { GOOGLE_PROVIDER } from '@hana-id/jwks';
 import type { ChainReader, ChainSnapshot, ChainWriter, ConfigView, GovernanceView, IssuerKey, IssuerView, KeyChange, OwnerAccount, SelfIssuedView, TxResult, WatchdogMethod } from './chain.ts';
 import { WATCHDOG_METHODS } from './chain.ts';
 import { EMAIL_PROVIDER } from './pins.ts';
+import { BODY_LIMITS, readJsonCapped } from './http.ts';
 import { log } from './log.ts';
 import { type AccessKeyEntry, type RelayerFunds, relayerFundsFrom } from './relayer.ts';
 
@@ -69,7 +70,7 @@ export class Rpc {
     }
     let body: { result?: T; error?: { name?: string; cause?: { name?: string }; data?: unknown; message?: string } };
     try {
-      body = (await res.json()) as typeof body;
+      body = await readJsonCapped<typeof body>(res, BODY_LIMITS.rpc);
     } catch {
       throw new RpcError(`NEAR RPC answered HTTP ${res.status}`, true);
     }

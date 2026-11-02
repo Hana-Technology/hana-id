@@ -28,7 +28,7 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [Governance change](#governance-change) | critical | `governance_change` |
 | [The watchdog acted again for an open incident](#watchdog-acted-again) | critical | `automatic_action` |
 | [A cancel, pause or updater-key deletion the watchdog sent failed](#protective-action-failed) | critical | `protective_action_failed` |
-| [The watchdog can't act](#watchdog-cannot-act) | critical | `not_a_watchdog`, `watchdog_key_missing`, `wrong_network` |
+| [The watchdog can't act](#watchdog-cannot-act) | critical | `not_a_watchdog`, `watchdog_key_missing`, `wrong_network`, `pins_invalid` |
 | [The watchdog is partly blind or mute](#watchdog-degraded) | warning | `rpc_failing`, `jwks_failing`, `heartbeat_failing`, `channel_not_configured` |
 | [Google key sync stalled](#key-sync-stalled) | warning | `unexecuted_key_change`, `stale_active_key` |
 | [Retired Google key proposed and cancelled](#retired-key-change) | warning | `retired_key_change` |
@@ -39,7 +39,7 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [A scheduled config change came into force (info)](#config-matured) | info | `config_matured` |
 | [The watchdog's first run (info)](#watchdog-first-run) | info | `first_run` |
 | [Relayer running out of funds (balance or a pool key's allowance)](#relayer-out-of-funds) | critical | `relayer_balance_critical`, `relayer_allowance_critical`, `relayer_pool_empty`, `relayer_balance_low`, `relayer_allowance_low` |
-| [Email signer policy differs from the pins](#signer-policy-mismatch) | critical | `signer_policy_mismatch` |
+| [Email signer policy differs from the pins](#signer-policy-mismatch) | critical | `signer_policy_mismatch`, `signer_policy_transition` |
 | [unrecorded_wallets is set outside a dev env](#unrecorded-wallets) | critical | `unrecorded_wallets` |
 | [Hana's email JWKS differs from the pins](#email-jwks-mismatch) | warning | `email_jwks_mismatch` |
 | [Link volume high, or not monitored](#link-volume) | warning | `link_volume_high`, `link_events_unavailable` |
@@ -153,7 +153,7 @@ A pending issuer key Google doesn't publish (or with other key material), an ema
 
 - Critical `forged_key_change` page (paging app, Slack, email), re-sent every 15 min until acknowledged. The title and `details.outcome` say what happened: `cancelled`, `gone` (someone else cancelled it first), `executed` (it took effect before the cancel), `unknown`, `failed` or `not_sent`.
 - `details.by` is the proposer: the signer account means `KEYS_UPDATER_KEY`; the owner means the council. `reason: updater_other_provider`: the updater proposed a key for a provider other than Google (it only serves Google).
-- `provider: email` (only the owner can post email keys, so the council proposed it): `reason` is `not_pinned` (its thumbprint isn't in `watchdog.pinnedIssuerKeys.email`; `details.pinned: false` means nothing is pinned at all), `other_signer` (pinned for another signer), `kid_not_thumbprint` or `no_signer` (the email issuer isn't self-issued). `details.thumbprint` is the key's RFC 7638 thumbprint.
+- `provider: email` (only the owner can post email keys, so the council proposed it): `reason` is `not_pinned` (its thumbprint isn't in `watchdog.pinnedIssuerKeys.email`; `details.pinned: false` means nothing is pinned at all), `pins_unreadable` (the pins themselves are broken: a `pins_invalid` page names it, see [watchdog-cannot-act](#watchdog-cannot-act)), `bad_material` (on-chain `n`/`e` that can't be hashed), `other_signer` (pinned for another signer), `kid_not_thumbprint` or `no_signer` (the email issuer isn't self-issued). `details.thumbprint` is the key's RFC 7638 thumbprint.
 - The API cron logs `jwks_sync_note` `unpublished_change` / `pending_mismatch` (error) while it is pending, then `issuer_key_change_cancelled`, and `jwks_tx` `send_failed` once its updater key is gone.
 
 **Impact**
@@ -492,14 +492,14 @@ The watchdog tried to protect the contract and the transaction failed, or a forg
 
 ### The watchdog can't act
 
-`watchdog-cannot-act` · critical · alert kinds: `not_a_watchdog`, `watchdog_key_missing`, `wrong_network`
+`watchdog-cannot-act` · critical · alert kinds: `not_a_watchdog`, `watchdog_key_missing`, `wrong_network`, `pins_invalid`
 
-Its account isn't a contract watchdog, its key is missing or malformed, or its RPC is on another chain: it can alert at most, never cancel or pause.
+Its account isn't a contract watchdog, its key is missing or malformed, or its RPC is on another chain: it can alert at most, never cancel or pause. Or its email pins are unreadable: it then cancels or pauses on every email key (fail closed).
 
 **Signals**
 
-- Critical `not_a_watchdog`, `watchdog_key_missing` or `wrong_network` (condition alerts: open until a run no longer sees them).
-- `/status` `last_run.checks`: `watchdog_role` or `config` not ok.
+- Critical `not_a_watchdog`, `watchdog_key_missing`, `wrong_network` or `pins_invalid` (condition alerts: open until a run no longer sees them).
+- `/status` `last_run.checks`: `watchdog_role` or `config` not ok. With `pins_invalid`, email key alerts carry `reason: pins_unreadable`.
 
 **Impact**
 
@@ -534,6 +534,14 @@ Its account isn't a contract watchdog, its key is missing or malformed, or its R
    ```sh
    corepack pnpm --filter @hana-id/watchdog gen <env>
    corepack pnpm --dir apps/watchdog exec wrangler deploy
+   ```
+
+5. **`pins_invalid`: regenerate the pins** (who: a founder). `EMAIL_PINS` doesn't parse, so no email key counts as pinned: pending email keys are cancelled and an active one pauses (D190). `gen` writes it from `watchdog.pinnedIssuerKeys.email`, which the schema validates: a broken value was set by hand or by a broken deploy. Regenerate and redeploy; if the watchdog paused on Hana's own keys meanwhile, the council unpauses once the next run is clean, and re-posts any email key it cancelled.
+
+   ```sh
+   corepack pnpm --filter @hana-id/watchdog gen <env>
+   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" https://<workerName>.<subdomain>.workers.dev/status
    ```
 
 **Verify**
@@ -946,15 +954,15 @@ The relayer account's available balance, or a pool key's remaining allowance, is
 
 ### Email signer policy differs from the pins
 
-`signer-policy-mismatch` · critical · alert kinds: `signer_policy_mismatch`
+`signer-policy-mismatch` · critical · alert kinds: `signer_policy_mismatch`, `signer_policy_transition`
 
-The email issuer on chain (`get_issuer("email")`, `get_self_issued("email")`) doesn't match the watchdog's pins: an email issuer with nothing pinned, one that isn't self-issued, or other signers or another `required`. Paused when the chain's policy is weaker; otherwise alert only.
+The email issuer on chain (`get_issuer("email")`, `get_self_issued("email")`) doesn't match the watchdog's pins. Weaker (paused) or unexplained (an email issuer with nothing pinned, a pre-v3 one): critical `signer_policy_mismatch`. Mid-way through a planned change and none of it weaker: warning `signer_policy_transition`.
 
 **Signals**
 
 - Critical `signer_policy_mismatch` page: "Email signer policy differs from the pins: <differences>; <weaker, paused | alert only>". `details.pinned` and `details.chain` show both sides.
-- Weaker (D191): `required` below the pinned one, a signer the pins don't list, or active email keys without a signer policy. Then every login answers `503 paused`.
-- During batch 6's setup, between `set_issuer("email")` and `mark_self_issued("email")`, it is expected (alert only, no keys yet): it resolves once the issuer is marked.
+- Weaker (D191): `required` below the pinned one, a signer the pins don't list, active email keys without a signer policy, or an overlap with the previous policy longer than the contract's 10 minutes (a `migrate` keeping a weaker policy valid). Then every login answers `503 paused`.
+- Warning `signer_policy_transition` (no page, no pause): a pinned signer not in the policy yet, the gap between `set_issuer("email")` and `mark_self_issued("email")` (batch 6's setup), a higher `required` on chain than pinned, or an overlap of normal length after a policy upgrade. It resolves once pins and chain match.
 
 **Impact**
 
@@ -1090,7 +1098,7 @@ More new links (`identity_linked`, `identity_link_proposed`) in the last hour th
 **Signals**
 
 - Warning `link_volume_high` (`link_volume_high:scope:<scope>` or `:total`): the count, how many were automatic, the threshold (`watchdog.linkVolume`, default 20 per scope and 100 in all per hour).
-- Warning `link_events_unavailable` (`:not_configured`, `:failing`, `:behind`). `/status` `link_volume` has the last scan, the cursor and the last hour by scope and event.
+- Warning `link_events_unavailable` (`:not_configured`, `:failing`, `:behind`, `:truncated`: one block holds more of the signer's transactions than a scan page, so the scan holds before it and stays blind past it). `/status` `link_volume` has the last scan, the cursor and the last hour by scope and event.
 
 **Impact**
 
@@ -1109,7 +1117,7 @@ More new links (`identity_linked`, `identity_link_proposed`) in the last hour th
 
 2. **Unexplained: treat the email issuer as compromised** (who: a founder). Follow [email-issuer-key-compromised](#email-issuer-key-compromised): remove the issuer key on chain (immediate), retire the sessions it opened, and tell the affected scopes so their users cancel pending links.
 
-3. **Not monitored: restore the event source** (who: a founder). `not_configured`: set `watchdog.linkVolume.indexerUrl` (FastNear's transactions API, `https://tx.test.fastnear.com` on testnet), regenerate, redeploy. `failing`: check the indexer's `/status`; it is a third party, so pick another if it stays down. `behind`: more signer transactions than a run reads (100 per run): raise it in code or move the watchdog to the paid plan.
+3. **Not monitored: restore the event source** (who: a founder). `not_configured`: set `watchdog.linkVolume.indexerUrl` (FastNear's transactions API, `https://tx.test.fastnear.com` on testnet), regenerate, redeploy. `failing`: check the indexer's `/status`; it is a third party, so pick another if it stays down. `behind`: more signer transactions than a run reads (100 per run): raise it in code or move the watchdog to the paid plan. `truncated`: someone filled a block with the signer's transactions (padding to hide links); the check stays blind past that block until the scan pages within a block (not built): watch links by hand meanwhile and treat it as hostile.
 
    ```sh
    corepack pnpm --filter @hana-id/watchdog gen <env>

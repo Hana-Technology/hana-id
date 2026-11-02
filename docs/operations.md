@@ -1,6 +1,7 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-02 (branch `feat/email-login-2`: `deploy-contract` refuses a v1 contract, D154; the v2 → v3
+Last verified against code: 2026-11-02 (branch `feat/link-cap`: "Link volume thresholds", D200, and `set_link_thresholds`
+through `owner:call`); 2026-11-02 (branch `feat/email-login-2`: `deploy-contract` refuses a v1 contract, D154; the v2 → v3
 upgrade path sandbox-tested, "Upgrading the governance contract"); 2026-10-30 (branch `fix/watchdog-retired-key-race`: the `retired_key_change` alert, D153;
 branch `feat/identity-token-2`: "Identity token keys" rewritten for the
 offline standby and `identity-key next / switch / retire` (D177), the identity secrets rows, `gen --dev-vars`;
@@ -812,6 +813,21 @@ actions and `execute_change` fail on chain while paused (`422 contract_rejected`
 pause state with `get_config`, cached 60 s (10 s while paused), so logins resume within 10 s of `unpause()`. Who
 pauses and unpauses, and what each watchdog alert means, is the watchdog runbook (`docs/governance-spec.md`
 "Alerts"); the API raises no alert.
+
+### Link volume thresholds (D200)
+
+The contract counts new links (a combined login with a `link_jwt`, or `link_identity`) per UTC hour, per scope and in
+total, and records when a count reaches its alarm threshold (defaults 50 per scope and 500 in total). It never refuses
+a link: the thresholds only decide when the watchdog alerts. A burst of links usually means a stolen email key
+(`docs/security.md`); a large partner launch can look the same.
+
+- **Check:** `near contract call-function as-read-only <signer> get_link_stats json-args '{}' network-config testnet
+  now`: `thresholds`, `pending_thresholds`, and for the current and previous hour `total`, `total_threshold_reached`,
+  `flagged_scopes`. On an alert, compare the flagged scope with the partner's plans and the email issuer's issuance for
+  that app; if it isn't a launch, pause (the watchdog runbook).
+- **Change:** `admin <env> owner:call set_link_thresholds --args '{"per_scope_per_hour":<n>,"total_per_hour":<m>}'
+  [--approve-with <member>] --yes` (a council proposal; each value 1–100000). A lower value applies at once; a raise
+  waits `governance_delay_ms` (`pending_thresholds` shows it) and the watchdog alerts on it.
 
 ### Issuer key lead times (D33)
 

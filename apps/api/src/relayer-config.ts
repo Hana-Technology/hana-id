@@ -65,6 +65,10 @@ export const GOVERNANCE_METHODS = [
   'set_change_delay_ms',
   'enable_public_registration',
   'admin_register_scope',
+  'set_sessions_valid_from_ms',
+  'mark_self_issued',
+  'accept_unrecorded_wallets',
+  'set_link_thresholds',
 ] as const;
 
 export type Pool = keyof typeof POOL_METHODS;

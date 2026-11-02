@@ -50,6 +50,7 @@ export const OWNER_METHODS = [
   'set_issuer',
   'mark_self_issued',
   'accept_unrecorded_wallets',
+  'set_link_thresholds',
   'admin_register_scope',
   'set_issuer_key',
   'propose_issuer_key_removal',

@@ -1855,7 +1855,8 @@ detail open or a safer reading was needed. Each follows the spec's intent; all f
     owner before a council transfer), console audiences only and no shared login. An audience in any other scope,
     a sink with any other owner included, is a blocker (automated scan, after the first review).
   - **No unattended gap.** The plan refuses to remove anything from `global` (a blocker, before `remove_client` runs)
-    unless the same run can register the sink right after: the quarantine is at most 10 min and no council vote stands
+    unless the same run can register the sink right after: the wait it would make (the quarantine plus a 5 s clock margin, `sinkWaitMs`, the same helper the runner waits
+    by) is at most 10 min and no council vote stands
     between the removal and the registration (on a council env, `--approve-with`). Elsewhere (staging, mainnet) the
     move is done by hand, back to back. An audience added to the manifest later gets a sink of its
     own (`admin_register_scope` can't add a client to an existing scope).

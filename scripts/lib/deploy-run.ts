@@ -23,7 +23,7 @@ import {
   removeConsoleClientArgs,
   type Role,
   ROLES,
-  SINK_WAIT_MAX_MS,
+  sinkWaitMs,
   stepSigner,
 } from './deploy-plan.ts';
 import {
@@ -232,20 +232,14 @@ async function observe(c: Ctx, wasmPath: string | null): Promise<{ observed: Dep
   };
 }
 
-/**
- * What a step ended as: done, only proposed to the council (the run stops there; re-run after the votes), or waiting for
- * a quarantine longer than one run waits out (the run stops; re-run after it).
- */
-type StepOutcome = 'done' | 'proposed' | 'waiting';
+/** What a step ended as: done, or only proposed to the council (the run stops there; re-run after the votes). */
+type StepOutcome = 'done' | 'proposed';
 
 interface RunState {
   wasmPath: string | null;
   /** When this run removed a console audience from "global" (its quarantine starts then). */
   removedAt?: number;
 }
-
-/** A little past the quarantine's end, for the gap between our clock and the block time. */
-const QUARANTINE_MARGIN_MS = 5_000;
 
 async function execute(c: Ctx, step: DeployStep, creds: Partial<Record<Role, LoadedKey>>, state: RunState): Promise<StepOutcome> {
   const { m, rpc, log } = c;
@@ -372,11 +366,9 @@ async function execute(c: Ctx, step: DeployStep, creds: Partial<Record<Role, Loa
     }
     case 'register-console-sink': {
       if (step.quarantineMs > 0 && state.removedAt !== undefined) {
-        const waitMs = state.removedAt + step.quarantineMs + QUARANTINE_MARGIN_MS - c.now();
-        if (waitMs > SINK_WAIT_MAX_MS) {
-          log(`    the removed console audiences are quarantined until ${new Date(state.removedAt + step.quarantineMs).toISOString()}; re-run deploy-contract ${m.name} after that to register the sink`);
-          return 'waiting';
-        }
+        // Exactly what the plan approved (consoleSinkPlan refuses a removal whose wait doesn't fit one run), less the
+        // time since the removal: never a refusal here, so a removal is always followed by the registration.
+        const waitMs = state.removedAt + sinkWaitMs(step.quarantineMs) - c.now();
         if (waitMs > 0) {
           log(`    waiting ${Math.ceil(waitMs / 1000)} s for the removed console audiences' quarantine (change_delay_ms) to end`);
           await c.sleep(waitMs);
@@ -496,10 +488,6 @@ export async function deployMain(argv: readonly string[], deps: DeployDeps = def
     const outcome = await execute(c, step, creds, state);
     if (outcome === 'proposed') {
       log(`\nStopped: step ${i + 1} waits for council votes. Re-run deploy-contract ${m.name} once it is approved; the plan picks up from there.`);
-      return 0;
-    }
-    if (outcome === 'waiting') {
-      log(`\nStopped: step ${i + 1} waits for the quarantine above. Re-run deploy-contract ${m.name} after it; the plan picks up from there.`);
       return 0;
     }
   }

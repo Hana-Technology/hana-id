@@ -9,7 +9,7 @@ import { loadEnv, type Manifest } from '@hana-id/env';
 import { KeyPair } from '@near-js/crypto';
 import { OWNER_RELAYER_METHODS, SESSION_RELAYER_METHODS } from '../lib/contract.ts';
 import { writeCouncilKey } from '../lib/council.ts';
-import { CLOCK_MARGIN_MS } from '../lib/deploy-plan.ts';
+import { CLOCK_MARGIN_MS, QUARANTINE_MARGIN_MS, SINK_WAIT_MAX_MS } from '../lib/deploy-plan.ts';
 import { DRY_RUN_LINE, deployMain } from '../lib/deploy-run.ts';
 import { keysUpdaterFile, readKeysUpdater, writeKeysUpdater, writePoolKeys } from '../lib/keys.ts';
 import { codeHashOf, TGAS } from '../lib/near.ts';
@@ -298,6 +298,19 @@ describe('the console sink scope on an existing env (D238)', () => {
     expect(run.out).toContain('Refusing to remove the console audiences');
     expect(run.sent).toEqual([]);
     expect((chain.globalScope as { clients: unknown[] }).clients).toHaveLength(base.googleClientIds.length + audiences.length);
+  });
+
+  it('a quarantine of 10 min minus the margin: removed, waited out exactly as planned, registered in the same run', async () => {
+    v2();
+    const audiences = base.consoleAudiences.map(([p, a]) => [p, a] as [string, string]);
+    chain.globalScope = { id: 'global', owners: [{ Near: { account_id: base.owner } }], clients: [...base.googleClientIds.map((aud) => ['google', aud]), ...audiences], allow_shared: false };
+    chain.scopes = {};
+    chain.config = { ...chain.config, change_delay_ms: SINK_WAIT_MAX_MS - QUARANTINE_MARGIN_MS };
+    const run = await deploy([base.name, '--yes']);
+    expect(run.code).toBe(0);
+    expect(run.calls.at(-1)).toBe(`${base.owner}→${base.signer}:admin_register_scope`);
+    expect(slept).toEqual([SINK_WAIT_MAX_MS]);
+    expect(Object.values(chain.scopes).map((x) => x.clients)).toEqual([audiences]);
   });
 
   it('a re-run inside the quarantine fails on chain and changes nothing; after it, the sink is registered', async () => {

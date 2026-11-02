@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { loadEnv } from '@hana-id/env';
 import { OWNER_RELAYER_METHODS, SESSION_RELAYER_METHODS, sharedClientsOf } from '../lib/contract.ts';
 import { type GovernanceView, UPDATER_METHODS } from '../lib/contract.ts';
-import { buildDeployPlan, checkFunctionKey, creationPlan, type DeployObserved, type DeployOptions, type DeployStep, describeStep, CLOCK_MARGIN_MS, ownerCallOf, signerFullAccessAllowed } from '../lib/deploy-plan.ts';
+import { buildDeployPlan, checkFunctionKey, creationPlan, type DeployObserved, type DeployOptions, type DeployStep, describeStep, CLOCK_MARGIN_MS, ownerCallOf, QUARANTINE_MARGIN_MS, SINK_WAIT_MAX_MS, signerFullAccessAllowed, sinkWaitMs } from '../lib/deploy-plan.ts';
 import { type AccessKeyListEntry, EMPTY_CODE_HASH, nearToYocto } from '../lib/near.ts';
 import { DEFAULT_OWNER_ALLOWANCE_NEAR } from '../lib/deploy-run.ts';
 import { OWNER_POOL_ALLOWANCE_YOCTO, POOL_METHODS as API_POOL_METHODS } from '../../apps/api/src/relayer-config.ts';
@@ -764,9 +764,18 @@ describe('buildDeployPlan', () => {
     const slow = buildDeployPlan(withAud, deployed({ config: { ...configOk, change_delay_ms: 86_400_000 }, globalScope, ...at('global') }), opts);
     expect(slow.blockers.join()).toContain('Refusing to remove the console audiences');
     expect(slow.steps.map((s) => s.kind)).not.toContain('remove-console-client');
-    // Just within the wait: planned.
-    const ok = buildDeployPlan(withAud, deployed({ config: { ...configOk, change_delay_ms: 10 * 60_000 }, globalScope, ...at('global') }), opts);
+    // The boundary is the wait the run makes (quarantine + margin), not the quarantine alone: 10 min minus the margin
+    // is planned, and the runner then waits exactly 10 min; one millisecond more is refused before any removal.
+    const edge = SINK_WAIT_MAX_MS - QUARANTINE_MARGIN_MS;
+    expect(sinkWaitMs(edge)).toBe(SINK_WAIT_MAX_MS);
+    const ok = buildDeployPlan(withAud, deployed({ config: { ...configOk, change_delay_ms: edge }, globalScope, ...at('global') }), opts);
     expect(ok.blockers.join()).not.toContain('Refusing to remove');
+    expect(ok.steps.map((s) => s.kind)).toContain('remove-console-client');
+    const over = buildDeployPlan(withAud, deployed({ config: { ...configOk, change_delay_ms: edge + 1 }, globalScope, ...at('global') }), opts);
+    expect(over.blockers.join()).toContain('Refusing to remove');
+    expect(over.steps.map((s) => s.kind)).not.toContain('remove-console-client');
+    // Formerly the boundary: a 10 min quarantine would make the run wait past it, so it is refused now.
+    expect(buildDeployPlan(withAud, deployed({ config: { ...configOk, change_delay_ms: SINK_WAIT_MAX_MS }, globalScope, ...at('global') }), opts).blockers.join()).toContain('Refusing to remove');
   });
 
   it('a council-owned env removes from "global" only with --approve-with (no council vote between the removal and the sink)', () => {

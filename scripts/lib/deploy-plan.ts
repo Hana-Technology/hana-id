@@ -751,8 +751,17 @@ export function describeStep(m: Manifest, s: DeployStep, ownerTx: OwnerTxOptions
 /** The key of a client pair in `DeployObserved.consoleAudienceScopes`. */
 export const clientKey = ([provider, aud]: readonly [string, string]): string => `${provider}/${aud}`;
 
-/** Longest quarantine deploy-contract waits out inside one run before registering the sink; longer means re-run. */
+/** Longest wait deploy-contract makes inside one run before registering the sink; a longer one is refused up front. */
 export const SINK_WAIT_MAX_MS = 10 * 60_000;
+/** A little past the quarantine's end, for the gap between our clock and the block time. */
+export const QUARANTINE_MARGIN_MS = 5_000;
+/**
+ * What the run waits after removing the console audiences from "global" before registering the sink: the quarantine
+ * plus the margin. The plan approves a removal only when this fits SINK_WAIT_MAX_MS, and the runner waits exactly
+ * this (less the time already spent), so a planned removal is always followed by the registration in the same run.
+ */
+export const sinkWaitMs = (quarantineMs: number): number => quarantineMs + QUARANTINE_MARGIN_MS;
+export const sinkWaitFits = (quarantineMs: number): boolean => sinkWaitMs(quarantineMs) <= SINK_WAIT_MAX_MS;
 
 /** The accounts a console sink may be owned by: the manifest's owner, its council DAO, and `knownOwners`. */
 export function hanaOwnerAccounts(m: Manifest, knownOwners: readonly string[] = []): Set<string> {
@@ -834,7 +843,7 @@ export function consoleSinkPlan(
     const registerByCouncil = ownerRoute(m, 'admin_register_scope').kind === 'sputnik';
     const removeByCouncil = via?.kind === 'owner' && ownerRoute(m, 'remove_client').kind === 'sputnik';
     let gap: string | null = null;
-    if (quarantineMs > SINK_WAIT_MAX_MS) gap = `the removed clients stay quarantined for change_delay_ms (${quarantineMs} ms), longer than one run waits (${SINK_WAIT_MAX_MS / 60_000} min)`;
+    if (!sinkWaitFits(quarantineMs)) gap = `the removed clients stay quarantined for change_delay_ms (${quarantineMs} ms); with the ${QUARANTINE_MARGIN_MS} ms margin that is longer than one run waits (${SINK_WAIT_MAX_MS / 60_000} min)`;
     else if ((registerByCouncil || removeByCouncil) && !opts.approveWith) gap = `the council's votes would come between the removal and the sink's registration (run with --approve-with on a dev env)`;
     if (!via) {
       blockers.push(

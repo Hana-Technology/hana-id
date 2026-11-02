@@ -756,7 +756,7 @@ impact"); console tokens lose that unused ability.
   provider, aud)` for each (immediate), then waits out the removed clients' quarantine (`change_delay_ms`: 60 s on
   sandbox-dev; the contract refuses to register a quarantined client in another scope) and registers the sink. The
   plan refuses (a blocker, before any removal) when this run couldn't register the sink right after: a quarantine
-  over 10 min, or on a council env without `--approve-with` (the votes would come in between). Then move them by
+  that, with the run's 5 s margin, makes a wait over 10 min, or on a council env without `--approve-with` (the votes would come in between). Then move them by
   hand, removal and registration back to back. During the wait the audiences are clients of no scope: the contract
   still refuses an `AddClient` of them until the quarantine ends. `remove_client` takes `OwnerAuth::Near`, so it is sent by an `Owner::Near` of
   `global`: the manifest's owner (on a council env, a DAO proposal), or the account that owned the contract when

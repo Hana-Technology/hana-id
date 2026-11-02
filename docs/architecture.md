@@ -2,7 +2,8 @@
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
 Last verified against code: 2026-11-02 (branch `feat/email-login-2`: the email login contract row in Status: sandbox
-tests, the v2 → v3 upgrade path, `migrate_v1` removed); 2026-10-30 (branch `feat/identity-token-2`: the identity mint's checks and limits, share
+tests, the v2 → v3 upgrade path, `migrate_v1` removed; branch `feat/email-login-3`: `packages/email` in Status and
+Components); 2026-10-30 (branch `feat/identity-token-2`: the identity mint's checks and limits, share
 tombstones, the offline standby key, D176–D179; branch `feat/identity-token-1`: the partner identity token in Status,
 Components, the "Partner identity token" flow, Data stores and the Glossary; `feat/email-login-1-r2`: contract v3
 email login status and path identity; `feat/playbook-gaps`: the watchdog's relayer funds reads and D1 meta;
@@ -38,6 +39,7 @@ Batch B is merged on the integration branch `feat/batch-b` (not yet on `develop`
 | Governance scripts (owner council, DAO-routed owner calls, timelocked upgrades, migration, `admin governance:status`) | `gov/scripts`, integrated on `feat/governance` | Code done (`docs/operations.md` "Governance") |
 | Partner identity token, build steps 1–4 (`docs/identity-token-spec.md`, D127): core layouts and ids, `POST /v1/identity/token`, JWKS and discovery, Worker-secret ES256 signer, migration 0008, `hana.getIdentityToken()`, `useIdentityToken()`, `scripts/identity-key.ts`, `examples/identity-verify` | `feat/identity-token-1` | Code done; not deployed (`docs/operations.md` "Identity token keys"). No `email` claim yet (steps 5–6), no KMS signer (step 7) or watchdog pin check (step 8) |
 | Email login, contract v3 (self-issued email issuer with a signer policy, JWS JSON tokens, accounts and links, `migrate` v2 → v3; `migrate_v1` removed) | `feat/email-login-1`, `feat/email-login-2` | Code done, unit- and sandbox-tested (email login, links, the v2 → v3 upgrade through the DAO from sandbox-dev's v2 code, gas in `docs/contract-interface.md`); not deployed. Every off-chain part (issuer, API, web, watchdog) is a later batch of `docs/email-login-build-plan.md`; until then nothing calls the new methods |
+| `@hana-id/email` (email normalization v1, the `e1.` `sub`, the Google-hosted rule, the pinned disposable-domain list; build-plan batch 3) | `feat/email-login-3` | Code done, frozen vectors; nothing imports it yet (the email issuer, batch 4, will) |
 
 ## Components
 
@@ -63,6 +65,7 @@ Batch B is merged on the integration branch `feat/batch-b` (not yet on `develop`
 | Watchdog Worker | `apps/watchdog/src/index.ts` | Cloudflare Workers on **its own account** (manifest `watchdog.cloudflare`, D86) | Every 5 min: Google's JWKS against the contract's pending and active issuer keys; cancels forged pending keys, deletes the updater keys that proposed one, pauses on a forged active key, confirms matches (D82); alerts on governance changes and on the relayer's balance and pool-key allowances (read-only, D150); pages, Slack, email (D85); dead-man's switch; read-only `GET /status`, `/alerts`, `/actions` and `POST /alerts/:id/ack` for the admin portal (D83) |
 | Watchdog D1 | `apps/watchdog/migrations/` | Cloudflare D1 on the watchdog's account | Seen kids, absences, runs and their checks, actions log, alerts, deliveries, acks |
 | `packages/jwks` | `packages/jwks/src/index.ts` | API and watchdog | JWKS parsing (`usableJwks`), RSA key comparison |
+| `packages/email` | `packages/email/src/` | email issuer (batch 4); Workers and browsers (Web Crypto, no Node API) | Email normalization v1 (UTS #46 via pinned `tr46`, characters newer than Unicode 15.0 refused, Gmail canonical form), `sub = "e1." ‖ b64url(HMAC-SHA256(K_sub, …))` with `K_sub` as an input, the Google-hosted rule, the pinned disposable-domain list; frozen at the address freeze by `vectors/email-v1.json`, tested in Node and workerd (D156–D159) |
 | `packages/playbooks` | `packages/playbooks/src/` | watchdog (playbook ids), admin portal (batch C), `docs/playbooks.md` | Recovery playbooks for every watchdog alert kind and incident (D126); the watchdog serves each alert kind's playbook id in `GET /status` and names it in every alert text |
 | Scripts | `scripts/`, `apps/api/scripts/gen-wrangler.ts`, `apps/watchdog/scripts/` | operator's machine | Deploy contract and keys, JWKS one-off sync, CKD key fetch, `VAULT_KEK` init/rotate, admin CLI, watchdog config and secrets |
 

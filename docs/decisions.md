@@ -3,7 +3,7 @@
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
 Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 and D150–D152 on 2026-10-30 (branches
 `feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`);
-D154–D155 on 2026-11-02 (branch `feat/email-login-2`).
+D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-login-3`) on 2026-11-02.
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -1368,7 +1368,7 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 - Rejected: the alternatives each question listed.
 
 ### D124. Sign in with Apple on the roadmap, after email login
-- Date 2026-10-30 · Status: confirmed by the user (roadmap), not specced · Source: conversation
+- Date 2026-10-30 · Status: confirmed by the user (roadmap); specced (`docs/apple-login-spec.md`), paused 2026-11-02 (D160) · Source: conversation
 - Decision: Apple is the next login method after email login and the partner identity token. It plugs into the
   provider-neutral core: the wallet path `scope#provider#sub#key_index` (provider `apple`, so no existing address
   changes), `set_issuer("apple", ["https://appleid.apple.com"])` with its keys through the same delayed, cancellable
@@ -1619,6 +1619,26 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 
 Choices made while building `docs/identity-token-spec.md` steps 1–4 on `feat/identity-token-1`, where the spec left a
 detail open or a safer reading was needed. Each follows the spec's intent; the user can revisit any of them.
+
+### D160. Sign in with Apple paused; the initial build is Google and email
+- Date 2026-11-02 · Status: confirmed by the user · Source: conversation (Apple spec questions)
+- Decision: Sign in with Apple is not built for the initial launch; it is built when partners ask for it. The spec
+  (`docs/apple-login-spec.md`) stays as the starting point. Answers given so far:
+  - Q1 = B: Apple users' emails through a second, email-only Apple client whose tokens never go on chain (like Privy:
+    partners get the email), at the cost of a second Apple prompt at an identity's first login in an app.
+  - Q2, provisional: the Apple developer team of the company that publishes Hana Wallet and Wend, for testnet. To be
+    confirmed or changed at the production-readiness check, before the address freeze.
+  - Q3 = A: every Apple client in Hana's team; partner-held Apple accounts only if customers ask, for partners that
+    start on them.
+  - Q4 = A: the shared client in a Hana app group, each Enterprise client in its own group.
+  - Q5 = A: partners' native iOS apps use the web flow (`ASWebAuthenticationSession`). A native-sheet
+    "partner-managed Apple" tier only if customers ask: with the native sheet the partner's app receives the Apple
+    token and can open sessions for its own users' wallets (partner custody within its scope), and those wallets
+    differ from the same users' wallets in Hana's team.
+  - Q6–Q18: open, asked again when the work resumes.
+- Why: focus the initial build on Google and email; Apple adds an issuer, a second client, a POST route, watchdog
+  and playbook work for a method no partner has asked for yet. Nothing built so far depends on Apple: the path format
+  and the issuer model already take a new provider without moving any address (D124).
 
 ### D170. Identity token layout details the spec left open
 - Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`packages/core/src/identity.ts`, frozen in
@@ -1915,6 +1935,95 @@ points for the user"; none changes an address.
   warning), and partners must not treat wallet → `sub` as unique, so the impact is within what the guide states.
   Revisit if addresses are ever recorded on chain.
 
+## Email login build, batch 3 (`packages/email`), 2026-11-02
+
+Made while building `docs/email-login-build-plan.md` batch 3 (branch `feat/email-login-3`), where the spec was silent
+or allowed two readings. Each takes the stricter reading. D156 and D159 define every email user's address (frozen at
+the address freeze; until then a change moves every sandbox-dev email address and must be called out); D157 and D158
+change no address.
+
+### D156. Email normalization v1: the stricter readings, and a pinned UTS #46 library
+- Date 2026-11-02 · Status: to confirm (built on `feat/email-login-3`, not merged) · Source: build of
+  `docs/email-login-spec.md` "Email normalization"
+- Decision (`packages/email/src/normalize.ts`, frozen by `vectors/email-v1.json`):
+  - "ASCII whitespace" is the WHATWG set (TAB, LF, FF, CR, SPACE), trimmed at the ends only; anything else (VT, NBSP,
+    ideographic space) stays and fails the syntax checks. An input with an unpaired UTF-16 surrogate is refused.
+  - The 254-byte limit applies to the trimmed input (UTF-8 bytes) **and** to the normalized address, since punycode
+    can lengthen the domain; the local part must be 1 to 64 bytes.
+  - "ASCII only" local parts must also be an RFC 5322 dot-atom: no quoted strings, comments, backslashes, spaces,
+    leading, trailing or doubled dots (also for Gmail, before its dots are dropped). Lowercasing is ASCII-only.
+  - UTS #46 runs non-transitional with every check on: CheckHyphens (so `ab--cd.com` is refused unless it is a valid
+    `xn--` label), CheckBidi, CheckJoiners, UseSTD3ASCIIRules; then the domain must be an LDH host name of at least
+    two labels, each 1 to 63 bytes, at most 253 bytes, whose top-level label has a letter (no IPv4 or IP literals).
+  - The Gmail canonical form is applied to the normalized domain (`GMAIL.COM.` and fullwidth forms count); a local
+    part left empty by it (`+tag@gmail.com`) is refused.
+  - IDNA comes from `tr46` 7.0.0 (UTS #46 revision 36, Unicode 18.0.0), pinned exactly; a guard test checks the
+    installed `tr46` and `punycode` versions. Emoji labels that UTS #46 allows (`💩.la`) are accepted.
+  - **Unicode 15.0 cutoff** (review M1, 2026-11-02): any code point assigned after Unicode 15.0 is refused
+    (`domain_unicode_version`), in the raw input, in its mapped form with `xn--` labels decoded, and in the result.
+    The ages come from a vendored table generated from Unicode's `DerivedAge-18.0.0.txt`
+    (`packages/email/src/unicode-age.ts`, hash-pinned), never from the engine's `\p{…}` data. Why: `tr46` calls the
+    runtime's `String.prototype.normalize('NFC')`; a runtime whose Unicode predates a character doesn't reorder it,
+    so `alice@x\u1AD0\u0316.com` (U+1AD0, Unicode 17) gave a different `sub` on Node 22.12 and Node 24. Why 15.0:
+    it is the newest version every target runtime knows: Safari 16.4 and later (16.4 shipped the Unicode 15.0
+    emoji), Chrome, Edge and Firefox of the last two years (ICU 74+, Unicode 15.1), Node 22 (ICU 74+) and workerd
+    (newer). Unicode's normalization stability policy keeps NFC identical across them for 15.0 characters. Cost:
+    domains using characters added since September 2022 (CJK extension I, new scripts, new emoji) can't sign in;
+    raising the cutoff later would only accept addresses that are refused today, so it moves no existing address.
+- Why: every refusal here only turns away addresses that are invalid or that no large provider issues; every
+  acceptance is frozen forever, so the narrow set is the safe one. The runtime's own `URL` parser is also
+  non-transitional UTS #46 but with looser flags and an unpinned Unicode version (workerd's or each browser's ICU), so
+  a runtime upgrade could move an address.
+- Residual: `tr46` still calls the platform's NFC, now only on characters of Unicode 15.0 or older, which every target
+  runtime has. The frozen vectors run in Node, in a bare V8 context (the browser bundle) and in workerd. CI's Node is
+  `22` (floating), so no claim rests on a pinned Node version. Browsers older than Safari 16.4 may predate Unicode
+  15.0, so only the email issuer (workerd) computes a normalized address for a `sub`; the popup uses the package for
+  display and pre-checks only (batches 4 and 8; review of batch 3).
+- Rejected: platform `URL`/`domainToASCII`; quoted local parts; measuring length on the input only; Unicode `trim()`.
+
+### D157. Disposable-domain list: one pinned upstream commit, parents match, updated by PR
+- Date 2026-11-02 · Status: to confirm (built on `feat/email-login-3`, not merged) · Source: build of
+  `docs/email-login-spec.md` "Rate limits and abuse" (Q10, D123)
+- Decision: `packages/email/src/disposable-domains.ts` vendors `disposable_email_blocklist.conf` of
+  `github.com/disposable-email-domains/disposable-email-domains` (CC0 1.0) byte for byte at commit
+  `e4f0910adf5ab418dc998a1d8e6c15906ca04864` (2026-10-23, 9927 domains), its sha256 checked by a test. A domain is
+  blocked when it **or any parent** is listed (upstream lists registrable domains and asks implementers to match
+  subdomains). The guard keeps `gmail.com`, `googlemail.com` and `google.com` (and their parents) off the list, in the
+  test and in `scripts/update-disposable-domains.mjs`, which is the only way to update it (a reviewed PR, an upstream
+  commit at least 7 days old, as the workspace's `minimumReleaseAge`).
+- Why: exact-match only would let `anything.<disposable>` through; a fresh upstream commit is unreviewed third-party
+  data that decides who may log in.
+- Rejected: exact match only; fetching the list at runtime.
+
+### D158. The Google-hosted rule compares `hd` exactly
+- Date 2026-11-02 · Status: to confirm (built on `feat/email-login-3`, not merged) · Source: build of
+  `docs/email-login-spec.md` "The four cases" ("`hd` is present and equal to the address's normalized domain")
+- Decision: `isGoogleHosted({ email, emailVerified, hd })` takes a normalized address (it throws otherwise) and
+  needs `emailVerified === true` (anything else is false). Then: `hd` absent (`undefined` or `null`) → true only for
+  the domain `gmail.com`; `hd` present → true only when it is a non-empty string **exactly equal** to the normalized
+  domain (so a `gmail.com` address with another `hd` is false; review L1). `hd` is not lowercased, IDNA-mapped or
+  trimmed first. A subdomain or parent of `hd` doesn't count.
+- Accepted: Cloud Identity accounts, and Workspace accounts without Gmail, have `hd` equal to the domain while the
+  mailbox is hosted elsewhere. The rule still treats them as Google-hosted because the same domain administrator
+  controls both the Google account and the domain's mail.
+- Why: a false "not Google-hosted" only costs the user a code (case A) or the 24 h delay (case B); a false "hosted"
+  links silently. Google returns `hd` as the Workspace's lowercase ASCII domain, so the exact form is the expected one.
+- Rejected: normalizing `hd` with `normalizeDomain`; matching `hd` against parent domains.
+
+### D159. Gmail canonical form: Google's pages as cited, and what they don't cover
+- Date 2026-11-02 · Status: to confirm (built on `feat/email-login-3`, not merged) · Source: spec Q7 (D123), checked
+  against Google's help pages on 2026-11-02 (cited in `packages/email/test/vectors.test.ts`)
+- Decision: keep the spec's rule unchanged (`gmail.com` and `googlemail.com` → `gmail.com`, drop from the first `+`,
+  drop dots). Cited: dots don't matter (support.google.com/mail/answer/7436150); `+word` reaches the same inbox
+  (support.google.com/a/users/answer/9308648, a Workspace Learning Center page; Gmail usernames can't contain `+`,
+  support.google.com/mail/answer/9211434); a deleted Gmail address can't be used by anyone in the future
+  (support.google.com/mail/answer/61177, /56256).
+- Open for the user: no current Google help page says `googlemail.com` is the same mailbox as `gmail.com` (it is,
+  historically: Gmail's name in Germany and the UK); and Google now lets a Gmail user change their address, the old
+  one becoming an alternate that still receives mail (support.google.com/accounts/answer/19870), so the same person
+  then has two email identities (the spec's "address changes between logins" case; nothing merges them).
+- Rejected: Gmail rules for Workspace domains (spec step 5: `+tags` elsewhere may be distinct mailboxes).
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -1972,4 +2081,5 @@ Still open from `docs/email-login-spec.md`: the user-mail provider (Resend unles
 D87). Everything else follows D4, D119 and D121–D123. The contract readings made while building it, D130 and D131,
 wait for the user's confirmation (`docs/email-login-build-plan.md` "Open points for the user"; point 3 is confirmed, D132);
 D133–D138 are the security reviews' fixes, D139 their off-chain obligations. Batch 2's readings, D154 (no v1
-migration; `deploy-contract` refuses v1) and D155 (attached gas of the email-login calls), wait for confirmation.
+migration; `deploy-contract` refuses v1) and D155 (attached gas of the email-login calls), and the `packages/email`
+readings (batch 3), D156–D159, wait for the user's confirmation; D156 and D159 decide every email address.

@@ -1,6 +1,6 @@
 # Email login build plan (batches)
 
-**Status: batch 1 done on branch `feat/email-login-1-r2` (not merged, not deployed); batches 2–10 not started.** Splits `docs/email-login-spec.md` "Build order"
+**Status: batches 1–3 done (batches 1 and 3 merged into `develop`; batch 2 on `feat/email-login-2`, in review); none deployed; batches 4–10 not done.** Splits `docs/email-login-spec.md` "Build order"
 (approved 2026-10-30; D4, D119, D121–D123, D25 and D96 amended) into reviewable batches. The spec stays the source of
 truth for *what* to build; this file says *in which order*, *what each batch ships* and *what users see after it*.
 Like a spec it is history once the work merges: the current state lives in the reference docs (`docs/README.md`).
@@ -329,3 +329,38 @@ Branch `feat/email-login-2`, not deployed (sandbox only; no testnet transaction)
   confirm).
 - **Left for later batches.** The API's attached gas and the session pool's link methods (batch 6), testnet gas
   (batch 8); the API's never-relay list still names `migrate_v1` (harmless, D154).
+
+## Batch 3 result
+
+Branch `feat/email-login-3`, not merged, nothing deployed; nothing imports the package yet (the issuer, batch 4, will).
+
+- **Code.** `packages/email` (`@hana-id/email`): `normalizeEmail` / `normalizeDomain` / `isNormalizedEmail`,
+  `emailSub` / `importSubKey` / `subMessage` / `isEmailSub` (`K_sub` always an input), `isGoogleHosted` (needs
+  `emailVerified: true`), `isDisposableDomain` / `disposableDomains`, the frozen `EMAIL_V1` constants. Web Crypto
+  only, no lookbehind or Unicode property regexes. The issuer must send codes to the normalized address, byte for
+  byte (package README).
+- **IDNA.** `tr46` 7.0.0 (UTS #46 revision 36, Unicode 18.0.0), pinned exactly, every check on, non-transitional;
+  the platform `URL` parser was rejected for its unpinned Unicode version and looser flags. Code points assigned
+  after Unicode 15.0 are refused from a vendored, hash-pinned table built from `DerivedAge-18.0.0.txt`, so the
+  runtime's NFC data never decides an address (review M1; D156).
+- **Disposable list.** `disposable-email-domains/disposable-email-domains` at `e4f0910adf5a` (2026-10-23), 9927
+  domains, vendored byte for byte with its sha256 checked; parents match (D157); `gmail.com`, `googlemail.com`,
+  `google.com` guarded off it through one module shared by the test and the update script, which also refuses
+  upstream commits younger than 7 days.
+- **Vectors.** `vectors/email-v1.json` from `scripts/gen-vectors.mjs`, an independent implementation (Node's
+  `domainToASCII`, its own syntax rules, `node:crypto`; it shares only the Unicode age data): 43 normalization, 53
+  rejection and 26 `sub` vectors with a public test key. The guard test pins the file's sha256, the `EMAIL_V1` hash,
+  the Unicode table's hash and the installed `tr46` / `punycode` versions. The vectors were regenerated once during
+  review (`--force`, before any deploy: no sandbox-dev email user exists). 207 tests in Node (including a bare V8
+  run of the browser bundle) and 99 in workerd (`@cloudflare/vitest-plugin`). Google's help pages for the Gmail
+  canonical form are cited in the guard (Q7).
+- **Address impact.** This batch defines every email user's `sub` (frozen at the address freeze). The stricter
+  readings taken where the spec was open are D156 (normalization, the Unicode 15.0 cutoff) and D159 (Gmail rule as
+  cited); D157 and D158 (disposable matching, the Google-hosted rule) change no address. All four wait for the
+  user's confirmation.
+- **Open for the user.** No current Google help page states that `googlemail.com` is the same mailbox; Gmail address
+  changes leave the old address as a receiving alternate (two email identities for one person; D159).
+- **Lockfile.** `pnpm install` (pnpm 11.3.0) also added three `deprecated:` lines for unrelated, already-locked
+  packages to `pnpm-lock.yaml`; metadata only, no version changed.
+- **Docs.** `architecture.md` (Status, Components), `README.md` (index), `decisions.md` (D156–D159),
+  `packages/email/README.md`.

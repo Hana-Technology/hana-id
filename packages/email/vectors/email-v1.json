@@ -66,8 +66,23 @@
       "out": "o'brien@example.ie"
     },
     {
-      "label": "Gmail: dots and +tag dropped, lowercased",
+      "label": "Gmail: dots dropped from the username, +tag kept, lowercased",
       "in": "A.B.C+Tag@Gmail.com",
+      "out": "abc+tag@gmail.com"
+    },
+    {
+      "label": "Gmail: a +tag is its own identity",
+      "in": "amdcopper+1@gmail.com",
+      "out": "amdcopper+1@gmail.com"
+    },
+    {
+      "label": "Gmail: dots inside the +tag are kept",
+      "in": "a.b+x.y@gmail.com",
+      "out": "ab+x.y@gmail.com"
+    },
+    {
+      "label": "Gmail: an empty +tag is the plain username",
+      "in": "abc+@gmail.com",
       "out": "abc@gmail.com"
     },
     {
@@ -83,12 +98,12 @@
     {
       "label": "googlemail.com, uppercase, two +, trailing dot",
       "in": "ABC+x+y@GOOGLEMAIL.COM.",
-      "out": "abc@gmail.com"
+      "out": "abc+x+y@gmail.com"
     },
     {
       "label": "Gmail: a dot right before +",
       "in": "a.+b@gmail.com",
-      "out": "a@gmail.com"
+      "out": "a+b@gmail.com"
     },
     {
       "label": "Gmail: whitespace around",
@@ -471,12 +486,28 @@
       "sub": "e1.mMfqJ79hkVvFIPablJM8qAkZXp2M2qqrLYbWvKzuRAE"
     },
     {
+      "email": "abc+tag@gmail.com",
+      "sub": "e1.3KZtCM8vDNYqCx3diKbgPqyOBU3ioLyFTolmv7uB4Kw"
+    },
+    {
+      "email": "amdcopper+1@gmail.com",
+      "sub": "e1.AY4kQMsJbap9PBKY8j0rd95imEBXWJS7FBDdsq8tUnQ"
+    },
+    {
+      "email": "ab+x.y@gmail.com",
+      "sub": "e1.Dkong5XVcYt-ChdSRHYEktKPDbOzGYGN5nKSuAraSMw"
+    },
+    {
       "email": "abc@gmail.com",
       "sub": "e1.0pSsPkbmMZ43qYJCjek1192TzxtQluy0avQxs5QuyaI"
     },
     {
-      "email": "a@gmail.com",
-      "sub": "e1.ALZec-6ytH28ukGBTU9J7IAZwP_cuMsuSKisVlCThoo"
+      "email": "abc+x+y@gmail.com",
+      "sub": "e1.dhI3WRVSqDDqeY2genbbnW7xVYI3Aivtq5_WNv7oSCw"
+    },
+    {
+      "email": "a+b@gmail.com",
+      "sub": "e1.HXVBYdPtNVn4lL15_s01k5Pohi4iLwbvBM56kOV5_AE"
     },
     {
       "email": "x@gmail.com",

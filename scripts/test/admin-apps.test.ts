@@ -184,7 +184,7 @@ describe('app:changes:announce', () => {
 
   it('no_session waiver fails closed on any sign of a user in the scope, even with first_session_at lost (NULL)', async () => {
     const signs: [string, string][] = [
-      ['a usage row', "INSERT INTO usage (app_id, day, sessions) VALUES ('app_1', '2026-11-02', 1)"],
+      ['a session marker', "INSERT INTO session_markers (app_id, first_at) VALUES ('app_1', 1)"],
       ['a vault share', "INSERT INTO vault_shares (share_id, app_id, session_pk, path_hash, partner_origin, share_enc, kek_id, created_at, idle_until, abs_expires_at) VALUES (x'01', 'app_1', x'02', x'03', 'https://a.example.com', x'04', 1, 1, 2, 3)"],
       ['an identity count', "INSERT INTO identity_usage (app_id, day, tokens) VALUES ('app_1', '2026-11-02', 1)"],
       ['another app of the scope with an origin in force', "INSERT INTO app_origins (app_id, origin, active_from) VALUES ('app_1', 'https://other.example.com', 0)"],

@@ -15,7 +15,8 @@
     "sdk-version": "tsx sdk-version.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "usage-migrate": "tsx usage-migrate.ts"
+    "usage-migrate": "tsx usage-migrate.ts",
+    "usage-setup": "tsx usage-setup.ts"
   },
   "dependencies": {
     "@hana-id/console-core": "workspace:*",

@@ -15,6 +15,7 @@ import {
   TEST_MANIFEST,
   devVarsContent,
   existingD1Id,
+  existingUsageHyperdriveId,
   identityDevVarsLines,
   identityVars,
   main,
@@ -286,6 +287,33 @@ describe('wrangler.jsonc', () => {
     expect(writeWranglerConfig(other, undefined, dir).d1Id).toBe(LOCAL_D1_ID);
   });
 
+  it('--usage-hyperdrive-id binds USAGE_DB (batch C4); kept on regeneration for the same Worker and database only; `off` drops it', () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => void logs.push(a.join(' ')));
+    const dir = tmp();
+    const id = '0123456789abcdef0123456789abcdef';
+    const read = () => JSON.parse(readFileSync(join(dir, 'wrangler.jsonc'), 'utf8').replace(/^\/\/.*\n/u, '')) as { hyperdrive?: unknown };
+    main([manifest.name], { dir });
+    expect(read()).not.toHaveProperty('hyperdrive');
+    expect(logs.join('\n')).toMatch(/usage capture: off/u);
+    main([manifest.name, '--usage-hyperdrive-id', id], { dir });
+    expect(read().hyperdrive).toEqual([{ binding: 'USAGE_DB', id }]);
+    expect(logs.join('\n')).toMatch(new RegExp(`usage capture: on \\(USAGE_DB → Hyperdrive ${id}\\)`, 'u'));
+    // Regenerating without the flag keeps it; another env's config never inherits it.
+    main([manifest.name], { dir });
+    expect(read().hyperdrive).toEqual([{ binding: 'USAGE_DB', id }]);
+    const other = { ...manifest, name: 'other-env', cloudflare: { ...manifest.cloudflare, workerName: 'hana-id-api-other', d1Name: 'hana-id-other-env' } };
+    expect(existingUsageHyperdriveId(join(dir, 'wrangler.jsonc'), other)).toBeNull();
+    expect(writeWranglerConfig(other, undefined, dir).usageHyperdriveId).toBeNull();
+    main([manifest.name, '--usage-hyperdrive-id', id], { dir });
+    main([manifest.name, '--usage-hyperdrive-id', 'off'], { dir });
+    expect(read()).not.toHaveProperty('hyperdrive');
+    for (const bad of [[], ['nope'], ['0123456789ABCDEF0123456789ABCDEF'], ['--dev-vars']]) {
+      expect(() => main([manifest.name, '--usage-hyperdrive-id', ...bad], { dir }), JSON.stringify(bad)).toThrow(/--usage-hyperdrive-id needs/u);
+    }
+    expect(() => wranglerConfig(manifest, LOCAL_D1_ID, { usageHyperdriveId: 'x' })).toThrow(/32 lowercase hex/u);
+  });
+
   it('writes only the secrets that exist (no owner pool yet: no OWNER_RELAYER_KEYS line)', () => {
     const root = tmp();
     const out = tmp();
@@ -331,7 +359,8 @@ describe('wrangler.jsonc', () => {
     const dir = tmp();
     seedSecrets(root);
     main([manifest.name, '--dev-vars'], { root, dir });
-    expect(logs).toHaveLength(4);
+    // The API config, its usage-capture line, the two page configs, .dev.vars.
+    expect(logs).toHaveLength(5);
     expect(logs.join('\n')).not.toMatch(/ed25519:|[1-9A-HJ-NP-Za-km-z]{40,}/u);
     expect(statSync(join(dir, '.dev.vars')).mode & 0o777).toBe(0o600);
     for (const file of ['wrangler.jsonc', 'wrangler.vault.jsonc', 'wrangler.auth.jsonc']) {

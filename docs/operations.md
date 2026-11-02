@@ -1,6 +1,8 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-02 (branch `feat/batch-c-3`: "Hot DB migration 0006 and the new gate" (milestone
+Last verified against code: 2026-11-02 (branch `feat/batch-c-4`: "Usage capture (batch C4, milestone M2)" (the
+setup steps for the user: `usage-setup`, Hyperdrive, `USER_ID_KEY`, migration 0009, `gen --usage-hyperdrive-id`), the
+ledger and uid secrets, the waiver's session marker; D220–D224); 2026-11-02 (branch `feat/batch-c-3`: "Hot DB migration 0006 and the new gate" (milestone
 M1, for the user to run), the admin CLI's `app:*` commands on the 0006 schema with `app:changes:announce`, the demo's
 origin add, the D1 restore steps; D205–D209); 2026-11-02 (branch `feat/link-cap`: "Link volume thresholds", D200, and `set_link_thresholds`
 through `owner:call`; branch `feat/email-login-5`: the watchdog's email rules, the link alarms and
@@ -36,7 +38,9 @@ Never print, log, paste or commit any of these. The scripts never print them eit
 | `VAULT_KEK` (and, during a rotation, `VAULT_KEK_PREVIOUS`) | `.secrets/<env>/vault-kek` (and `vault-kek.previous`); the only copy, since Cloudflare can't give a secret back | `vault-kek` (below) |
 | Identity token signing keys (Worker slots `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`; testnet and `local*` only) | `.secrets/<env>/identity-signing-key.json` (active), `identity-signing-key-standby.json` (published, **never uploaded**: keep it offline), and during a rotation `identity-signing-key-next.json` / `-previous.json` (P-256 private JWKs); `identity-slots.json` says which slot holds which kid; the only copies | `identity-key <env> init`, `next`, `switch`, `retire` ("Identity token keys" below); `put --yes` uploads the active key again |
 | Identity token sub key (`IDENTITY_SUB_KEY`) | `.secrets/<env>/identity-sub-key` (base64 of 32 bytes); never rotated, also backed up offline with the council backup (D81) | `identity-key <env> init`; upload again with `identity-key <env> put --yes` |
-| Neon Postgres connection strings (batch C ledger, D73): pooled `DATABASE_URL` and `DATABASE_URL_DIRECT` of the env's Neon branch | `.secrets/<env>/neon.json` (`{project_id, branch, DATABASE_URL, DATABASE_URL_DIRECT, …}`); role `neondb_owner` until batch C creates least-privilege roles | `neon connection-string <branch> --project-id <id> [--pooled]` (Neon CLI, `neon login`) |
+| Neon Postgres connection strings (batch C ledger, D73): pooled `DATABASE_URL` and `DATABASE_URL_DIRECT` of the env's Neon branch | `.secrets/<env>/neon.json` (`{project_id, branch, DATABASE_URL, DATABASE_URL_DIRECT, …}`); role `neondb_owner`, used only by `usage-migrate` and `usage-setup` | `neon connection-string <branch> --project-id <id> [--pooled]` (Neon CLI, `neon login`) |
+| Ledger role URLs (`usage_writer`, `usage_admin`, batch C4): each role's password; their copies live in the two Hyperdrive configs | `.secrets/<env>/neon-usage-writer.url`, `neon-usage-admin.url` | `usage-setup <env> roles` ("Usage capture" below) |
+| `USER_ID_KEY` (the uid key, base64 of 32 bytes; API only); never rotated within a contract term, backed up offline | `.secrets/<env>/user-id-key` | `usage-setup <env> user-id-key` (generates it once, sets the Worker secret) |
 | Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its Resend key, Slack webhook, paging-app credentials, `HEARTBEAT_URL`) | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
 | Worker copies of the above | Cloudflare Worker secrets (the watchdog's on its own Cloudflare account) | `wrangler secret put` (watchdog: `wrangler secret bulk`) |
 | Local dev copies | `apps/api/.dev.vars`, `apps/watchdog/.dev.vars` (0600) | `gen --dev-vars` |
@@ -511,9 +515,9 @@ read these sources, all read-only:
 
 ## Usage ledger (Neon, batch C)
 
-The ledger's schema is `apps/api/migrations-usage/` (Postgres; D73), applied by `scripts/usage-migrate.ts`. Nothing
-writes to it yet: capture starts in batch C4 (`docs/batch-c-build-plan.md`). Neon Auth and Neon's other services
-aren't used, only Postgres.
+The ledger's schema is `apps/api/migrations-usage/` (Postgres; D73), applied by `scripts/usage-migrate.ts`. The API
+writes to it from batch C4 once its `USAGE_DB` binding is set up ("Usage capture" below). Neon Auth and Neon's other
+services aren't used, only Postgres.
 
 ```sh
 corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev         # lists the pending files, changes nothing
@@ -526,13 +530,82 @@ corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev --yes   # appl
 - Each file runs in its own transaction with its sha256 recorded in `hana_migrations.applied`, under an advisory lock.
   A file changed after it was applied, or an applied file the repo doesn't have, stops the run: add a new file instead.
 - The schema creates the roles `usage_writer` (the API) and `usage_admin` (the admin Worker) `NOLOGIN`, with no
-  password; giving them `LOGIN` and passwords, and the Hyperdrive configs, is batch C4's `usage-setup`
-  (`docs/batch-c-build-plan.md` "Setup steps").
+  password; `usage-setup <env> roles` gives them `LOGIN` and passwords ("Usage capture" below).
+- Files: `0001_ledger.sql` (events, users, settlements, rates, statements, `ops`, `record_event`, roles and grants),
+  `0002_identity_tokens.sql` (identity tokens per app and day, `record_identity_tokens`, batch C4).
 - The first migration creates the monthly partitions of `usage.events` for the current month and the next three;
-  `usage.ensure_partitions(3)` adds the rest (the admin Worker's daily cron, from C12; until then by hand as the owner
-  if the ledger is in use).
+  `usage.ensure_partitions(3)` adds the rest (the admin Worker's daily cron, from C12; **until then by hand as the
+  owner while capture is on**: an event outside every partition is lost, logged as `usage_write_failed` `pg_23514`).
 - Tests run on PGlite in process (`apps/api/test-usage`, D140); set `USAGE_TEST_DATABASE_URL` to a superuser URL of a
   local Postgres 18 (a container, never Neon) to run the same suite there.
+
+## Usage capture (batch C4, milestone M2)
+
+From batch C4 the API sends one usage event per request past the gate of `/v1/login`, `/v1/sessions`,
+`/v1/derive`, `/v1/sessions/revoke` and `/v1/vault/unlock`, and per `/v1/owner-actions` request past the owner check,
+to the Neon ledger through the Hyperdrive binding `USAGE_DB` (role `usage_writer`), after the response (`docs/api.md`
+"Usage capture"). It no longer writes the D1 `usage` counters. **Logins never depend on it**: without the binding
+capture is off; with Neon or Hyperdrive down every endpoint answers exactly as before and the lost event is logged.
+The hourly cron also copies the last 7 days of identity token counts (`identity_usage`) to `usage.identity_tokens`.
+
+### Setting it up on sandbox-dev (for the user; run from the main checkout)
+
+Nothing here is run by an agent. Every command prints its plan and changes nothing without `--yes`; none prints a
+password, a URL or the key. Prerequisites: `.secrets/sandbox-dev/neon.json` with `DATABASE_URL_DIRECT` (the owner,
+direct endpoint), wrangler logged in to the Hana Cloudflare account, and Hyperdrive available on its plan (build plan
+open question 3).
+
+1. **Ledger schema** (applies `0002_identity_tokens.sql`; `0001` if it isn't yet):
+   `corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev`, then the same with `--yes`.
+2. **Role passwords**: `corepack pnpm --filter @hana-id/scripts usage-setup sandbox-dev roles` (plan), then `--yes`.
+   It generates a password per role, writes `.secrets/sandbox-dev/neon-usage-writer.url` and `neon-usage-admin.url`
+   (0600: the owner's direct endpoint and database, the role, `sslmode=require`) and, as the owner, runs
+   `ALTER ROLE usage_writer|usage_admin WITH LOGIN PASSWORD '<SCRAM verifier>'` in one transaction: Neon gets a
+   verifier, never the password. Running it again reuses the passwords in the files (to resume a run that stopped).
+3. **Hyperdrive configs**: `usage-setup sandbox-dev hyperdrive` (plan), then `--yes`: `wrangler hyperdrive create
+   hana-id-usage-writer-sandbox-dev` and `hana-id-usage-admin-sandbox-dev` (the manifest's `usage` block names once it
+   has one) with `--caching-disabled`, from the role files. It prints each config's id (not secret). The admin config
+   is for the admin Worker (batch C8); create both now. Note: wrangler takes the role URL as an argument, so it is
+   briefly visible in the local process list.
+4. **`USER_ID_KEY`**: `usage-setup sandbox-dev user-id-key` (plan), then `--yes`: generates 32 random bytes (base64)
+   into `.secrets/sandbox-dev/user-id-key` (0600, never replaced) and sets the API Worker's `USER_ID_KEY` through
+   wrangler's stdin. **Make an offline backup of the file** (with the council backup, as `identity-sub-key`): the key
+   is never rotated within a contract term, and losing it makes every user a new user in MAU and new-user counts
+   (D96). Running it again sets the existing key again.
+5. **Hot DB migration 0009** (`session_markers`, the `no_session` waiver's sign; D220):
+   `corepack pnpm --dir apps/api exec wrangler d1 migrations apply hana-id-sandbox-dev --remote` (it lists
+   `0009_session_markers.sql`; confirm). Then carry the legacy counters into markers, once, before C4b drops `usage`
+   (idempotent):
+
+   ```sh
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev --remote --command "INSERT INTO session_markers (app_id, first_at) SELECT app_id, unixepoch('now') * 1000 FROM usage GROUP BY app_id ON CONFLICT (app_id) DO NOTHING"
+   ```
+
+6. **Bind and deploy**: `corepack pnpm --filter @hana-id/api gen sandbox-dev --usage-hyperdrive-id <writer id>` (it
+   prints `usage capture: on`; later runs of `gen` keep the id for the same Worker and database), then
+   `corepack pnpm --filter @hana-id/api run deploy`. Use the admin CLI's `app:changes:announce` only after this deploy:
+   from C4 its waiver reads `session_markers`, which only the C4 API writes.
+7. **Partitions**: until the admin Worker's cron runs them (C12), keep future months: as the owner, `SELECT
+   usage.ensure_partitions(3);` each month (psql with `DATABASE_URL_DIRECT`; never paste the URL into a shared shell
+   history).
+8. **Verify**: log in on sandbox-dev (the demo or `apps/smoke`), then as the owner
+   `SELECT endpoint, outcome, code, relayed, uid IS NOT NULL AS has_uid FROM usage.events ORDER BY received_at DESC
+   LIMIT 5;` shows the login (`ok`, relayed, a uid); the Worker logs show no `usage_write_failed`.
+
+**Turning capture off** (e.g. a Neon incident that floods the logs): `gen sandbox-dev --usage-hyperdrive-id off` and
+deploy. Logins are unaffected either way; events in between are not recorded.
+
+### What to watch (Worker logs)
+
+| Event | Meaning | Action |
+|---|---|---|
+| `usage_write_failed` (`code` `connection`, `attempt` 2) | Neon/Hyperdrive unreachable or slow for both tries: the event is lost (under-bills Hana, never a partner) | Check Neon and Hyperdrive status; the daily nonce cross-check (C12) shows lost relayed rows |
+| `usage_write_failed` (`code` `pg_23514`) | No partition for the event's month | Run `usage.ensure_partitions(3)` as the owner |
+| `usage_write_failed` (other `pg_*`) | The server refused it (e.g. `pg_42501`: the role lost its grant; `pg_28P01`: wrong password in the Hyperdrive config) | Re-run `usage-migrate` / `usage-setup … roles`, or fix the Hyperdrive config |
+| `usage_write_rejected` | The event failed UsageEvent v1 (`invalid_event`, never sent) or the function refused it (`pg_22023`) | A bug: the event's `problems` name the fields |
+| `usage_uid_unavailable` | `missing_key` / `bad_key`: `USER_ID_KEY` unset or malformed (events recorded without uid); `bad_path`: a session path that doesn't parse for its scope | Set the key (step 4); `bad_path` should never happen |
+| `identity_usage_sync_failed` | The hourly identity-count copy failed | Nothing: the next hour copies the last 7 days again |
+| `first_session_write_failed` (`what` `scope` or `marker`) | One of the waiver's two hot-DB signs wasn't written | The other one stands; the next session attempt retries the scope's |
 
 ## Hot DB migration 0006 and the new gate (batch C3, milestone M1)
 
@@ -726,8 +799,8 @@ above.
   Generates `app_<base58>`, `key_<base58>` and a `pk_test_` or `pk_live_` key by the environment and prints the key
   (public). The origins are staff proposals; when this call created the scope row they skip the delay at their
   announcement if the scope then still shows no sign of a user (the `no_session` waiver, decided inside the
-  announcement's SQL: no `first_session_at`, no other origin of the scope ever in force, no vault share, usage or
-  identity row). On an existing scope it is refused
+  announcement's SQL: no `first_session_at`, no other origin of the scope ever in force, no vault share, session marker
+  or identity row; batch C4 replaced the legacy usage row with the session marker, D220). On an existing scope it is refused
   within `appChangeDelayMs` of the scope's org assignment. Origins are normalised by `@hana-id/console-core`
   `normaliseOrigin` (the form the API and the console share: lowercase ASCII/punycode host, default port and trailing
   dot dropped) and checked by its `originProblem` (`app:create` and `app:origins:add`; never `app:origins:remove`, so
@@ -1410,7 +1483,7 @@ mind (`VAULT_KEK` above). Skip it only when the database is gone altogether.
 
 **What is lost**: every write after the restore point. Apps created then (their publishable keys stop working), origin
 and settings changes (a pending `raw_sign` / `auto_approve` change scheduled then is gone: the partner asks again),
-**suspensions and revocations made then are undone**, usage counters, `vault_shares` created then (those users sign
+**suspensions and revocations made then are undone**, session markers, `vault_shares` created then (those users sign
 in with Google again; their addresses are on chain and unchanged), and the issuer-key cron's state
 (`issuer_key_observations`, `issuer_key_missing`, `issuer_key_proposals`, `issuer_key_sync_runs`). The cron rebuilds
 the last from chain: a pending change by the signer account it has no row for is adopted, a missing kid's 55-min

@@ -204,7 +204,13 @@ export class NearMock {
     } catch (err) {
       status = panic(err instanceof Error ? err.message : String(err));
     }
-    const outcome = { status, transaction: { hash }, receipts_outcome: receiptsFor(tx.receiverId, status, failedIn), final_execution_status: 'EXECUTED' };
+    const outcome = {
+      status,
+      transaction: { hash },
+      transaction_outcome: { outcome: { ...MOCK_TX_GAS } },
+      receipts_outcome: receiptsFor(tx.receiverId, status, failedIn),
+      final_execution_status: 'EXECUTED',
+    };
     this.outcomes.set(hash, outcome);
     if (this.sendTxTimesOut) return { error: { name: 'HANDLER_ERROR', cause: { name: 'TIMEOUT_ERROR' }, message: 'Timeout', data: 'TIMEOUT' } };
     return { result: outcome };
@@ -228,8 +234,12 @@ export function receiptFailure(executor: string | null, msg: string): { Failure:
  * receipts_outcome as NEAR reports it: the signer's receipt first; a failure elsewhere comes after the signer's receipt,
  * which then succeeded (it returned the promise that failed).
  */
+/** What every mock transaction burns: its conversion step, and each receipt (usage events carry the BigInt sum). */
+export const MOCK_TX_GAS = { gas_burnt: 2_427_922_607_472, tokens_burnt: '242792260747200000000' } as const;
+export const MOCK_RECEIPT_GAS = { gas_burnt: 5_123_456_789_012, tokens_burnt: '512345678901200000000' } as const;
+
 function receiptsFor(signer: string, status: Record<string, unknown>, failedIn: string | null): unknown[] {
-  const outcome = (executor: string, s: unknown): unknown => ({ outcome: { executor_id: executor, logs: [], status: s } });
+  const outcome = (executor: string, s: unknown): unknown => ({ outcome: { executor_id: executor, logs: [], status: s, ...MOCK_RECEIPT_GAS } });
   if (!('Failure' in status)) return [outcome(signer, status)];
   if (failedIn === null) return [];
   if (failedIn === signer) return [outcome(signer, status)];

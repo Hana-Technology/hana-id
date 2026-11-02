@@ -1,8 +1,8 @@
 import { baseEncode } from '@near-js/utils';
 import { env } from 'cloudflare:workers';
 import { type Mock, afterEach, describe, expect, it, vi } from 'vitest';
-import { usageDay } from '../src/apps.ts';
 import { panic, rsaSigner } from './near-mock.ts';
+import { usageOf } from './usage-ledger.ts';
 import { DERIVE_KEY, ORIGIN, appHeaders, bytes, call, chain, deriveBody, google, newKey, newSessionKey, revokeBody, seedApp, seedPlan, sessionBody, uid, startOfMinuteClock } from './helpers.ts';
 afterEach(() => vi.restoreAllMocks());
 
@@ -10,12 +10,11 @@ async function body(res: Response): Promise<Record<string, unknown>> {
   return (await res.json()) as Record<string, unknown>;
 }
 
-async function usage(appId: string): Promise<{ sessions: number; derives: number } | null> {
-  return env.DB.prepare('SELECT sessions, derives FROM usage WHERE app_id = ?1 AND day = ?2').bind(appId, usageDay(Date.now())).first();
-}
+/** The app's usage events (the in-memory ledger, usage-ledger.ts) as `endpoint outcome[ code]`, in order. */
+const usage = (appId: string): string[] => usageOf(appId).map((e) => [e.endpoint, e.outcome, e.code].filter(Boolean).join(' '));
 
 describe('POST /v1/sessions', () => {
-  it('relays create_session for a token whose client is registered to the app scope, and counts usage', async () => {
+  it('relays create_session for a token whose client is registered to the app scope, and records its usage event', async () => {
     const app = await seedApp();
     const aud = `${uid()}.apps.googleusercontent.com`;
     const near = chain({ [aud]: app.scope });
@@ -52,10 +51,10 @@ describe('POST /v1/sessions', () => {
       { method: 'get_config', args: {} },
       { method: 'get_issuer', args: { provider: 'google' } },
     ]);
-    expect(await usage(app.id)).toEqual({ sessions: 1, derives: 0 });
+    expect(usage(app.id)).toEqual(['session ok']);
   });
 
-  it('counts usage after responding (waitUntil), not before', async () => {
+  it('records usage after responding (waitUntil), not before', async () => {
     const app = await seedApp();
     const aud = `${uid()}.apps.googleusercontent.com`;
     chain({ [aud]: app.scope });
@@ -65,8 +64,9 @@ describe('POST /v1/sessions', () => {
     expect(res.status).toBe(200);
     // The JWKS fetch and the token's kid (key lead time, key-observations.ts), then usage: all after the response.
     expect(pending).toHaveLength(3);
+    expect(usage(app.id)).toEqual([]);
     await Promise.all(pending);
-    expect(await usage(app.id)).toEqual({ sessions: 1, derives: 0 });
+    expect(usage(app.id)).toEqual(['session ok']);
   });
 
   it('maps both Google iss forms to provider google', async () => {
@@ -84,7 +84,7 @@ describe('POST /v1/sessions', () => {
     expect((await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud) })).status).toBe(200);
     expect((await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud) })).status).toBe(200);
     expect(near.viewCalls.filter((v) => v.method === 'scope_for_client')).toHaveLength(1);
-    expect(await usage(app.id)).toEqual({ sessions: 2, derives: 0 });
+    expect(usage(app.id)).toEqual(['session ok', 'session ok']);
   });
 
   it('rejects a token for an unregistered client before relaying', async () => {
@@ -94,7 +94,7 @@ describe('POST /v1/sessions', () => {
     expect(res.status).toBe(403);
     expect(await body(res)).toMatchObject({ code: 'unregistered_client' });
     expect(near.sent).toHaveLength(0);
-    expect(await usage(app.id)).toBeNull();
+    expect(usage(app.id)).toEqual(['session rejected unregistered_client']);
   });
 
   it('rejects a token for a client registered to a different scope', async () => {
@@ -164,7 +164,7 @@ describe('POST /v1/sessions', () => {
     expect(near.sent).toHaveLength(0);
   });
 
-  it('returns the contract panic as 422 and does not count usage', async () => {
+  it('returns the contract panic as 422, recorded as a rejected relayed event', async () => {
     const app = await seedApp();
     const aud = `${uid()}.apps.googleusercontent.com`;
     const near = chain({ [aud]: app.scope });
@@ -175,7 +175,8 @@ describe('POST /v1/sessions', () => {
     expect(json).toMatchObject({ code: 'contract_rejected' });
     expect(json.error).toContain('Nonce mismatch');
     expect(typeof json.nearTx).toBe('string');
-    expect(await usage(app.id)).toBeNull();
+    expect(usage(app.id)).toEqual(['session rejected contract_rejected']);
+    expect(usageOf(app.id)[0]).toMatchObject({ relayed: true, near_tx: json.nearTx });
   });
 
   it('reports an unreachable RPC as 502', async () => {
@@ -416,10 +417,10 @@ describe('POST /v1/derive and /v1/sessions/revoke', () => {
     expect(near.sent.map((t) => t.method)).toEqual(['derive_key']);
     expect(near.sent[0]!.args).toEqual({ session_public_key: spk, counter: 1, signature: (await deriveBody(spk)).signature, pk1: DERIVE_KEY.pk1, pk2: DERIVE_KEY.pk2 });
     expect(near.sent[0]!.gas).toBe(60_000_000_000_000n);
-    expect(await usage(app.id)).toEqual({ sessions: 0, derives: 1 });
+    expect(usage(app.id)).toEqual(['derive ok']);
   });
 
-  it('counts sessions and derives separately over a full login', async () => {
+  it('records sessions, derives and revokes separately over a full login', async () => {
     const { app, near, aud } = await withSession();
     const req = await sessionBody(app.scope, aud);
     expect((await call('/v1/sessions', { headers: appHeaders(app), body: req })).status).toBe(200);
@@ -429,9 +430,9 @@ describe('POST /v1/derive and /v1/sessions/revoke', () => {
     // One session_key_in_use before create_session (the key must be unused); the derives use the session it returned.
     expect(near.viewCalls.filter((v) => v.method === 'session_key_in_use')).toHaveLength(1);
     expect(near.viewCalls.filter((v) => v.method === 'get_session')).toHaveLength(0);
-    expect(await usage(app.id)).toEqual({ sessions: 1, derives: 2 });
+    expect(usage(app.id)).toEqual(['session ok', 'derive ok', 'derive ok']);
     expect((await call('/v1/sessions/revoke', { headers: appHeaders(app), body: await revokeBody(spk, { counter: 3 }) })).status).toBe(200);
-    expect(await usage(app.id)).toEqual({ sessions: 1, derives: 2 });
+    expect(usage(app.id)).toEqual(['session ok', 'derive ok', 'derive ok', 'revoke ok']);
   });
 
   it('caches get_session (≤ 10 s)', async () => {
@@ -505,6 +506,6 @@ describe('POST /v1/derive and /v1/sessions/revoke', () => {
     near.contract.derive_key = () => null;
     const res = await call('/v1/derive', { headers: appHeaders(app), body: await deriveBody(spk) });
     expect(res.status).toBe(502);
-    expect(await usage(app.id)).toBeNull();
+    expect(usage(app.id)).toEqual(['derive error bad_contract_result']);
   });
 });

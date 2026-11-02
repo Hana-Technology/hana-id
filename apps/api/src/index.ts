@@ -11,6 +11,7 @@ import { IDENTITY_TOKEN_ENDPOINT, handleIdentityToken } from './identity/token.t
 import { log } from './log.ts';
 import { LOGIN_ENDPOINT, handleLogin } from './login.ts';
 import { LOGIN_RELAY_PREFIX, handleLoginRelay, loggedEndpoint } from './login-relay.ts';
+import { syncIdentityUsage } from './usage/identity-sync.ts';
 import { vaultMaintenance } from './vault/cron.ts';
 import { handleVaultEndpoint, isVaultEndpoint, vaultPreflight } from './vault/endpoints.ts';
 import { BASE_CSP, handleVaultPage, isVaultPageRequest } from './vault/page.ts';
@@ -26,8 +27,8 @@ const ID_RE = /^[A-Za-z0-9-]{1,64}$/u;
  * The cron fires every 15 min (one quarter-hourly trigger from gen-wrangler.ts: the free plan allows 5 per
  * account). Every run syncs Google's JWKS with hana-signer (proposals and matured executions, issuer-keys.ts; the
  * governance spec's P = 15 min). The run in the first quarter of each UTC hour also does vault maintenance, prunes
- * the identity token's counts past their retention, and records guarded changes' activations and expiries
- * (guarded/cron.ts). A Worker
+ * the identity token's counts past their retention, records guarded changes' activations and expiries
+ * (guarded/cron.ts), and copies the recent identity token counts to the usage ledger (usage/identity-sync.ts). A Worker
  * still on the old `0 * * * *` trigger only ever gets hourly runs.
  */
 export function isHourlyRun(scheduledTime: number): boolean {
@@ -123,7 +124,7 @@ export default {
       }
       if (pathname === '/v1/owner-actions') {
         if (request.method === 'OPTIONS') return openPreflight();
-        if (request.method === 'POST') return await handleOwnerAction(request, env, requestId);
+        if (request.method === 'POST') return await handleOwnerAction(request, env, requestId, ctx);
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
       }
       return routeError(404, 'not_found', 'Not found', requestId);
@@ -136,7 +137,11 @@ export default {
   async scheduled(controller, env, _ctx): Promise<void> {
     // Independent jobs: one failing must not skip the other. The sync records the JWKS observation from its fetch.
     const jobs: Promise<unknown>[] = [syncIssuerKeys(env)];
-    if (isHourlyRun(controller.scheduledTime)) jobs.push(vaultMaintenance(env), identityMaintenance(env), guardedChangesMaintenance(env));
+    if (isHourlyRun(controller.scheduledTime)) {
+      jobs.push(vaultMaintenance(env), identityMaintenance(env), guardedChangesMaintenance(env));
+      // Usage fails open: the copy logs its own failures and never fails the run (the next hour copies again).
+      jobs.push(syncIdentityUsage(env));
+    }
     const [issuerKeys, vault, identity, guarded] = await Promise.allSettled(jobs);
     if (vault?.status === 'rejected') log({ event: 'vault_maintenance', outcome: 'error', code: 'internal' }, 'error');
     if (identity?.status === 'rejected') log({ event: 'identity_maintenance', outcome: 'error', code: 'internal' }, 'error');

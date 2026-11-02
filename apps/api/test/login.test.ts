@@ -1,6 +1,5 @@
 import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { usageDay } from '../src/apps.ts';
 import { ALLOWED_CLAIMS } from '../src/claims.ts';
 import { DEFAULT_GAS_TGAS, TGAS } from '../src/gas.ts';
 import { EXPORTS_PER_PATH_HOUR, exportLimiterKey, loginFailure } from '../src/login.ts';
@@ -8,6 +7,7 @@ import { failedExecutor } from '../src/near/tx.ts';
 import { ORIGIN, appHeaders, bytes, call, chain, newSessionKey, seedApp, sessionBody, uid } from './helpers.ts';
 import { AUTH, VAULT, appKey, hanaHeaders, loginBody, mismatchedAppKey, withCombinedCall } from './login-helpers.ts';
 import { panic, receiptFailure } from './near-mock.ts';
+import { usageOf } from './usage-ledger.ts';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -16,9 +16,8 @@ const newAud = (): string => `${uid()}.apps.googleusercontent.com`;
 const login = (app: { key: string }, req: unknown, headers: Record<string, string> = hanaHeaders(app), bindings?: Partial<typeof env>): Promise<Response> =>
   call('/v1/login', { headers, body: req, env: bindings });
 
-async function usage(appId: string): Promise<{ sessions: number; derives: number } | null> {
-  return env.DB.prepare('SELECT sessions, derives FROM usage WHERE app_id = ?1 AND day = ?2').bind(appId, usageDay(Date.now())).first();
-}
+/** The app's usage events (the in-memory ledger, usage-ledger.ts) as `outcome[ code] relayed|-`, in order. */
+const usage = (appId: string): string[] => usageOf(appId).map((e) => [e.endpoint, e.outcome, e.code, e.relayed ? 'relayed' : '-'].filter(Boolean).join(' '));
 
 /** An app whose own Google client is `aud`, on a chain that runs the combined call. */
 async function setup(opts: { ckd?: 'ok' | 'fail' | 'pairing' } = {}) {
@@ -67,7 +66,7 @@ describe('POST /v1/login', () => {
       { method: 'get_config', args: {} },
       { method: 'get_issuer', args: { provider: 'google' } },
     ]);
-    expect(await usage(app.id)).toEqual({ sessions: 1, derives: 1 });
+    expect(usage(app.id)).toEqual(['login ok relayed']);
     // The session is committed with its use spent.
     expect(near.sessions.get(JSON.stringify(req.sessionPublicKey))).toMatchObject({ used: 1, max_uses: 1 });
   });
@@ -230,7 +229,7 @@ describe('POST /v1/login', () => {
       expect([res.status, (await body(res)).code]).toEqual([502, 'near_unavailable']);
       expect(near.viewCalls.map((c) => c.method)).toContain(view);
       expect(near.sent).toHaveLength(0);
-      expect(await usage(app.id)).toBeNull();
+      expect(usage(app.id)).toEqual(['login error near_unavailable -']);
     }
   });
 
@@ -252,7 +251,7 @@ describe('POST /v1/login', () => {
       expect([res.status, await body(res)]).toEqual([502, expect.objectContaining({ code: 'bad_contract_result', nearTx: expect.any(String) })]);
     }
     expect(near.sent).toHaveLength(3);
-    expect(await usage(app.id)).toBeNull();
+    expect(usage(app.id)).toEqual(Array(3).fill('login error bad_contract_result relayed'));
   });
 
   it('shared login: a shared client into a scope that allows it', async () => {
@@ -378,16 +377,17 @@ describe('POST /v1/login', () => {
     expect(loginFailure(e, { ok: false, status: 422, code: 'contract_rejected', error: 'x', nearTx: 't' }).body.code).toBe('near_error');
   });
 
-  it('counts a session and a derive on success, only a session on ckd_failed, nothing otherwise', async () => {
+  it('records one event per login: ckd_failed and a contract rejection as rejected relayed calls, a success as ok with a uid', async () => {
     const { app, aud, near } = await setup({ ckd: 'fail' });
     expect((await login(app, await loginBody(app.scope, aud))).status).toBe(422);
-    expect(await usage(app.id)).toEqual({ sessions: 1, derives: 0 });
+    expect(usage(app.id)).toEqual(['login rejected ckd_failed relayed']);
     near.contract.create_session_and_derive = () => panic('nope');
     expect((await login(app, await loginBody(app.scope, aud))).status).toBe(422);
-    expect(await usage(app.id)).toEqual({ sessions: 1, derives: 0 });
+    expect(usage(app.id)).toEqual(['login rejected ckd_failed relayed', 'login rejected contract_rejected relayed']);
     withCombinedCall(near, { ckd: 'ok' });
     expect((await login(app, await loginBody(app.scope, aud))).status).toBe(200);
-    expect(await usage(app.id)).toEqual({ sessions: 2, derives: 1 });
+    expect(usage(app.id)).toEqual(['login rejected ckd_failed relayed', 'login rejected contract_rejected relayed', 'login ok relayed']);
+    expect(usageOf(app.id).map((e) => e.uid !== undefined)).toEqual([false, false, true]);
   });
 
   it('an unknown outcome is 504 timeout with the transaction', async () => {
@@ -402,7 +402,8 @@ describe('POST /v1/login', () => {
     const res = await login(app, req);
     vi.restoreAllMocks();
     expect([res.status, await body(res)]).toEqual([504, expect.objectContaining({ code: 'timeout', nearTx: expect.any(String) })]);
-    expect(await usage(app.id)).toBeNull();
+    // An unknown outcome may have executed: relayed (gas may be burnt), settled later by the admin Worker.
+    expect(usage(app.id)).toEqual(['login error timeout relayed']);
   });
 
   it('relayer errors keep their codes (not executed)', async () => {

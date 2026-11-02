@@ -43,7 +43,7 @@ const asWriter = <T>(fn: () => Promise<T>) => db.asRole('usage_writer', fn);
 const asAdmin = <T>(fn: () => Promise<T>) => db.asRole('usage_admin', fn);
 const count = async (sql: string, params: unknown[] = []) => Number((await db.query<{ n: string }>(sql, params))[0]!.n);
 
-const TABLES = ['usage.events', 'usage.app_users', 'usage.gas_settlements', 'usage.near_usd_rates', 'usage.statements', 'ops.state', 'ops.scope_snapshot', 'ops.scope_watch', 'ops.nonce_checks', 'ops.retention_runs', 'ops.rejection_alerts'];
+const TABLES = ['usage.events', 'usage.app_users', 'usage.gas_settlements', 'usage.near_usd_rates', 'usage.statements', 'usage.identity_tokens', 'ops.state', 'ops.scope_snapshot', 'ops.scope_watch', 'ops.nonce_checks', 'ops.retention_runs', 'ops.rejection_alerts'];
 
 describe('migrations-usage on an empty database', () => {
   it('creates the schemas, tables and the current month with the next 3', async () => {
@@ -79,7 +79,7 @@ describe('migrations-usage on an empty database', () => {
           [role],
         )
       ).map((r) => r.f);
-    expect(await fns('usage_writer')).toEqual(['usage.record_event']);
+    expect(await fns('usage_writer')).toEqual(['usage.record_event', 'usage.record_identity_tokens']);
     expect(await fns('usage_admin')).toEqual(['usage.ensure_partitions']);
     expect(await fns('usage_test_nobody')).toEqual([]);
   });

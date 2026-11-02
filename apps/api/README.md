@@ -8,7 +8,7 @@ Durable Object per relayer key. Spec: `docs/batch-a-spec.md` (API section) as am
 ## Commands
 
 ```sh
-pnpm --filter @hana-id/api gen sandbox-dev [--d1-id <uuid>] [--dev-vars]  # wrangler.jsonc, wrangler.{vault,auth}.jsonc (+ .dev.vars) from envs/<env>.json
+pnpm --filter @hana-id/api gen sandbox-dev [--d1-id <uuid>] [--usage-hyperdrive-id <id>|off] [--dev-vars]  # wrangler.jsonc, wrangler.{vault,auth}.jsonc (+ .dev.vars) from envs/<env>.json
 pnpm --filter @hana-id/api test        # vitest in workerd (@cloudflare/vitest-plugin), NEAR RPC mocked; then scripts/ tests in Node
 pnpm --filter @hana-id/api typecheck
 pnpm --filter @hana-id/api dev         # wrangler dev (local D1: `wrangler d1 migrations apply DB --local` first)
@@ -20,7 +20,8 @@ are generated per env and gitignored (they can hold a real D1 id): run `gen <env
 The tests don't read them: `vitest.config.ts` writes `wrangler.vitest.jsonc` (gitignored) with the same generator from a
 fixed test manifest (`TEST_MANIFEST`), so CI needs no `gen` step and no env's values reach the tests. Without `--d1-id`
 the id already in the file is kept only if that file was generated for the same D1 database (`database_name`), else a
-local-only placeholder is written. `--dev-vars` writes `RELAYER_KEYS` (from `.secrets/<env>/relayer-keys.json`) and
+local-only placeholder is written. `--usage-hyperdrive-id` binds the usage ledger's writer (`USAGE_DB`, batch C4;
+kept on later runs for the same Worker and database, `off` drops it); without it usage capture is off. `--dev-vars` writes `RELAYER_KEYS` (from `.secrets/<env>/relayer-keys.json`) and
 `OWNER_RELAYER_KEYS` (from `.secrets/<env>/owner-relayer-keys.json`) single-quoted (wrangler's dotenv parser takes them
 literally), plus `KEYS_UPDATER_KEY`; files that don't exist are skipped.
 
@@ -130,8 +131,9 @@ Relay errors: `422 contract_rejected` (contract panic text in `error`), `502 nea
 as invalid: it never executed) / `near_error` / `near_unavailable` / `bad_contract_result` (it executed, but the
 result isn't the shape the endpoint returns), `503 relayer_busy` / `relayer_unavailable` / `relayer_unconfigured` (the
 pool's secret is missing or empty: nothing sent), `504 timeout`. Any other broadcast failure (dropped connection, non-JSON 5xx from a proxy) may still execute, so the
-tx hash is polled; transient errors while polling don't end the wait. Usage (`usage.sessions` /
-`usage.derives`, per app per UTC day) counts successful calls only.
+tx hash is polled; transient errors while polling don't end the wait. Usage: one event per request past the gate to
+the Neon ledger, after the response (`src/usage/`, `docs/api.md` "Usage capture"); the D1 `usage` counters are no
+longer written.
 
 CORS: responses echo `Origin` (with `Vary: Origin`) only when it is allowed for the request's app. Preflight carries no
 key, so `OPTIONS` succeeds when any active app allows the origin; the real request is then checked against its own app.
@@ -165,8 +167,8 @@ compressed, non-identity point (`400 invalid_app_key`); with `BLS_PRECHECK = "1"
 `e(pk1, −g2) · e(g1, pk2) = 1` (`400 invalid_app_key`; the same var gates it on `/v1/derive`). Failures map by the
 failing receipt's executor: the signer → `422 contract_rejected` (with `reason: "session_key_in_use"` for that panic;
 the session was not created), `MPC_ACCOUNT` → `422 ckd_failed` with `session: {used: 1}` (the session is committed),
-else `502 near_error`; `504 timeout` and relayer errors keep their codes and `nearTx`. Usage: `sessions` and `derives`
-on success, `sessions` only on `ckd_failed`. `/v1/sessions` applies the claim allow-list too once
+else `502 near_error`; `504 timeout` and relayer errors keep their codes and `nearTx`. Usage: one `login` event
+(relayed when the transaction can have executed; a uid on success). `/v1/sessions` applies the claim allow-list too once
 `REJECT_PII_ON_SESSIONS = "1"`. From `AUTH_ORIGIN` (the export window, a key export) the call is also limited to 3 per
 hour per `(app, sha256(path))`, counted right after the nonce check and before anything is relayed (`429 rate_limited`
 + `retry-after`, `503 rate_limiter_unavailable`; D59).
@@ -273,7 +275,7 @@ raised one never lengthens them). Then `401 invalid_signature`, then one atomic 
 settings in the same statement: `409 bad_counter {expected}`, `410 share_expired`. `revoke-all` revokes the other
 shares and moves its counter in one D1 batch (one transaction), the revoke conditional on the counter move, so a
 failure changes neither and a replay revokes nothing. `503 vault_key_unavailable` when `VAULT_KEK` (or, for an older row,
-`VAULT_KEK_PREVIOUS`) is missing; unlock unwraps K_s before the counter moves. Usage counts `usage.unlocks`. D1 holds
+`VAULT_KEK_PREVIOUS`) is missing; unlock unwraps K_s before the counter moves. Each unlock past the vault gate is one `unlock` usage event. D1 holds
 only `share_enc = iv ‖ AES-GCM(VAULT_KEK, iv, K_s, aad = share_id ‖ app_id ‖ session_pk)` (`src/vault/kek.ts`).
 
 ### `POST /v1/owner-actions` (no app auth; 10 per IP per minute, 20 per minute and 200 per day globally)

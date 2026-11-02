@@ -89,10 +89,21 @@ export interface AccessKeyListEntry {
   };
 }
 
+/**
+ * What one execution step burnt: `gas_burnt` (a JSON number; a u64 that stays far below 2^53 per step, ≤ 300 Tgas)
+ * and `tokens_burnt` (yoctoNEAR, a u128 as a decimal string). Read with care: sums use BigInt (near/tx.ts burntGas).
+ */
+export interface BurntGas {
+  gas_burnt?: number | string;
+  tokens_burnt?: string;
+}
+
 export interface FinalOutcome {
   status: { SuccessValue?: string; Failure?: unknown } | string;
+  /** The transaction's own conversion step (it creates the first receipt). */
+  transaction_outcome?: { outcome: BurntGas };
   /** Every receipt's outcome; `executor_id` is the account that ran it (the contract, or a contract it called). */
-  receipts_outcome?: { outcome: { logs?: string[]; executor_id?: string; status: { Failure?: unknown } | string } }[];
+  receipts_outcome?: { outcome: BurntGas & { logs?: string[]; executor_id?: string; status: { Failure?: unknown } | string } }[];
   transaction?: { hash: string };
   final_execution_status?: string;
 }

@@ -870,7 +870,7 @@ answered question there points here.
 
 ### D87. Email: Resend, from a dedicated sending subdomain
 - Date 2026-10-29 · Status: confirmed by the user, provisional: to re-confirm with the colleague (2026-10-29), not built · Source: `docs/batch-c-spec.md` "Email", open question 2
-- Decision: Resend, sending from a dedicated subdomain of the Hana domain with SPF, DKIM and DMARC, behind a small
+- Decision (user mail superseded by D194: SendGrid): Resend, sending from a dedicated subdomain of the Hana domain with SPF, DKIM and DMARC, behind a small
   sender interface (send one message → accepted or an error) so switching (e.g. to Postmark) is one adapter. The
   admin Worker's fail-closed notices count a send as done only when Resend accepts it. The watchdog sends its alert
   emails with its own Resend API key, not the admin Worker's.
@@ -1645,6 +1645,19 @@ detail open or a safer reading was needed. Each follows the spec's intent; the u
 - Why: focus the initial build on Google and email; Apple adds an issuer, a second client, a POST route, watchdog
   and playbook work for a method no partner has asked for yet. Nothing built so far depends on Apple: the path format
   and the issuer model already take a new provider without moving any address (D124).
+
+### D194. User mail (email login codes) via SendGrid, not Resend
+- Date 2026-11-02 · Status: confirmed by the user as likely, final once the colleague agrees · Source: conversation
+  (before email login batch 4)
+- Decision: the email issuer sends login-code mail through SendGrid (v3 Mail Send API), which Hana already uses for
+  Hana Wallet and Wend. It replaces Resend for user mail (D87's provider). It sits behind the issuer's one sender adapter, so
+  a later switch is a new adapter, not a redesign. Same rules as D87: a dedicated sending subdomain with SPF, DKIM and
+  DMARC (SendGrid domain authentication), a send counts only when SendGrid accepts it (`202`), and its own API key
+  restricted to Mail Send, used only by the email issuer (not shared with Hana Wallet or Wend; a separate SendGrid
+  subuser if the account allows it, so reputation and suppression lists stay apart).
+- Not changed yet: the watchdog's alert email and the admin Worker's notices still name Resend (D87); whether they
+  move to SendGrid too is decided separately.
+- Why: one provider the team already operates and pays for; the adapter keeps the choice reversible.
 
 ### D170. Identity token layout details the spec left open
 - Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`packages/core/src/identity.ts`, frozen in

@@ -2023,7 +2023,7 @@ change no address.
 - Rejected: platform `URL`/`domainToASCII`; quoted local parts; measuring length on the input only; Unicode `trim()`.
 
 ### D157. Disposable-domain list: one pinned upstream commit, parents match, updated by PR
-- Date 2026-11-02 · Status: to confirm (built on `feat/email-login-3`, not merged) · Source: build of
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); merged · Source: build of
   `docs/email-login-spec.md` "Rate limits and abuse" (Q10, D123)
 - Decision: `packages/email/src/disposable-domains.ts` vendors `disposable_email_blocklist.conf` of
   `github.com/disposable-email-domains/disposable-email-domains` (CC0 1.0) byte for byte at commit
@@ -2037,7 +2037,7 @@ change no address.
 - Rejected: exact match only; fetching the list at runtime.
 
 ### D158. The Google-hosted rule compares `hd` exactly
-- Date 2026-11-02 · Status: to confirm (built on `feat/email-login-3`, not merged) · Source: build of
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); merged · Source: build of
   `docs/email-login-spec.md` "The four cases" ("`hd` is present and equal to the address's normalized domain")
 - Decision: `isGoogleHosted({ email, emailVerified, hd })` takes a normalized address (it throws otherwise) and
   needs `emailVerified === true` (anything else is false). Then: `hd` absent (`undefined` or `null`) → true only for
@@ -2133,6 +2133,5 @@ paging app (D85, at setup), and open question 17 (cancel by a compromised OIDC o
 is a proposal there.
 
 Still open from `docs/email-login-spec.md`: nothing; the user-mail provider is SendGrid (D194). The contract readings
-D130 and D131, batch 2's D154 and D155, and the `packages/email` readings D156 and D159 are confirmed (2026-11-02);
-D157 (disposable list) and D158 (`hd` compared exactly) wait for the user's confirmation, as do the watchdog's
-D190–D193 (batch 5).
+D130 and D131, batch 2's D154 and D155, and the `packages/email` readings D156 and D159 are confirmed (2026-11-02).
+D157 and D158 are confirmed too (2026-11-02). The watchdog's D190–D193 (batch 5) wait for the user's confirmation.

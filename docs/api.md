@@ -1,6 +1,8 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's)
 
-Last verified against code: 2026-11-02 (branch `feat/batch-c-5`: "RPC entrypoints" (`ConsoleRpc`, `AdminRpc`: CAS
+Last verified against code: 2026-11-02 (branch `fix/c5-budgets`: "RPC entrypoints" breaker and budget: the
+per-org share of the global reserve, kill switches that changed nothing settled onto their org, the link cancel's
+read budget, a malformed link token `forbidden`, D228, D229); 2026-11-02 (branch `feat/batch-c-5`: "RPC entrypoints" (`ConsoleRpc`, `AdminRpc`: CAS
 writes, the breaker, the hot-DB budget, keys, notices, cancel, expedite, staff proposals), drift detection in the
 cron, the `console-rpc` limiter object, the legacy `apps.publishable_key` kept on a valid key, the new log events,
 and the review fixes: per-org budget with a kill-switch reserve, the link cancel's own limits, breaker refunds,
@@ -760,16 +762,21 @@ accept a revoked, rotating or deleted app's key.
 - **Budget.** Every member call first takes its cost (`CONSOLE_COSTS`: its plan read, batch and one diagnostic read,
   1–6 statements). It comes from its org's bucket (10/s, burst 40) and from the global one (the spec's 30/s, burst
   60). The kill switches (`removeOrigins`, `turnOff`, `revokeKey`, `setSuspended(true)`) may spend the last 10 of
-  the org's bucket and the last 20 of the global one; every other call must leave them. So neither one org nor a
-  flood of reads or settings writes can starve another org's kill switches.
+  the org's bucket and the last 20 of the global one; every other call must leave them. One org takes at most 12
+  tokens of the global reserve in any minute. A kill switch that changed nothing (the outcomes below, or a no-op)
+  gives back what it took of the global reserve, which is charged to its org's own bucket instead (that bucket may go
+  below zero, and the org's ordinary calls then wait). So neither one org nor a flood of reads, settings writes or
+  empty kill switches can starve another org's kill switches.
 - **Breaker.** `setSuspended(true)`, `revokeKey`, `rotateKey`, `removeOrigins` and a `googleWebClientId` change also
   take a slot in their org's rolling hour (5) and the global one (20). A call that changed nothing gets its slot
   back: `not_found`, `conflict`, `version_conflict`, `already_applied`, `bad_request`, or a no-op.
 - **Refusals.** Over any limit, the call is `rate_limited` and writes nothing. The first breaker refusal of a limit
   in a clock hour writes a `breaker` security event; the object remembers it, so later refusals write nothing.
 - **Emailed-link cancels** never touch the members' budget. Each takes a slot from a per-client-IP limiter (object
-  `cancel-link:<v4 address | v6 /64>`, 5 a minute and 50 a day), then a token from a global link bucket (1/s, burst
-  20). Both are taken before the token is read.
+  `cancel-link:<v4 address | v6 /64>`, 5 a minute and 50 a day), then one token of the link-read budget (one D1 read
+  each: 50/s, burst 100). Both are taken before the token is read, and nothing limits the cancel after that: one
+  whose token verifies on a pending change always runs. A token that isn't canonical b64url is `forbidden`, like a
+  wrong one.
 - **Statement cap.** A call is held to two reads and one batch of at most eight statements (`changes/db.ts`; going
   over is a bug, answered `internal`).
 
@@ -816,7 +823,7 @@ suffixed: per-IP limiters `ip:v4:<addr>` / `ip:v6:<prefix>::/64` and `cancel-lin
 | Class | State (KV keys) | Notes |
 |---|---|---|
 | `RelayerKey` | `publicKey`, `nonce` (reservation R), `block` `{hash, at}` | One per pool key; refuses a second pool or index |
-| `RateLimiter` | `<window>@<windowStart>` → count; `mark:<sha256>` → until ms; on `console-rpc` (C5) `console:bucket`, `console:bucket:org:<orgId>`, `console:link` → `{tokens, at}`, `console:breaker:org:<orgId>` and `console:breaker:global` → call times of the last hour, `console:noticed:*` → the hour of the last breaker event | Windows pruned when they end |
+| `RateLimiter` | `<window>@<windowStart>` → count; `mark:<sha256>` → until ms; on `console-rpc` (C5) `console:bucket`, `console:bucket:org:<orgId>`, `console:link-read` → `{tokens, at}`, `console:reserve:org:<orgId>` → `{at, n}` reserve takes of the last minute, `console:breaker:org:<orgId>` and `console:breaker:global` → call times of the last hour, `console:noticed:*` → the hour of the last breaker event | Windows pruned when they end |
 | `LoginRelay` | `slot`: `full` / `consumed` / `expired` | Alarm at write + 120 s, then + 120 s |
 
 **Nonce reservation (`relayer-key.ts`).** A promise-chain mutex covers only *nonce → sign → reserve → start
@@ -1052,7 +1059,7 @@ credential, a request or a signature), `identity_ceiling` (error), `identity_vol
 `identity_bad_session_path` (error), `identity_count_failed`, `identity_maintenance` (`pruned`), batch C's `rpc`
 (`method`, `requestId`, `orgId`, `actorKind`, `outcome`, `code`: one per RPC call, never its input or the actor's id
 or email), `drift_detection` (`added`; error `code: internal`) and `console_rpc` (`code: breaker_event_failed`,
-`breaker_refund_failed`), and from the page
+`settle_failed`), and from the page
 Workers `vault_host` and `auth_page` (`code`).
 
 ## Email issuer (`apps/email-issuer`, its own Worker) · E

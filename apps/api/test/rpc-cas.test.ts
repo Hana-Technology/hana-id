@@ -279,7 +279,7 @@ describe('the hot-DB budget', () => {
     expect(await rpc.setSuspended({ ...member(), orgId: victim.org, appId: victim.id, suspended: true })).toMatchObject({ ok: true, suspendedBy: 4 });
   });
 
-  it('an emailed-link flood has its own per-IP and global limits and never touches the members’ budget or kill switches', async () => {
+  it('an emailed-link flood has its own per-IP limit and link-read budget and never touches the members’ budget or kill switches', async () => {
     ownClock({ freeze: true });
     const app = await orgApp({ origins: [ORIGIN, SECOND] });
     const rpc = consoleRpc();
@@ -290,14 +290,84 @@ describe('the hot-DB budget', () => {
     // IPv6 by /64: another address in the same /64 is the same subject.
     for (let k = 0; k < 5; k++) await flood(`2001:db8:1:2::${k + 1}`);
     expect(await flood('2001:db8:1:2::ff')).toMatchObject({ ok: false, code: 'rate_limited' });
-    // Many addresses: the global link bucket (burst 20, 10 already taken) refuses the rest.
+    // Many addresses at once: the link-read budget (burst 100, 10 already taken) protects D1, and refuses the rest.
     const answers = [];
-    for (let k = 0; k < 15; k++) answers.push(await flood(`198.51.100.${k + 1}`));
-    expect(answers.filter((r) => !r.ok && r.code === 'rate_limited').length).toBeGreaterThan(0);
+    for (let k = 0; k < 20; k++) for (let j = 0; j < 5; j++) answers.push(await flood(`198.51.${100 + k}.${j + 1}`));
+    expect(answers.filter((r) => !r.ok && r.code === 'not_found')).toHaveLength(90);
+    expect(answers.filter((r) => !r.ok && r.code === 'rate_limited')).toHaveLength(10);
     // The members' budget is whole: a burst of reads and every kill switch still pass.
     for (let k = 0; k < 20; k++) expect(await rpc.listApps({ ...member(), orgId: app.org }), `read ${k}`).toMatchObject({ ok: true });
     expect(await rpc.removeOrigins({ ...member(), orgId: app.org, appId: app.id, remove: [SECOND], expectedVersion: 0 })).toMatchObject({ ok: true });
     expect(await rpc.setSuspended({ ...member(), orgId: app.org, appId: app.id, suspended: true })).toMatchObject({ ok: true });
+  });
+
+  it('a many-address flood of bogus tokens can’t block a cancel whose token verifies', async () => {
+    const clock = ownClock({ freeze: true });
+    const app = await orgApp();
+    const c = await adminRpc().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: ['https://victim.example.com'], expectedVersion: 0 });
+    if (!c.ok) throw new Error(c.code);
+    const changeId = c.changes[0]!.id;
+    const { token, hash } = linkToken();
+    expect(await adminRpc().ackNotice({ ...system(), changeId, cancelTokenHash: await hash })).toMatchObject({ ok: true });
+    const rpc = consoleRpc();
+    // 30 addresses, each within its own limit (5), at 100 attempts a second (twice the link-read rate) against the change itself with a wrong
+    // token: far past the old global link bucket (burst 20), all answered at the token check.
+    let answered = 0;
+    for (let k = 0; k < 30; k++) {
+      for (let j = 0; j < 5; j++) {
+        clock.advance(10);
+        const r = await rpc.cancelChangeByLink({ ...link(changeId), clientIp: `203.0.${k}.${j + 1}`, changeId, token: 'B'.repeat(43) });
+        expect(r).toMatchObject({ ok: false, code: 'forbidden' });
+        answered++;
+      }
+    }
+    expect(answered).toBe(150);
+    // The token holder, from an address of their own, still cancels.
+    expect(await rpc.cancelChangeByLink({ ...link(changeId), clientIp: '192.0.2.77', changeId, token })).toMatchObject({ ok: true, change: { status: 'cancelled' } });
+  });
+
+  it('one org’s flood of no-op kill switches can’t drain the global reserve: another org’s real suspend works', async () => {
+    ownClock({ freeze: true });
+    const rpc = consoleRpc();
+    // Ordinary calls of two orgs take the global bucket down to its reserve (60 − 40 = 20).
+    for (const n of [30, 10]) {
+      const o = await orgApp();
+      for (let k = 0; k < n; k++) expect(await rpc.listApps({ ...member(), orgId: o.org })).toMatchObject({ ok: true });
+    }
+    expect(await rpc.listApps({ ...member(), orgId: (await orgApp()).org })).toMatchObject({ ok: false, code: 'rate_limited' });
+    // Org A suspends its app once (a real kill switch, 5 reserve tokens), then floods no-ops on it: already suspended,
+    // nothing to turn off, an unknown app. Each gives back what it took of the reserve, charged to org A instead.
+    const a = await orgApp();
+    expect(await rpc.setSuspended({ ...member(), orgId: a.org, appId: a.id, suspended: true })).toMatchObject({ ok: true, suspendedBy: 4 });
+    const flood = [
+      () => rpc.setSuspended({ ...member(), orgId: a.org, appId: a.id, suspended: true }),
+      () => rpc.turnOff({ ...member(), orgId: a.org, appId: a.id, what: 'raw_sign', expectedVersion: 0 }),
+      () => rpc.revokeKey({ ...member(), orgId: a.org, appId: a.id, keyId: 'key_none' }),
+      () => rpc.removeOrigins({ ...member(), orgId: a.org, appId: 'app_none', remove: [SECOND], expectedVersion: 0 }),
+    ];
+    for (let k = 0; k < 40; k++) await flood[k % flood.length]!();
+    // Org B's real suspend still finds the reserve.
+    const b = await orgApp();
+    expect(await rpc.setSuspended({ ...member(), orgId: b.org, appId: b.id, suspended: true })).toMatchObject({ ok: true, suspendedBy: 4 });
+  });
+
+  it('one org takes at most its share of the global reserve, even with real kill switches', async () => {
+    ownClock({ freeze: true });
+    const rpc = consoleRpc();
+    for (const n of [30, 10]) {
+      const o = await orgApp();
+      for (let k = 0; k < n; k++) await rpc.listApps({ ...member(), orgId: o.org });
+    }
+    const org = newOrg();
+    const apps = await Promise.all([1, 2, 3].map(() => orgApp({ org })));
+    expect(await rpc.setSuspended({ ...member(), orgId: org, appId: apps[0]!.id, suspended: true })).toMatchObject({ ok: true });
+    expect(await rpc.setSuspended({ ...member(), orgId: org, appId: apps[1]!.id, suspended: true })).toMatchObject({ ok: true });
+    // A third would take 15 reserve tokens in the minute: over the 12-token share.
+    expect(await rpc.setSuspended({ ...member(), orgId: org, appId: apps[2]!.id, suspended: true })).toMatchObject({ ok: false, code: 'rate_limited' });
+    expect((await appRow(apps[2]!.id)).suspended_by).toBe(0);
+    // The rest of the reserve is still there for another org.
+    const other = await orgApp();
+    expect(await rpc.setSuspended({ ...member(), orgId: other.org, appId: other.id, suspended: true })).toMatchObject({ ok: true });
   });
 
   it('the rpc log carries the method, the org and the actor kind, never the input', async () => {

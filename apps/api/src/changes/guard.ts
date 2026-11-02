@@ -1,11 +1,14 @@
 // ConsoleRpc's admission (docs/batch-c-spec.md §RPC "Destructive-call breaker", "Hot-DB budget"; D228):
 // - the hot-DB budget: per-org token buckets under a global one (the spec's 30 statements/s, burst 60), each with a
 //   reserve that only the kill switches (removeOrigins, turnOff, revokeKey, setSuspended(true)) may spend, so neither
-//   one org nor a flood of reads or settings writes can starve another org's kill switches;
+//   one org nor a flood of reads or settings writes can starve another org's kill switches. One org takes at most 12
+//   tokens of the global reserve a minute, and a kill switch that changed nothing gives back what it took of the
+//   reserve, charged to its org's own bucket instead, so no org can drain the reserve with no-op kill switches;
 // - the destructive-call breaker (setSuspended(true), revokeKey, rotateKey, removeOrigins, a web-client change): 5 per
 //   org and 20 across orgs per rolling hour, counted per call (D93 Q21); a call that changed nothing gets its slot back;
-// - emailed-link cancels (no session, no org): their own per-IP limiter (IPv6 by /64) and a modest global bucket,
-//   outside the members' budget, taken before the token is read.
+// - emailed-link cancels (no session, no org), outside the members' budget: a per-IP limiter (IPv6 by /64), then one
+//   token of a global link-read budget sized for D1 (50 reads/s, burst 100), both before the token is read. Nothing
+//   limits a cancel after that: one whose token verifies on a pending change always runs (D229).
 // The member and link buckets and the breaker live on one RateLimiter object (`console-rpc`), so a member call is
 // admitted or refused in one step. The first breaker refusal of a limit in a clock hour writes a `breaker` security
 // event (the object remembers it, so later refusals cost no write). AdminRpc is neither counted nor charged.
@@ -21,10 +24,10 @@ export const HOUR_MS = 60 * 60 * 1000;
 export const CONSOLE_LIMITS = {
   /** Each org's share: 10 statements/s, burst 40, the last 10 for its kill switches. */
   perOrg: { ratePerS: 10, burst: 40, reserve: 10 },
-  /** Every org together (the spec's budget): 30 statements/s, burst 60, the last 20 for kill switches. */
-  global: { ratePerS: 30, burst: 60, reserve: 20 },
-  /** Emailed-link cancels together: 1 a second, burst 20. */
-  link: { ratePerS: 1, burst: 20 },
+  /** Every org together (the spec's budget): 30 statements/s, burst 60, the last 20 for kill switches, 12 a minute per org. */
+  global: { ratePerS: 30, burst: 60, reserve: 20, reserveShare: { windowMs: 60_000, max: 12 } },
+  /** Emailed-link cancels' token reads together (one D1 read each): 50 a second, burst 100. */
+  linkRead: { ratePerS: 50, burst: 100 },
   breaker: { windowMs: HOUR_MS, perOrg: 5, global: 20 },
 } as const satisfies ConsoleAdmission['limits'];
 /** Emailed-link cancels per client IP (IPv6 by /64). */
@@ -32,7 +35,7 @@ export const LINK_PER_IP: Limit[] = [
   { name: 'minute', windowMs: 60_000, max: 5 },
   { name: 'day', windowMs: 24 * HOUR_MS, max: 50 },
 ];
-/** The one object every member call and the global link bucket are admitted by. */
+/** The one object every member call and the link-read budget are admitted by. */
 export const CONSOLE_LIMITER = 'console-rpc';
 
 /** A deterministic security event id (`se_` + base58 of 12 bytes of a hash), so a repeated finding is written once. */
@@ -49,25 +52,34 @@ export interface MemberAdmission {
 
 const limiter = (env: Env) => placedStub(env, env.RATE_LIMITER, CONSOLE_LIMITER);
 
-/** Admits one member call; throws `rate_limited` when a bucket or the breaker refuses. */
-export async function admitMemberCall(env: Env, a: MemberAdmission, now = Date.now()): Promise<void> {
+/**
+ * Admits one member call; throws `rate_limited` when a bucket or the breaker refuses. Answers how many global reserve
+ * tokens it took (settled back by settleMemberCall when the call changed nothing).
+ */
+export async function admitMemberCall(env: Env, a: MemberAdmission, now = Date.now()): Promise<{ reserveUsed: number }> {
   const r = await limiter(env).consoleAdmit({ ...a, limits: CONSOLE_LIMITS }, now);
-  if (r.ok) return;
+  if (r.ok) return { reserveUsed: r.reserveUsed };
   if (r.notify) await breakerEvent(env.DB, r.limit === 'breaker_org' ? a.org : null, now);
   const breaker = r.limit === 'breaker_org' || r.limit === 'breaker_global';
   throw new RpcRefusal('rate_limited', breaker ? 'Too many destructive changes this hour: ask Hana security' : 'Too many console calls: try again shortly');
 }
 
-/** Gives back the breaker slot of a member call admitted at `at` that changed nothing. */
-export async function refundBreaker(env: Env, org: string, at: number): Promise<void> {
+/**
+ * Settles a member call admitted at `at` that changed nothing: its breaker slot back, and the global reserve tokens it
+ * took moved onto its org's own bucket.
+ */
+export async function settleMemberCall(env: Env, s: { org: string; at: number; breaker: boolean; reserveUsed: number }): Promise<void> {
   try {
-    await limiter(env).consoleBreakerRefund(org, at);
+    await limiter(env).consoleSettle({ ...s, limits: CONSOLE_LIMITS });
   } catch {
-    log({ event: 'console_rpc', outcome: 'error', code: 'breaker_refund_failed' }, 'error');
+    log({ event: 'console_rpc', outcome: 'error', code: 'settle_failed' }, 'error');
   }
 }
 
-/** Admits one emailed-link cancel: the caller's IP first, then the global link bucket. Never the members' budget. */
+/**
+ * Admits one emailed-link cancel to its token read: the caller's IP first, then one token of the link-read budget.
+ * Never the members' budget; nothing is checked after the read (a valid token on a pending change always cancels).
+ */
 export async function admitLinkCall(env: Env, clientIp: string, now = Date.now()): Promise<void> {
   const ip = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`cancel-link:${ipSubject(clientIp)}`));
   const perIp = await ip.hit(LINK_PER_IP, now);

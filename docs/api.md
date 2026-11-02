@@ -987,6 +987,14 @@ tag, unexpired, non-empty `sub`) whose email is on `emailIssuer.access.staffEmai
 env configures no Access. 20 per hour per staff member. Audited in `email_admin_audit` (staff email, scope, nonce,
 jti). No CORS.
 
+### `POST /v1/email/admin/unlock` · E
+
+`{email}` → `200 {cleared}`: clears the mailbox's guess counters for the UTC day, its trip marker and ceiling and every
+requester's lock on it (not the code-mail counters), for a user locked out by a guessing attack (D198). The same
+Cloudflare Access check and staff allowlist as client proofs (`403 forbidden`, `404` without Access), 20 staff actions
+an hour; audited in `email_admin_audit` (`action: "unlock"`, staff email, `subject` = 12 characters of the mailbox key;
+never the address); log `mailbox_unlocked` (warn). The only staff body with an address.
+
 ### `GET /v1/email/jwks.json`, `GET /v1/email/.well-known/openid-configuration` · E
 
 The JWKS: every key of `emailIssuer.publicKeys` (`kty, n, e, kid, use: "sig", alg: "RS256"`; kid = RFC 7638
@@ -1032,8 +1040,7 @@ subject. Every mailbox decision is one atomic call (D198).
 
 Issuer D1 (`apps/email-issuer/migrations/0001_init.sql`): `email_issuance(jti, app_id, purpose, kid, iat)` (24 months,
 D90), `email_hints(scope_id, email_sub, google_sub, updated_at_ms)` (kept while the scope exists, D122),
-`email_suppressions(email_key = HMAC(K_rl, exact normalized address), reason bounce|complaint, at_ms)`, `email_admin_audit(at_ms, staff, scope_id,
-action_nonce, jti)`. No address is stored anywhere. `APP_DB` is the API's D1, read only (`apps`, `plans`).
+`email_suppressions(email_key = HMAC(K_rl, exact normalized address), reason bounce|complaint, at_ms)`, `email_admin_audit(at_ms, staff, action client_proof|unlock, scope_id?, action_nonce?, jti?, subject?)`. No address is stored anywhere. `APP_DB` is the API's D1, read only (`apps`, `plans`).
 
 Vars (from `emailIssuer`, `scripts/gen-wrangler.ts`): `ENV_NAME`, `NEAR_RPC`, `NEAR_RPC_FALLBACK`, `SIGNER_ACCOUNT`,
 `EMAIL_ISS`, `EMAIL_PUBLIC_KEYS`, `EMAIL_ACTIVE_KID`, `EMAIL_SIGNER_KIND`, `EMAIL_SENDER`, `MAIL_FROM`, `AUTH_ORIGIN`,
@@ -1045,9 +1052,10 @@ Vars (from `emailIssuer`, `scripts/gen-wrangler.ts`): `ENV_NAME`, `NEAR_RPC`, `N
 
 `{"level", "ts", "service": "email-issuer", "event", …}` with typed fields only (`src/log.ts`): `requestId`,
 `endpoint`, `outcome` (`ok`, `rejected`, `error`, `suppressed`), `status`, `code`, `appId`, `scopeId`, `purpose`,
-`jti`, `kid`, `decision`, `limit` (its name, never its key), `providerStatus`, `latencyMs`, `count`. Events: `request`,
+`jti`, `kid`, `decision`, `limit` (its name, never its key), `subject` (12 characters of a mailbox key, an HMAC),
+`providerStatus`, `latencyMs`, `count`. Events: `request`,
 `token_minted` (jti, purpose, app, scope, kid), `code_mail` (`ok`; `suppressed`; `error` with the provider's reason
 and status), `link_notice`, `limit` (`mailbox:locked` / `mailbox:live` / `mailbox:codes`, or the window's name),
-`send_budget_exhausted` (error), `mailbox_guess_limit` (error: `code` `backstop` or `ceiling`, `subject` = 12
+`send_budget_exhausted` (error), `mailbox_unlocked` (warn, staff), `mailbox_guess_limit` (error: `code` `backstop` or `ceiling`, `subject` = 12
 characters of the mailbox key, an HMAC; staff see targeted mailboxes), `google_revoke` (warn). Never an address, a code, a `sub`, a token, an access token,
 a key or a body: `test/privacy.test.ts` greps every line of every flow for them.

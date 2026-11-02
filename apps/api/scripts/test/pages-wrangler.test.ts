@@ -8,7 +8,9 @@ import { COMPATIBILITY_DATE } from '../gen-wrangler.ts';
 import { PAGES_CONFIG_FILES, pagesAssetsDir, pagesPlacement, pagesWranglerConfig, workersDevHost, writePagesWranglerConfigs } from '../pages-wrangler.ts';
 
 const apiDir = resolve(fileURLToPath(import.meta.url), '..', '..', '..');
-const manifest = loadEnv('sandbox-dev');
+// sandbox-dev as deployed carries identityToken (its iss pins apiUrl), which these tests rewrite.
+const { identityToken: _deployedIdentity, ...withoutIdentity } = loadEnv('sandbox-dev');
+const manifest: Manifest = withoutIdentity;
 
 const dirs: string[] = [];
 const tmp = (): string => {

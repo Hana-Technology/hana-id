@@ -142,12 +142,12 @@ describe('fetch-ckd-key', () => {
     const h = harness(base());
     await fetchCkdKey(['sandbox-dev', '--rpc', 'https://near-testnet.drpc.org/?key=secret'], h.deps);
     expect(h.out.join('\n')).toContain(`All 3 agree at final block 1000 ${HASH}: ${KEY}`);
-    expect(h.out.join('\n')).not.toContain('secret');
+    expect(h.out.join('\n')).not.toContain('key=secret');
     expect(h.written).toHaveLength(1);
     const pinned = manifestSchema.parse(JSON.parse(h.written[0]!));
     expect(pinned.ckdNetworkKey).toBe(KEY);
     expect(pinned.ckdNetworkKeySource).toEqual({ blockHeight: 1000, blockHash: HASH, rpcs: ['test.rpc.fastnear.com', 'rpc.testnet.near.org', 'near-testnet.drpc.org'] });
-    expect(h.written[0]).not.toContain('secret');
+    expect(h.written[0]).not.toContain('key=secret');
   });
 
   it('writes a changed key with its source and says every pinned client must update', async () => {

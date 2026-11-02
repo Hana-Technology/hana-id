@@ -25,7 +25,7 @@ chain and holds no chain key.
 
 | File | Role |
 |---|---|
-| `src/handlers.ts` | the routes: `start`, `resend`, `verify`, `google-match`, `admin/client-proof`, JWKS, discovery, the SendGrid webhook |
+| `src/handlers.ts` | the routes: `start`, `resend`, `verify`, `google-match`, `admin/client-proof`, `admin/unlock`, JWKS, discovery, the SendGrid webhook |
 | `src/commitment.ts`, `src/layouts.ts` | purposes, commitments and every nonce (checked against the contract's `email_fixture.json`) |
 | `src/decide.ts` | the four cases of automatic linking, judged as the contract's `auto_link` will |
 | `src/challenge.ts` | `Challenge` Durable Object: one challenge or link ticket, atomic attempts, single use |

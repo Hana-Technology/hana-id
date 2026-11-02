@@ -2193,10 +2193,22 @@ is computed by `@hana-id/email` alone, from the normalized address including any
   and "10 wrong per hour → 1 h lock" for the whole address; a limited address answers 429 rather than a silent 202.
 - Why: the spec's per-address counters let anyone who knows an address use up its owner's codes, or lock it with ten
   wrong guesses; and a lock checked in one object and counted in another could be outrun by parallel guesses.
-- Residual (accepted, bounded): a requester with many IPs can fill a mailbox's daily allowance and reserve (35 mails),
-  or make 20 failed checks and use up the owner slot, leaving the owner without a code or a check for the rest of that
-  UTC day. Logged as above. A lower guess ceiling was preferred to an unbounded owner exemption (an earlier draft of
-  this fix exempted any requester with no failures, which gave an attacker one more guess per fresh IP).
+- **The trade-off, to confirm: brute-force resistance wins over availability.** A mailbox under a sustained guessing
+  attack can be locked for the rest of the UTC day: an attacker who knows the address can fill its daily code
+  allowance and reserve (35 mails) or make the 20 failed checks and use up the 5-check owner slot (a few requests from
+  a handful of IPs), after which nobody, owner included, can get or check a code until midnight UTC. This is the usual
+  OTP trade-off; the alternative (keeping the owner able to check) reopened the brute-force bound, since any
+  exemption an attacker can also qualify for multiplies by the number of IPs. Numbers: at most 25 failed checks per
+  mailbox per UTC day (≈ 0.91% a year), at most 35 challenges, a lockout of at most ~24 h per day of attack.
+  Mitigations: the tripping check logs `mailbox_guess_limit` (error, mailbox key prefix) for staff, and staff can lift
+  the lock with **`POST /v1/email/admin/unlock {email}`** (Cloudflare Access + the staff allowlist, audited in
+  `email_admin_audit` with the mailbox key prefix, never the address; it clears that day's guess counters, the trip
+  marker, the ceiling and the requesters' locks, not the code-mail counters). An unlock gives an attacker a fresh day's
+  25 checks, so staff should unlock only after the user has contacted support. The admin portal's alert and button are
+  batch 9's. It is the one staff body that carries an address (the spec's "only `start`" is about the browser routes).
+- Accounting details: a check reserved and then found right is refunded, and so is the trip marker when that brings
+  the backstop below 20; a challenge's place in the day's cap is refunded when the global budget refuses its start,
+  when it can't be created, and when its first code isn't delivered (the challenge itself stays, for a resend).
 - To check with the user: whether "20 × per_minute" was meant (1,200 starts a minute for a free-plan app; the global
   budget is then the binding cost bound).
 

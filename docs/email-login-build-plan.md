@@ -1,6 +1,6 @@
 # Email login build plan (batches)
 
-**Status: batches 1–3 done (batches 1 and 3 merged into `develop`; batch 2 on `feat/email-login-2`, in review); none deployed; batches 4–10 not done.** Splits `docs/email-login-spec.md` "Build order"
+**Status: batches 1–3 done (merged into `develop`); batch 4 (`apps/email-issuer`) done on `feat/email-login-4`, in review, not merged; batch 5 (watchdog) on `feat/email-login-5`; none deployed; batches 6–10 not done.** Splits `docs/email-login-spec.md` "Build order"
 (approved 2026-10-30; D4, D119, D121–D123, D25 and D96 amended) into reviewable batches. The spec stays the source of
 truth for *what* to build; this file says *in which order*, *what each batch ships* and *what users see after it*.
 Like a spec it is history once the work merges: the current state lives in the reference docs (`docs/README.md`).
@@ -370,3 +370,63 @@ Branch `feat/email-login-3`, not merged, nothing deployed; nothing imports the p
   packages to `pnpm-lock.yaml`; metadata only, no version changed.
 - **Docs.** `architecture.md` (Status, Components), `README.md` (index), `decisions.md` (D156–D159),
   `packages/email/README.md`.
+
+## Batch 4 result
+
+Branch `feat/email-login-4`, not merged, nothing deployed, no secret uploaded, no testnet transaction.
+
+- **Worker.** `apps/email-issuer`: `POST /v1/email/start`, `resend`, `verify`, `google-match`, `admin/client-proof`
+  and `admin/unlock` (Cloudflare Access + the issuer's own staff allowlist, audited), `webhooks/sendgrid` (signed events → suppressions);
+  `GET /v1/email/jwks.json` and `/.well-known/openid-configuration`. Durable Objects `Challenge` (`EMAIL_CHALLENGE`),
+  `RateLimiter`, and `Outbox` (`local*` only). Its own D1 (`email_issuance`, `email_hints`, `email_suppressions`,
+  `email_admin_audit`); the API's D1 read only for `apps` and `plans` (`login_methods` is batch 6's column: until then
+  email is off for every app). Tokens: JWS General JSON, claims exactly `iss aud sub iat exp nonce jti`, every nonce
+  computed by the issuer (matching the contract's worked examples, `email_fixture.json` and `test_fixture.json`), each
+  signature self-checked against the published key, an `email_issuance` row before signing. `sub` only through
+  `@hana-id/email` (`+tag` kept, D159 as amended); mail to the normalized address.
+- **Limits (D198)**, all exact and each decision one atomic Durable Object call: code mails 3 per 15 min and 10 per day
+  per (mailbox, requester), 10 per 15 min and 30 per day per mailbox plus a reserve of 5 a day for requesters new to it;
+  5 live and 35 created challenges per mailbox per day; 5 attempts per challenge; 10 wrong per hour per (mailbox,
+  requester) → 1 h lock; a hard ceiling of 25 failed checks per mailbox per UTC day (backstop 20 + owner slot 5;
+  ≈ 0.91% a year); per IP `start` 10 per 10 min and 50 per day, `verify` 30, `resend` 10, `google-match` 30 per 10 min;
+  per app 20 × plan `per_minute` per minute and plan `per_day` per day; staff 20 client proofs an hour; a global daily
+  send budget (`dailySendBudget`, default 1000). Mailbox = the address without its `+tag`; suppressions per exact
+  address. Every refusal is the same generic 429; suppressed addresses take the same path silently. Accepted
+  trade-off (D198, to confirm): a mailbox under a sustained guessing attack is locked until midnight UTC; the trip is
+  logged (`mailbox_guess_limit`) and staff can lift it with `admin/unlock`.
+- **Sender.** SendGrid v3 Mail Send (D194): a send counts only on `202`; tracking off; response bodies read ≤ 4 KB and
+  never logged; `SENDGRID_API_KEY` Mail Send only, the issuer's alone. The `outbox` stub (a test-only Durable Object)
+  only in `local*` envs (schema and `gen` refuse it elsewhere). The interface (`src/sender.ts`) is one method.
+- **Signers.** Worker-secret RSA (testnet); the KMS adapter (`src/kms.ts`, aws4fetch 1.0.20, `DIGEST`,
+  `RSASSA_PKCS1_V1_5_SHA_256`, no retries, error mapping) tested against a fake KMS (SigV4 checked against an
+  independent implementation, byte-for-byte parity with the Worker-secret signer) and wired to no env (`gen` refuses
+  `aws-kms`). Two-signature tokens tested.
+- **Manifest and tooling.** `emailIssuer` in `packages/env` (D196; `worker-secret` testnet only, `outbox` `local*`
+  only, kid = RFC 7638 thumbprint); `apps/email-issuer/scripts/gen-wrangler.ts` (and `--dev-vars`);
+  `scripts/email-issuer.ts init | put | show` (init writes `.secrets/<env>/email-*` 0600 and the manifest block and
+  uploads nothing; `put` is the user's upload; the standby never leaves `.secrets`). `packages/jwks` gains
+  `rsaThumbprint`, byte for byte batch 5's hunk, so the two branches merge cleanly. `.gitleaks.toml` covers the new
+  secret names, files and RSA private JWKs (self-test cases added).
+- **Security review.** The first build had a check-then-count race in `verify` (a lock checked in one object, counted
+  after the comparison), per-address limits that let anyone lock an address's owner out, suppressions keyed too
+  widely, an owner exemption that gave one more guess per fresh IP, a stale trip marker after a refunded check, and a
+  challenge cap never refunded on failed paths. All fixed before this result, with tests (parallel guesses, many
+  requesters, the ceiling, the owner slot, suppressed-address parity, the refunds, the unlock); D197–D199.
+- **Tests.** apps/email-issuer: 85 Worker tests (miniflare: layouts against the contract fixtures, codes,
+  limits and the ceiling, google-match's four cases, signers and KMS, adapters, the log-capture test) and 5 `gen` tests;
+  packages/env +11 (`emailIssuer`), packages/jwks +3 (`rsaThumbprint`), scripts +9 (`email-issuer`) and 4 secret-scan
+  self-test cases; `pnpm -r test` and `pnpm -r typecheck` green. Existing tests broken on `develop` by the identity-token deploy
+  (`envs/sandbox-dev.json` gained `identityToken`, whose `iss` pins `apiUrl` and whose signer says `worker-secret`)
+  are fixed test-only: `packages/env` `endpoints`, `origins`, `dashboard`; `apps/api` `scripts/test/gen-wrangler` and
+  `pages-wrangler`; `packages/web` `gen-envs` (drop that block where they rewrite `apiUrl`); `scripts` `ckd` (the
+  needle `key=secret` instead of the bare word).
+- **Decisions.** D195 (case A's code challenge prepared by google-match), D196 (manifest, standby off the Worker),
+  D197 (10-minute challenges), D198 (the limits and the guess ceiling, with the worst-case formula), D199 (HTTP, data
+  and chain readings), all to confirm.
+- **Not done here.** The CloudTrail reconciliation job (batch 10, with KMS); routing `{apiUrl}/v1/email/*` to the
+  Worker (batch 6: on `workers.dev` a service binding from the API, which would put addresses and codes through the
+  API Worker's memory, D199); the alert and admin view for `send_budget_exhausted` and `mailbox_guess_limit` (batch 9);
+  a `switch`/`retire` command for email keys (batch 10).
+- **Lockfile.** Adding `aws4fetch` also changed peer-resolution strings of already-locked `@walletconnect` packages
+  (`apps/e2e`), where it is an optional peer; no version changed.
+- **User-visible.** Nothing.

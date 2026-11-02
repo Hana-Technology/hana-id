@@ -57,7 +57,9 @@ afterEach(() => {
 const relayerKeys = [KeyPair.fromRandom('ed25519').toString(), KeyPair.fromRandom('ed25519').toString()];
 const ownerRelayerKeys = [KeyPair.fromRandom('ed25519').toString()];
 const updaterKey = KeyPair.fromRandom('ed25519').toString();
-const manifest = loadEnv('sandbox-dev');
+// sandbox-dev as deployed carries identityToken (its iss pins apiUrl); the tests add their own where they need one.
+const { identityToken: _deployedIdentity, ...withoutIdentity } = loadEnv('sandbox-dev');
+const manifest: Manifest = withoutIdentity;
 
 function seedSecrets(root: string, env = manifest.name): void {
   const dir = join(root, '.secrets', env);

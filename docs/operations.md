@@ -1229,6 +1229,7 @@ Local: `gen <env> --dev-vars` writes `apps/email-issuer/.dev.vars` (0600) from t
 | `code_mail` errors with `misconfigured` / provider 401/403 | the SendGrid key is wrong, revoked or lacks Mail Send | new key into the file, `put --yes` |
 | `code_mail` errors with `unavailable` | SendGrid 429 or 5xx (the counts were taken back) | SendGrid status; users can resend after 30 s |
 | `google_revoke` warnings | Google's revoke endpoint failed (the access token expires within the hour anyway) | none, unless sustained |
+| `mailbox_guess_limit` (error log, `code` `backstop` or `ceiling`, `subject` = mailbox key prefix) | someone is guessing codes for one mailbox: past the backstop only owner-slot requesters can check, past the ceiling nobody until midnight UTC (D198) | watch for repeats of the same `subject`; when the user contacts support, `POST {apiUrl}/v1/email/admin/unlock {"email": "<their address>"}` with your Access session (audited); unlocking gives the attacker a fresh 25 checks, so only on request |
 | A suspected key leak | anyone with the Worker's secrets can mint email tokens (1-of-1, D121) | owner `remove_issuer_key("email", primary)` (immediate; logins continue on the standby once it is on the Worker: upload it as ISSUER_SIGNING_KEY with `activeKid` switched, then deploy), then a new key through the 72 h path and new pins; `set_sessions_valid_from_ms` for sessions opened meanwhile |
 
 Limits are in `docs/api.md` "Email issuer" (D198): per (mailbox, requester), per mailbox with a reserve for new

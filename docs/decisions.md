@@ -1674,7 +1674,7 @@ ambiguous or unsafe as written. Each takes the safest reading and is listed for 
 points for the user"; none changes an address.
 
 ### D130. A wallet is recorded when its path is derived, not when a session opens
-- Date 2026-10-30 · Status: in force on `feat/email-login-1` (not deployed), **to confirm** · Source: build of
+- Date 2026-10-30 · Status: confirmed by the user (2026-11-02); in contract v3 on develop, not deployed · Source: build of
   `docs/email-login-spec.md` "Sessions" step 3 and "Model" ("the contract records that in `opened` at every
   `create_session*`")
 - Decision: `opened` (an identity "has a wallet") is set by `derive_key` and `create_session_and_derive` for the
@@ -1687,7 +1687,7 @@ points for the user"; none changes an address.
 - Rejected: the spec's wording (marking in `create_session`).
 
 ### D131. Contract readings of the email login spec (batch 1)
-- Date 2026-10-30 · Status: in force on `feat/email-login-1` (not deployed), **to confirm** · Source: build of
+- Date 2026-10-30 · Status: confirmed by the user (2026-11-02), every reading; in contract v3 on develop, not deployed · Source: build of
   `docs/email-login-spec.md` "Contract changes", "Sessions", "Link methods"
 - Decision:
   - `mark_self_issued` refuses an issuer that already has keys, active or pending (`Issuer already has keys`), and a

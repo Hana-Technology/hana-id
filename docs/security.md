@@ -2,7 +2,8 @@
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
 known open issues. Last verified against code: 2026-11-02 for the email issuer (branch `feat/email-login-4`: its keys and
-secrets rows and "Email issuer" invariants, D195–D199); 2026-10-30 for the watchdog's retired-key rule (branch
+secrets rows and "Email issuer" invariants, D195–D199) and for the hourly link counter (branch `feat/link-cap`, D200, in
+the email-login invariants); 2026-10-30 for the watchdog's retired-key rule (branch
 `fix/watchdog-retired-key-race`, D153), for the partner identity token (branch
 `feat/identity-token-2`: the review fixes D176–D179 in the identity rows, invariants and open issue (l); branch
 `feat/identity-token-1`: the partner-backend party, its compromise rows, the three identity secrets), for the relayer pool rows (branch `feat/playbook-gaps`: the watchdog's relayer funds
@@ -160,6 +161,18 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
     never derived with the plain payload (D137). The issuer mints the nonce with the join it decided; the API
     prechecks both and relays the split path's proof of possession; the watchdog alerts critical if
     `unrecorded_wallets` is ever true outside dev envs (D139).
+  - **Link volume counter (D200).** With a stolen email signing key alone (1-of-1 at launch) a thief can log into
+    every email-rooted wallet, log into every Google-rooted wallet that already has an email member, and link their own Google account into victims' email
+    wallets (case A, one Google account per victim and scope). Since D133 a link also needs the session key's signature,
+    so the key alone can't join an email identity to someone else's Google wallet. Only the last of the three makes new
+    links. The defence against a stolen key is its custody (KMS, a second signer, D121); the counter only detects bursts: the
+    contract counts every new link (a combined login with a `link_jwt`, `link_identity`) per UTC hour, per scope
+    and in total, records when a count reaches its alarm threshold (50 per scope, 500 in total per hour), and never
+    refuses a link. The watchdog reads `get_link_stats` each run and alerts; the owner then pauses and removes the key.
+    A refusing cap was rejected: it bounded little and anyone could burn it with one Google account and one email
+    (review H2), locking real users out. The owner lowers a threshold at once; a raise waits `governance_delay_ms`, so
+    a compromised owner can't quietly blind the alarm (the watchdog alerts on the scheduled raise). Fixed hours: a burst
+    across a boundary splits between two windows (the view keeps the previous one).
   - Contract security notes: `docs/contract-interface.md` "Security notes (for reviewers)"; readings made in the build:
     D130, D131; review fixes D133–D138, off-chain obligations D139.
 

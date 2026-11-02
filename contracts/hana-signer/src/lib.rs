@@ -28,6 +28,7 @@ mod events;
 mod governance;
 mod init;
 mod issuers;
+mod link_counter;
 mod links;
 mod migrate;
 mod oidc;
@@ -72,6 +73,9 @@ pub(crate) enum StorageKey {
     Links,
     Accounts,
     Opened,
+    // Link volume (D200).
+    LinkScopeCounts,
+    LinkGcQueue,
 }
 
 /// A scheduled decrease of a delay (increases apply at once): of `change_delay_ms`, `issuer_key_delay_ms` or
@@ -236,6 +240,8 @@ pub struct HanaSigner {
     /// True after a migration from pre-v3 state (wallets derived before v3 aren't in `opened`): links are refused until
     /// the owner calls `accept_unrecorded_wallets` (D135). False from `new`.
     pub(crate) unrecorded_wallets: bool,
+    /// New links counted per UTC hour, per scope and in total, with alarm thresholds (D200; never refuses).
+    pub(crate) link_counter: link_counter::LinkCounter,
 }
 
 #[near]

@@ -547,3 +547,70 @@ async fn gas_with_4096_bit_keys() -> Result<()> {
     outcome.into_result()?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// The hourly link counter and its alarm thresholds (D200)
+
+/// Links at or over a threshold still go through (the counter only records): the scope is flagged once, the event
+/// fires once, case A, case B and `link_identity` are all counted, and a lowered total threshold shows in the view at
+/// once.
+#[tokio::test]
+async fn links_over_a_threshold_succeed_and_are_recorded() -> Result<()> {
+    let w = email_world().await?;
+    let env = &w.env;
+    // Lowering applies at once; a raise is scheduled.
+    let outcome = env.admin.call(w.signer(), "set_link_thresholds").args_json(json!({"per_scope_per_hour": 1, "total_per_hour": 500})).gas(GAS).transact().await?;
+    report_gas("set_link_thresholds (a lowering)", &outcome, GAS);
+    outcome.into_result()?;
+    let outcome = env.admin.call(w.signer(), "set_link_thresholds").args_json(json!({"per_scope_per_hour": 1, "total_per_hour": 600})).gas(GAS).transact().await?;
+    report_gas("set_link_thresholds (a raise, scheduled)", &outcome, GAS);
+    outcome.into_result()?;
+    let stats: Value = env.signer.view("get_link_stats").await?.json()?;
+    assert_eq!((stats["thresholds"].clone(), stats["pending_thresholds"]["total_per_hour"].clone()), (json!({"per_scope_per_hour": 1, "total_per_hour": 500}), json!(600)));
+
+    // Case B: the link that reaches the scope's threshold records it.
+    let (g1, e1) = ("g-thr-1".to_string(), email_sub("thr1@example.com"));
+    let (_, g1_ckd) = w.google_login(&g1).await?;
+    let (mut s, jwt) = w.google_session(&g1).await?;
+    let link = w.auto_link_token(&s, &w.ik(PROVIDER, &g1), &e1, JOIN_LINK, &w.ik(PROVIDER, &g1), 0, true).await?;
+    let outcome = w.linked_login(&mut s, &jwt, &link, Some(true)).await?;
+    report_gas("create_session_and_derive + link_jwt (the link that reaches the scope threshold)", &outcome, LINKED_LOGIN_GAS);
+    let events = hana_events(&outcome);
+    let ckd: CkdResponse = outcome.into_result()?.json()?;
+    assert_eq!(ckd.big_y, g1_ckd.big_y);
+    let reached = event(&events, "link_threshold_reached");
+    assert_eq!((reached.len(), reached[0]["scope_id"].clone(), reached[0]["count"].clone()), (1, json!(w.scope), json!(1)));
+
+    // Case A over the threshold: it succeeds and opens the email wallet; no second event for the scope.
+    let (g2, e2) = ("g-thr-2".to_string(), email_sub("thr2@example.com"));
+    let (_, e2_ckd) = w.email_login(&e2).await?;
+    let (mut s, jwt) = w.google_session(&g2).await?;
+    let link = w.auto_link_token(&s, &w.ik(PROVIDER, &g2), &e2, JOIN_SESSION, &w.ik(EMAIL, &e2), 0, true).await?;
+    let outcome = w.linked_login(&mut s, &jwt, &link, Some(true)).await?;
+    let events = hana_events(&outcome);
+    let ckd: CkdResponse = outcome.into_result()?.json()?;
+    assert_eq!(ckd.big_y, e2_ckd.big_y);
+    assert!(event(&events, "link_threshold_reached").is_empty());
+    assert_eq!(env.get_identity(&w.scope, PROVIDER, &g2).await?["status"], json!("member"));
+
+    // link_identity over the threshold succeeds too.
+    let (g3, e3) = ("g-thr-3".to_string(), email_sub("thr3@example.com"));
+    w.google_login(&g3).await?;
+    let signer = w.signer().as_str().to_string();
+    let salt = [4u8; 16];
+    let now = env.now_ms().await?;
+    let (gik, eik) = (w.ik(PROVIDER, &g3), w.ik(EMAIL, &e3));
+    let account_jwt = w.google_jwt(&g3, &nonce_of(&link_account_preimage(&signer, &w.scope, &gik, &eik, 0, &salt)), now);
+    let new_jwt = w.email.email_jws(&email_aud(&w.scope), &e3, &nonce_of(&link_new_preimage(&signer, &w.scope, &gik, EMAIL, 0, &salt)), now);
+    let args = json!({"scope_id": w.scope, "account_jwt": account_jwt, "new_jwt": new_jwt, "epoch": 0, "salt": salt});
+    w.call(&env.relayer, "link_identity", args, LINK_IDENTITY_GAS).await?.into_result()?;
+
+    let stats: Value = env.signer.view("get_link_stats").await?.json()?;
+    assert_eq!(stats["links_total"], json!(3));
+    assert_eq!((stats["current"]["total"].clone(), stats["current"]["flagged_scopes"].clone(), stats["current"]["total_threshold_reached"].clone()), (json!(3), json!([w.scope]), json!(false)));
+    // Lowering the total threshold below the count shows it reached at once.
+    env.admin.call(w.signer(), "set_link_thresholds").args_json(json!({"per_scope_per_hour": 1, "total_per_hour": 2})).transact().await?.into_result()?;
+    let stats: Value = env.signer.view("get_link_stats").await?.json()?;
+    assert_eq!((stats["current"]["total_threshold_reached"].clone(), stats["pending_thresholds"].clone()), (json!(true), Value::Null));
+    Ok(())
+}

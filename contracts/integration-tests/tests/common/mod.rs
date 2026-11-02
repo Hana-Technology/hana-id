@@ -146,6 +146,7 @@ pub const ALL_CHANGE_METHODS: &[&str] = &[
     "link_identity",
     "cancel_link",
     "unlink_identity",
+    "set_link_limits",
 ];
 
 /// Gas for calls a user or the admin signs with their own wallet (not relayed by the API), which choose their own

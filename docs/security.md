@@ -1,7 +1,8 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-10-30 for the watchdog's retired-key rule (branch
+known open issues. Last verified against code: 2026-11-02 for the hourly link cap (branch `feat/link-cap`, D200, in
+the email-login invariants); 2026-10-30 for the watchdog's retired-key rule (branch
 `fix/watchdog-retired-key-race`, D153), for the partner identity token (branch
 `feat/identity-token-2`: the review fixes D176–D179 in the identity rows, invariants and open issue (l); branch
 `feat/identity-token-1`: the partner-backend party, its compromise rows, the three identity secrets), for the relayer pool rows (branch `feat/playbook-gaps`: the watchdog's relayer funds
@@ -154,6 +155,18 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
     never derived with the plain payload (D137). The issuer mints the nonce with the join it decided; the API
     prechecks both and relays the split path's proof of possession; the watchdog alerts critical if
     `unrecorded_wallets` is ever true outside dev envs (D139).
+  - **Link volume cap (D200).** A stolen email signing key (1-of-1 at launch) can sign "owns victim@gmail.com" and,
+    through automatic linking (D119), join that email identity to the victim's Google identity at once: the thief
+    then derives the victim's wallet, and every such takeover is a new link on chain. The contract counts every new
+    link (a combined login with a `link_jwt`, `link_identity`) per UTC hour, per scope and in total, and refuses
+    the next one once the scope has 50 or the total 500 this hour (`Link rate limit reached`; the whole login
+    reverts, no session, no derivation). So a thief takes over at most a cap's worth of accounts per hour; the
+    watchdog reads `get_link_stats` each run and pages (critical) when a cap is reached, then the owner pauses and
+    removes the key. The owner lowers a cap at once; a raise waits `governance_delay_ms` (a compromised owner can't
+    lift the brake quietly; the watchdog alerts on the scheduled raise). The cap doesn't bound email-only wallets
+    opened with forged tokens (no link is made): there the defence is the key's custody, KMS and a second signer
+    (D121). Cost: a real linking burst above the cap (a big partner launch) is refused for the rest of the hour
+    until the owner raises the cap (`docs/operations.md` "Raising the link cap").
   - Contract security notes: `docs/contract-interface.md` "Security notes (for reviewers)"; readings made in the build:
     D130, D131; review fixes D133–D138, off-chain obligations D139.
 

@@ -547,3 +547,64 @@ async fn gas_with_4096_bit_keys() -> Result<()> {
     outcome.into_result()?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// The hourly link cap (D200)
+
+/// A login whose link would pass the scope's hourly cap is refused as a whole: no session, no link, no count, no MPC
+/// request; `link_identity` is capped the same way; the same person's plain login still works.
+#[tokio::test]
+async fn a_capped_login_is_refused_and_leaves_nothing_behind() -> Result<()> {
+    let w = email_world().await?;
+    let env = &w.env;
+    // Lowering applies at once.
+    let outcome = env.admin.call(w.signer(), "set_link_limits").args_json(json!({"per_scope_per_hour": 1, "total_per_hour": 500})).gas(GAS).transact().await?;
+    report_gas("set_link_limits (a lowering)", &outcome, GAS);
+    outcome.into_result()?;
+    let outcome = env.admin.call(w.signer(), "set_link_limits").args_json(json!({"per_scope_per_hour": 1, "total_per_hour": 600})).gas(GAS).transact().await?;
+    report_gas("set_link_limits (a raise, scheduled)", &outcome, GAS);
+    outcome.into_result()?;
+    let stats: Value = env.signer.view("get_link_stats").await?.json()?;
+    assert_eq!((stats["limits"].clone(), stats["pending_limits"]["total_per_hour"].clone()), (json!({"per_scope_per_hour": 1, "total_per_hour": 500}), json!(600)));
+    let (g1, e1) = ("g-cap-1".to_string(), email_sub("cap1@example.com"));
+    w.google_login(&g1).await?;
+    let (mut s, jwt) = w.google_session(&g1).await?;
+    let link = w.auto_link_token(&s, &w.ik(PROVIDER, &g1), &e1, JOIN_LINK, &w.ik(PROVIDER, &g1), 0, true).await?;
+    let outcome = w.linked_login(&mut s, &jwt, &link, Some(true)).await?;
+    report_gas("create_session_and_derive + link_jwt (the link that reaches the scope cap)", &outcome, LINKED_LOGIN_GAS);
+    let events = hana_events(&outcome);
+    outcome.into_result()?;
+    let reached = event(&events, "link_cap_reached");
+    assert_eq!((reached.len(), reached[0]["scope_id"].clone(), reached[0]["count"].clone()), (1, json!(w.scope), json!(1)));
+    let stats: Value = env.signer.view("get_link_stats").await?.json()?;
+    assert_eq!((stats["links_total"].clone(), stats["current"]["capped_scopes"].clone()), (json!(1), json!([w.scope])));
+
+    // The next linked login in this scope: refused, and nothing of it stays.
+    let (g2, e2) = ("g-cap-2".to_string(), email_sub("cap2@example.com"));
+    w.google_login(&g2).await?;
+    let calls = env.mpc_calls().await?.len();
+    let (mut s, jwt) = w.google_session(&g2).await?;
+    let link = w.auto_link_token(&s, &w.ik(PROVIDER, &g2), &e2, JOIN_LINK, &w.ik(PROVIDER, &g2), 0, true).await?;
+    expect_failure(w.linked_login(&mut s, &jwt, &link, Some(true)).await, "Link rate limit reached");
+    assert!(env.get_session(&s).await?.is_none());
+    assert!(!env.session_key_in_use(&s).await?);
+    assert_eq!(env.get_identity(&w.scope, EMAIL, &e2).await?["status"], json!("own"));
+    assert_eq!(env.get_account(&w.scope, PROVIDER, &g2).await?, Value::Null);
+    assert_eq!(env.mpc_calls().await?.len(), calls);
+    let after: Value = env.signer.view("get_link_stats").await?.json()?;
+    assert_eq!((after["links_total"].clone(), after["current"]["total"].clone()), (json!(1), json!(1)));
+    // link_identity is capped the same way.
+    let signer = w.signer().as_str().to_string();
+    let salt = [4u8; 16];
+    let now = env.now_ms().await?;
+    let (gik, eik) = (w.ik(PROVIDER, &g2), w.ik(EMAIL, &e2));
+    let account_jwt = w.google_jwt(&g2, &nonce_of(&link_account_preimage(&signer, &w.scope, &gik, &eik, 0, &salt)), now);
+    let new_jwt = w.email.email_jws(&email_aud(&w.scope), &e2, &nonce_of(&link_new_preimage(&signer, &w.scope, &gik, EMAIL, 0, &salt)), now);
+    let args = json!({"scope_id": w.scope, "account_jwt": account_jwt, "new_jwt": new_jwt, "epoch": 0, "salt": salt});
+    expect_failure(w.call(&env.relayer, "link_identity", args, LINK_IDENTITY_GAS).await, "Link rate limit reached");
+    // A plain login still works, and still opens G2's own wallet.
+    let (s, ckd) = w.google_login(&g2).await?;
+    assert_eq!(ckd.big_y, w.expected_big_y(&w.path(PROVIDER, &g2)).await?);
+    assert_eq!(w.path_of(&s).await?, w.path(PROVIDER, &g2));
+    Ok(())
+}

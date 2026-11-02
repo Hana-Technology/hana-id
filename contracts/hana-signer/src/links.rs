@@ -555,7 +555,10 @@ impl HanaSigner {
 
     /// Adds `joiner` (of `provider`) to `root`'s account, creating the account record with `root_identity` if needed,
     /// and bumps the epoch. Emits `identity_linked` (active now) or `identity_link_proposed` (pending).
+    /// Every new link (automatic or explicit, immediate or pending) comes through here, so this is where it is counted
+    /// against the hourly cap (`link_cap.rs`, D200): over the cap the call panics before anything is written.
     fn join(&mut self, scope_id: &str, root: IdentityKey, root_identity: (String, String), joiner: IdentityKey, provider: String, effective_at_ms: u64, active: bool, auto: bool) {
+        self.count_link(scope_id);
         let mut account = self.accounts.get(&root).cloned().unwrap_or(Account {
             root_provider: root_identity.0,
             root_sub: root_identity.1,
@@ -680,5 +683,6 @@ impl HanaSigner {
     fn flush_links(&mut self) {
         self.links.flush();
         self.accounts.flush();
+        self.link_cap.flush();
     }
 }

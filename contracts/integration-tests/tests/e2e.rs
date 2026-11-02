@@ -166,6 +166,7 @@ async fn access_keys_are_limited() -> Result<()> {
         ("cancel_owner_proposal", json!({})),
         ("propose_withdrawal", json!({"receiver": env.relayer.id(), "amount": "1"})),
         ("cancel_withdrawal", json!({})),
+        ("set_link_limits", json!({"per_scope_per_hour": 100_000, "total_per_hour": 100_000})),
     ];
     for key in [&env.relayer_fc, &env.relayer_owner_fc] {
         for (method, args) in &admin_calls {

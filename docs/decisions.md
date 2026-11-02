@@ -4,7 +4,7 @@ One entry per decision: what was decided, when, why, what was rejected, its stat
 Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 and D150–D152 on 2026-10-30 (branches
 `feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`);
 D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-login-3`) on 2026-11-02; D159's `+tag`
-change (branch `fix/email-plus-tags`) on 2026-11-02.
+change (branch `fix/email-plus-tags`) on 2026-11-02; D200 (branch `feat/link-cap`) on 2026-11-02.
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -1661,8 +1661,9 @@ detail open or a safer reading was needed. Each follows the spec's intent; the u
 - Why: one provider the team already operates and pays for; the adapter keeps the choice reversible.
 
 ### D200. Link volume: a contract counter and an hourly cap, replacing the indexer scan
-- Date 2026-11-02 · Status: confirmed by the user (option A+), being built · Source: batch 5 review (the FastNear scan
-  reads about 13 logins per run at about 75 KB each, so it falls behind and pages on ordinary traffic)
+- Date 2026-11-02 · Status: confirmed by the user (option A+); contract built (`feat/link-cap`), watchdog side in
+  progress · Source: batch 5 review (the FastNear scan reads about 13 logins per run at about 75 KB each, so it falls
+  behind and pages on ordinary traffic)
 - Threat: a stolen email signing key (1-of-1 at launch) can sign "owns victim@gmail.com", and D119 links that email
   identity at once to the victim's Google identity, so the thief derives the victim's Google wallet. Such a takeover
   leaves new links on chain. (Opening email-only wallets with forged tokens makes no link; the defence there is the
@@ -1680,6 +1681,12 @@ detail open or a safer reading was needed. Each follows the spec's intent; the u
   contract change is cheap now.
 - Cost: a real burst of linking above the cap (a big partner launch) is refused for the rest of the hour until the
   owner raises the cap; the defaults are provisional until real traffic is measured.
+- Built (contract, branch `feat/link-cap`): `get_link_stats`, `set_link_limits` (lower at once, raise after
+  `governance_delay_ms`, like the delay setters), events `link_cap_reached` and `link_limits_set`
+  (`docs/contract-interface.md` "Link volume: the hourly cap"). The view's `previous` is `null` when the previous hour
+  had no links. Per-scope counts are deleted lazily (each counted link deletes up to 4 older than the previous hour).
+- Not built: the API (batch 6) maps the `Link rate limit reached` panic to a clear user-facing error (the login can be
+  retried in the next hour, or without linking); the watchdog's checks (built separately against the view).
 
 ### D170. Identity token layout details the spec left open
 - Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`packages/core/src/identity.ts`, frozen in

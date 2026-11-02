@@ -1,6 +1,7 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-02 (branch `feat/email-login-2`: `deploy-contract` refuses a v1 contract, D154; the v2 → v3
+Last verified against code: 2026-11-02 (branch `feat/link-cap`: "Raising the link cap", D200, and `set_link_limits`
+through `owner:call`); 2026-11-02 (branch `feat/email-login-2`: `deploy-contract` refuses a v1 contract, D154; the v2 → v3
 upgrade path sandbox-tested, "Upgrading the governance contract"); 2026-10-30 (branch `fix/watchdog-retired-key-race`: the `retired_key_change` alert, D153;
 branch `feat/identity-token-2`: "Identity token keys" rewritten for the
 offline standby and `identity-key next / switch / retire` (D177), the identity secrets rows, `gen --dev-vars`;
@@ -812,6 +813,28 @@ actions and `execute_change` fail on chain while paused (`422 contract_rejected`
 pause state with `get_config`, cached 60 s (10 s while paused), so logins resume within 10 s of `unpause()`. Who
 pauses and unpauses, and what each watchdog alert means, is the watchdog runbook (`docs/governance-spec.md`
 "Alerts"); the API raises no alert.
+
+### Raising the link cap (D200)
+
+The contract refuses a new link (a combined login with a `link_jwt`, or `link_identity`) once its scope has made
+`per_scope_per_hour` links in the current UTC hour, or all scopes together `total_per_hour` (defaults 50 and 500;
+`Link rate limit reached`, the login is refused as a whole). It is a brake on a stolen email key (`docs/security.md`),
+so it also stops a real burst: a large partner launch that links many existing Google users to their email in one hour.
+
+- **Check:** `near contract call-function as-read-only <signer> get_link_stats json-args '{}' network-config testnet
+  now`: `limits`, `pending_limits`, and per hour `total`, `total_cap_reached`, `capped_scopes`. The watchdog reads the
+  same view: a cap reached is critical, past half a cap a warning.
+- **Raise before a known launch.** A raise only takes effect `governance_delay_ms` after the call (sandbox-dev 60 s,
+  mainnet 72 h), so plan it at least that far ahead:
+  `admin <env> owner:call set_link_limits --args '{"per_scope_per_hour":<n>,"total_per_hour":<m>}' [--approve-with <member>] --yes`
+  (a council proposal; each value 1–100000). `get_link_stats().pending_limits` shows it with its `effective_at_ms`.
+  The watchdog raises a critical governance alert for the scheduled raise: expected, acknowledge it in the portal with
+  the launch as the reason.
+- **During an unplanned burst** the raise can't help within the hour (it waits the governance delay): links in that
+  scope resume at the next UTC hour. Tell the partner; first check it is a launch and not an attack (`capped_scopes`,
+  the scope's links in the watchdog, the email issuer's issuance for that app). If it is an attack, pause.
+- **Lower again** after the launch (`set_link_limits` with the defaults applies at once). A call made while a raise is
+  pending replaces it.
 
 ### Issuer key lead times (D33)
 

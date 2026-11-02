@@ -46,16 +46,20 @@ const TRANSIENT_CLASSES: ReadonlySet<string> = new Set(['08', '53', '57', '58', 
 /**
  * How a failed write is handled: `retry` (no answer from the server, or a transient one), `rejected` (the function
  * refused the event's shape: SQLSTATE 22023 from `usage.event_invalid`), or `failed` (any other server refusal, e.g.
- * an event outside every partition, 23514). `code` is safe to log (a SQLSTATE or `connection`).
+ * an event outside every partition, 23514). Only a `pg.DatabaseError` (the server's own answer) is read for a
+ * SQLSTATE: any other error, a socket's errno code (`ECONNRESET`) included, is a connection error. `code` is safe to log
+ * (a SQLSTATE or `connection`).
  */
 export function classifyWriteError(err: unknown): { kind: 'retry' | 'rejected' | 'failed'; code: string } {
-  const sqlstate = (err as { code?: unknown } | null)?.code;
+  const sqlstate = err instanceof pg.DatabaseError ? err.code : undefined;
   if (typeof sqlstate !== 'string' || !SQLSTATE_RE.test(sqlstate)) return { kind: 'retry', code: 'connection' };
   if (sqlstate === '22023') return { kind: 'rejected', code: `pg_${sqlstate}` };
   return { kind: TRANSIENT_CLASSES.has(sqlstate.slice(0, 2)) ? 'retry' : 'failed', code: `pg_${sqlstate}` };
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+/** Yields to the event loop (`scheduler.wait(0)` in Workers), so the caller returns its response first. */
+export const afterResponse = (): Promise<void> => (typeof scheduler !== 'undefined' && typeof scheduler.wait === 'function' ? scheduler.wait(0) : sleep(0));
 
 interface LogCtx {
   requestId: string;
@@ -121,6 +125,8 @@ async function scopeOrg(env: Env, scopeId: string, at: LogCtx): Promise<string> 
  * is `usage_write_rejected`, never sent), then `usage.record_event`. Never rejects. Without `USAGE_DB` nothing is sent.
  */
 export async function recordUsage(env: Env, draft: UsageDraftEvent, opts: { path?: string; logEndpoint: string }): Promise<void> {
+  // Yield first: everything below (the uid's HMAC, the check, the connection) runs after the response has gone.
+  await afterResponse();
   const binding = env.USAGE_DB;
   if (!binding) return;
   const at: LogCtx = { requestId: draft.request_id, appId: draft.app_id ?? undefined, endpoint: opts.logEndpoint };

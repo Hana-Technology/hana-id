@@ -2829,6 +2829,9 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   renumbers; it reads no other table, so it applies the same before or after 0007. The existing `usage` rows are
   carried into markers by a one-off idempotent statement before 0007 (`docs/operations.md` "Usage capture" step 5).
   The same rule in C5's `AdminRpc.ackNotice` must read `session_markers`, never `usage`.
+- Review fixes (2026-11-02): `HOT_DB_SCHEMA` is 9 and `app:changes:announce --remote` needs `hotDb` ≥ 9 (proposals
+  still ≥ 6), so no announcement runs against an API that writes no markers; the one-off `usage` → markers statement
+  runs after the C4 deploy (and again before 0007), since the API before it still wrote `usage` rows only.
 - Why: the build plan asked for a hot-DB marker beside the relay; per app (not per scope) so its test rows match the
   old ones and a scope's apps each leave their own sign.
 - Rejected: dropping the `usage` check and relying on `first_session_at` alone (one write, one point of failure);
@@ -2864,6 +2867,12 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   sent, after a retry) and the BigInt gas sums of a settled outcome; a malformed amount gives no gas fields, never a
   guess. Without `USER_ID_KEY` (or with a malformed one) events are recorded without a uid (`usage_uid_unavailable`,
   once per isolate); a path that doesn't parse for its scope gives no uid either.
+- Review fixes (2026-11-02): a SQLSTATE is read only from a `pg.DatabaseError` (the server's answer); any other error,
+  an errno code such as `ECONNRESET` included, is a connection error and retried. The provisional gas pair is dropped
+  when either figure is past the event's bounds (gas ≤ 2^63 − 1, tokens < 10^39), so the rest of the event is kept.
+  `recordUsage` first yields (`scheduler.wait(0)`), so the uid's HMAC, the check and the connection all run after the
+  response. Settlement (C12) must bill a relayed event only for its own transaction (`near_tx` unique, the
+  transaction's signer key and nonce equal to `relayer_pk` and `relayer_nonce`): an obligation in the build plan's C12.
 - Why: the spec's "connection error or timeout" retry and "never on a validation error", with a test for each class;
   a shape refusal is a bug that a retry can't fix; the nonce cross-check needs every relayed row's key and nonce.
 
@@ -2876,7 +2885,12 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   (app_id, day, org_id, scope_id, tokens)` through `usage.record_identity_tokens(rows jsonb)` (writer only, all or
   nothing, ≤ 1000 rows a call, the larger count kept, org and scope of the first copy kept). A failed copy is logged
   (`identity_usage_sync_failed`) and repaired by the next hour; it never fails the cron run. The Neon file is
-  `0002`, so the report and retention functions planned as 0002/0003 (C12, C13) take the next numbers.
+  `0002`, so the report and retention functions planned as 0002/0003 (C12, C13) take the next numbers (0004, 0005:
+  0003 is the partitions fix below).
+- Review fix (2026-11-02, M1): partitions no longer wait for the admin Worker. Neon `0003_writer_partitions.sql` lets
+  `usage_writer` execute `usage.ensure_partitions` (the owner's bounded SECURITY DEFINER function: 0..24 months, only
+  creates missing months) and creates 12 months ahead; the API's hourly cron calls `ensure_partitions(12)` before the
+  identity copy, logging `usage_partitions_failed` and never failing the run.
 - Why: per app and day is what reports need; a copy of a monotone count is idempotent and survives a Neon outage of
   up to 6 days with nothing lost, with no change to the mint path (which identity token steps 7/8 are changing).
 - Rejected: an `identity_token` event per mint in `usage.events` (a new endpoint value in a CHECK of a partitioned
@@ -2895,6 +2909,13 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   for the same Worker and D1 database, `off` drops it. The binding needs no manifest `usage` block (sandbox-dev has
   none yet; the Hyperdrive names default to the spec's). The gitleaks config gains a rule for Postgres URLs with a
   password and the new secret files by name.
+- Review fixes (2026-11-02): `gen` writes the binding's `localConnectionString` as an unroutable placeholder
+  (`usage-ledger.local.invalid`), so `wrangler dev` runs and local capture fails open, logged. The Hyperdrive id is
+  read only from wrangler's "Created new Hyperdrive … config: <id>" line (no line, no guessed id). The gitleaks rule
+  matches passwords of 8 characters or more with an entropy floor of 3.0 (3.5 made anything under 12 unmatchable),
+  stopwords for the repo's marked fakes. Creating the configs through the REST API (the password in an HTTPS body, not
+  a process argument) is a before-production item (`docs/mainnet-readiness.md` 4.18). The step-8 SCRAM login check on
+  sandbox-dev is an explicit gate in `docs/operations.md`.
 - Why: the spec's steps, made safe to repeat after a stop, and M2 without waiting for the dashboard blocks.
 
 ## Identity token build, step 7 (the AWS KMS signer, code only), 2026-11-02

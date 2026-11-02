@@ -46,11 +46,11 @@ const count = async (sql: string, params: unknown[] = []) => Number((await db.qu
 const TABLES = ['usage.events', 'usage.app_users', 'usage.gas_settlements', 'usage.near_usd_rates', 'usage.statements', 'usage.identity_tokens', 'ops.state', 'ops.scope_snapshot', 'ops.scope_watch', 'ops.nonce_checks', 'ops.retention_runs', 'ops.rejection_alerts'];
 
 describe('migrations-usage on an empty database', () => {
-  it('creates the schemas, tables and the current month with the next 3', async () => {
+  it('creates the schemas, tables and the current month with the next 12 (0001 made 3, 0003 the rest)', async () => {
     for (const t of TABLES) expect((await db.query<{ r: string | null }>('SELECT to_regclass($1)::text AS r', [t]))[0]!.r, t).toBe(t);
     const parts = await db.query<{ name: string }>("SELECT c.relname AS name FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid WHERE i.inhparent = 'usage.events'::regclass ORDER BY 1");
     const d = new Date(NOW);
-    const months = [0, 1, 2, 3].map((k) => {
+    const months = Array.from({ length: 13 }, (_, k) => k).map((k) => {
       const m = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + k, 1));
       return `events_${m.getUTCFullYear()}_${String(m.getUTCMonth() + 1).padStart(2, '0')}`;
     });
@@ -79,7 +79,7 @@ describe('migrations-usage on an empty database', () => {
           [role],
         )
       ).map((r) => r.f);
-    expect(await fns('usage_writer')).toEqual(['usage.record_event', 'usage.record_identity_tokens']);
+    expect(await fns('usage_writer')).toEqual(['usage.ensure_partitions', 'usage.record_event', 'usage.record_identity_tokens']);
     expect(await fns('usage_admin')).toEqual(['usage.ensure_partitions']);
     expect(await fns('usage_test_nobody')).toEqual([]);
   });
@@ -101,7 +101,20 @@ describe('the writer role', () => {
     }
     const insert = await failure(asWriter(() => db.query("INSERT INTO usage.events (request_id, at, org_id, app_id, scope_id, endpoint, outcome, status, latency_ms, relayed) VALUES ('x', now(), 'o', 'a', 's', 'login', 'ok', 200, 1, false)")));
     expect(insert?.code).toBe('42501');
-    expect((await failure(asWriter(() => db.query('SELECT usage.ensure_partitions(3)'))))?.code).toBe('42501');
+  });
+
+  it('keeps partitions ahead with ensure_partitions (0003, the API’s hourly cron): bounded, creates only missing months', async () => {
+    const parts = async () => Number((await db.query<{ n: string }>("SELECT count(*)::text AS n FROM pg_inherits WHERE inhparent = 'usage.events'::regclass"))[0]!.n);
+    const before = await parts();
+    expect((await asWriter(() => db.query<{ n: number }>('SELECT usage.ensure_partitions(12) AS n')))[0]!.n).toBe(0);
+    expect((await asWriter(() => db.query<{ n: number }>('SELECT usage.ensure_partitions(14) AS n')))[0]!.n).toBe(2);
+    expect(await parts()).toBe(before + 2);
+    for (const bad of [-1, 25]) expect((await failure(asWriter(() => db.query('SELECT usage.ensure_partitions($1)', [bad]))))?.code, String(bad)).toBe('22023');
+    // An event a year ahead now has its partition.
+    const d = new Date(NOW);
+    expect(await asWriter(() => record(event({ at_ms: Date.UTC(d.getUTCFullYear() + 1, d.getUTCMonth(), 15) })))).toBe(true);
+    // Still no table privilege, and no way to drop a partition.
+    expect((await failure(asWriter(() => db.query('DROP TABLE usage.events_2000_01'))))?.code).toMatch(/^42/u);
   });
 });
 
@@ -297,7 +310,9 @@ describe('frozen statements and rates', () => {
 describe('ensure_partitions', () => {
   it('is idempotent and bounded', async () => {
     expect((await db.query<{ n: number }>('SELECT usage.ensure_partitions(3) AS n'))[0]!.n).toBe(0);
-    expect((await db.query<{ n: number }>('SELECT usage.ensure_partitions(5) AS n'))[0]!.n).toBe(2);
+    // 0001 and 0003 made 12 months ahead, and the writer's test above two more.
+    expect((await db.query<{ n: number }>('SELECT usage.ensure_partitions(14) AS n'))[0]!.n).toBe(0);
+    expect((await db.query<{ n: number }>('SELECT usage.ensure_partitions(16) AS n'))[0]!.n).toBe(2);
     for (const bad of [-1, 25]) expect((await failure(db.query('SELECT usage.ensure_partitions($1)', [bad])))?.code).toBe('22023');
   });
 });

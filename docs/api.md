@@ -167,9 +167,10 @@ Seeded plan `free`: `per_minute` 60, `per_day` 5000, `per_ip_minute` 20.
 
 ### `GET /v1/health`
 
-No auth, no limits, `access-control-allow-origin: *`. → `200 {"ok": true, "env": ENV_NAME, "signer": SIGNER_ACCOUNT, "hotDb": 6, "requestId"}`.
-`hotDb` is the hot-DB migration whose reads the build makes (`apps.ts` `HOT_DB_SCHEMA`; 6 from batch C3, absent
-before): the admin CLI refuses guarded proposals and announcements on `--remote` until the deployed API reports ≥ 6.
+No auth, no limits, `access-control-allow-origin: *`. → `200 {"ok": true, "env": ENV_NAME, "signer": SIGNER_ACCOUNT, "hotDb": 9, "requestId"}`.
+`hotDb` is the hot-DB migration the build needs (`apps.ts` `HOT_DB_SCHEMA`; 6 from batch C3, 9 from batch C4 (the
+session markers it writes), absent before): the admin CLI refuses guarded proposals on `--remote` until the deployed
+API reports ≥ 6, and announcements until it reports ≥ 9.
 
 ### `GET /v1/governance` · G
 
@@ -703,15 +704,17 @@ gate records `500 internal`, as the router answers.
 | `outcome`, `status`, `code`, `latency_ms` | as the request log (`code` null for ok) |
 | `relayed` | a transaction that can execute was sent: an ok relay, or `contract_rejected`, `timeout`, `near_error` with a `nearTx`; never `relayer_busy` or `near_rejected` (they name a transaction that can't execute), nor anything that never reached NEAR, nor an unlock |
 | `near_tx`, `relayer_pk`, `relayer_nonce` | whenever the relay names a transaction: the pool key that signed it (`ed25519:…`) and its nonce (the `RelayerKey` result, for the admin's daily nonce cross-check) |
-| `relay_gas_burnt`, `relay_tokens_burnt_yocto` | BigInt sums of `gas_burnt` / `tokens_burnt` over `transaction_outcome` and every `receipts_outcome` of the settled outcome (`near/tx.ts` `burntGas`); provisional (`EXECUTED_OPTIMISTIC`), never billed; absent when the RPC didn't report them |
+| `relay_gas_burnt`, `relay_tokens_burnt_yocto` | BigInt sums of `gas_burnt` / `tokens_burnt` over `transaction_outcome` and every `receipts_outcome` of the settled outcome (`near/tx.ts` `burntGas`); provisional (`EXECUTED_OPTIMISTIC`), never billed; absent when the RPC didn't report them, or when either is past the event's bounds (gas ≤ 2^63 − 1, tokens < 10^39) |
 | `uid` | ok `login`, `session` and `derive` only: `HMAC-SHA256(USER_ID_KEY, "hana-id/uid/v1" ‖ borsh(scope) ‖ borsh(provider) ‖ borsh(sub))[0..16]`, b64url, from the request's derivation path (login: the token's; session: the new session's; derive: the session's), which must be `<scope>#provider#sub#key_index` (key index dropped); computed after the response |
 
 Never in an event: a sub, JWT, email, IP, session key, share id or path.
 
-**Write** (`usage/record.ts`): `ctx.waitUntil` runs the check against UsageEvent v1 (a refusal is
+**Write** (`usage/record.ts`): `ctx.waitUntil` first yields (`scheduler.wait(0)`: nothing runs before the response
+leaves), then runs the check against UsageEvent v1 (a refusal is
 `usage_write_rejected`, never sent), then `SELECT usage.record_event($1::jsonb)` over a new `pg` connection to
-`USAGE_DB` (Hyperdrive pools; 5 s to connect, 5 s for the statement). An error without a SQLSTATE (connection,
-timeout) or of class 08, 40, 53, 57 or 58 is retried once after 250 ms with the same event (a duplicate is ignored by
+`USAGE_DB` (Hyperdrive pools; 5 s to connect, 5 s for the statement). Only a `pg.DatabaseError` (the server's
+answer) carries a SQLSTATE: any other error, an errno code included, is a connection error. A connection error or
+timeout, or a SQLSTATE of class 08, 40, 53, 57 or 58, is retried once after 250 ms with the same event (a duplicate is ignored by
 the function); `22023` (the function refused the shape) is `usage_write_rejected`; any other SQLSTATE (e.g. `23514`,
 no partition) is not retried. The loss is logged once as `usage_write_failed {requestId, appId, endpoint, code,
 attempt}`, never with the connection string or the driver's message. Without `USAGE_DB` nothing is built or sent.
@@ -848,6 +851,9 @@ jobs (one failing doesn't skip the others):
   `VAULT_KEK`; counts rows under a KEK id neither key has (logged as an error).
 - **Identity counts' retention, the same hourly run** (`identity/maintenance.ts`, I): deletes `identity_issuance_hourly`
   and `identity_usage` rows older than 24 months (D90).
+- **Usage partitions, the same hourly run** (`usage/partitions.ts`, C4): with `USAGE_DB`, `usage.ensure_partitions(12)`
+  as the writer (migrations-usage 0003), so the ledger always has its next 12 months; a failure is logged
+  (`usage_partitions_failed`) and never fails the run. Runs before the identity copy.
 - **Identity counts to the usage ledger, the same hourly run** (`usage/identity-sync.ts`, C4): with `USAGE_DB`, copies
   the last 7 UTC days of `identity_usage` (with each app's org and scope) to `usage.identity_tokens` through
   `usage.record_identity_tokens` (500 rows a call), which keeps the larger count per app and day; a failure is logged
@@ -903,7 +909,7 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 | `IDENTITY_SUB_KEY` (I) | secret | `.secrets/<env>/identity-sub-key`, from `identity-key init` | base64 of 32 bytes; the `sub`/`sid` HMAC key; never rotated |
 | `USER_ID_KEY` (C4) | secret, optional | `.secrets/<env>/user-id-key`, from `usage-setup <env> user-id-key` | base64 of 32 bytes; the uid key. Absent or malformed → events without uid (`usage_uid_unavailable`); never logged |
 | `DB` | D1 | `cloudflare.d1Name`, id from `--d1-id` | `migrations_dir: migrations` |
-| `USAGE_DB` (C4) | Hyperdrive, optional | `gen --usage-hyperdrive-id <id>` (kept on regeneration for the same Worker and D1 database; `off` drops it) | the ledger writer's config (role `usage_writer`, caching disabled). Absent → capture off, every endpoint as before |
+| `USAGE_DB` (C4) | Hyperdrive, optional | `gen --usage-hyperdrive-id <id>` (kept on regeneration for the same Worker and D1 database; `off` drops it; `localConnectionString` an unroutable placeholder for `wrangler dev`) | the ledger writer's config (role `usage_writer`, caching disabled). Absent → capture off, every endpoint as before |
 | `RELAYER_KEY`, `RATE_LIMITER`, `LOGIN_RELAY` | Durable Objects | classes `RelayerKey`, `RateLimiter`, `LoginRelay` | |
 | `VAULT_IP_LIMIT`, `VAULT_SHARE_LIMIT` | Rate Limiting (`ratelimits`) | `gen` writes them (`src/vault/limits.ts`): namespaces `95001`, `95002`; 60 and 10 per 60 s | vault per-IP and per-share limits, per location (D95); a namespace id is account-wide, keys carry the env name |
 | `IDENTITY_SESSION_LIMIT` (I) | Rate Limiting (`ratelimits`) | `gen` writes it (`src/identity/limits.ts`): namespace `95003`; 10 per 60 s | `/v1/identity/token` per session key, per location |
@@ -987,7 +993,7 @@ Other events: `relay_dispatched` (`pool`, `keyIndex`, `method`, `nearTx`, `nonce
 `first_session_write_failed` (`what` `scope` / `marker`), the usage writer's (C4) `usage_write_failed` (`code`
 `connection` or `pg_<SQLSTATE>`, `attempt`), `usage_write_rejected` (`code` `invalid_event` with `problems`, or
 `pg_22023`), `usage_uid_unavailable` (`code` `missing_key` / `bad_key` / `bad_path`), `usage_org_unavailable`,
-`identity_usage_sync` (`synced`) / `identity_usage_sync_failed`, `owner_token_release_failed`, `gas_override_ignored`, `auto_approve_policy_invalid`
+`identity_usage_sync` (`synced`) / `identity_usage_sync_failed`, `usage_partitions_failed` (`code`), `owner_token_release_failed`, `gas_override_ignored`, `auto_approve_policy_invalid`
 (`problems`), the identity token's (I) `identity_unavailable` (`code`: `no_identity_config`, `bad_public_keys`,
 `active_kid_not_published`, `no_sub_key`, `bad_sub_key`), `identity_signer_unavailable` / `identity_sign_failed`
 (`code`: `no_signing_key_for_active_kid`, `signing_key_unusable`, `self_verify_failed`, `unknown_signer_kind`, `signer_kind_missing` (a KMS key ARN without `IDENTITY_SIGNER`), and for

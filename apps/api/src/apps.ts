@@ -37,10 +37,11 @@ export interface App {
 }
 
 /**
- * The hot-DB migration this build's reads need (0006: keys in app_keys, origins in force by active_from, the
- * suspension bits). Reported by GET /v1/health; the admin CLI checks it before it writes a guarded proposal.
+ * The hot-DB migration this build needs: 0006's reads (keys in app_keys, origins in force by active_from, the
+ * suspension bits) and 0009's session markers it writes (batch C4). Reported by GET /v1/health; the admin CLI needs
+ * ≥ 6 before it writes a guarded proposal and ≥ 9 before it announces one (the waiver reads the markers).
  */
-export const HOT_DB_SCHEMA = 6;
+export const HOT_DB_SCHEMA = 9;
 
 export const PUBLISHABLE_KEY_RE = /^pk_(test|live)_[1-9A-HJ-NP-Za-km-z]{16,64}$/u;
 

@@ -12,7 +12,7 @@
 //              scratch database (its name must contain "rehearsal"; --d1-id required), so `wrangler d1 migrations
 //              apply` and the admin CLI (its --d1-name) run on it exactly as they will on the env's database. Run gen
 //              again without it afterwards.
-// --usage-hyperdrive-id  The usage ledger writer's Hyperdrive config id (`usage-setup <env> --hyperdrive` prints it;
+// --usage-hyperdrive-id  The usage ledger writer's Hyperdrive config id (`usage-setup <env> hyperdrive` prints it;
 //              batch C4): binds USAGE_DB and turns usage capture on. Without the flag, the id already in wrangler.jsonc
 //              is kept only when that file was generated for the same Worker and D1 database; `off` drops it.
 // --dev-vars   Also write apps/api/.dev.vars (0600, gitignored) from .secrets/<env>/relayer-keys.json (session pool,
@@ -58,6 +58,12 @@ export function identityVars(m: Manifest): Record<string, string> {
   if (m.network !== 'testnet') throw new Error(`envs/${m.name}.json: a Worker-secret identity signing key is testnet only (D127)`);
   return { ...common, IDENTITY_ACTIVE_KID: t.signer.activeKid };
 }
+
+/**
+ * USAGE_DB's `localConnectionString` (`wrangler dev`): `.invalid` never resolves (RFC 6761), so a local login's usage
+ * write fails at connect and is logged, as with Neon down. No credential: the password is a placeholder.
+ */
+export const LOCAL_USAGE_CONNECTION_STRING = 'postgresql://usage_writer:local-dev@usage-ledger.local.invalid:5432/usage';
 
 /** A Hyperdrive config id (`wrangler hyperdrive create` prints it; not a secret: the credentials stay in the config). */
 export const HYPERDRIVE_ID_RE = /^[0-9a-f]{32}$/u;
@@ -111,8 +117,10 @@ export function wranglerConfig(m: Manifest, d1Id: string, opts: { usageHyperdriv
       ...identityVars(m),
     },
     d1_databases: [{ binding: 'DB', database_name: m.cloudflare.d1Name, database_id: d1Id, migrations_dir: 'migrations' }],
-    // The usage ledger's writer (role usage_writer, caching disabled on the config), batch C4; optional.
-    ...(opts.usageHyperdriveId ? { hyperdrive: [{ binding: 'USAGE_DB', id: opts.usageHyperdriveId }] } : {}),
+    // The usage ledger's writer (role usage_writer, caching disabled on the config), batch C4; optional. `wrangler dev`
+    // needs a local connection string for a Hyperdrive binding: an unroutable placeholder, so local capture fails open
+    // (usage_write_failed in the dev log) and never reaches a real ledger.
+    ...(opts.usageHyperdriveId ? { hyperdrive: [{ binding: 'USAGE_DB', id: opts.usageHyperdriveId, localConnectionString: LOCAL_USAGE_CONNECTION_STRING }] } : {}),
     durable_objects: {
       bindings: [
         { name: 'RELAYER_KEY', class_name: 'RelayerKey' },
@@ -340,7 +348,7 @@ export function main(argv: string[], opts: { root?: string; dir?: string; loadMa
   const usageFlag = argv.indexOf('--usage-hyperdrive-id');
   const usageArg = usageFlag >= 0 ? argv[usageFlag + 1] : undefined;
   if (usageFlag >= 0 && (!usageArg || (usageArg !== 'off' && !HYPERDRIVE_ID_RE.test(usageArg)))) {
-    throw new Error('--usage-hyperdrive-id needs the writer Hyperdrive config id (32 hex characters; `usage-setup <env> --hyperdrive` prints it) or `off`');
+    throw new Error('--usage-hyperdrive-id needs the writer Hyperdrive config id (32 hex characters; `usage-setup <env> hyperdrive` prints it) or `off`');
   }
   const idFlag = argv.indexOf('--d1-id');
   const d1Arg = idFlag >= 0 ? argv[idFlag + 1] : undefined;

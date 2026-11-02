@@ -12,6 +12,7 @@ import { generateKeyPairSync, randomBytes } from 'node:crypto';
 import { IDENTITY_SECRET_FILES, identityIssuerFor, p256Thumbprint, type Manifest } from '@hana-id/env';
 import {
   LOCAL_D1_ID,
+  LOCAL_USAGE_CONNECTION_STRING,
   TEST_MANIFEST,
   devVarsContent,
   existingD1Id,
@@ -297,11 +298,11 @@ describe('wrangler.jsonc', () => {
     expect(read()).not.toHaveProperty('hyperdrive');
     expect(logs.join('\n')).toMatch(/usage capture: off/u);
     main([manifest.name, '--usage-hyperdrive-id', id], { dir });
-    expect(read().hyperdrive).toEqual([{ binding: 'USAGE_DB', id }]);
+    expect(read().hyperdrive).toEqual([{ binding: 'USAGE_DB', id, localConnectionString: LOCAL_USAGE_CONNECTION_STRING }]);
     expect(logs.join('\n')).toMatch(new RegExp(`usage capture: on \\(USAGE_DB → Hyperdrive ${id}\\)`, 'u'));
     // Regenerating without the flag keeps it; another env's config never inherits it.
     main([manifest.name], { dir });
-    expect(read().hyperdrive).toEqual([{ binding: 'USAGE_DB', id }]);
+    expect(read().hyperdrive).toEqual([{ binding: 'USAGE_DB', id, localConnectionString: LOCAL_USAGE_CONNECTION_STRING }]);
     const other = { ...manifest, name: 'other-env', cloudflare: { ...manifest.cloudflare, workerName: 'hana-id-api-other', d1Name: 'hana-id-other-env' } };
     expect(existingUsageHyperdriveId(join(dir, 'wrangler.jsonc'), other)).toBeNull();
     expect(writeWranglerConfig(other, undefined, dir).usageHyperdriveId).toBeNull();
@@ -312,6 +313,8 @@ describe('wrangler.jsonc', () => {
       expect(() => main([manifest.name, '--usage-hyperdrive-id', ...bad], { dir }), JSON.stringify(bad)).toThrow(/--usage-hyperdrive-id needs/u);
     }
     expect(() => wranglerConfig(manifest, LOCAL_D1_ID, { usageHyperdriveId: 'x' })).toThrow(/32 lowercase hex/u);
+    // wrangler dev: an unroutable placeholder (RFC 6761 .invalid), never a real ledger or credential.
+    expect(new URL(LOCAL_USAGE_CONNECTION_STRING).hostname).toMatch(/\.invalid$/u);
   });
 
   it('writes only the secrets that exist (no owner pool yet: no OWNER_RELAYER_KEYS line)', () => {

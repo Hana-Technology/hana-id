@@ -6,12 +6,14 @@ import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { createExecutionContext, createScheduledController, waitOnExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import pg from 'pg';
 import worker from '../src/index.ts';
 import type { FinalOutcome } from '../src/near/rpc.ts';
 import { burntGas } from '../src/near/tx.ts';
 import { parseRelayerKeys } from '../src/relayer-config.ts';
 import type { RelayResult } from '../src/relayer-key.ts';
 import { IDENTITY_SYNC_DAYS, RECORD_IDENTITY_SQL, syncIdentityUsage } from '../src/usage/identity-sync.ts';
+import { ENSURE_PARTITIONS_SQL, USAGE_PARTITION_MONTHS, ensureUsagePartitions } from '../src/usage/partitions.ts';
 import { RECORD_EVENT_SQL, USAGE_RETRY_DELAY_MS, classifyWriteError, recordUsage, usageTransport } from '../src/usage/record.ts';
 import { relayFacts, wasRelayed } from '../src/usage/event.ts';
 import { ORIGIN, appHeaders, call, chain, deriveBody, newKey, newSessionKey, revokeBody, seedApp, seedPlan, sessionBody, uid } from './helpers.ts';
@@ -26,8 +28,10 @@ const SUB = '1234567890';
 const body = async (res: Response): Promise<Record<string, unknown>> => (await res.clone().json()) as Record<string, unknown>;
 const newAud = (): string => `${uid()}.apps.googleusercontent.com`;
 const NO_BINDING = { USAGE_DB: undefined };
+/** An error as the server sends it (pg's DatabaseError, the only one classifyWriteError reads a SQLSTATE from). */
+const dbError = (code: string) => Object.assign(new pg.DatabaseError('server said no', 0, 'error'), { code });
 /** A server that refuses connections (nothing listens on the discard port): the real pg driver's failure path. */
-const REFUSING = { USAGE_DB: { connectionString: 'postgresql://usage_writer:sekrit-pw@127.0.0.1:9/usage' } as unknown as Hyperdrive };
+const REFUSING = { USAGE_DB: { connectionString: 'postgresql://usage_writer:fake-pw-refused@127.0.0.1:9/usage' } as unknown as Hyperdrive };
 
 /** Structured log lines of one level written while `fn` ran. */
 async function logged<T>(fn: () => Promise<T>): Promise<{ value: T; lines: Record<string, unknown>[]; raw: string[] }> {
@@ -106,7 +110,7 @@ describe('logins never depend on the ledger', () => {
     );
     expect(new Set(failed.map((l) => l.requestId)).size).toBe(5);
     // Nothing logged names the connection: no password, host or URL.
-    expect(raw.join('\n')).not.toMatch(/sekrit-pw|127\.0\.0\.1|postgresql:/u);
+    expect(raw.join('\n')).not.toMatch(/fake-pw-refused|127\.0\.0\.1|postgresql:/u);
   });
 
   it('answers before the write: a ledger that never answers delays no response', async () => {
@@ -130,7 +134,7 @@ describe('logins never depend on the ledger', () => {
       expect(value.status).toBe(200);
       return { attempts: ledger.calls.length, logs: lines.filter((l) => String(l.event).startsWith('usage_write')).map((l) => `${l.event} ${l.code}`) };
     };
-    const err = (code: string) => Object.assign(new Error('server said no'), { code });
+    const err = dbError;
     expect(await login(() => err('22023'))).toEqual({ attempts: 1, logs: ['usage_write_rejected pg_22023'] });
     expect(await login(() => err('23514'))).toEqual({ attempts: 1, logs: ['usage_write_failed pg_23514'] });
     expect(await login(() => err('57014'))).toEqual({ attempts: 2, logs: ['usage_write_failed pg_57014'] });
@@ -151,12 +155,27 @@ describe('logins never depend on the ledger', () => {
     expect(usageOf(app.id)).toHaveLength(1);
   });
 
-  it('classifies write errors: no SQLSTATE or a transient class retries; 22023 is a refused event; others fail', () => {
+  it('classifies write errors: only the server’s DatabaseError has a SQLSTATE; a transient class retries; 22023 is a refused event; others fail', () => {
     expect(classifyWriteError(new Error('boom'))).toEqual({ kind: 'retry', code: 'connection' });
-    expect(classifyWriteError({ code: 'ECONNREFUSED' })).toEqual({ kind: 'retry', code: 'connection' });
-    for (const c of ['08006', '53300', '57014', '57P01', '58000', '40001']) expect(classifyWriteError({ code: c }).kind, c).toBe('retry');
-    expect(classifyWriteError({ code: '22023' })).toEqual({ kind: 'rejected', code: 'pg_22023' });
-    for (const c of ['23514', '42501', '42883', '28P01']) expect(classifyWriteError({ code: c }).kind, c).toBe('failed');
+    // A socket's errno code, or anything shaped like a SQLSTATE that isn't the server's answer, is a connection error.
+    for (const e of [{ code: 'ECONNREFUSED' }, Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }), { code: '22023' }, Object.assign(new Error('x'), { code: '23514' })]) {
+      expect(classifyWriteError(e), JSON.stringify(e)).toEqual({ kind: 'retry', code: 'connection' });
+    }
+    for (const c of ['08006', '53300', '57014', '57P01', '58000', '40001']) expect(classifyWriteError(dbError(c)).kind, c).toBe('retry');
+    expect(classifyWriteError(dbError('22023'))).toEqual({ kind: 'rejected', code: 'pg_22023' });
+    for (const c of ['23514', '42501', '42883', '28P01']) expect(classifyWriteError(dbError(c)).kind, c).toBe('failed');
+  });
+
+  it('does all its work after the response: nothing is computed or sent before the first yield', async () => {
+    const draft = { v: 1, request_id: 'req-after-response-1', at_ms: Date.now(), org_id: 'org_legacy', app_id: 'app_x', scope_id: 's1', endpoint: 'login', outcome: 'ok', code: null, status: 200, latency_ms: 1, relayed: false } as const;
+    let resolved = false;
+    const pending = recordUsage(env, draft, { path: `s1#google#${SUB}#0`, logEndpoint: '/v1/login' }).then(() => (resolved = true));
+    // Microtasks (a handler returning its response) run before the yield ends.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect([ledger.calls.length, resolved]).toEqual([0, false]);
+    await pending;
+    expect(ledger.events.map((e) => e.request_id)).toEqual(['req-after-response-1']);
   });
 
   it('an event UsageEvent v1 refuses is never sent (usage_write_rejected)', async () => {
@@ -292,6 +311,11 @@ describe('events', () => {
       relay_tokens_burnt_yocto: '2',
     });
     expect(relayFacts(fail('relayer_busy', tx))).toEqual({ relayed: false, near_tx: tx });
+    // Gas past the event's bounds is left out (both figures); the rest of the event stays.
+    const big = { ok: true as const, result: null, nearTx: tx, relayerPk: 'ed25519:pk', relayerNonce: '7' };
+    expect(relayFacts({ ...big, relayGasBurnt: (2n ** 63n).toString(), relayTokensBurnt: '2' })).toEqual({ relayed: true, near_tx: tx, relayer_pk: 'ed25519:pk', relayer_nonce: '7' });
+    expect(relayFacts({ ...big, relayGasBurnt: '1', relayTokensBurnt: (10n ** 39n).toString() })).toEqual({ relayed: true, near_tx: tx, relayer_pk: 'ed25519:pk', relayer_nonce: '7' });
+    expect(relayFacts({ ...big, relayGasBurnt: (2n ** 63n - 1n).toString(), relayTokensBurnt: (10n ** 39n - 1n).toString() })).toMatchObject({ relay_gas_burnt: (2n ** 63n - 1n).toString() });
   });
 
   it('a request that never reached the relay (an unlock, a refusal) is not relayed and names no transaction', async () => {
@@ -461,6 +485,20 @@ describe('identity token counts into the ledger (hourly)', () => {
     expect(ledger.identity.filter((r) => r.app_id === app.id)).toEqual([]);
     await run(hour);
     expect(ledger.identity.filter((r) => r.app_id === app.id).map((r) => r.tokens)).toEqual([3]);
+    // The same hourly run keeps the ledger's partitions 12 months ahead (migrations-usage 0003); the quarter's didn't.
+    expect(ledger.partitionCalls).toEqual([USAGE_PARTITION_MONTHS]);
+    expect(USAGE_PARTITION_MONTHS).toBe(12);
+  });
+
+  it('a failing partition call is logged, never fails the cron, and the identity copy still runs', async () => {
+    const app = await seedApp();
+    await env.DB.prepare('INSERT INTO identity_usage (app_id, day, tokens) VALUES (?1, ?2, 4)').bind(app.id, day(0)).run();
+    ledger.fail = (sql) => (sql === ENSURE_PARTITIONS_SQL ? dbError('42501') : undefined);
+    const { value, lines } = await logged(() => ensureUsagePartitions(env));
+    expect(value).toBe(false);
+    expect(lines.map((l) => [l.event, l.code])).toEqual([['usage_partitions_failed', 'pg_42501']]);
+    expect(await ensureUsagePartitions({ ...env, USAGE_DB: undefined })).toBe(true);
+    expect(await syncIdentityUsage(env)).toBeGreaterThanOrEqual(1);
   });
 });
 

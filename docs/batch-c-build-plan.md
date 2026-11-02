@@ -23,7 +23,8 @@ Batches merge one at a time. Deploys happen at the milestones at the end; a merg
   D172): its own tables only, so 0006 and 0007 keep their numbers and apply before or after it; batch C's usage
   ledger (C4) should also count `identity_tokens` per app and day (today `identity_usage` in D1). Taken by C4:
   hot-DB **0009** (`0009_session_markers.sql`, D220; 0007 stays C4b's) and Neon **0002**
-  (`0002_identity_tokens.sql`, D223), so C12's and C13's Neon functions take 0003 and 0004.
+  (`0002_identity_tokens.sql`, D223) and **0003** (`0003_writer_partitions.sql`, the writer keeps partitions
+  ahead), so C12's and C13's Neon functions take **0004** and **0005**.
 - Setup and deploy steps are instructions for the user. No batch's agent connects to Neon, creates Hyperdrive or D1
   resources, runs wrangler against an account, deploys or sends a chain transaction.
 - Neon is Postgres only, reached through Hyperdrive. Neon Auth, Better Auth and Neon's other services are not used
@@ -186,7 +187,7 @@ Setup for the user: `docs/operations.md` "Usage capture (batch C4, milestone M2)
 - `scripts/usage-legacy-export.ts`: writes the D1 `usage` table once to `EXPORTS` (`legacy/usage-<env>.csv`) with
   row counts verified; then `apps/api/migrations/0007_drop_legacy_usage.sql`. Applied only after the export, after C4
   is deployed (nothing writes `usage` any more) and after the one-off `usage` → `session_markers` statement of
-  `docs/operations.md` "Usage capture" step 5 (D220). Needs the `EXPORTS` bucket (setup step 7). Nothing reads `usage`
+  `docs/operations.md` "Usage capture" step 7 (D220), run again right before 0007. Needs the `EXPORTS` bucket (setup step 7). Nothing reads `usage`
   any more (`apps/api/scripts/test/hot-db-reads.test.ts` checks it).
 
 ## C5. `AdminRpc` and `ConsoleRpc` core
@@ -284,10 +285,15 @@ Setup for the user: `docs/operations.md` "Usage capture (batch C4, milestone M2)
 
 ## C12. Reports and statements
 
-- **Scope**: Neon `0002_reports.sql` (`org_report`, `org_statements`, `org_ledger`, `rejection_rates`); admin crons
-  (settlement every 15 min, the daily nonce check, rate fetch with the audited override, `ensure_partitions`,
-  rejection-rate alert); `ConsoleRpc.usage`/`statements`/`ledger`; report screens (console and admin); statement issue
+- **Scope**: Neon `0004_reports.sql` (`org_report`, `org_statements`, `org_ledger`, `rejection_rates`; C13's
+  retention functions are `0005`); admin crons (settlement every 15 min, the daily nonce check, rate fetch with the
+  audited override, `ensure_partitions` as a second keeper beside the API's hourly one (C4), rejection-rate alert); `ConsoleRpc.usage`/`statements`/`ledger`; report screens (console and admin); statement issue
   with CSV, PDF (`pdf-lib`, exact-pinned) and on-screen views, the ledger CSV and exports.
+- **Obligation from C4 (review L7, D222):** settlement bills a relayed event only when its transaction is its own:
+  `near_tx` unique among the ledger's relayed events, and the transaction read at FINAL signed by `relayer_pk` (one of
+  the env's relayer pool keys) with nonce `relayer_nonce`. A duplicate or a mismatch is not billed (`unsettled`,
+  listed) and alerts staff: a leaked writer credential could otherwise attach a real transaction to an org it isn't
+  for. Test it with a duplicated `near_tx` and a wrong key and nonce.
 - **Tests**: spec "Usage ledger" report, settlement, nonce-check, statement, golden-CSV, rejection-rate and D92 rows.
 
 ## C13. Retention
@@ -354,7 +360,7 @@ Run from the main checkout; every file in `.secrets/` is 0600 in a 0700 director
 6. **`USER_ID_KEY`** (C4): `usage-setup sandbox-dev user-id-key --yes` writes 32 random bytes (base64) to
    `.secrets/sandbox-dev/user-id-key` (never replaced) and sets the API's `USER_ID_KEY` through wrangler's stdin; an
    offline backup is made by hand. Also for C4: hot-DB migration 0009 and its one-off `usage` → `session_markers`
-   statement (`docs/operations.md` "Usage capture" step 5).
+   statement after the deploy (`docs/operations.md` "Usage capture" steps 5 and 7).
 7. **R2** (C11, C4b): buckets from the `files` block; `STATEMENTS` with a 7-year bucket lock, `EXPORTS` with a 30-day
    lifecycle rule except `legacy/`.
 8. **Cloudflare Access** (C8): the admin application on `admin.origin` (Custom Domain on production; Worker-level

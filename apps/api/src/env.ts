@@ -86,12 +86,12 @@ export interface Env {
   FILES_ORIGIN?: string;
   /**
    * Batch C4 (docs/batch-c-spec.md "Usage capture"): the usage ledger's writer, a Hyperdrive config (role
-   * `usage_writer`, which may only call `usage.record_event` and `usage.record_identity_tokens`) bound by
+   * `usage_writer`, which may only call `usage.record_event`, `usage.record_identity_tokens` and `usage.ensure_partitions`) bound by
    * `gen --usage-hyperdrive-id`. Optional: without it capture is off and every endpoint answers as before.
    */
   USAGE_DB?: Hyperdrive;
   /**
-   * Secret (`usage-setup <env> --user-id-key`): the uid key, base64 of 32 bytes (docs/batch-c-spec.md "uid"). Without
+   * Secret (`usage-setup <env> user-id-key`): the uid key, base64 of 32 bytes (docs/batch-c-spec.md "uid"). Without
    * it events carry no uid (MAU and new users go uncounted). Never logged, never rotated within a contract term.
    */
   USER_ID_KEY?: string;

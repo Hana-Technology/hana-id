@@ -40,7 +40,11 @@ export const ROLE_FILES: Record<LedgerRole, string> = { usage_writer: 'neon-usag
 export const USER_ID_KEY_FILE = 'user-id-key';
 const USER_ID_KEY_RE = /^[A-Za-z0-9+/]{43}=$/u;
 const PASSWORD_RE = /^[A-Za-z0-9_-]{43}$/u;
-const HYPERDRIVE_ID_RE = /\b[0-9a-f]{32}\b/u;
+/**
+ * The id in wrangler's success line (`✅ Created new Hyperdrive PostgreSQL config: <id>`), anchored to it: wrangler also
+ * echoes the config (with other ids and hex), and only this line names the new config.
+ */
+export const CREATED_ID_RE = /^\W*Created new Hyperdrive\b[^\n]*?\bconfig:\s*([0-9a-f]{32})\s*$/mu;
 /** Postgres's default for SCRAM-SHA-256 verifiers (scram_iterations). */
 export const SCRAM_ITERATIONS = 4096;
 
@@ -185,7 +189,7 @@ export async function usageSetup(argv: readonly string[], deps: UsageSetupDeps):
       // wrangler echoes the origin (host, user); only the id is printed, and an error has the URL and password removed.
       const out = redact(`${res.stdout}\n${res.stderr}`, url);
       if (res.status !== 0) throw new Error(`wrangler hyperdrive create ${names[role]} failed (exit ${res.status}): ${out.trim().split('\n').slice(-3).join(' ').slice(0, 400)}`);
-      const id = HYPERDRIVE_ID_RE.exec(res.stdout)?.[0];
+      const id = CREATED_ID_RE.exec(res.stdout)?.[1];
       if (!id) throw new Error(`wrangler hyperdrive create ${names[role]} printed no config id; find it with \`wrangler hyperdrive list\``);
       deps.log(`${names[role]} (${role}): ${id}`);
     }

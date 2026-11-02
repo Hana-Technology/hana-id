@@ -19,6 +19,7 @@ import {
   appOriginsPark,
   appOriginsUnpark,
   REQUIRED_HOT_DB,
+  REQUIRED_HOT_DB_ANNOUNCE,
   requireC3ApiFor,
   STALE_WRITE,
   withRehearsalD1,
@@ -381,7 +382,10 @@ describe('the deployed API must read the C3 schema before any proposal (M2)', ()
     const down = (async () => {
       throw new Error('ECONNREFUSED');
     }) as unknown as typeof fetch;
-    await expect(requireC3ApiFor(sandbox, true, down)()).rejects.toThrow('Could not read');
+    await expect(requireC3ApiFor(sandbox, true, down)()).rejects.toThrow('Could not read');    // An announcement needs the batch C4 API (hot DB 0009: the session markers the waiver reads).
+    expect(REQUIRED_HOT_DB_ANNOUNCE).toBe(9);
+    await expect(requireC3ApiFor(sandbox, true, health({ hotDb: 6 }))(REQUIRED_HOT_DB_ANNOUNCE)).rejects.toThrow('need ≥ 9');
+    await requireC3ApiFor(sandbox, true, health({ hotDb: 9 }))(REQUIRED_HOT_DB_ANNOUNCE);
   });
 });
 

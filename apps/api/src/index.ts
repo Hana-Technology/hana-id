@@ -12,6 +12,7 @@ import { log } from './log.ts';
 import { LOGIN_ENDPOINT, handleLogin } from './login.ts';
 import { LOGIN_RELAY_PREFIX, handleLoginRelay, loggedEndpoint } from './login-relay.ts';
 import { syncIdentityUsage } from './usage/identity-sync.ts';
+import { ensureUsagePartitions } from './usage/partitions.ts';
 import { vaultMaintenance } from './vault/cron.ts';
 import { handleVaultEndpoint, isVaultEndpoint, vaultPreflight } from './vault/endpoints.ts';
 import { BASE_CSP, handleVaultPage, isVaultPageRequest } from './vault/page.ts';
@@ -28,7 +29,8 @@ const ID_RE = /^[A-Za-z0-9-]{1,64}$/u;
  * account). Every run syncs Google's JWKS with hana-signer (proposals and matured executions, issuer-keys.ts; the
  * governance spec's P = 15 min). The run in the first quarter of each UTC hour also does vault maintenance, prunes
  * the identity token's counts past their retention, records guarded changes' activations and expiries
- * (guarded/cron.ts), and copies the recent identity token counts to the usage ledger (usage/identity-sync.ts). A Worker
+ * (guarded/cron.ts), keeps the usage ledger's monthly partitions 12 months ahead (usage/partitions.ts) and copies the
+ * recent identity token counts to it (usage/identity-sync.ts). A Worker
  * still on the old `0 * * * *` trigger only ever gets hourly runs.
  */
 export function isHourlyRun(scheduledTime: number): boolean {
@@ -139,8 +141,9 @@ export default {
     const jobs: Promise<unknown>[] = [syncIssuerKeys(env)];
     if (isHourlyRun(controller.scheduledTime)) {
       jobs.push(vaultMaintenance(env), identityMaintenance(env), guardedChangesMaintenance(env));
-      // Usage fails open: the copy logs its own failures and never fails the run (the next hour copies again).
-      jobs.push(syncIdentityUsage(env));
+      // Usage fails open: these log their own failures and never fail the run (the next hour tries again). Partitions
+      // first, so the copy and the hour's events have their months.
+      jobs.push(ensureUsagePartitions(env).then(() => syncIdentityUsage(env)));
     }
     const [issuerKeys, vault, identity, guarded] = await Promise.allSettled(jobs);
     if (vault?.status === 'rejected') log({ event: 'vault_maintenance', outcome: 'error', code: 'internal' }, 'error');

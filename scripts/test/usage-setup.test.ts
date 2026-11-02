@@ -167,7 +167,12 @@ describe('usage-setup hyperdrive', () => {
     await run(['hyperdrive']);
     expect(out.at(-1)).toBe(DRY_RUN_LINE);
     expect(calls).toEqual([]);
-    wranglerReply = (args) => ({ status: 0, stdout: `🚧 Creating '${args[2]}'\n✅ Created new Hyperdrive config: ${args[2] === hyperdriveNames(m).usage_writer ? ID_W : ID_A}\n{"origin": {"host": "ep-quiet-sky-a1b2c3d4.ap-southeast-2.aws.neon.tech", "user": "usage_writer"}}`, stderr: '' });
+    // Another 32-hex value comes first (an account id in wrangler's banner): only the "Created" line's id counts.
+    wranglerReply = (args) => ({
+      status: 0,
+      stdout: `account aaaaaaaabbbbbbbbccccccccdddddddd\n🚧 Creating '${args[2]}'\n✅ Created new Hyperdrive PostgreSQL config: ${args[2] === hyperdriveNames(m).usage_writer ? ID_W : ID_A}\n{"origin": {"host": "ep-quiet-sky-a1b2c3d4.ap-southeast-2.aws.neon.tech", "user": "usage_writer"}}`,
+      stderr: '',
+    });
     await run(['hyperdrive', '--yes']);
     expect(calls.map((c) => [c.args.slice(0, 3), c.args.slice(4)])).toEqual([
       [['hyperdrive', 'create', 'hana-id-usage-writer-usage-test'], ['--caching-disabled']],
@@ -191,6 +196,10 @@ describe('usage-setup hyperdrive', () => {
     // A role file someone loosened is refused.
     chmodSync(join(dir, ROLE_FILES.usage_admin), 0o644);
     await expect(run(['hyperdrive', '--yes'])).rejects.toThrow(/0600/u);
+    chmodSync(join(dir, ROLE_FILES.usage_admin), 0o600);
+    // Success without the "Created … config: <id>" line (a changed wrangler): refused, never a guessed id.
+    wranglerReply = () => ({ status: 0, stdout: 'done 0123456789abcdef0123456789abcdef', stderr: '' });
+    await expect(run(['hyperdrive', '--yes'])).rejects.toThrow(/printed no config id/u);
   });
 });
 

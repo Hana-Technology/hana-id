@@ -6,6 +6,7 @@
 // that point USAGE_DB at a refusing server.
 import type { UsageEventV1 } from '@hana-id/console-core';
 import { RECORD_IDENTITY_SQL } from '../src/usage/identity-sync.ts';
+import { ENSURE_PARTITIONS_SQL } from '../src/usage/partitions.ts';
 import { RECORD_EVENT_SQL, type UsageTransport, usageTransport } from '../src/usage/record.ts';
 
 export const realTransport: UsageTransport['query'] = usageTransport.query;
@@ -21,6 +22,8 @@ export interface IdentityRow {
 export const ledger = {
   events: [] as UsageEventV1[],
   identity: [] as IdentityRow[],
+  /** `months_ahead` of each `usage.ensure_partitions` call. */
+  partitionCalls: [] as number[],
   /** Every statement the writer ran, in order (one per attempt). */
   calls: [] as { sql: string; at: number }[],
   /** When set, an attempt throws what it returns, unless undefined (e.g. a pg error with a SQLSTATE, a connection error). */
@@ -31,7 +34,7 @@ export const fakeTransport: UsageTransport['query'] = async (_binding, sql, para
   ledger.calls.push({ sql, at: Date.now() });
   const failure = ledger.fail?.(sql, ledger.calls.length);
   if (failure !== undefined) throw failure;
-  const value = JSON.parse(String(params[0])) as unknown;
+  const value = sql === ENSURE_PARTITIONS_SQL ? null : (JSON.parse(String(params[0])) as unknown);
   if (sql === RECORD_EVENT_SQL) {
     const e = value as UsageEventV1;
     // As the function: a retry with the same (request_id, at) is ignored.
@@ -42,12 +45,15 @@ export const fakeTransport: UsageTransport['query'] = async (_binding, sql, para
       if (i < 0) ledger.identity.push(r);
       else ledger.identity[i] = { ...ledger.identity[i]!, tokens: Math.max(ledger.identity[i]!.tokens, r.tokens) };
     }
+  } else if (sql === ENSURE_PARTITIONS_SQL) {
+    ledger.partitionCalls.push(Number(params[0]));
   } else throw new Error(`unexpected ledger statement ${sql}`);
 };
 
 export function resetLedger(): void {
   ledger.events = [];
   ledger.identity = [];
+  ledger.partitionCalls = [];
   ledger.calls = [];
   ledger.fail = null;
   usageTransport.query = fakeTransport;

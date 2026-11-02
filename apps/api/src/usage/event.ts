@@ -72,14 +72,28 @@ export function wasRelayed(result: RelayResult): boolean {
   return result.nearTx !== undefined && RELAYED_FAILURES.has(result.code);
 }
 
-/** The ledger's view of a relay result: whether it was relayed, the transaction, its key and nonce, its gas. */
+const I64_MAX = (1n << 63n) - 1n;
+const YOCTO_MAX = 10n ** 39n - 1n;
+/** A decimal string within 0..max (the event's bounds for its gas fields). */
+const withinBounds = (v: string, max: bigint): boolean => /^(0|[1-9]\d{0,38})$/u.test(v) && BigInt(v) <= max;
+
+/**
+ * The ledger's view of a relay result: whether it was relayed, the transaction, its key and nonce, its gas. The
+ * provisional gas pair is left out when either figure is past the event's bounds (gas ≤ 2^63 − 1, tokens < 10^39; a
+ * sum of u64 receipts can pass the first), so the rest of the event is still recorded: settlement reads the billed
+ * figure from chain anyway.
+ */
 export function relayFacts(result: RelayResult): RelayFacts {
   const facts: RelayFacts = { relayed: wasRelayed(result) };
   if (result.nearTx !== undefined) facts.near_tx = result.nearTx;
   if (result.relayerPk !== undefined) facts.relayer_pk = result.relayerPk;
   if (result.relayerNonce !== undefined) facts.relayer_nonce = result.relayerNonce;
-  if (result.relayGasBurnt !== undefined) facts.relay_gas_burnt = result.relayGasBurnt;
-  if (result.relayTokensBurnt !== undefined) facts.relay_tokens_burnt_yocto = result.relayTokensBurnt;
+  const gas = result.relayGasBurnt;
+  const tokens = result.relayTokensBurnt;
+  if (gas !== undefined && tokens !== undefined && withinBounds(gas, I64_MAX) && withinBounds(tokens, YOCTO_MAX)) {
+    facts.relay_gas_burnt = gas;
+    facts.relay_tokens_burnt_yocto = tokens;
+  }
   return facts;
 }
 

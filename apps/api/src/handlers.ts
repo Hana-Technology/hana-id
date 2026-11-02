@@ -700,9 +700,10 @@ async function ownerAction(request: Request, env: Env, ctx: Ctx, exec?: Executio
 // ---- Health ----
 
 /**
- * `hotDb`: the hot-DB migration whose reads this build makes (apps.ts HOT_DB_SCHEMA). The admin CLI refuses guarded
- * proposals until the deployed API reports 6 or more: an API from before batch C3 would treat an origin that is only
- * proposed as in force (docs/operations.md "Rolling the API back below batch C3").
+ * `hotDb`: the hot-DB migration this build needs (apps.ts HOT_DB_SCHEMA). The admin CLI refuses guarded proposals
+ * until the deployed API reports 6 or more (an API from before batch C3 would treat an origin that is only proposed as
+ * in force; docs/operations.md "Rolling the API back below batch C3"), and announcements until it reports 9 or more
+ * (the batch C4 API writes the session markers the `no_session` waiver reads).
  */
 export function handleHealth(env: Env, requestId: string): Response {
   return json(200, { ok: true, env: env.ENV_NAME, signer: env.SIGNER_ACCOUNT, hotDb: HOT_DB_SCHEMA, requestId }, { 'access-control-allow-origin': '*', 'x-request-id': requestId });

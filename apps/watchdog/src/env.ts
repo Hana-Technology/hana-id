@@ -3,7 +3,7 @@
 
 import { PAGER_PROVIDERS, type PagerProvider, SECRET_NAMES } from './names.ts';
 
-export { PAGER_PROVIDERS, type PagerProvider, SECRET_NAMES } from './names.ts';
+export { isDevEnvName, PAGER_PROVIDERS, type PagerProvider, SECRET_NAMES } from './names.ts';
 
 export interface Env {
   DB: D1Database;
@@ -30,6 +30,13 @@ export interface Env {
   ALERT_FROM: string;
   /** Hour (UTC) after which the daily digest is sent. */
   DIGEST_HOUR_UTC?: string;
+  /**
+   * JSON `{required, signers: {<id>: [thumbprint, …]}}` of the manifest's `watchdog.pinnedIssuerKeys.email`. Absent:
+   * nothing pinned (every email key is unpinned; an email issuer on chain is a critical difference).
+   */
+  EMAIL_PINS?: string;
+  /** Hana's published email JWKS (set with the pins; default `{apiUrl}/v1/email/jwks.json`). */
+  EMAIL_JWKS_URL?: string;
 
   // ---- secrets ----
   /** `ed25519:<base58>` function-call key on WATCHDOG_ACCOUNT (receiver SIGNER_ACCOUNT, the four watchdog methods). */

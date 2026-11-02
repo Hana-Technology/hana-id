@@ -5,10 +5,15 @@
 //             can change; and the owner account's code or policy (the council DAO's members and vote rules, D81).
 //             Also the owner's immediate issuer actions, which leave no pending state: `set_issuer` (the watched
 //             issuer created, dropped or its iss values changed: field `issuer`) and `remove_issuer_key` (an active
-//             kid gone without a pending removal of it leaving the queue: field `issuer_keys`).
-//   warning:  shared clients, sponsors, public registration.
+//             kid gone without a pending removal of it leaving the queue: field `issuer_keys`); the same for the email
+//             issuer (`email_issuer`, `email_issuer_keys`), and its signer policy (`email_signer_policy`: marked
+//             self-issued, or signers or required changed by an upgrade's migrate). `unrecorded_wallets` (contract v3,
+//             D135): the owner's accept_unrecorded_wallets, or an upgrade that set it. The link alarm thresholds (D200):
+//             a raise (`link_thresholds` up, or a `pending_thresholds` raise appearing or changing) is critical.
+//   warning:  shared clients, sponsors, public registration; the link thresholds lowered, or a pending raise cancelled.
 //   matured:  a scheduled delay decrease or audience addition coming into force as scheduled (info).
-import type { ChainSnapshot, ConfigView, GovernanceView, IssuerView, KeyChange, OwnerAccount, PendingClient } from './chain.ts';
+import type { ChainSnapshot, ConfigView, GovernanceView, IssuerView, KeyChange, LinkThresholds, LinkStatsView, OwnerAccount, PendingClient, SelfIssuedView } from './chain.ts';
+import { EMAIL_PROVIDER } from './pins.ts';
 
 export interface StoredSnapshot {
   at: number;
@@ -19,7 +24,14 @@ export interface StoredSnapshot {
   owner?: OwnerAccount | null;
   /** The watched issuer (Google) as `get_issuer` showed it. Absent in older snapshots: that run's issuer is the baseline. */
   issuer?: IssuerView | null;
+  /** The email issuer and its signer policy. Absent in snapshots stored before the email checks: that run's is the baseline. */
+  email?: { issuer: IssuerView | null; selfIssued: SelfIssuedView | null };
+  /** The link thresholds (D200; null: no get_link_stats). Absent in older snapshots: that run's are the baseline. */
+  linkStats?: { thresholds: LinkThresholds; pending_thresholds: LinkStatsView['pending_thresholds'] } | null;
 }
+
+/** What the snapshot keeps of `get_link_stats()`: the thresholds, not the counts. */
+export const linkThresholdsOf = (v: LinkStatsView | null): StoredSnapshot['linkStats'] => (v ? { thresholds: v.thresholds, pending_thresholds: v.pending_thresholds } : null);
 
 export interface FieldChange {
   field: string;
@@ -48,6 +60,7 @@ const CRITICAL_CONFIG = [
   'pending_governance_delay',
   'unpaused_at_ms',
   'sessions_valid_from_ms',
+  'unrecorded_wallets',
 ] as const;
 /** The owner account's code and DAO policy (D81). */
 const CRITICAL_OWNER = [
@@ -93,7 +106,32 @@ function emptyBaseline(cur: ChainSnapshot): StoredSnapshot {
     keyChanges: [],
     owner: cur.owner,
     issuer: cur.issuer,
+    email: { issuer: cur.email.issuer, selfIssued: cur.email.selfIssued },
+    linkStats: cur.linkStats ? { thresholds: cur.linkStats.thresholds, pending_thresholds: null } : null,
   };
+}
+
+const capsOf = (l: LinkThresholds | null | undefined) => (l ? { per_scope_per_hour: l.per_scope_per_hour, total_per_hour: l.total_per_hour } : null);
+const above = (a: LinkThresholds, b: LinkThresholds | null) => !b || a.per_scope_per_hour > b.per_scope_per_hour || a.total_per_hour > b.total_per_hour;
+
+/**
+ * The link alarm thresholds (D200). Raising is the dangerous direction (more links per hour before an alarm): thresholds that
+ * went up (or appeared, with the view) and a pending raise appearing or changing are critical; lowering, or a pending
+ * raise cancelled, is a warning; a pending raise coming into force as scheduled is info.
+ */
+function linkThresholdChanges(prev: StoredSnapshot, cur: ChainSnapshot, now: number, out: ChainDiff): void {
+  if (prev.linkStats === undefined) return;
+  const pl = capsOf(prev.linkStats?.thresholds);
+  const cl = capsOf(cur.linkStats?.thresholds);
+  const pp = prev.linkStats?.pending_thresholds ?? null;
+  const cp = cur.linkStats?.pending_thresholds ?? null;
+  const matured = pp !== null && pp.effective_at_ms <= now && cp === null && same(capsOf(pp), cl);
+  if (matured) {
+    out.matured.push({ field: 'link_thresholds', before: pl, after: cl });
+    return;
+  }
+  if (!same(pl, cl)) (cl && above(cl, pl) ? out.critical : !cl ? out.critical : out.warning).push({ field: 'link_thresholds', before: pl, after: cl });
+  if (!same(pp, cp)) (cp && above(cp, cl) ? out.critical : out.warning).push({ field: 'pending_thresholds', before: pp, after: cp });
 }
 
 /**
@@ -101,18 +139,20 @@ function emptyBaseline(cur: ChainSnapshot): StoredSnapshot {
  * (provider and iss values) and `remove_issuer_key` (active kids that disappeared although no pending removal of them
  * left the queue since the last run; a removal that executed or was confirmed is reported by the queue check).
  */
-function issuerChanges(prev: StoredSnapshot, cur: ChainSnapshot): FieldChange[] {
-  if (prev.issuer === undefined) return [];
+function issuerChanges(field: string, provider: string, before: IssuerView | null, after: IssuerView | null, prev: StoredSnapshot, cur: ChainSnapshot): FieldChange[] {
   const out: FieldChange[] = [];
   const shape = (i: IssuerView | null | undefined) => (i ? { provider: i.provider, iss_values: i.iss_values } : null);
-  if (!same(shape(prev.issuer), shape(cur.issuer))) out.push({ field: 'issuer', before: shape(prev.issuer), after: shape(cur.issuer) });
-  const now = new Set(cur.issuer?.kids ?? []);
+  if (!same(shape(before), shape(after))) out.push({ field, before: shape(before), after: shape(after) });
+  const now = new Set(after?.kids ?? []);
   const stillQueued = new Set(cur.keyChanges.map((c) => c.id));
-  const explained = new Set(prev.keyChanges.filter((c) => c.op === 'Remove' && c.provider === (prev.issuer?.provider ?? cur.issuer?.provider) && !stillQueued.has(c.id)).map((c) => c.kid));
-  const removed = (prev.issuer?.kids ?? []).filter((k) => !now.has(k) && !explained.has(k));
-  if (cur.issuer && removed.length) out.push({ field: 'issuer_keys', before: prev.issuer?.kids ?? [], after: cur.issuer.kids });
+  const explained = new Set(prev.keyChanges.filter((c) => c.op === 'Remove' && c.provider === provider && !stillQueued.has(c.id)).map((c) => c.kid));
+  const removed = (before?.kids ?? []).filter((k) => !now.has(k) && !explained.has(k));
+  if (after && removed.length) out.push({ field: `${field}_keys`, before: before?.kids ?? [], after: after.kids });
   return out;
 }
+
+/** The signer policy without its kids (they change as keys execute, which the queue check reports). */
+const policyShape = (si: SelfIssuedView | null | undefined) => (si ? { signers: si.signers.map((s) => s.id), required: si.required, overlap_until_ms: si.overlap_until_ms ?? null } : null);
 
 export function diffChain(prevIn: StoredSnapshot | null, cur: ChainSnapshot, now: number, self: { paused: boolean; deletedUpdaterKeys: string[] }): ChainDiff {
   const prev = prevIn ?? emptyBaseline(cur);
@@ -159,7 +199,14 @@ export function diffChain(prevIn: StoredSnapshot | null, cur: ChainSnapshot, now
       if (!same(before, after)) out.critical.push({ field, before, after });
     }
   }
-  out.critical.push(...issuerChanges(prev, cur));
+  if (prev.issuer !== undefined) out.critical.push(...issuerChanges('issuer', prev.issuer?.provider ?? cur.issuer?.provider ?? 'google', prev.issuer, cur.issuer, prev, cur));
+  if (prev.email !== undefined) {
+    out.critical.push(...issuerChanges('email_issuer', EMAIL_PROVIDER, prev.email.issuer, cur.email.issuer, prev, cur));
+    const before = policyShape(prev.email.selfIssued);
+    const after = policyShape(cur.email.selfIssued);
+    if (!same(before, after)) out.critical.push({ field: 'email_signer_policy', before, after });
+  }
+  linkThresholdChanges(prev, cur, now, out);
   for (const f of WARNING_CONFIG) if (!handled.has(f) && !same(pc[f], cc[f])) out.warning.push({ field: f, before: pc[f], after: cc[f] });
   return out;
 }

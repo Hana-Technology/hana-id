@@ -1,5 +1,6 @@
 // Read-only status for batch C's admin portal (D83), plus acknowledgements:
-//   GET  /status               last run and its checks, heartbeat, silence, seen kids, relayer funds, recent actions,
+//   GET  /status               last run and its checks, heartbeat, silence, seen kids, relayer funds, the email pins
+//                              and the chain's email issuer, the link stats (D200), recent actions,
 //                              open alerts
 //   GET  /alerts?cursor&limit&severity   alert history, newest first, with deliveries
 //   GET  /actions?cursor&limit actions log, newest first (transaction hashes)
@@ -8,9 +9,11 @@
 // here can change a check, stop a first delivery or call the chain.
 import { ALERT_KINDS_WITH_PLAYBOOKS, CHANNELS, CHECKS, RESEND_MS, RUN_INTERVAL_MS, type Severity } from './checks.ts';
 import type { Notifier } from './channels.ts';
+import type { LinkStatsView } from './chain.ts';
 import type { Env } from './env.ts';
 import { log } from './log.ts';
-import { type HeartbeatState, META, type RelayerFundsStatus } from './run.ts';
+import { parsePins } from './pins.ts';
+import { type EmailPolicyStatus, type HeartbeatState, META, type RelayerFundsStatus } from './run.ts';
 import type { AlertRow, Store } from './store.ts';
 
 /** The portal warns when the last run is older than two intervals (spec "Monitoring in the admin portal"). */
@@ -153,6 +156,12 @@ async function status(d: StatusDeps) {
     seen_kids: await d.store.allSeenKids(),
     // The last relayer reading (balance, pool keys' allowances, thresholds; yocto strings), or null before one.
     relayer_funds: await d.store.getMeta<RelayerFundsStatus>(META.relayerFunds),
+    // The email pins in force (thumbprints: public), Hana's JWKS URL, and the chain's email issuer and signer policy
+    // with every difference at the last run (null before one).
+    email: { pinned: parsePins(d.env.EMAIL_PINS).pins, jwks_url: d.env.EMAIL_JWKS_URL ?? null, last: await d.store.getMeta<EmailPolicyStatus>(META.emailPolicy) },
+    // The last get_link_stats() (D200): thresholds, pending raise, the current and previous hour (null before one, or
+    // on a contract without the view).
+    link_stats: await d.store.getMeta<LinkStatsView & { at: number }>(META.linkStats),
     actions,
     open_alerts: open.map(alertView),
     checks: CHECKS,

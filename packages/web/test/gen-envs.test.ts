@@ -18,6 +18,8 @@ const sandbox = loadEnv('sandbox-dev');
 /** A validated manifest: sandbox-dev with overrides (undefined drops a field). */
 function manifest(overrides: Record<string, unknown>): Manifest {
   const m: Record<string, unknown> = { ...sandbox, ...overrides };
+  // A moved apiUrl would no longer match sandbox-dev's identity issuer; this test isn't about the identity token.
+  if ('apiUrl' in overrides && !('identityToken' in overrides)) delete m.identityToken;
   for (const [k, v] of Object.entries(overrides)) if (v === undefined) delete m[k];
   return manifestSchema.parse(m);
 }

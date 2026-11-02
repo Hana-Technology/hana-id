@@ -17,6 +17,7 @@ import {
   MAILBOX_CODE_LIMITS,
   MAILBOX_IP_CODE_LIMITS,
   MAILBOX_IP_LOCK_MS,
+  MAILBOX_IP_WRONG_DAY,
   MAILBOX_IP_WRONG_LIMIT,
   MAILBOX_RESERVE_LIMIT,
   MAILBOX_WRONG_BACKSTOP,
@@ -107,12 +108,18 @@ export class RateLimiter extends DurableObject<Env> {
 
   // ---- a mailbox ----
 
-  /** ms until this requester may act on this mailbox again (0: now). */
+  /**
+   * ms until this requester may act on this mailbox again (0: now). Past the mailbox-wide backstop, only a requester
+   * with no failed check on this mailbox in the day's window is let through (D198): the backstop stops whoever has been
+   * guessing, never an owner who hasn't, and each check still counts, so such a requester's first wrong code locks it
+   * too (one extra guess per new requester per day).
+   */
   private lockedFor(ip: string, now: number): number {
     const until = this.kv().get<number>(ipLock(ip)) ?? 0;
     if (until > now) return until - now;
     const backstop = this.slot(MAILBOX_WRONG_BACKSTOP, now);
-    return backstop.count >= backstop.l.max ? backstop.start + backstop.l.windowMs - now : 0;
+    if (backstop.count < backstop.l.max) return 0;
+    return this.slot(MAILBOX_IP_WRONG_DAY, now, `ip:${ip}:`).count === 0 ? 0 : backstop.start + backstop.l.windowMs - now;
   }
 
   private trySend(ip: string, now: number): Reserved {
@@ -178,8 +185,9 @@ export class RateLimiter extends DurableObject<Env> {
     const locked = this.lockedFor(ip, now);
     if (locked > 0) return { ok: false, reason: 'locked', retryAfterMs: locked };
     const own = this.slot(MAILBOX_IP_WRONG_LIMIT, now, `ip:${ip}:`);
+    const ownDay = this.slot(MAILBOX_IP_WRONG_DAY, now, `ip:${ip}:`);
     const all = this.slot(MAILBOX_WRONG_BACKSTOP, now);
-    const keys = this.count([own, all]);
+    const keys = this.count([own, ownDay, all]);
     if (own.count + 1 >= own.l.max) this.kv().put(ipLock(ip), now + MAILBOX_IP_LOCK_MS);
     await this.sweepAt(now + DAY);
     return { ok: true, reservation: { keys } };

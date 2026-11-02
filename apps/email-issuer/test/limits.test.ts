@@ -5,7 +5,7 @@
 import { runInDurableObject } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import type { ChallengeRecord } from '../src/challenge.ts';
-import { mailboxKey } from '../src/keys.ts';
+import { addressKey } from '../src/keys.ts';
 import { captureLogs, env, harness, seedApp, seedPlan, sessionCommitment, uid, type Harness, type TestApp } from './helpers.ts';
 
 const startBody = (h: Harness, app: TestApp, email: string) => ({ pk: app.pk, email, purpose: 'session', commitment: sessionCommitment(app.scope, h.clock.now).json });
@@ -87,7 +87,7 @@ describe('code mails per mailbox and requester', () => {
     const h = await harness();
     const app = await seedApp(h);
     const a = addr('s');
-    await env.DB.prepare('INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3)').bind(await mailboxKey(await h.deps.keys(), a), 'bounce', 1).run();
+    await env.DB.prepare('INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3)').bind(await addressKey(await h.deps.keys(), a), 'bounce', 1).run();
     const s = await start(h, app, a);
     expect(s.status).toBe(202);
     expect(h.sender.to(a)).toHaveLength(0);
@@ -100,10 +100,44 @@ describe('code mails per mailbox and requester', () => {
     h.clock.now += 30_000;
     expect((await h.call('/v1/email/resend', { challengeId: s.body.challengeId })).status).toBe(202);
     expect(h.sender.to(a)).toHaveLength(0);
-    // A bounce on a tagged address suppresses the mailbox.
-    const tagged = `${a.split('@')[0]}+x@example.com`;
+    // Suppression is per exact address: a bounce on victim+x@ never suppresses victim@ (where `+` may not be
+    // sub-addressing, those are two people's mailboxes).
+    const victim = addr('v');
+    const tagged = `${victim.split('@')[0]}+x@example.com`;
+    await env.DB.prepare('INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3)').bind(await addressKey(await h.deps.keys(), tagged), 'bounce', 1).run();
+    expect((await start(h, app, victim)).status).toBe(202);
+    expect(h.sender.to(victim)).toHaveLength(1);
     expect((await start(h, app, tagged)).status).toBe(202);
     expect(h.sender.to(tagged)).toHaveLength(0);
+  });
+
+  it('a suppressed address takes the same limiter path as any other (counted, never refunded)', async () => {
+    const h = await harness();
+    const app = await seedApp(h);
+    const fresh = addr('sf');
+    const suppressed = addr('ss');
+    await env.DB.prepare('INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3)').bind(await addressKey(await h.deps.keys(), suppressed), 'bounce', 1).run();
+    const ip = freshIp();
+    const seq = async (email: string) => {
+      const out: number[] = [];
+      for (let i = 0; i < 4; i++) out.push((await start(h, app, email, ip)).status);
+      return out;
+    };
+    expect(await seq(fresh)).toEqual([202, 202, 202, 429]);
+    expect(await seq(suppressed)).toEqual([202, 202, 202, 429]);
+    expect(h.sender.to(suppressed)).toHaveLength(0);
+    // Resends count alike: a fourth code for either from one requester within 15 min is refused.
+    for (const email of [addr('rf'), addr('rs')]) {
+      if (email.startsWith('rs')) await env.DB.prepare('INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3)').bind(await addressKey(await h.deps.keys(), email), 'bounce', 1).run();
+      const ip2 = freshIp();
+      const s = await start(h, app, email, ip2);
+      const out = [s.status];
+      for (let i = 0; i < 3; i++) {
+        h.clock.now += 30_000;
+        out.push((await h.call('/v1/email/resend', { challengeId: s.body.challengeId }, { ip: ip2 })).status);
+      }
+      expect(out).toEqual([202, 202, 202, 429]);
+    }
   });
 });
 
@@ -162,8 +196,25 @@ describe('wrong codes: per requester, with a mailbox-wide backstop', () => {
       h.clock.now += 3 * 60_000;
     }
     expect(checks).toBe(50);
-    const ip = freshIp();
-    expect((await start(h, app, a, ip)).status).toBe(429);
+    // The backstop stops whoever guessed: a requester that already failed on this mailbox is refused.
+    const guesser = freshIp();
+    h.clock.now += 10 * 60_000 + 1;
+    const g = await start(h, app, a, guesser);
+    expect(g.status).toBe(202);
+    expect((await h.call('/v1/email/verify', { challengeId: g.body.challengeId, code: wrongFor(h.sender.codeFor(a)) }, { ip: guesser })).status).toBe(400);
+    expect((await h.call('/v1/email/verify', { challengeId: g.body.challengeId, code: h.sender.codeFor(a) }, { ip: guesser })).status).toBe(429);
+    expect((await start(h, app, a, guesser)).status).toBe(429);
+    // The owner, with no failure on this mailbox, still signs in.
+    const owner = freshIp();
+    const o = await start(h, app, a, owner);
+    expect(o.status).toBe(202);
+    expect((await h.call('/v1/email/verify', { challengeId: o.body.challengeId, code: h.sender.codeFor(a) }, { ip: owner })).status).toBe(200);
+    // Parallel guesses from one new requester past the backstop: at most one is checked.
+    const burst = freshIp();
+    const b = await start(h, app, a, burst);
+    const wrong = wrongFor(h.sender.codeFor(a));
+    const statuses = await Promise.all(Array.from({ length: 10 }, () => h.call('/v1/email/verify', { challengeId: b.body.challengeId, code: wrong }, { ip: burst }).then((r) => r.status)));
+    expect(statuses.filter((x) => x === 400)).toHaveLength(1);
   });
 
   it('concurrent wrong guesses: one challenge compares at most 5 codes; one requester checks at most 10', async () => {
@@ -244,7 +295,7 @@ describe('enumeration resistance', () => {
     const h = await harness();
     const app = await seedApp(h);
     const suppressed = addr('m');
-    await env.DB.prepare('INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3)').bind(await mailboxKey(await h.deps.keys(), suppressed), 'complaint', 1).run();
+    await env.DB.prepare('INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3)').bind(await addressKey(await h.deps.keys(), suppressed), 'complaint', 1).run();
     const runs: Record<string, number[]> = { fresh: [], suppressed: [] };
     for (let i = 0; i < 5; i++) {
       for (const [k, email] of [['fresh', addr(`n${i}`)], ['suppressed', suppressed]] as const) {

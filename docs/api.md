@@ -919,22 +919,28 @@ the API's D1 (read only); it writes nothing on chain.
 `link_account` `{scopeId, rootIk, newIk, epoch, salt}`, `link_change` `{scopeId, action: "cancel"|"unlink", rootIk,
 memberIk, epoch, salt}` (iks 64 lowercase hex). `auto_link` is refused here (google-match prepares it, D195). The
 address is normalized by `@hana-id/email` (`400 invalid_email`); a disposable domain or its subdomain is `400
-email_domain_not_allowed`. Then the IP limit, the app limit and the global budget (`429 rate_limited`, the same for
-every address). The answer is the same 202 for every valid address; suppression, the lock, the per-address limits and
-the send happen after it (waitUntil) and are silent (D198). The code mail goes to the normalized address.
+email_domain_not_allowed`. Then the IP limit, the app limit, the global budget and, in one atomic call, the mailbox's
+(the address without its `+tag`): the requester's lock, at most 5 live challenges, and the code limits per (mailbox,
+requester) and per mailbox (D198). Any of these refuses with the same `429 rate_limited` body and stores nothing. A
+suppressed address gets the same 202 with a challenge that holds no address and no code, and no mail. The code mail
+goes to the normalized address (its `+tag` kept), after the response.
 
 ### `POST /v1/email/resend` · E
 
 `{challengeId}` → `202 {challengeId, expiresAtMs, resendAfterMs}`: a new code, the old one dead. `410
 challenge_expired` (expired, used, out of attempts or unknown), `429 rate_limited {resendAfterMs}` (< 30 s after the
-last code), `429 resend_limit` (2 resends done). For a challenge google-match prepared (case A, D195), the first call
+last code), `429 resend_limit` (2 resends done), `429 rate_limited` (the mailbox's code limits for this requester, or
+its lock; the send is reserved before the code changes). For a challenge google-match prepared (case A, D195), the first call
 sends its first code (not counted as a resend). The challenge still ends 10 min after it was created (D197).
 
 ### `POST /v1/email/verify` · E
 
-`{challengeId, code}` (6 digits) → `200 {idToken, googleWallet, linkTicket?}`. Errors: `400 code_invalid
-{attemptsLeft}` (5 wrong codes kill the challenge; each counts toward the address's 10 per hour, then a 1 h lock), `410
-challenge_expired`, `429 rate_limited` (IP, or the address is locked), `403 email_not_enabled` (the app was suspended
+`{challengeId, code}` (6 digits) → `200 {idToken, googleWallet, linkTicket?}`. Each check is reserved in the
+mailbox's limiter before the code is compared (one atomic call, refunded when the code is right), and the challenge
+counts its attempts atomically, so parallel guesses can't outrun either (D198). Errors: `400 code_invalid
+{attemptsLeft}` (5 wrong codes kill the challenge; 10 wrong from one requester lock it out of that mailbox for an hour;
+50 checks a day per mailbox from everyone stop all checks until the day's window ends), `410 challenge_expired`, `429
+rate_limited` (IP, or a lock), `403 email_not_enabled` (the app was suspended
 or turned email off meanwhile: nothing is minted). A correct code is single use: the challenge is deleted before the
 token is minted.
 
@@ -968,7 +974,8 @@ token is minted.
    join) only when `link` is true and: Google-hosted `case_a` (`linkImmediate: true`), or `case_b` with a `linkTicket`
    whose `sub` is this address's (`linkImmediate` = Google-hosted). Any presented ticket is spent. A link notice goes
    to the address. `case_a` not Google-hosted (linkable): `challenge: {challengeId, expiresAtMs, to: "a…@domain"}`, a
-   prepared `auto_link` challenge whose first code `resend` sends (D195).
+   prepared `auto_link` challenge whose first code `resend` sends (D195); none for a suppressed mailbox or one the
+   mailbox limits refuse.
 
 ### `POST /v1/email/admin/client-proof` · E
 
@@ -991,16 +998,21 @@ contract never fetches them and the watchdog pins instead of trusting them.
 SendGrid's signed Event Webhook (D199): `x-twilio-email-event-webhook-signature` (base64 DER ECDSA P-256) over
 `x-twilio-email-event-webhook-timestamp` ‖ body, verified with `SENDGRID_WEBHOOK_PUBLIC_KEY` (`401 bad_signature`;
 older than 10 min refused). Body ≤ 1 MB, ≤ 1000 events. `bounce` (not `blocked`) and `spamreport` events become
-`email_suppressions` rows keyed by `email_key`; `200 {stored}`. `404` when no key is configured.
+`email_suppressions` rows keyed by the mailbox key (a tagged address suppresses its mailbox); `200 {stored}`. `404` when no key is configured.
 
 ### Limits (D198; provisional, D123 Q22)
 
-All exact, on the issuer's `RateLimiter` objects (named `<env>:<subject>`).
+All exact, on the issuer's `RateLimiter` objects (named `<env>:<subject>`). A mailbox is the normalized address
+without its `+tag` (`normalizeEmail().mailbox`), keyed by HMAC under K_rl; a requester inside it is a hash of the IP
+subject. Every mailbox decision is one atomic call (D198).
 
 | Subject | Limit | Refusal |
 |---|---|---|
-| Address (`email_key`): codes | 3 per 15 min, 10 per day (every code mail, resends included) | silent (202, nothing sent) |
-| Address: wrong codes | 10 per hour over all challenges → 1 h lock | `start` silent; `verify` 429 |
+| Mailbox × requester: code mails | 3 per 15 min, 10 per day (resends included) | 429 |
+| Mailbox: code mails | 10 per 15 min, 30 per day; then 5 a day for requesters new to it that day | 429 |
+| Mailbox: live challenges | 5 at once | 429 |
+| Mailbox × requester: wrong codes | 10 per hour → that requester locked out of the mailbox for 1 h | 429 (start, resend, verify) |
+| Mailbox: code checks | 50 per day from everyone (the backstop) | 429 until the day's window ends |
 | Challenge | 10 min from creation; 5 wrong codes; ≤ 2 resends ≥ 30 s apart | 410 / 429 |
 | IP (IPv4 address, IPv6 /64): `start` | 10 per 10 min, 50 per day | 429 |
 | IP: `verify` / `resend` / `google-match` | 30 / 10 / 30 per 10 min | 429 |
@@ -1012,13 +1024,13 @@ All exact, on the issuer's `RateLimiter` objects (named `<env>:<subject>`).
 
 | Object | Holds |
 |---|---|
-| `Challenge` (binding `EMAIL_CHALLENGE`), one per challengeId | `{appId, appName, scopeId, purpose, nonce \| autoLink: {googleSub, sessionHash}, email (normalized), emailKey, codeMac = HMAC(K_code, challengeId ‖ code), attempts, createdAtMs, expiresAtMs, lastSentAtMs, resends}`; deleted at the correct code or by an alarm at expiry. Link tickets: one object per `t:` + b64url(sha256(ticket)), `{appId, scopeId, sub, expiresAtMs}`, deleted at first use |
-| `RateLimiter`, one per subject (`addr:<email_key>`, `ip:<subject>`, `app:<id>`, `global`, `staff:<sha256 hex>`) | fixed-window counts and the address lock; an alarm drops ended windows |
+| `Challenge` (binding `EMAIL_CHALLENGE`), one per challengeId | `{appId, appName, scopeId, purpose, nonce \| autoLink: {googleSub, sessionHash}, silent, email (normalized; '' when silent), mailboxKey, codeMac = HMAC(K_code, challengeId ‖ code), attempts, createdAtMs, expiresAtMs, lastSentAtMs, resends}`; deleted at the correct code or by an alarm at expiry. Link tickets: one object per `t:` + b64url(sha256(ticket)), `{appId, scopeId, sub, expiresAtMs}`, deleted at first use |
+| `RateLimiter`, one per subject (`mbx:<mailbox key>`, `ip:<subject>`, `app:<id>`, `global`, `staff:<sha256 hex>`) | fixed-window counts; in a mailbox's object also the live challenges' expiry times and the requesters' locks; an alarm drops what ended |
 | `Outbox` (binding `OUTBOX`, `local*` envs only) | the outbox stub's last 200 messages, read by tests through the binding; no route |
 
 Issuer D1 (`apps/email-issuer/migrations/0001_init.sql`): `email_issuance(jti, app_id, purpose, kid, iat)` (24 months,
 D90), `email_hints(scope_id, email_sub, google_sub, updated_at_ms)` (kept while the scope exists, D122),
-`email_suppressions(email_key, reason bounce|complaint, at_ms)`, `email_admin_audit(at_ms, staff, scope_id,
+`email_suppressions(email_key = the mailbox key, reason bounce|complaint, at_ms)`, `email_admin_audit(at_ms, staff, scope_id,
 action_nonce, jti)`. No address is stored anywhere. `APP_DB` is the API's D1, read only (`apps`, `plans`).
 
 Vars (from `emailIssuer`, `scripts/gen-wrangler.ts`): `ENV_NAME`, `NEAR_RPC`, `NEAR_RPC_FALLBACK`, `SIGNER_ACCOUNT`,
@@ -1032,7 +1044,7 @@ Vars (from `emailIssuer`, `scripts/gen-wrangler.ts`): `ENV_NAME`, `NEAR_RPC`, `N
 `{"level", "ts", "service": "email-issuer", "event", …}` with typed fields only (`src/log.ts`): `requestId`,
 `endpoint`, `outcome` (`ok`, `rejected`, `error`, `suppressed`), `status`, `code`, `appId`, `scopeId`, `purpose`,
 `jti`, `kid`, `decision`, `limit` (its name, never its key), `providerStatus`, `latencyMs`, `count`. Events: `request`,
-`token_minted` (jti, purpose, app, scope, kid), `code_mail` (`ok`; `suppressed` with `code` `suppressed` / `locked` /
-`address_limit` / `budget`; `error` with the provider's reason and status), `link_notice`, `limit`,
+`token_minted` (jti, purpose, app, scope, kid), `code_mail` (`ok`; `suppressed`; `error` with the provider's reason
+and status), `link_notice`, `limit` (`mailbox:locked` / `mailbox:live` / `mailbox:codes`, or the window's name),
 `send_budget_exhausted` (error), `google_revoke` (warn). Never an address, a code, a `sub`, a token, an access token,
 a key or a body: `test/privacy.test.ts` greps every line of every flow for them.

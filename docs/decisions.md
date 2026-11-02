@@ -2091,7 +2091,8 @@ is computed by `@hana-id/email` alone, from the normalized address including any
   (purpose `auto_link`)")
 - Decision: when google-match finds case A and the address isn't Google-hosted, it creates an `auto_link` challenge
   itself, holding Google's verified address, the Google `sub` and sha256 of this login's session nonce preimage, and
-  sends nothing; it answers `challenge: {challengeId, expiresAtMs, to: "a…@domain"}`. After the user's "Link and
+  sends nothing; it answers `challenge: {challengeId, expiresAtMs, to: "a…@domain"}` (no `challenge` for a suppressed
+  mailbox or one the limits refuse, D198: the popup then offers only "Sign in with email"). After the user's "Link and
   continue" the popup calls `POST /v1/email/resend {challengeId}`, which sends that challenge's first code (it counts
   as a code, not as one of the two resends). `verify` then re-reads the chain (D133) and mints the `auto_link` token
   only if the case is still A and linkable (`409 link_refused {decision}` otherwise). `start` refuses purpose
@@ -2124,34 +2125,52 @@ is computed by `@hana-id/email` alone, from the normalized address including any
 - Left for later: a `switch` / `retire` command for email keys (a key change is also a 72 h owner proposal and a pin
   change, so it belongs with batch 10's rotation tooling).
 
-### D197. A challenge lives 10 minutes from `start`; the lock also stops `verify`
+### D197. A challenge lives 10 minutes from its creation; a refused send is taken back
 - Date 2026-11-02 · Status: to confirm (built) · Source: build of the spec's "Codes, attempts, expiry, replay" and
   "Privacy and what is stored" (the address in the challenge object "until it ends (≤ 10 min)")
-- Decision: a resend doesn't extend the challenge: every code of it dies 10 minutes after `start`, so the address is
-  never held longer. While an address is locked (10 wrong codes in an hour), `verify` answers `429 rate_limited` for
-  its live challenges too, not only `start` silently. A send the provider refused is taken back from the counters
-  and from the challenge's resend count; a silent non-send (suppressed, locked, over a limit) is never taken back.
-- Why: the stricter reading of the privacy table; a lock that left live challenges guessable would let the 10-wrong
-  bound be exceeded with challenges started before it.
+- Decision: a resend doesn't extend the challenge: every code of it dies 10 minutes after the challenge was created,
+  so the address is never held longer. A send the provider refused is taken back from the limits and from the
+  challenge's resend count. A suppressed address's challenge stores neither the address nor a code (every code is
+  wrong, nothing is ever sent), so `start` still answers alike.
+- Why: the stricter reading of the privacy table.
 - Rejected: a fresh 10 minutes per code (up to 30 minutes of storage).
 
-### D198. The limits as built
-- Date 2026-11-02 · Status: to confirm (built; values provisional per D123 Q22) · Source: build of the spec's "Rate
-  limits and abuse" and "Enumeration resistance"
+### D198. The limits: per mailbox and requester, atomic, with a mailbox-wide backstop
+- Date 2026-11-02 · Status: to confirm (built; values provisional per D123 Q22). Revised the same day after a security
+  review of the first build (a check-then-count race in `verify`, and limits an attacker could use to lock an
+  address's owner out) · Source: build of the spec's "Rate limits and abuse" and "Enumeration resistance"
 - Decision:
-  - Every limit is exact, on the issuer's `RateLimiter` objects, including per IP: Cloudflare's Rate Limiting binding
-    only has 10 s and 60 s periods, so it can't express "10 per 10 min, 50 per day" (D95 is about the vault).
-  - Per-address limits (3 codes per 15 min, 10 per day; the 1 h lock) are **silent**: `start` answers 202 and nothing
-    is sent, as for suppressed and locked addresses, so a 429 never says that someone asked for this address recently.
-    They key on `email_key` of the normalized address, `+tag` included (D159).
-  - Per app: `start` 20 × the plan's `per_minute` per minute (the spec's value, read literally) and a daily cap of the
-    plan's `per_day` (the spec names no value).
-  - Not in the spec's table: `resend` 10 per 10 min per IP, `google-match` 30 per 10 min per IP (it calls Google three
-    times and the chain up to five), staff client proofs 20 per hour per staff member.
-  - The global budget (manifest `dailySendBudget`, default 1000 per day) counts every user mail, link notices
-    included; at the cap `start` and `resend` answer 429 and the issuer logs `send_budget_exhausted` at error level.
-    The alert itself is the admin portal's (batch 9): the issuer has no alert channel.
-- Why: enumeration resistance outranks a friendlier error; exact counts because these limits bound email bombing.
+  - **Mailbox** = `normalizeEmail(...).mailbox`, the normalized address without its `+tag` (D159), keyed as
+    HMAC(K_rl, mailbox): every per-mailbox limit and every suppression uses it, so cycling tags neither mails one inbox
+    without bound nor escapes a bounce. Mail still goes to the tagged address.
+  - **Atomic.** Every limit decision is one Durable Object call whose checks and writes run before any await. `verify`
+    reserves the check in the mailbox's limiter (refused while locked) before the code is compared, and gets it back
+    when the code was right; the challenge object counts its own attempts the same way, so concurrent guesses compare
+    at most 5 codes per challenge and at most 10 per requester per mailbox (tested with parallel guesses).
+  - **Code mails**: 3 per 15 min and 10 per day per (mailbox, requester = IP subject); 10 per 15 min and 30 per day per
+    mailbox from everyone (the mail-bombing bound); past that, a reserve of 5 a day only for a requester new to the
+    mailbox that day, so whoever used the allowance can't keep the owner out. At most 5 live challenges per mailbox. A
+    start that is over any of these, or locked, stores nothing (no challenge, no code).
+  - **Wrong codes**: 5 kill a challenge; 10 per hour from one requester lock that requester out of that mailbox for an
+    hour (the owner elsewhere is not affected); the mailbox-wide backstop is 50 checks a day from everyone, then none
+    until the day's window ends (≤ 50 guesses per mailbox per day, 5 × 10⁻⁵: the spec's bound).
+  - **Refusals are a generic 429** (`rate_limited`, the same body as an IP or app limit), so the popup says "try again
+    later" instead of waiting for a code that never comes. It tells the caller only that the mailbox is limited, never
+    whether it has a wallet. Suppressed addresses keep the silent 202 (their mail could never arrive).
+  - Exact counts everywhere, per IP too: Cloudflare's Rate Limiting binding only has 10 s and 60 s periods (D95 is the
+    vault's). Per IP: `start` 10 per 10 min and 50 per day, `verify` 30, `resend` 10 and `google-match` 30 per 10 min.
+    Per app: `start` 20 × the plan's `per_minute` per minute (the spec's value, read literally) and the plan's
+    `per_day` per day. Staff client proofs 20 per hour each. The global budget (`dailySendBudget`, default 1000 a
+    day) counts every user mail, link notices included; at the cap `start` and `resend` answer 429 and the issuer logs
+    `send_budget_exhausted` at error level (the alert itself is the admin portal's, batch 9).
+- Overrides the spec: the per-address limits key on (mailbox, requester) plus a mailbox-wide cap, and the wrong-code
+  lock is per requester with a higher mailbox-wide backstop, instead of "3 per 15 min, 10 per day per address" and
+  "10 wrong per hour → 1 h lock" for the whole address; a limited address answers 429 rather than a silent 202.
+- Why: the spec's per-address counters let anyone who knows an address use up its owner's codes, or lock it with ten
+  wrong guesses; and a lock checked in one object and counted in another could be outrun by parallel guesses.
+- Residual: a requester with many IPs can still fill a mailbox's daily allowance and reserve (35 mails), and spread 50
+  wrong guesses to stop checks for the rest of that day; both are bounded and leave the guess probability at the
+  spec's figure.
 - To check with the user: whether "20 × per_minute" was meant (1,200 starts a minute for a free-plan app; the global
   budget is then the binding cost bound).
 
@@ -2180,7 +2199,7 @@ is computed by `@hana-id/email` alone, from the normalized address including any
     `emailIssuer.access` (its own Access application on that path, D88's second check); every proof is a row in
     `email_admin_audit` and `email_issuance`.
   - Suppressions are fed by SendGrid's **signed** Event Webhook (`POST /v1/email/webhooks/sendgrid`, ECDSA P-256 over
-    timestamp ‖ body, ≤ 10 min old): hard bounces and spam reports, stored as `email_key` only.
+    timestamp ‖ body, ≤ 10 min old): hard bounces and spam reports, stored by mailbox key only (D198).
   - A chain or Google outage after a correct code (verify of `session` reading hints, or `auto_link`) answers 502 and
     the code is spent: the user starts again (never a guessed `googleWallet: false`, which could make a second wallet).
 - Why: each closes a gap the spec left, on the side that keeps a matched person to one wallet and addresses off logs

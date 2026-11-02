@@ -7,7 +7,7 @@ import { AccessVerifier } from '../src/access.ts';
 import { base64Encode, base64UrlEncode, fromUtf8, utf8 } from '../src/bytes.ts';
 import { NearChain } from '../src/chain.ts';
 import { senderFor } from '../src/deps.ts';
-import { mailboxKey } from '../src/keys.ts';
+import { addressKey } from '../src/keys.ts';
 import { clientProofPreimage, nonceOf } from '../src/layouts.ts';
 import { codeMail, displayAppName, linkNoticeMail } from '../src/mail.ts';
 import { OutboxSender } from '../src/outbox.ts';
@@ -161,8 +161,8 @@ describe('SendGrid event webhook → email_suppressions', () => {
     const keys = await h.deps.keys();
     const rows = await env.DB.prepare('SELECT email_key, reason FROM email_suppressions ORDER BY reason').all<{ email_key: string; reason: string }>();
     expect(rows.results).toEqual([
-      { email_key: await mailboxKey(keys, bounced), reason: 'bounce' },
-      { email_key: await mailboxKey(keys, complained.toLowerCase()), reason: 'complaint' },
+      { email_key: await addressKey(keys, bounced), reason: 'bounce' },
+      { email_key: await addressKey(keys, complained.toLowerCase()), reason: 'complaint' },
     ]);
     expect(JSON.stringify(rows.results)).not.toContain('@');
     expect(derToP1363(Uint8Array.of(0x31, 0))).toBeNull();

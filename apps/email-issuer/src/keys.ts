@@ -40,11 +40,18 @@ export async function importKeys(env: { EMAIL_SUB_KEY?: string | undefined; EMAI
 const mac = async (key: CryptoKey, data: Uint8Array): Promise<string> => base64UrlEncode(new Uint8Array(await crypto.subtle.sign('HMAC', key, data)));
 
 /**
- * The mailbox key = HMAC-SHA256(K_rl, mailbox), b64url, where `mailbox` is `normalizeEmail(...).mailbox` (the normalized
- * address without its `+tag`, D159): the key of every per-mailbox limit and of suppressions, so cycling tags neither
- * mails one inbox without bound nor escapes a bounce.
+ * The mailbox key = HMAC-SHA256(K_rl, "mailbox" ‖ 0x00 ‖ mailbox), b64url, where `mailbox` is `normalizeEmail(...).mailbox`
+ * (the normalized address without its `+tag`, D159): the key of the per-mailbox **rate limits only**, so cycling tags
+ * can't mail one inbox without bound. Never a suppression key: on a domain where `+` isn't sub-addressing,
+ * `victim+x@domain` is another person's mailbox (D199).
  */
-export const mailboxKey = (keys: IssuerKeys, mailbox: string): Promise<string> => mac(keys.rl, utf8(mailbox));
+export const mailboxKey = (keys: IssuerKeys, mailbox: string): Promise<string> => mac(keys.rl, concatBytes(utf8('mailbox'), Uint8Array.of(0), utf8(mailbox)));
+
+/**
+ * `email_key` = HMAC-SHA256(K_rl, normalized address), b64url (the spec's definition): the exact address, `+tag`
+ * included, for suppressions (a bounce or complaint suppresses exactly the address it came from).
+ */
+export const addressKey = (keys: IssuerKeys, normalized: string): Promise<string> => mac(keys.rl, utf8(normalized));
 
 /** A requester inside a mailbox object: the first 16 bytes of sha256(IP subject), hex (never the raw address). */
 export const requesterKey = (ipSubject: string): string => toHex(sha256(utf8(ipSubject)).subarray(0, 16));

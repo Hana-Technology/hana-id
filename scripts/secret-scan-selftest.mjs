@@ -45,6 +45,9 @@ const publicKey = () => `ed25519:${base58(randomBytes(32))}`;
 const kek = (id) => `${id}:${randomBytes(32).toString('base64')}`;
 /** A fake P-256 private JWK as scripts/lib/identity-key.ts writes it (random coordinates: only the shape matters). */
 const privateJwk = () => JSON.stringify({ kty: 'EC', crv: 'P-256', x: randomBytes(32).toString('base64url'), y: randomBytes(32).toString('base64url'), d: randomBytes(32).toString('base64url') });
+/** A fake RSA-2048 private JWK as scripts/lib/email-issuer.ts writes it (random members: only the shape matters). */
+const rsaPrivateJwk = () =>
+  JSON.stringify({ kty: 'RSA', n: randomBytes(256).toString('base64url'), e: 'AQAB', d: randomBytes(256).toString('base64url'), p: randomBytes(128).toString('base64url'), q: randomBytes(128).toString('base64url'), dp: randomBytes(128).toString('base64url'), dq: randomBytes(128).toString('base64url'), qi: randomBytes(128).toString('base64url') });
 /** A fake public JWKS entry (no `d`): public, must not be flagged. */
 const publicJwk = () => JSON.stringify({ kty: 'EC', crv: 'P-256', x: randomBytes(32).toString('base64url'), y: randomBytes(32).toString('base64url'), kid: randomBytes(32).toString('base64url'), use: 'sig', alg: 'ES256' });
 const keyFile = (account) => `${JSON.stringify({ account_id: account, public_key: publicKey(), private_key: secretKey() }, null, 2)}\n`;
@@ -76,6 +79,14 @@ const CASES = [
     files: { 'docs/dev.md': `IDENTITY_SIGNING_KEY='${privateJwk()}'\nIDENTITY_SUB_KEY='${randomBytes(32).toString('base64')}'\n` },
     expect: ['hana-worker-secret-assignment', 'hana-private-jwk'],
   },
+  { name: 'email issuer signing key file copied out of .secrets', files: { 'backup/email-issuer-signing-key.json': `${rsaPrivateJwk()}\n`, 'backup/email-issuer-signing-key-standby.json': `${rsaPrivateJwk()}\n` }, expect: ['hana-secret-file', 'hana-private-jwk'] },
+  { name: 'email issuer HMAC key files', files: { 'copy/email-sub-key': `${randomBytes(32).toString('base64')}\n`, 'copy/email-code-key': `${randomBytes(32).toString('base64')}\n`, 'copy/email-rl-key': `${randomBytes(32).toString('base64')}\n` }, expect: ['hana-secret-file'] },
+  {
+    name: 'email issuer secrets as gen-wrangler --dev-vars writes them, pasted into a doc',
+    files: { 'docs/email-dev.md': `ISSUER_SIGNING_KEY='${rsaPrivateJwk()}'\nEMAIL_SUB_KEY='${randomBytes(32).toString('base64')}'\nEMAIL_RL_KEY='${randomBytes(32).toString('base64')}'\n` },
+    expect: ['hana-worker-secret-assignment', 'hana-private-jwk'],
+  },
+  { name: 'RSA private JWK pasted into an innocent file', files: { 'src/rsa.ts': `export const KEY = ${rsaPrivateJwk()};\n` }, expect: ['hana-private-jwk'] },
   { name: 'watchdog secrets file', files: { '.secrets/sandbox-dev/watchdog-secrets.json': `{"WATCHDOG_STATUS_TOKEN":"${randomBytes(32).toString('base64url')}"}\n` }, expect: ['hana-secret-file'] },
 ];
 

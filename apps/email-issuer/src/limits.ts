@@ -37,9 +37,11 @@ export const MAX_LIVE_CHALLENGES = 5;
 /** Wrong codes per mailbox and requester: the 10th in an hour locks that requester out of that mailbox for an hour. */
 export const MAILBOX_IP_WRONG_LIMIT: Limit = { name: 'wrong:1h', windowMs: HOUR, max: 10 };
 export const MAILBOX_IP_LOCK_MS = HOUR;
+/** Failed checks per mailbox and requester in the day's window (no cap of its own: it decides who the backstop stops). */
+export const MAILBOX_IP_WRONG_DAY: Limit = { name: 'wrong:1d', windowMs: DAY, max: Number.MAX_SAFE_INTEGER };
 /**
- * The mailbox-wide brute-force backstop: 50 code checks per day from all requesters together, then none until the
- * day's window ends (≤ 50 guesses per mailbox per day: 5 × 10⁻⁵, the spec's bound).
+ * The mailbox-wide brute-force backstop: past 50 code checks in the day's window from all requesters together, only a
+ * requester with no failed check on this mailbox that day may check, and its first wrong code stops it too (D198).
  */
 export const MAILBOX_WRONG_BACKSTOP: Limit = { name: 'wrong:1d', windowMs: DAY, max: 50 };
 

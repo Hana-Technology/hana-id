@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { adminSchema, consoleSchema, dashboardRules, delayMs, emailSchema, filesSchema, usageSchema } from './dashboard.ts';
+import { emailIssuerRules, emailIssuerSchema } from './email-issuer.ts';
 import { identityTokenRules, identityTokenSchema } from './identity.ts';
 import { hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, siteOf } from './origins.ts';
 
@@ -219,6 +220,12 @@ export const manifestSchema = z
      * `scripts/identity-key.ts <env> init` writes it.
      */
     identityToken: identityTokenSchema.optional(),
+    /**
+     * The email issuer (apps/email-issuer, docs/email-login-spec.md "Issuer configuration"): iss, Worker and D1, signer,
+     * the JWKS's public keys, the user-mail sender. Optional: without it there is no issuer Worker (its `gen` refuses).
+     * `scripts/email-issuer.ts <env> init` writes it.
+     */
+    emailIssuer: emailIssuerSchema.optional(),
   })
   .superRefine((m, ctx) => {
     for (const field of ['rpc', 'rpcFallback', 'apiUrl'] as const) {
@@ -230,6 +237,7 @@ export const manifestSchema = z
     hanaOrigins(m, ctx);
     if (m.watchdog) watchdogRules(m, m.watchdog, ctx);
     if (m.identityToken) identityTokenRules(m, m.identityToken, ctx);
+    if (m.emailIssuer) emailIssuerRules(m, m.emailIssuer, ctx);
     governance(m, ctx);
     dashboardRules(m, ctx);
     if (m.rpcFallback !== undefined && m.rpcFallback === m.rpc) {

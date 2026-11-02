@@ -1,0 +1,30 @@
+{
+  "name": "@hana-id/email-issuer",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Hana-run email issuer (docs/email-login-spec.md \"Email issuer (Hana-run)\"): sign-in codes, JWS JSON email tokens with purpose-bound nonces, google-match and the JWKS. A Cloudflare Worker separate from the API.",
+  "type": "module",
+  "scripts": {
+    "gen": "tsx scripts/gen-wrangler.ts",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run && vitest run -c vitest.scripts.config.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts"
+  },
+  "dependencies": {
+    "@hana-id/email": "workspace:*",
+    "@hana-id/jwks": "workspace:*",
+    "@noble/hashes": "1.8.0",
+    "aws4fetch": "1.0.20"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.4",
+    "@cloudflare/workers-types": "5.20261016.1",
+    "@hana-id/env": "workspace:*",
+    "@types/node": "^22.0.0",
+    "tsx": "4.23.15",
+    "typescript": "^5.7.0",
+    "vitest": "4.1.12",
+    "wrangler": "4.151.1"
+  }
+}

@@ -1,6 +1,8 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-02 (branch `feat/batch-c-3`: "Hot DB migration 0006 and the new gate" (milestone
+Last verified against code: 2026-11-02 (branch `feat/batch-c-5`: `app:suspend` / `app:resume` refuse a deleted
+app; the API's RPC entrypoints need no setup step of their own, D225); 2026-11-02 (branch `feat/batch-c-3`: "Hot DB
+migration 0006 and the new gate" (milestone
 M1, for the user to run), the admin CLI's `app:*` commands on the 0006 schema with `app:changes:announce`, the demo's
 origin add, the D1 restore steps; D205–D209); 2026-11-02 (branch `feat/link-cap`: "Link volume thresholds", D200, and `set_link_thresholds`
 through `owner:call`; branch `feat/email-login-5`: the watchdog's email rules, the link alarms and
@@ -756,7 +758,8 @@ above.
   ```
 
 - `app:suspend` / `app:resume` set and clear Hana's suspension bit (1) only; the org (2) and partner (4) bits belong to
-  the admin and partner consoles (batch C), and an app stays suspended while any bit is set. Suspension is D1-only (the
+  the admin and partner consoles (batch C), and an app stays suspended while any bit is set. Both refuse a deleted app
+  (`AdminRpc.deleteApp`): it keeps bit 1 for good (D225). Suspension is D1-only (the
   contract has no suspension; D11). Removing an origin also kills that origin's vault shares on their next use.
   Logins, relays, `GET /v1/app` and new vault page loads see a suspension or an origin removal at once; the vault
   endpoints (unlock, touch, revoke, share creation) cache the app per Worker isolate, so there it takes up to 30 s

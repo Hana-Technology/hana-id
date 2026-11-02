@@ -274,7 +274,8 @@ export const suspensionBits = (bits: number): string => BIT_NAMES.filter(([b]) =
 
 /** app:suspend / app:resume --app <app>: Hana's bit (1), immediate. Resume never clears the org or partner bits. */
 export function appSuspension(suspend: boolean, args: Args, where: string, deps: AppCmdDeps): void {
-  const app = findApp(deps, args.required('app'));
+  // A deleted app stays suspended (bit 1) for good: legacy readers of `status` rely on it (D225).
+  const app = liveApp(deps, args.required('app'));
   const now = deps.now();
   const has = (app.suspended_by & 1) === 1;
   if (suspend === has && (suspend || app.status === 'active')) {

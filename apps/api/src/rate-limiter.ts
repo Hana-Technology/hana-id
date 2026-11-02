@@ -13,7 +13,17 @@ export interface Limit {
   soft?: boolean;
 }
 
-export type HitResult = { ok: true; soft?: string[] } | { ok: false; limit: string; retryAfterS: number };
+export interface ConsoleAdmission {
+  cost: number;
+  /** The org of a destructive call (counted by the breaker); absent for every other call. */
+  breakerOrg?: string;
+  budget: { ratePerS: number; burst: number };
+  breaker: { windowMs: number; perOrg: number; global: number };
+}
+
+export type ConsoleAdmitResult = { ok: true } | { ok: false; limit: 'budget' | 'breaker_org' | 'breaker_global'; retryAfterS: number };
+
+export type HitResult ={ ok: true; soft?: string[] } | { ok: false; limit: string; retryAfterS: number };
 
 /**
  * How long until a sliding window at `elapsed` ms into its bucket, with `current` and `previous` counts, admits one
@@ -131,6 +141,32 @@ export class RateLimiter extends DurableObject<Env> {
       if (count > 1) kv.put(key, count - 1);
       else if (count === 1) kv.delete(key);
     }
+  }
+
+  /**
+   * ConsoleRpc's admission (docs/batch-c-spec.md §RPC "Destructive-call breaker", "Hot-DB budget"; changes/guard.ts),
+   * on the one `console-rpc` object: `cost` statements from a token bucket (`rate` per second, `burst`), and for a
+   * destructive call one slot in its org's and in the global rolling hour (exact: the call times are kept). Either all
+   * of it is taken or nothing is; a refusal says which limit, the breaker before the budget.
+   */
+  consoleAdmit(r: ConsoleAdmission, now: number = Date.now()): ConsoleAdmitResult {
+    const kv = this.ctx.storage.kv;
+    const bucket = kv.get<{ tokens: number; at: number }>('console:bucket') ?? { tokens: r.budget.burst, at: now };
+    const tokens = Math.min(r.budget.burst, bucket.tokens + (Math.max(0, now - bucket.at) / 1000) * r.budget.ratePerS);
+    const recent = (key: string) => (kv.get<number[]>(key) ?? []).filter((t) => t > now - r.breaker.windowMs);
+    const orgKey = r.breakerOrg === undefined ? null : `console:breaker:org:${r.breakerOrg}`;
+    const org = orgKey ? recent(orgKey) : [];
+    const global = orgKey ? recent('console:breaker:global') : [];
+    const retry = (oldest: number | undefined) => Math.max(1, Math.ceil(((oldest ?? now) + r.breaker.windowMs - now) / 1000));
+    if (orgKey && org.length >= r.breaker.perOrg) return { ok: false, limit: 'breaker_org', retryAfterS: retry(org[0]) };
+    if (orgKey && global.length >= r.breaker.global) return { ok: false, limit: 'breaker_global', retryAfterS: retry(global[0]) };
+    if (tokens < r.cost) return { ok: false, limit: 'budget', retryAfterS: Math.max(1, Math.ceil((r.cost - tokens) / r.budget.ratePerS)) };
+    kv.put('console:bucket', { tokens: tokens - r.cost, at: now });
+    if (orgKey) {
+      kv.put(orgKey, [...org, now]);
+      kv.put('console:breaker:global', [...global, now]);
+    }
+    return { ok: true };
   }
 
   /** Drops a marker (a reservation whose relay definitely did not execute). */

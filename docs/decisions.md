@@ -8,7 +8,7 @@ change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 (branch `feat/e
 `feat/link-cap`, `feat/email-login-5`) on 2026-11-02; D201–D203 (branch `feat/batch-c-2`) on 2026-11-02; D205–D209
 (branch `feat/batch-c-3`, to confirm) on 2026-11-02. D215–D219 (branch `feat/identity-token-7`, to confirm) on
 2026-11-02. D210–D214 (branch `feat/identity-token-8`, to confirm, amended after its review the same
-day) on 2026-11-02. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
+day) on 2026-11-02. D240–D244 (branch `feat/batch-c-7`, to confirm) on 2026-11-02. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
 provider note, two "Superseded or amended" rows, the user-mail line under "Proposed", and the headings from D125 on, checked against `develop` @ 1c6a124 and what sandbox-dev runs (`docs/operations.md`) on
 2026-11-02 (branch `docs/consistency-pass`); no decision changed.
 
@@ -1734,6 +1734,132 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
     `@hana-id/core` `isDisplaySafeLine`'s rule. It is copied, because the Worker can't typecheck core's root entry; a
     test compares the two on every code point.
 
+## Batch C7: the console Worker backend (2026-11-02)
+
+Readings made while building `docs/batch-c-build-plan.md` C7 on `feat/batch-c-7` (`apps/console`: dispatch, headers,
+CSRF, `StaffRpc`, invites and owner grants, the hourly cron; no public route), where `docs/batch-c-spec.md` left a
+detail open or two of its lines pull apart. Each follows the spec's intent; all five are **to confirm** by the user.
+
+### D240. The console never holds or returns an invite token ("`issueInvite` returns the token once")
+- Date 2026-11-02 · Status: to confirm; built (`apps/console/src/invites.ts`, `staff-rpc.ts`) · Source: spec "Tests:
+  Invites and roles" ("`issueInvite` returns the token once; it is never stored, logged or returned again") against
+  §Nonce layouts (T = HMAC(`INVITE_LINK_KEY`, …), a key only the admin Worker holds), §RPC `issueInvite` ("the admin
+  Worker computes and emails the token") and §Invites "Notice first"
+- Decision: `issueInvite` returns the invite view and no token. The token exists only in the admin Worker: its notice
+  cron computes T from `INVITE_LINK_KEY` and the invite id, emails the link, and after every send is accepted calls
+  `ackMemberNotice` with sha256(T), the only form the console ever sees. So the test row reads: no StaffRpc answer
+  (`issueInvite`, `getOrg`, `listMembers`, `pendingMemberNotices`, `auditSince`) carries a token or a token hash, the
+  views' column lists never select `token_hash` or `cancel_token_hash`, and the console's code names neither link key
+  (a source check). The same holds for the owner-grant cancel token (`CANCEL_LINK_KEY`, admin Worker only).
+- Why: a token returned at issue would be a working link before the notice went out (the spec's fail-closed rule), and
+  the console would need the key; "once" is the admin Worker's single computation per notice.
+- Rejected: the console generating a random token and returning it to the admin Worker (the console would hold live
+  links; a re-sent notice after a failed ack could not carry the same link without storing it).
+
+### D241. An owner invite to an existing org always gets a grant; its notice comes before acceptance
+- Date 2026-11-02 · Status: to confirm; built (`invites.ts` `issueInvite`, `acceptInvite`; `cron.ts`) · Source: spec
+  "Invites and owner grants" ("an owner invite to an org that already has an owner also creates an `owner_grants`
+  row"; "every grant notice carries a cancel link"; the first-owner exception), §Membership rules
+- Decision:
+  - Every owner invite to an existing org creates its `owner_grants` row at issue, whether or not the org has an owner
+    then. Whether the new member waits is decided **at acceptance**, inside the acceptance batch: an org with a usable
+    owner (role or matured grant, user not disabled) gives a viewer with `owner_from = accepted_at +
+    ownerGrantDelayMs`; an org with none gives an owner at once and the grant `applied_at = owner_from = accepted_at`
+    (the first-owner exception). A grant cancelled before acceptance leaves a viewer. A new-org invite has no grant
+    (its acceptor is the first owner).
+  - Such an invite has two blocking notices, listed separately by `pendingMemberNotices`: the invite's (the link to
+    the invitee) and the grant's (with its cancel link, carrying the invite). Acceptance needs both acked, so the
+    owners and contacts hold the cancel link before the 24 h can start.
+  - Acceptance writes its `invite.accepted` audit row first and gates every other statement on it (D243), so two
+    concurrent acceptances, even by one person in the same millisecond, give one member and one audit row.
+- Why: deciding at issue would be wrong whenever the org's owners change between issue and acceptance (up to 7
+  days); acceptance runs in one serialised batch, so the decision there is exact. Accepting before the grant's notice
+  would start a wait nobody can cancel by link.
+- Rejected: a grant only when the org has an owner at issue; one combined notice (`ackMemberNotice` takes one hash, and
+  the two links go to different people).
+
+### D242. `invites.new_org_kind` (CONSOLE_DB migration 0002) and the passkey gate's count
+- Date 2026-11-02 · Status: to confirm; built (`apps/console/migrations/0002_invites_kind_audit_request.sql`,
+  `invites.ts`) · Source: spec §RPC `issueInvite({…, kind?})`, §Deferred (the passkey gate), §`CONSOLE_DB` (the invite
+  row has no kind; the acceptance SQL inserts the org with the default kind)
+- Decision: migration 0002 adds `invites.new_org_kind` (`partner` | `internal`, set exactly with `new_org_name`, by
+  triggers; the default `partner`), and acceptance creates the org with it. The gate refuses `issueInvite` with
+  `newOrgName` and `kind = 'partner'` with `passkeys_required` while `PASSKEYS_SHIPPED` (a build constant, false) is
+  false and either a `partner` org other than `org_legacy` exists or an **open** new-partner-org invite does; the check
+  is inside the insert's guard, so two concurrent issues can't both pass. Internal orgs, and invites into existing
+  orgs, never count.
+- Why: without the column `kind` would be lost at acceptance; without counting open invites, two first-partner invites
+  issued before either is accepted would make two partner orgs.
+
+### D243. StaffRpc readings: actors, the audit commit row, the last-owner rule, what the audit keeps
+- Date 2026-11-02 · Status: to confirm; built (`apps/console/src/{staff-rpc,members,grants,invites,audit,sql}.ts`) ·
+  Source: spec §RPC `StaffRpc` ("every method takes a Hana actor"), §Roles, §Invites, §Audit, §Sessions; D229 (the
+  API's actor rule for `ackNotice`)
+- Decision:
+  - **Actors.** Staff writes take `hana` only; the reads the admin Worker's crons need (`listOrgs`, `getOrg`,
+    `listMembers`, `pendingMemberNotices`, `auditSince`) also take `system`; `ackMemberNotice` takes `system` only, so
+    a staffer can't make an invite link work or start a grant's wait by hand. `member` and `link` actors are
+    `forbidden` everywhere (C10's owner actions reuse the same data functions with a member actor).
+  - **One write, one batch, the audit row first.** Every console write inserts its `audit_log` row first, only while
+    its guard holds, and gates every other statement on it, like `app_changes` in the API. Migration 0002 adds a
+    unique index on `audit_log (request_id, action)`: a replayed request id aborts the batch, answered
+    `already_applied` (same actor and target) or `conflict`. A write whose state moved between its read and its batch
+    is `conflict` (retry). Cron rows use `cron-<run>-<target>` request ids.
+  - **Codes the spec doesn't name.** `forbidden`: `org_legacy` (no members, no invites, can't be frozen). `not_found`:
+    unknown org, user, invite or grant, or removing a non-member. `conflict`: a frozen org (no invites), the 11th open
+    invite, a second open invite of the same address to an org, the last owner removed or demoted, a second promotion
+    while one is pending, adding a disabled user. `not_pending`: revoking or acking an ended invite, cancelling a
+    grant that is cancelled, applied or past `owner_from`. A repeated ack with the same hash is a no-op; with another,
+    `conflict`. A change to the role already in force writes nothing.
+  - **Roles.** The last-owner rule and the first-owner exception count only usable owners (not disabled); a pending
+    owner is a viewer. `setMember(viewer)` on a pending owner cancels the grant; on an owner, demotes (last-owner rule).
+    `setMember(owner)`: through a grant when the org has another owner, at once when it has none. Removal cancels the
+    member's live grants.
+  - **Sessions** are revoked (`revoked_at`, purged 30 days later) on a removal, a demotion, an immediate promotion, a
+    disable, and a freeze for members with no other active org; not when the cron records a matured grant (the role in
+    force doesn't change then).
+  - **What the audit keeps.** Details are allowlisted per action (`AUDIT_DETAIL_KEYS`, snapshot-tested): ids, roles,
+    kinds, codes, times. The invitee's address is never in the audit trail (the invite row has it and is purged 90
+    days after it ends; the audit is kept 5 years); `actor_email` is the acting staffer's or member's own; `ip_prefix`
+    is the caller's /24 or /48. Logs carry ids and codes only, never an email, a sub, a token or a hash.
+  - **Notices.** Each `pendingMemberNotices` entry lists the org's current usable owners; a promotion's grant also
+    carries the promoted `member` (user id and email), additive like D226, so the admin Worker needs no second call.
+- Why: the admin Worker is more trusted than the console (spec §Security model), but the notice must fail closed even
+  against a staff mistake, as in D229; the rest makes the spec's rules exact under concurrency and replays.
+
+### D244. The console's C7 surface: two link routes, CSRF everywhere, the cron's details
+- Date 2026-11-02 · Status: to confirm; built (`apps/console/src/{index,links,csrf,headers,cron}.ts`,
+  `apps/console/scripts/gen-wrangler.ts`) · Source: spec §Static assets, §Response headers, §Sessions (CSRF, rate
+  limits), §Console BFF routes, §Audit, §Retention; build plan C7 ("no public route")
+- Decision:
+  - **Routes.** The Worker serves its own origin only (404 for any other host), sends `/api/*` to its backend and the
+    rest to the SPA's assets (a placeholder page until C9). The only backend routes in C7 are the two session-less link
+    confirms, `POST /api/cancel` (through `ConsoleRpc.cancelChangeByLink`) and `POST /api/owner-grants/cancel`; any other
+    `/api/*` path is 404. The config has `workers_dev: false`, no `routes`, `preview_urls: false`.
+  - **CSRF on every non-GET request**, assets included (four checks, `403 csrf`); a write to a non-API path is 405.
+    `/api/*` answers carry `cache-control: no-store` besides the spec's headers; no response sets a cookie in C7.
+  - **The link routes' per-IP limit**: the rate-limiting binding (`CONSOLE_IP_LIMIT`, namespace `95101`, 10 a minute,
+    IPv6 by /64; C9's `/api/auth/*` will share the binding with its own key), before the body is read; the API keeps
+    its own exact link limits (D228, D229).
+  - **The link cancel's audit row** (the outcome of a console-initiated RPC) is written for a cancel and for a refusal
+    of a real link (`not_pending`, `already_applied`, `conflict`, `internal`, `near_unavailable`); a wrong token,
+    malformed input or a rate limit is only logged, since anyone can send them and audit rows are kept 5 years. The
+    owner-grant link cancel writes its own row only when it cancels.
+  - **The cron** (hourly, `0 * * * *`): expired invites get one `invite.expired` row each and their grant cancelled
+    (`system:invite_expired`); matured grants are recorded once (a grant whose member row is gone is cancelled,
+    `system:not_member`); invites are purged 90 days after acceptance, revocation or logged expiry, sessions 30 days
+    after they ended (revoked, idle or absolute, whichever first), sessions' network data at 90 days, auth flows,
+    handoff codes and pending actions 24 h after expiry, replaced logos (R2 object, then row) 30 days after
+    replacement; at most 200 rows per step and run; each step on its own (one failing doesn't stop the others).
+  - **Config.** The `LOGOS` and `STATEMENTS` R2 bindings are in the config from C7, so the two buckets must exist
+    before the console's first deploy (setup in `docs/operations.md`); invocation logs off (C9's handoff code is in a
+    URL); placement next to the API.
+  - **Flagged for C11:** the logo upload (`POST …/logo`, an image body) can't meet the CSRF rule's
+    `content-type: application/json`; C11 needs either a JSON body (base64) or an explicit exception for that one route
+    with the other three checks.
+- Why: nothing a partner can reach is half-wired until C9 (the build plan's rule), but the link confirms need no
+  sign-in and exercise the console → API binding end to end.
+
 ## Partner identity token, build steps 1–4 (2026-10-30)
 
 Choices made while building `docs/identity-token-spec.md` steps 1–4 on `feat/identity-token-1`, where the spec left a
@@ -3233,7 +3359,9 @@ To confirm from batch C step C2 (`packages/oidc`): D201 (the new claims typed on
 
 Batch C3's readings D205–D209 (hot DB 0006, the gate, the CLI) are to confirm. So are batch C5's D225–D229 (the
 legacy key column and deleted apps, the notice fields, keys and no-op writes, drift and breaker events, RPC actors
-and codes).
+and codes). And batch C7's D240–D244 (the console never holds an invite token, an owner invite's grant and its two notices,
+`invites.new_org_kind` and the passkey gate, StaffRpc's actors, commit rows and codes, the console's C7 routes and
+cron).
 To confirm from the identity token's step 7 (the KMS signer's code): D215 (the manifest shape and credentials), D216
 (`DIGEST`), D217 (strict DER, the self-check), D218 (one `Sign`, no retry, limits) and D219 (the standby's region, the
 IAM policy on the active key only).

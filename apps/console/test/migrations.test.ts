@@ -39,9 +39,13 @@ async function checkList(table: string, column: string): Promise<string[]> {
 }
 
 beforeAll(async () => {
-  expect(env.TEST_MIGRATIONS.map((m) => m.name)).toEqual(['0001_init.sql']);
+  expect(env.TEST_MIGRATIONS.map((m) => m.name)).toEqual(['0001_init.sql', '0002_invites_kind_audit_request.sql']);
   await applyD1Migrations(db, env.TEST_MIGRATIONS);
 });
+
+/** A request id of its own per audit row (0002's one row per request id and action). */
+let ridSeq = 0;
+const rid = () => `req-${String(++ridSeq).padStart(8, '0')}-${Math.random().toString(36).slice(2)}`;
 
 describe('CONSOLE_DB 0001', () => {
   it('creates every table of the spec', async () => {
@@ -94,10 +98,20 @@ describe('invites', () => {
 
   it('targets exactly one of an org and a new org; only staff create orgs', async () => {
     expect(await insert({})).toBe(true);
-    expect(await insert({ org_id: null, new_org_name: 'Acme' })).toBe(true);
+    expect(await insert({ org_id: null, new_org_name: 'Acme', new_org_kind: 'partner' })).toBe(true);
     expect(await insert({ org_id: null })).toBe(false);
-    expect(await insert({ new_org_name: 'Acme' })).toBe(false);
-    expect(await insert({ org_id: null, new_org_name: 'Acme', created_by_kind: 'member', step_up_id: 'act_x', created_by: 'usr_a' })).toBe(false);
+    expect(await insert({ new_org_name: 'Acme', new_org_kind: 'partner' })).toBe(false);
+    expect(await insert({ org_id: null, new_org_name: 'Acme', new_org_kind: 'partner', created_by_kind: 'member', step_up_id: 'act_x', created_by: 'usr_a' })).toBe(false);
+  });
+
+  it('0002: a new-org invite carries the new org\'s kind, and only it (D242)', async () => {
+    expect(await insert({ org_id: null, new_org_name: 'Acme', new_org_kind: 'internal' })).toBe(true);
+    expect(await insert({ org_id: null, new_org_name: 'Acme' })).toBe(false);
+    expect(await insert({ new_org_kind: 'partner' })).toBe(false);
+    expect(await insert({ org_id: null, new_org_name: 'Acme', new_org_kind: 'reseller' })).toBe(false);
+    const id = `inv_${Math.random()}`;
+    expect(await insert({ id, org_id: null, new_org_name: 'Acme', new_org_kind: 'partner' })).toBe(true);
+    expect(await accepted('UPDATE invites SET new_org_kind = NULL WHERE id = ?', id)).toBe(false);
   });
 
   it('member invites carry their step-up; staff invites none', async () => {
@@ -193,8 +207,8 @@ describe('auth_flows, handoff codes, sessions and pending actions', () => {
 describe('audit_log is append-only (D90)', () => {
   const insert = (at: number, action = 'member.added') =>
     db
-      .prepare("INSERT INTO audit_log (at, actor_kind, actor_id, org_id, action, details_json, request_id, outcome) VALUES (?, 'hana', 'staff-sub', 'org_a', ?, '{}', 'req-00000001', 'ok') RETURNING seq")
-      .bind(at, action)
+      .prepare("INSERT INTO audit_log (at, actor_kind, actor_id, org_id, action, details_json, request_id, outcome) VALUES (?, 'hana', 'staff-sub', 'org_a', ?, '{}', ?, 'ok') RETURNING seq")
+      .bind(at, action, rid())
       .first<{ seq: number }>();
 
   it('refuses every update', async () => {
@@ -215,10 +229,22 @@ describe('audit_log is append-only (D90)', () => {
 
   it('refuses unknown actor kinds, outcomes and non-JSON details', async () => {
     const row = (actor: string, outcome: string, details: string) =>
-      accepted('INSERT INTO audit_log (at, actor_kind, actor_id, action, details_json, request_id, outcome) VALUES (?, ?, ?, ?, ?, ?, ?)', now, actor, 'x', 'a', details, 'req-00000001', outcome);
+      accepted('INSERT INTO audit_log (at, actor_kind, actor_id, action, details_json, request_id, outcome) VALUES (?, ?, ?, ?, ?, ?, ?)', now, actor, 'x', 'a', details, rid(), outcome);
     expect(await row('member', 'ok', '{}')).toBe(true);
     expect(await row('root', 'ok', '{}')).toBe(false);
     expect(await row('member', 'maybe', '{}')).toBe(false);
     expect(await row('member', 'ok', '{oops')).toBe(false);
+  });
+});
+
+describe('0002: one audit row per request id and action (D243)', () => {
+  const row = (requestId: string, action: string) =>
+    accepted("INSERT INTO audit_log (at, actor_kind, actor_id, action, details_json, request_id, outcome) VALUES (?, 'hana', 'staff-sub', ?, '{}', ?, 'ok')", now, action, requestId);
+
+  it('refuses a second row of the same request and action, allows another action of the request', async () => {
+    const r = rid();
+    expect(await row(r, 'invite.issued')).toBe(true);
+    expect(await row(r, 'invite.issued')).toBe(false);
+    expect(await row(r, 'invite.revoked')).toBe(true);
   });
 });

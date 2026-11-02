@@ -1,7 +1,8 @@
 # Batch C build plan
 
-Status (2026-11-02): C1, C2 and C3 merged into `develop`, not deployed (milestone M1: migration 0006 isn't applied on
-sandbox-dev); C4–C17 not started. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
+Status (2026-11-02): C1, C2, C3 and C5 merged into `develop`, not deployed (milestone M1: migration 0006 isn't applied
+on sandbox-dev); C7 (the console Worker backend, no route) built on `feat/batch-c-7`, not merged (D240–D244); the
+others not merged. Plan of 2026-10-30. Splits `docs/batch-c-spec.md` (the source of truth for what is built) into
 batches that each merge into `develop` on their own: tests green, the docs they change updated, and nothing a partner,
 a user or staff can reach that is half-wired. Ordered by dependency; the spec's "Build order" steps are noted per
 batch. This is a plan, not a spec: where it and the spec disagree, the spec wins or gets amended first.

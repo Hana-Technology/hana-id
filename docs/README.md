@@ -4,7 +4,8 @@ Two kinds of doc live here. **Reference docs** describe the system as it is now 
 any change they cover (rule in `CLAUDE.md`). **Specs** describe what a batch set out to change; they are history once
 the batch merges, so where a spec and a reference doc disagree, the reference doc (and the code) wins.
 
-Last verified: 2026-11-02 against `develop` @ 1c6a124 (branch `docs/consistency-pass`: the specs' build state).
+Last verified: 2026-11-02 against `develop` @ 1c6a124 (branch `docs/consistency-pass`: the specs' build state);
+2026-11-02 on `feat/batch-c-7` (the build plan's row: C7 on its branch; `api.md` also covers the console Worker).
 
 ## Reference (current state)
 
@@ -13,7 +14,7 @@ Last verified: 2026-11-02 against `develop` @ 1c6a124 (branch `docs/consistency-
 | `architecture.md` | What the parts are, how they talk, each flow step by step, key derivation, where data lives, glossary |
 | `security.md` | Who is trusted for what, what each compromise gives, key and secret inventory, invariants, open issues |
 | `contract-interface.md` | `hana-signer` methods, types, byte layouts, events, panics |
-| `api.md` | Every HTTP endpoint, auth, errors, rate limits; D1 schema, Durable Objects, bindings, request logs |
+| `api.md` | Every HTTP endpoint, auth, errors, rate limits; D1 schema, Durable Objects, bindings, request logs; the email issuer's and the console Worker's routes and entrypoints |
 | `integration.md` | Partner guide: getting an app, `createHana`, page requirements, Google client, app settings, signing, auto-approve, React, Sodax, test and live keys, errors, the identity token and its verification (section 15) |
 | `operations.md` | Setting up and deploying an environment, Google clients, key rotation, smoke tests, the hosted demo, logs, common failures |
 | `playbooks.md` | Step-by-step recovery for every watchdog alert kind and every incident (signals, impact, steps with who acts, commands, verify); generated from `packages/playbooks` (D126), the same source as the admin portal's "Security & monitoring" playbooks |
@@ -33,7 +34,7 @@ Last verified: 2026-11-02 against `develop` @ 1c6a124 (branch `docs/consistency-
 | `batch-a2-shared-client.md` | A.2: shared Google client, sessions, follow-up fixes |
 | `batch-b-spec.md` | B: browser SDK, vault, one-transaction login, auto-approve policies (merged into `develop` and deployed on sandbox-dev, 2026-10-29) |
 | `batch-c-spec.md` | C: developer dashboard (D34 MVP cut and D73–D75 folded in; being built in the batches of `batch-c-build-plan.md`) |
-| `batch-c-build-plan.md` | C: the spec split into mergeable batches C1–C17, milestones and the setup steps (C1–C3 merged into `develop`, not deployed; C4–C17 not built) |
+| `batch-c-build-plan.md` | C: the spec split into mergeable batches C1–C17, milestones and the setup steps (C1–C3 and C5 merged into `develop`, not deployed; C7 on `feat/batch-c-7`; the others not merged) |
 | `governance-spec.md` | Pre-mainnet governance (D33): delayed issuer keys with a watchdog, multisig owner, timelocked upgrades, pause (built; on sandbox-dev since 2026-10-30) |
 | `hana-home-spec.md` | Pre-mainnet Hana Home (D40, D45): cross-app wallets and key export for shared-login apps, consent revocation from any device (draft, for review) |
 | `email-login-spec.md` | Pre-mainnet email login (D4): Hana-run email issuer (Worker-secret key on testnet, AWS KMS before mainnet, two-signer-ready), automatic Privy-style account linking with pseudonymous ids on chain, explicit `linkAccount` (approved 2026-10-30: D119, D121–D123; built in the batches of `email-login-build-plan.md`) |

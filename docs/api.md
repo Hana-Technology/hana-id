@@ -1,6 +1,7 @@
-# API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's)
+# API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's and the console's)
 
-Last verified against code: 2026-11-02 (branch `fix/c5-budgets`: "RPC entrypoints" breaker and budget: the
+Last verified against code: 2026-11-02 (branch `feat/batch-c-7`: "Console Worker": its two link routes, the
+CSRF and header rules, `StaffRpc`, bindings and logs, no route yet, D240–D244); 2026-11-02 (branch `fix/c5-budgets`: "RPC entrypoints" breaker and budget: the
 per-org share of the global reserve, kill switches that changed nothing settled onto their org, the link cancel's
 read budget, a malformed link token `forbidden`, D228, D229); 2026-11-02 (branch `feat/batch-c-5`: "RPC entrypoints" (`ConsoleRpc`, `AdminRpc`: CAS
 writes, the breaker, the hot-DB budget, keys, notices, cancel, expedite, staff proposals), drift detection in the
@@ -1061,6 +1062,57 @@ credential, a request or a signature), `identity_ceiling` (error), `identity_vol
 or email), `drift_detection` (`added`; error `code: internal`) and `console_rpc` (`code: breaker_event_failed`,
 `settle_failed`), and from the page
 Workers `vault_host` and `auth_page` (`code`).
+
+## Console Worker (`apps/console`, its own Worker; no route yet) · C7
+
+The partner console's Worker (`hana-id-console-<env>`). Batch C7 built its backend only; it has **no public route**
+(`workers_dev: false`, no `routes`), so in a deployed env only its bindings and cron reach it. Partner sign-in, the
+session routes and the SPA come with C9 and C10 (`docs/batch-c-spec.md` "Console BFF routes"). D240–D244.
+
+**Every request.** The Worker runs first (assets with `run_worker_first`). A host other than `CONSOLE_ORIGIN`: `404`
+`Not found`. A non-GET/HEAD request without all four CSRF checks (`Sec-Fetch-Site: same-origin`, `Origin` =
+`CONSOLE_ORIGIN`, `x-hana-console: 1`, `content-type: application/json`): `403 {"error":{"code":"csrf",…}}`. `/api/*` goes
+to the routes below (any other path `404 not_found`, a wrong method `405` with `allow`); anything else is the SPA
+(`GET`/`HEAD` only; a placeholder page in C7, its single-page fallback for unknown paths). Every response carries the
+console CSP, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`, `X-Content-Type-Options: nosniff`
+and `Strict-Transport-Security: max-age=63072000; includeSubDomains`; `/api/*` also `Cache-Control: no-store`. Errors
+are `{error: {code, message}}` with the RpcCode → HTTP map of console-core (`RPC_HTTP_STATUS`, `CONSOLE_ERROR_STATUS`).
+
+| Route | Body → answer | Notes |
+|---|---|---|
+| `POST /api/cancel` | `{changeId: "gc_…", token: <b64url of 32 bytes>}` → the cancelled `GuardedChange` | The guarded change's emailed link (`/cancel/:changeId#t=…` posts it). Calls `ConsoleRpc.cancelChangeByLink` (`link` actor, the request's `cf-ray` as request id, `cf-connecting-ip`); its answer's code maps to the status (`403 forbidden` for a wrong token, `409 not_pending` once cancelled or in force). Audited (`change.link_cancel`) for a cancel or a refusal of a real link only |
+| `POST /api/owner-grants/cancel` | `{grantId: "og_…", token: <b64url of 32 bytes>}` → `{}` | An owner grant's emailed link (`/cancel-owner/:grantId#t=…`). sha256(token) must equal the grant's `cancel_token_hash`; single use; `409 not_pending` once cancelled, applied or past `owner_from`; `403 forbidden` for a wrong token or an unknown or unannounced grant |
+
+Both: `400 bad_request` for any other body shape (strict), `413` over 4 KiB, `429 rate_limited` (`retry-after: 60`) past
+10 requests a minute per IP (IPv6 by /64; the `CONSOLE_IP_LIMIT` rate-limiting binding, namespace `95101`, key
+`<env>:console-link:<ip subject>`), checked before the body is read.
+
+**`StaffRpc`** (named export, a `WorkerEntrypoint`; no route: bound only by the admin Worker as `CONSOLE`, batch C8).
+Inputs are console-core's strict zod schemas (`packages/console-core/src/staff.ts`); answers `{ok: true, …}` or
+`{ok: false, code, error?}`. Staff writes take a `hana` actor; the reads the admin Worker's crons use also take
+`system`; `ackMemberNotice` takes `system` only.
+
+| Method | What it does |
+|---|---|
+| `listOrgs({cursor?, limit ≤ 200})`, `getOrg({orgId})`, `listMembers({orgId})` | Orgs by id (`org_legacy` included); an org with its members (email, `sub`, the role in force, `pendingOwnerFrom` for a pending owner) and invites (newest first) |
+| `issueInvite({email, role, orgId? \| newOrgName?, kind?})` | An invite (`token_hash` NULL until the notice is acked), 7 days from creation; an owner invite to an existing org also creates its owner grant. Refused: `org_legacy` (`forbidden`), unknown org (`not_found`), frozen org, 11th open invite, a second open invite of the address to the org (`conflict`), a second partner org while passkeys haven't shipped (`passkeys_required`). Returns the invite view, never a token |
+| `revokeInvite({inviteId})` | Revokes an open invite and cancels its grant (`not_pending` once ended) |
+| `pendingMemberNotices({limit ≤ 100})` | The blocking notices to send, oldest first: open invites and live grants not yet acked, each with the org's current owners (a promotion also with the promoted member) |
+| `ackMemberNotice({inviteId \| grantId, tokenHash})` | After every send was accepted: stores the link token's sha256 (an invite's link works from now; a promotion's wait starts: `owner_from = now + OWNER_GRANT_DELAY_MS`). Same hash again: no-op; another: `conflict` |
+| `cancelOwnerGrant({grantId})` | Until `owner_from` (`not_pending` after) |
+| `setMember({orgId, userId, role \| null})` | Add, remove, demote or promote (through a grant when the org has another owner); the last usable owner stays (`conflict`) |
+| `disableUser({userId, disabled})`, `freezeOrg({orgId, frozen})` | Revoke sessions as the spec's "Sessions" says |
+| `auditSince({seq, limit ≤ 500})`, `queryAudit({filters, cursor?, limit ≤ 500})` | The feed (oldest first) and the staff screen's query (newest first; filters `orgId`, `appId`, `actorKind`, `actorId`, `action`, `from`, `to`) |
+
+`purgeAudit` (the monthly retention job) comes with C13. A replayed request id is `already_applied` (same actor and
+target) or `conflict`; a write whose state moved meanwhile is `conflict`.
+
+**Bindings** (`apps/console/scripts/gen-wrangler.ts`): `CONSOLE_DB` (D1, `migrations/` 0001–0002), `API` → the API
+Worker's `ConsoleRpc`, `LOGOS` and `STATEMENTS` (R2; `STATEMENTS` read only by code), `ASSETS`, `CONSOLE_IP_LIMIT`;
+vars `ENV_NAME`, `CONSOLE_ORIGIN`, `CONSOLE_AUTH_ORIGIN`, `FILES_ORIGIN`, `NEAR_RPC`, `SIGNER_ACCOUNT`,
+`OWNER_GRANT_DELAY_MS`; no secret in C7. **Cron** `0 * * * *` (`docs/operations.md` "Partner console Worker").
+**Logs**: `staff_rpc`, `link_cancel`, `csrf_refused`, `console_cron`, `audit_write_failed`, `console_error`, with
+method, request id, actor kind, org id, outcome and code only.
 
 ## Email issuer (`apps/email-issuer`, its own Worker) · E
 

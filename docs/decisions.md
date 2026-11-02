@@ -7,7 +7,8 @@ D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-lo
 change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 (branch `feat/email-login-5`) and D200 (branches
 `feat/link-cap`, `feat/email-login-5`) on 2026-11-02; D201–D203 (branch `feat/batch-c-2`) on 2026-11-02; D205–D209
 (branch `feat/batch-c-3`, to confirm) on 2026-11-02. D215–D219 (branch `feat/identity-token-7`, to confirm) on
-2026-11-02. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
+2026-11-02. D230–D234 (branch `feat/email-login-6`, to confirm) on 2026-11-02, with batch 6 notes on D137, D154, D155,
+D199 and D206. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
 provider note, two "Superseded or amended" rows, the user-mail line under "Proposed", and the headings from D125 on, checked against `develop` @ 1c6a124 and what sandbox-dev runs (`docs/operations.md`) on
 2026-11-02 (branch `docs/consistency-pass`); no decision changed.
 
@@ -1894,6 +1895,9 @@ points for the user"; none changes an address.
 - Interface: the one change to an existing method. The API's split-path relay, `packages/web`'s split path and the
   smoke page's direct flow must send `signature` before the v3 upgrade lands (v2 ignores the extra field); batch 6.
   No path, CKD request or derivation changes.
+- Built in batch 6 (`feat/email-login-6`): the API requires and verifies `signature` on `/v1/sessions` and relays it;
+  the vault's split path and the smoke page sign it (`@hana-id/core` `signCreate`); the sandbox test
+  `v2_ignores_the_create_session_proof_that_v3_requires` proves v2 ignores it (D234).
 - Rejected: relying on the vault rule alone (the contract can make the bad recovery impossible to set up).
 
 ### D138. A replacing signer policy needs new signer ids and cancels dropped signers' pending keys
@@ -1939,7 +1943,7 @@ Made while building `docs/email-login-build-plan.md` batch 2 (branch `feat/email
   tooling shouldn't offer a plan that can't succeed. v3 still reads v1-era session records (`created_at_ms` absent):
   a deployment migrated from v1 may hold some, so that unit test stays, built without the v1 fixture.
 - Not changed: the API's never-relay list (`apps/api/src/relayer-config.ts` `GOVERNANCE_METHODS`) still names
-  `migrate_v1`: refusing a method that no longer exists is harmless, and batch 6 edits that file.
+  `migrate_v1`: refusing a method that no longer exists is harmless, and batch 6 edits that file. (Batch 6 removed it.)
 
 ### D155. Attached gas for the email-login calls covers 4096-bit keys
 - Date 2026-11-02 · Status: confirmed by the user (2026-11-02); measured in batch 2, the API sets the values in build-plan
@@ -1960,6 +1964,8 @@ Made while building `docs/email-login-build-plan.md` batch 2 (branch `feat/email
   key size: the spec's KMS keys are `RSA_2048`), and keep the gas values for Google's 2048-bit keys with a check in
   the watchdog. Not done here: no contract change in this batch.
 - Rejected: the spec's 150 for the linked login (fails with 4096-bit keys); 100 for `link_identity` (likewise).
+- Built in batch 6 (`feat/email-login-6`, `apps/api/src/gas.ts`): `create_session` 100, `create_session_and_derive`
+  150, a linked login 250, `link_identity` 250, `cancel_link` and `unlink_identity` 150 (D232).
 
 ## Email login build, batch 3 (`packages/email`), 2026-11-02
 
@@ -2572,7 +2578,8 @@ is computed by `@hana-id/email` alone, from the normalized address including any
   and storage.
 - Open for batch 6: how `{apiUrl}/v1/email/*` reaches this Worker. On sandbox-dev (`*.workers.dev`) the API Worker
   would forward it through a service binding, so request bodies (addresses and codes) would pass through the API
-  Worker's memory; a route on a Hana zone in production avoids that.
+  Worker's memory; a route on a Hana zone in production avoids that. Decided by D230 (batch 6): the issuer's own
+  workers.dev URL on sandbox-dev (`emailIssuer.url`), a zone route in production; never through the API.
 - **Amended after the independent reviews (2026-11-02; to confirm):**
   - **Staff routes (M2):** every `admin/*` route needs `Content-Type: application/json` and refuses any `Origin`
     header (no cross-site simple request can reach them), takes a support reference `ticket` (1–64 characters) kept in
@@ -2760,7 +2767,8 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   the bitmask; the column holds each app's first key), but it must move to `app_keys` (an unrevoked key),
   `deleted_at IS NULL` and `suspended_by = 0` before batch C5 ships key rotation, revocation and app deletion. The
   "no code reads `apps.publishable_key`" check (`apps/api/scripts/test/hot-db-reads.test.ts`) scans every
-  `apps/*/src` and allowlists `apps/email-issuer` until then.
+  `apps/*/src` and allowlists `apps/email-issuer` until then. Done in email login batch 6 (D233): the issuer reads
+  `app_keys`, `deleted_at` and `suspended_by`, and the allowlist entry is gone.
 - Why: the spec's table lists the commands but not these edges; each choice keeps the CLI's writes the ones
   `AdminRpc` will make, and never makes a change live sooner than the spec allows.
 
@@ -2917,6 +2925,146 @@ uses the KMS signer yet. None changes a derivation path or an address.
 - Rejected: one policy listing every identity key; key-policy edits for every switch (two places to keep in step);
   multi-region replica keys as the standby (same key material).
 
+## Email login build, batch 6 (API and sandbox-dev chain setup), 2026-11-02
+
+Made while building `docs/email-login-build-plan.md` batch 6 (branch `feat/email-login-6`), where the spec's "API
+changes" and the plan's deploy order were silent, ambiguous or unworkable as written. Each takes the safer reading. All
+five are **to confirm** by the user. None changes an address: no path, derivation or `sub` is touched.
+
+### D230. `{…}/v1/email/*` reaches the issuer without the API: its own `workers.dev` URL on sandbox-dev, a zone route in production
+- Date 2026-11-02 · Status: to confirm; built (`packages/env/src/email-issuer.ts` `url`, `workersDevIssuerUrl`,
+  `emailIssuerUrl`, `emailJwksUrl`; `scripts/lib/email-issuer.ts` init; the watchdog's default `jwksUrl`) · Source:
+  D199 "Open for batch 6"; D123 Q5 ("the issuer under `{apiUrl}/v1/email`")
+- Decision: the manifest's `emailIssuer.url` names the origin the issuer Worker is reached at; it serves
+  `{url}/v1/email/*` and its `iss` is `{url}/v1/email`. Absent, it is the API's URL and a Cloudflare route on the API's
+  zone sends `/v1/email/*` to the issuer Worker (production: the more specific route wins over the API's, and the API
+  Worker never runs for those requests). On a `workers.dev` API (sandbox-dev) there is no zone to route on, so `url` is
+  required and must be the issuer's own `https://<issuer Worker>.<the API's subdomain>.workers.dev` (the schema checks
+  it; `email-issuer init` writes it). sandbox-dev's `iss` is therefore
+  `https://hana-id-email-issuer-sandbox-dev.tingtc.workers.dev/v1/email`, set on chain by `set_issuer` in batch 6's deploy.
+  The API serves nothing under `/v1/email/` (404, as today). Consequences: batch 8's `/login/email` CSP gets
+  `connect-src` the issuer origin (the spec already says "connect-src {issuer origin}"), the vault's `google-match` call
+  goes there, the watchdog's default `jwksUrl` follows `emailIssuer.url`, and the issuer's Access application and
+  SendGrid webhook are configured on that URL.
+- Why: an address and a code are personal data and a login credential; D199 asks that they never pass through the API
+  Worker's memory. With a route or a separate origin they reach only the Worker that needs them. `iss` is in no path,
+  so moving it later costs a `set_issuer` (it keeps up to 4 values), never an address.
+- Rejected: a service binding from the API with a no-logging pass-through (the bodies still cross the API isolate, and
+  any later change to the API's logging or error paths could capture them; the API would also hold the issuer's
+  availability); a redirect from the API (the browser still sends the body to the API first); the issuer on a custom
+  domain for sandbox-dev (none is set up; the workers.dev URL gives the same property for free).
+
+### D231. Email tokens at the API: the manifest's keys, the issuer's exact form, the chain's policy, the app's methods
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/email-token.ts`, `login-token.ts`, `login-methods.ts`,
+  `link-views.ts`, `handlers.ts` `handleAppConfig`, migration 0010) · Source: spec "API changes" ("the JWKS from the
+  issuer's endpoint, cached like Google's"; "checked against `get_self_issued("email")` like the contract")
+- Decision:
+  - **Keys from the manifest, not fetched**: the API checks email signatures against `emailIssuer.publicKeys`
+    (`EMAIL_PUBLIC_KEYS`, generated), which is exactly what the issuer's JWKS serves (D196), so it needs no fetch, has
+    no SSRF or availability edge, and can't be steered by a compromised issuer Worker. A key rotation is a manifest
+    change (already part of the 72 h procedure) and an API `gen` + deploy.
+  - **The issuer's exact form**: a token must be byte for byte `JSON.stringify({payload, signatures: [{protected,
+    signature}]})` as the issuer writes it (refuses whitespace, unknown and duplicate members, the flattened form,
+    unprotected headers), protected headers `{alg: RS256, kid}` without `crit`, ≤ 3 signatures with distinct kids,
+    each RS256-valid, claims exactly `iss aud sub iat exp nonce jti` (no address claim can reach the chain through the
+    API). Stricter than the contract, which tolerates whitespace and extra claims: a precheck may only refuse.
+  - **The chain's policy**: `get_self_issued("email")` (cached 60 s, re-read for an unlisted kid at most every 10 s):
+    every kid must be listed under one of its signers and the distinct signers reach `required`. A kid the policy
+    doesn't list yet is `503 issuer_key_pending` (retry 30 s), as for Google; no policy (`null`) is
+    `400 unsupported_issuer`; the view missing (a v2 contract) is `502 near_unavailable`. During a policy upgrade's
+    10-minute overlap a token that only the previous policy accepts is refused here (the view gives only the overlap's
+    end, D191): the popup gets a fresh token, which the new policy accepts.
+  - **The app's methods**: an email token (session or link) is refused `403 login_method_disabled` unless the app's
+    `apps.login_methods` (migration 0010: `'google'`, `'email'`, `'google,email'`, default `'google'`) lists `email`,
+    on every endpoint that takes one; Google tokens are never gated by it. The column is read beside the gate, never
+    in it, and a database before 0010 reads as Google-only (deploying the API before the migration changes nothing).
+  - **`GET /v1/app`**: `loginMethods` is D1 ∩ the scope's on-chain clients (Google as today; email only with the
+    scope's `("email", "email:<scope>")` client), with `email: {aud}`. A Google-only app answers as before plus
+    `loginMethods: ["google"]`, keeping its `409 no_google_client`; only an app with email on gets
+    `409 no_login_method` (nothing available) or `google: null` (email only).
+- Rejected: fetching the issuer's JWKS from the API (above); accepting any JSON serialization the contract accepts;
+  gating Google tokens on `login_methods` (it would refuse every existing login on a database before 0010).
+
+### D232. The link precheck, the link relays, and the email-login panics as errors
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/link-precheck.ts`, `links.ts`, `login.ts`, `panics.ts`,
+  `gas.ts`, `relayer-config.ts`, `origins.ts`) · Source: spec "API changes", "Link methods"; D133, D135, D155, D200
+- Decision:
+  - **`/v1/login` with `linkJwt`** (D133): before relaying, the API verifies the link token (an email token of the
+    app's scope), requires the session signature over the linked CKD payload, reads `get_config` (links open only when
+    `unrecorded_wallets` is explicitly `false`: a pre-v3 contract has no field, so links stay closed there),
+    `get_identity` and `get_account` of both identities fresh, and recomputes the `auto_link` nonce with the join the
+    contract would make (case A: the session identity joins the link identity's account; else the link identity
+    joins), refusing in the contract's order: `409 links_unavailable`, `409 link_pending`, `422 link_refused` with
+    `reason` (`same_identity`, `already_linked`, `both_wallets`, `link_mismatch`, `unlinked`, `account_full`,
+    `provider_taken`). The export window never carries a link (`400`). Gas: 250 Tgas for a linked login
+    (`LINKED_LOGIN_TGAS`, override `GAS_CREATE_SESSION_AND_DERIVE_LINKED_TGAS`), D155's other values in the table.
+  - **Panics** after a relay (`/v1/sessions`, `/v1/login`, `/v1/derive`, the link relays), signer receipt only:
+    `Links wait until the owner accepts…` → `409 links_unavailable`; `Sign-in method is linked to an account` →
+    `409 identity_linked` (the vault signs in again, D136); `Sign-in method link is pending` → `409 link_pending`; the
+    link refusals → `422 contract_rejected` with a `reason` slug. The panic text stays in `error`, never in a log.
+  - **The link relays** (`/v1/link`, `/v1/link/cancel`, `/v1/link/unlink`): callers the vault and the auth origin's
+    pages only, never a partner page (not even a test app in a dev env); session pool; each token verified and in the
+    scope; the contract's nonce and state rules prechecked from fresh reads (`link_new` / `link_account` /
+    `link_change`, the epoch, has-wallet, already-linked, room, who may cancel or unlink). Cancel and unlink are not
+    gated on `links_open` (the contract doesn't gate them: a user can always remove a link). Limits, provisional: per
+    IP and app 5 adds and 10 removals a minute; per app 30 adds a minute and 1 000 a day, 60 removals a minute and
+    2 000 a day; adds and removals in separate windows, so a flood of adds never blocks a cancel. Every success,
+    `/v1/link` included, revokes the account's vault shares in the scope (D233): the spec says "each", and a new
+    sign-in method then signs the account's devices out, so they see the link banner at the next login.
+- Rejected: links open on a missing `unrecorded_wallets` field; one shared window for adds and removals; partner
+  pages on the link relays.
+
+### D233. Share revocation by the root path's key indexes; email usage in its own table; the issuer finds apps by the gate's model
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/links.ts` `revokeAccountShares`, `email-usage.ts`,
+  migration 0010; `apps/email-issuer/src/apps.ts`) · Source: spec "Unlink and cancel" ("revokes every vault share of
+  the account's path in that scope (`vault_shares.path_hash`)"), "API changes" ("Usage counts email logins and links
+  per app"); D206, D225
+- Decision:
+  - **Shares**: `vault_shares.path_hash` is the hash of a full path, which names its `key_index`, so the API revokes
+    every live share whose hash is that of the account root's path at `key_index` 0..63, in every app of the scope (one
+    statement). The SDK uses `key_index` 0; a share at a higher index ends at its own absolute limit (≤ 12 h by
+    default), as a share does after a direct contract call that skips the API. A failed revocation is logged
+    (`link_shares_revoke_failed`), never fails the answer (the change is already on chain).
+  - **Usage** (minimal, for batch C4 to take over): `email_usage (app_id, day, email_sessions, links)` in migration
+    0010, out of the legacy `usage` table that C4b's 0007 drops, like `identity_usage` (D172). An email session is
+    counted at a successful `/v1/login` or `/v1/sessions` with an email token; a link at a successful linked login or
+    `/v1/link` (as the contract's counter counts links, D200; cancels and unlinks aren't links). One function
+    (`countEmailUsage`), one call per endpoint: C4 replaces it as it copies `identity_usage` (D223).
+  - **The issuer's app lookup** (D206's obligation, D225's "still owed"): the key is an `app_keys` row not revoked or
+    still in its rotation grace (`revoked_at` NULL or in the future), the app not deleted (`deleted_at IS NULL`), and
+    active only with `suspended_by = 0` and `status = 'active'`, exactly the API gate's rule. `apps.publishable_key`
+    is no longer read anywhere; the source check (`apps/api/scripts/test/hot-db-reads.test.ts`) has no allowlist left.
+    A key in its grace now works for email logins too (D225's noted cost is gone).
+- Rejected: a new `vault_shares` column naming the account root (a hot-DB schema change, batch C's); counting email
+  logins in the legacy `usage` table (C4b drops it).
+
+### D234. Batch 6's deploy order, corrected: the D1 migration before the issuer, the email clients in batch 8
+- Date 2026-11-02 · Status: to confirm; written as the user's steps (`docs/operations.md` "Email login on sandbox-dev
+  (build plan batch 6)") · Source: build plan batch 6 "Deploy (sandbox-dev), in order"; D199 (client proofs)
+- Decision:
+  - The plan's `upgrade-contract propose|execute` doesn't exist: the upgrade is `deploy-contract sandbox-dev --upgrade`
+    (with `--approve-with` the DAO's `propose_upgrade` passes in one command on sandbox-dev), then, once due, the same
+    with `--skip-build` (`execute_upgrade`).
+  - The API's D1 migration moves **before** the issuer's deploy: the issuer finds apps through `app_keys` (0006, which
+    sandbox-dev hasn't applied yet, D233) and `login_methods` (0010). Both migrations only add, and the API deployed
+    there today works on them (0006's batch B reads are tested; 0010 adds a defaulted column and a table). The
+    issuer's Worker is deployed before its keys go on chain, so the watchdog's JWKS check finds it from the first
+    active email key (the plan's order would leave a window of `email_jwks_unavailable` warnings).
+  - `AddClient ("email", "email:<scope>")` for the test scopes moves to **batch 8**: its client proof is an email token
+    the issuer mints only for a scope with an active app whose `login_methods` lists `email` (D199, tokens review L6),
+    and no app enables email before batch 8. So batch 6 leaves the scopes without an email client: `GET /v1/app`
+    lists email nowhere, and nothing reaches users. Batch 8's order: `login_methods` for the test apps, the client
+    proof, `AddClient` through the scope's owners (timelocked by `change_delay_ms`), then the web.
+  - The session-pool keys are deleted and re-added with the link methods (`deploy-contract` reports them as a blocker
+    with the commands) before the API deploy; until the v3 upgrade the link methods exist nowhere and nothing calls
+    them.
+  - D137's proof of possession ships with the API and the pages before the upgrade: the sandbox test
+    `v2_ignores_the_create_session_proof_that_v3_requires` (`contracts/integration-tests/tests/governance.rs`) runs the
+    v2 wasm sandbox-dev runs (`V2_COMMIT`) with the proof, without it and with a wrong one (all three open the session:
+    v2 ignores the field), then upgrades the same deployment to v3, where only the right proof opens one.
+- Rejected: the plan's order with the issuer before the migration (every app lookup would fail until the migration);
+  minting the client proofs by turning email on for the test apps in batch 6 (against "nothing ships half-wired").
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -2985,6 +3133,10 @@ To confirm from batch C step C2 (`packages/oidc`): D201 (the new claims typed on
 (the Access JWT check and its cert cache) and D203 (the package's logging hook, Google's fetch limits).
 
 Batch C3's readings D205–D209 (hot DB 0006, the gate, the CLI) are to confirm.
+To confirm from email login batch 6 (`feat/email-login-6`): D230 (the issuer on its own URL, never through the API),
+D231 (email tokens at the API, `login_methods`, `GET /v1/app`), D232 (the link precheck, relays and panics), D233
+(share revocation, `email_usage`, the issuer's app lookup) and D234 (the corrected deploy order, the email clients in
+batch 8).
 To confirm from the identity token's step 7 (the KMS signer's code): D215 (the manifest shape and credentials), D216
 (`DIGEST`), D217 (strict DER, the self-check), D218 (one `Sign`, no retry, limits) and D219 (the standby's region, the
 IAM policy on the active key only).

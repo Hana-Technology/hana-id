@@ -4,6 +4,7 @@ import { beforeEach } from 'vitest';
 import { clearGovernanceCache } from '../src/governance-status.ts';
 import { clearJwksCache } from '@hana-id/oidc';
 import { clearNotedTokenKids } from '../src/key-observations.ts';
+import { clearLinkViewCaches } from '../src/link-views.ts';
 import { clearViewCaches } from '../src/views.ts';
 
 await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
@@ -13,5 +14,6 @@ beforeEach(() => {
   clearJwksCache();
   clearNotedTokenKids();
   clearViewCaches();
+  clearLinkViewCaches();
   clearGovernanceCache();
 });

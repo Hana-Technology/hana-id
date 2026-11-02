@@ -21,7 +21,7 @@ describe('GET /v1/app (batch B)', () => {
     const res = await get(appHeaders(app));
     const b = await body(res);
     expect(res.status).toBe(200);
-    expect(b).toEqual({ name: `Test ${app.id}`, scopeId: app.scope, signer: env.SIGNER_ACCOUNT, google: { clientId: aud, mode: 'own' }, serverTimeMs: expect.any(Number), autoApprovePolicy: null, rawSign: 'off', requestId: expect.any(String) });
+    expect(b).toEqual({ name: `Test ${app.id}`, scopeId: app.scope, signer: env.SIGNER_ACCOUNT, google: { clientId: aud, mode: 'own' }, loginMethods: ['google'], serverTimeMs: expect.any(Number), autoApprovePolicy: null, rawSign: 'off', requestId: expect.any(String) });
     expect(b.serverTimeMs as number).toBeGreaterThanOrEqual(before);
     expect(b.serverTimeMs as number).toBeLessThanOrEqual(Date.now());
   });

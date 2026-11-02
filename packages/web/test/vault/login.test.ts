@@ -1,6 +1,6 @@
 // Login, vault side (docs/batch-b-spec.md "Login", "Failure handling"; Tests → Web unit → Vault, Login (vault)).
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { addressesFromCkdSecret, ckdAppId, decryptCkd, newAppKey, sessionNonce, toHex } from '@hana-id/core';
+import { addressesFromCkdSecret, ckdAppId, createProofPayload, decryptCkd, newAppKey, sessionMessage, sessionNonce, toHex, verifyEd25519 } from '@hana-id/core';
 import {
   Browser,
   CLIENT_ID,
@@ -571,5 +571,25 @@ describe('login (vault side)', () => {
     expect(t.browser.backend.count('/v1/sessions')).toBe(1);
     expect((t.browser.backend.calls.find((c) => c.path === '/v1/derive')!.body as { counter: number }).counter).toBe(1);
     expect(t.browser.backend.count('/v1/login')).toBe(0);
+  });
+
+  it("the split fallback's /v1/sessions carries the session key's proof of possession (D137)", async () => {
+    const t = await tab(new Browser(), { loginFlow: 'split' });
+    await login(t, g);
+    const body = t.browser.backend.calls.find((c) => c.path === '/v1/sessions')!.body as { sessionPublicKey: number[]; expiresAtMs: number; keyIndex: number; maxUses: number; salt: number[]; signature: number[] };
+    const session = {
+      signer: ENV.signer,
+      scopeId: SCOPE,
+      sessionPublicKey: Uint8Array.from(body.sessionPublicKey),
+      expiresAtMs: body.expiresAtMs,
+      keyIndex: body.keyIndex,
+      maxUses: body.maxUses,
+      salt: Uint8Array.from(body.salt),
+    };
+    expect(body.signature).toHaveLength(64);
+    const message = sessionMessage(0, createProofPayload(session));
+    expect(await verifyEd25519(session.sessionPublicKey, Uint8Array.from(body.signature), message)).toBe(true);
+    // Bound to the session's parameters: the same signature doesn't prove another key index.
+    expect(await verifyEd25519(session.sessionPublicKey, Uint8Array.from(body.signature), sessionMessage(0, createProofPayload({ ...session, keyIndex: 1 })))).toBe(false);
   });
 });

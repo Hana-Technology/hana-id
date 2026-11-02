@@ -3,17 +3,19 @@
 
 /**
  * Two pools of function-call keys on RELAYER_ACCOUNT (receiver SIGNER_ACCOUNT), each with its own Durable Objects:
- * - `session` (RELAYER_KEYS): logins. Only the session methods. Batch B moves this list through three states
- *   (docs/batch-b-spec.md, "Relayer allowlists"); this is state 1, from the contract upgrade that adds
- *   create_session_and_derive. State 2 (ship gate passes, smoke on /v1/login) drops create_session; state 3 (gate
- *   fails) drops create_session_and_derive. Each change is a deploy step that re-adds every session-pool key.
+ * - `session` (RELAYER_KEYS): logins and the email-login link methods (/v1/link*, email login build plan batch 6).
+ *   Batch B moves the session methods through three states (docs/batch-b-spec.md, "Relayer allowlists"); this is state
+ *   1, from the contract upgrade that adds create_session_and_derive. State 2 (ship gate passes, smoke on /v1/login)
+ *   drops create_session; state 3 (gate fails) drops create_session_and_derive. Each change is a deploy step that
+ *   re-adds every session-pool key; batch 6's link methods were one (they exist from contract v3: before it, a key may
+ *   name them and nothing can call them).
  * - `owner` (OWNER_RELAYER_KEYS, small allowance): /v1/owner-actions. Abuse of that endpoint can only drain this pool,
  *   never stop logins.
  * The allowlists match the access keys' `method_names` (scripts/deploy-contract.ts); the Durable Object refuses
  * anything else even if a key would allow it.
  */
 export const POOL_METHODS = {
-  session: ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions'],
+  session: ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions', 'link_identity', 'cancel_link', 'unlink_identity'],
   owner: ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change', 'register_scope', 'apply_pending_config'],
 } as const;
 
@@ -51,7 +53,6 @@ export const GOVERNANCE_METHODS = [
   'cancel_upgrade',
   'execute_upgrade',
   'migrate',
-  'migrate_v1',
   'propose_owner',
   'cancel_owner_proposal',
   'accept_owner',

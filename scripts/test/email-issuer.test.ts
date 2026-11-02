@@ -83,7 +83,9 @@ describe('email-issuer init', () => {
     for (const k of ['signingKey', 'standbyKey', 'subKey', 'codeKey', 'rlKey'] as const) expect(mode(file(k))).toBe(0o600);
     for (const k of ['subKey', 'codeKey', 'rlKey'] as const) expect(Buffer.from(readFileSync(file(k), 'utf8').trim(), 'base64')).toHaveLength(32);
     const t = manifest().emailIssuer!;
-    expect(t).toMatchObject({ iss: `${manifest().apiUrl}/v1/email`, sender: 'sendgrid', from: FROM, dailySendBudget: 1000, cloudflare: { workerName: `hana-id-email-issuer-${name}`, d1Name: `hana-id-email-issuer-${name}` } });
+    // The API is on workers.dev (sandbox-dev's): the issuer gets its own workers.dev URL, and `iss` is under it (D230).
+    const url = `https://hana-id-email-issuer-${name}.${new URL(manifest().apiUrl).hostname.split('.')[1]}.workers.dev`;
+    expect(t).toMatchObject({ url, iss: `${url}/v1/email`, sender: 'sendgrid', from: FROM, dailySendBudget: 1000, cloudflare: { workerName: `hana-id-email-issuer-${name}`, d1Name: `hana-id-email-issuer-${name}` } });
     const primary = JSON.parse(readFileSync(file('signingKey'), 'utf8')) as { n: string; e: string };
     const standby = JSON.parse(readFileSync(file('standbyKey'), 'utf8')) as { n: string; e: string };
     expect(t.signer).toEqual({ kind: 'worker-secret', activeKid: rsaJwkThumbprint(primary) });

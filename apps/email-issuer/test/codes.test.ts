@@ -238,8 +238,38 @@ describe('purpose-bound nonces and the app gate', () => {
     const { appByKey } = await import('../src/apps.ts');
     await env.APP_DB_OLD.prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, created_at, assigned_at) VALUES ('s9', 'org_legacy', 'test', 0, 0)").run();
     await env.APP_DB_OLD.prepare("INSERT INTO apps (id, name, scope_id, publishable_key) VALUES ('old1', 'Old', 's9', 'pk_test_1111111111111111111111111111111a')").run();
+    await env.APP_DB_OLD.prepare("INSERT INTO app_keys (id, app_id, key, created_by, created_at) VALUES ('key_old1', 'old1', 'pk_test_1111111111111111111111111111111a', 'test', 0)").run();
     const app = await appByKey(env.APP_DB_OLD, 'pk_test_1111111111111111111111111111111a');
     expect(app).toMatchObject({ id: 'old1', emailOn: false, active: true });
+  });
+
+  it('finds apps by the gate’s model: app_keys (revoked, or in its grace), deleted_at, suspended_by; never the legacy column', async () => {
+    const { appByKey, appById, scopeHasEmailApp } = await import('../src/apps.ts');
+    const h = await harness();
+    const app = await seedApp(h);
+    const now = Date.now();
+    expect(await appByKey(env.APP_DB, app.pk, now)).toMatchObject({ id: app.id, active: true, emailOn: true });
+    // A rotated key: the new one works, the old one through its grace only.
+    const next = 'pk_test_2222222222222222222222222222222b';
+    await env.APP_DB.prepare("INSERT INTO app_keys (id, app_id, key, created_by, created_at) VALUES (?1, ?2, ?3, 'test', 0)").bind(`key2_${app.id}`, app.id, next).run();
+    await env.APP_DB.prepare('UPDATE app_keys SET revoked_at = ?2 WHERE key = ?1').bind(app.pk, now + 60_000).run();
+    expect((await appByKey(env.APP_DB, next, now))?.id).toBe(app.id);
+    expect((await appByKey(env.APP_DB, app.pk, now))?.id).toBe(app.id);
+    expect(await appByKey(env.APP_DB, app.pk, now + 60_000)).toBeNull();
+    // The legacy column is never read: a key only it holds finds nothing.
+    await env.APP_DB.prepare('UPDATE app_keys SET key = ?2 WHERE key = ?1').bind(next, 'pk_test_3333333333333333333333333333333c').run();
+    expect(await appByKey(env.APP_DB, next, now)).toBeNull();
+    // Any suspension bit makes it inactive (start then answers app_suspended); a deleted app is unknown everywhere.
+    await env.APP_DB.prepare('UPDATE apps SET suspended_by = 4 WHERE id = ?1').bind(app.id).run();
+    expect(await appByKey(env.APP_DB, 'pk_test_3333333333333333333333333333333c', now)).toMatchObject({ active: false });
+    expect(await appById(env.APP_DB, app.id)).toMatchObject({ active: false });
+    expect(await scopeHasEmailApp(env.APP_DB, app.scope)).toBe(false);
+    await env.APP_DB.prepare('UPDATE apps SET suspended_by = 0 WHERE id = ?1').bind(app.id).run();
+    expect(await scopeHasEmailApp(env.APP_DB, app.scope)).toBe(true);
+    await env.APP_DB.prepare('UPDATE apps SET deleted_at = ?2 WHERE id = ?1').bind(app.id, now).run();
+    expect(await appByKey(env.APP_DB, 'pk_test_3333333333333333333333333333333c', now)).toBeNull();
+    expect(await appById(env.APP_DB, app.id)).toBeNull();
+    expect(await scopeHasEmailApp(env.APP_DB, app.scope)).toBe(false);
   });
 
   it('invalid and disposable addresses', async () => {

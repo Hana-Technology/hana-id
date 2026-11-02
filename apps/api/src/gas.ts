@@ -24,12 +24,15 @@ export const registerScopeTgas = (proofs: number): number => Math.min(MAX_TGAS, 
  * Defaults in Tgas. derive_key forwards 20 Tgas to the MPC (yield/resume) and needs ≥ 50 attached. register_scope's
  * entry is its worst case, registerScopeTgas(MAX_CLIENT_PROOFS); gasFor scales it to the call's actual proof count.
  * create_session_and_derive is create_session plus derive_key's MPC call in one transaction (estimated ~38 Tgas
- * burnt; docs/batch-b-spec.md, "Cost and latency"). Values stay numeric literals, with no comments inside the table:
- * contracts/integration-tests parses it.
+ * burnt; docs/batch-b-spec.md, "Cost and latency"). The session and link values cover issuer keys of 4096 bits, the
+ * largest the contract accepts (D155, measured in the sandbox: docs/contract-interface.md "Gas of the email login
+ * calls"): create_session 100 (68.8 burnt at 4096 bits), create_session_and_derive 150 (≈ 89 needed), link_identity
+ * 250, cancel_link and unlink_identity 150; a linked login is LINKED_LOGIN_TGAS. Values stay numeric literals, with no
+ * comments inside the table: contracts/integration-tests parses it.
  */
 export const DEFAULT_GAS_TGAS: Readonly<Record<RelayMethod, number>> = {
-  create_session: 50,
-  create_session_and_derive: 100,
+  create_session: 100,
+  create_session_and_derive: 150,
   derive_key: 60,
   revoke_session: 20,
   prune_sessions: 50,
@@ -40,7 +43,17 @@ export const DEFAULT_GAS_TGAS: Readonly<Record<RelayMethod, number>> = {
   execute_change: 50,
   register_scope: 280,
   apply_pending_config: 50,
+  link_identity: 250,
+  cancel_link: 150,
+  unlink_identity: 150,
 };
+
+/**
+ * create_session_and_derive with a `link_jwt` (D155): two RS256 verifications and the account writes plus the MPC's
+ * 20 Tgas, ≈ 156 Tgas needed at 4096 bits. Override: GAS_CREATE_SESSION_AND_DERIVE_LINKED_TGAS.
+ */
+export const LINKED_LOGIN_TGAS = 250;
+export const LINKED_LOGIN_GAS_VAR = 'GAS_CREATE_SESSION_AND_DERIVE_LINKED_TGAS';
 
 export const gasEnvVar = (method: string): string => `GAS_${method.toUpperCase()}_TGAS`;
 
@@ -48,10 +61,12 @@ const warned = new Set<string>();
 
 /**
  * Gas for `method`: the env override when it is a valid integer 1..300 Tgas, else the default (for register_scope,
- * scaled to `args.client_proofs` when given).
+ * scaled to `args.client_proofs` when given; for a create_session_and_derive with `link_jwt`, LINKED_LOGIN_TGAS and its
+ * own override).
  */
 export function gasFor(method: RelayMethod, vars: object, args?: Record<string, unknown>): bigint {
-  const name = gasEnvVar(method);
+  const linked = method === 'create_session_and_derive' && typeof args?.link_jwt === 'string';
+  const name = linked ? LINKED_LOGIN_GAS_VAR : gasEnvVar(method);
   const raw = (vars as Record<string, unknown>)[name];
   if (raw !== undefined && raw !== '') {
     const tgas = Number(raw);
@@ -61,6 +76,7 @@ export function gasFor(method: RelayMethod, vars: object, args?: Record<string, 
       log({ event: 'gas_override_ignored', method, code: 'invalid_gas_override' }, 'warn');
     }
   }
+  if (linked) return BigInt(LINKED_LOGIN_TGAS) * TGAS;
   if (method === 'register_scope' && Array.isArray(args?.client_proofs)) return BigInt(registerScopeTgas(args.client_proofs.length)) * TGAS;
   return BigInt(DEFAULT_GAS_TGAS[method]) * TGAS;
 }

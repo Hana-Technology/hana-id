@@ -84,6 +84,13 @@ export interface Env {
   REFUSED_ORIGINS?: string;
   /** The logo origin (manifest `files.origin`), from batch C11; unset without the dashboard blocks. */
   FILES_ORIGIN?: string;
+  /**
+   * Email login (manifest `emailIssuer`, scripts/gen-wrangler.ts): the email tokens' `iss` and the issuer's public keys
+   * (a JSON array of public RSA JWKs, the JWKS the issuer serves, D196). Without them every email token is refused
+   * (`unsupported_issuer`); Google logins are unaffected.
+   */
+  EMAIL_ISS?: string;
+  EMAIL_PUBLIC_KEYS?: string;
   /** Optional per-method gas overrides in Tgas (see gas.ts), e.g. GAS_DERIVE_KEY_TGAS. */
   [gasOverride: `GAS_${string}_TGAS`]: string | undefined;
   DB: D1Database;

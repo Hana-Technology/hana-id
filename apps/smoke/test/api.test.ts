@@ -22,7 +22,7 @@ describe('HanaApi', () => {
     const session = { path: 's1#google#1#0', scope_id: 's1', expires_at_ms: 1, max_uses: 5, used: 0 };
     const f = fakeFetch(200, { result: session, nearTx: 'Tx1', requestId: 'r2' });
     const api = new HanaApi('https://api.example', PK, f);
-    const body = { jwt: 'a.b.c', sessionPublicKey: [1], expiresAtMs: 1, salt: [2], keyIndex: 0, maxUses: 5 };
+    const body = { jwt: 'a.b.c', sessionPublicKey: [1], expiresAtMs: 1, salt: [2], keyIndex: 0, maxUses: 5, signature: [3] };
     expect(await api.createSession(body)).toEqual({ result: session, nearTx: 'Tx1', requestId: 'r2' });
     const [url, init] = f.mock.calls[0]!;
     expect(url).toBe('https://api.example/v1/sessions');

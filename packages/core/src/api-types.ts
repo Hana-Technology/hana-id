@@ -54,6 +54,8 @@ export interface CreateSessionBody {
   salt: number[];
   keyIndex: number;
   maxUses: number;
+  /** The session key's proof of possession (D137): `signCreate`, counter 0. Required by the API and by contract v3. */
+  signature: number[];
 }
 
 /** `POST /v1/derive`. */

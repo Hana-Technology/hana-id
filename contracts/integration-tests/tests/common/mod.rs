@@ -66,12 +66,15 @@ pub const SHARED_2: &str = "hana-shared-2.apps.googleusercontent.com";
 /// The session pool's allowlist moves through three planned states (docs/batch-b-spec.md "Relayer allowlists"),
 /// each a delete-and-re-add of every session-pool key: 1. at the batch B contract upgrade; 2. the ship gate passes
 /// (create_session leaves the relayer); 3. the ship gate fails (create_session_and_derive leaves, and later the
-/// contract).
+/// contract). Email login batch 6 adds the three link methods to every state (`LINK_RELAYER_METHODS`, another
+/// delete-and-re-add).
 pub const SESSION_ALLOWLIST_STATES: [&[&str]; 3] = [
-    &["create_session", "create_session_and_derive", "derive_key", "revoke_session", "prune_sessions"],
-    &["create_session_and_derive", "derive_key", "revoke_session", "prune_sessions"],
-    &["create_session", "derive_key", "revoke_session", "prune_sessions"],
+    &["create_session", "create_session_and_derive", "derive_key", "revoke_session", "prune_sessions", "link_identity", "cancel_link", "unlink_identity"],
+    &["create_session_and_derive", "derive_key", "revoke_session", "prune_sessions", "link_identity", "cancel_link", "unlink_identity"],
+    &["create_session", "derive_key", "revoke_session", "prune_sessions", "link_identity", "cancel_link", "unlink_identity"],
 ];
+/// The email-login link methods the session pool relays (/v1/link, /v1/link/cancel, /v1/link/unlink), in every state.
+pub const LINK_RELAYER_METHODS: &[&str] = &["link_identity", "cancel_link", "unlink_identity"];
 /// The state in force (index into SESSION_ALLOWLIST_STATES: state 1).
 pub const SESSION_ALLOWLIST_STATE: usize = 0;
 /// Session pool (`RELAYER_KEYS`): the methods its function-call keys may call now.
@@ -802,8 +805,8 @@ impl TestSession {
         session_nonce(signer.as_str(), &self.scope_id, &self.public_key(), self.expires_at_ms, self.key_index, self.max_uses, &self.salt)
     }
 
-    /// The session fields shared by create_session and create_session_and_derive.
-    fn base_args(&self, jwt: &str) -> Value {
+    /// The session fields shared by create_session and create_session_and_derive (create_session's v2 arguments).
+    pub fn base_args(&self, jwt: &str) -> Value {
         json!({
             "jwt": jwt,
             "scope_id": self.scope_id,

@@ -34,7 +34,9 @@ describe('POST /v1/sessions', () => {
     expect(tx.receiverId).toBe(env.SIGNER_ACCOUNT);
     expect(tx.signerId).toBe(env.RELAYER_ACCOUNT);
     expect(tx.method).toBe('create_session');
-    expect(tx.gas).toBe(50_000_000_000_000n);
+    // D155: 100 Tgas covers a 4096-bit issuer key (68.8 burnt in the sandbox).
+    expect(tx.gas).toBe(100_000_000_000_000n);
+    // The session key's proof of possession (D137) is relayed as create_session's `signature`.
     expect(tx.args).toEqual({
       jwt: req.jwt,
       scope_id: app.scope,
@@ -43,6 +45,7 @@ describe('POST /v1/sessions', () => {
       salt: req.salt,
       key_index: 3,
       max_uses: 10,
+      signature: req.signature,
     });
     expect(near.viewCalls).toEqual([
       { method: 'scope_for_client', args: { provider: 'google', aud } },
@@ -116,8 +119,8 @@ describe('POST /v1/sessions', () => {
       [await sessionBody(app.scope, aud, {}, { iss: 'https://evil.example' }), 400, 'unsupported_issuer'],
       [await sessionBody(app.scope, aud, {}, { aud: [aud] }), 401, 'invalid_token'],
       [await sessionBody(app.scope, aud, {}, { exp: now - 120 }), 400, 'token_expired'],
-      [await sessionBody(app.scope, aud, { jwt: 'aaaa.!!!!.bbbb' }), 400, 'bad_request'],
-      [await sessionBody(app.scope, aud, { jwt: 'aaaa.bbbb.cccc' }), 401, 'invalid_token'],
+      [await sessionBody(app.scope, aud, { jwt: 'aaaa.!!!!.bbbb', signature: bytes(64, 1) }), 400, 'bad_request'],
+      [await sessionBody(app.scope, aud, { jwt: 'aaaa.bbbb.cccc', signature: bytes(64, 1) }), 401, 'invalid_token'],
     ];
     for (const [req, status, code] of cases) {
       const res = await call('/v1/sessions', { headers: appHeaders(app), body: req });

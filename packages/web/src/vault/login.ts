@@ -41,6 +41,7 @@ import {
   randomBytes,
   relayIdFor,
   sessionNonce,
+  signCreate,
   signDerive,
   verifyGoogleIdToken,
   zero,
@@ -546,13 +547,26 @@ export class LoginChain {
     }
   }
 
-  /** The split fallback: POST /v1/sessions, then /v1/derive with counter 1, with the same path rule and re-sync. */
+  /**
+   * The split fallback: POST /v1/sessions, then /v1/derive with counter 1, with the same path rule and re-sync. The
+   * create_session carries the session key's proof of possession (D137: required by contract v3, ignored by v2).
+   */
   async split(): Promise<CkdResult> {
     const { jwt, sessionPublicKey, expiresAtMs, salt, keyIndex, maxUses } = this.i.body;
+    const proof = await signCreate(this.i.sessionKey.keyPair.privateKey, {
+      signer: this.ctx.env.signer,
+      scopeId: this.ctx.config.scopeId,
+      sessionPublicKey: Uint8Array.from(sessionPublicKey),
+      expiresAtMs,
+      keyIndex,
+      maxUses,
+      salt: Uint8Array.from(salt),
+    });
+    const signature = Array.from(proof);
     for (;;) {
       this.check();
       try {
-        const r = await this.ctx.api.createSession({ jwt, sessionPublicKey, expiresAtMs, salt, keyIndex, maxUses });
+        const r = await this.ctx.api.createSession({ jwt, sessionPublicKey, expiresAtMs, salt, keyIndex, maxUses, signature });
         this.noteTx(r.nearTx);
         break;
       } catch (e) {

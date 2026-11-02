@@ -112,6 +112,9 @@ describe('Origin × x-hana-parent-origin matrix (appGate)', () => {
       '/v1/sessions': ['vault'],
       '/v1/derive': ['vault'],
       '/v1/sessions/revoke': ['vault'],
+      '/v1/link': ['vault', 'auth'],
+      '/v1/link/cancel': ['vault', 'auth'],
+      '/v1/link/unlink': ['vault', 'auth'],
     });
   });
 

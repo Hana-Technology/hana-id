@@ -29,7 +29,7 @@ async function setup(opts: { ckd?: 'ok' | 'fail' | 'pairing' } = {}) {
 }
 
 describe('POST /v1/login', () => {
-  it('relays create_session_and_derive with 100 Tgas and answers the CKD result, the session and the tx', async () => {
+  it('relays create_session_and_derive with 150 Tgas and answers the CKD result, the session and the tx', async () => {
     const { app, aud, near } = await setup();
     const req = await loginBody(app.scope, aud);
     const res = await login(app, req);
@@ -47,8 +47,9 @@ describe('POST /v1/login', () => {
     expect(near.sent).toHaveLength(1);
     const tx = near.sent[0]!;
     expect([tx.receiverId, tx.signerId, tx.method]).toEqual([env.SIGNER_ACCOUNT, env.RELAYER_ACCOUNT, 'create_session_and_derive']);
-    expect(tx.gas).toBe(100n * TGAS);
-    expect(DEFAULT_GAS_TGAS.create_session_and_derive).toBe(100);
+    // D155: 150 Tgas covers a 4096-bit issuer key (≈ 89 needed).
+    expect(tx.gas).toBe(150n * TGAS);
+    expect(DEFAULT_GAS_TGAS.create_session_and_derive).toBe(150);
     expect(tx.args).toEqual({
       jwt: req.jwt,
       scope_id: app.scope,

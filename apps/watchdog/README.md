@@ -120,7 +120,7 @@ Last verified: 2026-11-02 (branch `docs/consistency-pass`: the deploy line, agai
    updates the run's record; what it raises goes out in a second delivery. Its read is third-party (Hana's API is a
    party the watchdog must survive, D86).
    - Hana's JWKS (check `email_jwks`, only with pins and a URL): `EMAIL_JWKS_URL` (manifest `jwksUrl`, default
-     `{apiUrl}/v1/email/jwks.json`), fetched with no cache; a published key not pinned (or kid ≠ thumbprint) or an
+     `{emailIssuer.url}/v1/email/jwks.json`, else under `apiUrl`, D230), fetched with no cache; a published key not pinned (or kid ≠ thumbprint) or an
      active email key not published → warning `email_jwks_mismatch`; 3 failed fetches while an email key is active →
      the same warning (`:fetch`). Never trusted, never acted on.
 
@@ -211,7 +211,7 @@ Manifest block (`envs/<env>.json`, schema `packages/env/src/schema.ts`, optional
 ```
 
 `pinnedIssuerKeys.email` (optional, D190): `gen` passes `{required, signers}` as `EMAIL_PINS` (JSON) and the JWKS URL
-(`jwksUrl`, else `{apiUrl}/v1/email/jwks.json`) as `EMAIL_JWKS_URL`. Absent (sandbox-dev until batch 4 creates the
+(`jwksUrl`, else `{emailIssuer.url}/v1/email/jwks.json`, or under `apiUrl` without `emailIssuer.url`, D230) as `EMAIL_JWKS_URL`. Absent (sandbox-dev until batch 4 creates the
 key): nothing is pinned, so it must be set, generated and deployed before the owner posts the first email key; an
 unreadable `EMAIL_PINS` is read as nothing pinned and named in the `config` check. The link thresholds need no configuration here: they are the contract's own (`set_link_thresholds`, D200).
 

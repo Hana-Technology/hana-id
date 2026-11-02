@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import fixture from '../../../contracts/hana-signer/src/test_fixture.json' with { type: 'json' };
-import { checkSessionParams, ckdPayload, concatBytes, fromHex, jsonBytes, revokePayload, sessionMessage, sessionNonce, toHex } from '@hana-id/core';
-import { SESSION_LIFETIME_MS, newPendingSession, signDerive, signRevoke } from '../src/session.ts';
+import { checkSessionParams, ckdPayload, concatBytes, createProofPayload, fromHex, jsonBytes, revokePayload, sessionMessage, sessionNonce, toHex } from '@hana-id/core';
+import { SESSION_LIFETIME_MS, newPendingSession, signCreateProof, signDerive, signRevoke } from '../src/session.ts';
 
 const params = { signer: 'hana-id-signer-dev1.testnet', scopeId: 's1', keyIndex: 0, maxUses: 5 };
 
@@ -40,6 +40,14 @@ describe('session key', () => {
     expect(await verify(s.publicKey, sig, sessionMessage(4, ckdPayload('bls12381g1:A', 'bls12381g2:B')))).toBe(false);
     const rev = await signRevoke(s.privateKey, 4);
     expect(await verify(s.publicKey, rev, sessionMessage(4, revokePayload()))).toBe(true);
+  });
+
+  it("signs create_session's proof of possession over the pending session's own parameters (D137)", async () => {
+    const s = await newPendingSession(params);
+    const sig = await signCreateProof(s);
+    const session = { ...params, sessionPublicKey: s.publicKey, expiresAtMs: s.expiresAtMs, salt: s.salt };
+    expect(await verify(s.publicKey, sig, sessionMessage(0, createProofPayload(session)))).toBe(true);
+    expect(await verify(s.publicKey, sig, sessionMessage(0, createProofPayload({ ...session, maxUses: 6 })))).toBe(false);
   });
 
   it('signs the fixture session message with the fixture key (seed [7; 32])', async () => {

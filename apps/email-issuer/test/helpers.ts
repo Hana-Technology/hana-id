@@ -282,6 +282,8 @@ export async function seedApp(h: Harness, opts: { methods?: string; status?: str
   await env.APP_DB.prepare('INSERT INTO apps (id, name, scope_id, publishable_key, status, plan, login_methods) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)')
     .bind(id, name, scope, pk, opts.status ?? 'active', opts.plan ?? 'free', opts.methods ?? 'google,email')
     .run();
+  // The gate's model (0006): the issuer finds the app by its key in app_keys, never by the legacy column.
+  await env.APP_DB.prepare("INSERT INTO app_keys (id, app_id, key, created_by, created_at) VALUES (?1, ?2, ?3, 'test', 0)").bind(`key_${id}`, id, pk).run();
   h.chain.addScope(scope, opts.scope);
   return { id, pk, scope, name };
 }

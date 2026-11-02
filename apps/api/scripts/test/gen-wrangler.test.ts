@@ -8,12 +8,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseRelayerKeys } from '../../src/relayer-config.ts';
 import { IDENTITY_PER_ROOT_MINUTE, IDENTITY_PER_SESSION_MINUTE } from '../../src/identity/limits.ts';
 import { SHARE_PER_MINUTE, VAULT_PER_IP_MINUTE } from '../../src/vault/limits.ts';
-import { generateKeyPairSync, randomBytes } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto';
 import { IDENTITY_SECRET_FILES, identityIssuerFor, p256Thumbprint, type Manifest } from '@hana-id/env';
 import {
   LOCAL_D1_ID,
   TEST_MANIFEST,
   devVarsContent,
+  emailVars,
   existingD1Id,
   identityDevVarsLines,
   identityVars,
@@ -431,5 +432,32 @@ describe('the identity token', () => {
     expect(parsed.IDENTITY_SIGNING_KEY_STANDBY).toBeUndefined();
     chmodSync(join(dir, IDENTITY_SECRET_FILES.subKey), 0o644);
     expect(() => writeDevVars(manifest.name, root, tmp(), withIdentity())).toThrow(/mode 644/u);
+  });
+});
+
+describe('email login', () => {
+  it('vars: the email issuer’s iss and public keys (no secret); none without the block', () => {
+    const { publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048, publicExponent: 65537 });
+    const jwk = publicKey.export({ format: 'jwk' }) as { n: string; e: string };
+    const kid = createHash('sha256').update(`{"e":"${jwk.e}","kty":"RSA","n":"${jwk.n}"}`).digest('base64url');
+    const key = { kty: 'RSA' as const, n: jwk.n, e: jwk.e, kid, use: 'sig' as const, alg: 'RS256' as const };
+    const url = `https://hana-id-email-issuer-sandbox-dev.${new URL(manifest.apiUrl).hostname.split('.')[1]}.workers.dev`;
+    const m = manifestSchema.parse({
+      ...manifest,
+      emailIssuer: {
+        url,
+        iss: `${url}/v1/email`,
+        cloudflare: { workerName: 'hana-id-email-issuer-sandbox-dev', d1Name: 'hana-id-email-issuer-sandbox-dev' },
+        signer: { kind: 'worker-secret', activeKid: kid },
+        publicKeys: [key],
+        from: 'Hana <login@mail.example.com>',
+        sender: 'sendgrid',
+        dailySendBudget: 100,
+      },
+    });
+    const vars = (wranglerConfig(m, LOCAL_D1_ID) as { vars: Record<string, string> }).vars;
+    expect(vars.EMAIL_ISS).toBe(`${url}/v1/email`);
+    expect(JSON.parse(vars.EMAIL_PUBLIC_KEYS!)).toEqual([key]);
+    expect(emailVars(manifest as Manifest)).toEqual({});
   });
 });

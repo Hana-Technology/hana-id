@@ -4,7 +4,7 @@ import { bls12_381 } from '@noble/curves/bls12-381';
 import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import worker from '../src/index.ts';
-import { ckdPayload, revokePayload, sessionMessage, sessionNonce } from '../src/session-crypto.ts';
+import { ckdPayload, createProofPayload, revokePayload, sessionMessage, sessionNonce } from '../src/session-crypto.ts';
 import { NearMock, type RsaSigner, rsaSigner } from './near-mock.ts';
 
 export const GOOGLE_ISS = 'https://accounts.google.com';
@@ -153,7 +153,7 @@ export async function sessionBody(
   if ('jwt' in overrides) return body;
   let nonce = 'unused';
   try {
-    nonce = await sessionNonce({
+    const input = {
       signer: env.SIGNER_ACCOUNT,
       scopeId: scope,
       sessionPublicKey: body.sessionPublicKey as number[],
@@ -161,7 +161,10 @@ export async function sessionBody(
       keyIndex: body.keyIndex as number,
       maxUses: body.maxUses as number,
       salt: body.salt as number[],
-    });
+    };
+    nonce = await sessionNonce(input);
+    // The session key's proof of possession (D137), as POST /v1/sessions requires it (/v1/login replaces it).
+    if (!('signature' in overrides)) body.signature = await signSession(input.sessionPublicKey, 0, await createProofPayload(input));
   } catch {
     // Malformed fields (shape tests): any nonce will do, the request is rejected first.
   }

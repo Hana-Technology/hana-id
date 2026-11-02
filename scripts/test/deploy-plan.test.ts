@@ -23,7 +23,7 @@ const NEAR = 10n ** 24n;
 const PROD_DELAYS = { issuerKeyDelayMs: 7_200_000, governanceDelayMs: 259_200_000 };
 
 /** Batch B allowlist state 1 (docs/batch-b-spec.md, "Relayer allowlists"). */
-const SESSION = ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions'];
+const SESSION = ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions', 'link_identity', 'cancel_link', 'unlink_identity'];
 const OWNER = ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change', 'register_scope', 'apply_pending_config'];
 /** The governance contract's updater key methods (its UPDATER_METHODS) and the v1 key's. */
 const UPDATER = ['set_issuer_key', 'propose_issuer_key_removal', 'execute_issuer_key_change'];
@@ -254,6 +254,18 @@ describe('buildDeployPlan', () => {
       // Only the genuinely absent key would be re-added; no pool counts as "in place".
       expect(pool(p.steps, 'session')).toMatchObject({ reuse: ['ed25519:s4'], generate: 0 });
       expect(p.done.join()).not.toContain('owner-pool relayer key(s) in place');
+    });
+
+    it('email login batch 6: session keys with the batch B list (no link methods) are a blocker: delete, then re-run to re-add them', () => {
+      const batchB = SESSION.filter((x) => !['link_identity', 'cancel_link', 'unlink_identity'].includes(x));
+      const p = buildDeployPlan(m, deployed({ relayerAccessKeys: [fc('ed25519:s1', m.signer, batchB), fc('ed25519:s2', m.signer, batchB)], poolKeysInFile: { session: ['ed25519:s1', 'ed25519:s2'], owner: [] } }), opts);
+      const text = p.blockers.join('\n');
+      expect(text).toContain('with the wrong permission for the session pool');
+      expect(text).toContain(`has methods ${batchB.join(', ')}; expected ${SESSION.join(', ')}`);
+      expect(text).toContain(`near account delete-keys ${m.relayer} public-keys ed25519:s1`);
+      // Deleted, they are re-added from the file with the new list.
+      const after = buildDeployPlan(m, deployed({ relayerAccessKeys: [], poolKeysInFile: { session: ['ed25519:s1', 'ed25519:s2'], owner: [] } }), opts);
+      expect(pool(after.steps, 'session')).toMatchObject({ reuse: ['ed25519:s1', 'ed25519:s2'], methods: SESSION });
     });
 
     it('blocks a key listed in both pool files', () => {

@@ -11,8 +11,8 @@ import { isDevEnv, originAllowed, preflightAllows } from '../src/origins.ts';
 import { servedOrigins } from '../src/vault/origins.ts';
 
 const ALL = env.TEST_MIGRATIONS;
-/** sandbox-dev's database today: every migration but 0006 (0008 applied on 2026-11-02). */
-const SANDBOX_DEV = ALL.filter((m) => m.name !== '0006_dashboard_expand.sql');
+/** sandbox-dev's database today: 0001–0005 and 0008 (applied on 2026-11-02); 0006 and 0010 are not applied there yet. */
+const SANDBOX_DEV = ALL.filter((m) => m.name !== '0006_dashboard_expand.sql' && m.name !== '0010_login_methods.sql');
 
 const accepted = async (db: D1Database, sql: string, ...binds: unknown[]): Promise<boolean> =>
   db
@@ -251,13 +251,13 @@ describe('0006 on a sandbox-dev-shaped database (0001–0005 and 0008 applied, t
     before = await rowCounts(db, tables);
     batchBBefore = await batchB(db);
     migratedAt = Date.now();
-    // wrangler applies the unapplied files in name order: here 0006 alone, after 0008.
+    // wrangler applies the unapplied files in name order: here 0006 after 0008, then 0010.
     await applyD1Migrations(db, ALL);
   });
 
-  it('applies 0006 last and only 0006', async () => {
+  it('applies 0006 after the applied ones, then only the later 0010', async () => {
     const { results } = await db.prepare('SELECT name FROM d1_migrations ORDER BY id').all<{ name: string }>();
-    expect(results.map((r) => r.name)).toEqual([...SANDBOX_DEV.map((m) => m.name), '0006_dashboard_expand.sql']);
+    expect(results.map((r) => r.name)).toEqual([...SANDBOX_DEV.map((m) => m.name), '0006_dashboard_expand.sql', '0010_login_methods.sql']);
   });
 
   it('keeps every row of every existing table (apps, origins, legacy usage, vault shares, identity counts, plans, issuer keys)', async () => {
@@ -369,7 +369,7 @@ describe('0006 on an empty database, in order', () => {
     accepted(db, 'INSERT INTO apps (id, name, scope_id, org_id, publishable_key) VALUES (?1, ?1, ?2, ?3, ?4)', id, scopeId, org, key);
 
   beforeAll(async () => {
-    expect(ALL.map((m) => m.name)).toEqual(['0001_init.sql', '0002_issuer_key_missing.sql', '0003_vault.sql', '0004_issuer_key_observations.sql', '0005_issuer_key_sync.sql', '0006_dashboard_expand.sql', '0008_identity_token.sql']);
+    expect(ALL.map((m) => m.name)).toEqual(['0001_init.sql', '0002_issuer_key_missing.sql', '0003_vault.sql', '0004_issuer_key_observations.sql', '0005_issuer_key_sync.sql', '0006_dashboard_expand.sql', '0008_identity_token.sql', '0010_login_methods.sql']);
     await applyD1Migrations(db, ALL);
     await scope('sa', 'test');
     await scope('sl', 'live');

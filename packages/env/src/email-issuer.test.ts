@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { emailIssuerRules } from './email-issuer.ts';
-import { emailIssuerFor, manifestPath, manifestSchema, rsaJwkThumbprint, rsaModulusBits } from './index.ts';
+import { emailIssuerFor, emailIssuerUrl, emailJwksUrl, manifestPath, manifestSchema, rsaJwkThumbprint, rsaModulusBits, workersDevIssuerUrl } from './index.ts';
 
 const raw = () => JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Record<string, unknown>;
 
@@ -16,10 +16,12 @@ function publicKey(bits = 2048) {
 const primary = publicKey();
 const standby = publicKey();
 
+/** sandbox-dev's API is on workers.dev, so the issuer has its own workers.dev URL (D230). */
+const ISSUER_URL = 'https://hana-id-email-issuer-sandbox-dev.tingtc.workers.dev';
 const emailIssuer = (over: Record<string, unknown> = {}) => {
-  const m = raw();
   return {
-    iss: emailIssuerFor(m.apiUrl as string),
+    url: ISSUER_URL,
+    iss: emailIssuerFor(ISSUER_URL),
     cloudflare: { workerName: 'hana-id-email-issuer-sandbox-dev', d1Name: 'hana-id-email-issuer-sandbox-dev' },
     signer: { kind: 'worker-secret', activeKid: primary.kid },
     publicKeys: [primary, standby],
@@ -64,9 +66,27 @@ describe('manifestSchema: emailIssuer', () => {
     expect(parsed.emailIssuer?.publicKeys).toHaveLength(2);
   });
 
-  it('iss is the API’s /v1/email', () => {
+  it('iss is the issuer URL’s /v1/email', () => {
     expect(emailIssuerFor('https://api.example/')).toBe('https://api.example/v1/email');
     expect(issues(block({ iss: 'https://email.example' })).join()).toContain('/v1/email');
+    expect(issues(block({ iss: emailIssuerFor(raw().apiUrl as string) })).join()).toContain(`must be ${emailIssuerFor(ISSUER_URL)}`);
+  });
+
+  it('url (D230): required on a workers.dev API, and then the issuer’s own workers.dev URL; an https origin; absent = the API’s, routed', () => {
+    const api = raw().apiUrl as string;
+    expect(workersDevIssuerUrl(api, 'hana-id-email-issuer-sandbox-dev')).toBe(ISSUER_URL);
+    expect(workersDevIssuerUrl('https://api.hana.id', 'x')).toBeUndefined();
+    const { url: _url, ...noUrl } = emailIssuer();
+    expect(manifestSchema.safeParse({ ...raw(), emailIssuer: { ...noUrl, iss: emailIssuerFor(api) } }).error?.issues.map((i) => i.message).join()).toContain('url is required when the API is on workers.dev');
+    expect(issues(block({ url: 'https://other.tingtc.workers.dev', iss: emailIssuerFor('https://other.tingtc.workers.dev') })).join()).toContain("issuer's own workers.dev URL");
+    expect(issues(block({ url: `${ISSUER_URL}/`, iss: emailIssuerFor(ISSUER_URL) })).join()).toContain('https origin');
+    expect(issues(block({ url: ISSUER_URL.replace('https', 'http'), iss: emailIssuerFor(ISSUER_URL.replace('https', 'http')) })).join()).toContain('https origin');
+    expect(issues(block({ url: raw().vaultOrigin, iss: emailIssuerFor(raw().vaultOrigin as string) })).join()).toContain('Hana page origin');
+    // On a zone (production): absent means the API's own URL, where a route sends /v1/email/* to the issuer.
+    const prod = { apiUrl: 'https://api.hana.id' };
+    expect(emailIssuerUrl(prod)).toBe('https://api.hana.id');
+    expect(emailJwksUrl(prod)).toBe('https://api.hana.id/v1/email/jwks.json');
+    expect(emailJwksUrl({ apiUrl: api, emailIssuer: { url: ISSUER_URL } })).toBe(`${ISSUER_URL}/v1/email/jwks.json`);
   });
 
   it('kid must be the thumbprint, unique; one modulus once', () => {
@@ -114,7 +134,8 @@ describe('manifestSchema: emailIssuer', () => {
     delete (m as Record<string, unknown>).vaultOrigin;
     delete (m as Record<string, unknown>).authOrigin;
     delete (m as Record<string, unknown>).identityToken;
-    const r = manifestSchema.safeParse({ ...m, emailIssuer: { ...emailIssuer({ sender: 'outbox' }), iss: emailIssuerFor(local.apiUrl) } });
+    const { url: _url, ...routed } = emailIssuer({ sender: 'outbox' });
+    const r = manifestSchema.safeParse({ ...m, emailIssuer: { ...routed, iss: emailIssuerFor(local.apiUrl) } });
     expect(r.error?.issues.map((i) => i.message) ?? []).toEqual([]);
   });
 

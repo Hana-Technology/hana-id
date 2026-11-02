@@ -1,7 +1,9 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-02 for the email issuer (branch `feat/email-login-4`: its keys and secrets rows and "Email issuer"
+known open issues. Last verified against code: 2026-11-02 for email login's API part (branch `feat/email-login-6`: the
+email-token, proof-of-possession, link-precheck and link-relay invariants under "API", the issuer reached without the
+API and its `app_keys` lookup, the share-revocation residual, D230–D234); 2026-11-02 for the email issuer (branch `feat/email-login-4`: its keys and secrets rows and "Email issuer"
 invariants, D195–D199, with the review fixes and the abuse re-check: K_sup, K_device, per-address device tickets with
 revocation, the owner pool, mailed unlock/unsuppress, the growing domain cap, encrypted challenge addresses, the 0.92%
 bound); for the identity token's AWS KMS signer (branch
@@ -181,7 +183,7 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
     email-code step and the link token's `sub` is the address verified there (D139), so a compromised issuer service
     can't attach an email identity during a plain Google login; a session it meant to link is revoked and restarted,
     never derived with the plain payload (D137). The issuer mints the nonce with the join it decided; the API
-    prechecks both and relays the split path's proof of possession; the watchdog alerts critical if
+    prechecks both and relays the split path's proof of possession (built in batch 6, "API" below); the watchdog alerts critical if
     `unrecorded_wallets` is ever true outside dev envs (D139; built, D193).
   - **Link volume counter (D200).** With a stolen email signing key alone (1-of-1 at launch) a thief can log into
     every email-rooted wallet, log into every Google-rooted wallet that already has an email member, and link their own Google account into victims' email
@@ -212,7 +214,30 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
 - **Claim allow-list** `{iss, azp, aud, sub, iat, exp, nonce, nbf, jti, auth_time}` (`apps/api/src/claims.ts:8`):
   always on `/v1/login`; on `/v1/sessions` only with `REJECT_PII_ON_SESSIONS = "1"` (off today).
 - **Relayer allowlists** per pool in the Worker and in the object; gas only from `gas.ts`; receiver always
-  `SIGNER_ACCOUNT`.
+  `SIGNER_ACCOUNT`. The session pool also relays the three link methods (batch 6); no pool relays an owner,
+  governance or updater method (`GOVERNANCE_METHODS`, tested).
+- **Email tokens** (batch 6, `email-token.ts`, D231): checked against the manifest's email keys (never fetched, so a
+  compromised issuer Worker can't change what the API accepts) and the on-chain signer policy (`get_self_issued`:
+  every kid a listed signer's active key, `required` distinct signers), in the issuer's exact serialization, with
+  exactly the issuer's claims (no address claim can reach the chain through the API), and only for an app whose
+  `login_methods` lists `email` (`403 login_method_disabled`): until a partner turns email on, no email token is
+  relayed for its app. The contract re-checks all of it.
+- **Proof of possession on `/v1/sessions`** (D137): the session key's signature over `sessionMessage(0,
+  "hana-id-create-v1:" ‖ sha256(session nonce preimage))` is required and verified before relaying, so a token copied
+  from a published login can't occupy its session key through the API; contract v3 enforces it for direct callers too
+  (v2 ignores the argument: `v2_ignores_the_create_session_proof_that_v3_requires`).
+- **Link precheck** (`/v1/login` with `linkJwt`, D133, D232): the signature must be over the linked CKD payload
+  (whoever relays can't attach, swap or strip a link), and the link token's `auto_link` nonce must match the join the
+  contract would make from fresh chain reads; links stay closed while `unrecorded_wallets` is true or absent (pre-v3).
+  The panics that remain are answered as their own errors (`panics.ts`), the text never logged.
+- **Link relays** (`/v1/link*`, D232): from Hana pages only (never a partner page), every token verified and in the
+  scope, every nonce and state rule prechecked; adds and removals in separate per-IP and per-app windows, so a flood of
+  adds can't block a cancel of a malicious pending link; cancel and unlink work whatever `unrecorded_wallets` says.
+  Every success revokes the account's vault shares in the scope (the root path at `key_index` 0..63, D233): the
+  account's other devices sign in again. Residual: a share at `key_index` ≥ 64 ends at its own absolute limit, as one
+  left by a direct contract call.
+- **Addresses never through the API** (D230): the email issuer is reached at its own URL (sandbox-dev) or by a zone
+  route (production); the API serves nothing under `/v1/email/` and never forwards those bodies.
 - **Owner actions**: OIDC auth only, console audience, a current owner of the scope, change exists / unlocked, client
   proof matches; the token is reserved single-use before relaying and released only if the tx certainly didn't
   execute; caps per owner identity (5/min, 30/day), per scope (10/min, 50/day) and global (20/min, 200/day), asked in
@@ -368,6 +393,7 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
 
 | Invariant | Where |
 |---|---|
+| The app gate reads the API's D1 by the API gate's model (D233): a key in `app_keys` not revoked or still in its grace, an undeleted app, active only with no suspension bit; the legacy `apps.publishable_key` is never read (source check `apps/api/scripts/test/hot-db-reads.test.ts`, no allowlist) | `src/apps.ts`; `test/codes.test.ts` |
 | Only the issuer computes `sub` (`@hana-id/email` `emailSub` over `normalizeEmail().email`, `+tag` kept, D159); mail goes to that normalized address, byte for byte | `src/handlers.ts` `handleStart`, `handleVerify`, `handleGoogleMatch` |
 | Every token's nonce is computed by the issuer from the commitment with the pinned signer, so a token serves only its purpose (never a register proof or another app's client proof); the commitment's scope must be the app's | `src/commitment.ts`, `src/layouts.ts` (checked against `email_fixture.json`) |
 | An `auto_link` token commits to the join read from the chain at minting (D133); it is minted only for Google-hosted case A with `link`, case B with a `linkTicket` bound to the same `sub` and this Google identity, or a case-A code challenge google-match prepared with Google's verified address (D195); never while `unrecorded_wallets` | `src/decide.ts` (the contract's `auto_link` rules), `handleGoogleMatch`, `handleVerify` |

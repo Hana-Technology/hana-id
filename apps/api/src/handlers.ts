@@ -1,23 +1,26 @@
 // Request handlers: app endpoints (publishable key + origin), owner actions (OIDC proof in args), health.
-import { JwksUnavailableError, verifyIdToken } from '@hana-id/oidc';
+import { JwksUnavailableError } from '@hana-id/oidc';
 import { type App, HOT_DB_SCHEMA, PUBLISHABLE_KEY_RE, appSuspended, getAppByKey, incrementUsage, startFirstSession } from './apps.ts';
 import { appKeyPairs, appKeyProblem } from './bls.ts';
-import { disallowedClaim } from './claims.ts';
 import type { Env } from './env.ts';
 import { type Headers_, corsHeaders, json, readJson } from './http.ts';
 import { ipSubject } from './ip.ts';
-import { log, logStaleJwks } from './log.ts';
+import { log } from './log.ts';
 import { placedStub } from './placement.ts';
-import { keyObserver } from './key-observations.ts';
 import { type Caller, PARENT_ORIGIN_HEADER, RELAY_KEY_HEADER, checkCaller, preflightAllows } from './origins.ts';
 import { precheckOwnerAction, sha256Hex } from './owner-actions.ts';
 import type { Limit, RateLimiter } from './rate-limiter.ts';
-import type { RelayInstance, RelayTiming } from './relayer-key.ts';
+import type { RelayInstance, RelayResult, RelayTiming } from './relayer-key.ts';
 import { relay } from './relayer-pool.ts';
-import { ckdPayload, revokePayload, sessionNonce, verifySessionSignature } from './session-crypto.ts';
+import { ckdPayload, createProofPayload, revokePayload, sessionNonce, verifySessionSignature } from './session-crypto.ts';
+import { countEmailUsage } from './email-usage.ts';
+import { type LoginTokenResult, verifyLoginToken } from './login-token.ts';
+import { signerPanic } from './panics.ts';
 import { claimCounter, precheckSessionUse } from './session-use.ts';
 import { MAX_BODY, isError, toCreateSession, toDeriveKey, toOwnerAction, toRevokeSession } from './validate.ts';
 import { type AppSettings, effectiveSettings, getSettingsRow } from './vault/settings.ts';
+import { type LoginMethod, appLoginMethods } from './login-methods.ts';
+import { LINK_ADDS_PER_IP_MINUTE, LINK_CHANGES_PER_IP_MINUTE } from './links.ts';
 import { effectiveSharedClients, forgetScope, forgetSession, getConfig, getScope, isIssuerKeyActive, isSessionView, isSharedClient, recordSessionUse, rememberSession, scopeForClient, sessionKeyInUse } from './views.ts';
 
 const APP_ALLOW_HEADERS = `content-type, x-hana-key, ${PARENT_ORIGIN_HEADER}, ${RELAY_KEY_HEADER}`;
@@ -217,7 +220,7 @@ export type Gate = { ok: true; app: App; caller: Caller } | { ok: false; respons
  * every user of the app shares. `config` (GET /v1/app, no transaction) counts only against a per-IP window of its
  * own, so reading the config never uses up the app's relay quota.
  */
-export async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay' | 'config'): Promise<Gate> {
+export async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay' | 'config' | 'link' | 'link-change'): Promise<Gate> {
   const fail = (status: number, code: string, error: string, extra: Headers_ = {}): Gate => ({ ok: false, response: reject(ctx, status, code, error, extra) });
   // 1. App exists and is active.
   const key = request.headers.get('x-hana-key');
@@ -245,8 +248,10 @@ export async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay
   // 3. The per-IP limit, before anything is parsed or verified: it bounds what one client can make the checks cost.
   //    The app's shared quota is counted later, after verification (appQuota).
   try {
-    const window = kind === 'relay' ? `${app.id}:minute` : `${app.id}:config:minute`;
-    const ipHit = await limiter(env, ipKey(request)).hit([{ name: window, windowMs: MINUTE, max: app.per_ip_minute }]);
+    // The link relays (links.ts) count in windows of their own, with their own caps, adds and removals apart.
+    const window = kind === 'relay' ? `${app.id}:minute` : kind === 'config' ? `${app.id}:config:minute` : `${app.id}:${kind}:minute`;
+    const max = kind === 'link' ? LINK_ADDS_PER_IP_MINUTE : kind === 'link-change' ? LINK_CHANGES_PER_IP_MINUTE : app.per_ip_minute;
+    const ipHit = await limiter(env, ipKey(request)).hit([{ name: window, windowMs: MINUTE, max }]);
     if (!ipHit.ok) return fail(429, 'rate_limited', 'Rate limit exceeded (per IP per minute)', { 'retry-after': String(ipHit.retryAfterS) });
   } catch {
     return fail(503, 'rate_limiter_unavailable', 'Try again');
@@ -284,6 +289,12 @@ export async function appQuota(env: Env, ctx: Ctx, app: App): Promise<Response |
  * `autoApprovePolicy` is the policy in force now (D1, validated and normalized as the vault page inlines it), or null, and
  * `rawSign` the raw-signing setting in force now: an open vault re-reads both (within 10 s of a request), so removing a
  * policy stops auto-approval, and setting raw signing to 'off' stops raw requests, without a reload.
+ *
+ * Email login (docs/email-login-spec.md "API changes"): `loginMethods` is what the app's D1 `login_methods` enables
+ * and the scope's on-chain clients can serve, in the order google, email; `email: {aud}` (the scope's email client)
+ * when email is among them. A Google-only app (every app until build plan batch 8) answers exactly as before, with
+ * `loginMethods: ['google']` added, and its 409 `no_google_client`; an app with email on answers 409
+ * `no_login_method` when neither method is available, and `google: null` when only email is.
  */
 export async function handleAppConfig(request: Request, env: Env, requestId: string): Promise<Response> {
   const ctx = newCtx(env, requestId, APP_CONFIG_ENDPOINT, request);
@@ -292,27 +303,48 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
   const { app } = gate;
   let autoApprovePolicy: AppSettings['autoApprovePolicy'];
   let rawSign: AppSettings['rawSign'];
+  let methods: LoginMethod[];
   try {
     const row = await getSettingsRow(env.DB, app.id);
     const settings = row ? await effectiveSettings(row, app.id, Date.now()) : null;
     autoApprovePolicy = settings?.autoApprovePolicy ?? null;
     rawSign = settings?.rawSign ?? 'off';
+    methods = await appLoginMethods(env.DB, app.id);
   } catch {
     return reject(ctx, 503, 'config_unavailable', 'App config is unavailable, try again');
   }
+  // A Google-only app keeps batch B's answers and errors exactly.
+  const googleOnly = methods.length === 1 && methods[0] === 'google';
   try {
     const scope = await getScope(env, app.scope_id);
     if (!scope) return reject(ctx, 409, 'scope_not_registered', 'The app’s scope is not registered on chain');
-    const web = app.google_web_client_id;
-    const own = scope.clients.find(([p, aud]) => p === 'google' && (web === null || aud === web));
-    if (web !== null && !own) return reject(ctx, 409, 'no_google_client', 'The app’s Google web client is no longer one of its scope’s clients');
-    let google: { clientId: string; mode: 'own' | 'shared' } | null = own ? { clientId: own[1], mode: 'own' } : null;
-    if (!google && scope.allow_shared) {
-      const shared = effectiveSharedClients(await getConfig(env)).find(([p]) => p === 'google');
-      if (shared) google = { clientId: shared[1], mode: 'shared' };
+    let google: { clientId: string; mode: 'own' | 'shared' } | null = null;
+    if (methods.includes('google')) {
+      const web = app.google_web_client_id;
+      const own = scope.clients.find(([p, aud]) => p === 'google' && (web === null || aud === web));
+      if (web !== null && !own && googleOnly) return reject(ctx, 409, 'no_google_client', 'The app’s Google web client is no longer one of its scope’s clients');
+      if (own) google = { clientId: own[1], mode: 'own' };
+      else if (web === null && scope.allow_shared) {
+        const shared = effectiveSharedClients(await getConfig(env)).find(([p]) => p === 'google');
+        if (shared) google = { clientId: shared[1], mode: 'shared' };
+      }
+      if (!google && googleOnly) return reject(ctx, 409, 'no_google_client', 'The app has no Google client and shared login is not available');
     }
-    if (!google) return reject(ctx, 409, 'no_google_client', 'The app has no Google client and shared login is not available');
-    return done(ctx, 200, { name: app.name, scopeId: app.scope_id, signer: env.SIGNER_ACCOUNT, google, serverTimeMs: Date.now(), autoApprovePolicy, rawSign });
+    // The scope's email client (`email:<scope_id>`, a scope client: an email `aud` is never shared, D123 Q4).
+    const emailClient = methods.includes('email') ? scope.clients.find(([p]) => p === 'email') : undefined;
+    const loginMethods: LoginMethod[] = [...(google ? (['google'] as const) : []), ...(emailClient ? (['email'] as const) : [])];
+    if (loginMethods.length === 0) return reject(ctx, 409, 'no_login_method', 'The app has no sign-in method available');
+    return done(ctx, 200, {
+      name: app.name,
+      scopeId: app.scope_id,
+      signer: env.SIGNER_ACCOUNT,
+      google,
+      loginMethods,
+      ...(emailClient ? { email: { aud: emailClient[1] } } : {}),
+      serverTimeMs: Date.now(),
+      autoApprovePolicy,
+      rawSign,
+    });
   } catch {
     return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');
   }
@@ -336,28 +368,27 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
   if (!parsed.ok) return reject(ctx, parsed.status, 'bad_request', parsed.error);
 
   if (endpoint === '/v1/sessions') {
-    // The scope is always the app's (D1), never the client's.
-    const call = toCreateSession(parsed.body, app.scope_id, now);
+    // The scope is always the app's (D1), never the client's. The body carries the session key's proof of possession.
+    const call = toCreateSession(parsed.body, app.scope_id, now, { proof: true });
     if (isError(call)) return reject(ctx, 400, 'bad_request', call.error);
     const req = call.request;
 
-    // 5. The token is a genuine, unexpired Google ID token (RS256 against Google's JWKS) with a nonce...
-    let verified;
-    try {
-      verified = await verifyIdToken(req.jwt, now, { skewMs: TOKEN_EXP_SKEW_MS, observer: keyObserver(env, exec), onStaleKeys: logStaleJwks, identityIssuer: env.IDENTITY_ISS });
-    } catch (err) {
-      if (err instanceof JwksUnavailableError) return reject(ctx, 503, 'issuer_keys_unavailable', 'Could not read the token issuer keys, try again');
-      throw err;
-    }
-    if (!verified.ok) return reject(ctx, verified.code === 'invalid_token' ? 401 : 400, verified.code, verified.error);
+    // 5. The token is genuine and unexpired: a Google ID token (RS256 against Google's JWKS), or an email token (JWS
+    //    JSON against the email keys and the on-chain signer policy, for an app with email on), with a nonce...
+    // The claim allow-list (claims.ts) for Google tokens only once REJECT_PII_ON_SESSIONS is on: smoke's GIS tokens carry `email`.
+    const verified = await verifyLoginToken(env, req.jwt, now, { claimAllowList: env.REJECT_PII_ON_SESSIONS === '1', appId: app.id, exec });
+    if (!verified.ok) return loginTokenRefusal(ctx, verified);
     const token = verified.token;
-    // The claim allow-list (claims.ts), here only once REJECT_PII_ON_SESSIONS is on: smoke's GIS tokens carry `email`.
-    const claim = env.REJECT_PII_ON_SESSIONS === '1' ? disallowedClaim(req.jwt) : null;
-    if (claim) return done(ctx, 400, { error: 'The ID token carries a claim outside the allow-list', code: 'token_has_pii', data: { claim } });
     if (token.nonce === null) return reject(ctx, 400, 'nonce_mismatch', 'The ID token has no nonce');
     // 6. ...that commits to this session in this app's scope on this signer.
     const expected = await sessionNonce({ signer: env.SIGNER_ACCOUNT, scopeId: app.scope_id, ...req });
     if (token.nonce !== expected) return reject(ctx, 400, 'nonce_mismatch', 'The ID token nonce does not commit to this session');
+    // 6b. The session key proves possession (D137): its signature over session_message(0, "hana-id-create-v1:" ‖
+    //     sha256(session nonce preimage)). Contract v3 checks it too; v2 ignores the argument.
+    const proofPayload = await createProofPayload({ signer: env.SIGNER_ACCOUNT, scopeId: app.scope_id, ...req });
+    if (!(await verifySessionSignature(req.sessionPublicKey, 0, req.signature ?? [], proofPayload))) {
+      return reject(ctx, 401, 'invalid_signature', 'Invalid session signature');
+    }
 
     // 7 and 8 read the chain; only a verified token gets this far, and the two reads run side by side.
     // 7. Scope: a registered client must be this app's; a shared client needs a scope that allows shared login.
@@ -367,7 +398,7 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     const [scope, inUse, gov] = await Promise.all([
       settle(checkClientScope(env, token.provider, token.aud, app.scope_id, now)),
       settle(sessionKeyInUse(env, req.sessionPublicKey, now)),
-      chainGate(env, token, requestId),
+      chainGate(env, token.kid === null ? null : { provider: token.provider, kid: token.kid }, requestId),
     ]);
     if (!scope.ok) return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');
     if (scope.value) return reject(ctx, scope.value.status, scope.value.code, scope.value.error);
@@ -383,10 +414,11 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     const result = await relay(env, 'session', { method: call.method, args: call.args }, requestId);
     await noted;
     lapRelay(ctx, result);
-    if (!result.ok) return done(ctx, result.status, { error: result.error, code: result.code, nearTx: result.nearTx });
+    if (!result.ok) return relayFailure(ctx, env, result);
     if (!isSessionView(result.result)) return done(ctx, 502, { error: 'The contract returned no session', code: 'bad_contract_result', nearTx: result.nearTx });
     rememberSession(req.sessionPublicKey, result.result);
     await countUsage(env, app.id, 'sessions', ctx, exec);
+    if (token.email) await countEmailUsage(env, app.id, 'email_sessions', ctx, exec);
     return done(ctx, 200, { result: result.result, nearTx: result.nearTx });
   }
 
@@ -450,7 +482,7 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     // land), so the next request reads it from chain.
     if (endpoint === '/v1/derive' && result.ok) recordSessionUse(call.sessionPublicKey, call.counter, check.session);
     else forgetSession(call.sessionPublicKey);
-    if (!result.ok) return done(ctx, result.status, { error: result.error, code: result.code, nearTx: result.nearTx });
+    if (!result.ok) return relayFailure(ctx, env, result);
     if (endpoint === '/v1/derive') {
       const r = result.result as { big_y?: unknown; big_c?: unknown } | null;
       if (!r || typeof r.big_y !== 'string' || typeof r.big_c !== 'string') return done(ctx, 502, { error: 'The contract returned no key', code: 'bad_contract_result', nearTx: result.nearTx });
@@ -515,6 +547,19 @@ export async function chainGate(env: Env, token: { provider: string; kid: string
 /** The response for a chainGate rejection: `retryAfterS` in the body and the Retry-After header. */
 export const chainGateResponse = (ctx: Ctx, r: ChainGateRejection): Response =>
   done(ctx, r.status, { error: r.error, code: r.code, retryAfterS: r.retryAfterS }, { 'retry-after': String(r.retryAfterS) });
+
+/** A failed relay's answer: a known email-login panic as its own error (panics.ts), else the relay's. */
+export function relayFailure(ctx: Ctx, env: Env, result: Extract<RelayResult, { ok: false }>): Response {
+  const mapped = signerPanic(env, result);
+  if (mapped) return done(ctx, mapped.status, { ...mapped.body, nearTx: result.nearTx });
+  return done(ctx, result.status, { error: result.error, code: result.code, nearTx: result.nearTx });
+}
+
+/** The response for a refused session or link token (login-token.ts): its code, any `data`, and Retry-After when retryable. */
+export function loginTokenRefusal(ctx: Ctx, r: Extract<LoginTokenResult, { ok: false }>): Response {
+  const retry = r.retryAfterS === undefined ? {} : { retryAfterS: r.retryAfterS };
+  return done(ctx, r.status, { error: r.error, code: r.code, ...(r.data ? { data: r.data } : {}), ...retry }, r.retryAfterS === undefined ? {} : { 'retry-after': String(r.retryAfterS) });
+}
 
 /**
  * Check 7: the client (provider, aud) may log in to `appScope`, or why not. A registered client must be the app's own;

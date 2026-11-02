@@ -3,8 +3,10 @@
 The Hana-run email issuer (`docs/email-login-spec.md` "Email issuer (Hana-run)", build plan batch 4): a Cloudflare
 Worker, separate from the API, that sends sign-in codes, mints email tokens (JWS General JSON, RS256) whose nonces it
 computes per purpose, answers `google-match` for automatic linking, publishes its JWKS and serves the staff routes (client proofs, unlock,
-unsuppress) behind Cloudflare Access.
-**Not deployed**; no app enables email yet.
+unsuppress) behind Cloudflare Access. It is reached at `{emailIssuer.url}/v1/email/*` (D230): its own `workers.dev`
+URL on a `workers.dev` env (sandbox-dev), the API's URL through a zone route in production; never through the API
+Worker, so an address or a code never passes through it.
+**Not deployed**; no app enables email yet (the sandbox-dev steps: `docs/operations.md` "Email login on sandbox-dev").
 
 Reference: endpoints, limits, Durable Objects, D1 and logs in `docs/api.md` "Email issuer"; setup and runbook in
 `docs/operations.md` "Email issuer"; keys and invariants in `docs/security.md`; decisions D195–D199.
@@ -19,8 +21,10 @@ Reference: endpoints, limits, Durable Objects, D1 and logs in `docs/api.md` "Ema
 | `EMAIL_RL_KEY` (K_rl) | limiter keys: the mailbox (the address without its `+tag`) and the recipient domain |
 | `SENDGRID_API_KEY` | Mail Send only, this Worker's alone (D194) |
 
-It reads hana-signer views over the manifest's RPC and the API's D1 (`apps`, `plans`) read only; it writes nothing on
-chain and holds no chain key.
+It reads hana-signer views over the manifest's RPC and the API's D1 (`app_keys`, `apps`, `plans`) read only, finding an
+app as the API's gate does (a key in `app_keys` not revoked or in its grace, an undeleted app, active only with
+`suspended_by = 0`; `apps.login_methods` for email, D233); it never reads the legacy `apps.publishable_key`, writes
+nothing on chain and holds no chain key.
 
 ## Layout
 

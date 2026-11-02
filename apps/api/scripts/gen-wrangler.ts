@@ -56,6 +56,17 @@ export function identityVars(m: Manifest): Record<string, string> {
   return { ...common, IDENTITY_ACTIVE_KID: t.signer.activeKid };
 }
 
+/**
+ * Email login's vars (docs/email-login-spec.md "API changes"; manifest `emailIssuer`): the email tokens' `iss` and the
+ * issuer's public keys (the keys its JWKS serves, D196), which the API checks email tokens against before relaying them.
+ * Empty without the block: every email token is then refused, Google logins are unaffected.
+ */
+export function emailVars(m: Manifest): Record<string, string> {
+  const t = m.emailIssuer;
+  if (!t) return {};
+  return { EMAIL_ISS: t.iss, EMAIL_PUBLIC_KEYS: JSON.stringify(t.publicKeys) };
+}
+
 export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknown> {
   // The API checks callers against both Hana origins (and the login relay serves only them).
   if (!m.vaultOrigin || !m.authOrigin) throw new Error(`envs/${m.name}.json needs vaultOrigin and authOrigin`);
@@ -98,6 +109,8 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
       ...(m.files ? { FILES_ORIGIN: m.files.origin } : {}),
       // The partner identity token (its secrets come from scripts/identity-key.ts).
       ...identityVars(m),
+      // Email login: the email issuer's iss and public keys (no secret).
+      ...emailVars(m),
     },
     d1_databases: [{ binding: 'DB', database_name: m.cloudflare.d1Name, database_id: d1Id, migrations_dir: 'migrations' }],
     durable_objects: {

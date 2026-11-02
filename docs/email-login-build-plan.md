@@ -422,16 +422,24 @@ Branch `feat/email-login-5`, not deployed (no transactions sent).
   run); the indexer's answers share a 1 MB budget per run; pages of 200; a block no scan can read whole is skipped
   with a critical `link_block_unscanned` open for a week instead of stalling the scan; `unrecorded_wallets` now
   belongs to `governance_diff`; `pin` accepts a PEM with leading text (openssl "Bag Attributes").
-- **D200 (link counter and cap in the contract) replaces the link scan.** Everything above about the FastNear indexer,
+- **D200 (link counter in the contract) replaces the link scan.** Everything above about the FastNear indexer,
   `links.ts`, migration `0002_link_events.sql` (never applied, deleted), `watchdog.linkVolume`, `link_events_unavailable`,
   `link_block_unscanned` and the advisory link phase is removed. The watchdog reads `get_link_stats()` (built on
-  `feat/link-cap`) with the chain snapshot, in the protective phase: critical `link_cap_reached` per capped scope and
-  for the total, keyed by window, for the current and the previous hour (no pause: the contract brakes); warning
+  `feat/link-cap`) with the chain snapshot, in the protective phase: critical `link_threshold_reached` per flagged scope
+  and for the total, keyed by window, for the current and the previous hour (no pause); warning
   `link_volume_high` at half `total_per_hour`; warning `link_stats_unavailable` when an email issuer exists and the
-  view doesn't. A cap raise (`link_limits` up, a `pending_limits` raise) is a critical governance change, lowering a
-  warning. Playbook `link-cap` replaces `link-volume`. The advisory phase now holds only Hana's email JWKS read. D190,
+  view doesn't. A threshold raise (`link_thresholds` up, a `pending_thresholds` raise) is a critical governance change, lowering
+  a warning. Playbook `link-volume` (rewritten for the D200 alarm). The advisory phase now holds only Hana's email JWKS read. D190,
   D191 and D193 are confirmed by the user; D192 is superseded by D200.
-- **Left open.** The caps are provisional until sandbox-dev and staging traffic (D200), and the watchdog's
-  `get_link_stats` shape must match `feat/link-cap` when it merges (a mismatch fails the chain read loudly). The
-  `set_link_limits` owner call isn't in `scripts/lib/contract.ts` `OWNER_METHODS` yet (the link-cap branch adds it).
+- **Alarm, not cap (the user's choice, 2026-11-02).** The contract counts links and the watchdog alarms; nothing is
+  refused. The view is `{window_ms, thresholds, pending_thresholds, links_total, current, previous}` with windows
+  `{window_start_ms, total, total_threshold_reached, flagged_scopes, flagged_scopes_truncated?}`; the setter is
+  `set_link_thresholds`. The watchdog's kind is `link_threshold_reached` (critical; its text says the links went
+  through), `link_volume_high` stays at half the total threshold, unreadable stats still leave open alerts open, the
+  diff reports `link_thresholds` / `pending_thresholds` (raised critical, lowered warning), and the playbook is
+  `link-volume` (launch check; on a suspected compromise pause and rotate the email key; a threshold change only if
+  the alarm level is wrong for real traffic). With a stolen email key alone a thief can also log into email-rooted wallets, and into Google wallets that already have an email member, without making any link: the counter can't see that; the defence is the key's custody (D121).
+- **Left open.** The thresholds are provisional until sandbox-dev and staging traffic (D200), and the watchdog's
+  `get_link_stats` shape must match `feat/link-cap` when it merges (a mismatch marks only the link check). The
+  `set_link_thresholds` owner call isn't in `scripts/lib/contract.ts` `OWNER_METHODS` yet (the link-cap branch adds it).
   The admin portal's rendering of the new checks and kinds is batch C/9 (the registry and `/status` carry them).

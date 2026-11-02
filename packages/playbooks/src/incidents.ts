@@ -703,7 +703,7 @@ const emailIssuerKey: Playbook = {
   status: 'planned',
   summary: "Email login isn't built (`docs/email-login-spec.md`). When it is: whoever can make Hana's email issuer key sign can mint email tokens for any `sub` and derive the wallet of any email user (and of accounts linked to one).",
   signals: [
-    "The contract's hourly link cap and the watchdog's `link_cap_reached` page (link-cap, D200) and its pins (a swapped key is cancelled, forged-key-change; an active one pauses, forged-active-key). Planned: the hourly CloudTrail reconciliation finds a `Sign` the issuer didn't log (critical); an IAM or KMS policy change alert. On testnet (Worker-secret key) there is no signing log: you notice only a leak of the Worker's secrets or a link burst.",
+    "The contract's hourly link counter and the watchdog's `link_threshold_reached` page (link-volume, D200; links that take over Google wallets; email-rooted wallets and Google wallets that already have an email member are entered without a link, so only custody protects them, D121) and its pins (a swapped key is cancelled, forged-key-change; an active one pauses, forged-active-key). Planned: the hourly CloudTrail reconciliation finds a `Sign` the issuer didn't log (critical); an IAM or KMS policy change alert. On testnet (Worker-secret key) there is no signing log: you notice only a leak of the Worker's secrets or a link burst.",
   ],
   impact: [
     'At 1-of-1 the use of the real key isn\'t bounded on chain: it is detected and stopped. A key swap is bounded by governance (owner-posted only, `governance_delay_ms`, the watchdog\'s pinned thumbprints).',
@@ -724,7 +724,7 @@ const emailIssuerKey: Playbook = {
   verify: ['Planned: the reconciliation shows no unlogged `Sign` after the cut-off.'],
   followUps: ['Turn this playbook live with the email issuer\'s own commands when it ships.'],
   refs: ['docs/email-login-spec.md#signing-key-staged', 'docs/email-login-spec.md#trust-statement', 'D121'],
-  related: ['forged-active-key', 'link-cap', 'signer-policy-mismatch'],
+  related: ['forged-active-key', 'link-volume', 'signer-policy-mismatch'],
 };
 
 const identitySigningKey: Playbook = {

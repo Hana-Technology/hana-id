@@ -1,7 +1,7 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-02 for the watchdog's email issuer rules, the link-cap alerts
+known open issues. Last verified against code: 2026-11-02 for the watchdog's email issuer rules, the link alarms
 and the `unrecorded_wallets` alert (branch `feat/email-login-5`, D190–D193, D200); 2026-10-30 for the watchdog's retired-key rule (branch
 `fix/watchdog-retired-key-race`, D153), for the partner identity token (branch
 `feat/identity-token-2`: the review fixes D176–D179 in the identity rows, invariants and open issue (l); branch
@@ -129,10 +129,12 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
     launch); the signer list and `required` change only by a governed upgrade, with a 10-minute overlap. Google and
     every other issuer stay compact-only. Trust: whoever makes the `hana` key sign can mint any email token, so reach
     every email wallet and every account linked to one (`docs/email-login-spec.md` "Trust statement"). Taking over a
-    Google wallet that way needs a new link (D119), and the contract caps new links per scope and in all per UTC hour
-    (D200; default 50 / 500, raising waits `governance_delay_ms`), so a stolen email key takes over at most the cap's
-    worth of accounts per hour before the watchdog pages `link_cap_reached`; opening email-only wallets makes no link
-    and is bounded only by the key's custody (KMS, a second signer, D121).
+    Google wallet with no email member needs a new link (D119); the contract counts new links per scope and in all per
+    UTC hour and flags a scope (or the total) past its alarm threshold (D200; default 50 / 500, raising waits
+    `governance_delay_ms`), and the watchdog pages `link_threshold_reached`. These are alarm levels: nothing is
+    refused, the links go through, and the council decides whether to pause. With the email key alone a thief can also
+    log into email-rooted wallets, and into Google wallets that already have an email member, without making any link:
+    the counter can't see that, and the only defence is the key's custody (KMS, a second signer, D121).
   - Accounts: a member opens its root's path; an identity in no account opens the v2 path unchanged. Automatic links
     only inside a login and bound both ways (D133): the issuer's `auto_link` nonce binds the token to that session
     and to one join (session preimage hash, session identity, join, joiner, target root, target epoch, mode), and the
@@ -700,10 +702,11 @@ plan (D33; built on branch `feat/governance`, not deployed), specified in `docs/
   every protective step, the alert delivery, the heartbeat, the run record and the lock release, with its body
   capped: Hana's API can't stall the watchdog's cancel or pause, or hold its lock (D86). Every third-party answer
   the watchdog parses (RPC, both JWKS) is size-capped. The **use of Hana's real key** by a compromised issuer isn't
-  prevented on chain at 1-of-1, but its account takeovers are rate-limited there (D200): the contract refuses new
-  links past the hourly cap, and the watchdog reads `get_link_stats()` with the chain each run (current and previous
-  hour, so nothing falls between runs) and pages `link_cap_reached`; half the total cap warns, a cap raise is a
-  critical governance change. No third party is involved (the FastNear indexer scan of D192 is gone). A v2 contract
+  prevented on chain at 1-of-1. Takeovers by linking are counted there (D200): the watchdog reads `get_link_stats()`
+  with the chain each run (current and previous hour, so nothing falls between runs) and pages
+  `link_threshold_reached`; half the total threshold warns, a threshold raise is a critical governance change. These
+  are alarms, not limits: the links went through. Logins into email-rooted wallets, or Google wallets that already
+  have an email member, need no link and aren't seen; custody is their defence (D121). No third party is involved (the FastNear indexer scan of D192 is gone). A v2 contract
   reads as "no email issuer", and as "no link stats".
 - Monitoring (D83): every watchdog check, action and alert surfaces in the admin portal's "Security & monitoring"
   view (a standing rule for future checks); the watchdog sends its own alerts, so a compromised Hana Cloudflare

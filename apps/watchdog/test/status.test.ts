@@ -92,11 +92,11 @@ describe('GET /status', () => {
       jwks_url: 'https://api.test/v1/email/jwks.json',
       last: { pinned: pins, chain: { issuer: true, pre_v3: false, self_issued: { signers: [{ id: 'hana', kids: [hana.kid] }], required: 1 }, active_kids: [hana.kid] }, differences: [], weaker: [] },
     });
-    expect(body.link_stats).toMatchObject({ limits: { per_scope_per_hour: 50, total_per_hour: 500 }, links_total: 12, current: { total: 7 } });
+    expect(body.link_stats).toMatchObject({ thresholds: { per_scope_per_hour: 50, total_per_hour: 500 }, links_total: 12, current: { total: 7 } });
     const kinds = body.alert_kinds as Record<string, { severity: string; playbook: string }>;
     expect(kinds.signer_policy_mismatch).toMatchObject({ severity: 'critical', check: 'signer_policy', playbook: 'signer-policy-mismatch' });
-    expect(kinds.link_cap_reached).toMatchObject({ severity: 'critical', check: 'links', playbook: 'link-cap' });
-    expect(kinds.link_volume_high).toMatchObject({ severity: 'warning', check: 'links', playbook: 'link-cap' });
+    expect(kinds.link_threshold_reached).toMatchObject({ severity: 'critical', check: 'links', playbook: 'link-volume' });
+    expect(kinds.link_volume_high).toMatchObject({ severity: 'warning', check: 'links', playbook: 'link-volume' });
     // Without pins: nothing pinned.
     const bare = (await call('/status', {}, w.clock.t)).body;
     expect(bare.email).toMatchObject({ pinned: null, jwks_url: null });

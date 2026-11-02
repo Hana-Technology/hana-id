@@ -1,6 +1,6 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-02 (branch `feat/email-login-5`: the watchdog's email rules, the link cap and
+Last verified against code: 2026-11-02 (branch `feat/email-login-5`: the watchdog's email rules, the link alarms and
 `unrecorded_wallets` alerts in "Watchdog alerts (runbook)" and "Watchdog service", D190–D193, D200; branch
 `feat/email-login-2`: `deploy-contract` refuses a v1 contract, D154; the v2 → v3 upgrade path sandbox-tested,
 "Upgrading the governance contract"); 2026-10-30 (branch `fix/watchdog-retired-key-race`: the `retired_key_change` alert, D153;
@@ -1121,7 +1121,7 @@ Rotating its secrets: `WATCHDOG_KEY`: add a new function-call key (as in step 3)
 put WATCHDOG_KEY`, then delete the old key on chain. `WATCHDOG_STATUS_TOKEN`: change it on both Workers. The others:
 replace in the file and `wrangler secret put`.
 
-### Email login: pins, link caps, unrecorded wallets
+### Email login: pins, link alarms, unrecorded wallets
 
 The watchdog also checks Hana's email issuer (`docs/email-login-spec.md` "Watchdog", D190–D193), against the
 manifest's `watchdog.pinnedIssuerKeys.email` (`envs/README.md`). The pins are public thumbprints, not secrets; they
@@ -1142,10 +1142,12 @@ come only from the watchdog's own manifest, never from the chain or Hana's JWKS.
   executes with the current `required`; raise the pinned `required` (or drop the old signer) after it executed (D191).
   The reverse order reads as a weaker policy and pauses. The upgrade's 10-minute overlap shows as a
   `signer_policy_transition` warning; a longer one pauses (D191).
-- **Link caps** (D200): the contract counts new links per scope and in all per UTC hour and refuses a new link once a
-  cap is reached (default 50 per scope, 500 in all; `set_link_limits` by the council: lowering applies at once, raising
-  waits `governance_delay_ms`). The watchdog reads `get_link_stats()` each run: a cap reached pages
-  `link_cap_reached`, half the total cap warns `link_volume_high`, a raise is a critical `governance_change`. `/status`
+- **Link alarms** (D200): the contract counts new links per scope and in all per UTC hour and flags a scope (or the
+  total) whose links reach its alarm threshold (default 50 per scope, 500 in all; `set_link_thresholds` by the council:
+  lowering applies at once, raising waits `governance_delay_ms`). Nothing is refused. The watchdog reads
+  `get_link_stats()` each run: a threshold reached pages `link_threshold_reached`, half the total threshold warns
+  `link_volume_high`, a raise is a critical `governance_change`. A partner launch needs no action; change a threshold
+  only if the alarm level is wrong for real traffic. `/status`
   `link_stats` shows both windows. A contract without the view warns `link_stats_unavailable` once an email issuer is on
   chain, so the D200 contract must be deployed before email goes live.
 - **`unrecorded_wallets`** (D135, D139): sandbox-dev accepts after its v3 upgrade (`admin <env> owner:call
@@ -1185,7 +1187,7 @@ This table only says what each kind means:
 | `relayer_balance_critical`, `relayer_allowance_critical`, `relayer_pool_empty`; warning `relayer_balance_low`, `relayer_allowance_low` | The relayer account's available balance, or a pool key's remaining allowance, is below its threshold (defaults: balance 5 / 1 NEAR; session key 0.5 / 0.1; owner key 0.1 / 0.02; manifest `watchdog.relayerFunds`), or a pool has no key: relays from it fail once it runs out. Read-only: the watchdog never tops up | [`relayer-out-of-funds`](playbooks.md#relayer-out-of-funds) |
 | warning `confirm_failed` | A confirmation of a key that matches Google's JWKS failed: it goes live only after the full delay | [`confirm-failed`](playbooks.md#confirm-failed) |
 | warning `email_jwks_mismatch` | Hana's published email JWKS lists a key that isn't pinned (or whose kid isn't its thumbprint), lacks an active email key, or failed 3 fetches while email keys are active. Informational: the contract never reads it | [`email-jwks-mismatch`](playbooks.md#email-jwks-mismatch) |
-| `link_cap_reached`; warning `link_volume_high`, `link_stats_unavailable` | `get_link_stats()` (D200): a link cap was reached in the current or previous UTC hour, in one scope or in all, so the contract refuses further links there until the hour ends (a partner launch, or a stolen email key taking over accounts at the cap's pace; alert only, the cap is the brake); the current hour at half the total cap; or the view is missing with an email issuer on chain, malformed or failing (`link_stats_unavailable:missing` / `:malformed` / `:read_failed`; only the link check is affected, every protective step still runs) | [`link-cap`](playbooks.md#link-cap) |
+| `link_threshold_reached`; warning `link_volume_high`, `link_stats_unavailable` | `get_link_stats()` (D200): links reached an alarm threshold in the current or previous UTC hour, in one scope or in all; they went through (the contract refuses nothing): a partner launch, or a stolen email key taking over Google wallets by linking (alert only; the council decides whether to pause); the current hour at half the total threshold; or the view is missing with an email issuer on chain, malformed or failing (`link_stats_unavailable:missing` / `:malformed` / `:read_failed`; only the link check is affected, every protective step still runs) | [`link-volume`](playbooks.md#link-volume) |
 | info `key_change_confirmed`, `key_change_executed`, `key_change_cancelled` | Routine key-change events | [`key-change-lifecycle`](playbooks.md#key-change-lifecycle) |
 | info `self_issued_key_change` | A pending email key pinned for its signer, or a pending email key removal: never confirmed (self-issued keys wait `governance_delay_ms`) | [`self-issued-key-change`](playbooks.md#self-issued-key-change) |
 | info `config_matured` | A scheduled delay decrease or console-audience addition came into force | [`config-matured`](playbooks.md#config-matured) |

@@ -61,17 +61,19 @@ every run and sends nothing on a mismatch.
      keys before its upgrade executes, raise the pinned `required` after.
    - `get_config().unrecorded_wallets` true on an env that isn't `local*` or `sandbox*` → critical condition
      `unrecorded_wallets` (D139, D193; alert only; check `governance_diff`).
-   - Link caps (check `links`, D200): the contract counts every new link (immediate or pending) per scope and in all
-     in fixed UTC-hour windows and refuses a new link once a cap is reached (default 50 per scope, 500 in all).
-     `get_link_stats()` reports the current and the previous window, so a cap reached between two runs is seen: a cap
-     reached → critical condition `link_cap_reached` (`:total:<hour>`, `:scope:<scope>:<hour>`, `:more_scopes:<hour>`
-     when the view truncated its list), alert only (the contract is the brake: no pause); the current hour at half
+   - Link alarm thresholds (check `links`, D200): the contract counts every new link (immediate or pending) per scope
+     and in all in fixed UTC-hour windows and flags a scope (or the total) whose links reach its alarm threshold
+     (default 50 per scope, 500 in all); it refuses nothing. `get_link_stats()` reports the current and the previous
+     window, so a threshold reached between two runs is seen: → critical condition `link_threshold_reached`
+     (`:total:<hour>`, `:scope:<scope>:<hour>`, `:more_scopes:<hour>` when the view truncated its list), alert only
+     (the links went through; the council decides whether to pause); the current hour at half
      `total_per_hour` or more → warning `link_volume_high:<hour>`. An email issuer on chain and no `get_link_stats` →
      warning `link_stats_unavailable:missing`; with no email issuer, nothing (no link is possible). An answer of another
      shape, or a failing view → `links` `error` and warning `link_stats_unavailable:malformed` / `:read_failed`; the
-     Google and email cancels and pauses of the same run are unaffected, and open `link_cap_reached` /
+     Google and email cancels and pauses of the same run are unaffected, and open `link_threshold_reached` /
      `link_volume_high` alerts stay open (only a good read resolves them). Judged with the chain read,
-     before the run is recorded and its lock released.
+     before the run is recorded and its lock released. 
+     With a stolen email key alone a thief can also log into email-rooted wallets, and into Google wallets that already have an email member, without making any link: the counter can't see that; the defence is the key's custody (D121).
 6. **Active keys**: a kid this watchdog never saw in Google's JWKS, or whose on-chain material (`get_issuer_keys`)
    differs from Google's → `pause`, then `delete_updater_key` for every updater key (whoever proposed it: the change
    record is gone by then, and only the updater or the owner can post keys; D126), + critical alert. **The only
@@ -180,7 +182,7 @@ route answers 503. Responses are JSON, `cache-control: no-store`.
 
 | Route | Returns |
 |---|---|
-| `GET /status` | `env`, `network`, `signer`, `watchdog_account`, `now`, `run_interval_ms` (300000), `resend_ms`, `initialized_at`, `email` (`{pinned, jwks_url, last}`: the pins in force and, at the last run, `{at, pinned, chain: {issuer, pre_v3, self_issued, active_kids}, differences, weaker}`), `link_stats` (the last `get_link_stats()` with its read time `at`: `{window_ms, limits, pending_limits, links_total, current, previous}`, or null), `last_run` (`{id, started_at, finished_at, outcome, first_run, checks: [{id, outcome, detail?}]}`), `silent` (no finished run within two intervals: the portal's warning banner), `heartbeat` (`{configured, last_ping_at, last_ok_at, ok, failures}`), `channels` (configured or not, pager provider), `seen_kids` (`{provider, kid, n, e, source, first_seen_at, last_seen_at}`), `relayer_funds` (the last relayer reading or null: `{account, exists, amount, locked, storage_usage, available, keys: [{public_key, pool, allowance}], other_keys, at, thresholds: {balance, session, owner: {warn, critical}}}`, amounts in yoctoNEAR as decimal strings, `allowance` null = unlimited), `actions` (last 50), `open_alerts` (unacknowledged critical and open conditions), `checks` and `alert_kinds` (the registry: per kind `{severity, check, description, playbook}`, `playbook` = the id of its `@hana-id/playbooks` playbook, the portal's link target) |
+| `GET /status` | `env`, `network`, `signer`, `watchdog_account`, `now`, `run_interval_ms` (300000), `resend_ms`, `initialized_at`, `email` (`{pinned, jwks_url, last}`: the pins in force and, at the last run, `{at, pinned, chain: {issuer, pre_v3, self_issued, active_kids}, differences, weaker}`), `link_stats` (the last `get_link_stats()` with its read time `at`: `{window_ms, thresholds, pending_thresholds, links_total, current, previous}`, or null), `last_run` (`{id, started_at, finished_at, outcome, first_run, checks: [{id, outcome, detail?}]}`), `silent` (no finished run within two intervals: the portal's warning banner), `heartbeat` (`{configured, last_ping_at, last_ok_at, ok, failures}`), `channels` (configured or not, pager provider), `seen_kids` (`{provider, kid, n, e, source, first_seen_at, last_seen_at}`), `relayer_funds` (the last relayer reading or null: `{account, exists, amount, locked, storage_usage, available, keys: [{public_key, pool, allowance}], other_keys, at, thresholds: {balance, session, owner: {warn, critical}}}`, amounts in yoctoNEAR as decimal strings, `allowance` null = unlimited), `actions` (last 50), `open_alerts` (unacknowledged critical and open conditions), `checks` and `alert_kinds` (the registry: per kind `{severity, check, description, playbook}`, `playbook` = the id of its `@hana-id/playbooks` playbook, the portal's link target) |
 | `GET /alerts?cursor=<id>&limit=<1..200>&severity=<critical\|warning\|info>` | `{alerts: [{id, kind, severity, title, details, created_at, resolved_at, acked_at, acked_by, acked_via, last_sent_at, send_count, pending_channels, channels, resends_until_ack, deliveries: [{channel, kind, at, ok, error}]}], next_cursor}`, newest first |
 | `GET /actions?cursor=<id>&limit=<1..200>` | `{actions: [{id, run_id, at, method, args, reason, ok, tx_hash, error}], next_cursor}`, newest first (`tx_hash` for transaction links) |
 | `POST /alerts/:id/ack` `{"by": "<who>"}` | Records the acknowledgement once (`acked_via: "portal"`, `acked_by` 1–200 characters: the Access identity), `200 {alert}`; `409` if already acknowledged (the first ack is kept); `404`, `400`, `413`, `415` |
@@ -209,7 +211,7 @@ Manifest block (`envs/<env>.json`, schema `packages/env/src/schema.ts`, optional
 `pinnedIssuerKeys.email` (optional, D190): `gen` passes `{required, signers}` as `EMAIL_PINS` (JSON) and the JWKS URL
 (`jwksUrl`, else `{apiUrl}/v1/email/jwks.json`) as `EMAIL_JWKS_URL`. Absent (sandbox-dev until batch 4 creates the
 key): nothing is pinned, so it must be set, generated and deployed before the owner posts the first email key; an
-unreadable `EMAIL_PINS` is read as nothing pinned and named in the `config` check. The link caps need no configuration here: they are the contract's own (`set_link_limits`, D200).
+unreadable `EMAIL_PINS` is read as nothing pinned and named in the `config` check. The link thresholds need no configuration here: they are the contract's own (`set_link_thresholds`, D200).
 
 `relayerFunds` is optional, and so is each pair (NEAR, `critical` below `warn`): the values above are the defaults
 (`src/relayer.ts` `DEFAULT_RELAYER_FUNDS`). Raise the allowance pairs when `deploy-contract` ran with a larger
@@ -245,7 +247,7 @@ Setup and deploy steps are in `docs/operations.md` "Watchdog service".
 
 `test/` runs in workerd with a real (local) D1: `run.test.ts` covers every rule above against a stub chain, a scripted
 JWKS and recording channels; `email.test.ts` the email issuer's rules (pinned and unpinned keys per signer, no
-confirm, the signer-policy diff and its pauses, Hana's JWKS, the link caps (`get_link_stats`), `unrecorded_wallets`, a v2 contract read as
+confirm, the signer-policy diff and its pauses, Hana's JWKS, the link alarm thresholds (`get_link_stats`), `unrecorded_wallets`, a v2 contract read as
 no email issuer, D153 unchanged beside it, the review hardening: advisory order and the lock, `pins_invalid`,
 `bad_material`); `http.test.ts` the body caps on every third-party read; `scripts/test/pin.test.ts` the pin command
 (RFC 7638 vector, leading zeros, PEM, private keys refused); `pins.test.ts` the pin parsing and the per-key and

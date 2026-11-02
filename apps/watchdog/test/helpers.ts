@@ -110,12 +110,12 @@ export const hourOf = (at: number) => at - (at % HOUR);
 
 /** One window of `get_link_stats()`. */
 export function linkWindow(at: number, total = 0, over: Partial<LinkWindow> = {}): LinkWindow {
-  return { window_start_ms: hourOf(at), total, total_cap_reached: false, capped_scopes: [], ...over };
+  return { window_start_ms: hourOf(at), total, total_threshold_reached: false, flagged_scopes: [], ...over };
 }
 
 /** `get_link_stats()` as D200's contract answers it: the default caps, nothing linked yet. */
 export function linkStats(over: Partial<LinkStatsView> = {}): LinkStatsView {
-  return { window_ms: HOUR, limits: { per_scope_per_hour: 50, total_per_hour: 500 }, pending_limits: null, links_total: 0, current: linkWindow(T0), previous: null, ...over };
+  return { window_ms: HOUR, thresholds: { per_scope_per_hour: 50, total_per_hour: 500 }, pending_thresholds: null, links_total: 0, current: linkWindow(T0), previous: null, ...over };
 }
 
 export function baseGovernance(): GovernanceView {

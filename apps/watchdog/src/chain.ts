@@ -87,8 +87,8 @@ export interface SelfIssuedView {
   overlap_until_ms?: number | null;
 }
 
-/** Link caps per window (D200). */
-export interface LinkLimits {
+/** Link alarm thresholds per window (D200): alarm levels only, the contract refuses nothing. */
+export interface LinkThresholds {
   per_scope_per_hour: number;
   total_per_hour: number;
 }
@@ -98,19 +98,19 @@ export interface LinkWindow {
   window_start_ms: number;
   /** New links (immediate or pending) in the window, all scopes. */
   total: number;
-  total_cap_reached: boolean;
-  /** Scopes that reached their cap in the window (recorded by the call that reached it). */
-  capped_scopes: string[];
-  /** More scopes reached their cap than the view lists. */
-  capped_scopes_truncated?: boolean;
+  total_threshold_reached: boolean;
+  /** Scopes whose links reached the per-scope threshold in the window (recorded by the call that reached it). */
+  flagged_scopes: string[];
+  /** More scopes reached the threshold than the view lists. */
+  flagged_scopes_truncated?: boolean;
 }
 
-/** `get_link_stats()` (contract with D200's link counter and cap). */
+/** `get_link_stats()` (contract with D200's link counter and alarm thresholds). */
 export interface LinkStatsView {
   window_ms: number;
-  limits: LinkLimits;
+  thresholds: LinkThresholds;
   /** A raise waiting `governance_delay_ms` (lowering is immediate). */
-  pending_limits: (LinkLimits & { effective_at_ms: number }) | null;
+  pending_thresholds: (LinkThresholds & { effective_at_ms: number }) | null;
   links_total: number;
   current: LinkWindow;
   previous: LinkWindow | null;
@@ -171,7 +171,7 @@ export interface ChainSnapshot {
   issuerKeys: IssuerKey[] | null;
   /** The email issuer (self-issued, D121). */
   email: EmailSnapshot;
-  /** `get_link_stats()` (D200), or null on a contract without the view (v2, or v3 before the link cap). */
+  /** `get_link_stats()` (D200), or null on a contract without the view (v2, or v3 before the link counter). */
   linkStats: LinkStatsView | null;
   /**
    * Why `linkStats` is null although the contract may have the view: `malformed` (an answer of another shape) or

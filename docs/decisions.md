@@ -1674,11 +1674,15 @@ detail open or a safer reading was needed. Each follows the spec's intent; the u
   per hour, 500 in total per hour, changed by the owner (council). The scope or total that reaches its cap is
   recorded by the call that reaches it, and a view reports the current and previous windows. The watchdog reads that
   view each run: a cap reached is critical, a count past half the cap is a warning; raising a cap is a critical
-  governance change. The FastNear indexer scan (D192) is removed. Watchdog side (`feat/email-login-5`): the view is
-  read with the chain snapshot, before the run is recorded and its lock released; `link_cap_reached` (critical, per
-  capped scope and for the total, keyed by window, current and previous hour, no pause), `link_volume_high` (warning,
-  current total ≥ half `total_per_hour`), `link_stats_unavailable` (warning: `missing` with an email issuer on chain,
-  `malformed`, or `read_failed`); playbook `link-cap`. The read is isolated: a malformed or failing view marks only
+  governance change. The FastNear indexer scan (D192) is removed. Watchdog side (`feat/email-login-5`), after the user's
+  choice of alarms over a cap (2026-11-02: the contract counts and flags, it refuses nothing; the thresholds are alarm
+  levels; setter `set_link_thresholds`, event `link_threshold_reached`): the view is read with the chain snapshot,
+  before the run is recorded and its lock released; `link_threshold_reached` (critical, per flagged scope and for the
+  total, keyed by window, current and previous hour; alert only, the links went through), `link_volume_high`
+  (warning, current total ≥ half `total_per_hour`), `link_stats_unavailable` (warning: `missing` with an email issuer
+  on chain, `malformed`, or `read_failed`); a threshold raise (`link_thresholds`, `pending_thresholds`) is a critical
+  governance change, lowering a warning; playbook `link-volume`. With a stolen email key alone a thief can also log into email-rooted wallets, and into Google wallets that already have an email member, without making any link: the counter can't see that; the defence is the key's custody (D121): the alarm
+  only sees takeovers that link. The read is isolated: a malformed or failing view marks only
   the link check, never the snapshot, so a shape mismatch after an upgrade can't blind the Google and email cancels
   and pauses.
 - Why: exact, on chain, no third party or data budget, and it turns detection into a brake: a thief can take over at
@@ -2205,8 +2209,8 @@ address. D190, D191 and D193 are confirmed by the user (2026-11-02); D192 is sup
   (an upgrade setting it, `accept_unrecorded_wallets` clearing it), `email_issuer` (`set_issuer("email")` creating it or
   changing its iss values), `email_issuer_keys` (an active email kid gone without a queued removal), and
   `email_signer_policy` (`mark_self_issued`, or signers or `required` changed by an upgrade). With D200 the diff also
-  carries the link caps from `get_link_stats()`: `link_limits` rising (or appearing with the view) and a
-  `pending_limits` raise appearing or changing are critical; lowering, or a pending raise cancelled, is a warning; a
+  carries the link alarm thresholds from `get_link_stats()`: `link_thresholds` rising (or appearing with the view) and
+  a `pending_thresholds` raise appearing or changing are critical; lowering, or a pending raise cancelled, is a warning; a
   pending raise coming into force as scheduled is info.
 - Why: D139 asks for the alert on every non-dev env; the owner's immediate email issuer actions leave no pending
   state, like Google's (`issuer`, `issuer_keys`), so the diff is the only place they show.

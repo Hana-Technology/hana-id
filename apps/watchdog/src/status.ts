@@ -159,7 +159,7 @@ async function status(d: StatusDeps) {
     // The email pins in force (thumbprints: public), Hana's JWKS URL, and the chain's email issuer and signer policy
     // with every difference at the last run (null before one).
     email: { pinned: parsePins(d.env.EMAIL_PINS).pins, jwks_url: d.env.EMAIL_JWKS_URL ?? null, last: await d.store.getMeta<EmailPolicyStatus>(META.emailPolicy) },
-    // The last get_link_stats() (D200): limits, pending raise, the current and previous hour (null before one, or
+    // The last get_link_stats() (D200): thresholds, pending raise, the current and previous hour (null before one, or
     // on a contract without the view).
     link_stats: await d.store.getMeta<LinkStatsView & { at: number }>(META.linkStats),
     actions,

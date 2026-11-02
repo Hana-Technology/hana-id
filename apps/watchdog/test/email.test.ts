@@ -1,6 +1,6 @@
 // The email issuer's rules (docs/email-login-spec.md "Watchdog", D190–D193) against the stub chain: pinned and
 // unpinned email keys per signer (cancel, pause), no confirm for self-issued keys, the signer-policy diff, Hana's
-// email JWKS, the link caps (get_link_stats, D200), D139's unrecorded_wallets, and a v2 contract read as "no email issuer".
+// email JWKS, the link alarm thresholds (get_link_stats, D200), D139's unrecorded_wallets, and a v2 contract read as "no email issuer".
 import { describe, expect, it } from 'vitest';
 import { runWatchdog } from '../src/run.ts';
 import { alertsOf, emailJwk, HOUR, initialized, jwk, linkStats, linkWindow, MIN, OWNER, pinsOf, SIGNER, T0, UPDATER_KEYS, world } from './helpers.ts';
@@ -426,13 +426,13 @@ describe("Hana's email JWKS (warning only)", () => {
   });
 });
 
-describe('link caps (get_link_stats, D200)', () => {
+describe('link alarm thresholds (get_link_stats, D200; the contract refuses nothing)', () => {
   const live = async () => {
     const hana = await emailJwk(201);
     return initialized({ pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer([hana]) });
   };
 
-  it('quiet under half the total cap; reports the hour in the links check and /status meta', async () => {
+  it('quiet under half the total threshold; reports the hour in the links check and /status meta', async () => {
     const w = await live();
     w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t, 249), links_total: 300 });
     const r = await w.run();
@@ -441,7 +441,7 @@ describe('link caps (get_link_stats, D200)', () => {
     expect(await w.store.getMeta('link_stats')).toMatchObject({ links_total: 300, current: { total: 249 } });
   });
 
-  it('warns at half the total cap, once per hour', async () => {
+  it('warns at half the total threshold, once per hour', async () => {
     const w = await live();
     w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t, 250) });
     await w.run();
@@ -451,30 +451,31 @@ describe('link caps (get_link_stats, D200)', () => {
     expect(w.writer.calls).toEqual([]);
   });
 
-  it('pages a cap reached, in all and per scope, keyed by window; never pauses (the contract already brakes)', async () => {
+  it('pages a threshold reached, in all and per scope, keyed by window; the text says the links went through; never pauses', async () => {
     const w = await live();
     const h = linkWindow(w.clock.t).window_start_ms;
-    w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t, 500, { total_cap_reached: true, capped_scopes: ['s1', 's2'] }) });
+    w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t, 500, { total_threshold_reached: true, flagged_scopes: ['s1', 's2'] }) });
     await w.run();
     expect(w.writer.calls).toEqual([]);
-    const keys = (await alertsOf(w.store, 'link_cap_reached')).map((x) => x.key).sort();
-    expect(keys).toEqual([`link_cap_reached:scope:s1:${h}`, `link_cap_reached:scope:s2:${h}`, `link_cap_reached:total:${h}`]);
-    expect((await alertsOf(w.store, 'link_cap_reached')).every((x) => x.severity === 'critical')).toBe(true);
-    expect(w.notifier.on('pager').filter((x) => x.msg.kind === 'link_cap_reached')).toHaveLength(3);
-    // A cap reached and no longer at half: no extra warning for the same hour.
+    const keys = (await alertsOf(w.store, 'link_threshold_reached')).map((x) => x.key).sort();
+    expect(keys).toEqual([`link_threshold_reached:scope:s1:${h}`, `link_threshold_reached:scope:s2:${h}`, `link_threshold_reached:total:${h}`]);
+    expect((await alertsOf(w.store, 'link_threshold_reached')).every((x) => x.severity === 'critical')).toBe(true);
+    expect(w.notifier.on('pager').filter((x) => x.msg.kind === 'link_threshold_reached')).toHaveLength(3);
+    // A threshold reached: no extra half-way warning for the same hour.
+    expect((await alertsOf(w.store, 'link_threshold_reached')).every((x) => x.title.includes('nothing was refused') || x.title.includes('went through'))).toBe(true);
     expect(await alertsOf(w.store, 'link_volume_high')).toEqual([]);
   });
 
-  it("sees a cap reached in the previous window (between two runs), and resolves once it is neither window", async () => {
+  it("sees a threshold reached in the previous window (between two runs), and resolves once it is neither window", async () => {
     const w = await live();
     const prevHour = linkWindow(w.clock.t - HOUR);
-    w.chain.linkStats = linkStats({ previous: { ...prevHour, total: 40, capped_scopes: ['s9'], capped_scopes_truncated: true }, current: linkWindow(w.clock.t, 1) });
+    w.chain.linkStats = linkStats({ previous: { ...prevHour, total: 40, flagged_scopes: ['s9'], flagged_scopes_truncated: true }, current: linkWindow(w.clock.t, 1) });
     await w.run();
-    const keys = (await alertsOf(w.store, 'link_cap_reached')).map((x) => x.key).sort();
-    expect(keys).toEqual([`link_cap_reached:more_scopes:${prevHour.window_start_ms}`, `link_cap_reached:scope:s9:${prevHour.window_start_ms}`]);
+    const keys = (await alertsOf(w.store, 'link_threshold_reached')).map((x) => x.key).sort();
+    expect(keys).toEqual([`link_threshold_reached:more_scopes:${prevHour.window_start_ms}`, `link_threshold_reached:scope:s9:${prevHour.window_start_ms}`]);
     w.chain.linkStats = linkStats({ previous: linkWindow(w.clock.t, 1), current: linkWindow(w.clock.t + HOUR) });
     await w.run();
-    expect((await alertsOf(w.store, 'link_cap_reached')).every((x) => x.resolved_at !== null)).toBe(true);
+    expect((await alertsOf(w.store, 'link_threshold_reached')).every((x) => x.resolved_at !== null)).toBe(true);
   });
 
   it('warns when an email issuer is on chain but the contract has no get_link_stats', async () => {
@@ -521,24 +522,24 @@ describe('link caps (get_link_stats, D200)', () => {
     expect((await alertsOf(w.store, 'link_stats_unavailable')).every((a) => a.resolved_at !== null)).toBe(true);
   });
 
-  it('a broken or missing view never resolves an open cap or volume alert; a good read under the cap does', async () => {
+  it('a broken or missing view never resolves an open threshold or volume alert; a good read under the threshold does', async () => {
     const w = await live();
-    const open = async () => (await w.store.openAlerts()).filter((a) => a.resolved_at === null && ['link_cap_reached', 'link_volume_high'].includes(a.kind)).map((a) => a.kind).sort();
-    // A cap reached, in all and in scope s1: two open critical conditions.
-    w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t, 500, { total_cap_reached: true, capped_scopes: ['s1'] }) });
+    const open = async () => (await w.store.openAlerts()).filter((a) => a.resolved_at === null && ['link_threshold_reached', 'link_volume_high'].includes(a.kind)).map((a) => a.kind).sort();
+    // A threshold reached, in all and in scope s1: two open critical conditions.
+    w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t, 500, { total_threshold_reached: true, flagged_scopes: ['s1'] }) });
     await w.run();
-    expect(await open()).toEqual(['link_cap_reached', 'link_cap_reached']);
+    expect(await open()).toEqual(['link_threshold_reached', 'link_threshold_reached']);
     w.chain.linkStatsProblem = 'malformed';
     await w.run();
-    expect(await open()).toEqual(['link_cap_reached', 'link_cap_reached']);
+    expect(await open()).toEqual(['link_threshold_reached', 'link_threshold_reached']);
     w.chain.linkStatsProblem = 'read_failed';
     await w.run();
-    expect(await open()).toEqual(['link_cap_reached', 'link_cap_reached']);
+    expect(await open()).toEqual(['link_threshold_reached', 'link_threshold_reached']);
     w.chain.linkStatsProblem = null;
     w.chain.linkStats = null; // the view missing (with an email issuer on chain)
     await w.run();
-    expect(await open()).toEqual(['link_cap_reached', 'link_cap_reached']);
-    // A good read under the cap (a later hour): resolved.
+    expect(await open()).toEqual(['link_threshold_reached', 'link_threshold_reached']);
+    // A good read under the threshold (a later hour): resolved.
     w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t + 2 * HOUR, 3), previous: linkWindow(w.clock.t + HOUR, 2) });
     await w.run();
     expect(await open()).toEqual([]);
@@ -559,51 +560,51 @@ describe('link caps (get_link_stats, D200)', () => {
 
   it('is judged before the run is recorded and its lock released (the protective phase)', async () => {
     const w = await live();
-    w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t, 500, { total_cap_reached: true }) });
+    w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t, 500, { total_threshold_reached: true }) });
     let recorded: unknown = 'not yet';
     const finish = w.store.finishRun.bind(w.store);
     w.store.finishRun = async (...a) => {
-      recorded = (await alertsOf(w.store, 'link_cap_reached')).length;
+      recorded = (await alertsOf(w.store, 'link_threshold_reached')).length;
       return finish(...a);
     };
     await w.run();
     expect(recorded).toBe(1);
   });
 
-  describe('governance diff of the caps', () => {
+  describe('governance diff of the thresholds', () => {
     const fields = async (w: Awaited<ReturnType<typeof initialized>>, kind: string) => (await alertsOf(w.store, kind)).flatMap((g) => (g.details.changes as { field: string }[]).map((c) => c.field));
 
     it('a pending raise appearing is critical; it coming into force as scheduled is info', async () => {
       const w = await live();
       const effective = w.clock.t + 72 * HOUR;
-      w.chain.linkStats = linkStats({ pending_limits: { per_scope_per_hour: 100, total_per_hour: 500, effective_at_ms: effective } });
+      w.chain.linkStats = linkStats({ pending_thresholds: { per_scope_per_hour: 100, total_per_hour: 500, effective_at_ms: effective } });
       await w.run();
-      expect(await fields(w, 'governance_change')).toEqual(['pending_limits']);
+      expect(await fields(w, 'governance_change')).toEqual(['pending_thresholds']);
       w.clock.t = effective + MIN;
-      w.chain.linkStats = linkStats({ limits: { per_scope_per_hour: 100, total_per_hour: 500 } });
+      w.chain.linkStats = linkStats({ thresholds: { per_scope_per_hour: 100, total_per_hour: 500 } });
       await w.run();
-      expect(await fields(w, 'config_matured')).toEqual(['link_limits']);
-      expect(await fields(w, 'governance_change')).toEqual(['pending_limits']);
+      expect(await fields(w, 'config_matured')).toEqual(['link_thresholds']);
+      expect(await fields(w, 'governance_change')).toEqual(['pending_thresholds']);
     });
 
-    it('limits rising at once are critical; lowering is a warning', async () => {
+    it('thresholds rising at once are critical; lowering is a warning', async () => {
       const w = await live();
-      w.chain.linkStats = linkStats({ limits: { per_scope_per_hour: 10, total_per_hour: 100 } });
+      w.chain.linkStats = linkStats({ thresholds: { per_scope_per_hour: 10, total_per_hour: 100 } });
       await w.run();
-      expect(await fields(w, 'config_change')).toEqual(['link_limits']);
+      expect(await fields(w, 'config_change')).toEqual(['link_thresholds']);
       expect(await fields(w, 'governance_change')).toEqual([]);
-      w.chain.linkStats = linkStats({ limits: { per_scope_per_hour: 10, total_per_hour: 1000 } });
+      w.chain.linkStats = linkStats({ thresholds: { per_scope_per_hour: 10, total_per_hour: 1000 } });
       await w.run();
-      expect(await fields(w, 'governance_change')).toEqual(['link_limits']);
+      expect(await fields(w, 'governance_change')).toEqual(['link_thresholds']);
     });
 
     it('a pending raise cancelled is a warning', async () => {
       const w = await live();
-      w.chain.linkStats = linkStats({ pending_limits: { per_scope_per_hour: 100, total_per_hour: 500, effective_at_ms: w.clock.t + 72 * HOUR } });
+      w.chain.linkStats = linkStats({ pending_thresholds: { per_scope_per_hour: 100, total_per_hour: 500, effective_at_ms: w.clock.t + 72 * HOUR } });
       await w.run();
       w.chain.linkStats = linkStats();
       await w.run();
-      expect(await fields(w, 'config_change')).toEqual(['pending_limits']);
+      expect(await fields(w, 'config_change')).toEqual(['pending_thresholds']);
     });
   });
 });

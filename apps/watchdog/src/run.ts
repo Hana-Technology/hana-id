@@ -21,7 +21,7 @@ import type { ChainReader, ChainSnapshot, ChainWriter, KeyChange, WatchdogMethod
 import type { Notifier } from './channels.ts';
 import { ALERT_KINDS, type AlertKind, CHANNELS, CHECK_IDS, type CheckId } from './checks.ts';
 import { maybeSendDigest } from './digest.ts';
-import { diffChain, linkLimitsOf, type StoredSnapshot } from './diff.ts';
+import { diffChain, linkThresholdsOf, type StoredSnapshot } from './diff.ts';
 import { log } from './log.ts';
 import { EMAIL_KEY_WHY, EMAIL_PROVIDER, type EmailKeyReason, emailKeyVerdict, pinnedSignersOf, policyFindings, policyId, type SignerPins, signerOfKid } from './pins.ts';
 import { formatNear, level, RELAYER_POOLS, type RelayerFunds, type RelayerThresholds, type Threshold } from './relayer.ts';
@@ -451,7 +451,7 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
         owner: s.owner,
         issuer: s.issuer,
         email: { issuer: s.email.issuer, selfIssued: s.email.selfIssued },
-        linkStats: linkLimitsOf(s.linkStats),
+        linkStats: linkThresholdsOf(s.linkStats),
       } satisfies StoredSnapshot);
       await store.setMeta(META.selfChanges, self);
     } else {
@@ -1013,14 +1013,15 @@ async function unrecordedWallets(run: Run, s: ChainSnapshot): Promise<void> {
 }
 
 /**
- * D200: the contract counts every new link per scope and in total in fixed UTC-hour windows, and refuses a link once
- * a cap is reached. `get_link_stats()` reports the current and the previous window, so a cap reached between two runs
- * is still seen. A cap reached is critical (detection, and the contract already brakes: no pause); the current total
- * at half the total cap is a warning. A contract without the view reads as "no link stats": quiet while no email
+ * D200: the contract counts every new link per scope and in total in fixed UTC-hour windows and flags a scope, or the
+ * total, whose links reach its alarm threshold; nothing is refused. `get_link_stats()` reports the current and the
+ * previous window, so a threshold reached between two runs is still seen. A threshold reached is critical (alert
+ * only: the links went through, the council decides whether to pause); the current total at half the total
+ * threshold is a warning. A contract without the view reads as "no link stats": quiet while no email
  * issuer is on chain (no link is possible), a warning once one is.
  */
 async function linkStats(run: Run, s: ChainSnapshot): Promise<void> {
-  // Without a good read the cap state is unknown: only `link_stats_unavailable` is judged, so open cap and volume
+  // Without a good read the link state is unknown: only `link_stats_unavailable` is judged, so open threshold and volume
   // alerts stay open until a good read says otherwise (never resolved by a broken or missing view).
   run.evaluate('link_stats_unavailable');
   const v = s.linkStats;
@@ -1028,7 +1029,7 @@ async function linkStats(run: Run, s: ChainSnapshot): Promise<void> {
   if (s.linkStatsProblem) {
     // Only this check is affected: the snapshot and every protective step ran on the rest of the chain read.
     const why = s.linkStatsProblem === 'malformed' ? 'answered in an unexpected shape' : 'failed';
-    await run.condition('link_stats_unavailable', `link_stats_unavailable:${s.linkStatsProblem}`, `get_link_stats ${why}: link caps are not monitored this run (the contract still enforces them)`, {
+    await run.condition('link_stats_unavailable', `link_stats_unavailable:${s.linkStatsProblem}`, `get_link_stats ${why}: links per hour are not monitored this run (the contract still counts them)`, {
       reason: s.linkStatsProblem,
       signer: run.d.config.signer,
     });
@@ -1037,43 +1038,43 @@ async function linkStats(run: Run, s: ChainSnapshot): Promise<void> {
   }
   if (!v) {
     if (emailLive) {
-      await run.condition('link_stats_unavailable', 'link_stats_unavailable:missing', 'An email issuer is on chain but the contract has no get_link_stats: links per hour are neither capped nor monitored (D200)', { reason: 'missing', signer: run.d.config.signer });
+      await run.condition('link_stats_unavailable', 'link_stats_unavailable:missing', 'An email issuer is on chain but the contract has no get_link_stats: links per hour are neither counted nor monitored (D200)', { reason: 'missing', signer: run.d.config.signer });
     } else run.check('links', 'skipped', 'no get_link_stats (pre-D200 contract) and no email issuer: no link possible');
     return;
   }
-  run.evaluate('link_cap_reached', 'link_volume_high');
+  run.evaluate('link_threshold_reached', 'link_volume_high');
   await run.d.store.setMeta(META.linkStats, { at: run.d.now(), ...v });
-  const lim = v.limits;
+  const lim = v.thresholds;
   for (const w of [v.current, v.previous]) {
     if (!w) continue;
-    const window = { window_start_ms: w.window_start_ms, window_ms: v.window_ms, limits: lim };
-    if (w.total_cap_reached) {
-      await run.condition('link_cap_reached', `link_cap_reached:total:${w.window_start_ms}`, `Link cap reached in all scopes for the hour from ${iso(w.window_start_ms)} (${w.total} links, cap ${lim.total_per_hour}): new links are refused until the hour ends`, {
+    const window = { window_start_ms: w.window_start_ms, window_ms: v.window_ms, thresholds: lim };
+    if (w.total_threshold_reached) {
+      await run.condition('link_threshold_reached', `link_threshold_reached:total:${w.window_start_ms}`, `${w.total} links went through in all scopes in the hour from ${iso(w.window_start_ms)}: the alarm threshold of ${lim.total_per_hour} was reached (nothing was refused)`, {
         ...window,
         scope: null,
         total: w.total,
       });
     }
-    for (const scope of w.capped_scopes) {
-      await run.condition('link_cap_reached', `link_cap_reached:scope:${scope}:${w.window_start_ms}`, `Link cap reached in scope ${ident(scope)} for the hour from ${iso(w.window_start_ms)} (cap ${lim.per_scope_per_hour}): its new links are refused until the hour ends`, {
+    for (const scope of w.flagged_scopes) {
+      await run.condition('link_threshold_reached', `link_threshold_reached:scope:${scope}:${w.window_start_ms}`, `Links in scope ${ident(scope)} reached the alarm threshold of ${lim.per_scope_per_hour} in the hour from ${iso(w.window_start_ms)}; they went through (nothing was refused)`, {
         ...window,
         scope,
         total: w.total,
       });
     }
-    if (w.capped_scopes_truncated) {
-      await run.condition('link_cap_reached', `link_cap_reached:more_scopes:${w.window_start_ms}`, `More scopes reached their link cap in the hour from ${iso(w.window_start_ms)} than the view lists`, { ...window, listed: w.capped_scopes });
+    if (w.flagged_scopes_truncated) {
+      await run.condition('link_threshold_reached', `link_threshold_reached:more_scopes:${w.window_start_ms}`, `More scopes reached the link alarm threshold in the hour from ${iso(w.window_start_ms)} than the view lists (their links went through)`, { ...window, listed: w.flagged_scopes });
     }
   }
   const c = v.current;
-  if (lim.total_per_hour > 0 && c.total >= lim.total_per_hour * LINK_VOLUME_WARN_SHARE && !c.total_cap_reached) {
-    await run.condition('link_volume_high', `link_volume_high:${c.window_start_ms}`, `${c.total} new links this hour, at least half the total cap of ${lim.total_per_hour}`, {
+  if (lim.total_per_hour > 0 && c.total >= lim.total_per_hour * LINK_VOLUME_WARN_SHARE && !c.total_threshold_reached) {
+    await run.condition('link_volume_high', `link_volume_high:${c.window_start_ms}`, `${c.total} new links this hour, at least half the total alarm threshold of ${lim.total_per_hour}`, {
       window_start_ms: c.window_start_ms,
       total: c.total,
-      limits: lim,
+      thresholds: lim,
     });
   }
-  run.check('links', 'ok', `${c.total} new link(s) this hour (caps ${lim.per_scope_per_hour} per scope, ${lim.total_per_hour} in all); ${v.links_total} in all time`);
+  run.check('links', 'ok', `${c.total} new link(s) this hour (alarm thresholds ${lim.per_scope_per_hour} per scope, ${lim.total_per_hour} in all); ${v.links_total} in all time`);
 }
 
 const thresholdText = (t: Threshold) => ({ warn_below: formatNear(t.warn), critical_below: formatNear(t.critical) });

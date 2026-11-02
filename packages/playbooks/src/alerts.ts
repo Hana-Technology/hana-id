@@ -913,50 +913,50 @@ const emailJwksMismatch: Playbook = {
   related: ['email-issuer-key-compromised', 'api-or-cloudflare-compromised'],
 };
 
-const linkCap: Playbook = {
-  id: 'link-cap',
-  title: 'Link cap reached, or link volume high',
+const linkVolume: Playbook = {
+  id: 'link-volume',
+  title: 'Link volume past its alarm threshold',
   kind: 'alert',
-  alertKinds: ['link_cap_reached', 'link_volume_high', 'link_stats_unavailable'],
+  alertKinds: ['link_threshold_reached', 'link_volume_high', 'link_stats_unavailable'],
   severity: 'critical',
   status: 'live',
   summary:
-    "The contract counts every new link per scope and in total per UTC hour and refuses new links once a cap is reached (D200; default 50 per scope, 500 in all). A cap reached is critical: a partner launch, or a stolen email key taking over accounts at the cap's pace. Half the total cap is a warning.",
+    "The contract counts every new link per scope and in total per UTC hour and flags a scope (or the total) whose links reach its alarm threshold (D200; default 50 per scope, 500 in all). Nothing is refused: the links went through. A threshold reached is critical: a partner launch, or a stolen email key taking over Google wallets by linking. Half the total threshold is a warning.",
   signals: [
-    'Critical `link_cap_reached` (`:total:<hour>`, `:scope:<scope>:<hour>`, `:more_scopes:<hour>`), from `get_link_stats()` each run for the current and the previous hour, so a cap reached between two runs is seen. It resolves once that hour is neither window.',
+    'Critical `link_threshold_reached` (`:total:<hour>`, `:scope:<scope>:<hour>`, `:more_scopes:<hour>`), from `get_link_stats()` each run for the current and the previous hour, so a threshold reached between two runs is seen. It resolves once that hour is neither window (and stays open while the view can\'t be read).',
     "Warning `link_volume_high:<hour>`: the hour's links in all scopes reached half of `total_per_hour`. Warning `link_stats_unavailable`: `:missing` (an email issuer is on chain but the contract has no `get_link_stats`: deploy the D200 contract), `:malformed` (an answer of another shape: the watchdog and the contract disagree on the view, fix the watchdog's reader) or `:read_failed`. Only the link check is affected; cancels and pauses still run.",
-    'Users of the capped scope (or of every scope, for the total) whose login carries a link get `Link rate limit reached`: the whole call reverts, so the login is refused rather than completed without its link (D122). `/status` `link_stats` has the limits, a pending raise and both windows.',
+    '`/status` `link_stats` has the thresholds, a pending raise and both windows.',
   ],
   impact: [
-    "A stolen email signing key (1-of-1 at launch) can link an email identity it mints to a victim's Google identity at once (D119) and so derive the victim's wallet. The cap bounds that to the cap's worth of accounts per hour per scope and in all, and pages; it doesn't stop it.",
-    'While capped, legitimate linking logins in that scope (or everywhere) are refused until the hour ends; logins without a link are unaffected.',
+    "A stolen email signing key (1-of-1 at launch) can link an email identity it mints to a victim's Google identity at once (D119) and so derive the victim's wallet; each such takeover is one link, so a burst shows here. The links went through: the alarm is detection, the pause is the council's call.",
+    'What the counter can\'t see: with the email key alone a thief can also log into email-rooted wallets, and into Google wallets that already have an email member, without making any link. The defence there is the key\'s custody (KMS, a second signer, D121), not this alarm.',
   ],
   steps: [
     {
-      title: 'Partner launch or compromise?',
+      title: 'Check for a partner launch',
       who: 'a founder',
       detail:
         "Ask the scope's partner whether they launched or migrated users this hour, and compare with the API's logins for the window. Many automatic links (case B) for Google-hosted addresses the partner can't explain, links in scopes with no traffic, or every scope at once point to a stolen email key.",
       commands: [c.watchdogStatus, c.watchdogAlerts],
     },
     {
-      title: 'Compromise: pause and take the email key out',
+      title: 'Suspected key compromise: pause and rotate the email key',
       who: 'council (2 of 3)',
       detail:
-        "Pause at once (stops every login and derive), remove the email issuer key on chain (immediate), then follow email-issuer-key-compromised for the credential, the session floor and the affected users; forged-active-key has the recovery order before an unpause.",
+        "Pause at once (stops every login and derive), remove the email issuer key on chain (immediate), then follow email-issuer-key-compromised for the credential, the session floor and the affected users, and forged-active-key for the recovery order before the unpause. A new key is pinned first and waits `governance_delay_ms` (forged-key-change).",
       commands: [c.ownerCall('pause'), c.ownerCall('remove_issuer_key', '{"provider":"email","kid":"<kid>"}')],
     },
     {
-      title: 'Legitimate: raise the cap',
+      title: 'Only if the alarm level is wrong for real traffic: change the threshold',
       who: 'council (2 of 3)',
       detail:
-        "`set_link_limits` on the contract (an owner action through the council; `admin <env> owner:call` once the scripts list it): lowering applies at once, raising waits `governance_delay_ms` (72 h on mainnet) and pages as a `governance_change` (`pending_limits`) when proposed. Until then the partner's linking logins are refused for the rest of each capped hour: tell them.",
+        "A launch needs nothing (its links went through). If ordinary traffic keeps crossing the alarm, the council changes the threshold with `set_link_thresholds` (an owner action; `admin <env> owner:call` once the scripts list it): lowering applies at once, raising waits `governance_delay_ms` (72 h on mainnet) and pages as a `governance_change` (`pending_thresholds`) when proposed.",
     },
   ],
-  verify: ['The next hour shows `link_stats.current.total` under the caps and the alerts resolve after the window passes.', 'A compromise: the email key is gone from `get_issuer("email")` and the contract stays paused until the recovery order is done.'],
-  followUps: ['Tune the provisional caps (D200) from sandbox-dev and staging traffic before mainnet.'],
-  refs: ['docs/email-login-spec.md#watchdog-appswatchdog', 'docs/email-login-spec.md#trust-statement', 'apps/watchdog/README.md#what-a-run-does-every-5-min', 'D200', 'D119'],
-  related: ['email-issuer-key-compromised', 'forged-active-key', 'governance-change'],
+  verify: ['The next hours show `link_stats.current.total` under the thresholds and the alerts resolve after the window passes.', 'A compromise: the email key is gone from `get_issuer("email")` and the contract stays paused until the recovery order is done.'],
+  followUps: ['Tune the provisional thresholds (D200) from sandbox-dev and staging traffic before mainnet.'],
+  refs: ['docs/email-login-spec.md#watchdog-appswatchdog', 'docs/email-login-spec.md#trust-statement', 'apps/watchdog/README.md#what-a-run-does-every-5-min', 'D200', 'D119', 'D121'],
+  related: ['email-issuer-key-compromised', 'forged-active-key', 'forged-key-change', 'governance-change'],
 };
 
 const selfIssuedKeyChange: Playbook = {
@@ -1012,6 +1012,6 @@ export const ALERT_PLAYBOOKS: readonly Playbook[] = [
   signerPolicyMismatch,
   unrecordedWallets,
   emailJwksMismatch,
-  linkCap,
+  linkVolume,
   selfIssuedKeyChange,
 ];

@@ -4,7 +4,7 @@ import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { actionCreators, createTransaction, encodeTransaction, Signature, SignedTransaction } from '@near-js/transactions';
 import { baseDecode, baseEncode } from '@near-js/utils';
 import { GOOGLE_PROVIDER } from '@hana-id/jwks';
-import type { ChainReader, ChainSnapshot, ChainWriter, ConfigView, GovernanceView, IssuerKey, IssuerView, KeyChange, LinkLimits, LinkStatsView, LinkWindow, OwnerAccount, SelfIssuedView, TxResult, WatchdogMethod } from './chain.ts';
+import type { ChainReader, ChainSnapshot, ChainWriter, ConfigView, GovernanceView, IssuerKey, IssuerView, KeyChange, LinkThresholds, LinkStatsView, LinkWindow, OwnerAccount, SelfIssuedView, TxResult, WatchdogMethod } from './chain.ts';
 import { WATCHDOG_METHODS } from './chain.ts';
 import { EMAIL_PROVIDER } from './pins.ts';
 import { BODY_LIMITS, readJsonCapped } from './http.ts';
@@ -107,7 +107,7 @@ const validIssuer = (v: unknown): boolean =>
 const validKeys = (v: unknown): boolean =>
   v === null || (Array.isArray(v) && v.every((k) => typeof k === 'object' && k !== null && typeof k.kid === 'string' && typeof k.n === 'string' && typeof k.e === 'string'));
 const count = (v: unknown): boolean => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
-const validLimits = (v: unknown): boolean => typeof v === 'object' && v !== null && count((v as LinkLimits).per_scope_per_hour) && count((v as LinkLimits).total_per_hour);
+const validThresholds = (v: unknown): boolean => typeof v === 'object' && v !== null && count((v as LinkThresholds).per_scope_per_hour) && count((v as LinkThresholds).total_per_hour);
 const validWindow = (v: unknown): boolean => {
   const w = v as LinkWindow;
   return (
@@ -115,10 +115,10 @@ const validWindow = (v: unknown): boolean => {
     v !== null &&
     count(w.window_start_ms) &&
     count(w.total) &&
-    typeof w.total_cap_reached === 'boolean' &&
-    isStringArray(w.capped_scopes) &&
-    w.capped_scopes.length <= 1000 &&
-    (w.capped_scopes_truncated === undefined || typeof w.capped_scopes_truncated === 'boolean')
+    typeof w.total_threshold_reached === 'boolean' &&
+    isStringArray(w.flagged_scopes) &&
+    w.flagged_scopes.length <= 1000 &&
+    (w.flagged_scopes_truncated === undefined || typeof w.flagged_scopes_truncated === 'boolean')
   );
 };
 /** `get_link_stats()`'s shape (D200). */
@@ -128,8 +128,8 @@ export const validLinkStats = (v: unknown): v is LinkStatsView => {
     typeof v === 'object' &&
     v !== null &&
     count(l.window_ms) &&
-    validLimits(l.limits) &&
-    (l.pending_limits === null || (validLimits(l.pending_limits) && count(l.pending_limits.effective_at_ms))) &&
+    validThresholds(l.thresholds) &&
+    (l.pending_thresholds === null || (validThresholds(l.pending_thresholds) && count(l.pending_thresholds.effective_at_ms))) &&
     count(l.links_total) &&
     validWindow(l.current) &&
     (l.previous === null || validWindow(l.previous))
@@ -181,7 +181,7 @@ export class NearChain implements ChainReader {
     if (!validIssuer(issuer) || !validIssuer(emailIssuer) || !validKeys(issuerKeys.value) || !validKeys(emailKeys.value) || !validSelfIssued(selfIssued.value)) {
       throw new RpcError('Unexpected issuer view shape', false);
     }
-    // D200's link counter: one cheap view. A contract without it (v2, or v3 before the link cap) reads as no stats.
+    // D200's link counter: one cheap view. A contract without it (v2, or v3 before the link counter) reads as no stats.
     // Isolated: a failing or malformed answer (a later upgrade, a shape mismatch) only marks the link check, never
     // the snapshot, so no Google or email cancel or pause depends on it.
     let linkStats: { value: LinkStatsView | null; exists: boolean } = { value: null, exists: false };

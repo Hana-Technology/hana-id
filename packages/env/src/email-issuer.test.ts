@@ -25,6 +25,7 @@ const emailIssuer = (over: Record<string, unknown> = {}) => {
     publicKeys: [primary, standby],
     from: 'Hana <login@mail.example.com>',
     sender: 'sendgrid',
+    dailySendBudget: 1000,
     ...over,
   };
 };
@@ -51,6 +52,11 @@ describe('rsaJwkThumbprint', () => {
 });
 
 describe('manifestSchema: emailIssuer', () => {
+  it('requires dailySendBudget outside local* envs (no silent default)', () => {
+    expect(issues(block({ dailySendBudget: undefined }))).toContain('emailIssuer.dailySendBudget is required outside local* envs (the daily user-mail budget; no default)');
+    expect(issues(block({ dailySendBudget: 500 }))).toEqual([]);
+  });
+
   it('is optional, and a well-formed block parses', () => {
     expect(manifestSchema.safeParse(raw()).success).toBe(true);
     const parsed = manifestSchema.parse(block());

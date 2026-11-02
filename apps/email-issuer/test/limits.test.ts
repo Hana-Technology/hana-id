@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import type { ChallengeRecord } from '../src/challenge.ts';
 import { normalizeEmail } from '@hana-id/email';
 import { suppressionKey as addressKey, mailboxKey } from '../src/keys.ts';
+import { appBudgetShare } from '../src/limits.ts';
 import { captureLogs, challengeObject, env, harness, seedApp, seedPlan, sessionCommitment, uid, type Harness, type TestApp } from './helpers.ts';
 
 const startBody = (h: Harness, app: TestApp, email: string) => ({ pk: app.pk, email, purpose: 'session', commitment: sessionCommitment(app.scope, h.clock.now).json });
@@ -103,7 +104,8 @@ describe('code mails per mailbox and requester', () => {
       const rec = state.storage.kv.get<ChallengeRecord>('challenge')!;
       expect(rec.silent).toBe(true);
       expect(rec.emailEnc).toBe("");
-      expect(JSON.stringify(rec)).not.toContain('@');
+      expect(JSON.stringify(rec)).not.toContain(a);
+      expect(JSON.stringify(rec)).not.toContain(a.split('@')[0]);
     });
     h.clock.now += 30_000;
     expect((await h.call('/v1/email/resend', { challengeId: s.body.challengeId })).status).toBe(202);
@@ -263,7 +265,7 @@ describe('wrong codes: per requester, with a mailbox-wide backstop', () => {
     const first = await start(h, app, a, t);
     const v = await h.call('/v1/email/verify', { challengeId: first.body.challengeId, code: h.sender.codeFor(a) }, { ip: t });
     const { deviceTicket } = (await v.json()) as { deviceTicket: string };
-    expect(deviceTicket).toMatch(/^dt1\.[A-Za-z0-9_-]{54}$/u);
+    expect(deviceTicket).toMatch(/^dt2\.[A-Za-z0-9_-]{75}$/u);
     // Four clean early starters (and a fifth, kept clean for the end).
     const early = Array.from({ length: 5 }, freshIp);
     const earlyIds: unknown[] = [];
@@ -349,7 +351,8 @@ describe('wrong codes: per requester, with a mailbox-wide backstop', () => {
     expect((await h.call('/v1/email/verify', { challengeId: o.body.challengeId, code: ownerCode }, { ip: owner })).status).toBe(200);
   });
   it('the day’s challenge cap is taken back when the budget refuses the start or the first code isn’t delivered', async () => {
-    const env2 = { ...env, ENV_NAME: `cap-${uid()}`, DAILY_SEND_BUDGET: '10' };
+    // A budget of 1: no owner pool, a general pool of 1.
+    const env2 = { ...env, ENV_NAME: `cap-${uid()}`, DAILY_SEND_BUDGET: '1' };
     const h = await harness({ env: env2 });
     h.clock.now = morning;
     const app = await seedApp(h);
@@ -366,7 +369,7 @@ describe('wrong codes: per requester, with a mailbox-wide backstop', () => {
     h.sender.next = { ok: true };
     expect((await start(h, app, a, freshIp())).status).toBe(202);
     expect(await count()).toBe(1);
-    // The app's share of the budget (10% of 10: 1) is spent: every further start is refused and none takes a place.
+    // The budget is spent: every further start is refused and none takes a place.
     for (let i = 0; i < 5; i++) expect((await start(h, app, a, freshIp())).status).toBe(429);
     expect(await count()).toBe(1);
   });
@@ -461,33 +464,47 @@ describe('per-IP, per-app and global limits (429)', () => {
     for (let i = 0; i < 3; i++) if ((await start(h2, app2, addr(`j${i}`))).status === 202) okCount++;
     expect(okCount).toBe(4);
   });
-  it('the global budget is shared out: 10% per app, the last 20% only for apps under half their share; logged', async () => {
+  it('the budget: an owner pool of 15%, the general pool shared out per app (plan-sized), its last 20% only for apps under half their share; logged', async () => {
     const env2 = { ...env, ENV_NAME: `budget-${uid()}`, DAILY_SEND_BUDGET: '100' };
     const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`${env2.ENV_NAME}:global`));
     const now = morning;
-    // App share: 10. App b uses half its share; a0..a6 their whole share; a7 half: 80 = the general pool.
-    for (let k = 0; k < 5; k++) expect((await stub.reserveBudget('b', 100, now)).ok).toBe(true);
-    for (let i = 0; i < 7; i++) for (let k = 0; k < 10; k++) expect((await stub.reserveBudget(`a${i}`, 100, now)).ok).toBe(true);
-    expect(await stub.reserveBudget('a0', 100, now)).toEqual({ ok: false, limit: 'app' });
-    for (let k = 0; k < 5; k++) expect((await stub.reserveBudget('a7', 100, now)).ok).toBe(true);
-    // The reserve (the last 20): an app that has used half its share (b, a7) can't draw on it; one under half can.
-    expect(await stub.reserveBudget('b', 100, now)).toEqual({ ok: false, limit: 'reserve' });
-    expect(await stub.reserveBudget('a7', 100, now)).toEqual({ ok: false, limit: 'reserve' });
-    const c = await stub.reserveBudget('c', 100, now);
+    // Budget 100: owner pool 15, general pool 85, its reserve from 68. Share 10 each here.
+    for (let k = 0; k < 5; k++) expect((await stub.reserveBudget('b', 100, 10, false, now)).ok).toBe(true);
+    for (let i = 0; i < 6; i++) for (let k = 0; k < 10; k++) expect((await stub.reserveBudget(`a${i}`, 100, 10, false, now)).ok).toBe(true);
+    expect(await stub.reserveBudget('a0', 100, 10, false, now)).toEqual({ ok: false, limit: 'app' });
+    for (let k = 0; k < 3; k++) expect((await stub.reserveBudget('a7', 100, 10, false, now)).ok).toBe(true);
+    // 68 used: the reserve. An app that has used half its share (b) can't draw on it; one under half (a7, c) can.
+    expect(await stub.reserveBudget('b', 100, 10, false, now)).toEqual({ ok: false, limit: 'reserve' });
+    expect((await stub.reserveBudget('a7', 100, 10, false, now)).ok).toBe(true);
+    const c = await stub.reserveBudget('c', 100, 10, false, now);
     expect(c.ok && c.crossed).toEqual([]);
-    // Logs at 50% and 80% of the global budget and of an app's share, through start.
+    // The owner pool ignores every app's share and the general pool: 15, then refused.
+    for (let k = 0; k < 15; k++) expect((await stub.reserveBudget('a0', 100, 10, true, now)).ok).toBe(true);
+    expect(await stub.reserveBudget('a0', 100, 10, true, now)).toEqual({ ok: false, limit: 'owner' });
+    expect(await stub.reserveBudget(null, 0, 0, true, now)).toEqual({ ok: false, limit: 'global' });
+    // The share from the plan: 2% of per_day (the free plan's 5000 → 100), capped at the general pool; 10% without one.
+    expect(appBudgetShare(5000, 1000)).toBe(100);
+    expect(appBudgetShare(1_000_000, 1000)).toBe(850);
+    expect(appBudgetShare(0, 1000)).toBe(100);
+    // At least 10 a day, within the general pool.
+    expect(appBudgetShare(10, 1000)).toBe(10);
+    expect(appBudgetShare(10, 5)).toBe(5);
+    // Logs at 50% and 80% of the pools and of an app's share, through start.
     const h = await harness({ env: { ...env, ENV_NAME: `budget2-${uid()}`, DAILY_SEND_BUDGET: '20' } });
-    const app = await seedApp(h);
+    const plan = `q${uid().replace(/[^a-z0-9]/gu, '')}`;
+    // per_day 100: 2% is 2, so the minimum share of 10.
+    await seedPlan(plan, 60, 100);
+    const app = await seedApp(h, { plan });
     const { result, lines } = await captureLogs(async () => {
       const out: number[] = [];
-      for (let i = 0; i < 3; i++) out.push((await start(h, app, addr(`k${i}`))).status);
+      for (let i = 0; i < 11; i++) out.push((await start(h, app, addr(`k${i}`))).status);
       return out;
     });
-    // App share of 20: 2. The third start is refused.
-    expect(result).toEqual([202, 202, 429]);
+    // A share of 10: the eleventh start is refused.
+    expect(result).toEqual([...Array<number>(10).fill(202), 429]);
     expect(lines.some((l) => l.includes('"email_budget"') && l.includes('"code":"app_50"'))).toBe(true);
     expect(lines.some((l) => l.includes('"send_budget_exhausted"') && l.includes('"code":"app"') && l.includes('"level":"error"'))).toBe(true);
-    expect(h.sender.sent).toHaveLength(2);
+    expect(h.sender.sent).toHaveLength(10);
   });
 });
 

@@ -64,10 +64,12 @@ export interface Env {
 /** Every secret binding: log lines must never contain their values (tested). */
 export const SECRET_NAMES = ['ISSUER_SIGNING_KEY', 'EMAIL_SUB_KEY', 'EMAIL_CODE_KEY', 'EMAIL_RL_KEY', 'SENDGRID_API_KEY'] as const satisfies readonly (keyof Env)[];
 
-/** Default daily send budget when the manifest sets none. */
+/** The daily send budget of a `local*` env whose manifest sets none (every other env must set it, abuse review H1). */
 export const DEFAULT_DAILY_SEND_BUDGET = 1000;
 
+/** The env's daily send budget; 0 (every user mail refused, logged `unconfigured`) when a non-`local*` env sets none. */
 export function dailySendBudget(env: Env): number {
-  const n = Number(env.DAILY_SEND_BUDGET ?? DEFAULT_DAILY_SEND_BUDGET);
-  return Number.isSafeInteger(n) && n > 0 ? n : DEFAULT_DAILY_SEND_BUDGET;
+  if (env.DAILY_SEND_BUDGET === undefined || env.DAILY_SEND_BUDGET === '') return env.ENV_NAME.startsWith('local') ? DEFAULT_DAILY_SEND_BUDGET : 0;
+  const n = Number(env.DAILY_SEND_BUDGET);
+  return Number.isSafeInteger(n) && n > 0 ? n : 0;
 }

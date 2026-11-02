@@ -128,9 +128,15 @@ describe('nothing personal or secret is ever logged', () => {
         for (let k = 0; k < n; k++) await call('/v1/email/verify', { challengeId: s.challengeId, code: h0.sender.codeFor(vAddr) === '000000' ? '111111' : '000000' }, { ip });
       }
       // Staff: unlock and unsuppress (the address is in the body, never in a line).
-      const unlocked = (await (await call('/v1/email/admin/unlock', { email: `${victim}@example.com`, ticket: 'SUP-1' }, { origin: null, headers: { 'cf-access-jwt-assertion': access } })).json()) as { unlockToken: string };
-      secrets.push(unlocked.unlockToken);
+      await call('/v1/email/admin/unlock', { email: `${victim}@example.com`, ticket: 'SUP-1' }, { origin: null, headers: { 'cf-access-jwt-assertion': access } });
+      const unlockToken = /#(ug1\.[A-Za-z0-9_-]{43})/u.exec(h0.sender.to(vAddr).at(-1)!.text)![1]!;
+      secrets.push(unlockToken);
+      await call('/v1/email/start', { pk: app.pk, email: `${victim}@example.com`, purpose: 'session', commitment: sessionCommitment(app.scope, h.clock.now).json, unlockToken }, { ip: '203.0.113.90' });
       await call('/v1/email/admin/unsuppress', { email: supp, ticket: 'SUP-2' }, { origin: null, headers: { 'cf-access-jwt-assertion': access } });
+      const confirmToken = /#(uc1\.[A-Za-z0-9_-]{43})/u.exec(h0.sender.to(supp).at(-1)!.text)![1]!;
+      secrets.push(confirmToken);
+      await call('/v1/email/confirm', { token: confirmToken });
+      await call('/v1/email/admin/revoke-tickets', { email: supp, ticket: 'SUP-3' }, { origin: null, headers: { 'cf-access-jwt-assertion': access } });
       // Case A, not Google-hosted: a prepared challenge, its first code by resend, verify mints auto_link and notifies.
       const eSub = await emailSub((await h.deps.keys()).sub, corp);
       secrets.push(eSub);

@@ -2362,10 +2362,11 @@ is computed by `@hana-id/email` alone, from the normalized address including any
   the lock with **`POST /v1/email/admin/unlock {email}`** (Cloudflare Access + the staff allowlist, audited in
   `email_admin_audit` with the mailbox key prefix, never the address; it clears that day's guess counters, the trip
   marker, the ceiling and the requesters' locks, not the code-mail counters). An unlock gives an attacker a fresh day's
-  25 checks, so staff should unlock only after the user has contacted support. The admin portal's alert and button are
+  25 checks, so staff should unlock only after the user has contacted support. (Superseded after the abuse re-check:
+  unlock now mails a one-time grant to the address and clears nothing; see the amendments below.) The admin portal's alert and button are
   batch 9's. It is the one staff body that carries an address (the spec's "only `start`" is about the browser routes).
 - Accounting details: a check reserved and then found right is refunded, and so is the trip marker when that brings
-  the backstop below 20; a challenge's place in the day's cap is refunded when the global budget refuses its start,
+  the backstop below its max (18 since the reviews); a challenge's place in the day's cap is refunded when the global budget refuses its start,
   when it can't be created, and when its first code isn't delivered (the challenge itself stays, for a resend).
 - To check with the user: whether "20 × per_minute" was meant (1,200 starts a minute for a free-plan app; the global
   budget is then the binding cost bound).
@@ -2407,6 +2408,42 @@ is computed by `@hana-id/email` alone, from the normalized address including any
     (started before a trip, no failure) is reachable by an attacker, so it would hand the bypass back.
   - **One `retry-after` (L1):** every mailbox-level refusal (the mailbox's limits and locks, the domain cap) answers
     `retry-after: 900`, whatever the limit.
+  - **Amended after the abuse re-check (2026-11-02; every number to confirm).** The principle: **a valid device ticket
+    or unlock grant never depends on a pool an attacker can fill.**
+    - **Budget (H1):** `dailySendBudget` is split: an **owner pool of 15%** for the mail of challenges a valid ticket or
+      grant started and for the staff unlock/unsuppress mails, ignoring the app share; the **general pool (85%)** for
+      everything else. An app's share of the general pool comes from its plan: **2% of the plan's `per_day`** (the free
+      plan's 5000 gives 100), at least 10, at most the general pool; a flat 10% of the budget only when the plan has no
+      usable `per_day`. The last 20% of the general pool stays for apps under half their share. `email_budget` is
+      logged per app (`app_50`, `app_80`) and per pool (`global_*`, `owner_*`). `dailySendBudget` is **required** in
+      the manifest outside `local*` envs (`email-issuer init --budget`); a Worker without it sends nothing and logs
+      `send_budget_exhausted` `unconfigured`.
+    - **Owner starts skip every shared pool:** a valid ticket or grant skips the IP prefix limits, the app's quota,
+      the domain cap and the general budget pool; it still counts against its own IP subject (10 per 10 min, 50 a day).
+    - **Domain cap (M1):** a registrable domain's cap is **100 + 2 × its verified logins over the trailing 7 UTC days**;
+      a verified challenge gives its mails' places back; each requester prefix may use 20% of the day's cap. The
+      exempt list adds the regional variants and more large providers (yahoo.co.{uk,jp,in,id,nz,th}, yahoo.com.{au,br},
+      yahoo.{fr,de,es,it,ca}, hotmail.co.{uk,jp,th}, hotmail.{fr,de,es,it}, outlook.{fr,de,es,it,jp,co.uk,com.br,
+      com.au}, live.{co.uk,fr,de,nl,it,ca,com.au,jp}, web.de, t-online.de, naver.com, 126.com, yeah.net, foxmail.com,
+      comcast.net, orange.fr, free.fr, libero.it, pm.me, fastmail.com), each listed, never a wildcard.
+    - **IP prefixes (M2):** the ticket and the unlock token are read and checked **before** the prefix limits (a grant
+      against the mailbox object), and a valid one skips them. The prefix limits are raised to **1000 a day** each
+      (IPv4 /24, IPv6 /56, /48) instead of counting only requesters new to the mailbox: simpler, and still bounds a
+      /48's 65,536 /64s (chosen; to confirm).
+    - **Unlock (M3):** `admin/unlock` **mails** the one-time token to the address (a link to `{authOrigin}/email/unlock#
+      <token>`, the token in the fragment) and answers staff `{mailed}` only: whoever asks support, the attacker
+      included, gets nothing. It **clears nothing**: the shared guess counters, the trip and every lock stay. The
+      grant's start counts as an owner's; its challenge's mails are free (one challenge, ≤ 2 resends), its checks use
+      the ticket slot and then the **grant slot of 2**, which lies outside the ceiling.
+    - **The bound, with unlocks:** ≤ 25 failed checks a day (backstop 18 + owner slot 4 + ticket slot 3) plus ≤ 2 per
+      unlock, with at most 3 unlocks in 30 days (≤ 37 a year): **365 × 25 + 37 × 2 = 9,199 failed checks a year, ≈ 0.92%
+      a year** against a 6-digit code (the earlier 0.91% plus unlocks; the earlier unlock reset the counters, which gave
+      an attacker a fresh 25 each time). Worst case per day W ≤ min(5·C, 25) + 2·[unlock that day], C ≤ 35 (+1 grant).
+    - **Device tickets (abuse L1/L2, tokens N1):** "dt2." + b64url(expiry ‖ nonce ‖ HMAC(K_device, domain ‖ address key
+      ‖ nonce ‖ expiry)): bound to the **exact normalized address** (its K_sup HMAC, so `x+tag@` and `x@` have their own
+      tickets), with a 16-byte nonce; the 3 code mails a day are **per ticket**. Staff `admin/revoke-tickets {email,
+      ticket}` revokes every ticket of that address issued until then (audited, 1 a day and 3 in 30 days).
+    - The earlier "Unlock grants" bullet's staff-held token and the counters cleared by unlock are superseded by this.
 
 ### D199. HTTP, data and chain readings of the issuer
 - Date 2026-11-02 · Status: to confirm (built) · Source: build of the spec's "Endpoints", "The four cases",
@@ -2489,7 +2526,22 @@ is computed by `@hana-id/email` alone, from the normalized address including any
   - **Retention (independent review L3):** SendGrid's Email Activity keeps each message's recipient and events (3 days,
     longer only with the paid Email Activity History add-on, per SendGrid's docs at the time of writing; check at setup)
     and Hana can't shorten it: "the minimum the plan allows" means not buying the add-on. The issuer's own logs and
-    storage hold no address. `email_issuance` pruning (24 months, D90) is a batch C13 follow-up.
+    storage hold no address. `email_issuance` pruning (24 months, D90) is a batch C13 follow-up. **Corrected (abuse
+    re-check):** SendGrid's suppression lists (bounces, blocks, spam reports) keep the address **until it is removed**,
+    whatever the Email Activity retention; the runbook's unsuppress step removes it there.
+  - **Amended after the abuse re-check (2026-11-02; to confirm):**
+    - **Staff mail to the address (M3):** `admin/unlock` mails the unlock link; `admin/unsuppress` mails a one-time
+      confirmation (`{authOrigin}/email/confirm#uc1.…`, 24 h) and the suppression is removed only by
+      `POST /v1/email/confirm {token}` from `authOrigin` (IP-limited like `resend`), so only the mailbox's holder can
+      undo a suppression. Both mails are categories `hana-id-unlock` and `hana-id-confirm` (the webhook counts them),
+      from the owner pool. Staff see `{mailed}` and never a token. `admin/revoke-tickets` is new (D198).
+    - **The spec's "Phishing" line (spec line 319: "the link purposes use different wording ('add this email to an
+      existing wallet')")** is superseded by the per-purpose texts above; the spec is history and stays as written.
+    - **Access negative cache (L3):** a failed certs fetch or an unknown kid is cached for 30 s, so a burst of forged
+      kids can't make the Worker refetch the certs; a real key rotation is picked up at most 30 s late.
+    - **Webhook limit (L4):** 120 posts per 10 min per IP is a guess at SendGrid's batching; watch `limit` lines for
+      `ip:webhook:10m` on sandbox-dev and raise it if SendGrid's real traffic reaches it (a refused post is retried by
+      SendGrid).
 
 ## Batch C build, step C2 (`packages/oidc`), 2026-11-02
 

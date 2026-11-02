@@ -39,7 +39,7 @@ CREATE TABLE email_admin_audit (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   at_ms        INTEGER NOT NULL,
   staff        TEXT NOT NULL,                -- the Access identity's email (staff, never an end user)
-  action       TEXT NOT NULL CHECK (action IN ('client_proof', 'unlock', 'unsuppress')),
+  action       TEXT NOT NULL CHECK (action IN ('client_proof', 'unlock', 'unsuppress', 'revoke_tickets')),
   ticket       TEXT NOT NULL,                -- the support reference
   scope_id     TEXT,
   action_nonce INTEGER,

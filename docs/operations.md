@@ -2,7 +2,8 @@
 
 Last verified against code: 2026-11-02 (branch `feat/email-login-4`: "Email issuer" setup and runbook, the issuer's
 secrets rows, after the reviews: Access SameSite=Strict, staff calls, unsuppress, the exact key-leak steps with
-`put --standby`, the budget and complaint logs; branch `feat/link-cap`: "Link volume thresholds", D200, and `set_link_thresholds` through `owner:call`;
+`put --standby`, the budget and complaint logs; after the abuse re-check: `init --budget`, mailed unlock and
+unsuppress, revoke-tickets, the owner pool, the 503 window of a standby switch, SendGrid's suppression lists; branch `feat/link-cap`: "Link volume thresholds", D200, and `set_link_thresholds` through `owner:call`;
 branch `feat/email-login-5`: the watchdog's email rules, the link alarms and `unrecorded_wallets` alerts in "Watchdog
 alerts (runbook)" and "Watchdog service", D190–D193, D200; branch `feat/email-login-2`: `deploy-contract` refuses a v1
 contract, D154; the v2 → v3 upgrade path sandbox-tested,
@@ -1245,8 +1246,8 @@ email key, and no app enables email (`apps.login_methods`) before batch 8.
 1. **Keys and manifest block** (uploads nothing, prints no secret):
 
    ```sh
-   corepack pnpm --filter @hana-id/scripts email-issuer <env> init --from "Hana <login@<user-mail subdomain>>"   # plan
-   corepack pnpm --filter @hana-id/scripts email-issuer <env> init --from "Hana <login@<user-mail subdomain>>" --yes
+   corepack pnpm --filter @hana-id/scripts email-issuer <env> init --from "Hana <login@<user-mail subdomain>>" --budget 1000   # plan
+   corepack pnpm --filter @hana-id/scripts email-issuer <env> init --from "Hana <login@<user-mail subdomain>>" --budget 1000 --yes
    ```
 
    Writes `.secrets/<env>/email-issuer-signing-key.json` (RSA-2048 primary, the Worker secret),
@@ -1265,7 +1266,8 @@ email key, and no app enables email (`apps.login_methods`) before batch 8.
    and the suppression list must be the issuer's); an API key of that subuser with **Mail Send only**, used by this
    Worker alone, pasted into `.secrets/<env>/email-issuer-sendgrid-key` (0600; never in chat or a shell history). Don't
    buy the Email Activity History add-on: SendGrid keeps each message's recipient and events in its Email Activity for
-   its plan's period (3 days without the add-on when written; check at setup) and Hana can't shorten it. The signed
+   its plan's period (3 days without the add-on when written; check at setup) and Hana can't shorten it. Its
+   suppression lists (bounces, blocks, spam reports) keep an address **until it is removed** there. The signed
    Event Webhook (bounce, spam report) of that subuser to `{apiUrl}/v1/email/webhooks/sendgrid`, its verification key
    in `emailIssuer.sendgridWebhookPublicKey` (public); events of other categories are ignored.
 4. **D1 and config**: `wrangler d1 create hana-id-email-issuer-<env>`, then
@@ -1291,16 +1293,18 @@ Local: `gen <env> --dev-vars` writes `apps/email-issuer/.dev.vars` (0600) from t
 |---|---|---|
 | `503 signer_unavailable` | ISSUER_SIGNING_KEY missing, malformed, not the manifest's `activeKid`, or a signature failed its self-check | `email-issuer <env> show`; `put --yes` again; never edit the kid by hand |
 | `503 issuer_unavailable` | an HMAC key is missing or two are equal | `put --yes`; never generate a new K_sub for an env that has email users |
-| `email_budget` (warn log, `code` `global_50` / `global_80` / `app_50` / `app_80`, `appId`) | the day's user mail passed half or 80% of `dailySendBudget`, or of one app's 10% share (D198) | an `app_*` line names the app: check its traffic (a partner bug or a scripted abuse of its key); a `global_*` line with no app near its share means broad traffic |
-| `send_budget_exhausted` (error log, `code` `global`, `app` or `reserve`) | `global`: the day's `dailySendBudget` is spent, `start` and `resend` answer 429; `app`: that app used its 10% share; `reserve`: the last 20% is held for apps under half their share | look for abuse (per-app `limit` logs, `appId`); raise `dailySendBudget` in the manifest only if the traffic is real, then `gen` and deploy. An app's share can't be raised per app yet (plan fields, to confirm) |
+| `email_budget` (warn log, `code` `global_50` / `global_80` / `owner_50` / `owner_80` / `app_50` / `app_80`, `appId`) | the day's user mail passed half or 80% of the general pool (85% of `dailySendBudget`), of the owner pool (15%), or of one app's share (2% of its plan's `per_day`) (D198) | an `app_*` line names the app: check its traffic (a partner bug or a scripted abuse of its key); a `global_*` line with no app near its share means broad traffic |
+| `send_budget_exhausted` (error log, `code` `global`, `app`, `reserve`, `owner` or `unconfigured`) | `global`: the general pool is spent, `start` and `resend` answer 429 for everyone without a device ticket or unlock grant; `app`: that app used its share; `reserve`: the last 20% is held for apps under half their share; `owner`: the owner pool is spent (ticket holders wait too: look at once); `unconfigured`: the Worker has no `DAILY_SEND_BUDGET` outside `local*`, so it sends nothing | look for abuse (per-app `limit` logs, `appId`); raise `dailySendBudget` in the manifest only if the traffic is real, then `gen` and deploy. An app's share follows its plan's `per_day`. `unconfigured`: set `emailIssuer.dailySendBudget`, `gen`, deploy |
 | `email_complaint_rate` (error log, `count`) | more than 5 spam complaints in 24 h on the issuer's mail | check which app's flows run (`code_mail` by `appId`) and SendGrid's stats for the subuser; a sustained rate risks the sending domain's reputation: lower `dailySendBudget` or suspend the app |
 | `email_domain_cap` (warn log, `subject` = domain key prefix) | a non-exempt recipient domain used its 100 code mails today (each requester prefix at most 20); its users without a device ticket get 429 until midnight UTC (D198) | a real company rollout, or someone mailing many addresses at one domain: check `limit` logs and apps; repeats of the same `subject` on several days are worth a look |
 | `missing_client_ip` (warn log) | a request reached the Worker without a usable `cf-connecting-ip` (not through Cloudflare's edge, or a misrouted service binding): refused with 400 | check the route (batch 6's service binding must forward the client's headers) |
 | `code_mail` errors with `misconfigured` / provider 401/403 | the SendGrid key is wrong, revoked or lacks Mail Send | new key into the file, `put --yes` |
 | `code_mail` errors with `unavailable` | SendGrid 429 or 5xx (the counts were taken back) | SendGrid status; users can resend after 30 s |
 | `google_revoke` warnings | Google's revoke endpoint failed (the access token expires within the hour anyway) | none, unless sustained |
-| `mailbox_guess_limit` (error log, `code` `backstop` or `ceiling`, `subject` = mailbox key prefix) | someone is guessing codes for one mailbox: past the backstop (18) only owner-slot requesters and ticketed challenges can check, past the ceiling (25) nobody until midnight UTC (D198) | watch for repeats of the same `subject`. A user with a device ticket (an earlier sign-in on that browser) still gets 3 codes a day and the ticket slot. When a user without one contacts support and you've confirmed it's them: `admin/unlock` ("Staff calls" below) and give them the returned `unlockToken` through the support channel (it works once, within 24 h, and only for their address); unlocking gives the attacker a fresh 25 checks, so only on request, and at most once a day and 3 times in 30 days per mailbox |
-| A user says the codes never arrive | the address may be suppressed (a bounce in the last 30 days, or a spam complaint), or the mailbox limits refuse | after confirming the address is theirs and the cause is fixed (mailbox full, a complaint by mistake): `admin/unsuppress` ("Staff calls"), **then** remove the address from the issuer subuser's suppression lists in SendGrid (Suppressions: Bounces, Spam Reports, Blocks; search the address, delete it), or SendGrid keeps dropping the mail |
+| `mailbox_guess_limit` (error log, `code` `backstop` or `ceiling`, `subject` = mailbox key prefix) | someone is guessing codes for one mailbox: past the backstop (18) only owner-slot requesters and ticketed challenges can check, past the ceiling (25) nobody until midnight UTC (D198) | watch for repeats of the same `subject`. A user with a device ticket (an earlier sign-in on that browser) still gets 3 codes a day and the ticket slot. When a user without one contacts support: `admin/unlock` ("Staff calls" below). It mails a one-time link to the address itself (only the mailbox's holder can use it, so it is safe whoever asked), clears nothing, and adds at most 2 checks to the day; at most once a day and 3 times in 30 days per mailbox |
+| A user says the codes never arrive | the address may be suppressed (a bounce in the last 30 days, or a spam complaint), or the mailbox limits refuse | once the cause is fixed (mailbox full, a complaint by mistake): **first** remove the address from the issuer subuser's suppression lists in SendGrid (Suppressions: Bounces, Spam Reports, Blocks; search the address, delete it), or SendGrid drops the confirmation too; **then** `admin/unsuppress` ("Staff calls"): it mails the address a confirmation link, and the suppression goes when the user opens it (24 h) |
+| A user lost a device, or a device ticket may have leaked | anyone holding the ticket gets that address's owner allowances (3 codes a day, the ticket slot), never a token | `admin/revoke-tickets` ("Staff calls"): every ticket of that exact address issued until now stops counting; the next sign-in issues a fresh one |
+| `limit` lines `ip:webhook:10m` (sandbox-dev first) | SendGrid's event posts from one IP passed 120 in 10 min (a guess, D199 L4); refused posts are retried by SendGrid | if it is SendGrid's real traffic, raise `IP_WEBHOOK_LIMITS` in `apps/email-issuer/src/limits.ts` |
 | A suspected key leak | anyone with the Worker's secrets can mint email tokens (1-of-1, D121): sessions for any email user's path | "Suspected issuer key leak" below |
 
 ### Staff calls
@@ -1316,11 +1320,14 @@ cloudflared access curl {apiUrl}/v1/email/admin/unlock -X POST -H 'Content-Type:
 # then Ctrl-D
 ```
 
-`admin/unlock` answers `{cleared, unlockToken}`: pass the token to the user only, never into a ticket's public
-thread or a log; batch 8's popup takes it. `admin/unsuppress` takes the same body; `admin/client-proof` takes `{"scopeId", "actionNonce", "ticket"}`. The audit
-row (`email_admin_audit`: staff, action, ticket, mailbox key prefix or scope) is written before the action. 20 staff
-actions an hour per staff member, all routes together; unlock and unsuppress at most once a day and 3 times in 30 days
-per mailbox (`429 staff_cap`).
+`admin/unlock` answers `{mailed}`: the one-time link went to the address itself; staff never see a token, so there is
+nothing to pass on (`{mailed: false, reason: "suppressed"}`: unsuppress first). `admin/unsuppress` and
+`admin/revoke-tickets` take the same body (unsuppress answers `{mailed}` too: the user confirms from the mail);
+`admin/client-proof` takes `{"scopeId", "actionNonce", "ticket"}`. The audit row (`email_admin_audit`: staff, action,
+ticket, mailbox or address key prefix, or scope) is written before the action. 20 staff actions an hour per staff
+member, all routes together; unlock, unsuppress and revoke-tickets at most once a day and 3 times in 30 days per
+mailbox each (`429 staff_cap`). Access's certs: a failed fetch or an unknown kid is cached for 30 s (L3), so a key
+rotation at Cloudflare reaches the issuer at most 30 s late.
 
 ### Suspected issuer key leak
 
@@ -1338,14 +1345,18 @@ admin <env>` (owner calls take the council's approvals as usual, `--approve-with
    switches `emailIssuer.signer.activeKid` in `envs/<env>.json` to the standby's kid and uploads the standby as
    `ISSUER_SIGNING_KEY` (with the three HMAC keys). Then `corepack pnpm --filter @hana-id/email-issuer gen <env> --d1-id
    … --app-d1-id …` and `corepack pnpm --filter @hana-id/email-issuer deploy`; commit the manifest. Check `$I show`
-   names the standby active and `GET {apiUrl}/v1/email/jwks.json` still lists it. The env has no standby until a new
+   names the standby active and `GET {apiUrl}/v1/email/jwks.json` still lists it. **Expect `503 signer_unavailable`
+   between `put --standby --yes` and the deploy:** the running Worker's `EMAIL_ACTIVE_KID` still names the removed key
+   while its secret is already the standby, and its self-check refuses the mismatch (logins wait; nothing wrong is
+   signed). Run `gen` and `deploy` at once. The env has no standby until a new
    one is made (no command yet: batch 10 replaces the Worker key with KMS; to confirm). **Both exposed:** email logins
    stay off until a new key passes `set_issuer_key` (72 h, `governance_delay_ms`) and the watchdog pins.
 5. **Watchdog pins**: delete the removed kid(s) from `watchdog.pinnedIssuerKeys.email` and redeploy the watchdog, so a
    re-post of the leaked key is `forged_active_key`.
 6. **Session floor**: `$A owner:call set_sessions_valid_from_ms --args '{"sessions_valid_from_ms": <a time after the
    pause began>}' --yes`, before unpausing, so sessions the leaked key opened can't derive.
-7. **The other Worker secrets**, when the Worker's secrets were exposed: revoke the SendGrid key in SendGrid and paste a
+7. **The other Worker secrets**, when the Worker's secrets were exposed. Of the HMAC keys, **K_sub can't be rotated**
+   (privacy only: it would move every email address); **K_code and K_rl can be**. Revoke the SendGrid key in SendGrid and paste a
    new one into its file; replace K_code and K_rl (`(umask 077; openssl rand -base64 32 > .secrets/<env>/email-code-key)`,
    the same for `email-rl-key`; it prints nothing): live challenges, device tickets and today's counters reset, nothing
    else. Then `$I put --yes`. **Never K_sub** (it would move every email address); a K_sub leak is privacy only (the

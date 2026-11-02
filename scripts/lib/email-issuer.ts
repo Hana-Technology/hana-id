@@ -33,9 +33,10 @@ import { assertPrivate, parseSecretJson, secretsDir } from './secrets.ts';
 import { DRY_RUN_LINE, writeNewSecretFile } from './vault-kek.ts';
 
 export const EMAIL_ISSUER_USAGE = `Usage: email-issuer.ts <env> <command> [--yes]
-  init --from "<Name> <address>" [--outbox]
+  init --from "<Name> <address>" [--budget <mails a day>] [--outbox]
                  generate the signing key (primary), an offline standby (RSA-2048) and K_sub, K_code, K_rl (32 bytes
                  each), write .secrets/<env>/email-* (0600) and emailIssuer in envs/<env>.json. Uploads nothing.
+                 --budget: emailIssuer.dailySendBudget, required outside local* envs (no default)
                  --outbox: the test stub sender (local* envs only)
   put [--standby] set ISSUER_SIGNING_KEY (the manifest's active key; --standby: switch the active kid to the standby
                  key first, for a suspected leak of the primary), EMAIL_SUB_KEY, EMAIL_CODE_KEY, EMAIL_RL_KEY (and SENDGRID_API_KEY when
@@ -136,13 +137,13 @@ export const pinBlock = (kids: string[]): { required: number; signers: { hana: s
 
 /** Runs `email-issuer <argv>`. */
 export function emailIssuer(argv: readonly string[], deps: EmailIssuerDeps): void {
-  const args = parseCli(argv, { booleans: ['yes', 'help', 'outbox', 'standby'], strings: ['from'] });
+  const args = parseCli(argv, { booleans: ['yes', 'help', 'outbox', 'standby'], strings: ['from', 'budget'] });
   if (args.flag('help')) return void deps.log(EMAIL_ISSUER_USAGE);
   const [envName, command, ...rest] = args.positionals;
   if (!envName || !command) throw new CliError('Expected <env> <init | put | show>');
   if (rest.length) throw new CliError(`Unexpected argument ${rest.join(' ')}`);
   if (!['init', 'put', 'show'].includes(command)) throw new CliError(`Unknown command ${command}`);
-  if ((args.str('from') !== undefined || args.flag('outbox')) && command !== 'init') throw new CliError('--from and --outbox go with init only');
+  if ((args.str('from') !== undefined || args.str('budget') !== undefined || args.flag('outbox')) && command !== 'init') throw new CliError('--from, --budget and --outbox go with init only');
   if (args.flag('standby') && command !== 'put') throw new CliError('--standby goes with put only');
   const m = (deps.loadManifest ?? loadEnv)(envName);
   if (m.network !== 'testnet') throw new Error(`envs/${m.name}.json is not a testnet env: mainnet email keys live in AWS KMS (D121)`);
@@ -158,6 +159,10 @@ export function emailIssuer(argv: readonly string[], deps: EmailIssuerDeps): voi
     const from = args.required('from');
     const outbox = args.flag('outbox');
     if (outbox && !isLocalEnv(m.name)) throw new CliError('--outbox is for local* envs only');
+    const budgetArg = args.str('budget');
+    const budget = budgetArg === undefined ? undefined : Number(budgetArg);
+    if (budget !== undefined && !(Number.isSafeInteger(budget) && budget >= 1 && budget <= 10_000_000)) throw new CliError('--budget is a whole number of mails a day (1..10000000)');
+    if (budget === undefined && !isLocalEnv(m.name)) throw new CliError('--budget <mails a day> is required outside local* envs (emailIssuer.dailySendBudget, no default)');
     for (const k of ['signingKey', 'standbyKey', 'subKey', 'codeKey', 'rlKey'] as const) {
       if (existsSync(file(k))) throw new Error(`${shown(k)} already exists: refusing to overwrite a key (K_sub decides every email address). Use \`put\` to upload again.`);
     }
@@ -188,6 +193,7 @@ export function emailIssuer(argv: readonly string[], deps: EmailIssuerDeps): voi
       publicKeys: [publicEntry(primary), publicEntry(standby)],
       from,
       sender: outbox ? 'outbox' : 'sendgrid',
+      ...(budget !== undefined ? { dailySendBudget: budget } : {}),
     };
     writeText(m.name, insertManifestBlock(readText(m.name), 'emailIssuer', block, 'apiUrl'));
     deps.log(`Wrote emailIssuer to envs/${m.name}.json (active kid ${block.signer.activeKid}, standby ${block.publicKeys[1]!.kid}).`);

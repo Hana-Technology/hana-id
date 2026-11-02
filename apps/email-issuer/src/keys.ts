@@ -89,38 +89,56 @@ export const codeMac = (keys: IssuerKeys, challengeId: string, code: string): Pr
 
 // ---- owner device tickets (D198) ----
 
-export const DEVICE_TICKET_PREFIX = 'dt1.';
-export const DEVICE_TICKET_DOMAIN = 'hana-id/device-ticket/v1';
+export const DEVICE_TICKET_PREFIX = 'dt2.';
+export const DEVICE_TICKET_DOMAIN = 'hana-id/device-ticket/v2';
 /** A device ticket is valid 30 days from the `verify` that issued it. */
 export const DEVICE_TICKET_TTL_MS = 30 * 86_400_000;
+/** "dt2." + b64url(expiry u64 LE ‖ nonce 16 ‖ MAC 32): 56 bytes, 75 characters. */
+const TICKET_RAW = 8 + 16 + 32;
+const TICKET_LEN = DEVICE_TICKET_PREFIX.length + 75;
 
-const ticketMessage = (mailbox: string, expMs: number): Uint8Array => concatBytes(utf8(DEVICE_TICKET_DOMAIN), Uint8Array.of(0), utf8(mailbox), Uint8Array.of(0), u64le(expMs));
+const ticketMessage = (addrKey: string, nonce: Uint8Array, expMs: number): Uint8Array =>
+  concatBytes(utf8(DEVICE_TICKET_DOMAIN), Uint8Array.of(0), utf8(addrKey), Uint8Array.of(0), nonce, u64le(expMs));
 
-/**
- * An opaque owner device ticket for the mailbox `mailboxKeyValue`: "dt1." + b64url(expiry u64 LE ms ‖ HMAC(K_device,
- * domain ‖ 0 ‖ mailbox key ‖ 0 ‖ expiry)). Only a successful `verify` issues one, so only someone who read a code at that
- * mailbox can hold it. The popup keeps it on `authOrigin` (batch 8).
- */
-export async function deviceTicket(keys: IssuerKeys, mailboxKeyValue: string, now: number): Promise<string> {
-  const exp = now + DEVICE_TICKET_TTL_MS;
-  const m = await macBytes(keys.device, ticketMessage(mailboxKeyValue, exp));
-  return DEVICE_TICKET_PREFIX + base64UrlEncode(concatBytes(u64le(exp), m));
+/** A verified ticket: its id (the nonce, b64url: its allowances are counted per ticket) and when it was issued. */
+export interface DeviceTicketInfo {
+  id: string;
+  issuedAtMs: number;
 }
 
-/** Whether `ticket` is a live device ticket for this mailbox (constant-time MAC check). */
-export async function isDeviceTicketFor(keys: IssuerKeys, ticket: unknown, mailboxKeyValue: string, now: number): Promise<boolean> {
-  if (typeof ticket !== 'string' || !ticket.startsWith(DEVICE_TICKET_PREFIX) || ticket.length !== DEVICE_TICKET_PREFIX.length + 54) return false;
+/**
+ * An opaque owner device ticket for one exact normalized address (`addrKey` = its suppression-key HMAC, so a ticket for
+ * `x+tag@` isn't one for `x@`): "dt2." + b64url(expiry ‖ nonce ‖ HMAC(K_device, domain ‖ 0 ‖ addrKey ‖ 0 ‖ nonce ‖
+ * expiry)). Only a successful `verify` issues one, so only someone who read a code at that address can hold it. The
+ * nonce makes each ticket its own (per-ticket allowances, abuse review L1/L2); staff can revoke an address's tickets.
+ */
+export async function deviceTicket(keys: IssuerKeys, addrKey: string, now: number): Promise<string> {
+  const exp = now + DEVICE_TICKET_TTL_MS;
+  const nonce = crypto.getRandomValues(new Uint8Array(16));
+  const m = await macBytes(keys.device, ticketMessage(addrKey, nonce, exp));
+  return DEVICE_TICKET_PREFIX + base64UrlEncode(concatBytes(u64le(exp), nonce, m));
+}
+
+/** The ticket's id and issue time when `ticket` is a live device ticket for this address (constant-time MAC check), else null. */
+export async function readDeviceTicket(keys: IssuerKeys, ticket: unknown, addrKey: string, now: number): Promise<DeviceTicketInfo | null> {
+  if (typeof ticket !== 'string' || !ticket.startsWith(DEVICE_TICKET_PREFIX) || ticket.length !== TICKET_LEN) return null;
   let raw: Uint8Array;
   try {
     raw = base64UrlDecode(ticket.slice(DEVICE_TICKET_PREFIX.length));
   } catch {
-    return false;
+    return null;
   }
-  if (raw.length !== 40) return false;
+  if (raw.length !== TICKET_RAW) return null;
   const exp = Number(new DataView(raw.buffer, raw.byteOffset, 8).getBigUint64(0, true));
-  if (!(exp > now) || exp > now + DEVICE_TICKET_TTL_MS + 60_000) return false;
-  return bytesEqual(raw.subarray(8), await macBytes(keys.device, ticketMessage(mailboxKeyValue, exp)));
+  if (!(exp > now) || exp > now + DEVICE_TICKET_TTL_MS + 60_000) return null;
+  const nonce = raw.subarray(8, 24);
+  if (!bytesEqual(raw.subarray(24), await macBytes(keys.device, ticketMessage(addrKey, nonce, exp)))) return null;
+  return { id: base64UrlEncode(nonce), issuedAtMs: exp - DEVICE_TICKET_TTL_MS };
 }
+
+/** Whether `ticket` is a live device ticket for this address. */
+export const isDeviceTicketFor = async (keys: IssuerKeys, ticket: unknown, addrKey: string, now: number): Promise<boolean> =>
+  (await readDeviceTicket(keys, ticket, addrKey, now)) !== null;
 
 /** 32 random bytes, b64url (link tickets). */
 export function randomId(bytes = 32): string {

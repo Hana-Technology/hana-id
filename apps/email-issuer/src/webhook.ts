@@ -77,7 +77,7 @@ export async function verifyWebhook(publicKeyB64: string, timestamp: string, bod
 export type Suppression = { emailKey: string; reason: 'bounce' | 'complaint' };
 
 /** The categories the issuer's own mails carry (sendgrid.ts): events of any other mail are ignored (M3). */
-export const ISSUER_CATEGORIES: ReadonlySet<string> = new Set(['hana-id-code', 'hana-id-link_notice']);
+export const ISSUER_CATEGORIES: ReadonlySet<string> = new Set(['hana-id-code', 'hana-id-link_notice', 'hana-id-unlock', 'hana-id-confirm']);
 
 const fromIssuer = (category: unknown): boolean =>
   typeof category === 'string' ? ISSUER_CATEGORIES.has(category) : Array.isArray(category) && category.some((c) => typeof c === 'string' && ISSUER_CATEGORIES.has(c));

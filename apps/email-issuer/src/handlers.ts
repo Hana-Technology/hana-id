@@ -20,10 +20,11 @@ import { GoogleUnavailable } from './google.ts';
 import { corsHeaders, error, isObj, json, onlyKeys, readJson } from './http.ts';
 import { ipAggregates, ipSubject, isClientIp } from './ip.ts';
 import { type EmailClaims, TOKEN_LIFETIME_S, mintJws } from './jws.ts';
-import { CODE_RE, KeysUnavailable, codeMac, deviceTicket, domainKey, isDeviceTicketFor, mailboxKey, newCode, randomId, requesterKey, suppressionKey } from './keys.ts';
+import { CODE_RE, KeysUnavailable, codeMac, deviceTicket, domainKey, mailboxKey, newCode, randomId, readDeviceTicket, requesterKey, suppressionKey } from './keys.ts';
 import { autoLinkPreimage, clientProofPreimage, EMAIL_PROVIDER, identityKey, nonceOf, sessionPreimage, type SessionCommitment } from './layouts.ts';
 import {
   CHALLENGE_TTL_MS,
+  CONFIRM_TTL_MS,
   HINT_PRUNE_BATCH,
   NON_HOSTED_HINT_TTL_MS,
   IP_AGGREGATE_START_LIMITS,
@@ -36,11 +37,12 @@ import {
   MAILBOX_RETRY_AFTER_S,
   RESEND_SPACING_MS,
   STAFF_LIMITS,
+  appBudgetShare,
   appStartLimits,
 } from './limits.ts';
 import { log } from './log.ts';
-import { codeMail, linkNoticeMail } from './mail.ts';
-import type { Limit, Reservation } from './rate-limiter.ts';
+import { codeMail, confirmMail, linkNoticeMail, unlockMail } from './mail.ts';
+import type { Limit, OwnerClaim, Reservation } from './rate-limiter.ts';
 import { SignerUnavailable } from './signer.ts';
 import { readWebhookBody, SIGNATURE_HEADER, suppressionsOf, TIMESTAMP_HEADER, verifyWebhook, webhookHeadersOk } from './webhook.ts';
 
@@ -56,6 +58,10 @@ export const COMPLAINT_ALERT_PER_DAY = 5;
 /** A staff unlock's one-time token: "ug1." + 32 random bytes, b64url. */
 const UNLOCK_TOKEN_PREFIX = 'ug1.';
 const UNLOCK_TOKEN_RE = /^ug1\.[A-Za-z0-9_-]{43}$/u;
+/** A staff unsuppress's mailed confirmation token: "uc1." + 32 random bytes, b64url. */
+const CONFIRM_TOKEN_PREFIX = 'uc1.';
+const CONFIRM_TOKEN_RE = /^uc1\.[A-Za-z0-9_-]{43}$/u;
+const confirmName = (token: string): string => `u:${base64UrlEncode(sha256(utf8(token)))}`;
 const SUPPORT_TICKET_RE = /^[A-Za-z0-9._#:-]{1,64}$/u;
 
 type Ctx = { deps: Deps; requestId: string; endpoint: string; cors: Record<string, string> };
@@ -89,10 +95,8 @@ async function ipLimit(ctx: Ctx, request: Request, limits: Limit[]): Promise<Res
   return tooMany(ctx, r.retryAfterMs);
 }
 
-/** `start`'s IP limits: the IP subject (address, IPv6 /64) and each aggregate prefix (IPv4 /24, IPv6 /56 and /48). */
-async function startIpLimits(ctx: Ctx, request: Request): Promise<Response | null> {
-  const own = await ipLimit(ctx, request, IP_START_LIMITS);
-  if (own) return own;
+/** `start`'s aggregate prefix limits (IPv4 /24, IPv6 /56 and /48); skipped for a valid ticket or grant (abuse review M2). */
+async function aggregateLimits(ctx: Ctx, request: Request): Promise<Response | null> {
   for (const agg of ipAggregates(rawIp(request))) {
     const r = await limiter(ctx.deps, `ip:${agg}`).hit(IP_AGGREGATE_START_LIMITS, ctx.deps.now());
     if (!r.ok) {
@@ -147,17 +151,43 @@ const isSuppressed = async (deps: Deps, key: string): Promise<boolean> =>
   !!(await deps.env.DB.prepare("SELECT 1 AS x FROM email_suppressions WHERE email_key = ?1 AND (reason = 'complaint' OR at_ms > ?2)").bind(key, deps.now() - BOUNCE_SUPPRESSION_MS).first());
 
 /**
- * One user mail for `appId` against the global budget, shared out per app (H1). Logs `email_budget` when this mail
- * reached 50% or 80% of the global budget or of the app's share, and `send_budget_exhausted` when refused.
+ * One user mail against the global budget (H1, abuse review H1): an owner's (`owner`: a valid ticket's or grant's
+ * challenge, a staff unlock/unsuppress mail) from the owner pool, whatever the app's share; any other from the general
+ * pool within the app's `share`. Logs `email_budget` when this mail reached 50% or 80% of a pool or of the app's share,
+ * and `send_budget_exhausted` when refused (`unconfigured`: no `dailySendBudget` outside `local*`, every mail refused).
  */
-async function reserveBudget(ctx: Ctx, appId: string): Promise<Reservation | null> {
-  const r = await limiter(ctx.deps, 'global').reserveBudget(appId, dailySendBudget(ctx.deps.env), ctx.deps.now());
+async function reserveBudget(ctx: Ctx, appId: string | null, share: number, owner: boolean): Promise<Reservation | null> {
+  const budget = dailySendBudget(ctx.deps.env);
+  const r = await limiter(ctx.deps, 'global').reserveBudget(appId, budget, share, owner, ctx.deps.now());
+  const appField = appId ? { appId } : {};
   if (!r.ok) {
-    log({ event: 'send_budget_exhausted', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'error', code: r.limit, appId }, 'error');
+    log({ event: 'send_budget_exhausted', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'error', code: budget > 0 ? r.limit : 'unconfigured', ...appField }, 'error');
     return null;
   }
-  for (const c of r.crossed) log({ event: 'email_budget', requestId: ctx.requestId, endpoint: ctx.endpoint, code: c, appId }, 'warn');
+  for (const c of r.crossed) log({ event: 'email_budget', requestId: ctx.requestId, endpoint: ctx.endpoint, code: c, ...appField }, 'warn');
   return r.reservation;
+}
+
+/** The app's share of the general pool (its plan's `per_day`, D198). */
+const shareOf = (ctx: Ctx, app: { perDay: number }): number => appBudgetShare(app.perDay, dailySendBudget(ctx.deps.env));
+
+/**
+ * One staff-triggered mail to the address itself (unlock, unsuppress confirmation): from the owner pool, never the
+ * address in a log. Returns whether the provider accepted it.
+ */
+async function mailOwner(ctx: Ctx, message: ReturnType<typeof unlockMail>): Promise<boolean> {
+  const budget = await reserveBudget(ctx, null, 0, true);
+  if (!budget) return false;
+  try {
+    const res = await ctx.deps.sender.send(message);
+    if (!res.ok) await limiter(ctx.deps, 'global').refund(budget);
+    log({ event: 'staff_mail', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: res.ok ? 'ok' : 'error', code: res.ok ? message.kind : res.reason }, res.ok ? 'info' : 'error');
+    return res.ok;
+  } catch {
+    await limiter(ctx.deps, 'global').refund(budget);
+    log({ event: 'staff_mail', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'error', code: 'internal' }, 'error');
+    return false;
+  }
 }
 
 /**
@@ -166,8 +196,8 @@ async function reserveBudget(ctx: Ctx, appId: string): Promise<Reservation | nul
  * never waits on a domain someone else filled. `ok: false` when refused; logs `email_domain_cap` when this mail
  * filled the domain's day.
  */
-async function reserveDomain(ctx: Ctx, key: string, request: Request, now: number, ticketed: boolean): Promise<{ ok: boolean; r: Reservation | null }> {
-  if (!key || ticketed) return { ok: true, r: null };
+async function reserveDomain(ctx: Ctx, key: string, request: Request, now: number, owner: boolean): Promise<{ ok: boolean; r: Reservation | null }> {
+  if (!key || owner) return { ok: true, r: null };
   const prefixes = ipAggregates(rawIp(request)).map(requesterKey);
   const d = await limiter(ctx.deps, `dom:${key}`).reserveDomain(prefixes, now);
   if (!d.ok) return { ok: false, r: null };
@@ -206,12 +236,12 @@ async function deliver(ctx: Ctx, rec: ChallengeRecord, to: string, code: string,
 /** The mailbox's limiter. */
 const mailboxLimiter = (deps: Deps, key: string) => limiter(deps, `mbx:${key}`);
 
-/** A link notice to the joining address (spec "Notices"); against the budget only. Never throws. */
-async function notify(ctx: Ctx, to: string, appName: string, pending: boolean, appId: string): Promise<void> {
+/** A link notice to the joining address (spec "Notices"); against the budget only (the app's share). Never throws. */
+async function notify(ctx: Ctx, to: string, appName: string, pending: boolean, appId: string, share: number): Promise<void> {
   const { deps } = ctx;
   try {
     if (await isSuppressed(deps, await suppressionKey(await deps.keys(), to))) return;
-    const budget = await reserveBudget(ctx, appId);
+    const budget = await reserveBudget(ctx, appId, share, false);
     if (!budget) return;
     const res = await deps.sender.send(linkNoticeMail({ to, appName, authOrigin: deps.env.AUTH_ORIGIN, pending }));
     if (!res.ok) await limiter(deps, 'global').refund(budget);
@@ -229,62 +259,74 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
   if (!parsed.ok) return fail(ctx, parsed.status, 'bad_request', parsed.message);
   const b = parsed.body;
   if (!isObj(b) || !onlyKeys(b, ['pk', 'email', 'purpose', 'commitment'], ['deviceTicket', 'unlockToken'])) return fail(ctx, 400, 'bad_request', 'Body must be {pk, email, purpose, commitment, deviceTicket?, unlockToken?}');
-  // The requester pays first: its IP and prefix limits count before anything touches the app's quota or the budget.
-  const limited = await startIpLimits(ctx, request);
+  // The requester pays first: its IP subject's limits count before anything else.
+  const limited = await ipLimit(ctx, request, IP_START_LIMITS);
   if (limited) return limited;
+  if (typeof b.email !== 'string' || b.email.length > 1024) return fail(ctx, 400, 'invalid_email', 'Not a valid email address');
+  const r = normalizeEmail(b.email);
+  if (!r.ok) return fail(ctx, 400, 'invalid_email', 'Not a valid email address');
+  const now = deps.now();
+  const keys = await deps.keys();
+  const mbx = await mailboxKey(keys, r.mailbox);
+  const addrKey = await suppressionKey(keys, r.email);
+  const box = mailboxLimiter(deps, mbx);
+  // The owner's proof, checked before the prefix limits (abuse review M2): a device ticket for this exact address (D198),
+  // or a mailed unlock token. A valid one never depends on a pool an attacker can fill: it skips the prefix limits,
+  // the app's quota, the domain cap and the general budget pool. An invalid one is ignored, never an error.
+  const ticket = await readDeviceTicket(keys, b.deviceTicket, addrKey, now);
+  const grantHash = typeof b.unlockToken === 'string' && UNLOCK_TOKEN_RE.test(b.unlockToken) ? base64UrlEncode(sha256(utf8(b.unlockToken))) : null;
+  const claim: OwnerClaim | null = ticket ? { kind: 'ticket', id: ticket.id, addrKey, issuedAtMs: ticket.issuedAtMs } : grantHash ? { kind: 'grant', hash: grantHash } : null;
+  const claimOk = claim !== null && (await box.checkOwner(claim, now));
+  if (!claimOk) {
+    const agg = await aggregateLimits(ctx, request);
+    if (agg) return agg;
+  }
   const gate = await emailApp(ctx, b.pk);
   if (!gate.ok) return gate.response;
   const { app } = gate;
-  const now = deps.now();
   if (b.purpose === 'auto_link') return fail(ctx, 400, 'bad_request', 'auto_link codes are started by google-match');
   const c = commitmentNonce(deps.env.SIGNER_ACCOUNT, b.purpose, b.commitment, now);
   if (!c.ok) return fail(ctx, 400, 'bad_request', c.message);
   if (c.value.scopeId !== app.scopeId) return fail(ctx, 400, 'scope_mismatch', 'The commitment is for another app’s scope');
-  if (typeof b.email !== 'string' || b.email.length > 1024) return fail(ctx, 400, 'invalid_email', 'Not a valid email address');
-  const r = normalizeEmail(b.email);
-  if (!r.ok) return fail(ctx, 400, 'invalid_email', 'Not a valid email address');
   if (isDisposableDomain(r.domain)) return fail(ctx, 400, 'email_domain_not_allowed', 'Addresses on this domain can’t be used to sign in');
 
-  const keys = await deps.keys();
-  const mbx = await mailboxKey(keys, r.mailbox);
   const ip = requesterKey(ipOf(request));
   const expiresAtMs = now + CHALLENGE_TTL_MS;
   // A suppressed address takes exactly the same path, limits counted and never refunded, so no limiter answer tells it
   // apart (D198); only the provider call is skipped, and its challenge holds no address and no code.
-  const suppressed = await isSuppressed(deps, await suppressionKey(keys, r.email));
-  // An owner device ticket for this mailbox: the start uses the ticket's own allowances (D198). An invalid one is
-  // ignored, never an error (it would say something about the address).
-  const deviceOk = b.deviceTicket !== undefined && (await isDeviceTicketFor(keys, b.deviceTicket, mbx, now));
-  // A staff unlock's one-time token (D198): only the start that presents it uses the grant. Unknown ones are ignored.
-  const grantHash = typeof b.unlockToken === 'string' && UNLOCK_TOKEN_RE.test(b.unlockToken) ? base64UrlEncode(sha256(utf8(b.unlockToken))) : null;
+  const suppressed = await isSuppressed(deps, addrKey);
   const dKey = await domainSubject(deps, r.domain);
+  const share = shareOf(ctx, app);
 
-  // 1. The mailbox (one atomic call): locks, live challenges, the day's challenge cap, the first code's limits.
-  const box = mailboxLimiter(deps, mbx);
-  const adm = await box.admit(ip, expiresAtMs, true, now, deviceOk, grantHash);
+  // 1. The mailbox (one atomic call): locks, live challenges, the day's challenge cap, the first code's limits (an
+  // owner's: its ticket's allowance; a grant is used up here and given back if the start fails later).
+  const adm = await box.admit(ip, expiresAtMs, true, now, claimOk ? claim : null);
   if (!adm.ok) return tryLater(ctx, adm.reason);
-  const ticketed = deviceOk || adm.grant !== null;
+  const owner = adm.owner;
   const undoMailbox = async (alsoLive: boolean) => {
     if (adm.send) await box.refund(adm.send);
-    await box.unadmit(adm.created, alsoLive ? expiresAtMs : null, now, adm.grant);
+    await box.unadmit(adm.created, alsoLive ? expiresAtMs : null, now, owner);
   };
-  // 2. The recipient domain's day (a ticketed start skips it).
-  const dom = await reserveDomain(ctx, dKey, request, now, ticketed);
+  // 2. The recipient domain's day (an owner's start skips it).
+  const dom = await reserveDomain(ctx, dKey, request, now, owner !== null);
   if (!dom.ok) {
     await undoMailbox(true);
     return tryLater(ctx, 'domain');
   }
-  // 3. The partner's quota, only for a start every requester-side limit accepted.
-  const appLimit = await limiter(deps, `app:${app.id}`).hit(appStartLimits(app), now);
+  // 3. The partner's quota, only for a start every requester-side limit accepted (an owner's start skips it).
+  const appLimits = appStartLimits(app);
+  const appLimit = owner ? ({ ok: true } as const) : await limiter(deps, `app:${app.id}`).hit(appLimits, now);
   if (!appLimit.ok) {
     await undoMailbox(true);
     await releaseDomain(deps, dKey, dom.r);
     log({ event: 'limit', requestId: ctx.requestId, endpoint: ctx.endpoint, appId: app.id, limit: appLimit.limit });
     return tooMany(ctx, appLimit.retryAfterMs);
   }
-  const undoApp = () => limiter(deps, `app:${app.id}`).unhit(appStartLimits(app), now);
-  // 4. The global budget, shared out per app.
-  const budget = await reserveBudget(ctx, app.id);
+  const undoApp = async () => {
+    if (!owner) await limiter(deps, `app:${app.id}`).unhit(appLimits, now);
+  };
+  // 4. The global budget: the owner pool for an owner's start, else the app's share of the general pool.
+  const budget = await reserveBudget(ctx, app.id, share, owner !== null);
   if (!budget) {
     await undoMailbox(true);
     await releaseDomain(deps, dKey, dom.r);
@@ -305,7 +347,9 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
     emailEnc: suppressed ? '' : await encryptEmail(id, r.email),
     mailboxKey: mbx,
     domainKey: dKey,
-    ticketed,
+    owner,
+    budgetShare: share,
+    domainRes: dom.r ? [dom.r] : [],
     // A suppressed challenge's MAC is of a random value nobody holds: every code is wrong.
     codeMac: await codeMac(keys, id.id, suppressed ? randomId() : code),
     attempts: 0,
@@ -327,6 +371,7 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
         // The challenge stays (a resend may still deliver), but its first code's places are taken back.
         await undoMailbox(false);
         await releaseDomain(deps, dKey, dom.r);
+        if (dom.r) await challengeStub(deps, id.name).forgetDomain(dom.r);
         await limiter(deps, 'global').refund(budget);
       }),
     );
@@ -354,15 +399,15 @@ export async function handleResend(request: Request, ctx: Ctx): Promise<Response
   if (st.send.result === 'too_soon') return fail(ctx, 429, 'rate_limited', 'Wait before asking for another code', { resendAfterMs: now + st.send.retryAfterMs }, retryHeader(st.send.retryAfterMs));
   // Reserved before the code changes, in the order start uses; a silent (suppressed) challenge takes the same path.
   const box = mailboxLimiter(deps, st.mailboxKey);
-  const res = await box.reserveSend(requesterKey(ipOf(request)), now, st.ticketed);
+  const res = await box.reserveSend(requesterKey(ipOf(request)), now, st.owner);
   if (!res.ok) return tryLater(ctx, res.reason);
   const send = res.reservation;
-  const dom = await reserveDomain(ctx, st.domainKey, request, now, st.ticketed);
+  const dom = await reserveDomain(ctx, st.domainKey, request, now, st.owner !== null);
   if (!dom.ok) {
     await box.refund(send);
     return tryLater(ctx, 'domain');
   }
-  const budget = await reserveBudget(ctx, st.appId);
+  const budget = await reserveBudget(ctx, st.appId, st.budgetShare, st.owner !== null);
   if (!budget) {
     await box.refund(send);
     await releaseDomain(deps, st.domainKey, dom.r);
@@ -375,7 +420,7 @@ export async function handleResend(request: Request, ctx: Ctx): Promise<Response
   };
   const keys = await deps.keys();
   const code = newCode();
-  const r = await stub.newCode(await codeMac(keys, cid.id, code), now);
+  const r = await stub.newCode(await codeMac(keys, cid.id, code), now, dom.r);
   if (r.result !== 'ok') {
     await undoAll();
     if (r.result === 'gone') return gone();
@@ -392,7 +437,7 @@ export async function handleResend(request: Request, ctx: Ctx): Promise<Response
     deps.waitUntil(
       deliver(ctx, r.record, to, code, async () => {
         await undoAll();
-        await stub.undoSend(previous);
+        await stub.undoSend(previous, dom.r);
       }),
     );
   }
@@ -433,7 +478,7 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
   // its own attempts atomically too.
   const ip = requesterKey(ipOf(request));
   const box = mailboxLimiter(deps, live.mailboxKey);
-  const guess = await box.reserveGuess(ip, now, live.ticketed);
+  const guess = await box.reserveGuess(ip, now, live.owner);
   if (!guess.ok) return tryLater(ctx, guess.reason);
   // A mailbox whose backstop tripped or that reached its ceiling is being guessed at: logged at error level, once per
   // trip, with a pseudonymous prefix of its key (an HMAC under K_rl, never the address) so staff can see targeted
@@ -453,13 +498,15 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
   await box.releaseLive(v.record.expiresAtMs, now);
   // The code was right: the challenge is gone (single use). At most one token is minted from it.
   const rec = v.record;
+  // A verified login at a capped domain gives its mails' places back and raises the domain's cap (abuse review M1).
+  if (rec.domainKey) await limiter(deps, `dom:${rec.domainKey}`).domainVerified(rec.domainRes, now);
   const app = await appById(deps.env.APP_DB, rec.appId);
   if (!app?.active || !app.emailOn || app.scopeId !== rec.scopeId) return fail(ctx, 403, 'email_not_enabled', 'Email login is not enabled for this app');
   const email = await decryptEmail(cid, rec.emailEnc);
   if (email === null) return gone();
   const sub = await emailSub(keys.sub, email);
-  // Proof that this browser read a code at this mailbox: the owner's way past a code drain (D198).
-  const owner = await deviceTicket(keys, rec.mailboxKey, now);
+  // Proof that this browser read a code at this exact address: the owner's way past a code drain (D198).
+  const owner = await deviceTicket(keys, await suppressionKey(keys, email), now);
 
   if (rec.purpose === 'session') {
     // Case B lookup: a Google identity that reported this address as verified has the wallet here (D119). A hint for a
@@ -504,7 +551,7 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
     const sessionIk = identityKey(rec.scopeId, 'google', a.googleSub);
     const nonce = nonceOf(autoLinkPreimage(deps.env.SIGNER_ACCOUNT, rec.scopeId, base64UrlDecode(a.sessionHash), sessionIk, { ...j.join, mode: 1 }));
     const { token: idToken } = await mint(ctx, app, rec.scopeId, sub, nonce, 'auto_link');
-    deps.waitUntil(notify(ctx, email, app.name, false, app.id));
+    deps.waitUntil(notify(ctx, email, app.name, false, app.id, rec.budgetShare));
     return ok(ctx, 200, { idToken, googleWallet: false, decision: 'case_a', linkImmediate: true, deviceTicket: owner }, { appId: app.id, purpose: rec.purpose, decision: 'case_a' });
   }
 
@@ -593,7 +640,7 @@ export async function handleGoogleMatch(request: Request, ctx: Ctx): Promise<Res
         if (!b.link) return ok(ctx, 200, base, { appId: app.id, decision: j.decision });
         const nonce = nonceOf(autoLinkPreimage(deps.env.SIGNER_ACCOUNT, app.scopeId, sessionHash, sessionIk, { ...j.join, mode: 1 }));
         const { token: emailToken } = await mint(ctx, app, app.scopeId, sub, nonce, 'auto_link');
-        deps.waitUntil(notify(ctx, r.email, app.name, false, app.id));
+        deps.waitUntil(notify(ctx, r.email, app.name, false, app.id, shareOf(ctx, app)));
         return ok(ctx, 200, { ...base, emailToken, linkImmediate: true }, { appId: app.id, decision: j.decision });
       }
       // Not Google-hosted: a code to that address first (D195). The challenge is prepared here, where the verified
@@ -615,7 +662,9 @@ export async function handleGoogleMatch(request: Request, ctx: Ctx): Promise<Res
         emailEnc: await encryptEmail(cid, r.email),
         mailboxKey: mbx,
         domainKey: await domainSubject(deps, r.domain),
-        ticketed: false,
+        owner: null,
+        budgetShare: shareOf(ctx, app),
+        domainRes: [],
         codeMac: null,
         attempts: 0,
         createdAtMs: now,
@@ -634,7 +683,7 @@ export async function handleGoogleMatch(request: Request, ctx: Ctx): Promise<Res
       const mode = googleHosted ? 1 : 0;
       const nonce = nonceOf(autoLinkPreimage(deps.env.SIGNER_ACCOUNT, app.scopeId, sessionHash, sessionIk, { ...j.join, mode }));
       const { token: emailToken } = await mint(ctx, app, app.scopeId, sub, nonce, 'auto_link');
-      deps.waitUntil(notify(ctx, r.email, app.name, !googleHosted, app.id));
+      deps.waitUntil(notify(ctx, r.email, app.name, !googleHosted, app.id, shareOf(ctx, app)));
       return ok(ctx, 200, { ...base, emailToken, linkImmediate: mode === 1 }, { appId: app.id, decision: j.decision });
     }
     return ok(ctx, 200, base, { appId: app.id, decision: j.decision });
@@ -703,10 +752,10 @@ export async function handleClientProof(request: Request, ctx: Ctx): Promise<Res
 }
 
 /**
- * `{email, ticket}` (the address the user gave support) → clears the mailbox's guess counters, locks and trip for the
- * UTC day, and returns a one-time `unlockToken` for the owner: only the start presenting it passes the caps (D198,
- * scan finding 1). At most 1 a day and 3 in 30 days per
- * mailbox. Audited first (staff, ticket, a 12-character prefix of the mailbox key; never the address).
+ * `{email, ticket}` (the address the user gave support) → a one-time unlock grant for the mailbox, its token **mailed to
+ * the address** (abuse review M3): only the mailbox's holder gets it, never staff, never whoever asks. The start that
+ * presents it counts as an owner's (D198). Clears nothing: the shared guess counters and every lock stay. At most 1 a
+ * day and 3 in 30 days per mailbox. Audited first (staff, ticket, a 12-character prefix of the mailbox key).
  */
 export async function handleUnlock(request: Request, ctx: Ctx): Promise<Response> {
   const { deps } = ctx;
@@ -714,20 +763,24 @@ export async function handleUnlock(request: Request, ctx: Ctx): Promise<Response
   if (!gate.ok) return gate.response;
   const r = typeof gate.body.email === 'string' ? normalizeEmail(gate.body.email) : null;
   if (!r?.ok) return fail(ctx, 400, 'invalid_email', 'Not a valid email address');
-  const mbx = await mailboxKey(await deps.keys(), r.mailbox);
+  const keys = await deps.keys();
+  const mbx = await mailboxKey(keys, r.mailbox);
   const box = mailboxLimiter(deps, mbx);
   if (!(await box.staffAction('unlock', deps.now()))) return fail(ctx, 429, 'staff_cap', 'This mailbox was unlocked already today, or 3 times in 30 days');
   await audit(deps, { staff: gate.staff, action: 'unlock', ticket: gate.body.ticket as string, subject: mbx.slice(0, 12) });
-  // The grant is bound to whoever holds this token (staff pass it to the owner), never to whoever starts next.
-  const unlockToken = `${UNLOCK_TOKEN_PREFIX}${randomId(32)}`;
-  const cleared = await box.staffUnlock(deps.now(), base64UrlEncode(sha256(utf8(unlockToken))));
-  log({ event: 'mailbox_unlocked', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'ok', subject: mbx.slice(0, 12), count: cleared }, 'warn');
-  return ok(ctx, 200, { cleared, unlockToken }, { count: cleared });
+  // A suppressed address gets no mail (unsuppress first, with its own mailed confirmation).
+  if (await isSuppressed(deps, await suppressionKey(keys, r.email))) return ok(ctx, 200, { mailed: false, reason: 'suppressed' }, { code: 'suppressed' });
+  const token = `${UNLOCK_TOKEN_PREFIX}${randomId(32)}`;
+  await box.issueGrant(base64UrlEncode(sha256(utf8(token))), deps.now());
+  const mailed = await mailOwner(ctx, unlockMail({ to: r.email, token, authOrigin: deps.env.AUTH_ORIGIN }));
+  log({ event: 'mailbox_unlocked', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: mailed ? 'ok' : 'error', subject: mbx.slice(0, 12) }, 'warn');
+  return ok(ctx, 200, { mailed }, { code: mailed ? 'mailed' : 'not_mailed' });
 }
 
 /**
- * `{email, ticket}` → removes the address's suppression (a bounce, or a complaint the user withdrew; M3). Capped and
- * audited as unlock. SendGrid keeps its own suppression list: the runbook removes the address there too.
+ * `{email, ticket}` → mails the address a one-time confirmation (abuse review M3); its suppression (a bounce, or a
+ * complaint the user withdrew) is removed only when the mailbox's holder confirms it (`POST /v1/email/confirm`).
+ * Capped and audited as unlock. SendGrid keeps its own suppression list: the runbook removes the address there first.
  */
 export async function handleUnsuppress(request: Request, ctx: Ctx): Promise<Response> {
   const { deps } = ctx;
@@ -740,10 +793,49 @@ export async function handleUnsuppress(request: Request, ctx: Ctx): Promise<Resp
   if (!(await box.staffAction('unsuppress', deps.now()))) return fail(ctx, 429, 'staff_cap', 'This mailbox was unsuppressed already today, or 3 times in 30 days');
   const key = await suppressionKey(keys, r.email);
   await audit(deps, { staff: gate.staff, action: 'unsuppress', ticket: gate.body.ticket as string, subject: key.slice(0, 12) });
-  const res = await deps.env.DB.prepare('DELETE FROM email_suppressions WHERE email_key = ?1').bind(key).run();
+  const row = await deps.env.DB.prepare('SELECT 1 AS x FROM email_suppressions WHERE email_key = ?1').bind(key).first();
+  if (!row) return ok(ctx, 200, { mailed: false, reason: 'not_suppressed' }, { code: 'not_suppressed' });
+  const token = `${CONFIRM_TOKEN_PREFIX}${randomId(32)}`;
+  if (!(await challengeStub(deps, confirmName(token)).putConfirm({ action: 'unsuppress', emailKey: key, expiresAtMs: deps.now() + CONFIRM_TTL_MS }))) return fail(ctx, 500, 'internal', 'Could not store the confirmation');
+  const mailed = await mailOwner(ctx, confirmMail({ to: r.email, token, authOrigin: deps.env.AUTH_ORIGIN }));
+  return ok(ctx, 200, { mailed }, { code: mailed ? 'mailed' : 'not_mailed' });
+}
+
+/**
+ * `{email, ticket}` → revokes every device ticket of that exact address issued until now (a lost or shared device).
+ * Capped and audited as unlock.
+ */
+export async function handleRevokeTickets(request: Request, ctx: Ctx): Promise<Response> {
+  const { deps } = ctx;
+  const gate = await staffGate(request, ctx, ['email']);
+  if (!gate.ok) return gate.response;
+  const r = typeof gate.body.email === 'string' ? normalizeEmail(gate.body.email) : null;
+  if (!r?.ok) return fail(ctx, 400, 'invalid_email', 'Not a valid email address');
+  const keys = await deps.keys();
+  const box = mailboxLimiter(deps, await mailboxKey(keys, r.mailbox));
+  if (!(await box.staffAction('revoke', deps.now()))) return fail(ctx, 429, 'staff_cap', 'This mailbox’s tickets were revoked already today, or 3 times in 30 days');
+  const key = await suppressionKey(keys, r.email);
+  await audit(deps, { staff: gate.staff, action: 'revoke_tickets', ticket: gate.body.ticket as string, subject: key.slice(0, 12) });
+  await box.revokeTickets(key, deps.now());
+  log({ event: 'device_tickets_revoked', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'ok', subject: key.slice(0, 12) }, 'warn');
+  return ok(ctx, 200, { revoked: true });
+}
+
+/** `{token}` (from a mailed confirmation, on `authOrigin`) → does what staff asked once the mailbox's holder confirms. */
+export async function handleConfirm(request: Request, ctx: Ctx): Promise<Response> {
+  const { deps } = ctx;
+  const parsed = await readJson(request, MAX_BODY);
+  if (!parsed.ok) return fail(ctx, parsed.status, 'bad_request', parsed.message);
+  const b = parsed.body;
+  if (!isObj(b) || !onlyKeys(b, ['token']) || typeof b.token !== 'string' || !CONFIRM_TOKEN_RE.test(b.token)) return fail(ctx, 400, 'bad_request', 'Body must be {token}');
+  const limited = await ipLimit(ctx, request, IP_RESEND_LIMITS);
+  if (limited) return limited;
+  const c = await challengeStub(deps, confirmName(b.token)).takeConfirm(deps.now());
+  if (!c) return fail(ctx, 410, 'confirm_expired', 'The link expired or was used');
+  const res = await deps.env.DB.prepare('DELETE FROM email_suppressions WHERE email_key = ?1').bind(c.emailKey).run();
   const removed = (res.meta.changes ?? 0) > 0;
-  log({ event: 'suppression_removed', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'ok', subject: key.slice(0, 12), count: removed ? 1 : 0 }, 'warn');
-  return ok(ctx, 200, { removed }, { count: removed ? 1 : 0 });
+  log({ event: 'suppression_removed', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'ok', subject: c.emailKey.slice(0, 12), count: removed ? 1 : 0 }, 'warn');
+  return ok(ctx, 200, { confirmed: c.action }, { count: removed ? 1 : 0 });
 }
 
 // ---- JWKS and discovery ----
@@ -815,18 +907,20 @@ export const ROUTES = {
   clientProof: '/v1/email/admin/client-proof',
   unlock: '/v1/email/admin/unlock',
   unsuppress: '/v1/email/admin/unsuppress',
+  revokeTickets: '/v1/email/admin/revoke-tickets',
+  confirm: '/v1/email/confirm',
   jwks: '/v1/email/jwks.json',
   openid: '/v1/email/.well-known/openid-configuration',
   sendgridWebhook: '/v1/email/webhooks/sendgrid',
 } as const;
 
 /** Routes whose limits key on the client's IP: refused without a usable `cf-connecting-ip` (L4). */
-const IP_ROUTES: ReadonlySet<string> = new Set([ROUTES.start, ROUTES.resend, ROUTES.verify, ROUTES.googleMatch, ROUTES.sendgridWebhook]);
+const IP_ROUTES: ReadonlySet<string> = new Set([ROUTES.start, ROUTES.resend, ROUTES.verify, ROUTES.confirm, ROUTES.googleMatch, ROUTES.sendgridWebhook]);
 const isStaffRoute = (path: string): boolean => path.startsWith('/v1/email/admin/');
 
 /** Which browser origin may call a POST route (null: no browser caller, no CORS). */
 function allowedOrigin(deps: Deps, path: string): string | null {
-  if (path === ROUTES.start || path === ROUTES.resend || path === ROUTES.verify) return deps.env.AUTH_ORIGIN;
+  if (path === ROUTES.start || path === ROUTES.resend || path === ROUTES.verify || path === ROUTES.confirm) return deps.env.AUTH_ORIGIN;
   if (path === ROUTES.googleMatch) return deps.env.VAULT_ORIGIN;
   return null;
 }
@@ -853,6 +947,8 @@ export async function route(request: Request, deps: Deps): Promise<Response> {
       [ROUTES.clientProof]: handleClientProof,
       [ROUTES.unlock]: handleUnlock,
       [ROUTES.unsuppress]: handleUnsuppress,
+      [ROUTES.revokeTickets]: handleRevokeTickets,
+      [ROUTES.confirm]: handleConfirm,
       [ROUTES.sendgridWebhook]: handleSendgridWebhook,
     };
     const handler = handlers[path];

@@ -38,8 +38,9 @@ export const MAILBOX_CODE_LIMITS: Limit[] = [
  */
 export const MAILBOX_RESERVE_LIMIT: Limit = { name: 'reserve:1d', windowMs: DAY, max: 5 };
 /**
- * The owner device ticket's own allowance (D198): 3 code mails per mailbox per UTC day for a `start` that presents a
- * valid ticket, outside every other mailbox limit, so a code drain can't keep the owner out.
+ * The owner device ticket's own allowance (D198): 3 code mails per ticket per UTC day for the challenges a valid
+ * ticket started (resends included), outside every other mailbox limit, so a code drain can't keep the owner out.
+ * Counted per ticket (its nonce), never in a pool an attacker can fill.
  */
 export const MAILBOX_TICKET_SENDS: Limit = { name: 'ticket-sends:1d', windowMs: DAY, max: 3 };
 /** Live challenges per mailbox at once (ticketed starts don't need a free place). */
@@ -61,21 +62,32 @@ export const MAILBOX_WRONG_CEILING: Limit = { name: 'wrong:all:1d', windowMs: DA
 export const MAILBOX_WRONG_BACKSTOP: Limit = { name: 'wrong:any:1d', windowMs: DAY, max: 18 };
 /** Past the backstop: requesters that started a challenge before the trip and have no failure that day. */
 export const MAILBOX_OWNER_SLOT: Limit = { name: 'wrong:owner:1d', windowMs: DAY, max: 4 };
-/** Past the backstop: checks of challenges started with a valid owner device ticket (an attacker can't hold one). */
+/** Past the backstop: checks of challenges started with a valid owner device ticket or unlock grant (an attacker holds neither). */
 export const MAILBOX_TICKET_SLOT: Limit = { name: 'wrong:ticket:1d', windowMs: DAY, max: 3 };
+/**
+ * A staff unlock's own checks, outside the ceiling (M3): 2 per unlock, for the one challenge its mailed grant starts
+ * once the ticket slot is used up. At most 3 unlocks in 30 days, so ≤ 37 a year: the yearly bound is
+ * 365 × 25 + 37 × 2 = 9,199 failed checks, ≈ 0.92% a year against a 6-digit code.
+ */
+export const MAILBOX_GRANT_SLOT: Limit = { name: 'wrong:grant:1d', windowMs: DAY, max: 2 };
 
-/** Staff unlocks and unsuppressions per mailbox: 1 a day, 3 in any 30 days (M2). */
+/** Staff unlocks, unsuppressions and ticket revocations per mailbox: each 1 a day, 3 in any 30 days (M2). */
 export const STAFF_ACTIONS_PER_MAILBOX_DAY = 1;
 export const STAFF_ACTIONS_PER_MAILBOX_30D = 3;
 export const THIRTY_DAYS_MS = 30 * DAY;
 
-/** `start` (and google-match's prepared challenges) per IP subject (IPv4 address, IPv6 /64): 10 per 10 min, 50 a day. */
+/** `start` per IP subject (IPv4 address, IPv6 /64): 10 per 10 min, 50 a day. google-match's prepared challenges are
+ * counted on `ip:match` instead, and their first code on `ip:resend`. */
 export const IP_START_LIMITS: Limit[] = [
   { name: 'ip:start:10m', windowMs: 10 * MIN, max: 10 },
   { name: 'ip:start:1d', windowMs: DAY, max: 50 },
 ];
-/** `start` per aggregate prefix (IPv4 /24, IPv6 /56 and /48): 200 a day each (H1), so cheap /64s don't multiply. */
-export const IP_AGGREGATE_START_LIMITS: Limit[] = [{ name: 'agg:start:1d', windowMs: DAY, max: 200 }];
+/**
+ * `start` per aggregate prefix (IPv4 /24, IPv6 /56 and /48): 1000 a day each (H1, raised by abuse review M2 from 200
+ * so a carrier NAT or a campus /24 isn't shut by one abuser), so cheap /64s don't multiply. A start with a valid
+ * device ticket or unlock grant skips them (checked first).
+ */
+export const IP_AGGREGATE_START_LIMITS: Limit[] = [{ name: 'agg:start:1d', windowMs: DAY, max: 1000 }];
 /** `verify` per IP: 30 per 10 min. */
 export const IP_VERIFY_LIMITS: Limit[] = [{ name: 'ip:verify:10m', windowMs: 10 * MIN, max: 30 }];
 /** `resend` per IP (not in the spec's table; the same bound as start, D198). */
@@ -84,19 +96,29 @@ export const IP_RESEND_LIMITS: Limit[] = [{ name: 'ip:resend:10m', windowMs: 10 
 export const IP_MATCH_LIMITS: Limit[] = [{ name: 'ip:match:10m', windowMs: 10 * MIN, max: 30 }];
 /** The SendGrid webhook per IP (it posts batches; L5). */
 export const IP_WEBHOOK_LIMITS: Limit[] = [{ name: 'ip:webhook:10m', windowMs: 10 * MIN, max: 120 }];
-/** Staff actions (client proofs, unlocks, unsuppressions together) per staff member. */
+/** Staff actions (client proofs, unlocks, unsuppressions, revocations together) per staff member. */
 export const STAFF_LIMITS: Limit[] = [{ name: 'staff:actions:1h', windowMs: HOUR, max: 20 }];
 
-/** Code mails per recipient registrable domain per UTC day (H1, M4), except the large consumer providers below. */
-export const DOMAIN_SENDS_PER_DAY: Limit = { name: 'domain:sends:1d', windowMs: DAY, max: 100 };
 /**
- * Inside one domain's day, each requester prefix (IPv4 /24, IPv6 /56 and /48) may use at most 20% of it, so a few
- * requesters can't fill a company domain's day and lock everyone there out (scan finding 2). Ticketed and unlock-grant
- * starts skip the domain cap altogether.
+ * Code mails per recipient registrable domain per UTC day (H1, M4), except the large consumer providers in
+ * `domain.ts`: a base of 100 plus 2 per verified login at that domain over the trailing 7 days (abuse review M1), so a
+ * company that really uses email login isn't capped by its own size. A verified challenge gives its mails back.
  */
-export const DOMAIN_PREFIX_SENDS_PER_DAY: Limit = { name: 'domain:prefix:1d', windowMs: DAY, max: Math.floor(DOMAIN_SENDS_PER_DAY.max * 0.2) };
-/** A staff unlock's one-time grant (`admin/unlock` → `unlockToken`): one start, within 24 h of the unlock. */
+export const DOMAIN_SENDS_BASE = 100;
+export const DOMAIN_SENDS_PER_VERIFIED = 2;
+export const DOMAIN_VERIFIED_DAYS = 7;
+export const DOMAIN_SENDS_WINDOW: Omit<Limit, 'max'> = { name: 'domain:sends:1d', windowMs: DAY };
+/**
+ * Inside one domain's day, each requester prefix (IPv4 /24, IPv6 /56 and /48) may use at most 20% of the day's cap, so
+ * a few requesters can't fill a company domain's day (scan finding 2). Ticketed and unlock-grant starts skip the domain
+ * cap altogether.
+ */
+export const DOMAIN_PREFIX_SHARE = 0.2;
+export const DOMAIN_PREFIX_WINDOW: Omit<Limit, 'max'> = { name: 'domain:prefix:1d', windowMs: DAY };
+/** A staff unlock's one-time grant (`admin/unlock` mails its token to the address): one start, within 24 h. */
 export const UNLOCK_GRANT_TTL_MS = DAY;
+/** A staff unsuppress's mailed confirmation: valid 24 h, single use. */
+export const CONFIRM_TTL_MS = DAY;
 /**
  * A hint for a non-Google-hosted address counts only while its Google identity logged in with that address within the
  * last 180 days (D199): a stale Google account still holding an old address can't steer the address's new owner for
@@ -118,11 +140,27 @@ export function appStartLimits(plan: { perMinute: number; perDay: number }): Lim
 }
 
 /**
- * The global daily send budget (every user mail), shared out (H1): an app may use at most `APP_SHARE` of it a day, and
- * the last `RESERVE` of it only an app that has used less than half its share that day, so no single app (or an
- * attacker posing as its users) can stop email login everywhere.
+ * The global daily send budget (every user mail, `dailySendBudget`), split (H1; abuse review H1):
+ * - the owner pool, 15% of it: mail for challenges a valid device ticket or unlock grant started, and the staff
+ *   unlock and unsuppress mails, ignoring the app share, so an attacker filling an app's share (or the general pool)
+ *   never stops an owner's mail;
+ * - the general pool, the other 85%: everything else. An app may use its share of it a day, sized from its plan
+ *   (`BUDGET_SHARE_PER_PLAN_DAY` × the plan's `per_day`: the free plan's 5000 gives 100), capped at the general pool,
+ *   with a flat `BUDGET_APP_SHARE` of the budget only when the plan has no usable `per_day`; and the last
+ *   `BUDGET_RESERVE` of the general pool only an app that has used less than half its share that day.
  */
+export const BUDGET_OWNER_POOL = 0.15;
+export const BUDGET_SHARE_PER_PLAN_DAY = 0.02;
 export const BUDGET_APP_SHARE = 0.1;
 export const BUDGET_RESERVE = 0.2;
+/** No app's share is below this many mails a day (a tiny plan can still sign people in), within the general pool. */
+export const BUDGET_MIN_SHARE = 10;
+
+/** An app's daily share of the general pool, from its plan's `per_day`. */
+export function appBudgetShare(perDay: number, budget: number): number {
+  const general = budget - Math.floor(budget * BUDGET_OWNER_POOL);
+  const fromPlan = Number.isFinite(perDay) && perDay > 0 ? Math.max(BUDGET_MIN_SHARE, Math.floor(perDay * BUDGET_SHARE_PER_PLAN_DAY)) : Math.floor(budget * BUDGET_APP_SHARE);
+  return Math.max(1, Math.min(general, fromPlan));
+}
 /** `email_budget` log lines when a count reaches these fractions of the global budget or of an app's share. */
 export const BUDGET_LOG_AT = [0.5, 0.8] as const;

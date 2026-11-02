@@ -26,7 +26,7 @@ chain and holds no chain key.
 
 | File | Role |
 |---|---|
-| `src/handlers.ts` | the routes: `start`, `resend`, `verify`, `google-match`, `admin/client-proof`, `admin/unlock`, `admin/unsuppress`, JWKS, discovery, the SendGrid webhook |
+| `src/handlers.ts` | the routes: `start`, `resend`, `verify`, `google-match`, `admin/client-proof`, `admin/unlock`, `admin/unsuppress`, `admin/revoke-tickets`, `confirm`, JWKS, discovery, the SendGrid webhook |
 | `src/commitment.ts`, `src/layouts.ts` | purposes, commitments and every nonce (checked against the contract's `email_fixture.json`) |
 | `src/decide.ts` | the four cases of automatic linking, judged as the contract's `auto_link` will |
 | `src/challenge.ts`, `src/challenge-id.ts` | `Challenge` Durable Object: one challenge or link ticket, atomic attempts, single use; the challengeId's public half (the object's name) and secret half (the address's encryption key) |
@@ -36,7 +36,7 @@ chain and holds no chain key.
 | `src/jws.ts`, `src/signer.ts`, `src/kms.ts` | JWS JSON minting with a self-check; the Worker-secret signer; the KMS adapter (aws4fetch) |
 | `src/sender.ts`, `src/sendgrid.ts`, `src/outbox.ts`, `src/mail.ts` | the sender interface, SendGrid v3, the `local*`-only outbox stub, the per-purpose mail texts |
 | `src/google.ts`, `src/chain.ts`, `src/apps.ts`, `src/access.ts`, `src/webhook.ts` | Google (ID token, tokeninfo, userinfo, revoke), NEAR views, the app lookup, Cloudflare Access, SendGrid's signed events |
-| `scripts/gen-contract-fixture.ts` | writes `contracts/hana-signer/src/issuer_tokens_fixture.json` (tokens from this code, for the contract's unit tests) |
+| `scripts/gen-contract-fixture.ts` | writes `contracts/hana-signer/src/issuer_tokens_fixture.json` (tokens from this code, for the contract's unit tests), deterministically from a public test seed; `scripts/test/gen-contract-fixture.test.ts` checks the committed file matches |
 | `migrations/0001_init.sql` | the issuer's D1: `email_issuance`, `email_hints`, `email_suppressions`, `email_admin_audit` |
 
 ## Commands
@@ -44,7 +44,7 @@ chain and holds no chain key.
 ```sh
 corepack pnpm --filter @hana-id/email-issuer test        # Worker tests (miniflare) and the gen tests
 corepack pnpm --filter @hana-id/email-issuer typecheck
-corepack pnpm --filter @hana-id/scripts email-issuer <env> init --from "Hana <login@…>" [--yes]   # keys + manifest, uploads nothing
+corepack pnpm --filter @hana-id/scripts email-issuer <env> init --from "Hana <login@…>" --budget <n> [--yes]   # keys + manifest, uploads nothing
 corepack pnpm --filter @hana-id/email-issuer gen <env> [--d1-id <uuid>] [--app-d1-id <uuid>] [--dev-vars]
 corepack pnpm --filter @hana-id/scripts email-issuer <env> put [--standby] [--yes]    # the user uploads the secrets
 corepack pnpm --filter @hana-id/email-issuer exec tsx scripts/gen-contract-fixture.ts   # after a layout or token change

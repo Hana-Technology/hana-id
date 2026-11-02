@@ -9,7 +9,7 @@ export interface MailMessage {
   text: string;
   html: string;
   /** For the provider's own categorisation and the outbox stub; never the content. */
-  kind: 'code' | 'link_notice';
+  kind: 'code' | 'link_notice' | 'unlock' | 'confirm';
 }
 
 export type SendResult = { ok: true } | { ok: false; reason: 'rejected' | 'unavailable' | 'misconfigured'; providerStatus?: number };

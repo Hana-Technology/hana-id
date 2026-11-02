@@ -1,13 +1,16 @@
 // Writes contracts/hana-signer/src/issuer_tokens_fixture.json: email tokens minted by the issuer's own code (its
-// layouts, `judge`, commitment parser, Worker-secret signer and JWS JSON minting) with a throwaway RSA-2048 key whose
-// private half is discarded, for the contract's unit test `tests/email/issuer_tokens.rs`, which feeds them into the
-// real contract: an email login, auto_link case A and case B, and link_identity with a link_account token (tokens
-// review L4). The chain state each join is judged from is the one that test sets up.
+// layouts, `judge`, commitment parser, Worker-secret signer and JWS JSON minting) with an RSA-2048 test key derived from
+// a public seed, for the contract's unit test `tests/email/issuer_tokens.rs`, which feeds them into the real contract:
+// an email login, auto_link case A and case B, and link_identity with a link_account token (tokens review L4). The
+// chain state each join is judged from is the one that test sets up.
 //
 //   corepack pnpm --filter @hana-id/email-issuer exec tsx scripts/gen-contract-fixture.ts
 //
-// Re-run it when a layout, the join or the token format changes (the tokens are random: every run changes the file).
-import { createPrivateKey, generateKeyPairSync } from 'node:crypto';
+// Deterministic (tokens review N2): the key comes from TEST_RSA_SEED (public: the key is a test key and nothing else),
+// `iat` and every `jti` are fixed, RS256 (PKCS #1 v1.5) signatures are deterministic. So every run writes the same file,
+// and `scripts/test/gen-contract-fixture.test.ts` regenerates it in memory and compares it with the committed one. Re-run
+// it when a layout, the join or the token format changes.
+import { createHash, createPrivateKey } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,6 +40,92 @@ export const G2 = 'g-bob';
 export const ADDRESS = 'alice@example.com';
 /** A public, test-only K_sub (never an environment's): sha256 of this label. */
 export const TEST_SUB_KEY_LABEL = 'hana-id issuer_tokens_fixture TEST K_sub (never an environment key)';
+/** The public seed of the fixture's RSA test key (never an environment key). */
+export const TEST_RSA_SEED = 'hana-id issuer_tokens_fixture TEST RSA-2048 seed (public; never an environment key)';
+
+// ---- a deterministic RSA-2048 test key (SHA-256 counter stream, sieve + Miller-Rabin) ----
+
+function stream(seed: string): (n: number) => Buffer {
+  let counter = 0;
+  let buf = Buffer.alloc(0);
+  return (n) => {
+    while (buf.length < n) {
+      const c = Buffer.alloc(4);
+      c.writeUInt32BE(counter++);
+      buf = Buffer.concat([buf, createHash('sha256').update(seed).update(c).digest()]);
+    }
+    const out = buf.subarray(0, n);
+    buf = buf.subarray(n);
+    return out;
+  };
+}
+const big = (b: Buffer): bigint => BigInt(`0x${b.toString('hex')}`);
+function modPow(b: bigint, e: bigint, m: bigint): bigint {
+  let r = 1n;
+  b %= m;
+  for (; e > 0n; e >>= 1n) {
+    if (e & 1n) r = (r * b) % m;
+    b = (b * b) % m;
+  }
+  return r;
+}
+function modInv(a: bigint, m: bigint): bigint {
+  let [r0, r1, s0, s1] = [a % m, m, 1n, 0n];
+  while (r1 !== 0n) {
+    const q = r0 / r1;
+    [r0, r1, s0, s1] = [r1, r0 - q * r1, s1, s0 - q * s1];
+  }
+  if (r0 !== 1n) throw new Error('not invertible');
+  return ((s0 % m) + m) % m;
+}
+const SMALL_PRIMES = (() => {
+  const out: bigint[] = [];
+  for (let n = 3; n < 2000; n += 2) if (out.every((p) => BigInt(n) % p !== 0n)) out.push(BigInt(n));
+  return out;
+})();
+function probablePrime(n: bigint, rand: (n: number) => Buffer): boolean {
+  for (const p of SMALL_PRIMES) if (n % p === 0n) return n === p;
+  let d = n - 1n;
+  let s = 0;
+  while ((d & 1n) === 0n) {
+    d >>= 1n;
+    s++;
+  }
+  witness: for (let i = 0; i < 32; i++) {
+    const a = 2n + (big(rand(128)) % (n - 3n));
+    let x = modPow(a, d, n);
+    if (x === 1n || x === n - 1n) continue;
+    for (let k = 1; k < s; k++) {
+      x = (x * x) % n;
+      if (x === n - 1n) continue witness;
+    }
+    return false;
+  }
+  return true;
+}
+function prime1024(rand: (n: number) => Buffer, e: bigint): bigint {
+  for (;;) {
+    const c = big(rand(128)) | (3n << 1022n) | 1n;
+    if ((c - 1n) % e !== 0n && probablePrime(c, rand)) return c;
+  }
+}
+const b64u = (n: bigint): string => {
+  let hex = n.toString(16);
+  if (hex.length % 2) hex = `0${hex}`;
+  return Buffer.from(hex, 'hex').toString('base64url');
+};
+
+/** The fixture's RSA-2048 private JWK, the same on every run (from TEST_RSA_SEED). */
+export function testRsaJwk(): Record<string, string> {
+  const rand = stream(TEST_RSA_SEED);
+  const e = 65537n;
+  const p = prime1024(rand, e);
+  let q = prime1024(rand, e);
+  while (q === p) q = prime1024(rand, e);
+  const n = p * q;
+  const d = modInv(e, (p - 1n) * (q - 1n));
+  return { kty: 'RSA', n: b64u(n), e: b64u(e), d: b64u(d), p: b64u(p), q: b64u(q), dp: b64u(d % (p - 1n)), dq: b64u(d % (q - 1n)), qi: b64u(modInv(q, p)) };
+}
 
 /** The Ed25519 public key of the 32-byte seed [seed; 32] (ed25519-dalek's SigningKey::from_bytes, the tests' pk()). */
 export function sessionPk(seed: number): Uint8Array {
@@ -49,8 +138,7 @@ const session = (seed: number) => ({ scopeId: SCOPE, sessionPublicKey: sessionPk
 const own = (scope: string, provider: string, sub: string, opened: boolean): IdentityView => ({ key: toHex(identityKey(scope, provider, sub)), status: 'own', opened, root: null, accountEpoch: 0 });
 
 export async function build(): Promise<Record<string, unknown>> {
-  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048, publicExponent: 65537 });
-  const jwk = privateKey.export({ format: 'jwk' }) as Record<string, string>;
+  const jwk = testRsaJwk();
   const kid = (await rsaThumbprint({ n: jwk.n!, e: jwk.e! }))!;
   const signer = await WorkerSecretSigner.create(JSON.stringify(jwk), kid);
   const published = [{ kty: 'RSA' as const, n: jwk.n!, e: jwk.e!, kid, use: 'sig' as const, alg: 'RS256' as const }];
@@ -78,7 +166,7 @@ export async function build(): Promise<Record<string, unknown>> {
   if (!la.ok) throw new Error('fixture: link_account commitment');
   const linkAccount = await token(la.value.nonce);
   return {
-    _comment: 'Generated by apps/email-issuer/scripts/gen-contract-fixture.ts: tokens minted by the email issuer\'s own code with a throwaway key (private half discarded). Consumed by src/tests/email/issuer_tokens.rs.',
+    _comment: 'Generated by apps/email-issuer/scripts/gen-contract-fixture.ts: tokens minted by the email issuer\'s own code with a test key from a public seed (deterministic; checked by its vitest). Consumed by src/tests/email/issuer_tokens.rs.',
     signer: SIGNER,
     iss: ISS,
     kid,
@@ -95,5 +183,5 @@ export async function build(): Promise<Record<string, unknown>> {
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const fixture = await build();
   writeFileSync(FIXTURE_PATH, `${JSON.stringify(fixture, null, 2)}\n`);
-  console.log(`wrote ${FIXTURE_PATH} (kid ${fixture.kid as string}; the RSA private key was not kept)`);
+  console.log(`wrote ${FIXTURE_PATH} (kid ${fixture.kid as string}; the test key is derived from a public seed and not written)`);
 }

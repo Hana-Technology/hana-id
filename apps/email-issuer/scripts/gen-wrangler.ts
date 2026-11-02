@@ -108,7 +108,7 @@ export const TEST_MANIFEST = {
 } as unknown as Manifest;
 
 export function testWranglerConfig(publicKeys: unknown[], activeKid: string): Record<string, unknown> {
-  const m = { ...TEST_MANIFEST, emailIssuer: { ...TEST_MANIFEST.emailIssuer!, publicKeys, signer: { kind: 'worker-secret', activeKid } } } as Manifest;
+  const m = { ...TEST_MANIFEST, emailIssuer: { ...TEST_MANIFEST.emailIssuer!, publicKeys, signer: { kind: 'worker-secret', activeKid }, dailySendBudget: 1000 } } as Manifest;
   return wranglerConfig(m, LOCAL_D1_ID, LOCAL_D1_ID);
 }
 

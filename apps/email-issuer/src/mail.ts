@@ -103,3 +103,35 @@ export function linkNoticeMail(input: { to: string; appName: string; authOrigin:
     kind: 'link_notice',
   };
 }
+
+/**
+ * A staff unlock's one-time grant, mailed to the address (abuse review M3): only the mailbox's holder gets it. The token
+ * travels in the link's fragment (never sent to a server by the browser), and the `authOrigin` page passes it to
+ * `start` as `unlockToken` (batch 8).
+ */
+export function unlockMail(input: { to: string; token: string; authOrigin: string }): MailMessage {
+  const link = `${input.authOrigin.replace(/\/+$/u, '')}/email/unlock#${input.token}`;
+  const what = 'Hana support unlocked sign-in with this email, as you asked. To sign in, open this link in the browser where you use the app. It works once, within 24 hours.';
+  const notYou = 'Didn’t ask Hana support for this? Ignore this mail: nothing changes.';
+  return {
+    to: input.to,
+    subject: 'Your Hana sign-in is unlocked',
+    text: [what, '', link, '', notYou, ''].join('\n'),
+    html: html([escapeHtml(what), `<a href="${escapeHtml(link)}">${escapeHtml(link)}</a>`, escapeHtml(notYou)]),
+    kind: 'unlock',
+  };
+}
+
+/** A staff unsuppress's confirmation, mailed to the address (abuse review M3): mail resumes only once its holder confirms. */
+export function confirmMail(input: { to: string; token: string; authOrigin: string }): MailMessage {
+  const link = `${input.authOrigin.replace(/\/+$/u, '')}/email/confirm#${input.token}`;
+  const what = 'Hana stopped sending sign-in codes to this email after a bounce or a spam report. To receive them again, open this link. It works once, within 24 hours.';
+  const notYou = 'Didn’t ask Hana support for this? Ignore this mail: nothing changes.';
+  return {
+    to: input.to,
+    subject: 'Confirm to receive Hana sign-in codes again',
+    text: [what, '', link, '', notYou, ''].join('\n'),
+    html: html([escapeHtml(what), `<a href="${escapeHtml(link)}">${escapeHtml(link)}</a>`, escapeHtml(notYou)]),
+    kind: 'confirm',
+  };
+}

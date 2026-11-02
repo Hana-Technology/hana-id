@@ -81,7 +81,10 @@ export const emailIssuerSchema = z
     from: z.string(),
     /** User-mail provider: SendGrid (D194); `outbox` (a test-only Durable Object) in `local*` envs only. */
     sender: z.enum(EMAIL_SENDERS),
-    /** The env's daily user-mail budget (the breaker: `start` refused at the cap). Default 1000. */
+    /**
+     * The env's daily user-mail budget (the breaker): 15% the owner pool, the rest shared out per app. Required outside
+     * `local*` envs (no silent default; abuse review H1); a `local*` env without one gets 1000.
+     */
     dailySendBudget: z.number().int().min(1).max(10_000_000).optional(),
     /**
      * `POST /v1/email/admin/client-proof` (staff only): the Cloudflare Access application in front of that path and the
@@ -157,6 +160,7 @@ export function emailIssuerRules(
   if (t.signer.kind === 'aws-kms' && t.signer.keys.primary.kid === t.signer.keys.standby.kid) issue(['signer', 'keys'], 'Primary and standby must be different keys');
   if (t.signer.kind === 'worker-secret' && m.network !== 'testnet') issue(['signer', 'kind'], 'A Worker-secret email signing key is testnet only: mainnet uses AWS KMS (D121)');
   if (t.sender === 'outbox' && !isLocalEnv(m.name)) issue(['sender'], 'The outbox sender is a test stub, for local* envs only');
+  if (t.dailySendBudget === undefined && !isLocalEnv(m.name)) issue(['dailySendBudget'], 'emailIssuer.dailySendBudget is required outside local* envs (the daily user-mail budget; no default)');
   const fromProblem = emailFromProblem(t.from);
   if (fromProblem) issue(['from'], `emailIssuer.from ${fromProblem}`);
   if (t.cloudflare.workerName === m.cloudflare.workerName) issue(['cloudflare', 'workerName'], "emailIssuer.cloudflare.workerName must differ from the API's Worker (Q1: a separate Worker)");

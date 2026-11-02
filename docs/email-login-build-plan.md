@@ -428,8 +428,15 @@ per-prefix shares (20%) of a domain's day, ticketed starts exempt, `email_domain
   client proofs at the scope's current `action_nonce` with an email app; `email-issuer <env> put --standby` and the
   exact key-leak runbook; issuer-minted tokens checked in the real contract (`contracts/hana-signer` tests only, 4
   tests, `issuer_tokens_fixture.json`); gitleaks `hana-private-jwk` also matches an unquoted `d: '…'`.
-- **Tests.** apps/email-issuer: 105 Worker tests (miniflare: layouts against the contract fixtures, codes,
-  limits and the ceiling, google-match's four cases, signers and KMS, adapters, the log-capture test) and 5 `gen` tests;
+- **Abuse re-check fixes** (D198, D199, to confirm): an owner budget pool (15%) and plan-sized app shares,
+  `dailySendBudget` required outside `local*` (`init --budget`); a domain cap that grows with verified logins and gives
+  a verified challenge's places back, more exempt providers; ticket and grant checked before the prefix limits (raised
+  to 1000 a day) and skipping every shared pool; `admin/unlock` and `admin/unsuppress` mail the address instead of
+  answering staff, unlock clears nothing and adds a grant slot of 2 (0.92% a year with unlocks), `POST
+  /v1/email/confirm`; device tickets per exact address with a nonce, per-ticket allowances and staff revocation; a
+  deterministic contract fixture with a regeneration test.
+- **Tests.** apps/email-issuer: 112 Worker tests (miniflare: layouts against the contract fixtures, codes,
+  limits and the ceiling, google-match's four cases, signers and KMS, adapters, the log-capture test) and 7 node tests (`gen`, the fixture);
   packages/env +11 (`emailIssuer`), packages/jwks +3 (`rsaThumbprint`), scripts +10 (`email-issuer`) and 6 secret-scan
   self-test cases; hana-signer +4 (`tests/email/issuer_tokens.rs`, 303 in all); `pnpm -r test` and `pnpm -r typecheck` green. Existing tests broken on `develop` by the identity-token deploy
   (`envs/sandbox-dev.json` gained `identityToken`, whose `iss` pins `apiUrl` and whose signer says `worker-secret`)

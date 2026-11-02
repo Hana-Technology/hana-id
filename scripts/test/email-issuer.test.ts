@@ -70,20 +70,20 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 describe('email-issuer init', () => {
   it('without --yes prints the plan and changes nothing', () => {
-    run('init', '--from', FROM);
+    run('init', '--from', FROM, '--budget', '1000');
     expect(out.at(-1)).toBe(DRY_RUN_LINE);
     expect(() => readdirSync(dir)).toThrow();
     expect(text).toBe(baseText());
   });
 
   it('writes five 0600 files, the manifest block, and uploads nothing; prints the pins, never a secret', async () => {
-    run('init', '--from', FROM, '--yes');
+    run('init', '--from', FROM, '--budget', '1000', '--yes');
     expect(puts).toEqual([]);
     expect(mode(join(root, '.secrets'))).toBe(0o700);
     for (const k of ['signingKey', 'standbyKey', 'subKey', 'codeKey', 'rlKey'] as const) expect(mode(file(k))).toBe(0o600);
     for (const k of ['subKey', 'codeKey', 'rlKey'] as const) expect(Buffer.from(readFileSync(file(k), 'utf8').trim(), 'base64')).toHaveLength(32);
     const t = manifest().emailIssuer!;
-    expect(t).toMatchObject({ iss: `${manifest().apiUrl}/v1/email`, sender: 'sendgrid', from: FROM, cloudflare: { workerName: `hana-id-email-issuer-${name}`, d1Name: `hana-id-email-issuer-${name}` } });
+    expect(t).toMatchObject({ iss: `${manifest().apiUrl}/v1/email`, sender: 'sendgrid', from: FROM, dailySendBudget: 1000, cloudflare: { workerName: `hana-id-email-issuer-${name}`, d1Name: `hana-id-email-issuer-${name}` } });
     const primary = JSON.parse(readFileSync(file('signingKey'), 'utf8')) as { n: string; e: string };
     const standby = JSON.parse(readFileSync(file('standbyKey'), 'utf8')) as { n: string; e: string };
     expect(t.signer).toEqual({ kind: 'worker-secret', activeKid: rsaJwkThumbprint(primary) });
@@ -97,30 +97,33 @@ describe('email-issuer init', () => {
   });
 
   it('never overwrites a key or a published block', () => {
-    run('init', '--from', FROM, '--yes');
+    run('init', '--from', FROM, '--budget', '1000', '--yes');
     const before = readFileSync(file('subKey'), 'utf8');
-    expect(() => run('init', '--from', FROM, '--yes')).toThrow('already exists');
+    expect(() => run('init', '--from', FROM, '--budget', '1000', '--yes')).toThrow('already exists');
     rmSync(file('signingKey'));
     rmSync(file('standbyKey'));
     rmSync(file('subKey'));
     rmSync(file('codeKey'));
     rmSync(file('rlKey'));
-    expect(() => run('init', '--from', FROM, '--yes')).toThrow('already has emailIssuer');
+    expect(() => run('init', '--from', FROM, '--budget', '1000', '--yes')).toThrow('already has emailIssuer');
     void before;
   });
 
-  it('needs --from; refuses --outbox outside local* and a non-testnet env', () => {
+  it('needs --from and, outside local*, --budget (no silent default); refuses --outbox outside local* and a non-testnet env', () => {
     expect(() => run('init', '--yes')).toThrow(CliError);
-    expect(() => run('init', '--from', FROM, '--outbox', '--yes')).toThrow('local* envs only');
+    expect(() => run('init', '--from', FROM, '--yes')).toThrow('--budget');
+    expect(() => run('init', '--from', FROM, '--budget', '0', '--yes')).toThrow('--budget');
+    expect(() => run('put', '--budget', '5')).toThrow('init only');
+    expect(() => run('init', '--from', FROM, '--budget', '1000', '--outbox', '--yes')).toThrow('local* envs only');
     const m = manifest();
-    expect(() => emailIssuer([name, 'init', '--from', FROM], { ...deps(), loadManifest: () => ({ ...m, network: 'mainnet' }) as unknown as Manifest })).toThrow('AWS KMS');
+    expect(() => emailIssuer([name, 'init', '--from', FROM, '--budget', '1000'], { ...deps(), loadManifest: () => ({ ...m, network: 'mainnet' }) as unknown as Manifest })).toThrow('AWS KMS');
     expect(() => run('put', '--from', FROM)).toThrow(CliError);
   });
 });
 
 describe('email-issuer put and show', () => {
   it('put uploads the active key and the three HMAC keys (and SendGrid when present), never the standby', () => {
-    run('init', '--from', FROM, '--yes');
+    run('init', '--from', FROM, '--budget', '1000', '--yes');
     run('put');
     expect(out.at(-1)).toBe(DRY_RUN_LINE);
     expect(puts).toEqual([]);
@@ -142,7 +145,7 @@ describe('email-issuer put and show', () => {
   });
 
   it('put refuses a signing key that is not the manifest’s active key', () => {
-    run('init', '--from', FROM, '--yes');
+    run('init', '--from', FROM, '--budget', '1000', '--yes');
     const standby = readFileSync(file('standbyKey'), 'utf8');
     writeFileSync(file('signingKey'), standby);
     expect(() => run('put', '--yes')).toThrow('active kid');
@@ -150,7 +153,7 @@ describe('email-issuer put and show', () => {
   });
 
   it('put --standby switches the active kid to the standby (a suspected leak of the primary) and uploads it', () => {
-    run('init', '--from', FROM, '--yes');
+    run('init', '--from', FROM, '--budget', '1000', '--yes');
     const standby = JSON.parse(readFileSync(file('standbyKey'), 'utf8')) as { n: string; e: string; d: string };
     run('put', '--standby');
     expect(out.at(-1)).toBe(DRY_RUN_LINE);
@@ -168,7 +171,7 @@ describe('email-issuer put and show', () => {
   });
 
   it('show prints public values only', () => {
-    run('init', '--from', FROM, '--yes');
+    run('init', '--from', FROM, '--budget', '1000', '--yes');
     out = [];
     run('show');
     const printed = out.join('\n');
@@ -179,7 +182,7 @@ describe('email-issuer put and show', () => {
   });
 
   it('wrangler gets the value on stdin, never in argv', () => {
-    run('init', '--from', FROM, '--yes');
+    run('init', '--from', FROM, '--budget', '1000', '--yes');
     expect(wranglerSecretArgv(manifest(), 'EMAIL_SUB_KEY')).toEqual(['exec', 'wrangler', 'secret', 'put', 'EMAIL_SUB_KEY', '--name', `hana-id-email-issuer-${name}`]);
   });
 

@@ -7,13 +7,13 @@ import { AccessVerifier } from '../src/access.ts';
 import { base64Encode, base64UrlEncode, fromUtf8, utf8 } from '../src/bytes.ts';
 import { NearChain } from '../src/chain.ts';
 import { senderFor } from '../src/deps.ts';
-import { suppressionKey } from '../src/keys.ts';
+import { readDeviceTicket, suppressionKey } from '../src/keys.ts';
 import { clientProofPreimage, nonceOf } from '../src/layouts.ts';
 import { codeMail, displayAppName, linkNoticeMail } from '../src/mail.ts';
 import { OutboxSender } from '../src/outbox.ts';
 import { SENDGRID_URL, SendGridSender, parseFrom } from '../src/sendgrid.ts';
 import { derToP1363 } from '../src/webhook.ts';
-import { captureLogs, decodeToken, env, harness, seedApp, sessionCommitment, uid } from './helpers.ts';
+import { captureLogs, decodeToken, env, harness, mailboxObject, seedApp, sessionCommitment, uid } from './helpers.ts';
 
 const mail = codeMail({ to: 'a@example.com', code: '123456', appName: 'Wallet', authOrigin: 'https://auth.test', purpose: 'session' });
 
@@ -146,7 +146,7 @@ describe('staff routes (admin/*) behind Cloudflare Access', () => {
     }
   });
 
-  it('unlock: clears a guessing lockout and grants one challenge and one code past the drained limits; capped; audited first', async () => {
+  it('unlock: mails a one-time grant to the address (staff never see it), clears nothing; capped; audited first (M3)', async () => {
     const { h, ask } = await staffHarness();
     h.clock.now = Date.UTC(2027, 0, 20, 8);
     const app = await seedApp(h);
@@ -159,18 +159,31 @@ describe('staff routes (admin/*) behind Cloudflare Access', () => {
       const wrong = h.sender.codeFor(victim) === '000000' ? '111111' : '000000';
       for (let k = 0; k < 5; k++) await h.call('/v1/email/verify', { challengeId: s.challengeId, code: wrong }, { ip });
     }
-    const body = () => ({ pk: app.pk, email: victim, purpose: 'session', commitment: sessionCommitment(app.scope, h.clock.now).json });
+    const body = (extra: Record<string, unknown> = {}) => ({ pk: app.pk, email: victim, purpose: 'session', commitment: sessionCommitment(app.scope, h.clock.now).json, ...extra });
     expect((await h.call('/v1/email/start', body(), { ip: '198.18.0.9' })).status).toBe(429);
     expect((await ask('/v1/email/admin/unlock', { email: victim })).status).toBe(400);
     const { result, lines } = await captureLogs(() => ask('/v1/email/admin/unlock', { email: victim, ticket: 'SUP-77' }));
     expect(result.status).toBe(200);
-    expect(((await result.json()) as { cleared: number }).cleared).toBeGreaterThan(0);
-    for (const l of lines) expect(l).not.toContain(victim);
+    // Staff get no token: only the mailbox's holder does.
+    expect(await result.json()).toEqual({ mailed: true });
+    const mail = h.sender.to(victim).at(-1)!;
+    expect(mail.kind).toBe('unlock');
+    const unlockToken = /#(ug1\.[A-Za-z0-9_-]{43})/u.exec(mail.text)![1]!;
+    expect(mail.text).toContain(`${h.deps.env.AUTH_ORIGIN}/email/unlock#`);
+    for (const l of lines) {
+      expect(l).not.toContain(victim);
+      expect(l).not.toContain(unlockToken);
+    }
     const row = await env.DB.prepare("SELECT staff, action, ticket, subject FROM email_admin_audit WHERE action = 'unlock'").first<{ staff: string; action: string; ticket: string; subject: string }>();
     expect(row).toMatchObject({ staff: 'staff@example.com', action: 'unlock', ticket: 'SUP-77' });
     expect(row!.subject).toHaveLength(12);
     expect(JSON.stringify(row)).not.toContain(victim);
-    expect((await h.call('/v1/email/start', body(), { ip: '198.18.0.9' })).status).toBe(202);
+    // The shared guess counters stay: anyone without the token is still refused; the token's start passes.
+    expect((await h.call('/v1/email/start', body(), { ip: '198.18.0.9' })).status).toBe(429);
+    const s = await h.call('/v1/email/start', body({ unlockToken }), { ip: '198.18.0.9' });
+    expect(s.status).toBe(202);
+    const cid = ((await s.json()) as { challengeId: string }).challengeId;
+    expect((await h.call('/v1/email/verify', { challengeId: cid, code: h.sender.codeFor(victim) }, { ip: '198.18.0.9' })).status).toBe(200);
     // One a day per mailbox, three in 30 days.
     expect((await ask('/v1/email/admin/unlock', { email: victim, ticket: 'SUP-78' })).status).toBe(429);
     for (const days of [1, 2]) {
@@ -183,7 +196,7 @@ describe('staff routes (admin/*) behind Cloudflare Access', () => {
     expect((await ask('/v1/email/admin/unlock', { email: victim, ticket: 'SUP-91' })).status).toBe(200);
   });
 
-  it('unlock returns a one-time token: only a start presenting it gets past a drained mailbox, never the attacker’s (M1, scan 1)', async () => {
+  it('only the mailed token’s start passes a drained mailbox, never the attacker’s; given back on failure; one-time (M1, scan 1)', async () => {
     const { h, ask } = await staffHarness();
     h.clock.now = Date.UTC(2027, 0, 21, 8);
     const app = await seedApp(h);
@@ -201,14 +214,12 @@ describe('staff routes (admin/*) behind Cloudflare Access', () => {
     const owner = '192.0.2.10';
     const start = (ip: string, extra: Record<string, unknown> = {}) => h.call('/v1/email/start', { pk: app.pk, email: victim, purpose: 'session', commitment: sessionCommitment(app.scope, h.clock.now).json, ...extra }, { ip });
     expect((await start(owner)).status).toBe(429);
-    const u = await ask('/v1/email/admin/unlock', { email: victim, ticket: 'SUP-1' });
-    expect(u.status).toBe(200);
-    const { unlockToken } = (await u.json()) as { unlockToken: string };
-    expect(unlockToken).toMatch(/^ug1\.[A-Za-z0-9_-]{43}$/u);
+    expect((await ask('/v1/email/admin/unlock', { email: victim, ticket: 'SUP-1' })).status).toBe(200);
+    const unlockToken = /#(ug1\.[A-Za-z0-9_-]{43})/u.exec(h.sender.to(victim).at(-1)!.text)![1]!;
     // The attacker (any requester without the token, or with a forged one) can't use the grant.
     expect((await start('198.51.7.7')).status).toBe(429);
     expect((await start('198.51.7.8', { unlockToken: `ug1.${'A'.repeat(43)}` })).status).toBe(429);
-    // A refused or undelivered start gives the grant back: the provider fails once, then delivers.
+    // An undelivered start gives the grant back: the provider fails once, then delivers.
     h.sender.next = { ok: false, reason: 'unavailable', providerStatus: 503 };
     expect((await start(owner, { unlockToken })).status).toBe(202);
     h.sender.next = { ok: true };
@@ -220,7 +231,7 @@ describe('staff routes (admin/*) behind Cloudflare Access', () => {
     expect((await start(owner, { unlockToken })).status).toBe(429);
   });
 
-  it('unsuppress: removes an exact address’s suppression; needs a ticket; capped; audited first (M3)', async () => {
+  it('unsuppress: mails a confirmation; the suppression goes only when the mailbox’s holder confirms; capped; audited first (M3)', async () => {
     const { h, ask } = await staffHarness();
     const app = await seedApp(h);
     const a = `s${uid().replace(/[^a-z0-9]/gu, '')}@example.com`;
@@ -230,11 +241,47 @@ describe('staff routes (admin/*) behind Cloudflare Access', () => {
     expect(h.sender.to(a)).toHaveLength(0);
     expect((await ask('/v1/email/admin/unsuppress', { email: a })).status).toBe(400);
     const r = await ask('/v1/email/admin/unsuppress', { email: a, ticket: 'SUP-5' });
-    expect(await r.json()).toEqual({ removed: true });
+    expect(await r.json()).toEqual({ mailed: true });
     expect(await env.DB.prepare("SELECT ticket FROM email_admin_audit WHERE action = 'unsuppress'").first('ticket')).toBe('SUP-5');
+    const mail = h.sender.to(a).at(-1)!;
+    expect(mail.kind).toBe('confirm');
+    const token = /#(uc1\.[A-Za-z0-9_-]{43})/u.exec(mail.text)![1]!;
+    // Still suppressed until confirmed.
     expect((await start()).status).toBe(202);
-    expect(h.sender.to(a)).toHaveLength(1);
+    expect(h.sender.to(a).filter((m) => m.kind === 'code')).toHaveLength(0);
+    expect((await h.call('/v1/email/confirm', { token: `uc1.${'B'.repeat(43)}` })).status).toBe(410);
+    const c = await h.call('/v1/email/confirm', { token });
+    expect(await c.json()).toEqual({ confirmed: 'unsuppress' });
+    expect((await h.call('/v1/email/confirm', { token })).status).toBe(410);
+    expect((await start()).status).toBe(202);
+    expect(h.sender.to(a).filter((m) => m.kind === 'code')).toHaveLength(1);
     expect((await ask('/v1/email/admin/unsuppress', { email: a, ticket: 'SUP-6' })).status).toBe(429);
+    const other = `n${uid().replace(/[^a-z0-9]/gu, '')}@example.com`;
+    expect(await (await ask('/v1/email/admin/unsuppress', { email: other, ticket: 'SUP-7' })).json()).toEqual({ mailed: false, reason: 'not_suppressed' });
+  });
+
+  it('revoke-tickets: an address’s device tickets stop counting; capped; audited first', async () => {
+    const { h, ask } = await staffHarness();
+    const app = await seedApp(h);
+    const a = `r${uid().replace(/[^a-z0-9]/gu, '')}@example.com`;
+    const s = (await (await h.call('/v1/email/start', { pk: app.pk, email: a, purpose: 'session', commitment: sessionCommitment(app.scope, h.clock.now).json })).json()) as { challengeId: string };
+    const v = (await (await h.call('/v1/email/verify', { challengeId: s.challengeId, code: h.sender.codeFor(a) })).json()) as { deviceTicket: string };
+    const keys = await h.deps.keys();
+    const addrKey = await suppressionKey(keys, a);
+    const t = (await readDeviceTicket(keys, v.deviceTicket, addrKey, h.clock.now))!;
+    const claim = { kind: 'ticket' as const, id: t.id, addrKey, issuedAtMs: t.issuedAtMs };
+    const box = await mailboxObject(h, a);
+    expect(await box.checkOwner(claim, h.clock.now)).toBe(true);
+    expect((await ask('/v1/email/admin/revoke-tickets', { email: a, ticket: 'SUP-9' })).status).toBe(200);
+    expect(await env.DB.prepare("SELECT ticket FROM email_admin_audit WHERE action = 'revoke_tickets'").first('ticket')).toBe('SUP-9');
+    expect(await box.checkOwner(claim, h.clock.now)).toBe(false);
+    // A ticket issued after the revocation counts again.
+    h.clock.now += 1000;
+    const s2 = (await (await h.call('/v1/email/start', { pk: app.pk, email: a, purpose: 'session', commitment: sessionCommitment(app.scope, h.clock.now).json })).json()) as { challengeId: string };
+    const v2 = (await (await h.call('/v1/email/verify', { challengeId: s2.challengeId, code: h.sender.codeFor(a) })).json()) as { deviceTicket: string };
+    const t2 = (await readDeviceTicket(keys, v2.deviceTicket, addrKey, h.clock.now))!;
+    expect(await box.checkOwner({ kind: 'ticket', id: t2.id, addrKey, issuedAtMs: t2.issuedAtMs }, h.clock.now)).toBe(true);
+    expect((await ask('/v1/email/admin/revoke-tickets', { email: a, ticket: 'SUP-10' })).status).toBe(429);
   });
 
   it('a bounce lapses after 30 days; a complaint stays', async () => {
@@ -354,7 +401,7 @@ describe('Durable Object cleanup', () => {
   it('a challenge deletes itself at expiry; a limiter forgets ended windows', async () => {
     const h = await harness();
     const stub = env.EMAIL_CHALLENGE.get(env.EMAIL_CHALLENGE.idFromName(`cleanup-${uid()}`));
-    await stub.create({ appId: 'a', appName: 'A', scopeId: 's', purpose: 'session', nonce: 'n', autoLink: null, silent: false, emailEnc: '', mailboxKey: 'k', domainKey: '', ticketed: false, codeMac: 'AAAA', attempts: 0, createdAtMs: 0, expiresAtMs: Date.now() + 1000, lastSentAtMs: 0, resends: 0 });
+    await stub.create({ appId: 'a', appName: 'A', scopeId: 's', purpose: 'session', nonce: 'n', autoLink: null, silent: false, emailEnc: '', mailboxKey: 'k', domainKey: '', owner: null, budgetShare: 1, domainRes: [], codeMac: 'AAAA', attempts: 0, createdAtMs: 0, expiresAtMs: Date.now() + 1000, lastSentAtMs: 0, resends: 0 });
     expect(await runDurableObjectAlarm(stub)).toBe(true);
     await runInDurableObject(stub, (_o, state) => expect([...state.storage.kv.list()]).toEqual([]));
     const lim = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`cleanup-${uid()}`));

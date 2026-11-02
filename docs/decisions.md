@@ -2054,6 +2054,117 @@ change no address.
 - Rejected: dropping `+tags` (the spec's rule: one wallet per inbox); keeping dots significant (an accidental second
   wallet); Gmail rules for Workspace domains (`+tags` elsewhere may be distinct mailboxes).
 
+## Email login build, batch 4 (`apps/email-issuer`), 2026-11-02
+
+Made while building `docs/email-login-build-plan.md` batch 4 (branch `feat/email-login-4`), where the spec was silent,
+contradicted itself or allowed two readings. Each takes the stricter or safer reading. None changes an address: `sub`
+is computed by `@hana-id/email` alone, from the normalized address including any Gmail `+tag` (D159).
+
+### D195. Case A, not Google-hosted: google-match prepares the code challenge, the popup sends it with `resend`
+- Date 2026-11-02 · Status: to confirm (built on `feat/email-login-4`, not merged) · Source: build of
+  `docs/email-login-spec.md` "Endpoints" (`link` "from the user's Link and continue"), "How the popup gets Google's
+  verified email" (the access token is revoked after the call) and "The four cases" ("a code to a…@domain first
+  (purpose `auto_link`)")
+- Decision: when google-match finds case A and the address isn't Google-hosted, it creates an `auto_link` challenge
+  itself, holding Google's verified address, the Google `sub` and sha256 of this login's session nonce preimage, and
+  sends nothing; it answers `challenge: {challengeId, expiresAtMs, to: "a…@domain"}`. After the user's "Link and
+  continue" the popup calls `POST /v1/email/resend {challengeId}`, which sends that challenge's first code (it counts
+  as a code, not as one of the two resends). `verify` then re-reads the chain (D133) and mints the `auto_link` token
+  only if the case is still A and linkable (`409 link_refused {decision}` otherwise). `start` refuses purpose
+  `auto_link`. `link` gates only the minting of `emailToken` (Google-hosted case A; case B with a `linkTicket`), so
+  the vault sends `link: true` on its own at a Google login, as the spec says for Google-hosted case A.
+- Why: the spec's two-step reading ("call again with `link: true` after the click") can't work, since the access
+  token is revoked at the end of the first call, and a `start` with purpose `auto_link` would need the popup to hold
+  or retype the address Google reported, letting the caller choose which address gets the code. Here only Google's
+  verified address can receive it, and nothing is mailed before the user's click.
+- Cost: the address sits in the challenge object for up to 10 minutes even when the user picks "Sign in with
+  email" (the privacy table's "challenge object until it ends (≤ 10 min)").
+- Rejected: not revoking the access token until the second call; letting `start` take `auto_link` with a typed
+  address.
+
+### D196. Manifest `emailIssuer` as `identityToken`; the standby key stays off the Worker; init uploads nothing
+- Date 2026-11-02 · Status: to confirm (built) · Source: build of the spec's "Issuer configuration", "Signing key"
+  and "Migration" ("the signing keys (primary, standby) as Worker secrets"); D173, D177
+- Decision: `emailIssuer: {iss, cloudflare: {workerName, d1Name}, signer: {kind: "worker-secret", activeKid} | {kind:
+  "aws-kms", awsRegion, keys: {primary: {kid, arn}, standby: {kid, arn}}}, publicKeys, from, sender: "sendgrid" |
+  "outbox", dailySendBudget?, access?, sendgridWebhookPublicKey?}`. The JWKS is `publicKeys` alone (kid = RFC 7638
+  thumbprint, checked by the schema; 2048–4096-bit RSA, e = 65537, one modulus once). The schema and `gen` refuse
+  `worker-secret` off testnet and `outbox` outside `local*`; `gen` also refuses `aws-kms` until batch 10. The
+  standby key is published and posted on chain but **kept off the Worker**
+  (`.secrets/<env>/email-issuer-signing-key-standby.json`, to move offline), overriding the spec's "primary, standby
+  as Worker secrets": a leak of the Worker's secrets then doesn't reach it, and switching to it is a real recovery.
+  `scripts/email-issuer.ts init` writes the files and the block and uploads nothing; `put` (run by the user) uploads
+  the active key and the three HMAC keys (and the SendGrid key when its file exists), values on wrangler's stdin.
+- Why: one place that decides what the issuer publishes; the same model as the identity token's keys, for the same
+  reason (D177).
+- Left for later: a `switch` / `retire` command for email keys (a key change is also a 72 h owner proposal and a pin
+  change, so it belongs with batch 10's rotation tooling).
+
+### D197. A challenge lives 10 minutes from `start`; the lock also stops `verify`
+- Date 2026-11-02 · Status: to confirm (built) · Source: build of the spec's "Codes, attempts, expiry, replay" and
+  "Privacy and what is stored" (the address in the challenge object "until it ends (≤ 10 min)")
+- Decision: a resend doesn't extend the challenge: every code of it dies 10 minutes after `start`, so the address is
+  never held longer. While an address is locked (10 wrong codes in an hour), `verify` answers `429 rate_limited` for
+  its live challenges too, not only `start` silently. A send the provider refused is taken back from the counters
+  and from the challenge's resend count; a silent non-send (suppressed, locked, over a limit) is never taken back.
+- Why: the stricter reading of the privacy table; a lock that left live challenges guessable would let the 10-wrong
+  bound be exceeded with challenges started before it.
+- Rejected: a fresh 10 minutes per code (up to 30 minutes of storage).
+
+### D198. The limits as built
+- Date 2026-11-02 · Status: to confirm (built; values provisional per D123 Q22) · Source: build of the spec's "Rate
+  limits and abuse" and "Enumeration resistance"
+- Decision:
+  - Every limit is exact, on the issuer's `RateLimiter` objects, including per IP: Cloudflare's Rate Limiting binding
+    only has 10 s and 60 s periods, so it can't express "10 per 10 min, 50 per day" (D95 is about the vault).
+  - Per-address limits (3 codes per 15 min, 10 per day; the 1 h lock) are **silent**: `start` answers 202 and nothing
+    is sent, as for suppressed and locked addresses, so a 429 never says that someone asked for this address recently.
+    They key on `email_key` of the normalized address, `+tag` included (D159).
+  - Per app: `start` 20 × the plan's `per_minute` per minute (the spec's value, read literally) and a daily cap of the
+    plan's `per_day` (the spec names no value).
+  - Not in the spec's table: `resend` 10 per 10 min per IP, `google-match` 30 per 10 min per IP (it calls Google three
+    times and the chain up to five), staff client proofs 20 per hour per staff member.
+  - The global budget (manifest `dailySendBudget`, default 1000 per day) counts every user mail, link notices
+    included; at the cap `start` and `resend` answer 429 and the issuer logs `send_budget_exhausted` at error level.
+    The alert itself is the admin portal's (batch 9): the issuer has no alert channel.
+- Why: enumeration resistance outranks a friendlier error; exact counts because these limits bound email bombing.
+- To check with the user: whether "20 × per_minute" was meant (1,200 starts a minute for a free-plan app; the global
+  budget is then the binding cost bound).
+
+### D199. HTTP, data and chain readings of the issuer
+- Date 2026-11-02 · Status: to confirm (built) · Source: build of the spec's "Endpoints", "The four cases",
+  "Privacy and what is stored", "Deliverability" and "Issuer configuration"
+- Decision:
+  - CORS per route: `start`, `resend`, `verify` for `authOrigin`; `google-match` for `vaultOrigin` (the spec says
+    "authOrigin only" but also that the vault sends google-match); a browser route without that exact `Origin` is
+    403, and needs `Content-Type: application/json`. JWKS and discovery are `GET` with `*`. Every response `no-store`.
+  - The issuer reads the API's D1 read only (binding `APP_DB`: `apps`, `plans`); `apps.login_methods` is expected
+    comma-separated (`'google'`, `'google,email'`), and until the API's batch 6 migration adds it, email is off for
+    every app. `email_hints` (issuer D1) holds `(scope_id, email_sub, google_sub, updated_at_ms)`, written at every
+    google-match with a Google-verified address; `verify` (purpose `session`) reads at most 4 hints and answers
+    `googleWallet: true` when a hinted Google identity has the wallet in case B, with a `linkTicket` only when the
+    contract would accept the join. Tickets live in the `EmailChallenge` namespace (`t:` + sha256 of the ticket),
+    single use for any google-match that presents them.
+  - Before minting any link token (`auto_link`, `link_new`, `link_account`, `link_change`) the issuer reads
+    `get_config().unrecorded_wallets` fresh: while it is true (D135) google-match answers `linkable: false` and
+    `verify` `409 links_unavailable`.
+  - google-match answers `{decision, googleHosted, linkable, emailToken?, linkImmediate?, challenge?}`; `decision` is
+    `none`, `linked`, `pending`, `both_wallets`, `unlinked`, `case_a` or `case_b`, judged exactly as the contract's
+    `auto_link` (`linkable` false when the account is full, already has the joiner's provider, or the joiner is
+    linked elsewhere: the popup then offers only "Sign in with {the other method}").
+  - Client proofs: `sub` = `hana-client-proof` (never an `e1.` sub); Access and the staff allowlist come from
+    `emailIssuer.access` (its own Access application on that path, D88's second check); every proof is a row in
+    `email_admin_audit` and `email_issuance`.
+  - Suppressions are fed by SendGrid's **signed** Event Webhook (`POST /v1/email/webhooks/sendgrid`, ECDSA P-256 over
+    timestamp ‖ body, ≤ 10 min old): hard bounces and spam reports, stored as `email_key` only.
+  - A chain or Google outage after a correct code (verify of `session` reading hints, or `auto_link`) answers 502 and
+    the code is spent: the user starts again (never a guessed `googleWallet: false`, which could make a second wallet).
+- Why: each closes a gap the spec left, on the side that keeps a matched person to one wallet and addresses off logs
+  and storage.
+- Open for batch 6: how `{apiUrl}/v1/email/*` reaches this Worker. On sandbox-dev (`*.workers.dev`) the API Worker
+  would forward it through a service binding, so request bodies (addresses and codes) would pass through the API
+  Worker's memory; a route on a Hana zone in production avoids that.
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -2092,6 +2203,8 @@ change no address.
 | Email spec: `mark_self_issued(provider)` for any issuer | Only `email` (D134) | `docs/contract-interface.md` "Self-issued issuers" |
 | Email spec Q7: Gmail `+tag` dropped (one wallet per inbox) | Each `+tag` its own identity; dots still ignored (D159) | `packages/email/README.md` |
 | `create_session` opens a session for anyone holding the token; after a front-run `create_session` the key holder derives with counter `used + 1` | A bare `create_session` needs the session key's proof of possession bound to its parameters; a session meant to carry a link is revoked and restarted, never derived plainly (D137) | `docs/contract-interface.md` "Sessions and CKD" |
+| Email spec: the testnet signing keys (primary and standby) both Worker secrets | The standby is published and posted on chain but kept off the Worker (D196) | `docs/operations.md` "Email issuer" |
+| Email spec: case A's code started with `start` (purpose `auto_link`) and google-match called again with `link: true` | google-match prepares the `auto_link` challenge with Google's verified address; the popup sends its first code with `resend` (D195) | `docs/api.md` "Email issuer" |
 
 ## Proposed, not yet confirmed
 
@@ -2111,4 +2224,4 @@ is a proposal there.
 Still open from `docs/email-login-spec.md`: nothing; the user-mail provider is SendGrid (D194). The contract readings
 D130 and D131, batch 2's D154 and D155, and the `packages/email` readings D156 and D159 are confirmed (2026-11-02);
 D157 (disposable list) and D158 (`hd` compared exactly) wait for the user's confirmation, as do the watchdog's
-D190–D193 (batch 5).
+D190–D193 (batch 5) and the email issuer's D195–D199 (batch 4).

@@ -1,6 +1,7 @@
-# API reference — every endpoint the `apps/api` Worker serves today
+# API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's)
 
-Last verified against code: 2026-10-30 (branch `feat/identity-token-2`: the identity token's order of checks,
+Last verified against code: 2026-11-02 (branch `feat/email-login-4`: "Email issuer", the separate `apps/email-issuer`
+Worker: its endpoints, limits, Durable Objects, D1, bindings and logs, D195–D199); 2026-10-30 (branch `feat/identity-token-2`: the identity token's order of checks,
 limits, marker, cross-app share check, share tombstones in the cron, the new binding and log event, D176–D178);
 2026-10-30 (branch `feat/identity-token-1`: "Identity token", its routes, limits,
 Durable Objects, D1 tables, cron job, bindings, log fields and the `bad_token` refusals); 2026-10-30 (branch
@@ -880,3 +881,158 @@ Other events: `relay_dispatched` (`pool`, `keyIndex`, `method`, `nearTx`, `nonce
 (`code`: `no_signing_key_for_active_kid`, `signing_key_unusable`, `self_verify_failed`), `identity_ceiling` (error), `identity_volume_alert` (error: past the global soft line),
 `identity_bad_session_path` (error), `identity_count_failed`, `identity_maintenance` (`pruned`), and from the page
 Workers `vault_host` and `auth_page` (`code`).
+
+## Email issuer (`apps/email-issuer`, its own Worker) · E
+
+**E** marks the email login's issuer (`docs/email-login-spec.md` "Email issuer (Hana-run)", build plan batch 4,
+D195–D199). It is a separate Worker from the API (Q1): it alone holds the email signing key, K_sub, K_code, K_rl and
+the SendGrid key; the API holds none of them. It serves `{apiUrl}/v1/email/*` (the iss is `{apiUrl}/v1/email`); how
+that path reaches it (a service binding from the API on `workers.dev`, a zone route in production) is batch 6's (D199).
+**Not deployed**; no app's `login_methods` includes email yet, so nothing calls it. It reads the chain (views only) and
+the API's D1 (read only); it writes nothing on chain.
+
+### Conventions
+
+- Browser routes are `POST` JSON (`Content-Type: application/json`, else 415) from exactly one origin each (D199):
+  `start`, `resend`, `verify` from `AUTH_ORIGIN`, `google-match` from `VAULT_ORIGIN`; any other or missing `Origin` is
+  `403 origin_not_allowed` with no CORS headers. No cookies, no credentials (D70). Bodies ≤ 8 KB, exactly the listed
+  fields (else `400 bad_request`); only `start` carries an address. Every response `Cache-Control: no-store`.
+- Errors are `{error, code, data?}`. Thrown failures: `503 signer_unavailable` (no, a malformed or a non-active
+  ISSUER_SIGNING_KEY, a self-check failure), `503 issuer_unavailable` (a missing HMAC key), `502 near_unavailable`,
+  `502 google_unavailable`, `500 internal`. `429` carries `retry-after`.
+- **The app gate** (`start`, `google-match`): `pk` → the API's D1 app (`401 invalid_key`), `status = 'active'`
+  (`403 app_suspended`), `login_methods` lists `email` (`403 email_not_enabled`; the column is the API's batch 6
+  migration, absent = email off), and the scope holds the client `("email", "email:" + scope_id)` on chain (cached 60
+  s; `409 no_email_client`). The commitment's `scopeId` must be the app's (`400 scope_mismatch`).
+- **Tokens** are JWS General JSON (`{"payload", "signatures": [{"protected", "signature"}]}`, protected header exactly
+  `{"alg":"RS256","kid":<thumbprint>}`), claims exactly `iss aud sub iat exp nonce jti` (`aud` = `email:<scope_id>`,
+  `exp` = `iat` + 600, `jti` 16 random bytes). The issuer computes every nonce itself (`docs/contract-interface.md`
+  byte layouts, checked against `email_fixture.json`). Each signature is verified against the published key before the
+  answer; each token is a row in `email_issuance` before it is signed.
+
+### `POST /v1/email/start` · E
+
+`{pk, email, purpose, commitment}` → `202 {challengeId, expiresAtMs, resendAfterMs}` (absolute ms).
+
+`purpose`: `session` (commitment = the session nonce fields `{scopeId, sessionPublicKey: [32 bytes], expiresAtMs (next
+24 h), keyIndex (0..2^31−1), maxUses (1..500), salt: [16..64 bytes]}`), `link_new` `{scopeId, rootIk, epoch, salt}`,
+`link_account` `{scopeId, rootIk, newIk, epoch, salt}`, `link_change` `{scopeId, action: "cancel"|"unlink", rootIk,
+memberIk, epoch, salt}` (iks 64 lowercase hex). `auto_link` is refused here (google-match prepares it, D195). The
+address is normalized by `@hana-id/email` (`400 invalid_email`); a disposable domain or its subdomain is `400
+email_domain_not_allowed`. Then the IP limit, the app limit and the global budget (`429 rate_limited`, the same for
+every address). The answer is the same 202 for every valid address; suppression, the lock, the per-address limits and
+the send happen after it (waitUntil) and are silent (D198). The code mail goes to the normalized address.
+
+### `POST /v1/email/resend` · E
+
+`{challengeId}` → `202 {challengeId, expiresAtMs, resendAfterMs}`: a new code, the old one dead. `410
+challenge_expired` (expired, used, out of attempts or unknown), `429 rate_limited {resendAfterMs}` (< 30 s after the
+last code), `429 resend_limit` (2 resends done). For a challenge google-match prepared (case A, D195), the first call
+sends its first code (not counted as a resend). The challenge still ends 10 min after it was created (D197).
+
+### `POST /v1/email/verify` · E
+
+`{challengeId, code}` (6 digits) → `200 {idToken, googleWallet, linkTicket?}`. Errors: `400 code_invalid
+{attemptsLeft}` (5 wrong codes kill the challenge; each counts toward the address's 10 per hour, then a 1 h lock), `410
+challenge_expired`, `429 rate_limited` (IP, or the address is locked), `403 email_not_enabled` (the app was suspended
+or turned email off meanwhile: nothing is minted). A correct code is single use: the challenge is deleted before the
+token is minted.
+
+- `session`: `googleWallet` is true when a Google identity that reported this address (`email_hints`) has the wallet
+  in this scope and the email identity has none (case B); `linkTicket` (32 random bytes, single use, 10 min, bound to
+  the app and this address's `sub`) only when the contract would accept the join.
+- `link_new`, `link_account`, `link_change`: `googleWallet: false`. `409 links_unavailable` while
+  `get_config().unrecorded_wallets` (D135).
+- `auto_link` (a challenge google-match prepared): the join is read from the chain now; `200 {idToken, googleWallet:
+  false, decision: "case_a", linkImmediate: true}`, or `409 link_refused {decision}` when the case moved on. A link
+  notice goes to the address.
+
+### `POST /v1/email/google-match` · E
+
+`{pk, accessToken, googleIdToken, commitment, link, linkTicket?}` (commitment = the session nonce fields) → `200
+{decision, googleHosted, linkable, emailToken?, linkImmediate?, challenge?}`.
+
+1. The app gate; the Google ID token is RS256 against Google's JWKS, `iss` Google's, `aud` one of the app's Google
+   clients (its scope's own, only its web client when it set one; shared clients in an `allow_shared` scope), unexpired
+   (`400 google_token_invalid`), and its nonce is the commitment's session nonce (`400 nonce_mismatch`).
+2. `tokeninfo` (POST): the access token's `aud` (and `azp`) is the ID token's, its `sub` the ID token's; `userinfo`:
+   `email`, `email_verified`, `hd` (`400 google_token_invalid`). The access token is revoked at Google's revoke
+   endpoint afterwards, whatever the outcome. Tokens never appear in a URL or a log.
+3. `email_verified` not true (or an address that doesn't normalize): `{decision: "none", googleHosted: false,
+   linkable: false}`, no hint. Otherwise the address's `sub` (the Gmail `+tag` kept, dots dropped, D159), the
+   Google-hosted rule (`@hana-id/email` `isGoogleHosted`, D158), the hint `(scope, sub, Google sub)` upserted.
+4. The case, from `get_identity` and `get_account` of both identities, as the contract judges it (D199): `none` (case
+   C), `linked`, `pending`, `both_wallets`, `unlinked`, `case_a`, `case_b`; `linkable` false when the contract would
+   refuse the join or `unrecorded_wallets` is set.
+5. `emailToken` (an `auto_link` token for the email identity, nonce over this session, the Google identity and the
+   join) only when `link` is true and: Google-hosted `case_a` (`linkImmediate: true`), or `case_b` with a `linkTicket`
+   whose `sub` is this address's (`linkImmediate` = Google-hosted). Any presented ticket is spent. A link notice goes
+   to the address. `case_a` not Google-hosted (linkable): `challenge: {challengeId, expiresAtMs, to: "a…@domain"}`, a
+   prepared `auto_link` challenge whose first code `resend` sends (D195).
+
+### `POST /v1/email/admin/client-proof` · E
+
+`{scopeId, actionNonce}` → `200 {token, client: ["email", "email:<scopeId>"]}`: a token with `sub` `hana-client-proof`
+and nonce `client_proof_nonce(signer, scopeId, actionNonce)`, for `propose_change(AddClient)`. Needs a valid
+Cloudflare Access JWT (`Cf-Access-Jwt-Assertion`: RS256 against the team's certs, `iss`, `aud` the application's AUD
+tag, unexpired, non-empty `sub`) whose email is on `emailIssuer.access.staffEmails` (`403 forbidden`); `404` when the
+env configures no Access. 20 per hour per staff member. Audited in `email_admin_audit` (staff email, scope, nonce,
+jti). No CORS.
+
+### `GET /v1/email/jwks.json`, `GET /v1/email/.well-known/openid-configuration` · E
+
+The JWKS: every key of `emailIssuer.publicKeys` (`kty, n, e, kid, use: "sig", alg: "RS256"`; kid = RFC 7638
+thumbprint, the watchdog's pin, D190). Discovery: `issuer`, `jwks_uri`, `id_token_signing_alg_values_supported:
+["RS256"]`, `response_types_supported`, `subject_types_supported`, `claims_supported`. CORS `*`. Informational: the
+contract never fetches them and the watchdog pins instead of trusting them.
+
+### `POST /v1/email/webhooks/sendgrid` · E
+
+SendGrid's signed Event Webhook (D199): `x-twilio-email-event-webhook-signature` (base64 DER ECDSA P-256) over
+`x-twilio-email-event-webhook-timestamp` ‖ body, verified with `SENDGRID_WEBHOOK_PUBLIC_KEY` (`401 bad_signature`;
+older than 10 min refused). Body ≤ 1 MB, ≤ 1000 events. `bounce` (not `blocked`) and `spamreport` events become
+`email_suppressions` rows keyed by `email_key`; `200 {stored}`. `404` when no key is configured.
+
+### Limits (D198; provisional, D123 Q22)
+
+All exact, on the issuer's `RateLimiter` objects (named `<env>:<subject>`).
+
+| Subject | Limit | Refusal |
+|---|---|---|
+| Address (`email_key`): codes | 3 per 15 min, 10 per day (every code mail, resends included) | silent (202, nothing sent) |
+| Address: wrong codes | 10 per hour over all challenges → 1 h lock | `start` silent; `verify` 429 |
+| Challenge | 10 min from creation; 5 wrong codes; ≤ 2 resends ≥ 30 s apart | 410 / 429 |
+| IP (IPv4 address, IPv6 /64): `start` | 10 per 10 min, 50 per day | 429 |
+| IP: `verify` / `resend` / `google-match` | 30 / 10 / 30 per 10 min | 429 |
+| App: `start` | 20 × plan `per_minute` per minute; plan `per_day` per day | 429 |
+| Env: user mail | `emailIssuer.dailySendBudget` per day (default 1000), codes and notices | `start`, `resend` 429; log `send_budget_exhausted` (error) |
+| Staff: client proofs | 20 per hour | 429 |
+
+### Durable Objects, D1 and bindings
+
+| Object | Holds |
+|---|---|
+| `Challenge` (binding `EMAIL_CHALLENGE`), one per challengeId | `{appId, appName, scopeId, purpose, nonce \| autoLink: {googleSub, sessionHash}, email (normalized), emailKey, codeMac = HMAC(K_code, challengeId ‖ code), attempts, createdAtMs, expiresAtMs, lastSentAtMs, resends}`; deleted at the correct code or by an alarm at expiry. Link tickets: one object per `t:` + b64url(sha256(ticket)), `{appId, scopeId, sub, expiresAtMs}`, deleted at first use |
+| `RateLimiter`, one per subject (`addr:<email_key>`, `ip:<subject>`, `app:<id>`, `global`, `staff:<sha256 hex>`) | fixed-window counts and the address lock; an alarm drops ended windows |
+| `Outbox` (binding `OUTBOX`, `local*` envs only) | the outbox stub's last 200 messages, read by tests through the binding; no route |
+
+Issuer D1 (`apps/email-issuer/migrations/0001_init.sql`): `email_issuance(jti, app_id, purpose, kid, iat)` (24 months,
+D90), `email_hints(scope_id, email_sub, google_sub, updated_at_ms)` (kept while the scope exists, D122),
+`email_suppressions(email_key, reason bounce|complaint, at_ms)`, `email_admin_audit(at_ms, staff, scope_id,
+action_nonce, jti)`. No address is stored anywhere. `APP_DB` is the API's D1, read only (`apps`, `plans`).
+
+Vars (from `emailIssuer`, `scripts/gen-wrangler.ts`): `ENV_NAME`, `NEAR_RPC`, `NEAR_RPC_FALLBACK`, `SIGNER_ACCOUNT`,
+`EMAIL_ISS`, `EMAIL_PUBLIC_KEYS`, `EMAIL_ACTIVE_KID`, `EMAIL_SIGNER_KIND`, `EMAIL_SENDER`, `MAIL_FROM`, `AUTH_ORIGIN`,
+`VAULT_ORIGIN`, `DAILY_SEND_BUDGET`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ACCESS_STAFF_EMAILS`,
+`SENDGRID_WEBHOOK_PUBLIC_KEY`. Secrets: `ISSUER_SIGNING_KEY`, `EMAIL_SUB_KEY`, `EMAIL_CODE_KEY`, `EMAIL_RL_KEY`,
+`SENDGRID_API_KEY` (`docs/security.md` "Key and secret inventory"). Placement `aws:ap-east-1`; no invocation logs.
+
+### Logs
+
+`{"level", "ts", "service": "email-issuer", "event", …}` with typed fields only (`src/log.ts`): `requestId`,
+`endpoint`, `outcome` (`ok`, `rejected`, `error`, `suppressed`), `status`, `code`, `appId`, `scopeId`, `purpose`,
+`jti`, `kid`, `decision`, `limit` (its name, never its key), `providerStatus`, `latencyMs`, `count`. Events: `request`,
+`token_minted` (jti, purpose, app, scope, kid), `code_mail` (`ok`; `suppressed` with `code` `suppressed` / `locked` /
+`address_limit` / `budget`; `error` with the provider's reason and status), `link_notice`, `limit`,
+`send_budget_exhausted` (error), `google_revoke` (warn). Never an address, a code, a `sub`, a token, an access token,
+a key or a body: `test/privacy.test.ts` greps every line of every flow for them.

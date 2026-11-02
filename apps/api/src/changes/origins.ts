@@ -6,7 +6,7 @@ import { type Environment, MAX_APP_ORIGINS, newId, normaliseOrigin, OriginError,
 import type { Env } from '../env.ts';
 import { changeConfig } from '../guarded/config.ts';
 import { expectVersion, planApp } from './apps.ts';
-import { type Writer, actorId, closeChanges, commitOnApp, committed, refuse, runWrite } from './cas.ts';
+import { type Writer, actorId, closeChanges, commitOnApp, committed, refuse, runWrite, expectReplay } from './cas.ts';
 import type { HotDb } from './db.ts';
 import { q } from './sql.ts';
 import { type ChangeRow, changeView } from './views.ts';
@@ -45,8 +45,9 @@ export function checkOriginRules(env: Env, environment: Environment, origins: re
  * origins_version bump. Each origin must be one of the app's (a row, or an open origin_add whose row was parked).
  */
 export async function removeOrigins(db: HotDb, w: Writer, i: { orgId: string | null; appId: string; remove: readonly string[]; expectedVersion: number }): Promise<{ version: number }> {
+  expectReplay(w, ['origin.removed']);
   const remove = normaliseAll(i.remove);
-  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, requestId: w.requestId, with: { origins: true, changes: true } });
+  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, w, with: { origins: true, changes: true } });
   expectVersion(plan.app.origins_version, i.expectedVersion);
   const rows = new Map(plan.origins.map((o) => [o.origin, o]));
   const open = new Set(plan.openChanges.filter((c) => c.kind === 'origin_add').map((c) => c.origin));
@@ -54,7 +55,7 @@ export async function removeOrigins(db: HotDb, w: Writer, i: { orgId: string | n
   if (unknown.length) refuse('bad_request', `Not an origin of this app: ${unknown.join(', ')}`);
   const list = JSON.stringify(remove);
   const detail = { origins: remove.map((o) => ({ origin: o, wasInForce: (rows.get(o)?.active_from ?? null) !== null && rows.get(o)!.active_from! <= w.now })) };
-  await runWrite(db, w.requestId, [
+  await runWrite(db, w, [
     commitOnApp(w, { kind: 'origin.removed', detail }, i.appId, i.orgId, q`a.origins_version = ${i.expectedVersion} AND a.deleted_at IS NULL`),
     q`UPDATE apps SET origins_version = origins_version + 1 WHERE id = ${i.appId} AND ${committed(w.requestId)}`,
     closeChanges(q`app_id = ${i.appId} AND kind = 'origin_add' AND origin IN (SELECT value FROM json_each(${list}))`, w),
@@ -68,20 +69,22 @@ export async function removeOrigins(db: HotDb, w: Writer, i: { orgId: string | n
  * that never matches until the notice is acked and the delay passes), one origins_version bump. Never a waiver.
  */
 export async function addOrigins(db: HotDb, env: Env, w: Writer, i: { orgId: string; appId: string; add: readonly string[]; expectedVersion: number }) {
+  expectReplay(w, ['origin.proposed']);
   const config = requireChangeConfig(env);
   const add = normaliseAll(i.add);
-  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, requestId: w.requestId, with: { origins: true } });
+  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, w, with: { origins: true, changes: true } });
   expectVersion(plan.app.origins_version, i.expectedVersion);
   if (plan.app.assigned_at > w.now - config.delayMs) refuse('conflict', 'The scope was assigned to this org less than appChangeDelayMs ago: staff proposals wait for it');
   checkOriginRules(env, plan.app.environment, add);
-  const have = new Set(plan.origins.map((o) => o.origin));
+  // The app's origins: its rows and every open origin_add (one whose row was parked has no row but still counts).
+  const have = new Set([...plan.origins.map((o) => o.origin), ...plan.openChanges.filter((c) => c.kind === 'origin_add' && c.origin !== null).map((c) => c.origin!)]);
   const dup = add.filter((o) => have.has(o));
   if (dup.length) refuse('conflict', `Already an origin of this app (in force or pending): ${dup.join(', ')}`);
-  if (plan.origins.length + add.length > MAX_APP_ORIGINS) refuse('conflict', `At most ${MAX_APP_ORIGINS} active or pending origins per app`);
+  if (have.size + add.length > MAX_APP_ORIGINS) refuse('conflict', `At most ${MAX_APP_ORIGINS} active or pending origins per app`);
   const changes = add.map((origin) => ({ id: newId('guardedChange'), origin }));
   const list = JSON.stringify(changes);
   const origins = JSON.stringify(add);
-  await runWrite(db, w.requestId, [
+  await runWrite(db, w, [
     commitOnApp(
       w,
       { kind: 'origin.proposed', detail: { changes: changes.map((c) => ({ changeId: c.id, origin: c.origin })) } },
@@ -89,8 +92,11 @@ export async function addOrigins(db: HotDb, env: Env, w: Writer, i: { orgId: str
       i.orgId,
       q`a.origins_version = ${i.expectedVersion} AND a.deleted_at IS NULL
         AND (SELECT assigned_at FROM scopes WHERE scope_id = a.scope_id) <= ${w.now - config.delayMs}
-        AND (SELECT COUNT(*) FROM app_origins WHERE app_id = a.id) + ${add.length} <= ${MAX_APP_ORIGINS}
-        AND NOT EXISTS (SELECT 1 FROM app_origins WHERE app_id = a.id AND origin IN (SELECT value FROM json_each(${origins})))`,
+        AND (SELECT COUNT(*) FROM (SELECT origin FROM app_origins WHERE app_id = a.id
+                                   UNION SELECT origin FROM guarded_changes WHERE app_id = a.id AND kind = 'origin_add' AND status IN ('pending', 'active'))) + ${add.length} <= ${MAX_APP_ORIGINS}
+        AND NOT EXISTS (SELECT 1 FROM app_origins WHERE app_id = a.id AND origin IN (SELECT value FROM json_each(${origins})))
+        AND NOT EXISTS (SELECT 1 FROM guarded_changes WHERE app_id = a.id AND kind = 'origin_add' AND status IN ('pending', 'active')
+                         AND origin IN (SELECT value FROM json_each(${origins})))`,
     ),
     q`UPDATE apps SET origins_version = origins_version + 1 WHERE id = ${i.appId} AND ${committed(w.requestId)}`,
     q`INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, request_id)

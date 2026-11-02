@@ -2,7 +2,8 @@
 // (batch C7) and reachable through no route: the public `fetch` serves `/v1/*` only. Every org method takes `orgId`
 // and every query filters on it, so org A asking for org B's app is `not_found`. The console's member actor is trusted
 // except where the API verifies a token (guarded-change proposals and owner actions, batch C6); the `orgId` filter is a
-// backstop against console bugs, not against a compromise, which the breaker and the hot-DB budget bound instead.
+// backstop against console bugs, not against a compromise, which the breaker and the hot-DB budget bound instead. The
+// console never acts for `org_legacy` (forbidden).
 //
 // Built in batch C5: everything but `changeOrigins` / `proposeChange` / `ownerAction` (the API-verified step-up and the
 // owner-action precheck, C6) and `usage` / `statements` / `ledger` (Neon, C12). Those methods don't exist yet, so an
@@ -76,17 +77,21 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
 
   /** A kill switch: immediate, no step-up; counted by the breaker. */
   removeOrigins(c: unknown) {
-    return runRpc(this.env, 'removeOrigins', removeOriginsInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.removeOrigins, breaker: true }, ({ input, db, w }) => removeOrigins(db, w, input));
+    return runRpc(this.env, 'removeOrigins', removeOriginsInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.removeOrigins, killSwitch: true, breaker: true }, ({ input, db, w }) => removeOrigins(db, w, input));
   }
 
   /** A kill switch (policy removed, raw signing off): immediate, not counted by the breaker. */
   turnOff(c: unknown) {
-    return runRpc(this.env, 'turnOff', turnOffInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.turnOff }, ({ input, db, w }) => turnOff(db, w, input));
+    return runRpc(this.env, 'turnOff', turnOffInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.turnOff, killSwitch: true }, ({ input, db, w }) => turnOff(db, w, input));
   }
 
-  /** The console asks for the generic step-up first (spec "Fresh sign-in"); the API trusts the member actor here. */
+  /**
+   * The console asks for the generic step-up first (spec "Fresh sign-in"); the API trusts the member actor here. A
+   * web-client change is counted by the breaker (it can stop every login of the app, D229).
+   */
   updateSettings(c: unknown) {
-    return runRpc(this.env, 'updateSettings', updateSettingsInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.updateSettings }, ({ input, db, w }) => updateSettings(db, this.env, w, input));
+    const client = (c as { googleWebClientId?: unknown } | null)?.googleWebClientId !== undefined;
+    return runRpc(this.env, 'updateSettings', updateSettingsInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.updateSettings, breaker: client }, ({ input, db, w }) => updateSettings(db, this.env, w, input));
   }
 
   setLogo(c: unknown) {
@@ -97,15 +102,19 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
     return runRpc(this.env, 'cancelChange', cancelChangeInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.cancelChange }, ({ input, db, w }) => cancelChange(db, w, input));
   }
 
-  /** The emailed link's POST confirm (`POST /api/cancel`): no session, the `link` actor; the token is the proof. */
+  /**
+   * The emailed link's POST confirm (`POST /api/cancel`): no session, the `link` actor; the token is the proof. Its own
+   * limits (per client IP, then a global link bucket), taken before the token is read and never from the members'
+   * budget, so a link flood can't block anyone's kill switches.
+   */
   cancelChangeByLink(c: unknown) {
-    return runRpc(this.env, 'cancelChangeByLink', cancelChangeByLinkInput, c, { actors: LINK, cost: CONSOLE_COSTS.cancelChangeByLink }, ({ input, db, w }) => cancelChangeByLink(db, w, input));
+    return runRpc(this.env, 'cancelChangeByLink', cancelChangeByLinkInput, c, { actors: LINK, cost: CONSOLE_COSTS.cancelChangeByLink, link: true }, ({ input, db, w }) => cancelChangeByLink(db, w, input));
   }
 
   /** The partner bit (4) only: a member never sets or clears Hana's bits 1 and 2. Suspending is counted by the breaker. */
   setSuspended(c: unknown) {
     const suspending = (c as { suspended?: unknown } | null)?.suspended === true;
-    return runRpc(this.env, 'setSuspended', consoleSetSuspendedInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.setSuspended, breaker: suspending }, ({ input, db, w }) =>
+    return runRpc(this.env, 'setSuspended', consoleSetSuspendedInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.setSuspended, killSwitch: suspending, breaker: suspending }, ({ input, db, w }) =>
       setSuspensionBit(db, w, { orgId: input.orgId, appId: input.appId, bit: 4, suspended: input.suspended }),
     );
   }
@@ -119,6 +128,6 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
   }
 
   revokeKey(c: unknown) {
-    return runRpc(this.env, 'revokeKey', revokeKeyInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.revokeKey, breaker: true }, ({ input, db, w }) => revokeKey(db, w, input));
+    return runRpc(this.env, 'revokeKey', revokeKeyInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.revokeKey, killSwitch: true, breaker: true }, ({ input, db, w }) => revokeKey(db, w, input));
   }
 }

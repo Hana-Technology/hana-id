@@ -9,14 +9,14 @@ import { bytesEqual, fromB64url, hex, sha256 } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
 import { LOCALHOST_WILDCARD, isDevEnv, isLoopbackOrigin } from '../origins.ts';
 import { PRODUCTION_NETWORK } from '../guarded/config.ts';
-import { type Writer, actorId, commitOnChange, committed, refuseReplay, refuse, replaySeq, runWrite } from './cas.ts';
+import { type Writer, actorId, commitOnChange, committed, refuseReplay, refuse, replayRow, runWrite, expectReplay } from './cas.ts';
 import type { HotDb } from './db.ts';
 import { requireChangeConfig } from './origins.ts';
 import { type Q, q, raw } from './sql.ts';
 import { CHANGE_COLUMNS, type ChangeRow, changeView } from './views.ts';
 
 interface ChangePlan extends ChangeRow {
-  replay_seq: number | null;
+  replay: string | null;
   change_id: string | null;
   org_id: string | null;
   scope_id: string | null;
@@ -26,15 +26,17 @@ interface ChangePlan extends ChangeRow {
 }
 
 /** The plan read of a change write: the change, its app (in `orgId` when given) and scope, and the replay check. */
-async function planChange(db: HotDb, i: { changeId: string; orgId: string | null; requestId: string }): Promise<ChangePlan> {
+async function planChange(db: HotDb, i: { changeId: string; orgId: string | null; w: Writer }): Promise<ChangePlan> {
   const org = i.orgId === null ? raw('1') : q`a.org_id = ${i.orgId}`;
   const cols = CHANGE_COLUMNS.split(', ').map((c) => `g.${c}`).join(', ');
   const r = await db.first<ChangePlan>(
-    q`SELECT ${replaySeq(i.requestId)} AS replay_seq, g.id AS change_id, ${raw(cols)}, a.org_id, a.scope_id, a.deleted_at, s.environment, hex(g.cancel_token_hash) AS token_hash_hex
+    q`SELECT ${replayRow(i.w.requestId)} AS replay, g.id AS change_id, ${raw(cols)}, a.org_id, a.scope_id, a.deleted_at, s.environment, hex(g.cancel_token_hash) AS token_hash_hex
         FROM (SELECT 1) LEFT JOIN guarded_changes g ON g.id = ${i.changeId}
         LEFT JOIN apps a ON a.id = g.app_id AND ${org} LEFT JOIN scopes s ON s.scope_id = a.scope_id`,
   );
-  refuseReplay(r?.replay_seq);
+  // A replay must be of a write on this change's app (known only now).
+  if (i.w.expect) i.w.expect.appId = r?.app_id ?? null;
+  refuseReplay(r?.replay, i.w);
   if (!r || r.change_id === null || r.org_id === null) return refuse('not_found', 'No such change');
   return r;
 }
@@ -90,10 +92,11 @@ const cancelledRow = (c: ChangeRow, w: Writer, by: string): ChangeRow => ({ ...c
 
 /** ConsoleRpc.cancelChange (an owner) and the AdminRpc org method (Hana staff): any pending change of the org's apps. */
 export async function cancelChange(db: HotDb, w: Writer, i: { orgId: string; changeId: string }) {
-  const c = await planChange(db, { changeId: i.changeId, orgId: i.orgId, requestId: w.requestId });
+  expectReplay(w, ['change.cancelled']);
+  const c = await planChange(db, { changeId: i.changeId, orgId: i.orgId, w });
   if (c.deleted_at !== null) refuse('not_found', 'The app is deleted');
   if (!notInForce(c, w.now)) refuse('not_pending', c.status === 'pending' ? 'The change is already in force: remove it instead' : `The change is ${c.status}`);
-  await runWrite(db, w.requestId, cancelBatch(w, c, i.orgId, raw('1')));
+  await runWrite(db, w, cancelBatch(w, c, i.orgId, raw('1')));
   return { change: changeView(cancelledRow(c, w, actorId(w.actor))) };
 }
 
@@ -102,14 +105,15 @@ export async function cancelChange(db: HotDb, w: Writer, i: { orgId: string; cha
  * until `active_from`, single use (a cancelled change is no longer pending). Recorded with the `link` actor.
  */
 export async function cancelChangeByLink(db: HotDb, w: Writer, i: { changeId: string; token: string }) {
-  const c = await planChange(db, { changeId: i.changeId, orgId: null, requestId: w.requestId });
+  expectReplay(w, ['change.cancelled'], undefined, { kind: 'link', id: i.changeId });
+  const c = await planChange(db, { changeId: i.changeId, orgId: null, w });
   const presented = await sha256(fromB64url(i.token));
   // An unannounced change has no link yet; a wrong token and no token look the same to the caller.
   if (c.token_hash_hex === null || !bytesEqual(presented, hexBytes(c.token_hash_hex))) refuse('forbidden', 'This cancel link is not valid for this change');
   if (c.deleted_at !== null) refuse('not_found', 'The app is deleted');
   if (!notInForce(c, w.now)) refuse('not_pending', c.status === 'pending' ? 'The change is already in force' : `The change is ${c.status}`);
   const link = { kind: 'link', id: c.id };
-  await runWrite(db, w.requestId, cancelBatch(w, c, null, q`hex(g.cancel_token_hash) = ${hex(presented).toUpperCase()}`, link, 'link'));
+  await runWrite(db, w, cancelBatch(w, c, null, q`hex(g.cancel_token_hash) = ${hex(presented).toUpperCase()}`, link, 'link'));
   return { change: changeView(cancelledRow(c, w, 'link')) };
 }
 
@@ -201,8 +205,9 @@ export function loopbackWaiver(env: Env, network: string, c: Pick<ChangeRow, 'ki
  * value in force away). No version bump.
  */
 export async function ackNotice(db: HotDb, env: Env, w: Writer, i: { changeId: string; cancelTokenHash: string }) {
+  expectReplay(w, ['change.announced']);
   const config = requireChangeConfig(env);
-  const c = await planChange(db, { changeId: i.changeId, orgId: null, requestId: w.requestId });
+  const c = await planChange(db, { changeId: i.changeId, orgId: null, w });
   if (c.deleted_at !== null) refuse('not_found', 'The app is deleted');
   if (c.status !== 'pending' || c.notified_at !== null) refuse('not_pending', c.status === 'pending' ? 'The change is already announced' : `The change is ${c.status}`);
   const hash = fromB64url(i.cancelTokenHash);
@@ -242,7 +247,7 @@ export async function ackNotice(db: HotDb, env: Env, w: Writer, i: { changeId: s
     );
   }
   stmts.push(q`SELECT ${raw(CHANGE_COLUMNS)} FROM guarded_changes WHERE id = ${c.id}`);
-  const results = await runWrite(db, w.requestId, stmts);
+  const results = await runWrite(db, w, stmts);
   const row = results[results.length - 1]!.results[0] as ChangeRow;
   return { change: changeView(row) };
 }
@@ -255,7 +260,8 @@ export async function ackNotice(db: HotDb, env: Env, w: Writer, i: { changeId: s
  * Staff proposals are never expedited.
  */
 export async function expediteChange(db: HotDb, w: Writer, i: { changeId: string; reason: string }) {
-  const c = await planChange(db, { changeId: i.changeId, orgId: null, requestId: w.requestId });
+  expectReplay(w, ['change.expedited']);
+  const c = await planChange(db, { changeId: i.changeId, orgId: null, w });
   if (c.deleted_at !== null) refuse('not_found', 'The app is deleted');
   if (c.proposed_by_kind !== 'member') refuse('forbidden', 'Only a member-proposed change can be expedited');
   if (c.status !== 'pending' || c.notified_at === null) refuse('not_pending', 'Only an announced, pending change can be expedited');
@@ -278,7 +284,7 @@ export async function expediteChange(db: HotDb, w: Writer, i: { changeId: string
   } else {
     stmts.push(q`UPDATE apps SET raw_sign_effective_at = ${w.now} WHERE id = ${c.app_id} AND raw_sign_pending = 'approval' AND ${committed(w.requestId)}`);
   }
-  await runWrite(db, w.requestId, stmts);
+  await runWrite(db, w, stmts);
   return { change: changeView({ ...c, active_from: w.now, expedited_by: actorId(w.actor) }) };
 }
 

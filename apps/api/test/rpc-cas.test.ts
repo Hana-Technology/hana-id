@@ -10,27 +10,27 @@ import { HotDb } from '../src/changes/db.ts';
 import { rotateKey } from '../src/changes/keys.ts';
 import { removeOrigins } from '../src/changes/origins.ts';
 import { AdminRpc } from '../src/rpc/admin.ts';
-import { rpcHooks } from '../src/rpc/common.ts';
 import { CONSOLE_COSTS, ConsoleRpc } from '../src/rpc/console.ts';
 import { ORIGIN, call } from './helpers.ts';
-import { adminRpc, appRow, consoleRpc, hana, ledgerCount, linkToken, member, newOrg, orgApp, ownClock, rid, rows, system } from './rpc-helpers.ts';
+import { type DbCount, adminRpc, appRow, consoleRpc, counted, countingDb, hana, ledgerCount, link, linkToken, member, newOrg, orgApp, ownClock, rid, rows, system } from './rpc-helpers.ts';
 
-afterEach(() => {
-  vi.restoreAllMocks();
-  rpcHooks.onDb = undefined;
-});
+afterEach(() => vi.restoreAllMocks());
 
 const SECOND = 'https://second.example.com';
+/** This test's clock (each describe's beforeEach); ConsoleRpc calls advance it 2 s, as a person clicking would. */
+let clk: ReturnType<typeof ownClock>;
 
 describe('compare-and-swap writes', () => {
-  beforeEach(() => void ownClock());
+  beforeEach(() => {
+    clk = ownClock();
+  });
 
   it('a replayed requestId answers already_applied and writes nothing', async () => {
     const app = await orgApp({ origins: [ORIGIN, SECOND] });
     const c = { ...member(), orgId: app.org, appId: app.id, remove: [SECOND], expectedVersion: 0 };
-    expect(await consoleRpc().removeOrigins(c)).toEqual({ ok: true, version: 1 });
+    expect(await consoleRpc(clk).removeOrigins(c)).toEqual({ ok: true, version: 1 });
     const before = await ledgerCount();
-    const again = await consoleRpc().removeOrigins({ ...c, expectedVersion: 1 });
+    const again = await consoleRpc(clk).removeOrigins({ ...c, expectedVersion: 1 });
     expect(again).toMatchObject({ ok: false, code: 'already_applied' });
     expect(await ledgerCount()).toBe(before);
     expect((await appRow(app.id)).origins_version).toBe(1);
@@ -51,7 +51,7 @@ describe('compare-and-swap writes', () => {
   it('a moved version answers version_conflict and writes nothing', async () => {
     const app = await orgApp({ origins: [ORIGIN, SECOND] });
     const before = await ledgerCount();
-    const r = await consoleRpc().removeOrigins({ ...member(), orgId: app.org, appId: app.id, remove: [SECOND], expectedVersion: 7 });
+    const r = await consoleRpc(clk).removeOrigins({ ...member(), orgId: app.org, appId: app.id, remove: [SECOND], expectedVersion: 7 });
     expect(r).toMatchObject({ ok: false, code: 'version_conflict' });
     expect(await ledgerCount()).toBe(before);
     expect(await rows('SELECT origin FROM app_origins WHERE app_id = ?1', app.id)).toHaveLength(2);
@@ -76,8 +76,7 @@ describe('compare-and-swap writes', () => {
   it('no applied change lacks its app_changes row: a fault on any statement rolls the whole write back', async () => {
     for (let k = 0; k < 4; k++) {
       const app = await orgApp({ origins: [ORIGIN, SECOND] });
-      const db = new HotDb(env.DB);
-      db.faultAt = k;
+      const db = new HotDb(countingDb(env.DB, { reads: 0, batches: 0, statements: 0 }, { faultAt: k }));
       const w: Writer = { actor: member().actor, requestId: rid(), now: Date.now() };
       await expect(removeOrigins(db, w, { orgId: app.org, appId: app.id, remove: [SECOND], expectedVersion: 0 })).rejects.toThrow();
       expect(await rows('SELECT seq FROM app_changes WHERE request_id = ?1', w.requestId), `statement ${k}`).toHaveLength(0);
@@ -87,8 +86,7 @@ describe('compare-and-swap writes', () => {
     for (let k = 0; k < 4; k++) {
       const app = await orgApp();
       const key = (await rows<{ id: string }>('SELECT id FROM app_keys WHERE app_id = ?1', app.id))[0]!;
-      const db = new HotDb(env.DB);
-      db.faultAt = k;
+      const db = new HotDb(countingDb(env.DB, { reads: 0, batches: 0, statements: 0 }, { faultAt: k }));
       const w: Writer = { actor: member().actor, requestId: rid(), now: Date.now() };
       await expect(rotateKey(db, w, { orgId: app.org, appId: app.id, keyId: key.id })).rejects.toThrow();
       expect(await rows('SELECT seq FROM app_changes WHERE request_id = ?1', w.requestId), `statement ${k}`).toHaveLength(0);
@@ -98,13 +96,15 @@ describe('compare-and-swap writes', () => {
 });
 
 describe('the destructive-call breaker', () => {
-  beforeEach(() => void ownClock());
+  beforeEach(() => {
+    clk = ownClock();
+  });
 
   it('the sixth suspension, revocation, rotation or removal for one org within an hour is refused with a breaker event', async () => {
     const org = newOrg();
     const apps = await Promise.all([1, 2, 3].map(() => orgApp({ org, origins: [ORIGIN, SECOND] })));
     const keyOf = async (appId: string) => (await rows<{ id: string }>('SELECT id FROM app_keys WHERE app_id = ?1 AND revoked_at IS NULL', appId))[0]!.id;
-    const rpc = consoleRpc();
+    const rpc = consoleRpc(clk);
     const calls = [
       () => rpc.setSuspended({ ...member(), orgId: org, appId: apps[0]!.id, suspended: true }),
       async () => rpc.revokeKey({ ...member(), orgId: org, appId: apps[0]!.id, keyId: await keyOf(apps[0]!.id) }),
@@ -131,7 +131,7 @@ describe('the destructive-call breaker', () => {
 
   it('the 21st across orgs within an hour is refused, with a global breaker event', async () => {
     const clock = ownClock();
-    const rpc = consoleRpc();
+    const rpc = consoleRpc(clock);
     for (let k = 0; k < 20; k++) {
       clock.advance(1000); // within the hour, but past the hot-DB budget's burst
       const app = await orgApp();
@@ -147,17 +147,19 @@ describe('the destructive-call breaker', () => {
 });
 
 describe('suspension bits', () => {
-  beforeEach(() => void ownClock());
+  beforeEach(() => {
+    clk = ownClock();
+  });
 
   it('a member sets and clears only bit 4; Hana clears any bit, bit 4 included', async () => {
     const app = await orgApp();
     expect(await adminRpc().setSuspended({ ...hana(), appId: app.id, bit: 1, suspended: true })).toEqual({ ok: true, suspendedBy: 1 });
     expect(await adminRpc().setSuspended({ ...hana(), appId: app.id, bit: 2, suspended: true })).toEqual({ ok: true, suspendedBy: 3 });
-    expect(await consoleRpc().setSuspended({ ...member(), orgId: app.org, appId: app.id, suspended: true })).toEqual({ ok: true, suspendedBy: 7 });
+    expect(await consoleRpc(clk).setSuspended({ ...member(), orgId: app.org, appId: app.id, suspended: true })).toEqual({ ok: true, suspendedBy: 7 });
     // A member's resume clears bit 4 and never bits 1 or 2: the app stays suspended.
-    expect(await consoleRpc().setSuspended({ ...member(), orgId: app.org, appId: app.id, suspended: false })).toEqual({ ok: true, suspendedBy: 3 });
+    expect(await consoleRpc(clk).setSuspended({ ...member(), orgId: app.org, appId: app.id, suspended: false })).toEqual({ ok: true, suspendedBy: 3 });
     expect((await appRow(app.id)).status).toBe('suspended');
-    expect(await consoleRpc().setSuspended({ ...member(), orgId: app.org, appId: app.id, suspended: true })).toEqual({ ok: true, suspendedBy: 7 });
+    expect(await consoleRpc(clk).setSuspended({ ...member(), orgId: app.org, appId: app.id, suspended: true })).toEqual({ ok: true, suspendedBy: 7 });
     expect(await adminRpc().setSuspended({ ...hana(), appId: app.id, bit: 4, suspended: false })).toEqual({ ok: true, suspendedBy: 3 });
     expect(await adminRpc().setSuspended({ ...hana(), appId: app.id, bit: 1, suspended: false })).toEqual({ ok: true, suspendedBy: 2 });
     expect(await adminRpc().setSuspended({ ...hana(), appId: app.id, bit: 2, suspended: false })).toEqual({ ok: true, suspendedBy: 0 });
@@ -182,7 +184,7 @@ describe('suspension bits', () => {
     expect(await adminRpc().suspendOrg({ ...hana(), orgId: org, suspended: true })).toEqual({ ok: true, apps: 2 });
     expect((await appRow(a.id)).suspended_by).toBe(2);
     expect(await getAppByKey(env.DB, b.key)).toMatchObject({ suspended_by: 2, status: 'suspended' });
-    expect(await consoleRpc().setSuspended({ ...member(), orgId: org, appId: a.id, suspended: false })).toEqual({ ok: true, suspendedBy: 2 });
+    expect(await consoleRpc(clk).setSuspended({ ...member(), orgId: org, appId: a.id, suspended: false })).toEqual({ ok: true, suspendedBy: 2 });
     expect(await rows("SELECT seq FROM app_changes WHERE org_id = ?1 AND kind = 'suspension.org_set' AND app_id IS NULL", org)).toHaveLength(1);
     expect(await adminRpc().suspendOrg({ ...hana(), orgId: org, suspended: false })).toEqual({ ok: true, apps: 2 });
     expect((await appRow(b.id)).status).toBe('active');
@@ -191,10 +193,8 @@ describe('suspension bits', () => {
 
 describe('the hot-DB budget', () => {
   it('each ConsoleRpc method stays within two reads and one batch of at most eight statements, and its declared cost', async () => {
-    ownClock();
+    const clock = ownClock();
     const app = await orgApp({ origins: [ORIGIN, SECOND] });
-    const counted: { method: string; db: HotDb }[] = [];
-    const rpc = consoleRpc();
     const key = (await rows<{ id: string }>('SELECT id FROM app_keys WHERE app_id = ?1', app.id))[0]!.id;
     const pending = await adminRpc().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: ['https://pending.example.com'], expectedVersion: 0 });
     if (!pending.ok) throw new Error(pending.code);
@@ -202,50 +202,204 @@ describe('the hot-DB budget', () => {
     expect(await adminRpc().ackNotice({ ...system(), changeId: pending.changes[0]!.id, cancelTokenHash: await hash })).toMatchObject({ ok: true });
     const pending2 = await adminRpc().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: ['https://pending2.example.com'], expectedVersion: 1 });
     if (!pending2.ok) throw new Error(pending2.code);
-    rpcHooks.onDb = (db, method) => counted.push({ method, db });
-    const results: { ok: boolean }[] = [
-      await rpc.listApps({ ...member(), orgId: app.org }),
-      await rpc.getApp({ ...member(), orgId: app.org, appId: app.id }),
-      await rpc.listChanges({ ...member(), orgId: app.org, limit: 50 }),
-      await rpc.removeOrigins({ ...member(), orgId: app.org, appId: app.id, remove: [SECOND], expectedVersion: 2 }),
-      await rpc.turnOff({ ...member(), orgId: app.org, appId: app.id, what: 'raw_sign', expectedVersion: 0 }),
-      await rpc.updateSettings({ ...member(), orgId: app.org, appId: app.id, expectedVersion: 0, persistence: 'none', name: 'Renamed' }),
-      await rpc.setLogo({ ...member(), orgId: app.org, appId: app.id, logoKey: `logos/${app.id}/${'a'.repeat(64)}.png`, expectedVersion: 1 }),
-      await rpc.cancelChangeByLink({ ...{ actor: { kind: 'link' as const, id: pending.changes[0]!.id }, requestId: rid(), clientIp: '203.0.113.1' }, changeId: pending.changes[0]!.id, token }),
-      await rpc.cancelChange({ ...member(), orgId: app.org, changeId: pending2.changes[0]!.id }),
-      await rpc.setSuspended({ ...member(), orgId: app.org, appId: app.id, suspended: true }),
-      await rpc.createKey({ ...member(), orgId: app.org, appId: app.id }),
-      await rpc.rotateKey({ ...member(), orgId: app.org, appId: app.id, keyId: key }),
+    let created: { key: { id: string } } | undefined;
+    const calls: [keyof typeof CONSOLE_COSTS, (rpc: ConsoleRpc) => Promise<{ ok: boolean }>][] = [
+      ['listApps', (rpc) => rpc.listApps({ ...member(), orgId: app.org })],
+      ['getApp', (rpc) => rpc.getApp({ ...member(), orgId: app.org, appId: app.id })],
+      ['listChanges', (rpc) => rpc.listChanges({ ...member(), orgId: app.org, limit: 50 })],
+      ['removeOrigins', (rpc) => rpc.removeOrigins({ ...member(), orgId: app.org, appId: app.id, remove: [SECOND], expectedVersion: 2 })],
+      ['turnOff', (rpc) => rpc.turnOff({ ...member(), orgId: app.org, appId: app.id, what: 'raw_sign', expectedVersion: 0 })],
+      ['updateSettings', (rpc) => rpc.updateSettings({ ...member(), orgId: app.org, appId: app.id, expectedVersion: 0, persistence: 'none', name: 'Renamed' })],
+      ['setLogo', (rpc) => rpc.setLogo({ ...member(), orgId: app.org, appId: app.id, logoKey: `logos/${app.id}/${'a'.repeat(64)}.png`, expectedVersion: 1 })],
+      ['cancelChangeByLink', (rpc) => rpc.cancelChangeByLink({ ...link(pending.changes[0]!.id), changeId: pending.changes[0]!.id, token })],
+      ['cancelChange', (rpc) => rpc.cancelChange({ ...member(), orgId: app.org, changeId: pending2.changes[0]!.id })],
+      ['setSuspended', (rpc) => rpc.setSuspended({ ...member(), orgId: app.org, appId: app.id, suspended: true })],
+      ['createKey', async (rpc) => {
+        const r = await rpc.createKey({ ...member(), orgId: app.org, appId: app.id });
+        if (r.ok) created = r;
+        return r;
+      }],
+      ['rotateKey', (rpc) => rpc.rotateKey({ ...member(), orgId: app.org, appId: app.id, keyId: key })],
+      ['revokeKey', (rpc) => rpc.revokeKey({ ...member(), orgId: app.org, appId: app.id, keyId: created!.key.id })],
     ];
-    const created = results[10] as unknown as { ok: true; key: { id: string } };
-    results.push(await rpc.revokeKey({ ...member(), orgId: app.org, appId: app.id, keyId: created.key.id }));
-    for (const [k, r] of results.entries()) expect(r, counted[k]?.method).toMatchObject({ ok: true });
-    expect(new Set(counted.map((c) => c.method))).toEqual(new Set(Object.keys(CONSOLE_COSTS)));
-    for (const { method, db } of counted) {
-      expect(db.reads, method).toBeLessThanOrEqual(2);
-      expect(db.batches, method).toBeLessThanOrEqual(1);
-      expect(db.statements, method).toBeLessThanOrEqual(CONSOLE_COSTS[method as keyof typeof CONSOLE_COSTS]);
+    expect(new Set(calls.map(([m]) => m))).toEqual(new Set(Object.keys(CONSOLE_COSTS)));
+    for (const [method, run] of calls) {
+      clock.advance(5000); // a refilled budget for each call
+      const count: DbCount = { reads: 0, batches: 0, statements: 0 };
+      expect(await run(counted((c, e) => new ConsoleRpc(c, e), count)), method).toMatchObject({ ok: true });
+      expect(count.reads, method).toBeLessThanOrEqual(2);
+      expect(count.batches, method).toBeLessThanOrEqual(1);
+      expect(count.statements - count.reads, method).toBeLessThanOrEqual(8);
+      expect(count.statements, method).toBeLessThanOrEqual(CONSOLE_COSTS[method]);
     }
   });
 
-  it('over the budget is rate_limited; the bucket refills with time', async () => {
+  it('one org can’t starve another: per-org buckets under the global one; the bucket refills with time', async () => {
     const clock = ownClock({ freeze: true });
-    const app = await orgApp();
+    const a = await orgApp();
+    const b = await orgApp();
     const rpc = consoleRpc();
     let ok = 0;
     let refused: unknown;
-    for (let k = 0; k < 70 && !refused; k++) {
-      const r = await rpc.listApps({ ...member(), orgId: app.org });
+    for (let k = 0; k < 40 && !refused; k++) {
+      const r = await rpc.listApps({ ...member(), orgId: a.org });
       if (r.ok) ok++;
       else refused = r;
     }
-    expect(ok).toBe(60);
+    // Org A's burst (40) less the kill-switch reserve (10).
+    expect(ok).toBe(30);
     expect(refused).toMatchObject({ ok: false, code: 'rate_limited' });
-    expect(await rows("SELECT id FROM security_events WHERE kind = 'breaker' AND org_id = ?1", app.org)).toHaveLength(0);
-    clock.advance(1000);
-    expect(await rpc.listApps({ ...member(), orgId: app.org })).toMatchObject({ ok: true });
+    expect(await rows("SELECT id FROM security_events WHERE kind = 'breaker' AND org_id = ?1", a.org)).toHaveLength(0);
+    // Org B is unaffected, and org A's kill switches still pass on its reserve.
+    expect(await rpc.listApps({ ...member(), orgId: b.org })).toMatchObject({ ok: true });
+    expect(await rpc.setSuspended({ ...member(), orgId: a.org, appId: a.id, suspended: true })).toMatchObject({ ok: true });
+    expect(await rpc.turnOff({ ...member(), orgId: a.org, appId: a.id, what: 'policy', expectedVersion: 0 })).toMatchObject({ ok: true });
+    clock.advance(2000); // 20 tokens: above the reserve again
+    expect(await rpc.listApps({ ...member(), orgId: a.org })).toMatchObject({ ok: true });
   });
 
+  it('the global reserve keeps kill switches working when many orgs flood reads', async () => {
+    ownClock({ freeze: true });
+    const rpc = consoleRpc();
+    let refusedGlobal = false;
+    // The global bucket (60, 20 reserved for kill switches) refuses ordinary calls after 40, whichever orgs make them.
+    for (let o = 0; o < 4 && !refusedGlobal; o++) {
+      const app = await orgApp();
+      for (let k = 0; k < 20; k++) {
+        const r = await rpc.listApps({ ...member(), orgId: app.org });
+        if (!r.ok) {
+          refusedGlobal = true;
+          break;
+        }
+      }
+    }
+    expect(refusedGlobal).toBe(true);
+    const victim = await orgApp();
+    expect(await rpc.getApp({ ...member(), orgId: victim.org, appId: victim.id })).toMatchObject({ ok: false, code: 'rate_limited' });
+    expect(await rpc.setSuspended({ ...member(), orgId: victim.org, appId: victim.id, suspended: true })).toMatchObject({ ok: true, suspendedBy: 4 });
+  });
+
+  it('an emailed-link flood has its own per-IP and global limits and never touches the members’ budget or kill switches', async () => {
+    ownClock({ freeze: true });
+    const app = await orgApp({ origins: [ORIGIN, SECOND] });
+    const rpc = consoleRpc();
+    const flood = (ip: string) => rpc.cancelChangeByLink({ ...link('gc_flood'), clientIp: ip, changeId: 'gc_flood', token: 'A'.repeat(43) });
+    // One address: 5 a minute, then rate_limited before the token is read (an unknown change would be not_found).
+    for (let k = 0; k < 5; k++) expect(await flood('203.0.113.50')).toMatchObject({ ok: false, code: 'not_found' });
+    expect(await flood('203.0.113.50')).toMatchObject({ ok: false, code: 'rate_limited' });
+    // IPv6 by /64: another address in the same /64 is the same subject.
+    for (let k = 0; k < 5; k++) await flood(`2001:db8:1:2::${k + 1}`);
+    expect(await flood('2001:db8:1:2::ff')).toMatchObject({ ok: false, code: 'rate_limited' });
+    // Many addresses: the global link bucket (burst 20, 10 already taken) refuses the rest.
+    const answers = [];
+    for (let k = 0; k < 15; k++) answers.push(await flood(`198.51.100.${k + 1}`));
+    expect(answers.filter((r) => !r.ok && r.code === 'rate_limited').length).toBeGreaterThan(0);
+    // The members' budget is whole: a burst of reads and every kill switch still pass.
+    for (let k = 0; k < 20; k++) expect(await rpc.listApps({ ...member(), orgId: app.org }), `read ${k}`).toMatchObject({ ok: true });
+    expect(await rpc.removeOrigins({ ...member(), orgId: app.org, appId: app.id, remove: [SECOND], expectedVersion: 0 })).toMatchObject({ ok: true });
+    expect(await rpc.setSuspended({ ...member(), orgId: app.org, appId: app.id, suspended: true })).toMatchObject({ ok: true });
+  });
+
+  it('the rpc log carries the method, the org and the actor kind, never the input', async () => {
+    ownClock();
+    const app = await orgApp();
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((l: string) => void lines.push(l));
+    await consoleRpc().listApps({ ...member(), orgId: app.org });
+    const rpcLine = lines.map((l) => JSON.parse(l) as Record<string, unknown>).find((l) => l.event === 'rpc');
+    expect(rpcLine).toMatchObject({ method: 'listApps', orgId: app.org, actorKind: 'member', outcome: 'ok' });
+    expect(JSON.stringify(rpcLine)).not.toContain('owner@partner.example');
+  });
+});
+
+describe('the breaker’s refunds and its event', () => {
+  beforeEach(() => {
+    clk = ownClock();
+  });
+
+  it('a destructive call that changed nothing gets its slot back (not_found, conflict, version_conflict, a no-op)', async () => {
+    const app = await orgApp({ origins: [ORIGIN, SECOND] });
+    const rpc = consoleRpc(clk);
+    for (let k = 0; k < 3; k++) expect(await rpc.removeOrigins({ ...member(), orgId: app.org, appId: 'app_none', remove: [SECOND], expectedVersion: 0 })).toMatchObject({ code: 'not_found' });
+    expect(await rpc.removeOrigins({ ...member(), orgId: app.org, appId: app.id, remove: [SECOND], expectedVersion: 9 })).toMatchObject({ code: 'version_conflict' });
+    expect(await rpc.revokeKey({ ...member(), orgId: app.org, appId: app.id, keyId: 'key_none' })).toMatchObject({ code: 'not_found' });
+    expect(await rpc.setSuspended({ ...member(), orgId: app.org, appId: app.id, suspended: true })).toMatchObject({ ok: true, suspendedBy: 4 });
+    // Already suspended: a no-op, refunded.
+    for (let k = 0; k < 3; k++) expect(await rpc.setSuspended({ ...member(), orgId: app.org, appId: app.id, suspended: true })).toMatchObject({ ok: true, suspendedBy: 4 });
+    // So four more real destructive calls fit in the hour (5 in all), and the sixth doesn't.
+    const others = await Promise.all([1, 2, 3, 4].map(() => orgApp({ org: app.org })));
+    for (const o of others) expect(await rpc.setSuspended({ ...member(), orgId: app.org, appId: o.id, suspended: true })).toMatchObject({ ok: true });
+    const sixth = await orgApp({ org: app.org });
+    expect(await rpc.setSuspended({ ...member(), orgId: app.org, appId: sixth.id, suspended: true })).toMatchObject({ ok: false, code: 'rate_limited' });
+  });
+
+  it('a web-client change is counted by the breaker', async () => {
+    const app = await orgApp();
+    const { chain } = await import('./helpers.ts');
+    const near = chain();
+    near.views.get_scope = (a) => ({ id: a.scope_id, owners: [], clients: [['google', 'c1.apps.googleusercontent.com'], ['google', 'c2.apps.googleusercontent.com']], pending: [], action_nonce: 0, allow_shared: false });
+    const rpc = consoleRpc(clk);
+    let v = 0;
+    for (let k = 0; k < 5; k++) {
+      expect(await rpc.updateSettings({ ...member(), orgId: app.org, appId: app.id, expectedVersion: v, googleWebClientId: k % 2 ? 'c1.apps.googleusercontent.com' : 'c2.apps.googleusercontent.com' })).toMatchObject({ ok: true });
+      v++;
+    }
+    expect(await rpc.updateSettings({ ...member(), orgId: app.org, appId: app.id, expectedVersion: v, googleWebClientId: null })).toMatchObject({ ok: false, code: 'rate_limited' });
+    // Other settings aren't counted.
+    expect(await rpc.updateSettings({ ...member(), orgId: app.org, appId: app.id, expectedVersion: v, persistence: 'none' })).toMatchObject({ ok: true });
+  });
+
+  it('the breaker event is written once an hour: later refusals cost no write', async () => {
+    const org = newOrg();
+    const apps = await Promise.all([1, 2, 3, 4, 5, 6, 7].map(() => orgApp({ org })));
+    const rpc = consoleRpc(clk);
+    for (const a of apps.slice(0, 5)) expect(await rpc.setSuspended({ ...member(), orgId: org, appId: a.id, suspended: true })).toMatchObject({ ok: true });
+    expect(await rpc.setSuspended({ ...member(), orgId: org, appId: apps[5]!.id, suspended: true })).toMatchObject({ code: 'rate_limited' });
+    expect(await rows("SELECT id FROM security_events WHERE kind = 'breaker' AND org_id = ?1", org)).toHaveLength(1);
+    // Delete the row: a second refusal in the same hour doesn't write it again (the limiter object remembers).
+    await env.DB.prepare("DELETE FROM security_events WHERE kind = 'breaker' AND org_id = ?1").bind(org).run();
+    expect(await rpc.setSuspended({ ...member(), orgId: org, appId: apps[6]!.id, suspended: true })).toMatchObject({ code: 'rate_limited' });
+    expect(await rows("SELECT id FROM security_events WHERE kind = 'breaker' AND org_id = ?1", org)).toHaveLength(0);
+  });
+});
+
+describe('replays, the legacy org and the notice ack', () => {
+  beforeEach(() => {
+    clk = ownClock();
+  });
+
+  it('a request id reused for another write is conflict, not already_applied', async () => {
+    const app = await orgApp({ origins: [ORIGIN, SECOND] });
+    const c = member();
+    expect(await consoleRpc(clk).removeOrigins({ ...c, orgId: app.org, appId: app.id, remove: [SECOND], expectedVersion: 0 })).toMatchObject({ ok: true });
+    // Same id, another kind of write.
+    expect(await consoleRpc(clk).setSuspended({ ...c, orgId: app.org, appId: app.id, suspended: true })).toMatchObject({ ok: false, code: 'conflict' });
+    // Same id, same kind, another app.
+    const other = await orgApp({ org: app.org, origins: [ORIGIN, SECOND] });
+    expect(await consoleRpc(clk).removeOrigins({ ...c, orgId: app.org, appId: other.id, remove: [SECOND], expectedVersion: 0 })).toMatchObject({ ok: false, code: 'conflict' });
+    // Same id, same write, another actor.
+    expect(await consoleRpc(clk).removeOrigins({ ...member(), requestId: c.requestId, orgId: app.org, appId: app.id, remove: [SECOND], expectedVersion: 1 })).toMatchObject({ ok: false, code: 'conflict' });
+    // The same call again: already_applied.
+    expect(await consoleRpc(clk).removeOrigins({ ...c, orgId: app.org, appId: app.id, remove: [SECOND], expectedVersion: 1 })).toMatchObject({ ok: false, code: 'already_applied' });
+    expect((await appRow(other.id)).origins_version).toBe(0);
+  });
+
+  it('ConsoleRpc never acts for org_legacy', async () => {
+    expect(await consoleRpc(clk).listApps({ ...member(), orgId: 'org_legacy' })).toMatchObject({ ok: false, code: 'forbidden' });
+    expect(await adminRpc().listApps({ ...hana(), orgId: 'org_legacy' })).toMatchObject({ ok: true });
+  });
+
+  it('ackNotice takes only the admin Worker’s cron (system)', async () => {
+    const app = await orgApp();
+    const c = await adminRpc().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: ['https://ack.example.com'], expectedVersion: 0 });
+    if (!c.ok) throw new Error(c.code);
+    const { hash } = linkToken();
+    expect(await adminRpc().ackNotice({ ...hana(), changeId: c.changes[0]!.id, cancelTokenHash: await hash })).toMatchObject({ ok: false, code: 'forbidden' });
+    expect(await adminRpc().ackNotice({ ...system(), changeId: c.changes[0]!.id, cancelTokenHash: await hash })).toMatchObject({ ok: true });
+  });
+});
+
+describe('AdminRpc and the budget', () => {
   it('AdminRpc is neither charged nor limited', async () => {
     ownClock({ freeze: true });
     const app = await orgApp();
@@ -254,7 +408,9 @@ describe('the hot-DB budget', () => {
 });
 
 describe('entrypoints', () => {
-  beforeEach(() => void ownClock());
+  beforeEach(() => {
+    clk = ownClock();
+  });
 
   it('ConsoleRpc and AdminRpc are not reachable through the public fetch', async () => {
     for (const path of ['/ConsoleRpc/listApps', '/AdminRpc/createApp', '/rpc', '/v1/rpc/listApps', '/v1/admin/createApp']) {
@@ -275,13 +431,13 @@ describe('entrypoints', () => {
 
   it('each entrypoint takes only its own actors; a bad input is bad_request', async () => {
     const app = await orgApp();
-    expect(await consoleRpc().listApps({ ...hana(), orgId: app.org })).toMatchObject({ ok: false, code: 'forbidden' });
+    expect(await consoleRpc(clk).listApps({ ...hana(), orgId: app.org })).toMatchObject({ ok: false, code: 'forbidden' });
     expect(await adminRpc().listApps({ ...member(), orgId: app.org })).toMatchObject({ ok: false, code: 'forbidden' });
     expect(await adminRpc().createApp({ ...system(), orgId: app.org, scopeId: 's1', environment: 'test', name: 'x', origins: [], orgOwnerSubs: [] })).toMatchObject({ ok: false, code: 'forbidden' });
-    expect(await consoleRpc().cancelChangeByLink({ ...member(), changeId: 'gc_x', token: 'A'.repeat(43) })).toMatchObject({ ok: false, code: 'forbidden' });
-    expect(await consoleRpc().listApps({ ...member(), orgId: app.org, extra: 1 })).toMatchObject({ ok: false, code: 'bad_request' });
-    expect(await consoleRpc().listApps({ ...member(), orgId: 'not-an-org' })).toMatchObject({ ok: false, code: 'bad_request' });
-    expect(await consoleRpc().listApps(null)).toMatchObject({ ok: false, code: 'bad_request' });
+    expect(await consoleRpc(clk).cancelChangeByLink({ ...member(), changeId: 'gc_x', token: 'A'.repeat(43) })).toMatchObject({ ok: false, code: 'forbidden' });
+    expect(await consoleRpc(clk).listApps({ ...member(), orgId: app.org, extra: 1 })).toMatchObject({ ok: false, code: 'bad_request' });
+    expect(await consoleRpc(clk).listApps({ ...member(), orgId: 'not-an-org' })).toMatchObject({ ok: false, code: 'bad_request' });
+    expect(await consoleRpc(clk).listApps(null)).toMatchObject({ ok: false, code: 'bad_request' });
   });
 
   it('org A asking for org B’s app is not_found on every ConsoleRpc org method, and nothing is written', async () => {
@@ -291,7 +447,7 @@ describe('entrypoints', () => {
     const staff = await adminRpc().addOrigins({ ...hana(), orgId: b.org, appId: b.id, add: ['https://p.example.com'], expectedVersion: 0 });
     if (!staff.ok) throw new Error(staff.code);
     const before = await ledgerCount();
-    const rpc = consoleRpc();
+    const rpc = consoleRpc(clk);
     const as = { orgId: a.org, appId: b.id };
     const answers = {
       getApp: await rpc.getApp({ ...member(), ...as }),

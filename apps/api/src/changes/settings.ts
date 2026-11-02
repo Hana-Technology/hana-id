@@ -11,7 +11,7 @@ import { LOGO_KEY_RE, newId, normaliseAppName } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
 import { IDLE_TTL_MIN_MS, SESSION_TTL_MAX_MS, SESSION_TTL_MIN_MS } from '../vault/settings.ts';
 import { expectVersion, planApp } from './apps.ts';
-import { type Writer, actorId, closeChanges, commitOnApp, committed, NOT_YET, refuse, runWrite } from './cas.ts';
+import { type Writer, actorId, closeChanges, commitOnApp, committed, NOT_YET, refuse, runWrite, expectReplay } from './cas.ts';
 import { scopeGoogleClients } from './chain.ts';
 import type { HotDb } from './db.ts';
 import { requireChangeConfig } from './origins.ts';
@@ -37,7 +37,8 @@ export interface SettingsInput {
 }
 
 export async function updateSettings(db: HotDb, env: Env, w: Writer, i: SettingsInput): Promise<{ version: number }> {
-  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, requestId: w.requestId, with: { changes: true } });
+  expectReplay(w, ['settings.changed', 'app.renamed']);
+  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, w, with: { changes: true } });
   const a = plan.app;
   expectVersion(a.settings_version, i.expectedVersion);
   const set: Q[] = [];
@@ -78,7 +79,7 @@ export async function updateSettings(db: HotDb, env: Env, w: Writer, i: Settings
   }
   if (!set.length) return { version: a.settings_version };
   const kind = Object.keys(changed).length === 1 && 'name' in changed ? 'app.renamed' : 'settings.changed';
-  await runWrite(db, w.requestId, [
+  await runWrite(db, w, [
     commitOnApp(w, { kind, detail: changed }, i.appId, i.orgId, q`a.settings_version = ${i.expectedVersion} AND a.deleted_at IS NULL`),
     q`UPDATE apps SET settings_version = settings_version + 1, ${join(set, ', ')} WHERE id = ${i.appId} AND ${committed(w.requestId)}`,
   ]);
@@ -86,11 +87,12 @@ export async function updateSettings(db: HotDb, env: Env, w: Writer, i: Settings
 }
 
 export async function setLogo(db: HotDb, w: Writer, i: { orgId: string | null; appId: string; logoKey: string | null; expectedVersion: number }): Promise<{ version: number }> {
+  expectReplay(w, ['app.logo_set', 'app.logo_removed']);
   if (i.logoKey !== null && LOGO_KEY_RE.exec(i.logoKey)?.[1] !== i.appId) refuse('bad_request', "The logo key is not this app's");
-  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, requestId: w.requestId });
+  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, w });
   expectVersion(plan.app.settings_version, i.expectedVersion);
   if (plan.app.logo_key === i.logoKey) return { version: plan.app.settings_version };
-  await runWrite(db, w.requestId, [
+  await runWrite(db, w, [
     commitOnApp(w, { kind: i.logoKey === null ? 'app.logo_removed' : 'app.logo_set', detail: { logoKey: i.logoKey, previous: plan.app.logo_key } }, i.appId, i.orgId, q`a.settings_version = ${i.expectedVersion} AND a.deleted_at IS NULL`),
     q`UPDATE apps SET settings_version = settings_version + 1, logo_key = ${i.logoKey} WHERE id = ${i.appId} AND ${committed(w.requestId)}`,
   ]);
@@ -99,7 +101,8 @@ export async function setLogo(db: HotDb, w: Writer, i: { orgId: string | null; a
 
 /** turnOff: the policy removed, or raw signing off; immediate. Nothing to turn off answers the current version unchanged. */
 export async function turnOff(db: HotDb, w: Writer, i: { orgId: string | null; appId: string; what: 'policy' | 'raw_sign'; expectedVersion: number }): Promise<{ version: number }> {
-  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, requestId: w.requestId, with: { changes: true } });
+  expectReplay(w, ['policy.removed', 'raw_sign.off']);
+  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, w, with: { changes: true } });
   const a = plan.app;
   expectVersion(a.settings_version, i.expectedVersion);
   const kind = i.what === 'policy' ? 'policy_set' : 'raw_sign_on';
@@ -111,7 +114,7 @@ export async function turnOff(db: HotDb, w: Writer, i: { orgId: string | null; a
     i.what === 'policy'
       ? q`auto_approve_policy = NULL, auto_approve_pending = NULL, auto_approve_effective_at = NULL`
       : q`raw_sign = 'off', raw_sign_pending = NULL, raw_sign_effective_at = NULL`;
-  await runWrite(db, w.requestId, [
+  await runWrite(db, w, [
     commitOnApp(w, { kind: i.what === 'policy' ? 'policy.removed' : 'raw_sign.off', detail: { cancelled } }, i.appId, i.orgId, q`a.settings_version = ${i.expectedVersion} AND a.deleted_at IS NULL`),
     q`UPDATE apps SET settings_version = settings_version + 1, ${clear} WHERE id = ${i.appId} AND ${committed(w.requestId)}`,
     closeChanges(q`app_id = ${i.appId} AND kind = ${kind}`, w),
@@ -130,8 +133,9 @@ export async function proposeSetting(
   w: Writer,
   i: { orgId: string; appId: string; kind: 'policy_set' | 'raw_sign_on'; policy?: unknown; expectedVersion: number },
 ): Promise<{ version: number; change: ReturnType<typeof changeView> }> {
+  expectReplay(w, ['policy.proposed', 'raw_sign.proposed']);
   const config = requireChangeConfig(env);
-  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, requestId: w.requestId, with: { changes: true } });
+  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, w, with: { changes: true } });
   const a = plan.app;
   expectVersion(a.settings_version, i.expectedVersion);
   if (a.assigned_at > w.now - config.delayMs) refuse('conflict', 'The scope was assigned to this org less than appChangeDelayMs ago: staff proposals wait for it');
@@ -156,7 +160,7 @@ export async function proposeSetting(
     if (stillPending !== null && (await storedPolicy(stillPending, a.session_ttl_ms))?.id === policy.id) refuse('conflict', 'This policy is already pending');
   }
   const changeId = newId('guardedChange');
-  await runWrite(db, w.requestId, [
+  await runWrite(db, w, [
     commitOnApp(
       w,
       { kind: i.kind === 'policy_set' ? 'policy.proposed' : 'raw_sign.proposed', detail: policy ? { changeId, policyId: policy.id } : { changeId } },

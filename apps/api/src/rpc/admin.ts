@@ -59,6 +59,8 @@ import { runRpc } from './common.ts';
 const HANA = ['hana'] as const;
 /** Methods the admin Worker's crons call (notices, the feed, the watcher). */
 const HANA_OR_SYSTEM = ['hana', 'system'] as const;
+/** The notice ack: only the cron that sent the notice (a staffer can't start a change's clock by hand). */
+const SYSTEM = ['system'] as const;
 
 export class AdminRpc extends WorkerEntrypoint<Env> {
   // ---- the ConsoleRpc org methods, for any org ----
@@ -150,9 +152,9 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
     return runRpc(this.env, 'admin.pendingNotices', pendingNoticesInput, c, { actors: HANA_OR_SYSTEM }, async ({ input, db }) => ({ notices: await pendingNotices(db, input.limit) }));
   }
 
-  /** Called only after the email provider accepted every send of the notice; starts the change's clock. */
+  /** Called only by the admin Worker's notice cron, after the email provider accepted every send; starts the clock. */
   ackNotice(c: unknown) {
-    return runRpc(this.env, 'admin.ackNotice', ackNoticeInput, c, { actors: HANA_OR_SYSTEM }, ({ input, db, w }) => ackNotice(db, this.env, w, input));
+    return runRpc(this.env, 'admin.ackNotice', ackNoticeInput, c, { actors: SYSTEM }, ({ input, db, w }) => ackNotice(db, this.env, w, input));
   }
 
   setSecurityContacts(c: unknown) {

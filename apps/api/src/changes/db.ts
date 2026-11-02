@@ -11,7 +11,7 @@ export interface HotDbLimits {
 }
 
 /** ConsoleRpc's per-call ceiling (spec §RPC "Hot-DB budget"). */
-export const CONSOLE_LIMITS: HotDbLimits = { reads: 2, batches: 1, statements: 8 };
+export const CONSOLE_DB_LIMITS: HotDbLimits = { reads: 2, batches: 1, statements: 8 };
 
 export class BudgetExceededError extends Error {
   constructor(what: string) {
@@ -25,8 +25,6 @@ export class HotDb {
   reads = 0;
   batches = 0;
   statements = 0;
-  /** Test hook (fault injection): the batch statement at this index is replaced by one that fails. */
-  faultAt?: number;
 
   constructor(
     readonly db: D1Database,
@@ -55,7 +53,6 @@ export class HotDb {
     this.statements += stmts.length;
     if (this.limits && this.batches > this.limits.batches) throw new BudgetExceededError(`more than ${this.limits.batches} batch`);
     if (this.limits && stmts.length > this.limits.statements) throw new BudgetExceededError(`a batch of ${stmts.length} statements`);
-    const prepared = stmts.map((s, i) => (i === this.faultAt ? this.db.prepare('INSERT INTO fault_injected_no_such_table VALUES (1)') : prepare(this.db, s)));
-    return this.db.batch(prepared);
+    return this.db.batch(stmts.map((s) => prepare(this.db, s)));
   }
 }

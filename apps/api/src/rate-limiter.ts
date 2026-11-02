@@ -13,17 +13,45 @@ export interface Limit {
   soft?: boolean;
 }
 
-export interface ConsoleAdmission {
-  cost: number;
-  /** The org of a destructive call (counted by the breaker); absent for every other call. */
-  breakerOrg?: string;
-  budget: { ratePerS: number; burst: number };
-  breaker: { windowMs: number; perOrg: number; global: number };
+/** A token bucket: `ratePerS` tokens a second up to `burst`. */
+export interface Bucket {
+  ratePerS: number;
+  burst: number;
 }
 
-export type ConsoleAdmitResult = { ok: true } | { ok: false; limit: 'budget' | 'breaker_org' | 'breaker_global'; retryAfterS: number };
+/**
+ * One ConsoleRpc call's admission (changes/guard.ts). A member call takes `cost` from its org's bucket and from the
+ * global one; a call that isn't a kill switch must leave each bucket's `reserve` untouched, so a flood of reads or
+ * settings writes can never take the last tokens the kill switches need. A destructive call also takes a breaker slot.
+ * An emailed-link cancel (`link`) takes one token from the link bucket only, never the members' budget.
+ */
+export interface ConsoleAdmission {
+  cost: number;
+  /** The caller's org (members); absent for a link cancel. */
+  org?: string;
+  /** A kill switch (removeOrigins, turnOff, revokeKey, setSuspended(true)): may use the reserves. */
+  killSwitch?: boolean;
+  /** Counted by the breaker (setSuspended(true), revokeKey, rotateKey, removeOrigins, a web-client change). */
+  breaker?: boolean;
+  /** An emailed-link cancel: the link bucket instead of the members' buckets. */
+  link?: boolean;
+  limits: {
+    perOrg: Bucket & { reserve: number };
+    global: Bucket & { reserve: number };
+    link: Bucket;
+    breaker: { windowMs: number; perOrg: number; global: number };
+  };
+}
 
-export type HitResult ={ ok: true; soft?: string[] } | { ok: false; limit: string; retryAfterS: number };
+export type ConsoleLimit = 'budget_org' | 'budget' | 'link' | 'breaker_org' | 'breaker_global';
+
+/**
+ * `notify`: the first breaker refusal of this limit (the org's, or the global one) in this clock hour, the only one the
+ * caller writes a security event for.
+ */
+export type ConsoleAdmitResult = { ok: true } | { ok: false; limit: ConsoleLimit; retryAfterS: number; notify: boolean };
+
+export type HitResult = { ok: true; soft?: string[] } | { ok: false; limit: string; retryAfterS: number };
 
 /**
  * How long until a sliding window at `elapsed` ms into its bucket, with `current` and `previous` counts, admits one
@@ -145,28 +173,66 @@ export class RateLimiter extends DurableObject<Env> {
 
   /**
    * ConsoleRpc's admission (docs/batch-c-spec.md §RPC "Destructive-call breaker", "Hot-DB budget"; changes/guard.ts),
-   * on the one `console-rpc` object: `cost` statements from a token bucket (`rate` per second, `burst`), and for a
-   * destructive call one slot in its org's and in the global rolling hour (exact: the call times are kept). Either all
-   * of it is taken or nothing is; a refusal says which limit, the breaker before the budget.
+   * on the one `console-rpc` object: token buckets (per org and global for members, one for emailed-link cancels) and,
+   * for a destructive call, one slot in its org's and in the global rolling hour (exact: the call times are kept).
+   * Either all of it is taken or nothing is.
    */
   consoleAdmit(r: ConsoleAdmission, now: number = Date.now()): ConsoleAdmitResult {
     const kv = this.ctx.storage.kv;
-    const bucket = kv.get<{ tokens: number; at: number }>('console:bucket') ?? { tokens: r.budget.burst, at: now };
-    const tokens = Math.min(r.budget.burst, bucket.tokens + (Math.max(0, now - bucket.at) / 1000) * r.budget.ratePerS);
-    const recent = (key: string) => (kv.get<number[]>(key) ?? []).filter((t) => t > now - r.breaker.windowMs);
-    const orgKey = r.breakerOrg === undefined ? null : `console:breaker:org:${r.breakerOrg}`;
-    const org = orgKey ? recent(orgKey) : [];
-    const global = orgKey ? recent('console:breaker:global') : [];
-    const retry = (oldest: number | undefined) => Math.max(1, Math.ceil(((oldest ?? now) + r.breaker.windowMs - now) / 1000));
-    if (orgKey && org.length >= r.breaker.perOrg) return { ok: false, limit: 'breaker_org', retryAfterS: retry(org[0]) };
-    if (orgKey && global.length >= r.breaker.global) return { ok: false, limit: 'breaker_global', retryAfterS: retry(global[0]) };
-    if (tokens < r.cost) return { ok: false, limit: 'budget', retryAfterS: Math.max(1, Math.ceil((r.cost - tokens) / r.budget.ratePerS)) };
-    kv.put('console:bucket', { tokens: tokens - r.cost, at: now });
-    if (orgKey) {
-      kv.put(orgKey, [...org, now]);
-      kv.put('console:breaker:global', [...global, now]);
+    const hour = Math.floor(now / 3_600_000);
+    const refuse = (limit: ConsoleLimit, waitS: number): ConsoleAdmitResult => {
+      let notify = false;
+      if (limit === 'breaker_org' || limit === 'breaker_global') {
+        const key = limit === 'breaker_org' ? `console:noticed:org:${r.org}` : 'console:noticed:global';
+        notify = kv.get<number>(key) !== hour;
+        if (notify) kv.put(key, hour);
+      }
+      return { ok: false, limit, retryAfterS: Math.max(1, Math.ceil(waitS)), notify };
+    };
+    const fill = (key: string, b: Bucket) => {
+      const st = kv.get<{ tokens: number; at: number }>(key) ?? { tokens: b.burst, at: now };
+      return Math.min(b.burst, st.tokens + (Math.max(0, now - st.at) / 1000) * b.ratePerS);
+    };
+    if (r.link) {
+      const tokens = fill('console:link', r.limits.link);
+      if (tokens < r.cost) return refuse('link', (r.cost - tokens) / r.limits.link.ratePerS);
+      kv.put('console:link', { tokens: tokens - r.cost, at: now });
+      return { ok: true };
+    }
+    const orgKey = `console:bucket:org:${r.org ?? ''}`;
+    const orgTokens = fill(orgKey, r.limits.perOrg);
+    const globalTokens = fill('console:bucket', r.limits.global);
+    const recent = (key: string) => (kv.get<number[]>(key) ?? []).filter((t) => t > now - r.limits.breaker.windowMs);
+    const bOrgKey = `console:breaker:org:${r.org ?? ''}`;
+    const bOrg = r.breaker ? recent(bOrgKey) : [];
+    const bGlobal = r.breaker ? recent('console:breaker:global') : [];
+    const until = (oldest: number | undefined) => ((oldest ?? now) + r.limits.breaker.windowMs - now) / 1000;
+    if (r.breaker && bOrg.length >= r.limits.breaker.perOrg) return refuse('breaker_org', until(bOrg[0]));
+    if (r.breaker && bGlobal.length >= r.limits.breaker.global) return refuse('breaker_global', until(bGlobal[0]));
+    const orgFloor = r.killSwitch ? 0 : r.limits.perOrg.reserve;
+    const globalFloor = r.killSwitch ? 0 : r.limits.global.reserve;
+    if (orgTokens - r.cost < orgFloor) return refuse('budget_org', (r.cost + orgFloor - orgTokens) / r.limits.perOrg.ratePerS);
+    if (globalTokens - r.cost < globalFloor) return refuse('budget', (r.cost + globalFloor - globalTokens) / r.limits.global.ratePerS);
+    kv.put(orgKey, { tokens: orgTokens - r.cost, at: now });
+    kv.put('console:bucket', { tokens: globalTokens - r.cost, at: now });
+    if (r.breaker) {
+      kv.put(bOrgKey, [...bOrg, now]);
+      kv.put('console:breaker:global', [...bGlobal, now]);
     }
     return { ok: true };
+  }
+
+  /**
+   * Gives back the breaker slot a call took at `at` (changes/guard.ts): the call found nothing to change (`not_found`,
+   * `conflict`, `version_conflict`, a replay, a bad input, or a no-op), so it destroyed nothing.
+   */
+  consoleBreakerRefund(org: string, at: number): void {
+    const kv = this.ctx.storage.kv;
+    for (const key of [`console:breaker:org:${org}`, 'console:breaker:global']) {
+      const list = kv.get<number[]>(key) ?? [];
+      const i = list.indexOf(at);
+      if (i >= 0) kv.put(key, [...list.slice(0, i), ...list.slice(i + 1)]);
+    }
   }
 
   /** Drops a marker (a reservation whose relay definitely did not execute). */

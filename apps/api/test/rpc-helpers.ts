@@ -13,7 +13,24 @@ export const HOUR = 60 * 60 * 1000;
 /** The test manifest's appChangeDelayMs (scripts/gen-wrangler.ts TEST_MANIFEST). */
 export const DELAY = 60_000;
 
-export const consoleRpc = (): ConsoleRpc => new ConsoleRpc(createExecutionContext(), env);
+/**
+ * ConsoleRpc as the console gets it. With `clock`, each call first moves the clock 2 s on, as a person clicking would,
+ * so a test's sequence of calls stays within its org's hot-DB budget (the budget tests call it without).
+ */
+export const consoleRpc = (clock?: { advance: (ms: number) => void }): ConsoleRpc => {
+  const rpc = new ConsoleRpc(createExecutionContext(), env);
+  if (!clock) return rpc;
+  return new Proxy(rpc, {
+    get(t, p) {
+      const v: unknown = Reflect.get(t, p);
+      if (typeof v !== 'function') return v;
+      return (...args: unknown[]) => {
+        clock.advance(2000);
+        return (v as (...a: unknown[]) => unknown).apply(t, args);
+      };
+    },
+  });
+};
 export const adminRpc = (): AdminRpc => new AdminRpc(createExecutionContext(), env);
 
 export const rid = (): string => `req_${uid()}`;
@@ -94,3 +111,53 @@ export async function memberProposal(app: SeededApp, c: { kind: 'origin_add' | '
   if (c.kind === 'origin_add') await env.DB.prepare('INSERT INTO app_origins (app_id, origin, active_from, change_id) VALUES (?1, ?2, NULL, ?3)').bind(app.id, c.origin, id).run();
   return id;
 }
+
+export interface DbCount {
+  reads: number;
+  batches: number;
+  statements: number;
+}
+
+/**
+ * The hot DB seen through a counter (reads: a statement's first/all/run outside a batch; batches and their statements),
+ * optionally failing the batch statement at `faultAt` (fault injection). Statements given to `batch` are unwrapped, as
+ * D1 takes only its own. Keeps the counting and the fault injection out of the Worker's code.
+ */
+export function countingDb(base: D1Database, count: DbCount, opts: { faultAt?: number } = {}): D1Database {
+  const real = new WeakMap<object, D1PreparedStatement>();
+  const wrap = (st: D1PreparedStatement): D1PreparedStatement => {
+    const proxy: D1PreparedStatement = new Proxy(st, {
+      get(t, p) {
+        if (p === 'bind') return (...args: unknown[]) => wrap(t.bind(...args));
+        if (p === 'first' || p === 'all' || p === 'run' || p === 'raw') {
+          return (...args: unknown[]) => {
+            count.reads++;
+            count.statements++;
+            return (t[p] as (...a: unknown[]) => unknown).apply(t, args);
+          };
+        }
+        const v: unknown = Reflect.get(t, p);
+        return typeof v === 'function' ? v.bind(t) : v;
+      },
+    });
+    real.set(proxy, st);
+    return proxy;
+  };
+  return new Proxy(base, {
+    get(t, p) {
+      if (p === 'prepare') return (sql: string) => wrap(t.prepare(sql));
+      if (p === 'batch') {
+        return (stmts: D1PreparedStatement[]) => {
+          count.batches++;
+          count.statements += stmts.length;
+          return t.batch(stmts.map((s, i) => (i === opts.faultAt ? t.prepare('INSERT INTO fault_injected_no_such_table VALUES (1)') : (real.get(s) ?? s))));
+        };
+      }
+      const v: unknown = Reflect.get(t, p);
+      return typeof v === 'function' ? v.bind(t) : v;
+    },
+  });
+}
+
+/** An entrypoint over a counted hot DB (each call's own count). */
+export const counted = <T>(make: (ctx: ExecutionContext, e: typeof env) => T, count: DbCount): T => make(createExecutionContext(), { ...env, DB: countingDb(env.DB, count) });

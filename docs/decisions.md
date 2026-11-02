@@ -1655,7 +1655,8 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
 - Date 2026-11-02 · Status: to confirm; built (`apps/api/src/changes/keys.ts`, `settings.ts`, `suspension.ts`,
   `admin.ts`) · Source: spec "Keys" ("at most 5 unrevoked keys", rotate, revoke) and §RPC result types
 - Decision: "unrevoked" for the 5-key limit means `revoked_at` NULL, so a key in its rotation grace doesn't count, and
-  rotation never hits the limit. Only an unrevoked key can be rotated (a rotating or revoked one is `conflict`). A
+  rotation never hits the limit. "The last valid key" and what revoke accepts count keys still valid now (a rotating
+  key still logs users in): two counts on purpose. Only an unrevoked key can be rotated (a rotating or revoked one is `conflict`). A
   key in its grace can be revoked at once. Revoking the app's last valid key answers `{ok: true, warning:
   'last_key'}` (the spec's "warns"). A write that would change nothing writes nothing and answers the current state
   (a bit already set, nothing to turn off, the same settings, logo or contacts), with no ledger row. The breaker still
@@ -1671,19 +1672,36 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
     would let a forged in-force row for an unannounced initial origin pass.
   - A stored policy or `raw_sign = 'approval'` is explained by an announced change in force by then; a pending one by
     an announced change whose `active_from` is no later than its `*_effective_at` (catches a hand-advanced effective
-    time); or by the baseline, whose policies are compared as stored text (D205).
+    time); or by the baseline, whose policies are compared as stored text (D205), but only while no later
+    `app_changes` row ended the baseline value (review M1: a value put back by hand after a kill switch is drift).
   - Each finding is written once: the event id is derived from it (app, what, the value or the origin and its
     `active_from`). A breaker refusal writes one event per org (or for the global limit) per clock hour.
   - The breaker and the hot-DB budget live on one `RateLimiter` object (`console-rpc`). A call is admitted or refused
     in one step, nothing taken on a refusal. The breaker keeps exact call times for the rolling hour. Each method is
     charged its declared ceiling (`CONSOLE_COSTS`: plan read + batch + one diagnostic read) before it runs.
+  - The budget, after the C5 review (H2): per-org buckets (10/s, burst 40) under the spec's global one (30/s, burst
+    60). The kill switches (`removeOrigins`, `turnOff`, `revokeKey`, `setSuspended(true)`) alone may spend the last
+    10 of an org's bucket and the last 20 of the global one.
+  - Emailed-link cancels (review H1) never touch the members' budget. They take a per-client-IP limiter (5 a minute,
+    50 a day; IPv6 by /64) and a global link bucket (1/s, burst 20), before the token is read.
+  - The breaker (review M2, M3, L6):
+    - it also counts a `googleWebClientId` change, which can stop an app's logins;
+    - it gives the slot back when a call changed nothing (`not_found`, `conflict`, `version_conflict`,
+      `already_applied`, `bad_request`, a no-op);
+    - the event is written for the first refusal of a limit in a clock hour only (the object remembers it).
+  - Question to confirm (review M2): the spec counts `removeOrigins` and `setSuspended(true)` in the global 20 per hour
+    too (D93 Q21). Kept as built. One compromised console can then use the global limit to stop other orgs' removals
+    and suspensions for an hour, though not their `turnOff` or `cancelChange`.
 
 ### D229. RPC actors, refusal codes and staff proposal details
 - Date 2026-11-02 · Status: to confirm; built (`apps/api/src/rpc/`, `src/changes/`) · Source: spec §RPC, "Guarded
   changes", "Apps, scopes"
 - Decision:
-  - **Actors.** `ConsoleRpc` takes only `member` actors (`cancelChangeByLink` only `link`). `AdminRpc` takes `hana`;
-    the methods the admin Worker's crons call also take `system`. Any other actor is `forbidden`. `actor_sub` is left
+  - **Actors.** `ConsoleRpc` takes only `member` actors (`cancelChangeByLink` only `link`), and never `org_legacy`.
+    `AdminRpc` takes `hana`; the methods the admin Worker's crons call also take `system`, and `ackNotice` takes
+    `system` only (a staffer can't start a clock by hand). Any other actor is `forbidden`.
+  - **Replays.** A request id used before answers `already_applied` only when the stored row is the same write (one of
+    the method's ledger kinds, the same app, the same actor); otherwise `conflict`. `actor_sub` is left
     NULL in C5: it holds only an API-verified step-up's sub (C6).
   - **Codes the spec doesn't name.** `conflict` for a staff proposal inside `appChangeDelayMs` of the scope's
     assignment (also `createApp` with origins on an existing scope, D206), a duplicate origin, the 20-origin cap,
@@ -1698,6 +1716,8 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
     legacy `usage` check must change `changes/lifecycle.ts` `noSessionWaiver` as well as the CLI's.
   - **`deleteApp`** also cancels the app's pending changes and deletes its pending origin rows, so no notice goes out
     for a deleted app.
+  - **`addOrigins`** counts every open `origin_add` (a parked one with no row included) for duplicates and the
+    20-origin cap.
   - **App names** follow console-core `normaliseAppName`: NFC, trimmed, 1–64 code points, and
     `@hana-id/core` `isDisplaySafeLine`'s rule. It is copied, because the Worker can't typecheck core's root entry; a
     test compares the two on every code point.

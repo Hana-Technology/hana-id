@@ -6,6 +6,9 @@
 // write (manual SQL, a buggy script): it writes a `drift` security event, once per finding (the event id is derived
 // from it), which the admin feed emails. It doesn't catch an insider who also forges `guarded_changes` rows.
 //
+// A baseline explains a value only while no later `app_changes` row ended it (an origin removed, the policy removed,
+// replaced or its pending value dropped, raw signing off), so a value put back by hand after a kill switch is drift.
+//
 // An `app.created` row explains nothing on its own (D228): the origins it lists are guarded changes since 0006, and
 // counting the row would let a forged in-force row for an unannounced initial origin pass.
 import type { Env } from '../env.ts';
@@ -16,8 +19,18 @@ import { storedPolicy } from './policy.ts';
 /** At most this many findings per kind per run. */
 export const DRIFT_BATCH = 100;
 
-const BASELINE = (field: string, value: string) =>
-  `EXISTS (SELECT 1 FROM app_changes b WHERE b.kind = 'migration.baseline' AND b.app_id = a.id AND json_extract(b.detail_json, '$.${field}') = ${value})`;
+/** Ledger kinds that end what the baseline held (a CLI settings write lists several under `parts`). */
+const POLICY_ENDS = ['policy.removed', 'policy.activated', 'policy.pending_dropped'];
+const RAW_ENDS = ['raw_sign.off'];
+const kindIn = (kinds: readonly string[]) => kinds.map((k) => `'${k}'`).join(', ');
+/** No row after the baseline `b` of app `a` ended it. */
+const NOT_ENDED = (kinds: readonly string[]) =>
+  `NOT EXISTS (SELECT 1 FROM app_changes e WHERE e.app_id = a.id AND e.seq > b.seq
+                AND (e.kind IN (${kindIn(kinds)}) OR EXISTS (SELECT 1 FROM json_each(e.detail_json, '$.parts') pp WHERE json_extract(pp.value, '$.kind') IN (${kindIn(kinds)}))))`;
+/** The 0006 baseline of app `a` held `value` in `field`, and nothing has ended it since (a kill switch, a newer value). */
+const BASELINE = (field: string, value: string, ends: readonly string[]) =>
+  `EXISTS (SELECT 1 FROM app_changes b WHERE b.kind = 'migration.baseline' AND b.app_id = a.id AND json_extract(b.detail_json, '$.${field}') = ${value}
+             AND ${NOT_ENDED(ends)})`;
 
 /** An announced change of `kind` on app `a` with `value` (`g.policy_json = …` or none), status open, and `clock`. */
 const ANNOUNCED = (kind: string, value: string | null, clock: string) =>
@@ -56,7 +69,10 @@ export async function detectDrift(env: Pick<Env, 'DB'>, now = Date.now()): Promi
           AND NOT EXISTS (SELECT 1 FROM guarded_changes g WHERE g.id = o.change_id AND g.app_id = o.app_id AND g.kind = 'origin_add' AND g.origin = o.origin
                            AND g.notified_at IS NOT NULL AND g.active_from IS NOT NULL AND g.active_from <= o.active_from AND g.status IN ('pending', 'active'))
           AND NOT (o.active_from = 0 AND EXISTS (SELECT 1 FROM app_changes b, json_each(b.detail_json, '$.origins') j
-                                                 WHERE b.kind = 'migration.baseline' AND b.app_id = o.app_id AND j.value = o.origin))
+                                                 WHERE b.kind = 'migration.baseline' AND b.app_id = o.app_id AND j.value = o.origin
+                                                   AND NOT EXISTS (SELECT 1 FROM app_changes e, json_each(e.detail_json, '$.origins') r
+                                                                    WHERE e.app_id = o.app_id AND e.seq > b.seq AND e.kind = 'origin.removed'
+                                                                      AND json_extract(r.value, '$.origin') = o.origin)))
         ORDER BY o.app_id, o.origin LIMIT ?2`,
     )
     .bind(now, DRIFT_BATCH)
@@ -67,22 +83,22 @@ export async function detectDrift(env: Pick<Env, 'DB'>, now = Date.now()): Promi
       `SELECT a.id AS app_id, a.org_id, a.scope_id, 'policy' AS what, a.auto_approve_policy AS value FROM apps a
         WHERE a.deleted_at IS NULL AND a.auto_approve_policy IS NOT NULL
           AND NOT ${ANNOUNCED('policy_set', 'a.auto_approve_policy', inForceClock)}
-          AND NOT ${BASELINE('autoApprovePolicy', 'a.auto_approve_policy')} AND NOT ${BASELINE('autoApprovePending', 'a.auto_approve_policy')}
+          AND NOT ${BASELINE('autoApprovePolicy', 'a.auto_approve_policy', POLICY_ENDS)} AND NOT ${BASELINE('autoApprovePending', 'a.auto_approve_policy', POLICY_ENDS)}
        UNION ALL
        SELECT a.id, a.org_id, a.scope_id, 'policy_pending', a.auto_approve_pending FROM apps a
         WHERE a.deleted_at IS NULL AND a.auto_approve_pending IS NOT NULL
           AND NOT ${ANNOUNCED('policy_set', 'a.auto_approve_pending', 'g.active_from <= a.auto_approve_effective_at')}
-          AND NOT ${BASELINE('autoApprovePending', 'a.auto_approve_pending')}
+          AND NOT ${BASELINE('autoApprovePending', 'a.auto_approve_pending', POLICY_ENDS)}
        UNION ALL
        SELECT a.id, a.org_id, a.scope_id, 'raw_sign', NULL FROM apps a
         WHERE a.deleted_at IS NULL AND a.raw_sign = 'approval'
           AND NOT ${ANNOUNCED('raw_sign_on', null, inForceClock)}
-          AND NOT ${BASELINE('rawSign', "'approval'")} AND NOT ${BASELINE('rawSignPending', "'approval'")}
+          AND NOT ${BASELINE('rawSign', "'approval'", RAW_ENDS)} AND NOT ${BASELINE('rawSignPending', "'approval'", RAW_ENDS)}
        UNION ALL
        SELECT a.id, a.org_id, a.scope_id, 'raw_sign_pending', NULL FROM apps a
         WHERE a.deleted_at IS NULL AND a.raw_sign_pending = 'approval'
           AND NOT ${ANNOUNCED('raw_sign_on', null, 'g.active_from <= a.raw_sign_effective_at')}
-          AND NOT ${BASELINE('rawSignPending', "'approval'")}
+          AND NOT ${BASELINE('rawSignPending', "'approval'", RAW_ENDS)}
        LIMIT ?1`,
     )
     .bind(DRIFT_BATCH)

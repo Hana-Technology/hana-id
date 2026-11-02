@@ -7,7 +7,7 @@ import { type Environment, LEGACY_ORG_ID, newId, newPublishableKey } from '@hana
 import type { Env } from '../env.ts';
 import { parseRelayerKeys } from '../relayer-config.ts';
 import { getApp } from './apps.ts';
-import { type Writer, actorId, commitOn, committed, refuse, refuseReplay, replaySeq, runWrite } from './cas.ts';
+import { type Writer, actorId, commitOn, committed, refuse, refuseReplay, replayRow, runWrite, expectReplay } from './cas.ts';
 import { requireOwnersInOrg } from './chain.ts';
 import type { HotDb } from './db.ts';
 import { checkOriginRules, normaliseAll, requireChangeConfig } from './origins.ts';
@@ -18,7 +18,7 @@ import { APP_CHANGE_COLUMNS, type AppChangeRow, type SecurityEventRow, appChange
 const DEFAULT_PLAN = 'free';
 
 interface ScopeRead {
-  replay_seq: number | null;
+  replay: string | null;
   contacts: number;
   scope_id: string | null;
   org_id: string | null;
@@ -26,9 +26,9 @@ interface ScopeRead {
   assigned_at: number | null;
 }
 
-const readScope = (db: HotDb, requestId: string, scopeId: string, orgId: string) =>
+const readScope = (db: HotDb, w: Writer, scopeId: string, orgId: string) =>
   db.first<ScopeRead>(
-    q`SELECT ${replaySeq(requestId)} AS replay_seq, (SELECT COUNT(*) FROM org_security_contacts WHERE org_id = ${orgId}) AS contacts,
+    q`SELECT ${replayRow(w.requestId)} AS replay, (SELECT COUNT(*) FROM org_security_contacts WHERE org_id = ${orgId}) AS contacts,
              s.scope_id, s.org_id, s.environment, s.assigned_at
         FROM (SELECT 1) LEFT JOIN scopes s ON s.scope_id = ${scopeId}`,
   );
@@ -47,12 +47,13 @@ export async function createApp(
   w: Writer,
   i: { orgId: string; scopeId: string; environment: Environment; name: string; origins: readonly string[]; orgOwnerSubs: readonly string[] },
 ) {
+  expectReplay(w, ['app.created']);
   const config = requireChangeConfig(env);
   const name = appName(i.name);
   const origins = normaliseAll(i.origins);
   checkOriginRules(env, i.environment, origins);
-  const s = await readScope(db, w.requestId, i.scopeId, i.orgId);
-  refuseReplay(s?.replay_seq);
+  const s = await readScope(db, w, i.scopeId, i.orgId);
+  refuseReplay(s?.replay, w);
   if (!s || s.contacts === 0) refuse('no_security_contact', 'The org has no security contact: set them first');
   const createScope = s!.scope_id === null;
   if (!createScope) {
@@ -99,7 +100,7 @@ export async function createApp(
         SELECT ${appId}, json_extract(value, '$.origin'), NULL, json_extract(value, '$.changeId') FROM json_each(${list}) WHERE ${when}`,
     );
   }
-  await runWrite(db, w.requestId, stmts);
+  await runWrite(db, w, stmts);
   return { app: await getApp(db, appId, i.orgId, w.now, env.FILES_ORIGIN), publishableKey, createdScope: createScope };
 }
 
@@ -109,13 +110,14 @@ export async function createApp(
  * `assigned_at` restarts the staff-proposal wait.
  */
 export async function assignScopeOrg(db: HotDb, env: Env, w: Writer, i: { scopeId: string; orgId: string; orgOwnerSubs: readonly string[] }) {
+  expectReplay(w, ['scope.assigned'], null);
   if (i.orgId === LEGACY_ORG_ID) refuse('bad_request', `A scope can't be assigned to ${LEGACY_ORG_ID}`);
-  const s = await readScope(db, w.requestId, i.scopeId, i.orgId);
-  refuseReplay(s?.replay_seq);
+  const s = await readScope(db, w, i.scopeId, i.orgId);
+  refuseReplay(s?.replay, w);
   if (!s || s.scope_id === null) return refuse('not_found', 'No such scope');
   if (s.org_id !== LEGACY_ORG_ID) refuse('scope_conflict', 'The scope already belongs to an org');
   await requireOwnersInOrg(env, i.scopeId, i.orgOwnerSubs);
-  const results = await runWrite(db, w.requestId, [
+  const results = await runWrite(db, w, [
     commitOn(
       w,
       { kind: 'scope.assigned', detail: q`json_object('from', ${LEGACY_ORG_ID}, 'to', ${i.orgId}, 'apps', (SELECT COUNT(*) FROM apps WHERE scope_id = ${i.scopeId}))` },
@@ -139,15 +141,16 @@ export async function getSecurityContacts(db: HotDb, orgId: string): Promise<str
  * `app_changes org.security_contacts` lists the old and the new set (the admin feed emails both).
  */
 export async function setSecurityContacts(db: HotDb, w: Writer, i: { orgId: string; emails: readonly string[] }) {
+  expectReplay(w, ['org.security_contacts'], null);
   const emails = [...new Set(i.emails)].sort();
-  const r = await db.first<{ replay_seq: number | null; current: string }>(
-    q`SELECT ${replaySeq(w.requestId)} AS replay_seq, (SELECT json_group_array(email) FROM (SELECT email FROM org_security_contacts WHERE org_id = ${i.orgId} ORDER BY email)) AS current`,
+  const r = await db.first<{ replay: string | null; current: string }>(
+    q`SELECT ${replayRow(w.requestId)} AS replay, (SELECT json_group_array(email) FROM (SELECT email FROM org_security_contacts WHERE org_id = ${i.orgId} ORDER BY email)) AS current`,
   );
-  refuseReplay(r?.replay_seq);
+  refuseReplay(r?.replay, w);
   const old = JSON.parse(r?.current ?? '[]') as string[];
   if (JSON.stringify(old) === JSON.stringify(emails)) return { emails };
   const list = JSON.stringify(emails);
-  await runWrite(db, w.requestId, [
+  await runWrite(db, w, [
     commitOn(
       w,
       { kind: 'org.security_contacts', detail: { old, new: emails } },

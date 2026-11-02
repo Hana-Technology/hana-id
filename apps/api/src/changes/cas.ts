@@ -31,11 +31,30 @@ export const refuse = (code: RpcCode, message: string): never => {
   throw new RpcRefusal(code, message);
 };
 
+/** What a replayed request id must match to be answered `already_applied` (else `conflict`, D229). */
+export interface ReplayExpect {
+  /** The write's ledger kinds (one of them). */
+  kinds: readonly string[];
+  /** The app the write is on (undefined: not compared, e.g. a new app's id). */
+  appId?: string | null;
+  /** The actor recorded, when it isn't the caller's (a link cancel records the change as its actor). */
+  actor?: { kind: string; id: string };
+}
+
 /** Who wrote, as `app_changes` records it (the console's member, Hana staff, a cron, or an emailed link). */
 export interface Writer {
   actor: Actor;
   requestId: string;
   now: number;
+  /** Set by each writer before its plan read: what a replay of its request id must match. */
+  expect?: ReplayExpect;
+  /** Set by runWrite once the write applied (a no-op or a refusal leaves it unset; the breaker refunds those). */
+  wrote?: boolean;
+}
+
+/** Declares what this write records, for the replay check (call before the plan read). */
+export function expectReplay(w: Writer, kinds: readonly string[], appId?: string | null, actor?: { kind: string; id: string }): void {
+  w.expect = { kinds, ...(appId === undefined ? {} : { appId }), ...(actor ? { actor } : {}) };
 }
 
 /** The actor columns of `app_changes`. `actor_sub` is only an API-verified step-up's sub (C6), never set here. */
@@ -85,29 +104,48 @@ export function commitOn(w: Writer, row: CommitRow, ids: { orgId: string; appId?
      WHERE (${predicate}) OR ${replayed(w.requestId)}`;
 }
 
-/** `seq` of the row a request id already wrote, or null. Selected by every plan read (`replay_seq`). */
-export const replaySeq = (requestId: string): Q => q`(SELECT seq FROM app_changes WHERE request_id = ${requestId})`;
+/** The row a request id already wrote (JSON: seq, kind, app and actor), or null. Selected by every plan read (`replay`). */
+export const replayRow = (requestId: string): Q =>
+  q`(SELECT json_object('seq', seq, 'kind', kind, 'app_id', app_id, 'actor_kind', actor_kind, 'actor_id', actor_id) FROM app_changes WHERE request_id = ${requestId})`;
 
-/** Answers a replayed request id found by the plan read. */
-export function refuseReplay(seq: number | null | undefined): void {
-  if (seq !== null && seq !== undefined) refuse('already_applied', `Request already applied (app_changes seq ${seq})`);
+interface StoredReplay {
+  seq: number;
+  kind: string;
+  app_id: string | null;
+  actor_kind: string;
+  actor_id: string;
+}
+
+/**
+ * Answers a request id used before: `already_applied` when the stored row is this write's (same kind, app and actor),
+ * `conflict` when the id was used for another write (a caller bug: a retry must resend the same call).
+ */
+export function refuseReplay(row: string | StoredReplay | null | undefined, w: Writer): void {
+  if (row === null || row === undefined) return;
+  const r: StoredReplay = typeof row === 'string' ? (JSON.parse(row) as StoredReplay) : row;
+  const e = w.expect;
+  const actor = e?.actor ?? { kind: w.actor.kind, id: actorId(w.actor) };
+  const same = !!e && e.kinds.includes(r.kind) && (e.appId === undefined || e.appId === r.app_id) && actor.kind === r.actor_kind && actor.id === r.actor_id;
+  if (!same) refuse('conflict', 'This request id was already used for another write: use a new one');
+  refuse('already_applied', `Request already applied (app_changes seq ${r.seq})`);
 }
 
 /**
  * Runs a write's batch (its first statement the commit row). Returns the D1 results when the write applied. A moved
  * state is `version_conflict`; a replayed request id (the batch aborted on the unique request id) `already_applied`.
  */
-export async function runWrite(db: HotDb, requestId: string, stmts: readonly Q[]): Promise<D1Result[]> {
+export async function runWrite(db: HotDb, w: Writer, stmts: readonly Q[]): Promise<D1Result[]> {
   let results: D1Result[];
   try {
     results = await db.batch(stmts);
   } catch (err) {
     // The batch rolled back. Only a used request id is answered; anything else is the caller's internal error.
-    const seen = await db.first<{ seq: number }>(q`SELECT seq FROM app_changes WHERE request_id = ${requestId}`);
-    if (seen) refuse('already_applied', `Request already applied (app_changes seq ${seen.seq})`);
+    const seen = await db.first<StoredReplay>(q`SELECT seq, kind, app_id, actor_kind, actor_id FROM app_changes WHERE request_id = ${w.requestId}`);
+    if (seen) refuseReplay(seen, w);
     throw err;
   }
   if ((results[0]?.meta.changes ?? 0) !== 1) refuse('version_conflict', 'The app changed since it was read: read it again');
+  w.wrote = true;
   return results;
 }
 

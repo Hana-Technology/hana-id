@@ -3,7 +3,8 @@
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
 known open issues. Last verified against code: 2026-11-02 for batch C's RPC writers (branch `feat/batch-c-5`:
 `ConsoleRpc` / `AdminRpc` in "Invariants", the breaker and hot-DB budget, the waivers at the notice ack, drift
-detection now built, the legacy `apps.publishable_key` kept on a valid key, D225–D229); 2026-11-02 for the email issuer (branch `feat/email-login-4`: its keys and secrets rows and "Email issuer"
+detection now built (and what it doesn't cover), the legacy `apps.publishable_key` kept on a valid key, the review
+fixes to admission, D225–D229); 2026-11-02 for the email issuer (branch `feat/email-login-4`: its keys and secrets rows and "Email issuer"
 invariants, D195–D199, with the review fixes and the abuse re-check: K_sup, K_device, per-address device tickets with
 revocation, the owner pool, mailed unlock/unsuppress, the growing domain cap, encrypted challenge addresses, the 0.92%
 bound); for the identity token's AWS KMS signer (branch
@@ -64,7 +65,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | `KEYS_UPDATER_KEY` (Worker secret, function-call key on the signer account) | Governance contract (sandbox-dev since 2026-10-30): **propose** an attacker RSA key (`set_issuer_key`), which waits `issuer_key_delay_ms` (mainnet 2 h) in public. v1 contract: set it at once → mint Google tokens for any `sub` → derive any user's key | The watchdog cancels a pending key Google doesn't publish within one run and deletes every updater key; an active one (the watchdog was down) makes it pause and delete every updater key (D82, D126). Full table: `docs/governance-spec.md` "What a compromise gives"; recovery: `docs/playbooks.md` `updater-key-stolen`, `forged-active-key` |
 | Owner key (governance contract: the council DAO, 2 of 3) | Two council keys: issuer keys (delayed like the updater's), config, pause/unpause, upgrades and owner transfer (after `governance_delay_ms`, mainnet 72 h), surplus withdrawal | Every delayed action is public and cancellable by the owner; the watchdog alerts on each (`governance_change`). See `docs/governance-spec.md` and `docs/playbooks.md` `unexpected-owner-action` |
 | Signer account full-access key | Redeploy the contract: anything, including MPC requests for any path | No upgrade lock in batch A/A.2/B. Open issue (e), D33; fix specified in `docs/governance-spec.md` |
-| D1 | App origins (→ `frame-ancestors`, parent-origin checks; a bare write of an `app_origins` row with `active_from` set skips the guarded-change delay), app scope, settings incl. bare writes of `raw_sign`/policy without the pending delay, suspensions; `share_enc` rows. The API's hourly drift detection (`changes/drift.ts`) flags such writes against `guarded_changes` and the 0006 baseline as `drift` security events; it can't catch an insider who also forges those rows | `K_s` needs `VAULT_KEK`; a policy needs the user's consent to its `policyId`; raw requests still need approval |
+| D1 | App origins (→ `frame-ancestors`, parent-origin checks; a bare write of an `app_origins` row with `active_from` set skips the guarded-change delay), app scope, settings incl. bare writes of `raw_sign`/policy without the pending delay, suspensions; `share_enc` rows. The API's hourly drift detection (`changes/drift.ts`) flags such writes of origins, policies and raw signing against `guarded_changes` and the 0006 baseline (only while no later `app_changes` row ended a baseline value) as `drift` security events; it can't catch an insider who also forges those rows, and doesn't cover keys, suspension bits or deletion (a bare write of `app_keys`, `suspended_by` or `deleted_at` goes unflagged; `app_changes` has no row for it) | `K_s` needs `VAULT_KEK`; a policy needs the user's consent to its `policyId`; raw requests still need approval |
 | `VAULT_KEK` | Unwrap every `K_s` in D1 | Useless without a device's IndexedDB record (PRK is encrypted under `K_s` only on the device) |
 | API Worker code or all Worker secrets, or the Cloudflare account | Everything: the API Worker renders the vault page (inlined config, `frame-ancestors`) and holds `KEYS_UPDATER_KEY`; the same account deploys the two page Workers that serve the vault and auth bundles | Single trust root. Mitigations: small vault bundle, strict CSP, no third-party script, narrow `frame-ancestors` |
 | `vaultOrigin` | Every key of every user that loads it (PRK in memory) | — |
@@ -349,9 +350,16 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
     member candidate also needs an API-verified `proposer_sub`); `loopback` only for a member's loopback origin on a
     test scope in a dev env on a non-production network;
   - the cancel link is checked as `sha256(token)` against the stored hash, single use, until `active_from`;
-  - a compromised console is bounded: kill switches (`setSuspended(true)`, `revokeKey`, `rotateKey`,
-    `removeOrigins`) at 5 per org and 20 across orgs per rolling hour (`rate_limited` and a `breaker` event), every
-    call within a 30 statements/s hot-DB budget (burst 60) and two reads plus one batch of ≤ 8 statements;
+  - a compromised console is bounded: destructive calls (`setSuspended(true)`, `revokeKey`, `rotateKey`,
+    `removeOrigins`, a `googleWebClientId` change) at 5 per org and 20 across orgs per rolling hour (`rate_limited`,
+    and one `breaker` event per limit and hour; a call that changed nothing gets its slot back). Every call fits a
+    hot-DB budget: per-org buckets (10/s, burst 40) under the global one (30/s, burst 60), with the last 10 and 20
+    tokens kept for the kill switches. Every call is also held to two reads and one batch of ≤ 8 statements;
+  - emailed-link cancels (unauthenticated) have their own limits, per client IP (IPv6 by /64) and a global link
+    bucket, taken before the token is read and never from the members' budget. A link flood can't block anyone's
+    kill switches;
+  - a replayed request id is `already_applied` only for the same write (kind, app, actor), otherwise `conflict`;
+    `ackNotice` takes only the admin Worker's cron (`system`); the console never acts for `org_legacy`;
   - `relayerKeys` returns public keys only; RPC logs carry the method, request id, outcome and code, never the input;
   - the legacy `apps.publishable_key` is kept on the app's oldest unrevoked key or an unusable tombstone, so a reader
     of the column and `status` (`apps/email-issuer` until it moves to `app_keys`, D206) never accepts a revoked,

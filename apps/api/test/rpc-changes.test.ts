@@ -125,6 +125,17 @@ describe('staff proposals and the blocking notice', () => {
     expect(await adminRpc().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: [NEW], expectedVersion: 0 })).toMatchObject({ ok: true });
   });
 
+  it('an open origin_add without a row (parked) counts for duplicates and the 20-origin cap', async () => {
+    const app = await orgApp();
+    const c = await staffOrigin(app, 'https://parked.example.com');
+    await env.DB.prepare('DELETE FROM app_origins WHERE change_id = ?1').bind(c.id).run(); // app:origins:park
+    expect(await adminRpc().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: ['https://parked.example.com'], expectedVersion: 1 })).toMatchObject({ ok: false, code: 'conflict' });
+    // One row and one parked change: 18 more fit, 19 don't.
+    const many = (n: number) => Array.from({ length: n }, (_, k) => `https://p${k}.example.com`);
+    expect(await adminRpc().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: many(19), expectedVersion: 1 })).toMatchObject({ ok: false, code: 'conflict' });
+    expect(await adminRpc().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: many(18), expectedVersion: 1 })).toMatchObject({ ok: true });
+  });
+
   it('the origin rules: refused origins, duplicates, and at most 20 active or pending per app', async () => {
     const app = await orgApp();
     const add = (origins: string[], v: number) => adminRpc().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: origins, expectedVersion: v });
@@ -139,7 +150,7 @@ describe('staff proposals and the blocking notice', () => {
     // Stored in ASCII form; an IDN is flagged with its decoded form in the views.
     const idn = await orgApp();
     await ok(adminRpc().addOrigins({ ...hana(), orgId: idn.org, appId: idn.id, add: ['https://BÜCHER.example'], expectedVersion: 0 }));
-    const d = await ok(consoleRpc().getApp({ ...member(), orgId: idn.org, appId: idn.id }));
+    const d = await ok(consoleRpc(clock).getApp({ ...member(), orgId: idn.org, appId: idn.id }));
     expect(d.app.origins.find((o) => o.idn)).toMatchObject({ origin: 'https://xn--bcher-kva.example', display: 'https://bücher.example', activeFrom: null });
     expect(d.app.changes[0]).toMatchObject({ origin: 'https://xn--bcher-kva.example', idn: true });
   });
@@ -164,7 +175,7 @@ describe('staff proposals and the blocking notice', () => {
     clock.advance(DELAY);
     expect((await effectiveSettings((await getSettingsRow(env.DB, app.id))!, app.id, Date.now())).autoApprovePolicy?.label).toBe('one');
     // Turning it off is immediate, ends the change, and bumps the version.
-    expect(await consoleRpc().turnOff({ ...member(), orgId: app.org, appId: app.id, what: 'policy', expectedVersion: 2 })).toEqual({ ok: true, version: 3 });
+    expect(await consoleRpc(clock).turnOff({ ...member(), orgId: app.org, appId: app.id, what: 'policy', expectedVersion: 2 })).toEqual({ ok: true, version: 3 });
     expect(await appRow(app.id)).toMatchObject({ auto_approve_policy: null, auto_approve_pending: null });
     expect(await change(p1.change.id)).toMatchObject({ status: 'ended' });
   });
@@ -175,7 +186,7 @@ describe('cancel', () => {
     const app = await orgApp();
     const c = await staffOrigin(app);
     await ok(ack(c.id).then((x) => x.r));
-    expect(await consoleRpc().cancelChange({ ...member(), orgId: app.org, changeId: c.id })).toMatchObject({ ok: true, change: { status: 'cancelled' } });
+    expect(await consoleRpc(clock).cancelChange({ ...member(), orgId: app.org, changeId: c.id })).toMatchObject({ ok: true, change: { status: 'cancelled' } });
     expect(await rows('SELECT origin FROM app_origins WHERE app_id = ?1', app.id)).toEqual([{ origin: ORIGIN }]);
     expect((await appRow(app.id)).origins_version).toBe(2);
     clock.advance(DELAY);
@@ -198,15 +209,15 @@ describe('cancel', () => {
     const ta = await ack(a.id);
     const tb = await ack(b.id);
     // Unannounced: no link yet. A's token for B: refused. Then A's link works once.
-    expect(await consoleRpc().cancelChangeByLink({ ...link(a.id), changeId: (notYet as { changes: { id: string }[] }).changes[0]!.id, token: ta.token })).toMatchObject({ ok: false, code: 'forbidden' });
-    expect(await consoleRpc().cancelChangeByLink({ ...link(b.id), changeId: b.id, token: ta.token })).toMatchObject({ ok: false, code: 'forbidden' });
-    expect(await consoleRpc().cancelChangeByLink({ ...link(a.id), changeId: a.id, token: ta.token })).toMatchObject({ ok: true, change: { status: 'cancelled', cancelledBy: 'link' } });
-    expect(await consoleRpc().cancelChangeByLink({ ...link(a.id), changeId: a.id, token: ta.token })).toMatchObject({ ok: false, code: 'not_pending' });
+    expect(await consoleRpc(clock).cancelChangeByLink({ ...link(a.id), changeId: (notYet as { changes: { id: string }[] }).changes[0]!.id, token: ta.token })).toMatchObject({ ok: false, code: 'forbidden' });
+    expect(await consoleRpc(clock).cancelChangeByLink({ ...link(b.id), changeId: b.id, token: ta.token })).toMatchObject({ ok: false, code: 'forbidden' });
+    expect(await consoleRpc(clock).cancelChangeByLink({ ...link(a.id), changeId: a.id, token: ta.token })).toMatchObject({ ok: true, change: { status: 'cancelled', cancelledBy: 'link' } });
+    expect(await consoleRpc(clock).cancelChangeByLink({ ...link(a.id), changeId: a.id, token: ta.token })).toMatchObject({ ok: false, code: 'not_pending' });
     const led = await rows<{ actor_kind: string; actor_id: string }>("SELECT actor_kind, actor_id FROM app_changes WHERE app_id = ?1 AND kind = 'change.cancelled'", app.id);
     expect(led).toEqual([{ actor_kind: 'link', actor_id: a.id }]);
     // After active_from the link no longer cancels (the change is in force: remove it instead).
     clock.advance(DELAY);
-    expect(await consoleRpc().cancelChangeByLink({ ...link(b.id), changeId: b.id, token: tb.token })).toMatchObject({ ok: false, code: 'not_pending' });
+    expect(await consoleRpc(clock).cancelChangeByLink({ ...link(b.id), changeId: b.id, token: tb.token })).toMatchObject({ ok: false, code: 'not_pending' });
   });
 });
 
@@ -330,16 +341,16 @@ describe('versions', () => {
     clock.advance(DELAY);
     await guardedChangesMaintenance(env);
     expect(await v()).toEqual([1, 0]);
-    await ok(consoleRpc().removeOrigins({ ...member(), orgId: app.org, appId: app.id, remove: ['https://second.example.com'], expectedVersion: 1 }));
+    await ok(consoleRpc(clock).removeOrigins({ ...member(), orgId: app.org, appId: app.id, remove: ['https://second.example.com'], expectedVersion: 1 }));
     expect(await v()).toEqual([2, 0]);
     const p = await ok(adminRpc().proposeChange({ ...hana(), orgId: app.org, appId: app.id, kind: 'raw_sign_on', expectedVersion: 0 }));
     expect(await v()).toEqual([2, 1]);
     await ok(adminRpc().cancelChange({ ...hana(), orgId: app.org, changeId: p.change.id }));
     expect(await v()).toEqual([2, 2]);
-    await ok(consoleRpc().turnOff({ ...member(), orgId: app.org, appId: app.id, what: 'raw_sign', expectedVersion: 2 }));
+    await ok(consoleRpc(clock).turnOff({ ...member(), orgId: app.org, appId: app.id, what: 'raw_sign', expectedVersion: 2 }));
     expect(await v()).toEqual([2, 2]); // nothing was on: no write
     // Removing an origin in force ends its change.
-    await ok(consoleRpc().removeOrigins({ ...member(), orgId: app.org, appId: app.id, remove: [NEW], expectedVersion: 2 }));
+    await ok(consoleRpc(clock).removeOrigins({ ...member(), orgId: app.org, appId: app.id, remove: [NEW], expectedVersion: 2 }));
     expect(await change(c.id)).toMatchObject({ status: 'ended' });
     expect(await originsOf(app.key)).toEqual([ORIGIN]);
   });
@@ -371,6 +382,32 @@ describe('drift detection', () => {
     await waitOnExecutionContext(ctx);
     const events = await rows<{ detail_json: string }>("SELECT detail_json FROM security_events WHERE kind = 'drift' AND app_id = ?1", app.id);
     expect(events.map((e) => JSON.parse(e.detail_json).what).sort()).toEqual(['origin', 'raw_sign_pending']);
+  });
+
+  it('a baseline value put back by hand after a kill switch ended it is drift (origin, raw signing, policy)', async () => {
+    const policy = JSON.stringify(autoApprovePolicy('legacy'));
+    const app = await orgApp({ live: true, origins: [ORIGIN, 'https://second.example.com'] });
+    await env.DB.prepare("UPDATE apps SET raw_sign = 'approval', auto_approve_policy = ?2 WHERE id = ?1").bind(app.id, policy).run();
+    await env.DB.prepare(
+      "INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, request_id) VALUES (?1, ?2, ?3, ?4, 'migration.baseline', json_object('origins', json_array(?5, 'https://second.example.com'), 'rawSign', 'approval', 'autoApprovePolicy', ?6), 'system', 'migration:0006', ?7)",
+    )
+      .bind(Date.now(), app.org, app.id, app.scope, ORIGIN, policy, `migration-0006:${app.id}`)
+      .run();
+    await detectDrift(env);
+    expect(await rows("SELECT id FROM security_events WHERE kind = 'drift' AND app_id = ?1", app.id)).toEqual([]);
+    // The kill switches end each baseline value…
+    await ok(consoleRpc(clock).removeOrigins({ ...member(), orgId: app.org, appId: app.id, remove: ['https://second.example.com'], expectedVersion: 0 }));
+    await ok(consoleRpc(clock).turnOff({ ...member(), orgId: app.org, appId: app.id, what: 'raw_sign', expectedVersion: 0 }));
+    await ok(consoleRpc(clock).turnOff({ ...member(), orgId: app.org, appId: app.id, what: 'policy', expectedVersion: 1 }));
+    // …so writing them back by hand is drift, though the baseline still lists them.
+    await env.DB.prepare("INSERT INTO app_origins (app_id, origin, active_from) VALUES (?1, 'https://second.example.com', 0)").bind(app.id).run();
+    await env.DB.prepare("UPDATE apps SET raw_sign = 'approval', auto_approve_policy = ?2 WHERE id = ?1").bind(app.id, policy).run();
+    await detectDrift(env);
+    const what = (await rows<{ detail_json: string }>("SELECT detail_json FROM security_events WHERE kind = 'drift' AND app_id = ?1", app.id))
+      .map((e) => JSON.parse(e.detail_json) as { what: string; origin?: string })
+      .map((d) => `${d.what}:${d.origin ?? ''}`)
+      .sort();
+    expect(what).toEqual(['origin:https://second.example.com', 'policy:', 'raw_sign:']);
   });
 
   it('the 0006 baseline and announced changes explain what they hold', async () => {
@@ -442,7 +479,7 @@ describe('apps and scopes', () => {
 
   it('deleteApp revokes every key, suspends, cancels pending changes; the legacy column points at no key', async () => {
     const app = await orgApp();
-    const extra = await ok(consoleRpc().createKey({ ...member(), orgId: app.org, appId: app.id }));
+    const extra = await ok(consoleRpc(clock).createKey({ ...member(), orgId: app.org, appId: app.id }));
     const c = await staffOrigin(app);
     expect(await adminRpc().deleteApp({ ...hana(), appId: app.id })).toEqual({ ok: true });
     expect(await getAppByKey(env.DB, app.key)).toBeNull();
@@ -456,7 +493,7 @@ describe('apps and scopes', () => {
     // Deleted: every write is not_found, and Hana's bit can't be cleared.
     expect(await adminRpc().setSuspended({ ...hana(), appId: app.id, bit: 1, suspended: false })).toMatchObject({ ok: false, code: 'not_found' });
     expect(await adminRpc().deleteApp({ ...hana(), appId: app.id })).toMatchObject({ ok: false, code: 'not_found' });
-    expect(await consoleRpc().listApps({ ...member(), orgId: app.org })).toMatchObject({ ok: true, apps: [{ id: app.id, deleted: true }] });
+    expect(await consoleRpc(clock).listApps({ ...member(), orgId: app.org })).toMatchObject({ ok: true, apps: [{ id: app.id, deleted: true }] });
   });
 
   it('security contacts: only through AdminRpc; the ledger lists the old and the new set', async () => {
@@ -471,7 +508,7 @@ describe('apps and scopes', () => {
     ]);
     expect(await adminRpc().setSecurityContacts({ ...hana(), orgId: org, emails: ['Upper@p.example'] })).toMatchObject({ ok: false, code: 'bad_request' });
     expect(await adminRpc().setSecurityContacts({ ...hana(), orgId: org, emails: [] })).toMatchObject({ ok: false, code: 'bad_request' });
-    expect('setSecurityContacts' in consoleRpc()).toBe(false);
+    expect('setSecurityContacts' in consoleRpc(clock)).toBe(false);
   });
 
   it('the feeds: scopes by cursor, changes since a seq, security events marked once; relayer public keys only', async () => {
@@ -502,20 +539,20 @@ describe('keys', () => {
   it('rotation keeps the old key valid for exactly 24 h; revoke is immediate; the legacy column follows a valid key', async () => {
     const app = await orgApp();
     const key = (await rows<{ id: string }>('SELECT id FROM app_keys WHERE app_id = ?1', app.id))[0]!.id;
-    const r = await ok(consoleRpc().rotateKey({ ...member(), orgId: app.org, appId: app.id, keyId: key }));
+    const r = await ok(consoleRpc(clock).rotateKey({ ...member(), orgId: app.org, appId: app.id, keyId: key }));
     expect(r.oldKeyRevokedAt).toBe(Date.now() + 24 * HOUR);
     expect(r.key.key).toMatch(/^pk_test_/u);
     expect((await appRow(app.id)).publishable_key).toBe(r.key.key);
     expect(await getAppByKey(env.DB, app.key, Date.now() + 24 * HOUR - 1)).not.toBeNull();
     expect(await getAppByKey(env.DB, app.key, Date.now() + 24 * HOUR)).toBeNull();
-    expect(await consoleRpc().rotateKey({ ...member(), orgId: app.org, appId: app.id, keyId: key })).toMatchObject({ ok: false, code: 'conflict' });
-    expect(await ok(consoleRpc().revokeKey({ ...member(), orgId: app.org, appId: app.id, keyId: key }))).toEqual({ ok: true });
+    expect(await consoleRpc(clock).rotateKey({ ...member(), orgId: app.org, appId: app.id, keyId: key })).toMatchObject({ ok: false, code: 'conflict' });
+    expect(await ok(consoleRpc(clock).revokeKey({ ...member(), orgId: app.org, appId: app.id, keyId: key }))).toEqual({ ok: true });
     expect(await getAppByKey(env.DB, app.key)).toBeNull();
-    expect(await ok(consoleRpc().revokeKey({ ...member(), orgId: app.org, appId: app.id, keyId: r.key.id }))).toEqual({ ok: true, warning: 'last_key' });
+    expect(await ok(consoleRpc(clock).revokeKey({ ...member(), orgId: app.org, appId: app.id, keyId: r.key.id }))).toEqual({ ok: true, warning: 'last_key' });
     expect(await getAppByKey(env.DB, r.key.key)).toBeNull();
     expect(String((await appRow(app.id)).publishable_key)).toMatch(/^pk_test_0revoked/u);
     // A new key brings the legacy column back to a real key.
-    const fresh = await ok(consoleRpc().createKey({ ...member(), orgId: app.org, appId: app.id }));
+    const fresh = await ok(consoleRpc(clock).createKey({ ...member(), orgId: app.org, appId: app.id }));
     expect((await appRow(app.id)).publishable_key).toBe(fresh.key.key);
     const kinds = await rows<{ kind: string }>("SELECT kind FROM app_changes WHERE app_id = ?1 AND kind LIKE 'key.%' ORDER BY seq", app.id);
     expect(kinds.map((k) => k.kind)).toEqual(['key.rotated', 'key.revoked', 'key.revoked', 'key.created']);
@@ -529,13 +566,13 @@ describe('keys', () => {
     };
     const app = await orgApp();
     expect(await issuer(app.key)).toBe(true);
-    const second = await ok(consoleRpc().createKey({ ...member(), orgId: app.org, appId: app.id }));
+    const second = await ok(consoleRpc(clock).createKey({ ...member(), orgId: app.org, appId: app.id }));
     expect(await issuer(app.key)).toBe(true); // the older key stays the legacy one while it has no revocation
     const oldId = (await rows<{ id: string }>('SELECT id FROM app_keys WHERE app_id = ?1 AND key = ?2', app.id, app.key))[0]!.id;
-    const rotated = await ok(consoleRpc().rotateKey({ ...member(), orgId: app.org, appId: app.id, keyId: oldId }));
+    const rotated = await ok(consoleRpc(clock).rotateKey({ ...member(), orgId: app.org, appId: app.id, keyId: oldId }));
     expect(await issuer(app.key)).toBe(false); // refused at once, before the grace ends (D225)
     expect(await issuer(second.key.key)).toBe(true);
-    await ok(consoleRpc().revokeKey({ ...member(), orgId: app.org, appId: app.id, keyId: second.key.id }));
+    await ok(consoleRpc(clock).revokeKey({ ...member(), orgId: app.org, appId: app.id, keyId: second.key.id }));
     expect(await issuer(second.key.key)).toBe(false);
     expect(await issuer(rotated.key.key)).toBe(true);
     await ok(adminRpc().deleteApp({ ...hana(), appId: app.id }));
@@ -545,8 +582,8 @@ describe('keys', () => {
 
   it('at most 5 unrevoked keys; the prefix is the scope’s environment', async () => {
     const app = await orgApp({ live: true });
-    for (let k = 0; k < 4; k++) expect((await ok(consoleRpc().createKey({ ...member(), orgId: app.org, appId: app.id }))).key.key).toMatch(/^pk_live_/u);
-    expect(await consoleRpc().createKey({ ...member(), orgId: app.org, appId: app.id })).toMatchObject({ ok: false, code: 'key_limit' });
+    for (let k = 0; k < 4; k++) expect((await ok(consoleRpc(clock).createKey({ ...member(), orgId: app.org, appId: app.id }))).key.key).toMatch(/^pk_live_/u);
+    expect(await consoleRpc(clock).createKey({ ...member(), orgId: app.org, appId: app.id })).toMatchObject({ ok: false, code: 'key_limit' });
     expect((await appRow(app.id)).publishable_key).toBe(app.key);
     await expect(env.DB.prepare("INSERT INTO app_keys (id, app_id, key, created_by, created_at) VALUES ('key_x1', ?1, ?2, 't', 0)").bind(app.id, newKey('pk_test_')).run()).rejects.toThrow();
   });
@@ -555,7 +592,7 @@ describe('keys', () => {
 describe('settings', () => {
   it('ranges match batch B’s; the web client must be one of the scope’s on-chain Google clients; names are display-safe', async () => {
     const app = await orgApp();
-    const s = (x: Record<string, unknown>, v = 0) => consoleRpc().updateSettings({ ...member(), orgId: app.org, appId: app.id, expectedVersion: v, ...x });
+    const s = (x: Record<string, unknown>, v = 0) => consoleRpc(clock).updateSettings({ ...member(), orgId: app.org, appId: app.id, expectedVersion: v, ...x });
     expect(await s({ sessionTtlMs: 59 * 60 * 1000 })).toMatchObject({ ok: false, code: 'bad_request' });
     expect(await s({ idleTtlMs: 13 * HOUR })).toMatchObject({ ok: false, code: 'bad_request' });
     expect(await s({ name: 'Bad‮name' })).toMatchObject({ ok: false, code: 'bad_request' });
@@ -576,15 +613,15 @@ describe('settings', () => {
   it('a session TTL lowered under a stored or proposed policy’s maxConsentMs is policy_invalid', async () => {
     const app = await orgApp({ live: true });
     await ok(adminRpc().proposeChange({ ...hana(), orgId: app.org, appId: app.id, kind: 'policy_set', policy: autoApprovePolicy('12h'), expectedVersion: 0 }));
-    expect(await consoleRpc().updateSettings({ ...member(), orgId: app.org, appId: app.id, expectedVersion: 1, sessionTtlMs: 2 * HOUR, idleTtlMs: HOUR })).toMatchObject({ ok: false, code: 'policy_invalid' });
+    expect(await consoleRpc(clock).updateSettings({ ...member(), orgId: app.org, appId: app.id, expectedVersion: 1, sessionTtlMs: 2 * HOUR, idleTtlMs: HOUR })).toMatchObject({ ok: false, code: 'policy_invalid' });
   });
 
   it('setLogo points at an object of this app only', async () => {
     const app = await orgApp();
     const other = await orgApp();
-    expect(await consoleRpc().setLogo({ ...member(), orgId: app.org, appId: app.id, logoKey: `logos/${other.id}/${'b'.repeat(64)}.png`, expectedVersion: 0 })).toMatchObject({ ok: false, code: 'bad_request' });
-    expect(await consoleRpc().setLogo({ ...member(), orgId: app.org, appId: app.id, logoKey: `logos/${app.id}/${'b'.repeat(64)}.svg`, expectedVersion: 0 })).toMatchObject({ ok: false, code: 'bad_request' });
-    expect(await consoleRpc().setLogo({ ...member(), orgId: app.org, appId: app.id, logoKey: `logos/${app.id}/${'b'.repeat(64)}.png`, expectedVersion: 0 })).toEqual({ ok: true, version: 1 });
-    expect(await consoleRpc().setLogo({ ...member(), orgId: app.org, appId: app.id, logoKey: null, expectedVersion: 1 })).toEqual({ ok: true, version: 2 });
+    expect(await consoleRpc(clock).setLogo({ ...member(), orgId: app.org, appId: app.id, logoKey: `logos/${other.id}/${'b'.repeat(64)}.png`, expectedVersion: 0 })).toMatchObject({ ok: false, code: 'bad_request' });
+    expect(await consoleRpc(clock).setLogo({ ...member(), orgId: app.org, appId: app.id, logoKey: `logos/${app.id}/${'b'.repeat(64)}.svg`, expectedVersion: 0 })).toMatchObject({ ok: false, code: 'bad_request' });
+    expect(await consoleRpc(clock).setLogo({ ...member(), orgId: app.org, appId: app.id, logoKey: `logos/${app.id}/${'b'.repeat(64)}.png`, expectedVersion: 0 })).toEqual({ ok: true, version: 1 });
+    expect(await consoleRpc(clock).setLogo({ ...member(), orgId: app.org, appId: app.id, logoKey: null, expectedVersion: 1 })).toEqual({ ok: true, version: 2 });
   });
 });

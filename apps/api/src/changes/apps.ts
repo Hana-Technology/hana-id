@@ -3,7 +3,7 @@
 // B's app is `not_found`, exactly like an app that doesn't exist.
 import type { AppDetail, AppSummary } from '@hana-id/console-core';
 import { originDisplay } from '@hana-id/console-core';
-import { refuse, refuseReplay, replaySeq } from './cas.ts';
+import { type Writer, refuse, refuseReplay, replayRow } from './cas.ts';
 import type { HotDb } from './db.ts';
 import { policyInForce, rawSignInForce, storedPolicy } from './policy.ts';
 import { type Q, q, raw } from './sql.ts';
@@ -107,7 +107,7 @@ export interface AppPlan {
  */
 export async function planApp(
   db: HotDb,
-  i: { appId: string; orgId: string | null; requestId: string; with?: { origins?: boolean; changes?: boolean; keys?: boolean }; allowDeleted?: boolean },
+  i: { appId: string; orgId: string | null; w: Writer; with?: { origins?: boolean; changes?: boolean; keys?: boolean }; allowDeleted?: boolean },
 ): Promise<AppPlan> {
   const extra: Q[] = [];
   if (i.with?.origins) {
@@ -121,11 +121,12 @@ export async function planApp(
   }
   const cols = extra.length ? q`, ${{ sql: extra.map((e) => e.sql).join(', '), args: [] }}` : raw('');
   // The replay check is a scalar subquery: it is answered even when the app doesn't match (another org's, deleted).
-  const r = await db.first<AppRow & { replay_seq: number | null; app_id: string | null; origins_json?: string; changes_json?: string; keys_json?: string }>(
-    q`SELECT ${replaySeq(i.requestId)} AS replay_seq, a.id AS app_id, ${raw(APP_COLUMNS)}${cols}
+  const r = await db.first<AppRow & { replay: string | null; app_id: string | null; origins_json?: string; changes_json?: string; keys_json?: string }>(
+    q`SELECT ${replayRow(i.w.requestId)} AS replay, a.id AS app_id, ${raw(APP_COLUMNS)}${cols}
         FROM (SELECT 1) LEFT JOIN apps a ON a.id = ${i.appId} AND ${orgFilter(i.orgId)} LEFT JOIN scopes s ON s.scope_id = a.scope_id`,
   );
-  refuseReplay(r?.replay_seq);
+  if (i.w.expect && i.w.expect.appId === undefined) i.w.expect.appId = i.appId;
+  refuseReplay(r?.replay, i.w);
   if (!r || r.app_id === null) return refuse('not_found', 'No such app');
   if (r.deleted_at !== null && !i.allowDeleted) return refuse('not_found', 'The app is deleted');
   return { app: r, origins: jsonRows<OriginRow>(r.origins_json), openChanges: jsonRows<ChangeRow>(r.changes_json), keys: jsonRows<KeyRow>(r.keys_json) };

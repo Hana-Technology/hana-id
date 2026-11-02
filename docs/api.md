@@ -3,7 +3,8 @@
 Last verified against code: 2026-11-02 (branch `feat/batch-c-5`: "RPC entrypoints" (`ConsoleRpc`, `AdminRpc`: CAS
 writes, the breaker, the hot-DB budget, keys, notices, cancel, expedite, staff proposals), drift detection in the
 cron, the `console-rpc` limiter object, the legacy `apps.publishable_key` kept on a valid key, the new log events,
-D225–D229; branch `feat/email-login-4`: "Email issuer", the separate `apps/email-issuer` Worker: its endpoints,
+and the review fixes: per-org budget with a kill-switch reserve, the link cancel's own limits, breaker refunds,
+replays of another write `conflict`, D225–D229; branch `feat/email-login-4`: "Email issuer", the separate `apps/email-issuer` Worker: its endpoints,
 limits, Durable Objects, D1, bindings and logs, D195–D199, with the review fixes and the abuse re-check (the owner
 pool, mailed unlock and unsuppress, confirm, revoke-tickets, the growing domain cap, per-address tickets); branch `feat/identity-token-7`: the identity token's AWS KMS signer, its vars,
 secrets and log codes, D215–D219); 2026-11-02 (branch `feat/batch-c-3`: migration 0006, the gate on `app_keys` and `scopes`,
@@ -692,11 +693,12 @@ schema (`src/rpc.ts`: strict, so an unknown field is `bad_request`). The answer 
 `{ok: false, code, error?}` (`RpcCode`; the BFFs map it to HTTP with `RPC_HTTP_STATUS`). Nothing throws out of a
 method: an unexpected error is logged (`event: "rpc"`, method, request id, `code: internal`) and answered `internal`.
 
-**Actors.** `ConsoleRpc` takes `member` actors only (`cancelChangeByLink`: `link` only). `AdminRpc` takes `hana`;
-the methods its crons call also take `system`: `pendingNotices`, `ackNotice`, `getSecurityContacts`, `listScopes`,
-`changesSince`, `securityEvents`, `markSecurityEventNotified`, `relayerKeys`. Any other actor is `forbidden`. The
-console's member is trusted (spec "Trust in the actor"); every org method still filters `WHERE org_id = ?`, so
-another org's app or change is `not_found`, the same as one that doesn't exist.
+**Actors.** `ConsoleRpc` takes `member` actors only (`cancelChangeByLink`: `link` only) and never `org_legacy`
+(`forbidden`). `AdminRpc` takes `hana`; the methods its crons call also take `system` (`pendingNotices`,
+`getSecurityContacts`, `listScopes`, `changesSince`, `securityEvents`, `markSecurityEventNotified`, `relayerKeys`), and
+`ackNotice` takes `system` only (the notice cron). Any other actor is `forbidden`. The console's member is trusted
+(spec "Trust in the actor"); every org method still filters `WHERE org_id = ?`, so another org's app or change is
+`not_found`, the same as one that doesn't exist.
 
 | `ConsoleRpc` method | What it does |
 |---|---|
@@ -723,7 +725,7 @@ no budget, plus:
 | `assignScopeOrg` | Only a scope in `org_legacy` (else `scope_conflict`), the same owner check; moves every app of the scope (trigger) and sets `assigned_at` |
 | `deleteApp` | Soft delete: `deleted_at`, bit 1, every key revoked, pending changes cancelled, pending origin rows deleted; every later write on it is `not_found` |
 | `setSuspended` (`bit` 1, 2 or 4), `suspendOrg` | Any bit set or cleared; bit 2 on every non-deleted app of the org (one `app_changes` row for the org) |
-| `addOrigins`, `proposeChange` | Staff proposals (`origin_add`; `policy_set` validated by `validateAutoApprovePolicy` against the app's session TTL, `policy_invalid`; `raw_sign_on`, `env_mismatch` on a test app): pending, nothing in force, no waiver; `conflict` within `appChangeDelayMs` of the scope's assignment, for a duplicate origin, past 20 active-or-pending origins, while another change of the kind is pending, or for a value already in force; `origin_refused` by the console-core rules; version + 1 |
+| `addOrigins`, `proposeChange` | Staff proposals (`origin_add`, counted with every open `origin_add` for duplicates and the cap, a parked one included; `policy_set` validated by `validateAutoApprovePolicy` against the app's session TTL, `policy_invalid`; `raw_sign_on`, `env_mismatch` on a test app): pending, nothing in force, no waiver; `conflict` within `appChangeDelayMs` of the scope's assignment, for a duplicate origin, past 20 active-or-pending origins, while another change of the kind is pending, or for a value already in force; `origin_refused` by the console-core rules; version + 1 |
 | `pendingNotices` | Pending changes not yet announced (oldest first), each with its org's security contacts, the app (`id`, `name`, `orgId`, `scopeId`, `environment`) and a policy's JSON (D226) |
 | `ackNotice` | After every send was accepted: `notified_at`, `active_from = now + appChangeDelayMs` (or `now` under a waiver), `cancel_token_hash`, and the origin row's `active_from` or the app's pending policy / raw signing with its `*_effective_at` (a matured pending value is kept as the stored one first). No version bump. Already announced or not pending: `not_pending`. `internal` when the delay var is missing or out of range |
 | `expediteChange` | Only an announced, pending, member-proposed change not yet in force (staff proposal `forbidden`, else `not_pending`); `reason` ≥ 20 characters; `active_from = now` and the matching `*_effective_at`; `change.expedited` |
@@ -743,9 +745,10 @@ Anything else gets the full delay. Hana proposals never get `loopback`.
 **Compare-and-swap writes (`changes/cas.ts`).** Every write is one D1 batch. Its first statement inserts the write's
 `app_changes` row, but only while the predicate holds (the expected version, the key or change as read). A row with
 the same `requestId` that already exists also makes it insert, which fails on `request_id UNIQUE` and aborts the
-batch: a replay is `already_applied` and writes nothing. Every later statement runs only if that row exists. If the
-commit inserted nothing, the state moved since the plan read (`version_conflict`, nothing written). The plan read
-also answers a replay found before the batch.
+batch: a replay writes nothing. It is `already_applied` when the stored row is the same write (its kind, app and
+actor), `conflict` when the request id was used for another write. Every later statement runs only if that row
+exists. If the commit inserted nothing, the state moved since the plan read (`version_conflict`, nothing written). The
+plan read also answers a replay found before the batch.
 
 **The legacy `apps.publishable_key` (D225).** The API never reads it. The key writes keep it on the app's oldest key
 with `revoked_at` NULL, or on a tombstone (`pk_<env>_0revoked…`, never a valid key) when there is none. `deleteApp`
@@ -753,12 +756,22 @@ sets the tombstone. A deleted app keeps bit 1, and the CLI refuses `app:resume` 
 `suspended`. Readers that still use the column and `status` (`apps/email-issuer` until it moves, D206) then never
 accept a revoked, rotating or deleted app's key.
 
-**Breaker and budget (`changes/guard.ts`, object `console-rpc`).** Every `ConsoleRpc` call first takes its cost
-(`CONSOLE_COSTS`: its plan read, batch and one diagnostic read, 1–6 statements) from a token bucket of 30/s with a
-burst of 60. `setSuspended(true)`, `revokeKey`, `rotateKey` and `removeOrigins` also take a slot in their org's
-rolling hour (5) and the global one (20). Over any of these the call is `rate_limited` and writes nothing. A breaker
-refusal also writes a `breaker` security event, once per org (or for the global limit) per clock hour. A call is held
-to two reads and one batch of at most eight statements (`changes/db.ts`; going over is a bug, answered `internal`).
+**Breaker and budget (`changes/guard.ts`, object `console-rpc`).**
+- **Budget.** Every member call first takes its cost (`CONSOLE_COSTS`: its plan read, batch and one diagnostic read,
+  1–6 statements). It comes from its org's bucket (10/s, burst 40) and from the global one (the spec's 30/s, burst
+  60). The kill switches (`removeOrigins`, `turnOff`, `revokeKey`, `setSuspended(true)`) may spend the last 10 of
+  the org's bucket and the last 20 of the global one; every other call must leave them. So neither one org nor a
+  flood of reads or settings writes can starve another org's kill switches.
+- **Breaker.** `setSuspended(true)`, `revokeKey`, `rotateKey`, `removeOrigins` and a `googleWebClientId` change also
+  take a slot in their org's rolling hour (5) and the global one (20). A call that changed nothing gets its slot
+  back: `not_found`, `conflict`, `version_conflict`, `already_applied`, `bad_request`, or a no-op.
+- **Refusals.** Over any limit, the call is `rate_limited` and writes nothing. The first breaker refusal of a limit
+  in a clock hour writes a `breaker` security event; the object remembers it, so later refusals write nothing.
+- **Emailed-link cancels** never touch the members' budget. Each takes a slot from a per-client-IP limiter (object
+  `cancel-link:<v4 address | v6 /64>`, 5 a minute and 50 a day), then a token from a global link bucket (1/s, burst
+  20). Both are taken before the token is read.
+- **Statement cap.** A call is held to two reads and one batch of at most eight statements (`changes/db.ts`; going
+  over is a bug, answered `internal`).
 
 ## Relayer pools and gas (`src/relayer-config.ts`, `src/gas.ts`)
 
@@ -794,16 +807,16 @@ All SQLite-backed (wrangler migrations `v1`: `RelayerKey`, `RateLimiter`; `v2`: 
 created there: `relayer-key-0@apac`, `owner-relayer-key-0@apac`, `app:<appId>@apac`, `owner-actions:global@apac`,
 `owner-actions:scope:<scopeId>@apac`, `owner-actions:execute:<scopeId>@apac`, `owner-actions:owner:<hash>@apac`,
 `owner-actions:cancel:<scopeId>@apac`, `owner-actions:cancel-global@apac`, `owner-actions:tokens@apac`,
-`identity:global@apac`, `identity:scope:<scopeId>@apac`, `console-rpc@apac` (C5: every ConsoleRpc call's breaker and budget), `identity-proof:<hex sessionPk>@apac` (one per session key:
+`identity:global@apac`, `identity:scope:<scopeId>@apac`, `console-rpc@apac` (C5: every ConsoleRpc call's breaker and budget, and the global link bucket), `identity-proof:<hex sessionPk>@apac` (one per session key:
 its proofs' single-use markers, deleted by the object's alarm once expired). Unset or unknown hint: no suffix, Cloudflare places them. Changing
 the hint creates new objects (fresh limiter counters; new relayer objects read their nonce from chain once). Never
-suffixed: per-IP limiters `ip:v4:<addr>` / `ip:v6:<prefix>::/64` (created near the client) and `LoginRelay` objects
+suffixed: per-IP limiters `ip:v4:<addr>` / `ip:v6:<prefix>::/64` and `cancel-link:v4:…` / `cancel-link:v6:…` (C5) (created near the client) and `LoginRelay` objects
 (named by `relayId`).
 
 | Class | State (KV keys) | Notes |
 |---|---|---|
 | `RelayerKey` | `publicKey`, `nonce` (reservation R), `block` `{hash, at}` | One per pool key; refuses a second pool or index |
-| `RateLimiter` | `<window>@<windowStart>` → count; `mark:<sha256>` → until ms; on `console-rpc` (C5) `console:bucket` `{tokens, at}`, `console:breaker:org:<orgId>` and `console:breaker:global` → call times of the last hour | Windows pruned when they end |
+| `RateLimiter` | `<window>@<windowStart>` → count; `mark:<sha256>` → until ms; on `console-rpc` (C5) `console:bucket`, `console:bucket:org:<orgId>`, `console:link` → `{tokens, at}`, `console:breaker:org:<orgId>` and `console:breaker:global` → call times of the last hour, `console:noticed:*` → the hour of the last breaker event | Windows pruned when they end |
 | `LoginRelay` | `slot`: `full` / `consumed` / `expired` | Alarm at write + 120 s, then + 120 s |
 
 **Nonce reservation (`relayer-key.ts`).** A promise-chain mutex covers only *nonce → sign → reserve → start
@@ -904,7 +917,9 @@ jobs (one failing doesn't skip the others):
   by an announced `origin_add` whose clock had passed when the row came into force, or by the 0006 baseline
   (`active_from = 0`, listed in `migration.baseline`). It checks that every stored or pending policy and every
   raw-signing enable is explained by an announced change (a stored value by one in force by then; a pending value by
-  one whose `active_from` is no later than its `*_effective_at`), or by the baseline. Anything else is a direct D1
+  one whose `active_from` is no later than its `*_effective_at`), or by the baseline. A baseline value counts only
+  while no later `app_changes` row ended it (`origin.removed`, `policy.removed` / `.activated` / `.pending_dropped`,
+  `raw_sign.off`). Keys, suspension bits and deletion aren't checked. Anything else is a direct D1
   write: it gets a `drift` security event, once per finding (the id is derived from the finding), at most 100 per
   kind per run. An `app.created` row alone explains nothing (D228).
 
@@ -1035,8 +1050,9 @@ the KMS signer `no_kms_key_arn`, `no_aws_credentials`, `kms_bad_key_arn`, `kms_b
 `kms_key_usage`, `kms_throttled`, `kms_internal`, `kms_error`, `kms_bad_answer`, `kms_bad_signature`; never a
 credential, a request or a signature), `identity_ceiling` (error), `identity_volume_alert` (error: past the global soft line),
 `identity_bad_session_path` (error), `identity_count_failed`, `identity_maintenance` (`pruned`), batch C's `rpc`
-(`method`, `requestId`, `outcome`, `code`: one per RPC call, never its input), `drift_detection` (`added`;
-error `code: internal`) and `console_rpc` (`code: breaker_event_failed`), and from the page
+(`method`, `requestId`, `orgId`, `actorKind`, `outcome`, `code`: one per RPC call, never its input or the actor's id
+or email), `drift_detection` (`added`; error `code: internal`) and `console_rpc` (`code: breaker_event_failed`,
+`breaker_refund_failed`), and from the page
 Workers `vault_host` and `auth_page` (`code`).
 
 ## Email issuer (`apps/email-issuer`, its own Worker) · E

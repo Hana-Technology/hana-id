@@ -5,7 +5,7 @@
 // bit 1, every key revoked, pending changes cancelled; never a hard delete, ids never reused.
 import { SUSPENSION_BITS } from '@hana-id/console-core';
 import { planApp } from './apps.ts';
-import { RpcRefusal, type Writer, actorId, commitOn, commitOnApp, committed, refuse, runWrite } from './cas.ts';
+import { RpcRefusal, type Writer, actorId, commitOn, commitOnApp, committed, runWrite, expectReplay } from './cas.ts';
 import type { HotDb } from './db.ts';
 import { legacyKeyTombstone } from './keys.ts';
 import { q } from './sql.ts';
@@ -15,11 +15,12 @@ import { q } from './sql.ts';
  * deleted app is `not_found` (its bit 1 can never be cleared, so it stays suspended for every reader of `status`).
  */
 export async function setSuspensionBit(db: HotDb, w: Writer, i: { orgId: string | null; appId: string; bit: 1 | 2 | 4; suspended: boolean }): Promise<{ suspendedBy: number }> {
-  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, requestId: w.requestId });
+  expectReplay(w, ['suspension.set', 'suspension.cleared']);
+  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, w });
   const current = plan.app.suspended_by;
   const next = i.suspended ? current | i.bit : current & ~i.bit;
   if (next === current) return { suspendedBy: current };
-  const results = await runWrite(db, w.requestId, [
+  const results = await runWrite(db, w, [
     commitOnApp(
       w,
       { kind: i.suspended ? 'suspension.set' : 'suspension.cleared', detail: q`json_object('bit', ${i.bit}, 'suspendedBy', ${i.suspended ? q`a.suspended_by | ${i.bit}` : q`a.suspended_by & ~${i.bit}`})` },
@@ -35,8 +36,9 @@ export async function setSuspensionBit(db: HotDb, w: Writer, i: { orgId: string 
 
 /** AdminRpc.suspendOrg: bit 2 on (or off) for every app of the org that isn't deleted; one `app_changes` row for the org. */
 export async function suspendOrg(db: HotDb, w: Writer, i: { orgId: string; suspended: boolean }): Promise<{ apps: number }> {
+  expectReplay(w, ['suspension.org_set', 'suspension.org_cleared'], null);
   const bit = SUSPENSION_BITS.org;
-  const results = await runWrite(db, w.requestId, [
+  const results = await runWrite(db, w, [
     commitOn(
       w,
       { kind: i.suspended ? 'suspension.org_set' : 'suspension.org_cleared', detail: q`json_object('bit', ${bit}, 'apps', (SELECT COUNT(*) FROM apps WHERE org_id = ${i.orgId} AND deleted_at IS NULL))` },
@@ -56,9 +58,10 @@ export async function suspendOrg(db: HotDb, w: Writer, i: { orgId: string; suspe
 
 /** AdminRpc.deleteApp: soft delete, in one batch. */
 export async function deleteApp(db: HotDb, w: Writer, i: { appId: string }): Promise<Record<string, never>> {
-  const plan = await planApp(db, { appId: i.appId, orgId: null, requestId: w.requestId });
+  expectReplay(w, ['app.deleted']);
+  const plan = await planApp(db, { appId: i.appId, orgId: null, w });
   const notYet = q`(active_from IS NULL OR active_from > ${w.now})`;
-  await runWrite(db, w.requestId, [
+  await runWrite(db, w, [
     commitOnApp(w, { kind: 'app.deleted', detail: { name: plan.app.name, scopeId: plan.app.scope_id } }, i.appId, null, q`a.deleted_at IS NULL`),
     q`UPDATE apps SET deleted_at = ${w.now}, suspended_by = suspended_by | ${SUSPENSION_BITS.hana}, publishable_key = ${legacyKeyTombstone(plan.app.environment)}
        WHERE id = ${i.appId} AND ${committed(w.requestId)}`,
@@ -68,8 +71,4 @@ export async function deleteApp(db: HotDb, w: Writer, i: { appId: string }): Pro
     q`DELETE FROM app_origins WHERE app_id = ${i.appId} AND ${notYet} AND ${committed(w.requestId)}`,
   ]);
   return {};
-}
-
-export function refuseUnlessBit4(bit: number): void {
-  if (bit !== SUSPENSION_BITS.partner) refuse('forbidden', 'Members change only the partner bit');
 }

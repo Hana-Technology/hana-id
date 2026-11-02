@@ -113,7 +113,8 @@ export function identityTokenRules(m: { network: string; apiUrl: string }, t: Id
 /**
  * The KMS signer's own rules (D215, D219): one key per role (distinct kids and ARNs), every published key has a role
  * (a key nobody tracks is never published), every key in one AWS account (D121's dedicated account), and the standby
- * in another region than the active key, so a regional KMS outage leaves a key to switch to.
+ * in another region than the active key and than `next` (the active key after a switch), so a regional KMS outage
+ * leaves a key to switch to.
  */
 function kmsSignerRules(s: AwsKmsSignerConfig, published: Set<string>, issue: (message: string) => void): void {
   const keys = KMS_KEY_ROLES.flatMap((r) => (s.keys[r] ? [s.keys[r]] : []));
@@ -122,9 +123,10 @@ function kmsSignerRules(s: AwsKmsSignerConfig, published: Set<string>, issue: (m
   if (new Set(keys.map((k) => k.arn)).size !== keys.length) issue('Each KMS key role needs its own key (an ARN appears in two roles)');
   for (const kid of published) if (!kids.has(kid)) issue(`Published key ${kid} has no role in identityToken.signer.keys`);
   if (new Set(keys.map((k) => kmsArnParts(k.arn)?.account)).size > 1) issue('Every identity KMS key must be in the same AWS account (D121)');
-  if (s.keys.standby && kmsArnParts(s.keys.standby.arn)?.region === kmsArnParts(s.keys.active.arn)?.region) {
-    issue('The standby KMS key must be in another region than the active key (D219)');
-  }
+  const region = (k: { arn: string } | undefined) => (k ? kmsArnParts(k.arn)?.region : undefined);
+  if (s.keys.standby && region(s.keys.standby) === region(s.keys.active)) issue('The standby KMS key must be in another region than the active key (D219)');
+  // `next` becomes the active key at a switch, so it must not share the standby's region either.
+  if (s.keys.standby && s.keys.next && region(s.keys.standby) === region(s.keys.next)) issue('The next KMS key must be in another region than the standby (it becomes the active key, D219)');
 }
 
 /**

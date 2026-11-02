@@ -1193,7 +1193,8 @@ to everyone but the break-glass role:
       "Resource": "*",
       "Condition": {
         "ArnEquals": { "aws:PrincipalArn": "<signer>" },
-        "StringEquals": { "kms:SigningAlgorithm": "ECDSA_SHA_256", "kms:MessageType": "DIGEST" }
+        "StringEquals": { "kms:SigningAlgorithm": "ECDSA_SHA_256", "kms:MessageType": "DIGEST" },
+        "Null": { "aws:TokenIssueTime": "true" }
       }
     },
     {
@@ -1203,6 +1204,14 @@ to everyone but the break-glass role:
       "Action": "kms:Sign",
       "Resource": "*",
       "Condition": { "ArnNotEquals": { "aws:PrincipalArn": "<signer>" } }
+    },
+    {
+      "Sid": "NoSessionCredentials",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "kms:Sign",
+      "Resource": "*",
+      "Condition": { "Null": { "aws:TokenIssueTime": "false" } }
     },
     { "Sid": "NoGrants", "Effect": "Deny", "Principal": "*", "Action": "kms:CreateGrant", "Resource": "*" },
     {
@@ -1220,8 +1229,26 @@ to everyone but the break-glass role:
 
 Never drop the `BreakGlassAdministers` statement: a key policy nobody can change can only be repaired by AWS Support.
 
-**The signer user's IAM policy** (inline, the user's only policy). The `Resource` is the active key alone, and during
-a switch the active and the incoming key:
+**Only the long-term access key signs (D219).** Anyone holding the signer's access key can call
+`sts:GetSessionToken`, which needs no permission and can't be denied by any policy, and get session credentials that
+carry the user's permissions as they are at each call, including after a switch has put the standby in the IAM policy.
+Deactivating or deleting the access key isn't proven to end such sessions (up to 36 h). So `Sign` is allowed only to
+requests without `aws:TokenIssueTime` (long-term `AKIA…` credentials, which is what the Worker uses), and
+`NoSessionCredentials` denies `Sign` to every request made with temporary credentials, the signer's sessions included.
+**Confirm on staging** (a drill): a `GetSessionToken` session of the signer user is refused `Sign` (`AccessDenied`), and
+the Worker's own `AKIA…` key still signs.
+
+**The break-glass role.** `<admin>` is an IAM role in this account that operators reach with `sts:AssumeRole` and MFA
+(its trust policy requires `aws:MultiFactorAuthPresent`; `aws configure` a profile with `role_arn` and `mfa_serial`).
+Not an IAM Identity Center (SSO) permission set: those sessions don't carry `aws:MultiFactorAuthPresent`, so the
+`Bool` condition fails and nobody can administer the key. Never delete or rename the role: a key policy names the role
+by its unique id, so a recreated role of the same name isn't the same principal, and the keys lose their administrator
+(repair: AWS Support). To bound a stale MFA session as well, add `"NumericLessThan": { "aws:MultiFactorAuthAge":
+"3600" }` next to the `Bool` condition.
+
+**The signer user's IAM policy** (inline, the user's only policy). The `Resource` lists the active key alone, and
+during a switch the active and the incoming key; `NoOtherKey` lists the same ARNs, so even a policy attached to the user
+by mistake can't let it sign with another key:
 
 ```json
 {
@@ -1234,9 +1261,11 @@ a switch the active and the incoming key:
       "Resource": ["arn:aws:kms:<region>:<account>:key/<active key id>"],
       "Condition": {
         "StringEquals": { "kms:SigningAlgorithm": "ECDSA_SHA_256", "kms:MessageType": "DIGEST" },
-        "Bool": { "aws:SecureTransport": "true" }
+        "Bool": { "aws:SecureTransport": "true" },
+        "Null": { "aws:TokenIssueTime": "true" }
       }
     },
+    { "Sid": "NoOtherKey", "Effect": "Deny", "Action": "kms:Sign", "NotResource": ["arn:aws:kms:<region>:<account>:key/<active key id>"] },
     { "Sid": "NothingElse", "Effect": "Deny", "NotAction": "kms:Sign", "Resource": "*" }
   ]
 }
@@ -1269,12 +1298,26 @@ There is no source-IP condition: Workers have no fixed egress addresses. The use
 7. **Check.** Mint a token from a test app: it verifies against the JWKS with the active kid, and the request's `sign`
    timing phase fits the 100 ms p95 budget (measure on staging). CloudTrail shows one `Sign` by the signer user on the
    active key. Then delete `.secrets/<env>/identity-aws-access-key.json`.
-8. **Alarms** (EventBridge rules on CloudTrail, to the paging app): any `PutKeyPolicy`, `DisableKey`,
-   `ScheduleKeyDeletion` or `CreateGrant` on an identity key; any IAM change on the signer user (`PutUserPolicy`,
-   `DeleteUserPolicy`, `AttachUserPolicy`, `CreateAccessKey`, `UpdateAccessKey`, `DeleteAccessKey`,
-   `CreateLoginProfile`); any `Sign` on an identity key by another principal (the key policy refuses it, but the
-   attempt matters); an AWS Budgets alarm on KMS spend and a CloudWatch alarm on `Sign` volume per key. Every planned
-   change below fires one of them: acknowledge it.
+8. **Alarms** (EventBridge rules on CloudTrail events, to the paging app). Where and how:
+   - Rule state **`ENABLED_WITH_ALL_CLOUDTRAIL_MANAGEMENT_EVENTS`**: a rule in the default `ENABLED` state doesn't
+     receive read-only management events, and `Sign` and `GetSessionToken` are read-only.
+   - The same KMS and STS rules in **both key regions** (KMS events are regional; a `GetSessionToken` on a regional
+     STS endpoint is logged in that region), and the IAM and STS rules in **`us-east-1`** (IAM and the global STS
+     endpoint log there).
+   - The events: `PutKeyPolicy`, `DisableKey`, `ScheduleKeyDeletion` or `CreateGrant` on an identity key; any IAM
+     change that could widen or reuse the signer user: `PutUserPolicy`, `DeleteUserPolicy`, `AttachUserPolicy`,
+     `DetachUserPolicy`, `AddUserToGroup`, `PutUserPermissionsBoundary`, `DeleteUserPermissionsBoundary`,
+     `CreateAccessKey`, `UpdateAccessKey`, `DeleteAccessKey`, `CreateLoginProfile`, and `PutGroupPolicy` /
+     `AttachGroupPolicy` on any group the signer user is in (it should be in none); **`GetSessionToken` by the signer
+     user** (`userIdentity.arn` = `<signer>`; the Worker never calls it, so any is a leaked key in use); any `Sign` on
+     an identity key by another principal or with session credentials (the key policy refuses it, but the attempt
+     matters).
+   - **`Sign` volume per key:** KMS publishes no per-key request metric, so send the trail to a CloudWatch Logs log
+     group (in each key region) and add a metric filter per key, e.g.
+     `{ ($.eventSource = "kms.amazonaws.com") && ($.eventName = "Sign") && ($.resources[0].ARN = "<key arn>") }`, with an
+     alarm on its hourly sum (a few times the API's `identity_issuance_hourly` peak). Plus an AWS Budgets alarm on
+     KMS spend.
+   Every planned change below fires one of them: acknowledge it.
 
 `wrangler dev` doesn't run a KMS env: no AWS credentials go into `.dev.vars` (`gen --dev-vars` writes the sub key only
 and refuses a leftover private signing key file). Local development uses a `local*` env with a Worker-secret key.
@@ -1285,10 +1328,31 @@ and refuses a leftover private signing key file). Local development uses a `loca
    `get-public-key` → `next.json`; `$S kms-add --role next --key next.json --yes` → gen, deploy (the JWKS lists it,
    nothing signs with it). Add its thumbprint to the watchdog's pins.
 2. Wait the notice period.
-3. IAM: list both ARNs (active and next) in the signer user's policy.
-4. `$S kms-switch --to next --yes` → gen, deploy. The old key is now `previous`, still published.
-5. After ≥ 2 h: `$S kms-retire --key previous --yes` → gen, deploy. IAM: the new active ARN alone. KMS: `aws kms
+3. IAM: list both ARNs (active and next) in the signer user's policy, in `SignWithTheActiveIdentityKey` and
+   `NoOtherKey`.
+4. **Pre-switch check** (below) on the next key.
+5. `$S kms-switch --to next --yes` → gen, deploy. The old key is now `previous`, still published.
+6. After ≥ 2 h: `$S kms-retire --key previous --yes` → gen, deploy. IAM: the new active ARN alone. KMS: `aws kms
    disable-key` and `aws kms schedule-key-deletion --pending-window-in-days 30` on the old key. Remove its pin.
+
+**Pre-switch check** (before any `kms-switch`, once the IAM policy lists the target key): prove that the signer user
+can sign with the target and that its signature verifies against the public key the manifest publishes for it. Only
+the signer user may sign (`NoOtherSigner`), so this needs its access key: run it while
+`.secrets/<env>/identity-aws-access-key.json` exists (right after creating an access key; a scheduled switch is a good
+time to rotate it too). The credentials go into the AWS CLI's environment for one command and are never printed:
+
+```sh
+F=.secrets/<env>/identity-aws-access-key.json
+printf 'hana-id pre-switch check %s' "$(date -u +%FT%TZ)" | openssl dgst -sha256 -binary > /tmp/check.digest
+AWS_ACCESS_KEY_ID="$(jq -r .AccessKey.AccessKeyId "$F")" AWS_SECRET_ACCESS_KEY="$(jq -r .AccessKey.SecretAccessKey "$F")" \
+  aws kms sign --region <target region> --key-id <target arn> --message fileb:///tmp/check.digest --message-type DIGEST \
+  --signing-algorithm ECDSA_SHA_256 --output text --query Signature | base64 -d > /tmp/check.sig
+jq -r .PublicKey <target>.json | base64 -d | openssl pkey -pubin -inform DER -out /tmp/target.pem
+openssl pkeyutl -verify -pubin -inkey /tmp/target.pem -in /tmp/check.digest -sigfile /tmp/check.sig   # "Signature Verified Successfully"
+```
+
+`<target>.json` is the `get-public-key` file `kms-add` published (its kid is in the manifest). This `Sign` is in
+CloudTrail with no token behind it: note its time for the reconciliation.
 
 **Access key rotation** (every 90 days, and at once on suspicion):
 
@@ -1304,11 +1368,16 @@ unexplained `Sign` in CloudTrail, a forged token reported by a partner; planned 
 `identity-kms-signer-compromised`):
 
 1. **Stop the signatures:** `aws iam update-access-key … --status Inactive` for every access key of the signer user.
-   Mints answer 503 from then on, and partners fall back to no token.
-2. **Measure:** the CloudTrail `Sign` events by those access key ids: which keys, the window, the count. With D219
-   the standby can't have been used (the IAM policy never listed it); confirm it has no `Sign` events.
-3. **Switch:** the IAM policy → the standby's ARN; a new access key → `$S kms-put-aws-key --yes`;
-   `$S kms-switch --to standby --yes` → gen, deploy.
+   Mints answer 503 from then on, and partners fall back to no token. Deactivating a key alone isn't proven to end
+   session credentials made from it with `GetSessionToken`: what stops those signing is the key policy's
+   `NoSessionCredentials` deny (confirm it is in every identity key's policy, `aws kms get-key-policy`), not the
+   deactivation.
+2. **Measure:** the CloudTrail events whose `userIdentity.arn` is the signer user (every credential it has, sessions
+   included; not by access key id, which misses session keys): `GetSessionToken` calls, refused `Sign` attempts, and
+   successful `Sign`s by key, window and count. With D219 the standby can't have been used (the IAM policy never
+   listed it, sessions can't sign); confirm it has no successful `Sign` events.
+3. **Switch:** the IAM policy → the standby's ARN (both statements); a new access key → the pre-switch check →
+   `$S kms-put-aws-key --yes`; `$S kms-switch --to standby --yes` → gen, deploy.
 4. **Unpublish:** `$S kms-retire --key previous --yes` → gen, deploy (no 2 h wait); disable the old key and schedule
    its deletion; remove its pin.
 5. **New standby:** a new key in another region than the new active key; `$S kms-add --role standby --key <file>
@@ -1321,12 +1390,12 @@ revoking anything. To make the old key the standby again later: `kms-retire --ke
 standby` with its `get-public-key` file.
 
 **Reconciliation (planned, not built; before mainnet).** An hourly job counts the CloudTrail `Sign` events per identity
-key and UTC hour (signer user only, no `errorCode`) and compares them with `identity_issuance_hourly` (the tokens the
+key and UTC hour (`userIdentity.arn` = the signer user, no `errorCode`) and compares them with `identity_issuance_hourly` (the tokens the
 API answered, per kid and hour). Each answered token is one `Sign`, so CloudTrail's count is at least the API's. The
 difference must be explained by `Sign` calls that succeeded at KMS but produced no token (a timeout after KMS signed,
 a garbled or unverifiable answer), which today are only in the logs (`identity_sign_failed` with `kms_timeout`,
-`kms_bad_answer`, `kms_bad_signature` or `self_verify_failed`). A gap beyond that, or any `Sign` by another principal,
-is a critical alert: a signature Hana's API didn't make. To make the check exact, the job's build adds a per-hour,
+`kms_bad_answer`, `kms_bad_signature` or `self_verify_failed`). A gap beyond that, any `Sign` by another principal or with session credentials, or any
+`GetSessionToken` by the signer user, is a critical alert: a signature Hana's API didn't make. To make the check exact, the job's build adds a per-hour,
 per-kid count of the `Sign` requests the API sent (D218). Where it runs (the watchdog's account, D125, with a
 read-only principal on the log-archive bucket or `cloudtrail:LookupEvents`) is decided with it.
 

@@ -1,7 +1,8 @@
 // Picks the identity token's signer from the Worker's configuration (docs/identity-token-spec.md "Where the key
 // lives", D215): IDENTITY_SIGNER is `worker-secret` (testnet and `local*`: a P-256 private JWK as a Worker secret,
 // signer.ts) or `aws-kms` (mainnet and staging: kms.ts). gen writes it from the manifest's `identityToken.signer.kind`;
-// a Worker configured before build step 7 has no IDENTITY_SIGNER and keeps the Worker-secret signer. Either way the
+// a Worker configured before build step 7 has no IDENTITY_SIGNER and keeps the Worker-secret signer, unless it has a
+// KMS key ARN (then nothing signs). Either way the
 // endpoint only calls `sign` and reads `kid`, and every signature is verified with the published key before a token is
 // answered. Every failure is an IdentitySignerError (a reason code), answered as 503 identity_signer_unavailable.
 import type { Env } from '../env.ts';
@@ -14,6 +15,8 @@ type SignerEnv = Pick<Env, 'IDENTITY_SIGNER' | 'IDENTITY_SIGNING_KEY' | 'IDENTIT
 
 /** The signer for the configured kind and `config.activeKid`; rejects with IdentitySignerError when it can't be built. */
 export async function identitySigner(env: SignerEnv, config: Pick<IdentityConfig, 'activeKid' | 'keys'>): Promise<IdentitySigner> {
+  // A KMS key ARN without a signer kind is a half-applied config (a var lost, a hand edit): refuse rather than guess.
+  if (env.IDENTITY_SIGNER === undefined && env.IDENTITY_KMS_KEY_ARN) throw new IdentitySignerError('signer_kind_missing');
   const kind = env.IDENTITY_SIGNER ?? 'worker-secret';
   if (kind === 'worker-secret') return workerSecretSigner(env, config);
   if (kind !== 'aws-kms') throw new IdentitySignerError('unknown_signer_kind');

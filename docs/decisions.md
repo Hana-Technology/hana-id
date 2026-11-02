@@ -2465,7 +2465,8 @@ uses the KMS signer yet. None changes a derivation path or an address.
   are the IAM user's long-term access key as two Worker secrets (`IDENTITY_AWS_ACCESS_KEY_ID`,
   `IDENTITY_AWS_SECRET_ACCESS_KEY`), set together by `identity-key kms-put-aws-key` (one `wrangler secret bulk` from
   `aws iam create-access-key`'s JSON, checked for the manifest's user, `Active`, `AKIA…`). A Worker without
-  `IDENTITY_SIGNER` (configured before step 7) keeps the Worker-secret signer; an unknown kind, a missing ARN or missing
+  `IDENTITY_SIGNER` (configured before step 7) keeps the Worker-secret signer unless it has `IDENTITY_KMS_KEY_ARN` (a
+  half-applied config: refused, `signer_kind_missing`); an unknown kind, a missing ARN or missing
   credentials refuse every mint (`503 identity_signer_unavailable`), and a KMS Worker never falls back to a
   Worker-secret key. The kind is `aws-kms`, as the spec and the email issuer name it, not `kms`.
 - Why: the spec's standby lives in a second region, which one `awsRegion` can't express; ARNs pin the exact key (an
@@ -2530,10 +2531,20 @@ uses the KMS signer yet. None changes a derivation path or an address.
   same region; `kms-add --role next` refuses the standby's region, so a scheduled switch keeps them apart). The key
   policy is the same on every identity key: it delegates `kms:Sign` to the signer user's IAM policy only and denies
   `Sign` to every other principal, `CreateGrant` to all, and key changes to all but the break-glass role (MFA). The
-  signer user's IAM policy allows `kms:Sign` on the **active** key's ARN alone (both ARNs only during a switch), so a
-  leaked credential can't sign with the standby and the standby stays a clean recovery, as D177 keeps the testnet
-  standby off the Worker. A switch is: IAM policy (add the target), `kms-switch`, gen, deploy; `kms-retire` after ≥ 2 h
-  (at once in an incident), then the old key is disabled and scheduled for deletion (30 days). Commands: `kms-init`,
+  signer user's IAM policy allows `kms:Sign` on the **active** key's ARN alone (both ARNs only during a switch) and
+  denies `Sign` on any other key (`NoOtherKey`), so a leaked credential can't sign with the standby and the standby
+  stays a clean recovery, as D177 keeps the testnet standby off the Worker. **Long-term credentials only** (step 7
+  review, H1): `sts:GetSessionToken` needs no permission and can't be denied, and its sessions keep the user's live
+  permissions (so they would gain the standby at a switch), and deactivating the access key isn't proven to end them.
+  The key policy's allow and the IAM allow therefore require `Null aws:TokenIssueTime = true`, and the key policy
+  denies `Sign` to any request with `aws:TokenIssueTime` (`NoSessionCredentials`); the Worker uses an `AKIA…` key.
+  CloudTrail is matched by `userIdentity.arn`, never by access key id, and `GetSessionToken` by the signer user is an
+  alarm. To confirm on staging in the compromise drill: a session of the signer user is refused `Sign`. The
+  break-glass role is assumed with MFA (`sts:AssumeRole`), not through IAM Identity Center, and is never deleted or
+  renamed (the key policies name it). A switch is: IAM policy (add the target), `kms-switch`, gen, deploy; `kms-retire` after ≥ 2 h
+  (at once in an incident), then the old key is disabled and scheduled for deletion (30 days); before a switch, a
+  pre-switch check signs one digest with the target key and verifies it against its published `get-public-key` file.
+  `next` and `standby` are in different regions too (`next` becomes the active key). Commands: `kms-init`,
   `kms-add --role next|standby`, `kms-switch --to next|standby`, `kms-retire --key previous|standby`,
   `kms-put-aws-key`; they never call AWS.
 - Why: a regional KMS outage or a region-scoped mistake leaves a key to switch to; a credential that could sign with

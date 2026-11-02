@@ -187,6 +187,8 @@ describe('KmsIdentitySigner against a fake KMS', () => {
     ['KMSInternalException', 500, 'kms_internal'],
     ['SomethingNewException', 400, 'kms_error'],
     ['constructor', 400, 'kms_error'],
+    ['IncompleteSignatureException', 400, 'kms_bad_credentials'],
+    ['UnrecognizedClientException:http://internal.amazon.com/coral/com.amazon.coral.service/', 400, 'kms_bad_credentials'],
   ];
   for (const [type, status, code] of refusals) {
     it(`a refusal (${type}) is ${code}, after exactly one call`, async () => {
@@ -298,6 +300,8 @@ describe('identitySigner: the signer selection (D215)', () => {
     expect(await reason(identitySigner({ ...bindings, IDENTITY_AWS_ACCESS_KEY_ID: undefined }, c))).toBe('no_aws_credentials');
     expect(await reason(identitySigner({ ...bindings, IDENTITY_AWS_SECRET_ACCESS_KEY: '' }, c))).toBe('no_aws_credentials');
     expect(await reason(identitySigner(bindings, { ...c, activeKid: 'x'.repeat(43) }))).toBe('active_kid_not_published');
+    // A KMS key ARN without IDENTITY_SIGNER is a half-applied config: refused, not read as worker-secret.
+    expect(await reason(identitySigner({ ...env, IDENTITY_SIGNER: undefined, IDENTITY_KMS_KEY_ARN: kms.arn }, identityConfig(env) as Exclude<ReturnType<typeof identityConfig>, string>))).toBe('signer_kind_missing');
   });
 
   it('a KMS-configured Worker never falls back to a Worker-secret key still on it', async () => {
@@ -362,6 +366,7 @@ describe('POST /v1/identity/token with the KMS signer', () => {
     ['KMS signs with a key other than the published one', (kms, b) => ((kms.mode = { kind: 'patch', patch: (a, { digest }) => ({ ...a, Signature: base64Encode(new FakeKms().signDigest(digest)) }) }), b), 'self_verify_failed'],
     ['the connection drops', (kms, b) => ((kms.mode = { kind: 'network' }), b), 'kms_unreachable'],
     ['the credentials are missing', (_kms, b) => ({ ...b, IDENTITY_AWS_SECRET_ACCESS_KEY: undefined }), 'no_aws_credentials'],
+    ['IDENTITY_SIGNER is missing but a KMS key ARN is set', (_kms, b) => ({ ...b, IDENTITY_SIGNER: undefined }), 'signer_kind_missing'],
   ];
   for (const [name, arrange, code] of failures) {
     it(`503 identity_signer_unavailable when ${name} (logged as ${code}), with at most one Sign call`, async () => {

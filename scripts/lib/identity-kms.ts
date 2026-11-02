@@ -179,10 +179,12 @@ export function identityKms(m: Manifest, command: KmsCommand, args: Args, deps: 
     const key = readKeyFile('key');
     if (t.publicKeys.some((k) => k.kid === key.jwk.kid)) throw new Error(`kid ${key.jwk.kid} is already published`);
     const region = kmsArnParts(key.arn)!.region;
-    // The standby stays in another region than the active key (D219), also once `next` becomes active.
-    const against = role === 'next' ? keys.standby : keys.active;
-    if (against && kmsArnParts(against.arn)?.region === region) {
-      throw new Error(`The ${role} key is in ${region}, the ${role === 'next' ? 'standby' : 'active'} key's region: the standby and the active key must be in two regions (D219)`);
+    // The standby stays in another region than the active key and than `next` (the active key after a switch, D219).
+    const against = role === 'next' ? { standby: keys.standby } : { active: keys.active, next: keys.next };
+    for (const [other, k] of Object.entries(against)) {
+      if (k && kmsArnParts(k.arn)?.region === region) {
+        throw new Error(`The ${role} key is in ${region}, the ${other} key's region: the standby and the active (or next) key must be in two regions (D219)`);
+      }
     }
     deps.log(`Plan (env ${m.name}): publish ${describeKey(role, { kid: key.jwk.kid, arn: key.arn })} in envs/${m.name}.json (region ${region}; nothing signs with it yet).`);
     if (!apply) return void deps.log(DRY_RUN_LINE);

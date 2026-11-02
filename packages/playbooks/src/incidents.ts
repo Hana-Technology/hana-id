@@ -799,7 +799,7 @@ const identityKmsSigner: Playbook = {
   summary:
     "No env signs with AWS KMS yet (the adapter is built, the AWS account isn't: docs/operations.md \"Identity token keys on AWS KMS\"). When one does: the KMS key can't be stolen, but whoever holds the signer's AWS access key (or controls the API Worker) can have KMS sign forged identity tokens until the access key is revoked. Revoke it, switch to the standby, unpublish the suspect key, tell partners.",
   signals: [
-    "Planned: the hourly reconciliation of CloudTrail `Sign` events per key against `identity_issuance_hourly` finds more signatures than the API counted (critical); an EventBridge alert on `Sign` by another principal or on an IAM or key-policy change. A leak of the API Worker's secrets or the Cloudflare account; a partner reports a token they didn't expect.",
+    "Planned: the hourly reconciliation of CloudTrail `Sign` events per key against `identity_issuance_hourly` finds more signatures than the API counted (critical); an EventBridge alert on `GetSessionToken` by the signer user, on `Sign` by another principal or with session credentials, or on an IAM or key-policy change. A leak of the API Worker's secrets or the Cloudflare account; a partner reports a token they didn't expect.",
   ],
   impact: [
     'Forged tokens pass at every partner that trusts the JWKS URL, as any user of any app, until the access key is revoked and the key is out of partners\' JWKS caches (≤ 10 min after the deploy). Every forged signature is in CloudTrail, so the window and the count are known. No wallet, key or Hana API is reachable with a token.',
@@ -808,12 +808,14 @@ const identityKmsSigner: Playbook = {
     {
       title: 'Revoke the access key',
       who: 'a founder',
-      detail: 'In the AWS account (break-glass role with MFA): deactivate every access key of the IAM user `hana-identity-signer`. KMS refuses every `Sign` from then on; mints answer 503 `identity_signer_unavailable` and partners fall back to no token.',
+      detail:
+        "In the AWS account (break-glass role with MFA): deactivate every access key of the env's signer IAM user (`<iamUser>`, the manifest's `identityToken.signer.credentials.iamUser`). Mints answer 503 `identity_signer_unavailable` and partners fall back to no token. Deactivation alone isn't proven to end session credentials the holder made with `GetSessionToken` (no policy can deny that call): what stops them signing is the key policy's `NoSessionCredentials` deny, so check with `aws kms get-key-policy` that every identity key has it.",
     },
     {
       title: 'Switch to the standby',
       who: 'a founder',
-      detail: "The IAM policy allows `kms:Sign` on the active key only (D219), so the standby signed nothing during the leak: check it in CloudTrail. Grant the new access key `kms:Sign` on the standby's ARN, create the key, write `.secrets/<env>/identity-aws-access-key.json`, set it on the Worker, switch, `gen`, deploy.",
+      detail:
+        "The IAM policy allows `kms:Sign` on the active key only and session credentials can't sign at all (D219), so the standby signed nothing during the leak: check CloudTrail by `userIdentity.arn` = the signer user (sessions included), not by access key id. Put the standby's ARN in the signer user's IAM policy, create a new access key into `.secrets/<env>/identity-aws-access-key.json`, run the pre-switch check (docs/operations.md), set the key on the Worker, switch, `gen`, deploy.",
       commands: [c.identityKmsPutAwsKey, c.identityKmsSwitchStandby, c.apiGen, c.apiDeploy],
     },
     {
@@ -825,7 +827,7 @@ const identityKmsSigner: Playbook = {
     {
       title: 'Tell partners',
       who: 'a founder',
-      detail: 'Their security contacts: the `kid`, the window and the count of forged signatures from CloudTrail, and what to re-check. Pinning partners update their pins.',
+      detail: 'Their security contacts: the `kid`, the window and the count of forged signatures from CloudTrail (by `userIdentity.arn`), and what to re-check. Pinning partners update their pins.',
     },
     {
       title: 'A new standby',
@@ -835,7 +837,7 @@ const identityKmsSigner: Playbook = {
     },
   ],
   verify: [
-    "CloudTrail shows no `Sign` by the revoked access key after the cut-off, and the API's JWKS lists no suspect kid.",
+    "CloudTrail shows no successful `Sign` by the signer user (`userIdentity.arn`, any credential) after the cut-off except the Worker's new key, and the API's JWKS lists no suspect kid.",
     '`identity-key <env> show`: the standby is active and a new standby is published.',
   ],
   followUps: ['Build the CloudTrail reconciliation and alarms before mainnet (docs/operations.md "Identity token keys on AWS KMS").'],

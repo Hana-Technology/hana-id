@@ -220,6 +220,12 @@ describe('identity-key kms rotation and switch', () => {
     const fresh = kmsKey('ap-east-1');
     run('kms-add', '--role', 'standby', '--key', fresh.file, '--yes');
     expect(roles()).toEqual({ active: s.kid, standby: fresh.kid });
+    // A standby added while a next key waits keeps away from the next key's region too.
+    run('kms-retire', '--key', 'standby', '--yes');
+    run('kms-add', '--role', 'next', '--key', kmsKey('ap-northeast-1').file, '--yes');
+    expect(() => run('kms-add', '--role', 'standby', '--key', kmsKey('ap-northeast-1').file, '--yes')).toThrow(/next key's region/u);
+    run('kms-add', '--role', 'standby', '--key', kmsKey('ap-east-1').file, '--yes');
+    expect(Object.keys(roles()).sort()).toEqual(['active', 'next', 'standby']);
   });
 
   it('refuses a role that is taken, a key already published, a next in the standby’s region, a fifth key', () => {

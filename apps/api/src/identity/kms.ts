@@ -34,12 +34,22 @@ const ACCESS_KEY_ID_RE = /^AKIA[A-Z2-7]{16}$/u;
 const SECRET_ACCESS_KEY_RE = /^[A-Za-z0-9/+]{40}$/u;
 const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
 
-/** KMS error types (`__type`, after any `#`) mapped to the reasons logged; anything else is `kms_error`. */
+/**
+ * The error type of a KMS answer's `__type`: without the namespace (`com.amazonaws.kms#…`) or a trailing `:http…` (the
+ * form AWS's JSON protocols use for some errors, e.g. `UnrecognizedClientException:http://internal.amazon.com/…`).
+ */
+export function kmsErrorType(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  return raw.split('#').pop()!.split(':')[0]!;
+}
+
+/** KMS error types (`kmsErrorType`) mapped to the reasons logged; anything else is `kms_error`. */
 export const KMS_ERRORS: Readonly<Record<string, string>> = {
   AccessDeniedException: 'kms_access_denied',
   UnrecognizedClientException: 'kms_bad_credentials',
   InvalidSignatureException: 'kms_bad_credentials',
   IncompleteSignature: 'kms_bad_credentials',
+  IncompleteSignatureException: 'kms_bad_credentials',
   ExpiredTokenException: 'kms_bad_credentials',
   DisabledException: 'kms_key_disabled',
   KMSInvalidStateException: 'kms_key_disabled',
@@ -200,7 +210,7 @@ export class KmsIdentitySigner implements IdentitySigner {
     }
     const o = (answer.body ?? {}) as Record<string, unknown>;
     if (!answer.ok) {
-      const type = typeof o.__type === 'string' ? o.__type.split('#').pop()! : '';
+      const type = kmsErrorType(o.__type);
       throw new IdentitySignerError(Object.hasOwn(KMS_ERRORS, type) ? KMS_ERRORS[type]! : 'kms_error');
     }
     if (typeof answer.body !== 'object' || answer.body === null || Array.isArray(answer.body)) throw new IdentitySignerError('kms_bad_answer');

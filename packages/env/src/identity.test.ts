@@ -109,7 +109,9 @@ describe('manifestSchema: identityToken.signer aws-kms (build step 7, D215, D219
   });
 
   it('refuses a standby in the active key’s region, two roles on one key, and keys in two accounts', () => {
-    expect(issues(kms({ active: key('ap-east-1', 1), standby: key('ap-east-1', 2) })).join()).toContain('another region');
+    expect(issues(kms({ active: key('ap-east-1', 1), standby: key('ap-east-1', 2) })).join()).toContain('another region than the active key');
+    // `next` becomes the active key at a switch: not in the standby's region either.
+    expect(issues(kms({ active: key('ap-east-1', 1), standby: key('ap-southeast-1', 2), next: key('ap-southeast-1', 3) })).join()).toContain('another region than the standby');
     const a = key('ap-east-1', 1);
     expect(issues(kms({ active: a, standby: { kid: a.kid, arn: arn('ap-southeast-1', 2) } }, [pub.get(a.kid)])).join()).toContain('a kid appears in two roles');
     expect(issues(kms({ active: a, standby: { ...key('ap-southeast-1', 2), arn: a.arn } })).join()).toContain('an ARN appears in two roles');

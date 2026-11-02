@@ -201,6 +201,7 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
   const g = await global.hit(budget, now);
   if (!g.ok) {
     if (adm.send) await box.refund(adm.send);
+    await box.unadmit(adm.created, expiresAtMs, now);
     log({ event: 'send_budget_exhausted', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'error', code: 'send_budget_exhausted' }, 'error');
     return fail(ctx, 429, 'rate_limited', 'Too many requests, try again later', undefined, retryHeader(60_000));
   }
@@ -225,13 +226,21 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
     lastSentAtMs: now,
     resends: 0,
   };
-  if (!(await challengeStub(deps, challengeId).create(rec))) return fail(ctx, 500, 'internal', 'Could not start the challenge');
+  if (!(await challengeStub(deps, challengeId).create(rec))) {
+    if (adm.send) await box.refund(adm.send);
+    await global.unhit(budget, now);
+    await box.unadmit(adm.created, expiresAtMs, now);
+    return fail(ctx, 500, 'internal', 'Could not start the challenge');
+  }
   const reservation = adm.send;
+  const created = adm.created;
   if (reservation && !suppressed) {
     deps.waitUntil(
       deliver(ctx, rec, code, async () => {
         await box.refund(reservation);
         await global.unhit(budget, now);
+        // The challenge stays (a resend may still deliver), but its place in the day's cap is taken back.
+        await box.unadmit(created, null, now);
       }),
     );
   } else log({ event: 'code_mail', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'suppressed', code: 'suppressed', appId: app.id, purpose: rec.purpose });
@@ -499,7 +508,10 @@ export async function handleGoogleMatch(request: Request, ctx: Ctx): Promise<Res
         lastSentAtMs: null,
         resends: 0,
       };
-      if (!(await challengeStub(deps, challengeId).create(rec))) return fail(ctx, 500, 'internal', 'Could not prepare the challenge');
+      if (!(await challengeStub(deps, challengeId).create(rec))) {
+        await mailboxLimiter(deps, mbx).unadmit(adm.created, expiresAtMs, now);
+        return fail(ctx, 500, 'internal', 'Could not prepare the challenge');
+      }
       return ok(ctx, 200, { ...base, challenge: { challengeId, expiresAtMs: rec.expiresAtMs, to: maskEmail(r.email) } }, { appId: app.id, decision: j.decision });
     }
 
@@ -544,8 +556,37 @@ export async function handleClientProof(request: Request, ctx: Ctx): Promise<Res
   const scopeId = b.scopeId;
   const actionNonce = b.actionNonce as number;
   const { token, jti } = await mint(ctx, null, scopeId, CLIENT_PROOF_SUB, nonceOf(clientProofPreimage(deps.env.SIGNER_ACCOUNT, scopeId, actionNonce)), 'client_proof');
-  await deps.env.DB.prepare('INSERT INTO email_admin_audit (at_ms, staff, scope_id, action_nonce, jti) VALUES (?1, ?2, ?3, ?4, ?5)').bind(deps.now(), staff, scopeId, actionNonce, jti).run();
+  await deps.env.DB.prepare("INSERT INTO email_admin_audit (at_ms, staff, action, scope_id, action_nonce, jti) VALUES (?1, ?2, 'client_proof', ?3, ?4, ?5)").bind(deps.now(), staff, scopeId, actionNonce, jti).run();
   return ok(ctx, 200, { token, client: [EMAIL_PROVIDER, `email:${scopeId}`] }, { scopeId, purpose: 'client_proof', jti });
+}
+
+// ---- admin/unlock ----
+
+/**
+ * Staff unlock of a mailbox locked by a guessing attack (D198): `{email}` (the address the user gave support) → its
+ * mailbox's guess counters, trip marker, ceiling and requester locks for the day are cleared. Behind Cloudflare Access
+ * and the staff allowlist like client proofs; audited (staff, a 12-character prefix of the mailbox key, never the
+ * address). The one staff body that carries an address.
+ */
+export async function handleUnlock(request: Request, ctx: Ctx): Promise<Response> {
+  const { deps } = ctx;
+  if (!deps.access) return fail(ctx, 404, 'not_found', 'Not found');
+  const staff = await deps.access.staff(request);
+  if (!staff) return fail(ctx, 403, 'forbidden', 'Staff access required');
+  const parsed = await readJson(request, MAX_BODY);
+  if (!parsed.ok) return fail(ctx, parsed.status, 'bad_request', parsed.message);
+  const b = parsed.body;
+  if (!isObj(b) || !onlyKeys(b, ['email']) || typeof b.email !== 'string') return fail(ctx, 400, 'bad_request', 'Body must be {email}');
+  const r = normalizeEmail(b.email);
+  if (!r.ok) return fail(ctx, 400, 'invalid_email', 'Not a valid email address');
+  const staffKey = toHex(sha256(new TextEncoder().encode(staff)));
+  const lim = await limiter(deps, `staff:${staffKey}`).hit(STAFF_PROOF_LIMITS, deps.now());
+  if (!lim.ok) return fail(ctx, 429, 'rate_limited', 'Too many staff actions, try again later', undefined, retryHeader(lim.retryAfterMs));
+  const mbx = await mailboxKey(await deps.keys(), r.mailbox);
+  const cleared = await mailboxLimiter(deps, mbx).staffUnlock(deps.now());
+  await deps.env.DB.prepare("INSERT INTO email_admin_audit (at_ms, staff, action, subject) VALUES (?1, ?2, 'unlock', ?3)").bind(deps.now(), staff, mbx.slice(0, 12)).run();
+  log({ event: 'mailbox_unlocked', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'ok', subject: mbx.slice(0, 12), count: cleared }, 'warn');
+  return ok(ctx, 200, { cleared }, { count: cleared });
 }
 
 // ---- JWKS and discovery ----
@@ -606,6 +647,7 @@ export const ROUTES = {
   verify: '/v1/email/verify',
   googleMatch: '/v1/email/google-match',
   clientProof: '/v1/email/admin/client-proof',
+  unlock: '/v1/email/admin/unlock',
   jwks: '/v1/email/jwks.json',
   openid: '/v1/email/.well-known/openid-configuration',
   sendgridWebhook: '/v1/email/webhooks/sendgrid',
@@ -636,6 +678,7 @@ export async function route(request: Request, deps: Deps): Promise<Response> {
       [ROUTES.verify]: handleVerify,
       [ROUTES.googleMatch]: handleGoogleMatch,
       [ROUTES.clientProof]: handleClientProof,
+      [ROUTES.unlock]: handleUnlock,
       [ROUTES.sendgridWebhook]: handleSendgridWebhook,
     };
     const handler = handlers[path];

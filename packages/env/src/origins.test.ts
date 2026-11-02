@@ -2,7 +2,11 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, loadEnv, manifestPath, manifestSchema, siteOf } from './index.ts';
 
-const raw = () => JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Record<string, unknown>;
+// The committed manifest's identityToken pins its iss to sandbox-dev's apiUrl; these tests rewrite apiUrl, so drop it.
+const raw = () => {
+  const { identityToken: _, ...m } = JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Record<string, unknown>;
+  return m;
+};
 
 /** sandbox-dev with the given name and origins (undefined drops the field). */
 function manifest(name: string, vaultOrigin: string | undefined, authOrigin: string | undefined): Record<string, unknown> {

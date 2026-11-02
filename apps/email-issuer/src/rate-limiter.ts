@@ -39,7 +39,7 @@ export type HitResult = { ok: true } | { ok: false; limit: string; retryAfterMs:
 
 /** The window keys a reservation counted, so exactly those are taken back. */
 export type Reservation = { keys: string[] };
-export type Admitted = { ok: true; send: Reservation | null } | { ok: false; reason: 'locked' | 'live' | 'codes' | 'challenges'; retryAfterMs: number };
+export type Admitted = { ok: true; send: Reservation | null; created: Reservation } | { ok: false; reason: 'locked' | 'live' | 'codes' | 'challenges'; retryAfterMs: number };
 export type Reserved = { ok: true; reservation: Reservation } | { ok: false; reason: 'locked' | 'codes'; retryAfterMs: number };
 export type Guess = { ok: true; reservation: Reservation; tripped?: 'backstop' | 'ceiling' } | { ok: false; reason: 'locked'; retryAfterMs: number };
 
@@ -187,12 +187,12 @@ export class RateLimiter extends DurableObject<Env> {
       if (!r.ok) return r;
       reservation = r.reservation;
     }
-    this.count([created]);
+    const createdKeys = this.count([created]);
     this.kv().put(LIVE_KEY, [...live, expiresAtMs]);
     const startKey = `start:${ip}@${this.day(now)}`;
     if (this.kv().get(startKey) === undefined) this.kv().put(startKey, this.nextSeq(now));
     await this.sweepAt(now + DAY);
-    return { ok: true, send: reservation };
+    return { ok: true, send: reservation, created: { keys: createdKeys } };
   }
 
   /** A challenge ended early (its code was used, or its attempts ran out): its live slot is free again. */
@@ -241,11 +241,44 @@ export class RateLimiter extends DurableObject<Env> {
     return { ok: true, reservation: { keys }, ...(tripped ? { tripped } : {}) };
   }
 
-  /** A right code (or no check made): its reservation is taken back, and the lock it may have set. */
+  /**
+   * A right code (or no check made): its reservation is taken back, with the lock it may have set and, when the
+   * backstop is below its max again, the trip marker (a check that turned out right never trips the backstop).
+   */
   refundGuess(ip: string, r: Reservation, now: number = Date.now()): void {
     this.refund(r);
     const own = this.slot(MAILBOX_IP_WRONG_LIMIT, now, `ip:${ip}:`);
     if (own.count < own.l.max) this.kv().delete(ipLock(ip));
+    const backstop = this.slot(MAILBOX_WRONG_BACKSTOP, now);
+    if (backstop.count < backstop.l.max) this.kv().delete(`trip@${this.day(now)}`);
+  }
+
+  /**
+   * A challenge that admit counted but that was never created, or whose first code was never delivered: its place in
+   * the day's challenge cap (and, when it doesn't exist, its live slot) is taken back.
+   */
+  unadmit(created: Reservation, expiresAtMs: number | null, now: number = Date.now()): void {
+    this.refund(created);
+    if (expiresAtMs !== null) this.releaseLive(expiresAtMs, now);
+  }
+
+  /**
+   * Staff unlock (`admin/unlock`, D198): clears this UTC day's guess counters, the trip marker, the ceiling and every
+   * requester's lock, so a mailbox locked by a guessing attack works again. Code-mail counters stay (they bound mail).
+   * Returns how many entries were cleared.
+   */
+  staffUnlock(now: number = Date.now()): number {
+    const kv = this.kv();
+    const d = this.day(now);
+    let cleared = 0;
+    for (const [key] of kv.list<unknown>()) {
+      const guessWindow = /^(?:ip:[0-9a-f]+:)?wrong:/u.test(key);
+      if (key.startsWith('lock:') || key === `trip@${d}` || guessWindow) {
+        kv.delete(key);
+        cleared++;
+      }
+    }
+    return cleared;
   }
 
   // ---- cleanup ----

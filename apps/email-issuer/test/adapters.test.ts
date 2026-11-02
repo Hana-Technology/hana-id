@@ -13,7 +13,7 @@ import { codeMail, displayAppName, linkNoticeMail } from '../src/mail.ts';
 import { OutboxSender } from '../src/outbox.ts';
 import { SENDGRID_URL, SendGridSender, parseFrom } from '../src/sendgrid.ts';
 import { derToP1363 } from '../src/webhook.ts';
-import { decodeToken, env, harness, uid } from './helpers.ts';
+import { captureLogs, decodeToken, env, harness, seedApp, sessionCommitment, uid } from './helpers.ts';
 
 const mail = codeMail({ to: 'a@example.com', code: '123456', appName: 'Wallet', authOrigin: 'https://auth.test', purpose: 'session' });
 
@@ -113,6 +113,40 @@ describe('admin/client-proof behind Cloudflare Access', () => {
     expect(audit.results).toEqual([{ staff: 'staff@example.com', scope_id: 's7', action_nonce: 3, jti: t.claims.jti }]);
     expect(await env.DB.prepare('SELECT purpose, app_id FROM email_issuance WHERE jti = ?1').bind(t.claims.jti).first()).toEqual({ purpose: 'client_proof', app_id: null });
     expect((await ask(await jwt(pair.privateKey, 'acc-1', good), { scopeId: 'S7', actionNonce: 3 })).status).toBe(400);
+  });
+
+  it('admin/unlock: staff clear a mailbox locked by guessing; audited without the address', async () => {
+    const pair = (await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify'])) as CryptoKeyPair;
+    const pub = (await crypto.subtle.exportKey('jwk', pair.publicKey)) as JsonWebKey;
+    const team = 'hana.cloudflareaccess.com';
+    const aud = 'c'.repeat(64);
+    const certs = (async () => new Response(JSON.stringify({ keys: [{ ...pub, kid: 'acc-1', alg: 'RS256', use: 'sig' }] }))) as unknown as typeof fetch;
+    const h = await harness({ access: new AccessVerifier({ teamDomain: team, aud, staffEmails: ['staff@example.com'] }, certs) });
+    h.clock.now = Date.UTC(2027, 0, 20, 8);
+    const app = await seedApp(h);
+    const victim = `u${uid().replace(/[^a-z0-9]/gu, '')}@example.com`;
+    // 20 failed checks from four requesters trip the backstop: a new requester is refused.
+    for (let i = 0; i < 4; i++) {
+      const ip = `203.0.113.${100 + i}`;
+      const c = sessionCommitment(app.scope, h.clock.now);
+      const s = (await (await h.call('/v1/email/start', { pk: app.pk, email: victim, purpose: 'session', commitment: c.json }, { ip })).json()) as { challengeId: string };
+      const wrong = h.sender.codeFor(victim) === '000000' ? '111111' : '000000';
+      for (let k = 0; k < 5; k++) await h.call('/v1/email/verify', { challengeId: s.challengeId, code: wrong }, { ip });
+    }
+    const body = () => ({ pk: app.pk, email: victim, purpose: 'session', commitment: sessionCommitment(app.scope, h.clock.now).json });
+    expect((await h.call('/v1/email/start', body(), { ip: '198.18.0.9' })).status).toBe(429);
+    const now = Math.floor(Date.now() / 1000);
+    const token = await jwt(pair.privateKey, 'acc-1', { iss: `https://${team}`, aud: [aud], sub: 'staff-sub', email: 'staff@example.com', exp: now + 600, iat: now });
+    expect((await h.call('/v1/email/admin/unlock', { email: victim }, { origin: null })).status).toBe(403);
+    const { result, lines } = await captureLogs(() => h.call('/v1/email/admin/unlock', { email: victim }, { origin: null, headers: { 'cf-access-jwt-assertion': token } }));
+    expect(result.status).toBe(200);
+    expect(((await result.json()) as { cleared: number }).cleared).toBeGreaterThan(0);
+    for (const l of lines) expect(l).not.toContain(victim);
+    const row = await env.DB.prepare("SELECT staff, action, subject FROM email_admin_audit WHERE action = 'unlock'").first<{ staff: string; action: string; subject: string }>();
+    expect(row).toMatchObject({ staff: 'staff@example.com', action: 'unlock' });
+    expect(row!.subject).toHaveLength(12);
+    expect(JSON.stringify(row)).not.toContain(victim);
+    expect((await h.call('/v1/email/start', body(), { ip: '198.18.0.9' })).status).toBe(202);
   });
 
   it('is 404 when the env configures no Access', async () => {

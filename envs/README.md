@@ -87,6 +87,16 @@ D1 database). Per-IP limiters always stay near their client. Changing it creates
   `sessionAllowance` (each session-pool key; 0.5 / 0.1), `ownerAllowance` (each owner-pool key; 0.1 / 0.02). Raise the
   allowance pairs when `deploy-contract` runs with larger allowances. A change needs `watchdog gen` and a redeploy.
 
+`emailIssuer` (optional; no env has it yet): the email login's issuer Worker (`apps/email-issuer/README.md`,
+`docs/operations.md` "Email issuer", D196). Written by `scripts/email-issuer.ts <env> init`, never by hand for the keys:
+`iss` (`{apiUrl}/v1/email`), `cloudflare` (its own Worker and D1, never the API's or the watchdog's), `signer`
+(`{kind: "worker-secret", activeKid}` on testnet; `aws-kms` is refused by `gen` until batch 10 and by the schema off
+testnet for `worker-secret`), `publicKeys` (the JWKS: 2048–4096-bit RSA, e = 65537, kid = RFC 7638 thumbprint, the
+standby included), `from` (user mail's `From`, on the user-mail sending subdomain), `sender` (`sendgrid`; `outbox` only
+in `local*` envs), and optionally `dailySendBudget` (default 1000), `access` (`{teamDomain, aud, staffEmails}` for staff
+client proofs) and `sendgridWebhookPublicKey`. A change needs `email-issuer gen` and a redeploy; a key change is also an
+owner proposal on chain and a watchdog pin change.
+
 `rpcFallback` (optional): a second NEAR JSON-RPC endpoint, `https` only and not `rpc` itself, ideally from another
 provider. The vault and the export window read from it (session re-syncs, the login's registry check, transaction
 polling) only when `rpc` errors or doesn't answer within 8 s; each read's answer comes from one endpoint. It is built

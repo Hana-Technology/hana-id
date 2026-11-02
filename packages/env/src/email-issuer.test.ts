@@ -107,6 +107,7 @@ describe('manifestSchema: emailIssuer', () => {
     delete (m as Record<string, unknown>).ckdNetworkKeySource;
     delete (m as Record<string, unknown>).vaultOrigin;
     delete (m as Record<string, unknown>).authOrigin;
+    delete (m as Record<string, unknown>).identityToken;
     const r = manifestSchema.safeParse({ ...m, emailIssuer: { ...emailIssuer({ sender: 'outbox' }), iss: emailIssuerFor(local.apiUrl) } });
     expect(r.error?.issues.map((i) => i.message) ?? []).toEqual([]);
   });

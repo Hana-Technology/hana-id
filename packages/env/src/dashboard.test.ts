@@ -3,7 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { appChangeDelayProblems, DASHBOARD_BLOCKS, emailFromProblem, hanaOwnOrigins, loadEnv, manifestPath, manifestSchema } from './index.ts';
 
 type Raw = Record<string, unknown>;
-const raw = (): Raw => JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Raw;
+// The committed manifest's identityToken pins its iss to sandbox-dev's apiUrl; these tests rewrite apiUrl, so drop it.
+const raw = (): Raw => {
+  const { identityToken: _, ...m } = JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Raw;
+  return m;
+};
 
 /** A complete set of dashboard fields on sandbox-dev's workers.dev subdomain. */
 const dashboard = (): Raw => ({

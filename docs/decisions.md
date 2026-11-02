@@ -2150,16 +2150,31 @@ is computed by `@hana-id/email` alone, from the normalized address including any
   - **Code mails**: 3 per 15 min and 10 per day per (mailbox, requester = IP subject); 10 per 15 min and 30 per day per
     mailbox from everyone (the mail-bombing bound); past that, a reserve of 5 a day only for a requester new to the
     mailbox that day, so whoever used the allowance can't keep the owner out. At most 5 live challenges per mailbox. A
-    start that is over any of these, or locked, stores nothing (no challenge, no code).
-  - **Wrong codes**: 5 kill a challenge; 10 per hour from one requester lock that requester out of that mailbox for an
-    hour (the owner elsewhere is not affected). The mailbox-wide backstop: past 50 checks in the day's window from
-    everyone, only a requester with **no failed check on this mailbox that day** may check (start, resend, verify), and
-    each of its checks counts, so its first wrong code stops it too. The backstop thus stops whoever has been guessing,
-    never an owner who hasn't. Odds: up to the backstop, 50 guesses × 10⁻⁶ = 5 × 10⁻⁵ per mailbox per day (the spec's
-    bound); past it, one more guess per requester new to the mailbox that day, so N fresh IPs add N × 10⁻⁶ (a thousand
-    fresh IPs a day double the figure, to 10⁻³ in all). Independently of IPs, every guess needs a challenge, every
-    challenge a code mail (≤ 35 a day per mailbox) and gets 5 attempts: ≤ 175 guesses per mailbox per day, 1.75 × 10⁻⁴,
-    whatever the attacker's IPs.
+    start that is over any of these, or locked, stores nothing (no challenge, no code). At most 35 challenges per
+    mailbox per UTC day.
+  - **Wrong codes, worst case first.** Every path that compares a code goes through `verify`, which reserves the check
+    in the mailbox's limiter before comparing (refunded only when the code was right). Per mailbox and UTC day, with N
+    requesters (any number of IPs):
+    - challenges created C ≤ 35 (a hard per-mailbox cap on every kind, google-match's prepared ones included; it also
+      equals the code-mail bound, 30 mailbox-wide + 5 reserve), at most 5 live at once;
+    - checks per challenge ≤ 5, so without the guess limits W ≤ 5 · C ≤ 175, whatever N;
+    - the guess limits: every failed (or in-flight) check counts against a **hard ceiling of 25**; while fewer than 20
+      have failed (the backstop), any requester may check; after that only the **owner slot**: 5 more checks, counted
+      on their own, open only to a requester that started a challenge on this mailbox before the backstop tripped (the
+      order is a per-object sequence, not the clock) and has no failed check on it that day, each such check counting
+      as that requester's failure, so it gets one wrong code at most. The 10-per-hour per-requester lock applies too;
+    - so W ≤ min(5 · C, 20 + min(5, E)) ≤ 25, where E is the number of exempt requesters; the ceiling is checked on
+      its own and nothing passes it, whoever asks.
+    - Odds: each wrong guess hits with probability 10⁻⁶ (a fresh uniformly random code per challenge), so a persistent
+      attacker gets ≤ 25 × 365 = 9,125 guesses a year per mailbox: 1 − (1 − 10⁻⁶)^9125 ≈ 0.91% a year, under the 1%
+      target (27 a day would be 0.98%). The spec's figure was 50 a day (1.8% a year).
+    - When the backstop trips (for everyone but owner-slot requesters) or the ceiling is reached (for everyone), the
+      mailbox answers the generic 429 ("try again later" in the popup) until the UTC day ends: an accepted, bounded
+      lockout of at most the rest of that day. The tripping check logs `mailbox_guess_limit` at error level (`code`
+      `backstop` or `ceiling`) with a 12-character prefix of the mailbox key (an HMAC under K_rl, never the address), so
+      staff can see which mailboxes are being targeted and how often; the alert and the admin view are batch 9's.
+    - 5 wrong codes kill a challenge; 10 per hour from one requester lock that requester out of that mailbox for an
+      hour (the owner elsewhere is not affected).
   - **Refusals are a generic 429** (`rate_limited`, the same body as an IP or app limit), so the popup says "try again
     later" instead of waiting for a code that never comes. It tells the caller only that the mailbox is limited, never
     whether it has a wallet.
@@ -2174,12 +2189,14 @@ is computed by `@hana-id/email` alone, from the normalized address including any
     day) counts every user mail, link notices included; at the cap `start` and `resend` answer 429 and the issuer logs
     `send_budget_exhausted` at error level (the alert itself is the admin portal's, batch 9).
 - Overrides the spec: the per-address limits key on (mailbox, requester) plus a mailbox-wide cap, and the wrong-code
-  lock is per requester with a higher mailbox-wide backstop, instead of "3 per 15 min, 10 per day per address" and
-  "10 wrong per hour → 1 h lock" for the whole address; a limited address answers 429 rather than a silent 202.
+  lock is per requester inside a mailbox-wide ceiling of 25 a day, instead of "3 per 15 min, 10 per day per address"
+  and "10 wrong per hour → 1 h lock" for the whole address; a limited address answers 429 rather than a silent 202.
 - Why: the spec's per-address counters let anyone who knows an address use up its owner's codes, or lock it with ten
   wrong guesses; and a lock checked in one object and counted in another could be outrun by parallel guesses.
-- Residual: a requester with many IPs can still fill a mailbox's daily allowance and reserve (35 mails), which leaves
-  the owner without a code for the rest of that day; the backstop no longer locks the owner out.
+- Residual (accepted, bounded): a requester with many IPs can fill a mailbox's daily allowance and reserve (35 mails),
+  or make 20 failed checks and use up the owner slot, leaving the owner without a code or a check for the rest of that
+  UTC day. Logged as above. A lower guess ceiling was preferred to an unbounded owner exemption (an earlier draft of
+  this fix exempted any requester with no failures, which gave an attacker one more guess per fresh IP).
 - To check with the user: whether "20 × per_minute" was meant (1,200 starts a minute for a free-plan app; the global
   budget is then the binding cost bound).
 

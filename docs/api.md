@@ -940,8 +940,7 @@ sends its first code (not counted as a resend). The challenge still ends 10 min 
 mailbox's limiter before the code is compared (one atomic call, refunded when the code is right), and the challenge
 counts its attempts atomically, so parallel guesses can't outrun either (D198). Errors: `400 code_invalid
 {attemptsLeft}` (5 wrong codes kill the challenge; 10 wrong from one requester lock it out of that mailbox for an hour;
-past 50 checks a day per mailbox from everyone, only requesters with no failed check on it that day may check, until
-their first wrong code), `410 challenge_expired`, `429
+past 20 failed checks a day per mailbox only the owner slot is open, and past 25 nothing until the UTC day ends), `410 challenge_expired`, `429
 rate_limited` (IP, or a lock), `403 email_not_enabled` (the app was suspended
 or turned email off meanwhile: nothing is minted). A correct code is single use: the challenge is deleted before the
 token is minted.
@@ -1014,7 +1013,8 @@ subject. Every mailbox decision is one atomic call (D198).
 | Mailbox: code mails | 10 per 15 min, 30 per day; then 5 a day for requesters new to it that day | 429 |
 | Mailbox: live challenges | 5 at once | 429 |
 | Mailbox × requester: wrong codes | 10 per hour → that requester locked out of the mailbox for 1 h | 429 (start, resend, verify) |
-| Mailbox: code checks | 50 per day from everyone (the backstop); past it, only requesters with no failed check on the mailbox that day, each until its first wrong code | 429 |
+| Mailbox: failed code checks | hard ceiling 25 per UTC day, from everyone; any requester for the first 20 (the backstop), then an owner slot of 5 for requesters that started a challenge before the trip and have no failure (one each) | 429 until the UTC day ends; `mailbox_guess_limit` logged |
+| Mailbox: challenges created | 35 per UTC day, every kind | 429 |
 | Challenge | 10 min from creation; 5 wrong codes; ≤ 2 resends ≥ 30 s apart | 410 / 429 |
 | IP (IPv4 address, IPv6 /64): `start` | 10 per 10 min, 50 per day | 429 |
 | IP: `verify` / `resend` / `google-match` | 30 / 10 / 30 per 10 min | 429 |
@@ -1048,5 +1048,6 @@ Vars (from `emailIssuer`, `scripts/gen-wrangler.ts`): `ENV_NAME`, `NEAR_RPC`, `N
 `jti`, `kid`, `decision`, `limit` (its name, never its key), `providerStatus`, `latencyMs`, `count`. Events: `request`,
 `token_minted` (jti, purpose, app, scope, kid), `code_mail` (`ok`; `suppressed`; `error` with the provider's reason
 and status), `link_notice`, `limit` (`mailbox:locked` / `mailbox:live` / `mailbox:codes`, or the window's name),
-`send_budget_exhausted` (error), `google_revoke` (warn). Never an address, a code, a `sub`, a token, an access token,
+`send_budget_exhausted` (error), `mailbox_guess_limit` (error: `code` `backstop` or `ceiling`, `subject` = 12
+characters of the mailbox key, an HMAC; staff see targeted mailboxes), `google_revoke` (warn). Never an address, a code, a `sub`, a token, an access token,
 a key or a body: `test/privacy.test.ts` greps every line of every flow for them.

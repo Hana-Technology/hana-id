@@ -30,12 +30,15 @@ CREATE TABLE email_suppressions (
   at_ms     INTEGER NOT NULL
 );
 
--- Staff client proofs (admin/client-proof, behind Cloudflare Access and the allowlist, D88): who asked for which.
+-- Staff actions (admin/*, behind Cloudflare Access and the allowlist, D88): client proofs (scope, nonce, jti) and
+-- mailbox unlocks (subject = 12 characters of the mailbox key, an HMAC; never the address).
 CREATE TABLE email_admin_audit (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   at_ms        INTEGER NOT NULL,
   staff        TEXT NOT NULL,                -- the Access identity's email (staff, never an end user)
-  scope_id     TEXT NOT NULL,
-  action_nonce INTEGER NOT NULL,
-  jti          TEXT NOT NULL
+  action       TEXT NOT NULL CHECK (action IN ('client_proof', 'unlock')),
+  scope_id     TEXT,
+  action_nonce INTEGER,
+  jti          TEXT,
+  subject      TEXT
 );

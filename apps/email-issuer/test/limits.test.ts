@@ -5,7 +5,8 @@
 import { runInDurableObject } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import type { ChallengeRecord } from '../src/challenge.ts';
-import { addressKey } from '../src/keys.ts';
+import { normalizeEmail } from '@hana-id/email';
+import { addressKey, mailboxKey } from '../src/keys.ts';
 import { captureLogs, env, harness, seedApp, seedPlan, sessionCommitment, uid, type Harness, type TestApp } from './helpers.ts';
 
 const startBody = (h: Harness, app: TestApp, email: string) => ({ pk: app.pk, email, purpose: 'session', commitment: sessionCommitment(app.scope, h.clock.now).json });
@@ -17,6 +18,11 @@ const ipN = (n: number) => `198.51.${Math.floor(n / 250)}.${n % 250}`;
 let ipSeq = Math.floor(Math.random() * 10_000);
 const freshIp = () => ipN(ipSeq++);
 const addr = (tag: string) => `${tag}${uid().replace(/[^a-z0-9]/gu, '')}@example.com`;
+const normalizeMailbox = (email: string): string => {
+  const r = normalizeEmail(email);
+  if (!r.ok) throw new Error('bad test address');
+  return r.mailbox;
+};
 const wrongFor = (code: string) => (code === '000000' ? '111111' : '000000');
 
 describe('code mails per mailbox and requester', () => {
@@ -299,6 +305,71 @@ describe('wrong codes: per requester, with a mailbox-wide backstop', () => {
     }
     // 30 mailbox-wide plus the 5-a-day reserve: the code limits and the challenge cap agree at 35.
     expect(made).toBe(35);
+  });
+
+  it('a check that turned out right doesn’t leave a trip marker: the owner slot follows the real trip', async () => {
+    const h = await harness();
+    h.clock.now = morning;
+    const app = await seedApp(h);
+    const a = addr('tm');
+    // 19 failed checks from four requesters (5, 5, 5, 4).
+    let last: { ip: string; id: unknown } | null = null;
+    for (let i = 0; i < 4; i++) {
+      const ip = freshIp();
+      const s = await start(h, app, a, ip);
+      for (let k = 0; k < (i === 3 ? 4 : 5); k++) await guessWrong(h, s.body.challengeId, h.sender.codeFor(a), ip);
+      last = { ip, id: s.body.challengeId };
+    }
+    // The 20th check is right: reserved (the backstop's 20th place, the trip), then refunded.
+    expect((await h.call('/v1/email/verify', { challengeId: last!.id, code: h.sender.codeFor(a) }, { ip: last!.ip })).status).toBe(200);
+    // The owner starts now, before any real trip.
+    const owner = freshIp();
+    const o = await start(h, app, a, owner);
+    expect(o.status).toBe(202);
+    const ownerCode = h.sender.codeFor(a);
+    // The real trip.
+    const x = freshIp();
+    const s = await start(h, app, a, x);
+    expect(await guessWrong(h, s.body.challengeId, h.sender.codeFor(a), x)).toBe(400);
+    expect((await start(h, app, a, freshIp())).status).toBe(429);
+    // The owner started before it: the owner slot is open to it.
+    expect((await h.call('/v1/email/verify', { challengeId: o.body.challengeId, code: ownerCode }, { ip: owner })).status).toBe(200);
+  });
+
+  it('the day’s challenge cap is taken back when the budget refuses the start or the first code isn’t delivered', async () => {
+    const env2 = { ...env, ENV_NAME: `cap-${uid()}`, DAILY_SEND_BUDGET: '1' };
+    const h = await harness({ env: env2 });
+    h.clock.now = morning;
+    const app = await seedApp(h);
+    const a = addr('cr');
+    const count = async () => {
+      const key = await mailboxKey(await h.deps.keys(), normalizeMailbox(a));
+      const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`${env2.ENV_NAME}:mbx:${key}`));
+      return runInDurableObject(stub, (_o, state) => state.storage.kv.get<number>(`challenges:1d@${Date.UTC(2027, 0, 15)}`) ?? 0);
+    };
+    // The provider refuses the first code: the challenge stays (resendable), its place in the cap doesn't.
+    h.sender.next = { ok: false, reason: 'unavailable', providerStatus: 503 };
+    expect((await start(h, app, a, freshIp())).status).toBe(202);
+    expect(await count()).toBe(0);
+    h.sender.next = { ok: true };
+    expect((await start(h, app, a, freshIp())).status).toBe(202);
+    expect(await count()).toBe(1);
+    // The budget (1) is spent: every further start is refused and none takes a place.
+    for (let i = 0; i < 5; i++) expect((await start(h, app, a, freshIp())).status).toBe(429);
+    expect(await count()).toBe(1);
+  });
+
+  it('unadmit takes back the challenge’s place and its live slot', async () => {
+    const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`unadmit-${uid()}`));
+    const exp = morning + 600_000;
+    const adm = await stub.admit('r1', exp, false, morning);
+    expect(adm.ok).toBe(true);
+    if (!adm.ok) return;
+    await stub.unadmit(adm.created, exp, morning);
+    await runInDurableObject(stub, (_o, state) => {
+      expect(state.storage.kv.get(`challenges:1d@${Date.UTC(2027, 0, 15)}`)).toBeUndefined();
+      expect(state.storage.kv.get('live')).toBeUndefined();
+    });
   });
 
   it('concurrent wrong guesses: one challenge compares at most 5 codes; one requester checks at most 10', async () => {

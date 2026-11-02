@@ -434,8 +434,11 @@ per-prefix shares (20%) of a domain's day, ticketed starts exempt, `email_domain
   to 1000 a day) and skipping every shared pool; `admin/unlock` and `admin/unsuppress` mail the address instead of
   answering staff, unlock clears nothing and adds a grant slot of 2 (0.92% a year with unlocks), `POST
   /v1/email/confirm`; device tickets per exact address with a nonce, per-ticket allowances and staff revocation; a
-  deterministic contract fixture with a regeneration test.
-- **Tests.** apps/email-issuer: 112 Worker tests (miniflare: layouts against the contract fixtures, codes,
+  deterministic contract fixture with a regeneration test. Then the scan of the re-check: owner allowances per exact
+  address, ≤ 5 live tickets per address and ≤ 10 owner challenges per mailbox a day, the owner pool as a per-app-bounded
+  fallback and a staff mail pool, the effective owner kind on resend, a domain cap from distinct verified mailboxes with
+  a 2,000 ceiling.
+- **Tests.** apps/email-issuer: 114 Worker tests (miniflare: layouts against the contract fixtures, codes,
   limits and the ceiling, google-match's four cases, signers and KMS, adapters, the log-capture test) and 7 node tests (`gen`, the fixture);
   packages/env +11 (`emailIssuer`), packages/jwks +3 (`rsaThumbprint`), scripts +10 (`email-issuer`) and 6 secret-scan
   self-test cases; hana-signer +4 (`tests/email/issuer_tokens.rs`, 303 in all); `pnpm -r test` and `pnpm -r typecheck` green. Existing tests broken on `develop` by the identity-token deploy

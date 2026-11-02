@@ -1015,8 +1015,8 @@ only the owner slot (4) and the ticket slot (3) are open, and past 25 nothing un
 challenge_expired`, `429 rate_limited` (IP, or a lock), `403 email_not_enabled` (the app was suspended or turned email
 off meanwhile: nothing is minted). A correct code is single use: the challenge is deleted before the token is minted.
 
-- `deviceTicket`: `dt2.` + 75 characters, an owner device ticket for this exact address (30 days, its own nonce and
-  allowance); batch 8's popup keeps it on `authOrigin` and sends it with the next `start`. A verified challenge also
+- `deviceTicket`: `dt2.` + 75 characters, an owner device ticket for this exact address (30 days, its own nonce;
+  registered in the mailbox object, at most 5 live per address, a newer one revoking the oldest); batch 8's popup keeps it on `authOrigin` and sends it with the next `start`. A verified challenge also
   gives its recipient-domain places back and raises that domain's cap (D198).
 - `session`: case B is when a Google identity that reported this address as verified (`email_hints`; for a
   non-Google-hosted address only if it did so within 180 days, D199) has the wallet in this scope and the email identity has none. The email login then gets no `idToken`, so
@@ -1116,7 +1116,7 @@ subject. Every mailbox decision is one atomic call (D198). Every mailbox-level r
 |---|---|---|
 | Mailbox × requester: code mails | 3 per 15 min, 10 per day (resends included) | 429 |
 | Mailbox: code mails | 10 per 15 min, 30 per day; then 5 a day for requesters new to it that day | 429 |
-| Device ticket | 3 code mails a UTC day **per ticket** for the challenges it started, outside the two rows above, the live cap and the challenge cap | 429 |
+| Device ticket | 3 code mails a UTC day **per exact address** (all its tickets together) for the challenges they started, outside the two rows above, the live cap and the challenge cap; ≤ 5 live tickets per address (a 6th revokes the oldest); ≤ 10 owner challenges (ticket or grant) per mailbox a day, past which a ticket counts as nothing | 429 |
 | Unlock grant | one start within 24 h of the unlock; its challenge's mails free (≤ 2 resends); its checks in the ticket slot then a grant slot of 2 outside the ceiling | – |
 | Mailbox: live challenges | 5 at once | 429 |
 | Mailbox × requester: wrong codes | 10 per hour → that requester locked out of the mailbox for 1 h | 429 (start, resend, verify) |
@@ -1128,9 +1128,9 @@ subject. Every mailbox decision is one atomic call (D198). Every mailbox-level r
 | IP prefix (IPv4 /24, IPv6 /56, IPv6 /48): `start` | 1000 per day each; skipped with a valid ticket or grant | 429 |
 | IP: `verify` / `resend` (and `confirm`) / `google-match` (its prepared challenges too) / webhook | 30 / 10 / 30 / 120 per 10 min | 429 |
 | No usable `cf-connecting-ip` (IP-limited routes) | refused | `400 missing_client_ip`, logged |
-| Recipient domain (registrable, Public Suffix List): code mails | 100 + 2 × its verified logins over the trailing 7 days, per day; a verified challenge's places given back; except the listed consumer providers (`src/domain.ts`); each requester prefix (IPv4 /24, IPv6 /56, /48) ≤ 20% of the day's cap; ticketed and unlock-grant challenges not counted | 429; `email_domain_cap` logged when a day fills |
+| Recipient domain (registrable, Public Suffix List): code mails | 100 + 2 × its distinct verified mailboxes a day over the trailing 7 days (only challenges that took a domain place), at most 2,000, per day; a verified challenge's places given back; except the listed consumer providers (`src/domain.ts`); each requester prefix (IPv4 /24, IPv6 /56, /48) ≤ 20% of the day's cap; ticketed and unlock-grant challenges not counted | 429; `email_domain_cap` logged when a day fills |
 | App: `start` | plan `per_minute` per minute; plan `per_day` per day; owner starts not counted | 429 |
-| Env: user mail | `emailIssuer.dailySendBudget` per day (required outside `local*`; 1000 in `local*`): an owner pool of 15% (ticket and grant challenges, staff mails) and a general pool of 85%, in which an app's share is 2% of its plan's `per_day` (at least 10, at most the pool; 10% of the budget without a plan value) and the last 20% only for apps under half their share | `start`, `resend` 429; logs `email_budget` (50%, 80% of each pool and of each app's share), `send_budget_exhausted` (error; `code` `global`, `app`, `reserve`, `owner` or `unconfigured`) |
+| Env: user mail | `emailIssuer.dailySendBudget` per day (required outside `local*`; 1000 in `local*`): a staff pool (1%, at least 5: unlock and unsuppress mails), an owner pool of 15% (a ticket's or grant's mail when the general pool refuses it, at most 20% of it per app), and the general pool (the rest), in which an app's share is 2% of its plan's `per_day` (at least 10, at most the pool; 10% of the budget without a plan value) and the last 20% only for apps under half their share | `start`, `resend` 429; logs `email_budget` (50%, 80% of each pool and of each app's share), `send_budget_exhausted` (error; `code` `global`, `app`, `reserve`, `owner`, `staff` or `unconfigured`) |
 | Staff | 20 actions per hour per staff member, all staff routes together | 429 |
 
 The guess bound: ≤ 25 failed checks a day per mailbox plus ≤ 2 per unlock (≤ 3 unlocks in 30 days): 365 × 25 + 37 × 2 =

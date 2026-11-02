@@ -112,12 +112,15 @@ export interface DeviceTicketInfo {
  * expiry)). Only a successful `verify` issues one, so only someone who read a code at that address can hold it. The
  * nonce makes each ticket its own (per-ticket allowances, abuse review L1/L2); staff can revoke an address's tickets.
  */
-export async function deviceTicket(keys: IssuerKeys, addrKey: string, now: number): Promise<string> {
+export async function issueDeviceTicket(keys: IssuerKeys, addrKey: string, now: number): Promise<{ ticket: string } & DeviceTicketInfo> {
   const exp = now + DEVICE_TICKET_TTL_MS;
   const nonce = crypto.getRandomValues(new Uint8Array(16));
   const m = await macBytes(keys.device, ticketMessage(addrKey, nonce, exp));
-  return DEVICE_TICKET_PREFIX + base64UrlEncode(concatBytes(u64le(exp), nonce, m));
+  return { ticket: DEVICE_TICKET_PREFIX + base64UrlEncode(concatBytes(u64le(exp), nonce, m)), id: base64UrlEncode(nonce), issuedAtMs: now };
 }
+
+/** The ticket string alone (tests; `verify` uses `issueDeviceTicket` and registers the ticket). */
+export const deviceTicket = async (keys: IssuerKeys, addrKey: string, now: number): Promise<string> => (await issueDeviceTicket(keys, addrKey, now)).ticket;
 
 /** The ticket's id and issue time when `ticket` is a live device ticket for this address (constant-time MAC check), else null. */
 export async function readDeviceTicket(keys: IssuerKeys, ticket: unknown, addrKey: string, now: number): Promise<DeviceTicketInfo | null> {

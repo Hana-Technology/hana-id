@@ -43,6 +43,13 @@ export const MAILBOX_RESERVE_LIMIT: Limit = { name: 'reserve:1d', windowMs: DAY,
  * Counted per ticket (its nonce), never in a pool an attacker can fill.
  */
 export const MAILBOX_TICKET_SENDS: Limit = { name: 'ticket-sends:1d', windowMs: DAY, max: 3 };
+/**
+ * The ticket path's bounds (scan of the re-check): the 3 code mails a day above are counted per exact address (all its
+ * tickets together), at most 5 live tickets per address (a 6th revokes the oldest), and at most 10 owner challenges
+ * (ticket or grant) per mailbox per UTC day, so verifying again and again can't multiply the allowance.
+ */
+export const MAX_LIVE_TICKETS = 5;
+export const MAILBOX_OWNER_CHALLENGES: Limit = { name: 'owner-challenges:1d', windowMs: DAY, max: 10 };
 /** Live challenges per mailbox at once (ticketed starts don't need a free place). */
 export const MAX_LIVE_CHALLENGES = 5;
 /** Challenges created per mailbox per UTC day, every kind (google-match's prepared ones included): a hard cap. */
@@ -107,6 +114,8 @@ export const STAFF_LIMITS: Limit[] = [{ name: 'staff:actions:1h', windowMs: HOUR
 export const DOMAIN_SENDS_BASE = 100;
 export const DOMAIN_SENDS_PER_VERIFIED = 2;
 export const DOMAIN_VERIFIED_DAYS = 7;
+/** The domain cap never grows past this (scan of the re-check); past it only exempt providers and owner starts pass. */
+export const DOMAIN_SENDS_MAX = 2000;
 export const DOMAIN_SENDS_WINDOW: Omit<Limit, 'max'> = { name: 'domain:sends:1d', windowMs: DAY };
 /**
  * Inside one domain's day, each requester prefix (IPv4 /24, IPv6 /56 and /48) may use at most 20% of the day's cap, so
@@ -150,15 +159,25 @@ export function appStartLimits(plan: { perMinute: number; perDay: number }): Lim
  *   `BUDGET_RESERVE` of the general pool only an app that has used less than half its share that day.
  */
 export const BUDGET_OWNER_POOL = 0.15;
+/** One app's share of the owner pool (scan of the re-check): no app, and no address, can empty it for everyone. */
+export const BUDGET_OWNER_APP_SHARE = 0.2;
+/** Staff-triggered mail (unlock, unsuppress confirmation) has its own small pool: 1% of the budget, at least 5. */
+export const BUDGET_STAFF_POOL = 0.01;
+export const BUDGET_STAFF_MIN = 5;
 export const BUDGET_SHARE_PER_PLAN_DAY = 0.02;
 export const BUDGET_APP_SHARE = 0.1;
 export const BUDGET_RESERVE = 0.2;
 /** No app's share is below this many mails a day (a tiny plan can still sign people in), within the general pool. */
 export const BUDGET_MIN_SHARE = 10;
 
+/** The staff pool's size for a budget. */
+export const staffPool = (budget: number): number => Math.min(budget, Math.max(BUDGET_STAFF_MIN, Math.floor(budget * BUDGET_STAFF_POOL)));
+/** The general pool: what the owner and staff pools leave. */
+export const generalPool = (budget: number): number => Math.max(0, budget - Math.floor(budget * BUDGET_OWNER_POOL) - staffPool(budget));
+
 /** An app's daily share of the general pool, from its plan's `per_day`. */
 export function appBudgetShare(perDay: number, budget: number): number {
-  const general = budget - Math.floor(budget * BUDGET_OWNER_POOL);
+  const general = generalPool(budget);
   const fromPlan = Number.isFinite(perDay) && perDay > 0 ? Math.max(BUDGET_MIN_SHARE, Math.floor(perDay * BUDGET_SHARE_PER_PLAN_DAY)) : Math.floor(budget * BUDGET_APP_SHARE);
   return Math.max(1, Math.min(general, fromPlan));
 }

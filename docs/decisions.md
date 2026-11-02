@@ -2518,7 +2518,7 @@ is computed by `@hana-id/email` alone, from the normalized address including any
   - **Amended after the abuse re-check (2026-11-02; every number to confirm).** The principle: **a valid device ticket
     or unlock grant never depends on a pool an attacker can fill.**
     - **Budget (H1):** `dailySendBudget` is split: an **owner pool of 15%** for the mail of challenges a valid ticket or
-      grant started and for the staff unlock/unsuppress mails, ignoring the app share; the **general pool (85%)** for
+      grant started and for the staff unlock/unsuppress mails, ignoring the app share (refined below: a staff pool, and the owner pool as a fallback); the **general pool (85%)** for
       everything else. An app's share of the general pool comes from its plan: **2% of the plan's `per_day`** (the free
       plan's 5000 gives 100), at least 10, at most the general pool; a flat 10% of the budget only when the plan has no
       usable `per_day`. The last 20% of the general pool stays for apps under half their share. `email_budget` is
@@ -2551,6 +2551,16 @@ is computed by `@hana-id/email` alone, from the normalized address including any
       tickets), with a 16-byte nonce; the 3 code mails a day are **per ticket**. Staff `admin/revoke-tickets {email,
       ticket}` revokes every ticket of that address issued until then (audited, 1 a day and 3 in 30 days).
     - The earlier "Unlock grants" bullet's staff-held token and the counters cleared by unlock are superseded by this.
+    - **After the scan of the re-check (to confirm):** every `verify` mints a ticket, so allowances can't be per ticket:
+      the 3 code mails a day are counted **per exact address** (all its tickets together); an address has at most **5
+      live tickets** (the mailbox object registers each at issue; a 6th revokes the oldest; staff revocation clears the
+      address's list, and an unlisted ticket counts as nothing); at most **10 owner challenges** (ticket or grant) per
+      mailbox per UTC day. The budget becomes three pools: **staff** (1% of the budget, at least 5) for the unlock and
+      unsuppress mails; **owner** (15%), which an owner's mail draws on only when the general pool refuses it, at most
+      **20% of it per app**; **general** (the rest, 84% of 1000). A resend's domain and budget steps use the owner kind
+      `reserveSend` found after the revocation check, so a revoked ticket's challenge gets no owner path. The domain cap
+      counts **distinct verified mailboxes** a day, only of challenges that reserved a domain place, and never passes
+      **2,000 a day**; past it only exempt providers and owner starts pass.
 
 ### D199. HTTP, data and chain readings of the issuer
 - Date 2026-11-02 · Status: to confirm (built) · Source: build of the spec's "Endpoints", "The four cases",

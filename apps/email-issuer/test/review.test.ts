@@ -7,7 +7,7 @@ import { toHex, utf8, base64Encode } from '../src/bytes.ts';
 import { isExemptDomain, registrableDomain } from '../src/domain.ts';
 import { ipAggregates } from '../src/ip.ts';
 import { DEVICE_TICKET_TTL_MS, deviceTicket, domainKey, isDeviceTicketFor, mailboxKey, readDeviceTicket, suppressionKey } from '../src/keys.ts';
-import { DOMAIN_SENDS_BASE, MAILBOX_GRANT_SLOT, MAILBOX_OWNER_SLOT, MAILBOX_TICKET_SLOT, MAILBOX_WRONG_BACKSTOP, MAILBOX_WRONG_CEILING } from '../src/limits.ts';
+import { DOMAIN_SENDS_BASE, DOMAIN_SENDS_MAX, MAILBOX_GRANT_SLOT, MAILBOX_OWNER_SLOT, MAILBOX_TICKET_SLOT, MAILBOX_WRONG_BACKSTOP, MAILBOX_WRONG_CEILING } from '../src/limits.ts';
 import { linkAccountPreimage, nonceOf } from '../src/layouts.ts';
 import { codeMail } from '../src/mail.ts';
 import { captureLogs, decodeToken, env, harness, mailboxObject, seedApp, seedPlan, sessionCommitment, uid, type Harness, type TestApp } from './helpers.ts';
@@ -161,15 +161,18 @@ describe('owner device tickets (D198, M1)', () => {
     // The owner signed in once: a ticket.
     const s0 = (await (await h.call('/v1/email/start', startBody(h, apps[0]!, a), { ip: '192.0.2.50' })).json()) as { challengeId: string };
     const v0 = (await (await h.call('/v1/email/verify', { challengeId: s0.challengeId, code: h.sender.codeFor(a) }, { ip: '192.0.2.50' })).json()) as { deviceTicket: string };
-    // An attacker drains the mailbox's code allowance (30 + the 5-a-day reserve) from many /24s.
+    // An attacker drains the mailbox's code allowance (30 + the 5-a-day reserve) from many /24s, without ever reading a
+    // code (so without a ticket): its challenges just expire.
     let drained = 1;
-    for (let i = 0; i < 80 && drained < 35; i++) {
+    for (let i = 0; i < 200 && drained < 35; i++) {
       const s = await h.call('/v1/email/start', startBody(h, apps[i % 2]!, a), { ip: `10.${100 + Math.floor(i / 200)}.${i % 200}.1` });
-      if (s.status !== 202) continue;
+      if (s.status !== 202) {
+        h.clock.now += 10 * 60_000 + 1;
+        continue;
+      }
       drained++;
-      await h.call('/v1/email/verify', { challengeId: ((await s.json()) as { challengeId: string }).challengeId, code: h.sender.codeFor(a) }, { ip: `10.${100 + Math.floor(i / 200)}.${i % 200}.1` });
-      if (drained % 9 === 0) h.clock.now += 15 * 60_000 + 1;
     }
+    expect(drained).toBe(35);
     const owner = '192.0.2.51';
     expect((await h.call('/v1/email/start', startBody(h, apps[0]!, a), { ip: owner })).status).toBe(429);
     // A ticket for another mailbox, or a forged one, doesn't help.
@@ -311,13 +314,21 @@ describe('the owner’s recovery never depends on a pool an attacker can fill (a
     expect(h.sender.sent).toHaveLength(0);
   });
 
-  it('M1: the domain cap grows by 2 per verified login over 7 days; a verified challenge gives its place back', async () => {
+  it('M1: the domain cap grows by 2 per distinct verified mailbox a day over 7 days, to at most 2000; a verified challenge gives its place back', async () => {
     const h = await harness();
     h.clock.now = morning;
     const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`${h.deps.env.ENV_NAME}:dom:unit-${uid()}`));
     const first = await stub.reserveDomain([], morning);
     expect(first.ok && first.cap).toBe(DOMAIN_SENDS_BASE);
-    for (let i = 0; i < 10; i++) await stub.domainVerified([], morning);
+    const verifyOne = async (mbx: string) => {
+      const d = await stub.reserveDomain([], morning);
+      if (!d.ok) throw new Error('domain full');
+      await stub.domainVerified([d.reservation], mbx, morning);
+    };
+    for (let i = 0; i < 10; i++) await verifyOne(`mbx-${i}`);
+    // The same mailbox again, and a challenge that reserved no domain place (an owner's): no growth (scan).
+    for (let i = 0; i < 5; i++) await verifyOne('mbx-0');
+    await stub.domainVerified([], 'mbx-new', morning);
     const grown = await stub.reserveDomain([], morning);
     expect(grown.ok && grown.cap).toBe(DOMAIN_SENDS_BASE + 20);
     // A prefix's share follows the cap (20% of 120).
@@ -327,6 +338,11 @@ describe('the owner’s recovery never depends on a pool an attacker can fill (a
     // Eight days on, those logins no longer count.
     const later = await stub.reserveDomain([], morning + 8 * 86_400_000);
     expect(later.ok && later.cap).toBe(DOMAIN_SENDS_BASE);
+    // The hard ceiling: however many logins, 2000 a day.
+    const big = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`${h.deps.env.ENV_NAME}:dom:big-${uid()}`));
+    await runInDurableObject(big, (_o, state) => state.storage.kv.put(`verified@${Date.UTC(2027, 1, 3)}`, 5000));
+    const capped = await big.reserveDomain([], morning);
+    expect(capped.ok && capped.cap).toBe(DOMAIN_SENDS_MAX);
     // Through the routes: a verified login's place comes back.
     const app = await seedApp(h);
     const dom = `v${uid().replace(/[^a-z0-9]/gu, '')}.example`;
@@ -360,17 +376,70 @@ describe('the owner’s recovery never depends on a pool an attacker can fill (a
     const keys = await h.deps.keys();
     expect(await readDeviceTicket(keys, ticket, await suppressionKey(keys, tagged), h.clock.now)).not.toBeNull();
     expect(await readDeviceTicket(keys, ticket, await suppressionKey(keys, plain), h.clock.now)).toBeNull();
-    // Two tickets of one address: 3 code mails a day each.
+    // Many tickets of one address share its 3 code mails a day (scan: re-verifying can't multiply them).
     const box = await mailboxObject(h, plain);
     const addrKey = await suppressionKey(keys, plain);
     const claim = (id: string) => ({ kind: 'ticket' as const, id, addrKey, issuedAtMs: morning });
+    for (const id of ['one', 'two', 'three']) await box.registerTicket(addrKey, id, morning, morning);
     const sends = async (id: string) => {
       let n = 0;
-      for (let i = 0; i < 5; i++) if ((await box.admit(`r${i}`, morning + 600_000, true, morning, claim(id))).ok) n++;
+      for (let i = 0; i < 5; i++) if ((await box.admit(`r${id}${i}`, morning + 600_000, true, morning, claim(id))).ok) n++;
       return n;
     };
-    expect(await sends('ticket-one')).toBe(3);
-    expect(await sends('ticket-two')).toBe(3);
+    expect((await sends('one')) + (await sends('two')) + (await sends('three'))).toBe(3);
+    // An unregistered ticket (forged id, or pushed out) counts as nothing.
+    expect(await box.checkOwner(claim('never-issued'), morning)).toBe(false);
+  });
+
+  it('tickets: at most 5 live per address, a 6th revokes the oldest; at most 10 owner challenges per mailbox a day', async () => {
+    const h = await harness();
+    const app = await seedApp(h);
+    const a = `l${uid().replace(/[^a-z0-9]/gu, '')}@gmail.com`;
+    const tickets: string[] = [];
+    for (let i = 0; i < 6; i++) tickets.push(await ticketFor(h, app, a, `192.0.2.${100 + i}`));
+    const keys = await h.deps.keys();
+    const addrKey = await suppressionKey(keys, a);
+    const box = await mailboxObject(h, a);
+    const live = async (t: string) => {
+      const info = (await readDeviceTicket(keys, t, addrKey, h.clock.now))!;
+      return box.checkOwner({ kind: 'ticket', id: info.id, addrKey, issuedAtMs: info.issuedAtMs }, h.clock.now);
+    };
+    expect(await live(tickets[0]!)).toBe(false);
+    for (const t of tickets.slice(1)) expect(await live(t)).toBe(true);
+    // The owner-challenge cap: 10 a day per mailbox, then a ticket counts as nothing.
+    const info = (await readDeviceTicket(keys, tickets[5], addrKey, h.clock.now))!;
+    const claim = { kind: 'ticket' as const, id: info.id, addrKey, issuedAtMs: info.issuedAtMs };
+    let owners = 0;
+    for (let i = 0; i < 12; i++) {
+      const adm = await box.admit(`o${i}`, h.clock.now + 600_000, false, h.clock.now, claim);
+      if (adm.ok && adm.owner) owners++;
+    }
+    expect(owners).toBe(10);
+  });
+
+  it('a ticket revoked after its challenge started gets no owner path on resend: domain cap and general budget apply (scan)', async () => {
+    const h = await harness();
+    h.clock.now = morning;
+    const apps = await Promise.all(Array.from({ length: 3 }, () => seedApp(h)));
+    const app = apps[0]!;
+    const dom = `rv${uid().replace(/[^a-z0-9]/gu, '')}.example`;
+    const a = `owner@${dom}`;
+    const ticket = await ticketFor(h, app, a, '192.0.2.90');
+    // Fill the domain's day from other requesters (three apps, so no app's minute refuses first).
+    let filled = 0;
+    for (let i = 0; i < 200; i++) {
+      if ((await h.call('/v1/email/start', startBody(h, apps[i % 3]!, `f${i}@${dom}`), { ip: `10.${120 + Math.floor(i / 200)}.${i}.1` })).status !== 202) break;
+      filled++;
+    }
+    expect(filled).toBe(102);
+    const s = await h.call('/v1/email/start', startBody(h, app, a, { deviceTicket: ticket }), { ip: '192.0.2.91' });
+    expect(s.status).toBe(202);
+    const cid = ((await s.json()) as { challengeId: string }).challengeId;
+    const keys = await h.deps.keys();
+    await (await mailboxObject(h, a)).revokeTickets(await suppressionKey(keys, a), h.clock.now);
+    h.clock.now += 31_000;
+    // Revoked: the resend is an ordinary one, and the full domain refuses it.
+    expect((await h.call('/v1/email/resend', { challengeId: cid }, { ip: '192.0.2.91' })).status).toBe(429);
   });
 
   it('M3: a grant’s challenge checks in the ticket slot, then its own 2 outside the ceiling; the yearly bound stays under 1%', async () => {

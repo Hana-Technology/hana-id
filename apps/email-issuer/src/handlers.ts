@@ -20,7 +20,7 @@ import { GoogleUnavailable } from './google.ts';
 import { corsHeaders, error, isObj, json, onlyKeys, readJson } from './http.ts';
 import { ipAggregates, ipSubject, isClientIp } from './ip.ts';
 import { type EmailClaims, TOKEN_LIFETIME_S, mintJws } from './jws.ts';
-import { CODE_RE, KeysUnavailable, codeMac, deviceTicket, domainKey, mailboxKey, newCode, randomId, readDeviceTicket, requesterKey, suppressionKey } from './keys.ts';
+import { CODE_RE, KeysUnavailable, codeMac, domainKey, issueDeviceTicket, mailboxKey, newCode, randomId, readDeviceTicket, requesterKey, suppressionKey } from './keys.ts';
 import { autoLinkPreimage, clientProofPreimage, EMAIL_PROVIDER, identityKey, nonceOf, sessionPreimage, type SessionCommitment } from './layouts.ts';
 import {
   CHALLENGE_TTL_MS,
@@ -42,7 +42,7 @@ import {
 } from './limits.ts';
 import { log } from './log.ts';
 import { codeMail, confirmMail, linkNoticeMail, unlockMail } from './mail.ts';
-import type { Limit, OwnerClaim, Reservation } from './rate-limiter.ts';
+import type { BudgetKind, Limit, OwnerClaim, Reservation } from './rate-limiter.ts';
 import { SignerUnavailable } from './signer.ts';
 import { readWebhookBody, SIGNATURE_HEADER, suppressionsOf, TIMESTAMP_HEADER, verifyWebhook, webhookHeadersOk } from './webhook.ts';
 
@@ -156,9 +156,9 @@ const isSuppressed = async (deps: Deps, key: string): Promise<boolean> =>
  * pool within the app's `share`. Logs `email_budget` when this mail reached 50% or 80% of a pool or of the app's share,
  * and `send_budget_exhausted` when refused (`unconfigured`: no `dailySendBudget` outside `local*`, every mail refused).
  */
-async function reserveBudget(ctx: Ctx, appId: string | null, share: number, owner: boolean): Promise<Reservation | null> {
+async function reserveBudget(ctx: Ctx, appId: string | null, share: number, kind: BudgetKind): Promise<Reservation | null> {
   const budget = dailySendBudget(ctx.deps.env);
-  const r = await limiter(ctx.deps, 'global').reserveBudget(appId, budget, share, owner, ctx.deps.now());
+  const r = await limiter(ctx.deps, 'global').reserveBudget(appId, budget, share, kind, ctx.deps.now());
   const appField = appId ? { appId } : {};
   if (!r.ok) {
     log({ event: 'send_budget_exhausted', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'error', code: budget > 0 ? r.limit : 'unconfigured', ...appField }, 'error');
@@ -176,7 +176,7 @@ const shareOf = (ctx: Ctx, app: { perDay: number }): number => appBudgetShare(ap
  * address in a log. Returns whether the provider accepted it.
  */
 async function mailOwner(ctx: Ctx, message: ReturnType<typeof unlockMail>): Promise<boolean> {
-  const budget = await reserveBudget(ctx, null, 0, true);
+  const budget = await reserveBudget(ctx, null, 0, 'staff');
   if (!budget) return false;
   try {
     const res = await ctx.deps.sender.send(message);
@@ -241,7 +241,7 @@ async function notify(ctx: Ctx, to: string, appName: string, pending: boolean, a
   const { deps } = ctx;
   try {
     if (await isSuppressed(deps, await suppressionKey(await deps.keys(), to))) return;
-    const budget = await reserveBudget(ctx, appId, share, false);
+    const budget = await reserveBudget(ctx, appId, share, 'user');
     if (!budget) return;
     const res = await deps.sender.send(linkNoticeMail({ to, appName, authOrigin: deps.env.AUTH_ORIGIN, pending }));
     if (!res.ok) await limiter(deps, 'global').refund(budget);
@@ -326,7 +326,7 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
     if (!owner) await limiter(deps, `app:${app.id}`).unhit(appLimits, now);
   };
   // 4. The global budget: the owner pool for an owner's start, else the app's share of the general pool.
-  const budget = await reserveBudget(ctx, app.id, share, owner !== null);
+  const budget = await reserveBudget(ctx, app.id, share, owner ? 'owner' : 'user');
   if (!budget) {
     await undoMailbox(true);
     await releaseDomain(deps, dKey, dom.r);
@@ -402,12 +402,14 @@ export async function handleResend(request: Request, ctx: Ctx): Promise<Response
   const res = await box.reserveSend(requesterKey(ipOf(request)), now, st.owner);
   if (!res.ok) return tryLater(ctx, res.reason);
   const send = res.reservation;
-  const dom = await reserveDomain(ctx, st.domainKey, request, now, st.owner !== null);
+  // What the challenge's owner proof counts as now (a ticket revoked since counts as nothing), for every later step.
+  const isOwner = res.owner !== null;
+  const dom = await reserveDomain(ctx, st.domainKey, request, now, isOwner);
   if (!dom.ok) {
     await box.refund(send);
     return tryLater(ctx, 'domain');
   }
-  const budget = await reserveBudget(ctx, st.appId, st.budgetShare, st.owner !== null);
+  const budget = await reserveBudget(ctx, st.appId, st.budgetShare, isOwner ? 'owner' : 'user');
   if (!budget) {
     await box.refund(send);
     await releaseDomain(deps, st.domainKey, dom.r);
@@ -499,14 +501,18 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
   // The code was right: the challenge is gone (single use). At most one token is minted from it.
   const rec = v.record;
   // A verified login at a capped domain gives its mails' places back and raises the domain's cap (abuse review M1).
-  if (rec.domainKey) await limiter(deps, `dom:${rec.domainKey}`).domainVerified(rec.domainRes, now);
+  if (rec.domainKey) await limiter(deps, `dom:${rec.domainKey}`).domainVerified(rec.domainRes, rec.mailboxKey, now);
   const app = await appById(deps.env.APP_DB, rec.appId);
   if (!app?.active || !app.emailOn || app.scopeId !== rec.scopeId) return fail(ctx, 403, 'email_not_enabled', 'Email login is not enabled for this app');
   const email = await decryptEmail(cid, rec.emailEnc);
   if (email === null) return gone();
   const sub = await emailSub(keys.sub, email);
-  // Proof that this browser read a code at this exact address: the owner's way past a code drain (D198).
-  const owner = await deviceTicket(keys, await suppressionKey(keys, email), now);
+  // Proof that this browser read a code at this exact address: the owner's way past a code drain (D198). Registered in
+  // the mailbox object: at most 5 live per address, a newer one revoking the oldest.
+  const addrKey = await suppressionKey(keys, email);
+  const issued = await issueDeviceTicket(keys, addrKey, now);
+  await box.registerTicket(addrKey, issued.id, issued.issuedAtMs, now);
+  const owner = issued.ticket;
 
   if (rec.purpose === 'session') {
     // Case B lookup: a Google identity that reported this address as verified has the wallet here (D119). A hint for a

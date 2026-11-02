@@ -23,11 +23,13 @@ import { DurableObject } from 'cloudflare:workers';
 import type { Env } from './env.ts';
 import {
   BUDGET_LOG_AT,
+  BUDGET_OWNER_APP_SHARE,
   BUDGET_OWNER_POOL,
   BUDGET_RESERVE,
   DOMAIN_PREFIX_SHARE,
   DOMAIN_PREFIX_WINDOW,
   DOMAIN_SENDS_BASE,
+  DOMAIN_SENDS_MAX,
   DOMAIN_SENDS_PER_VERIFIED,
   DOMAIN_SENDS_WINDOW,
   DOMAIN_VERIFIED_DAYS,
@@ -38,6 +40,7 @@ import {
   MAILBOX_IP_LOCK_MS,
   MAILBOX_IP_WRONG_DAY,
   MAILBOX_IP_WRONG_LIMIT,
+  MAILBOX_OWNER_CHALLENGES,
   MAILBOX_OWNER_SLOT,
   MAILBOX_RESERVE_LIMIT,
   MAILBOX_TICKET_SENDS,
@@ -45,10 +48,13 @@ import {
   MAILBOX_WRONG_BACKSTOP,
   MAILBOX_WRONG_CEILING,
   MAX_LIVE_CHALLENGES,
+  MAX_LIVE_TICKETS,
   STAFF_ACTIONS_PER_MAILBOX_30D,
   STAFF_ACTIONS_PER_MAILBOX_DAY,
   THIRTY_DAYS_MS,
   UNLOCK_GRANT_TTL_MS,
+  generalPool,
+  staffPool,
 } from './limits.ts';
 
 export interface Limit {
@@ -75,18 +81,26 @@ export type Admitted =
   /** `owner`: the valid ticket or the grant this start used (a grant is given back by `unadmit`). */
   | { ok: true; send: Reservation | null; created: Reservation; owner: OwnerRef | null }
   | { ok: false; reason: 'locked' | 'live' | 'codes' | 'challenges'; retryAfterMs: number };
-export type Reserved = { ok: true; reservation: Reservation } | { ok: false; reason: 'locked' | 'codes'; retryAfterMs: number };
+/** `owner`: what the challenge's owner proof counts as now (a ticket revoked since: null), for the domain and budget steps. */
+export type Reserved = { ok: true; reservation: Reservation; owner: 'ticket' | 'grant' | null } | { ok: false; reason: 'locked' | 'codes'; retryAfterMs: number };
 export type Guess = { ok: true; reservation: Reservation; tripped?: 'backstop' | 'ceiling' } | { ok: false; reason: 'locked'; retryAfterMs: number };
 export type DomainReserved = { ok: true; reservation: Reservation; filled: boolean; cap: number } | { ok: false; limit: 'domain' | 'prefix' };
-export type Budget = { ok: true; reservation: Reservation; crossed: string[] } | { ok: false; limit: 'global' | 'app' | 'reserve' | 'owner' };
+export type Budget = { ok: true; reservation: Reservation; crossed: string[] } | { ok: false; limit: 'global' | 'app' | 'reserve' | 'owner' | 'staff' };
+/** Which pool a mail may draw on: a user's (the general pool), an owner's (general first, then the owner pool), staff's. */
+export type BudgetKind = 'user' | 'owner' | 'staff';
+/** A live ticket of an exact address, as the mailbox object registers it at issue. */
+interface TicketEntry {
+  id: string;
+  issuedAtMs: number;
+}
 
 const DAY = 86_400_000;
 const LIVE_KEY = 'live';
 const ipLock = (ip: string) => `lock:${ip}`;
 /** Staff action logs (timestamps of the last 30 days) per kind. */
 const staffLog = (kind: string) => `staff-log:${kind}`;
-/** Tickets of an exact address issued before this time are revoked (kept as long as a ticket can live). */
-const revokedKey = (addrKey: string) => `revoked:${addrKey}`;
+/** The live tickets of an exact address (≤ MAX_LIVE_TICKETS, oldest first); a ticket not listed is revoked. */
+const ticketsKey = (addrKey: string) => `tickets:${addrKey}`;
 /** A recipient domain's verified logins per UTC day (kept for the trailing window). */
 const verifiedKey = (day: number) => `verified@${day}`;
 
@@ -163,38 +177,47 @@ export class RateLimiter extends DurableObject<Env> {
    * `BUDGET_RESERVE` for an app that has used half its share or more. Returns the thresholds this mail reached
    * (`global_50`, `global_80`, `app_50`, `app_80`, `owner_50`, `owner_80`) for the `email_budget` log.
    */
-  async reserveBudget(appId: string | null, budget: number, share: number, owner: boolean, now: number = Date.now()): Promise<Budget> {
+  async reserveBudget(appId: string | null, budget: number, share: number, kind: BudgetKind, now: number = Date.now()): Promise<Budget> {
     if (!(budget > 0)) return { ok: false, limit: 'global' };
     const day = Math.floor(now / DAY) * DAY;
-    const ownerPool = Math.floor(budget * BUDGET_OWNER_POOL);
     const crossed: string[] = [];
     const reached = (count: number, of: number, name: string) => {
       for (const f of BUDGET_LOG_AT) if (count === Math.ceil(of * f)) crossed.push(`${name}_${Math.round(f * 100)}`);
     };
-    if (owner) {
-      const oKey = `budget-owner@${day}`;
-      const o = this.kv().get<number>(oKey) ?? 0;
-      if (o >= ownerPool) return { ok: false, limit: 'owner' };
-      this.kv().put(oKey, o + 1);
-      reached(o + 1, ownerPool, 'owner');
+    const take = async (keys: string[]): Promise<Budget> => {
+      for (const k of keys) this.kv().put(k, (this.kv().get<number>(k) ?? 0) + 1);
       await this.sweepAt(now + DAY);
-      return { ok: true, reservation: { keys: [oKey] }, crossed };
+      return { ok: true, reservation: { keys }, crossed };
+    };
+    if (kind === 'staff') {
+      const sKey = `budget-staff@${day}`;
+      const n = this.kv().get<number>(sKey) ?? 0;
+      if (n >= staffPool(budget)) return { ok: false, limit: 'staff' };
+      return take([sKey]);
     }
-    const general = budget - ownerPool;
+    const general = generalPool(budget);
     const gKey = `budget@${day}`;
     const aKey = `budget:${appId ?? '-'}@${day}`;
     const g = this.kv().get<number>(gKey) ?? 0;
     const a = this.kv().get<number>(aKey) ?? 0;
     const reserveFrom = Math.floor(general * (1 - BUDGET_RESERVE));
-    if (g >= general) return { ok: false, limit: 'global' };
-    if (a >= share) return { ok: false, limit: 'app' };
-    if (g >= reserveFrom && a >= Math.max(1, Math.floor(share / 2))) return { ok: false, limit: 'reserve' };
-    this.kv().put(gKey, g + 1);
-    this.kv().put(aKey, a + 1);
-    reached(g + 1, general, 'global');
-    reached(a + 1, share, 'app');
-    await this.sweepAt(now + DAY);
-    return { ok: true, reservation: { keys: [gKey, aKey] }, crossed };
+    const generalRefusal: 'global' | 'app' | 'reserve' | null = g >= general ? 'global' : a >= share ? 'app' : g >= reserveFrom && a >= Math.max(1, Math.floor(share / 2)) ? 'reserve' : null;
+    if (!generalRefusal) {
+      reached(g + 1, general, 'global');
+      reached(a + 1, share, 'app');
+      return take([gKey, aKey]);
+    }
+    if (kind !== 'owner') return { ok: false, limit: generalRefusal };
+    // An owner's mail the general pool refused: the owner pool, at most BUDGET_OWNER_APP_SHARE of it per app.
+    const ownerPool = Math.floor(budget * BUDGET_OWNER_POOL);
+    const ownerApp = Math.max(1, Math.floor(ownerPool * BUDGET_OWNER_APP_SHARE));
+    const oKey = `budget-owner@${day}`;
+    const oaKey = `budget-owner:${appId ?? '-'}@${day}`;
+    const o = this.kv().get<number>(oKey) ?? 0;
+    const oa = this.kv().get<number>(oaKey) ?? 0;
+    if (o >= ownerPool || oa >= ownerApp) return { ok: false, limit: 'owner' };
+    reached(o + 1, ownerPool, 'owner');
+    return take([oKey, oaKey]);
   }
 
   // ---- a mailbox ----
@@ -220,10 +243,20 @@ export class RateLimiter extends DurableObject<Env> {
     return trippedAt !== undefined && startedAt !== undefined && startedAt < trippedAt && this.slot(MAILBOX_IP_WRONG_DAY, now, `ip:${ip}:`).count === 0;
   }
 
-  /** A ticket of this exact address is valid unless staff revoked the address's tickets after it was issued. */
-  private ticketLive(addrKey: string, issuedAtMs: number): boolean {
-    const revoked = this.kv().get<number>(revokedKey(addrKey));
-    return revoked === undefined || issuedAtMs > revoked;
+  /** A ticket is valid while its address's registry lists it (not revoked, not pushed out by newer ones). */
+  private ticketLive(addrKey: string, id: string): boolean {
+    return (this.kv().get<TicketEntry[]>(ticketsKey(addrKey)) ?? []).some((t) => t.id === id);
+  }
+
+  /**
+   * Registers a ticket `verify` just issued for this exact address: at most MAX_LIVE_TICKETS stay live, a newer one
+   * revoking the oldest (scan of the re-check: re-verifying can't pile up tickets).
+   */
+  async registerTicket(addrKey: string, id: string, issuedAtMs: number, now: number = Date.now()): Promise<void> {
+    const live = (this.kv().get<TicketEntry[]>(ticketsKey(addrKey)) ?? []).filter((t) => t.issuedAtMs + THIRTY_DAYS_MS > now);
+    live.push({ id, issuedAtMs });
+    this.kv().put(ticketsKey(addrKey), live.slice(-MAX_LIVE_TICKETS));
+    await this.sweepAt(now + DAY);
   }
 
   /** The key of this mailbox's unused unlock grant whose token hashes to `hash`, issued within the last 24 h, or null. */
@@ -238,7 +271,7 @@ export class RateLimiter extends DurableObject<Env> {
   /** The claim, checked: the ticket (not revoked) or the unused grant; null when it doesn't hold. */
   private ownerOf(claim: OwnerClaim | null, now: number): OwnerRef | null {
     if (!claim) return null;
-    if (claim.kind === 'ticket') return this.ticketLive(claim.addrKey, claim.issuedAtMs) ? claim : null;
+    if (claim.kind === 'ticket') return this.ticketLive(claim.addrKey, claim.id) ? claim : null;
     const key = this.unusedGrant(claim.hash, now);
     return key ? { kind: 'grant', key } : null;
   }
@@ -246,7 +279,7 @@ export class RateLimiter extends DurableObject<Env> {
   /** What a live challenge's owner proof still counts as: a ticket revoked since counts as nothing. */
   private ownerKind(ref: OwnerRef | null): 'ticket' | 'grant' | null {
     if (!ref) return null;
-    if (ref.kind === 'ticket') return this.ticketLive(ref.addrKey, ref.issuedAtMs) ? 'ticket' : null;
+    if (ref.kind === 'ticket') return this.ticketLive(ref.addrKey, ref.id) ? 'ticket' : null;
     return 'grant';
   }
 
@@ -297,22 +330,23 @@ export class RateLimiter extends DurableObject<Env> {
    */
   private trySend(ip: string, ref: OwnerRef | null, now: number): Reserved {
     const kind = this.ownerKind(ref);
-    if (kind === 'grant') return { ok: true, reservation: { keys: [] } };
+    if (kind === 'grant') return { ok: true, reservation: { keys: [] }, owner: 'grant' };
     if (kind === 'ticket' && ref?.kind === 'ticket') {
-      const t = this.slot(MAILBOX_TICKET_SENDS, now, `t:${ref.id}:`);
+      // Per exact address, all its tickets together (scan of the re-check).
+      const t = this.slot(MAILBOX_TICKET_SENDS, now, `a:${ref.addrKey}:`);
       if (t.count >= t.l.max) return { ok: false, reason: 'codes', retryAfterMs: t.start + DAY - now };
-      return { ok: true, reservation: { keys: this.count([t]) } };
+      return { ok: true, reservation: { keys: this.count([t]) }, owner: 'ticket' };
     }
     const own = MAILBOX_IP_CODE_LIMITS.map((l) => this.slot(l, now, `ip:${ip}:`));
     const shared = MAILBOX_CODE_LIMITS.map((l) => this.slot(l, now));
     const ownFull = this.firstFull(own, now);
     const sharedFull = this.firstFull(shared, now);
-    if (!ownFull && !sharedFull) return { ok: true, reservation: { keys: [...this.count(own), ...this.count(shared)] } };
+    if (!ownFull && !sharedFull) return { ok: true, reservation: { keys: [...this.count(own), ...this.count(shared)] }, owner: null };
     if (!ownFull) {
       // A requester new to this mailbox today may still get a code from a small reserve.
       const isNew = own.find((s) => s.l.windowMs === DAY)!.count === 0;
       const reserve = this.slot(MAILBOX_RESERVE_LIMIT, now);
-      if (isNew && reserve.count < reserve.l.max) return { ok: true, reservation: { keys: [...this.count(own), ...this.count([reserve])] } };
+      if (isNew && reserve.count < reserve.l.max) return { ok: true, reservation: { keys: [...this.count(own), ...this.count([reserve])] }, owner: null };
     }
     return { ok: false, reason: 'codes', retryAfterMs: (ownFull ?? sharedFull)!.retryAfterMs };
   }
@@ -325,7 +359,11 @@ export class RateLimiter extends DurableObject<Env> {
    * nothing. An admitted one records when this requester first started here today.
    */
   async admit(ip: string, expiresAtMs: number, send: boolean, now: number = Date.now(), claim: OwnerClaim | null = null): Promise<Admitted> {
-    const owner = this.ownerOf(claim, now);
+    let owner = this.ownerOf(claim, now);
+    // At most MAILBOX_OWNER_CHALLENGES owner starts per mailbox a day; past it a ticket counts as nothing (a grant, one
+    // per unlock, always passes).
+    const ownerDay = this.slot(MAILBOX_OWNER_CHALLENGES, now);
+    if (owner?.kind === 'ticket' && ownerDay.count >= ownerDay.l.max) owner = null;
     const locked = this.lockedFor(ip, owner?.kind ?? null, now);
     if (locked > 0) return { ok: false, reason: 'locked', retryAfterMs: locked };
     const live = (this.kv().get<number[]>(LIVE_KEY) ?? []).filter((t) => t > now);
@@ -339,7 +377,7 @@ export class RateLimiter extends DurableObject<Env> {
       reservation = r.reservation;
     }
     if (owner?.kind === 'grant') this.kv().put(owner.key, 0);
-    const createdKeys = this.count([created]);
+    const createdKeys = this.count(owner ? [created, ownerDay] : [created]);
     this.kv().put(LIVE_KEY, [...live, expiresAtMs]);
     const startKey = `start:${ip}@${this.day(now)}`;
     if (this.kv().get(startKey) === undefined) this.kv().put(startKey, this.nextSeq(now));
@@ -438,10 +476,10 @@ export class RateLimiter extends DurableObject<Env> {
     await this.sweepAt(now + UNLOCK_GRANT_TTL_MS);
   }
 
-  /** Staff revocation (`admin/revoke-tickets`): every device ticket of this exact address issued until now. */
+  /** Staff revocation (`admin/revoke-tickets`): every live device ticket of this exact address. */
   async revokeTickets(addrKey: string, now: number = Date.now()): Promise<void> {
-    this.kv().put(revokedKey(addrKey), now);
-    await this.sweepAt(now + THIRTY_DAYS_MS);
+    this.kv().delete(ticketsKey(addrKey));
+    await this.sweepAt(now + DAY);
   }
 
   // ---- a recipient domain (the `dom:` object) ----
@@ -451,7 +489,7 @@ export class RateLimiter extends DurableObject<Env> {
     const d = this.day(now);
     let verified = 0;
     for (let i = 0; i < DOMAIN_VERIFIED_DAYS; i++) verified += this.kv().get<number>(verifiedKey(d - i * DAY)) ?? 0;
-    return DOMAIN_SENDS_BASE + DOMAIN_SENDS_PER_VERIFIED * verified;
+    return Math.min(DOMAIN_SENDS_MAX, DOMAIN_SENDS_BASE + DOMAIN_SENDS_PER_VERIFIED * verified);
   }
 
   /**
@@ -471,11 +509,21 @@ export class RateLimiter extends DurableObject<Env> {
     return { ok: true, reservation: { keys }, filled: total.count + 1 >= total.l.max, cap };
   }
 
-  /** A challenge to this domain verified: its mails' places come back, and the login raises the cap for 7 days. */
-  async domainVerified(reservations: Reservation[], now: number = Date.now()): Promise<void> {
+  /**
+   * A challenge to this domain verified: its mails' places come back and, when it reserved one (an owner's challenge
+   * never does) and its mailbox hasn't verified here today, the login raises the cap for 7 days: distinct mailboxes a
+   * day, never past DOMAIN_SENDS_MAX (scan of the re-check).
+   */
+  async domainVerified(reservations: Reservation[], mailboxKey: string, now: number = Date.now()): Promise<void> {
+    if (reservations.length === 0) return;
     for (const r of reservations) this.refund(r);
-    const k = verifiedKey(this.day(now));
-    this.kv().put(k, (this.kv().get<number>(k) ?? 0) + 1);
+    const d = this.day(now);
+    const seen = `vm:${mailboxKey}@${d}`;
+    if (this.kv().get(seen) === undefined) {
+      this.kv().put(seen, 1);
+      const k = verifiedKey(d);
+      this.kv().put(k, (this.kv().get<number>(k) ?? 0) + 1);
+    }
     await this.sweepAt(now + DAY);
   }
 
@@ -509,7 +557,13 @@ export class RateLimiter extends DurableObject<Env> {
           next = Math.max(next, Math.min(...log) + THIRTY_DAYS_MS);
         } else kv.delete(key);
       } else if (key.startsWith('lock:')) keepUntil(key, value as number);
-      else if (key.startsWith('revoked:')) keepUntil(key, (value as number) + THIRTY_DAYS_MS + DAY);
+      else if (key.startsWith('tickets:')) {
+        const live = (value as TicketEntry[]).filter((t) => t.issuedAtMs + THIRTY_DAYS_MS > now);
+        if (live.length) {
+          kv.put(key, live);
+          next = Math.max(next, Math.min(...live.map((t) => t.issuedAtMs)) + THIRTY_DAYS_MS);
+        } else kv.delete(key);
+      }
       else if (key.startsWith('verified@')) keepUntil(key, Number(key.slice(9)) + (DOMAIN_VERIFIED_DAYS + 1) * DAY);
       else {
         // Every other entry is keyed `…@<window start>` with a window of at most a day.

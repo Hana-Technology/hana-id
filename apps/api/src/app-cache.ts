@@ -1,10 +1,10 @@
 // An in-isolate cache of `getAppByKey` for the vault endpoints (`/v1/vault/*`, vault/endpoints.ts), so a reload's
 // unlock doesn't pay two D1 queries before its rate limits (docs/decisions.md D78).
 //
-// Staleness bound: an entry is used for at most APP_CACHE_TTL_MS after the D1 read that filled it, per isolate. Nothing
-// in the Worker writes `apps` or `app_origins` (operators change them with the admin CLI, straight in D1), so there is no
-// event to invalidate on: an app suspended, a publishable key removed or changed, an origin removed, a scope conflict
-// or a plan change reaches the vault endpoints within APP_CACHE_TTL_MS. Unknown keys are never cached (a new app works
+// Staleness bound: an entry is used for at most APP_CACHE_TTL_MS after the D1 read that filled it, per isolate. The
+// writers of `apps`, `app_keys` and `app_origins` (the admin CLI straight in D1, and from batch C5 the ConsoleRpc and
+// AdminRpc entrypoints, often in another isolate) don't invalidate it, so an app suspended or deleted, a key revoked,
+// an origin removed, a scope conflict or a plan change reaches the vault endpoints within APP_CACHE_TTL_MS. Unknown keys are never cached (a new app works
 // at once, and made-up keys can't fill the cache). The relay endpoints, GET /v1/app and the vault page don't use it:
 // they read D1 on every request, so a suspension stops logins (gas) and new vault loads at once.
 //

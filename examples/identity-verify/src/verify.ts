@@ -1,11 +1,22 @@
-import { createRemoteJWKSet, errors, jwtVerify, type JWTPayload } from 'jose';
+import { calculateJwkThumbprint, createRemoteJWKSet, errors, exportJWK, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
 
 // From Hana's partner console / your Hana app page. Not secrets.
 const HANA_ISSUER = process.env.HANA_IDENTITY_ISSUER!; // e.g. https://<hana api>/v1/identity
 const HANA_APP_ID = process.env.HANA_APP_ID!; // app_…
 
+// Recommended for anything of value: the key thumbprints Hana gives you (comma-separated; each is also its kid). A key
+// that isn't one of them is refused even if Hana's JWKS lists it, so a key published by whoever controls Hana's
+// servers never verifies here. Hana announces scheduled rotations 14 days ahead. Unset: the JWKS URL alone is trusted.
+const HANA_PINS = (process.env.HANA_IDENTITY_PINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+
 // Caches the keys for 10 minutes and refetches on an unknown kid (at most every 30 s).
-const hanaKeys = createRemoteJWKSet(new URL(`${HANA_ISSUER}/jwks.json`));
+const remoteKeys = createRemoteJWKSet(new URL(`${HANA_ISSUER}/jwks.json`));
+const hanaKeys: JWTVerifyGetKey = async (header, token) => {
+  const key = await remoteKeys(header, token);
+  // Judged by the key itself, never by its kid (anyone can put a pinned kid on another key).
+  if (HANA_PINS.length && !HANA_PINS.includes(await calculateJwkThumbprint(await exportJWK(key)))) throw new errors.JWKSNoMatchingKey();
+  return key;
+};
 
 export interface HanaIdentity {
   userId: string; // sub: stable per user in your app

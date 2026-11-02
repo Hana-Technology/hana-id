@@ -4,6 +4,7 @@ Everything that must be true before Hana ID runs on mainnet with real funds. Thi
 two founders to track. Update a row in the same branch as the change that moves it (rule in `CLAUDE.md`).
 
 Last verified: 2026-11-02 for rows 7.1–7.1c (branch `feat/email-login-6`, the API's email login part, D230–D234);
+2026-11-02 for rows 1.5, 1.16, 4.18 and 7.14 (branch `feat/batch-c-4`, usage capture, D220–D224);
 2026-11-02 for row 2.6 (branch `feat/identity-token-7`, the KMS signer code); 2026-11-02, against `develop` @ 3c4e920 (batch C3 merged) and the docs on it; the inconsistencies, rows
 1.14–1.16, 6.7 and 7.5 on 2026-11-02 against `develop` @ 1c6a124 (branch `docs/consistency-pass`). Today only
 sandbox-dev (testnet) runs.
@@ -35,13 +36,13 @@ with what became of each.
 | 1. Decisions still open | 16 | 0 | 0 | 0 | 16 | 0 |
 | 2. Keys and custody | 13 | 0 | 1 | 11 | 1 | 0 |
 | 3. Governance | 8 | 2 | 4 | 2 | 0 | 0 |
-| 4. Infrastructure and accounts | 17 | 0 | 0 | 12 | 3 | 2 |
+| 4. Infrastructure and accounts | 18 | 0 | 0 | 13 | 3 | 2 |
 | 5. Monitoring and paging | 9 | 0 | 2 | 6 | 1 | 0 |
 | 6. Security reviews and drills | 9 | 1 | 0 | 6 | 0 | 2 |
-| 7. Builds not done | 13 | 0 | 1 | 10 | 1 | 1 |
+| 7. Builds not done | 14 | 0 | 1 | 11 | 1 | 1 |
 | 8. Address freeze | 7 | 1 | 1 | 2 | 2 | 1 |
 | 9. Legal and product | 7 | 0 | 0 | 5 | 1 | 1 |
-| **Total** | **99** | **4** | **9** | **54** | **25** | **7** |
+| **Total** | **101** | **4** | **9** | **56** | **25** | **7** |
 
 ### Top 10 blockers
 
@@ -70,7 +71,7 @@ These have the longest lead time, or other rows wait on them.
 | 1.2 | Mainnet issuer-key delay (2 h, provisional) | Too short and a watchdog outage can let a forged key through; too long and logins with a new Google kid fail | decision needed (lead-time measurement running; needs ≥ 2 Google rotations) | founder | D33, D80; governance-spec "Delay length"; operations.md "Issuer key lead times" |
 | 1.3 | User-mail provider: SendGrid, final once the colleague agrees | Delivery of login codes is a trust root | decision needed | colleague, founder | D194 (replaces D87 for user mail) |
 | 1.4 | Provider for the watchdog's alert email and the admin Worker's notices (Resend today, or SendGrid too) | Two providers means two accounts to secure | decision needed ("decided separately") | founder | D87, D194 |
-| 1.5 | Batch C2/C3 readings to confirm: D201–D203, D205–D209 | Built code rests on them | decision needed | founder | decisions.md D201–D203, D205–D209 |
+| 1.5 | Batch C2/C3/C4 readings to confirm: D201–D203, D205–D209, D220–D224 | Built code rests on them | decision needed | founder | decisions.md D201–D203, D205–D209, D220–D224 |
 | 1.6 | Email issuer readings D195–D199 (batch 4, merged into `develop`) | Rate limits and issuer behaviour | decision needed ("to confirm") | founder | decisions.md D195–D199; `docs/email-login-build-plan.md` "Batch 4 result" |
 | 1.7 | Batch C Q1: does the console's Google code flow give an `openid`-only token? | If Google always adds `email`, step-ups and owner actions stop | decision needed (to test in C9) | founder, Claude build | batch-c-spec Q1; D93 |
 | 1.8 | Batch C Q5: Neon setup (restore window, compute, owner role, Hyperdrive on the plan) | The ledger is billing data, kept for years | decision needed | founder | batch-c-spec Q5; batch-c-build-plan P3; D93 |
@@ -81,7 +82,7 @@ These have the longest lead time, or other rows wait on them.
 | 1.13 | SDK registry (public npm `@hana-id` or private) and licence (`UNLICENSED` today) | Partners install the SDK from it | decision needed | founder | D72, D1 (scope still to claim); operations.md "SDK publishing" |
 | 1.14 | Hana Home: `disable_shared_login` delayed by `change_delay_ms`, a contract change (D98; the Home spec's "Confirmed by the user" item 4), while the Home spec's body ("Contract changes: None", its scope table) and batch-c-spec call it immediate, as the contract is today | Whether a partner with its own client can cut Home's route at once and shut down (D41's exit guarantee) | decision needed (settle when Hana Home is built) | founder | D98; hana-home-spec "Contract changes"; batch-c-spec; security.md "On chain" |
 | 1.15 | Hana Home billing: D98 (and the Home spec's confirmed item 12) puts an active app's Home derives on its org's statement as their own line; the Home spec's body counts them as Hana's own, on no statement; batch C's ledger has no Home event kind | Statements and the ledger schema | decision needed (settle when Hana Home is built) | founder | D98; hana-home-spec "Cost and latency (who pays)"; batch-c-spec |
-| 1.16 | Hana Home directory source: "every app with at least one login" (D98). The Home spec reads D1 `usage.sessions > 0`, which batch C stops writing (C4) and drops (migration 0007, C4b) | Which apps Home lists for a user | decision needed (settle when Hana Home is built) | founder, Claude build | D98; hana-home-spec "Discovery: finding a user's apps"; batch-c-build-plan C4b |
+| 1.16 | Hana Home directory source: "every app with at least one login" (D98). The Home spec reads D1 `usage.sessions > 0`, which batch C stops writing (C4) and drops (migration 0007, C4b); its directory must use the hot DB's `session_markers` (migration 0009, an app's first settled session-pool relay; D220) instead, never the Neon ledger (the Home spec itself is left as written until Home is built) | Which apps Home lists for a user | decision needed (settle when Hana Home is built) | founder, Claude build | D98, D220; hana-home-spec "Discovery: finding a user's apps"; batch-c-build-plan C4b |
 
 ## 2. Keys and custody
 
@@ -135,6 +136,7 @@ These have the longest lead time, or other rows wait on them.
 | 4.15 | R2 bucket for logos, statements and exports in the Hana account | Batch C files | not built | Claude build, founder | D74 |
 | 4.16 | D1 backup beyond 30 days and outside Cloudflare (export of the apps tables) | Time Travel stops at 30 days | not built | Claude build | D152; playbooks `d1-data-loss` |
 | 4.17 | SDK published: `NPM_TOKEN`, drop `"private": true`, claim the `@hana-id` npm scope | Partners install outside the monorepo | unclear: check (scope claim status not recorded) | founder | D1, D72; operations.md "SDK publishing" |
+| 4.18 | Usage ledger Hyperdrive configs created through Cloudflare's REST API with the role password in the HTTPS body, not `wrangler hyperdrive create --connection-string` (the password is in the local process list while it runs; acceptable on sandbox-dev only) | The writer's credential could insert made-up usage | not built | Claude build, founder | D224; operations.md "Usage capture" step 3 |
 
 ## 5. Monitoring and paging
 
@@ -183,6 +185,7 @@ These have the longest lead time, or other rows wait on them.
 | 7.11 | Support ID data path: a short spec section before C15 | Staff support without storing user data | not built | Claude build, founder | D96, D144; batch-c-build-plan P4 |
 | 7.12 | Batch C usage ledger counts identity tokens per app and day | Billing of identity tokens | not built | Claude build | batch-c-build-plan "Conventions"; D172 |
 | 7.13 | API-side NEAR RPC fallback | The API reads only `NEAR_RPC` | not built (whether a mainnet blocker isn't stated) | Claude build | playbooks `near-rpc-outage` |
+| 7.14 | Settlement (C12) checks each relayed event against its transaction: `near_tx` unique in the ledger, and the transaction's signer key and nonce equal the event's `relayer_pk` and `relayer_nonce`; anything else is not billed and is alerted | A leaked writer credential could otherwise bill a partner for a real transaction that isn't theirs | not built | Claude build | D222; batch-c-build-plan C12; security.md "What a compromise gives" |
 
 Not tracked as blockers: Sign in with Apple (paused, D160) and the native apps spec (`docs/native-apps-spec.md`, a
 draft on `docs/native-apps-spec`, not on `develop`).

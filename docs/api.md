@@ -3,7 +3,16 @@
 Last verified against code: 2026-11-02 (branch `feat/email-login-6`: email tokens on `/v1/sessions` and `/v1/login`, the
 create_session proof of possession, `/v1/login`'s `linkJwt` precheck, the link relays `/v1/link*`, the email-login
 panics as errors, `GET /v1/app`'s `loginMethods`, the gas values, migration 0010, the issuer's URL and app lookup,
-D230–D234); 2026-11-02 (branch `feat/email-login-4`: "Email issuer", the separate `apps/email-issuer` Worker: its endpoints,
+D230–D234); 2026-11-02 (branch `feat/batch-c-4`: "Usage capture" (one ledger event per post-gate
+request, written after the response through `USAGE_DB`), the D1 `usage` counters no longer written, migration 0009
+`session_markers` and the waiver on it, the relay result's key, nonce and gas, the identity-count copy in the cron,
+`USAGE_DB` / `USER_ID_KEY`, the usage log events; D220–D224); 2026-11-02 (branch `fix/c5-budgets`: "RPC entrypoints" breaker and budget: the
+per-org share of the global reserve, kill switches that changed nothing settled onto their org, the link cancel's
+read budget, a malformed link token `forbidden`, D228, D229); 2026-11-02 (branch `feat/batch-c-5`: "RPC entrypoints" (`ConsoleRpc`, `AdminRpc`: CAS
+writes, the breaker, the hot-DB budget, keys, notices, cancel, expedite, staff proposals), drift detection in the
+cron, the `console-rpc` limiter object, the legacy `apps.publishable_key` kept on a valid key, the new log events,
+and the review fixes: per-org budget with a kill-switch reserve, the link cancel's own limits, breaker refunds,
+replays of another write `conflict`, D225–D229; branch `feat/email-login-4`: "Email issuer", the separate `apps/email-issuer` Worker: its endpoints,
 limits, Durable Objects, D1, bindings and logs, D195–D199, with the review fixes and the abuse re-check (the owner
 pool, mailed unlock and unsuppress, confirm, revoke-tickets, the growing domain cap, per-address tickets); branch `feat/identity-token-7`: the identity token's AWS KMS signer, its vars,
 secrets and log codes, D215–D219); 2026-11-02 (branch `feat/batch-c-3`: migration 0006, the gate on `app_keys` and `scopes`,
@@ -55,7 +64,8 @@ page origins never reach the API routes: a request whose URL origin is `VAULT_OR
 | `/v1/identity/token` | POST, OPTIONS | `identity/token.ts` | publishable key + vault origin + session signature (identity message) | I |
 | `/v1/identity/jwks.json`, `/v1/identity/.well-known/openid-configuration` | GET, HEAD, OPTIONS | `identity/public.ts` | none (public keys only) | I |
 | `/v1/owner-actions` | POST, OPTIONS | `handlers.ts` | OIDC owner token inside the args | |
-| cron `*/15 * * * *` | — | `issuer-keys.ts`, `vault/cron.ts`, `key-observations.ts`, `identity/maintenance.ts` | — | vault part B; JWKS sync every 15 min since G; identity counts' retention I |
+| cron `*/15 * * * *` | — | `issuer-keys.ts`, `vault/cron.ts`, `key-observations.ts`, `identity/maintenance.ts`, `guarded/cron.ts`, `changes/drift.ts` | — | vault part B; JWKS sync every 15 min since G; identity counts' retention I; guarded changes and drift C |
+| `ConsoleRpc`, `AdminRpc` (named exports) | RPC only | `rpc/console.ts`, `rpc/admin.ts` | no route: reachable only through a service binding (console, admin Worker); `fetch` answers 404 for every other path | C |
 
 There is no secret-key (`sk_…`) auth anywhere: publishable keys are public and origins gate them. "I" marks the
 partner identity token (`docs/identity-token-spec.md`, build steps 1–4). Nothing under `/v1/email/` is the API's: the
@@ -73,8 +83,8 @@ Worker (D230); here such a path is `404 not_found`.
 - `content-type: application/json; charset=utf-8`, `cache-control: no-store`.
 - Body caps (streamed, `413` with code `bad_request` past them): app endpoints and owner actions 16 KiB, vault
   endpoints and `/v1/identity/token` 4 KiB, login relay 8 KiB. Non-JSON: `400 bad_request`. JWT ≤ 7168 characters.
-- Usage counters (D1 `usage`, per app per UTC day) count successes only and are written after the response
-  (`waitUntil`).
+- Usage: one ledger event per request past the gate (below, "Usage capture"), sent after the response (`waitUntil`);
+  no endpoint's answer or latency depends on it. The D1 `usage` counters are no longer written (batch C4).
 
 ## Callers, origins and CORS (`src/origins.ts`)
 
@@ -133,10 +143,12 @@ A test app's other limits are the vault's, never the API's: no raw signing and n
 When a session-pool relay (`/v1/sessions`, `/v1/login`, `/v1/derive`, `/v1/sessions/revoke`) is about to be sent on a
 scope whose `scopes.first_session_at` is NULL, the API sets it, beside the relay (no added latency; with an execution
 context it finishes after the response). At the attempt, not the success, so a relay whose answer fails or is lost still
-marks the scope. A failure is logged as `first_session_write_failed` and retried by the next attempt. It is one of the
-signs that end the `no_session` waiver of guarded changes, which is decided inside the announcement's own SQL: no
-`first_session_at`, no other origin of the scope ever in force, no vault share, usage or identity row for the scope's
-apps (`scripts/lib/admin-sql.ts` `noSessionWaiver`).
+marks the scope. Once that relay settled (whatever its outcome) it also writes the app's `session_markers` row
+(migration 0009): a second, independent sign, so one lost write never leaves the waiver open. A failure of either is
+logged as `first_session_write_failed` (`what` `scope` / `marker`); the scope's is retried by the next attempt. They
+are the signs that end the `no_session` waiver of guarded changes, which is decided inside the announcement's own SQL:
+no `first_session_at`, no other origin of the scope ever in force, no vault share, session marker or identity row for
+the scope's apps (`scripts/lib/admin-sql.ts` `noSessionWaiver`; the legacy `usage` rows until batch C4, D220).
 
 ## Rate limits
 
@@ -171,9 +183,10 @@ Seeded plan `free`: `per_minute` 60, `per_day` 5000, `per_ip_minute` 20.
 
 ### `GET /v1/health`
 
-No auth, no limits, `access-control-allow-origin: *`. → `200 {"ok": true, "env": ENV_NAME, "signer": SIGNER_ACCOUNT, "hotDb": 6, "requestId"}`.
-`hotDb` is the hot-DB migration whose reads the build makes (`apps.ts` `HOT_DB_SCHEMA`; 6 from batch C3, absent
-before): the admin CLI refuses guarded proposals and announcements on `--remote` until the deployed API reports ≥ 6.
+No auth, no limits, `access-control-allow-origin: *`. → `200 {"ok": true, "env": ENV_NAME, "signer": SIGNER_ACCOUNT, "hotDb": 9, "requestId"}`.
+`hotDb` is the hot-DB migration the build needs (`apps.ts` `HOT_DB_SCHEMA`; 6 from batch C3, 9 from batch C4 (the
+session markers it writes), absent before): the admin CLI refuses guarded proposals on `--remote` until the deployed
+API reports ≥ 6, and announcements until it reports ≥ 9.
 
 ### `GET /v1/governance` · G
 
@@ -317,9 +330,9 @@ The scope is always the app's (D1). Checks after the gate and shape (`400 bad_re
    failure `502 near_unavailable`. Reported in that order.
 5. The app's relay quota (`429 rate_limited` + `retry-after`), counted only here.
 
-→ `200 {"result": {"path", "scope_id", "expires_at_ms", "max_uses", "used"}, "nearTx", "requestId"}`. Usage:
-`sessions`; with an email token also `email_usage.email_sessions` (L). A failed relay's email-login panics are answered
-as in "Relay errors" (`409 link_pending` for a pending member).
+→ `200 {"result": {"path", "scope_id", "expires_at_ms", "max_uses", "used"}, "nearTx", "requestId"}`. Usage event:
+`session` (uid from the new session's `path`); with an email token also `email_usage.email_sessions` (L). A failed
+relay's email-login panics are answered as in "Relay errors" (`409 link_pending` for a pending member).
 
 **Governance gate (G, `handlers.ts` `chainGate`; also on `/v1/login`, and the pause part on `/v1/derive`).** The
 contract would refuse these, so nothing is relayed:
@@ -362,7 +375,8 @@ Body `{sessionPublicKey: number[32], counter: integer ≥ 1, signature: number[6
 5. Only with `BLS_PRECHECK = "1"`: pairing check `e(pk1, −g2) · e(g1, pk2) = 1` (`400 invalid_app_key`).
 6. The app's relay quota (`429 rate_limited` + `retry-after`), counted only here.
 
-→ `200 {"result": {"big_y": "string", "big_c": "string"}, "nearTx", "requestId"}`. Usage: `derives`.
+→ `200 {"result": {"big_y": "string", "big_c": "string"}, "nearTx", "requestId"}`. Usage event: `derive` (uid from the
+session's `path`); a revoke's is `revoke` (no uid).
 
 ### `POST /v1/sessions/revoke` — relays `revoke_session` (session pool)
 
@@ -417,8 +431,8 @@ failing receipt's executor:
 | 422 | `ckd_failed` + `session: {used: 1}` | MPC receipt failed; the session **is** committed with its one use spent |
 | 502 | `near_error` | another receipt, or none identified |
 
-Usage: `sessions` + `derives` on success, `sessions` only on `ckd_failed`; with an email token also
-`email_usage.email_sessions`, with a link `email_usage.links` (L, on success).
+Usage event: `login` (uid from the login's path on success; `ckd_failed` is a rejected, relayed event: its gas was
+burnt); with an email token also `email_usage.email_sessions`, with a link `email_usage.links` (L, on success).
 
 ### Email tokens · L
 
@@ -588,7 +602,7 @@ atomic update that needs `counter = stored + 1` and a live share (for unlock and
 the TTL cap in the same statement): `409 bad_counter` with `expected`, `410 share_expired`, `410 share_revoked`.
 Unlock unwraps K_s before the counter moves, re-wraps it under the current KEK if the row is under
 `VAULT_KEK_PREVIOUS`, slides `idle_until` to `min(now + idle_ttl_ms, the capped expiry)`, returns the capped
-`absExpiresAtMs`, counts `usage.unlocks`; an unreadable row is `500 internal`. Touch slides `idle_until` the same way.
+`absExpiresAtMs` (usage event `unlock`, never relayed, no uid); an unreadable row is `500 internal`. Touch slides `idle_until` the same way.
 Revoke and revoke-all ignore the settings. Revoke-all keeps its own share live and runs as one D1 batch (one
 transaction): the other shares are revoked only on the condition the counter move then meets, so a failed write
 changes nothing and a replay revokes nothing.
@@ -785,6 +799,137 @@ No idempotency keys. Each endpoint is safe to retry because the second copy is r
 After `504 timeout` or `502 near_error`, look the tx up by `nearTx` before retrying: a retry of a request that landed
 is refused as above.
 
+## Usage capture (`src/usage/`, batch C4)
+
+One UsageEvent v1 (`@hana-id/console-core` `usageEventV1`; the ledger's `usage.record_event` checks the same shape) for
+every request that passed the gate of `/v1/login`, `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` and
+`/v1/vault/unlock` (the vault gate: app, origins and the vault limits), and for `/v1/owner-actions` once the owner
+check passed. Gate rejections, `GET /v1/app`, share creation, touch, revoke and revoke-all, the identity token and
+the login relay produce none (logs only). The handler opens the event at its gate (`beginUsage`), the relay notes what
+it sent (`lapRelay` → `noteRelay`) and the response closes it (`done` → `finishUsage`); a handler that throws past its
+gate records `500 internal`, as the router answers.
+
+| Field | Value |
+|---|---|
+| `request_id`, `at_ms` | the request id (the idempotency key) and the request's start |
+| `org_id`, `app_id`, `scope_id` | from the gate row (owner actions: no app; the scope's org read from `scopes` after the response, `org_legacy` for a scope the hot DB doesn't hold or when D1 can't be read, `usage_org_unavailable`) |
+| `endpoint` | `login`, `session`, `derive`, `revoke`, `unlock`, `owner_action` |
+| `outcome`, `status`, `code`, `latency_ms` | as the request log (`code` null for ok) |
+| `relayed` | a transaction that can execute was sent: an ok relay, or `contract_rejected`, `timeout`, `near_error` with a `nearTx`; never `relayer_busy` or `near_rejected` (they name a transaction that can't execute), nor anything that never reached NEAR, nor an unlock |
+| `near_tx`, `relayer_pk`, `relayer_nonce` | whenever the relay names a transaction: the pool key that signed it (`ed25519:…`) and its nonce (the `RelayerKey` result, for the admin's daily nonce cross-check) |
+| `relay_gas_burnt`, `relay_tokens_burnt_yocto` | BigInt sums of `gas_burnt` / `tokens_burnt` over `transaction_outcome` and every `receipts_outcome` of the settled outcome (`near/tx.ts` `burntGas`); provisional (`EXECUTED_OPTIMISTIC`), never billed; absent when the RPC didn't report them, or when either is past the event's bounds (gas ≤ 2^63 − 1, tokens < 10^39) |
+| `uid` | ok `login`, `session` and `derive` only: `HMAC-SHA256(USER_ID_KEY, "hana-id/uid/v1" ‖ borsh(scope) ‖ borsh(provider) ‖ borsh(sub))[0..16]`, b64url, from the request's derivation path (login: the token's; session: the new session's; derive: the session's), which must be `<scope>#provider#sub#key_index` (key index dropped); computed after the response |
+
+Never in an event: a sub, JWT, email, IP, session key, share id or path.
+
+**Write** (`usage/record.ts`): `ctx.waitUntil` first yields (`scheduler.wait(0)`: nothing runs before the response
+leaves), then runs the check against UsageEvent v1 (a refusal is
+`usage_write_rejected`, never sent), then `SELECT usage.record_event($1::jsonb)` over a new `pg` connection to
+`USAGE_DB` (Hyperdrive pools; 5 s to connect, 5 s for the statement). Only a `pg.DatabaseError` (the server's
+answer) carries a SQLSTATE: any other error, an errno code included, is a connection error. A connection error or
+timeout, or a SQLSTATE of class 08, 40, 53, 57 or 58, is retried once after 250 ms with the same event (a duplicate is ignored by
+the function); `22023` (the function refused the shape) is `usage_write_rejected`; any other SQLSTATE (e.g. `23514`,
+no partition) is not retried. The loss is logged once as `usage_write_failed {requestId, appId, endpoint, code,
+attempt}`, never with the connection string or the driver's message. Without `USAGE_DB` nothing is built or sent.
+Tests: `apps/api/test/usage.test.ts` (a refusing server: every endpoint answers the same status, body and headers;
+a ledger that never answers delays no response).
+
+## RPC entrypoints (`src/rpc/`, `src/changes/`, batch C5) · C
+
+`ConsoleRpc` and `AdminRpc` are `WorkerEntrypoint` classes exported by the API Worker (`docs/batch-c-spec.md` "RPC
+interfaces"). No route reaches them; the console Worker (batch C7) binds `ConsoleRpc` and the admin Worker (C8)
+binds `AdminRpc`. Nothing binds them yet, so they are inert in a deployed env. Every method takes one object: `Ctx`
+(`actor`, `requestId`, `clientIp`) plus its fields. The object is validated with its `@hana-id/console-core` zod
+schema (`src/rpc.ts`: strict, so an unknown field is `bad_request`). The answer is `{ok: true, …}` or
+`{ok: false, code, error?}` (`RpcCode`; the BFFs map it to HTTP with `RPC_HTTP_STATUS`). Nothing throws out of a
+method: an unexpected error is logged (`event: "rpc"`, method, request id, `code: internal`) and answered `internal`.
+
+**Actors.** `ConsoleRpc` takes `member` actors only (`cancelChangeByLink`: `link` only) and never `org_legacy`
+(`forbidden`). `AdminRpc` takes `hana`; the methods its crons call also take `system` (`pendingNotices`,
+`getSecurityContacts`, `listScopes`, `changesSince`, `securityEvents`, `markSecurityEventNotified`, `relayerKeys`), and
+`ackNotice` takes `system` only (the notice cron). Any other actor is `forbidden`. The console's member is trusted
+(spec "Trust in the actor"); every org method still filters `WHERE org_id = ?`, so another org's app or change is
+`not_found`, the same as one that doesn't exist.
+
+| `ConsoleRpc` method | What it does |
+|---|---|
+| `listApps`, `getApp`, `listChanges` | The org's apps (summaries), one app in detail (origins with their ASCII and decoded forms and `idn`, settings in force, open changes, every key), the org's `app_changes` newest first (`beforeSeq`, `limit` ≤ 200) |
+| `removeOrigins` | Immediate: the rows go; an `origin_add` in force ends, one not yet in force is cancelled; `origins_version` + 1 |
+| `turnOff` (`policy` / `raw_sign`) | Immediate: the columns cleared, pending values dropped, the guarded changes ended or cancelled; `settings_version` + 1; nothing on → no write |
+| `updateSettings` | `persistence`, `sessionTtlMs` (1 h..23 h 50 min), `idleTtlMs` (15 min..session TTL), `googleWebClientId` (one of the scope's Google clients, `get_scope` read uncached; `null` unpins), `name` (`normaliseAppName`: NFC, ≤ 64, display-safe); a lowered TTL under a stored or proposed policy's `maxConsentMs` is `policy_invalid`; CAS on `settings_version` |
+| `setLogo` | The `logo_key` pointer (`logos/<this app id>/<sha256 hex>.png` or null), CAS on `settings_version` |
+| `cancelChange` | A pending change not yet in force: its origin row deleted, or its pending settings value cleared (only while still the change's and in the future); the version bumps; `change.cancelled` |
+| `cancelChangeByLink` | The same, by the emailed link: `sha256(token)` must equal the change's `cancel_token_hash` (else `forbidden`, also before the ack), valid until `active_from`, single use; actor `link` |
+| `setSuspended` | The partner bit (4) only, set or cleared; a member never touches bits 1 and 2 |
+| `createKey`, `rotateKey`, `revokeKey` | A new `pk_<environment>_` key (at most 5 with `revoked_at` NULL, `key_limit`); rotate: a new key and the old one `revoked_at = now + 24 h`; revoke: `revoked_at = now` (also in the grace), the last valid key included (`warning: 'last_key'`) |
+
+Not built yet: `changeOrigins`, `proposeChange`, `ownerAction` (C6, the API-verified step-up and the owner-action
+precheck) and `usage`, `statements`, `ledger` (C12); calling them is an RPC error (no such method).
+
+`AdminRpc` has the org methods above for any org (`listApps`, `getApp`, `listChanges`, `removeOrigins`, `turnOff`,
+`updateSettings`, `setLogo`, `cancelChange`, `createKey`, `rotateKey`, `revokeKey`), with a Hana actor, no breaker and
+no budget, plus:
+
+| `AdminRpc` method | What it does |
+|---|---|
+| `createApp` | Refuses `no_security_contact`; reads `get_scope` uncached (`near_unavailable`): the scope must be registered and every `Owner::Oidc` must be in `orgOwnerSubs`, else `scope_conflict`; an existing scope of another org is `scope_conflict`, of the other environment `env_mismatch`, assigned less than `appChangeDelayMs` ago (with origins) `conflict`. Writes the scope row (if new), the app (`apps.publishable_key` = its first key), the key, and the origins as staff proposals, with the `no_session` candidate only on a scope row it created |
+| `assignScopeOrg` | Only a scope in `org_legacy` (else `scope_conflict`), the same owner check; moves every app of the scope (trigger) and sets `assigned_at` |
+| `deleteApp` | Soft delete: `deleted_at`, bit 1, every key revoked, pending changes cancelled, pending origin rows deleted; every later write on it is `not_found` |
+| `setSuspended` (`bit` 1, 2 or 4), `suspendOrg` | Any bit set or cleared; bit 2 on every non-deleted app of the org (one `app_changes` row for the org) |
+| `addOrigins`, `proposeChange` | Staff proposals (`origin_add`, counted with every open `origin_add` for duplicates and the cap, a parked one included; `policy_set` validated by `validateAutoApprovePolicy` against the app's session TTL, `policy_invalid`; `raw_sign_on`, `env_mismatch` on a test app): pending, nothing in force, no waiver; `conflict` within `appChangeDelayMs` of the scope's assignment, for a duplicate origin, past 20 active-or-pending origins, while another change of the kind is pending, or for a value already in force; `origin_refused` by the console-core rules; version + 1 |
+| `pendingNotices` | Pending changes not yet announced (oldest first), each with its org's security contacts, the app (`id`, `name`, `orgId`, `scopeId`, `environment`) and a policy's JSON (D226) |
+| `ackNotice` | After every send was accepted: `notified_at`, `active_from = now + appChangeDelayMs` (or `now` under a waiver), `cancel_token_hash`, and the origin row's `active_from` or the app's pending policy / raw signing with its `*_effective_at` (a matured pending value is kept as the stored one first). No version bump. Already announced or not pending: `not_pending`. `internal` when the delay var is missing or out of range |
+| `expediteChange` | Only an announced, pending, member-proposed change not yet in force (staff proposal `forbidden`, else `not_pending`); `reason` ≥ 20 characters; `active_from = now` and the matching `*_effective_at`; `change.expedited` |
+| `setSecurityContacts`, `getSecurityContacts` | 1–10 lowercased emails replacing the set (CAS on the set as read); `org.security_contacts` lists `old` and `new` |
+| `listScopes`, `changesSince`, `securityEvents`, `markSecurityEventNotified` | The feeds: scopes by `scope_id` cursor, `app_changes` after a `seq`, security events (all or unnotified), marked once |
+| `relayerKeys` | The public keys of both pools; never a secret |
+
+Not built yet: `purgeAudit`, `deletedApps` (C13).
+
+**Waivers at `ackNotice`.** `loopback`: a member's loopback origin (or `http://localhost:*`) on a test scope in a dev
+env on a non-production network. `no_session`: a candidate is a member proposal with an API-verified step-up
+(`proposer_sub` set, C6) or one of `createApp`'s initial origins on a scope row it created. It is granted inside the
+acking statements while the scope shows no user: `first_session_at` NULL, no origin of the scope's apps in force
+except those of the same request, and no vault share, session marker (migration 0009; the legacy `usage` rows until
+batch C4, D220) or identity count for an app of the scope.
+Anything else gets the full delay. Hana proposals never get `loopback`.
+
+**Compare-and-swap writes (`changes/cas.ts`).** Every write is one D1 batch. Its first statement inserts the write's
+`app_changes` row, but only while the predicate holds (the expected version, the key or change as read). A row with
+the same `requestId` that already exists also makes it insert, which fails on `request_id UNIQUE` and aborts the
+batch: a replay writes nothing. It is `already_applied` when the stored row is the same write (its kind, app and
+actor), `conflict` when the request id was used for another write. Every later statement runs only if that row
+exists. If the commit inserted nothing, the state moved since the plan read (`version_conflict`, nothing written). The
+plan read also answers a replay found before the batch.
+
+**The legacy `apps.publishable_key` (D225).** The API never reads it. The key writes keep it on the app's oldest key
+with `revoked_at` NULL, or on a tombstone (`pk_<env>_0revoked…`, never a valid key) when there is none. `deleteApp`
+sets the tombstone. A deleted app keeps bit 1, and the CLI refuses `app:resume` on it, so `status` stays
+`suspended`. Readers that still use the column and `status` (`apps/email-issuer` until it moves, D206) then never
+accept a revoked, rotating or deleted app's key.
+
+**Breaker and budget (`changes/guard.ts`, object `console-rpc`).**
+- **Budget.** Every member call first takes its cost (`CONSOLE_COSTS`: its plan read, batch and one diagnostic read,
+  1–6 statements). It comes from its org's bucket (10/s, burst 40) and from the global one (the spec's 30/s, burst
+  60). The kill switches (`removeOrigins`, `turnOff`, `revokeKey`, `setSuspended(true)`) may spend the last 10 of
+  the org's bucket and the last 20 of the global one; every other call must leave them. One org takes at most 12
+  tokens of the global reserve in any minute. A kill switch that changed nothing (the outcomes below, or a no-op)
+  gives back what it took of the global reserve, which is charged to its org's own bucket instead (that bucket may go
+  below zero, and the org's ordinary calls then wait). So neither one org nor a flood of reads, settings writes or
+  empty kill switches can starve another org's kill switches.
+- **Breaker.** `setSuspended(true)`, `revokeKey`, `rotateKey`, `removeOrigins` and a `googleWebClientId` change also
+  take a slot in their org's rolling hour (5) and the global one (20). A call that changed nothing gets its slot
+  back: `not_found`, `conflict`, `version_conflict`, `already_applied`, `bad_request`, or a no-op.
+- **Refusals.** Over any limit, the call is `rate_limited` and writes nothing. The first breaker refusal of a limit
+  in a clock hour writes a `breaker` security event; the object remembers it, so later refusals write nothing.
+- **Emailed-link cancels** never touch the members' budget. Each takes a slot from a per-client-IP limiter (object
+  `cancel-link:<v4 address | v6 /64>`, 5 a minute and 50 a day), then one token of the link-read budget (one D1 read
+  each: 50/s, burst 100). Both are taken before the token is read, and nothing limits the cancel after that: one
+  whose token verifies on a pending change always runs. A token that isn't canonical b64url is `forbidden`, like a
+  wrong one.
+- **Statement cap.** A call is held to two reads and one batch of at most eight statements (`changes/db.ts`; going
+  over is a bug, answered `internal`).
+
 ## Relayer pools and gas (`src/relayer-config.ts`, `src/gas.ts`)
 
 | Pool | Secret | Durable Object names | Methods | Used by |
@@ -822,16 +967,16 @@ All SQLite-backed (wrangler migrations `v1`: `RelayerKey`, `RateLimiter`; `v2`: 
 created there: `relayer-key-0@apac`, `owner-relayer-key-0@apac`, `app:<appId>@apac`, `owner-actions:global@apac`,
 `owner-actions:scope:<scopeId>@apac`, `owner-actions:execute:<scopeId>@apac`, `owner-actions:owner:<hash>@apac`,
 `owner-actions:cancel:<scopeId>@apac`, `owner-actions:cancel-global@apac`, `owner-actions:tokens@apac`,
-`identity:global@apac`, `identity:scope:<scopeId>@apac`, `identity-proof:<hex sessionPk>@apac` (one per session key:
+`identity:global@apac`, `identity:scope:<scopeId>@apac`, `console-rpc@apac` (C5: every ConsoleRpc call's breaker and budget, and the global link bucket), `identity-proof:<hex sessionPk>@apac` (one per session key:
 its proofs' single-use markers, deleted by the object's alarm once expired). Unset or unknown hint: no suffix, Cloudflare places them. Changing
 the hint creates new objects (fresh limiter counters; new relayer objects read their nonce from chain once). Never
-suffixed: per-IP limiters `ip:v4:<addr>` / `ip:v6:<prefix>::/64` (created near the client) and `LoginRelay` objects
+suffixed: per-IP limiters `ip:v4:<addr>` / `ip:v6:<prefix>::/64` and `cancel-link:v4:…` / `cancel-link:v6:…` (C5) (created near the client) and `LoginRelay` objects
 (named by `relayId`).
 
 | Class | State (KV keys) | Notes |
 |---|---|---|
 | `RelayerKey` | `publicKey`, `nonce` (reservation R), `block` `{hash, at}` | One per pool key; refuses a second pool or index |
-| `RateLimiter` | `<window>@<windowStart>` → count; `mark:<sha256>` → until ms | Windows pruned when they end |
+| `RateLimiter` | `<window>@<windowStart>` → count; `mark:<sha256>` → until ms; on `console-rpc` (C5) `console:bucket`, `console:bucket:org:<orgId>`, `console:link-read` → `{tokens, at}`, `console:reserve:org:<orgId>` → `{at, n}` reserve takes of the last minute, `console:breaker:org:<orgId>` and `console:breaker:global` → call times of the last hour, `console:noticed:*` → the hour of the last breaker event | Windows pruned when they end |
 | `LoginRelay` | `slot`: `full` / `consumed` / `expired` | Alarm at write + 120 s, then + 120 s |
 
 **Nonce reservation (`relayer-key.ts`).** A promise-chain mutex covers only *nonce → sign → reserve → start
@@ -866,7 +1011,7 @@ this key's public key, start at R with no chain read (skips up to 99 nonces) and
 | `apps` | `id` PK, `name`, `scope_id` (indexed), `publishable_key` UNIQUE, `status` `active`/`suspended`, `plan` → plans, `created_at` ms | 0001 |
 | `apps` (added) | `persistence` `session`/`none` (default `session`), `session_ttl_ms` 1 h..23 h 50 min (12 h), `idle_ttl_ms` 15 min..session TTL (2 h), `raw_sign` `off`/`approval` + `raw_sign_pending`, `raw_sign_effective_at`, `auto_approve_policy` / `auto_approve_pending` (JSON) + `auto_approve_effective_at`, `google_web_client_id` | 0003 |
 | `app_origins` | (`app_id`, `origin`) PK, `origin` indexed; `http://localhost:*` wildcard allowed (0006 adds `active_from`, `change_id`, below) | 0001 |
-| `usage` | (`app_id`, `day` `YYYY-MM-DD` UTC) PK, `sessions`, `derives` | 0001 |
+| `usage` (legacy) | (`app_id`, `day` `YYYY-MM-DD` UTC) PK, `sessions`, `derives`. **Not written since batch C4** (usage goes to the Neon ledger, "Usage capture"); kept until C4b exports it and 0007 drops it | 0001 |
 | `usage` (added) | `unlocks` | 0003 |
 | `issuer_key_missing` | (`provider`, `kid`) PK, `first_missing_at` ms | 0002 |
 | `issuer_key_observations` | (`provider`, `kid`) PK, `first_seen_jwks_ms`, `last_seen_jwks_ms`, `removed_jwks_ms` (first fetch without the kid after `last_seen`; cleared if it reappears), `first_token_ms` (first verified token by the kid), `max_age_s_last` (the JWKS Cache-Control max-age when last listed); all nullable, ms / s. Public data only (no token, `sub` or user data). D33's key lead time (`admin issuer-keys:lead-times`) | 0004 |
@@ -884,6 +1029,7 @@ this key's public key, start at R with no chain read (skips up to 99 nonces) and
 | `org_security_contacts` (C) | (`org_id`, `email` lowercased) PK, `added_by`, `added_at` | 0006 |
 | `apps` (added, L) | `login_methods` `'google'` (default) / `'email'` / `'google,email'` (CHECK): the sign-in methods the app offers (read only by `GET /v1/app` and for email tokens, never in the gate; the email issuer reads it too) | 0010 |
 | `email_usage` (L) | (`app_id` → apps, `day` `YYYY-MM-DD` UTC) PK, `email_sessions`, `links`: email logins and new links per app and day, out of the legacy `usage` table (D233; batch C4 takes them over) | 0010 |
+| `session_markers` (C) | `app_id` PK → apps, `first_at` ms: written once, when the relay of a session-pool request on a scope with no `first_session_at` settled; the `no_session` waiver's sign besides `first_session_at` (D220). No user data | 0009 |
 | `vault_shares` | `share_id` BLOB(16) PK, `app_id`, `session_pk` BLOB(32) UNIQUE, `path_hash` = sha256(path), `partner_origin`, `share_enc` = iv ‖ AES-GCM(KEK, K_s, aad = share_id ‖ app_id ‖ session_pk), `kek_id`, `counter`, `created_at`, `idle_until`, `abs_expires_at`, `revoked_at`; indexes (`app_id`, `path_hash`), `abs_expires_at`, `kek_id` | 0003 |
 
 ## Cron (`*/15 * * * *`)
@@ -921,6 +1067,13 @@ jobs (one failing doesn't skip the others):
   `VAULT_KEK`; counts rows under a KEK id neither key has (logged as an error).
 - **Identity counts' retention, the same hourly run** (`identity/maintenance.ts`, I): deletes `identity_issuance_hourly`
   and `identity_usage` rows older than 24 months (D90).
+- **Usage partitions, the same hourly run** (`usage/partitions.ts`, C4): with `USAGE_DB`, `usage.ensure_partitions(12)`
+  as the writer (migrations-usage 0003), so the ledger always has its next 12 months; a failure is logged
+  (`usage_partitions_failed`) and never fails the run. Runs before the identity copy.
+- **Identity counts to the usage ledger, the same hourly run** (`usage/identity-sync.ts`, C4): with `USAGE_DB`, copies
+  the last 7 UTC days of `identity_usage` (with each app's org and scope) to `usage.identity_tokens` through
+  `usage.record_identity_tokens` (500 rows a call), which keeps the larger count per app and day; a failure is logged
+  (`identity_usage_sync_failed`) and repaired by the next run. It never fails the cron run (D223).
 - **Guarded changes, the same hourly run** (`guarded/cron.ts`, C): nothing waits for it (an origin is in force by
   `active_from <= now`, a policy or raw signing by batch B's `*_effective_at`), so it changes no answer the gate gives.
   For each announced pending change whose `active_from` has passed (≤ 100 a run): records it once (`status = 'active'`,
@@ -932,6 +1085,15 @@ jobs (one failing doesn't skip the others):
   `not_announced`): its `app_origins` row is deleted and the app's version bumped. Each change is one D1 batch whose
   writes after the first depend on the first, and each ledger row has a request id derived from the change, so
   overlapping runs record a change once.
+- **Drift detection, the same hourly run** (`changes/drift.ts`, C5). It checks that every origin in force is explained
+  by an announced `origin_add` whose clock had passed when the row came into force, or by the 0006 baseline
+  (`active_from = 0`, listed in `migration.baseline`). It checks that every stored or pending policy and every
+  raw-signing enable is explained by an announced change (a stored value by one in force by then; a pending value by
+  one whose `active_from` is no later than its `*_effective_at`), or by the baseline. A baseline value counts only
+  while no later `app_changes` row ended it (`origin.removed`, `policy.removed` / `.activated` / `.pending_dropped`,
+  `raw_sign.off`). Keys, suspension bits and deletion aren't checked. Anything else is a direct D1
+  write: it gets a `drift` security event, once per finding (the id is derived from the finding), at most 100 per
+  kind per run. An `app.created` row alone explains nothing (D228).
 
 ## Configuration (Worker bindings)
 
@@ -951,7 +1113,7 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 | `API_URL` | var | `apiUrl` | vault page `connect-src` |
 | `DO_LOCATION_HINT` | var | `cloudflare.durableObjectLocation` | only written when set |
 | `BLS_PRECHECK`, `REJECT_PII_ON_SESSIONS` | var | `gen` writes `"0"` | `"1"` turns each on |
-| `APP_CHANGE_DELAY_MS` | var | `appChangeDelayMs` | the guarded-change delay (`guarded/config.ts`): missing, not an integer, outside 60 s..7 d, or under 24 h on `mainnet` makes every guarded change refuse with `internal` (the writers come with batch C5) |
+| `APP_CHANGE_DELAY_MS` | var | `appChangeDelayMs` | the guarded-change delay (`guarded/config.ts`): missing, not an integer, outside 60 s..7 d, or under 24 h on `mainnet` makes every guarded change refuse with `internal` (`AdminRpc.addOrigins`, `proposeChange`, `createApp`, `ackNotice`) |
 | `NETWORK` | var | `network` | the production origin rules on `mainnet` (`guarded/config.ts`) |
 | `REFUSED_ORIGINS` | var | every Hana origin (`@hana-id/env` `hanaOwnOrigins`), JSON array | refused as app origins (`guarded/config.ts`; the CLI applies the same list from the manifest) |
 | `FILES_ORIGIN` | var, optional | `files.origin` | only with the dashboard blocks; `logoUrl` (batch C11) |
@@ -972,7 +1134,9 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 | `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY` (I) | secret, testnet and `local*` only | `.secrets/<env>/identity-signing-key.json`, `identity-signing-key-standby.json`, from `scripts/identity-key.ts init` | P-256 private JWKs; no key with the active kid → `503 identity_signer_unavailable` |
 | `IDENTITY_AWS_ACCESS_KEY_ID`, `IDENTITY_AWS_SECRET_ACCESS_KEY` (I) | secret, `aws-kms` only | `.secrets/<env>/identity-aws-access-key.json` (`aws iam create-access-key` for `identityToken.signer.credentials.iamUser`), from `identity-key kms-put-aws-key` (one `wrangler secret bulk`) | a long-term `AKIA…` key of the IAM user whose only permission is `kms:Sign` on the active key (D219); never logged; missing → `503 identity_signer_unavailable` |
 | `IDENTITY_SUB_KEY` (I) | secret | `.secrets/<env>/identity-sub-key`, from `identity-key init` | base64 of 32 bytes; the `sub`/`sid` HMAC key; never rotated |
+| `USER_ID_KEY` (C4) | secret, optional | `.secrets/<env>/user-id-key`, from `usage-setup <env> user-id-key` | base64 of 32 bytes; the uid key. Absent or malformed → events without uid (`usage_uid_unavailable`); never logged |
 | `DB` | D1 | `cloudflare.d1Name`, id from `--d1-id` | `migrations_dir: migrations` |
+| `USAGE_DB` (C4) | Hyperdrive, optional | `gen --usage-hyperdrive-id <id>` (kept on regeneration for the same Worker and D1 database; `off` drops it; `localConnectionString` an unroutable placeholder for `wrangler dev`) | the ledger writer's config (role `usage_writer`, caching disabled). Absent → capture off, every endpoint as before |
 | `RELAYER_KEY`, `RATE_LIMITER`, `LOGIN_RELAY` | Durable Objects | classes `RelayerKey`, `RateLimiter`, `LoginRelay` | |
 | `VAULT_IP_LIMIT`, `VAULT_SHARE_LIMIT` | Rate Limiting (`ratelimits`) | `gen` writes them (`src/vault/limits.ts`): namespaces `95001`, `95002`; 60 and 10 per 60 s | vault per-IP and per-share limits, per location (D95); a namespace id is account-wide, keys carry the env name |
 | `IDENTITY_SESSION_LIMIT` (I) | Rate Limiting (`ratelimits`) | `gen` writes it (`src/identity/limits.ts`): namespace `95003`; 10 per 60 s | `/v1/identity/token` per session key, per location |
@@ -1053,7 +1217,10 @@ Other events: `relay_dispatched` (`pool`, `keyIndex`, `method`, `nearTx`, `nonce
 (`method`, `nearTx`, `code` `raced` / `send_failed` / `method_not_allowed`), `chain_gate_unavailable` (warn, G:
 `code` `get_config_failed` / `get_issuer_failed`), `jwks_stale`, `key_observation_failed` (`code` `jwks` / `token`), `vault_page` (`latencyMs`: its D1 reads), `vault_maintenance`
 (`pruned`, `rewrapped`, `unknownKek`), `vault_rewrap_unreadable` (`unreadable`), `vault_kek_unavailable`, `vault_share_unreadable`,
-`usage_increment_failed`, `owner_token_release_failed`, `gas_override_ignored`, `auto_approve_policy_invalid`
+`first_session_write_failed` (`what` `scope` / `marker`), the usage writer's (C4) `usage_write_failed` (`code`
+`connection` or `pg_<SQLSTATE>`, `attempt`), `usage_write_rejected` (`code` `invalid_event` with `problems`, or
+`pg_22023`), `usage_uid_unavailable` (`code` `missing_key` / `bad_key` / `bad_path`), `usage_org_unavailable`,
+`identity_usage_sync` (`synced`) / `identity_usage_sync_failed`, `usage_partitions_failed` (`code`), `owner_token_release_failed`, `gas_override_ignored`, `auto_approve_policy_invalid`
 (`problems`), the identity token's (I) `identity_unavailable` (`code`: `no_identity_config`, `bad_public_keys`,
 `active_kid_not_published`, `no_sub_key`, `bad_sub_key`), `identity_signer_unavailable` / `identity_sign_failed`
 (`code`: `no_signing_key_for_active_kid`, `signing_key_unusable`, `self_verify_failed`, `unknown_signer_kind`, `signer_kind_missing` (a KMS key ARN without `IDENTITY_SIGNER`), and for
@@ -1061,7 +1228,10 @@ the KMS signer `no_kms_key_arn`, `no_aws_credentials`, `kms_bad_key_arn`, `kms_b
 `kms_unreachable`, `kms_access_denied`, `kms_bad_credentials`, `kms_key_disabled`, `kms_key_not_found`,
 `kms_key_usage`, `kms_throttled`, `kms_internal`, `kms_error`, `kms_bad_answer`, `kms_bad_signature`; never a
 credential, a request or a signature), `identity_ceiling` (error), `identity_volume_alert` (error: past the global soft line),
-`identity_bad_session_path` (error), `identity_count_failed`, `identity_maintenance` (`pruned`), and from the page
+`identity_bad_session_path` (error), `identity_count_failed`, `identity_maintenance` (`pruned`), batch C's `rpc`
+(`method`, `requestId`, `orgId`, `actorKind`, `outcome`, `code`: one per RPC call, never its input or the actor's id
+or email), `drift_detection` (`added`; error `code: internal`) and `console_rpc` (`code: breaker_event_failed`,
+`settle_failed`), and from the page
 Workers `vault_host` and `auth_page` (`code`).
 
 ## Email issuer (`apps/email-issuer`, its own Worker) · E

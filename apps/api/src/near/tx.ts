@@ -87,11 +87,52 @@ export function failureText(outcome: FinalOutcome): string | null {
   return (panic ?? text).slice(0, 500);
 }
 
-/** A `failure` carries the panic text in `error` and the failed receipt's executor (failedExecutor). */
+/** Gas and tokens a settled transaction burnt, summed over the transaction and every receipt (burntGas). */
+export interface GasSum {
+  gasBurnt: bigint;
+  tokensBurnt: bigint;
+}
+
+const U64_MAX = (1n << 64n) - 1n;
+const U128_MAX = (1n << 128n) - 1n;
+
+/** A u64 `gas_burnt` (a JSON number, or a decimal string) or a u128 `tokens_burnt` (a decimal string), else null. */
+function burnt(v: unknown, max: bigint): bigint | null {
+  if (typeof v === 'number') return Number.isSafeInteger(v) && v >= 0 ? BigInt(v) : null;
+  if (typeof v !== 'string' || !/^(0|[1-9]\d{0,38})$/u.test(v)) return null;
+  const n = BigInt(v);
+  return n <= max ? n : null;
+}
+
+/**
+ * The BigInt sums of `gas_burnt` and `tokens_burnt` over `transaction_outcome` and every `receipts_outcome` (refund
+ * receipts included), as the ledger records them (docs/batch-c-spec.md "Gas"). Null when the outcome has no
+ * transaction outcome or a value isn't a well-formed amount: a guess is never recorded. At EXECUTED_OPTIMISTIC (the
+ * relay's wait) the figure is provisional; settlement re-reads the transaction at FINAL.
+ */
+export function burntGas(outcome: Partial<FinalOutcome>): GasSum | null {
+  const steps = outcome.transaction_outcome ? [outcome.transaction_outcome, ...(outcome.receipts_outcome ?? [])] : null;
+  if (!steps) return null;
+  let gasBurnt = 0n;
+  let tokensBurnt = 0n;
+  for (const step of steps) {
+    const gas = burnt(step?.outcome?.gas_burnt, U64_MAX);
+    const tokens = burnt(step?.outcome?.tokens_burnt, U128_MAX);
+    if (gas === null || tokens === null) return null;
+    gasBurnt += gas;
+    tokensBurnt += tokens;
+  }
+  return { gasBurnt, tokensBurnt };
+}
+
+/**
+ * A `failure` carries the panic text in `error` and the failed receipt's executor (failedExecutor). A settled outcome
+ * (ok, failure, or a value that isn't JSON) also carries what it burnt, when the RPC reported it (burntGas).
+ */
 export type Outcome =
-  | { ok: true; value: unknown }
-  | { ok: false; kind: 'failure'; error: string; executor: string | null }
-  | { ok: false; kind: 'rpc' | 'timeout' | 'dropped'; error: string };
+  | { ok: true; value: unknown; gas?: GasSum | null }
+  | { ok: false; kind: 'failure'; error: string; executor: string | null; gas?: GasSum | null }
+  | { ok: false; kind: 'rpc' | 'timeout' | 'dropped'; error: string; gas?: GasSum | null };
 
 /** How often (at most) to ask `superseded` while the tx is unknown, and how many answers in a row count. */
 export const DROP_CHECK_MS = 2_000;
@@ -140,11 +181,12 @@ export async function waitForOutcome(rpc: Rpc, txHash: string, senderId: string,
       }
     }
   }
+  const gas = burntGas(outcome);
   const failure = failureText(outcome);
-  if (failure) return { ok: false, kind: 'failure', error: failure, executor: failedExecutor(outcome) };
+  if (failure) return { ok: false, kind: 'failure', error: failure, executor: failedExecutor(outcome), gas };
   try {
-    return { ok: true, value: decodeSuccessValue(statusObject(outcome.status)?.SuccessValue) };
+    return { ok: true, value: decodeSuccessValue(statusObject(outcome.status)?.SuccessValue), gas };
   } catch {
-    return { ok: false, kind: 'rpc', error: 'The contract returned a value that is not JSON' };
+    return { ok: false, kind: 'rpc', error: 'The contract returned a value that is not JSON', gas };
   }
 }

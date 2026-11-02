@@ -763,18 +763,33 @@ wallet, keep checking that the wallet that authenticated it is in `wallets` (`as
 ### Verify it (Node, `jose`)
 
 The JWKS is at `{iss}/jwks.json` (cached 10 minutes; `jose` refetches on an unknown `kid`), the discovery document at
-`{iss}/.well-known/openid-configuration`. This is `examples/identity-verify/src/verify.ts`, tested against a local
-issuer on every run:
+`{iss}/.well-known/openid-configuration`. **For anything of value, pin the key thumbprints** (`HANA_IDENTITY_PINS`
+below: each key's thumbprint is also its `kid` in the JWKS; confirm the list with Hana out of band, e.g. with your
+security contact, rather than trusting one fetch): the JWKS is served by Hana's
+infrastructure, and a pinned verifier refuses a key whoever controls it publishes, where a verifier that only trusts
+the URL accepts it until Hana notices and removes it. This is `examples/identity-verify/src/verify.ts`, tested against a
+local issuer on every run:
 
 ```ts
-import { createRemoteJWKSet, errors, jwtVerify, type JWTPayload } from 'jose';
+import { calculateJwkThumbprint, createRemoteJWKSet, errors, exportJWK, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
 
 // From Hana's partner console / your Hana app page. Not secrets.
 const HANA_ISSUER = process.env.HANA_IDENTITY_ISSUER!; // e.g. https://<hana api>/v1/identity
 const HANA_APP_ID = process.env.HANA_APP_ID!; // app_…
 
+// Recommended for anything of value: the key thumbprints Hana gives you (comma-separated; each is also its kid). A key
+// that isn't one of them is refused even if Hana's JWKS lists it, so a key published by whoever controls Hana's
+// servers never verifies here. Hana announces scheduled rotations 14 days ahead. Unset: the JWKS URL alone is trusted.
+const HANA_PINS = (process.env.HANA_IDENTITY_PINS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+
 // Caches the keys for 10 minutes and refetches on an unknown kid (at most every 30 s).
-const hanaKeys = createRemoteJWKSet(new URL(`${HANA_ISSUER}/jwks.json`));
+const remoteKeys = createRemoteJWKSet(new URL(`${HANA_ISSUER}/jwks.json`));
+const hanaKeys: JWTVerifyGetKey = async (header, token) => {
+  const key = await remoteKeys(header, token);
+  // Judged by the key itself, never by its kid (anyone can put a pinned kid on another key).
+  if (HANA_PINS.length && !HANA_PINS.includes(await calculateJwkThumbprint(await exportJWK(key)))) throw new errors.JWKSNoMatchingKey();
+  return key;
+};
 
 export interface HanaIdentity {
   userId: string; // sub: stable per user in your app
@@ -827,8 +842,9 @@ export function assertWallet(identity: HanaIdentity, chain: 'stellar' | 'evm', a
 
 Rules:
 
-1. Always check `aud` (your app id), `iss`, `typ` and `alg` (pinned to ES256); use the JWKS URL, or pinned thumbprints,
-   never a key named in the token's header.
+1. Always check `aud` (your app id), `iss`, `typ` and `alg` (pinned to ES256); take keys from the JWKS URL, never a key
+   named in the token's header; and for anything of value (credits, payouts, account access) pin the thumbprints,
+   judged on the key itself (`calculateJwkThumbprint`), never on its `kid`.
 2. Key users by `sub`, not by email or address. Store `sid` to run one session per device and to block a signed-out
    `sid`; a new interactive login always brings a new `sid`. Unlinking a login method later gives a different wallet
    and so a different `sub`: to you that is a different user.
@@ -843,8 +859,19 @@ Rules:
 Other languages: any JOSE/OIDC library works with the same checks: compact JWS, `alg` ES256 only, a key from the JWKS
 by `kid`, `typ` `hana-identity+jwt`, `iss`, `aud`, `exp` (and `iat` for freshness), with up to 30 s of clock skew.
 
-**Key rotation.** Hana publishes a standby key next to the active one, so an emergency switch needs nothing from you
-when you use the JWKS URL. Partners who pin thumbprints instead get 14 days' notice of a scheduled rotation.
+**Key rotation.** Hana publishes a standby key next to the active one, and both are pinned from the start: an
+emergency switch to the standby needs nothing from you either way. A scheduled rotation adds a key 14 days ahead of
+using it (24 h on testnet), announced to your security contact: add its thumbprint to your pins in that window. A
+compromise that exposes both keys means a fresh key you must pin at once (Hana tells you); until you do, a pinned
+verifier refuses the new tokens (fail closed) rather than accepting an attacker's.
+
+**Who watches the JWKS.** Hana's independent watchdog, on its own Cloudflare account (sandbox-dev excepted), reads the
+JWKS every 5 minutes, and a probe outside Cloudflare reads it every 15; either alerts Hana if it ever lists a key
+whose thumbprint Hana didn't pin, private key material, or a discovery document with another `issuer` or `jwks_uri`.
+That is detection, not prevention, and only of an attacker who serves the same JWKS to everyone: someone who controls
+Hana's servers can show the watchdog and the probe a clean JWKS and your verifier another, or publish a key between
+two reads. A verifier that only trusts the JWKS URL accepts such a key until Hana notices and removes it (and its
+cache expires, ≤ 10 min). Pinned thumbprints are the only defence that doesn't depend on Hana noticing.
 
 ### Migrating from Privy
 

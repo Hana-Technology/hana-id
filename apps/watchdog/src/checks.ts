@@ -8,7 +8,7 @@ export type Severity = 'critical' | 'warning' | 'info';
 
 /** Checks of one run, in run order. `GET /status` reports each one's outcome for the last run. */
 export const CHECKS = {
-  config: 'Secrets and settings present: the watchdog key, the alert channels, the RPC on the expected network, the email pins',
+  config: 'Secrets and settings present: the watchdog key, the alert channels, the RPC on the expected network, the email and identity pins',
   jwks_fetch: "Fetch Google's JWKS directly (no cache) and record each kid's first-seen time and key material",
   chain_read: "Read get_key_changes, get_issuer and get_issuer_keys (google, email), get_self_issued(\"email\"), get_config, get_governance and the owner account (code hash, the council DAO's get_policy) through its own RPC; a pre-v3 contract reads as no email issuer",
   watchdog_role: 'This account is one of the contract watchdogs, and whether it may confirm yet',
@@ -16,6 +16,8 @@ export const CHECKS = {
   active_keys: "Each active key: Google's against every key Google has published, the email issuer's against the pins; pause on a key that is neither",
   signer_policy: 'get_issuer("email") and get_self_issued("email") against the pinned signer policy (signers, required, overlap): pause on a weaker policy, warning while pins and chain move through a planned change',
   links: 'get_link_stats() (D200): a link alarm threshold reached in the current or previous hour, per scope or in all (the links went through: the contract only counts), and the current hour past half the total threshold',
+  identity_on_chain:
+    "No issuer key on chain (Google's and the email issuer's active keys, any pending addition) has an identity token key's thumbprint as its kid (the pins, and the keys Hana published at the last identity_jwks read): the contract must never trust an identity key (alert only)",
   governance_diff: "get_config().unrecorded_wallets outside a dev env (D139); config and governance against the last run: upgrades, owner, withdrawals, watchdogs, updater keys, delays, audiences, pause and unpause, the session floor, unrecorded_wallets, the owner DAO's code and policy, the owner's immediate issuer actions (Google and email), the link alarm thresholds and a pending raise (D200)",
   unexecuted_changes: 'Key changes past their executable time that nobody executed',
   relayer_funds: "The relayer account's available balance and each pool key's remaining allowance (session and owner pools) against their thresholds; read-only, never tops up",
@@ -24,6 +26,8 @@ export const CHECKS = {
   heartbeat: "Ping the dead-man's switch",
   // Advisory: after the run is recorded and its lock released, guarded (its third-party read can't hold back anything protective).
   email_jwks: "Hana's published email JWKS against the pins and the active email keys (warning only: Hana controls it, the contract never reads it)",
+  identity_jwks:
+    "Hana's partner identity JWKS ({iss}/jwks.json) and discovery document against watchdog.pinnedIdentityKeys and identityToken.iss (D210): an unpinned or private key, a wrong issuer or jwks_uri, or an answer that can't be judged (redirect, oversized, not JSON, duplicate members, wrong shape, or 3 failed fetches) is critical; no pause (the chain isn't involved: partners verify these tokens, the contract never does)",
 } as const;
 export type CheckId = keyof typeof CHECKS;
 export const CHECK_IDS = Object.keys(CHECKS) as CheckId[];
@@ -53,7 +57,12 @@ export const ALERT_KINDS = {
     description:
       "The email issuer on chain differs from the pins in a way that isn't a planned transition: an email issuer with nothing pinned, a pre-v3 email issuer, or a weaker policy (lower required, an unpinned signer, active email keys without a policy, an overlap longer than the contract's 10 minutes), which is paused on",
   },
-  pins_invalid: { severity: 'critical', check: 'config', description: "EMAIL_PINS (the manifest's watchdog.pinnedIssuerKeys.email) is unreadable: every email key is treated as unpinned (fail closed), so legitimate keys are cancelled or paused on" },
+  pins_invalid: {
+    severity: 'critical',
+    check: 'config',
+    description:
+      "EMAIL_PINS (the manifest's watchdog.pinnedIssuerKeys.email) is unreadable: every email key is treated as unpinned (fail closed), so legitimate keys are cancelled or paused on; or IDENTITY_PINS (watchdog.pinnedIdentityKeys) is unreadable: every published identity key is treated as unpinned (`pins_invalid:identity`); or IDENTITY_PINS is set without IDENTITY_ISS, so the identity JWKS check can't run (`pins_invalid:identity_no_iss`)",
+  },
   link_threshold_reached: {
     severity: 'critical',
     check: 'links',
@@ -78,6 +87,35 @@ export const ALERT_KINDS = {
   not_a_watchdog: { severity: 'critical', check: 'watchdog_role', description: "This account isn't a contract watchdog: it can't cancel or pause" },
   watchdog_key_missing: { severity: 'critical', check: 'config', description: 'WATCHDOG_KEY is missing or malformed: the watchdog can alert but not act' },
   wrong_network: { severity: 'critical', check: 'config', description: "The RPC's chain_id isn't the expected network: nothing is sent" },
+  identity_key_unpinned: {
+    severity: 'critical',
+    check: 'identity_jwks',
+    description:
+      "Hana's identity JWKS publishes a key whose RFC 7638 thumbprint isn't in watchdog.pinnedIdentityKeys, that isn't a P-256 key, or that has members beyond kty, crv, x, y, kid, use, alg: partners that trust the JWKS URL accept tokens it signs, for any user of any app. Alert only, no pause: the chain isn't involved",
+  },
+  identity_private_key_published: {
+    severity: 'critical',
+    check: 'identity_jwks',
+    description: "Hana's identity JWKS publishes private key material (`d` or another private member): anyone who read it can sign identity tokens with that key. Alert only, no pause",
+  },
+  identity_discovery_mismatch: {
+    severity: 'critical',
+    check: 'identity_jwks',
+    description:
+      "Hana's identity discovery document names another issuer than identityToken.iss, or a jwks_uri other than {iss}/jwks.json (a partner following discovery would fetch keys the watchdog doesn't check). Alert only, no pause",
+  },
+  identity_jwks_unreadable: {
+    severity: 'critical',
+    check: 'identity_jwks',
+    description:
+      "Hana's identity JWKS or discovery document can't be judged as published: a redirect (never followed), a body over 64 KB, not JSON, duplicate members, or the wrong shape (`:<document>:answer:<reason>`, at once), or 3 failed fetches in a row (`:<document>:sustained`). Each can hide a key from the watchdog that partners still see. Alert only, no pause",
+  },
+  identity_key_on_chain: {
+    severity: 'critical',
+    check: 'identity_on_chain',
+    description:
+      "An issuer key on chain (active, or a pending addition) has an identity token key's thumbprint as its kid: the contract must never trust an identity key. Alert only: the Google and email rules of the same run cancel or pause on such a key",
+  },
   relayer_balance_critical: { severity: 'critical', check: 'relayer_funds', description: "The relayer account's available balance is below the critical threshold (default 1 NEAR): every relay fails when it runs out" },
   relayer_allowance_critical: { severity: 'critical', check: 'relayer_funds', description: "A relayer pool key's remaining allowance is below its critical threshold (session 0.1 NEAR, owner 0.02 NEAR by default): relays from it are about to fail" },
   relayer_pool_empty: { severity: 'critical', check: 'relayer_funds', description: 'The relayer account has no function-call key of a pool (session or owner) for the signer: every relay of that pool fails' },
@@ -97,6 +135,11 @@ export const ALERT_KINDS = {
     severity: 'warning',
     check: 'email_jwks',
     description: "Hana's published email JWKS lists a key that isn't pinned (or whose kid isn't its thumbprint) or lacks an active email key, or it failed 3 fetches in a row while email keys are active (informational)",
+  },
+  identity_key_missing: {
+    severity: 'warning',
+    check: 'identity_jwks',
+    description: "A key in watchdog.pinnedIdentityKeys isn't in Hana's identity JWKS under its thumbprint as kid: a rotation half done (pinned before it was published, or unpublished before it was unpinned), or a kid changed",
   },
   signer_policy_transition: {
     severity: 'warning',

@@ -207,6 +207,26 @@ describe('identity-key kms rotation and switch', () => {
     expect(out.at(-1)).toContain(`disable the key and schedule its deletion`);
   });
 
+  it('the watchdog pins follow the published keys (D211): kms-init and kms-add pin, kms-retire unpins, each with its deploy order', () => {
+    const pins = () => manifest().watchdog?.pinnedIdentityKeys ?? [];
+    const sandboxPins = loadEnv('sandbox-dev').watchdog!.pinnedIdentityKeys!;
+    const ours = () => pins().filter((k) => !sandboxPins.includes(k));
+    const [a, s] = [kmsKey('ap-east-1'), kmsKey('ap-southeast-1')];
+    run('kms-init', '--active', a.file, '--standby', s.file, '--iam-user', IAM_USER, '--local', '--yes');
+    expect(ours()).toEqual([a.kid, s.kid]);
+    expect(out.join('\n')).toContain('deploy the watchdog FIRST');
+    const next = kmsKey('ap-east-1');
+    run('kms-add', '--role', 'next', '--key', next.file, '--yes');
+    expect(ours()).toEqual([a.kid, s.kid, next.kid]);
+    expect(out.at(-1)).toContain('deploy the watchdog FIRST');
+    run('kms-switch', '--to', 'next', '--yes');
+    expect(ours()).toEqual([a.kid, s.kid, next.kid]);
+    run('kms-retire', '--key', 'previous', '--yes');
+    expect(ours()).toEqual([s.kid, next.kid]);
+    expect(out.at(-1)).toContain('deploy the API FIRST, then gen and deploy the watchdog');
+    for (const k of published()) expect(pins()).toContain(k);
+  });
+
   it('compromise: kms-switch --to standby leaves no standby until a new one is added in another region', () => {
     const { a, s } = init();
     run('kms-switch', '--to', 'standby', '--yes');

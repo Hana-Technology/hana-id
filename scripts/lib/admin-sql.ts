@@ -367,7 +367,8 @@ export function suspensionWrite(app: AppRef & Pick<AppRow, 'suspended_by'>, susp
   const next = suspend ? app.suspended_by | HANA_SUSPENSION_BIT : app.suspended_by & ~HANA_SUSPENSION_BIT;
   return guardedAppWrite(
     app.id,
-    sql`suspended_by = ${app.suspended_by}`,
+    // A deleted app keeps Hana's bit for good (AdminRpc.deleteApp; D225): never resumed, never rewritten.
+    `${sql`suspended_by = ${app.suspended_by}`} AND deleted_at IS NULL`,
     [sql`suspended_by = ${next}`],
     { at: now, orgId: app.org_id, appId: app.id, scopeId: app.scope_id, kind: suspend ? 'suspension.set' : 'suspension.cleared', detail: { bit: HANA_SUSPENSION_BIT, suspendedBy: next }, actor, requestId },
     [],
@@ -380,7 +381,9 @@ export function suspensionWrite(app: AppRef & Pick<AppRow, 'suspended_by'>, susp
  * (the initial origins of an app:create that created the scope row), and the scope shows no sign that a user has a
  * key in it: `first_session_at` is NULL, no origin of any app of the scope is or was in force other than this
  * app:create's own initial ones (a guarded `origin_add` announced and due, or an `app_origins` row in force), and no
- * app of the scope has a vault share, a usage row or an identity count. Any one of these signs means the full delay.
+ * app of the scope has a vault share, a session marker (migration 0009, written by the API once a session-pool relay
+ * settled; it replaced the legacy `usage` counters in batch C4, D205) or an identity count. Any one of these signs
+ * means the full delay. Nothing here reads the usage ledger (Neon): the waiver depends on the hot DB only.
  */
 function noSessionWaiver(t: string, now: number): string {
   const scope = `(SELECT scope_id FROM apps WHERE id = ${t}.app_id)`;
@@ -392,7 +395,7 @@ function noSessionWaiver(t: string, now: number): string {
     AND NOT EXISTS (SELECT 1 FROM app_origins ao WHERE ao.app_id IN ${scopeApps} AND ao.active_from IS NOT NULL AND ao.active_from <= ${now}
                      AND (ao.change_id IS NULL OR ao.change_id NOT IN (SELECT gr.id FROM guarded_changes gr WHERE gr.request_id = ${t}.request_id)))
     AND NOT EXISTS (SELECT 1 FROM vault_shares WHERE app_id IN ${scopeApps})
-    AND NOT EXISTS (SELECT 1 FROM usage WHERE app_id IN ${scopeApps})
+    AND NOT EXISTS (SELECT 1 FROM session_markers WHERE app_id IN ${scopeApps})
     AND NOT EXISTS (SELECT 1 FROM identity_usage WHERE app_id IN ${scopeApps}))`;
 }
 

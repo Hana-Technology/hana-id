@@ -6,7 +6,7 @@ import type { Env } from '../src/env.ts';
 import worker from '../src/index.ts';
 import { handleRequest, SILENT_AFTER_MS } from '../src/status.ts';
 import { Store } from '../src/store.ts';
-import { alertsOf, emailJwk, initialized, jwk, linkStats, linkWindow, MIN, pinsOf, RecordingNotifier } from './helpers.ts';
+import { alertsOf, emailJwk, IDENTITY_ISS, identityKey, initialized, jwk, linkStats, linkWindow, MIN, pinsOf, RecordingNotifier } from './helpers.ts';
 
 const TOKEN = 'status-token-for-tests-only-0123456789abcdef';
 const testEnv = (over: Partial<Env> = {}): Env => ({ ...(env as unknown as Env), WATCHDOG_STATUS_TOKEN: TOKEN, ...over });
@@ -41,6 +41,29 @@ describe('auth', () => {
     expect((await call('/status', { method: 'POST' })).status).toBe(405);
     expect((await call('/alerts', { method: 'DELETE' })).status).toBe(405);
     expect((await call('/alerts/1/ack')).status).toBe(405);
+  });
+});
+
+describe('GET /status: the identity token (D210)', () => {
+  it('serves the issuer, the pins in force and the last JWKS and discovery reads', async () => {
+    const [a, b] = [await identityKey(), await identityKey()];
+    const w = await initialized({ identity: { published: [a, b] } });
+    const e = testEnv({ IDENTITY_ISS: IDENTITY_ISS, IDENTITY_PINS: JSON.stringify([a.kid, b.kid]) });
+    const { body } = await call('/status', {}, w.clock.t, e);
+    const id = body.identity as { iss: string; jwks_url: string; discovery_url: string; pinned: string[]; jwks: { count: number; unpinned: number; keys: { kid: string; pinned: boolean }[] }; discovery: { issuer: string; problems: unknown[] } };
+    expect(id).toMatchObject({ iss: IDENTITY_ISS, jwks_url: `${IDENTITY_ISS}/jwks.json`, discovery_url: `${IDENTITY_ISS}/.well-known/openid-configuration`, pinned: [a.kid, b.kid] });
+    expect(id.jwks).toMatchObject({ count: 2, unpinned: 0, private: 0, missing: [] });
+    expect(id.jwks.keys.map((k) => [k.kid, k.pinned])).toEqual([[a.kid, true], [b.kid, true]]);
+    expect(id.discovery).toMatchObject({ issuer: IDENTITY_ISS, problems: [] });
+    const kinds = body.alert_kinds as Record<string, { severity: string; playbook: string }>;
+    for (const k of ['identity_key_unpinned', 'identity_private_key_published', 'identity_discovery_mismatch', 'identity_jwks_unreadable']) expect(kinds[k]).toMatchObject({ severity: 'critical', playbook: 'identity-jwks-forged' });
+    expect(kinds.identity_key_missing).toMatchObject({ severity: 'warning', playbook: 'identity-jwks-degraded' });
+    expect(kinds.identity_key_on_chain).toMatchObject({ severity: 'critical', playbook: 'identity-key-on-chain' });
+  });
+
+  it('an env without an identity token: nulls, nothing pinned', async () => {
+    const { body } = await call('/status');
+    expect(body.identity).toMatchObject({ iss: null, jwks_url: null, discovery_url: null, pinned: null });
   });
 });
 

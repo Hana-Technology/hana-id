@@ -19,6 +19,7 @@ import {
   appOriginsPark,
   appOriginsUnpark,
   REQUIRED_HOT_DB,
+  REQUIRED_HOT_DB_ANNOUNCE,
   requireC3ApiFor,
   STALE_WRITE,
   withRehearsalD1,
@@ -184,7 +185,7 @@ describe('app:changes:announce', () => {
 
   it('no_session waiver fails closed on any sign of a user in the scope, even with first_session_at lost (NULL)', async () => {
     const signs: [string, string][] = [
-      ['a usage row', "INSERT INTO usage (app_id, day, sessions) VALUES ('app_1', '2026-11-02', 1)"],
+      ['a session marker', "INSERT INTO session_markers (app_id, first_at) VALUES ('app_1', 1)"],
       ['a vault share', "INSERT INTO vault_shares (share_id, app_id, session_pk, path_hash, partner_origin, share_enc, kek_id, created_at, idle_until, abs_expires_at) VALUES (x'01', 'app_1', x'02', x'03', 'https://a.example.com', x'04', 1, 1, 2, 3)"],
       ['an identity count', "INSERT INTO identity_usage (app_id, day, tokens) VALUES ('app_1', '2026-11-02', 1)"],
       ['another app of the scope with an origin in force', "INSERT INTO app_origins (app_id, origin, active_from) VALUES ('app_1', 'https://other.example.com', 0)"],
@@ -328,6 +329,14 @@ describe('app:suspend and app:resume', () => {
     expect(state()).toEqual({ status: 'active', suspended_by: 0 });
     expect(suspensionBits(7)).toBe('hana+org+partner');
   });
+
+  it('refuse a deleted app: it keeps Hana’s bit for good (AdminRpc.deleteApp, D225)', async () => {
+    seedHotApp(h.db, { id: 'app_d', key: APP_KEY, scope: 's1' });
+    h.db.exec("UPDATE apps SET deleted_at = 1, suspended_by = 1 WHERE id = 'app_d'");
+    expect(() => appSuspension(false, args(['--app', 'app_d']), 'local D1 test', h.deps)).toThrow(/deleted/u);
+    expect(h.db.prepare("SELECT status, suspended_by FROM apps WHERE id = 'app_d'").get()).toEqual({ status: 'suspended', suspended_by: 1 });
+    expect(ledger('app_d')).toEqual([]);
+  });
 });
 
 describe('app:list', () => {
@@ -381,7 +390,10 @@ describe('the deployed API must read the C3 schema before any proposal (M2)', ()
     const down = (async () => {
       throw new Error('ECONNREFUSED');
     }) as unknown as typeof fetch;
-    await expect(requireC3ApiFor(sandbox, true, down)()).rejects.toThrow('Could not read');
+    await expect(requireC3ApiFor(sandbox, true, down)()).rejects.toThrow('Could not read');    // An announcement needs the batch C4 API (hot DB 0009: the session markers the waiver reads).
+    expect(REQUIRED_HOT_DB_ANNOUNCE).toBe(9);
+    await expect(requireC3ApiFor(sandbox, true, health({ hotDb: 6 }))(REQUIRED_HOT_DB_ANNOUNCE)).rejects.toThrow('need ≥ 9');
+    await requireC3ApiFor(sandbox, true, health({ hotDb: 9 }))(REQUIRED_HOT_DB_ANNOUNCE);
   });
 });
 

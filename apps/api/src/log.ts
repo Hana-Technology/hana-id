@@ -5,6 +5,9 @@ export interface LogFields {
   event: string;
   requestId?: string;
   appId?: string;
+  /** Batch C's RPC calls (rpc/common.ts): the caller's org and actor kind (never the actor's id or email). */
+  orgId?: string;
+  actorKind?: string;
   endpoint?: string;
   method?: string;
   outcome?: 'ok' | 'rejected' | 'error';
@@ -43,6 +46,8 @@ export interface LogFields {
   activated?: number;
   superseded?: number;
   expired?: number;
+  /** The hourly identity-count copy to the usage ledger (usage/identity-sync.ts): rows sent. */
+  synced?: number;
 }
 
 export function log(fields: LogFields, level: 'info' | 'warn' | 'error' = 'info'): void {

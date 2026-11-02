@@ -1,6 +1,6 @@
 // Request handlers: app endpoints (publishable key + origin), owner actions (OIDC proof in args), health.
 import { JwksUnavailableError } from '@hana-id/oidc';
-import { type App, HOT_DB_SCHEMA, PUBLISHABLE_KEY_RE, appSuspended, getAppByKey, incrementUsage, startFirstSession } from './apps.ts';
+import { type App, HOT_DB_SCHEMA, PUBLISHABLE_KEY_RE, appSuspended, getAppByKey, markSession, startFirstSession } from './apps.ts';
 import { appKeyPairs, appKeyProblem } from './bls.ts';
 import type { Env } from './env.ts';
 import { type Headers_, corsHeaders, json, readJson } from './http.ts';
@@ -10,13 +10,14 @@ import { placedStub } from './placement.ts';
 import { type Caller, PARENT_ORIGIN_HEADER, RELAY_KEY_HEADER, checkCaller, preflightAllows } from './origins.ts';
 import { precheckOwnerAction, sha256Hex } from './owner-actions.ts';
 import type { Limit, RateLimiter } from './rate-limiter.ts';
-import type { RelayInstance, RelayResult, RelayTiming } from './relayer-key.ts';
+import type { RelayInstance, RelayResult } from './relayer-key.ts';
 import { relay } from './relayer-pool.ts';
 import { ckdPayload, createProofPayload, revokePayload, sessionNonce, verifySessionSignature } from './session-crypto.ts';
 import { countEmailUsage } from './email-usage.ts';
 import { type LoginTokenResult, verifyLoginToken } from './login-token.ts';
 import { signerPanic } from './panics.ts';
 import { claimCounter, precheckSessionUse } from './session-use.ts';
+import { type UsageDraft, beginUsage, finishUsage, finishUsageOnThrow, notePath, noteRelay } from './usage/event.ts';
 import { MAX_BODY, isError, toCreateSession, toDeriveKey, toOwnerAction, toRevokeSession } from './validate.ts';
 import { type AppSettings, effectiveSettings, getSettingsRow } from './vault/settings.ts';
 import { type LoginMethod, appLoginMethods } from './login-methods.ts';
@@ -106,6 +107,8 @@ export interface Ctx {
   exposeTimings?: boolean;
   /** POST /v1/identity/token: the signing key's kid (logged; never the token, `sub` or `sid`). */
   kid?: string;
+  /** The request's usage event, open from its gate to its response (usage/event.ts; `done` closes it). */
+  usage?: UsageDraft;
 }
 
 export function newCtx(env: Env, requestId: string, endpoint: string, request?: Request, cors: Headers_ = {}): Ctx {
@@ -123,9 +126,11 @@ export function lap(ctx: Ctx, name: string): void {
 
 /**
  * Records a relay's stages: the round trip to the relayer key object and, inside it, nonce + broadcast vs outcome,
- * with the broadcast split into queue / chain reads / signing / nonce reservation (see RelayTiming).
+ * with the broadcast split into queue / chain reads / signing / nonce reservation (see RelayTiming). Also notes what
+ * the relay sent for the request's usage event (the transaction, its key and nonce, its provisional gas).
  */
-export function lapRelay(ctx: Ctx, result: { timing?: RelayTiming; instance?: RelayInstance }): void {
+export function lapRelay(ctx: Ctx, result: RelayResult): void {
+  noteRelay(ctx, result);
   lap(ctx, 'relay');
   ctx.relayInstance = result.instance;
   const t = result.timing;
@@ -179,6 +184,8 @@ export function done(ctx: Ctx, status: number, body: Record<string, unknown>, ex
     },
     status >= 500 ? 'error' : 'info',
   );
+  // The request's usage event (when one is open) goes to the ledger after this response; it never changes or delays it.
+  finishUsage(ctx, status, code);
   return json(status, { ...body, ...(timings ? { timings } : {}), requestId: ctx.requestId }, { ...ctx.cors, 'x-request-id': ctx.requestId, ...extra });
 }
 
@@ -358,10 +365,22 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
  */
 export async function handleAppEndpoint(request: Request, env: Env, endpoint: AppEndpoint, requestId: string, exec?: ExecutionContext): Promise<Response> {
   const ctx = newCtx(env, requestId, endpoint, request);
+  try {
+    return await appEndpoint(request, env, endpoint, ctx, exec);
+  } catch (err) {
+    finishUsageOnThrow(ctx);
+    throw err;
+  }
+}
+
+async function appEndpoint(request: Request, env: Env, endpoint: AppEndpoint, ctx: Ctx, exec?: ExecutionContext): Promise<Response> {
+  const { requestId } = ctx;
   const now = Date.now();
   const gate = await appGate(request, env, ctx, 'relay');
   if (!gate.ok) return gate.response;
   const { app } = gate;
+  // Past the gate: every outcome from here on is one usage event (usage/event.ts).
+  beginUsage(ctx, { orgId: app.org_id, appId: app.id, scopeId: app.scope_id, exec });
 
   // 4. Argument shapes.
   const parsed = await readJson(request, MAX_BODY);
@@ -410,14 +429,16 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     const quota = await appQuota(env, ctx, app);
     if (quota) return quota;
 
-    const noted = firstSession(env, app, ctx, exec);
-    const result = await relay(env, 'session', { method: call.method, args: call.args }, requestId);
+    const relayed = relay(env, 'session', { method: call.method, args: call.args }, requestId);
+    const noted = firstSession(env, app, ctx, relayed, exec);
+    const result = await relayed;
     await noted;
     lapRelay(ctx, result);
     if (!result.ok) return relayFailure(ctx, env, result);
     if (!isSessionView(result.result)) return done(ctx, 502, { error: 'The contract returned no session', code: 'bad_contract_result', nearTx: result.nearTx });
     rememberSession(req.sessionPublicKey, result.result);
-    await countUsage(env, app.id, 'sessions', ctx, exec);
+    // The uid's input: the new session's path (kept in memory, never sent).
+    notePath(ctx, result.result.path);
     if (token.email) await countEmailUsage(env, app.id, 'email_sessions', ctx, exec);
     return done(ctx, 200, { result: result.result, nearTx: result.nearTx });
   }
@@ -463,6 +484,8 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     }
     const { rejection } = check;
     if (rejection) return done(ctx, rejection.status, { error: rejection.error, code: rejection.code, nextCounter: rejection.nextCounter });
+    // A derive's uid comes from the path of the session it is judged against (a revoke carries none).
+    if ('pk1' in call) notePath(ctx, check.session.path);
     const gov = await paused;
     if (gov) return chainGateResponse(ctx, gov);
     // The app key's pairing check (bls.ts), last: it is the costly one.
@@ -472,8 +495,9 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     const quota = await appQuota(env, ctx, app);
     if (quota) return quota;
 
-    const noted = firstSession(env, app, ctx, exec);
-    const result = await relay(env, 'session', { method: call.method, args: call.args }, requestId);
+    const relayed = relay(env, 'session', { method: call.method, args: call.args }, requestId);
+    const noted = firstSession(env, app, ctx, relayed, exec);
+    const result = await relayed;
     await noted;
     lapRelay(ctx, result);
     // A derive that succeeded used its counter: count it in the cached session, if that is still the session it was
@@ -486,7 +510,6 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     if (endpoint === '/v1/derive') {
       const r = result.result as { big_y?: unknown; big_c?: unknown } | null;
       if (!r || typeof r.big_y !== 'string' || typeof r.big_c !== 'string') return done(ctx, 502, { error: 'The contract returned no key', code: 'bad_contract_result', nearTx: result.nearTx });
-      await countUsage(env, app.id, 'derives', ctx, exec);
       return done(ctx, 200, { result: { big_y: r.big_y, big_c: r.big_c }, nearTx: result.nearTx });
     }
     return done(ctx, 200, { result: null, nearTx: result.nearTx });
@@ -496,30 +519,23 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
 }
 
 /**
- * Counts a successful call. With an execution context the D1 write runs after the response is sent (waitUntil);
- * without one it is awaited here. Never rejects.
+ * On a scope with no `first_session_at` yet (as the gate read it): starts the scope's first-session write beside the
+ * relay (apps.ts startFirstSession), and writes the app's session marker once `relayed` settles (apps.ts
+ * markSession): two independent writes, so one lost write never leaves the `no_session` waiver open. With an
+ * execution context both finish after the response (the returned promise is already resolved); without one, await
+ * the returned promise after the relay. Never rejects.
  */
-async function countUsage(env: Env, appId: string, field: 'sessions' | 'derives', ctx: Ctx, exec?: ExecutionContext): Promise<void> {
-  const write = incrementUsage(env.DB, appId, field).catch(() => {
-    log({ event: 'usage_increment_failed', requestId: ctx.requestId, appId, endpoint: ctx.endpoint }, 'error');
-  });
-  if (exec) exec.waitUntil(write);
-  else await write;
-}
-
-/**
- * Starts the scope's first-session write (apps.ts startFirstSession) beside a relay. With an execution context it
- * finishes after the response (the returned promise is already resolved); without one, await the returned promise
- * after the relay. Never rejects.
- */
-export function firstSession(env: Env, app: App, ctx: { requestId: string; endpoint: string }, exec?: ExecutionContext): Promise<void> {
-  const write = startFirstSession(env.DB, app, () => log({ event: 'first_session_write_failed', requestId: ctx.requestId, appId: app.id, endpoint: ctx.endpoint }, 'error'));
+export function firstSession(env: Env, app: App, ctx: { requestId: string; endpoint: string }, relayed: Promise<unknown>, exec?: ExecutionContext): Promise<void> {
+  const failed = (what: string) => (): void => log({ event: 'first_session_write_failed', requestId: ctx.requestId, appId: app.id, endpoint: ctx.endpoint, what }, 'error');
+  const write = startFirstSession(env.DB, app, failed('scope'));
   if (!write) return Promise.resolve();
+  const mark = (): Promise<void> => markSession(env.DB, app.id, failed('marker'));
+  const both = Promise.all([write, relayed.then(mark, mark)]).then(() => undefined);
   if (exec) {
-    exec.waitUntil(write);
+    exec.waitUntil(both);
     return Promise.resolve();
   }
-  return write;
+  return both;
 }
 
 type ScopeRejection = { status: number; code: string; error: string };
@@ -647,8 +663,18 @@ export async function hitAll(env: Env, windows: readonly OwnerActionWindow[], re
   return null;
 }
 
-export async function handleOwnerAction(request: Request, env: Env, requestId: string): Promise<Response> {
+export async function handleOwnerAction(request: Request, env: Env, requestId: string, exec?: ExecutionContext): Promise<Response> {
   const ctx = newCtx(env, requestId, '/v1/owner-actions', request, corsHeaders('*', 'content-type'));
+  try {
+    return await ownerAction(request, env, ctx, exec);
+  } catch (err) {
+    finishUsageOnThrow(ctx);
+    throw err;
+  }
+}
+
+async function ownerAction(request: Request, env: Env, ctx: Ctx, exec?: ExecutionContext): Promise<Response> {
+  const { requestId } = ctx;
   try {
     const hit = await limiter(env, ipKey(request)).hit([{ name: 'owner-actions:minute', windowMs: MINUTE, max: OWNER_ACTIONS_PER_IP_MINUTE }]);
     if (!hit.ok) return reject(ctx, 429, 'rate_limited', 'Rate limit exceeded (per IP per minute)', { 'retry-after': String(hit.retryAfterS) });
@@ -669,6 +695,9 @@ export async function handleOwnerAction(request: Request, env: Env, requestId: s
     return reject(ctx, 502, 'near_unavailable', 'Could not read the registry');
   }
   if (!check.ok) return reject(ctx, check.status, check.code, check.error);
+  // Past the owner check: every outcome from here on is one usage event, for the scope (owner actions have no gate
+  // row: the scope's org is read after the response).
+  beginUsage(ctx, { orgId: null, appId: null, scopeId: check.scopeId, exec });
 
   const tokens = limiter(env, 'owner-actions:tokens');
   const token = check.authToken;
@@ -716,9 +745,10 @@ export async function handleOwnerAction(request: Request, env: Env, requestId: s
 // ---- Health ----
 
 /**
- * `hotDb`: the hot-DB migration whose reads this build makes (apps.ts HOT_DB_SCHEMA). The admin CLI refuses guarded
- * proposals until the deployed API reports 6 or more: an API from before batch C3 would treat an origin that is only
- * proposed as in force (docs/operations.md "Rolling the API back below batch C3").
+ * `hotDb`: the hot-DB migration this build needs (apps.ts HOT_DB_SCHEMA). The admin CLI refuses guarded proposals
+ * until the deployed API reports 6 or more (an API from before batch C3 would treat an origin that is only proposed as
+ * in force; docs/operations.md "Rolling the API back below batch C3"), and announcements until it reports 9 or more
+ * (the batch C4 API writes the session markers the `no_session` waiver reads).
  */
 export function handleHealth(env: Env, requestId: string): Response {
   return json(200, { ok: true, env: env.ENV_NAME, signer: env.SIGNER_ACCOUNT, hotDb: HOT_DB_SCHEMA, requestId }, { 'access-control-allow-origin': '*', 'x-request-id': requestId });

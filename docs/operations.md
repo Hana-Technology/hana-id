@@ -2,7 +2,12 @@
 
 Last verified against code: 2026-11-02 (branch `feat/email-login-6`: "Email login on sandbox-dev (build plan batch 6)",
 the user's deploy order with the corrections of D234, the issuer on its own URL (D230), migration 0010 beside 0006,
-the session pool's link methods, the email clients left for batch 8; branch `feat/email-login-4`: "Email issuer" setup and runbook, the issuer's secrets rows, after the
+the session pool's link methods, the email clients left for batch 8; branch `feat/batch-c-4`: "Usage capture (batch C4, milestone M2)" (the
+setup steps for the user: `usage-setup`, Hyperdrive, `USER_ID_KEY`, migration 0009, `gen --usage-hyperdrive-id`), the
+ledger and uid secrets, the waiver's session marker; D220–D224); 2026-11-02 (branch `feat/batch-c-5`: `app:suspend` / `app:resume` refuse a deleted
+app; the API's RPC entrypoints need no setup step of their own, D225; branch `feat/identity-token-8`: "Identity token
+keys" gains the watchdog pin steps and their deploy order (the `kms-*` commands too); "Identity token: pins and the
+JWKS check" with the outside probe; the identity alerts in "Watchdog alerts (runbook)"; D210–D214; branch `feat/email-login-4`: "Email issuer" setup and runbook, the issuer's secrets rows, after the
 reviews (Access SameSite=Strict, staff calls, unsuppress, the exact key-leak steps with `put --standby`, the budget
 and complaint logs) and the abuse re-check (`init --budget`, mailed unlock and unsuppress, revoke-tickets, the owner
 pool, the 503 window of a standby switch, SendGrid's suppression lists); branch `feat/identity-token-7`: "Identity token keys on AWS KMS", the KMS
@@ -48,7 +53,9 @@ Never print, log, paste or commit any of these. The scripts never print them eit
 | Email issuer signing key (`ISSUER_SIGNING_KEY`; testnet and `local*` only) | `.secrets/<env>/email-issuer-signing-key.json` (active), `email-issuer-signing-key-standby.json` (published and on chain, **never uploaded**: keep it offline); RSA-2048 private JWKs, the only copies | `email-issuer <env> init`; upload with `email-issuer <env> put --yes` ("Email issuer" below) |
 | Email issuer HMAC keys (`EMAIL_SUB_KEY` = K_sub, `EMAIL_CODE_KEY`, `EMAIL_RL_KEY`) | `.secrets/<env>/email-sub-key`, `email-code-key`, `email-rl-key` (base64 of 32 bytes); K_sub is never rotated and is backed up offline twice (D81) | `email-issuer <env> init`; `put --yes` |
 | SendGrid key for user mail (`SENDGRID_API_KEY`, Mail Send only, D194) | `.secrets/<env>/email-issuer-sendgrid-key` | pasted by hand; `email-issuer <env> put --yes` |
-| Neon Postgres connection strings (batch C ledger, D73): pooled `DATABASE_URL` and `DATABASE_URL_DIRECT` of the env's Neon branch | `.secrets/<env>/neon.json` (`{project_id, branch, DATABASE_URL, DATABASE_URL_DIRECT, …}`); role `neondb_owner` until batch C creates least-privilege roles | `neon connection-string <branch> --project-id <id> [--pooled]` (Neon CLI, `neon login`) |
+| Neon Postgres connection strings (batch C ledger, D73): pooled `DATABASE_URL` and `DATABASE_URL_DIRECT` of the env's Neon branch | `.secrets/<env>/neon.json` (`{project_id, branch, DATABASE_URL, DATABASE_URL_DIRECT, …}`); role `neondb_owner`, used only by `usage-migrate` and `usage-setup` | `neon connection-string <branch> --project-id <id> [--pooled]` (Neon CLI, `neon login`) |
+| Ledger role URLs (`usage_writer`, `usage_admin`, batch C4): each role's password; their copies live in the two Hyperdrive configs | `.secrets/<env>/neon-usage-writer.url`, `neon-usage-admin.url` | `usage-setup <env> roles` ("Usage capture" below) |
+| `USER_ID_KEY` (the uid key, base64 of 32 bytes; API only); never rotated within a contract term, backed up offline | `.secrets/<env>/user-id-key` | `usage-setup <env> user-id-key` (generates it once, sets the Worker secret) |
 | Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its Resend key, Slack webhook, paging-app credentials, `HEARTBEAT_URL`) | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
 | Worker copies of the above | Cloudflare Worker secrets (the watchdog's on its own Cloudflare account) | `wrangler secret put` (watchdog: `wrangler secret bulk`) |
 | Local dev copies | `apps/api/.dev.vars`, `apps/watchdog/.dev.vars`, `apps/email-issuer/.dev.vars` (0600) | `gen --dev-vars` |
@@ -527,9 +534,9 @@ read these sources, all read-only:
 
 ## Usage ledger (Neon, batch C)
 
-The ledger's schema is `apps/api/migrations-usage/` (Postgres; D73), applied by `scripts/usage-migrate.ts`. Nothing
-writes to it yet: capture starts in batch C4 (`docs/batch-c-build-plan.md`). Neon Auth and Neon's other services
-aren't used, only Postgres.
+The ledger's schema is `apps/api/migrations-usage/` (Postgres; D73), applied by `scripts/usage-migrate.ts`. The API
+writes to it from batch C4 once its `USAGE_DB` binding is set up ("Usage capture" below). Neon Auth and Neon's other
+services aren't used, only Postgres.
 
 ```sh
 corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev         # lists the pending files, changes nothing
@@ -542,13 +549,90 @@ corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev --yes   # appl
 - Each file runs in its own transaction with its sha256 recorded in `hana_migrations.applied`, under an advisory lock.
   A file changed after it was applied, or an applied file the repo doesn't have, stops the run: add a new file instead.
 - The schema creates the roles `usage_writer` (the API) and `usage_admin` (the admin Worker) `NOLOGIN`, with no
-  password; giving them `LOGIN` and passwords, and the Hyperdrive configs, is batch C4's `usage-setup`
-  (`docs/batch-c-build-plan.md` "Setup steps").
-- The first migration creates the monthly partitions of `usage.events` for the current month and the next three;
-  `usage.ensure_partitions(3)` adds the rest (the admin Worker's daily cron, from C12; until then by hand as the owner
-  if the ledger is in use).
+  password; `usage-setup <env> roles` gives them `LOGIN` and passwords ("Usage capture" below).
+- Files: `0001_ledger.sql` (events, users, settlements, rates, statements, `ops`, `record_event`, roles and grants),
+  `0002_identity_tokens.sql` (identity tokens per app and day, `record_identity_tokens`, batch C4),
+  `0003_writer_partitions.sql` (the writer may run `ensure_partitions`; 12 months ahead created, batch C4).
+- Monthly partitions of `usage.events`: 0001 creates the current month and the next 3, 0003 the next 12, and the
+  API's hourly cron keeps 12 months ahead (`usage.ensure_partitions(12)` as the writer, `usage_partitions_failed` on
+  a failure). An event outside every partition is lost (`usage_write_failed` `pg_23514`).
 - Tests run on PGlite in process (`apps/api/test-usage`, D140); set `USAGE_TEST_DATABASE_URL` to a superuser URL of a
   local Postgres 18 (a container, never Neon) to run the same suite there.
+
+## Usage capture (batch C4, milestone M2)
+
+From batch C4 the API sends one usage event per request past the gate of `/v1/login`, `/v1/sessions`,
+`/v1/derive`, `/v1/sessions/revoke` and `/v1/vault/unlock`, and per `/v1/owner-actions` request past the owner check,
+to the Neon ledger through the Hyperdrive binding `USAGE_DB` (role `usage_writer`), after the response (`docs/api.md`
+"Usage capture"). It no longer writes the D1 `usage` counters. **Logins never depend on it**: without the binding
+capture is off; with Neon or Hyperdrive down every endpoint answers exactly as before and the lost event is logged.
+The hourly cron also copies the last 7 days of identity token counts (`identity_usage`) to `usage.identity_tokens`.
+
+### Setting it up on sandbox-dev (for the user; run from the main checkout)
+
+Nothing here is run by an agent. Every command prints its plan and changes nothing without `--yes`; none prints a
+password, a URL or the key. Prerequisites: `.secrets/sandbox-dev/neon.json` with `DATABASE_URL_DIRECT` (the owner,
+direct endpoint), wrangler logged in to the Hana Cloudflare account, and Hyperdrive available on its plan (build plan
+open question 3).
+
+1. **Ledger schema** (applies `0002_identity_tokens.sql` and `0003_writer_partitions.sql`; `0001` if it isn't yet):
+   `corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev`, then the same with `--yes`.
+2. **Role passwords**: `corepack pnpm --filter @hana-id/scripts usage-setup sandbox-dev roles` (plan), then `--yes`.
+   It generates a password per role, writes `.secrets/sandbox-dev/neon-usage-writer.url` and `neon-usage-admin.url`
+   (0600: the owner's direct endpoint and database, the role, `sslmode=require`) and, as the owner, runs
+   `ALTER ROLE usage_writer|usage_admin WITH LOGIN PASSWORD '<SCRAM verifier>'` in one transaction: Neon gets a
+   verifier, never the password. Running it again reuses the passwords in the files (to resume a run that stopped).
+3. **Hyperdrive configs**: `usage-setup sandbox-dev hyperdrive` (plan), then `--yes`: `wrangler hyperdrive create
+   hana-id-usage-writer-sandbox-dev` and `hana-id-usage-admin-sandbox-dev` (the manifest's `usage` block names once it
+   has one) with `--caching-disabled`, from the role files. It prints each config's id (not secret). The admin config
+   is for the admin Worker (batch C8); create both now. Note: wrangler takes the role URL as an argument, so it is
+   briefly visible in the local process list. **Before production** the configs are created through Cloudflare's
+   REST API with the password in the HTTPS body instead (`docs/mainnet-readiness.md` row 4.18).
+4. **`USER_ID_KEY`**: `usage-setup sandbox-dev user-id-key` (plan), then `--yes`: generates 32 random bytes (base64)
+   into `.secrets/sandbox-dev/user-id-key` (0600, never replaced) and sets the API Worker's `USER_ID_KEY` through
+   wrangler's stdin. **Make an offline backup of the file** (with the council backup, as `identity-sub-key`): the key
+   is never rotated within a contract term, and losing it makes every user a new user in MAU and new-user counts
+   (D96). Running it again sets the existing key again.
+5. **Hot DB migration 0009** (`session_markers`, the `no_session` waiver's sign; D220):
+   `corepack pnpm --dir apps/api exec wrangler d1 migrations apply hana-id-sandbox-dev --remote` (it lists
+   `0009_session_markers.sql`; confirm).
+6. **Bind and deploy**: `corepack pnpm --filter @hana-id/api gen sandbox-dev --usage-hyperdrive-id <writer id>` (it
+   prints `usage capture: on`; later runs of `gen` keep the id for the same Worker and database), then
+   `corepack pnpm --filter @hana-id/api run deploy`; `curl -s <apiUrl>/v1/health` shows `"hotDb":9`. The admin CLI's
+   `app:changes:announce --remote` is refused until then (it needs `hotDb` ≥ 9: from C4 its waiver reads
+   `session_markers`, which only the C4 API writes).
+7. **Carry the legacy counters into markers, after the deploy** (the API before it still wrote `usage` rows and no
+   markers, so a run before the deploy could miss the last ones). Once, idempotent, and again before C4b's 0007:
+
+   ```sh
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev --remote --command "INSERT INTO session_markers (app_id, first_at) SELECT app_id, unixepoch('now') * 1000 FROM usage GROUP BY app_id ON CONFLICT (app_id) DO NOTHING"
+   ```
+
+8. **Gate: the writer logs in and the event lands.** Do not go on (no admin Worker, no partner relying on usage
+   numbers, no C4b) until this passes. Log in on sandbox-dev (the demo or `apps/smoke`), then as the owner
+   `SELECT endpoint, outcome, code, relayed, uid IS NOT NULL AS has_uid FROM usage.events ORDER BY received_at DESC
+   LIMIT 5;` must show the login (`ok`, relayed, a uid), and the Worker logs no `usage_write_failed`. This is the
+   first time Neon checks a password `usage-setup` set as a SCRAM verifier (D224; PGlite only proved Postgres stores
+   it): `usage_write_failed` `pg_28P01` means Neon didn't accept it. Then stop, turn capture off (below) and raise it;
+   don't set a plain-text password by hand. While there, check the event's `relay_gas_burnt` against the transaction's
+   own sum (`tx` at FINAL: `transaction_outcome` plus every receipt) and keep that `tx` JSON as the test fixture the
+   gas test still lacks (`apps/api/test/usage.test.ts` uses a hand-shaped one).
+
+**Turning capture off** (e.g. a Neon incident that floods the logs): `gen sandbox-dev --usage-hyperdrive-id off` and
+deploy. Logins are unaffected either way; events in between are not recorded.
+
+### What to watch (Worker logs)
+
+| Event | Meaning | Action |
+|---|---|---|
+| `usage_write_failed` (`code` `connection`, `attempt` 2) | Neon/Hyperdrive unreachable or slow for both tries: the event is lost (under-bills Hana, never a partner) | Check Neon and Hyperdrive status; the daily nonce cross-check (C12) shows lost relayed rows |
+| `usage_write_failed` (`code` `pg_23514`) | No partition for the event's month | Look for `usage_partitions_failed`; as the owner, `SELECT usage.ensure_partitions(12);` |
+| `usage_partitions_failed` (`code`) | The hourly `ensure_partitions(12)` failed (12 months are ahead, so there's time) | Check the writer's grant (`usage-migrate`: 0003) and Neon; the next hour retries |
+| `usage_write_failed` (other `pg_*`) | The server refused it (e.g. `pg_42501`: the role lost its grant; `pg_28P01`: wrong password in the Hyperdrive config) | Re-run `usage-migrate` / `usage-setup … roles`, or fix the Hyperdrive config |
+| `usage_write_rejected` | The event failed UsageEvent v1 (`invalid_event`, never sent) or the function refused it (`pg_22023`) | A bug: the event's `problems` name the fields |
+| `usage_uid_unavailable` | `missing_key` / `bad_key`: `USER_ID_KEY` unset or malformed (events recorded without uid); `bad_path`: a session path that doesn't parse for its scope | Set the key (step 4); `bad_path` should never happen |
+| `identity_usage_sync_failed` | The hourly identity-count copy failed | Nothing: the next hour copies the last 7 days again |
+| `first_session_write_failed` (`what` `scope` or `marker`) | One of the waiver's two hot-DB signs wasn't written | The other one stands; the next session attempt retries the scope's |
 
 ## Hot DB migration 0006 and the new gate (batch C3, milestone M1)
 
@@ -662,6 +746,12 @@ made after step 4 are lost with it.
 
 ## Local API (`wrangler dev`)
 
+With a `USAGE_DB` binding (`gen --usage-hyperdrive-id`), `gen` also writes the binding's `localConnectionString`, an
+unroutable placeholder (`usage-ledger.local.invalid`): `wrangler dev` starts, local requests answer as always, and
+each local usage write fails at connect and is logged (`usage_write_failed` `connection`). Nothing local ever reaches
+the env's ledger. To test capture locally, run a Postgres 18 container with `apps/api/migrations-usage` applied and set
+`CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_USAGE_DB` to its URL for that shell (never a Neon URL).
+
 ```sh
 corepack pnpm --filter @hana-id/api run gen <env> --dev-vars     # wrangler.jsonc + apps/api/.dev.vars (0600)
 corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --local
@@ -734,7 +824,8 @@ once announced plus the manifest's `appChangeDelayMs` (sandbox-dev: 60 s). In an
 its notice announces them; in an env without one (sandbox-dev today) `app:changes:announce <gc id>` does, and nobody
 is emailed. A proposal not announced within 7 days is cancelled by the API's hourly cron. Removals, turn-offs and
 suspensions are immediate. With `--remote`, proposals and announcements are refused until the deployed API reports the
-batch C3 reads (`GET /v1/health` `hotDb` ≥ 6); `app:origins:park` / `unpark`: "Rolling the API back below batch C3"
+batch C3 reads (`GET /v1/health` `hotDb` ≥ 6), and announcements also until it reports the batch C4 hot DB (≥ 9: the
+waiver reads the session markers only that API writes); `app:origins:park` / `unpark`: "Rolling the API back below batch C3"
 above.
 
 - `app:create`: `--org` is required and must be `org_legacy` until the console database exists (batch C7). The scope
@@ -743,8 +834,8 @@ above.
   Generates `app_<base58>`, `key_<base58>` and a `pk_test_` or `pk_live_` key by the environment and prints the key
   (public). The origins are staff proposals; when this call created the scope row they skip the delay at their
   announcement if the scope then still shows no sign of a user (the `no_session` waiver, decided inside the
-  announcement's SQL: no `first_session_at`, no other origin of the scope ever in force, no vault share, usage or
-  identity row). On an existing scope it is refused
+  announcement's SQL: no `first_session_at`, no other origin of the scope ever in force, no vault share, session marker
+  or identity row; batch C4 replaced the legacy usage row with the session marker, D220). On an existing scope it is refused
   within `appChangeDelayMs` of the scope's org assignment. Origins are normalised by `@hana-id/console-core`
   `normaliseOrigin` (the form the API and the console share: lowercase ASCII/punycode host, default port and trailing
   dot dropped) and checked by its `originProblem` (`app:create` and `app:origins:add`; never `app:origins:remove`, so
@@ -773,7 +864,8 @@ above.
   ```
 
 - `app:suspend` / `app:resume` set and clear Hana's suspension bit (1) only; the org (2) and partner (4) bits belong to
-  the admin and partner consoles (batch C), and an app stays suspended while any bit is set. Suspension is D1-only (the
+  the admin and partner consoles (batch C), and an app stays suspended while any bit is set. Both refuse a deleted app
+  (`AdminRpc.deleteApp`): it keeps bit 1 for good (D225). Suspension is D1-only (the
   contract has no suspension; D11). Removing an origin also kills that origin's vault shares on their next use.
   Logins, relays, `GET /v1/app` and new vault page loads see a suspension or an origin removal at once; the vault
   endpoints (unlock, touch, revoke, share creation) cache the app per Worker isolate, so there it takes up to 30 s
@@ -1093,6 +1185,27 @@ below; `gen` and the schema refuse a Worker-secret key off testnet).
 Every command below prints its plan without `--yes`. After `init`, `next`, `switch` and `retire`, put the changed
 `envs/<env>.json` in the repo, run `gen` and deploy the API: the JWKS and the active kid come from the manifest.
 
+**Watchdog pins first** (D210, D211). The watchdog pages critical (`identity_key_unpinned`) for any key in the JWKS
+whose thumbprint isn't in `watchdog.pinnedIdentityKeys`, and the schema refuses a manifest that publishes an unpinned
+key. On an env with a `watchdog` block, `identity-key` writes the pins with the keys: `init` and `next` pin the new
+keys, `retire` unpins the key it unpublishes, `switch` changes no pin. The deploy order follows:
+
+- after `init` or `next` (a key added): **deploy the watchdog first**, then the API. Between the two the watchdog
+  warns `identity_key_missing` (pinned, not yet published): expected.
+- after `retire` (a key removed): **deploy the API first**, then the watchdog. The other order pages
+  `identity_key_unpinned` until the API deploy.
+
+The watchdog deploy runs on the watchdog's own Cloudflare account ("Watchdog service" below; logged in
+there, not to the API's account; sandbox-dev's watchdog shares the API's account, D125):
+
+```sh
+corepack pnpm --filter @hana-id/watchdog gen <env>              # IDENTITY_PINS, IDENTITY_ISS (and the rest)
+corepack pnpm --dir apps/watchdog exec wrangler deploy
+```
+
+Check `/status` `identity.pinned` after the watchdog deploy and `identity.jwks` (`unpinned: 0`, `missing: []`) after
+the next run.
+
 ```sh
 S="corepack pnpm --filter @hana-id/scripts run identity-key <env>"
 $S show                                   # the published kids, their roles and Worker slots (public values only)
@@ -1101,11 +1214,13 @@ $S show                                   # the published kids, their roles and 
 **First setup (once per env):**
 
 ```sh
-$S init --yes        # active + standby + sub key files; identityToken in envs/<env>.json; uploads the active key and IDENTITY_SUB_KEY
+$S init --yes        # active + standby + sub key files; identityToken in envs/<env>.json (both keys pinned for the watchdog); uploads the active key and IDENTITY_SUB_KEY
+# the watchdog first (its own account): watchdog gen <env>, wrangler deploy (above)
 corepack pnpm --filter @hana-id/api run gen <env> --d1-id <id>   # IDENTITY_ISS, IDENTITY_PUBLIC_KEYS, IDENTITY_ACTIVE_KID, the bindings
 corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --remote   # 0008_identity_token.sql
 corepack pnpm --filter @hana-id/api run deploy
 curl -s <apiUrl>/v1/identity/jwks.json             # {"keys":[{…active…},{…standby…}]}, no "d"
+curl -s <apiUrl>/v1/identity/.well-known/openid-configuration   # issuer = identityToken.iss, jwks_uri = {iss}/jwks.json
 ```
 
 Then move `identity-signing-key-standby.json` offline. `init` refuses when any identity file exists or the manifest
@@ -1116,11 +1231,11 @@ into `apps/api/.dev.vars`, never the standby, and refuses a key that isn't the m
 **Scheduled rotation** (every 12 months; 14 days' notice to partners that pin thumbprints, 24 h on testnet):
 
 ```sh
-$S next --yes                 # a new key, published (manifest), uploaded nowhere → gen, deploy
+$S next --yes                 # a new key, published and pinned (manifest), uploaded nowhere → watchdog gen + deploy, THEN API gen + deploy
 # … wait the notice period …
-$S switch --to next --yes     # uploads it into the free slot, makes it the active kid; the old key becomes "previous" → gen, deploy
+$S switch --to next --yes     # uploads it into the free slot, makes it the active kid; the old key becomes "previous" → API gen, deploy (no pin change)
 # … ≥ 2 h later (tokens signed by the old key expire within 1 h) …
-$S retire --key previous --yes   # unpublishes the old key, deletes its Worker secret, sets its file aside → gen, deploy
+$S retire --key previous --yes   # unpublishes and unpins the old key, deletes its Worker secret, sets its file aside → API gen + deploy, THEN watchdog gen + deploy
 ```
 
 `switch` leaves both keys on the Worker until `retire`, so whichever manifest is deployed, a key with its active kid
@@ -1133,13 +1248,20 @@ is there. Run `retire` only after the switch's deploy. Retired key files are kep
    (the standby was never uploaded). A leak of `.secrets/<env>/` or the operator's machine exposes every key whose
    file was there, the standby too unless it was offline. **Unless the incident provably touches only the active key,
    treat both as exposed.**
-2. Only the active key exposed: `$S switch --to standby --yes`, gen, deploy, then at once `$S retire --key previous
-   --yes`, gen, deploy (no 2 h wait). Make a new standby with `$S next --yes` and move its file offline.
-3. Both exposed: `$S retire --key standby --yes`, `$S next --yes`, `$S switch --to next --yes`, gen, deploy, then
-   `$S retire --key previous --yes`, gen, deploy. Partners using the JWKS URL pick up the new kid at once and reject
-   the removed ones within 10 minutes; tokens with up to 1 h left die then too.
+2. Only the active key exposed: `$S switch --to standby --yes`, API gen, deploy, then at once `$S retire --key previous
+   --yes`, API gen, deploy, then watchdog gen, deploy (no 2 h wait). Make a new standby with `$S next --yes`
+   (watchdog gen and deploy first, then the API) and move its file offline.
+3. Both exposed: `$S retire --key standby --yes` and `$S next --yes` (one unpins, one pins): deploy the watchdog, then
+   the API, and acknowledge the `identity_key_unpinned` page for the standby while the old API is still live (or
+   deploy the API between the two commands to avoid it); then `$S switch --to next --yes`, API gen, deploy; then
+   `$S retire --key previous --yes`, API gen, deploy, watchdog gen, deploy. Partners using the JWKS URL pick up the
+   new kid at once and reject the removed ones within 10 minutes; tokens with up to 1 h left die then too.
 4. Tell partners (security contacts): the `kid`, the window in which forged tokens may have been accepted, what to
    re-check. Pinning partners update their pins.
+
+A key in the JWKS nobody on the team published is the watchdog's critical `identity_key_unpinned` (or
+`identity_private_key_published`, `identity_discovery_mismatch`): playbook `identity-jwks-forged`, which treats the API
+Worker or the Cloudflare account as compromised and rotates as above.
 
 **Sub key leak.** Privacy, not funds: the holder can map partners' `sub`s to on-chain paths. Not rotatable without a
 `u2_` scheme and a 90-day `legacy_sub` window (spec "`sub`").
@@ -1298,8 +1420,8 @@ There is no source-IP condition: Workers have no fixed egress addresses. The use
    --policy-name identity-sign --policy-document file://signer-policy.json` (the active key's ARN).
 4. **Manifest and sub key.** `$S kms-init --active active.json --standby standby.json --iam-user <iamUser> --yes`
    writes `identityToken` (refused unless the two keys are in two regions of one account), creates
-   `.secrets/<env>/identity-sub-key` and sets `IDENTITY_SUB_KEY`. Commit the manifest; add both thumbprints to the
-   watchdog's pins (build step 8).
+   `.secrets/<env>/identity-sub-key` and sets `IDENTITY_SUB_KEY`; with a `watchdog` block it also pins both keys in
+   `watchdog.pinnedIdentityKeys` (D211). Commit the manifest; deploy the watchdog (gen, deploy) before the API.
 5. **Access key.** `(umask 077; aws iam create-access-key --user-name <iamUser> > .secrets/<env>/identity-aws-access-key.json)`,
    then `$S kms-put-aws-key --yes`. It checks that the file is 0600, that the key belongs to the manifest's user, and
    that it is an active `AKIA…` key.
@@ -1336,15 +1458,17 @@ and refuses a leftover private signing key file). Local development uses a `loca
 **Scheduled key rotation** (every 12 months; 14 days' notice to partners that pin thumbprints):
 
 1. Create the new key in the **active key's region** (the standby keeps the other one), with the same key policy;
-   `get-public-key` → `next.json`; `$S kms-add --role next --key next.json --yes` → gen, deploy (the JWKS lists it,
-   nothing signs with it). Add its thumbprint to the watchdog's pins.
+   `get-public-key` → `next.json`; `$S kms-add --role next --key next.json --yes` (it also pins the key in
+   `watchdog.pinnedIdentityKeys`, D211) → **watchdog gen and deploy first**, then API gen and deploy (the JWKS lists it,
+   nothing signs with it).
 2. Wait the notice period.
 3. IAM: list both ARNs (active and next) in the signer user's policy, in `SignWithTheActiveIdentityKey` and
    `NoOtherKey`.
 4. **Pre-switch check** (below) on the next key.
 5. `$S kms-switch --to next --yes` → gen, deploy. The old key is now `previous`, still published.
-6. After ≥ 2 h: `$S kms-retire --key previous --yes` → gen, deploy. IAM: the new active ARN alone. KMS: `aws kms
-   disable-key` and `aws kms schedule-key-deletion --pending-window-in-days 30` on the old key. Remove its pin.
+6. After ≥ 2 h: `$S kms-retire --key previous --yes` (it also unpins the key) → API gen and deploy, **then** watchdog gen
+   and deploy. IAM: the new active ARN alone. KMS: `aws kms disable-key` and `aws kms schedule-key-deletion
+   --pending-window-in-days 30` on the old key.
 
 **Pre-switch check** (before any `kms-switch`, once the IAM policy lists the target key): prove that the signer user
 can sign with the target and that its signature verifies against the public key the manifest publishes for it. Only
@@ -1389,10 +1513,10 @@ unexplained `Sign` in CloudTrail, a forged token reported by a partner; planned 
    listed it, sessions can't sign); confirm it has no successful `Sign` events.
 3. **Switch:** the IAM policy → the standby's ARN (both statements); a new access key → the pre-switch check →
    `$S kms-put-aws-key --yes`; `$S kms-switch --to standby --yes` → gen, deploy.
-4. **Unpublish:** `$S kms-retire --key previous --yes` → gen, deploy (no 2 h wait); disable the old key and schedule
-   its deletion; remove its pin.
+4. **Unpublish:** `$S kms-retire --key previous --yes` (unpublishes and unpins) → API gen and deploy, then watchdog gen
+   and deploy (no 2 h wait); disable the old key and schedule its deletion.
 5. **New standby:** a new key in another region than the new active key; `$S kms-add --role standby --key <file>
-   --yes` → gen, deploy; pin it.
+   --yes` (publishes and pins) → watchdog gen and deploy first, then API gen and deploy.
 6. **Tell partners:** the `kid`, the window and count from CloudTrail, what to re-check. Post-mortem (D83).
 
 A KMS outage in the active region (`kms_unreachable`, `kms_internal` or `kms_timeout` in the logs, mints at 503) isn't
@@ -1506,7 +1630,8 @@ The independent watchdog of the governance batch (`docs/governance-spec.md` "Wat
 doesn't publish (and deletes the updater keys if the updater proposed it), pauses only when such a key is **active**,
 confirms keys that match, alerts on every governance change, and serves a read-only status for the admin portal.
 What it checks and its status API: `apps/watchdog/README.md`. **Deployed on sandbox-dev (2026-10-30; redeployed 2026-11-02
-with batch 5's email rules and link alarms, version b156e1b5, no new migration: on the v2 contract it reads "no email
+with batch 5's email rules and link alarms, version b156e1b5, then with identity token step 8's identity JWKS
+checks, version 67fe97cb (first run: 2 keys published, all pinned, discovery ok), no new migration: on the v2 contract it reads "no email
 issuer" and skips the link check)**:
 `https://hana-id-watchdog-sandbox-dev.tingtc.workers.dev`, cron `*/5 * * * *`, on the API's Cloudflare account
 (D125), D1 `hana-id-watchdog-sandbox-dev`. First deployed with no channel and no heartbeat; first run
@@ -1616,6 +1741,38 @@ come only from the watchdog's own manifest, never from the chain or Hana's JWKS.
 - **`unrecorded_wallets`** (D135, D139): sandbox-dev accepts after its v3 upgrade (`admin <env> owner:call
   accept_unrecorded_wallets`); on any env that isn't `local*` or `sandbox*` the watchdog pages while it is true.
 
+### Identity token: pins and the JWKS check
+
+The watchdog checks the partner identity token's published keys (`docs/identity-token-spec.md` "JWKS and discovery",
+D210–D214) against `watchdog.pinnedIdentityKeys` (`envs/README.md`): public thumbprints (the kids), set only in the
+watchdog's own manifest block and deployed on its own account, never taken from Hana's JWKS. `watchdog gen` passes
+them as `IDENTITY_PINS` and `identityToken.iss` as `IDENTITY_ISS`; an env without `identityToken` skips the check.
+
+- Every run, after the protective work (D86), it reads `{iss}/jwks.json` and `{iss}/.well-known/openid-configuration`
+  (no cache, no redirect followed, 64 KB cap). An unpinned key (or one with members beyond the public ones), private
+  key material, a wrong `issuer` / `jwks_uri`, or an answer that can't be judged (a redirect, padding, not JSON,
+  duplicate members, the wrong shape) pages critical at once; 3 failed fetches in a row page critical too; a pinned key
+  not published (or under another kid) warns. **It never pauses for these**: partners verify identity tokens, the
+  contract never does.
+- **What that catches, and what it doesn't** (D210): an attacker who publishes the same JWKS to everyone. Someone who
+  controls Hana's Cloudflare account can recognise the watchdog's fetches (they come from Cloudflare's network) and
+  serve them a clean JWKS while partners get another, or publish a key for less than a run. The **outside probe**
+  narrows the first: the GitHub Actions workflow `identity-probe` (`.github/workflows/identity-probe.yml`, every
+  15 min, no secrets) fetches each non-`local*` env's JWKS and discovery document from GitHub's network with a `jose`
+  User-Agent and the same rules (`@hana-id/jwks/identity`), against `watchdog.pinnedIdentityKeys` in the repo's
+  manifests, and fails on any finding (every value from Hana's answers is printed JSON-quoted, escaped to printable
+  ASCII with `%` too, and cut, and no line can start with `::`, so a hostile JWKS can't inject a workflow command);
+  GitHub emails the failure to whoever last changed the workflow's schedule, so
+  that must be a founder (and scheduled workflows run only on the default branch). Run it by hand:
+  `corepack pnpm --filter @hana-id/scripts run identity-probe <env>`. Neither closes the gap: an attacker can still
+  single out partners' traffic. Partners that pin thumbprints (`docs/integration.md` section 15, the recommended
+  default for anything of value) are the only ones safe from it.
+- It also alerts critical (`identity_key_on_chain`) if an issuer key on chain has an identity key's thumbprint as its
+  kid (D212); the Google and email rules act on such a key as on any other forged one.
+- Pin changes follow "Identity token keys" above: `identity-key` writes them; the watchdog deploys first after a pin,
+  last after an unpin. sandbox-dev pins its active and standby keys; its watchdog needs a `watchdog gen` and
+  redeploy to start the check (not done on this branch).
+
 ### Watchdog alerts (runbook)
 
 Critical alerts page both founders (paging app + Slack + email) and are re-sent every 15 min until someone
@@ -1642,7 +1799,7 @@ This table only says what each kind means:
 | `governance_change` | An upgrade proposal or execution, owner transfer, withdrawal, watchdog, updater-key, delay or console-audience change, pause or unpause (`unpaused_at_ms` shows one that fell between two runs), a raised session floor (`sessions_valid_from_ms`), a change of the owner DAO's code or policy (`owner_code_hash`, `owner_policy`: a `ChangePolicy`, `AddMember` or `RemoveMember`), `mpc`, `ckd_domain_id` or `state_version`, `unrecorded_wallets`, or the owner's immediate issuer actions, which leave no pending state: `issuer` (`set_issuer` changed Google's iss values) and `issuer_keys` (an active kid disappeared without a pending removal leaving the queue: `remove_issuer_key`; also a removal proposed and confirmed by another watchdog between two runs), and the same for the email issuer (`email_issuer`, `email_issuer_keys`) and its signer policy (`email_signer_policy`: `mark_self_issued`, or an upgrade's `migrate`). Alert only. Nobody but the owner can cancel an upgrade (D84) | [`governance-change`](playbooks.md#governance-change) |
 | `automatic_action` | The watchdog acted again for an incident it already alerted (e.g. paused again after an unpause, or deleted an updater key added while a forged key is still active) | [`watchdog-acted-again`](playbooks.md#watchdog-acted-again) |
 | `protective_action_failed` | A cancel, pause or updater-key deletion the watchdog sent failed, or a forged change it tried to cancel was executed first (or it couldn't tell) | [`protective-action-failed`](playbooks.md#protective-action-failed) |
-| `not_a_watchdog`, `watchdog_key_missing`, `wrong_network`, `pins_invalid` | The watchdog can't act: its account isn't a contract watchdog, its key is missing or bad, or its RPC is on another chain; until fixed nothing cancels forged keys. `pins_invalid`: `EMAIL_PINS` is unreadable, so every email key counts as unpinned (cancelled, paused on; their alerts say `pins_unreadable`) | [`watchdog-cannot-act`](playbooks.md#watchdog-cannot-act) |
+| `not_a_watchdog`, `watchdog_key_missing`, `wrong_network`, `pins_invalid` | The watchdog can't act: its account isn't a contract watchdog, its key is missing or bad, or its RPC is on another chain; until fixed nothing cancels forged keys. `pins_invalid`: `EMAIL_PINS` is unreadable, so every email key counts as unpinned (cancelled, paused on; their alerts say `pins_unreadable`); `pins_invalid:identity`: `IDENTITY_PINS` is unreadable, so every published identity key pages as unpinned; `pins_invalid:identity_no_iss`: `IDENTITY_PINS` without `IDENTITY_ISS`, so the identity check can't run (it then resolves nothing) | [`watchdog-cannot-act`](playbooks.md#watchdog-cannot-act) |
 | warning `rpc_failing`, `jwks_failing`, `heartbeat_failing`, `channel_not_configured` | The watchdog is partly blind or mute (a dead watchdog is caught by the dead-man's switch: [`watchdog-down`](playbooks.md#watchdog-down)) | [`watchdog-degraded`](playbooks.md#watchdog-degraded) |
 | warning `unexecuted_key_change`, `stale_active_key` | A matured key change nobody executed (> 1 h), or an active kid Google dropped > 3 h ago | [`key-sync-stalled`](playbooks.md#key-sync-stalled) |
 | warning `active_key_material_unavailable` | The contract has no `get_issuer_keys` (older code): active keys are checked by kid only | [`active-key-material-unavailable`](playbooks.md#active-key-material-unavailable) |
@@ -1650,6 +1807,9 @@ This table only says what each kind means:
 | `relayer_balance_critical`, `relayer_allowance_critical`, `relayer_pool_empty`; warning `relayer_balance_low`, `relayer_allowance_low` | The relayer account's available balance, or a pool key's remaining allowance, is below its threshold (defaults: balance 5 / 1 NEAR; session key 0.5 / 0.1; owner key 0.1 / 0.02; manifest `watchdog.relayerFunds`), or a pool has no key: relays from it fail once it runs out. Read-only: the watchdog never tops up | [`relayer-out-of-funds`](playbooks.md#relayer-out-of-funds) |
 | warning `confirm_failed` | A confirmation of a key that matches Google's JWKS failed: it goes live only after the full delay | [`confirm-failed`](playbooks.md#confirm-failed) |
 | warning `email_jwks_mismatch` | Hana's published email JWKS lists a key that isn't pinned (or whose kid isn't its thumbprint), lacks an active email key, or failed 3 fetches while email keys are active. Informational: the contract never reads it | [`email-jwks-mismatch`](playbooks.md#email-jwks-mismatch) |
+| `identity_key_unpinned`, `identity_private_key_published`, `identity_discovery_mismatch`, `identity_jwks_unreadable` | Hana's partner identity JWKS (`{iss}/jwks.json`) publishes a key whose RFC 7638 thumbprint isn't in `watchdog.pinnedIdentityKeys` (or that isn't P-256, or has members beyond `kty crv x y kid use alg`; with nothing pinned every key is unpinned), or private key material, or its discovery document names another `issuer` or `jwks_uri` (D210, D213); or an answer can't be judged: a redirect, a 200 over 64 KB, not JSON, duplicate members, the wrong shape (at once), or 3 failed fetches in a row (`:sustained`). Partners trusting the JWKS URL would accept tokens for any user. Alert only, **no pause** (the chain isn't involved). A rotation deployed in the wrong order (API before the watchdog after `next`, the watchdog before the API after `retire`) also raises it | [`identity-jwks-forged`](playbooks.md#identity-jwks-forged) |
+| warning `identity_key_missing` | A pinned identity key isn't in the JWKS under its thumbprint as kid with public members only (a rotation half deployed, a kid changed, or extra members: then also `identity_key_unpinned`) | [`identity-jwks-degraded`](playbooks.md#identity-jwks-degraded) |
+| `identity_key_on_chain` | An active Google or email issuer key, or a pending key addition, has an identity token key's thumbprint as its kid (D212). Alert only: the same run's issuer-key rules cancel or pause on it | [`identity-key-on-chain`](playbooks.md#identity-key-on-chain) |
 | `link_threshold_reached`; warning `link_volume_high`, `link_stats_unavailable` | `get_link_stats()` (D200): links reached an alarm threshold in the current or previous UTC hour, in one scope or in all; they went through (the contract refuses nothing): a partner launch, or a stolen email key taking over Google wallets by linking (alert only; the council decides whether to pause); the current hour at half the total threshold; or the view is missing with an email issuer on chain, malformed or failing (`link_stats_unavailable:missing` / `:malformed` / `:read_failed`; only the link check is affected, every protective step still runs) | [`link-volume`](playbooks.md#link-volume) |
 | info `key_change_confirmed`, `key_change_executed`, `key_change_cancelled` | Routine key-change events | [`key-change-lifecycle`](playbooks.md#key-change-lifecycle) |
 | info `self_issued_key_change` | A pending email key pinned for its signer, or a pending email key removal: never confirmed (self-issued keys wait `governance_delay_ms`) | [`self-issued-key-change`](playbooks.md#self-issued-key-change) |
@@ -2014,7 +2174,7 @@ mind (`VAULT_KEK` above). Skip it only when the database is gone altogether.
 
 **What is lost**: every write after the restore point. Apps created then (their publishable keys stop working), origin
 and settings changes (a pending `raw_sign` / `auto_approve` change scheduled then is gone: the partner asks again),
-**suspensions and revocations made then are undone**, usage counters, `vault_shares` created then (those users sign
+**suspensions and revocations made then are undone**, session markers, `vault_shares` created then (those users sign
 in with Google again; their addresses are on chain and unchanged), and the issuer-key cron's state
 (`issuer_key_observations`, `issuer_key_missing`, `issuer_key_proposals`, `issuer_key_sync_runs`). The cron rebuilds
 the last from chain: a pending change by the signer account it has no row for is adopted, a missing kid's 55-min

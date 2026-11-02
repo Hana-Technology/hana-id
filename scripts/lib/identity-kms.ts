@@ -25,7 +25,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type AwsKmsSignerConfig, IDENTITY_SECRET_FILES, KMS_KEY_ARN_RE, type Manifest, identityIssuerFor, kmsArnParts, manifestPath, p256Thumbprint, repoRoot } from '@hana-id/env';
 import { CliError, type parseCli } from './cli.ts';
-import { type IdentityKeyDeps, insertManifestBlock, newSubKey, replaceManifestBlock } from './identity-key.ts';
+import { type IdentityKeyDeps, insertManifestBlock, newSubKey, replaceManifestBlock, withIdentityPins } from './identity-key.ts';
 import { assertPrivate, parseSecretJson, secretsDir } from './secrets.ts';
 import { DRY_RUN_LINE, writeNewSecretFile } from './vault-kek.ts';
 
@@ -109,6 +109,14 @@ export function identityKms(m: Manifest, command: KmsCommand, args: Args, deps: 
   const readText = deps.readManifestText ?? ((name: string) => readFileSync(manifestPath(name), 'utf8'));
   const writeText = deps.writeManifestText ?? ((name: string, text: string) => writeFileSync(manifestPath(name), text));
   const redeploy = `Commit envs/${m.name}.json, then gen and deploy the API (docs/operations.md "Identity token keys on AWS KMS").`;
+  // The watchdog pins every published identity key (D211): kms-init and kms-add pin, kms-retire unpins, as next/retire do.
+  const watched = m.watchdog !== undefined;
+  const pinFirst = watched
+    ? `Commit envs/${m.name}.json, then gen and deploy the watchdog FIRST (on its own Cloudflare account), then gen and deploy the API (docs/operations.md "Identity token keys on AWS KMS"); until both are deployed the watchdog warns identity_key_missing.`
+    : redeploy;
+  const unpinAfter = watched
+    ? `Commit envs/${m.name}.json, then gen and deploy the API FIRST, then gen and deploy the watchdog (docs/operations.md "Identity token keys on AWS KMS"): the other order pages identity_key_unpinned until the API deploy.`
+    : redeploy;
   const readKeyFile = (flag: string): { arn: string; jwk: ReturnType<typeof entry> } => {
     const path = args.str(flag);
     if (!path) throw new CliError(`${command} needs --${flag} <file> (aws kms get-public-key --key-id <arn> --output json)`);
@@ -136,16 +144,17 @@ export function identityKms(m: Manifest, command: KmsCommand, args: Args, deps: 
     deps.log(
       `Plan (env ${m.name}): add identityToken (iss ${block.iss}, aws-kms signer, IAM user ${iamUser}) with ${describeKey('active', block.signer.keys.active)} and ` +
         `${describeKey('standby', block.signer.keys.standby)} to envs/${m.name}.json; write a 32-byte sub key to .secrets/${m.name}/${IDENTITY_SECRET_FILES.subKey} (0600)` +
-        `${local ? '' : ` and set IDENTITY_SUB_KEY on Worker ${worker}`}. The AWS credentials come next: \`kms-put-aws-key\`.`,
+        `${watched ? '; pin both in watchdog.pinnedIdentityKeys' : ''}${local ? '' : ` and set IDENTITY_SUB_KEY on Worker ${worker}`}. The AWS credentials come next: \`kms-put-aws-key\`.`,
     );
     if (!apply) return void deps.log(DRY_RUN_LINE);
     // The manifest is checked (insertManifestBlock validates it: regions, one account) before the sub key is made.
-    const text = insertManifestBlock(readText(m.name), 'identityToken', block, 'apiUrl');
+    // Pins first (D211): each intermediate manifest validates, and a published key is always pinned.
+    const text = insertManifestBlock(withIdentityPins(readText(m.name), block.publicKeys.map((k) => k.kid), []), 'identityToken', block, 'apiUrl');
     const subKey = newSubKey(deps.randomBytes);
     writeNewSecretFile(subFile, `${subKey}\n`);
     deps.log(`Wrote .secrets/${m.name}/${IDENTITY_SECRET_FILES.subKey} (0600, value not shown). Back it up offline with the council backup (D81): it is never rotated.`);
     writeText(m.name, text);
-    deps.log(`Wrote identityToken to envs/${m.name}.json. ${redeploy}`);
+    deps.log(`Wrote identityToken to envs/${m.name}.json${watched ? ' and pinned both keys in watchdog.pinnedIdentityKeys' : ''}. ${pinFirst}`);
     if (local) return void deps.log(`IDENTITY_SUB_KEY not set on the Worker (--local).`);
     deps.putSecret(m, 'IDENTITY_SUB_KEY', subKey);
     deps.log(`Set IDENTITY_SUB_KEY (32 bytes) on Worker ${worker}.`);
@@ -186,11 +195,15 @@ export function identityKms(m: Manifest, command: KmsCommand, args: Args, deps: 
         throw new Error(`The ${role} key is in ${region}, the ${other} key's region: the standby and the active (or next) key must be in two regions (D219)`);
       }
     }
-    deps.log(`Plan (env ${m.name}): publish ${describeKey(role, { kid: key.jwk.kid, arn: key.arn })} in envs/${m.name}.json (region ${region}; nothing signs with it yet).`);
-    if (!apply) return void deps.log(DRY_RUN_LINE);
-    writeManifest({ ...t, signer: { ...signer, keys: { ...keys, [role]: { kid: key.jwk.kid, arn: key.arn } } }, publicKeys: [...t.publicKeys, key.jwk] });
     deps.log(
-      `Published kid ${key.jwk.kid} as ${role}. ${redeploy}` +
+      `Plan (env ${m.name}): publish ${describeKey(role, { kid: key.jwk.kid, arn: key.arn })} in envs/${m.name}.json${watched ? ', pinned in watchdog.pinnedIdentityKeys' : ''} (region ${region}; nothing signs with it yet).`,
+    );
+    if (!apply) return void deps.log(DRY_RUN_LINE);
+    // Pinned before published (D211).
+    const added = { ...t, signer: { ...signer, keys: { ...keys, [role]: { kid: key.jwk.kid, arn: key.arn } } }, publicKeys: [...t.publicKeys, key.jwk] };
+    writeText(m.name, replaceManifestBlock(withIdentityPins(readText(m.name), [key.jwk.kid], []), 'identityToken', added));
+    deps.log(
+      `Published kid ${key.jwk.kid} as ${role}${watched ? ' and pinned it' : ''}. ${pinFirst}` +
         (role === 'next' ? ' Partners that pin thumbprints need 14 days\' notice before `kms-switch --to next`, unless this is an incident.' : ''),
     );
     return;
@@ -223,11 +236,15 @@ export function identityKms(m: Manifest, command: KmsCommand, args: Args, deps: 
   const key = keys[which];
   if (!key) throw new Error(`identityToken.signer.keys has no ${which} key`);
   const { [which]: _gone, ...rest } = keys;
-  deps.log(`Plan (env ${m.name}): unpublish ${describeKey(which, key)} (identityToken.signer.keys and publicKeys in envs/${m.name}.json).`);
-  if (!apply) return void deps.log(DRY_RUN_LINE);
-  writeManifest({ ...t, signer: { ...signer, keys: rest as AwsKmsSignerConfig['keys'] }, publicKeys: t.publicKeys.filter((k) => k.kid !== key.kid) });
   deps.log(
-    `Kid ${key.kid} is unpublished. ${redeploy} Partners using the JWKS URL reject its tokens within 10 minutes of the deploy. ` +
+    `Plan (env ${m.name}): unpublish ${describeKey(which, key)} (identityToken.signer.keys and publicKeys${watched ? ', and its pin in watchdog.pinnedIdentityKeys' : ''} in envs/${m.name}.json).`,
+  );
+  if (!apply) return void deps.log(DRY_RUN_LINE);
+  // Unpublished first, then unpinned (D211): a retired key is never left pinned.
+  const removed = { ...t, signer: { ...signer, keys: rest as AwsKmsSignerConfig['keys'] }, publicKeys: t.publicKeys.filter((k) => k.kid !== key.kid) };
+  writeText(m.name, withIdentityPins(replaceManifestBlock(readText(m.name), 'identityToken', removed), [], [key.kid]));
+  deps.log(
+    `Kid ${key.kid} is unpublished${watched ? ' and unpinned' : ''}. ${unpinAfter} Partners using the JWKS URL reject its tokens within 10 minutes of the deploy. ` +
       `In AWS: remove ${key.arn} from the IAM policy, disable the key and schedule its deletion (30 days).`,
   );
 }

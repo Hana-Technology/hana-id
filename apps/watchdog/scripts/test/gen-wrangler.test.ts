@@ -2,14 +2,15 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KeyPair } from '@near-js/crypto';
-import { isDevEnv, type Manifest, PAGER_PROVIDERS, manifestSchema, WATCHDOG_INTERVAL_MS } from '@hana-id/env';
+import { isDevEnv, loadEnv, type Manifest, PAGER_PROVIDERS, manifestSchema, WATCHDOG_INTERVAL_MS } from '@hana-id/env';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RUN_INTERVAL_MS } from '../../src/checks.ts';
 
+import { identityDiscoveryUrl, parseIdentityPins } from '../../src/identity.ts';
 import { parsePins } from '../../src/pins.ts';
 import { isDevEnvName, PAGER_PROVIDERS as WORKER_PAGERS, SECRET_NAMES } from '../../src/names.ts';
 import { relayerThresholds } from '../../src/relayer.ts';
-import { CRON, LOCAL_D1_ID, TEST_MANIFEST, devVarsContent, existingD1Id, main, testWranglerConfig, wranglerConfig, writeWranglerConfig } from '../gen-wrangler.ts';
+import { CRON, LOCAL_D1_ID, TEST_MANIFEST, devVarsContent, existingD1Id, identityVars, main, testWranglerConfig, wranglerConfig, writeWranglerConfig } from '../gen-wrangler.ts';
 import { SECRET_RULES } from '../secrets.ts';
 
 const dirs: string[] = [];
@@ -101,6 +102,18 @@ describe('wranglerConfig', () => {
     // An issuer on its own URL (emailIssuer.url, D230): the default follows it.
     const issuerUrl = { ...m, emailIssuer: { url: 'https://hana-id-email-issuer-x.sub.workers.dev' } } as unknown as typeof m;
     expect((wranglerConfig(issuerUrl, D1).vars as Record<string, string>).EMAIL_JWKS_URL).toBe('https://hana-id-email-issuer-x.sub.workers.dev/v1/email/jwks.json');
+  });
+
+  it('passes the identity issuer and pins in a form the Worker reads; none without them (D210)', () => {
+    const none = wranglerConfig(TEST_MANIFEST, D1).vars as Record<string, string>;
+    expect(none.IDENTITY_ISS).toBeUndefined();
+    expect(none.IDENTITY_PINS).toBeUndefined();
+    expect(parseIdentityPins(none.IDENTITY_PINS)).toEqual({ pins: null, problems: [] });
+    const sandbox = loadEnv('sandbox-dev');
+    const vars = identityVars(sandbox);
+    expect(vars.IDENTITY_ISS).toBe(sandbox.identityToken!.iss);
+    expect(parseIdentityPins(vars.IDENTITY_PINS)).toEqual({ pins: sandbox.identityToken!.publicKeys.map((k) => k.kid), problems: [] });
+    expect(identityDiscoveryUrl(vars.IDENTITY_ISS!)).toBe(`${sandbox.apiUrl}/v1/identity/.well-known/openid-configuration`);
   });
 
   it("decides a dev env as @hana-id/env does (D139's unrecorded_wallets alert is for other envs)", () => {

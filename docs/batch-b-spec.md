@@ -1,6 +1,6 @@
 # Batch B spec: SDK (vault, login pages, packages)
 
-**Status: DRAFT (2026-10-27).** Written by a multi-agent design workflow (3 proposals + a judge per decision, then security, completeness and implementability reviews). Not yet reviewed or approved by the user: every decision and open question below needs confirmation before implementation.
+**Status: built; merged into `develop` and deployed on sandbox-dev (2026-10-29); the decisions are `docs/decisions.md` D22–D27, D35–D37, D47–D72 and D76–D79, and the questions still open are under "Proposed, not yet confirmed" there. History: the current state is in the reference docs (`docs/README.md`).** Drafted 2026-10-27 by a multi-agent design workflow (3 proposals + a judge per decision, then security, completeness and implementability reviews).
 
 This file is the source of truth for batch B. If code and this spec disagree, fix the code or raise the problem; don't diverge quietly.
 

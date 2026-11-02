@@ -1,6 +1,7 @@
 # hana-signer contract interface (batch A, A.2, B, governance and email login)
 
-Last verified against code: 2026-11-02 (branch `feat/link-cap`: the hourly link counter, D200: `set_link_thresholds`,
+Last verified against code: 2026-11-02 (branch `docs/consistency-pass`: the conventions' gas note points at the
+sandbox measurement of `create_session_and_derive`); 2026-11-02 (branch `feat/link-cap`: the hourly link counter, D200: `set_link_thresholds`,
 `get_link_stats`, `link_threshold_reached`, gas; it never refuses a link); 2026-11-02 (branch `feat/email-login-2`: contract v3 with `migrate_v1` removed, the email
 login calls and the v2 → v3 upgrade measured in the sandbox, [Gas of the email login calls](#gas-of-the-email-login-calls-sandbox)).
 
@@ -34,7 +35,9 @@ Conventions:
   (`apps/api/src/gas.ts`, overridable per env with `GAS_<METHOD>_TGAS`): `create_session` 50 Tgas,
   `create_session_and_derive` 100, `derive_key` 60, `revoke_session` 20, `prune_sessions` 50, owner-pool methods 50
   except `register_scope` (30 + 25 per client proof, ≤ 280). Measured on testnet (`docs/context.md`): `create_session`
-  and `derive_key` each burn ~20 Tgas over all receipts; `create_session_and_derive` is **not yet measured**. 300 Tgas
+  and `derive_key` each burn ~20 Tgas over all receipts. `create_session_and_derive` is measured in the sandbox with
+  the mock MPC (email-login batch 2), not yet on testnet: ≈ 20.5 Tgas in the signer's receipt, 22–23 Tgas in all with a
+  Google token ([Gas of the email login calls](#gas-of-the-email-login-calls-sandbox), [Upgrades](#upgrades)). 300 Tgas
   always works. View methods cost nothing. Governance calls (sandbox, `contracts/integration-tests/tests/governance.rs`):
   the updater key sends 30 Tgas to `set_issuer_key`, `propose_issuer_key_removal` and `execute_issuer_key_change`
   (its allowance is 1 NEAR); `execute_upgrade` needs 300 Tgas (see [Upgrades](#upgrades)); owner calls through the

@@ -428,7 +428,7 @@ per-prefix shares (20%) of a domain's day, ticketed starts exempt, `email_domain
   client proofs at the scope's current `action_nonce` with an email app; `email-issuer <env> put --standby` and the
   exact key-leak runbook; issuer-minted tokens checked in the real contract (`contracts/hana-signer` tests only, 4
   tests, `issuer_tokens_fixture.json`); gitleaks `hana-private-jwk` also matches an unquoted `d: '…'`.
-- **Abuse re-check fixes** (D198, D199, to confirm): an owner budget pool (finally 1 × the budget beside it, no per-app cap, past 50% only tickets ≥ 7 days old and grants) and plan-sized app shares,
+- **Abuse re-check fixes** (D198, D199, to confirm): an owner budget pool (finally 30% of the budget beside it: fresh tickets below half and ≤ 20% per app, aged tickets and grants uncapped per app, a fallback to the app's general share; owner allowances per address and per mailbox) and plan-sized app shares,
   `dailySendBudget` required outside `local*` (`init --budget`); a domain cap that grows with verified logins and gives
   a verified challenge's places back, more exempt providers; ticket and grant checked before the prefix limits (raised
   to 1000 a day) and skipping every shared pool; `admin/unlock` and `admin/unsuppress` mail the address instead of
@@ -437,7 +437,7 @@ per-prefix shares (20%) of a domain's day, ticketed starts exempt, `email_domain
   deterministic contract fixture with a regeneration test. Then the scan of the re-check: owner allowances per exact
   address, ≤ 5 live tickets per address and ≤ 10 ticket challenges per address a day, a staff mail pool, the effective owner kind on resend, a domain cap from distinct verified mailboxes with
   a 2,000 ceiling.
-- **Tests.** apps/email-issuer: 115 Worker tests (miniflare: layouts against the contract fixtures, codes,
+- **Tests.** apps/email-issuer: 116 Worker tests (miniflare: layouts against the contract fixtures, codes,
   limits and the ceiling, google-match's four cases, signers and KMS, adapters, the log-capture test) and 7 node tests (`gen`, the fixture);
   packages/env +11 (`emailIssuer`), packages/jwks +3 (`rsaThumbprint`), scripts +10 (`email-issuer`) and 6 secret-scan
   self-test cases; hana-signer +4 (`tests/email/issuer_tokens.rs`, 303 in all); `pnpm -r test` and `pnpm -r typecheck` green. Existing tests broken on `develop` by the identity-token deploy

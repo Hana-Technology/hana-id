@@ -2516,6 +2516,21 @@ is computed by `@hana-id/email` alone, from the normalized address including any
       for a day, bounded by its global ceiling (1 × `dailySendBudget` of extra mail); real owners are then refused until
       the UTC day ends, as they would be without tickets. Staff revocation and the 5-live-tickets-per-address cap limit
       the stock; batch 9's `email_owner_pool` alert shows it.
+    - **Final round (to confirm), superseding the owner-pool size and the per-address-only counts above:**
+      - Owner challenges and ticket mails are counted **per exact address (10 challenges, 3 mails a day) and per
+        mailbox (30 challenges, 9 mails a day)**, unlock-grant starts included in the mailbox's 30. The `+tag`s of one
+        inbox share a bounded allowance: a `+tag` holder (on a domain without sub-addressing, a different person) can't
+        use up the victim's per-address allowance and takes at most a third of the mailbox's.
+      - The **owner pool is 30% of `dailySendBudget`**, beside it: all mail together ≤ 1.3 × the budget. A fresh ticket
+        (< 7 days) draws on it only below half of it and within **20% of it per app**; aged tickets and grants have no
+        per-app cap (bounded by the per-address and per-mailbox limits and the pool). Owner mail the owner pool refuses
+        **falls back to the app's general share**, if any is left, instead of failing.
+      - **Residuals, to confirm:** (1) a stock of ≥ 7-day-old sock-puppet tickets (real verified logins at addresses the
+        attacker controls, 3 mails a day each, 9 per mailbox) can use up the owner pool for a day, at most 0.3 × the
+        budget of extra mail; real owners then fall back to their app's general share. (2) Holders of 3 `+tag` addresses
+        of one inbox (only where the domain gives `+tag`s to other people) can use the mailbox's 9 ticket mails and 30
+        owner challenges, leaving the inbox's own address its per-address 3 only if the mailbox has room. (3) Fresh
+        tickets of one app take at most 20% of the pool, so five attacker-held apps can fill the fresh half.
 
 ### D199. HTTP, data and chain readings of the issuer
 - Date 2026-11-02 · Status: to confirm (built) · Source: build of the spec's "Endpoints", "The four cases",

@@ -417,28 +417,28 @@ describe('the owner’s recovery never depends on a pool an attacker can fill (a
     expect(owners).toBe(10);
   });
 
-  it('final check M1: past half the owner pool, fresh (sock-puppet) tickets fall back to the general pool; aged ones and grants keep it; logged', async () => {
+  it('owner pool: fresh tickets capped per app (20%) and below half; aged tickets unaffected by fresh floods; refusals fall back to the general share; logged', async () => {
     const h = await harness();
     const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`${h.deps.env.ENV_NAME}:global`));
-    // Budget 20: the owner pool, 20, beside the general pool (15 here, after the staff pool's 5).
-    let fresh = 0;
-    const lines: string[] = [];
-    for (let i = 0; i < 40; i++) {
-      const r = await stub.reserveBudget(`x${i % 2}`, 20, 2, 'owner', morning);
-      if (r.ok) {
-        fresh++;
-        lines.push(...r.crossed);
-      }
-    }
-    // Half the owner pool (10), then only the apps' general shares (2 each): fresh tickets can't fill the rest.
-    expect(fresh).toBe(10 + 4);
-    expect(lines).toContain('owner_50');
-    // The aged real tickets (and grants) still get the other half.
-    let aged = 0;
-    for (let i = 0; i < 15; i++) if ((await stub.reserveBudget('x0', 20, 2, 'owner_aged', morning)).ok) aged++;
-    expect(aged).toBe(10);
+    // Budget 100: the owner pool, 30, beside the general pool (95); a fresh ticket's app may take 6 of the pool.
+    const take = async (app: string, kind: 'owner' | 'owner_aged', share: number) => {
+      const r = await stub.reserveBudget(app, 100, share, kind, morning);
+      return r.ok ? (r.reservation.keys.some((k) => k.startsWith('budget-owner@')) ? 'owner' : 'general') : 'refused';
+    };
+    // Fresh tickets of one app: 6 from the owner pool, then the app's general share (2), then refused.
+    const one: string[] = [];
+    for (let i = 0; i < 10; i++) one.push(await take('f0', 'owner', 2));
+    expect(one).toEqual([...Array<string>(6).fill('owner'), 'general', 'general', 'refused', 'refused']);
+    // A fresh flood from many apps stops at half the pool (15) and spills into the apps' general shares.
+    let flood = 6;
+    for (let a = 1; a < 10; a++) for (let i = 0; i < 6; i++) if ((await take(`f${a}`, 'owner', 0)) === 'owner') flood++;
+    expect(flood).toBe(15);
+    // Aged tickets and grants: no per-app cap, the rest of the pool (15), then the general share as a fallback.
+    const aged: string[] = [];
+    for (let i = 0; i < 17; i++) aged.push(await take('real', 'owner_aged', 1));
+    expect(aged).toEqual([...Array<string>(15).fill('owner'), 'general', 'refused']);
     // Through start: the crossing is logged as email_owner_pool.
-    const h2 = await harness({ env: { ...env, ENV_NAME: `op-${uid()}`, DAILY_SEND_BUDGET: '12' } });
+    const h2 = await harness({ env: { ...env, ENV_NAME: `op-${uid()}`, DAILY_SEND_BUDGET: '40' } });
     h2.clock.now = morning;
     const app = await seedApp(h2);
     const a = `op${uid().replace(/[^a-z0-9]/gu, '')}@gmail.com`;
@@ -448,6 +448,49 @@ describe('the owner’s recovery never depends on a pool an attacker can fill (a
     await runInDurableObject(g2, (_o, state) => state.storage.kv.put(`budget-owner@${Date.UTC(2027, 1, 3)}`, 5));
     const { lines: logs } = await captureLogs(() => h2.call('/v1/email/start', startBody(h2, app, a, { deviceTicket: ticket }), { ip: '192.0.2.121' }));
     expect(logs.some((l) => l.includes('"email_owner_pool"') && l.includes('"code":"owner_50"'))).toBe(true);
+  });
+
+  it('the +tags of one inbox share a bounded owner allowance: 3 mails and 10 challenges per address, 9 and 30 per mailbox', async () => {
+    const h = await harness();
+    const base = `p${uid().replace(/[^a-z0-9]/gu, '')}`;
+    const keys = await h.deps.keys();
+    const box = await mailboxObject(h, `${base}@gmail.com`);
+    const claimFor = async (tag: string) => {
+      const addrKey = await suppressionKey(keys, `${base}+${tag}@gmail.com`);
+      await box.registerTicket(addrKey, `t-${tag}`, morning, morning);
+      return { kind: 'ticket' as const, id: `t-${tag}`, addrKey, issuedAtMs: morning };
+    };
+    const sends = async (tag: string) => {
+      const claim = await claimFor(tag);
+      let n = 0;
+      for (let i = 0; i < 5; i++) {
+        const adm = await box.admit(`r-${tag}-${i}`, morning + 600_000, true, morning, claim);
+        if (adm.ok && adm.owner) n++;
+      }
+      return n;
+    };
+    // Each +tag gets its own 3; together at most 9: a fourth address of the inbox gets none that day.
+    expect([await sends('a'), await sends('b'), await sends('c'), await sends('d')]).toEqual([3, 3, 3, 0]);
+    // Owner challenges (no first mail): 10 per address, 30 per mailbox, grants counted too.
+    const box2 = await mailboxObject(h, `${base}2@gmail.com`);
+    const claim2 = async (tag: string) => {
+      const addrKey = await suppressionKey(keys, `${base}2+${tag}@gmail.com`);
+      await box2.registerTicket(addrKey, `u-${tag}`, morning, morning);
+      return { kind: 'ticket' as const, id: `u-${tag}`, addrKey, issuedAtMs: morning };
+    };
+    let owners = 0;
+    for (const tag of ['a', 'b', 'c', 'd']) {
+      const claim = await claim2(tag);
+      for (let i = 0; i < 12; i++) {
+        const adm = await box2.admit(`q-${tag}-${i}`, morning + 600_000, false, morning, claim);
+        if (adm.ok && adm.owner) owners++;
+      }
+    }
+    expect(owners).toBe(30);
+    await box2.issueGrant('g-1', morning);
+    const g = await box2.admit('q-grant', morning + 600_000, false, morning, { kind: 'grant', hash: 'g-1' });
+    // The mailbox's 30 are used: the grant counts as nothing (an ordinary start, which the live cap refuses here).
+    expect(g.ok ? g.owner : null).toBeNull();
   });
 
   it('a ticket revoked after its challenge started gets no owner path on resend: domain cap and general budget apply (scan)', async () => {

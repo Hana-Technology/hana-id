@@ -25,6 +25,7 @@ import type { Env } from './env.ts';
 import {
   BUDGET_LOG_AT,
   BUDGET_OWNER_AGED_FROM,
+  BUDGET_OWNER_FRESH_APP_SHARE,
   BUDGET_RESERVE,
   DOMAIN_PREFIX_SHARE,
   DOMAIN_PREFIX_WINDOW,
@@ -41,9 +42,11 @@ import {
   MAILBOX_IP_LOCK_MS,
   MAILBOX_IP_WRONG_DAY,
   MAILBOX_IP_WRONG_LIMIT,
+  MAILBOX_OWNER_CHALLENGES,
   MAILBOX_OWNER_SLOT,
   MAILBOX_RESERVE_LIMIT,
   MAILBOX_TICKET_SENDS,
+  MAILBOX_TICKET_SENDS_TOTAL,
   MAILBOX_TICKET_SLOT,
   MAILBOX_WRONG_BACKSTOP,
   MAILBOX_WRONG_CEILING,
@@ -204,13 +207,16 @@ export class RateLimiter extends DurableObject<Env> {
       const pool = ownerPool(budget);
       const oKey = `budget-owner@${day}`;
       const o = this.kv().get<number>(oKey) ?? 0;
-      const open = o < pool && (kind === 'owner_aged' || o < Math.floor(pool * BUDGET_OWNER_AGED_FROM));
+      const aged = kind === 'owner_aged';
+      // A fresh ticket: only below half the pool, and within 20% of it per app (final round).
+      const fKey = `budget-owner-fresh:${appId ?? '-'}@${day}`;
+      const f = this.kv().get<number>(fKey) ?? 0;
+      const open = o < pool && (aged || (o < Math.floor(pool * BUDGET_OWNER_AGED_FROM) && f < Math.max(1, Math.floor(pool * BUDGET_OWNER_FRESH_APP_SHARE))));
       if (open) {
         reached(o + 1, pool, 'owner');
-        return take([oKey]);
+        return take(aged ? [oKey] : [oKey, fKey]);
       }
-      if (kind === 'owner_aged') return { ok: false, limit: 'owner' };
-      // A fresh ticket past half the owner pool: an ordinary user's mail from here.
+      // Refused by the owner pool: the app's general share, if any is left, like a user's mail.
     }
     const general = generalPool(budget);
     const gKey = `budget@${day}`;
@@ -338,10 +344,12 @@ export class RateLimiter extends DurableObject<Env> {
     const kind = this.ownerKind(ref);
     if (kind === 'grant') return { ok: true, reservation: { keys: [] }, owner: 'grant' };
     if (kind === 'ticket' && ref?.kind === 'ticket') {
-      // Per exact address, all its tickets together (scan of the re-check).
+      // Per exact address (all its tickets together) and per mailbox (all its `+tag`s together).
       const t = this.slot(MAILBOX_TICKET_SENDS, now, `a:${ref.addrKey}:`);
-      if (t.count >= t.l.max) return { ok: false, reason: 'codes', retryAfterMs: t.start + DAY - now };
-      return { ok: true, reservation: { keys: this.count([t]) }, owner: 'ticket' };
+      const box = this.slot(MAILBOX_TICKET_SENDS_TOTAL, now);
+      const full = this.firstFull([t, box], now);
+      if (full) return { ok: false, reason: 'codes', retryAfterMs: full.retryAfterMs };
+      return { ok: true, reservation: { keys: this.count([t, box]) }, owner: 'ticket' };
     }
     const own = MAILBOX_IP_CODE_LIMITS.map((l) => this.slot(l, now, `ip:${ip}:`));
     const shared = MAILBOX_CODE_LIMITS.map((l) => this.slot(l, now));
@@ -366,10 +374,12 @@ export class RateLimiter extends DurableObject<Env> {
    */
   async admit(ip: string, expiresAtMs: number, send: boolean, now: number = Date.now(), claim: OwnerClaim | null = null): Promise<Admitted> {
     let owner = this.ownerOf(claim, now);
-    // At most ADDRESS_OWNER_CHALLENGES ticket starts per exact address a day; past it a ticket counts as nothing (a
-    // grant, one per unlock, always passes).
-    const ownerDay = owner?.kind === 'ticket' ? this.slot(ADDRESS_OWNER_CHALLENGES, now, `a:${owner.addrKey}:`) : null;
-    if (ownerDay && ownerDay.count >= ownerDay.l.max) owner = null;
+    // At most ADDRESS_OWNER_CHALLENGES ticket starts per exact address and MAILBOX_OWNER_CHALLENGES owner starts
+    // (tickets and grants) per mailbox a day; past either, the proof counts as nothing.
+    const addrDay = owner?.kind === 'ticket' ? this.slot(ADDRESS_OWNER_CHALLENGES, now, `a:${owner.addrKey}:`) : null;
+    const boxDay = owner ? this.slot(MAILBOX_OWNER_CHALLENGES, now) : null;
+    if ((addrDay && addrDay.count >= addrDay.l.max) || (boxDay && boxDay.count >= boxDay.l.max)) owner = null;
+    const ownerDay = owner ? [addrDay, boxDay].filter((x): x is Slot => x !== null) : [];
     const locked = this.lockedFor(ip, owner?.kind ?? null, now);
     if (locked > 0) return { ok: false, reason: 'locked', retryAfterMs: locked };
     const live = (this.kv().get<number[]>(LIVE_KEY) ?? []).filter((t) => t > now);
@@ -383,7 +393,7 @@ export class RateLimiter extends DurableObject<Env> {
       reservation = r.reservation;
     }
     if (owner?.kind === 'grant') this.kv().put(owner.key, 0);
-    const createdKeys = this.count(owner && ownerDay ? [created, ownerDay] : [created]);
+    const createdKeys = this.count([created, ...ownerDay]);
     this.kv().put(LIVE_KEY, [...live, expiresAtMs]);
     const startKey = `start:${ip}@${this.day(now)}`;
     if (this.kv().get(startKey) === undefined) this.kv().put(startKey, this.nextSeq(now));

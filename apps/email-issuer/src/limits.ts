@@ -50,7 +50,14 @@ export const MAILBOX_TICKET_SENDS: Limit = { name: 'ticket-sends:1d', windowMs: 
  */
 export const MAX_LIVE_TICKETS = 5;
 export const ADDRESS_OWNER_CHALLENGES: Limit = { name: 'owner-challenges:1d', windowMs: DAY, max: 10 };
-/** Past half the owner pool, only tickets at least this old (and unlock grants) draw on it (final check M1). */
+/**
+ * And per mailbox (the address without its `+tag`), so the `+tag`s of one inbox share a bounded allowance: 30 owner
+ * challenges (tickets and unlock grants) and 9 ticket mails a day. A `+tag` holder (on a domain without sub-addressing,
+ * someone else's address) can't use up the victim's per-address allowance and takes at most a third of the mailbox's.
+ */
+export const MAILBOX_OWNER_CHALLENGES: Limit = { name: 'owner-challenges-box:1d', windowMs: DAY, max: 30 };
+export const MAILBOX_TICKET_SENDS_TOTAL: Limit = { name: 'ticket-sends-box:1d', windowMs: DAY, max: 9 };
+/** A ticket younger than this is fresh: per-app capped in the owner pool, and only below its half (final check M1). */
 export const OWNER_AGED_TICKET_MS = 7 * DAY;
 /** Live challenges per mailbox at once (ticketed starts don't need a free place). */
 export const MAX_LIVE_CHALLENGES = 5;
@@ -157,13 +164,15 @@ export function appStartLimits(plan: { perMinute: number; perDay: number }): Lim
  *   plan (`BUDGET_SHARE_PER_PLAN_DAY` × the plan's `per_day`: the free plan's 5000 gives 100), capped at the general
  *   pool, with a flat `BUDGET_APP_SHARE` of the budget only when the plan has no usable `per_day`; and the last
  *   `BUDGET_RESERVE` of the general pool only an app that has used less than half its share that day;
- * - the owner pool, `BUDGET_OWNER_POOL` × the budget **beside it** (it never eats the general pool): the mail of
- *   challenges a valid device ticket or unlock grant started, with no per-app cap (an attacker's sock-puppet tickets
- *   would fill one). Bounded by the per-address limits above and this global ceiling; past half of it, only tickets at
- *   least 7 days old and unlock grants draw on it (a fresh ticket falls back to the general pool like any user).
+ * - the owner pool, 30% of the budget **beside it** (it never eats the general pool; all mail together ≤ 1.3 × the
+ *   budget): the mail of challenges a valid device ticket or unlock grant started. A fresh ticket (< 7 days) draws on
+ *   it only below half of it and within 20% of it per app; an aged ticket or a grant has no per-app cap, bounded by the
+ *   per-address and per-mailbox limits above and the pool. Owner mail the owner pool refuses falls back to the app's
+ *   general share, if any is left.
  */
-export const BUDGET_OWNER_POOL = 1;
+export const BUDGET_OWNER_POOL = 0.3;
 export const BUDGET_OWNER_AGED_FROM = 0.5;
+export const BUDGET_OWNER_FRESH_APP_SHARE = 0.2;
 /** Staff-triggered mail (unlock, unsuppress confirmation) has its own small pool: 1% of the budget, at least 5. */
 export const BUDGET_STAFF_POOL = 0.01;
 export const BUDGET_STAFF_MIN = 5;

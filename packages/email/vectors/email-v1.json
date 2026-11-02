@@ -1,0 +1,554 @@
+{
+  "_comment": "FROZEN email identity v1 vectors (packages/email/scripts/gen-vectors.mjs, an independent implementation). Changing this file changes every email user's address: see test/vectors.test.ts. The sub key is a TEST key: sha256(utf8(testKey.preimage)).",
+  "version": 1,
+  "provider": "email",
+  "subPrefix": "e1.",
+  "subLabel": "hana-id/email-sub/v1",
+  "idna": {
+    "standard": "UTS #46, non-transitional",
+    "library": "tr46",
+    "version": "7.0.0",
+    "unicode": "18.0.0"
+  },
+  "testKey": {
+    "preimage": "hana-id/email-sub/v1 TEST key (never an environment K_sub)",
+    "derivation": "sha256(utf8(preimage))"
+  },
+  "normalize": [
+    {
+      "label": "plain",
+      "in": "alice@example.com",
+      "out": "alice@example.com"
+    },
+    {
+      "label": "uppercase local and domain",
+      "in": "Alice@Example.COM",
+      "out": "alice@example.com"
+    },
+    {
+      "label": "surrounding ASCII whitespace (space, tab, LF, CR, FF)",
+      "in": " \t\r\n\falice@example.com \t\r\n\f",
+      "out": "alice@example.com"
+    },
+    {
+      "label": "one trailing dot on the domain",
+      "in": "alice@example.com.",
+      "out": "alice@example.com"
+    },
+    {
+      "label": "ideographic full stop as the trailing dot",
+      "in": "alice@example.com。",
+      "out": "alice@example.com"
+    },
+    {
+      "label": "+tag kept outside Gmail",
+      "in": "alice+news@example.com",
+      "out": "alice+news@example.com"
+    },
+    {
+      "label": "dots kept outside Gmail",
+      "in": "a.l.i.c.e@example.com",
+      "out": "a.l.i.c.e@example.com"
+    },
+    {
+      "label": "every atext character",
+      "in": "!#$%&'*+-/=?^_`{|}~@example.com",
+      "out": "!#$%&'*+-/=?^_`{|}~@example.com"
+    },
+    {
+      "label": "digits, underscore, hyphen, multi-label domain",
+      "in": "first_last-1@sub.example.co.uk",
+      "out": "first_last-1@sub.example.co.uk"
+    },
+    {
+      "label": "apostrophe",
+      "in": "O'Brien@Example.ie",
+      "out": "o'brien@example.ie"
+    },
+    {
+      "label": "Gmail: dots and +tag dropped, lowercased",
+      "in": "A.B.C+Tag@Gmail.com",
+      "out": "abc@gmail.com"
+    },
+    {
+      "label": "Gmail canonical form itself",
+      "in": "abc@gmail.com",
+      "out": "abc@gmail.com"
+    },
+    {
+      "label": "googlemail.com becomes gmail.com",
+      "in": "a.b.c@googlemail.com",
+      "out": "abc@gmail.com"
+    },
+    {
+      "label": "googlemail.com, uppercase, two +, trailing dot",
+      "in": "ABC+x+y@GOOGLEMAIL.COM.",
+      "out": "abc@gmail.com"
+    },
+    {
+      "label": "Gmail: a dot right before +",
+      "in": "a.+b@gmail.com",
+      "out": "a@gmail.com"
+    },
+    {
+      "label": "Gmail: whitespace around",
+      "in": "  A.B.C@gmail.com\n",
+      "out": "abc@gmail.com"
+    },
+    {
+      "label": "fullwidth gmail.com maps to gmail.com (UTS #46)",
+      "in": "x@ｇｍａｉｌ．ｃｏｍ",
+      "out": "x@gmail.com"
+    },
+    {
+      "label": "a gmail.com subdomain is not Gmail",
+      "in": "a.b+c@mail.gmail.com",
+      "out": "a.b+c@mail.gmail.com"
+    },
+    {
+      "label": "gmail.co.uk is not Gmail",
+      "in": "a.b+c@gmail.co.uk",
+      "out": "a.b+c@gmail.co.uk"
+    },
+    {
+      "label": "IDN: ü",
+      "in": "x@Bücher.example",
+      "out": "x@xn--bcher-kva.example"
+    },
+    {
+      "label": "IDN: already punycode",
+      "in": "x@xn--bcher-kva.example",
+      "out": "x@xn--bcher-kva.example"
+    },
+    {
+      "label": "IDN: uppercase punycode",
+      "in": "x@XN--BCHER-KVA.EXAMPLE",
+      "out": "x@xn--bcher-kva.example"
+    },
+    {
+      "label": "IDN: ß non-transitional (not fass.de)",
+      "in": "x@faß.de",
+      "out": "x@xn--fa-hia.de"
+    },
+    {
+      "label": "ASCII fass.de stays distinct from faß.de",
+      "in": "x@FASS.de",
+      "out": "x@fass.de"
+    },
+    {
+      "label": "IDN: final sigma non-transitional",
+      "in": "x@ς.gr",
+      "out": "x@xn--3xa.gr"
+    },
+    {
+      "label": "IDN: capital sigma maps to σ",
+      "in": "x@ΣΟΦΟΣ.gr",
+      "out": "x@xn--0xaakcn.gr"
+    },
+    {
+      "label": "IDN: Japanese labels",
+      "in": "x@例え.テスト",
+      "out": "x@xn--r8jz45g.xn--zckzah"
+    },
+    {
+      "label": "IDN: right-to-left labels",
+      "in": "x@مثال.إختبار",
+      "out": "x@xn--mgbh0fb.xn--kgbechtv"
+    },
+    {
+      "label": "IDN: soft hyphen is ignored",
+      "in": "x@exa­mple.com",
+      "out": "x@example.com"
+    },
+    {
+      "label": "IDN: circled letter maps to ASCII",
+      "in": "x@ⓔxample.com",
+      "out": "x@example.com"
+    },
+    {
+      "label": "IDN: emoji label (UTS #46 allows it)",
+      "in": "x@💩.la",
+      "out": "x@xn--ls8h.la"
+    },
+    {
+      "label": "IDN: emoji label as punycode",
+      "in": "x@xn--ls8h.la",
+      "out": "x@xn--ls8h.la"
+    },
+    {
+      "label": "IDN: ZWNJ in a valid ContextJ (Persian)",
+      "in": "x@نامه‌ای.ir",
+      "out": "x@xn--mgba3gch31f060k.ir"
+    },
+    {
+      "label": "IDN: ignored zero width space",
+      "in": "x@exa​mple.com",
+      "out": "x@example.com"
+    },
+    {
+      "label": "IDN: ignored variation selector 16",
+      "in": "x@exa️mple.com",
+      "out": "x@example.com"
+    },
+    {
+      "label": "IDN: ignored combining grapheme joiner",
+      "in": "x@exa͏mple.com",
+      "out": "x@example.com"
+    },
+    {
+      "label": "IDN: halfwidth ideographic full stop as an inner dot",
+      "in": "x@example｡com",
+      "out": "x@example.com"
+    },
+    {
+      "label": "IDN: ideographic full stop as an inner dot",
+      "in": "x@example。com",
+      "out": "x@example.com"
+    },
+    {
+      "label": "IDN: capital I with dot above maps to i + U+0307",
+      "in": "x@İstanbul.example",
+      "out": "x@xn--istanbul-o0e.example"
+    },
+    {
+      "label": "IDN: a Unicode 15.0 character (the cutoff itself)",
+      "in": "x@𱍐.example",
+      "out": "x@xn--8o8n.example"
+    },
+    {
+      "label": "local part of exactly 64 bytes",
+      "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com",
+      "out": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com"
+    },
+    {
+      "label": "address of exactly 254 bytes",
+      "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.com",
+      "out": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.com"
+    },
+    {
+      "label": "label of exactly 63 bytes, domain of 252 bytes",
+      "in": "a@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.dddddddddddddddddddddddddddddddddddddddddddddddddddddddd.com",
+      "out": "a@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.dddddddddddddddddddddddddddddddddddddddddddddddddddddddd.com"
+    }
+  ],
+  "reject": [
+    {
+      "label": "empty",
+      "in": ""
+    },
+    {
+      "label": "whitespace only",
+      "in": " \t\n"
+    },
+    {
+      "label": "no @",
+      "in": "alice.example.com"
+    },
+    {
+      "label": "two @",
+      "in": "alice@@example.com"
+    },
+    {
+      "label": "@ in the local part",
+      "in": "a@b@example.com"
+    },
+    {
+      "label": "empty local part",
+      "in": "@example.com"
+    },
+    {
+      "label": "empty domain",
+      "in": "alice@"
+    },
+    {
+      "label": "single-label domain",
+      "in": "alice@localhost"
+    },
+    {
+      "label": "single-label domain with a trailing dot",
+      "in": "alice@localhost."
+    },
+    {
+      "label": "two trailing dots",
+      "in": "alice@example.com.."
+    },
+    {
+      "label": "empty label",
+      "in": "alice@example..com"
+    },
+    {
+      "label": "leading dot in the domain",
+      "in": "alice@.example.com"
+    },
+    {
+      "label": "leading hyphen in a label",
+      "in": "alice@-example.com"
+    },
+    {
+      "label": "trailing hyphen in a label",
+      "in": "alice@example-.com"
+    },
+    {
+      "label": "hyphens in positions 3 and 4 (not xn--)",
+      "in": "alice@ab--cd.com"
+    },
+    {
+      "label": "underscore in the domain",
+      "in": "alice@ex_ample.com"
+    },
+    {
+      "label": "space in the domain",
+      "in": "alice@exam ple.com"
+    },
+    {
+      "label": "invalid punycode",
+      "in": "alice@xn--a.com"
+    },
+    {
+      "label": "punycode of an ASCII-only label",
+      "in": "alice@xn--abc-.com"
+    },
+    {
+      "label": "IPv4 address",
+      "in": "alice@1.2.3.4"
+    },
+    {
+      "label": "IPv4 literal",
+      "in": "alice@[1.2.3.4]"
+    },
+    {
+      "label": "numeric top-level label",
+      "in": "alice@example.123"
+    },
+    {
+      "label": "zero-width joiner (CheckJoiners)",
+      "in": "alice@a‍b.com"
+    },
+    {
+      "label": "LTR and RTL in one label (CheckBidi)",
+      "in": "alice@aא.com"
+    },
+    {
+      "label": "label starting with a combining mark",
+      "in": "alice@́a.com"
+    },
+    {
+      "label": "NUL in the domain",
+      "in": "alice@example.com\u0000"
+    },
+    {
+      "label": "non-breaking space is not trimmed",
+      "in": " alice@example.com"
+    },
+    {
+      "label": "non-ASCII local part (no SMTPUTF8)",
+      "in": "alicé@example.com"
+    },
+    {
+      "label": "non-ASCII local part, all letters",
+      "in": "δοκιμή@example.com"
+    },
+    {
+      "label": "quoted local part",
+      "in": "\"alice\"@example.com"
+    },
+    {
+      "label": "space in a quoted local part",
+      "in": "\"a b\"@example.com"
+    },
+    {
+      "label": "leading dot in the local part",
+      "in": ".alice@example.com"
+    },
+    {
+      "label": "trailing dot in the local part",
+      "in": "alice.@example.com"
+    },
+    {
+      "label": "two dots in a row in the local part",
+      "in": "al..ice@example.com"
+    },
+    {
+      "label": "comment in the local part",
+      "in": "alice(comment)@example.com"
+    },
+    {
+      "label": "backslash in the local part",
+      "in": "al\\ice@example.com"
+    },
+    {
+      "label": "lone surrogate in the domain",
+      "in": "alice@ex\ud800ample.com"
+    },
+    {
+      "label": "Gmail: nothing left before +",
+      "in": "+tag@gmail.com"
+    },
+    {
+      "label": "googlemail: nothing left before +",
+      "in": "+@googlemail.com"
+    },
+    {
+      "label": "Gmail: two dots in a row are still a syntax error",
+      "in": "a..b@gmail.com"
+    },
+    {
+      "label": "local part of 65 bytes",
+      "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com"
+    },
+    {
+      "label": "address of 255 bytes",
+      "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.dddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.com"
+    },
+    {
+      "label": "label of 64 bytes",
+      "in": "alice@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.com"
+    },
+    {
+      "label": "domain of 254 bytes",
+      "in": "a@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.dddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.com"
+    },
+    {
+      "label": "address of 255 bytes, domain of 253",
+      "in": "a@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.com"
+    },
+    {
+      "label": "normalized address over 254 bytes (punycode grows the domain)",
+      "in": "a@例え.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.com"
+    },
+    {
+      "label": "Unicode 17.0 combining mark U+1AD0 (runtime NFC would differ)",
+      "in": "alice@x᫐̖.com"
+    },
+    {
+      "label": "the same as punycode, in the order Unicode 17 NFC gives",
+      "in": "alice@xn--x-4cb633p.com"
+    },
+    {
+      "label": "the same as punycode, in the order a pre-17 runtime gives",
+      "in": "alice@xn--x-4cb533p.com"
+    },
+    {
+      "label": "Unicode 17.0 combining mark U+1AE0",
+      "in": "alice@a᫠.com"
+    },
+    {
+      "label": "Unicode 17.0 Tai Yo letters (U+1E6E3)",
+      "in": "alice@𞛣𞛠.example"
+    },
+    {
+      "label": "Unicode 15.1 CJK ideograph (after the 15.0 cutoff)",
+      "in": "alice@𮯰.example"
+    },
+    {
+      "label": "Unicode 18.0 character",
+      "in": "alice@a୓.com"
+    }
+  ],
+  "sub": [
+    {
+      "email": "alice@example.com",
+      "sub": "e1.X0hsY3PYY7kzGdKCeXWQ-y92ZvOQUDbqBtxt1ukoGRc"
+    },
+    {
+      "email": "alice+news@example.com",
+      "sub": "e1.0s5wsJwM3jG6Hx8HuKVcmPCFutY5mTdzV7os2BCqGwM"
+    },
+    {
+      "email": "a.l.i.c.e@example.com",
+      "sub": "e1.8dfdy4LUquRSWldVPgHsiONWQn334MHIztd3HkTP488"
+    },
+    {
+      "email": "!#$%&'*+-/=?^_`{|}~@example.com",
+      "sub": "e1.813EAcTJQ9TW6ZN6cs6mI6dUbPp6jixRiKCVtHtnjo4"
+    },
+    {
+      "email": "first_last-1@sub.example.co.uk",
+      "sub": "e1.i8kv7nVgBkg4V2hGy0x03tGYaa-9VZ5thwkI8MsH_Ps"
+    },
+    {
+      "email": "o'brien@example.ie",
+      "sub": "e1.mMfqJ79hkVvFIPablJM8qAkZXp2M2qqrLYbWvKzuRAE"
+    },
+    {
+      "email": "abc@gmail.com",
+      "sub": "e1.0pSsPkbmMZ43qYJCjek1192TzxtQluy0avQxs5QuyaI"
+    },
+    {
+      "email": "a@gmail.com",
+      "sub": "e1.ALZec-6ytH28ukGBTU9J7IAZwP_cuMsuSKisVlCThoo"
+    },
+    {
+      "email": "x@gmail.com",
+      "sub": "e1.qjNoNYg_qJkrc3lybMGIaYNaikdQV83S2uD-99kGbk8"
+    },
+    {
+      "email": "a.b+c@mail.gmail.com",
+      "sub": "e1.maAlYa1Au6hJ4lkK1GdmPDn37tJ5vEGH7pbUMWcvZxE"
+    },
+    {
+      "email": "a.b+c@gmail.co.uk",
+      "sub": "e1.ULwRf-r2Ztd28ktLa4Mflh6PPgNblAgGEOuhUtm4L4o"
+    },
+    {
+      "email": "x@xn--bcher-kva.example",
+      "sub": "e1.0UYydGnw5xOqagcqQ_N9VAryiShlm30zuOL8RtIPZpU"
+    },
+    {
+      "email": "x@xn--fa-hia.de",
+      "sub": "e1.sD_WeIFrNmQ8af68KWYXHqO-QEaBjNAPdXgrgNt0T8k"
+    },
+    {
+      "email": "x@fass.de",
+      "sub": "e1.p2Gx1mJetgUTa_tuG1kXWXI_OpIvA4qj9IPMrRvRZWg"
+    },
+    {
+      "email": "x@xn--3xa.gr",
+      "sub": "e1.dpAfkOQ6urMn-Ok19yiete0piaxs66E_6O4F3vrwd1Y"
+    },
+    {
+      "email": "x@xn--0xaakcn.gr",
+      "sub": "e1.dg9vrdGBXf1jedU0MkNtCmMEnCa7TQueZk1wJEd_kqw"
+    },
+    {
+      "email": "x@xn--r8jz45g.xn--zckzah",
+      "sub": "e1.LtctnBAuPuwDHluwZW2RwJAyyCKLXKx5alpFoI0vTZM"
+    },
+    {
+      "email": "x@xn--mgbh0fb.xn--kgbechtv",
+      "sub": "e1.rRTBBimKwWsn07J5cUirppaoxcQOVQPCz__qwgtuRuc"
+    },
+    {
+      "email": "x@example.com",
+      "sub": "e1.m29ruWmGl4AF5aDt9NDCGdL30dAdoq82nYEjjNLQTO0"
+    },
+    {
+      "email": "x@xn--ls8h.la",
+      "sub": "e1.4oBsWBhjvR680N1yNVObyeBOuctu8PToJvLIYB2LcCE"
+    },
+    {
+      "email": "x@xn--mgba3gch31f060k.ir",
+      "sub": "e1.KBOL-nPdBltM9KhwCtMmK2_VYvCBvoVsE0kCfHnTFuo"
+    },
+    {
+      "email": "x@xn--istanbul-o0e.example",
+      "sub": "e1.aW1nDdsLBQdoimxRdhJOgQzHoUUQnRUbgBm1kuHXnfc"
+    },
+    {
+      "email": "x@xn--8o8n.example",
+      "sub": "e1.ItLCPkixvENeYEjJhHmnOqtQglPLrm21Kk-6E45NICs"
+    },
+    {
+      "email": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com",
+      "sub": "e1.QA0jop2FrQy9meLu_A-OdUfTOjPldFnTFu7el6nHgUM"
+    },
+    {
+      "email": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.com",
+      "sub": "e1.a8NTu7tkDr8DNpchww1G7iPeeKhlvy0hZfJbXjkeePY"
+    },
+    {
+      "email": "a@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.dddddddddddddddddddddddddddddddddddddddddddddddddddddddd.com",
+      "sub": "e1.qQuSARJ8JCJ9vHRuGRqUOCF1yLiJD2ce4STazQUFbgs"
+    }
+  ]
+}

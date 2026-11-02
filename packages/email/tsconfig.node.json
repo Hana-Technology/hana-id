@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "types": ["node"], "resolveJsonModule": true },
+  "include": ["src", "test", "test-workerd", "vitest.config.ts", "vitest.workerd.config.ts"]
+}

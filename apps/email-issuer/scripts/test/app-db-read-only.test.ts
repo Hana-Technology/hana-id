@@ -1,5 +1,5 @@
 // The issuer's APP_DB binding is the API's D1, bound as an ordinary (read-write) D1 binding: Cloudflare has no
-// read-only D1 binding. Until it is replaced by a read-only RPC on the API (docs/decisions.md D236), this source check
+// read-only D1 binding. Until it is replaced by a read-only RPC on the API (docs/decisions.md D251), this source check
 // keeps the issuer's code to reads: APP_DB is used only through src/apps.ts, whose statements are SELECTs.
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -10,7 +10,7 @@ const files = (dir: string): string[] =>
   readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(join(dir, e.name)) : e.name.endsWith('.ts') ? [join(dir, e.name)] : []));
 const WRITE = /\b(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER|PRAGMA|ATTACH|VACUUM)\b/iu;
 
-describe('APP_DB is read only in the issuer’s code (D236)', () => {
+describe('APP_DB is read only in the issuer’s code (D251)', () => {
   it('every use of APP_DB outside apps.ts hands it to apps.ts’s readers', () => {
     const uses = files(SRC)
       .filter((f) => !f.endsWith('/apps.ts') && !f.endsWith('/env.ts'))

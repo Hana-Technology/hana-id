@@ -8,7 +8,7 @@ change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 (branch `feat/e
 `feat/link-cap`, `feat/email-login-5`) on 2026-11-02; D201–D203 (branch `feat/batch-c-2`) on 2026-11-02; D205–D209
 (branch `feat/batch-c-3`, to confirm) on 2026-11-02. D215–D219 (branch `feat/identity-token-7`, to confirm) on
 2026-11-02. D210–D214 (branch `feat/identity-token-8`, to confirm, amended after its review the same
-day) on 2026-11-02. D230–D237 (branch `feat/email-login-6`, to confirm) on 2026-11-02, with batch 6 notes on D137,
+day) on 2026-11-02. D230–D234, D250–D252 (branch `feat/email-login-6`, to confirm) on 2026-11-02, with batch 6 notes on D137,
 D154, D155, D199 and D206. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
 provider note, two "Superseded or amended" rows, the user-mail line under "Proposed", and the headings from D125 on, checked against `develop` @ 1c6a124 and what sandbox-dev runs (`docs/operations.md`) on
 2026-11-02 (branch `docs/consistency-pass`); no decision changed. D220–D224 (branch `feat/batch-c-4`, to confirm) on
@@ -3437,7 +3437,7 @@ five are **to confirm** by the user. None changes an address: no path, derivatio
 - Rejected: the plan's order with the issuer before the migration (every app lookup would fail until the migration);
   minting the client proofs by turning email on for the test apps in batch 6 (against "nothing ships half-wired").
 
-### D235. Batch 6 review follow-ups: requests bound to fail, per-account link limits, gas per signature, stale email keys
+### D250. Batch 6 review follow-ups: requests bound to fail, per-account link limits, gas per signature, stale email keys
 - Date 2026-11-02 · Status: to confirm; built (`apps/api/src/session-standing.ts`, `panic-cache.ts`, `links.ts`,
   `gas.ts`, `email-token.ts`, `login-token.ts`, `validate.ts`; migrations-usage `0005_link_events.sql`) · Source: the
   login/links review of batch 6 (M1, M2, L1–L3, L5, L6) and the deploy review (H1)
@@ -3471,7 +3471,7 @@ five are **to confirm** by the user. None changes an address: no path, derivatio
 - Rejected: a cross-isolate negative cache (a hot-path Durable Object call for a rare case); refusing removals on the
   app-wide caps.
 
-### D236. The issuer's APP_DB is a read-write D1 binding: kept for now, held to reads by a source test
+### D251. The issuer's APP_DB is a read-write D1 binding: kept for now, held to reads by a source test
 - Date 2026-11-02 · Status: to confirm · Source: the deploy review of batch 6 (M4)
 - Decision: Cloudflare has no read-only D1 binding, so the issuer's `APP_DB` (the API's D1) could write the API's tables
   if its code did. For now its code is held to reads by a source test (`apps/email-issuer/scripts/test/app-db-read-only.test.ts`:
@@ -3483,10 +3483,10 @@ five are **to confirm** by the user. None changes an address: no path, derivatio
   fix round; the source check closes the accidental-write path now.
 - Rejected: leaving it undocumented; copying the app rows into the issuer's own D1 (two sources of truth).
 
-### D237. The session pool carries the link methods, with a global daily cap on link adds
+### D252. The session pool carries the link methods, with a global daily cap on link adds
 - Date 2026-11-02 · Status: to confirm · Source: the deploy review of batch 6 (M5)
 - Decision: `link_identity`, `cancel_link` and `unlink_identity` are relayed by the session pool (its keys' allowance
-  pays them), as built in batch 6. Their spend is bounded by the per-IP, per-account and per-app limits (D235) and a
+  pays them), as built in batch 6. Their spend is bounded by the per-IP, per-account and per-app limits (D250) and a
   global ceiling of 5 000 link adds a UTC day across apps (`link-global`, refused above; removals can only follow adds).
   The alternative, to choose before mainnet: a third pool for links (its own keys and allowance), so a link flood can
   never use up the allowance logins share.
@@ -3567,8 +3567,8 @@ identity-count copy, `usage-setup`) are to confirm.
 To confirm from email login batch 6 (`feat/email-login-6`): D230 (the issuer on its own URL, never through the API),
 D231 (email tokens at the API, `login_methods`, `GET /v1/app`), D232 (the link precheck, relays and panics), D233
 (share revocation, `email_usage`, the issuer's app lookup), D234 (the corrected deploy order, the email clients in
-batch 8), and from its reviews D235 (requests bound to fail, per-account link limits, gas per signature, stale email
-keys), D236 (the issuer's read-write APP_DB, to replace by an RPC) and D237 (the session pool carries the link
+batch 8), and from its reviews D250 (requests bound to fail, per-account link limits, gas per signature, stale email
+keys), D251 (the issuer's read-write APP_DB, to replace by an RPC) and D252 (the session pool carries the link
 methods, with a global cap).
 To confirm from the identity token's step 7 (the KMS signer's code): D215 (the manifest shape and credentials), D216
 (`DIGEST`), D217 (strict DER, the self-check), D218 (one `Sign`, no retry, limits) and D219 (the standby's region, the

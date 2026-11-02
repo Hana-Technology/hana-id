@@ -188,7 +188,7 @@ No auth, no limits, `access-control-allow-origin: *`. → `200 {"ok": true, "env
 session markers it writes), absent before): the admin CLI refuses guarded proposals on `--remote` until the deployed
 API reports ≥ 6, and announcements until it reports ≥ 9.
 
-`capabilities` (L, D235): what this build does that deploy tooling checks; `createProof: true` (`/v1/sessions` requires
+`capabilities` (L, D250): what this build does that deploy tooling checks; `createProof: true` (`/v1/sessions` requires
 and relays create_session's proof of possession, D137). `deploy-contract --upgrade` refuses without it.
 ### `GET /v1/governance` · G
 
@@ -301,7 +301,7 @@ when the scope has `allow_shared`.
 
 ### `POST /v1/sessions` — relays `create_session` (session pool)
 
-Body: exactly the fields below (anything else, `scopeId` and `linkJwt` included, is `400 bad_request`, D235):
+Body: exactly the fields below (anything else, `scopeId` and `linkJwt` included, is `400 bad_request`, D250):
 
 | Field | Type | Rule |
 |---|---|---|
@@ -327,7 +327,7 @@ The scope is always the app's (D1). Checks after the gate and shape (`400 bad_re
 3. `nonce` equals the session nonce recomputed with `SIGNER_ACCOUNT` and the app's scope (`400 nonce_mismatch`).
 3b. (L) `signature` verifies as the proof of possession for exactly these parameters (`401 invalid_signature`): only
    the session key's holder can open a session, and a proof seen once can't open the key with other parameters.
-3c. (L, D235) The same request already refused by the chain for `link_pending` or `identity_linked` in this isolate in
+3c. (L, D250) The same request already refused by the chain for `link_pending` or `identity_linked` in this isolate in
    the last 60 s is answered the same way, without a relay. Beside step 4's reads, once links can exist
    (`get_config().links_open`): the session identity's `get_identity`; a pending member is `409 link_pending` (fails
    open when it can't be read).
@@ -460,11 +460,11 @@ anything is relayed:
 4. The signer policy on chain, `get_self_issued("email")` (cached 60 s; an unlisted kid re-reads it at most every
    10 s per isolate): every kid listed under one of its signers, else `503 issuer_key_pending` (`retryAfterS: 30`)
    when a pending change adds it (`get_key_changes`, cached 10 s: the key is still in its delay) and `401 token_stale`
-   otherwise (removed, a dropped signer's, or a token only an overlap's previous policy accepts, D235); at least
+   otherwise (removed, a dropped signer's, or a token only an overlap's previous policy accepts, D250); at least
    `required` distinct signers (`401 invalid_token`, "Not enough signatures"); no policy (`null`) is `400
    unsupported_issuer`, a contract without the view (v2) `502 near_unavailable`.
 5. The app's `login_methods` lists `email` (`403 login_method_disabled`; D1 failure `503 config_unavailable`), except on
-   `/v1/link/cancel` and `/unlink`, which take an email token whatever it says (D235).
+   `/v1/link/cancel` and `/unlink`, which take an email token whatever it says (D250).
 
 Then the caller checks `aud` against the scope (`scope_for_client("email", aud)`: the scope's client
 `email:<scope_id>`; an email client is never shared) and the nonce, as for a Google token. The governance gate's kid
@@ -498,7 +498,7 @@ app's scope; the governance gate (paused, a Google kid active); then the contrac
 - `/v1/link/unlink`: an active member of the acting identity's account (`no_such_member`, `cannot_unlink_root` for the
   root), the `link_change` "unlink" nonce, by the root or the member itself (`not_allowed`), `stale_epoch`.
 
-Then the claim and the limits (D235, D237): one relay per set of tokens (sha256 of them reserved in the `link-tokens`
+Then the claim and the limits (D250, D252): one relay per set of tokens (sha256 of them reserved in the `link-tokens`
 object for 10 minutes, released when the relay certainly didn't execute; a duplicate is `409 link_in_flight`); per
 account root (`link-root:<scope>:<root ik>`) 3 adds a minute and 20 a day, 10 removals a minute and 100 a day; per app
 30 adds a minute and 1000 a day; across apps 5000 adds a day (`link-global`); all `429 rate_limited` above. The app's
@@ -965,7 +965,7 @@ Gas attached (Tgas; `GAS_<METHOD>_TGAS` var overrides with an integer 1..300, in
 `GAS_CREATE_SESSION_AND_DERIVE_LINKED_TGAS`), `derive_key` 60, `revoke_session` 20, `prune_sessions` 50,
 `link_identity` 250, `cancel_link` and `unlink_identity` 150 (the session and link values cover 4096-bit issuer keys,
 D155), plus 70 per token signature beyond what the default covers (a 2-of-2 email token: one per token at the
-default; D235), owner methods 50, `register_scope` 30 + 25 per proof (max 300); every value capped at 300. The cron's calls use 30 Tgas with `KEYS_UPDATER_KEY` (on
+default; D250), owner methods 50, `register_scope` 30 + 25 per proof (max 300); every value capped at 300. The cron's calls use 30 Tgas with `KEYS_UPDATER_KEY` (on
 `SIGNER_ACCOUNT`, not a pool).
 
 **Updater key (G).** `KEYS_UPDATER_KEY` signs only `UPDATER_METHODS` = `set_issuer_key`,

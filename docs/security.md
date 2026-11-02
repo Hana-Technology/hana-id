@@ -250,7 +250,7 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   (whoever relays can't attach, swap or strip a link), and the link token's `auto_link` nonce must match the join the
   contract would make from fresh chain reads; links stay closed while `unrecorded_wallets` is true or absent (pre-v3).
   The panics that remain are answered as their own errors (`panics.ts`), the text never logged.
-- **Link relays** (`/v1/link*`, D232, D235, D237): from Hana pages only (never a partner page), every token verified
+- **Link relays** (`/v1/link*`, D232, D250, D252): from Hana pages only (never a partner page), every token verified
   and in the scope, every nonce and state rule prechecked; one relay per set of tokens across isolates
   (`link_in_flight`); adds and removals in separate windows per IP, per account root and per app, the app-wide removal
   windows only alarming, so neither a flood of adds nor another account's traffic can block a cancel of a malicious
@@ -262,7 +262,7 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   contract call that skips the API, keeps working until its absolute limit (≤ 12 h by default), and a device that
   already holds the derived key keeps it (D41: export is the user's). What protects a wallet is the contract (a pending
   link's delay, a cancel, an unlink stops future sessions) and, after a compromise, a `key_index` move.
-- **Requests bound to fail aren't relayed twice** (D235): a pending member's session is refused before relaying (once
+- **Requests bound to fail aren't relayed twice** (D250): a pending member's session is refused before relaying (once
   links exist), and a request the chain refused for `link_pending` or `identity_linked` is answered from the isolate
   for 60 s, so a replayed doomed request can't drain the session pool.
 - **Addresses never through the API** (D230): the email issuer is reached at its own URL (sandbox-dev) or by a zone
@@ -463,7 +463,7 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
 
 | Invariant | Where |
 |---|---|
-| **The issuer's `APP_DB` is a read-write binding of the API's D1** (Cloudflare has no read-only D1 binding): a compromised issuer Worker, or a bug in it, could write the API's tables (an app's origins, keys, settings). Held to reads by a source check (every use goes through `src/apps.ts`, SELECTs only); before mainnet replaced by a read-only RPC on the API (D236, `docs/mainnet-readiness.md`) | `apps/email-issuer/scripts/test/app-db-read-only.test.ts` |
+| **The issuer's `APP_DB` is a read-write binding of the API's D1** (Cloudflare has no read-only D1 binding): a compromised issuer Worker, or a bug in it, could write the API's tables (an app's origins, keys, settings). Held to reads by a source check (every use goes through `src/apps.ts`, SELECTs only); before mainnet replaced by a read-only RPC on the API (D251, `docs/mainnet-readiness.md`) | `apps/email-issuer/scripts/test/app-db-read-only.test.ts` |
 | The app gate reads the API's D1 by the API gate's model (D233): a key in `app_keys` not revoked or still in its grace, an undeleted app, active only with no suspension bit; the legacy `apps.publishable_key` is never read (source check `apps/api/scripts/test/hot-db-reads.test.ts`, no allowlist) | `src/apps.ts`; `test/codes.test.ts` |
 | Only the issuer computes `sub` (`@hana-id/email` `emailSub` over `normalizeEmail().email`, `+tag` kept, D159); mail goes to that normalized address, byte for byte | `src/handlers.ts` `handleStart`, `handleVerify`, `handleGoogleMatch` |
 | Every token's nonce is computed by the issuer from the commitment with the pinned signer, so a token serves only its purpose (never a register proof or another app's client proof); the commitment's scope must be the app's | `src/commitment.ts`, `src/layouts.ts` (checked against `email_fixture.json`) |

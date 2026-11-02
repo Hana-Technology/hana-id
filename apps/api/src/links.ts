@@ -35,14 +35,14 @@ export const LINK_ENDPOINTS: readonly string[] = [LINK_ENDPOINT, LINK_CANCEL_END
 export type LinkEndpoint = typeof LINK_ENDPOINT | typeof LINK_CANCEL_ENDPOINT | typeof LINK_UNLINK_ENDPOINT;
 
 /**
- * Limits (provisional, to measure on sandbox-dev; D232, D235). Adds and removals (cancel, unlink) never share a window.
+ * Limits (provisional, to measure on sandbox-dev; D232, D250). Adds and removals (cancel, unlink) never share a window.
  * - Per IP and app, per minute (in the gate): 5 adds, 10 removals.
  * - Per account root (the account the change is for, `link-root:<scope>:<root ik>`), so one account's traffic never
  *   uses up another's: 3 adds a minute and 20 a day; 10 removals a minute and 100 a day.
  * - Per app: 30 adds a minute and 1000 a day, refused above. Removals are counted on the same kind of windows but
  *   never refused there (a log line `link_changes_high` is the alarm): a cancel of a malicious pending link must never
  *   wait on other users' traffic.
- * - Across every app, a daily ceiling on adds (`link-global`), the session pool's spend bound for links (D237). It
+ * - Across every app, a daily ceiling on adds (`link-global`), the session pool's spend bound for links (D252). It
  *   bounds removals too, which can only follow adds.
  * The contract alarms at 50 new links per scope and hour (D200), so a normal app is far below these.
  */

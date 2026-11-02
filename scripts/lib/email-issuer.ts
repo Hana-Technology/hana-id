@@ -28,7 +28,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { EMAIL_ISSUER_SECRET_FILES, type EmailPublicKey, type Manifest, emailIssuerFor, isLocalEnv, loadEnv, manifestPath, repoRoot, rsaJwkThumbprint } from '@hana-id/env';
 import { CliError, parseCli } from './cli.ts';
-import { insertManifestBlock } from './identity-key.ts';
+import { insertManifestBlock, replaceManifestBlock } from './identity-key.ts';
 import { assertPrivate, parseSecretJson, secretsDir } from './secrets.ts';
 import { DRY_RUN_LINE, writeNewSecretFile } from './vault-kek.ts';
 
@@ -37,7 +37,8 @@ export const EMAIL_ISSUER_USAGE = `Usage: email-issuer.ts <env> <command> [--yes
                  generate the signing key (primary), an offline standby (RSA-2048) and K_sub, K_code, K_rl (32 bytes
                  each), write .secrets/<env>/email-* (0600) and emailIssuer in envs/<env>.json. Uploads nothing.
                  --outbox: the test stub sender (local* envs only)
-  put            set ISSUER_SIGNING_KEY, EMAIL_SUB_KEY, EMAIL_CODE_KEY, EMAIL_RL_KEY (and SENDGRID_API_KEY when
+  put [--standby] set ISSUER_SIGNING_KEY (the manifest's active key; --standby: switch the active kid to the standby
+                 key first, for a suspected leak of the primary), EMAIL_SUB_KEY, EMAIL_CODE_KEY, EMAIL_RL_KEY (and SENDGRID_API_KEY when
                  .secrets/<env>/email-issuer-sendgrid-key exists) on the issuer Worker from the files
   show           the published kids and roles, the watchdog pin block, the keys to post on chain (public values)
   --yes          do it (without it, only print the plan)
@@ -135,13 +136,14 @@ export const pinBlock = (kids: string[]): { required: number; signers: { hana: s
 
 /** Runs `email-issuer <argv>`. */
 export function emailIssuer(argv: readonly string[], deps: EmailIssuerDeps): void {
-  const args = parseCli(argv, { booleans: ['yes', 'help', 'outbox'], strings: ['from'] });
+  const args = parseCli(argv, { booleans: ['yes', 'help', 'outbox', 'standby'], strings: ['from'] });
   if (args.flag('help')) return void deps.log(EMAIL_ISSUER_USAGE);
   const [envName, command, ...rest] = args.positionals;
   if (!envName || !command) throw new CliError('Expected <env> <init | put | show>');
   if (rest.length) throw new CliError(`Unexpected argument ${rest.join(' ')}`);
   if (!['init', 'put', 'show'].includes(command)) throw new CliError(`Unknown command ${command}`);
   if ((args.str('from') !== undefined || args.flag('outbox')) && command !== 'init') throw new CliError('--from and --outbox go with init only');
+  if (args.flag('standby') && command !== 'put') throw new CliError('--standby goes with put only');
   const m = (deps.loadManifest ?? loadEnv)(envName);
   if (m.network !== 'testnet') throw new Error(`envs/${m.name}.json is not a testnet env: mainnet email keys live in AWS KMS (D121)`);
   const dir = secretsDir(m.name, deps.secretsRoot ?? repoRoot);
@@ -211,11 +213,21 @@ export function emailIssuer(argv: readonly string[], deps: EmailIssuerDeps): voi
     return;
   }
 
-  // put
-  const primary = readKeyFile(file('signingKey'));
-  if (publicEntry(primary).kid !== activeKid) throw new Error(`${shown('signingKey')} doesn't have the manifest's active kid ${activeKid}`);
+  // put [--standby]: the key file whose kid is the active kid (after --standby, the standby's).
+  const standbyKey = existsSync(file('standbyKey')) ? readKeyFile(file('standbyKey')) : null;
+  let active = activeKid;
+  if (args.flag('standby')) {
+    if (!standbyKey) throw new Error(`${shown('standbyKey')} doesn't exist (bring it back from its offline copy first)`);
+    const kid = publicEntry(standbyKey).kid;
+    if (!t.publicKeys.some((k) => k.kid === kid)) throw new Error(`the standby key (kid ${kid}) isn't in emailIssuer.publicKeys`);
+    if (kid === activeKid) throw new Error('the standby key is already the active key');
+    active = kid;
+  }
+  const candidates = [readKeyFile(file('signingKey')), ...(standbyKey ? [standbyKey] : [])];
+  const primary = candidates.find((k) => publicEntry(k).kid === active);
+  if (!primary) throw new Error(`no key file in .secrets/${m.name}/ has the manifest's active kid ${active}`);
   const values: [IssuerSecret, string, string][] = [
-    ['ISSUER_SIGNING_KEY', JSON.stringify(primary), `kid ${activeKid}`],
+    ['ISSUER_SIGNING_KEY', JSON.stringify(primary), `kid ${active}`],
     ['EMAIL_SUB_KEY', readKey32(file('subKey')), '32 bytes'],
     ['EMAIL_CODE_KEY', readKey32(file('codeKey')), '32 bytes'],
     ['EMAIL_RL_KEY', readKey32(file('rlKey')), '32 bytes'],
@@ -227,8 +239,13 @@ export function emailIssuer(argv: readonly string[], deps: EmailIssuerDeps): voi
     if (!SENDGRID_RE.test(sg)) throw new Error(`${shown('sendgridKey')} is not a SendGrid API key (SG.<id>.<secret>)`);
     values.push(['SENDGRID_API_KEY', sg, 'Mail Send key']);
   }
-  deps.log(`Plan (env ${m.name}): set ${values.map(([n]) => n).join(', ')} on Worker ${t.cloudflare.workerName} from the files (the standby stays offline).${existsSync(file('sendgridKey')) ? '' : ` No ${shown('sendgridKey')}: SENDGRID_API_KEY is not set.`}`);
+  deps.log(`Plan (env ${m.name}): set ${values.map(([n]) => n).join(', ')} on Worker ${t.cloudflare.workerName} from the files${active === activeKid ? ' (the standby stays offline)' : ''}.${existsSync(file('sendgridKey')) ? '' : ` No ${shown('sendgridKey')}: SENDGRID_API_KEY is not set.`}`);
+  if (active !== activeKid) deps.log(`Plan (env ${m.name}): first set emailIssuer.signer.activeKid to the standby's kid ${active} in envs/${m.name}.json; then gen and deploy the issuer.`);
   if (!apply) return void deps.log(DRY_RUN_LINE);
+  if (active !== activeKid) {
+    writeText(m.name, replaceManifestBlock(readText(m.name), 'emailIssuer', { ...t, signer: { kind: 'worker-secret', activeKid: active } }));
+    deps.log(`Set emailIssuer.signer.activeKid to ${active} in envs/${m.name}.json. Commit it, then gen and deploy the issuer (docs/operations.md "Email issuer", a suspected key leak).`);
+  }
   for (const [name, value, what] of values) {
     deps.putSecret(m, name, value);
     deps.log(`Set ${name} (${what}) on Worker ${t.cloudflare.workerName}.`);

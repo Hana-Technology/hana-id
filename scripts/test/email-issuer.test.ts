@@ -149,6 +149,24 @@ describe('email-issuer put and show', () => {
     expect(puts).toEqual([]);
   });
 
+  it('put --standby switches the active kid to the standby (a suspected leak of the primary) and uploads it', () => {
+    run('init', '--from', FROM, '--yes');
+    const standby = JSON.parse(readFileSync(file('standbyKey'), 'utf8')) as { n: string; e: string; d: string };
+    run('put', '--standby');
+    expect(out.at(-1)).toBe(DRY_RUN_LINE);
+    expect(manifest().emailIssuer!.signer).toMatchObject({ activeKid: expect.not.stringMatching(rsaJwkThumbprint(standby)) });
+    run('put', '--standby', '--yes');
+    expect(manifest().emailIssuer!.signer).toEqual({ kind: 'worker-secret', activeKid: rsaJwkThumbprint(standby) });
+    expect(JSON.parse(puts.find((p) => p.name === 'ISSUER_SIGNING_KEY')!.value).d).toBe(standby.d);
+    // From now on a plain put uploads the (now active) standby; --standby again is refused.
+    puts = [];
+    run('put', '--yes');
+    expect(JSON.parse(puts.find((p) => p.name === 'ISSUER_SIGNING_KEY')!.value).d).toBe(standby.d);
+    expect(() => run('put', '--standby', '--yes')).toThrow('already the active key');
+    expect(() => run('show', '--standby')).toThrow(CliError);
+    expectNoSecretsPrinted();
+  });
+
   it('show prints public values only', () => {
     run('init', '--from', FROM, '--yes');
     out = [];

@@ -90,7 +90,7 @@ export class WorkerSecretSigner implements IssuerSigner {
   }
 
   async sign(input: Uint8Array): Promise<Uint8Array> {
-    return new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', this.key, input));
+    return new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', this.key, new Uint8Array(input)));
   }
 }
 
@@ -98,7 +98,7 @@ export class WorkerSecretSigner implements IssuerSigner {
 export async function verifyRs256(jwk: { n: string; e: string }, input: Uint8Array, signature: Uint8Array): Promise<boolean> {
   try {
     const key = await crypto.subtle.importKey('jwk', { kty: 'RSA', n: jwk.n, e: jwk.e, alg: 'RS256', ext: true }, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
-    return await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, signature, input);
+    return await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, new Uint8Array(signature), new Uint8Array(input));
   } catch {
     return false;
   }

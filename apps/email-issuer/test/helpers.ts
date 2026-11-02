@@ -8,7 +8,9 @@ import type { AccountView, Chain, IdentityView, ScopeView } from '../src/chain.t
 import type { Deps } from '../src/deps.ts';
 import { GOOGLE_REVOKE_URL, GOOGLE_TOKENINFO_URL, GOOGLE_USERINFO_URL, Google } from '../src/google.ts';
 import { route } from '../src/handlers.ts';
-import { importKeys } from '../src/keys.ts';
+import { importKeys, mailboxKey } from '../src/keys.ts';
+import { parseChallengeId } from '../src/challenge-id.ts';
+import { normalizeEmail } from '@hana-id/email';
 import { identityKey, sessionNonceOf, type SessionCommitment } from '../src/layouts.ts';
 import type { EmailSender, MailMessage, SendResult } from '../src/sender.ts';
 import { type IssuerSigner, WorkerSecretSigner, parsePublicKeys, verifyRs256 } from '../src/signer.ts';
@@ -49,10 +51,10 @@ export class FakeChain implements Chain {
   ik(scope: string, provider: string, sub: string): string {
     return toHex(identityKey(scope, provider, sub));
   }
-  addScope(scopeId: string, opts: { email?: boolean; google?: string[]; allowShared?: boolean } = {}): void {
+  addScope(scopeId: string, opts: { email?: boolean; google?: string[]; allowShared?: boolean; actionNonce?: number } = {}): void {
     const clients: [string, string][] = [...(opts.google ?? [GOOGLE_CLIENT]).map((a): [string, string] => ['google', a])];
     if (opts.email !== false) clients.push(['email', `email:${scopeId}`]);
-    this.scopes.set(scopeId, { clients, allowShared: opts.allowShared ?? false });
+    this.scopes.set(scopeId, { clients, allowShared: opts.allowShared ?? false, actionNonce: opts.actionNonce ?? 0 });
   }
   open(scope: string, provider: string, sub: string): void {
     this.opened.add(this.ik(scope, provider, sub));
@@ -216,7 +218,8 @@ export interface Harness {
   google: FakeGoogle;
   sender: RecordingSender;
   clock: { now: number };
-  call: (path: string, body: unknown, opts?: { origin?: string | null; ip?: string; headers?: Record<string, string>; method?: string }) => Promise<Response>;
+  /** `ip: null` sends no cf-connecting-ip; `contentType: null` none. */
+  call: (path: string, body: unknown, opts?: { origin?: string | null; ip?: string | null; headers?: Record<string, string>; method?: string; contentType?: string | null }) => Promise<Response>;
 }
 
 let googleSingleton: FakeGoogle | null = null;
@@ -232,7 +235,8 @@ export async function harness(over: Partial<Deps> = {}): Promise<Harness> {
   const signer = await WorkerSecretSigner.create(env.ISSUER_SIGNING_KEY, env.EMAIL_ACTIVE_KID);
   const keys = await importKeys(env);
   const deps: Deps = {
-    env,
+    // Each harness its own env name: limiter objects are named `<env>:<subject>`, so tests never share a window.
+    env: { ...env, ENV_NAME: `t-${uid()}` },
     now: () => clock.now,
     chain,
     google: new Google(google.fetch, () => clock.now),
@@ -245,7 +249,11 @@ export async function harness(over: Partial<Deps> = {}): Promise<Harness> {
     ...over,
   };
   const call: Harness['call'] = async (path, body, opts = {}) => {
-    const headers = new Headers({ 'content-type': 'application/json', 'cf-connecting-ip': opts.ip ?? `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`, ...(opts.headers ?? {}) });
+    // A random IPv4 address on its own /24 (10.x.y.z: x and y random), so tests don't share aggregate windows.
+    const randomIp = `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`;
+    const headers = new Headers(opts.headers ?? {});
+    if (opts.contentType !== null) headers.set('content-type', opts.contentType ?? 'application/json');
+    if (opts.ip !== null) headers.set('cf-connecting-ip', opts.ip ?? randomIp);
     const origin = opts.origin === undefined ? (path.endsWith('/google-match') ? VAULT : AUTH) : opts.origin;
     if (origin) headers.set('origin', origin);
     const res = await route(new Request(`https://api.test${path}`, { method: opts.method ?? 'POST', headers, body: body === undefined ? undefined : JSON.stringify(body) }), deps);
@@ -331,14 +339,29 @@ export const sha256Hex = (s: string): string => toHex(sha256(utf8(s)));
 
 
 /** Runs a full email session login: start, code from the mail, verify. */
-export async function emailLogin(h: Harness, app: TestApp, email: string, normalized = email): Promise<{ idToken: string; googleWallet: boolean; linkTicket?: string; commitment: ReturnType<typeof sessionCommitment> }> {
+export async function emailLogin(h: Harness, app: TestApp, email: string, normalized = email): Promise<{ idToken?: string; googleWallet: boolean; linkTicket?: string; deviceTicket: string; commitment: ReturnType<typeof sessionCommitment> }> {
   const commitment = sessionCommitment(app.scope, h.clock.now);
   const s = await h.call('/v1/email/start', { pk: app.pk, email, purpose: 'session', commitment: commitment.json });
   expect(s.status).toBe(202);
   const { challengeId } = (await s.json()) as { challengeId: string };
   const v = await h.call('/v1/email/verify', { challengeId, code: h.sender.codeFor(normalized) });
   expect(v.status).toBe(200);
-  return { ...((await v.json()) as { idToken: string; googleWallet: boolean; linkTicket?: string }), commitment };
+  return { ...((await v.json()) as { idToken?: string; googleWallet: boolean; linkTicket?: string; deviceTicket: string }), commitment };
 }
 
 export { env };
+
+/** The Durable Object name of a challenge id (challenge-id.ts). */
+export function challengeObject(challengeId: unknown) {
+  const c = parseChallengeId(challengeId);
+  if (!c) throw new Error('not a challenge id');
+  return env.EMAIL_CHALLENGE.get(env.EMAIL_CHALLENGE.idFromName(c.name));
+}
+
+/** The mailbox limiter object of an address (as the issuer names it). */
+export async function mailboxObject(h: Harness, email: string) {
+  const r = normalizeEmail(email);
+  if (!r.ok) throw new Error('bad test address');
+  const key = await mailboxKey(await h.deps.keys(), r.mailbox);
+  return env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`${h.deps.env.ENV_NAME}:mbx:${key}`));
+}

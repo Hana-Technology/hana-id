@@ -55,3 +55,21 @@ export function ipSubject(raw: string | null): string {
   if (h.slice(0, 5).every((x) => x === 0) && h[5] === 0xffff) return `v4:${h[6]! >> 8}.${h[6]! & 255}.${h[7]! >> 8}.${h[7]! & 255}`;
   return `v6:${h.slice(0, 4).map((x) => x.toString(16)).join(':')}::/64`;
 }
+
+/**
+ * The aggregate prefixes a requester also counts against (H1): an IPv4 address's /24, an IPv6 address's /56 and /48
+ * (a free /48 holds 65,536 /64s, so per-/64 limits alone multiply). IPv4-mapped IPv6 counts as IPv4. Empty when the
+ * address isn't parseable (the caller refuses it anyway).
+ */
+export function ipAggregates(raw: string | null): string[] {
+  if (!raw) return [];
+  const subject = ipSubject(raw);
+  if (subject.startsWith('v4:')) return [`v4net:${subject.slice(3).split('.').slice(0, 3).join('.')}.0/24`];
+  const h = ipv6Hextets(raw.trim());
+  if (!h) return [];
+  const hex = (x: number) => x.toString(16);
+  return [`v6net:${hex(h[0]!)}:${hex(h[1]!)}:${hex(h[2]!)}:${hex(h[3]! & 0xff00)}::/56`, `v6net:${hex(h[0]!)}:${hex(h[1]!)}:${hex(h[2]!)}::/48`];
+}
+
+/** Whether a client address is one the limits can key on (an IPv4 or IPv6 address; L4: anything else is refused). */
+export const isClientIp = (raw: string | null): boolean => !!raw && !ipSubject(raw).startsWith('other:');

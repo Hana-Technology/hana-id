@@ -173,7 +173,8 @@ describe('the four cases', () => {
     const r = await h.call('/v1/email/resend', { challengeId: body.challenge!.challengeId });
     expect(r.status).toBe(202);
     const mail = h.sender.to(email)[0]!;
-    expect(mail.text).toContain('add this email to an existing wallet in “Corp Wallet”');
+    expect(mail.text).toContain('link your Google sign-in to the wallet this email opens in “Corp Wallet”');
+    expect(mail.subject).toBe('Your code to link your Google sign-in in Corp Wallet');
     // The account moved on meanwhile (another link elsewhere bumped E's epoch): the token commits to what is read now.
     const g2 = `9${Math.floor(Math.random() * 1e15)}`;
     h.chain.link(app.scope, ['email', eSub], ['google', g2]);
@@ -220,37 +221,63 @@ describe('the four cases', () => {
     expect(await v.json()).toMatchObject({ code: 'link_refused', data: { decision: 'both_wallets' } });
   });
 
-  for (const hosted of [true, false]) {
-    it(`case B, ${hosted ? 'Google-hosted (at once)' : 'not Google-hosted (pending)'}: verify says googleWallet with a ticket; the Google step mints the join`, async () => {
-      const h = await harness();
-      const app = await seedApp(h);
-      const email = hosted ? `b${uid()}@gmail.com` : `b${uid()}@corp.example`;
-      const acc = gAccount(email, hosted ? {} : { hd: 'other.example' });
-      // An earlier Google login wrote the hint and opened G's wallet.
-      await match(h, app, acc);
-      h.chain.open(app.scope, 'google', acc.sub);
-      const login = await emailLogin(h, app, email);
-      expect(login.googleWallet).toBe(true);
-      expect(login.linkTicket).toMatch(/^[A-Za-z0-9_-]{43}$/u);
-      // Without the ticket (a plain Google login), nothing is minted: never silently at a Google login.
-      const plain = await match(h, app, acc);
-      expect(plain.body.decision).toBe('case_b');
-      expect(plain.body.emailToken).toBeUndefined();
-      const { body, commitment } = await match(h, app, acc, { linkTicket: login.linkTicket! });
-      expect(body.linkImmediate).toBe(hosted);
-      const eSub = await sub(h, email);
-      const t = await decodeToken(body.emailToken!);
-      expect(t.claims.sub).toBe(eSub);
-      const gIk = identityKey(app.scope, 'google', acc.sub);
-      const eIk = identityKey(app.scope, 'email', eSub);
-      const hash = sha256(sessionPreimage(env.SIGNER_ACCOUNT, commitment));
-      expect(t.claims.nonce).toBe(nonceOf(autoLinkPreimage(env.SIGNER_ACCOUNT, app.scope, hash, gIk, { join: 2, joinerIk: eIk, targetRootIk: gIk, targetEpoch: 0, mode: hosted ? 1 : 0 })));
-      // The notice says pending when it is.
-      expect(h.sender.to(email).find((m) => m.kind === 'link_notice')!.text).toContain(hosted ? 'now opens' : 'waiting period');
-      // Single use.
-      expect((await match(h, app, acc, { linkTicket: login.linkTicket! })).body.emailToken).toBeUndefined();
-    });
-  }
+  it('case B, Google-hosted: verify withholds the session token, says googleWallet with a ticket; the Google step mints the join', async () => {
+    const h = await harness();
+    const app = await seedApp(h);
+    const email = `b${uid()}@gmail.com`;
+    const acc = gAccount(email);
+    // An earlier Google login wrote the hint and opened G's wallet.
+    await match(h, app, acc);
+    h.chain.open(app.scope, 'google', acc.sub);
+    const login = await emailLogin(h, app, email);
+    expect(login.googleWallet).toBe(true);
+    // No session token for E, which has no wallet: the server enforces "no second wallet" (tokens review L1).
+    expect(login.idToken).toBeUndefined();
+    expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM email_issuance').first('n')).toBe(0);
+    expect(login.linkTicket).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    // Without the ticket (a plain Google login), nothing is minted: never silently at a Google login.
+    const plain = await match(h, app, acc);
+    expect(plain.body.decision).toBe('case_b');
+    expect(plain.body.emailToken).toBeUndefined();
+    const { body, commitment } = await match(h, app, acc, { linkTicket: login.linkTicket! });
+    expect(body.linkImmediate).toBe(true);
+    const eSub = await sub(h, email);
+    const t = await decodeToken(body.emailToken!);
+    expect(t.claims.sub).toBe(eSub);
+    const gIk = identityKey(app.scope, 'google', acc.sub);
+    const eIk = identityKey(app.scope, 'email', eSub);
+    const hash = sha256(sessionPreimage(env.SIGNER_ACCOUNT, commitment));
+    expect(t.claims.nonce).toBe(nonceOf(autoLinkPreimage(env.SIGNER_ACCOUNT, app.scope, hash, gIk, { join: 2, joinerIk: eIk, targetRootIk: gIk, targetEpoch: 0, mode: 1 })));
+    expect(h.sender.to(email).find((m) => m.kind === 'link_notice')!.text).toContain('now opens');
+    // Single use.
+    expect((await match(h, app, acc, { linkTicket: login.linkTicket! })).body.emailToken).toBeUndefined();
+  });
+
+  it('a ticket counts only for the Google identities the email step found (tokens review L2)', async () => {
+    const h = await harness();
+    const app = await seedApp(h);
+    const email = `k${uid()}@gmail.com`;
+    const acc = gAccount(email);
+    await match(h, app, acc);
+    h.chain.open(app.scope, 'google', acc.sub);
+    const login = await emailLogin(h, app, email);
+    // Another Google account reporting the same address (its sub not hinted with a wallet) can't use the ticket.
+    const other = gAccount(email);
+    expect((await match(h, app, other, { linkTicket: login.linkTicket! })).body.emailToken).toBeUndefined();
+  });
+
+  it('not Google-hosted: no hint is written, so an email login is never told of a Google wallet (tokens review L1, D199)', async () => {
+    const h = await harness();
+    const app = await seedApp(h);
+    const email = `nh${uid()}@corp.example`;
+    const acc = gAccount(email, { hd: 'other.example' });
+    await match(h, app, acc);
+    h.chain.open(app.scope, 'google', acc.sub);
+    expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM email_hints WHERE scope_id = ?1').bind(app.scope).first('n')).toBe(0);
+    const login = await emailLogin(h, app, email);
+    expect(login.googleWallet).toBe(false);
+    expect(login.idToken).toBeDefined();
+  });
 
   it('case B: a ticket for another address, or another app, mints nothing; link=false mints nothing', async () => {
     const h = await harness();

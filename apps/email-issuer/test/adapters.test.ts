@@ -7,7 +7,7 @@ import { AccessVerifier } from '../src/access.ts';
 import { base64Encode, base64UrlEncode, fromUtf8, utf8 } from '../src/bytes.ts';
 import { NearChain } from '../src/chain.ts';
 import { senderFor } from '../src/deps.ts';
-import { addressKey } from '../src/keys.ts';
+import { suppressionKey } from '../src/keys.ts';
 import { clientProofPreimage, nonceOf } from '../src/layouts.ts';
 import { codeMail, displayAppName, linkNoticeMail } from '../src/mail.ts';
 import { OutboxSender } from '../src/outbox.ts';
@@ -82,50 +82,76 @@ async function jwt(key: CryptoKey, kid: string, claims: Record<string, unknown>)
   return `${h}.${c}.${base64UrlEncode(new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, utf8(`${h}.${c}`))))}`;
 }
 
-describe('admin/client-proof behind Cloudflare Access', () => {
-  it('refuses a missing, wrong-aud, wrong-iss, expired, unknown-kid, empty-sub or unlisted Access JWT; mints and audits for staff', async () => {
-    const pair = (await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify'])) as CryptoKeyPair;
-    const pub = (await crypto.subtle.exportKey('jwk', pair.publicKey)) as JsonWebKey;
-    const team = 'hana.cloudflareaccess.com';
-    const aud = 'a'.repeat(64);
-    const certs = (async (url: string) => {
-      expect(url).toBe(`https://${team}/cdn-cgi/access/certs`);
-      return new Response(JSON.stringify({ keys: [{ ...pub, kid: 'acc-1', alg: 'RS256', use: 'sig' }] }));
-    }) as unknown as typeof fetch;
-    const now = Math.floor(Date.now() / 1000);
-    const good = { iss: `https://${team}`, aud: [aud], sub: 'staff-sub', email: 'staff@example.com', exp: now + 600, iat: now };
-    const h = await harness({ access: new AccessVerifier({ teamDomain: team, aud, staffEmails: ['staff@example.com'] }, certs) });
-    const ask = (token: string | null, body: unknown = { scopeId: 's7', actionNonce: 3 }) => h.call('/v1/email/admin/client-proof', body, { origin: null, headers: token ? { 'cf-access-jwt-assertion': token } : {} });
-    expect((await ask(null)).status).toBe(403);
-    for (const over of [{ aud: ['b'.repeat(64)] }, { iss: 'https://other.cloudflareaccess.com' }, { exp: now - 120 }, { sub: '' }, { email: 'other@example.com' }]) {
-      expect((await ask(await jwt(pair.privateKey, 'acc-1', { ...good, ...over }))).status).toBe(403);
+/** A staff harness: Access with a throwaway team key, and a signed Access JWT for staff@example.com. */
+async function staffHarness(over: Record<string, unknown> = {}) {
+  const pair = (await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify'])) as CryptoKeyPair;
+  const pub = (await crypto.subtle.exportKey('jwk', pair.publicKey)) as JsonWebKey;
+  const team = 'hana.cloudflareaccess.com';
+  const aud = 'a'.repeat(64);
+  let certFetches = 0;
+  const certs = (async (url: string) => {
+    certFetches++;
+    expect(url).toBe(`https://${team}/cdn-cgi/access/certs`);
+    return new Response(JSON.stringify({ keys: [{ ...pub, kid: 'acc-1', alg: 'RS256', use: 'sig' }] }));
+  }) as unknown as typeof fetch;
+  const verifier = new AccessVerifier({ teamDomain: team, aud, staffEmails: ['staff@example.com'] }, certs);
+  const h = await harness({ access: verifier, ...over });
+  const now = Math.floor(Date.now() / 1000);
+  const good = { iss: `https://${team}`, aud: [aud], sub: 'staff-sub', email: 'staff@example.com', exp: now + 600, iat: now };
+  const token = (claims: Record<string, unknown> = {}, kid = 'acc-1') => jwt(pair.privateKey, kid, { ...good, ...claims });
+  const ask = async (path: string, body: unknown, opts: { token?: string | null; origin?: string | null; contentType?: string | null } = {}) => {
+    const t = opts.token === undefined ? await token() : opts.token;
+    return h.call(path, body, { origin: opts.origin ?? null, contentType: opts.contentType, headers: t ? { 'cf-access-jwt-assertion': t } : {} });
+  };
+  return { h, ask, token, verifier, fetches: () => certFetches };
+}
+
+describe('staff routes (admin/*) behind Cloudflare Access', () => {
+  it('client-proof: refuses bad Access JWTs; needs the scope’s current action_nonce, an email app and a ticket; audits first', async () => {
+    const { h, ask, token } = await staffHarness();
+    const app = await seedApp(h);
+    h.chain.addScope(app.scope, { actionNonce: 3 });
+    const path = '/v1/email/admin/client-proof';
+    const body = { scopeId: app.scope, actionNonce: 3, ticket: 'SUP-1234' };
+    expect((await ask(path, body, { token: null })).status).toBe(403);
+    for (const over of [{ aud: ['b'.repeat(64)] }, { iss: 'https://other.cloudflareaccess.com' }, { exp: Math.floor(Date.now() / 1000) - 120 }, { sub: '' }, { email: 'other@example.com' }]) {
+      expect((await ask(path, body, { token: await token(over) })).status).toBe(403);
     }
-    expect((await ask(await jwt(pair.privateKey, 'acc-2', good))).status).toBe(403);
-    const r = await ask(await jwt(pair.privateKey, 'acc-1', good));
+    expect((await ask(path, body, { token: await token({}, 'acc-2') })).status).toBe(403);
+    expect((await ask(path, { scopeId: app.scope, actionNonce: 3 })).status).toBe(400);
+    expect(((await (await ask(path, { ...body, actionNonce: 2 })).json()) as { code: string }).code).toBe('stale_action_nonce');
+    expect(((await (await ask(path, { ...body, scopeId: 'snone' })).json()) as { code: string }).code).toBe('unknown_scope');
+    const off = await seedApp(h, { methods: 'google' });
+    expect(((await (await ask(path, { ...body, scopeId: off.scope, actionNonce: 0 })).json()) as { code: string }).code).toBe('email_not_enabled');
+    const r = await ask(path, body);
     expect(r.status).toBe(200);
     expect(r.headers.get('access-control-allow-origin')).toBeNull();
-    const { token, client } = (await r.json()) as { token: string; client: [string, string] };
-    expect(client).toEqual(['email', 'email:s7']);
-    const t = await decodeToken(token);
+    const { token: proof, client } = (await r.json()) as { token: string; client: [string, string] };
+    expect(client).toEqual(['email', `email:${app.scope}`]);
+    const t = await decodeToken(proof);
     expect(t.verified).toBe(true);
-    expect(t.claims).toMatchObject({ aud: 'email:s7', sub: 'hana-client-proof', nonce: nonceOf(clientProofPreimage(env.SIGNER_ACCOUNT, 's7', 3)) });
-    const audit = await env.DB.prepare('SELECT staff, scope_id, action_nonce, jti FROM email_admin_audit').all();
-    expect(audit.results).toEqual([{ staff: 'staff@example.com', scope_id: 's7', action_nonce: 3, jti: t.claims.jti }]);
+    expect(t.claims).toMatchObject({ aud: `email:${app.scope}`, sub: 'hana-client-proof', nonce: nonceOf(clientProofPreimage(env.SIGNER_ACCOUNT, app.scope, 3)) });
+    const rows = await env.DB.prepare("SELECT staff, ticket, scope_id, action_nonce, jti FROM email_admin_audit WHERE action = 'client_proof'").all();
+    expect(rows.results).toEqual([{ staff: 'staff@example.com', ticket: 'SUP-1234', scope_id: app.scope, action_nonce: 3, jti: t.claims.jti }]);
     expect(await env.DB.prepare('SELECT purpose, app_id FROM email_issuance WHERE jti = ?1').bind(t.claims.jti).first()).toEqual({ purpose: 'client_proof', app_id: null });
-    expect((await ask(await jwt(pair.privateKey, 'acc-1', good), { scopeId: 'S7', actionNonce: 3 })).status).toBe(400);
   });
 
-  it('admin/unlock: staff clear a mailbox locked by guessing; audited without the address', async () => {
-    const pair = (await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify'])) as CryptoKeyPair;
-    const pub = (await crypto.subtle.exportKey('jwk', pair.publicKey)) as JsonWebKey;
-    const team = 'hana.cloudflareaccess.com';
-    const aud = 'c'.repeat(64);
-    const certs = (async () => new Response(JSON.stringify({ keys: [{ ...pub, kid: 'acc-1', alg: 'RS256', use: 'sig' }] }))) as unknown as typeof fetch;
-    const h = await harness({ access: new AccessVerifier({ teamDomain: team, aud, staffEmails: ['staff@example.com'] }, certs) });
+  it('refuses an Origin header (no cross-site requests) and a non-JSON body (M2)', async () => {
+    const { h, ask } = await staffHarness();
+    const app = await seedApp(h);
+    for (const path of ['/v1/email/admin/client-proof', '/v1/email/admin/unlock', '/v1/email/admin/unsuppress']) {
+      expect((await ask(path, { scopeId: app.scope, actionNonce: 0, ticket: 'T-1' }, { origin: 'https://evil.example' })).status).toBe(403);
+      expect((await ask(path, { scopeId: app.scope, actionNonce: 0, ticket: 'T-1' }, { origin: 'https://auth.test' })).status).toBe(403);
+      expect((await ask(path, { email: 'x@example.com', ticket: 'T-1' }, { contentType: 'text/plain' })).status).toBe(415);
+    }
+  });
+
+  it('unlock: clears a guessing lockout and grants one challenge and one code past the drained limits; capped; audited first', async () => {
+    const { h, ask } = await staffHarness();
     h.clock.now = Date.UTC(2027, 0, 20, 8);
     const app = await seedApp(h);
     const victim = `u${uid().replace(/[^a-z0-9]/gu, '')}@example.com`;
-    // 20 failed checks from four requesters trip the backstop: a new requester is refused.
+    // 18 failed checks from four requesters trip the backstop: a new requester is refused.
     for (let i = 0; i < 4; i++) {
       const ip = `203.0.113.${100 + i}`;
       const c = sessionCommitment(app.scope, h.clock.now);
@@ -135,23 +161,94 @@ describe('admin/client-proof behind Cloudflare Access', () => {
     }
     const body = () => ({ pk: app.pk, email: victim, purpose: 'session', commitment: sessionCommitment(app.scope, h.clock.now).json });
     expect((await h.call('/v1/email/start', body(), { ip: '198.18.0.9' })).status).toBe(429);
-    const now = Math.floor(Date.now() / 1000);
-    const token = await jwt(pair.privateKey, 'acc-1', { iss: `https://${team}`, aud: [aud], sub: 'staff-sub', email: 'staff@example.com', exp: now + 600, iat: now });
-    expect((await h.call('/v1/email/admin/unlock', { email: victim }, { origin: null })).status).toBe(403);
-    const { result, lines } = await captureLogs(() => h.call('/v1/email/admin/unlock', { email: victim }, { origin: null, headers: { 'cf-access-jwt-assertion': token } }));
+    expect((await ask('/v1/email/admin/unlock', { email: victim })).status).toBe(400);
+    const { result, lines } = await captureLogs(() => ask('/v1/email/admin/unlock', { email: victim, ticket: 'SUP-77' }));
     expect(result.status).toBe(200);
     expect(((await result.json()) as { cleared: number }).cleared).toBeGreaterThan(0);
     for (const l of lines) expect(l).not.toContain(victim);
-    const row = await env.DB.prepare("SELECT staff, action, subject FROM email_admin_audit WHERE action = 'unlock'").first<{ staff: string; action: string; subject: string }>();
-    expect(row).toMatchObject({ staff: 'staff@example.com', action: 'unlock' });
+    const row = await env.DB.prepare("SELECT staff, action, ticket, subject FROM email_admin_audit WHERE action = 'unlock'").first<{ staff: string; action: string; ticket: string; subject: string }>();
+    expect(row).toMatchObject({ staff: 'staff@example.com', action: 'unlock', ticket: 'SUP-77' });
     expect(row!.subject).toHaveLength(12);
     expect(JSON.stringify(row)).not.toContain(victim);
     expect((await h.call('/v1/email/start', body(), { ip: '198.18.0.9' })).status).toBe(202);
+    // One a day per mailbox, three in 30 days.
+    expect((await ask('/v1/email/admin/unlock', { email: victim, ticket: 'SUP-78' })).status).toBe(429);
+    for (const days of [1, 2]) {
+      h.clock.now = Date.UTC(2027, 0, 20 + days, 8);
+      expect((await ask('/v1/email/admin/unlock', { email: victim, ticket: `SUP-8${days}` })).status).toBe(200);
+    }
+    h.clock.now = Date.UTC(2027, 0, 23, 8);
+    expect((await ask('/v1/email/admin/unlock', { email: victim, ticket: 'SUP-90' })).status).toBe(429);
+    h.clock.now = Date.UTC(2027, 1, 20, 8);
+    expect((await ask('/v1/email/admin/unlock', { email: victim, ticket: 'SUP-91' })).status).toBe(200);
   });
 
-  it('is 404 when the env configures no Access', async () => {
+  it('unlock grants one challenge and one code even when the mailbox’s code allowance was drained (M1)', async () => {
+    const { h, ask } = await staffHarness();
+    h.clock.now = Date.UTC(2027, 0, 21, 8);
+    const app = await seedApp(h);
+    const victim = `g${uid().replace(/[^a-z0-9]/gu, '')}@example.com`;
+    let n = 0;
+    // Drain: 30 mailbox-wide plus the 5-a-day reserve, each challenge used up at once.
+    for (let i = 0; i < 60 && n < 35; i++) {
+      const ip = `198.51.${Math.floor(i / 200)}.${i % 200}`;
+      const s = await h.call('/v1/email/start', { pk: app.pk, email: victim, purpose: 'session', commitment: sessionCommitment(app.scope, h.clock.now).json }, { ip });
+      if (s.status !== 202) continue;
+      n++;
+      await h.call('/v1/email/verify', { challengeId: ((await s.json()) as { challengeId: string }).challengeId, code: h.sender.codeFor(victim) }, { ip });
+      if (n % 9 === 0) h.clock.now += 15 * 60_000 + 1;
+    }
+    const owner = '192.0.2.10';
+    const start = () => h.call('/v1/email/start', { pk: app.pk, email: victim, purpose: 'session', commitment: sessionCommitment(app.scope, h.clock.now).json }, { ip: owner });
+    expect((await start()).status).toBe(429);
+    expect((await ask('/v1/email/admin/unlock', { email: victim, ticket: 'SUP-1' })).status).toBe(200);
+    const s = await start();
+    expect(s.status).toBe(202);
+    const cid = ((await s.json()) as { challengeId: string }).challengeId;
+    expect((await h.call('/v1/email/verify', { challengeId: cid, code: h.sender.codeFor(victim) }, { ip: owner })).status).toBe(200);
+    expect((await start()).status).toBe(429);
+  });
+
+  it('unsuppress: removes an exact address’s suppression; needs a ticket; capped; audited first (M3)', async () => {
+    const { h, ask } = await staffHarness();
+    const app = await seedApp(h);
+    const a = `s${uid().replace(/[^a-z0-9]/gu, '')}@example.com`;
+    await env.DB.prepare('INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3)').bind(await suppressionKey(await h.deps.keys(), a), 'complaint', h.clock.now).run();
+    const start = () => h.call('/v1/email/start', { pk: app.pk, email: a, purpose: 'session', commitment: sessionCommitment(app.scope, h.clock.now).json });
+    expect((await start()).status).toBe(202);
+    expect(h.sender.to(a)).toHaveLength(0);
+    expect((await ask('/v1/email/admin/unsuppress', { email: a })).status).toBe(400);
+    const r = await ask('/v1/email/admin/unsuppress', { email: a, ticket: 'SUP-5' });
+    expect(await r.json()).toEqual({ removed: true });
+    expect(await env.DB.prepare("SELECT ticket FROM email_admin_audit WHERE action = 'unsuppress'").first('ticket')).toBe('SUP-5');
+    expect((await start()).status).toBe(202);
+    expect(h.sender.to(a)).toHaveLength(1);
+    expect((await ask('/v1/email/admin/unsuppress', { email: a, ticket: 'SUP-6' })).status).toBe(429);
+  });
+
+  it('a bounce lapses after 30 days; a complaint stays', async () => {
     const h = await harness();
-    expect((await h.call('/v1/email/admin/client-proof', { scopeId: 's1', actionNonce: 0 }, { origin: null })).status).toBe(404);
+    const app = await seedApp(h);
+    const bounced = `b${uid().replace(/[^a-z0-9]/gu, '')}@example.com`;
+    const complained = `c${uid().replace(/[^a-z0-9]/gu, '')}@example.com`;
+    const keys = await h.deps.keys();
+    for (const [a, reason] of [[bounced, 'bounce'], [complained, 'complaint']] as const) {
+      await env.DB.prepare('INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3)').bind(await suppressionKey(keys, a), reason, h.clock.now).run();
+    }
+    h.clock.now += 30 * 86_400_000 + 1;
+    for (const a of [bounced, complained]) await h.call('/v1/email/start', { pk: app.pk, email: a, purpose: 'session', commitment: sessionCommitment(app.scope, h.clock.now).json });
+    expect(h.sender.to(bounced)).toHaveLength(1);
+    expect(h.sender.to(complained)).toHaveLength(0);
+  });
+
+  it('is 404 when the env configures no Access; the Access verifier doesn’t refetch for unknown kids (L6)', async () => {
+    const h = await harness();
+    expect((await h.call('/v1/email/admin/client-proof', { scopeId: 's1', actionNonce: 0, ticket: 'T' }, { origin: null })).status).toBe(404);
+    const s = await staffHarness();
+    const app = await seedApp(s.h);
+    for (let i = 0; i < 5; i++) await s.ask('/v1/email/admin/unlock', { email: 'x@example.com', ticket: 'T' }, { token: await s.token({}, `unknown-${i}`) });
+    expect(s.fetches()).toBe(1);
+    void app;
   });
 });
 
@@ -177,10 +274,13 @@ describe('SendGrid event webhook → email_suppressions', () => {
     const complained = `C${uid()}@Example.com`;
     const blocked = `x${uid()}@example.com`;
     const events = JSON.stringify([
-      { event: 'bounce', type: 'bounce', email: bounced },
-      { event: 'spamreport', email: complained },
-      { event: 'bounce', type: 'blocked', email: blocked },
-      { event: 'delivered', email: `d${uid()}@example.com` },
+      { event: 'bounce', type: 'bounce', email: bounced, category: ['hana-id-code'] },
+      { event: 'spamreport', email: complained, category: 'hana-id-link_notice' },
+      { event: 'bounce', type: 'blocked', email: blocked, category: ['hana-id-code'] },
+      { event: 'delivered', email: `d${uid()}@example.com`, category: ['hana-id-code'] },
+      // Another mail of the same SendGrid account (another category, or none) never suppresses (M3).
+      { event: 'bounce', type: 'bounce', email: `o${uid()}@example.com`, category: ['wend-newsletter'] },
+      { event: 'spamreport', email: `p${uid()}@example.com` },
     ]);
     const send = async (body: string, ts: string, sig?: string) => {
       const s = sig ?? base64Encode(toDer(new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey, utf8(ts + body)))));
@@ -195,8 +295,8 @@ describe('SendGrid event webhook → email_suppressions', () => {
     const keys = await h.deps.keys();
     const rows = await env.DB.prepare('SELECT email_key, reason FROM email_suppressions ORDER BY reason').all<{ email_key: string; reason: string }>();
     expect(rows.results).toEqual([
-      { email_key: await addressKey(keys, bounced), reason: 'bounce' },
-      { email_key: await addressKey(keys, complained.toLowerCase()), reason: 'complaint' },
+      { email_key: await suppressionKey(keys, bounced), reason: 'bounce' },
+      { email_key: await suppressionKey(keys, complained.toLowerCase()), reason: 'complaint' },
     ]);
     expect(JSON.stringify(rows.results)).not.toContain('@');
     expect(derToP1363(Uint8Array.of(0x31, 0))).toBeNull();
@@ -211,7 +311,7 @@ describe('NEAR views', () => {
     const answers: Record<string, unknown> = {
       get_identity: { key: 'a'.repeat(64), status: 'member', opened: false, root: { provider: 'email', sub: 'e1.x' }, effective_at_ms: 1, account_epoch: 4 },
       get_account: { root: { provider: 'email', sub: 'e1.x' }, members: [{ key: 'a'.repeat(64), provider: 'google', effective_at_ms: 1, active: true, auto: true }], epoch: 4, unlinked: ['b'.repeat(64)] },
-      get_scope: { id: 's1', owners: [], clients: [['email', 'email:s1'], ['google', 'g']], allow_shared: true, pending: [] },
+      get_scope: { id: 's1', owners: [], clients: [['email', 'email:s1'], ['google', 'g']], allow_shared: true, pending: [], action_nonce: 4 },
       get_config: { shared_clients: [['google', 'sh1']], pending_shared_clients: [{ provider: 'google', aud: 'sh2', effective_at_ms: 0 }], unrecorded_wallets: false },
     };
     const fetcher = (async (url: string, init: RequestInit) => {
@@ -224,7 +324,7 @@ describe('NEAR views', () => {
     const chain = new NearChain(['https://first.test', 'https://second.test'], 'signer.test.near', fetcher);
     expect(await chain.identity('s1', 'google', '1')).toEqual({ key: 'a'.repeat(64), status: 'member', opened: false, root: { provider: 'email', sub: 'e1.x' }, accountEpoch: 4 });
     expect((await chain.account('s1', 'google', '1'))?.unlinked).toEqual(['b'.repeat(64)]);
-    expect(await chain.scope('s1')).toEqual({ clients: [['email', 'email:s1'], ['google', 'g']], allowShared: true });
+    expect(await chain.scope('s1')).toEqual({ clients: [['email', 'email:s1'], ['google', 'g']], allowShared: true, actionNonce: 4 });
     expect(await chain.sharedGoogleClients()).toEqual(['sh1', 'sh2']);
     expect(await chain.unrecordedWallets()).toBe(false);
     expect(calls.filter((c) => c.includes('second')).length).toBeGreaterThan(0);
@@ -243,7 +343,7 @@ describe('Durable Object cleanup', () => {
   it('a challenge deletes itself at expiry; a limiter forgets ended windows', async () => {
     const h = await harness();
     const stub = env.EMAIL_CHALLENGE.get(env.EMAIL_CHALLENGE.idFromName(`cleanup-${uid()}`));
-    await stub.create({ appId: 'a', appName: 'A', scopeId: 's', purpose: 'session', nonce: 'n', autoLink: null, silent: false, email: 'x@example.com', mailboxKey: 'k', codeMac: 'AAAA', attempts: 0, createdAtMs: 0, expiresAtMs: Date.now() + 1000, lastSentAtMs: 0, resends: 0 });
+    await stub.create({ appId: 'a', appName: 'A', scopeId: 's', purpose: 'session', nonce: 'n', autoLink: null, silent: false, emailEnc: '', mailboxKey: 'k', domainKey: '', ticketed: false, codeMac: 'AAAA', attempts: 0, createdAtMs: 0, expiresAtMs: Date.now() + 1000, lastSentAtMs: 0, resends: 0 });
     expect(await runDurableObjectAlarm(stub)).toBe(true);
     await runInDurableObject(stub, (_o, state) => expect([...state.storage.kv.list()]).toEqual([]));
     const lim = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`cleanup-${uid()}`));

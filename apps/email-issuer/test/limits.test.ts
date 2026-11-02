@@ -6,15 +6,17 @@ import { runInDurableObject } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import type { ChallengeRecord } from '../src/challenge.ts';
 import { normalizeEmail } from '@hana-id/email';
-import { addressKey, mailboxKey } from '../src/keys.ts';
-import { captureLogs, env, harness, seedApp, seedPlan, sessionCommitment, uid, type Harness, type TestApp } from './helpers.ts';
+import { suppressionKey as addressKey, mailboxKey } from '../src/keys.ts';
+import { captureLogs, challengeObject, env, harness, seedApp, seedPlan, sessionCommitment, uid, type Harness, type TestApp } from './helpers.ts';
 
 const startBody = (h: Harness, app: TestApp, email: string) => ({ pk: app.pk, email, purpose: 'session', commitment: sessionCommitment(app.scope, h.clock.now).json });
 const start = async (h: Harness, app: TestApp, email: string, ip?: string) => {
   const r = await h.call('/v1/email/start', startBody(h, app, email), ip ? { ip } : {});
   return { status: r.status, body: (await r.json()) as Record<string, unknown> };
 };
-const ipN = (n: number) => `198.51.${Math.floor(n / 250)}.${n % 250}`;
+// Each fresh requester on its own /24, so the per-/24 aggregate limit (200 starts a day) never joins unrelated tests.
+const ipN = (n: number) => `10.${Math.floor(n / 250) % 250}.${n % 250}.9`;
+const morning = Date.UTC(2027, 0, 15, 8, 0, 0);
 let ipSeq = Math.floor(Math.random() * 10_000);
 const freshIp = () => ipN(ipSeq++);
 const addr = (tag: string) => `${tag}${uid().replace(/[^a-z0-9]/gu, '')}@example.com`;
@@ -93,14 +95,14 @@ describe('code mails per mailbox and requester', () => {
     const h = await harness();
     const app = await seedApp(h);
     const a = addr('s');
-    await env.DB.prepare('INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3)').bind(await addressKey(await h.deps.keys(), a), 'bounce', 1).run();
+    await env.DB.prepare('INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3)').bind(await addressKey(await h.deps.keys(), a), 'bounce', h.clock.now).run();
     const s = await start(h, app, a);
     expect(s.status).toBe(202);
     expect(h.sender.to(a)).toHaveLength(0);
-    await runInDurableObject(env.EMAIL_CHALLENGE.get(env.EMAIL_CHALLENGE.idFromName(s.body.challengeId as string)), (_o, state) => {
+    await runInDurableObject(challengeObject(s.body.challengeId), (_o, state) => {
       const rec = state.storage.kv.get<ChallengeRecord>('challenge')!;
       expect(rec.silent).toBe(true);
-      expect(rec.email).toBe('');
+      expect(rec.emailEnc).toBe("");
       expect(JSON.stringify(rec)).not.toContain('@');
     });
     h.clock.now += 30_000;
@@ -110,7 +112,7 @@ describe('code mails per mailbox and requester', () => {
     // sub-addressing, those are two people's mailboxes).
     const victim = addr('v');
     const tagged = `${victim.split('@')[0]}+x@example.com`;
-    await env.DB.prepare('INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3)').bind(await addressKey(await h.deps.keys(), tagged), 'bounce', 1).run();
+    await env.DB.prepare('INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3)').bind(await addressKey(await h.deps.keys(), tagged), 'bounce', h.clock.now).run();
     expect((await start(h, app, victim)).status).toBe(202);
     expect(h.sender.to(victim)).toHaveLength(1);
     expect((await start(h, app, tagged)).status).toBe(202);
@@ -122,7 +124,7 @@ describe('code mails per mailbox and requester', () => {
     const app = await seedApp(h);
     const fresh = addr('sf');
     const suppressed = addr('ss');
-    await env.DB.prepare('INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3)').bind(await addressKey(await h.deps.keys(), suppressed), 'bounce', 1).run();
+    await env.DB.prepare('INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3)').bind(await addressKey(await h.deps.keys(), suppressed), 'bounce', h.clock.now).run();
     const ip = freshIp();
     const seq = async (email: string) => {
       const out: number[] = [];
@@ -134,7 +136,7 @@ describe('code mails per mailbox and requester', () => {
     expect(h.sender.to(suppressed)).toHaveLength(0);
     // Resends count alike: a fourth code for either from one requester within 15 min is refused.
     for (const email of [addr('rf'), addr('rs')]) {
-      if (email.startsWith('rs')) await env.DB.prepare('INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3)').bind(await addressKey(await h.deps.keys(), email), 'bounce', 1).run();
+      if (email.startsWith('rs')) await env.DB.prepare('INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3)').bind(await addressKey(await h.deps.keys(), email), 'bounce', h.clock.now).run();
       const ip2 = freshIp();
       const s = await start(h, app, email, ip2);
       const out = [s.status];
@@ -188,10 +190,10 @@ describe('wrong codes: per requester, with a mailbox-wide backstop', () => {
 
   // The hard ceiling (D198): ≤ 25 failed checks per mailbox per UTC day, whoever asks. The clock is set to a UTC
   // morning so no test crosses midnight by accident.
-  const morning = Date.UTC(2027, 0, 15, 8, 0, 0);
+
   const guessWrong = async (h: Harness, id: unknown, code: string, ip: string) => (await h.call('/v1/email/verify', { challengeId: id, code: wrongFor(code) }, { ip })).status;
 
-  it('many requesters: the backstop stops everyone at 20 failed checks but owner-slot requesters, and nothing passes 25', async () => {
+  it('many requesters: the backstop stops everyone at 18 failed checks but owner-slot requesters, and nothing passes 25', async () => {
     const h = await harness();
     h.clock.now = morning;
     const app = await seedApp(h);
@@ -222,7 +224,7 @@ describe('wrong codes: per requester, with a mailbox-wide backstop', () => {
       return failed;
     });
     expect(result).toBeLessThanOrEqual(25);
-    expect(result).toBe(20 + early.length);
+    expect(result).toBe(18 + early.length);
     expect(lines.some((l) => l.includes('"mailbox_guess_limit"') && l.includes('"code":"backstop"') && l.includes('"level":"error"'))).toBe(true);
     for (const l of lines) expect(l).not.toContain(a);
     // The next UTC day starts afresh.
@@ -232,7 +234,6 @@ describe('wrong codes: per requester, with a mailbox-wide backstop', () => {
     expect(s.status).toBe(202);
     expect((await h.call('/v1/email/verify', { challengeId: s.body.challengeId, code: h.sender.codeFor(a) }, { ip })).status).toBe(200);
   });
-
   it('the owner slot: a requester that started before the trip still signs in; one that started after can’t', async () => {
     const h = await harness();
     h.clock.now = morning;
@@ -240,54 +241,66 @@ describe('wrong codes: per requester, with a mailbox-wide backstop', () => {
     const a = addr('co');
     const owner = freshIp();
     const o = await start(h, app, a, owner);
-    for (let i = 0; i < 4; i++) {
+    const ownerCode = h.sender.codeFor(a);
+    // 18 failures: 5 + 5 + 5 + 3.
+    for (const n of [5, 5, 5, 3]) {
       const ip = freshIp();
       const s = await start(h, app, a, ip);
-      for (let k = 0; k < 5; k++) await guessWrong(h, s.body.challengeId, h.sender.codeFor(a), ip);
+      for (let k = 0; k < n; k++) expect(await guessWrong(h, s.body.challengeId, h.sender.codeFor(a), ip)).toBe(400);
     }
     const late = freshIp();
     expect((await start(h, app, a, late)).status).toBe(429);
     expect((await h.call('/v1/email/verify', { challengeId: o.body.challengeId, code: '123456' }, { ip: late })).status).toBe(429);
-    // The owner's code (its challenge's) still verifies.
-    const ownerCode = h.sender.to(a)[0]!.text.match(/\n(\d{6})\n/u)![1]!;
     expect((await h.call('/v1/email/verify', { challengeId: o.body.challengeId, code: ownerCode }, { ip: owner })).status).toBe(200);
   });
-
-  it('the ceiling: 20 + the 5 owner-slot checks, then nobody until the UTC day ends; logged', async () => {
+  it('the ceiling: 18 + the 4 owner-slot checks + the 3 ticket checks, then nobody until the UTC day ends; logged', async () => {
     const h = await harness();
     h.clock.now = morning;
     const app = await seedApp(h);
     const a = addr('cc');
-    const early = Array.from({ length: 6 }, freshIp);
-    // Five early starters (the live cap), their challenges then expire; a sixth starts once one has.
-    for (const ip of early.slice(0, 5)) expect((await start(h, app, a, ip)).status).toBe(202);
+    // The owner signed in earlier today: it holds a device ticket.
+    const t = freshIp();
+    const first = await start(h, app, a, t);
+    const v = await h.call('/v1/email/verify', { challengeId: first.body.challengeId, code: h.sender.codeFor(a) }, { ip: t });
+    const { deviceTicket } = (await v.json()) as { deviceTicket: string };
+    expect(deviceTicket).toMatch(/^dt1\.[A-Za-z0-9_-]{54}$/u);
+    // Four clean early starters (and a fifth, kept clean for the end).
+    const early = Array.from({ length: 5 }, freshIp);
+    const earlyIds: unknown[] = [];
+    for (const ip of early) earlyIds.push((await start(h, app, a, ip)).body.challengeId);
+    // The attackers: 18 failures trip the backstop.
     h.clock.now += 10 * 60_000 + 1;
-    expect((await start(h, app, a, early[5]!)).status).toBe(202);
-    h.clock.now += 10 * 60_000 + 1;
-    for (let i = 0; i < 4; i++) {
+    for (const n of [5, 5, 5, 3]) {
       const ip = freshIp();
       const s = await start(h, app, a, ip);
       expect(s.status).toBe(202);
-      for (let k = 0; k < 5; k++) expect(await guessWrong(h, s.body.challengeId, h.sender.codeFor(a), ip)).toBe(400);
+      for (let k = 0; k < n; k++) expect(await guessWrong(h, s.body.challengeId, h.sender.codeFor(a), ip)).toBe(400);
     }
     h.clock.now += 15 * 60_000 + 1;
     const { lines } = await captureLogs(async () => {
-      for (const ip of early.slice(0, 5)) {
+      // The owner slot: four clean early starters, one wrong check each.
+      for (const ip of early.slice(0, 4)) {
         const s = await start(h, app, a, ip);
         expect(s.status).toBe(202);
         expect(await guessWrong(h, s.body.challengeId, h.sender.codeFor(a), ip)).toBe(400);
       }
+      // The ticket slot: three checks of a ticketed challenge.
+      const ts = await h.call('/v1/email/start', { ...startBody(h, app, a), deviceTicket }, { ip: t });
+      expect(ts.status).toBe(202);
+      const tid = ((await ts.json()) as { challengeId: string }).challengeId;
+      for (let k = 0; k < 3; k++) expect(await guessWrong(h, tid, h.sender.codeFor(a), t)).toBe(400);
     });
     expect(lines.some((l) => l.includes('"mailbox_guess_limit"') && l.includes('"code":"ceiling"'))).toBe(true);
-    // 25 failed checks: the sixth early starter, clean and pre-trip, is refused too, as is everyone, until midnight UTC.
-    const r = await h.call('/v1/email/start', startBody(h, app, a), { ip: early[5]! });
+    // 25 failed checks: the fifth early starter (clean, pre-trip) and the ticket holder are refused too, until midnight
+    // UTC, with the one mailbox-level retry-after.
+    const r = await h.call('/v1/email/start', startBody(h, app, a), { ip: early[4]! });
     expect(r.status).toBe(429);
-    expect(Number(r.headers.get('retry-after'))).toBe(Math.ceil((Date.UTC(2027, 0, 16) - h.clock.now) / 1000));
+    expect(r.headers.get('retry-after')).toBe('900');
+    expect((await h.call('/v1/email/start', { ...startBody(h, app, a), deviceTicket }, { ip: t })).status).toBe(429);
     expect((await start(h, app, a, freshIp())).status).toBe(429);
     h.clock.now = Date.UTC(2027, 0, 16, 0, 0, 1);
-    expect((await start(h, app, a, early[5]!)).status).toBe(202);
+    expect((await start(h, app, a, early[4]!)).status).toBe(202);
   });
-
   it('challenges per mailbox per day are capped at 35, every kind', async () => {
     const h = await harness();
     h.clock.now = morning;
@@ -312,15 +325,15 @@ describe('wrong codes: per requester, with a mailbox-wide backstop', () => {
     h.clock.now = morning;
     const app = await seedApp(h);
     const a = addr('tm');
-    // 19 failed checks from four requesters (5, 5, 5, 4).
+    // 17 failed checks (5, 5, 5, 2), then the 18th check is right: reserved (the backstop's 18th place, the trip),
+    // then refunded.
     let last: { ip: string; id: unknown } | null = null;
-    for (let i = 0; i < 4; i++) {
+    for (const n of [5, 5, 5, 2]) {
       const ip = freshIp();
       const s = await start(h, app, a, ip);
-      for (let k = 0; k < (i === 3 ? 4 : 5); k++) await guessWrong(h, s.body.challengeId, h.sender.codeFor(a), ip);
+      for (let k = 0; k < n; k++) await guessWrong(h, s.body.challengeId, h.sender.codeFor(a), ip);
       last = { ip, id: s.body.challengeId };
     }
-    // The 20th check is right: reserved (the backstop's 20th place, the trip), then refunded.
     expect((await h.call('/v1/email/verify', { challengeId: last!.id, code: h.sender.codeFor(a) }, { ip: last!.ip })).status).toBe(200);
     // The owner starts now, before any real trip.
     const owner = freshIp();
@@ -335,9 +348,8 @@ describe('wrong codes: per requester, with a mailbox-wide backstop', () => {
     // The owner started before it: the owner slot is open to it.
     expect((await h.call('/v1/email/verify', { challengeId: o.body.challengeId, code: ownerCode }, { ip: owner })).status).toBe(200);
   });
-
   it('the day’s challenge cap is taken back when the budget refuses the start or the first code isn’t delivered', async () => {
-    const env2 = { ...env, ENV_NAME: `cap-${uid()}`, DAILY_SEND_BUDGET: '1' };
+    const env2 = { ...env, ENV_NAME: `cap-${uid()}`, DAILY_SEND_BUDGET: '10' };
     const h = await harness({ env: env2 });
     h.clock.now = morning;
     const app = await seedApp(h);
@@ -354,11 +366,10 @@ describe('wrong codes: per requester, with a mailbox-wide backstop', () => {
     h.sender.next = { ok: true };
     expect((await start(h, app, a, freshIp())).status).toBe(202);
     expect(await count()).toBe(1);
-    // The budget (1) is spent: every further start is refused and none takes a place.
+    // The app's share of the budget (10% of 10: 1) is spent: every further start is refused and none takes a place.
     for (let i = 0; i < 5; i++) expect((await start(h, app, a, freshIp())).status).toBe(429);
     expect(await count()).toBe(1);
   });
-
   it('unadmit takes back the challenge’s place and its live slot', async () => {
     const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`unadmit-${uid()}`));
     const exp = morning + 600_000;
@@ -420,37 +431,70 @@ describe('per-IP, per-app and global limits (429)', () => {
     expect((await h.call('/v1/email/verify', { challengeId: 'x'.repeat(43), code: '123456' }, { ip })).status).toBe(429);
   });
 
-  it('per app: 20 × the plan’s per_minute per minute, and its per_day', async () => {
+  it('per app: the plan’s per_minute per minute and its per_day (H1: no "20 ×"); a refused mailbox costs the app nothing', async () => {
     const h = await harness();
     const plan = `p${uid().replace(/[^a-z0-9]/gu, '')}`;
-    await seedPlan(plan, 1, 30);
+    await seedPlan(plan, 2, 4);
+    // A fixed clock: no 15-minute window boundary between the steps.
+    h.clock.now = morning;
     const app = await seedApp(h, { plan });
-    let okCount = 0;
-    for (let i = 0; i < 21; i++) if ((await start(h, app, addr(`i${i}`))).status === 202) okCount++;
-    expect(okCount).toBe(20);
+    // A start the mailbox refuses never reaches the app's quota: the requester pays first.
+    const busy = addr('busy');
+    const ip = freshIp();
+    for (let i = 0; i < 2; i++) expect((await start(h, app, busy, ip)).status).toBe(202);
     h.clock.now += 60_000;
-    for (let i = 0; i < 20; i++) if ((await start(h, app, addr(`j${i}`))).status === 202) okCount++;
-    expect(okCount).toBe(30);
+    // `busy` from the same requester is now at 2 of its 3 per 15 min; a third, then refusals by the mailbox.
+    expect((await start(h, app, busy, ip)).status).toBe(202);
+    for (let i = 0; i < 3; i++) expect((await start(h, app, busy, ip)).status).toBe(429);
+    h.clock.now += 60_000;
+    // The app's day (4): the three refused starts didn't count, so a fourth start passes, and a fifth doesn't.
+    expect((await start(h, app, addr('x1'))).status).toBe(202);
+    expect((await start(h, app, addr('x2'))).status).toBe(429);
+    const h2 = await harness();
+    const app2 = await seedApp(h2, { plan });
+    let okCount = 0;
+    for (let i = 0; i < 3; i++) if ((await start(h2, app2, addr(`i${i}`))).status === 202) okCount++;
+    expect(okCount).toBe(2);
+    h2.clock.now += 60_000;
+    for (let i = 0; i < 3; i++) if ((await start(h2, app2, addr(`j${i}`))).status === 202) okCount++;
+    expect(okCount).toBe(4);
   });
-
-  it('the daily send budget refuses new starts at the cap and logs a critical line', async () => {
-    const h = await harness({ env: { ...env, ENV_NAME: `budget-${uid()}`, DAILY_SEND_BUDGET: '2' } });
+  it('the global budget is shared out: 10% per app, the last 20% only for apps under half their share; logged', async () => {
+    const env2 = { ...env, ENV_NAME: `budget-${uid()}`, DAILY_SEND_BUDGET: '100' };
+    const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`${env2.ENV_NAME}:global`));
+    const now = morning;
+    // App share: 10. App b uses half its share; a0..a6 their whole share; a7 half: 80 = the general pool.
+    for (let k = 0; k < 5; k++) expect((await stub.reserveBudget('b', 100, now)).ok).toBe(true);
+    for (let i = 0; i < 7; i++) for (let k = 0; k < 10; k++) expect((await stub.reserveBudget(`a${i}`, 100, now)).ok).toBe(true);
+    expect(await stub.reserveBudget('a0', 100, now)).toEqual({ ok: false, limit: 'app' });
+    for (let k = 0; k < 5; k++) expect((await stub.reserveBudget('a7', 100, now)).ok).toBe(true);
+    // The reserve (the last 20): an app that has used half its share (b, a7) can't draw on it; one under half can.
+    expect(await stub.reserveBudget('b', 100, now)).toEqual({ ok: false, limit: 'reserve' });
+    expect(await stub.reserveBudget('a7', 100, now)).toEqual({ ok: false, limit: 'reserve' });
+    const c = await stub.reserveBudget('c', 100, now);
+    expect(c.ok && c.crossed).toEqual([]);
+    // Logs at 50% and 80% of the global budget and of an app's share, through start.
+    const h = await harness({ env: { ...env, ENV_NAME: `budget2-${uid()}`, DAILY_SEND_BUDGET: '20' } });
     const app = await seedApp(h);
-    await start(h, app, addr('k1'));
-    await start(h, app, addr('k2'));
-    const { result, lines } = await captureLogs(() => h.call('/v1/email/start', startBody(h, app, addr('k3'))));
-    expect(result.status).toBe(429);
-    expect(lines.some((l) => l.includes('"send_budget_exhausted"') && l.includes('"level":"error"'))).toBe(true);
+    const { result, lines } = await captureLogs(async () => {
+      const out: number[] = [];
+      for (let i = 0; i < 3; i++) out.push((await start(h, app, addr(`k${i}`))).status);
+      return out;
+    });
+    // App share of 20: 2. The third start is refused.
+    expect(result).toEqual([202, 202, 429]);
+    expect(lines.some((l) => l.includes('"email_budget"') && l.includes('"code":"app_50"'))).toBe(true);
+    expect(lines.some((l) => l.includes('"send_budget_exhausted"') && l.includes('"code":"app"') && l.includes('"level":"error"'))).toBe(true);
     expect(h.sender.sent).toHaveLength(2);
   });
 });
 
 describe('enumeration resistance', () => {
-  it('fresh and suppressed addresses: same status, body keys and similar timing; a limited mailbox: the IP limit’s exact body', async () => {
+  it('fresh and suppressed addresses: same status, body keys and similar timing; every mailbox-level refusal: one body and one retry-after (L1)', async () => {
     const h = await harness();
     const app = await seedApp(h);
     const suppressed = addr('m');
-    await env.DB.prepare('INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3)').bind(await addressKey(await h.deps.keys(), suppressed), 'complaint', 1).run();
+    await env.DB.prepare('INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3)').bind(await addressKey(await h.deps.keys(), suppressed), 'complaint', h.clock.now).run();
     const runs: Record<string, number[]> = { fresh: [], suppressed: [] };
     for (let i = 0; i < 5; i++) {
       for (const [k, email] of [['fresh', addr(`n${i}`)], ['suppressed', suppressed]] as const) {
@@ -463,15 +507,21 @@ describe('enumeration resistance', () => {
     }
     const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
     expect(Math.abs(median(runs.fresh!) - median(runs.suppressed!))).toBeLessThan(50);
-    // A mailbox limit answers exactly like an IP limit.
+    // Mailbox-level refusals of different kinds: the per-requester code limit, the live-challenge cap.
     const a = addr('o');
     const ip = freshIp();
     for (let i = 0; i < 3; i++) await start(h, app, a, ip);
-    const mailboxLimited = await h.call('/v1/email/start', startBody(h, app, a), { ip });
+    const byCodes = await h.call('/v1/email/start', startBody(h, app, a), { ip });
+    const b = addr('q');
+    for (let i = 0; i < 5; i++) await start(h, app, b, freshIp());
+    const byLive = await h.call('/v1/email/start', startBody(h, app, b), { ip: freshIp() });
+    expect([byCodes.status, byLive.status]).toEqual([429, 429]);
+    expect([byCodes.headers.get('retry-after'), byLive.headers.get('retry-after')]).toEqual(['900', '900']);
     const ipLimited = freshIp();
     for (let i = 0; i < 10; i++) await start(h, app, addr(`q${i}`), ipLimited);
     const ipRefused = await h.call('/v1/email/start', startBody(h, app, addr('q')), { ip: ipLimited });
-    expect([mailboxLimited.status, ipRefused.status]).toEqual([429, 429]);
-    expect(await mailboxLimited.json()).toEqual(await ipRefused.json());
+    const bodies = [await byCodes.json(), await byLive.json(), await ipRefused.json()];
+    expect(bodies[0]).toEqual(bodies[1]);
+    expect(bodies[0]).toEqual(bodies[2]);
   });
 });

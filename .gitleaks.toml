@@ -41,14 +41,15 @@ keywords = ["relayer_keys", "keys_updater_key", "vault_kek", "watchdog_key", "wa
 # A private JWK's `d`: an EC P-256 or OKP key (32 bytes, 43 base64url characters), as the identity token's signing keys
 # are kept (.secrets/<env>/identity-signing-key*.json, IDENTITY_SIGNING_KEY*), or an RSA key (2048-4096 bits, 342-683
 # characters), as the email issuer's are (.secrets/<env>/email-issuer-signing-key*.json, ISSUER_SIGNING_KEY). Public
-# JWKs (the JWKS, the manifest's identityToken and emailIssuer publicKeys) have no `d` and pass.
+# JWKs (the JWKS, the manifest's identityToken and emailIssuer publicKeys) have no `d` and pass. The member is matched quoted
+# (JSON) or unquoted (a JS/TS object literal, `d: '…'`), with any quote around the value.
 [[rules]]
 id = "hana-private-jwk"
 description = "Private JWK (d member)"
-regex = '''"d"[ \t]*:[ \t]*"([A-Za-z0-9_-]{43}|[A-Za-z0-9_-]{300,700})"'''
+regex = '''(?:"d"|'d'|\bd)[ \t]*:[ \t]*["'`]([A-Za-z0-9_-]{43}|[A-Za-z0-9_-]{300,700})["'`]'''
 secretGroup = 1
 entropy = 3.5
-keywords = ["\"d\""]
+keywords = ["\"d\"", "'d'", "d:", "d :"]
 
 # Hana's secret files, whatever they contain: anything under a .secrets/ directory (the council key files
 # .secrets/<env>/council/<account>.json included), .dev.vars, the relayer and keys-updater key files, the watchdog's

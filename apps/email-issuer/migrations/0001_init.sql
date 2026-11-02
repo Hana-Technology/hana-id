@@ -23,20 +23,23 @@ CREATE TABLE email_hints (
   PRIMARY KEY (scope_id, email_sub, google_sub)
 );
 
--- Addresses that bounced or complained (SendGrid's Event Webhook): no mail goes to them; `start` still answers 202.
+-- Addresses that bounced or complained (SendGrid's Event Webhook, the issuer's own mail only): no mail goes to them;
+-- `start` still answers alike. A bounce lapses after 30 days; a complaint lasts until a staff unsuppress.
 CREATE TABLE email_suppressions (
-  email_key TEXT PRIMARY KEY,                -- b64url(HMAC-SHA256(K_rl, normalized address))
+  email_key TEXT PRIMARY KEY,                -- b64url(HMAC-SHA256(K_sup, exact normalized address)); K_sup from K_sub
   reason    TEXT NOT NULL CHECK (reason IN ('bounce', 'complaint')),
   at_ms     INTEGER NOT NULL
 );
 
--- Staff actions (admin/*, behind Cloudflare Access and the allowlist, D88): client proofs (scope, nonce, jti) and
--- mailbox unlocks (subject = 12 characters of the mailbox key, an HMAC; never the address).
+-- Staff actions (admin/*, behind Cloudflare Access and the allowlist, D88), written before the action: client proofs
+-- (scope, nonce, jti), mailbox unlocks and unsuppressions (subject = 12 characters of an HMAC key; never the address),
+-- each with the support reference (ticket) staff gave.
 CREATE TABLE email_admin_audit (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   at_ms        INTEGER NOT NULL,
   staff        TEXT NOT NULL,                -- the Access identity's email (staff, never an end user)
-  action       TEXT NOT NULL CHECK (action IN ('client_proof', 'unlock')),
+  action       TEXT NOT NULL CHECK (action IN ('client_proof', 'unlock', 'unsuppress')),
+  ticket       TEXT NOT NULL,                -- the support reference
   scope_id     TEXT,
   action_nonce INTEGER,
   jti          TEXT,

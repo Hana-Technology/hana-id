@@ -87,6 +87,8 @@ const CASES = [
     expect: ['hana-worker-secret-assignment', 'hana-private-jwk'],
   },
   { name: 'RSA private JWK pasted into an innocent file', files: { 'src/rsa.ts': `export const KEY = ${rsaPrivateJwk()};\n` }, expect: ['hana-private-jwk'] },
+  { name: 'EC private JWK as a JS object literal (unquoted d)', files: { 'src/ec.ts': `export const KEY = { kty: 'EC', crv: 'P-256', d: '${randomBytes(32).toString('base64url')}' };\n` }, expect: ['hana-private-jwk'] },
+  { name: 'RSA private JWK as a JS object literal (unquoted d, backticks)', files: { 'src/rsa2.ts': `export const KEY = { kty: 'RSA', d: \`${randomBytes(256).toString('base64url')}\` };\n` }, expect: ['hana-private-jwk'] },
   { name: 'watchdog secrets file', files: { '.secrets/sandbox-dev/watchdog-secrets.json': `{"WATCHDOG_STATUS_TOKEN":"${randomBytes(32).toString('base64url')}"}\n` }, expect: ['hana-secret-file'] },
 ];
 

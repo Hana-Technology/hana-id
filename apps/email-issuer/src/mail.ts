@@ -27,25 +27,60 @@ function html(paragraphs: string[]): string {
   return `<!doctype html><html><body style="font-family:sans-serif;font-size:15px;line-height:1.5;color:#111">${paragraphs.map((p) => `<p>${p}</p>`).join('')}</body></html>`;
 }
 
+/**
+ * What a code does, per purpose (tokens review M1, D199): each purpose has its own subject and wording, so a code for
+ * one thing can't be passed off as a code for another. `X` is the app as mails name it.
+ */
+export function purposeText(purpose: Purpose, appText: string): { subject: string; what: string; ignore: string } {
+  switch (purpose) {
+    case 'session':
+      return { subject: `Your sign-in code for ${appText}`, what: `sign in to ${appText}`, ignore: 'If you didn’t try to sign in, ignore this mail.' };
+    case 'link_new':
+      return {
+        subject: `Your code to add this email to your wallet in ${appText}`,
+        what: `add this email as a sign-in method of your wallet in ${appText}`,
+        ignore: 'If you didn’t ask to add this email to a wallet, ignore this mail: nothing changes.',
+      };
+    case 'link_account':
+      return {
+        subject: `Your code to allow another sign-in method in ${appText}`,
+        what: `allow another sign-in method to open the wallet this email opens in ${appText}`,
+        ignore: 'If you didn’t ask to add a sign-in method to your wallet, ignore this mail: nothing changes, and someone may be trying to reach your wallet.',
+      };
+    case 'link_change':
+      return {
+        subject: `Your code to remove a sign-in method in ${appText}`,
+        what: `remove or cancel a sign-in method of the wallet this email opens in ${appText}`,
+        ignore: 'If you didn’t ask to remove a sign-in method, ignore this mail: nothing changes.',
+      };
+    case 'auto_link':
+      return {
+        subject: `Your code to link your Google sign-in in ${appText}`,
+        what: `link your Google sign-in to the wallet this email opens in ${appText}`,
+        ignore: 'If you didn’t just sign in with Google, ignore this mail: nothing changes.',
+      };
+  }
+}
+
 export function codeMail(input: { to: string; code: string; appName: string; authOrigin: string; purpose: Purpose }): MailMessage {
   const app = displayAppName(input.appName);
   const appText = app ? `“${app}”` : 'an app';
   const host = hostOf(input.authOrigin);
-  const linking = input.purpose !== 'session';
-  const what = linking ? `add this email to an existing wallet in ${appText}` : `sign in to ${appText}`;
+  const t = purposeText(input.purpose, appText);
   const warning = `Type this code only in the Hana window you opened (${host}). Hana never asks for it by phone, chat or on another site.`;
-  const ignore = linking ? 'If you didn’t ask to add this email to a wallet, ignore this mail: nothing changes.' : 'If you didn’t try to sign in, ignore this mail.';
-  const text = [`Your code to ${what} with Hana:`, '', input.code, '', 'It expires in 10 minutes.', '', warning, '', ignore, ''].join('\n');
+  const text = [`Your code to ${t.what} with Hana:`, '', input.code, '', 'It expires in 10 minutes.', '', warning, '', t.ignore, ''].join('\n');
+  // Subjects name the app only when it is display-safe; the code is never in a subject.
+  const subject = app ? t.subject.replaceAll('“', '').replaceAll('”', '') : purposeText(input.purpose, 'Hana').subject.replace(/ (?:for|in) Hana$/u, '');
   return {
     to: input.to,
-    subject: app ? `Your sign-in code for ${app}` : 'Your sign-in code',
+    subject,
     text,
     html: html([
-      `Your code to ${escapeHtml(what)} with Hana:`,
+      `Your code to ${escapeHtml(t.what)} with Hana:`,
       `<strong style="font-size:24px;letter-spacing:4px">${escapeHtml(input.code)}</strong>`,
       'It expires in 10 minutes.',
       escapeHtml(warning),
-      escapeHtml(ignore),
+      escapeHtml(t.ignore),
     ]),
     kind: 'code',
   };

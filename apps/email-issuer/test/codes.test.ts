@@ -6,7 +6,8 @@ import { bytesEqual, toHex } from '../src/bytes.ts';
 import type { ChallengeRecord } from '../src/challenge.ts';
 import { newCode } from '../src/keys.ts';
 import { linkChangePreimage, linkNewPreimage, nonceOf } from '../src/layouts.ts';
-import { AUTH, decodeToken, env, harness, nonceFor, seedApp, sessionCommitment } from './helpers.ts';
+import { parseChallengeId } from '../src/challenge-id.ts';
+import { AUTH, challengeObject, decodeToken, env, harness, nonceFor, seedApp, sessionCommitment } from './helpers.ts';
 
 const start = async (h: Awaited<ReturnType<typeof harness>>, body: Record<string, unknown>) => h.call('/v1/email/start', body);
 
@@ -51,14 +52,18 @@ describe('codes', () => {
     expect(mail.html).not.toMatch(/<a /u);
     expect(mail.text).toContain('auth.test');
 
-    // The challenge stores a MAC, never the code.
-    const stub = env.EMAIL_CHALLENGE.get(env.EMAIL_CHALLENGE.idFromName(body.challengeId));
+    // The challenge stores a MAC, never the code, and the address only encrypted under the id's secret half (L3): the
+    // object is named by the public half alone, and its storage holds nothing readable.
+    const stub = challengeObject(body.challengeId);
     await runInDurableObject(stub, (_o, state) => {
       const rec = state.storage.kv.get<ChallengeRecord>('challenge')!;
       expect(JSON.stringify(rec)).not.toContain(code);
+      expect(JSON.stringify(rec)).not.toContain('alice');
+      expect(rec.emailEnc).toMatch(/^[A-Za-z0-9_-]{40,}$/u);
       expect(rec.codeMac).toMatch(/^[A-Za-z0-9_-]{43}$/u);
       expect(rec.nonce).toBe(nonceFor(c));
     });
+    expect(env.EMAIL_CHALLENGE.idFromName(body.challengeId).toString()).not.toBe(env.EMAIL_CHALLENGE.idFromName(parseChallengeId(body.challengeId)!.name).toString());
 
     const v = await h.call('/v1/email/verify', { challengeId: body.challengeId, code });
     expect(v.status).toBe(200);
@@ -191,7 +196,7 @@ describe('purpose-bound nonces and the app gate', () => {
       expect(s.status).toBe(202);
       const { challengeId } = (await s.json()) as { challengeId: string };
       // The link purposes' mail says what the code does (spec "Phishing").
-      expect(h.sender.to(email)[0]!.text).toContain('add this email to an existing wallet');
+      expect(h.sender.to(email)[0]!.text).toContain(purpose === 'link_new' ? 'add this email as a sign-in method of your wallet' : 'remove or cancel a sign-in method');
       const v = await h.call('/v1/email/verify', { challengeId, code: h.sender.codeFor(email) });
       expect(v.status).toBe(200);
       const t = await decodeToken(((await v.json()) as { idToken: string }).idToken);
@@ -275,7 +280,7 @@ describe('HTTP surface', () => {
     expect(pre.status).toBe(204);
     expect(pre.headers.get('access-control-allow-origin')).toBe(AUTH);
     expect(pre.headers.get('access-control-allow-credentials')).toBeNull();
-    const text = await h.call('/v1/email/start', body, { headers: { 'content-type': 'text/plain' } });
+    const text = await h.call('/v1/email/start', body, { contentType: 'text/plain' });
     expect(text.status).toBe(415);
     expect(h.sender.sent).toHaveLength(0);
   });

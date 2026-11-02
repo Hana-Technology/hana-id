@@ -75,3 +75,14 @@ export async function appById(db: D1Database, id: string): Promise<IssuerApp | n
   if (!row) return null;
   return { id: row.id, name: row.name, scopeId: row.scope_id, active: row.status === 'active', emailOn: loginMethods(row.login_methods).includes('email'), perMinute: row.per_minute, perDay: row.per_day, googleWebClientId: row.google_web_client_id };
 }
+
+/** Whether `scopeId` has an active app with email on (a staff client proof is only for such a scope, tokens review L6). */
+export async function scopeHasEmailApp(db: D1Database, scopeId: string): Promise<boolean> {
+  try {
+    const rows = await db.prepare("SELECT login_methods FROM apps WHERE scope_id = ?1 AND status = 'active' LIMIT 50").bind(scopeId).all<{ login_methods: string | null }>();
+    return rows.results.some((r) => loginMethods(r.login_methods).includes('email'));
+  } catch (err) {
+    if (err instanceof Error && /no such column/u.test(err.message)) return false;
+    throw err;
+  }
+}

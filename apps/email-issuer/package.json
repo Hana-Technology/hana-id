@@ -15,7 +15,8 @@
     "@hana-id/email": "workspace:*",
     "@hana-id/jwks": "workspace:*",
     "@noble/hashes": "1.8.0",
-    "aws4fetch": "1.0.20"
+    "aws4fetch": "1.0.20",
+    "tldts": "7.4.18"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.4",

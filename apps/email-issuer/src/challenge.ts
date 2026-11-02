@@ -1,6 +1,7 @@
 // The `EmailChallenge` Durable Object (spec "Codes, attempts, expiry, replay"): one object per challenge (named by
-// its challengeId) or per link ticket (named `t:` + sha256 of the ticket). It holds the normalized address only for
-// resends and only until the challenge ends (≤ 10 min, D197), the code only as HMAC-SHA256(K_code, challengeId ‖ code)
+// sha256 of its id's public half, challenge-id.ts) or per link ticket (named `t:` + sha256 of the ticket). It holds the
+// normalized address only encrypted under a key only the client holds (the id's secret half), only for resends and
+// only until the challenge ends (≤ 10 min, D197), the code only as HMAC-SHA256(K_code, challengeId ‖ code)
 // (compared in constant time), the purpose and its nonce (or, for auto_link, what the nonce needs at minting), and the
 // attempts. Each method's checks and writes run synchronously before any await, so concurrent calls are serialized:
 // at most MAX_ATTEMPTS codes are ever compared per challenge, and a correct code is used once (the record is deleted
@@ -25,10 +26,17 @@ export interface ChallengeRecord {
    * wrong. It exists so `start` answers alike for every valid address.
    */
   silent: boolean;
-  /** The normalized address, byte for byte what the mail goes to (packages/email README); '' when silent. */
-  email: string;
-  /** HMAC-SHA256(K_rl, mailbox), b64url: the mailbox limiter's subject (the address without its `+tag`, D159). */
+  /**
+   * The normalized address (byte for byte what the mail goes to, packages/email README), AES-GCM-encrypted under the
+   * challenge id's secret half (challenge-id.ts); '' when silent.
+   */
+  emailEnc: string;
+  /** HMAC under K_rl of the mailbox (the address without its `+tag`, D159): the mailbox limiter's subject. */
   mailboxKey: string;
+  /** HMAC under K_rl of the recipient's registrable domain: the per-domain cap's subject. */
+  domainKey: string;
+  /** Started with a valid owner device ticket (D198): its sends and checks use the ticket allowances. */
+  ticketed: boolean;
   /** b64url MAC of the live code; null for a prepared auto_link challenge whose first code isn't sent yet. */
   codeMac: string | null;
   attempts: number;
@@ -44,6 +52,8 @@ export interface TicketRecord {
   scopeId: string;
   /** The email identity's `sub` the ticket was issued for. */
   sub: string;
+  /** The Google identities (hinted, with the wallet in case B) whose google-match may use the ticket. */
+  googleSubs: string[];
   expiresAtMs: number;
 }
 
@@ -81,10 +91,10 @@ export class Challenge extends DurableObject<Env> {
     return true;
   }
 
-  /** A live challenge's mailbox, and whether another code may go out now; null when gone. */
-  peek(now: number = Date.now()): { mailboxKey: string; silent: boolean; send: SendCheck } | null {
+  /** A live challenge's limiter subjects and flags, and whether another code may go out now; null when gone. */
+  peek(now: number = Date.now()): { mailboxKey: string; domainKey: string; appId: string; silent: boolean; ticketed: boolean; send: SendCheck } | null {
     const rec = this.load(now);
-    return rec ? { mailboxKey: rec.mailboxKey, silent: rec.silent, send: sendCheck(rec, now) } : null;
+    return rec ? { mailboxKey: rec.mailboxKey, domainKey: rec.domainKey, appId: rec.appId, silent: rec.silent, ticketed: rec.ticketed, send: sendCheck(rec, now) } : null;
   }
 
   /**

@@ -14,6 +14,8 @@ export class ChainUnavailable extends Error {}
 export interface ScopeView {
   clients: [string, string][];
   allowShared: boolean;
+  /** The scope's owner-action counter (`get_scope().action_nonce`): a client proof commits to its current value. */
+  actionNonce: number;
 }
 
 export interface IdentityView {
@@ -32,7 +34,8 @@ export interface AccountView {
 }
 
 export interface Chain {
-  scope(scopeId: string): Promise<ScopeView | null>;
+  /** `fresh`: skip the 60 s cache (client proofs read the current `action_nonce`). */
+  scope(scopeId: string, fresh?: boolean): Promise<ScopeView | null>;
   /** Google clients shared now (`get_config().shared_clients`, matured pending ones included). */
   sharedGoogleClients(): Promise<string[]>;
   /** `get_config().unrecorded_wallets` (D135): links are refused on chain while it is true. */
@@ -89,12 +92,14 @@ export class NearChain implements Chain {
     throw new ChainUnavailable('no RPC answered');
   }
 
-  async scope(scopeId: string): Promise<ScopeView | null> {
+  async scope(scopeId: string, fresh = false): Promise<ScopeView | null> {
     const hit = this.scopeCache.get(scopeId);
-    if (hit && this.now() - hit.at < VIEW_CACHE_MS) return hit.v;
+    if (!fresh && hit && this.now() - hit.at < VIEW_CACHE_MS) return hit.v;
     const raw = await this.view('get_scope', { scope_id: scopeId });
     let v: ScopeView | null = null;
-    if (isObj(raw) && Array.isArray(raw.clients)) v = { clients: raw.clients.filter(isPair), allowShared: raw.allow_shared === true };
+    if (isObj(raw) && Array.isArray(raw.clients) && Number.isSafeInteger(raw.action_nonce)) {
+      v = { clients: raw.clients.filter(isPair), allowShared: raw.allow_shared === true, actionNonce: raw.action_nonce as number };
+    }
     else if (raw !== null) throw new ChainUnavailable('get_scope: unexpected answer');
     this.scopeCache.set(scopeId, { v, at: this.now() });
     return v;

@@ -1,4 +1,4 @@
-// Cloudflare Access in front of `admin/client-proof` (D88): the `Cf-Access-Jwt-Assertion` JWT is RS256 against the
+// Cloudflare Access in front of every `admin/*` route (D88): the `Cf-Access-Jwt-Assertion` JWT is RS256 against the
 // team's certs, `iss` the team domain, `aud` the application's AUD tag, unexpired, a non-empty `sub`, and an email on the
 // issuer's own staff allowlist (a second check behind the Access policy). Any failure is a 403 that names nothing.
 import { base64UrlDecode } from './bytes.ts';
@@ -8,6 +8,8 @@ import { verifyRs256 } from './signer.ts';
 
 export const ACCESS_HEADER = 'cf-access-jwt-assertion';
 const CERTS_TTL_MS = 10 * 60_000;
+/** After a failed certs fetch or an unknown kid, no new fetch for this long (L6: a flood of bad JWTs costs no fetches). */
+export const ACCESS_NEGATIVE_CACHE_MS = 30_000;
 const SKEW_S = 60;
 
 export interface AccessConfig {
@@ -39,6 +41,9 @@ const decode = (part: string): Record<string, unknown> | null => {
 
 export class AccessVerifier {
   private certs: { keys: Map<string, Jwk>; at: number } | null = null;
+  private missUntil = 0;
+  /** How many times the certs were fetched (tests). */
+  fetches = 0;
 
   constructor(
     private readonly cfg: AccessConfig,
@@ -47,17 +52,22 @@ export class AccessVerifier {
   ) {}
 
   private async key(kid: string): Promise<Jwk | null> {
-    if (!this.certs || this.now() - this.certs.at >= CERTS_TTL_MS || !this.certs.keys.has(kid)) {
-      if (this.certs && this.now() - this.certs.at < 60_000) return this.certs.keys.get(kid) ?? null;
-      try {
-        const res = await this.fetcher(`https://${this.cfg.teamDomain}/cdn-cgi/access/certs`, { signal: AbortSignal.timeout(8000) });
-        const keys = res.ok ? usableJwks(await responseJson(res, 64 * 1024)) : [];
-        if (keys.length > 0) this.certs = { keys: new Map(keys.map((k) => [k.kid, k])), at: this.now() };
-      } catch {
-        return null;
-      }
+    const now = this.now();
+    const fresh = this.certs && now - this.certs.at < CERTS_TTL_MS;
+    if (fresh && this.certs!.keys.has(kid)) return this.certs!.keys.get(kid)!;
+    // Negative cache: a recent failed fetch, or a recent fetch that didn't know this kid.
+    if (now < this.missUntil || (this.certs && now - this.certs.at < 60_000)) return this.certs?.keys.get(kid) ?? null;
+    try {
+      this.fetches++;
+      const res = await this.fetcher(`https://${this.cfg.teamDomain}/cdn-cgi/access/certs`, { signal: AbortSignal.timeout(8000) });
+      const keys = res.ok ? usableJwks(await responseJson(res, 64 * 1024)) : [];
+      if (keys.length > 0) this.certs = { keys: new Map(keys.map((k) => [k.kid, k])), at: now };
+    } catch {
+      // Below: a miss.
     }
-    return this.certs?.keys.get(kid) ?? null;
+    const hit = this.certs?.keys.get(kid) ?? null;
+    if (!hit) this.missUntil = now + ACCESS_NEGATIVE_CACHE_MS;
+    return hit;
   }
 
   /** The staff email of a valid Access JWT, or null. */

@@ -1072,7 +1072,9 @@ The independent watchdog of the governance batch (`docs/governance-spec.md` "Wat
 5 min it compares the contract's pending and active issuer keys with Google's JWKS, cancels a pending key Google
 doesn't publish (and deletes the updater keys if the updater proposed it), pauses only when such a key is **active**,
 confirms keys that match, alerts on every governance change, and serves a read-only status for the admin portal.
-What it checks and its status API: `apps/watchdog/README.md`. **Deployed on sandbox-dev (2026-10-30)**:
+What it checks and its status API: `apps/watchdog/README.md`. **Deployed on sandbox-dev (2026-10-30; redeployed 2026-11-02
+with batch 5's email rules and link alarms, version b156e1b5, no new migration: on the v2 contract it reads "no email
+issuer" and skips the link check)**:
 `https://hana-id-watchdog-sandbox-dev.tingtc.workers.dev`, cron `*/5 * * * *`, on the API's Cloudflare account
 (D125), D1 `hana-id-watchdog-sandbox-dev`. Alert channels and the heartbeat aren't set yet (the manifest's alert
 addresses are `example.com` placeholders), so every run reports them as `channel_not_configured`. First run

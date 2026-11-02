@@ -2,7 +2,7 @@ import { applyD1Migrations } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { beforeEach } from 'vitest';
 import { clearGovernanceCache } from '../src/governance-status.ts';
-import { clearJwksCache } from '../src/jwks.ts';
+import { clearJwksCache } from '@hana-id/oidc';
 import { clearNotedTokenKids } from '../src/key-observations.ts';
 import { clearViewCaches } from '../src/views.ts';
 

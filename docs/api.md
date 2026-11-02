@@ -2,7 +2,9 @@
 
 Last verified against code: 2026-11-02 (branch `feat/email-login-4`: "Email issuer", the separate `apps/email-issuer`
 Worker: its endpoints, limits, Durable Objects, D1, bindings and logs, D195–D199, with the review fixes: staff routes,
-unsuppress, device tickets, budget shares, prefix and domain limits); 2026-10-30 (branch `feat/identity-token-2`: the identity token's order of checks,
+unsuppress, device tickets, budget shares, prefix and domain limits; branch `feat/batch-c-2`: the token check and the
+governance read's JWKS cache now in `@hana-id/oidc`; wrongly typed optional claims ignored, a non-finite `exp`
+refused, the owner-action token's claims, D201); 2026-10-30 (branch `feat/identity-token-2`: the identity token's order of checks,
 limits, marker, cross-app share check, share tombstones in the cron, the new binding and log event, D176–D178);
 2026-10-30 (branch `feat/identity-token-1`: "Identity token", its routes, limits,
 Durable Objects, D1 tables, cron job, bindings, log fields and the `bad_token` refusals); 2026-10-30 (branch
@@ -149,8 +151,8 @@ No auth, no limits, `access-control-allow-origin: *`. → `200 {"ok": true, "env
 
 No auth, no limits, `access-control-allow-origin: *`, `cache-control: public, max-age=10`. Read-only: it reads
 hana-signer's views (`get_config`, `get_governance`, `get_key_changes`, `get_issuer("google")`), the signer's
-`view_access_key_list`, Google's JWKS (the token-check cache, `jwks.ts`) and the JWKS cron's D1 tables, and sends no
-transaction. One snapshot per isolate serves every request for 10 s (concurrent misses share one read); `readAtMs`
+`view_access_key_list`, Google's JWKS (the token-check cache, `@hana-id/oidc` `publishedKeys`) and the JWKS
+cron's D1 tables, and sends no transaction. One snapshot per isolate serves every request for 10 s (concurrent misses share one read); `readAtMs`
 says when it was taken, so countdowns are the reader's (`executableAtMs − now`).
 
 This is the machine-readable source batch C's admin portal ("Security & monitoring", the pending-upgrades page;
@@ -261,7 +263,9 @@ Body (extra keys ignored, except `scopeId` / `scope_id`, which are refused):
 The scope is always the app's (D1). Checks after the gate and shape (`400 bad_request`):
 
 1. RS256 against Google's JWKS, `iss` → provider, `exp` + 60 s skew: `401 invalid_token`, `400 unsupported_issuer`,
-   `400 token_expired`, `503 issuer_keys_unavailable`. A valid signature's `kid` is recorded once per isolate after the
+   `400 token_expired`, `503 issuer_keys_unavailable` (`verifyIdToken`, `packages/oidc`); an `exp` that isn't a
+   finite number is `401 invalid_token`. `email`, `email_verified`, `iat`, `hd`, `azp`, `amr` and `auth_time` are
+   not read, and one of the wrong JSON type is ignored, not refused (D201). A valid signature's `kid` is recorded once per isolate after the
    response (`issuer_key_observations.first_token_ms`, here and on `/v1/login`; the kid only, never the token).
 2. Only with `REJECT_PII_ON_SESSIONS = "1"`: claim allow-list (`iss azp aud sub iat exp nonce nbf jti auth_time`),
    else `400 token_has_pii` with `data: {claim}`.
@@ -580,6 +584,12 @@ No app key. `{"method", "args"}` only, `args` exactly as the contract takes them
 | 409 | `shared_login_enabled` | `SetAllowShared` already on |
 | 409 | `token_used` | this exact token was reserved before |
 | 503 / 502 | `issuer_keys_unavailable` / `near_unavailable` | JWKS / chain read failed |
+
+The `auth` token and the `client_proof` are checked like a login token (RS256, issuer, `exp` without skew, a finite
+`exp`), the proof for its `(provider, aud)`. Their other claims are not read: an `email`, `email_verified` or `hd`
+(a console token should be `openid` only, but nothing refuses one that isn't) is ignored, as is any of the
+optional claims with the wrong JSON type (D201), and none is logged, returned or stored; only the token's sha256
+is kept. The token itself is relayed to the contract unchanged.
 
 The token's sha256 is reserved atomically (`RateLimiter` object `owner-actions:tokens`, until the token's `exp`)
 before relaying. Then the caps (table above) are asked from the most specific in, at one instant; when one refuses,

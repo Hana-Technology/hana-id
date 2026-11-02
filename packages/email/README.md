@@ -67,6 +67,9 @@ creates it in `.secrets/<env>/`).
    before the first `+`), and a non-empty `+tag` is kept as typed, so `name+1@gmail.com` is its own identity (its own
    wallet) and `name+@gmail.com` is `name@gmail.com` (D159). An empty username is refused. Google's help pages behind
    the dot rule are cited in `test/vectors.test.ts`.
+   `normalizeEmail` also returns `mailbox`: the address without its `+tag` (every domain). It is a rate-limit key
+   only: limits on codes sent key on it, or cycling tags would mail one inbox without bound. Never use it as an
+   identity or a recipient.
 5. No other provider rules: `+tag` and dots stay significant everywhere else.
 
 ## Dependency: `tr46` 7.0.0 (pinned exactly)

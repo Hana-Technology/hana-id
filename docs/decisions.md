@@ -1660,6 +1660,27 @@ detail open or a safer reading was needed. Each follows the spec's intent; the u
   move to SendGrid too is decided separately.
 - Why: one provider the team already operates and pays for; the adapter keeps the choice reversible.
 
+### D200. Link volume: a contract counter and an hourly cap, replacing the indexer scan
+- Date 2026-11-02 · Status: confirmed by the user (option A+), being built · Source: batch 5 review (the FastNear scan
+  reads about 13 logins per run at about 75 KB each, so it falls behind and pages on ordinary traffic)
+- Threat: a stolen email signing key (1-of-1 at launch) can sign "owns victim@gmail.com", and D119 links that email
+  identity at once to the victim's Google identity, so the thief derives the victim's Google wallet. Such a takeover
+  leaves new links on chain. (Opening email-only wallets with forged tokens makes no link; the defence there is the
+  key's custody, KMS and a second signer, D121.)
+- Decision: the contract counts every new link, immediate or pending (the combined login with a `link_jwt`, and
+  `link_identity`; not cancels, unlinks or lazy activations), in fixed UTC-hour windows, per scope and in total, and
+  refuses a new link once the scope or the total has reached its cap for the hour (`Link rate limit reached`; the
+  whole call reverts, so a capped login is refused, never completed without its link, D122). Defaults: 50 per scope
+  per hour, 500 in total per hour, changed by the owner (council). The scope or total that reaches its cap is
+  recorded by the call that reaches it, and a view reports the current and previous windows. The watchdog reads that
+  view each run: a cap reached is critical, a count past half the cap is a warning; raising a cap is a critical
+  governance change. The FastNear indexer scan (D192) is removed.
+- Why: exact, on chain, no third party or data budget, and it turns detection into a brake: a thief can take over at
+  most the cap's worth of accounts per hour before the page and the pause. v3 isn't deployed anywhere, so the
+  contract change is cheap now.
+- Cost: a real burst of linking above the cap (a big partner launch) is refused for the rest of the hour until the
+  owner raises the cap; the defaults are provisional until real traffic is measured.
+
 ### D170. Identity token layout details the spec left open
 - Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`packages/core/src/identity.ts`, frozen in
   `packages/core/test/vectors/identity-v1.json`) · Source: build step 1
@@ -2002,7 +2023,7 @@ change no address.
 - Rejected: platform `URL`/`domainToASCII`; quoted local parts; measuring length on the input only; Unicode `trim()`.
 
 ### D157. Disposable-domain list: one pinned upstream commit, parents match, updated by PR
-- Date 2026-11-02 · Status: to confirm (built on `feat/email-login-3`, not merged) · Source: build of
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); merged · Source: build of
   `docs/email-login-spec.md` "Rate limits and abuse" (Q10, D123)
 - Decision: `packages/email/src/disposable-domains.ts` vendors `disposable_email_blocklist.conf` of
   `github.com/disposable-email-domains/disposable-email-domains` (CC0 1.0) byte for byte at commit
@@ -2016,7 +2037,7 @@ change no address.
 - Rejected: exact match only; fetching the list at runtime.
 
 ### D158. The Google-hosted rule compares `hd` exactly
-- Date 2026-11-02 · Status: to confirm (built on `feat/email-login-3`, not merged) · Source: build of
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); merged · Source: build of
   `docs/email-login-spec.md` "The four cases" ("`hd` is present and equal to the address's normalized domain")
 - Decision: `isGoogleHosted({ email, emailVerified, hd })` takes a normalized address (it throws otherwise) and
   needs `emailVerified === true` (anything else is false). Then: `hd` absent (`undefined` or `null`) → true only for
@@ -2051,6 +2072,9 @@ change no address.
   Gmail user can now change their address, the old one becoming an alternate that still receives mail
   (support.google.com/accounts/answer/19870), so the same person can then have two email identities (the spec's
   "address changes between logins" case; nothing merges them).
+- Rate limits: since tags are distinct identities, `normalizeEmail` also returns `mailbox` (the address without its
+  `+tag`, on every domain), and the issuer's limits on codes sent key on it, so cycling tags can't mail one inbox
+  without bound (automated security review of this change). It is never an identity or a recipient.
 - Rejected: dropping `+tags` (the spec's rule: one wallet per inbox); keeping dots significant (an accidental second
   wallet); Gmail rules for Workspace domains (`+tags` elsewhere may be distinct mailboxes).
 
@@ -2222,6 +2246,6 @@ paging app (D85, at setup), and open question 17 (cancel by a compromised OIDC o
 is a proposal there.
 
 Still open from `docs/email-login-spec.md`: nothing; the user-mail provider is SendGrid (D194). The contract readings
-D130 and D131, batch 2's D154 and D155, and the `packages/email` readings D156 and D159 are confirmed (2026-11-02);
-D157 (disposable list) and D158 (`hd` compared exactly) wait for the user's confirmation, as do the watchdog's
-D190–D193 (batch 5) and the email issuer's D195–D199 (batch 4).
+D130 and D131, batch 2's D154 and D155, and the `packages/email` readings D156 and D159 are confirmed (2026-11-02).
+D157 and D158 are confirmed too (2026-11-02). The watchdog's D190–D193 (batch 5) and the email issuer's D195–D199
+(batch 4) wait for the user's confirmation.

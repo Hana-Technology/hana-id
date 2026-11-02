@@ -192,6 +192,19 @@ describe('the four cases', () => {
     expect(row?.purpose).toBe('auto_link');
   });
 
+  it('case A, not Google-hosted: no challenge for a mailbox at its live-challenge cap', async () => {
+    const h = await harness();
+    const app = await seedApp(h);
+    const email = `z${uid()}@corp.example`;
+    h.chain.open(app.scope, 'email', await sub(h, email));
+    for (let i = 0; i < 5; i++) {
+      const c = sessionCommitment(app.scope, h.clock.now);
+      expect((await h.call('/v1/email/start', { pk: app.pk, email, purpose: 'session', commitment: c.json })).status).toBe(202);
+    }
+    const { body } = await match(h, app, gAccount(email));
+    expect(body).toEqual({ decision: 'case_a', googleHosted: false, linkable: true });
+  });
+
   it('case A, not Google-hosted: if G got a wallet before the code, verify refuses (no second wallet, no wrong join)', async () => {
     const h = await harness();
     const app = await seedApp(h);

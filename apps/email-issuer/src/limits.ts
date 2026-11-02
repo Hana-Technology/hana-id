@@ -1,13 +1,13 @@
 // Every limit of the issuer (spec "Codes, attempts, expiry, replay" and "Rate limits and abuse"; D123 Q22: provisional,
-// tuned on sandbox-dev). All exact, on RateLimiter objects (D198: the Rate Limiting binding's 10 s / 60 s periods can't
-// express these windows).
+// tuned on sandbox-dev; D198 for how they are keyed). All exact, on RateLimiter objects: the Rate Limiting binding's
+// 10 s / 60 s periods can't express these windows.
 import type { Limit } from './rate-limiter.ts';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
-/** Challenge (and every code of it) lives 10 min from `start` (D197: a resend doesn't extend it). */
+/** A challenge (and every code of it) lives 10 min from its creation (D197: a resend doesn't extend it). */
 export const CHALLENGE_TTL_MS = 10 * MIN;
 /** Wrong codes that kill one challenge. */
 export const MAX_ATTEMPTS = 5;
@@ -17,14 +17,31 @@ export const RESEND_SPACING_MS = 30_000;
 /** A `linkTicket` (verify → google-match, case B): single use, 10 min. */
 export const LINK_TICKET_TTL_MS = 10 * MIN;
 
-/** Codes per address (every send, resends included): 3 per 15 min, 10 per day. Silent when full (D198). */
-export const ADDRESS_CODE_LIMITS: Limit[] = [
+/**
+ * Code mails per mailbox (the normalized address without its `+tag`, D159) and requester (IP subject): the spec's 3 per
+ * 15 min and 10 per day, per requester, so someone who knows an address can't use up its owner's codes (D198).
+ */
+export const MAILBOX_IP_CODE_LIMITS: Limit[] = [
   { name: 'codes:15m', windowMs: 15 * MIN, max: 3 },
   { name: 'codes:1d', windowMs: DAY, max: 10 },
 ];
-/** Wrong codes per address over all its challenges: 10 per hour, then a 1 h lock (silent at start). */
-export const ADDRESS_WRONG_LIMIT: Limit = { name: 'wrong:1h', windowMs: HOUR, max: 10 };
-export const ADDRESS_LOCK_MS = HOUR;
+/** Code mails per mailbox from every requester together: the mail-bombing bound. */
+export const MAILBOX_CODE_LIMITS: Limit[] = [
+  { name: 'codes:15m', windowMs: 15 * MIN, max: 10 },
+  { name: 'codes:1d', windowMs: DAY, max: 30 },
+];
+/** Past the mailbox-wide allowance: a small reserve, only for a requester that hasn't asked for this mailbox today. */
+export const MAILBOX_RESERVE_LIMIT: Limit = { name: 'reserve:1d', windowMs: DAY, max: 5 };
+/** Live challenges per mailbox at once. */
+export const MAX_LIVE_CHALLENGES = 5;
+/** Wrong codes per mailbox and requester: the 10th in an hour locks that requester out of that mailbox for an hour. */
+export const MAILBOX_IP_WRONG_LIMIT: Limit = { name: 'wrong:1h', windowMs: HOUR, max: 10 };
+export const MAILBOX_IP_LOCK_MS = HOUR;
+/**
+ * The mailbox-wide brute-force backstop: 50 code checks per day from all requesters together, then none until the
+ * day's window ends (≤ 50 guesses per mailbox per day: 5 × 10⁻⁵, the spec's bound).
+ */
+export const MAILBOX_WRONG_BACKSTOP: Limit = { name: 'wrong:1d', windowMs: DAY, max: 50 };
 
 /** `start` (and google-match's prepared challenges) per IP: 10 per 10 min, 50 per day. */
 export const IP_START_LIMITS: Limit[] = [

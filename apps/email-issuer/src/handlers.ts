@@ -1,8 +1,8 @@
 // The issuer's endpoints (docs/email-login-spec.md "Endpoints"; docs/api.md "Email issuer"). POST JSON, CORS for one
 // Hana origin each (start, resend, verify: authOrigin; google-match: the vault's origin, D199), no cookies, every
 // response `Cache-Control: no-store`; only `start` carries an address. Enumeration-safe: `start` answers 202 with the
-// same body for every valid address and does every address-dependent step (suppression, lock, per-address limits, the
-// send) after the response, in waitUntil.
+// same body for every valid address (suppressed included), and the same generic 429 for every limit; the provider's
+// send happens after the response, in waitUntil. Every limit decision is one atomic Durable Object call (D198).
 import { base64UrlDecode, base64UrlEncode, sha256, toHex } from './bytes.ts';
 import { emailSub, isDisposableDomain, isGoogleHosted, normalizeEmail } from '@hana-id/email';
 import { type IssuerApp, appById, appByKey, isPublishableKey } from './apps.ts';
@@ -16,12 +16,9 @@ import { GoogleUnavailable } from './google.ts';
 import { corsHeaders, error, isObj, json, onlyKeys, readJson } from './http.ts';
 import { ipSubject } from './ip.ts';
 import { type EmailClaims, TOKEN_LIFETIME_S, mintJws } from './jws.ts';
-import { CODE_RE, KeysUnavailable, codeMac, emailKey, newCode, randomId } from './keys.ts';
+import { CODE_RE, KeysUnavailable, codeMac, mailboxKey, newCode, randomId, requesterKey } from './keys.ts';
 import { autoLinkPreimage, clientProofPreimage, EMAIL_PROVIDER, identityKey, nonceOf, sessionPreimage, type SessionCommitment } from './layouts.ts';
 import {
-  ADDRESS_CODE_LIMITS,
-  ADDRESS_LOCK_MS,
-  ADDRESS_WRONG_LIMIT,
   CHALLENGE_TTL_MS,
   IP_MATCH_LIMITS,
   IP_RESEND_LIMITS,
@@ -103,32 +100,16 @@ async function mint(ctx: Ctx, app: { id: string; scopeId: string } | null, scope
 }
 
 /**
- * Delivers one code mail, after the response: nothing for a suppressed or locked address or one over its code limits
- * (silent, spec "Enumeration resistance"); the send counts only when the provider accepted it. Never throws.
+ * Sends one code mail whose send was already reserved (the mailbox limiter and the global budget, in the response
+ * path); after the response, so the provider's latency never shows. A provider refusal takes the reservations (and, for
+ * a resend, the challenge's count) back. Never throws.
  */
-async function deliver(ctx: Ctx, rec: ChallengeRecord, code: string, undelivered?: () => Promise<void>): Promise<void> {
+async function deliver(ctx: Ctx, rec: ChallengeRecord, code: string, undo: () => Promise<void>): Promise<void> {
   const { deps } = ctx;
-  const now = deps.now();
-  const silent = (code_: string) => log({ event: 'code_mail', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'suppressed', code: code_, appId: rec.appId, purpose: rec.purpose });
   try {
-    const suppressed = await deps.env.DB.prepare('SELECT 1 AS x FROM email_suppressions WHERE email_key = ?1').bind(rec.emailKey).first();
-    if (suppressed) return silent('suppressed');
-    const addr = limiter(deps, `addr:${rec.emailKey}`);
-    if (await addr.locked(now)) return silent('locked');
-    const a = await addr.hit(ADDRESS_CODE_LIMITS, now);
-    if (!a.ok) return silent('address_limit');
-    const global = limiter(deps, 'global');
-    const g = await global.hit(globalSendLimits(dailySendBudget(deps.env)), now);
-    if (!g.ok) {
-      await addr.unhit(ADDRESS_CODE_LIMITS, now);
-      log({ event: 'send_budget_exhausted', requestId: ctx.requestId, outcome: 'error', code: 'send_budget_exhausted' }, 'error');
-      return silent('budget');
-    }
     const res = await deps.sender.send(codeMail({ to: rec.email, code, appName: rec.appName, authOrigin: deps.env.AUTH_ORIGIN, purpose: rec.purpose }));
     if (!res.ok) {
-      await addr.unhit(ADDRESS_CODE_LIMITS, now);
-      await global.unhit(globalSendLimits(dailySendBudget(deps.env)), now);
-      await undelivered?.();
+      await undo();
       log({ event: 'code_mail', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'error', code: res.reason, appId: rec.appId, ...(res.providerStatus ? { providerStatus: res.providerStatus } : {}) }, 'error');
       return;
     }
@@ -138,13 +119,24 @@ async function deliver(ctx: Ctx, rec: ChallengeRecord, code: string, undelivered
   }
 }
 
+/** The mailbox's limiter. */
+const mailboxLimiter = (deps: Deps, key: string) => limiter(deps, `mbx:${key}`);
+
+/** The generic refusal for a limited or locked mailbox: the same body as every other 429 (D198). */
+const tryLater = (ctx: Ctx, retryAfterMs: number, why: string): Response => {
+  log({ event: 'limit', requestId: ctx.requestId, endpoint: ctx.endpoint, limit: `mailbox:${why}` });
+  return fail(ctx, 429, 'rate_limited', 'Too many requests, try again later', undefined, retryHeader(retryAfterMs));
+};
+
+const isSuppressed = async (deps: Deps, key: string): Promise<boolean> => !!(await deps.env.DB.prepare('SELECT 1 AS x FROM email_suppressions WHERE email_key = ?1').bind(key).first());
+
 /** A link notice to the joining address (spec "Notices"); counted against the global budget only. Never throws. */
 async function notify(ctx: Ctx, to: string, appName: string, pending: boolean, appId: string): Promise<void> {
   const { deps } = ctx;
   const now = deps.now();
   try {
-    const key = await emailKey(await deps.keys(), to);
-    if (await deps.env.DB.prepare('SELECT 1 AS x FROM email_suppressions WHERE email_key = ?1').bind(key).first()) return;
+    const n = normalizeEmail(to);
+    if (!n.ok || (await isSuppressed(deps, await mailboxKey(await deps.keys(), n.mailbox)))) return;
     const global = limiter(deps, 'global');
     const limits = globalSendLimits(dailySendBudget(deps.env));
     if (!(await global.hit(limits, now)).ok) return;
@@ -193,6 +185,27 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
   if (!(await budgetOpen(ctx))) return fail(ctx, 429, 'rate_limited', 'Too many requests, try again later', undefined, retryHeader(60_000));
 
   const keys = await deps.keys();
+  const mbx = await mailboxKey(keys, r.mailbox);
+  const ip = requesterKey(ipOf(request));
+  const expiresAtMs = now + CHALLENGE_TTL_MS;
+  // A suppressed address gets the same answer, but its challenge holds no address and no code, and nothing is sent.
+  const suppressed = await isSuppressed(deps, mbx);
+  // One atomic step: refused while the requester is locked out of this mailbox, at its live-challenge cap or over its
+  // code limits (a generic 429: the popup says "try again later"); else the challenge and its first code are counted.
+  const box = mailboxLimiter(deps, mbx);
+  const adm = await box.admit(ip, expiresAtMs, !suppressed, now);
+  if (!adm.ok) return tryLater(ctx, adm.retryAfterMs, adm.reason);
+  const global = limiter(deps, 'global');
+  const budget = globalSendLimits(dailySendBudget(deps.env));
+  if (adm.send) {
+    const g = await global.hit(budget, now);
+    if (!g.ok) {
+      await box.refund(adm.send);
+      log({ event: 'send_budget_exhausted', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'error', code: 'send_budget_exhausted' }, 'error');
+      return fail(ctx, 429, 'rate_limited', 'Too many requests, try again later', undefined, retryHeader(60_000));
+    }
+  }
+
   const challengeId = randomId();
   const code = newCode();
   const rec: ChallengeRecord = {
@@ -202,18 +215,28 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
     purpose: c.value.purpose,
     nonce: c.value.nonce,
     autoLink: null,
-    email: r.email,
-    emailKey: await emailKey(keys, r.email),
-    codeMac: await codeMac(keys, challengeId, code),
+    silent: suppressed,
+    email: suppressed ? '' : r.email,
+    mailboxKey: mbx,
+    // A suppressed challenge's MAC is of a random value nobody holds: every code is wrong.
+    codeMac: await codeMac(keys, challengeId, suppressed ? randomId() : code),
     attempts: 0,
     createdAtMs: now,
-    expiresAtMs: now + CHALLENGE_TTL_MS,
+    expiresAtMs,
     lastSentAtMs: now,
     resends: 0,
   };
   if (!(await challengeStub(deps, challengeId).create(rec))) return fail(ctx, 500, 'internal', 'Could not start the challenge');
-  deps.waitUntil(deliver(ctx, rec, code));
-  return ok(ctx, 202, { challengeId, expiresAtMs: rec.expiresAtMs, resendAfterMs: now + RESEND_SPACING_MS }, { appId: app.id, purpose: rec.purpose });
+  const reservation = adm.send;
+  if (reservation) {
+    deps.waitUntil(
+      deliver(ctx, rec, code, async () => {
+        await box.refund(reservation);
+        await global.unhit(budget, now);
+      }),
+    );
+  } else log({ event: 'code_mail', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'suppressed', code: 'suppressed', appId: app.id, purpose: rec.purpose });
+  return ok(ctx, 202, { challengeId, expiresAtMs, resendAfterMs: now + RESEND_SPACING_MS }, { appId: app.id, purpose: rec.purpose });
 }
 
 // ---- resend ----
@@ -227,16 +250,51 @@ export async function handleResend(request: Request, ctx: Ctx): Promise<Response
   const limited = await ipLimit(ctx, request, IP_RESEND_LIMITS);
   if (limited) return limited;
   if (!(await budgetOpen(ctx))) return fail(ctx, 429, 'rate_limited', 'Too many requests, try again later', undefined, retryHeader(60_000));
+  const now = deps.now();
+  const stub = challengeStub(deps, b.challengeId);
+  const gone = () => fail(ctx, 410, 'challenge_expired', 'The code expired, was used or ran out of attempts: start again');
+  const st = await stub.peek(now);
+  if (!st) return gone();
+  if (st.send.result === 'limit') return fail(ctx, 429, 'resend_limit', 'No more codes for this challenge: start again');
+  if (st.send.result === 'too_soon') return fail(ctx, 429, 'rate_limited', 'Wait before asking for another code', { resendAfterMs: now + st.send.retryAfterMs }, retryHeader(st.send.retryAfterMs));
+  // The send is reserved (mailbox, then global budget) before the code changes, and taken back if anything refuses.
+  const box = mailboxLimiter(deps, st.mailboxKey);
+  const global = limiter(deps, 'global');
+  const budget = globalSendLimits(dailySendBudget(deps.env));
+  let reservation = null;
+  if (!st.silent) {
+    const res = await box.reserveSend(requesterKey(ipOf(request)), now);
+    if (!res.ok) return tryLater(ctx, res.retryAfterMs, res.reason);
+    reservation = res.reservation;
+    if (!(await global.hit(budget, now)).ok) {
+      await box.refund(reservation);
+      return fail(ctx, 429, 'rate_limited', 'Too many requests, try again later', undefined, retryHeader(60_000));
+    }
+  }
   const keys = await deps.keys();
   const code = newCode();
-  const stub = challengeStub(deps, b.challengeId);
-  const r = await stub.newCode(await codeMac(keys, b.challengeId, code), deps.now());
-  if (r.result === 'gone') return fail(ctx, 410, 'challenge_expired', 'The code expired, was used or ran out of attempts: start again');
-  if (r.result === 'limit') return fail(ctx, 429, 'resend_limit', 'No more codes for this challenge: start again');
-  if (r.result === 'too_soon') return fail(ctx, 429, 'rate_limited', 'Wait before asking for another code', { resendAfterMs: deps.now() + r.retryAfterMs }, retryHeader(r.retryAfterMs));
-  const previous = r.previous;
-  deps.waitUntil(deliver(ctx, r.record, code, () => stub.undoSend(previous)));
-  return ok(ctx, 202, { challengeId: b.challengeId, expiresAtMs: r.record.expiresAtMs, resendAfterMs: r.record.lastSentAtMs! + RESEND_SPACING_MS }, { appId: r.record.appId, purpose: r.record.purpose });
+  const r = await stub.newCode(await codeMac(keys, b.challengeId, code), now);
+  if (r.result !== 'ok') {
+    if (reservation) {
+      await box.refund(reservation);
+      await global.unhit(budget, now);
+    }
+    if (r.result === 'gone') return gone();
+    if (r.result === 'limit') return fail(ctx, 429, 'resend_limit', 'No more codes for this challenge: start again');
+    return fail(ctx, 429, 'rate_limited', 'Wait before asking for another code', { resendAfterMs: now + r.retryAfterMs }, retryHeader(r.retryAfterMs));
+  }
+  const held = reservation;
+  if (held) {
+    const previous = r.previous;
+    deps.waitUntil(
+      deliver(ctx, r.record, code, async () => {
+        await box.refund(held);
+        await global.unhit(budget, now);
+        await stub.undoSend(previous);
+      }),
+    );
+  }
+  return ok(ctx, 202, { challengeId: b.challengeId, expiresAtMs: r.record.expiresAtMs, resendAfterMs: now + RESEND_SPACING_MS }, { appId: r.record.appId, purpose: r.record.purpose });
 }
 
 // ---- verify ----
@@ -266,17 +324,29 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
   if (limited) return limited;
   const now = deps.now();
   const stub = challengeStub(deps, b.challengeId);
+  const gone = () => fail(ctx, 410, 'challenge_expired', 'The code expired, was used or ran out of attempts: start again');
   const live = await stub.peek(now);
-  if (!live) return fail(ctx, 410, 'challenge_expired', 'The code expired, was used or ran out of attempts: start again');
-  const addr = limiter(deps, `addr:${live.emailKey}`);
-  if (await addr.locked(now)) return fail(ctx, 429, 'rate_limited', 'Too many wrong codes for this address, try again later', undefined, retryHeader(ADDRESS_LOCK_MS));
+  if (!live) return gone();
+  // The check is reserved in the mailbox limiter before the code is compared (one atomic call: refused while this
+  // requester is locked out of the mailbox or the mailbox is at its backstop), so concurrent guesses can't all pass a
+  // lock check before any is counted; it is refunded when the code was right. The challenge counts its own attempts
+  // atomically too.
+  const ip = requesterKey(ipOf(request));
+  const box = mailboxLimiter(deps, live.mailboxKey);
+  const guess = await box.reserveGuess(ip, now);
+  if (!guess.ok) return tryLater(ctx, guess.retryAfterMs, guess.reason);
   const keys = await deps.keys();
   const v = await stub.verify(await codeMac(keys, b.challengeId, b.code), now);
-  if (v.result === 'gone') return fail(ctx, 410, 'challenge_expired', 'The code expired, was used or ran out of attempts: start again');
+  if (v.result === 'gone') {
+    await box.refundGuess(ip, guess.reservation, now);
+    return gone();
+  }
   if (v.result === 'wrong') {
-    await addr.wrongCode(ADDRESS_WRONG_LIMIT, ADDRESS_LOCK_MS, now);
+    if (v.attemptsLeft === 0) await box.releaseLive(v.expiresAtMs, now);
     return fail(ctx, 400, 'code_invalid', 'Wrong code', { attemptsLeft: v.attemptsLeft });
   }
+  await box.refundGuess(ip, guess.reservation, now);
+  await box.releaseLive(v.record.expiresAtMs, now);
   // The code was right: the challenge is gone (single use). Exactly one token is minted from it.
   const rec = v.record;
   const app = await appById(deps.env.APP_DB, rec.appId);
@@ -407,6 +477,11 @@ export async function handleGoogleMatch(request: Request, ctx: Ctx): Promise<Res
       }
       // Not Google-hosted: a code to that address first (D195). The challenge is prepared here, where the verified
       // address is known; its first code goes out when the popup calls `resend` after "Link and continue".
+      // Admitted like any challenge (the live cap, the requester's lock); a suppressed or limited mailbox gets none.
+      const mbx = await mailboxKey(keys, r.mailbox);
+      const expiresAtMs = now + CHALLENGE_TTL_MS;
+      const adm = (await isSuppressed(deps, mbx)) ? null : await mailboxLimiter(deps, mbx).admit(requesterKey(ipOf(request)), expiresAtMs, false, now);
+      if (!adm?.ok) return ok(ctx, 200, base, { appId: app.id, decision: j.decision, code: 'challenge_unavailable' });
       const challengeId = randomId();
       const rec: ChallengeRecord = {
         appId: app.id,
@@ -415,12 +490,13 @@ export async function handleGoogleMatch(request: Request, ctx: Ctx): Promise<Res
         purpose: 'auto_link',
         nonce: null,
         autoLink: { googleSub, sessionHash: base64UrlEncode(sessionHash) },
+        silent: false,
         email: r.email,
-        emailKey: await emailKey(keys, r.email),
+        mailboxKey: mbx,
         codeMac: null,
         attempts: 0,
         createdAtMs: now,
-        expiresAtMs: now + CHALLENGE_TTL_MS,
+        expiresAtMs,
         lastSentAtMs: null,
         resends: 0,
       };
@@ -516,7 +592,7 @@ export async function handleSendgridWebhook(request: Request, ctx: Ctx): Promise
       list.map((s) =>
         deps.env.DB.prepare(
           "INSERT INTO email_suppressions (email_key, reason, at_ms) VALUES (?1, ?2, ?3) ON CONFLICT (email_key) DO UPDATE SET reason = CASE WHEN excluded.reason = 'complaint' THEN 'complaint' ELSE email_suppressions.reason END, at_ms = excluded.at_ms",
-        ).bind(s.emailKey, s.reason, now),
+        ).bind(s.mailboxKey, s.reason, now),
       ),
     );
   }

@@ -7,7 +7,7 @@ import { AccessVerifier } from '../src/access.ts';
 import { base64Encode, base64UrlEncode, fromUtf8, utf8 } from '../src/bytes.ts';
 import { NearChain } from '../src/chain.ts';
 import { senderFor } from '../src/deps.ts';
-import { emailKey } from '../src/keys.ts';
+import { mailboxKey } from '../src/keys.ts';
 import { clientProofPreimage, nonceOf } from '../src/layouts.ts';
 import { codeMail, displayAppName, linkNoticeMail } from '../src/mail.ts';
 import { OutboxSender } from '../src/outbox.ts';
@@ -161,8 +161,8 @@ describe('SendGrid event webhook → email_suppressions', () => {
     const keys = await h.deps.keys();
     const rows = await env.DB.prepare('SELECT email_key, reason FROM email_suppressions ORDER BY reason').all<{ email_key: string; reason: string }>();
     expect(rows.results).toEqual([
-      { email_key: await emailKey(keys, bounced), reason: 'bounce' },
-      { email_key: await emailKey(keys, complained.toLowerCase()), reason: 'complaint' },
+      { email_key: await mailboxKey(keys, bounced), reason: 'bounce' },
+      { email_key: await mailboxKey(keys, complained.toLowerCase()), reason: 'complaint' },
     ]);
     expect(JSON.stringify(rows.results)).not.toContain('@');
     expect(derToP1363(Uint8Array.of(0x31, 0))).toBeNull();
@@ -209,7 +209,7 @@ describe('Durable Object cleanup', () => {
   it('a challenge deletes itself at expiry; a limiter forgets ended windows', async () => {
     const h = await harness();
     const stub = env.EMAIL_CHALLENGE.get(env.EMAIL_CHALLENGE.idFromName(`cleanup-${uid()}`));
-    await stub.create({ appId: 'a', appName: 'A', scopeId: 's', purpose: 'session', nonce: 'n', autoLink: null, email: 'x@example.com', emailKey: 'k', codeMac: 'AAAA', attempts: 0, createdAtMs: 0, expiresAtMs: Date.now() + 1000, lastSentAtMs: 0, resends: 0 });
+    await stub.create({ appId: 'a', appName: 'A', scopeId: 's', purpose: 'session', nonce: 'n', autoLink: null, silent: false, email: 'x@example.com', mailboxKey: 'k', codeMac: 'AAAA', attempts: 0, createdAtMs: 0, expiresAtMs: Date.now() + 1000, lastSentAtMs: 0, resends: 0 });
     expect(await runDurableObjectAlarm(stub)).toBe(true);
     await runInDurableObject(stub, (_o, state) => expect([...state.storage.kv.list()]).toEqual([]));
     const lim = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`cleanup-${uid()}`));

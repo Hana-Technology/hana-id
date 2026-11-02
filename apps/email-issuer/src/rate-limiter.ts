@@ -1,9 +1,27 @@
-// Exact fixed-window limits and locks, one object per subject (an address's `email_key`, an IP subject, an app, the
-// env's global budget). A hit counts only when every window still has room, so a refused request costs nothing; the
-// storage calls are synchronous (SQLite-backed KV), so a hit is atomic inside the object. Keys never hold an address:
-// subjects are HMACs under K_rl (spec "Rate limits and abuse"), IP subjects, app ids or `global`.
+// Exact limits, one object per subject: a mailbox (`mbx:` + HMAC under K_rl of the normalized address without its
+// `+tag`), an IP subject, an app, the env's global budget, a staff member. Keys never hold an address or a raw IP
+// (requesters inside a mailbox object are sha256 prefixes of their IP subject).
+//
+// Every decision is one call, and every call's checks and writes run synchronously (SQLite-backed KV), before any await,
+// so concurrent requests can't all pass a check before any is counted (D198):
+// - `hit` / `peek` / `unhit`: plain fixed windows (IP, app, global, staff);
+// - `admit`: a new challenge for this mailbox (refused when locked, or when it already has MAX_LIVE live challenges),
+//   with, when a code is to go out, the send reserved (`reserveSend`'s rules) in the same step;
+// - `reserveSend`: one code mail, per (mailbox, requester) first, then mailbox-wide, then a small reserve for a requester
+//   that hasn't asked for this mailbox today, so an attacker who knows the address can't use up its owner's codes;
+// - `reserveGuess`: one code check, refused while the requester is locked for this mailbox or the mailbox has reached
+//   its brute-force backstop; counted before the code is compared, and refunded (`refundGuess`) when the code was right.
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from './env.ts';
+import {
+  MAILBOX_CODE_LIMITS,
+  MAILBOX_IP_CODE_LIMITS,
+  MAILBOX_IP_LOCK_MS,
+  MAILBOX_IP_WRONG_LIMIT,
+  MAILBOX_RESERVE_LIMIT,
+  MAILBOX_WRONG_BACKSTOP,
+  MAX_LIVE_CHALLENGES,
+} from './limits.ts';
 
 export interface Limit {
   /** Window name, unique per subject (e.g. `codes:15m`). */
@@ -14,92 +32,194 @@ export interface Limit {
 
 export type HitResult = { ok: true } | { ok: false; limit: string; retryAfterMs: number };
 
-const LOCK_KEY = 'lock';
+/** The window keys a reservation counted, so exactly those are taken back. */
+export type Reservation = { keys: string[] };
+export type Admitted = { ok: true; send: Reservation | null } | { ok: false; reason: 'locked' | 'live' | 'codes'; retryAfterMs: number };
+export type Reserved = { ok: true; reservation: Reservation } | { ok: false; reason: 'locked' | 'codes'; retryAfterMs: number };
+
+const DAY = 86_400_000;
+const LIVE_KEY = 'live';
+const ipLock = (ip: string) => `lock:${ip}`;
+
+interface Slot {
+  l: Limit;
+  key: string;
+  start: number;
+  count: number;
+}
 
 export class RateLimiter extends DurableObject<Env> {
-  private slots(limits: Limit[], now: number) {
-    const kv = this.ctx.storage.kv;
-    return limits.map((l) => {
-      const start = Math.floor(now / l.windowMs) * l.windowMs;
-      const key = `${l.name}@${start}`;
-      return { l, key, start, count: kv.get<number>(key) ?? 0 };
-    });
+  private kv() {
+    return this.ctx.storage.kv;
   }
+
+  private slot(l: Limit, now: number, prefix = ''): Slot {
+    const start = Math.floor(now / l.windowMs) * l.windowMs;
+    const key = `${prefix}${l.name}@${start}`;
+    return { l, key, start, count: this.kv().get<number>(key) ?? 0 };
+  }
+
+  private firstFull(slots: Slot[], now: number): { limit: string; retryAfterMs: number } | null {
+    for (const s of slots) if (s.count >= s.l.max) return { limit: s.l.name, retryAfterMs: s.start + s.l.windowMs - now };
+    return null;
+  }
+
+  private count(slots: Slot[]): string[] {
+    for (const s of slots) this.kv().put(s.key, s.count + 1);
+    return slots.map((s) => s.key);
+  }
+
+  // ---- plain windows ----
 
   /** Counts one hit in every window, or none when any is full. */
   async hit(limits: Limit[], now: number = Date.now()): Promise<HitResult> {
-    const slots = this.slots(limits, now);
-    for (const s of slots) if (s.count >= s.l.max) return { ok: false, limit: s.l.name, retryAfterMs: s.start + s.l.windowMs - now };
-    for (const s of slots) this.ctx.storage.kv.put(s.key, s.count + 1);
-    this.prune(now);
+    const slots = limits.map((l) => this.slot(l, now));
+    const full = this.firstFull(slots, now);
+    if (full) return { ok: false, ...full };
+    this.count(slots);
     await this.sweepAt(Math.max(...slots.map((s) => s.start + s.l.windowMs)));
     return { ok: true };
   }
 
   /** Whether a hit would pass, without counting it. */
   peek(limits: Limit[], now: number = Date.now()): HitResult {
-    for (const s of this.slots(limits, now)) if (s.count >= s.l.max) return { ok: false, limit: s.l.name, retryAfterMs: s.start + s.l.windowMs - now };
-    return { ok: true };
+    const full = this.firstFull(
+      limits.map((l) => this.slot(l, now)),
+      now,
+    );
+    return full ? { ok: false, ...full } : { ok: true };
   }
 
-  /** Takes back one accepted `hit(limits, now)` (same `now`): the send it reserved didn't happen. */
+  /** Takes back one accepted `hit(limits, now)` (same `now`). */
   unhit(limits: Limit[], now: number): void {
-    const kv = this.ctx.storage.kv;
-    for (const s of this.slots(limits, now)) {
-      if (s.count > 1) kv.put(s.key, s.count - 1);
-      else if (s.count === 1) kv.delete(s.key);
+    this.refund({ keys: limits.map((l) => this.slot(l, now).key) });
+  }
+
+  /** Takes back exactly the windows a reservation counted (windows that ended since are gone anyway). */
+  refund(r: Reservation): void {
+    const kv = this.kv();
+    for (const key of r.keys) {
+      const c = kv.get<number>(key) ?? 0;
+      if (c > 1) kv.put(key, c - 1);
+      else if (c === 1) kv.delete(key);
     }
+  }
+
+  // ---- a mailbox ----
+
+  /** ms until this requester may act on this mailbox again (0: now). */
+  private lockedFor(ip: string, now: number): number {
+    const until = this.kv().get<number>(ipLock(ip)) ?? 0;
+    if (until > now) return until - now;
+    const backstop = this.slot(MAILBOX_WRONG_BACKSTOP, now);
+    return backstop.count >= backstop.l.max ? backstop.start + backstop.l.windowMs - now : 0;
+  }
+
+  private trySend(ip: string, now: number): Reserved {
+    const own = MAILBOX_IP_CODE_LIMITS.map((l) => this.slot(l, now, `ip:${ip}:`));
+    const ownFull = this.firstFull(own, now);
+    if (ownFull) return { ok: false, reason: 'codes', retryAfterMs: ownFull.retryAfterMs };
+    const shared = MAILBOX_CODE_LIMITS.map((l) => this.slot(l, now));
+    const sharedFull = this.firstFull(shared, now);
+    if (!sharedFull) return { ok: true, reservation: { keys: [...this.count(own), ...this.count(shared)] } };
+    // The mailbox-wide allowance is used up: a requester new to this mailbox today may still get a code from a small
+    // reserve, so whoever filled the allowance can't keep the owner out (it bounds mail per mailbox all the same).
+    const isNew = own.find((s) => s.l.windowMs === DAY)!.count === 0;
+    const reserve = this.slot(MAILBOX_RESERVE_LIMIT, now);
+    if (isNew && reserve.count < reserve.l.max) return { ok: true, reservation: { keys: [...this.count(own), ...this.count([reserve])] } };
+    return { ok: false, reason: 'codes', retryAfterMs: sharedFull.retryAfterMs };
   }
 
   /**
-   * One wrong code for this address: counts it in `window`, and once the window holds `max`, locks the subject until
-   * `now + lockMs`. Returns whether the subject is locked now.
+   * A new challenge for this mailbox, live until `expiresAtMs`: refused while the requester is locked out (or the
+   * mailbox is at its backstop), or when MAX_LIVE challenges are still live; with `send`, its first code is reserved
+   * in the same step (refused when over). A refused admit stores nothing.
    */
-  async wrongCode(window: Limit, lockMs: number, now: number = Date.now()): Promise<boolean> {
-    const [s] = this.slots([window], now);
-    const count = s!.count + 1;
-    this.ctx.storage.kv.put(s!.key, count);
-    if (count >= window.max) this.ctx.storage.kv.put(LOCK_KEY, now + lockMs);
-    await this.sweepAt(Math.max(s!.start + window.windowMs, now + lockMs));
-    return this.locked(now);
-  }
-
-  locked(now: number = Date.now()): boolean {
-    const until = this.ctx.storage.kv.get<number>(LOCK_KEY);
-    return until !== undefined && until > now;
-  }
-
-  private prune(now: number): void {
-    const kv = this.ctx.storage.kv;
-    for (const [key] of kv.list<number>()) {
-      if (key === LOCK_KEY) continue;
-      const at = key.lastIndexOf('@');
-      const start = Number(key.slice(at + 1));
-      // Windows are at most a day; anything that ended more than a day ago is gone.
-      if (Number.isFinite(start) && start + 2 * 86_400_000 <= now) kv.delete(key);
+  async admit(ip: string, expiresAtMs: number, send: boolean, now: number = Date.now()): Promise<Admitted> {
+    const locked = this.lockedFor(ip, now);
+    if (locked > 0) return { ok: false, reason: 'locked', retryAfterMs: locked };
+    const live = (this.kv().get<number[]>(LIVE_KEY) ?? []).filter((t) => t > now);
+    if (live.length >= MAX_LIVE_CHALLENGES) return { ok: false, reason: 'live', retryAfterMs: Math.min(...live) - now };
+    let reservation: Reservation | null = null;
+    if (send) {
+      const r = this.trySend(ip, now);
+      if (!r.ok) return r;
+      reservation = r.reservation;
     }
+    this.kv().put(LIVE_KEY, [...live, expiresAtMs]);
+    await this.sweepAt(now + DAY);
+    return { ok: true, send: reservation };
   }
+
+  /** A challenge ended early (its code was used, or its attempts ran out): its live slot is free again. */
+  releaseLive(expiresAtMs: number, now: number = Date.now()): void {
+    const live = (this.kv().get<number[]>(LIVE_KEY) ?? []).filter((t) => t > now);
+    const i = live.indexOf(expiresAtMs);
+    if (i >= 0) live.splice(i, 1);
+    if (live.length) this.kv().put(LIVE_KEY, live);
+    else this.kv().delete(LIVE_KEY);
+  }
+
+  /** One more code mail for a live challenge (resend; a prepared case-A challenge's first code). */
+  async reserveSend(ip: string, now: number = Date.now()): Promise<Reserved> {
+    const locked = this.lockedFor(ip, now);
+    if (locked > 0) return { ok: false, reason: 'locked', retryAfterMs: locked };
+    const r = this.trySend(ip, now);
+    if (r.ok) await this.sweepAt(now + DAY);
+    return r;
+  }
+
+  /**
+   * One code check, counted as wrong before the code is compared: refused while locked; the requester's 10th wrong
+   * code in an hour locks it out of this mailbox for an hour; the mailbox's 50th in a day stops every check until the
+   * day's window ends (the brute-force backstop: ≤ 50 guesses per mailbox per day, 5 × 10⁻⁵).
+   */
+  async reserveGuess(ip: string, now: number = Date.now()): Promise<Reserved> {
+    const locked = this.lockedFor(ip, now);
+    if (locked > 0) return { ok: false, reason: 'locked', retryAfterMs: locked };
+    const own = this.slot(MAILBOX_IP_WRONG_LIMIT, now, `ip:${ip}:`);
+    const all = this.slot(MAILBOX_WRONG_BACKSTOP, now);
+    const keys = this.count([own, all]);
+    if (own.count + 1 >= own.l.max) this.kv().put(ipLock(ip), now + MAILBOX_IP_LOCK_MS);
+    await this.sweepAt(now + DAY);
+    return { ok: true, reservation: { keys } };
+  }
+
+  /** A right code (or no check made): its reservation is taken back, and the lock it may have set. */
+  refundGuess(ip: string, r: Reservation, now: number = Date.now()): void {
+    this.refund(r);
+    const own = this.slot(MAILBOX_IP_WRONG_LIMIT, now, `ip:${ip}:`);
+    if (own.count < own.l.max) this.kv().delete(ipLock(ip));
+  }
+
+  // ---- cleanup ----
 
   private async sweepAt(untilMs: number): Promise<void> {
     const current = await this.ctx.storage.getAlarm();
     if (current === null || current < untilMs) await this.ctx.storage.setAlarm(untilMs + 1);
   }
 
-  /** Deletes ended windows and an ended lock; an object left with nothing holds no state at all. */
+  /** Deletes ended windows, locks and challenges; an object left with nothing holds no state at all. */
   override async alarm(): Promise<void> {
-    const kv = this.ctx.storage.kv;
+    const kv = this.kv();
     const now = Date.now();
     let next = 0;
-    for (const [key, value] of kv.list<number>()) {
-      if (key === LOCK_KEY) {
-        if (value <= now) kv.delete(key);
-        else next = Math.max(next, value);
-        continue;
+    for (const [key, value] of kv.list<unknown>()) {
+      if (key === LIVE_KEY) {
+        const live = (value as number[]).filter((t) => t > now);
+        if (live.length) {
+          kv.put(key, live);
+          next = Math.max(next, ...live);
+        } else kv.delete(key);
+      } else if (key.startsWith('lock:')) {
+        if ((value as number) <= now) kv.delete(key);
+        else next = Math.max(next, value as number);
+      } else {
+        // Every window used here is at most a day long.
+        const start = Number(key.slice(key.lastIndexOf('@') + 1));
+        if (!Number.isFinite(start) || start + DAY <= now) kv.delete(key);
+        else next = Math.max(next, start + DAY);
       }
-      const start = Number(key.slice(key.lastIndexOf('@') + 1));
-      // The window length isn't stored with the key; a day bounds every window used here.
-      if (start + 86_400_000 <= now) kv.delete(key);
-      else next = Math.max(next, start + 86_400_000);
     }
     if (next > 0) await this.ctx.storage.setAlarm(next + 1);
     else await this.ctx.storage.deleteAll();

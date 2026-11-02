@@ -2,7 +2,7 @@
 // them. K_sub feeds `sub` through @hana-id/email (the only place `sub` is computed); K_code hashes codes; K_rl keys the
 // limiters and suppressions (spec "Rate limits and abuse": a separate key, so limiter state never holds an on-chain id).
 // Never logged.
-import { base64Decode, base64UrlEncode, concatBytes, utf8 } from './bytes.ts';
+import { base64Decode, base64UrlEncode, concatBytes, sha256, toHex, utf8 } from './bytes.ts';
 import { importSubKey } from '@hana-id/email';
 
 export class KeysUnavailable extends Error {}
@@ -39,8 +39,15 @@ export async function importKeys(env: { EMAIL_SUB_KEY?: string | undefined; EMAI
 
 const mac = async (key: CryptoKey, data: Uint8Array): Promise<string> => base64UrlEncode(new Uint8Array(await crypto.subtle.sign('HMAC', key, data)));
 
-/** `email_key` = HMAC-SHA256(K_rl, normalized address), b64url: the address's limiter and suppression key. */
-export const emailKey = (keys: IssuerKeys, normalized: string): Promise<string> => mac(keys.rl, utf8(normalized));
+/**
+ * The mailbox key = HMAC-SHA256(K_rl, mailbox), b64url, where `mailbox` is `normalizeEmail(...).mailbox` (the normalized
+ * address without its `+tag`, D159): the key of every per-mailbox limit and of suppressions, so cycling tags neither
+ * mails one inbox without bound nor escapes a bounce.
+ */
+export const mailboxKey = (keys: IssuerKeys, mailbox: string): Promise<string> => mac(keys.rl, utf8(mailbox));
+
+/** A requester inside a mailbox object: the first 16 bytes of sha256(IP subject), hex (never the raw address). */
+export const requesterKey = (ipSubject: string): string => toHex(sha256(utf8(ipSubject)).subarray(0, 16));
 
 /** HMAC-SHA256(K_code, challengeId ‖ code), b64url (challengeId is fixed-length, so the concatenation is unambiguous). */
 export const codeMac = (keys: IssuerKeys, challengeId: string, code: string): Promise<string> => mac(keys.code, concatBytes(utf8(challengeId), utf8(code)));

@@ -2,8 +2,9 @@
 // its challengeId) or per link ticket (named `t:` + sha256 of the ticket). It holds the normalized address only for
 // resends and only until the challenge ends (≤ 10 min, D197), the code only as HMAC-SHA256(K_code, challengeId ‖ code)
 // (compared in constant time), the purpose and its nonce (or, for auto_link, what the nonce needs at minting), and the
-// attempts. A correct code is single use: the object deletes everything before the worker mints the token. An alarm at
-// expiry deletes whatever is left.
+// attempts. Each method's checks and writes run synchronously before any await, so concurrent calls are serialized:
+// at most MAX_ATTEMPTS codes are ever compared per challenge, and a correct code is used once (the record is deleted
+// before the worker mints the token). An alarm at expiry deletes whatever is left.
 import { DurableObject } from 'cloudflare:workers';
 import { base64UrlDecode, bytesEqual } from './bytes.ts';
 import type { Purpose } from './commitment.ts';
@@ -19,10 +20,15 @@ export interface ChallengeRecord {
   nonce: string | null;
   /** auto_link (created by google-match, D195): the Google identity and sha256(session nonce preimage), b64url. */
   autoLink: { googleSub: string; sessionHash: string } | null;
-  /** The normalized address, byte for byte what the mail goes to (packages/email README). */
+  /**
+   * A suppressed address's challenge (D198): no address and no code are stored, nothing is ever sent, every code is
+   * wrong. It exists so `start` answers alike for every valid address.
+   */
+  silent: boolean;
+  /** The normalized address, byte for byte what the mail goes to (packages/email README); '' when silent. */
   email: string;
-  /** HMAC-SHA256(K_rl, normalized), b64url: the limiter subject. */
-  emailKey: string;
+  /** HMAC-SHA256(K_rl, mailbox), b64url: the mailbox limiter's subject (the address without its `+tag`, D159). */
+  mailboxKey: string;
   /** b64url MAC of the live code; null for a prepared auto_link challenge whose first code isn't sent yet. */
   codeMac: string | null;
   attempts: number;
@@ -41,19 +47,20 @@ export interface TicketRecord {
   expiresAtMs: number;
 }
 
-export type VerifyOutcome =
-  | { result: 'ok'; record: ChallengeRecord }
-  | { result: 'wrong'; attemptsLeft: number; emailKey: string }
-  | { result: 'gone' };
+export type VerifyOutcome = { result: 'ok'; record: ChallengeRecord } | { result: 'wrong'; attemptsLeft: number; expiresAtMs: number } | { result: 'gone' };
 
-export type SendOutcome =
-  | { result: 'ok'; record: ChallengeRecord; first: boolean; previous: { lastSentAtMs: number | null; resends: number } }
-  | { result: 'too_soon'; retryAfterMs: number }
-  | { result: 'limit' }
-  | { result: 'gone' };
+export type SendCheck = { result: 'ok' } | { result: 'too_soon'; retryAfterMs: number } | { result: 'limit' };
+export type SendOutcome = { result: 'ok'; record: ChallengeRecord; previous: { lastSentAtMs: number | null; resends: number } } | Exclude<SendCheck, { result: 'ok' }> | { result: 'gone' };
 
 const RECORD = 'challenge';
 const TICKET = 'ticket';
+
+function sendCheck(rec: ChallengeRecord, now: number): SendCheck {
+  if (rec.lastSentAtMs === null) return { result: 'ok' };
+  if (rec.resends >= MAX_RESENDS) return { result: 'limit' };
+  const wait = rec.lastSentAtMs + RESEND_SPACING_MS - now;
+  return wait > 0 ? { result: 'too_soon', retryAfterMs: wait } : { result: 'ok' };
+}
 
 export class Challenge extends DurableObject<Env> {
   private load(now: number): ChallengeRecord | null {
@@ -74,33 +81,30 @@ export class Challenge extends DurableObject<Env> {
     return true;
   }
 
-  /** The limiter subject of a live challenge (for the lock check before verify), or null. */
-  peek(now: number = Date.now()): { emailKey: string; appId: string } | null {
+  /** A live challenge's mailbox, and whether another code may go out now; null when gone. */
+  peek(now: number = Date.now()): { mailboxKey: string; silent: boolean; send: SendCheck } | null {
     const rec = this.load(now);
-    return rec ? { emailKey: rec.emailKey, appId: rec.appId } : null;
+    return rec ? { mailboxKey: rec.mailboxKey, silent: rec.silent, send: sendCheck(rec, now) } : null;
   }
 
   /**
-   * A new code for the challenge (`resend`; for a prepared auto_link challenge, its first code): ≥ 30 s after the last
-   * send, ≤ 2 resends. The old code dies. Returns the record for the mail.
+   * A new code (`resend`; for a prepared auto_link challenge, its first code): ≥ 30 s after the last send, ≤ 2
+   * resends. The old code dies. Returns the record for the mail, and what to restore if the provider refuses it.
    */
   newCode(codeMac: string, now: number = Date.now()): SendOutcome {
     const rec = this.load(now);
     if (!rec) return { result: 'gone' };
+    const check = sendCheck(rec, now);
+    if (check.result !== 'ok') return check;
     const first = rec.lastSentAtMs === null;
-    if (!first) {
-      if (rec.resends >= MAX_RESENDS) return { result: 'limit' };
-      const wait = rec.lastSentAtMs! + RESEND_SPACING_MS - now;
-      if (wait > 0) return { result: 'too_soon', retryAfterMs: wait };
-    }
-    const next: ChallengeRecord = { ...rec, codeMac, lastSentAtMs: now, resends: first ? rec.resends : rec.resends + 1 };
+    const next: ChallengeRecord = { ...rec, codeMac: rec.silent ? rec.codeMac : codeMac, lastSentAtMs: now, resends: first ? rec.resends : rec.resends + 1 };
     this.ctx.storage.kv.put(RECORD, next);
-    return { result: 'ok', record: next, first, previous: { lastSentAtMs: rec.lastSentAtMs, resends: rec.resends } };
+    return { result: 'ok', record: next, previous: { lastSentAtMs: rec.lastSentAtMs, resends: rec.resends } };
   }
 
   /**
    * Takes back the count of a send the provider refused (the code was never delivered), so the user's next resend
-   * isn't spent on it. Silent non-sends (suppressed, locked, over a limit) are never taken back: they must look alike.
+   * isn't spent on it. Silent non-sends are never taken back: they must look alike.
    */
   undoSend(previous: { lastSentAtMs: number | null; resends: number }): void {
     const rec = this.ctx.storage.kv.get<ChallengeRecord>(RECORD);
@@ -108,21 +112,25 @@ export class Challenge extends DurableObject<Env> {
   }
 
   /**
-   * Checks a code's MAC. Wrong: one attempt used, and the fifth kills the challenge. Right: the challenge is deleted
-   * (single use) and returned, so the worker can mint exactly one token.
+   * Checks a code's MAC, atomically: the attempt is counted (and, at the fifth, the challenge killed) before anything
+   * awaits. Right: the record is deleted (single use) and returned, so the worker mints exactly one token.
    */
   async verify(mac: string, now: number = Date.now()): Promise<VerifyOutcome> {
+    const kv = this.ctx.storage.kv;
     const rec = this.load(now);
     if (!rec) return { result: 'gone' };
-    const ok = rec.codeMac !== null && bytesEqual(base64UrlDecode(rec.codeMac), base64UrlDecode(mac));
+    const ok = !rec.silent && rec.codeMac !== null && bytesEqual(base64UrlDecode(rec.codeMac), base64UrlDecode(mac));
     if (ok) {
+      kv.delete(RECORD);
       await this.ctx.storage.deleteAll();
       return { result: 'ok', record: rec };
     }
     const attempts = rec.attempts + 1;
-    if (attempts >= MAX_ATTEMPTS) await this.ctx.storage.deleteAll();
-    else this.ctx.storage.kv.put(RECORD, { ...rec, attempts });
-    return { result: 'wrong', attemptsLeft: Math.max(0, MAX_ATTEMPTS - attempts), emailKey: rec.emailKey };
+    if (attempts >= MAX_ATTEMPTS) {
+      kv.delete(RECORD);
+      await this.ctx.storage.deleteAll();
+    } else kv.put(RECORD, { ...rec, attempts });
+    return { result: 'wrong', attemptsLeft: Math.max(0, MAX_ATTEMPTS - attempts), expiresAtMs: rec.expiresAtMs };
   }
 
   // ---- link tickets (verify → google-match, case B) ----
@@ -138,6 +146,7 @@ export class Challenge extends DurableObject<Env> {
   async takeTicket(appId: string, now: number = Date.now()): Promise<TicketRecord | null> {
     const t = this.ctx.storage.kv.get<TicketRecord>(TICKET);
     if (!t) return null;
+    this.ctx.storage.kv.delete(TICKET);
     await this.ctx.storage.deleteAll();
     return t.expiresAtMs > now && t.appId === appId ? t : null;
   }

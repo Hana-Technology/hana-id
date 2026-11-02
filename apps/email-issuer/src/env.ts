@@ -55,7 +55,7 @@ export interface Env {
   EMAIL_SUB_KEY?: string;
   /** K_code: base64 of 32 bytes. Code hashes in the challenge objects. */
   EMAIL_CODE_KEY?: string;
-  /** K_rl: base64 of 32 bytes. Limiter and suppression keys (`email_key`). */
+  /** K_rl: base64 of 32 bytes. Mailbox limiter and suppression keys (HMAC of the address without its `+tag`). */
   EMAIL_RL_KEY?: string;
   /** SendGrid API key restricted to Mail Send, used only by this Worker (D194). */
   SENDGRID_API_KEY?: string;

@@ -1,12 +1,12 @@
 // SendGrid's signed Event Webhook (spec "Deliverability": "The provider's bounce and complaint webhooks feed
 // email_suppressions(email_key, reason, at)"). The signature is ECDSA P-256 / SHA-256 (base64 DER) over
 // timestamp ‖ raw body, verified with the account's verification key (a public value, manifest
-// `emailIssuer.sendgridWebhookPublicKey`). Hard bounces and spam reports are stored as `email_key` (HMAC under K_rl) of
-// the normalized address; the address itself is dropped at once and never logged.
+// `emailIssuer.sendgridWebhookPublicKey`). Hard bounces and spam reports are stored as the mailbox key (HMAC under K_rl of
+// the normalized address without its `+tag`); the address itself is dropped at once and never logged.
 import { base64Decode } from './bytes.ts';
 import { normalizeEmail } from '@hana-id/email';
 import { readCapped } from './http.ts';
-import { type IssuerKeys, emailKey } from './keys.ts';
+import { type IssuerKeys, mailboxKey } from './keys.ts';
 
 export const SIGNATURE_HEADER = 'x-twilio-email-event-webhook-signature';
 export const TIMESTAMP_HEADER = 'x-twilio-email-event-webhook-timestamp';
@@ -56,7 +56,7 @@ export async function verifyWebhook(publicKeyB64: string, timestamp: string, bod
   }
 }
 
-export type Suppression = { emailKey: string; reason: 'bounce' | 'complaint' };
+export type Suppression = { mailboxKey: string; reason: 'bounce' | 'complaint' };
 
 /** The suppressions a verified batch carries: hard bounces (not `blocked`) and spam reports. */
 export async function suppressionsOf(keys: IssuerKeys, events: unknown): Promise<Suppression[] | null> {
@@ -69,8 +69,8 @@ export async function suppressionsOf(keys: IssuerKeys, events: unknown): Promise
     if (!reason || typeof ev.email !== 'string') continue;
     const r = normalizeEmail(ev.email);
     if (!r.ok) continue;
-    const k = await emailKey(keys, r.email);
-    if (!out.has(k) || reason === 'complaint') out.set(k, { emailKey: k, reason });
+    const k = await mailboxKey(keys, r.mailbox);
+    if (!out.has(k) || reason === 'complaint') out.set(k, { mailboxKey: k, reason });
   }
   return [...out.values()];
 }

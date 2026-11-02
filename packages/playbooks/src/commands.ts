@@ -37,6 +37,8 @@ export const identityKeySwitchStandby = `${SCRIPTS} identity-key <env> switch --
 export const identityKeySwitchNext = `${SCRIPTS} identity-key <env> switch --to next --yes`;
 export const identityKeyRetirePrevious = `${SCRIPTS} identity-key <env> retire --key previous --yes`;
 export const identityKeyRetireStandby = `${SCRIPTS} identity-key <env> retire --key standby --yes`;
+/** The outside probe of the identity JWKS and discovery document (`scripts/identity-probe.ts`, D210): from outside Cloudflare. */
+export const identityProbe = `${SCRIPTS} identity-probe <env>`;
 export const vaultKekPut = `${SCRIPTS} vault-kek <env> put --yes`;
 export const appList = `${SCRIPTS} admin <env> app:list --remote`;
 export const appSettings = `${SCRIPTS} admin <env> app:settings <app id | publishable key> --remote`;

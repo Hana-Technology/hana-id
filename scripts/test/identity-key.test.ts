@@ -344,6 +344,49 @@ describe('watchdog pins (D211): every published key pinned, pin before publish, 
     expect(manifest().identityToken!.publicKeys).toHaveLength(2);
   });
 
+  it('withIdentityPins edits only the pinnedIdentityKeys line of the committed manifest (L3)', () => {
+    const committed = readFileSync(manifestPath('sandbox-dev'), 'utf8');
+    expect(withIdentityPins(committed, [], [])).toBe(committed);
+    const extra = 'C'.repeat(43);
+    const added = withIdentityPins(committed, [extra], []);
+    const before = committed.split('\n');
+    const after = added.split('\n');
+    expect(after).toHaveLength(before.length);
+    const changed = after.flatMap((l, i) => (l === before[i] ? [] : [i]));
+    expect(changed).toHaveLength(1);
+    expect(after[changed[0]!]).toBe(`    "pinnedIdentityKeys": [${[...loadEnv('sandbox-dev').watchdog!.pinnedIdentityKeys!, extra].map((t) => JSON.stringify(t)).join(', ')}]`);
+    expect(withIdentityPins(added, [], [extra])).toBe(committed);
+  });
+
+  it('withIdentityPins adds the line as the last watchdog member and removes it again, nothing else changed (L3)', () => {
+    const t0 = baseText();
+    const a = 'a'.repeat(43);
+    const t1 = withIdentityPins(t0, [a], []);
+    const lines0 = t0.split('\n');
+    const lines1 = t1.split('\n');
+    expect(lines1).toHaveLength(lines0.length + 1);
+    expect(lines1.filter((l) => !lines0.includes(l))).toEqual([expect.stringMatching(/,$/u), `    "pinnedIdentityKeys": ["${a}"]`]);
+    expect(withIdentityPins(t1, [], [a])).toBe(t0);
+  });
+
+  it('init and next validate the new manifest before writing any key file (L4)', () => {
+    const full = JSON.parse(baseText()) as { watchdog: Record<string, unknown> };
+    full.watchdog.pinnedIdentityKeys = 'abcdefgh'.split('').map((c) => c.repeat(43));
+    text = `${JSON.stringify(full, null, 2)}\n`;
+    // Eight pins already: the two new ones can't be added, so init refuses with no file written.
+    expect(() => run('init', '--yes')).toThrow();
+    expect(existsSync(dir) && readdirSync(dir).length > 0).toBe(false);
+    expect(puts).toEqual([]);
+
+    text = baseText();
+    run('init', '--yes');
+    const m = JSON.parse(text) as { watchdog: { pinnedIdentityKeys: string[] } };
+    m.watchdog.pinnedIdentityKeys.push(...'abcdef'.split('').map((c) => c.repeat(43)));
+    text = JSON.stringify(m, null, 2);
+    expect(() => run('next', '--yes')).toThrow();
+    expect(existsSync(file('nextKey'))).toBe(false);
+  });
+
   it('withIdentityPins adds and removes, keeps order, validates, and leaves an unwatched manifest alone', () => {
     const a = 'a'.repeat(43);
     const b = 'b'.repeat(43);

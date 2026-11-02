@@ -197,17 +197,62 @@ function checked(out: string, key: string, value: unknown): string {
   return out;
 }
 
+/** The `"pinnedIdentityKeys": [...]` member on one line, as envs/*.json keep it. */
+const PINS_LINE = /^([ \t]*)"pinnedIdentityKeys"[ \t]*:[ \t]*\[[^\]\n]*\](,?)[ \t]*$/mu;
+
 /**
- * `watchdog.pinnedIdentityKeys` with `add` pinned and `remove` unpinned (D211), the rest of the manifest kept; the
- * result must validate. A manifest without a `watchdog` block is returned unchanged (no watchdog, nothing to pin).
+ * `watchdog.pinnedIdentityKeys` with `add` pinned and `remove` unpinned (D211); the result must validate. Only that
+ * one line changes (L3): it is rewritten in place (`["a", "b"]`, as the committed manifests have it), added after the
+ * watchdog block's last member, or removed when nothing stays pinned; the rest of the file is kept byte for byte. A
+ * manifest without a `watchdog` block is returned unchanged (no watchdog, nothing to pin). A layout this can't place
+ * (the member spread over several lines, or two of them) falls back to rewriting the watchdog block.
  */
 export function withIdentityPins(text: string, add: readonly string[], remove: readonly string[]): string {
   const raw = JSON.parse(text) as { watchdog?: Record<string, unknown> };
   if (!raw.watchdog) return text;
   const current = Array.isArray(raw.watchdog.pinnedIdentityKeys) ? (raw.watchdog.pinnedIdentityKeys as string[]) : [];
   const next = [...current.filter((t) => !remove.includes(t)), ...add.filter((t) => !current.includes(t))];
+  if (next.length === current.length && next.every((t, i) => t === current[i])) return checked(text, 'watchdog', raw.watchdog);
   const { pinnedIdentityKeys: _old, ...rest } = raw.watchdog;
-  return replaceManifestBlock(text, 'watchdog', next.length ? { ...rest, pinnedIdentityKeys: next } : rest);
+  const value = next.length ? { ...rest, pinnedIdentityKeys: next } : rest;
+  const member = `"pinnedIdentityKeys": [${next.map((t) => JSON.stringify(t)).join(', ')}]`;
+  const lines = [...text.matchAll(new RegExp(PINS_LINE.source, 'gmu'))];
+  let out: string | null = null;
+  if (lines.length === 1) {
+    const m = lines[0]!;
+    if (next.length) {
+      out = `${text.slice(0, m.index)}${m[1]}${member}${m[2]}${text.slice(m.index + m[0].length)}`;
+    } else if (m[2] === ',') {
+      // Not the last member: drop the line.
+      out = text.slice(0, m.index) + text.slice(m.index + m[0].length + 1);
+    } else {
+      // The last member: drop the line and the comma that ends the member before it.
+      const before = text.slice(0, m.index).replace(/,([ \t]*\n)$/u, '$1');
+      out = before + text.slice(m.index + m[0].length + 1);
+    }
+  } else if (lines.length === 0 && next.length) {
+    // Absent: a new last member of the watchdog block, indented like the others.
+    const head = /^([ \t]*)"watchdog"[ \t]*:[ \t]*\{[ \t]*\n/mu.exec(text);
+    if (head) {
+      let depth = 0;
+      let end = -1;
+      for (let i = head.index + head[0].lastIndexOf('{'); i < text.length && end < 0; i++) {
+        const c = text[i];
+        if (c === '"') {
+          for (i++; i < text.length && text[i] !== '"'; i++) if (text[i] === '\\') i++;
+        } else if (c === '{' || c === '[') depth++;
+        else if ((c === '}' || c === ']') && --depth === 0) end = i;
+      }
+      const body = end > 0 ? text.slice(head.index + head[0].length, end) : '';
+      const indent = /^([ \t]+)"/mu.exec(body)?.[1];
+      if (end > 0 && indent !== undefined) {
+        const lastNl = text.lastIndexOf('\n', end - 1);
+        const prev = text.slice(head.index + head[0].length, lastNl).replace(/[ \t]+$/u, '');
+        out = `${text.slice(0, head.index + head[0].length)}${prev},\n${indent}${member}${text.slice(lastNl)}`;
+      }
+    }
+  }
+  return out === null ? replaceManifestBlock(text, 'watchdog', value) : checked(out, 'watchdog', value);
 }
 
 type Slots = Record<SigningSlot, string | null>;
@@ -286,15 +331,16 @@ export function identityKey(argv: readonly string[], deps: IdentityKeyDeps): voi
     const standby = deps.newP256();
     if (!isP256PrivateJwk(active) || !isP256PrivateJwk(standby)) throw new Error('newP256 returned a malformed key');
     const subKey = newSubKey(deps.randomBytes);
-    // On disk before anything else: the files are the only copies Cloudflare won't give back.
+    const block = { iss: identityIssuerFor(m.apiUrl), signer: { kind: 'worker-secret', activeKid: publicEntry(active).kid }, publicKeys: [publicEntry(active), publicEntry(standby)] };
+    // The new manifest text first, validated (L4): a manifest that won't take the keys fails before any key file exists.
+    // Pins before the block (D211): each intermediate manifest validates, and a published key is always pinned.
+    const manifestText = insertManifestBlock(withIdentityPins(readText(m.name), block.publicKeys.map((k) => k.kid), []), 'identityToken', block, 'apiUrl');
+    // On disk before the manifest and the Worker: the files are the only copies Cloudflare won't give back.
     writeNewSecretFile(file('signingKey'), `${JSON.stringify(active)}\n`);
     writeNewSecretFile(file('standbyKey'), `${JSON.stringify(standby)}\n`);
     writeNewSecretFile(file('subKey'), `${subKey}\n`);
     deps.log(`Wrote ${shown('signingKey')}, ${shown('standbyKey')} and ${shown('subKey')} (0600, values not shown). Move the standby file offline.`);
-    const block = { iss: identityIssuerFor(m.apiUrl), signer: { kind: 'worker-secret', activeKid: publicEntry(active).kid }, publicKeys: [publicEntry(active), publicEntry(standby)] };
-    // Pins first (D211): each intermediate manifest validates, and a published key is always pinned.
-    const pinned = withIdentityPins(readText(m.name), block.publicKeys.map((k) => k.kid), []);
-    writeText(m.name, insertManifestBlock(pinned, 'identityToken', block, 'apiUrl'));
+    writeText(m.name, manifestText);
     deps.log(
       `Wrote identityToken to envs/${m.name}.json (active kid ${block.signer.activeKid}, standby ${block.publicKeys[1]!.kid})${watched ? ' and pinned both in watchdog.pinnedIdentityKeys' : ''}. ${pinFirst}`,
     );
@@ -338,9 +384,11 @@ export function identityKey(argv: readonly string[], deps: IdentityKeyDeps): voi
     if (!apply) return void deps.log(DRY_RUN_LINE);
     const key = deps.newP256();
     if (!isP256PrivateJwk(key)) throw new Error('newP256 returned a malformed key');
-    writeNewSecretFile(file('nextKey'), `${JSON.stringify(key)}\n`);
     const entry = publicEntry(key);
-    writeText(m.name, replaceManifestBlock(withIdentityPins(readText(m.name), [entry.kid], []), 'identityToken', { ...t, publicKeys: [...t.publicKeys, entry] }));
+    // Validated before the key file is written (L4); pinned before published (D211).
+    const manifestText = replaceManifestBlock(withIdentityPins(readText(m.name), [entry.kid], []), 'identityToken', { ...t, publicKeys: [...t.publicKeys, entry] });
+    writeNewSecretFile(file('nextKey'), `${JSON.stringify(key)}\n`);
+    writeText(m.name, manifestText);
     deps.log(`Published kid ${entry.kid}${watched ? ' and pinned it' : ''}. ${pinFirst} Partners that pin thumbprints need 14 days' notice (24 h on testnet) before \`switch --to next\`, unless this is an incident.`);
     return;
   }

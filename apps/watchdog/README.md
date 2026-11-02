@@ -10,7 +10,8 @@ Deployed on sandbox-dev (2026-10-30, on the API's Cloudflare account for the dri
 with email-login batch 5; `docs/operations.md` "Watchdog service"); no other env yet. Testnet only: it checks the RPC's `chain_id` against the manifest's `network`
 every run and sends nothing on a mismatch.
 
-Last verified: 2026-11-02 (branch `docs/consistency-pass`: the deploy line, against `docs/operations.md`).
+Last verified: 2026-11-02 (branch `feat/identity-token-8`: the identity JWKS and discovery check, step 5b, the
+`identity` status and `pinnedIdentityKeys`, D210–D214); 2026-11-02 (branch `docs/consistency-pass`: the deploy line, against `docs/operations.md`).
 
 ## What a run does (every 5 min)
 
@@ -131,30 +132,44 @@ Last verified: 2026-11-02 (branch `docs/consistency-pass`: the deploy line, agai
      (manifest `jwksUrl`, default `{apiUrl}/v1/email/jwks.json`), fetched with no cache; a published key not pinned
      (or kid ≠ thumbprint) or an active email key not published → warning `email_jwks_mismatch`; 3 failed fetches
      while an email key is active → the same warning (`:fetch`). Never trusted, never acted on.
-   - **The partner identity token's JWKS and discovery document** (check `identity_jwks`, D210, D213; needs no chain
-     read, so it runs without one; skipped without `IDENTITY_ISS`): `{IDENTITY_ISS}/jwks.json` and
-     `{IDENTITY_ISS}/.well-known/openid-configuration`, no cache, 10 s timeout. Each JWKS entry is judged by its key
-     material (its RFC 7638 P-256 thumbprint), never by its kid:
-     - a key whose thumbprint isn't in `IDENTITY_PINS` (manifest `watchdog.pinnedIdentityKeys`), or that isn't a
-       P-256 key → critical `identity_key_unpinned` (`details.keys[].reason`: `not_pinned`, `not_p256`,
-       `pins_unreadable`); **no pins = nothing pinned**: every published key is unpinned;
+   - **The partner identity token's JWKS and discovery document** (check `identity_jwks`, D210, D213, D214; needs no
+     chain read, so it runs without one; skipped without `IDENTITY_ISS`, and then nothing is resolved):
+     `{IDENTITY_ISS}/jwks.json` and `{IDENTITY_ISS}/.well-known/openid-configuration`, no cache, `redirect: 'manual'`,
+     10 s timeout, 64 KB cap. The rules are `@hana-id/jwks/identity`, shared with the outside probe. Each object
+     entry of `keys` is judged by its key material (its RFC 7638 P-256 thumbprint), never by its kid, whatever the
+     other entries are:
+     - a key whose thumbprint isn't in `IDENTITY_PINS` (manifest `watchdog.pinnedIdentityKeys`), that isn't a P-256
+       key, or that has any member beyond `kty crv x y kid use alg` → critical `identity_key_unpinned`
+       (`details.keys[].reason`: `not_pinned`, `not_p256`, `extra_members`, `pins_unreadable`); **no pins = nothing
+       pinned**: every published key is unpinned;
      - any private member (`d`, `p`, `q`, `dp`, `dq`, `qi`, `oth`, `k`) → critical `identity_private_key_published`
        (the member names are stored, never the values);
      - the discovery document's `issuer` not exactly `IDENTITY_ISS`, or its `jwks_uri` not `{IDENTITY_ISS}/jwks.json`
        → critical `identity_discovery_mismatch` (`:issuer:…`, `:jwks_uri:…`, per published value); nothing it
        advertises is fetched;
-     - a pinned key not published under its thumbprint as kid → warning `identity_key_missing:<thumbprint>`
-       (`not_published`, `kid_differs`);
-     - 3 failed reads in a row (HTTP error, timeout, over 64 KB, or not a JWKS / not a JSON object) → warning
-       `identity_jwks_failing:jwks` / `:discovery` (one counter each); a failed read resolves nothing it would judge.
+     - an answer that can't be judged as published → critical `identity_jwks_unreadable` **at once**
+       (`:<jwks|discovery>:answer:<reason>`): `redirect` (a 3xx, never followed), `too_large` (a 200 over 64 KB:
+       padding), `not_json`, `duplicate_members` (a member twice in one object, which parsers resolve differently;
+       the document is still judged), `bad_shape` (not an object, no `keys` array, or a non-object entry; the object
+       entries beside it are still judged);
+     - a network error or a status other than 200 or 3xx, 3 runs in a row → critical
+       `identity_jwks_unreadable:<document>:sustained` (one counter each; a failure only the watchdog gets is a way to
+       hide a key from it); a failed read resolves nothing it would judge;
+     - a pinned key not published under its thumbprint as kid with public members only → warning
+       `identity_key_missing:<thumbprint>` (`not_published`, `kid_differs`, `not_clean`).
      **No pause, ever** (D210): partners verify identity tokens, the contract never holds or accepts an identity key,
      so a pause would stop every user and no forged token. An unpinned or private set is one condition keyed by a hash
      of what was found (a new key is a new page), listing at most 20 keys (D214). The last good reads go to D1 (`meta`
-     `identity_jwks`, `identity_discovery`) for `/status` and step 5b.
+     `identity_jwks`, `identity_discovery`) for `/status` and step 5b. `IDENTITY_PINS` without `IDENTITY_ISS` pages
+     `pins_invalid:identity_no_iss` from the `config` check.
+     **What it catches** (D210): an attacker who serves the same JWKS to everyone. Someone who controls Hana's
+     Cloudflare account can tell this Worker's fetches apart (they come from Cloudflare's network) and serve them a
+     clean JWKS, or publish a key for less than a run. The outside probe (`scripts/identity-probe.ts`, GitHub Actions
+     every 15 min) narrows the first; only partners that pin thumbprints are safe from both.
 
 Every third-party body the watchdog parses is size-capped before parsing (`src/http.ts`: every JWKS and the identity
 discovery document 64 KB, an RPC answer 4 MB), by `Content-Length` and while streaming: over the cap is a failed
-fetch (an RPC answer then tries the fallback).
+fetch (an RPC answer then tries the fallback), except for the identity documents, where it is a critical finding.
 
 Everything not listed in steps 4–6 is alert-only (D82). Actions use exactly four methods, the permission of the
 watchdog's function-call key: `cancel_issuer_key_change`, `confirm_issuer_key_change`, `pause`, `delete_updater_key`.
@@ -289,9 +304,11 @@ JWKS and recording channels; `email.test.ts` the email issuer's rules (pinned an
 confirm, the signer-policy diff and its pauses, Hana's JWKS, the link alarm thresholds (`get_link_stats`), `unrecorded_wallets`, a v2 contract read as
 no email issuer, D153 unchanged beside it, the review hardening: advisory order and the lock, `pins_invalid`,
 `bad_material`); `identity.test.ts` the identity token's rules (pinned and unpinned keys judged by material, a
-non-P-256 key and a hostile kid, private members never stored, a pinned key missing or renamed, the discovery
-fields, failures per document and a malformed body, nothing pinned, unreadable pins, the advisory order and its
-containment, a run without a chain read, the on-chain kid check in the protective phase); `http.test.ts` the body caps on every third-party read; `scripts/test/pin.test.ts` the pin command
+non-P-256 key and a hostile kid, extra and private members (never stored), a pinned key missing or renamed, the
+discovery fields, a redirect, padding, not JSON, duplicate members and malformed entries critical at once, sustained
+failures per document, nothing pinned, unreadable pins, pins without an issuer, the advisory order and its
+containment, a run without a chain read, the on-chain kid check in the protective phase; the shared rules themselves in
+`packages/jwks/test/identity.test.ts`); `http.test.ts` the body caps on every third-party read; `scripts/test/pin.test.ts` the pin command
 (RFC 7638 vector, leading zeros, PEM, private keys refused); `pins.test.ts` the pin parsing and the per-key and
 policy verdicts; `alerts.test.ts` routing, re-sends, acks and failing channels; `channels.test.ts` each
 adapter's request; `registry.test.ts` that every alert kind has exactly one playbook (and its line in the alert text);

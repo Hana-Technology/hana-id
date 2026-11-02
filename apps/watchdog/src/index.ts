@@ -4,10 +4,10 @@
 import { GOOGLE_JWKS_URL, type Jwk, usableJwks } from '@hana-id/jwks';
 import { type Notifier, notifierFromEnv } from './channels.ts';
 import { type Env, digestHourUtc, isDevEnvName } from './env.ts';
-import { BODY_LIMITS, readJsonCapped } from './http.ts';
+import { BODY_LIMITS, BodyTooLarge, readCapped, readJsonCapped } from './http.ts';
 import { log } from './log.ts';
 import { NearChain, NearWriter, Rpc } from './near.ts';
-import { identityDiscoveryUrl, identityJwksUrl, parseIdentityPins } from './identity.ts';
+import { identityDiscoveryUrl, identityJwksUrl, type IdentityResponse, parseIdentityPins } from './identity.ts';
 import { parsePins } from './pins.ts';
 import { relayerThresholds } from './relayer.ts';
 import { type RunDeps, runWatchdog } from './run.ts';
@@ -36,14 +36,27 @@ export async function fetchEmailJwks(url: string): Promise<Jwk[]> {
 }
 
 /**
- * One of Hana's identity documents (the JWKS or the discovery document) as parsed JSON, fetched with no cache and its
- * body capped (64 KB). Informational for the watchdog's own judgement only: it is compared with the pins and the
- * configured issuer, never trusted (D210).
+ * One of Hana's identity documents (the JWKS or the discovery document), fetched with no cache, `redirect: 'manual'`
+ * and its body capped (64 KB). A redirect or an oversized 200 body is returned as such (a finding at once, D210); any
+ * other status or a network error throws (counted toward a sustained failure). Never trusted: compared with the pins
+ * and the configured issuer only.
  */
-export async function fetchIdentityDocument(url: string): Promise<unknown> {
-  const res = await fetch(url, { headers: { accept: 'application/json' }, cache: 'no-store', signal: AbortSignal.timeout(10_000) });
-  if (!res.ok) throw new Error(`identity document HTTP ${res.status}`);
-  return readJsonCapped<unknown>(res, BODY_LIMITS.jwks);
+export async function fetchIdentityDocument(url: string): Promise<IdentityResponse> {
+  const res = await fetch(url, { headers: { accept: 'application/json' }, cache: 'no-store', redirect: 'manual', signal: AbortSignal.timeout(10_000) });
+  if (res.status >= 300 && res.status < 400) {
+    await res.body?.cancel().catch(() => undefined);
+    return { kind: 'redirect', status: res.status, location: res.headers.get('location') };
+  }
+  if (res.status !== 200) {
+    await res.body?.cancel().catch(() => undefined);
+    throw new Error(`identity document HTTP ${res.status}`);
+  }
+  try {
+    return { kind: 'body', text: await readCapped(res, BODY_LIMITS.jwks) };
+  } catch (err) {
+    if (err instanceof BodyTooLarge) return { kind: 'too_large' };
+    throw err;
+  }
 }
 
 /** The real dependencies of a run, from the Worker's bindings. */

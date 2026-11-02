@@ -991,35 +991,37 @@ const selfIssuedKeyChange: Playbook = {
 
 const identityJwksForged: Playbook = {
   id: 'identity-jwks-forged',
-  title: "Hana's identity JWKS publishes a key the watchdog didn't pin",
+  title: "Hana's identity JWKS publishes a key the watchdog didn't pin, or can't be judged",
   kind: 'alert',
-  alertKinds: ['identity_key_unpinned', 'identity_private_key_published', 'identity_discovery_mismatch'],
+  alertKinds: ['identity_key_unpinned', 'identity_private_key_published', 'identity_discovery_mismatch', 'identity_jwks_unreadable'],
   severity: 'critical',
   status: 'live',
   summary:
-    "The partner identity token's JWKS (`{iss}/jwks.json`) lists a key whose RFC 7638 thumbprint isn't in `watchdog.pinnedIdentityKeys`, or private key material, or the discovery document names another issuer or `jwks_uri`. Partners that trust the JWKS URL would accept tokens for any user. The chain isn't involved: no pause.",
+    "The partner identity token's JWKS (`{iss}/jwks.json`) lists a key whose RFC 7638 thumbprint isn't in `watchdog.pinnedIdentityKeys` (or with members beyond the public ones), or private key material; the discovery document names another issuer or `jwks_uri`; or an answer can't be judged (a redirect, padding over 64 KB, not JSON, duplicate members, the wrong shape, 3 failed fetches). Partners that trust the JWKS URL would accept tokens for any user. The chain isn't involved: no pause.",
   signals: [
-    'Critical `identity_key_unpinned` (`details.keys`: each kid, thumbprint and `reason`: `not_pinned`, `not_p256`, or `pins_unreadable` while `IDENTITY_PINS` is malformed, which also pages `pins_invalid:identity`). With nothing pinned at all, every published key is unpinned.',
+    'Critical `identity_key_unpinned` (`details.keys`: each kid, thumbprint and `reason`: `not_pinned`, `not_p256`, `extra_members`, or `pins_unreadable` while `IDENTITY_PINS` is malformed, which also pages `pins_invalid:identity`). With nothing pinned at all, every published key is unpinned.',
     'Critical `identity_private_key_published` (`details.keys[].private`: the member names, never the values) and `identity_discovery_mismatch` (`details.field`: `issuer` or `jwks_uri`, with `expected` and `published`).',
-    "`/status` `identity`: the pins in force and the last JWKS and discovery reads, each key judged. The watchdog reads both every run after its protective work (D86); it runs on its own Cloudflare account, so this alert can't be silenced from Hana's.",
+    'Critical `identity_jwks_unreadable:<jwks|discovery>:answer:<reason>` (`redirect`, `too_large`, `not_json`, `duplicate_members`, `bad_shape`) at once, or `:sustained` after 3 failed fetches in a row: each can hide a key from the watchdog that partners still see.',
+    "`/status` `identity`: the pins in force and the last good reads, each key judged. The outside probe (GitHub Actions workflow `identity-probe`, every 15 min, from outside Cloudflare) failing on the same env is a second view: the watchdog's own fetch comes from Cloudflare's network and can be told apart.",
   ],
   impact: [
     "An unpinned key in the JWKS means whoever published it can sign identity tokens partners accept as any user of any app (identity at partners: credits, referrals, their accounts) until it is gone from the JWKS and the partners' caches (≤ 10 min). No wallet, key, Hana API or contract call accepts an identity token.",
-    "A private member published: anyone who fetched the JWKS holds that signing key. A wrong `issuer` or `jwks_uri`: partners that use discovery check tokens against another issuer or fetch keys the watchdog doesn't see.",
+    "A private member published: anyone who fetched the JWKS holds that signing key. A wrong `issuer` or `jwks_uri`: partners that use discovery check tokens against another issuer or fetch keys the watchdog doesn't see. An unreadable answer: the watchdog can't tell what partners are served.",
+    'Detection, not prevention: someone who controls Hana\'s Cloudflare account can serve the watchdog a clean JWKS and partners another, or publish a key between two runs. Only partners that pin thumbprints are safe from that.',
   ],
   steps: [
     {
-      title: 'Rule out a rotation done in the wrong order',
+      title: 'Rule out a rotation deployed in the wrong order, or a page expected during an incident',
       who: 'a founder',
       detail:
-        "Compare the published kids with `identity-key show` and the manifest's `watchdog.pinnedIdentityKeys`. If the team published a new key (`next`) and deployed the API before redeploying the watchdog with the new pin, deploy the watchdog now (the manifest already pins it: `identity-key` writes both); the next run resolves the alert. Anything else is an incident.",
-      commands: [c.watchdogStatus, c.identityKeyShow, c.watchdogGen, c.watchdogDeploy],
+        "Compare the published kids with `identity-key show` and the manifest's `watchdog.pinnedIdentityKeys`. After `next` (or `init`) the watchdog must be deployed before the API: if the API went first, deploy the watchdog now (the manifest already pins the key: `identity-key` writes both). After `retire` the API must be deployed before the watchdog: if the watchdog went first, the retired key is unpinned but still published until the API deploy, so deploy the API now. During an incident rotation that retires one key and publishes another (both keys exposed), this page is expected until both deploys are done (`docs/operations.md` \"Identity token keys\"): acknowledge it once both are deployed and the next run resolves it. Anything else is an incident.",
+      commands: [c.watchdogStatus, c.identityKeyShow, c.watchdogGen, c.watchdogDeploy, c.apiGen, c.apiDeploy],
     },
     {
-      title: 'Read what is published',
+      title: 'Read what is published, from outside Cloudflare',
       who: 'a founder',
-      detail: "Fetch the JWKS and the discovery document yourself and keep a copy for the post-mortem. Never paste a published private member anywhere: the key is burned either way.",
-      commands: ['curl -s <apiUrl>/v1/identity/jwks.json', 'curl -s <apiUrl>/v1/identity/.well-known/openid-configuration'],
+      detail: "Fetch the JWKS and the discovery document yourself and keep a copy for the post-mortem; run the outside probe too. Never paste a published private member anywhere: the key is burned either way. An unreadable answer whose cause you can't see from here (a redirect, padding, a failure only the watchdog gets) is treated as an unpinned key.",
+      commands: ['curl -s <apiUrl>/v1/identity/jwks.json', 'curl -s <apiUrl>/v1/identity/.well-known/openid-configuration', c.identityProbe],
     },
     {
       title: 'Treat the API Worker or the Cloudflare account as compromised',
@@ -1032,7 +1034,7 @@ const identityJwksForged: Playbook = {
       title: 'Rotate the identity signing keys',
       who: 'a founder',
       detail:
-        "Whoever could change what the API serves could also read its secrets, the active identity key among them: follow identity-signing-key-compromised (switch to the offline standby, or a fresh key if both may be exposed; unpublish the exposed ones). A published private member: that key is exposed whatever else happened.",
+        "Whoever could change what the API serves could also read its secrets, the active identity key among them: follow identity-signing-key-compromised (switch to the offline standby, or a fresh key if both may be exposed; unpublish the exposed ones; the watchdog's pins follow in the order it gives). A published private member: that key is exposed whatever else happened.",
       commands: [c.identityKeySwitchStandby, c.identityKeyRetirePrevious],
     },
     {
@@ -1041,7 +1043,7 @@ const identityJwksForged: Playbook = {
       detail: "Their security contacts: the kids that were published, the window, and what to re-check (tokens accepted with an unknown kid). Partners that pin thumbprints were not exposed; tell them the new pins after the rotation.",
     },
   ],
-  verify: ["The next run resolves the alert: every published key pinned, no private member, the discovery document's issuer and jwks_uri as configured.", '`/status` `identity.jwks.unpinned` and `identity.jwks.private` are 0.'],
+  verify: ["The next run resolves the alert: every published key pinned and clean, no private member, the discovery document's issuer and jwks_uri as configured, both answers readable.", '`/status` `identity.jwks.unpinned` and `identity.jwks.private` are 0, and the outside probe passes.'],
   followUps: ["Write the post-mortem: how the key got into the JWKS. Check that the watchdog's own Cloudflare account wasn't touched (watchdog-compromised)."],
   refs: ['docs/identity-token-spec.md#jwks-and-discovery', 'docs/operations.md#identity-token-keys', 'apps/watchdog/README.md#what-a-run-does-every-5-min', 'D210', 'D211'],
   related: ['api-or-cloudflare-compromised', 'identity-signing-key-compromised', 'identity-jwks-degraded', 'watchdog-compromised'],
@@ -1049,19 +1051,18 @@ const identityJwksForged: Playbook = {
 
 const identityJwksDegraded: Playbook = {
   id: 'identity-jwks-degraded',
-  title: "Hana's identity JWKS lacks a pinned key or can't be read",
+  title: "A pinned identity key isn't in Hana's identity JWKS",
   kind: 'alert',
-  alertKinds: ['identity_key_missing', 'identity_jwks_failing'],
+  alertKinds: ['identity_key_missing'],
   severity: 'warning',
   status: 'live',
   summary:
-    "A key in `watchdog.pinnedIdentityKeys` isn't in the identity JWKS under its thumbprint as kid, or the JWKS or the discovery document failed 3 fetches in a row. Usually a rotation half done or an API outage; nothing is forged.",
+    "A key in `watchdog.pinnedIdentityKeys` isn't in the identity JWKS under its thumbprint as kid with public members only. Usually a rotation half deployed; nothing is forged by this alone.",
   signals: [
-    'Warning `identity_key_missing:<thumbprint>` (`details.reason`: `not_published`, or `kid_differs`: the key is there under another kid).',
-    "Warning `identity_jwks_failing:jwks` or `:discovery` (HTTP error, timeout, a body over 64 KB, or not the document). While the JWKS can't be read, the watchdog can't see an unpinned key either.",
+    'Warning `identity_key_missing:<thumbprint>` (`details.reason`: `not_published`; `kid_differs`: the key is there under another kid; `not_clean`: under its kid but with other members, which also pages `identity_key_unpinned`).',
   ],
   impact: [
-    "A pinned key that isn't published: tokens it signs fail at partners (if it is the active key, every mint fails verification). A failing JWKS: partners' verifications fail once their cached copy expires (10 min), and the watchdog's pin check is blind until it reads again.",
+    "A pinned key that isn't published: tokens it signs fail at partners (if it is the active key, every mint fails verification). Partners that pin thumbprints and look keys up by kid fail on a renamed key.",
   ],
   steps: [
     {
@@ -1072,9 +1073,9 @@ const identityJwksDegraded: Playbook = {
       commands: [c.identityKeyShow, c.apiGen, c.apiDeploy, c.watchdogGen, c.watchdogDeploy],
     },
     {
-      title: 'The JWKS or discovery fetch fails',
+      title: 'The key is missing for no planned reason',
       who: 'a founder',
-      detail: "Check the API's health and the endpoints themselves; a 503 `identity_unavailable` means the API Worker lost its identity configuration (regenerate and redeploy). If the identity issuer moved on purpose, update `identityToken.iss` and redeploy both Workers.",
+      detail: "Check the API's health and the JWKS itself; a 503 `identity_unavailable` means the API Worker lost its identity configuration (regenerate and redeploy). A key under another kid or with extra members is a changed Worker: see identity-jwks-forged.",
       commands: [c.apiHealth, 'curl -s <apiUrl>/v1/identity/jwks.json', c.apiTailErrors],
     },
   ],

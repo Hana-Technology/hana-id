@@ -3,7 +3,7 @@
 // phase; an identity key's thumbprint as an issuer kid on chain. Every finding is an alert: the chain isn't involved,
 // so nothing is cancelled or paused for it. Stub chain, stub documents, no network.
 import { describe, expect, it } from 'vitest';
-import { identityKeysOnChain, judgeDiscovery, judgeIdentityJwks, p256Thumbprint, parseIdentityPins } from '../src/identity.ts';
+import { identityKeysOnChain, parseIdentityPins } from '../src/identity.ts';
 import { runWatchdog } from '../src/run.ts';
 import { alertsOf, IDENTITY_ISS, identityKey, initialized, jwk, OWNER } from './helpers.ts';
 
@@ -18,15 +18,7 @@ async function live(over: { pins?: string[] | null } = {}): Promise<{ w: Awaited
   return { w, active, standby };
 }
 
-describe('pure verdicts', () => {
-  it('thumbprints a P-256 key as RFC 7638 does, and refuses anything else', async () => {
-    // RFC 7638 §3.1's example is RSA; this is the P-256 form @hana-id/env and @hana-id/core compute (sandbox-dev's active key).
-    const k = { kty: 'EC', crv: 'P-256', x: 'K-9yfj4EQcl4NpjqbvU8Jd6o1qP6QXvq1H9vOcU4daI', y: '3ycRO9-5NiONOnFznQC004TVM9-Q_LTTxFJUJ-ayJac' };
-    expect(await p256Thumbprint(k)).toBe('17xAVaTfgwnOkdwq1uOmwHR31pPKB90xw5oGN5HcBgY');
-    expect(await p256Thumbprint({ ...k, kid: 'ignored', use: 'sig', alg: 'ES256' })).toBe('17xAVaTfgwnOkdwq1uOmwHR31pPKB90xw5oGN5HcBgY');
-    for (const bad of [{ ...k, crv: 'P-384' }, { ...k, kty: 'RSA' }, { ...k, x: `${k.x}A` }, { ...k, x: k.x.replace(/I$/u, 'J') }, { ...k, y: 7 }, null, 'k', jwk('r', 1)]) expect(await p256Thumbprint(bad)).toBeNull();
-  });
-
+describe('pure verdicts (the shared JWKS rules: packages/jwks/test/identity.test.ts)', () => {
   it('parses the pins: absent is nothing pinned, malformed is nothing pinned with a problem', () => {
     const tp = 'a'.repeat(43);
     expect(parseIdentityPins(undefined)).toEqual({ pins: null, problems: [] });
@@ -36,29 +28,6 @@ describe('pure verdicts', () => {
       expect(parseIdentityPins(raw).pins, raw).toBeNull();
       expect(parseIdentityPins(raw).problems, raw).toHaveLength(1);
     }
-  });
-
-  it('judges each JWKS entry by its material, never by its kid', async () => {
-    const [a, b, evil] = [await identityKey(), await identityKey(), await identityKey()];
-    const v = await judgeIdentityJwks({ keys: [a, { ...evil, kid: b.kid }, { ...a, kid: 'renamed' }] }, { pins: [a.kid, b.kid], problems: [] });
-    expect(v.unpinned.map((k) => [k.kid, k.thumbprint, k.reason])).toEqual([[b.kid, evil.kid, 'not_pinned']]);
-    // b is pinned but not published (its kid names other material); a is there, also under another kid (fine).
-    expect(v.missing).toEqual([{ thumbprint: b.kid, reason: 'not_published' }]);
-    const renamed = await judgeIdentityJwks({ keys: [{ ...a, kid: 'renamed' }] }, { pins: [a.kid], problems: [] });
-    expect(renamed.missing).toEqual([{ thumbprint: a.kid, reason: 'kid_differs' }]);
-    expect(renamed.unpinned).toEqual([]);
-  });
-
-  it('refuses a body that is not a JWKS', async () => {
-    for (const body of [null, [], 'x', { keys: 'x' }, { keys: [1] }, { keys: [[]] }, { nokeys: [] }]) await expect(judgeIdentityJwks(body, { pins: null, problems: [] })).rejects.toThrow(/not a JWKS/u);
-    expect((await judgeIdentityJwks({ keys: [] }, { pins: null, problems: [] })).keys).toEqual([]);
-  });
-
-  it('judges the discovery document against the configured issuer and its JWKS URL', () => {
-    expect(judgeDiscovery({ issuer: IDENTITY_ISS, jwks_uri: `${IDENTITY_ISS}/jwks.json` }, IDENTITY_ISS).problems).toEqual([]);
-    expect(judgeDiscovery({ issuer: `${IDENTITY_ISS}/`, jwks_uri: 'https://evil.example/jwks.json' }, IDENTITY_ISS).problems.map((p) => p.field)).toEqual(['issuer', 'jwks_uri']);
-    expect(judgeDiscovery({}, IDENTITY_ISS).problems.map((p) => p.published)).toEqual([null, null]);
-    expect(() => judgeDiscovery([], IDENTITY_ISS)).toThrow(/not a discovery document/u);
   });
 
   it('finds identity kids among active keys and pending additions only', () => {
@@ -97,7 +66,7 @@ describe("Hana's identity JWKS and discovery document (advisory, no pause)", () 
     expect(a).toMatchObject({ severity: 'critical', resolved_at: null });
     expect(a?.title).toContain(evil.kid);
     expect(a?.title).toContain('No pause');
-    expect(a?.details.keys).toEqual([{ kid: evil.kid, thumbprint: evil.kid, reason: 'not_pinned', private: [] }]);
+    expect(a?.details.keys).toEqual([{ index: 2, kid: evil.kid, thumbprint: evil.kid, reason: 'not_pinned', private: [], extra: [] }]);
     expect(w.notifier.sent.map((s) => s.channel).sort()).toEqual(['email', 'pager', 'slack']);
     expect(checkOf(r, 'identity_jwks')?.outcome).toBe('alert');
 
@@ -140,9 +109,10 @@ describe("Hana's identity JWKS and discovery document (advisory, no pause)", () 
     await w.run();
     const [a] = await alertsOf(w.store, 'identity_private_key_published');
     expect(a).toMatchObject({ severity: 'critical', resolved_at: null });
-    expect(a?.details.keys).toEqual([{ kid: active.kid, thumbprint: active.kid, reason: null, private: ['d'] }]);
-    // A pinned key with `d` is still pinned: only the private alert.
-    expect(await alertsOf(w.store, 'identity_key_unpinned')).toEqual([]);
+    expect(a?.details.keys).toEqual([{ index: 0, kid: active.kid, thumbprint: active.kid, reason: 'extra_members', private: ['d'], extra: ['d'] }]);
+    // A pinned key with `d` has a member beyond the public ones: unpinned too (L1), and its pin missing (not clean).
+    expect((await alertsOf(w.store, 'identity_key_unpinned'))[0]?.severity).toBe('critical');
+    expect((await alertsOf(w.store, 'identity_key_missing'))[0]?.details.reason).toBe('not_clean');
     const stored = JSON.stringify(await w.store.listAlerts(null, 50)) + JSON.stringify(await w.store.getMeta('identity_jwks'));
     expect(stored).not.toContain(d);
     for (const s of w.notifier.sent) expect(JSON.stringify(s)).not.toContain(d);
@@ -184,7 +154,7 @@ describe("Hana's identity JWKS and discovery document (advisory, no pause)", () 
     expect((await alertsOf(w.store, 'identity_discovery_mismatch')).every((a) => a.resolved_at !== null)).toBe(true);
   });
 
-  it('fetch failures warn after 3 runs in a row, per document; a malformed body counts; a failed read resolves nothing it would judge', async () => {
+  it('network or HTTP failures: critical after 3 runs in a row, per document; a failed read resolves nothing it would judge', async () => {
     const { w, active, standby } = await live();
     const evil = await identityKey();
     w.identity.keys = [active, standby, evil];
@@ -193,28 +163,94 @@ describe("Hana's identity JWKS and discovery document (advisory, no pause)", () 
     w.identity.failJwks = true;
     let r = await w.run();
     expect(checkOf(r, 'identity_jwks')?.outcome).toBe('error');
-    w.identity.failJwks = false;
-    w.identity.jwks = { keys: 'not a list' };
     await w.run();
-    expect(await alertsOf(w.store, 'identity_jwks_failing')).toEqual([]);
-    w.identity.jwks = [];
+    expect(await alertsOf(w.store, 'identity_jwks_unreadable')).toEqual([]);
     r = await w.run();
-    const [f] = await alertsOf(w.store, 'identity_jwks_failing');
-    expect(f).toMatchObject({ key: 'identity_jwks_failing:jwks', severity: 'warning', resolved_at: null });
+    const [f] = await alertsOf(w.store, 'identity_jwks_unreadable');
+    expect(f).toMatchObject({ key: 'identity_jwks_unreadable:jwks:sustained', severity: 'critical', resolved_at: null });
     // The unpinned key's page stays open while the JWKS can't be read.
     expect((await alertsOf(w.store, 'identity_key_unpinned'))[0]?.resolved_at).toBeNull();
-    expect(checkOf(r, 'identity_jwks')?.outcome).toBe('alert');
 
-    w.identity.jwks = null;
+    w.identity.failJwks = false;
     w.identity.keys = [active, standby];
     await w.run();
-    expect((await alertsOf(w.store, 'identity_jwks_failing'))[0]?.resolved_at).not.toBeNull();
+    expect((await alertsOf(w.store, 'identity_jwks_unreadable'))[0]?.resolved_at).not.toBeNull();
     expect((await alertsOf(w.store, 'identity_key_unpinned'))[0]?.resolved_at).not.toBeNull();
 
     // The discovery document has its own counter.
     w.identity.failDiscovery = true;
     for (let i = 0; i < 3; i++) await w.run();
-    expect((await alertsOf(w.store, 'identity_jwks_failing')).find((a) => a.resolved_at === null)?.key).toBe('identity_jwks_failing:discovery');
+    expect((await alertsOf(w.store, 'identity_jwks_unreadable')).find((a) => a.resolved_at === null)?.key).toBe('identity_jwks_unreadable:discovery:sustained');
+  });
+
+  for (const [name, response, reason] of [
+    ['a redirect (never followed)', { kind: 'redirect', status: 302, location: 'https://evil.example/jwks.json' }, 'redirect'],
+    ['a body over the cap (padding)', { kind: 'too_large' }, 'too_large'],
+    ['a body that is not JSON', { kind: 'body', text: '{"keys": [' }, 'not_json'],
+  ] as const) {
+    it(`an answer that is ${name}: critical at once, and it resolves nothing it would judge`, async () => {
+      const { w, active, standby } = await live();
+      w.identity.keys = [active, standby, await identityKey()];
+      await w.run();
+      w.notifier.clear();
+      w.identity.jwksResponse = response;
+      const r = await w.run();
+      const [a] = await alertsOf(w.store, 'identity_jwks_unreadable');
+      expect(a).toMatchObject({ key: `identity_jwks_unreadable:jwks:answer:${reason}`, severity: 'critical', resolved_at: null, details: expect.objectContaining({ reason }) });
+      expect(w.notifier.sent.map((x) => x.channel).sort()).toEqual(['email', 'pager', 'slack']);
+      expect((await alertsOf(w.store, 'identity_key_unpinned'))[0]?.resolved_at).toBeNull();
+      expect(checkOf(r, 'identity_jwks')?.outcome).toBe('alert');
+      expect(w.writer.calls).toEqual([]);
+      w.identity.jwksResponse = null;
+      w.identity.keys = [active, standby];
+      await w.run();
+      expect((await alertsOf(w.store, 'identity_jwks_unreadable'))[0]?.resolved_at).not.toBeNull();
+    });
+  }
+
+  it('a redirect of the discovery document is critical too', async () => {
+    const { w } = await live();
+    w.identity.discoveryResponse = { kind: 'redirect', status: 301, location: null };
+    await w.run();
+    expect((await alertsOf(w.store, 'identity_jwks_unreadable'))[0]).toMatchObject({ key: 'identity_jwks_unreadable:discovery:answer:redirect', severity: 'critical' });
+  });
+
+  it('duplicate members are critical, and the document is still judged', async () => {
+    const { w, active, standby } = await live();
+    const evil = await identityKey();
+    // JSON.parse keeps the last x (the pinned key's), a first-wins parser the attacker's.
+    const dup = `{"keys":[${JSON.stringify(standby)},{"kty":"EC","crv":"P-256","x":"${evil.x}","y":"${active.y}","x":"${active.x}","kid":"${active.kid}","use":"sig","alg":"ES256"}]}`;
+    w.identity.jwksResponse = { kind: 'body', text: dup };
+    await w.run();
+    const [a] = await alertsOf(w.store, 'identity_jwks_unreadable');
+    expect(a).toMatchObject({ key: 'identity_jwks_unreadable:jwks:answer:duplicate_members', severity: 'critical' });
+    expect(a?.details.detail).toContain('keys[1].x');
+    expect((await w.store.getMeta<{ count: number }>('identity_jwks'))?.count).toBe(2);
+  });
+
+  it('malformed entries are critical, and every object entry beside them is still judged', async () => {
+    const { w, active, standby } = await live();
+    const evil = await identityKey();
+    w.identity.jwks = { keys: [active, 'padding', standby, null, evil, [1]] };
+    await w.run();
+    const [shape] = await alertsOf(w.store, 'identity_jwks_unreadable');
+    expect(shape).toMatchObject({ key: 'identity_jwks_unreadable:jwks:answer:bad_shape', severity: 'critical' });
+    expect(shape?.details.problems).toEqual(['keys[1] is not an object', 'keys[3] is not an object', 'keys[5] is not an object']);
+    const [u] = await alertsOf(w.store, 'identity_key_unpinned');
+    expect((u?.details.keys as { kid: string; index: number }[]).map((k) => [k.index, k.kid])).toEqual([[4, evil.kid]]);
+    // A body without a keys array judges nothing: the unpinned page stays open, the shape pages.
+    w.identity.jwks = { keys: 'not a list' };
+    await w.run();
+    expect((await alertsOf(w.store, 'identity_key_unpinned'))[0]?.resolved_at).toBeNull();
+    expect((await alertsOf(w.store, 'identity_jwks_unreadable')).filter((a) => a.resolved_at === null).map((a) => a.key)).toEqual(['identity_jwks_unreadable:jwks:answer:bad_shape']);
+  });
+
+  it('an entry with members beyond the public ones is unpinned, even with a pinned thumbprint (L1)', async () => {
+    const { w, active, standby } = await live();
+    w.identity.keys = [{ ...active, x5u: 'https://evil.example/cert' }, standby];
+    await w.run();
+    const [u] = await alertsOf(w.store, 'identity_key_unpinned');
+    expect(u?.details.keys).toEqual([{ index: 0, kid: active.kid, thumbprint: active.kid, reason: 'extra_members', private: [], extra: ['x5u'] }]);
   });
 
   it('nothing pinned: every published key is unpinned (absence pins nothing)', async () => {
@@ -234,6 +270,19 @@ describe("Hana's identity JWKS and discovery document (advisory, no pause)", () 
     expect(checkOf(r, 'config')).toMatchObject({ outcome: 'alert', detail: expect.stringContaining('IDENTITY_PINS') });
     const [a] = await alertsOf(w.store, 'identity_key_unpinned');
     expect((a?.details.keys as { reason: string }[]).map((k) => k.reason)).toEqual(['pins_unreadable', 'pins_unreadable']);
+  });
+
+  it('pins without an issuer: a config problem that pages, and open identity alerts are never resolved (L2)', async () => {
+    const { w, active, standby } = await live();
+    w.identity.keys = [active, standby, await identityKey()];
+    await w.run();
+    w.deps.config.identity.iss = null;
+    w.deps.fetchIdentity = null;
+    const r = await w.run();
+    expect((await alertsOf(w.store, 'pins_invalid')).map((a) => a.key)).toEqual(['pins_invalid:identity_no_iss']);
+    expect(checkOf(r, 'config')).toMatchObject({ outcome: 'alert', detail: expect.stringContaining('IDENTITY_ISS is not') });
+    expect(checkOf(r, 'identity_jwks')?.outcome).toBe('skipped');
+    expect((await alertsOf(w.store, 'identity_key_unpinned'))[0]?.resolved_at).toBeNull();
   });
 
   it('an env without an identity token skips the check and fetches nothing', async () => {
@@ -334,7 +383,7 @@ describe('an identity key on chain (D212)', () => {
         raised = (await alertsOf(w.store, 'identity_key_on_chain')).length;
         throw new Error('down');
       },
-      discovery: async () => ({}),
+      discovery: async () => ({ kind: 'body', text: '{}' }),
     };
     await runWatchdog(w.deps);
     expect(raised).toBe(1);

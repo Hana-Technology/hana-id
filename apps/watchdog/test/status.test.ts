@@ -56,8 +56,8 @@ describe('GET /status: the identity token (D210)', () => {
     expect(id.jwks.keys.map((k) => [k.kid, k.pinned])).toEqual([[a.kid, true], [b.kid, true]]);
     expect(id.discovery).toMatchObject({ issuer: IDENTITY_ISS, problems: [] });
     const kinds = body.alert_kinds as Record<string, { severity: string; playbook: string }>;
-    for (const k of ['identity_key_unpinned', 'identity_private_key_published', 'identity_discovery_mismatch']) expect(kinds[k]).toMatchObject({ severity: 'critical', playbook: 'identity-jwks-forged' });
-    for (const k of ['identity_key_missing', 'identity_jwks_failing']) expect(kinds[k]).toMatchObject({ severity: 'warning', playbook: 'identity-jwks-degraded' });
+    for (const k of ['identity_key_unpinned', 'identity_private_key_published', 'identity_discovery_mismatch', 'identity_jwks_unreadable']) expect(kinds[k]).toMatchObject({ severity: 'critical', playbook: 'identity-jwks-forged' });
+    expect(kinds.identity_key_missing).toMatchObject({ severity: 'warning', playbook: 'identity-jwks-degraded' });
     expect(kinds.identity_key_on_chain).toMatchObject({ severity: 'critical', playbook: 'identity-key-on-chain' });
   });
 

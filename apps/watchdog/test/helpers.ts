@@ -5,7 +5,7 @@ import { env } from 'cloudflare:workers';
 import type { ChainReader, ChainSnapshot, ChainWriter, ConfigView, GovernanceView, KeyChange, LinkStatsView, LinkWindow, TxResult, WatchdogMethod } from '../src/chain.ts';
 import type { AlertMessage, Notifier, Pager, Sender, SendResult } from '../src/channels.ts';
 import type { Channel } from '../src/checks.ts';
-import { p256Thumbprint } from '../src/identity.ts';
+import { type IdentityResponse, p256Thumbprint } from '../src/identity.ts';
 import type { SignerPins } from '../src/pins.ts';
 import { type AccessKeyEntry, nearToYocto, type RelayerFunds, relayerFundsFrom, relayerThresholds } from '../src/relayer.ts';
 import { type RunDeps, type RunReport, runWatchdog } from '../src/run.ts';
@@ -414,20 +414,30 @@ export const IDENTITY_ISS = 'https://api.test/v1/identity';
  */
 export class StubIdentity {
   keys: unknown[] = [];
+  /** A JWKS body to serve as JSON (null: `{keys}`). */
   jwks: unknown = null;
+  /** A discovery body to serve as JSON (null: the honest one). */
   discovery: unknown = null;
+  /** Raw answers that win over the bodies (a redirect, an oversized body, a text that isn't JSON). */
+  jwksResponse: IdentityResponse | null = null;
+  discoveryResponse: IdentityResponse | null = null;
   failJwks = false;
   failDiscovery = false;
   fetches = { jwks: 0, discovery: 0 };
-  fetchJwks = async (): Promise<unknown> => {
+  fetchJwks = async (): Promise<IdentityResponse> => {
     this.fetches.jwks++;
     if (this.failJwks) throw new Error('identity JWKS down');
-    return structuredClone(this.jwks ?? { keys: this.keys });
+    return this.jwksResponse ?? { kind: 'body', text: JSON.stringify(this.jwks ?? { keys: this.keys }) };
   };
-  fetchDiscovery = async (): Promise<unknown> => {
+  fetchDiscovery = async (): Promise<IdentityResponse> => {
     this.fetches.discovery++;
     if (this.failDiscovery) throw new Error('identity discovery down');
-    return structuredClone(this.discovery ?? { issuer: IDENTITY_ISS, jwks_uri: `${IDENTITY_ISS}/jwks.json`, id_token_signing_alg_values_supported: ['ES256'], subject_types_supported: ['pairwise'] });
+    return (
+      this.discoveryResponse ?? {
+        kind: 'body',
+        text: JSON.stringify(this.discovery ?? { issuer: IDENTITY_ISS, jwks_uri: `${IDENTITY_ISS}/jwks.json`, id_token_signing_alg_values_supported: ['ES256'], subject_types_supported: ['pairwise'] }),
+      }
+    );
   };
 }
 

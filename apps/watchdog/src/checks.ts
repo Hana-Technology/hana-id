@@ -27,7 +27,7 @@ export const CHECKS = {
   // Advisory: after the run is recorded and its lock released, guarded (its third-party read can't hold back anything protective).
   email_jwks: "Hana's published email JWKS against the pins and the active email keys (warning only: Hana controls it, the contract never reads it)",
   identity_jwks:
-    "Hana's partner identity JWKS ({iss}/jwks.json) and discovery document against watchdog.pinnedIdentityKeys and identityToken.iss (D210): an unpinned or private key, or a wrong issuer or jwks_uri, is critical; no pause (the chain isn't involved: partners verify these tokens, the contract never does)",
+    "Hana's partner identity JWKS ({iss}/jwks.json) and discovery document against watchdog.pinnedIdentityKeys and identityToken.iss (D210): an unpinned or private key, a wrong issuer or jwks_uri, or an answer that can't be judged (redirect, oversized, not JSON, duplicate members, wrong shape, or 3 failed fetches) is critical; no pause (the chain isn't involved: partners verify these tokens, the contract never does)",
 } as const;
 export type CheckId = keyof typeof CHECKS;
 export const CHECK_IDS = Object.keys(CHECKS) as CheckId[];
@@ -61,7 +61,7 @@ export const ALERT_KINDS = {
     severity: 'critical',
     check: 'config',
     description:
-      "EMAIL_PINS (the manifest's watchdog.pinnedIssuerKeys.email) is unreadable: every email key is treated as unpinned (fail closed), so legitimate keys are cancelled or paused on; or IDENTITY_PINS (watchdog.pinnedIdentityKeys) is unreadable: every published identity key is treated as unpinned (`pins_invalid:identity`)",
+      "EMAIL_PINS (the manifest's watchdog.pinnedIssuerKeys.email) is unreadable: every email key is treated as unpinned (fail closed), so legitimate keys are cancelled or paused on; or IDENTITY_PINS (watchdog.pinnedIdentityKeys) is unreadable: every published identity key is treated as unpinned (`pins_invalid:identity`); or IDENTITY_PINS is set without IDENTITY_ISS, so the identity JWKS check can't run (`pins_invalid:identity_no_iss`)",
   },
   link_threshold_reached: {
     severity: 'critical',
@@ -91,7 +91,7 @@ export const ALERT_KINDS = {
     severity: 'critical',
     check: 'identity_jwks',
     description:
-      "Hana's identity JWKS publishes a key whose RFC 7638 thumbprint isn't in watchdog.pinnedIdentityKeys (or that isn't a P-256 key): partners that trust the JWKS URL accept tokens it signs, for any user of any app. Alert only, no pause: the chain isn't involved",
+      "Hana's identity JWKS publishes a key whose RFC 7638 thumbprint isn't in watchdog.pinnedIdentityKeys, that isn't a P-256 key, or that has members beyond kty, crv, x, y, kid, use, alg: partners that trust the JWKS URL accept tokens it signs, for any user of any app. Alert only, no pause: the chain isn't involved",
   },
   identity_private_key_published: {
     severity: 'critical',
@@ -103,6 +103,12 @@ export const ALERT_KINDS = {
     check: 'identity_jwks',
     description:
       "Hana's identity discovery document names another issuer than identityToken.iss, or a jwks_uri other than {iss}/jwks.json (a partner following discovery would fetch keys the watchdog doesn't check). Alert only, no pause",
+  },
+  identity_jwks_unreadable: {
+    severity: 'critical',
+    check: 'identity_jwks',
+    description:
+      "Hana's identity JWKS or discovery document can't be judged as published: a redirect (never followed), a body over 64 KB, not JSON, duplicate members, or the wrong shape (`:<document>:answer:<reason>`, at once), or 3 failed fetches in a row (`:<document>:sustained`). Each can hide a key from the watchdog that partners still see. Alert only, no pause",
   },
   identity_key_on_chain: {
     severity: 'critical',
@@ -134,11 +140,6 @@ export const ALERT_KINDS = {
     severity: 'warning',
     check: 'identity_jwks',
     description: "A key in watchdog.pinnedIdentityKeys isn't in Hana's identity JWKS under its thumbprint as kid: a rotation half done (pinned before it was published, or unpublished before it was unpinned), or a kid changed",
-  },
-  identity_jwks_failing: {
-    severity: 'warning',
-    check: 'identity_jwks',
-    description: "Hana's identity JWKS or discovery document failed 3 fetches in a row (HTTP error, timeout, over 64 KB, or not the document): `identity_jwks_failing:jwks` / `:discovery`. Partners' verifications may be failing too",
   },
   signer_policy_transition: {
     severity: 'warning',

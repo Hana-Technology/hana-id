@@ -22,11 +22,23 @@ import type { Notifier } from './channels.ts';
 import { ALERT_KINDS, type AlertKind, CHANNELS, CHECK_IDS, type CheckId } from './checks.ts';
 import { maybeSendDigest } from './digest.ts';
 import { diffChain, linkThresholdsOf, type StoredSnapshot } from './diff.ts';
-import { type IdentityPins, identityDiscoveryUrl, identityJwksUrl, identityKeysOnChain, judgeDiscovery, judgeIdentityJwks, MAX_LISTED, type PublishedKey, sha256b64url } from './identity.ts';
+import {
+  type IdentityPins,
+  type IdentityResponse,
+  identityDiscoveryUrl,
+  identityJwksUrl,
+  identityKeysOnChain,
+  judgeDiscovery,
+  judgeIdentityJwks,
+  MAX_LISTED,
+  type PublishedKey,
+  readIdentityResponse,
+  sha256b64url,
+} from './identity.ts';
 import { log } from './log.ts';
 import { EMAIL_KEY_WHY, EMAIL_PROVIDER, type EmailKeyReason, emailKeyVerdict, pinnedSignersOf, policyFindings, policyId, type SignerPins, signerOfKid } from './pins.ts';
 import { formatNear, level, RELAYER_POOLS, type RelayerFunds, type RelayerThresholds, type Threshold } from './relayer.ts';
-import { ident } from './sanitize.ts';
+import { ident, printable } from './sanitize.ts';
 import { iso } from './time.ts';
 import type { CheckResult, SeenKid, Store } from './store.ts';
 
@@ -86,10 +98,11 @@ export interface RunDeps {
   /** Hana's published email JWKS (usable RS256 keys; may be empty), or null when no URL is configured. Throws on failure. */
   fetchEmailJwks: (() => Promise<Jwk[]>) | null;
   /**
-   * Hana's identity JWKS and discovery document as parsed JSON (size-capped, no cache), or null when the env has no
-   * identity issuer. Each throws on an HTTP, network or JSON failure.
+   * Hana's identity JWKS and discovery document (no cache, `redirect: 'manual'`, body capped), or null when the env has
+   * no identity issuer. Each answers a 200 body, a redirect or an oversized body; any other status or a network error
+   * throws.
    */
-  fetchIdentity: { jwks: () => Promise<unknown>; discovery: () => Promise<unknown> } | null;
+  fetchIdentity: { jwks: () => Promise<IdentityResponse>; discovery: () => Promise<IdentityResponse> } | null;
   notifier: Notifier;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
@@ -144,11 +157,11 @@ export interface IdentityJwksStatus {
   at: number;
   url: string;
   /** Published entries (at most 50 listed; `count` has them all). */
-  keys: { kid: string | null; thumbprint: string | null; pinned: boolean; private: string[] }[];
+  keys: { kid: string | null; thumbprint: string | null; pinned: boolean; private: string[]; reason: string | null }[];
   count: number;
   unpinned: number;
   private: number;
-  missing: { thumbprint: string; reason: 'not_published' | 'kid_differs' }[];
+  missing: { thumbprint: string; reason: 'not_published' | 'kid_differs' | 'not_clean' }[];
 }
 
 /** What `GET /status` serves as `identity.discovery`: the last good read of the discovery document. */
@@ -292,6 +305,13 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
       // Fail closed as for email: every published identity key then pages as unpinned (`pins_unreadable`).
       await run.condition('pins_invalid', 'pins_invalid:identity', "The watchdog's identity pins (IDENTITY_PINS) are unreadable: every published identity key is treated as unpinned", {
         problems: cfg.identity.pins.problems,
+      });
+    }
+    if (cfg.identity.pins.pins && !cfg.identity.iss) {
+      // Pins with nothing to check them against: the identity JWKS check can't run, and must not look fine (L2).
+      run.check('config', 'ok', 'IDENTITY_PINS is set but IDENTITY_ISS is not: the identity JWKS check cannot run');
+      await run.condition('pins_invalid', 'pins_invalid:identity_no_iss', "The watchdog pins identity keys (IDENTITY_PINS) but has no identity issuer (IDENTITY_ISS): the identity JWKS check can't run", {
+        pinned: cfg.identity.pins.pins,
       });
     }
     if (!d.writer) await run.condition('watchdog_key_missing', 'watchdog_key_missing', 'The watchdog has no usable key: it can alert but not act', { account: cfg.watchdogAccount });
@@ -1080,45 +1100,78 @@ async function identityOnChain(run: Run, s: ChainSnapshot): Promise<void> {
 
 /** The first `MAX_LISTED` entries of a list for an alert's details or title. */
 const listed = <T>(xs: T[]): T[] => xs.slice(0, MAX_LISTED);
-const keyLabel = (k: PublishedKey): string => (k.kid !== null ? ident(k.kid) : k.thumbprint ?? 'a key without kid');
-const keyDetail = (k: PublishedKey) => ({ kid: k.kid, thumbprint: k.thumbprint, reason: k.reason, private: k.private });
+const keyLabel = (k: PublishedKey): string => (k.kid !== null ? ident(k.kid) : k.thumbprint ?? `keys[${k.index}]`);
+const keyDetail = (k: PublishedKey) => ({ index: k.index, kid: k.kid, thumbprint: k.thumbprint, reason: k.reason, private: k.private, extra: k.extra });
+const DOC_NAME = { jwks: 'JWKS', discovery: 'discovery document' } as const;
 
 /**
- * One of Hana's identity documents, counted: a failure (HTTP, network, over the cap, JSON, or a body of another shape)
- * adds to its counter and warns `identity_jwks_failing:<what>` after 3 runs in a row; a good read resets it. Returns the
- * judged document, or null when it failed.
+ * One of Hana's identity documents, read and checked for what makes it unreadable (D210):
+ *   - a network or HTTP error (anything but a 200 or a redirect) adds to its counter; 3 in a row is critical
+ *     `identity_jwks_unreadable:<what>:sustained` (selective failure is a way to hide a key from the watchdog);
+ *   - an answer that is a redirect (never followed), over the cap, not JSON, or with duplicate members is critical at
+ *     once (`identity_jwks_unreadable:<what>:answer:<reason>`): padding or malformed content never downgrades a finding.
+ * Returns the parsed value to judge (null when there is none). A failed fetch resolves none of the answer findings.
  */
-async function readIdentityDoc<T>(run: Run, what: 'jwks' | 'discovery', fetch: () => Promise<unknown>, judge: (body: unknown) => T | Promise<T>): Promise<T | null> {
+async function readIdentityDoc(run: Run, what: 'jwks' | 'discovery', fetch: () => Promise<IdentityResponse>, url: string): Promise<{ value: unknown } | null> {
   const metaKey = what === 'jwks' ? META.identityJwksFailures : META.identityDiscoveryFailures;
-  const condKey = `identity_jwks_failing:${what}`;
+  const sustainedKey = `identity_jwks_unreadable:${what}:sustained`;
   let failures = (await run.d.store.getMeta<number>(metaKey)) ?? 0;
-  let judged: T | null = null;
+  let res: IdentityResponse | null = null;
   try {
-    judged = await judge(await fetch());
+    res = await fetch();
     failures = 0;
   } catch {
     failures++;
   }
   await run.d.store.setMeta(metaKey, failures);
-  run.evaluatePrefix('identity_jwks_failing', condKey);
-  if (failures >= FAILING_RUNS) {
-    const doc = what === 'jwks' ? 'JWKS' : 'discovery document';
-    await run.condition('identity_jwks_failing', condKey, `Hana's identity ${doc} failed ${failures} fetches in a row`, { document: what, failures });
+  run.evaluatePrefix('identity_jwks_unreadable', sustainedKey);
+  if (!res) {
+    if (failures >= FAILING_RUNS) {
+      await run.condition('identity_jwks_unreadable', sustainedKey, `Hana's identity ${DOC_NAME[what]} failed ${failures} fetches in a row: the watchdog can't see what partners are served`, {
+        document: what,
+        url,
+        reason: 'sustained',
+        failures,
+      });
+    }
+    return null;
   }
-  return judged;
+  const answerPrefix = `identity_jwks_unreadable:${what}:answer:`;
+  run.evaluatePrefix('identity_jwks_unreadable', answerPrefix);
+  const r = readIdentityResponse(res);
+  for (const f of r.findings) {
+    await run.condition('identity_jwks_unreadable', `${answerPrefix}${f.reason}`, `Hana's identity ${DOC_NAME[what]} can't be judged as published (${f.reason}: ${printable(f.detail)}). No pause: the chain isn't involved`, {
+      document: what,
+      url,
+      reason: f.reason,
+      detail: f.detail,
+    });
+  }
+  return r.parsed ? { value: r.value } : null;
+}
+
+/** A shape problem of a parsed document: critical at once, like the other unreadable answers. */
+async function badShape(run: Run, what: 'jwks' | 'discovery', url: string, problems: string[]): Promise<void> {
+  await run.condition('identity_jwks_unreadable', `identity_jwks_unreadable:${what}:answer:bad_shape`, `Hana's identity ${DOC_NAME[what]} has the wrong shape: ${listed(problems).map(printable).join('; ')}. No pause: the chain isn't involved`, {
+    document: what,
+    url,
+    reason: 'bad_shape',
+    problems: listed(problems),
+  });
 }
 
 /**
- * Hana's identity JWKS and discovery document against the pins and the configured issuer (D210, D211). Critical for an
- * unpinned or private key and a wrong issuer or jwks_uri, never a pause: the chain is not involved (partners verify
- * identity tokens; the contract never does). Each alert set is one condition keyed by what it found, so a different
- * finding is a new page, and the list in one alert is bounded. A failed read resolves nothing of what it would judge.
+ * Hana's identity JWKS and discovery document against the pins and the configured issuer (D210, D211, D213, D214).
+ * Critical for an unpinned or private key, a wrong issuer or jwks_uri, and an answer that can't be judged; never a
+ * pause: the chain is not involved (partners verify identity tokens; the contract never does). Each set of findings
+ * is one condition keyed by what it found, so a different finding is a new page, and the list in one alert is
+ * bounded. A failed read resolves nothing of what it would judge; an unconfigured check resolves nothing at all.
  */
 async function identityJwks(run: Run): Promise<void> {
   const { iss, pins } = run.d.config.identity;
   const f = run.d.fetchIdentity;
   if (!iss || !f) {
-    run.evaluate('identity_key_unpinned', 'identity_private_key_published', 'identity_key_missing', 'identity_discovery_mismatch', 'identity_jwks_failing');
+    // Never evaluated here: an open identity alert stays open (IDENTITY_PINS without IDENTITY_ISS is a config problem).
     run.check('identity_jwks', 'skipped', 'no identity token configured (IDENTITY_ISS)');
     return;
   }
@@ -1129,16 +1182,18 @@ async function identityJwks(run: Run): Promise<void> {
 
   // ---- the JWKS ----
   const jwksUrl = identityJwksUrl(iss);
-  const v = await readIdentityDoc(run, 'jwks', f.jwks, (body) => judgeIdentityJwks(body, pins));
-  if (!v) {
+  const doc = await readIdentityDoc(run, 'jwks', f.jwks, jwksUrl);
+  const v = doc ? await judgeIdentityJwks(doc.value, pins) : null;
+  if (v && v.shapeProblems.length) await badShape(run, 'jwks', jwksUrl, v.shapeProblems);
+  if (!v || !v.shapeOk) {
     failed = true;
-    notes.push('JWKS fetch failed');
+    notes.push(doc ? 'JWKS has the wrong shape' : 'JWKS not readable');
   } else {
     run.evaluate('identity_key_unpinned', 'identity_private_key_published', 'identity_key_missing');
     await store.setMeta(META.identityJwks, {
       at,
       url: jwksUrl,
-      keys: v.keys.slice(0, 50).map((k) => ({ kid: k.kid, thumbprint: k.thumbprint, pinned: k.pinned, private: k.private })),
+      keys: v.keys.slice(0, 50).map((k) => ({ kid: k.kid, thumbprint: k.thumbprint, pinned: k.pinned, private: k.private, reason: k.reason })),
       count: v.keys.length,
       unpinned: v.unpinned.length,
       private: v.privateKeys.length,
@@ -1146,7 +1201,7 @@ async function identityJwks(run: Run): Promise<void> {
     } satisfies IdentityJwksStatus);
     if (v.unpinned.length) {
       const refs = v.unpinned.map((k) => k.ref).sort();
-      const why = pins.problems.length ? "the watchdog's identity pins are unreadable" : !pins.pins ? 'nothing is pinned (watchdog.pinnedIdentityKeys)' : 'not pinned';
+      const why = pins.problems.length ? "the watchdog's identity pins are unreadable" : !pins.pins ? 'nothing is pinned (watchdog.pinnedIdentityKeys)' : 'not pinned, or not a clean P-256 public key';
       await run.condition(
         'identity_key_unpinned',
         `identity_key_unpinned:${(await sha256b64url(refs.join(','))).slice(0, 16)}`,
@@ -1165,7 +1220,7 @@ async function identityJwks(run: Run): Promise<void> {
       );
     }
     for (const m of v.missing) {
-      const how = m.reason === 'kid_differs' ? 'is published under another kid' : 'is not published';
+      const how = m.reason === 'kid_differs' ? 'is published under another kid' : m.reason === 'not_clean' ? 'is published with members beyond the public ones' : 'is not published';
       await run.condition('identity_key_missing', `identity_key_missing:${m.thumbprint}`, `Pinned identity key ${m.thumbprint} ${how} in Hana's identity JWKS`, { url: jwksUrl, ...m });
     }
     notes.push(`${v.keys.length} published, ${v.unpinned.length} unpinned, ${v.privateKeys.length} with private members, ${v.missing.length} pinned missing`);
@@ -1173,13 +1228,15 @@ async function identityJwks(run: Run): Promise<void> {
 
   // ---- the discovery document ----
   const discoveryUrl = identityDiscoveryUrl(iss);
-  const dv = await readIdentityDoc(run, 'discovery', f.discovery, (body) => judgeDiscovery(body, iss));
-  if (!dv) {
+  const ddoc = await readIdentityDoc(run, 'discovery', f.discovery, discoveryUrl);
+  const dv = ddoc ? judgeDiscovery(ddoc.value, iss) : null;
+  if (ddoc && dv && !dv.shapeOk) await badShape(run, 'discovery', discoveryUrl, ['the discovery document is not a JSON object']);
+  if (!dv || !dv.shapeOk) {
     failed = true;
-    notes.push('discovery fetch failed');
+    notes.push(ddoc ? 'discovery has the wrong shape' : 'discovery not readable');
   } else {
     run.evaluate('identity_discovery_mismatch');
-    await store.setMeta(META.identityDiscovery, { at, url: discoveryUrl, ...dv } satisfies IdentityDiscoveryStatus);
+    await store.setMeta(META.identityDiscovery, { at, url: discoveryUrl, issuer: dv.issuer, jwks_uri: dv.jwks_uri, problems: dv.problems } satisfies IdentityDiscoveryStatus);
     for (const p of dv.problems) {
       const shown = p.published === null ? 'none' : ident(p.published);
       await run.condition(

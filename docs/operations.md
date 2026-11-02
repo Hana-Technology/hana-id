@@ -1,6 +1,7 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-02 (branch `feat/batch-c-3`: "Hot DB migration 0006 and the new gate" (milestone
+Last verified against code: 2026-11-02 (branch `docs/consistency-pass`: "Watchdog service" channels, "Owner
+council" verified on testnet, the `create_session_and_derive` gas pointer); 2026-11-02 (branch `feat/batch-c-3`: "Hot DB migration 0006 and the new gate" (milestone
 M1, for the user to run), the admin CLI's `app:*` commands on the 0006 schema with `app:changes:announce`, the demo's
 origin add, the D1 restore steps; D205–D209); 2026-11-02 (branch `feat/link-cap`: "Link volume thresholds", D200, and `set_link_thresholds`
 through `owner:call`; branch `feat/email-login-5`: the watchdog's email rules, the link alarms and
@@ -297,10 +298,12 @@ executes on the vote that reaches the threshold; `to_weight` is min(⌊a·n/b⌋
 testnet: `sputnikv2.testnet` exists, `get_default_code_hash` = the pinned `code_hash`, `get_default_version` = [3, 31].
 From near-cli-rs's `create-account fund-myself` source: a top-level `<name>.testnet` account is created by the
 `testnet` registrar's `create_account({new_account_id, new_public_key})` with the initial balance attached, 30 Tgas.
-**Not verified on testnet yet** (that needs real transactions, which agents don't send): that a DAO created this way
-and a proposal round trip behave as in the sandbox, and the gas `create` really burns (council-setup attaches
-300 Tgas). The first `council-setup sandbox-dev --yes` and `owner:call … --approve-with` runs are that check;
-`owner:proposals` and `governance:status` show the result.
+**Verified on testnet 2026-10-30** (sandbox-dev): `council-setup sandbox-dev --yes` created the
+DAO `hana-id-council-dev1.sputnikv2.testnet` with the pinned policy, and proposal round trips behaved as in the
+sandbox: the owner handover (`accept_owner`, proposal #0), the upgrade drill (contract 0.1.1), and the drills'
+updater-key install, `remove_issuer_key` and unpause (#2–#4) ([Governance migration (sandbox-dev)](#governance-migration-sandbox-dev),
+[Watchdog service](#watchdog-service-appswatchdog)); `governance:status` shows no findings. Not recorded: the gas
+`create` really burns (council-setup attaches 300 Tgas).
 
 **sandbox-dev** (dev envs only: `local*` / `sandbox*` on testnet):
 
@@ -1226,10 +1229,12 @@ What it checks and its status API: `apps/watchdog/README.md`. **Deployed on sand
 with batch 5's email rules and link alarms, version b156e1b5, no new migration: on the v2 contract it reads "no email
 issuer" and skips the link check)**:
 `https://hana-id-watchdog-sandbox-dev.tingtc.workers.dev`, cron `*/5 * * * *`, on the API's Cloudflare account
-(D125), D1 `hana-id-watchdog-sandbox-dev`. Alert channels and the heartbeat aren't set yet (the manifest's alert
-addresses are `example.com` placeholders), so every run reports them as `channel_not_configured`. First run
+(D125), D1 `hana-id-watchdog-sandbox-dev`. First deployed with no channel and no heartbeat; first run
 2026-10-30 04:50 UTC, every check ok; the cron trigger started ~10 min after the first deploy (two slots skipped).
-Pager: a random ntfy.sh topic plus a healthchecks.io heartbeat (secrets only). **ntfy.sh's public server rate-limits
+Since the drills the same day, the pager is a random ntfy.sh topic and the heartbeat a healthchecks.io check (both
+secrets only). Slack and email are still not set up (no Slack webhook; the manifest's alert addresses are
+`example.com` placeholders), so every run reports those channels as `channel_not_configured` (`/status` `channels`
+shows which are configured). **ntfy.sh's public server rate-limits
 publishers per IP, and Workers send from shared IPs**: in the forged-key drill (2026-10-30) the critical page got
 HTTP 429 at 05:06 and 05:40 and went through at 05:10 and 05:25, so it is not a production pager (the choice is
 open: `docs/context.md` "Next steps" 8). Forged-key drill: change #0 posted 05:01:17, cancelled and the updater
@@ -1526,7 +1531,9 @@ Measured on sandbox-dev (2026-10-27, real MPC, `docs/context.md` "Testnet measur
 | rejected derive on chain | 2.21 Tgas | 0.0002 NEAR | |
 
 Warm stage split: create = checks 0.2 s + relay 2.2 s (chain ~0.6 s); derive = relay ~6.0 s (MPC ~4.5 s).
-`create_session_and_derive` (`/v1/login`) is not measured yet (estimate ~38 Tgas, 100 Tgas attached).
+`create_session_and_derive` (`/v1/login`): its latency on testnet is D76 (the ship gate); its gas is measured in the
+sandbox with the mock MPC, not yet on testnet: ≈ 20.5 Tgas in the signer's receipt and 22–23 Tgas in all with a
+Google token (`docs/contract-interface.md` "Gas of the email login calls" and "Upgrades"; 100 Tgas attached).
 
 ## Common failures
 

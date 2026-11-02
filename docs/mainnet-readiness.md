@@ -3,12 +3,13 @@
 Everything that must be true before Hana ID runs on mainnet with real funds. This is a current-state doc for the
 two founders to track. Update a row in the same branch as the change that moves it (rule in `CLAUDE.md`).
 
-Last verified: 2026-11-02, against `develop` @ 3c4e920 (batch C3 merged) and the docs on it. Today only
+Last verified: 2026-11-02, against `develop` @ 3c4e920 (batch C3 merged) and the docs on it; the inconsistencies, rows
+1.14–1.16, 6.7 and 7.5 on 2026-11-02 against `develop` @ 1c6a124 (branch `docs/consistency-pass`). Today only
 sandbox-dev (testnet) runs.
 
 The facts come from the repo docs and from items the user named in conversation (source "conversation"). Where the
 docs don't settle a status, the row says **unclear: check**. Contradictions between docs are listed at the end,
-not fixed.
+with what became of each.
 
 ## How to read it
 
@@ -30,16 +31,16 @@ not fixed.
 
 | Group | Rows | done | built, not deployed | not built | decision needed | unclear: check |
 |---|---|---|---|---|---|---|
-| 1. Decisions still open | 13 | 0 | 0 | 0 | 13 | 0 |
+| 1. Decisions still open | 16 | 0 | 0 | 0 | 16 | 0 |
 | 2. Keys and custody | 13 | 0 | 1 | 11 | 1 | 0 |
 | 3. Governance | 8 | 2 | 4 | 2 | 0 | 0 |
 | 4. Infrastructure and accounts | 17 | 0 | 0 | 12 | 3 | 2 |
 | 5. Monitoring and paging | 9 | 0 | 2 | 6 | 1 | 0 |
 | 6. Security reviews and drills | 9 | 1 | 0 | 6 | 0 | 2 |
-| 7. Builds not done | 13 | 0 | 1 | 10 | 0 | 2 |
+| 7. Builds not done | 13 | 0 | 1 | 10 | 1 | 1 |
 | 8. Address freeze | 7 | 1 | 1 | 2 | 2 | 1 |
 | 9. Legal and product | 7 | 0 | 0 | 5 | 1 | 1 |
-| **Total** | **96** | **4** | **9** | **54** | **21** | **8** |
+| **Total** | **99** | **4** | **9** | **54** | **25** | **7** |
 
 ### Top 10 blockers
 
@@ -77,6 +78,9 @@ These have the longest lead time, or other rows wait on them.
 | 1.11 | Cap self-issued (email) keys at 2048 bits in a later contract version, or keep gas for 4096 | Gas headroom vs a contract change | decision needed (option offered) | founder | D155 |
 | 1.12 | VAULT_KEK: stay a Worker secret or move to KMS | A Cloudflare compromise reaches every server share | decision needed (revisit with the email issuer) | founder | D54 |
 | 1.13 | SDK registry (public npm `@hana-id` or private) and licence (`UNLICENSED` today) | Partners install the SDK from it | decision needed | founder | D72, D1 (scope still to claim); operations.md "SDK publishing" |
+| 1.14 | Hana Home: `disable_shared_login` delayed by `change_delay_ms`, a contract change (D98; the Home spec's "Confirmed by the user" item 4), while the Home spec's body ("Contract changes: None", its scope table) and batch-c-spec call it immediate, as the contract is today | Whether a partner with its own client can cut Home's route at once and shut down (D41's exit guarantee) | decision needed (settle when Hana Home is built) | founder | D98; hana-home-spec "Contract changes"; batch-c-spec; security.md "On chain" |
+| 1.15 | Hana Home billing: D98 (and the Home spec's confirmed item 12) puts an active app's Home derives on its org's statement as their own line; the Home spec's body counts them as Hana's own, on no statement; batch C's ledger has no Home event kind | Statements and the ledger schema | decision needed (settle when Hana Home is built) | founder | D98; hana-home-spec "Cost and latency (who pays)"; batch-c-spec |
+| 1.16 | Hana Home directory source: "every app with at least one login" (D98). The Home spec reads D1 `usage.sessions > 0`, which batch C stops writing (C4) and drops (migration 0007, C4b) | Which apps Home lists for a user | decision needed (settle when Hana Home is built) | founder, Claude build | D98; hana-home-spec "Discovery: finding a user's apps"; batch-c-build-plan C4b |
 
 ## 2. Keys and custody
 
@@ -155,7 +159,7 @@ These have the longest lead time, or other rows wait on them.
 | 6.4 | Sweep items marked "before mainnet": OPER-4, OPER-7, OPER-8, OPER-9 (publish workflow env, deploy wasm hash and extra full-access keys, near-sandbox checksum, dependency scanning) | CI and deploy hardening | not built | Claude build, founder | security.md "Security sweep 2026-10-29: API, operator tooling and CI" |
 | 6.5 | Deferred sweep findings (APIW-2/5/6/7/8/9, APIV-1/2/4/6/8/9, CORE-2/6, PART-2/4, the `owner_action_nonce` recompute) | Whether each must close before mainnet isn't stated | unclear: check | founder, Claude build | security.md sweep sections |
 | 6.6 | Open issues (g) cross-isolate replays and (h) wide relayer allowlists | Gas cost; a leaked key's reach | not built ((h) folded into the allowlist step) | Claude build | security.md (g), (h) |
-| 6.7 | GitHub "Require review from Code Owners" on `develop` and `main`; second owner | Derivation, contract and keys code needs a second reviewer | not built for the setting; second owner unclear: check (`@mj-hana` is in `.github/CODEOWNERS`, docs still say "to add") | founder | D58, D100; security.md OPER-3; context.md "Next steps" 2 |
+| 6.7 | GitHub "Require review from Code Owners" on `develop` and `main`; second owner | Derivation, contract and keys code needs a second reviewer | not built for the setting; the second owner is done (`@mj-hana` in `.github/CODEOWNERS` since 2026-10-30) | founder | D58, D100; security.md OPER-3; context.md "Next steps" 2 |
 | 6.8 | `REJECT_PII_ON_SESSIONS = "1"` on `/v1/sessions` | Keeps PII off chain on the split path | unclear: check (off today; whether mainnet needs it isn't stated) | founder | context.md; security.md "Verify before relay" |
 | 6.9 | Forged-key and pause drills | The watchdog acts as specified | done (sandbox-dev, 2026-10-30) | — | operations.md "Watchdog service" |
 
@@ -167,7 +171,7 @@ These have the longest lead time, or other rows wait on them.
 | 7.2 | Contract v3 (email login, link counter) deployed | Every email and linking feature needs it | built, not deployed (sandbox-dev still runs v2) | founder, council | D200; contract-interface.md |
 | 7.3 | Batch C C4–C17: ledger capture, console, admin console, notices, statements, Support ID | Replaces `admin app:*`; monitoring, notices, billing | not built (C1–C3 merged) | Claude build | D28–D34, D73–D75, D87–D93; batch-c-build-plan |
 | 7.4 | Hana Home: export for every shared-login app, cross-device consent revocation, Support ID | Users aren't stranded when an app shuts down; required before mainnet | not built | Claude build | D40, D45, D98; hana-home-spec |
-| 7.5 | `disable_shared_login` delayed by `change_delay_ms` (a contract change) | Hana Home's guarantee | unclear: check (D98 says delayed; the Home and batch C specs say no contract change) | Claude build | D98; hana-home-spec |
+| 7.5 | `disable_shared_login` delayed by `change_delay_ms` (a contract change) | Hana Home's guarantee | decision needed (row 1.14; D98 says delayed, the Home spec's body and batch C say no contract change) | Claude build | D98; hana-home-spec |
 | 7.6 | Identity token steps 5–6 (opt-in verified email claim, consent, sealing) | Partners' verified-email use (D120) | unclear: check (not built; whether required for mainnet isn't stated) | Claude build | D120, D127; identity-token-spec |
 | 7.7 | User key rotation (`key_index` move) | Recovery after a leaked user key | not built ("key rotation hooks before mainnet") | Claude build | D8, D60; playbooks `user-key-leaked` |
 | 7.8 | Passkeys for partner console members | Required before a second partner joins | not built (deferred, D34) | Claude build | D34; batch-c-spec "Deferred" |
@@ -209,49 +213,50 @@ discarded at the freeze (D122).
 
 ## Inconsistencies found
 
-Reference docs and status lines that disagree, as found on 2026-11-02. None is fixed here. Specs are history (rule in
-`CLAUDE.md`), so a stale spec header is listed only where a current doc repeats it or a build depends on it.
+Reference docs and status lines that disagreed, as found on 2026-11-02, and what became of each. Fixed on branch
+`docs/consistency-pass` (2026-11-02) after checking the code, git and `docs/operations.md`, unless marked otherwise.
+Specs and build plans are history (rule in `CLAUDE.md`): only their top-of-file Status line was updated; their bodies
+are left as written.
 
-1. **architecture.md "Status of each part" is stale.** It says batch B is "not yet on `develop`" and "not deployed";
-   governance contract, watchdog and API "not deployed"; batch C "Spec draft"; the batch 5 watchdog "not deployed".
-   operations.md "Watchdog service" says the watchdog was deployed on 2026-10-30 and redeployed with batch 5 on
-   2026-11-02. context.md has governance on sandbox-dev since 2026-10-30. Git has batch C C1–C3 merged.
-2. **security.md (e)** has a heading that says built and deployed on sandbox-dev, but the body still says "built on
-   branch `feat/governance`, not deployed" and "Built in `apps/watchdog` (branch `feat/governance`), not deployed". The
-   "Known open issues" status line also lists (e) as open. The email-pins part of (e) says batch 5 is "not deployed".
-3. **security.md** contradicts itself on the origin timelock. Its batch B notes say Q22 is "not built, so `admin
-   app:origins:add` still applies at once". Its "Admin CLI writes" section (batch C3) says origin adds are staff
-   proposals that wait `appChangeDelayMs`.
-4. **decisions.md D80, D81, D85, D86** say "not built", while governance is built and runs on sandbox-dev (D125,
-   D126 and operations.md).
-5. **Second code owner.** D100, the superseded table and security.md OPER-3 say the second owner's handle is still to
-   add. `.github/CODEOWNERS` already lists `@tzechuen @mj-hana`.
-6. **Email provider.** D194 says SendGrid is "final once the colleague agrees". decisions.md "Proposed, not yet
-   confirmed" says nothing is still open from the email spec and the provider is SendGrid. context.md "Next steps" 7
-   and "Before mainnet" still name Resend (D87). D123 Q3 still reads "Resend (D87, still provisional)".
-7. **operations.md "Watchdog service"** says "Alert channels and the heartbeat aren't set yet … every run reports them
-   as `channel_not_configured`". The same section describes an ntfy.sh pager and a healthchecks.io heartbeat that
-   paged and alerted in the drills.
-8. **operations.md "Owner council"** says the DAO round trip is "Not verified on testnet yet". context.md and
-   operations.md "Governance migration" record it done on sandbox-dev on 2026-10-30.
-9. **playbooks.md `link-volume`** says `set_link_thresholds` works through `admin owner:call` "once the scripts list
-   it". The email-login build plan also says it isn't in `OWNER_METHODS`. `scripts/lib/contract.ts` already lists it.
-10. **Build-plan status lines are stale.** The email-login build plan says batch 2 is "in review", "none deployed" and
-    batches 4–10 not done; git has batches 2 and 5 merged, and the batch 5 watchdog runs on sandbox-dev. The batch C
-    build plan has no per-batch status and still labels C1 "this branch". docs/README.md says "C1 on
-    `feat/batch-c-1`", calls the governance spec "draft, for review", and the governance spec's header says "Nothing
-    here is built".
-11. **Hana Home vs D98 on `disable_shared_login`.** D98 says it becomes delayed by `change_delay_ms` (a contract
-    change). The Home spec says "Contract changes: None" and lists it as immediate, and batch-c-spec calls it immediate.
-    This needs settling before Home is built (row 7.5).
-12. **Hana Home billing.** D98 puts Home derives on the active partner's statement as their own line. The Home spec
-    says the ledger counts them as Hana's own, "not on any statement". Batch C's ledger has no Home event kind.
-13. **Hana Home directory source.** The Home spec reads D1 `usage.sessions > 0`. Batch C stops writing the legacy D1
-    `usage` table and drops it in migration 0007.
-14. **governance-spec delay bound.** The delay table says 2 h is "valid if L_min ≥ ~4 h". The text below it says the
-    availability bound holds "for any L_min ≥ 2 h 16 min + 1 h".
-15. **`create_session_and_derive` gas** is "not yet measured" in contract-interface.md and operations.md. D76 measured
-    only its latency. Whether the gas was measured is unclear.
-16. **context.md** has no "Last verified" line. Its "Next steps (2026-10-29)" heading predates entries from 2026-10-30.
-17. **decisions.md layout.** D160, D194 and D200 sit under the heading "Partner identity token, build steps 1–4", out
-    of number order.
+1. **architecture.md "Status of each part" was stale.** Fixed: every row now says where the part is merged and what
+   sandbox-dev runs (batch B, governance v2 owned by the council DAO, the watchdog with batch 5 and the identity token
+   deployed; contract v3 and batch C C1–C3 merged, not deployed; the email issuer not merged).
+2. **security.md (e)** said "not deployed" under a heading that said deployed. Fixed: the body, the watchdog notes
+   (batch 5 included) and the "Known open issues" status line now say fixed on sandbox-dev, with mainnet setup left.
+3. **security.md, the origin timelock (Q22).** Fixed: the batch B note now says it is built in batch C3 (staff
+   proposals waiting `appChangeDelayMs`), merged, not deployed, matching "Admin CLI writes".
+4. **decisions.md D80, D81, D85, D86 said "not built".** Fixed (Status lines only): built and on sandbox-dev since
+   2026-10-30, with what is left for mainnet. Also stale and fixed the same way: D4, D33, D82, D87, D120, D190, D191,
+   D193, D200.
+5. **Second code owner.** Fixed: D100's Status line, the "Superseded or amended" row and security.md OPER-3 now name
+   `@mj-hana` (in `.github/CODEOWNERS` since 2026-10-30). Row 6.7 updated. D100's body (what was decided) is unchanged.
+6. **Email provider.** Fixed: decisions.md "Proposed, not yet confirmed" lists the user-mail provider as open (SendGrid,
+   D194, provisional until the colleague agrees); D123 Q3 notes that D194 supersedes its provider; context.md "Next
+   steps" 7 and "Before mainnet" say SendGrid for user mail and Resend (D87) for the watchdog's alert email.
+7. **operations.md "Watchdog service"** said no channel was configured. Fixed: since the 2026-10-30 drills the pager
+   (ntfy.sh) and the heartbeat are set; Slack and email are not, and only those report `channel_not_configured`.
+8. **operations.md "Owner council"** said the DAO round trip was unverified. Fixed: verified on testnet 2026-10-30
+   (handover, upgrade drill, drill proposals); the gas `create` burns wasn't recorded.
+9. **playbooks.md `link-volume`** said "once the scripts list it". Fixed in the source (`packages/playbooks`) and
+   regenerated: `set_link_thresholds` goes through `owner:call`. The email-login build plan's line about
+   `OWNER_METHODS` is history and stays.
+10. **Build-plan and spec status lines were stale.** Fixed: the Status lines of the email-login and batch C build plans,
+    and of the governance, batch B, batch C, email-login and identity-token specs; the `docs/README.md` index rows. The
+    batch C build plan's "this branch" label for C1 is in its body and stays.
+11. **Hana Home vs D98 on `disable_shared_login`.** Kept for a decision: row 1.14.
+12. **Hana Home billing.** Kept for a decision: row 1.15.
+13. **Hana Home directory source.** Kept for a decision: row 1.16.
+14. **governance-spec delay bound.** Not an inconsistency. With D = 2 h, P = 15 min, T = 1 min and M = max(1 h,
+    L_min / 4), the availability bound holds exactly for L_min ≥ 3 h 16 min ("2 h 16 min + 1 h"); the table's
+    "valid if L_min ≥ ~4 h" is the same bound rounded up. No current doc repeats either; the spec stays as written.
+15. **`create_session_and_derive` gas.** Fixed: it was measured in the sandbox with the mock MPC (email-login batch 2:
+    ≈ 20.5 Tgas in the signer's receipt, 22–23 in all); contract-interface.md's conventions, operations.md "Logs and
+    latency" and architecture.md now point there and say it isn't measured on testnet yet. D76 is its latency.
+16. **context.md** had no "Last verified" line. Fixed: it has one, "Next steps" is dated by its update (2026-11-02,
+    with that day's deploys), and the dated batch B status section says it is a record.
+17. **decisions.md layout.** Fixed: D160, D194 and D200 moved under headings of their own (in number order after
+    D159 and D193). Also moved, as misplaced: D125, D126 and D150–D153 (governance follow-ups), D140–D145 (batch C1),
+    D127 (identity token spec), D176–D179 (identity token review fixes, were under email login batch 1), D154–D155
+    (email login batch 2), and batch C3 after C2. No entry's text changed in the move. D120 (the identity token on the
+    roadmap) stays under the 2026-10-29 security-sweep heading, because the email login section's intro refers to it
+    as "above".

@@ -1,7 +1,9 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-02 for the hot DB after migration 0006 (branch
+known open issues. Last verified against code: 2026-11-02 for what runs on sandbox-dev (branch `docs/consistency-pass`:
+open issue (e) and its watchdog notes, the Q22 note, OPER-3, against `develop` @ 1c6a124 and `docs/operations.md`);
+2026-11-02 for the hot DB after migration 0006 (branch
 `feat/batch-c-3`: the gate on `app_keys` and `scopes`, origins in force by `active_from`, staff-proposed guarded
 changes and their announcement, the `app_changes` ledger, open issue (i) fixed for the CLI); 2026-11-02 for the token
 check's move to `packages/oidc` and its optional claims (branch `feat/batch-c-2`, D201, in "Verify before relay"),
@@ -126,7 +128,7 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   tombstone), `counter == used + 1`, Ed25519 over `"hana-id-session-v1:" ‖ counter ‖ sha256(payload)`; the off-chain
   vault prefix `hana-id-vault-v1:` can never verify as a session message.
 - `create_session_and_derive` is atomic up to the MPC receipt: any signer-side panic reverts the session.
-- Email login, contract v3 (branch `feat/email-login-1`, not deployed; `docs/email-login-build-plan.md` batch 1):
+- Email login, contract v3 (merged on `develop`, not deployed; `docs/email-login-build-plan.md` batch 1):
   - Self-issued issuers (email): keys owner-posted only (never the updater key), each change waits ≥
     `governance_delay_ms`, never confirmed early; one RSA modulus once per issuer (no key counts as two signers);
     tokens are JWS JSON with ≤ 3 signatures, every one valid, from ≥ `required` distinct signers (1-of-1 `hana` at
@@ -634,8 +636,10 @@ findings are tracked with their own fixes.
 
 ## Known open issues
 
-Status: **fixed** (a), (b), (c), (d), (f); **accepted** (k), and the residual risks named under (b)–(d) and
-"Auto-approve policies"; **fixed for the CLI** (i); **open** (e) (pre-mainnet, D33), (g), (h), (j) (sandbox-dev only; production envs
+Status: **fixed** (a), (b), (c), (d), (f); **fixed on sandbox-dev** (e) (the governance contract and watchdog run there
+since 2026-10-30; mainnet ships with them once its delay, council and watchdog account are set up: D80, D81, D86);
+**accepted** (k), and the residual risks named under (b)–(d) and
+"Auto-approve policies"; **fixed for the CLI** (i); **open** (g), (h), (j) (sandbox-dev only; production envs
 need D38's two domains), (l) (pre-mainnet: the identity token's KMS signer and JWKS pin check). The 2026-10-29 security sweep's items in the API, tooling and CI: "Security sweep
 2026-10-29" below.
 
@@ -688,7 +692,7 @@ Worker secret that can call `set_issuer_key` (`apps/api/src/issuer-keys.ts`), an
 can add an RSA key, mint a "Google" token for any `sub`, and derive any user's key in any scope. The contract
 account's full-access key can upgrade the contract (no lock). `docs/contract-interface.md` already calls the owner and
 contract account total control; the point here is that one of those powers sits in the API Worker's secrets. Confirmed
-plan (D33; built on branch `feat/governance`, not deployed), specified in `docs/governance-spec.md` and confirmed by the user on 2026-10-29 (D80–D86):
+plan (D33; built, and deployed on sandbox-dev 2026-10-30), specified in `docs/governance-spec.md` and confirmed by the user on 2026-10-29 (D80–D86):
 
 - Delays (D80): a newly posted issuer key waits `issuer_key_delay_ms` (mainnet 2 h, provisional until Google's lead
   time is measured with `admin issuer-keys:lead-times`); upgrades, owner transfer and surplus withdrawals wait
@@ -705,7 +709,7 @@ plan (D33; built on branch `feat/governance`, not deployed), specified in `docs/
   deletes the updater key that proposed one (not when it is Google's own material from the last 24 h, a retirement race:
   D153), and pauses only when such a key is active on chain; everything else is
   alert-only. The owner unpauses at once. Pause stops derivation and every token path, never governance. Built in
-  `apps/watchdog` (branch `feat/governance`), not deployed. Pause stops derivation only for as long as it lasts:
+  `apps/watchdog`, deployed on sandbox-dev 2026-10-30. Pause stops derivation only for as long as it lasts:
   sessions a forged key opened before the pause would derive again after it (up to 24 h, any `max_uses`), so the
   runbook raises the owner's session floor (`set_sessions_valid_from_ms`) past the pause before unpausing, which
   retires every older session. Scope changes proposed with a forged key's owner tokens or client proofs can't be
@@ -721,8 +725,8 @@ plan (D33; built on branch `feat/governance`, not deployed), specified in `docs/
   and `set_issuer` (no pending state to see); and every on-chain string in an alert (kid, provider, proposer) goes
   through an allow-list or an escaped form, with header-safe titles and Slack-escaped text, so a hostile kid can't
   break a page, inject headers or `<!channel>`.
-- Watchdog and the email issuer (email login, `docs/email-login-spec.md` "Watchdog", D190–D193; branch
-  `feat/email-login-5`, not deployed): self-issued keys have no outside JWKS, so the watchdog trusts only the pins in
+- Watchdog and the email issuer (email login, `docs/email-login-spec.md` "Watchdog", D190–D193; batch 5,
+  deployed on sandbox-dev 2026-11-02, where the v2 contract has no email issuer yet): self-issued keys have no outside JWKS, so the watchdog trusts only the pins in
   its own manifest (`watchdog.pinnedIssuerKeys.email`, set on its own account: a pin change is the operator's
   redeploy, outside Hana's main account). A pending email key whose RFC 7638 thumbprint isn't pinned for its signer
   (or whose kid isn't that thumbprint) is cancelled; an active one pauses and deletes every updater key, also at the
@@ -819,8 +823,8 @@ Fixed:
 - **APIW-3 (Medium)**: one global owner-action cap let any invited owner starve `cancel_change`. Caps per owner,
   scope and global, `cancel_change` on windows of its own (see "Owner actions" above for the remaining limit).
 - **OPER-2 (Medium)**: gitleaks caught none of this repo's secret shapes. Custom rules plus a self-test on fakes.
-- **OPER-3 (Low)**: CODEOWNERS widened (D100); the second owner's handle and "Require review from Code Owners" on
-  `develop` and `main` are still to do (GitHub settings, not in the repo).
+- **OPER-3 (Low)**: CODEOWNERS widened (D100), with the second owner `@mj-hana` on every owned path (2026-10-30);
+  "Require review from Code Owners" on `develop` and `main` is still to do (a GitHub setting, not in the repo).
 - **APIW-4, APIV-3, APIV-7, OPER-5, OPER-6, OPER-11 (Low/Info)**: as in D100. APIV-5: a "KEK compromised" runbook
   (`docs/operations.md` "`VAULT_KEK`"). Relay errors no longer echo RPC or fetch error text (sweep question 14).
 
@@ -851,8 +855,10 @@ Deferred, with the reason:
   key fragment on a malformed file; replace with a script.
 
 Open questions in `docs/batch-b-spec.md` that bear on security: Q22 (a timelock for new origins in shared mode) is
-decided for batch C (D32, D34: 24 h delay, notice, cancel) but not built, so `admin app:origins:add` still applies at
-once; Q15 (production domains) is decided only as far as two registrable domains (D38). Decided on 2026-10-28
+decided for batch C (D32, D34: 24 h delay, notice, cancel) and built in batch C3 (merged, not deployed on sandbox-dev):
+`admin app:origins:add` is a staff proposal that waits `appChangeDelayMs` (≥ 24 h on a production network; see
+"Admin CLI writes" above), and the CLI refuses remote proposals until the API reports the 0006 reads (`hotDb` ≥ 6),
+so a pre-C3 API never sees a proposed origin as in force; Q15 (production domains) is decided only as far as two registrable domains (D38). Decided on 2026-10-28
 (`docs/decisions.md`): Q7 (D56, registry check at login), Q9 (D65, `rpcFallback`), Q14 (D53, `max_uses = 1`), Q16
 (D54, KEK in `.secrets`, KMS later), Q18 (D59, export limits), Q27 (D39, test apps refuse mainnets), Q28 (D55,
 in-memory idle limit), Q39 (D46, no token caps), Q40 (D45, consent without a fresh sign-in), Q41 (D44, verified

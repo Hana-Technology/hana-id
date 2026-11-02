@@ -6,7 +6,9 @@ Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 and D150–
 D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-login-3`) on 2026-11-02; D159's `+tag`
 change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 (branch `feat/email-login-5`) and D200 (branches
 `feat/link-cap`, `feat/email-login-5`) on 2026-11-02; D201–D203 (branch `feat/batch-c-2`) on 2026-11-02; D205–D209
-(branch `feat/batch-c-3`, to confirm) on 2026-11-02.
+(branch `feat/batch-c-3`, to confirm) on 2026-11-02. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
+provider note, two "Superseded or amended" rows, the user-mail line under "Proposed", and the headings from D125 on, checked against `develop` @ 1c6a124 and what sandbox-dev runs (`docs/operations.md`) on
+2026-11-02 (branch `docs/consistency-pass`); no decision changed.
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -37,7 +39,8 @@ progress or not started), **deferred**, **superseded**, **proposed** (in a draft
   testnet-MPC keys are disposable.
 
 ### D4. Email login later, as its own trust decision
-- Date ≤ 2026-10-26; confirmed 2026-10-30 · Status: confirmed by the user, not built (before mainnet) · Source:
+- Date ≤ 2026-10-26; confirmed 2026-10-30 · Status: confirmed by the user; partly built (contract v3, `packages/email` and
+  the watchdog part merged, contract v3 not deployed; the email issuer not merged), before mainnet · Source:
   `docs/context.md` "Decisions"; `docs/batch-a-spec.md`; `docs/email-login-spec.md` "Confirmed by the user"
 - Why: whoever signs email tokens can derive any email user's key. Batch A made the verifier provider-generic
   (`issuers.rs`) so email can be another issuer.
@@ -340,7 +343,8 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
 ## Pre-mainnet and batch C scope, decided 2026-10-28
 
 ### D33. Bound issuer-key and upgrade power before mainnet
-- Date 2026-10-28 · Status: confirmed by the user, to spec as a pre-mainnet batch · Source: `docs/security.md` open issue (e)
+- Date 2026-10-28 · Status: confirmed by the user; specced (`docs/governance-spec.md`), built, and on sandbox-dev since
+  2026-10-30 (D80–D86); mainnet setup still to do · Source: `docs/security.md` open issue (e)
 - Decision: a newly posted issuer key becomes usable only after a delay, during which an independent watchdog (own
   key, own service, checks Google's published JWKS) can cancel it; alert on any `issuer_key_set` for a kid Google
   doesn't publish; the owner account becomes a multisig; the signer account's full-access key is removed and
@@ -679,6 +683,7 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
 - Rejected for now: Changesets. With four packages always released together and one consumer, per-package bump
   files add a dependency tree and a review step without information, and it wouldn't update the `VERSION` constants.
   Revisit if the packages start versioning independently.
+
 ### D73. Usage and billing ledger on Neon Postgres in Sydney
 - Date 2026-10-29 · Status: confirmed by the user, for batch C · Source: `docs/batch-c-spec.md` "Confirmed by the user"
 - Decision: the usage and billing ledger (batch C's `USAGE_DB`) is a Neon Postgres project in `aws-ap-southeast-2`
@@ -770,6 +775,7 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
 - Given up: a reload within that window (about one API round trip after the login reply) is a full login; the login
   result's `persistence` is the mode intended, and `persistenceChanged` / `hana_status` say if it didn't happen. Share timings are no
   longer in the login's timings (`persist`, `shareRtt`, `shareServer*` removed); the API's request log still has them.
+
 ## Governance and batch C, confirmed by the user 2026-10-29
 
 Each entry below was decided by the user on 2026-10-29 (source: conversation, "confirmed by the user"). D80–D86
@@ -777,7 +783,8 @@ answer `docs/governance-spec.md` "Open questions" and D87–D93 answer `docs/bat
 answered question there points here.
 
 ### D80. Governance delays: issuer keys 2 h (provisional), governance 72 h on mainnet
-- Date 2026-10-29 · Status: confirmed by the user (mainnet issuer-key delay provisional), not built · Source:
+- Date 2026-10-29 · Status: confirmed by the user (mainnet issuer-key delay provisional); built (governance contract v2),
+  running on sandbox-dev since 2026-10-30 with its dev delays; mainnet values not set yet · Source:
   `docs/governance-spec.md` "Delay length", open question 1
 - Decision: mainnet `issuer_key_delay_ms` = 2 h, provisional: it is set by the spec's formula from the lead-time
   measurement now running (`admin issuer-keys:lead-times`) once two Google rotations are recorded.
@@ -790,7 +797,8 @@ answered question there points here.
   emergencies); fixing the issuer-key delay before Google's lead time is measured.
 
 ### D81. Owner multisig: Sputnik DAO v2, 2-of-3 for every proposal kind
-- Date 2026-10-29 · Status: confirmed by the user, not built · Source: `docs/governance-spec.md` "Owner = multisig",
+- Date 2026-10-29 · Status: confirmed by the user; built; sandbox-dev's signer is owned by its 2-of-3 council DAO
+  (throwaway members) since 2026-10-30; the mainnet council and its backup key not set up · Source: `docs/governance-spec.md` "Owner = multisig",
   open question 2
 - Decision: the contract owner is a Sputnik DAO v2 council: 2 of 3 votes for **every** proposal kind (function calls,
   policy, member changes, the DAO's own upgrades); only council members propose. Mainnet council: the two founders
@@ -805,7 +813,8 @@ answered question there points here.
   little maintenance); a backup key either founder can reach alone (that founder would hold 2 of 3).
 
 ### D82. The watchdog acts alone only on clear forgeries; the owner unpauses at once
-- Date 2026-10-29 · Status: confirmed by the user, not built · Source: `docs/governance-spec.md` "Watchdog service",
+- Date 2026-10-29 · Status: confirmed by the user; built (`apps/watchdog`), deployed on sandbox-dev 2026-10-30 (forged-key
+  and pause drills) · Source: `docs/governance-spec.md` "Watchdog service",
   open question 4
 - Decision: on its own the watchdog cancels any pending issuer key Google doesn't publish (kid absent from two
   fetches ≥ 60 s apart, or other key material), deletes every updater key when the updater proposed such a key, and
@@ -840,7 +849,8 @@ answered question there points here.
 - Rejected: the watchdog as guardian (run by Hana, so not independent; a compromised watchdog could block every fix).
 
 ### D85. Alert severities: critical, warning, info
-- Date 2026-10-29 · Status: confirmed by the user, not built · Source: `docs/governance-spec.md` "Alerts", open
+- Date 2026-10-29 · Status: confirmed by the user; built (`apps/watchdog`), on sandbox-dev since 2026-10-30 with only the
+  pager (ntfy.sh, a stand-in) and the heartbeat set; Slack, email and the paging app still to set up · Source: `docs/governance-spec.md` "Alerts", open
   question 15
 - Decision: **critical** goes to a phone paging app (PagerDuty, Pushover or ntfy, chosen at setup), Slack and email,
   to both founders, and is re-sent every 15 min until acknowledged; acknowledgements are recorded in the admin portal.
@@ -851,7 +861,8 @@ answered question there points here.
 - Rejected: email only; one severity for everything.
 
 ### D86. Governance spec: the remaining open questions take the spec's proposals
-- Date 2026-10-29 · Status: defaults approved by the user, not built · Source: `docs/governance-spec.md` open
+- Date 2026-10-29 · Status: defaults approved by the user; the contract, watchdog and script parts built and on
+  sandbox-dev since 2026-10-30; Q11's partner email and pending-upgrades pages wait for batch C · Source: `docs/governance-spec.md` open
   questions 3, 5, 6, 7, 9, 10, 11, 12, 13, 14, 16
 - Decision, by question:
   - Q3: the watchdog runs on its own Cloudflare account (separate login and MFA); one watchdog at launch.
@@ -872,7 +883,8 @@ answered question there points here.
 - Rejected: the alternatives each question listed.
 
 ### D87. Email: Resend, from a dedicated sending subdomain
-- Date 2026-10-29 · Status: confirmed by the user, provisional: to re-confirm with the colleague (2026-10-29), not built · Source: `docs/batch-c-spec.md` "Email", open question 2
+- Date 2026-10-29 · Status: confirmed by the user, provisional: to re-confirm with the colleague (2026-10-29); user mail
+  superseded by D194; the watchdog's Resend adapter built, the admin Worker's notices not built (batch C) · Source: `docs/batch-c-spec.md` "Email", open question 2
 - Decision (user mail superseded by D194: SendGrid): Resend, sending from a dedicated subdomain of the Hana domain with SPF, DKIM and DMARC, behind a small
   sender interface (send one message → accepted or an error) so switching (e.g. to Postmark) is one adapter. The
   admin Worker's fail-closed notices count a send as done only when Resend accepts it. The watchdog sends its alert
@@ -1071,7 +1083,8 @@ answered question there points here.
   relay requests to the popup (the popup would have to trust the partner page).
 
 ### D100. Security sweep fixes (API, operator tooling, CI): quotas after verification, owner-action caps per owner and scope, CKD key from three providers
-- Date 2026-10-29 · Status: in force (branch `fix/sweep-api`) · Source: security sweep 2026-10-29 (OPER-1, APIW-1,
+- Date 2026-10-29 · Status: in force (branch `fix/sweep-api`); the second code owner `@mj-hana` is in `.github/CODEOWNERS`
+  on every owned path since 2026-10-30 · Source: security sweep 2026-10-29 (OPER-1, APIW-1,
   APIW-3, OPER-2, OPER-3, APIW-4, APIV-3, APIV-7, OPER-5, OPER-6, OPER-11; `docs/security.md` "Security sweep
   2026-10-29"); owner answers of the same day; amends D58
 - Decision:
@@ -1254,7 +1267,8 @@ can't collide with the entries the parallel API, contract and watchdog fixes add
   points stay allowed, so the validator gives the same answer on every engine.
 
 ### D120. Partner identity token, with opt-in verified email per app
-- Date 2026-10-29 · Status: confirmed by the user, on the roadmap after governance, alongside email login · Source:
+- Date 2026-10-29 · Status: confirmed by the user; build steps 1–4 (no email claim) deployed on sandbox-dev 2026-11-02
+  (D127, D170–D179); the email claim, KMS signer and watchdog pin check not built · Source:
   conversation; `wend-api` (`src/auth/privy.ts`, `src/user/privy-identity.ts`) as the reference use
 - Decision: Hana issues a short-lived (≤ 1 h) JWT a partner's backend can verify against Hana's published keys,
   obtained by the SDK without a popup (`hana.getIdentityToken()`; the vault proves its session with the session key).
@@ -1348,7 +1362,8 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 - Decision, by question:
   - Q1: the issuer is its own Worker, `apps/email-issuer`, separate from the API Worker.
   - Q3: user mail via Resend (D87, still provisional until the colleague confirms), behind one sender adapter, on its
-    own sending subdomain; the provider's message-log retention at the minimum.
+    own sending subdomain; the provider's message-log retention at the minimum. The provider is superseded by D194
+    (SendGrid, final once the colleague agrees).
   - Q4: per-scope `aud` (`email:<scope_id>`, a scope client): a partner turns email off on chain with
     `remove_client`.
   - Q5: the issuer under `{apiUrl}/v1/email`.
@@ -1389,6 +1404,11 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
     to be checked against Apple's documentation when specced.
 - Why: the App Store generally expects iOS apps that offer a third-party login such as Google to also offer Sign in
   with Apple, so partners with native apps will ask for it.
+
+## Governance and watchdog follow-ups, 2026-10-30
+
+Decided while governance went live on sandbox-dev (the watchdog's hosting and drills) and while its recovery
+playbooks were written (branches `feat/recovery-playbooks`, `feat/playbook-gaps`, `fix/watchdog-retired-key-race`).
 
 ### D125. Watchdog hosting: its own Cloudflare account in production; sandbox-dev shares the API's account
 - Date 2026-10-30 · Status: confirmed by the user · Source: conversation (hosting options researched and ranked)
@@ -1440,48 +1460,6 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   portal's Playbooks page is specified in `docs/batch-c-spec.md` (batch C, not built). `admin owner:call` now also
   sends `set_sessions_valid_from_ms` (the `forged_active_key` recovery needs it; it was missing from
   `OWNER_METHODS`).
-
-### D127. Partner identity token: the spec's recommendations, all 16 questions
-- Date 2026-10-30 · Status: confirmed by the user; build steps 1–4 (no email claim) built on `feat/identity-token-1`
-  (D170–D175) · Source: `docs/identity-token-spec.md` open questions
-- Decision: `sub` per scope (`"u1_"` + HMAC with a separate, never-rotated `IDENTITY_SUB_KEY`); ES256; minted by the
-  API Worker; mainnet key in AWS KMS (non-exportable, own IAM user, D121's account; a Worker secret on testnet and
-  `local*` only); lifetime 1 h capped at the session's end, `maxAgeMs` for fresher proof; email asked once per app at
-  the first login in the Hana popup, always optional (no mandatory setting in v1), `requestEmailSharing()` to ask
-  again; wallet addresses proven by a signature from each address's key once per session (no server registry);
-  tokens on for every app (the email claim opt-in); no introspection endpoint; no cookie on the partner's domain;
-  `login_methods` only (no `amr`/`auth_time` yet); trust by JWKS URL with optional pinned thumbprints and a watchdog
-  pin check; `iss` = `{apiUrl}/v1/identity` on sandbox-dev and a stable Hana hostname in production, fixed before
-  any partner goes live; a new `sid` at every interactive login.
-- Why: each question's trade-offs are in the spec. Optional email sharing never affects which wallet a person gets
-  (linking is D119/D122, from Google's verified address read transiently inside Hana).
-
-### D140. The ledger's Postgres tests run on PGlite
-- Date 2026-10-30 · Status: in force on `feat/batch-c-1` (`apps/api/test-usage`, `scripts/test/usage-migrate.test.ts`)
-  · Source: batch C1 (`docs/batch-c-build-plan.md`); the spec's "Tests" said a real Postgres 17 (a Neon branch in CI
-  or a local container)
-- Decision: the usage ledger's DDL, roles, grants, functions and the migration runner are tested on PGlite
-  (`@electric-sql/pglite` 0.5.11, exact-pinned: Postgres 18.6 compiled to WASM, in process), so `pnpm -r test` needs no
-  network, container or Neon branch, locally and in CI. The same suite runs against a real Postgres 18 through `pg`
-  when `USAGE_TEST_DATABASE_URL` names a superuser connection to a local server (a container); never Neon. Tests switch
-  roles with `SET ROLE`, as the Hyperdrive connections of each role would run.
-- Why: PGlite is the same server code as Neon's Postgres 18, so privileges, partitioning, PL/pgSQL and triggers behave
-  the same; a Neon branch per CI run would put a Neon credential in CI and a network dependency in every test run.
-- Not covered by PGlite: Neon's own role rules (the owner is `neon_superuser`, not a superuser) and Hyperdrive. The
-  first `usage-migrate` on sandbox-dev and C4's capture smoke check those.
-- Rejected: a Neon branch per CI run; a Postgres container as the default (needs Docker locally and in CI).
-
-### D141. Ledger roles: created without login, no credential in the DDL, nothing for PUBLIC
-- Date 2026-10-30 · Status: in force on `feat/batch-c-1` (`apps/api/migrations-usage/0001_ledger.sql`) · Source:
-  batch C1; amends `docs/batch-c-spec.md` "Usage ledger" roles
-- Decision: the migration creates `usage_writer` and `usage_admin` `NOLOGIN` if they don't exist; `usage-setup` (C4)
-  gives each `LOGIN` and a generated password. Every migration ends with `REVOKE EXECUTE ON ALL FUNCTIONS … FROM
-  PUBLIC` (Postgres grants EXECUTE on new functions to PUBLIC, which would have let the admin role call `record_event`
-  and any role call the retention functions); a test checks each role's exact function list and that a role with no
-  grants has none. The admin role gets `SELECT, INSERT, UPDATE, DELETE` on the `ops` tables instead of `CREATE` on the
-  schema (it never creates objects, and owner-created tables weren't writable by it).
-- Why: no secret in a committed file; the DDL runs unchanged on Neon, a container and PGlite; least privilege as the
-  spec intended.
 
 ### D150. The watchdog monitors the relayer's funds (read-only), with default thresholds and manifest overrides
 - Date 2026-10-30 · Status: built (branch `feat/playbook-gaps`), defaults for review · Source: conversation (closing
@@ -1559,40 +1537,36 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 - Playbook: `retired-key-change`. The incident's alert #10 was acknowledged; the deleted updater key is reprovisioned
   through the council (`forged-key-change` step 5).
 
-### D154. No v1 migration in contract v3: `migrate_v1` removed, `deploy-contract` refuses a v1 contract
-- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); merged · Source: email-login build plan batch 2
-- Decision: contract v3 drops `migrate_v1`, the v1 layout copy (`HanaSignerV1`) and the v1 state fixture, as the build
-  plan says. The plan doesn't say what the deploy tooling does with a v1 contract once the code can't migrate it; the
-  stricter reading is built: `deploy-contract` refuses a v1 contract with or without `--upgrade`, with a blocker that
-  names the ways out (upgrade it with the v2 code, develop 26fb70a, first; or a fresh signer account, which changes
-  every address), instead of planning `DeployContract` + `migrate_v1`, which would now fail on chain (`MethodNotFound`,
-  the receipt reverts). The plan's `migrate-v1` step and the simulated chain's `migrate_v1` are gone; the v1 plan
-  and run tests became refusal tests.
-- Why: no deployment is on v1 (sandbox-dev migrated on 2026-10-30; every other env is created with `new`), and the
-  tooling shouldn't offer a plan that can't succeed. v3 still reads v1-era session records (`created_at_ms` absent):
-  a deployment migrated from v1 may hold some, so that unit test stays, built without the v1 fixture.
-- Not changed: the API's never-relay list (`apps/api/src/relayer-config.ts` `GOVERNANCE_METHODS`) still names
-  `migrate_v1`: refusing a method that no longer exists is harmless, and batch 6 edits that file.
+## Batch C build, step C1 (ledger, manifest fields), 2026-10-30
 
-### D155. Attached gas for the email-login calls covers 4096-bit keys
-- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); measured in batch 2, the API sets the values in build-plan
-  batch 6 · Source: email-login build plan batch 2, the spec's "Gas and storage"; batch 2 review (L3)
-- Decision: attach 250 Tgas to `create_session_and_derive` with a `link_jwt` (the spec said 150), 250 to
-  `link_identity` (spec: 100), and 150 to `cancel_link` and `unlink_identity` (the spec gives no value). Measured in the
-  sandbox (`docs/contract-interface.md` "Gas of the email login calls"): one RS256 verification costs ≈ 17–18 Tgas at
-  2048 bits and ≈ 67 at 4096, the largest modulus `set_issuer_key` accepts. A linked login needs ≈ 59 Tgas at 2048
-  bits and ≈ 156 at 4096 (two verifications plus the MPC's 20); `link_identity` burns 37.2 / 134.6; `cancel_link` and
-  `unlink_identity` 19.8 / 68.5. The values cover the 4096-bit worst case with ≥ 1.6 times the need.
-- Also: at 4096 bits the plain logins outgrow the API's current values (`create_session` 68.8 burnt against 50
-  attached; `create_session_and_derive` ≈ 89 needed of 100). Batch 6 raises them (100 and 150) unless the issuer keys
-  are kept at 2048 bits (below).
-- Why: unused gas is refunded and the prepaid amount only counts against the relayer key's allowance while the call
-  runs, so a high value costs nothing; a low one fails logins the moment an issuer (Google, or Hana's email key)
-  rotates to a larger key, which the contract allows.
-- Alternative for the user: cap self-issued (email) keys at 2048 bits in a later contract version (Hana chooses that
-  key size: the spec's KMS keys are `RSA_2048`), and keep the gas values for Google's 2048-bit keys with a check in
-  the watchdog. Not done here: no contract change in this batch.
-- Rejected: the spec's 150 for the linked login (fails with 4096-bit keys); 100 for `link_identity` (likewise).
+Made while building `docs/batch-c-build-plan.md` C1 (branch `feat/batch-c-1`), and its open questions 1, 2, 4 and 5.
+
+### D140. The ledger's Postgres tests run on PGlite
+- Date 2026-10-30 · Status: in force on `feat/batch-c-1` (`apps/api/test-usage`, `scripts/test/usage-migrate.test.ts`)
+  · Source: batch C1 (`docs/batch-c-build-plan.md`); the spec's "Tests" said a real Postgres 17 (a Neon branch in CI
+  or a local container)
+- Decision: the usage ledger's DDL, roles, grants, functions and the migration runner are tested on PGlite
+  (`@electric-sql/pglite` 0.5.11, exact-pinned: Postgres 18.6 compiled to WASM, in process), so `pnpm -r test` needs no
+  network, container or Neon branch, locally and in CI. The same suite runs against a real Postgres 18 through `pg`
+  when `USAGE_TEST_DATABASE_URL` names a superuser connection to a local server (a container); never Neon. Tests switch
+  roles with `SET ROLE`, as the Hyperdrive connections of each role would run.
+- Why: PGlite is the same server code as Neon's Postgres 18, so privileges, partitioning, PL/pgSQL and triggers behave
+  the same; a Neon branch per CI run would put a Neon credential in CI and a network dependency in every test run.
+- Not covered by PGlite: Neon's own role rules (the owner is `neon_superuser`, not a superuser) and Hyperdrive. The
+  first `usage-migrate` on sandbox-dev and C4's capture smoke check those.
+- Rejected: a Neon branch per CI run; a Postgres container as the default (needs Docker locally and in CI).
+
+### D141. Ledger roles: created without login, no credential in the DDL, nothing for PUBLIC
+- Date 2026-10-30 · Status: in force on `feat/batch-c-1` (`apps/api/migrations-usage/0001_ledger.sql`) · Source:
+  batch C1; amends `docs/batch-c-spec.md` "Usage ledger" roles
+- Decision: the migration creates `usage_writer` and `usage_admin` `NOLOGIN` if they don't exist; `usage-setup` (C4)
+  gives each `LOGIN` and a generated password. Every migration ends with `REVOKE EXECUTE ON ALL FUNCTIONS … FROM
+  PUBLIC` (Postgres grants EXECUTE on new functions to PUBLIC, which would have let the admin role call `record_event`
+  and any role call the retention functions); a test checks each role's exact function list and that a role with no
+  grants has none. The admin role gets `SELECT, INSERT, UPDATE, DELETE` on the `ops` tables instead of `CREATE` on the
+  schema (it never creates objects, and owner-created tables weren't writable by it).
+- Why: no secret in a committed file; the DDL runs unchanged on Neon, a container and PGlite; least privilege as the
+  spec intended.
 
 ### D142. Loopback origins only in `sandbox-*` environments
 - Date 2026-10-30 · Status: confirmed by the user · Source: batch C1 open question 1 (`docs/batch-c-build-plan.md`)
@@ -1624,188 +1598,29 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   from `appChangeDelayMs`, with the same bounds (at least 24 h on mainnet).
 - Why: the two waits can be tuned independently; changing one never silently changes the other.
 
-## Batch C3: hot DB expand, the gate on it, the CLI on it (2026-11-02)
+## Partner identity token spec, confirmed by the user 2026-10-30
 
-Readings made while building `docs/batch-c-build-plan.md` C3 on `feat/batch-c-3`, where `docs/batch-c-spec.md` left a
-detail open. Each follows the spec's intent; all five are **to confirm** by the user.
+The answers to `docs/identity-token-spec.md`'s open questions (the roadmap decision is D120).
 
-### D205. Migration 0006 details: the baseline keeps policies as stored; four extra checks
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/migrations/0006_dashboard_expand.sql`) · Source: spec §Hot DB
-  "Migration 0006"
-- Decision: (1) the `migration.baseline` row lists each app's stored `auto_approve_policy` / `auto_approve_pending`
-  JSON (and their effective time, the raw-signing values and `suspended_by`) instead of their `policyId`: SQL can't
-  compute a `policyId` (SHA-256 of the canonical form), and the JSON is what drift detection (C5) derives it from.
-  (2) The insert and org/scope update triggers on `apps` also refuse a `publishable_key` whose prefix isn't the
-  scope's environment (the spec names this check only for `app_keys`; it is the "trigger" through which the legacy
-  column is still read). (3) A trigger keeps `scopes.environment` fixed. (4) `detail_json` columns must be valid JSON
-  and `org_security_contacts.email` lowercase (CHECKs). Also: the migration times are `unixepoch('now') * 1000`, the
-  backfilled keys' `created_at` is their app's, the baseline's request id is `migration-0006:<app id>`, and the
-  triggers are created after the backfill (which satisfies each).
-- Why: each only refuses rows the spec says must never exist (a test/live mix, a changed environment, malformed
-  ledger rows); none changes an existing row or answer.
-- Rejected: computing ids in the migration through a Worker step (a migration must be plain SQL that runs in order).
-- Forward obligation (C3 re-check): the `no_session` waiver (D206) reads the legacy D1 `usage` table, which C4 stops
-  writing and C4b's 0007 drops. Before 0007, C4 replaces that check with one that still sees new sessions (a hot-DB
-  marker the API writes beside the relay, not a Neon read); written in `docs/batch-c-build-plan.md` C4.
-
-### D206. CLI readings: environment, actor, waivers, one ledger row per write, no cancel command
-- Date 2026-11-02 · Status: to confirm; built (`scripts/lib/admin-apps.ts`, `admin-sql.ts`, `admin-settings.ts`) ·
-  Source: spec §CLI, §Guarded changes
-- Decision: `app:create` needs `--environment test|live` for a scope with no app yet (no default: the choice is
-  permanent for the scope) and takes the scope's own otherwise. The actor is `cli:<operator login>` (`hana` kind). The
-  `no_session` waiver is recorded as a candidate on the initial origins of an `app:create` that created the scope row
-  and is granted or dropped inside the announcement's own SQL (review M1: no check-then-write gap), fail closed: only
-  while `first_session_at` is NULL (the API writes it at every session-pool relay attempt, not only on a 200), no
-  origin of the scope's apps is or was in force other than the same `app:create`'s initial ones (an announced, due
-  `origin_add`, or an `app_origins` row in force), and no app of the scope has a vault share, a usage row or an
-  identity count. The same `app:create`'s initial origins don't count against each other, so each of them gets it.
-  CLI proposals never get the `loopback` waiver (the spec gives staff proposals none but `no_session`). The
-  `assigned_at` + `appChangeDelayMs` refusal applies to `app:create` on an existing scope too. Each write records one
-  `app_changes` row (a settings write that changes several things lists them under `parts`). A change whose clock has
-  passed but which the cron hasn't recorded yet counts as in force: it doesn't block a new proposal ("at most one
-  pending") and ends, not cancels, when removed. There is no `app:changes:cancel`: removing the origin or turning the
-  setting off cancels a pending change. `app:changes:announce` keeps a matured pending policy as the stored one before
-  writing the new pending one (as batch B's CLI did), and likewise a matured pending raw-signing value. Re-setting the
-  policy in force over a pending proposal also keeps a matured pending policy as the stored one before clearing the
-  columns (review H1: clearing them alone brought the older stored policy back with no delay). `--raw-sign approval`
-  is refused for a test app: the spec's "test apps never sign raw", which is D39 as amended on 2026-10-28 (the vault
-  refuses raw signing for every `pk_test_` app); refusing it at the CLI too is a C3 reading, to confirm.
-- The deployed API's build gates proposals (review M2): with `--remote`, every proposal and announcement first needs
-  `GET /v1/health` to report `hotDb` ≥ 6 (the batch C3 reads; `apps/api/src/apps.ts` `HOT_DB_SCHEMA`), because an older
-  API would treat a proposed origin as in force. The rollback floor is batch C3: running an older API on the 0006
-  database first needs `app:origins:park --yes` (deletes every origin row not in force, listing them in
-  `origin.parked`; `app:origins:unpark` restores exactly those, only while their change is still open, and
-  `app:origins:remove` closes a parked origin's change even with no row; `docs/operations.md` "Rolling the API back below batch C3").
-- Obligation for `apps/email-issuer` (branch `feat/email-login-4`), recorded here (review L4): it finds apps by
-  `apps.publishable_key` and checks only `status`. That is right on today's data (the trigger keeps `status` equal to
-  the bitmask; the column holds each app's first key), but it must move to `app_keys` (an unrevoked key),
-  `deleted_at IS NULL` and `suspended_by = 0` before batch C5 ships key rotation, revocation and app deletion. The
-  "no code reads `apps.publishable_key`" check (`apps/api/scripts/test/hot-db-reads.test.ts`) scans every
-  `apps/*/src` and allowlists `apps/email-issuer` until then.
-- Why: the spec's table lists the commands but not these edges; each choice keeps the CLI's writes the ones
-  `AdminRpc` will make, and never makes a change live sooner than the spec allows.
-
-### D207. CLI writes: the commit row first, everything else gated on it, read back
-- Date 2026-11-02 · Status: to confirm (settled by the M1 rehearsal, below); built and tested on SQLite · Source:
-  spec §RPC "CAS" applied to the CLI; batch B's settings guard; review L2 and its re-check
-- Decision: every CLI write is one `wrangler d1 execute --command` of several statements: first the write's
-  `app_changes` row, inserted only while the compare-and-swap predicate holds (the version read, or for settings also
-  every settings column as read); then the version bump with the same predicate and only if that row exists; then
-  every other statement only if that row exists. The CLI reads the row back and reports a stale write. No statement
-  depends on another's row count (`changes()`). The CAS is safe because D1 runs each query (one `--command`, all its
-  statements) as one implicit transaction: nothing else writes between the predicate and the bump, and a failing
-  statement aborts the whole write. (The CLI tests run each command statement by statement, with no transaction
-  around it, which shows the ordering needs nothing more within one writer.)
-- To confirm: the M1 rehearsal (`docs/operations.md` step 3) checks on a scratch remote D1 that a `--command` whose
-  last statement fails leaves its first one unapplied, and runs one CLI CAS write (`app:suspend`, `app:resume`)
-  through the real path; that settles this decision.
-- Rejected: a guard UPDATE followed by `WHERE changes() = 1` (relies on SQLite's per-connection row count across
-  statements); a bare version check on each later statement (`version = read + 1`), which another writer's bump to
-  the same number would satisfy.
-
-### D208. The vault endpoints' app cache keeps its 30 s
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/app-cache.ts` unchanged, `getAppByKey` filters) · Source:
-  spec §Hot DB "Login-path reads" ("any future app-config cache … TTL ≤ 10 s"); D78
-- Decision: D78's cache stays at 30 s. It caches what `getAppByKey` returns, the origins in force at the read, so it
-  never serves a pending origin early; one that comes into force is served from the next read (≤ 30 s late), and a
-  removal, suspension or key revocation reaches the vault endpoints within 30 s, as since D78. `GET /v1/app`, the
-  relay endpoints and the vault page don't use it.
-- Why: the spec's 10 s is for a future cache; this one predates it and its bound only delays what is already safe (an
-  activation) or what D78 accepted (a removal on the vault endpoints). Lowering it costs a D1 read per reload unlock
-  per 10 s per isolate; a one-line change if wanted.
-
-### D209. The gate keeps `scope_conflict` as a second check; `first_session_at` at the relay attempt
-- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/apps.ts`, `handlers.ts`, `login.ts`, `vault/*`) · Source:
-  spec §Hot DB "Login-path reads"
-- Decision: the batch B `scope_conflict` subquery is gone (replaced by `scopes.environment`, as the spec says), but
-  the gate still answers `403 scope_conflict` when the key's prefix names the other environment than its scope (only
-  a direct `app_keys` edit can produce it: the triggers refuse it otherwise). The dev-env partner calls and the
-  timings in success bodies follow `environment = 'test'` like the loopback rule. `first_session_at` is written when
-  a session-pool relay (`/v1/sessions`, `/v1/login`, `/v1/derive`, `/v1/sessions/revoke`) is about to be sent, beside
-  it (review M1; first built as "after a 200", which a lost answer or a timeout followed by `/v1/derive` would miss).
-  The hourly job also skips a `policy.ended` row already written (two `policy_set` changes due in one run, review
-  L1). The hourly job
-  cancels (`system`, reason `not_in_force`) a due change whose value is no longer pending or stored in `apps`, rather
-  than recording it active.
-- Why: a test key's dev-env privileges must never reach a live scope even after a manual write; the `no_session`
-  waiver must fail closed, so any attempt to open a session ends it.
+### D127. Partner identity token: the spec's recommendations, all 16 questions
+- Date 2026-10-30 · Status: confirmed by the user; build steps 1–4 (no email claim) built on `feat/identity-token-1`
+  (D170–D175) · Source: `docs/identity-token-spec.md` open questions
+- Decision: `sub` per scope (`"u1_"` + HMAC with a separate, never-rotated `IDENTITY_SUB_KEY`); ES256; minted by the
+  API Worker; mainnet key in AWS KMS (non-exportable, own IAM user, D121's account; a Worker secret on testnet and
+  `local*` only); lifetime 1 h capped at the session's end, `maxAgeMs` for fresher proof; email asked once per app at
+  the first login in the Hana popup, always optional (no mandatory setting in v1), `requestEmailSharing()` to ask
+  again; wallet addresses proven by a signature from each address's key once per session (no server registry);
+  tokens on for every app (the email claim opt-in); no introspection endpoint; no cookie on the partner's domain;
+  `login_methods` only (no `amr`/`auth_time` yet); trust by JWKS URL with optional pinned thumbprints and a watchdog
+  pin check; `iss` = `{apiUrl}/v1/identity` on sandbox-dev and a stable Hana hostname in production, fixed before
+  any partner goes live; a new `sid` at every interactive login.
+- Why: each question's trade-offs are in the spec. Optional email sharing never affects which wallet a person gets
+  (linking is D119/D122, from Google's verified address read transiently inside Hana).
 
 ## Partner identity token, build steps 1–4 (2026-10-30)
 
 Choices made while building `docs/identity-token-spec.md` steps 1–4 on `feat/identity-token-1`, where the spec left a
 detail open or a safer reading was needed. Each follows the spec's intent; the user can revisit any of them.
-
-### D160. Sign in with Apple paused; the initial build is Google and email
-- Date 2026-11-02 · Status: confirmed by the user · Source: conversation (Apple spec questions)
-- Decision: Sign in with Apple is not built for the initial launch; it is built when partners ask for it. The spec
-  (`docs/apple-login-spec.md`) stays as the starting point. Answers given so far:
-  - Q1 = B: Apple users' emails through a second, email-only Apple client whose tokens never go on chain (like Privy:
-    partners get the email), at the cost of a second Apple prompt at an identity's first login in an app.
-  - Q2, provisional: the Apple developer team of the company that publishes Hana Wallet and Wend, for testnet. To be
-    confirmed or changed at the production-readiness check, before the address freeze.
-  - Q3 = A: every Apple client in Hana's team; partner-held Apple accounts only if customers ask, for partners that
-    start on them.
-  - Q4 = A: the shared client in a Hana app group, each Enterprise client in its own group.
-  - Q5 = A: partners' native iOS apps use the web flow (`ASWebAuthenticationSession`). A native-sheet
-    "partner-managed Apple" tier only if customers ask: with the native sheet the partner's app receives the Apple
-    token and can open sessions for its own users' wallets (partner custody within its scope), and those wallets
-    differ from the same users' wallets in Hana's team.
-  - Q6–Q18: open, asked again when the work resumes.
-- Why: focus the initial build on Google and email; Apple adds an issuer, a second client, a POST route, watchdog
-  and playbook work for a method no partner has asked for yet. Nothing built so far depends on Apple: the path format
-  and the issuer model already take a new provider without moving any address (D124).
-
-### D194. User mail (email login codes) via SendGrid, not Resend
-- Date 2026-11-02 · Status: confirmed by the user as likely, final once the colleague agrees · Source: conversation
-  (before email login batch 4)
-- Decision: the email issuer sends login-code mail through SendGrid (v3 Mail Send API), which Hana already uses for
-  Hana Wallet and Wend. It replaces Resend for user mail (D87's provider). It sits behind the issuer's one sender adapter, so
-  a later switch is a new adapter, not a redesign. Same rules as D87: a dedicated sending subdomain with SPF, DKIM and
-  DMARC (SendGrid domain authentication), a send counts only when SendGrid accepts it (`202`), and its own API key
-  restricted to Mail Send, used only by the email issuer (not shared with Hana Wallet or Wend; a separate SendGrid
-  subuser if the account allows it, so reputation and suppression lists stay apart).
-- Not changed yet: the watchdog's alert email and the admin Worker's notices still name Resend (D87); whether they
-  move to SendGrid too is decided separately.
-- Why: one provider the team already operates and pays for; the adapter keeps the choice reversible.
-
-### D200. Link volume: a contract counter with hourly alarm thresholds, replacing the indexer scan
-- Date 2026-11-02 · Status: confirmed by the user: count and alarm, no refusal (option A, after review H1/H2);
-  contract and watchdog built, not deployed · Source: batch 5 review (the FastNear scan reads about 13
-  logins per run at about 75 KB each, so it falls behind and pages on ordinary traffic); the link-cap review (H1, H2)
-- Threat, stated as it is (review H1): with a stolen email signing key alone (1-of-1 at launch) a thief can log
-  into every email-rooted wallet, log into every Google-rooted wallet that already has an email member, and link their own Google account into victims' email
-  wallets (case A, one Google account per victim and scope). Since D133 a link also needs the session key's signature,
-  so the key alone can't join an email identity to someone else's Google wallet. Only the last of the three makes new
-  links. The defence against a stolen key is its custody (KMS, a second signer, D121); the counter only detects bursts.
-- Decision: the contract counts every new link, immediate or pending (the combined login with a `link_jwt`, cases A
-  and B, and `link_identity`; not cancels, unlinks or lazy activations), in fixed UTC-hour windows, per scope and in
-  total, and **never refuses a link**. When a count is at or above its threshold after a link, the window records it
-  (`flagged_scopes`, `total_threshold_reached`) and the first crossing per window emits `link_threshold_reached`.
-  Defaults 50 per scope and 500 in total per hour, changed by the owner (council) with `set_link_thresholds`: a
-  lowering applies at once, a raise only after `governance_delay_ms` (a raised threshold could hide an attack). A view
-  (`get_link_stats`) reports the current and previous hours; the watchdog reads it each run and alerts when a
-  threshold is reached, and on a scheduled raise. The FastNear indexer scan (D192) is removed.
-- Window boundary (review L1): the windows are fixed hours, so a burst that straddles a boundary is split between two
-  windows and each half may stay under a threshold; the view keeps the previous hour so the watchdog can add them.
-- Why: exact, on chain, no third party or data budget, cheap (≈ 0.3 Tgas per link) while v3 isn't deployed.
-- Rejected: a refusing cap (option A+, built first). It bounded little (H1: the takeovers it was meant to brake need
-  more than the key), and anyone could burn it (H2: one Google account and one email looping `link_identity` and
-  `cancel_link`) and lock real users out of linking logins for the hour.
-- Built (contract, branch `feat/link-cap`): `get_link_stats`, `set_link_thresholds`, events `link_threshold_reached`
-  and `link_thresholds_set` (`docs/contract-interface.md` "Link volume: the hourly counter"). The view's `previous` is
-  `null` when the previous hour had no links; its `total_threshold_reached` also reads the thresholds in force, so a
-  lowered threshold shows at once. Per-scope counts are deleted lazily (each counted link deletes up to 4 older than
-  the previous hour). `set_link_thresholds` and the other v3 owner methods are on the API's never-relay list.
-- Built (watchdog, branch `feat/email-login-5`): the view is read with the chain snapshot, before the run is recorded
-  and its lock released; `link_threshold_reached` (critical, per flagged scope and for the total, keyed by window,
-  current and previous hour; alert only, the links went through), `link_volume_high` (warning, current total ≥ half
-  `total_per_hour`), `link_stats_unavailable` (warning: `missing` with an email issuer on chain, `malformed`, or
-  `read_failed`; open threshold alerts stay open while the view can't be read); a threshold raise (`link_thresholds`,
-  `pending_thresholds`) is a critical governance change, lowering a warning; playbook `link-volume`. The read is
-  isolated: a malformed or failing view marks only the link check, never the snapshot, so a shape mismatch after an
-  upgrade can't blind the Google and email cancels and pauses.
-- Not built: nothing on the contract or watchdog side; neither is deployed (the contract with v3, the watchdog with
-  batch 5's deploy).
 
 ### D170. Identity token layout details the spec left open
 - Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`packages/core/src/identity.ts`, frozen in
@@ -1883,6 +1698,72 @@ detail open or a safer reading was needed. Each follows the spec's intent; the u
   `docs/integration.md` section 15 doesn't quote the file exactly. The Playwright suite verifies real tokens from the
   local stack with `jose` against its JWKS.
 - Why: the published guide always runs.
+
+## Partner identity token, review fixes (2026-10-30)
+
+From the identity token's security review, built on `feat/identity-token-2`.
+
+### D176. Identity mint limits: narrow to wide, sliding, none shared with the vault; the replay marker last
+- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`apps/api/src/identity/limits.ts`, `token.ts`
+  `identityQuota`, `rate-limiter.ts` `hitSliding`) · Source: the identity token's security review (M1, L2, L3, L5)
+- Decision: `/v1/identity/token` asks, in turn: the vault gate's per-IP binding (only: the app's `vault:minute` quota
+  is no longer used, so mints can't starve unlocks) → … → the session proof's signature → per session key 10/min
+  (binding) → not paused → share → chain session → wallet proofs → the single-use marker → per account root 30/min
+  (binding `IDENTITY_ROOT_LIMIT`, keyed by the HMAC `sub` bytes) → per app `identity:minute` (10 × plan `per_minute`)
+  and `identity:hour` (plan `per_day`, at most 100 000) → per scope `identity:hour` (2 × the app's) → global: a hard
+  breaker of 1 000 000/h (≥ 10 × any app's ceiling, so no one tenant can trip it) and a soft line at 100 000/h that
+  logs `identity_volume_alert` (critical) without refusing. The app, scope and global windows are sliding (the
+  previous bucket weighted by its overlap) and counted only for a request that passed every other check; a refusal by
+  a later window takes the hit back from the earlier ones. The marker is reserved only once the proof is known to be a
+  live session's (random keys create none), keyed `sha256(sessionPk ‖ u64le(issuedAtMs) ‖ nonce)` (independent of the
+  signature's encoding), and an alarm on the marker object deletes expired markers.
+- Why: the global hourly breaker was reachable by one tenant (three free apps at 600/min) and then refused every app
+  for up to an hour. Amends D173's global ceiling (100 000/h, refusing).
+- Rejected: one exact per-root object (a Durable Object per user per hour; the binding is a flood limit anyway).
+
+### D177. Testnet identity keys: the standby stays off the Worker; rotation and retirement commands
+- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`scripts/lib/identity-key.ts`,
+  `packages/playbooks` `identity-signing-key-compromised`) · Source: the identity token's security review (M2)
+- Decision: `identity-key init` uploads only the active key and the sub key; the standby is published in the JWKS
+  but never uploaded (operators move its file offline), so a leak of the Worker's secrets or the Cloudflare account
+  doesn't reach it. New commands: `next` (generate and publish a rotation key, upload nothing), `switch --to
+  next|standby` (upload it into the Worker slot the active key isn't in, make it the manifest's `activeKid`; the old
+  active key becomes `previous`, still published), `retire --key previous|standby` (unpublish, delete its Worker
+  secret if it has one, set its file aside). `.secrets/<env>/identity-slots.json` records which slot holds which kid.
+  `gen --dev-vars` writes only the active key. The compromise playbook (operations.md, `docs/playbooks.md`): treat
+  both keys as exposed unless the incident provably touches only the active one; then retire the standby too and
+  rotate to a fresh key.
+- Why: two keys side by side on one Worker and uploaded together made "switch to the standby" keep a compromised
+  key. Amends D173 (the standby slot is now a rotation slot) and the spec's rotation playbook.
+
+### D178. A dead or other app's share stops mints in every app of the scope; shares kept as tombstones for 24 h
+- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`apps/api/src/identity/token.ts` `checkShare`,
+  `vault/cron.ts` `pruneShares`) · Source: the identity token's security review (L1)
+- Decision: the mint looks a session key's share up in any app: a share that belongs to another app refuses the mint
+  (`410 session_ended`, `reason: unknown_share`) whatever this app's persistence, so a session revoked (or simply
+  persisted) in a `session` app of a scope never mints in a `none` app of the same scope. The hourly cron deletes a
+  revoked or absolutely expired share only once it is older than 24 h (the contract's `MAX_SESSION_MS`), so the row
+  outlives any on-chain session it could stand for.
+- Why: `getShareBySessionPk` was per app and the cron deleted revoked rows within the hour, so a revoked session kept
+  minting in a `none` app until its on-chain expiry, against D171 and `docs/security.md`. Amends D171.
+
+### D179. Raw signing never covers Hana's signing domains; `wallets` proves control, not derivation
+- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`packages/web/src/vault/signing.ts`
+  `refuseReservedRaw`, `docs/integration.md` section 15) · Source: the identity token's security review (L4, L6)
+- Decision: in apps with raw signing on, the vault refuses (4100, `reason: raw_reserved_domain`, before any popup) a
+  Stellar raw request whose bytes start with `hana-id`, and an EVM raw digest equal to the session's own identity
+  wallet-proof digest, so an approved raw signature can't serve as a wallet proof. The guide says what `wallets`
+  proves: the session's holder controls each address's key, not that it is the Hana-derived wallet of that `sub`; one
+  address can appear under several `sub`s (an exported or reused key, an old `key_index`), so partners must not treat
+  wallet → `sub` as unique (per-wallet credits).
+- Why: defence in depth for the wallet proof; the guide overstated the claim.
+- Accepted residual (automated review, 2026-10-30): the EVM check covers only this session's own proof digest. A raw
+  EVM digest is opaque, so a user who approves a raw signature over another session's wallet-proof digest lets that
+  session list their address. Not fixable at the source: raw signing signs any digest, whatever structure (EIP-191,
+  EIP-712) the proof used, and the API can't check that an address is the account's Hana-derived wallet (CKD output
+  is never on chain). The approval already authorizes arbitrary signatures (transactions included, with the popup's
+  warning), and partners must not treat wallet → `sub` as unique, so the impact is within what the guide states.
+  Revisit if addresses are ever recorded on chain.
 
 ## Email login build, batch 1 (contract v3), 2026-10-30
 
@@ -2040,67 +1921,44 @@ points for the user"; none changes an address.
   case-B token during a plain Google login. The flag must never be true on mainnet (D135); a runbook check alone can be
   skipped.
 
-### D176. Identity mint limits: narrow to wide, sliding, none shared with the vault; the replay marker last
-- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`apps/api/src/identity/limits.ts`, `token.ts`
-  `identityQuota`, `rate-limiter.ts` `hitSliding`) · Source: the identity token's security review (M1, L2, L3, L5)
-- Decision: `/v1/identity/token` asks, in turn: the vault gate's per-IP binding (only: the app's `vault:minute` quota
-  is no longer used, so mints can't starve unlocks) → … → the session proof's signature → per session key 10/min
-  (binding) → not paused → share → chain session → wallet proofs → the single-use marker → per account root 30/min
-  (binding `IDENTITY_ROOT_LIMIT`, keyed by the HMAC `sub` bytes) → per app `identity:minute` (10 × plan `per_minute`)
-  and `identity:hour` (plan `per_day`, at most 100 000) → per scope `identity:hour` (2 × the app's) → global: a hard
-  breaker of 1 000 000/h (≥ 10 × any app's ceiling, so no one tenant can trip it) and a soft line at 100 000/h that
-  logs `identity_volume_alert` (critical) without refusing. The app, scope and global windows are sliding (the
-  previous bucket weighted by its overlap) and counted only for a request that passed every other check; a refusal by
-  a later window takes the hit back from the earlier ones. The marker is reserved only once the proof is known to be a
-  live session's (random keys create none), keyed `sha256(sessionPk ‖ u64le(issuedAtMs) ‖ nonce)` (independent of the
-  signature's encoding), and an alarm on the marker object deletes expired markers.
-- Why: the global hourly breaker was reachable by one tenant (three free apps at 600/min) and then refused every app
-  for up to an hour. Amends D173's global ceiling (100 000/h, refusing).
-- Rejected: one exact per-root object (a Durable Object per user per hour; the binding is a flood limit anyway).
+## Email login build, batch 2 (contract v3 upgrade path and gas), 2026-11-02
 
-### D177. Testnet identity keys: the standby stays off the Worker; rotation and retirement commands
-- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`scripts/lib/identity-key.ts`,
-  `packages/playbooks` `identity-signing-key-compromised`) · Source: the identity token's security review (M2)
-- Decision: `identity-key init` uploads only the active key and the sub key; the standby is published in the JWKS
-  but never uploaded (operators move its file offline), so a leak of the Worker's secrets or the Cloudflare account
-  doesn't reach it. New commands: `next` (generate and publish a rotation key, upload nothing), `switch --to
-  next|standby` (upload it into the Worker slot the active key isn't in, make it the manifest's `activeKid`; the old
-  active key becomes `previous`, still published), `retire --key previous|standby` (unpublish, delete its Worker
-  secret if it has one, set its file aside). `.secrets/<env>/identity-slots.json` records which slot holds which kid.
-  `gen --dev-vars` writes only the active key. The compromise playbook (operations.md, `docs/playbooks.md`): treat
-  both keys as exposed unless the incident provably touches only the active one; then retire the standby too and
-  rotate to a fresh key.
-- Why: two keys side by side on one Worker and uploaded together made "switch to the standby" keep a compromised
-  key. Amends D173 (the standby slot is now a rotation slot) and the spec's rotation playbook.
+Made while building `docs/email-login-build-plan.md` batch 2 (branch `feat/email-login-2`).
 
-### D178. A dead or other app's share stops mints in every app of the scope; shares kept as tombstones for 24 h
-- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`apps/api/src/identity/token.ts` `checkShare`,
-  `vault/cron.ts` `pruneShares`) · Source: the identity token's security review (L1)
-- Decision: the mint looks a session key's share up in any app: a share that belongs to another app refuses the mint
-  (`410 session_ended`, `reason: unknown_share`) whatever this app's persistence, so a session revoked (or simply
-  persisted) in a `session` app of a scope never mints in a `none` app of the same scope. The hourly cron deletes a
-  revoked or absolutely expired share only once it is older than 24 h (the contract's `MAX_SESSION_MS`), so the row
-  outlives any on-chain session it could stand for.
-- Why: `getShareBySessionPk` was per app and the cron deleted revoked rows within the hour, so a revoked session kept
-  minting in a `none` app until its on-chain expiry, against D171 and `docs/security.md`. Amends D171.
+### D154. No v1 migration in contract v3: `migrate_v1` removed, `deploy-contract` refuses a v1 contract
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); merged · Source: email-login build plan batch 2
+- Decision: contract v3 drops `migrate_v1`, the v1 layout copy (`HanaSignerV1`) and the v1 state fixture, as the build
+  plan says. The plan doesn't say what the deploy tooling does with a v1 contract once the code can't migrate it; the
+  stricter reading is built: `deploy-contract` refuses a v1 contract with or without `--upgrade`, with a blocker that
+  names the ways out (upgrade it with the v2 code, develop 26fb70a, first; or a fresh signer account, which changes
+  every address), instead of planning `DeployContract` + `migrate_v1`, which would now fail on chain (`MethodNotFound`,
+  the receipt reverts). The plan's `migrate-v1` step and the simulated chain's `migrate_v1` are gone; the v1 plan
+  and run tests became refusal tests.
+- Why: no deployment is on v1 (sandbox-dev migrated on 2026-10-30; every other env is created with `new`), and the
+  tooling shouldn't offer a plan that can't succeed. v3 still reads v1-era session records (`created_at_ms` absent):
+  a deployment migrated from v1 may hold some, so that unit test stays, built without the v1 fixture.
+- Not changed: the API's never-relay list (`apps/api/src/relayer-config.ts` `GOVERNANCE_METHODS`) still names
+  `migrate_v1`: refusing a method that no longer exists is harmless, and batch 6 edits that file.
 
-### D179. Raw signing never covers Hana's signing domains; `wallets` proves control, not derivation
-- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`packages/web/src/vault/signing.ts`
-  `refuseReservedRaw`, `docs/integration.md` section 15) · Source: the identity token's security review (L4, L6)
-- Decision: in apps with raw signing on, the vault refuses (4100, `reason: raw_reserved_domain`, before any popup) a
-  Stellar raw request whose bytes start with `hana-id`, and an EVM raw digest equal to the session's own identity
-  wallet-proof digest, so an approved raw signature can't serve as a wallet proof. The guide says what `wallets`
-  proves: the session's holder controls each address's key, not that it is the Hana-derived wallet of that `sub`; one
-  address can appear under several `sub`s (an exported or reused key, an old `key_index`), so partners must not treat
-  wallet → `sub` as unique (per-wallet credits).
-- Why: defence in depth for the wallet proof; the guide overstated the claim.
-- Accepted residual (automated review, 2026-10-30): the EVM check covers only this session's own proof digest. A raw
-  EVM digest is opaque, so a user who approves a raw signature over another session's wallet-proof digest lets that
-  session list their address. Not fixable at the source: raw signing signs any digest, whatever structure (EIP-191,
-  EIP-712) the proof used, and the API can't check that an address is the account's Hana-derived wallet (CKD output
-  is never on chain). The approval already authorizes arbitrary signatures (transactions included, with the popup's
-  warning), and partners must not treat wallet → `sub` as unique, so the impact is within what the guide states.
-  Revisit if addresses are ever recorded on chain.
+### D155. Attached gas for the email-login calls covers 4096-bit keys
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); measured in batch 2, the API sets the values in build-plan
+  batch 6 · Source: email-login build plan batch 2, the spec's "Gas and storage"; batch 2 review (L3)
+- Decision: attach 250 Tgas to `create_session_and_derive` with a `link_jwt` (the spec said 150), 250 to
+  `link_identity` (spec: 100), and 150 to `cancel_link` and `unlink_identity` (the spec gives no value). Measured in the
+  sandbox (`docs/contract-interface.md` "Gas of the email login calls"): one RS256 verification costs ≈ 17–18 Tgas at
+  2048 bits and ≈ 67 at 4096, the largest modulus `set_issuer_key` accepts. A linked login needs ≈ 59 Tgas at 2048
+  bits and ≈ 156 at 4096 (two verifications plus the MPC's 20); `link_identity` burns 37.2 / 134.6; `cancel_link` and
+  `unlink_identity` 19.8 / 68.5. The values cover the 4096-bit worst case with ≥ 1.6 times the need.
+- Also: at 4096 bits the plain logins outgrow the API's current values (`create_session` 68.8 burnt against 50
+  attached; `create_session_and_derive` ≈ 89 needed of 100). Batch 6 raises them (100 and 150) unless the issuer keys
+  are kept at 2048 bits (below).
+- Why: unused gas is refunded and the prepaid amount only counts against the relayer key's allowance while the call
+  runs, so a high value costs nothing; a low one fails logins the moment an issuer (Google, or Hana's email key)
+  rotates to a larger key, which the contract allows.
+- Alternative for the user: cap self-issued (email) keys at 2048 bits in a later contract version (Hana chooses that
+  key size: the spec's KMS keys are `RSA_2048`), and keep the gas values for Google's 2048-bit keys with a check in
+  the watchdog. Not done here: no contract change in this batch.
+- Rejected: the spec's 150 for the linked login (fails with 4096-bit keys); 100 for `link_identity` (likewise).
 
 ## Email login build, batch 3 (`packages/email`), 2026-11-02
 
@@ -2204,6 +2062,30 @@ change no address.
 - Rejected: dropping `+tags` (the spec's rule: one wallet per inbox); keeping dots significant (an accidental second
   wallet); Gmail rules for Workspace domains (`+tags` elsewhere may be distinct mailboxes).
 
+## Sign in with Apple, 2026-11-02
+
+Decided in conversation on the Apple spec's questions (`docs/apple-login-spec.md`; the roadmap decision is D124).
+
+### D160. Sign in with Apple paused; the initial build is Google and email
+- Date 2026-11-02 · Status: confirmed by the user · Source: conversation (Apple spec questions)
+- Decision: Sign in with Apple is not built for the initial launch; it is built when partners ask for it. The spec
+  (`docs/apple-login-spec.md`) stays as the starting point. Answers given so far:
+  - Q1 = B: Apple users' emails through a second, email-only Apple client whose tokens never go on chain (like Privy:
+    partners get the email), at the cost of a second Apple prompt at an identity's first login in an app.
+  - Q2, provisional: the Apple developer team of the company that publishes Hana Wallet and Wend, for testnet. To be
+    confirmed or changed at the production-readiness check, before the address freeze.
+  - Q3 = A: every Apple client in Hana's team; partner-held Apple accounts only if customers ask, for partners that
+    start on them.
+  - Q4 = A: the shared client in a Hana app group, each Enterprise client in its own group.
+  - Q5 = A: partners' native iOS apps use the web flow (`ASWebAuthenticationSession`). A native-sheet
+    "partner-managed Apple" tier only if customers ask: with the native sheet the partner's app receives the Apple
+    token and can open sessions for its own users' wallets (partner custody within its scope), and those wallets
+    differ from the same users' wallets in Hana's team.
+  - Q6–Q18: open, asked again when the work resumes.
+- Why: focus the initial build on Google and email; Apple adds an issuer, a second client, a POST route, watchdog
+  and playbook work for a method no partner has asked for yet. Nothing built so far depends on Apple: the path format
+  and the issuer model already take a new provider without moving any address (D124).
+
 ## Email login build, batch 5 (watchdog), 2026-11-02
 
 Made while building `docs/email-login-build-plan.md` batch 5 (branch `feat/email-login-5`), where the spec's
@@ -2211,8 +2093,8 @@ Made while building `docs/email-login-build-plan.md` batch 5 (branch `feat/email
 address. D190, D191 and D193 are confirmed by the user (2026-11-02); D192 is superseded by D200.
 
 ### D190. Email pins: absent means nothing pinned; a pin is the key's thumbprint, its kid and its signer
-- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); built, not deployed (`feat/email-login-5`,
-  `apps/watchdog/src/pins.ts`, `run.ts`) · Source: build of `docs/email-login-spec.md` "Watchdog"
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); built (`feat/email-login-5`,
+  `apps/watchdog/src/pins.ts`, `run.ts`), deployed on sandbox-dev 2026-11-02 (no pins yet) · Source: build of `docs/email-login-spec.md` "Watchdog"
 - Decision:
   - The manifest's `watchdog.pinnedIssuerKeys.email` absent (sandbox-dev today, until batch 4 creates the key) means
     **nothing is pinned**, not "unchecked": a pending email Add is cancelled (`forged_key_change`, reason
@@ -2250,8 +2132,8 @@ address. D190, D191 and D193 are confirmed by the user (2026-11-02); D192 is sup
   chosen by whoever posts the key).
 
 ### D191. A weaker signer policy, and the order to change the pins around a policy upgrade
-- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); built, not deployed (`feat/email-login-5`, `pins.ts`
-  `policyFindings`) · Source: build of
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); built (`feat/email-login-5`, `pins.ts`
+  `policyFindings`), deployed on sandbox-dev 2026-11-02 · Source: build of
   `docs/email-login-spec.md` "Watchdog" ("critical on any difference, pause on a weaker policy") and "Signing key
   (staged)" ("Level 1 adds `cosign: […]` and `required: 2` before its upgrade executes")
 - **This overrides `docs/email-login-spec.md` line 867** ("Level 1 adds `cosign: […]` and `required: 2` before its
@@ -2317,7 +2199,8 @@ address. D190, D191 and D193 are confirmed by the user (2026-11-02); D192 is sup
   now: absolute thresholds work from the first day.
 
 ### D193. D139's unrecorded_wallets alert, and the email issuer in the governance diff
-- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); built, not deployed (`feat/email-login-5`) · Source: D139; build of
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); built (`feat/email-login-5`), deployed on sandbox-dev
+  2026-11-02 · Source: D139; build of
   `docs/email-login-spec.md` "Watchdog"
 - Decision: every run with `get_config().unrecorded_wallets == true` on an env that isn't a dev env (`local*`,
   `sandbox*`, the same rule as `@hana-id/env` `isDevEnv`) raises the critical condition `unrecorded_wallets` (alert
@@ -2330,6 +2213,63 @@ address. D190, D191 and D193 are confirmed by the user (2026-11-02); D192 is sup
   pending raise coming into force as scheduled is info.
 - Why: D139 asks for the alert on every non-dev env; the owner's immediate email issuer actions leave no pending
   state, like Google's (`issuer`, `issuer_keys`), so the diff is the only place they show.
+
+## Email login: user mail and link volume, 2026-11-02
+
+Decided in conversation before email login batch 4 (D194), and after the batch 5 and link-cap reviews (D200).
+
+### D194. User mail (email login codes) via SendGrid, not Resend
+- Date 2026-11-02 · Status: confirmed by the user as likely, final once the colleague agrees · Source: conversation
+  (before email login batch 4)
+- Decision: the email issuer sends login-code mail through SendGrid (v3 Mail Send API), which Hana already uses for
+  Hana Wallet and Wend. It replaces Resend for user mail (D87's provider). It sits behind the issuer's one sender adapter, so
+  a later switch is a new adapter, not a redesign. Same rules as D87: a dedicated sending subdomain with SPF, DKIM and
+  DMARC (SendGrid domain authentication), a send counts only when SendGrid accepts it (`202`), and its own API key
+  restricted to Mail Send, used only by the email issuer (not shared with Hana Wallet or Wend; a separate SendGrid
+  subuser if the account allows it, so reputation and suppression lists stay apart).
+- Not changed yet: the watchdog's alert email and the admin Worker's notices still name Resend (D87); whether they
+  move to SendGrid too is decided separately.
+- Why: one provider the team already operates and pays for; the adapter keeps the choice reversible.
+
+### D200. Link volume: a contract counter with hourly alarm thresholds, replacing the indexer scan
+- Date 2026-11-02 · Status: confirmed by the user: count and alarm, no refusal (option A, after review H1/H2);
+  contract and watchdog built; the watchdog deployed on sandbox-dev 2026-11-02 (it skips the check on the v2
+  contract), the contract not deployed (it comes with v3) · Source: batch 5 review (the FastNear scan reads about 13
+  logins per run at about 75 KB each, so it falls behind and pages on ordinary traffic); the link-cap review (H1, H2)
+- Threat, stated as it is (review H1): with a stolen email signing key alone (1-of-1 at launch) a thief can log
+  into every email-rooted wallet, log into every Google-rooted wallet that already has an email member, and link their own Google account into victims' email
+  wallets (case A, one Google account per victim and scope). Since D133 a link also needs the session key's signature,
+  so the key alone can't join an email identity to someone else's Google wallet. Only the last of the three makes new
+  links. The defence against a stolen key is its custody (KMS, a second signer, D121); the counter only detects bursts.
+- Decision: the contract counts every new link, immediate or pending (the combined login with a `link_jwt`, cases A
+  and B, and `link_identity`; not cancels, unlinks or lazy activations), in fixed UTC-hour windows, per scope and in
+  total, and **never refuses a link**. When a count is at or above its threshold after a link, the window records it
+  (`flagged_scopes`, `total_threshold_reached`) and the first crossing per window emits `link_threshold_reached`.
+  Defaults 50 per scope and 500 in total per hour, changed by the owner (council) with `set_link_thresholds`: a
+  lowering applies at once, a raise only after `governance_delay_ms` (a raised threshold could hide an attack). A view
+  (`get_link_stats`) reports the current and previous hours; the watchdog reads it each run and alerts when a
+  threshold is reached, and on a scheduled raise. The FastNear indexer scan (D192) is removed.
+- Window boundary (review L1): the windows are fixed hours, so a burst that straddles a boundary is split between two
+  windows and each half may stay under a threshold; the view keeps the previous hour so the watchdog can add them.
+- Why: exact, on chain, no third party or data budget, cheap (≈ 0.3 Tgas per link) while v3 isn't deployed.
+- Rejected: a refusing cap (option A+, built first). It bounded little (H1: the takeovers it was meant to brake need
+  more than the key), and anyone could burn it (H2: one Google account and one email looping `link_identity` and
+  `cancel_link`) and lock real users out of linking logins for the hour.
+- Built (contract, branch `feat/link-cap`): `get_link_stats`, `set_link_thresholds`, events `link_threshold_reached`
+  and `link_thresholds_set` (`docs/contract-interface.md` "Link volume: the hourly counter"). The view's `previous` is
+  `null` when the previous hour had no links; its `total_threshold_reached` also reads the thresholds in force, so a
+  lowered threshold shows at once. Per-scope counts are deleted lazily (each counted link deletes up to 4 older than
+  the previous hour). `set_link_thresholds` and the other v3 owner methods are on the API's never-relay list.
+- Built (watchdog, branch `feat/email-login-5`): the view is read with the chain snapshot, before the run is recorded
+  and its lock released; `link_threshold_reached` (critical, per flagged scope and for the total, keyed by window,
+  current and previous hour; alert only, the links went through), `link_volume_high` (warning, current total ≥ half
+  `total_per_hour`), `link_stats_unavailable` (warning: `missing` with an email issuer on chain, `malformed`, or
+  `read_failed`; open threshold alerts stay open while the view can't be read); a threshold raise (`link_thresholds`,
+  `pending_thresholds`) is a critical governance change, lowering a warning; playbook `link-volume`. The read is
+  isolated: a malformed or failing view marks only the link check, never the snapshot, so a shape mismatch after an
+  upgrade can't blind the Google and email cancels and pauses.
+- Not built: nothing on the contract or watchdog side. The watchdog is deployed (batch 5, 2026-11-02); the contract
+  goes out with v3.
 
 ## Batch C build, step C2 (`packages/oidc`), 2026-11-02
 
@@ -2398,6 +2338,112 @@ or allowed two readings. None changes a derivation path or an address.
   an unbounded fetch could hold a login for the Worker's whole time limit.
 - Rejected: the package writing the API's log format itself; an API wrapper module around the package.
 
+## Batch C3: hot DB expand, the gate on it, the CLI on it (2026-11-02)
+
+Readings made while building `docs/batch-c-build-plan.md` C3 on `feat/batch-c-3`, where `docs/batch-c-spec.md` left a
+detail open. Each follows the spec's intent; all five are **to confirm** by the user.
+
+### D205. Migration 0006 details: the baseline keeps policies as stored; four extra checks
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/migrations/0006_dashboard_expand.sql`) · Source: spec §Hot DB
+  "Migration 0006"
+- Decision: (1) the `migration.baseline` row lists each app's stored `auto_approve_policy` / `auto_approve_pending`
+  JSON (and their effective time, the raw-signing values and `suspended_by`) instead of their `policyId`: SQL can't
+  compute a `policyId` (SHA-256 of the canonical form), and the JSON is what drift detection (C5) derives it from.
+  (2) The insert and org/scope update triggers on `apps` also refuse a `publishable_key` whose prefix isn't the
+  scope's environment (the spec names this check only for `app_keys`; it is the "trigger" through which the legacy
+  column is still read). (3) A trigger keeps `scopes.environment` fixed. (4) `detail_json` columns must be valid JSON
+  and `org_security_contacts.email` lowercase (CHECKs). Also: the migration times are `unixepoch('now') * 1000`, the
+  backfilled keys' `created_at` is their app's, the baseline's request id is `migration-0006:<app id>`, and the
+  triggers are created after the backfill (which satisfies each).
+- Why: each only refuses rows the spec says must never exist (a test/live mix, a changed environment, malformed
+  ledger rows); none changes an existing row or answer.
+- Rejected: computing ids in the migration through a Worker step (a migration must be plain SQL that runs in order).
+- Forward obligation (C3 re-check): the `no_session` waiver (D206) reads the legacy D1 `usage` table, which C4 stops
+  writing and C4b's 0007 drops. Before 0007, C4 replaces that check with one that still sees new sessions (a hot-DB
+  marker the API writes beside the relay, not a Neon read); written in `docs/batch-c-build-plan.md` C4.
+
+### D206. CLI readings: environment, actor, waivers, one ledger row per write, no cancel command
+- Date 2026-11-02 · Status: to confirm; built (`scripts/lib/admin-apps.ts`, `admin-sql.ts`, `admin-settings.ts`) ·
+  Source: spec §CLI, §Guarded changes
+- Decision: `app:create` needs `--environment test|live` for a scope with no app yet (no default: the choice is
+  permanent for the scope) and takes the scope's own otherwise. The actor is `cli:<operator login>` (`hana` kind). The
+  `no_session` waiver is recorded as a candidate on the initial origins of an `app:create` that created the scope row
+  and is granted or dropped inside the announcement's own SQL (review M1: no check-then-write gap), fail closed: only
+  while `first_session_at` is NULL (the API writes it at every session-pool relay attempt, not only on a 200), no
+  origin of the scope's apps is or was in force other than the same `app:create`'s initial ones (an announced, due
+  `origin_add`, or an `app_origins` row in force), and no app of the scope has a vault share, a usage row or an
+  identity count. The same `app:create`'s initial origins don't count against each other, so each of them gets it.
+  CLI proposals never get the `loopback` waiver (the spec gives staff proposals none but `no_session`). The
+  `assigned_at` + `appChangeDelayMs` refusal applies to `app:create` on an existing scope too. Each write records one
+  `app_changes` row (a settings write that changes several things lists them under `parts`). A change whose clock has
+  passed but which the cron hasn't recorded yet counts as in force: it doesn't block a new proposal ("at most one
+  pending") and ends, not cancels, when removed. There is no `app:changes:cancel`: removing the origin or turning the
+  setting off cancels a pending change. `app:changes:announce` keeps a matured pending policy as the stored one before
+  writing the new pending one (as batch B's CLI did), and likewise a matured pending raw-signing value. Re-setting the
+  policy in force over a pending proposal also keeps a matured pending policy as the stored one before clearing the
+  columns (review H1: clearing them alone brought the older stored policy back with no delay). `--raw-sign approval`
+  is refused for a test app: the spec's "test apps never sign raw", which is D39 as amended on 2026-10-28 (the vault
+  refuses raw signing for every `pk_test_` app); refusing it at the CLI too is a C3 reading, to confirm.
+- The deployed API's build gates proposals (review M2): with `--remote`, every proposal and announcement first needs
+  `GET /v1/health` to report `hotDb` ≥ 6 (the batch C3 reads; `apps/api/src/apps.ts` `HOT_DB_SCHEMA`), because an older
+  API would treat a proposed origin as in force. The rollback floor is batch C3: running an older API on the 0006
+  database first needs `app:origins:park --yes` (deletes every origin row not in force, listing them in
+  `origin.parked`; `app:origins:unpark` restores exactly those, only while their change is still open, and
+  `app:origins:remove` closes a parked origin's change even with no row; `docs/operations.md` "Rolling the API back below batch C3").
+- Obligation for `apps/email-issuer` (branch `feat/email-login-4`), recorded here (review L4): it finds apps by
+  `apps.publishable_key` and checks only `status`. That is right on today's data (the trigger keeps `status` equal to
+  the bitmask; the column holds each app's first key), but it must move to `app_keys` (an unrevoked key),
+  `deleted_at IS NULL` and `suspended_by = 0` before batch C5 ships key rotation, revocation and app deletion. The
+  "no code reads `apps.publishable_key`" check (`apps/api/scripts/test/hot-db-reads.test.ts`) scans every
+  `apps/*/src` and allowlists `apps/email-issuer` until then.
+- Why: the spec's table lists the commands but not these edges; each choice keeps the CLI's writes the ones
+  `AdminRpc` will make, and never makes a change live sooner than the spec allows.
+
+### D207. CLI writes: the commit row first, everything else gated on it, read back
+- Date 2026-11-02 · Status: to confirm (settled by the M1 rehearsal, below); built and tested on SQLite · Source:
+  spec §RPC "CAS" applied to the CLI; batch B's settings guard; review L2 and its re-check
+- Decision: every CLI write is one `wrangler d1 execute --command` of several statements: first the write's
+  `app_changes` row, inserted only while the compare-and-swap predicate holds (the version read, or for settings also
+  every settings column as read); then the version bump with the same predicate and only if that row exists; then
+  every other statement only if that row exists. The CLI reads the row back and reports a stale write. No statement
+  depends on another's row count (`changes()`). The CAS is safe because D1 runs each query (one `--command`, all its
+  statements) as one implicit transaction: nothing else writes between the predicate and the bump, and a failing
+  statement aborts the whole write. (The CLI tests run each command statement by statement, with no transaction
+  around it, which shows the ordering needs nothing more within one writer.)
+- To confirm: the M1 rehearsal (`docs/operations.md` step 3) checks on a scratch remote D1 that a `--command` whose
+  last statement fails leaves its first one unapplied, and runs one CLI CAS write (`app:suspend`, `app:resume`)
+  through the real path; that settles this decision.
+- Rejected: a guard UPDATE followed by `WHERE changes() = 1` (relies on SQLite's per-connection row count across
+  statements); a bare version check on each later statement (`version = read + 1`), which another writer's bump to
+  the same number would satisfy.
+
+### D208. The vault endpoints' app cache keeps its 30 s
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/app-cache.ts` unchanged, `getAppByKey` filters) · Source:
+  spec §Hot DB "Login-path reads" ("any future app-config cache … TTL ≤ 10 s"); D78
+- Decision: D78's cache stays at 30 s. It caches what `getAppByKey` returns, the origins in force at the read, so it
+  never serves a pending origin early; one that comes into force is served from the next read (≤ 30 s late), and a
+  removal, suspension or key revocation reaches the vault endpoints within 30 s, as since D78. `GET /v1/app`, the
+  relay endpoints and the vault page don't use it.
+- Why: the spec's 10 s is for a future cache; this one predates it and its bound only delays what is already safe (an
+  activation) or what D78 accepted (a removal on the vault endpoints). Lowering it costs a D1 read per reload unlock
+  per 10 s per isolate; a one-line change if wanted.
+
+### D209. The gate keeps `scope_conflict` as a second check; `first_session_at` at the relay attempt
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/apps.ts`, `handlers.ts`, `login.ts`, `vault/*`) · Source:
+  spec §Hot DB "Login-path reads"
+- Decision: the batch B `scope_conflict` subquery is gone (replaced by `scopes.environment`, as the spec says), but
+  the gate still answers `403 scope_conflict` when the key's prefix names the other environment than its scope (only
+  a direct `app_keys` edit can produce it: the triggers refuse it otherwise). The dev-env partner calls and the
+  timings in success bodies follow `environment = 'test'` like the loopback rule. `first_session_at` is written when
+  a session-pool relay (`/v1/sessions`, `/v1/login`, `/v1/derive`, `/v1/sessions/revoke`) is about to be sent, beside
+  it (review M1; first built as "after a 200", which a lost answer or a timeout followed by `/v1/derive` would miss).
+  The hourly job also skips a `policy.ended` row already written (two `policy_set` changes due in one run, review
+  L1). The hourly job
+  cancels (`system`, reason `not_in_force`) a due change whose value is no longer pending or stored in `apps`, rather
+  than recording it active.
+- Why: a test key's dev-env privileges must never reach a live scope even after a manual write; the `no_session`
+  waiver must fail closed, so any attempt to open a session ends it.
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -2419,13 +2465,13 @@ or allowed two readings. None changes a derivation path or an address.
 | Sodax Stellar `signAndSendTransaction(p)` is `sendTransaction(signTransaction(p.data))` | It signs as `p.from`: `sendTransaction(signTransaction(p.data, {address: p.from}))`, so a raw transaction built for another account (a muxed `M…` address included) is 4100 before any popup. Sodax builds every raw transaction for `getWalletAddress()`'s `G…` address. Confirmed (D67) | `docs/batch-b-spec.md` "Sodax adapter"; `packages/sodax/src/stellar.ts` |
 | `/login` calls `GET /v1/app` itself and cross-checks the vault's signer, scope and client before Google (batch B "Login" step 4) | It checks the pinned signer and the nonce only, makes no API call, and shows the vault's app name (D77) | `docs/security.md` "The login popup trusts the vault's app facts" |
 | Every approval popup opens from the vault's "Review in Hana" launcher (batch B "Approval flow" steps 1–2) | A signing call from a click opens it in that click (`/approve?from=partner&v=…`); the launcher is the fallback without user activation or when `window.open` returns null (D99) | `docs/batch-b-spec.md` "Approval flow" |
-| CODEOWNERS on derivation, vectors, the contract and the env schema (D58) | Also `/envs/`, the API, web, core and watchdog sources, `scripts/`, lockfiles, `.gitleaks.toml`, `.githooks/`, `.github/`; a second owner to add (D100) | `.github/CODEOWNERS` |
+| CODEOWNERS on derivation, vectors, the contract and the env schema (D58) | Also `/envs/`, the API, web, core and watchdog sources, `scripts/`, lockfiles, `.gitleaks.toml`, `.githooks/`, `.github/`; two owners, `@tzechuen` and `@mj-hana` (D100) | `.github/CODEOWNERS` |
 | One global owner-action cap (20/min, 200/day); the relay quota counted in the gate, before verification | Caps per owner, per scope and global, `execute_change` and `cancel_change` on windows of their own; the relay quota counted right before the relay (D100) | `docs/api.md` "Rate limits" |
 | `fetch-ckd-key` reads the CKD key from the manifest's `rpc` | From ≥ 3 independent providers at one final block, all agreeing, with the block recorded (D100) | `docs/operations.md` "Create an environment" step 3 |
 | Stellar classic operations other than changeTrust, payment and createAccount shown by type with their raw XDR (batch B "Approval flow" step 4) | Every operation decoded field by field; account-control operations get a red banner and per-operation warning and are never auto-approved (D110) | `packages/core/src/decode/stellar.ts` |
 | The export window shows the key while a button is held until the window closes (batch B "Key export" step 5) | The key is erased 5 min after it is derived or when the session ends, whichever is first; a new export needs a new sign-in (D111) | `packages/web/src/auth/export-page.ts` |
 | The vault persists (share, record) before it replies to `hana_login` (batch B "Login" steps 11–12) | It replies first; the share and record follow in the background, and a failure turns `persistence` to `'none'` (`persistenceChanged`, D79) | `packages/web/src/vault/vault.ts` `persistLogin` |
-| Email login deferred (D4) | Confirmed: a Hana-run issuer (D4, D119, D121–D123), not built | `docs/email-login-spec.md` |
+| Email login deferred (D4) | Confirmed: a Hana-run issuer (D4, D119, D121–D123); contract v3, `packages/email` and the watchdog part merged, the issuer not yet (`docs/email-login-build-plan.md`) | `docs/email-login-spec.md` |
 | Hana requests only `scope=openid` from Google (D25) | The on-chain token stays openid-only; the popup also requests `email`, which the issuer handles transiently off chain at link time, keeping only an HMAC (D25 amended) | `docs/email-login-spec.md` "How the popup gets Google's verified email" |
 | End users are never contacted by Hana (D96) | Still no stored address; Hana sends only sign-in codes and link notices the user's action triggered (D96 amended) | `docs/email-login-spec.md` "Notices" |
 | Email spec draft: AWS KMS key from the start, single-signature tokens | Worker-secret key on testnet, AWS KMS before mainnet; a signer policy and multi-signature JWS JSON tokens from day one (D121) | `docs/email-login-spec.md` "Signing key (staged)" |
@@ -2452,7 +2498,9 @@ paging app (D85, at setup), and open question 17 (cancel by a compromised OIDC o
 `docs/batch-c-spec.md`: Q1, Q3, Q4's fallback addresses, Q5 (D93). Everything else in both specs follows D80–D93 or
 is a proposal there.
 
-Still open from `docs/email-login-spec.md`: nothing; the user-mail provider is SendGrid (D194). The contract readings
+Still open from `docs/email-login-spec.md`: the user-mail provider. D194 names SendGrid, provisional until the
+colleague agrees; whether the watchdog's alert email and the admin Worker's notices move from Resend (D87) too is
+decided separately. The contract readings
 D130 and D131, batch 2's D154 and D155, and the `packages/email` readings D156–D159 are confirmed (2026-11-02).
 The watchdog's D190, D191 and D193 (batch 5) are confirmed (2026-11-02); D192 is superseded by D200.
 To confirm from batch C step C2 (`packages/oidc`): D201 (the new claims typed on request, ignored by the API), D202

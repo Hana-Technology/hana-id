@@ -950,7 +950,7 @@ const linkVolume: Playbook = {
       title: 'Only if the alarm level is wrong for real traffic: change the threshold',
       who: 'council (2 of 3)',
       detail:
-        "A launch needs nothing (its links went through). If ordinary traffic keeps crossing the alarm, the council changes the threshold with `set_link_thresholds` (an owner action; `admin <env> owner:call` once the scripts list it): lowering applies at once, raising waits `governance_delay_ms` (72 h on mainnet) and pages as a `governance_change` (`pending_thresholds`) when proposed.",
+        "A launch needs nothing (its links went through). If ordinary traffic keeps crossing the alarm, the council changes the threshold with `set_link_thresholds` (an owner action, through `admin <env> owner:call set_link_thresholds`): lowering applies at once, raising waits `governance_delay_ms` (72 h on mainnet) and pages as a `governance_change` (`pending_thresholds`) when proposed.",
     },
   ],
   verify: ['The next hours show `link_stats.current.total` under the thresholds and the alerts resolve after the window passes.', 'A compromise: the email key is gone from `get_issuer("email")` and the contract stays paused until the recovery order is done.'],

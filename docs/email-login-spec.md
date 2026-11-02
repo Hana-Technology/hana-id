@@ -1,6 +1,6 @@
 # Email login and account linking spec (pre-mainnet)
 
-**Status: APPROVED (2026-10-30); batch 1 (the contract) built on `feat/email-login-1`, the rest not built.** Every
+**Status: APPROVED (2026-10-30); build-plan batches 1–3 and 5 merged (contract v3 not deployed; the watchdog part deployed on sandbox-dev 2026-11-02), batch 4 (the issuer) on a branch, the rest not built (`docs/email-login-build-plan.md`).** Every
 open question is answered (below and [Open questions](#open-questions-for-the-user)): `docs/decisions.md` D4
 (confirmed), D119, D121–D123, and the amendments to D25 and D96. **Amended 2026-10-30 after the batch 1 build and its
 security review** (D130–D136; the current contract is `docs/contract-interface.md`): `opened` is recorded at

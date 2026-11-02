@@ -551,6 +551,13 @@ describe('gas', () => {
     expect(gasFor('create_session_and_derive', { GAS_CREATE_SESSION_AND_DERIVE_LINKED_TGAS: '280' }, { link_jwt: '{}' })).toBe(280n * TGAS);
     expect(gasFor('create_session_and_derive', { GAS_CREATE_SESSION_AND_DERIVE_LINKED_TGAS: '280' }, {})).toBe(150n * TGAS);
     expect(gasFor('create_session_and_derive', { GAS_CREATE_SESSION_AND_DERIVE_TGAS: '120' }, { link_jwt: '{}' })).toBe(BigInt(LINKED_LOGIN_TGAS) * TGAS);
+    // Each token signature beyond the default's (a 2-of-2 email token): +70, capped at 300 (review L1).
+    const two = JSON.stringify({ payload: 'p', signatures: [{}, {}] });
+    expect(gasFor('cancel_link', {}, { jwt: two })).toBe(220n * TGAS);
+    expect(gasFor('create_session', {}, { jwt: two })).toBe(170n * TGAS);
+    expect(gasFor('create_session', {}, { jwt: 'a.b.c' })).toBe(100n * TGAS);
+    expect(gasFor('create_session_and_derive', {}, { jwt: 'a.b.c', link_jwt: two })).toBe(300n * TGAS);
+    expect(gasFor('link_identity', { GAS_LINK_IDENTITY_TGAS: '200' }, { account_jwt: two, new_jwt: two })).toBe(200n * TGAS);
     for (const m of POOL_METHODS.owner) expect(DEFAULT_GAS_TGAS[m], m).toBe(m === 'register_scope' ? registerScopeTgas(MAX_CLIENT_PROOFS) : 50);
     expect(gasEnvVar('derive_key')).toBe('GAS_DERIVE_KEY_TGAS');
     expect(gasFor('derive_key', {})).toBe(60n * TGAS);

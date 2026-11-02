@@ -8,7 +8,7 @@
 // authority anyway. Nothing of a token is ever logged.
 import { base64UrlDecode } from './bytes.ts';
 import type { Env } from './env.ts';
-import { type SelfIssuedView, getSelfIssued } from './link-views.ts';
+import { type SelfIssuedView, getSelfIssued, pendingKeyAdds } from './link-views.ts';
 import { MAX_JWT } from './validate.ts';
 
 /** The email provider name: in every email path (`{scope}#email#{sub}#{key_index}`), frozen. */
@@ -36,7 +36,12 @@ export type EmailVerifyFailure =
   | 'unsupported_issuer'
   | 'token_expired'
   /** A published key that isn't active on chain yet (still in its governance delay): retry later. */
-  | 'issuer_key_pending';
+  | 'issuer_key_pending'
+  /**
+   * A kid no current signer lists and no pending change adds (removed, a dropped signer's, or a token only the
+   * previous policy of an overlap accepts): waiting won't help; a fresh token from the issuer may (review L2).
+   */
+  | 'token_stale';
 
 export type EmailVerifyResult = { ok: true; token: VerifiedEmailToken } | { ok: false; code: EmailVerifyFailure; error: string };
 
@@ -183,7 +188,13 @@ export async function verifyEmailToken(env: Env, token: string, now: number, ske
   const policy = await getSelfIssued(env, EMAIL_PROVIDER, kids, now);
   if (!policy) return fail('unsupported_issuer', 'Email login is not set up on chain');
   const judged = policyAccepts(policy, kids);
-  if (judged === 'pending') return fail('issuer_key_pending', 'The token’s signing key is not active on chain yet, try again shortly');
+  if (judged === 'pending') {
+    // Only a kid a pending change adds is worth waiting for.
+    const unlisted = kids.filter((k) => !policy.signers.some((sg) => sg.kids.includes(k)));
+    const pending = await pendingKeyAdds(env, EMAIL_PROVIDER);
+    if (unlisted.every((k) => pending.has(k))) return fail('issuer_key_pending', 'The token’s signing key is not active on chain yet, try again shortly');
+    return fail('token_stale', 'The token is signed by a key that is no longer a current signer’s: sign in again');
+  }
   if (judged === 'not_enough') return fail('invalid_token', 'Not enough signatures');
   return { ok: true, token: { provider: EMAIL_PROVIDER, kids, iss, aud, sub, exp, nonce: nonceValue } };
 }

@@ -5,6 +5,7 @@ import { clearGovernanceCache } from '../src/governance-status.ts';
 import { clearJwksCache } from '@hana-id/oidc';
 import { clearNotedTokenKids } from '../src/key-observations.ts';
 import { clearLinkViewCaches } from '../src/link-views.ts';
+import { clearPanicCache } from '../src/panic-cache.ts';
 import { clearViewCaches } from '../src/views.ts';
 import { resetLedger } from './usage-ledger.ts';
 
@@ -18,6 +19,7 @@ beforeEach(() => {
   clearNotedTokenKids();
   clearViewCaches();
   clearLinkViewCaches();
+  clearPanicCache();
   clearGovernanceCache();
   // The usage ledger is in memory (usage-ledger.ts): empty, and the fake transport back in place, for every test.
   resetLedger();

@@ -85,15 +85,8 @@ export interface Env {
   /** The logo origin (manifest `files.origin`), from batch C11; unset without the dashboard blocks. */
   FILES_ORIGIN?: string;
   /**
-   * Email login (manifest `emailIssuer`, scripts/gen-wrangler.ts): the email tokens' `iss` and the issuer's public keys
-   * (a JSON array of public RSA JWKs, the JWKS the issuer serves, D196). Without them every email token is refused
-   * (`unsupported_issuer`); Google logins are unaffected.
-   */
-  EMAIL_ISS?: string;
-  EMAIL_PUBLIC_KEYS?: string;
-  /**
    * Batch C4 (docs/batch-c-spec.md "Usage capture"): the usage ledger's writer, a Hyperdrive config (role
-   * `usage_writer`, which may only call `usage.record_event`, `usage.record_identity_tokens` and `usage.ensure_partitions`) bound by
+   * `usage_writer`, which may only call `usage.record_event`, `usage.record_identity_tokens`, `usage.record_email_counts` and `usage.ensure_partitions`) bound by
    * `gen --usage-hyperdrive-id`. Optional: without it capture is off and every endpoint answers as before.
    */
   USAGE_DB?: Hyperdrive;
@@ -102,6 +95,13 @@ export interface Env {
    * it events carry no uid (MAU and new users go uncounted). Never logged, never rotated within a contract term.
    */
   USER_ID_KEY?: string;
+  /**
+   * Email login (manifest `emailIssuer`, scripts/gen-wrangler.ts): the email tokens' `iss` and the issuer's public keys
+   * (a JSON array of public RSA JWKs, the JWKS the issuer serves, D196). Without them every email token is refused
+   * (`unsupported_issuer`); Google logins are unaffected.
+   */
+  EMAIL_ISS?: string;
+  EMAIL_PUBLIC_KEYS?: string;
   /** Optional per-method gas overrides in Tgas (see gas.ts), e.g. GAS_DERIVE_KEY_TGAS. */
   [gasOverride: `GAS_${string}_TGAS`]: string | undefined;
   DB: D1Database;

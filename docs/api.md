@@ -185,11 +185,13 @@ Seeded plan `free`: `per_minute` 60, `per_day` 5000, `per_ip_minute` 20.
 
 ### `GET /v1/health`
 
-No auth, no limits, `access-control-allow-origin: *`. → `200 {"ok": true, "env": ENV_NAME, "signer": SIGNER_ACCOUNT, "hotDb": 9, "requestId"}`.
+No auth, no limits, `access-control-allow-origin: *`. → `200 {"ok": true, "env": ENV_NAME, "signer": SIGNER_ACCOUNT, "hotDb": 9, "capabilities": {"createProof": true}, "requestId"}`.
 `hotDb` is the hot-DB migration the build needs (`apps.ts` `HOT_DB_SCHEMA`; 6 from batch C3, 9 from batch C4 (the
 session markers it writes), absent before): the admin CLI refuses guarded proposals on `--remote` until the deployed
 API reports ≥ 6, and announcements until it reports ≥ 9.
 
+`capabilities` (L, D250): what this build does that deploy tooling checks; `createProof: true` (`/v1/sessions` requires
+and relays create_session's proof of possession, D137). `deploy-contract --upgrade` refuses without it.
 ### `GET /v1/governance` · G
 
 No auth, no limits, `access-control-allow-origin: *`, `cache-control: public, max-age=10`. Read-only: it reads
@@ -303,7 +305,7 @@ when the scope has `allow_shared`.
 
 ### `POST /v1/sessions` — relays `create_session` (session pool)
 
-Body (extra keys ignored, except `scopeId` / `scope_id`, which are refused):
+Body: exactly the fields below (anything else, `scopeId` and `linkJwt` included, is `400 bad_request`, D250):
 
 | Field | Type | Rule |
 |---|---|---|
@@ -318,7 +320,7 @@ Body (extra keys ignored, except `scopeId` / `scope_id`, which are refused):
 The scope is always the app's (D1). Checks after the gate and shape (`400 bad_request`):
 
 1. An email token (L): "Email tokens" below (`401 invalid_token`, `400 unsupported_issuer`, `400 token_expired`,
-   `503 issuer_key_pending` + `retry-after: 30`, `502 near_unavailable`, `403 login_method_disabled` for an app whose
+   `503 issuer_key_pending` + `retry-after: 30`, `401 token_stale`, `502 near_unavailable`, `403 login_method_disabled` for an app whose
    `login_methods` doesn't list `email`, `503 config_unavailable`). A Google token: RS256 against Google's JWKS, `iss` → provider, `exp` + 60 s skew: `401 invalid_token`, `400 unsupported_issuer`,
    `400 token_expired`, `503 issuer_keys_unavailable` (`verifyIdToken`, `packages/oidc`); an `exp` that isn't a
    finite number is `401 invalid_token`. `email`, `email_verified`, `iat`, `hd`, `azp`, `amr` and `auth_time` are
@@ -329,14 +331,19 @@ The scope is always the app's (D1). Checks after the gate and shape (`400 bad_re
 3. `nonce` equals the session nonce recomputed with `SIGNER_ACCOUNT` and the app's scope (`400 nonce_mismatch`).
 3b. (L) `signature` verifies as the proof of possession for exactly these parameters (`401 invalid_signature`): only
    the session key's holder can open a session, and a proof seen once can't open the key with other parameters.
+3c. (L, D250) The same request already refused by the chain for `link_pending` or `identity_linked` in this isolate in
+   the last 60 s is answered the same way, without a relay. Beside step 4's reads, once links can exist
+   (`get_config().links_open`): the session identity's `get_identity`; a pending member is `409 link_pending` (fails
+   open when it can't be read).
 4. Side by side: client → scope (`403 scope_mismatch` / `unregistered_client` / `unknown_scope` /
    `shared_login_disabled`), `session_key_in_use` (`409 session_exists`), and the governance gate (G, below); read
    failure `502 near_unavailable`. Reported in that order.
 5. The app's relay quota (`429 rate_limited` + `retry-after`), counted only here.
 
 → `200 {"result": {"path", "scope_id", "expires_at_ms", "max_uses", "used"}, "nearTx", "requestId"}`. Usage event:
-`session` (uid from the new session's `path`); with an email token also `email_usage.email_sessions` (L). A failed
-relay's email-login panics are answered as in "Relay errors" (`409 link_pending` for a pending member).
+`session` (uid from the new session's `path`).
+With an email token also `email_usage.email_sessions` (L, copied hourly to the ledger, D233). A failed relay's
+email-login panics are answered as in "Relay errors" (`409 link_pending` for a pending member).
 
 **Governance gate (G, `handlers.ts` `chainGate`; also on `/v1/login`, and the pause part on `/v1/derive`).** The
 contract would refuse these, so nothing is relayed:
@@ -436,7 +443,9 @@ failing receipt's executor:
 | 502 | `near_error` | another receipt, or none identified |
 
 Usage event: `login` (uid from the login's path on success; `ckd_failed` is a rejected, relayed event: its gas was
-burnt); with an email token also `email_usage.email_sessions`, with a link `email_usage.links` (L, on success).
+burnt).
+With an email token also `email_usage.email_sessions`, with a link `email_usage.links` (L, on success; copied
+hourly to the ledger's `usage.email_counts`, D233).
 
 ### Email tokens · L
 
@@ -453,11 +462,13 @@ anything is relayed:
 3. Each signature RS256-valid with its kid's key in `EMAIL_PUBLIC_KEYS` (the manifest's `emailIssuer.publicKeys`, the
    keys the issuer's JWKS serves; never fetched) (`401 invalid_token`).
 4. The signer policy on chain, `get_self_issued("email")` (cached 60 s; an unlisted kid re-reads it at most every
-   10 s per isolate): every kid listed under one of its signers (else `503 issuer_key_pending`, `retryAfterS: 30`: the
-   key is still in its governance delay), at least `required` distinct signers (`401 invalid_token`, "Not enough
-   signatures"); no policy (`null`) is `400 unsupported_issuer`, a contract without the view (v2) `502
-   near_unavailable`. A token only the previous policy of an overlap accepts is refused (D231).
-5. The app's `login_methods` lists `email` (`403 login_method_disabled`; D1 failure `503 config_unavailable`).
+   10 s per isolate): every kid listed under one of its signers, else `503 issuer_key_pending` (`retryAfterS: 30`)
+   when a pending change adds it (`get_key_changes`, cached 10 s: the key is still in its delay) and `401 token_stale`
+   otherwise (removed, a dropped signer's, or a token only an overlap's previous policy accepts, D250); at least
+   `required` distinct signers (`401 invalid_token`, "Not enough signatures"); no policy (`null`) is `400
+   unsupported_issuer`, a contract without the view (v2) `502 near_unavailable`.
+5. The app's `login_methods` lists `email` (`403 login_method_disabled`; D1 failure `503 config_unavailable`), except on
+   `/v1/link/cancel` and `/unlink`, which take an email token whatever it says (D250).
 
 Then the caller checks `aud` against the scope (`scope_for_client("email", aud)`: the scope's client
 `email:<scope_id>`; an email client is never shared) and the nonce, as for a Google token. The governance gate's kid
@@ -491,11 +502,17 @@ app's scope; the governance gate (paused, a Google kid active); then the contrac
 - `/v1/link/unlink`: an active member of the acting identity's account (`no_such_member`, `cannot_unlink_root` for the
   root), the `link_change` "unlink" nonce, by the root or the member itself (`not_allowed`), `stale_epoch`.
 
-Then the link quota (`429 rate_limited`), the relay, and on success the account's vault shares are revoked in every
-app of the scope (those of the account root's path at `key_index` 0..63, D233; logged `link_shares_revoked` with a
+Then the claim and the limits (D250, D252): one relay per set of tokens (sha256 of them reserved in the `link-tokens`
+object for 10 minutes, released when the relay certainly didn't execute; a duplicate is `409 link_in_flight`); per
+account root (`link-root:<scope>:<root ik>`) 3 adds a minute and 20 a day, 10 removals a minute and 100 a day; per app
+30 adds a minute and 1000 a day; across apps 5000 adds a day (`link-global`); all `429 rate_limited` above. The app's
+removal windows (60 a minute, 2000 a day) only log `link_changes_high`, never refuse. Then the relay (gas per "Relayer
+pools and gas"), and on success the account's vault shares are revoked in every app of the scope (a convenience that
+signs other devices out, not a security boundary: security.md) (those of the account root's path at `key_index` 0..63, D233; logged `link_shares_revoked` with a
 count, a failure `link_shares_revoke_failed`, never failing the answer). → `200 {"result": {"effectiveAtMs"}, "nearTx",
 "requestId"}` for `/v1/link` (when the link becomes active), `{"result": null, …}` for the other two. Usage: a link
-(`email_usage.links`) for `/v1/link` only. Failed relays as in "Relay errors".
+(`email_usage.links`) for `/v1/link` only; every request past the gate is one usage event (endpoints `link`,
+`link_cancel`, `link_unlink`, with its relay facts; migrations-usage 0005). Failed relays as in "Relay errors".
 
 ### `/v1/login-relay/<relayId>` — Durable Object `LoginRelay` · B
 
@@ -952,7 +969,8 @@ Gas attached (Tgas; `GAS_<METHOD>_TGAS` var overrides with an integer 1..300, in
 `create_session` 100, `create_session_and_derive` 150 (250 with a `link_jwt`, override
 `GAS_CREATE_SESSION_AND_DERIVE_LINKED_TGAS`), `derive_key` 60, `revoke_session` 20, `prune_sessions` 50,
 `link_identity` 250, `cancel_link` and `unlink_identity` 150 (the session and link values cover 4096-bit issuer keys,
-D155), owner methods 50, `register_scope` 30 + 25 per proof (max 300). The cron's calls use 30 Tgas with `KEYS_UPDATER_KEY` (on
+D155), plus 70 per token signature beyond what the default covers (a 2-of-2 email token: one per token at the
+default; D250), owner methods 50, `register_scope` 30 + 25 per proof (max 300); every value capped at 300. The cron's calls use 30 Tgas with `KEYS_UPDATER_KEY` (on
 `SIGNER_ACCOUNT`, not a pool).
 
 **Updater key (G).** `KEYS_UPDATER_KEY` signs only `UPDATER_METHODS` = `set_issuer_key`,
@@ -1032,9 +1050,9 @@ this key's public key, start at R with no chain read (skips up to 99 nonces) and
 | `app_changes` (C) | `seq` PK, `at`, `org_id`, `app_id`, `scope_id`, `kind`, `detail_json` (valid JSON, allowlisted fields), `actor_kind` `member`/`hana`/`system`/`link`, `actor_id`, `actor_sub`, `request_id` UNIQUE. Append-only: UPDATE refused, DELETE refused until a row is 60 months old (triggers). 0006 wrote one `migration.baseline` row per app (its origins, stored policies as stored, raw-signing values, suspension) | 0006 |
 | `security_events` (C) | `id` PK, `detected_at`, `kind` `drift`/`breaker`/`owner_cap`/`owner_allowance_low`, org/app/scope, `detail_json`, `notified_at` | 0006 |
 | `org_security_contacts` (C) | (`org_id`, `email` lowercased) PK, `added_by`, `added_at` | 0006 |
-| `apps` (added, L) | `login_methods` `'google'` (default) / `'email'` / `'google,email'` (CHECK): the sign-in methods the app offers (read only by `GET /v1/app` and for email tokens, never in the gate; the email issuer reads it too) | 0010 |
-| `email_usage` (L) | (`app_id` → apps, `day` `YYYY-MM-DD` UTC) PK, `email_sessions`, `links`: email logins and new links per app and day, out of the legacy `usage` table (D233; batch C4 takes them over) | 0010 |
 | `session_markers` (C) | `app_id` PK → apps, `first_at` ms: written once, when the relay of a session-pool request on a scope with no `first_session_at` settled; the `no_session` waiver's sign besides `first_session_at` (D220). No user data | 0009 |
+| `apps` (added, L) | `login_methods` `'google'` (default) / `'email'` / `'google,email'` (CHECK): the sign-in methods the app offers (read only by `GET /v1/app` and for email tokens, never in the gate; the email issuer reads it too) | 0010 |
+| `email_usage` (L) | (`app_id` → apps, `day` `YYYY-MM-DD` UTC) PK, `email_sessions`, `links`: email logins and new links per app and day, as `identity_usage`; copied hourly to the ledger's `usage.email_counts` (D233) | 0010 |
 | `vault_shares` | `share_id` BLOB(16) PK, `app_id`, `session_pk` BLOB(32) UNIQUE, `path_hash` = sha256(path), `partner_origin`, `share_enc` = iv ‖ AES-GCM(KEK, K_s, aad = share_id ‖ app_id ‖ session_pk), `kek_id`, `counter`, `created_at`, `idle_until`, `abs_expires_at`, `revoked_at`; indexes (`app_id`, `path_hash`), `abs_expires_at`, `kek_id` | 0003 |
 
 ## Cron (`*/15 * * * *`)
@@ -1079,6 +1097,9 @@ jobs (one failing doesn't skip the others):
   the last 7 UTC days of `identity_usage` (with each app's org and scope) to `usage.identity_tokens` through
   `usage.record_identity_tokens` (500 rows a call), which keeps the larger count per app and day; a failure is logged
   (`identity_usage_sync_failed`) and repaired by the next run. It never fails the cron run (D223).
+- **Email counts to the usage ledger, the same hourly run** (`usage/email-sync.ts`, L): the same for `email_usage`
+  (email sessions and new links per app and day) into `usage.email_counts` through `usage.record_email_counts`
+  (migrations-usage 0004; the larger count of each column kept); `email_usage_sync` / `email_usage_sync_failed` (D233).
 - **Guarded changes, the same hourly run** (`guarded/cron.ts`, C): nothing waits for it (an origin is in force by
   `active_from <= now`, a policy or raw signing by batch B's `*_effective_at`), so it changes no answer the gate gives.
   For each announced pending change whose `active_from` has passed (≤ 100 a run): records it once (`status = 'active'`,

@@ -346,6 +346,16 @@ describe('0006 on a sandbox-dev-shaped database (0001–0005 and 0008 applied, t
     await db.prepare("UPDATE apps SET suspended_by = 0 WHERE id = 'app_bare'").run();
     expect(await db.prepare("SELECT status FROM apps WHERE id = 'app_bare'").first()).toEqual({ status: 'active' });
   });
+
+  // Last in this block: it applies the later files on the same database.
+  it('then the later files apply in name order (0009 batch C4, 0010 email login), every app Google-only', async () => {
+    await applyD1Migrations(db, ALL);
+    const { results } = await db.prepare('SELECT name FROM d1_migrations ORDER BY id').all<{ name: string }>();
+    expect(results.map((r) => r.name).slice(-3)).toEqual(['0006_dashboard_expand.sql', '0009_session_markers.sql', '0010_login_methods.sql']);
+    const methods = await db.prepare('SELECT DISTINCT login_methods FROM apps').all<{ login_methods: string }>();
+    expect(methods.results.map((r) => r.login_methods)).toEqual(['google']);
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM email_usage').first()).toEqual({ n: 0 });
+  });
 });
 
 describe('0006 refuses a scope that mixes test and live keys', () => {

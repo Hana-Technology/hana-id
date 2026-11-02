@@ -176,6 +176,20 @@ describe('an email login', () => {
     expect(u.browser.backend.count('/v1/login')).toBe(0);
   });
 
+  it.each([
+    ['link_pending', 409, 'link_pending'],
+    ['identity_linked', 409, 'login_method_unavailable'],
+    ['token_stale', 401, 'token_invalid'],
+    ['login_method_disabled', 403, 'login_method_unavailable'],
+  ])('the API’s %s refusal ends the login with %s (batch 6’s final codes)', async (code, status, expected) => {
+    const b = emailBrowser();
+    b.backend.overrides.set('/v1/login', () => new Response(JSON.stringify({ error: 'refused', code, requestId: 'rq' }), { status }));
+    const t = await tab(b);
+    const { reply } = await emailLogin(t);
+    expect(reply.error?.code).toBe(expected);
+    if (code === 'identity_linked') expect(reply.error?.data).toMatchObject({ reason: 'identity_linked' });
+  });
+
   it('the scope’s email client must be this scope on chain', async () => {
     const b = emailBrowser();
     b.backend.clientScopes.set(`email|email:${SCOPE}`, 'other');

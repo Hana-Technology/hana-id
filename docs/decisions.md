@@ -8,8 +8,8 @@ change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 (branch `feat/e
 `feat/link-cap`, `feat/email-login-5`) on 2026-11-02; D201–D203 (branch `feat/batch-c-2`) on 2026-11-02; D205–D209
 (branch `feat/batch-c-3`, to confirm) on 2026-11-02. D215–D219 (branch `feat/identity-token-7`, to confirm) on
 2026-11-02. D210–D214 (branch `feat/identity-token-8`, to confirm, amended after its review the same
-day) on 2026-11-02. D230–D234 (branch `feat/email-login-6`, to confirm) on 2026-11-02, with batch 6 notes on D137, D154, D155,
-D199 and D206. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
+day) on 2026-11-02. D230–D234, D250–D252 (branch `feat/email-login-6`, to confirm) on 2026-11-02, with batch 6 notes on D137,
+D154, D155, D199 and D206. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
 provider note, two "Superseded or amended" rows, the user-mail line under "Proposed", and the headings from D125 on, checked against `develop` @ 1c6a124 and what sandbox-dev runs (`docs/operations.md`) on
 2026-11-02 (branch `docs/consistency-pass`); no decision changed. D220–D224 (branch `feat/batch-c-4`, to confirm) on
 2026-11-02. D245–D249 (branch `feat/email-login-8a`, to confirm) on 2026-11-02.
@@ -1642,7 +1642,8 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   logins (the API reads `app_keys`), but the issuer refuses it at once.
 - Still owed (D206): the issuer moves to `app_keys` (`revoked_at` NULL or in the future), `deleted_at IS NULL` and
   `suspended_by = 0`, which also gives email logins the grace. Its `apps/email-issuer` allowlist entry in the source
-  check stays until then.
+  check stays until then. Done in email login batch 6 (D233): the issuer reads only `app_keys`, so the tombstone in the
+  legacy column matches nothing there either, and the allowlist entry is gone.
 - Rejected: blocking rotation and deletion per app (not detectable on develop); pointing the column at the newest key
   (a second key created for a migration would break the first one's email logins).
 
@@ -3384,11 +3385,18 @@ five are **to confirm** by the user. None changes an address: no path, derivatio
     statement). The SDK uses `key_index` 0; a share at a higher index ends at its own absolute limit (≤ 12 h by
     default), as a share does after a direct contract call that skips the API. A failed revocation is logged
     (`link_shares_revoke_failed`), never fails the answer (the change is already on chain).
-  - **Usage** (minimal, for batch C4 to take over): `email_usage (app_id, day, email_sessions, links)` in migration
-    0010, out of the legacy `usage` table that C4b's 0007 drops, like `identity_usage` (D172). An email session is
-    counted at a successful `/v1/login` or `/v1/sessions` with an email token; a link at a successful linked login or
-    `/v1/link` (as the contract's counter counts links, D200; cancels and unlinks aren't links). One function
-    (`countEmailUsage`), one call per endpoint: C4 replaces it as it copies `identity_usage` (D223).
+  - **Usage**, on batch C4's model for counts (D223, amended at the merge of C4 into this branch): every
+    `/v1/login` and `/v1/sessions` request is already one usage event of its endpoint in the Neon ledger (an email
+    login included); what the spec adds, how many were email logins and how many made a link, is counted in the hot DB
+    (`email_usage (app_id, day, email_sessions, links)`, migration 0010, as `identity_usage`, D172) and copied by the
+    hourly cron to the ledger's `usage.email_counts` through `usage.record_email_counts` (migrations-usage 0004, the
+    writer's fourth function; the larger count per column kept, the last 7 days each run; `src/usage/email-sync.ts`).
+    An email session is counted at a successful `/v1/login` or `/v1/sessions` with an email token; a link at a
+    successful linked login or `/v1/link` (as the contract's counter counts links, D200; cancels and unlinks aren't
+    links). Chosen over new ledger event fields or endpoint values: those change the CHECK of the partitioned events
+    table and every event's shape, the reason D223 gave for the identity counts. Not covered yet: the link relays
+    (`/v1/link*`) are not usage events (their relayed gas isn't in the ledger); adding them needs ledger endpoint values,
+    left for the reporting batch (C12).
   - **The issuer's app lookup** (D206's obligation, D225's "still owed"): the key is an `app_keys` row not revoked or
     still in its rotation grace (`revoked_at` NULL or in the future), the app not deleted (`deleted_at IS NULL`), and
     active only with `suspended_by = 0` and `status = 'active'`, exactly the API gate's rule. `apps.publishable_key`
@@ -3397,10 +3405,14 @@ five are **to confirm** by the user. None changes an address: no path, derivatio
 - Rejected: a new `vault_shares` column naming the account root (a hot-DB schema change, batch C's); counting email
   logins in the legacy `usage` table (C4b drops it).
 
-### D234. Batch 6's deploy order, corrected: the D1 migration before the issuer, the email clients in batch 8
+### D234. Batch 6's deploy order, corrected: issuer keys and pins, D1, pages then API, pool keys, v3, accept, issuer Worker, its keys; the email clients in batch 8
 - Date 2026-11-02 · Status: to confirm; written as the user's steps (`docs/operations.md` "Email login on sandbox-dev
   (build plan batch 6)") · Source: build plan batch 6 "Deploy (sandbox-dev), in order"; D199 (client proofs)
-- Decision:
+- Decision (the full order, as `docs/operations.md` "Email login on sandbox-dev" runs it, amended after the batch 6
+  reviews: 1 the issuer's keys and manifest block, 2 the watchdog pins, 3 the API's D1 (0006 if missing, 0009, 0010;
+  C4's usage capture optional), 4 the pages then the API with the proof, 5 the session-pool keys switched without
+  downtime, 6 contract v3, 7 `accept_unrecorded_wallets`, 8 the issuer Worker, 9 the email issuer and its two keys on
+  chain; the email clients in batch 8):
   - The plan's `upgrade-contract propose|execute` doesn't exist: the upgrade is `deploy-contract sandbox-dev --upgrade`
     (with `--approve-with` the DAO's `propose_upgrade` passes in one command on sandbox-dev), then, once due, the same
     with `--skip-build` (`execute_upgrade`).
@@ -3414,9 +3426,10 @@ five are **to confirm** by the user. None changes an address: no path, derivatio
     and no app enables email before batch 8. So batch 6 leaves the scopes without an email client: `GET /v1/app`
     lists email nowhere, and nothing reaches users. Batch 8's order: `login_methods` for the test apps, the client
     proof, `AddClient` through the scope's owners (timelocked by `change_delay_ms`), then the web.
-  - The session-pool keys are deleted and re-added with the link methods (`deploy-contract` reports them as a blocker
-    with the commands) before the API deploy; until the v3 upgrade the link methods exist nowhere and nothing calls
-    them.
+  - The session-pool keys move to the new allowlist without downtime (amended after the deploy review, M1): new keys
+    are generated and added beside the old ones (the old file moved aside), `RELAYER_KEYS` is switched, then the old
+    keys are deleted; until the v3 upgrade the link methods exist nowhere and nothing calls them. `deploy-contract
+    --upgrade` refuses while the env's API doesn't report `capabilities.createProof` (M2).
   - D137's proof of possession ships with the API and the pages before the upgrade: the sandbox test
     `v2_ignores_the_create_session_proof_that_v3_requires` (`contracts/integration-tests/tests/governance.rs`) runs the
     v2 wasm sandbox-dev runs (`V2_COMMIT`) with the proof, without it and with a wrong one (all three open the session:
@@ -3424,6 +3437,60 @@ five are **to confirm** by the user. None changes an address: no path, derivatio
 - Rejected: the plan's order with the issuer before the migration (every app lookup would fail until the migration);
   minting the client proofs by turning email on for the test apps in batch 6 (against "nothing ships half-wired").
 
+### D250. Batch 6 review follow-ups: requests bound to fail, per-account link limits, gas per signature, stale email keys
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/session-standing.ts`, `panic-cache.ts`, `links.ts`,
+  `gas.ts`, `email-token.ts`, `login-token.ts`, `validate.ts`; migrations-usage `0005_link_events.sql`) · Source: the
+  login/links review of batch 6 (M1, M2, L1–L3, L5, L6) and the deploy review (H1)
+- Decision:
+  - **Pending members before relaying** (M1): `/v1/sessions` and `/v1/login` read the session identity's
+    `get_identity` beside the other chain reads, only once links can exist (`get_config().links_open`, cached; no read on
+    v2 or before `accept_unrecorded_wallets`), and refuse a pending member with `409 link_pending`. Fails open (the
+    contract decides) when the view can't be read.
+  - **Deterministic panics remembered** (M1): after `link_pending` or `identity_linked` from the chain, the exact
+    request (sha256 of the method and its arguments) is answered from the isolate for 60 s.
+  - **One relay per link request** (M1): `/v1/link*` reserve sha256 of their tokens in a `RateLimiter` object
+    (`link-tokens`) before relaying, across isolates; a duplicate is `409 link_in_flight`. The claim is released when the
+    relay certainly didn't execute, else kept for the tokens' 10 minutes.
+  - **Per-account limits** (M2): per account root (`link-root:<scope>:<root ik>`), adds 3 a minute and 20 a day,
+    removals 10 a minute and 100 a day, refused above; the app-wide add caps stay refusals, the app-wide removal windows
+    only log `link_changes_high` (a cancel never waits on other users' traffic).
+  - **Gas per signature** (L1): every token signature beyond a method's default adds 70 Tgas (≈ 67 per 4096-bit
+    verification, D155), capped at 300, as `register_scope` scales by proofs; an env override stays the whole budget.
+    A 2-of-2 email token, or one signed twice during a rotation, then still has the gas it needs.
+  - **Stale email keys** (L2): a kid no current signer lists is `503 issuer_key_pending` only while a pending change
+    adds it (`get_key_changes`, cached 10 s); otherwise (removed, a dropped signer's, a token only an overlap's previous
+    policy accepts) `401 token_stale`: waiting won't help, a fresh token may.
+  - **`/v1/sessions` takes exactly its fields** (L3): anything else, `linkJwt` included, is `400 bad_request`.
+  - **Exports and the uid on the derived path** (L5): a member's login is limited (3 exports an hour) and counted (the
+    usage uid) on its account root's path, read with the standing above.
+  - **Removals take email tokens whatever `login_methods` say** (L6): `/v1/link/cancel` and `/unlink` must keep working
+    after a partner turns email off; `/v1/link` still needs email on.
+  - **Link relays are usage events** (H1): endpoints `link`, `link_cancel`, `link_unlink` (`@hana-id/console-core`
+    `USAGE_ENDPOINTS`; migrations-usage 0005 widens the events table's CHECK and `record_event`), so their relayed gas
+    reaches the ledger like a login's. No uid on them.
+- Rejected: a cross-isolate negative cache (a hot-path Durable Object call for a rare case); refusing removals on the
+  app-wide caps.
+
+### D251. The issuer's APP_DB is a read-write D1 binding: kept for now, held to reads by a source test
+- Date 2026-11-02 · Status: to confirm · Source: the deploy review of batch 6 (M4)
+- Decision: Cloudflare has no read-only D1 binding, so the issuer's `APP_DB` (the API's D1) could write the API's tables
+  if its code did. For now its code is held to reads by a source test (`apps/email-issuer/scripts/test/app-db-read-only.test.ts`:
+  every use goes through `src/apps.ts`, whose statements are SELECTs), the risk is in `docs/security.md`, and
+  `docs/mainnet-readiness.md` has a row. Before mainnet the binding is replaced by a read-only RPC on the API (a
+  service-binding entrypoint: an app lookup in, the row out), so a compromised issuer Worker can't change an app's
+  origins, keys or settings.
+- Why: the RPC is a new API entrypoint beside C5's `ConsoleRpc` / `AdminRpc`, too large to add safely in this batch's
+  fix round; the source check closes the accidental-write path now.
+- Rejected: leaving it undocumented; copying the app rows into the issuer's own D1 (two sources of truth).
+
+### D252. The session pool carries the link methods, with a global daily cap on link adds
+- Date 2026-11-02 · Status: to confirm · Source: the deploy review of batch 6 (M5)
+- Decision: `link_identity`, `cancel_link` and `unlink_identity` are relayed by the session pool (its keys' allowance
+  pays them), as built in batch 6. Their spend is bounded by the per-IP, per-account and per-app limits (D250) and a
+  global ceiling of 5 000 link adds a UTC day across apps (`link-global`, refused above; removals can only follow adds).
+  The alternative, to choose before mainnet: a third pool for links (its own keys and allowance), so a link flood can
+  never use up the allowance logins share.
+- Why: a third pool is another set of keys, secrets and deploy-plan states; the cap gives the bound now.
 ## Email login build, batch 8a (plain email login in the popup), 2026-11-02
 
 Spec ambiguities met while building the minimal slice of batch 8 (no linking). All to confirm.
@@ -3463,7 +3530,10 @@ Spec ambiguities met while building the minimal slice of batch 8 (no linking). A
   any popup opens. `GET /v1/app`'s `loginMethods` is accepted only as `["google"]` or `["google","email"]`, with
   `email.aud = "email:<scopeId>"` exactly when email is listed: an email-only app (`google: null`) is refused by
   `isAppConfig` (the vault answers `api_unavailable`) until the vault and the popup support it. `createHana({
-  loginMethods })` (the spec's narrowing option) is not built yet.
+  loginMethods })` (the spec's narrowing option) is not built yet. The API's email-login refusals (batch 6 after its
+  reviews) map as: `409 link_pending` → the spec's `link_pending`; `409 identity_linked` → `login_method_unavailable`
+  (`data.reason: 'identity_linked'`: sign in with the account's method); `401 token_stale` → `token_invalid`; `403
+  login_method_disabled` → `login_method_unavailable`. A plain email login meets the first two only once links exist.
 - Rejected: falling back to the chooser on an unavailable method (the partner asked for one method; it should know).
 
 ### D248. Turning email on for the demo app is by hand on sandbox-dev
@@ -3570,8 +3640,10 @@ Batch C4's readings D220–D224 (the session marker and migration 0009, the even
 identity-count copy, `usage-setup`) are to confirm.
 To confirm from email login batch 6 (`feat/email-login-6`): D230 (the issuer on its own URL, never through the API),
 D231 (email tokens at the API, `login_methods`, `GET /v1/app`), D232 (the link precheck, relays and panics), D233
-(share revocation, `email_usage`, the issuer's app lookup) and D234 (the corrected deploy order, the email clients in
-batch 8).
+(share revocation, `email_usage`, the issuer's app lookup), D234 (the corrected deploy order, the email clients in
+batch 8), and from its reviews D250 (requests bound to fail, per-account link limits, gas per signature, stale email
+keys), D251 (the issuer's read-write APP_DB, to replace by an RPC) and D252 (the session pool carries the link
+methods, with a global cap).
 To confirm from email login batch 8a (`feat/email-login-8a`): D245 (the email step's cancel codes and progress), D246
 (no key export for email wallets yet), D247 (the SDK surface: `login_method_unavailable`, hints, no email-only apps),
 D248 (turning email on for the demo by hand) and D249 (paths without `get_identity`, the popup's storage).

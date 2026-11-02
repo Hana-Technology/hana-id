@@ -82,6 +82,8 @@ export const STRING_ERROR_CODES = [
   'code_invalid',
   /** hana_login (email): the user gave up after the code expired, was used or ran out of attempts (D245). */
   'challenge_expired',
+  /** hana_login: this sign-in method is a pending member of an account (the API's `409 link_pending`, D232). */
+  'link_pending',
 ] as const;
 
 export type StringErrorCode = (typeof STRING_ERROR_CODES)[number];

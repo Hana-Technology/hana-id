@@ -116,6 +116,21 @@ export async function getSelfIssued(env: Env, provider: string, kids: readonly s
   return readPolicy(env, provider);
 }
 
+/** Kids with a pending `Add` for `provider` (`get_key_changes`), ≤ 10 s per isolate: only read for an unlisted kid. */
+const pendingCache = new TtlCache<ReadonlySet<string>>(10_000, 4);
+
+export async function pendingKeyAdds(env: Env, provider: string): Promise<ReadonlySet<string>> {
+  const hit = pendingCache.get(provider);
+  if (hit) return hit;
+  const raw = await new Rpc(env.NEAR_RPC).view<unknown>(env.SIGNER_ACCOUNT, 'get_key_changes', {});
+  if (!Array.isArray(raw)) throw new ViewShapeError('get_key_changes');
+  const kids = new Set(
+    raw.flatMap((c) => (isObj(c) && c.provider === provider && c.op === 'Add' && typeof c.kid === 'string' ? [c.kid] : [])),
+  );
+  pendingCache.set(provider, kids);
+  return kids;
+}
+
 export async function getIdentity(env: Env, scopeId: string, provider: string, sub: string): Promise<IdentityView> {
   return parseIdentity(await new Rpc(env.NEAR_RPC).view<unknown>(env.SIGNER_ACCOUNT, 'get_identity', { scope_id: scopeId, provider, sub }));
 }
@@ -128,4 +143,5 @@ export async function getAccount(env: Env, scopeId: string, provider: string, su
 export function clearLinkViewCaches(): void {
   policyCache.clear();
   policyReads.clear();
+  pendingCache.clear();
 }

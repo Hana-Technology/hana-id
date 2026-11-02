@@ -697,6 +697,7 @@ account **different addresses** (D51). Wallets made with test keys are disposabl
 | `login_cancelled` | `cancelLogin()`, or a newer `login()`, or the user cancelled the email step | nothing |
 | `login_method_unavailable` | `login({method})` named a method your app doesn't offer (email not turned on) | offer the other method |
 | `code_invalid`, `challenge_expired` | Email login: the user cancelled after a wrong or expired code | let them retry |
+| `link_pending` | This sign-in method is waiting to join an account (account linking, a later release) | sign in with the account's other method |
 | `google_error` | Google returned an error (`data.error`) | retry; `access_denied` means the user declined |
 | `no_google_client` | Your scope has no usable Google client | ask Hana |
 | `token_invalid`, `token_has_pii` | The Google token failed Hana's checks | retry; report it if it persists |

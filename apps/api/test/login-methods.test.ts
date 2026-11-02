@@ -1,4 +1,5 @@
 // apps.login_methods (migration 0010) as the API reads it, and the signer panics it turns into errors.
+import { applyD1Migrations } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 import { appLoginMethods, parseLoginMethods } from '../src/login-methods.ts';
@@ -26,6 +27,20 @@ describe('login_methods', () => {
     expect(await appLoginMethods(missing, 'app_x')).toEqual(['google']);
     const down = { prepare: () => ({ bind: () => ({ first: () => Promise.reject(new Error('D1_ERROR: network')) }) }) } as unknown as D1Database;
     await expect(appLoginMethods(down, 'app_x')).rejects.toThrow(/network/u);
+  });
+});
+
+describe('a real D1 before migration 0010 (batch 6 review L7)', () => {
+  it('reads every app as Google-only, and 0010 then applies on it', async () => {
+    const db = env.PRE_0010_DB;
+    await applyD1Migrations(db, env.TEST_MIGRATIONS.filter((m) => m.name < '0010'));
+    await db.prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, created_at, assigned_at) VALUES ('s0', 'org_legacy', 'test', 0, 0)").run();
+    await db.prepare("INSERT INTO apps (id, name, scope_id, publishable_key) VALUES ('app_pre', 'Pre', 's0', 'pk_test_1111111111111111111111111111111p')").run();
+    expect(await appLoginMethods(db, 'app_pre')).toEqual(['google']);
+    await applyD1Migrations(db, env.TEST_MIGRATIONS);
+    expect(await appLoginMethods(db, 'app_pre')).toEqual(['google']);
+    await db.prepare("UPDATE apps SET login_methods = 'google,email' WHERE id = 'app_pre'").run();
+    expect(await appLoginMethods(db, 'app_pre')).toEqual(['google', 'email']);
   });
 });
 

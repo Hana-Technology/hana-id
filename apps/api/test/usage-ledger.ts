@@ -1,10 +1,11 @@
 // The usage ledger as the API tests see it: the writer's transport (src/usage/record.ts usageTransport) is replaced
-// by an in-memory ledger that keeps what the Worker sent, as `usage.record_event` and `usage.record_identity_tokens`
+// by an in-memory ledger that keeps what the Worker sent, as `usage.record_event`, `usage.record_identity_tokens` and `usage.record_email_counts`
 // would receive it. Every test runs with a USAGE_DB binding (vitest.config.ts: a fake Hyperdrive whose connection
 // string is never dialled, because nothing reaches pg), so capture runs beside every existing test. No network, no
 // Postgres: the functions themselves are tested on PGlite (test-usage/). `realTransport` is pg itself, for the tests
 // that point USAGE_DB at a refusing server.
 import type { UsageEventV1 } from '@hana-id/console-core';
+import { RECORD_EMAIL_SQL } from '../src/usage/email-sync.ts';
 import { RECORD_IDENTITY_SQL } from '../src/usage/identity-sync.ts';
 import { ENSURE_PARTITIONS_SQL } from '../src/usage/partitions.ts';
 import { RECORD_EVENT_SQL, type UsageTransport, usageTransport } from '../src/usage/record.ts';
@@ -19,9 +20,19 @@ export interface IdentityRow {
   tokens: number;
 }
 
+export interface EmailRow {
+  app_id: string;
+  day: string;
+  org_id: string;
+  scope_id: string;
+  email_sessions: number;
+  links: number;
+}
+
 export const ledger = {
   events: [] as UsageEventV1[],
   identity: [] as IdentityRow[],
+  email: [] as EmailRow[],
   /** `months_ahead` of each `usage.ensure_partitions` call. */
   partitionCalls: [] as number[],
   /** Every statement the writer ran, in order (one per attempt). */
@@ -45,6 +56,12 @@ export const fakeTransport: UsageTransport['query'] = async (_binding, sql, para
       if (i < 0) ledger.identity.push(r);
       else ledger.identity[i] = { ...ledger.identity[i]!, tokens: Math.max(ledger.identity[i]!.tokens, r.tokens) };
     }
+  } else if (sql === RECORD_EMAIL_SQL) {
+    for (const r of value as EmailRow[]) {
+      const i = ledger.email.findIndex((x) => x.app_id === r.app_id && x.day === r.day);
+      if (i < 0) ledger.email.push(r);
+      else ledger.email[i] = { ...ledger.email[i]!, email_sessions: Math.max(ledger.email[i]!.email_sessions, r.email_sessions), links: Math.max(ledger.email[i]!.links, r.links) };
+    }
   } else if (sql === ENSURE_PARTITIONS_SQL) {
     ledger.partitionCalls.push(Number(params[0]));
   } else throw new Error(`unexpected ledger statement ${sql}`);
@@ -53,6 +70,7 @@ export const fakeTransport: UsageTransport['query'] = async (_binding, sql, para
 export function resetLedger(): void {
   ledger.events = [];
   ledger.identity = [];
+  ledger.email = [];
   ledger.partitionCalls = [];
   ledger.calls = [];
   ledger.fail = null;

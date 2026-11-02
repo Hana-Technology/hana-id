@@ -13,6 +13,7 @@ import { log } from './log.ts';
 import { LOGIN_ENDPOINT, handleLogin } from './login.ts';
 import { LOGIN_RELAY_PREFIX, handleLoginRelay, loggedEndpoint } from './login-relay.ts';
 import { LINK_ENDPOINTS, type LinkEndpoint, handleLinkEndpoint } from './links.ts';
+import { syncEmailUsage } from './usage/email-sync.ts';
 import { syncIdentityUsage } from './usage/identity-sync.ts';
 import { ensureUsagePartitions } from './usage/partitions.ts';
 import { vaultMaintenance } from './vault/cron.ts';
@@ -153,7 +154,7 @@ export default {
       jobs.push(vaultMaintenance(env), identityMaintenance(env), guardedChangesMaintenance(env), detectDrift(env));
       // Usage fails open: these log their own failures and never fail the run (the next hour tries again). Partitions
       // first, so the copy and the hour's events have their months. Pushed last: the destructuring below is positional.
-      jobs.push(ensureUsagePartitions(env).then(() => syncIdentityUsage(env)));
+      jobs.push(ensureUsagePartitions(env).then(() => Promise.all([syncIdentityUsage(env), syncEmailUsage(env)])));
     }
     const [issuerKeys, vault, identity, guarded, drift] = await Promise.allSettled(jobs);
     if (vault?.status === 'rejected') log({ event: 'vault_maintenance', outcome: 'error', code: 'internal' }, 'error');

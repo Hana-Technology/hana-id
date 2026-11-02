@@ -46,6 +46,9 @@ function onlyKeys(o: Obj, required: string[], optional: string[] = []): boolean 
 
 // ---- App endpoints (camelCase request bodies, as the legacy client sent) ----
 
+/** The fields of a POST /v1/sessions body. */
+const SESSION_FIELDS: ReadonlySet<string> = new Set(['jwt', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses', 'signature']);
+
 export interface CreateSessionRequest {
   jwt: string;
   sessionPublicKey: number[];
@@ -79,6 +82,10 @@ export function toCreateSession(
   if (!isCount(maxUses) || maxUses > MAX_USES) return { error: `maxUses must be 1 to ${MAX_USES}` };
   const args = { jwt, scope_id: scopeId, session_public_key: sessionPublicKey, expires_at_ms: expiresAtMs, salt, key_index: keyIndex, max_uses: maxUses };
   if (opts.proof) {
+    // POST /v1/sessions takes exactly these fields (batch 6 review L3): a `linkJwt` or anything else is refused, never
+    // silently dropped.
+    const extra = Object.keys(body).find((k) => !SESSION_FIELDS.has(k));
+    if (extra !== undefined) return { error: `Unexpected field ${extra.slice(0, 64)}` };
     const { signature } = body;
     if (!isBytes(signature, 64, 64)) return { error: 'signature must be the session key’s 64-byte proof of possession' };
     return { request: { jwt, sessionPublicKey, expiresAtMs, salt, keyIndex, maxUses, signature }, method: 'create_session', args: { ...args, signature } };

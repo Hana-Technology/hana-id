@@ -582,15 +582,25 @@ in batch 8; and its `upgrade-contract propose|execute` is `deploy-contract <env>
   methods now relayed by the session-pool key) and `access_keys_are_limited`.
 - **Decisions (to confirm).** D230 (routing), D231 (email tokens and login methods), D232 (link precheck, relays,
   panics, limits), D233 (share revocation, `email_usage`, the issuer's lookup), D234 (the corrected deploy order).
+- **Review fixes** (both batch 6 reviews, D250–D252): pending members refused before relaying and link-state panics
+  remembered per isolate; one relay per link request (`link_in_flight`); per-account link limits, app-wide removal
+  caps as an alarm, a global daily cap on adds; gas per extra token signature; `token_stale` for an email kid no
+  pending change adds; `/v1/sessions` refuses unknown fields; exports keyed on the derived path; removals take email
+  tokens whatever `login_methods` say; the link relays as usage events (migrations-usage 0005); `/v1/health`
+  `capabilities.createProof` and `deploy-contract --upgrade` refusing without it; `owner:call set_issuer_key` for email
+  only for a pinned, published key; the issuer's lookup joins `scopes`, its `workers_dev` only with a `workers.dev`
+  `url`, a source check that it never writes `APP_DB` (D251); the runbook redone against the merged develop.
 - **Left for later.** Batch 8: `login_methods` for the test apps, the staff client proofs and `AddClient ("email",
   "email:<scope>")`, the web's use of `loginMethods`, `linkJwt`, the link relays and the new error codes, the popup's
-  CSP for the issuer origin, and the share revocation's caller pages. Batch C4 takes `email_usage` into its ledger.
+  CSP for the issuer origin, and the share revocation's caller pages. Merged with develop after batch C4: the email
+  counts stay in D1 `email_usage` and are copied hourly to the ledger (`usage.email_counts`, migrations-usage 0004,
+  D233), as the identity counts are; the link relays aren't usage events yet (C12).
   The link limits (D232) are provisional until sandbox-dev traffic.
 
 ## Batch 8a result
 
-Branch `feat/email-login-8a` (on batch 6's `feat/email-login-6`, with `develop` merged in), not merged, nothing
-deployed. The minimal slice of batch 8 for an internal demo: plain email login, no linking.
+Branch `feat/email-login-8a` (from batch 6's branch, with `develop` merged in after batch 6 merged at b404fb3), not
+merged, nothing deployed. The minimal slice of batch 8 for an internal demo: plain email login, no linking.
 
 - **Popup** (`packages/web/src/auth`): `/login` shows "Continue with Google" / "Continue with email" when the vault
   offers email (still fetch-free, D77); `/login/email` (`email-page.ts`, its own CSP: `connect-src` the issuer and the

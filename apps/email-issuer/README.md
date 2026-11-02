@@ -5,7 +5,9 @@ Worker, separate from the API, that sends sign-in codes, mints email tokens (JWS
 computes per purpose, answers `google-match` for automatic linking, publishes its JWKS and serves the staff routes (client proofs, unlock,
 unsuppress) behind Cloudflare Access. It is reached at `{emailIssuer.url}/v1/email/*` (D230): its own `workers.dev`
 URL on a `workers.dev` env (sandbox-dev), the API's URL through a zone route in production; never through the API
-Worker, so an address or a code never passes through it.
+Worker, so an address or a code never passes through it. `gen` turns on `workers_dev` only for a `workers.dev` `url`.
+Its `APP_DB` binding is the API's D1, read-write as every D1 binding is; a source check holds the code to SELECTs until
+a read-only RPC on the API replaces it (D251).
 **Not deployed**; no app enables email yet (the sandbox-dev steps: `docs/operations.md` "Email login on sandbox-dev").
 
 Reference: endpoints, limits, Durable Objects, D1 and logs in `docs/api.md` "Email issuer"; setup and runbook in

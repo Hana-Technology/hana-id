@@ -4,7 +4,8 @@
 import { z } from 'zod';
 import { requestId } from './types.ts';
 
-export const USAGE_ENDPOINTS = ['login', 'session', 'derive', 'revoke', 'unlock', 'owner_action'] as const;
+/** `link`, `link_cancel`, `link_unlink`: the API's link relays (email login batch 6; migrations-usage 0005). */
+export const USAGE_ENDPOINTS = ['login', 'session', 'derive', 'revoke', 'unlock', 'owner_action', 'link', 'link_cancel', 'link_unlink'] as const;
 export const USAGE_OUTCOMES = ['ok', 'rejected', 'error'] as const;
 /** Endpoints whose ok events carry a uid (MAU and new users). */
 export const UID_ENDPOINTS = ['login', 'session', 'derive'] as const;

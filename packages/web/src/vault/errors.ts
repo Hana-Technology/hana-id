@@ -48,6 +48,15 @@ export function apiErrorToVault(e: ApiError): VaultError {
     // Email login (D231): the app turned email off between GET /v1/app and the login.
     case 'login_method_disabled':
       return new VaultError('login_method_unavailable', 'This sign-in method is not available for this app', { api: status });
+    // The email-login refusals (D232, D250), which batch 8a's plain login meets only once links exist: a pending
+    // member, an identity linked to an account (its own path no longer derives, D136), a token signed by a key no
+    // current signer holds (sign in again for a fresh one).
+    case 'link_pending':
+      return new VaultError('link_pending', 'This sign-in method’s link to an account is pending', { api: status });
+    case 'identity_linked':
+      return new VaultError('login_method_unavailable', 'This sign-in method is linked to an account; sign in with that account’s method', { api: status, reason: 'identity_linked' });
+    case 'token_stale':
+      return new VaultError('token_invalid', 'The sign-in token is signed by a retired key; sign in again', { api: status });
     case 'origin_not_allowed':
     case 'scope_conflict':
       return new VaultError('origin_not_allowed', 'This site is not allowed for this app', { api: status });

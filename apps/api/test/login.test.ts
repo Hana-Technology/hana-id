@@ -61,10 +61,12 @@ describe('POST /v1/login', () => {
       pk1: req.pk1,
       pk2: req.pk2,
     });
+    // get_config first: the session standing (session-standing.ts) reads it (cached) to know whether links can exist;
+    // on a chain without them nothing else is read for it.
     expect(near.viewCalls).toEqual([
+      { method: 'get_config', args: {} },
       { method: 'scope_for_client', args: { provider: 'google', aud } },
       { method: 'session_key_in_use', args: { session_public_key: req.sessionPublicKey } },
-      { method: 'get_config', args: {} },
       { method: 'get_issuer', args: { provider: 'google' } },
     ]);
     expect(usage(app.id)).toEqual(['login ok relayed']);

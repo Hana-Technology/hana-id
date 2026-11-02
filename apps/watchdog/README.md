@@ -10,7 +10,7 @@ Deployed on sandbox-dev (2026-10-30, on the API's Cloudflare account for the dri
 with email-login batch 5; `docs/operations.md` "Watchdog service"); no other env yet. Testnet only: it checks the RPC's `chain_id` against the manifest's `network`
 every run and sends nothing on a mismatch.
 
-Last verified: 2026-11-02 (branch `feat/identity-token-8`: the identity JWKS and discovery check, step 5b, the
+Last verified: 2026-11-02 (branch `feat/email-login-6`: the email JWKS URL's default under `emailIssuer.url`, D230); 2026-11-02 (branch `feat/identity-token-8`: the identity JWKS and discovery check, step 5b, the
 `identity` status and `pinnedIdentityKeys`, D210–D214); 2026-11-02 (branch `docs/consistency-pass`: the deploy line, against `docs/operations.md`).
 
 ## What a run does (every 5 min)
@@ -129,8 +129,7 @@ Last verified: 2026-11-02 (branch `feat/identity-token-8`: the identity JWKS and
    own kinds; then the run's record is updated, and what they raised goes out in a second delivery. Their reads are
    third-party (Hana's API is a party the watchdog must survive, D86).
    - Hana's JWKS (check `email_jwks`, only with pins and a URL, and only after a chain read): `EMAIL_JWKS_URL`
-     (manifest `jwksUrl`, default `{emailIssuer.url}/v1/email/jwks.json`, else under `apiUrl`, D230), fetched with no
-     cache; a published key not pinned
+     (manifest `jwksUrl`, default `{emailIssuer.url}/v1/email/jwks.json`, else under `apiUrl`, D230), fetched with no cache; a published key not pinned
      (or kid ≠ thumbprint) or an active email key not published → warning `email_jwks_mismatch`; 3 failed fetches
      while an email key is active → the same warning (`:fetch`). Never trusted, never acted on.
    - **The partner identity token's JWKS and discovery document** (check `identity_jwks`, D210, D213, D214; needs no

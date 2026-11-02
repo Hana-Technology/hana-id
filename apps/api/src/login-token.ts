@@ -28,8 +28,13 @@ const EMAIL_KEY_PENDING_RETRY_S = 30;
 export interface LoginTokenOptions {
   /** Refuse a Google token with a claim outside the allow-list (claims.ts). Email tokens are always held to theirs. */
   claimAllowList: boolean;
-  /** The app the request is for: an email token needs `email` in its login methods. */
+  /** The app the request is for: an email token needs `email` in its login methods (unless `anyLoginMethod`). */
   appId: string;
+  /**
+   * Accept an email token whatever the app's `login_methods` say (review L6): `/v1/link/cancel` and `/unlink` only
+   * remove a sign-in method, which must stay possible after a partner turns email off.
+   */
+  anyLoginMethod?: boolean;
   exec?: ExecutionContext | undefined;
 }
 
@@ -49,11 +54,11 @@ export async function verifyLoginToken(env: Env, jwt: string, now: number, opts:
     }
     if (!v.ok) {
       if (v.code === 'issuer_key_pending') return { ok: false, status: 503, code: v.code, error: v.error, retryAfterS: EMAIL_KEY_PENDING_RETRY_S };
-      return { ok: false, status: v.code === 'invalid_token' ? 401 : 400, code: v.code, error: v.error };
+      return { ok: false, status: v.code === 'invalid_token' || v.code === 'token_stale' ? 401 : 400, code: v.code, error: v.error };
     }
     let methods;
     try {
-      methods = await appLoginMethods(env.DB, opts.appId);
+      methods = opts.anyLoginMethod ? ['email'] : await appLoginMethods(env.DB, opts.appId);
     } catch {
       return { ok: false, status: 503, code: 'config_unavailable', error: 'App config is unavailable, try again' };
     }

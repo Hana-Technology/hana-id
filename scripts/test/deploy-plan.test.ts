@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { loadEnv } from '@hana-id/env';
+import { reportsCreateProof } from '../lib/deploy-run.ts';
 import { OWNER_RELAYER_METHODS, SESSION_RELAYER_METHODS, sharedClientsOf } from '../lib/contract.ts';
 import { type GovernanceView, UPDATER_METHODS } from '../lib/contract.ts';
 import { buildDeployPlan, checkFunctionKey, creationPlan, type DeployObserved, type DeployOptions, type DeployStep, describeStep, CLOCK_MARGIN_MS, signerFullAccessAllowed } from '../lib/deploy-plan.ts';
@@ -461,6 +462,18 @@ describe('buildDeployPlan', () => {
   describe('upgrades of the governance contract: propose_upgrade → wait → execute_upgrade', () => {
     const up = { ...opts, upgrade: true };
     const pending = (code_hash: string, executable_at_ms: number) => deployed({ wasmCodeHash: 'H', governance: { ...govOk, pending_upgrade: { code_hash, proposed_at_ms: NOW - 60_000, executable_at_ms } } });
+
+    it('refuses to propose or execute while the env’s API lacks the create_session proof (capabilities.createProof, D137)', () => {
+      for (const o of [deployed({ apiCreateProof: false }), pending('H', NOW - CLOCK_MARGIN_MS)]) {
+        const p = buildDeployPlan(m, { ...o, apiCreateProof: false }, { ...up, skipBuild: true });
+        expect(p.blockers.join()).toContain('capabilities.createProof');
+        expect(p.steps.some((x) => x.kind === 'propose-upgrade' || x.kind === 'execute-upgrade')).toBe(false);
+      }
+      expect(buildDeployPlan(m, deployed({ apiCreateProof: true }), up).blockers.join()).not.toContain('createProof');
+      // What deploy-contract reads from GET /v1/health.
+      expect(reportsCreateProof({ ok: true, capabilities: { createProof: true } })).toBe(true);
+      for (const h of [null, { ok: true }, { capabilities: { createProof: 'yes' } }, 'x']) expect(reportsCreateProof(h)).toBe(false);
+    });
 
     it('never plans a raw DeployContract: build, then propose the built hash', () => {
       const p = buildDeployPlan(m, deployed(), up);

@@ -10,6 +10,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@hana-id/console-core':
+        specifier: workspace:*
+        version: link:../../packages/console-core
       '@hana-id/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -44,9 +47,6 @@ importers:
       '@electric-sql/pglite':
         specifier: 0.5.11
         version: 0.5.11
-      '@hana-id/console-core':
-        specifier: workspace:*
-        version: link:../../packages/console-core
       '@hana-id/env':
         specifier: workspace:*
         version: link:../../packages/env
@@ -334,6 +334,9 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
     devDependencies:
+      '@hana-id/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.5

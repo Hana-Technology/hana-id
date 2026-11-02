@@ -328,6 +328,14 @@ describe('app:suspend and app:resume', () => {
     expect(state()).toEqual({ status: 'active', suspended_by: 0 });
     expect(suspensionBits(7)).toBe('hana+org+partner');
   });
+
+  it('refuse a deleted app: it keeps Hana’s bit for good (AdminRpc.deleteApp, D225)', async () => {
+    seedHotApp(h.db, { id: 'app_d', key: APP_KEY, scope: 's1' });
+    h.db.exec("UPDATE apps SET deleted_at = 1, suspended_by = 1 WHERE id = 'app_d'");
+    expect(() => appSuspension(false, args(['--app', 'app_d']), 'local D1 test', h.deps)).toThrow(/deleted/u);
+    expect(h.db.prepare("SELECT status, suspended_by FROM apps WHERE id = 'app_d'").get()).toEqual({ status: 'suspended', suspended_by: 1 });
+    expect(ledger('app_d')).toEqual([]);
+  });
 });
 
 describe('app:list', () => {

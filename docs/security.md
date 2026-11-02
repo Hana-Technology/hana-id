@@ -1,7 +1,10 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-02 for the email issuer (branch `feat/email-login-4`: its keys and secrets rows and "Email issuer"
+known open issues. Last verified against code: 2026-11-02 for batch C's RPC writers (branch `feat/batch-c-5`:
+`ConsoleRpc` / `AdminRpc` in "Invariants", the breaker and hot-DB budget, the waivers at the notice ack, drift
+detection now built (and what it doesn't cover), the legacy `apps.publishable_key` kept on a valid key, the review
+fixes to admission, D225–D229); 2026-11-02 for the email issuer (branch `feat/email-login-4`: its keys and secrets rows and "Email issuer"
 invariants, D195–D199, with the review fixes and the abuse re-check: K_sup, K_device, per-address device tickets with
 revocation, the owner pool, mailed unlock/unsuppress, the growing domain cap, encrypted challenge addresses, the 0.92%
 bound); for the identity token's AWS KMS signer (branch
@@ -62,7 +65,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | `KEYS_UPDATER_KEY` (Worker secret, function-call key on the signer account) | Governance contract (sandbox-dev since 2026-10-30): **propose** an attacker RSA key (`set_issuer_key`), which waits `issuer_key_delay_ms` (mainnet 2 h) in public. v1 contract: set it at once → mint Google tokens for any `sub` → derive any user's key | The watchdog cancels a pending key Google doesn't publish within one run and deletes every updater key; an active one (the watchdog was down) makes it pause and delete every updater key (D82, D126). Full table: `docs/governance-spec.md` "What a compromise gives"; recovery: `docs/playbooks.md` `updater-key-stolen`, `forged-active-key` |
 | Owner key (governance contract: the council DAO, 2 of 3) | Two council keys: issuer keys (delayed like the updater's), config, pause/unpause, upgrades and owner transfer (after `governance_delay_ms`, mainnet 72 h), surplus withdrawal | Every delayed action is public and cancellable by the owner; the watchdog alerts on each (`governance_change`). See `docs/governance-spec.md` and `docs/playbooks.md` `unexpected-owner-action` |
 | Signer account full-access key | Redeploy the contract: anything, including MPC requests for any path | No upgrade lock in batch A/A.2/B. Open issue (e), D33; fix specified in `docs/governance-spec.md` |
-| D1 | App origins (→ `frame-ancestors`, parent-origin checks; a bare write of an `app_origins` row with `active_from` set skips the guarded-change delay), app scope, settings incl. bare writes of `raw_sign`/policy without the pending delay, suspensions; `share_enc` rows. Batch C's drift detection (C5) will flag such writes against `guarded_changes` and the 0006 baseline; it can't catch an insider who also forges those rows | `K_s` needs `VAULT_KEK`; a policy needs the user's consent to its `policyId`; raw requests still need approval |
+| D1 | App origins (→ `frame-ancestors`, parent-origin checks; a bare write of an `app_origins` row with `active_from` set skips the guarded-change delay), app scope, settings incl. bare writes of `raw_sign`/policy without the pending delay, suspensions; `share_enc` rows. The API's hourly drift detection (`changes/drift.ts`) flags such writes of origins, policies and raw signing against `guarded_changes` and the 0006 baseline (only while no later `app_changes` row ended a baseline value) as `drift` security events; it can't catch an insider who also forges those rows, and doesn't cover keys, suspension bits or deletion (a bare write of `app_keys`, `suspended_by` or `deleted_at` goes unflagged; `app_changes` has no row for it) | `K_s` needs `VAULT_KEK`; a policy needs the user's consent to its `policyId`; raw requests still need approval |
 | `VAULT_KEK` | Unwrap every `K_s` in D1 | Useless without a device's IndexedDB record (PRK is encrypted under `K_s` only on the device) |
 | API Worker code or all Worker secrets, or the Cloudflare account | Everything: the API Worker renders the vault page (inlined config, `frame-ancestors`) and holds `KEYS_UPDATER_KEY`; the same account deploys the two page Workers that serve the vault and auth bundles | Single trust root. Mitigations: small vault bundle, strict CSP, no third-party script, narrow `frame-ancestors` |
 | `vaultOrigin` | Every key of every user that loads it (PRK in memory) | — |
@@ -329,7 +332,38 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   origin adds, policies and raw-signing enables are staff proposals (`hana`, full `appChangeDelayMs`, refused within
   `appChangeDelayMs` of the scope's org assignment); `app:changes:announce` (only without an admin Worker, never on
   a production network) starts the clock and records that nobody was emailed. Raw signing is refused for test apps
-  (D39 as amended 2026-10-28). Removals, turn-offs and suspensions are immediate.
+  (D39 as amended 2026-10-28). Removals, turn-offs and suspensions are immediate. `app:resume` refuses a deleted
+  app, which keeps Hana's bit for good (D225).
+- **RPC writers** (`apps/api/src/rpc/`, `src/changes/`; batch C5; tests `apps/api/test/rpc-*.test.ts`), unbound until
+  the console (C7) and admin (C8) Workers bind them, never reachable through `fetch`:
+  - every input is validated with its strict console-core schema before anything is read; `ConsoleRpc` takes only a
+    `member` actor (the emailed-link cancel only `link`), `AdminRpc` only `hana` (its cron methods also `system`);
+  - every org method filters `org_id`, so another org's app or change is `not_found` and nothing is written;
+  - every write is one D1 batch with its `app_changes` row first, inserted only while the compare-and-swap predicate
+    holds or when its request id was used before (which then fails on `request_id UNIQUE` and rolls the batch back);
+    every other statement runs only if that row exists. A replay is `already_applied`, a moved state
+    `version_conflict`, and no applied change lacks its ledger row (fault injection on every statement);
+  - a member never touches suspension bits 1 or 2; `deleteApp` revokes every key and leaves the app suspended for
+    good; staff proposals get the full delay, no waiver but `createApp`'s `no_session`, and are refused within
+    `appChangeDelayMs` of a scope assignment; expedite only for an announced member proposal, with a reason;
+  - the `no_session` waiver is decided inside the acking statements and fails closed exactly as the CLI's does (a
+    member candidate also needs an API-verified `proposer_sub`); `loopback` only for a member's loopback origin on a
+    test scope in a dev env on a non-production network;
+  - the cancel link is checked as `sha256(token)` against the stored hash, single use, until `active_from`;
+  - a compromised console is bounded: destructive calls (`setSuspended(true)`, `revokeKey`, `rotateKey`,
+    `removeOrigins`, a `googleWebClientId` change) at 5 per org and 20 across orgs per rolling hour (`rate_limited`,
+    and one `breaker` event per limit and hour; a call that changed nothing gets its slot back). Every call fits a
+    hot-DB budget: per-org buckets (10/s, burst 40) under the global one (30/s, burst 60), with the last 10 and 20
+    tokens kept for the kill switches. Every call is also held to two reads and one batch of ≤ 8 statements;
+  - emailed-link cancels (unauthenticated) have their own limits, per client IP (IPv6 by /64) and a global link
+    bucket, taken before the token is read and never from the members' budget. A link flood can't block anyone's
+    kill switches;
+  - a replayed request id is `already_applied` only for the same write (kind, app, actor), otherwise `conflict`;
+    `ackNotice` takes only the admin Worker's cron (`system`); the console never acts for `org_legacy`;
+  - `relayerKeys` returns public keys only; RPC logs carry the method, request id, outcome and code, never the input;
+  - the legacy `apps.publishable_key` is kept on the app's oldest unrevoked key or an unusable tombstone, so a reader
+    of the column and `status` (`apps/email-issuer` until it moves to `app_keys`, D206) never accepts a revoked,
+    rotating or deleted app's key (D225).
 
 - **Identity token** (`src/identity/`; `docs/identity-token-spec.md` "Invariants"; tests in
   `apps/api/test/identity.test.ts`):
@@ -825,7 +859,7 @@ leaked key can call them directly within its allowance.
 
 **(i) The 20-origin cap is enforced only by the vault page. Fixed for the CLI (batch C3).** `admin app:create` and
 `app:origins:add` refuse more than 20 active-or-pending origins per app (`MAX_APP_ORIGINS`, `@hana-id/console-core`);
-`AdminRpc` and `ConsoleRpc` (C5) apply the same cap. A direct D1 write can still exceed it; the vault page then answers
+`AdminRpc.addOrigins` applies the same cap (batch C5; the member path, `changeOrigins`, comes with C6). A direct D1 write can still exceed it; the vault page then answers
 403 `too_many_origins` (availability, not safety).
 
 **(j) sandbox-dev's two Hana origins are one site. Open (sandbox-dev only; outside dev envs the schema refuses a

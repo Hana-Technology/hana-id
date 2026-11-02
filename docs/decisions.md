@@ -1618,6 +1618,110 @@ The answers to `docs/identity-token-spec.md`'s open questions (the roadmap decis
 - Why: each question's trade-offs are in the spec. Optional email sharing never affects which wallet a person gets
   (linking is D119/D122, from Google's verified address read transiently inside Hana).
 
+## Batch C5: `AdminRpc` and `ConsoleRpc` core (2026-11-02)
+
+Readings made while building `docs/batch-c-build-plan.md` C5 on `feat/batch-c-5`, where `docs/batch-c-spec.md` left a
+detail open. Each follows the spec's intent; all five are **to confirm** by the user.
+
+### D225. The legacy `apps.publishable_key` stays on a valid key; deleted apps stay suspended (C3's email-issuer obligation)
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/changes/keys.ts` `syncLegacyKey`, `changes/suspension.ts`
+  `deleteApp`, `scripts/lib/admin-apps.ts` `appSuspension`) · Source: D206's obligation for `apps/email-issuer`
+  (branch `feat/email-login-4`: finds apps by `apps.publishable_key` and checks only `status`)
+- Decision: rather than block key rotation and deletion for email-enabled apps (the API's DB has no `login_methods`
+  column yet, so "email-enabled" can't be told apart), every key write keeps the legacy column pointing at the app's
+  oldest key with `revoked_at` NULL (by creation, then insertion), or at a tombstone when it has none:
+  `pk_<env>_0revoked` + random base58. The `0` is not in base58, so it is never a generated key and never matches the
+  issuer's `PK_RE`. The scope's prefix keeps the 0006 org-move trigger satisfied. The column is written, never read
+  (the source check in `apps/api/scripts/test/hot-db-reads.test.ts` allows exactly these two assignments). A deleted
+  app keeps Hana's bit 1 for good: every RPC write on it is `not_found`, and the CLI's `app:suspend` / `app:resume`
+  refuse it, so `status` stays `suspended` for the issuer's `appById`. The issuer therefore never accepts a revoked,
+  rotating or deleted app's key. One cost: during a rotation's 24 h grace the old key keeps working for Google
+  logins (the API reads `app_keys`), but the issuer refuses it at once.
+- Still owed (D206): the issuer moves to `app_keys` (`revoked_at` NULL or in the future), `deleted_at IS NULL` and
+  `suspended_by = 0`, which also gives email logins the grace. Its `apps/email-issuer` allowlist entry in the source
+  check stays until then.
+- Rejected: blocking rotation and deletion per app (not detectable on develop); pointing the column at the newest key
+  (a second key created for a migration would break the first one's email logins).
+
+### D226. `pendingNotices` also returns the app and the policy
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/changes/lifecycle.ts`) · Source: spec §RPC
+  (`pendingNotices` → `{change, contacts}`) and §Notice and cancel (the notice describes the app, the origin or the
+  policy's contracts, functions and limits)
+- Decision: each notice also carries `app: {id, name, orgId, scopeId, environment}` and, for a `policy_set`, `policy`
+  (the canonical JSON, parsed). The change view alone has only the `policyId`. The fields are additive, so the admin
+  Worker builds the notice without a second call per change. Changes of a deleted app are never listed.
+
+### D227. Keys and no-op writes
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/changes/keys.ts`, `settings.ts`, `suspension.ts`,
+  `admin.ts`) · Source: spec "Keys" ("at most 5 unrevoked keys", rotate, revoke) and §RPC result types
+- Decision: "unrevoked" for the 5-key limit means `revoked_at` NULL, so a key in its rotation grace doesn't count, and
+  rotation never hits the limit. "The last valid key" and what revoke accepts count keys still valid now (a rotating
+  key still logs users in): two counts on purpose. Only an unrevoked key can be rotated (a rotating or revoked one is `conflict`). A
+  key in its grace can be revoked at once. Revoking the app's last valid key answers `{ok: true, warning:
+  'last_key'}` (the spec's "warns"). A write that would change nothing writes nothing and answers the current state
+  (a bit already set, nothing to turn off, the same settings, logo or contacts), with no ledger row. The breaker still
+  counts the call (D93 Q21: per call).
+
+### D228. Drift and breaker events: one per finding; what explains a value
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/changes/drift.ts`, `changes/guard.ts`) · Source: spec
+  "Drift detection" ("flags … once"), §RPC "Destructive-call breaker"
+- Decision:
+  - An origin in force is explained by an announced, open `origin_add` for that row whose `active_from` is no later
+    than the row's, or by the 0006 baseline (`active_from = 0`, listed in `migration.baseline`).
+  - An `app.created` row explains nothing on its own: since 0006 its origins are guarded changes, and counting it
+    would let a forged in-force row for an unannounced initial origin pass.
+  - A stored policy or `raw_sign = 'approval'` is explained by an announced change in force by then; a pending one by
+    an announced change whose `active_from` is no later than its `*_effective_at` (catches a hand-advanced effective
+    time); or by the baseline, whose policies are compared as stored text (D205), but only while no later
+    `app_changes` row ended the baseline value (review M1: a value put back by hand after a kill switch is drift).
+  - Each finding is written once: the event id is derived from it (app, what, the value or the origin and its
+    `active_from`). A breaker refusal writes one event per org (or for the global limit) per clock hour.
+  - The breaker and the hot-DB budget live on one `RateLimiter` object (`console-rpc`). A call is admitted or refused
+    in one step, nothing taken on a refusal. The breaker keeps exact call times for the rolling hour. Each method is
+    charged its declared ceiling (`CONSOLE_COSTS`: plan read + batch + one diagnostic read) before it runs.
+  - The budget, after the C5 review (H2): per-org buckets (10/s, burst 40) under the spec's global one (30/s, burst
+    60). The kill switches (`removeOrigins`, `turnOff`, `revokeKey`, `setSuspended(true)`) alone may spend the last
+    10 of an org's bucket and the last 20 of the global one.
+  - Emailed-link cancels (review H1) never touch the members' budget. They take a per-client-IP limiter (5 a minute,
+    50 a day; IPv6 by /64) and a global link bucket (1/s, burst 20), before the token is read.
+  - The breaker (review M2, M3, L6):
+    - it also counts a `googleWebClientId` change, which can stop an app's logins;
+    - it gives the slot back when a call changed nothing (`not_found`, `conflict`, `version_conflict`,
+      `already_applied`, `bad_request`, a no-op);
+    - the event is written for the first refusal of a limit in a clock hour only (the object remembers it).
+  - Question to confirm (review M2): the spec counts `removeOrigins` and `setSuspended(true)` in the global 20 per hour
+    too (D93 Q21). Kept as built. One compromised console can then use the global limit to stop other orgs' removals
+    and suspensions for an hour, though not their `turnOff` or `cancelChange`.
+
+### D229. RPC actors, refusal codes and staff proposal details
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/rpc/`, `src/changes/`) · Source: spec §RPC, "Guarded
+  changes", "Apps, scopes"
+- Decision:
+  - **Actors.** `ConsoleRpc` takes only `member` actors (`cancelChangeByLink` only `link`), and never `org_legacy`.
+    `AdminRpc` takes `hana`; the methods the admin Worker's crons call also take `system`, and `ackNotice` takes
+    `system` only (a staffer can't start a clock by hand). Any other actor is `forbidden`.
+  - **Replays.** A request id used before answers `already_applied` only when the stored row is the same write (one of
+    the method's ledger kinds, the same app, the same actor); otherwise `conflict`. `actor_sub` is left
+    NULL in C5: it holds only an API-verified step-up's sub (C6).
+  - **Codes the spec doesn't name.** `conflict` for a staff proposal inside `appChangeDelayMs` of the scope's
+    assignment (also `createApp` with origins on an existing scope, D206), a duplicate origin, the 20-origin cap,
+    another pending change of the kind, or a value already in force. `env_mismatch` for `raw_sign_on` on a test app.
+    `forbidden` for a cancel link that doesn't match (or a change not announced yet) and for expediting a staff
+    proposal. `bad_request` for removing an origin the app doesn't have.
+  - **Waivers at the ack.** A member proposal is a `no_session` candidate only with `proposer_sub` set (C6 sets it
+    after verifying the step-up). Members get the same fail-closed signals as the CLI's waiver: `first_session_at`; an
+    origin of the scope in force other than the same request's; a vault share, legacy usage row or identity count.
+    C3 review M1 holds for every path built here. `createApp` marks the candidate only on a scope row it created.
+    `addOrigins` and `proposeChange` never mark it. Hana proposals never get `loopback`. C4's replacement of the
+    legacy `usage` check must change `changes/lifecycle.ts` `noSessionWaiver` as well as the CLI's.
+  - **`deleteApp`** also cancels the app's pending changes and deletes its pending origin rows, so no notice goes out
+    for a deleted app.
+  - **`addOrigins`** counts every open `origin_add` (a parked one with no row included) for duplicates and the
+    20-origin cap.
+  - **App names** follow console-core `normaliseAppName`: NFC, trimmed, 1–64 code points, and
+    `@hana-id/core` `isDisplaySafeLine`'s rule. It is copied, because the Worker can't typecheck core's root entry; a
+    test compares the two on every code point.
+
 ## Partner identity token, build steps 1–4 (2026-10-30)
 
 Choices made while building `docs/identity-token-spec.md` steps 1–4 on `feat/identity-token-1`, where the spec left a
@@ -2984,7 +3088,9 @@ issuer's D195–D199 (batch 4) wait for the user's confirmation.
 To confirm from batch C step C2 (`packages/oidc`): D201 (the new claims typed on request, ignored by the API), D202
 (the Access JWT check and its cert cache) and D203 (the package's logging hook, Google's fetch limits).
 
-Batch C3's readings D205–D209 (hot DB 0006, the gate, the CLI) are to confirm.
+Batch C3's readings D205–D209 (hot DB 0006, the gate, the CLI) are to confirm. So are batch C5's D225–D229 (the
+legacy key column and deleted apps, the notice fields, keys and no-op writes, drift and breaker events, RPC actors
+and codes).
 To confirm from the identity token's step 7 (the KMS signer's code): D215 (the manifest shape and credentials), D216
 (`DIGEST`), D217 (strict DER, the self-check), D218 (one `Sign`, no retry, limits) and D219 (the standby's region, the
 IAM policy on the active key only).

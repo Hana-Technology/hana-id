@@ -1910,12 +1910,24 @@ change no address.
     part left empty by it (`+tag@gmail.com`) is refused.
   - IDNA comes from `tr46` 7.0.0 (UTS #46 revision 36, Unicode 18.0.0), pinned exactly; a guard test checks the
     installed `tr46` and `punycode` versions. Emoji labels that UTS #46 allows (`💩.la`) are accepted.
+  - **Unicode 15.0 cutoff** (review M1, 2026-11-02): any code point assigned after Unicode 15.0 is refused
+    (`domain_unicode_version`), in the raw input, in its mapped form with `xn--` labels decoded, and in the result.
+    The ages come from a vendored table generated from Unicode's `DerivedAge-18.0.0.txt`
+    (`packages/email/src/unicode-age.ts`, hash-pinned), never from the engine's `\p{…}` data. Why: `tr46` calls the
+    runtime's `String.prototype.normalize('NFC')`; a runtime whose Unicode predates a character doesn't reorder it,
+    so `alice@x\u1AD0\u0316.com` (U+1AD0, Unicode 17) gave a different `sub` on Node 22.12 and Node 24. Why 15.0:
+    it is the newest version every target runtime knows: Safari 16.4 and later (16.4 shipped the Unicode 15.0
+    emoji), Chrome, Edge and Firefox of the last two years (ICU 74+, Unicode 15.1), Node 22 (ICU 74+) and workerd
+    (newer). Unicode's normalization stability policy keeps NFC identical across them for 15.0 characters. Cost:
+    domains using characters added since September 2022 (CJK extension I, new scripts, new emoji) can't sign in;
+    raising the cutoff later would only accept addresses that are refused today, so it moves no existing address.
 - Why: every refusal here only turns away addresses that are invalid or that no large provider issues; every
   acceptance is frozen forever, so the narrow set is the safe one. The runtime's own `URL` parser is also
   non-transitional UTS #46 but with looser flags and an unpinned Unicode version (workerd's or each browser's ICU), so
   a runtime upgrade could move an address.
-- Residual: `tr46` uses the platform's `String.prototype.normalize('NFC')`, fixed for assigned characters by Unicode's
-  stability policy.
+- Residual: `tr46` still calls the platform's NFC, now only on characters of Unicode 15.0 or older, which every target
+  runtime has. The frozen vectors run in Node, in a bare V8 context (the browser bundle) and in workerd. CI's Node is
+  `22` (floating), so no claim rests on a pinned Node version.
 - Rejected: platform `URL`/`domainToASCII`; quoted local parts; measuring length on the input only; Unicode `trim()`.
 
 ### D157. Disposable-domain list: one pinned upstream commit, parents match, updated by PR
@@ -1935,9 +1947,14 @@ change no address.
 ### D158. The Google-hosted rule compares `hd` exactly
 - Date 2026-11-02 · Status: to confirm (built on `feat/email-login-3`, not merged) · Source: build of
   `docs/email-login-spec.md` "The four cases" ("`hd` is present and equal to the address's normalized domain")
-- Decision: `isGoogleHosted({ email, hd })` takes a normalized address (it throws otherwise) and is true for the
-  domain `gmail.com`, or when `hd` is a non-empty string **exactly equal** to the normalized domain: `hd` is not
-  lowercased, IDNA-mapped or trimmed first. A subdomain or parent of `hd` doesn't count.
+- Decision: `isGoogleHosted({ email, emailVerified, hd })` takes a normalized address (it throws otherwise) and
+  needs `emailVerified === true` (anything else is false). Then: `hd` absent (`undefined` or `null`) → true only for
+  the domain `gmail.com`; `hd` present → true only when it is a non-empty string **exactly equal** to the normalized
+  domain (so a `gmail.com` address with another `hd` is false; review L1). `hd` is not lowercased, IDNA-mapped or
+  trimmed first. A subdomain or parent of `hd` doesn't count.
+- Accepted: Cloud Identity accounts, and Workspace accounts without Gmail, have `hd` equal to the domain while the
+  mailbox is hosted elsewhere. The rule still treats them as Google-hosted because the same domain administrator
+  controls both the Google account and the domain's mail.
 - Why: a false "not Google-hosted" only costs the user a code (case A) or the 24 h delay (case B); a false "hosted"
   links silently. Google returns `hd` as the Workspace's lowercase ASCII domain, so the exact form is the expected one.
 - Rejected: normalizing `hd` with `normalizeDomain`; matching `hd` against parent domains.

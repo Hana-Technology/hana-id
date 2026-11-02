@@ -22,12 +22,15 @@
 import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 import { EMAIL_V1, emailSub, importSubKey, isNormalizedEmail, normalizeEmail } from '../src/index.ts';
+import { UNICODE_AGE_SOURCE } from '../src/unicode-age.ts';
 import { PKG, V, VECTORS_TEXT, readText, sha256Hex, testKey } from './helpers.ts';
 
 /** sha256 of vectors/email-v1.json, byte for byte. */
-const VECTORS_SHA256 = '6f516f0984c4617b770666cf98dc3ac31a2771f996d483baec5fc495bd2b1be3';
+const VECTORS_SHA256 = 'fea30ad09d8288aed3c71b9441d3c293bf49b4576064400dae1ec1289198d488';
 /** sha256 of JSON.stringify(EMAIL_V1). */
-const CONSTANTS_SHA256 = 'e94e5cc843da736277a4c5c7106b1a81d0bacf0d600944aadc971937ff137cc5';
+const CONSTANTS_SHA256 = 'cbb067bb7624caf6e182bb0298b249c4ef4980206352b60310827bcbc0c1b2eb';
+/** sha256 of src/unicode-age.ts (code points refused as newer than Unicode 15.0, from DerivedAge-18.0.0.txt). */
+const UNICODE_AGE_SHA256 = '0344aa1c296659c7ff4734c845aa4f47e710c539a47a1f6a86daafafc208ae15';
 
 const require = createRequire(`${PKG}/package.json`);
 
@@ -40,6 +43,12 @@ describe('email v1 freeze guard', () => {
     expect(sha256Hex(JSON.stringify(EMAIL_V1)), 'address-changing edit: EMAIL_V1 changed').toBe(CONSTANTS_SHA256);
     expect(Object.isFrozen(EMAIL_V1) && Object.isFrozen(EMAIL_V1.idna) && Object.isFrozen(EMAIL_V1.idna.options)).toBe(true);
     expect(Object.isFrozen(EMAIL_V1.gmailDomains)).toBe(true);
+  });
+
+  it('the Unicode age table is unchanged (it decides which addresses are accepted)', () => {
+    expect(sha256Hex(readText('src/unicode-age.ts')), 'address-changing edit: src/unicode-age.ts changed').toBe(UNICODE_AGE_SHA256);
+    expect(UNICODE_AGE_SOURCE.cutoff).toBe(EMAIL_V1.unicodeCutoff);
+    expect(UNICODE_AGE_SOURCE.file).toBe(`DerivedAge-${EMAIL_V1.idna.unicode}.txt`);
   });
 
   it('the vectors file names the same constants as the code', () => {

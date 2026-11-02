@@ -8,48 +8,63 @@ const n = (input: string) => {
   if (!r.ok) throw new Error(r.reason);
   return r.email;
 };
+const hosted = (email: string, hd?: unknown, emailVerified: unknown = true) =>
+  isGoogleHosted({ email: n(email), hd: hd as string | undefined, emailVerified: emailVerified as boolean });
 
 describe('isGoogleHosted', () => {
-  it('Gmail: always, with or without hd', () => {
-    expect(isGoogleHosted({ email: n('a.b@gmail.com') })).toBe(true);
-    expect(isGoogleHosted({ email: n('ab@gmail.com'), hd: 'example.com' })).toBe(true);
+  it('Gmail with no hd', () => {
+    expect(hosted('a.b@gmail.com')).toBe(true);
+    expect(hosted('ab@gmail.com', null)).toBe(true);
   });
 
   it('googlemail.com: through the Gmail canonical form', () => {
-    expect(isGoogleHosted({ email: n('A.B+x@GoogleMail.com') })).toBe(true);
+    expect(hosted('A.B+x@GoogleMail.com')).toBe(true);
+  });
+
+  it('Gmail with a present, different hd: not Google-hosted', () => {
+    expect(hosted('ab@gmail.com', 'example.com')).toBe(false);
+    expect(hosted('ab@gmail.com', '')).toBe(false);
   });
 
   it('Workspace: hd present and equal to the normalized domain', () => {
-    expect(isGoogleHosted({ email: n('Alice@Example.COM'), hd: 'example.com' })).toBe(true);
-    expect(isGoogleHosted({ email: n('x@Bücher.example'), hd: 'xn--bcher-kva.example' })).toBe(true);
+    expect(hosted('Alice@Example.COM', 'example.com')).toBe(true);
+    expect(hosted('x@Bücher.example', 'xn--bcher-kva.example')).toBe(true);
   });
 
-  it('hd absent: not Google-hosted (an outside address on a Google account)', () => {
-    expect(isGoogleHosted({ email: n('alice@example.com') })).toBe(false);
-    expect(isGoogleHosted({ email: n('alice@example.com'), hd: undefined })).toBe(false);
-    expect(isGoogleHosted({ email: n('alice@example.com'), hd: null })).toBe(false);
-    expect(isGoogleHosted({ email: n('alice@example.com'), hd: '' })).toBe(false);
+  it('hd absent on another domain: not Google-hosted (an outside address on a Google account)', () => {
+    expect(hosted('alice@example.com')).toBe(false);
+    expect(hosted('alice@example.com', null)).toBe(false);
+    expect(hosted('alice@example.com', '')).toBe(false);
   });
 
   it('hd different: not Google-hosted, including parent, sub- and look-alike domains', () => {
-    expect(isGoogleHosted({ email: n('alice@example.com'), hd: 'other.com' })).toBe(false);
-    expect(isGoogleHosted({ email: n('alice@mail.example.com'), hd: 'example.com' })).toBe(false);
-    expect(isGoogleHosted({ email: n('alice@example.com'), hd: 'mail.example.com' })).toBe(false);
-    expect(isGoogleHosted({ email: n('alice@example.com'), hd: 'example.co' })).toBe(false);
-    expect(isGoogleHosted({ email: n('alice@outlook.com'), hd: 'gmail.com' })).toBe(false);
+    expect(hosted('alice@example.com', 'other.com')).toBe(false);
+    expect(hosted('alice@mail.example.com', 'example.com')).toBe(false);
+    expect(hosted('alice@example.com', 'mail.example.com')).toBe(false);
+    expect(hosted('alice@example.com', 'example.co')).toBe(false);
+    expect(hosted('alice@outlook.com', 'gmail.com')).toBe(false);
   });
 
   it('compares hd exactly, without normalizing it (D158)', () => {
-    expect(isGoogleHosted({ email: n('alice@example.com'), hd: 'Example.com' })).toBe(false);
-    expect(isGoogleHosted({ email: n('alice@example.com'), hd: 'example.com.' })).toBe(false);
-    expect(isGoogleHosted({ email: n('alice@example.com'), hd: ' example.com' })).toBe(false);
-    expect(isGoogleHosted({ email: n('x@Bücher.example'), hd: 'bücher.example' })).toBe(false);
-    expect(isGoogleHosted({ email: n('alice@example.com'), hd: 42 as unknown as string })).toBe(false);
+    expect(hosted('alice@example.com', 'Example.com')).toBe(false);
+    expect(hosted('alice@example.com', 'example.com.')).toBe(false);
+    expect(hosted('alice@example.com', ' example.com')).toBe(false);
+    expect(hosted('x@Bücher.example', 'bücher.example')).toBe(false);
+    expect(hosted('alice@example.com', 42)).toBe(false);
+  });
+
+  it('needs email_verified to be exactly true', () => {
+    for (const v of [false, undefined, null, 'true', 1]) {
+      const emailVerified = v as boolean;
+      expect(isGoogleHosted({ email: n('ab@gmail.com'), emailVerified })).toBe(false);
+      expect(isGoogleHosted({ email: n('alice@example.com'), hd: 'example.com', emailVerified })).toBe(false);
+    }
+    expect(isGoogleHosted({ email: n('ab@gmail.com') } as unknown as Parameters<typeof isGoogleHosted>[0])).toBe(false);
   });
 
   it('refuses an address that is not normalized', () => {
     for (const email of ['Alice@example.com', 'a.b@gmail.com', 'ab@googlemail.com', 'nope']) {
-      expect(() => isGoogleHosted({ email, hd: 'example.com' })).toThrow(TypeError);
+      expect(() => isGoogleHosted({ email, hd: 'example.com', emailVerified: true })).toThrow(TypeError);
     }
   });
 });

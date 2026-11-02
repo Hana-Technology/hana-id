@@ -9,12 +9,11 @@
 import { describe, expect, it } from 'vitest';
 import { DISPOSABLE_DOMAINS_SOURCE, disposableDomains, isDisposableDomain, normalizeDomain, normalizeEmail } from '../src/index.ts';
 import { DISPOSABLE_DOMAINS_TEXT } from '../src/disposable-domains.ts';
+import { PROTECTED_DOMAINS, protectedConflicts } from '../scripts/protected-domains.mjs';
 import { readText, sha256Hex } from './helpers.ts';
 
-const GOOGLE_HOSTED = ['gmail.com', 'googlemail.com', 'google.com'];
-
 describe('disposable-domain list: Google-hosted guard', () => {
-  it.each(GOOGLE_HOSTED)('%s and its parents are not on the list', (d) => {
+  it.each([...PROTECTED_DOMAINS])('%s and its parents are not on the list', (d) => {
     const labels = d.split('.');
     for (let i = 0; i < labels.length; i++) expect(disposableDomains().has(labels.slice(i).join('.'))).toBe(false);
     expect(isDisposableDomain(d)).toBe(false);
@@ -27,9 +26,12 @@ describe('disposable-domain list: Google-hosted guard', () => {
     }
   });
 
-  it('the update script refuses the same domains', () => {
-    const script = readText('scripts/update-disposable-domains.mjs');
-    expect(script).toContain("const PROTECTED = ['gmail.com', 'googlemail.com', 'google.com'];");
+  it('covers the spec Google-hosted domains, and the shared check the update script runs finds no conflict', () => {
+    expect(PROTECTED_DOMAINS).toEqual(expect.arrayContaining(['gmail.com', 'googlemail.com']));
+    expect(protectedConflicts(disposableDomains())).toEqual([]);
+    expect(protectedConflicts(new Set(['com']))).toEqual(['com', 'com', 'com']);
+    expect(protectedConflicts(new Set(['googlemail.com']))).toEqual(['googlemail.com']);
+    expect(readText('scripts/update-disposable-domains.mjs')).toContain("import { protectedConflicts } from './protected-domains.mjs';");
   });
 });
 

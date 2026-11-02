@@ -9,7 +9,7 @@ import { PKG, V, testKey } from './helpers.ts';
 interface Bundle {
   normalizeEmail(input: string): { ok: boolean; email?: string };
   emailSub(key: Uint8Array, email: string): Promise<string>;
-  isGoogleHosted(i: { email: string; hd?: string }): boolean;
+  isGoogleHosted(i: { email: string; emailVerified: boolean; hd?: string }): boolean;
   isDisposableDomain(d: string): boolean;
 }
 
@@ -46,7 +46,7 @@ describe('Workers and browser compatibility', () => {
     // The key is made inside the context: its own Uint8Array, as a Worker would hold it.
     const key = runInContext(`new Uint8Array(${JSON.stringify([...testKey()])})`, ctx) as Uint8Array;
     for (const v of V.sub) expect(await m.emailSub(key, v.email)).toBe(v.sub);
-    expect(m.isGoogleHosted({ email: 'ab@gmail.com' })).toBe(true);
+    expect(m.isGoogleHosted({ email: 'ab@gmail.com', emailVerified: true })).toBe(true);
     expect(m.isDisposableDomain('x.mailinator.com')).toBe(true);
   });
 });

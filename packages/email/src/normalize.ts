@@ -5,8 +5,9 @@
 //
 // Pure and platform-neutral: no Node API, no I/O. Runs in Workers and browsers.
 
-import { toASCII } from 'tr46';
+import { toASCII, toUnicode } from 'tr46';
 import { EMAIL_V1 } from './constants.ts';
+import { hasLoneSurrogate, hasPostCutoffCodePoint } from './unicode.ts';
 
 export type InvalidEmailReason =
   /** Not a string. */
@@ -30,7 +31,9 @@ export type InvalidEmailReason =
   /** Not a valid DNS host name after ToASCII (empty or over-long labels, numeric TLD, over 253 bytes). */
   | 'domain_syntax'
   /** A single-label domain. */
-  | 'domain_no_dot';
+  | 'domain_no_dot'
+  /** A code point assigned after Unicode `EMAIL_V1.unicodeCutoff` (15.0), in the input or the decoded domain (D156). */
+  | 'domain_unicode_version';
 
 export type NormalizeResult =
   | { ok: true; email: string; local: string; domain: string }
@@ -40,7 +43,6 @@ export type NormalizeDomainResult = { ok: true; domain: string } | { ok: false; 
 
 /** WHATWG "ASCII whitespace": TAB, LF, FF, CR, SPACE. Anything else stays and fails the syntax checks. */
 const EDGE_WHITESPACE = /^[\t\n\f\r ]+|[\t\n\f\r ]+$/g;
-const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 const NON_ASCII = /[^\x00-\x7F]/;
 /** RFC 5322 §3.2.3 dot-atom-text: 1*atext *("." 1*atext). */
 const DOT_ATOM = /^[A-Za-z0-9!#$%&'*+\-/=?^_`{|}~]+(?:\.[A-Za-z0-9!#$%&'*+\-/=?^_`{|}~]+)*$/;
@@ -55,13 +57,22 @@ const asciiLower = (s: string): string => s.replace(/[A-Z]/g, (c) => String.from
 
 /**
  * Spec step 2 on its own: UTS #46 ToASCII (non-transitional), lowercase, strip one trailing dot, then a valid DNS
- * name with at least one dot. Used for the domain of an address, Google's `hd` and the disposable-domain list.
+ * name with at least one dot. Used for the domain of an address and to check the disposable-domain list (Google's
+ * `hd` is compared without being normalized, D158). Refuses any code point assigned after Unicode 15.0, in the input
+ * or in the decoded result, so the runtime's Unicode data can't change the answer (D156).
  */
 export function normalizeDomain(input: string): NormalizeDomainResult {
   if (typeof input !== 'string') return { ok: false, reason: 'not_string' };
-  if (LONE_SURROGATE.test(input)) return { ok: false, reason: 'malformed' };
+  if (hasLoneSurrogate(input)) return { ok: false, reason: 'malformed' };
+  // Before tr46 validates: its NFC step uses the runtime's Unicode data, which may predate a newer character. First
+  // the raw input, then its mapped form with `xn--` labels decoded (an ASCII `xn--` label can hide a newer character;
+  // mapping and decoding are table-driven, and NFC is runtime-independent once every code point is in 15.0), then
+  // the Unicode form of the result again. Each check gives the same answer on every runtime.
+  if (hasPostCutoffCodePoint(input)) return { ok: false, reason: 'domain_unicode_version' };
+  if (hasPostCutoffCodePoint(toUnicode(input).domain)) return { ok: false, reason: 'domain_unicode_version' };
   const ascii = toASCII(input, { ...EMAIL_V1.idna.options });
   if (ascii === null) return { ok: false, reason: 'domain_idna' };
+  if (hasPostCutoffCodePoint(toUnicode(ascii).domain)) return { ok: false, reason: 'domain_unicode_version' };
   let domain = asciiLower(ascii);
   if (domain.endsWith('.')) domain = domain.slice(0, -1);
   if (domain.length === 0 || domain.length > EMAIL_V1.maxDomainBytes) return { ok: false, reason: 'domain_syntax' };
@@ -86,10 +97,15 @@ export function normalizeDomain(input: string): NormalizeDomainResult {
  * 5. Nothing else provider-specific.
  *
  * The result is idempotent: `normalizeEmail(r.email)` gives `r.email` again.
+ *
+ * **The issuer must send the code to `r.email`, byte for byte, never to the raw input.** The normalized form is the
+ * address `sub` stands for; the raw input can reach another mailbox. Example: `x@faß.de` normalizes to
+ * `x@xn--fa-hia.de`, but a mailer that applies transitional IDNA to the raw input would deliver to `x@fass.de`, a
+ * different domain with a different owner.
  */
 export function normalizeEmail(input: string): NormalizeResult {
   if (typeof input !== 'string') return { ok: false, reason: 'not_string' };
-  if (LONE_SURROGATE.test(input)) return { ok: false, reason: 'malformed' };
+  if (hasLoneSurrogate(input)) return { ok: false, reason: 'malformed' };
   const trimmed = input.replace(EDGE_WHITESPACE, '');
   if (utf8Length(trimmed) > EMAIL_V1.maxAddressBytes) return { ok: false, reason: 'too_long' };
   const parts = trimmed.split('@');

@@ -166,6 +166,56 @@
       "out": "x@example.com"
     },
     {
+      "label": "IDN: emoji label (UTS #46 allows it)",
+      "in": "x@💩.la",
+      "out": "x@xn--ls8h.la"
+    },
+    {
+      "label": "IDN: emoji label as punycode",
+      "in": "x@xn--ls8h.la",
+      "out": "x@xn--ls8h.la"
+    },
+    {
+      "label": "IDN: ZWNJ in a valid ContextJ (Persian)",
+      "in": "x@نامه‌ای.ir",
+      "out": "x@xn--mgba3gch31f060k.ir"
+    },
+    {
+      "label": "IDN: ignored zero width space",
+      "in": "x@exa​mple.com",
+      "out": "x@example.com"
+    },
+    {
+      "label": "IDN: ignored variation selector 16",
+      "in": "x@exa️mple.com",
+      "out": "x@example.com"
+    },
+    {
+      "label": "IDN: ignored combining grapheme joiner",
+      "in": "x@exa͏mple.com",
+      "out": "x@example.com"
+    },
+    {
+      "label": "IDN: halfwidth ideographic full stop as an inner dot",
+      "in": "x@example｡com",
+      "out": "x@example.com"
+    },
+    {
+      "label": "IDN: ideographic full stop as an inner dot",
+      "in": "x@example。com",
+      "out": "x@example.com"
+    },
+    {
+      "label": "IDN: capital I with dot above maps to i + U+0307",
+      "in": "x@İstanbul.example",
+      "out": "x@xn--istanbul-o0e.example"
+    },
+    {
+      "label": "IDN: a Unicode 15.0 character (the cutoff itself)",
+      "in": "x@𱍐.example",
+      "out": "x@xn--8o8n.example"
+    },
+    {
       "label": "local part of exactly 64 bytes",
       "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com",
       "out": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com"
@@ -365,6 +415,34 @@
     {
       "label": "normalized address over 254 bytes (punycode grows the domain)",
       "in": "a@例え.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.com"
+    },
+    {
+      "label": "Unicode 17.0 combining mark U+1AD0 (runtime NFC would differ)",
+      "in": "alice@x᫐̖.com"
+    },
+    {
+      "label": "the same as punycode, in the order Unicode 17 NFC gives",
+      "in": "alice@xn--x-4cb633p.com"
+    },
+    {
+      "label": "the same as punycode, in the order a pre-17 runtime gives",
+      "in": "alice@xn--x-4cb533p.com"
+    },
+    {
+      "label": "Unicode 17.0 combining mark U+1AE0",
+      "in": "alice@a᫠.com"
+    },
+    {
+      "label": "Unicode 17.0 Tai Yo letters (U+1E6E3)",
+      "in": "alice@𞛣𞛠.example"
+    },
+    {
+      "label": "Unicode 15.1 CJK ideograph (after the 15.0 cutoff)",
+      "in": "alice@𮯰.example"
+    },
+    {
+      "label": "Unicode 18.0 character",
+      "in": "alice@a୓.com"
     }
   ],
   "sub": [
@@ -443,6 +521,22 @@
     {
       "email": "x@example.com",
       "sub": "e1.m29ruWmGl4AF5aDt9NDCGdL30dAdoq82nYEjjNLQTO0"
+    },
+    {
+      "email": "x@xn--ls8h.la",
+      "sub": "e1.4oBsWBhjvR680N1yNVObyeBOuctu8PToJvLIYB2LcCE"
+    },
+    {
+      "email": "x@xn--mgba3gch31f060k.ir",
+      "sub": "e1.KBOL-nPdBltM9KhwCtMmK2_VYvCBvoVsE0kCfHnTFuo"
+    },
+    {
+      "email": "x@xn--istanbul-o0e.example",
+      "sub": "e1.aW1nDdsLBQdoimxRdhJOgQzHoUUQnRUbgBm1kuHXnfc"
+    },
+    {
+      "email": "x@xn--8o8n.example",
+      "sub": "e1.ItLCPkixvENeYEjJhHmnOqtQglPLrm21Kk-6E45NICs"
     },
     {
       "email": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com",

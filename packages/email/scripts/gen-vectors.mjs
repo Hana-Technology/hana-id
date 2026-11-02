@@ -3,7 +3,9 @@
 // (docs/email-login-spec.md "Email normalization", "`sub`: HMAC of the normalized email"). It is an independent
 // implementation: Node's own UTS #46 (`url.domainToASCII`, the WHATWG URL host parser: non-transitional, Ada in
 // Node) plus this file's own LDH, length and Gmail rules, and node:crypto HMAC. The package code (tr46, Web Crypto)
-// must reproduce every vector: test/vectors.test.ts.
+// must reproduce every vector: test/vectors.test.ts. The one shared input is data, not code: the list of code
+// points assigned after Unicode 15.0 (src/unicode-age.ts, generated from Unicode's DerivedAge.txt), read as text and
+// checked here with this file's own logic.
 //
 // Run once to create the file; afterwards it only re-checks: it refuses to overwrite a file whose content would
 // change (an address-changing edit) unless --force is passed, which must never happen after the address freeze.
@@ -19,7 +21,17 @@ import { dirname, join } from 'node:path';
 import { domainToASCII, domainToUnicode } from 'node:url';
 import { fileURLToPath } from 'node:url';
 
-const OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'vectors', 'email-v1.json');
+const PKG = join(dirname(fileURLToPath(import.meta.url)), '..');
+const OUT = join(PKG, 'vectors', 'email-v1.json');
+
+// Code points assigned after Unicode 15.0 (D156), from the vendored table's text.
+const AGE_TEXT = /ASSIGNED_AFTER_CUTOFF = `([^`]*)`/.exec(readFileSync(join(PKG, 'src', 'unicode-age.ts'), 'utf8'))[1];
+const NEW_RANGES = AGE_TEXT.trim().split(/\s+/).map((r) => {
+  const [lo, hi = lo] = r.split('..');
+  return [parseInt(lo, 16), parseInt(hi, 16)];
+});
+const isNew = (cp) => NEW_RANGES.some(([lo, hi]) => cp >= lo && cp <= hi);
+const anyNew = (s) => [...s].some((c) => isNew(c.codePointAt(0)));
 
 const SUB_PREFIX = 'e1.';
 const SUB_LABEL = 'hana-id/email-sub/v1';
@@ -48,9 +60,11 @@ function hyphensOk(asciiLabel) {
 }
 
 function domainOf(input) {
-  if (/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(input)) return null;
+  if (!input.isWellFormed()) return null;
+  if (anyNew(input)) return null;
   const ascii = domainToASCII(input);
   if (ascii === '') return null;
+  if (ascii.split('.').some((l) => anyNew(l.startsWith('xn--') ? domainToUnicode(l) : l))) return null;
   let d = ascii.toLowerCase();
   if (d.endsWith('.')) d = d.slice(0, -1);
   if (d.length === 0 || d.length > 253) return null;
@@ -126,6 +140,16 @@ const ACCEPT = [
   ['IDN: right-to-left labels', 'x@مثال.إختبار'],
   ['IDN: soft hyphen is ignored', 'x@exa­mple.com'],
   ['IDN: circled letter maps to ASCII', 'x@ⓔxample.com'],
+  ['IDN: emoji label (UTS #46 allows it)', 'x@\u{1F4A9}.la'],
+  ['IDN: emoji label as punycode', 'x@xn--ls8h.la'],
+  ['IDN: ZWNJ in a valid ContextJ (Persian)', 'x@نامه‌ای.ir'],
+  ['IDN: ignored zero width space', 'x@exa​mple.com'],
+  ['IDN: ignored variation selector 16', 'x@exa️mple.com'],
+  ['IDN: ignored combining grapheme joiner', 'x@exa͏mple.com'],
+  ['IDN: halfwidth ideographic full stop as an inner dot', 'x@example｡com'],
+  ['IDN: ideographic full stop as an inner dot', 'x@example。com'],
+  ['IDN: capital I with dot above maps to i + U+0307', 'x@İstanbul.example'],
+  ['IDN: a Unicode 15.0 character (the cutoff itself)', 'x@\u{31350}.example'],
   ['local part of exactly 64 bytes', `${a(64)}@example.com`],
   ['address of exactly 254 bytes', `${a(64)}@${domain189}`],
   ['label of exactly 63 bytes, domain of 252 bytes', `a@${a(63)}.${a(63, 'b')}.${a(63, 'c')}.${a(56, 'd')}.com`],
@@ -178,6 +202,13 @@ const REJECT = [
   ['domain of 254 bytes', `a@${a(63)}.${a(63, 'b')}.${a(63, 'c')}.${a(58, 'd')}.com`],
   ['address of 255 bytes, domain of 253', `a@${a(63)}.${a(63, 'b')}.${a(63, 'c')}.${a(57, 'd')}.com`],
   ['normalized address over 254 bytes (punycode grows the domain)', `a@${idn253}`],
+  ['Unicode 17.0 combining mark U+1AD0 (runtime NFC would differ)', 'alice@x\u1AD0\u0316.com'],
+  ['the same as punycode, in the order Unicode 17 NFC gives', 'alice@xn--x-4cb633p.com'],
+  ['the same as punycode, in the order a pre-17 runtime gives', 'alice@xn--x-4cb533p.com'],
+  ['Unicode 17.0 combining mark U+1AE0', 'alice@a\u1AE0.com'],
+  ['Unicode 17.0 Tai Yo letters (U+1E6E3)', 'alice@\u{1E6E3}\u{1E6E0}.example'],
+  ['Unicode 15.1 CJK ideograph (after the 15.0 cutoff)', 'alice@\u{2EBF0}.example'],
+  ['Unicode 18.0 character', 'alice@a\u0B53.com'],
 ];
 
 // ---- build and check ----------------------------------------------------------------------------------------------

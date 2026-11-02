@@ -31,4 +31,9 @@ export const EMAIL_V1 = Object.freeze({
   gmailDomains: Object.freeze(['gmail.com', 'googlemail.com'] as const),
   gmailCanonicalDomain: 'gmail.com',
   idna: Object.freeze({ library: 'tr46', version: '7.0.0', unicode: '18.0.0', options: IDNA_OPTIONS }),
+  /**
+   * Code points assigned after this Unicode version are refused anywhere in the address (src/unicode-age.ts), so the
+   * runtime's own Unicode data (NFC inside tr46) can't change a result: every target runtime knows 15.0 (D156).
+   */
+  unicodeCutoff: '15.0',
 });

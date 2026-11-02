@@ -11,4 +11,6 @@ declare module 'tr46' {
   }
   /** UTS #46 ToASCII; `null` when the domain fails processing or validation. */
   export function toASCII(domainName: string, options?: ToASCIIOptions): string | null;
+  /** UTS #46 ToUnicode: the Unicode form of each label (`xn--` labels decoded) and whether processing failed. */
+  export function toUnicode(domainName: string, options?: Omit<ToASCIIOptions, 'verifyDNSLength'>): { domain: string; error: boolean };
 }

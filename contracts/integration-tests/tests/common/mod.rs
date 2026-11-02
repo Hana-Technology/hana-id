@@ -306,6 +306,24 @@ pub fn wasms() -> Result<(Vec<u8>, Vec<u8>)> {
         .map_err(|e| anyhow!(e))
 }
 
+static DEPLOY_WASM: OnceLock<std::result::Result<Vec<u8>, String>> = OnceLock::new();
+
+/// The current hana-signer wasm exactly as `deploy-contract` builds what it deploys (`cargo near build
+/// non-reproducible-wasm --no-abi`, scripts/lib/deploy-run.ts), into `target/wasm-deploy`. The upgrade tests run this
+/// artifact; the other tests use `wasms()` (with the embedded ABI). `HANA_SIGNER_DEPLOY_WASM=<path>` overrides it.
+pub fn deploy_wasm() -> Result<Vec<u8>> {
+    DEPLOY_WASM
+        .get_or_init(|| {
+            if let Ok(path) = std::env::var("HANA_SIGNER_DEPLOY_WASM") {
+                return std::fs::read(&path).map_err(|e| format!("reading HANA_SIGNER_DEPLOY_WASM={path}: {e}"));
+            }
+            let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("target").join("wasm-deploy");
+            build_wasm_at(&contracts_dir().join("hana-signer"), "hana_signer.wasm", &target, &["--no-abi"]).map_err(|e| format!("{e:#}"))
+        })
+        .clone()
+        .map_err(|e| anyhow!(e))
+}
+
 static V2_WASM: OnceLock<std::result::Result<Vec<u8>, String>> = OnceLock::new();
 
 /// The v2 hana-signer wasm: `contracts/hana-signer` at `V2_COMMIT`, exported with `git archive` into
@@ -693,7 +711,12 @@ impl TestIssuer {
 
     /// A fresh RSA key whose tokens carry `kid` (e.g. Google's next key in a rotation).
     pub fn generate_with_kid(kid: &str) -> Result<Self> {
-        let key = RsaPrivateKey::new(&mut rand::thread_rng(), 2048)?;
+        Self::generate_with_bits(kid, 2048)
+    }
+
+    /// A fresh RSA key of `bits` bits (the contract accepts 2048 to 4096) whose tokens carry `kid`.
+    pub fn generate_with_bits(kid: &str, bits: usize) -> Result<Self> {
+        let key = RsaPrivateKey::new(&mut rand::thread_rng(), bits)?;
         let n = b64url(&key.n().to_bytes_be());
         let e = b64url(&key.e().to_bytes_be());
         Ok(Self { signing: RsaSigningKey::<RsaSha256>::new(key), kid: kid.to_string(), n, e })
@@ -1129,8 +1152,12 @@ impl Env {
     /// `mark_self_issued("email")`, `set_issuer_key(..., signer: "hana")`, then, after `governance_delay_ms`, anyone
     /// executes the key change. Returns the issuer's key. Prints the gas of each call.
     pub async fn setup_email(&self) -> Result<TestIssuer> {
+        self.setup_email_with(TestIssuer::generate_with_kid(EMAIL_KID)?).await
+    }
+
+    /// `setup_email` with the given issuer key.
+    pub async fn setup_email_with(&self, key: TestIssuer) -> Result<TestIssuer> {
         let signer = self.signer.id();
-        let key = TestIssuer::generate_with_kid(EMAIL_KID)?;
         let outcome = self.admin.call(signer, "set_issuer").args_json(json!({"provider": EMAIL, "iss_values": [EMAIL_ISS]})).gas(GAS).transact().await?;
         report_gas("set_issuer (email)", &outcome, GAS);
         outcome.into_result()?;

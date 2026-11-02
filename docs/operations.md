@@ -431,10 +431,21 @@ Re-run with `--skip-build` (or the same `--wasm`) to execute, so the hash is the
 the build must be reproducible (`cargo near build reproducible-wasm`) and its hash, commit and command published
 before the proposal (D86); the scripts refuse every non-testnet manifest today.
 
-**v2 → v3 (email login, sandbox-dev in build-plan batch 6).** The same path; the sandbox suite runs it end to end
+**v2 → v3 (email login, sandbox-dev in build-plan batch 6).** Before proposing it, both must be live:
+
+1. The API, `packages/web` (the vault's split path) and `apps/smoke/src/direct.ts` sending the `create_session`
+   proof of possession (`signature` over session_message(0, "hana-id-create-v1:" ‖ sha256(session nonce
+   preimage)), D137), deployed. v2 ignores the extra field; v3 requires it, so without it every split-path session
+   (`/v1/sessions`) fails from the moment the upgrade executes (the one-transaction `/v1/login` is unaffected).
+2. The watchdog with the email pins (build-plan batch 5) deployed, so the email keys posted after the upgrade aren't
+   read as an attack (`unverifiable_key_change`).
+
+The full order is build-plan batch 6's "Deploy (sandbox-dev), in order" (watchdog pins → upgrade →
+`accept_unrecorded_wallets` → email issuer on chain → issuer Worker → email clients → D1 → API). The upgrade itself
+is the same path as any other; the sandbox suite runs it end to end
 from the v2 code sandbox-dev runs (`contracts/integration-tests/tests/governance.rs`
 `v2_to_v3_upgrade_through_the_dao_keeps_every_view_and_path`): the DAO's `propose_upgrade`, `execute_upgrade` once
-due (`state_migrated {2, 3}`, ≈ 102 Tgas of the 300 attached), every view and path unchanged, then the DAO's
+due (`state_migrated {2, 3}`, ≈ 100 Tgas of the 300 attached), every view and path unchanged, then the DAO's
 `accept_unrecorded_wallets` before any link works (D135). Check `get_governance().state_version == 3` and
 `get_config().unrecorded_wallets` (`true` until that call). The v2 code can't come back by upgrade (its `migrate`
 refuses v3 state; the deploy reverts). sandbox-dev's v2 code (`3TSDwkMqPUhZtzFCvvaJ39nQWXUQK4LExPhsaS9tScoz`) is

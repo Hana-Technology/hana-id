@@ -38,8 +38,9 @@ Conventions:
   the updater key sends 30 Tgas to `set_issuer_key`, `propose_issuer_key_removal` and `execute_issuer_key_change`
   (its allowance is 1 NEAR); `execute_upgrade` needs 300 Tgas (see [Upgrades](#upgrades)); owner calls through the
   DAO attach 100 Tgas per `FunctionCall` action. Email login and links (v3): measured per call in
-  [Gas of the email login calls](#gas-of-the-email-login-calls-sandbox); a combined login with `link_jwt` needs 150
-  Tgas (the API sets it in build-plan batch 6).
+  [Gas of the email login calls](#gas-of-the-email-login-calls-sandbox); a combined login with `link_jwt` needs ≈ 59
+  Tgas with 2048-bit keys and ≈ 156 with 4096-bit ones (the largest the contract accepts): attach 250 (D155; the
+  API sets it in build-plan batch 6).
 
 ## Types (JSON)
 
@@ -890,12 +891,15 @@ gives sandbox-dev's code hash `3TSDwkMqPUhZtzFCvvaJ39nQWXUQK4LExPhsaS9tScoz` on 
 by a 2-of-3 Sputnik DAO: `propose_upgrade` through the DAO, `execute_upgrade` by anyone once due, `state_migrated
 {2, 3}`. Every v2 view is unchanged (`get_config` only gains `unrecorded_wallets: true`, `get_governance` only
 changes `state_version`), sessions, pending changes and pending key proposals survive, every path stays (old
-sessions and new logins derive the v2 paths). Links fail `Links wait until the owner accepts the wallets opened before
+sessions and new logins derive the v2 paths), and so does the state no view shows: a removed client's quarantine,
+a pending AddClient's reservation (`pending_adds`: it can't be made shared), the scope counter (the next
+registration gets the next id) and the session queue (`prune_sessions` removes the v2 sessions once expired). Links fail `Links wait until the owner accepts the wallets opened before
 v3` until the DAO calls `accept_unrecorded_wallets`; the email issuer and an email client are then set up through
 the DAO and the scope owner; the v2 code can't be upgraded back (its `migrate` panics `Unexpected state version`).
 
-Gas (sandbox): `execute_upgrade` of the 621.8 KB v3 wasm (with its embedded ABI; the `--no-abi` build is smaller)
-burns 102 Tgas over all receipts, 30 of them in the execute receipt (attach 300); the same for v3 → v3. Logins on v3
+Gas (sandbox): `execute_upgrade` of the 611.0 KB v3 wasm built as `deploy-contract` builds it (`--no-abi`, the
+artifact the upgrade test runs) burns 100 Tgas over all receipts, 29 of them in the execute receipt (attach 300);
+v3 → v3 with the 621.8 KB build with its ABI burns 102. Logins on v3
 against v2 (Google, no link, mock MPC, `login_gas_of_v3_against_v2`; the test fails above +3 Tgas):
 `create_session_and_derive` 22.1 → 22.6 Tgas at an identity's first login (the `opened` insert) and 22.2 → 22.5
 later; `create_session` 19.8 → 20.4 Tgas (with the proof of possession, D137). The spec's +1–2 Tgas estimate holds
@@ -1172,8 +1176,9 @@ identity to a published Google login), and a case-A login can't be stripped of i
 identity's own path and split the person into two wallets): either fails `Invalid session signature`. The vault
 checks the link token and recomputes its `auto_link` nonce before it signs. With a link the call needs more gas: one
 more RS256 verification and the account writes burn ≈ +18 Tgas in the signer's receipt (38.5 against 20.5 Tgas;
-the spec estimated +8–12), so attach **150 Tgas** (the spec's value, confirmed: ≈ 59 Tgas is the floor with the 20
-Tgas forwarded to the MPC); [Gas of the email login calls](#gas-of-the-email-login-calls-sandbox).
+the spec estimated +8–12); ≈ 59 Tgas is the floor with the 20 Tgas forwarded to the MPC. With 4096-bit keys (the
+largest `set_issuer_key` accepts) each verification costs ≈ 67 Tgas and the floor is ≈ 156, above the spec's 150:
+attach **250 Tgas** (D155); [Gas of the email login calls](#gas-of-the-email-login-calls-sandbox).
 
 - No counter argument (always 1) and no callback. `signature` is over `session_message(1, CKD payload)`.
 - Panics: every `create_session` panic, in its order, then every `derive_key` panic. Any of them aborts the whole
@@ -1293,32 +1298,36 @@ member opens its own path again (a new wallet unless it had one).
 ### Gas of the email login calls (sandbox)
 
 Measured 2026-11-02 in the near-workspaces sandbox with the mock MPC (`contracts/integration-tests`: `cargo test
---test email -- --nocapture | grep '^GAS'`, and `--test governance`), 2048-bit RSA keys, a v3 deployment created
-with `new`. "Signer receipt" is the gas burnt by hana-signer itself; "total" adds the transaction and, for logins,
-the MPC receipt (the 20 Tgas forwarded to the MPC are attached on top of the signer receipt). Testnet figures come
-with build-plan batch 8.
+--test email -- --nocapture | grep '^GAS'`, and `--test governance`) on a v3 deployment created with `new`, with
+2048-bit RSA keys (Google's size, and the spec's email key) and again with 4096-bit keys for every token
+(`gas_with_4096_bit_keys`; `set_issuer_key` accepts 2048 to 4096 bits, `issuers.rs` `checked_rsa_key`). Figures are
+Tgas burnt in hana-signer's own receipt; the transaction adds ≈ 0.3–0.4 and a login's MPC receipt ≈ 2. A login also
+forwards 20 Tgas to the MPC, so it needs its signer receipt + 20 attached. Testnet figures come with build-plan batch
+8.
 
-| Call | Signer receipt | Total | Attach |
+| Call | 2048-bit | 4096-bit | Attach (D155) |
 |---|---|---|---|
-| `set_issuer("email", [iss])` (owner) | 2.2 | 2.5 | DAO default 100 |
-| `mark_self_issued("email")` (owner) | 2.0 | 2.3 | DAO default 100 |
-| `set_issuer_key("email", …, signer: "hana")` (owner) | 2.4 | 2.7 | 30 |
-| `execute_issuer_key_change` (email key, anyone) | 2.2 | 2.5 | 30 |
-| `accept_unrecorded_wallets()` (owner) | 1.8 | 2.1 | DAO default 100 |
-| `create_session` (email token) | 20.1 | 20.5 | 50 (the API's) |
-| `create_session_and_derive` (email token, no link; first or later login) | 20.5 | 22.6 | 100 (the API's) |
-| `create_session_and_derive` (Google, no link, v3) | 20.6 | 22.6 | 100 (the API's) |
-| `create_session_and_derive` (a member's login that activates a pending link) | 20.9 | 23.0 | 100 |
-| `create_session_and_derive` + `link_jwt` (case A, case B at once or delayed) | 38.5–38.6 | 40.6–40.7 | **150** (spec value confirmed) |
-| `link_identity` (two tokens, relayed by a sponsor) | 37.2 | 37.6 | 100 (spec value) |
-| `cancel_link` | 19.8 | 20.2 | 50 |
-| `unlink_identity` | 19.8 | 20.1 | 50 |
+| `set_issuer("email", [iss])` (owner) | 2.2 | — | DAO default 100 |
+| `mark_self_issued("email")` (owner) | 2.0 | — | DAO default 100 |
+| `set_issuer_key("email", …, signer: "hana")` (owner) | 2.4–2.5 | — | 30 |
+| `execute_issuer_key_change` (email key, anyone) | 2.2 | — | 30 |
+| `accept_unrecorded_wallets()` (owner, through the DAO, flipping the flag) | 1.9 (the DAO vote: 8.5 in all) | — | DAO default 100 |
+| `create_session` (email token) | 20.1 | 68.8 | the API's 50: **too little at 4096 bits** |
+| `create_session_and_derive` (email or Google token, no link) | 20.5–20.6 | 69.2–69.3 | the API's 100: 89 needed at 4096 bits |
+| `create_session_and_derive` (a member's login that activates a pending link) | 20.9 | — | 100 |
+| `create_session_and_derive` + `link_jwt` (case A, case B at once or delayed) | 38.5–38.6 | 136.0 | **250** (≈ 59 / ≈ 156 needed) |
+| `link_identity` (two tokens, relayed by a sponsor) | 37.2 | 134.6 | **250** |
+| `cancel_link` | 19.8 | 68.5 | **150** |
+| `unlink_identity` | 19.8 | 68.5 | **150** |
 
-One RS256 verification of a 2048-bit key costs ≈ 17–18 Tgas in wasm, which is most of every token-taking call: the
-spec's estimates were low for the link calls (`link_identity` ≈ 25–35 → 37.6; `cancel_link` / `unlink_identity` ≈
-15 → 20) and for the link in a login (+8–12 → +18). The attached values above keep at least 2.5 times the burnt gas
-(the login: 150 against ≈ 59 needed). An email token at 2-of-2 (Level 1) adds one more verification (≈ +18 Tgas)
-to every call that takes it: raise the attached gas with that upgrade.
+One RS256 verification costs ≈ 17–18 Tgas at 2048 bits and ≈ 67 at 4096 (the modular exponentiation in wasm), which
+is most of every token-taking call. The spec's estimates were low (`link_identity` ≈ 25–35, `cancel_link` /
+`unlink_identity` ≈ 15, the link in a login +8–12 Tgas) and its 150 Tgas for a linked login is enough only with
+2048-bit keys. The values in the last column cover the 4096-bit worst case with ≥ 1.6 times the need (unused gas is
+refunded; the prepaid gas only counts against the relayer key's allowance while the call runs). The plain logins'
+API values (50 and 100) don't cover 4096-bit keys: batch 6 raises them or the issuer keys stay at 2048 bits (D155).
+An email token at 2-of-2 (Level 1) adds one more verification to every call that takes it: raise the attached gas
+with that upgrade.
 
 ## Events (NEP-297)
 

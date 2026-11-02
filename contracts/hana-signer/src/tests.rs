@@ -4065,8 +4065,9 @@ fn unhex(s: &str) -> Vec<u8> {
 
 #[test]
 fn migrations_refuse_a_state_they_do_not_migrate_from() {
-    // migrate on a state that is neither the v2 nor the v3 layout (here a v3 state cut short: an older or corrupt
-    // layout, such as a v1 state, which has no migration any more).
+    // migrate on a state that is neither the v2 nor the v3 layout: here a v3 state cut short by one byte (corrupt).
+    // A v1 state, which has no migration any more, is refused the same way (tests/email.rs
+    // migrate_refuses_every_state_it_does_not_migrate_from: a state shorter than the v2 layout).
     let c = setup();
     let bytes = near_sdk::borsh::to_vec(&c).unwrap();
     env::storage_write(b"STATE", &bytes[..bytes.len() - 1]);

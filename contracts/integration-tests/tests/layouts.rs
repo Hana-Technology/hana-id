@@ -78,12 +78,17 @@ fn email_layouts_match_the_js_worked_examples() {
     assert_eq!(hex(&g), ex("identity_key_google")["ik"].as_str().unwrap());
     assert_eq!(hex(&e), ex("identity_key_email")["ik"].as_str().unwrap());
     let salt = [9u8; 16];
-    // The auto_link examples commit to the session nonce preimage of the session nonce example; its hash is a part.
+    // The auto_link examples commit to the session nonce preimage of test_fixture.json's session nonce example: scope
+    // s1, the Ed25519 key of seed [7; 32], expiry 1800003600000, key_index 0, max_uses 3, salt [9; 16]. Computed here
+    // with this crate's own session_nonce_preimage (not read from the fixture), then checked against the part the JS
+    // implementation wrote.
+    let pk7 = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]).verifying_key().to_bytes();
+    let own_hash = sha256(&session_nonce_preimage(signer, "s1", &pk7, 1_800_003_600_000, 0, 3, &[9u8; 16]));
     let session_hash = |name: &str| {
         let parts = ex(name)["parts"].as_array().unwrap().clone();
         let part = parts.iter().find(|p| p[0].as_str().unwrap().starts_with("sha256(session nonce preimage)")).expect("session hash part").clone();
-        let text = part[1].as_str().unwrap().to_string();
-        (0..text.len()).step_by(2).map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap()).collect::<Vec<u8>>()
+        assert_eq!(part[1].as_str().unwrap(), hex(&own_hash), "{name}: session nonce preimage hash");
+        own_hash.clone()
     };
     let checks: Vec<(&str, Vec<u8>)> = vec![
         ("link_new", link_new_preimage(signer, "s1", &g, "email", 7, &salt)),

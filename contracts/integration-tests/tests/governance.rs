@@ -108,6 +108,7 @@ struct V2World {
     worker: Worker<Sandbox>,
     signer: Contract,
     alice: Account,
+    bob: Account,
     relayer: Account,
     watchdog: Account,
     outsider: Account,
@@ -139,6 +140,16 @@ impl V2World {
             anyhow::bail!("council proposal {method} ended {status}: {:?}", outcome.into_result().err());
         }
         Ok(outcome)
+    }
+
+    /// As `council_call`, but returns the proposal's final status and the text of the last vote's outcome (with the
+    /// signer's panic when the FunctionCall failed).
+    async fn council_try(&self, method: &str, args: Value) -> Result<(String, String)> {
+        let dao = self.dao();
+        let id = dao.propose(&self.council[0], method, function_call(self.signer.id(), method, args)).await?;
+        dao.vote(&self.council[0], id).await?.into_result()?;
+        let outcome = dao.vote(&self.council[1], id).await?;
+        Ok((dao.status(id).await?, format!("{:?}", outcome.receipt_failures())))
     }
 
     async fn now_ms(&self) -> Result<u64> {
@@ -189,6 +200,9 @@ impl V2World {
     }
 }
 
+/// change_delay_ms of the v2 world: longer than the owner transfer plus the upgrade's delay (2 × GOVERNANCE_DELAY_MS).
+const V2_CHANGE_DELAY_MS: u64 = 180_000;
+
 async fn v2_world() -> Result<V2World> {
     let (_, mpc_wasm) = wasms()?;
     let v2 = v2_wasm()?;
@@ -212,7 +226,10 @@ async fn v2_world() -> Result<V2World> {
     let scope_a: String = register(json!([near_owner(alice.id())]), json!([[PROVIDER, APP_A], [PROVIDER, APP_C]]), false).await?.into_result()?.json()?;
     let _s2: String = register(json!([near_owner(bob.id())]), json!([[PROVIDER, APP_B]]), false).await?.into_result()?.json()?;
     let _s3: String = register(json!([near_owner(bob.id())]), json!([]), true).await?.into_result()?.json()?;
-    // A shared client (pending for CHANGE_DELAY_MS).
+    // A longer change delay (an increase applies at once), so C's quarantine below outlasts the owner transfer and the
+    // upgrade's governance delay and is checked after the upgrade.
+    admin.call(signer.id(), "set_change_delay_ms").args_json(json!({"change_delay_ms": V2_CHANGE_DELAY_MS})).transact().await?.into_result()?;
+    // A shared client (pending for the change delay).
     admin.call(signer.id(), "set_shared_clients").args_json(json!({"clients": [[PROVIDER, SHARED]]})).gas(GAS).transact().await?.into_result()?;
     // A pending AddClient (D) in s1, with a client proof at action_nonce 0, then C removed (quarantined).
     let now = now_ms(&worker).await?;
@@ -255,7 +272,7 @@ async fn v2_world() -> Result<V2World> {
     admin.call(signer.id(), "propose_owner").args_json(json!({"owner": dao.id()})).transact().await?.into_result()?;
     let acceptable = signer.view("get_governance").await?.json::<Value>()?["pending_owner"]["acceptable_at_ms"].as_u64().context("pending owner")?;
     advance_to(&worker, acceptable).await?;
-    let w = V2World { worker, signer, alice, relayer, watchdog, outsider, council, dao, bond, mpc, issuer, scope_a, session, pending_key_id };
+    let w = V2World { worker, signer, alice, bob, relayer, watchdog, outsider, council, dao, bond, mpc, issuer, scope_a, session, pending_key_id };
     w.council_call("accept_owner", json!({})).await?.into_result()?;
     assert_eq!(w.signer.view("get_config").await?.json::<Value>()?["owner"], json!(w.dao.id()));
     Ok(w)
@@ -270,7 +287,8 @@ async fn v2_world() -> Result<V2World> {
 async fn v2_to_v3_upgrade_through_the_dao_keeps_every_view_and_path() -> Result<()> {
     let mut w = v2_world().await?;
     let signer = w.signer.id().clone();
-    let (v3, _) = wasms()?;
+    // The exact artifact deploy-contract deploys (--no-abi), as the v2 code was.
+    let v3 = deploy_wasm()?;
     let v2 = v2_wasm()?;
     let v2_hash = account_code_hash(&w.worker, &signer).await?;
     assert_eq!(v2_hash, code_hash(&v2));
@@ -317,6 +335,28 @@ async fn v2_to_v3_upgrade_through_the_dao_keeps_every_view_and_path() -> Result<
     let ik = hex(&identity_key("s1", PROVIDER, USER_SUB));
     assert_eq!(identity(USER_SUB).await?.json::<Value>()?, json!({"key": ik, "status": "own", "opened": false, "root": null, "effective_at_ms": null, "account_epoch": 0}));
     assert_eq!(identity(OWNER_SUB).await?.json::<Value>()?["opened"], json!(false));
+
+    // State no view shows survives too. The quarantine: C, removed from s1 by v2 code, can't join s2 yet.
+    let now = w.now_ms().await?;
+    let proof = w.issuer.jwt(APP_C, OWNER_SUB, Some(&client_proof_nonce(signer.as_str(), "s2", 0)), now);
+    expect_failure(
+        tx(w.bob
+            .call(&signer, "propose_change")
+            .args_json(json!({"scope_id": "s2", "auth": "Near", "change": {"AddClient": {"provider": PROVIDER, "aud": APP_C}}, "client_proof": proof}))
+            .deposit(NearToken::from_millinear(10))
+            .gas(GAS)
+            .transact()
+            .await),
+        "Client was recently removed from another scope",
+    );
+    // The pending AddClient's reservation (pending_adds): D can't be made a shared client while it is pending in s1.
+    let (status, text) = w.council_try("set_shared_clients", json!({"clients": [[PROVIDER, SHARED], [PROVIDER, APP_D]]})).await?;
+    assert_eq!(status, "Failed");
+    assert!(text.contains("Client is pending in a scope"), "{text}");
+    // The scope counter (next_scope): s1..s3 exist, the next registration is s4.
+    w.council_call("admin_register_scope", json!({"owners": [near_owner(w.bob.id())], "clients": [], "scope_id": null, "allow_shared": true})).await?.into_result()?;
+    let s4: Value = w.signer.view("get_scope").args_json(json!({"scope_id": "s4"})).await?.json()?;
+    assert_eq!((s4["owners"].clone(), s4["allow_shared"].clone()), (json!([near_owner(w.bob.id())]), json!(true)));
 
     // The session opened by v2 code derives again with the same path; a fresh login gets that path too (and is now
     // recorded in `opened`).
@@ -393,7 +433,14 @@ async fn v2_to_v3_upgrade_through_the_dao_keeps_every_view_and_path() -> Result<
     let args = linked_login(&mut ls, now, 0);
     expect_failure(tx(w.relayer.call(&signer, "create_session_and_derive").args_json(args).gas(Gas::from_tgas(150)).transact().await), "Links wait until the owner accepts the wallets opened before v3");
     let outcome = w.council_call("accept_unrecorded_wallets", json!({})).await?;
+    let events = hana_events(&outcome);
+    println!(
+        "GAS accept_unrecorded_wallets (through the DAO, flips the flag): {:.2} Tgas in the signer's receipt, {:.2} Tgas for the whole vote",
+        signer_receipts_gas(&outcome, &signer).as_gas() as f64 / 1e12,
+        outcome.total_gas_burnt.as_gas() as f64 / 1e12
+    );
     outcome.into_result()?;
+    assert_eq!(events_named(&events, "unrecorded_wallets_accepted").len(), 1);
     assert_eq!(w.signer.view("get_config").await?.json::<Value>()?["unrecorded_wallets"], json!(false));
     // The same link now goes through (case B at once): the email identity joins USER_SUB's account, whose wallet stays
     // where v2 put it.
@@ -417,6 +464,14 @@ async fn v2_to_v3_upgrade_through_the_dao_keeps_every_view_and_path() -> Result<
     assert_eq!(w.signer.view("get_governance").await?.json::<Value>()?["state_version"], json!(3));
     // migrate stays private.
     expect_failure(tx(w.alice.call(&signer, "migrate").args_json(json!({})).transact().await), "is private");
+
+    // The session queue survived: once the sessions opened by v2 code expire, prune_sessions removes them.
+    advance_to(&w.worker, before["session"]["expires_at_ms"].as_u64().context("expiry")? + 1_000).await?;
+    let key = json!({"session_public_key": w.session.public_key()});
+    assert!(w.signer.view("get_session").args_json(key.clone()).await?.json::<Value>()?.is_object(), "an expired session stays until pruned");
+    let pruned: u32 = w.outsider.call(&signer, "prune_sessions").args_json(json!({"limit": 50})).gas(GAS).transact().await?.into_result()?.json()?;
+    assert!(pruned >= 2, "pruned {pruned}");
+    assert_eq!(w.signer.view("get_session").args_json(key).await?.json::<Value>()?, Value::Null);
     Ok(())
 }
 
@@ -425,7 +480,8 @@ async fn v2_to_v3_upgrade_through_the_dao_keeps_every_view_and_path() -> Result<
 /// identity's first derivation, one `opened` insert (spec "Gas and storage": ≈ +1–2 Tgas).
 #[tokio::test]
 async fn login_gas_of_v3_against_v2() -> Result<()> {
-    let (v3, mpc_wasm) = wasms()?;
+    let (_, mpc_wasm) = wasms()?;
+    let v3 = deploy_wasm()?;
     let v2 = v2_wasm()?;
     let worker = near_workspaces::sandbox().await?;
     let root = worker.root_account()?;

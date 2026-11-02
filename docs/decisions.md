@@ -1571,19 +1571,25 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 - Not changed: the API's never-relay list (`apps/api/src/relayer-config.ts` `GOVERNANCE_METHODS`) still names
   `migrate_v1`: refusing a method that no longer exists is harmless, and batch 6 edits that file.
 
-### D155. Attached gas for the email-login calls: the spec's values kept, 50 Tgas for cancel and unlink
+### D155. Attached gas for the email-login calls covers 4096-bit keys
 - Date 2026-11-02 · Status: to confirm (measured on `feat/email-login-2`; the API sets the values in build-plan batch
-  6) · Source: email-login build plan batch 2, the spec's "Gas and storage"
-- Decision: attach 150 Tgas to `create_session_and_derive` with a `link_jwt` (the spec's value, confirmed), 100 Tgas to
-  `link_identity` (the spec's value), and 50 Tgas to `cancel_link` and `unlink_identity` (the spec gives no value).
-  Measured in the sandbox (`docs/contract-interface.md` "Gas of the email login calls"): one RS256 verification of a
-  2048-bit key costs ≈ 17–18 Tgas, so the link in a login adds ≈ 18 Tgas (spec: 8–12) to 38.5 Tgas in the signer's
-  receipt (≈ 59 needed with the 20 Tgas forwarded to the MPC), `link_identity` burns 37.6 (spec: 25–35),
-  `cancel_link` / `unlink_identity` 20 (spec: 15).
-- Why: each value keeps at least 2.5 times the gas burnt, the margin the plain login has today (100 against ≈ 41),
-  so a slower testnet runtime or a longer token doesn't fail logins; unused gas is refunded. A 2-of-2 email policy
-  (Level 1) adds one verification (≈ +18 Tgas) to every call that takes an email token and raises these with it.
-- Rejected: 100 Tgas for the linked login (enough in the sandbox, but only 1.7 times the need).
+  6) · Source: email-login build plan batch 2, the spec's "Gas and storage"; batch 2 review (L3)
+- Decision: attach 250 Tgas to `create_session_and_derive` with a `link_jwt` (the spec said 150), 250 to
+  `link_identity` (spec: 100), and 150 to `cancel_link` and `unlink_identity` (the spec gives no value). Measured in the
+  sandbox (`docs/contract-interface.md` "Gas of the email login calls"): one RS256 verification costs ≈ 17–18 Tgas at
+  2048 bits and ≈ 67 at 4096, the largest modulus `set_issuer_key` accepts. A linked login needs ≈ 59 Tgas at 2048
+  bits and ≈ 156 at 4096 (two verifications plus the MPC's 20); `link_identity` burns 37.2 / 134.6; `cancel_link` and
+  `unlink_identity` 19.8 / 68.5. The values cover the 4096-bit worst case with ≥ 1.6 times the need.
+- Also: at 4096 bits the plain logins outgrow the API's current values (`create_session` 68.8 burnt against 50
+  attached; `create_session_and_derive` ≈ 89 needed of 100). Batch 6 raises them (100 and 150) unless the issuer keys
+  are kept at 2048 bits (below).
+- Why: unused gas is refunded and the prepaid amount only counts against the relayer key's allowance while the call
+  runs, so a high value costs nothing; a low one fails logins the moment an issuer (Google, or Hana's email key)
+  rotates to a larger key, which the contract allows.
+- Alternative for the user: cap self-issued (email) keys at 2048 bits in a later contract version (Hana chooses that
+  key size: the spec's KMS keys are `RSA_2048`), and keep the gas values for Google's 2048-bit keys with a check in
+  the watchdog. Not done here: no contract change in this batch.
+- Rejected: the spec's 150 for the linked login (fails with 4096-bit keys); 100 for `link_identity` (likewise).
 
 ### D142. Loopback origins only in `sandbox-*` environments
 - Date 2026-10-30 · Status: confirmed by the user · Source: batch C1 open question 1 (`docs/batch-c-build-plan.md`)

@@ -1499,6 +1499,19 @@ fn migrate_v2_to_v3_keeps_every_field_and_every_path() {
     // Sessions and their paths, byte for byte.
     assert_eq!(c.get_session(pk(7)), Some(Session { path: format!("s1#google#{USER}#0"), scope_id: "s1".into(), expires_at_ms: EXPIRES_MS, max_uses: 3, used: 1 }));
     assert_eq!(c.get_session(pk(8)).unwrap().path, format!("s2#google#{USER}#0"));
+    // State no view shows survives too: the session queue (the two v2 sessions, pruned below), ...
+    let (head, tail) = (c.queue_head, c.queue_tail);
+    assert_eq!(tail - head, 2);
+    // ...the quarantine of A2 (removed from s1), ...
+    ctx(BOB, NOW_MS);
+    expect_panic("Client was recently removed from another scope", || {
+        c.propose_change("s2".into(), OwnerAuth::Near, add(A2), Some(tok("cp_a2_s2_0")));
+    });
+    // ...the pending AddClient E's reservation (a client pending in a scope can't be made shared), ...
+    ctx(ADMIN, NOW_MS);
+    expect_panic("Client is pending in a scope", || c.set_shared_clients(vec![google(SHARED), google(E)]));
+    // ...and the scope counter: s1..s4 exist, the next registration is s5.
+    assert_eq!(c.admin_register_scope(vec![near_owner(BOB)], vec![], None, true), "s5");
     // The v3 fields start empty: no self-issued issuer, no account, nothing opened (v2 wallets aren't in `opened`).
     assert!(c.self_issued.is_empty());
     assert_eq!(c.get_self_issued("google".into()), None);
@@ -1527,6 +1540,12 @@ fn migrate_v2_to_v3_keeps_every_field_and_every_path() {
     ctx(ANYONE, NOW_MS + GOV_DELAY_MS);
     c.execute_issuer_key_change(id);
     assert_eq!(c.get_self_issued(EMAIL.into()).unwrap().signers[0].kids, vec![HANA_KID.to_string()]);
+    // Once they expire, prune_sessions removes the v2 sessions from the migrated queue, then the new one.
+    assert_eq!((c.queue_head, c.queue_tail), (head, tail + 1));
+    ctx(ANYONE, EXPIRES_MS + 1);
+    assert_eq!(c.prune_sessions(10), 3);
+    assert_eq!((c.queue_head, c.queue_tail), (tail + 1, tail + 1));
+    assert!(c.sessions.get(&pk(7)).is_none() && c.sessions.get(&pk(8)).is_none());
 }
 
 #[test]

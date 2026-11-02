@@ -149,8 +149,9 @@ same run). Steps:
 4. The keys-updater key (the API's `KEYS_UPDATER_KEY`, so the cron can propose Google keys without the owner): generated
    into `.secrets/<env>/keys-updater.json` and installed on `signer` by the owner's `add_updater_key`. The contract
    gives it exactly `set_issuer_key`, `propose_issuer_key_removal`, `execute_issuer_key_change`, receiver `signer`,
-   1 NEAR; nobody adds keys to the signer by hand any more. On the v1 → v2 migration the old updater key (with
-   `remove_issuer_key`) is deleted after the new one is in. Then `add_watchdog` for each `watchdogs` account that exists,
+   1 NEAR; nobody adds keys to the signer by hand any more. A pre-governance updater key (with `remove_issuer_key`)
+   still on the signer is deleted once the contract's own is in (the v1 → v2 migration did this on sandbox-dev
+   on 2026-10-30). Then `add_watchdog` for each `watchdogs` account that exists,
    and `set_issuer_key_delay_ms` / `set_governance_delay_ms` if the contract's delays differ from the manifest.
    `--transfer-owner` adds `propose_owner(<council DAO>)` and, once due, the DAO's `accept_owner` (then the script sets
    `owner` / `ownerKind` in the manifest).

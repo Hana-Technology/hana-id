@@ -22,13 +22,14 @@ use serde_json::{json, Value};
 const PK1: &str = "bls12381g1:A";
 const PK2: &str = "bls12381g2:B";
 
-/// What the API will attach to `create_session_and_derive` with a `link_jwt` (the spec's 150 Tgas; batch 6 sets it
-/// in apps/api/src/gas.ts from the measurement here).
-const LINKED_LOGIN_GAS: Gas = Gas::from_tgas(150);
-/// The spec's attached gas for `link_identity` (two RS256 verifications).
-const LINK_IDENTITY_GAS: Gas = Gas::from_tgas(100);
-/// Attached to `cancel_link` / `unlink_identity` (one verification; the spec estimates ≈ 15 Tgas burnt).
-const LINK_CHANGE_GAS: Gas = Gas::from_tgas(50);
+/// The attached gas D155 sets (batch 6 puts them in apps/api/src/gas.ts), sized for the worst key the contract
+/// accepts (4096-bit RSA, ≈ 67 Tgas per verification; `gas_with_4096_bit_keys`): `create_session_and_derive` with a
+/// `link_jwt` (two verifications plus the MPC's 20 Tgas, ≈ 156 at 4096 bits, ≈ 59 at 2048).
+const LINKED_LOGIN_GAS: Gas = Gas::from_tgas(250);
+/// `link_identity` (two verifications).
+const LINK_IDENTITY_GAS: Gas = Gas::from_tgas(250);
+/// `cancel_link` / `unlink_identity` (one verification).
+const LINK_CHANGE_GAS: Gas = Gas::from_tgas(150);
 
 /// A sandbox with Hana's email issuer set up (Env::setup_email) and a scope with both sign-in methods:
 /// [google APP_E, email "email:<scope>"], owned by carol.
@@ -36,11 +37,26 @@ struct EmailWorld {
     env: Env,
     email: TestIssuer,
     scope: String,
+    /// The Google key the world's Google tokens are signed with (Env's test key unless `email_world_with` was given
+    /// another).
+    google: Option<TestIssuer>,
 }
 
 async fn email_world() -> Result<EmailWorld> {
+    email_world_with(None, None).await
+}
+
+/// `email_world` with other keys: an email issuer key, and a further Google key (posted by the owner, confirmed by
+/// the watchdog) that the world's Google tokens are then signed with.
+async fn email_world_with(email_key: Option<TestIssuer>, google: Option<TestIssuer>) -> Result<EmailWorld> {
     let env = Env::setup().await?;
-    let email = env.setup_email().await?;
+    if let Some(g) = &google {
+        post_issuer_key(&env.admin, &env.watchdog, env.signer.id(), g).await?;
+    }
+    let email = match email_key {
+        Some(key) => env.setup_email_with(key).await?,
+        None => env.setup_email().await?,
+    };
     // admin_register_scope assigns ids in sequence: Env::setup registered s1 and s2, so this one is s3, and its email
     // client is "email:s3" (as Hana predicts the id at registration, decisions.md D130 point 11).
     let aud = email_aud("s3");
@@ -48,7 +64,7 @@ async fn email_world() -> Result<EmailWorld> {
     if scope != "s3" {
         bail!("expected scope s3, got {scope}");
     }
-    Ok(EmailWorld { env, email, scope })
+    Ok(EmailWorld { env, email, scope, google })
 }
 
 impl EmailWorld {
@@ -65,7 +81,15 @@ impl EmailWorld {
     }
 
     async fn google_session(&self, sub: &str) -> Result<(TestSession, String)> {
-        self.env.new_session(APP_E, sub, &self.scope, 0, 600_000).await
+        let Some(google) = &self.google else { return self.env.new_session(APP_E, sub, &self.scope, 0, 600_000).await };
+        let now = self.env.now_ms().await?;
+        let session = TestSession::new(&self.scope, now + 600_000, 0, 5);
+        let jwt = google.jwt(APP_E, sub, Some(&session.nonce(self.signer())), now);
+        Ok((session, jwt))
+    }
+
+    fn google_jwt(&self, sub: &str, nonce: &str, now: u64) -> String {
+        self.google.as_ref().unwrap_or(&self.env.issuer).jwt(APP_E, sub, Some(nonce), now)
     }
 
     async fn email_session(&self, sub: &str) -> Result<(TestSession, String)> {
@@ -452,5 +476,74 @@ async fn a_new_deployment_records_every_wallet_from_the_start() -> Result<()> {
     outcome.into_result()?;
     assert!(events.iter().all(|e| e["event"] != "unrecorded_wallets_accepted"));
     assert_eq!(env.get_config().await?["unrecorded_wallets"], json!(false));
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The worst case: 4096-bit keys
+
+/// Gas at the largest RSA key the contract accepts (4096 bits, `issuers.rs` `checked_rsa_key`) for every key that
+/// signs a token here (Google and email), with 300 Tgas attached to measure, then with the attached gas D155 sets.
+#[tokio::test]
+async fn gas_with_4096_bit_keys() -> Result<()> {
+    let w = email_world_with(Some(TestIssuer::generate_with_bits(EMAIL_KID, 4096)?), Some(TestIssuer::generate_with_bits("google-4096", 4096)?)).await?;
+    let env = &w.env;
+    let max = Gas::from_tgas(300);
+    let signer = w.signer().as_str().to_string();
+    let salt: Vec<u8> = (0u8..16).map(|i| i * 3 + 2).collect();
+
+    // Plain logins (one verification each).
+    let (g, e) = ("g-4096".to_string(), email_sub("big@example.com"));
+    let (mut s, jwt) = w.google_session(&g).await?;
+    let outcome = env.relayer_fc.call(w.signer(), "create_session_and_derive").args_json(s.login_args(&jwt, PK1, PK2)).gas(max).transact().await?;
+    report_gas("4096: create_session_and_derive (Google, no link)", &outcome, max);
+    outcome.into_result()?;
+    let (mut s, jwt) = w.email_session(&e).await?;
+    let outcome = env.relayer_fc.call(w.signer(), "create_session_and_derive").args_json(s.login_args(&jwt, PK1, PK2)).gas(max).transact().await?;
+    report_gas("4096: create_session_and_derive (email, no link)", &outcome, max);
+    outcome.into_result()?;
+    let (bare, jwt) = w.email_session(&e).await?;
+    let outcome = env.relayer_fc.call(w.signer(), "create_session").args_json(bare.create_args(w.signer(), &jwt)).gas(max).transact().await?;
+    report_gas("4096: create_session (email)", &outcome, max);
+    outcome.into_result()?;
+
+    // A linked login (Google session token + email link token), case B at once.
+    let (g2, e2) = ("g-4096-2".to_string(), email_sub("big2@example.com"));
+    let (mut s, jwt) = w.google_session(&g2).await?;
+    let link = w.auto_link_token(&s, &w.ik(PROVIDER, &g2), &e2, JOIN_LINK, &w.ik(PROVIDER, &g2), 0, true).await?;
+    let args = s.linked_login_args(&jwt, PK1, PK2, &link, Some(true));
+    let outcome = env.relayer_fc.call(w.signer(), "create_session_and_derive").args_json(args).gas(max).transact().await?;
+    report_gas("4096: create_session_and_derive + link_jwt (case B)", &outcome, max);
+    outcome.into_result()?;
+    // ...and with the attached gas D155 sets.
+    let (g3, e3) = ("g-4096-3".to_string(), email_sub("big3@example.com"));
+    let (mut s, jwt) = w.google_session(&g3).await?;
+    let link = w.auto_link_token(&s, &w.ik(PROVIDER, &g3), &e3, JOIN_LINK, &w.ik(PROVIDER, &g3), 0, true).await?;
+    w.linked_login(&mut s, &jwt, &link, Some(true)).await?.into_result()?;
+
+    // link_identity (two verifications), then cancel_link and, after a second link, unlink_identity (one each).
+    // g (which has a wallet) gets a fresh email identity (e has a wallet of its own).
+    let gik = w.ik(PROVIDER, &g);
+    let e4 = email_sub("big4@example.com");
+    let eik4 = w.ik(EMAIL, &e4);
+    let link_args = |epoch: u64, now: u64| {
+        let account_jwt = w.google_jwt(&g, &nonce_of(&link_account_preimage(&signer, &w.scope, &gik, &eik4, epoch, &salt)), now);
+        let new_jwt = w.email.email_jws(&email_aud(&w.scope), &e4, &nonce_of(&link_new_preimage(&signer, &w.scope, &gik, EMAIL, epoch, &salt)), now);
+        json!({"scope_id": w.scope, "account_jwt": account_jwt, "new_jwt": new_jwt, "epoch": epoch, "salt": salt})
+    };
+    let outcome = w.call(&env.relayer, "link_identity", link_args(0, env.now_ms().await?), max).await?;
+    report_gas("4096: link_identity", &outcome, max);
+    outcome.into_result()?;
+    let cancel = w.email.email_jws(&email_aud(&w.scope), &e4, &nonce_of(&link_change_preimage(&signer, &w.scope, "cancel", &gik, &eik4, 1, &salt)), env.now_ms().await?);
+    let outcome = w.call(&env.relayer, "cancel_link", json!({"scope_id": w.scope, "jwt": cancel, "member_key": hex(&eik4), "epoch": 1, "salt": salt}), max).await?;
+    report_gas("4096: cancel_link", &outcome, max);
+    outcome.into_result()?;
+    // With the attached gas D155 sets.
+    let effective: u64 = w.call(&env.relayer, "link_identity", link_args(2, env.now_ms().await?), LINK_IDENTITY_GAS).await?.into_result()?.json()?;
+    env.advance_to(effective).await?;
+    let unlink = w.google_jwt(&g, &nonce_of(&link_change_preimage(&signer, &w.scope, "unlink", &gik, &eik4, 3, &salt)), env.now_ms().await?);
+    let outcome = w.call(&env.relayer, "unlink_identity", json!({"scope_id": w.scope, "jwt": unlink, "member_key": hex(&eik4), "epoch": 3, "salt": salt}), LINK_CHANGE_GAS).await?;
+    report_gas("4096: unlink_identity", &outcome, LINK_CHANGE_GAS);
+    outcome.into_result()?;
     Ok(())
 }

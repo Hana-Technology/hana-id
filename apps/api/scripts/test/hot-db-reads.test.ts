@@ -80,6 +80,40 @@ describe('no code reads apps.publishable_key (it stays only for the legacy colum
   });
 });
 
+/** SQL on the legacy D1 `usage` table (its own name, not `usage.` of the Neon schema nor `identity_usage`). */
+const LEGACY_USAGE = [/\b(?:FROM|INTO|UPDATE|JOIN)\s+usage\b(?!\.)/iu];
+
+describe('no code reads or writes the legacy D1 usage table (batch C4: usage goes to the Neon ledger; C4b drops it)', () => {
+  it('every apps/*/src and scripts', () => {
+    const roots = [...readdirSync(join(repoRoot, 'apps')).map((d) => `apps/${d}/src`), 'scripts'].map((d) => join(repoRoot, d));
+    const offenders: string[] = [];
+    for (const root of roots) {
+      let files: string[];
+      try {
+        files = sources(root);
+      } catch {
+        continue;
+      }
+      for (const file of files) {
+        readFileSync(file, 'utf8')
+          .split('\n')
+          .forEach((line, i) => {
+            if (/^\s*(\/\/|\/\*|\*|--)/u.test(line)) return;
+            if (LEGACY_USAGE.some((re) => re.test(line))) offenders.push(`${relative(repoRoot, file)}:${i + 1}: ${line.trim()}`);
+          });
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('the check catches the batch B writes and the waiver read it replaced, and not the Neon schema', () => {
+    for (const old of ['INSERT INTO usage (app_id, day, sessions, derives)', 'AND NOT EXISTS (SELECT 1 FROM usage WHERE app_id IN x)', 'UPDATE usage SET unlocks = unlocks + 1']) {
+      expect(LEGACY_USAGE.some((re) => re.test(old)), old).toBe(true);
+    }
+    for (const fine of ['SELECT usage.record_event($1::jsonb)', 'FROM usage.events', 'FROM identity_usage u JOIN apps a']) expect(LEGACY_USAGE.some((re) => re.test(fine)), fine).toBe(false);
+  });
+});
+
 describe('guarded/config.ts', () => {
   it('has the manifest package’s appChangeDelayMs bounds', () => {
     expect(apiConfig.MIN_APP_CHANGE_DELAY_MS).toBe(MIN_APP_CHANGE_DELAY_MS);

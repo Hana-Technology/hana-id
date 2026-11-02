@@ -85,9 +85,10 @@ export interface AppCmdDeps {
   ids: CliIds;
   /**
    * Throws unless the API serving this database reads the batch C3 schema (GET /v1/health `hotDb` ≥ 6): an older API
-   * would treat a proposed origin as in force. A no-op for the local database (`requireC3ApiFor`).
+   * would treat a proposed origin as in force. `min` raises the bar (an announcement needs REQUIRED_HOT_DB_ANNOUNCE). A
+   * no-op for the local database (`requireC3ApiFor`).
    */
-  requireC3Api: () => Promise<void>;
+  requireC3Api: (min?: number) => Promise<void>;
 }
 
 /**
@@ -102,10 +103,15 @@ export function withRehearsalD1<T extends Pick<Manifest, 'cloudflare'>>(m: T, d1
 
 /** The hot-DB schema the API must report before the CLI writes a guarded proposal (apps/api/src/apps.ts HOT_DB_SCHEMA). */
 export const REQUIRED_HOT_DB = 6;
+/**
+ * Before an announcement: the batch C4 API (hot DB 0009), the one that writes the session markers the `no_session`
+ * waiver reads (D220). An older API writes none, so the waiver would see fewer signs of a user than there are.
+ */
+export const REQUIRED_HOT_DB_ANNOUNCE = 9;
 
 /** `requireC3Api` for an env: against the deployed API with `--remote`, nothing for the local database. */
-export function requireC3ApiFor(m: Pick<Manifest, 'apiUrl' | 'name'>, remote: boolean, fetchFn: typeof fetch = fetch): () => Promise<void> {
-  return async () => {
+export function requireC3ApiFor(m: Pick<Manifest, 'apiUrl' | 'name'>, remote: boolean, fetchFn: typeof fetch = fetch): (min?: number) => Promise<void> {
+  return async (min = REQUIRED_HOT_DB) => {
     if (!remote) return;
     const url = new URL('/v1/health', m.apiUrl).toString();
     let hotDb: unknown;
@@ -115,9 +121,11 @@ export function requireC3ApiFor(m: Pick<Manifest, 'apiUrl' | 'name'>, remote: bo
     } catch {
       throw new Error(`Could not read ${url}: guarded proposals need the deployed API to report the batch C3 schema first`);
     }
-    if (typeof hotDb !== 'number' || hotDb < REQUIRED_HOT_DB) {
+    if (typeof hotDb !== 'number' || hotDb < min) {
       throw new Error(
-        `The API of ${m.name} does not report the batch C3 hot-DB reads (GET /v1/health hotDb ${JSON.stringify(hotDb ?? null)}, need ≥ ${REQUIRED_HOT_DB}): deploy it before proposing origins, policies or raw signing (an older API would treat a proposed origin as in force)`,
+        min >= REQUIRED_HOT_DB_ANNOUNCE
+          ? `The API of ${m.name} does not report the batch C4 hot DB (GET /v1/health hotDb ${JSON.stringify(hotDb ?? null)}, need ≥ ${min}): deploy it before announcing (the no_session waiver reads the session markers only it writes)`
+          : `The API of ${m.name} does not report the batch C3 hot-DB reads (GET /v1/health hotDb ${JSON.stringify(hotDb ?? null)}, need ≥ ${min}): deploy it before proposing origins, policies or raw signing (an older API would treat a proposed origin as in force)`,
       );
     }
   };
@@ -332,7 +340,7 @@ export async function appChangesAnnounce(m: M, changeId: string, where: string, 
   if (!change) throw new Error(`No guarded change ${changeId}`);
   if (change.status !== 'pending') throw new Error(`${changeId} is ${change.status}, not pending`);
   if (change.notified_at !== null) throw new Error(`${changeId} was already announced at ${at(change.notified_at)} (in force from ${at(change.active_from ?? change.notified_at)})`);
-  await deps.requireC3Api();
+  await deps.requireC3Api(REQUIRED_HOT_DB_ANNOUNCE);
   const app = findApp(deps, change.app_id);
   const now = deps.now();
   // The waiver is decided inside the write (admin-sql.ts noSessionWaiver), from the database as it is then.

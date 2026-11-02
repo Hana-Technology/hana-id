@@ -1,4 +1,4 @@
-// Off-chain app config in D1: publishable keys (app_keys), origins, plans, scopes, suspension, usage. The two login-path
+// Off-chain app config in D1: publishable keys (app_keys), origins, plans, scopes, suspension, session markers. The two login-path
 // reads (docs/batch-c-spec.md §Hot DB "Login-path reads"): the app behind an unrevoked key, then its origins in force.
 
 export type Environment = 'test' | 'live';
@@ -37,10 +37,11 @@ export interface App {
 }
 
 /**
- * The hot-DB migration this build's reads need (0006: keys in app_keys, origins in force by active_from, the
- * suspension bits). Reported by GET /v1/health; the admin CLI checks it before it writes a guarded proposal.
+ * The hot-DB migration this build needs: 0006's reads (keys in app_keys, origins in force by active_from, the
+ * suspension bits) and 0009's session markers it writes (batch C4). Reported by GET /v1/health; the admin CLI needs
+ * ≥ 6 before it writes a guarded proposal and ≥ 9 before it announces one (the waiver reads the markers).
  */
-export const HOT_DB_SCHEMA = 6;
+export const HOT_DB_SCHEMA = 9;
 
 export const PUBLISHABLE_KEY_RE = /^pk_(test|live)_[1-9A-HJ-NP-Za-km-z]{16,64}$/u;
 
@@ -77,8 +78,8 @@ export async function getAppByKey(db: D1Database, publishableKey: string, now = 
  * `/v1/derive`, `/v1/sessions/revoke`) is about to be sent, on a scope with no `first_session_at` yet, and run beside
  * the relay. At the attempt, not the success, so a relay whose answer is lost (a timeout, a 5xx after the transaction
  * landed) still ends the `no_session` waiver (fail closed). Set once; a failure is only logged (the next attempt
- * retries, and the waiver also needs no usage, vault share or identity row in the scope). The promise never rejects;
- * null when there is nothing to write.
+ * retries, and the waiver also needs no session marker, vault share or identity row in the scope). The promise never
+ * rejects; null when there is nothing to write.
  */
 export function startFirstSession(db: D1Database, app: Pick<App, 'scope_id' | 'first_session_at'>, onError: () => void, now = Date.now()): Promise<void> | null {
   if (app.first_session_at !== null) return null;
@@ -92,15 +93,23 @@ export function startFirstSession(db: D1Database, app: Pick<App, 'scope_id' | 'f
     );
 }
 
-export const usageDay = (now: number): string => new Date(now).toISOString().slice(0, 10);
-
-export async function incrementUsage(db: D1Database, appId: string, field: 'sessions' | 'derives', now = Date.now()): Promise<void> {
-  const column = field === 'sessions' ? 'sessions' : 'derives';
-  await db
-    .prepare(
-      `INSERT INTO usage (app_id, day, sessions, derives) VALUES (?1, ?2, ?3, ?4)
-       ON CONFLICT (app_id, day) DO UPDATE SET ${column} = ${column} + 1`,
-    )
-    .bind(appId, usageDay(now), field === 'sessions' ? 1 : 0, field === 'derives' ? 1 : 0)
-    .run();
+/**
+ * The app's session marker (migration 0009 `session_markers`): a second, independent sign that a user may hold a key
+ * in the scope, written once the relay of a first session attempt settled (whatever its outcome), so a lost
+ * `first_session_at` write still leaves one. The `no_session` waiver (scripts/lib/admin-sql.ts; AdminRpc's from C5)
+ * reads it in place of the legacy D1 `usage` counters, which the API no longer writes (batch C4). Set once; a failure
+ * is only logged. Never rejects.
+ */
+export function markSession(db: D1Database, appId: string, onError: () => void, now = Date.now()): Promise<void> {
+  return db
+    .prepare('INSERT INTO session_markers (app_id, first_at) VALUES (?1, ?2) ON CONFLICT (app_id) DO NOTHING')
+    .bind(appId, now)
+    .run()
+    .then(
+      () => undefined,
+      () => onError(),
+    );
 }
+
+/** The UTC day of `now`, `YYYY-MM-DD` (the identity token's per-app counts). */
+export const usageDay = (now: number): string => new Date(now).toISOString().slice(0, 10);

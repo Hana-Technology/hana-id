@@ -1,7 +1,9 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-02 for the RPC budgets (branch `fix/c5-budgets`: the per-org
+known open issues. Last verified against code: 2026-11-02 for usage capture (branch `feat/batch-c-4`: the ledger's
+writer credential and `USER_ID_KEY` in the inventory and the compromise table, "Usage capture fails open" in the API
+invariants, the waiver's session marker, the secret-scan rules for the new files; D220–D224); 2026-11-02 for the RPC budgets (branch `fix/c5-budgets`: the per-org
 share of the global reserve, empty kill switches charged to their org, the link cancel's read budget); 2026-11-02 for
 batch C's RPC writers (branch `feat/batch-c-5`:
 `ConsoleRpc` / `AdminRpc` in "Invariants", the breaker and hot-DB budget, the waivers at the notice ack, drift
@@ -81,6 +83,8 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | An identity signing key (the active one on the Worker, or a published standby or next key from `.secrets/`) | Forge identity tokens for any user of any app: be anyone at every partner that uses them as login evidence, while partners trust the key | No key, no signature, nothing at Hana or on chain (no Hana API accepts the token). The standby is never on the Worker (D177), so a Worker or Cloudflare leak exposes the active key only. Testnet only: staging and mainnet sign with a non-exportable AWS KMS key (next row). Recovery (playbook `identity-signing-key-compromised`): switch to a key the incident didn't touch (the standby, or a fresh one when both may be exposed), unpublish the exposed ones (partners reject them within 10 min), tell partners. A key of the attacker's own put in the JWKS (through the API Worker or the Cloudflare account) pages critical from the watchdog's pin check within one run, and fails the outside probe within 15 min, **if** it is served to them too: the same attacker can serve the watchdog and the probe a clean JWKS, or publish for less than a run (D210). Partners trusting the JWKS URL accept it until it is removed; partners pinning thumbprints never. A stolen key of Hana's own is invisible to both (its kid is pinned) |
 | The KMS signer's AWS access key (`IDENTITY_AWS_*`, or the API Worker itself on a KMS env; none yet) | Have KMS sign forged identity tokens for any user of any app while the access key is active. The key itself can't be read or exported | Only `kms:Sign` on the active key with `ECDSA_SHA_256` and `DIGEST` (IAM policy; the key policy refuses `Sign` by any other principal, grants to everyone, key changes to all but the break-glass role). The standby isn't in the IAM policy (which also denies `Sign` on any other key), so it stays clean for the switch (D219). Only long-term credentials sign: the key policy denies `Sign` to session credentials, because the holder can always call `GetSessionToken` (no policy can deny it), its sessions keep the user's live permissions, and deactivating the access key isn't proven to end them (confirm on staging). Every signature is in CloudTrail, matched by `userIdentity.arn` (the planned reconciliation and alarms find unexplained ones; `GetSessionToken` by the signer user is an alarm). Recovery (planned playbook `identity-kms-signer-compromised`): deactivate the access key, check the `NoSessionCredentials` deny is on every key, switch to the standby, unpublish the suspect key, tell partners with CloudTrail's window and count |
 | `IDENTITY_SUB_KEY` | Map partners' `sub`s back to on-chain paths, so to the Google `sub` (privacy) | Funds and keys unaffected. Never rotated: a new key changes every user's `sub` at every partner (a `u2_` scheme with a 90-day `legacy_sub` window if it ever leaks) |
+| The ledger writer's credential (`usage_writer`: the Hyperdrive config, `.secrets/<env>/neon-usage-writer.url`) | Insert made-up usage events (any org, app, uid) and identity counts; call the report functions (C12) for any org | No read or change of any table (functions only, D141); events can't be altered or deleted, so real ones stay. Billed gas comes from settlement, which reads each `near_tx` at FINAL from chain (C12): a made-up hash never settles, and C12 must also refuse a real transaction that isn't the event's own (a `near_tx` already in the ledger, or a transaction whose signer key and nonce differ from the event's `relayer_pk` and `relayer_nonce`; `docs/batch-c-build-plan.md` C12). Rotate with `usage-setup roles` after deleting the role files, then update the Hyperdrive config |
+| `USER_ID_KEY` | Link a known Google `sub` to its ledger uid in a scope (and so its activity); with the ledger, re-identify users | No funds, keys or logins. Never rotated within a contract term (a new key makes every user new in MAU); API only, never logged |
 | One identity token (a partner's log, transit) | Act as that user at that partner's backend until `exp` (≤ 1 h) | That partner only (`aud`); never at Hana or on chain |
 | A session key (with its vault record) | Also: mint identity tokens while the session is live | The same session's limits, its app only; a logout or revoke stops new tokens in every app of the scope (the share check, D178: a share is kept 24 h after it dies), the 1 h `exp` bounds the old ones |
 
@@ -123,12 +127,14 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | `SENDGRID_API_KEY` | SendGrid API key, Mail Send only (D194) | Issuer Worker secret; `.secrets/<env>/email-issuer-sendgrid-key` | Hana | Its own key, not Hana Wallet's or Wend's; rotate in SendGrid, then `put`. A leak sends mail as Hana's user-mail subdomain (phishing, reputation), not tokens |
 | Sign-in codes | 6 digits | The user's mailbox and SendGrid while it delivers (and in SendGrid's Email Activity for its retention period); the challenge object holds only HMAC(K_code, challengeId ‖ code) | the user | ≤ 10 min, single use, 5 attempts; never logged |
 | Challenge id secret half | 16 random bytes, the second half of the challengeId | The client only; the object is named by sha256 of the public half | the user's session | Decrypts the address in the challenge record (AES-256-GCM, D197); the issuer holds it only during a `resend` or `verify` |
+| Ledger role passwords (`usage_writer`, `usage_admin`, batch C4) | 32 random bytes (base64url) each | Their Hyperdrive configs (writer: the API's `USAGE_DB`; admin: the admin Worker's, C8); `.secrets/<env>/neon-usage-writer.url`, `neon-usage-admin.url` (0600). Neon holds only SCRAM verifiers | Hana | Generated by `usage-setup <env> roles` (never printed; sent to Neon as a verifier, never as plain text). Roles can only call their functions and read what D141 grants |
+| `USER_ID_KEY` (batch C4) | 32 random bytes (base64) | API Worker secret; `.secrets/<env>/user-id-key` (0600) with an offline backup | Hana | `usage-setup <env> user-id-key` (wrangler stdin, never printed, file never replaced). Not rotated within a contract term; never logged; the uid is `HMAC(key, scope ‖ provider ‖ sub)[0..16]` |
 | Cloudflare account / `wrangler login` | account credentials | operator's machine | the user | Deploys the Worker: a trust root |
 
 Rule (CLAUDE.md): derived keys, CKD secrets, relayer keys, owner keys and Google tokens are never logged, printed,
 written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-commit hook blocks secrets. Its config
-has rules for every secret shape above (NEAR secret keys, `VAULT_KEK`, `.dev.vars` lines, private JWKs (`"d"`), the
-secret files by name),
+has rules for every secret shape above (NEAR secret keys, `VAULT_KEK`, `.dev.vars` lines, private JWKs (`"d"`),
+Postgres URLs with a password, the secret files by name, `user-id-key` and the ledger's URL files included),
 proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and in CI (security sweep OPER-2).
 
 ## Invariants and where they are enforced
@@ -214,6 +220,13 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   D25, D96, checked by `apps/api/test/session-flags.test.ts` and `owner-actions.test.ts`), scope check (`checkClientScope`, `handlers.ts:384`), `session_key_in_use`,
   session signature, session-use precheck mirroring the contract's counter and `max_uses` rules (`session-use.ts:29`,
   D20), BLS key shape. The scope is always the app's D1 `scope_id`, never the client's.
+- **Usage capture fails open and carries no PII** (batch C4, `src/usage/`). The ledger event is built at the response
+  and written after it (`waitUntil`); a missing binding, a refusing, slow or hanging server, a refused event or a
+  missing uid key never changes a status, body or header or delays an answer (`apps/api/test/usage.test.ts`). A lost
+  event is logged (`usage_write_failed`) without the connection string or the driver's message. An event holds no
+  sub, JWT, email, IP, session key, share id or path: the user is the uid, a keyed pseudonym (D96) computed after the
+  response from the path the request already holds. The writer role can only call `usage.record_event`,
+  `usage.record_identity_tokens` and `usage.ensure_partitions` (bounded, creates missing months only); nothing on the login path, and nothing the `no_session` waiver decides, reads Neon.
 - **Replay precheck.** A cached session view never refuses on its own: it is re-read fresh first. A second request
   for the same `(session key, counter)` in the same isolate waits for the first (`session-use.ts:76`).
 - **Claim allow-list** `{iss, azp, aud, sub, iat, exp, nonce, nbf, jti, auth_time}` (`apps/api/src/claims.ts:8`):
@@ -330,9 +343,11 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   the stored one before clearing the pending columns, and an announcement keeps a matured pending policy or raw-signing
   value in force, so neither ever brings an older value back. The `no_session` waiver is decided inside the
   announcement's SQL from the database as it is then, and fails closed on any sign of a user in the scope
-  (`first_session_at`, written at every session-pool relay attempt; another origin ever in force; a vault share, usage
-  or identity row). Proposals and announcements are refused with `--remote` until the deployed API reports the batch
-  C3 reads (`GET /v1/health` `hotDb` ≥ 6): an older API would treat a proposed origin as in force. The CLI never puts a guarded change in force:
+  (`first_session_at`, written at every session-pool relay attempt; the app's session marker, written once that relay
+  settled (batch C4, D220); another origin ever in force; a vault share or identity row). It reads only the hot DB,
+  never the usage ledger. Proposals and announcements are refused with `--remote` until the deployed API reports the batch
+  C3 reads (`GET /v1/health` `hotDb` ≥ 6): an older API would treat a proposed origin as in force; announcements also
+  need ≥ 9, the batch C4 API that writes the session markers the waiver reads. The CLI never puts a guarded change in force:
   origin adds, policies and raw-signing enables are staff proposals (`hana`, full `appChangeDelayMs`, refused within
   `appChangeDelayMs` of the scope's org assignment); `app:changes:announce` (only without an admin Worker, never on
   a production network) starts the clock and records that nobody was emailed. Raw signing is refused for test apps

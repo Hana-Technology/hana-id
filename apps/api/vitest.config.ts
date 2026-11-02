@@ -17,6 +17,8 @@ function identityKey(): { private: string; public: Record<string, string> } {
   const kid = createHash('sha256').update(JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y })).digest('base64url');
   return { private: JSON.stringify({ kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, d: jwk.d }), public: { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y, kid, use: 'sig', alg: 'ES256' } };
 }
+/** The uid key (docs/batch-c-spec.md "uid"); test/usage.test.ts reads it back from the binding for its vectors. */
+const userIdKey = randomBytes(32).toString('base64');
 const identityActive = identityKey();
 const identityStandby = identityKey();
 
@@ -60,6 +62,10 @@ export default defineConfig(async () => {
             IDENTITY_SIGNING_KEY: identityActive.private,
             IDENTITY_SIGNING_KEY_STANDBY: identityStandby.private,
             IDENTITY_SUB_KEY: randomBytes(32).toString('base64'),
+            // Usage capture on in every test (batch C4): a stand-in for the Hyperdrive binding, never dialled (the
+            // tests replace the writer's transport with an in-memory ledger, test/usage-ledger.ts), and a uid key.
+            USAGE_DB: { connectionString: 'postgresql://usage_writer:unused@usage-db.test.invalid:5432/usage' },
+            USER_ID_KEY: userIdKey,
             TEST_MIGRATIONS: migrations,
           },
           // Empty databases for the migration tests: 0003's (apply 0001–0002, seed rows, then 0003), and 0006's (a fresh

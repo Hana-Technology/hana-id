@@ -28,6 +28,7 @@ import { GOVERNANCE_METHODS, UPDATER_METHODS, parseRelayerKeys } from '../src/re
 import { clearViewCaches, parsePendingShared } from '../src/views.ts';
 import { call, startOfMinuteClock } from './helpers.ts';
 import { NearMock, type RsaSigner, makeJwt, panic, rsaSigner } from './near-mock.ts';
+import { eventFor, ledger } from './usage-ledger.ts';
 
 const GOOGLE = 'https://accounts.google.com';
 const CONSOLE = 'console.apps.googleusercontent.com';
@@ -153,6 +154,27 @@ describe('POST /v1/owner-actions', () => {
     const failed = await post({ method: 'execute_change', args: { scope_id: 's1', change_id: 0 } });
     expect(failed.status).toBe(422);
     expect((await json(failed)).error).toContain('No such change');
+  });
+
+  it('records one usage event per action past the owner check (the scope’s org, no app, the owner pool’s key); none before it', async () => {
+    const n = near();
+    const ownerPool = parseRelayerKeys(env.OWNER_RELAYER_KEYS, 'OWNER_RELAYER_KEYS').map((k) => KeyPair.fromString(k as KeyPairString).getPublicKey().toString());
+    // s2 is in the hot DB under an org; s1 isn't (a scope with no app yet): org_legacy.
+    await env.DB.prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES ('s2', 'org_owner_test', 'test', NULL, 0, 0)").run();
+    const ok = await post({ method: 'execute_change', args: { scope_id: 's1', change_id: 3 } });
+    const other = await post({ method: 'execute_change', args: { scope_id: 's2', change_id: 3 } });
+    n.contract.execute_change = () => panic('No such change');
+    const rejected = await post({ method: 'execute_change', args: { scope_id: 's1', change_id: 0 } });
+    // Refused before the owner check passed (an unknown pending change, a malformed body): no event.
+    const unchecked = [await post({ method: 'execute_change', args: { scope_id: 's1', change_id: 5 } }), await post({ method: 'execute_change' })];
+    expect([ok.status, other.status, rejected.status, ...unchecked.map((r) => r.status)]).toEqual([200, 200, 422, 409, 400]);
+    const ev = async (r: Response) => eventFor(((await r.clone().json()) as { requestId: string }).requestId);
+    expect(await ev(ok)).toMatchObject({ endpoint: 'owner_action', app_id: null, scope_id: 's1', org_id: 'org_legacy', outcome: 'ok', relayed: true, near_tx: n.sent[0]!.hash, relayer_nonce: n.sent[0]!.nonce.toString() });
+    expect(ownerPool).toContain((await ev(ok))!.relayer_pk);
+    expect(await ev(other)).toMatchObject({ scope_id: 's2', org_id: 'org_owner_test', outcome: 'ok' });
+    expect(await ev(rejected)).toMatchObject({ outcome: 'rejected', code: 'contract_rejected', relayed: true });
+    for (const r of unchecked) expect(await ev(r)).toBeUndefined();
+    expect(ledger.events.every((e) => !('uid' in e))).toBe(true);
   });
 
   it('rejects methods outside the allowlist', async () => {

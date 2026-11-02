@@ -21,7 +21,8 @@
     "@near-js/transactions": "2.5.1",
     "@near-js/utils": "2.5.1",
     "@noble/curves": "1.9.7",
-    "aws4fetch": "1.0.20"
+    "aws4fetch": "1.0.20",
+    "pg": "8.23.1"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.4",
@@ -30,7 +31,6 @@
     "@hana-id/env": "workspace:*",
     "@types/node": "^22.0.0",
     "@types/pg": "8.23.1",
-    "pg": "8.23.1",
     "tsx": "4.23.15",
     "typescript": "^5.7.0",
     "vitest": "4.1.12",

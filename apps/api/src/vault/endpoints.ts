@@ -18,9 +18,10 @@ import { type Keks, SHARE_KEY_BYTES, kekFor, loadKeks, unwrapShareKey, wrapShare
 import { SHARE_PER_MINUTE, VAULT_LIMIT_PERIOD_S, VAULT_PER_IP_MINUTE, vaultIpKey, vaultShareKey } from './limits.ts';
 import { NO_SHARE_ID, SHARE_ID_BYTES, type ShareAction, actionPayload, createSharePayload, verifyVaultSignature } from './message.ts';
 import { isTestApp } from '../origins.ts';
+import { beginUsage, finishUsageOnThrow } from '../usage/event.ts';
 import { parentOriginAllowed } from './origins.ts';
 import { effectiveSettings, getSettingsRow } from './settings.ts';
-import { type ShareRow, type ShareUpdate, advanceShare, capExpiry, getShare, incrementUnlocks, insertShare, markRevoked, revokeAllFrom } from './shares.ts';
+import { type ShareRow, type ShareUpdate, advanceShare, capExpiry, getShare, insertShare, markRevoked, revokeAllFrom } from './shares.ts';
 
 export const VAULT_ENDPOINTS = ['/v1/vault/shares', '/v1/vault/unlock', '/v1/vault/touch', '/v1/vault/revoke', '/v1/vault/revoke-all'] as const;
 export type VaultEndpoint = (typeof VAULT_ENDPOINTS)[number];
@@ -182,6 +183,17 @@ export async function handleVaultEndpoint(request: Request, env: Env, endpoint: 
   // Limits before the body: a malformed body still counts against the IP and app limits.
   const limited = await vaultLimits(request, env, ctx, gate.app);
   if (limited) return limited;
+  // An unlock past the vault gate (app, origins, limits) is one usage event, whatever its outcome (usage/event.ts).
+  if (endpoint === '/v1/vault/unlock') beginUsage(ctx, { orgId: gate.app.org_id, appId: gate.app.id, scopeId: gate.app.scope_id, exec });
+  try {
+    return await vaultRequest(request, env, endpoint, ctx, gate);
+  } catch (err) {
+    finishUsageOnThrow(ctx);
+    throw err;
+  }
+}
+
+async function vaultRequest(request: Request, env: Env, endpoint: VaultEndpoint, ctx: Ctx, gate: Extract<VaultGate, { ok: true }>): Promise<Response> {
   // pk_test_ apps: share creation and unlock answer with the request's own timings (apps/smoke's breakdowns).
   ctx.exposeTimings = (endpoint === '/v1/vault/shares' || endpoint === '/v1/vault/unlock') && isTestApp(gate.app);
   const parsed = await readJson(request, MAX_VAULT_BODY);
@@ -195,7 +207,7 @@ export async function handleVaultEndpoint(request: Request, env: Env, endpoint: 
   const shareLimited = await shareLimit(env, ctx, gate.app, shareReq.shareId);
   if (shareLimited) return shareLimited;
   lap(ctx, 'limits');
-  return shareAction(env, ctx, gate.app, ACTIONS[endpoint], shareReq, exec);
+  return shareAction(env, ctx, gate.app, ACTIONS[endpoint], shareReq);
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -338,7 +350,7 @@ async function refusal(env: Env, ctx: Ctx, app: App, shareId: Uint8Array, now: n
  * POST /v1/vault/unlock, /touch, /revoke, /revoke-all: one signed, in-order use of a share (its body and the share's
  * rate limit already checked, in handleVaultEndpoint).
  */
-async function shareAction(env: Env, ctx: Ctx, app: App, action: ShareAction, req: { shareId: Uint8Array; counter: number; signature: Uint8Array }, exec?: ExecutionContext): Promise<Response> {
+async function shareAction(env: Env, ctx: Ctx, app: App, action: ShareAction, req: { shareId: Uint8Array; counter: number; signature: Uint8Array }): Promise<Response> {
   const keks = action === 'unlock' ? await loadKeks(env) : null;
   if (action === 'unlock' && !keks) return vaultKeyUnavailable(ctx);
 
@@ -367,7 +379,7 @@ async function shareAction(env: Env, ctx: Ctx, app: App, action: ShareAction, re
     });
     if (!signed) return reject(ctx, 401, 'invalid_signature', 'Invalid session signature');
 
-    if (action === 'unlock') return await unlock(env, ctx, app, row, req.counter, now, keks!, exec);
+    if (action === 'unlock') return await unlock(env, ctx, app, row, req.counter, now, keks!);
     if (action === 'revoke-all') {
       if (now - row.created_at >= REVOKE_ALL_FRESH_MS) {
         return reject(ctx, 403, 'share_not_fresh', 'Revoking other devices needs a share from a login in the last 5 minutes');
@@ -388,9 +400,9 @@ async function shareAction(env: Env, ctx: Ctx, app: App, action: ShareAction, re
 
 /**
  * Unwraps K_s before the counter moves (a share this API can't read never burns a counter), re-wrapping it under the
- * current KEK in the same statement when the row is still under the previous one. Counts one unlock.
+ * current KEK in the same statement when the row is still under the previous one. Its usage event is the request's.
  */
-async function unlock(env: Env, ctx: Ctx, app: App, row: ShareRow, counter: number, now: number, keks: Keks, exec?: ExecutionContext): Promise<Response> {
+async function unlock(env: Env, ctx: Ctx, app: App, row: ShareRow, counter: number, now: number, keks: Keks): Promise<Response> {
   const kek = kekFor(keks, row.kek_id);
   if (!kek) return vaultKeyUnavailable(ctx);
   const binding = { shareId: row.share_id, appId: app.id, sessionPk: row.session_pk };
@@ -404,11 +416,6 @@ async function unlock(env: Env, ctx: Ctx, app: App, row: ShareRow, counter: numb
     const advanced = await advanceShare(env.DB, app.id, row.share_id, counter, now, { kind: 'slide', rewrap });
     lap(ctx, 'advance');
     if (!advanced) return await refusal(env, ctx, app, row.share_id, now, true);
-    const write = incrementUnlocks(env.DB, app.id, now).catch(() => {
-      log({ event: 'usage_increment_failed', requestId: ctx.requestId, appId: app.id, endpoint: ctx.endpoint }, 'error');
-    });
-    if (exec) exec.waitUntil(write);
-    else await write;
     return done(ctx, 200, { ks: arr(ks), counter: advanced.counter, idleUntilMs: advanced.idleUntil, absExpiresAtMs: advanced.absExpiresAt });
   } finally {
     ks.fill(0);

@@ -168,9 +168,10 @@ export async function pendingNotices(db: HotDb, limit: number): Promise<Notice[]
  * `proposer_sub`), or a Hana proposal marked at proposal time, which only createApp does for the initial origins of a
  * scope row it created. Granted only while the scope shows no sign that a user has a key in it: `first_session_at` is
  * NULL (the API writes it at every session-pool relay attempt, D209), no origin of the scope's apps is or was in force
- * other than those proposed in the same request, and no app of the scope has a vault share, a usage row or an identity
- * count. The same rule as the CLI's `app:changes:announce` (scripts/lib/admin-sql.ts `noSessionWaiver`, D206); C4
- * replaces the legacy `usage` check in both before migration 0007 drops that table.
+ * other than those proposed in the same request, and no app of the scope has a vault share, a session marker
+ * (migration 0009, written by the API once a session-pool relay settled; it replaced the legacy `usage` rows in batch
+ * C4, D220) or an identity count. The same rule as the CLI's `app:changes:announce` (scripts/lib/admin-sql.ts
+ * `noSessionWaiver`, D206). Nothing here reads the usage ledger (Neon): the waiver depends on the hot DB only.
  */
 export function noSessionWaiver(t: string, now: number): Q {
   const T = raw(t);
@@ -183,7 +184,7 @@ export function noSessionWaiver(t: string, now: number): Q {
     AND NOT EXISTS (SELECT 1 FROM app_origins ao WHERE ao.app_id IN ${scopeApps} AND ao.active_from IS NOT NULL AND ao.active_from <= ${now}
                      AND (ao.change_id IS NULL OR ao.change_id NOT IN (SELECT gr.id FROM guarded_changes gr WHERE gr.request_id = ${T}.request_id)))
     AND NOT EXISTS (SELECT 1 FROM vault_shares WHERE app_id IN ${scopeApps})
-    AND NOT EXISTS (SELECT 1 FROM usage WHERE app_id IN ${scopeApps})
+    AND NOT EXISTS (SELECT 1 FROM session_markers WHERE app_id IN ${scopeApps})
     AND NOT EXISTS (SELECT 1 FROM identity_usage WHERE app_id IN ${scopeApps}))`;
 }
 

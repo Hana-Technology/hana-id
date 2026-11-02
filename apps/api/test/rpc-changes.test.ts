@@ -267,7 +267,8 @@ describe('waivers', () => {
     const fresh = await orgApp({ firstSession: null, origins: [] });
     const c = await memberProposal(fresh, { kind: 'origin_add', origin: NEW });
     expect((await ack(c)).r).toMatchObject({ ok: true, change: { waiver: 'no_session', activeFrom: Date.now() } });
-    // Any sign of a user means the full delay: a first session, an origin of the scope already in force, a vault share.
+    // Any sign of a user means the full delay: a first session, an origin of the scope already in force, a vault share,
+    // a session marker, an identity count.
     const seen = await orgApp({ firstSession: Date.now(), origins: [] });
     expect((await ack(await memberProposal(seen, { kind: 'origin_add', origin: NEW }))).r).toMatchObject({ ok: true, change: { activeFrom: Date.now() + DELAY } });
     const live = await orgApp({ firstSession: null });
@@ -279,6 +280,11 @@ describe('waivers', () => {
       .bind(shared.id, ORIGIN, Date.now() + HOUR)
       .run();
     expect((await ack(await memberProposal(shared, { kind: 'origin_add', origin: NEW }))).r).toMatchObject({ ok: true, change: { activeFrom: Date.now() + DELAY } });
+    // The app's session marker (migration 0009, D220): written once a session-pool relay settled, even with
+    // first_session_at lost.
+    const marked = await orgApp({ firstSession: null, origins: [] });
+    await env.DB.prepare('INSERT INTO session_markers (app_id, first_at) VALUES (?1, 1)').bind(marked.id).run();
+    expect((await ack(await memberProposal(marked, { kind: 'origin_add', origin: NEW }))).r).toMatchObject({ ok: true, change: { activeFrom: Date.now() + DELAY } });
     const counted = await orgApp({ firstSession: null, origins: [] });
     await env.DB.prepare("INSERT INTO identity_usage (app_id, day, tokens) VALUES (?1, '2026-11-02', 1)").bind(counted.id).run();
     expect((await ack(await memberProposal(counted, { kind: 'origin_add', origin: NEW }))).r).toMatchObject({ ok: true, change: { activeFrom: Date.now() + DELAY } });

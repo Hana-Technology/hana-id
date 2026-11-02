@@ -10,7 +10,8 @@ change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 (branch `feat/e
 2026-11-02. D210–D214 (branch `feat/identity-token-8`, to confirm, amended after its review the same
 day) on 2026-11-02. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
 provider note, two "Superseded or amended" rows, the user-mail line under "Proposed", and the headings from D125 on, checked against `develop` @ 1c6a124 and what sandbox-dev runs (`docs/operations.md`) on
-2026-11-02 (branch `docs/consistency-pass`); no decision changed.
+2026-11-02 (branch `docs/consistency-pass`); no decision changed. D220–D224 (branch `feat/batch-c-4`, to confirm) on
+2026-11-02.
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -2841,7 +2842,10 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
 - Rejected: computing ids in the migration through a Worker step (a migration must be plain SQL that runs in order).
 - Forward obligation (C3 re-check): the `no_session` waiver (D206) reads the legacy D1 `usage` table, which C4 stops
   writing and C4b's 0007 drops. Before 0007, C4 replaces that check with one that still sees new sessions (a hot-DB
-  marker the API writes beside the relay, not a Neon read); written in `docs/batch-c-build-plan.md` C4.
+  marker the API writes beside the relay, not a Neon read); written in `docs/batch-c-build-plan.md` C4. Discharged in
+  batch C4 by the `session_markers` table (migration 0009, D220), in both waivers: the CLI's
+  (`scripts/lib/admin-sql.ts`) and `AdminRpc.ackNotice`'s (`apps/api/src/changes/lifecycle.ts`, batch C5, switched
+  when C4 merged after it). No code reads the legacy `usage` table any more.
 
 ### D206. CLI readings: environment, actor, waivers, one ledger row per write, no cancel command
 - Date 2026-11-02 · Status: to confirm; built (`scripts/lib/admin-apps.ts`, `admin-sql.ts`, `admin-settings.ts`) ·
@@ -3056,6 +3060,114 @@ or the contract. All five are **to confirm** by the user.
 - Rejected: one alert per published key (page flood); one fixed condition per kind (a second forged key while the
   first is open would raise nothing new).
 
+## Batch C4: usage capture (2026-11-02)
+
+Readings made while building `docs/batch-c-build-plan.md` C4 on `feat/batch-c-4`, where `docs/batch-c-spec.md` left a
+detail open. Each follows the spec's intent; all five are **to confirm** by the user.
+
+### D220. The `no_session` waiver's hot-DB sign: a session marker per app (migration 0009)
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/migrations/0009_session_markers.sql`, `apps/api/src/apps.ts`
+  `markSession`, `handlers.ts` `firstSession`, `scripts/lib/admin-sql.ts` `noSessionWaiver`) · Source: D205's forward
+  obligation; build plan C4
+- Decision: a new hot-DB table `session_markers (app_id PK → apps, first_at)`. When the gate saw no
+  `first_session_at` on the scope, the API writes the scope's `first_session_at` beside the relay (as since C3) and,
+  once that relay settled whatever its outcome, the app's marker (`INSERT … ON CONFLICT DO NOTHING`): two independent
+  writes, so one lost write never leaves the waiver open, as the `usage` row did for a lost `first_session_at`. The
+  waiver reads the marker in place of the legacy `usage` rows; nothing it decides reads Neon. The migration is
+  numbered **0009** (the next free number): 0007 stays C4b's drop and 0008 the identity token's, so no merged doc
+  renumbers; it reads no other table, so it applies the same before or after 0007. The existing `usage` rows are
+  carried into markers by a one-off idempotent statement before 0007 (`docs/operations.md` "Usage capture" step 5).
+  The same rule in C5's `AdminRpc.ackNotice` (`apps/api/src/changes/lifecycle.ts` `noSessionWaiver`, merged before C4)
+  now reads `session_markers` too, with a test row of its own; nothing reads `usage`.
+- Review fixes (2026-11-02): `HOT_DB_SCHEMA` is 9 and `app:changes:announce --remote` needs `hotDb` ≥ 9 (proposals
+  still ≥ 6), so no announcement runs against an API that writes no markers; the one-off `usage` → markers statement
+  runs after the C4 deploy (and again before 0007), since the API before it still wrote `usage` rows only.
+- Why: the build plan asked for a hot-DB marker beside the relay; per app (not per scope) so its test rows match the
+  old ones and a scope's apps each leave their own sign.
+- Rejected: dropping the `usage` check and relying on `first_session_at` alone (one write, one point of failure);
+  taking 0007 and renumbering C4b's drop to 0009 (a backfill inside the drop would be cleaner, but every merged doc
+  and decision names 0007 as the drop).
+
+### D221. What one usage event covers, and when it is opened and closed
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/usage/event.ts`, `handlers.ts`, `login.ts`,
+  `vault/endpoints.ts`) · Source: spec "Usage capture"
+- Decision: the event opens once the request passed the gate (for `/v1/vault/unlock`: the vault gate, app, origins and
+  the vault's IP and app limits; for owner actions: the owner check) and closes in `done` with the response, so every
+  answer after the gate is exactly one event and the per-IP 429 of the gate is none. A handler that throws past its
+  gate records `500 internal`, as the router answers. The export window's `/v1/login` is a `login` event (with a uid).
+  `ckd_failed` is a rejected, relayed event (no longer "counts as a session"). An owner action's `org_id` is read from
+  `scopes` after the response, `org_legacy` for a scope the hot DB doesn't hold or when D1 can't be read
+  (`usage_org_unavailable`). A code that isn't the event shape's `^[a-z][a-z0-9_]{0,63}$` is recorded as `internal`.
+- Why: the gate is where the spec draws the line ("requests that passed appGate"); one place to close the event
+  (`done`) means no response path can forget it; a relayed owner action must reach the ledger for the nonce check
+  even when its scope has no app.
+
+### D222. The writer: checked in the Worker, one retry for transient errors only, relayed by the relay result
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/usage/record.ts`, `relayer-key.ts`, `near/tx.ts`) ·
+  Source: spec "Write", "Gas", tests "Topology and config"
+- Decision: the event is checked against UsageEvent v1 (`console-core`, zod) before it is sent; a refusal is
+  `usage_write_rejected` and never sent. One new `pg` connection per event over `USAGE_DB` (Hyperdrive pools), 5 s to
+  connect and 5 s for the statement. Retried once after 250 ms: an error without a SQLSTATE (connection, timeout) or of
+  class 08, 40, 53, 57, 58; `22023` (the function's shape refusal) is `usage_write_rejected`; any other SQLSTATE (e.g.
+  `23514`, no partition) is `usage_write_failed` without a retry. Logs carry the SQLSTATE (`pg_<code>`) or
+  `connection`, never the driver's message or the URL. `relayed` follows the relay *result*, not the response code:
+  ok, or `contract_rejected` / `timeout` / `near_error` with a `nearTx`; `near_rejected` and `relayer_busy` are not
+  relayed even though they name a transaction (it can never execute), and their `near_tx`, key and nonce are still
+  recorded. The `RelayerKey` result carries the signing key and nonce on every result naming a transaction (the last
+  sent, after a retry) and the BigInt gas sums of a settled outcome; a malformed amount gives no gas fields, never a
+  guess. Without `USER_ID_KEY` (or with a malformed one) events are recorded without a uid (`usage_uid_unavailable`,
+  once per isolate); a path that doesn't parse for its scope gives no uid either.
+- Review fixes (2026-11-02): a SQLSTATE is read only from a `pg.DatabaseError` (the server's answer); any other error,
+  an errno code such as `ECONNRESET` included, is a connection error and retried. The provisional gas pair is dropped
+  when either figure is past the event's bounds (gas ≤ 2^63 − 1, tokens < 10^39), so the rest of the event is kept.
+  `recordUsage` first yields (`scheduler.wait(0)`), so the uid's HMAC, the check and the connection all run after the
+  response. Settlement (C12) must bill a relayed event only for its own transaction (`near_tx` unique, the
+  transaction's signer key and nonce equal to `relayer_pk` and `relayer_nonce`): an obligation in the build plan's C12.
+- Why: the spec's "connection error or timeout" retry and "never on a validation error", with a test for each class;
+  a shape refusal is a bug that a retry can't fix; the nonce cross-check needs every relayed row's key and nonce.
+
+### D223. Identity token counts reach the ledger by an hourly copy, not per mint
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/migrations-usage/0002_identity_tokens.sql`,
+  `apps/api/src/usage/identity-sync.ts`, the API's hourly cron) · Source: build plan "Conventions" (the ledger counts
+  `identity_tokens` per app and day); D172
+- Decision: the mint keeps counting in the hot DB (`identity_usage`, unchanged, and the identity signing code is not
+  touched); the hourly cron copies the last 7 UTC days, with each app's org and scope, to `usage.identity_tokens
+  (app_id, day, org_id, scope_id, tokens)` through `usage.record_identity_tokens(rows jsonb)` (writer only, all or
+  nothing, ≤ 1000 rows a call, the larger count kept, org and scope of the first copy kept). A failed copy is logged
+  (`identity_usage_sync_failed`) and repaired by the next hour; it never fails the cron run. The Neon file is
+  `0002`, so the report and retention functions planned as 0002/0003 (C12, C13) take the next numbers (0004, 0005:
+  0003 is the partitions fix below).
+- Review fix (2026-11-02, M1): partitions no longer wait for the admin Worker. Neon `0003_writer_partitions.sql` lets
+  `usage_writer` execute `usage.ensure_partitions` (the owner's bounded SECURITY DEFINER function: 0..24 months, only
+  creates missing months) and creates 12 months ahead; the API's hourly cron calls `ensure_partitions(12)` before the
+  identity copy, logging `usage_partitions_failed` and never failing the run.
+- Why: per app and day is what reports need; a copy of a monotone count is idempotent and survives a Neon outage of
+  up to 6 days with nothing lost, with no change to the mint path (which identity token steps 7/8 are changing).
+- Rejected: an `identity_token` event per mint in `usage.events` (a new endpoint value in a CHECK of a partitioned
+  table, a Neon write per mint, and a change in the identity signing files).
+
+### D224. `usage-setup` and the binding: subcommands, SCRAM verifiers, re-runnable; capture optional on sandbox-dev
+- Date 2026-11-02 · Status: to confirm; built (`scripts/lib/usage-setup.ts`, `apps/api/scripts/gen-wrangler.ts`) ·
+  Source: build plan "Setup steps" 3, 4 and 6
+- Decision: `usage-setup <env> roles | hyperdrive | user-id-key [--yes]` (testnet only, dry run by default).
+  `roles` writes each role's URL first (the owner's direct endpoint and database, `sslmode=require` only: Neon's
+  `channel_binding` is dropped for Hyperdrive) and then sets `LOGIN PASSWORD` to a SCRAM-SHA-256 verifier computed
+  locally (checked against RFC 7677's example), in one transaction, so Neon never sees the password; a re-run reuses
+  the files' passwords. `hyperdrive` creates both configs with caching disabled and prints only names and ids (the
+  role URL is a wrangler argument, briefly visible in the local process list). `user-id-key` never replaces the key
+  file and sets the Worker secret through stdin. `gen --usage-hyperdrive-id <id>` binds `USAGE_DB`; later runs keep it
+  for the same Worker and D1 database, `off` drops it. The binding needs no manifest `usage` block (sandbox-dev has
+  none yet; the Hyperdrive names default to the spec's). The gitleaks config gains a rule for Postgres URLs with a
+  password and the new secret files by name.
+- Review fixes (2026-11-02): `gen` writes the binding's `localConnectionString` as an unroutable placeholder
+  (`usage-ledger.local.invalid`), so `wrangler dev` runs and local capture fails open, logged. The Hyperdrive id is
+  read only from wrangler's "Created new Hyperdrive … config: <id>" line (no line, no guessed id). The gitleaks rule
+  matches passwords of 8 characters or more with an entropy floor of 3.0 (3.5 made anything under 12 unmatchable),
+  stopwords for the repo's marked fakes. Creating the configs through the REST API (the password in an HTTPS body, not
+  a process argument) is a before-production item (`docs/mainnet-readiness.md` 4.18). The step-8 SCRAM login check on
+  sandbox-dev is an explicit gate in `docs/operations.md`.
+- Why: the spec's steps, made safe to repeat after a stop, and M2 without waiting for the dashboard blocks.
+
 ## Identity token build, step 7 (the AWS KMS signer, code only), 2026-11-02
 
 Made while building `docs/identity-token-spec.md` build step 7's code (branch `feat/identity-token-7`): the KMS adapter,
@@ -3234,6 +3346,8 @@ To confirm from batch C step C2 (`packages/oidc`): D201 (the new claims typed on
 Batch C3's readings D205–D209 (hot DB 0006, the gate, the CLI) are to confirm. So are batch C5's D225–D229 (the
 legacy key column and deleted apps, the notice fields, keys and no-op writes, drift and breaker events, RPC actors
 and codes).
+Batch C4's readings D220–D224 (the session marker and migration 0009, the event's bounds, the writer, the
+identity-count copy, `usage-setup`) are to confirm.
 To confirm from the identity token's step 7 (the KMS signer's code): D215 (the manifest shape and credentials), D216
 (`DIGEST`), D217 (strict DER, the self-check), D218 (one `Sign`, no retry, limits) and D219 (the standby's region, the
 IAM policy on the active key only).

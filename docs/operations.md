@@ -1,6 +1,8 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-02 (branch `feat/link-cap`: "Link volume thresholds", D200, and `set_link_thresholds`
+Last verified against code: 2026-11-02 (branch `feat/identity-token-7`: "Identity token keys on AWS KMS", the KMS
+signer's setup steps, IAM and key policies, rotations and the planned reconciliation, the `identity-key kms-*`
+commands, the AWS access key row in "Secrets: where they live", D215–D219; branch `feat/link-cap`: "Link volume thresholds", D200, and `set_link_thresholds`
 through `owner:call`; branch `feat/email-login-5`: the watchdog's email rules, the link alarms and
 `unrecorded_wallets` alerts in "Watchdog alerts (runbook)" and "Watchdog service", D190–D193, D200; branch
 `feat/email-login-2`: `deploy-contract` refuses a v1 contract, D154; the v2 → v3 upgrade path sandbox-tested,
@@ -33,6 +35,7 @@ Never print, log, paste or commit any of these. The scripts never print them eit
 | Council member keys (dev envs only, D81) | `.secrets/<env>/council/<member>.json` (`{account_id, public_key, private_key}`), full-access keys of throwaway testnet accounts | `council-setup`; other envs' members hold their own keys (mainnet: Ledgers, never on disk) |
 | `VAULT_KEK` (and, during a rotation, `VAULT_KEK_PREVIOUS`) | `.secrets/<env>/vault-kek` (and `vault-kek.previous`); the only copy, since Cloudflare can't give a secret back | `vault-kek` (below) |
 | Identity token signing keys (Worker slots `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`; testnet and `local*` only) | `.secrets/<env>/identity-signing-key.json` (active), `identity-signing-key-standby.json` (published, **never uploaded**: keep it offline), and during a rotation `identity-signing-key-next.json` / `-previous.json` (P-256 private JWKs); `identity-slots.json` says which slot holds which kid; the only copies | `identity-key <env> init`, `next`, `switch`, `retire` ("Identity token keys" below); `put --yes` uploads the active key again |
+| Identity token KMS signer's AWS access key (`IDENTITY_AWS_ACCESS_KEY_ID`, `IDENTITY_AWS_SECRET_ACCESS_KEY`; `aws-kms` envs only, none yet) | `.secrets/<env>/identity-aws-access-key.json` (`aws iam create-access-key`'s JSON for the signer's IAM user), only until it is uploaded and checked: then delete it (a lost key is replaced, never recovered) | the operator, with the AWS CLI as the break-glass role; `identity-key <env> kms-put-aws-key --yes` uploads it ("Identity token keys on AWS KMS" below) |
 | Identity token sub key (`IDENTITY_SUB_KEY`) | `.secrets/<env>/identity-sub-key` (base64 of 32 bytes); never rotated, also backed up offline with the council backup (D81) | `identity-key <env> init`; upload again with `identity-key <env> put --yes` |
 | Neon Postgres connection strings (batch C ledger, D73): pooled `DATABASE_URL` and `DATABASE_URL_DIRECT` of the env's Neon branch | `.secrets/<env>/neon.json` (`{project_id, branch, DATABASE_URL, DATABASE_URL_DIRECT, …}`); role `neondb_owner` until batch C creates least-privilege roles | `neon connection-string <branch> --project-id <id> [--pooled]` (Neon CLI, `neon login`) |
 | Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its Resend key, Slack webhook, paging-app credentials, `HEARTBEAT_URL`) | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
@@ -909,8 +912,8 @@ exposed for that long.
 The partner identity token (`docs/identity-token-spec.md`, D127; `docs/api.md` "Identity token") needs a manifest block
 and API Worker secrets, all made by `scripts/identity-key.ts` (D177). Files in `.secrets/<env>/` are 0600 and never
 overwritten (Cloudflare can't give a secret back); values go to the Worker through wrangler's stdin; no command prints
-a private value. Testnet and `local*` only: mainnet signs with AWS KMS (build step 7; `gen` and the schema refuse a
-Worker-secret key there).
+a private value. Testnet and `local*` only: staging and mainnet sign with AWS KMS ("Identity token keys on AWS KMS"
+below; `gen` and the schema refuse a Worker-secret key off testnet).
 
 | File | Role | On the Worker |
 |---|---|---|
@@ -974,6 +977,203 @@ is there. Run `retire` only after the switch's deploy. Retired key files are kep
 
 **Sub key leak.** Privacy, not funds: the holder can map partners' `sub`s to on-chain paths. Not rotatable without a
 `u2_` scheme and a 90-day `legacy_sub` window (spec "`sub`").
+
+### Identity token keys on AWS KMS
+
+**Status: code only (build step 7, branch `feat/identity-token-7`), no env uses it.** The API's KMS signer
+(`apps/api/src/identity/kms.ts`), the manifest's `aws-kms` signer, `gen`'s vars and the `identity-key kms-*` commands
+are built and tested against a fake KMS. The AWS side below is the operator's setup, in D121's dedicated AWS account,
+before staging's rehearsal and mainnet. sandbox-dev stays on the Worker-secret key. Moving an existing Worker-secret
+env to KMS isn't scripted (it must keep `IDENTITY_SUB_KEY` and needs a rotation window), so KMS envs start with
+`kms-init`.
+
+How it signs (`docs/api.md` "Identity token"): the Worker hashes the token's signing input and sends one
+`TrentService.Sign` (`MessageType: DIGEST`, `ECDSA_SHA_256`, SigV4) for the active key's ARN to
+`kms.<that key's region>.amazonaws.com`, with no retry, a 3 s deadline and a 4 KiB answer cap. The DER answer is
+converted to JOSE and verified with the published key before any token is answered (D216–D218). Every failure is
+`503 identity_signer_unavailable`, logged `identity_sign_failed` with a `kms_*` code.
+
+| What | Where | Notes |
+|---|---|---|
+| Identity keys: `active` and `standby`, during a rotation `next` and `previous` | AWS KMS, D121's account | `ECC_NIST_P256`, `SIGN_VERIFY`, origin `AWS_KMS` (generated in KMS, non-exportable), single-region (no `mrk-` keys: a replica shares its key material). The standby in another region than the active key (D219, the schema checks it). The same key policy on every key (below) |
+| IAM user `hana-identity-signer` (one per env: the manifest's `credentials.iamUser`) | IAM, same account | No console password. Its only permission: `kms:Sign` on the **active** key's ARN, `ECDSA_SHA_256` and `DIGEST` only (D219). One access key in use (two during a rotation) |
+| `IDENTITY_AWS_ACCESS_KEY_ID`, `IDENTITY_AWS_SECRET_ACCESS_KEY` | API Worker secrets | Set together by `kms-put-aws-key` (one `wrangler secret bulk`); rotated every 90 days and on suspicion |
+| `identityToken.signer` | `envs/<env>.json` | `{kind: "aws-kms", credentials: {kind: "worker-secret", iamUser}, keys: {active: {kid, arn}, standby?: {kid, arn}, next?, previous?}}`; every published key has a role, all keys in one account (D215). `gen` writes `IDENTITY_SIGNER=aws-kms`, `IDENTITY_ACTIVE_KID` and `IDENTITY_KMS_KEY_ARN` (the active key's ARN only) |
+| `IDENTITY_SUB_KEY` | Worker secret, `.secrets/<env>/identity-sub-key` | As on testnet: never rotated, backed up offline (D81). `kms-init` makes it |
+
+Every `kms-*` command prints its plan without `--yes`, never calls AWS and never prints a credential.
+`<key.json>` is the public data `aws kms get-public-key --key-id <arn> --output json` prints. After each manifest
+change: commit `envs/<env>.json`, `gen`, deploy.
+
+```sh
+S="corepack pnpm --filter @hana-id/scripts run identity-key <env>"
+$S show            # roles, kids and ARNs (public values only); warns when there is no standby
+```
+
+**Key policy** (every identity key; `<signer>` is `arn:aws:iam::<account>:user/<iamUser>`, `<admin>` the break-glass
+role's ARN). It delegates `kms:Sign` to the signer user's IAM policy only, so the key the Worker can sign with is set
+in one place, the IAM policy (D219). It denies signing to every other principal, grants to everyone, and key changes
+to everyone but the break-glass role:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Id": "hana-id-identity-key",
+  "Statement": [
+    {
+      "Sid": "BreakGlassAdministers",
+      "Effect": "Allow",
+      "Principal": { "AWS": "<admin>" },
+      "Action": ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetPublicKey", "kms:ListResourceTags", "kms:PutKeyPolicy",
+                 "kms:EnableKey", "kms:DisableKey", "kms:ScheduleKeyDeletion", "kms:CancelKeyDeletion",
+                 "kms:TagResource", "kms:UntagResource", "kms:UpdateKeyDescription"],
+      "Resource": "*",
+      "Condition": { "Bool": { "aws:MultiFactorAuthPresent": "true" } }
+    },
+    {
+      "Sid": "SignerSignsThroughItsIamPolicy",
+      "Effect": "Allow",
+      "Principal": { "AWS": "arn:aws:iam::<account>:root" },
+      "Action": "kms:Sign",
+      "Resource": "*",
+      "Condition": {
+        "ArnEquals": { "aws:PrincipalArn": "<signer>" },
+        "StringEquals": { "kms:SigningAlgorithm": "ECDSA_SHA_256", "kms:MessageType": "DIGEST" }
+      }
+    },
+    {
+      "Sid": "NoOtherSigner",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "kms:Sign",
+      "Resource": "*",
+      "Condition": { "ArnNotEquals": { "aws:PrincipalArn": "<signer>" } }
+    },
+    { "Sid": "NoGrants", "Effect": "Deny", "Principal": "*", "Action": "kms:CreateGrant", "Resource": "*" },
+    {
+      "Sid": "OnlyBreakGlassChangesTheKey",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": ["kms:PutKeyPolicy", "kms:ScheduleKeyDeletion", "kms:CancelKeyDeletion", "kms:DisableKey",
+                 "kms:EnableKey", "kms:UpdateKeyDescription", "kms:TagResource", "kms:UntagResource"],
+      "Resource": "*",
+      "Condition": { "ArnNotEquals": { "aws:PrincipalArn": "<admin>" } }
+    }
+  ]
+}
+```
+
+Never drop the `BreakGlassAdministers` statement: a key policy nobody can change can only be repaired by AWS Support.
+
+**The signer user's IAM policy** (inline, the user's only policy). The `Resource` is the active key alone, and during
+a switch the active and the incoming key:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "SignWithTheActiveIdentityKey",
+      "Effect": "Allow",
+      "Action": "kms:Sign",
+      "Resource": ["arn:aws:kms:<region>:<account>:key/<active key id>"],
+      "Condition": {
+        "StringEquals": { "kms:SigningAlgorithm": "ECDSA_SHA_256", "kms:MessageType": "DIGEST" },
+        "Bool": { "aws:SecureTransport": "true" }
+      }
+    },
+    { "Sid": "NothingElse", "Effect": "Deny", "NotAction": "kms:Sign", "Resource": "*" }
+  ]
+}
+```
+
+There is no source-IP condition: Workers have no fixed egress addresses. The user can't manage its own access keys
+(`NothingElse`); the break-glass role does.
+
+**One-time setup (the operator, per env, as the break-glass role with MFA):**
+
+1. **CloudTrail.** A multi-region trail in the account (or the organization trail) delivering to the log-archive
+   account (D121), with management events **Read and Write** (`Sign` is a read event) and KMS events **not**
+   excluded. Check that a `Sign` shows up (step 7).
+2. **Keys.** One in the active region (for example `ap-east-1`) and one in a second region (for example
+   `ap-southeast-1`), with the key policy above in `key-policy.json`:
+   `aws kms create-key --region <region> --key-spec ECC_NIST_P256 --key-usage SIGN_VERIFY --origin AWS_KMS --policy file://key-policy.json --description "hana-id identity <env> <role>" --tags TagKey=env,TagValue=<env>`.
+   Then for each: `aws kms get-public-key --region <region> --key-id <arn> --output json > <role>.json` (public data).
+3. **IAM user.** `aws iam create-user --user-name <iamUser>`, then `aws iam put-user-policy --user-name <iamUser>
+   --policy-name identity-sign --policy-document file://signer-policy.json` (the active key's ARN).
+4. **Manifest and sub key.** `$S kms-init --active active.json --standby standby.json --iam-user <iamUser> --yes`
+   writes `identityToken` (refused unless the two keys are in two regions of one account), creates
+   `.secrets/<env>/identity-sub-key` and sets `IDENTITY_SUB_KEY`. Commit the manifest; add both thumbprints to the
+   watchdog's pins (build step 8).
+5. **Access key.** `(umask 077; aws iam create-access-key --user-name <iamUser> > .secrets/<env>/identity-aws-access-key.json)`,
+   then `$S kms-put-aws-key --yes`. It checks that the file is 0600, that the key belongs to the manifest's user, and
+   that it is an active `AKIA…` key.
+6. **Deploy.** `gen <env> --d1-id <id>` (writes `IDENTITY_SIGNER=aws-kms`, `IDENTITY_ACTIVE_KID`,
+   `IDENTITY_KMS_KEY_ARN`), apply the migrations, deploy. The Worker must have no `IDENTITY_SIGNING_KEY*` secrets
+   (`wrangler secret list`; delete leftovers).
+7. **Check.** Mint a token from a test app: it verifies against the JWKS with the active kid, and the request's `sign`
+   timing phase fits the 100 ms p95 budget (measure on staging). CloudTrail shows one `Sign` by the signer user on the
+   active key. Then delete `.secrets/<env>/identity-aws-access-key.json`.
+8. **Alarms** (EventBridge rules on CloudTrail, to the paging app): any `PutKeyPolicy`, `DisableKey`,
+   `ScheduleKeyDeletion` or `CreateGrant` on an identity key; any IAM change on the signer user (`PutUserPolicy`,
+   `DeleteUserPolicy`, `AttachUserPolicy`, `CreateAccessKey`, `UpdateAccessKey`, `DeleteAccessKey`,
+   `CreateLoginProfile`); any `Sign` on an identity key by another principal (the key policy refuses it, but the
+   attempt matters); an AWS Budgets alarm on KMS spend and a CloudWatch alarm on `Sign` volume per key. Every planned
+   change below fires one of them: acknowledge it.
+
+`wrangler dev` doesn't run a KMS env: no AWS credentials go into `.dev.vars` (`gen --dev-vars` writes the sub key only
+and refuses a leftover private signing key file). Local development uses a `local*` env with a Worker-secret key.
+
+**Scheduled key rotation** (every 12 months; 14 days' notice to partners that pin thumbprints):
+
+1. Create the new key in the **active key's region** (the standby keeps the other one), with the same key policy;
+   `get-public-key` → `next.json`; `$S kms-add --role next --key next.json --yes` → gen, deploy (the JWKS lists it,
+   nothing signs with it). Add its thumbprint to the watchdog's pins.
+2. Wait the notice period.
+3. IAM: list both ARNs (active and next) in the signer user's policy.
+4. `$S kms-switch --to next --yes` → gen, deploy. The old key is now `previous`, still published.
+5. After ≥ 2 h: `$S kms-retire --key previous --yes` → gen, deploy. IAM: the new active ARN alone. KMS: `aws kms
+   disable-key` and `aws kms schedule-key-deletion --pending-window-in-days 30` on the old key. Remove its pin.
+
+**Access key rotation** (every 90 days, and at once on suspicion):
+
+1. `(umask 077; aws iam create-access-key --user-name <iamUser> > .secrets/<env>/identity-aws-access-key.json)`. IAM
+   allows two keys per user: delete an old inactive one first if there are two.
+2. `$S kms-put-aws-key --yes`: one request sets both secrets, so the Worker never pairs the new id with the old secret.
+3. Mint a token; CloudTrail shows a `Sign` with the new access key id.
+4. `aws iam update-access-key --user-name <iamUser> --access-key-id <old id> --status Inactive`; after a day with no
+   use (`aws iam get-access-key-last-used`), `aws iam delete-access-key`. Delete the `.secrets` file.
+
+**Suspected compromise** (a leaked access key or Worker secrets, an API Worker or Cloudflare account incident, an
+unexplained `Sign` in CloudTrail, a forged token reported by a partner; planned playbook
+`identity-kms-signer-compromised`):
+
+1. **Stop the signatures:** `aws iam update-access-key … --status Inactive` for every access key of the signer user.
+   Mints answer 503 from then on, and partners fall back to no token.
+2. **Measure:** the CloudTrail `Sign` events by those access key ids: which keys, the window, the count. With D219
+   the standby can't have been used (the IAM policy never listed it); confirm it has no `Sign` events.
+3. **Switch:** the IAM policy → the standby's ARN; a new access key → `$S kms-put-aws-key --yes`;
+   `$S kms-switch --to standby --yes` → gen, deploy.
+4. **Unpublish:** `$S kms-retire --key previous --yes` → gen, deploy (no 2 h wait); disable the old key and schedule
+   its deletion; remove its pin.
+5. **New standby:** a new key in another region than the new active key; `$S kms-add --role standby --key <file>
+   --yes` → gen, deploy; pin it.
+6. **Tell partners:** the `kid`, the window and count from CloudTrail, what to re-check. Post-mortem (D83).
+
+A KMS outage in the active region (`kms_unreachable`, `kms_internal` or `kms_timeout` in the logs, mints at 503) isn't
+a compromise. Either wait it out (partners fall back to no token), or switch to the standby as in step 3 without
+revoking anything. To make the old key the standby again later: `kms-retire --key previous`, then `kms-add --role
+standby` with its `get-public-key` file.
+
+**Reconciliation (planned, not built; before mainnet).** An hourly job counts the CloudTrail `Sign` events per identity
+key and UTC hour (signer user only, no `errorCode`) and compares them with `identity_issuance_hourly` (the tokens the
+API answered, per kid and hour). Each answered token is one `Sign`, so CloudTrail's count is at least the API's. The
+difference must be explained by `Sign` calls that succeeded at KMS but produced no token (a timeout after KMS signed,
+a garbled or unverifiable answer), which today are only in the logs (`identity_sign_failed` with `kms_timeout`,
+`kms_bad_answer`, `kms_bad_signature` or `self_verify_failed`). A gap beyond that, or any `Sign` by another principal,
+is a critical alert: a signature Hana's API didn't make. To make the check exact, the job's build adds a per-hour,
+per-kid count of the `Sign` requests the API sent (D218). Where it runs (the watchdog's account, D125, with a
+read-only principal on the log-archive bucket or `cloudtrail:LookupEvents`) is decided with it.
 
 ### A user's leaked key (`key_index`)
 

@@ -31,6 +31,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { IDENTITY_SECRET_FILES, type Manifest, identityIssuerFor, loadEnv, manifestPath, manifestSchema, p256Thumbprint, repoRoot } from '@hana-id/env';
 import { CliError, parseCli } from './cli.ts';
+import { type AwsSecret, KMS_COMMANDS, KMS_STRING_FLAGS, type KmsCommand, identityKms } from './identity-kms.ts';
 import { assertPrivate, parseSecretJson, secretsDir, writeSecretJson } from './secrets.ts';
 import { DRY_RUN_LINE, writeNewSecretFile } from './vault-kek.ts';
 
@@ -46,7 +47,21 @@ export const IDENTITY_KEY_USAGE = `Usage: identity-key.ts <env> <command> [--yes
   --yes                          do it (without it, only print the plan)
 
 After init, next, switch and retire: commit envs/<env>.json, run gen and deploy the API. No private key is ever
-printed. Testnet envs only. The sub key is never rotated: a new one changes every user's \`sub\` at every partner.`;
+printed. Testnet envs only. The sub key is never rotated: a new one changes every user's \`sub\` at every partner.
+
+AWS KMS signer (staging and mainnet; D215, docs/operations.md "Identity token keys on AWS KMS"):
+  kms-init --active <file> --standby <file> --iam-user <name> [--local]
+                                 a new env: identityToken with the aws-kms signer (active and standby in two regions)
+                                 and a new IDENTITY_SUB_KEY, set on the Worker unless --local
+  kms-add --role next|standby --key <file>
+                                 publish a KMS key in that role (manifest only)
+  kms-switch --to next|standby   make that key active; the old active key becomes "previous" (still published)
+  kms-retire --key previous|standby
+                                 unpublish that key (then disable it and schedule its deletion in KMS)
+  kms-put-aws-key                set IDENTITY_AWS_ACCESS_KEY_ID and IDENTITY_AWS_SECRET_ACCESS_KEY in one wrangler
+                                 secret bulk, from .secrets/<env>/${IDENTITY_SECRET_FILES.awsAccessKey}
+  <file> is \`aws kms get-public-key --key-id <arn> --output json\`'s output. The kms-* commands never call AWS and
+  never print a credential.`;
 
 export type SigningSlot = 'IDENTITY_SIGNING_KEY' | 'IDENTITY_SIGNING_KEY_STANDBY';
 export type IdentitySecret = SigningSlot | 'IDENTITY_SUB_KEY';
@@ -62,6 +77,8 @@ export interface P256PrivateJwk {
 
 export interface IdentityKeyDeps {
   putSecret: (m: Manifest, name: IdentitySecret, value: string) => void;
+  /** Sets several secrets in one request (`wrangler secret bulk`, stdin): the AWS key pair changes atomically. */
+  putSecretsBulk?: (m: Manifest, values: Record<AwsSecret, string>) => void;
   deleteSecret: (m: Manifest, name: SigningSlot) => void;
   /** A fresh P-256 private JWK (default node:crypto). */
   newP256: () => P256PrivateJwk;
@@ -77,6 +94,11 @@ const apiDir = join(repoRoot, 'apps', 'api');
 
 export function wranglerSecretArgv(m: Manifest, name: IdentitySecret): string[] {
   return ['exec', 'wrangler', 'secret', 'put', name, '--name', m.cloudflare.workerName];
+}
+
+/** `wrangler secret bulk` with no file reads the JSON object from stdin: the values never touch the disk again. */
+export function wranglerSecretBulkArgv(m: Manifest): string[] {
+  return ['exec', 'wrangler', 'secret', 'bulk', '--name', m.cloudflare.workerName];
 }
 
 export function wranglerSecretDeleteArgv(m: Manifest, name: SigningSlot): string[] {
@@ -97,6 +119,7 @@ export function defaultIdentityKeyDeps(): IdentityKeyDeps {
   };
   return {
     putSecret: (m, name, value) => wrangler(wranglerSecretArgv(m, name), value),
+    putSecretsBulk: (m, values) => wrangler(wranglerSecretBulkArgv(m), JSON.stringify(values)),
     deleteSecret: (m, name) => wrangler(wranglerSecretDeleteArgv(m, name)),
     newP256,
     randomBytes: (n) => new Uint8Array(nodeRandomBytes(n)),
@@ -197,16 +220,33 @@ type Slots = Record<SigningSlot, string | null>;
 
 /** Runs `identity-key <argv>`. */
 export function identityKey(argv: readonly string[], deps: IdentityKeyDeps): void {
-  const args = parseCli(argv, { booleans: ['yes', 'help', 'local'], strings: ['to', 'key'] });
+  const args = parseCli(argv, { booleans: ['yes', 'help', 'local'], strings: [...KMS_STRING_FLAGS] });
   if (args.flag('help')) return void deps.log(IDENTITY_KEY_USAGE);
   const [envName, command, ...rest] = args.positionals;
-  if (!envName || !command) throw new CliError('Expected <env> <init | put | next | switch | retire | show>');
+  if (!envName || !command) throw new CliError('Expected <env> <init | put | next | switch | retire | show | kms-…>');
   if (rest.length) throw new CliError(`Unexpected argument ${rest.join(' ')}`);
+  // The AWS KMS signer's commands (identity-kms.ts): any network, no private key files.
+  if ((KMS_COMMANDS as readonly string[]).includes(command)) return identityKms((deps.loadManifest ?? loadEnv)(envName), command as KmsCommand, args, deps);
   if (!['init', 'put', 'next', 'switch', 'retire', 'show'].includes(command)) throw new CliError(`Unknown command ${command}`);
+  for (const flag of ['active', 'standby', 'iam-user', 'role'] as const) {
+    if (args.str(flag) !== undefined) throw new CliError(`--${flag} goes with the kms-* commands only`);
+  }
   if (args.flag('local') && command !== 'init') throw new CliError('--local goes with init only');
   if (args.str('to') !== undefined && command !== 'switch') throw new CliError('--to goes with switch only');
   if (args.str('key') !== undefined && command !== 'retire') throw new CliError('--key goes with retire only');
   const m = (deps.loadManifest ?? loadEnv)(envName);
+  if (command === 'show' && m.identityToken?.signer.kind === 'aws-kms') {
+    const t = m.identityToken;
+    const s = m.identityToken.signer;
+    deps.log(`iss ${t.iss}`);
+    deps.log(`signer aws-kms, IAM user ${s.credentials.iamUser} (credentials: Worker secrets IDENTITY_AWS_ACCESS_KEY_ID, IDENTITY_AWS_SECRET_ACCESS_KEY)`);
+    for (const role of ['active', 'standby', 'next', 'previous'] as const) {
+      const k = s.keys[role];
+      if (k) deps.log(`kid ${k.kid} ${role}${role === 'active' ? ' (signs)' : ''} ${k.arn}`);
+    }
+    if (!s.keys.standby) deps.log(`No standby key: create one in another region than the active key and \`kms-add --role standby\`.`);
+    return;
+  }
   if (m.network !== 'testnet') throw new Error(`envs/${m.name}.json is not a testnet env: mainnet identity keys live in AWS KMS (D127)`);
   const dir = secretsDir(m.name, deps.secretsRoot ?? repoRoot);
   type Role = 'signingKey' | 'standbyKey' | 'nextKey' | 'previousKey';
@@ -233,7 +273,7 @@ export function identityKey(argv: readonly string[], deps: IdentityKeyDeps): voi
     const t = m.identityToken;
     if (!t) return void deps.log(`envs/${m.name}.json has no identityToken: run \`identity-key ${m.name} init\`.`);
     deps.log(`iss ${t.iss}`);
-    const active = t.signer.kind === 'worker-secret' ? t.signer.activeKid : t.signer.keys.active;
+    const active = t.signer.kind === 'worker-secret' ? t.signer.activeKid : t.signer.keys.active.kid;
     const roles = new Map<string, string>();
     for (const r of ['signingKey', 'standbyKey', 'nextKey', 'previousKey'] as const) {
       if (existsSync(file(r))) roles.set(p256Thumbprint(readKeyFile(file(r))), r.replace('Key', ''));
@@ -282,7 +322,7 @@ export function identityKey(argv: readonly string[], deps: IdentityKeyDeps): voi
 
   const t = m.identityToken;
   if (!t) throw new Error(`envs/${m.name}.json has no identityToken: run \`identity-key ${m.name} init\` first`);
-  if (t.signer.kind !== 'worker-secret') throw new Error(`identityToken.signer is ${t.signer.kind}: there are no Worker-secret keys to manage`);
+  if (t.signer.kind !== 'worker-secret') throw new Error(`identityToken.signer is ${t.signer.kind}: there are no Worker-secret keys to manage (use the kms-* commands)`);
   const activeKid = t.signer.activeKid;
   const published = new Set(t.publicKeys.map((k) => k.kid));
   const active = readKeyFile(file('signingKey'));

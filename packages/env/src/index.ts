@@ -13,7 +13,7 @@ export {
   MIN_APP_CHANGE_DELAY_MS,
   PRODUCTION_APP_CHANGE_DELAY_MS,
 } from './dashboard.ts';
-export { IDENTITY_SECRET_FILES, identityIssuerFor, identityPublicKeySchema, identityTokenSchema, p256Thumbprint, type IdentityPublicKey, type IdentityTokenConfig } from './identity.ts';
+export { IDENTITY_SECRET_FILES, KMS_KEY_ARN_RE, KMS_KEY_ROLES, identityIssuerFor, identityPublicKeySchema, identityTokenSchema, kmsArnParts, p256Thumbprint, type AwsKmsSignerConfig, type IdentityPublicKey, type IdentityTokenConfig, type KmsKeyRole } from './identity.ts';
 export { hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, LOCALHOST_WILDCARD, partnerOriginProblem, siteOf } from './origins.ts';
 export {
   type DelayValues,

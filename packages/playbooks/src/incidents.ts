@@ -785,9 +785,62 @@ const identitySigningKey: Playbook = {
     "The API's JWKS lists no exposed kid, and a fresh mint's header `kid` is the new active key.",
     '`identity-key <env> show`: the active kid is in a Worker slot, no exposed kid is published.',
   ],
-  followUps: ['If the Worker or the Cloudflare account was the way in: api-or-cloudflare-compromised. Before mainnet the key moves to AWS KMS (build step 7).'],
+  followUps: ['If the Worker or the Cloudflare account was the way in: api-or-cloudflare-compromised. Before mainnet the key moves to AWS KMS (build step 7; identity-kms-signer-compromised).'],
   refs: ['docs/operations.md#identity-token-keys', 'docs/security.md#what-a-compromise-gives', 'D177'],
-  related: ['api-or-cloudflare-compromised'],
+  related: ['api-or-cloudflare-compromised', 'identity-kms-signer-compromised'],
+};
+
+const identityKmsSigner: Playbook = {
+  id: 'identity-kms-signer-compromised',
+  title: 'Identity token KMS signer misused (planned: staging and mainnet)',
+  kind: 'incident',
+  severity: 'critical',
+  status: 'planned',
+  summary:
+    "No env signs with AWS KMS yet (the adapter is built, the AWS account isn't: docs/operations.md \"Identity token keys on AWS KMS\"). When one does: the KMS key can't be stolen, but whoever holds the signer's AWS access key (or controls the API Worker) can have KMS sign forged identity tokens until the access key is revoked. Revoke it, switch to the standby, unpublish the suspect key, tell partners.",
+  signals: [
+    "Planned: the hourly reconciliation of CloudTrail `Sign` events per key against `identity_issuance_hourly` finds more signatures than the API counted (critical); an EventBridge alert on `Sign` by another principal or on an IAM or key-policy change. A leak of the API Worker's secrets or the Cloudflare account; a partner reports a token they didn't expect.",
+  ],
+  impact: [
+    'Forged tokens pass at every partner that trusts the JWKS URL, as any user of any app, until the access key is revoked and the key is out of partners\' JWKS caches (≤ 10 min after the deploy). Every forged signature is in CloudTrail, so the window and the count are known. No wallet, key or Hana API is reachable with a token.',
+  ],
+  steps: [
+    {
+      title: 'Revoke the access key',
+      who: 'a founder',
+      detail: 'In the AWS account (break-glass role with MFA): deactivate every access key of the IAM user `hana-identity-signer`. KMS refuses every `Sign` from then on; mints answer 503 `identity_signer_unavailable` and partners fall back to no token.',
+    },
+    {
+      title: 'Switch to the standby',
+      who: 'a founder',
+      detail: "The IAM policy allows `kms:Sign` on the active key only (D219), so the standby signed nothing during the leak: check it in CloudTrail. Grant the new access key `kms:Sign` on the standby's ARN, create the key, write `.secrets/<env>/identity-aws-access-key.json`, set it on the Worker, switch, `gen`, deploy.",
+      commands: [c.identityKmsPutAwsKey, c.identityKmsSwitchStandby, c.apiGen, c.apiDeploy],
+    },
+    {
+      title: 'Unpublish the suspect key',
+      who: 'a founder',
+      detail: "After the switch's deploy: remove it from the JWKS (partners reject its tokens within 10 minutes), remove its ARN from the IAM policy, disable it in KMS and schedule its deletion. Don't wait the 2 h of a scheduled rotation.",
+      commands: [c.identityKmsRetirePrevious, c.apiGen, c.apiDeploy],
+    },
+    {
+      title: 'Tell partners',
+      who: 'a founder',
+      detail: 'Their security contacts: the `kid`, the window and the count of forged signatures from CloudTrail, and what to re-check. Pinning partners update their pins.',
+    },
+    {
+      title: 'A new standby',
+      who: 'a founder',
+      detail: 'Create a new ECC_NIST_P256 key in another region than the new active key (with the same key policy), publish it, deploy.',
+      commands: [c.identityKmsAddStandby, c.apiGen, c.apiDeploy],
+    },
+  ],
+  verify: [
+    "CloudTrail shows no `Sign` by the revoked access key after the cut-off, and the API's JWKS lists no suspect kid.",
+    '`identity-key <env> show`: the standby is active and a new standby is published.',
+  ],
+  followUps: ['Build the CloudTrail reconciliation and alarms before mainnet (docs/operations.md "Identity token keys on AWS KMS").'],
+  refs: ['docs/operations.md#identity-token-keys-on-aws-kms', 'D215', 'D219'],
+  related: ['identity-signing-key-compromised', 'api-or-cloudflare-compromised'],
 };
 
 export const INCIDENT_PLAYBOOKS: readonly Playbook[] = [
@@ -810,4 +863,5 @@ export const INCIDENT_PLAYBOOKS: readonly Playbook[] = [
   userKeyLeaked,
   emailIssuerKey,
   identitySigningKey,
+  identityKmsSigner,
 ];

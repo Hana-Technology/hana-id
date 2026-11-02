@@ -348,15 +348,43 @@ describe('the identity token', () => {
     expect(vars.IDENTITY_ISS).toBe(`${manifest.apiUrl}/v1/identity`);
     expect(JSON.parse(vars.IDENTITY_PUBLIC_KEYS!)).toEqual([active.pub, standby.pub]);
     expect(vars.IDENTITY_ACTIVE_KID).toBe(active.pub.kid);
+    expect(vars.IDENTITY_SIGNER).toBe('worker-secret');
+    expect(vars.IDENTITY_KMS_KEY_ARN).toBeUndefined();
     expect(vars.IDENTITY_PUBLIC_KEYS).not.toContain('"d"');
     const bare = manifest; // already without identityToken (top of file)
     expect(identityVars(bare as Manifest)).toEqual({});
     expect(Object.keys((wranglerConfig(bare as Manifest, LOCAL_D1_ID) as { vars: Record<string, string> }).vars).filter((k) => k.startsWith('IDENTITY_'))).toEqual([]);
   });
 
-  it('refuses the AWS KMS signer until the API has it (build step 7)', () => {
-    const kms = manifestSchema.parse({ ...withIdentity(), identityToken: { ...withIdentity().identityToken, signer: { kind: 'aws-kms', awsRegion: 'ap-east-1', keys: { active: active.pub.kid, standby: standby.pub.kid } } } });
-    expect(() => identityVars(kms)).toThrow(/not supported by the API yet/u);
+  const kmsArn = (region: string, n: number) => `arn:aws:kms:${region}:111122223333:key/${String(n).padStart(8, '0')}-1111-4222-8333-444455556666`;
+  const withKms = (): Manifest =>
+    manifestSchema.parse({
+      ...withIdentity(),
+      identityToken: {
+        ...withIdentity().identityToken,
+        signer: {
+          kind: 'aws-kms',
+          credentials: { kind: 'worker-secret', iamUser: 'hana-identity-signer' },
+          keys: { active: { kid: active.pub.kid, arn: kmsArn('ap-east-1', 1) }, standby: { kid: standby.pub.kid, arn: kmsArn('ap-southeast-1', 2) } },
+        },
+      },
+    });
+
+  it('vars for the AWS KMS signer (D215): the kind, the active kid and only the active key’s ARN; no credentials', () => {
+    const vars = (wranglerConfig(withKms(), LOCAL_D1_ID) as { vars: Record<string, string> }).vars;
+    expect(Object.fromEntries(Object.entries(vars).filter(([k]) => k.startsWith('IDENTITY_')))).toEqual({
+      IDENTITY_ISS: `${manifest.apiUrl}/v1/identity`,
+      IDENTITY_PUBLIC_KEYS: JSON.stringify([active.pub, standby.pub]),
+      IDENTITY_SIGNER: 'aws-kms',
+      IDENTITY_ACTIVE_KID: active.pub.kid,
+      IDENTITY_KMS_KEY_ARN: kmsArn('ap-east-1', 1),
+    });
+    expect(JSON.stringify(vars)).not.toContain(kmsArn('ap-southeast-1', 2));
+  });
+
+  it('.dev.vars for a KMS env: the sub key only; a leftover private signing key file is refused', () => {
+    expect(dotenvParse(devVarsContent({ identity: identityDevVarsLines(withKms(), { subKey: subKey }) }))).toMatchObject({ IDENTITY_SUB_KEY: subKey });
+    expect(() => identityDevVarsLines(withKms(), { signingKey: active.priv })).toThrow(/signs with AWS KMS/u);
   });
 
   it('.dev.vars: the active signing key and the sub key, round-tripped through wrangler’s parser; never the standby', () => {

@@ -1,6 +1,7 @@
 # API reference — every endpoint the `apps/api` Worker serves today
 
-Last verified against code: 2026-11-02 (branch `feat/batch-c-2`: the token check and the governance read's JWKS
+Last verified against code: 2026-11-02 (branch `feat/identity-token-7`: the identity token's AWS KMS signer, its vars,
+secrets and log codes, D215–D218; branch `feat/batch-c-2`: the token check and the governance read's JWKS
 cache now in `@hana-id/oidc`; wrongly typed optional claims ignored, a non-finite `exp` refused, the owner-action
 token's claims, D201); 2026-10-30 (branch `feat/identity-token-2`: the identity token's order of checks, limits, marker, cross-app share check, share tombstones in the cron, the new binding and log event, D176–D178);
 2026-10-30 (branch `feat/identity-token-1`: "Identity token", its routes, limits,
@@ -525,6 +526,15 @@ deletes expired markers) → per account root (`429 rate_limited`) → the quota
 per isolate) → sign and self-verify (`503
 identity_signer_unavailable`) → `200 {identityToken, expiresAtMs, emailStatus: "off"}`.
 
+The signer is the one `IDENTITY_SIGNER` names (`src/identity/signers.ts`): `worker-secret` (testnet: a P-256 private
+JWK as a Worker secret) or `aws-kms` (staging and mainnet, D215; no env uses it yet). The KMS signer hashes the JWS
+signing input in the Worker and sends one `TrentService.Sign` (`MessageType: DIGEST`, `SigningAlgorithm:
+ECDSA_SHA_256`, SigV4) to `kms.<region>.amazonaws.com` for `IDENTITY_KMS_KEY_ARN`, with no retry, a 3 s deadline over
+the request and its body, and a 4 KiB answer cap (D216, D218). It checks the answer's `KeyId` and algorithm, converts
+the DER signature strictly to JOSE `r ‖ s` (D217), and verifies it with the published key for the active kid. Any
+failure (KMS refusing, throttling, timing out, unreachable or answering garbage, missing configuration, a signature the
+published key doesn't verify) is `503 identity_signer_unavailable`: no token is ever answered unverified.
+
 Nothing here writes the share: no counter moves, `idle_until` doesn't slide (a mint is never activity, D55, D112).
 After the response (`waitUntil`): `identity_issuance_hourly` (+1 for the hour and kid) and `identity_usage` (+1 for the
 app and UTC day); a failed write is logged (`identity_count_failed`), never a failed mint.
@@ -798,9 +808,12 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 | `VAULT_KEK_PREVIOUS` | secret, rotation only | `.secrets/<env>/vault-kek.previous`, from `vault-kek rotate` | |
 | `IDENTITY_ISS` (I) | var, optional | `identityToken.iss` (`{apiUrl}/v1/identity`) | absent → `/v1/identity/*` 503 `identity_unavailable` |
 | `IDENTITY_PUBLIC_KEYS` (I) | var, optional | `identityToken.publicKeys`, JSON | the JWKS; public members only |
-| `IDENTITY_ACTIVE_KID` (I) | var, optional | `identityToken.signer.activeKid` | the key that signs: whichever of the two signing-key secrets has this thumbprint; `gen` refuses the `aws-kms` signer until build step 7 |
+| `IDENTITY_SIGNER` (I) | var, optional | `identityToken.signer.kind` | `worker-secret` or `aws-kms` (D215); absent (a config generated before build step 7) means `worker-secret`; any other value → `503 identity_signer_unavailable` |
+| `IDENTITY_ACTIVE_KID` (I) | var, optional | `identityToken.signer.activeKid`, or `.keys.active.kid` for `aws-kms` | the key that signs: whichever of the two signing-key secrets has this thumbprint, or the KMS key; it must be in `IDENTITY_PUBLIC_KEYS` |
+| `IDENTITY_KMS_KEY_ARN` (I) | var, `aws-kms` only | `identityToken.signer.keys.active.arn` | the active key's ARN (single-region key); its region is the KMS endpoint's. The standby, next and previous ARNs stay in the manifest |
 | `IDENTITY_GLOBAL_HOURLY_MAX` (I) | var, optional | not generated | the global mint breaker per hour (default 1 000 000; the soft alert line is 100 000) |
 | `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY` (I) | secret, testnet and `local*` only | `.secrets/<env>/identity-signing-key.json`, `identity-signing-key-standby.json`, from `scripts/identity-key.ts init` | P-256 private JWKs; no key with the active kid → `503 identity_signer_unavailable` |
+| `IDENTITY_AWS_ACCESS_KEY_ID`, `IDENTITY_AWS_SECRET_ACCESS_KEY` (I) | secret, `aws-kms` only | `.secrets/<env>/identity-aws-access-key.json` (`aws iam create-access-key` for `identityToken.signer.credentials.iamUser`), from `identity-key kms-put-aws-key` (one `wrangler secret bulk`) | a long-term `AKIA…` key of the IAM user whose only permission is `kms:Sign` on the active key (D219); never logged; missing → `503 identity_signer_unavailable` |
 | `IDENTITY_SUB_KEY` (I) | secret | `.secrets/<env>/identity-sub-key`, from `identity-key init` | base64 of 32 bytes; the `sub`/`sid` HMAC key; never rotated |
 | `DB` | D1 | `cloudflare.d1Name`, id from `--d1-id` | `migrations_dir: migrations` |
 | `RELAYER_KEY`, `RATE_LIMITER`, `LOGIN_RELAY` | Durable Objects | classes `RelayerKey`, `RateLimiter`, `LoginRelay` | |
@@ -886,6 +899,10 @@ Other events: `relay_dispatched` (`pool`, `keyIndex`, `method`, `nearTx`, `nonce
 `usage_increment_failed`, `owner_token_release_failed`, `gas_override_ignored`, `auto_approve_policy_invalid`
 (`problems`), the identity token's (I) `identity_unavailable` (`code`: `no_identity_config`, `bad_public_keys`,
 `active_kid_not_published`, `no_sub_key`, `bad_sub_key`), `identity_signer_unavailable` / `identity_sign_failed`
-(`code`: `no_signing_key_for_active_kid`, `signing_key_unusable`, `self_verify_failed`), `identity_ceiling` (error), `identity_volume_alert` (error: past the global soft line),
+(`code`: `no_signing_key_for_active_kid`, `signing_key_unusable`, `self_verify_failed`, `unknown_signer_kind`, and for
+the KMS signer `no_kms_key_arn`, `no_aws_credentials`, `kms_bad_key_arn`, `kms_bad_credentials_format`, `kms_timeout`,
+`kms_unreachable`, `kms_access_denied`, `kms_bad_credentials`, `kms_key_disabled`, `kms_key_not_found`,
+`kms_key_usage`, `kms_throttled`, `kms_internal`, `kms_error`, `kms_bad_answer`, `kms_bad_signature`; never a
+credential, a request or a signature), `identity_ceiling` (error), `identity_volume_alert` (error: past the global soft line),
 `identity_bad_session_path` (error), `identity_count_failed`, `identity_maintenance` (`pruned`), and from the page
 Workers `vault_host` and `auth_page` (`code`).

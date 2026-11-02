@@ -22,14 +22,48 @@ export const identityPublicKeySchema = z.object({ kty: z.literal('EC'), crv: z.l
  */
 const workerSecretSigner = z.object({ kind: z.literal('worker-secret'), activeKid: kid }).strict();
 
-/** Mainnet (build step 7): AWS KMS `ECC_NIST_P256` keys by kid. The API doesn't implement it yet; gen refuses it. */
+/**
+ * A KMS key ARN in the standard partition: `arn:aws:kms:<region>:<account>:key/<key id>`. Single-region keys only (a
+ * UUID key id): a multi-region replica (`mrk-…`) shares its primary's key material, so it can't be an independent
+ * standby, and an alias could be repointed outside the manifest.
+ */
+export const KMS_KEY_ARN_RE = /^arn:aws:kms:([a-z]{2}(?:-[a-z]+)+-\d):(\d{12}):key\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+
+/** The region and account of a KMS key ARN (`KMS_KEY_ARN_RE`), or null. */
+export function kmsArnParts(arn: string): { region: string; account: string } | null {
+  const m = KMS_KEY_ARN_RE.exec(arn);
+  return m ? { region: m[1]!, account: m[2]! } : null;
+}
+
+/** One KMS key: its kid (the thumbprint of the public key `GetPublicKey` returns) and its ARN (public data). */
+const kmsKey = z.object({ kid, arn: z.string().regex(KMS_KEY_ARN_RE, 'A single-region KMS key ARN (arn:aws:kms:<region>:<account>:key/<uuid>)') }).strict();
+
+/**
+ * Mainnet, and staging's rehearsal (build step 7, D215): AWS KMS `ECC_NIST_P256` `SIGN_VERIFY` keys by role. `active`
+ * signs; `standby` (another region, D219) is published and ready for a switch; `next` and `previous` exist during a
+ * rotation. Each key's region is its ARN's: the Worker calls `kms.<region>.amazonaws.com` for the active key. Only the
+ * active key's ARN reaches the Worker (`IDENTITY_KMS_KEY_ARN`). `credentials`: how the Worker authenticates, today
+ * always the access key of the dedicated IAM user `iamUser` as two Worker secrets (`IDENTITY_AWS_ACCESS_KEY_ID`,
+ * `IDENTITY_AWS_SECRET_ACCESS_KEY`), set by `identity-key <env> kms-put-aws-key` (Workers can't assume an IAM role
+ * without another long-lived secret). `standby` is optional only so that the manifest stays valid between a switch to
+ * the standby and the new standby's `kms-add` (docs/operations.md "Identity token keys on AWS KMS").
+ */
 const awsKmsSigner = z
   .object({
     kind: z.literal('aws-kms'),
-    awsRegion: z.string().regex(/^[a-z]{2}(?:-[a-z]+)+-\d$/u, 'An AWS region such as ap-east-1'),
-    keys: z.object({ active: kid, standby: kid, next: kid.optional(), previous: kid.optional() }).strict(),
+    credentials: z
+      .object({
+        kind: z.literal('worker-secret'),
+        iamUser: z.string().regex(/^[A-Za-z0-9+=,.@_-]{1,64}$/u, 'An IAM user name'),
+      })
+      .strict(),
+    keys: z.object({ active: kmsKey, standby: kmsKey.optional(), next: kmsKey.optional(), previous: kmsKey.optional() }).strict(),
   })
   .strict();
+
+export type AwsKmsSignerConfig = z.infer<typeof awsKmsSigner>;
+export type KmsKeyRole = keyof AwsKmsSignerConfig['keys'];
+export const KMS_KEY_ROLES: readonly KmsKeyRole[] = ['active', 'standby', 'next', 'previous'];
 
 export const identityTokenSchema = z
   .object({
@@ -65,12 +99,31 @@ export function identityTokenRules(m: { network: string; apiUrl: string }, t: Id
     if (kids.has(k.kid)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: at('publicKeys', i, 'kid'), message: `Duplicate key ${k.kid}` });
     kids.add(k.kid);
   });
-  const named = t.signer.kind === 'worker-secret' ? [t.signer.activeKid] : Object.values(t.signer.keys).filter((v): v is string => typeof v === 'string');
+  const signer = t.signer;
+  const named = signer.kind === 'worker-secret' ? [signer.activeKid] : KMS_KEY_ROLES.flatMap((r) => (signer.keys[r] ? [signer.keys[r].kid] : []));
   for (const k of named) {
     if (!kids.has(k)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: at('signer'), message: `The signer's key ${k} is not in identityToken.publicKeys` });
   }
+  if (signer.kind === 'aws-kms') kmsSignerRules(signer, kids, (message) => ctx.addIssue({ code: z.ZodIssueCode.custom, path: at('signer', 'keys'), message }));
   if (t.signer.kind === 'worker-secret' && m.network !== 'testnet') {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: at('signer', 'kind'), message: 'A Worker-secret identity signing key is testnet only: mainnet uses AWS KMS (D127)' });
+  }
+}
+
+/**
+ * The KMS signer's own rules (D215, D219): one key per role (distinct kids and ARNs), every published key has a role
+ * (a key nobody tracks is never published), every key in one AWS account (D121's dedicated account), and the standby
+ * in another region than the active key, so a regional KMS outage leaves a key to switch to.
+ */
+function kmsSignerRules(s: AwsKmsSignerConfig, published: Set<string>, issue: (message: string) => void): void {
+  const keys = KMS_KEY_ROLES.flatMap((r) => (s.keys[r] ? [s.keys[r]] : []));
+  const kids = new Set(keys.map((k) => k.kid));
+  if (kids.size !== keys.length) issue('Each KMS key role needs its own key (a kid appears in two roles)');
+  if (new Set(keys.map((k) => k.arn)).size !== keys.length) issue('Each KMS key role needs its own key (an ARN appears in two roles)');
+  for (const kid of published) if (!kids.has(kid)) issue(`Published key ${kid} has no role in identityToken.signer.keys`);
+  if (new Set(keys.map((k) => kmsArnParts(k.arn)?.account)).size > 1) issue('Every identity KMS key must be in the same AWS account (D121)');
+  if (s.keys.standby && kmsArnParts(s.keys.standby.arn)?.region === kmsArnParts(s.keys.active.arn)?.region) {
+    issue('The standby KMS key must be in another region than the active key (D219)');
   }
 }
 
@@ -89,4 +142,10 @@ export const IDENTITY_SECRET_FILES = {
   previousKey: 'identity-signing-key-previous.json',
   slots: 'identity-slots.json',
   subKey: 'identity-sub-key',
+  /**
+   * The KMS signer's AWS access key (D215): the JSON `aws iam create-access-key --user-name <iamUser>` prints, written
+   * by the operator into this file (0600) and uploaded by `identity-key <env> kms-put-aws-key`. Testnet-style files
+   * above don't exist for a KMS signer (its private keys never leave KMS).
+   */
+  awsAccessKey: 'identity-aws-access-key.json',
 } as const;

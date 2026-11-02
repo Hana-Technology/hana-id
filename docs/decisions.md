@@ -2525,11 +2525,16 @@ is computed by `@hana-id/email` alone, from the normalized address including any
         (< 7 days) draws on it only below half of it and within **20% of it per app**; aged tickets and grants have no
         per-app cap (bounded by the per-address and per-mailbox limits and the pool). Owner mail the owner pool refuses
         **falls back to the app's general share**, if any is left, instead of failing.
+      - **The mailbox's own address is never blocked by the mailbox totals (to confirm):** the exact untagged address
+        (the address equal to its mailbox) and unlock grants count toward the mailbox's 30 owner challenges and 9 ticket
+        mails but are never refused by them, only by their own per-address limits (10 and 3) and the grant rules; tagged
+        addresses keep both limits. So on a domain where `+` isn't sub-addressing, other people's `+tag` addresses can
+        fill the mailbox totals without blocking the bare address's owner.
       - **Residuals, to confirm:** (1) a stock of ≥ 7-day-old sock-puppet tickets (real verified logins at addresses the
         attacker controls, 3 mails a day each, 9 per mailbox) can use up the owner pool for a day, at most 0.3 × the
         budget of extra mail; real owners then fall back to their app's general share. (2) Holders of 3 `+tag` addresses
         of one inbox (only where the domain gives `+tag`s to other people) can use the mailbox's 9 ticket mails and 30
-        owner challenges, leaving the inbox's own address its per-address 3 only if the mailbox has room. (3) Fresh
+        owner challenges for every other `+tag`; the bare address keeps its own 3 and 10. (3) Fresh
         tickets of one app take at most 20% of the pool, so five attacker-held apps can fill the fresh half.
 
 ### D199. HTTP, data and chain readings of the issuer

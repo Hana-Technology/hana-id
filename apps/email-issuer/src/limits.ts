@@ -55,6 +55,7 @@ export const ADDRESS_OWNER_CHALLENGES: Limit = { name: 'owner-challenges:1d', wi
  * challenges (tickets and unlock grants) and 9 ticket mails a day. A `+tag` holder (on a domain without sub-addressing,
  * someone else's address) can't use up the victim's per-address allowance and takes at most a third of the mailbox's.
  */
+// The mailbox's own untagged address and unlock grants count toward these but are never blocked by them.
 export const MAILBOX_OWNER_CHALLENGES: Limit = { name: 'owner-challenges-box:1d', windowMs: DAY, max: 30 };
 export const MAILBOX_TICKET_SENDS_TOTAL: Limit = { name: 'ticket-sends-box:1d', windowMs: DAY, max: 9 };
 /** A ticket younger than this is fresh: per-app capped in the owner pool, and only below its half (final check M1). */

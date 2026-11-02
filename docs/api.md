@@ -1116,7 +1116,7 @@ subject. Every mailbox decision is one atomic call (D198). Every mailbox-level r
 |---|---|---|
 | Mailbox × requester: code mails | 3 per 15 min, 10 per day (resends included) | 429 |
 | Mailbox: code mails | 10 per 15 min, 30 per day; then 5 a day for requesters new to it that day | 429 |
-| Device ticket | 3 code mails a UTC day **per exact address** (all its tickets together) for the challenges they started, outside the two rows above, the live cap and the challenge cap; ≤ 5 live tickets per address (a 6th revokes the oldest); ≤ 10 ticket challenges per exact address a day; per mailbox (all its `+tag`s) ≤ 9 ticket mails and ≤ 30 owner challenges (grants included) a day; past these the proof counts as nothing | 429 |
+| Device ticket | 3 code mails a UTC day **per exact address** (all its tickets together) for the challenges they started, outside the two rows above, the live cap and the challenge cap; ≤ 5 live tickets per address (a 6th revokes the oldest); ≤ 10 ticket challenges per exact address a day; per mailbox (all its `+tag`s) ≤ 9 ticket mails and ≤ 30 owner challenges (grants included) a day, which never block the untagged address or a grant (they count toward them); past these the proof counts as nothing | 429 |
 | Unlock grant | one start within 24 h of the unlock; its challenge's mails free (≤ 2 resends); its checks in the ticket slot then a grant slot of 2 outside the ceiling | – |
 | Mailbox: live challenges | 5 at once | 429 |
 | Mailbox × requester: wrong codes | 10 per hour → that requester locked out of the mailbox for 1 h | 429 (start, resend, verify) |

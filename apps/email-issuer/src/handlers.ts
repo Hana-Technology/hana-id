@@ -280,7 +280,7 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
   // the app's quota, the domain cap and the general budget pool. An invalid one is ignored, never an error.
   const ticket = await readDeviceTicket(keys, b.deviceTicket, addrKey, now);
   const grantHash = typeof b.unlockToken === 'string' && UNLOCK_TOKEN_RE.test(b.unlockToken) ? base64UrlEncode(sha256(utf8(b.unlockToken))) : null;
-  const claim: OwnerClaim | null = ticket ? { kind: 'ticket', id: ticket.id, addrKey, issuedAtMs: ticket.issuedAtMs } : grantHash ? { kind: 'grant', hash: grantHash } : null;
+  const claim: OwnerClaim | null = ticket ? { kind: 'ticket', id: ticket.id, addrKey, issuedAtMs: ticket.issuedAtMs, untagged: r.email === r.mailbox } : grantHash ? { kind: 'grant', hash: grantHash } : null;
   const claimOk = claim !== null && (await box.checkOwner(claim, now));
   if (!claimOk) {
     const agg = await aggregateLimits(ctx, request);

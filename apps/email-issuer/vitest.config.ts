@@ -45,6 +45,8 @@ export default defineConfig(async () => {
     ],
     test: {
       include: ['test/**/*.test.ts'],
+      // Some tests make 100+ requests (domain caps, drains): 5 s isn't enough under a loaded `pnpm -r test`.
+      testTimeout: 30_000,
       setupFiles: ['./test/apply-migrations.ts'],
       onConsoleLog: (log: string) => (process.env.LOG || !log.startsWith('{"level"') ? undefined : false),
     },

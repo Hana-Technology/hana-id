@@ -74,7 +74,8 @@ describe('the recipient-domain cap (H1, M4)', () => {
     const apps = await Promise.all(Array.from({ length: 3 }, () => seedApp(h)));
     let ok = 0;
     for (let i = 0; i < 103; i++) {
-      const r = await h.call('/v1/email/start', startBody(h, apps[i % 3]!, `u${i}@s${i % 7}.catchall.example`));
+      // One requester each, on its own /24 (deterministic: no random default IP, D198 prefix shares).
+      const r = await h.call('/v1/email/start', startBody(h, apps[i % 3]!, `u${i}@s${i % 7}.catchall.example`), { ip: `10.201.${i}.1` });
       if (r.status === 202) ok++;
       else {
         expect(r.status).toBe(429);
@@ -487,10 +488,53 @@ describe('the owner’s recovery never depends on a pool an attacker can fill (a
       }
     }
     expect(owners).toBe(30);
+    // The mailbox's 30 are used by +tags, but an unlock grant and the untagged address are never blocked by them.
     await box2.issueGrant('g-1', morning);
     const g = await box2.admit('q-grant', morning + 600_000, false, morning, { kind: 'grant', hash: 'g-1' });
-    // The mailbox's 30 are used: the grant counts as nothing (an ordinary start, which the live cap refuses here).
-    expect(g.ok ? g.owner : null).toBeNull();
+    expect(g.ok && g.owner?.kind).toBe('grant');
+    const bareKey = await suppressionKey(keys, `${base}2@gmail.com`);
+    await box2.registerTicket(bareKey, 'u-bare', morning, morning);
+    const bare = { kind: 'ticket' as const, id: 'u-bare', addrKey: bareKey, issuedAtMs: morning, untagged: true };
+    let bareOwners = 0;
+    for (let i = 0; i < 12; i++) {
+      const adm = await box2.admit(`q-bare-${i}`, morning + 600_000, false, morning, bare);
+      if (adm.ok && adm.owner) bareOwners++;
+    }
+    expect(bareOwners).toBe(10);
+  });
+
+  it('the untagged address keeps its 3 ticket mails when other people’s +tags filled the mailbox’s 9 (final round)', async () => {
+    const h = await harness();
+    h.clock.now = morning;
+    const app = await seedApp(h);
+    const base = `n${uid().replace(/[^a-z0-9]/gu, '')}`;
+    const dom = `nosub${uid().replace(/[^a-z0-9]/gu, '')}.example`;
+    // Three other people hold +tag addresses of the same inbox (a domain without sub-addressing) and use 9 mails.
+    for (const tag of ['x', 'y', 'z']) {
+      const t = await ticketFor(h, app, `${base}+${tag}@${dom}`, `192.0.2.${130 + tag.charCodeAt(0) - 120}`);
+      for (let i = 0; i < 3; i++) expect((await h.call('/v1/email/start', startBody(h, app, `${base}+${tag}@${dom}`, { deviceTicket: t }), { ip: '192.0.2.140' })).status).toBe(202);
+      // Their challenges expire unused (the live cap is the mailbox's, not the point here).
+      h.clock.now += 10 * 60_000 + 1;
+    }
+    // A fourth +tag holder gets no ticket mail from the full mailbox total.
+    const w = await ticketFor(h, app, `${base}+w@${dom}`, '192.0.2.141');
+    const box = await mailboxObject(h, `${base}@${dom}`);
+    const keys = await h.deps.keys();
+    const wKey = await suppressionKey(keys, `${base}+w@${dom}`);
+    const wInfo = (await readDeviceTicket(keys, w, wKey, h.clock.now))!;
+    // Its ticket gets no ticket mail: the mailbox's 9 are used (an ordinary start's limits apply to it instead).
+    const wTry = await box.admit('w-direct', h.clock.now + 600_000, true, h.clock.now, { kind: 'ticket', id: wInfo.id, addrKey: wKey, issuedAtMs: wInfo.issuedAtMs });
+    expect(wTry.ok ? wTry.send?.keys.some((k) => k.includes('ticket-sends')) : false).toBe(false);
+    // The bare address's owner still gets its own 3.
+    h.clock.now += 10 * 60_000 + 1;
+    const bare = `${base}@${dom}`;
+    const bt = await ticketFor(h, app, bare, '192.0.2.143');
+    for (let i = 0; i < 3; i++) expect((await h.call('/v1/email/start', startBody(h, app, bare, { deviceTicket: bt }), { ip: '192.0.2.144' })).status).toBe(202);
+    // ... as ticket mails (its own allowance), counted in the mailbox total too.
+    const bareKey = await suppressionKey(keys, bare);
+    const day = Date.UTC(2027, 1, 3);
+    const counts = await runInDurableObject(box, (_o, state) => [state.storage.kv.get<number>(`a:${bareKey}:ticket-sends:1d@${day}`), state.storage.kv.get<number>(`ticket-sends-box:1d@${day}`)]);
+    expect(counts).toEqual([3, 12]);
   });
 
   it('a ticket revoked after its challenge started gets no owner path on resend: domain cap and general budget apply (scan)', async () => {

@@ -437,7 +437,7 @@ per-prefix shares (20%) of a domain's day, ticketed starts exempt, `email_domain
   deterministic contract fixture with a regeneration test. Then the scan of the re-check: owner allowances per exact
   address, ≤ 5 live tickets per address and ≤ 10 ticket challenges per address a day, a staff mail pool, the effective owner kind on resend, a domain cap from distinct verified mailboxes with
   a 2,000 ceiling.
-- **Tests.** apps/email-issuer: 116 Worker tests (miniflare: layouts against the contract fixtures, codes,
+- **Tests.** apps/email-issuer: 117 Worker tests (miniflare: layouts against the contract fixtures, codes,
   limits and the ceiling, google-match's four cases, signers and KMS, adapters, the log-capture test) and 7 node tests (`gen`, the fixture);
   packages/env +11 (`emailIssuer`), packages/jwks +3 (`rsaThumbprint`), scripts +10 (`email-issuer`) and 6 secret-scan
   self-test cases; hana-signer +4 (`tests/email/issuer_tokens.rs`, 303 in all); `pnpm -r test` and `pnpm -r typecheck` green. Existing tests broken on `develop` by the identity-token deploy
@@ -455,8 +455,13 @@ per-prefix shares (20%) of a domain's day, ticketed starts exempt, `email_domain
     `mailbox_guess_limit`;
   - batch 6: the issuer reads apps by `apps.publishable_key`; after batch C3's migration 0006 it should read the gate's
     `app_keys` (rotated keys) and skip soft-deleted apps;
-  - the remaining items of that review's follow-up list (1, 2, 3, 5) as the coordinator records them; this branch
-    did item 4 (ticket challenges per address, not per mailbox).
+  - accepted limits from that review, for plans and alerts later: new (ticketless) users of a free-plan app can be cut
+    off for the day once its general share (about 100 mails) is used;
+  - a domain's ticketless new users can be locked out for the day by several prefixes filling its cap (100 + 2 ×
+    verified mailboxes, ≤ 2,000);
+  - the `RateLimiter` alarm runs at the latest keep-until, so ended daily windows stay in a mailbox object for up to 30
+    days (storage only);
+  - item 4 of that list (ticket challenges counted per address) is done here.
 - **Not done here.** The CloudTrail reconciliation job (batch 10, with KMS); routing `{apiUrl}/v1/email/*` to the
   Worker (batch 6: on `workers.dev` a service binding from the API, which would put addresses and codes through the
   API Worker's memory, D199); the alert and admin view for `send_budget_exhausted` and `mailbox_guess_limit` (batch 9);

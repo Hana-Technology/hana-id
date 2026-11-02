@@ -77,9 +77,13 @@ export type Reservation = { keys: string[] };
  * The owner's proof a start presented: a device ticket the worker checked (its MAC, for this exact address) or the hash
  * of a mailed unlock token. Checked here too: a ticket against the address's revocation, a grant against the stored one.
  */
-export type OwnerClaim = { kind: 'ticket'; id: string; addrKey: string; issuedAtMs: number } | { kind: 'grant'; hash: string };
+export type OwnerClaim = { kind: 'ticket'; id: string; addrKey: string; issuedAtMs: number; untagged?: boolean } | { kind: 'grant'; hash: string };
 /** What a challenge keeps of it: the ticket (allowances are per ticket) or the grant it used up. */
-export type OwnerRef = { kind: 'ticket'; id: string; addrKey: string; issuedAtMs: number } | { kind: 'grant'; key: string };
+/**
+ * `untagged`: the ticket's address is the mailbox's own (no `+tag`): the mailbox-wide owner totals count it but never
+ * block it (final round; absent means tagged, so both limits apply).
+ */
+export type OwnerRef = { kind: 'ticket'; id: string; addrKey: string; issuedAtMs: number; untagged?: boolean } | { kind: 'grant'; key: string };
 
 export type Admitted =
   /** `owner`: the valid ticket or the grant this start used (a grant is given back by `unadmit`). */
@@ -347,7 +351,9 @@ export class RateLimiter extends DurableObject<Env> {
       // Per exact address (all its tickets together) and per mailbox (all its `+tag`s together).
       const t = this.slot(MAILBOX_TICKET_SENDS, now, `a:${ref.addrKey}:`);
       const box = this.slot(MAILBOX_TICKET_SENDS_TOTAL, now);
-      const full = this.firstFull([t, box], now);
+      // The untagged address is counted in the mailbox total but never blocked by it (other people's `+tag`s on a
+      // domain without sub-addressing could fill it).
+      const full = this.firstFull(ref.untagged ? [t] : [t, box], now);
       if (full) return { ok: false, reason: 'codes', retryAfterMs: full.retryAfterMs };
       return { ok: true, reservation: { keys: this.count([t, box]) }, owner: 'ticket' };
     }
@@ -378,7 +384,9 @@ export class RateLimiter extends DurableObject<Env> {
     // (tickets and grants) per mailbox a day; past either, the proof counts as nothing.
     const addrDay = owner?.kind === 'ticket' ? this.slot(ADDRESS_OWNER_CHALLENGES, now, `a:${owner.addrKey}:`) : null;
     const boxDay = owner ? this.slot(MAILBOX_OWNER_CHALLENGES, now) : null;
-    if ((addrDay && addrDay.count >= addrDay.l.max) || (boxDay && boxDay.count >= boxDay.l.max)) owner = null;
+    // The untagged address and unlock grants count toward the mailbox total but are never blocked by it.
+    const boxBlocks = owner?.kind === 'ticket' && !owner.untagged;
+    if ((addrDay && addrDay.count >= addrDay.l.max) || (boxBlocks && boxDay && boxDay.count >= boxDay.l.max)) owner = null;
     const ownerDay = owner ? [addrDay, boxDay].filter((x): x is Slot => x !== null) : [];
     const locked = this.lockedFor(ip, owner?.kind ?? null, now);
     if (locked > 0) return { ok: false, reason: 'locked', retryAfterMs: locked };

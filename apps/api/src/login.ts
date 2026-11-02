@@ -2,13 +2,12 @@
 // create_session_and_derive, a literal composition of create_session and derive_key with counter 1, so a login costs
 // one transaction instead of two. Called by the vault (and the export window on authOrigin) with the token it got
 // through the relay; the vault computes the path itself and never uses what this returns beyond `result`.
-import { usageDay } from './apps.ts';
 import { appKeyPairs, appKeyProblem } from './bls.ts';
 import { isJsonForm } from './email-token.ts';
 import { countEmailUsage } from './email-usage.ts';
 import type { Env } from './env.ts';
 import { hex, sha256 } from './bytes.ts';
-import { appGate, appQuota, chainGate, chainGateResponse, checkClientScope, done, firstSession, lap, lapRelay, limiter, loginTokenRefusal, newCtx, reject, settle } from './handlers.ts';
+import { type Ctx, appGate, appQuota, chainGate, chainGateResponse, checkClientScope, done, firstSession, lap, lapRelay, limiter, loginTokenRefusal, newCtx, reject, settle } from './handlers.ts';
 import { readJson } from './http.ts';
 import { type LinkRefusal, checkKey, precheckAutoLink } from './link-precheck.ts';
 import { getAccount, getIdentity } from './link-views.ts';
@@ -20,6 +19,7 @@ import type { RelayResult } from './relayer-key.ts';
 import { relay } from './relayer-pool.ts';
 import { ckdPayload, linkedCkdPayload, sessionNonce, sessionNoncePreimage, verifySessionSignature } from './session-crypto.ts';
 import { claimCounter } from './session-use.ts';
+import { beginUsage, finishUsageOnThrow, notePath } from './usage/event.ts';
 import { type Checked, type CreateSessionRequest, MAX_BODY, isError, isToken, toCreateSession, toDeriveKey } from './validate.ts';
 import { forgetSession, getConfig, sessionKeyInUse } from './views.ts';
 
@@ -98,11 +98,23 @@ export function loginFailure(env: Pick<Env, 'SIGNER_ACCOUNT' | 'MPC_ACCOUNT'>, r
 
 export async function handleLogin(request: Request, env: Env, requestId: string, exec?: ExecutionContext): Promise<Response> {
   const ctx = newCtx(env, requestId, LOGIN_ENDPOINT, request);
+  try {
+    return await login(request, env, ctx, exec);
+  } catch (err) {
+    finishUsageOnThrow(ctx);
+    throw err;
+  }
+}
+
+async function login(request: Request, env: Env, ctx: Ctx, exec?: ExecutionContext): Promise<Response> {
+  const { requestId } = ctx;
   const now = Date.now();
   // 1. App, caller (the vault or the export window, for an allowed parent origin), the per-IP limit.
   const gate = await appGate(request, env, ctx, 'relay');
   if (!gate.ok) return gate.response;
   const { app } = gate;
+  // Past the gate: every outcome from here on is one usage event (usage/event.ts).
+  beginUsage(ctx, { orgId: app.org_id, appId: app.id, scopeId: app.scope_id, exec });
   // Test-scope apps: the success response carries the request's own timings (apps/smoke's login breakdown).
   ctx.exposeTimings = isTestApp(app);
 
@@ -132,11 +144,14 @@ export async function handleLogin(request: Request, env: Env, requestId: string,
     if (!linked.token.email) return reject(ctx, 400, 'bad_request', 'linkJwt must be an email token');
     link = linked.token;
   }
+  // The login's derivation path: the uid's input (kept in memory, never sent or logged).
+  const path = `${app.scope_id}#${token.provider}#${token.sub}#${req.keyIndex}`;
+  notePath(ctx, path);
 
   // An export (the auth origin's window): at most EXPORTS_PER_PATH_HOUR per user path per app.
   if (gate.caller.page === 'auth') {
     try {
-      const key = await exportLimiterKey(app.id, `${app.scope_id}#${token.provider}#${token.sub}#${req.keyIndex}`);
+      const key = await exportLimiterKey(app.id, path);
       const hit = await limiter(env, key).hit([{ name: 'export:hour', windowMs: HOUR, max: EXPORTS_PER_PATH_HOUR }]);
       if (!hit.ok) return reject(ctx, 429, 'rate_limited', 'Too many key exports for this account, try again later', { 'retry-after': String(hit.retryAfterS) });
     } catch {
@@ -184,21 +199,20 @@ export async function handleLogin(request: Request, env: Env, requestId: string,
     const quota = await appQuota(env, ctx, app);
     if (quota) return quota;
 
-    const noted = firstSession(env, app, ctx, exec);
-    const result = await relay(env, 'session', { method: call.method, args: call.args }, requestId);
+    const relayed = relay(env, 'session', { method: call.method, args: call.args }, requestId);
+    const noted = firstSession(env, app, ctx, relayed, exec);
+    const result = await relayed;
     await noted;
     lapRelay(ctx, result);
     // Whatever happened, the session (if any) is read from chain next time.
     forgetSession(req.sessionPublicKey);
     if (!result.ok) {
       const failure = loginFailure(env, result);
-      // The session was committed even though the CKD failed: it counts as one.
-      if (failure.body.code === 'ckd_failed') await countLogin(env, app.id, false, ctx, exec);
       return done(ctx, failure.status, failure.body);
     }
     const r = result.result as { big_y?: unknown; big_c?: unknown } | null;
     if (!r || typeof r.big_y !== 'string' || typeof r.big_c !== 'string') return done(ctx, 502, { error: 'The contract returned no key', code: 'bad_contract_result', nearTx: result.nearTx });
-    await countLogin(env, app.id, true, ctx, exec);
+    // Email logins and new links per app and day (D1 `email_usage`, copied hourly to the ledger, D233).
     if (token.email) await countEmailUsage(env, app.id, 'email_sessions', ctx, exec);
     if (link) await countEmailUsage(env, app.id, 'links', ctx, exec);
     return done(ctx, 200, {
@@ -210,23 +224,6 @@ export async function handleLogin(request: Request, env: Env, requestId: string,
   } finally {
     release();
   }
-}
-
-/** Counts a session and, when the CKD succeeded, a derive (one D1 write, after the response when it can). Never rejects. */
-async function countLogin(env: Env, appId: string, derived: boolean, ctx: { requestId: string; endpoint: string }, exec?: ExecutionContext): Promise<void> {
-  const derives = derived ? 1 : 0;
-  const write = env.DB.prepare(
-    `INSERT INTO usage (app_id, day, sessions, derives) VALUES (?1, ?2, 1, ?3)
-     ON CONFLICT (app_id, day) DO UPDATE SET sessions = sessions + 1, derives = derives + ?3`,
-  )
-    .bind(appId, usageDay(Date.now()), derives)
-    .run()
-    .then(() => undefined)
-    .catch(() => {
-      log({ event: 'usage_increment_failed', requestId: ctx.requestId, appId, endpoint: ctx.endpoint }, 'error');
-    });
-  if (exec) exec.waitUntil(write);
-  else await write;
 }
 
 /**

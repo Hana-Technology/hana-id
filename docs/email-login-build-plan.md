@@ -584,5 +584,7 @@ in batch 8; and its `upgrade-contract propose|execute` is `deploy-contract <env>
   panics, limits), D233 (share revocation, `email_usage`, the issuer's lookup), D234 (the corrected deploy order).
 - **Left for later.** Batch 8: `login_methods` for the test apps, the staff client proofs and `AddClient ("email",
   "email:<scope>")`, the web's use of `loginMethods`, `linkJwt`, the link relays and the new error codes, the popup's
-  CSP for the issuer origin, and the share revocation's caller pages. Batch C4 takes `email_usage` into its ledger.
+  CSP for the issuer origin, and the share revocation's caller pages. Merged with develop after batch C4: the email
+  counts stay in D1 `email_usage` and are copied hourly to the ledger (`usage.email_counts`, migrations-usage 0004,
+  D233), as the identity counts are; the link relays aren't usage events yet (C12).
   The link limits (D232) are provisional until sandbox-dev traffic.

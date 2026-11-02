@@ -7,10 +7,12 @@ D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-lo
 change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 (branch `feat/email-login-5`) and D200 (branches
 `feat/link-cap`, `feat/email-login-5`) on 2026-11-02; D201–D203 (branch `feat/batch-c-2`) on 2026-11-02; D205–D209
 (branch `feat/batch-c-3`, to confirm) on 2026-11-02. D215–D219 (branch `feat/identity-token-7`, to confirm) on
-2026-11-02. D230–D234 (branch `feat/email-login-6`, to confirm) on 2026-11-02, with batch 6 notes on D137, D154, D155,
-D199 and D206. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
+2026-11-02. D210–D214 (branch `feat/identity-token-8`, to confirm, amended after its review the same
+day) on 2026-11-02. D230–D234 (branch `feat/email-login-6`, to confirm) on 2026-11-02, with batch 6 notes on D137,
+D154, D155, D199 and D206. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
 provider note, two "Superseded or amended" rows, the user-mail line under "Proposed", and the headings from D125 on, checked against `develop` @ 1c6a124 and what sandbox-dev runs (`docs/operations.md`) on
-2026-11-02 (branch `docs/consistency-pass`); no decision changed.
+2026-11-02 (branch `docs/consistency-pass`); no decision changed. D220–D224 (branch `feat/batch-c-4`, to confirm) on
+2026-11-02.
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -1619,6 +1621,122 @@ The answers to `docs/identity-token-spec.md`'s open questions (the roadmap decis
 - Why: each question's trade-offs are in the spec. Optional email sharing never affects which wallet a person gets
   (linking is D119/D122, from Google's verified address read transiently inside Hana).
 
+## Batch C5: `AdminRpc` and `ConsoleRpc` core (2026-11-02)
+
+Readings made while building `docs/batch-c-build-plan.md` C5 on `feat/batch-c-5`, where `docs/batch-c-spec.md` left a
+detail open. Each follows the spec's intent; all five are **to confirm** by the user.
+
+### D225. The legacy `apps.publishable_key` stays on a valid key; deleted apps stay suspended (C3's email-issuer obligation)
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/changes/keys.ts` `syncLegacyKey`, `changes/suspension.ts`
+  `deleteApp`, `scripts/lib/admin-apps.ts` `appSuspension`) · Source: D206's obligation for `apps/email-issuer`
+  (branch `feat/email-login-4`: finds apps by `apps.publishable_key` and checks only `status`)
+- Decision: rather than block key rotation and deletion for email-enabled apps (the API's DB has no `login_methods`
+  column yet, so "email-enabled" can't be told apart), every key write keeps the legacy column pointing at the app's
+  oldest key with `revoked_at` NULL (by creation, then insertion), or at a tombstone when it has none:
+  `pk_<env>_0revoked` + random base58. The `0` is not in base58, so it is never a generated key and never matches the
+  issuer's `PK_RE`. The scope's prefix keeps the 0006 org-move trigger satisfied. The column is written, never read
+  (the source check in `apps/api/scripts/test/hot-db-reads.test.ts` allows exactly these two assignments). A deleted
+  app keeps Hana's bit 1 for good: every RPC write on it is `not_found`, and the CLI's `app:suspend` / `app:resume`
+  refuse it, so `status` stays `suspended` for the issuer's `appById`. The issuer therefore never accepts a revoked,
+  rotating or deleted app's key. One cost: during a rotation's 24 h grace the old key keeps working for Google
+  logins (the API reads `app_keys`), but the issuer refuses it at once.
+- Still owed (D206): the issuer moves to `app_keys` (`revoked_at` NULL or in the future), `deleted_at IS NULL` and
+  `suspended_by = 0`, which also gives email logins the grace. Its `apps/email-issuer` allowlist entry in the source
+  check stays until then. Done in email login batch 6 (D233): the issuer reads only `app_keys`, so the tombstone in the
+  legacy column matches nothing there either, and the allowlist entry is gone.
+- Rejected: blocking rotation and deletion per app (not detectable on develop); pointing the column at the newest key
+  (a second key created for a migration would break the first one's email logins).
+
+### D226. `pendingNotices` also returns the app and the policy
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/changes/lifecycle.ts`) · Source: spec §RPC
+  (`pendingNotices` → `{change, contacts}`) and §Notice and cancel (the notice describes the app, the origin or the
+  policy's contracts, functions and limits)
+- Decision: each notice also carries `app: {id, name, orgId, scopeId, environment}` and, for a `policy_set`, `policy`
+  (the canonical JSON, parsed). The change view alone has only the `policyId`. The fields are additive, so the admin
+  Worker builds the notice without a second call per change. Changes of a deleted app are never listed.
+
+### D227. Keys and no-op writes
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/changes/keys.ts`, `settings.ts`, `suspension.ts`,
+  `admin.ts`) · Source: spec "Keys" ("at most 5 unrevoked keys", rotate, revoke) and §RPC result types
+- Decision: "unrevoked" for the 5-key limit means `revoked_at` NULL, so a key in its rotation grace doesn't count, and
+  rotation never hits the limit. "The last valid key" and what revoke accepts count keys still valid now (a rotating
+  key still logs users in): two counts on purpose. Only an unrevoked key can be rotated (a rotating or revoked one is `conflict`). A
+  key in its grace can be revoked at once. Revoking the app's last valid key answers `{ok: true, warning:
+  'last_key'}` (the spec's "warns"). A write that would change nothing writes nothing and answers the current state
+  (a bit already set, nothing to turn off, the same settings, logo or contacts), with no ledger row. The breaker still
+  counts the call (D93 Q21: per call).
+
+### D228. Drift and breaker events: one per finding; what explains a value
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/changes/drift.ts`, `changes/guard.ts`) · Source: spec
+  "Drift detection" ("flags … once"), §RPC "Destructive-call breaker"
+- Decision:
+  - An origin in force is explained by an announced, open `origin_add` for that row whose `active_from` is no later
+    than the row's, or by the 0006 baseline (`active_from = 0`, listed in `migration.baseline`).
+  - An `app.created` row explains nothing on its own: since 0006 its origins are guarded changes, and counting it
+    would let a forged in-force row for an unannounced initial origin pass.
+  - A stored policy or `raw_sign = 'approval'` is explained by an announced change in force by then; a pending one by
+    an announced change whose `active_from` is no later than its `*_effective_at` (catches a hand-advanced effective
+    time); or by the baseline, whose policies are compared as stored text (D205), but only while no later
+    `app_changes` row ended the baseline value (review M1: a value put back by hand after a kill switch is drift).
+  - Each finding is written once: the event id is derived from it (app, what, the value or the origin and its
+    `active_from`). A breaker refusal writes one event per org (or for the global limit) per clock hour.
+  - The breaker and the hot-DB budget live on one `RateLimiter` object (`console-rpc`). A call is admitted or refused
+    in one step, nothing taken on a refusal. The breaker keeps exact call times for the rolling hour. Each method is
+    charged its declared ceiling (`CONSOLE_COSTS`: plan read + batch + one diagnostic read) before it runs.
+  - The budget, after the C5 review (H2): per-org buckets (10/s, burst 40) under the spec's global one (30/s, burst
+    60). The kill switches (`removeOrigins`, `turnOff`, `revokeKey`, `setSuspended(true)`) alone may spend the last
+    10 of an org's bucket and the last 20 of the global one.
+  - The global reserve after the follow-up scan (`fix/c5-budgets`):
+    - one org takes at most 12 tokens of it in any minute (two kill switches);
+    - a kill switch that changed nothing (`not_found`, `conflict`, `version_conflict`, `already_applied`,
+      `bad_request`, a no-op) gives back what it took of the reserve, charged to its org's own bucket instead (which
+      may go below zero), so empty kill switches can't drain what every org's kill switches rely on.
+  - Emailed-link cancels (review H1) never touch the members' budget: they take a per-client-IP limiter (5 a minute,
+    50 a day; IPv6 by /64) before the token is read. The read budget is D229.
+  - The breaker (review M2, M3, L6):
+    - it also counts a `googleWebClientId` change, which can stop an app's logins;
+    - it gives the slot back when a call changed nothing (`not_found`, `conflict`, `version_conflict`,
+      `already_applied`, `bad_request`, a no-op);
+    - the event is written for the first refusal of a limit in a clock hour only (the object remembers it).
+  - Question to confirm (review M2): the spec counts `removeOrigins` and `setSuspended(true)` in the global 20 per hour
+    too (D93 Q21). Kept as built. One compromised console can then use the global limit to stop other orgs' removals
+    and suspensions for an hour, though not their `turnOff` or `cancelChange`.
+
+### D229. RPC actors, refusal codes and staff proposal details
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/rpc/`, `src/changes/`) · Source: spec §RPC, "Guarded
+  changes", "Apps, scopes"
+- Decision:
+  - **Actors.** `ConsoleRpc` takes only `member` actors (`cancelChangeByLink` only `link`), and never `org_legacy`.
+    `AdminRpc` takes `hana`; the methods the admin Worker's crons call also take `system`, and `ackNotice` takes
+    `system` only (a staffer can't start a clock by hand). Any other actor is `forbidden`.
+  - **Replays.** A request id used before answers `already_applied` only when the stored row is the same write (one of
+    the method's ledger kinds, the same app, the same actor); otherwise `conflict`.
+  - **The link cancel's read budget** (follow-up scan, `fix/c5-budgets`): after its per-IP limit, a link cancel takes
+    one token of a global link-read budget sized to protect D1 (one plan read each: 50/s, burst 100), then reads the
+    token. Nothing limits it after that: a cancel whose token verifies on a pending change always runs. This replaces
+    the 1/s, burst 20 link bucket, which many addresses each within their limit could drain, refusing the token
+    holder. Residual: denial needs a sustained 50 bogus reads a second from ≥ 600 IPv4 addresses or IPv6 /64s. A token
+    that isn't canonical b64url of 32 bytes is `forbidden`, like a wrong one (it was `internal`). `actor_sub` is left
+    NULL in C5: it holds only an API-verified step-up's sub (C6).
+  - **Codes the spec doesn't name.** `conflict` for a staff proposal inside `appChangeDelayMs` of the scope's
+    assignment (also `createApp` with origins on an existing scope, D206), a duplicate origin, the 20-origin cap,
+    another pending change of the kind, or a value already in force. `env_mismatch` for `raw_sign_on` on a test app.
+    `forbidden` for a cancel link that doesn't match (or a change not announced yet) and for expediting a staff
+    proposal. `bad_request` for removing an origin the app doesn't have.
+  - **Waivers at the ack.** A member proposal is a `no_session` candidate only with `proposer_sub` set (C6 sets it
+    after verifying the step-up). Members get the same fail-closed signals as the CLI's waiver: `first_session_at`; an
+    origin of the scope in force other than the same request's; a vault share, legacy usage row or identity count.
+    C3 review M1 holds for every path built here. `createApp` marks the candidate only on a scope row it created.
+    `addOrigins` and `proposeChange` never mark it. Hana proposals never get `loopback`. C4's replacement of the
+    legacy `usage` check must change `changes/lifecycle.ts` `noSessionWaiver` as well as the CLI's.
+  - **`deleteApp`** also cancels the app's pending changes and deletes its pending origin rows, so no notice goes out
+    for a deleted app.
+  - **`addOrigins`** counts every open `origin_add` (a parked one with no row included) for duplicates and the
+    20-origin cap.
+  - **App names** follow console-core `normaliseAppName`: NFC, trimmed, 1–64 code points, and
+    `@hana-id/core` `isDisplaySafeLine`'s rule. It is copied, because the Worker can't typecheck core's root entry; a
+    test compares the two on every code point.
+
 ## Partner identity token, build steps 1–4 (2026-10-30)
 
 Choices made while building `docs/identity-token-spec.md` steps 1–4 on `feat/identity-token-1`, where the spec left a
@@ -2732,7 +2850,10 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
 - Rejected: computing ids in the migration through a Worker step (a migration must be plain SQL that runs in order).
 - Forward obligation (C3 re-check): the `no_session` waiver (D206) reads the legacy D1 `usage` table, which C4 stops
   writing and C4b's 0007 drops. Before 0007, C4 replaces that check with one that still sees new sessions (a hot-DB
-  marker the API writes beside the relay, not a Neon read); written in `docs/batch-c-build-plan.md` C4.
+  marker the API writes beside the relay, not a Neon read); written in `docs/batch-c-build-plan.md` C4. Discharged in
+  batch C4 by the `session_markers` table (migration 0009, D220), in both waivers: the CLI's
+  (`scripts/lib/admin-sql.ts`) and `AdminRpc.ackNotice`'s (`apps/api/src/changes/lifecycle.ts`, batch C5, switched
+  when C4 merged after it). No code reads the legacy `usage` table any more.
 
 ### D206. CLI readings: environment, actor, waivers, one ledger row per write, no cancel command
 - Date 2026-11-02 · Status: to confirm; built (`scripts/lib/admin-apps.ts`, `admin-sql.ts`, `admin-settings.ts`) ·
@@ -2816,6 +2937,245 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   than recording it active.
 - Why: a test key's dev-env privileges must never reach a live scope even after a manual write; the `no_session`
   waiver must fail closed, so any attempt to open a session ends it.
+## Partner identity token, build step 8 (watchdog), 2026-11-02
+
+Made while building `docs/identity-token-spec.md` "Build order" step 8 (branch `feat/identity-token-8`), where the
+spec ("JWKS and discovery", "Pinning") was silent or allowed two readings. None changes a derivation path, an address
+or the contract. All five are **to confirm** by the user.
+
+### D210. The identity JWKS check: pins in the watchdog's config, an outside probe, alerts only; detection, not prevention
+- Date 2026-11-02 (amended the same day after the step 8 review: H1, H2, M2, L1, L2) · Status: **to confirm**; built
+  (`packages/jwks/src/identity.ts`, `apps/watchdog/src/identity.ts`, `run.ts` `identityJwks`,
+  `scripts/lib/identity-probe.ts`, `.github/workflows/identity-probe.yml`) · Source: spec "JWKS and discovery" ("the
+  watchdog fetches the JWKS every run and raises a critical alert for any key whose thumbprint isn't in its pinned
+  list"), D127 Q13, D86, D190
+- Decision: the manifest's `watchdog.pinnedIdentityKeys` (RFC 7638 thumbprints of the P-256 keys, which are also their
+  kids; 1–8) is passed by `watchdog gen` as `IDENTITY_PINS`, with `identityToken.iss` as `IDENTITY_ISS`. Each run, after
+  the run is recorded and its lock released (the advisory phase, as the email JWKS: Hana's API is a party the watchdog
+  must survive), it reads `{iss}/jwks.json` and `{iss}/.well-known/openid-configuration`, no cache, `redirect:
+  'manual'`, 10 s timeout, body capped at 64 KB. It runs without a chain read (it needs none). The rules are one module,
+  `@hana-id/jwks/identity`, shared with the outside probe. Each object entry is judged by its key material, never by
+  its kid, whatever the other entries are. Findings and severities:
+  - a published key whose thumbprint isn't pinned, that isn't a P-256 key with 32-byte coordinates, or that has any
+    member beyond `kty crv x y kid use alg` (D214): critical `identity_key_unpinned` (`reason` `not_pinned`,
+    `not_p256`, `extra_members`, `pins_unreadable`);
+  - any private member (`d`, `p`, `q`, `dp`, `dq`, `qi`, `oth`, `k`) on any entry: critical
+    `identity_private_key_published` (the member names are stored, never the values);
+  - the discovery document's `issuer` or `jwks_uri` wrong (D213): critical `identity_discovery_mismatch`;
+  - an answer that can't be judged as published, **critical at once**: a redirect (3xx, never followed), a 200 over the
+    cap, a body that isn't JSON, duplicate members (D214), or the wrong shape (not an object, no `keys` array, a
+    non-object entry): `identity_jwks_unreadable:<document>:answer:<reason>`. Padding or malformed content never
+    downgrades a finding to a warning, and the object entries beside a malformed one are still judged;
+  - a network error or any other status, 3 runs in a row: critical `identity_jwks_unreadable:<document>:sustained`
+    (one counter per document): a failure only the watchdog gets is a way to hide a key from it. A failed read resolves
+    nothing it would have judged;
+  - a pinned key not published under its thumbprint as kid with public members only: warning `identity_key_missing`
+    (`not_published`, `kid_differs`, `not_clean`).
+  **No pause, ever:** the chain isn't involved. The contract never holds or accepts an identity key; partners verify
+  identity tokens, so pausing would stop every login without stopping a forged token. Absent pins mean nothing is
+  pinned (as D190): every published key is unpinned; unreadable pins page `pins_invalid:identity` and read as nothing
+  pinned; pins without `IDENTITY_ISS` page `pins_invalid:identity_no_iss` (L2). An env without `identityToken` skips
+  the check, and a skipped check resolves nothing.
+  **What it catches, and the residual (H1):** an attacker who serves the same JWKS to everyone. Whoever controls Hana's
+  Cloudflare account can recognise the watchdog's fetches (they leave from Cloudflare's network, through the
+  watchdog's own Worker) and serve them a clean JWKS while partners get another, or publish a key between two runs
+  (5 min) and remove it again. So the watchdog is detection against a non-cloaking attacker only. The **outside
+  probe** narrows the cloaking: a scheduled GitHub Actions workflow (every 15 min, standard actions pinned by commit,
+  no secrets) runs `scripts/identity-probe.ts` from GitHub's network with jose's User-Agent and Accept and no
+  `CF-Worker` header, applies the same rules against every non-`local*` env's `watchdog.pinnedIdentityKeys` in the
+  repo, and fails on any finding (GitHub emails the failure). Values from Hana's answers reach the Actions log only
+  JSON-quoted, escaped to printable ASCII (`%` included) and cut, and no line can start with `::` (no workflow
+  command injection). It doesn't close it either: an attacker can single out
+  partners' addresses, or time the key. **Partner-side thumbprint pinning is the recommended default for anything of
+  value** (`docs/integration.md`, the example verifier's `HANA_IDENTITY_PINS`): it is the only defence that doesn't
+  depend on Hana noticing.
+- Why: the JWKS is served by Hana's Cloudflare account, the one party this check must not trust; pins in the
+  watchdog's own config change only with a redeploy on the watchdog's account. Judging by material catches a pinned
+  kid placed over an attacker's key, which is what `jose` would then select.
+- Rejected: pausing on an unpinned key (no effect on partners, stops every user); trusting the kid; a warning for an
+  unpinned key (the spec says critical); a warning for an unreadable answer or a sustained failure (the first draft:
+  padding or a selective failure would downgrade a forged key to a warning); following redirects; reading the JWKS
+  before the protective work; probe secrets or a paid monitor (the probe needs neither).
+
+### D211. Pin before publish: the schema ties the published keys to the pins; identity-key writes both
+- Date 2026-11-02 · Status: **to confirm**; built (`packages/env/src/schema.ts` `watchdogRules`,
+  `scripts/lib/identity-key.ts` `withIdentityPins`) · Source: spec "Rotation playbook" step 1 ("add its thumbprint to
+  the watchdog pins (operator redeploy)") and step 4 ("remove the old key from the JWKS and the pins")
+- Decision: when a manifest has both `watchdog` and `identityToken`, every `identityToken.publicKeys` kid must be in
+  `watchdog.pinnedIdentityKeys` (extra pins are allowed: a key pinned ahead warns `identity_key_missing` until
+  published). `identity-key init` and `next` pin the new keys in the same manifest change, pins first; `retire` unpins
+  the key it unpublishes, after removing it; `switch` changes no pin (the published set is the same). Deploy order:
+  after `init` or `next`, the watchdog first (on its own account), then the API; after `retire`, the API first, then
+  the watchdog. The wrong order is caught, not silent: a key published before its pin is deployed pages
+  `identity_key_unpinned` until the watchdog deploy; a retired key unpinned before the API deploy pages the same.
+  sandbox-dev pins its two published keys (active `17xAVaTf…`, standby `_MjNZC3l…`). `identity-key` rewrites only the
+  `pinnedIdentityKeys` line of the manifest (review L3), and `init` and `next` validate the new manifest text before
+  writing any key file (L4), so a manifest that can't take the key leaves no orphan key behind.
+- Why: the operator can't forget the pin (the manifest won't validate, and `identity-key` writes it), and a retired key
+  is never left pinned: a key that leaked can't be republished by whoever holds Hana's Cloudflare account without a
+  page.
+- Rejected: pins edited by hand (forgotten in a hurry, e.g. a compromise rotation); keeping a retired key pinned until
+  someone removes it; a separate pins file outside the manifest (the email pins live in the manifest too).
+
+### D212. "Identity key on chain" is a kid check, alert only; no contract change
+- Date 2026-11-02 · Status: **to confirm**; built (`run.ts` `identityOnChain`, check `identity_on_chain`) · Source:
+  spec "JWKS and discovery" ("the watchdog also alerts if an identity key's thumbprint ever appears among the
+  contract's issuer keys (the contract must never trust it)"), invariant 6, threat model "Replay against Hana"
+- Decision: the contract stores issuer keys as RSA `{n, e}` only (`issuers.rs` `RsaKey`) and verifies RS256 only, so an
+  identity key's EC material can never be on chain; what can appear is its thumbprint as a kid. Each run, in the
+  protective phase (chain data and stored config only, no third-party read), the watchdog compares the kids of
+  Google's and the email issuer's active keys and of every pending key addition (any provider) with the pinned
+  identity thumbprints and those Hana published at the last good JWKS read (stored in D1). A match is critical
+  `identity_key_on_chain`, alert only: the same run's Google and email rules already cancel or pause on such a kid
+  (Google never published it; an email kid must be its own RSA thumbprint), and an owner's pending change for another
+  provider stays an `unverifiable_key_change`. No contract change is needed or made.
+- Why: the contract can't trust an identity key whatever its kid, so the check exists to explain an odd issuer-key
+  event, not to protect; reading the published thumbprints from D1 keeps Hana's API out of the protective phase.
+- Rejected: a contract view or refusal of identity kids (no security gain: material is checked, not the kid);
+  fetching the JWKS before the protective phase.
+
+### D213. The discovery document: `issuer` exact, `jwks_uri` exact, both critical; nothing followed
+- Date 2026-11-02 · Status: **to confirm**; built (`identity.ts` `judgeDiscovery`) · Source: spec "JWKS and
+  discovery" (the discovery document's fields), Q14
+- Decision: `issuer` must equal `identityToken.iss` exactly (no trailing-slash or case tolerance: an OpenID client
+  compares it with the token's `iss` byte for byte) and `jwks_uri` must equal `{iss}/jwks.json`. Either one wrong,
+  absent or not a string is critical `identity_discovery_mismatch`, one condition per field and published value. The
+  watchdog never follows a `jwks_uri` it didn't configure; the other fields (`id_token_signing_alg_values_supported`,
+  `claims_supported`) aren't judged.
+- Why: a partner library that follows discovery would fetch keys from a substituted `jwks_uri`, past the pin check, so
+  a wrong value is as dangerous as an unpinned key; a substituted `issuer` makes such clients accept another issuer's
+  tokens. The other fields can't make a partner accept a forged token.
+- Rejected: a warning (the user asked for critical on a wrong `iss`, and `jwks_uri` is the same risk); fetching and
+  judging the advertised `jwks_uri` too (an attacker-chosen URL in the watchdog's run).
+
+### D214. Bounded identity alerts, and the portal hand-off without the portal
+- Date 2026-11-02 · Status: **to confirm**; built (`run.ts`, `checks.ts`, `status.ts`, `@hana-id/playbooks`) · Source:
+  spec step 8 ("portal rendering (D83)"), D83, D126
+- Decision: an unpinned or private set is one condition keyed by a hash of what was found (a new key is a new page;
+  the old set resolves), listing at most 20 entries; kids and URLs from Hana's answers are cut to 256 characters and
+  shown through `ident` in titles. A published entry may have only `kty crv x y kid use alg`; anything else (an
+  `x5u`, `jku`, private members) makes it unpinned, and a member twice in one object anywhere in either document is
+  critical (`duplicate_members`): `JSON.parse` keeps the last, other parsers the first, so two readers could see two
+  keys (review L1). Three playbooks: `identity-jwks-forged` (critical: unpinned, private, discovery, unreadable),
+  `identity-jwks-degraded` (warning: missing), `identity-key-on-chain`. `/status` gains `identity`
+  (`{iss, jwks_url, discovery_url, pinned, jwks, discovery}`: the pins and the last good reads, each key judged, public
+  members only). The checks `identity_on_chain` and `identity_jwks` and the six kinds (`identity_key_unpinned`,
+  `identity_private_key_published`, `identity_discovery_mismatch`, `identity_jwks_unreadable`, `identity_key_missing`,
+  `identity_key_on_chain`) are in `CHECK_IDS` /
+  `ALERT_KINDS` for the portal's registry test; the portal's "Security & monitoring" view isn't built yet (batch C),
+  so step 8's "portal rendering" is that hand-off, rendered when the portal is.
+- Why: a JWKS of a few hundred junk keys (64 KB) must not become hundreds of pages, and a stored alert must never hold a
+  private value.
+- Rejected: one alert per published key (page flood); one fixed condition per kind (a second forged key while the
+  first is open would raise nothing new).
+
+## Batch C4: usage capture (2026-11-02)
+
+Readings made while building `docs/batch-c-build-plan.md` C4 on `feat/batch-c-4`, where `docs/batch-c-spec.md` left a
+detail open. Each follows the spec's intent; all five are **to confirm** by the user.
+
+### D220. The `no_session` waiver's hot-DB sign: a session marker per app (migration 0009)
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/migrations/0009_session_markers.sql`, `apps/api/src/apps.ts`
+  `markSession`, `handlers.ts` `firstSession`, `scripts/lib/admin-sql.ts` `noSessionWaiver`) · Source: D205's forward
+  obligation; build plan C4
+- Decision: a new hot-DB table `session_markers (app_id PK → apps, first_at)`. When the gate saw no
+  `first_session_at` on the scope, the API writes the scope's `first_session_at` beside the relay (as since C3) and,
+  once that relay settled whatever its outcome, the app's marker (`INSERT … ON CONFLICT DO NOTHING`): two independent
+  writes, so one lost write never leaves the waiver open, as the `usage` row did for a lost `first_session_at`. The
+  waiver reads the marker in place of the legacy `usage` rows; nothing it decides reads Neon. The migration is
+  numbered **0009** (the next free number): 0007 stays C4b's drop and 0008 the identity token's, so no merged doc
+  renumbers; it reads no other table, so it applies the same before or after 0007. The existing `usage` rows are
+  carried into markers by a one-off idempotent statement before 0007 (`docs/operations.md` "Usage capture" step 5).
+  The same rule in C5's `AdminRpc.ackNotice` (`apps/api/src/changes/lifecycle.ts` `noSessionWaiver`, merged before C4)
+  now reads `session_markers` too, with a test row of its own; nothing reads `usage`.
+- Review fixes (2026-11-02): `HOT_DB_SCHEMA` is 9 and `app:changes:announce --remote` needs `hotDb` ≥ 9 (proposals
+  still ≥ 6), so no announcement runs against an API that writes no markers; the one-off `usage` → markers statement
+  runs after the C4 deploy (and again before 0007), since the API before it still wrote `usage` rows only.
+- Why: the build plan asked for a hot-DB marker beside the relay; per app (not per scope) so its test rows match the
+  old ones and a scope's apps each leave their own sign.
+- Rejected: dropping the `usage` check and relying on `first_session_at` alone (one write, one point of failure);
+  taking 0007 and renumbering C4b's drop to 0009 (a backfill inside the drop would be cleaner, but every merged doc
+  and decision names 0007 as the drop).
+
+### D221. What one usage event covers, and when it is opened and closed
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/usage/event.ts`, `handlers.ts`, `login.ts`,
+  `vault/endpoints.ts`) · Source: spec "Usage capture"
+- Decision: the event opens once the request passed the gate (for `/v1/vault/unlock`: the vault gate, app, origins and
+  the vault's IP and app limits; for owner actions: the owner check) and closes in `done` with the response, so every
+  answer after the gate is exactly one event and the per-IP 429 of the gate is none. A handler that throws past its
+  gate records `500 internal`, as the router answers. The export window's `/v1/login` is a `login` event (with a uid).
+  `ckd_failed` is a rejected, relayed event (no longer "counts as a session"). An owner action's `org_id` is read from
+  `scopes` after the response, `org_legacy` for a scope the hot DB doesn't hold or when D1 can't be read
+  (`usage_org_unavailable`). A code that isn't the event shape's `^[a-z][a-z0-9_]{0,63}$` is recorded as `internal`.
+- Why: the gate is where the spec draws the line ("requests that passed appGate"); one place to close the event
+  (`done`) means no response path can forget it; a relayed owner action must reach the ledger for the nonce check
+  even when its scope has no app.
+
+### D222. The writer: checked in the Worker, one retry for transient errors only, relayed by the relay result
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/src/usage/record.ts`, `relayer-key.ts`, `near/tx.ts`) ·
+  Source: spec "Write", "Gas", tests "Topology and config"
+- Decision: the event is checked against UsageEvent v1 (`console-core`, zod) before it is sent; a refusal is
+  `usage_write_rejected` and never sent. One new `pg` connection per event over `USAGE_DB` (Hyperdrive pools), 5 s to
+  connect and 5 s for the statement. Retried once after 250 ms: an error without a SQLSTATE (connection, timeout) or of
+  class 08, 40, 53, 57, 58; `22023` (the function's shape refusal) is `usage_write_rejected`; any other SQLSTATE (e.g.
+  `23514`, no partition) is `usage_write_failed` without a retry. Logs carry the SQLSTATE (`pg_<code>`) or
+  `connection`, never the driver's message or the URL. `relayed` follows the relay *result*, not the response code:
+  ok, or `contract_rejected` / `timeout` / `near_error` with a `nearTx`; `near_rejected` and `relayer_busy` are not
+  relayed even though they name a transaction (it can never execute), and their `near_tx`, key and nonce are still
+  recorded. The `RelayerKey` result carries the signing key and nonce on every result naming a transaction (the last
+  sent, after a retry) and the BigInt gas sums of a settled outcome; a malformed amount gives no gas fields, never a
+  guess. Without `USER_ID_KEY` (or with a malformed one) events are recorded without a uid (`usage_uid_unavailable`,
+  once per isolate); a path that doesn't parse for its scope gives no uid either.
+- Review fixes (2026-11-02): a SQLSTATE is read only from a `pg.DatabaseError` (the server's answer); any other error,
+  an errno code such as `ECONNRESET` included, is a connection error and retried. The provisional gas pair is dropped
+  when either figure is past the event's bounds (gas ≤ 2^63 − 1, tokens < 10^39), so the rest of the event is kept.
+  `recordUsage` first yields (`scheduler.wait(0)`), so the uid's HMAC, the check and the connection all run after the
+  response. Settlement (C12) must bill a relayed event only for its own transaction (`near_tx` unique, the
+  transaction's signer key and nonce equal to `relayer_pk` and `relayer_nonce`): an obligation in the build plan's C12.
+- Why: the spec's "connection error or timeout" retry and "never on a validation error", with a test for each class;
+  a shape refusal is a bug that a retry can't fix; the nonce cross-check needs every relayed row's key and nonce.
+
+### D223. Identity token counts reach the ledger by an hourly copy, not per mint
+- Date 2026-11-02 · Status: to confirm; built (`apps/api/migrations-usage/0002_identity_tokens.sql`,
+  `apps/api/src/usage/identity-sync.ts`, the API's hourly cron) · Source: build plan "Conventions" (the ledger counts
+  `identity_tokens` per app and day); D172
+- Decision: the mint keeps counting in the hot DB (`identity_usage`, unchanged, and the identity signing code is not
+  touched); the hourly cron copies the last 7 UTC days, with each app's org and scope, to `usage.identity_tokens
+  (app_id, day, org_id, scope_id, tokens)` through `usage.record_identity_tokens(rows jsonb)` (writer only, all or
+  nothing, ≤ 1000 rows a call, the larger count kept, org and scope of the first copy kept). A failed copy is logged
+  (`identity_usage_sync_failed`) and repaired by the next hour; it never fails the cron run. The Neon file is
+  `0002`, so the report and retention functions planned as 0002/0003 (C12, C13) take the next numbers (0004, 0005:
+  0003 is the partitions fix below).
+- Review fix (2026-11-02, M1): partitions no longer wait for the admin Worker. Neon `0003_writer_partitions.sql` lets
+  `usage_writer` execute `usage.ensure_partitions` (the owner's bounded SECURITY DEFINER function: 0..24 months, only
+  creates missing months) and creates 12 months ahead; the API's hourly cron calls `ensure_partitions(12)` before the
+  identity copy, logging `usage_partitions_failed` and never failing the run.
+- Why: per app and day is what reports need; a copy of a monotone count is idempotent and survives a Neon outage of
+  up to 6 days with nothing lost, with no change to the mint path (which identity token steps 7/8 are changing).
+- Rejected: an `identity_token` event per mint in `usage.events` (a new endpoint value in a CHECK of a partitioned
+  table, a Neon write per mint, and a change in the identity signing files).
+
+### D224. `usage-setup` and the binding: subcommands, SCRAM verifiers, re-runnable; capture optional on sandbox-dev
+- Date 2026-11-02 · Status: to confirm; built (`scripts/lib/usage-setup.ts`, `apps/api/scripts/gen-wrangler.ts`) ·
+  Source: build plan "Setup steps" 3, 4 and 6
+- Decision: `usage-setup <env> roles | hyperdrive | user-id-key [--yes]` (testnet only, dry run by default).
+  `roles` writes each role's URL first (the owner's direct endpoint and database, `sslmode=require` only: Neon's
+  `channel_binding` is dropped for Hyperdrive) and then sets `LOGIN PASSWORD` to a SCRAM-SHA-256 verifier computed
+  locally (checked against RFC 7677's example), in one transaction, so Neon never sees the password; a re-run reuses
+  the files' passwords. `hyperdrive` creates both configs with caching disabled and prints only names and ids (the
+  role URL is a wrangler argument, briefly visible in the local process list). `user-id-key` never replaces the key
+  file and sets the Worker secret through stdin. `gen --usage-hyperdrive-id <id>` binds `USAGE_DB`; later runs keep it
+  for the same Worker and D1 database, `off` drops it. The binding needs no manifest `usage` block (sandbox-dev has
+  none yet; the Hyperdrive names default to the spec's). The gitleaks config gains a rule for Postgres URLs with a
+  password and the new secret files by name.
+- Review fixes (2026-11-02): `gen` writes the binding's `localConnectionString` as an unroutable placeholder
+  (`usage-ledger.local.invalid`), so `wrangler dev` runs and local capture fails open, logged. The Hyperdrive id is
+  read only from wrangler's "Created new Hyperdrive … config: <id>" line (no line, no guessed id). The gitleaks rule
+  matches passwords of 8 characters or more with an entropy floor of 3.0 (3.5 made anything under 12 unmatchable),
+  stopwords for the repo's marked fakes. Creating the configs through the REST API (the password in an HTTPS body, not
+  a process argument) is a before-production item (`docs/mainnet-readiness.md` 4.18). The step-8 SCRAM login check on
+  sandbox-dev is an explicit gate in `docs/operations.md`.
+- Why: the spec's steps, made safe to repeat after a stop, and M2 without waiting for the dashboard blocks.
 
 ## Identity token build, step 7 (the AWS KMS signer, code only), 2026-11-02
 
@@ -3025,11 +3385,18 @@ five are **to confirm** by the user. None changes an address: no path, derivatio
     statement). The SDK uses `key_index` 0; a share at a higher index ends at its own absolute limit (≤ 12 h by
     default), as a share does after a direct contract call that skips the API. A failed revocation is logged
     (`link_shares_revoke_failed`), never fails the answer (the change is already on chain).
-  - **Usage** (minimal, for batch C4 to take over): `email_usage (app_id, day, email_sessions, links)` in migration
-    0010, out of the legacy `usage` table that C4b's 0007 drops, like `identity_usage` (D172). An email session is
-    counted at a successful `/v1/login` or `/v1/sessions` with an email token; a link at a successful linked login or
-    `/v1/link` (as the contract's counter counts links, D200; cancels and unlinks aren't links). One function
-    (`countEmailUsage`), one call per endpoint: C4 replaces it as it copies `identity_usage` (D223).
+  - **Usage**, on batch C4's model for counts (D223, amended at the merge of C4 into this branch): every
+    `/v1/login` and `/v1/sessions` request is already one usage event of its endpoint in the Neon ledger (an email
+    login included); what the spec adds, how many were email logins and how many made a link, is counted in the hot DB
+    (`email_usage (app_id, day, email_sessions, links)`, migration 0010, as `identity_usage`, D172) and copied by the
+    hourly cron to the ledger's `usage.email_counts` through `usage.record_email_counts` (migrations-usage 0004, the
+    writer's fourth function; the larger count per column kept, the last 7 days each run; `src/usage/email-sync.ts`).
+    An email session is counted at a successful `/v1/login` or `/v1/sessions` with an email token; a link at a
+    successful linked login or `/v1/link` (as the contract's counter counts links, D200; cancels and unlinks aren't
+    links). Chosen over new ledger event fields or endpoint values: those change the CHECK of the partitioned events
+    table and every event's shape, the reason D223 gave for the identity counts. Not covered yet: the link relays
+    (`/v1/link*`) are not usage events (their relayed gas isn't in the ledger); adding them needs ledger endpoint values,
+    left for the reporting batch (C12).
   - **The issuer's app lookup** (D206's obligation, D225's "still owed"): the key is an `app_keys` row not revoked or
     still in its rotation grace (`revoked_at` NULL or in the future), the app not deleted (`deleted_at IS NULL`), and
     active only with `suspended_by = 0` and `status = 'active'`, exactly the API gate's rule. `apps.publishable_key`
@@ -3132,7 +3499,11 @@ issuer's D195–D199 (batch 4) wait for the user's confirmation.
 To confirm from batch C step C2 (`packages/oidc`): D201 (the new claims typed on request, ignored by the API), D202
 (the Access JWT check and its cert cache) and D203 (the package's logging hook, Google's fetch limits).
 
-Batch C3's readings D205–D209 (hot DB 0006, the gate, the CLI) are to confirm.
+Batch C3's readings D205–D209 (hot DB 0006, the gate, the CLI) are to confirm. So are batch C5's D225–D229 (the
+legacy key column and deleted apps, the notice fields, keys and no-op writes, drift and breaker events, RPC actors
+and codes).
+Batch C4's readings D220–D224 (the session marker and migration 0009, the event's bounds, the writer, the
+identity-count copy, `usage-setup`) are to confirm.
 To confirm from email login batch 6 (`feat/email-login-6`): D230 (the issuer on its own URL, never through the API),
 D231 (email tokens at the API, `login_methods`, `GET /v1/app`), D232 (the link precheck, relays and panics), D233
 (share revocation, `email_usage`, the issuer's app lookup) and D234 (the corrected deploy order, the email clients in
@@ -3140,3 +3511,6 @@ batch 8).
 To confirm from the identity token's step 7 (the KMS signer's code): D215 (the manifest shape and credentials), D216
 (`DIGEST`), D217 (strict DER, the self-check), D218 (one `Sign`, no retry, limits) and D219 (the standby's region, the
 IAM policy on the active key only).
+
+Identity token step 8's readings D210–D214 (the watchdog's identity JWKS and discovery check, pin before publish, the
+"identity key on chain" kid check, the discovery fields, bounded alerts and the portal hand-off) are to confirm.

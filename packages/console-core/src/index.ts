@@ -4,6 +4,8 @@ export * from './bytes.ts';
 export * from './ids.ts';
 export * from './jcs.ts';
 export * from './layouts.ts';
+export * from './names.ts';
 export * from './origins.ts';
+export * from './rpc.ts';
 export * from './types.ts';
 export * from './usage-event.ts';

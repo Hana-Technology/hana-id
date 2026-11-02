@@ -3,7 +3,7 @@
 // and gitignored (they can carry a real D1 id): generate them, never commit them. The API tests use
 // wrangler.vitest.jsonc, which vitest.config.ts writes with testWranglerConfig() (also gitignored).
 //
-//   pnpm --filter @hana-id/api gen <env> [--d1-id <uuid>] [--dev-vars]
+//   pnpm --filter @hana-id/api gen <env> [--d1-id <uuid>] [--usage-hyperdrive-id <id>|off] [--dev-vars]
 //
 // --d1-id      D1 database id (`wrangler d1 create <cloudflare.d1Name>` prints it). Without it, the id already in
 //              wrangler.jsonc is kept only when that file was generated for the same D1 database (same
@@ -12,6 +12,9 @@
 //              scratch database (its name must contain "rehearsal"; --d1-id required), so `wrangler d1 migrations
 //              apply` and the admin CLI (its --d1-name) run on it exactly as they will on the env's database. Run gen
 //              again without it afterwards.
+// --usage-hyperdrive-id  The usage ledger writer's Hyperdrive config id (`usage-setup <env> hyperdrive` prints it;
+//              batch C4): binds USAGE_DB and turns usage capture on. Without the flag, the id already in wrangler.jsonc
+//              is kept only when that file was generated for the same Worker and D1 database; `off` drops it.
 // --dev-vars   Also write apps/api/.dev.vars (0600, gitignored) from .secrets/<env>/relayer-keys.json (session pool,
 //              JSON array of ed25519 secret keys), .secrets/<env>/owner-relayer-keys.json (owner pool, same format) and
 //              .secrets/<env>/keys-updater.json ({account_id, public_key, private_key}), as written by
@@ -67,7 +70,21 @@ export function emailVars(m: Manifest): Record<string, string> {
   return { EMAIL_ISS: t.iss, EMAIL_PUBLIC_KEYS: JSON.stringify(t.publicKeys) };
 }
 
-export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknown> {
+/**
+ * USAGE_DB's `localConnectionString` (`wrangler dev`): `.invalid` never resolves (RFC 6761), so a local login's usage
+ * write fails at connect and is logged, as with Neon down. No credential: the password is a placeholder.
+ */
+export const LOCAL_USAGE_CONNECTION_STRING = 'postgresql://usage_writer:local-dev@usage-ledger.local.invalid:5432/usage';
+
+/** A Hyperdrive config id (`wrangler hyperdrive create` prints it; not a secret: the credentials stay in the config). */
+export const HYPERDRIVE_ID_RE = /^[0-9a-f]{32}$/u;
+
+/**
+ * `usageHyperdriveId`: the usage ledger writer's Hyperdrive config (docs/batch-c-spec.md "Bindings"), bound as
+ * `USAGE_DB`. Without it the Worker has no binding and capture is off (logins are unaffected either way).
+ */
+export function wranglerConfig(m: Manifest, d1Id: string, opts: { usageHyperdriveId?: string } = {}): Record<string, unknown> {
+  if (opts.usageHyperdriveId !== undefined && !HYPERDRIVE_ID_RE.test(opts.usageHyperdriveId)) throw new Error('A Hyperdrive id is 32 lowercase hex characters');
   // The API checks callers against both Hana origins (and the login relay serves only them).
   if (!m.vaultOrigin || !m.authOrigin) throw new Error(`envs/${m.name}.json needs vaultOrigin and authOrigin`);
   return {
@@ -113,6 +130,10 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
       ...emailVars(m),
     },
     d1_databases: [{ binding: 'DB', database_name: m.cloudflare.d1Name, database_id: d1Id, migrations_dir: 'migrations' }],
+    // The usage ledger's writer (role usage_writer, caching disabled on the config), batch C4; optional. `wrangler dev`
+    // needs a local connection string for a Hyperdrive binding: an unroutable placeholder, so local capture fails open
+    // (usage_write_failed in the dev log) and never reaches a real ledger.
+    ...(opts.usageHyperdriveId ? { hyperdrive: [{ binding: 'USAGE_DB', id: opts.usageHyperdriveId, localConnectionString: LOCAL_USAGE_CONNECTION_STRING }] } : {}),
     durable_objects: {
       bindings: [
         { name: 'RELAYER_KEY', class_name: 'RelayerKey' },
@@ -298,21 +319,49 @@ export function writeDevVars(envName: string, root: string = repoRoot, dir: stri
   return { path, count: [relayerKeys, ownerRelayerKeys, keysUpdaterKey].filter((v) => v !== undefined).length + identity.length };
 }
 
-/** Writes <dir>/wrangler.jsonc for the env. */
-export function writeWranglerConfig(manifest: Manifest, d1Arg: string | undefined, dir: string = apiDir): { path: string; d1Id: string } {
+/**
+ * The usage writer's Hyperdrive id in an existing wrangler.jsonc, but only when it was generated for the same Worker
+ * (`name`) and D1 database: an id left over from another environment must never bind this env's API to that ledger.
+ */
+export function existingUsageHyperdriveId(path: string, m: Pick<Manifest, 'cloudflare'>): string | null {
+  if (!existsSync(path)) return null;
+  const text = readFileSync(path, 'utf8');
+  let config: { name?: unknown; d1_databases?: { database_name?: unknown }[]; hyperdrive?: { binding?: unknown; id?: unknown }[] };
+  try {
+    config = JSON.parse(text.replace(/^\/\/.*\n/u, '')) as typeof config;
+  } catch {
+    return null;
+  }
+  if (config.name !== m.cloudflare.workerName || config.d1_databases?.[0]?.database_name !== m.cloudflare.d1Name) return null;
+  const id = config.hyperdrive?.find((h) => h.binding === 'USAGE_DB')?.id;
+  return typeof id === 'string' && HYPERDRIVE_ID_RE.test(id) ? id : null;
+}
+
+/**
+ * Writes <dir>/wrangler.jsonc for the env. `usageArg`: a Hyperdrive id, `off` (no binding), or undefined (keep the
+ * existing file's, for the same Worker and database).
+ */
+export function writeWranglerConfig(manifest: Manifest, d1Arg: string | undefined, dir: string = apiDir, usageArg?: string): { path: string; d1Id: string; usageHyperdriveId: string | null } {
   const path = join(dir, 'wrangler.jsonc');
   const d1Id = d1Arg ?? existingD1Id(path, manifest.cloudflare.d1Name) ?? LOCAL_D1_ID;
+  const usageHyperdriveId = usageArg === 'off' ? null : (usageArg ?? existingUsageHyperdriveId(path, manifest));
   const header = `// Generated by apps/api/scripts/gen-wrangler.ts from envs/${manifest.name}.json: edit the manifest, not this file.\n`;
-  writeFileSync(path, header + JSON.stringify(wranglerConfig(manifest, d1Id), null, 2) + '\n');
-  return { path, d1Id };
+  writeFileSync(path, header + JSON.stringify(wranglerConfig(manifest, d1Id, { usageHyperdriveId: usageHyperdriveId ?? undefined }), null, 2) + '\n');
+  return { path, d1Id, usageHyperdriveId };
 }
 
 /** `root`/`dir` override the repo root (for .secrets/) and the output directory; `loadManifest` the manifest (tests). */
 export function main(argv: string[], opts: { root?: string; dir?: string; loadManifest?: (name: string) => Manifest } = {}): void {
-  const envName = argv.find((a, i) => !a.startsWith('--') && argv[i - 1] !== '--d1-id' && argv[i - 1] !== '--d1-name');
+  const valueFlags = ['--d1-id', '--d1-name', '--usage-hyperdrive-id'];
+  const envName = argv.find((a, i) => !a.startsWith('--') && !valueFlags.includes(argv[i - 1] ?? ''));
   if (!envName) {
-    console.error('usage: gen-wrangler <env> [--d1-id <uuid>] [--d1-name <rehearsal db> --d1-id <uuid>] [--dev-vars]');
+    console.error('usage: gen-wrangler <env> [--d1-id <uuid>] [--d1-name <rehearsal db> --d1-id <uuid>] [--usage-hyperdrive-id <id>|off] [--dev-vars]');
     process.exit(2);
+  }
+  const usageFlag = argv.indexOf('--usage-hyperdrive-id');
+  const usageArg = usageFlag >= 0 ? argv[usageFlag + 1] : undefined;
+  if (usageFlag >= 0 && (!usageArg || (usageArg !== 'off' && !HYPERDRIVE_ID_RE.test(usageArg)))) {
+    throw new Error('--usage-hyperdrive-id needs the writer Hyperdrive config id (32 hex characters; `usage-setup <env> hyperdrive` prints it) or `off`');
   }
   const idFlag = argv.indexOf('--d1-id');
   const d1Arg = idFlag >= 0 ? argv[idFlag + 1] : undefined;
@@ -329,8 +378,9 @@ export function main(argv: string[], opts: { root?: string; dir?: string; loadMa
   if (d1Name) console.log(`The D1 binding points at the rehearsal database ${d1Name}: run gen ${loaded.name} again (with the env's own --d1-id) before any deploy or admin command on the env`);
   // The page Workers first: they refuse more envs (workers.dev outside dev envs), and a refusal then writes nothing.
   const pages = writePagesWranglerConfigs(manifest, COMPATIBILITY_DATE, opts.dir);
-  const { path, d1Id } = writeWranglerConfig(manifest, d1Arg, opts.dir);
+  const { path, d1Id, usageHyperdriveId } = writeWranglerConfig(manifest, d1Arg, opts.dir, usageArg);
   console.log(`wrote ${path} (env ${manifest.name}, worker ${manifest.cloudflare.workerName}${d1Id === LOCAL_D1_ID ? ', local D1 placeholder id' : ''})`);
+  console.log(usageHyperdriveId ? `usage capture: on (USAGE_DB → Hyperdrive ${usageHyperdriveId})` : 'usage capture: off (no USAGE_DB binding; pass --usage-hyperdrive-id <id> to turn it on)');
   for (const p of pages) console.log(`wrote ${p}`);
 
   if (argv.includes('--dev-vars')) {

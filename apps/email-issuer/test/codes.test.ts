@@ -259,6 +259,10 @@ describe('purpose-bound nonces and the app gate', () => {
     // The legacy column is never read: a key only it holds finds nothing.
     await env.APP_DB.prepare('UPDATE app_keys SET key = ?2 WHERE key = ?1').bind(next, 'pk_test_3333333333333333333333333333333c').run();
     expect(await appByKey(env.APP_DB, next, now)).toBeNull();
+    // Nor does batch C5's tombstone in the legacy column (D225): it is in no app_keys row.
+    const tombstone = 'pk_test_0revoked1111111111111111';
+    await env.APP_DB.prepare('UPDATE apps SET publishable_key = ?2 WHERE id = ?1').bind(app.id, tombstone).run();
+    expect(await appByKey(env.APP_DB, tombstone, now)).toBeNull();
     // Any suspension bit makes it inactive (start then answers app_suspended); a deleted app is unknown everywhere.
     await env.APP_DB.prepare('UPDATE apps SET suspended_by = 4 WHERE id = ?1').bind(app.id).run();
     expect(await appByKey(env.APP_DB, 'pk_test_3333333333333333333333333333333c', now)).toMatchObject({ active: false });

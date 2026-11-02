@@ -23,7 +23,10 @@
 //   show                            the published kids, their roles and slots (public values only)
 //
 // Every command that changes something prints its plan and changes nothing without --yes; each manifest change needs
-// `gen` and a deploy to take effect, which the command says. Dependencies are injectable, so the tests run every flow
+// `gen` and a deploy to take effect, which the command says. When the manifest has a `watchdog` block, every key the
+// manifest publishes is also pinned in `watchdog.pinnedIdentityKeys` (D211; the schema requires it): `init` and `next`
+// pin the new keys (deploy the watchdog first, then the API), `retire` unpins the key it unpublishes (deploy the API
+// first, then the watchdog). Dependencies are injectable, so the tests run every flow
 // against a temp directory and a fake wrangler. Nothing prints a private key.
 import { spawnSync } from 'node:child_process';
 import { generateKeyPairSync, randomBytes as nodeRandomBytes } from 'node:crypto';
@@ -46,7 +49,9 @@ export const IDENTITY_KEY_USAGE = `Usage: identity-key.ts <env> <command> [--yes
   show                           the published kids, their roles and slots (public values only)
   --yes                          do it (without it, only print the plan)
 
-After init, next, switch and retire: commit envs/<env>.json, run gen and deploy the API. No private key is ever
+After init, next, switch and retire: commit envs/<env>.json, run gen and deploy the API. With a watchdog block, init
+and next (and kms-init, kms-add) also pin the new keys in watchdog.pinnedIdentityKeys (deploy the watchdog first), and
+retire (and kms-retire) unpins (deploy the watchdog after the API). No private key is ever
 printed. Testnet envs only. The sub key is never rotated: a new one changes every user's \`sub\` at every partner.
 
 AWS KMS signer (staging and mainnet; D215, docs/operations.md "Identity token keys on AWS KMS"):
@@ -216,6 +221,64 @@ function checked(out: string, key: string, value: unknown): string {
   return out;
 }
 
+/** The `"pinnedIdentityKeys": [...]` member on one line, as envs/*.json keep it. */
+const PINS_LINE = /^([ \t]*)"pinnedIdentityKeys"[ \t]*:[ \t]*\[[^\]\n]*\](,?)[ \t]*$/mu;
+
+/**
+ * `watchdog.pinnedIdentityKeys` with `add` pinned and `remove` unpinned (D211); the result must validate. Only that
+ * one line changes (L3): it is rewritten in place (`["a", "b"]`, as the committed manifests have it), added after the
+ * watchdog block's last member, or removed when nothing stays pinned; the rest of the file is kept byte for byte. A
+ * manifest without a `watchdog` block is returned unchanged (no watchdog, nothing to pin). A layout this can't place
+ * (the member spread over several lines, or two of them) falls back to rewriting the watchdog block.
+ */
+export function withIdentityPins(text: string, add: readonly string[], remove: readonly string[]): string {
+  const raw = JSON.parse(text) as { watchdog?: Record<string, unknown> };
+  if (!raw.watchdog) return text;
+  const current = Array.isArray(raw.watchdog.pinnedIdentityKeys) ? (raw.watchdog.pinnedIdentityKeys as string[]) : [];
+  const next = [...current.filter((t) => !remove.includes(t)), ...add.filter((t) => !current.includes(t))];
+  if (next.length === current.length && next.every((t, i) => t === current[i])) return checked(text, 'watchdog', raw.watchdog);
+  const { pinnedIdentityKeys: _old, ...rest } = raw.watchdog;
+  const value = next.length ? { ...rest, pinnedIdentityKeys: next } : rest;
+  const member = `"pinnedIdentityKeys": [${next.map((t) => JSON.stringify(t)).join(', ')}]`;
+  const lines = [...text.matchAll(new RegExp(PINS_LINE.source, 'gmu'))];
+  let out: string | null = null;
+  if (lines.length === 1) {
+    const m = lines[0]!;
+    if (next.length) {
+      out = `${text.slice(0, m.index)}${m[1]}${member}${m[2]}${text.slice(m.index + m[0].length)}`;
+    } else if (m[2] === ',') {
+      // Not the last member: drop the line.
+      out = text.slice(0, m.index) + text.slice(m.index + m[0].length + 1);
+    } else {
+      // The last member: drop the line and the comma that ends the member before it.
+      const before = text.slice(0, m.index).replace(/,([ \t]*\n)$/u, '$1');
+      out = before + text.slice(m.index + m[0].length + 1);
+    }
+  } else if (lines.length === 0 && next.length) {
+    // Absent: a new last member of the watchdog block, indented like the others.
+    const head = /^([ \t]*)"watchdog"[ \t]*:[ \t]*\{[ \t]*\n/mu.exec(text);
+    if (head) {
+      let depth = 0;
+      let end = -1;
+      for (let i = head.index + head[0].lastIndexOf('{'); i < text.length && end < 0; i++) {
+        const c = text[i];
+        if (c === '"') {
+          for (i++; i < text.length && text[i] !== '"'; i++) if (text[i] === '\\') i++;
+        } else if (c === '{' || c === '[') depth++;
+        else if ((c === '}' || c === ']') && --depth === 0) end = i;
+      }
+      const body = end > 0 ? text.slice(head.index + head[0].length, end) : '';
+      const indent = /^([ \t]+)"/mu.exec(body)?.[1];
+      if (end > 0 && indent !== undefined) {
+        const lastNl = text.lastIndexOf('\n', end - 1);
+        const prev = text.slice(head.index + head[0].length, lastNl).replace(/[ \t]+$/u, '');
+        out = `${text.slice(0, head.index + head[0].length)}${prev},\n${indent}${member}${text.slice(lastNl)}`;
+      }
+    }
+  }
+  return out === null ? replaceManifestBlock(text, 'watchdog', value) : checked(out, 'watchdog', value);
+}
+
 type Slots = Record<SigningSlot, string | null>;
 
 /** Runs `identity-key <argv>`. */
@@ -268,6 +331,13 @@ export function identityKey(argv: readonly string[], deps: IdentityKeyDeps): voi
   };
   const writeSlots = (s: Slots) => writeSecretJson(file('slots'), s);
   const redeploy = `Commit envs/${m.name}.json, then gen and deploy the API (docs/operations.md "Identity token keys").`;
+  const watched = m.watchdog !== undefined;
+  const pinFirst = watched
+    ? `Commit envs/${m.name}.json, then gen and deploy the watchdog FIRST (on its own Cloudflare account), then gen and deploy the API (docs/operations.md "Identity token keys"); until both are deployed the watchdog warns identity_key_missing.`
+    : redeploy;
+  const unpinAfter = watched
+    ? `Commit envs/${m.name}.json, then gen and deploy the API FIRST, then gen and deploy the watchdog (docs/operations.md "Identity token keys"): the other order pages identity_key_unpinned until the API deploy.`
+    : redeploy;
 
   if (command === 'show') {
     const t = m.identityToken;
@@ -295,21 +365,26 @@ export function identityKey(argv: readonly string[], deps: IdentityKeyDeps): voi
     deps.log(
       `Plan (env ${m.name}): generate two P-256 keys (active, standby) and a 32-byte sub key, write ${shown('signingKey')}, ` +
         `${shown('standbyKey')} and ${shown('subKey')} (0600), add identityToken (iss ${identityIssuerFor(m.apiUrl)}, both public keys, ` +
-        `the first active) to envs/${m.name}.json${local ? '' : `, set IDENTITY_SIGNING_KEY and IDENTITY_SUB_KEY on Worker ${worker} (the standby stays off the Worker)`}.`,
+        `the first active) to envs/${m.name}.json${watched ? ' and pin both in watchdog.pinnedIdentityKeys' : ''}${local ? '' : `, set IDENTITY_SIGNING_KEY and IDENTITY_SUB_KEY on Worker ${worker} (the standby stays off the Worker)`}.`,
     );
     if (!apply) return void deps.log(DRY_RUN_LINE);
     const active = deps.newP256();
     const standby = deps.newP256();
     if (!isP256PrivateJwk(active) || !isP256PrivateJwk(standby)) throw new Error('newP256 returned a malformed key');
     const subKey = newSubKey(deps.randomBytes);
-    // On disk before anything else: the files are the only copies Cloudflare won't give back.
+    const block = { iss: identityIssuerFor(m.apiUrl), signer: { kind: 'worker-secret', activeKid: publicEntry(active).kid }, publicKeys: [publicEntry(active), publicEntry(standby)] };
+    // The new manifest text first, validated (L4): a manifest that won't take the keys fails before any key file exists.
+    // Pins before the block (D211): each intermediate manifest validates, and a published key is always pinned.
+    const manifestText = insertManifestBlock(withIdentityPins(readText(m.name), block.publicKeys.map((k) => k.kid), []), 'identityToken', block, 'apiUrl');
+    // On disk before the manifest and the Worker: the files are the only copies Cloudflare won't give back.
     writeNewSecretFile(file('signingKey'), `${JSON.stringify(active)}\n`);
     writeNewSecretFile(file('standbyKey'), `${JSON.stringify(standby)}\n`);
     writeNewSecretFile(file('subKey'), `${subKey}\n`);
     deps.log(`Wrote ${shown('signingKey')}, ${shown('standbyKey')} and ${shown('subKey')} (0600, values not shown). Move the standby file offline.`);
-    const block = { iss: identityIssuerFor(m.apiUrl), signer: { kind: 'worker-secret', activeKid: publicEntry(active).kid }, publicKeys: [publicEntry(active), publicEntry(standby)] };
-    writeText(m.name, insertManifestBlock(readText(m.name), 'identityToken', block, 'apiUrl'));
-    deps.log(`Wrote identityToken to envs/${m.name}.json (active kid ${block.signer.activeKid}, standby ${block.publicKeys[1]!.kid}). ${redeploy}`);
+    writeText(m.name, manifestText);
+    deps.log(
+      `Wrote identityToken to envs/${m.name}.json (active kid ${block.signer.activeKid}, standby ${block.publicKeys[1]!.kid})${watched ? ' and pinned both in watchdog.pinnedIdentityKeys' : ''}. ${pinFirst}`,
+    );
     if (local) {
       writeSlots({ IDENTITY_SIGNING_KEY: null, IDENTITY_SIGNING_KEY_STANDBY: null });
       return void deps.log(`Not set on the Worker (--local). \`identity-key ${m.name} put --yes\` sets them, or \`gen ${m.name} --dev-vars\` for wrangler dev.`);
@@ -344,13 +419,18 @@ export function identityKey(argv: readonly string[], deps: IdentityKeyDeps): voi
   if (command === 'next') {
     if (existsSync(file('nextKey'))) throw new Error(`${shown('nextKey')} exists: switch to it or retire it first`);
     if (t.publicKeys.length >= 4) throw new Error(`identityToken.publicKeys already has 4 keys: retire one first`);
-    deps.log(`Plan (env ${m.name}): generate a P-256 key, write ${shown('nextKey')} (0600) and publish it in envs/${m.name}.json (nothing is uploaded).`);
+    deps.log(
+      `Plan (env ${m.name}): generate a P-256 key, write ${shown('nextKey')} (0600) and publish it in envs/${m.name}.json${watched ? ', pinned in watchdog.pinnedIdentityKeys' : ''} (nothing is uploaded).`,
+    );
     if (!apply) return void deps.log(DRY_RUN_LINE);
     const key = deps.newP256();
     if (!isP256PrivateJwk(key)) throw new Error('newP256 returned a malformed key');
+    const entry = publicEntry(key);
+    // Validated before the key file is written (L4); pinned before published (D211).
+    const manifestText = replaceManifestBlock(withIdentityPins(readText(m.name), [entry.kid], []), 'identityToken', { ...t, publicKeys: [...t.publicKeys, entry] });
     writeNewSecretFile(file('nextKey'), `${JSON.stringify(key)}\n`);
-    writeManifest({ ...t, publicKeys: [...t.publicKeys, publicEntry(key)] });
-    deps.log(`Published kid ${publicEntry(key).kid}. ${redeploy} Partners that pin thumbprints need 14 days' notice (24 h on testnet) before \`switch --to next\`, unless this is an incident.`);
+    writeText(m.name, manifestText);
+    deps.log(`Published kid ${entry.kid}${watched ? ' and pinned it' : ''}. ${pinFirst} Partners that pin thumbprints need 14 days' notice (24 h on testnet) before \`switch --to next\`, unless this is an incident.`);
     return;
   }
 
@@ -393,17 +473,19 @@ export function identityKey(argv: readonly string[], deps: IdentityKeyDeps): voi
   const slot = SIGNING_SLOTS.find((s) => slots[s] === kid) ?? null;
   const retiredFile = join(dir, `identity-signing-key-retired-${kid.slice(0, 16)}.json`);
   deps.log(
-    `Plan (env ${m.name}): remove kid ${kid} (${which}) from identityToken.publicKeys${slot ? `, delete ${slot} on Worker ${worker}` : ''}, and move ` +
+    `Plan (env ${m.name}): remove kid ${kid} (${which}) from identityToken.publicKeys${watched ? ' and watchdog.pinnedIdentityKeys' : ''}${slot ? `, delete ${slot} on Worker ${worker}` : ''}, and move ` +
       `${shown(role)} to .secrets/${m.name}/identity-signing-key-retired-${kid.slice(0, 16)}.json (kept for the post-mortem; never commit it).`,
   );
   if (!apply) return void deps.log(DRY_RUN_LINE);
   if (existsSync(retiredFile)) throw new Error(`${retiredFile} exists: refusing to overwrite it`);
-  writeManifest({ ...t, publicKeys: t.publicKeys.filter((k) => k.kid !== kid) });
+  // Unpublish first, then unpin (D211): each intermediate manifest validates. A retired key is never left pinned, so a
+  // key that leaked can't be republished without a critical alert.
+  writeText(m.name, withIdentityPins(replaceManifestBlock(readText(m.name), 'identityToken', { ...t, publicKeys: t.publicKeys.filter((k) => k.kid !== kid) }), [], [kid]));
   if (slot) {
     deps.deleteSecret(m, slot);
     deps.log(`Deleted ${slot} on Worker ${worker}.`);
     writeSlots({ ...slots, [slot]: null });
   }
   renameSync(file(role), retiredFile);
-  deps.log(`Kid ${kid} is unpublished. ${redeploy} Partners using the JWKS URL reject its tokens within 10 minutes of the deploy.`);
+  deps.log(`Kid ${kid} is unpublished${watched ? ' and unpinned' : ''}. ${unpinAfter} Partners using the JWKS URL reject its tokens within 10 minutes of the deploy.`);
 }

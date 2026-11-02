@@ -115,10 +115,10 @@ describe('usageMigrate (the command)', () => {
   it('lists pending files without --yes and changes nothing; applies with --yes', async () => {
     const dry = await run(['sandbox-dev']);
     expect(dry.result).toEqual([]);
-    expect(dry.lines.join('\n')).toMatch(/pending on sandbox-dev: 0001_ledger\.sql/u);
+    expect(dry.lines.join('\n')).toMatch(/pending on sandbox-dev: 0001_ledger\.sql, 0002_identity_tokens\.sql, 0003_writer_partitions\.sql, 0004_email_counts\.sql/u);
     expect((await dry.db.query("SELECT to_regclass('usage.events') AS r")).rows[0]).toEqual({ r: null });
     const real = await run(['sandbox-dev', '--yes'], { db: dry.db });
-    expect(real.result).toEqual(['0001_ledger.sql']);
+    expect(real.result).toEqual(['0001_ledger.sql', '0002_identity_tokens.sql', '0003_writer_partitions.sql', '0004_email_counts.sql']);
     expect((await run(['sandbox-dev'], { db: dry.db })).lines.join('\n')).toMatch(/up to date/u);
   });
 

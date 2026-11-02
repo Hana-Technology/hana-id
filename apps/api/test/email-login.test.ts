@@ -13,6 +13,8 @@ import { EMAIL_ISS, type EmailChain, emailAud, emailEnv, emailSigner, emailToken
 import { appHeaders, bytes, call, chain, google, newSessionKey, seedApp, sessionBody, signSession, uid } from './helpers.ts';
 import { appKey, hanaHeaders, loginBody, withCombinedCall } from './login-helpers.ts';
 import { panic } from './near-mock.ts';
+import { ledger } from './usage-ledger.ts';
+import { RECORD_EMAIL_SQL, syncEmailUsage } from '../src/usage/email-sync.ts';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -480,3 +482,30 @@ describe('email tokens and other issuers', () => {
 });
 
 export type { EmailChain };
+
+describe('email counts into the usage ledger (hourly, D233)', () => {
+  const day = (msAgo: number) => new Date(Date.now() - msAgo).toISOString().slice(0, 10);
+
+  it('an email login counts in email_usage; the hourly copy sends it with the app’s org and scope; a replay never lowers it', async () => {
+    const { app } = await setup();
+    expect((await sessions(app, await emailSessionBody(app.scope))).status).toBe(200);
+    await env.DB.prepare('INSERT INTO email_usage (app_id, day, links) VALUES (?1, ?2, 4)').bind(app.id, day(86_400_000)).run();
+    expect(await syncEmailUsage(env)).toBeGreaterThanOrEqual(2);
+    const mine = () => ledger.email.filter((r) => r.app_id === app.id).sort((a, b) => a.day.localeCompare(b.day));
+    expect(mine()).toEqual([
+      { app_id: app.id, day: day(86_400_000), org_id: 'org_legacy', scope_id: app.scope, email_sessions: 0, links: 4 },
+      { app_id: app.id, day: day(0), org_id: 'org_legacy', scope_id: app.scope, email_sessions: 1, links: 0 },
+    ]);
+    await syncEmailUsage(env);
+    expect(mine().map((r) => [r.email_sessions, r.links])).toEqual([[0, 4], [1, 0]]);
+    expect(ledger.calls.filter((c) => c.sql === RECORD_EMAIL_SQL).length).toBe(2);
+  });
+
+  it('sends nothing without the binding; a failing ledger is logged and never throws', async () => {
+    const app = await seedApp();
+    await env.DB.prepare('INSERT INTO email_usage (app_id, day, email_sessions) VALUES (?1, ?2, 1)').bind(app.id, day(0)).run();
+    expect(await syncEmailUsage({ ...env, USAGE_DB: undefined })).toBe(0);
+    ledger.fail = () => new Error('Connection terminated unexpectedly');
+    expect(await syncEmailUsage(env)).toBe(0);
+  });
+});

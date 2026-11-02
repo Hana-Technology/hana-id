@@ -216,8 +216,9 @@ export const isSharedClient = (config: ConfigView, provider: string, aud: string
 export const isSharedOrPending = (config: ConfigView, provider: string, aud: string): boolean =>
   config.shared_clients.some(([p, a]) => p === provider && a === aud) || config.pending_shared_clients.some(({ client: [p, a] }) => p === provider && a === aud);
 
-export async function getScope(env: Env, scopeId: string): Promise<ScopeView | null> {
-  const cached = scopeViewCache.get(scopeId);
+/** `fresh`: skip the cache (the RPC's owner and client checks read uncached, docs/batch-c-spec.md "Apps, scopes"). */
+export async function getScope(env: Env, scopeId: string, opts: { fresh?: boolean } = {}): Promise<ScopeView | null> {
+  const cached = opts.fresh ? undefined : scopeViewCache.get(scopeId);
   if (cached !== undefined) return cached;
   const raw = await new Rpc(env.NEAR_RPC).view<Record<string, unknown> | null>(env.SIGNER_ACCOUNT, 'get_scope', { scope_id: scopeId });
   let value: ScopeView | null = null;

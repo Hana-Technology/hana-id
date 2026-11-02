@@ -85,6 +85,17 @@ export interface Env {
   /** The logo origin (manifest `files.origin`), from batch C11; unset without the dashboard blocks. */
   FILES_ORIGIN?: string;
   /**
+   * Batch C4 (docs/batch-c-spec.md "Usage capture"): the usage ledger's writer, a Hyperdrive config (role
+   * `usage_writer`, which may only call `usage.record_event`, `usage.record_identity_tokens`, `usage.record_email_counts` and `usage.ensure_partitions`) bound by
+   * `gen --usage-hyperdrive-id`. Optional: without it capture is off and every endpoint answers as before.
+   */
+  USAGE_DB?: Hyperdrive;
+  /**
+   * Secret (`usage-setup <env> user-id-key`): the uid key, base64 of 32 bytes (docs/batch-c-spec.md "uid"). Without
+   * it events carry no uid (MAU and new users go uncounted). Never logged, never rotated within a contract term.
+   */
+  USER_ID_KEY?: string;
+  /**
    * Email login (manifest `emailIssuer`, scripts/gen-wrangler.ts): the email tokens' `iss` and the issuer's public keys
    * (a JSON array of public RSA JWKs, the JWKS the issuer serves, D196). Without them every email token is refused
    * (`unsupported_issuer`); Google logins are unaffected.

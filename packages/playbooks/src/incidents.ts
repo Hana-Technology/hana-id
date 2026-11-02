@@ -151,6 +151,7 @@ const apiCompromised: Playbook = {
     "Deploys nobody made (Cloudflare's deployment history), unknown API tokens or logins, changed Worker secrets or D1 rows (origins, settings).",
     'A `forged_key_change` from the signer account (the updater key is a Worker secret).',
     "The watchdog keeps alerting: it runs on its own Cloudflare account and can't be silenced from this one (except on sandbox-dev, D125).",
+    "A critical `identity_key_unpinned`: the API publishes an identity token key the watchdog doesn't pin (identity-jwks-forged).",
   ],
   impact: [
     'Every key of every user who loads the vault while it is compromised (the API renders the vault page; the same account deploys the vault and auth bundles). Pausing the contract stops new derivations, not a malicious vault page reading a persisted share: those users\' keys are exposed and must be moved (can\'t be undone).',
@@ -178,7 +179,7 @@ const apiCompromised: Playbook = {
     {
       title: 'Rotate every API secret',
       who: 'a founder',
-      detail: 'The updater key (updater-key-stolen), both relayer pools (relayer-key-stolen), and `VAULT_KEK` with every share revoked (vault-kek-leaked). The admin Worker\'s copy of `WATCHDOG_STATUS_TOKEN` too, once batch C exists.',
+      detail: 'The updater key (updater-key-stolen), both relayer pools (relayer-key-stolen), `VAULT_KEK` with every share revoked (vault-kek-leaked), and the identity token signing key (identity-signing-key-compromised). The admin Worker\'s copy of `WATCHDOG_STATUS_TOKEN` too, once batch C exists.',
     },
     {
       title: 'Check D1 for tampering',
@@ -737,7 +738,7 @@ const identitySigningKey: Playbook = {
     "Whoever holds an identity signing key can forge any user's identity token for any app, until the key is out of the JWKS. Switch to a key the incident didn't touch, unpublish the exposed ones, tell partners.",
   signals: [
     "The API Worker's secrets, `.secrets/<env>/identity-signing-key*.json` or the operator's machine were exposed; a partner reports a token they didn't expect (a valid signature for a session that never existed).",
-    "Not built yet (build steps 7–8): the KMS `Sign` reconciliation against `identity_issuance_hourly` and the watchdog's JWKS pin check.",
+    "No watchdog alert: a stolen key signs under its own, pinned kid, so the JWKS doesn't change and the watchdog's pin check (D210) sees nothing. It pages only when a key of the attacker's own, or private key material, is published (identity-jwks-forged). Not built yet (planned with step 7's KMS signer): the `Sign` reconciliation against `identity_issuance_hourly`, which would show signatures Hana didn't count.",
   ],
   impact: [
     'Forged tokens pass at every partner that trusts the JWKS URL, as any user of any app (identity at partners: credits, referrals, their own accounts), until the key is removed and their JWKS caches refresh (≤ 10 min). No wallet, key or Hana API is reachable with a token.',
@@ -754,20 +755,21 @@ const identitySigningKey: Playbook = {
     {
       title: 'Only the active key exposed: switch to the standby',
       who: 'a founder',
-      detail: "Uploads the standby into the free Worker slot and makes it the manifest's active kid. Put the manifest change in the repo, `gen`, deploy: new tokens are signed by the standby, which partners already trust.",
+      detail: "Uploads the standby into the free Worker slot and makes it the manifest's active kid (no pin changes: the published set is the same). Put the manifest change in the repo, API `gen`, deploy: new tokens are signed by the standby, which partners already trust.",
       commands: [c.identityKeySwitchStandby, c.apiGen, c.apiDeploy],
     },
     {
       title: 'Both keys exposed: retire the standby and rotate to a fresh key',
       who: 'a founder',
-      detail: 'Unpublish the standby, generate and publish a fresh key, switch to it, deploy. Partners using the JWKS URL pick up the new kid at once (jose refetches on an unknown kid); partners that pin thumbprints need the new one from you.',
-      commands: [c.identityKeyRetireStandby, c.identityKeyNext, c.identityKeySwitchNext, c.apiGen, c.apiDeploy],
+      detail:
+        "`retire --key standby` unpublishes and unpins the standby, `next` publishes and pins a fresh key: deploy the watchdog (it now pins the fresh key, not the standby), then the API. Between the two deploys the watchdog pages `identity_key_unpinned` for the standby the old API still publishes: expected, acknowledge it once the API is deployed (or deploy the API between the two commands to avoid it). Then `switch --to next` and an API deploy. Partners using the JWKS URL pick up the new kid at once (jose refetches on an unknown kid); partners that pin thumbprints need the new one from you.",
+      commands: [c.identityKeyRetireStandby, c.identityKeyNext, c.watchdogGen, c.watchdogDeploy, c.apiGen, c.apiDeploy, c.identityKeySwitchNext, c.apiGen, c.apiDeploy],
     },
     {
       title: 'Unpublish the exposed active key',
       who: 'a founder',
-      detail: "Removes it from the JWKS and deletes its Worker secret, after the deploy of the switch; its file is set aside for the post-mortem (never put it in the repo). Deploy: partners reject its tokens within 10 minutes. Don't wait the 2 h of a scheduled rotation.",
-      commands: [c.identityKeyRetirePrevious, c.apiGen, c.apiDeploy],
+      detail: "Removes it from the JWKS and the watchdog's pins and deletes its Worker secret, after the deploy of the switch; its file is set aside for the post-mortem (never put it in the repo). Deploy the API first (partners reject its tokens within 10 minutes), then the watchdog: the other order pages `identity_key_unpinned` until the API deploy. Don't wait the 2 h of a scheduled rotation.",
+      commands: [c.identityKeyRetirePrevious, c.apiGen, c.apiDeploy, c.watchdogGen, c.watchdogDeploy],
     },
     {
       title: 'Tell partners',
@@ -777,8 +779,8 @@ const identitySigningKey: Playbook = {
     {
       title: 'A new standby',
       who: 'a founder',
-      detail: 'After a switch to the standby there is none: `next` publishes a new key (not uploaded); move its file offline and keep it as the next standby.',
-      commands: [c.identityKeyNext],
+      detail: 'After a switch to the standby there is none: `next` publishes and pins a new key (not uploaded): deploy the watchdog first, then the API; move its file offline and keep it as the next standby.',
+      commands: [c.identityKeyNext, c.watchdogGen, c.watchdogDeploy, c.apiGen, c.apiDeploy],
     },
   ],
   verify: [
@@ -787,7 +789,7 @@ const identitySigningKey: Playbook = {
   ],
   followUps: ['If the Worker or the Cloudflare account was the way in: api-or-cloudflare-compromised. Before mainnet the key moves to AWS KMS (build step 7; identity-kms-signer-compromised).'],
   refs: ['docs/operations.md#identity-token-keys', 'docs/security.md#what-a-compromise-gives', 'D177'],
-  related: ['api-or-cloudflare-compromised', 'identity-kms-signer-compromised'],
+  related: ['api-or-cloudflare-compromised', 'identity-kms-signer-compromised', 'identity-jwks-forged'],
 };
 
 const identityKmsSigner: Playbook = {
@@ -821,8 +823,8 @@ const identityKmsSigner: Playbook = {
     {
       title: 'Unpublish the suspect key',
       who: 'a founder',
-      detail: "After the switch's deploy: remove it from the JWKS (partners reject its tokens within 10 minutes), remove its ARN from the IAM policy, disable it in KMS and schedule its deletion. Don't wait the 2 h of a scheduled rotation.",
-      commands: [c.identityKmsRetirePrevious, c.apiGen, c.apiDeploy],
+      detail: "After the switch's deploy: remove it from the JWKS and the watchdog's pins (partners reject its tokens within 10 minutes), remove its ARN from the IAM policy, disable it in KMS and schedule its deletion. Deploy the API first, then the watchdog: the other order pages `identity_key_unpinned` until the API deploy. Don't wait the 2 h of a scheduled rotation.",
+      commands: [c.identityKmsRetirePrevious, c.apiGen, c.apiDeploy, c.watchdogGen, c.watchdogDeploy],
     },
     {
       title: 'Tell partners',
@@ -832,8 +834,8 @@ const identityKmsSigner: Playbook = {
     {
       title: 'A new standby',
       who: 'a founder',
-      detail: 'Create a new ECC_NIST_P256 key in another region than the new active key (with the same key policy), publish it, deploy.',
-      commands: [c.identityKmsAddStandby, c.apiGen, c.apiDeploy],
+      detail: 'Create a new ECC_NIST_P256 key in another region than the new active key (with the same key policy), publish and pin it (`kms-add` writes both), deploy the watchdog first, then the API.',
+      commands: [c.identityKmsAddStandby, c.watchdogGen, c.watchdogDeploy, c.apiGen, c.apiDeploy],
     },
   ],
   verify: [

@@ -10,6 +10,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@hana-id/console-core':
+        specifier: workspace:*
+        version: link:../../packages/console-core
       '@hana-id/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -34,6 +37,9 @@ importers:
       aws4fetch:
         specifier: 1.0.20
         version: 1.0.20
+      pg:
+        specifier: 8.23.1
+        version: 8.23.1
     devDependencies:
       '@cloudflare/vitest-plugin':
         specifier: 1.4.4
@@ -44,9 +50,6 @@ importers:
       '@electric-sql/pglite':
         specifier: 0.5.11
         version: 0.5.11
-      '@hana-id/console-core':
-        specifier: workspace:*
-        version: link:../../packages/console-core
       '@hana-id/env':
         specifier: workspace:*
         version: link:../../packages/env
@@ -54,9 +57,6 @@ importers:
         specifier: ^22.0.0
         version: 22.20.5
       '@types/pg':
-        specifier: 8.23.1
-        version: 8.23.1
-      pg:
         specifier: 8.23.1
         version: 8.23.1
       tsx:
@@ -334,6 +334,9 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
     devDependencies:
+      '@hana-id/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.5
@@ -623,6 +626,9 @@ importers:
       '@hana-id/env':
         specifier: workspace:*
         version: link:../packages/env
+      '@hana-id/jwks':
+        specifier: workspace:*
+        version: link:../packages/jwks
       '@near-js/crypto':
         specifier: 2.5.1
         version: 2.5.1(@near-js/types@2.5.1)(@near-js/utils@2.5.1(@near-js/types@2.5.1))

@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { type Server, createServer } from 'node:http';
 import { type AddressInfo } from 'node:net';
 import { type JWK, SignJWT, calculateJwkThumbprint, exportJWK, generateKeyPair } from 'jose';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 const APP_ID = 'app_partner1';
 const STELLAR = 'GBXGQJWVLWOYHFLVTKWV5FGHA3LNYY2JQKM7OAJAUEQFU6LPCSEFVXON';
@@ -16,7 +16,11 @@ let issuer: string;
 let key: CryptoKey;
 let kid: string;
 let other: CryptoKey;
+/** A key of an attacker who controls Hana's servers: published in the JWKS next to Hana's. */
+let rogue: CryptoKey;
+let rogueKid: string;
 let verify: typeof import('../src/verify.ts');
+let jwks: { keys: JWK[] };
 
 beforeAll(async () => {
   const pair = await generateKeyPair('ES256', { extractable: true });
@@ -24,7 +28,11 @@ beforeAll(async () => {
   const pub = (await exportJWK(pair.publicKey)) as JWK;
   kid = await calculateJwkThumbprint(pub);
   other = (await generateKeyPair('ES256')).privateKey;
-  const jwks = { keys: [{ ...pub, kid, use: 'sig', alg: 'ES256' }] };
+  const roguePair = await generateKeyPair('ES256', { extractable: true });
+  rogue = roguePair.privateKey;
+  const roguePub = (await exportJWK(roguePair.publicKey)) as JWK;
+  rogueKid = await calculateJwkThumbprint(roguePub);
+  jwks = { keys: [{ ...pub, kid, use: 'sig', alg: 'ES256' }, { ...roguePub, kid: rogueKid, use: 'sig', alg: 'ES256' }] };
   server = createServer((req, res) => {
     if (req.url === '/v1/identity/jwks.json') {
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=600' });
@@ -140,6 +148,53 @@ describe('verifyHanaIdentityToken', () => {
     expect(() => verify.assertWallet(id, 'evm', EVM.toLowerCase())).not.toThrow();
     expect(() => verify.assertWallet(id, 'evm', '0x000000000000000000000000000000000000dEaD')).toThrow(verify.HanaTokenError);
     expect(() => verify.assertWallet(id, 'stellar', EVM)).toThrow(verify.HanaTokenError);
+  });
+});
+
+describe('thumbprint pinning (HANA_IDENTITY_PINS, recommended for anything of value)', () => {
+  afterEach(() => {
+    delete process.env.HANA_IDENTITY_PINS;
+    vi.resetModules();
+  });
+  const fresh = async (pins: string | undefined) => {
+    vi.resetModules();
+    if (pins === undefined) delete process.env.HANA_IDENTITY_PINS;
+    else process.env.HANA_IDENTITY_PINS = pins;
+    return import('../src/verify.ts');
+  };
+  const rogueToken = async () =>
+    new SignJWT({ iss: issuer, aud: APP_ID, sub: 'u1_victim', sid: 's1_x', wallets: [] })
+      .setProtectedHeader({ alg: 'ES256', kid: rogueKid, typ: 'hana-identity+jwt' })
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(rogue);
+
+  it("without pins, a key published in Hana's JWKS by someone else verifies (the risk pinning removes)", async () => {
+    const v = await fresh(undefined);
+    expect((await v.verifyHanaIdentityToken(await rogueToken())).userId).toBe('u1_victim');
+  });
+
+  it("with pins, only the pinned keys verify, whatever the JWKS lists", async () => {
+    const v = await fresh(` ${kid} ,`);
+    expect((await v.verifyHanaIdentityToken(await token())).sessionId).toBe('s1_Jf2kL9mN0pQ3rS6tU8vW1x');
+    await expect(v.verifyHanaIdentityToken(await rogueToken())).rejects.toMatchObject({ code: 'invalid' });
+  });
+
+  it("a pinned kid on another key doesn't pass: the key itself is hashed", async () => {
+    const v = await fresh(kid);
+    jwks.keys[1] = { ...jwks.keys[1]!, kid: `${kid}` };
+    jwks.keys.reverse();
+    try {
+      const forged = await new SignJWT({ iss: issuer, aud: APP_ID, sub: 'u1_victim', sid: 's1_x', wallets: [] })
+        .setProtectedHeader({ alg: 'ES256', kid, typ: 'hana-identity+jwt' })
+        .setIssuedAt()
+        .setExpirationTime('1h')
+        .sign(rogue);
+      await expect(v.verifyHanaIdentityToken(forged)).rejects.toMatchObject({ code: 'invalid' });
+    } finally {
+      jwks.keys.reverse();
+      jwks.keys[1] = { ...jwks.keys[1]!, kid: rogueKid };
+    }
   });
 });
 

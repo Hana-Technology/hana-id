@@ -1,0 +1,37 @@
+# The outside probe of the partner identity token's JWKS and discovery document (D210; docs/operations.md
+# "Identity token: pins and the JWKS check"). The watchdog reads them from its own Cloudflare account, so its fetches
+# come from Cloudflare's network; this job reads them from GitHub's, looking like a partner's verifier (jose's
+# User-Agent, no CF-Worker header, no redirect followed), and checks every key against envs/<env>.json
+# `watchdog.pinnedIdentityKeys` with the watchdog's rules (scripts/identity-probe.ts). Any finding fails the run, and
+# GitHub emails the failure of a scheduled workflow to the user who last changed its schedule. No secrets: it reads
+# public documents and prints only public values. Standard actions only, pinned by commit.
+name: Identity JWKS probe
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: identity-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Identity JWKS probe (outside Cloudflare)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter @hana-id/scripts...
+      - run: pnpm --filter @hana-id/scripts run identity-probe

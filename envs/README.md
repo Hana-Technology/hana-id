@@ -96,6 +96,13 @@ D1 database). Per-IP limiters always stay near their client. Changing it creates
   (D191): pin a new signer's keys before the upgrade executes, raise `required` after it. A change needs
   `watchdog gen` and a redeploy (on the watchdog's own account: a pin change is the operator's, outside Hana's main
   account).
+- `pinnedIdentityKeys` (optional; the partner identity token, `docs/identity-token-spec.md` "JWKS and discovery",
+  D210, D211): the RFC 7638 thumbprints (43 base64url characters; the kids) of the identity token's P-256 keys the
+  watchdog accepts in Hana's identity JWKS, 1–8, each once. With `identityToken` in the manifest, **every one of its
+  `publicKeys` must be pinned** (the schema refuses the manifest otherwise; extra pins are allowed and warn
+  `identity_key_missing` until published). `scripts/identity-key.ts` writes them with the keys: `init` and `next` pin
+  (deploy the watchdog first, then the API), `retire` unpins (deploy the API first, then the watchdog). Absent means
+  nothing is pinned: every published identity key pages as unpinned. sandbox-dev pins its active and standby keys.
 
 `emailIssuer` (optional; no env has it yet): the email login's issuer Worker (`apps/email-issuer/README.md`,
 `docs/operations.md` "Email issuer", D196). Written by `scripts/email-issuer.ts <env> init`, never by hand for the keys:

@@ -79,6 +79,16 @@ const CASES = [
     files: { 'docs/dev.md': `IDENTITY_SIGNING_KEY='${privateJwk()}'\nIDENTITY_SUB_KEY='${randomBytes(32).toString('base64')}'\n` },
     expect: ['hana-worker-secret-assignment', 'hana-private-jwk'],
   },
+  { name: 'uid key file copied out of .secrets', files: { 'copy/user-id-key': `${randomBytes(32).toString('base64')}\n` }, expect: ['hana-secret-file'] },
+  { name: 'USER_ID_KEY line pasted into a doc', files: { 'docs/usage.md': `USER_ID_KEY=${randomBytes(32).toString('base64')}\n` }, expect: ['hana-worker-secret-assignment'] },
+  {
+    name: 'ledger role URL file copied out of .secrets',
+    files: { 'backup/neon-usage-writer.url': `postgresql://usage_writer:${randomBytes(32).toString('base64url')}@ep-x-${randomBytes(4).toString('hex')}.ap-southeast-2.aws.neon.tech/neondb?sslmode=require\n` },
+    expect: ['hana-secret-file', 'hana-postgres-url'],
+  },
+  // 10 distinct characters (random order): log2(10) ≈ 3.3 bits each, over the rule's 3.0 floor.
+  { name: 'Postgres URL with a short (10-character) password', files: { 'notes/short.txt': 'postgres://app:' + shortPassword(10) + '@db.example.net/app\n' }, expect: ['hana-postgres-url'] },
+  { name: 'Postgres URL with a password in an innocent file', files: { 'notes/db.txt': `psql "postgresql://neondb_owner:${randomBytes(18).toString('base64url')}@ep-y.ap-southeast-2.aws.neon.tech/neondb"\n` }, expect: ['hana-postgres-url'] },
   { name: 'email issuer signing key file copied out of .secrets', files: { 'backup/email-issuer-signing-key.json': `${rsaPrivateJwk()}\n`, 'backup/email-issuer-signing-key-standby.json': `${rsaPrivateJwk()}\n` }, expect: ['hana-secret-file', 'hana-private-jwk'] },
   { name: 'email issuer HMAC key files', files: { 'copy/email-sub-key': `${randomBytes(32).toString('base64')}\n`, 'copy/email-code-key': `${randomBytes(32).toString('base64')}\n`, 'copy/email-rl-key': `${randomBytes(32).toString('base64')}\n` }, expect: ['hana-secret-file'] },
   {
@@ -92,6 +102,16 @@ const CASES = [
   { name: 'watchdog secrets file', files: { '.secrets/sandbox-dev/watchdog-secrets.json': `{"WATCHDOG_STATUS_TOKEN":"${randomBytes(32).toString('base64url')}"}\n` }, expect: ['hana-secret-file'] },
 ];
 
+/** `n` distinct letters and digits in a random order (a short password whose entropy is log2(n) bits a character). */
+function shortPassword(n) {
+  const pool = [...'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = randomBytes(1)[0] % (i + 1);
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(0, n).join('');
+}
+
 /** Public look-alikes the repo legitimately contains: none may be flagged by any rule. */
 const NEGATIVE = {
   'src/keys.ts': `export const RELAYER_PUBLIC_KEY = "${publicKey()}";\nexport const CKD = "bls12381g2:${base58(randomBytes(96))}";\nexport const PK = "pk_test_${base58(randomBytes(24))}";\n`,
@@ -100,6 +120,7 @@ const NEGATIVE = {
   'scripts/vault-kek.ts': '// vault-kek.ts <env> <init | put | rotate>\n',
   'envs/x.json': `{ "watchdogs": ["${publicKey()}"], "identityToken": { "publicKeys": [${publicJwk()}] } }\n`,
   'docs/jwks.md': `IDENTITY_SIGNING_KEY=<a P-256 private JWK>\nIDENTITY_SUB_KEY=<base64 of 32 bytes>\n`,
+  'docs/usage.md': 'postgresql://usage_writer:<password>@<host>/neondb?sslmode=require\nUSER_ID_KEY=<base64 of 32 bytes>\npostgresql://usage_writer:unused@usage-db.test.invalid:5432/usage\n',
 };
 
 function scan(dir) {

@@ -3,6 +3,7 @@ import type { Env } from './env.ts';
 import { type AppEndpoint, APP_CONFIG_ENDPOINT, APP_ENDPOINTS, appPreflight, handleAppConfig, handleAppEndpoint, handleHealth, handleOwnerAction, openPreflight } from './handlers.ts';
 import { GOVERNANCE_ENDPOINT, handleGovernance } from './governance-status.ts';
 import { json } from './http.ts';
+import { detectDrift } from './changes/drift.ts';
 import { guardedChangesMaintenance } from './guarded/cron.ts';
 import { syncIssuerKeys } from './issuer-keys.ts';
 import { identityMaintenance } from './identity/maintenance.ts';
@@ -12,11 +13,17 @@ import { log } from './log.ts';
 import { LOGIN_ENDPOINT, handleLogin } from './login.ts';
 import { LOGIN_RELAY_PREFIX, handleLoginRelay, loggedEndpoint } from './login-relay.ts';
 import { LINK_ENDPOINTS, type LinkEndpoint, handleLinkEndpoint } from './links.ts';
+import { syncEmailUsage } from './usage/email-sync.ts';
+import { syncIdentityUsage } from './usage/identity-sync.ts';
+import { ensureUsagePartitions } from './usage/partitions.ts';
 import { vaultMaintenance } from './vault/cron.ts';
 import { handleVaultEndpoint, isVaultEndpoint, vaultPreflight } from './vault/endpoints.ts';
 import { BASE_CSP, handleVaultPage, isVaultPageRequest } from './vault/page.ts';
 
 export { LoginRelay } from './login-relay.ts';
+// Batch C's RPC entrypoints (no route: bound by the console and the admin Worker only, docs/batch-c-spec.md "RPC").
+export { AdminRpc } from './rpc/admin.ts';
+export { ConsoleRpc } from './rpc/console.ts';
 export { RateLimiter } from './rate-limiter.ts';
 export { RelayerKey } from './relayer-key.ts';
 export type { Env } from './env.ts';
@@ -27,8 +34,9 @@ const ID_RE = /^[A-Za-z0-9-]{1,64}$/u;
  * The cron fires every 15 min (one quarter-hourly trigger from gen-wrangler.ts: the free plan allows 5 per
  * account). Every run syncs Google's JWKS with hana-signer (proposals and matured executions, issuer-keys.ts; the
  * governance spec's P = 15 min). The run in the first quarter of each UTC hour also does vault maintenance, prunes
- * the identity token's counts past their retention, and records guarded changes' activations and expiries
- * (guarded/cron.ts). A Worker
+ * the identity token's counts past their retention, records guarded changes' activations and expiries
+ * (guarded/cron.ts), runs drift detection (changes/drift.ts), keeps the usage ledger's monthly partitions 12
+ * months ahead (usage/partitions.ts) and copies the recent identity token counts to it (usage/identity-sync.ts). A Worker
  * still on the old `0 * * * *` trigger only ever gets hourly runs.
  */
 export function isHourlyRun(scheduledTime: number): boolean {
@@ -129,7 +137,7 @@ export default {
       }
       if (pathname === '/v1/owner-actions') {
         if (request.method === 'OPTIONS') return openPreflight();
-        if (request.method === 'POST') return await handleOwnerAction(request, env, requestId);
+        if (request.method === 'POST') return await handleOwnerAction(request, env, requestId, ctx);
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
       }
       return routeError(404, 'not_found', 'Not found', requestId);
@@ -142,14 +150,21 @@ export default {
   async scheduled(controller, env, _ctx): Promise<void> {
     // Independent jobs: one failing must not skip the other. The sync records the JWKS observation from its fetch.
     const jobs: Promise<unknown>[] = [syncIssuerKeys(env)];
-    if (isHourlyRun(controller.scheduledTime)) jobs.push(vaultMaintenance(env), identityMaintenance(env), guardedChangesMaintenance(env));
-    const [issuerKeys, vault, identity, guarded] = await Promise.allSettled(jobs);
+    if (isHourlyRun(controller.scheduledTime)) {
+      jobs.push(vaultMaintenance(env), identityMaintenance(env), guardedChangesMaintenance(env), detectDrift(env));
+      // Usage fails open: these log their own failures and never fail the run (the next hour tries again). Partitions
+      // first, so the copy and the hour's events have their months. Pushed last: the destructuring below is positional.
+      jobs.push(ensureUsagePartitions(env).then(() => Promise.all([syncIdentityUsage(env), syncEmailUsage(env)])));
+    }
+    const [issuerKeys, vault, identity, guarded, drift] = await Promise.allSettled(jobs);
     if (vault?.status === 'rejected') log({ event: 'vault_maintenance', outcome: 'error', code: 'internal' }, 'error');
     if (identity?.status === 'rejected') log({ event: 'identity_maintenance', outcome: 'error', code: 'internal' }, 'error');
     if (guarded?.status === 'rejected') log({ event: 'guarded_change_cron', outcome: 'error', code: 'internal' }, 'error');
+    if (drift?.status === 'rejected') log({ event: 'drift_detection', outcome: 'error', code: 'internal' }, 'error');
     if (issuerKeys?.status === 'rejected') throw issuerKeys.reason;
     if (vault?.status === 'rejected') throw vault.reason;
     if (identity?.status === 'rejected') throw identity.reason;
     if (guarded?.status === 'rejected') throw guarded.reason;
+    if (drift?.status === 'rejected') throw drift.reason;
   },
 } satisfies ExportedHandler<Env>;

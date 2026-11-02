@@ -28,7 +28,7 @@ mod events;
 mod governance;
 mod init;
 mod issuers;
-mod link_cap;
+mod link_counter;
 mod links;
 mod migrate;
 mod oidc;
@@ -240,8 +240,8 @@ pub struct HanaSigner {
     /// True after a migration from pre-v3 state (wallets derived before v3 aren't in `opened`): links are refused until
     /// the owner calls `accept_unrecorded_wallets` (D135). False from `new`.
     pub(crate) unrecorded_wallets: bool,
-    /// New links counted per UTC hour, per scope and in total, and the hourly caps (D200).
-    pub(crate) link_cap: link_cap::LinkCap,
+    /// New links counted per UTC hour, per scope and in total, with alarm thresholds (D200; never refuses).
+    pub(crate) link_counter: link_counter::LinkCounter,
 }
 
 #[near]

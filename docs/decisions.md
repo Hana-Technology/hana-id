@@ -1660,33 +1660,35 @@ detail open or a safer reading was needed. Each follows the spec's intent; the u
   move to SendGrid too is decided separately.
 - Why: one provider the team already operates and pays for; the adapter keeps the choice reversible.
 
-### D200. Link volume: a contract counter and an hourly cap, replacing the indexer scan
-- Date 2026-11-02 · Status: confirmed by the user (option A+); contract built (`feat/link-cap`), watchdog side in
-  progress · Source: batch 5 review (the FastNear scan reads about 13 logins per run at about 75 KB each, so it falls
-  behind and pages on ordinary traffic)
-- Threat: a stolen email signing key (1-of-1 at launch) can sign "owns victim@gmail.com", and D119 links that email
-  identity at once to the victim's Google identity, so the thief derives the victim's Google wallet. Such a takeover
-  leaves new links on chain. (Opening email-only wallets with forged tokens makes no link; the defence there is the
-  key's custody, KMS and a second signer, D121.)
-- Decision: the contract counts every new link, immediate or pending (the combined login with a `link_jwt`, and
-  `link_identity`; not cancels, unlinks or lazy activations), in fixed UTC-hour windows, per scope and in total, and
-  refuses a new link once the scope or the total has reached its cap for the hour (`Link rate limit reached`; the
-  whole call reverts, so a capped login is refused, never completed without its link, D122). Defaults: 50 per scope
-  per hour, 500 in total per hour, changed by the owner (council). The scope or total that reaches its cap is
-  recorded by the call that reaches it, and a view reports the current and previous windows. The watchdog reads that
-  view each run: a cap reached is critical, a count past half the cap is a warning; raising a cap is a critical
-  governance change. The FastNear indexer scan (D192) is removed.
-- Why: exact, on chain, no third party or data budget, and it turns detection into a brake: a thief can take over at
-  most the cap's worth of accounts per hour before the page and the pause. v3 isn't deployed anywhere, so the
-  contract change is cheap now.
-- Cost: a real burst of linking above the cap (a big partner launch) is refused for the rest of the hour until the
-  owner raises the cap; the defaults are provisional until real traffic is measured.
-- Built (contract, branch `feat/link-cap`): `get_link_stats`, `set_link_limits` (lower at once, raise after
-  `governance_delay_ms`, like the delay setters), events `link_cap_reached` and `link_limits_set`
-  (`docs/contract-interface.md` "Link volume: the hourly cap"). The view's `previous` is `null` when the previous hour
-  had no links. Per-scope counts are deleted lazily (each counted link deletes up to 4 older than the previous hour).
-- Not built: the API (batch 6) maps the `Link rate limit reached` panic to a clear user-facing error (the login can be
-  retried in the next hour, or without linking); the watchdog's checks (built separately against the view).
+### D200. Link volume: a contract counter with hourly alarm thresholds, replacing the indexer scan
+- Date 2026-11-02 · Status: confirmed by the user: count and alarm, no refusal (option A, after review H1/H2);
+  contract built (`feat/link-cap`), watchdog side in progress · Source: batch 5 review (the FastNear scan reads about 13
+  logins per run at about 75 KB each, so it falls behind and pages on ordinary traffic); the link-cap review (H1, H2)
+- Threat, stated as it is (review H1): with a stolen email signing key alone (1-of-1 at launch) a thief can log
+  into every email-rooted wallet, log into every Google-rooted wallet that already has an email member, and link their own Google account into victims' email
+  wallets (case A, one Google account per victim and scope). Since D133 a link also needs the session key's signature,
+  so the key alone can't join an email identity to someone else's Google wallet. Only the last of the three makes new
+  links. The defence against a stolen key is its custody (KMS, a second signer, D121); the counter only detects bursts.
+- Decision: the contract counts every new link, immediate or pending (the combined login with a `link_jwt`, cases A
+  and B, and `link_identity`; not cancels, unlinks or lazy activations), in fixed UTC-hour windows, per scope and in
+  total, and **never refuses a link**. When a count is at or above its threshold after a link, the window records it
+  (`flagged_scopes`, `total_threshold_reached`) and the first crossing per window emits `link_threshold_reached`.
+  Defaults 50 per scope and 500 in total per hour, changed by the owner (council) with `set_link_thresholds`: a
+  lowering applies at once, a raise only after `governance_delay_ms` (a raised threshold could hide an attack). A view
+  (`get_link_stats`) reports the current and previous hours; the watchdog reads it each run and alerts when a
+  threshold is reached, and on a scheduled raise. The FastNear indexer scan (D192) is removed.
+- Window boundary (review L1): the windows are fixed hours, so a burst that straddles a boundary is split between two
+  windows and each half may stay under a threshold; the view keeps the previous hour so the watchdog can add them.
+- Why: exact, on chain, no third party or data budget, cheap (≈ 0.3 Tgas per link) while v3 isn't deployed.
+- Rejected: a refusing cap (option A+, built first). It bounded little (H1: the takeovers it was meant to brake need
+  more than the key), and anyone could burn it (H2: one Google account and one email looping `link_identity` and
+  `cancel_link`) and lock real users out of linking logins for the hour.
+- Built (contract, branch `feat/link-cap`): `get_link_stats`, `set_link_thresholds`, events `link_threshold_reached`
+  and `link_thresholds_set` (`docs/contract-interface.md` "Link volume: the hourly counter"). The view's `previous` is
+  `null` when the previous hour had no links; its `total_threshold_reached` also reads the thresholds in force, so a
+  lowered threshold shows at once. Per-scope counts are deleted lazily (each counted link deletes up to 4 older than
+  the previous hour). `set_link_thresholds` and the other v3 owner methods are on the API's never-relay list.
+- Not built: the watchdog's checks (built separately against the view).
 
 ### D170. Identity token layout details the spec left open
 - Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`packages/core/src/identity.ts`, frozen in

@@ -150,7 +150,7 @@ impl HanaSigner {
             // Wallets derived by v1/v2 code aren't in `opened`: no link until the owner accepts that (D135).
             unrecorded_wallets: true,
             // No link yet: the default caps, empty windows (D200).
-            link_cap: crate::link_cap::LinkCap::new(),
+            link_counter: crate::link_counter::LinkCounter::new(),
         }
     }
 }

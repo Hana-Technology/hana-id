@@ -1,7 +1,7 @@
 # hana-signer contract interface (batch A, A.2, B, governance and email login)
 
-Last verified against code: 2026-11-02 (branch `feat/link-cap`: the hourly link cap, D200: `set_link_limits`,
-`get_link_stats`, `Link rate limit reached`, `link_cap_reached`, gas); 2026-11-02 (branch `feat/email-login-2`: contract v3 with `migrate_v1` removed, the email
+Last verified against code: 2026-11-02 (branch `feat/link-cap`: the hourly link counter, D200: `set_link_thresholds`,
+`get_link_stats`, `link_threshold_reached`, gas; it never refuses a link); 2026-11-02 (branch `feat/email-login-2`: contract v3 with `migrate_v1` removed, the email
 login calls and the v2 → v3 upgrade measured in the sandbox, [Gas of the email login calls](#gas-of-the-email-login-calls-sandbox)).
 
 The exact on-chain interface of `contracts/hana-signer`. The API, scripts, console and SDK must match this file.
@@ -1259,8 +1259,8 @@ then the nonce (`auto_link` over this session's nonce preimage, X, the join just
 root), the target account's epoch and the mode; `Link token nonce doesn't match`: a token minted for case A can't
 execute as case B after the chain state changed, D133), the mode (case A), an unlinked pair (`This sign-in method was unlinked`: either identity
 is in the other's account's `unlinked`), room (`Account is full`, `Account already has a sign-in method of this
-kind`), the hourly cap (`Link rate limit reached`, D200). Events `identity_linked` (at once) or
-`identity_link_proposed` (pending). Any panic reverts the whole login,
+kind`). Events `identity_linked` (at once) or `identity_link_proposed` (pending); the link is counted (D200, never
+refused). Any panic reverts the whole login,
 including a bad session signature later in the same call (no link is ever left behind). Contract-paid storage.
 
 | Method | Who | Args | Effect |
@@ -1272,8 +1272,8 @@ including a bad session signature later in the same call (no link is ever left b
 | `get_account(scope_id, provider, sub)` | view | | Account (Types above) or `null` |
 | `identity_key(scope_id, provider, sub)` | view | | hex ik |
 | `accept_unrecorded_wallets()` | owner | `{}` | one way: lets links be made after a migration from pre-v3 state (D135) |
-| `set_link_limits(per_scope_per_hour, total_per_hour)` | owner | `{"per_scope_per_hour":50,"total_per_hour":500}` | the hourly link caps ([below](#link-volume-the-hourly-cap-d200)) |
-| `get_link_stats()` | view | | the link counter ([below](#link-volume-the-hourly-cap-d200)) |
+| `set_link_thresholds(per_scope_per_hour, total_per_hour)` | owner | `{"per_scope_per_hour":50,"total_per_hour":500}` | the hourly alarm thresholds ([below](#link-volume-the-hourly-counter-d200)) |
+| `get_link_stats()` | view | | the link counter ([below](#link-volume-the-hourly-counter-d200)) |
 
 Panics (each method checks in this order where they apply):
 
@@ -1282,8 +1282,7 @@ Panics (each method checks in this order where they apply):
   `account_jwt` = `link_account`, root = A's root, this `epoch` and `salt`); `Identities must differ`; `Sign-in method
   link is pending` (A); `Sign-in method already has a wallet` (N in `opened`); `Sign-in method is already linked` (N a
   member, or a root with members); `Account is full`; `Account already has a sign-in method of this kind`; `Wrong
-  epoch` (`epoch` ≠ the account's); `Link rate limit reached` (D200); `Attached deposit doesn't cover storage: need …
-  yoctoNEAR`.
+  epoch` (`epoch` ≠ the account's); `Attached deposit doesn't cover storage: need … yoctoNEAR`.
 - `cancel_link`: `Paused`; salt; token panics; `Token is for another app`; `Invalid identity key` (not 64 lowercase
   hex characters); `No such member` (no link record); `Link nonce doesn't match` (`link_change` "cancel", root = the
   member's root); `Sign-in method is not in this account` / `Sign-in method link is pending` (the caller, unless it is
@@ -1300,46 +1299,46 @@ Unlinking (or cancelling) stops **future** sessions of the member on the root's 
 deriving until they end (the API revokes the vault shares of the account, build-plan batch 6). After an unlink the
 member opens its own path again (a new wallet unless it had one).
 
-#### Link volume: the hourly cap (D200)
+#### Link volume: the hourly counter (D200)
 
-Every **new link** is counted: the combined login with a `link_jwt` (immediate or pending) and `link_identity`. Not
-`cancel_link`, `unlink_identity` or a pending member's lazy activation. Counts are kept in fixed UTC hours
-(`window_start_ms = floor(block_ms / 3_600_000) * 3_600_000`), one per scope and one in total; the current hour and the
-previous one are kept.
+Every **new link** is counted: the combined login with a `link_jwt` (case A or B, immediate or pending) and
+`link_identity`. Not `cancel_link`, `unlink_identity` or a pending member's lazy activation. Counts are kept in fixed
+UTC hours (`window_start_ms = floor(block_ms / 3_600_000) * 3_600_000`), one per scope and one in total; the current
+hour and the previous one are kept. **Nothing is ever refused**: the thresholds are alarm levels only.
 
-- **The cap.** As the last check before a new link is written (after every check listed below for the two methods),
-  if the scope's count this hour is already `per_scope_per_hour`, or the total is `total_per_hour`, the call panics
-  `Link rate limit reached` and reverts as a whole: a capped login is refused (no session, no derivation), never
-  completed without its link (D122). The link that makes a count equal its cap is made, and records the cap: the scope
-  goes into the window's `capped_scopes` (≤ 64, in the order reached; then `capped_scopes_truncated: true`), or
-  `total_cap_reached` becomes `true`; event `link_cap_reached`. Defaults 50 per scope and 500 in total per hour
-  (provisional until real traffic is measured).
-- **`set_link_limits(per_scope_per_hour, total_per_hour)`** — owner (`Only the owner can do this`), each 1..=100000
-  (`Link limits must be 1 to 100000`). A lower value applies at once; a higher one is a weakening and applies only
-  after `governance_delay_ms`, as the delay setters' decreases do: the lowered parts of the pair apply now, the whole
-  pair from `effective_at_ms`, and a later call replaces the scheduled raise (setting the values in force cancels it).
-  Event `link_limits_set`. Never relayed by either pool (scripts `OWNER_METHODS`; the sandbox access-key test).
+- **Thresholds.** When a count is at or above its threshold after a link, the window records it: the scope goes into
+  `flagged_scopes` (once per window, ≤ 64 in the order flagged; then `flagged_scopes_truncated: true`), or
+  `total_threshold_reached` becomes `true`; the first crossing per window emits `link_threshold_reached`. Defaults 50
+  per scope and 500 in total per hour (provisional until real traffic is measured). A burst across an hour boundary is
+  split between two windows: read `previous` too.
+- **`set_link_thresholds(per_scope_per_hour, total_per_hour)`** — owner (`Only the owner can do this`), each
+  1..=100000 (`Link thresholds must be 1 to 100000`). A lower value applies at once; a higher one could hide an attack
+  and applies only after `governance_delay_ms`, as the delay setters' decreases do: the lowered parts of the pair apply
+  now, the whole pair from `effective_at_ms`, and a later call replaces the scheduled raise (setting the values in
+  force cancels it). Event `link_thresholds_set`. Never relayed (scripts `OWNER_METHODS`, the API's
+  `GOVERNANCE_METHODS`, the sandbox access-key test).
 - **`get_link_stats()`** — view:
 
   ```json
   {"window_ms":3600000,
-   "limits":{"per_scope_per_hour":50,"total_per_hour":500},
-   "pending_limits":null,
+   "thresholds":{"per_scope_per_hour":50,"total_per_hour":500},
+   "pending_thresholds":null,
    "links_total":12,
-   "current":{"window_start_ms":1800000000000,"total":3,"total_cap_reached":false,"capped_scopes":["s4"]},
+   "current":{"window_start_ms":1800000000000,"total":3,"total_threshold_reached":false,"flagged_scopes":["s4"]},
    "previous":null}
   ```
 
-  `limits` are the ones in force (a matured raise included); `pending_limits` is a raise not yet in force
+  `thresholds` are the ones in force (a matured raise included); `pending_thresholds` is a raise not yet in force
   (`{"per_scope_per_hour","total_per_hour","effective_at_ms"}`) or `null`; `links_total` counts new links since v3.
   `current` is always the hour of the block (zeros when it has no links yet; a rollover shows without a write);
-  `previous` is the hour before, or `null` when it had no links. `capped_scopes_truncated` appears (as `true`) only
-  in a window whose list is full.
+  `previous` is the hour before, or `null` when it had no links. `total_threshold_reached` is also computed against the
+  thresholds in force (`total >= total_per_hour`), so a lowered threshold shows at once; `flagged_scopes` lists only
+  scopes recorded by a link. `flagged_scopes_truncated` appears (as `true`) only in a window whose list is full.
 - **Storage.** Per scope, only scopes with links in the current or previous hour keep a count: each scope's first
   link in an hour queues it, and every counted link deletes up to 4 queued counts older than the previous hour.
   Contract-paid (or the `link_identity` caller's, with the rest of its storage).
-- **Watchdog.** It reads `get_link_stats` each run: a cap reached is critical, a count past half a cap a warning, a
-  raise (`pending_limits`, `link_limits_set`) a critical governance change (D200).
+- **Watchdog.** It reads `get_link_stats` each run and alerts when a threshold is reached and on a scheduled raise
+  (D200).
 
 ### Gas of the email login calls (sandbox)
 
@@ -1362,13 +1361,13 @@ forwards 20 Tgas to the MPC, so it needs its signer receipt + 20 attached. Testn
 | `create_session_and_derive` (email or Google token, no link) | 20.5–20.6 | 69.2–69.3 | the API's 100: 89 needed at 4096 bits |
 | `create_session_and_derive` (a member's login that activates a pending link) | 20.9 | — | 100 |
 | `create_session_and_derive` + `link_jwt` (case A, case B at once or delayed) | 38.8–38.9 | 136.4 | **250** (≈ 59 / ≈ 157 needed) |
-| … the link that reaches a cap (event `link_cap_reached`) | 39.0 | — | 250 |
+| … the link that reaches a threshold (event `link_threshold_reached`) | 39.0 | — | 250 |
 | `link_identity` (two tokens, relayed by a sponsor) | 37.6 | 134.9 | **250** |
-| `set_link_limits` (owner; a lowering or a scheduled raise) | 2.1 | — | DAO default 100 |
+| `set_link_thresholds` (owner; a lowering or a scheduled raise) | 2.1 | — | DAO default 100 |
 | `cancel_link` | 19.8 | 68.5 | **150** |
 | `unlink_identity` | 19.8 | 68.5 | **150** |
 
-The hourly link cap (D200) adds ≈ 0.3 Tgas to each call that makes a link (38.5 → 38.8 for a linked login, 37.2 →
+The hourly link counter (D200) adds ≈ 0.3 Tgas to each call that makes a link (38.5 → 38.8 for a linked login, 37.2 →
 37.6 for `link_identity`; a scope's first link in an hour also queues it for cleanup), ≈ 0.05 to the other logins.
 One RS256 verification costs ≈ 17–18 Tgas at 2048 bits and ≈ 67 at 4096 (the modular exponentiation in wasm), which
 is most of every token-taking call. The spec's estimates were low (`link_identity` ≈ 25–35, `cancel_link` /
@@ -1406,8 +1405,8 @@ self-issued issuer's key. Link events carry identity keys in hex, never `sub`s.
 | `identity_link_activated` | `{"scope_id","root","member","provider"}` (a pending member's first login after its time) |
 | `identity_link_cancelled` / `identity_unlinked` | `{"scope_id","root","member","provider","by":"<hex ik of the caller's identity>"}` |
 | `unrecorded_wallets_accepted` | `{}` (the owner let links be made after a migration from pre-v3 state) |
-| `link_cap_reached` | `{"scope_id":"s4"\|null,"window_start_ms","count"}` (the link that made a scope's count, or the total (`scope_id: null`), equal its hourly cap, D200) |
-| `link_limits_set` | `{"per_scope_per_hour","total_per_hour","effective_at_ms","in_force":{"per_scope_per_hour","total_per_hour"}}` (the requested pair, when it is all in force, and what is in force now: a raise waits `governance_delay_ms`) |
+| `link_threshold_reached` | `{"scope_id":"s4"\|null,"window_start_ms","count"}` (the first link in this hour after which a scope's count, or the total (`scope_id: null`), is at or above its threshold, D200; the link was made) |
+| `link_thresholds_set` | `{"per_scope_per_hour","total_per_hour","effective_at_ms","in_force":{"per_scope_per_hour","total_per_hour"}}` (the requested pair, when it is all in force, and what is in force now: a raise waits `governance_delay_ms`) |
 | `issuer_key_removal_proposed` | `{"id","provider","kid","executable_at_ms","by":"account"}` |
 | `issuer_key_set` | `{"provider","kid","id","how":"delay"\|"confirmed","by"?}` (`by` = the watchdog, for `"confirmed"` only) |
 | `issuer_key_removed` | `{"provider","kid","id","how":"delay"\|"confirmed","by"?}` or `{"provider","kid","how":"owner"}` |

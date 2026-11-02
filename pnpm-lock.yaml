@@ -31,6 +31,9 @@ importers:
       '@noble/curves':
         specifier: 1.9.7
         version: 1.9.7
+      aws4fetch:
+        specifier: 1.0.20
+        version: 1.0.20
     devDependencies:
       '@cloudflare/vitest-plugin':
         specifier: 1.4.4

@@ -37,6 +37,11 @@ export const identityKeySwitchStandby = `${SCRIPTS} identity-key <env> switch --
 export const identityKeySwitchNext = `${SCRIPTS} identity-key <env> switch --to next --yes`;
 export const identityKeyRetirePrevious = `${SCRIPTS} identity-key <env> retire --key previous --yes`;
 export const identityKeyRetireStandby = `${SCRIPTS} identity-key <env> retire --key standby --yes`;
+/** The identity token's AWS KMS signer (`docs/operations.md` "Identity token keys on AWS KMS", D215, D219). */
+export const identityKmsSwitchStandby = `${SCRIPTS} identity-key <env> kms-switch --to standby --yes`;
+export const identityKmsRetirePrevious = `${SCRIPTS} identity-key <env> kms-retire --key previous --yes`;
+export const identityKmsAddStandby = `${SCRIPTS} identity-key <env> kms-add --role standby --key <get-public-key.json> --yes`;
+export const identityKmsPutAwsKey = `${SCRIPTS} identity-key <env> kms-put-aws-key --yes`;
 export const vaultKekPut = `${SCRIPTS} vault-kek <env> put --yes`;
 export const appList = `${SCRIPTS} admin <env> app:list --remote`;
 export const appSettings = `${SCRIPTS} admin <env> app:settings <app id | publishable key> --remote`;

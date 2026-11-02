@@ -6,7 +6,8 @@ Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 and D150–
 D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-login-3`) on 2026-11-02; D159's `+tag`
 change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 (branch `feat/email-login-5`) and D200 (branches
 `feat/link-cap`, `feat/email-login-5`) on 2026-11-02; D201–D203 (branch `feat/batch-c-2`) on 2026-11-02; D205–D209
-(branch `feat/batch-c-3`, to confirm) on 2026-11-02. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
+(branch `feat/batch-c-3`, to confirm) on 2026-11-02. D215–D219 (branch `feat/identity-token-7`, to confirm) on
+2026-11-02. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
 provider note, two "Superseded or amended" rows, the user-mail line under "Proposed", and the headings from D125 on, checked against `develop` @ 1c6a124 and what sandbox-dev runs (`docs/operations.md`) on
 2026-11-02 (branch `docs/consistency-pass`); no decision changed.
 
@@ -2808,6 +2809,114 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
 - Why: a test key's dev-env privileges must never reach a live scope even after a manual write; the `no_session`
   waiver must fail closed, so any attempt to open a session ends it.
 
+## Identity token build, step 7 (the AWS KMS signer, code only), 2026-11-02
+
+Made while building `docs/identity-token-spec.md` build step 7's code (branch `feat/identity-token-7`): the KMS adapter,
+the manifest's signer selection, the scripts and the runbook. The AWS account, keys, IAM, CloudTrail reconciliation
+and alarms are the operator's setup before mainnet (`docs/operations.md` "Identity token keys on AWS KMS"); no env
+uses the KMS signer yet. None changes a derivation path or an address.
+
+### D215. The KMS signer in the manifest: keys by role with their ARNs, credentials as Worker secrets of one IAM user
+- Date 2026-11-02 · Status: **to confirm** · Source: build of the spec's "D1 schema, manifest and secrets" and "Where
+  the key lives" (`packages/env/src/identity.ts`, `apps/api/scripts/gen-wrangler.ts`, `apps/api/src/identity/signers.ts`)
+- Decision: `identityToken.signer` is `{kind: "aws-kms", credentials: {kind: "worker-secret", iamUser}, keys: {active:
+  {kid, arn}, standby?: {kid, arn}, next?: …, previous?: …}}`. Each key carries its own single-region ARN (no
+  `mrk-` key, no alias) and its region is the ARN's; there is no `awsRegion` field. The schema also requires: one key
+  per role (distinct kids and ARNs), every published key in a role and every role's key published, every key in one
+  AWS account, and the standby in another region than the active key (D219). `standby` is optional only for the
+  window between a switch to it and the new standby's `kms-add`. `gen` writes `IDENTITY_SIGNER` (`worker-secret` or
+  `aws-kms`), `IDENTITY_ACTIVE_KID` and, for KMS, `IDENTITY_KMS_KEY_ARN` = the active key's ARN only. The credentials
+  are the IAM user's long-term access key as two Worker secrets (`IDENTITY_AWS_ACCESS_KEY_ID`,
+  `IDENTITY_AWS_SECRET_ACCESS_KEY`), set together by `identity-key kms-put-aws-key` (one `wrangler secret bulk` from
+  `aws iam create-access-key`'s JSON, checked for the manifest's user, `Active`, `AKIA…`). A Worker without
+  `IDENTITY_SIGNER` (configured before step 7) keeps the Worker-secret signer unless it has `IDENTITY_KMS_KEY_ARN` (a
+  half-applied config: refused, `signer_kind_missing`); an unknown kind, a missing ARN or missing
+  credentials refuse every mint (`503 identity_signer_unavailable`), and a KMS Worker never falls back to a
+  Worker-secret key. The kind is `aws-kms`, as the spec and the email issuer name it, not `kms`.
+- Why: the spec's standby lives in a second region, which one `awsRegion` can't express; ARNs pin the exact key (an
+  alias can be repointed outside the manifest, a multi-region replica isn't an independent key). Only the active ARN on
+  the Worker keeps a switch a reviewed manifest change. `credentials` names how the Worker authenticates so a later
+  mechanism (a role through a broker) is a new kind, not a silent change. Workers can't assume an IAM role without
+  another long-lived secret (the spec).
+- Amends the spec's manifest sketch (`keys: {active, standby, next?, previous?}` as kids, `awsRegion`).
+- Rejected: one region for all keys; ARNs of every role on the Worker; temporary (`ASIA…`) credentials (they need a
+  session token and a refresher the Worker doesn't have).
+
+### D216. KMS `Sign` with `MessageType = DIGEST`: the Worker hashes, AWS sees 32 bytes
+- Date 2026-11-02 · Status: **to confirm** · Source: build of the spec's "Signing" bullet (`apps/api/src/identity/kms.ts`)
+- Decision: the adapter computes `sha256(header ‖ "." ‖ payload)` itself and calls `Sign` with `MessageType: DIGEST`,
+  `SigningAlgorithm: ECDSA_SHA_256`; the IAM and key policies require both values (`kms:MessageType`,
+  `kms:SigningAlgorithm`).
+- Why: the token's claims (`sub`, `sid`, wallet addresses, later the email) never leave Cloudflare, whereas `RAW` sends
+  the whole signing input to AWS; the request has a fixed size whatever the token's (`RAW` caps the message at 4096
+  bytes); the self-check verifies the same bytes the Worker hashed. It matches the email issuer's adapter (RSA,
+  `DIGEST`). `DIGEST` gives a credential holder no more than `RAW` would: either way it can sign any token it likes.
+- Rejected: `RAW` (claims at AWS, a size limit, no gain in what a leaked credential can do).
+
+### D217. Strict DER to JOSE conversion, high-S kept, every signature verified before it is answered
+- Date 2026-11-02 · Status: **to confirm** · Source: build of the spec's "Signing" bullet and "Tests" ("DER → JOSE
+  conversion, high-S and short-`r` cases, refusal when the self-verify fails") (`derToJose` in
+  `apps/api/src/identity/kms.ts`)
+- Decision: KMS's `ECDSA-Sig-Value` is accepted only as strict DER: one SEQUENCE with a short-form length equal to the
+  rest of the input (≤ 72 bytes), two INTEGERs of 1–33 content bytes each, minimal (a leading `0x00` only before a byte
+  with its high bit set), non-negative, in `[1, n − 1]` for P-256, nothing after `s`. Each value is left-padded to 32
+  bytes (`r ‖ s`, 64 bytes, RFC 7518 §3.4). High-S signatures are kept (JOSE doesn't require low-S, WebCrypto
+  verifies both). The answer must name the configured key ARN and `ECDSA_SHA_256`, its base64 must be canonical, and
+  the 64-byte result is verified with the manifest's public key for the active kid before the token is returned.
+  Tested against frozen node:crypto vectors (32-byte, high-bit, high-S, short `r`, short `s`), 27 malformed encodings,
+  thousands of signatures from an independent encoder, and a fake KMS that signs with a real P-256 key.
+- Why: a lenient parser accepts several encodings of one signature and hides wiring faults; the self-check catches what
+  parsing can't (a wrong ARN, a key whose public half isn't the published one).
+- Rejected: normalizing to low-S (pointless for JOSE); trusting KMS's answer without the self-check.
+
+### D218. KMS call limits: one `Sign` per mint, no retry, a 3 s deadline, a 4 KiB answer cap, fail closed
+- Date 2026-11-02 · Status: **to confirm** · Source: build of the spec's latency budget and "Mint flood" row
+  (`apps/api/src/identity/kms.ts`)
+- Decision: each mint sends at most one `Sign` request; aws4fetch's retries are off and the adapter never calls twice.
+  One 3 s deadline covers the request and its body (a stalled body is a timeout), the answer is read up to 4 KiB, and
+  every failure (refusal, throttling, timeout, network error, garbage, a failed self-check) is `503
+  identity_signer_unavailable` with a fixed reason code in the log (`kms_timeout`, `kms_throttled`, `kms_bad_answer`,
+  …). The vault's next refresh is a new mint (a new `jti`), so a retry happens a level up and is counted there. Known
+  gap, for the reconciliation's build: a `Sign` that KMS completed but whose answer never arrived (timeout) or was
+  refused by the self-check is in CloudTrail without a counted token; today only the log explains it, and the
+  reconciliation job adds a per-hour, per-kid count of sent `Sign` requests so that "CloudTrail ≤ requests sent" is
+  exact.
+- Why: a retry inside a mint can double the signatures for one token in a way the reconciliation can't tell from
+  misuse, and KMS throttling is better answered by less load than by more; 3 s is far above KMS's normal latency (the
+  budget is ≤ 100 ms p95) and well under the vault's wait.
+- Rejected: a retry on 5xx or throttling; a migration for the attempts count now (no consumer before the reconciliation
+  job, and migration numbers are reserved by other branches).
+
+### D219. KMS standby and rotation: another region, the IAM policy names the active key only
+- Date 2026-11-02 · Status: **to confirm** · Source: build of the spec's rotation playbook and D177 for KMS
+  (`docs/operations.md` "Identity token keys on AWS KMS", `scripts/lib/identity-kms.ts`, playbook
+  `identity-kms-signer-compromised`)
+- Decision: the standby is a separate single-region key in another region than the active key (the schema refuses the
+  same region; `kms-add --role next` refuses the standby's region, so a scheduled switch keeps them apart). The key
+  policy is the same on every identity key: it delegates `kms:Sign` to the signer user's IAM policy only and denies
+  `Sign` to every other principal, `CreateGrant` to all, and key changes to all but the break-glass role (MFA). The
+  signer user's IAM policy allows `kms:Sign` on the **active** key's ARN alone (both ARNs only during a switch) and
+  denies `Sign` on any other key (`NoOtherKey`), so a leaked credential can't sign with the standby and the standby
+  stays a clean recovery, as D177 keeps the testnet standby off the Worker. **Long-term credentials only** (step 7
+  review, H1): `sts:GetSessionToken` needs no permission and can't be denied, and its sessions keep the user's live
+  permissions (so they would gain the standby at a switch), and deactivating the access key isn't proven to end them.
+  The key policy's allow and the IAM allow therefore require `Null aws:TokenIssueTime = true`, and the key policy
+  denies `Sign` to any request with `aws:TokenIssueTime` (`NoSessionCredentials`); the Worker uses an `AKIA…` key.
+  CloudTrail is matched by `userIdentity.arn`, never by access key id, and `GetSessionToken` by the signer user is an
+  alarm. To confirm on staging in the compromise drill: a session of the signer user is refused `Sign`. The
+  break-glass role is assumed with MFA (`sts:AssumeRole`), not through IAM Identity Center, and is never deleted or
+  renamed (the key policies name it). A switch is: IAM policy (add the target), `kms-switch`, gen, deploy; `kms-retire` after ≥ 2 h
+  (at once in an incident), then the old key is disabled and scheduled for deletion (30 days); before a switch, a
+  pre-switch check signs one digest with the target key and verifies it against its published `get-public-key` file.
+  `next` and `standby` are in different regions too (`next` becomes the active key). Commands: `kms-init`,
+  `kms-add --role next|standby`, `kms-switch --to next|standby`, `kms-retire --key previous|standby`,
+  `kms-put-aws-key`; they never call AWS.
+- Why: a regional KMS outage or a region-scoped mistake leaves a key to switch to; a credential that could sign with
+  both keys would make "switch to the standby" keep forged tokens valid after the switch.
+- Amends the spec's "IAM user … `kms:Sign` on the identity key ARNs" (now: the active key's ARN).
+- Rejected: one policy listing every identity key; key-policy edits for every switch (two places to keep in step);
+  multi-region replica keys as the standby (same key material).
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -2845,6 +2954,8 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
 | Email spec: `auto_link` nonce over the session, the session identity, the target epoch and the mode; the combined login signed over the plain CKD payload | The nonce also commits to the join (who joins which account), and with a link the session key signs the linked CKD payload (D133) | `docs/email-login-spec.md` "Byte layouts (new)", "Sessions" |
 | Email spec: `mark_self_issued(provider)` for any issuer | Only `email` (D134) | `docs/contract-interface.md` "Self-issued issuers" |
 | Email spec Q7: Gmail `+tag` dropped (one wallet per inbox) | Each `+tag` its own identity; dots still ignored (D159) | `packages/email/README.md` |
+| Identity spec: KMS signer `{kind: "aws-kms", awsRegion, keys: {active, standby, next?, previous?}}` (kids) | Each key `{kid, arn}` (region from the ARN, the standby in another region), a `credentials` block naming the IAM user; only the active ARN reaches the Worker (D215) | `packages/env/src/identity.ts` |
+| Identity spec: the signer's IAM user may `kms:Sign` on the identity key ARNs | On the active key's ARN only (both during a switch), so the standby stays clean (D219) | `docs/operations.md` "Identity token keys on AWS KMS" |
 | `create_session` opens a session for anyone holding the token; after a front-run `create_session` the key holder derives with counter `used + 1` | A bare `create_session` needs the session key's proof of possession bound to its parameters; a session meant to carry a link is revoked and restarted, never derived plainly (D137) | `docs/contract-interface.md` "Sessions and CKD" |
 | Email spec: the testnet signing keys (primary and standby) both Worker secrets | The standby is published and posted on chain but kept off the Worker (D196) | `docs/operations.md` "Email issuer" |
 | Email spec: case A's code started with `start` (purpose `auto_link`) and google-match called again with `link: true` | google-match prepares the `auto_link` challenge with Google's verified address; the popup sends its first code with `resend` (D195) | `docs/api.md` "Email issuer" |
@@ -2874,3 +2985,6 @@ To confirm from batch C step C2 (`packages/oidc`): D201 (the new claims typed on
 (the Access JWT check and its cert cache) and D203 (the package's logging hook, Google's fetch limits).
 
 Batch C3's readings D205–D209 (hot DB 0006, the gate, the CLI) are to confirm.
+To confirm from the identity token's step 7 (the KMS signer's code): D215 (the manifest shape and credentials), D216
+(`DIGEST`), D217 (strict DER, the self-check), D218 (one `Sign`, no retry, limits) and D219 (the standby's region, the
+IAM policy on the active key only).

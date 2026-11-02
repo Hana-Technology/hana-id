@@ -54,7 +54,8 @@ import {
   identityScopeLimiter,
   identitySessionKey,
 } from './limits.ts';
-import { type IdentityConfig, IdentitySignerError, identityConfig, workerSecretSigner } from './signer.ts';
+import { type IdentityConfig, IdentitySignerError, identityConfig } from './signer.ts';
+import { identitySigner } from './signers.ts';
 
 export const IDENTITY_TOKEN_ENDPOINT = '/v1/identity/token';
 /** The body is a few byte arrays and two addresses. */
@@ -374,7 +375,7 @@ async function sign(
   let token: string;
   let kid: string;
   try {
-    const signer = await workerSecretSigner(env, config);
+    const signer = await identitySigner(env, config);
     kid = signer.kid;
     ctx.kid = kid;
     const claims = buildIdentityClaims({

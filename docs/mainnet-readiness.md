@@ -3,7 +3,7 @@
 Everything that must be true before Hana ID runs on mainnet with real funds. This is a current-state doc for the
 two founders to track. Update a row in the same branch as the change that moves it (rule in `CLAUDE.md`).
 
-Last verified: 2026-11-02, against `develop` @ 3c4e920 (batch C3 merged) and the docs on it; the inconsistencies, rows
+Last verified: 2026-11-02 for row 2.6 (branch `feat/identity-token-7`, the KMS signer code); 2026-11-02, against `develop` @ 3c4e920 (batch C3 merged) and the docs on it; the inconsistencies, rows
 1.14–1.16, 6.7 and 7.5 on 2026-11-02 against `develop` @ 1c6a124 (branch `docs/consistency-pass`). Today only
 sandbox-dev (testnet) runs.
 
@@ -91,7 +91,7 @@ These have the longest lead time, or other rows wait on them.
 | 2.3 | Mainnet council DAO created by hand (Sputnik v2, 2-of-3 for every kind; factory `sputnik-dao.near` to verify) | It owns the contract | not built | founder, council | D81; operations.md "Owner council" |
 | 2.4 | AWS account: root held by both founders on hardware keys, recovery offline | Holds the KMS keys | not built | founder | D121 |
 | 2.5 | Email issuer key in AWS KMS (`RSA_2048`, sign-only IAM user rotated every 90 days, CloudTrail, hourly `Sign` reconciliation, alarms, standby key in a second region) | A Worker-secret key can be copied; mainnet never takes one | not built (KMS adapter on `feat/email-login-4`, wired to no env) | Claude build, founder | D121, D123 Q11; email-login-build-plan batch 10 |
-| 2.6 | Identity token key in AWS KMS (ES256, own IAM user, reconciliation against `identity_issuance_hourly`, standby region) | A leaked key forges any user's identity at every partner | not built (step 7) | Claude build, founder | D127; identity-token-spec step 7; security.md (l) |
+| 2.6 | Identity token key in AWS KMS (ES256, own IAM user, reconciliation against `identity_issuance_hourly`, standby region) | A leaked key forges any user's identity at every partner | code built on `feat/identity-token-7` (KMS adapter, `aws-kms` manifest signer, `identity-key kms-*`; tested against a fake KMS); AWS keys, IAM, CloudTrail, alarms and the reconciliation not built (operations.md "Identity token keys on AWS KMS") | Claude build, founder | D127, D215–D219; identity-token-spec step 7; security.md (l) |
 | 2.7 | `K_sub` for mainnet: generated offline, two offline backups (one with the council backup), never rotated | Losing it locks out every email user; replacing it moves every email address | not built | founder | D123 Q6; email-login-spec "Migration" |
 | 2.8 | `IDENTITY_SUB_KEY` for mainnet, backed up offline with the council backup | Changing it changes every partner's user id | not built | founder | D127; identity-token-spec; security.md inventory |
 | 2.9 | `USER_ID_KEY` offline backup | Support IDs and MAU depend on it | not built | founder | batch-c-build-plan setup step 6; batch-c-spec |
@@ -154,7 +154,7 @@ These have the longest lead time, or other rows wait on them.
 | # | Item | Why it matters | Status | Owner | Source |
 |---|---|---|---|---|---|
 | 6.1 | External audit | `pk_live_` keys are issued only after it | not built (no auditor named) | founder | D2; context.md "Before mainnet"; integration.md |
-| 6.2 | Staging rehearsal: KMS signers and p95 (≤ 100 ms), key rotation and compromise drills, Playwright, Access header, load test | Mainnet procedures run once before they matter | not built | Claude build, founder | email-login-build-plan batch 10; identity-token-spec step 7; batch-c-spec |
+| 6.2 | Staging rehearsal: KMS signers and p95 (≤ 100 ms), key rotation and compromise drills (for the identity KMS signer, confirm on staging that a `GetSessionToken` session of the signer user can't `Sign`, operations.md "Identity token keys on AWS KMS"), Playwright, Access header, load test | Mainnet procedures run once before they matter | not built | Claude build, founder | email-login-build-plan batch 10; identity-token-spec step 7; batch-c-spec |
 | 6.3 | D1 Time Travel restore rehearsed on sandbox-dev | A restore must not undo a security response | not built | founder | D152; playbooks `d1-data-loss` |
 | 6.4 | Sweep items marked "before mainnet": OPER-4, OPER-7, OPER-8, OPER-9 (publish workflow env, deploy wasm hash and extra full-access keys, near-sandbox checksum, dependency scanning) | CI and deploy hardening | not built | Claude build, founder | security.md "Security sweep 2026-10-29: API, operator tooling and CI" |
 | 6.5 | Deferred sweep findings (APIW-2/5/6/7/8/9, APIV-1/2/4/6/8/9, CORE-2/6, PART-2/4, the `owner_action_nonce` recompute) | Whether each must close before mainnet isn't stated | unclear: check | founder, Claude build | security.md sweep sections |

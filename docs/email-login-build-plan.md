@@ -1,6 +1,6 @@
 # Email login build plan (batches)
 
-**Status: batches 1–3 and 5 done and merged into `develop`; batch 4 (`apps/email-issuer`) done on `feat/email-login-4`, in review, not merged; none deployed; batches 6–10 not done.** Splits `docs/email-login-spec.md` "Build order"
+**Status (2026-11-02): batches 1, 2, 3 and 5 merged into `develop`, with the link counter of D200 (`feat/link-cap`); only batch 5 (the watchdog) is deployed, on sandbox-dev 2026-11-02; contract v3 (batches 1–2) is not deployed; batch 4 (the email issuer) is on `feat/email-login-4`, not merged; batches 6–10 not started.** Splits `docs/email-login-spec.md` "Build order"
 (approved 2026-10-30; D4, D119, D121–D123, D25 and D96 amended) into reviewable batches. The spec stays the source of
 truth for *what* to build; this file says *in which order*, *what each batch ships* and *what users see after it*.
 Like a spec it is history once the work merges: the current state lives in the reference docs (`docs/README.md`).

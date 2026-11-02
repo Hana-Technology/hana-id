@@ -26,6 +26,33 @@
   "rpc": "https://test.rpc.fastnear.com",
   "rpcFallback": "https://rpc.testnet.near.org",
   "apiUrl": "https://hana-id-api-sandbox-dev.tingtc.workers.dev",
+  "identityToken": {
+    "iss": "https://hana-id-api-sandbox-dev.tingtc.workers.dev/v1/identity",
+    "signer": {
+      "kind": "worker-secret",
+      "activeKid": "17xAVaTfgwnOkdwq1uOmwHR31pPKB90xw5oGN5HcBgY"
+    },
+    "publicKeys": [
+      {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "K-9yfj4EQcl4NpjqbvU8Jd6o1qP6QXvq1H9vOcU4daI",
+        "y": "3ycRO9-5NiONOnFznQC004TVM9-Q_LTTxFJUJ-ayJac",
+        "kid": "17xAVaTfgwnOkdwq1uOmwHR31pPKB90xw5oGN5HcBgY",
+        "use": "sig",
+        "alg": "ES256"
+      },
+      {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "htkDu2VzgrQionxGwVtQm_klqxcnCumuNaXPlPKKGCw",
+        "y": "XUKxw3-94CT4ck2x_FUJkrlfm75EB_rBYy1iiauJle8",
+        "kid": "_MjNZC3lmy9Xk6LI1mbGVbvtoIfDN557VBZG7DXVQ-g",
+        "use": "sig",
+        "alg": "ES256"
+      }
+    ]
+  },
   "vaultOrigin": "https://hana-id-vault-sandbox-dev.tingtc.workers.dev",
   "authOrigin": "https://hana-id-auth-sandbox-dev.tingtc.workers.dev",
   "changeDelayMs": 60000,

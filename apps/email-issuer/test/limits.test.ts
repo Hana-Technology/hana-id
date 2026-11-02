@@ -351,8 +351,8 @@ describe('wrong codes: per requester, with a mailbox-wide backstop', () => {
     expect((await h.call('/v1/email/verify', { challengeId: o.body.challengeId, code: ownerCode }, { ip: owner })).status).toBe(200);
   });
   it('the day’s challenge cap is taken back when the budget refuses the start or the first code isn’t delivered', async () => {
-    // A budget of 7: owner pool 1, staff pool 5, general pool 1.
-    const env2 = { ...env, ENV_NAME: `cap-${uid()}`, DAILY_SEND_BUDGET: '7' };
+    // A budget of 6: staff pool 5, general pool 1.
+    const env2 = { ...env, ENV_NAME: `cap-${uid()}`, DAILY_SEND_BUDGET: '6' };
     const h = await harness({ env: env2 });
     h.clock.now = morning;
     const app = await seedApp(h);
@@ -468,31 +468,30 @@ describe('per-IP, per-app and global limits (429)', () => {
     const env2 = { ...env, ENV_NAME: `budget-${uid()}`, DAILY_SEND_BUDGET: '100' };
     const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`${env2.ENV_NAME}:global`));
     const now = morning;
-    // Budget 100: owner pool 15 (3 per app), staff pool 5, general pool 80, its reserve from 64. Share 10 each here.
+    // Budget 100: staff pool 5, general pool 95 (its reserve from 76); the owner pool, 100, beside it. Share 10 here.
     for (let k = 0; k < 5; k++) expect((await stub.reserveBudget('b', 100, 10, 'user', now)).ok).toBe(true);
-    for (let i = 0; i < 5; i++) for (let k = 0; k < 10; k++) expect((await stub.reserveBudget(`a${i}`, 100, 10, 'user', now)).ok).toBe(true);
+    for (let i = 0; i < 6; i++) for (let k = 0; k < 10; k++) expect((await stub.reserveBudget(`a${i}`, 100, 10, 'user', now)).ok).toBe(true);
     expect(await stub.reserveBudget('a0', 100, 10, 'user', now)).toEqual({ ok: false, limit: 'app' });
     for (let k = 0; k < 9; k++) expect((await stub.reserveBudget('a7', 100, 10, 'user', now)).ok).toBe(true);
-    // 64 used: the reserve. An app that has used half its share (b, a7) can't draw on it; one under half (c) can.
+    for (let k = 0; k < 2; k++) expect((await stub.reserveBudget('a8', 100, 10, 'user', now)).ok).toBe(true);
+    // 76 used: the reserve. An app that has used half its share (b, a7) can't draw on it; one under half (c) can.
     expect(await stub.reserveBudget('b', 100, 10, 'user', now)).toEqual({ ok: false, limit: 'reserve' });
     expect(await stub.reserveBudget('a7', 100, 10, 'user', now)).toEqual({ ok: false, limit: 'reserve' });
-    const c = await stub.reserveBudget('c', 100, 10, 'owner', now);
+    const c = await stub.reserveBudget('c', 100, 10, 'user', now);
     expect(c.ok && c.crossed).toEqual([]);
-    // An owner's mail the general pool refuses: the owner pool, at most 20% of it (3) per app.
-    for (let k = 0; k < 3; k++) expect((await stub.reserveBudget('a0', 100, 10, 'owner', now)).ok).toBe(true);
-    expect(await stub.reserveBudget('a0', 100, 10, 'owner', now)).toEqual({ ok: false, limit: 'owner' });
-    expect((await stub.reserveBudget('a1', 100, 10, 'owner', now)).ok).toBe(true);
+    // An owner's mail takes the owner pool, whatever its app's share, with no per-app cap (final check M1).
+    for (let k = 0; k < 20; k++) expect((await stub.reserveBudget('a0', 100, 10, 'owner_aged', now)).ok).toBe(true);
     // Staff mail: its own pool of 5.
     for (let k = 0; k < 5; k++) expect((await stub.reserveBudget(null, 100, 0, 'staff', now)).ok).toBe(true);
     expect(await stub.reserveBudget(null, 100, 0, 'staff', now)).toEqual({ ok: false, limit: 'staff' });
     expect(await stub.reserveBudget(null, 0, 0, 'owner', now)).toEqual({ ok: false, limit: 'global' });
     // The share from the plan: 2% of per_day (the free plan's 5000 → 100), capped at the general pool; 10% without one.
     expect(appBudgetShare(5000, 1000)).toBe(100);
-    expect(appBudgetShare(1_000_000, 1000)).toBe(840);
+    expect(appBudgetShare(1_000_000, 1000)).toBe(990);
     expect(appBudgetShare(0, 1000)).toBe(100);
     // At least 10 a day, within the general pool.
     expect(appBudgetShare(10, 1000)).toBe(10);
-    expect(appBudgetShare(10, 15)).toBe(8);
+    expect(appBudgetShare(10, 12)).toBe(7);
     // Logs at 50% and 80% of the pools and of an app's share, through start.
     const h = await harness({ env: { ...env, ENV_NAME: `budget2-${uid()}`, DAILY_SEND_BUDGET: '40' } });
     const plan = `q${uid().replace(/[^a-z0-9]/gu, '')}`;

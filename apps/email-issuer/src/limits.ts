@@ -44,12 +44,14 @@ export const MAILBOX_RESERVE_LIMIT: Limit = { name: 'reserve:1d', windowMs: DAY,
  */
 export const MAILBOX_TICKET_SENDS: Limit = { name: 'ticket-sends:1d', windowMs: DAY, max: 3 };
 /**
- * The ticket path's bounds (scan of the re-check): the 3 code mails a day above are counted per exact address (all its
- * tickets together), at most 5 live tickets per address (a 6th revokes the oldest), and at most 10 owner challenges
- * (ticket or grant) per mailbox per UTC day, so verifying again and again can't multiply the allowance.
+ * The ticket path's bounds (scan of the re-check, final check M1): the 3 code mails a day above are counted per exact
+ * address (all its tickets together), at most 5 live tickets per address (a 6th revokes the oldest), and at most 10
+ * ticket challenges per exact address per UTC day, so verifying again and again can't multiply the allowance.
  */
 export const MAX_LIVE_TICKETS = 5;
-export const MAILBOX_OWNER_CHALLENGES: Limit = { name: 'owner-challenges:1d', windowMs: DAY, max: 10 };
+export const ADDRESS_OWNER_CHALLENGES: Limit = { name: 'owner-challenges:1d', windowMs: DAY, max: 10 };
+/** Past half the owner pool, only tickets at least this old (and unlock grants) draw on it (final check M1). */
+export const OWNER_AGED_TICKET_MS = 7 * DAY;
 /** Live challenges per mailbox at once (ticketed starts don't need a free place). */
 export const MAX_LIVE_CHALLENGES = 5;
 /** Challenges created per mailbox per UTC day, every kind (google-match's prepared ones included): a hard cap. */
@@ -74,7 +76,7 @@ export const MAILBOX_TICKET_SLOT: Limit = { name: 'wrong:ticket:1d', windowMs: D
 /**
  * A staff unlock's own checks, outside the ceiling (M3): 2 per unlock, for the one challenge its mailed grant starts
  * once the ticket slot is used up. At most 3 unlocks in 30 days, so ≤ 37 a year: the yearly bound is
- * 365 × 25 + 37 × 2 = 9,199 failed checks, ≈ 0.92% a year against a 6-digit code.
+ * 365 × 25 + 37 × 2 ≈ 9,199 failed checks (≈ 9,273 in the worst case), ≈ 0.92% a year against a 6-digit code.
  */
 export const MAILBOX_GRANT_SLOT: Limit = { name: 'wrong:grant:1d', windowMs: DAY, max: 2 };
 
@@ -149,18 +151,19 @@ export function appStartLimits(plan: { perMinute: number; perDay: number }): Lim
 }
 
 /**
- * The global daily send budget (every user mail, `dailySendBudget`), split (H1; abuse review H1):
- * - the owner pool, 15% of it: mail for challenges a valid device ticket or unlock grant started, and the staff
- *   unlock and unsuppress mails, ignoring the app share, so an attacker filling an app's share (or the general pool)
- *   never stops an owner's mail;
- * - the general pool, the other 85%: everything else. An app may use its share of it a day, sized from its plan
- *   (`BUDGET_SHARE_PER_PLAN_DAY` × the plan's `per_day`: the free plan's 5000 gives 100), capped at the general pool,
- *   with a flat `BUDGET_APP_SHARE` of the budget only when the plan has no usable `per_day`; and the last
- *   `BUDGET_RESERVE` of the general pool only an app that has used less than half its share that day.
+ * The daily send budget (`dailySendBudget`) and the pools beside it (H1; abuse review H1; final check M1):
+ * - the staff pool, 1% of the budget (at least 5): the unlock and unsuppress mails;
+ * - the general pool, the rest of the budget: every user's mail. An app may use its share of it a day, sized from its
+ *   plan (`BUDGET_SHARE_PER_PLAN_DAY` × the plan's `per_day`: the free plan's 5000 gives 100), capped at the general
+ *   pool, with a flat `BUDGET_APP_SHARE` of the budget only when the plan has no usable `per_day`; and the last
+ *   `BUDGET_RESERVE` of the general pool only an app that has used less than half its share that day;
+ * - the owner pool, `BUDGET_OWNER_POOL` × the budget **beside it** (it never eats the general pool): the mail of
+ *   challenges a valid device ticket or unlock grant started, with no per-app cap (an attacker's sock-puppet tickets
+ *   would fill one). Bounded by the per-address limits above and this global ceiling; past half of it, only tickets at
+ *   least 7 days old and unlock grants draw on it (a fresh ticket falls back to the general pool like any user).
  */
-export const BUDGET_OWNER_POOL = 0.15;
-/** One app's share of the owner pool (scan of the re-check): no app, and no address, can empty it for everyone. */
-export const BUDGET_OWNER_APP_SHARE = 0.2;
+export const BUDGET_OWNER_POOL = 1;
+export const BUDGET_OWNER_AGED_FROM = 0.5;
 /** Staff-triggered mail (unlock, unsuppress confirmation) has its own small pool: 1% of the budget, at least 5. */
 export const BUDGET_STAFF_POOL = 0.01;
 export const BUDGET_STAFF_MIN = 5;
@@ -172,8 +175,10 @@ export const BUDGET_MIN_SHARE = 10;
 
 /** The staff pool's size for a budget. */
 export const staffPool = (budget: number): number => Math.min(budget, Math.max(BUDGET_STAFF_MIN, Math.floor(budget * BUDGET_STAFF_POOL)));
-/** The general pool: what the owner and staff pools leave. */
-export const generalPool = (budget: number): number => Math.max(0, budget - Math.floor(budget * BUDGET_OWNER_POOL) - staffPool(budget));
+/** The general pool: what the staff pool leaves of the budget. */
+export const generalPool = (budget: number): number => Math.max(0, budget - staffPool(budget));
+/** The owner pool, beside the budget. */
+export const ownerPool = (budget: number): number => Math.floor(budget * BUDGET_OWNER_POOL);
 
 /** An app's daily share of the general pool, from its plan's `per_day`. */
 export function appBudgetShare(perDay: number, budget: number): number {

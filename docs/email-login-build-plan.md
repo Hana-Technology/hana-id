@@ -428,17 +428,16 @@ per-prefix shares (20%) of a domain's day, ticketed starts exempt, `email_domain
   client proofs at the scope's current `action_nonce` with an email app; `email-issuer <env> put --standby` and the
   exact key-leak runbook; issuer-minted tokens checked in the real contract (`contracts/hana-signer` tests only, 4
   tests, `issuer_tokens_fixture.json`); gitleaks `hana-private-jwk` also matches an unquoted `d: '…'`.
-- **Abuse re-check fixes** (D198, D199, to confirm): an owner budget pool (15%) and plan-sized app shares,
+- **Abuse re-check fixes** (D198, D199, to confirm): an owner budget pool (finally 1 × the budget beside it, no per-app cap, past 50% only tickets ≥ 7 days old and grants) and plan-sized app shares,
   `dailySendBudget` required outside `local*` (`init --budget`); a domain cap that grows with verified logins and gives
   a verified challenge's places back, more exempt providers; ticket and grant checked before the prefix limits (raised
   to 1000 a day) and skipping every shared pool; `admin/unlock` and `admin/unsuppress` mail the address instead of
   answering staff, unlock clears nothing and adds a grant slot of 2 (0.92% a year with unlocks), `POST
   /v1/email/confirm`; device tickets per exact address with a nonce, per-ticket allowances and staff revocation; a
   deterministic contract fixture with a regeneration test. Then the scan of the re-check: owner allowances per exact
-  address, ≤ 5 live tickets per address and ≤ 10 owner challenges per mailbox a day, the owner pool as a per-app-bounded
-  fallback and a staff mail pool, the effective owner kind on resend, a domain cap from distinct verified mailboxes with
+  address, ≤ 5 live tickets per address and ≤ 10 ticket challenges per address a day, a staff mail pool, the effective owner kind on resend, a domain cap from distinct verified mailboxes with
   a 2,000 ceiling.
-- **Tests.** apps/email-issuer: 114 Worker tests (miniflare: layouts against the contract fixtures, codes,
+- **Tests.** apps/email-issuer: 115 Worker tests (miniflare: layouts against the contract fixtures, codes,
   limits and the ceiling, google-match's four cases, signers and KMS, adapters, the log-capture test) and 7 node tests (`gen`, the fixture);
   packages/env +11 (`emailIssuer`), packages/jwks +3 (`rsaThumbprint`), scripts +10 (`email-issuer`) and 6 secret-scan
   self-test cases; hana-signer +4 (`tests/email/issuer_tokens.rs`, 303 in all); `pnpm -r test` and `pnpm -r typecheck` green. Existing tests broken on `develop` by the identity-token deploy
@@ -449,6 +448,15 @@ per-prefix shares (20%) of a domain's day, ticketed starts exempt, `email_domain
 - **Decisions.** D195 (case A's code challenge prepared by google-match), D196 (manifest, standby off the Worker),
   D197 (10-minute challenges), D198 (the limits and the guess ceiling, with the worst-case formula), D199 (HTTP, data
   and chain readings), all to confirm.
+- **Follow-ups from the final review** (for the batches named):
+  - batch 8: the `{authOrigin}/email/unlock#…` and `/email/confirm#…` pages ask for a click before they POST the token
+    (a mail scanner that opens links must not spend it);
+  - batch 9: alerts on `email_domain_cap`, `email_owner_pool`, `email_budget`, `send_budget_exhausted` and
+    `mailbox_guess_limit`;
+  - batch 6: the issuer reads apps by `apps.publishable_key`; after batch C3's migration 0006 it should read the gate's
+    `app_keys` (rotated keys) and skip soft-deleted apps;
+  - the remaining items of that review's follow-up list (1, 2, 3, 5) as the coordinator records them; this branch
+    did item 4 (ticket challenges per address, not per mailbox).
 - **Not done here.** The CloudTrail reconciliation job (batch 10, with KMS); routing `{apiUrl}/v1/email/*` to the
   Worker (batch 6: on `workers.dev` a service binding from the API, which would put addresses and codes through the
   API Worker's memory, D199); the alert and admin view for `send_budget_exhausted` and `mailbox_guess_limit` (batch 9);

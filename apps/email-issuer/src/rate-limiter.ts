@@ -10,8 +10,9 @@
 // - `admit`: a new challenge for this mailbox (locks, live challenges, the day's challenge cap, its first code);
 // - `reserveSend`: one code mail, per (mailbox, requester), then mailbox-wide, then a small reserve for requesters new
 //   to the mailbox that day. These bound mail; they don't keep the owner in: an attacker with many IPs can use them all
-//   up. What keeps the owner in is that **a valid device ticket or unlock grant never depends on a pool an attacker can
-//   fill**: a ticket's own allowance (per ticket), an unlock grant only the mailed token can use;
+//   up. What keeps the owner in: a valid device ticket or unlock grant never waits on an app's, a domain's or the
+//   general pool (its own per-address allowance, the owner pool, which fresh tickets fill only to half), and an
+//   unlock grant only the mailed token can use;
 // - `reserveGuess`: one code check, counted before the code is compared and refunded when it was right; inside a hard
 //   ceiling of 25 failed checks per UTC day: a backstop of 18 open to anyone, then an owner slot of 4 (requesters that
 //   started before the trip, no failures) and a ticket slot of 3 (challenges a ticket or a grant started); past the
@@ -23,8 +24,7 @@ import { DurableObject } from 'cloudflare:workers';
 import type { Env } from './env.ts';
 import {
   BUDGET_LOG_AT,
-  BUDGET_OWNER_APP_SHARE,
-  BUDGET_OWNER_POOL,
+  BUDGET_OWNER_AGED_FROM,
   BUDGET_RESERVE,
   DOMAIN_PREFIX_SHARE,
   DOMAIN_PREFIX_WINDOW,
@@ -33,6 +33,7 @@ import {
   DOMAIN_SENDS_PER_VERIFIED,
   DOMAIN_SENDS_WINDOW,
   DOMAIN_VERIFIED_DAYS,
+  ADDRESS_OWNER_CHALLENGES,
   MAILBOX_CHALLENGES_PER_DAY,
   MAILBOX_CODE_LIMITS,
   MAILBOX_GRANT_SLOT,
@@ -40,7 +41,6 @@ import {
   MAILBOX_IP_LOCK_MS,
   MAILBOX_IP_WRONG_DAY,
   MAILBOX_IP_WRONG_LIMIT,
-  MAILBOX_OWNER_CHALLENGES,
   MAILBOX_OWNER_SLOT,
   MAILBOX_RESERVE_LIMIT,
   MAILBOX_TICKET_SENDS,
@@ -54,6 +54,7 @@ import {
   THIRTY_DAYS_MS,
   UNLOCK_GRANT_TTL_MS,
   generalPool,
+  ownerPool,
   staffPool,
 } from './limits.ts';
 
@@ -86,8 +87,11 @@ export type Reserved = { ok: true; reservation: Reservation; owner: 'ticket' | '
 export type Guess = { ok: true; reservation: Reservation; tripped?: 'backstop' | 'ceiling' } | { ok: false; reason: 'locked'; retryAfterMs: number };
 export type DomainReserved = { ok: true; reservation: Reservation; filled: boolean; cap: number } | { ok: false; limit: 'domain' | 'prefix' };
 export type Budget = { ok: true; reservation: Reservation; crossed: string[] } | { ok: false; limit: 'global' | 'app' | 'reserve' | 'owner' | 'staff' };
-/** Which pool a mail may draw on: a user's (the general pool), an owner's (general first, then the owner pool), staff's. */
-export type BudgetKind = 'user' | 'owner' | 'staff';
+/**
+ * Which pool a mail may draw on: a user's (the general pool); an owner's (the owner pool, a fresh ticket's only below
+ * half of it, then the general pool like a user's; `owner_aged`: a ticket ≥ 7 days old or an unlock grant); staff's.
+ */
+export type BudgetKind = 'user' | 'owner' | 'owner_aged' | 'staff';
 /** A live ticket of an exact address, as the mailbox object registers it at issue. */
 interface TicketEntry {
   id: string;
@@ -171,11 +175,12 @@ export class RateLimiter extends DurableObject<Env> {
   // ---- the global send budget (the `global` object) ----
 
   /**
-   * One user mail against the day's budget (H1, abuse review H1). `owner`: mail of a challenge a valid ticket or grant
-   * started, or a staff unlock/unsuppress mail: only the owner pool (`BUDGET_OWNER_POOL` of the budget), whatever the
-   * app's share. Otherwise the general pool (the rest): refused past it, past the app's `share`, and in its last
+   * One mail against the day's pools (H1, abuse review H1, final check M1): staff mail from the staff pool; an owner's
+   * from the owner pool (beside the budget, no per-app cap), a fresh ticket's only while the pool is below half, after
+   * which it is a user's; a user's from the general pool, refused past it, past the app's `share`, and in its last
    * `BUDGET_RESERVE` for an app that has used half its share or more. Returns the thresholds this mail reached
-   * (`global_50`, `global_80`, `app_50`, `app_80`, `owner_50`, `owner_80`) for the `email_budget` log.
+   * (`global_50`, `global_80`, `app_50`, `app_80`, `owner_50`, `owner_80`) for the `email_budget` and
+   * `email_owner_pool` logs.
    */
   async reserveBudget(appId: string | null, budget: number, share: number, kind: BudgetKind, now: number = Date.now()): Promise<Budget> {
     if (!(budget > 0)) return { ok: false, limit: 'global' };
@@ -195,29 +200,30 @@ export class RateLimiter extends DurableObject<Env> {
       if (n >= staffPool(budget)) return { ok: false, limit: 'staff' };
       return take([sKey]);
     }
+    if (kind === 'owner' || kind === 'owner_aged') {
+      const pool = ownerPool(budget);
+      const oKey = `budget-owner@${day}`;
+      const o = this.kv().get<number>(oKey) ?? 0;
+      const open = o < pool && (kind === 'owner_aged' || o < Math.floor(pool * BUDGET_OWNER_AGED_FROM));
+      if (open) {
+        reached(o + 1, pool, 'owner');
+        return take([oKey]);
+      }
+      if (kind === 'owner_aged') return { ok: false, limit: 'owner' };
+      // A fresh ticket past half the owner pool: an ordinary user's mail from here.
+    }
     const general = generalPool(budget);
     const gKey = `budget@${day}`;
     const aKey = `budget:${appId ?? '-'}@${day}`;
     const g = this.kv().get<number>(gKey) ?? 0;
     const a = this.kv().get<number>(aKey) ?? 0;
     const reserveFrom = Math.floor(general * (1 - BUDGET_RESERVE));
-    const generalRefusal: 'global' | 'app' | 'reserve' | null = g >= general ? 'global' : a >= share ? 'app' : g >= reserveFrom && a >= Math.max(1, Math.floor(share / 2)) ? 'reserve' : null;
-    if (!generalRefusal) {
-      reached(g + 1, general, 'global');
-      reached(a + 1, share, 'app');
-      return take([gKey, aKey]);
-    }
-    if (kind !== 'owner') return { ok: false, limit: generalRefusal };
-    // An owner's mail the general pool refused: the owner pool, at most BUDGET_OWNER_APP_SHARE of it per app.
-    const ownerPool = Math.floor(budget * BUDGET_OWNER_POOL);
-    const ownerApp = Math.max(1, Math.floor(ownerPool * BUDGET_OWNER_APP_SHARE));
-    const oKey = `budget-owner@${day}`;
-    const oaKey = `budget-owner:${appId ?? '-'}@${day}`;
-    const o = this.kv().get<number>(oKey) ?? 0;
-    const oa = this.kv().get<number>(oaKey) ?? 0;
-    if (o >= ownerPool || oa >= ownerApp) return { ok: false, limit: 'owner' };
-    reached(o + 1, ownerPool, 'owner');
-    return take([oKey, oaKey]);
+    if (g >= general) return { ok: false, limit: 'global' };
+    if (a >= share) return { ok: false, limit: 'app' };
+    if (g >= reserveFrom && a >= Math.max(1, Math.floor(share / 2))) return { ok: false, limit: 'reserve' };
+    reached(g + 1, general, 'global');
+    reached(a + 1, share, 'app');
+    return take([gKey, aKey]);
   }
 
   // ---- a mailbox ----
@@ -360,10 +366,10 @@ export class RateLimiter extends DurableObject<Env> {
    */
   async admit(ip: string, expiresAtMs: number, send: boolean, now: number = Date.now(), claim: OwnerClaim | null = null): Promise<Admitted> {
     let owner = this.ownerOf(claim, now);
-    // At most MAILBOX_OWNER_CHALLENGES owner starts per mailbox a day; past it a ticket counts as nothing (a grant, one
-    // per unlock, always passes).
-    const ownerDay = this.slot(MAILBOX_OWNER_CHALLENGES, now);
-    if (owner?.kind === 'ticket' && ownerDay.count >= ownerDay.l.max) owner = null;
+    // At most ADDRESS_OWNER_CHALLENGES ticket starts per exact address a day; past it a ticket counts as nothing (a
+    // grant, one per unlock, always passes).
+    const ownerDay = owner?.kind === 'ticket' ? this.slot(ADDRESS_OWNER_CHALLENGES, now, `a:${owner.addrKey}:`) : null;
+    if (ownerDay && ownerDay.count >= ownerDay.l.max) owner = null;
     const locked = this.lockedFor(ip, owner?.kind ?? null, now);
     if (locked > 0) return { ok: false, reason: 'locked', retryAfterMs: locked };
     const live = (this.kv().get<number[]>(LIVE_KEY) ?? []).filter((t) => t > now);
@@ -377,7 +383,7 @@ export class RateLimiter extends DurableObject<Env> {
       reservation = r.reservation;
     }
     if (owner?.kind === 'grant') this.kv().put(owner.key, 0);
-    const createdKeys = this.count(owner ? [created, ownerDay] : [created]);
+    const createdKeys = this.count(owner && ownerDay ? [created, ownerDay] : [created]);
     this.kv().put(LIVE_KEY, [...live, expiresAtMs]);
     const startKey = `start:${ip}@${this.day(now)}`;
     if (this.kv().get(startKey) === undefined) this.kv().put(startKey, this.nextSeq(now));

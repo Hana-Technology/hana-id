@@ -26,6 +26,7 @@ import {
   CHALLENGE_TTL_MS,
   CONFIRM_TTL_MS,
   HINT_PRUNE_BATCH,
+  OWNER_AGED_TICKET_MS,
   NON_HOSTED_HINT_TTL_MS,
   IP_AGGREGATE_START_LIMITS,
   IP_MATCH_LIMITS,
@@ -42,7 +43,7 @@ import {
 } from './limits.ts';
 import { log } from './log.ts';
 import { codeMail, confirmMail, linkNoticeMail, unlockMail } from './mail.ts';
-import type { BudgetKind, Limit, OwnerClaim, Reservation } from './rate-limiter.ts';
+import type { BudgetKind, Limit, OwnerClaim, OwnerRef, Reservation } from './rate-limiter.ts';
 import { SignerUnavailable } from './signer.ts';
 import { readWebhookBody, SIGNATURE_HEADER, suppressionsOf, TIMESTAMP_HEADER, verifyWebhook, webhookHeadersOk } from './webhook.ts';
 
@@ -164,9 +165,13 @@ async function reserveBudget(ctx: Ctx, appId: string | null, share: number, kind
     log({ event: 'send_budget_exhausted', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'error', code: budget > 0 ? r.limit : 'unconfigured', ...appField }, 'error');
     return null;
   }
-  for (const c of r.crossed) log({ event: 'email_budget', requestId: ctx.requestId, endpoint: ctx.endpoint, code: c, ...appField }, 'warn');
+  for (const c of r.crossed) log({ event: c.startsWith('owner_') ? 'email_owner_pool' : 'email_budget', requestId: ctx.requestId, endpoint: ctx.endpoint, code: c, ...appField }, 'warn');
   return r.reservation;
 }
+
+/** The pool an owner's mail draws on: a grant or a ticket ≥ 7 days old is `owner_aged` (final check M1). */
+const ownerBudgetKind = (owner: OwnerRef | null, now: number): BudgetKind =>
+  !owner ? 'user' : owner.kind === 'grant' || now - owner.issuedAtMs >= OWNER_AGED_TICKET_MS ? 'owner_aged' : 'owner';
 
 /** The app's share of the general pool (its plan's `per_day`, D198). */
 const shareOf = (ctx: Ctx, app: { perDay: number }): number => appBudgetShare(app.perDay, dailySendBudget(ctx.deps.env));
@@ -271,7 +276,7 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
   const addrKey = await suppressionKey(keys, r.email);
   const box = mailboxLimiter(deps, mbx);
   // The owner's proof, checked before the prefix limits (abuse review M2): a device ticket for this exact address (D198),
-  // or a mailed unlock token. A valid one never depends on a pool an attacker can fill: it skips the prefix limits,
+  // or a mailed unlock token. A valid one never waits on a pool an attacker fills cheaply: it skips the prefix limits,
   // the app's quota, the domain cap and the general budget pool. An invalid one is ignored, never an error.
   const ticket = await readDeviceTicket(keys, b.deviceTicket, addrKey, now);
   const grantHash = typeof b.unlockToken === 'string' && UNLOCK_TOKEN_RE.test(b.unlockToken) ? base64UrlEncode(sha256(utf8(b.unlockToken))) : null;
@@ -326,7 +331,7 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
     if (!owner) await limiter(deps, `app:${app.id}`).unhit(appLimits, now);
   };
   // 4. The global budget: the owner pool for an owner's start, else the app's share of the general pool.
-  const budget = await reserveBudget(ctx, app.id, share, owner ? 'owner' : 'user');
+  const budget = await reserveBudget(ctx, app.id, share, ownerBudgetKind(owner, now));
   if (!budget) {
     await undoMailbox(true);
     await releaseDomain(deps, dKey, dom.r);
@@ -409,7 +414,7 @@ export async function handleResend(request: Request, ctx: Ctx): Promise<Response
     await box.refund(send);
     return tryLater(ctx, 'domain');
   }
-  const budget = await reserveBudget(ctx, st.appId, st.budgetShare, isOwner ? 'owner' : 'user');
+  const budget = await reserveBudget(ctx, st.appId, st.budgetShare, isOwner ? ownerBudgetKind(st.owner, now) : 'user');
   if (!budget) {
     await box.refund(send);
     await releaseDomain(deps, st.domainKey, dom.r);

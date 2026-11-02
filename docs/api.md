@@ -979,7 +979,7 @@ per mailbox; then the recipient domain's day, then the app's quota, then the glo
 A later refusal refunds the mailbox, domain and app counts (never the IP ones) and stores nothing. Every mailbox-level
 refusal (the mailbox's limits and locks, the domain cap) is the same `429 rate_limited` body with `retry-after: 900`.
 
-**A valid device ticket or unlock grant never depends on a pool an attacker can fill** (D198). `deviceTicket` (from an
+**A valid device ticket or unlock grant never waits on the IP prefix limits, an app's quota, a recipient domain's cap or the general budget pool**; its mail comes from the owner pool, which fresh tickets fill only to half (D198). `deviceTicket` (from an
 earlier `verify` of this exact address, 30 days, not revoked): the start uses that ticket's own allowance, 3 code mails
 a day, outside the code limits, the live cap and the challenge cap, and its checks may use the ticket slot.
 `unlockToken` (mailed to the address by a staff `admin/unlock`): the mailbox's one-time grant, used by this start only;
@@ -1116,7 +1116,7 @@ subject. Every mailbox decision is one atomic call (D198). Every mailbox-level r
 |---|---|---|
 | Mailbox × requester: code mails | 3 per 15 min, 10 per day (resends included) | 429 |
 | Mailbox: code mails | 10 per 15 min, 30 per day; then 5 a day for requesters new to it that day | 429 |
-| Device ticket | 3 code mails a UTC day **per exact address** (all its tickets together) for the challenges they started, outside the two rows above, the live cap and the challenge cap; ≤ 5 live tickets per address (a 6th revokes the oldest); ≤ 10 owner challenges (ticket or grant) per mailbox a day, past which a ticket counts as nothing | 429 |
+| Device ticket | 3 code mails a UTC day **per exact address** (all its tickets together) for the challenges they started, outside the two rows above, the live cap and the challenge cap; ≤ 5 live tickets per address (a 6th revokes the oldest); ≤ 10 ticket challenges per exact address a day, past which a ticket counts as nothing | 429 |
 | Unlock grant | one start within 24 h of the unlock; its challenge's mails free (≤ 2 resends); its checks in the ticket slot then a grant slot of 2 outside the ceiling | – |
 | Mailbox: live challenges | 5 at once | 429 |
 | Mailbox × requester: wrong codes | 10 per hour → that requester locked out of the mailbox for 1 h | 429 (start, resend, verify) |
@@ -1130,11 +1130,11 @@ subject. Every mailbox decision is one atomic call (D198). Every mailbox-level r
 | No usable `cf-connecting-ip` (IP-limited routes) | refused | `400 missing_client_ip`, logged |
 | Recipient domain (registrable, Public Suffix List): code mails | 100 + 2 × its distinct verified mailboxes a day over the trailing 7 days (only challenges that took a domain place), at most 2,000, per day; a verified challenge's places given back; except the listed consumer providers (`src/domain.ts`); each requester prefix (IPv4 /24, IPv6 /56, /48) ≤ 20% of the day's cap; ticketed and unlock-grant challenges not counted | 429; `email_domain_cap` logged when a day fills |
 | App: `start` | plan `per_minute` per minute; plan `per_day` per day; owner starts not counted | 429 |
-| Env: user mail | `emailIssuer.dailySendBudget` per day (required outside `local*`; 1000 in `local*`): a staff pool (1%, at least 5: unlock and unsuppress mails), an owner pool of 15% (a ticket's or grant's mail when the general pool refuses it, at most 20% of it per app), and the general pool (the rest), in which an app's share is 2% of its plan's `per_day` (at least 10, at most the pool; 10% of the budget without a plan value) and the last 20% only for apps under half their share | `start`, `resend` 429; logs `email_budget` (50%, 80% of each pool and of each app's share), `send_budget_exhausted` (error; `code` `global`, `app`, `reserve`, `owner`, `staff` or `unconfigured`) |
+| Env: user mail | `emailIssuer.dailySendBudget` per day (required outside `local*`; 1000 in `local*`): a staff pool (1%, at least 5: unlock and unsuppress mails) and the general pool (the rest), in which an app's share is 2% of its plan's `per_day` (at least 10, at most the pool; 10% of the budget without a plan value) and the last 20% only for apps under half their share; beside them the owner pool, 1 × the budget, for a ticket's or grant's mail (no per-app cap; past 50% for the day only tickets ≥ 7 days old and grants, a fresher ticket's mail then being a user's) | `start`, `resend` 429; logs `email_budget` (50%, 80% of the general pool and of each app's share), `email_owner_pool` (50%, 80% of the owner pool), `send_budget_exhausted` (error; `code` `global`, `app`, `reserve`, `owner`, `staff` or `unconfigured`) |
 | Staff | 20 actions per hour per staff member, all staff routes together | 429 |
 
 The guess bound: ≤ 25 failed checks a day per mailbox plus ≤ 2 per unlock (≤ 3 unlocks in 30 days): 365 × 25 + 37 × 2 =
-9,199 a year, ≈ 0.92% a year against a 6-digit code (D198).
+≈ 9,199 a year (≈ 9,273 in the worst case), ≈ 0.92% a year against a 6-digit code (D198).
 
 ### Durable Objects, D1 and bindings
 
@@ -1172,7 +1172,7 @@ the add-on.
 (`ok`; `suppressed`; `error` with the provider's reason and status), `link_notice`, `limit` (`mailbox:locked` /
 `mailbox:live` / `mailbox:codes` / `domain`, or the window's name), `email_budget` (warn: `code` `global_50`,
 `global_80`, `app_50`, `app_80`), `send_budget_exhausted` (error: `code` `global`, `app` or `reserve`),
-`email_complaint_rate` (error: `count` complaints in 24 h), `email_domain_cap` (warn: `subject` = 12 characters of
+`email_owner_pool` (warn: `code` `owner_50` / `owner_80`), `email_complaint_rate` (error: `count` complaints in 24 h), `email_domain_cap` (warn: `subject` = 12 characters of
 the domain key, the mail that filled the domain's day), `staff_mail` (`code` `unlock` / `confirm`, or the provider's
 reason), `device_tickets_revoked` (warn, staff), `missing_client_ip` (warn), `mailbox_unlocked` (warn,
 staff), `suppression_removed` (warn, staff), `mailbox_guess_limit` (error: `code` `backstop` or `ceiling`, `subject` =

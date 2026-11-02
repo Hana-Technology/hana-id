@@ -2516,7 +2516,8 @@ is computed by `@hana-id/email` alone, from the normalized address including any
   - **One `retry-after` (L1):** every mailbox-level refusal (the mailbox's limits and locks, the domain cap) answers
     `retry-after: 900`, whatever the limit.
   - **Amended after the abuse re-check (2026-11-02; every number to confirm).** The principle: **a valid device ticket
-    or unlock grant never depends on a pool an attacker can fill.**
+    or unlock grant never depends on a pool an attacker can fill.** (Reworded after the final check, M1, to what is
+    guaranteed: see the last bullet.)
     - **Budget (H1):** `dailySendBudget` is split: an **owner pool of 15%** for the mail of challenges a valid ticket or
       grant started and for the staff unlock/unsuppress mails, ignoring the app share (refined below: a staff pool, and the owner pool as a fallback); the **general pool (85%)** for
       everything else. An app's share of the general pool comes from its plan: **2% of the plan's `per_day`** (the free
@@ -2543,7 +2544,7 @@ is computed by `@hana-id/email` alone, from the normalized address including any
       grant's start counts as an owner's; its challenge's mails are free (one challenge, ≤ 2 resends), its checks use
       the ticket slot and then the **grant slot of 2**, which lies outside the ceiling.
     - **The bound, with unlocks:** ≤ 25 failed checks a day (backstop 18 + owner slot 4 + ticket slot 3) plus ≤ 2 per
-      unlock, with at most 3 unlocks in 30 days (≤ 37 a year): **365 × 25 + 37 × 2 = 9,199 failed checks a year, ≈ 0.92%
+      unlock, with at most 3 unlocks in 30 days (≤ 37 a year): **365 × 25 + 37 × 2 ≈ 9,199 a year, ≈ 9,273 in the worst case, ≈ 0.92%
       a year** against a 6-digit code (the earlier 0.91% plus unlocks; the earlier unlock reset the counters, which gave
       an attacker a fresh 25 each time). Worst case per day W ≤ min(5·C, 25) + 2·[unlock that day], C ≤ 35 (+1 grant).
     - **Device tickets (abuse L1/L2, tokens N1):** "dt2." + b64url(expiry ‖ nonce ‖ HMAC(K_device, domain ‖ address key
@@ -2561,6 +2562,20 @@ is computed by `@hana-id/email` alone, from the normalized address including any
       `reserveSend` found after the revocation check, so a revoked ticket's challenge gets no owner path. The domain cap
       counts **distinct verified mailboxes** a day, only of challenges that reserved a domain place, and never passes
       **2,000 a day**; past it only exempt providers and owner starts pass.
+    - **After the final check (M1; to confirm), superseding the owner-pool details above.** Tickets aren't bound to an
+      app, so a per-app owner cap could be filled by an attacker's sock-puppet tickets (addresses at a catch-all domain
+      he controls) and deny that app's real owners. So: no per-app owner cap. The **owner pool is 1 × `dailySendBudget`
+      beside the budget** (it never eats the general pool, which is the budget minus the staff pool). Owner mail is
+      bounded by 3 code mails a day per address, **10 ticket challenges a day per exact address** (was per mailbox) and
+      that global ceiling; **once the owner pool passes 50% for the day, only tickets at least 7 days old and unlock
+      grants draw on it** (a fresh ticket's mail is then an ordinary user's, in the app's general share).
+      `email_owner_pool` is logged at 50% and 80%.
+    - **What is guaranteed (the principle, reworded):** A valid device ticket or unlock grant never waits on the IP prefix limits, an app's quota, a recipient domain's cap or the general budget pool; its mail comes from the owner pool, which a
+      fresh ticket can fill only to half. **Residual, to confirm:** an attacker who has built up a large stock of
+      sock-puppet tickets at least 7 days old (real verified logins, 3 mails a day each) can still use up the owner pool
+      for a day, bounded by its global ceiling (1 × `dailySendBudget` of extra mail); real owners are then refused until
+      the UTC day ends, as they would be without tickets. Staff revocation and the 5-live-tickets-per-address cap limit
+      the stock; batch 9's `email_owner_pool` alert shows it.
 
 ### D199. HTTP, data and chain readings of the issuer
 - Date 2026-11-02 · Status: to confirm (built) · Source: build of the spec's "Endpoints", "The four cases",

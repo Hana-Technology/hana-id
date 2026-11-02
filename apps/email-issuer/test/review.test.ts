@@ -391,7 +391,7 @@ describe('the owner’s recovery never depends on a pool an attacker can fill (a
     expect(await box.checkOwner(claim('never-issued'), morning)).toBe(false);
   });
 
-  it('tickets: at most 5 live per address, a 6th revokes the oldest; at most 10 owner challenges per mailbox a day', async () => {
+  it('tickets: at most 5 live per address, a 6th revokes the oldest; at most 10 ticket challenges per address a day', async () => {
     const h = await harness();
     const app = await seedApp(h);
     const a = `l${uid().replace(/[^a-z0-9]/gu, '')}@gmail.com`;
@@ -415,6 +415,39 @@ describe('the owner’s recovery never depends on a pool an attacker can fill (a
       if (adm.ok && adm.owner) owners++;
     }
     expect(owners).toBe(10);
+  });
+
+  it('final check M1: past half the owner pool, fresh (sock-puppet) tickets fall back to the general pool; aged ones and grants keep it; logged', async () => {
+    const h = await harness();
+    const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`${h.deps.env.ENV_NAME}:global`));
+    // Budget 20: the owner pool, 20, beside the general pool (15 here, after the staff pool's 5).
+    let fresh = 0;
+    const lines: string[] = [];
+    for (let i = 0; i < 40; i++) {
+      const r = await stub.reserveBudget(`x${i % 2}`, 20, 2, 'owner', morning);
+      if (r.ok) {
+        fresh++;
+        lines.push(...r.crossed);
+      }
+    }
+    // Half the owner pool (10), then only the apps' general shares (2 each): fresh tickets can't fill the rest.
+    expect(fresh).toBe(10 + 4);
+    expect(lines).toContain('owner_50');
+    // The aged real tickets (and grants) still get the other half.
+    let aged = 0;
+    for (let i = 0; i < 15; i++) if ((await stub.reserveBudget('x0', 20, 2, 'owner_aged', morning)).ok) aged++;
+    expect(aged).toBe(10);
+    // Through start: the crossing is logged as email_owner_pool.
+    const h2 = await harness({ env: { ...env, ENV_NAME: `op-${uid()}`, DAILY_SEND_BUDGET: '12' } });
+    h2.clock.now = morning;
+    const app = await seedApp(h2);
+    const a = `op${uid().replace(/[^a-z0-9]/gu, '')}@gmail.com`;
+    const ticket = await ticketFor(h2, app, a, '192.0.2.120');
+    // The owner pool (12) has 5 used: the next owner mail reaches half.
+    const g2 = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`${h2.deps.env.ENV_NAME}:global`));
+    await runInDurableObject(g2, (_o, state) => state.storage.kv.put(`budget-owner@${Date.UTC(2027, 1, 3)}`, 5));
+    const { lines: logs } = await captureLogs(() => h2.call('/v1/email/start', startBody(h2, app, a, { deviceTicket: ticket }), { ip: '192.0.2.121' }));
+    expect(logs.some((l) => l.includes('"email_owner_pool"') && l.includes('"code":"owner_50"'))).toBe(true);
   });
 
   it('a ticket revoked after its challenge started gets no owner path on resend: domain cap and general budget apply (scan)', async () => {

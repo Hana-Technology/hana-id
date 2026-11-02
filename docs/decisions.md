@@ -1660,6 +1660,27 @@ detail open or a safer reading was needed. Each follows the spec's intent; the u
   move to SendGrid too is decided separately.
 - Why: one provider the team already operates and pays for; the adapter keeps the choice reversible.
 
+### D200. Link volume: a contract counter and an hourly cap, replacing the indexer scan
+- Date 2026-11-02 · Status: confirmed by the user (option A+), being built · Source: batch 5 review (the FastNear scan
+  reads about 13 logins per run at about 75 KB each, so it falls behind and pages on ordinary traffic)
+- Threat: a stolen email signing key (1-of-1 at launch) can sign "owns victim@gmail.com", and D119 links that email
+  identity at once to the victim's Google identity, so the thief derives the victim's Google wallet. Such a takeover
+  leaves new links on chain. (Opening email-only wallets with forged tokens makes no link; the defence there is the
+  key's custody, KMS and a second signer, D121.)
+- Decision: the contract counts every new link, immediate or pending (the combined login with a `link_jwt`, and
+  `link_identity`; not cancels, unlinks or lazy activations), in fixed UTC-hour windows, per scope and in total, and
+  refuses a new link once the scope or the total has reached its cap for the hour (`Link rate limit reached`; the
+  whole call reverts, so a capped login is refused, never completed without its link, D122). Defaults: 50 per scope
+  per hour, 500 in total per hour, changed by the owner (council). The scope or total that reaches its cap is
+  recorded by the call that reaches it, and a view reports the current and previous windows. The watchdog reads that
+  view each run: a cap reached is critical, a count past half the cap is a warning; raising a cap is a critical
+  governance change. The FastNear indexer scan (D192) is removed.
+- Why: exact, on chain, no third party or data budget, and it turns detection into a brake: a thief can take over at
+  most the cap's worth of accounts per hour before the page and the pause. v3 isn't deployed anywhere, so the
+  contract change is cheap now.
+- Cost: a real burst of linking above the cap (a big partner launch) is refused for the rest of the hour until the
+  owner raises the cap; the defaults are provisional until real traffic is measured.
+
 ### D170. Identity token layout details the spec left open
 - Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`packages/core/src/identity.ts`, frozen in
   `packages/core/test/vectors/identity-v1.json`) · Source: build step 1

@@ -1,7 +1,8 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
 Last verified against code: 2026-11-02 (branch `feat/email-login-4`: "Email issuer" setup and runbook, the issuer's
-secrets rows; branch `feat/link-cap`: "Link volume thresholds", D200, and `set_link_thresholds` through `owner:call`;
+secrets rows, after the reviews: Access SameSite=Strict, staff calls, unsuppress, the exact key-leak steps with
+`put --standby`, the budget and complaint logs; branch `feat/link-cap`: "Link volume thresholds", D200, and `set_link_thresholds` through `owner:call`;
 branch `feat/email-login-5`: the watchdog's email rules, the link alarms and `unrecorded_wallets` alerts in "Watchdog
 alerts (runbook)" and "Watchdog service", D190–D193, D200; branch `feat/email-login-2`: `deploy-contract` refuses a v1
 contract, D154; the v2 → v3 upgrade path sandbox-tested,
@@ -1132,6 +1133,11 @@ below logged in to the watchdog's account (`wrangler login` there, or `CLOUDFLAR
    page to both founders (the forced-rotation drill of the migration plan does this for real).
 7. The admin Worker (batch C) gets the same `WATCHDOG_STATUS_TOKEN` and the watchdog's URL.
 
+**Cloudflare Access** (before any staff call): one Access application for `{apiUrl}/v1/email/admin/*`, policy = the
+staff on `emailIssuer.access.staffEmails`, its AUD tag in `emailIssuer.access.aud`. In the application's settings set
+the session cookie's **SameSite attribute to Strict** (and HttpOnly on), so no other site's request carries a staff
+session; the issuer also refuses any request with an `Origin` header and any body that isn't JSON (D199).
+
 Local: `gen <env> --dev-vars` writes `apps/watchdog/.dev.vars` (0600) from the secrets file; `corepack pnpm --filter
 @hana-id/watchdog dev` runs `wrangler dev --test-scheduled` (`curl localhost:8787/__scheduled` runs one cron). Use a
 test Slack channel and ntfy topic: local runs send real alerts and, with a real `WATCHDOG_KEY`, real testnet
@@ -1253,10 +1259,13 @@ email key, and no app enables email (`apps.login_methods`) before batch 8.
    watchdog (its own account) **before** step 6. `email-issuer <env> show` prints it again, with the `set_issuer_key`
    arguments.
 3. **SendGrid** (D194): domain authentication (SPF, DKIM, DMARC `p=quarantine`) for the dedicated user-mail sending
-   subdomain; a subuser for user mail if the account allows it; an API key with **Mail Send only**, used by this Worker
-   alone, pasted into `.secrets/<env>/email-issuer-sendgrid-key` (0600; never in chat or a shell history). Set the
-   message-log retention to the minimum the plan allows. Optional: the signed Event Webhook (bounce, spam report) to
-   `{apiUrl}/v1/email/webhooks/sendgrid`, its verification key in `emailIssuer.sendgridWebhookPublicKey` (public).
+   subdomain; **a subuser for the issuer's mail alone** (required, D194: the webhook trusts only the issuer's categories
+   and the suppression list must be the issuer's); an API key of that subuser with **Mail Send only**, used by this
+   Worker alone, pasted into `.secrets/<env>/email-issuer-sendgrid-key` (0600; never in chat or a shell history). Don't
+   buy the Email Activity History add-on: SendGrid keeps each message's recipient and events in its Email Activity for
+   its plan's period (3 days without the add-on when written; check at setup) and Hana can't shorten it. The signed
+   Event Webhook (bounce, spam report) of that subuser to `{apiUrl}/v1/email/webhooks/sendgrid`, its verification key
+   in `emailIssuer.sendgridWebhookPublicKey` (public); events of other categories are ignored.
 4. **D1 and config**: `wrangler d1 create hana-id-email-issuer-<env>`, then
    `corepack pnpm --filter @hana-id/email-issuer gen <env> --d1-id <issuer uuid> --app-d1-id <the API's D1 uuid>` and
    `wrangler d1 migrations apply hana-id-email-issuer-<env> --remote` from `apps/email-issuer`. `gen` refuses a
@@ -1266,8 +1275,8 @@ email key, and no app enables email (`apps.login_methods`) before batch 8.
    `SENDGRID_API_KEY` on the issuer Worker through wrangler's stdin. The standby is never uploaded.
 6. **Chain** (batch 6, owner DAO): `set_issuer("email", [iss])`, `mark_self_issued("email")`, one `set_issuer_key("email",
    key, signer: "hana")` per published key (each waits `governance_delay_ms`), then `AddClient ("email", "email:" +
-   scope)` per scope with a staff client proof (`POST {apiUrl}/v1/email/admin/client-proof`, behind Access; configure
-   `emailIssuer.access`).
+   scope)` per scope with a staff client proof (`POST {apiUrl}/v1/email/admin/client-proof {scopeId, actionNonce,
+   ticket}` with the scope's current `action_nonce`, "Staff calls" below; configure `emailIssuer.access`).
 7. **Deploy**: `corepack pnpm --filter @hana-id/email-issuer deploy`, and route `{apiUrl}/v1/email/*` to it (batch 6:
    a service binding from the API on `workers.dev`, or a zone route).
 
@@ -1280,15 +1289,69 @@ Local: `gen <env> --dev-vars` writes `apps/email-issuer/.dev.vars` (0600) from t
 |---|---|---|
 | `503 signer_unavailable` | ISSUER_SIGNING_KEY missing, malformed, not the manifest's `activeKid`, or a signature failed its self-check | `email-issuer <env> show`; `put --yes` again; never edit the kid by hand |
 | `503 issuer_unavailable` | an HMAC key is missing or two are equal | `put --yes`; never generate a new K_sub for an env that has email users |
-| `send_budget_exhausted` (error log) | the day's `dailySendBudget` is spent: `start` and `resend` answer 429 | look for abuse (per-app `limit` logs); raise `dailySendBudget` in the manifest only if the traffic is real, then `gen` and deploy |
+| `email_budget` (warn log, `code` `global_50` / `global_80` / `app_50` / `app_80`, `appId`) | the day's user mail passed half or 80% of `dailySendBudget`, or of one app's 10% share (D198) | an `app_*` line names the app: check its traffic (a partner bug or a scripted abuse of its key); a `global_*` line with no app near its share means broad traffic |
+| `send_budget_exhausted` (error log, `code` `global`, `app` or `reserve`) | `global`: the day's `dailySendBudget` is spent, `start` and `resend` answer 429; `app`: that app used its 10% share; `reserve`: the last 20% is held for apps under half their share | look for abuse (per-app `limit` logs, `appId`); raise `dailySendBudget` in the manifest only if the traffic is real, then `gen` and deploy. An app's share can't be raised per app yet (plan fields, to confirm) |
+| `email_complaint_rate` (error log, `count`) | more than 5 spam complaints in 24 h on the issuer's mail | check which app's flows run (`code_mail` by `appId`) and SendGrid's stats for the subuser; a sustained rate risks the sending domain's reputation: lower `dailySendBudget` or suspend the app |
+| `missing_client_ip` (warn log) | a request reached the Worker without a usable `cf-connecting-ip` (not through Cloudflare's edge, or a misrouted service binding): refused with 400 | check the route (batch 6's service binding must forward the client's headers) |
 | `code_mail` errors with `misconfigured` / provider 401/403 | the SendGrid key is wrong, revoked or lacks Mail Send | new key into the file, `put --yes` |
 | `code_mail` errors with `unavailable` | SendGrid 429 or 5xx (the counts were taken back) | SendGrid status; users can resend after 30 s |
 | `google_revoke` warnings | Google's revoke endpoint failed (the access token expires within the hour anyway) | none, unless sustained |
-| `mailbox_guess_limit` (error log, `code` `backstop` or `ceiling`, `subject` = mailbox key prefix) | someone is guessing codes for one mailbox: past the backstop only owner-slot requesters can check, past the ceiling nobody until midnight UTC (D198) | watch for repeats of the same `subject`; when the user contacts support, `POST {apiUrl}/v1/email/admin/unlock {"email": "<their address>"}` with your Access session (audited); unlocking gives the attacker a fresh 25 checks, so only on request |
-| A suspected key leak | anyone with the Worker's secrets can mint email tokens (1-of-1, D121) | owner `remove_issuer_key("email", primary)` (immediate; logins continue on the standby once it is on the Worker: upload it as ISSUER_SIGNING_KEY with `activeKid` switched, then deploy), then a new key through the 72 h path and new pins; `set_sessions_valid_from_ms` for sessions opened meanwhile |
+| `mailbox_guess_limit` (error log, `code` `backstop` or `ceiling`, `subject` = mailbox key prefix) | someone is guessing codes for one mailbox: past the backstop (18) only owner-slot requesters and ticketed challenges can check, past the ceiling (25) nobody until midnight UTC (D198) | watch for repeats of the same `subject`. A user with a device ticket (an earlier sign-in on that browser) still gets 3 codes a day and the ticket slot. When a user without one contacts support and you've confirmed it's them: `admin/unlock` ("Staff calls" below); unlocking gives the attacker a fresh 25 checks, so only on request, and at most once a day and 3 times in 30 days per mailbox |
+| A user says the codes never arrive | the address may be suppressed (a bounce in the last 30 days, or a spam complaint), or the mailbox limits refuse | after confirming the address is theirs and the cause is fixed (mailbox full, a complaint by mistake): `admin/unsuppress` ("Staff calls"), **then** remove the address from the issuer subuser's suppression lists in SendGrid (Suppressions: Bounces, Spam Reports, Blocks; search the address, delete it), or SendGrid keeps dropping the mail |
+| A suspected key leak | anyone with the Worker's secrets can mint email tokens (1-of-1, D121): sessions for any email user's path | "Suspected issuer key leak" below |
+
+### Staff calls
+
+Every staff route needs an Access session, `Content-Type: application/json`, no `Origin` header (so not from a
+browser page), and a support reference `ticket` (the support case id, kept in the audit row; 1–64 of `A–Z a–z 0–9 .
+_ # : -`). Use `cloudflared access curl`, with the body on stdin so the address stays out of the shell history:
+
+```sh
+cloudflared access login {apiUrl}/v1/email/admin/unlock
+cloudflared access curl {apiUrl}/v1/email/admin/unlock -X POST -H 'Content-Type: application/json' --data-binary @-
+{"email": "<their address>", "ticket": "<support case id>"}
+# then Ctrl-D
+```
+
+`admin/unsuppress` takes the same body; `admin/client-proof` takes `{"scopeId", "actionNonce", "ticket"}`. The audit
+row (`email_admin_audit`: staff, action, ticket, mailbox key prefix or scope) is written before the action. 20 staff
+actions an hour per staff member, all routes together; unlock and unsuppress at most once a day and 3 times in 30 days
+per mailbox (`429 staff_cap`).
+
+### Suspected issuer key leak
+
+`$I` = `corepack pnpm --filter @hana-id/scripts email-issuer <env>`, `$A` = `corepack pnpm --filter @hana-id/scripts
+admin <env>` (owner calls take the council's approvals as usual, `--approve-with`).
+
+1. **Decide what is exposed.** The Worker's secrets or the Cloudflare account: the active signing key, K_sub, K_code,
+   K_rl and the SendGrid key (the standby was never uploaded). `.secrets/<env>/` or the operator's machine: every file
+   there, the standby too unless it was offline. **Unless the incident provably touches only the Worker, treat the
+   standby as exposed.**
+2. **Pause**: `$A owner:call pause --yes`. Logins and derivation stop; no session opens while paused.
+3. **Remove the leaked key** (immediate): `$A owner:call remove_issuer_key --args '{"provider":"email","kid":"<active
+   kid>"}' --yes` (`$I show` prints the kids). Both exposed: the standby's kid too.
+4. **Only the active key exposed: switch to the standby.** `$I put --standby` (plan), then `$I put --standby --yes`:
+   switches `emailIssuer.signer.activeKid` in `envs/<env>.json` to the standby's kid and uploads the standby as
+   `ISSUER_SIGNING_KEY` (with the three HMAC keys). Then `corepack pnpm --filter @hana-id/email-issuer gen <env> --d1-id
+   … --app-d1-id …` and `corepack pnpm --filter @hana-id/email-issuer deploy`; commit the manifest. Check `$I show`
+   names the standby active and `GET {apiUrl}/v1/email/jwks.json` still lists it. The env has no standby until a new
+   one is made (no command yet: batch 10 replaces the Worker key with KMS; to confirm). **Both exposed:** email logins
+   stay off until a new key passes `set_issuer_key` (72 h, `governance_delay_ms`) and the watchdog pins.
+5. **Watchdog pins**: delete the removed kid(s) from `watchdog.pinnedIssuerKeys.email` and redeploy the watchdog, so a
+   re-post of the leaked key is `forged_active_key`.
+6. **Session floor**: `$A owner:call set_sessions_valid_from_ms --args '{"sessions_valid_from_ms": <a time after the
+   pause began>}' --yes`, before unpausing, so sessions the leaked key opened can't derive.
+7. **The other Worker secrets**, when the Worker's secrets were exposed: revoke the SendGrid key in SendGrid and paste a
+   new one into its file; replace K_code and K_rl (`(umask 077; openssl rand -base64 32 > .secrets/<env>/email-code-key)`,
+   the same for `email-rl-key`; it prints nothing): live challenges, device tickets and today's counters reset, nothing
+   else. Then `$I put --yes`. **Never K_sub** (it would move every email address); a K_sub leak is privacy only (the
+   holder can map addresses to `sub`s and paths), and suppressions stay keyed by it.
+8. **Unpause**: `$A owner:call unpause --yes`.
+9. Tell partners (security contacts): the kid, the window in which forged tokens may have been accepted.
 
 Limits are in `docs/api.md` "Email issuer" (D198): per (mailbox, requester), per mailbox with a reserve for new
-requesters, live challenges, the wrong-code locks and the backstop.
+requesters and the device ticket's allowance, live challenges, the wrong-code locks, the ceiling (18 + 4 + 3), the IP
+prefixes, the recipient domain and the budget's shares.
 
 ## Restoring a D1 database (Time Travel)
 

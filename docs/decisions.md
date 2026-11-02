@@ -1660,6 +1660,9 @@ detail open or a safer reading was needed. Each follows the spec's intent; the u
 - Not changed yet: the watchdog's alert email and the admin Worker's notices still name Resend (D87); whether they
   move to SendGrid too is decided separately.
 - Why: one provider the team already operates and pays for; the adapter keeps the choice reversible.
+- **Amended (2026-11-02, independent review M3; to confirm):** a SendGrid **subuser for the issuer is required**, not
+  "if the account allows it": the issuer's suppression handling trusts only events of its own categories, and a shared
+  account mixes other mail's bounces and suppression list with the issuer's.
 
 ### D200. Link volume: a contract counter with hourly alarm thresholds, replacing the indexer scan
 - Date 2026-11-02 · Status: confirmed by the user: count and alarm, no refusal (option A, after review H1/H2);
@@ -2069,6 +2072,11 @@ change no address.
 - Why: a false "not Google-hosted" only costs the user a code (case A) or the 24 h delay (case B); a false "hosted"
   links silently. Google returns `hd` as the Workspace's lowercase ASCII domain, so the exact form is the expected one.
 - Rejected: normalizing `hd` with `normalizeDomain`; matching `hd` against parent domains.
+- **Reasoning corrected (2026-11-02, tokens review L3; the rule is unchanged):** for a Workspace account without Gmail
+  or a Cloud Identity account, Google does **not** host the mailbox, so "whoever passes Google's sign-in can read the
+  mailbox" isn't a fact about Google there. The rule treats such an `hd` account as Google-hosted on the domain
+  administrator's word: the same administrator issues the Google account and the mailbox, and can already reach both.
+  A silent link then trusts that administrator, as every address on that domain already does.
 
 ### D159. Gmail canonical form: dots ignored, each `+tag` its own identity
 - Date 2026-11-02 · Status: confirmed by the user (2026-11-02), amending Q7 (D123) · Source: spec Q7 (D123), checked
@@ -2280,6 +2288,10 @@ is computed by `@hana-id/email` alone, from the normalized address including any
   wrong, nothing is ever sent), so `start` still answers alike.
 - Why: the stricter reading of the privacy table.
 - Rejected: a fresh 10 minutes per code (up to 30 minutes of storage).
+- **Amended (independent review L3):** a challenge id is 32 random bytes, a public half (the object is named by its
+  sha256) and a secret half that only the client holds: the address in the record is AES-256-GCM-encrypted under a
+  key derived from the secret half (the public half as AAD), so the object's storage, and any point-in-time copy of it,
+  holds no readable address. The worker decrypts it only during a `resend` or `verify` that carries the full id.
 
 ### D198. The limits: per mailbox and requester, atomic, with a mailbox-wide backstop
 - Date 2026-11-02 · Status: to confirm (built; values provisional per D123 Q22). Revised the same day after a security
@@ -2357,6 +2369,35 @@ is computed by `@hana-id/email` alone, from the normalized address including any
   when it can't be created, and when its first code isn't delivered (the challenge itself stays, for a resend).
 - To check with the user: whether "20 × per_minute" was meant (1,200 starts a minute for a free-plan app; the global
   budget is then the binding cost bound).
+- **Amended after the independent reviews (2026-11-02; every number below to confirm):**
+  - **The global budget is shared out (H1):** an app may use at most 10% of `dailySendBudget` a day (free plan; one
+    share for every plan until email-specific plan fields exist), and the last 20% only an app that has used less than
+    half its share that day. `email_budget` is logged at 50% and 80% of the global budget and of each app's share;
+    `send_budget_exhausted` names the limit (`global`, `app`, `reserve`). Batch 9 turns them into alerts.
+  - **Aggregate requester limits (H1, L4):** besides the IPv4 address or IPv6 /64, `start` counts against the IPv4 /24
+    and the IPv6 /56 and /48, each ≤ 200 a day. A request without a usable `cf-connecting-ip` is refused
+    (`400 missing_client_ip`, logged) instead of sharing one bucket.
+  - **Per recipient domain (H1, M4):** ≤ 100 code mails a day per registrable domain (Public Suffix List, so a catch-all's
+    subdomains count together), except a listed set of large consumer providers (gmail.com, outlook.com, hotmail.com,
+    live.com, yahoo.com, icloud.com, me.com, mac.com, proton.me, protonmail.com, gmx.{com,net,de,at,ch,fr,es,it,co.uk,us},
+    qq.com, 163.com, yandex.{com,ru,ua,by,kz,com.tr}, mail.ru, aol.com, zoho.com; `src/domain.ts`).
+  - **Per app:** `start` the plan's `per_minute` per minute (the "20 ×" dropped) and its `per_day` per day.
+  - **Order: the requester pays first.** `start` counts the IP and prefix limits, then the mailbox (atomic), then the
+    domain, then the partner's quota, then the budget; a later refusal refunds the earlier mailbox, domain and app counts
+    (never the IP ones), so refused mailboxes can't burn a partner's quota or the budget.
+  - **Owner device ticket (M1):** a successful `verify` returns `deviceTicket` = "dt1." + b64url(expiry ‖
+    HMAC(K_device, domain ‖ mailbox key ‖ expiry)), K_device = HMAC(K_code, "hana-id/device-ticket-key/v1"), valid 30
+    days, bound to the mailbox. A `start` that presents a valid one gets its own allowance, **3 code mails per mailbox
+    per UTC day**, outside the code limits, the live cap and the challenge cap, and its challenge's checks may use a
+    **ticket slot of 3** past the backstop. Only someone who read a code at that mailbox holds one. Batch 8's popup keeps
+    it on `authOrigin`. The reserve for new requesters stays, but it bounds mail; it doesn't protect the owner (an
+    attacker with many IPs uses it up too), which the earlier wording claimed.
+  - **The ceiling is now 18 + 4 + 3:** a backstop of 18 open to anyone, the owner slot of 4 (started before the trip,
+    no failure), the ticket slot of 3 (a ticketed challenge); still a hard 25 a day, 0.91% a year.
+  - **Unlock grants (M1):** `admin/unlock` also grants the mailbox, for that UTC day, one challenge past the live and
+    daily caps and one code mail past the code limits, so an owner whose mailbox was drained can sign in after support.
+  - **One `retry-after` (L1):** every mailbox-level refusal (the mailbox's limits and locks, the domain cap) answers
+    `retry-after: 900`, whatever the limit.
 
 ### D199. HTTP, data and chain readings of the issuer
 - Date 2026-11-02 · Status: to confirm (built) · Source: build of the spec's "Endpoints", "The four cases",
@@ -2393,6 +2434,39 @@ is computed by `@hana-id/email` alone, from the normalized address including any
 - Open for batch 6: how `{apiUrl}/v1/email/*` reaches this Worker. On sandbox-dev (`*.workers.dev`) the API Worker
   would forward it through a service binding, so request bodies (addresses and codes) would pass through the API
   Worker's memory; a route on a Hana zone in production avoids that.
+- **Amended after the independent reviews (2026-11-02; to confirm):**
+  - **Staff routes (M2):** every `admin/*` route needs `Content-Type: application/json` and refuses any `Origin`
+    header (no cross-site simple request can reach them), takes a support reference `ticket` (1–64 characters) kept in
+    the audit row, and writes the audit row **before** acting. Unlocks and unsuppressions are capped per mailbox at 1 a
+    day and 3 in any 30 days. The Access application's session cookie is to be set to SameSite=Strict (operations).
+  - **Client proofs (tokens review L6):** minted only for a scope `get_scope` returns now (no cache), with
+    `actionNonce` equal to its current `action_nonce` and at least one active app with email on.
+  - **Suppressions (M3):** `admin/unsuppress {email, ticket}` (capped and audited like unlock; SendGrid's own list is
+    cleaned by hand, runbook). The webhook counts only events of the issuer's own categories (`hana-id-code`,
+    `hana-id-link_notice`). A bounce lapses after 30 days; a complaint lasts until a staff unsuppress. Suppressions are
+    keyed by K_sup = HMAC(K_sub, "hana-id/suppression-key/v1"), so rotating K_rl or K_code never drops them (K_sub is
+    never rotated). `email_complaint_rate` is logged when the complaints of 24 h pass 5 (M4).
+  - **Webhook (L5):** the timestamp and signature shape are checked before the body is read, the verification key is
+    imported once per isolate, and the route is limited per IP (120 per 10 min).
+  - **Access (L6):** a failed certs fetch or an unknown kid is negatively cached for 30 s.
+  - **Per-purpose mail (tokens review M1):** each purpose has its own subject and wording (`session`: sign in;
+    `link_new`: add this email; `link_account`: allow another sign-in method to open the wallet this email opens in X;
+    `link_change`: remove or cancel a sign-in method; `auto_link`: link your Google sign-in to the wallet this email
+    opens). The spec's "Phishing" wording ("add this email to an existing wallet" for every link purpose) was wrong for
+    `link_account`, `link_change` and `auto_link`; the spec is history and is not edited.
+  - **Case B on the server (tokens review L1):** when `verify` finds that a hinted Google identity has the wallet
+    (case B), it returns no `idToken` (`{googleWallet: true, linkTicket?, deviceTicket}`), so an email login can't open a
+    second wallet even if the popup misbehaves. Hints are written only for **Google-hosted** addresses: for any other,
+    Google's word that the account has the address says nothing about the mailbox. **Consequence, to confirm:** a
+    non-Google-hosted address is never matched in case B any more, so D119's delayed (24 h) case-B link isn't reached by
+    automatic linking; such a person gets two wallets unless they link explicitly (`linkAccount`). The minting path for
+    it stays in the code.
+  - **Link tickets (tokens review L2):** a `linkTicket` is bound to the app, the address's `sub` **and** the hinted Google
+    identities found in case B; google-match accepts it only for one of those (binding the relayId is left for batch 8).
+  - **Retention (independent review L3):** SendGrid's Email Activity keeps each message's recipient and events (3 days,
+    longer only with the paid Email Activity History add-on, per SendGrid's docs at the time of writing; check at setup)
+    and Hana can't shorten it: "the minimum the plan allows" means not buying the add-on. The issuer's own logs and
+    storage hold no address. `email_issuance` pruning (24 months, D90) is a batch C13 follow-up.
 
 ## Superseded or amended
 

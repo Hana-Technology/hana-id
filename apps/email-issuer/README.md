@@ -2,7 +2,8 @@
 
 The Hana-run email issuer (`docs/email-login-spec.md` "Email issuer (Hana-run)", build plan batch 4): a Cloudflare
 Worker, separate from the API, that sends sign-in codes, mints email tokens (JWS General JSON, RS256) whose nonces it
-computes per purpose, answers `google-match` for automatic linking, publishes its JWKS and mints staff client proofs.
+computes per purpose, answers `google-match` for automatic linking, publishes its JWKS and serves the staff routes (client proofs, unlock,
+unsuppress) behind Cloudflare Access.
 **Not deployed**; no app enables email yet.
 
 Reference: endpoints, limits, Durable Objects, D1 and logs in `docs/api.md` "Email issuer"; setup and runbook in
@@ -13,9 +14,9 @@ Reference: endpoints, limits, Durable Objects, D1 and logs in `docs/api.md` "Ema
 | Secret | What |
 |---|---|
 | `ISSUER_SIGNING_KEY` | RSA-2048 private JWK of signer `hana` (testnet only; mainnet: AWS KMS, `src/kms.ts`, not wired). The standby key is published but stays offline (D196) |
-| `EMAIL_SUB_KEY` (K_sub) | feeds every email user's `sub` (`@hana-id/email` `emailSub`): never rotated |
-| `EMAIL_CODE_KEY` (K_code) | code hashes in the challenge objects |
-| `EMAIL_RL_KEY` (K_rl) | mailbox limiter keys (the address without its `+tag`) and suppression keys (the exact address) |
+| `EMAIL_SUB_KEY` (K_sub) | feeds every email user's `sub` (`@hana-id/email` `emailSub`): never rotated. K_sup, derived from it, keys the suppressions (the exact address) |
+| `EMAIL_CODE_KEY` (K_code) | code MACs in the challenge objects; K_device, derived from it, signs owner device tickets |
+| `EMAIL_RL_KEY` (K_rl) | limiter keys: the mailbox (the address without its `+tag`) and the recipient domain |
 | `SENDGRID_API_KEY` | Mail Send only, this Worker's alone (D194) |
 
 It reads hana-signer views over the manifest's RPC and the API's D1 (`apps`, `plans`) read only; it writes nothing on
@@ -25,14 +26,17 @@ chain and holds no chain key.
 
 | File | Role |
 |---|---|
-| `src/handlers.ts` | the routes: `start`, `resend`, `verify`, `google-match`, `admin/client-proof`, `admin/unlock`, JWKS, discovery, the SendGrid webhook |
+| `src/handlers.ts` | the routes: `start`, `resend`, `verify`, `google-match`, `admin/client-proof`, `admin/unlock`, `admin/unsuppress`, JWKS, discovery, the SendGrid webhook |
 | `src/commitment.ts`, `src/layouts.ts` | purposes, commitments and every nonce (checked against the contract's `email_fixture.json`) |
 | `src/decide.ts` | the four cases of automatic linking, judged as the contract's `auto_link` will |
-| `src/challenge.ts` | `Challenge` Durable Object: one challenge or link ticket, atomic attempts, single use |
-| `src/rate-limiter.ts`, `src/limits.ts` | `RateLimiter` Durable Object and every limit (D198): per (mailbox, requester), per mailbox, the 25-a-day guess ceiling |
+| `src/challenge.ts`, `src/challenge-id.ts` | `Challenge` Durable Object: one challenge or link ticket, atomic attempts, single use; the challengeId's public half (the object's name) and secret half (the address's encryption key) |
+| `src/keys.ts` | the HMAC keys, their derived keys (K_sup, K_device), codes, owner device tickets |
+| `src/rate-limiter.ts`, `src/limits.ts` | `RateLimiter` Durable Object and every limit (D198): per (mailbox, requester), per mailbox, the device ticket's allowance, the 25-a-day guess ceiling, the budget's per-app shares |
+| `src/domain.ts`, `src/ip.ts` | the recipient domain's cap (registrable domain, exempt consumer providers); IP subjects and their /24, /56, /48 prefixes |
 | `src/jws.ts`, `src/signer.ts`, `src/kms.ts` | JWS JSON minting with a self-check; the Worker-secret signer; the KMS adapter (aws4fetch) |
-| `src/sender.ts`, `src/sendgrid.ts`, `src/outbox.ts`, `src/mail.ts` | the sender interface, SendGrid v3, the `local*`-only outbox stub, mail texts |
+| `src/sender.ts`, `src/sendgrid.ts`, `src/outbox.ts`, `src/mail.ts` | the sender interface, SendGrid v3, the `local*`-only outbox stub, the per-purpose mail texts |
 | `src/google.ts`, `src/chain.ts`, `src/apps.ts`, `src/access.ts`, `src/webhook.ts` | Google (ID token, tokeninfo, userinfo, revoke), NEAR views, the app lookup, Cloudflare Access, SendGrid's signed events |
+| `scripts/gen-contract-fixture.ts` | writes `contracts/hana-signer/src/issuer_tokens_fixture.json` (tokens from this code, for the contract's unit tests) |
 | `migrations/0001_init.sql` | the issuer's D1: `email_issuance`, `email_hints`, `email_suppressions`, `email_admin_audit` |
 
 ## Commands
@@ -42,7 +46,8 @@ corepack pnpm --filter @hana-id/email-issuer test        # Worker tests (minifla
 corepack pnpm --filter @hana-id/email-issuer typecheck
 corepack pnpm --filter @hana-id/scripts email-issuer <env> init --from "Hana <login@…>" [--yes]   # keys + manifest, uploads nothing
 corepack pnpm --filter @hana-id/email-issuer gen <env> [--d1-id <uuid>] [--app-d1-id <uuid>] [--dev-vars]
-corepack pnpm --filter @hana-id/scripts email-issuer <env> put [--yes]    # the user uploads the secrets
+corepack pnpm --filter @hana-id/scripts email-issuer <env> put [--standby] [--yes]    # the user uploads the secrets
+corepack pnpm --filter @hana-id/email-issuer exec tsx scripts/gen-contract-fixture.ts   # after a layout or token change
 corepack pnpm --filter @hana-id/email-issuer dev
 ```
 

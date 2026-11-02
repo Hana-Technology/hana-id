@@ -387,13 +387,16 @@ Branch `feat/email-login-4`, not merged, nothing deployed, no secret uploaded, n
 - **Limits (D198)**, all exact and each decision one atomic Durable Object call: code mails 3 per 15 min and 10 per day
   per (mailbox, requester), 10 per 15 min and 30 per day per mailbox plus a reserve of 5 a day for requesters new to it;
   5 live and 35 created challenges per mailbox per day; 5 attempts per challenge; 10 wrong per hour per (mailbox,
-  requester) → 1 h lock; a hard ceiling of 25 failed checks per mailbox per UTC day (backstop 20 + owner slot 5;
-  ≈ 0.91% a year); per IP `start` 10 per 10 min and 50 per day, `verify` 30, `resend` 10, `google-match` 30 per 10 min;
-  per app 20 × plan `per_minute` per minute and plan `per_day` per day; staff 20 client proofs an hour; a global daily
-  send budget (`dailySendBudget`, default 1000). Mailbox = the address without its `+tag`; suppressions per exact
-  address. Every refusal is the same generic 429; suppressed addresses take the same path silently. Accepted
-  trade-off (D198, to confirm): a mailbox under a sustained guessing attack is locked until midnight UTC; the trip is
-  logged (`mailbox_guess_limit`) and staff can lift it with `admin/unlock`.
+  requester) → 1 h lock; a hard ceiling of 25 failed checks per mailbox per UTC day (backstop 18 + owner slot 4 +
+  ticket slot 3; ≈ 0.91% a year); per IP `start` 10 per 10 min and 50 per day, and 200 a day per IPv4 /24, IPv6 /56
+  and /48; `verify` 30, `resend` 10, `google-match` 30, webhook 120 per 10 min; per recipient domain 100 code mails a
+  day (consumer providers exempt); per app plan `per_minute` per minute and plan `per_day` per day; staff 20 actions
+  an hour (shared); a global daily send budget (`dailySendBudget`, default 1000), at most 10% per app and the last 20%
+  only for apps under half their share. Mailbox = the address without its `+tag`; suppressions per exact address.
+  Every mailbox-level refusal is the same 429 with `retry-after: 900`; suppressed addresses take the same path
+  silently. Accepted trade-off (D198, to confirm): a mailbox under a sustained guessing attack is locked until
+  midnight UTC for anyone without a device ticket; the trip is logged (`mailbox_guess_limit`) and staff can lift it
+  with `admin/unlock`.
 - **Sender.** SendGrid v3 Mail Send (D194): a send counts only on `202`; tracking off; response bodies read ≤ 4 KB and
   never logged; `SENDGRID_API_KEY` Mail Send only, the issuer's alone. The `outbox` stub (a test-only Durable Object)
   only in `local*` envs (schema and `gen` refuse it elsewhere). The interface (`src/sender.ts`) is one method.
@@ -412,10 +415,22 @@ Branch `feat/email-login-4`, not merged, nothing deployed, no secret uploaded, n
   widely, an owner exemption that gave one more guess per fresh IP, a stale trip marker after a refunded check, and a
   challenge cap never refunded on failed paths. All fixed before this result, with tests (parallel guesses, many
   requesters, the ceiling, the owner slot, suppressed-address parity, the refunds, the unlock); D197–D199.
-- **Tests.** apps/email-issuer: 85 Worker tests (miniflare: layouts against the contract fixtures, codes,
+- **Review fixes** (two independent reviews, after the security review; defaults to confirm in D194, D158 and
+  D197–D199): the budget's per-app shares and reserve, the IP prefix and recipient-domain caps, `email_budget` and
+  `email_complaint_rate` logs, the per-app limit at plan `per_minute`, the requester-pays order in `start`; owner
+  device tickets (30 days, 3 code mails a day, the ticket slot) and unlock grants; staff routes JSON-only, `Origin`
+  refused, a support `ticket` in every audit row written before acting, unlock and the new `admin/unsuppress` capped
+  per mailbox; the webhook's category filter, 30-day bounce expiry, header checks before the body, cached key, per-IP
+  limit; suppressions keyed by K_sup (from K_sub); the challenge's address encrypted under the client-held half of the
+  challengeId; `missing_client_ip` refused; uniform `retry-after`; Access negative cache; per-purpose mail texts; case
+  B's `idToken` withheld, hints only for Google-hosted addresses, link tickets bound to the hinted Google identities;
+  client proofs at the scope's current `action_nonce` with an email app; `email-issuer <env> put --standby` and the
+  exact key-leak runbook; issuer-minted tokens checked in the real contract (`contracts/hana-signer` tests only, 4
+  tests, `issuer_tokens_fixture.json`); gitleaks `hana-private-jwk` also matches an unquoted `d: '…'`.
+- **Tests.** apps/email-issuer: 101 Worker tests (miniflare: layouts against the contract fixtures, codes,
   limits and the ceiling, google-match's four cases, signers and KMS, adapters, the log-capture test) and 5 `gen` tests;
-  packages/env +11 (`emailIssuer`), packages/jwks +3 (`rsaThumbprint`), scripts +9 (`email-issuer`) and 4 secret-scan
-  self-test cases; `pnpm -r test` and `pnpm -r typecheck` green. Existing tests broken on `develop` by the identity-token deploy
+  packages/env +11 (`emailIssuer`), packages/jwks +3 (`rsaThumbprint`), scripts +10 (`email-issuer`) and 6 secret-scan
+  self-test cases; hana-signer +4 (`tests/email/issuer_tokens.rs`, 303 in all); `pnpm -r test` and `pnpm -r typecheck` green. Existing tests broken on `develop` by the identity-token deploy
   (`envs/sandbox-dev.json` gained `identityToken`, whose `iss` pins `apiUrl` and whose signer says `worker-secret`)
   are fixed test-only: `packages/env` `endpoints`, `origins`, `dashboard`; `apps/api` `scripts/test/gen-wrangler` and
   `pages-wrangler`; `packages/web` `gen-envs` (drop that block where they rewrite `apiUrl`); `scripts` `ckd` (the

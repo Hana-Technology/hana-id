@@ -1020,7 +1020,9 @@ async function unrecordedWallets(run: Run, s: ChainSnapshot): Promise<void> {
  * issuer is on chain (no link is possible), a warning once one is.
  */
 async function linkStats(run: Run, s: ChainSnapshot): Promise<void> {
-  run.evaluate('link_cap_reached', 'link_volume_high', 'link_stats_unavailable');
+  // Without a good read the cap state is unknown: only `link_stats_unavailable` is judged, so open cap and volume
+  // alerts stay open until a good read says otherwise (never resolved by a broken or missing view).
+  run.evaluate('link_stats_unavailable');
   const v = s.linkStats;
   const emailLive = s.email.issuer !== null || s.email.selfIssued !== null;
   if (s.linkStatsProblem) {
@@ -1039,6 +1041,7 @@ async function linkStats(run: Run, s: ChainSnapshot): Promise<void> {
     } else run.check('links', 'skipped', 'no get_link_stats (pre-D200 contract) and no email issuer: no link possible');
     return;
   }
+  run.evaluate('link_cap_reached', 'link_volume_high');
   await run.d.store.setMeta(META.linkStats, { at: run.d.now(), ...v });
   const lim = v.limits;
   for (const w of [v.current, v.previous]) {

@@ -69,7 +69,8 @@ every run and sends nothing on a mismatch.
      `total_per_hour` or more → warning `link_volume_high:<hour>`. An email issuer on chain and no `get_link_stats` →
      warning `link_stats_unavailable:missing`; with no email issuer, nothing (no link is possible). An answer of another
      shape, or a failing view → `links` `error` and warning `link_stats_unavailable:malformed` / `:read_failed`; the
-     Google and email cancels and pauses of the same run are unaffected. Judged with the chain read,
+     Google and email cancels and pauses of the same run are unaffected, and open `link_cap_reached` /
+     `link_volume_high` alerts stay open (only a good read resolves them). Judged with the chain read,
      before the run is recorded and its lock released.
 6. **Active keys**: a kid this watchdog never saw in Google's JWKS, or whose on-chain material (`get_issuer_keys`)
    differs from Google's → `pause`, then `delete_updater_key` for every updater key (whoever proposed it: the change

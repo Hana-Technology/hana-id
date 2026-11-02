@@ -521,6 +521,42 @@ describe('link caps (get_link_stats, D200)', () => {
     expect((await alertsOf(w.store, 'link_stats_unavailable')).every((a) => a.resolved_at !== null)).toBe(true);
   });
 
+  it('a broken or missing view never resolves an open cap or volume alert; a good read under the cap does', async () => {
+    const w = await live();
+    const open = async () => (await w.store.openAlerts()).filter((a) => a.resolved_at === null && ['link_cap_reached', 'link_volume_high'].includes(a.kind)).map((a) => a.kind).sort();
+    // A cap reached, in all and in scope s1: two open critical conditions.
+    w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t, 500, { total_cap_reached: true, capped_scopes: ['s1'] }) });
+    await w.run();
+    expect(await open()).toEqual(['link_cap_reached', 'link_cap_reached']);
+    w.chain.linkStatsProblem = 'malformed';
+    await w.run();
+    expect(await open()).toEqual(['link_cap_reached', 'link_cap_reached']);
+    w.chain.linkStatsProblem = 'read_failed';
+    await w.run();
+    expect(await open()).toEqual(['link_cap_reached', 'link_cap_reached']);
+    w.chain.linkStatsProblem = null;
+    w.chain.linkStats = null; // the view missing (with an email issuer on chain)
+    await w.run();
+    expect(await open()).toEqual(['link_cap_reached', 'link_cap_reached']);
+    // A good read under the cap (a later hour): resolved.
+    w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t + 2 * HOUR, 3), previous: linkWindow(w.clock.t + HOUR, 2) });
+    await w.run();
+    expect(await open()).toEqual([]);
+  });
+
+  it('a broken view keeps an open link_volume_high warning open too', async () => {
+    const w = await live();
+    w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t, 300) });
+    await w.run();
+    w.chain.linkStatsProblem = 'malformed';
+    await w.run();
+    expect((await alertsOf(w.store, 'link_volume_high'))[0]?.resolved_at).toBeNull();
+    w.chain.linkStatsProblem = null;
+    w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t, 10) });
+    await w.run();
+    expect((await alertsOf(w.store, 'link_volume_high'))[0]?.resolved_at).not.toBeNull();
+  });
+
   it('is judged before the run is recorded and its lock released (the protective phase)', async () => {
     const w = await live();
     w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t, 500, { total_cap_reached: true }) });

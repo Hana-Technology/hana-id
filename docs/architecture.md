@@ -1,9 +1,10 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-02 (branch `feat/email-login-5`: the watchdog's email issuer, link-volume and
-`unrecorded_wallets` checks in Status, Components, the watchdog's reads and its D1; branch `feat/email-login-3`:
-`packages/email` in Status and Components); 2026-10-30 (branch `feat/identity-token-2`: the identity mint's checks and limits, share
+Last verified against code: 2026-11-02 (branch `feat/email-login-5`: the watchdog's email issuer, link-cap and
+`unrecorded_wallets` checks in Status, Components and the watchdog's reads; branch `feat/email-login-2`: the email
+login contract row in Status: sandbox tests, the v2 → v3 upgrade path, `migrate_v1` removed; branch
+`feat/email-login-3`: `packages/email` in Status and Components); 2026-10-30 (branch `feat/identity-token-2`: the identity mint's checks and limits, share
 tombstones, the offline standby key, D176–D179; branch `feat/identity-token-1`: the partner identity token in Status,
 Components, the "Partner identity token" flow, Data stores and the Glossary; `feat/email-login-1-r2`: contract v3
 email login status and path identity; `feat/playbook-gaps`: the watchdog's relayer funds reads and D1 meta;
@@ -38,7 +39,7 @@ Batch B is merged on the integration branch `feat/batch-b` (not yet on `develop`
 | Governance API (delayed JWKS sync, `issuer_key_pending` / `paused` gate, `GET /v1/governance`) | `gov/api`, integrated on `feat/governance` | Code done; not deployed (`docs/operations.md` "Deploying the governance API") |
 | Governance scripts (owner council, DAO-routed owner calls, timelocked upgrades, migration, `admin governance:status`) | `gov/scripts`, integrated on `feat/governance` | Code done (`docs/operations.md` "Governance") |
 | Partner identity token, build steps 1–4 (`docs/identity-token-spec.md`, D127): core layouts and ids, `POST /v1/identity/token`, JWKS and discovery, Worker-secret ES256 signer, migration 0008, `hana.getIdentityToken()`, `useIdentityToken()`, `scripts/identity-key.ts`, `examples/identity-verify` | `feat/identity-token-1` | Code done; not deployed (`docs/operations.md` "Identity token keys"). No `email` claim yet (steps 5–6), no KMS signer (step 7) or watchdog pin check (step 8) |
-| Email login, contract v3 (self-issued email issuer with a signer policy, JWS JSON tokens, accounts and links, `migrate` v2 → v3) | `feat/email-login-1` | Code done, unit-tested; not deployed. Every off-chain part (issuer, API, web, watchdog) is a later batch of `docs/email-login-build-plan.md`; until then nothing calls the new methods |
+| Email login, contract v3 (self-issued email issuer with a signer policy, JWS JSON tokens, accounts and links, `migrate` v2 → v3; `migrate_v1` removed) | `feat/email-login-1`, `feat/email-login-2` | Code done, unit- and sandbox-tested (email login, links, the v2 → v3 upgrade through the DAO from sandbox-dev's v2 code, gas in `docs/contract-interface.md`); not deployed. Every off-chain part (issuer, API, web, watchdog) is a later batch of `docs/email-login-build-plan.md`; until then nothing calls the new methods |
 | `@hana-id/email` (email normalization v1, the `e1.` `sub`, the Google-hosted rule, the pinned disposable-domain list; build-plan batch 3) | `feat/email-login-3` | Code done, frozen vectors; nothing imports it yet (the email issuer, batch 4, will) |
 | Email login, watchdog (batch 5): email pins and signer policy, link volume, `unrecorded_wallets` (D190–D193) | `feat/email-login-5` | Code done, tested against stubs, review fixes in (warning-only third-party reads run last and guarded, every third-party body size-capped); not deployed (it must be, with its pins, before batch 6 posts email keys). Reads a v2 contract as "no email issuer" |
 

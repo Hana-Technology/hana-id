@@ -6,7 +6,7 @@
 // only in memory, never written anywhere): one for signer "hana" and one for a co-signer.
 //
 // It is separate from gen-fixtures.mjs on purpose: regenerating test_fixture.json changes its Google test key, which
-// v1_state_fixture.json and v2_state_fixture.json embed (their migrate tests verify fixture tokens after the
+// v2_state_fixture.json embeds (its migrate tests verify fixture tokens after the
 // migration). This file has no such dependency and may be regenerated at any time.
 //
 //   node contracts/hana-signer/scripts/gen-email-fixtures.mjs           # writes src/email_fixture.json

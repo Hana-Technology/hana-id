@@ -41,9 +41,14 @@ pub const CHANGE_DELAY_MS: u64 = 20_000;
 pub const ISSUER_KEY_DELAY_MS: u64 = 20_000;
 /// governance_delay_ms of the sandbox deployment.
 pub const GOVERNANCE_DELAY_MS: u64 = 30_000;
-/// The commit whose hana-signer is the v1 contract (batch B, the code on sandbox-dev before the governance batch):
-/// the last develop commit that changed contracts/hana-signer before it. The migration tests build its wasm.
-pub const V1_COMMIT: &str = "3fd4964c13488d37cffdedb069c729573c978c68";
+/// The commit whose hana-signer is the v2 contract (governance batch, contract 0.1.1, on sandbox-dev since
+/// 2026-10-30): the last develop commit before the v3 merge (9a52058). Its contracts/hana-signer is the tree of the
+/// sandbox-dev upgrade drill (90c39bd). The v2 → v3 upgrade tests build its wasm (`v2_wasm`).
+pub const V2_COMMIT: &str = "26fb70a92eecc74592df886e16a109fa6ee19830";
+/// sandbox-dev's v2 code hash (docs/context.md). `cargo near build non-reproducible-wasm --no-abi` of V2_COMMIT (what
+/// deploy-contract runs) reproduces it on the machine that built the deployed code; elsewhere the wasm embeds other
+/// cargo registry paths in its panic locations, so the hash differs and the tests only report it.
+pub const V2_SANDBOX_DEV_CODE_HASH: &str = "3TSDwkMqPUhZtzFCvvaJ39nQWXUQK4LExPhsaS9tScoz";
 pub const APP_A: &str = "app-a.apps.googleusercontent.com";
 pub const APP_B: &str = "app-b.apps.googleusercontent.com";
 pub const APP_C: &str = "app-c.apps.googleusercontent.com";
@@ -86,8 +91,8 @@ pub const OWNER_RELAYER_METHODS: &[&str] = &[
 /// from the spec, not read from the contract, so the on-chain checks compare the contract with the spec.
 pub const UPDATER_METHODS: &[&str] = &["set_issuer_key", "propose_issuer_key_removal", "execute_issuer_key_change"];
 
-/// Every change method of hana-signer (docs/batch-a-spec.md, docs/batch-a2-shared-client.md, docs/batch-b-spec.md,
-/// docs/governance-spec.md). The access-key test calls each one with each function-call key, so a method added to
+/// Every change method of hana-signer (docs/contract-interface.md: batch A, A.2, B, governance and the email-login
+/// methods of v3). The access-key test calls each one with each function-call key, so a method added to
 /// the contract should be added here too.
 pub const ALL_CHANGE_METHODS: &[&str] = &[
     "new",
@@ -118,7 +123,6 @@ pub const ALL_CHANGE_METHODS: &[&str] = &[
     "cancel_upgrade",
     "execute_upgrade",
     "migrate",
-    "migrate_v1",
     "propose_owner",
     "cancel_owner_proposal",
     "accept_owner",
@@ -137,6 +141,11 @@ pub const ALL_CHANGE_METHODS: &[&str] = &[
     "derive_key",
     "revoke_session",
     "prune_sessions",
+    "mark_self_issued",
+    "accept_unrecorded_wallets",
+    "link_identity",
+    "cancel_link",
+    "unlink_identity",
 ];
 
 /// Gas for calls a user or the admin signs with their own wallet (not relayed by the API), which choose their own
@@ -260,14 +269,14 @@ fn build_wasm(crate_dir: &str, wasm_name: &str, override_var: &str) -> Result<Ve
     if let Ok(path) = std::env::var(override_var) {
         return std::fs::read(&path).with_context(|| format!("reading {override_var}={path}"));
     }
-    build_wasm_at(&contracts_dir().join(crate_dir), wasm_name, &Path::new(env!("CARGO_MANIFEST_DIR")).join("target").join("wasm"))
+    build_wasm_at(&contracts_dir().join(crate_dir), wasm_name, &Path::new(env!("CARGO_MANIFEST_DIR")).join("target").join("wasm"), &[])
 }
 
-/// `cargo near build non-reproducible-wasm` in `dir`, into `target`.
-fn build_wasm_at(dir: &Path, wasm_name: &str, target: &Path) -> Result<Vec<u8>> {
+/// `cargo near build non-reproducible-wasm <extra>` in `dir`, into `target`.
+fn build_wasm_at(dir: &Path, wasm_name: &str, target: &Path, extra: &[&str]) -> Result<Vec<u8>> {
     let crate_dir = dir.display().to_string();
     let mut cmd = Command::new("cargo");
-    cmd.args(["near", "build", "non-reproducible-wasm"]).current_dir(dir);
+    cmd.args(["near", "build", "non-reproducible-wasm"]).args(extra).current_dir(dir);
     for (key, _) in std::env::vars() {
         let keep = key == "CARGO_HOME" || key == "RUSTUP_HOME";
         if !keep && (key.starts_with("CARGO") || key.starts_with("RUSTUP_") || key.starts_with("RUSTC") || key.starts_with("RUSTFLAGS") || key == "RUSTDOC") {
@@ -297,34 +306,52 @@ pub fn wasms() -> Result<(Vec<u8>, Vec<u8>)> {
         .map_err(|e| anyhow!(e))
 }
 
-static V1_WASM: OnceLock<std::result::Result<Vec<u8>, String>> = OnceLock::new();
+static DEPLOY_WASM: OnceLock<std::result::Result<Vec<u8>, String>> = OnceLock::new();
 
-/// The v1 hana-signer wasm: `contracts/hana-signer` at `V1_COMMIT`, exported with `git archive` into
-/// `target/v1-src/<commit>` and built there (its own Cargo.lock and toolchain). `HANA_SIGNER_V1_WASM=<path>`
-/// overrides the build.
-pub fn v1_wasm() -> Result<Vec<u8>> {
-    V1_WASM
+/// The current hana-signer wasm exactly as `deploy-contract` builds what it deploys (`cargo near build
+/// non-reproducible-wasm --no-abi`, scripts/lib/deploy-run.ts), into `target/wasm-deploy`. The upgrade tests run this
+/// artifact; the other tests use `wasms()` (with the embedded ABI). `HANA_SIGNER_DEPLOY_WASM=<path>` overrides it.
+pub fn deploy_wasm() -> Result<Vec<u8>> {
+    DEPLOY_WASM
         .get_or_init(|| {
-            if let Ok(path) = std::env::var("HANA_SIGNER_V1_WASM") {
-                return std::fs::read(&path).map_err(|e| format!("reading HANA_SIGNER_V1_WASM={path}: {e}"));
+            if let Ok(path) = std::env::var("HANA_SIGNER_DEPLOY_WASM") {
+                return std::fs::read(&path).map_err(|e| format!("reading HANA_SIGNER_DEPLOY_WASM={path}: {e}"));
             }
-            build_v1().map_err(|e| format!("{e:#}"))
+            let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("target").join("wasm-deploy");
+            build_wasm_at(&contracts_dir().join("hana-signer"), "hana_signer.wasm", &target, &["--no-abi"]).map_err(|e| format!("{e:#}"))
         })
         .clone()
         .map_err(|e| anyhow!(e))
 }
 
-fn build_v1() -> Result<Vec<u8>> {
+static V2_WASM: OnceLock<std::result::Result<Vec<u8>, String>> = OnceLock::new();
+
+/// The v2 hana-signer wasm: `contracts/hana-signer` at `V2_COMMIT`, exported with `git archive` into
+/// `target/v2-src/<commit>` and built there (its own Cargo.lock and toolchain). `HANA_SIGNER_V2_WASM=<path>`
+/// overrides the build.
+pub fn v2_wasm() -> Result<Vec<u8>> {
+    V2_WASM
+        .get_or_init(|| {
+            if let Ok(path) = std::env::var("HANA_SIGNER_V2_WASM") {
+                return std::fs::read(&path).map_err(|e| format!("reading HANA_SIGNER_V2_WASM={path}: {e}"));
+            }
+            build_v2().map_err(|e| format!("{e:#}"))
+        })
+        .clone()
+        .map_err(|e| anyhow!(e))
+}
+
+fn build_v2() -> Result<Vec<u8>> {
     let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("target");
-    let src = target.join("v1-src").join(V1_COMMIT);
+    let src = target.join("v2-src").join(V2_COMMIT);
     let crate_dir = src.join("contracts").join("hana-signer");
     if !crate_dir.join("Cargo.toml").exists() {
         std::fs::create_dir_all(&src)?;
-        let tar = target.join("v1-src").join(format!("{V1_COMMIT}.tar"));
+        let tar = target.join("v2-src").join(format!("{V2_COMMIT}.tar"));
         let repo = contracts_dir().parent().expect("repo root").to_path_buf();
-        let out = Command::new("git").arg("-C").arg(&repo).args(["archive", "--format=tar", "-o"]).arg(&tar).arg(V1_COMMIT).arg("contracts/hana-signer").output()?;
+        let out = Command::new("git").arg("-C").arg(&repo).args(["archive", "--format=tar", "-o"]).arg(&tar).arg(V2_COMMIT).arg("contracts/hana-signer").output()?;
         if !out.status.success() {
-            bail!("git archive {V1_COMMIT} failed (is the commit in this clone?): {}", String::from_utf8_lossy(&out.stderr));
+            bail!("git archive {V2_COMMIT} failed (is the commit in this clone?): {}", String::from_utf8_lossy(&out.stderr));
         }
         let out = Command::new("tar").arg("-xf").arg(&tar).arg("-C").arg(&src).output()?;
         if !out.status.success() {
@@ -336,9 +363,10 @@ fn build_v1() -> Result<Vec<u8>> {
     let manifest = crate_dir.join("Cargo.toml");
     let text = std::fs::read_to_string(&manifest)?;
     if !text.lines().any(|l| l.trim() == "[workspace]") {
-        std::fs::write(&manifest, format!("{text}\n# Added by the sandbox tests: a standalone copy (see tests/common/mod.rs build_v1).\n[workspace]\n"))?;
+        std::fs::write(&manifest, format!("{text}\n# Added by the sandbox tests: a standalone copy (see tests/common/mod.rs build_v2).\n[workspace]\n"))?;
     }
-    build_wasm_at(&crate_dir, "hana_signer.wasm", &target.join("wasm-v1"))
+    // `--no-abi`, as deploy-contract builds the code it deploys (scripts/lib/deploy-run.ts).
+    build_wasm_at(&crate_dir, "hana_signer.wasm", &target.join("wasm-v2"), &["--no-abi"])
 }
 
 static SPUTNIK_WASM: OnceLock<std::result::Result<Vec<u8>, String>> = OnceLock::new();
@@ -561,6 +589,101 @@ pub fn ckd_payload(pk1: &str, pk2: &str) -> Vec<u8> {
     format!("hana-id-ckd-v1:{pk1}:{pk2}").into_bytes()
 }
 
+// Email login layouts (docs/email-login-spec.md "Byte layouts (new)", docs/contract-interface.md), written from the
+// spec; tests/layouts.rs pins them to the JS implementation's worked examples (contracts/hana-signer/src/
+// email_fixture.json, scripts/gen-email-fixtures.mjs).
+
+/// Identity key: sha256("hana-id/identity/v1" ‖ borsh(scope_id) ‖ borsh(provider) ‖ borsh(sub)).
+pub fn identity_key(scope_id: &str, provider: &str, sub: &str) -> [u8; 32] {
+    let mut m = b"hana-id/identity/v1".to_vec();
+    m.extend(borsh_str(scope_id));
+    m.extend(borsh_str(provider));
+    m.extend(borsh_str(sub));
+    sha256(&m).try_into().expect("32 bytes")
+}
+
+pub fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// link_new = "hana-id/link-new/v1" ‖ borsh(signer) ‖ borsh(scope_id) ‖ root_ik ‖ borsh(new provider) ‖ epoch u64 LE ‖
+/// salt.
+pub fn link_new_preimage(signer: &str, scope_id: &str, root: &[u8; 32], new_provider: &str, epoch: u64, salt: &[u8]) -> Vec<u8> {
+    let mut m = b"hana-id/link-new/v1".to_vec();
+    m.extend(borsh_str(signer));
+    m.extend(borsh_str(scope_id));
+    m.extend_from_slice(root);
+    m.extend(borsh_str(new_provider));
+    m.extend_from_slice(&epoch.to_le_bytes());
+    m.extend_from_slice(salt);
+    m
+}
+
+/// link_account = "hana-id/link-account/v1" ‖ borsh(signer) ‖ borsh(scope_id) ‖ root_ik ‖ new_ik ‖ epoch u64 LE ‖ salt.
+pub fn link_account_preimage(signer: &str, scope_id: &str, root: &[u8; 32], new: &[u8; 32], epoch: u64, salt: &[u8]) -> Vec<u8> {
+    let mut m = b"hana-id/link-account/v1".to_vec();
+    m.extend(borsh_str(signer));
+    m.extend(borsh_str(scope_id));
+    m.extend_from_slice(root);
+    m.extend_from_slice(new);
+    m.extend_from_slice(&epoch.to_le_bytes());
+    m.extend_from_slice(salt);
+    m
+}
+
+/// link_change = "hana-id/link-change/v1" ‖ borsh(signer) ‖ borsh(scope_id) ‖ borsh("cancel" | "unlink") ‖ root_ik ‖
+/// member_ik ‖ epoch u64 LE ‖ salt.
+pub fn link_change_preimage(signer: &str, scope_id: &str, action: &str, root: &[u8; 32], member: &[u8; 32], epoch: u64, salt: &[u8]) -> Vec<u8> {
+    let mut m = b"hana-id/link-change/v1".to_vec();
+    m.extend(borsh_str(signer));
+    m.extend(borsh_str(scope_id));
+    m.extend(borsh_str(action));
+    m.extend_from_slice(root);
+    m.extend_from_slice(member);
+    m.extend_from_slice(&epoch.to_le_bytes());
+    m.extend_from_slice(salt);
+    m
+}
+
+/// `join` of the auto_link nonce: 1 = the session identity joins the link identity's account (case A), 2 = the link
+/// identity joins the session identity's (cases B, C).
+pub const JOIN_SESSION: u8 = 1;
+pub const JOIN_LINK: u8 = 2;
+
+/// auto_link = "hana-id/auto-link/v1" ‖ borsh(signer) ‖ borsh(scope_id) ‖ sha256(session nonce preimage) ‖ session_ik ‖
+/// join u8 ‖ joiner_ik ‖ target_root_ik ‖ target epoch u64 LE ‖ mode u8 (1 = link_immediate).
+#[allow(clippy::too_many_arguments)]
+pub fn auto_link_preimage(signer: &str, scope_id: &str, session_hash: &[u8], session_ik: &[u8; 32], join: u8, joiner: &[u8; 32], target_root: &[u8; 32], epoch: u64, immediate: bool) -> Vec<u8> {
+    let mut m = b"hana-id/auto-link/v1".to_vec();
+    m.extend(borsh_str(signer));
+    m.extend(borsh_str(scope_id));
+    m.extend_from_slice(session_hash);
+    m.extend_from_slice(session_ik);
+    m.push(join);
+    m.extend_from_slice(joiner);
+    m.extend_from_slice(target_root);
+    m.extend_from_slice(&epoch.to_le_bytes());
+    m.push(immediate as u8);
+    m
+}
+
+/// Every link nonce is b64url(sha256(preimage)).
+pub fn nonce_of(preimage: &[u8]) -> String {
+    b64url(&sha256(preimage))
+}
+
+/// The linked CKD payload a combined login with `link_jwt` signs (counter 1): "hana-id-ckd-link-v1:" ‖ sha256(link_jwt)
+/// ‖ mode u8 ‖ pk1 ‖ ":" ‖ pk2.
+pub fn linked_ckd_payload(link_jwt: &str, immediate: bool, pk1: &str, pk2: &str) -> Vec<u8> {
+    let mut m = b"hana-id-ckd-link-v1:".to_vec();
+    m.extend(sha256(link_jwt.as_bytes()));
+    m.push(immediate as u8);
+    m.extend_from_slice(pk1.as_bytes());
+    m.push(b':');
+    m.extend_from_slice(pk2.as_bytes());
+    m
+}
+
 pub fn near_owner(account: &AccountId) -> Value {
     json!({"Near": {"account_id": account}})
 }
@@ -588,7 +711,12 @@ impl TestIssuer {
 
     /// A fresh RSA key whose tokens carry `kid` (e.g. Google's next key in a rotation).
     pub fn generate_with_kid(kid: &str) -> Result<Self> {
-        let key = RsaPrivateKey::new(&mut rand::thread_rng(), 2048)?;
+        Self::generate_with_bits(kid, 2048)
+    }
+
+    /// A fresh RSA key of `bits` bits (the contract accepts 2048 to 4096) whose tokens carry `kid`.
+    pub fn generate_with_bits(kid: &str, bits: usize) -> Result<Self> {
+        let key = RsaPrivateKey::new(&mut rand::thread_rng(), bits)?;
         let n = b64url(&key.n().to_bytes_be());
         let e = b64url(&key.e().to_bytes_be());
         Ok(Self { signing: RsaSigningKey::<RsaSha256>::new(key), kid: kid.to_string(), n, e })
@@ -596,9 +724,14 @@ impl TestIssuer {
 
     /// An RS256 token like Google's, valid for an hour from `now_ms` (sandbox time).
     pub fn jwt(&self, aud: &str, sub: &str, nonce: Option<&str>, now_ms: u64) -> String {
+        self.compact_jwt(ISS, aud, sub, nonce, now_ms)
+    }
+
+    /// A compact RS256 token from issuer `iss`.
+    pub fn compact_jwt(&self, iss: &str, aud: &str, sub: &str, nonce: Option<&str>, now_ms: u64) -> String {
         let now_s = now_ms / 1000;
         let header = json!({"alg": "RS256", "kid": self.kid, "typ": "JWT"});
-        let mut claims = json!({"iss": ISS, "azp": aud, "aud": aud, "sub": sub, "iat": now_s - 60, "exp": now_s + 3600});
+        let mut claims = json!({"iss": iss, "azp": aud, "aud": aud, "sub": sub, "iat": now_s - 60, "exp": now_s + 3600});
         if let Some(n) = nonce {
             claims["nonce"] = json!(n);
         }
@@ -606,6 +739,36 @@ impl TestIssuer {
         let sig = self.signing.sign(input.as_bytes()).to_vec();
         format!("{input}.{}", b64url(&sig))
     }
+
+    /// An email token as Hana's email issuer mints it (docs/email-login-spec.md "The token"): JWS General JSON
+    /// Serialization, one RS256 signature over `protected ‖ "." ‖ payload`, claims iss/aud/sub/iat/exp (+ 600 s)/
+    /// nonce/jti.
+    pub fn email_jws(&self, aud: &str, sub: &str, nonce: &str, now_ms: u64) -> String {
+        let now_s = now_ms / 1000;
+        let jti: [u8; 16] = rand::random();
+        let claims = json!({"iss": EMAIL_ISS, "aud": aud, "sub": sub, "iat": now_s, "exp": now_s + 600, "nonce": nonce, "jti": b64url(&jti)});
+        let payload = b64url(claims.to_string().as_bytes());
+        let protected = b64url(json!({"alg": "RS256", "kid": self.kid}).to_string().as_bytes());
+        let sig = self.signing.sign(format!("{protected}.{payload}").as_bytes()).to_vec();
+        json!({"payload": payload, "signatures": [{"protected": protected, "signature": b64url(&sig)}]}).to_string()
+    }
+}
+
+/// Hana's email issuer: the provider name in paths (frozen at the address freeze), its `iss` in the sandbox, the
+/// signer id `mark_self_issued` lists and the kid of the sandbox key.
+pub const EMAIL: &str = "email";
+pub const EMAIL_ISS: &str = "https://api.sandbox.hana-id.test/v1/email";
+pub const EMAIL_SIGNER: &str = "hana";
+pub const EMAIL_KID: &str = "hana-email-sandbox-1";
+
+/// An email `sub` of the issuer's shape ("e1." + 43 base64url characters) for a test name.
+pub fn email_sub(name: &str) -> String {
+    format!("e1.{}", b64url(&sha256(name.as_bytes())))
+}
+
+/// The email client audience of a scope: "email:" + scope_id.
+pub fn email_aud(scope_id: &str) -> String {
+    format!("email:{scope_id}")
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -686,6 +849,27 @@ impl TestSession {
         args["signature"] = json!(sig.to_bytes().to_vec());
         args["pk1"] = json!(pk1);
         args["pk2"] = json!(pk2);
+        args
+    }
+
+    /// sha256 of this session's nonce preimage on `signer` (what the auto_link nonce commits to).
+    pub fn preimage_hash(&self, signer: &AccountId) -> Vec<u8> {
+        sha256(&session_nonce_preimage(signer.as_str(), &self.scope_id, &self.public_key(), self.expires_at_ms, self.key_index, self.max_uses, &self.salt))
+    }
+
+    /// create_session_and_derive args with an automatic link: `link_jwt`, `link_immediate`, and the counter-1
+    /// signature over the linked CKD payload (D133), as the vault signs it.
+    pub fn linked_login_args(&mut self, jwt: &str, pk1: &str, pk2: &str, link_jwt: &str, immediate: Option<bool>) -> Value {
+        self.counter = 1;
+        let sig = self.key.sign(&session_message(1, &linked_ckd_payload(link_jwt, immediate.unwrap_or(false), pk1, pk2)));
+        let mut args = self.base_args(jwt);
+        args["signature"] = json!(sig.to_bytes().to_vec());
+        args["pk1"] = json!(pk1);
+        args["pk2"] = json!(pk2);
+        args["link_jwt"] = json!(link_jwt);
+        if let Some(immediate) = immediate {
+            args["link_immediate"] = json!(immediate);
+        }
         args
     }
 
@@ -775,7 +959,14 @@ async fn add_fc_key(worker: &Worker<Sandbox>, account: &Account, receiver: &Acco
 /// force at once; the delay is then raised to CHANGE_DELAY_MS (increases apply at once).
 async fn deploy_signer(root: &Account, name: &str, admin: &Account, watchdog: &Account, mpc: &AccountId, issuer: &TestIssuer, relayer: &AccountId) -> Result<Contract> {
     let (signer_wasm, _) = wasms()?;
-    let signer = subaccount(root, name, 50).await?.deploy(&signer_wasm).await?.into_result()?;
+    deploy_signer_code(root, name, &signer_wasm, admin, watchdog, mpc, issuer, relayer).await
+}
+
+/// `deploy_signer` with the given hana-signer code (the current one, or the v2 code of `v2_wasm`, whose `new`, Google
+/// key flow and setters take the same arguments).
+#[allow(clippy::too_many_arguments)]
+pub async fn deploy_signer_code(root: &Account, name: &str, code: &[u8], admin: &Account, watchdog: &Account, mpc: &AccountId, issuer: &TestIssuer, relayer: &AccountId) -> Result<Contract> {
+    let signer = subaccount(root, name, 50).await?.deploy(code).await?.into_result()?;
     signer
         .call("new")
         .args_json(json!({
@@ -816,6 +1007,37 @@ pub async fn post_issuer_key(proposer: &Account, watchdog: &Account, signer: &Ac
         .json()?;
     watchdog.call(signer, "confirm_issuer_key_change").args_json(json!({"id": id})).transact().await?.into_result()?;
     Ok(id)
+}
+
+/// `owner` proposes `key` as a key of Hana's email issuer (signer "hana"); returns the key change id. It waits at least
+/// `governance_delay_ms` (self-issued keys are never confirmed early).
+pub async fn post_email_key(owner: &Account, signer: &AccountId, key: &TestIssuer) -> Result<u64> {
+    let outcome = owner
+        .call(signer, "set_issuer_key")
+        .args_json(json!({"provider": EMAIL, "kid": key.kid, "n": key.n, "e": key.e, "signer": EMAIL_SIGNER}))
+        .gas(Gas::from_tgas(30))
+        .transact()
+        .await?;
+    report_gas("set_issuer_key (email, signer hana)", &outcome, Gas::from_tgas(30));
+    Ok(outcome.into_result()?.json()?)
+}
+
+/// Gas burnt by the signer contract's receipts of `outcome` (not the MPC's, nor the transaction's conversion).
+pub fn signer_receipts_gas(outcome: &ExecutionFinalResult, signer: &AccountId) -> Gas {
+    Gas::from_gas(outcome.receipt_outcomes().iter().filter(|r| &r.executor_id == signer).map(|r| r.gas_burnt.as_gas()).sum())
+}
+
+/// Prints one line of the gas report (`cargo test -- --nocapture | grep '^GAS'`): the transaction's total gas burnt,
+/// the part burnt in its first receipt (the called contract), and the gas attached.
+pub fn report_gas(label: &str, outcome: &ExecutionFinalResult, attached: Gas) {
+    let first = outcome.receipt_outcomes().first().map_or(0, |r| r.gas_burnt.as_gas());
+    println!(
+        "GAS {label}: {:.2} Tgas burnt in all, {:.2} Tgas in the called contract's receipt, {} Tgas attached{}",
+        outcome.total_gas_burnt.as_gas() as f64 / 1e12,
+        first as f64 / 1e12,
+        attached.as_tgas(),
+        if outcome.is_success() { "" } else { " (FAILED)" }
+    );
 }
 
 /// The owner has the contract add a fresh updater key to `signer`; returns the signer account signing with it,
@@ -911,6 +1133,62 @@ impl Env {
             .gas(GAS)
             .transact()
             .await?)
+    }
+
+    /// admin_register_scope on the main deployment with `(provider, aud)` clients of any provider.
+    pub async fn admin_register_clients(&self, owners: Vec<Value>, clients: &[(&str, &str)], allow_shared: bool) -> Result<String> {
+        Ok(self
+            .admin
+            .call(self.signer.id(), "admin_register_scope")
+            .args_json(json!({"owners": owners, "clients": clients, "scope_id": null, "allow_shared": allow_shared}))
+            .gas(GAS)
+            .transact()
+            .await?
+            .into_result()?
+            .json()?)
+    }
+
+    /// The owner (admin) sets up Hana's email issuer as batch 6 does on sandbox-dev: `set_issuer("email", [EMAIL_ISS])`,
+    /// `mark_self_issued("email")`, `set_issuer_key(..., signer: "hana")`, then, after `governance_delay_ms`, anyone
+    /// executes the key change. Returns the issuer's key. Prints the gas of each call.
+    pub async fn setup_email(&self) -> Result<TestIssuer> {
+        self.setup_email_with(TestIssuer::generate_with_kid(EMAIL_KID)?).await
+    }
+
+    /// `setup_email` with the given issuer key.
+    pub async fn setup_email_with(&self, key: TestIssuer) -> Result<TestIssuer> {
+        let signer = self.signer.id();
+        let outcome = self.admin.call(signer, "set_issuer").args_json(json!({"provider": EMAIL, "iss_values": [EMAIL_ISS]})).gas(GAS).transact().await?;
+        report_gas("set_issuer (email)", &outcome, GAS);
+        outcome.into_result()?;
+        let outcome = self.admin.call(signer, "mark_self_issued").args_json(json!({"provider": EMAIL})).gas(GAS).transact().await?;
+        report_gas("mark_self_issued", &outcome, GAS);
+        outcome.into_result()?;
+        let id = post_email_key(&self.admin, signer, &key).await?;
+        let due = self.get_key_changes().await?.as_array().context("key changes")?.iter().find(|c| c["id"] == json!(id)).context("the email key change")?["executable_at_ms"]
+            .as_u64()
+            .context("executable_at_ms")?;
+        self.advance_to(due).await?;
+        let outcome = self.alice.call(signer, "execute_issuer_key_change").args_json(json!({"id": id})).gas(Gas::from_tgas(30)).transact().await?;
+        report_gas("execute_issuer_key_change (email)", &outcome, Gas::from_tgas(30));
+        outcome.into_result()?;
+        Ok(key)
+    }
+
+    /// A new session in `scope_id` (key index 0, 5 uses) and an email token for `sub` committing to it.
+    pub async fn new_email_session(&self, email: &TestIssuer, scope_id: &str, sub: &str, ttl_ms: u64) -> Result<(TestSession, String)> {
+        let now = self.now_ms().await?;
+        let session = TestSession::new(scope_id, now + ttl_ms, 0, 5);
+        let jwt = email.email_jws(&email_aud(scope_id), sub, &session.nonce(self.signer.id()), now);
+        Ok((session, jwt))
+    }
+
+    pub async fn get_identity(&self, scope_id: &str, provider: &str, sub: &str) -> Result<Value> {
+        Ok(self.signer.view("get_identity").args_json(json!({"scope_id": scope_id, "provider": provider, "sub": sub})).await?.json()?)
+    }
+
+    pub async fn get_account(&self, scope_id: &str, provider: &str, sub: &str) -> Result<Value> {
+        Ok(self.signer.view("get_account").args_json(json!({"scope_id": scope_id, "provider": provider, "sub": sub})).await?.json()?)
     }
 
     /// Sets the shared clients (owner only) on the main deployment.

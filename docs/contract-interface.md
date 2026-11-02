@@ -1,6 +1,7 @@
 # hana-signer contract interface (batch A, A.2, B, governance and email login)
 
-Last verified against code: 2026-10-30 (branch `feat/email-login-1`: contract v3, email login batch 1, with the security review fixes D133–D138).
+Last verified against code: 2026-11-02 (branch `feat/email-login-2`: contract v3 with `migrate_v1` removed, the email
+login calls and the v2 → v3 upgrade measured in the sandbox, [Gas of the email login calls](#gas-of-the-email-login-calls-sandbox)).
 
 The exact on-chain interface of `contracts/hana-signer`. The API, scripts, console and SDK must match this file.
 If the code and this file disagree, the code is wrong: raise it. Batch A.2 (`docs/batch-a2-shared-client.md`) added
@@ -36,7 +37,10 @@ Conventions:
   always works. View methods cost nothing. Governance calls (sandbox, `contracts/integration-tests/tests/governance.rs`):
   the updater key sends 30 Tgas to `set_issuer_key`, `propose_issuer_key_removal` and `execute_issuer_key_change`
   (its allowance is 1 NEAR); `execute_upgrade` needs 300 Tgas (see [Upgrades](#upgrades)); owner calls through the
-  DAO attach 100 Tgas per `FunctionCall` action.
+  DAO attach 100 Tgas per `FunctionCall` action. Email login and links (v3): measured per call in
+  [Gas of the email login calls](#gas-of-the-email-login-calls-sandbox); a combined login with `link_jwt` needs ≈ 59
+  Tgas with 2048-bit keys and ≈ 156 with 4096-bit ones (the largest the contract accepts): attach 250 (D155; the
+  API sets it in build-plan batch 6).
 
 ## Types (JSON)
 
@@ -876,12 +880,30 @@ can add or delete keys on it.
 | `cancel_upgrade()` | owner | `{}` | `No pending upgrade`. Event `upgrade_cancelled {code_hash}`. |
 | `execute_upgrade()` | **anyone**, once due | **raw wasm bytes** as the input (not JSON) | `No pending upgrade`, `Upgrade is still delayed`, `Code doesn't match the proposed hash` (`sha256(input)`). Not blocked by pause (a fix must be deployable). Clears `pending_upgrade`, emits `upgrade_executed {code_hash}`, and returns one promise to the contract account with two actions: `DeployContract(code)` then `FunctionCall migrate({}, 0 deposit, 50 Tgas)`. They are one receipt: if the new code's `migrate` panics (or doesn't exist), the deploy is rolled back with it and the old code stays. The pending upgrade is consumed either way (re-propose a fixed build); `upgrade_executed` is logged by the committed execute receipt, so success is the deploy receipt's outcome, `state_migrated` in its logs, and `view_account.code_hash`. Attach 300 Tgas; the transaction must fit NEAR's 1.5 MiB limit; the account balance must cover the new code's storage. |
 | `migrate()` | the contract account only (`#[private]`, `#[init(ignore_state)]`) | — | Called by `execute_upgrade`'s deploy receipt on the **new** code. This version (layout v3): on a v2 state (the exact v2 root struct, `src/migrate.rs` `HanaSignerV2`, checked against a v2 state fixture built by the v2 code) with `state_version == 2`, keeps every field and appends the v3 ones empty (no self-issued issuer, no account, nothing in `opened`) with `unrecorded_wallets = true` (links wait for `accept_unrecorded_wallets`, D135), event `state_migrated {from_version: 2, to_version: 3}`; on a v3 state with `state_version == 3` (a later v3 fix), keeps it, event `{3, 3}`; anything else panics `Unexpected state version`, reverting the deploy. A v3 state doesn't parse as v2, so a later upgrade back to v2 code fails in v2's `migrate` and is reverted (the way back is a fixed v3). Each future version ships its own `migrate` reading a copy of the previous layout. |
-| `migrate_v1(issuer_key_delay_ms, governance_delay_ms)` | the contract account only (`#[private]`, `#[init(ignore_state)]`) | `{"issuer_key_delay_ms":120000,"governance_delay_ms":60000}` | The one-off v1 → v2 migration, sent by `deploy-contract --upgrade` as `DeployContract` + `migrate_v1` in one transaction while the signer still has its full-access key. Reads the exact v1 root struct (`src/migrate.rs`, checked against a v1 state fixture), keeps every field, starts with no watchdogs, no updater keys, nothing pending, `paused = false`. Delay bounds as `new`. Panics `Unexpected state version` on anything but v1 state (a re-run on v2 or v3 can only fail). In v3 code it migrates v1 straight to v3 (the v3 fields empty); event `state_migrated {from_version: 1, to_version: 3}`. No deployment is on v1 any more; it goes with the sandbox suite's move to v2 → v3 (`docs/email-login-build-plan.md` batch 2). |
 
-Gas (sandbox, `governance.rs`, measured 2026-10-29): `execute_upgrade` of the 499 KB v2 wasm burns 84 Tgas over all
-receipts (attach 300); `DeployContract` + `migrate_v1` burns 39 Tgas (attach 100 to `migrate_v1`). Logins on v2 burn
-+0.5% against v1 (`create_session` 19.6 → 19.7 Tgas, `create_session_and_derive` 22.0 → 22.1 Tgas with the mock
-MPC; the test fails above +2%).
+There is no v1 migration any more: `migrate_v1` and the v1 layout copy were removed with v3 (build-plan batch 2), since
+no deployment is on v1 (sandbox-dev is v2); `deploy-contract` refuses a v1 contract (D154).
+
+**v2 → v3** (sandbox, `contracts/integration-tests/tests/governance.rs`
+`v2_to_v3_upgrade_through_the_dao_keeps_every_view_and_path`, 2026-11-02): from a v2 deployment built by the v2 code
+(`V2_COMMIT` = develop 26fb70a; `cargo near build non-reproducible-wasm --no-abi` of it, as `deploy-contract` builds,
+gives sandbox-dev's code hash `3TSDwkMqPUhZtzFCvvaJ39nQWXUQK4LExPhsaS9tScoz` on the machine that deployed it) owned
+by a 2-of-3 Sputnik DAO: `propose_upgrade` through the DAO, `execute_upgrade` by anyone once due, `state_migrated
+{2, 3}`. Every v2 view is unchanged (`get_config` only gains `unrecorded_wallets: true`, `get_governance` only
+changes `state_version`), sessions, pending changes and pending key proposals survive, every path stays (old
+sessions and new logins derive the v2 paths), and so does the state no view shows: a removed client's quarantine,
+a pending AddClient's reservation (`pending_adds`: it can't be made shared), the scope counter (the next
+registration gets the next id) and the session queue (`prune_sessions` removes the v2 sessions once expired). Links fail `Links wait until the owner accepts the wallets opened before
+v3` until the DAO calls `accept_unrecorded_wallets`; the email issuer and an email client are then set up through
+the DAO and the scope owner; the v2 code can't be upgraded back (its `migrate` panics `Unexpected state version`).
+
+Gas (sandbox): `execute_upgrade` of the 611.0 KB v3 wasm built as `deploy-contract` builds it (`--no-abi`, the
+artifact the upgrade test runs) burns 100 Tgas over all receipts, 29 of them in the execute receipt (attach 300);
+v3 → v3 with the 621.8 KB build with its ABI burns 102. Logins on v3
+against v2 (Google, no link, mock MPC, `login_gas_of_v3_against_v2`; the test fails above +3 Tgas):
+`create_session_and_derive` 22.1 → 22.6 Tgas at an identity's first login (the `opened` insert) and 22.2 → 22.5
+later; `create_session` 19.8 → 20.4 Tgas (with the proof of possession, D137). The spec's +1–2 Tgas estimate holds
+(+0.3 to +0.6 Tgas).
 
 #### Owner transfer
 
@@ -1152,9 +1174,11 @@ not the plain CKD payload (D133): only the session key holder decides whether a 
 which mode. A replayed or front-run login therefore can't gain a link (a stolen email key can't attach its own
 identity to a published Google login), and a case-A login can't be stripped of its link (which would derive the Google
 identity's own path and split the person into two wallets): either fails `Invalid session signature`. The vault
-checks the link token and recomputes its `auto_link` nonce before it signs. With a link the call attaches more gas
-(one more RS256 verification and the account writes; the spec estimates +8–12 Tgas; measured in the sandbox in
-build-plan batch 2).
+checks the link token and recomputes its `auto_link` nonce before it signs. With a link the call needs more gas: one
+more RS256 verification and the account writes burn ≈ +18 Tgas in the signer's receipt (38.5 against 20.5 Tgas;
+the spec estimated +8–12); ≈ 59 Tgas is the floor with the 20 Tgas forwarded to the MPC. With 4096-bit keys (the
+largest `set_issuer_key` accepts) each verification costs ≈ 67 Tgas and the floor is ≈ 156, above the spec's 150:
+attach **250 Tgas** (D155); [Gas of the email login calls](#gas-of-the-email-login-calls-sandbox).
 
 - No counter argument (always 1) and no callback. `signature` is over `session_message(1, CKD payload)`.
 - Panics: every `create_session` panic, in its order, then every `derive_key` panic. Any of them aborts the whole
@@ -1271,6 +1295,40 @@ Unlinking (or cancelling) stops **future** sessions of the member on the root's 
 deriving until they end (the API revokes the vault shares of the account, build-plan batch 6). After an unlink the
 member opens its own path again (a new wallet unless it had one).
 
+### Gas of the email login calls (sandbox)
+
+Measured 2026-11-02 in the near-workspaces sandbox with the mock MPC (`contracts/integration-tests`: `cargo test
+--test email -- --nocapture | grep '^GAS'`, and `--test governance`) on a v3 deployment created with `new`, with
+2048-bit RSA keys (Google's size, and the spec's email key) and again with 4096-bit keys for every token
+(`gas_with_4096_bit_keys`; `set_issuer_key` accepts 2048 to 4096 bits, `issuers.rs` `checked_rsa_key`). Figures are
+Tgas burnt in hana-signer's own receipt; the transaction adds ≈ 0.3–0.4 and a login's MPC receipt ≈ 2. A login also
+forwards 20 Tgas to the MPC, so it needs its signer receipt + 20 attached. Testnet figures come with build-plan batch
+8.
+
+| Call | 2048-bit | 4096-bit | Attach (D155) |
+|---|---|---|---|
+| `set_issuer("email", [iss])` (owner) | 2.2 | — | DAO default 100 |
+| `mark_self_issued("email")` (owner) | 2.0 | — | DAO default 100 |
+| `set_issuer_key("email", …, signer: "hana")` (owner) | 2.4–2.5 | — | 30 |
+| `execute_issuer_key_change` (email key, anyone) | 2.2 | — | 30 |
+| `accept_unrecorded_wallets()` (owner, through the DAO, flipping the flag) | 1.9 (the DAO vote: 8.5 in all) | — | DAO default 100 |
+| `create_session` (email token) | 20.1 | 68.8 | the API's 50: **too little at 4096 bits** |
+| `create_session_and_derive` (email or Google token, no link) | 20.5–20.6 | 69.2–69.3 | the API's 100: 89 needed at 4096 bits |
+| `create_session_and_derive` (a member's login that activates a pending link) | 20.9 | — | 100 |
+| `create_session_and_derive` + `link_jwt` (case A, case B at once or delayed) | 38.5–38.6 | 136.0 | **250** (≈ 59 / ≈ 156 needed) |
+| `link_identity` (two tokens, relayed by a sponsor) | 37.2 | 134.6 | **250** |
+| `cancel_link` | 19.8 | 68.5 | **150** |
+| `unlink_identity` | 19.8 | 68.5 | **150** |
+
+One RS256 verification costs ≈ 17–18 Tgas at 2048 bits and ≈ 67 at 4096 (the modular exponentiation in wasm), which
+is most of every token-taking call. The spec's estimates were low (`link_identity` ≈ 25–35, `cancel_link` /
+`unlink_identity` ≈ 15, the link in a login +8–12 Tgas) and its 150 Tgas for a linked login is enough only with
+2048-bit keys. The values in the last column cover the 4096-bit worst case with ≥ 1.6 times the need (unused gas is
+refunded; the prepaid gas only counts against the relayer key's allowance while the call runs). The plain logins'
+API values (50 and 100) don't cover 4096-bit keys: batch 6 raises them or the issuer keys stay at 2048 bits (D155).
+An email token at 2-of-2 (Level 1) adds one more verification to every call that takes it: raise the attached gas
+with that upgrade.
+
 ## Events (NEP-297)
 
 Logged as `EVENT_JSON:{"standard":"hana-id","version":"1.2.0","event":"<name>","data":[{...}]}` (`data` is a
@@ -1308,7 +1366,7 @@ self-issued issuer's key. Link events carry identity keys in hex, never `sub`s.
 | `paused` / `unpaused` | `{"by"}` / `{"changes_unlock_floor_ms"}` |
 | `sessions_valid_from_set` | `{"sessions_valid_from_ms"}` |
 | `upgrade_proposed` / `upgrade_cancelled` / `upgrade_executed` | `{"code_hash","executable_at_ms"}` / `{"code_hash"}` / `{"code_hash"}` |
-| `state_migrated` | `{"from_version","to_version"}` (logged by `migrate` / `migrate_v1` in the deploy receipt: the upgrade really happened) |
+| `state_migrated` | `{"from_version","to_version"}` (logged by `migrate` in the deploy receipt: the upgrade really happened) |
 | `owner_proposed` / `owner_proposal_cancelled` / `owner_changed` | `{"owner","acceptable_at_ms"}` / `{"owner"}` / `{"old","new"}` |
 | `withdrawal_proposed` / `withdrawal_cancelled` / `withdrawal_executed` | `{"receiver","amount","executable_at_ms"}` / `{"receiver","amount"}` / `{"receiver","amount"}` (amount in yoctoNEAR, a string) |
 
@@ -1378,8 +1436,9 @@ sessions opened by v2 code keep their stored paths after `migrate`). In detail:
   the split path must add it), and a replacing signer policy needs new signer ids and cancels dropped signers' pending
   keys.
 - **Events** 1.2.0 (additive).
-- `migrate` v2 → v3 (and v3 → v3); `migrate_v1` now goes v1 → v3.
-- **Wasm**: 628.5 KB (v2: 520.5 KB), `cargo near build non-reproducible-wasm`, toolchain 1.85.1.
+- `migrate` v2 → v3 (and v3 → v3), sandbox-tested through the DAO from the v2 code (build-plan batch 2);
+  `migrate_v1`, the v1 layout copy and its fixture are removed (no deployment is on v1).
+- **Wasm**: 621.8 KB since batch 2 (628.5 KB with `migrate_v1`; v2: 520.5 KB), `cargo near build non-reproducible-wasm`, toolchain 1.85.1.
 
 ## Changed in the governance batch
 

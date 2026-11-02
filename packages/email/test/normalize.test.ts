@@ -125,3 +125,23 @@ describe('normalizeDomain', () => {
     }
   });
 });
+
+describe('mailbox (rate-limit key, D159)', () => {
+  const mb = (input: string) => {
+    const r = normalizeEmail(input);
+    if (!r.ok) throw new Error(r.reason);
+    return { email: r.email, mailbox: r.mailbox };
+  };
+  it('every +tag of one Gmail inbox shares one mailbox, while the identities differ', () => {
+    const all = ['abc@gmail.com', 'abc+1@gmail.com', 'A.B.C+2@GoogleMail.com', 'abc+x+y@gmail.com'].map(mb);
+    expect(new Set(all.map((x) => x.mailbox))).toEqual(new Set(['abc@gmail.com']));
+    expect(new Set(all.map((x) => x.email)).size).toBe(4);
+  });
+  it('drops a +tag on other domains too, keeping dots there', () => {
+    expect(mb('a.b+news@Example.com')).toEqual({ email: 'a.b+news@example.com', mailbox: 'a.b@example.com' });
+  });
+  it('is the address itself without a tag, or when + leads the local part outside Gmail', () => {
+    expect(mb('alice@example.com').mailbox).toBe('alice@example.com');
+    expect(mb('+x@example.com').mailbox).toBe('+x@example.com');
+  });
+});

@@ -1,5 +1,5 @@
 // deploy-contract's governance flows end to end against the simulated chain (sim-chain.ts), never a network:
-// the sandbox-dev migration (DeployContract + migrate_v1, updater key swap, watchdog), upgrades only through
+// v1 contracts refused (D154), upgrades only through
 // propose_upgrade → wait → execute_upgrade, the owner transfer to the council DAO (--approve-with), council-owned
 // runs that stop at the first proposal, and the printed-only creation batch.
 import { readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -125,42 +125,17 @@ async function deploy(argv: string[], m: Manifest = base) {
   return { code, out: text, sent, calls: sent.map((t) => `${t.signer}→${t.receiver}:${t.actions.map((a) => a.functionCall?.methodName ?? a.enum).join('+')}`) };
 }
 
-describe('sandbox-dev migration: v1 → v2 in place', () => {
-  it('without --yes prints the plan and sends nothing', async () => {
+describe('v1 contracts (pre-governance)', () => {
+  it('are refused: nothing is sent, with or without --yes (contract v3 has no migrate_v1, D154)', async () => {
     v1();
-    const r = await deploy([base.name, '--upgrade', '--skip-build']);
-    expect(r.code).toBe(0);
-    expect(r.out).toContain('contract v1 (pre-governance)');
-    expect(r.out).toContain('migrate_v1({"issuer_key_delay_ms":120000,"governance_delay_ms":60000})');
-    expect(r.out.trimEnd().endsWith(DRY_RUN_LINE)).toBe(true);
-    expect(r.sent).toEqual([]);
-  });
-
-  it('--yes: DeployContract + migrate_v1 in one transaction, the contract installs a new updater key, the v1 key is deleted, the watchdog is added', async () => {
-    const old = v1();
-    const r = await deploy([base.name, '--upgrade', '--skip-build', '--yes']);
-    expect(r.code).toBe(0);
-    expect(r.calls).toEqual([
-      `${base.signer}→${base.signer}:deployContract+migrate_v1`,
-      `${base.owner}→${base.signer}:add_updater_key`,
-      `${base.signer}→${base.signer}:deleteKey`,
-      `${base.owner}→${base.signer}:add_watchdog`,
-    ]);
-    expect(JSON.parse(Buffer.from(r.sent[0]!.actions[1]!.functionCall!.args).toString())).toEqual({ issuer_key_delay_ms: 120_000, governance_delay_ms: 60_000 });
-    // Same account, new code: the addresses (signer id in the CKD app_id) are unchanged.
-    expect(chain.accounts.get(base.signer)!.codeHash).toBe(codeHashOf(readFileSync(wasm)));
-    const updater = readKeysUpdater(base.name, roots.secretsRoot)!;
-    secrets.push(updater.keyPair);
-    expect(updater.publicKey).not.toBe(old.getPublicKey().toString());
-    expect(mode(keysUpdaterFile(base.name, roots.secretsRoot))).toBe(0o600);
-    expect(chain.governance?.updater_keys).toEqual([updater.publicKey]);
-    expect(chain.keysOf(base.signer).map((k) => k.public_key).sort()).toEqual([secrets[0]!.getPublicKey().toString(), updater.publicKey].sort());
-    expect(chain.governance?.watchdogs.map((w) => w.account_id)).toEqual([WATCHDOG]);
-    // sandbox-dev keeps the signer's full-access key (D86): a re-run has nothing left to do.
-    const again = await deploy([base.name]);
-    expect(again.code).toBe(0);
-    expect(again.out).toContain('Nothing to do.');
-    expect(again.out).toContain(`Watchdog ${WATCHDOG} may confirm from`);
+    for (const argv of [[base.name, '--upgrade', '--skip-build'], [base.name, '--upgrade', '--skip-build', '--yes']]) {
+      const r = await deploy(argv);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain('contract v1 (pre-governance)');
+      expect(r.out).toContain("which this code can't migrate: contract v3 has no migrate_v1 (D154)");
+      expect(r.sent).toEqual([]);
+    }
+    expect(chain.accounts.get(base.signer)!.codeHash).toBe('V1CODE');
   });
 });
 

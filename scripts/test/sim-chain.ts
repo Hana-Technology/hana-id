@@ -282,12 +282,6 @@ export class SimChain {
         this.config = { owner: args.owner, mpc: args.mpc, ckd_domain_id: args.ckd_domain_id, change_delay_ms: args.change_delay_ms, issuer_key_delay_ms: args.issuer_key_delay_ms, governance_delay_ms: args.governance_delay_ms, sponsors: [], console_audiences: [], shared_clients: [], pending_shared_clients: [], paused: false };
         this.governance = { ...structuredClone(GOVERNANCE_DEFAULT), watchdogs: (args.watchdogs as string[]).map((account_id) => ({ account_id, confirm_from_ms: 0 })) };
         return null;
-      case 'migrate_v1':
-        if (predecessor !== this.signer) throw new Error('Method migrate_v1 is private');
-        if (this.governance) throw new Error('Smart contract panicked: Unexpected state version');
-        this.config = { ...this.config, issuer_key_delay_ms: args.issuer_key_delay_ms, governance_delay_ms: args.governance_delay_ms, pending_issuer_key_delay: null, pending_governance_delay: null, paused: false };
-        this.governance = structuredClone(GOVERNANCE_DEFAULT);
-        return null;
       case 'add_updater_key': {
         this.assertOwner(predecessor);
         if (g().updater_keys.length >= 2) throw new Error('Smart contract panicked: Too many updater keys');

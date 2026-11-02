@@ -403,13 +403,13 @@ describe('buildDeployPlan', () => {
       expect(p.blockers.join()).toContain(`Shared client ${SHARED} is registered as a client of scope "s4"`);
     });
 
-    it('blocks on a contract without shared clients, also with --upgrade (migrate_v1 reads only the batch B layout)', () => {
+    it('blocks on a contract without shared clients, also with --upgrade (no code migrates it)', () => {
       const { shared_clients: _s, pending_shared_clients: _p, ...old } = configV1;
       const p = buildDeployPlan(m, deployedV1({ config: old }), opts);
       expect(p.blockers.join()).toContain('predates batch A.2');
       expect(p.steps.find((s) => s.kind === 'set-shared-clients')).toMatchObject({ added: [['google', SHARED]] });
       const up = buildDeployPlan(m, deployedV1({ config: old }), { ...opts, upgrade: true, skipBuild: true });
-      expect(up.blockers.join()).toContain('migrate_v1 reads only the batch B layout');
+      expect(up.blockers.join()).toContain('No code migrates it: deploy to a fresh signer account');
     });
 
     it('reads the plausible get_config shapes for pending additions', () => {
@@ -425,34 +425,13 @@ describe('buildDeployPlan', () => {
     });
   });
 
-  describe('v1 → v2 migration (sandbox-dev, docs/governance-spec.md "Migration plan")', () => {
-    it('a v1 contract needs --upgrade', () => {
-      const p = buildDeployPlan(m, deployedV1(), opts);
-      expect(p.blockers.join()).toContain('runs the v1 (pre-governance) contract. Migrate it in place with --upgrade');
-    });
-
-    it('--upgrade migrates in place, installs a new updater key, then deletes the v1 one, then adds the watchdog', () => {
-      const p = buildDeployPlan(m, deployedV1(), { ...opts, upgrade: true, skipBuild: true });
-      expect(p.blockers).toEqual([]);
-      expect(p.steps).toEqual([
-        { kind: 'migrate-v1', issuer_key_delay_ms: 120_000, governance_delay_ms: 60_000 },
-        { kind: 'add-updater-key', reuse: null },
-        { kind: 'delete-signer-key', publicKey: 'ed25519:U', why: 'the v1 keys-updater key (set_issuer_key, remove_issuer_key)', via: 'signer' },
-        { kind: 'add-watchdog', accountId: WATCHDOG },
-      ]);
-      expect(describeStep(m, p.steps[0]!)).toBe(
-        `Migrate ${m.signer} in place: DeployContract + migrate_v1({"issuer_key_delay_ms":120000,"governance_delay_ms":60000}) in one transaction (same account, so every address stays) [signed by ${m.signer}].`,
-      );
-      expect(describeStep(m, p.steps[2]!)).toContain(`[signed by ${m.signer}]`);
-      expect(describeStep(m, p.steps[3]!)).toBe(`add_watchdog({"account_id":"${WATCHDOG}"}) [signed by ${m.owner}].`);
-    });
-
-    it('builds first unless --skip-build, and refuses without the manifest delays or the signer full-access key', () => {
-      expect(buildDeployPlan(m, deployedV1(), { ...opts, upgrade: true }).steps.slice(0, 2).map((s) => s.kind)).toEqual(['build', 'migrate-v1']);
-      const { issuerKeyDelayMs: _i, ...noDelays } = m;
-      expect(buildDeployPlan({ ...noDelays, issuerKeyDelayMs: undefined }, deployedV1(), { ...opts, upgrade: true }).blockers.join()).toContain('needs issuerKeyDelayMs and governanceDelayMs for migrate_v1');
-      const noFull = buildDeployPlan(m, deployedV1({ signerAccessKeys: [fc('ed25519:U', m.signer, V1_UPDATER)] }), { ...opts, upgrade: true });
-      expect(noFull.blockers.join()).toContain("migrate_v1 is sent with");
+  describe('v1 contracts (pre-governance)', () => {
+    it('a v1 contract is refused, with or without --upgrade: contract v3 has no migrate_v1 (D154)', () => {
+      for (const o of [opts, { ...opts, upgrade: true }, { ...opts, upgrade: true, skipBuild: true }]) {
+        const p = buildDeployPlan(m, deployedV1(), o);
+        expect(p.blockers.join()).toContain("runs the v1 (pre-governance) contract, which this code can't migrate: contract v3 has no migrate_v1 (D154)");
+        expect(p.steps.some((s) => s.kind === 'build' || s.kind === 'deploy' || s.kind === 'propose-upgrade' || s.kind === 'execute-upgrade')).toBe(false);
+      }
     });
 
     it('after the migration, a re-run sees only what is left (the old key deleted by the owner if there is no full-access key)', () => {
@@ -475,7 +454,7 @@ describe('buildDeployPlan', () => {
       const p = buildDeployPlan(m, deployed(), up);
       expect(p.steps).toEqual([{ kind: 'build' }, { kind: 'propose-upgrade', codeHash: null, replaces: null, current: 'abc' }]);
       expect(describeStep(m, p.steps[1]!)).toContain(`propose_upgrade({"code_hash":"<hash of the built wasm>"}) [signed by ${m.owner}]`);
-      expect(p.steps.some((s) => s.kind === 'deploy' || s.kind === 'migrate-v1')).toBe(false);
+      expect(p.steps.some((s) => s.kind === 'deploy')).toBe(false);
     });
 
     it('with a known wasm: propose it; wait while delayed; execute once due', () => {

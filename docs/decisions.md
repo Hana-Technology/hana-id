@@ -2,8 +2,9 @@
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
 Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 and D150–D152 on 2026-10-30 (branches
-`feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`); D156–D159
-on 2026-11-02 (branch `feat/email-login-3`); D190–D193 on 2026-11-02 (branch `feat/email-login-5`).
+`feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`);
+D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-login-3`) on 2026-11-02; D159's `+tag`
+change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 on 2026-11-02 (branch `feat/email-login-5`).
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -870,7 +871,7 @@ answered question there points here.
 
 ### D87. Email: Resend, from a dedicated sending subdomain
 - Date 2026-10-29 · Status: confirmed by the user, provisional: to re-confirm with the colleague (2026-10-29), not built · Source: `docs/batch-c-spec.md` "Email", open question 2
-- Decision: Resend, sending from a dedicated subdomain of the Hana domain with SPF, DKIM and DMARC, behind a small
+- Decision (user mail superseded by D194: SendGrid): Resend, sending from a dedicated subdomain of the Hana domain with SPF, DKIM and DMARC, behind a small
   sender interface (send one message → accepted or an error) so switching (e.g. to Postmark) is one adapter. The
   admin Worker's fail-closed notices count a send as done only when Resend accepts it. The watchdog sends its alert
   emails with its own Resend API key, not the admin Worker's.
@@ -1351,7 +1352,7 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   - Q5: the issuer under `{apiUrl}/v1/email`.
   - Q6: `sub` = HMAC with `K_sub`; `K_sub` a Worker secret with two offline backups, never rotated.
   - Q7: the Gmail canonical form (dots and `+tag` ignored); Google's help pages cited in the guard test before the
-    freeze.
+    freeze. Amended 2026-11-02 (D159): a `+tag` is kept, each tag its own identity.
   - Q8: the code never in the mail subject.
   - Q9: no Turnstile on `authOrigin`; rate limits instead.
   - Q10: disposable-address domains blocked (a pinned list, `email_domain_not_allowed`).
@@ -1556,6 +1557,41 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 - Playbook: `retired-key-change`. The incident's alert #10 was acknowledged; the deleted updater key is reprovisioned
   through the council (`forged-key-change` step 5).
 
+### D154. No v1 migration in contract v3: `migrate_v1` removed, `deploy-contract` refuses a v1 contract
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); merged · Source: email-login build plan batch 2
+- Decision: contract v3 drops `migrate_v1`, the v1 layout copy (`HanaSignerV1`) and the v1 state fixture, as the build
+  plan says. The plan doesn't say what the deploy tooling does with a v1 contract once the code can't migrate it; the
+  stricter reading is built: `deploy-contract` refuses a v1 contract with or without `--upgrade`, with a blocker that
+  names the ways out (upgrade it with the v2 code, develop 26fb70a, first; or a fresh signer account, which changes
+  every address), instead of planning `DeployContract` + `migrate_v1`, which would now fail on chain (`MethodNotFound`,
+  the receipt reverts). The plan's `migrate-v1` step and the simulated chain's `migrate_v1` are gone; the v1 plan
+  and run tests became refusal tests.
+- Why: no deployment is on v1 (sandbox-dev migrated on 2026-10-30; every other env is created with `new`), and the
+  tooling shouldn't offer a plan that can't succeed. v3 still reads v1-era session records (`created_at_ms` absent):
+  a deployment migrated from v1 may hold some, so that unit test stays, built without the v1 fixture.
+- Not changed: the API's never-relay list (`apps/api/src/relayer-config.ts` `GOVERNANCE_METHODS`) still names
+  `migrate_v1`: refusing a method that no longer exists is harmless, and batch 6 edits that file.
+
+### D155. Attached gas for the email-login calls covers 4096-bit keys
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); measured in batch 2, the API sets the values in build-plan
+  batch 6 · Source: email-login build plan batch 2, the spec's "Gas and storage"; batch 2 review (L3)
+- Decision: attach 250 Tgas to `create_session_and_derive` with a `link_jwt` (the spec said 150), 250 to
+  `link_identity` (spec: 100), and 150 to `cancel_link` and `unlink_identity` (the spec gives no value). Measured in the
+  sandbox (`docs/contract-interface.md` "Gas of the email login calls"): one RS256 verification costs ≈ 17–18 Tgas at
+  2048 bits and ≈ 67 at 4096, the largest modulus `set_issuer_key` accepts. A linked login needs ≈ 59 Tgas at 2048
+  bits and ≈ 156 at 4096 (two verifications plus the MPC's 20); `link_identity` burns 37.2 / 134.6; `cancel_link` and
+  `unlink_identity` 19.8 / 68.5. The values cover the 4096-bit worst case with ≥ 1.6 times the need.
+- Also: at 4096 bits the plain logins outgrow the API's current values (`create_session` 68.8 burnt against 50
+  attached; `create_session_and_derive` ≈ 89 needed of 100). Batch 6 raises them (100 and 150) unless the issuer keys
+  are kept at 2048 bits (below).
+- Why: unused gas is refunded and the prepaid amount only counts against the relayer key's allowance while the call
+  runs, so a high value costs nothing; a low one fails logins the moment an issuer (Google, or Hana's email key)
+  rotates to a larger key, which the contract allows.
+- Alternative for the user: cap self-issued (email) keys at 2048 bits in a later contract version (Hana chooses that
+  key size: the spec's KMS keys are `RSA_2048`), and keep the gas values for Google's 2048-bit keys with a check in
+  the watchdog. Not done here: no contract change in this batch.
+- Rejected: the spec's 150 for the linked login (fails with 4096-bit keys); 100 for `link_identity` (likewise).
+
 ### D142. Loopback origins only in `sandbox-*` environments
 - Date 2026-10-30 · Status: confirmed by the user · Source: batch C1 open question 1 (`docs/batch-c-build-plan.md`)
 - Decision: `localhost` / loopback origins are accepted only in dev environments (`sandbox-*`, `local*`), both when an
@@ -1610,6 +1646,40 @@ detail open or a safer reading was needed. Each follows the spec's intent; the u
 - Why: focus the initial build on Google and email; Apple adds an issuer, a second client, a POST route, watchdog
   and playbook work for a method no partner has asked for yet. Nothing built so far depends on Apple: the path format
   and the issuer model already take a new provider without moving any address (D124).
+
+### D194. User mail (email login codes) via SendGrid, not Resend
+- Date 2026-11-02 · Status: confirmed by the user as likely, final once the colleague agrees · Source: conversation
+  (before email login batch 4)
+- Decision: the email issuer sends login-code mail through SendGrid (v3 Mail Send API), which Hana already uses for
+  Hana Wallet and Wend. It replaces Resend for user mail (D87's provider). It sits behind the issuer's one sender adapter, so
+  a later switch is a new adapter, not a redesign. Same rules as D87: a dedicated sending subdomain with SPF, DKIM and
+  DMARC (SendGrid domain authentication), a send counts only when SendGrid accepts it (`202`), and its own API key
+  restricted to Mail Send, used only by the email issuer (not shared with Hana Wallet or Wend; a separate SendGrid
+  subuser if the account allows it, so reputation and suppression lists stay apart).
+- Not changed yet: the watchdog's alert email and the admin Worker's notices still name Resend (D87); whether they
+  move to SendGrid too is decided separately.
+- Why: one provider the team already operates and pays for; the adapter keeps the choice reversible.
+
+### D200. Link volume: a contract counter and an hourly cap, replacing the indexer scan
+- Date 2026-11-02 · Status: confirmed by the user (option A+), being built · Source: batch 5 review (the FastNear scan
+  reads about 13 logins per run at about 75 KB each, so it falls behind and pages on ordinary traffic)
+- Threat: a stolen email signing key (1-of-1 at launch) can sign "owns victim@gmail.com", and D119 links that email
+  identity at once to the victim's Google identity, so the thief derives the victim's Google wallet. Such a takeover
+  leaves new links on chain. (Opening email-only wallets with forged tokens makes no link; the defence there is the
+  key's custody, KMS and a second signer, D121.)
+- Decision: the contract counts every new link, immediate or pending (the combined login with a `link_jwt`, and
+  `link_identity`; not cancels, unlinks or lazy activations), in fixed UTC-hour windows, per scope and in total, and
+  refuses a new link once the scope or the total has reached its cap for the hour (`Link rate limit reached`; the
+  whole call reverts, so a capped login is refused, never completed without its link, D122). Defaults: 50 per scope
+  per hour, 500 in total per hour, changed by the owner (council). The scope or total that reaches its cap is
+  recorded by the call that reaches it, and a view reports the current and previous windows. The watchdog reads that
+  view each run: a cap reached is critical, a count past half the cap is a warning; raising a cap is a critical
+  governance change. The FastNear indexer scan (D192) is removed.
+- Why: exact, on chain, no third party or data budget, and it turns detection into a brake: a thief can take over at
+  most the cap's worth of accounts per hour before the page and the pause. v3 isn't deployed anywhere, so the
+  contract change is cheap now.
+- Cost: a real burst of linking above the cap (a big partner launch) is refused for the rest of the hour until the
+  owner raises the cap; the defaults are provisional until real traffic is measured.
 
 ### D170. Identity token layout details the spec left open
 - Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`packages/core/src/identity.ts`, frozen in
@@ -1914,7 +1984,7 @@ the address freeze; until then a change moves every sandbox-dev email address an
 change no address.
 
 ### D156. Email normalization v1: the stricter readings, and a pinned UTS #46 library
-- Date 2026-11-02 · Status: to confirm (built on `feat/email-login-3`, not merged) · Source: build of
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); merged · Source: build of
   `docs/email-login-spec.md` "Email normalization"
 - Decision (`packages/email/src/normalize.ts`, frozen by `vectors/email-v1.json`):
   - "ASCII whitespace" is the WHATWG set (TAB, LF, FF, CR, SPACE), trimmed at the ends only; anything else (VT, NBSP,
@@ -1981,19 +2051,32 @@ change no address.
   links silently. Google returns `hd` as the Workspace's lowercase ASCII domain, so the exact form is the expected one.
 - Rejected: normalizing `hd` with `normalizeDomain`; matching `hd` against parent domains.
 
-### D159. Gmail canonical form: Google's pages as cited, and what they don't cover
-- Date 2026-11-02 · Status: to confirm (built on `feat/email-login-3`, not merged) · Source: spec Q7 (D123), checked
-  against Google's help pages on 2026-11-02 (cited in `packages/email/test/vectors.test.ts`)
-- Decision: keep the spec's rule unchanged (`gmail.com` and `googlemail.com` → `gmail.com`, drop from the first `+`,
-  drop dots). Cited: dots don't matter (support.google.com/mail/answer/7436150); `+word` reaches the same inbox
-  (support.google.com/a/users/answer/9308648, a Workspace Learning Center page; Gmail usernames can't contain `+`,
-  support.google.com/mail/answer/9211434); a deleted Gmail address can't be used by anyone in the future
-  (support.google.com/mail/answer/61177, /56256).
-- Open for the user: no current Google help page says `googlemail.com` is the same mailbox as `gmail.com` (it is,
-  historically: Gmail's name in Germany and the UK); and Google now lets a Gmail user change their address, the old
-  one becoming an alternate that still receives mail (support.google.com/accounts/answer/19870), so the same person
-  then has two email identities (the spec's "address changes between logins" case; nothing merges them).
-- Rejected: Gmail rules for Workspace domains (spec step 5: `+tags` elsewhere may be distinct mailboxes).
+### D159. Gmail canonical form: dots ignored, each `+tag` its own identity
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02), amending Q7 (D123) · Source: spec Q7 (D123), checked
+  against Google's help pages on 2026-11-02 (cited in `packages/email/test/vectors.test.ts`); the user's choice of
+  `+tag` behaviour
+- Decision: `gmail.com` and `googlemail.com` → `gmail.com`; every dot in the username (before the first `+`) is
+  dropped; a non-empty `+tag` is kept as typed (lowercased, its dots and further `+` kept), so `name+1@gmail.com`
+  and `name+2@gmail.com` are separate identities with separate wallets; an empty tag (`name+@gmail.com`) is the plain
+  username; an empty username (`+tag@gmail.com`) is refused. Other domains keep dots and `+` as typed.
+- Why dots: Gmail delivers every dot spelling to one inbox and nobody can register another spelling
+  (support.google.com/mail/answer/7436150), so ignoring dots keeps one person from getting a second, empty wallet
+  by typing their address differently, and keeps D119 matching against Google's reported address working.
+- Why `+tags` kept (the user's choice): a tag is typed on purpose, so it can't split a wallet by accident, and it
+  gives one inbox many wallets for testing and for users who want them, as Privy does. Security is unchanged: only
+  the inbox owner receives a tag's codes. Costs: one person can hold many email wallets (partners running rewards
+  should know); a Google login links automatically only with the untagged email identity; the identity token's email
+  for a tagged login carries the tag.
+- Cited and open: a deleted Gmail address can't be used by anyone in the future (support.google.com/mail/answer/61177,
+  /56256); no current Google page says `googlemail.com` is the same mailbox as `gmail.com` (it is, historically); a
+  Gmail user can now change their address, the old one becoming an alternate that still receives mail
+  (support.google.com/accounts/answer/19870), so the same person can then have two email identities (the spec's
+  "address changes between logins" case; nothing merges them).
+- Rate limits: since tags are distinct identities, `normalizeEmail` also returns `mailbox` (the address without its
+  `+tag`, on every domain), and the issuer's limits on codes sent key on it, so cycling tags can't mail one inbox
+  without bound (automated security review of this change). It is never an identity or a recipient.
+- Rejected: dropping `+tags` (the spec's rule: one wallet per inbox); keeping dots significant (an accidental second
+  wallet); Gmail rules for Workspace domains (`+tags` elsewhere may be distinct mailboxes).
 
 ## Email login build, batch 5 (watchdog), 2026-11-02
 
@@ -2151,6 +2234,7 @@ address. All wait for the user's confirmation.
 | Email spec: `opened` recorded at every `create_session*` | Recorded at derivation (D130) | `docs/contract-interface.md` "Accounts and links" |
 | Email spec: `auto_link` nonce over the session, the session identity, the target epoch and the mode; the combined login signed over the plain CKD payload | The nonce also commits to the join (who joins which account), and with a link the session key signs the linked CKD payload (D133) | `docs/email-login-spec.md` "Byte layouts (new)", "Sessions" |
 | Email spec: `mark_self_issued(provider)` for any issuer | Only `email` (D134) | `docs/contract-interface.md` "Self-issued issuers" |
+| Email spec Q7: Gmail `+tag` dropped (one wallet per inbox) | Each `+tag` its own identity; dots still ignored (D159) | `packages/email/README.md` |
 | `create_session` opens a session for anyone holding the token; after a front-run `create_session` the key holder derives with counter `used + 1` | A bare `create_session` needs the session key's proof of possession bound to its parameters; a session meant to carry a link is revoked and restarted, never derived plainly (D137) | `docs/contract-interface.md` "Sessions and CKD" |
 
 ## Proposed, not yet confirmed
@@ -2168,9 +2252,7 @@ paging app (D85, at setup), and open question 17 (cancel by a compromised OIDC o
 `docs/batch-c-spec.md`: Q1, Q3, Q4's fallback addresses, Q5 (D93). Everything else in both specs follows D80–D93 or
 is a proposal there.
 
-Still open from `docs/email-login-spec.md`: the user-mail provider (Resend unless the colleague picks another,
-D87). Everything else follows D4, D119 and D121–D123. The contract readings made while building it, D130 and D131,
-wait for the user's confirmation (`docs/email-login-build-plan.md` "Open points for the user"; point 3 is confirmed, D132);
-D133–D138 are the security reviews' fixes, D139 their off-chain obligations. The `packages/email` readings
-(batch 3), D156–D159, wait for the user's confirmation; D156 and D159 decide every email address. D190–D193 (batch 5,
-the watchdog's email rules) wait for the user's confirmation.
+Still open from `docs/email-login-spec.md`: nothing; the user-mail provider is SendGrid (D194). The contract readings
+D130 and D131, batch 2's D154 and D155, and the `packages/email` readings D156 and D159 are confirmed (2026-11-02);
+D157 (disposable list) and D158 (`hd` compared exactly) wait for the user's confirmation, as do the watchdog's
+D190–D193 (batch 5).

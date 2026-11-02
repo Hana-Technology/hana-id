@@ -36,7 +36,18 @@ export type InvalidEmailReason =
   | 'domain_unicode_version';
 
 export type NormalizeResult =
-  | { ok: true; email: string; local: string; domain: string }
+  | {
+      ok: true;
+      email: string;
+      local: string;
+      domain: string;
+      /**
+       * The delivery mailbox, for rate limits only (never an identity, never a recipient): `email` without its
+       * `+tag` on every domain (Gmail, Outlook, iCloud, Fastmail and others deliver tags to one inbox). Limits on
+       * codes sent must key on this, or cycling tags would mail one inbox without bound (D159).
+       */
+      mailbox: string;
+    }
   | { ok: false; reason: InvalidEmailReason };
 
 export type NormalizeDomainResult = { ok: true; domain: string } | { ok: false; reason: InvalidEmailReason };
@@ -123,16 +134,21 @@ export function normalizeEmail(input: string): NormalizeResult {
 
   if ((EMAIL_V1.gmailDomains as readonly string[]).includes(domain)) {
     domain = EMAIL_V1.gmailCanonicalDomain;
+    // Dots are dropped from the username only; a `+tag` is kept as typed (lowercased), so each tag is its own
+    // identity, and an empty tag (`name+@gmail.com`) is the plain username (D159).
     const plus = local.indexOf('+');
-    if (plus !== -1) local = local.slice(0, plus);
-    local = local.replaceAll('.', '');
-    if (local.length === 0) return { ok: false, reason: 'local_empty' };
+    const tag = plus === -1 ? '' : local.slice(plus + 1);
+    const user = (plus === -1 ? local : local.slice(0, plus)).replaceAll('.', '');
+    if (user.length === 0) return { ok: false, reason: 'local_empty' };
+    local = tag.length === 0 ? user : `${user}+${tag}`;
   }
 
   const email = `${local}@${domain}`;
   // Punycode can make the domain longer than the input's: the limit holds for the normalized address too (D156).
   if (email.length > EMAIL_V1.maxAddressBytes) return { ok: false, reason: 'too_long' };
-  return { ok: true, email, local, domain };
+  const plus = local.indexOf('+');
+  const mailbox = plus > 0 ? `${local.slice(0, plus)}@${domain}` : email;
+  return { ok: true, email, local, domain, mailbox };
 }
 
 /** True when `email` is exactly the output of {@link normalizeEmail} (what `sub` and the Google-hosted rule accept). */

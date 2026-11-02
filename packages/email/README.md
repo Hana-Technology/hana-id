@@ -63,8 +63,13 @@ creates it in `.secrets/<env>/`).
 3. Local part: ASCII only (no SMTPUTF8), an RFC 5322 dot-atom (no quoted strings, comments, leading, trailing or
    doubled dots), ASCII-lowercased.
 4. Gmail canonical form for `gmail.com` and `googlemail.com` only (checked on the normalized domain, so `GMAIL.COM.`
-   and fullwidth `ｇｍａｉｌ．ｃｏｍ` count): domain `gmail.com`, drop everything from the first `+`, drop every `.`;
-   an empty result is refused. Google's help pages behind this rule are cited in `test/vectors.test.ts`.
+   and fullwidth `ｇｍａｉｌ．ｃｏｍ` count): domain `gmail.com`; every `.` is dropped from the username (the part
+   before the first `+`), and a non-empty `+tag` is kept as typed, so `name+1@gmail.com` is its own identity (its own
+   wallet) and `name+@gmail.com` is `name@gmail.com` (D159). An empty username is refused. Google's help pages behind
+   the dot rule are cited in `test/vectors.test.ts`.
+   `normalizeEmail` also returns `mailbox`: the address without its `+tag` (every domain). It is a rate-limit key
+   only: limits on codes sent key on it, or cycling tags would mail one inbox without bound. Never use it as an
+   identity or a recipient.
 5. No other provider rules: `+tag` and dots stay significant everywhere else.
 
 ## Dependency: `tr46` 7.0.0 (pinned exactly)

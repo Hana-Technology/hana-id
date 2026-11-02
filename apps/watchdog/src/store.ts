@@ -1,7 +1,8 @@
-// The watchdog's D1 state (migrations/0001_init.sql). Everything here is public data: kids, key material, change
+// The watchdog's D1 state (migrations/0001_init.sql, 0002_link_events.sql). Everything here is public data: kids, key material, change
 // ids, transaction hashes, alert texts built from on-chain values.
 import type { Jwk } from '@hana-id/jwks';
 import { ALERT_KINDS, type AlertKind, type Channel, type CheckId, type Severity } from './checks.ts';
+import type { LinkEvent } from './links.ts';
 
 export interface SeenKid {
   provider: string;
@@ -200,6 +201,33 @@ export class Store {
     return (await this.db.prepare('SELECT * FROM actions WHERE at >= ?1 ORDER BY id').bind(at).all<RawAction>()).results.map(actionRow);
   }
 
+  // ---- link events ----
+
+  /** Records link events; an id seen before is ignored (a scan may re-read a block). */
+  async recordLinkEvents(events: LinkEvent[]): Promise<void> {
+    if (events.length === 0) return;
+    await this.db.batch(
+      events.map((e) =>
+        this.db
+          .prepare('INSERT INTO link_events (id, event, scope_id, provider, auto, at, block_height) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT (id) DO NOTHING')
+          .bind(e.id, e.event, e.scope_id, e.provider, e.auto === null ? null : e.auto ? 1 : 0, e.at, e.block_height),
+      ),
+    );
+  }
+
+  /** Link events since `at` (block time), counted per scope, event and auto flag. */
+  async linkCounts(at: number): Promise<{ scope_id: string; event: string; auto: number | null; n: number }[]> {
+    const rows = await this.db
+      .prepare('SELECT scope_id, event, auto, COUNT(*) AS n FROM link_events WHERE at >= ?1 GROUP BY scope_id, event, auto ORDER BY scope_id, event')
+      .bind(at)
+      .all<{ scope_id: string; event: string; auto: number | null; n: number }>();
+    return rows.results;
+  }
+
+  async pruneLinkEvents(before: number): Promise<void> {
+    await this.db.prepare('DELETE FROM link_events WHERE at < ?1').bind(before).run();
+  }
+
   // ---- alerts ----
 
   /** An alert with this key whose condition still holds (event alerts are resolved at creation). */
@@ -226,12 +254,21 @@ export class Store {
     await this.db.prepare('UPDATE alerts SET details = ?2 WHERE id = ?1').bind(id, JSON.stringify(details)).run();
   }
 
-  /** Resolves open condition alerts of `kinds` whose key isn't in `keep`. */
-  async resolveConditions(kinds: AlertKind[], keep: Set<string>, at: number): Promise<number> {
+  /**
+   * Resolves open condition alerts of the evaluated kinds whose key isn't in `keep`. A kind evaluated only in part
+   * (`string[]`: key prefixes, e.g. the email half of `forged_active_key` in a run whose Google half was skipped)
+   * resolves only keys with one of those prefixes.
+   */
+  async resolveConditions(evaluated: Map<AlertKind, 'all' | string[]>, keep: Set<string>, at: number): Promise<number> {
+    const kinds = [...evaluated.keys()];
     if (kinds.length === 0) return 0;
     const placeholders = kinds.map((_, i) => `?${i + 1}`).join(', ');
-    const open = await this.db.prepare(`SELECT id, key FROM alerts WHERE resolved_at IS NULL AND kind IN (${placeholders})`).bind(...kinds).all<{ id: number; key: string }>();
-    const ids = open.results.filter((r) => !keep.has(r.key)).map((r) => r.id);
+    const open = await this.db.prepare(`SELECT id, key, kind FROM alerts WHERE resolved_at IS NULL AND kind IN (${placeholders})`).bind(...kinds).all<{ id: number; key: string; kind: AlertKind }>();
+    const inScope = (r: { key: string; kind: AlertKind }) => {
+      const scope = evaluated.get(r.kind);
+      return scope === 'all' || (scope ?? []).some((p) => r.key.startsWith(p));
+    };
+    const ids = open.results.filter((r) => !keep.has(r.key) && inScope(r)).map((r) => r.id);
     if (ids.length) await this.db.batch(ids.map((id) => this.db.prepare('UPDATE alerts SET resolved_at = ?2 WHERE id = ?1').bind(id, at)));
     return ids.length;
   }

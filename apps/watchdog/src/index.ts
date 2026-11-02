@@ -3,9 +3,11 @@
 // admin portal (D83). docs/governance-spec.md "Watchdog service"; apps/watchdog/README.md.
 import { GOOGLE_JWKS_URL, type Jwk, usableJwks } from '@hana-id/jwks';
 import { type Notifier, notifierFromEnv } from './channels.ts';
-import { type Env, digestHourUtc } from './env.ts';
+import { type Env, digestHourUtc, isDevEnvName } from './env.ts';
+import { FastNearLinkEvents, linkVolumeConfig } from './links.ts';
 import { log } from './log.ts';
 import { NearChain, NearWriter, Rpc } from './near.ts';
+import { parsePins } from './pins.ts';
 import { relayerThresholds } from './relayer.ts';
 import { type RunDeps, runWatchdog } from './run.ts';
 import { handleRequest } from './status.ts';
@@ -22,6 +24,16 @@ export async function fetchGoogleJwks(): Promise<Jwk[]> {
   return keys;
 }
 
+/**
+ * Hana's published email JWKS (usable RS256 keys; may be empty), fetched with no cache. Informational only: the
+ * watchdog compares it with the pins and never trusts it (docs/email-login-spec.md "Issuer configuration").
+ */
+export async function fetchEmailJwks(url: string): Promise<Jwk[]> {
+  const res = await fetch(url, { headers: { accept: 'application/json' }, cache: 'no-store', signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) throw new Error(`email JWKS HTTP ${res.status}`);
+  return usableJwks(await res.json());
+}
+
 /** The real dependencies of a run, from the Worker's bindings. */
 export function runDeps(env: Env, notifier: Notifier = notifierFromEnv(env)): RunDeps {
   const rpc = new Rpc([env.NEAR_RPC, ...(env.NEAR_RPC_FALLBACK ? [env.NEAR_RPC_FALLBACK] : [])]);
@@ -33,11 +45,17 @@ export function runDeps(env: Env, notifier: Notifier = notifierFromEnv(env)): Ru
       log({ event: 'config', outcome: 'error', code: 'bad_watchdog_key' }, 'error');
     }
   }
+  const emailJwksUrl = env.EMAIL_JWKS_URL?.trim();
+  const indexer = env.LINK_INDEXER_URL?.trim();
+  const linkVolume = linkVolumeConfig(env.LINK_VOLUME);
+  const emailPins = parsePins(env.EMAIL_PINS);
   return {
     store: new Store(env.DB),
     chain: new NearChain(rpc, env.SIGNER_ACCOUNT),
     writer,
     fetchJwks: fetchGoogleJwks,
+    fetchEmailJwks: emailJwksUrl ? () => fetchEmailJwks(emailJwksUrl) : null,
+    linkEvents: indexer ? new FastNearLinkEvents(indexer, env.SIGNER_ACCOUNT) : null,
     notifier,
     now: Date.now,
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -49,6 +67,9 @@ export function runDeps(env: Env, notifier: Notifier = notifierFromEnv(env)): Ru
       digestHourUtc: digestHourUtc(env),
       relayer: env.RELAYER_ACCOUNT?.trim() || null,
       relayerThresholds: relayerThresholds(env.RELAYER_FUNDS),
+      emailPins,
+      devEnv: isDevEnvName(env.ENV_NAME),
+      linkVolume,
     },
   };
 }

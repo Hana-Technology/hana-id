@@ -1,7 +1,8 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-10-30 for the watchdog's retired-key rule (branch
+known open issues. Last verified against code: 2026-11-02 for the watchdog's email issuer rules, link volume and
+`unrecorded_wallets` alert (branch `feat/email-login-5`, D190–D193); 2026-10-30 for the watchdog's retired-key rule (branch
 `fix/watchdog-retired-key-race`, D153), for the partner identity token (branch
 `feat/identity-token-2`: the review fixes D176–D179 in the identity rows, invariants and open issue (l); branch
 `feat/identity-token-1`: the partner-backend party, its compromise rows, the three identity secrets), for the relayer pool rows (branch `feat/playbook-gaps`: the watchdog's relayer funds
@@ -153,7 +154,7 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
     can't attach an email identity during a plain Google login; a session it meant to link is revoked and restarted,
     never derived with the plain payload (D137). The issuer mints the nonce with the join it decided; the API
     prechecks both and relays the split path's proof of possession; the watchdog alerts critical if
-    `unrecorded_wallets` is ever true outside dev envs (D139).
+    `unrecorded_wallets` is ever true outside dev envs (D139; built, D193).
   - Contract security notes: `docs/contract-interface.md` "Security notes (for reviewers)"; readings made in the build:
     D130, D131; review fixes D133–D138, off-chain obligations D139.
 
@@ -675,6 +676,20 @@ plan (D33; built on branch `feat/governance`, not deployed), specified in `docs/
   and `set_issuer` (no pending state to see); and every on-chain string in an alert (kid, provider, proposer) goes
   through an allow-list or an escaped form, with header-safe titles and Slack-escaped text, so a hostile kid can't
   break a page, inject headers or `<!channel>`.
+- Watchdog and the email issuer (email login, `docs/email-login-spec.md` "Watchdog", D190–D193; branch
+  `feat/email-login-5`, not deployed): self-issued keys have no outside JWKS, so the watchdog trusts only the pins in
+  its own manifest (`watchdog.pinnedIssuerKeys.email`, set on its own account: a pin change is the operator's
+  redeploy, outside Hana's main account). A pending email key whose RFC 7638 thumbprint isn't pinned for its signer
+  (or whose kid isn't that thumbprint) is cancelled; an active one pauses and deletes every updater key, also at the
+  first run; it never confirms an email key (the contract refuses too). No pins means nothing is pinned, never "not
+  checked" (D190). `get_issuer("email")` / `get_self_issued("email")` against the pins: any difference is critical; a
+  weaker policy (lower `required`, an unpinned signer, active keys with no policy) pauses (D191). So a compromised
+  owner DAO can't install its own email key, and an upgrade weakening the policy is paused on as it executes (it was
+  already public and alerted for `governance_delay_ms`). Hana's published email JWKS is compared with the pins as a
+  warning only (Hana controls it). The **use of Hana's real key** by a compromised issuer isn't bounded on chain at
+  1-of-1: the link-volume warning (D192, new links per scope and hour from `identity_link_*` events) is the
+  watchdog's detection. Its events come from a third-party transactions indexer (FastNear), which can hide or invent
+  events (a missed or a false warning) but can't make the watchdog act. A v2 contract reads as "no email issuer".
 - Monitoring (D83): every watchdog check, action and alert surfaces in the admin portal's "Security & monitoring"
   view (a standing rule for future checks); the watchdog sends its own alerts, so a compromised Hana Cloudflare
   account can't silence them.

@@ -291,3 +291,43 @@ listed under "Batch 1 result"; the one choice in them that is yours to revisit i
     plain payload, which a crafted `pk2` could collide with (D133); the vault (batch 8) and the API precheck (batch 6)
     sign and check exactly this. The pre-v3 wallet guard (D135) means sandbox-dev's v3 upgrade needs one more owner
     (council) call, `accept_unrecorded_wallets`, before any link works there.
+
+## Batch 5 result
+
+Branch `feat/email-login-5`, not deployed (no transactions sent).
+
+- **Code.** `apps/watchdog`: `src/pins.ts` (pin parsing, the per-key verdict by RFC 7638 thumbprint, kid and signer,
+  the signer-policy findings), `src/links.ts` (the link-event source: FastNear's transactions API, `EVENT_JSON` logs
+  of receipts the signer executed that succeeded), `run.ts` (pending and active email keys, the policy check and its
+  pause, Hana's JWKS, links and `unrecorded_wallets`; a shared `forgedActive` for Google and email; partial
+  evaluation so an email-only judgement never resolves a Google alert), `near.ts` (reads `get_issuer` /
+  `get_issuer_keys` for `email` and `get_self_issued("email")`; a missing view is "no email issuer"), `diff.ts`
+  (`email_issuer`, `email_issuer_keys`, `email_signer_policy`, `unrecorded_wallets`), `status.ts` (`email`,
+  `link_volume`), migration `0002_link_events.sql`, `gen-wrangler` (`EMAIL_PINS`, `EMAIL_JWKS_URL`,
+  `LINK_INDEXER_URL`, `LINK_VOLUME`). `packages/jwks`: `rsaThumbprint`. `packages/env`: `watchdog.pinnedIssuerKeys.email`
+  and `watchdog.linkVolume`. `envs/sandbox-dev.json`: `linkVolume.indexerUrl` only; no pins (batch 4 creates the key).
+- **Registry.** Checks `signer_policy`, `email_jwks`, `links`. Alert kinds: critical `signer_policy_mismatch` (pause
+  when weaker), critical `unrecorded_wallets` (alert only), warning `email_jwks_mismatch`, `link_volume_high`,
+  `link_events_unavailable`, info `self_issued_key_change`; `forged_key_change` and `forged_active_key` now also cover
+  email keys. Each new kind has a playbook (`signer-policy-mismatch`, `unrecorded-wallets`, `email-jwks-mismatch`,
+  `link-volume`, `self-issued-key-change`); `docs/playbooks.md` regenerated.
+- **v2 contract (sandbox-dev today).** Reads as "no email issuer" (no `get_self_issued`, `get_issuer("email")` null,
+  no `unrecorded_wallets`): no alert with or without pins, no link scan; tested in `near.test.ts` and `email.test.ts`.
+  The upgrade to v3 shows as one `governance_change` (`state_version`, `unrecorded_wallets`).
+- **Tests.** Watchdog 222 Worker tests (166 before; `email.test.ts`, `links.test.ts`, and v2/v3 reads in
+  `near.test.ts`) and 25 script tests (21 before); `packages/env` 91 (86), `packages/jwks` 8 (5). D153 and every
+  earlier rule unchanged (the existing tests pass as they were, plus a D153 run beside a live email issuer).
+- **Decisions (to confirm).** D190 (absent pins = nothing pinned; a pin is thumbprint + kid + signer; pins apply at
+  the first run; JWKS warning only), D191 (what "weaker" means and the pin order around a policy upgrade, which
+  differs from the spec's "adds `required: 2` before its upgrade executes"), D192 (link volume through an indexer,
+  detection only, provisional 20 per scope / 100 in all per hour), D193 (the `unrecorded_wallets` alert and the
+  email issuer in the governance diff).
+- **Deploy order (batch 6).** Pins in `envs/sandbox-dev.json` (the issuer's thumbprints from batch 4) → watchdog
+  `gen`, D1 migration 0002, deploy → `/status` `email.pinned` → only then the contract v3 upgrade and the email issuer
+  setup. Between `set_issuer` and `mark_self_issued` a `signer_policy_mismatch` (alert only) is expected.
+- **Docs.** `apps/watchdog/README.md`, `docs/operations.md` (alerts runbook table, "Email login: pins, link volume,
+  unrecorded wallets"), `docs/security.md`, `docs/architecture.md`, `envs/README.md`, `docs/decisions.md`.
+- **Left open.** The thresholds are guesses until sandbox-dev and staging traffic (D192). The link scan reads at most
+  100 signer transactions per run (every login is one), so a busy signer falls behind (alerted) on the free plan's
+  subrequest budget; a contract view counting links would remove the indexer. The admin portal's rendering of the new
+  checks and kinds is batch C/9 (the registry and `/status` carry them).

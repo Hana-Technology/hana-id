@@ -17,3 +17,12 @@ export const SECRET_NAMES = [
   'PAGERDUTY_ROUTING_KEY',
   'HEARTBEAT_URL',
 ] as const;
+
+/**
+ * A dev env (`local*`, `sandbox*`), where `unrecorded_wallets` may be true between the v3 upgrade and
+ * `accept_unrecorded_wallets` (D139). The same rule as `@hana-id/env` `isDevEnv` (a scripts test keeps them equal; the
+ * Worker doesn't bundle the manifest package).
+ */
+export function isDevEnvName(name: string): boolean {
+  return /^(local|sandbox)/u.test(name);
+}

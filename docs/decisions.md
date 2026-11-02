@@ -2,7 +2,8 @@
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
 Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 and D150–D152 on 2026-10-30 (branches
-`feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`).
+`feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`);
+D190–D193 on 2026-11-02 (branch `feat/email-login-5`).
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -1885,6 +1886,95 @@ points for the user"; none changes an address.
   warning), and partners must not treat wallet → `sub` as unique, so the impact is within what the guide states.
   Revisit if addresses are ever recorded on chain.
 
+## Email login build, batch 5 (watchdog), 2026-11-02
+
+Made while building `docs/email-login-build-plan.md` batch 5 (branch `feat/email-login-5`), where the spec's
+"Watchdog (`apps/watchdog`)" section was silent or ambiguous. Each takes the stricter reading; none changes an
+address. All wait for the user's confirmation.
+
+### D190. Email pins: absent means nothing pinned; a pin is the key's thumbprint, its kid and its signer
+- Date 2026-11-02 · Status: to confirm; built (`feat/email-login-5`, `apps/watchdog/src/pins.ts`, `run.ts`), not
+  deployed · Source: build of `docs/email-login-spec.md` "Watchdog"
+- Decision:
+  - The manifest's `watchdog.pinnedIssuerKeys.email` absent (sandbox-dev today, until batch 4 creates the key) means
+    **nothing is pinned**, not "unchecked": a pending email Add is cancelled (`forged_key_change`, reason
+    `not_pinned`), an active email key pauses (`forged_active_key`), and an email issuer or signer policy on chain is a
+    critical `signer_policy_mismatch` (alert only while no key is active). A malformed `EMAIL_PINS` var is read the
+    same way (and named in the `config` check). So the pins must be deployed before the owner posts the first email
+    key, as batch 6 orders it.
+  - A key is pinned when the RFC 7638 thumbprint of its on-chain `n`/`e` is listed for **its** signer (the pending
+    change's `signer`; for an active key, the signer `get_self_issued` lists it under; an active key no signer lists,
+    e.g. a dropped signer's, may be pinned under any signer) **and** its kid equals that thumbprint (Hana's issuer
+    names keys so). Otherwise reasons `not_pinned`, `other_signer`, `kid_not_thumbprint`, `no_signer` (a pending Add
+    without a signer: the email issuer isn't self-issued).
+  - A pending pinned Add, and any pending email removal (owner only, DoS only), raise the info
+    `self_issued_key_change` and nothing is called: the watchdog never confirms an email key (the contract refuses).
+  - The pins are configuration, not history: unlike Google's first-run baseline, an unpinned active email key pauses
+    at the first run too. As for Google (D82, D126), the pause also deletes every updater key.
+  - Hana's published email JWKS (`jwksUrl`, default `{apiUrl}/v1/email/jwks.json`) is compared with the pins and the
+    active email keys, warning `email_jwks_mismatch` only; a failed fetch warns after 3 runs and only while an email
+    key is active (the issuer may not be deployed before that).
+  - A v2 contract (no `get_self_issued`, `get_issuer("email")` null) reads as "no email issuer": no alert, pins or not.
+- Why: the pins are the only truth for self-issued keys (no outside JWKS vouches for them); treating "no pins" as
+  "skip the check" would let an owner post an email key unchecked on any env that forgot the block. A kid other than
+  the thumbprint, or a key pinned for one signer posted for another, isn't what Hana's issuer produces.
+- Rejected: absent pins = alert only (the old `unverifiable_key_change`); matching pins by kid alone (the kid is
+  chosen by whoever posts the key).
+
+### D191. A weaker signer policy, and the order to change the pins around a policy upgrade
+- Date 2026-11-02 · Status: to confirm; built (`feat/email-login-5`, `pins.ts` `policyFindings`) · Source: build of
+  `docs/email-login-spec.md` "Watchdog" ("critical on any difference, pause on a weaker policy") and "Signing key
+  (staged)" ("Level 1 adds `cosign: […]` and `required: 2` before its upgrade executes")
+- Decision: every difference between the pins and `get_issuer("email")` / `get_self_issued("email")` (signers,
+  `required`; kids are judged per key) is one critical `signer_policy_mismatch` condition per chain policy state. The
+  chain's policy is **weaker**, and the watchdog pauses, when its `required` is below the pinned one, when it lists a
+  signer the pins don't, or when email keys are active with no signer policy at all. A pinned signer the chain doesn't
+  list, or a higher `required` on chain, is a difference only (alert, no pause). So the operator changes the pins
+  around a policy upgrade in this order: pin the new signer's keys (with the current `required`) before the upgrade
+  executes, raise the pinned `required` after it executed; replacing a signer: pin the new id first, drop the old id
+  after.
+- Why: the spec's literal order (pins at `required: 2` while the chain is still 1-of-1 for the upgrade's 72 h) would
+  read as a weaker chain policy and pause every login for the whole wait. Pinning the new keys first is what matters
+  (migrate installs them active at once, and an unpinned active key pauses).
+- Rejected: no pause on policy at all (the spec asks for it); pausing on any difference (the planned transitions
+  above would pause).
+
+### D192. Link volume through a transactions indexer, detection only, with provisional thresholds
+- Date 2026-11-02 · Status: to confirm; built (`feat/email-login-5`, `apps/watchdog/src/links.ts`, migration
+  `0002_link_events.sql`) · Source: build of `docs/email-login-spec.md` "Watchdog" ("Link-volume check from
+  `identity_link_*` events (warning above the threshold)"; the spec names no threshold or event source)
+- Decision:
+  - Events are receipt logs, which no JSON-RPC view lists, and a block scan is far beyond a Worker run's budget. The
+    watchdog reads the signer's transactions from a NEAR transactions indexer (manifest `watchdog.linkVolume.indexerUrl`,
+    FastNear's transactions API: `/status`, `/v0/account`, `/v0/transactions`) and keeps only `EVENT_JSON` logs of
+    standard `hana-id` the signer emitted in receipts that didn't fail. At most 100 transactions per run, 60 blocks
+    behind the indexer's head; events are stored 8 days in D1 with scope and provider only (no identity key).
+  - New links = `identity_linked` + `identity_link_proposed`; warning `link_volume_high` above 20 per scope or 100 in
+    all in the last hour (provisional, `watchdog.linkVolume.perScopePerHour` / `perHour`). The other link events are
+    counted in `/status` only.
+  - Nothing is scanned while no email issuer is on chain (no link is possible); the first scan after it appears starts
+    at the chain's head. Warning `link_events_unavailable` when no indexer is configured while email is on chain, after
+    3 failed reads, or when the scan is more than 1 h behind.
+  - Detection only: the indexer can hide events (a missed warning) or invent some (a false warning), never make the
+    watchdog act.
+- Why: the spec wants link bursts (the visible trace of a compromised issuer using the real key at 1-of-1) to alert;
+  an indexer is the only source of events within the free plan's limits, and nothing on chain depends on it.
+- Rejected: a contract view counting links (a contract change, outside this batch); scanning blocks through the
+  watchdog's RPC (hundreds of requests per run); the console spec's relative rule ("5× its 7-day median", batch 9) for
+  now: absolute thresholds work from the first day.
+
+### D193. D139's unrecorded_wallets alert, and the email issuer in the governance diff
+- Date 2026-11-02 · Status: to confirm; built (`feat/email-login-5`) · Source: D139; build of
+  `docs/email-login-spec.md` "Watchdog"
+- Decision: every run with `get_config().unrecorded_wallets == true` on an env that isn't a dev env (`local*`,
+  `sandbox*`, the same rule as `@hana-id/env` `isDevEnv`) raises the critical condition `unrecorded_wallets` (alert
+  only), resolved once the owner accepts. The governance diff also treats as critical: `unrecorded_wallets` changing
+  (an upgrade setting it, `accept_unrecorded_wallets` clearing it), `email_issuer` (`set_issuer("email")` creating it or
+  changing its iss values), `email_issuer_keys` (an active email kid gone without a queued removal), and
+  `email_signer_policy` (`mark_self_issued`, or signers or `required` changed by an upgrade).
+- Why: D139 asks for the alert on every non-dev env; the owner's immediate email issuer actions leave no pending
+  state, like Google's (`issuer`, `issuer_keys`), so the diff is the only place they show.
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -1941,4 +2031,5 @@ is a proposal there.
 Still open from `docs/email-login-spec.md`: the user-mail provider (Resend unless the colleague picks another,
 D87). Everything else follows D4, D119 and D121–D123. The contract readings made while building it, D130 and D131,
 wait for the user's confirmation (`docs/email-login-build-plan.md` "Open points for the user"; point 3 is confirmed, D132);
-D133–D138 are the security reviews' fixes, D139 their off-chain obligations.
+D133–D138 are the security reviews' fixes, D139 their off-chain obligations. D190–D193 (batch 5, the watchdog's email rules) wait
+for the user's confirmation.

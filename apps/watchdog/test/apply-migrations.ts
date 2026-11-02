@@ -4,7 +4,7 @@ import { beforeEach } from 'vitest';
 
 await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
 
-const TABLES = ['meta', 'seen_kids', 'absences', 'runs', 'actions', 'alerts', 'deliveries'];
+const TABLES = ['meta', 'seen_kids', 'absences', 'runs', 'actions', 'alerts', 'deliveries', 'link_events'];
 
 // Every test starts from an empty database (a fresh watchdog).
 beforeEach(async () => {

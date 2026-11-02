@@ -67,3 +67,23 @@ export function sameRsaKey(a: { n: string; e: string }, b: { n: string; e: strin
   if (!an || !ae || !bn || !be) return false;
   return equalBytes(an, bn) && equalBytes(ae, be);
 }
+
+const b64urlOf = (bytes: Uint8Array): string => {
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '');
+};
+
+/**
+ * RFC 7638 JWK thumbprint of an RSA public key: base64url(SHA-256(`{"e":…,"kty":"RSA","n":…}`)), with `n` and `e` as
+ * unpadded base64url of the unsigned big-endian integers without leading zero bytes (how the contract stores them, and
+ * the `kid` Hana's email issuer gives each key, `docs/email-login-spec.md` "Issuer configuration"). The watchdog pins
+ * email issuer keys by this value. Null when a component isn't valid base64 or is empty.
+ */
+export async function rsaThumbprint(key: { n: string; e: string }): Promise<string | null> {
+  const n = keyComponentBytes(key.n);
+  const e = keyComponentBytes(key.e);
+  if (!n || !e || n.length === 0 || e.length === 0) return null;
+  const canonical = `{"e":"${b64urlOf(e)}","kty":"RSA","n":"${b64urlOf(n)}"}`;
+  return b64urlOf(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical))));
+}

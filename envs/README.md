@@ -86,6 +86,20 @@ D1 database). Per-IP limiters always stay near their client. Changing it creates
   optional, `critical` below `warn`: `balance` (the `relayer` account's available balance; default 5 / 1),
   `sessionAllowance` (each session-pool key; 0.5 / 0.1), `ownerAllowance` (each owner-pool key; 0.1 / 0.02). Raise the
   allowance pairs when `deploy-contract` runs with larger allowances. A change needs `watchdog gen` and a redeploy.
+- `pinnedIssuerKeys.email` (optional; email login, `docs/email-login-spec.md` "Watchdog", D190, D191): the signer
+  policy the watchdog expects of Hana's email issuer, `{"required": 1, "signers": {"hana": ["<thumbprint>", …]}}`,
+  each key by its RFC 7638 JWK thumbprint (43 base64url characters, the email issuer's `kid` for it), 1–3 signers,
+  ≤ 8 keys in all, each key pinned once; optional `jwksUrl` (https; default `{apiUrl}/v1/email/jwks.json`). Absent
+  means **nothing is pinned**: every email key is then unpinned (a pending one is cancelled, an active one pauses the
+  contract) and an email issuer on chain is a critical alert. So pin before the owner posts the first email key
+  (build plan batch 6). sandbox-dev has none until batch 4 creates the key. Order around a signer-policy upgrade
+  (D191): pin a new signer's keys before the upgrade executes, raise `required` after it. A change needs
+  `watchdog gen` and a redeploy (on the watchdog's own account: a pin change is the operator's, outside Hana's main
+  account).
+- `linkVolume` (optional; D192): `indexerUrl` (https), the NEAR transactions indexer the link-volume check reads the
+  signer's `identity_link_*` events from (FastNear's transactions API, `https://tx.test.fastnear.com` on testnet;
+  sandbox-dev sets it), and the thresholds of new links per hour `perScopePerHour` (default 20) and `perHour` (100).
+  Absent: the check is skipped, with a warning once an email issuer is on chain.
 
 `rpcFallback` (optional): a second NEAR JSON-RPC endpoint, `https` only and not `rpc` itself, ideally from another
 provider. The vault and the export window read from it (session re-syncs, the login's registry check, transaction

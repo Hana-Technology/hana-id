@@ -8,14 +8,17 @@ export type Severity = 'critical' | 'warning' | 'info';
 
 /** Checks of one run, in run order. `GET /status` reports each one's outcome for the last run. */
 export const CHECKS = {
-  config: 'Secrets and settings present: the watchdog key, the alert channels, the RPC on the expected network',
+  config: 'Secrets and settings present: the watchdog key, the alert channels, the RPC on the expected network, the email pins',
   jwks_fetch: "Fetch Google's JWKS directly (no cache) and record each kid's first-seen time and key material",
-  chain_read: "Read get_key_changes, get_issuer, get_issuer_keys, get_config, get_governance and the owner account (code hash, the council DAO's get_policy) through its own RPC",
+  chain_read: "Read get_key_changes, get_issuer and get_issuer_keys (google, email), get_self_issued(\"email\"), get_config, get_governance and the owner account (code hash, the council DAO's get_policy) through its own RPC; a pre-v3 contract reads as no email issuer",
   watchdog_role: 'This account is one of the contract watchdogs, and whether it may confirm yet',
-  pending_key_changes: "Each pending key change against Google's JWKS: confirm matches, cancel keys Google doesn't publish",
-  active_keys: "Each active key against every key Google has published: pause on a key Google doesn't publish",
-  governance_diff: "Config and governance against the last run: upgrades, owner, withdrawals, watchdogs, updater keys, delays, audiences, pause and unpause, the session floor, the owner DAO's code and policy",
+  pending_key_changes: "Each pending key change: Google's against Google's JWKS (confirm matches, cancel keys Google doesn't publish); the email issuer's against the pinned thumbprints of its signer (cancel unpinned ones, never confirm: self-issued keys wait their delay)",
+  active_keys: "Each active key: Google's against every key Google has published, the email issuer's against the pins; pause on a key that is neither",
+  signer_policy: 'get_issuer("email") and get_self_issued("email") against the pinned signer policy (signers, required): critical on any difference, pause on a weaker policy',
+  email_jwks: "Hana's published email JWKS against the pins and the active email keys (warning only: Hana controls it, the contract never reads it)",
+  governance_diff: "Config and governance against the last run: upgrades, owner, withdrawals, watchdogs, updater keys, delays, audiences, pause and unpause, the session floor, unrecorded_wallets, the owner DAO's code and policy, the owner's immediate issuer actions (Google and email)",
   unexecuted_changes: 'Key changes past their executable time that nobody executed',
+  links: "identity_link_* events from the indexer: new links per scope and in all against the thresholds; and get_config().unrecorded_wallets outside a dev env (D139)",
   relayer_funds: "The relayer account's available balance and each pool key's remaining allowance (session and owner pools) against their thresholds; read-only, never tops up",
   alert_delivery: 'First deliveries, 15-minute re-sends of unacknowledged critical alerts, paging-app acknowledgements',
   digest: 'Daily info digest email',
@@ -38,11 +41,23 @@ export const ALERT_KINDS = {
   forged_key_change: {
     severity: 'critical',
     check: 'pending_key_changes',
-    description: "A pending key Google doesn't publish (absent from two fetches ≥ 60 s apart; not one it published with the same material within 24 h, see retired_key_change) or with other key material: cancelled, and the updater keys deleted when the updater proposed it",
+    description:
+      "A pending key Google doesn't publish (absent from two fetches ≥ 60 s apart; not one it published with the same material within 24 h, see retired_key_change) or with other key material, an email key whose thumbprint isn't pinned for its signer (or whose kid isn't its thumbprint), or any change the updater proposed for a provider other than Google: cancelled, and the updater keys deleted when the updater proposed it",
   },
   published_key_removal: { severity: 'critical', check: 'pending_key_changes', description: 'A pending removal of a kid Google still publishes (alert only: the owner decides and cancels)' },
-  unverifiable_key_change: { severity: 'critical', check: 'pending_key_changes', description: 'A pending key change for a provider whose JWKS the watchdog does not know (alert only)' },
-  forged_active_key: { severity: 'critical', check: 'active_keys', description: "An active key Google never published, or with other key material: the contract is paused and every updater key deleted" },
+  unverifiable_key_change: { severity: 'critical', check: 'pending_key_changes', description: 'A pending key change the owner proposed for a provider other than Google and email: no JWKS or pins known for it (alert only)' },
+  signer_policy_mismatch: {
+    severity: 'critical',
+    check: 'signer_policy',
+    description:
+      "The email issuer on chain differs from the pins: an email issuer without pins, not self-issued, or a signer policy whose signers or required differ. Paused when the chain's policy is weaker (lower required, an unpinned signer, active email keys without a policy); otherwise alert only",
+  },
+  unrecorded_wallets: { severity: 'critical', check: 'links', description: 'get_config().unrecorded_wallets is true on an env that is not a dev env (D139): links are refused, and it must never be true on mainnet (alert only)' },
+  forged_active_key: {
+    severity: 'critical',
+    check: 'active_keys',
+    description: "An active Google key Google never published or with other key material, or an active email key that isn't pinned (for its signer, with its thumbprint as kid): the contract is paused and every updater key deleted",
+  },
   unknown_active_key_first_run: { severity: 'critical', check: 'active_keys', description: 'At the first run, an active key not in the JWKS (alert only: history the watchdog cannot judge)' },
   governance_change: {
     severity: 'critical',
@@ -70,6 +85,13 @@ export const ALERT_KINDS = {
     description: "A pending Add by the updater of a key Google no longer publishes but published with the same material within 24 h (a race with Google's key retirement): cancelled, the updater keys kept",
   },
   confirm_failed: { severity: 'warning', check: 'pending_key_changes', description: 'A confirmation the watchdog sent failed' },
+  email_jwks_mismatch: {
+    severity: 'warning',
+    check: 'email_jwks',
+    description: "Hana's published email JWKS lists a key that isn't pinned (or whose kid isn't its thumbprint) or lacks an active email key, or it failed 3 fetches in a row while email keys are active (informational)",
+  },
+  link_volume_high: { severity: 'warning', check: 'links', description: 'More new links (identity_linked, identity_link_proposed) in the last hour than the threshold, in one scope or in all' },
+  link_events_unavailable: { severity: 'warning', check: 'links', description: "The link-volume check can't see the chain: no indexer configured while an email issuer is on chain, the indexer failed 3 runs in a row, or the scan is more than 1 h behind" },
   channel_not_configured: { severity: 'warning', check: 'config', description: 'An alert channel (paging app, Slack, email) or the heartbeat has no credentials' },
   heartbeat_failing: { severity: 'warning', check: 'heartbeat', description: "The dead-man's switch ping failed for 3 runs in a row" },
   relayer_balance_low: { severity: 'warning', check: 'relayer_funds', description: "The relayer account's available balance is below the warning threshold (default 5 NEAR)" },
@@ -77,6 +99,7 @@ export const ALERT_KINDS = {
   key_change_confirmed: { severity: 'info', check: 'pending_key_changes', description: "The watchdog confirmed a key change that matches Google's JWKS" },
   key_change_executed: { severity: 'info', check: 'pending_key_changes', description: 'A key change left the queue and took effect (executed after its delay, or confirmed by another watchdog)' },
   key_change_cancelled: { severity: 'info', check: 'pending_key_changes', description: 'A key change left the queue without taking effect (cancelled by the owner or another watchdog)' },
+  self_issued_key_change: { severity: 'info', check: 'pending_key_changes', description: 'A pending email key pinned for its signer, or a pending email key removal: never confirmed (self-issued keys wait governance_delay_ms), nothing called' },
   config_matured: { severity: 'info', check: 'governance_diff', description: 'A scheduled delay decrease or console-audience addition came into force' },
   first_run: { severity: 'info', check: 'active_keys', description: "First run: the current JWKS recorded as known" },
 } as const satisfies Record<string, AlertKindInfo>;

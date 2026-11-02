@@ -1,10 +1,12 @@
 // Test doubles: a stub chain that behaves like hana-signer for the four watchdog methods, a recording notifier, a
 // fake clock and a scripted JWKS. Nothing here reaches the network.
-import type { Jwk } from '@hana-id/jwks';
+import { type Jwk, rsaThumbprint } from '@hana-id/jwks';
 import { env } from 'cloudflare:workers';
 import type { ChainReader, ChainSnapshot, ChainWriter, ConfigView, GovernanceView, KeyChange, TxResult, WatchdogMethod } from '../src/chain.ts';
 import type { AlertMessage, Notifier, Pager, Sender, SendResult } from '../src/channels.ts';
 import type { Channel } from '../src/checks.ts';
+import { DEFAULT_LINK_VOLUME, type LinkEvent, type LinkEventSource, type LinkScan } from '../src/links.ts';
+import type { SignerPins } from '../src/pins.ts';
 import { type AccessKeyEntry, nearToYocto, type RelayerFunds, relayerFundsFrom, relayerThresholds } from '../src/relayer.ts';
 import { type RunDeps, type RunReport, runWatchdog } from '../src/run.ts';
 import { Store } from '../src/store.ts';
@@ -91,6 +93,19 @@ export function councilPolicy(members: string[] = ['a.test.near', 'b.test.near',
   };
 }
 
+/** An email issuer key as Hana's issuer makes it: kid = its RFC 7638 thumbprint. */
+export async function emailJwk(seed: number): Promise<Jwk> {
+  const n = modulus(seed);
+  return { kid: (await rsaThumbprint({ n, e: 'AQAB' }))!, kty: 'RSA', alg: 'RS256', use: 'sig', n, e: 'AQAB' };
+}
+
+/** Pins `{required, signers}` with each signer's keys' thumbprints. */
+export function pinsOf(signers: Record<string, Jwk[]>, required = 1): SignerPins {
+  return { required, signers: Object.fromEntries(Object.entries(signers).map(([id, keys]) => [id, keys.map((k) => k.kid)])) };
+}
+
+export const EMAIL_ISS = 'https://api.test/v1/email';
+
 export function baseGovernance(): GovernanceView {
   return {
     state_version: 2,
@@ -119,6 +134,15 @@ export class StubChain implements ChainReader {
   governance = baseGovernance();
   /** The owner account: a council DAO with the 2-of-3 policy. */
   owner: { code_hash: string; policy: unknown } = { code_hash: 'DAOcode1111111111111111111111111111111111111', policy: councilPolicy() };
+  /** Contract v3 (false: v2, no get_self_issued and no `unrecorded_wallets` in get_config). */
+  v3 = true;
+  unrecordedWallets = false;
+  /** get_issuer("email").iss_values (null: no email issuer). */
+  emailIss: string[] | null = null;
+  /** Active email keys: kid → material and the signer it was posted for. */
+  emailActive = new Map<string, { n: string; e: string; signer: string | null }>();
+  /** The email signer policy (null: not self-issued). */
+  selfIssued: { signers: string[]; required: number; overlap_until_ms?: number | null } | null = null;
   failReads = false;
   reads = 0;
   /** The relayer account (`view_account`, null: it doesn't exist) and its access keys. */
@@ -141,11 +165,23 @@ export class StubChain implements ChainReader {
     if (this.failReads) throw new Error('rpc down');
     const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
     const kids = [...this.active.keys()].sort();
+    const emailKids = [...this.emailActive.keys()].sort();
+    const si = this.v3 && this.selfIssued;
+    const config = clone(this.config);
+    if (this.v3) config.unrecorded_wallets = this.unrecordedWallets;
     return {
       keyChanges: clone(this.changes),
       issuer: this.issuerConfigured ? { provider: 'google', iss_values: [...this.issValues], kids } : null,
       issuerKeys: this.issuerConfigured && this.hasIssuerKeys ? kids.map((kid) => ({ kid, ...this.active.get(kid)! })) : null,
-      config: clone(this.config),
+      email: {
+        issuer: this.emailIss ? { provider: 'email', iss_values: [...this.emailIss], kids: emailKids } : null,
+        issuerKeys: this.emailIss ? emailKids.map((kid) => ({ kid, n: this.emailActive.get(kid)!.n, e: this.emailActive.get(kid)!.e })) : null,
+        selfIssued: si
+          ? { provider: 'email', signers: si.signers.map((id) => ({ id, kids: emailKids.filter((k) => this.emailActive.get(k)!.signer === id) })), required: si.required, overlap_until_ms: si.overlap_until_ms ?? null }
+          : null,
+        hasSelfIssuedView: this.v3,
+      },
+      config,
       governance: clone(this.governance),
       owner: { account_id: this.config.owner, ...clone(this.owner) },
     };
@@ -170,8 +206,23 @@ export class StubChain implements ChainReader {
     this.relayer.view.amount = (nearToYocto(near) + 1000n * 10n ** 19n).toString();
   }
 
+  /** A v2 contract: no get_self_issued, no email issuer, no `unrecorded_wallets` (what sandbox-dev runs today). */
+  asV2(): this {
+    this.v3 = false;
+    this.selfIssued = null;
+    return this;
+  }
+
+  /** The email issuer set up as batch 6 does: `set_issuer`, `mark_self_issued` (1-of-1 `hana`), and active keys. */
+  emailIssuer(keys: Jwk[] = [], signer = 'hana'): this {
+    this.emailIss = [EMAIL_ISS];
+    this.selfIssued = { signers: [signer], required: 1 };
+    for (const k of keys) this.emailActive.set(k.kid, { n: k.n, e: k.e, signer });
+    return this;
+  }
+
   /** Queues a key change as the updater (the signer account) or the owner would. */
-  propose(op: 'Add' | 'Remove', kid: string, opts: { key?: Jwk; by?: string; provider?: string; at?: number; delay?: number } = {}): KeyChange {
+  propose(op: 'Add' | 'Remove', kid: string, opts: { key?: Jwk; by?: string; provider?: string; at?: number; delay?: number; signer?: string } = {}): KeyChange {
     const at = opts.at ?? T0;
     const change: KeyChange = {
       id: this.nextId++,
@@ -180,6 +231,7 @@ export class StubChain implements ChainReader {
       op,
       n: op === 'Add' ? (opts.key?.n ?? modulus(99)) : null,
       e: op === 'Add' ? (opts.key?.e ?? 'AQAB') : null,
+      ...(opts.signer !== undefined ? { signer: opts.signer } : {}),
       by: opts.by ?? SIGNER,
       proposed_at_ms: at,
       executable_at_ms: at + (opts.delay ?? 2 * HOUR),
@@ -193,6 +245,11 @@ export class StubChain implements ChainReader {
     const i = this.changes.findIndex((c) => c.id === id);
     const [c] = this.changes.splice(i, 1);
     if (!c) throw new Error('no such change');
+    if (c.provider === 'email') {
+      if (c.op === 'Add') this.emailActive.set(c.kid, { n: c.n!, e: c.e!, signer: c.signer ?? null });
+      else this.emailActive.delete(c.kid);
+      return;
+    }
     if (c.op === 'Add') this.active.set(c.kid, { n: c.n!, e: c.e! });
     else this.active.delete(c.kid);
   }
@@ -214,6 +271,9 @@ export class StubWriter implements ChainWriter {
     const txHash = `tx${++this.n}`;
     if (this.fail.has(method)) return { ok: false, txHash, error: this.failError };
     const c = this.chain;
+    if (method === 'confirm_issuer_key_change' && c.changes.find((x) => x.id === args.id)?.provider === 'email' && c.selfIssued) {
+      return { ok: false, txHash, error: "Smart contract panicked: Keys of a self-issued issuer can't be confirmed early" };
+    }
     if (method === 'cancel_issuer_key_change') c.changes = c.changes.filter((x) => x.id !== args.id);
     else if (method === 'confirm_issuer_key_change') c.execute(args.id as number);
     else if (method === 'pause') c.config.paused = true;
@@ -303,6 +363,45 @@ export class StubJwks {
   };
 }
 
+/** Hana's published email JWKS: `keys`, or a failure while `fail`. */
+export class StubEmailJwks {
+  /** null: an honest issuer, publishing exactly the chain's active email keys. */
+  keys: Jwk[] | null = null;
+  fail = false;
+  fetches = 0;
+  constructor(private readonly chain: StubChain) {}
+  fetch = async (): Promise<Jwk[]> => {
+    this.fetches++;
+    if (this.fail) throw new Error('email JWKS down');
+    const keys = this.keys ?? [...this.chain.emailActive].map(([kid, k]) => ({ kid, kty: 'RSA', alg: 'RS256', use: 'sig', n: k.n, e: k.e }));
+    return keys.map((k) => ({ ...k }));
+  };
+}
+
+/** The indexer as the link-volume check sees it: queued events, a scripted lag, failures. */
+export class StubLinkEvents implements LinkEventSource {
+  queue: LinkEvent[] = [];
+  fail = false;
+  behindMs = 0;
+  truncated = false;
+  head = 1000;
+  scans: (number | null)[] = [];
+  async scan(fromHeight: number | null): Promise<LinkScan> {
+    this.scans.push(fromHeight);
+    if (this.fail) throw new Error('indexer down');
+    this.head += 10;
+    const events = fromHeight === null ? [] : this.queue.splice(0);
+    return { events, scannedTo: this.head, latestHeight: this.head + 60, behindMs: this.behindMs, truncated: this.truncated };
+  }
+}
+
+let linkSeq = 0;
+/** One link event at `at` (block time). */
+export function linkEvent(scope: string, at: number, event: LinkEvent['event'] = 'identity_link_proposed', auto = false): LinkEvent {
+  linkSeq++;
+  return { id: `r${linkSeq}:0:0`, event, scope_id: scope, provider: 'email', auto: event === 'identity_linked' || event === 'identity_link_proposed' ? auto : null, at, block_height: 1000 + linkSeq };
+}
+
 export interface World {
   chain: StubChain;
   writer: StubWriter;
@@ -312,11 +411,24 @@ export interface World {
   clock: { t: number };
   sleeps: number[];
   deps: RunDeps;
+  emailJwks: StubEmailJwks;
+  links: StubLinkEvents;
   /** One run at the current time; then the clock moves 5 min. */
   run(): Promise<RunReport>;
 }
 
-export function world(opts: { active?: Jwk[]; jwks?: Jwk[]; writer?: boolean; at?: number } = {}): World {
+export interface WorldOpts {
+  active?: Jwk[];
+  jwks?: Jwk[];
+  writer?: boolean;
+  at?: number;
+  /** The manifest's email pins (default: none, as on sandbox-dev today). */
+  pins?: SignerPins | null;
+  /** A link indexer configured (default true). */
+  links?: boolean;
+}
+
+export function world(opts: WorldOpts = {}): World {
   const chain = new StubChain(opts.active ?? []);
   const writer = new StubWriter(chain);
   const jwks = new StubJwks(opts.jwks ?? opts.active ?? []);
@@ -324,18 +436,33 @@ export function world(opts: { active?: Jwk[]; jwks?: Jwk[]; writer?: boolean; at
   const store = new Store(env.DB);
   const clock = { t: opts.at ?? T0 };
   const sleeps: number[] = [];
+  const emailJwks = new StubEmailJwks(chain);
+  const links = new StubLinkEvents();
   const deps: RunDeps = {
     store,
     chain,
     writer: opts.writer === false ? null : writer,
     fetchJwks: jwks.fetch,
+    fetchEmailJwks: emailJwks.fetch,
+    linkEvents: opts.links === false ? null : links,
     notifier,
     now: () => clock.t,
     sleep: async (ms) => {
       sleeps.push(ms);
       clock.t += ms;
     },
-    config: { envName: 'sandbox-test', network: 'testnet', signer: SIGNER, watchdogAccount: WATCHDOG, digestHourUtc: 0, relayer: RELAYER, relayerThresholds: relayerThresholds(undefined) },
+    config: {
+      envName: 'sandbox-test',
+      network: 'testnet',
+      signer: SIGNER,
+      watchdogAccount: WATCHDOG,
+      digestHourUtc: 0,
+      relayer: RELAYER,
+      relayerThresholds: relayerThresholds(undefined),
+      emailPins: { pins: opts.pins ?? null, problems: [] },
+      devEnv: true,
+      linkVolume: { thresholds: { ...DEFAULT_LINK_VOLUME }, problems: [] },
+    },
   };
   const w: World = {
     chain,
@@ -346,6 +473,8 @@ export function world(opts: { active?: Jwk[]; jwks?: Jwk[]; writer?: boolean; at
     clock,
     sleeps,
     deps,
+    emailJwks,
+    links,
     async run() {
       const r = await runWatchdog(deps);
       clock.t += 5 * MIN;
@@ -356,9 +485,11 @@ export function world(opts: { active?: Jwk[]; jwks?: Jwk[]; writer?: boolean; at
 }
 
 /** A world past its first run: K1 active and published, initialized, digest already sent today. */
-export async function initialized(opts: { active?: Jwk[]; jwks?: Jwk[]; writer?: boolean } = {}): Promise<World> {
+export async function initialized(opts: Omit<WorldOpts, 'at'> & { before?: (w: World) => void | Promise<void> } = {}): Promise<World> {
   const active = opts.active ?? [jwk('k1', 1)];
-  const w = world({ active, jwks: opts.jwks ?? active, ...(opts.writer === false ? { writer: false } : {}) });
+  const { before, ...rest } = opts;
+  const w = world({ ...rest, active, jwks: opts.jwks ?? active });
+  await before?.(w);
   await w.store.setMeta('digest', { date: new Date(T0).toISOString().slice(0, 10), at: T0 });
   const r = await w.run();
   if (!r.firstRun) throw new Error('expected a first run');

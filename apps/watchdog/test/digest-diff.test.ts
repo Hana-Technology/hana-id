@@ -12,6 +12,7 @@ const snap = (over: { config?: Partial<ChainSnapshot['config']>; governance?: Pa
   keyChanges: [],
   issuer: null,
   issuerKeys: null,
+  email: { issuer: null, issuerKeys: null, selfIssued: null, hasSelfIssuedView: true },
   config: { ...baseConfig(), ...over.config },
   governance: { ...baseGovernance(), ...over.governance },
   owner: over.owner !== undefined ? over.owner : { account_id: OWNER, code_hash: DAO_CODE, policy: councilPolicy() },

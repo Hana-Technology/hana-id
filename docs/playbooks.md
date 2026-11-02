@@ -1,7 +1,7 @@
 # Recovery playbooks
 
 Generated from `packages/playbooks` (D126) by `corepack pnpm --filter @hana-id/playbooks gen-docs`: edit the package,
-not this file (a test fails when it is stale). Last verified against code: 2026-10-30 (branch `fix/watchdog-retired-key-race`).
+not this file (a test fails when it is stale). Last verified against code: 2026-11-02 (branch `feat/email-login-5`).
 
 One step-by-step guide for every watchdog alert kind and for every incident the watchdog does not raise. The admin
 portal's "Security & monitoring" view renders the same playbooks (`docs/batch-c-spec.md`), and every watchdog
@@ -39,6 +39,11 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [A scheduled config change came into force (info)](#config-matured) | info | `config_matured` |
 | [The watchdog's first run (info)](#watchdog-first-run) | info | `first_run` |
 | [Relayer running out of funds (balance or a pool key's allowance)](#relayer-out-of-funds) | critical | `relayer_balance_critical`, `relayer_allowance_critical`, `relayer_pool_empty`, `relayer_balance_low`, `relayer_allowance_low` |
+| [Email signer policy differs from the pins](#signer-policy-mismatch) | critical | `signer_policy_mismatch` |
+| [unrecorded_wallets is set outside a dev env](#unrecorded-wallets) | critical | `unrecorded_wallets` |
+| [Hana's email JWKS differs from the pins](#email-jwks-mismatch) | warning | `email_jwks_mismatch` |
+| [Link volume high, or not monitored](#link-volume) | warning | `link_volume_high`, `link_events_unavailable` |
+| [Pending email key change (info)](#self-issued-key-change) | info | `self_issued_key_change` |
 | [`KEYS_UPDATER_KEY` stolen (API secrets leaked)](#updater-key-stolen) | critical | — |
 | [A relayer key stolen (session pool or owner pool)](#relayer-key-stolen) | warning | — |
 | [`VAULT_KEK` leaked (and routine rotation)](#vault-kek-leaked) | critical | — |
@@ -67,11 +72,11 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 
 `forged-active-key` · critical · alert kinds: `forged_active_key`
 
-A key Google doesn't publish is active on chain: the watchdog paused the contract and deleted every updater key (D126). Recover in a fixed order: remove the key, raise the session floor, a fresh updater key, unpause.
+A key Google doesn't publish, or an email key that isn't pinned, is active on chain: the watchdog paused the contract and deleted every updater key (D126). Recover in a fixed order: remove the key, raise the session floor, a fresh updater key, unpause.
 
 **Signals**
 
-- Critical `forged_active_key` page: "Active issuer key <kid>: …; paused, N updater key(s) deleted".
+- Critical `forged_active_key` page: "Active issuer key <kid>: …; paused, N updater key(s) deleted" (an email key: "Active email issuer key <kid>: its key is not pinned; …", `details.provider: email`, `details.reason` as in [forged-key-change](#forged-key-change)).
 - Every login and derive answers `503 paused`; a `governance_change` alert for `paused` follows.
 - The watchdog's actions log has `pause` and `delete_updater_key` rows with transaction hashes.
 
@@ -89,10 +94,10 @@ A key Google doesn't publish is active on chain: the watchdog paused the contrac
    curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" https://<workerName>.<subdomain>.workers.dev/actions
    ```
 
-2. **Remove the forged key** (who: council (2 of 3)). The owner removes the kid at once (`remove_issuer_key`, immediate; it also drops a pending change for that kid).
+2. **Remove the forged key** (who: council (2 of 3)). The owner removes the kid at once (`remove_issuer_key`, immediate; it also drops a pending change for that kid). For an email key use `"provider":"email"`: email logins continue on the other pinned key, if one is active.
 
    ```sh
-   corepack pnpm --filter @hana-id/scripts run admin <env> owner:call remove_issuer_key --args '{"provider":"google","kid":"<kid>"}' --yes
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:call remove_issuer_key --args '{"provider":"<google | email>","kid":"<kid>"}' --yes
    ```
 
 3. **Raise the session floor past the pause** (who: council (2 of 3)). `set_sessions_valid_from_ms` to the block time (ms) of the `paused` event + 1: the `pause` row in the watchdog's `GET /actions` has its transaction hash. Every session opened before the pause is then gone (`No such session`): users log in again. It can only be raised and never past the current block time.
@@ -119,11 +124,11 @@ A key Google doesn't publish is active on chain: the watchdog paused the contrac
 
 6. **Review scope changes made with forged tokens** (who: scope owners). Hana lists every `change_proposed` event since the forged key's `issuer_key_set` and tells each scope's owners; they cancel the ones they didn't make (`cancel_change`, through `POST /v1/owner-actions` or directly on chain). Hana can't cancel scope changes. Changes that already executed, and immediate actions by forged owner tokens (`remove_client`, `disable_shared_login`), are reverted by the scope's owners.
 
-7. **Find how the key got there** (who: a founder). A delay that ran out while the watchdog was down ([watchdog-down](#watchdog-down)), an owner post ([unexpected-owner-action](#unexpected-owner-action)), or an upgrade. Fix that path before closing.
+7. **Find how the key got there** (who: a founder). A delay that ran out while the watchdog was down ([watchdog-down](#watchdog-down)), an owner post ([unexpected-owner-action](#unexpected-owner-action)), or an upgrade. An email key: the council posted it and the pins didn't list it, or an upgrade's migrate installed it; if it is Hana's own key that was never pinned, fix the pins (`watchdog.pinnedIssuerKeys.email`, then redeploy the watchdog) before the unpause, or the next run pauses again. Fix that path before closing.
 
 **Verify**
 
-- `admin <env> governance:status`: no findings (no active Google key Google doesn't publish, not paused, the updater key tracked).
+- `admin <env> governance:status`: no findings (no active Google key Google doesn't publish, not paused, the updater key tracked); the watchdog's `/status` `email` shows every active email kid pinned.
 - `GET /v1/governance` shows `paused: false`; logins resume within 10 s (the API caches the pause state 10 s while paused).
 - The watchdog's `forged_active_key` alert resolves at its next run and it doesn't pause again.
 - `get_config().sessions_valid_from_ms` is past the pause.
@@ -134,7 +139,7 @@ A key Google doesn't publish is active on chain: the watchdog paused the contrac
 - Users who derived during the window: treat their keys as exposed ([user-key-leaked](#user-key-leaked)).
 - Post-mortem: how the forged key reached the active set; record any rule change in `docs/decisions.md`.
 
-**Refs:** [`docs/operations.md#watchdog-alerts-runbook`](operations.md#watchdog-alerts-runbook), [`docs/operations.md#pause`](operations.md#pause), [`docs/contract-interface.md#pause`](contract-interface.md#pause), D82 (`docs/decisions.md`), D126 (`docs/decisions.md`) · **See also:** [contract-paused](#contract-paused), [updater-key-stolen](#updater-key-stolen), [watchdog-down](#watchdog-down), [unexpected-owner-action](#unexpected-owner-action), [user-key-leaked](#user-key-leaked)
+**Refs:** [`docs/operations.md#watchdog-alerts-runbook`](operations.md#watchdog-alerts-runbook), [`docs/operations.md#pause`](operations.md#pause), [`docs/contract-interface.md#pause`](contract-interface.md#pause), [`docs/email-login-spec.md#watchdog-appswatchdog`](email-login-spec.md#watchdog-appswatchdog), D82 (`docs/decisions.md`), D126 (`docs/decisions.md`), D190 (`docs/decisions.md`) · **See also:** [contract-paused](#contract-paused), [updater-key-stolen](#updater-key-stolen), [watchdog-down](#watchdog-down), [unexpected-owner-action](#unexpected-owner-action), [user-key-leaked](#user-key-leaked), [email-issuer-key-compromised](#email-issuer-key-compromised)
 
 <a id="forged-key-change"></a>
 
@@ -142,12 +147,13 @@ A key Google doesn't publish is active on chain: the watchdog paused the contrac
 
 `forged-key-change` · critical · alert kinds: `forged_key_change`
 
-A pending issuer key Google doesn't publish (or with other key material), or a non-Google key the updater proposed: the watchdog cancelled it and, when the updater proposed it, deleted every updater key. A key Google published with the same material in the last 24 h is a [retired-key-change](#retired-key-change) instead (D153).
+A pending issuer key Google doesn't publish (or with other key material), an email key that isn't pinned for its signer, or a non-Google key the updater proposed: the watchdog cancelled it and, when the updater proposed it, deleted every updater key. A key Google published with the same material in the last 24 h is a [retired-key-change](#retired-key-change) instead (D153).
 
 **Signals**
 
 - Critical `forged_key_change` page (paging app, Slack, email), re-sent every 15 min until acknowledged. The title and `details.outcome` say what happened: `cancelled`, `gone` (someone else cancelled it first), `executed` (it took effect before the cancel), `unknown`, `failed` or `not_sent`.
 - `details.by` is the proposer: the signer account means `KEYS_UPDATER_KEY`; the owner means the council. `reason: updater_other_provider`: the updater proposed a key for a provider other than Google (it only serves Google).
+- `provider: email` (only the owner can post email keys, so the council proposed it): `reason` is `not_pinned` (its thumbprint isn't in `watchdog.pinnedIssuerKeys.email`; `details.pinned: false` means nothing is pinned at all), `other_signer` (pinned for another signer), `kid_not_thumbprint` or `no_signer` (the email issuer isn't self-issued). `details.thumbprint` is the key's RFC 7638 thumbprint.
 - The API cron logs `jwks_sync_note` `unpublished_change` / `pending_mismatch` (error) while it is pending, then `issuer_key_change_cancelled`, and `jwks_tx` `send_failed` once its updater key is gone.
 
 **Impact**
@@ -180,7 +186,14 @@ A pending issuer key Google doesn't publish (or with other key material), or a n
 
 4. **Find the leak** (who: a founder). Signer account as proposer: `KEYS_UPDATER_KEY` is stolen. It lives in the API Worker's secrets and `.secrets/<env>/keys-updater.json`: follow [updater-key-stolen](#updater-key-stolen) (and [api-or-cloudflare-compromised](#api-or-cloudflare-compromised) if the Worker or the Cloudflare account is how it leaked). Owner as proposer: the proposal needed two council votes: follow [unexpected-owner-action](#unexpected-owner-action).
 
-5. **Install a fresh updater key** (who: council (2 of 3)). A founder moves the old key file aside (never re-add a key that may be compromised) and runs `deploy-contract`, which generates a new key into `.secrets/<env>/keys-updater.json` and plans the owner's `add_updater_key` (a council proposal; dev envs add `--approve-with <member>`). Then a founder uploads it as `KEYS_UPDATER_KEY` from the repo root (needs `apps/api/wrangler.jsonc` for the env: `gen <env>`; the documented pipe can print a key fragment on a malformed file, security sweep OPER-5: check the file first).
+5. **An email key that should have been pinned** (who: a founder). If the council meant to post a new email key (a rotation, or the first keys of batch 6), the pins were not updated first: the watchdog's pins come from its own manifest, never from chain or Hana's JWKS. Check the thumbprint against the key the issuer was given (`details.thumbprint`), add it under its signer in `watchdog.pinnedIssuerKeys.email`, regenerate and redeploy the watchdog, then the council posts the key again (it waits `governance_delay_ms`). Never pin a thumbprint you can't trace to Hana's own key.
+
+   ```sh
+   corepack pnpm --filter @hana-id/watchdog gen <env>
+   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   ```
+
+6. **Install a fresh updater key** (who: council (2 of 3)). A founder moves the old key file aside (never re-add a key that may be compromised) and runs `deploy-contract`, which generates a new key into `.secrets/<env>/keys-updater.json` and plans the owner's `add_updater_key` (a council proposal; dev envs add `--approve-with <member>`). Then a founder uploads it as `KEYS_UPDATER_KEY` from the repo root (needs `apps/api/wrangler.jsonc` for the env: `gen <env>`; the documented pipe can print a key fragment on a malformed file, security sweep OPER-5: check the file first).
 
    ```sh
    mv .secrets/<env>/keys-updater.json .secrets/<env>/keys-updater.revoked-<yyyymmdd>.json
@@ -189,7 +202,7 @@ A pending issuer key Google doesn't publish (or with other key material), or a n
    node -e 'process.stdout.write(require("./.secrets/<env>/keys-updater.json").private_key)' | corepack pnpm --dir apps/api exec wrangler secret put KEYS_UPDATER_KEY
    ```
 
-6. **Re-sync Google's keys** (who: the API cron). The 15-min cron proposes Google kids that are neither active nor pending again (a proposal of ours that was cancelled is held 1 h). To sync at once a founder runs `post-google-keys` (it signs with the updater key only).
+7. **Re-sync Google's keys** (who: the API cron). The 15-min cron proposes Google kids that are neither active nor pending again (a proposal of ours that was cancelled is held 1 h). To sync at once a founder runs `post-google-keys` (it signs with the updater key only).
 
    ```sh
    corepack pnpm --filter @hana-id/scripts run post-google-keys <env> --dry-run
@@ -261,7 +274,7 @@ Someone proposed removing an issuer kid Google still publishes. The watchdog onl
 
 `unverifiable-key-change` · critical · alert kinds: `unverifiable_key_change`
 
-The owner proposed a key change for an issuer other than Google: the watchdog has no JWKS for it and only alerts.
+The owner proposed a key change for an issuer other than Google and email: the watchdog has neither a JWKS nor pins for it and only alerts.
 
 **Signals**
 
@@ -294,7 +307,7 @@ The owner proposed a key change for an issuer other than Google: the watchdog ha
 
 **Follow-ups**
 
-- When a new issuer is added on purpose (email login is planned, `docs/email-login-spec.md`), the watchdog needs its pinned keys first.
+- Email keys are judged against the pins instead ([forged-key-change](#forged-key-change), [self-issued-key-change](#self-issued-key-change)). Another new issuer added on purpose needs its own watchdog rules first.
 
 **Refs:** [`docs/operations.md#watchdog-alerts-runbook`](operations.md#watchdog-alerts-runbook), D82 (`docs/decisions.md`) · **See also:** [unexpected-owner-action](#unexpected-owner-action), [email-issuer-key-compromised](#email-issuer-key-compromised)
 
@@ -352,7 +365,7 @@ An upgrade, owner transfer, withdrawal, watchdog, updater-key, delay or console-
 **Signals**
 
 - Critical `governance_change` page with one line per change (`field: before -> after`, lists as removed / added).
-- Fields: `pending_upgrade`, `owner`, `pending_owner`, `pending_withdrawal`, `watchdogs`, `updater_keys`, the delays, `console_audiences`, `paused`, `unpaused_at_ms`, `sessions_valid_from_ms`, `owner_code_hash`, `owner_policy`, `issuer`, `issuer_keys`, `mpc`, `ckd_domain_id`, `state_version`.
+- Fields: `pending_upgrade`, `owner`, `pending_owner`, `pending_withdrawal`, `watchdogs`, `updater_keys`, the delays, `console_audiences`, `paused`, `unpaused_at_ms`, `sessions_valid_from_ms`, `owner_code_hash`, `owner_policy`, `issuer`, `issuer_keys`, `email_issuer`, `email_issuer_keys`, `email_signer_policy`, `unrecorded_wallets`, `mpc`, `ckd_domain_id`, `state_version`.
 
 **Impact**
 
@@ -928,6 +941,227 @@ The relayer account's available balance, or a pool key's remaining allowance, is
 - A used-up key replaced: delete its line from the secrets file only after the on-chain deletion is confirmed.
 
 **Refs:** [`docs/operations.md#relayer-keys-either-pool`](operations.md#relayer-keys-either-pool), [`docs/api.md#relay-errors-any-relayed-call`](api.md#relay-errors-any-relayed-call), [`apps/watchdog/README.md#what-a-run-does-every-5-min`](../apps/watchdog/README.md#what-a-run-does-every-5-min), D150 (`docs/decisions.md`) · **See also:** [relayer-key-stolen](#relayer-key-stolen), [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)
+
+<a id="signer-policy-mismatch"></a>
+
+### Email signer policy differs from the pins
+
+`signer-policy-mismatch` · critical · alert kinds: `signer_policy_mismatch`
+
+The email issuer on chain (`get_issuer("email")`, `get_self_issued("email")`) doesn't match the watchdog's pins: an email issuer with nothing pinned, one that isn't self-issued, or other signers or another `required`. Paused when the chain's policy is weaker; otherwise alert only.
+
+**Signals**
+
+- Critical `signer_policy_mismatch` page: "Email signer policy differs from the pins: <differences>; <weaker, paused | alert only>". `details.pinned` and `details.chain` show both sides.
+- Weaker (D191): `required` below the pinned one, a signer the pins don't list, or active email keys without a signer policy. Then every login answers `503 paused`.
+- During batch 6's setup, between `set_issuer("email")` and `mark_self_issued("email")`, it is expected (alert only, no keys yet): it resolves once the issuer is marked.
+
+**Impact**
+
+- A weaker policy lets fewer signers (or a signer nobody pinned) mint email tokens, and so derive every email wallet and every wallet linked to one. The signer list and `required` change only through a governed upgrade (`migrate`, public for `governance_delay_ms`), so a weaker one means an upgrade nobody reviewed for this, or a compromised council.
+- Not weaker (a pinned signer not in the policy yet, a higher `required`): nothing is at risk; the pins are ahead of or behind a planned upgrade.
+
+**Steps**
+
+1. **Read both sides** (who: a founder). Acknowledge. Compare `details.pinned` (from the watchdog's manifest) with `details.chain`. Find the council action or upgrade that changed the chain side (`owner:proposals`; a `governance_change` alert for `email_signer_policy`, `email_issuer` or `pending_upgrade` should precede it).
+
+   ```sh
+   curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" https://<workerName>.<subdomain>.workers.dev/status
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:proposals
+   ```
+
+2. **Planned change: bring the pins in line** (who: a founder). Level 1 (adding a co-signer): pin the new signer's keys first, with the current `required`; after the upgrade executes, raise the pinned `required` (D191). Replacing a signer: pin the new id's keys before the upgrade, drop the old id after. Edit `watchdog.pinnedIssuerKeys.email` in `envs/<env>.json`, regenerate the watchdog's config and redeploy it (the watchdog's own Cloudflare account). If it paused for a planned change, the council unpauses only after the pins match.
+
+   ```sh
+   corepack pnpm --filter @hana-id/watchdog gen <env>
+   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   ```
+
+3. **Nobody planned it: stay paused** (who: council (2 of 3)). A weaker policy can only come from an executed upgrade: follow [unexpected-owner-action](#unexpected-owner-action). Remove every email key that isn't Hana's own pinned key at once (`remove_issuer_key`, immediate), then raise the session floor past the pause before any unpause, as for a forged active key (follow [forged-active-key](#forged-active-key)).
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:call remove_issuer_key --args '{"provider":"email","kid":"<kid>"}' --yes
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:call set_sessions_valid_from_ms --args '{"sessions_valid_from_ms":<pause block time ms + 1>}' --yes
+   ```
+
+**Verify**
+
+- The next run resolves the alert (`/status` `email.differences` empty) and doesn't pause again.
+- `admin <env> governance:status`: no findings.
+
+**Follow-ups**
+
+- Record a planned policy change and its pin order in `docs/decisions.md`.
+
+**Refs:** [`docs/email-login-spec.md#watchdog-appswatchdog`](email-login-spec.md#watchdog-appswatchdog), [`docs/email-login-spec.md#signing-key-staged`](email-login-spec.md#signing-key-staged), [`docs/operations.md#watchdog-alerts-runbook`](operations.md#watchdog-alerts-runbook), D121 (`docs/decisions.md`), D191 (`docs/decisions.md`) · **See also:** [forged-active-key](#forged-active-key), [unexpected-owner-action](#unexpected-owner-action), [email-issuer-key-compromised](#email-issuer-key-compromised)
+
+<a id="unrecorded-wallets"></a>
+
+### unrecorded_wallets is set outside a dev env
+
+`unrecorded-wallets` · critical · alert kinds: `unrecorded_wallets`
+
+`get_config().unrecorded_wallets` is true on an env that isn't a dev env (D139): the contract was migrated from pre-v3 state, so wallets derived before v3 aren't in `opened`. Links are refused until the owner accepts, and mainnet must never show it.
+
+**Signals**
+
+- Critical `unrecorded_wallets` page, every run while the flag is set (alert only; the watchdog calls nothing).
+- Every link (automatic or explicit) panics `Links wait until the owner accepts the wallets opened before v3`.
+
+**Impact**
+
+- While set: no link can be made, so email login can't join a Google wallet (and vice versa); nothing else stops.
+- If accepted blindly: a funded pre-v3 Google wallet counts as having no wallet, so a case-A link could join it silently to an email account (D135). On mainnet the signer is created with `new` on v3, so the flag is false from the start; seeing it there means the runbook was not followed.
+
+**Steps**
+
+1. **Find how the env got here** (who: a founder). Only a migration from pre-v3 state (`migrate`, `migrate_v1`) sets it. Check the env's upgrade history (`owner:proposals`, the `governance_change` alert for `state_version`). On a staging or production env this is a deviation from the mainnet runbook (`docs/email-login-spec.md` "Migration").
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:proposals
+   corepack pnpm --filter @hana-id/scripts run admin <env> governance:status
+   ```
+
+2. **Decide whether pre-v3 wallets matter** (who: a founder). Accepting is only safe when every wallet derived before v3 is test data that will be discarded (as on sandbox-dev). Otherwise leave it set (links stay off) and plan a fresh signer created with `new` on v3.
+
+3. **Accept, only if they are test data** (who: council (2 of 3)). One way: `accept_unrecorded_wallets` clears the flag (event `unrecorded_wallets_accepted`); the next watchdog run resolves the alert.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:call accept_unrecorded_wallets --yes
+   ```
+
+**Verify**
+
+- `get_config().unrecorded_wallets` is false; the watchdog resolves the alert at its next run.
+
+**Follow-ups**
+
+- Write down why the env was migrated rather than created with `new` (`docs/decisions.md`).
+
+**Refs:** [`docs/email-login-spec.md#migration`](email-login-spec.md#migration), [`docs/contract-interface.md#accounts-and-links`](contract-interface.md#accounts-and-links), D135 (`docs/decisions.md`), D139 (`docs/decisions.md`) · **See also:** [governance-change](#governance-change), [unexpected-owner-action](#unexpected-owner-action)
+
+<a id="email-jwks-mismatch"></a>
+
+### Hana's email JWKS differs from the pins
+
+`email-jwks-mismatch` · warning · alert kinds: `email_jwks_mismatch`
+
+Hana's published email JWKS (`{apiUrl}/v1/email/jwks.json`) lists a key that isn't pinned, or lacks an active email key, or can't be fetched while email keys are active. Informational: the contract never reads it and the watchdog doesn't trust it.
+
+**Signals**
+
+- Warning `email_jwks_mismatch` (Slack, email): `details.problems` lists each key; `email_jwks_mismatch:fetch` after 3 failed fetches.
+
+**Impact**
+
+- No direct risk: logins check the keys on chain. A published key that isn't pinned means the issuer Worker holds (or advertises) a key the watchdog would cancel or pause on if the council posted it; a missing active key means the issuer and the chain disagree about which keys sign.
+
+**Steps**
+
+1. **Compare the three lists** (who: a founder). Pins (`watchdog.pinnedIssuerKeys.email`), the chain's active email kids (`/status` `email.chain.active_kids`) and the published JWKS. A rotation in progress (new key published before the council posts it) is expected: pin it before the post.
+
+   ```sh
+   curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" https://<workerName>.<subdomain>.workers.dev/status
+   ```
+
+2. **An unknown published key** (who: a founder). Nobody on the team added it: the issuer Worker or Hana's Cloudflare account may be compromised. Follow [email-issuer-key-compromised](#email-issuer-key-compromised) and [api-or-cloudflare-compromised](#api-or-cloudflare-compromised).
+
+3. **Fetch failing** (who: a founder). The issuer Worker is down or its route moved (email logins then fail too). Check the issuer's deployment; if the URL changed on purpose, set `jwksUrl` in the pins and redeploy the watchdog.
+
+   ```sh
+   corepack pnpm --filter @hana-id/watchdog gen <env>
+   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   ```
+
+**Verify**
+
+- The next run resolves the warning.
+
+**Refs:** [`docs/email-login-spec.md#issuer-configuration`](email-login-spec.md#issuer-configuration), [`docs/email-login-spec.md#watchdog-appswatchdog`](email-login-spec.md#watchdog-appswatchdog), D190 (`docs/decisions.md`) · **See also:** [email-issuer-key-compromised](#email-issuer-key-compromised), [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)
+
+<a id="link-volume"></a>
+
+### Link volume high, or not monitored
+
+`link-volume` · warning · alert kinds: `link_volume_high`, `link_events_unavailable`
+
+More new links (`identity_linked`, `identity_link_proposed`) in the last hour than the threshold, in one scope or in all; or the watchdog cannot read link events (no indexer while email is on chain, the indexer failing, or the scan more than 1 h behind).
+
+**Signals**
+
+- Warning `link_volume_high` (`link_volume_high:scope:<scope>` or `:total`): the count, how many were automatic, the threshold (`watchdog.linkVolume`, default 20 per scope and 100 in all per hour).
+- Warning `link_events_unavailable` (`:not_configured`, `:failing`, `:behind`). `/status` `link_volume` has the last scan, the cursor and the last hour by scope and event.
+
+**Impact**
+
+- A burst of links is how a compromised email issuer would use the real key at 1-of-1 (docs/email-login-spec.md "Trust statement"): each link joins an identity it minted to someone's wallet. Pending links wait `change_delay_ms` and can be cancelled by their users; automatic ones are active at once.
+- Unmonitored: such a burst goes unnoticed by the watchdog (the CloudTrail reconciliation, once built, still sees unlogged signatures on mainnet).
+
+**Steps**
+
+1. **Is it real traffic?** (who: a founder). Check the scope's app: a launch, a migration of its users or a marketing push explains a jump. The API's usage counts show logins for the same window. If it is legitimate, raise the threshold for the env (`watchdog.linkVolume.perScopePerHour` / `perHour`), regenerate and redeploy the watchdog.
+
+   ```sh
+   curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" https://<workerName>.<subdomain>.workers.dev/status
+   corepack pnpm --filter @hana-id/watchdog gen <env>
+   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   ```
+
+2. **Unexplained: treat the email issuer as compromised** (who: a founder). Follow [email-issuer-key-compromised](#email-issuer-key-compromised): remove the issuer key on chain (immediate), retire the sessions it opened, and tell the affected scopes so their users cancel pending links.
+
+3. **Not monitored: restore the event source** (who: a founder). `not_configured`: set `watchdog.linkVolume.indexerUrl` (FastNear's transactions API, `https://tx.test.fastnear.com` on testnet), regenerate, redeploy. `failing`: check the indexer's `/status`; it is a third party, so pick another if it stays down. `behind`: more signer transactions than a run reads (100 per run): raise it in code or move the watchdog to the paid plan.
+
+   ```sh
+   corepack pnpm --filter @hana-id/watchdog gen <env>
+   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   ```
+
+**Verify**
+
+- The next run resolves the alert (`/status` `link_volume.last_hour` under the thresholds, `failures` 0, `behind_ms` small).
+
+**Follow-ups**
+
+- Tune the provisional thresholds (D192) from sandbox-dev and staging traffic before mainnet.
+
+**Refs:** [`docs/email-login-spec.md#watchdog-appswatchdog`](email-login-spec.md#watchdog-appswatchdog), [`docs/email-login-spec.md#trust-statement`](email-login-spec.md#trust-statement), [`apps/watchdog/README.md#what-a-run-does-every-5-min`](../apps/watchdog/README.md#what-a-run-does-every-5-min), D192 (`docs/decisions.md`) · **See also:** [email-issuer-key-compromised](#email-issuer-key-compromised)
+
+<a id="self-issued-key-change"></a>
+
+### Pending email key change (info)
+
+`self-issued-key-change` · info · alert kinds: `self_issued_key_change`
+
+A pending email key pinned for its signer, or a pending email key removal. Self-issued keys can't be confirmed early (D121): it waits its `governance_delay_ms` (72 h on mainnet), then anyone executes it.
+
+**Signals**
+
+- Info `self_issued_key_change` in `/status`, the portal and the daily digest: the change id, kid (its thumbprint), signer and `executable_at_ms`.
+
+**Impact**
+
+- None when the council meant it: the key is Hana's own (pinned). A removal stops email logins signed with that key once it executes (DoS only).
+
+**Steps**
+
+1. **Match it with a council proposal** (who: a founder). A rotation or the first keys: expected. Unexpected: the council posted it without the team (follow [unexpected-owner-action](#unexpected-owner-action)), and cancel it before it executes.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:proposals
+   corepack pnpm --filter @hana-id/scripts run admin <env> owner:call cancel_issuer_key_change --args '{"id":<id>}' --yes
+   ```
+
+2. **Execute it once due** (who: anyone). After `executable_at_ms`, anyone executes it (the API cron executes only Google changes). The watchdog warns `unexecuted_key_change` an hour after it is due.
+
+   ```sh
+   near contract call-function as-transaction <signer> execute_issuer_key_change json-args '{"id":<id>}' prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as <any funded account> network-config testnet sign-with-legacy-keychain send
+   ```
+
+**Verify**
+
+- The key appears in `get_issuer("email")` and under its signer in `get_self_issued("email")`; the watchdog reports `key_change_executed`.
+
+**Refs:** [`docs/email-login-spec.md#self-issued-issuers`](email-login-spec.md#self-issued-issuers), [`docs/contract-interface.md#self-issued-issuers-email-login-d121`](contract-interface.md#self-issued-issuers-email-login-d121), D121 (`docs/decisions.md`) · **See also:** [key-change-lifecycle](#key-change-lifecycle), [unexpected-owner-action](#unexpected-owner-action)
 
 ## Incident playbooks
 
@@ -1828,7 +2062,7 @@ Email login isn't built (`docs/email-login-spec.md`). When it is: whoever can ma
 
 **Signals**
 
-- Planned: the hourly CloudTrail reconciliation finds a `Sign` the issuer didn't log (critical); link-volume alerts; an IAM or KMS policy change alert. On testnet (Worker-secret key) there is no signing log: you notice only a leak of the Worker's secrets.
+- The watchdog's [link-volume](#link-volume) warning (`link_volume_high`, [link-volume](#link-volume)) and its pins (a swapped key is cancelled, [forged-key-change](#forged-key-change); an active one pauses, [forged-active-key](#forged-active-key)). Planned: the hourly CloudTrail reconciliation finds a `Sign` the issuer didn't log (critical); an IAM or KMS policy change alert. On testnet (Worker-secret key) there is no signing log: you notice only a leak of the Worker's secrets or a link burst.
 
 **Impact**
 
@@ -1850,7 +2084,7 @@ Email login isn't built (`docs/email-login-spec.md`). When it is: whoever can ma
 
 - Turn this playbook live with the email issuer's own commands when it ships.
 
-**Refs:** [`docs/email-login-spec.md#signing-key-staged`](email-login-spec.md#signing-key-staged), [`docs/email-login-spec.md#trust-statement`](email-login-spec.md#trust-statement), D121 (`docs/decisions.md`) · **See also:** [forged-active-key](#forged-active-key)
+**Refs:** [`docs/email-login-spec.md#signing-key-staged`](email-login-spec.md#signing-key-staged), [`docs/email-login-spec.md#trust-statement`](email-login-spec.md#trust-statement), D121 (`docs/decisions.md`) · **See also:** [forged-active-key](#forged-active-key), [link-volume](#link-volume), [signer-policy-mismatch](#signer-policy-mismatch)
 
 <a id="identity-signing-key-compromised"></a>
 

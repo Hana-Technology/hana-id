@@ -3,8 +3,10 @@
 import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { actionCreators, createTransaction, encodeTransaction, Signature, SignedTransaction } from '@near-js/transactions';
 import { baseDecode, baseEncode } from '@near-js/utils';
-import type { ChainReader, ChainSnapshot, ChainWriter, ConfigView, GovernanceView, IssuerKey, IssuerView, KeyChange, OwnerAccount, TxResult, WatchdogMethod } from './chain.ts';
+import { GOOGLE_PROVIDER } from '@hana-id/jwks';
+import type { ChainReader, ChainSnapshot, ChainWriter, ConfigView, GovernanceView, IssuerKey, IssuerView, KeyChange, OwnerAccount, SelfIssuedView, TxResult, WatchdogMethod } from './chain.ts';
 import { WATCHDOG_METHODS } from './chain.ts';
+import { EMAIL_PROVIDER } from './pins.ts';
 import { log } from './log.ts';
 import { type AccessKeyEntry, type RelayerFunds, relayerFundsFrom } from './relayer.ts';
 
@@ -98,6 +100,24 @@ export class Rpc {
 
 const isMethodNotFound = (err: unknown): boolean => err instanceof Error && /MethodNotFound|MethodResolveError/u.test(err.message);
 
+const isStringArray = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
+const validIssuer = (v: unknown): boolean =>
+  v === null || (typeof v === 'object' && typeof (v as IssuerView).provider === 'string' && isStringArray((v as IssuerView).iss_values) && isStringArray((v as IssuerView).kids));
+const validKeys = (v: unknown): boolean =>
+  v === null || (Array.isArray(v) && v.every((k) => typeof k === 'object' && k !== null && typeof k.kid === 'string' && typeof k.n === 'string' && typeof k.e === 'string'));
+const validSelfIssued = (v: unknown): boolean => {
+  if (v === null) return true;
+  const s = v as SelfIssuedView;
+  return (
+    typeof v === 'object' &&
+    typeof s.provider === 'string' &&
+    Number.isInteger(s.required) &&
+    Array.isArray(s.signers) &&
+    s.signers.every((x) => typeof x === 'object' && x !== null && typeof x.id === 'string' && isStringArray(x.kids)) &&
+    (s.overlap_until_ms === undefined || s.overlap_until_ms === null || typeof s.overlap_until_ms === 'number')
+  );
+};
+
 /** `view_account` code hash of an account without a contract. */
 export const EMPTY_CODE_HASH = '11111111111111111111111111111111';
 
@@ -112,25 +132,37 @@ export class NearChain implements ChainReader {
     return typeof status.chain_id === 'string' ? status.chain_id : '';
   }
 
-  async snapshot(provider: string): Promise<ChainSnapshot> {
-    const [keyChanges, issuer, config, governance] = await Promise.all([
+  async snapshot(): Promise<ChainSnapshot> {
+    const [keyChanges, issuer, config, governance, emailIssuer] = await Promise.all([
       this.rpc.view<KeyChange[]>(this.signer, 'get_key_changes', {}),
-      this.rpc.view<IssuerView | null>(this.signer, 'get_issuer', { provider }),
+      this.rpc.view<IssuerView | null>(this.signer, 'get_issuer', { provider: GOOGLE_PROVIDER }),
       this.rpc.view<ConfigView>(this.signer, 'get_config', {}),
       this.rpc.view<GovernanceView>(this.signer, 'get_governance', {}),
+      this.rpc.view<IssuerView | null>(this.signer, 'get_issuer', { provider: EMAIL_PROVIDER }),
     ]);
-    let issuerKeys: IssuerKey[] | null;
-    try {
-      issuerKeys = await this.rpc.view<IssuerKey[] | null>(this.signer, 'get_issuer_keys', { provider });
-    } catch (err) {
-      if (!isMethodNotFound(err)) throw err;
-      issuerKeys = null;
-    }
+    const issuerKeys = await this.optionalView<IssuerKey[] | null>('get_issuer_keys', { provider: GOOGLE_PROVIDER });
+    // A pre-v3 contract has no get_self_issued: it reads as "no email issuer is self-issued", never as an error.
+    const selfIssued = await this.optionalView<SelfIssuedView | null>('get_self_issued', { provider: EMAIL_PROVIDER });
+    const emailKeys = emailIssuer ? await this.optionalView<IssuerKey[] | null>('get_issuer_keys', { provider: EMAIL_PROVIDER }) : { value: null, exists: true };
     if (!Array.isArray(keyChanges) || typeof config !== 'object' || config === null || typeof governance !== 'object' || governance === null) {
       throw new RpcError('Unexpected view shape', false);
     }
+    if (!validIssuer(issuer) || !validIssuer(emailIssuer) || !validKeys(issuerKeys.value) || !validKeys(emailKeys.value) || !validSelfIssued(selfIssued.value)) {
+      throw new RpcError('Unexpected issuer view shape', false);
+    }
     const owner = typeof config.owner === 'string' ? await this.ownerAccount(config.owner) : null;
-    return { keyChanges, issuer, issuerKeys, config, governance, owner };
+    const email = { issuer: emailIssuer, issuerKeys: emailKeys.value, selfIssued: selfIssued.value, hasSelfIssuedView: selfIssued.exists };
+    return { keyChanges, issuer, issuerKeys: issuerKeys.value, email, config, governance, owner };
+  }
+
+  /** A view that older contract code may not have: `exists: false` (value null) on MethodNotFound; other errors throw. */
+  private async optionalView<T>(method: string, args: unknown): Promise<{ value: T | null; exists: boolean }> {
+    try {
+      return { value: await this.rpc.view<T>(this.signer, method, args), exists: true };
+    } catch (err) {
+      if (!isMethodNotFound(err)) throw err;
+      return { value: null, exists: false };
+    }
   }
 
   async relayerFunds(account: string): Promise<RelayerFunds> {

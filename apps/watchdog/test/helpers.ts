@@ -155,6 +155,8 @@ export class StubChain implements ChainReader {
   emailActive = new Map<string, { n: string; e: string; signer: string | null }>();
   /** `get_link_stats()` (D200); null: a contract without the view (v2, or v3 before the link cap). */
   linkStats: LinkStatsView | null = linkStats();
+  /** As the reader reports a view of another shape, or one that errored (`linkStats` then reads as null). */
+  linkStatsProblem: 'malformed' | 'read_failed' | null = null;
   /** The email signer policy (null: not self-issued). */
   selfIssued: { signers: string[]; required: number; overlap_until_ms?: number | null } | null = null;
   failReads = false;
@@ -195,7 +197,8 @@ export class StubChain implements ChainReader {
           : null,
         hasSelfIssuedView: this.v3,
       },
-      linkStats: this.linkStats && clone(this.linkStats),
+      linkStats: this.linkStatsProblem ? null : this.linkStats && clone(this.linkStats),
+      linkStatsProblem: this.linkStatsProblem,
       config,
       governance: clone(this.governance),
       owner: { account_id: this.config.owner, ...clone(this.owner) },

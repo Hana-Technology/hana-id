@@ -490,6 +490,37 @@ describe('link caps (get_link_stats, D200)', () => {
     expect((await alertsOf(w.store, 'link_stats_unavailable'))[0]?.resolved_at).not.toBeNull();
   });
 
+  it('a malformed or failing view marks only the links check: forged Google and email keys are still cancelled in the same run', async () => {
+    const hana = await emailJwk(201);
+    const rogue = await emailJwk(202);
+    const w = await initialized({ pins: pinsOf({ hana: [hana] }), before: (x) => void x.chain.emailIssuer([hana]) });
+    w.chain.linkStatsProblem = 'malformed';
+    const g = w.chain.propose('Add', 'k1x', { key: jwk('k1x', 66), by: OWNER });
+    w.jwks.keys = [jwk('k1', 1), jwk('k1x', 7)];
+    const e = w.chain.propose('Add', rogue.kid, { key: rogue, by: OWNER, provider: 'email', signer: 'hana' });
+    const r = await w.run();
+    expect(w.writer.calls).toEqual([
+      { method: 'cancel_issuer_key_change', args: { id: e.id } },
+      { method: 'cancel_issuer_key_change', args: { id: g.id } },
+    ]);
+    expect(checkOf(r, 'chain_read')?.outcome).toBe('ok');
+    expect(checkOf(r, 'links')).toMatchObject({ outcome: 'error', detail: expect.stringContaining('unexpected shape') });
+    expect((await alertsOf(w.store, 'link_stats_unavailable'))[0]).toMatchObject({ key: 'link_stats_unavailable:malformed', severity: 'warning', details: { reason: 'malformed' } });
+    expect((await alertsOf(w.store, 'forged_key_change')).map((a) => a.details.id).sort()).toEqual([e.id, g.id].sort());
+    // An active forged email key still pauses too.
+    w.chain.emailActive.set(rogue.kid, { n: rogue.n, e: rogue.e, signer: 'hana' });
+    w.chain.linkStatsProblem = 'read_failed';
+    w.writer.calls = [];
+    const r2 = await w.run();
+    expect(w.writer.methods()[0]).toBe('pause');
+    expect(checkOf(r2, 'links')?.outcome).toBe('error');
+    expect((await alertsOf(w.store, 'link_stats_unavailable')).map((a) => a.key).sort()).toEqual(['link_stats_unavailable:malformed', 'link_stats_unavailable:read_failed']);
+    // A good answer again: both resolve.
+    w.chain.linkStatsProblem = null;
+    await w.run();
+    expect((await alertsOf(w.store, 'link_stats_unavailable')).every((a) => a.resolved_at !== null)).toBe(true);
+  });
+
   it('is judged before the run is recorded and its lock released (the protective phase)', async () => {
     const w = await live();
     w.chain.linkStats = linkStats({ current: linkWindow(w.clock.t, 500, { total_cap_reached: true }) });

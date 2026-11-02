@@ -182,11 +182,22 @@ export class NearChain implements ChainReader {
       throw new RpcError('Unexpected issuer view shape', false);
     }
     // D200's link counter: one cheap view. A contract without it (v2, or v3 before the link cap) reads as no stats.
-    const linkStats = await this.optionalView<LinkStatsView>('get_link_stats', {});
-    if (linkStats.value !== null && !validLinkStats(linkStats.value)) throw new RpcError('Unexpected get_link_stats shape', false);
+    // Isolated: a failing or malformed answer (a later upgrade, a shape mismatch) only marks the link check, never
+    // the snapshot, so no Google or email cancel or pause depends on it.
+    let linkStats: { value: LinkStatsView | null; exists: boolean } = { value: null, exists: false };
+    let linkStatsProblem: ChainSnapshot['linkStatsProblem'] = null;
+    try {
+      linkStats = await this.optionalView<LinkStatsView>('get_link_stats', {});
+      if (linkStats.value !== null && !validLinkStats(linkStats.value)) {
+        linkStats = { value: null, exists: true };
+        linkStatsProblem = 'malformed';
+      }
+    } catch {
+      linkStatsProblem = 'read_failed';
+    }
     const owner = typeof config.owner === 'string' ? await this.ownerAccount(config.owner) : null;
     const email = { issuer: emailIssuer, issuerKeys: emailKeys.value, selfIssued: selfIssued.value, hasSelfIssuedView: selfIssued.exists };
-    return { keyChanges, issuer, issuerKeys: issuerKeys.value, email, linkStats: linkStats.value, config, governance, owner };
+    return { keyChanges, issuer, issuerKeys: issuerKeys.value, email, linkStats: linkStats.value, linkStatsProblem, config, governance, owner };
   }
 
   /** A view that older contract code may not have: `exists: false` (value null) on MethodNotFound; other errors throw. */

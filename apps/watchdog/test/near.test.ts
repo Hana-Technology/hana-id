@@ -108,12 +108,19 @@ describe('NearChain', () => {
     expect(calls.find((c) => c.params.method_name === 'get_link_stats')?.params).toMatchObject({ finality: 'final' });
   });
 
-  it('fails the read on a get_link_stats of another shape (D200)', async () => {
-    for (const bad of [{ ...STATS, limits: { per_scope_per_hour: -1, total_per_hour: 500 } }, { ...STATS, current: { ...WINDOW, capped_scopes: 's1' } }, { ...STATS, previous: 'x' }, { ...STATS, pending_limits: { per_scope_per_hour: 1, total_per_hour: 2 } }]) {
+  it('isolates a get_link_stats of another shape, or one that fails: the rest of the snapshot is read (D200)', async () => {
+    for (const bad of [{ ...STATS, limits: { per_scope_per_hour: -1, total_per_hour: 500 } }, { ...STATS, current: { ...WINDOW, capped_scopes: 's1' } }, { ...STATS, previous: 'x' }, { ...STATS, pending_limits: { per_scope_per_hour: 1, total_per_hour: 2 } }, 'nope']) {
       vi.restoreAllMocks();
       stubRpc(contract({ email: true, over: { get_link_stats: bad } }));
-      await expect(new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot(), JSON.stringify(bad)).rejects.toBeInstanceOf(RpcError);
+      const s = await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot();
+      expect(s, JSON.stringify(bad)).toMatchObject({ linkStats: null, linkStatsProblem: 'malformed', issuer: GOOGLE_ISSUER, email: { issuer: EMAIL_ISSUER } });
     }
+    vi.restoreAllMocks();
+    stubRpc(contract({ email: true, over: { get_link_stats: new TypeError('down') } }));
+    expect(await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot()).toMatchObject({ linkStats: null, linkStatsProblem: 'read_failed', keyChanges: [{ kid: 'k2' }] });
+    vi.restoreAllMocks();
+    stubRpc(contract({ v3: false }));
+    expect(await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot()).toMatchObject({ linkStats: null, linkStatsProblem: null });
   });
 
   it('reads a v2 contract (no get_self_issued, no email issuer) as no email issuer, not as an error', async () => {

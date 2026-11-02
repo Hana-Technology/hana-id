@@ -1677,8 +1677,10 @@ detail open or a safer reading was needed. Each follows the spec's intent; the u
   governance change. The FastNear indexer scan (D192) is removed. Watchdog side (`feat/email-login-5`): the view is
   read with the chain snapshot, before the run is recorded and its lock released; `link_cap_reached` (critical, per
   capped scope and for the total, keyed by window, current and previous hour, no pause), `link_volume_high` (warning,
-  current total ≥ half `total_per_hour`), `link_stats_unavailable` (warning: an email issuer and no view); playbook
-  `link-cap`.
+  current total ≥ half `total_per_hour`), `link_stats_unavailable` (warning: `missing` with an email issuer on chain,
+  `malformed`, or `read_failed`); playbook `link-cap`. The read is isolated: a malformed or failing view marks only
+  the link check, never the snapshot, so a shape mismatch after an upgrade can't blind the Google and email cancels
+  and pauses.
 - Why: exact, on chain, no third party or data budget, and it turns detection into a brake: a thief can take over at
   most the cap's worth of accounts per hour before the page and the pause. v3 isn't deployed anywhere, so the
   contract change is cheap now.

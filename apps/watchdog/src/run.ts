@@ -1023,9 +1023,19 @@ async function linkStats(run: Run, s: ChainSnapshot): Promise<void> {
   run.evaluate('link_cap_reached', 'link_volume_high', 'link_stats_unavailable');
   const v = s.linkStats;
   const emailLive = s.email.issuer !== null || s.email.selfIssued !== null;
+  if (s.linkStatsProblem) {
+    // Only this check is affected: the snapshot and every protective step ran on the rest of the chain read.
+    const why = s.linkStatsProblem === 'malformed' ? 'answered in an unexpected shape' : 'failed';
+    await run.condition('link_stats_unavailable', `link_stats_unavailable:${s.linkStatsProblem}`, `get_link_stats ${why}: link caps are not monitored this run (the contract still enforces them)`, {
+      reason: s.linkStatsProblem,
+      signer: run.d.config.signer,
+    });
+    run.check('links', 'error', `get_link_stats ${why}`);
+    return;
+  }
   if (!v) {
     if (emailLive) {
-      await run.condition('link_stats_unavailable', 'link_stats_unavailable', 'An email issuer is on chain but the contract has no get_link_stats: links per hour are neither capped nor monitored (D200)', { signer: run.d.config.signer });
+      await run.condition('link_stats_unavailable', 'link_stats_unavailable:missing', 'An email issuer is on chain but the contract has no get_link_stats: links per hour are neither capped nor monitored (D200)', { reason: 'missing', signer: run.d.config.signer });
     } else run.check('links', 'skipped', 'no get_link_stats (pre-D200 contract) and no email issuer: no link possible');
     return;
   }

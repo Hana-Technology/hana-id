@@ -1098,7 +1098,7 @@ The contract counts every new link per scope and in total per UTC hour and refus
 **Signals**
 
 - Critical `link_cap_reached` (`:total:<hour>`, `:scope:<scope>:<hour>`, `:more_scopes:<hour>`), from `get_link_stats()` each run for the current and the previous hour, so a cap reached between two runs is seen. It resolves once that hour is neither window.
-- Warning `link_volume_high:<hour>`: the hour's links in all scopes reached half of `total_per_hour`. Warning `link_stats_unavailable`: an email issuer is on chain but the contract has no `get_link_stats` (deploy the D200 contract).
+- Warning `link_volume_high:<hour>`: the hour's links in all scopes reached half of `total_per_hour`. Warning `link_stats_unavailable`: `:missing` (an email issuer is on chain but the contract has no `get_link_stats`: deploy the D200 contract), `:malformed` (an answer of another shape: the watchdog and the contract disagree on the view, fix the watchdog's reader) or `:read_failed`. Only the link check is affected; cancels and pauses still run.
 - Users of the capped scope (or of every scope, for the total) whose login carries a link get `Link rate limit reached`: the whole call reverts, so the login is refused rather than completed without its link (D122). `/status` `link_stats` has the limits, a pending raise and both windows.
 
 **Impact**

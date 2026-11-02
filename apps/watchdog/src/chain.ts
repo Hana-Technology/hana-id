@@ -173,6 +173,11 @@ export interface ChainSnapshot {
   email: EmailSnapshot;
   /** `get_link_stats()` (D200), or null on a contract without the view (v2, or v3 before the link cap). */
   linkStats: LinkStatsView | null;
+  /**
+   * Why `linkStats` is null although the contract may have the view: `malformed` (an answer of another shape) or
+   * `read_failed` (the view errored). Null when it was read, or the contract has no view. Never fails the snapshot.
+   */
+  linkStatsProblem: 'malformed' | 'read_failed' | null;
   config: ConfigView;
   governance: GovernanceView;
   /** The owner account (null when `get_config` names none). */

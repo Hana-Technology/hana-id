@@ -20,7 +20,9 @@ every run and sends nothing on a mismatch.
    `get_link_stats()` (D200), `get_config`, `get_governance`, and the owner account (`get_config().owner`): `view_account` (code hash) and, when it runs a
    contract, the DAO's `get_policy` (null for a contract without one), at final finality. A contract without
    `get_self_issued` (v2, sandbox-dev today) reads as "no email issuer is self-issued", never as an error; v2's
-   `get_issuer("email")` answers null. Likewise a contract without `get_link_stats` reads as "no link stats".
+   `get_issuer("email")` answers null. Likewise a contract without `get_link_stats` reads as "no link stats". The
+   link-stats read is isolated: a malformed or failing answer leaves the rest of the snapshot (and every protective
+   step) intact and only marks the `links` check.
 3. **Google's JWKS**, fetched directly with no cache; every kid's first-seen time and key material go to D1
    (`seen_kids`). RS256 keys only (`usableJwks`, shared with the API in `packages/jwks`).
 4. **Pending additions**: a kid in the JWKS with equal `n`, `e` (leading zeros stripped) → `confirm_issuer_key_change`
@@ -65,7 +67,9 @@ every run and sends nothing on a mismatch.
      reached → critical condition `link_cap_reached` (`:total:<hour>`, `:scope:<scope>:<hour>`, `:more_scopes:<hour>`
      when the view truncated its list), alert only (the contract is the brake: no pause); the current hour at half
      `total_per_hour` or more → warning `link_volume_high:<hour>`. An email issuer on chain and no `get_link_stats` →
-     warning `link_stats_unavailable`; with no email issuer, nothing (no link is possible). Judged with the chain read,
+     warning `link_stats_unavailable:missing`; with no email issuer, nothing (no link is possible). An answer of another
+     shape, or a failing view → `links` `error` and warning `link_stats_unavailable:malformed` / `:read_failed`; the
+     Google and email cancels and pauses of the same run are unaffected. Judged with the chain read,
      before the run is recorded and its lock released.
 6. **Active keys**: a kid this watchdog never saw in Google's JWKS, or whose on-chain material (`get_issuer_keys`)
    differs from Google's → `pause`, then `delete_updater_key` for every updater key (whoever proposed it: the change

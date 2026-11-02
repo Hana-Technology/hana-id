@@ -104,7 +104,11 @@ export const ALERT_KINDS = {
     description: 'The email issuer and the pins are mid-way through a planned change, none of it weaker: a pinned signer not in the policy yet, the set_issuer to mark_self_issued gap, a higher required on chain, an overlap of normal length (no pause)',
   },
   link_volume_high: { severity: 'warning', check: 'links', description: "This hour's new links in all scopes reached half the total cap (get_link_stats, D200)" },
-  link_stats_unavailable: { severity: 'warning', check: 'links', description: 'An email issuer is on chain but the contract has no get_link_stats: links are neither capped nor counted (deploy the D200 contract)' },
+  link_stats_unavailable: {
+    severity: 'warning',
+    check: 'links',
+    description: "get_link_stats can't be judged: `missing` (an email issuer on chain, a contract without the view: links are neither capped nor counted), `malformed` (an answer of another shape) or `read_failed`. Only the link check is affected",
+  },
   channel_not_configured: { severity: 'warning', check: 'config', description: 'An alert channel (paging app, Slack, email) or the heartbeat has no credentials' },
   heartbeat_failing: { severity: 'warning', check: 'heartbeat', description: "The dead-man's switch ping failed for 3 runs in a row" },
   relayer_balance_low: { severity: 'warning', check: 'relayer_funds', description: "The relayer account's available balance is below the warning threshold (default 5 NEAR)" },

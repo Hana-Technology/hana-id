@@ -16,6 +16,9 @@ importers:
       '@hana-id/jwks':
         specifier: workspace:*
         version: link:../../packages/jwks
+      '@hana-id/oidc':
+        specifier: workspace:*
+        version: link:../../packages/oidc
       '@near-js/crypto':
         specifier: 2.5.1
         version: 2.5.1(@near-js/types@2.5.1)(@near-js/utils@2.5.1(@near-js/types@2.5.1))
@@ -381,6 +384,28 @@ importers:
       vitest:
         specifier: 4.1.12
         version: 4.1.12(@types/node@22.20.5)(happy-dom@21.0.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15))
+
+  packages/oidc:
+    dependencies:
+      '@hana-id/jwks':
+        specifier: workspace:*
+        version: link:../jwks
+    devDependencies:
+      '@cloudflare/vitest-plugin':
+        specifier: 1.4.4
+        version: 1.4.4(@cloudflare/workers-types@5.20261016.1)(@types/node@22.20.5)(bufferutil@4.1.0)(utf-8-validate@6.0.6)(vitest@4.1.12(@types/node@22.20.5)(happy-dom@21.0.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15)))
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.5
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.12
+        version: 4.1.12(@types/node@22.20.5)(happy-dom@21.0.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15))
+      wrangler:
+        specifier: 4.151.1
+        version: 4.151.1(@cloudflare/workers-types@5.20261016.1)(@types/node@22.20.5)(bufferutil@4.1.0)(utf-8-validate@6.0.6)
 
   packages/playbooks:
     devDependencies:

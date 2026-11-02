@@ -1,13 +1,13 @@
 // Request handlers: app endpoints (publishable key + origin), owner actions (OIDC proof in args), health.
+import { JwksUnavailableError, verifyIdToken } from '@hana-id/oidc';
 import { type App, PUBLISHABLE_KEY_RE, appSuspended, getAppByKey, incrementUsage, noteFirstSession } from './apps.ts';
 import { appKeyPairs, appKeyProblem } from './bls.ts';
 import { disallowedClaim } from './claims.ts';
 import type { Env } from './env.ts';
 import { type Headers_, corsHeaders, json, readJson } from './http.ts';
 import { ipSubject } from './ip.ts';
-import { log } from './log.ts';
+import { log, logStaleJwks } from './log.ts';
 import { placedStub } from './placement.ts';
-import { JwksUnavailableError, verifyIdToken } from './jwks.ts';
 import { keyObserver } from './key-observations.ts';
 import { type Caller, PARENT_ORIGIN_HEADER, RELAY_KEY_HEADER, checkCaller, preflightAllows } from './origins.ts';
 import { precheckOwnerAction, sha256Hex } from './owner-actions.ts';
@@ -344,7 +344,7 @@ export async function handleAppEndpoint(request: Request, env: Env, endpoint: Ap
     // 5. The token is a genuine, unexpired Google ID token (RS256 against Google's JWKS) with a nonce...
     let verified;
     try {
-      verified = await verifyIdToken(req.jwt, now, { skewMs: TOKEN_EXP_SKEW_MS, observer: keyObserver(env, exec), identityIssuer: env.IDENTITY_ISS });
+      verified = await verifyIdToken(req.jwt, now, { skewMs: TOKEN_EXP_SKEW_MS, observer: keyObserver(env, exec), onStaleKeys: logStaleJwks, identityIssuer: env.IDENTITY_ISS });
     } catch (err) {
       if (err instanceof JwksUnavailableError) return reject(ctx, 503, 'issuer_keys_unavailable', 'Could not read the token issuer keys, try again');
       throw err;

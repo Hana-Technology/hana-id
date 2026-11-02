@@ -3,9 +3,10 @@
 // it, so a request is relayed only if it would plausibly succeed: a genuine (signature-checked), unexpired console
 // token of an owner of an existing scope, a change that exists (and, for execute_change, is unlocked), and a client
 // proof that matches the change. The contract still checks everything, including the nonces.
+import { verifyIdToken } from '@hana-id/oidc';
 import { hex } from './bytes.ts';
 import type { Env } from './env.ts';
-import { verifyIdToken } from './jwks.ts';
+import { logStaleJwks } from './log.ts';
 import type { ContractCall } from './near/tx.ts';
 import { getConfig, getScope, isSharedOrPending } from './views.ts';
 
@@ -42,7 +43,7 @@ export async function precheckOwnerAction(env: Env, call: ContractCall, now: num
   let owner: { provider: string; sub: string } | null = null;
   if (call.method !== 'execute_change') {
     const jwt = (args.auth as { Oidc: { jwt: string } }).Oidc.jwt;
-    const v = await verifyIdToken(jwt, now, { identityIssuer: env.IDENTITY_ISS });
+    const v = await verifyIdToken(jwt, now, { onStaleKeys: logStaleJwks, identityIssuer: env.IDENTITY_ISS });
     if (!v.ok) return no(v.code === 'unsupported_issuer' || v.code === 'bad_token' ? 400 : 401, v.code, v.error);
     const config = await getConfig(env);
     if (!config.console_audiences.some(([p, a]) => p === v.token.provider && a === v.token.aud)) return no(403, 'not_console_token', 'Token is not for the Hana console');
@@ -78,7 +79,7 @@ export async function precheckOwnerAction(env: Env, call: ContractCall, now: num
       if (change.SetAllowShared && scope.allow_shared) return no(409, 'shared_login_enabled', 'Shared login is already enabled for this scope');
       const add = change.AddClient;
       if (add) {
-        const proof = await verifyIdToken(args.client_proof as string, now, { identityIssuer: env.IDENTITY_ISS });
+        const proof = await verifyIdToken(args.client_proof as string, now, { onStaleKeys: logStaleJwks, identityIssuer: env.IDENTITY_ISS });
         if (!proof.ok) return no(400, proof.code === 'bad_token' ? 'bad_token' : 'invalid_client_proof', `Client proof: ${proof.error}`);
         if (proof.token.provider !== add.provider || proof.token.aud !== add.aud) return no(400, 'invalid_client_proof', 'Client proof is for another client');
         if (scope.clients.some(([p, a]) => p === add.provider && a === add.aud)) return no(409, 'client_registered', 'Client is already in this scope');

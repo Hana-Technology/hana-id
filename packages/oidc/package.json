@@ -1,0 +1,21 @@
+{
+  "name": "@hana-id/oidc",
+  "version": "0.0.0",
+  "private": true,
+  "description": "RS256 ID-token verification (Google's JWKS cache, the claim checks) for the API and the console, and the Cloudflare Access JWT check for the admin Worker. Runs in Workers (Web Crypto only).",
+  "type": "module",
+  "sideEffects": false,
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "test": "vitest run && vitest run -c vitest.workerd.config.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json"
+  },
+  "dependencies": { "@hana-id/jwks": "workspace:*" },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.4",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "4.1.12",
+    "wrangler": "4.151.1"
+  }
+}

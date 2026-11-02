@@ -21,7 +21,7 @@ Governance fields (`docs/governance-spec.md`, `docs/operations.md` "Governance")
   `council-setup` (member keys in `.secrets/sandbox-dev/council/`); it exists before it becomes the owner.
 - `watchdogs` (default none, ≤ 3): accounts the contract lets cancel, confirm and pause (`add_watchdog`); none may be
   an env or council account.
-- `issuerKeyDelayMs` (≤ 7 days), `governanceDelayMs` (≤ 30 days): the delays `new` and `migrate_v1` start with (D80;
+- `issuerKeyDelayMs` (≤ 7 days), `governanceDelayMs` (≤ 30 days): the delays `new` starts with (D80;
   sandbox-dev 120 000 and 60 000). `deploy-contract` sets them on chain if they differ (decreases wait, per contract).
 - `allowSignerFullAccessKey`: the signer may keep a full-access key (D86). Only for `local*` / `sandbox*` envs on
   testnet: the schema refuses it outside testnet, `deploy-contract` refuses it in any other env, and a test checks that

@@ -1,6 +1,7 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-10-30 (branch `fix/watchdog-retired-key-race`: the `retired_key_change` alert, D153;
+Last verified against code: 2026-11-02 (branch `feat/email-login-2`: `deploy-contract` refuses a v1 contract, D154; the v2 → v3
+upgrade path sandbox-tested, "Upgrading the governance contract"); 2026-10-30 (branch `fix/watchdog-retired-key-race`: the `retired_key_change` alert, D153;
 branch `feat/identity-token-2`: "Identity token keys" rewritten for the
 offline standby and `identity-key next / switch / retire` (D177), the identity secrets rows, `gen --dev-vars`;
 `feat/identity-token-1`: the identity token secrets, migration 0008; `feat/playbook-gaps`: relayer funds monitoring in the watchdog,
@@ -72,7 +73,7 @@ Every name comes from `envs/<env>.json` (schema: `packages/env/src/schema.ts`; n
 | `ownerKind` | `account` (the owner's keychain key signs) or `sputnik` (`owner` is `council.dao`; owner calls are DAO proposals) | default `account`; `deploy-contract --transfer-owner` switches it after the DAO accepts |
 | `council` (optional) | `{factory, dao, members}`: the owner council, a Sputnik DAO v2 `<name>.<factory>` with exactly three members, 2 of 3 for every proposal kind (D81) | sandbox-dev: `sputnikv2.testnet`, members funded by `council-setup` (2 NEAR each), DAO 6 NEAR |
 | `watchdogs` | watchdog accounts (≤ 3) the contract lets cancel, confirm and pause | default none; `add_watchdog` is skipped until the account exists |
-| `issuerKeyDelayMs`, `governanceDelayMs` | `new` / `migrate_v1` delays (D80) | sandbox-dev: 120 000 and 60 000; mainnet 2 h (provisional) and 72 h. Outside dev envs `deploy-contract` (and `--creation-plan`) refuses an issuer-key delay below the security bound 3·(W + T) = 18 min and a governance delay below 24 h (mainnet: 72 h); `@hana-id/env` `governanceDelayProblems`. sandbox-dev's 2 min deliberately violates the bound for fast drills (D80): its plans carry a warning, never copy its delays to another env |
+| `issuerKeyDelayMs`, `governanceDelayMs` | `new` delays (D80; also the delays the done v1 → v2 migration started with) | sandbox-dev: 120 000 and 60 000; mainnet 2 h (provisional) and 72 h. Outside dev envs `deploy-contract` (and `--creation-plan`) refuses an issuer-key delay below the security bound 3·(W + T) = 18 min and a governance delay below 24 h (mainnet: 72 h); `@hana-id/env` `governanceDelayProblems`. sandbox-dev's 2 min deliberately violates the bound for fast drills (D80): its plans carry a warning, never copy its delays to another env |
 | `allowSignerFullAccessKey` | the signer may keep a full-access key (D86) | only `local*` / `sandbox*` testnet envs; sandbox-dev only among committed manifests |
 | `mpc` | the NEAR MPC contract (exists already; not ours) | — |
 | `ckdDomainId`, `ckdNetworkKey` | CKD domain and the pinned MPC public key | pin with `fetch-ckd-key` |
@@ -265,7 +266,7 @@ issuer keys and code changes behind public delays and makes the owner a 2-of-3 S
 | Vote / list council proposals | `admin <env> owner:vote <id> --member <m> [--reject] [--yes]` · `admin <env> owner:proposals [--json]` |
 | Replace a council member | `admin <env> council:replace-member --remove <old> --add <new> [--member <m>] [--approve-with <m>] [--yes]` |
 | Governance state and findings | `admin <env> governance:status [--json]` |
-| Migrate v1 → v2, upgrade, hand the contract to the DAO | `deploy-contract <env> --upgrade` · `--transfer-owner [--approve-with <m>]` |
+| Upgrade (propose, then execute once due), hand the contract to the DAO | `deploy-contract <env> --upgrade` · `--transfer-owner [--approve-with <m>]` |
 | Print the mainnet-style signer creation batch | `deploy-contract <env> --creation-plan [--wasm <reproducible build>]` |
 
 All are `corepack pnpm --filter @hana-id/scripts run …`. Each prints its plan and sends nothing without `--yes`
@@ -384,7 +385,9 @@ On a dev env the new member's key belongs in `.secrets/<env>/council/<new member
 ### Governance migration (sandbox-dev)
 
 `docs/governance-spec.md` "Migration plan → sandbox-dev", as commands. Same signer account, migrated in place: no
-address changes (the signer id, the path and the CKD request are untouched).
+address changes (the signer id, the path and the CKD request are untouched). **Done on sandbox-dev 2026-10-30; kept as
+the record.** It can't be repeated with current code: contract v3 has no `migrate_v1`, and `deploy-contract` refuses
+a v1 contract (D154; a v1 contract would first need the v2 code, develop 26fb70a).
 
 1. Merge the contract, API (sync with the new updater methods) and script changes; tests pass.
 2. `council-setup sandbox-dev --yes` (above). Create the watchdog account (`watchdogs[0]`) with near CLI when the
@@ -427,6 +430,17 @@ address changes (the signer id, the path and the CKD request are untouched).
 Re-run with `--skip-build` (or the same `--wasm`) to execute, so the hash is the proposed one. For a mainnet manifest
 the build must be reproducible (`cargo near build reproducible-wasm`) and its hash, commit and command published
 before the proposal (D86); the scripts refuse every non-testnet manifest today.
+
+**v2 → v3 (email login, sandbox-dev in build-plan batch 6).** The same path; the sandbox suite runs it end to end
+from the v2 code sandbox-dev runs (`contracts/integration-tests/tests/governance.rs`
+`v2_to_v3_upgrade_through_the_dao_keeps_every_view_and_path`): the DAO's `propose_upgrade`, `execute_upgrade` once
+due (`state_migrated {2, 3}`, ≈ 102 Tgas of the 300 attached), every view and path unchanged, then the DAO's
+`accept_unrecorded_wallets` before any link works (D135). Check `get_governance().state_version == 3` and
+`get_config().unrecorded_wallets` (`true` until that call). The v2 code can't come back by upgrade (its `migrate`
+refuses v3 state; the deploy reverts). sandbox-dev's v2 code (`3TSDwkMqPUhZtzFCvvaJ39nQWXUQK4LExPhsaS9tScoz`) is
+`contracts/hana-signer` at develop 26fb70a built with `cargo near build non-reproducible-wasm --no-abi` (what
+`deploy-contract` runs) on the machine that deployed it; another machine embeds other cargo registry paths and
+gets another hash.
 
 ### Creating a signer with governance in place (mainnet-style)
 
@@ -772,8 +786,9 @@ Order for an env moving to the governance contract (`docs/governance-spec.md` "M
    (`key_changes_unavailable`, sync by hand meanwhile), and `/v1/governance` answers `502 near_unavailable`.
    Deployed before the migration, the cron logs `proposals_unavailable` / `proposal_record_failed` /
    `run_record_failed` (it still proposes, without the cancel hold) and `/v1/governance` has `updater: null`.
-2. Upgrade the contract (`migrate_v1`). From then on the v1 updater key can still call `set_issuer_key` (it now
-   queues) but not the new methods: executions fail (`jwks_tx` `send_failed`) until step 3.
+2. Upgrade the contract (`migrate_v1`, done on sandbox-dev; current code has no v1 migration, D154). From then on the
+   v1 updater key can still call `set_issuer_key` (it now queues) but not the new methods: executions fail (`jwks_tx`
+   `send_failed`) until step 3.
 3. `add_updater_key(<new key>)`, upload it as `KEYS_UPDATER_KEY`, delete the v1 key ("Keys-updater key" above).
 4. Check: `curl -s <apiUrl>/v1/governance | jq '{stateVersion, updaterKeys, signerAccessKeys, updater}'`.
 
@@ -1040,7 +1055,7 @@ the trigger removal hadn't propagated, so a run at 05:55:05 found it and paused 
 reported the check down at 06:10:15 (period 5 min + grace 10 min) by email. **Cron trigger changes take minutes to
 apply** (start ~10 min after the first deploy; one run after removal): stop a watchdog by deleting the Worker's
 trigger and checking `/status` `last_run`, not by assuming. Other envs: not
-deployed; each needs the governance contract (`migrate_v1`) first.
+deployed; each is created with `new` on current code.
 
 ### Setting it up (once per env)
 

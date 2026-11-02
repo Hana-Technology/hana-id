@@ -131,10 +131,10 @@ same run). Steps:
 2. Deploy to `signer` and call `new(owner, mpc, ckd_domain_id, change_delay_ms, issuer_key_delay_ms,
    governance_delay_ms, watchdogs, updater_keys)` in the same transaction (only where `allowSignerFullAccessKey`
    allows the signer a full-access key; other envs are created with the `--creation-plan` batch). On an initialised
-   contract `--upgrade` changes the code in place, same account, so no address changes: a v1 contract gets
-   `DeployContract` + `migrate_v1` in one transaction; a v2 contract gets `propose_upgrade(<code_hash>)` by the owner
-   and, on a re-run once `governance_delay_ms` has passed, `execute_upgrade` with the raw wasm (never a raw
-   `DeployContract`). Details and the sandbox-dev migration: `docs/operations.md` "Governance".
+   contract `--upgrade` changes the code in place, same account, so no address changes: `propose_upgrade(<code_hash>)`
+   by the owner and, on a re-run once `governance_delay_ms` has passed, `execute_upgrade` with the raw wasm (never a
+   raw `DeployContract`). A v1 (pre-governance) contract is refused: current code has no v1 migration (D154).
+   Details and the sandbox-dev migration: `docs/operations.md` "Governance".
 3. Add two pools of function-call keys on `relayer`, both with receiver = `signer`, one transaction per pool:
    - **Session pool** (the API's `RELAYER_KEYS`, logins): `--relayer-keys` keys (default 3), limited to
      `create_session`, `create_session_and_derive`, `derive_key`, `revoke_session`, `prune_sessions`, allowance

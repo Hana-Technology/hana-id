@@ -2,7 +2,8 @@
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
 Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 and D150–D152 on 2026-10-30 (branches
-`feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`).
+`feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`);
+D154–D155 on 2026-11-02 (branch `feat/email-login-2`).
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -1555,6 +1556,35 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 - Playbook: `retired-key-change`. The incident's alert #10 was acknowledged; the deleted updater key is reprovisioned
   through the council (`forged-key-change` step 5).
 
+### D154. No v1 migration in contract v3: `migrate_v1` removed, `deploy-contract` refuses a v1 contract
+- Date 2026-11-02 · Status: to confirm (built on `feat/email-login-2`) · Source: email-login build plan batch 2
+- Decision: contract v3 drops `migrate_v1`, the v1 layout copy (`HanaSignerV1`) and the v1 state fixture, as the build
+  plan says. The plan doesn't say what the deploy tooling does with a v1 contract once the code can't migrate it; the
+  stricter reading is built: `deploy-contract` refuses a v1 contract with or without `--upgrade`, with a blocker that
+  names the ways out (upgrade it with the v2 code, develop 26fb70a, first; or a fresh signer account, which changes
+  every address), instead of planning `DeployContract` + `migrate_v1`, which would now fail on chain (`MethodNotFound`,
+  the receipt reverts). The plan's `migrate-v1` step and the simulated chain's `migrate_v1` are gone; the v1 plan
+  and run tests became refusal tests.
+- Why: no deployment is on v1 (sandbox-dev migrated on 2026-10-30; every other env is created with `new`), and the
+  tooling shouldn't offer a plan that can't succeed. v3 still reads v1-era session records (`created_at_ms` absent):
+  a deployment migrated from v1 may hold some, so that unit test stays, built without the v1 fixture.
+- Not changed: the API's never-relay list (`apps/api/src/relayer-config.ts` `GOVERNANCE_METHODS`) still names
+  `migrate_v1`: refusing a method that no longer exists is harmless, and batch 6 edits that file.
+
+### D155. Attached gas for the email-login calls: the spec's values kept, 50 Tgas for cancel and unlink
+- Date 2026-11-02 · Status: to confirm (measured on `feat/email-login-2`; the API sets the values in build-plan batch
+  6) · Source: email-login build plan batch 2, the spec's "Gas and storage"
+- Decision: attach 150 Tgas to `create_session_and_derive` with a `link_jwt` (the spec's value, confirmed), 100 Tgas to
+  `link_identity` (the spec's value), and 50 Tgas to `cancel_link` and `unlink_identity` (the spec gives no value).
+  Measured in the sandbox (`docs/contract-interface.md` "Gas of the email login calls"): one RS256 verification of a
+  2048-bit key costs ≈ 17–18 Tgas, so the link in a login adds ≈ 18 Tgas (spec: 8–12) to 38.5 Tgas in the signer's
+  receipt (≈ 59 needed with the 20 Tgas forwarded to the MPC), `link_identity` burns 37.6 (spec: 25–35),
+  `cancel_link` / `unlink_identity` 20 (spec: 15).
+- Why: each value keeps at least 2.5 times the gas burnt, the margin the plain login has today (100 against ≈ 41),
+  so a slower testnet runtime or a longer token doesn't fail logins; unused gas is refunded. A 2-of-2 email policy
+  (Level 1) adds one verification (≈ +18 Tgas) to every call that takes an email token and raises these with it.
+- Rejected: 100 Tgas for the linked login (enough in the sandbox, but only 1.7 times the need).
+
 ### D142. Loopback origins only in `sandbox-*` environments
 - Date 2026-10-30 · Status: confirmed by the user · Source: batch C1 open question 1 (`docs/batch-c-build-plan.md`)
 - Decision: `localhost` / loopback origins are accepted only in dev environments (`sandbox-*`, `local*`), both when an
@@ -1941,4 +1971,5 @@ is a proposal there.
 Still open from `docs/email-login-spec.md`: the user-mail provider (Resend unless the colleague picks another,
 D87). Everything else follows D4, D119 and D121–D123. The contract readings made while building it, D130 and D131,
 wait for the user's confirmation (`docs/email-login-build-plan.md` "Open points for the user"; point 3 is confirmed, D132);
-D133–D138 are the security reviews' fixes, D139 their off-chain obligations.
+D133–D138 are the security reviews' fixes, D139 their off-chain obligations. Batch 2's readings, D154 (no v1
+migration; `deploy-contract` refuses v1) and D155 (attached gas of the email-login calls), wait for confirmation.

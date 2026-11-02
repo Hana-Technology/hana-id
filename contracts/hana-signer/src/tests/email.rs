@@ -1531,8 +1531,12 @@ fn migrate_v2_to_v3_keeps_every_field_and_every_path() {
 
 #[test]
 fn migrate_refuses_every_state_it_does_not_migrate_from() {
-    // v1 state, no state, a v2 layout that claims another version, a v3 layout that claims another version.
-    ctx_with_storage(ME, NOW_MS, v1_storage());
+    // A state shorter than the v2 layout (a v1 state is a strict prefix of it, and v1 has no migration any more), no
+    // state, a v2 layout that claims another version, a v3 layout that claims another version.
+    let mut storage = v2_storage();
+    let raw = storage.get_mut(b"STATE".as_slice()).unwrap();
+    raw.truncate(raw.len() - 8);
+    ctx_with_storage(ME, NOW_MS, storage);
     expect_panic("Unexpected state version", || drop(HanaSigner::migrate()));
     ctx_with_storage(ME, NOW_MS, Default::default());
     expect_panic("Unexpected state version", || drop(HanaSigner::migrate()));

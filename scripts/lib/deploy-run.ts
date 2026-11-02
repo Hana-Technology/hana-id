@@ -38,9 +38,8 @@ export const DEPLOY_USAGE = `Usage: deploy-contract.ts <env> [--yes] [--relayer-
   --relayer-allowance         gas allowance per session-pool key, in NEAR (default 2)
   --owner-relayer-keys N      owner-pool keys on the relayer (OWNER_RELAYER_KEYS: /v1/owner-actions) (default 1)
   --owner-relayer-allowance   gas allowance per owner-pool key, in NEAR (default 0.5)
-  --upgrade                   change the code of an initialised contract: a v1 contract is migrated in place
-                              (DeployContract + migrate_v1, signer full-access key); a v2 contract gets
-                              propose_upgrade(hash) by the owner, and execute_upgrade once governance_delay_ms passed
+  --upgrade                   change the code of an initialised contract: propose_upgrade(hash) by the owner, and
+                              execute_upgrade once governance_delay_ms passed (a v1 contract is refused)
   --wasm <file>               deploy this wasm instead of building
   --skip-build                use the last built wasm (its hash is then known when planning)
   --transfer-owner            hand the contract to the council DAO: propose_owner(DAO), then the DAO's accept_owner
@@ -233,16 +232,6 @@ async function execute(c: Ctx, step: DeployStep, creds: Partial<Record<Role, Loa
       const code = wasm();
       await storageCheck(code);
       await send(m.signer, [actionCreators.deployContract(new Uint8Array(code)), actionCreators.functionCall('new', step.init, GAS_INIT, 0n)]);
-      return 'done';
-    }
-    case 'migrate-v1': {
-      const code = wasm();
-      await storageCheck(code);
-      // One transaction: if migrate_v1 panics the deploy is rolled back with it and the v1 code stays.
-      await send(m.signer, [
-        actionCreators.deployContract(new Uint8Array(code)),
-        actionCreators.functionCall('migrate_v1', { issuer_key_delay_ms: step.issuer_key_delay_ms, governance_delay_ms: step.governance_delay_ms }, GAS_INIT, 0n),
-      ]);
       return 'done';
     }
     case 'relayer-keys': {

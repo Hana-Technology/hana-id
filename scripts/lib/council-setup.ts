@@ -268,7 +268,7 @@ export async function councilSetupMain(argv: readonly string[], deps: CouncilDep
     }
   }
   log(`\nDone. Council keys are in .secrets/${m.name}/council/ (0600). Next (docs/operations.md "Governance migration (sandbox-dev)"):
-  deploy-contract ${m.name} --upgrade                    # migrate_v1, updater key, watchdog
+  deploy-contract ${m.name} --upgrade                    # propose/execute the upgrade, updater key, watchdog
   deploy-contract ${m.name} --transfer-owner --approve-with <member>   # propose_owner(DAO), then the DAO accepts`);
   return 0;
 }

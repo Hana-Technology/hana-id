@@ -291,3 +291,41 @@ listed under "Batch 1 result"; the one choice in them that is yours to revisit i
     plain payload, which a crafted `pk2` could collide with (D133); the vault (batch 8) and the API precheck (batch 6)
     sign and check exactly this. The pre-v3 wallet guard (D135) means sandbox-dev's v3 upgrade needs one more owner
     (council) call, `accept_unrecorded_wallets`, before any link works there.
+
+## Batch 2 result
+
+Branch `feat/email-login-2`, not deployed (sandbox only; no testnet transaction).
+
+- **Sandbox tests.** `contracts/integration-tests/tests/email.rs` (new): the email issuer end to end with a local RSA
+  key (`set_issuer`, `mark_self_issued`, an owner-posted key that the updater key can't post, a watchdog can't
+  confirm and that waits `governance_delay_ms`; an email login whose CKD request carries `{scope}#email#{sub}#0`;
+  refused token forms); automatic links (case A, case B at once and delayed, both-have-a-wallet, a link added to a
+  plain signature refused) and explicit `link_identity` / `cancel_link` / `unlink_identity`: every login through a
+  member derives the root's `big_y`, an unlinked member its own. `tests/governance.rs`: the **v2 → v3 upgrade through
+  a 2-of-3 Sputnik DAO** from real v2 state built by the v2 wasm (`V2_COMMIT`), keeping every view (they only gain
+  `get_config().unrecorded_wallets`), session, pending change and path; links wait for the DAO's
+  `accept_unrecorded_wallets`; batch 6's email setup through the DAO and an email client by the scope owner; no way back
+  to v2 code; login gas of v3 against v2. `tests/layouts.rs`: the email layouts of the test helpers against the JS
+  worked examples (`email_fixture.json`). The access-key test now covers the v3 change methods (the session pool
+  can't call the link methods yet; batch 6 adds them).
+- **`V2_COMMIT` = develop 26fb70a** (the last develop commit before the v3 merge; its contract tree is the 0.1.1
+  upgrade drill's, 90c39bd). Built as `deploy-contract` builds (`cargo near build non-reproducible-wasm --no-abi`) it
+  **reproduces sandbox-dev's code hash** `3TSDwkMqPUhZtzFCvvaJ39nQWXUQK4LExPhsaS9tScoz` on the machine that deployed
+  it (the test prints the comparison; another machine embeds other cargo registry paths, so CI only reports it).
+- **Removed.** `migrate_v1`, `HanaSignerV1`, `src/v1_state_fixture.json`, the v1 → v2 sandbox test and the v1-only
+  unit tests (the v1 session-record test stays, built without the fixture). `deploy-contract` refuses a v1 contract
+  instead of planning a migration that can no longer succeed (D154). Wasm: 621.8 KB (628.5 KB with `migrate_v1`).
+- **Gas** (`docs/contract-interface.md` "Gas of the email login calls"): a linked login burns 38.5 Tgas in the
+  signer's receipt (plain: 20.5; one RS256 verification ≈ 17–18 Tgas, so the spec's +8–12 was low): the spec's
+  **150 Tgas is confirmed** (≈ 59 needed). `link_identity` 37.6 (attach 100), `cancel_link` / `unlink_identity` 20
+  (attach 50, D155); owner setup calls ≈ 2–3 Tgas; `execute_upgrade` v2 → v3 102 Tgas (attach 300). No-link logins on
+  v3 burn +0.3 to +0.6 Tgas over v2 (spec: +1–2).
+- **Tests.** 290 unit tests (`cargo test`; 293 before, minus the three v1 migration tests), clippy clean; 33 sandbox
+  tests (e2e 12, email 4 new, governance 10, layouts 7); `pnpm -r test` and `pnpm -r typecheck` green.
+- **Address safety.** No path, nonce, layout or derivation changed; the sandbox checks Google paths unchanged across
+  the upgrade and an unlinked email identity on `{scope}#email#{sub}#{key_index}`.
+- **Docs.** `contract-interface.md` (gas table, upgrades, `migrate_v1` gone), `operations.md` (the v2 → v3 path, the
+  v1 runbooks marked done), `architecture.md` (status), `README.md`, `envs/README.md`, `decisions.md` (D154, D155, to
+  confirm).
+- **Left for later batches.** The API's attached gas and the session pool's link methods (batch 6), testnet gas
+  (batch 8); the API's never-relay list still names `migrate_v1` (harmless, D154).

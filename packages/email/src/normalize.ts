@@ -36,7 +36,18 @@ export type InvalidEmailReason =
   | 'domain_unicode_version';
 
 export type NormalizeResult =
-  | { ok: true; email: string; local: string; domain: string }
+  | {
+      ok: true;
+      email: string;
+      local: string;
+      domain: string;
+      /**
+       * The delivery mailbox, for rate limits only (never an identity, never a recipient): `email` without its
+       * `+tag` on every domain (Gmail, Outlook, iCloud, Fastmail and others deliver tags to one inbox). Limits on
+       * codes sent must key on this, or cycling tags would mail one inbox without bound (D159).
+       */
+      mailbox: string;
+    }
   | { ok: false; reason: InvalidEmailReason };
 
 export type NormalizeDomainResult = { ok: true; domain: string } | { ok: false; reason: InvalidEmailReason };
@@ -135,7 +146,9 @@ export function normalizeEmail(input: string): NormalizeResult {
   const email = `${local}@${domain}`;
   // Punycode can make the domain longer than the input's: the limit holds for the normalized address too (D156).
   if (email.length > EMAIL_V1.maxAddressBytes) return { ok: false, reason: 'too_long' };
-  return { ok: true, email, local, domain };
+  const plus = local.indexOf('+');
+  const mailbox = plus > 0 ? `${local.slice(0, plus)}@${domain}` : email;
+  return { ok: true, email, local, domain, mailbox };
 }
 
 /** True when `email` is exactly the output of {@link normalizeEmail} (what `sub` and the Google-hosted rule accept). */

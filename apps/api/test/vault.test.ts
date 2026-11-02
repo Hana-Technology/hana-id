@@ -7,7 +7,7 @@ import { VAULT_LIMIT_PERIOD_S, vaultIpKey, vaultShareKey } from '../src/vault/li
 import { clearKekCache } from '../src/vault/kek.ts';
 import { advanceShare } from '../src/vault/shares.ts';
 import { NO_SHARE_ID, createSharePayload, vaultMessage } from '../src/vault/message.ts';
-import { ORIGIN, appHeaders, call, chain, deriveBody, newKey, seedApp, seedPlan, sessionKeyPair, uid } from './helpers.ts';
+import { ORIGIN, appHeaders, call, chain, deriveBody, forgeKeyEnvironment, newKey, seedApp, seedPlan, sessionKeyPair, uid } from './helpers.ts';
 import {
   HOUR,
   VAULT,
@@ -259,12 +259,10 @@ describe('vault gate', () => {
     expect(await unset.json()).toMatchObject({ code: 'origin_not_allowed' });
   });
 
-  it('403 scope_conflict for a pk_test_ app on a scope a pk_live_ app uses', async () => {
-    const scope = `s${uid()}`;
+  it('403 scope_conflict for a key whose prefix names the other environment than its scope', async () => {
     const near = chain();
-    const test = await seedApp({ scope });
-    await seedApp({ scope, key: newKey('pk_live_') });
-    const spk = spentSession(near, scope);
+    const test = await forgeKeyEnvironment(await seedApp());
+    const spk = spentSession(near, test.scope);
     const res = await call('/v1/vault/shares', { headers: vaultHeaders(test), body: await createShareBody(spk, test.id) });
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ code: 'scope_conflict' });
@@ -569,7 +567,7 @@ describe('POST /v1/vault/unlock', () => {
     expect(await res.json()).toMatchObject({ code: 'share_revoked' });
     expect((await storedShare(share.shareId))!.revoked_at).not.toBeNull();
     expect((await act(app, kept, 'unlock', 1)).status).toBe(200);
-    await env.DB.prepare('INSERT INTO app_origins (app_id, origin) VALUES (?1, ?2)').bind(app.id, extra).run();
+    await env.DB.prepare('INSERT INTO app_origins (app_id, origin, active_from) VALUES (?1, ?2, 0)').bind(app.id, extra).run();
     forgetCachedApps();
     expect((await act(app, share, 'unlock', 1, { parent: extra })).status).toBe(410);
   });

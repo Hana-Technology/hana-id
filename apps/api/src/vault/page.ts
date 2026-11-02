@@ -2,7 +2,7 @@
 // hidden iframe that holds the keys. The HTML is rendered per request so it can inline the app's D1 config (no chain
 // RPC, so a reload unlocks with one API call) and set `frame-ancestors` to the app's origins. Its script is a static
 // asset from @hana-id/web, loaded with `'self'`; until that bundle is built the script path simply 404s.
-import { type App, PUBLISHABLE_KEY_RE, getAppByKey } from '../apps.ts';
+import { type App, PUBLISHABLE_KEY_RE, appSuspended, getAppByKey } from '../apps.ts';
 import type { Env } from '../env.ts';
 import { log } from '../log.ts';
 import { MAX_APP_ORIGINS, servedOrigins } from './origins.ts';
@@ -106,14 +106,15 @@ export async function handleVaultPage(request: Request, env: Env, requestId: str
   try {
     app = await getAppByKey(env.DB, key);
     if (!app) return errorPage(403, requestId, undefined, 'unknown_app', head);
-    if (app.status !== 'active') return errorPage(403, requestId, app.id, 'app_suspended', head);
+    if (appSuspended(app)) return errorPage(403, requestId, app.id, 'app_suspended', head);
     const row = await getSettingsRow(env.DB, app.id);
     if (!row) return errorPage(403, requestId, app.id, 'unknown_app', head);
     settings = await effectiveSettings(row, app.id, Date.now());
   } catch {
     return errorPage(503, requestId, undefined, 'config_unavailable', head);
   }
-  // getAppByKey: a pk_test_ app whose scope a pk_live_ app also uses (test and live apps never share addresses).
+  // getAppByKey: a key whose prefix names the other environment than its scope (test and live apps never share
+  // addresses; the 0006 triggers refuse such a row, this is a second check).
   if (app.scope_conflict) return errorPage(403, requestId, app.id, 'scope_conflict', head);
 
   const origins = servedOrigins(env.ENV_NAME, app);

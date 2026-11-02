@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index.ts';
 import { MAX_APP_ORIGINS } from '../src/vault/origins.ts';
 import { jsonForHtml } from '../src/vault/page.ts';
-import { ORIGIN, call, chain, newKey, seedApp, uid } from './helpers.ts';
+import { ORIGIN, call, chain, forgeKeyEnvironment, newKey, seedApp, uid } from './helpers.ts';
 import { HOUR, VAULT, autoApprovePolicy, setSettings } from './vault-helpers.ts';
 
 afterEach(() => vi.restoreAllMocks());
@@ -139,9 +139,7 @@ describe('GET {vaultOrigin}/vault', () => {
 
   it('403 without a config script for an unknown, malformed, suspended or scope-conflicting app', async () => {
     const suspended = await seedApp({ status: 'suspended' });
-    const scope = `s${uid()}`;
-    const conflicted = await seedApp({ scope });
-    await seedApp({ scope, key: newKey('pk_live_') });
+    const conflicted = await forgeKeyEnvironment(await seedApp());
     for (const res of [await vaultPage(newKey()), await vaultPage('pk_test_x'), await page(''), await vaultPage(suspended.key), await vaultPage(conflicted.key)]) {
       expect(res.status).toBe(403);
       expect(csp(res)).toBe(`${BASE}; frame-ancestors 'none'`);

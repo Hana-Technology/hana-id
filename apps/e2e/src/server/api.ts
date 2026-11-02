@@ -149,17 +149,26 @@ export class MockApi {
     if (spec.publishableKey !== undefined) {
       if (spec.live) throw new Error('a live app gets a fresh key: publishableKey is for pk_test_ apps');
       if (!/^pk_test_[1-9A-HJ-NP-Za-km-z]{16,64}$/u.test(spec.publishableKey)) throw new Error('publishableKey must be a pk_test_ key');
-      const existing = this.d1.db.prepare('SELECT id FROM apps WHERE publishable_key = ?').get(spec.publishableKey) as { id: string } | undefined;
+      const existing = this.d1.db.prepare('SELECT app_id AS id FROM app_keys WHERE key = ?').get(spec.publishableKey) as { id: string } | undefined;
       if (existing) return { appId: existing.id, pk: spec.publishableKey };
     }
     this.seq += 1;
     const appId = `app_e2e_${this.seq}_${toHex(crypto.getRandomValues(new Uint8Array(4)))}`;
     const pk = spec.publishableKey ?? `${spec.live ? 'pk_live_' : 'pk_test_'}${base58.encode(crypto.getRandomValues(new Uint8Array(16)))}`;
     const s = spec.settings ?? {};
+    const scopeId = spec.scopeId ?? (spec.live ? LIVE_SCOPE_ID : 'e2e');
+    const now = Date.now();
+    // The hot DB after migration 0006: the scope row (one environment per scope; a key of the other one is refused by
+    // its triggers), the app, its key in app_keys, and its origins in force (active_from 0, as migrated).
+    this.d1.db
+      .prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES (?, 'org_legacy', ?, ?, ?, ?)")
+      .run(scopeId, spec.live ? 'live' : 'test', now, now, now);
     this.d1.db
       .prepare('INSERT INTO apps (id, name, scope_id, publishable_key, status, persistence, raw_sign, auto_approve_policy) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(appId, spec.name ?? 'E2E Partner', spec.scopeId ?? (spec.live ? LIVE_SCOPE_ID : 'e2e'), pk, spec.status ?? 'active', s.persistence ?? 'session', s.rawSign ?? 'off', s.autoApprovePolicy ? JSON.stringify(s.autoApprovePolicy) : null);
-    const insert = this.d1.db.prepare('INSERT INTO app_origins (app_id, origin) VALUES (?, ?)');
+      .run(appId, spec.name ?? 'E2E Partner', scopeId, pk, spec.status ?? 'active', s.persistence ?? 'session', s.rawSign ?? 'off', s.autoApprovePolicy ? JSON.stringify(s.autoApprovePolicy) : null);
+    if (spec.status === 'suspended') this.d1.db.prepare('UPDATE apps SET suspended_by = 1 WHERE id = ?').run(appId);
+    this.d1.db.prepare("INSERT INTO app_keys (id, app_id, key, created_by, created_at) VALUES (?, ?, ?, 'e2e', ?)").run(`key_${appId}`, appId, pk, now);
+    const insert = this.d1.db.prepare('INSERT INTO app_origins (app_id, origin, active_from) VALUES (?, ?, 0)');
     for (const o of spec.origins) insert.run(appId, o);
     return { appId, pk };
   }
@@ -167,7 +176,7 @@ export class MockApi {
   /** Revokes every live share of the app (apps/api's vault_shares rows) and returns how many. */
   revokeApp(pk: string): number {
     const r = this.d1.db
-      .prepare('UPDATE vault_shares SET revoked_at = ? WHERE app_id = (SELECT id FROM apps WHERE publishable_key = ?) AND revoked_at IS NULL')
+      .prepare('UPDATE vault_shares SET revoked_at = ? WHERE app_id = (SELECT app_id FROM app_keys WHERE key = ?) AND revoked_at IS NULL')
       .run(Date.now(), pk);
     return Number(r.changes);
   }
@@ -175,7 +184,7 @@ export class MockApi {
   /** The app's shares, oldest first. */
   shares(pk: string): { counter: number; revoked: boolean; partnerOrigin: string }[] {
     return this.d1.db
-      .prepare('SELECT counter, revoked_at, partner_origin FROM vault_shares WHERE app_id = (SELECT id FROM apps WHERE publishable_key = ?) ORDER BY created_at, rowid')
+      .prepare('SELECT counter, revoked_at, partner_origin FROM vault_shares WHERE app_id = (SELECT app_id FROM app_keys WHERE key = ?) ORDER BY created_at, rowid')
       .all(pk)
       .map((r) => ({ counter: Number(r.counter), revoked: r.revoked_at !== null, partnerOrigin: String(r.partner_origin) }));
   }
@@ -194,8 +203,8 @@ export class MockApi {
     const ctx = this.api.newCtx(this.env, crypto.randomUUID(), endpoint, req);
     const gate = await this.api.appGate(req, this.env, ctx, 'relay');
     if (!gate.ok) return gate.response;
-    // As apps/api's /v1/login: a pk_test_ app's success carries the request's own timings.
-    if (endpoint === '/v1/login') ctx.exposeTimings = gate.app.publishable_key.startsWith('pk_test_');
+    // As apps/api's /v1/login: a test-scope app's success carries the request's own timings.
+    if (endpoint === '/v1/login') ctx.exposeTimings = gate.app.environment === 'test';
     try {
       const b = await this.body(req);
       return endpoint === '/v1/login' ? await this.login(ctx, gate.app, b) : await this.derive(ctx, b);

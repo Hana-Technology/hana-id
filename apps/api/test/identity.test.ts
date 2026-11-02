@@ -296,14 +296,14 @@ describe('POST /v1/identity/token: refusals, in order', () => {
     expect((await storedShare(off.share.shareId))!.revoked_at).toBeNull();
 
     const removed = await sessionSetup();
-    await env.DB.prepare('INSERT INTO app_origins (app_id, origin) VALUES (?1, ?2)').bind(removed.app.id, 'https://second.example').run();
+    await env.DB.prepare('INSERT INTO app_origins (app_id, origin, active_from) VALUES (?1, ?2, 0)').bind(removed.app.id, 'https://second.example').run();
     forgetCachedApps();
     await env.DB.prepare('UPDATE vault_shares SET partner_origin = ?2 WHERE share_id = ?1').bind(Uint8Array.from(removed.share.shareId), 'https://gone.example').run();
     expect(await reasonOf(await mint(removed.app, removed.spk))).toBe('share_revoked');
 
     // A share made for another of the app's parents.
     const elsewhere = await sessionSetup();
-    await env.DB.prepare('INSERT INTO app_origins (app_id, origin) VALUES (?1, ?2)').bind(elsewhere.app.id, 'https://second.example').run();
+    await env.DB.prepare('INSERT INTO app_origins (app_id, origin, active_from) VALUES (?1, ?2, 0)').bind(elsewhere.app.id, 'https://second.example').run();
     forgetCachedApps();
     expect(await reasonOf(await mint(elsewhere.app, elsewhere.spk, { parent: 'https://second.example' }))).toBe('unknown_share');
 

@@ -8,6 +8,10 @@
 // --d1-id      D1 database id (`wrangler d1 create <cloudflare.d1Name>` prints it). Without it, the id already in
 //              wrangler.jsonc is kept only when that file was generated for the same D1 database (same
 //              `database_name`), else a local-only placeholder is written (fine for `wrangler dev` and tests).
+// --d1-name    Rehearsals only (docs/operations.md "Hot DB migration 0006"): point the generated config's D1 binding at a
+//              scratch database (its name must contain "rehearsal"; --d1-id required), so `wrangler d1 migrations
+//              apply` and the admin CLI (its --d1-name) run on it exactly as they will on the env's database. Run gen
+//              again without it afterwards.
 // --dev-vars   Also write apps/api/.dev.vars (0600, gitignored) from .secrets/<env>/relayer-keys.json (session pool,
 //              JSON array of ed25519 secret keys), .secrets/<env>/owner-relayer-keys.json (owner pool, same format) and
 //              .secrets/<env>/keys-updater.json ({account_id, public_key, private_key}), as written by
@@ -292,16 +296,24 @@ export function writeWranglerConfig(manifest: Manifest, d1Arg: string | undefine
 
 /** `root`/`dir` override the repo root (for .secrets/) and the output directory; `loadManifest` the manifest (tests). */
 export function main(argv: string[], opts: { root?: string; dir?: string; loadManifest?: (name: string) => Manifest } = {}): void {
-  const envName = argv.find((a, i) => !a.startsWith('--') && argv[i - 1] !== '--d1-id');
+  const envName = argv.find((a, i) => !a.startsWith('--') && argv[i - 1] !== '--d1-id' && argv[i - 1] !== '--d1-name');
   if (!envName) {
-    console.error('usage: gen-wrangler <env> [--d1-id <uuid>] [--dev-vars]');
+    console.error('usage: gen-wrangler <env> [--d1-id <uuid>] [--d1-name <rehearsal db> --d1-id <uuid>] [--dev-vars]');
     process.exit(2);
   }
   const idFlag = argv.indexOf('--d1-id');
   const d1Arg = idFlag >= 0 ? argv[idFlag + 1] : undefined;
   if (idFlag >= 0 && (!d1Arg || !/^[0-9a-f-]{36}$/u.test(d1Arg))) throw new Error('--d1-id needs a D1 database uuid');
 
-  const manifest = (opts.loadManifest ?? loadEnv)(envName);
+  const nameFlag = argv.indexOf('--d1-name');
+  const d1Name = nameFlag >= 0 ? argv[nameFlag + 1] : undefined;
+  if (nameFlag >= 0 && (!d1Name || !/^[a-z0-9-]{1,64}$/u.test(d1Name) || !d1Name.includes('rehearsal'))) {
+    throw new Error('--d1-name is for rehearsal databases: a D1 name containing "rehearsal"');
+  }
+  if (d1Name && !d1Arg) throw new Error("--d1-name needs --d1-id (the scratch database's uuid)");
+  const loaded = (opts.loadManifest ?? loadEnv)(envName);
+  const manifest: Manifest = d1Name ? { ...loaded, cloudflare: { ...loaded.cloudflare, d1Name } } : loaded;
+  if (d1Name) console.log(`The D1 binding points at the rehearsal database ${d1Name}: run gen ${loaded.name} again (with the env's own --d1-id) before any deploy or admin command on the env`);
   // The page Workers first: they refuse more envs (workers.dev outside dev envs), and a refusal then writes nothing.
   const pages = writePagesWranglerConfigs(manifest, COMPATIBILITY_DATE, opts.dir);
   const { path, d1Id } = writeWranglerConfig(manifest, d1Arg, opts.dir);

@@ -87,7 +87,10 @@ so for sandbox-dev `https://hana-id-demo-sandbox-dev.tingtc.workers.dev`.
    corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:origins:add \
      --app pk_test_85gdPtFF4kYzqgPisccZbsT9fQP1tq7ie \
      --origin https://hana-id-demo-sandbox-dev.tingtc.workers.dev --remote
+   corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:changes:announce <gc id> --remote   # the id printed above
    ```
+
+   The origin is a staff proposal: it is in force 60 s after the announcement (sandbox-dev's `appChangeDelayMs`).
 
    The shared Google client needs nothing: the demo's origin never talks to Google (Hana's login popup does, on
    `authOrigin`).
@@ -114,8 +117,8 @@ corepack pnpm --filter @hana-id/demo dev       # http://localhost:5174 (no CSP: 
 corepack pnpm --filter @hana-id/demo build && corepack pnpm --filter @hana-id/demo preview   # the built page with its headers
 ```
 
-Both need `http://localhost:5174` on the app's origins (`app:origins:add … --origin http://localhost:5174`; loopback
-works for `pk_test_` keys in `sandbox*` envs only).
+Both need `http://localhost:5174` on the app's origins (`app:origins:add … --origin http://localhost:5174`, then
+`app:changes:announce`; loopback works for test apps in `sandbox*` envs only).
 
 ## Tests
 

@@ -3,9 +3,13 @@
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
 known open issues. Last verified against code: 2026-11-02 for the identity token's AWS KMS signer (branch
 `feat/identity-token-7`, D215–D219: its compromise row, the AWS access key in the inventory, the signer invariants and
-open issue (l)), for the token check's move to `packages/oidc` and its
-optional claims (branch `feat/batch-c-2`, D201, in "Verify before relay"), for the hourly link counter
-(branch `feat/link-cap`, D200, in the email-login invariants) and the watchdog's email issuer rules, the link alarms
+open issue (l)); 2026-11-02 for what runs on sandbox-dev (branch `docs/consistency-pass`:
+open issue (e) and its watchdog notes, the Q22 note, OPER-3, against `develop` @ 1c6a124 and `docs/operations.md`);
+2026-11-02 for the hot DB after migration 0006 (branch
+`feat/batch-c-3`: the gate on `app_keys` and `scopes`, origins in force by `active_from`, staff-proposed guarded
+changes and their announcement, the `app_changes` ledger, open issue (i) fixed for the CLI); 2026-11-02 for the token
+check's move to `packages/oidc` and its optional claims (branch `feat/batch-c-2`, D201, in "Verify before relay"),
+for the hourly link counter (branch `feat/link-cap`, D200, in the email-login invariants) and the watchdog's email issuer rules, the link alarms
 and the `unrecorded_wallets` alert (branch `feat/email-login-5`, D190–D193, D200); 2026-10-30 for the watchdog's retired-key rule (branch
 `fix/watchdog-retired-key-race`, D153), for the partner identity token (branch
 `feat/identity-token-2`: the review fixes D176–D179 in the identity rows, invariants and open issue (l); branch
@@ -55,7 +59,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | `KEYS_UPDATER_KEY` (Worker secret, function-call key on the signer account) | Governance contract (sandbox-dev since 2026-10-30): **propose** an attacker RSA key (`set_issuer_key`), which waits `issuer_key_delay_ms` (mainnet 2 h) in public. v1 contract: set it at once → mint Google tokens for any `sub` → derive any user's key | The watchdog cancels a pending key Google doesn't publish within one run and deletes every updater key; an active one (the watchdog was down) makes it pause and delete every updater key (D82, D126). Full table: `docs/governance-spec.md` "What a compromise gives"; recovery: `docs/playbooks.md` `updater-key-stolen`, `forged-active-key` |
 | Owner key (governance contract: the council DAO, 2 of 3) | Two council keys: issuer keys (delayed like the updater's), config, pause/unpause, upgrades and owner transfer (after `governance_delay_ms`, mainnet 72 h), surplus withdrawal | Every delayed action is public and cancellable by the owner; the watchdog alerts on each (`governance_change`). See `docs/governance-spec.md` and `docs/playbooks.md` `unexpected-owner-action` |
 | Signer account full-access key | Redeploy the contract: anything, including MPC requests for any path | No upgrade lock in batch A/A.2/B. Open issue (e), D33; fix specified in `docs/governance-spec.md` |
-| D1 | App origins (→ `frame-ancestors`, parent-origin checks), app scope, settings incl. bare writes of `raw_sign`/policy without the pending delay, suspensions; `share_enc` rows | `K_s` needs `VAULT_KEK`; a policy needs the user's consent to its `policyId`; raw requests still need approval |
+| D1 | App origins (→ `frame-ancestors`, parent-origin checks; a bare write of an `app_origins` row with `active_from` set skips the guarded-change delay), app scope, settings incl. bare writes of `raw_sign`/policy without the pending delay, suspensions; `share_enc` rows. Batch C's drift detection (C5) will flag such writes against `guarded_changes` and the 0006 baseline; it can't catch an insider who also forges those rows | `K_s` needs `VAULT_KEK`; a policy needs the user's consent to its `policyId`; raw requests still need approval |
 | `VAULT_KEK` | Unwrap every `K_s` in D1 | Useless without a device's IndexedDB record (PRK is encrypted under `K_s` only on the device) |
 | API Worker code or all Worker secrets, or the Cloudflare account | Everything: the API Worker renders the vault page (inlined config, `frame-ancestors`) and holds `KEYS_UPDATER_KEY`; the same account deploys the two page Workers that serve the vault and auth bundles | Single trust root. Mitigations: small vault bundle, strict CSP, no third-party script, narrow `frame-ancestors` |
 | `vaultOrigin` | Every key of every user that loads it (PRK in memory) | — |
@@ -129,7 +133,7 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   tombstone), `counter == used + 1`, Ed25519 over `"hana-id-session-v1:" ‖ counter ‖ sha256(payload)`; the off-chain
   vault prefix `hana-id-vault-v1:` can never verify as a session message.
 - `create_session_and_derive` is atomic up to the MPC receipt: any signer-side panic reverts the session.
-- Email login, contract v3 (branch `feat/email-login-1`, not deployed; `docs/email-login-build-plan.md` batch 1):
+- Email login, contract v3 (merged on `develop`, not deployed; `docs/email-login-build-plan.md` batch 1):
   - Self-issued issuers (email): keys owner-posted only (never the updater key), each change waits ≥
     `governance_delay_ms`, never confirmed early; one RSA modulus once per issuer (no key counts as two signers);
     tokens are JWS JSON with ≤ 3 signatures, every one valid, from ≥ `required` distinct signers (1-of-1 `hana` at
@@ -213,10 +217,13 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   relayed and fails on chain, at the cost of its owner's own windows only.
 - **Origin rules** (`apps/api/src/origins.ts:81`): a Hana page (`Origin` = `VAULT_ORIGIN`/`AUTH_ORIGIN`) may call only
   its endpoints, and only for an `x-hana-parent-origin` the app allows. Partner origins: `GET /v1/app` always; the
-  session endpoints only for `pk_test_` in dev envs. Loopback origins and `http://localhost:*` only for `pk_test_` in
-  dev envs. A `pk_test_` app on a scope a `pk_live_` app uses is refused (`scope_conflict`, `getAppByKey`,
-  `apps/api/src/apps.ts:29`; D51). These checks bind browsers only (a script can send any `Origin`); they never
-  replace a token or signature.
+  session endpoints only for test-scope apps in dev envs. Loopback origins and `http://localhost:*` only for
+  test-scope apps (`scopes.environment = 'test'`) in dev envs. Only origins in force count (`app_origins.active_from
+  <= now`; NULL, not yet announced, never matches), in the gate, the vault page and the preflight alike. Test and
+  live apps never share a scope (D51): `scopes` holds one environment per scope, and migration 0006's triggers refuse
+  an app or key whose prefix names the other one (the gate still refuses such a key, `scope_conflict`, after a direct
+  edit). A revoked key is `unknown_app`, the same as an unknown one. These checks bind browsers only (a script can
+  send any `Origin`); they never replace a token or signature.
 - **Hana origins host nothing else.** Each Hana origin is its own thin Worker (D66, `apps/api/src/pages/host.ts`): the
   vault Worker forwards only `GET /vault` to the API Worker, the auth Worker serves only its four pages, both serve
   static assets otherwise and answer only GET/HEAD on their own host. In the API Worker, a request whose URL origin is
@@ -225,8 +232,8 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   manifest schema (`packages/env/src/origins.ts`, `schema.ts`) refuses a Hana origin that is an IP address, a bare
   public suffix, a single label or has a trailing dot (any env), loopback (including `localhost.` and IPv4-mapped
   127/8) outside `local*`, `apiUrl`'s own origin (any env), or `apiUrl`'s site outside dev envs.
-- **CORS**: app endpoints echo only an allowed origin; preflight allows the Hana origins and origins of active apps
-  (`origins.ts:105`); vault endpoints only `VAULT_ORIGIN`; the relay only the Hana origins; `/v1/owner-actions` and
+- **CORS**: app endpoints echo only an allowed origin; preflight allows the Hana origins and the origins in force of
+  active (no suspension bit), undeleted apps (`origins.ts` `preflightAllows`); vault endpoints only `VAULT_ORIGIN`; the relay only the Hana origins; `/v1/owner-actions` and
   `/v1/health` are `*`.
 - **Vault shares**: every lookup is `share_id AND app_id`; one share per session key; a share needs a live, used-up
   session in the app's scope; counter moves by one atomic `UPDATE`; a share whose partner origin was removed is
@@ -280,8 +287,9 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
 - **App cache (vault endpoints only, D78).** `/v1/vault/*` takes the app row (status, key, origins, scope conflict,
   plan) from a per-isolate cache whose entries live 30 s from their D1 read (`apps/api/src/app-cache.ts`; unknown keys
   and failed reads never cached; at most 256 apps). Nothing in the Worker writes `apps`, so the staleness bound is the
-  TTL: a suspension, a removed or changed publishable key, a removed origin (its shares are revoked on the first use
-  after) or a scope conflict reaches unlock, touch, revoke and share creation within 30 s per isolate. The app's
+  TTL: a suspension, a revoked key, a removed origin (its shares are revoked on the first use after) or a scope
+  conflict reaches unlock, touch, revoke and share creation within 30 s per isolate. It caches the origins in force at
+  its read, so it never serves a pending origin early (D208). The app's
   settings (persistence, TTLs), the share rows and the signature are read fresh on every request. The relay endpoints,
   `GET /v1/app` and the vault page never use the cache, so a suspension stops logins, relays and new vault loads at
   once (tests: `apps/api/test/app-cache.test.ts`).
@@ -292,9 +300,25 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   security sweep APIV-3). Relay errors never return the RPC's or the runtime's error text (it can name the RPC URL,
   which can carry an API key): `near_unavailable`, `near_rejected` and `relayer_unavailable` answer a fixed message
   and log a code.
-- **Admin settings writes** (`scripts/lib/admin-settings.ts`): the UPDATE is guarded by every settings column as the
-  command read it, so a change made in between (another operator's `--auto-approve off`) can't be overwritten with
-  values planned from the old row; a delayed setting is never put in force by the CLI.
+- **Admin CLI writes** (`scripts/lib/admin-apps.ts`, `admin-settings.ts`, `admin-sql.ts`; batch C3): every write is
+  a compare-and-swap. Its first statement inserts its `app_changes` row only while the version the command read still
+  holds (`origins_version`, `settings_version`, or for settings also every settings column as read); the version bump
+  and every other statement run only if that row exists; the CLI reads the row back. The CAS is safe because D1 runs
+  each query (one `--command` with all its statements) as one implicit transaction, so nothing else writes between the
+  predicate and the bump and a failing statement aborts the whole write; the M1 rehearsal checks it on remote D1 (D207).
+  A change made in between
+  (another operator's `--auto-approve off`) is never overwritten with values planned from the old row, even when the
+  other writer moved the version to the same number. Re-setting the policy in force keeps a matured pending policy as
+  the stored one before clearing the pending columns, and an announcement keeps a matured pending policy or raw-signing
+  value in force, so neither ever brings an older value back. The `no_session` waiver is decided inside the
+  announcement's SQL from the database as it is then, and fails closed on any sign of a user in the scope
+  (`first_session_at`, written at every session-pool relay attempt; another origin ever in force; a vault share, usage
+  or identity row). Proposals and announcements are refused with `--remote` until the deployed API reports the batch
+  C3 reads (`GET /v1/health` `hotDb` ≥ 6): an older API would treat a proposed origin as in force. The CLI never puts a guarded change in force:
+  origin adds, policies and raw-signing enables are staff proposals (`hana`, full `appChangeDelayMs`, refused within
+  `appChangeDelayMs` of the scope's org assignment); `app:changes:announce` (only without an admin Worker, never on
+  a production network) starts the clock and records that nobody was emailed. Raw signing is refused for test apps
+  (D39 as amended 2026-10-28). Removals, turn-offs and suspensions are immediate.
 
 - **Identity token** (`src/identity/`; `docs/identity-token-spec.md` "Invariants"; tests in
   `apps/api/test/identity.test.ts`):
@@ -622,8 +646,10 @@ findings are tracked with their own fixes.
 
 ## Known open issues
 
-Status: **fixed** (a), (b), (c), (d), (f); **accepted** (k), and the residual risks named under (b)–(d) and
-"Auto-approve policies"; **open** (e) (pre-mainnet, D33), (g), (h), (i), (j) (sandbox-dev only; production envs
+Status: **fixed** (a), (b), (c), (d), (f); **fixed on sandbox-dev** (e) (the governance contract and watchdog run there
+since 2026-10-30; mainnet ships with them once its delay, council and watchdog account are set up: D80, D81, D86);
+**accepted** (k), and the residual risks named under (b)–(d) and
+"Auto-approve policies"; **fixed for the CLI** (i); **open** (g), (h), (j) (sandbox-dev only; production envs
 need D38's two domains), (l) (pre-mainnet: the identity token's KMS signer and JWKS pin check). The 2026-10-29 security sweep's items in the API, tooling and CI: "Security sweep
 2026-10-29" below.
 
@@ -676,7 +702,7 @@ Worker secret that can call `set_issuer_key` (`apps/api/src/issuer-keys.ts`), an
 can add an RSA key, mint a "Google" token for any `sub`, and derive any user's key in any scope. The contract
 account's full-access key can upgrade the contract (no lock). `docs/contract-interface.md` already calls the owner and
 contract account total control; the point here is that one of those powers sits in the API Worker's secrets. Confirmed
-plan (D33; built on branch `feat/governance`, not deployed), specified in `docs/governance-spec.md` and confirmed by the user on 2026-10-29 (D80–D86):
+plan (D33; built, and deployed on sandbox-dev 2026-10-30), specified in `docs/governance-spec.md` and confirmed by the user on 2026-10-29 (D80–D86):
 
 - Delays (D80): a newly posted issuer key waits `issuer_key_delay_ms` (mainnet 2 h, provisional until Google's lead
   time is measured with `admin issuer-keys:lead-times`); upgrades, owner transfer and surplus withdrawals wait
@@ -693,7 +719,7 @@ plan (D33; built on branch `feat/governance`, not deployed), specified in `docs/
   deletes the updater key that proposed one (not when it is Google's own material from the last 24 h, a retirement race:
   D153), and pauses only when such a key is active on chain; everything else is
   alert-only. The owner unpauses at once. Pause stops derivation and every token path, never governance. Built in
-  `apps/watchdog` (branch `feat/governance`), not deployed. Pause stops derivation only for as long as it lasts:
+  `apps/watchdog`, deployed on sandbox-dev 2026-10-30. Pause stops derivation only for as long as it lasts:
   sessions a forged key opened before the pause would derive again after it (up to 24 h, any `max_uses`), so the
   runbook raises the owner's session floor (`set_sessions_valid_from_ms`) past the pause before unpausing, which
   retires every older session. Scope changes proposed with a forged key's owner tokens or client proofs can't be
@@ -709,8 +735,8 @@ plan (D33; built on branch `feat/governance`, not deployed), specified in `docs/
   and `set_issuer` (no pending state to see); and every on-chain string in an alert (kid, provider, proposer) goes
   through an allow-list or an escaped form, with header-safe titles and Slack-escaped text, so a hostile kid can't
   break a page, inject headers or `<!channel>`.
-- Watchdog and the email issuer (email login, `docs/email-login-spec.md` "Watchdog", D190–D193; branch
-  `feat/email-login-5`, not deployed): self-issued keys have no outside JWKS, so the watchdog trusts only the pins in
+- Watchdog and the email issuer (email login, `docs/email-login-spec.md` "Watchdog", D190–D193; batch 5,
+  deployed on sandbox-dev 2026-11-02, where the v2 contract has no email issuer yet): self-issued keys have no outside JWKS, so the watchdog trusts only the pins in
   its own manifest (`watchdog.pinnedIssuerKeys.email`, set on its own account: a pin change is the operator's
   redeploy, outside Hana's main account). A pending email key whose RFC 7638 thumbprint isn't pinned for its signer
   (or whose kid isn't that thumbprint) is cancelled; an active one pauses and deletes every updater key, also at the
@@ -763,8 +789,10 @@ each). Known (`docs/context.md`).
 `register_scope` and `apply_pending_config`, but no endpoint relays them. Harmless (the Worker refuses them), but a
 leaked key can call them directly within its allowance.
 
-**(i) The 20-origin cap is enforced only by the vault page. Open.** `admin app:origins:add` doesn't cap the count; an
-app over 20 gets 403 `too_many_origins` on its vault page (availability, not safety).
+**(i) The 20-origin cap is enforced only by the vault page. Fixed for the CLI (batch C3).** `admin app:create` and
+`app:origins:add` refuse more than 20 active-or-pending origins per app (`MAX_APP_ORIGINS`, `@hana-id/console-core`);
+`AdminRpc` and `ConsoleRpc` (C5) apply the same cap. A direct D1 write can still exceed it; the vault page then answers
+403 `too_many_origins` (availability, not safety).
 
 **(j) sandbox-dev's two Hana origins are one site. Open (sandbox-dev only; outside dev envs the schema refuses a
 same-site pair).** `hana-id-vault-sandbox-dev.tingtc.workers.dev` and `hana-id-auth-sandbox-dev.tingtc.workers.dev`
@@ -809,8 +837,8 @@ Fixed:
 - **APIW-3 (Medium)**: one global owner-action cap let any invited owner starve `cancel_change`. Caps per owner,
   scope and global, `cancel_change` on windows of its own (see "Owner actions" above for the remaining limit).
 - **OPER-2 (Medium)**: gitleaks caught none of this repo's secret shapes. Custom rules plus a self-test on fakes.
-- **OPER-3 (Low)**: CODEOWNERS widened (D100); the second owner's handle and "Require review from Code Owners" on
-  `develop` and `main` are still to do (GitHub settings, not in the repo).
+- **OPER-3 (Low)**: CODEOWNERS widened (D100), with the second owner `@mj-hana` on every owned path (2026-10-30);
+  "Require review from Code Owners" on `develop` and `main` is still to do (a GitHub setting, not in the repo).
 - **APIW-4, APIV-3, APIV-7, OPER-5, OPER-6, OPER-11 (Low/Info)**: as in D100. APIV-5: a "KEK compromised" runbook
   (`docs/operations.md` "`VAULT_KEK`"). Relay errors no longer echo RPC or fetch error text (sweep question 14).
 
@@ -841,8 +869,10 @@ Deferred, with the reason:
   key fragment on a malformed file; replace with a script.
 
 Open questions in `docs/batch-b-spec.md` that bear on security: Q22 (a timelock for new origins in shared mode) is
-decided for batch C (D32, D34: 24 h delay, notice, cancel) but not built, so `admin app:origins:add` still applies at
-once; Q15 (production domains) is decided only as far as two registrable domains (D38). Decided on 2026-10-28
+decided for batch C (D32, D34: 24 h delay, notice, cancel) and built in batch C3 (merged, not deployed on sandbox-dev):
+`admin app:origins:add` is a staff proposal that waits `appChangeDelayMs` (≥ 24 h on a production network; see
+"Admin CLI writes" above), and the CLI refuses remote proposals until the API reports the 0006 reads (`hotDb` ≥ 6),
+so a pre-C3 API never sees a proposed origin as in force; Q15 (production domains) is decided only as far as two registrable domains (D38). Decided on 2026-10-28
 (`docs/decisions.md`): Q7 (D56, registry check at login), Q9 (D65, `rpcFallback`), Q14 (D53, `max_uses = 1`), Q16
 (D54, KEK in `.secrets`, KMS later), Q18 (D59, export limits), Q27 (D39, test apps refuse mainnets), Q28 (D55,
 in-memory idle limit), Q39 (D46, no token caps), Q40 (D45, consent without a fresh sign-in), Q41 (D44, verified

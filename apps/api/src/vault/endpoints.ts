@@ -4,7 +4,7 @@
 // back only for a signed, in-order, unexpired and unrevoked request. No endpoint here makes a chain transaction, and
 // only share creation reads the chain.
 import { getAppByKeyCached } from '../app-cache.ts';
-import { type App, PUBLISHABLE_KEY_RE } from '../apps.ts';
+import { type App, PUBLISHABLE_KEY_RE, appSuspended } from '../apps.ts';
 import { hex, sha256 } from '../bytes.ts';
 import type { Env } from '../env.ts';
 import { type Ctx, done, lap, limiter, newCtx, reject } from '../handlers.ts';
@@ -17,7 +17,7 @@ import { type SessionView, isSessionView } from '../views.ts';
 import { type Keks, SHARE_KEY_BYTES, kekFor, loadKeks, unwrapShareKey, wrapShareKey } from './kek.ts';
 import { SHARE_PER_MINUTE, VAULT_LIMIT_PERIOD_S, VAULT_PER_IP_MINUTE, vaultIpKey, vaultShareKey } from './limits.ts';
 import { NO_SHARE_ID, SHARE_ID_BYTES, type ShareAction, actionPayload, createSharePayload, verifyVaultSignature } from './message.ts';
-import { isTestKey } from '../origins.ts';
+import { isTestApp } from '../origins.ts';
 import { parentOriginAllowed } from './origins.ts';
 import { effectiveSettings, getSettingsRow } from './settings.ts';
 import { type ShareRow, type ShareUpdate, advanceShare, capExpiry, getShare, incrementUnlocks, insertShare, markRevoked, revokeAllFrom } from './shares.ts';
@@ -90,11 +90,11 @@ export async function vaultApp(request: Request, env: Env, ctx: Ctx): Promise<Va
   lap(ctx, 'app');
   if (!app) return fail(401, 'unknown_app', 'Unknown publishable key');
   ctx.appId = app.id;
-  if (app.status !== 'active') return fail(403, 'app_suspended', 'This app is suspended');
+  if (appSuspended(app)) return fail(403, 'app_suspended', 'This app is suspended');
   if (!fromVault) return fail(403, 'origin_not_allowed', 'Origin not allowed for this endpoint');
   const parentOrigin = request.headers.get('x-hana-parent-origin');
   if (!parentOrigin || !parentOriginAllowed(env.ENV_NAME, app, parentOrigin)) return fail(403, 'origin_not_allowed', 'Parent origin not allowed for this app');
-  if (app.scope_conflict) return fail(403, 'scope_conflict', 'This test app shares its scope with a live app');
+  if (app.scope_conflict) return fail(403, 'scope_conflict', 'This key’s environment is not its scope’s');
   return { ok: true, app, parentOrigin };
 }
 
@@ -183,7 +183,7 @@ export async function handleVaultEndpoint(request: Request, env: Env, endpoint: 
   const limited = await vaultLimits(request, env, ctx, gate.app);
   if (limited) return limited;
   // pk_test_ apps: share creation and unlock answer with the request's own timings (apps/smoke's breakdowns).
-  ctx.exposeTimings = (endpoint === '/v1/vault/shares' || endpoint === '/v1/vault/unlock') && isTestKey(gate.app.publishable_key);
+  ctx.exposeTimings = (endpoint === '/v1/vault/shares' || endpoint === '/v1/vault/unlock') && isTestApp(gate.app);
   const parsed = await readJson(request, MAX_VAULT_BODY);
   if (!parsed.ok) return reject(ctx, parsed.status, 'bad_request', parsed.error);
   if (endpoint === '/v1/vault/shares') {

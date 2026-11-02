@@ -1,7 +1,9 @@
 # API reference — every endpoint the `apps/api` Worker serves today
 
 Last verified against code: 2026-11-02 (branch `feat/identity-token-7`: the identity token's AWS KMS signer, its vars,
-secrets and log codes, D215–D218; branch `feat/batch-c-2`: the token check and the governance read's JWKS
+secrets and log codes, D215–D219); 2026-11-02 (branch `feat/batch-c-3`: migration 0006, the gate on `app_keys` and `scopes`,
+origins in force by `active_from`, suspension bits, `first_session_at`, the guarded-change cron job, the batch C vars
+read, D205–D209); 2026-11-02 (branch `feat/batch-c-2`: the token check and the governance read's JWKS
 cache now in `@hana-id/oidc`; wrongly typed optional claims ignored, a non-finite `exp` refused, the owner-action
 token's claims, D201); 2026-10-30 (branch `feat/identity-token-2`: the identity token's order of checks, limits, marker, cross-app share check, share tombstones in the cron, the new binding and log event, D176–D178);
 2026-10-30 (branch `feat/identity-token-1`: "Identity token", its routes, limits,
@@ -69,14 +71,16 @@ partner identity token (`docs/identity-token-spec.md`, build steps 1–4).
 "Dev env" = `ENV_NAME` starting with `local` or `sandbox`. "Loopback" = `localhost`, `*.localhost`, `127.0.0.0/8`,
 `[::1]`; the app origin entry `http://localhost:*` matches any `http://localhost:<port>`.
 
-`originAllowed(app, origin)`: exact match against `app_origins`; loopback origins (and the wildcard) count only for
-`pk_test_` keys in dev envs.
+`originAllowed(app, origin)`: exact match against the app's origins **in force** (`app_origins.active_from <= now`; a
+row whose `active_from` is NULL, a guarded change not yet announced, never matches, and an announced one matches from
+its `active_from` on, with nothing run at that moment); loopback origins (and the wildcard) count only for apps on a
+`test` scope (`scopes.environment`, the scope of every `pk_test_` key) in dev envs.
 
 | Caller (`Origin`) | `/v1/app` | `/v1/login` | `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` | Vault endpoints | Login relay |
 |---|---|---|---|---|---|
 | `VAULT_ORIGIN` | yes | yes | yes | yes | read |
 | `AUTH_ORIGIN` | yes | yes | no | no | write, read |
-| a partner origin of the app | yes, any key, any env | no | only `pk_test_` in dev envs (`apps/smoke`) | no | no |
+| a partner origin of the app | yes, any key, any env | no | only test-scope apps in dev envs (`apps/smoke`) | no | no |
 
 - From a Hana origin the request acts for `x-hana-parent-origin`, which must pass `originAllowed` for the app. CORS
   echoes the Hana origin even when the parent is refused, so the page can read the error.
@@ -84,7 +88,7 @@ partner identity token (`docs/identity-token-spec.md`, build steps 1–4).
 
 | Preflight | Allowed when | `allow-headers` | `allow-methods` |
 |---|---|---|---|
-| `/v1/app`, `/v1/sessions*`, `/v1/derive`, `/v1/login` | `Origin` is a Hana origin, or any active app lists it (loopback: only a `pk_test_` app in a dev env) | `content-type, x-hana-key, x-hana-parent-origin, x-hana-relay-key` | `GET, POST, OPTIONS` |
+| `/v1/app`, `/v1/sessions*`, `/v1/derive`, `/v1/login` | `Origin` is a Hana origin, or it is in force (`active_from <= now`) for an app that is active (`status = 'active'`, `suspended_by = 0`) and not deleted (loopback: only a test-scope app in a dev env) | `content-type, x-hana-key, x-hana-parent-origin, x-hana-relay-key` | `GET, POST, OPTIONS` |
 | `/v1/vault/*` | `Origin === VAULT_ORIGIN` | `content-type, x-hana-key, x-hana-parent-origin` | `POST, OPTIONS` |
 | `/v1/login-relay/*` | a Hana origin | `content-type, x-hana-relay-key` | `GET, POST, OPTIONS` |
 | `/v1/health`, `/v1/owner-actions` | always (`*`) | `content-type` | `POST, OPTIONS` |
@@ -96,10 +100,15 @@ Allowed preflight: `204`, `access-control-max-age: 600`, `access-control-expose-
 
 Every app endpoint (`/v1/app`, `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke`, `/v1/login`) runs, in order:
 
-1. `x-hana-key` present (`401 missing_key`) and shaped `pk_(test|live)_<base58 16..64>`, found in D1
-   (`401 unknown_app`; D1 failure `503 config_unavailable`).
-2. App `active` (`403 app_suspended`); not a `pk_test_` app on a scope a `pk_live_` app also uses
-   (`403 scope_conflict`).
+1. `x-hana-key` present (`401 missing_key`) and shaped `pk_(test|live)_<base58 16..64>`, an unrevoked key of an
+   undeleted app (`401 unknown_app`; D1 failure `503 config_unavailable`). Two D1 queries, as before 0006: the app
+   through `app_keys` (`revoked_at` NULL or still in the future, the rotation grace) joined to `apps`
+   (`deleted_at IS NULL`), `scopes` and `plans`; then its origins in force. A revoked key answers exactly as an
+   unknown one. `apps.publishable_key` is never read (it stays as the legacy column every app fills with its first key).
+2. App active: no suspension bit (`suspended_by`: Hana 1, org 2, partner 4) and the legacy `status` `active`, which a
+   trigger keeps equal to `suspended_by != 0` (`403 app_suspended`). The key's prefix names its scope's environment
+   (`403 scope_conflict` otherwise; the 0006 triggers refuse such a row, so only a direct edit of `app_keys` reaches
+   this check). Test and live apps never share a scope: `scopes` holds one environment per scope (D51).
 3. Caller rule above (`403 origin_not_allowed`).
 4. The per-IP limit (`429 rate_limited` + `retry-after` seconds; limiter failure `503 rate_limiter_unavailable`).
 
@@ -110,6 +119,14 @@ spends the quota every user of the app shares (security sweep APIW-1); the per-I
 flood can make the checks cost.
 
 A test app's other limits are the vault's, never the API's: no raw signing and no mainnet chains for `pk_test_` (D39).
+
+When a session-pool relay (`/v1/sessions`, `/v1/login`, `/v1/derive`, `/v1/sessions/revoke`) is about to be sent on a
+scope whose `scopes.first_session_at` is NULL, the API sets it, beside the relay (no added latency; with an execution
+context it finishes after the response). At the attempt, not the success, so a relay whose answer fails or is lost still
+marks the scope. A failure is logged as `first_session_write_failed` and retried by the next attempt. It is one of the
+signs that end the `no_session` waiver of guarded changes, which is decided inside the announcement's own SQL: no
+`first_session_at`, no other origin of the scope ever in force, no vault share, usage or identity row for the scope's
+apps (`scripts/lib/admin-sql.ts` `noSessionWaiver`).
 
 ## Rate limits
 
@@ -143,7 +160,9 @@ Seeded plan `free`: `per_minute` 60, `per_day` 5000, `per_ip_minute` 20.
 
 ### `GET /v1/health`
 
-No auth, no limits, `access-control-allow-origin: *`. → `200 {"ok": true, "env": ENV_NAME, "signer": SIGNER_ACCOUNT, "requestId"}`.
+No auth, no limits, `access-control-allow-origin: *`. → `200 {"ok": true, "env": ENV_NAME, "signer": SIGNER_ACCOUNT, "hotDb": 6, "requestId"}`.
+`hotDb` is the hot-DB migration whose reads the build makes (`apps.ts` `HOT_DB_SCHEMA`; 6 from batch C3, absent
+before): the admin CLI refuses guarded proposals and announcements on `--remote` until the deployed API reports ≥ 6.
 
 ### `GET /v1/governance` · G
 
@@ -442,8 +461,9 @@ limits (per IP, then per app) → body (`400 bad_request`) → share actions: th
 `503 config_unavailable`. Missing `VAULT_KEK`: `503 vault_key_unavailable`.
 
 The app row comes from a per-isolate cache (`src/app-cache.ts`, D78): an entry serves for 30 s after its D1 read, so
-a suspension, a removed or changed key, a removed origin or a scope conflict reaches these endpoints within 30 s per
-isolate (unknown keys and failed reads are never cached; at most 256 apps). Nothing else uses it: the app gate above
+a suspension, a revoked key, a removed origin or a scope conflict reaches these endpoints within 30 s per isolate. It
+caches the origins in force at the read, so a pending origin is never served early; one that comes into force is
+served from the next read, within 30 s (D208) (unknown keys and failed reads are never cached; at most 256 apps). Nothing else uses it: the app gate above
 (relay endpoints, `GET /v1/app`) and the vault page read D1 every time. The per-IP and per-share limits are Rate
 Limiting bindings, checked in the Worker's location with no network hop; the per-app quota is the one limiter object
 call (`app:<id>`), made only once the IP limit accepted (D95).
@@ -731,7 +751,7 @@ this key's public key, start at R with no chain read (skips up to 99 nonces) and
 | `plans` | `id` PK, `per_minute`, `per_day`, `per_ip_minute` (default 20); seeds `free` 60 / 5000 / 20 | 0001 |
 | `apps` | `id` PK, `name`, `scope_id` (indexed), `publishable_key` UNIQUE, `status` `active`/`suspended`, `plan` → plans, `created_at` ms | 0001 |
 | `apps` (added) | `persistence` `session`/`none` (default `session`), `session_ttl_ms` 1 h..23 h 50 min (12 h), `idle_ttl_ms` 15 min..session TTL (2 h), `raw_sign` `off`/`approval` + `raw_sign_pending`, `raw_sign_effective_at`, `auto_approve_policy` / `auto_approve_pending` (JSON) + `auto_approve_effective_at`, `google_web_client_id` | 0003 |
-| `app_origins` | (`app_id`, `origin`) PK, `origin` indexed; `http://localhost:*` wildcard allowed | 0001 |
+| `app_origins` | (`app_id`, `origin`) PK, `origin` indexed; `http://localhost:*` wildcard allowed (0006 adds `active_from`, `change_id`, below) | 0001 |
 | `usage` | (`app_id`, `day` `YYYY-MM-DD` UTC) PK, `sessions`, `derives` | 0001 |
 | `usage` (added) | `unlocks` | 0003 |
 | `issuer_key_missing` | (`provider`, `kid`) PK, `first_missing_at` ms | 0002 |
@@ -740,6 +760,14 @@ this key's public key, start at R with no chain read (skips up to 99 nonces) and
 | `issuer_key_sync_runs` (G) | `provider` PK, `at_ms`, `outcome` `ok`/`error`/`skipped`, `code`, `summary` (JSON `SyncResult`): the cron's last run, for `GET /v1/governance` | 0005 |
 | `identity_issuance_hourly` (I) | (`hour` ms at the UTC hour, `kid`) PK, `count`: tokens signed per key and hour (the KMS reconciliation, build step 7); 24 months | 0008 |
 | `identity_usage` (I) | (`app_id` → apps, `day` `YYYY-MM-DD` UTC) PK, `tokens`: the spec's `usage.identity_tokens`, kept out of the legacy `usage` table batch C's 0007 drops; 24 months | 0008 |
+| `scopes` (C) | `scope_id` PK, `org_id`, `environment` `test`/`live` (fixed: a trigger refuses a change), `first_session_at` ms (NULL until the first session-pool relay attempt), `created_at`, `assigned_at` ms (the last org change) | 0006 |
+| `apps` (added, C) | `org_id` (default `org_legacy`; a trigger keeps it equal to its scope's), `suspended_by` 0..7 (bitmask; a trigger sets `status` from it), `origins_version`, `settings_version` (compare-and-swap counters), `logo_key`, `deleted_at` (soft delete); index `apps_org_id`. Inserting an app needs its `scopes` row in its org with the environment its key's prefix names (trigger); changing one app's `org_id` or `scope_id` alone is refused, moving a scope's org moves all its apps | 0006 |
+| `app_keys` (C) | `id` PK (`key_…`; `key_legacy_<app id>` for the key each app had before 0006), `app_id`, `key` UNIQUE, `created_by`, `created_at`, `revoked_at` (may be in the future), `revoked_by`; the insert trigger needs the app and the prefix of its scope's environment | 0006 |
+| `app_origins` (added, C) | `active_from` ms (NULL: not announced, never matches; 0: migrated), `change_id` → `guarded_changes.id` | 0006 |
+| `guarded_changes` (C) | `id` PK (`gc_…`), `app_id`, `kind` `origin_add`/`policy_set`/`raw_sign_on` with its `origin` or `policy_json` + `policy_id`, `status` `pending`/`active`/`cancelled`/`ended`, the proposer (`member`/`hana`/`system`, id, step-up `sub`, time, country), `waiver` `loopback`/`no_session`, `notified_at`, `active_from`, `cancel_token_hash`, `activated_recorded_at`, expedite and end/cancel fields, `request_id`; indexes by app and status, unnotified, due | 0006 |
+| `app_changes` (C) | `seq` PK, `at`, `org_id`, `app_id`, `scope_id`, `kind`, `detail_json` (valid JSON, allowlisted fields), `actor_kind` `member`/`hana`/`system`/`link`, `actor_id`, `actor_sub`, `request_id` UNIQUE. Append-only: UPDATE refused, DELETE refused until a row is 60 months old (triggers). 0006 wrote one `migration.baseline` row per app (its origins, stored policies as stored, raw-signing values, suspension) | 0006 |
+| `security_events` (C) | `id` PK, `detected_at`, `kind` `drift`/`breaker`/`owner_cap`/`owner_allowance_low`, org/app/scope, `detail_json`, `notified_at` | 0006 |
+| `org_security_contacts` (C) | (`org_id`, `email` lowercased) PK, `added_by`, `added_at` | 0006 |
 | `vault_shares` | `share_id` BLOB(16) PK, `app_id`, `session_pk` BLOB(32) UNIQUE, `path_hash` = sha256(path), `partner_origin`, `share_enc` = iv ‖ AES-GCM(KEK, K_s, aad = share_id ‖ app_id ‖ session_pk), `kek_id`, `counter`, `created_at`, `idle_until`, `abs_expires_at`, `revoked_at`; indexes (`app_id`, `path_hash`), `abs_expires_at`, `kek_id` | 0003 |
 
 ## Cron (`*/15 * * * *`)
@@ -777,6 +805,17 @@ jobs (one failing doesn't skip the others):
   `VAULT_KEK`; counts rows under a KEK id neither key has (logged as an error).
 - **Identity counts' retention, the same hourly run** (`identity/maintenance.ts`, I): deletes `identity_issuance_hourly`
   and `identity_usage` rows older than 24 months (D90).
+- **Guarded changes, the same hourly run** (`guarded/cron.ts`, C): nothing waits for it (an origin is in force by
+  `active_from <= now`, a policy or raw signing by batch B's `*_effective_at`), so it changes no answer the gate gives.
+  For each announced pending change whose `active_from` has passed (≤ 100 a run): records it once (`status = 'active'`,
+  `activated_recorded_at`, `app_changes <kind>.activated`, actor `system`/`cron`); a `policy_set` moves the matured
+  `auto_approve_pending` into `auto_approve_policy` (pending columns cleared) and ends the `policy_set` it replaced
+  (`policy.ended`); a `raw_sign_on` sets `raw_sign = 'approval'` (pending cleared). A due change whose value is no
+  longer in force or pending in `apps` (cleared by a direct write) is cancelled (`change.cancelled`, reason
+  `not_in_force`). A change not announced within 7 days of its proposal is cancelled by `system` (reason
+  `not_announced`): its `app_origins` row is deleted and the app's version bumped. Each change is one D1 batch whose
+  writes after the first depend on the first, and each ledger row has a request id derived from the change, so
+  overlapping runs record a change once.
 
 ## Configuration (Worker bindings)
 
@@ -796,9 +835,9 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 | `API_URL` | var | `apiUrl` | vault page `connect-src` |
 | `DO_LOCATION_HINT` | var | `cloudflare.durableObjectLocation` | only written when set |
 | `BLS_PRECHECK`, `REJECT_PII_ON_SESSIONS` | var | `gen` writes `"0"` | `"1"` turns each on |
-| `APP_CHANGE_DELAY_MS` | var | `appChangeDelayMs` | batch C guarded-change delay; not read yet (batch C3) |
-| `NETWORK` | var | `network` | batch C origin rules; not read yet (batch C3) |
-| `REFUSED_ORIGINS` | var | every Hana origin (`@hana-id/env` `hanaOwnOrigins`), JSON array | refused as app origins; not read yet (batch C3) |
+| `APP_CHANGE_DELAY_MS` | var | `appChangeDelayMs` | the guarded-change delay (`guarded/config.ts`): missing, not an integer, outside 60 s..7 d, or under 24 h on `mainnet` makes every guarded change refuse with `internal` (the writers come with batch C5) |
+| `NETWORK` | var | `network` | the production origin rules on `mainnet` (`guarded/config.ts`) |
+| `REFUSED_ORIGINS` | var | every Hana origin (`@hana-id/env` `hanaOwnOrigins`), JSON array | refused as app origins (`guarded/config.ts`; the CLI applies the same list from the manifest) |
 | `FILES_ORIGIN` | var, optional | `files.origin` | only with the dashboard blocks; `logoUrl` (batch C11) |
 | `GAS_<METHOD>_TGAS` | var, optional | not generated | per-method gas |
 | `RELAYER_KEYS` | secret | `.secrets/<env>/relayer-keys.json` | JSON array of `ed25519:` secret keys |

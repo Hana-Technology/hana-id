@@ -312,6 +312,17 @@ describe('wrangler.jsonc', () => {
     for (const file of ['wrangler.jsonc', 'wrangler.vault.jsonc', 'wrangler.auth.jsonc', '.dev.vars']) expect(existsSync(join(dir, file)), file).toBe(false);
   });
 
+  it('--d1-name points the D1 binding at a rehearsal database only, and needs its --d1-id', () => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const dir = tmp();
+    const id = '11111111-2222-4333-8444-555555555555';
+    main([manifest.name, '--d1-name', 'hana-id-sandbox-dev-rehearsal-0006', '--d1-id', id], { dir });
+    const config = JSON.parse(readFileSync(join(dir, 'wrangler.jsonc'), 'utf8').replace(/^\/\/.*\n/u, '')) as { d1_databases: { database_name: string; database_id: string; migrations_dir: string }[] };
+    expect(config.d1_databases).toEqual([{ binding: 'DB', database_name: 'hana-id-sandbox-dev-rehearsal-0006', database_id: id, migrations_dir: 'migrations' }]);
+    expect(() => main([manifest.name, '--d1-name', 'hana-id-sandbox-dev', '--d1-id', id], { dir })).toThrow(/rehearsal/u);
+    expect(() => main([manifest.name, '--d1-name', 'x-rehearsal'], { dir })).toThrow(/needs --d1-id/u);
+  });
+
   it('main writes the API and page Worker configs and .dev.vars, and never prints secret values', () => {
     const logs: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => void logs.push(a.join(' ')));

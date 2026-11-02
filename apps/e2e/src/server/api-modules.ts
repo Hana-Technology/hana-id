@@ -15,6 +15,8 @@ export interface ApiApp {
   scope_id: string;
   publishable_key: string;
   status: string;
+  suspended_by: number;
+  environment: 'test' | 'live';
   google_web_client_id: string | null;
   scope_conflict: boolean;
   origins: string[];

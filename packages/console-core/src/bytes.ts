@@ -78,7 +78,7 @@ export function base58(bytes: Uint8Array): string {
   return out;
 }
 
-const subtle = (): SubtleCrypto => crypto.subtle;
+const subtle = (): typeof crypto.subtle => crypto.subtle;
 
 /** Copies into a fresh ArrayBuffer-backed array (WebCrypto's BufferSource typing refuses SharedArrayBuffer views). */
 const own = (b: Uint8Array): Uint8Array<ArrayBuffer> => new Uint8Array(b);

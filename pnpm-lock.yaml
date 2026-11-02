@@ -571,6 +571,9 @@ importers:
 
   scripts:
     dependencies:
+      '@hana-id/console-core':
+        specifier: workspace:*
+        version: link:../packages/console-core
       '@hana-id/core':
         specifier: workspace:*
         version: link:../packages/core

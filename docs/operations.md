@@ -1,8 +1,11 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
 Last verified against code: 2026-11-02 (branch `feat/identity-token-7`: "Identity token keys on AWS KMS", the KMS
-signer's setup steps, IAM and key policies, rotations and the planned reconciliation, the `identity-key kms-*`
-commands, the AWS access key row in "Secrets: where they live", D215–D219; branch `feat/link-cap`: "Link volume thresholds", D200, and `set_link_thresholds`
+signer's setup steps, IAM and key policies, alarms, rotations and the planned reconciliation, the `identity-key kms-*`
+commands, the AWS access key row in "Secrets: where they live", D215–D219); 2026-11-02 (branch `docs/consistency-pass`: "Watchdog service" channels, "Owner
+council" verified on testnet, the `create_session_and_derive` gas pointer); 2026-11-02 (branch `feat/batch-c-3`: "Hot DB migration 0006 and the new gate" (milestone
+M1, for the user to run), the admin CLI's `app:*` commands on the 0006 schema with `app:changes:announce`, the demo's
+origin add, the D1 restore steps; D205–D209); 2026-11-02 (branch `feat/link-cap`: "Link volume thresholds", D200, and `set_link_thresholds`
 through `owner:call`; branch `feat/email-login-5`: the watchdog's email rules, the link alarms and
 `unrecorded_wallets` alerts in "Watchdog alerts (runbook)" and "Watchdog service", D190–D193, D200; branch
 `feat/email-login-2`: `deploy-contract` refuses a v1 contract, D154; the v2 → v3 upgrade path sandbox-tested,
@@ -298,10 +301,12 @@ executes on the vote that reaches the threshold; `to_weight` is min(⌊a·n/b⌋
 testnet: `sputnikv2.testnet` exists, `get_default_code_hash` = the pinned `code_hash`, `get_default_version` = [3, 31].
 From near-cli-rs's `create-account fund-myself` source: a top-level `<name>.testnet` account is created by the
 `testnet` registrar's `create_account({new_account_id, new_public_key})` with the initial balance attached, 30 Tgas.
-**Not verified on testnet yet** (that needs real transactions, which agents don't send): that a DAO created this way
-and a proposal round trip behave as in the sandbox, and the gas `create` really burns (council-setup attaches
-300 Tgas). The first `council-setup sandbox-dev --yes` and `owner:call … --approve-with` runs are that check;
-`owner:proposals` and `governance:status` show the result.
+**Verified on testnet 2026-10-30** (sandbox-dev): `council-setup sandbox-dev --yes` created the
+DAO `hana-id-council-dev1.sputnikv2.testnet` with the pinned policy, and proposal round trips behaved as in the
+sandbox: the owner handover (`accept_owner`, proposal #0), the upgrade drill (contract 0.1.1), and the drills'
+updater-key install, `remove_issuer_key` and unpause (#2–#4) ([Governance migration (sandbox-dev)](#governance-migration-sandbox-dev),
+[Watchdog service](#watchdog-service-appswatchdog)); `governance:status` shows no findings. Not recorded: the gas
+`create` really burns (council-setup attaches 300 Tgas).
 
 **sandbox-dev** (dev envs only: `local*` / `sandbox*` on testnet):
 
@@ -535,6 +540,115 @@ corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev --yes   # appl
 - Tests run on PGlite in process (`apps/api/test-usage`, D140); set `USAGE_TEST_DATABASE_URL` to a superuser URL of a
   local Postgres 18 (a container, never Neon) to run the same suite there.
 
+## Hot DB migration 0006 and the new gate (batch C3, milestone M1)
+
+Migration `0006_dashboard_expand.sql` adds batch C's hot-DB tables and columns (`docs/api.md` "D1 schema") without
+rebuilding a table, and backfills them: one `scopes` row per scope (in `org_legacy`, with the environment its keys
+name), one `app_keys` row per app (its key), every origin in force from 0, Hana's suspension bit for suspended apps and
+one `migration.baseline` row per app. The API built on it reads keys from `app_keys`, origins only once in force,
+the suspension bits, and `scopes.environment` for the loopback rules. Existing apps answer exactly as before (tested on
+a sandbox-dev-shaped database: `apps/api/test/migration-0006.test.ts`). On sandbox-dev it is the only unapplied file
+(0008 is applied); wrangler applies unapplied files in name order. Run from the main checkout, logged in to the API's
+Cloudflare account, with `corepack pnpm --filter @hana-id/api run gen sandbox-dev` done. Nothing here touches the chain.
+
+1. **Check the data first** (reads only). Every scope must have one key prefix and every key one of the two, and no
+   column the baseline copies into JSON may hold a BLOB (`json_object` refuses one); the migration aborts otherwise
+   (as a whole on Miniflare; the rehearsal in step 3 shows what remote D1 does):
+
+   ```sh
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev --remote --command "SELECT name FROM d1_migrations ORDER BY id"
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev --remote --command "SELECT scope_id, COUNT(*) AS apps, COUNT(DISTINCT substr(publishable_key, 1, 8)) AS prefixes FROM apps GROUP BY scope_id"
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev --remote --command "SELECT id FROM apps WHERE substr(publishable_key, 1, 8) NOT IN ('pk_test_', 'pk_live_')"
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev --remote --command "SELECT id FROM apps WHERE 'blob' IN (typeof(auto_approve_policy), typeof(auto_approve_pending), typeof(auto_approve_effective_at), typeof(raw_sign), typeof(raw_sign_pending), typeof(raw_sign_effective_at), typeof(publishable_key)) UNION ALL SELECT app_id FROM app_origins WHERE typeof(origin) = 'blob'"
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev --remote --command "SELECT (SELECT COUNT(*) FROM apps) AS apps, (SELECT COUNT(*) FROM app_origins) AS origins, (SELECT COUNT(*) FROM usage) AS usage, (SELECT COUNT(*) FROM vault_shares) AS shares, (SELECT COUNT(*) FROM identity_usage) AS identity"
+   ```
+
+   Expected: the migrations end with `0008_identity_token.sql` and have no `0006`; `prefixes` is 1 on every row; the
+   third and fourth queries return nothing. Note the counts.
+
+2. **Back up** (the export holds `vault_shares`, so it goes under `.secrets/`, 0600):
+
+   ```sh
+   corepack pnpm --dir apps/api exec wrangler d1 time-travel info hana-id-sandbox-dev        # note the bookmark: it undoes the migration
+   corepack pnpm --dir apps/api exec wrangler d1 export hana-id-sandbox-dev --remote --output=../../.secrets/sandbox-dev/d1-before-0006-<yyyymmdd>.sql
+   chmod 600 .secrets/sandbox-dev/d1-before-0006-<yyyymmdd>.sql
+   ```
+
+3. **Rehearse on a scratch remote D1** restored from that export, through the same path as the real apply (`wrangler
+   d1 migrations apply` on the generated config's D1 binding) and the CLI. Note sandbox-dev's own `database_id` first
+   (in `apps/api/wrangler.jsonc`, or `wrangler d1 info hana-id-sandbox-dev`): step d puts it back.
+
+   ```sh
+   # a. a scratch database holding the export (it prints the scratch id)
+   corepack pnpm --dir apps/api exec wrangler d1 create hana-id-sandbox-dev-rehearsal-0006
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev-rehearsal-0006 --remote --file=../../.secrets/sandbox-dev/d1-before-0006-<yyyymmdd>.sql
+   # b. the config's D1 binding on the scratch database, then the real command (it lists 0006 alone)
+   corepack pnpm --filter @hana-id/api run gen sandbox-dev --d1-name hana-id-sandbox-dev-rehearsal-0006 --d1-id <scratch id>
+   corepack pnpm --dir apps/api exec wrangler d1 migrations apply hana-id-sandbox-dev-rehearsal-0006 --remote
+   # c. D1's implicit transaction per query (D207): the second statement fails, so the first must not be there (expect 0)
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev-rehearsal-0006 --remote --command "INSERT INTO plans (id, per_minute, per_day) VALUES ('rehearsal', 1, 1); INSERT INTO plans (id, per_minute, per_day) VALUES ('rehearsal', 1, 1)"
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev-rehearsal-0006 --remote --command "SELECT COUNT(*) AS n FROM plans WHERE id = 'rehearsal'"
+   #    and one CLI compare-and-swap write each way, read back by the CLI (any app id from app:list)
+   corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:list --remote --d1-name hana-id-sandbox-dev-rehearsal-0006
+   corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:suspend --app <app id> --remote --d1-name hana-id-sandbox-dev-rehearsal-0006
+   corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:resume --app <app id> --remote --d1-name hana-id-sandbox-dev-rehearsal-0006
+   # d. the config back on sandbox-dev's own database (before anything else, above all a deploy), then drop the scratch one
+   corepack pnpm --filter @hana-id/api run gen sandbox-dev --d1-id <sandbox-dev database id>
+   corepack pnpm --dir apps/api exec wrangler d1 delete hana-id-sandbox-dev-rehearsal-0006
+   ```
+
+   Between b and d, run step 1's counts and step 5's checks against `hana-id-sandbox-dev-rehearsal-0006`: the counts
+   equal, the step 5 numbers as expected, the count in c is 0, and each CLI write prints its new state (a stale or
+   lost write would say "nothing was written"). If the migration fails, stop: nothing touched sandbox-dev; read the
+   error (step 1's checks name the usual causes) and note whether the scratch database kept any new table. If the count
+   in c is 1, D1 didn't run that query as one transaction: stop and report it (D207). Delete the scratch database either
+   way (it holds the export's vault shares), after step d.
+
+4. **Apply 0006**: `corepack pnpm --dir apps/api exec wrangler d1 migrations apply hana-id-sandbox-dev --remote`
+   (it lists `0006_dashboard_expand.sql` alone; confirm).
+
+5. **Verify**: the counts of step 1 are unchanged, and
+
+   ```sh
+   corepack pnpm --dir apps/api exec wrangler d1 execute hana-id-sandbox-dev --remote --command "SELECT (SELECT COUNT(*) FROM scopes) AS scopes, (SELECT COUNT(*) FROM app_keys) AS keys, (SELECT COUNT(*) FROM app_changes WHERE kind = 'migration.baseline') AS baselines, (SELECT COUNT(*) FROM app_origins WHERE active_from IS NOT 0) AS not_in_force"
+   ```
+
+   gives one scope per distinct `scope_id`, `keys` = `baselines` = the apps count, and `not_in_force` 0.
+
+6. **Deploy the API** (`corepack pnpm --filter @hana-id/api run deploy`), then check that it reports the new reads
+   (`curl -s https://hana-id-api-sandbox-dev.tingtc.workers.dev/v1/health` shows `"hotDb":6`), a login on sandbox-dev
+   (the demo, or `apps/smoke`) and `admin sandbox-dev app:list --remote` (every app `active` or `suspended(hana)` as
+   before, its key, its origins).
+
+7. **From now on use only this CLI** (below). It refuses proposals and announcements with `--remote` until
+   `/v1/health` reports `hotDb` ≥ 6, so a proposal can't be made between steps 4 and 6. A checkout from before batch C3
+   must not run `app:*` against sandbox-dev: its `app:origins:add` writes rows with `active_from` NULL, which never
+   match, and its `app:create` is refused by the new triggers.
+
+### Rolling the API back below batch C3 (rollback floor)
+
+**The rollback floor is batch C3**: on a database with 0006 applied, run an API from before batch C3 only after
+parking the pending origins. Such an API reads every `app_origins` row, so an origin that is only proposed (not yet
+announced, or announced and still in its delay) would be in force for it. Its other reads work unchanged on the 0006
+schema (new apps carry their key in `apps.publishable_key` too). Mandatory, in this order:
+
+```sh
+corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:origins:park --remote          # lists the rows not in force
+corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:origins:park --remote --yes    # deletes them (origin.parked rows in app_changes)
+corepack pnpm --dir apps/api exec wrangler rollback                                               # or deploy the older build
+```
+
+Park again right before the rollback if anyone proposed since. While the older API runs, make no proposals (the CLI
+refuses them: `/v1/health` reports no `hotDb`). When batch C3 or later is deployed again,
+`admin sandbox-dev app:origins:unpark --remote --yes` restores exactly the rows the park listed (`origin.parked` in
+`app_changes`), each with its change's `active_from`, and only while that change is still open: an origin removed
+while parked (`app:origins:remove` closes its change even with no row) or cancelled stays gone, and a row deleted any
+other way is never brought back. Proposals not announced within 7 days are cancelled by the cron as usual, parked or not.
+
+**Undo of the migration**: it only adds; a restore to the bookmark of step 2 (`time-travel restore`, "Restoring a D1
+database" below) returns the database to before it, and the API from before batch C3 then works as it did. Writes
+made after step 4 are lost with it.
+
 ## Local API (`wrangler dev`)
 
 ```sh
@@ -565,12 +679,16 @@ origin).
 ## Admin CLI (`scripts/admin.ts`)
 
 ```text
-admin <env> app:create --name <name> --scope <scope_id> --origin <origin> [--origin …] [--plan free] [--remote]
+admin <env> app:create --org org_legacy --name <name> --scope <scope_id> [--environment test|live] --origin <origin> [--origin …] [--plan free] [--remote]
 admin <env> app:origins:add    --app <app id | publishable key> --origin <origin> [--origin …] [--remote]
 admin <env> app:origins:remove --app <app id | publishable key> --origin <origin> [--origin …] [--remote]
 admin <env> app:suspend        --app <app id | publishable key> [--remote]
 admin <env> app:resume         --app <app id | publishable key> [--remote]
 admin <env> app:list [--remote]
+admin <env> app:changes:announce <change id> [--remote]
+admin <env> app:origins:park [--yes] [--remote]      # before running an API from before batch C3 (rollback floor)
+admin <env> app:origins:unpark [--yes] [--remote]    # after redeploying batch C3 or later
+admin <env> <app:* command> … --d1-name <name containing "rehearsal">   # on a rehearsal database (M1 step 3)
 admin <env> app:settings <app id | publishable key> [--persistence session|none] [--session-ttl 12h] [--idle-ttl 2h]
              [--raw-sign off|approval] [--google-web-client <client id>|default] [--auto-approve <policy.json>|off] [--remote]
 admin <env> scope:register [--client <google client id> …] [--allow-shared] (--owner-near <account> | --owner-google <sub>) […]
@@ -597,31 +715,68 @@ Run as `corepack pnpm --filter @hana-id/scripts run admin <env> <command> …`. 
   corepack pnpm --filter @hana-id/scripts run admin <env> scope:register --allow-shared --owner-near <account> --yes   # shared only
   ```
 
-- `app:create`: the scope must exist on chain and the plan in D1; refuses a scope already used by an app with the
-  other key type. Generates `app_<base58>` and a **`pk_test_`** key (there is no command for `pk_live_` keys) and
-  prints it (public). Origins are normalised to `scheme://host[:port]`, then refused if the API would drop or misuse
-  them (`app:create` and `app:origins:add`; never `app:origins:remove`, so a bad entry can always be removed; D100,
-  security sweep OPER-6): Hana's own origins (`vaultOrigin`, `authOrigin`, `apiUrl`), wildcards and odd characters,
-  IP addresses, public suffixes and single labels; loopback origins (`http://localhost:<port>`, `127.0.0.1`,
-  `[::1]`) and the literal `http://localhost:*` only for a `pk_test_` app in a dev env (`local*`, `sandbox*`).
-  App names are NFC-normalised and may not contain control, bidi, zero-width, separator or unassigned characters;
-  `app:list` prints stored values with such characters escaped (OPER-11).
+The `app:*` commands work on the hot DB after migration 0006 (`docs/api.md` "D1 schema"; batch C3). Every write is a
+Hana staff action recorded in `app_changes` (actor `cli:<your login>`) and a compare-and-swap on the version the
+command read: if someone changed the app in between, nothing is written and the command says so; run it again.
+**Origin adds, auto-approve policies and raw signing on are staff proposals**: each gets a `gc_…` id and goes live only
+once announced plus the manifest's `appChangeDelayMs` (sandbox-dev: 60 s). In an env with an admin Worker (batch C8)
+its notice announces them; in an env without one (sandbox-dev today) `app:changes:announce <gc id>` does, and nobody
+is emailed. A proposal not announced within 7 days is cancelled by the API's hourly cron. Removals, turn-offs and
+suspensions are immediate. With `--remote`, proposals and announcements are refused until the deployed API reports the
+batch C3 reads (`GET /v1/health` `hotDb` ≥ 6); `app:origins:park` / `unpark`: "Rolling the API back below batch C3"
+above.
+
+- `app:create`: `--org` is required and must be `org_legacy` until the console database exists (batch C7). The scope
+  must exist on chain and the plan in D1. A scope with no app yet needs `--environment test|live`, fixed for the scope
+  from then on (its `scopes` row); an existing scope keeps its own (another environment or org is refused, D51).
+  Generates `app_<base58>`, `key_<base58>` and a `pk_test_` or `pk_live_` key by the environment and prints the key
+  (public). The origins are staff proposals; when this call created the scope row they skip the delay at their
+  announcement if the scope then still shows no sign of a user (the `no_session` waiver, decided inside the
+  announcement's SQL: no `first_session_at`, no other origin of the scope ever in force, no vault share, usage or
+  identity row). On an existing scope it is refused
+  within `appChangeDelayMs` of the scope's org assignment. Origins are normalised by `@hana-id/console-core`
+  `normaliseOrigin` (the form the API and the console share: lowercase ASCII/punycode host, default port and trailing
+  dot dropped) and checked by its `originProblem` (`app:create` and `app:origins:add`; never `app:origins:remove`, so
+  a bad entry can always be removed; D100, security sweep OPER-6): Hana's own origins (`REFUSED_ORIGINS`: the vault,
+  auth and API origins and the dashboard's), wildcards, plain `http` other than loopback, IP addresses, public
+  suffixes and single labels, a mixed-script label on a live scope; loopback origins (`http://localhost:<port>`,
+  `127.0.0.1`, `[::1]`) and the literal `http://localhost:*` only on a test scope in a dev env (`local*`, `sandbox*`,
+  D142). At most 20 active-or-pending origins per app. App names are NFC-normalised and may not contain control, bidi,
+  zero-width, separator or unassigned characters; `app:list` prints stored values with such characters escaped
+  (OPER-11).
 
   ```sh
-  corepack pnpm --filter @hana-id/scripts run admin <env> app:create --name smoke-a --scope s1 --origin http://localhost:5173 --remote
+  corepack pnpm --filter @hana-id/scripts run admin <env> app:create --org org_legacy --name smoke-a --scope s1 --origin http://localhost:5173 --remote
   ```
 
-- Suspension is D1-only (the contract has no suspension; D11). Removing an origin also kills that origin's vault
-  shares on their next use. Logins, relays, `GET /v1/app` and new vault page loads see a suspension or an origin
-  removal at once; the vault endpoints (unlock, touch, revoke, share creation) cache the app per Worker isolate, so
-  there it takes up to 30 s (D78).
+- `app:origins:add`: a staff proposal per new origin (one already listed or pending is reported and skipped); prints
+  each `gc_…` id. `app:origins:remove`: immediate; an origin in force ends its change, a pending one is cancelled.
+- `app:changes:announce <gc id>`: only in an env with no `admin` block, never on a production network. Sets the
+  change's `notified_at` and `active_from` (now + `appChangeDelayMs`, or now under the `no_session` waiver), on its
+  origin row too, or writes the policy or raw-signing value as pending until `active_from`; records
+  `{channel: "cli", emailed: "none"}`. Once per change.
+
+  ```sh
+  corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:origins:add --app <app> --origin https://new.example.com --remote   # prints gc_…
+  corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:changes:announce <gc id> --remote                                # in force 60 s later
+  ```
+
+- `app:suspend` / `app:resume` set and clear Hana's suspension bit (1) only; the org (2) and partner (4) bits belong to
+  the admin and partner consoles (batch C), and an app stays suspended while any bit is set. Suspension is D1-only (the
+  contract has no suspension; D11). Removing an origin also kills that origin's vault shares on their next use.
+  Logins, relays, `GET /v1/app` and new vault page loads see a suspension or an origin removal at once; the vault
+  endpoints (unlock, touch, revoke, share creation) cache the app per Worker isolate, so there it takes up to 30 s
+  (D78).
+- `app:list`: each app's org, environment, suspension bits, keys (revoked ones marked), origins in force and pending
+  changes.
 - `app:*` need `apps/api/wrangler.jsonc` for the env (`gen <env>` first) and run `wrangler d1 execute` from `apps/api`.
-- `app:settings` (app positionally or with `--app`, not both; no setting flags: show them): ranges as the migration's
-  CHECKs; `--raw-sign approval` and a new `--auto-approve` policy are pending for 24 h (`changeDelayMs` in dev envs),
-  `off` is immediate. A relative `--auto-approve` path is resolved against the directory you ran `pnpm` from
-  (`INIT_CWD`), and the change log names the resolved file. The UPDATE only applies if every settings column is still
-  as the command read it: if someone else changed the app in between, nothing is written and the command fails with
-  "The app's settings changed since they were read"; run it again. `--persistence none` revokes existing vault
+- `app:settings` (app positionally or with `--app`, not both; no setting flags: show them, with any proposals): ranges
+  as the migration's CHECKs; `--raw-sign approval` (refused for a test app: test apps never sign raw, D39 as amended 2026-10-28) and a new
+  `--auto-approve` policy are staff proposals (above; at most one pending policy per app); `off` and the other
+  settings are immediate. A relative `--auto-approve` path is resolved against the directory you ran `pnpm` from
+  (`INIT_CWD`), and the change log names the resolved file. The write only applies if `settings_version` and every
+  settings column are still as the command read them: if someone else changed the app in between, nothing is written
+  and the command fails with "The app's settings changed since they were read"; run it again. `--persistence none` revokes existing vault
   shares on their next unlock or touch; a lower `--session-ttl` also shortens live shares (to their creation + the new
   TTL). Plans other than `free` need a manual D1 insert.
 
@@ -1244,9 +1399,11 @@ ids). Details: `apps/demo/README.md`.
 | Env | `HANA_DEMO_ENV` (default `sandbox-dev`); only testnet `sandbox*`/`local*` envs whose API is on workers.dev |
 
 ```sh
-# once per app: the vault loads only on the app's origins (needs apps/api/wrangler.jsonc: `gen sandbox-dev`)
+# once per app: the vault loads only on the app's origins (needs apps/api/wrangler.jsonc: `gen sandbox-dev`); a staff
+# proposal: announce the gc_… id it prints, and the origin is in force 60 s later (appChangeDelayMs)
 corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:origins:add \
   --app pk_test_85gdPtFF4kYzqgPisccZbsT9fQP1tq7ie --origin https://hana-id-demo-sandbox-dev.tingtc.workers.dev --remote
+corepack pnpm --filter @hana-id/scripts run admin sandbox-dev app:changes:announce <gc id> --remote
 
 corepack pnpm --filter @hana-id/demo run deploy      # gen:envs, vite build, gen (apps/demo/wrangler.jsonc), wrangler deploy
 corepack pnpm --filter @hana-id/demo run build && corepack pnpm --filter @hana-id/demo run gen \
@@ -1257,8 +1414,9 @@ corepack pnpm --filter @hana-id/demo run build && corepack pnpm --filter @hana-i
   code, `frame-ancestors 'none'`, Trusted Types) and `nosniff`, `no-referrer`, `X-Frame-Options: DENY`, COOP
   `same-origin-allow-popups` on every response; preview URLs are off and it answers only on its own origin.
 - Redeploy after changing `envs/<env>.json` (the vault origin is in the CSP and the bundle) or `@hana-id/web`.
-- "Could not load the Hana vault" on the demo: the origin isn't on the app (`app:origins:add` above), or the build is
-  for another env. `admin <env> app:list --remote` shows the app's origins.
+- "Could not load the Hana vault" on the demo: the origin isn't in force on the app (`app:origins:add` and
+  `app:changes:announce` above, then 60 s), or the build is for another env. `admin <env> app:list --remote` shows the
+  app's origins in force and its pending changes.
 - Removing the origin (`app:origins:remove`) signs out everyone who used the demo, on their next use.
 
 ## Watchdog service (`apps/watchdog`)
@@ -1271,10 +1429,12 @@ What it checks and its status API: `apps/watchdog/README.md`. **Deployed on sand
 with batch 5's email rules and link alarms, version b156e1b5, no new migration: on the v2 contract it reads "no email
 issuer" and skips the link check)**:
 `https://hana-id-watchdog-sandbox-dev.tingtc.workers.dev`, cron `*/5 * * * *`, on the API's Cloudflare account
-(D125), D1 `hana-id-watchdog-sandbox-dev`. Alert channels and the heartbeat aren't set yet (the manifest's alert
-addresses are `example.com` placeholders), so every run reports them as `channel_not_configured`. First run
+(D125), D1 `hana-id-watchdog-sandbox-dev`. First deployed with no channel and no heartbeat; first run
 2026-10-30 04:50 UTC, every check ok; the cron trigger started ~10 min after the first deploy (two slots skipped).
-Pager: a random ntfy.sh topic plus a healthchecks.io heartbeat (secrets only). **ntfy.sh's public server rate-limits
+Since the drills the same day, the pager is a random ntfy.sh topic and the heartbeat a healthchecks.io check (both
+secrets only). Slack and email are still not set up (no Slack webhook; the manifest's alert addresses are
+`example.com` placeholders), so every run reports those channels as `channel_not_configured` (`/status` `channels`
+shows which are configured). **ntfy.sh's public server rate-limits
 publishers per IP, and Workers send from shared IPs**: in the forged-key drill (2026-10-30) the critical page got
 HTTP 429 at 05:06 and 05:40 and went through at 05:10 and 05:25, so it is not a production pager (the choice is
 open: `docs/context.md` "Next steps" 8). Forged-key drill: change #0 posted 05:01:17, cancelled and the updater
@@ -1466,7 +1626,8 @@ timer starts again (its removal proposal comes up to 55 min later), and D33's le
 1. `corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --remote`: a point before a
    later migration has the older schema (its `d1_migrations` table comes back with it, so only the missing ones run).
 2. Security writes made after the point: `admin <env> app:suspend` for every app suspended since, `app:origins:remove`
-   for every origin removed since, and, if every share was revoked since (a KEK compromise), the revoke-all command in
+   for every origin removed since (and for every origin, policy or raw-signing value still pending in the restored
+   rows that was cancelled since: `app:list` shows the pending changes), and, if every share was revoked since (a KEK compromise), the revoke-all command in
    "`VAULT_KEK`" above **before** anything else touches the database. Never leave a restored database un-revoking
    what a security response revoked.
 3. A KEK rotated after the point: the restored rows are under the old key id. While `VAULT_KEK_PREVIOUS` still holds
@@ -1474,7 +1635,8 @@ timer starts again (its removal proposal comes up to 55 min later), and D33's le
    `unknownKek` (the users sign in again) unless the old key file is still there: `vault-kek <env> put --yes` sets
    both secrets from the files.
 4. Other app changes since the point (new apps with `app:create`, which issues new publishable keys the partners
-   must use; origins; settings), from what partners and the audit trail say.
+   must use; origins and settings, which are proposals again and wait for their announcement and delay), from what
+   partners and the audit trail say (the `app_changes` rows in the export of step 1 list every app write).
 5. Check: `admin <env> app:list --remote` against the known apps, `GET /v1/governance` `.updater` (the cron's next
    run), a smoke login and a reload unlock.
 
@@ -1569,7 +1731,9 @@ Measured on sandbox-dev (2026-10-27, real MPC, `docs/context.md` "Testnet measur
 | rejected derive on chain | 2.21 Tgas | 0.0002 NEAR | |
 
 Warm stage split: create = checks 0.2 s + relay 2.2 s (chain ~0.6 s); derive = relay ~6.0 s (MPC ~4.5 s).
-`create_session_and_derive` (`/v1/login`) is not measured yet (estimate ~38 Tgas, 100 Tgas attached).
+`create_session_and_derive` (`/v1/login`): its latency on testnet is D76 (the ship gate); its gas is measured in the
+sandbox with the mock MPC, not yet on testnet: ≈ 20.5 Tgas in the signer's receipt and 22–23 Tgas in all with a
+Google token (`docs/contract-interface.md` "Gas of the email login calls" and "Upgrades"; 100 Tgas attached).
 
 ## Common failures
 

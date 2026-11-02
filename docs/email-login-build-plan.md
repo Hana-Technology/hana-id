@@ -418,16 +418,17 @@ Branch `feat/email-login-4`, not merged, nothing deployed, no secret uploaded, n
 - **Review fixes** (two independent reviews, after the security review; defaults to confirm in D194, D158 and
   D197–D199): the budget's per-app shares and reserve, the IP prefix and recipient-domain caps, `email_budget` and
   `email_complaint_rate` logs, the per-app limit at plan `per_minute`, the requester-pays order in `start`; owner
-  device tickets (30 days, 3 code mails a day, the ticket slot) and unlock grants; staff routes JSON-only, `Origin`
+  device tickets (30 days, 3 code mails a day, the ticket slot) and unlock grants bound to a one-time `unlockToken`;
+per-prefix shares (20%) of a domain's day, ticketed starts exempt, `email_domain_cap`; staff routes JSON-only, `Origin`
   refused, a support `ticket` in every audit row written before acting, unlock and the new `admin/unsuppress` capped
   per mailbox; the webhook's category filter, 30-day bounce expiry, header checks before the body, cached key, per-IP
   limit; suppressions keyed by K_sup (from K_sub); the challenge's address encrypted under the client-held half of the
   challengeId; `missing_client_ip` refused; uniform `retry-after`; Access negative cache; per-purpose mail texts; case
-  B's `idToken` withheld (hints still for every verified address, D119), link tickets bound to the hinted Google identities;
+  B's `idToken` withheld (hints still for every verified address, D119; a non-hosted one only within 180 days), link tickets bound to the hinted Google identities;
   client proofs at the scope's current `action_nonce` with an email app; `email-issuer <env> put --standby` and the
   exact key-leak runbook; issuer-minted tokens checked in the real contract (`contracts/hana-signer` tests only, 4
   tests, `issuer_tokens_fixture.json`); gitleaks `hana-private-jwk` also matches an unquoted `d: '…'`.
-- **Tests.** apps/email-issuer: 101 Worker tests (miniflare: layouts against the contract fixtures, codes,
+- **Tests.** apps/email-issuer: 105 Worker tests (miniflare: layouts against the contract fixtures, codes,
   limits and the ceiling, google-match's four cases, signers and KMS, adapters, the log-capture test) and 5 `gen` tests;
   packages/env +11 (`emailIssuer`), packages/jwks +3 (`rsaThumbprint`), scripts +10 (`email-issuer`) and 6 secret-scan
   self-test cases; hana-signer +4 (`tests/email/issuer_tokens.rs`, 303 in all); `pnpm -r test` and `pnpm -r typecheck` green. Existing tests broken on `develop` by the identity-token deploy

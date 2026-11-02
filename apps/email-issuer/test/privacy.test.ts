@@ -128,7 +128,8 @@ describe('nothing personal or secret is ever logged', () => {
         for (let k = 0; k < n; k++) await call('/v1/email/verify', { challengeId: s.challengeId, code: h0.sender.codeFor(vAddr) === '000000' ? '111111' : '000000' }, { ip });
       }
       // Staff: unlock and unsuppress (the address is in the body, never in a line).
-      await call('/v1/email/admin/unlock', { email: `${victim}@example.com`, ticket: 'SUP-1' }, { origin: null, headers: { 'cf-access-jwt-assertion': access } });
+      const unlocked = (await (await call('/v1/email/admin/unlock', { email: `${victim}@example.com`, ticket: 'SUP-1' }, { origin: null, headers: { 'cf-access-jwt-assertion': access } })).json()) as { unlockToken: string };
+      secrets.push(unlocked.unlockToken);
       await call('/v1/email/admin/unsuppress', { email: supp, ticket: 'SUP-2' }, { origin: null, headers: { 'cf-access-jwt-assertion': access } });
       // Case A, not Google-hosted: a prepared challenge, its first code by resend, verify mints auto_link and notifies.
       const eSub = await emailSub((await h.deps.keys()).sub, corp);

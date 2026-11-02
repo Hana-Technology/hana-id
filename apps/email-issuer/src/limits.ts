@@ -88,7 +88,23 @@ export const IP_WEBHOOK_LIMITS: Limit[] = [{ name: 'ip:webhook:10m', windowMs: 1
 export const STAFF_LIMITS: Limit[] = [{ name: 'staff:actions:1h', windowMs: HOUR, max: 20 }];
 
 /** Code mails per recipient registrable domain per UTC day (H1, M4), except the large consumer providers below. */
-export const DOMAIN_SENDS_PER_DAY: Limit[] = [{ name: 'domain:sends:1d', windowMs: DAY, max: 100 }];
+export const DOMAIN_SENDS_PER_DAY: Limit = { name: 'domain:sends:1d', windowMs: DAY, max: 100 };
+/**
+ * Inside one domain's day, each requester prefix (IPv4 /24, IPv6 /56 and /48) may use at most 20% of it, so a few
+ * requesters can't fill a company domain's day and lock everyone there out (scan finding 2). Ticketed and unlock-grant
+ * starts skip the domain cap altogether.
+ */
+export const DOMAIN_PREFIX_SENDS_PER_DAY: Limit = { name: 'domain:prefix:1d', windowMs: DAY, max: Math.floor(DOMAIN_SENDS_PER_DAY.max * 0.2) };
+/** A staff unlock's one-time grant (`admin/unlock` → `unlockToken`): one start, within 24 h of the unlock. */
+export const UNLOCK_GRANT_TTL_MS = DAY;
+/**
+ * A hint for a non-Google-hosted address counts only while its Google identity logged in with that address within the
+ * last 180 days (D199): a stale Google account still holding an old address can't steer the address's new owner for
+ * ever. Older ones are pruned. Hosted hints don't lapse (Google, or the domain's admin, controls the mailbox, D158).
+ */
+export const NON_HOSTED_HINT_TTL_MS = 180 * DAY;
+/** Rows of stale non-hosted hints pruned per hint write (the issuer has no cron). */
+export const HINT_PRUNE_BATCH = 50;
 
 /**
  * Per app: `start` the plan's `per_minute` per minute and its `per_day` per day (H1: the spec's "20 ×" dropped until

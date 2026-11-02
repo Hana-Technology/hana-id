@@ -412,14 +412,16 @@ describe('per-IP, per-app and global limits (429)', () => {
     const h = await harness();
     const app = await seedApp(h);
     const ip = freshIp();
-    for (let i = 0; i < 10; i++) expect((await start(h, app, addr(`f${i}`), ip)).status).toBe(202);
-    const r = await h.call('/v1/email/start', startBody(h, app, addr('g')), { ip });
+    // Exempt-provider addresses, so the recipient domain's per-prefix share doesn't count here.
+    const gaddr = (tag: string) => `${tag}${uid().replace(/[^a-z0-9]/gu, '')}@gmail.com`;
+    for (let i = 0; i < 10; i++) expect((await start(h, app, gaddr(`f${i}`), ip)).status).toBe(202);
+    const r = await h.call('/v1/email/start', startBody(h, app, gaddr('g')), { ip });
     expect(r.status).toBe(429);
     expect(r.headers.get('retry-after')).not.toBeNull();
     let okCount = 10;
     for (let w = 0; w < 6; w++) {
       h.clock.now += 10 * 60_000;
-      for (let i = 0; i < 10; i++) if ((await start(h, app, addr(`h${w}${i}`), ip)).status === 202) okCount++;
+      for (let i = 0; i < 10; i++) if ((await start(h, app, gaddr(`h${w}${i}`), ip)).status === 202) okCount++;
     }
     expect(okCount).toBe(50);
   });

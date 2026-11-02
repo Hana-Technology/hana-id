@@ -923,7 +923,8 @@ the API's D1 (read only); it writes nothing on chain.
 
 ### `POST /v1/email/start` · E
 
-`{pk, email, purpose, commitment, deviceTicket?}` → `202 {challengeId, expiresAtMs, resendAfterMs}` (absolute ms).
+`{pk, email, purpose, commitment, deviceTicket?, unlockToken?}` → `202 {challengeId, expiresAtMs, resendAfterMs}`
+(absolute ms).
 
 `purpose`: `session` (commitment = the session nonce fields `{scopeId, sessionPublicKey: [32 bytes], expiresAtMs (next
 24 h), keyIndex (0..2^31−1), maxUses (1..500), salt: [16..64 bytes]}`), `link_new` `{scopeId, rootIk, epoch, salt}`,
@@ -941,7 +942,10 @@ refusal (the mailbox's limits and locks, the domain cap) is the same `429 rate_l
 
 `deviceTicket` (from an earlier `verify` of this mailbox, 30 days): when valid for this mailbox the start uses the
 owner's allowance, 3 code mails a day outside the code limits, the live cap and the challenge cap, and its checks may
-use the ticket slot (D198). An invalid or another mailbox's ticket is ignored, never an error.
+use the ticket slot (D198). An invalid or another mailbox's ticket is ignored, never an error. `unlockToken` (from a
+staff `admin/unlock`, passed to the owner by support): the mailbox's one-time grant, used by this start only, which
+then counts as ticketed; given back if the start is refused later or its mail fails. Ticketed starts and their
+resends skip the recipient domain's cap.
 
 A suppressed address (its exact address, `+tag` included: a complaint, or a bounce of the last 30 days) takes the same
 path, counted and never refunded, and gets the same answer; only the mail is skipped, and its challenge holds no address
@@ -973,7 +977,8 @@ off meanwhile: nothing is minted). A correct code is single use: the challenge i
 
 - `deviceTicket`: `dt1.` + 54 characters, the owner device ticket for this mailbox (30 days); batch 8's popup keeps it
   on `authOrigin` and sends it with the next `start`.
-- `session`: case B is when a Google identity that reported this address as verified (`email_hints`) has the wallet in this scope and the email identity has none. The email login then gets no `idToken`, so
+- `session`: case B is when a Google identity that reported this address as verified (`email_hints`; for a
+  non-Google-hosted address only if it did so within 180 days, D199) has the wallet in this scope and the email identity has none. The email login then gets no `idToken`, so
   it can't open a second wallet; the popup continues with Google. `linkTicket` (32 random bytes, single use, 10 min,
   bound to the app, this address's `sub` and the hinted Google identities) only when the contract would accept the join.
 - `link_new`, `link_account`, `link_change`: `googleWallet: false`. `409 links_unavailable` while
@@ -1022,9 +1027,10 @@ row. One shared bucket of 20 staff actions an hour per staff member, all routes 
   actionNonce)`, for `propose_change(AddClient)`. The scope is read from `get_scope` now (no cache): `404
   unknown_scope`, `409 stale_action_nonce {actionNonce}` when `actionNonce` isn't its current `action_nonce`, `403
   email_not_enabled` when no active app of the scope has email on. Audit: staff, ticket, scope, nonce, jti.
-- **`POST /v1/email/admin/unlock`** `{email, ticket}` → `200 {cleared}`: clears the mailbox's guess counters for the
-  UTC day, its trip marker and every requester's lock on it (not the code-mail counters), and grants it for the UTC day
-  one challenge past the live and daily caps and one code mail past the code limits (D198). `429 staff_cap` past 1 a day
+- **`POST /v1/email/admin/unlock`** `{email, ticket}` → `200 {cleared, unlockToken}`: clears the mailbox's guess
+  counters for the UTC day, its trip marker and every requester's lock on it (not the code-mail counters), and returns
+  a one-time `unlockToken` (`ug1.` + 43 characters, 24 h; only its sha256 is kept) for support to pass to the owner:
+  the one `start` presenting it gets past the mailbox's caps and limits as a ticketed start (D198). Never logged. `429 staff_cap` past 1 a day
   or 3 in 30 days per mailbox. Audit: `action: "unlock"`, staff, ticket, `subject` = 12 characters of the mailbox key
   (never the address); log `mailbox_unlocked` (warn).
 - **`POST /v1/email/admin/unsuppress`** `{email, ticket}` → `200 {removed}`: deletes the exact address's suppression
@@ -1070,7 +1076,7 @@ subject. Every mailbox decision is one atomic call (D198). Every mailbox-level r
 | IP prefix (IPv4 /24, IPv6 /56, IPv6 /48): `start` | 200 per day each | 429 |
 | IP: `verify` / `resend` / `google-match` / webhook | 30 / 10 / 30 / 120 per 10 min | 429 |
 | No usable `cf-connecting-ip` (IP-limited routes) | refused | `400 missing_client_ip`, logged |
-| Recipient domain (registrable, Public Suffix List): code mails | 100 per day, except the listed consumer providers (`src/domain.ts`) | 429 |
+| Recipient domain (registrable, Public Suffix List): code mails | 100 per day, except the listed consumer providers (`src/domain.ts`); each requester prefix (IPv4 /24, IPv6 /56, /48) ≤ 20 of them; ticketed and unlock-grant challenges not counted | 429; `email_domain_cap` logged when a day fills |
 | App: `start` | plan `per_minute` per minute; plan `per_day` per day | 429 |
 | Env: user mail | `emailIssuer.dailySendBudget` per day (default 1000), codes and notices; one app ≤ 10% of it, and the last 20% only for apps under half their share | `start`, `resend` 429; logs `email_budget` (50%, 80% of global and of each share), `send_budget_exhausted` (error) |
 | Staff | 20 actions per hour per staff member, all staff routes together | 429 |
@@ -1080,12 +1086,13 @@ subject. Every mailbox decision is one atomic call (D198). Every mailbox-level r
 | Object | Holds |
 |---|---|
 | `Challenge` (binding `EMAIL_CHALLENGE`), one per `c:` + b64url(sha256(public half of the challengeId)) | `{appId, appName, scopeId, purpose, nonce \| autoLink: {googleSub, sessionHash}, silent, emailEnc (AES-256-GCM under a key from the id's secret half; '' when silent), mailboxKey, domainKey, ticketed, codeMac = HMAC(K_code, challengeId ‖ code), attempts, createdAtMs, expiresAtMs, lastSentAtMs, resends}`; deleted at the correct code or by an alarm at expiry. Link tickets: one object per `t:` + b64url(sha256(ticket)), `{appId, scopeId, sub, googleSubs, expiresAtMs}`, deleted at first use |
-| `RateLimiter`, one per subject (`mbx:<mailbox key>`, `dom:<domain key>`, `ip:<subject or prefix>`, `app:<id>`, `global`, `staff:<sha256 hex>`) | fixed-window counts; in a mailbox's object also the live challenges' expiry times, the requesters' locks, the unlock grants and 30 days of staff actions; in `global` the per-app budget use; an alarm drops what ended |
+| `RateLimiter`, one per subject (`mbx:<mailbox key>`, `dom:<domain key>`, `ip:<subject or prefix>`, `app:<id>`, `global`, `staff:<sha256 hex>`) | fixed-window counts; in a mailbox's object also the live challenges' expiry times, the requesters' locks, the unlock grant (sha256 of its token, 24 h) and 30 days of staff actions; in a domain's, the per-prefix shares (hashed prefixes); in `global` the per-app budget use; an alarm drops what ended |
 | `Outbox` (binding `OUTBOX`, `local*` envs only) | the outbox stub's last 200 messages, read by tests through the binding; no route |
 
 Issuer D1 (`apps/email-issuer/migrations/0001_init.sql`): `email_issuance(jti, app_id, purpose, kid, iat)` (24 months,
-D90; the pruning job is a batch C13 follow-up), `email_hints(scope_id, email_sub, google_sub, updated_at_ms)` (kept
-while the scope exists, D122), `email_suppressions(email_key = HMAC(K_sup, exact normalized address), reason
+D90; the pruning job is a batch C13 follow-up), `email_hints(scope_id, email_sub, google_sub, hosted, updated_at_ms)`
+(a hosted one kept while the scope exists, D122; a non-hosted one honoured and kept 180 days after its last login,
+D199), `email_suppressions(email_key = HMAC(K_sup, exact normalized address), reason
 bounce|complaint, at_ms)` (K_sup derived from K_sub), `email_admin_audit(at_ms, staff, action
 client_proof|unlock|unsuppress, ticket, scope_id?, action_nonce?, jti?, subject?)`. No address is stored readably
 anywhere. `APP_DB` is the API's D1, read only (`apps`, `plans`).
@@ -1109,8 +1116,9 @@ the add-on.
 (`ok`; `suppressed`; `error` with the provider's reason and status), `link_notice`, `limit` (`mailbox:locked` /
 `mailbox:live` / `mailbox:codes` / `domain`, or the window's name), `email_budget` (warn: `code` `global_50`,
 `global_80`, `app_50`, `app_80`), `send_budget_exhausted` (error: `code` `global`, `app` or `reserve`),
-`email_complaint_rate` (error: `count` complaints in 24 h), `missing_client_ip` (warn), `mailbox_unlocked` (warn,
+`email_complaint_rate` (error: `count` complaints in 24 h), `email_domain_cap` (warn: `subject` = 12 characters of
+the domain key, the mail that filled the domain's day), `missing_client_ip` (warn), `mailbox_unlocked` (warn,
 staff), `suppression_removed` (warn, staff), `mailbox_guess_limit` (error: `code` `backstop` or `ceiling`, `subject` =
 12 characters of the mailbox key; staff see targeted mailboxes), `google_revoke` (warn). Never an address, a code, a
-`sub`, a token, a device or link ticket, an access token, a key or a body: `test/privacy.test.ts` greps every line of
+`sub`, a token, a device or link ticket, an unlock token, an access token, a key or a body: `test/privacy.test.ts` greps every line of
 every flow for them.

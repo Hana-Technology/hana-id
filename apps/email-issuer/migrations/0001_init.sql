@@ -19,7 +19,8 @@ CREATE TABLE email_hints (
   scope_id      TEXT NOT NULL,
   email_sub     TEXT NOT NULL,               -- e1.… (the email identity's sub)
   google_sub    TEXT NOT NULL,               -- the Google identity's sub (public on chain once it logs in)
-  updated_at_ms INTEGER NOT NULL,
+  hosted        INTEGER NOT NULL,            -- 1: the address was Google-hosted at that login (D158); 0: honoured 180 days
+  updated_at_ms INTEGER NOT NULL,              -- that Google identity's last login reporting the address
   PRIMARY KEY (scope_id, email_sub, google_sub)
 );
 

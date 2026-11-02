@@ -5,7 +5,7 @@
 // `retry-after`, for every mailbox-level limit; the provider's send happens after the response, in waitUntil. Every
 // limit decision is one atomic Durable Object call, and the checks run so that a requester pays before a partner's
 // quota or the global budget is touched (D198).
-import { base64UrlDecode, base64UrlEncode, sha256, toHex } from './bytes.ts';
+import { base64UrlDecode, base64UrlEncode, sha256, toHex, utf8 } from './bytes.ts';
 import { emailSub, isDisposableDomain, isGoogleHosted, normalizeEmail } from '@hana-id/email';
 import { type IssuerApp, appById, appByKey, isPublishableKey, scopeHasEmailApp } from './apps.ts';
 import type { ChallengeRecord, TicketRecord } from './challenge.ts';
@@ -24,7 +24,8 @@ import { CODE_RE, KeysUnavailable, codeMac, deviceTicket, domainKey, isDeviceTic
 import { autoLinkPreimage, clientProofPreimage, EMAIL_PROVIDER, identityKey, nonceOf, sessionPreimage, type SessionCommitment } from './layouts.ts';
 import {
   CHALLENGE_TTL_MS,
-  DOMAIN_SENDS_PER_DAY,
+  HINT_PRUNE_BATCH,
+  NON_HOSTED_HINT_TTL_MS,
   IP_AGGREGATE_START_LIMITS,
   IP_MATCH_LIMITS,
   IP_RESEND_LIMITS,
@@ -52,6 +53,9 @@ const MAX_HINTS = 4;
 export const BOUNCE_SUPPRESSION_MS = 30 * 86_400_000;
 /** `email_complaint_rate` is logged when the complaints of the last 24 h pass this (M4). */
 export const COMPLAINT_ALERT_PER_DAY = 5;
+/** A staff unlock's one-time token: "ug1." + 32 random bytes, b64url. */
+const UNLOCK_TOKEN_PREFIX = 'ug1.';
+const UNLOCK_TOKEN_RE = /^ug1\.[A-Za-z0-9_-]{43}$/u;
 const SUPPORT_TICKET_RE = /^[A-Za-z0-9._#:-]{1,64}$/u;
 
 type Ctx = { deps: Deps; requestId: string; endpoint: string; cors: Record<string, string> };
@@ -156,13 +160,22 @@ async function reserveBudget(ctx: Ctx, appId: string): Promise<Reservation | nul
   return r.reservation;
 }
 
-/** One code mail to a recipient domain (`''`: an exempt provider, no cap). Returns false when the domain's day is full. */
-async function reserveDomain(deps: Deps, key: string, now: number): Promise<boolean> {
-  if (!key) return true;
-  return (await limiter(deps, `dom:${key}`).hit(DOMAIN_SENDS_PER_DAY, now)).ok;
+/**
+ * One code mail to a recipient domain, within its day and the requester prefixes' shares of it (scan finding 2).
+ * Nothing is counted for an exempt provider (`key` ''), or a ticketed (or unlock-grant) challenge: the owner's mail
+ * never waits on a domain someone else filled. `ok: false` when refused; logs `email_domain_cap` when this mail
+ * filled the domain's day.
+ */
+async function reserveDomain(ctx: Ctx, key: string, request: Request, now: number, ticketed: boolean): Promise<{ ok: boolean; r: Reservation | null }> {
+  if (!key || ticketed) return { ok: true, r: null };
+  const prefixes = ipAggregates(rawIp(request)).map(requesterKey);
+  const d = await limiter(ctx.deps, `dom:${key}`).reserveDomain(prefixes, now);
+  if (!d.ok) return { ok: false, r: null };
+  if (d.filled) log({ event: 'email_domain_cap', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'rejected', subject: key.slice(0, 12) }, 'warn');
+  return { ok: true, r: d.reservation };
 }
-const releaseDomain = async (deps: Deps, key: string, now: number): Promise<void> => {
-  if (key) await limiter(deps, `dom:${key}`).unhit(DOMAIN_SENDS_PER_DAY, now);
+const releaseDomain = async (deps: Deps, key: string, r: Reservation | null): Promise<void> => {
+  if (key && r) await limiter(deps, `dom:${key}`).refund(r);
 };
 
 /** The domain cap's subject of a normalized address's domain: '' for an exempt provider. */
@@ -215,7 +228,7 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
   const parsed = await readJson(request, MAX_BODY);
   if (!parsed.ok) return fail(ctx, parsed.status, 'bad_request', parsed.message);
   const b = parsed.body;
-  if (!isObj(b) || !onlyKeys(b, ['pk', 'email', 'purpose', 'commitment'], ['deviceTicket'])) return fail(ctx, 400, 'bad_request', 'Body must be {pk, email, purpose, commitment, deviceTicket?}');
+  if (!isObj(b) || !onlyKeys(b, ['pk', 'email', 'purpose', 'commitment'], ['deviceTicket', 'unlockToken'])) return fail(ctx, 400, 'bad_request', 'Body must be {pk, email, purpose, commitment, deviceTicket?, unlockToken?}');
   // The requester pays first: its IP and prefix limits count before anything touches the app's quota or the budget.
   const limited = await startIpLimits(ctx, request);
   if (limited) return limited;
@@ -241,19 +254,23 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
   const suppressed = await isSuppressed(deps, await suppressionKey(keys, r.email));
   // An owner device ticket for this mailbox: the start uses the ticket's own allowances (D198). An invalid one is
   // ignored, never an error (it would say something about the address).
-  const ticketed = b.deviceTicket !== undefined && (await isDeviceTicketFor(keys, b.deviceTicket, mbx, now));
+  const deviceOk = b.deviceTicket !== undefined && (await isDeviceTicketFor(keys, b.deviceTicket, mbx, now));
+  // A staff unlock's one-time token (D198): only the start that presents it uses the grant. Unknown ones are ignored.
+  const grantHash = typeof b.unlockToken === 'string' && UNLOCK_TOKEN_RE.test(b.unlockToken) ? base64UrlEncode(sha256(utf8(b.unlockToken))) : null;
   const dKey = await domainSubject(deps, r.domain);
 
   // 1. The mailbox (one atomic call): locks, live challenges, the day's challenge cap, the first code's limits.
   const box = mailboxLimiter(deps, mbx);
-  const adm = await box.admit(ip, expiresAtMs, true, now, ticketed);
+  const adm = await box.admit(ip, expiresAtMs, true, now, deviceOk, grantHash);
   if (!adm.ok) return tryLater(ctx, adm.reason);
+  const ticketed = deviceOk || adm.grant !== null;
   const undoMailbox = async (alsoLive: boolean) => {
     if (adm.send) await box.refund(adm.send);
-    await box.unadmit(adm.created, alsoLive ? expiresAtMs : null, now);
+    await box.unadmit(adm.created, alsoLive ? expiresAtMs : null, now, adm.grant);
   };
-  // 2. The recipient domain's day.
-  if (!(await reserveDomain(deps, dKey, now))) {
+  // 2. The recipient domain's day (a ticketed start skips it).
+  const dom = await reserveDomain(ctx, dKey, request, now, ticketed);
+  if (!dom.ok) {
     await undoMailbox(true);
     return tryLater(ctx, 'domain');
   }
@@ -261,7 +278,7 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
   const appLimit = await limiter(deps, `app:${app.id}`).hit(appStartLimits(app), now);
   if (!appLimit.ok) {
     await undoMailbox(true);
-    await releaseDomain(deps, dKey, now);
+    await releaseDomain(deps, dKey, dom.r);
     log({ event: 'limit', requestId: ctx.requestId, endpoint: ctx.endpoint, appId: app.id, limit: appLimit.limit });
     return tooMany(ctx, appLimit.retryAfterMs);
   }
@@ -270,7 +287,7 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
   const budget = await reserveBudget(ctx, app.id);
   if (!budget) {
     await undoMailbox(true);
-    await releaseDomain(deps, dKey, now);
+    await releaseDomain(deps, dKey, dom.r);
     await undoApp();
     return tooMany(ctx, 60_000);
   }
@@ -299,7 +316,7 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
   };
   if (!(await challengeStub(deps, id.name).create(rec))) {
     await undoMailbox(true);
-    await releaseDomain(deps, dKey, now);
+    await releaseDomain(deps, dKey, dom.r);
     await undoApp();
     await limiter(deps, 'global').refund(budget);
     return fail(ctx, 500, 'internal', 'Could not start the challenge');
@@ -309,7 +326,7 @@ export async function handleStart(request: Request, ctx: Ctx): Promise<Response>
       deliver(ctx, rec, r.email, code, async () => {
         // The challenge stays (a resend may still deliver), but its first code's places are taken back.
         await undoMailbox(false);
-        await releaseDomain(deps, dKey, now);
+        await releaseDomain(deps, dKey, dom.r);
         await limiter(deps, 'global').refund(budget);
       }),
     );
@@ -340,19 +357,20 @@ export async function handleResend(request: Request, ctx: Ctx): Promise<Response
   const res = await box.reserveSend(requesterKey(ipOf(request)), now, st.ticketed);
   if (!res.ok) return tryLater(ctx, res.reason);
   const send = res.reservation;
-  if (!(await reserveDomain(deps, st.domainKey, now))) {
+  const dom = await reserveDomain(ctx, st.domainKey, request, now, st.ticketed);
+  if (!dom.ok) {
     await box.refund(send);
     return tryLater(ctx, 'domain');
   }
   const budget = await reserveBudget(ctx, st.appId);
   if (!budget) {
     await box.refund(send);
-    await releaseDomain(deps, st.domainKey, now);
+    await releaseDomain(deps, st.domainKey, dom.r);
     return tooMany(ctx, 60_000);
   }
   const undoAll = async () => {
     await box.refund(send);
-    await releaseDomain(deps, st.domainKey, now);
+    await releaseDomain(deps, st.domainKey, dom.r);
     await limiter(deps, 'global').refund(budget);
   };
   const keys = await deps.keys();
@@ -444,9 +462,12 @@ export async function handleVerify(request: Request, ctx: Ctx): Promise<Response
   const owner = await deviceTicket(keys, rec.mailboxKey, now);
 
   if (rec.purpose === 'session') {
-    // Case B lookup: a Google identity that reported this (Google-hosted) address has the wallet here.
-    const hints = await deps.env.DB.prepare('SELECT google_sub FROM email_hints WHERE scope_id = ?1 AND email_sub = ?2 ORDER BY updated_at_ms DESC LIMIT ?3')
-      .bind(rec.scopeId, sub, MAX_HINTS)
+    // Case B lookup: a Google identity that reported this address as verified has the wallet here (D119). A hint for a
+    // non-Google-hosted address counts only if that Google identity logged in with it within 180 days (D199).
+    const staleBefore = now - NON_HOSTED_HINT_TTL_MS;
+    await deps.env.DB.prepare('DELETE FROM email_hints WHERE scope_id = ?1 AND email_sub = ?2 AND hosted = 0 AND updated_at_ms <= ?3').bind(rec.scopeId, sub, staleBefore).run();
+    const hints = await deps.env.DB.prepare('SELECT google_sub FROM email_hints WHERE scope_id = ?1 AND email_sub = ?2 AND (hosted = 1 OR updated_at_ms > ?4) ORDER BY updated_at_ms DESC LIMIT ?3')
+      .bind(rec.scopeId, sub, MAX_HINTS, staleBefore)
       .all<{ google_sub: string }>();
     const caseB: string[] = [];
     let googleWallet = false;
@@ -543,13 +564,15 @@ export async function handleGoogleMatch(request: Request, ctx: Ctx): Promise<Res
     const keys = await deps.keys();
     const sub = await emailSub(keys.sub, r.email);
     const googleSub = id.value.sub;
-    // The hint a Google login writes for every Google-verified address (D119, D122: kept while the scope exists). A
-    // non-Google-hosted match links as case B only after 24 h (mode 0 below), with link notices (D199's residual risk).
-    await deps.env.DB.prepare(
-      'INSERT INTO email_hints (scope_id, email_sub, google_sub, updated_at_ms) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (scope_id, email_sub, google_sub) DO UPDATE SET updated_at_ms = excluded.updated_at_ms',
-    )
-      .bind(app.scopeId, sub, googleSub, now)
-      .run();
+    // The hint a Google login writes for every Google-verified address (D119, D122: a hosted one kept while the scope
+    // exists). A non-hosted one counts for 180 days after this login, then is pruned, and its case B links only after
+    // 24 h (mode 0 below), with link notices (D199's residual risk).
+    await deps.env.DB.batch([
+      deps.env.DB.prepare(
+        'INSERT INTO email_hints (scope_id, email_sub, google_sub, hosted, updated_at_ms) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (scope_id, email_sub, google_sub) DO UPDATE SET hosted = excluded.hosted, updated_at_ms = excluded.updated_at_ms',
+      ).bind(app.scopeId, sub, googleSub, googleHosted ? 1 : 0, now),
+      deps.env.DB.prepare('DELETE FROM email_hints WHERE rowid IN (SELECT rowid FROM email_hints WHERE hosted = 0 AND updated_at_ms <= ?1 LIMIT ?2)').bind(now - NON_HOSTED_HINT_TTL_MS, HINT_PRUNE_BATCH),
+    ]);
 
     const j = await judgeChain(deps, app.scopeId, googleSub, sub);
     // A ticket is single use: any google-match that presents it spends it. It counts only for this address and for one
@@ -681,7 +704,8 @@ export async function handleClientProof(request: Request, ctx: Ctx): Promise<Res
 
 /**
  * `{email, ticket}` (the address the user gave support) → clears the mailbox's guess counters, locks and trip for the
- * UTC day and grants it one challenge and one code mail past the caps (D198). At most 1 a day and 3 in 30 days per
+ * UTC day, and returns a one-time `unlockToken` for the owner: only the start presenting it passes the caps (D198,
+ * scan finding 1). At most 1 a day and 3 in 30 days per
  * mailbox. Audited first (staff, ticket, a 12-character prefix of the mailbox key; never the address).
  */
 export async function handleUnlock(request: Request, ctx: Ctx): Promise<Response> {
@@ -694,9 +718,11 @@ export async function handleUnlock(request: Request, ctx: Ctx): Promise<Response
   const box = mailboxLimiter(deps, mbx);
   if (!(await box.staffAction('unlock', deps.now()))) return fail(ctx, 429, 'staff_cap', 'This mailbox was unlocked already today, or 3 times in 30 days');
   await audit(deps, { staff: gate.staff, action: 'unlock', ticket: gate.body.ticket as string, subject: mbx.slice(0, 12) });
-  const cleared = await box.staffUnlock(deps.now());
+  // The grant is bound to whoever holds this token (staff pass it to the owner), never to whoever starts next.
+  const unlockToken = `${UNLOCK_TOKEN_PREFIX}${randomId(32)}`;
+  const cleared = await box.staffUnlock(deps.now(), base64UrlEncode(sha256(utf8(unlockToken))));
   log({ event: 'mailbox_unlocked', requestId: ctx.requestId, endpoint: ctx.endpoint, outcome: 'ok', subject: mbx.slice(0, 12), count: cleared }, 'warn');
-  return ok(ctx, 200, { cleared }, { count: cleared });
+  return ok(ctx, 200, { cleared, unlockToken }, { count: cleared });
 }
 
 /**

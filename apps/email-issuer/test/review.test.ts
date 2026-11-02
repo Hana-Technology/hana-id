@@ -76,6 +76,51 @@ describe('the recipient-domain cap (H1, M4)', () => {
   });
 });
 
+describe('the recipient-domain cap: per-prefix shares, ticketed starts, the log (scan finding 2)', () => {
+  it('one /24 gets at most 20% of a domain’s day; other requesters still get the rest; email_domain_cap at the cap', async () => {
+    const h = await harness();
+    h.clock.now = morning;
+    const apps = await Promise.all(Array.from({ length: 3 }, () => seedApp(h)));
+    const dom = `corp${uid().replace(/[^a-z0-9]/gu, '')}.example`;
+    let fromOne = 0;
+    // One /24 (distinct addresses inside it, so the per-IP limit doesn't bite first).
+    for (let i = 0; i < 25; i++) if ((await h.call('/v1/email/start', startBody(h, apps[i % 3]!, `a${i}@${dom}`), { ip: `203.0.113.${i + 1}` })).status === 202) fromOne++;
+    expect(fromOne).toBe(20);
+    // An IPv6 /48 likewise, whatever its /56s.
+    let fromV6 = 0;
+    for (let i = 0; i < 25; i++) if ((await h.call('/v1/email/start', startBody(h, apps[i % 3]!, `b${i}@${dom}`), { ip: `2001:db8:99:${(i * 256).toString(16)}::1` })).status === 202) fromV6++;
+    expect(fromV6).toBe(20);
+    // Others fill the rest: 100 in all, and the mail that fills the day is logged.
+    let rest = 0;
+    const { lines } = await captureLogs(async () => {
+      for (let i = 0; i < 70; i++) if ((await h.call('/v1/email/start', startBody(h, apps[i % 3]!, `c${i}@${dom}`), { ip: `10.${77 + Math.floor(i / 200)}.${i}.1` })).status === 202) rest++;
+    });
+    expect(rest).toBe(60);
+    expect(lines.filter((l) => l.includes('"email_domain_cap"'))).toHaveLength(1);
+    expect(lines.join('\n')).not.toContain(dom);
+  });
+
+  it('a ticketed start skips the domain cap: a filled company domain never locks its owners out', async () => {
+    const h = await harness();
+    h.clock.now = morning;
+    const apps = await Promise.all(Array.from({ length: 3 }, () => seedApp(h)));
+    const dom = `full${uid().replace(/[^a-z0-9]/gu, '')}.example`;
+    const a = `owner@${dom}`;
+    const s0 = (await (await h.call('/v1/email/start', startBody(h, apps[0]!, a), { ip: '192.0.2.60' })).json()) as { challengeId: string };
+    const v0 = (await (await h.call('/v1/email/verify', { challengeId: s0.challengeId, code: h.sender.codeFor(a) }, { ip: '192.0.2.60' })).json()) as { deviceTicket: string };
+    let n = 1;
+    for (let i = 0; n < 100 && i < 200; i++) if ((await h.call('/v1/email/start', startBody(h, apps[i % 3]!, `x${i}@${dom}`), { ip: `10.${90 + Math.floor(i / 200)}.${i}.1` })).status === 202) n++;
+    expect(n).toBe(100);
+    expect((await h.call('/v1/email/start', startBody(h, apps[0]!, a), { ip: '192.0.2.61' })).status).toBe(429);
+    const s = await h.call('/v1/email/start', startBody(h, apps[0]!, a, { deviceTicket: v0.deviceTicket }), { ip: '192.0.2.61' });
+    expect(s.status).toBe(202);
+    const cid = ((await s.json()) as { challengeId: string }).challengeId;
+    // Its resend skips the domain cap too.
+    h.clock.now += 31_000;
+    expect((await h.call('/v1/email/resend', { challengeId: cid }, { ip: '192.0.2.61' })).status).toBe(202);
+  });
+});
+
 describe('owner device tickets (D198, M1)', () => {
   it('opaque, bound to the mailbox, 30 days', async () => {
     const h = await harness();

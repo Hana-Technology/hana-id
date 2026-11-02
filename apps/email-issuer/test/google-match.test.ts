@@ -291,6 +291,45 @@ describe('the four cases', () => {
     expect(t.claims.nonce).toBe(nonceOf(autoLinkPreimage(env.SIGNER_ACCOUNT, app.scope, hash, gIk, { join: 2, joinerIk: eIk, targetRootIk: gIk, targetEpoch: 0, mode: 0 })));
     expect(h.sender.to(email).some((m) => m.kind === 'link_notice')).toBe(true);
   });
+  it('a non-hosted hint older than 180 days is ignored and pruned: E gets its own session (D199)', async () => {
+    const h = await harness();
+    const app = await seedApp(h);
+    const email = `st${uid()}@corp.example`;
+    const acc = gAccount(email, { hd: 'other.example' });
+    await match(h, app, acc);
+    h.chain.open(app.scope, 'google', acc.sub);
+    // 181 days without that Google identity logging in with the address.
+    h.clock.now += 181 * 86_400_000;
+    const login = await emailLogin(h, app, email);
+    expect(login.googleWallet).toBe(false);
+    expect(login.idToken).toBeDefined();
+    expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM email_hints WHERE scope_id = ?1').bind(app.scope).first('n')).toBe(0);
+  });
+
+  it('a hosted hint doesn’t lapse; a fresh non-hosted login renews its hint', async () => {
+    const h = await harness();
+    const app = await seedApp(h);
+    const hosted = `hs${uid()}@gmail.com`;
+    const g = gAccount(hosted);
+    await match(h, app, g);
+    h.chain.open(app.scope, 'google', g.sub);
+    // A non-hosted hint 170 days old, renewed by a fresh Google login (ID tokens are dated by the real clock, so the
+    // old login is written directly).
+    const other = `rn${uid()}@corp.example`;
+    const n = gAccount(other, { hd: 'other.example' });
+    await env.DB.prepare('INSERT INTO email_hints (scope_id, email_sub, google_sub, hosted, updated_at_ms) VALUES (?1, ?2, ?3, 0, ?4)').bind(app.scope, await sub(h, other), n.sub, h.clock.now - 170 * 86_400_000).run();
+    await match(h, app, n);
+    expect(await env.DB.prepare('SELECT updated_at_ms FROM email_hints WHERE google_sub = ?1').bind(n.sub).first('updated_at_ms')).toBe(h.clock.now);
+    h.chain.open(app.scope, 'google', n.sub);
+    // 170 days later it still counts (without the renewal it would be 340 days old).
+    h.clock.now += 170 * 86_400_000;
+    expect((await emailLogin(h, app, other)).googleWallet).toBe(true);
+    h.clock.now += 230 * 86_400_000;
+    expect((await emailLogin(h, app, hosted)).googleWallet).toBe(true);
+    // 400 days after the renewal, the non-hosted one has lapsed.
+    expect((await emailLogin(h, app, other)).googleWallet).toBe(false);
+  });
+
   it('case B: a ticket for another address, or another app, mints nothing; link=false mints nothing', async () => {
     const h = await harness();
     const app = await seedApp(h);

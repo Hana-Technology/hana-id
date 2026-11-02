@@ -183,11 +183,11 @@ describe('staff routes (admin/*) behind Cloudflare Access', () => {
     expect((await ask('/v1/email/admin/unlock', { email: victim, ticket: 'SUP-91' })).status).toBe(200);
   });
 
-  it('unlock grants one challenge and one code even when the mailbox’s code allowance was drained (M1)', async () => {
+  it('unlock returns a one-time token: only a start presenting it gets past a drained mailbox, never the attacker’s (M1, scan 1)', async () => {
     const { h, ask } = await staffHarness();
     h.clock.now = Date.UTC(2027, 0, 21, 8);
     const app = await seedApp(h);
-    const victim = `g${uid().replace(/[^a-z0-9]/gu, '')}@example.com`;
+    const victim = `g${uid().replace(/[^a-z0-9]/gu, '')}@gmail.com`;
     let n = 0;
     // Drain: 30 mailbox-wide plus the 5-a-day reserve, each challenge used up at once.
     for (let i = 0; i < 60 && n < 35; i++) {
@@ -199,14 +199,25 @@ describe('staff routes (admin/*) behind Cloudflare Access', () => {
       if (n % 9 === 0) h.clock.now += 15 * 60_000 + 1;
     }
     const owner = '192.0.2.10';
-    const start = () => h.call('/v1/email/start', { pk: app.pk, email: victim, purpose: 'session', commitment: sessionCommitment(app.scope, h.clock.now).json }, { ip: owner });
-    expect((await start()).status).toBe(429);
-    expect((await ask('/v1/email/admin/unlock', { email: victim, ticket: 'SUP-1' })).status).toBe(200);
-    const s = await start();
+    const start = (ip: string, extra: Record<string, unknown> = {}) => h.call('/v1/email/start', { pk: app.pk, email: victim, purpose: 'session', commitment: sessionCommitment(app.scope, h.clock.now).json, ...extra }, { ip });
+    expect((await start(owner)).status).toBe(429);
+    const u = await ask('/v1/email/admin/unlock', { email: victim, ticket: 'SUP-1' });
+    expect(u.status).toBe(200);
+    const { unlockToken } = (await u.json()) as { unlockToken: string };
+    expect(unlockToken).toMatch(/^ug1\.[A-Za-z0-9_-]{43}$/u);
+    // The attacker (any requester without the token, or with a forged one) can't use the grant.
+    expect((await start('198.51.7.7')).status).toBe(429);
+    expect((await start('198.51.7.8', { unlockToken: `ug1.${'A'.repeat(43)}` })).status).toBe(429);
+    // A refused or undelivered start gives the grant back: the provider fails once, then delivers.
+    h.sender.next = { ok: false, reason: 'unavailable', providerStatus: 503 };
+    expect((await start(owner, { unlockToken })).status).toBe(202);
+    h.sender.next = { ok: true };
+    const s = await start(owner, { unlockToken });
     expect(s.status).toBe(202);
     const cid = ((await s.json()) as { challengeId: string }).challengeId;
     expect((await h.call('/v1/email/verify', { challengeId: cid, code: h.sender.codeFor(victim) }, { ip: owner })).status).toBe(200);
-    expect((await start()).status).toBe(429);
+    // One-time: used up.
+    expect((await start(owner, { unlockToken })).status).toBe(429);
   });
 
   it('unsuppress: removes an exact address’s suppression; needs a ticket; capped; audited first (M3)', async () => {

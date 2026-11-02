@@ -2394,8 +2394,17 @@ is computed by `@hana-id/email` alone, from the normalized address including any
     attacker with many IPs uses it up too), which the earlier wording claimed.
   - **The ceiling is now 18 + 4 + 3:** a backstop of 18 open to anyone, the owner slot of 4 (started before the trip,
     no failure), the ticket slot of 3 (a ticketed challenge); still a hard 25 a day, 0.91% a year.
-  - **Unlock grants (M1):** `admin/unlock` also grants the mailbox, for that UTC day, one challenge past the live and
-    daily caps and one code mail past the code limits, so an owner whose mailbox was drained can sign in after support.
+  - **Unlock grants (M1; bound to the owner after the scan, finding 1):** `admin/unlock` returns a one-time
+    `unlockToken` ("ug1." + 32 random bytes; the mailbox object keeps only its sha256, 24 h) that staff pass to the
+    owner. Only a `start` presenting it uses the grant: that start counts as ticketed (past the live and daily caps, the
+    ticket's code allowance and guess slot, and the domain cap). A start that is then refused or whose mail fails gives
+    the grant back. Any other requester, the attacker who caused the lockout included, gets nothing from the unlock but
+    the cleared guess counters. (The first version granted the mailbox, so whoever started next took it.)
+  - **The domain cap can't be filled by a few requesters (scan finding 2):** inside one domain's day, each requester
+    prefix (IPv4 /24, IPv6 /56 and /48) may send at most 20% (20 of 100); ticketed and unlock-grant starts and their
+    resends skip the domain cap altogether. `email_domain_cap` (warn, the domain key's 12-character prefix) is logged by
+    the mail that fills a domain's day, for batch 9's alert. Owner-slot requesters do **not** skip it: owner-slot status
+    (started before a trip, no failure) is reachable by an attacker, so it would hand the bypass back.
   - **One `retry-after` (L1):** every mailbox-level refusal (the mailbox's limits and locks, the domain cap) answers
     `retry-after: 900`, whatever the limit.
 
@@ -2460,12 +2469,21 @@ is computed by `@hana-id/email` alone, from the normalized address including any
     decided): a Google-hosted case B links at once, any other only after 24 h (mode 0), with a link notice to the
     address. (A first version of this fix wrote hints only for Google-hosted addresses; it was reverted because it
     overrode D119.)
-  - **Residual risk, to confirm (tokens review L1):** for a non-Google-hosted address, Google's word that an account
-    has the address says nothing about who reads the mailbox today. A stale Google account still holding an old address
-    (a former employee's, a recycled domain's) can steer the address's new owner, at their email login, to that Google
-    account's wallet in a scope: the new owner gets no email wallet of their own there and is offered the link. Mitigated
-    by the 24 h delay before such a join takes effect (cancellable meanwhile) and by the link notices sent to the
-    address; Google-hosted addresses don't have it (Google hosts the mailbox, or the domain admin controls both, D158).
+  - **Residual risk, to confirm (tokens review L1, scan of the D119 revert):** for a non-Google-hosted address, Google's
+    word that an account has the address says nothing about who reads the mailbox today. A stale Google account G still
+    holding an old address (a former employee's, a recycled domain's) can steer the address's new owner E, at E's email
+    login, to G's wallet in a scope: E gets no session of its own there (case B withholds `idToken`) and is offered the
+    link. Bounds:
+    - **180 days:** a non-hosted hint counts only while G logged in with that address within the last 180 days
+      (`email_hints.updated_at_ms`, renewed at every such Google login); older non-hosted hints are ignored and pruned
+      (the address's own at each `verify`, up to 50 others at each hint write). Hosted hints don't lapse.
+    - **24 h and notices:** a non-hosted case B joins only after 24 h (mode 0), and the address gets a link notice.
+    - **A cancel frees E:** while the join is pending, a cancel by G's wallet or by E itself (`cancel_link` with a
+      `link_change` "cancel" code) removes it, and E's next email login gets its own wallet.
+  - **The alternative, for the user to choose (proposed by the scan):** for a non-hosted address, give E its own
+    session in case B and make the link an option the popup offers, at the cost of D122's "no second wallet" for those
+    addresses (a person whose old Google account really has the address would then hold two wallets in that scope until
+    they link). The code does the stricter D119/D122 reading with the 180-day bound.
   - **Link tickets (tokens review L2):** a `linkTicket` is bound to the app, the address's `sub` **and** the hinted Google
     identities found in case B; google-match accepts it only for one of those (binding the relayId is left for batch 8).
   - **Retention (independent review L3):** SendGrid's Email Activity keeps each message's recipient and events (3 days,

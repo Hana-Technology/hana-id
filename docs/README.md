@@ -19,6 +19,7 @@ the batch merges, so where a spec and a reference doc disagree, the reference do
 | `context.md` | Project background, batch B status, testnet measurements, next steps |
 | `../envs/README.md`, `../apps/api/README.md`, `../apps/smoke/README.md`, `../apps/e2e/README.md`, `../apps/demo/README.md` | Per-package quick starts (`apps/demo`: the hosted testnet demo for colleagues) |
 | `../packages/{core,web,react,sodax}/README.md` | The partner-facing READMEs shipped in the SDK tarballs (install, minimal usage) |
+| `../packages/email/README.md` | Email normalization v1, the `e1.` `sub`, the Google-hosted rule, the disposable-domain list: API, the frozen rules, the `tr46` choice, the list's pinned source and how to update it |
 
 ## Specs (history)
 
@@ -34,6 +35,7 @@ the batch merges, so where a spec and a reference doc disagree, the reference do
 | `email-login-spec.md` | Pre-mainnet email login (D4): Hana-run email issuer (Worker-secret key on testnet, AWS KMS before mainnet, two-signer-ready), automatic Privy-style account linking with pseudonymous ids on chain, explicit `linkAccount` (approved 2026-10-30: D119, D121–D123; not built) |
 | `identity-token-spec.md` | Pre-mainnet partner identity token (D120): a ≤ 1 h ES256 JWT for partner backends with a per-scope pseudonymous `sub`, proven wallet addresses, `sid`, opt-in verified email per app (sealed, never stored); JWKS, staged signing key (Worker secret on testnet, AWS KMS before mainnet), Privy migration (approved 2026-10-30: D127; build steps 1–4, no email claim, merged: D170–D175; review fixes on `feat/identity-token-2`: D176–D179) |
 | `email-login-build-plan.md` | The email login spec split into reviewable batches (order, scope, deploy steps, what users see after each); batch 1 = contract v3 |
+| `apple-login-spec.md` | **Paused, not built (D160):** Sign in with Apple (D124), Q1–Q5 answered: provider `apple` verified on chain (RS256, Apple's JWKS through the delayed key changes and the watchdog), every Apple client in Hana's developer team (team-scoped `sub`), no Apple scopes at launch so no email on chain, first-login screen and explicit linking, an optional email-only second client for matching (draft, 18 open questions) |
 | `hana-embed-ckd-results.md` | PoC measurements from wend-widget-demo |
 
 ## Where to put new knowledge

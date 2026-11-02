@@ -407,7 +407,7 @@ EVM `personal_sign` was approved and returned.
 **Roadmap after governance (decided 2026-10-29):** email login with a Hana-run issuer and automatic, Privy-style account
 linking (`docs/email-login-spec.md`, approved 2026-10-30: D4, D119, D121–D123; signing key a Worker secret on
 testnet, AWS KMS before mainnet), and the partner identity token with opt-in verified email per app (D120; `docs/identity-token-spec.md` approved
-2026-10-30, D127). Then Sign in with Apple (D124).
+2026-10-30, D127). Then Sign in with Apple (D124; `docs/apple-login-spec.md`, draft 2026-10-30, 18 open questions).
 
 **Before mainnet:**
 

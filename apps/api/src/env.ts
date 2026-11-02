@@ -57,6 +57,19 @@ export interface Env {
    */
   IDENTITY_SIGNING_KEY?: string;
   IDENTITY_SIGNING_KEY_STANDBY?: string;
+  /**
+   * Var: the signer kind (manifest `identityToken.signer.kind`, identity/signers.ts): `worker-secret` (the secrets
+   * above) or `aws-kms` (D215). Absent (a config generated before build step 7) means `worker-secret`.
+   */
+  IDENTITY_SIGNER?: string;
+  /** Var, `aws-kms` only: the active key's ARN (`identityToken.signer.keys.active.arn`); its region picks the endpoint. */
+  IDENTITY_KMS_KEY_ARN?: string;
+  /**
+   * Secrets, `aws-kms` only (scripts/identity-key.ts kms-put-aws-key): the access key of the dedicated IAM user whose
+   * only permission is kms:Sign on the active key (D215, D219). Never logged.
+   */
+  IDENTITY_AWS_ACCESS_KEY_ID?: string;
+  IDENTITY_AWS_SECRET_ACCESS_KEY?: string;
   /** Secret: the `sub`/`sid` HMAC key, base64 of 32 bytes. Never rotated (a new key changes every user's `sub`). */
   IDENTITY_SUB_KEY?: string;
   /** Optional var: the global hourly mint ceiling (identity/limits.ts IDENTITY_GLOBAL_PER_HOUR by default). */

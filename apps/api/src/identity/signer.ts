@@ -5,9 +5,10 @@
 // (scripts/identity-key.ts): IDENTITY_SIGNING_KEY and IDENTITY_SIGNING_KEY_STANDBY (P-256 private JWKs, testnet and
 // `local*` only) and IDENTITY_SUB_KEY (32 bytes, base64).
 //
-// `IdentitySigner` is the seam for build step 7's AWS KMS signer: the endpoint only ever calls `sign` and reads `kid`.
-// Whatever signs, the signature is verified with the manifest's public key for `kid` before a token is answered, so a
-// secret that doesn't match the published key (or a KMS wiring fault) never reaches a partner.
+// `IdentitySigner` has two adapters, picked by signers.ts from IDENTITY_SIGNER: the Worker-secret one here and AWS KMS
+// (kms.ts, build step 7). The endpoint only ever calls `sign` and reads `kid`. Whatever signs, the signature is
+// verified with the manifest's public key for `kid` before a token is answered, so a secret that doesn't match the
+// published key (or a KMS wiring fault) never reaches a partner.
 //
 // SECURITY: the private JWKs and IDENTITY_SUB_KEY never leave this module's memory; nothing here logs them.
 import { type P256PublicJwk, identityJwksEntry, isP256PublicJwk, jwkThumbprint } from '@hana-id/core/identity';

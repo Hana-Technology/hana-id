@@ -3,7 +3,14 @@
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
 known open issues. Last verified against code: 2026-11-02 for usage capture (branch `feat/batch-c-4`: the ledger's
 writer credential and `USER_ID_KEY` in the inventory and the compromise table, "Usage capture fails open" in the API
-invariants, the waiver's session marker, the secret-scan rules for the new files; D220–D224); 2026-11-02 for the hot DB after migration 0006 (branch
+invariants, the waiver's session marker, the secret-scan rules for the new files; D220–D224); 2026-11-02 for the email issuer (branch `feat/email-login-4`: its keys and secrets rows and "Email issuer"
+invariants, D195–D199, with the review fixes and the abuse re-check: K_sup, K_device, per-address device tickets with
+revocation, the owner pool, mailed unlock/unsuppress, the growing domain cap, encrypted challenge addresses, the 0.92%
+bound); for the identity token's AWS KMS signer (branch
+`feat/identity-token-7`, D215–D219: its compromise row, the AWS access key in the inventory, the signer invariants and
+open issue (l)); 2026-11-02 for what runs on sandbox-dev (branch `docs/consistency-pass`:
+open issue (e) and its watchdog notes, the Q22 note, OPER-3, against `develop` @ 1c6a124 and `docs/operations.md`);
+2026-11-02 for the hot DB after migration 0006 (branch
 `feat/batch-c-3`: the gate on `app_keys` and `scopes`, origins in force by `active_from`, staff-proposed guarded
 changes and their announcement, the `app_changes` ledger, open issue (i) fixed for the CLI); 2026-11-02 for the token
 check's move to `packages/oidc` and its optional claims (branch `feat/batch-c-2`, D201, in "Verify before relay"),
@@ -66,7 +73,8 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | A partner's Google client (own-client mode) | Tokens with chosen nonces for that scope → that scope's users' keys | Other scopes |
 | Hana's shared Google client or its Cloud project | Break isolation of every `allow_shared` scope | Own-client-only scopes |
 | Leaked in-memory PRK | Every v1 chain and account under that `key_index` | Other `key_index` values; rotation is the only remedy |
-| An identity signing key (the active one on the Worker, or a published standby or next key from `.secrets/`) | Forge identity tokens for any user of any app: be anyone at every partner that uses them as login evidence, while partners trust the key | No key, no signature, nothing at Hana or on chain (no Hana API accepts the token). The standby is never on the Worker (D177), so a Worker or Cloudflare leak exposes the active key only. Testnet only: mainnet signs with a non-exportable AWS KMS key (build step 7). Recovery (playbook `identity-signing-key-compromised`): switch to a key the incident didn't touch (the standby, or a fresh one when both may be exposed), unpublish the exposed ones (partners reject them within 10 min), tell partners |
+| An identity signing key (the active one on the Worker, or a published standby or next key from `.secrets/`) | Forge identity tokens for any user of any app: be anyone at every partner that uses them as login evidence, while partners trust the key | No key, no signature, nothing at Hana or on chain (no Hana API accepts the token). The standby is never on the Worker (D177), so a Worker or Cloudflare leak exposes the active key only. Testnet only: staging and mainnet sign with a non-exportable AWS KMS key (next row). Recovery (playbook `identity-signing-key-compromised`): switch to a key the incident didn't touch (the standby, or a fresh one when both may be exposed), unpublish the exposed ones (partners reject them within 10 min), tell partners |
+| The KMS signer's AWS access key (`IDENTITY_AWS_*`, or the API Worker itself on a KMS env; none yet) | Have KMS sign forged identity tokens for any user of any app while the access key is active. The key itself can't be read or exported | Only `kms:Sign` on the active key with `ECDSA_SHA_256` and `DIGEST` (IAM policy; the key policy refuses `Sign` by any other principal, grants to everyone, key changes to all but the break-glass role). The standby isn't in the IAM policy (which also denies `Sign` on any other key), so it stays clean for the switch (D219). Only long-term credentials sign: the key policy denies `Sign` to session credentials, because the holder can always call `GetSessionToken` (no policy can deny it), its sessions keep the user's live permissions, and deactivating the access key isn't proven to end them (confirm on staging). Every signature is in CloudTrail, matched by `userIdentity.arn` (the planned reconciliation and alarms find unexplained ones; `GetSessionToken` by the signer user is an alarm). Recovery (planned playbook `identity-kms-signer-compromised`): deactivate the access key, check the `NoSessionCredentials` deny is on every key, switch to the standby, unpublish the suspect key, tell partners with CloudTrail's window and count |
 | `IDENTITY_SUB_KEY` | Map partners' `sub`s back to on-chain paths, so to the Google `sub` (privacy) | Funds and keys unaffected. Never rotated: a new key changes every user's `sub` at every partner (a `u2_` scheme with a 90-day `legacy_sub` window if it ever leaks) |
 | The ledger writer's credential (`usage_writer`: the Hyperdrive config, `.secrets/<env>/neon-usage-writer.url`) | Insert made-up usage events (any org, app, uid) and identity counts; call the report functions (C12) for any org | No read or change of any table (functions only, D141); events can't be altered or deleted, so real ones stay. Billed gas comes from settlement, which reads each `near_tx` at FINAL from chain (C12): a made-up transaction never settles. Rotate with `usage-setup roles` after deleting the role files, then update the Hyperdrive config |
 | `USER_ID_KEY` | Link a known Google `sub` to its ledger uid in a scope (and so its activity); with the ledger, re-identify users | No funds, keys or logins. Never rotated within a contract term (a new key makes every user new in MAU); API only, never logged |
@@ -99,9 +107,19 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Google RSA public keys | JWKS | On chain (issuers); API isolate cache (≤ 6 h stale on fetch failure) | public | v1 contract: hourly cron sync. Governance contract: the 15-min cron proposes and executes delayed changes, the watchdog checks them against its own JWKS copy |
 | Console owner-action tokens | RS256 JWT (console audience) | Transient; `sha256` marker in a `RateLimiter` until `exp` | partner owner | Single use (nonce bound to `action_nonce`) |
 | Publishable keys | `pk_test_` / `pk_live_` + base58 | D1, partner pages | public | Not secrets |
-| Identity signing keys (Worker slots `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`) | P-256 private JWKs (ES256), testnet and `local*` only | The active key: a Worker secret and `.secrets/<env>/identity-signing-key.json`. The standby: `identity-signing-key-standby.json` only, kept offline, never uploaded until a switch (D177). During a rotation a `next` and a `previous` key. 0600, the only copies | Hana | `scripts/identity-key.ts`: `init`, `next`, `switch --to next|standby`, `retire --key previous|standby` (wrangler stdin, never printed, files never overwritten); public halves in the manifest's `identityToken.publicKeys` (the JWKS). `activeKid` picks the signer. Mainnet: AWS KMS `ECC_NIST_P256`, non-exportable, its own IAM user (build step 7, D127) |
+| Identity signing keys (Worker slots `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`) | P-256 private JWKs (ES256), testnet and `local*` only | The active key: a Worker secret and `.secrets/<env>/identity-signing-key.json`. The standby: `identity-signing-key-standby.json` only, kept offline, never uploaded until a switch (D177). During a rotation a `next` and a `previous` key. 0600, the only copies | Hana | `scripts/identity-key.ts`: `init`, `next`, `switch --to next|standby`, `retire --key previous|standby` (wrangler stdin, never printed, files never overwritten); public halves in the manifest's `identityToken.publicKeys` (the JWKS). `activeKid` picks the signer. Staging and mainnet: AWS KMS (next row) |
+| Identity KMS keys (`identityToken.signer.keys`: `active`, `standby`, during a rotation `next`, `previous`); none yet | AWS KMS `ECC_NIST_P256` `SIGN_VERIFY`, origin `AWS_KMS`, single-region; the standby in another region (D219) | AWS KMS in D121's dedicated account; never exportable, never on the Worker. The manifest holds their ARNs and public keys only | Hana (break-glass role with MFA administers; the key policy in `docs/operations.md` "Identity token keys on AWS KMS") | Created in AWS by the operator; published with `identity-key kms-init / kms-add`, switched with `kms-switch`, unpublished with `kms-retire` (then disabled and deleted in KMS, 30 days); scheduled rotation every 12 months |
+| KMS signer's AWS access key (`IDENTITY_AWS_ACCESS_KEY_ID`, `IDENTITY_AWS_SECRET_ACCESS_KEY`) | Long-term IAM user key (`AKIA…`) of the env's signer user (`identityToken.signer.credentials.iamUser`) | API Worker secrets; `.secrets/<env>/identity-aws-access-key.json` (0600) only between `aws iam create-access-key` and the checked upload, then deleted | Hana | `identity-key kms-put-aws-key` (one `wrangler secret bulk`, never printed); rotated every 90 days and on suspicion; the user can only `kms:Sign` the active key (D215, D219); never logged |
 | `IDENTITY_SUB_KEY` | 32 random bytes (base64) | API Worker secret; `.secrets/<env>/identity-sub-key` (0600), with an offline backup alongside the council backup (D81) | Hana | Never rotated (it fixes every user's `sub` at every partner); never logged |
 | Identity tokens | ES256 JWT, ≤ 1 h | Vault memory (and its per-app channel), the partner page, the partner backend | the user's session, the partner | Not stored by Hana: no per-token record, never logged; refused by every Hana API (`bad_token`) |
+| Email issuer signing key `ISSUER_SIGNING_KEY` (signer `hana`) | RSA-2048 private JWK (RS256), testnet and `local*` only | The primary: an issuer Worker secret and `.secrets/<env>/email-issuer-signing-key.json`. The standby: `email-issuer-signing-key-standby.json` only, offline, never uploaded (D196). 0600, the only copies | Hana | `scripts/email-issuer.ts init` / `put` (wrangler stdin, never printed, never overwritten); public halves in `emailIssuer.publicKeys` (the JWKS, kid = RFC 7638 thumbprint, the watchdog's pin). On chain owner-posted only, after `governance_delay_ms`, pinned by the watchdog. **Whoever can read the Worker's secrets can mint any email user's token** (1-of-1, D121); mainnet: AWS KMS (adapter built, not wired, batch 10) |
+| `EMAIL_SUB_KEY` (K_sub) | 32 random bytes | Issuer Worker secret; `.secrets/<env>/email-sub-key` (0600) plus two offline backups (D81) | Hana | **Never rotated**: it fixes every email user's `sub` and so their address; losing it locks them all out. A leak lets the holder test guessed addresses against on-chain subs (privacy), never mint. K_sup = HMAC(K_sub, "hana-id/suppression-key/v1") keys the suppressions, so they last as long as K_sub (D199) |
+| `EMAIL_CODE_KEY` (K_code), `EMAIL_RL_KEY` (K_rl) | 32 random bytes each | Issuer Worker secrets; `.secrets/<env>/email-code-key`, `email-rl-key` | Hana | K_code MACs the codes in the challenge objects; K_device = HMAC(K_code, "hana-id/device-ticket-key/v1") signs owner device tickets. K_rl keys the limiters (mailbox and recipient domain). Rotating K_code kills live challenges and every device ticket; rotating K_rl resets the limit windows; neither touches suppressions |
+| Owner device tickets | `dt2.` + b64url(expiry ‖ nonce ‖ HMAC(K_device, address key ‖ nonce ‖ expiry)) | The user's browser (batch 8: the popup on `authOrigin`) | the user | 30 days, bound to one exact normalized address (its K_sup HMAC); returned only by a correct code. Grants the address's owner allowance (3 code mails a day per address, all its tickets together; the ticket slot of 3 checks; ≤ 10 ticket challenges per address a day; per mailbox 9 mails and 30 owner challenges) and skips the prefix limits, app quotas, domain caps and the general pool, never a token. At most 5 live per address (a 6th revokes the oldest); revocable per address by staff (`admin/revoke-tickets`). Not stored by Hana, never logged (D198) |
+| Unlock and confirmation tokens | `ug1.` / `uc1.` + 32 random bytes | The address's mailbox only (mailed by `admin/unlock`, `admin/unsuppress`); the issuer keeps only sha256 | the user | One use, 24 h. An unlock token is one owner start (ticket slot, then 2 checks of its own); a confirmation removes the address's suppression. Staff never see them; never logged (D198, D199) |
+| `SENDGRID_API_KEY` | SendGrid API key, Mail Send only (D194) | Issuer Worker secret; `.secrets/<env>/email-issuer-sendgrid-key` | Hana | Its own key, not Hana Wallet's or Wend's; rotate in SendGrid, then `put`. A leak sends mail as Hana's user-mail subdomain (phishing, reputation), not tokens |
+| Sign-in codes | 6 digits | The user's mailbox and SendGrid while it delivers (and in SendGrid's Email Activity for its retention period); the challenge object holds only HMAC(K_code, challengeId ‖ code) | the user | ≤ 10 min, single use, 5 attempts; never logged |
+| Challenge id secret half | 16 random bytes, the second half of the challengeId | The client only; the object is named by sha256 of the public half | the user's session | Decrypts the address in the challenge record (AES-256-GCM, D197); the issuer holds it only during a `resend` or `verify` |
 | Ledger role passwords (`usage_writer`, `usage_admin`, batch C4) | 32 random bytes (base64url) each | Their Hyperdrive configs (writer: the API's `USAGE_DB`; admin: the admin Worker's, C8); `.secrets/<env>/neon-usage-writer.url`, `neon-usage-admin.url` (0600). Neon holds only SCRAM verifiers | Hana | Generated by `usage-setup <env> roles` (never printed; sent to Neon as a verifier, never as plain text). Roles can only call their functions and read what D141 grants |
 | `USER_ID_KEY` (batch C4) | 32 random bytes (base64) | API Worker secret; `.secrets/<env>/user-id-key` (0600) with an offline backup | Hana | `usage-setup <env> user-id-key` (wrangler stdin, never printed, file never replaced). Not rotated within a contract term; never logged; the uid is `HMAC(key, scope ‖ provider ‖ sub)[0..16]` |
 | Cloudflare account / `wrangler login` | account credentials | operator's machine | the user | Deploys the Worker: a trust root |
@@ -132,7 +150,7 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   tombstone), `counter == used + 1`, Ed25519 over `"hana-id-session-v1:" ‖ counter ‖ sha256(payload)`; the off-chain
   vault prefix `hana-id-vault-v1:` can never verify as a session message.
 - `create_session_and_derive` is atomic up to the MPC receipt: any signer-side panic reverts the session.
-- Email login, contract v3 (branch `feat/email-login-1`, not deployed; `docs/email-login-build-plan.md` batch 1):
+- Email login, contract v3 (merged on `develop`, not deployed; `docs/email-login-build-plan.md` batch 1):
   - Self-issued issuers (email): keys owner-posted only (never the updater key), each change waits ≥
     `governance_delay_ms`, never confirmed early; one RSA modulus once per issuer (no key counts as two signers);
     tokens are JWS JSON with ≤ 3 signatures, every one valid, from ≥ `required` distinct signers (1-of-1 `hana` at
@@ -349,11 +367,39 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
     as a proof; the claim set is exactly the spec's (`buildIdentityClaims` throws on anything else);
   - `sub` depends only on (scope, root provider, root sub): never the login method, client, device or `key_index`, and
     never the Google `sub` in the clear;
-  - the signature is checked against the published key for its `kid` before the token is answered; the JWKS comes
-    from the manifest's public keys alone and refuses a private member;
+  - the signature is checked against the published key for its `kid` before the token is answered, whichever signer
+    made it; the JWKS comes from the manifest's public keys alone and refuses a private member;
+  - the KMS signer (`src/identity/kms.ts`, `signers.ts`; tests in `apps/api/test/identity-kms.test.ts`) sends only the
+    32-byte digest (no claim reaches AWS), one `Sign` per mint with no retry, under a 3 s deadline and a 4 KiB answer
+    cap; it accepts only an answer for its own key ARN and algorithm and a strict DER signature (D216–D218); any other
+    outcome, and any missing or malformed configuration, is `503 identity_signer_unavailable`, never a fallback to a
+    Worker-secret key; AWS credentials, requests and signatures are never logged;
   - no Hana API accepts an identity token: `verifyIdToken` refuses `typ: hana-identity+jwt` or `iss` =
     `IDENTITY_ISS` first (`400 bad_token`), and the contract takes RS256 issuer keys only;
   - logs carry the app id, outcome, code, kid and timings, never a token, `sub`, `sid`, address or body.
+
+### Email issuer (`apps/email-issuer`, not deployed)
+
+| Invariant | Where |
+|---|---|
+| Only the issuer computes `sub` (`@hana-id/email` `emailSub` over `normalizeEmail().email`, `+tag` kept, D159); mail goes to that normalized address, byte for byte | `src/handlers.ts` `handleStart`, `handleVerify`, `handleGoogleMatch` |
+| Every token's nonce is computed by the issuer from the commitment with the pinned signer, so a token serves only its purpose (never a register proof or another app's client proof); the commitment's scope must be the app's | `src/commitment.ts`, `src/layouts.ts` (checked against `email_fixture.json`) |
+| An `auto_link` token commits to the join read from the chain at minting (D133); it is minted only for Google-hosted case A with `link`, case B with a `linkTicket` bound to the same `sub` and this Google identity, or a case-A code challenge google-match prepared with Google's verified address (D195); never while `unrecorded_wallets` | `src/decide.ts` (the contract's `auto_link` rules), `handleGoogleMatch`, `handleVerify` |
+| Every signature verifies against the published key before the token leaves; every token is an `email_issuance` row before it is signed | `src/jws.ts` `mintJws`, `handlers.ts` `mint` |
+| Codes: 6 digits by rejection sampling; stored only as an HMAC; compared in constant time; 5 attempts and single use counted atomically in the challenge object; each check reserved in the mailbox limiter before the comparison (refused while locked, refunded on success), so parallel guesses can't outrun a lock (D198) | `src/keys.ts`, `src/challenge.ts`, `src/rate-limiter.ts` `reserveGuess` |
+| Brute force is bounded per mailbox whatever the number of requesters: ≤ 25 failed checks per UTC day (18 open to anyone + an owner slot of 4 + a ticket slot of 3; ≈ 0.91% a year against a 6-digit code), ≤ 35 challenges a day; worst case W ≤ min(5·C, 25). Unlocks add at most 2 checks each (≤ 3 in 30 days): ≈ 9,199 a year, ≈ 9,273 in the worst case, ≈ 0.92%. A targeted owner without a device ticket is locked out at most until the UTC day ends (the accepted trade-off); one with a ticket keeps 3 codes a day and the ticket slot; the trip is logged, and staff can unlock (`admin/unlock`: ticket-referenced, audited first, 1 a day and 3 in 30 days per mailbox; mails a one-time grant to the address and clears nothing, so neither the asker nor an attacker gains anything) (D198) | `src/rate-limiter.ts` `reserveGuess`, `admit`, `trySend`, `issueGrant`; `test/limits.test.ts` (many requesters), `test/review.test.ts` (device tickets) |
+| Mail volume: per mailbox (and per requester inside it), per recipient registrable domain (100 + 2 per distinct verified mailbox a day over 7 days, at most 2,000 a day, a verified challenge's places given back, at most 20% per requester prefix, listed consumer providers exempt, ticketed and unlock-grant starts not counted, so a few requesters can't lock a company's domain out), per app (plan `per_minute` and `per_day`), per IP and IP prefix (IPv4 /24, IPv6 /56 and /48: 200 starts a day each), and a global budget split into a staff pool (1%, ≥ 5) and a general pool, with an owner pool of 30% of the budget beside them (fresh tickets below its half and ≤ 20% of it per app; aged tickets and grants uncapped per app; refusals fall back to the app's general share), in which an app's share follows its plan (2% of `per_day`), with the last 20% only for apps under half their share; `dailySendBudget` required outside `local*`. The requester's limits are counted first, so refused mailboxes can't spend a partner's quota or the budget. **A valid device ticket or unlock grant never waits on the IP prefix limits, an app's quota, a recipient domain's cap or the general budget pool**; owner allowances are counted per address and per mailbox (3 / 9 mails, 10 / 30 challenges a day; the mailbox totals never block the untagged address or a grant); fresh tickets fill the owner pool only to half and 20% per app; a stock of 7-day-old sock-puppet tickets can still use it up for a day, at most 0.3 × the budget (the residuals, D198) | `handleStart`, `src/rate-limiter.ts` `reserveBudget`, `src/domain.ts`, `src/ip.ts` `ipAggregates`; `test/limits.test.ts`, `test/review.test.ts` |
+| A request without a usable client address is refused (`400 missing_client_ip`, logged), never pooled into one bucket | `handlers.ts` `route`; `test/review.test.ts` |
+| Enumeration: `start` answers the same 202 (or the same 429, always `retry-after: 900` for a mailbox-level refusal) for every valid address; a suppressed address takes the same limiter path, only the mail is skipped; an invalid device ticket is ignored | `handleStart`, `handleResend`, `tryLater`; `test/limits.test.ts` |
+| No address, code, `sub`, token, device or link ticket, unlock or confirmation token, access token or key in any log line (typed fields only). The issuer never stores the address readably: a live challenge (≤ 10 min) holds it encrypted under the challengeId's secret half, which only the client holds (D197). SendGrid does (outside Hana's control): its activity feed for its retention period, and its suppression lists until an address is removed | `src/log.ts`, `src/challenge-id.ts`; `test/privacy.test.ts` greps every flow |
+| Suppressions per exact address (keyed by K_sup, from K_sub), limits per mailbox (address without `+tag`): a bounce on `victim+x@` never suppresses `victim@`. Only signed events of the issuer's own categories count; a bounce lapses after 30 days, a complaint stays until the address's holder confirms a staff `admin/unsuppress` from a mailed link (audited, capped); more than 5 complaints in 24 h is logged (D199) | `src/keys.ts` `suppressionKey`, `mailboxKey`; `src/webhook.ts`; `handleUnsuppress` |
+| Webhook: headers (timestamp ≤ 10 min, signature shape) checked before the body is read; ECDSA P-256 over timestamp ‖ body with a key imported once; 120 per 10 min per IP | `src/webhook.ts`, `handleWebhook` |
+| The Google access token is checked (tokeninfo aud/azp and sub = the ID token's), used for userinfo, then revoked whatever the outcome; tokens never in a URL | `src/google.ts`, `handleGoogleMatch` |
+| CORS: `start`/`resend`/`verify` only from `authOrigin`, `google-match` only from `vaultOrigin`, no credentials. Staff routes only behind Cloudflare Access plus the staff allowlist (D88), JSON only, any `Origin` refused (with the Access cookie SameSite=Strict, no cross-site request reaches them), a support `ticket` in every audit row, the row written before the action; certs failures negatively cached 30 s (D199) | `handlers.ts` `route`, `staffGate`, `src/access.ts`; `test/adapters.test.ts` |
+| Client proofs only for a scope read from `get_scope` now, at its current `action_nonce`, with an active email app | `handleClientProof`; `test/adapters.test.ts` |
+| Case B: `verify` returns no `idToken` when a hinted Google identity has the wallet (no second wallet even if the popup misbehaves); a non-Google-hosted hint counts only within 180 days of that Google identity's last login with the address (older ones pruned), and its case B joins only after 24 h, with link notices (D119; the stale-account residual risk and the alternative in D199); a `linkTicket` binds the app, the `sub` and the hinted Google identities (D199) | `handleVerify`, `handleGoogleMatch`; `test/google-match.test.ts` |
+| Each purpose's mail says what the code does (sign in, add this email, allow another sign-in method, remove one, link Google), so a code phished for one action doesn't read as a sign-in (D199) | `src/mail.ts`; `test/review.test.ts` |
+| The issuer's token layouts are checked in the real contract: tokens minted by the issuer's code (session, auto_link case A and B, link_account) pass `hana-signer`'s unit tests | `scripts/gen-contract-fixture.ts`, `contracts/hana-signer/src/tests/email/issuer_tokens.rs` |
 
 ### Vault page (`apps/api/src/vault/page.ts`)
 
@@ -648,8 +694,10 @@ findings are tracked with their own fixes.
 
 ## Known open issues
 
-Status: **fixed** (a), (b), (c), (d), (f); **accepted** (k), and the residual risks named under (b)–(d) and
-"Auto-approve policies"; **fixed for the CLI** (i); **open** (e) (pre-mainnet, D33), (g), (h), (j) (sandbox-dev only; production envs
+Status: **fixed** (a), (b), (c), (d), (f); **fixed on sandbox-dev** (e) (the governance contract and watchdog run there
+since 2026-10-30; mainnet ships with them once its delay, council and watchdog account are set up: D80, D81, D86);
+**accepted** (k), and the residual risks named under (b)–(d) and
+"Auto-approve policies"; **fixed for the CLI** (i); **open** (g), (h), (j) (sandbox-dev only; production envs
 need D38's two domains), (l) (pre-mainnet: the identity token's KMS signer and JWKS pin check). The 2026-10-29 security sweep's items in the API, tooling and CI: "Security sweep
 2026-10-29" below.
 
@@ -702,7 +750,7 @@ Worker secret that can call `set_issuer_key` (`apps/api/src/issuer-keys.ts`), an
 can add an RSA key, mint a "Google" token for any `sub`, and derive any user's key in any scope. The contract
 account's full-access key can upgrade the contract (no lock). `docs/contract-interface.md` already calls the owner and
 contract account total control; the point here is that one of those powers sits in the API Worker's secrets. Confirmed
-plan (D33; built on branch `feat/governance`, not deployed), specified in `docs/governance-spec.md` and confirmed by the user on 2026-10-29 (D80–D86):
+plan (D33; built, and deployed on sandbox-dev 2026-10-30), specified in `docs/governance-spec.md` and confirmed by the user on 2026-10-29 (D80–D86):
 
 - Delays (D80): a newly posted issuer key waits `issuer_key_delay_ms` (mainnet 2 h, provisional until Google's lead
   time is measured with `admin issuer-keys:lead-times`); upgrades, owner transfer and surplus withdrawals wait
@@ -719,7 +767,7 @@ plan (D33; built on branch `feat/governance`, not deployed), specified in `docs/
   deletes the updater key that proposed one (not when it is Google's own material from the last 24 h, a retirement race:
   D153), and pauses only when such a key is active on chain; everything else is
   alert-only. The owner unpauses at once. Pause stops derivation and every token path, never governance. Built in
-  `apps/watchdog` (branch `feat/governance`), not deployed. Pause stops derivation only for as long as it lasts:
+  `apps/watchdog`, deployed on sandbox-dev 2026-10-30. Pause stops derivation only for as long as it lasts:
   sessions a forged key opened before the pause would derive again after it (up to 24 h, any `max_uses`), so the
   runbook raises the owner's session floor (`set_sessions_valid_from_ms`) past the pause before unpausing, which
   retires every older session. Scope changes proposed with a forged key's owner tokens or client proofs can't be
@@ -735,8 +783,8 @@ plan (D33; built on branch `feat/governance`, not deployed), specified in `docs/
   and `set_issuer` (no pending state to see); and every on-chain string in an alert (kid, provider, proposer) goes
   through an allow-list or an escaped form, with header-safe titles and Slack-escaped text, so a hostile kid can't
   break a page, inject headers or `<!channel>`.
-- Watchdog and the email issuer (email login, `docs/email-login-spec.md` "Watchdog", D190–D193; branch
-  `feat/email-login-5`, not deployed): self-issued keys have no outside JWKS, so the watchdog trusts only the pins in
+- Watchdog and the email issuer (email login, `docs/email-login-spec.md` "Watchdog", D190–D193; batch 5,
+  deployed on sandbox-dev 2026-11-02, where the v2 contract has no email issuer yet): self-issued keys have no outside JWKS, so the watchdog trusts only the pins in
   its own manifest (`watchdog.pinnedIssuerKeys.email`, set on its own account: a pin change is the operator's
   redeploy, outside Hana's main account). A pending email key whose RFC 7638 thumbprint isn't pinned for its signer
   (or whose kid isn't that thumbprint) is cancelled; an active one pauses and deletes every updater key, also at the
@@ -810,9 +858,13 @@ the approve popup now says "This signature isn't tied to one network." on them.
 
 **(l) Identity token: testnet signing key and no JWKS pin check yet. Open (pre-mainnet).** Build steps 1–4 sign with
 a Worker-secret P-256 key (`IDENTITY_SIGNING_KEY`): anyone who can read the API Worker's secrets once can forge any
-user's identity at every partner until the key is removed from the JWKS. Step 7 moves mainnet signing to a
-non-exportable AWS KMS key with its own IAM user, CloudTrail and a reconciliation against `identity_issuance_hourly`
-(`gen` and the schema already refuse a Worker-secret key outside testnet); step 8 adds the watchdog's JWKS pin check
+user's identity at every partner until the key is removed from the JWKS. Step 7's code is built (branch
+`feat/identity-token-7`, D215–D219): the AWS KMS signer, the manifest's `aws-kms` signer and the `identity-key kms-*`
+commands, tested against a fake KMS. Still open before mainnet: the AWS account's keys, IAM user and policies,
+CloudTrail and alarms, and the hourly reconciliation of `Sign` events against `identity_issuance_hourly` (not built;
+`docs/operations.md` "Identity token keys on AWS KMS"). A KMS credential still lets its holder forge tokens until it is
+revoked; KMS makes the key unexportable and every signature visible, not misuse impossible. `gen` and the schema
+already refuse a Worker-secret key outside testnet; step 8 adds the watchdog's JWKS pin check
 (an unpinned key in the JWKS is a critical alert) and the "identity key on chain" check. Until then partners must not
 use identity tokens for anything of value. The testnet standby is kept off the Worker, and `identity-key next / switch /
 retire` rotate or replace keys (D177; playbook `identity-signing-key-compromised`). Also accepted for now: in an app that keeps logins, a browser that can't
@@ -833,8 +885,8 @@ Fixed:
 - **APIW-3 (Medium)**: one global owner-action cap let any invited owner starve `cancel_change`. Caps per owner,
   scope and global, `cancel_change` on windows of its own (see "Owner actions" above for the remaining limit).
 - **OPER-2 (Medium)**: gitleaks caught none of this repo's secret shapes. Custom rules plus a self-test on fakes.
-- **OPER-3 (Low)**: CODEOWNERS widened (D100); the second owner's handle and "Require review from Code Owners" on
-  `develop` and `main` are still to do (GitHub settings, not in the repo).
+- **OPER-3 (Low)**: CODEOWNERS widened (D100), with the second owner `@mj-hana` on every owned path (2026-10-30);
+  "Require review from Code Owners" on `develop` and `main` is still to do (a GitHub setting, not in the repo).
 - **APIW-4, APIV-3, APIV-7, OPER-5, OPER-6, OPER-11 (Low/Info)**: as in D100. APIV-5: a "KEK compromised" runbook
   (`docs/operations.md` "`VAULT_KEK`"). Relay errors no longer echo RPC or fetch error text (sweep question 14).
 
@@ -865,8 +917,10 @@ Deferred, with the reason:
   key fragment on a malformed file; replace with a script.
 
 Open questions in `docs/batch-b-spec.md` that bear on security: Q22 (a timelock for new origins in shared mode) is
-decided for batch C (D32, D34: 24 h delay, notice, cancel) but not built, so `admin app:origins:add` still applies at
-once; Q15 (production domains) is decided only as far as two registrable domains (D38). Decided on 2026-10-28
+decided for batch C (D32, D34: 24 h delay, notice, cancel) and built in batch C3 (merged, not deployed on sandbox-dev):
+`admin app:origins:add` is a staff proposal that waits `appChangeDelayMs` (≥ 24 h on a production network; see
+"Admin CLI writes" above), and the CLI refuses remote proposals until the API reports the 0006 reads (`hotDb` ≥ 6),
+so a pre-C3 API never sees a proposed origin as in force; Q15 (production domains) is decided only as far as two registrable domains (D38). Decided on 2026-10-28
 (`docs/decisions.md`): Q7 (D56, registry check at login), Q9 (D65, `rpcFallback`), Q14 (D53, `max_uses = 1`), Q16
 (D54, KEK in `.secrets`, KMS later), Q18 (D59, export limits), Q27 (D39, test apps refuse mainnets), Q28 (D55,
 in-memory idle limit), Q39 (D46, no token caps), Q40 (D45, consent without a fresh sign-in), Q41 (D44, verified

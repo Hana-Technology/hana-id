@@ -20,7 +20,9 @@
 //              .secrets/<env>/keys-updater.json ({account_id, public_key, private_key}), as written by
 //              scripts/deploy-contract.ts, and the identity token's IDENTITY_SIGNING_KEY and
 //              IDENTITY_SUB_KEY from .secrets/<env>/identity-* (scripts/identity-key.ts), when they exist; the signing
-//              key must be the manifest's active key, and the offline standby is never written. Never prints secrets.
+//              key must be the manifest's active key, and the offline standby is never written. A KMS env gets the
+//              sub key only (no AWS credentials in .dev.vars; a private signing key file there is refused). Never
+//              prints secrets.
 import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -42,16 +44,19 @@ export const COMPATIBILITY_DATE = '2026-10-01';
 export const FLAG_DEFAULTS = { BLS_PRECHECK: '0', REJECT_PII_ON_SESSIONS: '0' } as const;
 
 /**
- * The identity token's vars (docs/identity-token-spec.md): its `iss`, the JWKS (public keys only) and the kid that
- * signs. Empty when the manifest has no `identityToken` (the API then answers 503 identity_unavailable). The AWS KMS
- * signer is build step 7: refused until the API has it, rather than deployed as a Worker that can't sign.
+ * The identity token's vars (docs/identity-token-spec.md): its `iss`, the JWKS (public keys only), the signer kind and
+ * the kid that signs; for the AWS KMS signer (build step 7, D215) also the active key's ARN, and only that one (the
+ * standby, next and previous ARNs stay in the manifest: a switch is a manifest change and a deploy). Empty when the
+ * manifest has no `identityToken` (the API then answers 503 identity_unavailable). The AWS credentials are Worker
+ * secrets (`identity-key <env> kms-put-aws-key`), never vars.
  */
 export function identityVars(m: Manifest): Record<string, string> {
   const t = m.identityToken;
   if (!t) return {};
-  if (t.signer.kind !== 'worker-secret') throw new Error(`envs/${m.name}.json: identityToken.signer.kind "${t.signer.kind}" is not supported by the API yet (build step 7)`);
+  const common = { IDENTITY_ISS: t.iss, IDENTITY_PUBLIC_KEYS: JSON.stringify(t.publicKeys), IDENTITY_SIGNER: t.signer.kind };
+  if (t.signer.kind === 'aws-kms') return { ...common, IDENTITY_ACTIVE_KID: t.signer.keys.active.kid, IDENTITY_KMS_KEY_ARN: t.signer.keys.active.arn };
   if (m.network !== 'testnet') throw new Error(`envs/${m.name}.json: a Worker-secret identity signing key is testnet only (D127)`);
-  return { IDENTITY_ISS: t.iss, IDENTITY_PUBLIC_KEYS: JSON.stringify(t.publicKeys), IDENTITY_ACTIVE_KID: t.signer.activeKid };
+  return { ...common, IDENTITY_ACTIVE_KID: t.signer.activeKid };
 }
 
 /** A Hyperdrive config id (`wrangler hyperdrive create` prints it; not a secret: the credentials stay in the config). */
@@ -217,6 +222,8 @@ export function identityDevVarsLines(m: Pick<Manifest, 'name' | 'identityToken'>
     const { line, kid } = identityKeyLine('IDENTITY_SIGNING_KEY', IDENTITY_SECRET_FILES.signingKey, secrets.signingKey);
     const t = m.identityToken;
     if (!t) throw new Error(`.secrets/${m.name} has an identity signing key but envs/${m.name}.json has no identityToken (run scripts/identity-key.ts ${m.name} init)`);
+    // A KMS env signs in KMS only: a private key file next to it is a leftover to remove, never a key to run with.
+    if (t.signer.kind === 'aws-kms') throw new Error(`.secrets/${m.name}/${IDENTITY_SECRET_FILES.signingKey} exists but envs/${m.name}.json signs with AWS KMS: move the file out of .secrets/${m.name}`);
     if (!t.publicKeys.some((k) => k.kid === kid)) throw new Error(`The identity signing key in .secrets/${m.name} doesn't match envs/${m.name}.json identityToken.publicKeys`);
     if (t.signer.kind === 'worker-secret' && kid !== t.signer.activeKid) throw new Error(`The identity signing key in .secrets/${m.name} doesn't have the active kid ${t.signer.activeKid}`);
     lines.push(line);

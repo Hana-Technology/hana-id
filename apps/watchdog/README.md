@@ -6,9 +6,11 @@ D190–D193). A Cloudflare Worker on **its own Cloudflare account** (separate lo
 MFA from the API's, D86), its own NEAR account and key, its own D1, its own Resend key, Slack webhook and paging-app
 credentials. It reads the chain through its own RPC (manifest `rpc`, then `rpcFallback`), never through the API.
 
-Deployed on sandbox-dev (2026-10-30, on the API's Cloudflare account for the drills only, D125; `docs/operations.md`
-"Watchdog service"); no other env yet. Testnet only: it checks the RPC's `chain_id` against the manifest's `network`
+Deployed on sandbox-dev (2026-10-30, on the API's Cloudflare account for the drills only, D125; redeployed 2026-11-02
+with email-login batch 5; `docs/operations.md` "Watchdog service"); no other env yet. Testnet only: it checks the RPC's `chain_id` against the manifest's `network`
 every run and sends nothing on a mismatch.
+
+Last verified: 2026-11-02 (branch `docs/consistency-pass`: the deploy line, against `docs/operations.md`).
 
 ## What a run does (every 5 min)
 

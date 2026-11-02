@@ -21,6 +21,7 @@
     "@near-js/transactions": "2.5.1",
     "@near-js/utils": "2.5.1",
     "@noble/curves": "1.9.7",
+    "aws4fetch": "1.0.20",
     "pg": "8.23.1"
   },
   "devDependencies": {

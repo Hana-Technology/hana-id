@@ -1,6 +1,7 @@
 # Batch C spec: developer dashboard (partner console, Hana admin console, usage and billing)
 
-**Status: DRAFT for implementation review (2026-10-29); decisions confirmed: D28, D29 (as amended by D89), D30 (as
+**Status: being built (2026-11-02: C1–C3 of `docs/batch-c-build-plan.md` merged, not deployed); written 2026-10-29;
+decisions confirmed: D28, D29 (as amended by D89), D30 (as
 amended by D73), D31, D32, D34, D51, D52, D73, D74, D75, and on 2026-10-29 D87–D93.** Everything else in this file is
 a proposal that follows from them; the open questions at the end say what still needs the user (Q1, Q3, Q4's
 fallback addresses, Q5). The 2026-10-27 multi-agent draft (four decision records, a

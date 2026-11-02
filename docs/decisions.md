@@ -6,7 +6,11 @@ Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 and D150–
 D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-login-3`) on 2026-11-02; D159's `+tag`
 change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 (branch `feat/email-login-5`) and D200 (branches
 `feat/link-cap`, `feat/email-login-5`) on 2026-11-02; D201–D203 (branch `feat/batch-c-2`) on 2026-11-02; D205–D209
-(branch `feat/batch-c-3`, to confirm) on 2026-11-02; D220–D224 (branch `feat/batch-c-4`, to confirm) on 2026-11-02.
+(branch `feat/batch-c-3`, to confirm) on 2026-11-02. D215–D219 (branch `feat/identity-token-7`, to confirm) on
+2026-11-02. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
+provider note, two "Superseded or amended" rows, the user-mail line under "Proposed", and the headings from D125 on, checked against `develop` @ 1c6a124 and what sandbox-dev runs (`docs/operations.md`) on
+2026-11-02 (branch `docs/consistency-pass`); no decision changed. D220–D224 (branch `feat/batch-c-4`, to confirm) on
+2026-11-02.
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -37,7 +41,8 @@ progress or not started), **deferred**, **superseded**, **proposed** (in a draft
   testnet-MPC keys are disposable.
 
 ### D4. Email login later, as its own trust decision
-- Date ≤ 2026-10-26; confirmed 2026-10-30 · Status: confirmed by the user, not built (before mainnet) · Source:
+- Date ≤ 2026-10-26; confirmed 2026-10-30 · Status: confirmed by the user; partly built (contract v3, `packages/email` and
+  the watchdog part merged, contract v3 not deployed; the email issuer not merged), before mainnet · Source:
   `docs/context.md` "Decisions"; `docs/batch-a-spec.md`; `docs/email-login-spec.md` "Confirmed by the user"
 - Why: whoever signs email tokens can derive any email user's key. Batch A made the verifier provider-generic
   (`issuers.rs`) so email can be another issuer.
@@ -340,7 +345,8 @@ The batch C spec (`docs/batch-c-spec.md`) is a draft; only the entries below wer
 ## Pre-mainnet and batch C scope, decided 2026-10-28
 
 ### D33. Bound issuer-key and upgrade power before mainnet
-- Date 2026-10-28 · Status: confirmed by the user, to spec as a pre-mainnet batch · Source: `docs/security.md` open issue (e)
+- Date 2026-10-28 · Status: confirmed by the user; specced (`docs/governance-spec.md`), built, and on sandbox-dev since
+  2026-10-30 (D80–D86); mainnet setup still to do · Source: `docs/security.md` open issue (e)
 - Decision: a newly posted issuer key becomes usable only after a delay, during which an independent watchdog (own
   key, own service, checks Google's published JWKS) can cancel it; alert on any `issuer_key_set` for a kid Google
   doesn't publish; the owner account becomes a multisig; the signer account's full-access key is removed and
@@ -679,6 +685,7 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
 - Rejected for now: Changesets. With four packages always released together and one consumer, per-package bump
   files add a dependency tree and a review step without information, and it wouldn't update the `VERSION` constants.
   Revisit if the packages start versioning independently.
+
 ### D73. Usage and billing ledger on Neon Postgres in Sydney
 - Date 2026-10-29 · Status: confirmed by the user, for batch C · Source: `docs/batch-c-spec.md` "Confirmed by the user"
 - Decision: the usage and billing ledger (batch C's `USAGE_DB`) is a Neon Postgres project in `aws-ap-southeast-2`
@@ -770,6 +777,7 @@ The matching question in `docs/batch-b-spec.md` "Open questions" points here.
 - Given up: a reload within that window (about one API round trip after the login reply) is a full login; the login
   result's `persistence` is the mode intended, and `persistenceChanged` / `hana_status` say if it didn't happen. Share timings are no
   longer in the login's timings (`persist`, `shareRtt`, `shareServer*` removed); the API's request log still has them.
+
 ## Governance and batch C, confirmed by the user 2026-10-29
 
 Each entry below was decided by the user on 2026-10-29 (source: conversation, "confirmed by the user"). D80–D86
@@ -777,7 +785,8 @@ answer `docs/governance-spec.md` "Open questions" and D87–D93 answer `docs/bat
 answered question there points here.
 
 ### D80. Governance delays: issuer keys 2 h (provisional), governance 72 h on mainnet
-- Date 2026-10-29 · Status: confirmed by the user (mainnet issuer-key delay provisional), not built · Source:
+- Date 2026-10-29 · Status: confirmed by the user (mainnet issuer-key delay provisional); built (governance contract v2),
+  running on sandbox-dev since 2026-10-30 with its dev delays; mainnet values not set yet · Source:
   `docs/governance-spec.md` "Delay length", open question 1
 - Decision: mainnet `issuer_key_delay_ms` = 2 h, provisional: it is set by the spec's formula from the lead-time
   measurement now running (`admin issuer-keys:lead-times`) once two Google rotations are recorded.
@@ -790,7 +799,8 @@ answered question there points here.
   emergencies); fixing the issuer-key delay before Google's lead time is measured.
 
 ### D81. Owner multisig: Sputnik DAO v2, 2-of-3 for every proposal kind
-- Date 2026-10-29 · Status: confirmed by the user, not built · Source: `docs/governance-spec.md` "Owner = multisig",
+- Date 2026-10-29 · Status: confirmed by the user; built; sandbox-dev's signer is owned by its 2-of-3 council DAO
+  (throwaway members) since 2026-10-30; the mainnet council and its backup key not set up · Source: `docs/governance-spec.md` "Owner = multisig",
   open question 2
 - Decision: the contract owner is a Sputnik DAO v2 council: 2 of 3 votes for **every** proposal kind (function calls,
   policy, member changes, the DAO's own upgrades); only council members propose. Mainnet council: the two founders
@@ -805,7 +815,8 @@ answered question there points here.
   little maintenance); a backup key either founder can reach alone (that founder would hold 2 of 3).
 
 ### D82. The watchdog acts alone only on clear forgeries; the owner unpauses at once
-- Date 2026-10-29 · Status: confirmed by the user, not built · Source: `docs/governance-spec.md` "Watchdog service",
+- Date 2026-10-29 · Status: confirmed by the user; built (`apps/watchdog`), deployed on sandbox-dev 2026-10-30 (forged-key
+  and pause drills) · Source: `docs/governance-spec.md` "Watchdog service",
   open question 4
 - Decision: on its own the watchdog cancels any pending issuer key Google doesn't publish (kid absent from two
   fetches ≥ 60 s apart, or other key material), deletes every updater key when the updater proposed such a key, and
@@ -840,7 +851,8 @@ answered question there points here.
 - Rejected: the watchdog as guardian (run by Hana, so not independent; a compromised watchdog could block every fix).
 
 ### D85. Alert severities: critical, warning, info
-- Date 2026-10-29 · Status: confirmed by the user, not built · Source: `docs/governance-spec.md` "Alerts", open
+- Date 2026-10-29 · Status: confirmed by the user; built (`apps/watchdog`), on sandbox-dev since 2026-10-30 with only the
+  pager (ntfy.sh, a stand-in) and the heartbeat set; Slack, email and the paging app still to set up · Source: `docs/governance-spec.md` "Alerts", open
   question 15
 - Decision: **critical** goes to a phone paging app (PagerDuty, Pushover or ntfy, chosen at setup), Slack and email,
   to both founders, and is re-sent every 15 min until acknowledged; acknowledgements are recorded in the admin portal.
@@ -851,7 +863,8 @@ answered question there points here.
 - Rejected: email only; one severity for everything.
 
 ### D86. Governance spec: the remaining open questions take the spec's proposals
-- Date 2026-10-29 · Status: defaults approved by the user, not built · Source: `docs/governance-spec.md` open
+- Date 2026-10-29 · Status: defaults approved by the user; the contract, watchdog and script parts built and on
+  sandbox-dev since 2026-10-30; Q11's partner email and pending-upgrades pages wait for batch C · Source: `docs/governance-spec.md` open
   questions 3, 5, 6, 7, 9, 10, 11, 12, 13, 14, 16
 - Decision, by question:
   - Q3: the watchdog runs on its own Cloudflare account (separate login and MFA); one watchdog at launch.
@@ -872,7 +885,8 @@ answered question there points here.
 - Rejected: the alternatives each question listed.
 
 ### D87. Email: Resend, from a dedicated sending subdomain
-- Date 2026-10-29 · Status: confirmed by the user, provisional: to re-confirm with the colleague (2026-10-29), not built · Source: `docs/batch-c-spec.md` "Email", open question 2
+- Date 2026-10-29 · Status: confirmed by the user, provisional: to re-confirm with the colleague (2026-10-29); user mail
+  superseded by D194; the watchdog's Resend adapter built, the admin Worker's notices not built (batch C) · Source: `docs/batch-c-spec.md` "Email", open question 2
 - Decision (user mail superseded by D194: SendGrid): Resend, sending from a dedicated subdomain of the Hana domain with SPF, DKIM and DMARC, behind a small
   sender interface (send one message → accepted or an error) so switching (e.g. to Postmark) is one adapter. The
   admin Worker's fail-closed notices count a send as done only when Resend accepts it. The watchdog sends its alert
@@ -1071,7 +1085,8 @@ answered question there points here.
   relay requests to the popup (the popup would have to trust the partner page).
 
 ### D100. Security sweep fixes (API, operator tooling, CI): quotas after verification, owner-action caps per owner and scope, CKD key from three providers
-- Date 2026-10-29 · Status: in force (branch `fix/sweep-api`) · Source: security sweep 2026-10-29 (OPER-1, APIW-1,
+- Date 2026-10-29 · Status: in force (branch `fix/sweep-api`); the second code owner `@mj-hana` is in `.github/CODEOWNERS`
+  on every owned path since 2026-10-30 · Source: security sweep 2026-10-29 (OPER-1, APIW-1,
   APIW-3, OPER-2, OPER-3, APIW-4, APIV-3, APIV-7, OPER-5, OPER-6, OPER-11; `docs/security.md` "Security sweep
   2026-10-29"); owner answers of the same day; amends D58
 - Decision:
@@ -1254,7 +1269,8 @@ can't collide with the entries the parallel API, contract and watchdog fixes add
   points stay allowed, so the validator gives the same answer on every engine.
 
 ### D120. Partner identity token, with opt-in verified email per app
-- Date 2026-10-29 · Status: confirmed by the user, on the roadmap after governance, alongside email login · Source:
+- Date 2026-10-29 · Status: confirmed by the user; build steps 1–4 (no email claim) deployed on sandbox-dev 2026-11-02
+  (D127, D170–D179); the email claim, KMS signer and watchdog pin check not built · Source:
   conversation; `wend-api` (`src/auth/privy.ts`, `src/user/privy-identity.ts`) as the reference use
 - Decision: Hana issues a short-lived (≤ 1 h) JWT a partner's backend can verify against Hana's published keys,
   obtained by the SDK without a popup (`hana.getIdentityToken()`; the vault proves its session with the session key).
@@ -1348,7 +1364,8 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 - Decision, by question:
   - Q1: the issuer is its own Worker, `apps/email-issuer`, separate from the API Worker.
   - Q3: user mail via Resend (D87, still provisional until the colleague confirms), behind one sender adapter, on its
-    own sending subdomain; the provider's message-log retention at the minimum.
+    own sending subdomain; the provider's message-log retention at the minimum. The provider is superseded by D194
+    (SendGrid, final once the colleague agrees).
   - Q4: per-scope `aud` (`email:<scope_id>`, a scope client): a partner turns email off on chain with
     `remove_client`.
   - Q5: the issuer under `{apiUrl}/v1/email`.
@@ -1389,6 +1406,11 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
     to be checked against Apple's documentation when specced.
 - Why: the App Store generally expects iOS apps that offer a third-party login such as Google to also offer Sign in
   with Apple, so partners with native apps will ask for it.
+
+## Governance and watchdog follow-ups, 2026-10-30
+
+Decided while governance went live on sandbox-dev (the watchdog's hosting and drills) and while its recovery
+playbooks were written (branches `feat/recovery-playbooks`, `feat/playbook-gaps`, `fix/watchdog-retired-key-race`).
 
 ### D125. Watchdog hosting: its own Cloudflare account in production; sandbox-dev shares the API's account
 - Date 2026-10-30 · Status: confirmed by the user · Source: conversation (hosting options researched and ranked)
@@ -1440,48 +1462,6 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   portal's Playbooks page is specified in `docs/batch-c-spec.md` (batch C, not built). `admin owner:call` now also
   sends `set_sessions_valid_from_ms` (the `forged_active_key` recovery needs it; it was missing from
   `OWNER_METHODS`).
-
-### D127. Partner identity token: the spec's recommendations, all 16 questions
-- Date 2026-10-30 · Status: confirmed by the user; build steps 1–4 (no email claim) built on `feat/identity-token-1`
-  (D170–D175) · Source: `docs/identity-token-spec.md` open questions
-- Decision: `sub` per scope (`"u1_"` + HMAC with a separate, never-rotated `IDENTITY_SUB_KEY`); ES256; minted by the
-  API Worker; mainnet key in AWS KMS (non-exportable, own IAM user, D121's account; a Worker secret on testnet and
-  `local*` only); lifetime 1 h capped at the session's end, `maxAgeMs` for fresher proof; email asked once per app at
-  the first login in the Hana popup, always optional (no mandatory setting in v1), `requestEmailSharing()` to ask
-  again; wallet addresses proven by a signature from each address's key once per session (no server registry);
-  tokens on for every app (the email claim opt-in); no introspection endpoint; no cookie on the partner's domain;
-  `login_methods` only (no `amr`/`auth_time` yet); trust by JWKS URL with optional pinned thumbprints and a watchdog
-  pin check; `iss` = `{apiUrl}/v1/identity` on sandbox-dev and a stable Hana hostname in production, fixed before
-  any partner goes live; a new `sid` at every interactive login.
-- Why: each question's trade-offs are in the spec. Optional email sharing never affects which wallet a person gets
-  (linking is D119/D122, from Google's verified address read transiently inside Hana).
-
-### D140. The ledger's Postgres tests run on PGlite
-- Date 2026-10-30 · Status: in force on `feat/batch-c-1` (`apps/api/test-usage`, `scripts/test/usage-migrate.test.ts`)
-  · Source: batch C1 (`docs/batch-c-build-plan.md`); the spec's "Tests" said a real Postgres 17 (a Neon branch in CI
-  or a local container)
-- Decision: the usage ledger's DDL, roles, grants, functions and the migration runner are tested on PGlite
-  (`@electric-sql/pglite` 0.5.11, exact-pinned: Postgres 18.6 compiled to WASM, in process), so `pnpm -r test` needs no
-  network, container or Neon branch, locally and in CI. The same suite runs against a real Postgres 18 through `pg`
-  when `USAGE_TEST_DATABASE_URL` names a superuser connection to a local server (a container); never Neon. Tests switch
-  roles with `SET ROLE`, as the Hyperdrive connections of each role would run.
-- Why: PGlite is the same server code as Neon's Postgres 18, so privileges, partitioning, PL/pgSQL and triggers behave
-  the same; a Neon branch per CI run would put a Neon credential in CI and a network dependency in every test run.
-- Not covered by PGlite: Neon's own role rules (the owner is `neon_superuser`, not a superuser) and Hyperdrive. The
-  first `usage-migrate` on sandbox-dev and C4's capture smoke check those.
-- Rejected: a Neon branch per CI run; a Postgres container as the default (needs Docker locally and in CI).
-
-### D141. Ledger roles: created without login, no credential in the DDL, nothing for PUBLIC
-- Date 2026-10-30 · Status: in force on `feat/batch-c-1` (`apps/api/migrations-usage/0001_ledger.sql`) · Source:
-  batch C1; amends `docs/batch-c-spec.md` "Usage ledger" roles
-- Decision: the migration creates `usage_writer` and `usage_admin` `NOLOGIN` if they don't exist; `usage-setup` (C4)
-  gives each `LOGIN` and a generated password. Every migration ends with `REVOKE EXECUTE ON ALL FUNCTIONS … FROM
-  PUBLIC` (Postgres grants EXECUTE on new functions to PUBLIC, which would have let the admin role call `record_event`
-  and any role call the retention functions); a test checks each role's exact function list and that a role with no
-  grants has none. The admin role gets `SELECT, INSERT, UPDATE, DELETE` on the `ops` tables instead of `CREATE` on the
-  schema (it never creates objects, and owner-created tables weren't writable by it).
-- Why: no secret in a committed file; the DDL runs unchanged on Neon, a container and PGlite; least privilege as the
-  spec intended.
 
 ### D150. The watchdog monitors the relayer's funds (read-only), with default thresholds and manifest overrides
 - Date 2026-10-30 · Status: built (branch `feat/playbook-gaps`), defaults for review · Source: conversation (closing
@@ -1559,6 +1539,394 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 - Playbook: `retired-key-change`. The incident's alert #10 was acknowledged; the deleted updater key is reprovisioned
   through the council (`forged-key-change` step 5).
 
+## Batch C build, step C1 (ledger, manifest fields), 2026-10-30
+
+Made while building `docs/batch-c-build-plan.md` C1 (branch `feat/batch-c-1`), and its open questions 1, 2, 4 and 5.
+
+### D140. The ledger's Postgres tests run on PGlite
+- Date 2026-10-30 · Status: in force on `feat/batch-c-1` (`apps/api/test-usage`, `scripts/test/usage-migrate.test.ts`)
+  · Source: batch C1 (`docs/batch-c-build-plan.md`); the spec's "Tests" said a real Postgres 17 (a Neon branch in CI
+  or a local container)
+- Decision: the usage ledger's DDL, roles, grants, functions and the migration runner are tested on PGlite
+  (`@electric-sql/pglite` 0.5.11, exact-pinned: Postgres 18.6 compiled to WASM, in process), so `pnpm -r test` needs no
+  network, container or Neon branch, locally and in CI. The same suite runs against a real Postgres 18 through `pg`
+  when `USAGE_TEST_DATABASE_URL` names a superuser connection to a local server (a container); never Neon. Tests switch
+  roles with `SET ROLE`, as the Hyperdrive connections of each role would run.
+- Why: PGlite is the same server code as Neon's Postgres 18, so privileges, partitioning, PL/pgSQL and triggers behave
+  the same; a Neon branch per CI run would put a Neon credential in CI and a network dependency in every test run.
+- Not covered by PGlite: Neon's own role rules (the owner is `neon_superuser`, not a superuser) and Hyperdrive. The
+  first `usage-migrate` on sandbox-dev and C4's capture smoke check those.
+- Rejected: a Neon branch per CI run; a Postgres container as the default (needs Docker locally and in CI).
+
+### D141. Ledger roles: created without login, no credential in the DDL, nothing for PUBLIC
+- Date 2026-10-30 · Status: in force on `feat/batch-c-1` (`apps/api/migrations-usage/0001_ledger.sql`) · Source:
+  batch C1; amends `docs/batch-c-spec.md` "Usage ledger" roles
+- Decision: the migration creates `usage_writer` and `usage_admin` `NOLOGIN` if they don't exist; `usage-setup` (C4)
+  gives each `LOGIN` and a generated password. Every migration ends with `REVOKE EXECUTE ON ALL FUNCTIONS … FROM
+  PUBLIC` (Postgres grants EXECUTE on new functions to PUBLIC, which would have let the admin role call `record_event`
+  and any role call the retention functions); a test checks each role's exact function list and that a role with no
+  grants has none. The admin role gets `SELECT, INSERT, UPDATE, DELETE` on the `ops` tables instead of `CREATE` on the
+  schema (it never creates objects, and owner-created tables weren't writable by it).
+- Why: no secret in a committed file; the DDL runs unchanged on Neon, a container and PGlite; least privilege as the
+  spec intended.
+
+### D142. Loopback origins only in `sandbox-*` environments
+- Date 2026-10-30 · Status: confirmed by the user · Source: batch C1 open question 1 (`docs/batch-c-build-plan.md`)
+- Decision: `localhost` / loopback origins are accepted only in dev environments (`sandbox-*`, `local*`), both when an
+  origin is registered and at the login gate; partners develop locally against Hana's sandbox environment. This
+  replaces the spec's "any test scope in any non-production network" rule for origin input.
+- Why: one rule enforced the same way in both places; otherwise a partner could register an origin that silently
+  fails at login.
+
+### D143. Production's usage ledger gets its own Neon project before mainnet
+- Date 2026-10-30 · Status: confirmed by the user · Source: batch C1 open question 2
+- Decision: the current Neon project (`hana-id`, branches `production` and `sandbox-dev`) serves dev and test; before
+  mainnet a separate Neon project (AWS Sydney) holds the production ledger, with its own credentials, restore window
+  and access list. The `production` branch of the current project is not used for mainnet.
+- Why: a sandbox credential leak or a project-level mistake can never reach production billing data.
+
+### D144. Support ID lookup is built from data Hana already keeps
+- Date 2026-10-30 · Status: confirmed by the user, not built · Source: batch C1 open question 4 (D96)
+- Decision: staff resolve a user's Support ID in the admin console from the usage ledger's pseudonymous user id plus
+  each app's change history (`app_changes`): which apps it used, recent logins, errors and app setting changes. No
+  dedicated support table and no email or name stored. A short spec section, reviewed by the user, comes before
+  batch C15.
+- Why: no new store of user data to protect or keep under retention rules.
+- Rejected: a dedicated support table with more detail per user.
+
+### D145. The owner-invite waiting period has its own setting
+- Date 2026-10-30 · Status: confirmed by the user, built in batch C1 · Source: batch C1 open question 5 (D89)
+- Decision: manifest `ownerGrantDelayMs` (a new owner is a viewer until it passes; owners can cancel) is separate
+  from `appChangeDelayMs`, with the same bounds (at least 24 h on mainnet).
+- Why: the two waits can be tuned independently; changing one never silently changes the other.
+
+## Partner identity token spec, confirmed by the user 2026-10-30
+
+The answers to `docs/identity-token-spec.md`'s open questions (the roadmap decision is D120).
+
+### D127. Partner identity token: the spec's recommendations, all 16 questions
+- Date 2026-10-30 · Status: confirmed by the user; build steps 1–4 (no email claim) built on `feat/identity-token-1`
+  (D170–D175) · Source: `docs/identity-token-spec.md` open questions
+- Decision: `sub` per scope (`"u1_"` + HMAC with a separate, never-rotated `IDENTITY_SUB_KEY`); ES256; minted by the
+  API Worker; mainnet key in AWS KMS (non-exportable, own IAM user, D121's account; a Worker secret on testnet and
+  `local*` only); lifetime 1 h capped at the session's end, `maxAgeMs` for fresher proof; email asked once per app at
+  the first login in the Hana popup, always optional (no mandatory setting in v1), `requestEmailSharing()` to ask
+  again; wallet addresses proven by a signature from each address's key once per session (no server registry);
+  tokens on for every app (the email claim opt-in); no introspection endpoint; no cookie on the partner's domain;
+  `login_methods` only (no `amr`/`auth_time` yet); trust by JWKS URL with optional pinned thumbprints and a watchdog
+  pin check; `iss` = `{apiUrl}/v1/identity` on sandbox-dev and a stable Hana hostname in production, fixed before
+  any partner goes live; a new `sid` at every interactive login.
+- Why: each question's trade-offs are in the spec. Optional email sharing never affects which wallet a person gets
+  (linking is D119/D122, from Google's verified address read transiently inside Hana).
+
+## Partner identity token, build steps 1–4 (2026-10-30)
+
+Choices made while building `docs/identity-token-spec.md` steps 1–4 on `feat/identity-token-1`, where the spec left a
+detail open or a safer reading was needed. Each follows the spec's intent; the user can revisit any of them.
+
+### D170. Identity token layout details the spec left open
+- Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`packages/core/src/identity.ts`, frozen in
+  `packages/core/test/vectors/identity-v1.json`) · Source: build step 1
+- Decision: the session proof's prefix is the spec's `"hana-id-identity-v1:"` (the build brief said
+  `hana-identity-v1:`; the spec wins). `wallet_proofs_hash`, which the spec names but doesn't define, is
+  `sha256("hana-id/identity-wallet-proofs/v1" ‖ 0x00 ‖ for stellar then evm: borsh(chain) ‖ borsh(address) ‖
+  borsh(Vec<u8> signature))`. The EVM address in a wallet-proof message is EIP-55; the API accepts any valid case in
+  the body and canonicalizes before checking. `sub`'s root identity is the session path after the app's `scope#`:
+  exactly `provider#sub#key_index` with a lowercase provider, a non-empty sub and a decimal `key_index`, else no token
+  (`502 bad_contract_result`). `login_methods` is `[root provider]` until account linking exists (email login, D119).
+  The claims are built in the spec's order and the builder throws on anything off-spec.
+- Why: a frozen, unambiguous layout before any vault signs one; the proofs hash commits to the chain names, addresses
+  and signatures so a session proof can't be paired with other proofs.
+
+### D171. A mint in an app that keeps logins needs the session's live share
+- Date 2026-10-30 · Status: in force; amended by D178 (other apps' shares, tombstones) · Source: build step 2; the
+  spec's "Minting" step 2 (`apps/api/src/identity/token.ts` `checkShare`, `packages/web/src/vault/vault.ts`
+  `mintIdentity`)
+- Decision: when the app's persistence is `session`, `/v1/identity/token` requires a share for the session key, made
+  for the requesting parent, judged as unlock judges it without writing anything (`410 session_ended` with `reason`
+  `unknown_share`, `share_revoked`, `persistence_off`, `share_expired`); a session key with no share passes on the
+  chain check alone only while the app's persistence is `none`. The vault answers `identity_unavailable` with
+  `reason: no_share` (no API call) for a session in a `session` app that has no share (storage blocked, or the
+  background persist gave up, D79), and waits for a login's persist before minting. A `410 session_ended` from the
+  mint ends the vault session as a revoked share does (`sessionExpired`). A missing on-chain session is re-read every
+  300 ms for up to 2 s before the refusal (a node a block behind the login would otherwise log the user out).
+- Why: the share is what a logout, `revokeOtherDevices()` or a removed origin kills; the hourly cron deletes revoked
+  shares, so "no share" can't be told from "revoked" and must refuse in a `session` app. Accepted: a browser that
+  can't store the session gets no identity token in such an app (`docs/security.md` open issue (l)).
+
+### D172. Identity counts in their own tables, migration 0008
+- Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`apps/api/migrations/0008_identity_token.sql`) ·
+  Source: build step 2; `docs/batch-c-build-plan.md` reserves 0006 and 0007
+- Decision: migration 0008 creates `identity_issuance_hourly (hour, kid, count)` and `identity_usage (app_id, day,
+  tokens)` (the spec's `usage.identity_tokens`), both kept 24 months by the hourly cron. It doesn't touch the legacy
+  `usage` table (batch C's 0007 drops it) and holds no user data. The email claim's `apps.identity_email`,
+  `identity_email_consents` and `identity_emails` count come with build step 5's migration.
+- Why: 0008 applies the same before or after batch C's 0006/0007; an `ALTER TABLE usage` would fail on a fresh
+  database once 0007 drops `usage`.
+
+### D173. Identity signing configuration: `activeKid` in the manifest, `iss` under the API
+- Date 2026-10-30 · Status: in force; the global ceiling amended by D176, the standby slot by D177 · Was on `feat/identity-token-1` (`packages/env/src/identity.ts`,
+  `apps/api/scripts/gen-wrangler.ts`, `scripts/lib/identity-key.ts`) · Source: build step 2; the spec's "Manifest"
+- Decision: the Worker-secret signer is `{kind: "worker-secret", activeKid}`: the API signs with whichever of
+  `IDENTITY_SIGNING_KEY` / `IDENTITY_SIGNING_KEY_STANDBY` has that RFC 7638 thumbprint, so the rotation playbook's
+  "switch to the standby" is a manifest change and a deploy. The schema requires every `publicKeys` kid to be its
+  key's thumbprint, refuses any private member, requires the signer's kids in the list and refuses a Worker-secret
+  signer off testnet; `identityToken.iss` must be `{apiUrl}/v1/identity` until the production hostname exists (D127
+  Q14). `gen` refuses the `aws-kms` shape until build step 7 and, with `--dev-vars`, signing keys the manifest
+  doesn't publish. The API verifies each signature with the published key before answering, and serves the JWKS from
+  the manifest's list alone. The global hourly ceiling is 100 000 mints (var `IDENTITY_GLOBAL_HOURLY_MAX` overrides).
+- Why: the standby switch must not need a secret upload in an incident, and a secret that doesn't match the published
+  key must never produce a token.
+
+### D174. Identity token cache rule and SDK surface details
+- Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`packages/web/src/vault/identity.ts`,
+  `packages/web/src/client/client.ts`, `packages/react/src/identity.ts`) · Source: build step 3
+- Decision: the vault hands out its cached token while more than `min(5 min, half the token's life)` remains (a token
+  the session's end made short doesn't cause a mint per call) and, with `maxAgeMs`, it is at most that old. The SDK
+  clamps `maxAgeMs` to 30 s–1 h (the port refuses anything else) and rejects a non-positive one with `-32602`. The
+  port result and `identityTokenChanged` carry `{identityToken, expiresAtMs}`; the client exposes
+  `hana.identityToken` and `hana.identityTokenExpiresAtMs`. `410 session_ending` (< 30 s left) is `session_ended` with
+  `data.reason: 'session_ending'`, without ending the session (its own timers do). `useIdentityToken` retries a failed
+  refresh after 60 s. The record format 2 stores the proofs; the session key stays with a dormant session so it can
+  mint without PRK.
+- Why: the spec's 5-minute margin alone would mint on every call near a session's end; the rest fills in shapes the
+  spec named but didn't fix.
+
+### D175. A tested partner example, quoted exactly by the guide
+- Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`examples/identity-verify`, a workspace member) ·
+  Source: build step 4; the spec's "Example verifier"
+- Decision: `examples/identity-verify/src/verify.ts` is the guide's verifier (`jose` 6.2.13, ES256 pinned); its tests
+  run it against a local issuer (expired, stale, wrong `aud`/`iss`/`typ`/key, `alg: none`, HS256) and fail when
+  `docs/integration.md` section 15 doesn't quote the file exactly. The Playwright suite verifies real tokens from the
+  local stack with `jose` against its JWKS.
+- Why: the published guide always runs.
+
+## Partner identity token, review fixes (2026-10-30)
+
+From the identity token's security review, built on `feat/identity-token-2`.
+
+### D176. Identity mint limits: narrow to wide, sliding, none shared with the vault; the replay marker last
+- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`apps/api/src/identity/limits.ts`, `token.ts`
+  `identityQuota`, `rate-limiter.ts` `hitSliding`) · Source: the identity token's security review (M1, L2, L3, L5)
+- Decision: `/v1/identity/token` asks, in turn: the vault gate's per-IP binding (only: the app's `vault:minute` quota
+  is no longer used, so mints can't starve unlocks) → … → the session proof's signature → per session key 10/min
+  (binding) → not paused → share → chain session → wallet proofs → the single-use marker → per account root 30/min
+  (binding `IDENTITY_ROOT_LIMIT`, keyed by the HMAC `sub` bytes) → per app `identity:minute` (10 × plan `per_minute`)
+  and `identity:hour` (plan `per_day`, at most 100 000) → per scope `identity:hour` (2 × the app's) → global: a hard
+  breaker of 1 000 000/h (≥ 10 × any app's ceiling, so no one tenant can trip it) and a soft line at 100 000/h that
+  logs `identity_volume_alert` (critical) without refusing. The app, scope and global windows are sliding (the
+  previous bucket weighted by its overlap) and counted only for a request that passed every other check; a refusal by
+  a later window takes the hit back from the earlier ones. The marker is reserved only once the proof is known to be a
+  live session's (random keys create none), keyed `sha256(sessionPk ‖ u64le(issuedAtMs) ‖ nonce)` (independent of the
+  signature's encoding), and an alarm on the marker object deletes expired markers.
+- Why: the global hourly breaker was reachable by one tenant (three free apps at 600/min) and then refused every app
+  for up to an hour. Amends D173's global ceiling (100 000/h, refusing).
+- Rejected: one exact per-root object (a Durable Object per user per hour; the binding is a flood limit anyway).
+
+### D177. Testnet identity keys: the standby stays off the Worker; rotation and retirement commands
+- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`scripts/lib/identity-key.ts`,
+  `packages/playbooks` `identity-signing-key-compromised`) · Source: the identity token's security review (M2)
+- Decision: `identity-key init` uploads only the active key and the sub key; the standby is published in the JWKS
+  but never uploaded (operators move its file offline), so a leak of the Worker's secrets or the Cloudflare account
+  doesn't reach it. New commands: `next` (generate and publish a rotation key, upload nothing), `switch --to
+  next|standby` (upload it into the Worker slot the active key isn't in, make it the manifest's `activeKid`; the old
+  active key becomes `previous`, still published), `retire --key previous|standby` (unpublish, delete its Worker
+  secret if it has one, set its file aside). `.secrets/<env>/identity-slots.json` records which slot holds which kid.
+  `gen --dev-vars` writes only the active key. The compromise playbook (operations.md, `docs/playbooks.md`): treat
+  both keys as exposed unless the incident provably touches only the active one; then retire the standby too and
+  rotate to a fresh key.
+- Why: two keys side by side on one Worker and uploaded together made "switch to the standby" keep a compromised
+  key. Amends D173 (the standby slot is now a rotation slot) and the spec's rotation playbook.
+
+### D178. A dead or other app's share stops mints in every app of the scope; shares kept as tombstones for 24 h
+- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`apps/api/src/identity/token.ts` `checkShare`,
+  `vault/cron.ts` `pruneShares`) · Source: the identity token's security review (L1)
+- Decision: the mint looks a session key's share up in any app: a share that belongs to another app refuses the mint
+  (`410 session_ended`, `reason: unknown_share`) whatever this app's persistence, so a session revoked (or simply
+  persisted) in a `session` app of a scope never mints in a `none` app of the same scope. The hourly cron deletes a
+  revoked or absolutely expired share only once it is older than 24 h (the contract's `MAX_SESSION_MS`), so the row
+  outlives any on-chain session it could stand for.
+- Why: `getShareBySessionPk` was per app and the cron deleted revoked rows within the hour, so a revoked session kept
+  minting in a `none` app until its on-chain expiry, against D171 and `docs/security.md`. Amends D171.
+
+### D179. Raw signing never covers Hana's signing domains; `wallets` proves control, not derivation
+- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`packages/web/src/vault/signing.ts`
+  `refuseReservedRaw`, `docs/integration.md` section 15) · Source: the identity token's security review (L4, L6)
+- Decision: in apps with raw signing on, the vault refuses (4100, `reason: raw_reserved_domain`, before any popup) a
+  Stellar raw request whose bytes start with `hana-id`, and an EVM raw digest equal to the session's own identity
+  wallet-proof digest, so an approved raw signature can't serve as a wallet proof. The guide says what `wallets`
+  proves: the session's holder controls each address's key, not that it is the Hana-derived wallet of that `sub`; one
+  address can appear under several `sub`s (an exported or reused key, an old `key_index`), so partners must not treat
+  wallet → `sub` as unique (per-wallet credits).
+- Why: defence in depth for the wallet proof; the guide overstated the claim.
+- Accepted residual (automated review, 2026-10-30): the EVM check covers only this session's own proof digest. A raw
+  EVM digest is opaque, so a user who approves a raw signature over another session's wallet-proof digest lets that
+  session list their address. Not fixable at the source: raw signing signs any digest, whatever structure (EIP-191,
+  EIP-712) the proof used, and the API can't check that an address is the account's Hana-derived wallet (CKD output
+  is never on chain). The approval already authorizes arbitrary signatures (transactions included, with the popup's
+  warning), and partners must not treat wallet → `sub` as unique, so the impact is within what the guide states.
+  Revisit if addresses are ever recorded on chain.
+
+## Email login build, batch 1 (contract v3), 2026-10-30
+
+Made while building `docs/email-login-build-plan.md` batch 1 (branch `feat/email-login-1`), where the spec was silent,
+ambiguous or unsafe as written. Each takes the safest reading and is listed for the user under the plan's "Open
+points for the user"; none changes an address.
+
+### D130. A wallet is recorded when its path is derived, not when a session opens
+- Date 2026-10-30 · Status: confirmed by the user (2026-11-02); in contract v3 on develop, not deployed · Source: build of
+  `docs/email-login-spec.md` "Sessions" step 3 and "Model" ("the contract records that in `opened` at every
+  `create_session*`")
+- Decision: `opened` (an identity "has a wallet") is set by `derive_key` and `create_session_and_derive` for the
+  session's path identity, not by a bare `create_session`.
+- Why: tokens are public in the mempool and in failed transactions. Copying a Google token that was sent for a case-A
+  link into a bare `create_session` would open a session nobody can use but mark the Google identity as having a
+  wallet, so the user's retry hits "both have a wallet" and the person ends up with two wallets, which D122 forbids.
+  Nobody can derive without the session key, so marking at derivation can't be forged. For every real login (the
+  combined call) the result is the same as the spec's.
+- Rejected: the spec's wording (marking in `create_session`).
+
+### D131. Contract readings of the email login spec (batch 1)
+- Date 2026-10-30 · Status: confirmed by the user (2026-11-02), every reading; in contract v3 on develop, not deployed · Source: build of
+  `docs/email-login-spec.md` "Contract changes", "Sessions", "Link methods"
+- Decision:
+  - `mark_self_issued` refuses an issuer that already has keys, active or pending (`Issuer already has keys`), and a
+    second call (`Issuer is already self-issued`), so it can never reset an upgraded policy.
+  - The updater key ("self") can't propose **any** key change of a self-issued issuer, removals included.
+  - One RSA modulus is registered once per self-issued issuer, whatever its kid, exponent or signer (`Key is already
+    registered`), including keys a future `migrate` installs: one stolen key never counts as two signers.
+  - A self-issued key change waits `max(the usual rule, now + governance_delay_ms)`.
+  - JWS JSON is parsed strictly: no flattened form, no unprotected `header`, no `crit`, no duplicate members; every
+    signature must verify and every kid must be a counting signer's active key (an unknown extra signature fails the
+    token rather than being ignored).
+  - Case A (Google joining an email wallet) must carry `link_immediate = true` (`This link must be immediate`): a
+    delayed case A would have to open the Google identity's own path, a second wallet.
+  - `cancel_link` doesn't mark the pair `unlinked` (the spec names unlink only; confirmed by the user, D132); lazy activation of a pending member
+    doesn't bump the epoch; an account record is never deleted (its epoch must not restart).
+  - `get_account` also returns `unlinked` (hex keys), so the issuer can apply "an unlinked pair is not a match".
+  - The panic for an unlisted kid stays today's `Unknown signing key` (the spec writes `Unknown key`); a
+    `link_immediate` without `link_jwt` panics `link_immediate needs a link_jwt`; unlinking by another member panics
+    `Only the root or the member itself can unlink`.
+  - `migrate_v1` stays (now v1 → v3) until the sandbox suite moves to v2 → v3 (build-plan batch 2).
+- Why: each is the stricter of the readings the spec allows, or fills a gap without a product choice.
+- Rejected: the looser readings (accepting a delayed case A, ignoring unknown extra signatures, letting the updater
+  propose email key removals).
+
+### D132. A cancelled link keeps the match (open point 3 → A)
+- Date 2026-10-30 · Status: confirmed by the user, built (`feat/email-login-1`) · Source: conversation
+  (`docs/email-login-build-plan.md` open point 3)
+- Decision: `cancel_link` does **not** mark the pair `unlinked`. After a user cancels a pending link, the next login
+  with the other method still sees the match and offers only "Link and continue" or "Sign in with {the other
+  method}": no second wallet. Only `unlink_identity` marks a pair.
+- Rejected: marking cancelled pairs (an email login would then make its own wallet after a cancel).
+
+### D133. The user's session signature binds the link, and the auto_link nonce binds the join
+- Date 2026-10-30 · Status: built (`feat/email-login-1`), from the independent security review (HIGH-1, MEDIUM-1) ·
+  Source: review of contract v3 at ba45b91
+- Decision:
+  - In `create_session_and_derive` with `link_jwt`, the session key's counter-1 signature is over the **linked CKD
+    payload** `"hana-id-ckd-link-v1:" ‖ sha256(link_jwt) ‖ mode u8 ‖ pk1 ‖ ":" ‖ pk2` instead of the plain one. The
+    plain payload is unchanged for logins without a link. The vault verifies the link token and recomputes its
+    `auto_link` nonce before signing.
+  - The `auto_link` nonce also commits to the join the issuer decided: `join` (1 = the session identity joins the link
+    identity's account, case A; 2 = the link identity joins the session identity's, cases B/C), `joiner_ik` and
+    `target_root_ik`, before the epoch and mode. The contract recomputes the join from chain state and checks it.
+- Why: before, nothing the user signed bound the link. Whoever submitted a published login chose whether and which
+  link was attached: a stolen email-issuer key could replay a failed Google login with its own case-B token and join
+  its email identity to the Google wallet (against D119 and the spec's trust statement), and anyone could strip the
+  link from a case-A login so the Google identity derived its own path (two wallets, against D122). A token minted for
+  case A could also execute as case B after the chain state changed at the same epoch. Its own domain keeps the linked
+  payload from ever reading as a plain CKD payload (a suffix on the plain payload could collide with a crafted `pk2`).
+- No path, CKD request, derivation or existing layout changes; the `auto_link` layout was never deployed.
+- Rejected: the reviewer's suffix form (`plain payload ‖ ":link:" ‖ …`), for the collision above.
+
+### D134. Only the email provider can be self-issued
+- Date 2026-10-30 · Status: built (`feat/email-login-1`), from the review (LOW-3)
+- Decision: `mark_self_issued` accepts only `SELF_ISSUABLE = ["email"]` (`Only the email issuer can be self-issued`).
+  Another provider needs a governed upgrade.
+- Why: marking is one way. An owner could remove Google's keys and mark `google` self-issued, which would stop every
+  Google login until a governed upgrade. The email provider name is frozen anyway (it is in every email path).
+- Rejected: a governance delay on marking (more machinery for a provider list that is one name).
+
+### D135. Links wait for the owner after a migration from pre-v3 state
+- Date 2026-10-30 · Status: built (`feat/email-login-1`), from the review (LOW-4)
+- Decision: `migrate` (v2 → v3) and `migrate_v1` set `unrecorded_wallets = true`; while it is set every link, automatic
+  or explicit, panics `Links wait until the owner accepts the wallets opened before v3`. The owner's
+  `accept_unrecorded_wallets()` (one way, event) clears it. `new` starts with `false`. sandbox-dev accepts after its
+  v3 upgrade (its pre-v3 wallets are test data, D122); the mainnet runbook creates the signer with `new` on v3 and
+  checks `get_config().unrecorded_wallets == false`.
+- Why: wallets derived before v3 aren't in `opened`, so "has a wallet" would be wrong for them and a funded pre-v3
+  Google wallet could be silently joined to an email account in case A. A migration argument isn't possible: v2's
+  `execute_upgrade` calls `migrate` with empty input.
+- Rejected: documenting it only (the review's point); a migrate argument (above).
+
+### D136. A linked identity's own path never derives; signer-policy keys are checked like any key
+- Date 2026-10-30 · Status: built (`feat/email-login-1`), from the review (LOW-1, LOW-2, info)
+- Decision:
+  - `derive_key` (and the derive half of `create_session_and_derive`) refuses a session whose path identity is a
+    member of an account, pending or active (`Sign-in method is linked to an account`): a session an identity opened
+    on its own path before it joined can't make a second wallet.
+  - `set_signer_policy` (a governed upgrade's `migrate` only) checks every new key with `set_issuer_key`'s rules
+    (leading zeros stripped, 2048–4096 bits, odd exponent other than 1), so a zero-padded copy of hana's modulus can't
+    pass as a co-signer's key.
+  - `set_signer_policy` takes `overlap`: `true` (adding a signer) keeps the 10-minute overlap and leaves dropped
+    signers' keys until the owner removes them (they can't count once it ends; `get_issuer_keys` still lists them);
+    `false` (replacing a compromised signer) opens no overlap and removes the dropped signers' keys at once.
+- Why: each closes a path the review reproduced; none changes an address.
+
+### D137. A bare create_session needs the session key's proof of possession; linked logins never recover unlinked
+- Date 2026-10-30 · Status: built (`feat/email-login-1-r2`), from the second review (N1) and the automated review of
+  its first form · Source: review of e225d2e
+- Decision:
+  - `create_session` takes `signature`: Ed25519 by the session key over `session_message(0, "hana-id-create-v1:" ‖
+    sha256(session nonce preimage))`. Only the key holder can open a session, and the proof is bound to that call's
+    parameters (signer, scope, key, expiry, key_index, max_uses, salt), so a proof seen in one transaction can't open
+    the key with any other parameters. Counter 0 is never accepted by `derive_key` or `revoke_session`, and the domain
+    differs from every other signed payload. `create_session_and_derive` is unchanged (its counter-1 signature already
+    proves possession).
+  - Recovery rule for the vault (batch 8): a session it meant to carry a link is never derived on with the plain
+    payload; on `Session key already in use` (or any failure after publishing) it revokes that session and restarts
+    with a fresh session key, Google token and link token.
+- Why: a front-runner could copy the Google token of a published case-A linked login into a bare `create_session`
+  with the same session key and no link. The user's call then failed `Session key already in use`, and the documented
+  recovery (derive with counter `used + 1`, plain payload) derived the Google identity's own path, splitting the person
+  into two wallets (D122). A constant proof (the first form of this fix) would still have been replayable for that key
+  with other parameters.
+- Interface: the one change to an existing method. The API's split-path relay, `packages/web`'s split path and the
+  smoke page's direct flow must send `signature` before the v3 upgrade lands (v2 ignores the extra field); batch 6.
+  No path, CKD request or derivation changes.
+- Rejected: relying on the vault rule alone (the contract can make the bad recovery impossible to set up).
+
+### D138. A replacing signer policy needs new signer ids and cancels dropped signers' pending keys
+- Date 2026-10-30 · Status: built (`feat/email-login-1-r2`), from the second review (N3)
+- Decision: in `set_signer_policy` with `overlap = false`, new keys may only go to signer ids the previous policy
+  didn't list (`A replacing policy adds keys only for new signer ids`); in either mode, pending `AddForSigner`
+  changes of signers that leave the policy are cancelled (event `issuer_key_change_cancelled`, `by` = the contract).
+- Why: a replacing upgrade that kept the id `cosign` with a new key left the compromised old `cosign` key counting
+  (keys were dropped by signer id only); and a dropped signer's owner-posted pending key would revive, executable by
+  anyone, if a later upgrade listed the id again.
+- Rejected: an explicit list of kids to remove (the owner can already remove any key at once with
+  `remove_issuer_key`; a new id makes the replacement visible in the policy itself).
+
+### D139. Off-chain guards from the second review: case-B signing only after the popup's own email step; a watchdog alert
+- Date 2026-10-30 · Status: obligations for later batches (`docs/email-login-build-plan.md` batches 5 and 8), from
+  the second review (N2, N4)
+- Decision:
+  - The vault signs a linked payload with `join = 2` (an email identity joining the Google identity's account) only
+    when this same popup ran the user's email-code step for this login (`verify` → `linkTicket`) and the link token's
+    `sub` equals the `sub` of the address verified there. A case-B token offered during a plain Google login is
+    refused.
+  - The watchdog raises a critical alert whenever `get_config().unrecorded_wallets` is `true` on an env that isn't a
+    dev env.
+- Why: since D133 a case-B join happens only when the vault signs the linked payload, so the vault is the last check
+  that the user really proved the email address in this flow; without it a compromised issuer service could serve a
+  case-B token during a plain Google login. The flag must never be true on mainnet (D135); a runbook check alone can be
+  skipped.
+
+## Email login build, batch 2 (contract v3 upgrade path and gas), 2026-11-02
+
+Made while building `docs/email-login-build-plan.md` batch 2 (branch `feat/email-login-2`).
+
 ### D154. No v1 migration in contract v3: `migrate_v1` removed, `deploy-contract` refuses a v1 contract
 - Date 2026-11-02 · Status: confirmed by the user (2026-11-02); merged · Source: email-login build plan batch 2
 - Decision: contract v3 drops `migrate_v1`, the v1 layout copy (`HanaSignerV1`) and the v1 state fixture, as the build
@@ -1594,35 +1962,747 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   the watchdog. Not done here: no contract change in this batch.
 - Rejected: the spec's 150 for the linked login (fails with 4096-bit keys); 100 for `link_identity` (likewise).
 
-### D142. Loopback origins only in `sandbox-*` environments
-- Date 2026-10-30 · Status: confirmed by the user · Source: batch C1 open question 1 (`docs/batch-c-build-plan.md`)
-- Decision: `localhost` / loopback origins are accepted only in dev environments (`sandbox-*`, `local*`), both when an
-  origin is registered and at the login gate; partners develop locally against Hana's sandbox environment. This
-  replaces the spec's "any test scope in any non-production network" rule for origin input.
-- Why: one rule enforced the same way in both places; otherwise a partner could register an origin that silently
-  fails at login.
+## Email login build, batch 3 (`packages/email`), 2026-11-02
 
-### D143. Production's usage ledger gets its own Neon project before mainnet
-- Date 2026-10-30 · Status: confirmed by the user · Source: batch C1 open question 2
-- Decision: the current Neon project (`hana-id`, branches `production` and `sandbox-dev`) serves dev and test; before
-  mainnet a separate Neon project (AWS Sydney) holds the production ledger, with its own credentials, restore window
-  and access list. The `production` branch of the current project is not used for mainnet.
-- Why: a sandbox credential leak or a project-level mistake can never reach production billing data.
+Made while building `docs/email-login-build-plan.md` batch 3 (branch `feat/email-login-3`), where the spec was silent
+or allowed two readings. Each takes the stricter reading. D156 and D159 define every email user's address (frozen at
+the address freeze; until then a change moves every sandbox-dev email address and must be called out); D157 and D158
+change no address.
 
-### D144. Support ID lookup is built from data Hana already keeps
-- Date 2026-10-30 · Status: confirmed by the user, not built · Source: batch C1 open question 4 (D96)
-- Decision: staff resolve a user's Support ID in the admin console from the usage ledger's pseudonymous user id plus
-  each app's change history (`app_changes`): which apps it used, recent logins, errors and app setting changes. No
-  dedicated support table and no email or name stored. A short spec section, reviewed by the user, comes before
-  batch C15.
-- Why: no new store of user data to protect or keep under retention rules.
-- Rejected: a dedicated support table with more detail per user.
+### D156. Email normalization v1: the stricter readings, and a pinned UTS #46 library
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); merged · Source: build of
+  `docs/email-login-spec.md` "Email normalization"
+- Decision (`packages/email/src/normalize.ts`, frozen by `vectors/email-v1.json`):
+  - "ASCII whitespace" is the WHATWG set (TAB, LF, FF, CR, SPACE), trimmed at the ends only; anything else (VT, NBSP,
+    ideographic space) stays and fails the syntax checks. An input with an unpaired UTF-16 surrogate is refused.
+  - The 254-byte limit applies to the trimmed input (UTF-8 bytes) **and** to the normalized address, since punycode
+    can lengthen the domain; the local part must be 1 to 64 bytes.
+  - "ASCII only" local parts must also be an RFC 5322 dot-atom: no quoted strings, comments, backslashes, spaces,
+    leading, trailing or doubled dots (also for Gmail, before its dots are dropped). Lowercasing is ASCII-only.
+  - UTS #46 runs non-transitional with every check on: CheckHyphens (so `ab--cd.com` is refused unless it is a valid
+    `xn--` label), CheckBidi, CheckJoiners, UseSTD3ASCIIRules; then the domain must be an LDH host name of at least
+    two labels, each 1 to 63 bytes, at most 253 bytes, whose top-level label has a letter (no IPv4 or IP literals).
+  - The Gmail canonical form is applied to the normalized domain (`GMAIL.COM.` and fullwidth forms count); a local
+    part left empty by it (`+tag@gmail.com`) is refused.
+  - IDNA comes from `tr46` 7.0.0 (UTS #46 revision 36, Unicode 18.0.0), pinned exactly; a guard test checks the
+    installed `tr46` and `punycode` versions. Emoji labels that UTS #46 allows (`💩.la`) are accepted.
+  - **Unicode 15.0 cutoff** (review M1, 2026-11-02): any code point assigned after Unicode 15.0 is refused
+    (`domain_unicode_version`), in the raw input, in its mapped form with `xn--` labels decoded, and in the result.
+    The ages come from a vendored table generated from Unicode's `DerivedAge-18.0.0.txt`
+    (`packages/email/src/unicode-age.ts`, hash-pinned), never from the engine's `\p{…}` data. Why: `tr46` calls the
+    runtime's `String.prototype.normalize('NFC')`; a runtime whose Unicode predates a character doesn't reorder it,
+    so `alice@x\u1AD0\u0316.com` (U+1AD0, Unicode 17) gave a different `sub` on Node 22.12 and Node 24. Why 15.0:
+    it is the newest version every target runtime knows: Safari 16.4 and later (16.4 shipped the Unicode 15.0
+    emoji), Chrome, Edge and Firefox of the last two years (ICU 74+, Unicode 15.1), Node 22 (ICU 74+) and workerd
+    (newer). Unicode's normalization stability policy keeps NFC identical across them for 15.0 characters. Cost:
+    domains using characters added since September 2022 (CJK extension I, new scripts, new emoji) can't sign in;
+    raising the cutoff later would only accept addresses that are refused today, so it moves no existing address.
+- Why: every refusal here only turns away addresses that are invalid or that no large provider issues; every
+  acceptance is frozen forever, so the narrow set is the safe one. The runtime's own `URL` parser is also
+  non-transitional UTS #46 but with looser flags and an unpinned Unicode version (workerd's or each browser's ICU), so
+  a runtime upgrade could move an address.
+- Residual: `tr46` still calls the platform's NFC, now only on characters of Unicode 15.0 or older, which every target
+  runtime has. The frozen vectors run in Node, in a bare V8 context (the browser bundle) and in workerd. CI's Node is
+  `22` (floating), so no claim rests on a pinned Node version. Browsers older than Safari 16.4 may predate Unicode
+  15.0, so only the email issuer (workerd) computes a normalized address for a `sub`; the popup uses the package for
+  display and pre-checks only (batches 4 and 8; review of batch 3).
+- Rejected: platform `URL`/`domainToASCII`; quoted local parts; measuring length on the input only; Unicode `trim()`.
 
-### D145. The owner-invite waiting period has its own setting
-- Date 2026-10-30 · Status: confirmed by the user, built in batch C1 · Source: batch C1 open question 5 (D89)
-- Decision: manifest `ownerGrantDelayMs` (a new owner is a viewer until it passes; owners can cancel) is separate
-  from `appChangeDelayMs`, with the same bounds (at least 24 h on mainnet).
-- Why: the two waits can be tuned independently; changing one never silently changes the other.
+### D157. Disposable-domain list: one pinned upstream commit, parents match, updated by PR
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); merged · Source: build of
+  `docs/email-login-spec.md` "Rate limits and abuse" (Q10, D123)
+- Decision: `packages/email/src/disposable-domains.ts` vendors `disposable_email_blocklist.conf` of
+  `github.com/disposable-email-domains/disposable-email-domains` (CC0 1.0) byte for byte at commit
+  `e4f0910adf5ab418dc998a1d8e6c15906ca04864` (2026-10-23, 9927 domains), its sha256 checked by a test. A domain is
+  blocked when it **or any parent** is listed (upstream lists registrable domains and asks implementers to match
+  subdomains). The guard keeps `gmail.com`, `googlemail.com` and `google.com` (and their parents) off the list, in the
+  test and in `scripts/update-disposable-domains.mjs`, which is the only way to update it (a reviewed PR, an upstream
+  commit at least 7 days old, as the workspace's `minimumReleaseAge`).
+- Why: exact-match only would let `anything.<disposable>` through; a fresh upstream commit is unreviewed third-party
+  data that decides who may log in.
+- Rejected: exact match only; fetching the list at runtime.
+
+### D158. The Google-hosted rule compares `hd` exactly
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); merged · Source: build of
+  `docs/email-login-spec.md` "The four cases" ("`hd` is present and equal to the address's normalized domain")
+- Decision: `isGoogleHosted({ email, emailVerified, hd })` takes a normalized address (it throws otherwise) and
+  needs `emailVerified === true` (anything else is false). Then: `hd` absent (`undefined` or `null`) → true only for
+  the domain `gmail.com`; `hd` present → true only when it is a non-empty string **exactly equal** to the normalized
+  domain (so a `gmail.com` address with another `hd` is false; review L1). `hd` is not lowercased, IDNA-mapped or
+  trimmed first. A subdomain or parent of `hd` doesn't count.
+- Accepted: Cloud Identity accounts, and Workspace accounts without Gmail, have `hd` equal to the domain while the
+  mailbox is hosted elsewhere. The rule still treats them as Google-hosted because the same domain administrator
+  controls both the Google account and the domain's mail.
+- Why: a false "not Google-hosted" only costs the user a code (case A) or the 24 h delay (case B); a false "hosted"
+  links silently. Google returns `hd` as the Workspace's lowercase ASCII domain, so the exact form is the expected one.
+- Rejected: normalizing `hd` with `normalizeDomain`; matching `hd` against parent domains.
+- **Reasoning corrected (2026-11-02, tokens review L3; the rule is unchanged):** for a Workspace account without Gmail
+  or a Cloud Identity account, Google does **not** host the mailbox, so "whoever passes Google's sign-in can read the
+  mailbox" isn't a fact about Google there. The rule treats such an `hd` account as Google-hosted on the domain
+  administrator's word: the same administrator issues the Google account and the mailbox, and can already reach both.
+  A silent link then trusts that administrator, as every address on that domain already does.
+
+### D159. Gmail canonical form: dots ignored, each `+tag` its own identity
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02), amending Q7 (D123) · Source: spec Q7 (D123), checked
+  against Google's help pages on 2026-11-02 (cited in `packages/email/test/vectors.test.ts`); the user's choice of
+  `+tag` behaviour
+- Decision: `gmail.com` and `googlemail.com` → `gmail.com`; every dot in the username (before the first `+`) is
+  dropped; a non-empty `+tag` is kept as typed (lowercased, its dots and further `+` kept), so `name+1@gmail.com`
+  and `name+2@gmail.com` are separate identities with separate wallets; an empty tag (`name+@gmail.com`) is the plain
+  username; an empty username (`+tag@gmail.com`) is refused. Other domains keep dots and `+` as typed.
+- Why dots: Gmail delivers every dot spelling to one inbox and nobody can register another spelling
+  (support.google.com/mail/answer/7436150), so ignoring dots keeps one person from getting a second, empty wallet
+  by typing their address differently, and keeps D119 matching against Google's reported address working.
+- Why `+tags` kept (the user's choice): a tag is typed on purpose, so it can't split a wallet by accident, and it
+  gives one inbox many wallets for testing and for users who want them, as Privy does. Security is unchanged: only
+  the inbox owner receives a tag's codes. Costs: one person can hold many email wallets (partners running rewards
+  should know); a Google login links automatically only with the untagged email identity; the identity token's email
+  for a tagged login carries the tag.
+- Cited and open: a deleted Gmail address can't be used by anyone in the future (support.google.com/mail/answer/61177,
+  /56256); no current Google page says `googlemail.com` is the same mailbox as `gmail.com` (it is, historically); a
+  Gmail user can now change their address, the old one becoming an alternate that still receives mail
+  (support.google.com/accounts/answer/19870), so the same person can then have two email identities (the spec's
+  "address changes between logins" case; nothing merges them).
+- Rate limits: since tags are distinct identities, `normalizeEmail` also returns `mailbox` (the address without its
+  `+tag`, on every domain), and the issuer's limits on codes sent key on it, so cycling tags can't mail one inbox
+  without bound (automated security review of this change). It is never an identity or a recipient.
+- Rejected: dropping `+tags` (the spec's rule: one wallet per inbox); keeping dots significant (an accidental second
+  wallet); Gmail rules for Workspace domains (`+tags` elsewhere may be distinct mailboxes).
+
+## Sign in with Apple, 2026-11-02
+
+Decided in conversation on the Apple spec's questions (`docs/apple-login-spec.md`; the roadmap decision is D124).
+
+### D160. Sign in with Apple paused; the initial build is Google and email
+- Date 2026-11-02 · Status: confirmed by the user · Source: conversation (Apple spec questions)
+- Decision: Sign in with Apple is not built for the initial launch; it is built when partners ask for it. The spec
+  (`docs/apple-login-spec.md`) stays as the starting point. Answers given so far:
+  - Q1 = B: Apple users' emails through a second, email-only Apple client whose tokens never go on chain (like Privy:
+    partners get the email), at the cost of a second Apple prompt at an identity's first login in an app.
+  - Q2, provisional: the Apple developer team of the company that publishes Hana Wallet and Wend, for testnet. To be
+    confirmed or changed at the production-readiness check, before the address freeze.
+  - Q3 = A: every Apple client in Hana's team; partner-held Apple accounts only if customers ask, for partners that
+    start on them.
+  - Q4 = A: the shared client in a Hana app group, each Enterprise client in its own group.
+  - Q5 = A: partners' native iOS apps use the web flow (`ASWebAuthenticationSession`). A native-sheet
+    "partner-managed Apple" tier only if customers ask: with the native sheet the partner's app receives the Apple
+    token and can open sessions for its own users' wallets (partner custody within its scope), and those wallets
+    differ from the same users' wallets in Hana's team.
+  - Q6–Q18: open, asked again when the work resumes.
+- Why: focus the initial build on Google and email; Apple adds an issuer, a second client, a POST route, watchdog
+  and playbook work for a method no partner has asked for yet. Nothing built so far depends on Apple: the path format
+  and the issuer model already take a new provider without moving any address (D124).
+
+## Email login build, batch 5 (watchdog), 2026-11-02
+
+Made while building `docs/email-login-build-plan.md` batch 5 (branch `feat/email-login-5`), where the spec's
+"Watchdog (`apps/watchdog`)" section was silent or ambiguous. Each takes the stricter reading; none changes an
+address. D190, D191 and D193 are confirmed by the user (2026-11-02); D192 is superseded by D200.
+
+### D190. Email pins: absent means nothing pinned; a pin is the key's thumbprint, its kid and its signer
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); built (`feat/email-login-5`,
+  `apps/watchdog/src/pins.ts`, `run.ts`), deployed on sandbox-dev 2026-11-02 (no pins yet) · Source: build of `docs/email-login-spec.md` "Watchdog"
+- Decision:
+  - The manifest's `watchdog.pinnedIssuerKeys.email` absent (sandbox-dev today, until batch 4 creates the key) means
+    **nothing is pinned**, not "unchecked": a pending email Add is cancelled (`forged_key_change`, reason
+    `not_pinned`), an active email key pauses (`forged_active_key`), and an email issuer or signer policy on chain is a
+    critical `signer_policy_mismatch` (alert only while no key is active). A malformed `EMAIL_PINS` var is read the
+    same way (and named in the `config` check). So the pins must be deployed before the owner posts the first email
+    key, as batch 6 orders it.
+  - A key is pinned when the RFC 7638 thumbprint of its on-chain `n`/`e` is listed for **its** signer (the pending
+    change's `signer`; for an active key, the signer `get_self_issued` lists it under; an active key no signer lists,
+    e.g. a dropped signer's, may be pinned under any signer) **and** its kid equals that thumbprint (Hana's issuer
+    names keys so). Otherwise reasons `not_pinned`, `other_signer`, `kid_not_thumbprint`, `no_signer` (a pending Add
+    without a signer: the email issuer isn't self-issued).
+  - A pending pinned Add, and any pending email removal (owner only, DoS only), raise the info
+    `self_issued_key_change` and nothing is called: the watchdog never confirms an email key (the contract refuses).
+  - The pins are configuration, not history: unlike Google's first-run baseline, an unpinned active email key pauses
+    at the first run too. As for Google (D82, D126), the pause also deletes every updater key.
+  - Hana's published email JWKS (`jwksUrl`, default `{apiUrl}/v1/email/jwks.json`) is compared with the pins and the
+    active email keys, warning `email_jwks_mismatch` only; a failed fetch warns after 3 runs and only while an email
+    key is active (the issuer may not be deployed before that).
+  - A v2 contract (no `get_self_issued`, `get_issuer("email")` null) reads as "no email issuer": no alert, pins or not.
+  - Fail closed (review L1, L4): on-chain material that can't be hashed is `bad_material` (never judged by its kid); a
+    malformed `EMAIL_PINS` raises the critical `pins_invalid` (check `config`) and the email key alerts it causes carry
+    reason `pins_unreadable`, so the page names the config rather than a forgery.
+  - Order (review H1, re-review): Hana's email JWKS is read after every protective step, the first alert delivery,
+    the heartbeat, the run record and the lock release, guarded, with its body capped (64 KB); every body is capped:
+    Google's JWKS and every RPC answer (4 MB). (The link scan that also ran there is gone with D200: link caps are a
+    chain view, judged in the protective phase.)
+    Hana's API is a party the watchdog must survive (D86): a huge or hostile body is a failed fetch.
+  - `scripts/pin.ts` (`pnpm --filter @hana-id/watchdog pin <public key>`) prints a public key's pin with the same
+    function the Worker uses, so batch 4's kid and the manifest's pin can't disagree.
+- Why: the pins are the only truth for self-issued keys (no outside JWKS vouches for them); treating "no pins" as
+  "skip the check" would let an owner post an email key unchecked on any env that forgot the block. A kid other than
+  the thumbprint, or a key pinned for one signer posted for another, isn't what Hana's issuer produces.
+- Rejected: absent pins = alert only (the old `unverifiable_key_change`); matching pins by kid alone (the kid is
+  chosen by whoever posts the key).
+
+### D191. A weaker signer policy, and the order to change the pins around a policy upgrade
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); built (`feat/email-login-5`, `pins.ts`
+  `policyFindings`), deployed on sandbox-dev 2026-11-02 · Source: build of
+  `docs/email-login-spec.md` "Watchdog" ("critical on any difference, pause on a weaker policy") and "Signing key
+  (staged)" ("Level 1 adds `cosign: […]` and `required: 2` before its upgrade executes")
+- **This overrides `docs/email-login-spec.md` line 867** ("Level 1 adds `cosign: […]` and `required: 2` before its
+  upgrade executes"): the pinned `required` is raised only **after** the upgrade executed. The spec is history and is
+  not edited.
+- Decision: the pins are compared with `get_issuer("email")` / `get_self_issued("email")` (signers, `required` and
+  `overlap_until_ms`; kids are judged per key). The chain's policy is **weaker**, and the watchdog pauses with a
+  critical `signer_policy_mismatch`, when its `required` is below the pinned one, when it lists a signer the pins
+  don't, when email keys are active with no signer policy at all, or when an overlap with the previous policy lasts
+  longer than the contract's `POLICY_OVERLAP_MS` (10 min) plus one run interval (5 min): a `migrate` could otherwise
+  keep a weaker previous policy (say 1-of-1) valid indefinitely, and `get_self_issued` shows only the end time, not
+  the previous policy. An email issuer on chain with nothing pinned, or a pre-v3 email issuer, is also a critical
+  `signer_policy_mismatch` (no pause). What a planned change passes through, none of it weaker, is a **warning**
+  `signer_policy_transition` (no page, no pause, review L5): a pinned signer the chain doesn't list yet, the
+  `set_issuer` → `mark_self_issued` gap with no key, a higher `required` on chain, an overlap of normal length. So the
+  operator changes the pins around a policy upgrade in this order: pin the new signer's keys (with the current
+  `required`) before the upgrade executes, raise the pinned `required` after it executed; replacing a signer: pin the
+  new id first, drop the old id after. The governance diff's `email_signer_policy` includes `overlap_until_ms`.
+- Why: the spec's literal order (pins at `required: 2` while the chain is still 1-of-1 for the upgrade's 72 h) would
+  read as a weaker chain policy and pause every login for the whole wait. Pinning the new keys first is what matters
+  (migrate installs them active at once, and an unpinned active key pauses).
+- Rejected: no pause on policy at all (the spec asks for it); pausing on any difference (the planned transitions
+  above would pause); a critical page for the transitions (it would repeat for the upgrade's 72 h).
+- Contract note (not changed): `get_self_issued` exposes `overlap_until_ms` but not the previous policy's signers and
+  `required`; a view that also returned them would let the watchdog judge the overlap's policy itself instead of only
+  its length.
+
+### D192. Link volume through a transactions indexer, detection only, with provisional thresholds
+- Date 2026-11-02 · Status: **superseded by D200** (2026-11-02): the indexer scan, `apps/watchdog/src/links.ts`, the
+  never-applied migration `0002_link_events.sql`, `watchdog.linkVolume`, `link_events_unavailable` and
+  `link_block_unscanned` are removed; the contract counts and caps links and the watchdog reads `get_link_stats()`.
+  Kept below as history · Source: build of `docs/email-login-spec.md` "Watchdog" ("Link-volume check from
+  `identity_link_*` events (warning above the threshold)"; the spec names no threshold or event source)
+- Decision:
+  - Events are receipt logs, which no JSON-RPC view lists, and a block scan is far beyond a Worker run's budget. The
+    watchdog reads the signer's transactions from a NEAR transactions indexer (manifest `watchdog.linkVolume.indexerUrl`,
+    FastNear's transactions API: `/status`, `/v0/account`, `/v0/transactions`) and keeps only `EVENT_JSON` logs of
+    standard `hana-id` the signer emitted in receipts that didn't fail. At most 100 transactions per run, 60 blocks
+    behind the indexer's head; events are stored 8 days in D1 with scope and provider only (no identity key).
+  - New links = `identity_linked` + `identity_link_proposed`; warning `link_volume_high` above 20 per scope or 100 in
+    all in the last hour (provisional, `watchdog.linkVolume.perScopePerHour` / `perHour`). The other link events are
+    counted in `/status` only.
+  - Nothing is scanned while no email issuer is on chain (no link is possible); the first scan after it appears starts
+    at the chain's head. Warning `link_events_unavailable` when no indexer is configured while email is on chain, after
+    3 failed reads, or when the scan is more than 1 h behind.
+  - Detection only: the indexer can hide events (a missed warning) or invent some (a false warning), never make the
+    watchdog act.
+  - Hardening (review M1, M2, L2, L8 and the re-review): the check runs after the run is recorded and the lock
+    released (a CPU kill there can't hold the lock and skip the next run's protections), guarded (a throw marks
+    `links` `error`, resolves nothing, and leaves the run `degraded`); it is skipped in a run that took protective
+    actions (subrequests). The indexer answers of one scan share a 1 MB budget (a testnet login with its MPC
+    receipts is ~75 KB, so ~13 per run: a busy signer falls behind, which warns); each answer is also capped, receipt
+    ids must be NEAR ids, at most 2 000 events per scan. The indexer's head is clamped to the RPC's final block, and
+    events dated more than 5 min in the future are ignored and pruned. Pages hold 200 transactions; a block the scan
+    can't read whole even with a fresh budget (≥ 200 of the signer's transactions, or over 1 MB) is counted as far as
+    the budget goes and skipped, so the scan moves on, with a critical `link_block_unscanned:<height>` open for a week
+    (holding the cursor instead would stop detection for good). The schema refuses an indexer host naming another
+    network.
+- Why: the spec wants link bursts (the visible trace of a compromised issuer using the real key at 1-of-1) to alert;
+  an indexer is the only source of events within the free plan's limits, and nothing on chain depends on it.
+- Rejected: a contract view counting links (a contract change, outside this batch); scanning blocks through the
+  watchdog's RPC (hundreds of requests per run); the console spec's relative rule ("5× its 7-day median", batch 9) for
+  now: absolute thresholds work from the first day.
+
+### D193. D139's unrecorded_wallets alert, and the email issuer in the governance diff
+- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); built (`feat/email-login-5`), deployed on sandbox-dev
+  2026-11-02 · Source: D139; build of
+  `docs/email-login-spec.md` "Watchdog"
+- Decision: every run with `get_config().unrecorded_wallets == true` on an env that isn't a dev env (`local*`,
+  `sandbox*`, the same rule as `@hana-id/env` `isDevEnv`) raises the critical condition `unrecorded_wallets` (alert
+  only), resolved once the owner accepts. The governance diff also treats as critical: `unrecorded_wallets` changing
+  (an upgrade setting it, `accept_unrecorded_wallets` clearing it), `email_issuer` (`set_issuer("email")` creating it or
+  changing its iss values), `email_issuer_keys` (an active email kid gone without a queued removal), and
+  `email_signer_policy` (`mark_self_issued`, or signers or `required` changed by an upgrade). With D200 the diff also
+  carries the link alarm thresholds from `get_link_stats()`: `link_thresholds` rising (or appearing with the view) and
+  a `pending_thresholds` raise appearing or changing are critical; lowering, or a pending raise cancelled, is a warning; a
+  pending raise coming into force as scheduled is info.
+- Why: D139 asks for the alert on every non-dev env; the owner's immediate email issuer actions leave no pending
+  state, like Google's (`issuer`, `issuer_keys`), so the diff is the only place they show.
+
+## Email login: user mail and link volume, 2026-11-02
+
+Decided in conversation before email login batch 4 (D194), and after the batch 5 and link-cap reviews (D200).
+
+### D194. User mail (email login codes) via SendGrid, not Resend
+- Date 2026-11-02 · Status: confirmed by the user as likely, final once the colleague agrees · Source: conversation
+  (before email login batch 4)
+- Decision: the email issuer sends login-code mail through SendGrid (v3 Mail Send API), which Hana already uses for
+  Hana Wallet and Wend. It replaces Resend for user mail (D87's provider). It sits behind the issuer's one sender adapter, so
+  a later switch is a new adapter, not a redesign. Same rules as D87: a dedicated sending subdomain with SPF, DKIM and
+  DMARC (SendGrid domain authentication), a send counts only when SendGrid accepts it (`202`), and its own API key
+  restricted to Mail Send, used only by the email issuer (not shared with Hana Wallet or Wend; a separate SendGrid
+  subuser if the account allows it, so reputation and suppression lists stay apart).
+- Not changed yet: the watchdog's alert email and the admin Worker's notices still name Resend (D87); whether they
+  move to SendGrid too is decided separately.
+- Why: one provider the team already operates and pays for; the adapter keeps the choice reversible.
+- **Amended (2026-11-02, independent review M3; to confirm):** a SendGrid **subuser for the issuer is required**, not
+  "if the account allows it": the issuer's suppression handling trusts only events of its own categories, and a shared
+  account mixes other mail's bounces and suppression list with the issuer's.
+
+### D200. Link volume: a contract counter with hourly alarm thresholds, replacing the indexer scan
+- Date 2026-11-02 · Status: confirmed by the user: count and alarm, no refusal (option A, after review H1/H2);
+  contract and watchdog built; the watchdog deployed on sandbox-dev 2026-11-02 (it skips the check on the v2
+  contract), the contract not deployed (it comes with v3) · Source: batch 5 review (the FastNear scan reads about 13
+  logins per run at about 75 KB each, so it falls behind and pages on ordinary traffic); the link-cap review (H1, H2)
+- Threat, stated as it is (review H1): with a stolen email signing key alone (1-of-1 at launch) a thief can log
+  into every email-rooted wallet, log into every Google-rooted wallet that already has an email member, and link their own Google account into victims' email
+  wallets (case A, one Google account per victim and scope). Since D133 a link also needs the session key's signature,
+  so the key alone can't join an email identity to someone else's Google wallet. Only the last of the three makes new
+  links. The defence against a stolen key is its custody (KMS, a second signer, D121); the counter only detects bursts.
+- Decision: the contract counts every new link, immediate or pending (the combined login with a `link_jwt`, cases A
+  and B, and `link_identity`; not cancels, unlinks or lazy activations), in fixed UTC-hour windows, per scope and in
+  total, and **never refuses a link**. When a count is at or above its threshold after a link, the window records it
+  (`flagged_scopes`, `total_threshold_reached`) and the first crossing per window emits `link_threshold_reached`.
+  Defaults 50 per scope and 500 in total per hour, changed by the owner (council) with `set_link_thresholds`: a
+  lowering applies at once, a raise only after `governance_delay_ms` (a raised threshold could hide an attack). A view
+  (`get_link_stats`) reports the current and previous hours; the watchdog reads it each run and alerts when a
+  threshold is reached, and on a scheduled raise. The FastNear indexer scan (D192) is removed.
+- Window boundary (review L1): the windows are fixed hours, so a burst that straddles a boundary is split between two
+  windows and each half may stay under a threshold; the view keeps the previous hour so the watchdog can add them.
+- Why: exact, on chain, no third party or data budget, cheap (≈ 0.3 Tgas per link) while v3 isn't deployed.
+- Rejected: a refusing cap (option A+, built first). It bounded little (H1: the takeovers it was meant to brake need
+  more than the key), and anyone could burn it (H2: one Google account and one email looping `link_identity` and
+  `cancel_link`) and lock real users out of linking logins for the hour.
+- Built (contract, branch `feat/link-cap`): `get_link_stats`, `set_link_thresholds`, events `link_threshold_reached`
+  and `link_thresholds_set` (`docs/contract-interface.md` "Link volume: the hourly counter"). The view's `previous` is
+  `null` when the previous hour had no links; its `total_threshold_reached` also reads the thresholds in force, so a
+  lowered threshold shows at once. Per-scope counts are deleted lazily (each counted link deletes up to 4 older than
+  the previous hour). `set_link_thresholds` and the other v3 owner methods are on the API's never-relay list.
+- Built (watchdog, branch `feat/email-login-5`): the view is read with the chain snapshot, before the run is recorded
+  and its lock released; `link_threshold_reached` (critical, per flagged scope and for the total, keyed by window,
+  current and previous hour; alert only, the links went through), `link_volume_high` (warning, current total ≥ half
+  `total_per_hour`), `link_stats_unavailable` (warning: `missing` with an email issuer on chain, `malformed`, or
+  `read_failed`; open threshold alerts stay open while the view can't be read); a threshold raise (`link_thresholds`,
+  `pending_thresholds`) is a critical governance change, lowering a warning; playbook `link-volume`. The read is
+  isolated: a malformed or failing view marks only the link check, never the snapshot, so a shape mismatch after an
+  upgrade can't blind the Google and email cancels and pauses.
+- Not built: nothing on the contract or watchdog side. The watchdog is deployed (batch 5, 2026-11-02); the contract
+  goes out with v3.
+
+## Email login build, batch 4 (`apps/email-issuer`), 2026-11-02
+
+Made while building `docs/email-login-build-plan.md` batch 4 (branch `feat/email-login-4`), where the spec was silent,
+contradicted itself or allowed two readings. Each takes the stricter or safer reading. None changes an address: `sub`
+is computed by `@hana-id/email` alone, from the normalized address including any Gmail `+tag` (D159).
+
+### D195. Case A, not Google-hosted: google-match prepares the code challenge, the popup sends it with `resend`
+- Date 2026-11-02 · Status: to confirm (built on `feat/email-login-4`, not merged) · Source: build of
+  `docs/email-login-spec.md` "Endpoints" (`link` "from the user's Link and continue"), "How the popup gets Google's
+  verified email" (the access token is revoked after the call) and "The four cases" ("a code to a…@domain first
+  (purpose `auto_link`)")
+- Decision: when google-match finds case A and the address isn't Google-hosted, it creates an `auto_link` challenge
+  itself, holding Google's verified address, the Google `sub` and sha256 of this login's session nonce preimage, and
+  sends nothing; it answers `challenge: {challengeId, expiresAtMs, to: "a…@domain"}` (no `challenge` for a suppressed
+  mailbox or one the limits refuse, D198: the popup then offers only "Sign in with email"). After the user's "Link and
+  continue" the popup calls `POST /v1/email/resend {challengeId}`, which sends that challenge's first code (it counts
+  as a code, not as one of the two resends). `verify` then re-reads the chain (D133) and mints the `auto_link` token
+  only if the case is still A and linkable (`409 link_refused {decision}` otherwise). `start` refuses purpose
+  `auto_link`. `link` gates only the minting of `emailToken` (Google-hosted case A; case B with a `linkTicket`), so
+  the vault sends `link: true` on its own at a Google login, as the spec says for Google-hosted case A.
+- Why: the spec's two-step reading ("call again with `link: true` after the click") can't work, since the access
+  token is revoked at the end of the first call, and a `start` with purpose `auto_link` would need the popup to hold
+  or retype the address Google reported, letting the caller choose which address gets the code. Here only Google's
+  verified address can receive it, and nothing is mailed before the user's click.
+- Cost: the address sits in the challenge object for up to 10 minutes even when the user picks "Sign in with
+  email" (the privacy table's "challenge object until it ends (≤ 10 min)").
+- Rejected: not revoking the access token until the second call; letting `start` take `auto_link` with a typed
+  address.
+
+### D196. Manifest `emailIssuer` as `identityToken`; the standby key stays off the Worker; init uploads nothing
+- Date 2026-11-02 · Status: to confirm (built) · Source: build of the spec's "Issuer configuration", "Signing key"
+  and "Migration" ("the signing keys (primary, standby) as Worker secrets"); D173, D177
+- Decision: `emailIssuer: {iss, cloudflare: {workerName, d1Name}, signer: {kind: "worker-secret", activeKid} | {kind:
+  "aws-kms", awsRegion, keys: {primary: {kid, arn}, standby: {kid, arn}}}, publicKeys, from, sender: "sendgrid" |
+  "outbox", dailySendBudget?, access?, sendgridWebhookPublicKey?}`. The JWKS is `publicKeys` alone (kid = RFC 7638
+  thumbprint, checked by the schema; 2048–4096-bit RSA, e = 65537, one modulus once). The schema and `gen` refuse
+  `worker-secret` off testnet and `outbox` outside `local*`; `gen` also refuses `aws-kms` until batch 10. The
+  standby key is published and posted on chain but **kept off the Worker**
+  (`.secrets/<env>/email-issuer-signing-key-standby.json`, to move offline), overriding the spec's "primary, standby
+  as Worker secrets": a leak of the Worker's secrets then doesn't reach it, and switching to it is a real recovery.
+  `scripts/email-issuer.ts init` writes the files and the block and uploads nothing; `put` (run by the user) uploads
+  the active key and the three HMAC keys (and the SendGrid key when its file exists), values on wrangler's stdin.
+- Why: one place that decides what the issuer publishes; the same model as the identity token's keys, for the same
+  reason (D177).
+- Left for later: a `switch` / `retire` command for email keys (a key change is also a 72 h owner proposal and a pin
+  change, so it belongs with batch 10's rotation tooling).
+
+### D197. A challenge lives 10 minutes from its creation; a refused send is taken back
+- Date 2026-11-02 · Status: to confirm (built) · Source: build of the spec's "Codes, attempts, expiry, replay" and
+  "Privacy and what is stored" (the address in the challenge object "until it ends (≤ 10 min)")
+- Decision: a resend doesn't extend the challenge: every code of it dies 10 minutes after the challenge was created,
+  so the address is never held longer. A send the provider refused is taken back from the limits and from the
+  challenge's resend count. A suppressed address's challenge stores neither the address nor a code (every code is
+  wrong, nothing is ever sent), so `start` still answers alike.
+- Why: the stricter reading of the privacy table.
+- Rejected: a fresh 10 minutes per code (up to 30 minutes of storage).
+- **Amended (independent review L3):** a challenge id is 32 random bytes, a public half (the object is named by its
+  sha256) and a secret half that only the client holds: the address in the record is AES-256-GCM-encrypted under a
+  key derived from the secret half (the public half as AAD), so the object's storage, and any point-in-time copy of it,
+  holds no readable address. The worker decrypts it only during a `resend` or `verify` that carries the full id.
+
+### D198. The limits: per mailbox and requester, atomic, with a mailbox-wide backstop
+- Date 2026-11-02 · Status: to confirm (built; values provisional per D123 Q22). Revised the same day after a security
+  review of the first build (a check-then-count race in `verify`, and limits an attacker could use to lock an
+  address's owner out) · Source: build of the spec's "Rate limits and abuse" and "Enumeration resistance"
+- Decision:
+  - **Mailbox** = `normalizeEmail(...).mailbox`, the normalized address without its `+tag` (D159), keyed as
+    HMAC(K_rl, "mailbox" ‖ 0x00 ‖ mailbox): every per-mailbox limit uses it, so cycling tags can't mail one inbox without
+    bound. It is a rate-limit key only: suppressions use the exact address (D199). Mail still goes to the tagged address.
+  - **Atomic.** Every limit decision is one Durable Object call whose checks and writes run before any await. `verify`
+    reserves the check in the mailbox's limiter (refused while locked) before the code is compared, and gets it back
+    when the code was right; the challenge object counts its own attempts the same way, so concurrent guesses compare
+    at most 5 codes per challenge and at most 10 per requester per mailbox (tested with parallel guesses).
+  - **Code mails**: 3 per 15 min and 10 per day per (mailbox, requester = IP subject); 10 per 15 min and 30 per day per
+    mailbox from everyone (the mail-bombing bound); past that, a reserve of 5 a day only for a requester new to the
+    mailbox that day, so whoever used the allowance can't keep the owner out. At most 5 live challenges per mailbox. A
+    start that is over any of these, or locked, stores nothing (no challenge, no code). At most 35 challenges per
+    mailbox per UTC day.
+  - **Wrong codes, worst case first.** Every path that compares a code goes through `verify`, which reserves the check
+    in the mailbox's limiter before comparing (refunded only when the code was right). Per mailbox and UTC day, with N
+    requesters (any number of IPs):
+    - challenges created C ≤ 35 (a hard per-mailbox cap on every kind, google-match's prepared ones included; it also
+      equals the code-mail bound, 30 mailbox-wide + 5 reserve), at most 5 live at once;
+    - checks per challenge ≤ 5, so without the guess limits W ≤ 5 · C ≤ 175, whatever N;
+    - the guess limits: every failed (or in-flight) check counts against a **hard ceiling of 25**; while fewer than 20
+      have failed (the backstop), any requester may check; after that only the **owner slot**: 5 more checks, counted
+      on their own, open only to a requester that started a challenge on this mailbox before the backstop tripped (the
+      order is a per-object sequence, not the clock) and has no failed check on it that day, each such check counting
+      as that requester's failure, so it gets one wrong code at most. The 10-per-hour per-requester lock applies too;
+    - so W ≤ min(5 · C, 20 + min(5, E)) ≤ 25, where E is the number of exempt requesters; the ceiling is checked on
+      its own and nothing passes it, whoever asks.
+    - Odds: each wrong guess hits with probability 10⁻⁶ (a fresh uniformly random code per challenge), so a persistent
+      attacker gets ≤ 25 × 365 = 9,125 guesses a year per mailbox: 1 − (1 − 10⁻⁶)^9125 ≈ 0.91% a year, under the 1%
+      target (27 a day would be 0.98%). The spec's figure was 50 a day (1.8% a year).
+    - When the backstop trips (for everyone but owner-slot requesters) or the ceiling is reached (for everyone), the
+      mailbox answers the generic 429 ("try again later" in the popup) until the UTC day ends: an accepted, bounded
+      lockout of at most the rest of that day. The tripping check logs `mailbox_guess_limit` at error level (`code`
+      `backstop` or `ceiling`) with a 12-character prefix of the mailbox key (an HMAC under K_rl, never the address), so
+      staff can see which mailboxes are being targeted and how often; the alert and the admin view are batch 9's.
+    - 5 wrong codes kill a challenge; 10 per hour from one requester lock that requester out of that mailbox for an
+      hour (the owner elsewhere is not affected).
+  - **Refusals are a generic 429** (`rate_limited`, the same body as an IP or app limit), so the popup says "try again
+    later" instead of waiting for a code that never comes. It tells the caller only that the mailbox is limited, never
+    whether it has a wallet.
+  - **Suppressed addresses take the same path**: `start` and `resend` reserve and count exactly as for any address
+    (mailbox limits, live challenges, the global budget; never refunded) and answer alike, 202 or the same 429; only the
+    provider call is skipped, and the challenge holds no address and no code. So no limiter answer tells a suppressed
+    address apart.
+  - Exact counts everywhere, per IP too: Cloudflare's Rate Limiting binding only has 10 s and 60 s periods (D95 is the
+    vault's). Per IP: `start` 10 per 10 min and 50 per day, `verify` 30, `resend` 10 and `google-match` 30 per 10 min.
+    Per app: `start` 20 × the plan's `per_minute` per minute (the spec's value, read literally) and the plan's
+    `per_day` per day. Staff client proofs 20 per hour each. The global budget (`dailySendBudget`, default 1000 a
+    day) counts every user mail, link notices included; at the cap `start` and `resend` answer 429 and the issuer logs
+    `send_budget_exhausted` at error level (the alert itself is the admin portal's, batch 9).
+- Overrides the spec: the per-address limits key on (mailbox, requester) plus a mailbox-wide cap, and the wrong-code
+  lock is per requester inside a mailbox-wide ceiling of 25 a day, instead of "3 per 15 min, 10 per day per address"
+  and "10 wrong per hour → 1 h lock" for the whole address; a limited address answers 429 rather than a silent 202.
+- Why: the spec's per-address counters let anyone who knows an address use up its owner's codes, or lock it with ten
+  wrong guesses; and a lock checked in one object and counted in another could be outrun by parallel guesses.
+- **The trade-off, to confirm: brute-force resistance wins over availability.** A mailbox under a sustained guessing
+  attack can be locked for the rest of the UTC day: an attacker who knows the address can fill its daily code
+  allowance and reserve (35 mails) or make the 20 failed checks and use up the 5-check owner slot (a few requests from
+  a handful of IPs), after which nobody, owner included, can get or check a code until midnight UTC. This is the usual
+  OTP trade-off; the alternative (keeping the owner able to check) reopened the brute-force bound, since any
+  exemption an attacker can also qualify for multiplies by the number of IPs. Numbers: at most 25 failed checks per
+  mailbox per UTC day (≈ 0.91% a year), at most 35 challenges, a lockout of at most ~24 h per day of attack.
+  Mitigations: the tripping check logs `mailbox_guess_limit` (error, mailbox key prefix) for staff, and staff can lift
+  the lock with **`POST /v1/email/admin/unlock {email}`** (Cloudflare Access + the staff allowlist, audited in
+  `email_admin_audit` with the mailbox key prefix, never the address; it clears that day's guess counters, the trip
+  marker, the ceiling and the requesters' locks, not the code-mail counters). An unlock gives an attacker a fresh day's
+  25 checks, so staff should unlock only after the user has contacted support. (Superseded after the abuse re-check:
+  unlock now mails a one-time grant to the address and clears nothing; see the amendments below.) The admin portal's alert and button are
+  batch 9's. It is the one staff body that carries an address (the spec's "only `start`" is about the browser routes).
+- Accounting details: a check reserved and then found right is refunded, and so is the trip marker when that brings
+  the backstop below its max (18 since the reviews); a challenge's place in the day's cap is refunded when the global budget refuses its start,
+  when it can't be created, and when its first code isn't delivered (the challenge itself stays, for a resend).
+- To check with the user: whether "20 × per_minute" was meant (1,200 starts a minute for a free-plan app; the global
+  budget is then the binding cost bound).
+- **Amended after the independent reviews (2026-11-02; every number below to confirm):**
+  - **The global budget is shared out (H1):** an app may use at most 10% of `dailySendBudget` a day (free plan; one
+    share for every plan until email-specific plan fields exist), and the last 20% only an app that has used less than
+    half its share that day. `email_budget` is logged at 50% and 80% of the global budget and of each app's share;
+    `send_budget_exhausted` names the limit (`global`, `app`, `reserve`). Batch 9 turns them into alerts.
+  - **Aggregate requester limits (H1, L4):** besides the IPv4 address or IPv6 /64, `start` counts against the IPv4 /24
+    and the IPv6 /56 and /48, each ≤ 200 a day. A request without a usable `cf-connecting-ip` is refused
+    (`400 missing_client_ip`, logged) instead of sharing one bucket.
+  - **Per recipient domain (H1, M4):** ≤ 100 code mails a day per registrable domain (Public Suffix List, so a catch-all's
+    subdomains count together), except a listed set of large consumer providers (gmail.com, outlook.com, hotmail.com,
+    live.com, yahoo.com, icloud.com, me.com, mac.com, proton.me, protonmail.com, gmx.{com,net,de,at,ch,fr,es,it,co.uk,us},
+    qq.com, 163.com, yandex.{com,ru,ua,by,kz,com.tr}, mail.ru, aol.com, zoho.com; `src/domain.ts`).
+  - **Per app:** `start` the plan's `per_minute` per minute (the "20 ×" dropped) and its `per_day` per day.
+  - **Order: the requester pays first.** `start` counts the IP and prefix limits, then the mailbox (atomic), then the
+    domain, then the partner's quota, then the budget; a later refusal refunds the earlier mailbox, domain and app counts
+    (never the IP ones), so refused mailboxes can't burn a partner's quota or the budget.
+  - **Owner device ticket (M1):** a successful `verify` returns `deviceTicket` = "dt1." + b64url(expiry ‖
+    HMAC(K_device, domain ‖ mailbox key ‖ expiry)), K_device = HMAC(K_code, "hana-id/device-ticket-key/v1"), valid 30
+    days, bound to the mailbox. A `start` that presents a valid one gets its own allowance, **3 code mails per mailbox
+    per UTC day**, outside the code limits, the live cap and the challenge cap, and its challenge's checks may use a
+    **ticket slot of 3** past the backstop. Only someone who read a code at that mailbox holds one. Batch 8's popup keeps
+    it on `authOrigin`. The reserve for new requesters stays, but it bounds mail; it doesn't protect the owner (an
+    attacker with many IPs uses it up too), which the earlier wording claimed.
+  - **The ceiling is now 18 + 4 + 3:** a backstop of 18 open to anyone, the owner slot of 4 (started before the trip,
+    no failure), the ticket slot of 3 (a ticketed challenge); still a hard 25 a day, 0.91% a year.
+  - **Unlock grants (M1; bound to the owner after the scan, finding 1):** `admin/unlock` returns a one-time
+    `unlockToken` ("ug1." + 32 random bytes; the mailbox object keeps only its sha256, 24 h) that staff pass to the
+    owner. Only a `start` presenting it uses the grant: that start counts as ticketed (past the live and daily caps, the
+    ticket's code allowance and guess slot, and the domain cap). A start that is then refused or whose mail fails gives
+    the grant back. Any other requester, the attacker who caused the lockout included, gets nothing from the unlock but
+    the cleared guess counters. (The first version granted the mailbox, so whoever started next took it.)
+  - **The domain cap can't be filled by a few requesters (scan finding 2):** inside one domain's day, each requester
+    prefix (IPv4 /24, IPv6 /56 and /48) may send at most 20% (20 of 100); ticketed and unlock-grant starts and their
+    resends skip the domain cap altogether. `email_domain_cap` (warn, the domain key's 12-character prefix) is logged by
+    the mail that fills a domain's day, for batch 9's alert. Owner-slot requesters do **not** skip it: owner-slot status
+    (started before a trip, no failure) is reachable by an attacker, so it would hand the bypass back.
+  - **One `retry-after` (L1):** every mailbox-level refusal (the mailbox's limits and locks, the domain cap) answers
+    `retry-after: 900`, whatever the limit.
+  - **Amended after the abuse re-check (2026-11-02; every number to confirm).** The principle: **a valid device ticket
+    or unlock grant never depends on a pool an attacker can fill.** (Reworded after the final check, M1, to what is
+    guaranteed: see the last bullet.)
+    - **Budget (H1):** `dailySendBudget` is split: an **owner pool of 15%** for the mail of challenges a valid ticket or
+      grant started and for the staff unlock/unsuppress mails, ignoring the app share (refined below: a staff pool, and the owner pool as a fallback); the **general pool (85%)** for
+      everything else. An app's share of the general pool comes from its plan: **2% of the plan's `per_day`** (the free
+      plan's 5000 gives 100), at least 10, at most the general pool; a flat 10% of the budget only when the plan has no
+      usable `per_day`. The last 20% of the general pool stays for apps under half their share. `email_budget` is
+      logged per app (`app_50`, `app_80`) and per pool (`global_*`, `owner_*`). `dailySendBudget` is **required** in
+      the manifest outside `local*` envs (`email-issuer init --budget`); a Worker without it sends nothing and logs
+      `send_budget_exhausted` `unconfigured`.
+    - **Owner starts skip every shared pool:** a valid ticket or grant skips the IP prefix limits, the app's quota,
+      the domain cap and the general budget pool; it still counts against its own IP subject (10 per 10 min, 50 a day).
+    - **Domain cap (M1):** a registrable domain's cap is **100 + 2 × its verified logins over the trailing 7 UTC days**;
+      a verified challenge gives its mails' places back; each requester prefix may use 20% of the day's cap. The
+      exempt list adds the regional variants and more large providers (yahoo.co.{uk,jp,in,id,nz,th}, yahoo.com.{au,br},
+      yahoo.{fr,de,es,it,ca}, hotmail.co.{uk,jp,th}, hotmail.{fr,de,es,it}, outlook.{fr,de,es,it,jp,co.uk,com.br,
+      com.au}, live.{co.uk,fr,de,nl,it,ca,com.au,jp}, web.de, t-online.de, naver.com, 126.com, yeah.net, foxmail.com,
+      comcast.net, orange.fr, free.fr, libero.it, pm.me, fastmail.com), each listed, never a wildcard.
+    - **IP prefixes (M2):** the ticket and the unlock token are read and checked **before** the prefix limits (a grant
+      against the mailbox object), and a valid one skips them. The prefix limits are raised to **1000 a day** each
+      (IPv4 /24, IPv6 /56, /48) instead of counting only requesters new to the mailbox: simpler, and still bounds a
+      /48's 65,536 /64s (chosen; to confirm).
+    - **Unlock (M3):** `admin/unlock` **mails** the one-time token to the address (a link to `{authOrigin}/email/unlock#
+      <token>`, the token in the fragment) and answers staff `{mailed}` only: whoever asks support, the attacker
+      included, gets nothing. It **clears nothing**: the shared guess counters, the trip and every lock stay. The
+      grant's start counts as an owner's; its challenge's mails are free (one challenge, ≤ 2 resends), its checks use
+      the ticket slot and then the **grant slot of 2**, which lies outside the ceiling.
+    - **The bound, with unlocks:** ≤ 25 failed checks a day (backstop 18 + owner slot 4 + ticket slot 3) plus ≤ 2 per
+      unlock, with at most 3 unlocks in 30 days (≤ 37 a year): **365 × 25 + 37 × 2 ≈ 9,199 a year, ≈ 9,273 in the worst case, ≈ 0.92%
+      a year** against a 6-digit code (the earlier 0.91% plus unlocks; the earlier unlock reset the counters, which gave
+      an attacker a fresh 25 each time). Worst case per day W ≤ min(5·C, 25) + 2·[unlock that day], C ≤ 35 (+1 grant).
+    - **Device tickets (abuse L1/L2, tokens N1):** "dt2." + b64url(expiry ‖ nonce ‖ HMAC(K_device, domain ‖ address key
+      ‖ nonce ‖ expiry)): bound to the **exact normalized address** (its K_sup HMAC, so `x+tag@` and `x@` have their own
+      tickets), with a 16-byte nonce; the 3 code mails a day are **per ticket**. Staff `admin/revoke-tickets {email,
+      ticket}` revokes every ticket of that address issued until then (audited, 1 a day and 3 in 30 days).
+    - The earlier "Unlock grants" bullet's staff-held token and the counters cleared by unlock are superseded by this.
+    - **After the scan of the re-check (to confirm):** every `verify` mints a ticket, so allowances can't be per ticket:
+      the 3 code mails a day are counted **per exact address** (all its tickets together); an address has at most **5
+      live tickets** (the mailbox object registers each at issue; a 6th revokes the oldest; staff revocation clears the
+      address's list, and an unlisted ticket counts as nothing); at most **10 owner challenges** (ticket or grant) per
+      mailbox per UTC day. The budget becomes three pools: **staff** (1% of the budget, at least 5) for the unlock and
+      unsuppress mails; **owner** (15%), which an owner's mail draws on only when the general pool refuses it, at most
+      **20% of it per app**; **general** (the rest, 84% of 1000). A resend's domain and budget steps use the owner kind
+      `reserveSend` found after the revocation check, so a revoked ticket's challenge gets no owner path. The domain cap
+      counts **distinct verified mailboxes** a day, only of challenges that reserved a domain place, and never passes
+      **2,000 a day**; past it only exempt providers and owner starts pass.
+    - **After the final check (M1; to confirm), superseding the owner-pool details above.** Tickets aren't bound to an
+      app, so a per-app owner cap could be filled by an attacker's sock-puppet tickets (addresses at a catch-all domain
+      he controls) and deny that app's real owners. So: no per-app owner cap. The **owner pool is 1 × `dailySendBudget`
+      beside the budget** (it never eats the general pool, which is the budget minus the staff pool). Owner mail is
+      bounded by 3 code mails a day per address, **10 ticket challenges a day per exact address** (was per mailbox) and
+      that global ceiling; **once the owner pool passes 50% for the day, only tickets at least 7 days old and unlock
+      grants draw on it** (a fresh ticket's mail is then an ordinary user's, in the app's general share).
+      `email_owner_pool` is logged at 50% and 80%.
+    - **What is guaranteed (the principle, reworded):** A valid device ticket or unlock grant never waits on the IP prefix limits, an app's quota, a recipient domain's cap or the general budget pool; its mail comes from the owner pool, which a
+      fresh ticket can fill only to half. **Residual, to confirm:** an attacker who has built up a large stock of
+      sock-puppet tickets at least 7 days old (real verified logins, 3 mails a day each) can still use up the owner pool
+      for a day, bounded by its global ceiling (1 × `dailySendBudget` of extra mail); real owners are then refused until
+      the UTC day ends, as they would be without tickets. Staff revocation and the 5-live-tickets-per-address cap limit
+      the stock; batch 9's `email_owner_pool` alert shows it.
+    - **Final round (to confirm), superseding the owner-pool size and the per-address-only counts above:**
+      - Owner challenges and ticket mails are counted **per exact address (10 challenges, 3 mails a day) and per
+        mailbox (30 challenges, 9 mails a day)**, unlock-grant starts included in the mailbox's 30. The `+tag`s of one
+        inbox share a bounded allowance: a `+tag` holder (on a domain without sub-addressing, a different person) can't
+        use up the victim's per-address allowance and takes at most a third of the mailbox's.
+      - The **owner pool is 30% of `dailySendBudget`**, beside it: all mail together ≤ 1.3 × the budget. A fresh ticket
+        (< 7 days) draws on it only below half of it and within **20% of it per app**; aged tickets and grants have no
+        per-app cap (bounded by the per-address and per-mailbox limits and the pool). Owner mail the owner pool refuses
+        **falls back to the app's general share**, if any is left, instead of failing.
+      - **The mailbox's own address is never blocked by the mailbox totals (to confirm):** the exact untagged address
+        (the address equal to its mailbox) and unlock grants count toward the mailbox's 30 owner challenges and 9 ticket
+        mails but are never refused by them, only by their own per-address limits (10 and 3) and the grant rules; tagged
+        addresses keep both limits. So on a domain where `+` isn't sub-addressing, other people's `+tag` addresses can
+        fill the mailbox totals without blocking the bare address's owner.
+      - **Residuals, to confirm:** (1) a stock of ≥ 7-day-old sock-puppet tickets (real verified logins at addresses the
+        attacker controls, 3 mails a day each, 9 per mailbox) can use up the owner pool for a day, at most 0.3 × the
+        budget of extra mail; real owners then fall back to their app's general share. (2) Holders of 3 `+tag` addresses
+        of one inbox (only where the domain gives `+tag`s to other people) can use the mailbox's 9 ticket mails and 30
+        owner challenges for every other `+tag`; the bare address keeps its own 3 and 10. (3) Fresh
+        tickets of one app take at most 20% of the pool, so five attacker-held apps can fill the fresh half.
+
+### D199. HTTP, data and chain readings of the issuer
+- Date 2026-11-02 · Status: to confirm (built) · Source: build of the spec's "Endpoints", "The four cases",
+  "Privacy and what is stored", "Deliverability" and "Issuer configuration"
+- Decision:
+  - CORS per route: `start`, `resend`, `verify` for `authOrigin`; `google-match` for `vaultOrigin` (the spec says
+    "authOrigin only" but also that the vault sends google-match); a browser route without that exact `Origin` is
+    403, and needs `Content-Type: application/json`. JWKS and discovery are `GET` with `*`. Every response `no-store`.
+  - The issuer reads the API's D1 read only (binding `APP_DB`: `apps`, `plans`); `apps.login_methods` is expected
+    comma-separated (`'google'`, `'google,email'`), and until the API's batch 6 migration adds it, email is off for
+    every app. `email_hints` (issuer D1) holds `(scope_id, email_sub, google_sub, updated_at_ms)`, written at every
+    google-match with a Google-verified address; `verify` (purpose `session`) reads at most 4 hints and answers
+    `googleWallet: true` when a hinted Google identity has the wallet in case B, with a `linkTicket` only when the
+    contract would accept the join. Tickets live in the `EmailChallenge` namespace (`t:` + sha256 of the ticket),
+    single use for any google-match that presents them.
+  - Before minting any link token (`auto_link`, `link_new`, `link_account`, `link_change`) the issuer reads
+    `get_config().unrecorded_wallets` fresh: while it is true (D135) google-match answers `linkable: false` and
+    `verify` `409 links_unavailable`.
+  - google-match answers `{decision, googleHosted, linkable, emailToken?, linkImmediate?, challenge?}`; `decision` is
+    `none`, `linked`, `pending`, `both_wallets`, `unlinked`, `case_a` or `case_b`, judged exactly as the contract's
+    `auto_link` (`linkable` false when the account is full, already has the joiner's provider, or the joiner is
+    linked elsewhere: the popup then offers only "Sign in with {the other method}").
+  - Client proofs: `sub` = `hana-client-proof` (never an `e1.` sub); Access and the staff allowlist come from
+    `emailIssuer.access` (its own Access application on that path, D88's second check); every proof is a row in
+    `email_admin_audit` and `email_issuance`.
+  - Suppressions are fed by SendGrid's **signed** Event Webhook (`POST /v1/email/webhooks/sendgrid`, ECDSA P-256 over
+    timestamp ‖ body, ≤ 10 min old): hard bounces and spam reports, stored as `email_key` = HMAC(K_rl, the exact
+    normalized address, `+tag` included), the spec's definition. Not the mailbox key: on a domain where `+` isn't
+    sub-addressing, `victim+x@domain` is someone else's mailbox, and making it bounce must not suppress `victim@domain`.
+  - A chain or Google outage after a correct code (verify of `session` reading hints, or `auto_link`) answers 502 and
+    the code is spent: the user starts again (never a guessed `googleWallet: false`, which could make a second wallet).
+- Why: each closes a gap the spec left, on the side that keeps a matched person to one wallet and addresses off logs
+  and storage.
+- Open for batch 6: how `{apiUrl}/v1/email/*` reaches this Worker. On sandbox-dev (`*.workers.dev`) the API Worker
+  would forward it through a service binding, so request bodies (addresses and codes) would pass through the API
+  Worker's memory; a route on a Hana zone in production avoids that.
+- **Amended after the independent reviews (2026-11-02; to confirm):**
+  - **Staff routes (M2):** every `admin/*` route needs `Content-Type: application/json` and refuses any `Origin`
+    header (no cross-site simple request can reach them), takes a support reference `ticket` (1–64 characters) kept in
+    the audit row, and writes the audit row **before** acting. Unlocks and unsuppressions are capped per mailbox at 1 a
+    day and 3 in any 30 days. The Access application's session cookie is to be set to SameSite=Strict (operations).
+  - **Client proofs (tokens review L6):** minted only for a scope `get_scope` returns now (no cache), with
+    `actionNonce` equal to its current `action_nonce` and at least one active app with email on.
+  - **Suppressions (M3):** `admin/unsuppress {email, ticket}` (capped and audited like unlock; SendGrid's own list is
+    cleaned by hand, runbook). The webhook counts only events of the issuer's own categories (`hana-id-code`,
+    `hana-id-link_notice`). A bounce lapses after 30 days; a complaint lasts until a staff unsuppress. Suppressions are
+    keyed by K_sup = HMAC(K_sub, "hana-id/suppression-key/v1"), so rotating K_rl or K_code never drops them (K_sub is
+    never rotated). `email_complaint_rate` is logged when the complaints of 24 h pass 5 (M4).
+  - **Webhook (L5):** the timestamp and signature shape are checked before the body is read, the verification key is
+    imported once per isolate, and the route is limited per IP (120 per 10 min).
+  - **Access (L6):** a failed certs fetch or an unknown kid is negatively cached for 30 s.
+  - **Per-purpose mail (tokens review M1):** each purpose has its own subject and wording (`session`: sign in;
+    `link_new`: add this email; `link_account`: allow another sign-in method to open the wallet this email opens in X;
+    `link_change`: remove or cancel a sign-in method; `auto_link`: link your Google sign-in to the wallet this email
+    opens). The spec's "Phishing" wording ("add this email to an existing wallet" for every link purpose) was wrong for
+    `link_account`, `link_change` and `auto_link`; the spec is history and is not edited.
+  - **Case B on the server (tokens review L1):** when `verify` finds that a hinted Google identity has the wallet
+    (case B), it returns no `idToken` (`{googleWallet: true, linkTicket?, deviceTicket}`), so an email login can't open a
+    second wallet even if the popup misbehaves. Hints are written for every Google-verified address (D119, as the user
+    decided): a Google-hosted case B links at once, any other only after 24 h (mode 0), with a link notice to the
+    address. (A first version of this fix wrote hints only for Google-hosted addresses; it was reverted because it
+    overrode D119.)
+  - **Residual risk, to confirm (tokens review L1, scan of the D119 revert):** for a non-Google-hosted address, Google's
+    word that an account has the address says nothing about who reads the mailbox today. A stale Google account G still
+    holding an old address (a former employee's, a recycled domain's) can steer the address's new owner E, at E's email
+    login, to G's wallet in a scope: E gets no session of its own there (case B withholds `idToken`) and is offered the
+    link. Bounds:
+    - **180 days:** a non-hosted hint counts only while G logged in with that address within the last 180 days
+      (`email_hints.updated_at_ms`, renewed at every such Google login); older non-hosted hints are ignored and pruned
+      (the address's own at each `verify`, up to 50 others at each hint write). Hosted hints don't lapse.
+    - **24 h and notices:** a non-hosted case B joins only after 24 h (mode 0), and the address gets a link notice.
+    - **A cancel frees E:** while the join is pending, a cancel by G's wallet or by E itself (`cancel_link` with a
+      `link_change` "cancel" code) removes it, and E's next email login gets its own wallet.
+  - **The alternative, for the user to choose (proposed by the scan):** for a non-hosted address, give E its own
+    session in case B and make the link an option the popup offers, at the cost of D122's "no second wallet" for those
+    addresses (a person whose old Google account really has the address would then hold two wallets in that scope until
+    they link). The code does the stricter D119/D122 reading with the 180-day bound.
+  - **Link tickets (tokens review L2):** a `linkTicket` is bound to the app, the address's `sub` **and** the hinted Google
+    identities found in case B; google-match accepts it only for one of those (binding the relayId is left for batch 8).
+  - **Retention (independent review L3):** SendGrid's Email Activity keeps each message's recipient and events (3 days,
+    longer only with the paid Email Activity History add-on, per SendGrid's docs at the time of writing; check at setup)
+    and Hana can't shorten it: "the minimum the plan allows" means not buying the add-on. The issuer's own logs and
+    storage hold no address. `email_issuance` pruning (24 months, D90) is a batch C13 follow-up. **Corrected (abuse
+    re-check):** SendGrid's suppression lists (bounces, blocks, spam reports) keep the address **until it is removed**,
+    whatever the Email Activity retention; the runbook's unsuppress step removes it there.
+  - **Amended after the abuse re-check (2026-11-02; to confirm):**
+    - **Staff mail to the address (M3):** `admin/unlock` mails the unlock link; `admin/unsuppress` mails a one-time
+      confirmation (`{authOrigin}/email/confirm#uc1.…`, 24 h) and the suppression is removed only by
+      `POST /v1/email/confirm {token}` from `authOrigin` (IP-limited like `resend`), so only the mailbox's holder can
+      undo a suppression. Both mails are categories `hana-id-unlock` and `hana-id-confirm` (the webhook counts them),
+      from the owner pool. Staff see `{mailed}` and never a token. `admin/revoke-tickets` is new (D198).
+    - **The spec's "Phishing" line (spec line 319: "the link purposes use different wording ('add this email to an
+      existing wallet')")** is superseded by the per-purpose texts above; the spec is history and stays as written.
+    - **Access negative cache (L3):** a failed certs fetch or an unknown kid is cached for 30 s, so a burst of forged
+      kids can't make the Worker refetch the certs; a real key rotation is picked up at most 30 s late.
+    - **Webhook limit (L4):** 120 posts per 10 min per IP is a guess at SendGrid's batching; watch `limit` lines for
+      `ip:webhook:10m` on sandbox-dev and raise it if SendGrid's real traffic reaches it (a refused post is retried by
+      SendGrid).
+
+## Batch C build, step C2 (`packages/oidc`), 2026-11-02
+
+Made while building `docs/batch-c-build-plan.md` C2 (branch `feat/batch-c-2`), where `docs/batch-c-spec.md` was silent
+or allowed two readings. None changes a derivation path or an address.
+
+### D201. The new ID-token claims: typed on request (strict for the console), ignored by the API
+- Date 2026-11-02 · Status: **to confirm** · Source: build of `docs/batch-c-spec.md` "Code flow" (`verifyIdToken`
+  gains `email`, `email_verified`, `iat`, `hd`, `azp`, `amr`, `auth_time`); C2 review M1, L1
+- Decision (`packages/oidc/src/id-token.ts`, `VerifyOptions.optionalClaims`): each claim is optional and is returned
+  only when the token carries it with the right type: a JSON string (`email`, `hd`, `azp`), a finite number (`iat`,
+  `auth_time`), an array of strings (`amr`), or for `email_verified` a boolean or the string `"true"` / `"false"`,
+  returned as a boolean. Absent claims have no key in `VerifiedToken`. A wrongly typed claim:
+  - `'ignore'` (the default, every API call): dropped, the token kept. The API's answers are develop's: a token with
+    `email_verified: "x"` on `/v1/sessions` still gets to the claim allow-list (`token_has_pii` with the flag on).
+  - `'strict'` (the console, C9, which reads them): the token is `invalid_token` ("Malformed token claims").
+  The claims are checked after the expiry check, so the order of refusals (format, issuer, expiry, then these, then
+  the JWKS) is develop's. `nonce` keeps its rule (a non-string is `null`, which every caller refuses). The checks stop
+  at types: `email_verified === true`, the `iat` age (120 s), the step-up's "no `email`" and the `hd` membership rule
+  are C9's.
+- Why strict for the console: its step-up rule ("must carry no `email`") must not pass a token whose `email` is only of
+  the wrong type, as dropping it would. Why ignore for the API: it reads none of these claims, and the C2 brief is "no
+  change in behaviour for the API". Why accept the strings: Google's OpenID Connect documentation shows
+  `"email_verified": "true"` in its example ID token payload; current tokens carry a JSON boolean, but a check that
+  refused the documented form could lock out a real sign-in.
+- Also (review L2): an `exp` that isn't finite (`1e400` parses as Infinity, a token that never expires) is
+  `invalid_token` in both modes. On develop it passed the API's check; the contract would still refuse it.
+- Rejected: strict by default (the first C2 draft), which changed the API's answers; a boolean-only `email_verified`.
+
+### D202. The Access JWT check: aud as string or array, 60 s skew, certs ≤ 10 min old, staff list outside
+- Date 2026-11-02 · Status: **to confirm** · Source: build of `docs/batch-c-spec.md` "Hana admin console" (JWT check on
+  every `/api/*` request) and "Admin and email" tests; C2 review M2, L3
+- Decision (`packages/oidc/src/access.ts` `AccessJwtVerifier`, for C8): RS256 only, a non-empty `kid` in the team's
+  certs (`https://<accessTeamDomain>/cdn-cgi/access/certs`, through an injected fetcher), `type === 'app'`, `iss ===
+  https://<accessTeamDomain>`, `aud` the AUD tag or an array containing it (Access sends a one-element array; RFC 7519
+  allows either), `exp` with 60 s skew, `nbf` (when present) with the same skew, `iat` optional but numeric, a
+  non-empty string `sub` and `email`; a token over 8 KiB or with invalid UTF-8 is malformed. Every claim is checked
+  before the certs are read. The result carries `sub`, `email` as sent, `kid`, `exp`, `iat`; the lowercased-email
+  check against `admin.staffEmails` stays in C8 (with "an email not on the list" as its test).
+- The certs: each fetch has an 8 s timeout (body included) and a 64 KiB body cap; a set is fresh for its `max-age`
+  with no floor (`max-age=0`, `no-cache` or `no-store` mean every request refetches) and at most 10 min
+  (`ACCESS_CERTS_MAX_TTL_MS`; 10 min without a header); an unknown kid refetches at most once a minute; after a
+  failure, no new attempt for 10 s. A set is never served past its freshness: a failed fetch throws
+  `JwksUnavailableError` (fail closed; C8 chooses 503 or 401). **Staleness bound:** a cert Cloudflare withdraws is
+  trusted by an isolate for at most min(its max-age, 10 min) after that isolate's last successful fetch.
+- **Construct once per isolate** (module scope, or built on the first request and kept): the cache lives in the
+  instance, so one verifier per request fetches the certs on every request.
+- Why: the spec lists the checks without the encoding details; the skew covers Access minting `nbf = iat = now` on
+  another machine; the admin path should never trust a set Cloudflare may have withdrawn for long, and Google's
+  5-minute floor and 6-hour grace exist for login availability, which the admin console doesn't need.
+- Rejected: a strict one-element `aud` array; no skew; Google's cache rules for Access; putting the staff list in the
+  package (the manifest is C8's).
+
+### D203. The package logs nothing: the API passes its stale-JWKS log in; fetch limits on Google's JWKS too
+- Date 2026-11-02 · Status: **to confirm** · Source: build of `docs/batch-c-build-plan.md` C2 ("unchanged in behaviour
+  for the API"); C2 review M2
+- Decision: `@hana-id/oidc` keeps the module-level, per-isolate Google JWKS cache and the same exports as
+  `apps/api/src/{jwt,jwks}.ts` (`verifyIdToken`, `publishedKeys`, `clearJwksCache`, `JwksUnavailableError`,
+  `providerForIssuer`, `IDENTITY_TOKEN_TYP`, …); the `jwks_stale` warning becomes a `VerifyOptions.onStaleKeys` hook,
+  which every API call site sets to `logStaleJwks` (`apps/api/src/log.ts`), so the log line is unchanged.
+  `KeyObserver` and `cacheMaxAgeS` moved into the package (`key-observations.ts` re-exports the latter). JWKS
+  parsing stays in `@hana-id/jwks`, which the package depends on; the watchdog is untouched. Google's JWKS fetch
+  keeps its TTL rules (max-age clamped to 5 min..6 h, `no-cache` ignored, 6 h stale grace) and gains the same 8 s
+  timeout and 64 KiB body cap as Access (a hung or oversized answer is a failed fetch: stale grace, then 503).
+- Why: a shared package can't import an app's logger, and an injected hook keeps it testable without log scraping;
+  an unbounded fetch could hold a login for the Worker's whole time limit.
+- Rejected: the package writing the API's log format itself; an API wrapper module around the package.
 
 ## Batch C3: hot DB expand, the gate on it, the CLI on it (2026-11-02)
 
@@ -1817,673 +2897,113 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   password and the new secret files by name.
 - Why: the spec's steps, made safe to repeat after a stop, and M2 without waiting for the dashboard blocks.
 
-## Partner identity token, build steps 1–4 (2026-10-30)
+## Identity token build, step 7 (the AWS KMS signer, code only), 2026-11-02
 
-Choices made while building `docs/identity-token-spec.md` steps 1–4 on `feat/identity-token-1`, where the spec left a
-detail open or a safer reading was needed. Each follows the spec's intent; the user can revisit any of them.
+Made while building `docs/identity-token-spec.md` build step 7's code (branch `feat/identity-token-7`): the KMS adapter,
+the manifest's signer selection, the scripts and the runbook. The AWS account, keys, IAM, CloudTrail reconciliation
+and alarms are the operator's setup before mainnet (`docs/operations.md` "Identity token keys on AWS KMS"); no env
+uses the KMS signer yet. None changes a derivation path or an address.
 
-### D160. Sign in with Apple paused; the initial build is Google and email
-- Date 2026-11-02 · Status: confirmed by the user · Source: conversation (Apple spec questions)
-- Decision: Sign in with Apple is not built for the initial launch; it is built when partners ask for it. The spec
-  (`docs/apple-login-spec.md`) stays as the starting point. Answers given so far:
-  - Q1 = B: Apple users' emails through a second, email-only Apple client whose tokens never go on chain (like Privy:
-    partners get the email), at the cost of a second Apple prompt at an identity's first login in an app.
-  - Q2, provisional: the Apple developer team of the company that publishes Hana Wallet and Wend, for testnet. To be
-    confirmed or changed at the production-readiness check, before the address freeze.
-  - Q3 = A: every Apple client in Hana's team; partner-held Apple accounts only if customers ask, for partners that
-    start on them.
-  - Q4 = A: the shared client in a Hana app group, each Enterprise client in its own group.
-  - Q5 = A: partners' native iOS apps use the web flow (`ASWebAuthenticationSession`). A native-sheet
-    "partner-managed Apple" tier only if customers ask: with the native sheet the partner's app receives the Apple
-    token and can open sessions for its own users' wallets (partner custody within its scope), and those wallets
-    differ from the same users' wallets in Hana's team.
-  - Q6–Q18: open, asked again when the work resumes.
-- Why: focus the initial build on Google and email; Apple adds an issuer, a second client, a POST route, watchdog
-  and playbook work for a method no partner has asked for yet. Nothing built so far depends on Apple: the path format
-  and the issuer model already take a new provider without moving any address (D124).
+### D215. The KMS signer in the manifest: keys by role with their ARNs, credentials as Worker secrets of one IAM user
+- Date 2026-11-02 · Status: **to confirm** · Source: build of the spec's "D1 schema, manifest and secrets" and "Where
+  the key lives" (`packages/env/src/identity.ts`, `apps/api/scripts/gen-wrangler.ts`, `apps/api/src/identity/signers.ts`)
+- Decision: `identityToken.signer` is `{kind: "aws-kms", credentials: {kind: "worker-secret", iamUser}, keys: {active:
+  {kid, arn}, standby?: {kid, arn}, next?: …, previous?: …}}`. Each key carries its own single-region ARN (no
+  `mrk-` key, no alias) and its region is the ARN's; there is no `awsRegion` field. The schema also requires: one key
+  per role (distinct kids and ARNs), every published key in a role and every role's key published, every key in one
+  AWS account, and the standby in another region than the active key (D219). `standby` is optional only for the
+  window between a switch to it and the new standby's `kms-add`. `gen` writes `IDENTITY_SIGNER` (`worker-secret` or
+  `aws-kms`), `IDENTITY_ACTIVE_KID` and, for KMS, `IDENTITY_KMS_KEY_ARN` = the active key's ARN only. The credentials
+  are the IAM user's long-term access key as two Worker secrets (`IDENTITY_AWS_ACCESS_KEY_ID`,
+  `IDENTITY_AWS_SECRET_ACCESS_KEY`), set together by `identity-key kms-put-aws-key` (one `wrangler secret bulk` from
+  `aws iam create-access-key`'s JSON, checked for the manifest's user, `Active`, `AKIA…`). A Worker without
+  `IDENTITY_SIGNER` (configured before step 7) keeps the Worker-secret signer unless it has `IDENTITY_KMS_KEY_ARN` (a
+  half-applied config: refused, `signer_kind_missing`); an unknown kind, a missing ARN or missing
+  credentials refuse every mint (`503 identity_signer_unavailable`), and a KMS Worker never falls back to a
+  Worker-secret key. The kind is `aws-kms`, as the spec and the email issuer name it, not `kms`.
+- Why: the spec's standby lives in a second region, which one `awsRegion` can't express; ARNs pin the exact key (an
+  alias can be repointed outside the manifest, a multi-region replica isn't an independent key). Only the active ARN on
+  the Worker keeps a switch a reviewed manifest change. `credentials` names how the Worker authenticates so a later
+  mechanism (a role through a broker) is a new kind, not a silent change. Workers can't assume an IAM role without
+  another long-lived secret (the spec).
+- Amends the spec's manifest sketch (`keys: {active, standby, next?, previous?}` as kids, `awsRegion`).
+- Rejected: one region for all keys; ARNs of every role on the Worker; temporary (`ASIA…`) credentials (they need a
+  session token and a refresher the Worker doesn't have).
 
-### D194. User mail (email login codes) via SendGrid, not Resend
-- Date 2026-11-02 · Status: confirmed by the user as likely, final once the colleague agrees · Source: conversation
-  (before email login batch 4)
-- Decision: the email issuer sends login-code mail through SendGrid (v3 Mail Send API), which Hana already uses for
-  Hana Wallet and Wend. It replaces Resend for user mail (D87's provider). It sits behind the issuer's one sender adapter, so
-  a later switch is a new adapter, not a redesign. Same rules as D87: a dedicated sending subdomain with SPF, DKIM and
-  DMARC (SendGrid domain authentication), a send counts only when SendGrid accepts it (`202`), and its own API key
-  restricted to Mail Send, used only by the email issuer (not shared with Hana Wallet or Wend; a separate SendGrid
-  subuser if the account allows it, so reputation and suppression lists stay apart).
-- Not changed yet: the watchdog's alert email and the admin Worker's notices still name Resend (D87); whether they
-  move to SendGrid too is decided separately.
-- Why: one provider the team already operates and pays for; the adapter keeps the choice reversible.
+### D216. KMS `Sign` with `MessageType = DIGEST`: the Worker hashes, AWS sees 32 bytes
+- Date 2026-11-02 · Status: **to confirm** · Source: build of the spec's "Signing" bullet (`apps/api/src/identity/kms.ts`)
+- Decision: the adapter computes `sha256(header ‖ "." ‖ payload)` itself and calls `Sign` with `MessageType: DIGEST`,
+  `SigningAlgorithm: ECDSA_SHA_256`; the IAM and key policies require both values (`kms:MessageType`,
+  `kms:SigningAlgorithm`).
+- Why: the token's claims (`sub`, `sid`, wallet addresses, later the email) never leave Cloudflare, whereas `RAW` sends
+  the whole signing input to AWS; the request has a fixed size whatever the token's (`RAW` caps the message at 4096
+  bytes); the self-check verifies the same bytes the Worker hashed. It matches the email issuer's adapter (RSA,
+  `DIGEST`). `DIGEST` gives a credential holder no more than `RAW` would: either way it can sign any token it likes.
+- Rejected: `RAW` (claims at AWS, a size limit, no gain in what a leaked credential can do).
 
-### D200. Link volume: a contract counter with hourly alarm thresholds, replacing the indexer scan
-- Date 2026-11-02 · Status: confirmed by the user: count and alarm, no refusal (option A, after review H1/H2);
-  contract and watchdog built, not deployed · Source: batch 5 review (the FastNear scan reads about 13
-  logins per run at about 75 KB each, so it falls behind and pages on ordinary traffic); the link-cap review (H1, H2)
-- Threat, stated as it is (review H1): with a stolen email signing key alone (1-of-1 at launch) a thief can log
-  into every email-rooted wallet, log into every Google-rooted wallet that already has an email member, and link their own Google account into victims' email
-  wallets (case A, one Google account per victim and scope). Since D133 a link also needs the session key's signature,
-  so the key alone can't join an email identity to someone else's Google wallet. Only the last of the three makes new
-  links. The defence against a stolen key is its custody (KMS, a second signer, D121); the counter only detects bursts.
-- Decision: the contract counts every new link, immediate or pending (the combined login with a `link_jwt`, cases A
-  and B, and `link_identity`; not cancels, unlinks or lazy activations), in fixed UTC-hour windows, per scope and in
-  total, and **never refuses a link**. When a count is at or above its threshold after a link, the window records it
-  (`flagged_scopes`, `total_threshold_reached`) and the first crossing per window emits `link_threshold_reached`.
-  Defaults 50 per scope and 500 in total per hour, changed by the owner (council) with `set_link_thresholds`: a
-  lowering applies at once, a raise only after `governance_delay_ms` (a raised threshold could hide an attack). A view
-  (`get_link_stats`) reports the current and previous hours; the watchdog reads it each run and alerts when a
-  threshold is reached, and on a scheduled raise. The FastNear indexer scan (D192) is removed.
-- Window boundary (review L1): the windows are fixed hours, so a burst that straddles a boundary is split between two
-  windows and each half may stay under a threshold; the view keeps the previous hour so the watchdog can add them.
-- Why: exact, on chain, no third party or data budget, cheap (≈ 0.3 Tgas per link) while v3 isn't deployed.
-- Rejected: a refusing cap (option A+, built first). It bounded little (H1: the takeovers it was meant to brake need
-  more than the key), and anyone could burn it (H2: one Google account and one email looping `link_identity` and
-  `cancel_link`) and lock real users out of linking logins for the hour.
-- Built (contract, branch `feat/link-cap`): `get_link_stats`, `set_link_thresholds`, events `link_threshold_reached`
-  and `link_thresholds_set` (`docs/contract-interface.md` "Link volume: the hourly counter"). The view's `previous` is
-  `null` when the previous hour had no links; its `total_threshold_reached` also reads the thresholds in force, so a
-  lowered threshold shows at once. Per-scope counts are deleted lazily (each counted link deletes up to 4 older than
-  the previous hour). `set_link_thresholds` and the other v3 owner methods are on the API's never-relay list.
-- Built (watchdog, branch `feat/email-login-5`): the view is read with the chain snapshot, before the run is recorded
-  and its lock released; `link_threshold_reached` (critical, per flagged scope and for the total, keyed by window,
-  current and previous hour; alert only, the links went through), `link_volume_high` (warning, current total ≥ half
-  `total_per_hour`), `link_stats_unavailable` (warning: `missing` with an email issuer on chain, `malformed`, or
-  `read_failed`; open threshold alerts stay open while the view can't be read); a threshold raise (`link_thresholds`,
-  `pending_thresholds`) is a critical governance change, lowering a warning; playbook `link-volume`. The read is
-  isolated: a malformed or failing view marks only the link check, never the snapshot, so a shape mismatch after an
-  upgrade can't blind the Google and email cancels and pauses.
-- Not built: nothing on the contract or watchdog side; neither is deployed (the contract with v3, the watchdog with
-  batch 5's deploy).
+### D217. Strict DER to JOSE conversion, high-S kept, every signature verified before it is answered
+- Date 2026-11-02 · Status: **to confirm** · Source: build of the spec's "Signing" bullet and "Tests" ("DER → JOSE
+  conversion, high-S and short-`r` cases, refusal when the self-verify fails") (`derToJose` in
+  `apps/api/src/identity/kms.ts`)
+- Decision: KMS's `ECDSA-Sig-Value` is accepted only as strict DER: one SEQUENCE with a short-form length equal to the
+  rest of the input (≤ 72 bytes), two INTEGERs of 1–33 content bytes each, minimal (a leading `0x00` only before a byte
+  with its high bit set), non-negative, in `[1, n − 1]` for P-256, nothing after `s`. Each value is left-padded to 32
+  bytes (`r ‖ s`, 64 bytes, RFC 7518 §3.4). High-S signatures are kept (JOSE doesn't require low-S, WebCrypto
+  verifies both). The answer must name the configured key ARN and `ECDSA_SHA_256`, its base64 must be canonical, and
+  the 64-byte result is verified with the manifest's public key for the active kid before the token is returned.
+  Tested against frozen node:crypto vectors (32-byte, high-bit, high-S, short `r`, short `s`), 27 malformed encodings,
+  thousands of signatures from an independent encoder, and a fake KMS that signs with a real P-256 key.
+- Why: a lenient parser accepts several encodings of one signature and hides wiring faults; the self-check catches what
+  parsing can't (a wrong ARN, a key whose public half isn't the published one).
+- Rejected: normalizing to low-S (pointless for JOSE); trusting KMS's answer without the self-check.
 
-### D170. Identity token layout details the spec left open
-- Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`packages/core/src/identity.ts`, frozen in
-  `packages/core/test/vectors/identity-v1.json`) · Source: build step 1
-- Decision: the session proof's prefix is the spec's `"hana-id-identity-v1:"` (the build brief said
-  `hana-identity-v1:`; the spec wins). `wallet_proofs_hash`, which the spec names but doesn't define, is
-  `sha256("hana-id/identity-wallet-proofs/v1" ‖ 0x00 ‖ for stellar then evm: borsh(chain) ‖ borsh(address) ‖
-  borsh(Vec<u8> signature))`. The EVM address in a wallet-proof message is EIP-55; the API accepts any valid case in
-  the body and canonicalizes before checking. `sub`'s root identity is the session path after the app's `scope#`:
-  exactly `provider#sub#key_index` with a lowercase provider, a non-empty sub and a decimal `key_index`, else no token
-  (`502 bad_contract_result`). `login_methods` is `[root provider]` until account linking exists (email login, D119).
-  The claims are built in the spec's order and the builder throws on anything off-spec.
-- Why: a frozen, unambiguous layout before any vault signs one; the proofs hash commits to the chain names, addresses
-  and signatures so a session proof can't be paired with other proofs.
+### D218. KMS call limits: one `Sign` per mint, no retry, a 3 s deadline, a 4 KiB answer cap, fail closed
+- Date 2026-11-02 · Status: **to confirm** · Source: build of the spec's latency budget and "Mint flood" row
+  (`apps/api/src/identity/kms.ts`)
+- Decision: each mint sends at most one `Sign` request; aws4fetch's retries are off and the adapter never calls twice.
+  One 3 s deadline covers the request and its body (a stalled body is a timeout), the answer is read up to 4 KiB, and
+  every failure (refusal, throttling, timeout, network error, garbage, a failed self-check) is `503
+  identity_signer_unavailable` with a fixed reason code in the log (`kms_timeout`, `kms_throttled`, `kms_bad_answer`,
+  …). The vault's next refresh is a new mint (a new `jti`), so a retry happens a level up and is counted there. Known
+  gap, for the reconciliation's build: a `Sign` that KMS completed but whose answer never arrived (timeout) or was
+  refused by the self-check is in CloudTrail without a counted token; today only the log explains it, and the
+  reconciliation job adds a per-hour, per-kid count of sent `Sign` requests so that "CloudTrail ≤ requests sent" is
+  exact.
+- Why: a retry inside a mint can double the signatures for one token in a way the reconciliation can't tell from
+  misuse, and KMS throttling is better answered by less load than by more; 3 s is far above KMS's normal latency (the
+  budget is ≤ 100 ms p95) and well under the vault's wait.
+- Rejected: a retry on 5xx or throttling; a migration for the attempts count now (no consumer before the reconciliation
+  job, and migration numbers are reserved by other branches).
 
-### D171. A mint in an app that keeps logins needs the session's live share
-- Date 2026-10-30 · Status: in force; amended by D178 (other apps' shares, tombstones) · Source: build step 2; the
-  spec's "Minting" step 2 (`apps/api/src/identity/token.ts` `checkShare`, `packages/web/src/vault/vault.ts`
-  `mintIdentity`)
-- Decision: when the app's persistence is `session`, `/v1/identity/token` requires a share for the session key, made
-  for the requesting parent, judged as unlock judges it without writing anything (`410 session_ended` with `reason`
-  `unknown_share`, `share_revoked`, `persistence_off`, `share_expired`); a session key with no share passes on the
-  chain check alone only while the app's persistence is `none`. The vault answers `identity_unavailable` with
-  `reason: no_share` (no API call) for a session in a `session` app that has no share (storage blocked, or the
-  background persist gave up, D79), and waits for a login's persist before minting. A `410 session_ended` from the
-  mint ends the vault session as a revoked share does (`sessionExpired`). A missing on-chain session is re-read every
-  300 ms for up to 2 s before the refusal (a node a block behind the login would otherwise log the user out).
-- Why: the share is what a logout, `revokeOtherDevices()` or a removed origin kills; the hourly cron deletes revoked
-  shares, so "no share" can't be told from "revoked" and must refuse in a `session` app. Accepted: a browser that
-  can't store the session gets no identity token in such an app (`docs/security.md` open issue (l)).
-
-### D172. Identity counts in their own tables, migration 0008
-- Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`apps/api/migrations/0008_identity_token.sql`) ·
-  Source: build step 2; `docs/batch-c-build-plan.md` reserves 0006 and 0007
-- Decision: migration 0008 creates `identity_issuance_hourly (hour, kid, count)` and `identity_usage (app_id, day,
-  tokens)` (the spec's `usage.identity_tokens`), both kept 24 months by the hourly cron. It doesn't touch the legacy
-  `usage` table (batch C's 0007 drops it) and holds no user data. The email claim's `apps.identity_email`,
-  `identity_email_consents` and `identity_emails` count come with build step 5's migration.
-- Why: 0008 applies the same before or after batch C's 0006/0007; an `ALTER TABLE usage` would fail on a fresh
-  database once 0007 drops `usage`.
-
-### D173. Identity signing configuration: `activeKid` in the manifest, `iss` under the API
-- Date 2026-10-30 · Status: in force; the global ceiling amended by D176, the standby slot by D177 · Was on `feat/identity-token-1` (`packages/env/src/identity.ts`,
-  `apps/api/scripts/gen-wrangler.ts`, `scripts/lib/identity-key.ts`) · Source: build step 2; the spec's "Manifest"
-- Decision: the Worker-secret signer is `{kind: "worker-secret", activeKid}`: the API signs with whichever of
-  `IDENTITY_SIGNING_KEY` / `IDENTITY_SIGNING_KEY_STANDBY` has that RFC 7638 thumbprint, so the rotation playbook's
-  "switch to the standby" is a manifest change and a deploy. The schema requires every `publicKeys` kid to be its
-  key's thumbprint, refuses any private member, requires the signer's kids in the list and refuses a Worker-secret
-  signer off testnet; `identityToken.iss` must be `{apiUrl}/v1/identity` until the production hostname exists (D127
-  Q14). `gen` refuses the `aws-kms` shape until build step 7 and, with `--dev-vars`, signing keys the manifest
-  doesn't publish. The API verifies each signature with the published key before answering, and serves the JWKS from
-  the manifest's list alone. The global hourly ceiling is 100 000 mints (var `IDENTITY_GLOBAL_HOURLY_MAX` overrides).
-- Why: the standby switch must not need a secret upload in an incident, and a secret that doesn't match the published
-  key must never produce a token.
-
-### D174. Identity token cache rule and SDK surface details
-- Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`packages/web/src/vault/identity.ts`,
-  `packages/web/src/client/client.ts`, `packages/react/src/identity.ts`) · Source: build step 3
-- Decision: the vault hands out its cached token while more than `min(5 min, half the token's life)` remains (a token
-  the session's end made short doesn't cause a mint per call) and, with `maxAgeMs`, it is at most that old. The SDK
-  clamps `maxAgeMs` to 30 s–1 h (the port refuses anything else) and rejects a non-positive one with `-32602`. The
-  port result and `identityTokenChanged` carry `{identityToken, expiresAtMs}`; the client exposes
-  `hana.identityToken` and `hana.identityTokenExpiresAtMs`. `410 session_ending` (< 30 s left) is `session_ended` with
-  `data.reason: 'session_ending'`, without ending the session (its own timers do). `useIdentityToken` retries a failed
-  refresh after 60 s. The record format 2 stores the proofs; the session key stays with a dormant session so it can
-  mint without PRK.
-- Why: the spec's 5-minute margin alone would mint on every call near a session's end; the rest fills in shapes the
-  spec named but didn't fix.
-
-### D175. A tested partner example, quoted exactly by the guide
-- Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`examples/identity-verify`, a workspace member) ·
-  Source: build step 4; the spec's "Example verifier"
-- Decision: `examples/identity-verify/src/verify.ts` is the guide's verifier (`jose` 6.2.13, ES256 pinned); its tests
-  run it against a local issuer (expired, stale, wrong `aud`/`iss`/`typ`/key, `alg: none`, HS256) and fail when
-  `docs/integration.md` section 15 doesn't quote the file exactly. The Playwright suite verifies real tokens from the
-  local stack with `jose` against its JWKS.
-- Why: the published guide always runs.
-
-## Email login build, batch 1 (contract v3), 2026-10-30
-
-Made while building `docs/email-login-build-plan.md` batch 1 (branch `feat/email-login-1`), where the spec was silent,
-ambiguous or unsafe as written. Each takes the safest reading and is listed for the user under the plan's "Open
-points for the user"; none changes an address.
-
-### D130. A wallet is recorded when its path is derived, not when a session opens
-- Date 2026-10-30 · Status: confirmed by the user (2026-11-02); in contract v3 on develop, not deployed · Source: build of
-  `docs/email-login-spec.md` "Sessions" step 3 and "Model" ("the contract records that in `opened` at every
-  `create_session*`")
-- Decision: `opened` (an identity "has a wallet") is set by `derive_key` and `create_session_and_derive` for the
-  session's path identity, not by a bare `create_session`.
-- Why: tokens are public in the mempool and in failed transactions. Copying a Google token that was sent for a case-A
-  link into a bare `create_session` would open a session nobody can use but mark the Google identity as having a
-  wallet, so the user's retry hits "both have a wallet" and the person ends up with two wallets, which D122 forbids.
-  Nobody can derive without the session key, so marking at derivation can't be forged. For every real login (the
-  combined call) the result is the same as the spec's.
-- Rejected: the spec's wording (marking in `create_session`).
-
-### D131. Contract readings of the email login spec (batch 1)
-- Date 2026-10-30 · Status: confirmed by the user (2026-11-02), every reading; in contract v3 on develop, not deployed · Source: build of
-  `docs/email-login-spec.md` "Contract changes", "Sessions", "Link methods"
-- Decision:
-  - `mark_self_issued` refuses an issuer that already has keys, active or pending (`Issuer already has keys`), and a
-    second call (`Issuer is already self-issued`), so it can never reset an upgraded policy.
-  - The updater key ("self") can't propose **any** key change of a self-issued issuer, removals included.
-  - One RSA modulus is registered once per self-issued issuer, whatever its kid, exponent or signer (`Key is already
-    registered`), including keys a future `migrate` installs: one stolen key never counts as two signers.
-  - A self-issued key change waits `max(the usual rule, now + governance_delay_ms)`.
-  - JWS JSON is parsed strictly: no flattened form, no unprotected `header`, no `crit`, no duplicate members; every
-    signature must verify and every kid must be a counting signer's active key (an unknown extra signature fails the
-    token rather than being ignored).
-  - Case A (Google joining an email wallet) must carry `link_immediate = true` (`This link must be immediate`): a
-    delayed case A would have to open the Google identity's own path, a second wallet.
-  - `cancel_link` doesn't mark the pair `unlinked` (the spec names unlink only; confirmed by the user, D132); lazy activation of a pending member
-    doesn't bump the epoch; an account record is never deleted (its epoch must not restart).
-  - `get_account` also returns `unlinked` (hex keys), so the issuer can apply "an unlinked pair is not a match".
-  - The panic for an unlisted kid stays today's `Unknown signing key` (the spec writes `Unknown key`); a
-    `link_immediate` without `link_jwt` panics `link_immediate needs a link_jwt`; unlinking by another member panics
-    `Only the root or the member itself can unlink`.
-  - `migrate_v1` stays (now v1 → v3) until the sandbox suite moves to v2 → v3 (build-plan batch 2).
-- Why: each is the stricter of the readings the spec allows, or fills a gap without a product choice.
-- Rejected: the looser readings (accepting a delayed case A, ignoring unknown extra signatures, letting the updater
-  propose email key removals).
-
-### D132. A cancelled link keeps the match (open point 3 → A)
-- Date 2026-10-30 · Status: confirmed by the user, built (`feat/email-login-1`) · Source: conversation
-  (`docs/email-login-build-plan.md` open point 3)
-- Decision: `cancel_link` does **not** mark the pair `unlinked`. After a user cancels a pending link, the next login
-  with the other method still sees the match and offers only "Link and continue" or "Sign in with {the other
-  method}": no second wallet. Only `unlink_identity` marks a pair.
-- Rejected: marking cancelled pairs (an email login would then make its own wallet after a cancel).
-
-### D133. The user's session signature binds the link, and the auto_link nonce binds the join
-- Date 2026-10-30 · Status: built (`feat/email-login-1`), from the independent security review (HIGH-1, MEDIUM-1) ·
-  Source: review of contract v3 at ba45b91
-- Decision:
-  - In `create_session_and_derive` with `link_jwt`, the session key's counter-1 signature is over the **linked CKD
-    payload** `"hana-id-ckd-link-v1:" ‖ sha256(link_jwt) ‖ mode u8 ‖ pk1 ‖ ":" ‖ pk2` instead of the plain one. The
-    plain payload is unchanged for logins without a link. The vault verifies the link token and recomputes its
-    `auto_link` nonce before signing.
-  - The `auto_link` nonce also commits to the join the issuer decided: `join` (1 = the session identity joins the link
-    identity's account, case A; 2 = the link identity joins the session identity's, cases B/C), `joiner_ik` and
-    `target_root_ik`, before the epoch and mode. The contract recomputes the join from chain state and checks it.
-- Why: before, nothing the user signed bound the link. Whoever submitted a published login chose whether and which
-  link was attached: a stolen email-issuer key could replay a failed Google login with its own case-B token and join
-  its email identity to the Google wallet (against D119 and the spec's trust statement), and anyone could strip the
-  link from a case-A login so the Google identity derived its own path (two wallets, against D122). A token minted for
-  case A could also execute as case B after the chain state changed at the same epoch. Its own domain keeps the linked
-  payload from ever reading as a plain CKD payload (a suffix on the plain payload could collide with a crafted `pk2`).
-- No path, CKD request, derivation or existing layout changes; the `auto_link` layout was never deployed.
-- Rejected: the reviewer's suffix form (`plain payload ‖ ":link:" ‖ …`), for the collision above.
-
-### D134. Only the email provider can be self-issued
-- Date 2026-10-30 · Status: built (`feat/email-login-1`), from the review (LOW-3)
-- Decision: `mark_self_issued` accepts only `SELF_ISSUABLE = ["email"]` (`Only the email issuer can be self-issued`).
-  Another provider needs a governed upgrade.
-- Why: marking is one way. An owner could remove Google's keys and mark `google` self-issued, which would stop every
-  Google login until a governed upgrade. The email provider name is frozen anyway (it is in every email path).
-- Rejected: a governance delay on marking (more machinery for a provider list that is one name).
-
-### D135. Links wait for the owner after a migration from pre-v3 state
-- Date 2026-10-30 · Status: built (`feat/email-login-1`), from the review (LOW-4)
-- Decision: `migrate` (v2 → v3) and `migrate_v1` set `unrecorded_wallets = true`; while it is set every link, automatic
-  or explicit, panics `Links wait until the owner accepts the wallets opened before v3`. The owner's
-  `accept_unrecorded_wallets()` (one way, event) clears it. `new` starts with `false`. sandbox-dev accepts after its
-  v3 upgrade (its pre-v3 wallets are test data, D122); the mainnet runbook creates the signer with `new` on v3 and
-  checks `get_config().unrecorded_wallets == false`.
-- Why: wallets derived before v3 aren't in `opened`, so "has a wallet" would be wrong for them and a funded pre-v3
-  Google wallet could be silently joined to an email account in case A. A migration argument isn't possible: v2's
-  `execute_upgrade` calls `migrate` with empty input.
-- Rejected: documenting it only (the review's point); a migrate argument (above).
-
-### D136. A linked identity's own path never derives; signer-policy keys are checked like any key
-- Date 2026-10-30 · Status: built (`feat/email-login-1`), from the review (LOW-1, LOW-2, info)
-- Decision:
-  - `derive_key` (and the derive half of `create_session_and_derive`) refuses a session whose path identity is a
-    member of an account, pending or active (`Sign-in method is linked to an account`): a session an identity opened
-    on its own path before it joined can't make a second wallet.
-  - `set_signer_policy` (a governed upgrade's `migrate` only) checks every new key with `set_issuer_key`'s rules
-    (leading zeros stripped, 2048–4096 bits, odd exponent other than 1), so a zero-padded copy of hana's modulus can't
-    pass as a co-signer's key.
-  - `set_signer_policy` takes `overlap`: `true` (adding a signer) keeps the 10-minute overlap and leaves dropped
-    signers' keys until the owner removes them (they can't count once it ends; `get_issuer_keys` still lists them);
-    `false` (replacing a compromised signer) opens no overlap and removes the dropped signers' keys at once.
-- Why: each closes a path the review reproduced; none changes an address.
-
-### D137. A bare create_session needs the session key's proof of possession; linked logins never recover unlinked
-- Date 2026-10-30 · Status: built (`feat/email-login-1-r2`), from the second review (N1) and the automated review of
-  its first form · Source: review of e225d2e
-- Decision:
-  - `create_session` takes `signature`: Ed25519 by the session key over `session_message(0, "hana-id-create-v1:" ‖
-    sha256(session nonce preimage))`. Only the key holder can open a session, and the proof is bound to that call's
-    parameters (signer, scope, key, expiry, key_index, max_uses, salt), so a proof seen in one transaction can't open
-    the key with any other parameters. Counter 0 is never accepted by `derive_key` or `revoke_session`, and the domain
-    differs from every other signed payload. `create_session_and_derive` is unchanged (its counter-1 signature already
-    proves possession).
-  - Recovery rule for the vault (batch 8): a session it meant to carry a link is never derived on with the plain
-    payload; on `Session key already in use` (or any failure after publishing) it revokes that session and restarts
-    with a fresh session key, Google token and link token.
-- Why: a front-runner could copy the Google token of a published case-A linked login into a bare `create_session`
-  with the same session key and no link. The user's call then failed `Session key already in use`, and the documented
-  recovery (derive with counter `used + 1`, plain payload) derived the Google identity's own path, splitting the person
-  into two wallets (D122). A constant proof (the first form of this fix) would still have been replayable for that key
-  with other parameters.
-- Interface: the one change to an existing method. The API's split-path relay, `packages/web`'s split path and the
-  smoke page's direct flow must send `signature` before the v3 upgrade lands (v2 ignores the extra field); batch 6.
-  No path, CKD request or derivation changes.
-- Rejected: relying on the vault rule alone (the contract can make the bad recovery impossible to set up).
-
-### D138. A replacing signer policy needs new signer ids and cancels dropped signers' pending keys
-- Date 2026-10-30 · Status: built (`feat/email-login-1-r2`), from the second review (N3)
-- Decision: in `set_signer_policy` with `overlap = false`, new keys may only go to signer ids the previous policy
-  didn't list (`A replacing policy adds keys only for new signer ids`); in either mode, pending `AddForSigner`
-  changes of signers that leave the policy are cancelled (event `issuer_key_change_cancelled`, `by` = the contract).
-- Why: a replacing upgrade that kept the id `cosign` with a new key left the compromised old `cosign` key counting
-  (keys were dropped by signer id only); and a dropped signer's owner-posted pending key would revive, executable by
-  anyone, if a later upgrade listed the id again.
-- Rejected: an explicit list of kids to remove (the owner can already remove any key at once with
-  `remove_issuer_key`; a new id makes the replacement visible in the policy itself).
-
-### D139. Off-chain guards from the second review: case-B signing only after the popup's own email step; a watchdog alert
-- Date 2026-10-30 · Status: obligations for later batches (`docs/email-login-build-plan.md` batches 5 and 8), from
-  the second review (N2, N4)
-- Decision:
-  - The vault signs a linked payload with `join = 2` (an email identity joining the Google identity's account) only
-    when this same popup ran the user's email-code step for this login (`verify` → `linkTicket`) and the link token's
-    `sub` equals the `sub` of the address verified there. A case-B token offered during a plain Google login is
-    refused.
-  - The watchdog raises a critical alert whenever `get_config().unrecorded_wallets` is `true` on an env that isn't a
-    dev env.
-- Why: since D133 a case-B join happens only when the vault signs the linked payload, so the vault is the last check
-  that the user really proved the email address in this flow; without it a compromised issuer service could serve a
-  case-B token during a plain Google login. The flag must never be true on mainnet (D135); a runbook check alone can be
-  skipped.
-
-### D176. Identity mint limits: narrow to wide, sliding, none shared with the vault; the replay marker last
-- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`apps/api/src/identity/limits.ts`, `token.ts`
-  `identityQuota`, `rate-limiter.ts` `hitSliding`) · Source: the identity token's security review (M1, L2, L3, L5)
-- Decision: `/v1/identity/token` asks, in turn: the vault gate's per-IP binding (only: the app's `vault:minute` quota
-  is no longer used, so mints can't starve unlocks) → … → the session proof's signature → per session key 10/min
-  (binding) → not paused → share → chain session → wallet proofs → the single-use marker → per account root 30/min
-  (binding `IDENTITY_ROOT_LIMIT`, keyed by the HMAC `sub` bytes) → per app `identity:minute` (10 × plan `per_minute`)
-  and `identity:hour` (plan `per_day`, at most 100 000) → per scope `identity:hour` (2 × the app's) → global: a hard
-  breaker of 1 000 000/h (≥ 10 × any app's ceiling, so no one tenant can trip it) and a soft line at 100 000/h that
-  logs `identity_volume_alert` (critical) without refusing. The app, scope and global windows are sliding (the
-  previous bucket weighted by its overlap) and counted only for a request that passed every other check; a refusal by
-  a later window takes the hit back from the earlier ones. The marker is reserved only once the proof is known to be a
-  live session's (random keys create none), keyed `sha256(sessionPk ‖ u64le(issuedAtMs) ‖ nonce)` (independent of the
-  signature's encoding), and an alarm on the marker object deletes expired markers.
-- Why: the global hourly breaker was reachable by one tenant (three free apps at 600/min) and then refused every app
-  for up to an hour. Amends D173's global ceiling (100 000/h, refusing).
-- Rejected: one exact per-root object (a Durable Object per user per hour; the binding is a flood limit anyway).
-
-### D177. Testnet identity keys: the standby stays off the Worker; rotation and retirement commands
-- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`scripts/lib/identity-key.ts`,
-  `packages/playbooks` `identity-signing-key-compromised`) · Source: the identity token's security review (M2)
-- Decision: `identity-key init` uploads only the active key and the sub key; the standby is published in the JWKS
-  but never uploaded (operators move its file offline), so a leak of the Worker's secrets or the Cloudflare account
-  doesn't reach it. New commands: `next` (generate and publish a rotation key, upload nothing), `switch --to
-  next|standby` (upload it into the Worker slot the active key isn't in, make it the manifest's `activeKid`; the old
-  active key becomes `previous`, still published), `retire --key previous|standby` (unpublish, delete its Worker
-  secret if it has one, set its file aside). `.secrets/<env>/identity-slots.json` records which slot holds which kid.
-  `gen --dev-vars` writes only the active key. The compromise playbook (operations.md, `docs/playbooks.md`): treat
-  both keys as exposed unless the incident provably touches only the active one; then retire the standby too and
-  rotate to a fresh key.
-- Why: two keys side by side on one Worker and uploaded together made "switch to the standby" keep a compromised
-  key. Amends D173 (the standby slot is now a rotation slot) and the spec's rotation playbook.
-
-### D178. A dead or other app's share stops mints in every app of the scope; shares kept as tombstones for 24 h
-- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`apps/api/src/identity/token.ts` `checkShare`,
-  `vault/cron.ts` `pruneShares`) · Source: the identity token's security review (L1)
-- Decision: the mint looks a session key's share up in any app: a share that belongs to another app refuses the mint
-  (`410 session_ended`, `reason: unknown_share`) whatever this app's persistence, so a session revoked (or simply
-  persisted) in a `session` app of a scope never mints in a `none` app of the same scope. The hourly cron deletes a
-  revoked or absolutely expired share only once it is older than 24 h (the contract's `MAX_SESSION_MS`), so the row
-  outlives any on-chain session it could stand for.
-- Why: `getShareBySessionPk` was per app and the cron deleted revoked rows within the hour, so a revoked session kept
-  minting in a `none` app until its on-chain expiry, against D171 and `docs/security.md`. Amends D171.
-
-### D179. Raw signing never covers Hana's signing domains; `wallets` proves control, not derivation
-- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`packages/web/src/vault/signing.ts`
-  `refuseReservedRaw`, `docs/integration.md` section 15) · Source: the identity token's security review (L4, L6)
-- Decision: in apps with raw signing on, the vault refuses (4100, `reason: raw_reserved_domain`, before any popup) a
-  Stellar raw request whose bytes start with `hana-id`, and an EVM raw digest equal to the session's own identity
-  wallet-proof digest, so an approved raw signature can't serve as a wallet proof. The guide says what `wallets`
-  proves: the session's holder controls each address's key, not that it is the Hana-derived wallet of that `sub`; one
-  address can appear under several `sub`s (an exported or reused key, an old `key_index`), so partners must not treat
-  wallet → `sub` as unique (per-wallet credits).
-- Why: defence in depth for the wallet proof; the guide overstated the claim.
-- Accepted residual (automated review, 2026-10-30): the EVM check covers only this session's own proof digest. A raw
-  EVM digest is opaque, so a user who approves a raw signature over another session's wallet-proof digest lets that
-  session list their address. Not fixable at the source: raw signing signs any digest, whatever structure (EIP-191,
-  EIP-712) the proof used, and the API can't check that an address is the account's Hana-derived wallet (CKD output
-  is never on chain). The approval already authorizes arbitrary signatures (transactions included, with the popup's
-  warning), and partners must not treat wallet → `sub` as unique, so the impact is within what the guide states.
-  Revisit if addresses are ever recorded on chain.
-
-## Email login build, batch 3 (`packages/email`), 2026-11-02
-
-Made while building `docs/email-login-build-plan.md` batch 3 (branch `feat/email-login-3`), where the spec was silent
-or allowed two readings. Each takes the stricter reading. D156 and D159 define every email user's address (frozen at
-the address freeze; until then a change moves every sandbox-dev email address and must be called out); D157 and D158
-change no address.
-
-### D156. Email normalization v1: the stricter readings, and a pinned UTS #46 library
-- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); merged · Source: build of
-  `docs/email-login-spec.md` "Email normalization"
-- Decision (`packages/email/src/normalize.ts`, frozen by `vectors/email-v1.json`):
-  - "ASCII whitespace" is the WHATWG set (TAB, LF, FF, CR, SPACE), trimmed at the ends only; anything else (VT, NBSP,
-    ideographic space) stays and fails the syntax checks. An input with an unpaired UTF-16 surrogate is refused.
-  - The 254-byte limit applies to the trimmed input (UTF-8 bytes) **and** to the normalized address, since punycode
-    can lengthen the domain; the local part must be 1 to 64 bytes.
-  - "ASCII only" local parts must also be an RFC 5322 dot-atom: no quoted strings, comments, backslashes, spaces,
-    leading, trailing or doubled dots (also for Gmail, before its dots are dropped). Lowercasing is ASCII-only.
-  - UTS #46 runs non-transitional with every check on: CheckHyphens (so `ab--cd.com` is refused unless it is a valid
-    `xn--` label), CheckBidi, CheckJoiners, UseSTD3ASCIIRules; then the domain must be an LDH host name of at least
-    two labels, each 1 to 63 bytes, at most 253 bytes, whose top-level label has a letter (no IPv4 or IP literals).
-  - The Gmail canonical form is applied to the normalized domain (`GMAIL.COM.` and fullwidth forms count); a local
-    part left empty by it (`+tag@gmail.com`) is refused.
-  - IDNA comes from `tr46` 7.0.0 (UTS #46 revision 36, Unicode 18.0.0), pinned exactly; a guard test checks the
-    installed `tr46` and `punycode` versions. Emoji labels that UTS #46 allows (`💩.la`) are accepted.
-  - **Unicode 15.0 cutoff** (review M1, 2026-11-02): any code point assigned after Unicode 15.0 is refused
-    (`domain_unicode_version`), in the raw input, in its mapped form with `xn--` labels decoded, and in the result.
-    The ages come from a vendored table generated from Unicode's `DerivedAge-18.0.0.txt`
-    (`packages/email/src/unicode-age.ts`, hash-pinned), never from the engine's `\p{…}` data. Why: `tr46` calls the
-    runtime's `String.prototype.normalize('NFC')`; a runtime whose Unicode predates a character doesn't reorder it,
-    so `alice@x\u1AD0\u0316.com` (U+1AD0, Unicode 17) gave a different `sub` on Node 22.12 and Node 24. Why 15.0:
-    it is the newest version every target runtime knows: Safari 16.4 and later (16.4 shipped the Unicode 15.0
-    emoji), Chrome, Edge and Firefox of the last two years (ICU 74+, Unicode 15.1), Node 22 (ICU 74+) and workerd
-    (newer). Unicode's normalization stability policy keeps NFC identical across them for 15.0 characters. Cost:
-    domains using characters added since September 2022 (CJK extension I, new scripts, new emoji) can't sign in;
-    raising the cutoff later would only accept addresses that are refused today, so it moves no existing address.
-- Why: every refusal here only turns away addresses that are invalid or that no large provider issues; every
-  acceptance is frozen forever, so the narrow set is the safe one. The runtime's own `URL` parser is also
-  non-transitional UTS #46 but with looser flags and an unpinned Unicode version (workerd's or each browser's ICU), so
-  a runtime upgrade could move an address.
-- Residual: `tr46` still calls the platform's NFC, now only on characters of Unicode 15.0 or older, which every target
-  runtime has. The frozen vectors run in Node, in a bare V8 context (the browser bundle) and in workerd. CI's Node is
-  `22` (floating), so no claim rests on a pinned Node version. Browsers older than Safari 16.4 may predate Unicode
-  15.0, so only the email issuer (workerd) computes a normalized address for a `sub`; the popup uses the package for
-  display and pre-checks only (batches 4 and 8; review of batch 3).
-- Rejected: platform `URL`/`domainToASCII`; quoted local parts; measuring length on the input only; Unicode `trim()`.
-
-### D157. Disposable-domain list: one pinned upstream commit, parents match, updated by PR
-- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); merged · Source: build of
-  `docs/email-login-spec.md` "Rate limits and abuse" (Q10, D123)
-- Decision: `packages/email/src/disposable-domains.ts` vendors `disposable_email_blocklist.conf` of
-  `github.com/disposable-email-domains/disposable-email-domains` (CC0 1.0) byte for byte at commit
-  `e4f0910adf5ab418dc998a1d8e6c15906ca04864` (2026-10-23, 9927 domains), its sha256 checked by a test. A domain is
-  blocked when it **or any parent** is listed (upstream lists registrable domains and asks implementers to match
-  subdomains). The guard keeps `gmail.com`, `googlemail.com` and `google.com` (and their parents) off the list, in the
-  test and in `scripts/update-disposable-domains.mjs`, which is the only way to update it (a reviewed PR, an upstream
-  commit at least 7 days old, as the workspace's `minimumReleaseAge`).
-- Why: exact-match only would let `anything.<disposable>` through; a fresh upstream commit is unreviewed third-party
-  data that decides who may log in.
-- Rejected: exact match only; fetching the list at runtime.
-
-### D158. The Google-hosted rule compares `hd` exactly
-- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); merged · Source: build of
-  `docs/email-login-spec.md` "The four cases" ("`hd` is present and equal to the address's normalized domain")
-- Decision: `isGoogleHosted({ email, emailVerified, hd })` takes a normalized address (it throws otherwise) and
-  needs `emailVerified === true` (anything else is false). Then: `hd` absent (`undefined` or `null`) → true only for
-  the domain `gmail.com`; `hd` present → true only when it is a non-empty string **exactly equal** to the normalized
-  domain (so a `gmail.com` address with another `hd` is false; review L1). `hd` is not lowercased, IDNA-mapped or
-  trimmed first. A subdomain or parent of `hd` doesn't count.
-- Accepted: Cloud Identity accounts, and Workspace accounts without Gmail, have `hd` equal to the domain while the
-  mailbox is hosted elsewhere. The rule still treats them as Google-hosted because the same domain administrator
-  controls both the Google account and the domain's mail.
-- Why: a false "not Google-hosted" only costs the user a code (case A) or the 24 h delay (case B); a false "hosted"
-  links silently. Google returns `hd` as the Workspace's lowercase ASCII domain, so the exact form is the expected one.
-- Rejected: normalizing `hd` with `normalizeDomain`; matching `hd` against parent domains.
-
-### D159. Gmail canonical form: dots ignored, each `+tag` its own identity
-- Date 2026-11-02 · Status: confirmed by the user (2026-11-02), amending Q7 (D123) · Source: spec Q7 (D123), checked
-  against Google's help pages on 2026-11-02 (cited in `packages/email/test/vectors.test.ts`); the user's choice of
-  `+tag` behaviour
-- Decision: `gmail.com` and `googlemail.com` → `gmail.com`; every dot in the username (before the first `+`) is
-  dropped; a non-empty `+tag` is kept as typed (lowercased, its dots and further `+` kept), so `name+1@gmail.com`
-  and `name+2@gmail.com` are separate identities with separate wallets; an empty tag (`name+@gmail.com`) is the plain
-  username; an empty username (`+tag@gmail.com`) is refused. Other domains keep dots and `+` as typed.
-- Why dots: Gmail delivers every dot spelling to one inbox and nobody can register another spelling
-  (support.google.com/mail/answer/7436150), so ignoring dots keeps one person from getting a second, empty wallet
-  by typing their address differently, and keeps D119 matching against Google's reported address working.
-- Why `+tags` kept (the user's choice): a tag is typed on purpose, so it can't split a wallet by accident, and it
-  gives one inbox many wallets for testing and for users who want them, as Privy does. Security is unchanged: only
-  the inbox owner receives a tag's codes. Costs: one person can hold many email wallets (partners running rewards
-  should know); a Google login links automatically only with the untagged email identity; the identity token's email
-  for a tagged login carries the tag.
-- Cited and open: a deleted Gmail address can't be used by anyone in the future (support.google.com/mail/answer/61177,
-  /56256); no current Google page says `googlemail.com` is the same mailbox as `gmail.com` (it is, historically); a
-  Gmail user can now change their address, the old one becoming an alternate that still receives mail
-  (support.google.com/accounts/answer/19870), so the same person can then have two email identities (the spec's
-  "address changes between logins" case; nothing merges them).
-- Rate limits: since tags are distinct identities, `normalizeEmail` also returns `mailbox` (the address without its
-  `+tag`, on every domain), and the issuer's limits on codes sent key on it, so cycling tags can't mail one inbox
-  without bound (automated security review of this change). It is never an identity or a recipient.
-- Rejected: dropping `+tags` (the spec's rule: one wallet per inbox); keeping dots significant (an accidental second
-  wallet); Gmail rules for Workspace domains (`+tags` elsewhere may be distinct mailboxes).
-
-## Email login build, batch 5 (watchdog), 2026-11-02
-
-Made while building `docs/email-login-build-plan.md` batch 5 (branch `feat/email-login-5`), where the spec's
-"Watchdog (`apps/watchdog`)" section was silent or ambiguous. Each takes the stricter reading; none changes an
-address. D190, D191 and D193 are confirmed by the user (2026-11-02); D192 is superseded by D200.
-
-### D190. Email pins: absent means nothing pinned; a pin is the key's thumbprint, its kid and its signer
-- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); built, not deployed (`feat/email-login-5`,
-  `apps/watchdog/src/pins.ts`, `run.ts`) · Source: build of `docs/email-login-spec.md` "Watchdog"
-- Decision:
-  - The manifest's `watchdog.pinnedIssuerKeys.email` absent (sandbox-dev today, until batch 4 creates the key) means
-    **nothing is pinned**, not "unchecked": a pending email Add is cancelled (`forged_key_change`, reason
-    `not_pinned`), an active email key pauses (`forged_active_key`), and an email issuer or signer policy on chain is a
-    critical `signer_policy_mismatch` (alert only while no key is active). A malformed `EMAIL_PINS` var is read the
-    same way (and named in the `config` check). So the pins must be deployed before the owner posts the first email
-    key, as batch 6 orders it.
-  - A key is pinned when the RFC 7638 thumbprint of its on-chain `n`/`e` is listed for **its** signer (the pending
-    change's `signer`; for an active key, the signer `get_self_issued` lists it under; an active key no signer lists,
-    e.g. a dropped signer's, may be pinned under any signer) **and** its kid equals that thumbprint (Hana's issuer
-    names keys so). Otherwise reasons `not_pinned`, `other_signer`, `kid_not_thumbprint`, `no_signer` (a pending Add
-    without a signer: the email issuer isn't self-issued).
-  - A pending pinned Add, and any pending email removal (owner only, DoS only), raise the info
-    `self_issued_key_change` and nothing is called: the watchdog never confirms an email key (the contract refuses).
-  - The pins are configuration, not history: unlike Google's first-run baseline, an unpinned active email key pauses
-    at the first run too. As for Google (D82, D126), the pause also deletes every updater key.
-  - Hana's published email JWKS (`jwksUrl`, default `{apiUrl}/v1/email/jwks.json`) is compared with the pins and the
-    active email keys, warning `email_jwks_mismatch` only; a failed fetch warns after 3 runs and only while an email
-    key is active (the issuer may not be deployed before that).
-  - A v2 contract (no `get_self_issued`, `get_issuer("email")` null) reads as "no email issuer": no alert, pins or not.
-  - Fail closed (review L1, L4): on-chain material that can't be hashed is `bad_material` (never judged by its kid); a
-    malformed `EMAIL_PINS` raises the critical `pins_invalid` (check `config`) and the email key alerts it causes carry
-    reason `pins_unreadable`, so the page names the config rather than a forgery.
-  - Order (review H1, re-review): Hana's email JWKS is read after every protective step, the first alert delivery,
-    the heartbeat, the run record and the lock release, guarded, with its body capped (64 KB); every body is capped:
-    Google's JWKS and every RPC answer (4 MB). (The link scan that also ran there is gone with D200: link caps are a
-    chain view, judged in the protective phase.)
-    Hana's API is a party the watchdog must survive (D86): a huge or hostile body is a failed fetch.
-  - `scripts/pin.ts` (`pnpm --filter @hana-id/watchdog pin <public key>`) prints a public key's pin with the same
-    function the Worker uses, so batch 4's kid and the manifest's pin can't disagree.
-- Why: the pins are the only truth for self-issued keys (no outside JWKS vouches for them); treating "no pins" as
-  "skip the check" would let an owner post an email key unchecked on any env that forgot the block. A kid other than
-  the thumbprint, or a key pinned for one signer posted for another, isn't what Hana's issuer produces.
-- Rejected: absent pins = alert only (the old `unverifiable_key_change`); matching pins by kid alone (the kid is
-  chosen by whoever posts the key).
-
-### D191. A weaker signer policy, and the order to change the pins around a policy upgrade
-- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); built, not deployed (`feat/email-login-5`, `pins.ts`
-  `policyFindings`) · Source: build of
-  `docs/email-login-spec.md` "Watchdog" ("critical on any difference, pause on a weaker policy") and "Signing key
-  (staged)" ("Level 1 adds `cosign: […]` and `required: 2` before its upgrade executes")
-- **This overrides `docs/email-login-spec.md` line 867** ("Level 1 adds `cosign: […]` and `required: 2` before its
-  upgrade executes"): the pinned `required` is raised only **after** the upgrade executed. The spec is history and is
-  not edited.
-- Decision: the pins are compared with `get_issuer("email")` / `get_self_issued("email")` (signers, `required` and
-  `overlap_until_ms`; kids are judged per key). The chain's policy is **weaker**, and the watchdog pauses with a
-  critical `signer_policy_mismatch`, when its `required` is below the pinned one, when it lists a signer the pins
-  don't, when email keys are active with no signer policy at all, or when an overlap with the previous policy lasts
-  longer than the contract's `POLICY_OVERLAP_MS` (10 min) plus one run interval (5 min): a `migrate` could otherwise
-  keep a weaker previous policy (say 1-of-1) valid indefinitely, and `get_self_issued` shows only the end time, not
-  the previous policy. An email issuer on chain with nothing pinned, or a pre-v3 email issuer, is also a critical
-  `signer_policy_mismatch` (no pause). What a planned change passes through, none of it weaker, is a **warning**
-  `signer_policy_transition` (no page, no pause, review L5): a pinned signer the chain doesn't list yet, the
-  `set_issuer` → `mark_self_issued` gap with no key, a higher `required` on chain, an overlap of normal length. So the
-  operator changes the pins around a policy upgrade in this order: pin the new signer's keys (with the current
-  `required`) before the upgrade executes, raise the pinned `required` after it executed; replacing a signer: pin the
-  new id first, drop the old id after. The governance diff's `email_signer_policy` includes `overlap_until_ms`.
-- Why: the spec's literal order (pins at `required: 2` while the chain is still 1-of-1 for the upgrade's 72 h) would
-  read as a weaker chain policy and pause every login for the whole wait. Pinning the new keys first is what matters
-  (migrate installs them active at once, and an unpinned active key pauses).
-- Rejected: no pause on policy at all (the spec asks for it); pausing on any difference (the planned transitions
-  above would pause); a critical page for the transitions (it would repeat for the upgrade's 72 h).
-- Contract note (not changed): `get_self_issued` exposes `overlap_until_ms` but not the previous policy's signers and
-  `required`; a view that also returned them would let the watchdog judge the overlap's policy itself instead of only
-  its length.
-
-### D192. Link volume through a transactions indexer, detection only, with provisional thresholds
-- Date 2026-11-02 · Status: **superseded by D200** (2026-11-02): the indexer scan, `apps/watchdog/src/links.ts`, the
-  never-applied migration `0002_link_events.sql`, `watchdog.linkVolume`, `link_events_unavailable` and
-  `link_block_unscanned` are removed; the contract counts and caps links and the watchdog reads `get_link_stats()`.
-  Kept below as history · Source: build of `docs/email-login-spec.md` "Watchdog" ("Link-volume check from
-  `identity_link_*` events (warning above the threshold)"; the spec names no threshold or event source)
-- Decision:
-  - Events are receipt logs, which no JSON-RPC view lists, and a block scan is far beyond a Worker run's budget. The
-    watchdog reads the signer's transactions from a NEAR transactions indexer (manifest `watchdog.linkVolume.indexerUrl`,
-    FastNear's transactions API: `/status`, `/v0/account`, `/v0/transactions`) and keeps only `EVENT_JSON` logs of
-    standard `hana-id` the signer emitted in receipts that didn't fail. At most 100 transactions per run, 60 blocks
-    behind the indexer's head; events are stored 8 days in D1 with scope and provider only (no identity key).
-  - New links = `identity_linked` + `identity_link_proposed`; warning `link_volume_high` above 20 per scope or 100 in
-    all in the last hour (provisional, `watchdog.linkVolume.perScopePerHour` / `perHour`). The other link events are
-    counted in `/status` only.
-  - Nothing is scanned while no email issuer is on chain (no link is possible); the first scan after it appears starts
-    at the chain's head. Warning `link_events_unavailable` when no indexer is configured while email is on chain, after
-    3 failed reads, or when the scan is more than 1 h behind.
-  - Detection only: the indexer can hide events (a missed warning) or invent some (a false warning), never make the
-    watchdog act.
-  - Hardening (review M1, M2, L2, L8 and the re-review): the check runs after the run is recorded and the lock
-    released (a CPU kill there can't hold the lock and skip the next run's protections), guarded (a throw marks
-    `links` `error`, resolves nothing, and leaves the run `degraded`); it is skipped in a run that took protective
-    actions (subrequests). The indexer answers of one scan share a 1 MB budget (a testnet login with its MPC
-    receipts is ~75 KB, so ~13 per run: a busy signer falls behind, which warns); each answer is also capped, receipt
-    ids must be NEAR ids, at most 2 000 events per scan. The indexer's head is clamped to the RPC's final block, and
-    events dated more than 5 min in the future are ignored and pruned. Pages hold 200 transactions; a block the scan
-    can't read whole even with a fresh budget (≥ 200 of the signer's transactions, or over 1 MB) is counted as far as
-    the budget goes and skipped, so the scan moves on, with a critical `link_block_unscanned:<height>` open for a week
-    (holding the cursor instead would stop detection for good). The schema refuses an indexer host naming another
-    network.
-- Why: the spec wants link bursts (the visible trace of a compromised issuer using the real key at 1-of-1) to alert;
-  an indexer is the only source of events within the free plan's limits, and nothing on chain depends on it.
-- Rejected: a contract view counting links (a contract change, outside this batch); scanning blocks through the
-  watchdog's RPC (hundreds of requests per run); the console spec's relative rule ("5× its 7-day median", batch 9) for
-  now: absolute thresholds work from the first day.
-
-### D193. D139's unrecorded_wallets alert, and the email issuer in the governance diff
-- Date 2026-11-02 · Status: confirmed by the user (2026-11-02); built, not deployed (`feat/email-login-5`) · Source: D139; build of
-  `docs/email-login-spec.md` "Watchdog"
-- Decision: every run with `get_config().unrecorded_wallets == true` on an env that isn't a dev env (`local*`,
-  `sandbox*`, the same rule as `@hana-id/env` `isDevEnv`) raises the critical condition `unrecorded_wallets` (alert
-  only), resolved once the owner accepts. The governance diff also treats as critical: `unrecorded_wallets` changing
-  (an upgrade setting it, `accept_unrecorded_wallets` clearing it), `email_issuer` (`set_issuer("email")` creating it or
-  changing its iss values), `email_issuer_keys` (an active email kid gone without a queued removal), and
-  `email_signer_policy` (`mark_self_issued`, or signers or `required` changed by an upgrade). With D200 the diff also
-  carries the link alarm thresholds from `get_link_stats()`: `link_thresholds` rising (or appearing with the view) and
-  a `pending_thresholds` raise appearing or changing are critical; lowering, or a pending raise cancelled, is a warning; a
-  pending raise coming into force as scheduled is info.
-- Why: D139 asks for the alert on every non-dev env; the owner's immediate email issuer actions leave no pending
-  state, like Google's (`issuer`, `issuer_keys`), so the diff is the only place they show.
-
-## Batch C build, step C2 (`packages/oidc`), 2026-11-02
-
-Made while building `docs/batch-c-build-plan.md` C2 (branch `feat/batch-c-2`), where `docs/batch-c-spec.md` was silent
-or allowed two readings. None changes a derivation path or an address.
-
-### D201. The new ID-token claims: typed on request (strict for the console), ignored by the API
-- Date 2026-11-02 · Status: **to confirm** · Source: build of `docs/batch-c-spec.md` "Code flow" (`verifyIdToken`
-  gains `email`, `email_verified`, `iat`, `hd`, `azp`, `amr`, `auth_time`); C2 review M1, L1
-- Decision (`packages/oidc/src/id-token.ts`, `VerifyOptions.optionalClaims`): each claim is optional and is returned
-  only when the token carries it with the right type: a JSON string (`email`, `hd`, `azp`), a finite number (`iat`,
-  `auth_time`), an array of strings (`amr`), or for `email_verified` a boolean or the string `"true"` / `"false"`,
-  returned as a boolean. Absent claims have no key in `VerifiedToken`. A wrongly typed claim:
-  - `'ignore'` (the default, every API call): dropped, the token kept. The API's answers are develop's: a token with
-    `email_verified: "x"` on `/v1/sessions` still gets to the claim allow-list (`token_has_pii` with the flag on).
-  - `'strict'` (the console, C9, which reads them): the token is `invalid_token` ("Malformed token claims").
-  The claims are checked after the expiry check, so the order of refusals (format, issuer, expiry, then these, then
-  the JWKS) is develop's. `nonce` keeps its rule (a non-string is `null`, which every caller refuses). The checks stop
-  at types: `email_verified === true`, the `iat` age (120 s), the step-up's "no `email`" and the `hd` membership rule
-  are C9's.
-- Why strict for the console: its step-up rule ("must carry no `email`") must not pass a token whose `email` is only of
-  the wrong type, as dropping it would. Why ignore for the API: it reads none of these claims, and the C2 brief is "no
-  change in behaviour for the API". Why accept the strings: Google's OpenID Connect documentation shows
-  `"email_verified": "true"` in its example ID token payload; current tokens carry a JSON boolean, but a check that
-  refused the documented form could lock out a real sign-in.
-- Also (review L2): an `exp` that isn't finite (`1e400` parses as Infinity, a token that never expires) is
-  `invalid_token` in both modes. On develop it passed the API's check; the contract would still refuse it.
-- Rejected: strict by default (the first C2 draft), which changed the API's answers; a boolean-only `email_verified`.
-
-### D202. The Access JWT check: aud as string or array, 60 s skew, certs ≤ 10 min old, staff list outside
-- Date 2026-11-02 · Status: **to confirm** · Source: build of `docs/batch-c-spec.md` "Hana admin console" (JWT check on
-  every `/api/*` request) and "Admin and email" tests; C2 review M2, L3
-- Decision (`packages/oidc/src/access.ts` `AccessJwtVerifier`, for C8): RS256 only, a non-empty `kid` in the team's
-  certs (`https://<accessTeamDomain>/cdn-cgi/access/certs`, through an injected fetcher), `type === 'app'`, `iss ===
-  https://<accessTeamDomain>`, `aud` the AUD tag or an array containing it (Access sends a one-element array; RFC 7519
-  allows either), `exp` with 60 s skew, `nbf` (when present) with the same skew, `iat` optional but numeric, a
-  non-empty string `sub` and `email`; a token over 8 KiB or with invalid UTF-8 is malformed. Every claim is checked
-  before the certs are read. The result carries `sub`, `email` as sent, `kid`, `exp`, `iat`; the lowercased-email
-  check against `admin.staffEmails` stays in C8 (with "an email not on the list" as its test).
-- The certs: each fetch has an 8 s timeout (body included) and a 64 KiB body cap; a set is fresh for its `max-age`
-  with no floor (`max-age=0`, `no-cache` or `no-store` mean every request refetches) and at most 10 min
-  (`ACCESS_CERTS_MAX_TTL_MS`; 10 min without a header); an unknown kid refetches at most once a minute; after a
-  failure, no new attempt for 10 s. A set is never served past its freshness: a failed fetch throws
-  `JwksUnavailableError` (fail closed; C8 chooses 503 or 401). **Staleness bound:** a cert Cloudflare withdraws is
-  trusted by an isolate for at most min(its max-age, 10 min) after that isolate's last successful fetch.
-- **Construct once per isolate** (module scope, or built on the first request and kept): the cache lives in the
-  instance, so one verifier per request fetches the certs on every request.
-- Why: the spec lists the checks without the encoding details; the skew covers Access minting `nbf = iat = now` on
-  another machine; the admin path should never trust a set Cloudflare may have withdrawn for long, and Google's
-  5-minute floor and 6-hour grace exist for login availability, which the admin console doesn't need.
-- Rejected: a strict one-element `aud` array; no skew; Google's cache rules for Access; putting the staff list in the
-  package (the manifest is C8's).
-
-### D203. The package logs nothing: the API passes its stale-JWKS log in; fetch limits on Google's JWKS too
-- Date 2026-11-02 · Status: **to confirm** · Source: build of `docs/batch-c-build-plan.md` C2 ("unchanged in behaviour
-  for the API"); C2 review M2
-- Decision: `@hana-id/oidc` keeps the module-level, per-isolate Google JWKS cache and the same exports as
-  `apps/api/src/{jwt,jwks}.ts` (`verifyIdToken`, `publishedKeys`, `clearJwksCache`, `JwksUnavailableError`,
-  `providerForIssuer`, `IDENTITY_TOKEN_TYP`, …); the `jwks_stale` warning becomes a `VerifyOptions.onStaleKeys` hook,
-  which every API call site sets to `logStaleJwks` (`apps/api/src/log.ts`), so the log line is unchanged.
-  `KeyObserver` and `cacheMaxAgeS` moved into the package (`key-observations.ts` re-exports the latter). JWKS
-  parsing stays in `@hana-id/jwks`, which the package depends on; the watchdog is untouched. Google's JWKS fetch
-  keeps its TTL rules (max-age clamped to 5 min..6 h, `no-cache` ignored, 6 h stale grace) and gains the same 8 s
-  timeout and 64 KiB body cap as Access (a hung or oversized answer is a failed fetch: stale grace, then 503).
-- Why: a shared package can't import an app's logger, and an injected hook keeps it testable without log scraping;
-  an unbounded fetch could hold a login for the Worker's whole time limit.
-- Rejected: the package writing the API's log format itself; an API wrapper module around the package.
+### D219. KMS standby and rotation: another region, the IAM policy names the active key only
+- Date 2026-11-02 · Status: **to confirm** · Source: build of the spec's rotation playbook and D177 for KMS
+  (`docs/operations.md` "Identity token keys on AWS KMS", `scripts/lib/identity-kms.ts`, playbook
+  `identity-kms-signer-compromised`)
+- Decision: the standby is a separate single-region key in another region than the active key (the schema refuses the
+  same region; `kms-add --role next` refuses the standby's region, so a scheduled switch keeps them apart). The key
+  policy is the same on every identity key: it delegates `kms:Sign` to the signer user's IAM policy only and denies
+  `Sign` to every other principal, `CreateGrant` to all, and key changes to all but the break-glass role (MFA). The
+  signer user's IAM policy allows `kms:Sign` on the **active** key's ARN alone (both ARNs only during a switch) and
+  denies `Sign` on any other key (`NoOtherKey`), so a leaked credential can't sign with the standby and the standby
+  stays a clean recovery, as D177 keeps the testnet standby off the Worker. **Long-term credentials only** (step 7
+  review, H1): `sts:GetSessionToken` needs no permission and can't be denied, and its sessions keep the user's live
+  permissions (so they would gain the standby at a switch), and deactivating the access key isn't proven to end them.
+  The key policy's allow and the IAM allow therefore require `Null aws:TokenIssueTime = true`, and the key policy
+  denies `Sign` to any request with `aws:TokenIssueTime` (`NoSessionCredentials`); the Worker uses an `AKIA…` key.
+  CloudTrail is matched by `userIdentity.arn`, never by access key id, and `GetSessionToken` by the signer user is an
+  alarm. To confirm on staging in the compromise drill: a session of the signer user is refused `Sign`. The
+  break-glass role is assumed with MFA (`sts:AssumeRole`), not through IAM Identity Center, and is never deleted or
+  renamed (the key policies name it). A switch is: IAM policy (add the target), `kms-switch`, gen, deploy; `kms-retire` after ≥ 2 h
+  (at once in an incident), then the old key is disabled and scheduled for deletion (30 days); before a switch, a
+  pre-switch check signs one digest with the target key and verifies it against its published `get-public-key` file.
+  `next` and `standby` are in different regions too (`next` becomes the active key). Commands: `kms-init`,
+  `kms-add --role next|standby`, `kms-switch --to next|standby`, `kms-retire --key previous|standby`,
+  `kms-put-aws-key`; they never call AWS.
+- Why: a regional KMS outage or a region-scoped mistake leaves a key to switch to; a credential that could sign with
+  both keys would make "switch to the standby" keep forged tokens valid after the switch.
+- Amends the spec's "IAM user … `kms:Sign` on the identity key ARNs" (now: the active key's ARN).
+- Rejected: one policy listing every identity key; key-policy edits for every switch (two places to keep in step);
+  multi-region replica keys as the standby (same key material).
 
 ## Superseded or amended
 
@@ -2506,13 +3026,13 @@ or allowed two readings. None changes a derivation path or an address.
 | Sodax Stellar `signAndSendTransaction(p)` is `sendTransaction(signTransaction(p.data))` | It signs as `p.from`: `sendTransaction(signTransaction(p.data, {address: p.from}))`, so a raw transaction built for another account (a muxed `M…` address included) is 4100 before any popup. Sodax builds every raw transaction for `getWalletAddress()`'s `G…` address. Confirmed (D67) | `docs/batch-b-spec.md` "Sodax adapter"; `packages/sodax/src/stellar.ts` |
 | `/login` calls `GET /v1/app` itself and cross-checks the vault's signer, scope and client before Google (batch B "Login" step 4) | It checks the pinned signer and the nonce only, makes no API call, and shows the vault's app name (D77) | `docs/security.md` "The login popup trusts the vault's app facts" |
 | Every approval popup opens from the vault's "Review in Hana" launcher (batch B "Approval flow" steps 1–2) | A signing call from a click opens it in that click (`/approve?from=partner&v=…`); the launcher is the fallback without user activation or when `window.open` returns null (D99) | `docs/batch-b-spec.md` "Approval flow" |
-| CODEOWNERS on derivation, vectors, the contract and the env schema (D58) | Also `/envs/`, the API, web, core and watchdog sources, `scripts/`, lockfiles, `.gitleaks.toml`, `.githooks/`, `.github/`; a second owner to add (D100) | `.github/CODEOWNERS` |
+| CODEOWNERS on derivation, vectors, the contract and the env schema (D58) | Also `/envs/`, the API, web, core and watchdog sources, `scripts/`, lockfiles, `.gitleaks.toml`, `.githooks/`, `.github/`; two owners, `@tzechuen` and `@mj-hana` (D100) | `.github/CODEOWNERS` |
 | One global owner-action cap (20/min, 200/day); the relay quota counted in the gate, before verification | Caps per owner, per scope and global, `execute_change` and `cancel_change` on windows of their own; the relay quota counted right before the relay (D100) | `docs/api.md` "Rate limits" |
 | `fetch-ckd-key` reads the CKD key from the manifest's `rpc` | From ≥ 3 independent providers at one final block, all agreeing, with the block recorded (D100) | `docs/operations.md` "Create an environment" step 3 |
 | Stellar classic operations other than changeTrust, payment and createAccount shown by type with their raw XDR (batch B "Approval flow" step 4) | Every operation decoded field by field; account-control operations get a red banner and per-operation warning and are never auto-approved (D110) | `packages/core/src/decode/stellar.ts` |
 | The export window shows the key while a button is held until the window closes (batch B "Key export" step 5) | The key is erased 5 min after it is derived or when the session ends, whichever is first; a new export needs a new sign-in (D111) | `packages/web/src/auth/export-page.ts` |
 | The vault persists (share, record) before it replies to `hana_login` (batch B "Login" steps 11–12) | It replies first; the share and record follow in the background, and a failure turns `persistence` to `'none'` (`persistenceChanged`, D79) | `packages/web/src/vault/vault.ts` `persistLogin` |
-| Email login deferred (D4) | Confirmed: a Hana-run issuer (D4, D119, D121–D123), not built | `docs/email-login-spec.md` |
+| Email login deferred (D4) | Confirmed: a Hana-run issuer (D4, D119, D121–D123); contract v3, `packages/email` and the watchdog part merged, the issuer not yet (`docs/email-login-build-plan.md`) | `docs/email-login-spec.md` |
 | Hana requests only `scope=openid` from Google (D25) | The on-chain token stays openid-only; the popup also requests `email`, which the issuer handles transiently off chain at link time, keeping only an HMAC (D25 amended) | `docs/email-login-spec.md` "How the popup gets Google's verified email" |
 | End users are never contacted by Hana (D96) | Still no stored address; Hana sends only sign-in codes and link notices the user's action triggered (D96 amended) | `docs/email-login-spec.md` "Notices" |
 | Email spec draft: AWS KMS key from the start, single-signature tokens | Worker-secret key on testnet, AWS KMS before mainnet; a signer policy and multi-signature JWS JSON tokens from day one (D121) | `docs/email-login-spec.md` "Signing key (staged)" |
@@ -2522,7 +3042,11 @@ or allowed two readings. None changes a derivation path or an address.
 | Email spec: `auto_link` nonce over the session, the session identity, the target epoch and the mode; the combined login signed over the plain CKD payload | The nonce also commits to the join (who joins which account), and with a link the session key signs the linked CKD payload (D133) | `docs/email-login-spec.md` "Byte layouts (new)", "Sessions" |
 | Email spec: `mark_self_issued(provider)` for any issuer | Only `email` (D134) | `docs/contract-interface.md` "Self-issued issuers" |
 | Email spec Q7: Gmail `+tag` dropped (one wallet per inbox) | Each `+tag` its own identity; dots still ignored (D159) | `packages/email/README.md` |
+| Identity spec: KMS signer `{kind: "aws-kms", awsRegion, keys: {active, standby, next?, previous?}}` (kids) | Each key `{kid, arn}` (region from the ARN, the standby in another region), a `credentials` block naming the IAM user; only the active ARN reaches the Worker (D215) | `packages/env/src/identity.ts` |
+| Identity spec: the signer's IAM user may `kms:Sign` on the identity key ARNs | On the active key's ARN only (both during a switch), so the standby stays clean (D219) | `docs/operations.md` "Identity token keys on AWS KMS" |
 | `create_session` opens a session for anyone holding the token; after a front-run `create_session` the key holder derives with counter `used + 1` | A bare `create_session` needs the session key's proof of possession bound to its parameters; a session meant to carry a link is revoked and restarted, never derived plainly (D137) | `docs/contract-interface.md` "Sessions and CKD" |
+| Email spec: the testnet signing keys (primary and standby) both Worker secrets | The standby is published and posted on chain but kept off the Worker (D196) | `docs/operations.md` "Email issuer" |
+| Email spec: case A's code started with `start` (purpose `auto_link`) and google-match called again with `link: true` | google-match prepares the `auto_link` challenge with Google's verified address; the popup sends its first code with `resend` (D195) | `docs/api.md` "Email issuer" |
 
 ## Proposed, not yet confirmed
 
@@ -2539,12 +3063,18 @@ paging app (D85, at setup), and open question 17 (cancel by a compromised OIDC o
 `docs/batch-c-spec.md`: Q1, Q3, Q4's fallback addresses, Q5 (D93). Everything else in both specs follows D80–D93 or
 is a proposal there.
 
-Still open from `docs/email-login-spec.md`: nothing; the user-mail provider is SendGrid (D194). The contract readings
+Still open from `docs/email-login-spec.md`: the user-mail provider. D194 names SendGrid, provisional until the
+colleague agrees; whether the watchdog's alert email and the admin Worker's notices move from Resend (D87) too is
+decided separately. The contract readings
 D130 and D131, batch 2's D154 and D155, and the `packages/email` readings D156–D159 are confirmed (2026-11-02).
-The watchdog's D190, D191 and D193 (batch 5) are confirmed (2026-11-02); D192 is superseded by D200.
+The watchdog's D190, D191 and D193 (batch 5) are confirmed (2026-11-02); D192 is superseded by D200. The email
+issuer's D195–D199 (batch 4) wait for the user's confirmation.
 To confirm from batch C step C2 (`packages/oidc`): D201 (the new claims typed on request, ignored by the API), D202
 (the Access JWT check and its cert cache) and D203 (the package's logging hook, Google's fetch limits).
 
 Batch C3's readings D205–D209 (hot DB 0006, the gate, the CLI) are to confirm. Batch C4's readings D220–D224 (the
 session marker and migration 0009, the event's bounds, the writer, the identity-count copy, `usage-setup`) are to
 confirm.
+To confirm from the identity token's step 7 (the KMS signer's code): D215 (the manifest shape and credentials), D216
+(`DIGEST`), D217 (strict DER, the self-check), D218 (one `Sign`, no retry, limits) and D219 (the standby's region, the
+IAM policy on the active key only).

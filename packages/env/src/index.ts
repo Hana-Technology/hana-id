@@ -13,6 +13,19 @@ export {
   MIN_APP_CHANGE_DELAY_MS,
   PRODUCTION_APP_CHANGE_DELAY_MS,
 } from './dashboard.ts';
+export {
+  EMAIL_ISSUER_SECRET_FILES,
+  EMAIL_KEY_MAX_BITS,
+  EMAIL_KEY_MIN_BITS,
+  EMAIL_SENDERS,
+  emailIssuerFor,
+  emailIssuerSchema,
+  emailPublicKeySchema,
+  rsaJwkThumbprint,
+  rsaModulusBits,
+  type EmailIssuerConfig,
+  type EmailPublicKey,
+} from './email-issuer.ts';
 export { IDENTITY_SECRET_FILES, KMS_KEY_ARN_RE, KMS_KEY_ROLES, identityIssuerFor, identityPublicKeySchema, identityTokenSchema, kmsArnParts, p256Thumbprint, type AwsKmsSignerConfig, type IdentityPublicKey, type IdentityTokenConfig, type KmsKeyRole } from './identity.ts';
 export { hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, LOCALHOST_WILDCARD, partnerOriginProblem, siteOf } from './origins.ts';
 export {

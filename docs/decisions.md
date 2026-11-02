@@ -2035,6 +2035,11 @@ change no address.
 - Why: a false "not Google-hosted" only costs the user a code (case A) or the 24 h delay (case B); a false "hosted"
   links silently. Google returns `hd` as the Workspace's lowercase ASCII domain, so the exact form is the expected one.
 - Rejected: normalizing `hd` with `normalizeDomain`; matching `hd` against parent domains.
+- **Reasoning corrected (2026-11-02, tokens review L3; the rule is unchanged):** for a Workspace account without Gmail
+  or a Cloud Identity account, Google does **not** host the mailbox, so "whoever passes Google's sign-in can read the
+  mailbox" isn't a fact about Google there. The rule treats such an `hd` account as Google-hosted on the domain
+  administrator's word: the same administrator issues the Google account and the mailbox, and can already reach both.
+  A silent link then trusts that administrator, as every address on that domain already does.
 
 ### D159. Gmail canonical form: dots ignored, each `+tag` its own identity
 - Date 2026-11-02 · Status: confirmed by the user (2026-11-02), amending Q7 (D123) · Source: spec Q7 (D123), checked
@@ -2231,6 +2236,9 @@ Decided in conversation before email login batch 4 (D194), and after the batch 5
 - Not changed yet: the watchdog's alert email and the admin Worker's notices still name Resend (D87); whether they
   move to SendGrid too is decided separately.
 - Why: one provider the team already operates and pays for; the adapter keeps the choice reversible.
+- **Amended (2026-11-02, independent review M3; to confirm):** a SendGrid **subuser for the issuer is required**, not
+  "if the account allows it": the issuer's suppression handling trusts only events of its own categories, and a shared
+  account mixes other mail's bounces and suppression list with the issuer's.
 
 ### D200. Link volume: a contract counter with hourly alarm thresholds, replacing the indexer scan
 - Date 2026-11-02 · Status: confirmed by the user: count and alarm, no refusal (option A, after review H1/H2);
@@ -2271,6 +2279,362 @@ Decided in conversation before email login batch 4 (D194), and after the batch 5
   upgrade can't blind the Google and email cancels and pauses.
 - Not built: nothing on the contract or watchdog side. The watchdog is deployed (batch 5, 2026-11-02); the contract
   goes out with v3.
+
+## Email login build, batch 4 (`apps/email-issuer`), 2026-11-02
+
+Made while building `docs/email-login-build-plan.md` batch 4 (branch `feat/email-login-4`), where the spec was silent,
+contradicted itself or allowed two readings. Each takes the stricter or safer reading. None changes an address: `sub`
+is computed by `@hana-id/email` alone, from the normalized address including any Gmail `+tag` (D159).
+
+### D195. Case A, not Google-hosted: google-match prepares the code challenge, the popup sends it with `resend`
+- Date 2026-11-02 · Status: to confirm (built on `feat/email-login-4`, not merged) · Source: build of
+  `docs/email-login-spec.md` "Endpoints" (`link` "from the user's Link and continue"), "How the popup gets Google's
+  verified email" (the access token is revoked after the call) and "The four cases" ("a code to a…@domain first
+  (purpose `auto_link`)")
+- Decision: when google-match finds case A and the address isn't Google-hosted, it creates an `auto_link` challenge
+  itself, holding Google's verified address, the Google `sub` and sha256 of this login's session nonce preimage, and
+  sends nothing; it answers `challenge: {challengeId, expiresAtMs, to: "a…@domain"}` (no `challenge` for a suppressed
+  mailbox or one the limits refuse, D198: the popup then offers only "Sign in with email"). After the user's "Link and
+  continue" the popup calls `POST /v1/email/resend {challengeId}`, which sends that challenge's first code (it counts
+  as a code, not as one of the two resends). `verify` then re-reads the chain (D133) and mints the `auto_link` token
+  only if the case is still A and linkable (`409 link_refused {decision}` otherwise). `start` refuses purpose
+  `auto_link`. `link` gates only the minting of `emailToken` (Google-hosted case A; case B with a `linkTicket`), so
+  the vault sends `link: true` on its own at a Google login, as the spec says for Google-hosted case A.
+- Why: the spec's two-step reading ("call again with `link: true` after the click") can't work, since the access
+  token is revoked at the end of the first call, and a `start` with purpose `auto_link` would need the popup to hold
+  or retype the address Google reported, letting the caller choose which address gets the code. Here only Google's
+  verified address can receive it, and nothing is mailed before the user's click.
+- Cost: the address sits in the challenge object for up to 10 minutes even when the user picks "Sign in with
+  email" (the privacy table's "challenge object until it ends (≤ 10 min)").
+- Rejected: not revoking the access token until the second call; letting `start` take `auto_link` with a typed
+  address.
+
+### D196. Manifest `emailIssuer` as `identityToken`; the standby key stays off the Worker; init uploads nothing
+- Date 2026-11-02 · Status: to confirm (built) · Source: build of the spec's "Issuer configuration", "Signing key"
+  and "Migration" ("the signing keys (primary, standby) as Worker secrets"); D173, D177
+- Decision: `emailIssuer: {iss, cloudflare: {workerName, d1Name}, signer: {kind: "worker-secret", activeKid} | {kind:
+  "aws-kms", awsRegion, keys: {primary: {kid, arn}, standby: {kid, arn}}}, publicKeys, from, sender: "sendgrid" |
+  "outbox", dailySendBudget?, access?, sendgridWebhookPublicKey?}`. The JWKS is `publicKeys` alone (kid = RFC 7638
+  thumbprint, checked by the schema; 2048–4096-bit RSA, e = 65537, one modulus once). The schema and `gen` refuse
+  `worker-secret` off testnet and `outbox` outside `local*`; `gen` also refuses `aws-kms` until batch 10. The
+  standby key is published and posted on chain but **kept off the Worker**
+  (`.secrets/<env>/email-issuer-signing-key-standby.json`, to move offline), overriding the spec's "primary, standby
+  as Worker secrets": a leak of the Worker's secrets then doesn't reach it, and switching to it is a real recovery.
+  `scripts/email-issuer.ts init` writes the files and the block and uploads nothing; `put` (run by the user) uploads
+  the active key and the three HMAC keys (and the SendGrid key when its file exists), values on wrangler's stdin.
+- Why: one place that decides what the issuer publishes; the same model as the identity token's keys, for the same
+  reason (D177).
+- Left for later: a `switch` / `retire` command for email keys (a key change is also a 72 h owner proposal and a pin
+  change, so it belongs with batch 10's rotation tooling).
+
+### D197. A challenge lives 10 minutes from its creation; a refused send is taken back
+- Date 2026-11-02 · Status: to confirm (built) · Source: build of the spec's "Codes, attempts, expiry, replay" and
+  "Privacy and what is stored" (the address in the challenge object "until it ends (≤ 10 min)")
+- Decision: a resend doesn't extend the challenge: every code of it dies 10 minutes after the challenge was created,
+  so the address is never held longer. A send the provider refused is taken back from the limits and from the
+  challenge's resend count. A suppressed address's challenge stores neither the address nor a code (every code is
+  wrong, nothing is ever sent), so `start` still answers alike.
+- Why: the stricter reading of the privacy table.
+- Rejected: a fresh 10 minutes per code (up to 30 minutes of storage).
+- **Amended (independent review L3):** a challenge id is 32 random bytes, a public half (the object is named by its
+  sha256) and a secret half that only the client holds: the address in the record is AES-256-GCM-encrypted under a
+  key derived from the secret half (the public half as AAD), so the object's storage, and any point-in-time copy of it,
+  holds no readable address. The worker decrypts it only during a `resend` or `verify` that carries the full id.
+
+### D198. The limits: per mailbox and requester, atomic, with a mailbox-wide backstop
+- Date 2026-11-02 · Status: to confirm (built; values provisional per D123 Q22). Revised the same day after a security
+  review of the first build (a check-then-count race in `verify`, and limits an attacker could use to lock an
+  address's owner out) · Source: build of the spec's "Rate limits and abuse" and "Enumeration resistance"
+- Decision:
+  - **Mailbox** = `normalizeEmail(...).mailbox`, the normalized address without its `+tag` (D159), keyed as
+    HMAC(K_rl, "mailbox" ‖ 0x00 ‖ mailbox): every per-mailbox limit uses it, so cycling tags can't mail one inbox without
+    bound. It is a rate-limit key only: suppressions use the exact address (D199). Mail still goes to the tagged address.
+  - **Atomic.** Every limit decision is one Durable Object call whose checks and writes run before any await. `verify`
+    reserves the check in the mailbox's limiter (refused while locked) before the code is compared, and gets it back
+    when the code was right; the challenge object counts its own attempts the same way, so concurrent guesses compare
+    at most 5 codes per challenge and at most 10 per requester per mailbox (tested with parallel guesses).
+  - **Code mails**: 3 per 15 min and 10 per day per (mailbox, requester = IP subject); 10 per 15 min and 30 per day per
+    mailbox from everyone (the mail-bombing bound); past that, a reserve of 5 a day only for a requester new to the
+    mailbox that day, so whoever used the allowance can't keep the owner out. At most 5 live challenges per mailbox. A
+    start that is over any of these, or locked, stores nothing (no challenge, no code). At most 35 challenges per
+    mailbox per UTC day.
+  - **Wrong codes, worst case first.** Every path that compares a code goes through `verify`, which reserves the check
+    in the mailbox's limiter before comparing (refunded only when the code was right). Per mailbox and UTC day, with N
+    requesters (any number of IPs):
+    - challenges created C ≤ 35 (a hard per-mailbox cap on every kind, google-match's prepared ones included; it also
+      equals the code-mail bound, 30 mailbox-wide + 5 reserve), at most 5 live at once;
+    - checks per challenge ≤ 5, so without the guess limits W ≤ 5 · C ≤ 175, whatever N;
+    - the guess limits: every failed (or in-flight) check counts against a **hard ceiling of 25**; while fewer than 20
+      have failed (the backstop), any requester may check; after that only the **owner slot**: 5 more checks, counted
+      on their own, open only to a requester that started a challenge on this mailbox before the backstop tripped (the
+      order is a per-object sequence, not the clock) and has no failed check on it that day, each such check counting
+      as that requester's failure, so it gets one wrong code at most. The 10-per-hour per-requester lock applies too;
+    - so W ≤ min(5 · C, 20 + min(5, E)) ≤ 25, where E is the number of exempt requesters; the ceiling is checked on
+      its own and nothing passes it, whoever asks.
+    - Odds: each wrong guess hits with probability 10⁻⁶ (a fresh uniformly random code per challenge), so a persistent
+      attacker gets ≤ 25 × 365 = 9,125 guesses a year per mailbox: 1 − (1 − 10⁻⁶)^9125 ≈ 0.91% a year, under the 1%
+      target (27 a day would be 0.98%). The spec's figure was 50 a day (1.8% a year).
+    - When the backstop trips (for everyone but owner-slot requesters) or the ceiling is reached (for everyone), the
+      mailbox answers the generic 429 ("try again later" in the popup) until the UTC day ends: an accepted, bounded
+      lockout of at most the rest of that day. The tripping check logs `mailbox_guess_limit` at error level (`code`
+      `backstop` or `ceiling`) with a 12-character prefix of the mailbox key (an HMAC under K_rl, never the address), so
+      staff can see which mailboxes are being targeted and how often; the alert and the admin view are batch 9's.
+    - 5 wrong codes kill a challenge; 10 per hour from one requester lock that requester out of that mailbox for an
+      hour (the owner elsewhere is not affected).
+  - **Refusals are a generic 429** (`rate_limited`, the same body as an IP or app limit), so the popup says "try again
+    later" instead of waiting for a code that never comes. It tells the caller only that the mailbox is limited, never
+    whether it has a wallet.
+  - **Suppressed addresses take the same path**: `start` and `resend` reserve and count exactly as for any address
+    (mailbox limits, live challenges, the global budget; never refunded) and answer alike, 202 or the same 429; only the
+    provider call is skipped, and the challenge holds no address and no code. So no limiter answer tells a suppressed
+    address apart.
+  - Exact counts everywhere, per IP too: Cloudflare's Rate Limiting binding only has 10 s and 60 s periods (D95 is the
+    vault's). Per IP: `start` 10 per 10 min and 50 per day, `verify` 30, `resend` 10 and `google-match` 30 per 10 min.
+    Per app: `start` 20 × the plan's `per_minute` per minute (the spec's value, read literally) and the plan's
+    `per_day` per day. Staff client proofs 20 per hour each. The global budget (`dailySendBudget`, default 1000 a
+    day) counts every user mail, link notices included; at the cap `start` and `resend` answer 429 and the issuer logs
+    `send_budget_exhausted` at error level (the alert itself is the admin portal's, batch 9).
+- Overrides the spec: the per-address limits key on (mailbox, requester) plus a mailbox-wide cap, and the wrong-code
+  lock is per requester inside a mailbox-wide ceiling of 25 a day, instead of "3 per 15 min, 10 per day per address"
+  and "10 wrong per hour → 1 h lock" for the whole address; a limited address answers 429 rather than a silent 202.
+- Why: the spec's per-address counters let anyone who knows an address use up its owner's codes, or lock it with ten
+  wrong guesses; and a lock checked in one object and counted in another could be outrun by parallel guesses.
+- **The trade-off, to confirm: brute-force resistance wins over availability.** A mailbox under a sustained guessing
+  attack can be locked for the rest of the UTC day: an attacker who knows the address can fill its daily code
+  allowance and reserve (35 mails) or make the 20 failed checks and use up the 5-check owner slot (a few requests from
+  a handful of IPs), after which nobody, owner included, can get or check a code until midnight UTC. This is the usual
+  OTP trade-off; the alternative (keeping the owner able to check) reopened the brute-force bound, since any
+  exemption an attacker can also qualify for multiplies by the number of IPs. Numbers: at most 25 failed checks per
+  mailbox per UTC day (≈ 0.91% a year), at most 35 challenges, a lockout of at most ~24 h per day of attack.
+  Mitigations: the tripping check logs `mailbox_guess_limit` (error, mailbox key prefix) for staff, and staff can lift
+  the lock with **`POST /v1/email/admin/unlock {email}`** (Cloudflare Access + the staff allowlist, audited in
+  `email_admin_audit` with the mailbox key prefix, never the address; it clears that day's guess counters, the trip
+  marker, the ceiling and the requesters' locks, not the code-mail counters). An unlock gives an attacker a fresh day's
+  25 checks, so staff should unlock only after the user has contacted support. (Superseded after the abuse re-check:
+  unlock now mails a one-time grant to the address and clears nothing; see the amendments below.) The admin portal's alert and button are
+  batch 9's. It is the one staff body that carries an address (the spec's "only `start`" is about the browser routes).
+- Accounting details: a check reserved and then found right is refunded, and so is the trip marker when that brings
+  the backstop below its max (18 since the reviews); a challenge's place in the day's cap is refunded when the global budget refuses its start,
+  when it can't be created, and when its first code isn't delivered (the challenge itself stays, for a resend).
+- To check with the user: whether "20 × per_minute" was meant (1,200 starts a minute for a free-plan app; the global
+  budget is then the binding cost bound).
+- **Amended after the independent reviews (2026-11-02; every number below to confirm):**
+  - **The global budget is shared out (H1):** an app may use at most 10% of `dailySendBudget` a day (free plan; one
+    share for every plan until email-specific plan fields exist), and the last 20% only an app that has used less than
+    half its share that day. `email_budget` is logged at 50% and 80% of the global budget and of each app's share;
+    `send_budget_exhausted` names the limit (`global`, `app`, `reserve`). Batch 9 turns them into alerts.
+  - **Aggregate requester limits (H1, L4):** besides the IPv4 address or IPv6 /64, `start` counts against the IPv4 /24
+    and the IPv6 /56 and /48, each ≤ 200 a day. A request without a usable `cf-connecting-ip` is refused
+    (`400 missing_client_ip`, logged) instead of sharing one bucket.
+  - **Per recipient domain (H1, M4):** ≤ 100 code mails a day per registrable domain (Public Suffix List, so a catch-all's
+    subdomains count together), except a listed set of large consumer providers (gmail.com, outlook.com, hotmail.com,
+    live.com, yahoo.com, icloud.com, me.com, mac.com, proton.me, protonmail.com, gmx.{com,net,de,at,ch,fr,es,it,co.uk,us},
+    qq.com, 163.com, yandex.{com,ru,ua,by,kz,com.tr}, mail.ru, aol.com, zoho.com; `src/domain.ts`).
+  - **Per app:** `start` the plan's `per_minute` per minute (the "20 ×" dropped) and its `per_day` per day.
+  - **Order: the requester pays first.** `start` counts the IP and prefix limits, then the mailbox (atomic), then the
+    domain, then the partner's quota, then the budget; a later refusal refunds the earlier mailbox, domain and app counts
+    (never the IP ones), so refused mailboxes can't burn a partner's quota or the budget.
+  - **Owner device ticket (M1):** a successful `verify` returns `deviceTicket` = "dt1." + b64url(expiry ‖
+    HMAC(K_device, domain ‖ mailbox key ‖ expiry)), K_device = HMAC(K_code, "hana-id/device-ticket-key/v1"), valid 30
+    days, bound to the mailbox. A `start` that presents a valid one gets its own allowance, **3 code mails per mailbox
+    per UTC day**, outside the code limits, the live cap and the challenge cap, and its challenge's checks may use a
+    **ticket slot of 3** past the backstop. Only someone who read a code at that mailbox holds one. Batch 8's popup keeps
+    it on `authOrigin`. The reserve for new requesters stays, but it bounds mail; it doesn't protect the owner (an
+    attacker with many IPs uses it up too), which the earlier wording claimed.
+  - **The ceiling is now 18 + 4 + 3:** a backstop of 18 open to anyone, the owner slot of 4 (started before the trip,
+    no failure), the ticket slot of 3 (a ticketed challenge); still a hard 25 a day, 0.91% a year.
+  - **Unlock grants (M1; bound to the owner after the scan, finding 1):** `admin/unlock` returns a one-time
+    `unlockToken` ("ug1." + 32 random bytes; the mailbox object keeps only its sha256, 24 h) that staff pass to the
+    owner. Only a `start` presenting it uses the grant: that start counts as ticketed (past the live and daily caps, the
+    ticket's code allowance and guess slot, and the domain cap). A start that is then refused or whose mail fails gives
+    the grant back. Any other requester, the attacker who caused the lockout included, gets nothing from the unlock but
+    the cleared guess counters. (The first version granted the mailbox, so whoever started next took it.)
+  - **The domain cap can't be filled by a few requesters (scan finding 2):** inside one domain's day, each requester
+    prefix (IPv4 /24, IPv6 /56 and /48) may send at most 20% (20 of 100); ticketed and unlock-grant starts and their
+    resends skip the domain cap altogether. `email_domain_cap` (warn, the domain key's 12-character prefix) is logged by
+    the mail that fills a domain's day, for batch 9's alert. Owner-slot requesters do **not** skip it: owner-slot status
+    (started before a trip, no failure) is reachable by an attacker, so it would hand the bypass back.
+  - **One `retry-after` (L1):** every mailbox-level refusal (the mailbox's limits and locks, the domain cap) answers
+    `retry-after: 900`, whatever the limit.
+  - **Amended after the abuse re-check (2026-11-02; every number to confirm).** The principle: **a valid device ticket
+    or unlock grant never depends on a pool an attacker can fill.** (Reworded after the final check, M1, to what is
+    guaranteed: see the last bullet.)
+    - **Budget (H1):** `dailySendBudget` is split: an **owner pool of 15%** for the mail of challenges a valid ticket or
+      grant started and for the staff unlock/unsuppress mails, ignoring the app share (refined below: a staff pool, and the owner pool as a fallback); the **general pool (85%)** for
+      everything else. An app's share of the general pool comes from its plan: **2% of the plan's `per_day`** (the free
+      plan's 5000 gives 100), at least 10, at most the general pool; a flat 10% of the budget only when the plan has no
+      usable `per_day`. The last 20% of the general pool stays for apps under half their share. `email_budget` is
+      logged per app (`app_50`, `app_80`) and per pool (`global_*`, `owner_*`). `dailySendBudget` is **required** in
+      the manifest outside `local*` envs (`email-issuer init --budget`); a Worker without it sends nothing and logs
+      `send_budget_exhausted` `unconfigured`.
+    - **Owner starts skip every shared pool:** a valid ticket or grant skips the IP prefix limits, the app's quota,
+      the domain cap and the general budget pool; it still counts against its own IP subject (10 per 10 min, 50 a day).
+    - **Domain cap (M1):** a registrable domain's cap is **100 + 2 × its verified logins over the trailing 7 UTC days**;
+      a verified challenge gives its mails' places back; each requester prefix may use 20% of the day's cap. The
+      exempt list adds the regional variants and more large providers (yahoo.co.{uk,jp,in,id,nz,th}, yahoo.com.{au,br},
+      yahoo.{fr,de,es,it,ca}, hotmail.co.{uk,jp,th}, hotmail.{fr,de,es,it}, outlook.{fr,de,es,it,jp,co.uk,com.br,
+      com.au}, live.{co.uk,fr,de,nl,it,ca,com.au,jp}, web.de, t-online.de, naver.com, 126.com, yeah.net, foxmail.com,
+      comcast.net, orange.fr, free.fr, libero.it, pm.me, fastmail.com), each listed, never a wildcard.
+    - **IP prefixes (M2):** the ticket and the unlock token are read and checked **before** the prefix limits (a grant
+      against the mailbox object), and a valid one skips them. The prefix limits are raised to **1000 a day** each
+      (IPv4 /24, IPv6 /56, /48) instead of counting only requesters new to the mailbox: simpler, and still bounds a
+      /48's 65,536 /64s (chosen; to confirm).
+    - **Unlock (M3):** `admin/unlock` **mails** the one-time token to the address (a link to `{authOrigin}/email/unlock#
+      <token>`, the token in the fragment) and answers staff `{mailed}` only: whoever asks support, the attacker
+      included, gets nothing. It **clears nothing**: the shared guess counters, the trip and every lock stay. The
+      grant's start counts as an owner's; its challenge's mails are free (one challenge, ≤ 2 resends), its checks use
+      the ticket slot and then the **grant slot of 2**, which lies outside the ceiling.
+    - **The bound, with unlocks:** ≤ 25 failed checks a day (backstop 18 + owner slot 4 + ticket slot 3) plus ≤ 2 per
+      unlock, with at most 3 unlocks in 30 days (≤ 37 a year): **365 × 25 + 37 × 2 ≈ 9,199 a year, ≈ 9,273 in the worst case, ≈ 0.92%
+      a year** against a 6-digit code (the earlier 0.91% plus unlocks; the earlier unlock reset the counters, which gave
+      an attacker a fresh 25 each time). Worst case per day W ≤ min(5·C, 25) + 2·[unlock that day], C ≤ 35 (+1 grant).
+    - **Device tickets (abuse L1/L2, tokens N1):** "dt2." + b64url(expiry ‖ nonce ‖ HMAC(K_device, domain ‖ address key
+      ‖ nonce ‖ expiry)): bound to the **exact normalized address** (its K_sup HMAC, so `x+tag@` and `x@` have their own
+      tickets), with a 16-byte nonce; the 3 code mails a day are **per ticket**. Staff `admin/revoke-tickets {email,
+      ticket}` revokes every ticket of that address issued until then (audited, 1 a day and 3 in 30 days).
+    - The earlier "Unlock grants" bullet's staff-held token and the counters cleared by unlock are superseded by this.
+    - **After the scan of the re-check (to confirm):** every `verify` mints a ticket, so allowances can't be per ticket:
+      the 3 code mails a day are counted **per exact address** (all its tickets together); an address has at most **5
+      live tickets** (the mailbox object registers each at issue; a 6th revokes the oldest; staff revocation clears the
+      address's list, and an unlisted ticket counts as nothing); at most **10 owner challenges** (ticket or grant) per
+      mailbox per UTC day. The budget becomes three pools: **staff** (1% of the budget, at least 5) for the unlock and
+      unsuppress mails; **owner** (15%), which an owner's mail draws on only when the general pool refuses it, at most
+      **20% of it per app**; **general** (the rest, 84% of 1000). A resend's domain and budget steps use the owner kind
+      `reserveSend` found after the revocation check, so a revoked ticket's challenge gets no owner path. The domain cap
+      counts **distinct verified mailboxes** a day, only of challenges that reserved a domain place, and never passes
+      **2,000 a day**; past it only exempt providers and owner starts pass.
+    - **After the final check (M1; to confirm), superseding the owner-pool details above.** Tickets aren't bound to an
+      app, so a per-app owner cap could be filled by an attacker's sock-puppet tickets (addresses at a catch-all domain
+      he controls) and deny that app's real owners. So: no per-app owner cap. The **owner pool is 1 × `dailySendBudget`
+      beside the budget** (it never eats the general pool, which is the budget minus the staff pool). Owner mail is
+      bounded by 3 code mails a day per address, **10 ticket challenges a day per exact address** (was per mailbox) and
+      that global ceiling; **once the owner pool passes 50% for the day, only tickets at least 7 days old and unlock
+      grants draw on it** (a fresh ticket's mail is then an ordinary user's, in the app's general share).
+      `email_owner_pool` is logged at 50% and 80%.
+    - **What is guaranteed (the principle, reworded):** A valid device ticket or unlock grant never waits on the IP prefix limits, an app's quota, a recipient domain's cap or the general budget pool; its mail comes from the owner pool, which a
+      fresh ticket can fill only to half. **Residual, to confirm:** an attacker who has built up a large stock of
+      sock-puppet tickets at least 7 days old (real verified logins, 3 mails a day each) can still use up the owner pool
+      for a day, bounded by its global ceiling (1 × `dailySendBudget` of extra mail); real owners are then refused until
+      the UTC day ends, as they would be without tickets. Staff revocation and the 5-live-tickets-per-address cap limit
+      the stock; batch 9's `email_owner_pool` alert shows it.
+    - **Final round (to confirm), superseding the owner-pool size and the per-address-only counts above:**
+      - Owner challenges and ticket mails are counted **per exact address (10 challenges, 3 mails a day) and per
+        mailbox (30 challenges, 9 mails a day)**, unlock-grant starts included in the mailbox's 30. The `+tag`s of one
+        inbox share a bounded allowance: a `+tag` holder (on a domain without sub-addressing, a different person) can't
+        use up the victim's per-address allowance and takes at most a third of the mailbox's.
+      - The **owner pool is 30% of `dailySendBudget`**, beside it: all mail together ≤ 1.3 × the budget. A fresh ticket
+        (< 7 days) draws on it only below half of it and within **20% of it per app**; aged tickets and grants have no
+        per-app cap (bounded by the per-address and per-mailbox limits and the pool). Owner mail the owner pool refuses
+        **falls back to the app's general share**, if any is left, instead of failing.
+      - **The mailbox's own address is never blocked by the mailbox totals (to confirm):** the exact untagged address
+        (the address equal to its mailbox) and unlock grants count toward the mailbox's 30 owner challenges and 9 ticket
+        mails but are never refused by them, only by their own per-address limits (10 and 3) and the grant rules; tagged
+        addresses keep both limits. So on a domain where `+` isn't sub-addressing, other people's `+tag` addresses can
+        fill the mailbox totals without blocking the bare address's owner.
+      - **Residuals, to confirm:** (1) a stock of ≥ 7-day-old sock-puppet tickets (real verified logins at addresses the
+        attacker controls, 3 mails a day each, 9 per mailbox) can use up the owner pool for a day, at most 0.3 × the
+        budget of extra mail; real owners then fall back to their app's general share. (2) Holders of 3 `+tag` addresses
+        of one inbox (only where the domain gives `+tag`s to other people) can use the mailbox's 9 ticket mails and 30
+        owner challenges for every other `+tag`; the bare address keeps its own 3 and 10. (3) Fresh
+        tickets of one app take at most 20% of the pool, so five attacker-held apps can fill the fresh half.
+
+### D199. HTTP, data and chain readings of the issuer
+- Date 2026-11-02 · Status: to confirm (built) · Source: build of the spec's "Endpoints", "The four cases",
+  "Privacy and what is stored", "Deliverability" and "Issuer configuration"
+- Decision:
+  - CORS per route: `start`, `resend`, `verify` for `authOrigin`; `google-match` for `vaultOrigin` (the spec says
+    "authOrigin only" but also that the vault sends google-match); a browser route without that exact `Origin` is
+    403, and needs `Content-Type: application/json`. JWKS and discovery are `GET` with `*`. Every response `no-store`.
+  - The issuer reads the API's D1 read only (binding `APP_DB`: `apps`, `plans`); `apps.login_methods` is expected
+    comma-separated (`'google'`, `'google,email'`), and until the API's batch 6 migration adds it, email is off for
+    every app. `email_hints` (issuer D1) holds `(scope_id, email_sub, google_sub, updated_at_ms)`, written at every
+    google-match with a Google-verified address; `verify` (purpose `session`) reads at most 4 hints and answers
+    `googleWallet: true` when a hinted Google identity has the wallet in case B, with a `linkTicket` only when the
+    contract would accept the join. Tickets live in the `EmailChallenge` namespace (`t:` + sha256 of the ticket),
+    single use for any google-match that presents them.
+  - Before minting any link token (`auto_link`, `link_new`, `link_account`, `link_change`) the issuer reads
+    `get_config().unrecorded_wallets` fresh: while it is true (D135) google-match answers `linkable: false` and
+    `verify` `409 links_unavailable`.
+  - google-match answers `{decision, googleHosted, linkable, emailToken?, linkImmediate?, challenge?}`; `decision` is
+    `none`, `linked`, `pending`, `both_wallets`, `unlinked`, `case_a` or `case_b`, judged exactly as the contract's
+    `auto_link` (`linkable` false when the account is full, already has the joiner's provider, or the joiner is
+    linked elsewhere: the popup then offers only "Sign in with {the other method}").
+  - Client proofs: `sub` = `hana-client-proof` (never an `e1.` sub); Access and the staff allowlist come from
+    `emailIssuer.access` (its own Access application on that path, D88's second check); every proof is a row in
+    `email_admin_audit` and `email_issuance`.
+  - Suppressions are fed by SendGrid's **signed** Event Webhook (`POST /v1/email/webhooks/sendgrid`, ECDSA P-256 over
+    timestamp ‖ body, ≤ 10 min old): hard bounces and spam reports, stored as `email_key` = HMAC(K_rl, the exact
+    normalized address, `+tag` included), the spec's definition. Not the mailbox key: on a domain where `+` isn't
+    sub-addressing, `victim+x@domain` is someone else's mailbox, and making it bounce must not suppress `victim@domain`.
+  - A chain or Google outage after a correct code (verify of `session` reading hints, or `auto_link`) answers 502 and
+    the code is spent: the user starts again (never a guessed `googleWallet: false`, which could make a second wallet).
+- Why: each closes a gap the spec left, on the side that keeps a matched person to one wallet and addresses off logs
+  and storage.
+- Open for batch 6: how `{apiUrl}/v1/email/*` reaches this Worker. On sandbox-dev (`*.workers.dev`) the API Worker
+  would forward it through a service binding, so request bodies (addresses and codes) would pass through the API
+  Worker's memory; a route on a Hana zone in production avoids that.
+- **Amended after the independent reviews (2026-11-02; to confirm):**
+  - **Staff routes (M2):** every `admin/*` route needs `Content-Type: application/json` and refuses any `Origin`
+    header (no cross-site simple request can reach them), takes a support reference `ticket` (1–64 characters) kept in
+    the audit row, and writes the audit row **before** acting. Unlocks and unsuppressions are capped per mailbox at 1 a
+    day and 3 in any 30 days. The Access application's session cookie is to be set to SameSite=Strict (operations).
+  - **Client proofs (tokens review L6):** minted only for a scope `get_scope` returns now (no cache), with
+    `actionNonce` equal to its current `action_nonce` and at least one active app with email on.
+  - **Suppressions (M3):** `admin/unsuppress {email, ticket}` (capped and audited like unlock; SendGrid's own list is
+    cleaned by hand, runbook). The webhook counts only events of the issuer's own categories (`hana-id-code`,
+    `hana-id-link_notice`). A bounce lapses after 30 days; a complaint lasts until a staff unsuppress. Suppressions are
+    keyed by K_sup = HMAC(K_sub, "hana-id/suppression-key/v1"), so rotating K_rl or K_code never drops them (K_sub is
+    never rotated). `email_complaint_rate` is logged when the complaints of 24 h pass 5 (M4).
+  - **Webhook (L5):** the timestamp and signature shape are checked before the body is read, the verification key is
+    imported once per isolate, and the route is limited per IP (120 per 10 min).
+  - **Access (L6):** a failed certs fetch or an unknown kid is negatively cached for 30 s.
+  - **Per-purpose mail (tokens review M1):** each purpose has its own subject and wording (`session`: sign in;
+    `link_new`: add this email; `link_account`: allow another sign-in method to open the wallet this email opens in X;
+    `link_change`: remove or cancel a sign-in method; `auto_link`: link your Google sign-in to the wallet this email
+    opens). The spec's "Phishing" wording ("add this email to an existing wallet" for every link purpose) was wrong for
+    `link_account`, `link_change` and `auto_link`; the spec is history and is not edited.
+  - **Case B on the server (tokens review L1):** when `verify` finds that a hinted Google identity has the wallet
+    (case B), it returns no `idToken` (`{googleWallet: true, linkTicket?, deviceTicket}`), so an email login can't open a
+    second wallet even if the popup misbehaves. Hints are written for every Google-verified address (D119, as the user
+    decided): a Google-hosted case B links at once, any other only after 24 h (mode 0), with a link notice to the
+    address. (A first version of this fix wrote hints only for Google-hosted addresses; it was reverted because it
+    overrode D119.)
+  - **Residual risk, to confirm (tokens review L1, scan of the D119 revert):** for a non-Google-hosted address, Google's
+    word that an account has the address says nothing about who reads the mailbox today. A stale Google account G still
+    holding an old address (a former employee's, a recycled domain's) can steer the address's new owner E, at E's email
+    login, to G's wallet in a scope: E gets no session of its own there (case B withholds `idToken`) and is offered the
+    link. Bounds:
+    - **180 days:** a non-hosted hint counts only while G logged in with that address within the last 180 days
+      (`email_hints.updated_at_ms`, renewed at every such Google login); older non-hosted hints are ignored and pruned
+      (the address's own at each `verify`, up to 50 others at each hint write). Hosted hints don't lapse.
+    - **24 h and notices:** a non-hosted case B joins only after 24 h (mode 0), and the address gets a link notice.
+    - **A cancel frees E:** while the join is pending, a cancel by G's wallet or by E itself (`cancel_link` with a
+      `link_change` "cancel" code) removes it, and E's next email login gets its own wallet.
+  - **The alternative, for the user to choose (proposed by the scan):** for a non-hosted address, give E its own
+    session in case B and make the link an option the popup offers, at the cost of D122's "no second wallet" for those
+    addresses (a person whose old Google account really has the address would then hold two wallets in that scope until
+    they link). The code does the stricter D119/D122 reading with the 180-day bound.
+  - **Link tickets (tokens review L2):** a `linkTicket` is bound to the app, the address's `sub` **and** the hinted Google
+    identities found in case B; google-match accepts it only for one of those (binding the relayId is left for batch 8).
+  - **Retention (independent review L3):** SendGrid's Email Activity keeps each message's recipient and events (3 days,
+    longer only with the paid Email Activity History add-on, per SendGrid's docs at the time of writing; check at setup)
+    and Hana can't shorten it: "the minimum the plan allows" means not buying the add-on. The issuer's own logs and
+    storage hold no address. `email_issuance` pruning (24 months, D90) is a batch C13 follow-up. **Corrected (abuse
+    re-check):** SendGrid's suppression lists (bounces, blocks, spam reports) keep the address **until it is removed**,
+    whatever the Email Activity retention; the runbook's unsuppress step removes it there.
+  - **Amended after the abuse re-check (2026-11-02; to confirm):**
+    - **Staff mail to the address (M3):** `admin/unlock` mails the unlock link; `admin/unsuppress` mails a one-time
+      confirmation (`{authOrigin}/email/confirm#uc1.…`, 24 h) and the suppression is removed only by
+      `POST /v1/email/confirm {token}` from `authOrigin` (IP-limited like `resend`), so only the mailbox's holder can
+      undo a suppression. Both mails are categories `hana-id-unlock` and `hana-id-confirm` (the webhook counts them),
+      from the owner pool. Staff see `{mailed}` and never a token. `admin/revoke-tickets` is new (D198).
+    - **The spec's "Phishing" line (spec line 319: "the link purposes use different wording ('add this email to an
+      existing wallet')")** is superseded by the per-purpose texts above; the spec is history and stays as written.
+    - **Access negative cache (L3):** a failed certs fetch or an unknown kid is cached for 30 s, so a burst of forged
+      kids can't make the Worker refetch the certs; a real key rotation is picked up at most 30 s late.
+    - **Webhook limit (L4):** 120 posts per 10 min per IP is a guess at SendGrid's batching; watch `limit` lines for
+      `ip:webhook:10m` on sandbox-dev and raise it if SendGrid's real traffic reaches it (a refused post is retried by
+      SendGrid).
 
 ## Batch C build, step C2 (`packages/oidc`), 2026-11-02
 
@@ -2593,6 +2957,8 @@ uses the KMS signer yet. None changes a derivation path or an address.
 | Identity spec: KMS signer `{kind: "aws-kms", awsRegion, keys: {active, standby, next?, previous?}}` (kids) | Each key `{kid, arn}` (region from the ARN, the standby in another region), a `credentials` block naming the IAM user; only the active ARN reaches the Worker (D215) | `packages/env/src/identity.ts` |
 | Identity spec: the signer's IAM user may `kms:Sign` on the identity key ARNs | On the active key's ARN only (both during a switch), so the standby stays clean (D219) | `docs/operations.md` "Identity token keys on AWS KMS" |
 | `create_session` opens a session for anyone holding the token; after a front-run `create_session` the key holder derives with counter `used + 1` | A bare `create_session` needs the session key's proof of possession bound to its parameters; a session meant to carry a link is revoked and restarted, never derived plainly (D137) | `docs/contract-interface.md` "Sessions and CKD" |
+| Email spec: the testnet signing keys (primary and standby) both Worker secrets | The standby is published and posted on chain but kept off the Worker (D196) | `docs/operations.md` "Email issuer" |
+| Email spec: case A's code started with `start` (purpose `auto_link`) and google-match called again with `link: true` | google-match prepares the `auto_link` challenge with Google's verified address; the popup sends its first code with `resend` (D195) | `docs/api.md` "Email issuer" |
 
 ## Proposed, not yet confirmed
 
@@ -2613,7 +2979,8 @@ Still open from `docs/email-login-spec.md`: the user-mail provider. D194 names S
 colleague agrees; whether the watchdog's alert email and the admin Worker's notices move from Resend (D87) too is
 decided separately. The contract readings
 D130 and D131, batch 2's D154 and D155, and the `packages/email` readings D156–D159 are confirmed (2026-11-02).
-The watchdog's D190, D191 and D193 (batch 5) are confirmed (2026-11-02); D192 is superseded by D200.
+The watchdog's D190, D191 and D193 (batch 5) are confirmed (2026-11-02); D192 is superseded by D200. The email
+issuer's D195–D199 (batch 4) wait for the user's confirmation.
 To confirm from batch C step C2 (`packages/oidc`): D201 (the new claims typed on request, ignored by the API), D202
 (the Access JWT check and its cert cache) and D203 (the package's logging hook, Google's fetch limits).
 

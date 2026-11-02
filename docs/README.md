@@ -22,6 +22,7 @@ Last verified: 2026-11-02 against `develop` @ 1c6a124 (branch `docs/consistency-
 | `mainnet-readiness.md` | Everything that must be true before mainnet: each item's status, owner and source, grouped (open decisions, keys, governance, infrastructure, monitoring, reviews, builds, address freeze, legal), the top blockers, and inconsistencies found between docs |
 | `../envs/README.md`, `../apps/api/README.md`, `../apps/smoke/README.md`, `../apps/e2e/README.md`, `../apps/demo/README.md` | Per-package quick starts (`apps/demo`: the hosted testnet demo for colleagues) |
 | `../packages/{core,web,react,sodax}/README.md` | The partner-facing READMEs shipped in the SDK tarballs (install, minimal usage) |
+| `../apps/email-issuer/README.md` | The email issuer Worker: what it holds, its endpoints and limits in short, tests, `gen`, the init script and local dev |
 | `../packages/email/README.md` | Email normalization v1, the `e1.` `sub`, the Google-hosted rule, the disposable-domain list: API, the frozen rules, the `tr46` choice, the list's pinned source and how to update it |
 
 ## Specs (history)

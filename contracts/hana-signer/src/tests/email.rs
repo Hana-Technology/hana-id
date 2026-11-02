@@ -5,6 +5,7 @@
 //! Tokens: `email_fixture.json` (JS-signed, `scripts/gen-email-fixtures.mjs`) for interoperability and layouts;
 //! everything else is minted here with the deterministic test keys of `test_rsa.rs`.
 
+mod issuer_tokens;
 mod link_counter;
 
 use near_sdk::serde_json::{self, json, Value};

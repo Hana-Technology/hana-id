@@ -1537,7 +1537,8 @@ The independent watchdog of the governance batch (`docs/governance-spec.md` "Wat
 doesn't publish (and deletes the updater keys if the updater proposed it), pauses only when such a key is **active**,
 confirms keys that match, alerts on every governance change, and serves a read-only status for the admin portal.
 What it checks and its status API: `apps/watchdog/README.md`. **Deployed on sandbox-dev (2026-10-30; redeployed 2026-11-02
-with batch 5's email rules and link alarms, version b156e1b5, no new migration: on the v2 contract it reads "no email
+with batch 5's email rules and link alarms, version b156e1b5, then with identity token step 8's identity JWKS
+checks, version 67fe97cb (first run: 2 keys published, all pinned, discovery ok), no new migration: on the v2 contract it reads "no email
 issuer" and skips the link check)**:
 `https://hana-id-watchdog-sandbox-dev.tingtc.workers.dev`, cron `*/5 * * * *`, on the API's Cloudflare account
 (D125), D1 `hana-id-watchdog-sandbox-dev`. First deployed with no channel and no heartbeat; first run

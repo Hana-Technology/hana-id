@@ -163,6 +163,11 @@ export class Store {
     await this.db.prepare('UPDATE runs SET finished_at = ?2, outcome = ?3, first_run = ?4, checks = ?5 WHERE id = ?1').bind(id, at, outcome, firstRun ? 1 : 0, JSON.stringify(checks)).run();
   }
 
+  /** The advisory checks' outcome, written after the run was recorded and its lock released. */
+  async updateRun(id: number, outcome: 'ok' | 'degraded' | 'error', checks: CheckResult[]): Promise<void> {
+    await this.db.prepare('UPDATE runs SET outcome = ?2, checks = ?3 WHERE id = ?1').bind(id, outcome, JSON.stringify(checks)).run();
+  }
+
   async lastRun(): Promise<RunRow | null> {
     const row = await this.db.prepare('SELECT * FROM runs WHERE finished_at IS NOT NULL ORDER BY id DESC LIMIT 1').first<RawRun>();
     return row ? runRow(row) : null;
@@ -226,12 +231,21 @@ export class Store {
     await this.db.prepare('UPDATE alerts SET details = ?2 WHERE id = ?1').bind(id, JSON.stringify(details)).run();
   }
 
-  /** Resolves open condition alerts of `kinds` whose key isn't in `keep`. */
-  async resolveConditions(kinds: AlertKind[], keep: Set<string>, at: number): Promise<number> {
+  /**
+   * Resolves open condition alerts of the evaluated kinds whose key isn't in `keep`. A kind evaluated only in part
+   * (`string[]`: key prefixes, e.g. the email half of `forged_active_key` in a run whose Google half was skipped)
+   * resolves only keys with one of those prefixes.
+   */
+  async resolveConditions(evaluated: Map<AlertKind, 'all' | string[]>, keep: Set<string>, at: number): Promise<number> {
+    const kinds = [...evaluated.keys()];
     if (kinds.length === 0) return 0;
     const placeholders = kinds.map((_, i) => `?${i + 1}`).join(', ');
-    const open = await this.db.prepare(`SELECT id, key FROM alerts WHERE resolved_at IS NULL AND kind IN (${placeholders})`).bind(...kinds).all<{ id: number; key: string }>();
-    const ids = open.results.filter((r) => !keep.has(r.key)).map((r) => r.id);
+    const open = await this.db.prepare(`SELECT id, key, kind FROM alerts WHERE resolved_at IS NULL AND kind IN (${placeholders})`).bind(...kinds).all<{ id: number; key: string; kind: AlertKind }>();
+    const inScope = (r: { key: string; kind: AlertKind }) => {
+      const scope = evaluated.get(r.kind);
+      return scope === 'all' || (scope ?? []).some((p) => r.key.startsWith(p));
+    };
+    const ids = open.results.filter((r) => !keep.has(r.key) && inScope(r)).map((r) => r.id);
     if (ids.length) await this.db.batch(ids.map((id) => this.db.prepare('UPDATE alerts SET resolved_at = ?2 WHERE id = ?1').bind(id, at)));
     return ids.length;
   }

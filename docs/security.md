@@ -2,8 +2,9 @@
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
 known open issues. Last verified against code: 2026-11-02 for the email issuer (branch `feat/email-login-4`: its keys and
-secrets rows and "Email issuer" invariants, D195–D199) and for the hourly link counter (branch `feat/link-cap`, D200, in
-the email-login invariants); 2026-10-30 for the watchdog's retired-key rule (branch
+secrets rows and "Email issuer" invariants, D195–D199), for the hourly link counter (branch `feat/link-cap`, D200, in
+the email-login invariants) and the watchdog's email issuer rules, the link alarms and the `unrecorded_wallets` alert
+(branch `feat/email-login-5`, D190–D193, D200); 2026-10-30 for the watchdog's retired-key rule (branch
 `fix/watchdog-retired-key-race`, D153), for the partner identity token (branch
 `feat/identity-token-2`: the review fixes D176–D179 in the identity rows, invariants and open issue (l); branch
 `feat/identity-token-1`: the partner-backend party, its compromise rows, the three identity secrets), for the relayer pool rows (branch `feat/playbook-gaps`: the watchdog's relayer funds
@@ -134,7 +135,13 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
     tokens are JWS JSON with ≤ 3 signatures, every one valid, from ≥ `required` distinct signers (1-of-1 `hana` at
     launch); the signer list and `required` change only by a governed upgrade, with a 10-minute overlap. Google and
     every other issuer stay compact-only. Trust: whoever makes the `hana` key sign can mint any email token, so reach
-    every email wallet and every account linked to one (`docs/email-login-spec.md` "Trust statement").
+    every email wallet and every account linked to one (`docs/email-login-spec.md` "Trust statement"). Taking over a
+    Google wallet with no email member needs a new link (D119); the contract counts new links per scope and in all per
+    UTC hour and flags a scope (or the total) past its alarm threshold (D200; default 50 / 500, raising waits
+    `governance_delay_ms`), and the watchdog pages `link_threshold_reached`. These are alarm levels: nothing is
+    refused, the links go through, and the council decides whether to pause. With the email key alone a thief can also
+    log into email-rooted wallets, and into Google wallets that already have an email member, without making any link:
+    the counter can't see that, and the only defence is the key's custody (KMS, a second signer, D121).
   - Accounts: a member opens its root's path; an identity in no account opens the v2 path unchanged. Automatic links
     only inside a login and bound both ways (D133): the issuer's `auto_link` nonce binds the token to that session
     and to one join (session preimage hash, session identity, join, joiner, target root, target epoch, mode), and the
@@ -160,7 +167,7 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
     can't attach an email identity during a plain Google login; a session it meant to link is revoked and restarted,
     never derived with the plain payload (D137). The issuer mints the nonce with the join it decided; the API
     prechecks both and relays the split path's proof of possession; the watchdog alerts critical if
-    `unrecorded_wallets` is ever true outside dev envs (D139).
+    `unrecorded_wallets` is ever true outside dev envs (D139; built, D193).
   - **Link volume counter (D200).** With a stolen email signing key alone (1-of-1 at launch) a thief can log into
     every email-rooted wallet, log into every Google-rooted wallet that already has an email member, and link their own Google account into victims' email
     wallets (case A, one Google account per victim and scope). Since D133 a link also needs the session key's signature,
@@ -710,6 +717,32 @@ plan (D33; built on branch `feat/governance`, not deployed), specified in `docs/
   and `set_issuer` (no pending state to see); and every on-chain string in an alert (kid, provider, proposer) goes
   through an allow-list or an escaped form, with header-safe titles and Slack-escaped text, so a hostile kid can't
   break a page, inject headers or `<!channel>`.
+- Watchdog and the email issuer (email login, `docs/email-login-spec.md` "Watchdog", D190–D193; branch
+  `feat/email-login-5`, not deployed): self-issued keys have no outside JWKS, so the watchdog trusts only the pins in
+  its own manifest (`watchdog.pinnedIssuerKeys.email`, set on its own account: a pin change is the operator's
+  redeploy, outside Hana's main account). A pending email key whose RFC 7638 thumbprint isn't pinned for its signer
+  (or whose kid isn't that thumbprint) is cancelled; an active one pauses and deletes every updater key, also at the
+  first run; it never confirms an email key (the contract refuses too). No pins means nothing is pinned, never "not
+  checked" (D190); unreadable pins page `pins_invalid`, and unhashable on-chain key material fails closed.
+  `get_issuer("email")` / `get_self_issued("email")` against the pins (D191): a **weaker** policy pauses with a
+  critical alert: a lower `required`, an unpinned signer, active keys with no policy, or an overlap with the previous
+  policy longer than the contract's 10 minutes plus one run (a `migrate` setting a long overlap to a weaker previous
+  policy would otherwise keep, say, 1-of-1 tokens valid indefinitely; `get_self_issued` shows only the overlap's end,
+  not the previous policy, so its length is what the watchdog can judge). An email issuer nobody pinned is critical
+  without a pause. Differences a planned change passes through and that aren't weaker (a pinned signer not in the
+  policy yet, the `set_issuer` → `mark_self_issued` gap, a higher `required` on chain, a normal-length overlap) are a
+  warning, and every overlap is reported. So a compromised owner DAO can't install its own email key, and an upgrade
+  weakening the policy is paused on as it executes (it was already public and alerted for `governance_delay_ms`).
+  Hana's published email JWKS is compared with the pins as a warning only (Hana controls it), and is read only after
+  every protective step, the alert delivery, the heartbeat, the run record and the lock release, with its body
+  capped: Hana's API can't stall the watchdog's cancel or pause, or hold its lock (D86). Every third-party answer
+  the watchdog parses (RPC, both JWKS) is size-capped. The **use of Hana's real key** by a compromised issuer isn't
+  prevented on chain at 1-of-1. Takeovers by linking are counted there (D200): the watchdog reads `get_link_stats()`
+  with the chain each run (current and previous hour, so nothing falls between runs) and pages
+  `link_threshold_reached`; half the total threshold warns, a threshold raise is a critical governance change. These
+  are alarms, not limits: the links went through. Logins into email-rooted wallets, or Google wallets that already
+  have an email member, need no link and aren't seen; custody is their defence (D121). No third party is involved (the FastNear indexer scan of D192 is gone). A v2 contract
+  reads as "no email issuer", and as "no link stats".
 - Monitoring (D83): every watchdog check, action and alert surfaces in the admin portal's "Security & monitoring"
   view (a standing rule for future checks); the watchdog sends its own alerts, so a compromised Hana Cloudflare
   account can't silence them.

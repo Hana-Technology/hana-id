@@ -66,8 +66,8 @@ describe('ckdSources', () => {
   });
 
   it('adds every --rpc and skips well-known endpoints of providers already present', () => {
-    const urls = ckdSources(base(), ['https://near-testnet.drpc.org/?key=secret']);
-    expect(urls).toEqual([URLS[0], URLS[1], 'https://near-testnet.drpc.org/?key=secret']);
+    const urls = ckdSources(base(), ['https://near-testnet.drpc.org/?key=rpc-key-7f3a9c']);
+    expect(urls).toEqual([URLS[0], URLS[1], 'https://near-testnet.drpc.org/?key=rpc-key-7f3a9c']);
     const noFallback = { ...base(), rpcFallback: undefined };
     expect(ckdSources(noFallback).map(providerOf)).toEqual(['https://fastnear.com', 'https://near.org', 'https://drpc.org']);
   });
@@ -140,14 +140,14 @@ describe('fetch-ckd-key', () => {
 
   it('records the block and hosts beside a key it already has, and prints them (hosts only, never URLs)', async () => {
     const h = harness(base());
-    await fetchCkdKey(['sandbox-dev', '--rpc', 'https://near-testnet.drpc.org/?key=secret'], h.deps);
+    await fetchCkdKey(['sandbox-dev', '--rpc', 'https://near-testnet.drpc.org/?key=rpc-key-7f3a9c'], h.deps);
     expect(h.out.join('\n')).toContain(`All 3 agree at final block 1000 ${HASH}: ${KEY}`);
-    expect(h.out.join('\n')).not.toContain('key=secret');
+    expect(h.out.join('\n')).not.toContain('rpc-key-7f3a9c');
     expect(h.written).toHaveLength(1);
     const pinned = manifestSchema.parse(JSON.parse(h.written[0]!));
     expect(pinned.ckdNetworkKey).toBe(KEY);
     expect(pinned.ckdNetworkKeySource).toEqual({ blockHeight: 1000, blockHash: HASH, rpcs: ['test.rpc.fastnear.com', 'rpc.testnet.near.org', 'near-testnet.drpc.org'] });
-    expect(h.written[0]).not.toContain('key=secret');
+    expect(h.written[0]).not.toContain('rpc-key-7f3a9c');
   });
 
   it('writes a changed key with its source and says every pinned client must update', async () => {

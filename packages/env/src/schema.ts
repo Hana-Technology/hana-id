@@ -25,6 +25,38 @@ const nearThresholds = z
 
 const workerName = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u, 'A Worker name is 1-63 lowercase letters, digits and inner hyphens');
 
+/** Signers in a self-issued issuer's policy, at most, and its keys (all signers together): the contract's limits. */
+export const MAX_PINNED_SIGNERS = 3;
+export const MAX_PINNED_KEYS = 8;
+
+/** An RSA key's RFC 7638 JWK thumbprint (unpadded base64url SHA-256): the email issuer's `kid` for that key. */
+const keyThumbprint = z.string().regex(/^[A-Za-z0-9_-]{43}$/u, 'A pinned key is its RFC 7638 JWK thumbprint (43 base64url characters)');
+/** A signer id as the contract accepts it (`valid_provider`). */
+const signerId = z.string().regex(/^[a-z0-9_-]{1,32}$/u, 'A signer id is 1-32 lowercase letters, digits, _ or -');
+
+/**
+ * The signer policy the watchdog expects of a self-issued issuer (`docs/email-login-spec.md` "Watchdog"): every
+ * signer's keys by thumbprint, and the number of distinct signers a token needs. 1-of-1 (`hana`) at launch; Level 1
+ * adds `cosign` before its upgrade executes.
+ */
+const signerPolicyPins = z
+  .object({
+    required: z.number().int().min(1).max(MAX_PINNED_SIGNERS),
+    signers: z.record(signerId, z.array(keyThumbprint).min(1).max(MAX_PINNED_KEYS)),
+    /** Where Hana publishes the issuer's JWKS (compared with the pins, warning only). Default `{apiUrl}/v1/email/jwks.json`. */
+    jwksUrl: z.string().optional(),
+  })
+  .strict()
+  .superRefine((p, ctx) => {
+    const ids = Object.keys(p.signers);
+    if (ids.length < 1 || ids.length > MAX_PINNED_SIGNERS) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['signers'], message: `1 to ${MAX_PINNED_SIGNERS} signers` });
+    if (p.required > ids.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['required'], message: 'required must not exceed the number of signers' });
+    const all = Object.values(p.signers).flat();
+    if (all.length > MAX_PINNED_KEYS) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['signers'], message: `at most ${MAX_PINNED_KEYS} pinned keys in all` });
+    // One key is one signer: the contract refuses a modulus registered twice, so a thumbprint pinned twice is a typo.
+    if (new Set(all).size !== all.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['signers'], message: 'A key is pinned once, for one signer' });
+  });
+
 const watchdogSchema = z.object({
   /**
    * The watchdog's own NEAR account: one of the contract's watchdogs (`add_watchdog`). Its Worker secret
@@ -56,6 +88,14 @@ const watchdogSchema = z.object({
     .object({ balance: nearThresholds.optional(), sessionAllowance: nearThresholds.optional(), ownerAllowance: nearThresholds.optional() })
     .strict()
     .optional(),
+  /**
+   * Pinned keys of self-issued issuers (`docs/email-login-spec.md` "Watchdog"): `email: {required, signers: {hana:
+   * [thumbprint, …]}}`. Set on the watchdog's own account: a pin change is a watchdog redeploy by the operator, outside
+   * Hana's main account. Absent `email` = nothing pinned: the watchdog then treats every email key as unpinned
+   * (cancels pending ones, pauses on an active one) and alerts on any email issuer on chain. Pin before the owner
+   * posts the first email key (`docs/email-login-build-plan.md` batch 6).
+   */
+  pinnedIssuerKeys: z.object({ email: signerPolicyPins.optional() }).strict().optional(),
 });
 
 /**
@@ -64,7 +104,7 @@ const watchdogSchema = z.object({
  * whose account the contract doesn't know can't cancel or pause anything.
  */
 function watchdogRules(
-  m: { signer: string; relayer: string; owner: string; mpc: string; watchdogs?: string[] | undefined; cloudflare: { workerName: string } },
+  m: { name: string; signer: string; relayer: string; owner: string; mpc: string; watchdogs?: string[] | undefined; cloudflare: { workerName: string } },
   w: z.infer<typeof watchdogSchema>,
   ctx: z.RefinementCtx,
 ): void {
@@ -78,6 +118,9 @@ function watchdogRules(
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'cloudflare', 'workerName'], message: "watchdog.cloudflare.workerName must differ from the API's Worker name" });
   }
   if (new Set(w.alertEmails).size !== w.alertEmails.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'alertEmails'], message: 'Duplicate alert email' });
+  const jwksUrl = w.pinnedIssuerKeys?.email?.jwksUrl;
+  const problem = jwksUrl === undefined ? null : endpointUrlProblem(jwksUrl, m.name);
+  if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'pinnedIssuerKeys', 'email', 'jwksUrl'], message: `watchdog.pinnedIssuerKeys.email.jwksUrl ${problem}` });
 }
 
 /** One environment's accounts and endpoints. Every account name the code uses comes from here. */

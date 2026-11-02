@@ -20,6 +20,17 @@ export const COMPATIBILITY_DATE = '2026-10-01';
 /** Every 5 min (W in the spec's delay formula). */
 export const CRON = '*/5 * * * *';
 
+/**
+ * The email pins (`watchdog.pinnedIssuerKeys.email`) as `EMAIL_PINS` (JSON `{required, signers}`) and Hana's email
+ * JWKS URL (`jwksUrl`, else `{apiUrl}/v1/email/jwks.json`). No pins: neither var, and the Worker pins nothing.
+ */
+export function emailVars(m: Manifest): Record<string, string> {
+  const pins = m.watchdog?.pinnedIssuerKeys?.email;
+  if (!pins) return {};
+  const jwksUrl = pins.jwksUrl ?? (m.apiUrl ? `${m.apiUrl.replace(/\/+$/u, '')}/v1/email/jwks.json` : undefined);
+  return { EMAIL_PINS: JSON.stringify({ required: pins.required, signers: pins.signers }), ...(jwksUrl ? { EMAIL_JWKS_URL: jwksUrl } : {}) };
+}
+
 export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknown> {
   const w = m.watchdog;
   if (!w) throw new Error(`envs/${m.name}.json has no watchdog block`);
@@ -51,6 +62,7 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
       ALERT_EMAILS: w.alertEmails.join(','),
       ALERT_FROM: w.alertFrom,
       DIGEST_HOUR_UTC: String(w.digestHourUtc ?? 0),
+      ...emailVars(m),
     },
     d1_databases: [{ binding: 'DB', database_name: w.cloudflare.d1Name, database_id: d1Id, migrations_dir: 'migrations' }],
     triggers: { crons: [CRON] },

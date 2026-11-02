@@ -1,6 +1,6 @@
 # Email login build plan (batches)
 
-**Status: batches 1–3 done (merged into `develop`); batch 4 (`apps/email-issuer`) done on `feat/email-login-4`, in review, not merged; batch 5 (watchdog) on `feat/email-login-5`; none deployed; batches 6–10 not done.** Splits `docs/email-login-spec.md` "Build order"
+**Status: batches 1–3 and 5 done and merged into `develop`; batch 4 (`apps/email-issuer`) done on `feat/email-login-4`, in review, not merged; none deployed; batches 6–10 not done.** Splits `docs/email-login-spec.md` "Build order"
 (approved 2026-10-30; D4, D119, D121–D123, D25 and D96 amended) into reviewable batches. The spec stays the source of
 truth for *what* to build; this file says *in which order*, *what each batch ships* and *what users see after it*.
 Like a spec it is history once the work merges: the current state lives in the reference docs (`docs/README.md`).
@@ -430,3 +430,76 @@ Branch `feat/email-login-4`, not merged, nothing deployed, no secret uploaded, n
 - **Lockfile.** Adding `aws4fetch` also changed peer-resolution strings of already-locked `@walletconnect` packages
   (`apps/e2e`), where it is an optional peer; no version changed.
 - **User-visible.** Nothing.
+
+## Batch 5 result
+
+Branch `feat/email-login-5`, not deployed (no transactions sent).
+
+- **Code.** `apps/watchdog`: `src/pins.ts` (pin parsing, the per-key verdict by RFC 7638 thumbprint, kid and signer,
+  the signer-policy findings), `src/links.ts` (the link-event source: FastNear's transactions API, `EVENT_JSON` logs
+  of receipts the signer executed that succeeded), `run.ts` (pending and active email keys, the policy check and its
+  pause, Hana's JWKS, links and `unrecorded_wallets`; a shared `forgedActive` for Google and email; partial
+  evaluation so an email-only judgement never resolves a Google alert), `near.ts` (reads `get_issuer` /
+  `get_issuer_keys` for `email` and `get_self_issued("email")`; a missing view is "no email issuer"), `diff.ts`
+  (`email_issuer`, `email_issuer_keys`, `email_signer_policy`, `unrecorded_wallets`), `status.ts` (`email`,
+  `link_volume`), migration `0002_link_events.sql`, `gen-wrangler` (`EMAIL_PINS`, `EMAIL_JWKS_URL`,
+  `LINK_INDEXER_URL`, `LINK_VOLUME`). `packages/jwks`: `rsaThumbprint`. `packages/env`: `watchdog.pinnedIssuerKeys.email`
+  and `watchdog.linkVolume`. `envs/sandbox-dev.json`: `linkVolume.indexerUrl` only; no pins (batch 4 creates the key).
+- **Registry.** Checks `signer_policy`, `email_jwks`, `links`. Alert kinds: critical `signer_policy_mismatch` (pause
+  when weaker), critical `unrecorded_wallets` (alert only), warning `email_jwks_mismatch`, `link_volume_high`,
+  `link_events_unavailable`, info `self_issued_key_change`; `forged_key_change` and `forged_active_key` now also cover
+  email keys. Each new kind has a playbook (`signer-policy-mismatch`, `unrecorded-wallets`, `email-jwks-mismatch`,
+  `link-volume`, `self-issued-key-change`); `docs/playbooks.md` regenerated.
+- **v2 contract (sandbox-dev today).** Reads as "no email issuer" (no `get_self_issued`, `get_issuer("email")` null,
+  no `unrecorded_wallets`): no alert with or without pins, no link scan; tested in `near.test.ts` and `email.test.ts`.
+  The upgrade to v3 shows as one `governance_change` (`state_version`, `unrecorded_wallets`).
+- **Tests.** Watchdog 222 Worker tests (166 before; `email.test.ts`, `links.test.ts`, and v2/v3 reads in
+  `near.test.ts`) and 25 script tests (21 before); `packages/env` 91 (86), `packages/jwks` 8 (5). D153 and every
+  earlier rule unchanged (the existing tests pass as they were, plus a D153 run beside a live email issuer).
+- **Decisions (to confirm).** D190 (absent pins = nothing pinned; a pin is thumbprint + kid + signer; pins apply at
+  the first run; JWKS warning only), D191 (what "weaker" means and the pin order around a policy upgrade, which
+  differs from the spec's "adds `required: 2` before its upgrade executes"), D192 (link volume through an indexer,
+  detection only, provisional 20 per scope / 100 in all per hour), D193 (the `unrecorded_wallets` alert and the
+  email issuer in the governance diff).
+- **Deploy order (batch 6).** Pins in `envs/sandbox-dev.json` (the issuer's thumbprints from batch 4) → watchdog
+  `gen`, D1 migration 0002, deploy → `/status` `email.pinned` → only then the contract v3 upgrade and the email issuer
+  setup. Between `set_issuer` and `mark_self_issued` a `signer_policy_mismatch` (alert only) is expected.
+- **Docs.** `apps/watchdog/README.md`, `docs/operations.md` (alerts runbook table, "Email login: pins, link volume,
+  unrecorded wallets"), `docs/security.md`, `docs/architecture.md`, `envs/README.md`, `docs/decisions.md`.
+- **Review fixes (2026-11-02, after `origin/develop` was merged in).** H1: Hana's email JWKS is read after every
+  protective step, the first delivery and the heartbeat, guarded; every third-party body (both JWKS, RPC, indexer) is
+  size-capped (`src/http.ts`). M1: the link check runs last, guarded (a throw gives `degraded`, never `error`), skipped
+  in runs with protective actions; ids, events and bodies bounded. M2: a full page inside one block holds the cursor
+  before it and warns `link_events_unavailable:truncated`. M3: an overlap longer than the contract's 10 min + 5 min is
+  weaker (pause), any overlap is reported, and `email_signer_policy` includes it. L1 `bad_material`; L2 the indexer's
+  head clamped to the RPC's final block, future events dropped; L4 critical `pins_invalid` and reason
+  `pins_unreadable`; L5 warning `signer_policy_transition` for planned transitions; L6 `Map` counts; L7
+  `pnpm --filter @hana-id/watchdog pin`; L8 an indexer of another network refused by the schema, and
+  `pending_key_changes` stays ok when email was judged without Google's JWKS. D190–D192 amended; D191 states that it
+  overrides spec line 867.
+- **Re-review fixes.** The run is recorded and its lock released before the advisory checks (Hana's JWKS, the link
+  scan), which then resolve only their own kinds and update the run's record (a CPU kill there can't skip the next
+  run); the indexer's answers share a 1 MB budget per run; pages of 200; a block no scan can read whole is skipped
+  with a critical `link_block_unscanned` open for a week instead of stalling the scan; `unrecorded_wallets` now
+  belongs to `governance_diff`; `pin` accepts a PEM with leading text (openssl "Bag Attributes").
+- **D200 (link counter in the contract) replaces the link scan.** Everything above about the FastNear indexer,
+  `links.ts`, migration `0002_link_events.sql` (never applied, deleted), `watchdog.linkVolume`, `link_events_unavailable`,
+  `link_block_unscanned` and the advisory link phase is removed. The watchdog reads `get_link_stats()` (built on
+  `feat/link-cap`) with the chain snapshot, in the protective phase: critical `link_threshold_reached` per flagged scope
+  and for the total, keyed by window, for the current and the previous hour (no pause); warning
+  `link_volume_high` at half `total_per_hour`; warning `link_stats_unavailable` when an email issuer exists and the
+  view doesn't. A threshold raise (`link_thresholds` up, a `pending_thresholds` raise) is a critical governance change, lowering
+  a warning. Playbook `link-volume` (rewritten for the D200 alarm). The advisory phase now holds only Hana's email JWKS read. D190,
+  D191 and D193 are confirmed by the user; D192 is superseded by D200.
+- **Alarm, not cap (the user's choice, 2026-11-02).** The contract counts links and the watchdog alarms; nothing is
+  refused. The view is `{window_ms, thresholds, pending_thresholds, links_total, current, previous}` with windows
+  `{window_start_ms, total, total_threshold_reached, flagged_scopes, flagged_scopes_truncated?}`; the setter is
+  `set_link_thresholds`. The watchdog's kind is `link_threshold_reached` (critical; its text says the links went
+  through), `link_volume_high` stays at half the total threshold, unreadable stats still leave open alerts open, the
+  diff reports `link_thresholds` / `pending_thresholds` (raised critical, lowered warning), and the playbook is
+  `link-volume` (launch check; on a suspected compromise pause and rotate the email key; a threshold change only if
+  the alarm level is wrong for real traffic). With a stolen email key alone a thief can also log into email-rooted wallets, and into Google wallets that already have an email member, without making any link: the counter can't see that; the defence is the key's custody (D121).
+- **Left open.** The thresholds are provisional until sandbox-dev and staging traffic (D200), and the watchdog's
+  `get_link_stats` shape must match `feat/link-cap` when it merges (a mismatch marks only the link check). The
+  `set_link_thresholds` owner call isn't in `scripts/lib/contract.ts` `OWNER_METHODS` yet (the link-cap branch adds it).
+  The admin portal's rendering of the new checks and kinds is batch C/9 (the registry and `/status` carry them).

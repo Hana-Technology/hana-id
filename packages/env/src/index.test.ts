@@ -141,4 +141,41 @@ describe('manifestSchema: watchdog', () => {
     expect(issues(watchdog({ cloudflare: { ...watchdog().cloudflare, workerName: api } }))[0]).toContain("differ from the API's Worker name");
     expect(issues(watchdog({ alertEmails: ['a@example.com', 'a@example.com'] }))).toEqual(['Duplicate alert email']);
   });
+
+  describe('pinnedIssuerKeys.email (the email signer policy)', () => {
+    const tp = (c: string) => c.repeat(43);
+    const pins = (email: unknown) => watchdog({ pinnedIssuerKeys: { email } });
+
+    it('is optional (absent: nothing pinned) and takes 1-of-1 and 2-of-2 policies', () => {
+      expect(issues(watchdog({ pinnedIssuerKeys: {} }))).toEqual([]);
+      expect(issues(pins({ required: 1, signers: { hana: [tp('a'), tp('b')] } }))).toEqual([]);
+      expect(issues(pins({ required: 2, signers: { hana: [tp('a')], cosign: [tp('c')] }, jwksUrl: 'https://api.example.com/v1/email/jwks.json' }))).toEqual([]);
+      const m = manifestSchema.parse({ ...withWatchdog(pins({ required: 1, signers: { hana: [tp('a')] } })) });
+      expect(m.watchdog?.pinnedIssuerKeys?.email?.signers.hana).toEqual([tp('a')]);
+    });
+
+    it('pins keys by RFC 7638 thumbprint and signer ids as the contract accepts them', () => {
+      expect(issues(pins({ required: 1, signers: { hana: ['short'] } }))[0]).toContain('RFC 7638 JWK thumbprint');
+      expect(issues(pins({ required: 1, signers: { hana: [`${tp('a').slice(1)}+`] } }))[0]).toContain('RFC 7638 JWK thumbprint');
+      expect(issues(pins({ required: 1, signers: { Hana: [tp('a')] } }))[0]).toContain('signer id');
+      expect(issues(pins({ required: 1, signers: { hana: [] } })).length).toBeGreaterThan(0);
+    });
+
+    it('refuses a policy the contract could never hold', () => {
+      expect(issues(pins({ required: 1, signers: {} }))).toContain('1 to 3 signers');
+      expect(issues(pins({ required: 2, signers: { hana: [tp('a')] } }))).toEqual(['required must not exceed the number of signers']);
+      expect(issues(pins({ required: 0, signers: { hana: [tp('a')] } })).length).toBeGreaterThan(0);
+      expect(issues(pins({ required: 1, signers: { a: [tp('a')], b: [tp('b')], c: [tp('c')], d: [tp('d')] } }))).toContain('1 to 3 signers');
+      const nine = 'abcdefghi'.split('').map(tp);
+      expect(issues(pins({ required: 1, signers: { hana: nine.slice(0, 5), cosign: nine.slice(5) } }))).toEqual(['at most 8 pinned keys in all']);
+      expect(issues(pins({ required: 1, signers: { hana: [tp('a')], cosign: [tp('a')] } }))).toEqual(['A key is pinned once, for one signer']);
+      expect(issues(pins({ required: 1, signers: { hana: [tp('a'), tp('a')] } }))).toEqual(['A key is pinned once, for one signer']);
+      expect(issues(pins({ required: 1, signers: { hana: [tp('a')] }, extra: true })).length).toBeGreaterThan(0);
+    });
+
+    it('needs an https JWKS URL', () => {
+      expect(issues(pins({ required: 1, signers: { hana: [tp('a')] }, jwksUrl: 'http://api.example.com/jwks.json' }))[0]).toContain('watchdog.pinnedIssuerKeys.email.jwksUrl must be an https URL');
+    });
+  });
+
 });

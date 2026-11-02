@@ -52,7 +52,9 @@ class Net {
     });
   }
 
-  private view(name: string): unknown {
+  private view(name: string, provider: string | undefined): unknown {
+    // No email issuer (the contract's get_issuer and get_issuer_keys are per provider; get_self_issued answers null).
+    if (provider === 'email') return null;
     const kids = [...this.active.keys()].sort();
     switch (name) {
       case 'get_key_changes':
@@ -74,7 +76,8 @@ class Net {
   private rpc({ method, params }: { method: string; params: Record<string, unknown> }): object {
     if (method === 'status') return { result: { chain_id: 'testnet' } };
     if (method === 'query' && params.request_type === 'call_function') {
-      return { result: { result: [...new TextEncoder().encode(JSON.stringify(this.view(params.method_name as string)))] } };
+      const args = JSON.parse(atob(params.args_base64 as string)) as { provider?: string };
+      return { result: { result: [...new TextEncoder().encode(JSON.stringify(this.view(params.method_name as string, args.provider)))] } };
     }
     if (method === 'query' && params.request_type === 'view_access_key') return { result: { nonce: 1, block_hash: BLOCK } };
     if (method === 'query' && params.request_type === 'view_account') return { result: { amount: '1', code_hash: 'DAOcode1111111111111111111111111111111111111' } };

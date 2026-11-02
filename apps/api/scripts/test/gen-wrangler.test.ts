@@ -57,9 +57,9 @@ afterEach(() => {
 const relayerKeys = [KeyPair.fromRandom('ed25519').toString(), KeyPair.fromRandom('ed25519').toString()];
 const ownerRelayerKeys = [KeyPair.fromRandom('ed25519').toString()];
 const updaterKey = KeyPair.fromRandom('ed25519').toString();
-// sandbox-dev as deployed carries identityToken (its iss pins apiUrl); the tests add their own where they need one.
-const { identityToken: _deployedIdentity, ...withoutIdentity } = loadEnv('sandbox-dev');
-const manifest: Manifest = withoutIdentity;
+// sandbox-dev without its identity token block: these tests move apiUrl and list exact vars; the identity vars
+// have their own tests.
+const { identityToken: _identity, ...manifest } = loadEnv('sandbox-dev');
 
 function seedSecrets(root: string, env = manifest.name): void {
   const dir = join(root, '.secrets', env);
@@ -349,7 +349,7 @@ describe('the identity token', () => {
     expect(JSON.parse(vars.IDENTITY_PUBLIC_KEYS!)).toEqual([active.pub, standby.pub]);
     expect(vars.IDENTITY_ACTIVE_KID).toBe(active.pub.kid);
     expect(vars.IDENTITY_PUBLIC_KEYS).not.toContain('"d"');
-    const { identityToken: _, ...bare } = manifest;
+    const bare = manifest; // already without identityToken (top of file)
     expect(identityVars(bare as Manifest)).toEqual({});
     expect(Object.keys((wranglerConfig(bare as Manifest, LOCAL_D1_ID) as { vars: Record<string, string> }).vars).filter((k) => k.startsWith('IDENTITY_'))).toEqual([]);
   });
@@ -371,7 +371,7 @@ describe('the identity token', () => {
     expect(() => identityDevVarsLines(withIdentity(), { signingKey: other.priv })).toThrow(/doesn't match/u);
     // The standby is published but not the active key: refused as the signing key.
     expect(() => identityDevVarsLines(withIdentity(), { signingKey: standby.priv })).toThrow(/active kid/u);
-    const { identityToken: _, ...bare } = manifest;
+    const bare = manifest; // already without identityToken (top of file)
     expect(() => identityDevVarsLines(bare as Manifest, { signingKey: active.priv })).toThrow(/no identityToken/u);
     expect(() => identityDevVarsLines(withIdentity(), { signingKey: { ...active.priv, d: undefined } })).toThrow(/private JWK/u);
     expect(() => identityDevVarsLines(withIdentity(), { subKey: 'c2hvcnQ=' })).toThrow(/32 bytes/u);

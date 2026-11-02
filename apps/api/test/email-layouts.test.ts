@@ -95,9 +95,13 @@ describe('email tokens against the fixture tokens', () => {
     expect(await verifyEmailToken(testEnv(), tok.email_session_s1_cosign_only, NOW, 60_000)).toMatchObject({ ok: false, code: 'invalid_token' });
   });
 
-  it('a key the policy does not list yet is pending; no email issuer on chain is unsupported', async () => {
-    policy([{ id: 'hana', kids: [] }], 1);
+  it('a key the policy does not list is pending only while a change adds it, else stale; no email issuer on chain is unsupported', async () => {
+    const near1 = policy([{ id: 'hana', kids: [] }], 1);
+    near1.views.get_key_changes = () => [{ id: 1, provider: 'email', kid: emailFixture.email_kid, op: 'Add' }];
     expect(await verifyEmailToken(testEnv(), tok.email_session_s1, NOW, 60_000)).toMatchObject({ ok: false, code: 'issuer_key_pending' });
+    const near2 = policy([{ id: 'hana', kids: [] }], 1);
+    near2.views.get_key_changes = () => [{ id: 1, provider: 'google', kid: emailFixture.email_kid, op: 'Add' }];
+    expect(await verifyEmailToken(testEnv(), tok.email_session_s1, NOW, 60_000)).toMatchObject({ ok: false, code: 'token_stale' });
     policy([], 1);
     clearLinkViewCaches();
     const near = new NearMock();

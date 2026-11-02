@@ -9,6 +9,7 @@ declare global {
       FRESH_DB: D1Database;
       SNAPSHOT_DB: D1Database;
       MIX_DB: D1Database;
+      PRE_0010_DB: D1Database;
     }
   }
 }

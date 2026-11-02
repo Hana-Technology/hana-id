@@ -26,6 +26,10 @@ interface Row {
   scope_id: string;
   status: string;
   suspended_by: number;
+  /** The scope's environment (`scopes.environment`), read only by the key lookup (`appByKey`). */
+  environment?: string;
+  /** The key the request named (`app_keys.key`), read only by the key lookup. */
+  key?: string;
   google_web_client_id: string | null;
   login_methods?: string | null;
   per_minute: number;
@@ -38,8 +42,12 @@ export const loginMethods = (raw: string | null | undefined): string[] =>
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 
-/** The gate's rule (apps/api appSuspended): any suspension bit, or the legacy status column, suspends. */
-const isActive = (row: Pick<Row, 'status' | 'suspended_by'>): boolean => row.status === 'active' && row.suspended_by === 0;
+/**
+ * The gate's rule (apps/api appSuspended, `scope_conflict`): any suspension bit, or the legacy status column, suspends;
+ * so does a key whose prefix names the other environment than its scope (only a direct `app_keys` edit can make one).
+ */
+const isActive = (row: Pick<Row, 'status' | 'suspended_by' | 'environment' | 'key'>): boolean =>
+  row.status === 'active' && row.suspended_by === 0 && (row.key === undefined || row.environment === (row.key.startsWith('pk_live_') ? 'live' : 'test'));
 
 const toApp = (row: Row): IssuerApp => ({
   id: row.id,
@@ -80,7 +88,8 @@ async function firstApp(db: D1Database, sql: (columns: string) => string, ...bin
 export async function appByKey(db: D1Database, pk: string, now: number = Date.now()): Promise<IssuerApp | null> {
   const row = await firstApp(
     db,
-    (c) => `SELECT ${c} FROM app_keys k JOIN apps a ON a.id = k.app_id JOIN plans p ON p.id = a.plan
+    (c) => `SELECT ${c}, k.key, s.environment FROM app_keys k JOIN apps a ON a.id = k.app_id JOIN scopes s ON s.scope_id = a.scope_id
+             JOIN plans p ON p.id = a.plan
              WHERE k.key = ?1 AND (k.revoked_at IS NULL OR k.revoked_at > ?2) AND a.deleted_at IS NULL`,
     pk,
     now,

@@ -582,6 +582,14 @@ in batch 8; and its `upgrade-contract propose|execute` is `deploy-contract <env>
   methods now relayed by the session-pool key) and `access_keys_are_limited`.
 - **Decisions (to confirm).** D230 (routing), D231 (email tokens and login methods), D232 (link precheck, relays,
   panics, limits), D233 (share revocation, `email_usage`, the issuer's lookup), D234 (the corrected deploy order).
+- **Review fixes** (both batch 6 reviews, D235–D237): pending members refused before relaying and link-state panics
+  remembered per isolate; one relay per link request (`link_in_flight`); per-account link limits, app-wide removal
+  caps as an alarm, a global daily cap on adds; gas per extra token signature; `token_stale` for an email kid no
+  pending change adds; `/v1/sessions` refuses unknown fields; exports keyed on the derived path; removals take email
+  tokens whatever `login_methods` say; the link relays as usage events (migrations-usage 0005); `/v1/health`
+  `capabilities.createProof` and `deploy-contract --upgrade` refusing without it; `owner:call set_issuer_key` for email
+  only for a pinned, published key; the issuer's lookup joins `scopes`, its `workers_dev` only with a `workers.dev`
+  `url`, a source check that it never writes `APP_DB` (D236); the runbook redone against the merged develop.
 - **Left for later.** Batch 8: `login_methods` for the test apps, the staff client proofs and `AddClient ("email",
   "email:<scope>")`, the web's use of `loginMethods`, `linkJwt`, the link relays and the new error codes, the popup's
   CSP for the issuer origin, and the share revocation's caller pages. Merged with develop after batch C4: the email

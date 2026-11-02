@@ -62,7 +62,7 @@ const warned = new Set<string>();
 /**
  * Gas for `method`: the env override when it is a valid integer 1..300 Tgas, else the default (for register_scope,
  * scaled to `args.client_proofs` when given; for a create_session_and_derive with `link_jwt`, LINKED_LOGIN_TGAS and its
- * own override).
+ * own override), plus PER_EXTRA_SIGNATURE_TGAS per token signature beyond the default's, capped at MAX_TGAS.
  */
 export function gasFor(method: RelayMethod, vars: object, args?: Record<string, unknown>): bigint {
   const linked = method === 'create_session_and_derive' && typeof args?.link_jwt === 'string';
@@ -76,7 +76,46 @@ export function gasFor(method: RelayMethod, vars: object, args?: Record<string, 
       log({ event: 'gas_override_ignored', method, code: 'invalid_gas_override' }, 'warn');
     }
   }
-  if (linked) return BigInt(LINKED_LOGIN_TGAS) * TGAS;
   if (method === 'register_scope' && Array.isArray(args?.client_proofs)) return BigInt(registerScopeTgas(args.client_proofs.length)) * TGAS;
-  return BigInt(DEFAULT_GAS_TGAS[method]) * TGAS;
+  const base = linked ? LINKED_LOGIN_TGAS : DEFAULT_GAS_TGAS[method];
+  return BigInt(Math.min(MAX_TGAS, base + PER_EXTRA_SIGNATURE_TGAS * extraSignatures(method, args))) * TGAS;
+}
+
+/**
+ * Each RS256 signature a call verifies beyond what its default covers (batch 6 review L1): an email token signed by
+ * two signers (a 2-of-2 policy, D121) or by two keys during a rotation, ≈ 67 Tgas each at 4096 bits (D155); 70 with
+ * headroom. Added to the default as `register_scope` adds per proof; an env override is the whole budget.
+ */
+export const PER_EXTRA_SIGNATURE_TGAS = 70;
+
+/** Signatures each method's default gas covers (one per token: Google's compact JWT, an email token at 1-of-1). */
+const BASELINE_SIGNATURES: Partial<Record<RelayMethod, number>> = { create_session: 1, create_session_and_derive: 1, link_identity: 2, cancel_link: 1, unlink_identity: 1 };
+/** The token arguments of each method that takes tokens. */
+const TOKEN_ARGS: Partial<Record<RelayMethod, readonly string[]>> = {
+  create_session: ['jwt'],
+  create_session_and_derive: ['jwt', 'link_jwt'],
+  link_identity: ['account_jwt', 'new_jwt'],
+  cancel_link: ['jwt'],
+  unlink_identity: ['jwt'],
+};
+
+/** The RS256 signatures a token carries: 1 for a compact JWT, the `signatures` count (1..3) of a JWS JSON token. */
+export function tokenSignatures(token: unknown): number {
+  if (typeof token !== 'string') return 0;
+  if (!token.startsWith('{')) return 1;
+  try {
+    const sigs = (JSON.parse(token) as { signatures?: unknown }).signatures;
+    return Array.isArray(sigs) ? Math.min(3, Math.max(1, sigs.length)) : 1;
+  } catch {
+    return 1;
+  }
+}
+
+/** Signatures of the call's tokens beyond the method's baseline (a linked login's baseline is its two tokens). */
+export function extraSignatures(method: RelayMethod, args?: Record<string, unknown>): number {
+  const names = TOKEN_ARGS[method];
+  if (!names || !args) return 0;
+  const total = names.reduce((n, a) => n + tokenSignatures(args[a]), 0);
+  const baseline = (BASELINE_SIGNATURES[method] ?? 0) + (method === 'create_session_and_derive' && typeof args.link_jwt === 'string' ? 1 : 0);
+  return Math.max(0, total - baseline);
 }

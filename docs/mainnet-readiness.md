@@ -3,7 +3,7 @@
 Everything that must be true before Hana ID runs on mainnet with real funds. This is a current-state doc for the
 two founders to track. Update a row in the same branch as the change that moves it (rule in `CLAUDE.md`).
 
-Last verified: 2026-11-02 for rows 7.1–7.1c (branch `feat/email-login-6`, the API's email login part, D230–D234);
+Last verified: 2026-11-02 for rows 7.1–7.1e (branch `feat/email-login-6`, the API's email login part and its reviews, D230–D237);
 2026-11-02 for rows 1.5, 1.16, 4.18 and 7.14 (branch `feat/batch-c-4`, usage capture, D220–D224);
 2026-11-02 for row 2.6 (branch `feat/identity-token-7`, the KMS signer code); 2026-11-02, against `develop` @ 3c4e920 (batch C3 merged) and the docs on it; the inconsistencies, rows
 1.14–1.16, 6.7 and 7.5 on 2026-11-02 against `develop` @ 1c6a124 (branch `docs/consistency-pass`). Today only
@@ -172,7 +172,9 @@ These have the longest lead time, or other rows wait on them.
 |---|---|---|---|---|---|
 | 7.1 | Email login batches 6 (API, on `feat/email-login-6`), 7–8 (web), 9 (consoles), 10 (KMS, staging) | Email login is a pre-mainnet login method (D4) | not built (1–5 merged; 6 on a branch) | Claude build | D4, D119–D123; email-login-build-plan |
 | 7.1b | Production route `<api host>/v1/email/*` to the email issuer Worker on Hana's zone (the issuer's `iss` under the API's URL), or `emailIssuer.url` for its own host | Addresses and codes must never pass through the API Worker (D230) | not built (needs the production zone, 4.1) | founder | D230; operations.md "Email issuer" step 7 |
-| 7.1c | Email login batch 6 readings D230–D234 | Routing, the API's email checks, link limits and the deploy order | decision needed ("to confirm") | founder | decisions.md D230–D234 |
+| 7.1c | Email login batch 6 readings D230–D237 | Routing, the API's email checks, link limits, the deploy order, the issuer's APP_DB, the pool links use | decision needed ("to confirm") | founder | decisions.md D230–D237 |
+| 7.1d | The email issuer reads the API's D1 through a read-only RPC on the API instead of the read-write `APP_DB` binding | A compromised issuer Worker could write the API's tables (origins, keys, settings) | not built (a source check holds the code to reads, D236) | Claude build | D236; security.md "Email issuer" |
+| 7.1e | A third relayer pool for the link methods, or keep them on the session pool with the global cap | A link flood shares the allowance logins use | decision needed (D237) | founder | D237 |
 | 7.2 | Contract v3 (email login, link counter) deployed | Every email and linking feature needs it | built, not deployed (sandbox-dev still runs v2) | founder, council | D200; contract-interface.md |
 | 7.3 | Batch C C4–C17: ledger capture, console, admin console, notices, statements, Support ID | Replaces `admin app:*`; monitoring, notices, billing | not built (C1–C3 merged) | Claude build | D28–D34, D73–D75, D87–D93; batch-c-build-plan |
 | 7.4 | Hana Home: export for every shared-login app, cross-device consent revocation, Support ID | Users aren't stranded when an app shuts down; required before mainnet | not built | Claude build | D40, D45, D98; hana-home-spec |

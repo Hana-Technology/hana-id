@@ -39,6 +39,13 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 describe('wranglerConfig', () => {
+  it('a workers.dev URL only when emailIssuer.url names one; a zone-routed issuer has none (review L5)', () => {
+    const own = 'https://hana-id-email-issuer-sandbox-dev.tingtc.workers.dev';
+    expect((wranglerConfig(manifest({ url: own, iss: `${own}/v1/email` }), LOCAL_D1_ID, LOCAL_D1_ID) as { workers_dev: boolean }).workers_dev).toBe(true);
+    expect((wranglerConfig(manifest(), LOCAL_D1_ID, LOCAL_D1_ID) as { workers_dev: boolean }).workers_dev).toBe(false);
+    expect((wranglerConfig(manifest({ url: 'https://email.hana.example' }), LOCAL_D1_ID, LOCAL_D1_ID) as { workers_dev: boolean }).workers_dev).toBe(false);
+  });
+
   it('writes the issuer’s Worker, both D1s, the Durable Objects and the public vars (no secret)', () => {
     const c = wranglerConfig(manifest({ dailySendBudget: 500 }), 'a'.repeat(8) + '-0000-4000-8000-000000000001', LOCAL_D1_ID) as Record<string, any>;
     expect(c.name).toBe('hana-id-email-issuer-sandbox-dev');

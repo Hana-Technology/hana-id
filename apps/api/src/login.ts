@@ -14,6 +14,8 @@ import { getAccount, getIdentity } from './link-views.ts';
 import { type LoginToken, verifyLoginToken } from './login-token.ts';
 import { log } from './log.ts';
 import { signerPanic } from './panics.ts';
+import { recalledPanic, rememberPanic, requestKey } from './panic-cache.ts';
+import { sessionStanding } from './session-standing.ts';
 import { isTestApp } from './origins.ts';
 import type { RelayResult } from './relayer-key.ts';
 import { relay } from './relayer-pool.ts';
@@ -144,14 +146,21 @@ async function login(request: Request, env: Env, ctx: Ctx, exec?: ExecutionConte
     if (!linked.token.email) return reject(ctx, 400, 'bad_request', 'linkJwt must be an email token');
     link = linked.token;
   }
-  // The login's derivation path: the uid's input (kept in memory, never sent or logged).
-  const path = `${app.scope_id}#${token.provider}#${token.sub}#${req.keyIndex}`;
-  notePath(ctx, path);
+  // The same request already panicked for a link state in this isolate (panic-cache.ts): answered from here.
+  const panicKey = await requestKey(call.method, call.args);
+  const recalled = recalledPanic(panicKey);
+  if (recalled) return done(ctx, recalled.status, { error: recalled.error, code: recalled.code });
+  // Where the session identity stands (session-standing.ts): a pending member is refused, and a member's login derives
+  // its account root's path, the uid's and the export limit's input (kept in memory, never sent or logged). Started
+  // now, awaited beside the other chain reads (or here for an export, which needs the path first).
+  const standingRead = sessionStanding(env, app.scope_id, token.provider, token.sub, req.keyIndex);
 
-  // An export (the auth origin's window): at most EXPORTS_PER_PATH_HOUR per user path per app.
+  // An export (the auth origin's window): at most EXPORTS_PER_PATH_HOUR per derived path per app (a member's root's).
   if (gate.caller.page === 'auth') {
+    const standing = await standingRead;
+    if (standing.pending) return reject(ctx, 409, 'link_pending', 'This sign-in method’s link is pending');
     try {
-      const key = await exportLimiterKey(app.id, path);
+      const key = await exportLimiterKey(app.id, standing.path);
       const hit = await limiter(env, key).hit([{ name: 'export:hour', windowMs: HOUR, max: EXPORTS_PER_PATH_HOUR }]);
       if (!hit.ok) return reject(ctx, 429, 'rate_limited', 'Too many key exports for this account, try again later', { 'retry-after': String(hit.retryAfterS) });
     } catch {
@@ -165,12 +174,14 @@ async function login(request: Request, env: Env, ctx: Ctx, exec?: ExecutionConte
   try {
     // 5. Scope, session key, and governance (not paused; the token's kid active on chain, not still in its
     //    issuer-key delay), side by side (all read the chain).
-    const [scope, inUse, gov, linkScope] = await Promise.all([
+    const [scope, inUse, gov, linkScope, standing] = await Promise.all([
       settle(checkClientScope(env, token.provider, token.aud, app.scope_id, now)),
       settle(sessionKeyInUse(env, req.sessionPublicKey, now)),
       chainGate(env, token.kid === null ? null : { provider: token.provider, kid: token.kid }, requestId),
       link ? settle(checkClientScope(env, link.provider, link.aud, app.scope_id, now)) : Promise.resolve(null),
+      standingRead,
     ]);
+    notePath(ctx, standing.path);
     if (!scope.ok) return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');
     if (scope.value) return reject(ctx, scope.value.status, scope.value.code, scope.value.error);
     if (linkScope && !linkScope.ok) return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');
@@ -178,6 +189,7 @@ async function login(request: Request, env: Env, ctx: Ctx, exec?: ExecutionConte
     if (!inUse.ok) return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');
     if (inUse.value) return reject(ctx, 409, 'session_exists', 'This session key is already in use');
     if (gov) return chainGateResponse(ctx, gov);
+    if (standing.pending) return reject(ctx, 409, 'link_pending', 'This sign-in method’s link is pending');
 
     // 6. The session key signed the CKD request with counter 1: with a link, the linked CKD payload, which binds the
     //    link token and its mode (D133), so only the key holder decides whether a link is attached and which.
@@ -208,6 +220,7 @@ async function login(request: Request, env: Env, ctx: Ctx, exec?: ExecutionConte
     forgetSession(req.sessionPublicKey);
     if (!result.ok) {
       const failure = loginFailure(env, result);
+      if (typeof failure.body.code === 'string' && typeof failure.body.error === 'string') rememberPanic(panicKey, { status: failure.status, code: failure.body.code, error: failure.body.error });
       return done(ctx, failure.status, failure.body);
     }
     const r = result.result as { big_y?: unknown; big_c?: unknown } | null;

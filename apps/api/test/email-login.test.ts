@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { usageDay } from '../src/apps.ts';
 import { fromHex, sha256 } from '../src/bytes.ts';
 import { TGAS } from '../src/gas.ts';
-import { LINK_ADDS_PER_IP_MINUTE } from '../src/links.ts';
+import { LINK_ADDS_PER_IP_MINUTE, LINK_ADDS_PER_ROOT_MINUTE } from '../src/links.ts';
+import { sessionStanding } from '../src/session-standing.ts';
 import { clearViewCaches } from '../src/views.ts';
 import { autoLinkNonce, createProofPayload, linkAccountNonce, linkChangeNonce, linkNewNonce, linkedCkdPayload, sessionNonce, sessionNoncePreimage } from '../src/session-crypto.ts';
 import { EMAIL_ISS, type EmailChain, emailAud, emailEnv, emailSigner, emailToken, ikSync, issuer, setLoginMethods, withEmail } from './email-helpers.ts';
@@ -103,11 +104,18 @@ describe('POST /v1/sessions: email tokens and the proof of possession (D137)', (
     expect((await sessions(app, g)).status).toBe(200);
   });
 
-  it('an email key not active on chain yet is issuer_key_pending (retry); a contract without the policy view is near_unavailable', async () => {
+  it('an email key a pending change adds is issuer_key_pending (retry); one no change adds is token_stale; no policy view is near_unavailable', async () => {
     const { app, near } = await setup();
     near.policy = { signers: [{ id: 'hana', kids: [] }], required: 1 };
+    near.views.get_key_changes = () => [{ id: 3, provider: 'email', kid: issuer.kid, op: 'Add', n: 'x', e: 'AQAB', signer: 'hana', by: 'owner', proposed_at_ms: 1, executable_at_ms: 2 }];
     const res = await sessions(app, await emailSessionBody(app.scope));
     expect([res.status, (await body(res)).code, res.headers.get('retry-after')]).toEqual([503, 'issuer_key_pending', '30']);
+    // Removed, or a dropped signer's: waiting won't help (review L2).
+    const { clearLinkViewCaches: clearCaches } = await import('../src/link-views.ts');
+    clearCaches();
+    near.views.get_key_changes = () => [];
+    const stale = await sessions(app, await emailSessionBody(app.scope));
+    expect([stale.status, (await body(stale)).code]).toEqual([401, 'token_stale']);
     delete near.views.get_self_issued;
     const { clearLinkViewCaches } = await import('../src/link-views.ts');
     clearLinkViewCaches();
@@ -184,8 +192,8 @@ describe('POST /v1/login with a link (D133)', () => {
     expect([tx.args.link_jwt, tx.args.link_immediate]).toEqual([req.linkJwt, true]);
     expect(tx.gas).toBe(250n * TGAS);
     expect(await emailUsage(app.id)).toEqual({ email_sessions: 0, links: 1 });
-    // Read fresh: both identities and both accounts.
-    expect(near.viewCalls.filter((v) => v.method === 'get_identity' || v.method === 'get_account')).toHaveLength(4);
+    // Read fresh: both identities and both accounts, and the session identity's standing once more (session-standing.ts).
+    expect(near.viewCalls.filter((v) => v.method === 'get_identity' || v.method === 'get_account')).toHaveLength(5);
   });
 
   it('case B (the email identity joins the Google wallet), pending: relays with link_immediate false', async () => {
@@ -457,12 +465,14 @@ describe('POST /v1/link/cancel and /v1/link/unlink', () => {
     expect(refused.reason).toBe('not_allowed');
   });
 
-  it('a Google-only app takes no email token on the link relays', async () => {
+  it('an app that turned email off still takes an email token to remove a link (review L6), never to add one', async () => {
     const { app, e, root, member } = await account(true);
     await setLoginMethods(app.id, 'google');
     const jwt = await emailToken({ aud: emailAud(app.scope), sub: e, nonce: await linkChangeNonce(env.SIGNER_ACCOUNT, app.scope, 'unlink', root, fromHex(member), 1, Uint8Array.from(salt)) });
     const res = await linkCall('/v1/link/unlink', app, { jwt, memberKey: member, epoch: 1, salt });
-    expect([res.status, (await body(res)).code]).toEqual([403, 'login_method_disabled']);
+    expect(res.status, JSON.stringify(await res.clone().json())).toBe(200);
+    const add = await linkCall('/v1/link', app, { accountJwt: jwt, newJwt: jwt, epoch: 1, salt });
+    expect([add.status, (await body(add)).code]).toEqual([403, 'login_method_disabled']);
   });
 });
 
@@ -507,5 +517,117 @@ describe('email counts into the usage ledger (hourly, D233)', () => {
     expect(await syncEmailUsage({ ...env, USAGE_DB: undefined })).toBe(0);
     ledger.fail = () => new Error('Connection terminated unexpectedly');
     expect(await syncEmailUsage(env)).toBe(0);
+  });
+});
+
+describe('batch 6 review: requests bound to fail, link limits, unknown fields', () => {
+  const salt = bytes(16, 9);
+
+  it('a pending member’s login and session are refused before any relay (409 link_pending)', async () => {
+    const { app, aud, near } = await setup();
+    near.identities.set(`google#${G_SUB}`, { status: 'pending', opened: false, root: { provider: 'email', sub: 'e1.root' } });
+    const res = await login(app, await loginBody(app.scope, aud));
+    expect([res.status, (await body(res)).code]).toEqual([409, 'link_pending']);
+    const ses = await sessions(app, await sessionBody(app.scope, aud));
+    expect([ses.status, (await body(ses)).code]).toEqual([409, 'link_pending']);
+    expect(near.sent).toHaveLength(0);
+  });
+
+  it('a member’s login derives (and its export limit and uid key on) the account root’s path; links closed: its own', async () => {
+    const { app, near } = await setup();
+    near.identities.set(`google#${G_SUB}`, { status: 'member', opened: false, root: { provider: 'email', sub: 'e1.root' } });
+    expect(await sessionStanding(env, app.scope, 'google', G_SUB, 0)).toEqual({ pending: false, path: `${app.scope}#email#e1.root#0` });
+    near.unrecordedWallets = true;
+    clearViewCaches();
+    expect(await sessionStanding(env, app.scope, 'google', G_SUB, 0)).toEqual({ pending: false, path: `${app.scope}#google#${G_SUB}#0` });
+  });
+
+  it('the same request after a link-state panic is answered from the isolate, not relayed again', async () => {
+    const { app, aud, near } = await setup();
+    let calls = 0;
+    near.contract.create_session_and_derive = () => {
+      calls += 1;
+      return panic('Sign-in method is linked to an account');
+    };
+    const req = await loginBody(app.scope, aud);
+    expect((await body(await login(app, req))).code).toBe('identity_linked');
+    expect((await body(await login(app, req))).code).toBe('identity_linked');
+    expect(calls).toBe(1);
+  });
+
+  it('/v1/sessions refuses an unknown field, linkJwt included', async () => {
+    const { app, aud, near } = await setup();
+    const req = await sessionBody(app.scope, aud);
+    for (const extra of [{ linkJwt: '{}' }, { foo: 1 }]) {
+      const res = await sessions(app, { ...req, ...extra });
+      expect([res.status, (await body(res)).code]).toEqual([400, 'bad_request']);
+    }
+    expect(near.sent).toHaveLength(0);
+  });
+
+  /** A /v1/link request adding a fresh email identity `nSub` to the Google root's account (epoch 0). */
+  async function addRequest(s: Awaited<ReturnType<typeof setup>>, nSub: string) {
+    const root = fromHex(ikSync(s.app.scope, 'google', G_SUB));
+    const newJwt = await emailToken({ aud: emailAud(s.app.scope), sub: nSub, nonce: await linkNewNonce(env.SIGNER_ACCOUNT, s.app.scope, root, 'email', 0, Uint8Array.from(salt)) });
+    const accountJwt = await google.sign({
+      iss: 'https://accounts.google.com',
+      aud: s.aud,
+      sub: G_SUB,
+      nonce: await linkAccountNonce(env.SIGNER_ACCOUNT, s.app.scope, root, fromHex(ikSync(s.app.scope, 'email', nSub)), 0, Uint8Array.from(salt)),
+      exp: Math.floor(Date.now() / 1000) + 600,
+    });
+    return { accountJwt, newJwt, epoch: 0, salt };
+  }
+
+  it('a duplicate of a link request relays once (link_in_flight), across retries', async () => {
+    const s = await setup();
+    s.near.identities.set(`google#${G_SUB}`, { status: 'own', opened: true });
+    s.near.contract.link_identity = () => Date.now() + 60_000;
+    const req = await addRequest(s, 'e1.dup');
+    const [a, b] = await Promise.all([linkCall('/v1/link', s.app, req), linkCall('/v1/link', s.app, req)]);
+    expect([a.status, b.status].sort()).toEqual([200, 409]);
+    expect((await body(a.status === 409 ? a : b)).code).toBe('link_in_flight');
+    expect(s.near.sent).toHaveLength(1);
+    // The link relay is a usage event (endpoint `link`, its relay facts).
+    expect(ledger.events.filter((e) => e.endpoint === 'link' && e.app_id === s.app.id).map((e) => e.outcome).sort()).toEqual(['ok', 'rejected']);
+  });
+
+  it('adds are limited per account root, whatever the IP', async () => {
+    const s = await setup();
+    s.near.identities.set(`google#${G_SUB}`, { status: 'own', opened: true });
+    s.near.contract.link_identity = () => Date.now() + 60_000;
+    const statuses: number[] = [];
+    for (let i = 0; i <= LINK_ADDS_PER_ROOT_MINUTE; i++) {
+      const headers = { ...hanaHeaders(s.app), 'cf-connecting-ip': `10.7.${i}.1` };
+      statuses.push((await linkCall('/v1/link', s.app, await addRequest(s, `e1.r${i}`), headers)).status);
+    }
+    expect(statuses).toEqual([...Array(LINK_ADDS_PER_ROOT_MINUTE).fill(200), 429]);
+  });
+
+  it('a 2-of-2 email token gets the gas of its second signature', async () => {
+    const s = await setup();
+    s.near.identities.set(`google#${G_SUB}`, { status: 'own', opened: true });
+    s.near.contract.link_identity = () => Date.now() + 60_000;
+    const cosign = await emailSigner('cosign-test');
+    s.near.policy = { signers: [{ id: 'hana', kids: [issuer.kid] }, { id: 'cosign', kids: [cosign.kid] }], required: 2 };
+    const req = await addRequest(s, 'e1.two');
+    const claims = JSON.parse(atob((JSON.parse(req.newJwt) as { payload: string }).payload.replace(/-/gu, '+').replace(/_/gu, '/'))) as Record<string, unknown>;
+    const newJwt = await emailToken(claims, [issuer, cosign]);
+    const res = await call('/v1/link', { headers: hanaHeaders(s.app), body: { ...req, newJwt }, env: emailEnv([issuer, cosign]) });
+    expect(res.status, JSON.stringify(await res.clone().json())).toBe(200);
+    // 250 + 70 for the second signature, capped at NEAR's 300 Tgas per transaction.
+    expect(s.near.sent[0]!.gas).toBe(300n * TGAS);
+  });
+
+  it('nothing under /v1/email/ is the API’s (D230): 404', async () => {
+    for (const path of ['/v1/email/start', '/v1/email/jwks.json', '/v1/email/.well-known/openid-configuration']) {
+      const res = await call(path, { method: 'GET' });
+      expect([res.status, (await body(res)).code], path).toEqual([404, 'not_found']);
+    }
+  });
+
+  it('/v1/health reports the createProof capability (deploy-contract --upgrade checks it)', async () => {
+    const res = await call('/v1/health', { method: 'GET' });
+    expect((await body(res)).capabilities).toEqual({ createProof: true });
   });
 });

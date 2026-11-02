@@ -16,6 +16,8 @@ import { ckdPayload, createProofPayload, revokePayload, sessionNonce, verifySess
 import { countEmailUsage } from './email-usage.ts';
 import { type LoginTokenResult, verifyLoginToken } from './login-token.ts';
 import { signerPanic } from './panics.ts';
+import { recalledPanic, rememberPanic, requestKey } from './panic-cache.ts';
+import { sessionStanding } from './session-standing.ts';
 import { claimCounter, precheckSessionUse } from './session-use.ts';
 import { type UsageDraft, beginUsage, finishUsage, finishUsageOnThrow, notePath, noteRelay } from './usage/event.ts';
 import { MAX_BODY, isError, toCreateSession, toDeriveKey, toOwnerAction, toRevokeSession } from './validate.ts';
@@ -408,22 +410,29 @@ async function appEndpoint(request: Request, env: Env, endpoint: AppEndpoint, ct
     if (!(await verifySessionSignature(req.sessionPublicKey, 0, req.signature ?? [], proofPayload))) {
       return reject(ctx, 401, 'invalid_signature', 'Invalid session signature');
     }
+    // 6c. The same request already panicked for a link state in this isolate (panic-cache.ts): answered from here.
+    const panicKey = await requestKey(call.method, call.args);
+    const recalled = recalledPanic(panicKey);
+    if (recalled) return done(ctx, recalled.status, { error: recalled.error, code: recalled.code });
 
     // 7 and 8 read the chain; only a verified token gets this far, and the two reads run side by side.
     // 7. Scope: a registered client must be this app's; a shared client needs a scope that allows shared login.
     // 8. The session key is not in use already (a replayed request would only fail on chain, at the relayer's
     //    cost). session_key_in_use also covers revoked sessions that have not expired, which get_session hides.
     // 9. The contract isn't paused and the token's kid is active on chain (not still in its issuer-key delay).
-    const [scope, inUse, gov] = await Promise.all([
+    // 9b. The session's identity isn't a pending member (session-standing.ts; read only once links can exist).
+    const [scope, inUse, gov, standing] = await Promise.all([
       settle(checkClientScope(env, token.provider, token.aud, app.scope_id, now)),
       settle(sessionKeyInUse(env, req.sessionPublicKey, now)),
       chainGate(env, token.kid === null ? null : { provider: token.provider, kid: token.kid }, requestId),
+      sessionStanding(env, app.scope_id, token.provider, token.sub, req.keyIndex),
     ]);
     if (!scope.ok) return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');
     if (scope.value) return reject(ctx, scope.value.status, scope.value.code, scope.value.error);
     if (!inUse.ok) return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');
     if (inUse.value) return reject(ctx, 409, 'session_exists', 'This session key is already in use');
     if (gov) return chainGateResponse(ctx, gov);
+    if (standing.pending) return reject(ctx, 409, 'link_pending', 'This sign-in method’s link is pending');
     lap(ctx, 'checks');
     // 10. The app's quota, counted only now that the request passed every check.
     const quota = await appQuota(env, ctx, app);
@@ -434,7 +443,7 @@ async function appEndpoint(request: Request, env: Env, endpoint: AppEndpoint, ct
     const result = await relayed;
     await noted;
     lapRelay(ctx, result);
-    if (!result.ok) return relayFailure(ctx, env, result);
+    if (!result.ok) return relayFailure(ctx, env, result, panicKey);
     if (!isSessionView(result.result)) return done(ctx, 502, { error: 'The contract returned no session', code: 'bad_contract_result', nearTx: result.nearTx });
     rememberSession(req.sessionPublicKey, result.result);
     // The uid's input: the new session's path (kept in memory, never sent).
@@ -468,6 +477,10 @@ async function appEndpoint(request: Request, env: Env, endpoint: AppEndpoint, ct
     const keyProblem = appKeyProblem(call.pk1, call.pk2);
     if (keyProblem) return reject(ctx, 400, 'invalid_app_key', keyProblem);
   }
+  // A derive that already panicked for a link state (`identity_linked`) in this isolate: answered from here.
+  const panicKey = await requestKey(call.method, call.args);
+  const recalled = recalledPanic(panicKey);
+  if (recalled) return done(ctx, recalled.status, { error: recalled.error, code: recalled.code });
 
   // 6. The session belongs to this app's scope, is live and can still take this counter (the contract's rules,
   //    session-use.ts): a replayed request or one past the use limit would only fail on chain, at the relayer's cost.
@@ -507,7 +520,7 @@ async function appEndpoint(request: Request, env: Env, endpoint: AppEndpoint, ct
     // land), so the next request reads it from chain.
     if (endpoint === '/v1/derive' && result.ok) recordSessionUse(call.sessionPublicKey, call.counter, check.session);
     else forgetSession(call.sessionPublicKey);
-    if (!result.ok) return relayFailure(ctx, env, result);
+    if (!result.ok) return relayFailure(ctx, env, result, panicKey);
     if (endpoint === '/v1/derive') {
       const r = result.result as { big_y?: unknown; big_c?: unknown } | null;
       if (!r || typeof r.big_y !== 'string' || typeof r.big_c !== 'string') return done(ctx, 502, { error: 'The contract returned no key', code: 'bad_contract_result', nearTx: result.nearTx });
@@ -566,8 +579,9 @@ export const chainGateResponse = (ctx: Ctx, r: ChainGateRejection): Response =>
   done(ctx, r.status, { error: r.error, code: r.code, retryAfterS: r.retryAfterS }, { 'retry-after': String(r.retryAfterS) });
 
 /** A failed relay's answer: a known email-login panic as its own error (panics.ts), else the relay's. */
-export function relayFailure(ctx: Ctx, env: Env, result: Extract<RelayResult, { ok: false }>): Response {
+export function relayFailure(ctx: Ctx, env: Env, result: Extract<RelayResult, { ok: false }>, panicKey?: string): Response {
   const mapped = signerPanic(env, result);
+  if (mapped && panicKey) rememberPanic(panicKey, { status: mapped.status, code: mapped.body.code, error: mapped.body.error });
   if (mapped) return done(ctx, mapped.status, { ...mapped.body, nearTx: result.nearTx });
   return done(ctx, result.status, { error: result.error, code: result.code, nearTx: result.nearTx });
 }
@@ -746,11 +760,18 @@ async function ownerAction(request: Request, env: Env, ctx: Ctx, exec?: Executio
 // ---- Health ----
 
 /**
+ * What this build does that deploy tooling must check before a step that depends on it (batch 6 review M2):
+ * `createProof`: `/v1/sessions` requires and relays create_session's proof of possession (D137), so contract v3 may be
+ * deployed (`deploy-contract --upgrade` refuses without it on the env's API).
+ */
+export const API_CAPABILITIES = { createProof: true } as const;
+
+/**
  * `hotDb`: the hot-DB migration this build needs (apps.ts HOT_DB_SCHEMA). The admin CLI refuses guarded proposals
  * until the deployed API reports 6 or more (an API from before batch C3 would treat an origin that is only proposed as
  * in force; docs/operations.md "Rolling the API back below batch C3"), and announcements until it reports 9 or more
  * (the batch C4 API writes the session markers the `no_session` waiver reads).
  */
 export function handleHealth(env: Env, requestId: string): Response {
-  return json(200, { ok: true, env: env.ENV_NAME, signer: env.SIGNER_ACCOUNT, hotDb: HOT_DB_SCHEMA, requestId }, { 'access-control-allow-origin': '*', 'x-request-id': requestId });
+  return json(200, { ok: true, env: env.ENV_NAME, signer: env.SIGNER_ACCOUNT, hotDb: HOT_DB_SCHEMA, capabilities: API_CAPABILITIES, requestId }, { 'access-control-allow-origin': '*', 'x-request-id': requestId });
 }

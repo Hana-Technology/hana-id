@@ -7,6 +7,7 @@ import { type Env, digestHourUtc, isDevEnvName } from './env.ts';
 import { BODY_LIMITS, readJsonCapped } from './http.ts';
 import { log } from './log.ts';
 import { NearChain, NearWriter, Rpc } from './near.ts';
+import { identityDiscoveryUrl, identityJwksUrl, parseIdentityPins } from './identity.ts';
 import { parsePins } from './pins.ts';
 import { relayerThresholds } from './relayer.ts';
 import { type RunDeps, runWatchdog } from './run.ts';
@@ -34,6 +35,17 @@ export async function fetchEmailJwks(url: string): Promise<Jwk[]> {
   return usableJwks(await readJsonCapped<unknown>(res, BODY_LIMITS.jwks));
 }
 
+/**
+ * One of Hana's identity documents (the JWKS or the discovery document) as parsed JSON, fetched with no cache and its
+ * body capped (64 KB). Informational for the watchdog's own judgement only: it is compared with the pins and the
+ * configured issuer, never trusted (D210).
+ */
+export async function fetchIdentityDocument(url: string): Promise<unknown> {
+  const res = await fetch(url, { headers: { accept: 'application/json' }, cache: 'no-store', signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) throw new Error(`identity document HTTP ${res.status}`);
+  return readJsonCapped<unknown>(res, BODY_LIMITS.jwks);
+}
+
 /** The real dependencies of a run, from the Worker's bindings. */
 export function runDeps(env: Env, notifier: Notifier = notifierFromEnv(env)): RunDeps {
   const rpc = new Rpc([env.NEAR_RPC, ...(env.NEAR_RPC_FALLBACK ? [env.NEAR_RPC_FALLBACK] : [])]);
@@ -47,12 +59,14 @@ export function runDeps(env: Env, notifier: Notifier = notifierFromEnv(env)): Ru
   }
   const emailJwksUrl = env.EMAIL_JWKS_URL?.trim();
   const emailPins = parsePins(env.EMAIL_PINS);
+  const identityIss = env.IDENTITY_ISS?.trim() || null;
   return {
     store: new Store(env.DB),
     chain: new NearChain(rpc, env.SIGNER_ACCOUNT),
     writer,
     fetchJwks: fetchGoogleJwks,
     fetchEmailJwks: emailJwksUrl ? () => fetchEmailJwks(emailJwksUrl) : null,
+    fetchIdentity: identityIss ? { jwks: () => fetchIdentityDocument(identityJwksUrl(identityIss)), discovery: () => fetchIdentityDocument(identityDiscoveryUrl(identityIss)) } : null,
     notifier,
     now: Date.now,
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -66,6 +80,7 @@ export function runDeps(env: Env, notifier: Notifier = notifierFromEnv(env)): Ru
       relayerThresholds: relayerThresholds(env.RELAYER_FUNDS),
       emailPins,
       devEnv: isDevEnvName(env.ENV_NAME),
+      identity: { iss: identityIss, pins: parseIdentityPins(env.IDENTITY_PINS) },
     },
   };
 }

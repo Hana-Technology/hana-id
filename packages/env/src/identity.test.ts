@@ -17,7 +17,11 @@ const block = (over: Record<string, unknown> = {}) => {
   const m = raw();
   const active = publicKey();
   const standby = publicKey();
-  return { ...m, identityToken: { iss: identityIssuerFor(m.apiUrl as string), signer: { kind: 'worker-secret', activeKid: active.kid }, publicKeys: [active, standby], ...over } };
+  const identityToken = { iss: identityIssuerFor(m.apiUrl as string), signer: { kind: 'worker-secret', activeKid: active.kid }, publicKeys: [active, standby], ...over };
+  // The watchdog pins every published key (D211): pin whatever this block publishes, so only the rule under test fails.
+  const kids = Array.isArray(identityToken.publicKeys) ? (identityToken.publicKeys as { kid?: unknown }[]).flatMap((k) => (typeof k?.kid === 'string' ? [k.kid] : [])) : [];
+  const watchdog = { ...(m.watchdog as Record<string, unknown>), pinnedIdentityKeys: [...new Set(kids)].length ? [...new Set(kids)] : undefined };
+  return { ...m, watchdog, identityToken };
 };
 const issues = (v: unknown): string[] => manifestSchema.safeParse(v).error?.issues.map((i) => i.message) ?? [];
 

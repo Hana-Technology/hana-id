@@ -27,6 +27,8 @@ const workerName = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u, '
 /** Signers in a self-issued issuer's policy, at most, and its keys (all signers together): the contract's limits. */
 export const MAX_PINNED_SIGNERS = 3;
 export const MAX_PINNED_KEYS = 8;
+/** Identity keys the watchdog pins, at most: the JWKS holds up to 4 (active, standby, next, previous), plus room to pin ahead. */
+export const MAX_PINNED_IDENTITY_KEYS = 8;
 
 /** An RSA key's RFC 7638 JWK thumbprint (unpadded base64url SHA-256): the email issuer's `kid` for that key. */
 const keyThumbprint = z.string().regex(/^[A-Za-z0-9_-]{43}$/u, 'A pinned key is its RFC 7638 JWK thumbprint (43 base64url characters)');
@@ -95,6 +97,15 @@ const watchdogSchema = z.object({
    * posts the first email key (`docs/email-login-build-plan.md` batch 6).
    */
   pinnedIssuerKeys: z.object({ email: signerPolicyPins.optional() }).strict().optional(),
+  /**
+   * The partner identity token's public keys the watchdog accepts in the API's JWKS (`docs/identity-token-spec.md`
+   * "JWKS and discovery", D210): RFC 7638 thumbprints of the P-256 keys, which are also their kids. Set on the
+   * watchdog's own account, so a pin change is a watchdog redeploy by the operator. Absent = nothing pinned: every
+   * published identity key is unpinned (critical, no pause). With `identityToken` in the manifest every one of its
+   * `publicKeys` must be pinned here (`scripts/identity-key.ts` writes both); extra pins are allowed (a key pinned
+   * before the API publishes it warns `identity_key_missing` until it does).
+   */
+  pinnedIdentityKeys: z.array(keyThumbprint).min(1).max(MAX_PINNED_IDENTITY_KEYS).optional(),
 });
 
 /**
@@ -103,7 +114,16 @@ const watchdogSchema = z.object({
  * whose account the contract doesn't know can't cancel or pause anything.
  */
 function watchdogRules(
-  m: { name: string; signer: string; relayer: string; owner: string; mpc: string; watchdogs?: string[] | undefined; cloudflare: { workerName: string } },
+  m: {
+    name: string;
+    signer: string;
+    relayer: string;
+    owner: string;
+    mpc: string;
+    watchdogs?: string[] | undefined;
+    cloudflare: { workerName: string };
+    identityToken?: { publicKeys: { kid: string }[] } | undefined;
+  },
   w: z.infer<typeof watchdogSchema>,
   ctx: z.RefinementCtx,
 ): void {
@@ -120,6 +140,18 @@ function watchdogRules(
   const jwksUrl = w.pinnedIssuerKeys?.email?.jwksUrl;
   const problem = jwksUrl === undefined ? null : endpointUrlProblem(jwksUrl, m.name);
   if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'pinnedIssuerKeys', 'email', 'jwksUrl'], message: `watchdog.pinnedIssuerKeys.email.jwksUrl ${problem}` });
+  const identityPins = w.pinnedIdentityKeys ?? [];
+  if (new Set(identityPins).size !== identityPins.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchdog', 'pinnedIdentityKeys'], message: 'An identity key is pinned once' });
+  // Pin before publish (D211): a key the API publishes that the watchdog doesn't pin pages as a forgery.
+  for (const k of m.identityToken?.publicKeys ?? []) {
+    if (!identityPins.includes(k.kid)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['watchdog', 'pinnedIdentityKeys'],
+        message: `identityToken key ${k.kid} is not in watchdog.pinnedIdentityKeys: pin every published identity key (docs/operations.md "Identity token keys")`,
+      });
+    }
+  }
 }
 
 /** One environment's accounts and endpoints. Every account name the code uses comes from here. */

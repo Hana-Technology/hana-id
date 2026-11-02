@@ -1,7 +1,9 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-02 for the hot DB after migration 0006 (branch
+known open issues. Last verified against code: 2026-11-02 for the watchdog's identity JWKS pin check and the
+"identity key on chain" check (branch `feat/identity-token-8`, D210–D214: the compromise rows, the identity
+invariants, the watchdog paragraph and open issue (l)); 2026-11-02 for the hot DB after migration 0006 (branch
 `feat/batch-c-3`: the gate on `app_keys` and `scopes`, origins in force by `active_from`, staff-proposed guarded
 changes and their announcement, the `app_changes` ledger, open issue (i) fixed for the CLI); 2026-11-02 for the token
 check's move to `packages/oidc` and its optional claims (branch `feat/batch-c-2`, D201, in "Verify before relay"),
@@ -64,7 +66,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | A partner's Google client (own-client mode) | Tokens with chosen nonces for that scope → that scope's users' keys | Other scopes |
 | Hana's shared Google client or its Cloud project | Break isolation of every `allow_shared` scope | Own-client-only scopes |
 | Leaked in-memory PRK | Every v1 chain and account under that `key_index` | Other `key_index` values; rotation is the only remedy |
-| An identity signing key (the active one on the Worker, or a published standby or next key from `.secrets/`) | Forge identity tokens for any user of any app: be anyone at every partner that uses them as login evidence, while partners trust the key | No key, no signature, nothing at Hana or on chain (no Hana API accepts the token). The standby is never on the Worker (D177), so a Worker or Cloudflare leak exposes the active key only. Testnet only: mainnet signs with a non-exportable AWS KMS key (build step 7). Recovery (playbook `identity-signing-key-compromised`): switch to a key the incident didn't touch (the standby, or a fresh one when both may be exposed), unpublish the exposed ones (partners reject them within 10 min), tell partners |
+| An identity signing key (the active one on the Worker, or a published standby or next key from `.secrets/`) | Forge identity tokens for any user of any app: be anyone at every partner that uses them as login evidence, while partners trust the key | No key, no signature, nothing at Hana or on chain (no Hana API accepts the token). The standby is never on the Worker (D177), so a Worker or Cloudflare leak exposes the active key only. Testnet only: mainnet signs with a non-exportable AWS KMS key (build step 7). Recovery (playbook `identity-signing-key-compromised`): switch to a key the incident didn't touch (the standby, or a fresh one when both may be exposed), unpublish the exposed ones (partners reject them within 10 min), tell partners. A key of the attacker's own put in the JWKS (through the API Worker or the Cloudflare account) pages critical from the watchdog's pin check within one run (D210); partners trusting the JWKS URL accept it until it is removed, partners pinning thumbprints never |
 | `IDENTITY_SUB_KEY` | Map partners' `sub`s back to on-chain paths, so to the Google `sub` (privacy) | Funds and keys unaffected. Never rotated: a new key changes every user's `sub` at every partner (a `u2_` scheme with a 90-day `legacy_sub` window if it ever leaks) |
 | One identity token (a partner's log, transit) | Act as that user at that partner's backend until `exp` (≤ 1 h) | That partner only (`aud`); never at Hana or on chain |
 | A session key (with its vault record) | Also: mint identity tokens while the session is live | The same session's limits, its app only; a logout or revoke stops new tokens in every app of the scope (the share check, D178: a share is kept 24 h after it dies), the 1 h `exp` bounds the old ones |
@@ -336,7 +338,10 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   - `sub` depends only on (scope, root provider, root sub): never the login method, client, device or `key_index`, and
     never the Google `sub` in the clear;
   - the signature is checked against the published key for its `kid` before the token is answered; the JWKS comes
-    from the manifest's public keys alone and refuses a private member;
+    from the manifest's public keys alone and refuses a private member; every key it publishes must be pinned in
+    `watchdog.pinnedIdentityKeys` (the schema, D211), and the watchdog, on its own account, pages critical for a
+    published key it doesn't pin, any private member, or a discovery document whose `issuer` or `jwks_uri` differs
+    (`apps/watchdog/src/identity.ts`, D210, D213);
   - no Hana API accepts an identity token: `verifyIdToken` refuses `typ: hana-identity+jwt` or `iss` =
     `IDENTITY_ISS` first (`400 bad_token`), and the contract takes RS256 issuer keys only;
   - logs carry the app id, outcome, code, kid and timings, never a token, `sub`, `sid`, address or body.
@@ -636,7 +641,7 @@ findings are tracked with their own fixes.
 
 Status: **fixed** (a), (b), (c), (d), (f); **accepted** (k), and the residual risks named under (b)–(d) and
 "Auto-approve policies"; **fixed for the CLI** (i); **open** (e) (pre-mainnet, D33), (g), (h), (j) (sandbox-dev only; production envs
-need D38's two domains), (l) (pre-mainnet: the identity token's KMS signer and JWKS pin check). The 2026-10-29 security sweep's items in the API, tooling and CI: "Security sweep
+need D38's two domains), (l) (pre-mainnet: the identity token's KMS signer; the watchdog's JWKS pin check is built, D210). The 2026-10-29 security sweep's items in the API, tooling and CI: "Security sweep
 2026-10-29" below.
 
 **(a) Unlock and touch don't re-check the app's current settings. Fixed.** Unlock and touch now read the app's
@@ -747,6 +752,14 @@ plan (D33; built on branch `feat/governance`, not deployed), specified in `docs/
   are alarms, not limits: the links went through. Logins into email-rooted wallets, or Google wallets that already
   have an email member, need no link and aren't seen; custody is their defence (D121). No third party is involved (the FastNear indexer scan of D192 is gone). A v2 contract
   reads as "no email issuer", and as "no link stats".
+- Watchdog and the partner identity token (D210–D214; branch `feat/identity-token-8`, not deployed): Hana's identity
+  JWKS is served by Hana's Cloudflare account, so the watchdog pins the keys' RFC 7638 thumbprints in its own manifest
+  block (`watchdog.pinnedIdentityKeys`, a redeploy on its own account to change; no pins = nothing pinned) and reads
+  the JWKS and the discovery document every run, after every protective step, with bodies capped. Each key is judged
+  by its material, never its kid. Unpinned keys, private members and a wrong `issuer` or `jwks_uri` are critical;
+  nothing is paused (partners verify the token; the contract never holds or accepts an identity key: it stores RSA
+  keys only). The schema refuses a manifest that publishes an unpinned key, and `identity-key` pins with `next` and
+  unpins with `retire`, so a retired, possibly leaked key can't be republished silently.
 - Monitoring (D83): every watchdog check, action and alert surfaces in the admin portal's "Security & monitoring"
   view (a standing rule for future checks); the watchdog sends its own alerts, so a compromised Hana Cloudflare
   account can't silence them.
@@ -794,13 +807,16 @@ with the partner page; there, short unlock windows and zeroing PRK are the mitig
 `approvalContextString`). Typed data carries its chain in its domain; messages and raw requests name no network, and
 the approve popup now says "This signature isn't tied to one network." on them.
 
-**(l) Identity token: testnet signing key and no JWKS pin check yet. Open (pre-mainnet).** Build steps 1–4 sign with
+**(l) Identity token: testnet signing key. Open (pre-mainnet).** Build steps 1–4 sign with
 a Worker-secret P-256 key (`IDENTITY_SIGNING_KEY`): anyone who can read the API Worker's secrets once can forge any
 user's identity at every partner until the key is removed from the JWKS. Step 7 moves mainnet signing to a
 non-exportable AWS KMS key with its own IAM user, CloudTrail and a reconciliation against `identity_issuance_hourly`
-(`gen` and the schema already refuse a Worker-secret key outside testnet); step 8 adds the watchdog's JWKS pin check
-(an unpinned key in the JWKS is a critical alert) and the "identity key on chain" check. Until then partners must not
-use identity tokens for anything of value. The testnet standby is kept off the Worker, and `identity-key next / switch /
+(`gen` and the schema already refuse a Worker-secret key outside testnet). Step 8 is built (branch
+`feat/identity-token-8`, D210–D214): the watchdog pages critical for an unpinned or private key in the JWKS and a wrong
+discovery `issuer` or `jwks_uri`, and for an identity key's thumbprint as an issuer kid on chain; it never pauses for
+them (the chain isn't involved). It detects, it doesn't prevent: partners that trust the JWKS URL accept a published
+attacker key until it is removed (≤ 10 min of cache after), so pinning thumbprints stays the stronger option for a
+partner. Until step 7 partners must not use identity tokens for anything of value. The testnet standby is kept off the Worker, and `identity-key next / switch /
 retire` rotate or replace keys (D177; playbook `identity-signing-key-compromised`). Also accepted for now: in an app that keeps logins, a browser that can't
 store the session (no share) gets `identity_unavailable` (`data.reason: 'no_share'`): the share check is what makes a
 logout or a revocation stop new tokens, and a missing share can't be told from a revoked and pruned one.

@@ -44,6 +44,9 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [Hana's email JWKS differs from the pins](#email-jwks-mismatch) | warning | `email_jwks_mismatch` |
 | [Link volume past its alarm threshold](#link-volume) | critical | `link_threshold_reached`, `link_volume_high`, `link_stats_unavailable` |
 | [Pending email key change (info)](#self-issued-key-change) | info | `self_issued_key_change` |
+| [Hana's identity JWKS publishes a key the watchdog didn't pin](#identity-jwks-forged) | critical | `identity_key_unpinned`, `identity_private_key_published`, `identity_discovery_mismatch` |
+| [Hana's identity JWKS lacks a pinned key or can't be read](#identity-jwks-degraded) | warning | `identity_key_missing`, `identity_jwks_failing` |
+| [An issuer key on chain has an identity key's kid](#identity-key-on-chain) | critical | `identity_key_on_chain` |
 | [`KEYS_UPDATER_KEY` stolen (API secrets leaked)](#updater-key-stolen) | critical | — |
 | [A relayer key stolen (session pool or owner pool)](#relayer-key-stolen) | warning | — |
 | [`VAULT_KEK` leaked (and routine rotation)](#vault-kek-leaked) | critical | — |
@@ -1172,6 +1175,154 @@ A pending email key pinned for its signer, or a pending email key removal. Self-
 
 **Refs:** [`docs/email-login-spec.md#self-issued-issuers`](email-login-spec.md#self-issued-issuers), [`docs/contract-interface.md#self-issued-issuers-email-login-d121`](contract-interface.md#self-issued-issuers-email-login-d121), D121 (`docs/decisions.md`) · **See also:** [key-change-lifecycle](#key-change-lifecycle), [unexpected-owner-action](#unexpected-owner-action)
 
+<a id="identity-jwks-forged"></a>
+
+### Hana's identity JWKS publishes a key the watchdog didn't pin
+
+`identity-jwks-forged` · critical · alert kinds: `identity_key_unpinned`, `identity_private_key_published`, `identity_discovery_mismatch`
+
+The partner identity token's JWKS (`{iss}/jwks.json`) lists a key whose RFC 7638 thumbprint isn't in `watchdog.pinnedIdentityKeys`, or private key material, or the discovery document names another issuer or `jwks_uri`. Partners that trust the JWKS URL would accept tokens for any user. The chain isn't involved: no pause.
+
+**Signals**
+
+- Critical `identity_key_unpinned` (`details.keys`: each kid, thumbprint and `reason`: `not_pinned`, `not_p256`, or `pins_unreadable` while `IDENTITY_PINS` is malformed, which also pages `pins_invalid:identity`). With nothing pinned at all, every published key is unpinned.
+- Critical `identity_private_key_published` (`details.keys[].private`: the member names, never the values) and `identity_discovery_mismatch` (`details.field`: `issuer` or `jwks_uri`, with `expected` and `published`).
+- `/status` `identity`: the pins in force and the last JWKS and discovery reads, each key judged. The watchdog reads both every run after its protective work (D86); it runs on its own Cloudflare account, so this alert can't be silenced from Hana's.
+
+**Impact**
+
+- An unpinned key in the JWKS means whoever published it can sign identity tokens partners accept as any user of any app (identity at partners: credits, referrals, their accounts) until it is gone from the JWKS and the partners' caches (≤ 10 min). No wallet, key, Hana API or contract call accepts an identity token.
+- A private member published: anyone who fetched the JWKS holds that signing key. A wrong `issuer` or `jwks_uri`: partners that use discovery check tokens against another issuer or fetch keys the watchdog doesn't see.
+
+**Steps**
+
+1. **Rule out a rotation done in the wrong order** (who: a founder). Compare the published kids with `identity-key show` and the manifest's `watchdog.pinnedIdentityKeys`. If the team published a new key (`next`) and deployed the API before redeploying the watchdog with the new pin, deploy the watchdog now (the manifest already pins it: `identity-key` writes both); the next run resolves the alert. Anything else is an incident.
+
+   ```sh
+   curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" https://<workerName>.<subdomain>.workers.dev/status
+   corepack pnpm --filter @hana-id/scripts run identity-key <env> show
+   corepack pnpm --filter @hana-id/watchdog gen <env>
+   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   ```
+
+2. **Read what is published** (who: a founder). Fetch the JWKS and the discovery document yourself and keep a copy for the post-mortem. Never paste a published private member anywhere: the key is burned either way.
+
+   ```sh
+   curl -s <apiUrl>/v1/identity/jwks.json
+   curl -s <apiUrl>/v1/identity/.well-known/openid-configuration
+   ```
+
+3. **Treat the API Worker or the Cloudflare account as compromised** (who: a founder). The JWKS and the discovery document come from the manifest at deploy time, so a key nobody on the team added means a deploy nobody made, a changed Worker, or a taken account. Follow [api-or-cloudflare-compromised](#api-or-cloudflare-compromised): take the account back and redeploy known-good code from the repo; the redeploy restores the pinned JWKS.
+
+   ```sh
+   corepack pnpm --filter @hana-id/api run gen <env>
+   corepack pnpm --filter @hana-id/api run deploy
+   ```
+
+4. **Rotate the identity signing keys** (who: a founder). Whoever could change what the API serves could also read its secrets, the active identity key among them: follow [identity-signing-key-compromised](#identity-signing-key-compromised) (switch to the offline standby, or a fresh key if both may be exposed; unpublish the exposed ones). A published private member: that key is exposed whatever else happened.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run identity-key <env> switch --to standby --yes
+   corepack pnpm --filter @hana-id/scripts run identity-key <env> retire --key previous --yes
+   ```
+
+5. **Tell partners** (who: a founder). Their security contacts: the kids that were published, the window, and what to re-check (tokens accepted with an unknown kid). Partners that pin thumbprints were not exposed; tell them the new pins after the rotation.
+
+**Verify**
+
+- The next run resolves the alert: every published key pinned, no private member, the discovery document's issuer and jwks_uri as configured.
+- `/status` `identity.jwks.unpinned` and `identity.jwks.private` are 0.
+
+**Follow-ups**
+
+- Write the post-mortem: how the key got into the JWKS. Check that the watchdog's own Cloudflare account wasn't touched ([watchdog-compromised](#watchdog-compromised)).
+
+**Refs:** [`docs/identity-token-spec.md#jwks-and-discovery`](identity-token-spec.md#jwks-and-discovery), [`docs/operations.md#identity-token-keys`](operations.md#identity-token-keys), [`apps/watchdog/README.md#what-a-run-does-every-5-min`](../apps/watchdog/README.md#what-a-run-does-every-5-min), D210 (`docs/decisions.md`), D211 (`docs/decisions.md`) · **See also:** [api-or-cloudflare-compromised](#api-or-cloudflare-compromised), [identity-signing-key-compromised](#identity-signing-key-compromised), [identity-jwks-degraded](#identity-jwks-degraded), [watchdog-compromised](#watchdog-compromised)
+
+<a id="identity-jwks-degraded"></a>
+
+### Hana's identity JWKS lacks a pinned key or can't be read
+
+`identity-jwks-degraded` · warning · alert kinds: `identity_key_missing`, `identity_jwks_failing`
+
+A key in `watchdog.pinnedIdentityKeys` isn't in the identity JWKS under its thumbprint as kid, or the JWKS or the discovery document failed 3 fetches in a row. Usually a rotation half done or an API outage; nothing is forged.
+
+**Signals**
+
+- Warning `identity_key_missing:<thumbprint>` (`details.reason`: `not_published`, or `kid_differs`: the key is there under another kid).
+- Warning `identity_jwks_failing:jwks` or `:discovery` (HTTP error, timeout, a body over 64 KB, or not the document). While the JWKS can't be read, the watchdog can't see an unpinned key either.
+
+**Impact**
+
+- A pinned key that isn't published: tokens it signs fail at partners (if it is the active key, every mint fails verification). A failing JWKS: partners' verifications fail once their cached copy expires (10 min), and the watchdog's pin check is blind until it reads again.
+
+**Steps**
+
+1. **A rotation step half done** (who: a founder). `identity-key next` pins the new key and publishes it in the same manifest change: the watchdog is deployed first (it warns until the API deploy), then the API. After `retire`, the pin goes with the key: deploy the API first, then the watchdog. Finish whichever deploy is missing.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run identity-key <env> show
+   corepack pnpm --filter @hana-id/api run gen <env>
+   corepack pnpm --filter @hana-id/api run deploy
+   corepack pnpm --filter @hana-id/watchdog gen <env>
+   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   ```
+
+2. **The JWKS or discovery fetch fails** (who: a founder). Check the API's health and the endpoints themselves; a 503 `identity_unavailable` means the API Worker lost its identity configuration (regenerate and redeploy). If the identity issuer moved on purpose, update `identityToken.iss` and redeploy both Workers.
+
+   ```sh
+   curl -s https://<worker-url>/v1/health
+   curl -s <apiUrl>/v1/identity/jwks.json
+   corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --status error
+   ```
+
+**Verify**
+
+- The next run resolves the warning; `/status` `identity.jwks.missing` is empty.
+
+**Refs:** [`docs/operations.md#identity-token-keys`](operations.md#identity-token-keys), [`apps/watchdog/README.md#what-a-run-does-every-5-min`](../apps/watchdog/README.md#what-a-run-does-every-5-min), D211 (`docs/decisions.md`) · **See also:** [identity-jwks-forged](#identity-jwks-forged), [identity-signing-key-compromised](#identity-signing-key-compromised)
+
+<a id="identity-key-on-chain"></a>
+
+### An issuer key on chain has an identity key's kid
+
+`identity-key-on-chain` · critical · alert kinds: `identity_key_on_chain`
+
+An active Google or email issuer key, or a pending key addition of any provider, has as its kid the RFC 7638 thumbprint of a partner identity key (pinned, or published at the last JWKS read). The contract must never trust an identity key; its material (EC) can't even be stored there, so this is someone posting an identity kid.
+
+**Signals**
+
+- Critical `identity_key_on_chain:active:<provider>:<kid>` or `:pending:<change id>` (`details`: where, provider, kid, change, whether the kid is pinned).
+- The same run's Google and email rules judge the key as usual: Google never publishes such a kid (a pending one is cancelled, an active one pauses), and an email kid must be its own RSA thumbprint (cancel, pause). Expect a `forged_key_change` or `forged_active_key` beside this alert; for a provider the watchdog doesn't know, an `unverifiable_key_change`.
+
+**Impact**
+
+- No identity token is accepted by the contract either way (it verifies RS256 issuer tokens only). The risk is what the key change itself is: an issuer key nobody vouches for, handled by the forged-key playbooks.
+
+**Steps**
+
+1. **Follow the issuer-key alert of the same run** (who: a founder). Follow [forged-key-change](#forged-key-change) or [forged-active-key](#forged-active-key): they cancel, pause and recover. This alert only says the kid is an identity key.
+
+   ```sh
+   curl -H "authorization: Bearer $(jq -r .WATCHDOG_STATUS_TOKEN .secrets/<env>/watchdog-secrets.json)" 'https://<workerName>.<subdomain>.workers.dev/alerts?severity=critical'
+   ```
+
+2. **Find who posted it** (who: a founder). The change's proposer (`details` of the issuer-key alert): the updater account means its key is stolen ([updater-key-stolen](#updater-key-stolen)); the owner means a council action nobody explained ([unexpected-owner-action](#unexpected-owner-action)). Using an identity kid suggests someone with access to Hana's identity configuration: check it with [identity-signing-key-compromised](#identity-signing-key-compromised) in mind.
+
+   ```sh
+   curl -s <apiUrl>/v1/governance | jq '{paused, keyChanges, issuers, updater}'
+   ```
+
+**Verify**
+
+- The key change is cancelled or the key removed; the next run resolves the alert.
+
+**Follow-ups**
+
+- Record how an identity kid reached the chain in the post-mortem.
+
+**Refs:** [`docs/identity-token-spec.md#jwks-and-discovery`](identity-token-spec.md#jwks-and-discovery), [`apps/watchdog/README.md#what-a-run-does-every-5-min`](../apps/watchdog/README.md#what-a-run-does-every-5-min), D212 (`docs/decisions.md`) · **See also:** [forged-key-change](#forged-key-change), [forged-active-key](#forged-active-key), [unverifiable-key-change](#unverifiable-key-change), [identity-signing-key-compromised](#identity-signing-key-compromised)
+
 ## Incident playbooks
 
 <a id="updater-key-stolen"></a>
@@ -1349,6 +1500,7 @@ Someone changed what the API or page Workers run, or controls Hana's main Cloudf
 - Deploys nobody made (Cloudflare's deployment history), unknown API tokens or logins, changed Worker secrets or D1 rows (origins, settings).
 - A `forged_key_change` from the signer account (the updater key is a Worker secret).
 - The watchdog keeps alerting: it runs on its own Cloudflare account and can't be silenced from this one (except on sandbox-dev, D125).
+- A critical `identity_key_unpinned`: the API publishes an identity token key the watchdog doesn't pin ([identity-jwks-forged](#identity-jwks-forged)).
 
 **Impact**
 
@@ -1375,7 +1527,7 @@ Someone changed what the API or page Workers run, or controls Hana's main Cloudf
    corepack pnpm --filter @hana-id/api run deploy:pages
    ```
 
-4. **Rotate every API secret** (who: a founder). The updater key ([updater-key-stolen](#updater-key-stolen)), both relayer pools ([relayer-key-stolen](#relayer-key-stolen)), and `VAULT_KEK` with every share revoked ([vault-kek-leaked](#vault-kek-leaked)). The admin Worker's copy of `WATCHDOG_STATUS_TOKEN` too, once batch C exists.
+4. **Rotate every API secret** (who: a founder). The updater key ([updater-key-stolen](#updater-key-stolen)), both relayer pools ([relayer-key-stolen](#relayer-key-stolen)), `VAULT_KEK` with every share revoked ([vault-kek-leaked](#vault-kek-leaked)), and the identity token signing key ([identity-signing-key-compromised](#identity-signing-key-compromised)). The admin Worker's copy of `WATCHDOG_STATUS_TOKEN` too, once batch C exists.
 
 5. **Check D1 for tampering** (who: a founder). Origins decide `frame-ancestors` and parent-origin checks; settings include `raw_sign` and policies (a bare D1 write skips their pending delay). Remove origins nobody added; suspend apps you can't verify.
 
@@ -2106,7 +2258,7 @@ Whoever holds an identity signing key can forge any user's identity token for an
 **Signals**
 
 - The API Worker's secrets, `.secrets/<env>/identity-signing-key*.json` or the operator's machine were exposed; a partner reports a token they didn't expect (a valid signature for a session that never existed).
-- Not built yet (build steps 7–8): the KMS `Sign` reconciliation against `identity_issuance_hourly` and the watchdog's JWKS pin check.
+- The watchdog's JWKS pin check (D210): a critical `identity_key_unpinned` or `identity_private_key_published` ([identity-jwks-forged](#identity-jwks-forged)). Not built yet (build step 7): the KMS `Sign` reconciliation against `identity_issuance_hourly`.
 
 **Impact**
 
@@ -2164,4 +2316,4 @@ Whoever holds an identity signing key can forge any user's identity token for an
 
 - If the Worker or the Cloudflare account was the way in: [api-or-cloudflare-compromised](#api-or-cloudflare-compromised). Before mainnet the key moves to AWS KMS (build step 7).
 
-**Refs:** [`docs/operations.md#identity-token-keys`](operations.md#identity-token-keys), [`docs/security.md#what-a-compromise-gives`](security.md#what-a-compromise-gives), D177 (`docs/decisions.md`) · **See also:** [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)
+**Refs:** [`docs/operations.md#identity-token-keys`](operations.md#identity-token-keys), [`docs/security.md#what-a-compromise-gives`](security.md#what-a-compromise-gives), D177 (`docs/decisions.md`) · **See also:** [api-or-cloudflare-compromised](#api-or-cloudflare-compromised), [identity-jwks-forged](#identity-jwks-forged)

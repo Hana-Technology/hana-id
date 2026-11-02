@@ -2,7 +2,7 @@
 
 The independent watchdog for `hana-signer`'s issuer keys and governance (`docs/governance-spec.md` "Watchdog
 service", `docs/decisions.md` D33, D82–D86; the email issuer's rules: `docs/email-login-spec.md` "Watchdog",
-D190–D193). A Cloudflare Worker on **its own Cloudflare account** (separate login and
+D190–D193; the partner identity token's JWKS: `docs/identity-token-spec.md` "JWKS and discovery", D210–D214). A Cloudflare Worker on **its own Cloudflare account** (separate login and
 MFA from the API's, D86), its own NEAR account and key, its own D1, its own Resend key, Slack webhook and paging-app
 credentials. It reads the chain through its own RPC (manifest `rpc`, then `rpcFallback`), never through the API.
 
@@ -74,6 +74,14 @@ every run and sends nothing on a mismatch.
      `link_volume_high` alerts stay open (only a good read resolves them). Judged with the chain read,
      before the run is recorded and its lock released. 
      With a stolen email key alone a thief can also log into email-rooted wallets, and into Google wallets that already have an email member, without making any link: the counter can't see that; the defence is the key's custody (D121).
+5b. **An identity key on chain** (check `identity_on_chain`, D212; chain data and D1 only): the kids of Google's and
+   the email issuer's active keys and of every pending key addition (any provider) against the identity token's
+   thumbprints: the pins (`watchdog.pinnedIdentityKeys`) and the keys Hana published at the last good identity JWKS
+   read (step 11). A match → critical condition `identity_key_on_chain` (`:active:<provider>:<kid>`,
+   `:pending:<change id>`), alert only. The contract stores RSA keys only, so an identity key's (EC) material can't be
+   there, only its kid; the same run's Google and email rules already cancel or pause on such a kid (Google never
+   published it; an email kid must be its own RSA thumbprint), an owner's change for another provider stays an
+   `unverifiable_key_change`. Skipped with nothing pinned or published.
 6. **Active keys**: a kid this watchdog never saw in Google's JWKS, or whose on-chain material (`get_issuer_keys`)
    differs from Google's → `pause`, then `delete_updater_key` for every updater key (whoever proposed it: the change
    record is gone by then, and only the updater or the owner can post keys; D126), + critical alert. **The only
@@ -112,18 +120,38 @@ every run and sends nothing on a mismatch.
    and the run `degraded`, and resolves nothing. Thresholds: manifest `watchdog.relayerFunds` (below).
 10. **Alerts out** (`src/alerts.ts`), the daily digest (`src/digest.ts`), the **dead-man's switch** ping, and the run
    record (`runs`, each check's outcome).
-11. **The advisory check** (warning only), **after the run is recorded and its lock released**, so a CPU kill or a
-   hang there costs only this check: the next cron run starts on time and every protective step already ran and was
-   recorded. It runs guarded (a throw marks it `error` and resolves nothing), resolves only its own kind, then
-   updates the run's record; what it raises goes out in a second delivery. Its read is third-party (Hana's API is a
-   party the watchdog must survive, D86).
-   - Hana's JWKS (check `email_jwks`, only with pins and a URL): `EMAIL_JWKS_URL` (manifest `jwksUrl`, default
-     `{apiUrl}/v1/email/jwks.json`), fetched with no cache; a published key not pinned (or kid ≠ thumbprint) or an
-     active email key not published → warning `email_jwks_mismatch`; 3 failed fetches while an email key is active →
-     the same warning (`:fetch`). Never trusted, never acted on.
+11. **The advisory checks** (alert only, never an action), **after the run is recorded and its lock released**, so a
+   CPU kill or a hang there costs only these checks: the next cron run starts on time and every protective step
+   already ran and was recorded. Each runs guarded (a throw marks it `error` and resolves nothing), resolves only its
+   own kinds; then the run's record is updated, and what they raised goes out in a second delivery. Their reads are
+   third-party (Hana's API is a party the watchdog must survive, D86).
+   - Hana's JWKS (check `email_jwks`, only with pins and a URL, and only after a chain read): `EMAIL_JWKS_URL`
+     (manifest `jwksUrl`, default `{apiUrl}/v1/email/jwks.json`), fetched with no cache; a published key not pinned
+     (or kid ≠ thumbprint) or an active email key not published → warning `email_jwks_mismatch`; 3 failed fetches
+     while an email key is active → the same warning (`:fetch`). Never trusted, never acted on.
+   - **The partner identity token's JWKS and discovery document** (check `identity_jwks`, D210, D213; needs no chain
+     read, so it runs without one; skipped without `IDENTITY_ISS`): `{IDENTITY_ISS}/jwks.json` and
+     `{IDENTITY_ISS}/.well-known/openid-configuration`, no cache, 10 s timeout. Each JWKS entry is judged by its key
+     material (its RFC 7638 P-256 thumbprint), never by its kid:
+     - a key whose thumbprint isn't in `IDENTITY_PINS` (manifest `watchdog.pinnedIdentityKeys`), or that isn't a
+       P-256 key → critical `identity_key_unpinned` (`details.keys[].reason`: `not_pinned`, `not_p256`,
+       `pins_unreadable`); **no pins = nothing pinned**: every published key is unpinned;
+     - any private member (`d`, `p`, `q`, `dp`, `dq`, `qi`, `oth`, `k`) → critical `identity_private_key_published`
+       (the member names are stored, never the values);
+     - the discovery document's `issuer` not exactly `IDENTITY_ISS`, or its `jwks_uri` not `{IDENTITY_ISS}/jwks.json`
+       → critical `identity_discovery_mismatch` (`:issuer:…`, `:jwks_uri:…`, per published value); nothing it
+       advertises is fetched;
+     - a pinned key not published under its thumbprint as kid → warning `identity_key_missing:<thumbprint>`
+       (`not_published`, `kid_differs`);
+     - 3 failed reads in a row (HTTP error, timeout, over 64 KB, or not a JWKS / not a JSON object) → warning
+       `identity_jwks_failing:jwks` / `:discovery` (one counter each); a failed read resolves nothing it would judge.
+     **No pause, ever** (D210): partners verify identity tokens, the contract never holds or accepts an identity key,
+     so a pause would stop every user and no forged token. An unpinned or private set is one condition keyed by a hash
+     of what was found (a new key is a new page), listing at most 20 keys (D214). The last good reads go to D1 (`meta`
+     `identity_jwks`, `identity_discovery`) for `/status` and step 5b.
 
-Every third-party body the watchdog parses is size-capped before parsing (`src/http.ts`: both JWKS 64 KB, an RPC
-answer 4 MB), by `Content-Length` and while streaming: over the cap is a failed
+Every third-party body the watchdog parses is size-capped before parsing (`src/http.ts`: every JWKS and the identity
+discovery document 64 KB, an RPC answer 4 MB), by `Content-Length` and while streaming: over the cap is a failed
 fetch (an RPC answer then tries the fallback).
 
 Everything not listed in steps 4–6 is alert-only (D82). Actions use exactly four methods, the permission of the
@@ -182,7 +210,7 @@ route answers 503. Responses are JSON, `cache-control: no-store`.
 
 | Route | Returns |
 |---|---|
-| `GET /status` | `env`, `network`, `signer`, `watchdog_account`, `now`, `run_interval_ms` (300000), `resend_ms`, `initialized_at`, `email` (`{pinned, jwks_url, last}`: the pins in force and, at the last run, `{at, pinned, chain: {issuer, pre_v3, self_issued, active_kids}, differences, weaker}`), `link_stats` (the last `get_link_stats()` with its read time `at`: `{window_ms, thresholds, pending_thresholds, links_total, current, previous}`, or null), `last_run` (`{id, started_at, finished_at, outcome, first_run, checks: [{id, outcome, detail?}]}`), `silent` (no finished run within two intervals: the portal's warning banner), `heartbeat` (`{configured, last_ping_at, last_ok_at, ok, failures}`), `channels` (configured or not, pager provider), `seen_kids` (`{provider, kid, n, e, source, first_seen_at, last_seen_at}`), `relayer_funds` (the last relayer reading or null: `{account, exists, amount, locked, storage_usage, available, keys: [{public_key, pool, allowance}], other_keys, at, thresholds: {balance, session, owner: {warn, critical}}}`, amounts in yoctoNEAR as decimal strings, `allowance` null = unlimited), `actions` (last 50), `open_alerts` (unacknowledged critical and open conditions), `checks` and `alert_kinds` (the registry: per kind `{severity, check, description, playbook}`, `playbook` = the id of its `@hana-id/playbooks` playbook, the portal's link target) |
+| `GET /status` | `env`, `network`, `signer`, `watchdog_account`, `now`, `run_interval_ms` (300000), `resend_ms`, `initialized_at`, `email` (`{pinned, jwks_url, last}`: the pins in force and, at the last run, `{at, pinned, chain: {issuer, pre_v3, self_issued, active_kids}, differences, weaker}`), `link_stats` (the last `get_link_stats()` with its read time `at`: `{window_ms, thresholds, pending_thresholds, links_total, current, previous}`, or null), `identity` (`{iss, jwks_url, discovery_url, pinned, jwks, discovery}`: the identity issuer and pins in force, and the last good reads: `jwks` = `{at, url, keys: [{kid, thumbprint, pinned, private}] (≤ 50), count, unpinned, private, missing: [{thumbprint, reason}]}`, `discovery` = `{at, url, issuer, jwks_uri, problems: [{field, expected, published}]}`, each null before one; D210), `last_run` (`{id, started_at, finished_at, outcome, first_run, checks: [{id, outcome, detail?}]}`), `silent` (no finished run within two intervals: the portal's warning banner), `heartbeat` (`{configured, last_ping_at, last_ok_at, ok, failures}`), `channels` (configured or not, pager provider), `seen_kids` (`{provider, kid, n, e, source, first_seen_at, last_seen_at}`), `relayer_funds` (the last relayer reading or null: `{account, exists, amount, locked, storage_usage, available, keys: [{public_key, pool, allowance}], other_keys, at, thresholds: {balance, session, owner: {warn, critical}}}`, amounts in yoctoNEAR as decimal strings, `allowance` null = unlimited), `actions` (last 50), `open_alerts` (unacknowledged critical and open conditions), `checks` and `alert_kinds` (the registry: per kind `{severity, check, description, playbook}`, `playbook` = the id of its `@hana-id/playbooks` playbook, the portal's link target) |
 | `GET /alerts?cursor=<id>&limit=<1..200>&severity=<critical\|warning\|info>` | `{alerts: [{id, kind, severity, title, details, created_at, resolved_at, acked_at, acked_by, acked_via, last_sent_at, send_count, pending_channels, channels, resends_until_ack, deliveries: [{channel, kind, at, ok, error}]}], next_cursor}`, newest first |
 | `GET /actions?cursor=<id>&limit=<1..200>` | `{actions: [{id, run_id, at, method, args, reason, ok, tx_hash, error}], next_cursor}`, newest first (`tx_hash` for transaction links) |
 | `POST /alerts/:id/ack` `{"by": "<who>"}` | Records the acknowledgement once (`acked_via: "portal"`, `acked_by` 1–200 characters: the Access identity), `200 {alert}`; `409` if already acknowledged (the first ack is kept); `404`, `400`, `413`, `415` |
@@ -204,9 +232,18 @@ Manifest block (`envs/<env>.json`, schema `packages/env/src/schema.ts`, optional
   "pager": "ntfy",
   "digestHourUtc": 0,
   "relayerFunds": { "balance": { "warn": 5, "critical": 1 }, "sessionAllowance": { "warn": 0.5, "critical": 0.1 }, "ownerAllowance": { "warn": 0.1, "critical": 0.02 } },
-  "pinnedIssuerKeys": { "email": { "required": 1, "signers": { "hana": ["<primary thumbprint>", "<standby thumbprint>"] } } }
+  "pinnedIssuerKeys": { "email": { "required": 1, "signers": { "hana": ["<primary thumbprint>", "<standby thumbprint>"] } } },
+  "pinnedIdentityKeys": ["<active identity kid>", "<standby identity kid>"]
 }
 ```
+
+`pinnedIdentityKeys` (optional, D210, D211): the RFC 7638 thumbprints (= kids) of the partner identity token's P-256
+keys the watchdog accepts in Hana's identity JWKS. `gen` passes them as `IDENTITY_PINS` (JSON array) and
+`identityToken.iss` as `IDENTITY_ISS`; no `identityToken`, no `IDENTITY_ISS` and the check is skipped. With
+`identityToken` in the manifest the schema requires every one of its `publicKeys` to be pinned (extra pins are
+allowed), and `scripts/identity-key.ts` writes the pins with the keys (`init` and `next` pin, `retire` unpins): deploy
+the watchdog before the API after a pin, the API before the watchdog after an unpin (`docs/operations.md` "Identity
+token keys"). An unreadable `IDENTITY_PINS` pages `pins_invalid:identity` and reads as nothing pinned.
 
 `pinnedIssuerKeys.email` (optional, D190): `gen` passes `{required, signers}` as `EMAIL_PINS` (JSON) and the JWKS URL
 (`jwksUrl`, else `{apiUrl}/v1/email/jwks.json`) as `EMAIL_JWKS_URL`. Absent (sandbox-dev until batch 4 creates the
@@ -249,7 +286,10 @@ Setup and deploy steps are in `docs/operations.md` "Watchdog service".
 JWKS and recording channels; `email.test.ts` the email issuer's rules (pinned and unpinned keys per signer, no
 confirm, the signer-policy diff and its pauses, Hana's JWKS, the link alarm thresholds (`get_link_stats`), `unrecorded_wallets`, a v2 contract read as
 no email issuer, D153 unchanged beside it, the review hardening: advisory order and the lock, `pins_invalid`,
-`bad_material`); `http.test.ts` the body caps on every third-party read; `scripts/test/pin.test.ts` the pin command
+`bad_material`); `identity.test.ts` the identity token's rules (pinned and unpinned keys judged by material, a
+non-P-256 key and a hostile kid, private members never stored, a pinned key missing or renamed, the discovery
+fields, failures per document and a malformed body, nothing pinned, unreadable pins, the advisory order and its
+containment, a run without a chain read, the on-chain kid check in the protective phase); `http.test.ts` the body caps on every third-party read; `scripts/test/pin.test.ts` the pin command
 (RFC 7638 vector, leading zeros, PEM, private keys refused); `pins.test.ts` the pin parsing and the per-key and
 policy verdicts; `alerts.test.ts` routing, re-sends, acks and failing channels; `channels.test.ts` each
 adapter's request; `registry.test.ts` that every alert kind has exactly one playbook (and its line in the alert text);

@@ -22,6 +22,7 @@ import type { Notifier } from './channels.ts';
 import { ALERT_KINDS, type AlertKind, CHANNELS, CHECK_IDS, type CheckId } from './checks.ts';
 import { maybeSendDigest } from './digest.ts';
 import { diffChain, linkThresholdsOf, type StoredSnapshot } from './diff.ts';
+import { type IdentityPins, identityDiscoveryUrl, identityJwksUrl, identityKeysOnChain, judgeDiscovery, judgeIdentityJwks, MAX_LISTED, type PublishedKey, sha256b64url } from './identity.ts';
 import { log } from './log.ts';
 import { EMAIL_KEY_WHY, EMAIL_PROVIDER, type EmailKeyReason, emailKeyVerdict, pinnedSignersOf, policyFindings, policyId, type SignerPins, signerOfKid } from './pins.ts';
 import { formatNear, level, RELAYER_POOLS, type RelayerFunds, type RelayerThresholds, type Threshold } from './relayer.ts';
@@ -68,6 +69,11 @@ export interface RunConfig {
   emailPins: { pins: SignerPins | null; problems: string[] };
   /** A dev env (`local*`, `sandbox*`): `unrecorded_wallets` may be true there (D139). */
   devEnv: boolean;
+  /**
+   * The partner identity token (D210): its issuer (`identityToken.iss`; null: the env has none, the JWKS check is
+   * skipped) and `watchdog.pinnedIdentityKeys` (`pins: null`: nothing pinned), with any problem reading them.
+   */
+  identity: { iss: string | null; pins: IdentityPins };
 }
 
 export interface RunDeps {
@@ -79,6 +85,11 @@ export interface RunDeps {
   fetchJwks: () => Promise<Jwk[]>;
   /** Hana's published email JWKS (usable RS256 keys; may be empty), or null when no URL is configured. Throws on failure. */
   fetchEmailJwks: (() => Promise<Jwk[]>) | null;
+  /**
+   * Hana's identity JWKS and discovery document as parsed JSON (size-capped, no cache), or null when the env has no
+   * identity issuer. Each throws on an HTTP, network or JSON failure.
+   */
+  fetchIdentity: { jwks: () => Promise<unknown>; discovery: () => Promise<unknown> } | null;
   notifier: Notifier;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
@@ -120,7 +131,34 @@ export const META = {
   linkStats: 'link_stats',
   /** The pins and the chain's email issuer at the last run (`GET /status` `email`). */
   emailPolicy: 'email_policy',
+  identityJwksFailures: 'identity_jwks_failures',
+  identityDiscoveryFailures: 'identity_discovery_failures',
+  /** The last good read of Hana's identity JWKS, judged (`GET /status` `identity.jwks`; its thumbprints feed identity_on_chain). */
+  identityJwks: 'identity_jwks',
+  /** The last good read of the identity discovery document (`GET /status` `identity.discovery`). */
+  identityDiscovery: 'identity_discovery',
 } as const;
+
+/** What `GET /status` serves as `identity.jwks`: the last good read of Hana's identity JWKS, judged against the pins. */
+export interface IdentityJwksStatus {
+  at: number;
+  url: string;
+  /** Published entries (at most 50 listed; `count` has them all). */
+  keys: { kid: string | null; thumbprint: string | null; pinned: boolean; private: string[] }[];
+  count: number;
+  unpinned: number;
+  private: number;
+  missing: { thumbprint: string; reason: 'not_published' | 'kid_differs' }[];
+}
+
+/** What `GET /status` serves as `identity.discovery`: the last good read of the discovery document. */
+export interface IdentityDiscoveryStatus {
+  at: number;
+  url: string;
+  issuer: string | null;
+  jwks_uri: string | null;
+  problems: { field: 'issuer' | 'jwks_uri'; expected: string; published: string | null }[];
+}
 
 /** What `GET /status` serves as `email`: the pins in force and the chain's email issuer at the last run. */
 export interface EmailPolicyStatus {
@@ -232,6 +270,7 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
   let firstRun = false;
   let delivery: DeliveryReport | null = null;
   let advisorySnap: ChainSnapshot | null = null;
+  let advisoryReady = false;
   if (!(await store.acquireLock(runId, startedAt, LOCK_STALE_MS))) {
     // Another run is still going (a slow one overlaps the next cron tick): it does the work, and the heartbeat.
     const checks = CHECK_IDS.map((id) => ({ id, outcome: 'skipped' as const, detail: 'another run in progress' }));
@@ -244,10 +283,16 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
 
     // ---- config ----
     run.evaluate('watchdog_key_missing', 'channel_not_configured', 'pins_invalid');
-    run.check('config', 'ok', [...cfg.relayerThresholds.problems, ...cfg.emailPins.problems].join('; ') || undefined);
+    run.check('config', 'ok', [...cfg.relayerThresholds.problems, ...cfg.emailPins.problems, ...cfg.identity.pins.problems].join('; ') || undefined);
     if (cfg.emailPins.problems.length) {
       // Fail closed: every email key then counts as unpinned (cancel, pause), so say why at once (L4).
       await run.condition('pins_invalid', 'pins_invalid', "The watchdog's email pins (EMAIL_PINS) are unreadable: every email key is treated as unpinned", { problems: cfg.emailPins.problems });
+    }
+    if (cfg.identity.pins.problems.length) {
+      // Fail closed as for email: every published identity key then pages as unpinned (`pins_unreadable`).
+      await run.condition('pins_invalid', 'pins_invalid:identity', "The watchdog's identity pins (IDENTITY_PINS) are unreadable: every published identity key is treated as unpinned", {
+        problems: cfg.identity.pins.problems,
+      });
     }
     if (!d.writer) await run.condition('watchdog_key_missing', 'watchdog_key_missing', 'The watchdog has no usable key: it can alert but not act', { account: cfg.watchdogAccount });
     const channels = { pager: d.notifier.pager.configured, slack: d.notifier.slack.configured, email: d.notifier.email.configured, heartbeat: d.notifier.heartbeat.configured };
@@ -342,6 +387,8 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
       await unrecordedWallets(run, snap);
       // D200: links per hour from one chain view, judged before the run is recorded and the lock released.
       await linkStats(run, snap);
+      // D212: no identity key's thumbprint as an issuer kid (chain data and stored config only: no third-party read).
+      await identityOnChain(run, snap);
     }
 
     const firstJwks = google.jwks;
@@ -455,7 +502,7 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
       } satisfies StoredSnapshot);
       await store.setMeta(META.selfChanges, self);
     } else {
-      for (const id of ['signer_policy', 'links', 'governance_diff', 'unexecuted_changes'] as const) run.check(id, 'skipped', 'no chain read');
+      for (const id of ['signer_policy', 'links', 'identity_on_chain', 'governance_diff', 'unexecuted_changes'] as const) run.check(id, 'skipped', 'no chain read');
     }
     // ---- relayer funds (alert only) ----
     let relayerRead = true;
@@ -475,7 +522,9 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
 
     // The advisory checks run after the run is recorded and the lock released (below).
     advisorySnap = snap;
+    advisoryReady = true;
     run.check('email_jwks', 'skipped', snap ? 'advisory: runs after the run is recorded' : 'no chain read');
+    run.check('identity_jwks', 'skipped', 'advisory: runs after the run is recorded');
   } catch (err) {
     outcome = 'error';
     log({ event: 'run_failed', runId, code: err instanceof Error ? err.name : 'error' }, 'error');
@@ -504,19 +553,24 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
   await store.releaseLock(runId).catch(() => log({ event: 'run_lock_release_failed', runId }, 'error'));
   log({ event: 'run', runId, outcome: outcome === 'error' ? 'error' : 'ok', code: outcome, checks: checks.length, actions: run.actions.length, alerts: run.alerts.length, latencyMs: d.now() - startedAt });
 
-  // ---- step 9: the advisory check (warning only), after the run is recorded and the lock released ----
-  // Its third-party read (Hana's email JWKS: Hana's API is a party the watchdog must survive, D86) can't hold back a
-  // cancel, a pause, the snapshot, an alert, the heartbeat, the run record or the lock: a CPU kill or a hang here
-  // costs only this check. It runs guarded, resolves only its own kinds, then updates the run's record; what it
-  // raises goes out in a second delivery.
-  if (advisorySnap && outcome !== 'error') {
-    const s: ChainSnapshot = advisorySnap;
+  // ---- step 9: the advisory checks, after the run is recorded and the lock released ----
+  // Their third-party reads (Hana's email JWKS, Hana's identity JWKS and discovery document: Hana's API is a party the
+  // watchdog must survive, D86) can't hold back a cancel, a pause, the snapshot, an alert, the heartbeat, the run record
+  // or the lock: a CPU kill or a hang here costs only these checks. Each runs guarded and resolves only its own kinds;
+  // then the run's record is updated, and what they raised goes out in a second delivery. The identity check needs no
+  // chain read, so it runs without one.
+  if (advisoryReady && outcome !== 'error') {
+    const s: ChainSnapshot | null = advisorySnap;
     try {
       run.evaluated.clear();
-      run.checks.delete('email_jwks');
       run.raisedKeys.clear();
       const raised = run.alerts.length;
-      await advisory(run, 'email_jwks', () => emailJwks(run, s));
+      if (s) {
+        run.checks.delete('email_jwks');
+        await advisory(run, 'email_jwks', () => emailJwks(run, s));
+      }
+      run.checks.delete('identity_jwks');
+      await advisory(run, 'identity_jwks', () => identityJwks(run));
       await store.resolveConditions(run.evaluated, run.raisedKeys, d.now());
       if (run.alerts.length > raised) {
         const more = await deliverAlerts(store, d.notifier, d.now(), cfg.envName);
@@ -995,6 +1049,150 @@ async function emailJwks(run: Run, s: ChainSnapshot): Promise<void> {
     await run.condition('email_jwks_mismatch', 'email_jwks_mismatch:keys', `Hana's email JWKS differs from the pins: ${problems.join('; ')}`, { problems, published: [...published], active_kids: active });
   }
   run.check('email_jwks', problems.length ? 'alert' : 'ok', `${keys.length} published, ${active.length} active`);
+}
+
+/**
+ * D212: an issuer key on chain whose kid is an identity key's thumbprint (the pins, and what Hana published at the last
+ * good JWKS read) is critical, alert only. The contract holds RSA keys only, so an identity key's material can't be
+ * there; the Google and email rules of this run already cancel or pause on such a kid (Google never published it; an
+ * email kid must be its own RSA thumbprint). This says why. Chain data and stored config only: no third-party read.
+ */
+async function identityOnChain(run: Run, s: ChainSnapshot): Promise<void> {
+  const pins = run.d.config.identity.pins.pins ?? [];
+  const last = await run.d.store.getMeta<IdentityJwksStatus>(META.identityJwks);
+  const thumbprints = new Set([...pins, ...(last?.keys ?? []).flatMap((k) => (k.thumbprint ? [k.thumbprint] : []))]);
+  run.evaluate('identity_key_on_chain');
+  if (thumbprints.size === 0) {
+    run.check('identity_on_chain', 'skipped', 'no identity key pinned or published');
+    return;
+  }
+  const hits = identityKeysOnChain({ issuerKids: s.issuer?.kids ?? [], emailKids: s.email.issuer?.kids ?? [], pending: s.keyChanges }, thumbprints);
+  for (const h of hits) {
+    const key = h.where === 'pending' ? `identity_key_on_chain:pending:${h.change}` : `identity_key_on_chain:active:${h.provider}:${h.kid}`;
+    const what = h.where === 'pending' ? `A pending addition (change ${h.change}) of ${ident(h.provider)} key` : `An active ${h.provider} key`;
+    await run.condition('identity_key_on_chain', key, `${what} has identity token key ${h.kid}'s thumbprint as its kid: the contract must never trust an identity key (alert only)`, {
+      ...h,
+      pinned: pins.includes(h.kid),
+    });
+  }
+  run.check('identity_on_chain', hits.length ? 'alert' : 'ok', `${thumbprints.size} identity thumbprint(s) checked`);
+}
+
+/** The first `MAX_LISTED` entries of a list for an alert's details or title. */
+const listed = <T>(xs: T[]): T[] => xs.slice(0, MAX_LISTED);
+const keyLabel = (k: PublishedKey): string => (k.kid !== null ? ident(k.kid) : k.thumbprint ?? 'a key without kid');
+const keyDetail = (k: PublishedKey) => ({ kid: k.kid, thumbprint: k.thumbprint, reason: k.reason, private: k.private });
+
+/**
+ * One of Hana's identity documents, counted: a failure (HTTP, network, over the cap, JSON, or a body of another shape)
+ * adds to its counter and warns `identity_jwks_failing:<what>` after 3 runs in a row; a good read resets it. Returns the
+ * judged document, or null when it failed.
+ */
+async function readIdentityDoc<T>(run: Run, what: 'jwks' | 'discovery', fetch: () => Promise<unknown>, judge: (body: unknown) => T | Promise<T>): Promise<T | null> {
+  const metaKey = what === 'jwks' ? META.identityJwksFailures : META.identityDiscoveryFailures;
+  const condKey = `identity_jwks_failing:${what}`;
+  let failures = (await run.d.store.getMeta<number>(metaKey)) ?? 0;
+  let judged: T | null = null;
+  try {
+    judged = await judge(await fetch());
+    failures = 0;
+  } catch {
+    failures++;
+  }
+  await run.d.store.setMeta(metaKey, failures);
+  run.evaluatePrefix('identity_jwks_failing', condKey);
+  if (failures >= FAILING_RUNS) {
+    const doc = what === 'jwks' ? 'JWKS' : 'discovery document';
+    await run.condition('identity_jwks_failing', condKey, `Hana's identity ${doc} failed ${failures} fetches in a row`, { document: what, failures });
+  }
+  return judged;
+}
+
+/**
+ * Hana's identity JWKS and discovery document against the pins and the configured issuer (D210, D211). Critical for an
+ * unpinned or private key and a wrong issuer or jwks_uri, never a pause: the chain is not involved (partners verify
+ * identity tokens; the contract never does). Each alert set is one condition keyed by what it found, so a different
+ * finding is a new page, and the list in one alert is bounded. A failed read resolves nothing of what it would judge.
+ */
+async function identityJwks(run: Run): Promise<void> {
+  const { iss, pins } = run.d.config.identity;
+  const f = run.d.fetchIdentity;
+  if (!iss || !f) {
+    run.evaluate('identity_key_unpinned', 'identity_private_key_published', 'identity_key_missing', 'identity_discovery_mismatch', 'identity_jwks_failing');
+    run.check('identity_jwks', 'skipped', 'no identity token configured (IDENTITY_ISS)');
+    return;
+  }
+  const { store } = run.d;
+  const at = run.d.now();
+  const notes: string[] = [];
+  let failed = false;
+
+  // ---- the JWKS ----
+  const jwksUrl = identityJwksUrl(iss);
+  const v = await readIdentityDoc(run, 'jwks', f.jwks, (body) => judgeIdentityJwks(body, pins));
+  if (!v) {
+    failed = true;
+    notes.push('JWKS fetch failed');
+  } else {
+    run.evaluate('identity_key_unpinned', 'identity_private_key_published', 'identity_key_missing');
+    await store.setMeta(META.identityJwks, {
+      at,
+      url: jwksUrl,
+      keys: v.keys.slice(0, 50).map((k) => ({ kid: k.kid, thumbprint: k.thumbprint, pinned: k.pinned, private: k.private })),
+      count: v.keys.length,
+      unpinned: v.unpinned.length,
+      private: v.privateKeys.length,
+      missing: v.missing,
+    } satisfies IdentityJwksStatus);
+    if (v.unpinned.length) {
+      const refs = v.unpinned.map((k) => k.ref).sort();
+      const why = pins.problems.length ? "the watchdog's identity pins are unreadable" : !pins.pins ? 'nothing is pinned (watchdog.pinnedIdentityKeys)' : 'not pinned';
+      await run.condition(
+        'identity_key_unpinned',
+        `identity_key_unpinned:${(await sha256b64url(refs.join(','))).slice(0, 16)}`,
+        `Hana's identity JWKS publishes ${v.unpinned.length} key(s) the watchdog doesn't accept (${why}): ${listed(v.unpinned).slice(0, 3).map(keyLabel).join(', ')}${v.unpinned.length > 3 ? ', ...' : ''}; partners trusting the JWKS URL accept tokens they sign. No pause: the chain isn't involved`,
+        { url: jwksUrl, count: v.unpinned.length, keys: listed(v.unpinned).map(keyDetail), pinned: pins.pins, published: v.keys.length },
+      );
+    }
+    if (v.privateKeys.length) {
+      const refs = v.privateKeys.map((k) => k.ref).sort();
+      await run.condition(
+        'identity_private_key_published',
+        `identity_private_key_published:${(await sha256b64url(refs.join(','))).slice(0, 16)}`,
+        `Hana's identity JWKS publishes private key material for ${v.privateKeys.length} key(s): ${listed(v.privateKeys).slice(0, 3).map(keyLabel).join(', ')}${v.privateKeys.length > 3 ? ', ...' : ''}; anyone can sign identity tokens with them. No pause: the chain isn't involved`,
+        // The members' names only: the stored alert never holds the private values.
+        { url: jwksUrl, count: v.privateKeys.length, keys: listed(v.privateKeys).map(keyDetail) },
+      );
+    }
+    for (const m of v.missing) {
+      const how = m.reason === 'kid_differs' ? 'is published under another kid' : 'is not published';
+      await run.condition('identity_key_missing', `identity_key_missing:${m.thumbprint}`, `Pinned identity key ${m.thumbprint} ${how} in Hana's identity JWKS`, { url: jwksUrl, ...m });
+    }
+    notes.push(`${v.keys.length} published, ${v.unpinned.length} unpinned, ${v.privateKeys.length} with private members, ${v.missing.length} pinned missing`);
+  }
+
+  // ---- the discovery document ----
+  const discoveryUrl = identityDiscoveryUrl(iss);
+  const dv = await readIdentityDoc(run, 'discovery', f.discovery, (body) => judgeDiscovery(body, iss));
+  if (!dv) {
+    failed = true;
+    notes.push('discovery fetch failed');
+  } else {
+    run.evaluate('identity_discovery_mismatch');
+    await store.setMeta(META.identityDiscovery, { at, url: discoveryUrl, ...dv } satisfies IdentityDiscoveryStatus);
+    for (const p of dv.problems) {
+      const shown = p.published === null ? 'none' : ident(p.published);
+      await run.condition(
+        'identity_discovery_mismatch',
+        `identity_discovery_mismatch:${p.field}:${(await sha256b64url(String(p.published))).slice(0, 16)}`,
+        `Hana's identity discovery document has ${p.field} ${shown}, not ${p.expected}. No pause: the chain isn't involved`,
+        { url: discoveryUrl, ...p },
+      );
+    }
+    notes.push(dv.problems.length ? `discovery differs: ${dv.problems.map((p) => p.field).join(', ')}` : 'discovery ok');
+  }
+  const alerted = run.checks.get('identity_jwks')?.outcome === 'alert';
+  run.check('identity_jwks', alerted ? 'alert' : failed ? 'error' : 'ok', notes.join('; '));
 }
 
 /** D139: `unrecorded_wallets` must never be true outside a dev env (critical, alert only). Chain data only. */

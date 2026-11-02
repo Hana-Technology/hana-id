@@ -5,6 +5,7 @@ import { env } from 'cloudflare:workers';
 import type { ChainReader, ChainSnapshot, ChainWriter, ConfigView, GovernanceView, KeyChange, LinkStatsView, LinkWindow, TxResult, WatchdogMethod } from '../src/chain.ts';
 import type { AlertMessage, Notifier, Pager, Sender, SendResult } from '../src/channels.ts';
 import type { Channel } from '../src/checks.ts';
+import { p256Thumbprint } from '../src/identity.ts';
 import type { SignerPins } from '../src/pins.ts';
 import { type AccessKeyEntry, nearToYocto, type RelayerFunds, relayerFundsFrom, relayerThresholds } from '../src/relayer.ts';
 import { type RunDeps, type RunReport, runWatchdog } from '../src/run.ts';
@@ -397,6 +398,39 @@ export class StubEmailJwks {
   };
 }
 
+/** A P-256 public JWK as Hana's API publishes it (kid = its RFC 7638 thumbprint), from a throwaway key. */
+export async function identityKey(): Promise<{ kty: 'EC'; crv: 'P-256'; x: string; y: string; kid: string; use: 'sig'; alg: 'ES256' }> {
+  const pair = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])) as CryptoKeyPair;
+  const pub = (await crypto.subtle.exportKey('jwk', pair.publicKey)) as JsonWebKey & { x: string; y: string };
+  const kid = (await p256Thumbprint({ kty: 'EC', crv: 'P-256', x: pub.x, y: pub.y }))!;
+  return { kty: 'EC', crv: 'P-256', x: pub.x, y: pub.y, kid, use: 'sig', alg: 'ES256' };
+}
+
+export const IDENTITY_ISS = 'https://api.test/v1/identity';
+
+/**
+ * Hana's identity JWKS and discovery document as the watchdog fetches them: `jwks` / `discovery` bodies (null: the
+ * honest answer for `keys` and `IDENTITY_ISS`), or a failure while `failJwks` / `failDiscovery`.
+ */
+export class StubIdentity {
+  keys: unknown[] = [];
+  jwks: unknown = null;
+  discovery: unknown = null;
+  failJwks = false;
+  failDiscovery = false;
+  fetches = { jwks: 0, discovery: 0 };
+  fetchJwks = async (): Promise<unknown> => {
+    this.fetches.jwks++;
+    if (this.failJwks) throw new Error('identity JWKS down');
+    return structuredClone(this.jwks ?? { keys: this.keys });
+  };
+  fetchDiscovery = async (): Promise<unknown> => {
+    this.fetches.discovery++;
+    if (this.failDiscovery) throw new Error('identity discovery down');
+    return structuredClone(this.discovery ?? { issuer: IDENTITY_ISS, jwks_uri: `${IDENTITY_ISS}/jwks.json`, id_token_signing_alg_values_supported: ['ES256'], subject_types_supported: ['pairwise'] });
+  };
+}
+
 export interface World {
   chain: StubChain;
   writer: StubWriter;
@@ -407,6 +441,7 @@ export interface World {
   sleeps: number[];
   deps: RunDeps;
   emailJwks: StubEmailJwks;
+  identity: StubIdentity;
   /** One run at the current time; then the clock moves 5 min. */
   run(): Promise<RunReport>;
 }
@@ -418,6 +453,11 @@ export interface WorldOpts {
   at?: number;
   /** The manifest's email pins (default: none, as on sandbox-dev today). */
   pins?: SignerPins | null;
+  /**
+   * The identity token (D210): `published` keys in Hana's JWKS (default: exactly the pinned ones) and the pins
+   * (thumbprints; default: the published keys' kids). Absent: the env has no identity token (check skipped).
+   */
+  identity?: { published?: unknown[]; pins?: string[] | null };
 }
 
 export function world(opts: WorldOpts = {}): World {
@@ -429,12 +469,16 @@ export function world(opts: WorldOpts = {}): World {
   const clock = { t: opts.at ?? T0 };
   const sleeps: number[] = [];
   const emailJwks = new StubEmailJwks(chain);
+  const identity = new StubIdentity();
+  identity.keys = opts.identity?.published ?? [];
+  const identityPins = opts.identity ? (opts.identity.pins === undefined ? (opts.identity.published ?? []).map((k) => (k as { kid: string }).kid) : opts.identity.pins) : null;
   const deps: RunDeps = {
     store,
     chain,
     writer: opts.writer === false ? null : writer,
     fetchJwks: jwks.fetch,
     fetchEmailJwks: emailJwks.fetch,
+    fetchIdentity: opts.identity ? { jwks: identity.fetchJwks, discovery: identity.fetchDiscovery } : null,
     notifier,
     now: () => clock.t,
     sleep: async (ms) => {
@@ -451,6 +495,7 @@ export function world(opts: WorldOpts = {}): World {
       relayerThresholds: relayerThresholds(undefined),
       emailPins: { pins: opts.pins ?? null, problems: [] },
       devEnv: true,
+      identity: { iss: opts.identity ? IDENTITY_ISS : null, pins: { pins: identityPins, problems: [] } },
     },
   };
   const w: World = {
@@ -463,6 +508,7 @@ export function world(opts: WorldOpts = {}): World {
     sleeps,
     deps,
     emailJwks,
+    identity,
     async run() {
       const r = await runWatchdog(deps);
       clock.t += 5 * MIN;

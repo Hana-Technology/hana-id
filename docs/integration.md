@@ -846,6 +846,12 @@ by `kid`, `typ` `hana-identity+jwt`, `iss`, `aud`, `exp` (and `iat` for freshnes
 **Key rotation.** Hana publishes a standby key next to the active one, so an emergency switch needs nothing from you
 when you use the JWKS URL. Partners who pin thumbprints instead get 14 days' notice of a scheduled rotation.
 
+**Who watches the JWKS.** Hana's independent watchdog, on its own Cloudflare account (sandbox-dev excepted), reads the JWKS every 5 minutes
+and pages Hana if it ever lists a key whose thumbprint Hana didn't pin, private key material, or a discovery document
+with another `issuer` or `jwks_uri`. That is detection, not prevention: a verifier that trusts the JWKS URL accepts
+such a key until Hana removes it (and its cache expires, ≤ 10 min). If that window matters to you, pin the
+thumbprints.
+
 ### Migrating from Privy
 
 | Privy | Hana |

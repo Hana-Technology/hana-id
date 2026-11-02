@@ -16,6 +16,7 @@ import {
   insertManifestBlock,
   newP256,
   replaceManifestBlock,
+  withIdentityPins,
   wranglerSecretArgv,
   wranglerSecretDeleteArgv,
 } from '../lib/identity-key.ts';
@@ -23,10 +24,19 @@ import { DRY_RUN_LINE } from '../lib/vault-kek.ts';
 
 const base: Manifest = { ...loadEnv('sandbox-dev'), name: 'sandbox-idk-test', cloudflare: { workerName: 'hana-id-api-idk-test', d1Name: 'hana-id-idk-test' } };
 const baseText = (): string => {
-  const raw = JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Record<string, unknown>;
+  const raw = JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Record<string, unknown> & { watchdog: Record<string, unknown> };
   delete raw.identityToken;
+  delete raw.watchdog.pinnedIdentityKeys;
   return `${JSON.stringify({ ...raw, name: base.name, cloudflare: base.cloudflare }, null, 2)}\n`;
 };
+/** The same manifest without a watchdog block (no watchdog: nothing to pin). */
+const unwatchedText = (): string => {
+  const raw = JSON.parse(baseText()) as Record<string, unknown>;
+  delete raw.watchdog;
+  return `${JSON.stringify(raw, null, 2)}\n`;
+};
+const pinsNow = (): string[] => manifest().watchdog?.pinnedIdentityKeys ?? [];
+const publishedNow = (): string[] => manifest().identityToken?.publicKeys.map((k) => k.kid) ?? [];
 const mode = (p: string) => statSync(p).mode & 0o777;
 
 let root: string;
@@ -268,6 +278,82 @@ describe('identity-key rotation: next, switch, retire', () => {
     expect(text).toBe(before);
     expect(existsSync(file('nextKey'))).toBe(false);
     expect(deletes).toEqual([]);
+  });
+});
+
+describe('watchdog pins (D211): every published key pinned, pin before publish, unpin after unpublish', () => {
+  it('init pins both keys; the plan says so; the log says to deploy the watchdog first', () => {
+    run('init');
+    expect(out.join('\n')).toContain('pin both in watchdog.pinnedIdentityKeys');
+    expect(pinsNow()).toEqual([]);
+    run('init', '--yes');
+    expect(pinsNow()).toEqual(publishedNow());
+    expect(out.join('\n')).toContain('deploy the watchdog FIRST');
+    // The rest of the watchdog block is untouched.
+    const before = (JSON.parse(baseText()) as { watchdog: Record<string, unknown> }).watchdog;
+    const { pinnedIdentityKeys: _, ...after } = (JSON.parse(text) as { watchdog: Record<string, unknown> }).watchdog;
+    expect(after).toEqual(before);
+  });
+
+  it('a scheduled rotation keeps the pins equal to the published keys at every step', () => {
+    run('init', '--yes');
+    const first = kidOf('signingKey');
+    run('next', '--yes');
+    expect(pinsNow()).toEqual(publishedNow());
+    expect(pinsNow()).toContain(kidOf('nextKey'));
+    run('switch', '--to', 'next', '--yes');
+    expect(pinsNow()).toEqual(publishedNow());
+    run('retire', '--key', 'previous', '--yes');
+    expect(pinsNow()).not.toContain(first);
+    expect(pinsNow()).toEqual(publishedNow());
+    expect(out.at(-1)).toContain('deploy the API FIRST, then gen and deploy the watchdog');
+  });
+
+  it('a retired key is never left pinned, so republishing it is an alert (compromise path)', () => {
+    run('init', '--yes');
+    const leaked = kidOf('signingKey');
+    run('switch', '--to', 'standby', '--yes');
+    run('retire', '--key', 'previous', '--yes');
+    expect(pinsNow()).not.toContain(leaked);
+    // Republishing the leaked key by hand without its pin is refused by the schema.
+    const m = JSON.parse(text) as { identityToken: { publicKeys: { kid: string }[] } };
+    const leakedEntry = { kty: 'EC', crv: 'P-256', ...JSON.parse(readFileSync(readdirSync(dir).filter((f) => f.startsWith('identity-signing-key-retired-')).map((f) => join(dir, f))[0]!, 'utf8')) };
+    delete (leakedEntry as { d?: string }).d;
+    m.identityToken.publicKeys.push({ ...leakedEntry, kid: leaked, use: 'sig', alg: 'ES256' } as never);
+    expect(manifestSchema.safeParse(m).error?.issues.map((i) => i.message).join()).toContain(`identityToken key ${leaked} is not in watchdog.pinnedIdentityKeys`);
+  });
+
+  it('pins kept in the manifest by hand (pinned ahead) stay; next adds its own', () => {
+    run('init', '--yes');
+    const ahead = 'A'.repeat(43);
+    const raw = JSON.parse(text) as { watchdog: { pinnedIdentityKeys: string[] } };
+    raw.watchdog.pinnedIdentityKeys.push(ahead);
+    text = JSON.stringify(raw, null, 2);
+    run('next', '--yes');
+    expect(pinsNow()).toContain(ahead);
+    expect(pinsNow()).toContain(kidOf('nextKey'));
+  });
+
+  it('a manifest without a watchdog block gets no pins and the plain redeploy line', () => {
+    text = unwatchedText();
+    run('init', '--yes');
+    expect(manifest().watchdog).toBeUndefined();
+    run('next', '--yes');
+    run('retire', '--key', 'standby', '--yes');
+    expect(out.join('\n')).not.toContain('watchdog');
+    expect(manifest().identityToken!.publicKeys).toHaveLength(2);
+  });
+
+  it('withIdentityPins adds and removes, keeps order, validates, and leaves an unwatched manifest alone', () => {
+    const a = 'a'.repeat(43);
+    const b = 'b'.repeat(43);
+    const t1 = withIdentityPins(baseText(), [a, b], []);
+    expect((JSON.parse(t1) as { watchdog: { pinnedIdentityKeys: string[] } }).watchdog.pinnedIdentityKeys).toEqual([a, b]);
+    expect((JSON.parse(withIdentityPins(t1, [a], [])) as { watchdog: { pinnedIdentityKeys: string[] } }).watchdog.pinnedIdentityKeys).toEqual([a, b]);
+    const t2 = withIdentityPins(t1, [], [a, b]);
+    expect((JSON.parse(t2) as { watchdog: Record<string, unknown> }).watchdog).not.toHaveProperty('pinnedIdentityKeys');
+    expect(withIdentityPins(unwatchedText(), [a], [])).toBe(unwatchedText());
+    expect(() => withIdentityPins(baseText(), ['short'], [])).toThrow();
   });
 });
 

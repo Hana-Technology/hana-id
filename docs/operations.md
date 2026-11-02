@@ -1,6 +1,8 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-02 (branch `feat/batch-c-3`: "Hot DB migration 0006 and the new gate" (milestone
+Last verified against code: 2026-11-02 (branch `feat/identity-token-8`: "Identity token keys" gains the watchdog pin
+steps and their deploy order, the identity JWKS check in "Watchdog service" and its alerts in "Watchdog alerts
+(runbook)", D210–D214); 2026-11-02 (branch `feat/batch-c-3`: "Hot DB migration 0006 and the new gate" (milestone
 M1, for the user to run), the admin CLI's `app:*` commands on the 0006 schema with `app:changes:announce`, the demo's
 origin add, the D1 restore steps; D205–D209); 2026-11-02 (branch `feat/link-cap`: "Link volume thresholds", D200, and `set_link_thresholds`
 through `owner:call`; branch `feat/email-login-5`: the watchdog's email rules, the link alarms and
@@ -1076,6 +1078,27 @@ Worker-secret key there).
 Every command below prints its plan without `--yes`. After `init`, `next`, `switch` and `retire`, put the changed
 `envs/<env>.json` in the repo, run `gen` and deploy the API: the JWKS and the active kid come from the manifest.
 
+**Watchdog pins first** (D210, D211). The watchdog pages critical (`identity_key_unpinned`) for any key in the JWKS
+whose thumbprint isn't in `watchdog.pinnedIdentityKeys`, and the schema refuses a manifest that publishes an unpinned
+key. On an env with a `watchdog` block, `identity-key` writes the pins with the keys: `init` and `next` pin the new
+keys, `retire` unpins the key it unpublishes, `switch` changes no pin. The deploy order follows:
+
+- after `init` or `next` (a key added): **deploy the watchdog first**, then the API. Between the two the watchdog
+  warns `identity_key_missing` (pinned, not yet published): expected.
+- after `retire` (a key removed): **deploy the API first**, then the watchdog. The other order pages
+  `identity_key_unpinned` until the API deploy.
+
+The watchdog deploy runs on the watchdog's own Cloudflare account ("Watchdog service" below; logged in
+there, not to the API's account; sandbox-dev's watchdog shares the API's account, D125):
+
+```sh
+corepack pnpm --filter @hana-id/watchdog gen <env>              # IDENTITY_PINS, IDENTITY_ISS (and the rest)
+corepack pnpm --dir apps/watchdog exec wrangler deploy
+```
+
+Check `/status` `identity.pinned` after the watchdog deploy and `identity.jwks` (`unpinned: 0`, `missing: []`) after
+the next run.
+
 ```sh
 S="corepack pnpm --filter @hana-id/scripts run identity-key <env>"
 $S show                                   # the published kids, their roles and Worker slots (public values only)
@@ -1084,11 +1107,13 @@ $S show                                   # the published kids, their roles and 
 **First setup (once per env):**
 
 ```sh
-$S init --yes        # active + standby + sub key files; identityToken in envs/<env>.json; uploads the active key and IDENTITY_SUB_KEY
+$S init --yes        # active + standby + sub key files; identityToken in envs/<env>.json (both keys pinned for the watchdog); uploads the active key and IDENTITY_SUB_KEY
+# the watchdog first (its own account): watchdog gen <env>, wrangler deploy (above)
 corepack pnpm --filter @hana-id/api run gen <env> --d1-id <id>   # IDENTITY_ISS, IDENTITY_PUBLIC_KEYS, IDENTITY_ACTIVE_KID, the bindings
 corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --remote   # 0008_identity_token.sql
 corepack pnpm --filter @hana-id/api run deploy
 curl -s <apiUrl>/v1/identity/jwks.json             # {"keys":[{…active…},{…standby…}]}, no "d"
+curl -s <apiUrl>/v1/identity/.well-known/openid-configuration   # issuer = identityToken.iss, jwks_uri = {iss}/jwks.json
 ```
 
 Then move `identity-signing-key-standby.json` offline. `init` refuses when any identity file exists or the manifest
@@ -1099,11 +1124,11 @@ into `apps/api/.dev.vars`, never the standby, and refuses a key that isn't the m
 **Scheduled rotation** (every 12 months; 14 days' notice to partners that pin thumbprints, 24 h on testnet):
 
 ```sh
-$S next --yes                 # a new key, published (manifest), uploaded nowhere → gen, deploy
+$S next --yes                 # a new key, published and pinned (manifest), uploaded nowhere → watchdog gen + deploy, THEN API gen + deploy
 # … wait the notice period …
-$S switch --to next --yes     # uploads it into the free slot, makes it the active kid; the old key becomes "previous" → gen, deploy
+$S switch --to next --yes     # uploads it into the free slot, makes it the active kid; the old key becomes "previous" → API gen, deploy (no pin change)
 # … ≥ 2 h later (tokens signed by the old key expire within 1 h) …
-$S retire --key previous --yes   # unpublishes the old key, deletes its Worker secret, sets its file aside → gen, deploy
+$S retire --key previous --yes   # unpublishes and unpins the old key, deletes its Worker secret, sets its file aside → API gen + deploy, THEN watchdog gen + deploy
 ```
 
 `switch` leaves both keys on the Worker until `retire`, so whichever manifest is deployed, a key with its active kid
@@ -1116,13 +1141,20 @@ is there. Run `retire` only after the switch's deploy. Retired key files are kep
    (the standby was never uploaded). A leak of `.secrets/<env>/` or the operator's machine exposes every key whose
    file was there, the standby too unless it was offline. **Unless the incident provably touches only the active key,
    treat both as exposed.**
-2. Only the active key exposed: `$S switch --to standby --yes`, gen, deploy, then at once `$S retire --key previous
-   --yes`, gen, deploy (no 2 h wait). Make a new standby with `$S next --yes` and move its file offline.
-3. Both exposed: `$S retire --key standby --yes`, `$S next --yes`, `$S switch --to next --yes`, gen, deploy, then
-   `$S retire --key previous --yes`, gen, deploy. Partners using the JWKS URL pick up the new kid at once and reject
-   the removed ones within 10 minutes; tokens with up to 1 h left die then too.
+2. Only the active key exposed: `$S switch --to standby --yes`, API gen, deploy, then at once `$S retire --key previous
+   --yes`, API gen, deploy, then watchdog gen, deploy (no 2 h wait). Make a new standby with `$S next --yes`
+   (watchdog gen and deploy first, then the API) and move its file offline.
+3. Both exposed: `$S retire --key standby --yes` and `$S next --yes` (one unpins, one pins): deploy the watchdog, then
+   the API, and acknowledge the `identity_key_unpinned` page for the standby while the old API is still live (or
+   deploy the API between the two commands to avoid it); then `$S switch --to next --yes`, API gen, deploy; then
+   `$S retire --key previous --yes`, API gen, deploy, watchdog gen, deploy. Partners using the JWKS URL pick up the
+   new kid at once and reject the removed ones within 10 minutes; tokens with up to 1 h left die then too.
 4. Tell partners (security contacts): the `kid`, the window in which forged tokens may have been accepted, what to
    re-check. Pinning partners update their pins.
+
+A key in the JWKS nobody on the team published is the watchdog's critical `identity_key_unpinned` (or
+`identity_private_key_published`, `identity_discovery_mismatch`): playbook `identity-jwks-forged`, which treats the API
+Worker or the Cloudflare account as compromised and rotates as above.
 
 **Sub key leak.** Privacy, not funds: the holder can map partners' `sub`s to on-chain paths. Not rotatable without a
 `u2_` scheme and a 90-day `legacy_sub` window (spec "`sub`").
@@ -1326,6 +1358,23 @@ come only from the watchdog's own manifest, never from the chain or Hana's JWKS.
 - **`unrecorded_wallets`** (D135, D139): sandbox-dev accepts after its v3 upgrade (`admin <env> owner:call
   accept_unrecorded_wallets`); on any env that isn't `local*` or `sandbox*` the watchdog pages while it is true.
 
+### Identity token: pins and the JWKS check
+
+The watchdog checks the partner identity token's published keys (`docs/identity-token-spec.md` "JWKS and discovery",
+D210–D214) against `watchdog.pinnedIdentityKeys` (`envs/README.md`): public thumbprints (the kids), set only in the
+watchdog's own manifest block and deployed on its own account, never taken from Hana's JWKS. `watchdog gen` passes
+them as `IDENTITY_PINS` and `identityToken.iss` as `IDENTITY_ISS`; an env without `identityToken` skips the check.
+
+- Every run, after the protective work (D86), it reads `{iss}/jwks.json` and `{iss}/.well-known/openid-configuration`
+  (no cache, 64 KB cap). An unpinned key, private key material, or a wrong `issuer` / `jwks_uri` pages critical; a
+  pinned key not published (or under another kid) warns; 3 failed reads in a row warn. **It never pauses for these**:
+  partners verify identity tokens, the contract never does.
+- It also alerts critical (`identity_key_on_chain`) if an issuer key on chain has an identity key's thumbprint as its
+  kid (D212); the Google and email rules act on such a key as on any other forged one.
+- Pin changes follow "Identity token keys" above: `identity-key` writes them; the watchdog deploys first after a pin,
+  last after an unpin. sandbox-dev pins its active and standby keys; its watchdog needs a `watchdog gen` and
+  redeploy to start the check (not done on this branch).
+
 ### Watchdog alerts (runbook)
 
 Critical alerts page both founders (paging app + Slack + email) and are re-sent every 15 min until someone
@@ -1352,7 +1401,7 @@ This table only says what each kind means:
 | `governance_change` | An upgrade proposal or execution, owner transfer, withdrawal, watchdog, updater-key, delay or console-audience change, pause or unpause (`unpaused_at_ms` shows one that fell between two runs), a raised session floor (`sessions_valid_from_ms`), a change of the owner DAO's code or policy (`owner_code_hash`, `owner_policy`: a `ChangePolicy`, `AddMember` or `RemoveMember`), `mpc`, `ckd_domain_id` or `state_version`, `unrecorded_wallets`, or the owner's immediate issuer actions, which leave no pending state: `issuer` (`set_issuer` changed Google's iss values) and `issuer_keys` (an active kid disappeared without a pending removal leaving the queue: `remove_issuer_key`; also a removal proposed and confirmed by another watchdog between two runs), and the same for the email issuer (`email_issuer`, `email_issuer_keys`) and its signer policy (`email_signer_policy`: `mark_self_issued`, or an upgrade's `migrate`). Alert only. Nobody but the owner can cancel an upgrade (D84) | [`governance-change`](playbooks.md#governance-change) |
 | `automatic_action` | The watchdog acted again for an incident it already alerted (e.g. paused again after an unpause, or deleted an updater key added while a forged key is still active) | [`watchdog-acted-again`](playbooks.md#watchdog-acted-again) |
 | `protective_action_failed` | A cancel, pause or updater-key deletion the watchdog sent failed, or a forged change it tried to cancel was executed first (or it couldn't tell) | [`protective-action-failed`](playbooks.md#protective-action-failed) |
-| `not_a_watchdog`, `watchdog_key_missing`, `wrong_network`, `pins_invalid` | The watchdog can't act: its account isn't a contract watchdog, its key is missing or bad, or its RPC is on another chain; until fixed nothing cancels forged keys. `pins_invalid`: `EMAIL_PINS` is unreadable, so every email key counts as unpinned (cancelled, paused on; their alerts say `pins_unreadable`) | [`watchdog-cannot-act`](playbooks.md#watchdog-cannot-act) |
+| `not_a_watchdog`, `watchdog_key_missing`, `wrong_network`, `pins_invalid` | The watchdog can't act: its account isn't a contract watchdog, its key is missing or bad, or its RPC is on another chain; until fixed nothing cancels forged keys. `pins_invalid`: `EMAIL_PINS` is unreadable, so every email key counts as unpinned (cancelled, paused on; their alerts say `pins_unreadable`); `pins_invalid:identity`: `IDENTITY_PINS` is unreadable, so every published identity key pages as unpinned | [`watchdog-cannot-act`](playbooks.md#watchdog-cannot-act) |
 | warning `rpc_failing`, `jwks_failing`, `heartbeat_failing`, `channel_not_configured` | The watchdog is partly blind or mute (a dead watchdog is caught by the dead-man's switch: [`watchdog-down`](playbooks.md#watchdog-down)) | [`watchdog-degraded`](playbooks.md#watchdog-degraded) |
 | warning `unexecuted_key_change`, `stale_active_key` | A matured key change nobody executed (> 1 h), or an active kid Google dropped > 3 h ago | [`key-sync-stalled`](playbooks.md#key-sync-stalled) |
 | warning `active_key_material_unavailable` | The contract has no `get_issuer_keys` (older code): active keys are checked by kid only | [`active-key-material-unavailable`](playbooks.md#active-key-material-unavailable) |
@@ -1360,6 +1409,9 @@ This table only says what each kind means:
 | `relayer_balance_critical`, `relayer_allowance_critical`, `relayer_pool_empty`; warning `relayer_balance_low`, `relayer_allowance_low` | The relayer account's available balance, or a pool key's remaining allowance, is below its threshold (defaults: balance 5 / 1 NEAR; session key 0.5 / 0.1; owner key 0.1 / 0.02; manifest `watchdog.relayerFunds`), or a pool has no key: relays from it fail once it runs out. Read-only: the watchdog never tops up | [`relayer-out-of-funds`](playbooks.md#relayer-out-of-funds) |
 | warning `confirm_failed` | A confirmation of a key that matches Google's JWKS failed: it goes live only after the full delay | [`confirm-failed`](playbooks.md#confirm-failed) |
 | warning `email_jwks_mismatch` | Hana's published email JWKS lists a key that isn't pinned (or whose kid isn't its thumbprint), lacks an active email key, or failed 3 fetches while email keys are active. Informational: the contract never reads it | [`email-jwks-mismatch`](playbooks.md#email-jwks-mismatch) |
+| `identity_key_unpinned`, `identity_private_key_published`, `identity_discovery_mismatch` | Hana's partner identity JWKS (`{iss}/jwks.json`) publishes a key whose RFC 7638 thumbprint isn't in `watchdog.pinnedIdentityKeys` (or that isn't P-256; with nothing pinned every key is unpinned), or private key material, or its discovery document names another `issuer` or `jwks_uri` (D210, D213). Partners trusting the JWKS URL would accept tokens for any user. Alert only, **no pause** (the chain isn't involved). A rotation deployed in the wrong order (API before the watchdog) also raises it | [`identity-jwks-forged`](playbooks.md#identity-jwks-forged) |
+| warning `identity_key_missing`, `identity_jwks_failing` | A pinned identity key isn't in the JWKS under its thumbprint as kid (a rotation half deployed, or a kid changed), or the JWKS or discovery document failed 3 reads in a row (`:jwks`, `:discovery`) | [`identity-jwks-degraded`](playbooks.md#identity-jwks-degraded) |
+| `identity_key_on_chain` | An active Google or email issuer key, or a pending key addition, has an identity token key's thumbprint as its kid (D212). Alert only: the same run's issuer-key rules cancel or pause on it | [`identity-key-on-chain`](playbooks.md#identity-key-on-chain) |
 | `link_threshold_reached`; warning `link_volume_high`, `link_stats_unavailable` | `get_link_stats()` (D200): links reached an alarm threshold in the current or previous UTC hour, in one scope or in all; they went through (the contract refuses nothing): a partner launch, or a stolen email key taking over Google wallets by linking (alert only; the council decides whether to pause); the current hour at half the total threshold; or the view is missing with an email issuer on chain, malformed or failing (`link_stats_unavailable:missing` / `:malformed` / `:read_failed`; only the link check is affected, every protective step still runs) | [`link-volume`](playbooks.md#link-volume) |
 | info `key_change_confirmed`, `key_change_executed`, `key_change_cancelled` | Routine key-change events | [`key-change-lifecycle`](playbooks.md#key-change-lifecycle) |
 | info `self_issued_key_change` | A pending email key pinned for its signer, or a pending email key removal: never confirmed (self-issued keys wait `governance_delay_ms`) | [`self-issued-key-change`](playbooks.md#self-issued-key-change) |

@@ -151,6 +151,7 @@ const apiCompromised: Playbook = {
     "Deploys nobody made (Cloudflare's deployment history), unknown API tokens or logins, changed Worker secrets or D1 rows (origins, settings).",
     'A `forged_key_change` from the signer account (the updater key is a Worker secret).',
     "The watchdog keeps alerting: it runs on its own Cloudflare account and can't be silenced from this one (except on sandbox-dev, D125).",
+    "A critical `identity_key_unpinned`: the API publishes an identity token key the watchdog doesn't pin (identity-jwks-forged).",
   ],
   impact: [
     'Every key of every user who loads the vault while it is compromised (the API renders the vault page; the same account deploys the vault and auth bundles). Pausing the contract stops new derivations, not a malicious vault page reading a persisted share: those users\' keys are exposed and must be moved (can\'t be undone).',
@@ -178,7 +179,7 @@ const apiCompromised: Playbook = {
     {
       title: 'Rotate every API secret',
       who: 'a founder',
-      detail: 'The updater key (updater-key-stolen), both relayer pools (relayer-key-stolen), and `VAULT_KEK` with every share revoked (vault-kek-leaked). The admin Worker\'s copy of `WATCHDOG_STATUS_TOKEN` too, once batch C exists.',
+      detail: 'The updater key (updater-key-stolen), both relayer pools (relayer-key-stolen), `VAULT_KEK` with every share revoked (vault-kek-leaked), and the identity token signing key (identity-signing-key-compromised). The admin Worker\'s copy of `WATCHDOG_STATUS_TOKEN` too, once batch C exists.',
     },
     {
       title: 'Check D1 for tampering',
@@ -737,7 +738,7 @@ const identitySigningKey: Playbook = {
     "Whoever holds an identity signing key can forge any user's identity token for any app, until the key is out of the JWKS. Switch to a key the incident didn't touch, unpublish the exposed ones, tell partners.",
   signals: [
     "The API Worker's secrets, `.secrets/<env>/identity-signing-key*.json` or the operator's machine were exposed; a partner reports a token they didn't expect (a valid signature for a session that never existed).",
-    "Not built yet (build steps 7–8): the KMS `Sign` reconciliation against `identity_issuance_hourly` and the watchdog's JWKS pin check.",
+    "The watchdog's JWKS pin check (D210): a critical `identity_key_unpinned` or `identity_private_key_published` (identity-jwks-forged). Not built yet (build step 7): the KMS `Sign` reconciliation against `identity_issuance_hourly`.",
   ],
   impact: [
     'Forged tokens pass at every partner that trusts the JWKS URL, as any user of any app (identity at partners: credits, referrals, their own accounts), until the key is removed and their JWKS caches refresh (≤ 10 min). No wallet, key or Hana API is reachable with a token.',
@@ -787,7 +788,7 @@ const identitySigningKey: Playbook = {
   ],
   followUps: ['If the Worker or the Cloudflare account was the way in: api-or-cloudflare-compromised. Before mainnet the key moves to AWS KMS (build step 7).'],
   refs: ['docs/operations.md#identity-token-keys', 'docs/security.md#what-a-compromise-gives', 'D177'],
-  related: ['api-or-cloudflare-compromised'],
+  related: ['api-or-cloudflare-compromised', 'identity-jwks-forged'],
 };
 
 export const INCIDENT_PLAYBOOKS: readonly Playbook[] = [

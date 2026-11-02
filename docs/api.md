@@ -1,8 +1,8 @@
 # API reference — every endpoint the `apps/api` Worker serves today
 
 Last verified against code: 2026-11-02 (branch `feat/batch-c-2`: the token check and the governance read's JWKS
-cache now in `@hana-id/oidc`, a wrongly typed optional claim is `invalid_token`, D201); 2026-10-30 (branch `feat/identity-token-2`: the identity token's order of checks,
-limits, marker, cross-app share check, share tombstones in the cron, the new binding and log event, D176–D178);
+cache now in `@hana-id/oidc`; wrongly typed optional claims ignored, a non-finite `exp` refused, the owner-action
+token's claims, D201); 2026-10-30 (branch `feat/identity-token-2`: the identity token's order of checks, limits, marker, cross-app share check, share tombstones in the cron, the new binding and log event, D176–D178);
 2026-10-30 (branch `feat/identity-token-1`: "Identity token", its routes, limits,
 Durable Objects, D1 tables, cron job, bindings, log fields and the `bad_token` refusals); 2026-10-30 (branch
 `feat/batch-c-1`: the batch C vars in "Configuration"); 2026-10-29
@@ -260,9 +260,9 @@ Body (extra keys ignored, except `scopeId` / `scope_id`, which are refused):
 The scope is always the app's (D1). Checks after the gate and shape (`400 bad_request`):
 
 1. RS256 against Google's JWKS, `iss` → provider, `exp` + 60 s skew: `401 invalid_token`, `400 unsupported_issuer`,
-   `400 token_expired`, `503 issuer_keys_unavailable` (`verifyIdToken`, `packages/oidc`). `email`, `email_verified`,
-   `iat`, `hd`, `azp`, `amr` and `auth_time` are not read, but one of the wrong JSON type (say a string
-   `email_verified`) is `401 invalid_token` (D201). A valid signature's `kid` is recorded once per isolate after the
+   `400 token_expired`, `503 issuer_keys_unavailable` (`verifyIdToken`, `packages/oidc`); an `exp` that isn't a
+   finite number is `401 invalid_token`. `email`, `email_verified`, `iat`, `hd`, `azp`, `amr` and `auth_time` are
+   not read, and one of the wrong JSON type is ignored, not refused (D201). A valid signature's `kid` is recorded once per isolate after the
    response (`issuer_key_observations.first_token_ms`, here and on `/v1/login`; the kid only, never the token).
 2. Only with `REJECT_PII_ON_SESSIONS = "1"`: claim allow-list (`iss azp aud sub iat exp nonce nbf jti auth_time`),
    else `400 token_has_pii` with `data: {claim}`.
@@ -581,6 +581,12 @@ No app key. `{"method", "args"}` only, `args` exactly as the contract takes them
 | 409 | `shared_login_enabled` | `SetAllowShared` already on |
 | 409 | `token_used` | this exact token was reserved before |
 | 503 / 502 | `issuer_keys_unavailable` / `near_unavailable` | JWKS / chain read failed |
+
+The `auth` token and the `client_proof` are checked like a login token (RS256, issuer, `exp` without skew, a finite
+`exp`), the proof for its `(provider, aud)`. Their other claims are not read: an `email`, `email_verified` or `hd`
+(a console token should be `openid` only, but nothing refuses one that isn't) is ignored, as is any of the
+optional claims with the wrong JSON type (D201), and none is logged, returned or stored; only the token's sha256
+is kept. The token itself is relayed to the contract unchanged.
 
 The token's sha256 is reserved atomically (`RateLimiter` object `owner-actions:tokens`, until the token's `exp`)
 before relaying. Then the caps (table above) are asked from the most specific in, at one instant; when one refuses,

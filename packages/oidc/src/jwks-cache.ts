@@ -1,12 +1,17 @@
-// One issuer's JWKS, cached in the isolate: per its Cache-Control max-age (clamped to 5 min..6 h, 1 h without one),
-// refetched on an unknown kid at most once a minute (failed attempts count, so a forged kid can't make us hammer the
-// issuer), no new attempt within 10 s of a failure, and, when `staleGraceMs` allows it, the expired set keeps serving
-// the kids it holds while refetches fail. RS256 keys only (`usableJwks`, @hana-id/jwks).
+// One issuer's JWKS, cached in the isolate: per its Cache-Control max-age (by default clamped to 5 min..6 h, 1 h
+// without one; the bounds and no-cache handling are options), refetched on an unknown kid at most once a minute
+// (failed attempts count, so a forged kid can't make us hammer the issuer), no new attempt within 10 s of a failure,
+// and, when `staleGraceMs` allows it, the expired set keeps serving the kids it holds while refetches fail. Each
+// fetch has a timeout and a body cap. RS256 keys only (`usableJwks`, @hana-id/jwks).
 import { type Jwk, usableJwks } from '@hana-id/jwks';
 
 const DEFAULT_TTL_MS = 60 * 60_000;
-const MIN_TTL_MS = 5 * 60_000;
+export const MIN_TTL_MS = 5 * 60_000;
 export const MAX_TTL_MS = 6 * 60 * 60_000;
+/** Default fetch timeout (connection, headers and body). */
+export const FETCH_TIMEOUT_MS = 8_000;
+/** Default cap on a JWKS response body (Google's is about 2 KB). */
+export const MAX_BODY_BYTES = 64 * 1024;
 /** An unknown kid refetches the JWKS at most this often (Google pre-publishes keys, so this is rare). */
 export const REFETCH_MIN_MS = 60_000;
 /** After a failed fetch, no new attempt for this long (fail closed, or serve the stale set, in between). */
@@ -28,10 +33,31 @@ export function cacheMaxAgeS(cacheControl: string | null): number | null {
   return m?.[1] ? Math.min(MAX_AGE_CAP_S, Number(m[1])) : null;
 }
 
-function ttlMs(res: Response): number {
-  const m = /max-age=(\d+)/u.exec(res.headers.get('cache-control') ?? '');
-  const ms = m?.[1] ? Number(m[1]) * 1000 : DEFAULT_TTL_MS;
-  return Math.min(MAX_TTL_MS, Math.max(MIN_TTL_MS, ms));
+/** The response body as JSON, read up to `maxBytes` (a declared or actual larger body throws). */
+async function readJsonCapped(res: Response, maxBytes: number): Promise<unknown> {
+  if (Number(res.headers.get('content-length')) > maxBytes) throw new Error('JWKS response too large');
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  if (res.body) {
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error('JWKS response too large');
+      }
+      chunks.push(value);
+    }
+  }
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) {
+    bytes.set(c, at);
+    at += c.byteLength;
+  }
+  return JSON.parse(new TextDecoder().decode(bytes));
 }
 
 export type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
@@ -41,6 +67,15 @@ export interface JwksCacheOptions {
   fetch?: Fetcher;
   /** How long past its max-age the set still serves the kids it holds while refetches fail (default 0: fail closed). */
   staleGraceMs?: number;
+  /** Each fetch is aborted after this long, body included (default FETCH_TIMEOUT_MS). */
+  timeoutMs?: number;
+  /** A larger response body fails the fetch (default MAX_BODY_BYTES). */
+  maxBodyBytes?: number;
+  /** The max-age is clamped to [minTtlMs, maxTtlMs] (defaults MIN_TTL_MS, MAX_TTL_MS); 1 h, clamped, without one. */
+  minTtlMs?: number;
+  maxTtlMs?: number;
+  /** `no-cache` or `no-store` means a TTL of 0, before the clamp (default false: ignored, as for Google). */
+  respectNoCache?: boolean;
 }
 
 /** Per-call hooks: told about each successful fetch, and about a lookup served from an expired set. Never about a token. */
@@ -62,6 +97,11 @@ export class JwksCache {
   private lastFailure: number | undefined;
   private readonly fetcher: Fetcher;
   private readonly staleGraceMs: number;
+  private readonly timeoutMs: number;
+  private readonly maxBodyBytes: number;
+  private readonly minTtlMs: number;
+  private readonly maxTtlMs: number;
+  private readonly respectNoCache: boolean;
 
   constructor(
     readonly url: string,
@@ -69,6 +109,19 @@ export class JwksCache {
   ) {
     this.fetcher = opts.fetch ?? ((input, init) => fetch(input, init));
     this.staleGraceMs = opts.staleGraceMs ?? 0;
+    this.timeoutMs = opts.timeoutMs ?? FETCH_TIMEOUT_MS;
+    this.maxBodyBytes = opts.maxBodyBytes ?? MAX_BODY_BYTES;
+    this.minTtlMs = opts.minTtlMs ?? MIN_TTL_MS;
+    this.maxTtlMs = opts.maxTtlMs ?? MAX_TTL_MS;
+    this.respectNoCache = opts.respectNoCache ?? false;
+  }
+
+  /** How long a fetched set is fresh. */
+  private ttlMs(cacheControl: string | null): number {
+    const m = /max-age=(\d+)/u.exec(cacheControl ?? '');
+    let ms = m?.[1] ? Number(m[1]) * 1000 : DEFAULT_TTL_MS;
+    if (this.respectNoCache && /(?:^|[\s,])no-(?:cache|store)(?:$|[\s,=])/iu.test(cacheControl ?? '')) ms = 0;
+    return Math.min(this.maxTtlMs, Math.max(this.minTtlMs, ms));
   }
 
   private async fetchKeys(now: number, hooks?: JwksHooks): Promise<Entry> {
@@ -76,16 +129,16 @@ export class JwksCache {
     let keys: Jwk[];
     let res: Response;
     try {
-      res = await this.fetcher(this.url, { headers: { accept: 'application/json' } });
+      res = await this.fetcher(this.url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(this.timeoutMs) });
       if (!res.ok) throw new Error(`JWKS HTTP ${res.status}`);
-      keys = usableJwks(await res.json());
+      keys = usableJwks(await readJsonCapped(res, this.maxBodyBytes));
       if (keys.length === 0) throw new Error('JWKS has no usable key');
     } catch (err) {
       this.lastFailure = now;
       throw new JwksUnavailableError(err instanceof Error ? err.message : String(err));
     }
     this.lastFailure = undefined;
-    const entry = { keys: new Map(keys.map((k) => [k.kid, k])), until: now + ttlMs(res) };
+    const entry = { keys: new Map(keys.map((k) => [k.kid, k])), until: now + this.ttlMs(res.headers.get('cache-control')) };
     this.entry = entry;
     hooks?.onFetch?.([...entry.keys.keys()], cacheMaxAgeS(res.headers.get('cache-control')), now);
     return entry;

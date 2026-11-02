@@ -41,15 +41,30 @@ export class FakeJwks {
   fetches = 0;
   /** When set, the fetch rejects (a network error). */
   networkError = false;
+  /** When set, the fetch never answers until its signal aborts (a hung endpoint). */
+  hang = false;
+  /** The RequestInit of each fetch. */
+  readonly inits: (RequestInit | undefined)[] = [];
 
   constructor(keys: unknown[] = []) {
     this.body = { keys };
   }
 
   readonly fetch = (input: string, init?: RequestInit): Promise<Response> => {
-    void init;
+    void input;
     this.fetches++;
+    this.inits.push(init);
     if (this.networkError) return Promise.reject(new TypeError('Network connection lost.'));
+    if (this.hang) {
+      return new Promise((_, reject) => {
+        const signal = init?.signal;
+        if (!signal) return;
+        signal.addEventListener('abort', () => reject(signal.reason as Error));
+      });
+    }
+    if (typeof this.body === 'string') {
+      return Promise.resolve(new Response(this.body, { status: this.status, headers: this.cacheControl ? { 'cache-control': this.cacheControl } : {} }));
+    }
     return Promise.resolve(Response.json(this.body, { status: this.status, headers: this.cacheControl ? { 'cache-control': this.cacheControl } : {} }));
   };
 }

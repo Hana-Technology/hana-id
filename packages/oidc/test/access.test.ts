@@ -2,7 +2,7 @@
 // (docs/batch-c-spec.md "Hana admin console"; the "Admin and email" refusals: missing, wrong aud or iss, expired,
 // unknown kid, empty sub). The certs endpoint is a stub passed in; nothing touches the network.
 import { beforeEach, describe, expect, it } from 'vitest';
-import { ACCESS_JWT_HEADER, AccessJwtVerifier, JwksUnavailableError, MAX_ACCESS_JWT_BYTES, accessCertsUrl } from '../src/index.ts';
+import { ACCESS_CERTS_MAX_TTL_MS, ACCESS_JWT_HEADER, AccessJwtVerifier, JwksUnavailableError, MAX_ACCESS_JWT_BYTES, MAX_BODY_BYTES, accessCertsUrl } from '../src/index.ts';
 import { FakeJwks, type RsaSigner, b64url, rsaSigner } from './helpers.ts';
 
 const TEAM = 'hana.cloudflareaccess.com';
@@ -149,6 +149,31 @@ describe('AccessJwtVerifier', () => {
     // Expired and the refetch fails: no stale grace for Access.
     certs.networkError = true;
     await expect(verifier.verify(await token(), T0 + 11_000 + 601_000)).rejects.toBeInstanceOf(JwksUnavailableError);
+  });
+
+  it('caches the certs for their max-age but at most 10 min, with no floor (max-age=0 and no-cache refetch)', async () => {
+    const fetchesAfter = async (cacheControl: string | undefined, laterMs: number): Promise<number> => {
+      certs = new FakeJwks([access.jwk]);
+      certs.cacheControl = cacheControl;
+      const v = new AccessJwtVerifier({ teamDomain: TEAM, aud: AUD, fetch: certs.fetch });
+      expect((await v.verify(await token(), T0)).ok).toBe(true);
+      expect((await v.verify(await token(), T0 + laterMs)).ok).toBe(true);
+      return certs.fetches;
+    };
+    expect(ACCESS_CERTS_MAX_TTL_MS).toBe(600_000);
+    expect(await fetchesAfter('max-age=86400', 599_000)).toBe(1);
+    expect(await fetchesAfter('max-age=86400', 601_000)).toBe(2);
+    expect(await fetchesAfter(undefined, 601_000)).toBe(2);
+    expect(await fetchesAfter('max-age=30', 31_000)).toBe(2);
+    expect(await fetchesAfter('max-age=0', 1)).toBe(2);
+    expect(await fetchesAfter('no-cache', 1)).toBe(2);
+    // Each fetch has the 8 s timeout's signal.
+    expect(certs.inits.every((i) => i?.signal instanceof AbortSignal)).toBe(true);
+  });
+
+  it('refuses a certs body over 64 KiB (fail closed)', async () => {
+    certs.body = JSON.stringify({ keys: [access.jwk], pad: 'x'.repeat(MAX_BODY_BYTES) });
+    await expect(verifier.verify(await token(), T0)).rejects.toBeInstanceOf(JwksUnavailableError);
   });
 
   it('refuses a bad configuration at construction', () => {

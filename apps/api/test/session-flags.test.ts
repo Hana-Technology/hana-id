@@ -29,7 +29,7 @@ describe('/v1/sessions claim allow-list (REJECT_PII_ON_SESSIONS)', () => {
     const near = chain({ [aud]: app.scope });
     const on = { REJECT_PII_ON_SESSIONS: '1' };
     for (const claim of REFUSED) {
-      const res = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud, {}, { [claim]: claim === 'email_verified' ? true : 'x' }), env: on });
+      const res = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud, {}, { [claim]: 'x' }), env: on });
       expect([res.status, await body(res)], claim).toEqual([400, expect.objectContaining({ code: 'token_has_pii', data: { claim } })]);
     }
     expect(near.sent).toHaveLength(0);
@@ -68,6 +68,18 @@ describe('/v1/sessions claim allow-list (REJECT_PII_ON_SESSIONS)', () => {
       expect(haystack).not.toContain(email);
       expect(haystack).not.toContain(hd);
     }
+  });
+
+  it('optional claims of the wrong type are ignored, not refused (verifyIdToken optionalClaims "ignore", D201)', async () => {
+    const app = await seedApp();
+    const aud = newAud();
+    const near = chain({ [aud]: app.scope });
+    // Off: any claim names; on: only allow-listed names, still wrongly typed.
+    const off = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud, {}, { email: 7, email_verified: 'yes', hd: [], amr: [1], iat: 'soon' }) });
+    expect(off.status).toBe(200);
+    const on = await call('/v1/sessions', { headers: appHeaders(app), body: await sessionBody(app.scope, aud, {}, { iat: 'soon', auth_time: 'x', azp: 5 }), env: { REJECT_PII_ON_SESSIONS: '1' } });
+    expect(on.status).toBe(200);
+    expect(near.sent).toHaveLength(2);
   });
 
   it('disallowedClaim reads the payload of any token, and leaves unreadable ones to the signature check', () => {

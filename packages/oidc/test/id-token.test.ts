@@ -76,6 +76,10 @@ describe('verifyIdToken: signature and format', () => {
     for (const over of [{ iss: 1 }, { aud: [AUD] }, { aud: undefined }, { sub: 5 }, { sub: undefined }, { exp: '9999999999' }, { exp: undefined }]) {
       expect(await verifyIdToken(await token(over), T0), JSON.stringify(over)).toMatchObject({ ok: false, code: 'invalid_token', error: 'Malformed token claims' });
     }
+    // exp = 1e400 parses as Infinity (a token that never expires): refused.
+    const [h2, , sig2] = (await token()).split('.') as [string, string, string];
+    const forever = b64url(JSON.stringify(claims({ exp: 0 })).replace('"exp":0', '"exp":1e400'));
+    expect(await verifyIdToken(`${h2}.${forever}.${sig2}`, T0)).toMatchObject({ ok: false, code: 'invalid_token', error: 'Malformed token claims' });
     expect(jwks.fetches).toBe(0);
   });
 
@@ -128,26 +132,56 @@ describe('verifyIdToken: new optional claims', () => {
     expect(r.ok && Object.keys(r.token).sort()).toEqual(['aud', 'email', 'exp', 'iss', 'kid', 'nonce', 'provider', 'sub']);
   });
 
-  it('refuses a token carrying one of them with the wrong type, before reading the JWKS', async () => {
-    const wrong: Record<string, unknown[]> = {
-      email: [1, true, null, ['a@example.com'], {}],
-      email_verified: ['true', 1, null, 'false'],
-      iat: ['1700000000', null, true, [1]],
-      hd: [1, null, ['example.com']],
-      azp: [1, null, [AUD]],
-      amr: ['pwd', [1], ['pwd', null], null, {}],
-      auth_time: ['1700000000', null, false],
-    };
-    for (const [name, values] of Object.entries(wrong)) {
+  const WRONG: Record<string, unknown[]> = {
+    email: [1, true, null, ['a@example.com'], {}],
+    email_verified: [1, null, 'yes', 'True', '', [true]],
+    iat: ['1700000000', null, true, [1]],
+    hd: [1, null, ['example.com']],
+    azp: [1, null, [AUD]],
+    amr: ['pwd', [1], ['pwd', null], null, {}],
+    auth_time: ['1700000000', null, false],
+  };
+  /** The token's claims with `[name]: v` swapped in, re-signed. */
+  const withClaim = (name: string, v: unknown): Promise<string> => token({ ...ALL, [name]: v });
+
+  it("'ignore' (the default, the API): a wrongly typed one is dropped and the token kept", async () => {
+    for (const [name, values] of Object.entries(WRONG)) {
       for (const v of values) {
-        expect(await verifyIdToken(await token({ [name]: v }), T0), `${name}=${JSON.stringify(v)}`).toMatchObject({ ok: false, code: 'invalid_token', error: 'Malformed token claims' });
+        for (const opts of [{}, { optionalClaims: 'ignore' as const }]) {
+          const r = await verifyIdToken(await withClaim(name, v), T0, opts);
+          const label = `${name}=${JSON.stringify(v)}`;
+          expect(r.ok, label).toBe(true);
+          if (!r.ok) continue;
+          expect(Object.hasOwn(r.token, name), label).toBe(false);
+          // The other claims are kept.
+          for (const [other, value] of Object.entries(ALL)) if (other !== name) expect(r.token[other as keyof typeof ALL], `${label}: ${other}`).toEqual(value);
+        }
+      }
+    }
+  });
+
+  it("'strict' (the console): a wrongly typed one refuses the token, after the expiry check and before the JWKS", async () => {
+    for (const [name, values] of Object.entries(WRONG)) {
+      for (const v of values) {
+        expect(await verifyIdToken(await withClaim(name, v), T0, { optionalClaims: 'strict' }), `${name}=${JSON.stringify(v)}`).toMatchObject({ ok: false, code: 'invalid_token', error: 'Malformed token claims' });
       }
     }
     // A number too large for a double parses as Infinity: refused too.
     const [h, , sig] = (await token()).split('.') as [string, string, string];
     const huge = b64url(JSON.stringify(claims()).replace(/\}$/u, ',"iat":1e400}'));
-    expect(await verifyIdToken(`${h}.${huge}.${sig}`, T0)).toMatchObject({ ok: false, code: 'invalid_token', error: 'Malformed token claims' });
+    expect(await verifyIdToken(`${h}.${huge}.${sig}`, T0, { optionalClaims: 'strict' })).toMatchObject({ ok: false, code: 'invalid_token', error: 'Malformed token claims' });
     expect(jwks.fetches).toBe(0);
+    // The order of refusals is develop's: issuer, then expiry, then these claims.
+    expect(await verifyIdToken(await token({ iss: 'https://evil.example', iat: 'x' }), T0, { optionalClaims: 'strict' })).toMatchObject({ ok: false, code: 'unsupported_issuer' });
+    expect(await verifyIdToken(await token({ exp: s(T0) - 10, iat: 'x' }), T0, { optionalClaims: 'strict' })).toMatchObject({ ok: false, code: 'token_expired' });
+    expect((await verifyIdToken(await token(ALL), T0, { optionalClaims: 'strict' })).ok).toBe(true);
+  });
+
+  it('email_verified "true" / "false" (Google’s documented string form) become booleans in both modes', async () => {
+    for (const mode of ['strict', 'ignore'] as const) {
+      expect(await verifyIdToken(await token({ email_verified: 'true' }), T0, { optionalClaims: mode })).toMatchObject({ ok: true, token: { email_verified: true } });
+      expect(await verifyIdToken(await token({ email_verified: 'false' }), T0, { optionalClaims: mode })).toMatchObject({ ok: true, token: { email_verified: false } });
+    }
   });
 
   it('returns a copy of amr, not the parsed array', async () => {

@@ -17,6 +17,7 @@ export {
   verifyIdToken,
 } from './id-token.ts';
 export {
+  ACCESS_CERTS_MAX_TTL_MS,
   ACCESS_JWT_HEADER,
   ACCESS_SKEW_MS,
   type AccessFailure,
@@ -27,4 +28,4 @@ export {
   MAX_ACCESS_JWT_BYTES,
   accessCertsUrl,
 } from './access.ts';
-export { type Fetcher, JwksUnavailableError, cacheMaxAgeS } from './jwks-cache.ts';
+export { FETCH_TIMEOUT_MS, type Fetcher, JwksUnavailableError, MAX_BODY_BYTES, cacheMaxAgeS } from './jwks-cache.ts';

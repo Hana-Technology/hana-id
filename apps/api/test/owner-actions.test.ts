@@ -221,6 +221,50 @@ describe('POST /v1/owner-actions', () => {
     // Another /64 has its own budget.
     expect((await post({ method: 'nope' }, '2001:db8:aa:bc::1')).status).toBe(400);
   });
+
+  it('an email-carrying console token and client proof: relayed, and their email and hd reach no log, response or D1 row', async () => {
+    const lines: string[] = [];
+    for (const level of ['log', 'info', 'warn', 'error'] as const) vi.spyOn(console, level).mockImplementation((...a: unknown[]) => void lines.push(a.map(String).join(' ')));
+    const n = near();
+    const email = `owner-${seq++}@example.com`;
+    const hd = `hd-${seq++}.example`;
+    const pii = { email, email_verified: true, hd };
+    const responses: string[] = [];
+    for (const body of [
+      { method: 'propose_change', args: { scope_id: 's1', auth: await oidc(pii), change: { AddClient: { provider: 'google', aud: NEW_CLIENT } }, client_proof: await clientProof(pii) } },
+      { method: 'cancel_change', args: { scope_id: 's1', auth: await oidc(pii), change_id: 0 } },
+      // Refused ones log too: not an owner, and an unknown scope.
+      { method: 'cancel_change', args: { scope_id: 's1', auth: await oidc({ ...pii, sub: '999' }), change_id: 0 } },
+      { method: 'cancel_change', args: { scope_id: 'nope', auth: await oidc(pii), change_id: 0 } },
+    ]) {
+      const res = await post(body);
+      responses.push(`${res.status} ${await res.text()}`);
+    }
+    expect(responses.map((r) => r.slice(0, 3))).toEqual(['200', '200', '403', '404']);
+    expect(n.sent.map((t) => t.method)).toEqual(['propose_change', 'cancel_change']);
+    const tables = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'").all<{ name: string }>();
+    const rows: string[] = [];
+    for (const { name } of tables.results) rows.push(JSON.stringify((await env.DB.prepare(`SELECT * FROM "${name}"`).all()).results));
+    for (const haystack of [...lines, ...responses, ...rows]) {
+      expect(haystack).not.toContain(email);
+      expect(haystack).not.toContain(hd);
+    }
+  });
+
+  it('optional claims of the wrong type are ignored, not refused (verifyIdToken optionalClaims "ignore", D201)', async () => {
+    const n = near();
+    const wrong = { email_verified: 'yes', iat: 'soon', amr: [1], auth_time: 'x', azp: 5, email: 7, hd: [] };
+    const res = await post({ method: 'propose_change', args: { scope_id: 's1', auth: await oidc(wrong), change: { AddClient: { provider: 'google', aud: NEW_CLIENT } }, client_proof: await clientProof(wrong) } });
+    expect(res.status).toBe(200);
+    expect(n.sent.map((t) => t.method)).toEqual(['propose_change']);
+    // A non-finite exp is still refused.
+    const forever = (await ownerJwt()).split('.');
+    const payload = JSON.parse(atob(forever[1]!.replace(/-/gu, '+').replace(/_/gu, '/'))) as Record<string, unknown>;
+    const b64 = (s: string): string => btoa(s).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '');
+    const infinite = `${forever[0]}.${b64(JSON.stringify(payload).replace(/"exp":\d+/u, '"exp":1e400'))}.${forever[2]}`;
+    const refused = await post({ method: 'cancel_change', args: { scope_id: 's1', auth: { Oidc: { jwt: infinite } }, change_id: 0 } });
+    expect([refused.status, (await json(refused)).code]).toEqual([401, 'invalid_token']);
+  });
 });
 
 describe('owner-action checks before relaying (each relayed tx costs relayer allowance)', () => {

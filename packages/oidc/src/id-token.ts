@@ -58,9 +58,9 @@ export interface VerifiedToken {
   sub: string;
   exp: number;
   nonce: string | null;
-  // The claims below are present only when the token carries them, each with its type checked (a token carrying one
-  // with the wrong type is refused). The API ignores them; `email` and `hd` are personal data (D25, D96): never log
-  // or store them.
+  // The claims below are present only when the token carries them with the right type (`optionalClaims` says what a
+  // wrong type does: dropped by default, the token refused with 'strict'). The API ignores them; `email` and `hd` are
+  // personal data (D25, D96): never log or store them.
   email?: string;
   email_verified?: boolean;
   iat?: number;
@@ -87,43 +87,54 @@ export interface VerifyOptions {
   onStaleKeys?: () => void;
   /** The env's identity token issuer (IDENTITY_ISS): a token with this `iss` is refused as `bad_token`. */
   identityIssuer?: string | undefined;
+  /**
+   * A present optional claim (`email`, `email_verified`, `iat`, `hd`, `azp`, `amr`, `auth_time`) of the wrong type:
+   * `'ignore'` (default, the API) drops it and keeps the token; `'strict'` (the console, which reads them) refuses the
+   * token as `invalid_token`. Either way `email_verified` may be the strings `"true"` / `"false"`, as Google's docs
+   * show it, and comes back as a boolean (D201).
+   */
+  optionalClaims?: 'strict' | 'ignore';
 }
 
 type Optional = Pick<VerifiedToken, 'email' | 'email_verified' | 'iat' | 'hd' | 'azp' | 'amr' | 'auth_time'>;
 
 const isString = (v: unknown): v is string => typeof v === 'string';
 const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
-const isBoolean = (v: unknown): v is boolean => typeof v === 'boolean';
-const isStringArray = (v: unknown): v is string[] => Array.isArray(v) && v.every(isString);
 
-const OPTIONAL_CLAIMS: { [K in keyof Optional]-?: (v: unknown) => boolean } = {
-  email: isString,
-  email_verified: isBoolean,
-  iat: isNumber,
-  hd: isString,
-  azp: isString,
-  amr: isStringArray,
-  auth_time: isNumber,
+/** Each optional claim's parser: its value, or undefined when it has the wrong type. */
+const as = <T>(valid: (v: unknown) => v is T) => (v: unknown): T | undefined => (valid(v) ? v : undefined);
+const OPTIONAL_CLAIMS: { [K in keyof Optional]-?: (v: unknown) => Optional[K] } = {
+  email: as(isString),
+  // Google's OpenID Connect docs show `"email_verified": "true"`; current tokens carry a JSON boolean.
+  email_verified: (v) => (typeof v === 'boolean' ? v : v === 'true' ? true : v === 'false' ? false : undefined),
+  iat: as(isNumber),
+  hd: as(isString),
+  azp: as(isString),
+  amr: (v) => (Array.isArray(v) && v.every(isString) ? [...(v as string[])] : undefined),
+  auth_time: as(isNumber),
 };
 
-/** The optional claims the token carries, or null when one has the wrong type. Absent claims stay absent. */
-function optionalClaims(claims: Record<string, unknown>): Optional | null {
+/**
+ * The optional claims the token carries with the right type; absent claims stay absent (no key). A wrongly typed one
+ * is dropped, or with `strict` makes the whole answer null.
+ */
+function optionalClaims(claims: Record<string, unknown>, strict: boolean): Optional | null {
   const out: Record<string, unknown> = {};
-  for (const [name, valid] of Object.entries(OPTIONAL_CLAIMS)) {
+  for (const [name, parse] of Object.entries(OPTIONAL_CLAIMS) as [string, (v: unknown) => unknown][]) {
     if (!Object.hasOwn(claims, name)) continue;
-    const v = claims[name];
-    if (!valid(v)) return null;
-    out[name] = Array.isArray(v) ? [...(v as string[])] : v;
+    const v = parse(claims[name]);
+    if (v !== undefined) out[name] = v;
+    else if (strict) return null;
   }
   return out as Optional;
 }
 
 /**
  * Verifies an ID token the way the contract does (docs/contract-interface.md, "Token verification"): RS256 only,
- * known issuer, known kid, valid signature, not expired, single-string aud; and the optional claims (`email`,
- * `email_verified`, `iat`, `hd`, `azp`, `amr`, `auth_time`) typed when present. Throws JwksUnavailableError only
- * when the JWKS cannot be fetched (callers answer 503: fail closed). `aud`, `nonce`, `iat` age and the email claims
- * are the caller's to check. Before anything else, a partner identity token (`typ` hana-identity+jwt, or `iss` the
+ * known issuer, known kid, valid signature, not expired (a finite `exp`), single-string aud; and the optional claims
+ * (`email`, `email_verified`, `iat`, `hd`, `azp`, `amr`, `auth_time`) typed when present (`opts.optionalClaims`).
+ * Throws JwksUnavailableError only when the JWKS cannot be fetched (callers answer 503: fail closed). `aud`, `nonce`,
+ * `iat` age and the email claims are the caller's to check. Before anything else, a partner identity token (`typ` hana-identity+jwt, or `iss` the
  * env's identity issuer) is refused as `bad_token`: no Hana API accepts one (D120), whatever its signature.
  */
 export async function verifyIdToken(jwt: string, now: number = Date.now(), opts: VerifyOptions = {}): Promise<VerifyResult> {
@@ -135,13 +146,13 @@ export async function verifyIdToken(jwt: string, now: number = Date.now(), opts:
   if (header.typ === IDENTITY_TOKEN_TYP || (!!opts.identityIssuer && claims.iss === opts.identityIssuer)) return fail('bad_token', 'A Hana identity token is not accepted here');
   if (header.alg !== 'RS256' || typeof header.kid !== 'string') return fail('invalid_token', 'Unsupported token algorithm');
   const { iss, aud, sub, exp, nonce } = claims;
-  if (typeof iss !== 'string' || typeof aud !== 'string' || typeof sub !== 'string' || typeof exp !== 'number') return fail('invalid_token', 'Malformed token claims');
-  const optional = optionalClaims(claims);
-  if (!optional) return fail('invalid_token', 'Malformed token claims');
+  if (typeof iss !== 'string' || typeof aud !== 'string' || typeof sub !== 'string' || typeof exp !== 'number' || !Number.isFinite(exp)) return fail('invalid_token', 'Malformed token claims');
   const provider = providerForIssuer(iss);
   const cache = provider ? cacheFor(provider) : null;
   if (!provider || !cache) return fail('unsupported_issuer', 'Unsupported token issuer');
   if (exp * 1000 + (opts.skewMs ?? 0) <= now) return fail('token_expired', 'The token has expired');
+  const optional = optionalClaims(claims, opts.optionalClaims === 'strict');
+  if (!optional) return fail('invalid_token', 'Malformed token claims');
 
   const { observer, onStaleKeys } = opts;
   const jwk = await cache.key(header.kid, now, {

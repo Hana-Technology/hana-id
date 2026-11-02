@@ -1,10 +1,10 @@
 // The Cloudflare Access application token (the `Cf-Access-Jwt-Assertion` header) the admin Worker checks on every
 // /api/* request (docs/batch-c-spec.md "Hana admin console", D88): RS256 against the team's certs
-// (`https://<teamDomain>/cdn-cgi/access/certs`, cached like Google's JWKS but never served stale), a `kid` in that set,
+// (`https://<teamDomain>/cdn-cgi/access/certs`, cached for at most 10 min and never served stale), a `kid` in that set,
 // `iss = https://<teamDomain>`, `aud` the application's AUD tag, unexpired and not before `nbf`, `type = 'app'`, a
 // non-empty `sub` (service tokens have none) and a non-empty `email`. The staff allowlist is the caller's (the
 // lowercased `email` in the manifest's `admin.staffEmails`). The fetcher is injected; nothing here logs.
-import { type Fetcher, JwksCache } from './jwks-cache.ts';
+import { FETCH_TIMEOUT_MS, type Fetcher, JwksCache, MAX_BODY_BYTES } from './jwks-cache.ts';
 import { decodeSegment, verifyRs256 } from './jws.ts';
 
 /** The request header Cloudflare Access sets on requests it lets through. */
@@ -13,6 +13,11 @@ export const ACCESS_JWT_HEADER = 'cf-access-jwt-assertion';
 export const MAX_ACCESS_JWT_BYTES = 8192;
 /** Clock skew tolerated on `exp` and `nbf` by default: Access mints the token on another machine at the same moment. */
 export const ACCESS_SKEW_MS = 60_000;
+/**
+ * The certs are fresh for their max-age (0 with `no-cache` or `no-store`, no floor) but never longer than this, and
+ * never served past it: a cert Cloudflare withdraws is trusted at most this long after this isolate fetched it.
+ */
+export const ACCESS_CERTS_MAX_TTL_MS = 10 * 60_000;
 
 const HOSTNAME = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/u;
 
@@ -55,6 +60,10 @@ export type AccessResult = { ok: true; identity: AccessIdentity } | { ok: false;
 
 const no = (code: AccessFailure): AccessResult => ({ ok: false, code });
 
+/**
+ * Construct once per isolate (module scope, or built lazily on the first request and kept): the certs cache lives in
+ * the instance, so a verifier per request fetches the certs on every request.
+ */
 export class AccessJwtVerifier {
   private readonly certs: JwksCache;
   private readonly iss: string;
@@ -64,7 +73,15 @@ export class AccessJwtVerifier {
   constructor(cfg: AccessVerifierConfig) {
     if (!HOSTNAME.test(cfg.teamDomain)) throw new Error('Access team domain must be a lowercase host name');
     if (typeof cfg.aud !== 'string' || cfg.aud.length === 0) throw new Error('Access AUD tag is required');
-    this.certs = new JwksCache(accessCertsUrl(cfg.teamDomain), { fetch: cfg.fetch, staleGraceMs: 0 });
+    this.certs = new JwksCache(accessCertsUrl(cfg.teamDomain), {
+      fetch: cfg.fetch,
+      staleGraceMs: 0,
+      timeoutMs: FETCH_TIMEOUT_MS,
+      maxBodyBytes: MAX_BODY_BYTES,
+      minTtlMs: 0,
+      maxTtlMs: ACCESS_CERTS_MAX_TTL_MS,
+      respectNoCache: true,
+    });
     this.iss = `https://${cfg.teamDomain}`;
     this.aud = cfg.aud;
     this.skewMs = cfg.skewMs ?? ACCESS_SKEW_MS;

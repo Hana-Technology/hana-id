@@ -16,7 +16,8 @@
     "cloudflare": { "accountId": "f0b1e2c42c3e5bd63992958a19d4abca", "workerName": "hana-id-watchdog-sandbox-dev", "d1Name": "hana-id-watchdog-sandbox-dev" },
     "alertEmails": ["alerts@example.com"],
     "alertFrom": "watchdog@example.com",
-    "pager": "ntfy"
+    "pager": "ntfy",
+    "pinnedIdentityKeys": ["17xAVaTfgwnOkdwq1uOmwHR31pPKB90xw5oGN5HcBgY", "_MjNZC3lmy9Xk6LI1mbGVbvtoIfDN557VBZG7DXVQ-g"]
   },
   "allowSignerFullAccessKey": true,
   "mpc": "v1.signer-prod.testnet",

@@ -31,6 +31,17 @@ export function emailVars(m: Manifest): Record<string, string> {
   return { EMAIL_PINS: JSON.stringify({ required: pins.required, signers: pins.signers }), ...(jwksUrl ? { EMAIL_JWKS_URL: jwksUrl } : {}) };
 }
 
+/**
+ * The partner identity token's watchdog check (D210): `IDENTITY_ISS` (the manifest's `identityToken.iss`; the JWKS is
+ * `{iss}/jwks.json`, the discovery document `{iss}/.well-known/openid-configuration`) and `IDENTITY_PINS` (JSON array
+ * of `watchdog.pinnedIdentityKeys`). No `identityToken`: no `IDENTITY_ISS`, and the JWKS check is skipped; no pins: no
+ * `IDENTITY_PINS`, and every published identity key is unpinned.
+ */
+export function identityVars(m: Manifest): Record<string, string> {
+  const pins = m.watchdog?.pinnedIdentityKeys;
+  return { ...(m.identityToken ? { IDENTITY_ISS: m.identityToken.iss } : {}), ...(pins ? { IDENTITY_PINS: JSON.stringify(pins) } : {}) };
+}
+
 export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknown> {
   const w = m.watchdog;
   if (!w) throw new Error(`envs/${m.name}.json has no watchdog block`);
@@ -63,6 +74,7 @@ export function wranglerConfig(m: Manifest, d1Id: string): Record<string, unknow
       ALERT_FROM: w.alertFrom,
       DIGEST_HOUR_UTC: String(w.digestHourUtc ?? 0),
       ...emailVars(m),
+      ...identityVars(m),
     },
     d1_databases: [{ binding: 'DB', database_name: w.cloudflare.d1Name, database_id: d1Id, migrations_dir: 'migrations' }],
     triggers: { crons: [CRON] },

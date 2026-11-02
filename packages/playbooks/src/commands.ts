@@ -37,6 +37,8 @@ export const identityKeySwitchStandby = `${SCRIPTS} identity-key <env> switch --
 export const identityKeySwitchNext = `${SCRIPTS} identity-key <env> switch --to next --yes`;
 export const identityKeyRetirePrevious = `${SCRIPTS} identity-key <env> retire --key previous --yes`;
 export const identityKeyRetireStandby = `${SCRIPTS} identity-key <env> retire --key standby --yes`;
+/** The outside probe of the identity JWKS and discovery document (`scripts/identity-probe.ts`, D210): from outside Cloudflare. */
+export const identityProbe = `${SCRIPTS} identity-probe <env>`;
 /** The identity token's AWS KMS signer (`docs/operations.md` "Identity token keys on AWS KMS", D215, D219). */
 export const identityKmsSwitchStandby = `${SCRIPTS} identity-key <env> kms-switch --to standby --yes`;
 export const identityKmsRetirePrevious = `${SCRIPTS} identity-key <env> kms-retire --key previous --yes`;

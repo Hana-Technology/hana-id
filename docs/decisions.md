@@ -7,7 +7,8 @@ D154–D155 (branch `feat/email-login-2`) and D156–D159 (branch `feat/email-lo
 change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 (branch `feat/email-login-5`) and D200 (branches
 `feat/link-cap`, `feat/email-login-5`) on 2026-11-02; D201–D203 (branch `feat/batch-c-2`) on 2026-11-02; D205–D209
 (branch `feat/batch-c-3`, to confirm) on 2026-11-02. D215–D219 (branch `feat/identity-token-7`, to confirm) on
-2026-11-02. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
+2026-11-02. D210–D214 (branch `feat/identity-token-8`, to confirm, amended after its review the same
+day) on 2026-11-02. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
 provider note, two "Superseded or amended" rows, the user-mail line under "Proposed", and the headings from D125 on, checked against `develop` @ 1c6a124 and what sandbox-dev runs (`docs/operations.md`) on
 2026-11-02 (branch `docs/consistency-pass`); no decision changed.
 
@@ -2912,6 +2913,137 @@ detail open. Each follows the spec's intent; all five are **to confirm** by the 
   than recording it active.
 - Why: a test key's dev-env privileges must never reach a live scope even after a manual write; the `no_session`
   waiver must fail closed, so any attempt to open a session ends it.
+## Partner identity token, build step 8 (watchdog), 2026-11-02
+
+Made while building `docs/identity-token-spec.md` "Build order" step 8 (branch `feat/identity-token-8`), where the
+spec ("JWKS and discovery", "Pinning") was silent or allowed two readings. None changes a derivation path, an address
+or the contract. All five are **to confirm** by the user.
+
+### D210. The identity JWKS check: pins in the watchdog's config, an outside probe, alerts only; detection, not prevention
+- Date 2026-11-02 (amended the same day after the step 8 review: H1, H2, M2, L1, L2) · Status: **to confirm**; built
+  (`packages/jwks/src/identity.ts`, `apps/watchdog/src/identity.ts`, `run.ts` `identityJwks`,
+  `scripts/lib/identity-probe.ts`, `.github/workflows/identity-probe.yml`) · Source: spec "JWKS and discovery" ("the
+  watchdog fetches the JWKS every run and raises a critical alert for any key whose thumbprint isn't in its pinned
+  list"), D127 Q13, D86, D190
+- Decision: the manifest's `watchdog.pinnedIdentityKeys` (RFC 7638 thumbprints of the P-256 keys, which are also their
+  kids; 1–8) is passed by `watchdog gen` as `IDENTITY_PINS`, with `identityToken.iss` as `IDENTITY_ISS`. Each run, after
+  the run is recorded and its lock released (the advisory phase, as the email JWKS: Hana's API is a party the watchdog
+  must survive), it reads `{iss}/jwks.json` and `{iss}/.well-known/openid-configuration`, no cache, `redirect:
+  'manual'`, 10 s timeout, body capped at 64 KB. It runs without a chain read (it needs none). The rules are one module,
+  `@hana-id/jwks/identity`, shared with the outside probe. Each object entry is judged by its key material, never by
+  its kid, whatever the other entries are. Findings and severities:
+  - a published key whose thumbprint isn't pinned, that isn't a P-256 key with 32-byte coordinates, or that has any
+    member beyond `kty crv x y kid use alg` (D214): critical `identity_key_unpinned` (`reason` `not_pinned`,
+    `not_p256`, `extra_members`, `pins_unreadable`);
+  - any private member (`d`, `p`, `q`, `dp`, `dq`, `qi`, `oth`, `k`) on any entry: critical
+    `identity_private_key_published` (the member names are stored, never the values);
+  - the discovery document's `issuer` or `jwks_uri` wrong (D213): critical `identity_discovery_mismatch`;
+  - an answer that can't be judged as published, **critical at once**: a redirect (3xx, never followed), a 200 over the
+    cap, a body that isn't JSON, duplicate members (D214), or the wrong shape (not an object, no `keys` array, a
+    non-object entry): `identity_jwks_unreadable:<document>:answer:<reason>`. Padding or malformed content never
+    downgrades a finding to a warning, and the object entries beside a malformed one are still judged;
+  - a network error or any other status, 3 runs in a row: critical `identity_jwks_unreadable:<document>:sustained`
+    (one counter per document): a failure only the watchdog gets is a way to hide a key from it. A failed read resolves
+    nothing it would have judged;
+  - a pinned key not published under its thumbprint as kid with public members only: warning `identity_key_missing`
+    (`not_published`, `kid_differs`, `not_clean`).
+  **No pause, ever:** the chain isn't involved. The contract never holds or accepts an identity key; partners verify
+  identity tokens, so pausing would stop every login without stopping a forged token. Absent pins mean nothing is
+  pinned (as D190): every published key is unpinned; unreadable pins page `pins_invalid:identity` and read as nothing
+  pinned; pins without `IDENTITY_ISS` page `pins_invalid:identity_no_iss` (L2). An env without `identityToken` skips
+  the check, and a skipped check resolves nothing.
+  **What it catches, and the residual (H1):** an attacker who serves the same JWKS to everyone. Whoever controls Hana's
+  Cloudflare account can recognise the watchdog's fetches (they leave from Cloudflare's network, through the
+  watchdog's own Worker) and serve them a clean JWKS while partners get another, or publish a key between two runs
+  (5 min) and remove it again. So the watchdog is detection against a non-cloaking attacker only. The **outside
+  probe** narrows the cloaking: a scheduled GitHub Actions workflow (every 15 min, standard actions pinned by commit,
+  no secrets) runs `scripts/identity-probe.ts` from GitHub's network with jose's User-Agent and Accept and no
+  `CF-Worker` header, applies the same rules against every non-`local*` env's `watchdog.pinnedIdentityKeys` in the
+  repo, and fails on any finding (GitHub emails the failure). Values from Hana's answers reach the Actions log only
+  JSON-quoted, escaped to printable ASCII (`%` included) and cut, and no line can start with `::` (no workflow
+  command injection). It doesn't close it either: an attacker can single out
+  partners' addresses, or time the key. **Partner-side thumbprint pinning is the recommended default for anything of
+  value** (`docs/integration.md`, the example verifier's `HANA_IDENTITY_PINS`): it is the only defence that doesn't
+  depend on Hana noticing.
+- Why: the JWKS is served by Hana's Cloudflare account, the one party this check must not trust; pins in the
+  watchdog's own config change only with a redeploy on the watchdog's account. Judging by material catches a pinned
+  kid placed over an attacker's key, which is what `jose` would then select.
+- Rejected: pausing on an unpinned key (no effect on partners, stops every user); trusting the kid; a warning for an
+  unpinned key (the spec says critical); a warning for an unreadable answer or a sustained failure (the first draft:
+  padding or a selective failure would downgrade a forged key to a warning); following redirects; reading the JWKS
+  before the protective work; probe secrets or a paid monitor (the probe needs neither).
+
+### D211. Pin before publish: the schema ties the published keys to the pins; identity-key writes both
+- Date 2026-11-02 · Status: **to confirm**; built (`packages/env/src/schema.ts` `watchdogRules`,
+  `scripts/lib/identity-key.ts` `withIdentityPins`) · Source: spec "Rotation playbook" step 1 ("add its thumbprint to
+  the watchdog pins (operator redeploy)") and step 4 ("remove the old key from the JWKS and the pins")
+- Decision: when a manifest has both `watchdog` and `identityToken`, every `identityToken.publicKeys` kid must be in
+  `watchdog.pinnedIdentityKeys` (extra pins are allowed: a key pinned ahead warns `identity_key_missing` until
+  published). `identity-key init` and `next` pin the new keys in the same manifest change, pins first; `retire` unpins
+  the key it unpublishes, after removing it; `switch` changes no pin (the published set is the same). Deploy order:
+  after `init` or `next`, the watchdog first (on its own account), then the API; after `retire`, the API first, then
+  the watchdog. The wrong order is caught, not silent: a key published before its pin is deployed pages
+  `identity_key_unpinned` until the watchdog deploy; a retired key unpinned before the API deploy pages the same.
+  sandbox-dev pins its two published keys (active `17xAVaTf…`, standby `_MjNZC3l…`). `identity-key` rewrites only the
+  `pinnedIdentityKeys` line of the manifest (review L3), and `init` and `next` validate the new manifest text before
+  writing any key file (L4), so a manifest that can't take the key leaves no orphan key behind.
+- Why: the operator can't forget the pin (the manifest won't validate, and `identity-key` writes it), and a retired key
+  is never left pinned: a key that leaked can't be republished by whoever holds Hana's Cloudflare account without a
+  page.
+- Rejected: pins edited by hand (forgotten in a hurry, e.g. a compromise rotation); keeping a retired key pinned until
+  someone removes it; a separate pins file outside the manifest (the email pins live in the manifest too).
+
+### D212. "Identity key on chain" is a kid check, alert only; no contract change
+- Date 2026-11-02 · Status: **to confirm**; built (`run.ts` `identityOnChain`, check `identity_on_chain`) · Source:
+  spec "JWKS and discovery" ("the watchdog also alerts if an identity key's thumbprint ever appears among the
+  contract's issuer keys (the contract must never trust it)"), invariant 6, threat model "Replay against Hana"
+- Decision: the contract stores issuer keys as RSA `{n, e}` only (`issuers.rs` `RsaKey`) and verifies RS256 only, so an
+  identity key's EC material can never be on chain; what can appear is its thumbprint as a kid. Each run, in the
+  protective phase (chain data and stored config only, no third-party read), the watchdog compares the kids of
+  Google's and the email issuer's active keys and of every pending key addition (any provider) with the pinned
+  identity thumbprints and those Hana published at the last good JWKS read (stored in D1). A match is critical
+  `identity_key_on_chain`, alert only: the same run's Google and email rules already cancel or pause on such a kid
+  (Google never published it; an email kid must be its own RSA thumbprint), and an owner's pending change for another
+  provider stays an `unverifiable_key_change`. No contract change is needed or made.
+- Why: the contract can't trust an identity key whatever its kid, so the check exists to explain an odd issuer-key
+  event, not to protect; reading the published thumbprints from D1 keeps Hana's API out of the protective phase.
+- Rejected: a contract view or refusal of identity kids (no security gain: material is checked, not the kid);
+  fetching the JWKS before the protective phase.
+
+### D213. The discovery document: `issuer` exact, `jwks_uri` exact, both critical; nothing followed
+- Date 2026-11-02 · Status: **to confirm**; built (`identity.ts` `judgeDiscovery`) · Source: spec "JWKS and
+  discovery" (the discovery document's fields), Q14
+- Decision: `issuer` must equal `identityToken.iss` exactly (no trailing-slash or case tolerance: an OpenID client
+  compares it with the token's `iss` byte for byte) and `jwks_uri` must equal `{iss}/jwks.json`. Either one wrong,
+  absent or not a string is critical `identity_discovery_mismatch`, one condition per field and published value. The
+  watchdog never follows a `jwks_uri` it didn't configure; the other fields (`id_token_signing_alg_values_supported`,
+  `claims_supported`) aren't judged.
+- Why: a partner library that follows discovery would fetch keys from a substituted `jwks_uri`, past the pin check, so
+  a wrong value is as dangerous as an unpinned key; a substituted `issuer` makes such clients accept another issuer's
+  tokens. The other fields can't make a partner accept a forged token.
+- Rejected: a warning (the user asked for critical on a wrong `iss`, and `jwks_uri` is the same risk); fetching and
+  judging the advertised `jwks_uri` too (an attacker-chosen URL in the watchdog's run).
+
+### D214. Bounded identity alerts, and the portal hand-off without the portal
+- Date 2026-11-02 · Status: **to confirm**; built (`run.ts`, `checks.ts`, `status.ts`, `@hana-id/playbooks`) · Source:
+  spec step 8 ("portal rendering (D83)"), D83, D126
+- Decision: an unpinned or private set is one condition keyed by a hash of what was found (a new key is a new page;
+  the old set resolves), listing at most 20 entries; kids and URLs from Hana's answers are cut to 256 characters and
+  shown through `ident` in titles. A published entry may have only `kty crv x y kid use alg`; anything else (an
+  `x5u`, `jku`, private members) makes it unpinned, and a member twice in one object anywhere in either document is
+  critical (`duplicate_members`): `JSON.parse` keeps the last, other parsers the first, so two readers could see two
+  keys (review L1). Three playbooks: `identity-jwks-forged` (critical: unpinned, private, discovery, unreadable),
+  `identity-jwks-degraded` (warning: missing), `identity-key-on-chain`. `/status` gains `identity`
+  (`{iss, jwks_url, discovery_url, pinned, jwks, discovery}`: the pins and the last good reads, each key judged, public
+  members only). The checks `identity_on_chain` and `identity_jwks` and the six kinds (`identity_key_unpinned`,
+  `identity_private_key_published`, `identity_discovery_mismatch`, `identity_jwks_unreadable`, `identity_key_missing`,
+  `identity_key_on_chain`) are in `CHECK_IDS` /
+  `ALERT_KINDS` for the portal's registry test; the portal's "Security & monitoring" view isn't built yet (batch C),
+  so step 8's "portal rendering" is that hand-off, rendered when the portal is.
+- Why: a JWKS of a few hundred junk keys (64 KB) must not become hundreds of pages, and a stored alert must never hold a
+  private value.
+- Rejected: one alert per published key (page flood); one fixed condition per kind (a second forged key while the
+  first is open would raise nothing new).
 
 ## Identity token build, step 7 (the AWS KMS signer, code only), 2026-11-02
 
@@ -3094,3 +3226,6 @@ and codes).
 To confirm from the identity token's step 7 (the KMS signer's code): D215 (the manifest shape and credentials), D216
 (`DIGEST`), D217 (strict DER, the self-check), D218 (one `Sign`, no retry, limits) and D219 (the standby's region, the
 IAM policy on the active key only).
+
+Identity token step 8's readings D210–D214 (the watchdog's identity JWKS and discovery check, pin before publish, the
+"identity key on chain" kid check, the discovery fields, bounded alerts and the portal hand-off) are to confirm.

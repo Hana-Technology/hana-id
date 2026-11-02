@@ -2051,6 +2051,9 @@ change no address.
   Gmail user can now change their address, the old one becoming an alternate that still receives mail
   (support.google.com/accounts/answer/19870), so the same person can then have two email identities (the spec's
   "address changes between logins" case; nothing merges them).
+- Rate limits: since tags are distinct identities, `normalizeEmail` also returns `mailbox` (the address without its
+  `+tag`, on every domain), and the issuer's limits on codes sent key on it, so cycling tags can't mail one inbox
+  without bound (automated security review of this change). It is never an identity or a recipient.
 - Rejected: dropping `+tags` (the spec's rule: one wallet per inbox); keeping dots significant (an accidental second
   wallet); Gmail rules for Workspace domains (`+tags` elsewhere may be distinct mailboxes).
 

@@ -1,7 +1,7 @@
 # Recovery playbooks
 
 Generated from `packages/playbooks` (D126) by `corepack pnpm --filter @hana-id/playbooks gen-docs`: edit the package,
-not this file (a test fails when it is stale). Last verified against code: 2026-11-02 (branch `feat/email-login-5`).
+not this file (a test fails when it is stale). Last verified against code: 2026-11-02 (branch `docs/consistency-pass`: `link-volume` step 3, `set_link_thresholds` through `owner:call`; before it branch `feat/email-login-5`).
 
 One step-by-step guide for every watchdog alert kind and for every incident the watchdog does not raise. The admin
 portal's "Security & monitoring" view renders the same playbooks (`docs/batch-c-spec.md`), and every watchdog
@@ -1122,7 +1122,7 @@ The contract counts every new link per scope and in total per UTC hour and flags
    corepack pnpm --filter @hana-id/scripts run admin <env> owner:call remove_issuer_key --args '{"provider":"email","kid":"<kid>"}' --yes
    ```
 
-3. **Only if the alarm level is wrong for real traffic: change the threshold** (who: council (2 of 3)). A launch needs nothing (its links went through). If ordinary traffic keeps crossing the alarm, the council changes the threshold with `set_link_thresholds` (an owner action; `admin <env> owner:call` once the scripts list it): lowering applies at once, raising waits `governance_delay_ms` (72 h on mainnet) and pages as a `governance_change` (`pending_thresholds`) when proposed.
+3. **Only if the alarm level is wrong for real traffic: change the threshold** (who: council (2 of 3)). A launch needs nothing (its links went through). If ordinary traffic keeps crossing the alarm, the council changes the threshold with `set_link_thresholds` (an owner action, through `admin <env> owner:call set_link_thresholds`): lowering applies at once, raising waits `governance_delay_ms` (72 h on mainnet) and pages as a `governance_change` (`pending_thresholds`) when proposed.
 
 **Verify**
 

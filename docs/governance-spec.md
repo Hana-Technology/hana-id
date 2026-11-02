@@ -1,9 +1,11 @@
 # Governance spec: delayed issuer keys, watchdog, multisig owner, timelocked upgrades (pre-mainnet)
 
-**Status: DRAFT (2026-10-29); the user's decisions of 2026-10-29 (D80–D86) are applied below.** Implements
-`docs/decisions.md` D33 (confirmed 2026-10-28) and closes `docs/security.md` open issue (e). Still open: the mainnet
+**Status: built and merged into `develop`; on sandbox-dev since 2026-10-30 (contract v2 migrated in place and owned
+by the council DAO, the watchdog deployed and drilled; watchdog redeployed 2026-11-02 with email-login batch 5); not on
+mainnet. The user's decisions of 2026-10-29 (D80–D86) are applied below.** Implements `docs/decisions.md` D33
+(confirmed 2026-10-28) and closes `docs/security.md` open issue (e) on sandbox-dev. Still open: the mainnet
 issuer-key delay (provisional until the lead-time measurement is in), where the backup council key is held, the
-paging app, and open question 17. Nothing here is built.
+paging app, and open question 17. The current state is in the reference docs (`docs/README.md`).
 
 This file is the source of truth for the batch once approved. If code and this spec disagree, fix the code or raise
 the problem. Reference docs (`contract-interface.md`, `security.md`, `operations.md`, `architecture.md`, `api.md`)

@@ -5,7 +5,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { type Manifest, loadEnv, manifestSchema, p256Thumbprint } from '@hana-id/env';
 import { describe, expect, it } from 'vitest';
 import { CliError } from '../lib/cli.ts';
-import { PROBE_HEADERS, identityProbe, probeEnv, probeFetch, probeTargets } from '../lib/identity-probe.ts';
+import { MAX_LINE_CHARS, PROBE_HEADERS, identityProbe, probeEnv, probeFetch, probeTargets, quote, safeLine } from '../lib/identity-probe.ts';
 
 function key() {
   const { publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
@@ -80,24 +80,24 @@ describe('probeEnv: the watchdog rules', () => {
     const evil = key();
     const f = await probeEnv(target, server({ jwks: { keys: [A, { ...B, d: 'secret-scalar-not-printed' }, evil, { ...A, x5u: 'https://evil.example' }] } }).fetchFn);
     expect(f.some((l) => l.includes(`thumbprint ${evil.kid} (not_pinned)`))).toBe(true);
-    expect(f.some((l) => l.includes('keys[1]') && l.includes('extra_members: d'))).toBe(true);
+    expect(f.some((l) => l.includes('keys[1]') && l.includes('extra_members: "d"'))).toBe(true);
     expect(f.some((l) => l.startsWith('jwks: private members d on keys[1]'))).toBe(true);
-    expect(f.some((l) => l.includes('keys[3]') && l.includes('extra_members: x5u'))).toBe(true);
+    expect(f.some((l) => l.includes('keys[3]') && l.includes('extra_members: "x5u"'))).toBe(true);
     expect(f).toContain(`jwks: pinned key ${B.kid} not_clean`);
     expect(f.join('\n')).not.toContain('secret-scalar-not-printed');
   });
 
   it('duplicate members, the wrong shape, not JSON, a redirect, a status and a network failure are findings', async () => {
     const dup = `{"keys":[${JSON.stringify(A)},{"kty":"EC","crv":"P-256","x":"${B.x}","y":"${B.y}","kid":"${B.kid}","kid":"other","use":"sig","alg":"ES256"}]}`;
-    expect((await probeEnv(target, server({ jwks: dup }).fetchFn)).some((l) => l.startsWith('jwks: duplicate_members: duplicate members: keys[1].kid'))).toBe(true);
+    expect((await probeEnv(target, server({ jwks: dup }).fetchFn)).some((l) => l.startsWith('jwks: duplicate_members: "keys[1].kid"'))).toBe(true);
     expect(await probeEnv(target, server({ jwks: { keys: [A, 'x', B] } }).fetchFn)).toEqual(['jwks: bad_shape: keys[1] is not an object']);
     expect((await probeEnv(target, server({ jwks: '{"keys": [' }).fetchFn))[0]).toMatch(/^jwks: not_json/u);
-    expect((await probeEnv(target, server({ jwks: new Response(null, { status: 307, headers: { location: '/elsewhere' } }) }).fetchFn))[0]).toMatch(/^jwks: redirect: HTTP 307 to \/elsewhere/u);
+    expect((await probeEnv(target, server({ jwks: new Response(null, { status: 307, headers: { location: '/elsewhere' } }) }).fetchFn))[0]).toMatch(/^jwks: redirect \(HTTP 307\): "\/elsewhere"/u);
     expect((await probeEnv(target, server({ discovery: new Response('down', { status: 503 }) }).fetchFn))).toEqual([`discovery: HTTP 503 at ${ISS}/.well-known/openid-configuration`]);
     const down = (async () => {
       throw new TypeError('fetch failed');
     }) as typeof fetch;
-    expect(await probeEnv(target, down)).toEqual([`jwks: fetch failed (TypeError) at ${ISS}/jwks.json`, `discovery: fetch failed (TypeError) at ${ISS}/.well-known/openid-configuration`]);
+    expect(await probeEnv(target, down)).toEqual([`jwks: fetch failed ("TypeError") at ${ISS}/jwks.json`, `discovery: fetch failed ("TypeError") at ${ISS}/.well-known/openid-configuration`]);
   });
 
   it('a wrong issuer or jwks_uri is a finding (exact match)', async () => {
@@ -126,5 +126,51 @@ describe('identityProbe: the exit code', () => {
   it('refuses an env it does not know or cannot probe', async () => {
     await expect(identityProbe(['nope'], deps(server().fetchFn, []))).rejects.toThrow(CliError);
     await expect(identityProbe(['local'], deps(server().fetchFn, []))).rejects.toThrow(/local/u);
+  });
+});
+
+describe('log safety: a hostile JWKS cannot inject workflow commands', () => {
+  /** A line GitHub Actions would read as a workflow command, or that breaks into several lines. */
+  const unsafe = (line: string) => /[\r\n\u0000-\u001f\u007f-\u009f\u2028\u2029%]/u.test(line) || /^\s*::/u.test(line) || line.length > MAX_LINE_CHARS;
+
+  it('quotes values as JSON, escapes control and non-ASCII characters and %, and caps them', () => {
+    expect(quote('\n::set-output name=x::y')).toBe('"\\n::set-output name=x::y"');
+    expect(quote('a%0Ab')).toBe('"a\\u00250Ab"');
+    expect(quote('\u2028\u0085é😀')).toBe('"\\u2028\\u0085\\u00e9\\ud83d\\ude00"');
+    expect(quote('x'.repeat(500)).length).toBeLessThan(100);
+    expect(quote(null)).toBe('none');
+    expect(safeLine('::error::pwned')).toBe('> ::error::pwned');
+    expect(safeLine('   ::warning::x')).toMatch(/^> /u);
+    expect(safeLine(`a\r\nb${'z'.repeat(5000)}`)).toMatch(/^a\\u000d\\u000ab/u);
+    expect(safeLine('z'.repeat(5000)).length).toBe(MAX_LINE_CHARS);
+  });
+
+  it('a member named "\\n::set-output name=x::y", a %0A sequence and a hostile duplicate path all print as one safe line each', async () => {
+    const hostile = '\n::set-output name=x::y';
+    const kid = '%0A::error::injected%0D\r\n::add-mask::x';
+    const jwks = `{"keys":[${JSON.stringify(A)},${JSON.stringify(B)},{"kty":"EC","crv":"P-256","x":"${A.x}","y":"${A.y}","kid":${JSON.stringify(kid)},"use":"sig","alg":"ES256",${JSON.stringify(hostile)}:1,"%0A::x":2,"%0A::x":3}]}`;
+    const discoveryBody = { issuer: '\n::stop-commands::tok', jwks_uri: `${ISS}/jwks.json` };
+    const out: string[] = [];
+    const m = (): Manifest => {
+      const s = loadEnv('sandbox-dev');
+      return { ...s, name: 'staging', identityToken: { ...s.identityToken!, iss: ISS, publicKeys: [{ ...A }, { ...B }], signer: { kind: 'worker-secret', activeKid: A.kid } }, watchdog: { ...s.watchdog!, pinnedIdentityKeys: [A.kid, B.kid] } };
+    };
+    const code = await identityProbe([], { log: (l) => void out.push(l), fetch: server({ jwks, discovery: discoveryBody }).fetchFn, envNames: () => ['staging'], loadManifest: m });
+    expect(code).toBe(1);
+    expect(out.length).toBeGreaterThan(3);
+    for (const line of out) expect(unsafe(line), line).toBe(false);
+    const all = out.join('\n');
+    // The hostile names are there, quoted and escaped, never raw.
+    expect(all).toContain(quote(hostile));
+    expect(all).toContain(quote(kid));
+    expect(all).toContain(quote('%0A::x'));
+    expect(all).not.toContain('%0A');
+    expect(out.every((l) => !l.trimStart().startsWith('::'))).toBe(true);
+  });
+
+  it('a hostile redirect location is quoted too', async () => {
+    const f = await probeEnv(target, server({ jwks: new Response(null, { status: 302, headers: { location: 'https://e.example/%0A::error::x' } }) }).fetchFn);
+    expect(f[0]).toBe(`jwks: redirect (HTTP 302): ${quote('https://e.example/%0A::error::x')} at ${ISS}/jwks.json`);
+    for (const l of f) expect(unsafe(safeLine(`  ${l}`))).toBe(false);
   });
 });

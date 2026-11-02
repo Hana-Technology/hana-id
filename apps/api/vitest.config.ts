@@ -55,6 +55,7 @@ export default defineConfig(async () => {
             VAULT_KEK: vaultKek,
             IDENTITY_ISS: 'https://api.test/v1/identity',
             IDENTITY_PUBLIC_KEYS: JSON.stringify([identityActive.public, identityStandby.public]),
+            IDENTITY_SIGNER: 'worker-secret',
             IDENTITY_ACTIVE_KID: identityActive.public.kid!,
             IDENTITY_SIGNING_KEY: identityActive.private,
             IDENTITY_SIGNING_KEY_STANDBY: identityStandby.private,

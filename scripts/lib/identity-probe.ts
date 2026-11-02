@@ -6,7 +6,9 @@
 // applies the watchdog's rules (`@hana-id/jwks/identity`): every key pinned in `watchdog.pinnedIdentityKeys` and
 // public members only, no private member, no duplicate member, the right shape, `issuer` and `jwks_uri` exact, a 200
 // (a redirect is a finding, never followed) within 64 KB. Any finding fails the run, so GitHub notifies the repo's
-// owners. It holds no secret and prints only public values (kids, thumbprints, URLs, statuses).
+// owners. It holds no secret and prints only public values (kids, thumbprints, URLs, statuses). Every value taken
+// from Hana's answers is JSON-quoted, escaped to printable ASCII (`%` too) and cut, and no printed line can start with
+// `::`, so a hostile JWKS can't inject a workflow command or break a log line (`quote`, `safeLine`).
 //
 // It narrows cloaking by the fetch's origin; it doesn't close it (an attacker can still single out partners' IPs) and
 // it runs every 15 min: partner-side thumbprint pinning is what prevents a forged key being accepted.
@@ -90,7 +92,34 @@ export async function probeFetch(url: string, fetchFn: typeof fetch = fetch): Pr
   return { kind: 'body', text: Buffer.concat(chunks).toString('utf8') };
 }
 
-const shown = (s: string | null): string => (s === null ? 'none' : JSON.stringify(s));
+/** Longest value from Hana's answers shown in a log line, and longest line. */
+export const MAX_VALUE_CHARS = 80;
+export const MAX_LINE_CHARS = 1000;
+
+/** `\uXXXX` for every UTF-16 unit outside printable ASCII (C0, DEL, C1, U+2028, U+2029, …) and for `%`. */
+const escapeUnits = (s: string): string => s.replace(/[^\x20-\x7e]|%/gu, (ch) => ch.split('').map((c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`).join(''));
+
+/**
+ * A value taken from Hana's answers (a kid, a member name, a path, a URL): JSON-quoted, cut to MAX_VALUE_CHARS, and
+ * printable ASCII only, `%` included (GitHub decodes `%0A` in workflow command data), so it can't break a log line.
+ */
+export function quote(v: string | null): string {
+  if (v === null) return 'none';
+  const cut = v.length <= MAX_VALUE_CHARS ? v : `${v.slice(0, MAX_VALUE_CHARS - 3)}...`;
+  return escapeUnits(JSON.stringify(cut));
+}
+
+/**
+ * One line for the Actions log: control and non-ASCII characters escaped (no CR, LF or other line break survives),
+ * cut to MAX_LINE_CHARS, and never starting with `::` (a workflow command) whatever its leading spaces.
+ */
+export function safeLine(line: string): string {
+  let out = escapeUnits(line);
+  if (out.length > MAX_LINE_CHARS) out = `${out.slice(0, MAX_LINE_CHARS - 3)}...`;
+  return /^\s*::/u.test(out) ? `> ${out}` : out;
+}
+
+const shown = quote;
 
 /** Every finding for one env (empty: clean). Each is one line of public values. */
 export async function probeEnv(t: ProbeTarget, fetchFn: typeof fetch = fetch): Promise<string[]> {
@@ -102,7 +131,7 @@ export async function probeEnv(t: ProbeTarget, fetchFn: typeof fetch = fetch): P
     try {
       res = await probeFetch(url, fetchFn);
     } catch (err) {
-      findings.push(`${what}: fetch failed (${err instanceof Error ? err.name : 'error'}) at ${url}`);
+      findings.push(`${what}: fetch failed (${err instanceof Error ? quote(err.name) : 'error'}) at ${url}`);
       continue;
     }
     if (res.kind === 'status') {
@@ -110,12 +139,15 @@ export async function probeEnv(t: ProbeTarget, fetchFn: typeof fetch = fetch): P
       continue;
     }
     const r = readIdentityResponse(res);
-    for (const f of r.findings) findings.push(`${what}: ${f.reason}: ${f.detail} at ${url}`);
+    for (const f of r.findings) {
+      const values = f.values.length ? `: ${f.values.map(quote).join(', ')}` : '';
+      findings.push(`${what}: ${f.reason}${f.reason === 'redirect' ? ` (${f.detail.slice(0, f.detail.indexOf(' to '))})` : ''}${values} at ${url}`);
+    }
     if (!r.parsed) continue;
     if (what === 'jwks') {
       const v = await judgeIdentityJwks(r.value, pins);
       for (const p of v.shapeProblems) findings.push(`jwks: bad_shape: ${p}`);
-      for (const k of v.unpinned.slice(0, MAX_LISTED)) findings.push(`jwks: unpinned key keys[${k.index}] kid ${shown(k.kid)} thumbprint ${k.thumbprint ?? 'none'} (${k.reason}${k.extra.length ? `: ${k.extra.join(', ')}` : ''})`);
+      for (const k of v.unpinned.slice(0, MAX_LISTED)) findings.push(`jwks: unpinned key keys[${k.index}] kid ${shown(k.kid)} thumbprint ${k.thumbprint ?? 'none'} (${k.reason}${k.extra.length ? `: ${k.extra.map(quote).join(', ')}` : ''})`);
       for (const k of v.privateKeys.slice(0, MAX_LISTED)) findings.push(`jwks: private members ${k.private.join(', ')} on keys[${k.index}] kid ${shown(k.kid)}`);
       for (const m of v.missing) findings.push(`jwks: pinned key ${m.thumbprint} ${m.reason}`);
     } else {
@@ -157,8 +189,8 @@ export async function identityProbe(argv: readonly string[], deps: IdentityProbe
     const findings = await probeEnv(t, deps.fetch ?? fetch);
     if (findings.length) {
       failed++;
-      deps.log(`FAIL ${t.env} (${t.iss}; ${t.pins.length} pinned, from ${t.pinSource}):`);
-      for (const f of findings) deps.log(`  ${f}`);
+      deps.log(safeLine(`FAIL ${t.env} (${t.iss}; ${t.pins.length} pinned, from ${t.pinSource}):`));
+      for (const f of findings) deps.log(safeLine(`  ${f}`));
     } else {
       deps.log(`ok ${t.env}: every published key pinned (${t.pinSource}), discovery as configured`);
     }

@@ -241,6 +241,8 @@ export type UnreadableReason = 'redirect' | 'too_large' | 'not_json' | 'duplicat
 export interface DocumentFinding {
   reason: UnreadableReason;
   detail: string;
+  /** The attacker-chosen values in `detail` (the redirect's location, the duplicate paths), for callers that quote them. */
+  values: string[];
 }
 
 /**
@@ -249,12 +251,14 @@ export interface DocumentFinding {
  * `judgeIdentityJwks` / `judgeDiscovery`.
  */
 export function readIdentityResponse(r: IdentityResponse): { value: unknown; parsed: boolean; findings: DocumentFinding[] } {
-  if (r.kind === 'redirect') return { value: null, parsed: false, findings: [{ reason: 'redirect', detail: `HTTP ${r.status} to ${r.location === null ? 'nowhere' : cutStored(r.location)}` }] };
-  if (r.kind === 'too_large') return { value: null, parsed: false, findings: [{ reason: 'too_large', detail: `body over ${IDENTITY_BODY_LIMIT} bytes` }] };
+  if (r.kind === 'redirect') {
+    const location = r.location === null ? null : cutStored(r.location);
+    return { value: null, parsed: false, findings: [{ reason: 'redirect', detail: `HTTP ${r.status} to ${location ?? 'nowhere'}`, values: location === null ? [] : [location] }] };
+  }
+  if (r.kind === 'too_large') return { value: null, parsed: false, findings: [{ reason: 'too_large', detail: `body over ${IDENTITY_BODY_LIMIT} bytes`, values: [] }] };
   const p = parseIdentityDocument(r.text);
-  if (!p) return { value: null, parsed: false, findings: [{ reason: 'not_json', detail: 'the body is not JSON' }] };
-  const findings: DocumentFinding[] = p.duplicates.length
-    ? [{ reason: 'duplicate_members', detail: `duplicate members: ${p.duplicates.slice(0, MAX_LISTED).join(', ')}` }]
-    : [];
+  if (!p) return { value: null, parsed: false, findings: [{ reason: 'not_json', detail: 'the body is not JSON', values: [] }] };
+  const paths = p.duplicates.slice(0, MAX_LISTED);
+  const findings: DocumentFinding[] = paths.length ? [{ reason: 'duplicate_members', detail: `duplicate members: ${paths.join(', ')}`, values: paths }] : [];
   return { value: p.value, parsed: true, findings };
 }

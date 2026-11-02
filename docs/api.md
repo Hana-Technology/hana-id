@@ -1,6 +1,9 @@
-# API reference — every endpoint the `apps/api` Worker serves today
+# API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's)
 
-Last verified against code: 2026-11-02 (branch `feat/batch-c-3`: migration 0006, the gate on `app_keys` and `scopes`,
+Last verified against code: 2026-11-02 (branch `feat/email-login-4`: "Email issuer", the separate `apps/email-issuer` Worker: its endpoints,
+limits, Durable Objects, D1, bindings and logs, D195–D199, with the review fixes and the abuse re-check (the owner
+pool, mailed unlock and unsuppress, confirm, revoke-tickets, the growing domain cap, per-address tickets); branch `feat/identity-token-7`: the identity token's AWS KMS signer, its vars,
+secrets and log codes, D215–D219); 2026-11-02 (branch `feat/batch-c-3`: migration 0006, the gate on `app_keys` and `scopes`,
 origins in force by `active_from`, suspension bits, `first_session_at`, the guarded-change cron job, the batch C vars
 read, D205–D209); 2026-11-02 (branch `feat/batch-c-2`: the token check and the governance read's JWKS
 cache now in `@hana-id/oidc`; wrongly typed optional claims ignored, a non-finite `exp` refused, the owner-action
@@ -545,6 +548,15 @@ deletes expired markers) → per account root (`429 rate_limited`) → the quota
 per isolate) → sign and self-verify (`503
 identity_signer_unavailable`) → `200 {identityToken, expiresAtMs, emailStatus: "off"}`.
 
+The signer is the one `IDENTITY_SIGNER` names (`src/identity/signers.ts`): `worker-secret` (testnet: a P-256 private
+JWK as a Worker secret) or `aws-kms` (staging and mainnet, D215; no env uses it yet). The KMS signer hashes the JWS
+signing input in the Worker and sends one `TrentService.Sign` (`MessageType: DIGEST`, `SigningAlgorithm:
+ECDSA_SHA_256`, SigV4) to `kms.<region>.amazonaws.com` for `IDENTITY_KMS_KEY_ARN`, with no retry, a 3 s deadline over
+the request and its body, and a 4 KiB answer cap (D216, D218). It checks the answer's `KeyId` and algorithm, converts
+the DER signature strictly to JOSE `r ‖ s` (D217), and verifies it with the published key for the active kid. Any
+failure (KMS refusing, throttling, timing out, unreachable or answering garbage, missing configuration, a signature the
+published key doesn't verify) is `503 identity_signer_unavailable`: no token is ever answered unverified.
+
 Nothing here writes the share: no counter moves, `idle_until` doesn't slide (a mint is never activity, D55, D112).
 After the response (`waitUntil`): `identity_issuance_hourly` (+1 for the hour and kid) and `identity_usage` (+1 for the
 app and UTC day); a failed write is logged (`identity_count_failed`), never a failed mint.
@@ -837,9 +849,12 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 | `VAULT_KEK_PREVIOUS` | secret, rotation only | `.secrets/<env>/vault-kek.previous`, from `vault-kek rotate` | |
 | `IDENTITY_ISS` (I) | var, optional | `identityToken.iss` (`{apiUrl}/v1/identity`) | absent → `/v1/identity/*` 503 `identity_unavailable` |
 | `IDENTITY_PUBLIC_KEYS` (I) | var, optional | `identityToken.publicKeys`, JSON | the JWKS; public members only |
-| `IDENTITY_ACTIVE_KID` (I) | var, optional | `identityToken.signer.activeKid` | the key that signs: whichever of the two signing-key secrets has this thumbprint; `gen` refuses the `aws-kms` signer until build step 7 |
+| `IDENTITY_SIGNER` (I) | var, optional | `identityToken.signer.kind` | `worker-secret` or `aws-kms` (D215); absent (a config generated before build step 7) means `worker-secret`, unless `IDENTITY_KMS_KEY_ARN` is set (then every mint is refused); any other value → `503 identity_signer_unavailable` |
+| `IDENTITY_ACTIVE_KID` (I) | var, optional | `identityToken.signer.activeKid`, or `.keys.active.kid` for `aws-kms` | the key that signs: whichever of the two signing-key secrets has this thumbprint, or the KMS key; it must be in `IDENTITY_PUBLIC_KEYS` |
+| `IDENTITY_KMS_KEY_ARN` (I) | var, `aws-kms` only | `identityToken.signer.keys.active.arn` | the active key's ARN (single-region key); its region is the KMS endpoint's. The standby, next and previous ARNs stay in the manifest |
 | `IDENTITY_GLOBAL_HOURLY_MAX` (I) | var, optional | not generated | the global mint breaker per hour (default 1 000 000; the soft alert line is 100 000) |
 | `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY` (I) | secret, testnet and `local*` only | `.secrets/<env>/identity-signing-key.json`, `identity-signing-key-standby.json`, from `scripts/identity-key.ts init` | P-256 private JWKs; no key with the active kid → `503 identity_signer_unavailable` |
+| `IDENTITY_AWS_ACCESS_KEY_ID`, `IDENTITY_AWS_SECRET_ACCESS_KEY` (I) | secret, `aws-kms` only | `.secrets/<env>/identity-aws-access-key.json` (`aws iam create-access-key` for `identityToken.signer.credentials.iamUser`), from `identity-key kms-put-aws-key` (one `wrangler secret bulk`) | a long-term `AKIA…` key of the IAM user whose only permission is `kms:Sign` on the active key (D219); never logged; missing → `503 identity_signer_unavailable` |
 | `IDENTITY_SUB_KEY` (I) | secret | `.secrets/<env>/identity-sub-key`, from `identity-key init` | base64 of 32 bytes; the `sub`/`sid` HMAC key; never rotated |
 | `DB` | D1 | `cloudflare.d1Name`, id from `--d1-id` | `migrations_dir: migrations` |
 | `RELAYER_KEY`, `RATE_LIMITER`, `LOGIN_RELAY` | Durable Objects | classes `RelayerKey`, `RateLimiter`, `LoginRelay` | |
@@ -925,6 +940,259 @@ Other events: `relay_dispatched` (`pool`, `keyIndex`, `method`, `nearTx`, `nonce
 `usage_increment_failed`, `owner_token_release_failed`, `gas_override_ignored`, `auto_approve_policy_invalid`
 (`problems`), the identity token's (I) `identity_unavailable` (`code`: `no_identity_config`, `bad_public_keys`,
 `active_kid_not_published`, `no_sub_key`, `bad_sub_key`), `identity_signer_unavailable` / `identity_sign_failed`
-(`code`: `no_signing_key_for_active_kid`, `signing_key_unusable`, `self_verify_failed`), `identity_ceiling` (error), `identity_volume_alert` (error: past the global soft line),
+(`code`: `no_signing_key_for_active_kid`, `signing_key_unusable`, `self_verify_failed`, `unknown_signer_kind`, `signer_kind_missing` (a KMS key ARN without `IDENTITY_SIGNER`), and for
+the KMS signer `no_kms_key_arn`, `no_aws_credentials`, `kms_bad_key_arn`, `kms_bad_credentials_format`, `kms_timeout`,
+`kms_unreachable`, `kms_access_denied`, `kms_bad_credentials`, `kms_key_disabled`, `kms_key_not_found`,
+`kms_key_usage`, `kms_throttled`, `kms_internal`, `kms_error`, `kms_bad_answer`, `kms_bad_signature`; never a
+credential, a request or a signature), `identity_ceiling` (error), `identity_volume_alert` (error: past the global soft line),
 `identity_bad_session_path` (error), `identity_count_failed`, `identity_maintenance` (`pruned`), and from the page
 Workers `vault_host` and `auth_page` (`code`).
+
+## Email issuer (`apps/email-issuer`, its own Worker) · E
+
+**E** marks the email login's issuer (`docs/email-login-spec.md` "Email issuer (Hana-run)", build plan batch 4,
+D195–D199). It is a separate Worker from the API (Q1): it alone holds the email signing key, K_sub, K_code, K_rl and
+the SendGrid key; the API holds none of them. It serves `{apiUrl}/v1/email/*` (the iss is `{apiUrl}/v1/email`); how
+that path reaches it (a service binding from the API on `workers.dev`, a zone route in production) is batch 6's (D199).
+**Not deployed**; no app's `login_methods` includes email yet, so nothing calls it. It reads the chain (views only) and
+the API's D1 (read only); it writes nothing on chain.
+
+### Conventions
+
+- Browser routes are `POST` JSON (`Content-Type: application/json`, else 415) from exactly one origin each (D199):
+  `start`, `resend`, `verify` from `AUTH_ORIGIN`, `google-match` from `VAULT_ORIGIN`; any other or missing `Origin` is
+  `403 origin_not_allowed` with no CORS headers. No cookies, no credentials (D70). Bodies ≤ 8 KB, exactly the listed
+  fields (else `400 bad_request`); only `start` carries an address. Every response `Cache-Control: no-store`.
+- Errors are `{error, code, data?}`. Thrown failures: `503 signer_unavailable` (no, a malformed or a non-active
+  ISSUER_SIGNING_KEY, a self-check failure), `503 issuer_unavailable` (a missing HMAC key), `502 near_unavailable`,
+  `502 google_unavailable`, `500 internal`. `429` carries `retry-after`.
+- **The app gate** (`start`, `google-match`): `pk` → the API's D1 app (`401 invalid_key`), `status = 'active'`
+  (`403 app_suspended`), `login_methods` lists `email` (`403 email_not_enabled`; the column is the API's batch 6
+  migration, absent = email off), and the scope holds the client `("email", "email:" + scope_id)` on chain (cached 60
+  s; `409 no_email_client`). The commitment's `scopeId` must be the app's (`400 scope_mismatch`).
+- **Tokens** are JWS General JSON (`{"payload", "signatures": [{"protected", "signature"}]}`, protected header exactly
+  `{"alg":"RS256","kid":<thumbprint>}`), claims exactly `iss aud sub iat exp nonce jti` (`aud` = `email:<scope_id>`,
+  `exp` = `iat` + 600, `jti` 16 random bytes). The issuer computes every nonce itself (`docs/contract-interface.md`
+  byte layouts, checked against `email_fixture.json`). Each signature is verified against the published key before the
+  answer; each token is a row in `email_issuance` before it is signed.
+
+### `POST /v1/email/start` · E
+
+`{pk, email, purpose, commitment, deviceTicket?, unlockToken?}` → `202 {challengeId, expiresAtMs, resendAfterMs}`
+(absolute ms).
+
+`purpose`: `session` (commitment = the session nonce fields `{scopeId, sessionPublicKey: [32 bytes], expiresAtMs (next
+24 h), keyIndex (0..2^31−1), maxUses (1..500), salt: [16..64 bytes]}`), `link_new` `{scopeId, rootIk, epoch, salt}`,
+`link_account` `{scopeId, rootIk, newIk, epoch, salt}`, `link_change` `{scopeId, action: "cancel"|"unlink", rootIk,
+memberIk, epoch, salt}` (iks 64 lowercase hex). `auto_link` is refused here (google-match prepares it, D195). The
+address is normalized by `@hana-id/email` (`400 invalid_email`); a disposable domain or its subdomain is `400
+email_domain_not_allowed`.
+
+The requester pays first (D198): the IP subject's limits, then the owner proof (`deviceTicket`, `unlockToken`) is
+checked, then (unless it was valid) the prefixes' limits (IPv4 /24, IPv6 /56 and /48, 1000 a day each), then the app
+gate and the body, then in one atomic call the mailbox's (the address without its `+tag`):
+the requester's lock, at most 5 live challenges, 35 challenges a day, and the code limits per (mailbox, requester) and
+per mailbox; then the recipient domain's day, then the app's quota, then the global budget and the app's share of it.
+A later refusal refunds the mailbox, domain and app counts (never the IP ones) and stores nothing. Every mailbox-level
+refusal (the mailbox's limits and locks, the domain cap) is the same `429 rate_limited` body with `retry-after: 900`.
+
+**A valid device ticket or unlock grant never waits on the IP prefix limits, an app's quota, a recipient domain's cap or the general budget pool**; its mail comes from the owner pool (30% of the budget, beside it), which fresh tickets fill only to half and 20% per app, and falls back to the app's general share (D198). `deviceTicket` (from an
+earlier `verify` of this exact address, 30 days, not revoked): the start uses that ticket's own allowance, 3 code mails
+a day, outside the code limits, the live cap and the challenge cap, and its checks may use the ticket slot.
+`unlockToken` (mailed to the address by a staff `admin/unlock`): the mailbox's one-time grant, used by this start only;
+its challenge's mails are free and its checks use the ticket slot then the grant slot; given back if the start is
+refused later or its mail fails. Either skips the prefix limits, the app's quota, the recipient domain's cap and the
+general budget pool (it draws on the owner pool). An invalid one is ignored, never an error.
+
+A suppressed address (its exact address, `+tag` included: a complaint, or a bounce of the last 30 days) takes the same
+path, counted and never refunded, and gets the same answer; only the mail is skipped, and its challenge holds no address
+and no code. The code mail goes to the normalized address (its `+tag` kept), after the response, with the purpose's own
+subject and wording (`src/mail.ts`, D199).
+
+### `POST /v1/email/resend` · E
+
+`{challengeId}` → `202 {challengeId, expiresAtMs, resendAfterMs}`: a new code, the old one dead. `410
+challenge_expired` (expired, used, out of attempts or unknown), `429 rate_limited {resendAfterMs}` (< 30 s after the
+last code), `429 resend_limit` (2 resends done), `429 rate_limited` (`retry-after: 900`: the mailbox's code limits for
+this requester, its lock, or for a ticketed challenge the ticket allowance; the send is reserved before the code
+changes). For a challenge google-match prepared (case A, D195), the first call sends its first code (not counted as a
+resend). The challenge still ends 10 min after it was created (D197).
+
+The challenge id is 32 bytes (base64url): a public half that names the challenge's object and a secret half that
+decrypts its address (D197); only the client holds both.
+
+### `POST /v1/email/verify` · E
+
+`{challengeId, code}` (6 digits) → `200 {idToken, googleWallet: false, deviceTicket}`, or in case B `200 {googleWallet:
+true, linkTicket?, deviceTicket}` with no token. Each check is reserved in the mailbox's limiter before the code is
+compared (one atomic call, refunded when the code is right), and the challenge counts its attempts atomically, so
+parallel guesses can't outrun either (D198). Errors: `400 code_invalid {attemptsLeft}` (5 wrong codes kill the
+challenge; 10 wrong from one requester lock it out of that mailbox for an hour; past 18 failed checks a day per mailbox
+only the owner slot (4) and the ticket slot (3) are open, and past 25 nothing until the UTC day ends), `410
+challenge_expired`, `429 rate_limited` (IP, or a lock), `403 email_not_enabled` (the app was suspended or turned email
+off meanwhile: nothing is minted). A correct code is single use: the challenge is deleted before the token is minted.
+
+- `deviceTicket`: `dt2.` + 75 characters, an owner device ticket for this exact address (30 days, its own nonce;
+  registered in the mailbox object, at most 5 live per address, a newer one revoking the oldest); batch 8's popup keeps it on `authOrigin` and sends it with the next `start`. A verified challenge also
+  gives its recipient-domain places back and raises that domain's cap (D198).
+- `session`: case B is when a Google identity that reported this address as verified (`email_hints`; for a
+  non-Google-hosted address only if it did so within 180 days, D199) has the wallet in this scope and the email identity has none. The email login then gets no `idToken`, so
+  it can't open a second wallet; the popup continues with Google. `linkTicket` (32 random bytes, single use, 10 min,
+  bound to the app, this address's `sub` and the hinted Google identities) only when the contract would accept the join.
+- `link_new`, `link_account`, `link_change`: `googleWallet: false`. `409 links_unavailable` while
+  `get_config().unrecorded_wallets` (D135).
+- `auto_link` (a challenge google-match prepared): the join is read from the chain now; `200 {idToken, googleWallet:
+  false, decision: "case_a", linkImmediate: true, deviceTicket}`, or `409 link_refused {decision}` when the case moved
+  on. A link notice goes to the address.
+
+### `POST /v1/email/google-match` · E
+
+`{pk, accessToken, googleIdToken, commitment, link, linkTicket?}` (commitment = the session nonce fields) → `200
+{decision, googleHosted, linkable, emailToken?, linkImmediate?, challenge?}`.
+
+1. The app gate; the Google ID token is RS256 against Google's JWKS, `iss` Google's, `aud` one of the app's Google
+   clients (its scope's own, only its web client when it set one; shared clients in an `allow_shared` scope), unexpired
+   (`400 google_token_invalid`), and its nonce is the commitment's session nonce (`400 nonce_mismatch`).
+2. `tokeninfo` (POST): the access token's `aud` (and `azp`) is the ID token's, its `sub` the ID token's; `userinfo`:
+   `email`, `email_verified`, `hd` (`400 google_token_invalid`). The access token is revoked at Google's revoke
+   endpoint afterwards, whatever the outcome. Tokens never appear in a URL or a log.
+3. `email_verified` not true (or an address that doesn't normalize): `{decision: "none", googleHosted: false,
+   linkable: false}`, no hint. Otherwise the address's `sub` (the Gmail `+tag` kept, dots dropped, D159) and the
+   Google-hosted rule (`@hana-id/email` `isGoogleHosted`, D158); the hint `(scope, sub, Google sub)` is upserted for every
+   verified address (D119; a non-Google-hosted case B then links only after 24 h, D199's residual risk).
+4. The case, from `get_identity` and `get_account` of both identities, as the contract judges it (D199): `none` (case
+   C), `linked`, `pending`, `both_wallets`, `unlinked`, `case_a`, `case_b`; `linkable` false when the contract would
+   refuse the join or `unrecorded_wallets` is set.
+5. `emailToken` (an `auto_link` token for the email identity, nonce over this session, the Google identity and the
+   join) only when `link` is true and: Google-hosted `case_a` (`linkImmediate: true`), or `case_b` with a `linkTicket`
+   bound to this address's `sub` and to this Google identity (`linkImmediate` = Google-hosted). Any presented ticket
+   is spent. A link notice goes to the address. `case_a` not Google-hosted (linkable): `challenge: {challengeId,
+   expiresAtMs, to: "a…@domain"}`, a prepared `auto_link` challenge whose first code `resend` sends (D195); none for a
+   suppressed mailbox or one the mailbox limits refuse.
+
+### Staff routes (`/v1/email/admin/*`) · E
+
+Common to all of them (D199): a valid Cloudflare Access JWT (`Cf-Access-Jwt-Assertion`: RS256 against the team's certs,
+`iss`, `aud` the application's AUD tag, unexpired, non-empty `sub`; a failed certs fetch or an unknown kid is cached for
+30 s) whose email is on `emailIssuer.access.staffEmails` (`403 forbidden`); `404` when the env configures no Access.
+`Content-Type: application/json` (else 415) and **no `Origin` header** (`403 origin_not_allowed`: a browser can't
+reach them). Every body carries `ticket`, the support reference (1–64 of `A–Z a–z 0–9 . _ # : -`), kept in the audit
+row. One shared bucket of 20 staff actions an hour per staff member, all routes together. The audit row in
+`email_admin_audit` is written **before** the action; an action that then fails leaves its row. No CORS.
+
+- **`POST /v1/email/admin/client-proof`** `{scopeId, actionNonce, ticket}` → `200 {token, client: ["email",
+  "email:<scopeId>"]}`: a token with `sub` `hana-client-proof` and nonce `client_proof_nonce(signer, scopeId,
+  actionNonce)`, for `propose_change(AddClient)`. The scope is read from `get_scope` now (no cache): `404
+  unknown_scope`, `409 stale_action_nonce {actionNonce}` when `actionNonce` isn't its current `action_nonce`, `403
+  email_not_enabled` when no active app of the scope has email on. Audit: staff, ticket, scope, nonce, jti.
+- **`POST /v1/email/admin/unlock`** `{email, ticket}` → `200 {mailed}` (or `{mailed: false, reason: "suppressed"}`):
+  stores a one-time grant for the mailbox and **mails its token to the address** (`{authOrigin}/email/unlock#ug1.…`,
+  24 h; only its sha256 is kept), never to staff. The one `start` presenting it counts as an owner's (D198). Clears
+  nothing: the shared guess counters, the trip and every lock stay. Never logged. `429 staff_cap` past 1 a day
+  or 3 in 30 days per mailbox. Audit: `action: "unlock"`, staff, ticket, `subject` = 12 characters of the mailbox key
+  (never the address); log `mailbox_unlocked` (warn).
+- **`POST /v1/email/admin/unsuppress`** `{email, ticket}` → `200 {mailed}` (or `{mailed: false, reason:
+  "not_suppressed"}`): mails the address a one-time confirmation (`{authOrigin}/email/confirm#uc1.…`, 24 h); the
+  suppression row goes only when its holder confirms (`POST /v1/email/confirm`). Capped like unlock (its own count),
+  audited (`action: "unsuppress"`). SendGrid's own suppression list is cleaned by hand first (`docs/operations.md`).
+- **`POST /v1/email/admin/revoke-tickets`** `{email, ticket}` → `200 {revoked: true}`: every device ticket of that
+  exact address issued until now stops counting. Capped like unlock, audited (`action: "revoke_tickets"`); log
+  `device_tickets_revoked` (warn).
+
+### `POST /v1/email/confirm` · E
+
+`{token}` (`uc1.` + 43 characters, from a mailed confirmation; `authOrigin` only, IP-limited like `resend`) → `200
+{confirmed: "unsuppress"}`: the confirmation's action is done (the exact address's suppression removed; log
+`suppression_removed`). `410 confirm_expired` when unknown, used or older than 24 h.
+
+### `GET /v1/email/jwks.json`, `GET /v1/email/.well-known/openid-configuration` · E
+
+The JWKS: every key of `emailIssuer.publicKeys` (`kty, n, e, kid, use: "sig", alg: "RS256"`; kid = RFC 7638
+thumbprint, the watchdog's pin, D190). Discovery: `issuer`, `jwks_uri`, `id_token_signing_alg_values_supported:
+["RS256"]`, `response_types_supported`, `subject_types_supported`, `claims_supported`. CORS `*`. Informational: the
+contract never fetches them and the watchdog pins instead of trusting them.
+
+### `POST /v1/email/webhooks/sendgrid` · E
+
+SendGrid's signed Event Webhook (D199): 120 per 10 min per IP; the headers are checked before the body is read
+(`x-twilio-email-event-webhook-timestamp` within 10 min, `x-twilio-email-event-webhook-signature` base64 DER ECDSA
+P-256 of a plausible size; `401 bad_signature`), then the signature over timestamp ‖ body, verified with
+`SENDGRID_WEBHOOK_PUBLIC_KEY` (imported once per isolate). Body ≤ 1 MB, ≤ 1000 events. Only events whose `category`
+is one of the issuer's (`hana-id-code`, `hana-id-link_notice`) count: `bounce` (not `blocked`) and `spamreport` become
+`email_suppressions` rows keyed by the exact normalized address (a bounce on `x+tag@` suppresses only that address); a
+bounce lapses after 30 days, a complaint stays until `admin/unsuppress`. `200 {stored}`. More than 5 complaints in 24 h
+logs `email_complaint_rate` (error). `404` when no key is configured.
+
+### Limits (D198; provisional, D123 Q22; the review defaults to confirm)
+
+All exact, on the issuer's `RateLimiter` objects (named `<env>:<subject>`). A mailbox is the normalized address
+without its `+tag` (`normalizeEmail().mailbox`), keyed by HMAC under K_rl; a requester inside it is a hash of the IP
+subject. Every mailbox decision is one atomic call (D198). Every mailbox-level refusal answers `retry-after: 900`.
+
+| Subject | Limit | Refusal |
+|---|---|---|
+| Mailbox × requester: code mails | 3 per 15 min, 10 per day (resends included) | 429 |
+| Mailbox: code mails | 10 per 15 min, 30 per day; then 5 a day for requesters new to it that day | 429 |
+| Device ticket | 3 code mails a UTC day **per exact address** (all its tickets together) for the challenges they started, outside the two rows above, the live cap and the challenge cap; ≤ 5 live tickets per address (a 6th revokes the oldest); ≤ 10 ticket challenges per exact address a day; per mailbox (all its `+tag`s) ≤ 9 ticket mails and ≤ 30 owner challenges (grants included) a day, which never block the untagged address or a grant (they count toward them); past these the proof counts as nothing | 429 |
+| Unlock grant | one start within 24 h of the unlock; its challenge's mails free (≤ 2 resends); its checks in the ticket slot then a grant slot of 2 outside the ceiling | – |
+| Mailbox: live challenges | 5 at once | 429 |
+| Mailbox × requester: wrong codes | 10 per hour → that requester locked out of the mailbox for 1 h | 429 (start, resend, verify) |
+| Mailbox: failed code checks | hard ceiling 25 per UTC day, from everyone: any requester for the first 18 (the backstop), then an owner slot of 4 (requesters that started a challenge before the trip and have no failure, one each) and a ticket slot of 3 (ticketed challenges) | 429 until the UTC day ends; `mailbox_guess_limit` logged |
+| Mailbox: challenges created | 35 per UTC day, every kind | 429 |
+| Mailbox: staff unlocks, unsuppressions, ticket revocations | 1 a day and 3 in 30 days each | `429 staff_cap` |
+| Challenge | 10 min from creation; 5 wrong codes; ≤ 2 resends ≥ 30 s apart | 410 / 429 |
+| IP (IPv4 address, IPv6 /64): `start` | 10 per 10 min, 50 per day | 429 |
+| IP prefix (IPv4 /24, IPv6 /56, IPv6 /48): `start` | 1000 per day each; skipped with a valid ticket or grant | 429 |
+| IP: `verify` / `resend` (and `confirm`) / `google-match` (its prepared challenges too) / webhook | 30 / 10 / 30 / 120 per 10 min | 429 |
+| No usable `cf-connecting-ip` (IP-limited routes) | refused | `400 missing_client_ip`, logged |
+| Recipient domain (registrable, Public Suffix List): code mails | 100 + 2 × its distinct verified mailboxes a day over the trailing 7 days (only challenges that took a domain place), at most 2,000, per day; a verified challenge's places given back; except the listed consumer providers (`src/domain.ts`); each requester prefix (IPv4 /24, IPv6 /56, /48) ≤ 20% of the day's cap; ticketed and unlock-grant challenges not counted | 429; `email_domain_cap` logged when a day fills |
+| App: `start` | plan `per_minute` per minute; plan `per_day` per day; owner starts not counted | 429 |
+| Env: user mail | `emailIssuer.dailySendBudget` per day (required outside `local*`; 1000 in `local*`): a staff pool (1%, at least 5: unlock and unsuppress mails) and the general pool (the rest), in which an app's share is 2% of its plan's `per_day` (at least 10, at most the pool; 10% of the budget without a plan value) and the last 20% only for apps under half their share; beside them the owner pool, 30% of the budget (all mail ≤ 1.3 × the budget), for a ticket's or grant's mail: a fresh ticket (< 7 days) only below half of it and within 20% of it per app; aged tickets and grants without a per-app cap; owner mail it refuses falls back to the app's general share | `start`, `resend` 429; logs `email_budget` (50%, 80% of the general pool and of each app's share), `email_owner_pool` (50%, 80% of the owner pool), `send_budget_exhausted` (error; `code` `global`, `app`, `reserve`, `owner`, `staff` or `unconfigured`) |
+| Staff | 20 actions per hour per staff member, all staff routes together | 429 |
+
+The guess bound: ≤ 25 failed checks a day per mailbox plus ≤ 2 per unlock (≤ 3 unlocks in 30 days): 365 × 25 + 37 × 2 =
+≈ 9,199 a year (≈ 9,273 in the worst case), ≈ 0.92% a year against a 6-digit code (D198).
+
+### Durable Objects, D1 and bindings
+
+| Object | Holds |
+|---|---|
+| `Challenge` (binding `EMAIL_CHALLENGE`), one per `c:` + b64url(sha256(public half of the challengeId)) | `{appId, appName, scopeId, purpose, nonce \| autoLink: {googleSub, sessionHash}, silent, emailEnc (AES-256-GCM under a key from the id's secret half; '' when silent), mailboxKey, domainKey, owner (the ticket's id or the grant used, or null), budgetShare, domainRes (the domain places its mails took), codeMac = HMAC(K_code, challengeId ‖ code), attempts, createdAtMs, expiresAtMs, lastSentAtMs, resends}`; deleted at the correct code or by an alarm at expiry. Link tickets: one object per `t:` + b64url(sha256(ticket)), `{appId, scopeId, sub, googleSubs, expiresAtMs}`, deleted at first use. Unsuppress confirmations: one per `u:` + b64url(sha256(token)), `{action, emailKey, expiresAtMs}`, deleted at first use |
+| `RateLimiter`, one per subject (`mbx:<mailbox key>`, `dom:<domain key>`, `ip:<subject or prefix>`, `app:<id>`, `global`, `staff:<sha256 hex>`) | fixed-window counts; in a mailbox's object also the live challenges' expiry times, the requesters' locks, the unlock grant (sha256 of its token, 24 h), per-ticket send counts, ticket revocations (per address key, 30 days) and 30 days of staff actions; in a domain's, the per-prefix shares (hashed prefixes) and 8 days of verified-login counts; in `global`, the owner pool and per-app use; in `global` the per-app budget use; an alarm drops what ended |
+| `Outbox` (binding `OUTBOX`, `local*` envs only) | the outbox stub's last 200 messages, read by tests through the binding; no route |
+
+Issuer D1 (`apps/email-issuer/migrations/0001_init.sql`): `email_issuance(jti, app_id, purpose, kid, iat)` (24 months,
+D90; the pruning job is a batch C13 follow-up), `email_hints(scope_id, email_sub, google_sub, hosted, updated_at_ms)`
+(a hosted one kept while the scope exists, D122; a non-hosted one honoured and kept 180 days after its last login,
+D199), `email_suppressions(email_key = HMAC(K_sup, exact normalized address), reason
+bounce|complaint, at_ms)` (K_sup derived from K_sub), `email_admin_audit(at_ms, staff, action
+client_proof|unlock|unsuppress|revoke_tickets, ticket, scope_id?, action_nonce?, jti?, subject?)`. The issuer
+stores no address readably (logs, D1, Durable Objects). SendGrid does: its suppression lists keep an address until it
+is removed there, whatever the activity retention below. `APP_DB` is the API's D1, read only (`apps`, `plans`).
+
+Vars (from `emailIssuer`, `scripts/gen-wrangler.ts`): `ENV_NAME`, `NEAR_RPC`, `NEAR_RPC_FALLBACK`, `SIGNER_ACCOUNT`,
+`EMAIL_ISS`, `EMAIL_PUBLIC_KEYS`, `EMAIL_ACTIVE_KID`, `EMAIL_SIGNER_KIND`, `EMAIL_SENDER`, `MAIL_FROM`, `AUTH_ORIGIN`,
+`VAULT_ORIGIN`, `DAILY_SEND_BUDGET`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ACCESS_STAFF_EMAILS`,
+`SENDGRID_WEBHOOK_PUBLIC_KEY`. Secrets: `ISSUER_SIGNING_KEY`, `EMAIL_SUB_KEY`, `EMAIL_CODE_KEY`, `EMAIL_RL_KEY`,
+`SENDGRID_API_KEY` (`docs/security.md` "Key and secret inventory"). Placement `aws:ap-east-1`; no invocation logs.
+
+SendGrid keeps each message's recipient and events in its Email Activity (3 days on the plans without the paid Email
+Activity History add-on, per SendGrid's docs when written; check at setup); Hana can't shorten that, and doesn't buy
+the add-on.
+
+### Logs
+
+`{"level", "ts", "service": "email-issuer", "event", …}` with typed fields only (`src/log.ts`): `requestId`,
+`endpoint`, `outcome` (`ok`, `rejected`, `error`, `suppressed`), `status`, `code`, `appId`, `scopeId`, `purpose`,
+`jti`, `kid`, `decision`, `limit` (its name, never its key), `subject` (12 characters of a mailbox key, an HMAC),
+`providerStatus`, `latencyMs`, `count`. Events: `request`, `token_minted` (jti, purpose, app, scope, kid), `code_mail`
+(`ok`; `suppressed`; `error` with the provider's reason and status), `link_notice`, `limit` (`mailbox:locked` /
+`mailbox:live` / `mailbox:codes` / `domain`, or the window's name), `email_budget` (warn: `code` `global_50`,
+`global_80`, `app_50`, `app_80`), `send_budget_exhausted` (error: `code` `global`, `app` or `reserve`),
+`email_owner_pool` (warn: `code` `owner_50` / `owner_80`), `email_complaint_rate` (error: `count` complaints in 24 h), `email_domain_cap` (warn: `subject` = 12 characters of
+the domain key, the mail that filled the domain's day), `staff_mail` (`code` `unlock` / `confirm`, or the provider's
+reason), `device_tickets_revoked` (warn, staff), `missing_client_ip` (warn), `mailbox_unlocked` (warn,
+staff), `suppression_removed` (warn, staff), `mailbox_guess_limit` (error: `code` `backstop` or `ceiling`, `subject` =
+12 characters of the mailbox key; staff see targeted mailboxes), `google_revoke` (warn). Never an address, a code, a
+`sub`, a token, a device or link ticket, an unlock or confirmation token, an access token, a key or a body: `test/privacy.test.ts` greps every line of
+every flow for them.

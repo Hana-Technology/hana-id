@@ -91,10 +91,10 @@ describe('duplicate members', () => {
 
 describe('readIdentityResponse', () => {
   it('a redirect, a body over the cap, not JSON and duplicate members are findings; a clean body parses', () => {
-    expect(readIdentityResponse({ kind: 'redirect', status: 302, location: 'https://evil.example' }).findings).toEqual([{ reason: 'redirect', detail: 'HTTP 302 to https://evil.example' }]);
-    expect(readIdentityResponse({ kind: 'too_large' }).findings).toEqual([{ reason: 'too_large', detail: `body over ${IDENTITY_BODY_LIMIT} bytes` }]);
+    expect(readIdentityResponse({ kind: 'redirect', status: 302, location: 'https://evil.example' }).findings).toEqual([{ reason: 'redirect', detail: 'HTTP 302 to https://evil.example', values: ['https://evil.example'] }]);
+    expect(readIdentityResponse({ kind: 'too_large' }).findings).toEqual([{ reason: 'too_large', detail: `body over ${IDENTITY_BODY_LIMIT} bytes`, values: [] }]);
     expect(readIdentityResponse({ kind: 'body', text: 'nope' })).toMatchObject({ parsed: false, findings: [{ reason: 'not_json' }] });
-    expect(readIdentityResponse({ kind: 'body', text: '{"keys":[],"keys":[]}' })).toMatchObject({ parsed: true, findings: [{ reason: 'duplicate_members', detail: 'duplicate members: keys' }] });
+    expect(readIdentityResponse({ kind: 'body', text: '{"keys":[],"keys":[]}' })).toMatchObject({ parsed: true, findings: [{ reason: 'duplicate_members', detail: 'duplicate members: keys', values: ['keys'] }] });
     expect(readIdentityResponse({ kind: 'body', text: '{"keys":[]}' })).toEqual({ value: { keys: [] }, parsed: true, findings: [] });
   });
 });

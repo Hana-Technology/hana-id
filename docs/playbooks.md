@@ -66,6 +66,7 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [A user's key leaked or exposed](#user-key-leaked) | warning | — |
 | [Email-login issuer key compromised (planned)](#email-issuer-key-compromised) | critical (planned) | — |
 | [Identity token signing key compromised (testnet Worker-secret key)](#identity-signing-key-compromised) | critical | — |
+| [Identity token KMS signer misused (planned: staging and mainnet)](#identity-kms-signer-compromised) | critical (planned) | — |
 
 ## Alert playbooks
 
@@ -2262,7 +2263,7 @@ Whoever holds an identity signing key can forge any user's identity token for an
 **Signals**
 
 - The API Worker's secrets, `.secrets/<env>/identity-signing-key*.json` or the operator's machine were exposed; a partner reports a token they didn't expect (a valid signature for a session that never existed).
-- No watchdog alert: a stolen key signs under its own, pinned kid, so the JWKS doesn't change and the watchdog's pin check (D210) sees nothing. It pages only when a key of the attacker's own, or private key material, is published ([identity-jwks-forged](#identity-jwks-forged)). Not built yet (build step 7): the KMS `Sign` reconciliation against `identity_issuance_hourly`, which would show signatures Hana didn't count.
+- No watchdog alert: a stolen key signs under its own, pinned kid, so the JWKS doesn't change and the watchdog's pin check (D210) sees nothing. It pages only when a key of the attacker's own, or private key material, is published ([identity-jwks-forged](#identity-jwks-forged)). Not built yet (planned with step 7's KMS signer): the `Sign` reconciliation against `identity_issuance_hourly`, which would show signatures Hana didn't count.
 
 **Impact**
 
@@ -2328,6 +2329,68 @@ Whoever holds an identity signing key can forge any user's identity token for an
 
 **Follow-ups**
 
-- If the Worker or the Cloudflare account was the way in: [api-or-cloudflare-compromised](#api-or-cloudflare-compromised). Before mainnet the key moves to AWS KMS (build step 7).
+- If the Worker or the Cloudflare account was the way in: [api-or-cloudflare-compromised](#api-or-cloudflare-compromised). Before mainnet the key moves to AWS KMS (build step 7; [identity-kms-signer-compromised](#identity-kms-signer-compromised)).
 
-**Refs:** [`docs/operations.md#identity-token-keys`](operations.md#identity-token-keys), [`docs/security.md#what-a-compromise-gives`](security.md#what-a-compromise-gives), D177 (`docs/decisions.md`) · **See also:** [api-or-cloudflare-compromised](#api-or-cloudflare-compromised), [identity-jwks-forged](#identity-jwks-forged)
+**Refs:** [`docs/operations.md#identity-token-keys`](operations.md#identity-token-keys), [`docs/security.md#what-a-compromise-gives`](security.md#what-a-compromise-gives), D177 (`docs/decisions.md`) · **See also:** [api-or-cloudflare-compromised](#api-or-cloudflare-compromised), [identity-kms-signer-compromised](#identity-kms-signer-compromised), [identity-jwks-forged](#identity-jwks-forged)
+
+<a id="identity-kms-signer-compromised"></a>
+
+### Identity token KMS signer misused (planned: staging and mainnet)
+
+`identity-kms-signer-compromised` · critical · **planned: not built yet**
+
+No env signs with AWS KMS yet (the adapter is built, the AWS account isn't: docs/operations.md "Identity token keys on AWS KMS"). When one does: the KMS key can't be stolen, but whoever holds the signer's AWS access key (or controls the API Worker) can have KMS sign forged identity tokens until the access key is revoked. Revoke it, switch to the standby, unpublish the suspect key, tell partners.
+
+**Signals**
+
+- Planned: the hourly reconciliation of CloudTrail `Sign` events per key against `identity_issuance_hourly` finds more signatures than the API counted (critical); an EventBridge alert on `GetSessionToken` by the signer user, on `Sign` by another principal or with session credentials, or on an IAM or key-policy change. A leak of the API Worker's secrets or the Cloudflare account; a partner reports a token they didn't expect.
+
+**Impact**
+
+- Forged tokens pass at every partner that trusts the JWKS URL, as any user of any app, until the access key is revoked and the key is out of partners' JWKS caches (≤ 10 min after the deploy). Every forged signature is in CloudTrail, so the window and the count are known. No wallet, key or Hana API is reachable with a token.
+
+**Steps**
+
+1. **Revoke the access key** (who: a founder). In the AWS account (break-glass role with MFA): deactivate every access key of the env's signer IAM user (`<iamUser>`, the manifest's `identityToken.signer.credentials.iamUser`). Mints answer 503 `identity_signer_unavailable` and partners fall back to no token. Deactivation alone isn't proven to end session credentials the holder made with `GetSessionToken` (no policy can deny that call): what stops them signing is the key policy's `NoSessionCredentials` deny, so check with `aws kms get-key-policy` that every identity key has it.
+
+2. **Switch to the standby** (who: a founder). The IAM policy allows `kms:Sign` on the active key only and session credentials can't sign at all (D219), so the standby signed nothing during the leak: check CloudTrail by `userIdentity.arn` = the signer user (sessions included), not by access key id. Put the standby's ARN in the signer user's IAM policy, create a new access key into `.secrets/<env>/identity-aws-access-key.json`, run the pre-switch check (docs/operations.md), set the key on the Worker, switch, `gen`, deploy.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run identity-key <env> kms-put-aws-key --yes
+   corepack pnpm --filter @hana-id/scripts run identity-key <env> kms-switch --to standby --yes
+   corepack pnpm --filter @hana-id/api run gen <env>
+   corepack pnpm --filter @hana-id/api run deploy
+   ```
+
+3. **Unpublish the suspect key** (who: a founder). After the switch's deploy: remove it from the JWKS and the watchdog's pins (partners reject its tokens within 10 minutes), remove its ARN from the IAM policy, disable it in KMS and schedule its deletion. Deploy the API first, then the watchdog: the other order pages `identity_key_unpinned` until the API deploy. Don't wait the 2 h of a scheduled rotation.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run identity-key <env> kms-retire --key previous --yes
+   corepack pnpm --filter @hana-id/api run gen <env>
+   corepack pnpm --filter @hana-id/api run deploy
+   corepack pnpm --filter @hana-id/watchdog gen <env>
+   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   ```
+
+4. **Tell partners** (who: a founder). Their security contacts: the `kid`, the window and the count of forged signatures from CloudTrail (by `userIdentity.arn`), and what to re-check. Pinning partners update their pins.
+
+5. **A new standby** (who: a founder). Create a new ECC_NIST_P256 key in another region than the new active key (with the same key policy), publish and pin it (`kms-add` writes both), deploy the watchdog first, then the API.
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts run identity-key <env> kms-add --role standby --key <get-public-key.json> --yes
+   corepack pnpm --filter @hana-id/watchdog gen <env>
+   corepack pnpm --dir apps/watchdog exec wrangler deploy
+   corepack pnpm --filter @hana-id/api run gen <env>
+   corepack pnpm --filter @hana-id/api run deploy
+   ```
+
+**Verify**
+
+- CloudTrail shows no successful `Sign` by the signer user (`userIdentity.arn`, any credential) after the cut-off except the Worker's new key, and the API's JWKS lists no suspect kid.
+- `identity-key <env> show`: the standby is active and a new standby is published.
+
+**Follow-ups**
+
+- Build the CloudTrail reconciliation and alarms before mainnet (docs/operations.md "Identity token keys on AWS KMS").
+
+**Refs:** [`docs/operations.md#identity-token-keys-on-aws-kms`](operations.md#identity-token-keys-on-aws-kms), D215 (`docs/decisions.md`), D219 (`docs/decisions.md`) · **See also:** [identity-signing-key-compromised](#identity-signing-key-compromised), [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)

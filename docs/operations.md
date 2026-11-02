@@ -1,8 +1,13 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
 Last verified against code: 2026-11-02 (branch `feat/identity-token-8`: "Identity token keys" gains the watchdog pin
-steps and their deploy order; "Identity token: pins and the JWKS check" with the outside probe; the identity alerts in
-"Watchdog alerts (runbook)"; D210–D214); 2026-11-02 (branch `docs/consistency-pass`: "Watchdog service" channels, "Owner
+steps and their deploy order (the `kms-*` commands too); "Identity token: pins and the JWKS check" with the outside
+probe; the identity alerts in "Watchdog alerts (runbook)"; D210–D214); 2026-11-02 (branch `feat/email-login-4`: "Email issuer" setup and runbook, the issuer's secrets rows, after the
+reviews (Access SameSite=Strict, staff calls, unsuppress, the exact key-leak steps with `put --standby`, the budget
+and complaint logs) and the abuse re-check (`init --budget`, mailed unlock and unsuppress, revoke-tickets, the owner
+pool, the 503 window of a standby switch, SendGrid's suppression lists); branch `feat/identity-token-7`: "Identity token keys on AWS KMS", the KMS
+signer's setup steps, IAM and key policies, alarms, rotations and the planned reconciliation, the `identity-key kms-*`
+commands, the AWS access key row in "Secrets: where they live", D215–D219); 2026-11-02 (branch `docs/consistency-pass`: "Watchdog service" channels, "Owner
 council" verified on testnet, the `create_session_and_derive` gas pointer); 2026-11-02 (branch `feat/batch-c-3`: "Hot DB migration 0006 and the new gate" (milestone
 M1, for the user to run), the admin CLI's `app:*` commands on the 0006 schema with `app:changes:announce`, the demo's
 origin add, the D1 restore steps; D205–D209); 2026-11-02 (branch `feat/link-cap`: "Link volume thresholds", D200, and `set_link_thresholds`
@@ -38,11 +43,15 @@ Never print, log, paste or commit any of these. The scripts never print them eit
 | Council member keys (dev envs only, D81) | `.secrets/<env>/council/<member>.json` (`{account_id, public_key, private_key}`), full-access keys of throwaway testnet accounts | `council-setup`; other envs' members hold their own keys (mainnet: Ledgers, never on disk) |
 | `VAULT_KEK` (and, during a rotation, `VAULT_KEK_PREVIOUS`) | `.secrets/<env>/vault-kek` (and `vault-kek.previous`); the only copy, since Cloudflare can't give a secret back | `vault-kek` (below) |
 | Identity token signing keys (Worker slots `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`; testnet and `local*` only) | `.secrets/<env>/identity-signing-key.json` (active), `identity-signing-key-standby.json` (published, **never uploaded**: keep it offline), and during a rotation `identity-signing-key-next.json` / `-previous.json` (P-256 private JWKs); `identity-slots.json` says which slot holds which kid; the only copies | `identity-key <env> init`, `next`, `switch`, `retire` ("Identity token keys" below); `put --yes` uploads the active key again |
+| Identity token KMS signer's AWS access key (`IDENTITY_AWS_ACCESS_KEY_ID`, `IDENTITY_AWS_SECRET_ACCESS_KEY`; `aws-kms` envs only, none yet) | `.secrets/<env>/identity-aws-access-key.json` (`aws iam create-access-key`'s JSON for the signer's IAM user), only until it is uploaded and checked: then delete it (a lost key is replaced, never recovered) | the operator, with the AWS CLI as the break-glass role; `identity-key <env> kms-put-aws-key --yes` uploads it ("Identity token keys on AWS KMS" below) |
 | Identity token sub key (`IDENTITY_SUB_KEY`) | `.secrets/<env>/identity-sub-key` (base64 of 32 bytes); never rotated, also backed up offline with the council backup (D81) | `identity-key <env> init`; upload again with `identity-key <env> put --yes` |
+| Email issuer signing key (`ISSUER_SIGNING_KEY`; testnet and `local*` only) | `.secrets/<env>/email-issuer-signing-key.json` (active), `email-issuer-signing-key-standby.json` (published and on chain, **never uploaded**: keep it offline); RSA-2048 private JWKs, the only copies | `email-issuer <env> init`; upload with `email-issuer <env> put --yes` ("Email issuer" below) |
+| Email issuer HMAC keys (`EMAIL_SUB_KEY` = K_sub, `EMAIL_CODE_KEY`, `EMAIL_RL_KEY`) | `.secrets/<env>/email-sub-key`, `email-code-key`, `email-rl-key` (base64 of 32 bytes); K_sub is never rotated and is backed up offline twice (D81) | `email-issuer <env> init`; `put --yes` |
+| SendGrid key for user mail (`SENDGRID_API_KEY`, Mail Send only, D194) | `.secrets/<env>/email-issuer-sendgrid-key` | pasted by hand; `email-issuer <env> put --yes` |
 | Neon Postgres connection strings (batch C ledger, D73): pooled `DATABASE_URL` and `DATABASE_URL_DIRECT` of the env's Neon branch | `.secrets/<env>/neon.json` (`{project_id, branch, DATABASE_URL, DATABASE_URL_DIRECT, …}`); role `neondb_owner` until batch C creates least-privilege roles | `neon connection-string <branch> --project-id <id> [--pooled]` (Neon CLI, `neon login`) |
 | Watchdog secrets (`WATCHDOG_KEY`, `WATCHDOG_STATUS_TOKEN`, its Resend key, Slack webhook, paging-app credentials, `HEARTBEAT_URL`) | `.secrets/<env>/watchdog-secrets.json` (flat `{NAME: value}`) | `watchdog secrets <env> init` (the key and token); the rest by hand ("Watchdog service" below) |
 | Worker copies of the above | Cloudflare Worker secrets (the watchdog's on its own Cloudflare account) | `wrangler secret put` (watchdog: `wrangler secret bulk`) |
-| Local dev copies | `apps/api/.dev.vars`, `apps/watchdog/.dev.vars` (0600) | `gen --dev-vars` |
+| Local dev copies | `apps/api/.dev.vars`, `apps/watchdog/.dev.vars`, `apps/email-issuer/.dev.vars` (0600) | `gen --dev-vars` |
 
 `.secrets/` is gitignored, directories 0700, files 0600 (`scripts/lib/secrets.ts` refuses to read a file that group
 or others can read). Google ID tokens, CKD outputs and derived keys are never stored anywhere.
@@ -1066,8 +1075,8 @@ exposed for that long.
 The partner identity token (`docs/identity-token-spec.md`, D127; `docs/api.md` "Identity token") needs a manifest block
 and API Worker secrets, all made by `scripts/identity-key.ts` (D177). Files in `.secrets/<env>/` are 0600 and never
 overwritten (Cloudflare can't give a secret back); values go to the Worker through wrangler's stdin; no command prints
-a private value. Testnet and `local*` only: mainnet signs with AWS KMS (build step 7; `gen` and the schema refuse a
-Worker-secret key there).
+a private value. Testnet and `local*` only: staging and mainnet sign with AWS KMS ("Identity token keys on AWS KMS"
+below; `gen` and the schema refuse a Worker-secret key off testnet).
 
 | File | Role | On the Worker |
 |---|---|---|
@@ -1161,6 +1170,274 @@ Worker or the Cloudflare account as compromised and rotates as above.
 
 **Sub key leak.** Privacy, not funds: the holder can map partners' `sub`s to on-chain paths. Not rotatable without a
 `u2_` scheme and a 90-day `legacy_sub` window (spec "`sub`").
+
+### Identity token keys on AWS KMS
+
+**Status: code only (build step 7, branch `feat/identity-token-7`), no env uses it.** The API's KMS signer
+(`apps/api/src/identity/kms.ts`), the manifest's `aws-kms` signer, `gen`'s vars and the `identity-key kms-*` commands
+are built and tested against a fake KMS. The AWS side below is the operator's setup, in D121's dedicated AWS account,
+before staging's rehearsal and mainnet. sandbox-dev stays on the Worker-secret key. Moving an existing Worker-secret
+env to KMS isn't scripted (it must keep `IDENTITY_SUB_KEY` and needs a rotation window), so KMS envs start with
+`kms-init`.
+
+How it signs (`docs/api.md` "Identity token"): the Worker hashes the token's signing input and sends one
+`TrentService.Sign` (`MessageType: DIGEST`, `ECDSA_SHA_256`, SigV4) for the active key's ARN to
+`kms.<that key's region>.amazonaws.com`, with no retry, a 3 s deadline and a 4 KiB answer cap. The DER answer is
+converted to JOSE and verified with the published key before any token is answered (D216–D218). Every failure is
+`503 identity_signer_unavailable`, logged `identity_sign_failed` with a `kms_*` code.
+
+| What | Where | Notes |
+|---|---|---|
+| Identity keys: `active` and `standby`, during a rotation `next` and `previous` | AWS KMS, D121's account | `ECC_NIST_P256`, `SIGN_VERIFY`, origin `AWS_KMS` (generated in KMS, non-exportable), single-region (no `mrk-` keys: a replica shares its key material). The standby in another region than the active key (D219, the schema checks it). The same key policy on every key (below) |
+| IAM user `hana-identity-signer` (one per env: the manifest's `credentials.iamUser`) | IAM, same account | No console password. Its only permission: `kms:Sign` on the **active** key's ARN, `ECDSA_SHA_256` and `DIGEST` only (D219). One access key in use (two during a rotation) |
+| `IDENTITY_AWS_ACCESS_KEY_ID`, `IDENTITY_AWS_SECRET_ACCESS_KEY` | API Worker secrets | Set together by `kms-put-aws-key` (one `wrangler secret bulk`); rotated every 90 days and on suspicion |
+| `identityToken.signer` | `envs/<env>.json` | `{kind: "aws-kms", credentials: {kind: "worker-secret", iamUser}, keys: {active: {kid, arn}, standby?: {kid, arn}, next?, previous?}}`; every published key has a role, all keys in one account (D215). `gen` writes `IDENTITY_SIGNER=aws-kms`, `IDENTITY_ACTIVE_KID` and `IDENTITY_KMS_KEY_ARN` (the active key's ARN only) |
+| `IDENTITY_SUB_KEY` | Worker secret, `.secrets/<env>/identity-sub-key` | As on testnet: never rotated, backed up offline (D81). `kms-init` makes it |
+
+Every `kms-*` command prints its plan without `--yes`, never calls AWS and never prints a credential.
+`<key.json>` is the public data `aws kms get-public-key --key-id <arn> --output json` prints. After each manifest
+change: commit `envs/<env>.json`, `gen`, deploy.
+
+```sh
+S="corepack pnpm --filter @hana-id/scripts run identity-key <env>"
+$S show            # roles, kids and ARNs (public values only); warns when there is no standby
+```
+
+**Key policy** (every identity key; `<signer>` is `arn:aws:iam::<account>:user/<iamUser>`, `<admin>` the break-glass
+role's ARN). It delegates `kms:Sign` to the signer user's IAM policy only, so the key the Worker can sign with is set
+in one place, the IAM policy (D219). It denies signing to every other principal, grants to everyone, and key changes
+to everyone but the break-glass role:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Id": "hana-id-identity-key",
+  "Statement": [
+    {
+      "Sid": "BreakGlassAdministers",
+      "Effect": "Allow",
+      "Principal": { "AWS": "<admin>" },
+      "Action": ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetPublicKey", "kms:ListResourceTags", "kms:PutKeyPolicy",
+                 "kms:EnableKey", "kms:DisableKey", "kms:ScheduleKeyDeletion", "kms:CancelKeyDeletion",
+                 "kms:TagResource", "kms:UntagResource", "kms:UpdateKeyDescription"],
+      "Resource": "*",
+      "Condition": { "Bool": { "aws:MultiFactorAuthPresent": "true" } }
+    },
+    {
+      "Sid": "SignerSignsThroughItsIamPolicy",
+      "Effect": "Allow",
+      "Principal": { "AWS": "arn:aws:iam::<account>:root" },
+      "Action": "kms:Sign",
+      "Resource": "*",
+      "Condition": {
+        "ArnEquals": { "aws:PrincipalArn": "<signer>" },
+        "StringEquals": { "kms:SigningAlgorithm": "ECDSA_SHA_256", "kms:MessageType": "DIGEST" },
+        "Null": { "aws:TokenIssueTime": "true" }
+      }
+    },
+    {
+      "Sid": "NoOtherSigner",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "kms:Sign",
+      "Resource": "*",
+      "Condition": { "ArnNotEquals": { "aws:PrincipalArn": "<signer>" } }
+    },
+    {
+      "Sid": "NoSessionCredentials",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "kms:Sign",
+      "Resource": "*",
+      "Condition": { "Null": { "aws:TokenIssueTime": "false" } }
+    },
+    { "Sid": "NoGrants", "Effect": "Deny", "Principal": "*", "Action": "kms:CreateGrant", "Resource": "*" },
+    {
+      "Sid": "OnlyBreakGlassChangesTheKey",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": ["kms:PutKeyPolicy", "kms:ScheduleKeyDeletion", "kms:CancelKeyDeletion", "kms:DisableKey",
+                 "kms:EnableKey", "kms:UpdateKeyDescription", "kms:TagResource", "kms:UntagResource"],
+      "Resource": "*",
+      "Condition": { "ArnNotEquals": { "aws:PrincipalArn": "<admin>" } }
+    }
+  ]
+}
+```
+
+Never drop the `BreakGlassAdministers` statement: a key policy nobody can change can only be repaired by AWS Support.
+
+**Only the long-term access key signs (D219).** Anyone holding the signer's access key can call
+`sts:GetSessionToken`, which needs no permission and can't be denied by any policy, and get session credentials that
+carry the user's permissions as they are at each call, including after a switch has put the standby in the IAM policy.
+Deactivating or deleting the access key isn't proven to end such sessions (up to 36 h). So `Sign` is allowed only to
+requests without `aws:TokenIssueTime` (long-term `AKIA…` credentials, which is what the Worker uses), and
+`NoSessionCredentials` denies `Sign` to every request made with temporary credentials, the signer's sessions included.
+**Confirm on staging** (a drill): a `GetSessionToken` session of the signer user is refused `Sign` (`AccessDenied`), and
+the Worker's own `AKIA…` key still signs.
+
+**The break-glass role.** `<admin>` is an IAM role in this account that operators reach with `sts:AssumeRole` and MFA
+(its trust policy requires `aws:MultiFactorAuthPresent`; `aws configure` a profile with `role_arn` and `mfa_serial`).
+Not an IAM Identity Center (SSO) permission set: those sessions don't carry `aws:MultiFactorAuthPresent`, so the
+`Bool` condition fails and nobody can administer the key. Never delete or rename the role: a key policy names the role
+by its unique id, so a recreated role of the same name isn't the same principal, and the keys lose their administrator
+(repair: AWS Support). To bound a stale MFA session as well, add `"NumericLessThan": { "aws:MultiFactorAuthAge":
+"3600" }` next to the `Bool` condition.
+
+**The signer user's IAM policy** (inline, the user's only policy). The `Resource` lists the active key alone, and
+during a switch the active and the incoming key; `NoOtherKey` lists the same ARNs, so even a policy attached to the user
+by mistake can't let it sign with another key:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "SignWithTheActiveIdentityKey",
+      "Effect": "Allow",
+      "Action": "kms:Sign",
+      "Resource": ["arn:aws:kms:<region>:<account>:key/<active key id>"],
+      "Condition": {
+        "StringEquals": { "kms:SigningAlgorithm": "ECDSA_SHA_256", "kms:MessageType": "DIGEST" },
+        "Bool": { "aws:SecureTransport": "true" },
+        "Null": { "aws:TokenIssueTime": "true" }
+      }
+    },
+    { "Sid": "NoOtherKey", "Effect": "Deny", "Action": "kms:Sign", "NotResource": ["arn:aws:kms:<region>:<account>:key/<active key id>"] },
+    { "Sid": "NothingElse", "Effect": "Deny", "NotAction": "kms:Sign", "Resource": "*" }
+  ]
+}
+```
+
+There is no source-IP condition: Workers have no fixed egress addresses. The user can't manage its own access keys
+(`NothingElse`); the break-glass role does.
+
+**One-time setup (the operator, per env, as the break-glass role with MFA):**
+
+1. **CloudTrail.** A multi-region trail in the account (or the organization trail) delivering to the log-archive
+   account (D121), with management events **Read and Write** (`Sign` is a read event) and KMS events **not**
+   excluded. Check that a `Sign` shows up (step 7).
+2. **Keys.** One in the active region (for example `ap-east-1`) and one in a second region (for example
+   `ap-southeast-1`), with the key policy above in `key-policy.json`:
+   `aws kms create-key --region <region> --key-spec ECC_NIST_P256 --key-usage SIGN_VERIFY --origin AWS_KMS --policy file://key-policy.json --description "hana-id identity <env> <role>" --tags TagKey=env,TagValue=<env>`.
+   Then for each: `aws kms get-public-key --region <region> --key-id <arn> --output json > <role>.json` (public data).
+3. **IAM user.** `aws iam create-user --user-name <iamUser>`, then `aws iam put-user-policy --user-name <iamUser>
+   --policy-name identity-sign --policy-document file://signer-policy.json` (the active key's ARN).
+4. **Manifest and sub key.** `$S kms-init --active active.json --standby standby.json --iam-user <iamUser> --yes`
+   writes `identityToken` (refused unless the two keys are in two regions of one account), creates
+   `.secrets/<env>/identity-sub-key` and sets `IDENTITY_SUB_KEY`; with a `watchdog` block it also pins both keys in
+   `watchdog.pinnedIdentityKeys` (D211). Commit the manifest; deploy the watchdog (gen, deploy) before the API.
+5. **Access key.** `(umask 077; aws iam create-access-key --user-name <iamUser> > .secrets/<env>/identity-aws-access-key.json)`,
+   then `$S kms-put-aws-key --yes`. It checks that the file is 0600, that the key belongs to the manifest's user, and
+   that it is an active `AKIA…` key.
+6. **Deploy.** `gen <env> --d1-id <id>` (writes `IDENTITY_SIGNER=aws-kms`, `IDENTITY_ACTIVE_KID`,
+   `IDENTITY_KMS_KEY_ARN`), apply the migrations, deploy. The Worker must have no `IDENTITY_SIGNING_KEY*` secrets
+   (`wrangler secret list`; delete leftovers).
+7. **Check.** Mint a token from a test app: it verifies against the JWKS with the active kid, and the request's `sign`
+   timing phase fits the 100 ms p95 budget (measure on staging). CloudTrail shows one `Sign` by the signer user on the
+   active key. Then delete `.secrets/<env>/identity-aws-access-key.json`.
+8. **Alarms** (EventBridge rules on CloudTrail events, to the paging app). Where and how:
+   - Rule state **`ENABLED_WITH_ALL_CLOUDTRAIL_MANAGEMENT_EVENTS`**: a rule in the default `ENABLED` state doesn't
+     receive read-only management events, and `Sign` and `GetSessionToken` are read-only.
+   - The same KMS and STS rules in **both key regions** (KMS events are regional; a `GetSessionToken` on a regional
+     STS endpoint is logged in that region), and the IAM and STS rules in **`us-east-1`** (IAM and the global STS
+     endpoint log there).
+   - The events: `PutKeyPolicy`, `DisableKey`, `ScheduleKeyDeletion` or `CreateGrant` on an identity key; any IAM
+     change that could widen or reuse the signer user: `PutUserPolicy`, `DeleteUserPolicy`, `AttachUserPolicy`,
+     `DetachUserPolicy`, `AddUserToGroup`, `PutUserPermissionsBoundary`, `DeleteUserPermissionsBoundary`,
+     `CreateAccessKey`, `UpdateAccessKey`, `DeleteAccessKey`, `CreateLoginProfile`, and `PutGroupPolicy` /
+     `AttachGroupPolicy` on any group the signer user is in (it should be in none); **`GetSessionToken` by the signer
+     user** (`userIdentity.arn` = `<signer>`; the Worker never calls it, so any is a leaked key in use); any `Sign` on
+     an identity key by another principal or with session credentials (the key policy refuses it, but the attempt
+     matters).
+   - **`Sign` volume per key:** KMS publishes no per-key request metric, so send the trail to a CloudWatch Logs log
+     group (in each key region) and add a metric filter per key, e.g.
+     `{ ($.eventSource = "kms.amazonaws.com") && ($.eventName = "Sign") && ($.resources[0].ARN = "<key arn>") }`, with an
+     alarm on its hourly sum (a few times the API's `identity_issuance_hourly` peak). Plus an AWS Budgets alarm on
+     KMS spend.
+   Every planned change below fires one of them: acknowledge it.
+
+`wrangler dev` doesn't run a KMS env: no AWS credentials go into `.dev.vars` (`gen --dev-vars` writes the sub key only
+and refuses a leftover private signing key file). Local development uses a `local*` env with a Worker-secret key.
+
+**Scheduled key rotation** (every 12 months; 14 days' notice to partners that pin thumbprints):
+
+1. Create the new key in the **active key's region** (the standby keeps the other one), with the same key policy;
+   `get-public-key` → `next.json`; `$S kms-add --role next --key next.json --yes` (it also pins the key in
+   `watchdog.pinnedIdentityKeys`, D211) → **watchdog gen and deploy first**, then API gen and deploy (the JWKS lists it,
+   nothing signs with it).
+2. Wait the notice period.
+3. IAM: list both ARNs (active and next) in the signer user's policy, in `SignWithTheActiveIdentityKey` and
+   `NoOtherKey`.
+4. **Pre-switch check** (below) on the next key.
+5. `$S kms-switch --to next --yes` → gen, deploy. The old key is now `previous`, still published.
+6. After ≥ 2 h: `$S kms-retire --key previous --yes` (it also unpins the key) → API gen and deploy, **then** watchdog gen
+   and deploy. IAM: the new active ARN alone. KMS: `aws kms disable-key` and `aws kms schedule-key-deletion
+   --pending-window-in-days 30` on the old key.
+
+**Pre-switch check** (before any `kms-switch`, once the IAM policy lists the target key): prove that the signer user
+can sign with the target and that its signature verifies against the public key the manifest publishes for it. Only
+the signer user may sign (`NoOtherSigner`), so this needs its access key: run it while
+`.secrets/<env>/identity-aws-access-key.json` exists (right after creating an access key; a scheduled switch is a good
+time to rotate it too). The credentials go into the AWS CLI's environment for one command and are never printed:
+
+```sh
+F=.secrets/<env>/identity-aws-access-key.json
+printf 'hana-id pre-switch check %s' "$(date -u +%FT%TZ)" | openssl dgst -sha256 -binary > /tmp/check.digest
+AWS_ACCESS_KEY_ID="$(jq -r .AccessKey.AccessKeyId "$F")" AWS_SECRET_ACCESS_KEY="$(jq -r .AccessKey.SecretAccessKey "$F")" \
+  aws kms sign --region <target region> --key-id <target arn> --message fileb:///tmp/check.digest --message-type DIGEST \
+  --signing-algorithm ECDSA_SHA_256 --output text --query Signature | base64 -d > /tmp/check.sig
+jq -r .PublicKey <target>.json | base64 -d | openssl pkey -pubin -inform DER -out /tmp/target.pem
+openssl pkeyutl -verify -pubin -inkey /tmp/target.pem -in /tmp/check.digest -sigfile /tmp/check.sig   # "Signature Verified Successfully"
+```
+
+`<target>.json` is the `get-public-key` file `kms-add` published (its kid is in the manifest). This `Sign` is in
+CloudTrail with no token behind it: note its time for the reconciliation.
+
+**Access key rotation** (every 90 days, and at once on suspicion):
+
+1. `(umask 077; aws iam create-access-key --user-name <iamUser> > .secrets/<env>/identity-aws-access-key.json)`. IAM
+   allows two keys per user: delete an old inactive one first if there are two.
+2. `$S kms-put-aws-key --yes`: one request sets both secrets, so the Worker never pairs the new id with the old secret.
+3. Mint a token; CloudTrail shows a `Sign` with the new access key id.
+4. `aws iam update-access-key --user-name <iamUser> --access-key-id <old id> --status Inactive`; after a day with no
+   use (`aws iam get-access-key-last-used`), `aws iam delete-access-key`. Delete the `.secrets` file.
+
+**Suspected compromise** (a leaked access key or Worker secrets, an API Worker or Cloudflare account incident, an
+unexplained `Sign` in CloudTrail, a forged token reported by a partner; planned playbook
+`identity-kms-signer-compromised`):
+
+1. **Stop the signatures:** `aws iam update-access-key … --status Inactive` for every access key of the signer user.
+   Mints answer 503 from then on, and partners fall back to no token. Deactivating a key alone isn't proven to end
+   session credentials made from it with `GetSessionToken`: what stops those signing is the key policy's
+   `NoSessionCredentials` deny (confirm it is in every identity key's policy, `aws kms get-key-policy`), not the
+   deactivation.
+2. **Measure:** the CloudTrail events whose `userIdentity.arn` is the signer user (every credential it has, sessions
+   included; not by access key id, which misses session keys): `GetSessionToken` calls, refused `Sign` attempts, and
+   successful `Sign`s by key, window and count. With D219 the standby can't have been used (the IAM policy never
+   listed it, sessions can't sign); confirm it has no successful `Sign` events.
+3. **Switch:** the IAM policy → the standby's ARN (both statements); a new access key → the pre-switch check →
+   `$S kms-put-aws-key --yes`; `$S kms-switch --to standby --yes` → gen, deploy.
+4. **Unpublish:** `$S kms-retire --key previous --yes` (unpublishes and unpins) → API gen and deploy, then watchdog gen
+   and deploy (no 2 h wait); disable the old key and schedule its deletion.
+5. **New standby:** a new key in another region than the new active key; `$S kms-add --role standby --key <file>
+   --yes` (publishes and pins) → watchdog gen and deploy first, then API gen and deploy.
+6. **Tell partners:** the `kid`, the window and count from CloudTrail, what to re-check. Post-mortem (D83).
+
+A KMS outage in the active region (`kms_unreachable`, `kms_internal` or `kms_timeout` in the logs, mints at 503) isn't
+a compromise. Either wait it out (partners fall back to no token), or switch to the standby as in step 3 without
+revoking anything. To make the old key the standby again later: `kms-retire --key previous`, then `kms-add --role
+standby` with its `get-public-key` file.
+
+**Reconciliation (planned, not built; before mainnet).** An hourly job counts the CloudTrail `Sign` events per identity
+key and UTC hour (`userIdentity.arn` = the signer user, no `errorCode`) and compares them with `identity_issuance_hourly` (the tokens the
+API answered, per kid and hour). Each answered token is one `Sign`, so CloudTrail's count is at least the API's. The
+difference must be explained by `Sign` calls that succeeded at KMS but produced no token (a timeout after KMS signed,
+a garbled or unverifiable answer), which today are only in the logs (`identity_sign_failed` with `kms_timeout`,
+`kms_bad_answer`, `kms_bad_signature` or `self_verify_failed`). A gap beyond that, any `Sign` by another principal or with session credentials, or any
+`GetSessionToken` by the signer user, is a critical alert: a signature Hana's API didn't make. To make the check exact, the job's build adds a per-hour,
+per-kid count of the `Sign` requests the API sent (D218). Where it runs (the watchdog's account, D125, with a
+read-only principal on the log-archive bucket or `cloudtrail:LookupEvents`) is decided with it.
 
 ### A user's leaked key (`key_index`)
 
@@ -1322,6 +1599,11 @@ below logged in to the watchdog's account (`wrangler login` there, or `CLOUDFLAR
    page to both founders (the forced-rotation drill of the migration plan does this for real).
 7. The admin Worker (batch C) gets the same `WATCHDOG_STATUS_TOKEN` and the watchdog's URL.
 
+**Cloudflare Access** (before any staff call): one Access application for `{apiUrl}/v1/email/admin/*`, policy = the
+staff on `emailIssuer.access.staffEmails`, its AUD tag in `emailIssuer.access.aud`. In the application's settings set
+the session cookie's **SameSite attribute to Strict** (and HttpOnly on), so no other site's request carries a staff
+session; the issuer also refuses any request with an `Origin` header and any body that isn't JSON (D199).
+
 Local: `gen <env> --dev-vars` writes `apps/watchdog/.dev.vars` (0600) from the secrets file; `corepack pnpm --filter
 @hana-id/watchdog dev` runs `wrangler dev --test-scheduled` (`curl localhost:8787/__scheduled` runs one cron). Use a
 test Slack channel and ntfy topic: local runs send real alerts and, with a real `WATCHDOG_KEY`, real testnet
@@ -1382,7 +1664,9 @@ them as `IDENTITY_PINS` and `identityToken.iss` as `IDENTITY_ISS`; an env withou
   narrows the first: the GitHub Actions workflow `identity-probe` (`.github/workflows/identity-probe.yml`, every
   15 min, no secrets) fetches each non-`local*` env's JWKS and discovery document from GitHub's network with a `jose`
   User-Agent and the same rules (`@hana-id/jwks/identity`), against `watchdog.pinnedIdentityKeys` in the repo's
-  manifests, and fails on any finding; GitHub emails the failure to whoever last changed the workflow's schedule, so
+  manifests, and fails on any finding (every value from Hana's answers is printed JSON-quoted, escaped to printable
+  ASCII with `%` too, and cut, and no line can start with `::`, so a hostile JWKS can't inject a workflow command);
+  GitHub emails the failure to whoever last changed the workflow's schedule, so
   that must be a founder (and scheduled workflows run only on the default branch). Run it by hand:
   `corepack pnpm --filter @hana-id/scripts run identity-probe <env>`. Neither closes the gap: an attacker can still
   single out partners' traffic. Partners that pin thumbprints (`docs/integration.md` section 15, the recommended
@@ -1447,6 +1731,141 @@ pending change's `unlock_at_ms`), since OIDC owners couldn't cancel while paused
 immediate but slows every key change to `governance_delay_ms` unless another watchdog confirms (D86). Likewise a key
 change proposed while no watchdog may confirm yet (none, or only ones added less than `governance_delay_ms` ago)
 waits `governance_delay_ms`: after adding the first watchdog, rotations go slow until its `confirm_from_ms`.
+
+## Email issuer (`apps/email-issuer`)
+
+The email login's issuer (`docs/api.md` "Email issuer", `apps/email-issuer/README.md`, D195–D199): its own Worker,
+separate from the API, holding the email signing key, K_sub, K_code, K_rl and the SendGrid key. **Not deployed on any
+env yet.** Order matters (build plan batch 6): the watchdog's email pins (batch 5) are live before the owner posts any
+email key, and no app enables email (`apps.login_methods`) before batch 8.
+
+### Setting it up (once per env; testnet and `local*` only)
+
+1. **Keys and manifest block** (uploads nothing, prints no secret):
+
+   ```sh
+   corepack pnpm --filter @hana-id/scripts email-issuer <env> init --from "Hana <login@<user-mail subdomain>>" --budget 1000   # plan
+   corepack pnpm --filter @hana-id/scripts email-issuer <env> init --from "Hana <login@<user-mail subdomain>>" --budget 1000 --yes
+   ```
+
+   Writes `.secrets/<env>/email-issuer-signing-key.json` (RSA-2048 primary, the Worker secret),
+   `email-issuer-signing-key-standby.json` (published and posted on chain, **never uploaded**: move it offline),
+   `email-sub-key`, `email-code-key`, `email-rl-key` (base64 of 32 bytes each), all 0600 and never overwritten, and the
+   `emailIssuer` block in `envs/<env>.json` (iss `{apiUrl}/v1/email`, Worker and D1 `hana-id-email-issuer-<env>`, both
+   public keys with kid = RFC 7638 thumbprint, the primary active, sender `sendgrid`; `--outbox` for the test stub in
+   `local*` envs only). It prints the watchdog pin block. **Back up `email-sub-key` offline twice** (with the council
+   backup, D81) before the first email login: losing K_sub locks every email user out, and a new one moves every email
+   address. Commit the manifest.
+2. **Watchdog pins** (batch 5, D190): add the printed block as `watchdog.pinnedIssuerKeys.email` and redeploy the
+   watchdog (its own account) **before** step 6. `email-issuer <env> show` prints it again, with the `set_issuer_key`
+   arguments.
+3. **SendGrid** (D194): domain authentication (SPF, DKIM, DMARC `p=quarantine`) for the dedicated user-mail sending
+   subdomain; **a subuser for the issuer's mail alone** (required, D194: the webhook trusts only the issuer's categories
+   and the suppression list must be the issuer's); an API key of that subuser with **Mail Send only**, used by this
+   Worker alone, pasted into `.secrets/<env>/email-issuer-sendgrid-key` (0600; never in chat or a shell history). Don't
+   buy the Email Activity History add-on: SendGrid keeps each message's recipient and events in its Email Activity for
+   its plan's period (3 days without the add-on when written; check at setup) and Hana can't shorten it. Its
+   suppression lists (bounces, blocks, spam reports) keep an address **until it is removed** there. The signed
+   Event Webhook (bounce, spam report) of that subuser to `{apiUrl}/v1/email/webhooks/sendgrid`, its verification key
+   in `emailIssuer.sendgridWebhookPublicKey` (public); events of other categories are ignored.
+4. **D1 and config**: `wrangler d1 create hana-id-email-issuer-<env>`, then
+   `corepack pnpm --filter @hana-id/email-issuer gen <env> --d1-id <issuer uuid> --app-d1-id <the API's D1 uuid>` and
+   `wrangler d1 migrations apply hana-id-email-issuer-<env> --remote` from `apps/email-issuer`. `gen` refuses a
+   Worker-secret signer off testnet, the `aws-kms` signer (until batch 10) and the outbox outside `local*`.
+5. **Secrets** (the user runs this): `corepack pnpm --filter @hana-id/scripts email-issuer <env> put` (plan), then
+   `--yes`: sets `ISSUER_SIGNING_KEY`, `EMAIL_SUB_KEY`, `EMAIL_CODE_KEY`, `EMAIL_RL_KEY` and, when its file exists,
+   `SENDGRID_API_KEY` on the issuer Worker through wrangler's stdin. The standby is never uploaded.
+6. **Chain** (batch 6, owner DAO): `set_issuer("email", [iss])`, `mark_self_issued("email")`, one `set_issuer_key("email",
+   key, signer: "hana")` per published key (each waits `governance_delay_ms`), then `AddClient ("email", "email:" +
+   scope)` per scope with a staff client proof (`POST {apiUrl}/v1/email/admin/client-proof {scopeId, actionNonce,
+   ticket}` with the scope's current `action_nonce`, "Staff calls" below; configure `emailIssuer.access`).
+7. **Deploy**: `corepack pnpm --filter @hana-id/email-issuer deploy`, and route `{apiUrl}/v1/email/*` to it (batch 6:
+   a service binding from the API on `workers.dev`, or a zone route).
+
+Local: `gen <env> --dev-vars` writes `apps/email-issuer/.dev.vars` (0600) from the files (the active key only), then
+`corepack pnpm --filter @hana-id/email-issuer dev`.
+
+### Runbook
+
+| Symptom | Meaning | Action |
+|---|---|---|
+| `503 signer_unavailable` | ISSUER_SIGNING_KEY missing, malformed, not the manifest's `activeKid`, or a signature failed its self-check | `email-issuer <env> show`; `put --yes` again; never edit the kid by hand |
+| `503 issuer_unavailable` | an HMAC key is missing or two are equal | `put --yes`; never generate a new K_sub for an env that has email users |
+| `email_budget` (warn log, `code` `global_50` / `global_80` / `owner_50` / `owner_80` / `app_50` / `app_80`, `appId`) | the day's user mail passed half or 80% of the general pool (what the staff pool leaves of `dailySendBudget`) or of one app's share (2% of its plan's `per_day`) (D198) |
+| `email_owner_pool` (warn log, `code` `owner_50` / `owner_80`) | ticket and unlock mail passed half or 80% of the owner pool (30% of `dailySendBudget`, beside it); past half only tickets ≥ 7 days old and grants draw on it, fresh tickets ≤ 20% of it per app; refused owner mail falls back to the app's general share (D198) | ticket mail is normally small: a high owner pool means many tickets in use at once, possibly an attacker's stock of sock-puppet tickets at one catch-all domain; `admin/revoke-tickets` for addresses found, and look at `limit` lines by app | an `app_*` line names the app: check its traffic (a partner bug or a scripted abuse of its key); a `global_*` line with no app near its share means broad traffic |
+| `send_budget_exhausted` (error log, `code` `global`, `app`, `reserve`, `owner` or `unconfigured`) | `global`: the general pool is spent, `start` and `resend` answer 429 for everyone without a device ticket or unlock grant; `app`: that app used its share; `reserve`: the last 20% is held for apps under half their share; `owner`: the owner pool is spent for the day (aged ticket holders and grants wait too: look at once, see `email_owner_pool`); `staff`: the staff pool (1%, ≥ 5) for unlock and unsuppress mails is spent; `unconfigured`: the Worker has no `DAILY_SEND_BUDGET` outside `local*`, so it sends nothing | look for abuse (per-app `limit` logs, `appId`); raise `dailySendBudget` in the manifest only if the traffic is real, then `gen` and deploy. An app's share follows its plan's `per_day`. `unconfigured`: set `emailIssuer.dailySendBudget`, `gen`, deploy |
+| `email_complaint_rate` (error log, `count`) | more than 5 spam complaints in 24 h on the issuer's mail | check which app's flows run (`code_mail` by `appId`) and SendGrid's stats for the subuser; a sustained rate risks the sending domain's reputation: lower `dailySendBudget` or suspend the app |
+| `email_domain_cap` (warn log, `subject` = domain key prefix) | a non-exempt recipient domain used its 100 code mails today (each requester prefix at most 20); its users without a device ticket get 429 until midnight UTC (D198) | a real company rollout, or someone mailing many addresses at one domain: check `limit` logs and apps; repeats of the same `subject` on several days are worth a look |
+| `missing_client_ip` (warn log) | a request reached the Worker without a usable `cf-connecting-ip` (not through Cloudflare's edge, or a misrouted service binding): refused with 400 | check the route (batch 6's service binding must forward the client's headers) |
+| `code_mail` errors with `misconfigured` / provider 401/403 | the SendGrid key is wrong, revoked or lacks Mail Send | new key into the file, `put --yes` |
+| `code_mail` errors with `unavailable` | SendGrid 429 or 5xx (the counts were taken back) | SendGrid status; users can resend after 30 s |
+| `google_revoke` warnings | Google's revoke endpoint failed (the access token expires within the hour anyway) | none, unless sustained |
+| `mailbox_guess_limit` (error log, `code` `backstop` or `ceiling`, `subject` = mailbox key prefix) | someone is guessing codes for one mailbox: past the backstop (18) only owner-slot requesters and ticketed challenges can check, past the ceiling (25) nobody until midnight UTC (D198) | watch for repeats of the same `subject`. A user with a device ticket (an earlier sign-in on that browser) still gets 3 codes a day and the ticket slot. When a user without one contacts support: `admin/unlock` ("Staff calls" below). It mails a one-time link to the address itself (only the mailbox's holder can use it, so it is safe whoever asked), clears nothing, and adds at most 2 checks to the day; at most once a day and 3 times in 30 days per mailbox |
+| A user says the codes never arrive | the address may be suppressed (a bounce in the last 30 days, or a spam complaint), or the mailbox limits refuse | once the cause is fixed (mailbox full, a complaint by mistake): **first** remove the address from the issuer subuser's suppression lists in SendGrid (Suppressions: Bounces, Spam Reports, Blocks; search the address, delete it), or SendGrid drops the confirmation too; **then** `admin/unsuppress` ("Staff calls"): it mails the address a confirmation link, and the suppression goes when the user opens it (24 h) |
+| A user lost a device, or a device ticket may have leaked | anyone holding the ticket gets that address's owner allowances (3 codes a day, the ticket slot), never a token | `admin/revoke-tickets` ("Staff calls"): every ticket of that exact address issued until now stops counting; the next sign-in issues a fresh one |
+| `limit` lines `ip:webhook:10m` (sandbox-dev first) | SendGrid's event posts from one IP passed 120 in 10 min (a guess, D199 L4); refused posts are retried by SendGrid | if it is SendGrid's real traffic, raise `IP_WEBHOOK_LIMITS` in `apps/email-issuer/src/limits.ts` |
+| A suspected key leak | anyone with the Worker's secrets can mint email tokens (1-of-1, D121): sessions for any email user's path | "Suspected issuer key leak" below |
+
+### Staff calls
+
+Every staff route needs an Access session, `Content-Type: application/json`, no `Origin` header (so not from a
+browser page), and a support reference `ticket` (the support case id, kept in the audit row; 1–64 of `A–Z a–z 0–9 .
+_ # : -`). Use `cloudflared access curl`, with the body on stdin so the address stays out of the shell history:
+
+```sh
+cloudflared access login {apiUrl}/v1/email/admin/unlock
+cloudflared access curl {apiUrl}/v1/email/admin/unlock -X POST -H 'Content-Type: application/json' --data-binary @-
+{"email": "<their address>", "ticket": "<support case id>"}
+# then Ctrl-D
+```
+
+`admin/unlock` answers `{mailed}`: the one-time link went to the address itself; staff never see a token, so there is
+nothing to pass on (`{mailed: false, reason: "suppressed"}`: unsuppress first). `admin/unsuppress` and
+`admin/revoke-tickets` take the same body (unsuppress answers `{mailed}` too: the user confirms from the mail);
+`admin/client-proof` takes `{"scopeId", "actionNonce", "ticket"}`. The audit row (`email_admin_audit`: staff, action,
+ticket, mailbox or address key prefix, or scope) is written before the action. 20 staff actions an hour per staff
+member, all routes together; unlock, unsuppress and revoke-tickets at most once a day and 3 times in 30 days per
+mailbox each (`429 staff_cap`). Access's certs: a failed fetch or an unknown kid is cached for 30 s (L3), so a key
+rotation at Cloudflare reaches the issuer at most 30 s late.
+
+### Suspected issuer key leak
+
+`$I` = `corepack pnpm --filter @hana-id/scripts email-issuer <env>`, `$A` = `corepack pnpm --filter @hana-id/scripts
+admin <env>` (owner calls take the council's approvals as usual, `--approve-with`).
+
+1. **Decide what is exposed.** The Worker's secrets or the Cloudflare account: the active signing key, K_sub, K_code,
+   K_rl and the SendGrid key (the standby was never uploaded). `.secrets/<env>/` or the operator's machine: every file
+   there, the standby too unless it was offline. **Unless the incident provably touches only the Worker, treat the
+   standby as exposed.**
+2. **Pause**: `$A owner:call pause --yes`. Logins and derivation stop; no session opens while paused.
+3. **Remove the leaked key** (immediate): `$A owner:call remove_issuer_key --args '{"provider":"email","kid":"<active
+   kid>"}' --yes` (`$I show` prints the kids). Both exposed: the standby's kid too.
+4. **Only the active key exposed: switch to the standby.** `$I put --standby` (plan), then `$I put --standby --yes`:
+   switches `emailIssuer.signer.activeKid` in `envs/<env>.json` to the standby's kid and uploads the standby as
+   `ISSUER_SIGNING_KEY` (with the three HMAC keys). Then `corepack pnpm --filter @hana-id/email-issuer gen <env> --d1-id
+   … --app-d1-id …` and `corepack pnpm --filter @hana-id/email-issuer deploy`; commit the manifest. Check `$I show`
+   names the standby active and `GET {apiUrl}/v1/email/jwks.json` still lists it. **Expect `503 signer_unavailable`
+   between `put --standby --yes` and the deploy:** the running Worker's `EMAIL_ACTIVE_KID` still names the removed key
+   while its secret is already the standby, and its self-check refuses the mismatch (logins wait; nothing wrong is
+   signed). Run `gen` and `deploy` at once. The env has no standby until a new
+   one is made (no command yet: batch 10 replaces the Worker key with KMS; to confirm). **Both exposed:** email logins
+   stay off until a new key passes `set_issuer_key` (72 h, `governance_delay_ms`) and the watchdog pins.
+5. **Watchdog pins**: delete the removed kid(s) from `watchdog.pinnedIssuerKeys.email` and redeploy the watchdog, so a
+   re-post of the leaked key is `forged_active_key`.
+6. **Session floor**: `$A owner:call set_sessions_valid_from_ms --args '{"sessions_valid_from_ms": <a time after the
+   pause began>}' --yes`, before unpausing, so sessions the leaked key opened can't derive.
+7. **The other Worker secrets**, when the Worker's secrets were exposed. Of the HMAC keys, **K_sub can't be rotated**
+   (privacy only: it would move every email address); **K_code and K_rl can be**. Revoke the SendGrid key in SendGrid and paste a
+   new one into its file; replace K_code and K_rl (`(umask 077; openssl rand -base64 32 > .secrets/<env>/email-code-key)`,
+   the same for `email-rl-key`; it prints nothing): live challenges, device tickets and today's counters reset, nothing
+   else. Then `$I put --yes`. **Never K_sub** (it would move every email address); a K_sub leak is privacy only (the
+   holder can map addresses to `sub`s and paths), and suppressions stay keyed by it.
+8. **Unpause**: `$A owner:call unpause --yes`.
+9. Tell partners (security contacts): the kid, the window in which forged tokens may have been accepted.
+
+Limits are in `docs/api.md` "Email issuer" (D198): per (mailbox, requester), per mailbox with a reserve for new
+requesters and the device ticket's allowance, live challenges, the wrong-code locks, the ceiling (18 + 4 + 3), the IP
+prefixes, the recipient domain and the budget's shares.
 
 ## Restoring a D1 database (Time Travel)
 

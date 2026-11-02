@@ -229,17 +229,38 @@ export class SimChain {
       if (!p) throw new Error('ERR_NO_PROPOSAL');
       if (p.status !== 'InProgress') throw new Error('ERR_PROPOSAL_NOT_READY_FOR_VOTE');
       if (p.votes[predecessor]) throw new Error('ERR_ALREADY_VOTED');
-      p.votes[predecessor] = 'Approve';
-      const approvals = Object.values(p.votes).filter((v) => v === 'Approve').length;
-      if (approvals >= votesNeeded(d.policy.default_vote_policy.threshold, members.length)) {
-        const fc = (p.kind as { FunctionCall?: { receiver_id: string; actions: { method_name: string; args: string }[] } }).FunctionCall;
+      const action = String(args.action);
+      if (action !== 'VoteApprove' && action !== 'VoteReject') throw new Error(`Unsupported action ${action}`);
+      p.votes[predecessor] = action === 'VoteApprove' ? 'Approve' : 'Reject';
+      // The threshold comes from the group's size now (sputnik's proposal_status recomputes it at every vote).
+      const needed = votesNeeded(d.policy.default_vote_policy.threshold, members.length);
+      const count = (v: string) => Object.values(p.votes).filter((x) => x === v).length;
+      if (count('Approve') >= needed) {
+        const kind = p.kind as {
+          FunctionCall?: { receiver_id: string; actions: { method_name: string; args: string }[] };
+          AddMemberToRole?: { member_id: string; role: string };
+          RemoveMemberFromRole?: { member_id: string; role: string };
+        };
+        const fc = kind.FunctionCall;
         try {
           if (fc) for (const act of fc.actions) this.apply(dao, fc.receiver_id, { functionCall: { methodName: act.method_name, args: Buffer.from(act.args, 'base64'), gas: 0n, deposit: 0n } } as unknown as Action);
+          const change = kind.AddMemberToRole ?? kind.RemoveMemberFromRole;
+          if (change) {
+            // policy.rs add_member_to_role / remove_member_from_role: a missing role only logs ERR_ROLE_NOT_FOUND.
+            const role = d.policy.roles.find((r) => r.name === change.role);
+            const group = (role?.kind as { Group?: string[] } | undefined)?.Group;
+            if (group) {
+              const next = new Set(group);
+              if (kind.AddMemberToRole) next.add(change.member_id);
+              else next.delete(change.member_id);
+              role!.kind = { Group: [...next] };
+            }
+          }
           p.status = 'Approved';
         } catch {
           p.status = 'Failed';
         }
-      }
+      } else if (count('Reject') >= needed) p.status = 'Rejected';
       return null;
     }
     throw new Error(`MethodNotFound ${method}`);

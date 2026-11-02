@@ -47,6 +47,26 @@ export interface SubjectRules {
   rawSign: 'off' | 'approval';
   /** A pk_test_ app: mainnet chains are refused (docs/decisions.md D39, @hana-id/core networks.ts). */
   testApp: boolean;
+  /**
+   * EVM digests a raw request may never be (D179): the session's own identity wallet-proof digest, so an approved raw
+   * signature can't stand in for a wallet proof.
+   */
+  reservedEvmDigests?: readonly Uint8Array[];
+}
+
+/** Hana's own signing domains start with this; raw Stellar bytes that do are refused (D179). */
+export const RESERVED_RAW_PREFIX = 'hana-id';
+const RESERVED_RAW_PREFIX_BYTES = new TextEncoder().encode(RESERVED_RAW_PREFIX);
+
+/** Refuses a raw request that could double as a Hana-domain signature (a wallet proof, a session proof). */
+function refuseReservedRaw(request: SignRequest, rules: SubjectRules): void {
+  if (request.method !== 'hana_signRaw') return;
+  const p = request.params;
+  const reserved =
+    p.chain === 'stellar'
+      ? p.bytes.length >= RESERVED_RAW_PREFIX_BYTES.length && bytesEqual(p.bytes.subarray(0, RESERVED_RAW_PREFIX_BYTES.length), RESERVED_RAW_PREFIX_BYTES)
+      : (rules.reservedEvmDigests ?? []).some((d) => bytesEqual(d, p.digest));
+  if (reserved) throw new VaultError(ErrorCode.unauthorized, 'This raw request is a Hana signing domain and is never signed', { reason: 'raw_reserved_domain' });
 }
 
 /**
@@ -60,6 +80,7 @@ export function approvalSubject(request: SignRequest, addresses: RecordAddresses
   // A test app never signs raw (D39): a raw digest can be a mainnet transaction's hash. Before the app's setting.
   if (request.method === 'hana_signRaw' && rules.testApp) throw new VaultError(ErrorCode.unauthorized, TEST_APP_RAW_RULE, { reason: 'raw_not_allowed_for_test_apps' });
   if (request.method === 'hana_signRaw' && rules.rawSign !== 'approval') throw new VaultError(ErrorCode.unauthorized, 'Raw signing is off for this app', { reason: 'raw_sign_off' });
+  refuseReservedRaw(request, rules);
   const chain = approvalChain(request);
   const address = chain === 'stellar' ? addresses.stellar : addresses.evm;
   switch (request.method) {

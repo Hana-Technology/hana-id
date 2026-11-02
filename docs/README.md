@@ -12,7 +12,7 @@ the batch merges, so where a spec and a reference doc disagree, the reference do
 | `security.md` | Who is trusted for what, what each compromise gives, key and secret inventory, invariants, open issues |
 | `contract-interface.md` | `hana-signer` methods, types, byte layouts, events, panics |
 | `api.md` | Every HTTP endpoint, auth, errors, rate limits; D1 schema, Durable Objects, bindings, request logs |
-| `integration.md` | Partner guide: getting an app, `createHana`, page requirements, Google client, app settings, signing, auto-approve, React, Sodax, test and live keys, errors |
+| `integration.md` | Partner guide: getting an app, `createHana`, page requirements, Google client, app settings, signing, auto-approve, React, Sodax, test and live keys, errors, the identity token and its verification (section 15) |
 | `operations.md` | Setting up and deploying an environment, Google clients, key rotation, smoke tests, the hosted demo, logs, common failures |
 | `playbooks.md` | Step-by-step recovery for every watchdog alert kind and every incident (signals, impact, steps with who acts, commands, verify); generated from `packages/playbooks` (D126), the same source as the admin portal's "Security & monitoring" playbooks |
 | `decisions.md` | Every decision: when, why, what was rejected, status |
@@ -32,8 +32,9 @@ the batch merges, so where a spec and a reference doc disagree, the reference do
 | `governance-spec.md` | Pre-mainnet governance (D33): delayed issuer keys with a watchdog, multisig owner, timelocked upgrades, pause (draft, for review) |
 | `hana-home-spec.md` | Pre-mainnet Hana Home (D40, D45): cross-app wallets and key export for shared-login apps, consent revocation from any device (draft, for review) |
 | `email-login-spec.md` | Pre-mainnet email login (D4): Hana-run email issuer (Worker-secret key on testnet, AWS KMS before mainnet, two-signer-ready), automatic Privy-style account linking with pseudonymous ids on chain, explicit `linkAccount` (approved 2026-10-30: D119, D121–D123; not built) |
-| `identity-token-spec.md` | Pre-mainnet partner identity token (D120): a ≤ 1 h ES256 JWT for partner backends with a per-scope pseudonymous `sub`, proven wallet addresses, `sid`, opt-in verified email per app (sealed, never stored); JWKS, staged signing key (Worker secret on testnet, AWS KMS before mainnet), Privy migration (draft, 16 open questions) |
-| `apple-login-spec.md` | Pre-mainnet Sign in with Apple (D124): provider `apple` verified on chain (RS256, Apple's JWKS through the delayed key changes and the watchdog), every Apple client in Hana's developer team (team-scoped `sub`), no Apple scopes at launch so no email on chain, first-login screen and explicit linking, an optional email-only second client for matching (draft, 18 open questions) |
+| `identity-token-spec.md` | Pre-mainnet partner identity token (D120): a ≤ 1 h ES256 JWT for partner backends with a per-scope pseudonymous `sub`, proven wallet addresses, `sid`, opt-in verified email per app (sealed, never stored); JWKS, staged signing key (Worker secret on testnet, AWS KMS before mainnet), Privy migration (approved 2026-10-30: D127; build steps 1–4, no email claim, merged: D170–D175; review fixes on `feat/identity-token-2`: D176–D179) |
+| `email-login-build-plan.md` | The email login spec split into reviewable batches (order, scope, deploy steps, what users see after each); batch 1 = contract v3 |
+| `apple-login-spec.md` | **Paused, not built (D160):** Sign in with Apple (D124), Q1–Q5 answered: provider `apple` verified on chain (RS256, Apple's JWKS through the delayed key changes and the watchdog), every Apple client in Hana's developer team (team-scoped `sub`), no Apple scopes at launch so no email on chain, first-login screen and explicit linking, an optional email-only second client for matching (draft, 18 open questions) |
 | `hana-embed-ckd-results.md` | PoC measurements from wend-widget-demo |
 
 ## Where to put new knowledge

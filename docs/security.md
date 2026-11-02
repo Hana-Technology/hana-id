@@ -1,11 +1,15 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-10-30 for the `KEYS_UPDATER_KEY` and owner rows and open issue
+known open issues. Last verified against code: 2026-10-30 for the watchdog's retired-key rule (branch
+`fix/watchdog-retired-key-race`, D153), for the partner identity token (branch
+`feat/identity-token-2`: the review fixes D176–D179 in the identity rows, invariants and open issue (l); branch
+`feat/identity-token-1`: the partner-backend party, its compromise rows, the three identity secrets), for the relayer pool rows (branch `feat/playbook-gaps`: the watchdog's relayer funds
+monitoring, D150) and for the `KEYS_UPDATER_KEY` and owner rows and open issue
 (e) (governance deployed on sandbox-dev, D126); otherwise 2026-10-29 (branch `perf/login-latency-impl`; the login popup, the
 background persist and the vault gate were re-checked, the rest as of 2026-10-28, commit 58edee9; the approval popup
 opened by the partner page, branch `feat/approve-in-click`, D99; the API rate limits, owner-action caps, CKD key pin,
-secret scan and admin CLI after the 2026-10-29 security sweep, D100; the browser, core and SDK sweep fixes, D110–D118).
+secret scan and admin CLI after the 2026-10-29 security sweep, D100; the browser, core and SDK sweep fixes, D110–D118; the contract v3 email-login invariants, 2026-10-30, branches `feat/email-login-1` and `-r2`, D130–D139).
 
 Component map and flows: `docs/architecture.md`. On-chain layouts and the contract's own security notes:
 `docs/contract-interface.md` ("Security notes (for reviewers)"). Browser parts (vault, auth pages, partner client)
@@ -34,6 +38,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | User's browser and device | Running Hana's pages; keeping the profile private | Malware or an extension in all frames: everything the user can do, including reading an exported key. A disk dump with a live share: unlock and get PRK | After logout, idle or absolute expiry or revoke: nothing (an open export window erases its key then too, and at most 5 min after deriving it, D111). A derive (the persisted session is used up) |
 | NEAR RPC (manifest `rpc`, and `rpcFallback` when set) | Liveness, honest views | Fail derives, report wrong counters or a wrong registry answer (a refused login), delay. The fallback is asked only when the primary fails, so a lying primary is not outvoted | Forge a CKD result (pairing check against the pinned key, which was read from ≥ 3 independent providers that all agreed at one final block, D100) |
 | Anyone watching the chain or mempool | Nothing | Read used tokens (openid-only claims via the API), replay `create_session` with them (the vault derives with the next counter), replay a whole combined call (burns a `max_uses = 1` login: `session_consumed`; attacker pays gas) | Derive for themselves (needs the session key; the answer is encrypted to `a`) |
+| Partner backend (identity tokens) | Verifying identity tokens as `docs/integration.md` section 15 says (`aud`, `iss`, `typ`, ES256) | Hold its users' tokens (≤ 1 h each) and what they say: `sub`, `sid`, addresses; act as a user **at itself** with a stolen token until `exp` | Use a token at Hana or another partner (`aud`, no Hana API accepts one), reach a key, map its `sub`s to another partner's or to a Google account (keyed HMAC per scope) |
 | Another website | Nothing | Embed a vault with its own `pk` and log users into its own scope (legitimate) | Frame the vault for app X (`frame-ancestors`), receive `auth-params` (the popup checks `event.origin` and `event.source`), inject a token (the relay slot is written only from `authOrigin`, read only with `relayReadKey`) |
 
 ## What a compromise gives
@@ -54,6 +59,10 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | A partner's Google client (own-client mode) | Tokens with chosen nonces for that scope → that scope's users' keys | Other scopes |
 | Hana's shared Google client or its Cloud project | Break isolation of every `allow_shared` scope | Own-client-only scopes |
 | Leaked in-memory PRK | Every v1 chain and account under that `key_index` | Other `key_index` values; rotation is the only remedy |
+| An identity signing key (the active one on the Worker, or a published standby or next key from `.secrets/`) | Forge identity tokens for any user of any app: be anyone at every partner that uses them as login evidence, while partners trust the key | No key, no signature, nothing at Hana or on chain (no Hana API accepts the token). The standby is never on the Worker (D177), so a Worker or Cloudflare leak exposes the active key only. Testnet only: mainnet signs with a non-exportable AWS KMS key (build step 7). Recovery (playbook `identity-signing-key-compromised`): switch to a key the incident didn't touch (the standby, or a fresh one when both may be exposed), unpublish the exposed ones (partners reject them within 10 min), tell partners |
+| `IDENTITY_SUB_KEY` | Map partners' `sub`s back to on-chain paths, so to the Google `sub` (privacy) | Funds and keys unaffected. Never rotated: a new key changes every user's `sub` at every partner (a `u2_` scheme with a 90-day `legacy_sub` window if it ever leaks) |
+| One identity token (a partner's log, transit) | Act as that user at that partner's backend until `exp` (≤ 1 h) | That partner only (`aud`); never at Hana or on chain |
+| A session key (with its vault record) | Also: mint identity tokens while the session is live | The same session's limits, its app only; a logout or revoke stops new tokens in every app of the scope (the share check, D178: a share is kept 24 h after it dies), the 1 h `exp` bounds the old ones |
 
 ## Key and secret inventory
 
@@ -69,8 +78,8 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | `K_s` | 32-byte AES-GCM key per share | D1 only as `share_enc` under `VAULT_KEK`; vault memory briefly | API generates, vault uses | Ends with the share (idle ≤ `idle_ttl_ms`, absolute ≤ `session_ttl_ms`, revoke) |
 | `VAULT_KEK`, `VAULT_KEK_PREVIOUS` | AES-256-GCM, `<id>:<base64>` | Worker secrets; `.secrets/<env>/vault-kek` (and `vault-kek.previous`), 0600, the only copy | Hana | Generated and set by `scripts/vault-kek.ts init` (wrangler stdin, never printed, file never overwritten). Rotate with `vault-kek rotate`: old value → `VAULT_KEK_PREVIOUS`, new id in `VAULT_KEK`; unlocks and the hourly cron re-wrap (`apps/api/src/vault/kek.ts`, `vault/cron.ts`) |
 | `relayKey`, `relayReadKey` | 32-byte AES-GCM key / read capability | Vault memory; `relayKey` also in the login popup's `sessionStorage` until `/login/callback` reads it (`packages/web/src/auth/login-storage.ts`) | vault, login popup | One login; slot lives 120 s |
-| Session-pool keys `RELAYER_KEYS` | ed25519 function-call keys on `relayer`, receiver `signer` | Worker secret; `.secrets/<env>/relayer-keys.json` | Hana | Default 3 × 2 NEAR. `deploy-contract` deletes and re-adds; mainnet needs allowance monitoring |
-| Owner-pool keys `OWNER_RELAYER_KEYS` | same, owner methods | Worker secret; `.secrets/<env>/owner-relayer-keys.json` | Hana | Default 1 × 0.5 NEAR |
+| Session-pool keys `RELAYER_KEYS` | ed25519 function-call keys on `relayer`, receiver `signer` | Worker secret; `.secrets/<env>/relayer-keys.json` | Hana | Default 3 × 2 NEAR. `deploy-contract` deletes and re-adds. The watchdog alerts on each key's remaining allowance and the account's balance (D150, read-only) |
+| Owner-pool keys `OWNER_RELAYER_KEYS` | same, owner methods | Worker secret; `.secrets/<env>/owner-relayer-keys.json` | Hana | Default 1 × 0.5 NEAR; allowance monitored like the session pool (D150) |
 | `KEYS_UPDATER_KEY` | ed25519 function-call key on `signer`. v1 contract: `set_issuer_key`, `remove_issuer_key`. Governance contract: exactly `set_issuer_key`, `propose_issuer_key_removal`, `execute_issuer_key_change`, installed only by the contract (`add_updater_key`); the API signs nothing else (`apps/api/src/relayer-config.ts` `UPDATER_METHODS`) | Worker secret; `.secrets/<env>/keys-updater.json` | Hana | 1 NEAR allowance. On the governance contract it can only propose (delayed, cancellable) and execute matured changes; a watchdog deletes it when it proposes a key Google doesn't publish. See open issue (e) and D33 |
 | `WATCHDOG_KEY` | ed25519 function-call key on the watchdog's account (manifest `watchdog.account`), receiver `signer`, methods `cancel_issuer_key_change`, `confirm_issuer_key_change`, `pause`, `delete_updater_key`, 1 NEAR | Watchdog Worker secret (its own Cloudflare account); `.secrets/<env>/watchdog-secrets.json` | Hana (operator) | Created by `watchdog secrets <env> init`; rotate by adding a new key, then deleting the old (`docs/operations.md` "Watchdog service"). DoS power only (cancel, confirm a proposed change, pause, delete updater keys) |
 | `WATCHDOG_STATUS_TOKEN` | random bearer token (32 bytes, base64url) | Watchdog and admin Worker secrets; same file | Hana | Read and acknowledge only: a holder can stop re-sends of an alert already paged, never a first alert or a check |
@@ -81,11 +90,15 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Google RSA public keys | JWKS | On chain (issuers); API isolate cache (≤ 6 h stale on fetch failure) | public | v1 contract: hourly cron sync. Governance contract: the 15-min cron proposes and executes delayed changes, the watchdog checks them against its own JWKS copy |
 | Console owner-action tokens | RS256 JWT (console audience) | Transient; `sha256` marker in a `RateLimiter` until `exp` | partner owner | Single use (nonce bound to `action_nonce`) |
 | Publishable keys | `pk_test_` / `pk_live_` + base58 | D1, partner pages | public | Not secrets |
+| Identity signing keys (Worker slots `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY`) | P-256 private JWKs (ES256), testnet and `local*` only | The active key: a Worker secret and `.secrets/<env>/identity-signing-key.json`. The standby: `identity-signing-key-standby.json` only, kept offline, never uploaded until a switch (D177). During a rotation a `next` and a `previous` key. 0600, the only copies | Hana | `scripts/identity-key.ts`: `init`, `next`, `switch --to next|standby`, `retire --key previous|standby` (wrangler stdin, never printed, files never overwritten); public halves in the manifest's `identityToken.publicKeys` (the JWKS). `activeKid` picks the signer. Mainnet: AWS KMS `ECC_NIST_P256`, non-exportable, its own IAM user (build step 7, D127) |
+| `IDENTITY_SUB_KEY` | 32 random bytes (base64) | API Worker secret; `.secrets/<env>/identity-sub-key` (0600), with an offline backup alongside the council backup (D81) | Hana | Never rotated (it fixes every user's `sub` at every partner); never logged |
+| Identity tokens | ES256 JWT, ≤ 1 h | Vault memory (and its per-app channel), the partner page, the partner backend | the user's session, the partner | Not stored by Hana: no per-token record, never logged; refused by every Hana API (`bad_token`) |
 | Cloudflare account / `wrangler login` | account credentials | operator's machine | the user | Deploys the Worker: a trust root |
 
 Rule (CLAUDE.md): derived keys, CKD secrets, relayer keys, owner keys and Google tokens are never logged, printed,
 written outside `.secrets/` (gitignored, 0600) or committed; a gitleaks pre-commit hook blocks secrets. Its config
-has rules for every secret shape above (NEAR secret keys, `VAULT_KEK`, `.dev.vars` lines, the secret files by name),
+has rules for every secret shape above (NEAR secret keys, `VAULT_KEK`, `.dev.vars` lines, private JWKs (`"d"`), the
+secret files by name),
 proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and in CI (security sweep OPER-2).
 
 ## Invariants and where they are enforced
@@ -108,6 +121,41 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   tombstone), `counter == used + 1`, Ed25519 over `"hana-id-session-v1:" ‖ counter ‖ sha256(payload)`; the off-chain
   vault prefix `hana-id-vault-v1:` can never verify as a session message.
 - `create_session_and_derive` is atomic up to the MPC receipt: any signer-side panic reverts the session.
+- Email login, contract v3 (branch `feat/email-login-1`, not deployed; `docs/email-login-build-plan.md` batch 1):
+  - Self-issued issuers (email): keys owner-posted only (never the updater key), each change waits ≥
+    `governance_delay_ms`, never confirmed early; one RSA modulus once per issuer (no key counts as two signers);
+    tokens are JWS JSON with ≤ 3 signatures, every one valid, from ≥ `required` distinct signers (1-of-1 `hana` at
+    launch); the signer list and `required` change only by a governed upgrade, with a 10-minute overlap. Google and
+    every other issuer stay compact-only. Trust: whoever makes the `hana` key sign can mint any email token, so reach
+    every email wallet and every account linked to one (`docs/email-login-spec.md` "Trust statement").
+  - Accounts: a member opens its root's path; an identity in no account opens the v2 path unchanged. Automatic links
+    only inside a login and bound both ways (D133): the issuer's `auto_link` nonce binds the token to that session
+    and to one join (session preimage hash, session identity, join, joiner, target root, target epoch, mode), and the
+    session key's counter-1 signature covers the link token and its mode, so whoever submits a published login can't
+    add, swap, change or strip a link. Case B (email joining a Google wallet) pending `change_delay_ms` unless the
+    issuer's mode says at once; case A must be immediate; both-have-a-wallet is never merged; unlinked pairs are never
+    re-matched (a cancel keeps the match, D132). Explicit links need fresh proofs of both identities and wait
+    `change_delay_ms` (and the unpause floor). Every link change bumps the account epoch, which every link nonce
+    commits to.
+  - `opened` ("has a wallet") is set at derivation, so a copied token in a bare `create_session` can't create a
+    wallet (D130); a linked identity's own path never derives (D136); after a migration from pre-v3 state every link
+    waits for the owner's `accept_unrecorded_wallets` (D135). Unlinking stops future sessions only; open ones run to
+    their end.
+  - Only `email` can be self-issued (D134); keys a governed upgrade adds to a signer policy are checked like
+    `set_issuer_key`'s (no padded duplicate as a second signer), and a "replace the signer" upgrade can drop the old
+    signer's keys with no overlap (D136).
+  - A bare `create_session` needs the session key's proof of possession, bound to that call's session parameters
+    (D137), so a published token can't be used to occupy its session key; a replacing signer-policy upgrade must use
+    new signer ids and cancels dropped signers' pending keys (D138).
+  - Off-chain obligations (later batches): the vault verifies a link token and recomputes its `auto_link` nonce before
+    signing the linked CKD payload; it signs a case-B join (`join = 2`) only when this same popup ran the user's
+    email-code step and the link token's `sub` is the address verified there (D139), so a compromised issuer service
+    can't attach an email identity during a plain Google login; a session it meant to link is revoked and restarted,
+    never derived with the plain payload (D137). The issuer mints the nonce with the join it decided; the API
+    prechecks both and relays the split path's proof of possession; the watchdog alerts critical if
+    `unrecorded_wallets` is ever true outside dev envs (D139).
+  - Contract security notes: `docs/contract-interface.md` "Security notes (for reviewers)"; readings made in the build:
+    D130, D131; review fixes D133–D138, off-chain obligations D139.
 
 ### API (`apps/api`)
 
@@ -218,6 +266,34 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
 - **Admin settings writes** (`scripts/lib/admin-settings.ts`): the UPDATE is guarded by every settings column as the
   command read it, so a change made in between (another operator's `--auto-approve off`) can't be overwritten with
   values planned from the old row; a delayed setting is never put in force by the CLI.
+
+- **Identity token** (`src/identity/`; `docs/identity-token-spec.md` "Invariants"; tests in
+  `apps/api/test/identity.test.ts`):
+  - a token is minted only for a session live on chain (`get_session`, a refusal re-read fresh) and, in an app that
+    keeps logins, whose share is live (judged as unlock judges it), in the app's scope, while the contract isn't
+    paused (an unreadable config refuses), with a fresh (±60 s), single-use session-key signature over the identity
+    message, which binds the signer, the app, the parent origin and the wallet proofs. The single-use marker is
+    `sha256(sessionPk ‖ issuedAtMs ‖ nonce)`, reserved only once the session is known live (D176);
+  - a session key whose share belongs to another app never mints, whatever this app's persistence, and dead shares stay
+    as tombstones for 24 h (the longest on-chain session), so a revocation in one app of a scope reaches all (D178);
+  - no tenant can use up what others share: per session key, per account root, per app (its own windows, never the
+    vault endpoints' quota) and per scope before a global breaker set ≥ 10 × any app's ceiling; the global soft line
+    only alerts (D176);
+  - a mint writes nothing to the share: no counter moves, `idle_until` doesn't slide, and the vault doesn't count it as
+    activity (D55, D112);
+  - `exp ≤ iat + 3600` and never past the on-chain expiry, the share's idle limit or its absolute cap; less than 30 s
+    left mints nothing;
+  - every address in `wallets` is proven by a signature of its own key over a message bound to this session key and
+    app: the session's holder controls it (not proof that it is the Hana-derived wallet of that `sub`; D179). The vault
+    never raw-signs bytes starting `hana-id` or its own wallet-proof digest, so an approved raw signature can't serve
+    as a proof; the claim set is exactly the spec's (`buildIdentityClaims` throws on anything else);
+  - `sub` depends only on (scope, root provider, root sub): never the login method, client, device or `key_index`, and
+    never the Google `sub` in the clear;
+  - the signature is checked against the published key for its `kid` before the token is answered; the JWKS comes
+    from the manifest's public keys alone and refuses a private member;
+  - no Hana API accepts an identity token: `verifyIdToken` refuses `typ: hana-identity+jwt` or `iss` =
+    `IDENTITY_ISS` first (`400 bad_token`), and the contract takes RS256 issuer keys only;
+  - logs carry the app id, outcome, code, kid and timings, never a token, `sub`, `sid`, address or body.
 
 ### Vault page (`apps/api/src/vault/page.ts`)
 
@@ -514,7 +590,7 @@ findings are tracked with their own fixes.
 
 Status: **fixed** (a), (b), (c), (d), (f); **accepted** (k), and the residual risks named under (b)–(d) and
 "Auto-approve policies"; **open** (e) (pre-mainnet, D33), (g), (h), (i), (j) (sandbox-dev only; production envs
-need D38's two domains). The 2026-10-29 security sweep's items in the API, tooling and CI: "Security sweep
+need D38's two domains), (l) (pre-mainnet: the identity token's KMS signer and JWKS pin check). The 2026-10-29 security sweep's items in the API, tooling and CI: "Security sweep
 2026-10-29" below.
 
 **(a) Unlock and touch don't re-check the app's current settings. Fixed.** Unlock and touch now read the app's
@@ -580,7 +656,8 @@ plan (D33; built on branch `feat/governance`, not deployed), specified in `docs/
   the contract, and the watchdog alerts critical on any later change of the owner DAO's policy or code (a
   `ChangePolicy`, `AddMember` or `RemoveMember`).
 - Watchdog (D82, D86): its own service, key and Cloudflare account. It cancels a pending key Google doesn't publish,
-  deletes the updater key that proposed one, and pauses only when such a key is active on chain; everything else is
+  deletes the updater key that proposed one (not when it is Google's own material from the last 24 h, a retirement race:
+  D153), and pauses only when such a key is active on chain; everything else is
   alert-only. The owner unpauses at once. Pause stops derivation and every token path, never governance. Built in
   `apps/watchdog` (branch `feat/governance`), not deployed. Pause stops derivation only for as long as it lasts:
   sessions a forged key opened before the pause would derive again after it (up to 24 h, any `max_uses`), so the
@@ -642,6 +719,17 @@ with the partner page; there, short unlock windows and zeroing PRK are the mitig
 (2026-10-28, `docs/decisions.md` D35): `contextString` is `''` for those kinds (`approval.ts` header,
 `approvalContextString`). Typed data carries its chain in its domain; messages and raw requests name no network, and
 the approve popup now says "This signature isn't tied to one network." on them.
+
+**(l) Identity token: testnet signing key and no JWKS pin check yet. Open (pre-mainnet).** Build steps 1–4 sign with
+a Worker-secret P-256 key (`IDENTITY_SIGNING_KEY`): anyone who can read the API Worker's secrets once can forge any
+user's identity at every partner until the key is removed from the JWKS. Step 7 moves mainnet signing to a
+non-exportable AWS KMS key with its own IAM user, CloudTrail and a reconciliation against `identity_issuance_hourly`
+(`gen` and the schema already refuse a Worker-secret key outside testnet); step 8 adds the watchdog's JWKS pin check
+(an unpinned key in the JWKS is a critical alert) and the "identity key on chain" check. Until then partners must not
+use identity tokens for anything of value. The testnet standby is kept off the Worker, and `identity-key next / switch /
+retire` rotate or replace keys (D177; playbook `identity-signing-key-compromised`). Also accepted for now: in an app that keeps logins, a browser that can't
+store the session (no share) gets `identity_unavailable` (`data.reason: 'no_share'`): the share check is what makes a
+logout or a revocation stop new tokens, and a missing share can't be told from a revoked and pruned one.
 
 ### Security sweep 2026-10-29: API, operator tooling and CI
 

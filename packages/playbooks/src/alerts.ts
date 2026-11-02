@@ -12,7 +12,7 @@ const forgedKeyChange: Playbook = {
   severity: 'critical',
   status: 'live',
   summary:
-    "A pending issuer key Google doesn't publish (or with other key material), or a non-Google key the updater proposed: the watchdog cancelled it and, when the updater proposed it, deleted every updater key.",
+    "A pending issuer key Google doesn't publish (or with other key material), or a non-Google key the updater proposed: the watchdog cancelled it and, when the updater proposed it, deleted every updater key. A key Google published with the same material in the last 24 h is a retired-key-change instead (D153).",
   signals: [
     'Critical `forged_key_change` page (paging app, Slack, email), re-sent every 15 min until acknowledged. The title and `details.outcome` say what happened: `cancelled`, `gone` (someone else cancelled it first), `executed` (it took effect before the cancel), `unknown`, `failed` or `not_sent`.',
     "`details.by` is the proposer: the signer account means `KEYS_UPDATER_KEY`; the owner means the council. `reason: updater_other_provider`: the updater proposed a key for a provider other than Google (it only serves Google).",
@@ -476,6 +476,35 @@ const watchdogDegraded: Playbook = {
   related: ['near-rpc-outage', 'google-jwks-outage', 'watchdog-down'],
 };
 
+const retiredKeyChange: Playbook = {
+  id: 'retired-key-change',
+  title: 'Retired Google key proposed and cancelled',
+  kind: 'alert',
+  alertKinds: ['retired_key_change'],
+  severity: 'warning',
+  status: 'live',
+  summary:
+    "The updater proposed a key Google stopped publishing but did publish, with the same key material, within the last 24 h: the API cron's fetch raced Google's retirement of the kid (D153). The watchdog cancelled it and kept the updater keys.",
+  signals: [
+    'Warning `retired_key_change` (Slack, email): "Retired Google key <kid> proposed (change <id>): Google stopped publishing it after <time>; cancelled, updater key kept".',
+    "`details.last_seen_jwks_at` is the watchdog's last fetch that listed the kid; `details.outcome` is `cancelled`, `gone`, `failed` (retried next run) or `not_sent`.",
+  ],
+  impact: ["None for logins: the key was Google's own, and the kid is retired. The API cron holds a re-proposal of a cancelled kid for 1 h and proposes only kids Google lists."],
+  steps: [
+    {
+      title: 'Check it was a retirement',
+      who: 'a founder',
+      detail:
+        "Google's JWKS no longer lists the kid, and `details.n` matches what the watchdog recorded for it (`/status` `seen_kids`). Repeats for the same kid more than an hour apart, or any `forged_key_change`, are not a race: see forged-key-change.",
+      commands: [c.watchdogAlerts, c.apiGovernance],
+    },
+  ],
+  verify: ['`keyChanges` no longer lists the change; `issuers` matches Google\'s JWKS.'],
+  followUps: [],
+  refs: ['docs/operations.md#watchdog-alerts-runbook', 'D153'],
+  related: ['forged-key-change', 'key-sync-stalled'],
+};
+
 const keySyncStalled: Playbook = {
   id: 'key-sync-stalled',
   title: 'Google key sync stalled',
@@ -677,13 +706,69 @@ const watchdogFirstRun: Playbook = {
     {
       title: 'Not after a deploy: investigate',
       who: 'a founder',
-      detail: 'Its D1 was emptied or replaced: follow watchdog-compromised.',
+      detail: "Its D1 was emptied or replaced: follow watchdog-compromised. A restore of its D1 to a minute before (Time Travel, 30 days; operations \"The watchdog's D1\") brings its history back; until then this first run's baseline stands.",
+      commands: [c.watchdogD1BookmarkAt, c.watchdogD1Restore],
     },
   ],
   verify: ['The next runs report `first_run: false` and every check ok.'],
   followUps: [],
-  refs: ['docs/operations.md#setting-it-up-once-per-env'],
+  refs: ['docs/operations.md#setting-it-up-once-per-env', 'docs/operations.md#the-watchdogs-d1'],
   related: ['unknown-active-key-first-run', 'watchdog-compromised'],
+};
+
+const relayerOutOfFunds: Playbook = {
+  id: 'relayer-out-of-funds',
+  title: "Relayer running out of funds (balance or a pool key's allowance)",
+  kind: 'alert',
+  alertKinds: ['relayer_balance_critical', 'relayer_allowance_critical', 'relayer_pool_empty', 'relayer_balance_low', 'relayer_allowance_low'],
+  severity: 'critical',
+  status: 'live',
+  summary: "The relayer account's available balance, or a pool key's remaining allowance, is below its threshold, or a pool has no key: relays from it fail when it runs out.",
+  signals: [
+    "Watchdog alerts (read-only check `relayer_funds`, every 5 min): `relayer_balance_low` (warning, < 5 NEAR available by default) and `relayer_balance_critical` (< 1 NEAR, or the account doesn't exist); `relayer_allowance_low` / `relayer_allowance_critical` per pool key (session pool < 0.5 / 0.1 NEAR of its 2 NEAR, owner pool < 0.1 / 0.02 NEAR of its 0.5 NEAR); `relayer_pool_empty` (no key of a pool for the signer). Thresholds: the manifest's `watchdog.relayerFunds`.",
+    '`/status` `relayer_funds`: the last reading (available balance, each pool key with its allowance, the thresholds).',
+    'Once it has run out: relays failing with `502 near_rejected` for one key or all; logins and derives fail for the apps routed to those keys.',
+  ],
+  impact: [
+    'Session pool: logins and derives fail for the apps on a used-up key (all apps when the balance is gone). Owner pool: OIDC owner actions fail. No security impact.',
+    'The watchdog only alerts: it holds no key on the relayer account and never tops anything up. The alerts resolve by themselves at the first run after the refill.',
+  ],
+  steps: [
+    {
+      title: 'Read what is low',
+      who: 'a founder',
+      detail: "The alert's details name the account, the pool and the key (`public_key`), what is left and the thresholds; `/status` `relayer_funds` lists every pool key. A drop that the request logs (`relayInstance` per relay) don't explain: follow relayer-key-stolen. 3 keys × 2 NEAR covered ~1,500 logins on testnet; allowances drop by gas burnt.",
+      commands: [c.watchdogStatus, c.apiTailErrors],
+    },
+    {
+      title: 'Low balance: fund the relayer account',
+      who: 'a founder',
+      detail: 'Send NEAR to `<relayer>` from a funded testnet account (testnet only, never a mainnet account). `relayer_balance_critical` saying the account does not exist: create it again first (operations "Create an environment" step 1), then re-run `deploy-contract` for its keys.',
+      commands: [c.fundRelayer],
+    },
+    {
+      title: 'Low allowance: replace the key',
+      who: 'a founder',
+      detail: "Same as a leaked key: delete it on chain, remove it from its `.secrets` file, re-run `deploy-contract` (pass larger `--relayer-allowance` / `--owner-relayer-allowance` if needed, and the same flags on every later re-run), upload the pool. Delete the used-up key: left there it keeps its last allowance and its alert stays open.",
+      commands: [c.deleteRelayerKey, c.deployContractPlan, c.deployContract, c.uploadRelayerKeys, c.uploadOwnerRelayerKeys],
+    },
+    {
+      title: 'No key in a pool: add the pool again',
+      who: 'a founder',
+      detail: "`deploy-contract` adds every key of `.secrets/<env>/relayer-keys.json` / `owner-relayer-keys.json` that isn't on chain. Only the relayer account's full-access key can delete keys: if nobody here did, treat that key as compromised (follow api-or-cloudflare-compromised).",
+      commands: [c.deployContractPlan, c.deployContract, c.uploadRelayerKeys, c.uploadOwnerRelayerKeys],
+    },
+    {
+      title: 'Thresholds that no longer fit',
+      who: 'a founder',
+      detail: "After raising the allowances (or for a busier env), set `watchdog.relayerFunds` in `envs/<env>.json` (NEAR; `balance`, `sessionAllowance`, `ownerAllowance`, each `{warn, critical}` with critical below warn), then regenerate the watchdog's config and redeploy it.",
+      commands: [c.watchdogGen, c.watchdogDeploy],
+    },
+  ],
+  verify: ['The next watchdog run resolves the alert (`/status` `open_alerts` without it; `relayer_funds` above the thresholds).', 'Relays succeed; the request logs show no `near_rejected`.'],
+  followUps: ['A used-up key replaced: delete its line from the secrets file only after the on-chain deletion is confirmed.'],
+  refs: ['docs/operations.md#relayer-keys-either-pool', 'docs/api.md#relay-errors-any-relayed-call', 'apps/watchdog/README.md#what-a-run-does-every-5-min', 'D150'],
+  related: ['relayer-key-stolen', 'api-or-cloudflare-compromised'],
 };
 
 export const ALERT_PLAYBOOKS: readonly Playbook[] = [
@@ -698,10 +783,12 @@ export const ALERT_PLAYBOOKS: readonly Playbook[] = [
   watchdogCannotAct,
   watchdogDegraded,
   keySyncStalled,
+  retiredKeyChange,
   activeKeyMaterialUnavailable,
   configChange,
   confirmFailed,
   keyChangeLifecycle,
   configMatured,
   watchdogFirstRun,
+  relayerOutOfFunds,
 ];

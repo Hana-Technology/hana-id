@@ -1,0 +1,19 @@
+{
+  "name": "@hana-id/example-identity-verify",
+  "version": "0.0.0",
+  "description": "The partner verification guide's code (docs/integration.md \"Identity token\"): verify a Hana identity token in Node with jose, tested against a local issuer.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "jose": "6.2.13"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "5.9.3",
+    "vitest": "4.1.12"
+  }
+}

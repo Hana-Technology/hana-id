@@ -12,6 +12,7 @@ import { isEvmAddress, isStellarAddress } from './addresses.ts';
 import { APPROVAL_KINDS, type ApprovalContext, type ApprovalKind, approvalKindChain, validateApprovalSubject } from './approval.ts';
 import { base64Decode, from0xHex, toHex, utf8, utf8Length } from './bytes.ts';
 import { isDisplaySafeLine } from './display-safe.ts';
+import { IDENTITY_MAX_MAX_AGE_MS, IDENTITY_MIN_MAX_AGE_MS } from './identity.ts';
 import { KEY_INDEX_LIMIT, MAX_USES_LIMIT, RELAY_ID_PATTERN, SALT_MAX_BYTES, SALT_MIN_BYTES, SHARE_ID_BYTES } from './layouts.ts';
 import { type EvmTxRequest, evmTxSigningPayload, parseEvmTxRequest } from './signers/evm.ts';
 import { isTimings } from './timings.ts';
@@ -68,6 +69,10 @@ export const STRING_ERROR_CODES = [
   'origin_not_allowed',
   'api_unavailable',
   'busy',
+  /** hana_identityToken: the API or its signer is unavailable (retryable). */
+  'identity_unavailable',
+  /** hana_identityToken: the Hana session ended (the vault also fires sessionExpired) or ends within 30 s. */
+  'session_ended',
 ] as const;
 
 export type StringErrorCode = (typeof STRING_ERROR_CODES)[number];
@@ -182,6 +187,7 @@ export const PORT_METHODS = [
   'hana_requestAutoApprove',
   'hana_autoApproveStatus',
   'hana_revokeAutoApprove',
+  'hana_identityToken',
 ] as const;
 
 export type PortMethod = (typeof PORT_METHODS)[number];
@@ -228,6 +234,8 @@ export interface PortParamsMap {
   hana_requestAutoApprove: undefined;
   hana_autoApproveStatus: undefined;
   hana_revokeAutoApprove: undefined;
+  /** `maxAgeMs`: a token minted at most this long ago (IDENTITY_MIN_MAX_AGE_MS..IDENTITY_MAX_MAX_AGE_MS). */
+  hana_identityToken: { maxAgeMs?: number } | undefined;
 }
 
 /**
@@ -300,6 +308,11 @@ const PARAMS: { [M in PortMethod]: (p: unknown) => PortParamsMap[M] | null } = {
   hana_requestAutoApprove: (p) => (noParams(p) ? undefined : null),
   hana_autoApproveStatus: (p) => (noParams(p) ? undefined : null),
   hana_revokeAutoApprove: (p) => (noParams(p) ? undefined : null),
+  hana_identityToken: (p) => {
+    if (noParams(p)) return undefined;
+    if (isPlainObject(p) && exactKeys(p, [], ['maxAgeMs']) && (p.maxAgeMs === undefined || isInt(p.maxAgeMs, IDENTITY_MIN_MAX_AGE_MS, IDENTITY_MAX_MAX_AGE_MS))) return p as { maxAgeMs?: number };
+    return null;
+  },
 };
 
 /** The size cap for a port request with `method`. */
@@ -355,6 +368,12 @@ export interface LoginResult {
   timings?: Record<string, number>;
 }
 
+/** A partner identity token and when it expires, or nulls while logged out (hana_identityToken, identityTokenChanged). */
+export interface IdentityTokenState {
+  identityToken: string | null;
+  expiresAtMs: number | null;
+}
+
 export interface AutoApproveStatus {
   policyId: string;
   label: string;
@@ -381,7 +400,15 @@ export interface PortResultMap {
   hana_requestAutoApprove: { granted: boolean; policyId?: string; expiresAtMs?: number };
   hana_autoApproveStatus: AutoApproveStatus | null;
   hana_revokeAutoApprove: null;
+  hana_identityToken: IdentityTokenState;
 }
+
+/** A compact ES256 JWS as the API mints it (core identity.ts isIdentityTokenResponse's shape), at most ~4 KiB. */
+const isIdentityJwt = (v: unknown): v is string => typeof v === 'string' && v.length <= 4096 && /^[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{86}$/u.test(v);
+const isIdentityTokenState = (v: unknown): v is IdentityTokenState =>
+  isPlainObject(v) &&
+  exactKeys(v, ['identityToken', 'expiresAtMs']) &&
+  ((v.identityToken === null && v.expiresAtMs === null) || (isIdentityJwt(v.identityToken) && isMs(v.expiresAtMs)));
 
 const isPersistence = (v: unknown): v is Persistence => v === 'session' || v === 'none';
 const isPortAddresses = (v: unknown): v is PortAddresses => isPlainObject(v) && exactKeys(v, ['stellar', 'evm']) && isAddressFor('stellar', v.stellar) && isAddressFor('evm', v.evm);
@@ -439,6 +466,7 @@ const RESULTS: { [M in PortMethod]: (r: unknown) => boolean } = {
       typeof r.used.native === 'string' &&
       /^[0-9]{1,78}$/u.test(r.used.native)),
   hana_revokeAutoApprove: (r) => r === null,
+  hana_identityToken: isIdentityTokenState,
 };
 
 export type PortReply<M extends PortMethod = PortMethod> = { v: 1; id: string; result: PortResultMap[M] } | { v: 1; id: string; error: ProtocolError };
@@ -483,6 +511,11 @@ export interface PortEventMap {
    * after a login (D79) could not be made, so the next page load needs a full login.
    */
   persistenceChanged: { persistence: Persistence };
+  /**
+   * The current identity token changed: minted in this tab or another tab of the session (the per-app channel), or
+   * null once the session ended (logout, expiry, revocation, a newer login).
+   */
+  identityTokenChanged: IdentityTokenState;
 }
 
 export type PortEventName = keyof PortEventMap;
@@ -500,6 +533,7 @@ const EVENTS: { [E in PortEventName]: (d: unknown) => boolean } = {
   autoApproved: (d) =>
     isPlainObject(d) && exactKeys(d, ['kind', 'chain', 'contract', 'function']) && isSignMethod(d.kind) && isChain(d.chain) && isStr(d.contract, 1, 128) && isStr(d.function, 1, 128),
   persistenceChanged: (d) => isPlainObject(d) && exactKeys(d, ['persistence']) && isPersistence(d.persistence),
+  identityTokenChanged: isIdentityTokenState,
 };
 
 /** Validates a vault → SDK event, or null. */
@@ -797,8 +831,15 @@ export function approvalContent(request: Extract<PortRequest, { method: SignMeth
  * - `revoked`: this share is dead (the API said 410, or a newer login on this device replaced it); only the tabs
  *   holding that share end their session.
  * - `logout`: the user logged out of this app on this device; every tab of the app ends its session.
+ * - `identity`: an identity token minted for a session; the tabs of that session share it (no key material: the token
+ *   is what the partner page gets anyway).
  */
-export type VaultBroadcast = { v: 1; t: 'counter'; shareId: Uint8Array; counter: number } | { v: 1; t: 'logout' } | { v: 1; t: 'revoked'; shareId: Uint8Array };
+export type VaultBroadcast =
+  | { v: 1; t: 'counter'; shareId: Uint8Array; counter: number }
+  | { v: 1; t: 'logout' }
+  | { v: 1; t: 'revoked'; shareId: Uint8Array }
+  /** A tab minted an identity token for the session of `sessionPk`: the tabs of that session cache it too. */
+  | { v: 1; t: 'identity'; sessionPk: Uint8Array; identityToken: string; iatMs: number; expiresAtMs: number };
 
 /** Validates a per-app BroadcastChannel message, or null. */
 export function parseVaultBroadcast(data: unknown): VaultBroadcast | null {
@@ -808,5 +849,15 @@ export function parseVaultBroadcast(data: unknown): VaultBroadcast | null {
   }
   if (data.t === 'revoked') return exactKeys(data, ['v', 't', 'shareId']) && isBytes(data.shareId, SHARE_ID_BYTES, SHARE_ID_BYTES) ? (data as VaultBroadcast) : null;
   if (data.t === 'logout') return exactKeys(data, ['v', 't']) ? (data as VaultBroadcast) : null;
+  if (data.t === 'identity') {
+    return exactKeys(data, ['v', 't', 'sessionPk', 'identityToken', 'iatMs', 'expiresAtMs']) &&
+      isBytes(data.sessionPk, 32, 32) &&
+      isIdentityJwt(data.identityToken) &&
+      isMs(data.iatMs) &&
+      isMs(data.expiresAtMs) &&
+      (data.iatMs as number) < (data.expiresAtMs as number)
+      ? (data as VaultBroadcast)
+      : null;
+  }
   return null;
 }

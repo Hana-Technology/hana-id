@@ -2,10 +2,10 @@
 // Web unit → Approval, Raw signing). The approval popup is simulated as the auth page runs it: hello, then a result
 // with the digest of what it rendered.
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { SIGN_MESSAGE_MAX_BYTES, TEST_APP_RAW_RULE, base64Decode, base64Encode, parsePortRequest, recoverEvmAddress, toHex, utf8 } from '@hana-id/core';
+import { SIGN_MESSAGE_MAX_BYTES, TEST_APP_RAW_RULE, base64Decode, base64Encode, parsePortRequest, recoverEvmAddress, sha256, toHex, utf8, walletProofMessage } from '@hana-id/core';
 import { verifyStellarSignature } from '@hana-id/core/signers/stellar';
 import { POLICY_FRESH_MS } from '../../src/vault/vault.ts';
-import { Browser, ENV, FakeWindow, type Google, PARTNER, type Tab, answer, apiError, approveDigest, google, login, makeConfig, openApproval, partnerApproval, readyTab, sleepReal, waitLauncher } from './harness.ts';
+import { APP_ID, Browser, ENV, FakeWindow, type Google, PARTNER, type Tab, answer, apiError, approveDigest, google, login, makeConfig, openApproval, partnerApproval, readyTab, sleepReal, waitLauncher } from './harness.ts';
 import {
   CHAIN,
   EVM_VAULT,
@@ -404,6 +404,18 @@ describe('raw signing', () => {
     const s = await session({ config: makeConfig({ publishableKey: LIVE }) });
     const reply = await s.t.request('hana_signRaw', { chain: 'evm', digest: new Uint8Array(32).fill(1) });
     expect(reply.error).toMatchObject({ code: 4100, data: { reason: 'raw_sign_off' } });
+    expect(s.t.launcher.label).toBeNull();
+  });
+
+  it('never signs raw bytes in a Hana signing domain, nor the session’s identity wallet-proof digest (D179)', async () => {
+    const s = await session({ config: makeConfig({ publishableKey: LIVE, settings: { rawSign: 'approval' } }) });
+    for (const text of ['hana-id/identity-wallet/v1', 'hana-id-identity-v1:', 'hana-id-vault-v1:']) {
+      const reply = await s.t.request('hana_signRaw', { chain: 'stellar', bytes: utf8(`${text}anything`) });
+      expect(reply.error).toMatchObject({ code: 4100, data: { reason: 'raw_reserved_domain' } });
+    }
+    const sessionPk = (s.t.vault as unknown as { session: { sessionPk: Uint8Array } }).session.sessionPk;
+    const digest = sha256(walletProofMessage({ signer: ENV.signer, appId: APP_ID, sessionPublicKey: sessionPk }, 'evm', s.evm));
+    expect((await s.t.request('hana_signRaw', { chain: 'evm', digest })).error).toMatchObject({ code: 4100, data: { reason: 'raw_reserved_domain' } });
     expect(s.t.launcher.label).toBeNull();
   });
 

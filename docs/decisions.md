@@ -1,7 +1,8 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 on 2026-10-30 (branch `feat/batch-c-1`).
+Last verified against code: 2026-10-28 (commit 58edee9); D140–D141 and D150–D152 on 2026-10-30 (branches
+`feat/batch-c-1`, `feat/playbook-gaps`); D130–D139 on 2026-10-30 (branches `feat/email-login-1`, `feat/email-login-1-r2`).
 
 Consolidated from `docs/context.md` ("Decisions", "Batch A.2 decisions", "Batch C decisions", "Testnet
 measurements"), `docs/batch-a-spec.md` ("Decisions"), `docs/batch-a2-shared-client.md`, `docs/batch-b-spec.md`
@@ -1366,7 +1367,7 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 - Rejected: the alternatives each question listed.
 
 ### D124. Sign in with Apple on the roadmap, after email login
-- Date 2026-10-30 · Status: confirmed by the user (roadmap), not specced · Source: conversation
+- Date 2026-10-30 · Status: confirmed by the user (roadmap); specced (`docs/apple-login-spec.md`), paused 2026-11-02 (D160) · Source: conversation
 - Decision: Apple is the next login method after email login and the partner identity token. It plugs into the
   provider-neutral core: the wallet path `scope#provider#sub#key_index` (provider `apple`, so no existing address
   changes), `set_issuer("apple", ["https://appleid.apple.com"])` with its keys through the same delayed, cancellable
@@ -1437,7 +1438,8 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
   `OWNER_METHODS`).
 
 ### D127. Partner identity token: the spec's recommendations, all 16 questions
-- Date 2026-10-30 · Status: confirmed by the user, not built · Source: `docs/identity-token-spec.md` open questions
+- Date 2026-10-30 · Status: confirmed by the user; build steps 1–4 (no email claim) built on `feat/identity-token-1`
+  (D170–D175) · Source: `docs/identity-token-spec.md` open questions
 - Decision: `sub` per scope (`"u1_"` + HMAC with a separate, never-rotated `IDENTITY_SUB_KEY`); ES256; minted by the
   API Worker; mainnet key in AWS KMS (non-exportable, own IAM user, D121's account; a Worker secret on testnet and
   `local*` only); lifetime 1 h capped at the session's end, `maxAgeMs` for fresher proof; email asked once per app at
@@ -1477,6 +1479,432 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 - Why: no secret in a committed file; the DDL runs unchanged on Neon, a container and PGlite; least privilege as the
   spec intended.
 
+### D150. The watchdog monitors the relayer's funds (read-only), with default thresholds and manifest overrides
+- Date 2026-10-30 · Status: built (branch `feat/playbook-gaps`), defaults for review · Source: conversation (closing
+  the recovery playbooks' "not built yet" steps)
+- Decision: every run reads the relayer account (`view_account`, `view_access_key_list`, final) and raises condition
+  alerts: available balance (`amount` minus storage) below 5 NEAR → warning `relayer_balance_low`, below 1 NEAR or no
+  account → critical `relayer_balance_critical`; each pool key's remaining allowance below its pool's thresholds
+  (session 0.5 / 0.1 NEAR of 2 NEAR, owner 0.1 / 0.02 NEAR of 0.5 NEAR) → `relayer_allowance_low` /
+  `relayer_allowance_critical`; a pool with no key → critical `relayer_pool_empty`. Keys are assigned to a pool by a
+  marker method (`derive_key` session, `propose_change` owner), so the session pool's planned allowlist states keep
+  working. Thresholds can be overridden per pair in the manifest's `watchdog.relayerFunds` (NEAR). The watchdog never
+  tops anything up: it holds no key on the relayer account, and funding stays a founder's manual step. Playbook:
+  `relayer-out-of-funds` (now an alert playbook).
+- Why: `docs/security.md` listed allowance monitoring as a mainnet requirement, and the relayer playbook could only
+  say "you notice from failed logins". The watchdog already reads the chain every 5 min through its own RPC and pages
+  both founders; a second monitor would duplicate that. Critical for the balance and per key, because a used-up key
+  stops the logins of every app routed to it.
+- Rejected: a total-allowance-per-pool threshold (one key running out still fails its apps); auto top-up from a
+  funded account (it would put a spending key on the watchdog's account, against D82's minimal powers); thresholds as
+  code constants only (a busier env or raised allowances need their own).
+
+### D151. Council member replacement: remove first, then add, through the admin CLI; reject votes in the scripts
+- Date 2026-10-30 · Status: built (branch `feat/playbook-gaps`), for review · Source: conversation (closing the
+  recovery playbooks' "not built yet" steps)
+- Decision: `admin <env> council:replace-member --remove <old> --add <new>` makes two Sputnik proposals on the
+  council DAO, `RemoveMemberFromRole(<old>, council)` then `AddMemberToRole(<new>, council)`, signed and approved only
+  by remaining members. It refuses unless the DAO's group is the manifest's council (or a half-done replacement it
+  carries on from) with otherwise exactly the 2-of-3 council policy, the new account exists, and the manifest still
+  validates with the new member in the old one's place. Dev envs may `--approve-with` (both execute in one command);
+  elsewhere it proposes and prints each remaining member's `act_proposal`. Once the DAO has the new council, `--yes`
+  writes `council.members` in `envs/<env>.json` (only that list; without `--yes` it prints the edit). `owner:vote
+  --reject` casts a `VoteReject`.
+- Why: removing first cuts a lost or stolen key off at once. Sputnik recomputes the threshold from the group's size
+  (2 members: 2 of 2), so the window needs both remaining members, which the replacement needs anyway; adding first
+  instead makes the removal 3 of 4, which needs the new member's vote too. Writing the manifest only after the chain
+  shows the new council keeps `deploy-contract`'s policy check (`policyProblems`) meaningful.
+- Rejected: one `ChangePolicy` proposal with the whole new policy (it can change anything else in the policy at the
+  same time, which is harder to review than a member change); add first (needs three votes for the removal).
+
+### D152. D1 recovery is D1 Time Travel, with a runbook for both databases
+- Date 2026-10-30 · Status: documented (branch `feat/playbook-gaps`), not rehearsed · Source: conversation (closing
+  the recovery playbooks' "not built yet" steps)
+- Decision: a lost or damaged D1 (the API's `DB` or the watchdog's) is restored in place with `wrangler d1
+  time-travel restore --bookmark` (30 days on the paid plan), after noting the current bookmark (the undo) and, for
+  the API, exporting the damaged state to `.secrets/` (it holds wrapped vault shares). The runbook
+  (`docs/operations.md` "Restoring a D1 database (Time Travel)") lists what a restore loses and what to re-run, in
+  order: migrations, then security writes made since the point (suspensions, origin removals, a revoke-all) before
+  anything else, then a KEK rotated since, then other app changes. For the watchdog it spells out the first-run
+  baseline caveat (a point after the first run keeps the pause; before it, or no restore, means a first run that
+  only alerts) and the gap caveat (a kid published and dropped inside the gap looks never published and pauses).
+  The `d1-data-loss`, `watchdog-down`, `watchdog-compromised` and `watchdog-first-run` playbooks use it.
+- Why: Time Travel is on by default for production-backend D1 databases and needs no code; the dangerous part of a
+  restore is silently undoing a security response, so the runbook orders that first.
+- Still open: a rehearsal on sandbox-dev (no wrangler or chain actions were run for this), and a backup kept beyond
+  30 days and outside Cloudflare (an export of the apps tables, or batch C's Neon ledger, D73).
+
+### D153. A key Google just retired isn't a forgery: cancel, keep the updater key, warn
+- Date 2026-10-30 · Status: built (branch `fix/watchdog-retired-key-race`) · Source: a false
+  positive on sandbox-dev (watchdog alert #10)
+- What happened: at 16:30:07 (UTC+8) the API cron's JWKS fetch still listed Google kid `f10f8740…`, which wasn't on
+  chain, so it proposed adding it (change 2). Google dropped the kid at about that time: the watchdog's next two
+  fetches didn't list it, so it cancelled the change as forged and deleted the updater key. The proposed `n`/`e` were
+  byte-for-byte what the watchdog itself had fetched from Google at 16:10. No attack: the two services saw Google's
+  JWKS a few minutes apart, across a key retirement.
+- Decision: an Add **by the updater** of a kid Google doesn't publish now, whose `n`/`e` equal what this watchdog
+  fetched from Google (`seen_kids`, source `jwks`, not a first-run baseline) within the last 24 h
+  (`RETIRED_KEY_GRACE_MS`), is a `retired_key_change`: the watchdog cancels it (a retired key has no use), keeps the
+  updater keys, and raises a **warning** (Slack, email; no page). Everything else that was forged stays forged: a kid
+  Google never published, other key material, a kid last seen more than 24 h ago, an owner proposal (the owner path
+  never deletes updater keys), and any non-Google change from the updater. If the watchdog can't read `seen_kids` the
+  change is treated as forged (fail safe).
+- Why: a stolen updater key gains nothing from it. It can only re-propose Google's own key material, which is useless
+  without Google's private key, and it would be cancelled anyway. Deleting the updater key on every retirement race
+  stops Google key sync until a council member reprovisions it, and pages someone for nothing.
+- Playbook: `retired-key-change`. The incident's alert #10 was acknowledged; the deleted updater key is reprovisioned
+  through the council (`forged-key-change` step 5).
+
+### D142. Loopback origins only in `sandbox-*` environments
+- Date 2026-10-30 · Status: confirmed by the user · Source: batch C1 open question 1 (`docs/batch-c-build-plan.md`)
+- Decision: `localhost` / loopback origins are accepted only in dev environments (`sandbox-*`, `local*`), both when an
+  origin is registered and at the login gate; partners develop locally against Hana's sandbox environment. This
+  replaces the spec's "any test scope in any non-production network" rule for origin input.
+- Why: one rule enforced the same way in both places; otherwise a partner could register an origin that silently
+  fails at login.
+
+### D143. Production's usage ledger gets its own Neon project before mainnet
+- Date 2026-10-30 · Status: confirmed by the user · Source: batch C1 open question 2
+- Decision: the current Neon project (`hana-id`, branches `production` and `sandbox-dev`) serves dev and test; before
+  mainnet a separate Neon project (AWS Sydney) holds the production ledger, with its own credentials, restore window
+  and access list. The `production` branch of the current project is not used for mainnet.
+- Why: a sandbox credential leak or a project-level mistake can never reach production billing data.
+
+### D144. Support ID lookup is built from data Hana already keeps
+- Date 2026-10-30 · Status: confirmed by the user, not built · Source: batch C1 open question 4 (D96)
+- Decision: staff resolve a user's Support ID in the admin console from the usage ledger's pseudonymous user id plus
+  each app's change history (`app_changes`): which apps it used, recent logins, errors and app setting changes. No
+  dedicated support table and no email or name stored. A short spec section, reviewed by the user, comes before
+  batch C15.
+- Why: no new store of user data to protect or keep under retention rules.
+- Rejected: a dedicated support table with more detail per user.
+
+### D145. The owner-invite waiting period has its own setting
+- Date 2026-10-30 · Status: confirmed by the user, built in batch C1 · Source: batch C1 open question 5 (D89)
+- Decision: manifest `ownerGrantDelayMs` (a new owner is a viewer until it passes; owners can cancel) is separate
+  from `appChangeDelayMs`, with the same bounds (at least 24 h on mainnet).
+- Why: the two waits can be tuned independently; changing one never silently changes the other.
+
+## Partner identity token, build steps 1–4 (2026-10-30)
+
+Choices made while building `docs/identity-token-spec.md` steps 1–4 on `feat/identity-token-1`, where the spec left a
+detail open or a safer reading was needed. Each follows the spec's intent; the user can revisit any of them.
+
+### D160. Sign in with Apple paused; the initial build is Google and email
+- Date 2026-11-02 · Status: confirmed by the user · Source: conversation (Apple spec questions)
+- Decision: Sign in with Apple is not built for the initial launch; it is built when partners ask for it. The spec
+  (`docs/apple-login-spec.md`) stays as the starting point. Answers given so far:
+  - Q1 = B: Apple users' emails through a second, email-only Apple client whose tokens never go on chain (like Privy:
+    partners get the email), at the cost of a second Apple prompt at an identity's first login in an app.
+  - Q2, provisional: the Apple developer team of the company that publishes Hana Wallet and Wend, for testnet. To be
+    confirmed or changed at the production-readiness check, before the address freeze.
+  - Q3 = A: every Apple client in Hana's team; partner-held Apple accounts only if customers ask, for partners that
+    start on them.
+  - Q4 = A: the shared client in a Hana app group, each Enterprise client in its own group.
+  - Q5 = A: partners' native iOS apps use the web flow (`ASWebAuthenticationSession`). A native-sheet
+    "partner-managed Apple" tier only if customers ask: with the native sheet the partner's app receives the Apple
+    token and can open sessions for its own users' wallets (partner custody within its scope), and those wallets
+    differ from the same users' wallets in Hana's team.
+  - Q6–Q18: open, asked again when the work resumes.
+- Why: focus the initial build on Google and email; Apple adds an issuer, a second client, a POST route, watchdog
+  and playbook work for a method no partner has asked for yet. Nothing built so far depends on Apple: the path format
+  and the issuer model already take a new provider without moving any address (D124).
+
+### D170. Identity token layout details the spec left open
+- Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`packages/core/src/identity.ts`, frozen in
+  `packages/core/test/vectors/identity-v1.json`) · Source: build step 1
+- Decision: the session proof's prefix is the spec's `"hana-id-identity-v1:"` (the build brief said
+  `hana-identity-v1:`; the spec wins). `wallet_proofs_hash`, which the spec names but doesn't define, is
+  `sha256("hana-id/identity-wallet-proofs/v1" ‖ 0x00 ‖ for stellar then evm: borsh(chain) ‖ borsh(address) ‖
+  borsh(Vec<u8> signature))`. The EVM address in a wallet-proof message is EIP-55; the API accepts any valid case in
+  the body and canonicalizes before checking. `sub`'s root identity is the session path after the app's `scope#`:
+  exactly `provider#sub#key_index` with a lowercase provider, a non-empty sub and a decimal `key_index`, else no token
+  (`502 bad_contract_result`). `login_methods` is `[root provider]` until account linking exists (email login, D119).
+  The claims are built in the spec's order and the builder throws on anything off-spec.
+- Why: a frozen, unambiguous layout before any vault signs one; the proofs hash commits to the chain names, addresses
+  and signatures so a session proof can't be paired with other proofs.
+
+### D171. A mint in an app that keeps logins needs the session's live share
+- Date 2026-10-30 · Status: in force; amended by D178 (other apps' shares, tombstones) · Source: build step 2; the
+  spec's "Minting" step 2 (`apps/api/src/identity/token.ts` `checkShare`, `packages/web/src/vault/vault.ts`
+  `mintIdentity`)
+- Decision: when the app's persistence is `session`, `/v1/identity/token` requires a share for the session key, made
+  for the requesting parent, judged as unlock judges it without writing anything (`410 session_ended` with `reason`
+  `unknown_share`, `share_revoked`, `persistence_off`, `share_expired`); a session key with no share passes on the
+  chain check alone only while the app's persistence is `none`. The vault answers `identity_unavailable` with
+  `reason: no_share` (no API call) for a session in a `session` app that has no share (storage blocked, or the
+  background persist gave up, D79), and waits for a login's persist before minting. A `410 session_ended` from the
+  mint ends the vault session as a revoked share does (`sessionExpired`). A missing on-chain session is re-read every
+  300 ms for up to 2 s before the refusal (a node a block behind the login would otherwise log the user out).
+- Why: the share is what a logout, `revokeOtherDevices()` or a removed origin kills; the hourly cron deletes revoked
+  shares, so "no share" can't be told from "revoked" and must refuse in a `session` app. Accepted: a browser that
+  can't store the session gets no identity token in such an app (`docs/security.md` open issue (l)).
+
+### D172. Identity counts in their own tables, migration 0008
+- Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`apps/api/migrations/0008_identity_token.sql`) ·
+  Source: build step 2; `docs/batch-c-build-plan.md` reserves 0006 and 0007
+- Decision: migration 0008 creates `identity_issuance_hourly (hour, kid, count)` and `identity_usage (app_id, day,
+  tokens)` (the spec's `usage.identity_tokens`), both kept 24 months by the hourly cron. It doesn't touch the legacy
+  `usage` table (batch C's 0007 drops it) and holds no user data. The email claim's `apps.identity_email`,
+  `identity_email_consents` and `identity_emails` count come with build step 5's migration.
+- Why: 0008 applies the same before or after batch C's 0006/0007; an `ALTER TABLE usage` would fail on a fresh
+  database once 0007 drops `usage`.
+
+### D173. Identity signing configuration: `activeKid` in the manifest, `iss` under the API
+- Date 2026-10-30 · Status: in force; the global ceiling amended by D176, the standby slot by D177 · Was on `feat/identity-token-1` (`packages/env/src/identity.ts`,
+  `apps/api/scripts/gen-wrangler.ts`, `scripts/lib/identity-key.ts`) · Source: build step 2; the spec's "Manifest"
+- Decision: the Worker-secret signer is `{kind: "worker-secret", activeKid}`: the API signs with whichever of
+  `IDENTITY_SIGNING_KEY` / `IDENTITY_SIGNING_KEY_STANDBY` has that RFC 7638 thumbprint, so the rotation playbook's
+  "switch to the standby" is a manifest change and a deploy. The schema requires every `publicKeys` kid to be its
+  key's thumbprint, refuses any private member, requires the signer's kids in the list and refuses a Worker-secret
+  signer off testnet; `identityToken.iss` must be `{apiUrl}/v1/identity` until the production hostname exists (D127
+  Q14). `gen` refuses the `aws-kms` shape until build step 7 and, with `--dev-vars`, signing keys the manifest
+  doesn't publish. The API verifies each signature with the published key before answering, and serves the JWKS from
+  the manifest's list alone. The global hourly ceiling is 100 000 mints (var `IDENTITY_GLOBAL_HOURLY_MAX` overrides).
+- Why: the standby switch must not need a secret upload in an incident, and a secret that doesn't match the published
+  key must never produce a token.
+
+### D174. Identity token cache rule and SDK surface details
+- Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`packages/web/src/vault/identity.ts`,
+  `packages/web/src/client/client.ts`, `packages/react/src/identity.ts`) · Source: build step 3
+- Decision: the vault hands out its cached token while more than `min(5 min, half the token's life)` remains (a token
+  the session's end made short doesn't cause a mint per call) and, with `maxAgeMs`, it is at most that old. The SDK
+  clamps `maxAgeMs` to 30 s–1 h (the port refuses anything else) and rejects a non-positive one with `-32602`. The
+  port result and `identityTokenChanged` carry `{identityToken, expiresAtMs}`; the client exposes
+  `hana.identityToken` and `hana.identityTokenExpiresAtMs`. `410 session_ending` (< 30 s left) is `session_ended` with
+  `data.reason: 'session_ending'`, without ending the session (its own timers do). `useIdentityToken` retries a failed
+  refresh after 60 s. The record format 2 stores the proofs; the session key stays with a dormant session so it can
+  mint without PRK.
+- Why: the spec's 5-minute margin alone would mint on every call near a session's end; the rest fills in shapes the
+  spec named but didn't fix.
+
+### D175. A tested partner example, quoted exactly by the guide
+- Date 2026-10-30 · Status: in force on `feat/identity-token-1` (`examples/identity-verify`, a workspace member) ·
+  Source: build step 4; the spec's "Example verifier"
+- Decision: `examples/identity-verify/src/verify.ts` is the guide's verifier (`jose` 6.2.13, ES256 pinned); its tests
+  run it against a local issuer (expired, stale, wrong `aud`/`iss`/`typ`/key, `alg: none`, HS256) and fail when
+  `docs/integration.md` section 15 doesn't quote the file exactly. The Playwright suite verifies real tokens from the
+  local stack with `jose` against its JWKS.
+- Why: the published guide always runs.
+
+## Email login build, batch 1 (contract v3), 2026-10-30
+
+Made while building `docs/email-login-build-plan.md` batch 1 (branch `feat/email-login-1`), where the spec was silent,
+ambiguous or unsafe as written. Each takes the safest reading and is listed for the user under the plan's "Open
+points for the user"; none changes an address.
+
+### D130. A wallet is recorded when its path is derived, not when a session opens
+- Date 2026-10-30 · Status: confirmed by the user (2026-11-02); in contract v3 on develop, not deployed · Source: build of
+  `docs/email-login-spec.md` "Sessions" step 3 and "Model" ("the contract records that in `opened` at every
+  `create_session*`")
+- Decision: `opened` (an identity "has a wallet") is set by `derive_key` and `create_session_and_derive` for the
+  session's path identity, not by a bare `create_session`.
+- Why: tokens are public in the mempool and in failed transactions. Copying a Google token that was sent for a case-A
+  link into a bare `create_session` would open a session nobody can use but mark the Google identity as having a
+  wallet, so the user's retry hits "both have a wallet" and the person ends up with two wallets, which D122 forbids.
+  Nobody can derive without the session key, so marking at derivation can't be forged. For every real login (the
+  combined call) the result is the same as the spec's.
+- Rejected: the spec's wording (marking in `create_session`).
+
+### D131. Contract readings of the email login spec (batch 1)
+- Date 2026-10-30 · Status: confirmed by the user (2026-11-02), every reading; in contract v3 on develop, not deployed · Source: build of
+  `docs/email-login-spec.md` "Contract changes", "Sessions", "Link methods"
+- Decision:
+  - `mark_self_issued` refuses an issuer that already has keys, active or pending (`Issuer already has keys`), and a
+    second call (`Issuer is already self-issued`), so it can never reset an upgraded policy.
+  - The updater key ("self") can't propose **any** key change of a self-issued issuer, removals included.
+  - One RSA modulus is registered once per self-issued issuer, whatever its kid, exponent or signer (`Key is already
+    registered`), including keys a future `migrate` installs: one stolen key never counts as two signers.
+  - A self-issued key change waits `max(the usual rule, now + governance_delay_ms)`.
+  - JWS JSON is parsed strictly: no flattened form, no unprotected `header`, no `crit`, no duplicate members; every
+    signature must verify and every kid must be a counting signer's active key (an unknown extra signature fails the
+    token rather than being ignored).
+  - Case A (Google joining an email wallet) must carry `link_immediate = true` (`This link must be immediate`): a
+    delayed case A would have to open the Google identity's own path, a second wallet.
+  - `cancel_link` doesn't mark the pair `unlinked` (the spec names unlink only; confirmed by the user, D132); lazy activation of a pending member
+    doesn't bump the epoch; an account record is never deleted (its epoch must not restart).
+  - `get_account` also returns `unlinked` (hex keys), so the issuer can apply "an unlinked pair is not a match".
+  - The panic for an unlisted kid stays today's `Unknown signing key` (the spec writes `Unknown key`); a
+    `link_immediate` without `link_jwt` panics `link_immediate needs a link_jwt`; unlinking by another member panics
+    `Only the root or the member itself can unlink`.
+  - `migrate_v1` stays (now v1 → v3) until the sandbox suite moves to v2 → v3 (build-plan batch 2).
+- Why: each is the stricter of the readings the spec allows, or fills a gap without a product choice.
+- Rejected: the looser readings (accepting a delayed case A, ignoring unknown extra signatures, letting the updater
+  propose email key removals).
+
+### D132. A cancelled link keeps the match (open point 3 → A)
+- Date 2026-10-30 · Status: confirmed by the user, built (`feat/email-login-1`) · Source: conversation
+  (`docs/email-login-build-plan.md` open point 3)
+- Decision: `cancel_link` does **not** mark the pair `unlinked`. After a user cancels a pending link, the next login
+  with the other method still sees the match and offers only "Link and continue" or "Sign in with {the other
+  method}": no second wallet. Only `unlink_identity` marks a pair.
+- Rejected: marking cancelled pairs (an email login would then make its own wallet after a cancel).
+
+### D133. The user's session signature binds the link, and the auto_link nonce binds the join
+- Date 2026-10-30 · Status: built (`feat/email-login-1`), from the independent security review (HIGH-1, MEDIUM-1) ·
+  Source: review of contract v3 at ba45b91
+- Decision:
+  - In `create_session_and_derive` with `link_jwt`, the session key's counter-1 signature is over the **linked CKD
+    payload** `"hana-id-ckd-link-v1:" ‖ sha256(link_jwt) ‖ mode u8 ‖ pk1 ‖ ":" ‖ pk2` instead of the plain one. The
+    plain payload is unchanged for logins without a link. The vault verifies the link token and recomputes its
+    `auto_link` nonce before signing.
+  - The `auto_link` nonce also commits to the join the issuer decided: `join` (1 = the session identity joins the link
+    identity's account, case A; 2 = the link identity joins the session identity's, cases B/C), `joiner_ik` and
+    `target_root_ik`, before the epoch and mode. The contract recomputes the join from chain state and checks it.
+- Why: before, nothing the user signed bound the link. Whoever submitted a published login chose whether and which
+  link was attached: a stolen email-issuer key could replay a failed Google login with its own case-B token and join
+  its email identity to the Google wallet (against D119 and the spec's trust statement), and anyone could strip the
+  link from a case-A login so the Google identity derived its own path (two wallets, against D122). A token minted for
+  case A could also execute as case B after the chain state changed at the same epoch. Its own domain keeps the linked
+  payload from ever reading as a plain CKD payload (a suffix on the plain payload could collide with a crafted `pk2`).
+- No path, CKD request, derivation or existing layout changes; the `auto_link` layout was never deployed.
+- Rejected: the reviewer's suffix form (`plain payload ‖ ":link:" ‖ …`), for the collision above.
+
+### D134. Only the email provider can be self-issued
+- Date 2026-10-30 · Status: built (`feat/email-login-1`), from the review (LOW-3)
+- Decision: `mark_self_issued` accepts only `SELF_ISSUABLE = ["email"]` (`Only the email issuer can be self-issued`).
+  Another provider needs a governed upgrade.
+- Why: marking is one way. An owner could remove Google's keys and mark `google` self-issued, which would stop every
+  Google login until a governed upgrade. The email provider name is frozen anyway (it is in every email path).
+- Rejected: a governance delay on marking (more machinery for a provider list that is one name).
+
+### D135. Links wait for the owner after a migration from pre-v3 state
+- Date 2026-10-30 · Status: built (`feat/email-login-1`), from the review (LOW-4)
+- Decision: `migrate` (v2 → v3) and `migrate_v1` set `unrecorded_wallets = true`; while it is set every link, automatic
+  or explicit, panics `Links wait until the owner accepts the wallets opened before v3`. The owner's
+  `accept_unrecorded_wallets()` (one way, event) clears it. `new` starts with `false`. sandbox-dev accepts after its
+  v3 upgrade (its pre-v3 wallets are test data, D122); the mainnet runbook creates the signer with `new` on v3 and
+  checks `get_config().unrecorded_wallets == false`.
+- Why: wallets derived before v3 aren't in `opened`, so "has a wallet" would be wrong for them and a funded pre-v3
+  Google wallet could be silently joined to an email account in case A. A migration argument isn't possible: v2's
+  `execute_upgrade` calls `migrate` with empty input.
+- Rejected: documenting it only (the review's point); a migrate argument (above).
+
+### D136. A linked identity's own path never derives; signer-policy keys are checked like any key
+- Date 2026-10-30 · Status: built (`feat/email-login-1`), from the review (LOW-1, LOW-2, info)
+- Decision:
+  - `derive_key` (and the derive half of `create_session_and_derive`) refuses a session whose path identity is a
+    member of an account, pending or active (`Sign-in method is linked to an account`): a session an identity opened
+    on its own path before it joined can't make a second wallet.
+  - `set_signer_policy` (a governed upgrade's `migrate` only) checks every new key with `set_issuer_key`'s rules
+    (leading zeros stripped, 2048–4096 bits, odd exponent other than 1), so a zero-padded copy of hana's modulus can't
+    pass as a co-signer's key.
+  - `set_signer_policy` takes `overlap`: `true` (adding a signer) keeps the 10-minute overlap and leaves dropped
+    signers' keys until the owner removes them (they can't count once it ends; `get_issuer_keys` still lists them);
+    `false` (replacing a compromised signer) opens no overlap and removes the dropped signers' keys at once.
+- Why: each closes a path the review reproduced; none changes an address.
+
+### D137. A bare create_session needs the session key's proof of possession; linked logins never recover unlinked
+- Date 2026-10-30 · Status: built (`feat/email-login-1-r2`), from the second review (N1) and the automated review of
+  its first form · Source: review of e225d2e
+- Decision:
+  - `create_session` takes `signature`: Ed25519 by the session key over `session_message(0, "hana-id-create-v1:" ‖
+    sha256(session nonce preimage))`. Only the key holder can open a session, and the proof is bound to that call's
+    parameters (signer, scope, key, expiry, key_index, max_uses, salt), so a proof seen in one transaction can't open
+    the key with any other parameters. Counter 0 is never accepted by `derive_key` or `revoke_session`, and the domain
+    differs from every other signed payload. `create_session_and_derive` is unchanged (its counter-1 signature already
+    proves possession).
+  - Recovery rule for the vault (batch 8): a session it meant to carry a link is never derived on with the plain
+    payload; on `Session key already in use` (or any failure after publishing) it revokes that session and restarts
+    with a fresh session key, Google token and link token.
+- Why: a front-runner could copy the Google token of a published case-A linked login into a bare `create_session`
+  with the same session key and no link. The user's call then failed `Session key already in use`, and the documented
+  recovery (derive with counter `used + 1`, plain payload) derived the Google identity's own path, splitting the person
+  into two wallets (D122). A constant proof (the first form of this fix) would still have been replayable for that key
+  with other parameters.
+- Interface: the one change to an existing method. The API's split-path relay, `packages/web`'s split path and the
+  smoke page's direct flow must send `signature` before the v3 upgrade lands (v2 ignores the extra field); batch 6.
+  No path, CKD request or derivation changes.
+- Rejected: relying on the vault rule alone (the contract can make the bad recovery impossible to set up).
+
+### D138. A replacing signer policy needs new signer ids and cancels dropped signers' pending keys
+- Date 2026-10-30 · Status: built (`feat/email-login-1-r2`), from the second review (N3)
+- Decision: in `set_signer_policy` with `overlap = false`, new keys may only go to signer ids the previous policy
+  didn't list (`A replacing policy adds keys only for new signer ids`); in either mode, pending `AddForSigner`
+  changes of signers that leave the policy are cancelled (event `issuer_key_change_cancelled`, `by` = the contract).
+- Why: a replacing upgrade that kept the id `cosign` with a new key left the compromised old `cosign` key counting
+  (keys were dropped by signer id only); and a dropped signer's owner-posted pending key would revive, executable by
+  anyone, if a later upgrade listed the id again.
+- Rejected: an explicit list of kids to remove (the owner can already remove any key at once with
+  `remove_issuer_key`; a new id makes the replacement visible in the policy itself).
+
+### D139. Off-chain guards from the second review: case-B signing only after the popup's own email step; a watchdog alert
+- Date 2026-10-30 · Status: obligations for later batches (`docs/email-login-build-plan.md` batches 5 and 8), from
+  the second review (N2, N4)
+- Decision:
+  - The vault signs a linked payload with `join = 2` (an email identity joining the Google identity's account) only
+    when this same popup ran the user's email-code step for this login (`verify` → `linkTicket`) and the link token's
+    `sub` equals the `sub` of the address verified there. A case-B token offered during a plain Google login is
+    refused.
+  - The watchdog raises a critical alert whenever `get_config().unrecorded_wallets` is `true` on an env that isn't a
+    dev env.
+- Why: since D133 a case-B join happens only when the vault signs the linked payload, so the vault is the last check
+  that the user really proved the email address in this flow; without it a compromised issuer service could serve a
+  case-B token during a plain Google login. The flag must never be true on mainnet (D135); a runbook check alone can be
+  skipped.
+
+### D176. Identity mint limits: narrow to wide, sliding, none shared with the vault; the replay marker last
+- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`apps/api/src/identity/limits.ts`, `token.ts`
+  `identityQuota`, `rate-limiter.ts` `hitSliding`) · Source: the identity token's security review (M1, L2, L3, L5)
+- Decision: `/v1/identity/token` asks, in turn: the vault gate's per-IP binding (only: the app's `vault:minute` quota
+  is no longer used, so mints can't starve unlocks) → … → the session proof's signature → per session key 10/min
+  (binding) → not paused → share → chain session → wallet proofs → the single-use marker → per account root 30/min
+  (binding `IDENTITY_ROOT_LIMIT`, keyed by the HMAC `sub` bytes) → per app `identity:minute` (10 × plan `per_minute`)
+  and `identity:hour` (plan `per_day`, at most 100 000) → per scope `identity:hour` (2 × the app's) → global: a hard
+  breaker of 1 000 000/h (≥ 10 × any app's ceiling, so no one tenant can trip it) and a soft line at 100 000/h that
+  logs `identity_volume_alert` (critical) without refusing. The app, scope and global windows are sliding (the
+  previous bucket weighted by its overlap) and counted only for a request that passed every other check; a refusal by
+  a later window takes the hit back from the earlier ones. The marker is reserved only once the proof is known to be a
+  live session's (random keys create none), keyed `sha256(sessionPk ‖ u64le(issuedAtMs) ‖ nonce)` (independent of the
+  signature's encoding), and an alarm on the marker object deletes expired markers.
+- Why: the global hourly breaker was reachable by one tenant (three free apps at 600/min) and then refused every app
+  for up to an hour. Amends D173's global ceiling (100 000/h, refusing).
+- Rejected: one exact per-root object (a Durable Object per user per hour; the binding is a flood limit anyway).
+
+### D177. Testnet identity keys: the standby stays off the Worker; rotation and retirement commands
+- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`scripts/lib/identity-key.ts`,
+  `packages/playbooks` `identity-signing-key-compromised`) · Source: the identity token's security review (M2)
+- Decision: `identity-key init` uploads only the active key and the sub key; the standby is published in the JWKS
+  but never uploaded (operators move its file offline), so a leak of the Worker's secrets or the Cloudflare account
+  doesn't reach it. New commands: `next` (generate and publish a rotation key, upload nothing), `switch --to
+  next|standby` (upload it into the Worker slot the active key isn't in, make it the manifest's `activeKid`; the old
+  active key becomes `previous`, still published), `retire --key previous|standby` (unpublish, delete its Worker
+  secret if it has one, set its file aside). `.secrets/<env>/identity-slots.json` records which slot holds which kid.
+  `gen --dev-vars` writes only the active key. The compromise playbook (operations.md, `docs/playbooks.md`): treat
+  both keys as exposed unless the incident provably touches only the active one; then retire the standby too and
+  rotate to a fresh key.
+- Why: two keys side by side on one Worker and uploaded together made "switch to the standby" keep a compromised
+  key. Amends D173 (the standby slot is now a rotation slot) and the spec's rotation playbook.
+
+### D178. A dead or other app's share stops mints in every app of the scope; shares kept as tombstones for 24 h
+- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`apps/api/src/identity/token.ts` `checkShare`,
+  `vault/cron.ts` `pruneShares`) · Source: the identity token's security review (L1)
+- Decision: the mint looks a session key's share up in any app: a share that belongs to another app refuses the mint
+  (`410 session_ended`, `reason: unknown_share`) whatever this app's persistence, so a session revoked (or simply
+  persisted) in a `session` app of a scope never mints in a `none` app of the same scope. The hourly cron deletes a
+  revoked or absolutely expired share only once it is older than 24 h (the contract's `MAX_SESSION_MS`), so the row
+  outlives any on-chain session it could stand for.
+- Why: `getShareBySessionPk` was per app and the cron deleted revoked rows within the hour, so a revoked session kept
+  minting in a `none` app until its on-chain expiry, against D171 and `docs/security.md`. Amends D171.
+
+### D179. Raw signing never covers Hana's signing domains; `wallets` proves control, not derivation
+- Date 2026-10-30 · Status: in force on `feat/identity-token-2` (`packages/web/src/vault/signing.ts`
+  `refuseReservedRaw`, `docs/integration.md` section 15) · Source: the identity token's security review (L4, L6)
+- Decision: in apps with raw signing on, the vault refuses (4100, `reason: raw_reserved_domain`, before any popup) a
+  Stellar raw request whose bytes start with `hana-id`, and an EVM raw digest equal to the session's own identity
+  wallet-proof digest, so an approved raw signature can't serve as a wallet proof. The guide says what `wallets`
+  proves: the session's holder controls each address's key, not that it is the Hana-derived wallet of that `sub`; one
+  address can appear under several `sub`s (an exported or reused key, an old `key_index`), so partners must not treat
+  wallet → `sub` as unique (per-wallet credits).
+- Why: defence in depth for the wallet proof; the guide overstated the claim.
+- Accepted residual (automated review, 2026-10-30): the EVM check covers only this session's own proof digest. A raw
+  EVM digest is opaque, so a user who approves a raw signature over another session's wallet-proof digest lets that
+  session list their address. Not fixable at the source: raw signing signs any digest, whatever structure (EIP-191,
+  EIP-712) the proof used, and the API can't check that an address is the account's Hana-derived wallet (CKD output
+  is never on chain). The approval already authorizes arbitrary signatures (transactions included, with the popup's
+  warning), and partners must not treat wallet → `sub` as unique, so the impact is within what the guide states.
+  Revisit if addresses are ever recorded on chain.
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -1510,6 +1938,10 @@ taken in the meantime, so the rest start at D121. D4, D25 and D96 are amended ab
 | Email spec draft: AWS KMS key from the start, single-signature tokens | Worker-secret key on testnet, AWS KMS before mainnet; a signer policy and multi-signature JWS JSON tokens from day one (D121) | `docs/email-login-spec.md` "Signing key (staged)" |
 | Email spec draft: Gmail-only immediate linking, case B always 24 h, a switcher for two wallets (case D) | Google-hosted (Gmail or matching `hd`) links at once in cases A and B, others need a code (A) or 24 h (B) (D119); never a second wallet, no switcher (D122) | `docs/email-login-spec.md` "The four cases" |
 | Email spec draft: disposable-address domains allowed | Blocked (D123) | `docs/email-login-spec.md` "Rate limits and abuse" |
+| Email spec: `opened` recorded at every `create_session*` | Recorded at derivation (D130) | `docs/contract-interface.md` "Accounts and links" |
+| Email spec: `auto_link` nonce over the session, the session identity, the target epoch and the mode; the combined login signed over the plain CKD payload | The nonce also commits to the join (who joins which account), and with a link the session key signs the linked CKD payload (D133) | `docs/email-login-spec.md` "Byte layouts (new)", "Sessions" |
+| Email spec: `mark_self_issued(provider)` for any issuer | Only `email` (D134) | `docs/contract-interface.md` "Self-issued issuers" |
+| `create_session` opens a session for anyone holding the token; after a front-run `create_session` the key holder derives with counter `used + 1` | A bare `create_session` needs the session key's proof of possession bound to its parameters; a session meant to carry a link is revoked and restarted, never derived plainly (D137) | `docs/contract-interface.md` "Sessions and CKD" |
 
 ## Proposed, not yet confirmed
 
@@ -1527,6 +1959,6 @@ paging app (D85, at setup), and open question 17 (cancel by a compromised OIDC o
 is a proposal there.
 
 Still open from `docs/email-login-spec.md`: the user-mail provider (Resend unless the colleague picks another,
-D87). Everything else follows D4, D119 and D121–D123.
-
-
+D87). Everything else follows D4, D119 and D121–D123. The contract readings made while building it, D130 and D131,
+wait for the user's confirmation (`docs/email-login-build-plan.md` "Open points for the user"; point 3 is confirmed, D132);
+D133–D138 are the security reviews' fixes, D139 their off-chain obligations.

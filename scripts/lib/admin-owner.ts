@@ -4,7 +4,7 @@
 // owner:call <method> --args <json>   prints the call (and, for a council owner, the proposal); --yes sends it. With
 //   --approve-with <member> (dev envs on testnet only) the proposer and that member approve in the same command, so
 //   it executes; elsewhere it only proposes and prints the vote each member must sign.
-// owner:vote <id> --member <m>        one VoteApprove (dev envs: key from .secrets/<env>/council/).
+// owner:vote <id> --member <m> [--reject]   one VoteApprove, or VoteReject (dev envs: key from .secrets/<env>/council/).
 // owner:proposals [--json]            the council's recent proposals, decoded.
 // governance:status [--json]          get_config / get_governance / get_key_changes / the signer's keys / the council,
 //   with findings. Its --json output is the machine-readable source batch C's "Security & monitoring" view starts
@@ -15,8 +15,8 @@ import { type ContractConfig, GOOGLE_PROVIDER, type GovernanceView, type KeyChan
 import { checkFunctionKey, signerFullAccessAllowed } from './deploy-plan.ts';
 import { fetchGoogleJwks, usableKeys } from './jwks.ts';
 import { type AccessKeyListEntry, describePermission, type NearRpc, TGAS } from './near.ts';
-import { describeOwnerCall, isOwnerMethod, type OwnerTxDeps, type OwnerTxOptions, sendOwnerCall, voteApprove } from './owner-tx.ts';
-import { approvers, type DaoProposal, decodeFunctionCall, isOpen, policyProblems, recentProposals, type SputnikPolicy, votesNeeded } from './sputnik.ts';
+import { castVote, describeOwnerCall, isOwnerMethod, type OwnerTxDeps, type OwnerTxOptions, sendOwnerCall } from './owner-tx.ts';
+import { approvers, type DaoProposal, decodeFunctionCall, decodeMemberChange, isOpen, policyProblems, recentProposals, type SputnikPolicy, votesNeeded } from './sputnik.ts';
 
 export const OWNER_DRY_RUN_LINE = 'Dry run: re-run with --yes to send.';
 
@@ -35,7 +35,7 @@ async function assertTestnet(rpc: Pick<NearRpc, 'chainId'>, m: Manifest): Promis
 }
 
 /** The council DAO the commands vote on: the owner if it is the council, else the manifest's council. */
-function councilDao(m: Manifest): string {
+export function councilDao(m: Manifest): string {
   if (!m.council) throw new CliError(`envs/${m.name}.json has no council`);
   return m.ownerKind === 'sputnik' ? m.owner : m.council.dao;
 }
@@ -65,12 +65,18 @@ export function describeProposal(p: DaoProposal, policy: SputnikPolicy, nowMs: n
   const group = (policy.roles?.[0]?.kind as { Group?: string[] } | undefined)?.Group ?? [];
   const needed = votesNeeded(policy.default_vote_policy.threshold, group.length);
   const calls = decodeFunctionCall(p.kind);
-  const what = calls ? calls.map((c) => `${c.receiver}.${c.method}(${typeof c.args === 'string' ? c.args : JSON.stringify(c.args)})`).join(' + ') : JSON.stringify(p.kind);
+  const change = decodeMemberChange(p.kind);
+  const what = calls
+    ? calls.map((c) => `${c.receiver}.${c.method}(${typeof c.args === 'string' ? c.args : JSON.stringify(c.args)})`).join(' + ')
+    : change
+      ? `${change.op === 'add' ? 'AddMemberToRole' : 'RemoveMemberFromRole'}(${change.member}, role ${change.role})`
+      : JSON.stringify(p.kind);
+  const rejecters = Object.entries(p.votes ?? {}).filter(([, v]) => v === 'Reject').map(([a]) => a);
   const expiresMs = Number((BigInt(p.submission_time) + BigInt(policy.proposal_period)) / 1_000_000n);
   const status = p.status === 'InProgress' && !isOpen(p, policy, nowMs) ? 'Expired (not finalized)' : p.status;
   return [
     `#${p.id} ${status}: ${what}`,
-    `    by ${p.proposer}; approvals ${approvers(p).length}/${needed} (${approvers(p).join(', ') || 'none'})${p.status === 'InProgress' ? `; open until ${new Date(expiresMs).toISOString()}` : ''}`,
+    `    by ${p.proposer}; approvals ${approvers(p).length}/${needed} (${approvers(p).join(', ') || 'none'})${rejecters.length ? `; rejections ${rejecters.length}/${needed} (${rejecters.join(', ')})` : ''}${p.status === 'InProgress' ? `; open until ${new Date(expiresMs).toISOString()}` : ''}`,
     `    "${p.description}"`,
   ];
 }
@@ -85,12 +91,24 @@ export async function ownerVoteCmd(m: Manifest, idText: string, args: Args, deps
   const nowMs = deps.now?.() ?? Date.now();
   for (const line of describeProposal(p, policy, nowMs)) deps.log(line);
   if (!isOpen(p, policy, nowMs)) throw new Error(`Proposal #${id} is not open for votes`);
-  if (approvers(p).includes(member)) return void deps.log(`${member} already approved #${id}.`);
-  deps.log(`VoteApprove #${id} on ${dao} by ${member}`);
+  // A member votes once (the DAO refuses a second vote: ERR_ALREADY_VOTED).
+  const prior = p.votes?.[member];
+  if (prior === 'Approve') return void deps.log(`${member} already approved #${id}.`);
+  if (prior) return void deps.log(`${member} already voted ${prior} on #${id}.`);
+  const action = args.flag('reject') ? 'VoteReject' : 'VoteApprove';
+  deps.log(`${action} #${id} on ${dao} by ${member}`);
   if (!args.flag('yes')) return void deps.log(OWNER_DRY_RUN_LINE);
   await assertTestnet(deps.rpc, m);
-  const status = await voteApprove(m, dao, id, member, deps);
-  deps.log(status === 'Approved' ? `#${id} approved and executed.` : status === 'Failed' ? `#${id} reached the threshold but its call failed (status Failed).` : `#${id} is ${status}.`);
+  const status = await castVote(m, dao, id, member, action, deps);
+  deps.log(
+    status === 'Approved'
+      ? `#${id} approved and executed.`
+      : status === 'Failed'
+        ? `#${id} reached the threshold but its call failed (status Failed).`
+        : status === 'Rejected'
+          ? `#${id} rejected: it will not execute (the proposer's bond is refunded).`
+          : `#${id} is ${status}.`,
+  );
 }
 
 export async function ownerProposalsCmd(m: Manifest, args: Args, deps: AdminOwnerDeps): Promise<void> {

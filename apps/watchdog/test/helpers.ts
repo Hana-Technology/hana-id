@@ -5,12 +5,36 @@ import { env } from 'cloudflare:workers';
 import type { ChainReader, ChainSnapshot, ChainWriter, ConfigView, GovernanceView, KeyChange, TxResult, WatchdogMethod } from '../src/chain.ts';
 import type { AlertMessage, Notifier, Pager, Sender, SendResult } from '../src/channels.ts';
 import type { Channel } from '../src/checks.ts';
+import { type AccessKeyEntry, nearToYocto, type RelayerFunds, relayerFundsFrom, relayerThresholds } from '../src/relayer.ts';
 import { type RunDeps, type RunReport, runWatchdog } from '../src/run.ts';
 import { Store } from '../src/store.ts';
 
 export const SIGNER = 'signer.test.near';
 export const OWNER = 'owner.test.near';
 export const WATCHDOG = 'watchdog.test.near';
+export const RELAYER = 'relayer.test.near';
+export const SESSION_METHODS = ['create_session', 'create_session_and_derive', 'derive_key', 'revoke_session', 'prune_sessions'];
+export const OWNER_POOL_METHODS = ['propose_change', 'cancel_change', 'remove_client', 'disable_shared_login', 'execute_change', 'register_scope', 'apply_pending_config'];
+export const SESSION_KEYS = ['ed25519:3PXtH5yGjK4qrKpZuS4ZBc6fMSu1yBU4ZPR3XDjBmVvH', 'ed25519:5rKxnZ3ZQ9cYgHPzcDk7Ln3AokBdtpLwrqX1Bc4hiVj8', 'ed25519:8AxjGhhmV6rTwQhSCRRmzz6sU2dFqDswnRbXYoC2b7rk'];
+export const OWNER_POOL_KEY = 'ed25519:9mE3bS7YWXaKXg8tjLfV1JpCcRhDmBzQkYsNuHv2TfGa';
+export const NEAR = 10n ** 24n;
+
+/** A function-call key of the relayer for the signer, as view_access_key_list returns it. */
+export function relayerKey(publicKey: string, methods: string[], allowanceNear: number | null): AccessKeyEntry {
+  return { public_key: publicKey, access_key: { nonce: 1, permission: { FunctionCall: { allowance: allowanceNear === null ? null : nearToYocto(allowanceNear).toString(), receiver_id: SIGNER, method_names: methods } } } };
+}
+
+/** A funded relayer as deploy-contract leaves it: 3 session keys × 2 NEAR, 1 owner key × 0.5 NEAR, a full-access key. */
+export function healthyRelayer(): { view: { amount: string; locked: string; storage_usage: number } | null; keys: AccessKeyEntry[] } {
+  return {
+    view: { amount: (50n * NEAR).toString(), locked: '0', storage_usage: 1000 },
+    keys: [
+      { public_key: 'ed25519:FuLLaccessKey1111111111111111111111111111111', access_key: { nonce: 1, permission: 'FullAccess' } },
+      ...SESSION_KEYS.map((k) => relayerKey(k, SESSION_METHODS, 2)),
+      relayerKey(OWNER_POOL_KEY, OWNER_POOL_METHODS, 0.5),
+    ],
+  };
+}
 export const UPDATER_KEYS = ['ed25519:7mEBxCsWzXSq3Rpy2RwEGWb7ux5YX4tdTnRvAYfGHuFc', 'ed25519:4ZBVzQ6SaxiGVF6fHNWZ2NV1Xv1r6WqBmGxe2dwbCDGQ'];
 /** 2026-10-29 12:00 UTC. */
 export const T0 = Date.UTC(2026, 9, 29, 12, 0);
@@ -97,6 +121,10 @@ export class StubChain implements ChainReader {
   owner: { code_hash: string; policy: unknown } = { code_hash: 'DAOcode1111111111111111111111111111111111111', policy: councilPolicy() };
   failReads = false;
   reads = 0;
+  /** The relayer account (`view_account`, null: it doesn't exist) and its access keys. */
+  relayer = healthyRelayer();
+  failRelayer = false;
+  relayerReads = 0;
   private nextId = 10;
 
   constructor(active: Jwk[] = []) {
@@ -121,6 +149,25 @@ export class StubChain implements ChainReader {
       governance: clone(this.governance),
       owner: { account_id: this.config.owner, ...clone(this.owner) },
     };
+  }
+
+  async relayerFunds(account: string): Promise<RelayerFunds> {
+    this.relayerReads++;
+    if (this.failReads || this.failRelayer) throw new Error('rpc down');
+    return relayerFundsFrom(account, SIGNER, this.relayer.view && { ...this.relayer.view }, JSON.parse(JSON.stringify(this.relayer.keys)) as AccessKeyEntry[]);
+  }
+
+  /** Sets one relayer key's remaining allowance (NEAR; null: unlimited). */
+  setAllowance(publicKey: string, near: number | null): void {
+    const k = this.relayer.keys.find((x) => x.public_key === publicKey);
+    if (!k || typeof k.access_key.permission !== 'object') throw new Error('no such function-call key');
+    k.access_key.permission.FunctionCall.allowance = near === null ? null : nearToYocto(near).toString();
+  }
+
+  /** Sets the relayer's balance (NEAR) on top of its storage (1000 bytes = 0.01 NEAR). */
+  setBalance(near: number): void {
+    if (!this.relayer.view) throw new Error('no relayer account');
+    this.relayer.view.amount = (nearToYocto(near) + 1000n * 10n ** 19n).toString();
   }
 
   /** Queues a key change as the updater (the signer account) or the owner would. */
@@ -288,7 +335,7 @@ export function world(opts: { active?: Jwk[]; jwks?: Jwk[]; writer?: boolean; at
       sleeps.push(ms);
       clock.t += ms;
     },
-    config: { envName: 'sandbox-test', network: 'testnet', signer: SIGNER, watchdogAccount: WATCHDOG, digestHourUtc: 0 },
+    config: { envName: 'sandbox-test', network: 'testnet', signer: SIGNER, watchdogAccount: WATCHDOG, digestHourUtc: 0, relayer: RELAYER, relayerThresholds: relayerThresholds(undefined) },
   };
   const w: World = {
     chain,

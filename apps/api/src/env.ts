@@ -43,6 +43,24 @@ export interface Env {
   VAULT_KEK?: string;
   /** Secret, during a KEK rotation only: the previous VAULT_KEK, read to unwrap and re-wrap older shares. */
   VAULT_KEK_PREVIOUS?: string;
+  /**
+   * The partner identity token (docs/identity-token-spec.md; manifest `identityToken`, scripts/gen-wrangler.ts): the
+   * `iss`, the JWKS (a JSON array of public P-256 JWKs) and the kid of the key that signs. Without them every
+   * /v1/identity/* endpoint answers 503 identity_unavailable.
+   */
+  IDENTITY_ISS?: string;
+  IDENTITY_PUBLIC_KEYS?: string;
+  IDENTITY_ACTIVE_KID?: string;
+  /**
+   * Secrets (scripts/identity-key.ts), testnet and local* only: P-256 private JWKs. Whichever has the thumbprint
+   * IDENTITY_ACTIVE_KID signs; the other is the standby, already in every partner's JWKS cache.
+   */
+  IDENTITY_SIGNING_KEY?: string;
+  IDENTITY_SIGNING_KEY_STANDBY?: string;
+  /** Secret: the `sub`/`sid` HMAC key, base64 of 32 bytes. Never rotated (a new key changes every user's `sub`). */
+  IDENTITY_SUB_KEY?: string;
+  /** Optional var: the global hourly mint ceiling (identity/limits.ts IDENTITY_GLOBAL_PER_HOUR by default). */
+  IDENTITY_GLOBAL_HOURLY_MAX?: string;
   /** Optional per-method gas overrides in Tgas (see gas.ts), e.g. GAS_DERIVE_KEY_TGAS. */
   [gasOverride: `GAS_${string}_TGAS`]: string | undefined;
   DB: D1Database;
@@ -52,4 +70,8 @@ export interface Env {
   /** Rate Limiting bindings (vault/limits.ts, D95): the vault's per-IP and per-share flood limits, counted per location. */
   VAULT_IP_LIMIT: RateLimit;
   VAULT_SHARE_LIMIT: RateLimit;
+  /** POST /v1/identity/token's per-session-key flood limit (identity/limits.ts). */
+  IDENTITY_SESSION_LIMIT: RateLimit;
+  /** POST /v1/identity/token's per-account-root flood limit (identity/limits.ts, D176). */
+  IDENTITY_ROOT_LIMIT: RateLimit;
 }

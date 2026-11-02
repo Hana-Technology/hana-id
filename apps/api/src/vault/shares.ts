@@ -74,6 +74,15 @@ export async function getShare(db: D1Database, appId: string, shareId: Uint8Arra
   return row ? toShareRow(row) : null;
 }
 
+/**
+ * The share of a session key in any app, with its app id, or null (POST /v1/identity/token judges a session's share
+ * without moving it, and refuses a key whose share is another app's). `session_pk` is UNIQUE, so there is at most one.
+ */
+export async function getShareBySessionPk(db: D1Database, sessionPk: Uint8Array): Promise<(ShareRow & { app_id: string }) | null> {
+  const row = await db.prepare(`SELECT app_id, ${SHARE_COLUMNS} FROM vault_shares WHERE session_pk = ?1`).bind(sessionPk).first<Record<string, unknown>>();
+  return row ? { ...toShareRow(row), app_id: row.app_id as string } : null;
+}
+
 /** Marks a share revoked (no-op if it already is). */
 export async function markRevoked(db: D1Database, appId: string, shareId: Uint8Array, now: number): Promise<void> {
   await db.prepare('UPDATE vault_shares SET revoked_at = ?3 WHERE share_id = ?1 AND app_id = ?2 AND revoked_at IS NULL').bind(shareId, appId, now).run();

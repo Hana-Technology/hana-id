@@ -102,6 +102,34 @@ describe('NearChain', () => {
     expect((await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot('google')).owner?.policy).toBeNull();
   });
 
+  it("reads the relayer's balance and access keys at final finality, read-only", async () => {
+    const RELAYER = 'relayer.test.near';
+    const keys = [
+      { public_key: 'ed25519:full', access_key: { nonce: 1, permission: 'FullAccess' } },
+      { public_key: 'ed25519:s1', access_key: { nonce: 9, permission: { FunctionCall: { allowance: '1500000000000000000000000', receiver_id: SIGNER, method_names: ['create_session', 'derive_key'] } } } },
+    ];
+    const calls = stubRpc((_u, _m, p) =>
+      p.request_type === 'view_account' ? { result: { amount: '3000000000000000000000000', locked: '0', storage_usage: 500, code_hash: '11111111111111111111111111111111' } } : { result: { keys } },
+    );
+    const f = await new NearChain(new Rpc([PRIMARY]), SIGNER).relayerFunds(RELAYER);
+    expect(f).toMatchObject({ account: RELAYER, exists: true, available: (3n * 10n ** 24n - 500n * 10n ** 19n).toString(), keys: [{ public_key: 'ed25519:s1', pool: 'session', allowance: '1500000000000000000000000' }] });
+    expect(calls.map((c) => [c.method, c.params.request_type, c.params.finality, c.params.account_id])).toEqual([
+      ['query', 'view_account', 'final', RELAYER],
+      ['query', 'view_access_key_list', 'final', RELAYER],
+    ]);
+  });
+
+  it('reads a relayer account that does not exist as empty; any other failure throws', async () => {
+    stubRpc(() => ({ error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_ACCOUNT' } } }));
+    expect(await new NearChain(new Rpc([PRIMARY]), SIGNER).relayerFunds('gone.test.near')).toMatchObject({ exists: false, available: '0', keys: [] });
+    vi.restoreAllMocks();
+    stubRpc(() => new TypeError('down'));
+    await expect(new NearChain(new Rpc([PRIMARY]), SIGNER).relayerFunds('relayer.test.near')).rejects.toBeInstanceOf(RpcError);
+    vi.restoreAllMocks();
+    stubRpc((_u, _m, p) => (p.request_type === 'view_account' ? { result: { amount: '1', storage_usage: 0 } } : { result: { nope: true } }));
+    await expect(new NearChain(new Rpc([PRIMARY]), SIGNER).relayerFunds('relayer.test.near')).rejects.toThrow(/view_access_key_list/u);
+  });
+
   it('treats a contract without get_issuer_keys as no key material', async () => {
     stubRpc((_u, _m, p) => (p.method_name === 'get_issuer_keys' ? { result: { error: 'MethodResolveError(MethodNotFound)' } } : viewResult(views[p.method_name as string])));
     expect((await new NearChain(new Rpc([PRIMARY]), SIGNER).snapshot('google')).issuerKeys).toBeNull();

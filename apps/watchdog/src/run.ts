@@ -8,7 +8,9 @@
 //     and deletes every updater key (whoever proposed it: by then the change record is gone, and only the updater
 //     or the owner can post keys; a needless deletion costs one council vote in a recovery that needs one anyway);
 //   - confirms pending changes that match Google's JWKS (D86).
-// Everything else is an alert (D85). Dependencies are injected so every path is tested against stubs.
+// Everything else is an alert (D85), the relayer's funds included: the watchdog reads the relayer account's balance and
+// its pool keys' allowances and never tops anything up (it holds no key on that account). Dependencies are injected
+// so every path is tested against stubs.
 import { GOOGLE_PROVIDER, type Jwk, sameRsaKey } from '@hana-id/jwks';
 import { type DeliveryReport, deliverAlerts } from './alerts.ts';
 import type { ChainReader, ChainSnapshot, ChainWriter, KeyChange, WatchdogMethod } from './chain.ts';
@@ -17,12 +19,18 @@ import { ALERT_KINDS, type AlertKind, CHANNELS, CHECK_IDS, type CheckId } from '
 import { maybeSendDigest } from './digest.ts';
 import { diffChain, type StoredSnapshot } from './diff.ts';
 import { log } from './log.ts';
+import { formatNear, level, RELAYER_POOLS, type RelayerFunds, type RelayerThresholds, type Threshold } from './relayer.ts';
 import { ident } from './sanitize.ts';
 import { iso } from './time.ts';
-import type { CheckResult, Store } from './store.ts';
+import type { CheckResult, SeenKid, Store } from './store.ts';
 
 /** A kid with a pending change counts as not published once absent from two fetches at least this far apart. */
 export const ABSENCE_RECHECK_MS = 60_000;
+/**
+ * A pending Add of a kid Google doesn't publish now, but did publish with the same key material within this window,
+ * is a race with Google's key retirement (the API cron's fetch still listed it), not a forgery (D153).
+ */
+export const RETIRED_KEY_GRACE_MS = 24 * 60 * 60_000;
 /** An active kid Google stopped publishing longer ago than this is stale (warning). */
 export const STALE_ACTIVE_KID_MS = 3 * 60 * 60_000;
 /** A change executable for longer than this that nobody executed (warning). */
@@ -45,6 +53,10 @@ export interface RunConfig {
   signer: string;
   watchdogAccount: string;
   digestHourUtc: number;
+  /** The relayer account to monitor (null: not configured, the `relayer_funds` check is skipped). */
+  relayer: string | null;
+  /** Thresholds, and any problem reading the configured ones (shown in the `config` check). */
+  relayerThresholds: { thresholds: RelayerThresholds; problems: string[] };
 }
 
 export interface RunDeps {
@@ -88,7 +100,15 @@ export const META = {
   jwksFailures: 'jwks_failures',
   heartbeat: 'heartbeat',
   digest: 'digest',
+  /** The last relayer reading with the thresholds it was judged against (`GET /status` `relayer_funds`). */
+  relayerFunds: 'relayer_funds',
 } as const;
+
+/** What `GET /status` serves as `relayer_funds`: the last reading, when, and the thresholds (yocto strings). */
+export interface RelayerFundsStatus extends RelayerFunds {
+  at: number;
+  thresholds: Record<keyof RelayerThresholds, { warn: string; critical: string }>;
+}
 
 export interface HeartbeatState {
   last_ping_at: number | null;
@@ -186,7 +206,7 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
 
     // ---- config ----
     run.evaluate('watchdog_key_missing', 'channel_not_configured');
-    run.check('config', 'ok');
+    run.check('config', 'ok', cfg.relayerThresholds.problems.join('; ') || undefined);
     if (!d.writer) await run.condition('watchdog_key_missing', 'watchdog_key_missing', 'The watchdog has no usable key: it can alert but not act', { account: cfg.watchdogAccount });
     const channels = { pager: d.notifier.pager.configured, slack: d.notifier.slack.configured, email: d.notifier.email.configured, heartbeat: d.notifier.heartbeat.configured };
     for (const [name, ok] of Object.entries(channels)) {
@@ -305,6 +325,11 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
         }
       }
 
+      // Read for D153 only. A failed read must not hold back a cancel: without it every unpublished Add is forged.
+      const seen = await store.seenKids(GOOGLE_PROVIDER).catch(() => {
+        log({ event: 'seen_kids_read_failed', runId }, 'error');
+        return new Map<string, SeenKid>();
+      });
       for (const c of pending) {
         const jwk = jwksNow.get(c.kid);
         if (c.op === 'Add') {
@@ -315,6 +340,11 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
           const reason = jwk ? 'other_key_material' : absent.has(c.kid) ? 'not_published' : null;
           if (!reason) {
             run.check('pending_key_changes', 'ok', `${ident(c.kid)} absent once, rechecking next run`);
+            continue;
+          }
+          const lastSeen = reason === 'not_published' && c.by === cfg.signer ? retiredAt(seen.get(c.kid), c, d.now()) : null;
+          if (lastSeen !== null) {
+            await retiredPending(run, c, lastSeen, canAct, settled);
             continue;
           }
           await forgedPending(run, s, c, reason, jwk ?? null, canAct, settled, deleted, self);
@@ -364,7 +394,12 @@ export async function runWatchdog(d: RunDeps): Promise<RunReport> {
     } else {
       for (const id of ['governance_diff', 'unexecuted_changes'] as const) run.check(id, 'skipped', 'no chain read');
     }
-    if (!complete) outcome = 'degraded';
+    // ---- relayer funds (alert only) ----
+    let relayerRead = true;
+    if (!networkOk) run.check('relayer_funds', 'skipped', 'no chain read');
+    else if (!cfg.relayer) run.check('relayer_funds', 'skipped', 'RELAYER_ACCOUNT not set');
+    else relayerRead = await checkRelayerFunds(run, cfg.relayer, cfg.relayerThresholds.thresholds);
+    if (!complete || !relayerRead) outcome = 'degraded';
 
     // ---- alerts out (first deliveries, re-sends, pager acks) ----
     delivery = await deliverAlerts(store, d.notifier, d.now(), cfg.envName);
@@ -434,6 +469,37 @@ async function confirm(run: Run, c: KeyChange, settled: Set<number>): Promise<vo
   } else {
     await run.event('confirm_failed', `confirm_failed:${a.id}`, `Confirming change ${c.id} (${ident(c.op)} ${ident(c.kid)}) failed`, { ...changeDetails(c), ...actionDetail(a) });
   }
+}
+
+/**
+ * When Google last published this Add's kid with the same key material, if within RETIRED_KEY_GRACE_MS of `now`
+ * (D153); null otherwise. Only kids the watchdog fetched itself count, not first-run baseline kids.
+ */
+export function retiredAt(s: SeenKid | undefined, c: KeyChange, now: number): number | null {
+  if (!s || s.source !== 'jwks' || s.last_seen_at === null || !s.n || !s.e || !c.n || !c.e) return null;
+  if (now - s.last_seen_at > RETIRED_KEY_GRACE_MS) return null;
+  return sameRsaKey({ n: c.n, e: c.e }, { n: s.n, e: s.e }) ? s.last_seen_at : null;
+}
+
+/**
+ * D153: the updater proposed a key Google published, with this material, until recently. The API cron's fetch raced
+ * Google's retirement of the kid. Cancelled (a retired key has no use), the updater keys kept, one warning.
+ */
+async function retiredPending(run: Run, c: KeyChange, lastSeen: number, canAct: boolean, settled: Set<number>): Promise<void> {
+  let outcome: 'cancelled' | 'gone' | 'failed' | 'not_sent' = 'not_sent';
+  let cancel: ActionSummary | null = null;
+  if (canAct) {
+    cancel = await run.act('cancel_issuer_key_change', { id: c.id }, `${ident(c.kid)}: retired by Google`);
+    outcome = cancel.ok ? 'cancelled' : CHANGE_GONE.test(cancel.error ?? '') ? 'gone' : 'failed';
+    if (outcome !== 'failed') settled.add(c.id);
+  }
+  const what = { cancelled: 'cancelled', gone: 'already gone from the queue', failed: 'the cancel failed (retried next run)', not_sent: 'the watchdog could not act' }[outcome];
+  await run.event('retired_key_change', `retired_key_change:${c.id}`, `Retired Google key ${ident(c.kid)} proposed (change ${c.id}): Google stopped publishing it after ${iso(lastSeen)}; ${what}, updater key kept`, {
+    ...changeDetails(c),
+    last_seen_jwks_at: lastSeen,
+    outcome,
+    actions: cancel ? [actionDetail(cancel)] : [],
+  });
 }
 
 /** Why a pending change is treated as forged and cancelled. */
@@ -627,6 +693,61 @@ async function queueExits(run: Run, prev: StoredSnapshot | null, s: ChainSnapsho
     if (tookEffect) await run.event('key_change_executed', `executed:${p.id}`, `Key change ${p.id} took effect: ${ident(p.op)} ${ident(p.kid)}`, changeDetails(p));
     else await run.event('key_change_cancelled', `cancelled:${p.id}`, `Key change ${p.id} left the queue without taking effect: ${ident(p.op)} ${ident(p.kid)}`, changeDetails(p));
   }
+}
+
+const thresholdText = (t: Threshold) => ({ warn_below: formatNear(t.warn), critical_below: formatNear(t.critical) });
+
+/**
+ * Reads the relayer account and raises one condition per thing running low: its available balance (critical below
+ * the critical threshold, else a warning below the warning one), each pool key's remaining allowance (the same way,
+ * per key and pool), and a pool with no key at all. A refill, a replaced key or a raised allowance resolves them at
+ * the next run. Returns false when the read failed: nothing is judged then, and open alerts stay open.
+ */
+async function checkRelayerFunds(run: Run, relayer: string, t: RelayerThresholds): Promise<boolean> {
+  let f: RelayerFunds;
+  try {
+    f = await run.d.chain.relayerFunds(relayer);
+  } catch {
+    run.check('relayer_funds', 'error', 'relayer account read failed');
+    log({ event: 'relayer_read', outcome: 'error', runId: run.id }, 'warn');
+    return false;
+  }
+  const at = run.d.now();
+  const str = (x: Threshold) => ({ warn: x.warn.toString(), critical: x.critical.toString() });
+  await run.d.store.setMeta(META.relayerFunds, { ...f, at, thresholds: { balance: str(t.balance), session: str(t.session), owner: str(t.owner) } } satisfies RelayerFundsStatus);
+  run.evaluate('relayer_balance_critical', 'relayer_balance_low', 'relayer_allowance_critical', 'relayer_allowance_low', 'relayer_pool_empty');
+  const available = BigInt(f.available);
+  const counts = RELAYER_POOLS.map((p) => `${f.keys.filter((k) => k.pool === p).length} ${p}`).join(', ');
+  run.check('relayer_funds', 'ok', `${formatNear(available)} available; pool keys: ${counts}${f.other_keys.length ? `; ${f.other_keys.length} other key(s) for the signer not judged` : ''}`);
+  const account = ident(relayer);
+
+  const balance = level(available, t.balance);
+  const balanceDetails = { account: relayer, exists: f.exists, available: formatNear(available), available_yocto: f.available, amount_yocto: f.amount, storage_usage: f.storage_usage, ...thresholdText(t.balance) };
+  if (balance === 'critical') {
+    await run.condition('relayer_balance_critical', 'relayer_balance_critical', f.exists ? `Relayer ${account} has ${formatNear(available)} available (critical below ${formatNear(t.balance.critical)}): relays fail when it runs out` : `Relayer account ${account} does not exist: every relay fails`, balanceDetails);
+  } else if (balance === 'warn') {
+    await run.condition('relayer_balance_low', 'relayer_balance_low', `Relayer ${account} has ${formatNear(available)} available (warning below ${formatNear(t.balance.warn)})`, balanceDetails);
+  }
+
+  for (const pool of RELAYER_POOLS) {
+    const keys = f.keys.filter((k) => k.pool === pool);
+    const th = t[pool];
+    if (keys.length === 0) {
+      await run.condition('relayer_pool_empty', `relayer_pool_empty:${pool}`, `Relayer ${account} has no ${pool}-pool key for ${ident(run.d.config.signer)}: every ${pool === 'session' ? 'login' : 'owner action'} relay fails`, { account: relayer, pool, receiver: run.d.config.signer });
+      continue;
+    }
+    for (const k of keys) {
+      if (k.allowance === null) continue; // unlimited: only the account balance bounds it
+      const left = BigInt(k.allowance);
+      const lv = level(left, th);
+      if (lv === 'ok') continue;
+      const details = { account: relayer, pool, public_key: k.public_key, allowance: formatNear(left), allowance_yocto: k.allowance, ...thresholdText(th) };
+      const kind = lv === 'critical' ? 'relayer_allowance_critical' : 'relayer_allowance_low';
+      const below = lv === 'critical' ? `critical below ${formatNear(th.critical)}` : `warning below ${formatNear(th.warn)}`;
+      await run.condition(kind, `${kind}:${pool}:${k.public_key}`, `Relayer ${pool}-pool key ${ident(k.public_key)} has ${formatNear(left)} of allowance left (${below})`, details);
+    }
+  }
+  return true;
 }
 
 async function heartbeat(run: Run): Promise<void> {

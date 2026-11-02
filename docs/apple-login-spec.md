@@ -1,8 +1,10 @@
 # Sign in with Apple spec (pre-mainnet)
 
-**Status: DRAFT (2026-10-30), for review.** Specifies `docs/decisions.md` D124 (Sign in with Apple, after email login
-and the partner identity token). 18 [open questions](#open-questions-for-the-user) for the user; nothing here is
-decided until they are answered and recorded in `docs/decisions.md`.
+**Status: PAUSED (2026-11-02), not built (D160).** Specifies `docs/decisions.md` D124 (Sign in with Apple, after email
+login and the partner identity token). The initial build is Google and email only; Apple is built when partners ask
+for it. Q1–Q5 of the [open questions](#open-questions-for-the-user) are answered (see [Answers so far](#answers-so-far)
+and D160); Q6–Q18 are open and are asked again when the work resumes. Where an answer differs from this draft's
+recommendation (Q1 = B), the draft's body below still describes the recommendation: rewrite it on resuming.
 
 This file becomes the source of truth for the batch once approved. If code and this spec disagree, fix the code or
 raise the problem. Reference docs (`architecture.md`, `security.md`, `contract-interface.md`, `api.md`,
@@ -887,6 +889,18 @@ Hana: `docs/decisions.md` D25, D33, D40–D42, D77, D80–D86, D96, D119–D127;
 [Current state](#current-state-and-baseline).
 
 ## Open questions for the user
+
+### Answers so far
+
+Recorded 2026-11-02 in D160. The rest (Q6–Q18) are open; Q16–Q18 apply because Q1 = B.
+
+| Q | Answer | Notes |
+|---|---|---|
+| 1. Apple email | **B**: a second, email-only Apple client in its own app group, its token never on chain | Chosen to behave like Privy (partners receive Apple users' emails). Costs a second Apple prompt at an Apple identity's first login in an app, and about 2.5k lines |
+| 2. Developer team | **Provisional: the existing Apple developer team of the company that publishes Hana Wallet and Wend**, for testnet | Not final. Must be confirmed or changed at the production-readiness check, before the address freeze (the team decides every Apple address) |
+| 3. Client tiers | **A**: every Apple client in Hana's team | Partner-held Apple accounts (B) may be added later if customers ask, for partners that start on them; a partner already live on Hana's clients can't switch without new wallets for its Apple users |
+| 4. App groups | **A**: the shared client in a Hana group, each Enterprise client in its own group | |
+| 5. Native iOS | **A**: the web flow (`ASWebAuthenticationSession`) only | A "partner-managed Apple" tier with the native sheet may follow if customers ask. Its trade-off: the partner's app receives the Apple token and can open sessions for its own users' wallets (partner custody within its scope), and those wallets differ from the same users' Hana-team wallets |
 
 Each question stands alone: the options, what each costs, and the recommendation. Answer by number ("Q3: A").
 Questions 16–18 matter only if Q1 is B.

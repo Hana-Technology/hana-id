@@ -26,7 +26,7 @@ import { clearJwksCache } from '../src/jwks.ts';
 import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { GOVERNANCE_METHODS, UPDATER_METHODS, parseRelayerKeys } from '../src/relayer-config.ts';
 import { clearViewCaches, parsePendingShared } from '../src/views.ts';
-import { call } from './helpers.ts';
+import { call, startOfMinuteClock } from './helpers.ts';
 import { NearMock, type RsaSigner, makeJwt, panic, rsaSigner } from './near-mock.ts';
 
 const GOOGLE = 'https://accounts.google.com';
@@ -202,6 +202,7 @@ describe('POST /v1/owner-actions', () => {
   });
 
   it(`limits each IP to ${OWNER_ACTIONS_PER_IP_MINUTE} per minute`, async () => {
+    await startOfMinuteClock();
     near();
     const from = '198.18.0.9';
     const statuses: number[] = [];

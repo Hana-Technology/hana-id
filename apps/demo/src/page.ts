@@ -26,6 +26,7 @@ export type DemoClient = Pick<
   | 'logout'
   | 'exportKey'
   | 'revokeOtherDevices'
+  | 'getIdentityToken'
   | 'on'
   | 'stellar'
   | 'ethereum'
@@ -75,6 +76,33 @@ const show = (id: string, visible: boolean): void => {
 const disable = (id: string, disabled: boolean): void => {
   el<HTMLButtonElement>(id).disabled = disabled;
 };
+
+/** A JWT's header and claims, decoded for display only (the page never trusts them: the partner backend verifies). */
+export function decodeToken(token: string): { header: Record<string, unknown>; claims: Record<string, unknown> } | null {
+  const part = (s: string): Record<string, unknown> => JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(s.replace(/-/gu, '+').replace(/_/gu, '/') + '='.repeat((4 - (s.length % 4)) % 4)), (ch) => ch.charCodeAt(0)))) as Record<string, unknown>;
+  const [h, c] = token.split('.');
+  try {
+    return h && c ? { header: part(h), claims: part(c) } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The verify-it-yourself snippet for a token's issuer and audience (docs/integration.md "Identity token"). */
+export function verifySnippet(iss: string, aud: string): string {
+  return [
+    "import { createRemoteJWKSet, jwtVerify } from 'jose';",
+    '',
+    `const keys = createRemoteJWKSet(new URL('${iss}/jwks.json'));`,
+    'const { payload } = await jwtVerify(token, keys, {',
+    `  issuer: '${iss}',`,
+    `  audience: '${aud}',`,
+    "  algorithms: ['ES256'],",
+    "  typ: 'hana-identity+jwt',",
+    '});',
+    '// payload.sub: the user in this app; payload.sid: this session; payload.wallets: their addresses.',
+  ].join('\n');
+}
 
 /** "in 11 h 58 min" / "in 4 min" / "now". */
 export function untilText(ms: number): string {
@@ -182,7 +210,25 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     p.textContent = status === 'logging_in' ? progress : '';
     p.hidden = !p.textContent;
     renderAddresses(loggedIn ? c.addresses : null);
-    for (const id of ['logout', 'revoke', 'sign-personal', 'sign-stellar', 'sign-evm-tx', 'export-stellar', 'export-evm']) disable(id, pending || !loggedIn);
+    show('identity', loggedIn);
+    if (!loggedIn) renderIdentity(null);
+    for (const id of ['logout', 'revoke', 'sign-personal', 'sign-stellar', 'sign-evm-tx', 'export-stellar', 'export-evm', 'identity-token']) disable(id, pending || !loggedIn);
+  }
+
+  /** The decoded token (display only) and the verify snippet, or nothing. */
+  function renderIdentity(token: string | null): void {
+    const decoded = token === null ? null : decodeToken(token);
+    show('identity-result', decoded !== null);
+    if (!decoded) {
+      el('identity-claims').textContent = '';
+      el('identity-snippet').textContent = '';
+      el('identity-expiry').textContent = '';
+      return;
+    }
+    el('identity-claims').textContent = JSON.stringify(decoded, null, 2);
+    const exp = typeof decoded.claims.exp === 'number' ? decoded.claims.exp * 1000 : null;
+    el('identity-expiry').textContent = exp === null ? '' : `Expires ${untilText(exp - clock())}. Send it to your backend as Authorization: Bearer <token>.`;
+    el('identity-snippet').textContent = verifySnippet(String(decoded.claims.iss ?? ''), String(decoded.claims.aud ?? ''));
   }
 
   function renderTimings(): void {
@@ -355,6 +401,11 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
     run('revoke', async () => {
       const { revoked } = await c.revokeOtherDevices();
       notice(revoked === 0 ? 'No other device was signed in.' : `Signed out ${revoked} other device${revoked === 1 ? '' : 's'}.`);
+    }),
+  );
+  el('identity-token').addEventListener('click', () =>
+    run('identity', async () => {
+      renderIdentity(await c.getIdentityToken());
     }),
   );
   el('sign-personal').addEventListener('click', () =>

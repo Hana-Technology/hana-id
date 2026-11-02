@@ -330,7 +330,7 @@ Every run, one-transaction and two-transaction, gave the same Stellar and EVM ad
   caught by InvalidNonce and one re-read) and the stored block hash while under 5 min old: no chain read. Each cold
   start still skips up to 99 nonces and writes one reservation (~3–30 ms).
 - Function-call key allowances drop by gas **burnt**, not attached (refunds restore them): 3 × 2 NEAR covers ~1,500
-  logins. Mainnet needs allowance monitoring and key rotation.
+  logins. Mainnet needs allowance monitoring (built: the watchdog's `relayer_funds` check, D150) and key rotation.
 - Google `sub` is the same across the partner and shared clients (same Google Cloud project; across two projects too,
   2026-10-28, D42).
 - Rejected derives (counter replayed, `max_uses` reached) cost ~2.2 Tgas each, and signed derive requests are public
@@ -393,8 +393,8 @@ EVM `personal_sign` was approved and returned.
 5. Backup Google addresses for admin-portal access (D88); where the offline backup council key is held (D81, before
    mainnet).
 6. ~~Create the Neon project~~ Done 2026-10-30: project `hana-id` (`aged-cell-90359381`, org
-   `org-red-heart-13914393`), AWS Sydney `aws-ap-southeast-2`, Postgres 18; branches `production` (default, kept for
-   mainnet) and `sandbox-dev`. Neon Auth and Neon's other services are not used (D75, D74). Batch C is unblocked.
+   `org-red-heart-13914393`), AWS Sydney `aws-ap-southeast-2`, Postgres 18; branches `production` (default) and
+   `sandbox-dev`; mainnet's ledger gets its own Neon project (D143). Neon Auth and Neon's other services are not used (D75, D74). Batch C is unblocked.
 7. **Confirm the email provider with the colleague** before creating any account: Resend is recorded (D87) but
    another provider may be used instead. The email code sits behind one small interface, so a switch is cheap.
 8. **Choose the watchdog's paging app with the colleague** (paused 2026-10-30). Candidates: Pushover (30-day trial,

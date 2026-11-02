@@ -1,5 +1,5 @@
 // An in-memory D1 for the local stack: node:sqlite with apps/api's real migrations applied, behind the part of the D1
-// API the API Worker's code uses (`prepare(sql).bind(...).first() / .all() / .run()`). Apps are real rows, so the
+// API the API Worker's code uses (`prepare(sql).bind(...).first() / .all() / .run()`, and `batch`). Apps are real rows, so the
 // vault page is rendered by apps/api's handleVaultPage from the same SQL it runs on D1.
 import { readFileSync, readdirSync } from 'node:fs';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
@@ -34,8 +34,18 @@ class Statement {
   }
 
   async run(): Promise<{ success: true; meta: { changes: number } }> {
-    const r = this.db.prepare(this.sql).run(...this.args);
-    return { success: true, meta: { changes: Number(r.changes) } };
+    return this.runSync();
+  }
+
+  runSync(): { success: true; meta: { changes: number }; results: Row[] } {
+    const stmt = this.db.prepare(this.sql);
+    // A statement with RETURNING answers rows (D1's batch gives them in `results`).
+    if (/\breturning\b/iu.test(this.sql)) {
+      const results = stmt.all(...this.args).map(plain);
+      return { success: true, meta: { changes: results.length }, results };
+    }
+    const r = stmt.run(...this.args);
+    return { success: true, meta: { changes: Number(r.changes) }, results: [] };
   }
 }
 
@@ -50,5 +60,18 @@ export class D1Shim {
 
   prepare(sql: string): Statement {
     return new Statement(this.db, sql);
+  }
+
+  /** D1's batch: the statements in order, in one transaction (all or none). */
+  async batch(statements: Statement[]): Promise<{ success: true; meta: { changes: number }; results: Row[] }[]> {
+    this.db.exec('BEGIN');
+    try {
+      const out = statements.map((s) => s.runSync());
+      this.db.exec('COMMIT');
+      return out;
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
   }
 }

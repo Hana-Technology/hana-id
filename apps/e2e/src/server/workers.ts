@@ -94,11 +94,18 @@ export class MemoryNamespace<T extends object> {
 
 /**
  * RATE_LIMITER that always allows. The real windows are per IP, and every page in the suite is the same client: the
- * relay's 10 writes per minute would fail a parallel run. apps/api's own tests cover the limits.
+ * relay's 10 writes per minute would fail a parallel run. apps/api's own tests cover the limits, and the single-use
+ * markers (`reserve`: the identity token's session proofs), which this always grants.
  */
 export const allowAllLimiter = {
   idFromName: (name: string): string => name,
-  get: (_id: string) => ({ hit: async () => ({ ok: true as const }) }),
+  get: (_id: string) => ({
+    hit: async () => ({ ok: true as const }),
+    hitSliding: async () => ({ ok: true as const }),
+    unhitSliding: async () => undefined,
+    reserve: async () => true,
+    release: async () => undefined,
+  }),
 };
 
 /** A Rate Limiting binding (the vault's VAULT_IP_LIMIT, VAULT_SHARE_LIMIT) that always allows, for the same reason. */

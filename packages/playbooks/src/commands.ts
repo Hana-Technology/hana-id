@@ -14,6 +14,14 @@ export const ownerCall = (method: string, args?: string): string => `${SCRIPTS} 
 export const governanceStatus = `${SCRIPTS} admin <env> governance:status`;
 export const ownerProposals = `${SCRIPTS} admin <env> owner:proposals`;
 export const ownerVote = `${SCRIPTS} admin <env> owner:vote <proposal id> --member <member> --yes`;
+/** A `VoteReject` (dev envs: key from .secrets; elsewhere the member's own key). Two rejections close a proposal. */
+export const ownerVoteReject = `${SCRIPTS} admin <env> owner:vote <proposal id> --member <member> --reject --yes`;
+/**
+ * Replace a council member (`docs/operations.md` "Replacing a council member"): RemoveMemberFromRole, then
+ * AddMemberToRole. Dev envs add `--approve-with <second member>`; elsewhere it proposes and prints each member's vote.
+ */
+export const councilReplaceMemberPlan = `${SCRIPTS} admin <env> council:replace-member --remove <old member> --add <new member> --member <member>`;
+export const councilReplaceMember = `${SCRIPTS} admin <env> council:replace-member --remove <old member> --add <new member> --member <member> --yes`;
 export const deployContractPlan = `${SCRIPTS} deploy-contract <env>`;
 export const deployContract = `${SCRIPTS} deploy-contract <env> --yes`;
 export const upgradePropose = `${SCRIPTS} deploy-contract <env> --upgrade --yes`;
@@ -22,6 +30,13 @@ export const postGoogleKeysDry = `${SCRIPTS} post-google-keys <env> --dry-run`;
 export const postGoogleKeys = `${SCRIPTS} post-google-keys <env>`;
 export const postGoogleKeysExecute = `${SCRIPTS} post-google-keys <env> --execute`;
 export const vaultKekRotate = `${SCRIPTS} vault-kek <env> rotate --yes`;
+/** The identity token's signing keys (`docs/operations.md` "Identity token keys", D177). */
+export const identityKeyShow = `${SCRIPTS} identity-key <env> show`;
+export const identityKeyNext = `${SCRIPTS} identity-key <env> next --yes`;
+export const identityKeySwitchStandby = `${SCRIPTS} identity-key <env> switch --to standby --yes`;
+export const identityKeySwitchNext = `${SCRIPTS} identity-key <env> switch --to next --yes`;
+export const identityKeyRetirePrevious = `${SCRIPTS} identity-key <env> retire --key previous --yes`;
+export const identityKeyRetireStandby = `${SCRIPTS} identity-key <env> retire --key standby --yes`;
 export const vaultKekPut = `${SCRIPTS} vault-kek <env> put --yes`;
 export const appList = `${SCRIPTS} admin <env> app:list --remote`;
 export const appSettings = `${SCRIPTS} admin <env> app:settings <app id | publishable key> --remote`;
@@ -66,6 +81,16 @@ export const apiTailErrors = 'corepack pnpm --dir apps/api exec wrangler tail <c
 export const apiTail = 'corepack pnpm --dir apps/api exec wrangler tail <cloudflare.workerName> --format pretty';
 export const d1Migrate = 'corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --remote';
 
+/** D1 Time Travel (`docs/operations.md` "Restoring a D1 database (Time Travel)"): the API's `DB`. */
+export const apiD1Bookmark = 'corepack pnpm --dir apps/api exec wrangler d1 time-travel info <cloudflare.d1Name>';
+export const apiD1BookmarkAt = 'corepack pnpm --dir apps/api exec wrangler d1 time-travel info <cloudflare.d1Name> --timestamp=<RFC 3339 time before the loss>';
+export const apiD1Export = 'corepack pnpm --dir apps/api exec wrangler d1 export <cloudflare.d1Name> --remote --output=../../.secrets/<env>/d1-before-restore-<yyyymmdd>.sql';
+export const apiD1Restore = 'corepack pnpm --dir apps/api exec wrangler d1 time-travel restore <cloudflare.d1Name> --bookmark=<bookmark>';
+/** The same for the watchdog's D1, from apps/watchdog on the watchdog's Cloudflare account. */
+export const watchdogD1Bookmark = 'corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel info <watchdog.cloudflare.d1Name>';
+export const watchdogD1BookmarkAt = 'corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel info <watchdog.cloudflare.d1Name> --timestamp=<RFC 3339 time before the loss>';
+export const watchdogD1Restore = 'corepack pnpm --dir apps/watchdog exec wrangler d1 time-travel restore <watchdog.cloudflare.d1Name> --bookmark=<bookmark>';
+
 /** Revoke every live vault share (`docs/operations.md` "`VAULT_KEK`", KEK compromised). */
 export const revokeAllShares =
   "corepack pnpm --dir apps/api exec wrangler d1 execute <cloudflare.d1Name> --remote --command \"UPDATE vault_shares SET revoked_at = CAST(strftime('%s','now') AS INTEGER) * 1000 WHERE revoked_at IS NULL\"";
@@ -73,6 +98,8 @@ export const countOldKekRows =
   'corepack pnpm --dir apps/api exec wrangler d1 execute <cloudflare.d1Name> --remote --command "SELECT COUNT(*) AS n FROM vault_shares WHERE kek_id = <old id>"';
 export const deletePreviousKek = 'corepack pnpm --dir apps/api exec wrangler secret delete VAULT_KEK_PREVIOUS --name <cloudflare.workerName>';
 
+/** Fund the relayer account (`docs/operations.md` "Relayer keys (either pool)"); testnet only. */
+export const fundRelayer = "near tokens <funded testnet account> send-near <relayer> '<amount> NEAR' network-config testnet sign-with-legacy-keychain send";
 export const deleteRelayerKey = 'near account delete-keys <relayer> public-keys <ed25519:…> network-config testnet sign-with-legacy-keychain send';
 export const deleteWatchdogKey = 'near account delete-keys <watchdog.account> public-keys <ed25519:…> network-config testnet sign-with-legacy-keychain send';
 export const executeIssuerKeyChange =

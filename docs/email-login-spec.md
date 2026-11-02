@@ -1,8 +1,15 @@
 # Email login and account linking spec (pre-mainnet)
 
-**Status: APPROVED (2026-10-30), not built.** Every open question is answered (below and
-[Open questions](#open-questions-for-the-user)): `docs/decisions.md` D4 (confirmed), D119, D121–D123, and the
-amendments to D25 and D96.
+**Status: APPROVED (2026-10-30); batch 1 (the contract) built on `feat/email-login-1`, the rest not built.** Every
+open question is answered (below and [Open questions](#open-questions-for-the-user)): `docs/decisions.md` D4
+(confirmed), D119, D121–D123, and the amendments to D25 and D96. **Amended 2026-10-30 after the batch 1 build and its
+security review** (D130–D136; the current contract is `docs/contract-interface.md`): `opened` is recorded at
+derivation; the session key's signature binds `link_jwt` and its mode, and the `auto_link` nonce commits to the join;
+only `email` can be self-issued; links wait for the owner after a migration from pre-v3 state; a linked identity's
+own path never derives; a cancelled link keeps the match (D132); after the second review, a bare `create_session`
+needs a proof of possession bound to its parameters (D137), a replacing signer policy needs new signer ids (D138), and
+the vault signs case B only after its own email step (D139). The obligations this puts on the vault, the issuer
+and the API are marked "(D133)" etc. below.
 
 This file is the source of truth for the batch once approved. If code and this spec disagree, fix the code or raise
 the problem. Reference docs (`contract-interface.md`, `security.md`, `architecture.md`, `api.md`, `integration.md`,
@@ -482,8 +489,8 @@ move (TEE or co-signed issuer) keeps every address.
 
 Per scope, identities `(provider, sub)` form **accounts**. An account has a **root** (the identity whose own path is
 the account's wallet) and up to 3 **members** (identities that open the root's path). An identity is in at most one
-account per scope. An identity **has a wallet** in a scope when a session was ever opened on its own path there: the
-contract records that in `opened` at every `create_session*` (it is the only definition the rules use: testable on
+account per scope. An identity **has a wallet** in a scope when its own path was ever derived there: the
+contract records that in `opened` at every derivation (D130; it is the only definition the rules use: testable on
 chain, independent of RPCs and balances). Links are per scope: logging in to app X never changes which wallet an
 identity opens in app Y (Q14; a Hana Home "link everywhere" may come later).
 
@@ -530,7 +537,8 @@ What Privy does, for comparison (docs read 2026-10-29):
 Decided by the user (Q15, Q16, Q18; D119, D122). The issuer reads `get_identity(scope, "google", G)` and
 `get_identity(scope, "email", sub_E)` and answers with a `decision` and `googleHosted`. Linking happens inside the
 login's own `create_session_and_derive`, through its new `link_jwt` argument (an email token whose `auto_link` nonce
-commits to this session's nonce, the Google identity, the target account's epoch and the link mode), so it needs this
+commits to this session's nonce, the Google identity, the join (who joins which account), the target account's epoch
+and the link mode; the session key signs the link token and mode too, D133), so it needs this
 live Google login and can't be replayed into another session.
 
 **Google-hosted** (computed by the issuer from Google's userinfo, never stored): the normalized address's domain is
@@ -593,6 +601,8 @@ fields, so `verify` returns the `auto_link` token itself; case B starts as an em
 Google account's verified address normalizes to the same `sub`. If the user picks a Google account with another
 address, nothing is joined and the popup offers explicit linking. The link mode (`immediate` or after
 `change_delay_ms`) is in the `auto_link` nonce, set by the issuer: immediate for case A and Google-hosted case B.
+The issuer also puts the join it decided into the nonce (`join`, `joiner_ik`, `target_root_ik`, read from
+`get_identity` and `get_account` at minting, D133), so the token is refused if the chain state moved to another case.
 
 A pending link refuses logins by the joining identity with `link_pending` (the popup shows when it activates and a
 Cancel). The issuer mints an `auto_link` email token only after checking `email_verified = true`, the normalized
@@ -688,8 +698,8 @@ Identity key: `ik = sha256("hana-id/identity/v1" ‖ borsh(scope_id) ‖ borsh(p
 
 ### Self-issued issuers
 
-- `mark_self_issued(provider)`, owner, one way, `Unknown issuer`; sets `{signers: ["hana"], required: 1}`. Event
-  `issuer_self_issued {provider}`.
+- `mark_self_issued(provider)`, owner, one way, `email` only (`Only the email issuer can be self-issued`, D134),
+  `Unknown issuer`; sets `{signers: ["hana"], required: 1}`. Event `issuer_self_issued {provider}`.
 - For such a provider: `set_issuer_key` takes `signer` (one of `signers`, else `Unknown signer`); by "self" it panics
   `Only the owner posts keys for this issuer`; `executable_at_ms` is also at least `now + governance_delay_ms`;
   `confirm_issuer_key_change` panics `Keys of a self-issued issuer can't be confirmed early`. Removal by the owner
@@ -713,15 +723,25 @@ Identity key: `ik = sha256("hana-id/identity/v1" ‖ borsh(scope_id) ‖ borsh(p
    proves old callers are unaffected):
    - `link_jwt: Option<String>`: an email token for the scope's email client (`verify_token`, provider in
      `self_issued`, `session_scope` gives the same scope) whose nonce is the `auto_link` nonce over this call's session
-     nonce, X, the target epoch and `link_immediate: Option<bool>` (a second new argument, default `false`). Then the
+     nonce, X, the join (who joins which account, D133), the target epoch and `link_immediate: Option<bool>` (a second
+     new argument, default `false`). With a link, the counter-1 signature of the session key is over the **linked CKD
+     payload** (`"hana-id-ckd-link-v1:" ‖ sha256(link_jwt) ‖ mode u8 ‖ pk1 ‖ ":" ‖ pk2`, D133) instead of the plain
+     one, so nobody but the session key holder can add, swap, change or strip the link. **The vault** verifies the link
+     token (email keys on chain), recomputes its expected `auto_link` nonce (join, joiner, target root and epoch from
+     `get_identity` / `get_account` on its own RPC, mode as the issuer said and the popup showed) and only then signs.
+     Then the
      [four cases](#the-four-cases) on chain: E has a wallet and X none → X joins E's account, active now (`auto:
      true`; the issuer sets `link_immediate` for case A); X has a wallet (or is getting one in this call) and E none →
      E joins X's account, active now if `link_immediate`, else pending `max(now + change_delay_ms,
      changes_unlock_floor_ms)`; both have wallets → `Both sign-in methods already have a wallet`;
      an `unlinked` pair → `This sign-in method was unlinked`. Panics also: `Link token nonce doesn't match`,
      `Account is full`, `Account already has a sign-in method of this kind`.
-3. Path = `{scope}#{path provider}#{path sub}#{key_index}`, unchanged format. If the path identity's key isn't in
-   `opened`, insert it.
+3. Path = `{scope}#{path provider}#{path sub}#{key_index}`, unchanged format. When the path is first derived
+   (`derive_key` and the derive half of the combined call, D130), the path identity's key goes into `opened`; a
+   session whose path identity has since become a member of an account no longer derives (`Sign-in method is linked
+   to an account`, D136).
+
+After a migration from pre-v3 state, every link waits until the owner calls `accept_unrecorded_wallets` (D135).
 
 The session nonce layout is unchanged: it commits to the scope, not the path. A race (a link activating between the
 vault's read and the transaction) makes the vault's pairing check fail; the vault re-reads and retries once.
@@ -758,12 +778,17 @@ examples in `test_fixture.json` (D14).
 link_new     = "hana-id/link-new/v1"     ‖ borsh(signer) ‖ borsh(scope_id) ‖ root_ik ‖ borsh(new provider) ‖ epoch u64 LE ‖ salt
 link_account = "hana-id/link-account/v1" ‖ borsh(signer) ‖ borsh(scope_id) ‖ root_ik ‖ new_ik ‖ epoch u64 LE ‖ salt
 link_change  = "hana-id/link-change/v1"  ‖ borsh(signer) ‖ borsh(scope_id) ‖ borsh("cancel" | "unlink") ‖ root_ik ‖ member_ik ‖ epoch u64 LE ‖ salt
-auto_link    = "hana-id/auto-link/v1"    ‖ borsh(signer) ‖ borsh(scope_id) ‖ sha256(session nonce preimage) ‖ session_ik ‖ target epoch u64 LE ‖ mode u8
+auto_link    = "hana-id/auto-link/v1"    ‖ borsh(signer) ‖ borsh(scope_id) ‖ sha256(session nonce preimage) ‖ session_ik
+               ‖ join u8 ‖ joiner_ik ‖ target_root_ik ‖ target epoch u64 LE ‖ mode u8
+linked CKD payload = "hana-id-ckd-link-v1:" ‖ sha256(link_jwt) ‖ mode u8 ‖ pk1 ‖ ":" ‖ pk2
 ```
 
-`salt` 16..=64 bytes. `target epoch` is the epoch of the account the joining identity joins (0 for none yet). `mode`
-is 1 for `link_immediate`, else 0. `signer` is the signer contract's account id (as in the existing layouts), not an
-email signer id.
+`salt` 16..=64 bytes. `join` is 1 when the session identity joins the link identity's account (case A), 2 when the
+link identity joins the session identity's (cases B, C); `joiner_ik` is the joining identity, `target_root_ik` the
+root of the account it joins, `target epoch` that account's epoch (0 for none yet) (D133: **the issuer** commits to
+the join it decided, so a change of chain state can only make the token fail). `mode` is 1 for `link_immediate`, else
+0. `signer` is the signer contract's account id (as in the existing layouts), not an email signer id. The linked CKD
+payload is what the session key signs (counter 1) in a combined login that carries `link_jwt` (D133).
 
 ### Gas and storage (estimates, to measure in the sandbox and on testnet)
 
@@ -779,7 +804,8 @@ email signer id.
 
 - `ISSUER_PROVIDERS` gains the email `iss`; `/v1/login` and `/v1/sessions` accept email tokens (same allow-list,
   nonce and scope checks; the JWKS from the issuer's endpoint, cached like Google's); `/v1/login` accepts and
-  prechecks `linkJwt` and `linkImmediate` (verifies it, recomputes the `auto_link` nonce). Email tokens are the JWS
+  prechecks `linkJwt` and `linkImmediate` (verifies it, recomputes the `auto_link` nonce with the join from its own chain reads, and checks the session
+  signature against the linked CKD payload, D133). Email tokens are the JWS
   JSON form, checked against `get_self_issued("email")` like the contract (signers, `required`, overlap).
 - `GET /v1/app`: `loginMethods: ("google" | "email")[]` (D1 setting ∩ the scope's on-chain clients), `email: {aud}`
   when on. 409 `no_login_method` replaces `no_google_client` when nothing is available (the old code stays for
@@ -802,7 +828,13 @@ email signer id.
 - **Vault**: verifies email tokens against the on-chain email keys (`get_issuer_keys("email")`, defence in depth);
   computes the path from `get_identity` on its own RPC (never from the API), so `login.ts`, `export-page.ts` and the
   record check in `vault.ts` stop assuming `#google#`; runs `google-match` after a Google token and before the chain
-  call; shows link banners from `get_account`.
+  call; shows link banners from `get_account`. With a link token (D133) it checks the token's signatures against the
+  on-chain email keys, recomputes the expected `auto_link` nonce from its own chain reads (join, joiner, target root,
+  epoch, mode) and refuses on any mismatch, then signs the linked CKD payload; without one it signs the plain payload.
+  It never signs a linked payload for a link the popup didn't show (or, for Google-hosted case A, decide silently),
+  signs `join = 2` (case B) only when this popup ran the user's email-code step and the link token's `sub` is the address
+  verified there (D139), and never derives on a session it meant to link with the plain payload: on `Session key
+  already in use` it revokes that session and restarts with fresh keys and tokens (D137).
 - **SDK**: `createHana({ ..., loginMethods?: ('google' | 'email')[] })` narrows what the popup offers (it can't add a
   method the app hasn't enabled); `hana.login({ method?, emailHint? })` preselects (an `emailHint` the partner page
   knows prefills the field; the page then knows the address, its own business); `hana.linkAccount({ method })` (in a
@@ -850,12 +882,14 @@ Following D83 (every check surfaces in the portal):
   `mark_self_issued`, two `set_issuer_key(…, "hana")` proposals by the owner (they wait 60 s there); the signing keys
   (primary, standby) as Worker secrets, `K_sub`, `K_code`, `K_rl`, all generated by `scripts/email-issuer.ts init` into
   `.secrets/sandbox-dev/` (0600) and the Worker (never printed); `AddClient` for `s1` and `s2`; D1 migration;
-  watchdog pins. Sessions and wallets opened before v3 aren't in `opened`, so on sandbox-dev an old wallet can be
-  merged over by mistake: test data, discarded at the address freeze (mainnet starts with v3).
+  watchdog pins. Sessions and wallets opened before v3 aren't in `opened`, so the migration leaves links off
+  (`unrecorded_wallets`, D135) until the owner calls `accept_unrecorded_wallets`, which sandbox-dev does (its old
+  wallets are test data, discarded at the address freeze).
 - **Staging, before mainnet:** the dedicated AWS account and KMS keys set up as in [Signing key](#signing-key-staged),
   the reconciliation and alarms running, KMS latency measured.
-- **Mainnet:** the signer is created with v3 code at the address freeze (`docs/governance-spec.md` "Mainnet"), so
-  `opened` is complete from the first login. `K_sub` is generated offline, backed up twice before the first email
+- **Mainnet:** the signer is created with v3 code (`new`) at the address freeze (`docs/governance-spec.md`
+  "Mainnet"), so `opened` is complete from the first login; the runbook checks `get_config().unrecorded_wallets ==
+  false` and never calls `accept_unrecorded_wallets` there (D135). `K_sub` is generated offline, backed up twice before the first email
   login, and never changed. Email keys are KMS keys only.
 
 ## Tests

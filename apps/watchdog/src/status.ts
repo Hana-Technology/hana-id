@@ -1,5 +1,6 @@
 // Read-only status for batch C's admin portal (D83), plus acknowledgements:
-//   GET  /status               last run and its checks, heartbeat, silence, seen kids, recent actions, open alerts
+//   GET  /status               last run and its checks, heartbeat, silence, seen kids, relayer funds, recent actions,
+//                              open alerts
 //   GET  /alerts?cursor&limit&severity   alert history, newest first, with deliveries
 //   GET  /actions?cursor&limit actions log, newest first (transaction hashes)
 //   POST /alerts/:id/ack {by}  records who acknowledged (via "portal"); stops only the 15-minute re-sends
@@ -9,7 +10,7 @@ import { ALERT_KINDS_WITH_PLAYBOOKS, CHANNELS, CHECKS, RESEND_MS, RUN_INTERVAL_M
 import type { Notifier } from './channels.ts';
 import type { Env } from './env.ts';
 import { log } from './log.ts';
-import { type HeartbeatState, META } from './run.ts';
+import { type HeartbeatState, META, type RelayerFundsStatus } from './run.ts';
 import type { AlertRow, Store } from './store.ts';
 
 /** The portal warns when the last run is older than two intervals (spec "Monitoring in the admin portal"). */
@@ -150,6 +151,8 @@ async function status(d: StatusDeps) {
       email: { configured: d.notifier.email.configured },
     },
     seen_kids: await d.store.allSeenKids(),
+    // The last relayer reading (balance, pool keys' allowances, thresholds; yocto strings), or null before one.
+    relayer_funds: await d.store.getMeta<RelayerFundsStatus>(META.relayerFunds),
     actions,
     open_alerts: open.map(alertView),
     checks: CHECKS,

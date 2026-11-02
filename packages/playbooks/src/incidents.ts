@@ -64,7 +64,7 @@ const relayerKeyStolen: Playbook = {
   status: 'live',
   summary: "A function-call key of the relayer account (`RELAYER_KEYS` or `OWNER_RELAYER_KEYS`) leaked: it can burn its allowance, nothing more.",
   signals: [
-    'Allowance or relayer balance dropping without matching logins; `relay_retry` `invalid_nonce` warnings (another sender used a pool key).',
+    'A watchdog `relayer_allowance_*` or `relayer_balance_*` alert without matching logins (allowance or balance dropping faster than the request logs explain); `relay_retry` `invalid_nonce` warnings (another sender used a pool key).',
     'The API Worker secrets or `.secrets/<env>/relayer-keys.json` / `owner-relayer-keys.json` were exposed.',
   ],
   impact: [
@@ -100,43 +100,6 @@ const relayerKeyStolen: Playbook = {
   followUps: ['If the leak came from the Worker or the Cloudflare account: api-or-cloudflare-compromised.'],
   refs: ['docs/operations.md#relayer-keys-either-pool', 'docs/security.md#what-a-compromise-gives', 'docs/architecture.md#relayer-design'],
   related: ['relayer-out-of-funds', 'api-or-cloudflare-compromised'],
-};
-
-const relayerOutOfFunds: Playbook = {
-  id: 'relayer-out-of-funds',
-  title: 'Relayer out of funds (allowance or balance)',
-  kind: 'incident',
-  severity: 'warning',
-  status: 'live',
-  summary: "A pool key's allowance is used up or the relayer account's balance is too low: relays from it fail.",
-  signals: [
-    'Relays failing with `502 near_rejected` (the node refuses the transaction) for one key or all; logins and derives fail for the apps routed to those keys.',
-    'Not built yet: allowance and balance monitoring (`docs/security.md` key inventory: "mainnet needs allowance monitoring"). Today you notice from failed logins or the request logs.',
-  ],
-  impact: ['Logins (session pool) or owner actions (owner pool) fail until refilled. No security impact.'],
-  steps: [
-    {
-      title: 'Find which key or the account',
-      who: 'a founder',
-      detail: 'The request logs show `code` and `relayInstance` per relay. 3 keys × 2 NEAR covered ~1,500 logins on testnet; allowances drop by gas burnt.',
-      commands: [c.apiTailErrors],
-    },
-    {
-      title: 'Replace a used-up key',
-      who: 'a founder',
-      detail: "Same as a leaked key: delete it on chain, remove it from its `.secrets` file, re-run `deploy-contract` (pass larger `--relayer-allowance` / `--owner-relayer-allowance` if needed, and the same flags on every later re-run), upload the pool.",
-      commands: [c.deleteRelayerKey, c.deployContract, c.uploadRelayerKeys],
-    },
-    {
-      title: 'Fund the account',
-      who: 'a founder',
-      detail: 'A low relayer balance: send NEAR to it from a funded testnet account (near CLI; testnet only, never a mainnet account).',
-    },
-  ],
-  verify: ['Relays succeed; the request logs show no `near_rejected`.'],
-  followUps: ['Before mainnet: build allowance and balance monitoring with an alert.'],
-  refs: ['docs/operations.md#relayer-keys-either-pool', 'docs/api.md#relay-errors-any-relayed-call'],
-  related: ['relayer-key-stolen'],
 };
 
 const vaultKekLeaked: Playbook = {
@@ -300,15 +263,22 @@ const watchdogDown: Playbook = {
       commands: [c.watchdogGen, c.watchdogSecretBulk, c.watchdogDeploy],
     },
     {
-      title: 'If its D1 was lost',
+      title: 'If its D1 was lost or damaged: restore it',
       who: 'a founder',
-      detail: "The next run is a first run: it records Google's current JWKS as known and alerts, without pausing, on any active kid not in it. Check every first-run alert by hand (unknown-active-key-first-run); a forged key active at that moment is not paused.",
+      detail: "Logged in to the watchdog's account: Time Travel back to a minute before the loss (30 days). A point after its first run keeps `initialized_at`, so the pause still works; first compare the active kids with Google's JWKS (an active kid Google published and dropped entirely inside the gap would look never published and be paused). The next runs re-alert every governance change since the point (check, then acknowledge) and re-raise conditions still true.",
+      commands: [c.governanceStatus, c.watchdogD1Bookmark, c.watchdogD1BookmarkAt, c.watchdogD1Restore],
+    },
+    {
+      title: 'If it can\'t be restored: the first-run caveat',
+      who: 'a founder',
+      detail: "Past 30 days, a point before its first run, or a new database: the next run is a first run. It records Google's current JWKS as known and alerts, without pausing, on any active kid not in it. Check every first-run alert by hand (unknown-active-key-first-run) and the pending queue; a forged key active at that moment is not paused.",
+      commands: [c.apiGovernancePending],
     },
   ],
   verify: ['`/status`: `last_run.outcome: "ok"`, `silent: false`, `heartbeat.ok`; the heartbeat provider shows the check up.'],
   followUps: ['A second watchdog on another provider (D125 later option) removes this single point.'],
-  refs: ['docs/operations.md#watchdog-service-appswatchdog', 'apps/watchdog/README.md#alerts-d85', 'D83', 'D125'],
-  related: ['watchdog-degraded', 'watchdog-compromised', 'forged-active-key'],
+  refs: ['docs/operations.md#watchdog-service-appswatchdog', 'docs/operations.md#the-watchdogs-d1', 'apps/watchdog/README.md#alerts-d85', 'D83', 'D125', 'D152'],
+  related: ['watchdog-degraded', 'watchdog-compromised', 'forged-active-key', 'unknown-active-key-first-run'],
 };
 
 const watchdogCompromised: Playbook = {
@@ -361,10 +331,10 @@ const watchdogCompromised: Playbook = {
       commands: [c.watchdogSecretsInit, c.watchdogSecretsCheck, c.watchdogSecretBulk],
     },
     {
-      title: 'A lost D1: check the first run',
+      title: 'A lost D1: restore it, or check the first run',
       who: 'a founder',
-      detail: 'Redeploy against a fresh D1 if needed (setup step 5) and check every first-run alert by hand (unknown-active-key-first-run).',
-      commands: [c.watchdogGen, c.watchdogDeploy],
+      detail: "Restore its D1 with Time Travel to a minute before the intrusion (operations \"The watchdog's D1\"; a point after its first run keeps the pause working). Past 30 days or with nothing to restore: redeploy against a fresh D1 (setup step 5) and check every first-run alert by hand (unknown-active-key-first-run).",
+      commands: [c.watchdogD1BookmarkAt, c.watchdogD1Restore, c.watchdogGen, c.watchdogDeploy],
     },
   ],
   verify: ['`/status`: every check ok, channels configured; only the new key on `watchdog.account` besides its full-access key.', '`admin <env> governance:status`: no findings, the watchdog listed (or re-added).'],
@@ -387,27 +357,28 @@ const councilMemberKey: Playbook = {
   ],
   steps: [
     {
-      title: "Reject or let expire the member's stray proposals",
+      title: "Reject the member's stray proposals",
       who: 'council (2 of 3)',
-      detail: "List open proposals; never approve one nobody explained. Not built yet: a reject vote in the scripts (`owner:vote` only approves); reject with the DAO's `act_proposal` `VoteReject` through a UI or near CLI, or let it expire (7-day proposals).",
-      commands: [c.ownerProposals],
+      detail: "List open proposals; never approve one nobody explained. Two remaining members each cast a `VoteReject` (`owner:vote --reject`): two rejections close it as `Rejected`, so it can never execute even if the lost key turns up again. Off dev envs each member signs the same `act_proposal` command as an approval, with `\"action\":\"VoteReject\"`.",
+      commands: [c.ownerProposals, c.ownerVoteReject],
     },
     {
       title: 'Replace the member',
       who: 'council (2 of 3)',
       detail:
-        "An `AddMemberToRole` proposal for the new member and a `RemoveMemberFromRole` for the old one, 2 of 3 each, through a DAO UI or near CLI (`add_proposal` with that kind). Not built yet: a script for member-change proposals. Each raises a critical `governance_change` (`owner_policy`): expected, acknowledge it.",
+        "The new member creates their account first (a Ledger key on mainnet). `council:replace-member` proposes `RemoveMemberFromRole` for the old member, then `AddMemberToRole` for the new one, signed by a remaining member (the old one never signs): read the plan without `--yes`. The removal goes first and cuts the key off; until the addition executes the council is 2 of 2, so both remaining members approve it straight away. Dev envs: add `--approve-with <second member>` to approve both in the same command; elsewhere it prints each remaining member's `act_proposal` for each proposal. Each executed change raises a critical `governance_change` (`owner_policy`): expected, acknowledge it.",
+      commands: [c.councilReplaceMemberPlan, c.councilReplaceMember, c.ownerProposals],
     },
     {
       title: 'Update the manifest',
       who: 'a founder',
-      detail: "`council.members` in `envs/<env>.json` (code-owner review); `deploy-contract` blocks until the DAO's policy is exactly the manifest's council at 2 of 3.",
-      commands: [c.governanceStatus, 'corepack pnpm --filter @hana-id/scripts run council-setup <env>', c.deployContractPlan],
+      detail: "Once both proposals executed, run `council:replace-member` again with `--yes` (on dev envs with `--approve-with` the first run already did): it checks the DAO's group is the new council at 2 of 3 and writes `council.members` in `envs/<env>.json`, the new member in the old one's place. Commit it (code-owner review); `deploy-contract` blocks until the DAO's policy is exactly the manifest's council at 2 of 3.",
+      commands: [c.councilReplaceMember, c.governanceStatus, 'corepack pnpm --filter @hana-id/scripts run council-setup <env>', c.deployContractPlan],
     },
   ],
   verify: ['`admin <env> governance:status`: no findings (the policy is the manifest\'s council, 2 of 3 for every kind).', '`deploy-contract <env>` dry run without blockers (`council-setup <env>` dry run on dev envs).'],
   followUps: ['Mainnet: where the backup key is held is decided before mainnet (D81); record the replacement.'],
-  refs: ['docs/operations.md#owner', 'docs/operations.md#owner-council-sputnik-dao-v2-d81', 'D81'],
+  refs: ['docs/operations.md#replacing-a-council-member', 'docs/operations.md#owner', 'docs/operations.md#owner-council-sputnik-dao-v2-d81', 'D81', 'D151'],
   related: ['unexpected-owner-action', 'governance-change'],
 };
 
@@ -430,6 +401,12 @@ const unexpectedOwnerAction: Playbook = {
       who: 'a founder',
       detail: 'The proposal\'s votes name the members; talk to each of them on a channel you trust.',
       commands: [c.ownerProposals, c.governanceStatus, c.apiGovernancePending],
+    },
+    {
+      title: 'Reject open proposals nobody explained',
+      who: 'council (2 of 3)',
+      detail: "Before a second key approves them: each honest member casts a `VoteReject`; two rejections close a proposal for good.",
+      commands: [c.ownerProposals, c.ownerVoteReject],
     },
     {
       title: 'Cancel what is pending',
@@ -609,19 +586,25 @@ const d1Loss: Playbook = {
     {
       title: 'Restore from Time Travel',
       who: 'a founder',
-      detail: "Not in the runbook yet: Cloudflare D1 Time Travel keeps 30 days; restore the database to a time before the loss (Cloudflare's docs give the command; rehearse it on sandbox-dev first). Restored shares need the `VAULT_KEK` they were wrapped under (`vault-kek <env> put --yes` sets both secrets again from the files).",
-      commands: [c.vaultKekPut],
+      detail: "D1 Time Travel restores any minute of the last 30 days (7 on the Free plan), in place. Note the current bookmark first (it undoes the restore), get the bookmark of a time before the loss, export the damaged state to `.secrets/` (it holds wrapped vault shares: 0600), then restore. Everything written after that point is lost, including suspensions and share revocations made since.",
+      commands: [c.apiD1Bookmark, c.apiD1BookmarkAt, c.apiD1Export, c.apiD1Restore],
+    },
+    {
+      title: 'Re-run what the restore undid',
+      who: 'a founder',
+      detail: "In order: apply the migrations (a point before a later migration has the older schema); re-apply security writes made since the point (`app:suspend`, `app:origins:remove`, and the revoke-all if every share was revoked since: before anything else); then the other app changes. A KEK rotated since: restored rows need the old key (`vault-kek <env> put --yes` sets both secrets from the files), else those users sign in again. The issuer-key cron rebuilds its own state from chain on its next run.",
+      commands: [c.d1Migrate, c.appSuspend, c.appOriginsRemove, c.revokeAllShares, c.vaultKekPut],
     },
     {
       title: 'Without a restore: rebuild',
       who: 'a founder',
-      detail: 'Re-apply the migrations, then re-create each app, its origins and settings from what partners and the audit trail say. Not built yet: an export or restore tool for apps.',
+      detail: 'Past 30 days, or nothing to restore: re-apply the migrations, then re-create each app, its origins and settings from what partners and the audit trail say. Not built yet: a scheduled export of the apps tables kept outside Cloudflare.',
       commands: [c.d1Migrate, 'corepack pnpm --filter @hana-id/scripts run admin <env> app:create --name <name> --scope <scope_id> --origin <origin> --remote', c.appSettings],
     },
   ],
-  verify: ['`admin <env> app:list --remote` matches the known apps; a smoke login and a reload unlock work.'],
-  followUps: ['Batch C moves the ledger to Neon with point-in-time restore (D73); the API\'s D1 still needs its own backup routine.'],
-  refs: ['docs/architecture.md#data-stores', 'docs/operations.md#admin-cli-scriptsadmints', 'docs/operations.md#vault_kek'],
+  verify: ['`admin <env> app:list --remote` matches the known apps; suspended apps are still suspended; a smoke login and a reload unlock work.'],
+  followUps: ['Batch C moves the ledger to Neon with point-in-time restore (D73); the API\'s D1 still needs a backup kept beyond Time Travel\'s 30 days.', 'Rehearse a Time Travel restore on sandbox-dev (D152).'],
+  refs: ['docs/operations.md#restoring-a-d1-database-time-travel', 'docs/architecture.md#data-stores', 'docs/operations.md#admin-cli-scriptsadmints', 'docs/operations.md#vault_kek', 'D152'],
   related: ['vault-kek-leaked', 'api-or-cloudflare-compromised'],
 };
 
@@ -744,10 +727,72 @@ const emailIssuerKey: Playbook = {
   related: ['forged-active-key'],
 };
 
+const identitySigningKey: Playbook = {
+  id: 'identity-signing-key-compromised',
+  title: 'Identity token signing key compromised (testnet Worker-secret key)',
+  kind: 'incident',
+  severity: 'critical',
+  status: 'live',
+  summary:
+    "Whoever holds an identity signing key can forge any user's identity token for any app, until the key is out of the JWKS. Switch to a key the incident didn't touch, unpublish the exposed ones, tell partners.",
+  signals: [
+    "The API Worker's secrets, `.secrets/<env>/identity-signing-key*.json` or the operator's machine were exposed; a partner reports a token they didn't expect (a valid signature for a session that never existed).",
+    "Not built yet (build steps 7–8): the KMS `Sign` reconciliation against `identity_issuance_hourly` and the watchdog's JWKS pin check.",
+  ],
+  impact: [
+    'Forged tokens pass at every partner that trusts the JWKS URL, as any user of any app (identity at partners: credits, referrals, their own accounts), until the key is removed and their JWKS caches refresh (≤ 10 min). No wallet, key or Hana API is reachable with a token.',
+    "Tokens already accepted can't be recalled: partners must re-check what they granted in the window.",
+  ],
+  steps: [
+    {
+      title: 'Decide which keys are exposed',
+      who: 'a founder',
+      detail:
+        "The standby is published but never uploaded (D177): a leak of the Worker's secrets or the Cloudflare account exposes only the active key (and a `next` key already switched in). A leak of `.secrets/<env>/` or the operator's machine exposes every key whose file was there, the standby included unless it was moved offline. Unless the incident provably touches only the active key, treat BOTH as exposed.",
+      commands: [c.identityKeyShow],
+    },
+    {
+      title: 'Only the active key exposed: switch to the standby',
+      who: 'a founder',
+      detail: "Uploads the standby into the free Worker slot and makes it the manifest's active kid. Put the manifest change in the repo, `gen`, deploy: new tokens are signed by the standby, which partners already trust.",
+      commands: [c.identityKeySwitchStandby, c.apiGen, c.apiDeploy],
+    },
+    {
+      title: 'Both keys exposed: retire the standby and rotate to a fresh key',
+      who: 'a founder',
+      detail: 'Unpublish the standby, generate and publish a fresh key, switch to it, deploy. Partners using the JWKS URL pick up the new kid at once (jose refetches on an unknown kid); partners that pin thumbprints need the new one from you.',
+      commands: [c.identityKeyRetireStandby, c.identityKeyNext, c.identityKeySwitchNext, c.apiGen, c.apiDeploy],
+    },
+    {
+      title: 'Unpublish the exposed active key',
+      who: 'a founder',
+      detail: "Removes it from the JWKS and deletes its Worker secret, after the deploy of the switch; its file is set aside for the post-mortem (never put it in the repo). Deploy: partners reject its tokens within 10 minutes. Don't wait the 2 h of a scheduled rotation.",
+      commands: [c.identityKeyRetirePrevious, c.apiGen, c.apiDeploy],
+    },
+    {
+      title: 'Tell partners',
+      who: 'a founder',
+      detail: 'Their security contacts: the `kid`, the window in which forged tokens may have been accepted, and what to re-check (emails recorded, credits granted, sessions opened). Pinning partners update their pins.',
+    },
+    {
+      title: 'A new standby',
+      who: 'a founder',
+      detail: 'After a switch to the standby there is none: `next` publishes a new key (not uploaded); move its file offline and keep it as the next standby.',
+      commands: [c.identityKeyNext],
+    },
+  ],
+  verify: [
+    "The API's JWKS lists no exposed kid, and a fresh mint's header `kid` is the new active key.",
+    '`identity-key <env> show`: the active kid is in a Worker slot, no exposed kid is published.',
+  ],
+  followUps: ['If the Worker or the Cloudflare account was the way in: api-or-cloudflare-compromised. Before mainnet the key moves to AWS KMS (build step 7).'],
+  refs: ['docs/operations.md#identity-token-keys', 'docs/security.md#what-a-compromise-gives', 'D177'],
+  related: ['api-or-cloudflare-compromised'],
+};
+
 export const INCIDENT_PLAYBOOKS: readonly Playbook[] = [
   updaterKeyStolen,
   relayerKeyStolen,
-  relayerOutOfFunds,
   vaultKekLeaked,
   apiCompromised,
   originCompromised,
@@ -764,4 +809,5 @@ export const INCIDENT_PLAYBOOKS: readonly Playbook[] = [
   sharedClientCompromised,
   userKeyLeaked,
   emailIssuerKey,
+  identitySigningKey,
 ];

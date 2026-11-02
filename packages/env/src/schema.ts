@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { adminSchema, consoleSchema, dashboardRules, delayMs, emailSchema, filesSchema, usageSchema } from './dashboard.ts';
+import { identityTokenRules, identityTokenSchema } from './identity.ts';
 import { hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, siteOf } from './origins.ts';
 
 /** Independent RPC providers the pinned CKD network key must be read from, all agreeing (OPER-1, D100). */
@@ -14,6 +15,12 @@ const clientId = z.string().min(1).max(255).regex(/^\S+$/u, 'Client IDs contain 
 
 /** Paging apps the watchdog can page through (D85: chosen at setup). */
 export const PAGER_PROVIDERS = ['ntfy', 'pushover', 'pagerduty'] as const;
+
+/** A warning and a critical threshold in NEAR (critical below warn), for the watchdog's relayer funds check. */
+const nearThresholds = z
+  .object({ warn: z.number().positive().max(100_000), critical: z.number().nonnegative().max(100_000) })
+  .strict()
+  .refine((t) => t.critical < t.warn, { message: 'critical must be below warn' });
 
 const workerName = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u, 'A Worker name is 1-63 lowercase letters, digits and inner hyphens');
 
@@ -38,6 +45,16 @@ const watchdogSchema = z.object({
   pager: z.enum(PAGER_PROVIDERS),
   /** Hour (UTC, 0-23) after which the daily info digest is sent; default 0. */
   digestHourUtc: z.number().int().min(0).max(23).optional(),
+  /**
+   * Thresholds (NEAR) of the relayer funds check (`relayer` account balance, each pool key's remaining allowance);
+   * each pair optional. Defaults (apps/watchdog/src/relayer.ts): balance 5 / 1, session-pool key 0.5 / 0.1 (of its 2 NEAR
+   * allowance), owner-pool key 0.1 / 0.02 (of 0.5 NEAR). Raise the allowance pairs if deploy-contract ran with a
+   * larger `--relayer-allowance` / `--owner-relayer-allowance`.
+   */
+  relayerFunds: z
+    .object({ balance: nearThresholds.optional(), sessionAllowance: nearThresholds.optional(), ownerAllowance: nearThresholds.optional() })
+    .strict()
+    .optional(),
 });
 
 /**
@@ -196,6 +213,12 @@ export const manifestSchema = z
      * has no watchdog Worker (`gen` for apps/watchdog refuses it). It runs on its own Cloudflare account (D86).
      */
     watchdog: watchdogSchema.optional(),
+    /**
+     * The partner identity token (docs/identity-token-spec.md, D127): issuer, signer and the public keys of the JWKS.
+     * Optional: without it the API answers `/v1/identity/*` with 503 identity_unavailable.
+     * `scripts/identity-key.ts <env> init` writes it.
+     */
+    identityToken: identityTokenSchema.optional(),
   })
   .superRefine((m, ctx) => {
     for (const field of ['rpc', 'rpcFallback', 'apiUrl'] as const) {
@@ -206,6 +229,7 @@ export const manifestSchema = z
     if (m.ckdNetworkKeySource) ckdSourceRules(m.ckdNetworkKeySource, ctx);
     hanaOrigins(m, ctx);
     if (m.watchdog) watchdogRules(m, m.watchdog, ctx);
+    if (m.identityToken) identityTokenRules(m, m.identityToken, ctx);
     governance(m, ctx);
     dashboardRules(m, ctx);
     if (m.rpcFallback !== undefined && m.rpcFallback === m.rpc) {

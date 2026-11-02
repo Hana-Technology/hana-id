@@ -3,7 +3,7 @@ import { env } from 'cloudflare:workers';
 import { type Mock, afterEach, describe, expect, it, vi } from 'vitest';
 import { usageDay } from '../src/apps.ts';
 import { panic, rsaSigner } from './near-mock.ts';
-import { DERIVE_KEY, ORIGIN, appHeaders, bytes, call, chain, deriveBody, google, newKey, newSessionKey, revokeBody, seedApp, seedPlan, sessionBody, uid } from './helpers.ts';
+import { DERIVE_KEY, ORIGIN, appHeaders, bytes, call, chain, deriveBody, google, newKey, newSessionKey, revokeBody, seedApp, seedPlan, sessionBody, uid, startOfMinuteClock } from './helpers.ts';
 afterEach(() => vi.restoreAllMocks());
 
 async function body(res: Response): Promise<Record<string, unknown>> {
@@ -317,6 +317,7 @@ describe('app checks (in order)', () => {
 
 describe('rate limit order', () => {
   it('the per-IP limit comes first and bounds a flood; neither refused nor junk requests use the app’s quota', async () => {
+    await startOfMinuteClock();
     const plan = `p${uid()}`;
     await seedPlan(plan, 3, 1000, 2);
     const app = await seedApp({ plan });

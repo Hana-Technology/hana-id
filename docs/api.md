@@ -1,6 +1,10 @@
 # API reference — every endpoint the `apps/api` Worker serves today
 
-Last verified against code: 2026-10-30 (branch `feat/batch-c-1`: the batch C vars in "Configuration"); 2026-10-29
+Last verified against code: 2026-10-30 (branch `feat/identity-token-2`: the identity token's order of checks,
+limits, marker, cross-app share check, share tombstones in the cron, the new binding and log event, D176–D178);
+2026-10-30 (branch `feat/identity-token-1`: "Identity token", its routes, limits,
+Durable Objects, D1 tables, cron job, bindings, log fields and the `bad_token` refusals); 2026-10-30 (branch
+`feat/batch-c-1`: the batch C vars in "Configuration"); 2026-10-29
 (branch `gov/api`: the governance batch's cron, `issuer_key_pending` /
 `paused`, `GET /v1/governance`; branch `perf/login-latency-impl`: the vault endpoints' gate, the auth pages' CSP and
 the timings; the rest as of 2026-10-28, commit 58edee9).
@@ -36,10 +40,13 @@ page origins never reach the API routes: a request whose URL origin is `VAULT_OR
 | `/v1/login` | POST, OPTIONS | `login.ts` | publishable key + caller rule + session signature | B |
 | `/v1/login-relay/<relayId>` | GET, POST, OPTIONS | `login-relay.ts` | Hana origin only; read key for GET | B |
 | `/v1/vault/shares`, `/unlock`, `/touch`, `/revoke`, `/revoke-all` | POST, OPTIONS | `vault/endpoints.ts` | publishable key + vault origin + session signature (vault message) | B |
+| `/v1/identity/token` | POST, OPTIONS | `identity/token.ts` | publishable key + vault origin + session signature (identity message) | I |
+| `/v1/identity/jwks.json`, `/v1/identity/.well-known/openid-configuration` | GET, HEAD, OPTIONS | `identity/public.ts` | none (public keys only) | I |
 | `/v1/owner-actions` | POST, OPTIONS | `handlers.ts` | OIDC owner token inside the args | |
-| cron `*/15 * * * *` | — | `issuer-keys.ts`, `vault/cron.ts`, `key-observations.ts` | — | vault part B; JWKS sync every 15 min since G |
+| cron `*/15 * * * *` | — | `issuer-keys.ts`, `vault/cron.ts`, `key-observations.ts`, `identity/maintenance.ts` | — | vault part B; JWKS sync every 15 min since G; identity counts' retention I |
 
-There is no secret-key (`sk_…`) auth anywhere: publishable keys are public and origins gate them.
+There is no secret-key (`sk_…`) auth anywhere: publishable keys are public and origins gate them. "I" marks the
+partner identity token (`docs/identity-token-spec.md`, build steps 1–4).
 
 ## Conventions
 
@@ -51,7 +58,7 @@ There is no secret-key (`sk_…`) auth anywhere: publishable keys are public and
   `[A-Za-z0-9-]{1,64}`, else a random UUID.
 - `content-type: application/json; charset=utf-8`, `cache-control: no-store`.
 - Body caps (streamed, `413` with code `bad_request` past them): app endpoints and owner actions 16 KiB, vault
-  endpoints 4 KiB, login relay 8 KiB. Non-JSON: `400 bad_request`. JWT ≤ 7168 characters.
+  endpoints and `/v1/identity/token` 4 KiB, login relay 8 KiB. Non-JSON: `400 bad_request`. JWT ≤ 7168 characters.
 - Usage counters (D1 `usage`, per app per UTC day) count successes only and are written after the response
   (`waitUntil`).
 
@@ -111,7 +118,8 @@ Two kinds of counter (D95):
 - **Per location, approximate** (*per location* below): Cloudflare's Rate Limiting bindings (`ratelimits` in the
   generated wrangler config, `src/vault/limits.ts`). Each Cloudflare location counts on its own from a locally
   cached count, with no network hop; counts sync in the background, so a burst can briefly pass the limit, and a
-  client served from two locations gets the limit in each. Used only for the vault endpoints' flood limits. A
+  client served from two locations gets the limit in each. Used only for the vault endpoints' and the identity
+  token's flood limits. A
   refusal's `retry-after` is the binding's period (60 s): the binding doesn't say when its window ends.
 
 The per-IP subject is the IPv4 address or the IPv6 /64 (`src/ip.ts`).
@@ -122,6 +130,7 @@ The per-IP subject is the IPv4 address or the IPv6 /64 (`src/ip.ts`).
 | key exports: `/v1/login` from `AUTH_ORIGIN` | — | — | 3 per hour per user path per app (subject `export:<appId>:<hex sha256(path)>`, window `export:hour`), counted once the token and nonce are verified, before anything is relayed (D59) |
 | `GET /v1/app` | plan `per_ip_minute` (own window `<appId>:config:minute`) | — | never touches the relay quota |
 | vault endpoints | 60/min, *per location* (binding `VAULT_IP_LIMIT`, key `<env>:vault-ip:<appId>:<ipSubject>`) | 10 × plan `per_minute` (`vault:minute`), global | share actions: 10/min per share, *per location* (binding `VAULT_SHARE_LIMIT`, key `<env>:vault-share:<appId>:<hex>`); asked in turn: IP, then app only once the IP accepted, then (after the body check) the share (D95) |
+| `/v1/identity/token` (I, D176) | the vault endpoints' 60/min binding, before the body | its own windows on `app:<id>`, never `vault:minute`: `identity:minute` 10 × plan `per_minute`, `identity:hour` plan `per_day` (at most 100 000), sliding, counted after every other check | per session key 10/min, *per location* (`IDENTITY_SESSION_LIMIT`, key `<env>:identity-session:<appId>:<hex sessionPk>`), after the signature; per account root 30/min, *per location* (`IDENTITY_ROOT_LIMIT`, key `<env>:identity-root:<scopeId>:<hex sub bytes>`); per scope `identity:hour` 2 × the app's (`identity:scope:<scopeId>`, sliding); then global on `identity:global`, sliding: a hard breaker of 1 000 000/h (`503 identity_busy`; `IDENTITY_GLOBAL_HOURLY_MAX` overrides; ≥ 10 × any app's ceiling) and a soft line at 100 000/h that only logs `identity_volume_alert`. A refusal by a later window takes the hit back from the earlier ones |
 | login relay | writes 10/min, reads 120/min | — | not per app |
 | `/v1/owner-actions` | 10/min | per scope 10/min, 50/day (`owner-actions:scope:<scopeId>`), authenticated actions only | authenticated actions (`propose_change`, `remove_client`, `disable_shared_login`): per owner identity 5/min, 30/day (`owner-actions:owner:<hex sha256(provider#sub)>`), then per scope, then global 20/min, 200/day (`owner-actions:global`). `execute_change` (no auth): its own 10/min, 50/day per scope (`owner-actions:execute:<scopeId>`), then global. `cancel_change`: none of those; 5/min, 20/day per owner identity (windows `cancel:minute`, `cancel:day`), then 25/min, 100/day per target scope (`owner-actions:cancel:<scopeId>`: the contract's `MAX_OWNERS` = 5 owners at their own cap), then a spend-bound ceiling of 100/min, 1000/day (`owner-actions:cancel-global`). Counted only after every off-chain check passes, the owner proof against the target scope's on-chain owners included; a request a later window refuses is taken back from the earlier ones (D100) |
 | `/v1/health`, `GET /vault` | — | — | — |
@@ -462,6 +471,86 @@ Revoke and revoke-all ignore the settings. Revoke-all keeps its own share live a
 transaction): the other shares are revoked only on the condition the counter move then meets, so a failed write
 changes nothing and a replay revokes nothing.
 
+### Identity token · I
+
+The partner identity token (`docs/identity-token-spec.md`, D120, D127; build steps 1–4, no `email` claim yet): an
+ES256 JWT the vault mints for its app and the partner's backend verifies against the JWKS below, without calling Hana.
+`src/identity/`. No Hana API accepts the token (below, "Refusals elsewhere").
+
+#### `POST /v1/identity/token` (vault only)
+
+`Origin: VAULT_ORIGIN`, `x-hana-key`, `x-hana-parent-origin`; preflight as the vault endpoints'. Body ≤ 4 KiB,
+exactly:
+
+```json
+{ "sessionPublicKey": [32], "issuedAtMs": 0, "nonce": [16], "signature": [64],
+  "walletProofs": { "stellar": { "address": "G…", "signature": [64] },
+                    "evm": { "address": "0x…", "signature": [65] } },
+  "sealedEmail": "optional, ≤ 1024 characters: covered by the signature, not opened yet (build step 6)" }
+```
+
+`signature`: Ed25519 by the session key over `"hana-id-identity-v1:" ‖ borsh(SIGNER_ACCOUNT) ‖ borsh(appId) ‖
+sessionPk(32) ‖ u64le(issuedAtMs) ‖ nonce(16) ‖ sha256(payload)`, `payload = "identity-token" ‖ borsh(parentOrigin)
+‖ walletProofsHash(32) ‖ sha256(sealedEmail or "")`. Wallet proofs: Stellar Ed25519 by the address's key, EVM
+secp256k1 `r ‖ s ‖ v` over `sha256` of `"hana-id/identity-wallet/v1" ‖ 0x00 ‖ borsh(SIGNER_ACCOUNT) ‖ borsh(appId) ‖
+sessionPk(32) ‖ borsh(chain) ‖ borsh(address)` (EVM address in EIP-55 form in the message; any accepted case in the
+body). `walletProofsHash = sha256("hana-id/identity-wallet-proofs/v1" ‖ 0x00 ‖ for stellar then evm: borsh(chain) ‖
+borsh(address) ‖ borsh(Vec<u8> signature))`. Layouts: `docs/contract-interface.md` "Identity token messages"; vectors
+`packages/core/test/vectors/identity-v1.json`.
+
+In order (D176): the vault gate (key, active, Origin, parent, `scope_conflict`, the vault per-IP binding; not the
+vault endpoints' app quota) →
+`503 identity_unavailable` without the configuration (below) → body (`400 bad_request`, `413`) → clock, ±60 s
+(`400 stale_proof {serverTimeMs}`) → session signature (`401 invalid_signature`) → per session key 10/min, *per
+location* (`429 rate_limited`, binding `IDENTITY_SESSION_LIMIT`) → `get_config` not paused (`503 paused` with `retry-after`; an unreadable config is `502 near_unavailable`: fail closed)
+→ the share, looked up by session key in any app: a share of another app refuses whatever this app's persistence
+(`410 session_ended`, `reason: unknown_share`, D178); in an app whose persistence is `session`, the session key's
+share must exist and be live, judged as unlock judges it but read-only (`410 session_ended` with `reason`
+`unknown_share` (none, or made for another parent),
+`share_revoked` (revoked, or its origin removed), `persistence_off` (the app no longer keeps logins), `share_expired`
+(`now ≥ idle_until` or `≥ min(abs_expires_at, created_at + session_ttl_ms)`)); in a `none` app a session key without a
+share goes to the chain check alone → `get_session`: cached ≤ 10 s, a cached answer that would refuse re-read fresh, a
+missing one re-read every 300 ms for up to 2 s (a lagging node) (`410 session_ended` `reason: no_session` for missing,
+revoked, before `sessions_valid_from_ms` or expired; `403 scope_mismatch`; `502 near_unavailable`) → the path's root
+identity (`scope#provider#sub#key_index`, exactly three parts; else `502 bad_contract_result`) → lifetime (`410
+session_ending` with < 30 s left) → both wallet proofs (`400 bad_wallet_proof {chain}`) → single use:
+`sha256(sessionPk ‖ u64le(issuedAtMs) ‖ nonce)` reserved on the RateLimiter object `identity-proof:<hex sessionPk>`
+until `issuedAtMs + 120 s` (`409 proof_replayed`; reserved only once the session is known live, and the object's alarm
+deletes expired markers) → per account root (`429 rate_limited`) → the quota windows, per app, per scope, global
+(`429 rate_limited` naming the window, or `503 identity_busy` with `retry-after` for the global breaker, logged
+`identity_ceiling` at error level; above the global soft line a critical `identity_volume_alert`, at most every 10 min
+per isolate) → sign and self-verify (`503
+identity_signer_unavailable`) → `200 {identityToken, expiresAtMs, emailStatus: "off"}`.
+
+Nothing here writes the share: no counter moves, `idle_until` doesn't slide (a mint is never activity, D55, D112).
+After the response (`waitUntil`): `identity_issuance_hourly` (+1 for the hour and kid) and `identity_usage` (+1 for the
+app and UTC day); a failed write is logged (`identity_count_failed`), never a failed mint.
+
+The token: header `{"alg":"ES256","kid":"<RFC 7638 thumbprint>","typ":"hana-identity+jwt"}`; claims, exactly and in
+this order: `iss` (`IDENTITY_ISS`), `aud` (the D1 `apps.id`), `sub` (`"u1_" ‖ b64url(HMAC-SHA256(IDENTITY_SUB_KEY,
+"hana-id/idt-sub/v1" ‖ 0x00 ‖ borsh(scope_id) ‖ borsh(root_provider) ‖ borsh(root_sub))[0..16])`, per scope and
+account root, `key_index` dropped), `sid` (`"s1_" ‖ b64url(HMAC-SHA256(IDENTITY_SUB_KEY, "hana-id/idt-sid/v1" ‖ 0x00 ‖
+borsh(app_id) ‖ session_pk)[0..16])`), `iat`, `exp` (`min(iat + 3600, on-chain expiry, and in session mode idle_until
+and the absolute cap)`, rounded down), `jti` (16 random bytes, b64url), `wallets` (`[{chain: "stellar", address},
+{chain: "evm", address}]`, as proven), `login_methods` (the root's provider, `["google"]` today: account linking comes
+with email login). Never `email` yet.
+
+#### `GET /v1/identity/jwks.json`, `GET /v1/identity/.well-known/openid-configuration`
+
+Public, GET and HEAD (OPTIONS: open preflight), `cache-control: public, max-age=600` (jose's `createRemoteJWKSet`
+default), CORS `*`, no cookies. Both come from `IDENTITY_PUBLIC_KEYS` alone (the manifest's key list), never from D1 or
+a secret. The JWKS: `{"keys": [{kty: "EC", crv: "P-256", x, y, kid, use: "sig", alg: "ES256"}, …]}` (active and
+standby; a private member in the configuration refuses the whole set). Discovery: `{issuer, jwks_uri:
+"<issuer>/jwks.json", id_token_signing_alg_values_supported: ["ES256"], subject_types_supported: ["pairwise"],
+claims_supported: [iss, aud, sub, sid, iat, exp, jti, wallets, login_methods, email, email_verified]}`. Without the
+configuration: `503 identity_unavailable`.
+
+#### Refusals elsewhere
+
+Every JWT-accepting path (`/v1/login`, `/v1/sessions`, `/v1/owner-actions` owner tokens and client proofs) runs
+`verifyIdToken`, which refuses a token whose header `typ` is `hana-identity+jwt` or whose `iss` is `IDENTITY_ISS`
+before anything else: `400 bad_token`. (It would fail anyway: those paths take RS256 Google tokens only.)
+
 ### `POST /v1/owner-actions` — owner pool
 
 No app key. `{"method", "args"}` only, `args` exactly as the contract takes them; unknown keys anywhere are refused.
@@ -581,7 +670,9 @@ All SQLite-backed (wrangler migrations `v1`: `RelayerKey`, `RateLimiter`; `v2`: 
 `DO_LOCATION_HINT`, one of `wnam enam sam weur eeur apac oc afr me`), shared objects get the suffix `@<hint>` and are
 created there: `relayer-key-0@apac`, `owner-relayer-key-0@apac`, `app:<appId>@apac`, `owner-actions:global@apac`,
 `owner-actions:scope:<scopeId>@apac`, `owner-actions:execute:<scopeId>@apac`, `owner-actions:owner:<hash>@apac`,
-`owner-actions:cancel:<scopeId>@apac`, `owner-actions:cancel-global@apac`, `owner-actions:tokens@apac`. Unset or unknown hint: no suffix, Cloudflare places them. Changing
+`owner-actions:cancel:<scopeId>@apac`, `owner-actions:cancel-global@apac`, `owner-actions:tokens@apac`,
+`identity:global@apac`, `identity:scope:<scopeId>@apac`, `identity-proof:<hex sessionPk>@apac` (one per session key:
+its proofs' single-use markers, deleted by the object's alarm once expired). Unset or unknown hint: no suffix, Cloudflare places them. Changing
 the hint creates new objects (fresh limiter counters; new relayer objects read their nonce from chain once). Never
 suffixed: per-IP limiters `ip:v4:<addr>` / `ip:v6:<prefix>::/64` (created near the client) and `LoginRelay` objects
 (named by `relayId`).
@@ -628,12 +719,14 @@ this key's public key, start at R with no chain read (skips up to 99 nonces) and
 | `issuer_key_observations` | (`provider`, `kid`) PK, `first_seen_jwks_ms`, `last_seen_jwks_ms`, `removed_jwks_ms` (first fetch without the kid after `last_seen`; cleared if it reappears), `first_token_ms` (first verified token by the kid), `max_age_s_last` (the JWKS Cache-Control max-age when last listed); all nullable, ms / s. Public data only (no token, `sub` or user data). D33's key lead time (`admin issuer-keys:lead-times`) | 0004 |
 | `issuer_key_proposals` (G) | (`provider`, `kid`, `op` `Add`/`Remove`) PK, `change_id`, `proposed_at` ms, `cancelled_seen_at` ms: changes the JWKS cron proposed and hasn't seen resolved | 0005 |
 | `issuer_key_sync_runs` (G) | `provider` PK, `at_ms`, `outcome` `ok`/`error`/`skipped`, `code`, `summary` (JSON `SyncResult`): the cron's last run, for `GET /v1/governance` | 0005 |
+| `identity_issuance_hourly` (I) | (`hour` ms at the UTC hour, `kid`) PK, `count`: tokens signed per key and hour (the KMS reconciliation, build step 7); 24 months | 0008 |
+| `identity_usage` (I) | (`app_id` → apps, `day` `YYYY-MM-DD` UTC) PK, `tokens`: the spec's `usage.identity_tokens`, kept out of the legacy `usage` table batch C's 0007 drops; 24 months | 0008 |
 | `vault_shares` | `share_id` BLOB(16) PK, `app_id`, `session_pk` BLOB(32) UNIQUE, `path_hash` = sha256(path), `partner_origin`, `share_enc` = iv ‖ AES-GCM(KEK, K_s, aad = share_id ‖ app_id ‖ session_pk), `kek_id`, `counter`, `created_at`, `idle_until`, `abs_expires_at`, `revoked_at`; indexes (`app_id`, `path_hash`), `abs_expires_at`, `kek_id` | 0003 |
 
 ## Cron (`*/15 * * * *`)
 
-One trigger every 15 min (the free plan allows 5 cron triggers per account; this keeps the API at one). Two
-independent jobs (one failing doesn't skip the other):
+One trigger every 15 min (the free plan allows 5 cron triggers per account; this keeps the API at one). Independent
+jobs (one failing doesn't skip the others):
 
 - **Google JWKS → contract, every run** (`issuer-keys.ts`, G; the governance spec's P = 15 min). Issuer keys change
   on chain only through a public, cancellable delay (`docs/contract-interface.md` "Issuers"). Each run fetches the
@@ -660,8 +753,11 @@ independent jobs (one failing doesn't skip the other):
   `issuer_not_configured`, `key_changes_unavailable` (the view failed or is malformed; also a contract still on v1),
   `bad_keys_updater_key`.
 - **Vault maintenance, the run in the first quarter of each UTC hour** (`index.ts` `isHourlyRun`; `vault/cron.ts`,
-  B): deletes shares past `abs_expires_at` or revoked; re-wraps up to 2000 rows from `VAULT_KEK_PREVIOUS` to
+  B): deletes shares past `abs_expires_at` or revoked once they are older than 24 h (the contract's `MAX_SESSION_MS`:
+  until then a dead share is the identity token's tombstone, D178); re-wraps up to 2000 rows from `VAULT_KEK_PREVIOUS` to
   `VAULT_KEK`; counts rows under a KEK id neither key has (logged as an error).
+- **Identity counts' retention, the same hourly run** (`identity/maintenance.ts`, I): deletes `identity_issuance_hourly`
+  and `identity_usage` rows older than 24 months (D90).
 
 ## Configuration (Worker bindings)
 
@@ -691,9 +787,17 @@ Vars are generated from `envs/<env>.json` by `apps/api/scripts/gen-wrangler.ts` 
 | `KEYS_UPDATER_KEY` | secret | `.secrets/<env>/keys-updater.json` `private_key` | function-call key on the signer with exactly the updater methods (installed by `add_updater_key`, G); absent → cron skips JWKS sync |
 | `VAULT_KEK` | secret | `.secrets/<env>/vault-kek`, from `scripts/vault-kek.ts init` | `<id>:<base64 of 32 bytes>`; absent → vault 503 |
 | `VAULT_KEK_PREVIOUS` | secret, rotation only | `.secrets/<env>/vault-kek.previous`, from `vault-kek rotate` | |
+| `IDENTITY_ISS` (I) | var, optional | `identityToken.iss` (`{apiUrl}/v1/identity`) | absent → `/v1/identity/*` 503 `identity_unavailable` |
+| `IDENTITY_PUBLIC_KEYS` (I) | var, optional | `identityToken.publicKeys`, JSON | the JWKS; public members only |
+| `IDENTITY_ACTIVE_KID` (I) | var, optional | `identityToken.signer.activeKid` | the key that signs: whichever of the two signing-key secrets has this thumbprint; `gen` refuses the `aws-kms` signer until build step 7 |
+| `IDENTITY_GLOBAL_HOURLY_MAX` (I) | var, optional | not generated | the global mint breaker per hour (default 1 000 000; the soft alert line is 100 000) |
+| `IDENTITY_SIGNING_KEY`, `IDENTITY_SIGNING_KEY_STANDBY` (I) | secret, testnet and `local*` only | `.secrets/<env>/identity-signing-key.json`, `identity-signing-key-standby.json`, from `scripts/identity-key.ts init` | P-256 private JWKs; no key with the active kid → `503 identity_signer_unavailable` |
+| `IDENTITY_SUB_KEY` (I) | secret | `.secrets/<env>/identity-sub-key`, from `identity-key init` | base64 of 32 bytes; the `sub`/`sid` HMAC key; never rotated |
 | `DB` | D1 | `cloudflare.d1Name`, id from `--d1-id` | `migrations_dir: migrations` |
 | `RELAYER_KEY`, `RATE_LIMITER`, `LOGIN_RELAY` | Durable Objects | classes `RelayerKey`, `RateLimiter`, `LoginRelay` | |
 | `VAULT_IP_LIMIT`, `VAULT_SHARE_LIMIT` | Rate Limiting (`ratelimits`) | `gen` writes them (`src/vault/limits.ts`): namespaces `95001`, `95002`; 60 and 10 per 60 s | vault per-IP and per-share limits, per location (D95); a namespace id is account-wide, keys carry the env name |
+| `IDENTITY_SESSION_LIMIT` (I) | Rate Limiting (`ratelimits`) | `gen` writes it (`src/identity/limits.ts`): namespace `95003`; 10 per 60 s | `/v1/identity/token` per session key, per location |
+| `IDENTITY_ROOT_LIMIT` (I) | Rate Limiting (`ratelimits`) | `gen` writes it: namespace `95004`; 30 per 60 s | `/v1/identity/token` per account root (keyed by the HMAC `sub` bytes, never the Google `sub`), per location (D176) |
 
 `gen` also writes the page Workers' `wrangler.vault.jsonc` (var `VAULT_ORIGIN`, assets, service binding `API` to this
 Worker) and `wrangler.auth.jsonc` (vars `AUTH_ORIGIN`, `API_URL`, `NEAR_RPC`, `NEAR_RPC_FALLBACK` when set; assets),
@@ -737,6 +841,7 @@ signatures, bodies, keys, CKD responses, relay bodies or panic text.
 | `colo` | Cloudflare data center that ran the request (`SIN`, …) |
 | `phases` | ms per stage, below |
 | `relayInstance` | `{cold, coldChainRead, blockRefresh, served, ageMs}` of the relayer key object |
+| `kid` | `/v1/identity/token`: the signing key's thumbprint (I); never the token, `sub`, `sid`, an address or the body |
 
 | Phase | Covers |
 |---|---|
@@ -748,6 +853,7 @@ signatures, bodies, keys, CKD responses, relay bodies or panic text.
 | `insert` | share creation: wrapping K_s and the D1 insert |
 | `share` | share actions: the KEK, the share row and (unlock, touch) the settings row (D1) |
 | `advance` | unlock: re-wrap if needed and the counter update (D1) |
+| `proof`, `limits`, `share`, `session`, `wallets`, `sign` | `/v1/identity/token` (I): the session signature, the per-session limit and marker, the share and settings rows, the chain session, the wallet proofs, signing |
 | `relay` | round trip to the relayer key object |
 | `relayDispatch` | inside it, until broadcast: = `relayQueue` + `relayChainRead` + `relaySign` + `relayPersist` (summed over retries) |
 | `relayQueue` | waiting for earlier critical sections of the same key |
@@ -769,4 +875,8 @@ Other events: `relay_dispatched` (`pool`, `keyIndex`, `method`, `nearTx`, `nonce
 `code` `get_config_failed` / `get_issuer_failed`), `jwks_stale`, `key_observation_failed` (`code` `jwks` / `token`), `vault_page` (`latencyMs`: its D1 reads), `vault_maintenance`
 (`pruned`, `rewrapped`, `unknownKek`), `vault_rewrap_unreadable` (`unreadable`), `vault_kek_unavailable`, `vault_share_unreadable`,
 `usage_increment_failed`, `owner_token_release_failed`, `gas_override_ignored`, `auto_approve_policy_invalid`
-(`problems`), and from the page Workers `vault_host` and `auth_page` (`code`).
+(`problems`), the identity token's (I) `identity_unavailable` (`code`: `no_identity_config`, `bad_public_keys`,
+`active_kid_not_published`, `no_sub_key`, `bad_sub_key`), `identity_signer_unavailable` / `identity_sign_failed`
+(`code`: `no_signing_key_for_active_kid`, `signing_key_unusable`, `self_verify_failed`), `identity_ceiling` (error), `identity_volume_alert` (error: past the global soft line),
+`identity_bad_session_path` (error), `identity_count_failed`, `identity_maintenance` (`pruned`), and from the page
+Workers `vault_host` and `auth_page` (`code`).

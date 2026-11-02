@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { base64UrlEncode, sha256 } from '../src/bytes.ts';
 import { RELAY_READS_PER_IP_MINUTE, RELAY_TOMBSTONE_MS, RELAY_TTL_MS, RELAY_WRITES_PER_IP_MINUTE } from '../src/login-relay.ts';
 import worker from '../src/index.ts';
-import { ORIGIN, call } from './helpers.ts';
+import { ORIGIN, call, startOfMinuteClock } from './helpers.ts';
 import { AUTH, VAULT } from './login-helpers.ts';
 
 afterEach(() => vi.restoreAllMocks());
@@ -187,6 +187,8 @@ describe('login relay', () => {
   });
 
   it('rate limits per IP: writes 10 per minute, reads 120 per minute', async () => {
+    // The windows are fixed minutes: start the run a second into one (helpers.ts startOfMinuteClock).
+    await startOfMinuteClock();
     const ip = `198.51.100.${Math.floor(Math.random() * 250)}`;
     const statuses: number[] = [];
     for (let i = 0; i <= RELAY_WRITES_PER_IP_MINUTE; i++) statuses.push((await write((await newRelay()).id, value(), AUTH, ip)).status);

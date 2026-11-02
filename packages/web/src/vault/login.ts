@@ -7,7 +7,16 @@
 //     `source.opener === window.parent`; vault: the window its launcher opened) with hana:auth-params.
 //  7. It long-polls the relay with the read key, decrypts the slot with relayKey, and checks the token (RS256 against
 //     Google's JWKS, iss, aud, nonce, exp/iat on the corrected clock, the claim allow-list, sub).
-//  8. It fixes `expectedPath = scopeId#google#sub#keyIndex`, the only path it ever uses for this session. Before the
+//     Email login (build plan batch 8a): when the app's `loginMethods` include email and the env has an email issuer,
+//     the auth-params offer both methods (the popup's chooser, or `hana.login({method})`); the popup's /login/email
+//     relays the issuer's email token (JWS JSON) in the same slot. The vault verifies it against the on-chain email keys
+//     and signer policy (`get_issuer_keys` / `get_self_issued("email")`, its own RPC), the pinned `iss`, the scope's
+//     `aud` `email:<scopeId>`, the nonce and the time (core email-token.ts), and checks `scope_for_client("email",
+//     aud)` is the scope. It never sends a `linkJwt`: batch 8a links nothing.
+//  8. It fixes `expectedPath = scopeId#<provider>#sub#keyIndex` (loginPath: `google` exactly as before, or `email`),
+//     the only path it ever uses for this session. With no links on chain (none exist while no app enables linking)
+//     that is the identity's own path; a linked identity's login would fail the pairing check, never derive another
+//     key. Before the
 //     chain step it has also checked the inlined scopeId against the on-chain registry (docs/batch-b-spec.md Q7): one
 //     view through the manifest RPC, started as soon as GET /v1/app answers so it runs while the user is at Google.
 //     Own client: `scope_for_client('google', clientId)` must be the scopeId; shared client: `get_scope(scopeId)` must
@@ -43,6 +52,12 @@ import {
   sessionNonce,
   signCreate,
   signDerive,
+  type EmailChainKey,
+  type EmailSignerPolicy,
+  EMAIL_PROVIDER,
+  type LoginMethod,
+  isJsonFormToken,
+  verifyEmailIdToken,
   verifyGoogleIdToken,
   zero,
 } from '@hana-id/core';
@@ -74,7 +89,38 @@ export const KEY_PENDING_MAX_WAIT_S = 30;
 export const KEY_PENDING_DEFAULT_WAIT_S = 30;
 
 export type LoginMode = 'partner' | 'vault';
-export type LoginStage = 'popup_connected' | 'google' | 'token' | 'chain' | 'key_pending' | 'done';
+export type LoginStage = 'popup_connected' | 'google' | 'email_code' | 'token' | 'chain' | 'key_pending' | 'done';
+
+/** What `hana_login` asked for: a method to open directly, an address to prefill. */
+export interface LoginRequest {
+  method?: LoginMethod;
+  emailHint?: string;
+}
+
+/**
+ * A login's derivation path, `{scope}#{provider}#{sub}#{key_index}`, for an identity that is not linked (D119: an
+ * unlinked identity derives on its own path). `google` gives batch B's path byte for byte.
+ */
+export const loginPath = (scopeId: string, provider: 'google' | 'email', sub: string, keyIndex: number): string => `${scopeId}#${provider}#${sub}#${keyIndex}`;
+
+/**
+ * Whether a stored record's path is one this vault opens in `scopeId`: an unlinked Google or email identity's path
+ * (the record check, docs/batch-b-spec.md "Record"). Google paths are checked exactly as before.
+ */
+export const isOwnLoginPath = (path: string, scopeId: string): boolean => path.startsWith(`${scopeId}#google#`) || path.startsWith(`${scopeId}#email#`);
+
+/**
+ * What /login/email relays as `{error}` when the user cancels the email step (D245), and the code the login ends with.
+ * Google's own error codes (OAuth's) never start with `email_`.
+ */
+export const EMAIL_RELAY_ERRORS: Readonly<Record<string, 'login_cancelled' | 'code_invalid' | 'challenge_expired' | 'rate_limited' | 'login_method_unavailable'>> = Object.freeze({
+  email_cancelled: 'login_cancelled',
+  email_code_invalid: 'code_invalid',
+  email_challenge_expired: 'challenge_expired',
+  email_rate_limited: 'rate_limited',
+  /** The step can't go on here (email unavailable for the app or this env, case B without Google). */
+  email_unavailable: 'login_method_unavailable',
+});
 
 export interface LoginContext {
   env: HanaEnv;
@@ -142,6 +188,9 @@ interface Relayed {
 
 type AuthParams = {
   v: 1;
+  methods?: LoginMethod[];
+  method?: LoginMethod;
+  emailHint?: string;
   t: 'hana:auth-params';
   pk: string;
   appName: string;
@@ -173,6 +222,12 @@ export class PendingLogin {
   private resolveHello: (() => void) | null = null;
   private readonly helloSeen: Promise<void>;
   private readonly pendingTimer: unknown;
+  /** The popup whose hello was answered: the only window whose `hana:auth-progress` counts. */
+  private helloSource: unknown = null;
+  /** Email is offered in this login (set once the app config is read). */
+  private emailOffered = false;
+  /** The popup's progress stages already reported (each once). */
+  private readonly progressed = new Set<string>();
   /** When the vault took the hana_login request (perfNow), for the `vault` total. */
   readonly startedAt: number;
 
@@ -181,6 +236,8 @@ export class PendingLogin {
     readonly mode: LoginMode,
     /** The SDK sent `{popupBlocked: true}` (the launcher fallback): hana_cancelLogin then ends it with popup_blocked. */
     readonly popupBlocked = false,
+    /** `hana.login({method, emailHint})`. */
+    private readonly request: LoginRequest = {},
   ) {
     this.startedAt = ctx.perfNow();
     this.helloSeen = new Promise<void>((resolve) => {
@@ -230,6 +287,7 @@ export class PendingLogin {
       return false;
     }
     this.helloAccepted = true;
+    this.helloSource = e.source;
     const params = this.params;
     // The copies posted are the only ones besides the vault's; structured clone copies them again, so zero after.
     const message: AuthParams = { ...params, sessionPublicKey: Uint8Array.from(params.sessionPublicKey), salt: Uint8Array.from(params.salt), relayKey: Uint8Array.from(params.relayKey) };
@@ -239,6 +297,20 @@ export class PendingLogin {
       zero(message.relayKey, message.salt);
     }
     this.resolveHello?.();
+    return true;
+  }
+
+  /**
+   * A hana:auth-progress (already parsed) from /login/email: the code was sent. Taken only in a login that offered email,
+   * after its hello was answered, from authOrigin and from that same window (a navigation keeps the window). Only a
+   * progress event follows; nothing else depends on it.
+   */
+  acceptProgress(e: WindowMessageEvent, stage: 'google' | 'email_code'): boolean {
+    if (this.abortError || !this.helloAccepted || !this.emailOffered) return false;
+    if (e.origin !== this.ctx.env.authOrigin || !e.source || e.source !== this.helloSource) return false;
+    if (this.progressed.has(stage)) return false;
+    this.progressed.add(stage);
+    this.ctx.progress(stage);
     return true;
   }
 
@@ -268,6 +340,12 @@ export class PendingLogin {
     }
     this.check();
     if (app.signer !== env.signer || app.scopeId !== config.scopeId) throw fail('config_mismatch', 'The app configuration does not match this vault');
+    // Email is offered only when the app enables it, its scope serves it (the API's `email.aud`, this scope's client)
+    // and this env's bundle pins an email issuer. Otherwise the login is batch B's Google login, message for message.
+    const emailAud = `email:${config.scopeId}`;
+    const emailOn = !!(env.emailIssuerUrl && env.emailIss && app.loginMethods?.includes('email') && app.email?.aud === emailAud);
+    if (this.request.method === 'email' && !emailOn) throw fail('login_method_unavailable', 'Email sign-in is not available for this app');
+    this.emailOffered = emailOn;
     mark('app');
     // Q7, in the background: settled before the chain step, never an unhandled rejection.
     const scopeStarted = ctx.perfNow();
@@ -275,6 +353,10 @@ export class PendingLogin {
       (problem) => ({ problem, ms: ctx.perfNow() - scopeStarted }),
       () => ({ problem: 'unchecked' as const, ms: ctx.perfNow() - scopeStarted }),
     );
+    // Email: the scope's email client and the on-chain email keys and policy, read while the user types the code.
+    // Not for `method: 'google'`: that popup never takes the email path.
+    const emailChain: Promise<EmailChain | 'unchecked'> | null =
+      emailOn && this.request.method !== 'google' ? this.readEmailChain(emailAud).catch(() => 'unchecked' as const) : null;
 
     const sessionKey = await newSessionKey();
     this.check();
@@ -304,6 +386,13 @@ export class PendingLogin {
         nonce,
         relayId,
         relayKey: Uint8Array.from(relayKey),
+        ...(emailOn
+          ? {
+              methods: ['google', 'email'] as LoginMethod[],
+              ...(this.request.method ? { method: this.request.method } : {}),
+              ...(this.request.emailHint && this.request.method !== 'google' ? { emailHint: this.request.emailHint } : {}),
+            }
+          : {}),
       };
       mark('keygen');
 
@@ -312,7 +401,9 @@ export class PendingLogin {
       this.check();
       this.dropSecrets();
       ctx.progress('popup_connected');
-      ctx.progress('google');
+      // With email offered the user may not go to Google: the popup says so itself (hana:auth-progress), except for
+      // `method: 'google'`, which goes straight there.
+      if (!emailOn || this.request.method === 'google') ctx.progress('google');
       mark('popup');
 
       // Step 7: the token, through the relay.
@@ -331,31 +422,52 @@ export class PendingLogin {
         timings.relayHeld = relayed.heldMs;
         timings.google = Math.max(0, (timings.google ?? 0) - relayed.heldMs);
       }
-      let jwksUnavailable = false;
-      const verified = await verifyGoogleIdToken(idToken, {
-        clientId: app.google.clientId,
-        nonce,
-        nowMs: ctx.clock.now(),
-        jwks: async (kid) => {
-          try {
-            return await ctx.jwks(kid);
-          } catch {
-            jwksUnavailable = true;
-            return null;
-          }
-        },
-      });
-      this.check();
-      if (!verified.ok) {
-        if (jwksUnavailable) throw fail('api_unavailable', "Could not read Google's signing keys");
-        if (verified.code === 'token_has_pii') throw fail('token_has_pii', 'The Google token carries a claim outside the allow-list', { claim: verified.claim.slice(0, 64) });
-        throw fail('token_invalid', 'The Google token was refused');
+      // Step 7 (email): the issuer's token, checked against the chain's keys, never the API's word.
+      let provider: 'google' | 'email' = 'google';
+      let sub: string;
+      let exp: number;
+      if (isJsonFormToken(idToken)) {
+        if (!emailChain) throw fail('token_invalid', 'The sign-in token was refused');
+        const chain = await emailChain;
+        this.check();
+        if (chain === 'unchecked') throw fail('api_unavailable', 'Could not read the email sign-in keys on NEAR', { reason: 'email_unchecked' });
+        if (chain.scope !== config.scopeId) throw fail('config_mismatch', 'The app’s email client does not match the on-chain registry', { reason: 'scope_mismatch' });
+        const checked = await verifyEmailIdToken(idToken, { iss: env.emailIss as string, aud: emailAud, nonce, nowMs: ctx.clock.now(), keys: chain.keys, policy: chain.policy });
+        this.check();
+        if (!checked.ok) {
+          if (checked.code === 'key_pending') throw fail('api_unavailable', 'The email sign-in key is not active yet; try signing in again in a few minutes');
+          throw fail('token_invalid', 'The email token was refused');
+        }
+        provider = EMAIL_PROVIDER;
+        sub = checked.token.sub;
+        exp = checked.token.exp;
+      } else {
+        let jwksUnavailable = false;
+        const verified = await verifyGoogleIdToken(idToken, {
+          clientId: app.google.clientId,
+          nonce,
+          nowMs: ctx.clock.now(),
+          jwks: async (kid) => {
+            try {
+              return await ctx.jwks(kid);
+            } catch {
+              jwksUnavailable = true;
+              return null;
+            }
+          },
+        });
+        this.check();
+        if (!verified.ok) {
+          if (jwksUnavailable) throw fail('api_unavailable', "Could not read Google's signing keys");
+          if (verified.code === 'token_has_pii') throw fail('token_has_pii', 'The Google token carries a claim outside the allow-list', { claim: verified.claim.slice(0, 64) });
+          throw fail('token_invalid', 'The Google token was refused');
+        }
+        ({ sub, exp } = verified.token);
       }
-      const { sub, exp } = verified.token;
       mark('verify');
 
       // Step 8: the only path this session ever uses, in a scope the registry confirmed.
-      const path = `${config.scopeId}#google#${sub}#${KEY_INDEX}`;
+      const path = loginPath(config.scopeId, provider, sub, KEY_INDEX);
       const scope = await scopeCheck;
       this.check();
       timings.scopeCheck = Math.max(0, scope.ms);
@@ -417,6 +529,13 @@ export class PendingLogin {
     return scope && scope.id === config.scopeId && scope.allow_shared && isShared ? null : 'mismatch';
   }
 
+  /** The email side of the registry check and the token check's keys, from the vault's own RPC. */
+  private async readEmailChain(aud: string): Promise<EmailChain> {
+    const { near } = this.ctx;
+    const [scope, keys, policy] = await Promise.all([near.scopeForClient(EMAIL_PROVIDER, aud), near.issuerKeys(EMAIL_PROVIDER), near.selfIssued(EMAIL_PROVIDER)]);
+    return { scope, keys: keys ?? [], policy };
+  }
+
   /** Long-polls the relay until it holds Google's answer; returns the ID token (and, pk_test_ apps, the popup's timings). */
   private async readRelay(relayId: string, relayReadKey: Uint8Array, relayKey: Uint8Array): Promise<Relayed> {
     const { api, timers } = this.ctx;
@@ -446,7 +565,15 @@ export class PendingLogin {
         throw fail('token_invalid', 'The sign-in answer does not decrypt');
       }
       this.check();
-      if ('error' in payload) throw fail('google_error', 'Google returned an error', { error: payload.error });
+      if ('error' in payload) {
+        // The email step's cancel (D245), only in a login that offered email; anything else is Google's answer.
+        const email = this.emailOffered && Object.hasOwn(EMAIL_RELAY_ERRORS, payload.error) ? EMAIL_RELAY_ERRORS[payload.error] : undefined;
+        if (email === 'login_cancelled') throw fail('login_cancelled', 'The sign-in was cancelled');
+        if (email === 'rate_limited') throw fail('rate_limited', 'Too many attempts, try again later');
+        if (email === 'login_method_unavailable') throw fail('login_method_unavailable', 'Email sign-in is not available for this app');
+        if (email) throw fail(email, email === 'code_invalid' ? 'The sign-in code was wrong' : 'The sign-in code expired');
+        throw fail('google_error', 'Google returned an error', { error: payload.error });
+      }
       const held = read.value.heldMs;
       return {
         idToken: payload.idToken,
@@ -455,6 +582,14 @@ export class PendingLogin {
       };
     }
   }
+}
+
+/** What the email token check reads from the chain. */
+interface EmailChain {
+  /** `scope_for_client("email", "email:<scopeId>")`. */
+  scope: string | null;
+  keys: EmailChainKey[];
+  policy: EmailSignerPolicy | null;
 }
 
 interface ChainInput {

@@ -235,6 +235,9 @@ export class FakeBackend {
   relayHeldMs: number | null = null;
   /** What the callback adds to the relay slot for a pk_test_ login (its own and /login's stage durations), or none. */
   popupTimings: Record<string, number> | null = null;
+  /** The on-chain email keys (`get_issuer_keys("email")`) and signer policy (`get_self_issued("email")`), or none. */
+  emailKeys: { kid: string; n: string; e: string }[] | null = null;
+  emailPolicy: { provider: string; signers: { id: string; kids: string[] }[]; required: number; overlap_until_ms: null } | null = null;
   /** The identity tokens' lifetime this fake API mints with (seconds); the real one caps it at the session's end. */
   identityTtlS = 3600;
   private txSeq = 0;
@@ -266,8 +269,11 @@ export class FakeBackend {
   createSession(body: Record<string, unknown>, derive: boolean): { ok: true; result?: unknown; session: ChainSession } | { ok: false; reason: string } {
     const pkHex = toHex(Uint8Array.from(body.sessionPublicKey as number[]));
     if (this.sessions.has(pkHex)) return { ok: false, reason: 'session_key_in_use' };
-    const claims = JSON.parse(fromUtf8(base64UrlDecode((body.jwt as string).split('.')[1]!))) as { sub: string };
-    const session: ChainSession = { path: `${SCOPE}#google#${claims.sub}#${body.keyIndex as number}`, scope_id: SCOPE, expires_at_ms: body.expiresAtMs as number, max_uses: body.maxUses as number, used: derive ? 1 : 0 };
+    // An email token (JWS JSON) derives on `#email#`, a Google one on `#google#` (unlinked identities, as the contract).
+    const jwt = body.jwt as string;
+    const email = jwt.startsWith('{');
+    const claims = JSON.parse(fromUtf8(base64UrlDecode(email ? (JSON.parse(jwt) as { payload: string }).payload : jwt.split('.')[1]!))) as { sub: string };
+    const session: ChainSession = { path: `${SCOPE}#${email ? 'email' : 'google'}#${claims.sub}#${body.keyIndex as number}`, scope_id: SCOPE, expires_at_ms: body.expiresAtMs as number, max_uses: body.maxUses as number, used: derive ? 1 : 0 };
     this.sessions.set(pkHex, session);
     return { ok: true, session, ...(derive ? { result: mpcAnswer(body.pk1 as string, session.path) } : {}) };
   }
@@ -435,6 +441,8 @@ export class FakeBackend {
       if (body.params.method_name === 'get_scope') return answer(this.scopes.get(args.scope_id as string) ?? null);
       if (body.params.method_name === 'scope_for_client') return answer(this.clientScopes.get(`${args.provider as string}|${args.aud as string}`) ?? null);
       if (body.params.method_name === 'get_config') return answer({ shared_clients: this.sharedClients, pending_shared_clients: [] });
+      if (body.params.method_name === 'get_issuer_keys') return answer(args.provider === 'email' ? this.emailKeys : null);
+      if (body.params.method_name === 'get_self_issued') return answer(args.provider === 'email' ? this.emailPolicy : null);
       return answer(this.sessions.get(toHex(Uint8Array.from(args.session_public_key as number[]))) ?? null);
     }
     if (body.method === 'EXPERIMENTAL_tx_status') {
@@ -728,6 +736,57 @@ export function tokenClaims(params: Record<string, unknown>, over: Record<string
 /** The callback: Google's answer, encrypted under the popup's relayKey, into the relay slot. */
 export async function deliverToken(tab: Tab, g: Google, run: LoginRun, over: Record<string, unknown> = {}, nowMs?: number): Promise<string> {
   const token = await g.token(tokenClaims(run.params, over, nowMs ?? tab.browser.timers.now));
+  await tab.browser.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: token });
+  return token;
+}
+
+// ---- email login (build plan batch 8a) ----
+
+export const EMAIL_ISSUER = 'https://issuer.test';
+export const EMAIL_ISS = `${EMAIL_ISSUER}/v1/email`;
+export const EMAIL_SUB = `e1.${'Q'.repeat(43)}`;
+/** The env with an email issuer pinned. */
+export const EMAIL_ENV: HanaEnv = Object.freeze({ ...ENV, emailIssuerUrl: EMAIL_ISSUER, emailIss: EMAIL_ISS });
+
+export interface EmailIssuer {
+  kid: string;
+  chainKey: { kid: string; n: string; e: string };
+  /** A token as Hana's issuer writes it: JWS General JSON, one RS256 signature. */
+  token(claims: Record<string, unknown>): Promise<string>;
+}
+
+export async function emailIssuer(kid = 'email-kid-1'): Promise<EmailIssuer> {
+  const pair = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
+  const pub = await crypto.subtle.exportKey('jwk', pair.publicKey);
+  const b64 = (v: unknown) => base64UrlEncode(utf8(JSON.stringify(v)));
+  return {
+    kid,
+    chainKey: { kid, n: pub.n as string, e: pub.e as string },
+    async token(claims) {
+      const payload = b64(claims);
+      const protectedHeader = b64({ alg: 'RS256', kid });
+      const sig = new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', pair.privateKey, utf8(`${protectedHeader}.${payload}`)));
+      return JSON.stringify({ payload, signatures: [{ protected: protectedHeader, signature: base64UrlEncode(sig) }] });
+    },
+  };
+}
+
+/** Turns email on for the backend: GET /v1/app offers it, the scope holds `email:<scope>`, the chain lists the key. */
+export function enableEmail(backend: FakeBackend, issuer: EmailIssuer): void {
+  backend.app = { ...backend.app, loginMethods: ['google', 'email'], email: { aud: `email:${SCOPE}` } };
+  backend.clientScopes.set(`email|email:${SCOPE}`, SCOPE);
+  backend.emailKeys = [issuer.chainKey];
+  backend.emailPolicy = { provider: 'email', signers: [{ id: 'hana', kids: [issuer.kid] }], required: 1, overlap_until_ms: null };
+}
+
+export function emailClaims(params: Record<string, unknown>, over: Record<string, unknown> = {}, nowMs = START_MS): Record<string, unknown> {
+  const now = Math.floor(nowMs / 1000);
+  return { iss: EMAIL_ISS, aud: `email:${SCOPE}`, sub: EMAIL_SUB, iat: now, exp: now + 600, nonce: params.nonce, jti: 'jti-email-1', ...over };
+}
+
+/** /login/email: the issuer's token, encrypted under the popup's relayKey, into the relay slot. */
+export async function deliverEmailToken(tab: Tab, issuer: EmailIssuer, run: LoginRun, over: Record<string, unknown> = {}): Promise<string> {
+  const token = await issuer.token(emailClaims(run.params, over, tab.browser.timers.now));
   await tab.browser.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: token });
   return token;
 }

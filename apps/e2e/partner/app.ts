@@ -159,6 +159,8 @@ function hanaConnector() {
 
 const actions: Record<string, (...args: never[]) => Promise<unknown>> = {
   login: () => hana.login(),
+  // Email login (batch 8a): the method, and an optional hint, as a partner page passes them.
+  loginWith: (options: Parameters<typeof hana.login>[0]) => hana.login(options),
   logout: () => hana.logout(),
   cancelLogin: async () => hana.cancelLogin(),
   exportKey: (chainName: 'stellar' | 'evm') => hana.exportKey(chainName),

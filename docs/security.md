@@ -1,7 +1,9 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-02 for email login's API part (branch `feat/email-login-6`: the
+known open issues. Last verified against code: 2026-11-02 for email login in the web (branch `feat/email-login-8a`:
+"Email login in the popup and the vault" under "Browser", `/login/email`'s CSP, the device ticket on `authOrigin`,
+D245–D249); 2026-11-02 for email login's API part (branch `feat/email-login-6`: the
 email-token, proof-of-possession, link-precheck and link-relay invariants under "API", the issuer reached without the
 API and its `app_keys` lookup, the share-revocation residual, D230–D234); 2026-11-02 for usage capture (branch `feat/batch-c-4`: the ledger's
 writer credential and `USER_ID_KEY` in the inventory and the compromise table, "Usage capture fails open" in the API
@@ -597,6 +599,50 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   a later day's usage when the clock says an earlier day (`usageToday`), so a backwards step never resets the caps.
   Not done: a cap on how far one server answer may move the clock forward (an API that lies is already a total
   compromise; a forward step only ends things early).
+
+### Email login in the popup and the vault (build plan batch 8a)
+
+- **The vault checks the email token itself, against the chain** (`packages/core/src/email-token.ts`, called from
+  `vault/login.ts`): the issuer's exact JWS JSON form (no whitespace, unknown or duplicate member, no unprotected
+  header, ≤ 7168 bytes, 1–3 signatures with distinct kids, each header exactly `{alg: RS256, kid}`), RS256 with an
+  active key from `get_issuer_keys("email")`, each kid under a signer of `get_self_issued("email")` with at least
+  `required` signers, `iss` equal to the bundle's pinned `emailIss` (manifest `emailIssuer.iss`), `aud` exactly
+  `email:<scopeId>`, the pending login's nonce, `exp`/`iat` within 60 s skew, exactly the issuer's claims (no
+  address), `sub` 1–255 bytes without `#`. Its keys come from its own RPC, never the API or the issuer's JWKS; a kid
+  the chain doesn't list refuses the login ("try again later"). It also requires `scope_for_client("email",
+  "email:<scopeId>")` to be its scope (the email side of D56). Only then does it fix `scopeId#email#sub#0`
+  (`loginPath`); the pairing check against the pinned CKD key still guards the result.
+- **Email is accepted only where it was offered**: a JWS JSON token in a login whose auth-params didn't offer email
+  (a Google-only app, an env without `emailIssuer`) is `token_invalid`; the `email_*` relay errors (D245) count only
+  in such a login, and are Google's answer otherwise.
+- **No link, ever, in batch 8a**: the vault never sends `linkJwt` / `linkImmediate` and signs only the plain CKD
+  payload; the e2e mock refuses a login that carries a link. Case B (the address belongs to a Google wallet here, the
+  issuer mints no token) would continue as a plain Google login, but it can't happen in 8a: nothing writes
+  `email_hints` before google-match (batch 8b). D139 is batch 8b's.
+- **Only demo and test scopes get email in 8a (D248).** Every email identity opened in 8a is a wallet of its own, and it can never join a Google account later (the contract refuses a link to an identity that already has a wallet: "Sign-in method already has a wallet"). Nothing writes `email_hints` before google-match (batch 8b), so case B never happens in 8a: a Google user who picks email with their Gmail address gets that second wallet. Turning email on is a hand `UPDATE`
+  of `login_methods` plus the scope's email client; do it for no scope with real Google users until google-match's
+  hint writes or a merge path ship (`docs/mainnet-readiness.md` row 7.1g).
+- **A linked identity can't log in through 8a's web** (D249): links can exist on chain (`/v1/link`, other clients),
+  and the vault, which fixes the identity's own path, then refuses (`derive_failed` on a re-synced root path, the
+  pairing check on a root CKD answer); it never derives another key.
+- **`/login/email` reaches only the issuer and the API** (CSP `connect-src {issuer origin} {api}`; the auth Worker's
+  `EMAIL_ISSUER_URL`, `packages/web/src/auth/pages.ts`); `/login` stays fetch-free (D77). The address goes only to
+  the issuer's `start`, the code only to `verify`; neither is stored or logged. The token is held only until
+  encrypted under `relayKey`, which is taken (single use) at that moment. The email context in `sessionStorage`
+  (`hana.email.<relayId>`, 10 min) holds public facts and the `challengeId` (spec: kept in the popup), and the
+  partner's `emailHint` only until `/login/email` loads (then in memory only); never the relay key, a typed address,
+  a code or a token. A step that can't go on tells the vault at once (`email_unavailable`), and the page stops at the
+  vault's deadline, so no relay key outlives the login.
+- **Device tickets on `authOrigin`**: `localStorage` `hana.dt.<b64url(sha256(trimmed lowercased address))>`, at
+  most 5, 30 days. A ticket only lets its owner's code mail past the shared limits (D198); it can't sign anyone in.
+  Residual: anyone with script on `authOrigin` (or the device) can read them, and the hash of a guessable address can
+  be confirmed by guessing.
+- **The progress message** (`hana:auth-progress`, `email_code`) carries nothing; the vault takes it only from the
+  window whose hello it answered, on `authOrigin`, in a login that offered email.
+- **Key export is refused for an email wallet** (D246): the export window re-authenticates with Google only.
+- **Enumeration**: the popup shows one generic "Too many attempts. Try again later." for every limit and says
+  nothing about whether an address has a wallet; case B's screen appears only after the user proved the address with
+  its code.
 
 ### The login popup trusts the vault's app facts
 

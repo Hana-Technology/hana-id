@@ -70,7 +70,11 @@ class FakeClient {
     this.resolveReady();
   }
 
-  login(): Promise<HanaAddresses> {
+  /** Every login's options (each demo button names its method). */
+  readonly loginOptions: unknown[] = [];
+
+  login(options?: unknown): Promise<HanaAddresses> {
+    this.loginOptions.push(options);
     this.status = 'logging_in';
     this.emit('statusChanged', 'logging_in');
     return new Promise((resolve, reject) => {
@@ -146,6 +150,22 @@ async function loginFlow(): Promise<void> {
 }
 
 describe('demo page', () => {
+  it('“Log in with Google” and “Log in with email” each open their own method (batch 8a)', async () => {
+    boot();
+    fake.readyWith(null);
+    await flush();
+    expect($('login-email').hidden).toBe(false);
+    expect(($('login-email') as HTMLButtonElement).disabled).toBe(false);
+    click('login');
+    expect(fake.loginOptions).toEqual([{ method: 'google' }]);
+    // While a login is pending, both buttons are disabled.
+    expect(($('login-email') as HTMLButtonElement).disabled).toBe(true);
+    fake.finishLogin!(Object.assign(new Error('x'), { code: 'login_cancelled' }));
+    await flush();
+    click('login-email');
+    expect(fake.loginOptions).toEqual([{ method: 'google' }, { method: 'email' }]);
+  });
+
   it('creates the client exactly as a partner does, from the baked configuration', () => {
     boot();
     expect(fake.config).toEqual({

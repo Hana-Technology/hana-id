@@ -7,7 +7,7 @@
 // API's own check has its own tests in apps/api).
 //
 // Control endpoints for the tests (`/__e2e/*`, no CORS, so no page can call them):
-//   POST /__e2e/apps                  {name?, scopeId?, origins, status?, settings?, publishableKey?, live?} → {appId, pk}
+//   POST /__e2e/apps                  {name?, scopeId?, origins, status?, settings?, publishableKey?, live?, loginMethods?} → {appId, pk}
 //                                     (with publishableKey: created once, then the same app is returned; live: a
 //                                     pk_live_ key, on LIVE_SCOPE_ID unless scopeId says otherwise)
 //   POST /__e2e/apps/<pk>/revoke      every live share of the app is revoked (an unlock then gets 410 share_revoked)
@@ -90,6 +90,8 @@ export interface AppSpec {
    * src/stack.ts), raw signing when `rawSign` is 'approval', no timings.
    */
   live?: boolean;
+  /** `apps.login_methods` (migration 0010): `'google,email'` turns email login on (default: Google only). */
+  loginMethods?: 'google' | 'google,email';
 }
 
 export interface MockApiOptions {
@@ -102,6 +104,8 @@ export interface MockApiOptions {
    * (src/stack.ts). It has no control endpoints: the tests create apps through the default one.
    */
   serves?: { envName: string; vaultOrigin: string; authOrigin: string; apiUrl: string };
+  /** The email issuer's iss and public keys (gen-wrangler's EMAIL_ISS / EMAIL_PUBLIC_KEYS), when the env has one. */
+  email?: { iss: string; publicKeys: unknown[] };
 }
 
 export class MockApi {
@@ -138,6 +142,7 @@ export class MockApi {
       IDENTITY_SESSION_LIMIT: allowAllRateLimit,
       IDENTITY_ROOT_LIMIT: allowAllRateLimit,
       ...identityBindings(serves.apiUrl),
+      ...(opts.email ? { EMAIL_ISS: opts.email.iss, EMAIL_PUBLIC_KEYS: JSON.stringify(opts.email.publicKeys) } : {}),
     };
     env.LOGIN_RELAY = new MemoryNamespace(api.LoginRelay, () => env);
     this.env = env;
@@ -167,6 +172,7 @@ export class MockApi {
       .prepare('INSERT INTO apps (id, name, scope_id, publishable_key, status, persistence, raw_sign, auto_approve_policy) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .run(appId, spec.name ?? 'E2E Partner', scopeId, pk, spec.status ?? 'active', s.persistence ?? 'session', s.rawSign ?? 'off', s.autoApprovePolicy ? JSON.stringify(s.autoApprovePolicy) : null);
     if (spec.status === 'suspended') this.d1.db.prepare('UPDATE apps SET suspended_by = 1 WHERE id = ?').run(appId);
+    if (spec.loginMethods) this.d1.db.prepare('UPDATE apps SET login_methods = ? WHERE id = ?').run(spec.loginMethods, appId);
     this.d1.db.prepare("INSERT INTO app_keys (id, app_id, key, created_by, created_at) VALUES (?, ?, ?, 'e2e', ?)").run(`key_${appId}`, appId, pk, now);
     const insert = this.d1.db.prepare('INSERT INTO app_origins (app_id, origin, active_from) VALUES (?, ?, 0)');
     for (const o of spec.origins) insert.run(appId, o);
@@ -242,9 +248,15 @@ export class MockApi {
       throw new HttpError(400, 'bad_request');
     }
     if (b.keyIndex < 0 || b.keyIndex >= KEY_INDEX_LIMIT) throw new HttpError(400, 'bad_request');
+    // Batch 8a links nothing: a login that carries a link is refused here, so the suite fails if the vault sends one.
+    if ('linkJwt' in b || 'linkImmediate' in b) throw new HttpError(400, 'bad_request');
+    // An email token (JWS JSON, `{"payload":…}`) derives on `#email#`, a Google one on `#google#` (unlinked identities,
+    // as the contract does). The signature is the vault's to check here (and apps/api's own tests'), as for Google.
+    const email = b.jwt.startsWith('{');
     let claims: { sub?: unknown; nonce?: unknown };
     try {
-      claims = JSON.parse(fromUtf8(base64UrlDecode(b.jwt.split('.')[1] ?? ''))) as typeof claims;
+      const payload = email ? (JSON.parse(b.jwt) as { payload?: unknown }).payload : b.jwt.split('.')[1];
+      claims = JSON.parse(fromUtf8(base64UrlDecode(typeof payload === 'string' ? payload : ''))) as typeof claims;
     } catch {
       throw new HttpError(401, 'token_invalid');
     }
@@ -253,7 +265,7 @@ export class MockApi {
     if (claims.nonce !== nonce || typeof claims.sub !== 'string') throw new HttpError(401, 'token_invalid');
     if (this.chain.session(sessionPublicKey)) throw new HttpError(409, 'session_exists');
     if (!(await verifyEd25519(sessionPublicKey, bytes(b.signature), sessionMessage(1, ckdPayload(b.pk1, b.pk2))))) throw new HttpError(401, 'invalid_signature');
-    const session = { path: `${app.scope_id}#google#${claims.sub}#${b.keyIndex}`, scope_id: app.scope_id, expires_at_ms: b.expiresAtMs, max_uses: b.maxUses, used: 1 };
+    const session = { path: `${app.scope_id}#${email ? 'email' : 'google'}#${claims.sub}#${b.keyIndex}`, scope_id: app.scope_id, expires_at_ms: b.expiresAtMs, max_uses: b.maxUses, used: 1 };
     this.chain.sessions.set(toHex(sessionPublicKey), session);
     const result = mpcAnswer(b.pk1, session.path);
     const nearTx = this.chain.newTxHash();

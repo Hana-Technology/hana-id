@@ -6,7 +6,7 @@
 // - vaultOrigin: `GET /vault` goes to the API Worker through the `API` service binding with the request unchanged (its
 //   URL keeps the vault origin, which vault/page.ts checks), so the page is rendered there per request with the app's
 //   D1 config inlined and its `frame-ancestors`. Every other path is a static asset (the vault bundle).
-// - authOrigin: `/login`, `/login/callback`, `/approve` and `/export` are the built HTML files (`<path>.html`), served
+// - authOrigin: `/login`, `/login/email`, `/login/callback`, `/approve` and `/export` are the built HTML files (`<path>.html`), served
 //   with each page's CSP and headers. Every other path is a static asset.
 //
 // Nothing else is served: no other path reaches the API (so `{vaultOrigin}/v1/*` is not the API), HTML files are never
@@ -33,16 +33,24 @@ export interface AuthHostEnv {
   API_URL: string;
   NEAR_RPC: string;
   NEAR_RPC_FALLBACK?: string;
+  /**
+   * Email login (manifest `emailIssuer`, D230): the issuer's origin, `/login/email`'s only connect-src besides the API.
+   * Unset: that page gets the API alone (it then stops at once, as its build does).
+   */
+  EMAIL_ISSUER_URL?: string;
   /** Static assets: packages/web/dist/pages/<env>/auth. */
   ASSETS: Fetcher;
 }
 
 /** Each auth page's directives on top of the base policy (docs/batch-b-spec.md "Origins and pages"). */
 /** `origins.rpc` is the NEAR RPC origin, or the primary and fallback origins separated by a space. */
-export function authPageDirectives(pathname: string, origins: { api: string; rpc: string }): string[] | null {
+export function authPageDirectives(pathname: string, origins: { api: string; rpc: string; emailIssuer?: string | null }): string[] | null {
   switch (pathname) {
     case '/login/callback':
       return ["frame-ancestors 'none'", `connect-src ${origins.api}`];
+    case '/login/email':
+      // The email step (build plan batch 8a): the issuer's start, resend and verify, and the relay write to the API.
+      return ["frame-ancestors 'none'", `connect-src ${origins.emailIssuer ? `${origins.emailIssuer} ` : ''}${origins.api}`];
     case '/login':
     // The login popup fetches nothing (D77); the approval popup decodes and renders what the vault sent.
     case '/approve':
@@ -55,7 +63,7 @@ export function authPageDirectives(pathname: string, origins: { api: string; rpc
 }
 
 /** The auth pages' routes; each is served from the built file `<route>.html`. */
-export const AUTH_PAGE_PATHS = ['/login', '/login/callback', '/approve', '/export'] as const;
+export const AUTH_PAGE_PATHS = ['/login', '/login/email', '/login/callback', '/approve', '/export'] as const;
 
 const ERROR_HTML = '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Hana ID</title></head><body></body></html>\n';
 
@@ -158,7 +166,11 @@ export async function handleAuthHost(request: Request, env: AuthHostEnv): Promis
   const fallback = env.NEAR_RPC_FALLBACK ? originOf(env.NEAR_RPC_FALLBACK) : null;
   // The export window falls back to rpcFallback when the primary fails (Q9): both are in its connect-src.
   const rpc = primary && (!env.NEAR_RPC_FALLBACK || fallback) ? (fallback && fallback !== primary ? `${primary} ${fallback}` : primary) : null;
-  const directives = api && rpc ? authPageDirectives(url.pathname, { api, rpc }) : null;
+  const emailIssuer = env.EMAIL_ISSUER_URL ? originOf(env.EMAIL_ISSUER_URL) : null;
+  // A malformed EMAIL_ISSUER_URL breaks only the email step's page (never a looser policy there); the other pages don't
+  // use it.
+  const issuerBroken = url.pathname === '/login/email' && !!env.EMAIL_ISSUER_URL && !emailIssuer;
+  const directives = api && rpc && !issuerBroken ? authPageDirectives(url.pathname, { api, rpc, emailIssuer }) : null;
   if (!directives) {
     log({ event: 'auth_page', endpoint: url.pathname, outcome: 'error', status: 503, code: 'misconfigured' }, 'error');
     return unavailable(head);

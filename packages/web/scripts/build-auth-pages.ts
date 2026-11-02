@@ -1,4 +1,4 @@
-// Builds the auth-origin pages (/login, /login/callback, /approve, /export) of every env whose manifest sets
+// Builds the auth-origin pages (/login, /login/email, /login/callback, /approve, /export) of every env whose manifest sets
 // vaultOrigin and authOrigin, into packages/web/dist/pages/<env>/auth (docs/batch-b-spec.md "Packages"):
 //
 //   pnpm --filter @hana-id/web build:auth [env…]
@@ -7,7 +7,7 @@
 // `ckdNetworkKey`, origins), so nothing is read at runtime. Output, per env, in `<env>/auth/`, which is the auth
 // origin's whole static-assets root (apps/api wrangler.auth.jsonc; the vault origin's is `<env>/vault`, so neither
 // origin can serve the other's files):
-//   login.html, login/callback.html, approve.html, export.html   static HTML: a <meta> CSP, one stylesheet, one module
+//   login.html, login/email.html, login/callback.html, approve.html, export.html   static HTML: a <meta> CSP, one stylesheet, one module
 //   assets/*.js, assets/*.css                                   content-hashed bundles (no inline script or style),
 //                                                               served at /assets/…
 // The Worker (apps/api src/pages/host.ts) serves each page from `<path>.html` with that page's headers, which it builds
@@ -30,6 +30,7 @@ export const ASSET_DIR = 'assets';
 
 const ENTRIES: Record<AuthPage['name'], string> = {
   login: 'src/auth/entries/login.ts',
+  email: 'src/auth/entries/email.ts',
   callback: 'src/auth/entries/callback.ts',
   approve: 'src/auth/entries/approve.ts',
   export: 'src/auth/entries/export.ts',

@@ -23,6 +23,14 @@ export interface AppConfig {
    * the policy), so setting it to 'off' takes effect in open tabs; a vault treats a missing value as 'off'.
    */
   rawSign?: 'off' | 'approval';
+  /**
+   * Email login (D231): the sign-in methods the app offers and its scope can serve, in the order google, email. Older
+   * APIs omit it (Google only). An app with email but no Google (`google: null`) is refused by isAppConfig until the
+   * vault supports it (D247).
+   */
+  loginMethods?: ('google' | 'email')[];
+  /** Present when `loginMethods` has email: the scope's email client, `email:<scopeId>`. */
+  email?: { aud: string };
   requestId: string;
 }
 
@@ -233,9 +241,18 @@ export function isAppConfig(v: unknown): v is AppConfig {
     (v.name === undefined || (typeof v.name === 'string' && isDisplaySafeLine(v.name))) &&
     (v.serverTimeMs === undefined || isMs(v.serverTimeMs)) &&
     (v.autoApprovePolicy === undefined || v.autoApprovePolicy === null || isObj(v.autoApprovePolicy)) &&
-    (v.rawSign === undefined || v.rawSign === 'off' || v.rawSign === 'approval')
+    (v.rawSign === undefined || v.rawSign === 'off' || v.rawSign === 'approval') &&
+    (v.loginMethods === undefined || isLoginMethodList(v.loginMethods)) &&
+    // `email` comes exactly with the email method, and names this scope's client.
+    (Array.isArray(v.loginMethods) && v.loginMethods.includes('email')
+      ? isObj(v.email) && v.email.aud === `email:${v.scopeId}`
+      : v.email === undefined)
   );
 }
+
+/** `loginMethods`: distinct, known, in the order google, email, and Google among them (isAppConfig needs `google`). */
+const isLoginMethodList = (v: unknown): v is ('google' | 'email')[] =>
+  Array.isArray(v) && (JSON.stringify(v) === '["google"]' || JSON.stringify(v) === '["google","email"]');
 
 export function isSessionView(v: unknown): v is SessionView {
   return (

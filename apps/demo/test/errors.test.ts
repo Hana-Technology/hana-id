@@ -19,6 +19,9 @@ describe('plainMessage', () => {
   it('explains the login failures a user can hit', () => {
     expect(plainMessage(new HanaError('popup_blocked', 'x'), 'login')).toMatch(/blocked the Hana sign-in window.*Allow pop-ups/u);
     expect(plainMessage(new HanaError('login_cancelled', 'x'), 'login')).toBe('Sign-in cancelled.');
+    expect(plainMessage(new HanaError('login_method_unavailable', 'x'), 'login')).toMatch(/Email login isn’t turned on/u);
+    expect(plainMessage(new HanaError('code_invalid', 'x'), 'login')).toMatch(/wrong code/u);
+    expect(plainMessage(new HanaError('challenge_expired', 'x'), 'login')).toMatch(/expired/u);
     expect(plainMessage(new HanaError(4001, 'x'), 'login')).toMatch(/did not complete/u);
     expect(plainMessage(new HanaError('google_error', 'x', { error: 'access_denied' }), 'login')).toBe('You declined the Google sign-in.');
     expect(plainMessage(new HanaError('vault_unavailable', 'x'), 'load')).toMatch(/Could not load the Hana vault/u);

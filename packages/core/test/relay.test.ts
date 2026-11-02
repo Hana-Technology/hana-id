@@ -118,6 +118,17 @@ describe('API responses', () => {
     expect(isAppConfig({ scopeId: 's1', signer: 'x', google: { clientId: 'c', mode: 'shared' }, autoApprovePolicy: { v: 1 }, requestId: 'r' })).toBe(true);
     expect(isAppConfig({ scopeId: 's1', signer: 'x', google: { clientId: 'c', mode: 'shared' }, autoApprovePolicy: [1], requestId: 'r' })).toBe(false);
     expect(isAppConfig({ scopeId: 's1', signer: 'x', google: { clientId: 'c', mode: 'shared' }, autoApprovePolicy: 'off', requestId: 'r' })).toBe(false);
+    // Email login (D231): loginMethods in its fixed order, `email` exactly with the email method and naming this scope.
+    const g = { scopeId: 's1', signer: 'x', google: { clientId: 'c', mode: 'shared' }, requestId: 'r' };
+    expect(isAppConfig({ ...g, loginMethods: ['google'] })).toBe(true);
+    expect(isAppConfig({ ...g, loginMethods: ['google', 'email'], email: { aud: 'email:s1' } })).toBe(true);
+    expect(isAppConfig({ ...g, loginMethods: ['google', 'email'] })).toBe(false);
+    expect(isAppConfig({ ...g, loginMethods: ['google', 'email'], email: { aud: 'email:s2' } })).toBe(false);
+    expect(isAppConfig({ ...g, loginMethods: ['google'], email: { aud: 'email:s1' } })).toBe(false);
+    expect(isAppConfig({ ...g, loginMethods: ['email', 'google'], email: { aud: 'email:s1' } })).toBe(false);
+    expect(isAppConfig({ ...g, loginMethods: ['google', 'apple'] })).toBe(false);
+    // An email-only app (google: null) is not supported by this vault yet (D247).
+    expect(isAppConfig({ ...g, google: null, loginMethods: ['email'], email: { aud: 'email:s1' } })).toBe(false);
     expect(isLoginResponse({ result: { big_y: 'y', big_c: 'c' }, session: { scope_id: 's1', expires_at_ms: 1, max_uses: 1, used: 1 }, nearTx: 'tx', requestId: 'r' })).toBe(true);
     expect(isLoginResponse({ result: { big_y: 'y', big_c: 'c' }, session: { scope_id: 's1', expires_at_ms: 1, max_uses: 1, used: 2 }, nearTx: 'tx' })).toBe(false);
     expect(isRelayReadResponse({ iv: 'a', ct: 'b', serverTimeMs: 1 })).toBe(true);

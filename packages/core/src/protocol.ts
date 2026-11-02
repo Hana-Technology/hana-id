@@ -73,6 +73,17 @@ export const STRING_ERROR_CODES = [
   'identity_unavailable',
   /** hana_identityToken: the Hana session ended (the vault also fires sessionExpired) or ends within 30 s. */
   'session_ended',
+  /**
+   * hana_login: the `method` asked for is not one the app offers here (its `login_methods`, its scope's clients, or an
+   * env without an email issuer). Email login, build plan batch 8a.
+   */
+  'login_method_unavailable',
+  /** hana_login (email): the user gave up after a wrong code (the popup handles wrong codes itself, D245). */
+  'code_invalid',
+  /** hana_login (email): the user gave up after the code expired, was used or ran out of attempts (D245). */
+  'challenge_expired',
+  /** hana_login: this sign-in method is a pending member of an account (the API's `409 link_pending`, D232). */
+  'link_pending',
 ] as const;
 
 export type StringErrorCode = (typeof STRING_ERROR_CODES)[number];
@@ -163,6 +174,21 @@ const isAppName = (v: unknown): v is string => isStr(v, 1, 200) && isDisplaySafe
 const isClientId = (v: unknown): v is string => isStr(v, 1, 256);
 const isNonce = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9_-]{43}$/u.test(v);
 const isRelayId = (v: unknown): v is string => typeof v === 'string' && RELAY_ID_PATTERN.test(v);
+
+/** The sign-in methods (`GET /v1/app` `loginMethods`, migration 0010 `apps.login_methods`), in their fixed order. */
+export const LOGIN_METHODS = ['google', 'email'] as const;
+export type LoginMethod = (typeof LOGIN_METHODS)[number];
+export const isLoginMethod = (v: unknown): v is LoginMethod => v === 'google' || v === 'email';
+/** Longest `emailHint` (RFC 5321's path limit): the popup only prefills its field with it, the issuer checks it. */
+export const EMAIL_HINT_MAX = 254;
+/**
+ * An `emailHint`: one line of 3 to 254 characters with an `@`, no space, control, bidi or invisible character. Only a
+ * prefill: the issuer normalizes and checks whatever the user sends.
+ */
+export const isEmailHint = (v: unknown): v is string => isStr(v, 3, EMAIL_HINT_MAX) && v.includes('@') && !/\s/u.test(v) && isDisplaySafeLine(v);
+/** The methods offered in auth-params: distinct, in LOGIN_METHODS order. */
+const isOfferedMethods = (v: unknown): v is LoginMethod[] =>
+  Array.isArray(v) && v.length >= 1 && v.length <= LOGIN_METHODS.length && v.every(isLoginMethod) && v.every((m, i) => i === 0 || LOGIN_METHODS.indexOf(m) > LOGIN_METHODS.indexOf(v[i - 1] as LoginMethod));
 const isMs = (v: unknown): v is number => isInt(v, 0, Number.MAX_SAFE_INTEGER);
 const isAddressFor = (chain: 'stellar' | 'evm', v: unknown): v is string => typeof v === 'string' && (chain === 'stellar' ? isStellarAddress(v) : isEvmAddress(v));
 
@@ -216,8 +242,11 @@ export const isApprovalPopupMethod = (m: unknown): m is ApprovalPopupMethod => (
 
 export interface PortParamsMap {
   hana_status: undefined;
-  /** `{popupBlocked: true}` when window.open returned null. */
-  hana_login: { popupBlocked?: boolean } | undefined;
+  /**
+   * `{popupBlocked: true}` when window.open returned null. `method`: open that sign-in method directly instead of the
+   * chooser (`hana.login({method})`); `emailHint` prefills the email field (never with `method: 'google'`).
+   */
+  hana_login: { popupBlocked?: boolean; method?: LoginMethod; emailHint?: string } | undefined;
   hana_cancelLogin: undefined;
   hana_logout: undefined;
   hana_export: { chain: 'stellar' | 'evm' };
@@ -275,7 +304,15 @@ const PARAMS: { [M in PortMethod]: (p: unknown) => PortParamsMap[M] | null } = {
   hana_status: (p) => (noParams(p) ? undefined : null),
   hana_login: (p) => {
     if (noParams(p)) return undefined;
-    if (isPlainObject(p) && exactKeys(p, [], ['popupBlocked']) && (p.popupBlocked === undefined || typeof p.popupBlocked === 'boolean')) return p as { popupBlocked?: boolean };
+    if (
+      isPlainObject(p) &&
+      exactKeys(p, [], ['popupBlocked', 'method', 'emailHint']) &&
+      (p.popupBlocked === undefined || typeof p.popupBlocked === 'boolean') &&
+      (p.method === undefined || isLoginMethod(p.method)) &&
+      (p.emailHint === undefined || (isEmailHint(p.emailHint) && p.method !== 'google'))
+    ) {
+      return p as { popupBlocked?: boolean; method?: LoginMethod; emailHint?: string };
+    }
     return null;
   },
   hana_cancelLogin: (p) => (noParams(p) ? undefined : null),
@@ -490,7 +527,7 @@ export function parsePortReply<M extends PortMethod>(data: unknown, method: M): 
  * issuer_key_pending`, D80): the vault waits the API's `retryAfterS` (at most 30 s) and tries once more, then reports
  * `chain` again. An SDK that predates it drops the event (the stage list is validated).
  */
-export const LOGIN_STAGES = ['popup_connected', 'google', 'token', 'chain', 'key_pending', 'done'] as const;
+export const LOGIN_STAGES = ['popup_connected', 'google', 'email_code', 'token', 'chain', 'key_pending', 'done'] as const;
 
 export interface PortEventMap {
   /** `timings`: pk_test_ apps only, the vault's boot and unlock stages (timings.ts, UNLOCK_TIMING_STAGES). */
@@ -577,7 +614,20 @@ export interface WindowMessageMap {
     nonce: string;
     relayId: string;
     relayKey: Uint8Array;
+    /**
+     * Email login (build plan batch 8a): the methods the popup offers, present only when email is among them (a
+     * Google-only app's message is exactly batch B's); `method` skips the chooser; `emailHint` prefills the address.
+     */
+    methods?: LoginMethod[];
+    method?: LoginMethod;
+    emailHint?: string;
   };
+  /**
+   * Login popup → vault, in a login that offered email: the user went to Google (`google`, from the chooser or case B)
+   * or the code was sent (`email_code`, from `/login/email`). A progress signal only: it carries nothing, and the vault
+   * takes it only from the window its pending login answered.
+   */
+  'hana:auth-progress': { stage: 'google' | 'email_code' };
   'hana:approve-hello': Record<string, never>;
   'hana:approve-request': {
     id: string;
@@ -697,7 +747,10 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:hello': (m) => exactKeys(m, ['v', 't', 'sdk']) && typeof m.sdk === 'string' && /^[0-9A-Za-z.+-]{1,32}$/u.test(m.sdk),
   'hana:auth-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:auth-params': (m) =>
-    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'clientId', 'mode', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses', 'nonce', 'relayId', 'relayKey']) &&
+    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'clientId', 'mode', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses', 'nonce', 'relayId', 'relayKey'], ['methods', 'method', 'emailHint']) &&
+    (m.methods === undefined || (isOfferedMethods(m.methods) && m.methods.includes('email'))) &&
+    (m.method === undefined || (Array.isArray(m.methods) && m.methods.includes(m.method as LoginMethod))) &&
+    (m.emailHint === undefined || (isEmailHint(m.emailHint) && m.method !== 'google' && Array.isArray(m.methods))) &&
     isPublishableKey(m.pk) &&
     isAppName(m.appName) &&
     isOrigin(m.parentOrigin) &&
@@ -713,6 +766,7 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
     isNonce(m.nonce) &&
     isRelayId(m.relayId) &&
     isBytes(m.relayKey, 32, 32),
+  'hana:auth-progress': (m) => exactKeys(m, ['v', 't', 'stage']) && (m.stage === 'email_code' || m.stage === 'google'),
   'hana:approve-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:approve-request': (m) => {
     if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp'])) return false;

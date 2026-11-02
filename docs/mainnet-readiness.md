@@ -3,7 +3,8 @@
 Everything that must be true before Hana ID runs on mainnet with real funds. This is a current-state doc for the
 two founders to track. Update a row in the same branch as the change that moves it (rule in `CLAUDE.md`).
 
-Last verified: 2026-11-02 for rows 7.1–7.1e (branch `feat/email-login-6`, the API's email login part and its reviews, D230–D234, D250–D252);
+Last verified: 2026-11-02 for rows 7.1f and 7.1g (branch `feat/email-login-8a`, plain email login in the web, D245–D249);
+2026-11-02 for rows 7.1–7.1e (branch `feat/email-login-6`, the API's email login part and its reviews, D230–D234, D250–D252);
 2026-11-02 for rows 1.5, 1.16, 4.18 and 7.14 (branch `feat/batch-c-4`, usage capture, D220–D224);
 2026-11-02 for row 2.6 (branch `feat/identity-token-7`, the KMS signer code); 2026-11-02, against `develop` @ 3c4e920 (batch C3 merged) and the docs on it; the inconsistencies, rows
 1.14–1.16, 6.7 and 7.5 on 2026-11-02 against `develop` @ 1c6a124 (branch `docs/consistency-pass`). Today only
@@ -175,6 +176,8 @@ These have the longest lead time, or other rows wait on them.
 | 7.1c | Email login batch 6 readings D230–D234, D250–D252 | Routing, the API's email checks, link limits, the deploy order, the issuer's APP_DB, the pool links use | decision needed ("to confirm") | founder | decisions.md D230–D234, D250–D252 |
 | 7.1d | The email issuer reads the API's D1 through a read-only RPC on the API instead of the read-write `APP_DB` binding | A compromised issuer Worker could write the API's tables (origins, keys, settings) | not built (a source check holds the code to reads, D251) | Claude build | D251; security.md "Email issuer" |
 | 7.1e | A third relayer pool for the link methods, or keep them on the session pool with the global cap | A link flood shares the allowance logins use | decision needed (D252) | founder | D252 |
+| 7.1f | Email login batch 8a readings D245–D249; batch 8b (linking, `get_identity` path resolution, email export) before any app enables linking | The popup's cancel codes, the SDK surface, the demo setup by hand, paths from the token while no links exist | decision needed ("to confirm"); 8b not built | founder | decisions.md D245–D249 |
+| 7.1g | Before email is enabled for any scope with real Google users: google-match's hint writes (batch 8b), or a merge path for email wallets opened meanwhile | An email identity with a wallet can never join a Google account later ("Sign-in method already has a wallet"); in 8a nothing writes `email_hints`, so a Google user who picks email with their Gmail address gets a second, unlinkable wallet | not built (8a enables email for demo and test scopes only, D248) | founder, Claude build | D248, D249 |
 | 7.2 | Contract v3 (email login, link counter) deployed | Every email and linking feature needs it | built, not deployed (sandbox-dev still runs v2) | founder, council | D200; contract-interface.md |
 | 7.3 | Batch C C4–C17: ledger capture, console, admin console, notices, statements, Support ID | Replaces `admin app:*`; monitoring, notices, billing | not built (C1–C3 merged) | Claude build | D28–D34, D73–D75, D87–D93; batch-c-build-plan |
 | 7.4 | Hana Home: export for every shared-login app, cross-device consent revocation, Support ID | Users aren't stranded when an app shuts down; required before mainnet | not built | Claude build | D40, D45, D98; hana-home-spec |

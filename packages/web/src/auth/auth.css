@@ -265,3 +265,14 @@ button.hold {
   touch-action: none;
   user-select: none;
 }
+
+/* The login popup's method chooser and email step (batch 8a). */
+.actions.choose {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+p.links {
+  margin-top: 14px;
+  text-align: center;
+}

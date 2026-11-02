@@ -596,3 +596,33 @@ in batch 8; and its `upgrade-contract propose|execute` is `deploy-contract <env>
   counts stay in D1 `email_usage` and are copied hourly to the ledger (`usage.email_counts`, migrations-usage 0004,
   D233), as the identity counts are; the link relays aren't usage events yet (C12).
   The link limits (D232) are provisional until sandbox-dev traffic.
+
+## Batch 8a result
+
+Branch `feat/email-login-8a` (from batch 6's branch, with `develop` merged in after batch 6 merged at b404fb3), not
+merged, nothing deployed. The minimal slice of batch 8 for an internal demo: plain email login, no linking.
+
+- **Popup** (`packages/web/src/auth`): `/login` shows "Continue with Google" / "Continue with email" when the vault
+  offers email (still fetch-free, D77); `/login/email` (`email-page.ts`, its own CSP: `connect-src` the issuer and the
+  API) runs address → `start` → code → `verify` → the token into the relay slot, with resend, "Use a different email",
+  inline wrong and expired codes, one generic limit message, case B as a plain "Continue with Google", the device
+  ticket in `localStorage` (hashed key), and cancel codes (D245).
+- **Vault** (`vault/login.ts`): the offer only for `["google","email"]` with this scope's `email.aud` in an env with an
+  email issuer; the email token checked against the chain's email keys and policy and the scope's email client
+  (`core/email-token.ts`); `loginPath` (`#email#`; Google byte for byte, golden test); the record check takes
+  `#email#`; export refused for email wallets (D246); never a `linkJwt`.
+- **SDK**: `hana.login({method, emailHint})`, `login_method_unavailable`, `code_invalid`, `challenge_expired`,
+  `loginProgress: email_code` (D247).
+- **API** (the one change outside the web): the auth page Worker serves `/login/email` with `connect-src
+  {EMAIL_ISSUER_URL} {API_URL}` (`src/pages/host.ts`), `gen` sets `EMAIL_ISSUER_URL` from `emailIssuer`
+  (`scripts/pages-wrangler.ts`).
+- **Demo**: "Log in with email" beside "Log in with Google" (each names its method).
+- **Tests**: core (the email-token check, the protocol), web (the chooser and every email-page state, the vault's
+  offer, check, path, progress, record and export), the API's page host and pages config, the demo; Playwright in
+  Chromium, Firefox and WebKit on the local stack with apps/email-issuer's own Worker and its `outbox` stub (email
+  login, a returning login with its device ticket, a wrong code, Google through the chooser unchanged).
+- **Left for batch 8b**: google-match and the four cases, the Google `email` scope (batch 0's spike), link banners,
+  `hana.linkAccount`, the unlock and confirm pages, `get_identity` path resolution (D249), email export,
+  `createHana({loginMethods})`, email-only apps.
+- **Decisions (to confirm)**: D245–D249. The sandbox-dev demo steps: `docs/operations.md` "Email login demo on
+  sandbox-dev (batch 8a)" (SendGrid needed for real mail).

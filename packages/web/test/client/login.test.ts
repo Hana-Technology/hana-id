@@ -65,6 +65,29 @@ describe('opening the popup', () => {
     expect(s.client.error).toBeNull();
   });
 
+  it('login({method, emailHint}) sends them with hana_login, after opening the popup in the click (batch 8a)', async () => {
+    s = setup();
+    await s.vault.connect();
+    s.vault.handle('hana_login', () => 'manual');
+    const p = s.client.login({ method: 'email', emailHint: 'ada@example.com' });
+    expect(s.open).toHaveBeenCalledTimes(1);
+    await flush();
+    const req = s.vault.last('hana_login');
+    expect(req.raw).toEqual({ v: 1, id: req.id, method: 'hana_login', params: { method: 'email', emailHint: 'ada@example.com' } });
+    s.vault.reply(req.id, LOGIN_RESULT);
+    await expect(p).resolves.toEqual({ stellar: STELLAR, evm: EVM });
+  });
+
+  it('refuses bad login options before opening anything (-32602)', async () => {
+    s = setup();
+    await s.vault.connect();
+    for (const bad of [{ method: 'apple' }, { method: 'google', emailHint: 'ada@example.com' }, { emailHint: 'nope' }, { other: 1 }, 'email']) {
+      const e = await rejection(s.client.login(bad as never));
+      expect(e.code).toBe(-32602);
+    }
+    expect(s.open).not.toHaveBeenCalled();
+  });
+
   it('opens the popup even before the handshake finishes, then sends hana_login once ready', async () => {
     s = setup();
     s.vault.handle('hana_login', () => ({ result: LOGIN_RESULT }));

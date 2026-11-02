@@ -15,7 +15,7 @@
 import { readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Manifest, isDevEnv, isLocalEnv, loadEnv, repoRoot } from '@hana-id/env';
+import { type Manifest, emailIssuerUrl, isDevEnv, isLocalEnv, loadEnv, repoRoot } from '@hana-id/env';
 import type { HanaEnv } from '../src/hana-env.ts';
 import { ckdKeyProblem } from './ckd-key.ts';
 
@@ -36,6 +36,8 @@ export function hanaEnv(m: Manifest): HanaEnv | null {
     ...(m.rpcFallback ? { rpcFallback: m.rpcFallback } : {}),
     ckdNetworkKey: m.ckdNetworkKey,
     devEnv: isDevEnv(m.name),
+    // Email login: the issuer's origin (its own URL, D230, or the API's) and the tokens' iss.
+    ...(m.emailIssuer ? { emailIssuerUrl: new URL(emailIssuerUrl(m)).origin, emailIss: m.emailIssuer.iss } : {}),
   };
 }
 

@@ -36,6 +36,12 @@ export function plainMessage(e: unknown, action: DemoAction): string {
       return 'Your browser blocked the Hana sign-in window. Allow pop-ups for this site and click “Log in with Google” again.';
     case 'login_cancelled':
       return 'Sign-in cancelled.';
+    case 'login_method_unavailable':
+      return 'Email login isn’t turned on for the demo app yet. Use “Log in with Google”, or ask the Hana team to turn email on.';
+    case 'code_invalid':
+      return 'Sign-in stopped after a wrong code. Click “Log in with email” to get a new one.';
+    case 'challenge_expired':
+      return 'The sign-in code expired. Click “Log in with email” to get a new one.';
     case 'coop_blocks_popup':
       return 'The Hana sign-in window closed before it finished loading. Try again and keep the window open.';
     case 'login_timeout':

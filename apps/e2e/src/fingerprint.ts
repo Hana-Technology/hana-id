@@ -5,7 +5,8 @@
 // GET /__e2e/health; tests/global-setup.ts compares it with the checkout's own and fails the run on a mismatch.
 //
 // It hashes this package's absolute path and every file the stack builds or runs from source: the e2e stack and
-// partner app, @hana-id/web and @hana-id/core (the bundles), apps/api's Worker and migrations, and the demo (its page,
+// partner app, @hana-id/web and @hana-id/core (the bundles), apps/api's Worker and migrations, the email issuer's Worker
+// and migrations, and the demo (its page,
 // sources and Worker).
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -25,6 +26,8 @@ export const FINGERPRINT_DIRS: readonly string[] = [
   'packages/core/src',
   'apps/api/src',
   'apps/api/migrations',
+  'apps/email-issuer/src',
+  'apps/email-issuer/migrations',
   'apps/demo/src',
   'apps/demo/worker',
   'apps/demo/public',

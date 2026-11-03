@@ -1,3 +1,4 @@
+import { globalFetch } from './http.ts';
 // What a request needs, built once per isolate from the bindings (keys, signer, chain and Google clients cached while
 // the bindings don't change). Tests build their own (fake chain, Google, sender and fetch).
 import { AccessVerifier, accessConfig } from './access.ts';
@@ -38,7 +39,7 @@ const memo = <T>(f: () => Promise<T>): (() => Promise<T>) => {
 let cached: { fingerprint: string; deps: Omit<Deps, 'waitUntil'> } | null = null;
 
 /** The sender an env names: SendGrid, or the outbox stub where the binding exists (local* envs only, gen-enforced). */
-export function senderFor(env: Env, fetcher: typeof fetch = fetch): EmailSender {
+export function senderFor(env: Env, fetcher: typeof fetch = globalFetch): EmailSender {
   if (env.EMAIL_SENDER === 'outbox') return new OutboxSender(env.OUTBOX);
   return new SendGridSender(env.SENDGRID_API_KEY, env.MAIL_FROM, fetcher);
 }

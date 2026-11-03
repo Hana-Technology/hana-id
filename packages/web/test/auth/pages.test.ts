@@ -32,8 +32,10 @@ describe('auth page policies', () => {
   });
 
   it('the email step’s connect-src is the issuer and the API only (batch 8a), the API only without an issuer', () => {
-    expect(authPageCsp(sandbox, 'email')).toBe(`${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev; frame-ancestors 'none'`);
-    const withIssuer = { ...sandbox, emailIssuerUrl: 'https://hana-id-email-sandbox-dev.tingtc.workers.dev', emailIss: 'https://hana-id-email-sandbox-dev.tingtc.workers.dev/v1/email' };
+    // The live manifest may or may not carry an emailIssuer block: strip it for the "without" half.
+    const { emailIssuerUrl: _url, emailIss: _iss, ...noIssuer } = sandbox;
+    expect(authPageCsp(noIssuer, 'email')).toBe(`${BASE}; connect-src https://hana-id-api-sandbox-dev.tingtc.workers.dev; frame-ancestors 'none'`);
+    const withIssuer = { ...noIssuer, emailIssuerUrl: 'https://hana-id-email-sandbox-dev.tingtc.workers.dev', emailIss: 'https://hana-id-email-sandbox-dev.tingtc.workers.dev/v1/email' };
     expect(authPageCsp(withIssuer, 'email')).toBe(
       `${BASE}; connect-src https://hana-id-email-sandbox-dev.tingtc.workers.dev https://hana-id-api-sandbox-dev.tingtc.workers.dev; frame-ancestors 'none'`,
     );

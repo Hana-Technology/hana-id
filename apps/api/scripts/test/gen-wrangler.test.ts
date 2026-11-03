@@ -61,8 +61,9 @@ const relayerKeys = [KeyPair.fromRandom('ed25519').toString(), KeyPair.fromRando
 const ownerRelayerKeys = [KeyPair.fromRandom('ed25519').toString()];
 const updaterKey = KeyPair.fromRandom('ed25519').toString();
 // sandbox-dev without its identity token block: these tests move apiUrl and list exact vars; the identity vars
-// have their own tests.
-const { identityToken: _identity, ...manifest } = loadEnv('sandbox-dev');
+// have their own tests. Also without its emailIssuer block, which the live manifest may or may not carry: the exact-vars
+// tests assume none, and the email login tests add their own fixture block.
+const { identityToken: _identity, emailIssuer: _emailIssuer, ...manifest } = loadEnv('sandbox-dev');
 
 function seedSecrets(root: string, env = manifest.name): void {
   const dir = join(root, '.secrets', env);

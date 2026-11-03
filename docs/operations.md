@@ -1760,7 +1760,7 @@ come only from the watchdog's own manifest, never from the chain or Hana's JWKS.
   (no new D1 migration), and check `/status` `email.pinned`; only then does the council run `set_issuer("email", …)`,
   `mark_self_issued("email")` and `set_issuer_key(…, signer: "hana")` (build plan batch 6). Between `set_issuer` and
   `mark_self_issued` a `signer_policy_transition` warning and the `governance_change` alerts are expected.
-  A v2 contract reads as "no email issuer": nothing is alerted, pins or not. sandbox-dev's contract is v3 since 2026-11-03 and its manifest has the pins (the issuer's active and standby kids); manifest pins set; watchdog redeploy with them unverified.
+  A v2 contract reads as "no email issuer": nothing is alerted, pins or not. sandbox-dev's contract is v3 since 2026-11-03 and its manifest has the pins (the issuer's active and standby kids); the watchdog was redeployed with them on 2026-11-03 (version fd6d8b27).
 - **Rotating an email key**: pin the new thumbprint first (redeploy), then the council posts it; it waits
   `governance_delay_ms` and is never confirmed early (info `self_issued_key_change`); anyone executes it after.
 - **A signer-policy upgrade** (Level 1 co-signer, or replacing a signer): pin the new signer's keys before the upgrade

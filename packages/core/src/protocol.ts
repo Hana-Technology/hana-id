@@ -14,6 +14,7 @@ import { base64Decode, from0xHex, toHex, utf8, utf8Length } from './bytes.ts';
 import { isDisplaySafeLine } from './display-safe.ts';
 import { IDENTITY_MAX_MAX_AGE_MS, IDENTITY_MIN_MAX_AGE_MS } from './identity.ts';
 import { KEY_INDEX_LIMIT, MAX_USES_LIMIT, RELAY_ID_PATTERN, SALT_MAX_BYTES, SALT_MIN_BYTES, SHARE_ID_BYTES } from './layouts.ts';
+import { type FollowProve, isFollowProve } from './relay.ts';
 import { type EvmTxRequest, evmTxSigningPayload, parseEvmTxRequest } from './signers/evm.ts';
 import { isTimings } from './timings.ts';
 
@@ -84,6 +85,12 @@ export const STRING_ERROR_CODES = [
   'challenge_expired',
   /** hana_login: this sign-in method is a pending member of an account (the API's `409 link_pending`, D232). */
   'link_pending',
+  /**
+   * hana_login, hana_linkAccount: the sign-in methods can't be linked (`data.reason`: `already_linked`,
+   * `has_wallet`, `account_full`, `provider_taken`, `unlinked`, `both_wallets`, `link_mismatch`, `links_unavailable`,
+   * `same_identity`); build plan batch 8b.
+   */
+  'link_refused',
 ] as const;
 
 export type StringErrorCode = (typeof STRING_ERROR_CODES)[number];
@@ -214,6 +221,10 @@ export const PORT_METHODS = [
   'hana_autoApproveStatus',
   'hana_revokeAutoApprove',
   'hana_identityToken',
+  /** The wallet's sign-in methods (build plan batch 7, spec "SDK": `hana.account()`). */
+  'hana_account',
+  /** Add a sign-in method to the wallet (`hana.linkAccount({method})`, from a click; build plan batch 8b). */
+  'hana_linkAccount',
 ] as const;
 
 export type PortMethod = (typeof PORT_METHODS)[number];
@@ -265,6 +276,9 @@ export interface PortParamsMap {
   hana_revokeAutoApprove: undefined;
   /** `maxAgeMs`: a token minted at most this long ago (IDENTITY_MIN_MAX_AGE_MS..IDENTITY_MAX_MAX_AGE_MS). */
   hana_identityToken: { maxAgeMs?: number } | undefined;
+  hana_account: undefined;
+  /** `popupBlocked: true` when window.open returned null (the vault's launcher opens the popup instead). */
+  hana_linkAccount: { method: LoginMethod; popupBlocked?: boolean };
 }
 
 /**
@@ -350,6 +364,11 @@ const PARAMS: { [M in PortMethod]: (p: unknown) => PortParamsMap[M] | null } = {
     if (isPlainObject(p) && exactKeys(p, [], ['maxAgeMs']) && (p.maxAgeMs === undefined || isInt(p.maxAgeMs, IDENTITY_MIN_MAX_AGE_MS, IDENTITY_MAX_MAX_AGE_MS))) return p as { maxAgeMs?: number };
     return null;
   },
+  hana_account: (p) => (noParams(p) ? undefined : null),
+  hana_linkAccount: (p) =>
+    isPlainObject(p) && exactKeys(p, ['method'], ['popupBlocked']) && isLoginMethod(p.method) && (p.popupBlocked === undefined || typeof p.popupBlocked === 'boolean')
+      ? (p as { method: LoginMethod; popupBlocked?: boolean })
+      : null,
 };
 
 /** The size cap for a port request with `method`. */
@@ -418,6 +437,43 @@ export interface AutoApproveStatus {
   used: { count: number; native: string };
 }
 
+/**
+ * One sign-in method of the wallet's account (`hana.account()`; no `sub`, no address): the root (`root: true`, always
+ * active) or a member, pending until `effectiveAtMs` or active since then.
+ */
+export interface AccountMethod {
+  provider: LoginMethod;
+  status: 'active' | 'pending';
+  /** When the method could (or can) open the wallet; null for the wallet's own method (the root). */
+  effectiveAtMs: number | null;
+  root: boolean;
+}
+
+export interface AccountResult {
+  methods: AccountMethod[];
+}
+
+/** A sign-in method added, activated or removed (`linkChanged`); `effectiveAtMs` for pending and active ones. */
+export interface LinkChange {
+  provider: LoginMethod;
+  status: 'pending' | 'active' | 'removed';
+  effectiveAtMs: number | null;
+}
+
+const isAccountMethod = (v: unknown): v is AccountMethod =>
+  isPlainObject(v) &&
+  exactKeys(v, ['provider', 'status', 'effectiveAtMs', 'root']) &&
+  isLoginMethod(v.provider) &&
+  (v.status === 'active' || v.status === 'pending') &&
+  (v.effectiveAtMs === null || isMs(v.effectiveAtMs)) &&
+  typeof v.root === 'boolean';
+const isLinkChange = (v: unknown): v is LinkChange =>
+  isPlainObject(v) &&
+  exactKeys(v, ['provider', 'status', 'effectiveAtMs']) &&
+  isLoginMethod(v.provider) &&
+  (v.status === 'pending' || v.status === 'active' || v.status === 'removed') &&
+  (v.effectiveAtMs === null || isMs(v.effectiveAtMs));
+
 export interface PortResultMap {
   hana_status: StatusResult;
   hana_login: LoginResult;
@@ -438,6 +494,8 @@ export interface PortResultMap {
   hana_autoApproveStatus: AutoApproveStatus | null;
   hana_revokeAutoApprove: null;
   hana_identityToken: IdentityTokenState;
+  hana_account: AccountResult;
+  hana_linkAccount: LinkChange;
 }
 
 /** A compact ES256 JWS as the API mints it (core identity.ts isIdentityTokenResponse's shape), at most ~4 KiB. */
@@ -504,6 +562,8 @@ const RESULTS: { [M in PortMethod]: (r: unknown) => boolean } = {
       /^[0-9]{1,78}$/u.test(r.used.native)),
   hana_revokeAutoApprove: (r) => r === null,
   hana_identityToken: isIdentityTokenState,
+  hana_account: (r) => isPlainObject(r) && exactKeys(r, ['methods']) && Array.isArray(r.methods) && r.methods.length >= 1 && r.methods.length <= 4 && r.methods.every(isAccountMethod),
+  hana_linkAccount: (r) => isLinkChange(r) && r.status !== 'removed',
 };
 
 export type PortReply<M extends PortMethod = PortMethod> = { v: 1; id: string; result: PortResultMap[M] } | { v: 1; id: string; error: ProtocolError };
@@ -527,7 +587,7 @@ export function parsePortReply<M extends PortMethod>(data: unknown, method: M): 
  * issuer_key_pending`, D80): the vault waits the API's `retryAfterS` (at most 30 s) and tries once more, then reports
  * `chain` again. An SDK that predates it drops the event (the stage list is validated).
  */
-export const LOGIN_STAGES = ['popup_connected', 'google', 'email_code', 'token', 'chain', 'key_pending', 'done'] as const;
+export const LOGIN_STAGES = ['popup_connected', 'google', 'email_code', 'token', 'linking', 'chain', 'key_pending', 'done'] as const;
 
 export interface PortEventMap {
   /**
@@ -559,6 +619,11 @@ export interface PortEventMap {
    * null once the session ended (logout, expiry, revocation, a newer login).
    */
   identityTokenChanged: IdentityTokenState;
+  /**
+   * A sign-in method of the logged-in wallet was added (pending or active), became active, or was removed (spec
+   * "Notices"): partners show pending ones with a way to cancel (docs/integration.md). Build plan batches 7 and 8b.
+   */
+  linkChanged: LinkChange;
 }
 
 export type PortEventName = keyof PortEventMap;
@@ -578,6 +643,7 @@ const EVENTS: { [E in PortEventName]: (d: unknown) => boolean } = {
     isPlainObject(d) && exactKeys(d, ['kind', 'chain', 'contract', 'function']) && isSignMethod(d.kind) && isChain(d.chain) && isStr(d.contract, 1, 128) && isStr(d.function, 1, 128),
   persistenceChanged: (d) => isPlainObject(d) && exactKeys(d, ['persistence']) && isPersistence(d.persistence),
   identityTokenChanged: isIdentityTokenState,
+  linkChanged: isLinkChange,
 };
 
 /** Validates a vault → SDK event, or null. */
@@ -628,6 +694,17 @@ export interface WindowMessageMap {
     methods?: LoginMethod[];
     method?: LoginMethod;
     emailHint?: string;
+    /**
+     * Linking (build plan batch 8b): the follow-up channel's key (core links.ts `followSlot`), sent only in a login
+     * that offers email (or a link task): after Google's answer the popup waits for the vault's follow-up notices
+     * (google-match's screens, link banners) and answers them through the relay, end-to-end encrypted under relayKey.
+     */
+    followKey?: Uint8Array;
+    /**
+     * `hana.linkAccount({method})`: this popup signs in the new method with `prove` (its nonce or email commitment)
+     * instead of a login; the session fields are unused. Then the vault asks (follow-up `prove`) for the account's.
+     */
+    task?: { kind: 'link'; provider: LoginMethod; prove: FollowProve };
   };
   /**
    * Login popup → vault, in a login that offered email: the user went to Google (`google`, from the chooser or case B)
@@ -754,7 +831,18 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:hello': (m) => exactKeys(m, ['v', 't', 'sdk']) && typeof m.sdk === 'string' && /^[0-9A-Za-z.+-]{1,32}$/u.test(m.sdk),
   'hana:auth-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:auth-params': (m) =>
-    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'clientId', 'mode', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses', 'nonce', 'relayId', 'relayKey'], ['methods', 'method', 'emailHint']) &&
+    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'clientId', 'mode', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses', 'nonce', 'relayId', 'relayKey'], ['methods', 'method', 'emailHint', 'followKey', 'task']) &&
+    (m.followKey === undefined || (isBytes(m.followKey, 32, 32) && (Array.isArray(m.methods) || m.task !== undefined))) &&
+    (m.task === undefined ||
+      (m.followKey !== undefined &&
+        isPlainObject(m.task) &&
+        exactKeys(m.task, ['kind', 'provider', 'prove']) &&
+        m.task.kind === 'link' &&
+        isLoginMethod(m.task.provider) &&
+        isFollowProve(m.task.prove) &&
+        m.task.prove.method === m.task.provider &&
+        m.method === undefined &&
+        m.emailHint === undefined)) &&
     (m.methods === undefined || (isOfferedMethods(m.methods) && m.methods.includes('email'))) &&
     (m.method === undefined || (Array.isArray(m.methods) && m.methods.includes(m.method as LoginMethod))) &&
     (m.emailHint === undefined || (isEmailHint(m.emailHint) && m.method !== 'google' && Array.isArray(m.methods))) &&

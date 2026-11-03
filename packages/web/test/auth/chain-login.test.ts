@@ -53,7 +53,7 @@ function harness(o: {
   const derive = o.derive ? vi.fn(async () => OTHER) : undefined;
   const ctx: ChainLoginContext = {
     login,
-    near: { getSession, txOutcome },
+    near: { getSession, txOutcome, view: vi.fn(), independent: () => null },
     signer: SIGNER,
     relayer: RELAYER,
     scopeId: 's1',

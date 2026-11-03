@@ -3,8 +3,8 @@
 // mocked chain and MPC. Flows: the chooser → email → code → wallet; a returning login that sends its device ticket;
 // a wrong code then the right one; and Google through the chooser gives the Google wallet unchanged.
 import type { Page, TestInfo } from '@playwright/test';
-import { GoogleStub } from '../src/google-stub.ts';
-import { ISSUER_URL } from '../src/stack.ts';
+import { GoogleStub, stackGoogleKey } from '../src/google-stub.ts';
+import { API_URL, ISSUER_URL } from '../src/stack.ts';
 import { LOGIN_ENDPOINT, chooseAccount, clickAction, expect, login, newApp, okValue, openPartner, routeStubs, status, test, waitPersisted } from './fixtures.ts';
 
 /** A fresh address per test and browser (the issuer's per-address limits are real here). */
@@ -125,8 +125,9 @@ test('Google through the chooser is the Google login, unchanged: the same wallet
   await popup.click('#continue-google');
   await chooseAccount(popup);
   const viaChooser = await okValue<{ stellar: string; evm: string }>(page, 'login');
-  expect(google.requests).toHaveLength(1);
-  expect(google.requests[0]?.ok).toBe(true);
+  // Batch 8b: the login's request, then the second, silent one for the email scope (google-match); one chooser.
+  expect(google.logins).toHaveLength(1);
+  expect(google.requests.every((r) => r.ok)).toBe(true);
   // The chooser's time is its own stage, out of `google`; no email stage.
   const timings = (await page.evaluate(() => (window as any).e2e.hana.lastLogin?.timings)) as Record<string, number>;
   for (const k of ['choose', 'google', 'callbackFetch']) expect(timings, k).toHaveProperty(k);
@@ -135,7 +136,7 @@ test('Google through the chooser is the Google login, unchanged: the same wallet
   // A Google-only app on the same scope, same Google account: no chooser, the same path, so the same addresses.
   const other = await browser.newContext();
   try {
-    await routeStubs(other, new GoogleStub());
+    await routeStubs(other, new GoogleStub({ key: stackGoogleKey(API_URL) }));
     const page2 = await other.newPage();
     const googleApp = await newApp();
     await openPartner(page2, googleApp);

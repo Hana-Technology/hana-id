@@ -7,7 +7,7 @@ import { VAULT_LIMIT_PERIOD_S, vaultIpKey, vaultShareKey } from '../src/vault/li
 import { clearKekCache } from '../src/vault/kek.ts';
 import { advanceShare } from '../src/vault/shares.ts';
 import { NO_SHARE_ID, createSharePayload, vaultMessage } from '../src/vault/message.ts';
-import { ORIGIN, appHeaders, call, chain, deriveBody, forgeKeyEnvironment, newKey, seedApp, seedPlan, sessionKeyPair, uid } from './helpers.ts';
+import { ORIGIN, appHeaders, call, chain, deriveBody, forgeKeyEnvironment, newKey, seedApp, seedPlan, sessionKeyPair, uid, minuteHeadroom } from './helpers.ts';
 import { usageOf } from './usage-ledger.ts';
 import {
   HOUR,
@@ -285,6 +285,8 @@ describe('vault gate', () => {
   });
 
   it('per-IP and per-app vault windows', async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom).
+    await minuteHeadroom(15_000);
     const { app, near } = await vaultSetup();
     const share = await createShare(app, near);
     const ip = `10.9.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`;
@@ -322,6 +324,8 @@ describe('vault gate', () => {
   });
 
   it('the app window is asked only once the IP window accepted: requests the IP refuses never use the app quota', async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom).
+    await minuteHeadroom(15_000);
     // per_minute 10 → an app vault window of 100, above the 60 per IP.
     const plan = `p${uid()}`;
     await seedPlan(plan, 10, 1000, 1000);
@@ -338,6 +342,8 @@ describe('vault gate', () => {
   });
 
   it('the share limit counts only requests the IP and app limits accepted', async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom).
+    await minuteHeadroom(15_000);
     const plan = `p${uid()}`;
     await seedPlan(plan, 1, 1000, 1000);
     const near = chain();
@@ -365,6 +371,8 @@ describe('vault gate', () => {
   });
 
   it('the per-IP and per-share limits are the Rate Limiting bindings; the RateLimiter object is asked only for the app quota', async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom).
+    await minuteHeadroom(15_000);
     const { app, near } = await vaultSetup();
     const objects = vi.spyOn(env.RATE_LIMITER, 'idFromName');
     const share = await createShare(app, near);
@@ -438,6 +446,8 @@ describe('vault gate', () => {
   });
 
   it(`per share: ${SHARE_PER_MINUTE} requests per minute`, async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom).
+    await minuteHeadroom(15_000);
     const { app, near } = await vaultSetup();
     const share = await createShare(app, near);
     for (let c = 1; c <= SHARE_PER_MINUTE; c++) expect((await act(app, share, 'touch', c)).status).toBe(200);

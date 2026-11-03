@@ -23,6 +23,8 @@ export {
 } from './client/client.ts';
 export { type ApprovalTicket } from './client/approval-window.ts';
 export type { LoginOptions } from './client/login.ts';
+// The wallet's sign-in methods (`hana.account()`, `linkChanged`, `hana.linkAccount()`; build plan batches 7 and 8b).
+export type { AccountMethod, AccountResult, LinkChange } from '@hana-id/core';
 export { HanaError, ProviderRpcError, RpcCode, type ClientErrorCode, type SwkError } from './client/errors.ts';
 export {
   HanaEthereumProvider,

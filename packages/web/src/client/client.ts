@@ -21,7 +21,10 @@ import {
   IDENTITY_MIN_MAX_AGE_MS,
   UNLOCK_TIMING_STAGES,
   isApprovalPopupMethod,
+  type AccountResult,
   type AutoApproveStatus,
+  type LinkChange,
+  type LoginMethod,
   type LoginResult,
   type Persistence,
   type PortEvent,
@@ -79,6 +82,12 @@ export interface HanaEvents {
    * session ended (logout, expiry, revocation, a newer login).
    */
   identityTokenChanged: [string | null];
+  /**
+   * A sign-in method of the wallet was added (`pending` until `effectiveAtMs`, or `active`), became active, or was
+   * removed (docs/integration.md "Sign-in methods"). Show pending ones to the user with a way to cancel: the mailbox of
+   * a pending email may not be theirs.
+   */
+  linkChanged: [LinkChange];
 }
 
 export interface IdentityTokenOptions {
@@ -323,6 +332,36 @@ export class HanaClient extends Emitter<HanaEvents> {
     if (this.#status !== 'logging_in') this.#setStatus('logged_out');
   }
 
+  /**
+   * The wallet's sign-in methods (build plan batch 7): its own (`root: true`) and the ones linked to it, each
+   * `active` or `pending` until `effectiveAtMs`. No identifiers or addresses. Rejects 4100 when logged out.
+   */
+  account(): Promise<AccountResult> {
+    return this.#request('hana_account');
+  }
+
+  /**
+   * Adds a sign-in method to the wallet (`'google'` or `'email'`; build plan batch 8b). Call it synchronously in a
+   * click handler, like login(): the Hana popup signs in the new method, then the wallet's own, and the link waits
+   * `change_delay_ms` (24 h on mainnet) before it opens the wallet; it resolves with `{provider, status: 'pending',
+   * effectiveAtMs}`. Rejects with `link_refused` (`data.reason`) when the methods can't be linked.
+   */
+  linkAccount(options: { method: LoginMethod }): Promise<LinkChange> {
+    if (this.#destroyed) return Promise.reject(hanaError(ErrorCode.disconnected));
+    const method = typeof options === 'object' && options !== null ? (options as { method?: unknown }).method : undefined;
+    if (method !== 'google' && method !== 'email') return Promise.reject(hanaError(RpcCode.invalidParams, "method must be 'google' or 'email'"));
+    if (this.#status !== 'logged_in') return Promise.reject(hanaError(ErrorCode.unauthorized));
+    const popup = openLoginPopup(this.#win, this.authOrigin, this.#conn.frameName);
+    return this.#request('hana_linkAccount', { method, ...(popup ? {} : { popupBlocked: true }) }).catch((e: unknown) => {
+      try {
+        popup?.close();
+      } catch {
+        // A COOP-severed handle: nothing to do.
+      }
+      throw e;
+    });
+  }
+
   /** Starts a key export: the vault shows its launcher, and the key is shown only in a Hana window. */
   exportKey(chain: 'stellar' | 'evm'): Promise<null> {
     return this.#request('hana_export', { chain });
@@ -494,6 +533,9 @@ export class HanaClient extends Emitter<HanaEvents> {
         return;
       case 'identityTokenChanged':
         this.#setIdentity(e.data.identityToken === null || e.data.expiresAtMs === null ? null : { token: e.data.identityToken, expiresAtMs: e.data.expiresAtMs });
+        return;
+      case 'linkChanged':
+        this.emit('linkChanged', e.data);
         return;
     }
   }

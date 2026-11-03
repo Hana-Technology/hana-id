@@ -262,6 +262,41 @@ The summary also has `audProject` (the Cloud project number the client ID starts
 different projects and getting the same `subFingerprint` shows that a partner can move from Hana's shared client to a
 Hana-held branded client without any address change (the path is `scope#provider#sub#key_index`, with no client ID).
 
+## Google email scope spike (`spike-email.html`)
+
+`http://localhost:5173/spike-email.html` is email login's batch 0 spike (`docs/email-login-build-plan.md`; not run yet):
+it decides whether the login popup can ask Google for the `email` scope in its one request, or needs the fallback the
+popup uses today (`GOOGLE_EMAIL_FLOW = 'second_request'` in `packages/web/src/auth/google.ts`). Same callback and
+redirect-URI rule as `spike.html`; no Hana API, no chain.
+
+- **A** asks once: `response_type=id_token token`, `scope=openid email`. The summary's `oneRequestUsable` is true only
+  when the ID token carried no personal claim (`emailInIdToken: false`) and an access token came with it.
+- **B** is the fallback: `scope=openid` first, then `response_type=token`, `scope=email`, `prompt=none`,
+  `login_hint=<sub>`; when Google answers that silent request with `consent_required` (or another "needs the user"
+  error) it asks once more without `prompt=none`, as the popup does.
+
+- **C** (after B, its button unlocks): a plain `scope=openid` login of the same account now that B granted `email`.
+  The summary records the ID token's claim names and `tokenHasPiiLockout`: true if `email` or `email_verified`
+  appear, which would make every later Google login of that user fail with `token_has_pii` (the vault and the API
+  refuse such a token). That must be false.
+- **D** (after B): B's silent request again (`prompt=none`, the same `login_hint`), with no interactive retry. With
+  the grant no longer revoked (D265) it must answer an access token silently (`silentAccessToken: true`, no
+  `silentError`); a `silentError` means Google asks for consent at every login.
+
+A, B and D then call Google's `tokeninfo` by POST (aud and sub match; the token never goes in a URL) and `userinfo`
+(an address, `email_verified`, `hd` present and equal to the address's domain, a Gmail address), from the page, and
+never revoke the token (as production, D265). Each leg has its own single-use `state`, and a fragment with more than
+one `state` is ignored, as production's callback. The summary holds booleans and claim names only (never the
+address, `sub` or a token). Run it with a personal Gmail account, a Workspace account whose `hd` is its own domain,
+and a Google account registered with an outside address, each through A, B, C and D in that order; write down what
+the consent screen lists, and record the results in `docs/context.md`. If A is usable for all three,
+`GOOGLE_EMAIL_FLOW` may become `'one_request'` (a reviewed change; the vault and the API keep refusing an ID token
+with `email` either way).
+
+**Gate (D265):** legs C and D on real Google, by the user, before batch 8b reaches real users: C must show no
+lockout and D must succeed silently (`docs/email-login-build-plan.md` batch 8b, `docs/operations.md` "Turning
+linking on (batch 8b)").
+
 ## Test checklist
 
 ### Vault page

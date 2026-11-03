@@ -57,6 +57,13 @@ export interface EmailContext {
   emailHint: string | null;
   /** The live challenge, once `start` answered (resend and verify need only this). */
   challengeId: string | null;
+  /**
+   * `hana.linkAccount({method: 'email'})` (build plan batch 8b): the first sign-in is the new address's code over this
+   * purpose and commitment (`link_new`), not a login's `session`.
+   */
+  proof?: { purpose: 'link_new'; commitment: Record<string, unknown> } | null;
+  /** The export window's email re-authentication (export mode): no follow-up channel, no case B link. */
+  exportMode?: boolean;
 }
 
 interface Stored {
@@ -90,7 +97,9 @@ function decode(raw: string | null): Stored | null {
       (c.emailHint === null || isEmailHint(c.emailHint)) &&
       (c.opener === 'partner' || c.opener === 'vault') &&
       (c.vaultFrame === null || typeof c.vaultFrame === 'string') &&
-      (c.challengeId === null || (typeof c.challengeId === 'string' && CHALLENGE_ID_RE.test(c.challengeId)));
+      (c.challengeId === null || (typeof c.challengeId === 'string' && CHALLENGE_ID_RE.test(c.challengeId))) &&
+      (c.proof === undefined || c.proof === null || (isObj(c.proof) && c.proof.purpose === 'link_new' && isObj(c.proof.commitment))) &&
+      (c.exportMode === undefined || typeof c.exportMode === 'boolean');
     return ok ? (v as unknown as Stored) : null;
   } catch {
     return null;

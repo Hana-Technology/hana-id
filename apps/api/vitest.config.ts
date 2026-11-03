@@ -81,6 +81,11 @@ export default defineConfig(async () => {
     test: {
       include: ['test/**/*.test.ts'],
       setupFiles: ['./test/apply-migrations.ts'],
+      // `pnpm -r test` runs this suite beside every other package's: under that CPU load the heavier tests (RSA and BLS
+      // work, many requests through the Worker) outrun vitest's 5 s / 10 s defaults. A minute-window wait
+      // (test/helpers.ts minuteHeadroom) can take up to 15 s on its own.
+      testTimeout: 30_000,
+      hookTimeout: 60_000,
       // The worker's structured JSON logs are noise in test output (set LOG=1 to see them).
       onConsoleLog: (log: string) => (process.env.LOG || !log.startsWith('{"level"') ? undefined : false),
     },

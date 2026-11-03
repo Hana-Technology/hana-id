@@ -23,9 +23,10 @@ Ports are `HANA_E2E_PORT_BASE` (default 4410) plus the offsets below: the table 
 | `http://localhost:4412` | the hosted demo (`apps/demo`), built for the e2e env and served by its own Worker handler with its real CSP (`tests/demo.spec.ts`) |
 | `http://127.0.0.1:4420` | `vaultOrigin`: apps/api's vault host, and the vault page rendered by apps/api's `handleVaultPage` from D1 |
 | `http://127.0.0.1:4430` | `authOrigin`: apps/api's auth host over the built auth pages |
-| `http://127.0.0.1:4440` | the Hana API: apps/api's Worker, with `/v1/login` and `/v1/derive` mocked; plus `/__e2e/*` control endpoints |
+| `http://127.0.0.1:4440` | the Hana API: apps/api's Worker, with `/v1/login`, `/v1/derive`, `/v1/sessions/revoke` and `/v1/link*` mocked; plus `/__e2e/*` control endpoints (`/__e2e/google-key`: the stack's Google signing key) |
 | `http://127.0.0.1:4442` | the email issuer: apps/email-issuer's Worker with the `outbox` stub; plus `GET /__e2e/outbox` (the mails, for the tests) |
 | `http://127.0.0.1:4450`, `:4460` | mocked NEAR RPC and EVM chain RPC |
+| `http://127.0.0.1:4451` | the same mocked chain as the env's `rpcFallback`: a member's path is confirmed on both (D263) |
 | `http://127.0.0.1:4421`, `:4431`, `:4441` | live mode's vault, auth and API hosts (below): reached only through the tests' routes |
 
 Both partner sites are cross-site to the Hana pages, as in production, so the vault frame is a third-party frame on
@@ -35,7 +36,7 @@ vault through its `frame-ancestors`.
 
 The API is `apps/api/src/index.ts` itself, run in Node: routing, CORS, the app gate and origin rule, `GET /v1/app`,
 the vault endpoints (KEK wrapping, counters and the real SQL on `vault_shares`) and the login relay (the `LoginRelay`
-Durable Object class, on in-memory storage). Only `/v1/login` and `/v1/derive` are mocked (`src/server/api.ts`), after
+Durable Object class, on in-memory storage). Only `/v1/login` and `/v1/derive` (and batch 8b's link calls, below) are mocked (`src/server/api.ts`), after
 the Worker's own app gate, since they need the relayer and the MPC. The rate limiter object and the vault's Rate
 Limiting bindings always allow (and the limiter grants every single-use marker): every page in the suite is one
 client, and apps/api's tests cover the limits. The partner identity token is the real one: the stack gives the Worker
@@ -64,13 +65,31 @@ Email login (`tests/email.spec.ts`, build plan batch 8a) runs apps/email-issuer'
 active `email` key of signer `hana` and gives every scope its email client, so the vault's on-chain token check passes,
 and `POST /__e2e/apps` takes `loginMethods: 'google,email'` to turn email on for one app. Each issuer request gets a
 fresh client address from 198.18.0.0/15 (`cf-connecting-ip`), since every page in the suite is one client; the
-per-address limits stay real, so each test uses its own address. The mocked `/v1/login` derives `#email#` paths for
-email tokens and refuses any login that carries a link (batch 8a never links).
+per-address limits stay real, so each test uses its own address.
 
-Google is never contacted: each test's browser context routes `accounts.google.com/o/oauth2/v2/auth` and
-`www.googleapis.com/oauth2/v3/certs` to an OIDC stub (`src/google-stub.ts`) that checks the request is the spec's
-openid-only implicit flow and signs RS256 tokens with the claims Google sends for it. Production bundles keep the
-hard-coded Google endpoints; nothing in them can select the stub.
+Linking (`tests/linking.spec.ts`, build plan batch 8b): the mocked chain keeps contract v3's accounts and links (the
+`opened` set, accounts by root identity key with their members) and answers `get_identity`, `get_account` and
+`get_config().unrecorded_wallets = false`. The mocked `/v1/login` resolves the path as the contract does (an active
+member opens its account root's path, a pending one is `409 link_pending`), checks the session signature over the
+linked CKD payload when the body carries `linkJwt`, applies the link (case A: the Google identity joins the email
+wallet's account at once; else the email identity joins, at once or pending 24 h), and marks the path's identity
+opened. `/v1/sessions/revoke`, `/v1/link`, `/v1/link/cancel` and `/v1/link/unlink` are mocked the same way (they need
+the relayer); the vault's own D133 and D139 checks are what the specs exercise, the API's link precheck has its own
+tests in apps/api. The vault page's CSP names the issuer (`EMAIL_ISSUER_URL`), since the vault calls google-match.
+Each test uses its own Google account and addresses: links are per scope, and the stack's test apps share scope `e2e`.
+
+Google is never contacted. In the browser, each test's context routes `accounts.google.com/o/oauth2/v2/auth` and
+`www.googleapis.com/oauth2/v3/certs` to an OIDC stub (`src/google-stub.ts`) that takes exactly the popup's requests:
+the openid-only login with the account chooser, a proof the vault asks for (`login_hint`, answered at once), and
+the second, silent request for the email scope (`response_type=token`, `scope=email`, `login_hint`, `prompt=none`;
+answered with an access token). It refuses an ID token with the email scope, and signs RS256 tokens with the claims
+Google sends for `scope=openid`. On the server side (`src/server/google-backend.ts`), the stack answers Google's JWKS,
+`tokeninfo`, `userinfo` and revoke (which the issuer must never call, D265) for the Workers in its process (the issuer's google-match), by wrapping that
+process's `fetch` for those three Google hosts. One RSA key per stack signs every ID token: the browser stubs fetch it
+from `GET {API}/__e2e/google-key` (no CORS, refused with an `Origin`), so the issuer's JWKS cache always knows the
+kid. Access tokens are self-describing test values (`ya29.e2e.<b64url JSON>`: the client, sub, email,
+email_verified, hd) that `tokeninfo` and `userinfo` read back; a test sets its accounts' email and `hd` on
+`google.accounts`. Production bundles keep the hard-coded Google endpoints; nothing in them can select the stub.
 
 The ports are fixed for a run (the bundles inline the origins) and chosen by `HANA_E2E_PORT_BASE`, so worktrees that
 run the suite at the same time each set their own base (4410, 4510, …; the stack uses base … base + 50). A base

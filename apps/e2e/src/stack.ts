@@ -63,6 +63,11 @@ export function portsFrom(base: number) {
     /** The email issuer (apps/email-issuer's Worker), on its own origin as on sandbox-dev (D230). */
     issuer: base + 32,
     near: base + 40,
+    /**
+     * A second NEAR RPC on the same mocked chain: the env's `rpcFallback`, the independent provider a member's path is
+     * confirmed on (D263).
+     */
+    nearFallback: base + 41,
     evm: base + 50,
   });
 }
@@ -83,6 +88,7 @@ export const ISSUER_URL = `http://127.0.0.1:${PORTS.issuer}`;
 /** The email tokens' iss (`{emailIssuer.url}/v1/email`, D230). */
 export const EMAIL_ISS = `${ISSUER_URL}/v1/email`;
 export const NEAR_RPC = `http://127.0.0.1:${PORTS.near}`;
+export const NEAR_RPC_FALLBACK = `http://127.0.0.1:${PORTS.nearFallback}`;
 export const EVM_RPC = `http://127.0.0.1:${PORTS.evm}`;
 /** A foreign site, served by Playwright routes only (see tests/fixtures.ts): it never runs Hana code. */
 export const EVIL_ORIGIN = 'http://evil.e2e.test';
@@ -109,6 +115,7 @@ export const E2E_ENV: HanaEnv = Object.freeze({
   signer: 'e2e-signer.testnet',
   relayer: 'e2e-relayer.testnet',
   rpc: NEAR_RPC,
+  rpcFallback: NEAR_RPC_FALLBACK,
   ckdNetworkKey: TEST_CKD_NETWORK_KEY,
   devEnv: true,
   emailIssuerUrl: ISSUER_URL,
@@ -148,9 +155,12 @@ export const LIVE_UPSTREAMS: Readonly<Record<string, string>> = Object.freeze({
   [LIVE_EVM_RPC]: EVM_RPC,
 });
 
-/** An env's constants without the email issuer (live mode runs no issuer). */
+/**
+ * An env's constants without the email issuer and the second RPC: live mode runs no issuer, so no link, and its pages
+ * (https) couldn't reach the stack's http fallback anyway.
+ */
 function withoutEmail(e: HanaEnv): HanaEnv {
-  const { emailIssuerUrl: _u, emailIss: _i, ...rest } = e;
+  const { emailIssuerUrl: _u, emailIss: _i, rpcFallback: _f, ...rest } = e;
   return rest;
 }
 

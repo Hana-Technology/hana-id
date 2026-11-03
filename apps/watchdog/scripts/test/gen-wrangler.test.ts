@@ -41,7 +41,7 @@ describe('wranglerConfig', () => {
         ENV_NAME: 'sandbox-test',
         NEAR_NETWORK: 'testnet',
         NEAR_RPC: 'https://rpc.test.invalid',
-        NEAR_RPC_FALLBACK: 'https://rpc-fallback.test.invalid',
+        NEAR_RPC_FALLBACK: 'https://rpc.fallback-provider.invalid',
         SIGNER_ACCOUNT: 'signer.test.near',
         WATCHDOG_ACCOUNT: 'watchdog.test.near',
         RELAYER_ACCOUNT: 'relayer.test.near',

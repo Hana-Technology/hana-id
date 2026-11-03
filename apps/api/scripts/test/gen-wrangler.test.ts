@@ -495,6 +495,8 @@ describe('email login', () => {
     const vars = (wranglerConfig(m, LOCAL_D1_ID) as { vars: Record<string, string> }).vars;
     expect(vars.EMAIL_ISS).toBe(`${url}/v1/email`);
     expect(JSON.parse(vars.EMAIL_PUBLIC_KEYS!)).toEqual([key]);
+    // The vault page's connect-src names the issuer (the vault calls google-match, batch 8b).
+    expect(vars.EMAIL_ISSUER_URL).toBe(url);
     expect(emailVars(manifest as Manifest)).toEqual({});
   });
 });

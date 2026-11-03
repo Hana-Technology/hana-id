@@ -3,7 +3,7 @@
 // policy. Tokens here are built the way apps/email-issuer's jws.ts builds them, with throwaway RSA keys.
 import { beforeAll, describe, expect, it } from 'vitest';
 import { base64UrlEncode, utf8 } from '../src/bytes.ts';
-import { type EmailChainKey, type EmailSignerPolicy, type EmailTokenExpectations, isJsonFormToken, verifyEmailIdToken } from '../src/email-token.ts';
+import { type EmailChainKey, type EmailSignerPolicy, type EmailTokenExpectations, isJsonFormToken, parseIssuerKeysView, parseSelfIssuedView, verifyEmailIdToken } from '../src/email-token.ts';
 
 const ISS = 'https://issuer.example/v1/email';
 const AUD = 'email:s1';
@@ -121,5 +121,28 @@ describe('verifyEmailIdToken', () => {
 
   it('refuses a token over 7168 bytes before parsing it', async () => {
     expect(await verifyEmailIdToken(`{"payload":"${'a'.repeat(7200)}","signatures":[]}`, expectations())).toMatchObject({ ok: false, code: 'token_invalid' });
+  });
+});
+
+describe('the chain views of the email keys and signer policy (one strict parser for the vault and the export window)', () => {
+  it('parses get_issuer_keys: null, or every entry {kid, n, e}; anything else throws', () => {
+    expect(parseIssuerKeysView(null)).toBeNull();
+    expect(parseIssuerKeysView([{ kid: 'k', n: 'n', e: 'AQAB', extra: 1 }])).toEqual([{ kid: 'k', n: 'n', e: 'AQAB' }]);
+    for (const bad of [{}, 'x', [{ kid: 'k', n: 'n' }], [{ kid: 'k', n: 'n', e: 'AQAB' }, null]]) expect(() => parseIssuerKeysView(bad), JSON.stringify(bad)).toThrow();
+  });
+
+  it('parses get_self_issued: null, or {required, signers: [{id, kids}]}; one bad signer throws (never a policy of the rest)', () => {
+    expect(parseSelfIssuedView(null)).toBeNull();
+    expect(parseSelfIssuedView({ provider: 'email', required: 1, signers: [{ id: 'hana', kids: ['k1'] }], overlap_until_ms: null })).toEqual({ required: 1, signers: [{ id: 'hana', kids: ['k1'] }] });
+    for (const bad of [
+      { required: '1', signers: [] },
+      { required: 1.5, signers: [] },
+      { required: 1, signers: {} },
+      { required: 1, signers: [{ id: 'hana', kids: ['k1'] }, { id: 5, kids: [] }] },
+      { required: 1, signers: [{ id: 'hana', kids: [1] }] },
+      [],
+    ]) {
+      expect(() => parseSelfIssuedView(bad), JSON.stringify(bad)).toThrow();
+    }
   });
 });

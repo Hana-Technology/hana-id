@@ -6,7 +6,10 @@ import { expect, vi } from 'vitest';
 import { base64UrlDecode, base64UrlEncode, fromUtf8, sha256, toHex, utf8 } from '../src/bytes.ts';
 import type { AccountView, Chain, IdentityView, ScopeView } from '../src/chain.ts';
 import type { Deps } from '../src/deps.ts';
-import { GOOGLE_REVOKE_URL, GOOGLE_TOKENINFO_URL, GOOGLE_USERINFO_URL, Google } from '../src/google.ts';
+import { GOOGLE_TOKENINFO_URL, GOOGLE_USERINFO_URL, Google } from '../src/google.ts';
+
+/** Google's revocation endpoint: the issuer must never call it (D265); the fake records any call. */
+const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 import { route } from '../src/handlers.ts';
 import { importKeys, mailboxKey } from '../src/keys.ts';
 import { parseChallengeId } from '../src/challenge-id.ts';

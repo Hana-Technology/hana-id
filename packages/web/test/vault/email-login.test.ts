@@ -26,6 +26,7 @@ import {
   persisted,
   popupHello,
   readyTab,
+  waitLauncher,
 } from './harness.ts';
 
 let g: Google;
@@ -147,11 +148,13 @@ describe('an email login', () => {
     expect(await second.ready()).toMatchObject({ status: 'logged_in', addresses });
   });
 
-  it('refuses key export for an email wallet (later, D246)', async () => {
+  it('starts key export for an email wallet like a Google one (D246 lifted by batch 8b): the launcher opens /export', async () => {
     const t = await tab(emailBrowser());
     await emailLogin(t);
-    const r = await t.request('hana_export', { chain: 'stellar' });
-    expect(r.error).toMatchObject({ code: 4200, data: { reason: 'email_export' } });
+    void t.request('hana_export', { chain: 'stellar' });
+    await waitLauncher(t, 'Export key in Hana');
+    t.launcher.click();
+    expect(t.opened.at(-1)?.url).toBe(`${ENV.authOrigin}/export`);
   });
 
   it.each([
@@ -248,7 +251,7 @@ describe('hana:auth-progress', () => {
 const stagesOf = (t: Tab) => t.events.filter((e) => e.event === 'loginProgress').map((e) => (e.data as { stage: string }).stage);
 
 describe('google progress (only on the Google path)', () => {
-  it('with email offered, `google` comes from the popup, once; `method: google` reports it itself and reads no email views', async () => {
+  it('with email offered, `google` comes from the popup, once; `method: google` reports it itself and goes to google-match', async () => {
     const t = await tab(emailBrowser());
     const pending = t.request('hana_login');
     const run = await popupHello(t);
@@ -267,9 +270,11 @@ describe('google progress (only on the Google path)', () => {
     await deliverToken(u, g, run2);
     expect((await p2).error).toBeUndefined();
     expect(stagesOf(u)).toContain('google');
+    // Batch 8b: a Google login of an app with email may carry a link token, so the email keys are read too, and the
+    // Google token goes to google-match first.
     const views = u.browser.backend.rpcCalls.map((c) => c.params.method_name);
-    expect(views).not.toContain('get_issuer_keys');
-    expect(views).not.toContain('get_self_issued');
+    expect(views).toContain('get_issuer_keys');
+    expect(u.browser.backend.matchCalls).toHaveLength(1);
   });
 
   it('a Google-only app reports `google` at connect, as before', async () => {

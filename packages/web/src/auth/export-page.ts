@@ -14,6 +14,17 @@ import {
   ApiError,
   type AppConfig,
   type CkdResult,
+  EMAIL_PROVIDER,
+  type EmailChainKey,
+  type EmailSignerPolicy,
+  type LoginMethod,
+  isJsonFormToken,
+  isRelayToken,
+  parseIdentityView,
+  parseIssuerKeysView,
+  parseSelfIssuedView,
+  pathIdentity,
+  verifyEmailIdToken,
   EXPORT_MAX_AUTH_AGE_MS,
   type Jwk,
   type LoginBody,
@@ -48,6 +59,7 @@ import { ServerClock } from './clock.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import { PageError, apiErrorCode, errorMessage } from './errors.ts';
 import type { NearReader } from './near-rpc.ts';
+import { PathCheckError, confirmPath } from '../path-check.ts';
 import { type GestureCheck, type PageWindow, isFramed, isUserGesture, randomName } from './page-window.ts';
 
 /** The export session's lifetime: it is used once, within minutes. */
@@ -155,6 +167,75 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
   const settled = new Promise<ExportPageState>((r) => {
     settle = r;
   });
+
+  /** Email is offered when the app enables it, its scope serves it and this env pins an issuer (as the vault decides). */
+  const emailOffered = (a: AppConfig, scopeId: string): boolean =>
+    !!(env.emailIssuerUrl && env.emailIss && a.loginMethods?.includes('email') && a.email?.aud === `email:${scopeId}`);
+
+  /** An email token for this window's session, against the chain's email keys and policy and the scope's client. */
+  async function checkEmailToken(token: string, nonce: string, scopeId: string): Promise<{ provider: 'email'; sub: string; expMs: number }> {
+    let scope: unknown;
+    let keys: unknown;
+    let policy: unknown;
+    try {
+      [scope, keys, policy] = await Promise.all([
+        near.view(env.signer, 'scope_for_client', { provider: EMAIL_PROVIDER, aud: `email:${scopeId}` }),
+        near.view(env.signer, 'get_issuer_keys', { provider: EMAIL_PROVIDER }),
+        near.view(env.signer, 'get_self_issued', { provider: EMAIL_PROVIDER }),
+      ]);
+    } catch {
+      throw new PageError('api_unavailable', 'The email sign-in keys could not be read on NEAR. Try again.');
+    }
+    if (scope !== scopeId) throw new PageError('config_mismatch', errorMessage('config_mismatch'));
+    // Parsed strictly, as the vault's NearView does (W-L2): a malformed answer refuses, never a key list or a policy
+    // built from the entries that happened to parse.
+    let chainKeys: EmailChainKey[];
+    let signerPolicy: EmailSignerPolicy | null;
+    try {
+      chainKeys = parseIssuerKeysView(keys) ?? [];
+      signerPolicy = parseSelfIssuedView(policy);
+    } catch {
+      throw new PageError('api_unavailable', 'The email sign-in keys could not be read on NEAR. Try again.');
+    }
+    const checked = await verifyEmailIdToken(token, { iss: env.emailIss as string, aud: `email:${scopeId}`, nonce, nowMs: clock.now(), keys: chainKeys, policy: signerPolicy });
+    if (!checked.ok) throw new PageError(checked.code === 'key_pending' ? 'api_unavailable' : 'token_invalid', errorMessage(checked.code === 'key_pending' ? 'api_unavailable' : 'token_invalid'));
+    return { provider: EMAIL_PROVIDER, sub: checked.token.sub, expMs: checked.token.exp * 1000 };
+  }
+
+  /**
+   * The path the export derives (batch 7): `get_identity` on this window's own RPC names the identity or its root. A
+   * root's path is confirmed on both providers first (D263): a lying RPC that knows a path's secret could otherwise
+   * show its own wallet's key here as the user's. (The key is shown only if it is the vault session's address, which
+   * the vault resolved the same way.)
+   */
+  async function pathFor(scopeId: string, who: { provider: 'google' | 'email'; sub: string }, keyIndex: number): Promise<string> {
+    let view;
+    try {
+      view = parseIdentityView(await near.view(env.signer, 'get_identity', { scope_id: scopeId, provider: who.provider, sub: who.sub }));
+    } catch {
+      throw new PageError('api_unavailable', 'Your sign-in method could not be read on NEAR. Try again.');
+    }
+    let p;
+    try {
+      p = pathIdentity(scopeId, who, view);
+    } catch {
+      throw new PageError('api_unavailable', 'Your sign-in method could not be read on NEAR. Try again.');
+    }
+    if (p.kind === 'pending') throw new PageError('link_pending', 'This sign-in method’s link to the wallet is still pending. Sign in with the wallet’s own method.');
+    if (p.kind === 'unsupported') throw new PageError('login_method_unavailable', 'This wallet’s sign-in method isn’t supported here.');
+    if (p.linked) {
+      try {
+        await confirmPath({ scopeId, via: who, viaView: view, path: p.identity, views: near.independent(env.signer) });
+      } catch (e) {
+        if (!(e instanceof PathCheckError)) throw e;
+        throw new PageError(
+          'api_unavailable',
+          e.reason === 'path_disputed' ? 'NEAR providers disagree about the wallet this sign-in opens. Nothing was exported; try again later.' : 'The wallet this sign-in opens could not be confirmed on NEAR. Try again.',
+        );
+      }
+    }
+    return `${scopeId}#${p.identity.provider}#${p.identity.sub}#${keyIndex}`;
+  }
 
   const stopTimers = () => {
     if (keyTimer !== null) clearTimeout(keyTimer);
@@ -295,7 +376,8 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
   function showReady(): void {
     const ctx = context as WindowMessage<'hana:export-context'>;
     state = 'ready';
-    const start = d.h('button', { class: 'primary', attrs: { type: 'button' } }, 'Sign in with Google to continue');
+    const both = app !== null && emailOffered(app, ctx.scopeId);
+    const start = d.h('button', { class: 'primary', attrs: { type: 'button' } }, both ? 'Sign in again to continue' : 'Sign in with Google to continue');
     start.addEventListener('click', (e) => {
       if (!isGesture(e) || state !== 'ready') return;
       begin();
@@ -312,7 +394,7 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
           { class: 'warn' },
           'Anyone with this key controls this address on every app and can take its funds. Hana never shows it anywhere else and can’t recover it for you if it leaks.',
         ),
-        d.h('p', { class: 'muted' }, 'To be sure it’s you, sign in with Google again first.'),
+        d.h('p', { class: 'muted' }, both ? 'To be sure it’s you, sign in again first, with Google or with a code sent to your email.' : 'To be sure it’s you, sign in with Google again first.'),
         start,
       ),
     );
@@ -390,6 +472,9 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
         nonce: sessionNonce(nonceInput),
         relayId,
         relayKey: Uint8Array.from(relayKey),
+        // An app with email (build plan batch 8b, D246 lifted): the child offers both methods; an email
+        // re-authentication is a code over this window's own session (purpose `session`, D258).
+        ...(emailOffered(a, ctx.scopeId) ? { methods: ['google', 'email'] as LoginMethod[] } : {}),
       };
       if (child !== opened || state !== 'signing_in') {
         relayKey.fill(0);
@@ -443,18 +528,33 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
       const payload = await decryptRelayPayload(p.relayKey, p.relayId, value).catch(() => {
         throw new PageError('token_invalid', errorMessage('token_invalid'));
       });
-      if ('error' in payload) throw new PageError('google_error', `${errorMessage('google_error')} (${payload.error})`);
-      idToken = payload.idToken;
-      const checked = await verifyGoogleIdToken(idToken, { clientId: p.params.clientId, nonce: p.params.nonce, nowMs: clock.now(), jwks }).catch(() => {
-        throw new PageError('api_unavailable', 'Google’s keys could not be read. Try again.');
-      });
-      if (!checked.ok) throw new PageError(checked.code, errorMessage(checked.code));
-      // Google sends no auth_time today even with max_age=0 (Q33), so its absence is accepted; when present it must be
-      // fresh, which is what max_age=0 asks for.
-      if (checked.token.authTime !== null && checked.token.authTime * 1000 < clock.now() - EXPORT_MAX_AUTH_AGE_MS) {
-        throw new PageError('token_invalid', 'Google did not ask you to sign in again. Try again.');
+      if ('error' in payload) {
+        if (payload.error.startsWith('email_')) throw new PageError('login_cancelled', 'The sign-in was cancelled. Try again.');
+        throw new PageError('google_error', `${errorMessage('google_error')} (${payload.error})`);
       }
-      const path = `${ctx.scopeId}#google#${checked.token.sub}#${ctx.keyIndex}`;
+      if (!isRelayToken(payload) || payload.accessToken !== undefined || payload.access !== undefined || payload.caseB !== undefined || payload.as !== undefined) {
+        throw new PageError('token_invalid', errorMessage('token_invalid'));
+      }
+      idToken = payload.idToken;
+      let who: { provider: 'google' | 'email'; sub: string; expMs: number };
+      if (isJsonFormToken(idToken)) {
+        // An email re-authentication (D246 lifted): the token checked against the chain's email keys, as the vault does.
+        if (!emailOffered(app as AppConfig, ctx.scopeId)) throw new PageError('token_invalid', errorMessage('token_invalid'));
+        who = await checkEmailToken(idToken, p.params.nonce, ctx.scopeId);
+      } else {
+        const checked = await verifyGoogleIdToken(idToken, { clientId: p.params.clientId, nonce: p.params.nonce, nowMs: clock.now(), jwks }).catch(() => {
+          throw new PageError('api_unavailable', 'Google’s keys could not be read. Try again.');
+        });
+        if (!checked.ok) throw new PageError(checked.code, errorMessage(checked.code));
+        // Google sends no auth_time today even with max_age=0 (Q33), so its absence is accepted; when present it must
+        // be fresh, which is what max_age=0 asks for.
+        if (checked.token.authTime !== null && checked.token.authTime * 1000 < clock.now() - EXPORT_MAX_AUTH_AGE_MS) {
+          throw new PageError('token_invalid', 'Google did not ask you to sign in again. Try again.');
+        }
+        who = { provider: 'google', sub: checked.token.sub, expMs: checked.token.exp * 1000 };
+      }
+      // The path (batch 7): the identity's own, or its account root's; a pending link exports nothing.
+      const path = await pathFor(ctx.scopeId, who, ctx.keyIndex);
 
       const appKey = newAppKey();
       const { pk1, pk2 } = appKey.publicKey.AppPublicKeyPV;
@@ -482,7 +582,7 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
           expectedPath: path,
           sessionPublicKey: p.params.sessionPublicKey,
           maxUses: 1,
-          resendableUntil: checked.token.exp * 1000,
+          resendableUntil: who.expMs,
           now: () => clock.now(),
           sleep,
         });

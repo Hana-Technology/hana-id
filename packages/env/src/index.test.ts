@@ -74,6 +74,15 @@ describe('manifestSchema: rpcFallback', () => {
     expect(same.success).toBe(false);
     expect(same.error?.issues[0]?.message).toContain('different endpoint');
   });
+
+  it('is another provider than rpc (registrable domain) outside local* envs: a member path is confirmed on both (D263)', () => {
+    const { rpcFallback: _, ...base } = raw();
+    const host = new URL(base.rpc as string).hostname.split('.').slice(-2).join('.');
+    const sameProvider = manifestSchema.safeParse({ ...base, rpcFallback: `https://other-node.${host}` });
+    expect(sameProvider.success).toBe(false);
+    expect(sameProvider.error?.issues.map((i) => i.message).join()).toContain('another provider');
+    expect(manifestSchema.safeParse({ ...base, rpcFallback: 'https://rpc.testnet.near.org' }).success).toBe(true);
+  });
 });
 
 /** The kids sandbox-dev's identity JWKS publishes. */

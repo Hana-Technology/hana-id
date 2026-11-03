@@ -4,7 +4,7 @@
 //
 // SECURITY: `start` carries the address, `verify` the code, and `verify` answers the email token and a device ticket.
 // Nothing here logs a body or puts one in an error message; errors carry the issuer's code only.
-import { ApiError, parseApiResponse } from '@hana-id/core';
+import { ApiError, type CaseBProof, parseApiResponse } from '@hana-id/core';
 import { CHALLENGE_ID_RE, DEVICE_TICKET_RE } from './email-storage.ts';
 
 export type Fetch = typeof fetch;
@@ -32,10 +32,15 @@ export type Verified =
    * Case B (D119): a Google identity that reported this address has the wallet in this scope, the email identity has
    * none, so no token is minted: the popup continues with Google (batch 8a: a plain Google login, no link).
    */
-  | { kind: 'google_wallet'; deviceTicket: string | null };
+  | { kind: 'google_wallet'; deviceTicket: string | null; link?: CaseBProof };
+
+/** A link purpose's commitment, as the vault prepared it (the issuer computes the nonce, D195). */
+export type LinkPurpose = 'link_new' | 'link_account' | 'link_change';
 
 export interface EmailApi {
   start(pk: string, email: string, commitment: SessionCommitment, deviceTicket: string | null): Promise<Challenge>;
+  /** `start` for a link purpose (build plan batch 8b), with the commitment the vault sent. */
+  startLink(pk: string, email: string, purpose: LinkPurpose, commitment: Record<string, unknown>, deviceTicket: string | null): Promise<Challenge>;
   resend(challengeId: string): Promise<Challenge>;
   verify(challengeId: string, code: string): Promise<Verified>;
 }
@@ -78,6 +83,10 @@ export function emailApi(issuerUrl: string, fetchFn: Fetch = (...args) => fetch(
       return challenge(await post('start', { pk, email, purpose: 'session', commitment, ...(deviceTicket ? { deviceTicket } : {}) }), 'start');
     },
 
+    async startLink(pk, email, purpose, commitment, deviceTicket) {
+      return challenge(await post('start', { pk, email, purpose, commitment, ...(deviceTicket ? { deviceTicket } : {}) }), 'start');
+    },
+
     async resend(challengeId) {
       return challenge(await post('resend', { challengeId }), 'resend');
     },
@@ -85,7 +94,12 @@ export function emailApi(issuerUrl: string, fetchFn: Fetch = (...args) => fetch(
     async verify(challengeId, code) {
       const body = await post('verify', { challengeId, code });
       const deviceTicket = ticketOf(body.deviceTicket);
-      if (body.googleWallet === true) return { kind: 'google_wallet', deviceTicket };
+      if (body.googleWallet === true) {
+        // Case B with a ticket: the address's `sub` comes with it, for the vault's D139 check (batch 8b).
+        const { linkTicket, sub } = body;
+        const link = typeof linkTicket === 'string' && /^[A-Za-z0-9_-]{43}$/u.test(linkTicket) && typeof sub === 'string' && /^e1\.[A-Za-z0-9_-]{43}$/u.test(sub) ? { linkTicket, emailSub: sub } : null;
+        return link ? { kind: 'google_wallet', deviceTicket, link } : { kind: 'google_wallet', deviceTicket };
+      }
       if (body.googleWallet !== false || typeof body.idToken !== 'string' || !body.idToken.startsWith('{')) throw bad('verify');
       return { kind: 'token', idToken: body.idToken, deviceTicket };
     },

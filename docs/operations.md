@@ -1,6 +1,10 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-03 (branch `fix/demo-polish`: "Hosted demo"'s vault errors and timings, "Logs
+Last verified against code: 2026-11-03 (branch `fix/8b-rereview`: "Turning linking on (batch 8b)"'s slow second
+provider and watching `path_unconfirmed`, D263); 2026-11-03 (branch `feat/email-login-8b` review fixes: "Turning linking on (batch 8b)"'s
+second RPC, the consent screens, the API's and the issuer's redeploys for the new limits, the spike's legs C and D as
+a gate, D263–D267; "Logs and latency"'s `google_account_mismatch`); 2026-11-03 (branch `feat/email-login-8b`: "Turning linking on (batch 8b)": what users see
+in each case, the sandbox-dev checklist, lifting D248, the email-scope spike; D254–D259); 2026-11-03 (branch `fix/demo-polish`: "Hosted demo"'s vault errors and timings, "Logs
 and latency"'s `GET /v1/app` phases, "Common failures"' `vault_unavailable` reasons and the slow `app` stage;
 D260–D262); 2026-11-02 (branch `feat/email-login-8a`: "Email login demo on sandbox-dev (batch 8a)",
 the auth page Worker's `EMAIL_ISSUER_URL`, the local demo on the e2e stack's outbox; D245–D249); 2026-11-02 (branch `feat/email-login-6`, after both batch 6 reviews: "Email login on
@@ -1928,7 +1932,7 @@ Local: `gen <env> --dev-vars` writes `apps/email-issuer/.dev.vars` (0600) from t
 | `missing_client_ip` (warn log) | a request reached the Worker without a usable `cf-connecting-ip` (not through Cloudflare's edge): refused with 400 | check the route: the issuer is reached directly at `{url}` (D230), never through another Worker |
 | `code_mail` errors with `misconfigured` / provider 401/403 | the SendGrid key is wrong, revoked or lacks Mail Send | new key into the file, `put --yes` |
 | `code_mail` errors with `unavailable` | SendGrid 429 or 5xx (the counts were taken back) | SendGrid status; users can resend after 30 s |
-| `google_revoke` warnings | Google's revoke endpoint failed (the access token expires within the hour anyway) | none, unless sustained |
+| `google_account_mismatch` answers from google-match | A user picked another Google account on Google's email permission screen; the popup asks them to try again (D264) | none, unless a burst |
 | `mailbox_guess_limit` (error log, `code` `backstop` or `ceiling`, `subject` = mailbox key prefix) | someone is guessing codes for one mailbox: past the backstop (18) only owner-slot requesters and ticketed challenges can check, past the ceiling (25) nobody until midnight UTC (D198) | watch for repeats of the same `subject`. A user with a device ticket (an earlier sign-in on that browser) still gets 3 codes a day and the ticket slot. When a user without one contacts support: `admin/unlock` ("Staff calls" below). It mails a one-time link to the address itself (only the mailbox's holder can use it, so it is safe whoever asked), clears nothing, and adds at most 2 checks to the day; at most once a day and 3 times in 30 days per mailbox |
 | A user says the codes never arrive | the address may be suppressed (a bounce in the last 30 days, or a spam complaint), or the mailbox limits refuse | once the cause is fixed (mailbox full, a complaint by mistake): **first** remove the address from the issuer subuser's suppression lists in SendGrid (Suppressions: Bounces, Spam Reports, Blocks; search the address, delete it), or SendGrid drops the confirmation too; **then** `admin/unsuppress` ("Staff calls"): it mails the address a confirmation link, and the suppression goes when the user opens it (24 h) |
 | A user lost a device, or a device ticket may have leaked | anyone holding the ticket gets that address's owner allowances (3 codes a day, the ticket slot), never a token | `admin/revoke-tickets` ("Staff calls"): every ticket of that exact address issued until now stops counting; the next sign-in issues a fresh one |
@@ -2284,6 +2288,82 @@ curl -s 'http://127.0.0.1:4442/__e2e/outbox?to=<address, lowercased>'
 
 Create the app before anything else on a fresh stack (a second create with the same key returns the first app
 unchanged). This is a demo of the screens and the flow, not of sandbox-dev; say so when showing it.
+
+## Turning linking on (batch 8b)
+
+Batch 8b ships automatic linking (one person, one wallet: Google and email with the same verified address open the
+same wallet), `hana.account()`, `hana.linkAccount()` and email-wallet key export. It has **no switch of its own**: it
+is on for every app whose `login_methods` lists email, once its code is deployed. Testnet only; for the user to run.
+Nothing below changes the contract, an address or a key.
+
+What users see, by case (`docs/integration.md` "Sign-in methods and links" has the partner's view):
+
+| Case | The user | The popup shows | Result |
+|---|---|---|---|
+| A, Google-hosted | had an email wallet (`…@gmail.com`, or a Workspace address whose `hd` is its domain), signs in with Google | Google's account chooser, then (first time for this client only) Hana's "One more step with Google" screen (**Continue**), Google's consent for "See your primary Google Account email address"; then "Signed in", or "Your Google sign-in now opens this wallet too" | the email wallet; Google joins it at once |
+| A, not hosted | had an email wallet on another domain, signs in with Google | "This email already has a wallet": **Link and continue** (a code to `a…@domain`, typed in the popup) or **Sign in with email** | the email wallet either way; linked only after the code |
+| B, Google-hosted | had a Google wallet, chooses "Continue with email" with its Gmail address and types the code | "This email belongs to a wallet you created by signing in with Google": **Link and continue** or **Sign in with Google**, then Google | the Google wallet; the email joins at once (a notice mail goes to the address) |
+| B, not hosted | the same with an address Google doesn't host | the same, then "An email will be able to open this wallet from {date}" with **Cancel this link** | the Google wallet; the email joins after `change_delay_ms` (sandbox-dev: the contract's value; 24 h on mainnet); an email login meanwhile is `link_pending` with the date |
+| C | has neither wallet | the usual sign-in | a new wallet for that method; a Google login records the hint for later |
+| Declined | a Google user without a wallet declines Google's email permission (or picks another Google account on Google's screen) | "Your Google email address is needed" (or "Another Google account was chosen"): **Sign in with email instead**, **Try Google again**, Cancel (D264) | an email login, or Google again; Cancel ends `login_cancelled` (`email_consent_declined` / `google_account_mismatch`). A user with a wallet sees nothing of it |
+
+Checklist, in order (each check before the next):
+
+1. **Prerequisites**: batch 6's chain setup and batch 8a's demo steps above (v3, `accept_unrecorded_wallets` done:
+   `get_config().unrecorded_wallets` is `false`, else every link is refused `links_unavailable`; the issuer Worker and
+   its keys on chain; SendGrid). Check: `GET /v1/app` for the demo's key lists `email`.
+   **Two NEAR providers**: the manifest's `rpc` and `rpcFallback` on different providers (sandbox-dev: fastnear and
+   `rpc.testnet.near.org`; `packages/env` refuses an env with `emailIssuer` and no `rpcFallback`, or both on one
+   registrable domain). Every login of a linked identity reads its path on both separately and is refused while either
+   is down (D263). Check: `curl -s -X POST <each rpc> -H 'content-type: application/json' -d
+   '{"jsonrpc":"2.0","id":1,"method":"status","params":[]}'` answers on both. sandbox-dev's second provider,
+   `rpc.testnet.near.org`, is slow and rate-limited (accepted for the testnet demo; mainnet-readiness 4.19). **Watch
+   `path_unconfirmed` rates**: the vault decides it in the browser and no Worker logs it, so watch the demo's
+   *Copy diagnostics* and users' reports for `api_unavailable` with `data.reason: 'path_unconfirmed'`; a rise means
+   the second provider is failing (run the check above).
+2. **Google clients**: nothing to register. The second request uses the same client and the same
+   `{authOrigin}/login/callback` redirect URI. The OAuth consent screen of each Google client used by an app with
+   email must allow the `email` scope (a non-sensitive scope: no verification needed). Check (once, by hand): a
+   Google login of the demo shows Google's consent for the email address the first time, and none after.
+3. **The API with batch 8b**: `corepack pnpm --filter @hana-id/api run gen sandbox-dev` (the API gets
+   `EMAIL_ISSUER_URL` for the vault page's `connect-src`, and `NEAR_RPC_FALLBACK`), `corepack pnpm --filter
+   @hana-id/web build`, `run deploy:pages`, `run deploy`. The login relay now takes writes from `vaultOrigin` (the
+   vault's follow-up notices), 40 a minute per IP (was 10), and bodies up to 12 KiB (was 8; D267). Check: `curl -sI
+   '{vaultOrigin}/vault?pk=<demo key>'` shows the issuer's origin and both RPCs in `connect-src`.
+4. **The issuer with batch 8b** (its case-B `verify` answers the address's `sub` beside the `linkTicket`; google-match
+   no longer revokes Google's access token, answers `google_account_mismatch`, and takes 120 a minute per 10 min per
+   IP; D264, D265, D267): `email-issuer gen`, deploy. Check: an email login of an address with a Google wallet shows
+   "Link and continue"; a second Google login of the demo shows no Google consent screen.
+5. **Try each case on the demo** (two browsers or two profiles help): C, then A hosted (email login first with a Gmail
+   address, then Google with that account: same addresses), B hosted (a fresh Google login, then "Continue with
+   email" with its Gmail address: "Link and continue": same addresses; an email login afterwards opens them too),
+   and B not hosted with the pending banner and its **Cancel this link**.
+6. **Watch**: the watchdog's link alarms (`link_threshold_reached`, `link_volume_high`, D200) count these links; a
+   demo's handful is far under the thresholds. The issuer's request log for `google-match` carries the decision only (never an
+   address).
+7. **Undo**: `UPDATE apps SET login_methods = 'google' …` stops email and every new link for the app at once. Links
+   already made stay (they are chain state); a pending one can be cancelled from the popup's banner at its owner's
+   next sign-in. A wrong link is removed by the root's **Remove** banner (unlink), or by `POST /v1/link/unlink`.
+
+**Lifting D248 ("demo scopes only").** Since every Google login of an app with email now calls google-match, which
+writes the `email_hints` row for that Google account's verified address, a later email login with that address reaches
+case B instead of a second wallet. The remaining gap: a Google wallet opened **before** its app turned email on has no
+hint until its owner signs in with Google there again. So for a scope that already has Google users, either turn email
+on and accept that window (an email login by such a user in it opens a separate email wallet, which can never merge,
+D122), or wait until those users have signed in with Google once since. Hana's own testers on the demo scope are fine
+either way. The readiness item is `docs/mainnet-readiness.md` row 7.1g.
+
+**Google's verified email: the spike** (`apps/smoke/spike-email.html`, build plan batch 0; not run yet). The popup
+asks Google twice today (`GOOGLE_EMAIL_FLOW = 'second_request'`): the openid-only login request, then a silent
+`response_type=token`, `scope=email` request. The spike measures whether one request (`id_token token`, `openid
+email`) keeps `email` out of the ID token; run it with a Gmail, a Workspace and an outside-address Google account
+(`apps/smoke/README.md`) and record the results in `docs/context.md` before changing the switch.
+
+**Gate before real users (D265):** the user runs the spike's legs **C** and **D** on real Google, for each of the three
+accounts, after B: C (a plain `openid` login once the email grant exists) must show `tokenHasPiiLockout: false` (no
+`email` or `email_verified` in the ID token, else every later Google login of that user would be refused
+`token_has_pii`), and D (B's silent request again) must answer an access token with no `silentError` (the grant
+persists, now that google-match no longer revokes it). Until both pass, batch 8b stays on Hana's own testers.
 
 ## Restoring a D1 database (Time Travel)
 

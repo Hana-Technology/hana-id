@@ -27,7 +27,7 @@ import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { IDENTITY_SECRET_FILES, type Manifest, hanaOwnOrigins, loadEnv, p256Thumbprint, repoRoot } from '@hana-id/env';
+import { IDENTITY_SECRET_FILES, type Manifest, emailIssuerUrl, hanaOwnOrigins, loadEnv, p256Thumbprint, repoRoot } from '@hana-id/env';
 import { IDENTITY_RATE_LIMITS } from '../src/identity/limits.ts';
 import { VAULT_RATE_LIMITS } from '../src/vault/limits.ts';
 import { writePagesWranglerConfigs } from './pages-wrangler.ts';
@@ -67,7 +67,8 @@ export function identityVars(m: Manifest): Record<string, string> {
 export function emailVars(m: Manifest): Record<string, string> {
   const t = m.emailIssuer;
   if (!t) return {};
-  return { EMAIL_ISS: t.iss, EMAIL_PUBLIC_KEYS: JSON.stringify(t.publicKeys) };
+  // EMAIL_ISSUER_URL: the vault page's connect-src (the vault calls google-match, build plan batch 8b).
+  return { EMAIL_ISS: t.iss, EMAIL_PUBLIC_KEYS: JSON.stringify(t.publicKeys), EMAIL_ISSUER_URL: emailIssuerUrl(m) };
 }
 
 /**

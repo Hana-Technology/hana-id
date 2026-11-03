@@ -155,3 +155,52 @@ export async function verifyEmailIdToken(token: string, expect: EmailTokenExpect
   if (signers.size < Math.max(1, policy.required)) return invalid('Not enough signatures');
   return { ok: true, token: { iss, aud, sub, nonce, iat, exp, kids } };
 }
+
+/**
+ * The `sub` claim of an email token, read without any check (null when it doesn't parse). Only for choosing which
+ * identity's chain state to read before `verifyEmailIdToken`, whose nonce depends on it (a link token's `auto_link`
+ * nonce commits to the joining identity); the verified token's `sub` must then be this one.
+ */
+export function peekEmailTokenSub(token: string): string | null {
+  try {
+    const body: unknown = JSON.parse(token);
+    if (typeof body !== 'object' || body === null || typeof (body as { payload?: unknown }).payload !== 'string') return null;
+    const sub = jsonSegment((body as { payload: string }).payload)?.sub;
+    return typeof sub === 'string' && sub.length > 0 && sub.length <= 255 && !sub.includes('#') ? sub : null;
+  } catch {
+    return null;
+  }
+}
+
+const isViewObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/**
+ * `get_issuer_keys("email")` as the chain answers it: null (no keys) or a list of `{kid, n, e}`. Anything else throws
+ * (a broken or lying RPC): a reader never drops the odd entry and goes on with the rest.
+ */
+export function parseIssuerKeysView(value: unknown): EmailChainKey[] | null {
+  if (value === null) return null;
+  if (!Array.isArray(value) || !value.every((k) => isViewObj(k) && typeof k.kid === 'string' && typeof k.n === 'string' && typeof k.e === 'string')) {
+    throw new Error('NEAR RPC: malformed get_issuer_keys');
+  }
+  return value.map((k: Record<string, unknown>) => ({ kid: k.kid as string, n: k.n as string, e: k.e as string }));
+}
+
+/**
+ * `get_self_issued(provider)` as the chain answers it: null (not a self-issued provider) or `{required, signers: [{id,
+ * kids}]}`. Anything else throws (a contract before v3, a broken or lying RPC), never a policy built from the parts
+ * that parsed.
+ */
+export function parseSelfIssuedView(value: unknown): EmailSignerPolicy | null {
+  if (value === null) return null;
+  const signers = isViewObj(value) ? value.signers : undefined;
+  if (
+    !isViewObj(value) ||
+    !Number.isSafeInteger(value.required) ||
+    !Array.isArray(signers) ||
+    !signers.every((s) => isViewObj(s) && typeof s.id === 'string' && Array.isArray(s.kids) && s.kids.every((k) => typeof k === 'string'))
+  ) {
+    throw new Error('NEAR RPC: malformed get_self_issued');
+  }
+  return { required: value.required as number, signers: (signers as Record<string, unknown>[]).map((s) => ({ id: s.id as string, kids: [...(s.kids as string[])] })) };
+}

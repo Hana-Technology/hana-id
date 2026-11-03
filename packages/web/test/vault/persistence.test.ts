@@ -406,6 +406,8 @@ describe('the share and record after the login is reported (D79)', () => {
       return {
         ...store,
         put: async (key, record) => {
+          // The record's writes only (a login also stores its root pin, D263, under its own key).
+          if (key.startsWith('pin|')) return store.put(key, record);
           writes += 1;
           if (writes === 1) await held;
           await store.put(key, record);

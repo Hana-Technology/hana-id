@@ -210,7 +210,8 @@ describe('owner:call set_issuer_key for email: only a pinned, published, thumbpr
     expect(emailKeyProblem(pinnedOther, 'set_issuer_key', { ...args(other), kid: pub.kid })).toContain('thumbprint');
     const { signer: _s, ...unsigned } = args(pub);
     expect(emailKeyProblem(m, 'set_issuer_key', unsigned)).toContain('signer');
-    expect(emailKeyProblem({ ...m, watchdog: base.watchdog } as Manifest, 'set_issuer_key', args(pub))).toContain('no watchdog.pinnedIssuerKeys.email');
+    const { pinnedIssuerKeys: _pins, ...unpinned } = base.watchdog!;
+    expect(emailKeyProblem({ ...m, watchdog: unpinned } as Manifest, 'set_issuer_key', args(pub))).toContain('no watchdog.pinnedIssuerKeys.email');
     expect(emailKeyProblem(m, 'set_issuer_key', { ...args(other), provider: 'google' })).toBeNull();
     expect(emailKeyProblem(m, 'mark_self_issued', { provider: 'email' })).toBeNull();
   });

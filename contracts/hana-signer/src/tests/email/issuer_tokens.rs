@@ -90,3 +90,56 @@ fn an_issuer_minted_link_account_token_proves_the_account_in_link_identity() {
         let _ = c.link_identity("s1".into(), itok("session_e9"), google_tok(A, &g2, &new_nonce), 0, SALT.to_vec());
     });
 }
+
+/// issuer_setup() with s3 = owners [bob], clients [google "app-s3"]: no email client yet, action_nonce 0.
+fn issuer_setup_with_s3() -> HanaSigner {
+    let mut c = issuer_setup();
+    ctx(ADMIN, NOW_MS);
+    assert_eq!(c.admin_register_scope(vec![near_owner(BOB)], vec![google("app-s3.apps.googleusercontent.com")], None, false), "s3");
+    assert_eq!(c.get_scope("s3".into()).unwrap().action_nonce, 0);
+    c
+}
+
+fn add_email(scope: &str) -> Change {
+    Change::AddClient { provider: EMAIL.into(), aud: format!("email:{scope}") }
+}
+
+#[test]
+fn an_issuer_minted_client_proof_adds_the_email_client() {
+    // The claims and nonce of apps/email-issuer/src/client-proof.ts, which the issuer's staff route and the dev-env
+    // CLI's local mint (`admin scope:add-email-client`, D253) both use.
+    let mut c = issuer_setup_with_s3();
+    ctx(BOB, NOW_MS);
+    let id = c.propose_change("s3".into(), OwnerAuth::Near, add_email("s3"), Some(itok("client_proof_s3_0")));
+    assert_eq!(id, 0);
+    assert_eq!(c.get_scope("s3".into()).unwrap().pending[0].change, add_email("s3"));
+    ctx(ANYONE, NOW_MS + DELAY_MS);
+    c.execute_change("s3".into(), id);
+    let s3 = c.get_scope("s3".into()).unwrap();
+    assert!(s3.clients.contains(&(EMAIL.to_string(), "email:s3".to_string())));
+    assert_eq!(c.scope_for_client(EMAIL.into(), "email:s3".into()), Some("s3".into()));
+}
+
+#[test]
+fn an_issuer_minted_client_proof_is_bound_to_its_scope_nonce_client_and_lifetime() {
+    // A later action_nonce: stale.
+    let mut c = issuer_setup_with_s3();
+    ctx(BOB, NOW_MS);
+    let id = c.propose_change("s3".into(), OwnerAuth::Near, Change::SetOwners { owners: vec![near_owner(BOB), near_owner(ALICE)] }, None);
+    c.cancel_change("s3".into(), OwnerAuth::Near, id);
+    expect_panic("Client proof nonce doesn't match", || {
+        let _ = c.propose_change("s3".into(), OwnerAuth::Near, add_email("s3"), Some(itok("client_proof_s3_0")));
+    });
+    // Another client than the proof's.
+    let mut c = issuer_setup_with_s3();
+    ctx(BOB, NOW_MS);
+    expect_panic("Client proof is for another client", || {
+        let _ = c.propose_change("s3".into(), OwnerAuth::Near, add_email("s4"), Some(itok("client_proof_s3_0")));
+    });
+    // Expired: its exp is iat + 600 s, and the fixture's iat is NOW - 60 s.
+    let mut c = issuer_setup_with_s3();
+    ctx(BOB, NOW_MS + 540_000);
+    expect_panic("Token expired", || {
+        let _ = c.propose_change("s3".into(), OwnerAuth::Near, add_email("s3"), Some(itok("client_proof_s3_0")));
+    });
+}

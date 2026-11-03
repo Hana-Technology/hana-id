@@ -17,7 +17,8 @@
     "alertEmails": ["alerts@example.com"],
     "alertFrom": "watchdog@example.com",
     "pager": "ntfy",
-    "pinnedIdentityKeys": ["17xAVaTfgwnOkdwq1uOmwHR31pPKB90xw5oGN5HcBgY", "_MjNZC3lmy9Xk6LI1mbGVbvtoIfDN557VBZG7DXVQ-g"]
+    "pinnedIdentityKeys": ["17xAVaTfgwnOkdwq1uOmwHR31pPKB90xw5oGN5HcBgY", "_MjNZC3lmy9Xk6LI1mbGVbvtoIfDN557VBZG7DXVQ-g"],
+    "pinnedIssuerKeys": {"email": {"required": 1, "signers": {"hana": ["v_H0YgrYDKczje-jsOa1eEdEWy9BECqRRCSp98pztsw", "ziQVLEH8Qhqfq_d0XHUkC4GMIxvGoc0TlN0c7H4In_w"]}}}
   },
   "allowSignerFullAccessKey": true,
   "mpc": "v1.signer-prod.testnet",
@@ -27,6 +28,39 @@
   "rpc": "https://test.rpc.fastnear.com",
   "rpcFallback": "https://rpc.testnet.near.org",
   "apiUrl": "https://hana-id-api-sandbox-dev.tingtc.workers.dev",
+  "emailIssuer": {
+    "url": "https://hana-id-email-issuer-sandbox-dev.tingtc.workers.dev",
+    "iss": "https://hana-id-email-issuer-sandbox-dev.tingtc.workers.dev/v1/email",
+    "cloudflare": {
+      "workerName": "hana-id-email-issuer-sandbox-dev",
+      "d1Name": "hana-id-email-issuer-sandbox-dev"
+    },
+    "signer": {
+      "kind": "worker-secret",
+      "activeKid": "v_H0YgrYDKczje-jsOa1eEdEWy9BECqRRCSp98pztsw"
+    },
+    "publicKeys": [
+      {
+        "kty": "RSA",
+        "n": "yIYGOW93qux37A5p0RdUzVwDYXzTPCfml8x2LDc1OWryC1tNd7g5EfZSAaBdsouw7nwL37WYcE1J0gRqeTM3Wd14XaDYv6BYizJlhHYG30jmzG5uCkB12ATitwN4tiYKznm0YQtE1nIW-__TEYIMal3B1SLR0hPn3UW8c8TKt17ES9JDTmi2-gHGlwngPmoVqZo9pmhWTieQa9SIZUZE6W8NqFfb-5VisEIA_2c5S_7J7sGxCJ60rNJKw7JUnR6Y28iKFDbyUzjOaZPsCB0mPf-GdQqSYgXEmXVmAHHZ53ax_A4XQkEWM3ltyc7OYECHbBkdEsyxjZqrgw8puic9Hw",
+        "e": "AQAB",
+        "kid": "v_H0YgrYDKczje-jsOa1eEdEWy9BECqRRCSp98pztsw",
+        "use": "sig",
+        "alg": "RS256"
+      },
+      {
+        "kty": "RSA",
+        "n": "ohw1UjwWIBq7d_URLDniEy-IY31442JCBDWFTz3qcdxdbn6w-Pa04q2E1GWi2GIa0sZ38Ju9q0WfmaJ8cgaZBe6Hnj46Dq65TCob5mLuHbiDgbW-gv8D-AOewXxXmBNU0QReCjlUtUTI1d0JxxdP3f072o7JKMNOCW8cGNDqwrMRug72jKe5y8u7k_wc8uLc-P6nyyejWTnW57usz4jqXl2Lgmwl1RdWlK7j5HlsnOHz358FmRtEWha9Nd7ZbZHA9PQxU31pgxy9Rt6OG9WolvBvk1-hTqQwrBfRW2ky1ZaAsbG0K2O9AaspU9jn-CYxv0xs9zpZM2Dcs4GlI2qqBw",
+        "e": "AQAB",
+        "kid": "ziQVLEH8Qhqfq_d0XHUkC4GMIxvGoc0TlN0c7H4In_w",
+        "use": "sig",
+        "alg": "RS256"
+      }
+    ],
+    "from": "Hana ID (testnet) <team@hanawallet.io>",
+    "sender": "sendgrid",
+    "dailySendBudget": 200
+  },
   "identityToken": {
     "iss": "https://hana-id-api-sandbox-dev.tingtc.workers.dev/v1/identity",
     "signer": {

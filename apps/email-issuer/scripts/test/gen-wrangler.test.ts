@@ -84,7 +84,8 @@ describe('wranglerConfig', () => {
     expect(() => wranglerConfig({ ...manifest(), network: 'mainnet' } as unknown as Manifest, LOCAL_D1_ID, LOCAL_D1_ID)).toThrow('testnet only');
     const kms = { kind: 'aws-kms', awsRegion: 'ap-east-1', keys: { primary: { kid: primary.pub.kid, arn: 'x' }, standby: { kid: standby.pub.kid, arn: 'y' } } };
     expect(() => wranglerConfig(manifest({ signer: kms }), LOCAL_D1_ID, LOCAL_D1_ID)).toThrow('not wired yet');
-    expect(() => wranglerConfig(base, LOCAL_D1_ID, LOCAL_D1_ID)).toThrow('no emailIssuer');
+    const { emailIssuer: _committed, ...noIssuer } = base;
+    expect(() => wranglerConfig(noIssuer as Manifest, LOCAL_D1_ID, LOCAL_D1_ID)).toThrow('no emailIssuer');
     expect(() => wranglerConfig({ ...manifest(), authOrigin: undefined } as Manifest, LOCAL_D1_ID, LOCAL_D1_ID)).toThrow('vaultOrigin and authOrigin');
   });
 

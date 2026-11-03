@@ -4,8 +4,11 @@
 // or a body the caller can't use) does the same request go to the fallback. Each call's answer comes whole from one
 // endpoint: nothing is ever combined from both. The next call starts at the primary again.
 //
-// Neither endpoint is trusted for more than liveness and honest views: every CKD result still passes the pairing check
-// against the pinned network key, and a re-synced session must carry the vault's own scope and path.
+// A lying endpoint can do more than fail: the pairing check proves only that a CKD answer is the key *of the path the
+// vault asked about*, so a view that names another identity's path (a member's account root) must not come from one
+// provider alone. Those reads use `independentEndpoints` and `nearCallAt`, which ask each provider separately
+// (../path-check.ts, D263). Every CKD result still passes the pairing check against the pinned network key, and a
+// re-synced session must carry the vault's own scope and path.
 
 type Fetch = typeof fetch;
 
@@ -54,6 +57,21 @@ async function callOne(fetchFn: Fetch, url: string, body: string, timeoutMs: num
   } finally {
     globalThis.clearTimeout(timer);
   }
+}
+
+/**
+ * The two providers a confirmation reads separately (D263): the primary and the fallback, or null when the env has no
+ * fallback (a path through another identity can then never be confirmed, and is refused).
+ */
+export function independentEndpoints(e: NearEndpoints): readonly [string, string] | null {
+  return e.rpcFallback && e.rpcFallback !== e.rpc ? [e.rpc, e.rpcFallback] : null;
+}
+
+/** One endpoint's usable body, with no fallback; throws when it fails or the body isn't usable. */
+export async function nearCallAt(url: string, fetchFn: Fetch, method: string, params: unknown, o: NearCallOptions): Promise<Record<string, unknown>> {
+  const answer = await callOne(fetchFn, url, JSON.stringify({ jsonrpc: '2.0', id: o.id, method, params }), o.timeoutMs ?? NEAR_RPC_TIMEOUT_MS);
+  if (!(o.usable ?? (() => true))(answer)) throw new Error(`NEAR RPC: ${method} failed`);
+  return answer;
 }
 
 /** The body of the first endpoint that answers usably; throws when none does. */

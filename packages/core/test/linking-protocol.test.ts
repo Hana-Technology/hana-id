@@ -2,7 +2,7 @@
 // (access token, case B's proof, the answer kinds), the vault's follow-up notices, and the port's hana_account,
 // hana_linkAccount and linkChanged shapes.
 import { describe, expect, it } from 'vitest';
-import { isFollowNotice, isRelayPayload } from '../src/relay.ts';
+import { RELAY_MAX_BODY_BYTES, RELAY_MAX_PLAINTEXT_BYTES, decryptRelayPayload, encryptRelayPayload, encryptRelayValue, isFollowNotice, isRelayPayload } from '../src/relay.ts';
 import { parsePortEvent, parsePortReply, parsePortRequest, parseWindowMessage } from '../src/protocol.ts';
 import { relayIdFor, sessionNonce } from '../src/layouts.ts';
 
@@ -89,6 +89,8 @@ describe('follow-up notices', () => {
       { t: 'done', banners: [] },
       { t: 'done', banners: [{ provider: 'email', status: 'pending', effectiveAtMs: 5, fresh: true, action: { kind: 'cancel', prove: { method: 'google', nonce: 'N'.repeat(43), loginHint: null } } }] },
       { t: 'stop', code: 'link_pending', effectiveAtMs: 9 },
+      { t: 'email_consent', reason: 'declined', loginHint: '110248495921238986420' },
+      { t: 'email_consent', reason: 'account_mismatch', loginHint: '1' },
     ]) {
       expect(isFollowNotice(n), JSON.stringify(n)).toBe(true);
     }
@@ -102,6 +104,10 @@ describe('follow-up notices', () => {
       { t: 'prove', why: 'other', provider: 'google', prove: { method: 'google', nonce: 'N'.repeat(43), loginHint: null } },
       { t: 'prove', why: 'link_new', provider: 'google', prove: { method: 'email', purpose: 'session', commitment: 'x' } },
       { t: 'link_code', challengeId: 'C', expiresAtMs: 1, to: 'x' },
+      { t: 'email_consent', reason: 'other', loginHint: '1' },
+      { t: 'email_consent', reason: 'declined' },
+      { t: 'email_consent', reason: 'declined', loginHint: 'a b' },
+      { t: 'email_consent', reason: 'declined', loginHint: '1', extra: 1 },
       { t: 'whatever' },
     ]) {
       expect(isFollowNotice(n), JSON.stringify(n)).toBe(false);
@@ -127,5 +133,33 @@ describe('port: hana_account, hana_linkAccount, linkChanged', () => {
     expect(parsePortEvent({ v: 1, event: 'linkChanged', data: { provider: 'email', status: 'removed', effectiveAtMs: null } })).not.toBeNull();
     expect(parsePortEvent({ v: 1, event: 'linkChanged', data: { provider: 'email', status: 'gone', effectiveAtMs: null } })).toBeNull();
     expect(parsePortReply({ v: 1, id: '1', error: { code: 'link_refused', message: 'x', data: { reason: 'provider_taken' } } }, 'hana_linkAccount')).not.toBeNull();
+  });
+});
+
+describe('relay value size (G-L7)', () => {
+  const key = new Uint8Array(32).fill(7);
+  const id = relayIdFor(new Uint8Array(32).fill(8));
+  const bodyBytes = (v: { iv: string; ct: string }) => new TextEncoder().encode(JSON.stringify(v)).length;
+
+  it('the largest one-request payload the field caps allow encrypts, fits the body cap and decrypts', async () => {
+    const timings = Object.fromEntries(['authCheck', 'choose', 'callbackRedirect', 'callbackFetch', 'callbackBoot', 'callbackPrep', 'emailLoad', 'emailEntry'].map((k) => [k, 9_999_999_999]));
+    const payload = {
+      idToken: `${'h'.repeat(1000)}.${'p'.repeat(2000)}.${'s'.repeat(1094)}`,
+      accessToken: 'y'.repeat(2048),
+      caseB: { linkTicket: 'T'.repeat(64), emailSub: `e1.${'Z'.repeat(43)}` },
+      as: 'session' as const,
+      timings,
+    };
+    expect(payload.idToken).toHaveLength(4096);
+    expect(isRelayPayload(payload)).toBe(true);
+    const value = await encryptRelayPayload(key, id, payload);
+    expect(bodyBytes(value)).toBeLessThanOrEqual(RELAY_MAX_BODY_BYTES);
+    expect(await decryptRelayPayload(key, id, value)).toEqual(payload);
+  });
+
+  it('any value at the plaintext cap fits the body cap; a larger one is refused before encrypting', async () => {
+    const at = await encryptRelayValue(key, id, 'x'.repeat(RELAY_MAX_PLAINTEXT_BYTES - 2));
+    expect(bodyBytes(at)).toBeLessThanOrEqual(RELAY_MAX_BODY_BYTES);
+    await expect(encryptRelayValue(key, id, 'x'.repeat(RELAY_MAX_PLAINTEXT_BYTES - 1))).rejects.toThrow(/too large/u);
   });
 });

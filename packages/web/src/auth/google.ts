@@ -27,6 +27,13 @@ export const GOOGLE_EMAIL_FLOW: GoogleEmailFlow = 'second_request';
 /** The silent request's errors that mean "Google needs the user": the callback asks once more, interactively. */
 export const SILENT_ERRORS: ReadonlySet<string> = new Set(['consent_required', 'interaction_required', 'login_required', 'account_selection_required']);
 
+/**
+ * Whether a login's Google request asks for the email scope itself (one-request mode): only in a login of an app with
+ * email (it has the follow-up key), never for a link task's or a proof's request (they never ask for `email`) or the
+ * export window's.
+ */
+export const wantsEmailScope = (flow: GoogleEmailFlow, o: { follow: boolean; task: boolean }): boolean => flow === 'one_request' && o.follow && !o.task;
+
 export interface GoogleAuthRequest {
   clientId: string;
   authOrigin: string;

@@ -8,6 +8,7 @@ import type { AuthApi } from '../../src/auth/api.ts';
 import type { EmailApi } from '../../src/auth/email-api.ts';
 import { type EmailPage, startEmailPage } from '../../src/auth/email-page.ts';
 import { EMAIL_ENTRY_PREFIX } from '../../src/auth/email-storage.ts';
+import type { GoogleEmailFlow } from '../../src/auth/google.ts';
 import { EMAIL_PATH } from '../../src/auth/login-page.ts';
 import { LOGIN_ENTRY_PREFIX, storeLoginEntry } from '../../src/auth/login-storage.ts';
 import type { HanaEnv } from '../../src/hana-env.ts';
@@ -56,7 +57,7 @@ interface Setup {
 }
 
 /** The page with a login of an app with email: the context, and the login entry (`next` set: follow-up mode). */
-function setup(o: { next?: number } = {}): Setup {
+function setup(o: { next?: number; flow?: GoogleEmailFlow } = {}): Setup {
   const sessionPublicKey = crypto.getRandomValues(new Uint8Array(32));
   const salt = crypto.getRandomValues(new Uint8Array(32));
   const expiresAtMs = 1_900_000_000_000;
@@ -117,7 +118,7 @@ function setup(o: { next?: number } = {}): Setup {
       return { ...v, serverTimeMs: NOW };
     }),
   };
-  const page = startEmailPage({ win, env: EMAIL_ENV, issuer: issuer as unknown as EmailApi, api: api as never, tickets: window.localStorage, now: () => NOW, setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 5)), clearTimeout: () => {} });
+  const page = startEmailPage({ win, env: EMAIL_ENV, issuer: issuer as unknown as EmailApi, api: api as never, tickets: window.localStorage, now: () => NOW, setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 5)), clearTimeout: () => {}, ...(o.flow ? { googleEmailFlow: o.flow } : {}) });
   return {
     win,
     page,
@@ -165,6 +166,21 @@ describe('case B: “Link and continue” (D139)', () => {
     expect(url.searchParams.get('nonce')).toBe(s.nonce);
     expect(url.searchParams.get('state')).toBe(s.relayId);
     expect(url.searchParams.get('scope')).toBe('openid');
+  });
+
+  it('G-L3: in one-request mode case B’s Google request asks for the email scope too (google-match needs its token)', async () => {
+    for (const flow of ['one_request', 'second_request'] as const) {
+      resetDom();
+      const s = setup({ flow });
+      s.issuer.verify.mockResolvedValueOnce({ kind: 'google_wallet', deviceTicket: null, link: { linkTicket: 'T'.repeat(43), emailSub: E_SUB } });
+      await toCode();
+      typeInto('email-code', '123456');
+      submit('email-verify');
+      await vi.waitFor(() => expect(s.page.stage).toBe('google_wallet'));
+      click('email-google');
+      const url = new URL(s.win.location.assigned[0]!);
+      expect([url.searchParams.get('response_type'), url.searchParams.get('scope')], flow).toEqual(flow === 'one_request' ? ['id_token token', 'openid email'] : ['id_token', 'openid']);
+    }
   });
 
   it('“Sign in with Google” stores no ticket (a plain Google login, never linked)', async () => {
@@ -231,6 +247,46 @@ describe('the follow-up mode', () => {
     const s = setup({ next: 2 });
     await s.vaultSays(2, { t: 'link_code', challengeId: CID, expiresAtMs: NOW + 600_000, to: 'a…@example.com' });
     await vi.waitFor(() => expect(s.page.stage).toBe('link_choice'));
+    click('email-cancel');
+    expect(await s.answerIn(3)).toEqual({ error: 'email_cancelled' });
+  });
+
+  it('D264: declined Google email permission: the screen explains; “Sign in with email instead” answers an email login', async () => {
+    const s = setup({ next: 2 });
+    await s.vaultSays(2, { t: 'email_consent', reason: 'declined', loginHint: SUBJECT });
+    await vi.waitFor(() => expect(s.page.stage).toBe('link_choice'));
+    expect(s.page.notice).toBe('email_consent_declined');
+    expect(pageText()).toContain('This app checks whether your Google address already has a wallet. Hana uses it once and doesn’t keep it.');
+    expect(pageText()).toContain('Without it you can’t open a new wallet with Google here.');
+    expect(pageText()).toContain('Sign in with email instead');
+    expect(pageText()).toContain('Try Google again');
+    click('consent-email');
+    await toCode('ada@example.com');
+    typeInto('email-code', '111111');
+    submit('email-verify');
+    expect(await s.answerIn(3)).toEqual({ idToken: TOKEN, as: 'session' });
+  });
+
+  it('D264: “Try Google again” asks Google’s permission interactively for the signed-in account; its answer goes to slot 3', async () => {
+    const s = setup({ next: 2 });
+    await s.vaultSays(2, { t: 'email_consent', reason: 'declined', loginHint: SUBJECT });
+    await vi.waitFor(() => expect(s.page.stage).toBe('link_choice'));
+    click('consent-google');
+    const url = new URL(s.win.location.assigned[0]!);
+    const slot3 = followSlot(s.followKey, 3).id;
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({ response_type: 'token', scope: 'email', login_hint: SUBJECT, state: slot3, client_id: CLIENT_ID });
+    expect(url.searchParams.get('prompt')).toBeNull();
+    // The callback's entry for that leg: interactive already (no second explainer), the vault's next notice is slot 4.
+    const entry = JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + slot3)!);
+    expect(entry).toMatchObject({ leg: 'access', i: 1, next: 4, h: SUBJECT, home: s.relayId });
+  });
+
+  it('D264: another Google account picked on Google’s screen gets its own message; Cancel answers {error}', async () => {
+    const s = setup({ next: 2 });
+    await s.vaultSays(2, { t: 'email_consent', reason: 'account_mismatch', loginHint: SUBJECT });
+    await vi.waitFor(() => expect(s.page.stage).toBe('link_choice'));
+    expect(s.page.notice).toBe('google_account_mismatch');
+    expect(pageText()).toContain('pick the account you signed in with');
     click('email-cancel');
     expect(await s.answerIn(3)).toEqual({ error: 'email_cancelled' });
   });

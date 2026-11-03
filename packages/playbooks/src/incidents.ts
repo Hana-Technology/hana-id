@@ -525,7 +525,8 @@ const nearRpcOutage: Playbook = {
   summary: "The manifest's `rpc` provider is down or wrong. The API reads only `rpc`; the vault, the export window and the watchdog fall back to `rpcFallback`.",
   signals: ['`502 near_unavailable` on API endpoints; `rpc_failing` from the watchdog (both its RPCs failed 3 runs).'],
   impact: [
-    "Logins, derives and owner actions through the API fail while `rpc` is down. Users with an unlocked or persisted vault keep signing (no chain call needed for the key). A lying RPC can fail derives or refuse logins but can't forge a CKD result (pinned key, pairing check).",
+    "Logins, derives and owner actions through the API fail while `rpc` is down. Users with an unlocked or persisted vault keep signing (no chain call needed for the key). Logins of a linked identity (a member's path, through its account root) also need `rpcFallback` to answer: the vault confirms that path on both providers and refuses when either is down (D263).",
+    "A lying RPC can fail derives or refuse logins. It can't forge a CKD result for a user's own path (pinned key, pairing check), but it could forge one for a path whose secret it knows if the vault took its word that the user is a member of that account: the vault and the export window therefore confirm every member path on `rpc` and `rpcFallback` separately (D263). Keep the two on independent providers (the manifest schema refuses one registrable domain for both).",
   ],
   steps: [
     { title: 'Confirm it is the provider', who: 'a founder', detail: 'Check the provider\'s status and another provider.', commands: [c.apiHealth, c.apiTailErrors] },

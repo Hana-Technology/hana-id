@@ -189,7 +189,7 @@ export function takeLogin(storage: Storage, state: string, now: number): TakenLo
 }
 
 /** The entry for `state` without taking it (the email step checks whether it is in follow-up mode), or null. */
-export function peekLogin(storage: Storage, state: string, now: number): (Omit<TakenLogin, 'relayKey' | 'followKey'> & { createdAt: number }) | null {
+export function peekLogin(storage: Storage, state: string, now: number): (Omit<TakenLogin, 'relayKey' | 'followKey'> & { createdAt: number; follows: boolean }) | null {
   if (!RELAY_ID_PATTERN.test(state)) return null;
   try {
     const e = readEntry(storage, LOGIN_ENTRY_PREFIX + state);
@@ -199,8 +199,8 @@ export function peekLogin(storage: Storage, state: string, now: number): (Omit<T
     zeroTaken(t);
     const { relayKey: _r, followKey: _f, ...rest } = t;
     void _r;
-    void _f;
-    return { ...rest, createdAt: e.createdAt };
+    // Whether the entry carries the follow-up key (a login of an app with email), never the key itself.
+    return { ...rest, createdAt: e.createdAt, follows: _f !== undefined };
   } catch {
     return null;
   }

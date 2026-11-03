@@ -1,9 +1,14 @@
 // The vault's own NEAR reads (docs/batch-b-spec.md "Failure handling"): it re-syncs a session from the chain with
 // `get_session` (optimistic, as apps/smoke's syncCounter), checks the app's scope in the on-chain registry at login
 // (`scope_for_client`, `get_scope`; Q7), and polls a login transaction with `EXPERIMENTAL_tx_status`,
-// `sender_account_id` the pinned RELAYER. It never takes session state from the API. A lying RPC can fail or delay a
-// login, never forge one: every CKD result still passes the pairing check against the pinned key. Each read goes to
-// the manifest `rpc`, and to `rpcFallback` only when the primary fails (../near-call.ts), one endpoint per answer.
+// `sender_account_id` the pinned RELAYER. It never takes session state from the API. Each read goes to the manifest
+// `rpc`, and to `rpcFallback` only when the primary fails (../near-call.ts), one endpoint per answer.
+//
+// What a lying RPC can do: fail or delay a login, refuse one with a wrong registry answer, and forge a CKD answer for a
+// path whose secret S the liar knows. The pairing check against the pinned key catches a forgery for the identity's
+// own path (only the MPC can answer that one), but not for a path a `get_identity` view of the liar's chose (a
+// "member" of the liar's own account): so a path that is not the signed-in identity's own is confirmed on both
+// providers separately (`independent()`, ../path-check.ts, D263) before the vault derives it.
 import {
   type AccountView,
   type CkdResult,
@@ -18,9 +23,12 @@ import {
   isSessionView,
   parseAccountView,
   parseIdentityView,
+  parseIssuerKeysView,
+  parseSelfIssuedView,
   utf8,
 } from '@hana-id/core';
-import { type NearEndpoints, isPendingTxError, nearCall } from '../near-call.ts';
+import { type NearEndpoints, independentEndpoints, isPendingTxError, nearCall, nearCallAt } from '../near-call.ts';
+import type { IndependentViews, ViewRead } from '../path-check.ts';
 
 type Fetch = typeof fetch;
 
@@ -56,15 +64,31 @@ export class NearView {
     return nearCall(this.endpoints, this.fetchFn, method, params, { id: 'hana-vault', ...(usable ? { usable } : {}), ...(this.timeoutMs ? { timeoutMs: this.timeoutMs } : {}) });
   }
 
+  private viewParams(methodName: string, args: unknown): Record<string, unknown> {
+    return { request_type: 'call_function', finality: 'optimistic', account_id: this.signer, method_name: methodName, args_base64: base64Encode(utf8(JSON.stringify(args))) };
+  }
+
   /** A view of the pinned signer contract at optimistic finality, as parsed JSON. Throws when no endpoint answers. */
   async view(methodName: string, args: unknown): Promise<unknown> {
-    const body = await this.call(
-      'query',
-      { request_type: 'call_function', finality: 'optimistic', account_id: this.signer, method_name: methodName, args_base64: base64Encode(utf8(JSON.stringify(args))) },
-      viewAnswered,
-    );
+    const body = await this.call('query', this.viewParams(methodName, args), viewAnswered);
     const raw = (body.result as { result: number[] }).result;
     return JSON.parse(fromUtf8(Uint8Array.from(raw))) as unknown;
+  }
+
+  /**
+   * The env's two providers, each read alone (no fallback from one to the other), for confirming a path that isn't
+   * the signed-in identity's own (D263); null without a second provider.
+   */
+  independent(): IndependentViews | null {
+    const ends = independentEndpoints(this.endpoints);
+    if (!ends) return null;
+    const at =
+      (url: string): ViewRead =>
+      async (method, args) => {
+        const body = await nearCallAt(url, this.fetchFn, 'query', this.viewParams(method, args), { id: 'hana-vault', usable: viewAnswered, ...(this.timeoutMs ? { timeoutMs: this.timeoutMs } : {}) });
+        return JSON.parse(fromUtf8(Uint8Array.from((body.result as { result: number[] }).result))) as unknown;
+      };
+    return { primary: at(ends[0]), second: at(ends[1]) };
   }
 
   /** The session of a session key, or null (optimistic finality, so a just-executed login shows up). */
@@ -102,28 +126,12 @@ export class NearView {
 
   /** `get_issuer_keys(provider)`: the provider's active keys with their material (`{kid, n, e}`), or null for none. */
   async issuerKeys(provider: string): Promise<EmailChainKey[] | null> {
-    const value = await this.view('get_issuer_keys', { provider });
-    if (value === null) return null;
-    if (!Array.isArray(value) || !value.every((k) => isObj(k) && typeof k.kid === 'string' && typeof k.n === 'string' && typeof k.e === 'string')) {
-      throw new Error('NEAR RPC: malformed get_issuer_keys');
-    }
-    return value.map((k) => ({ kid: k.kid as string, n: k.n as string, e: k.e as string }));
+    return parseIssuerKeysView(await this.view('get_issuer_keys', { provider }));
   }
 
   /** `get_self_issued(provider)`: the signer policy, or null (not a self-issued provider; a contract before v3 throws). */
   async selfIssued(provider: string): Promise<EmailSignerPolicy | null> {
-    const value = await this.view('get_self_issued', { provider });
-    if (value === null) return null;
-    const signers = isObj(value) ? value.signers : undefined;
-    if (
-      !isObj(value) ||
-      !Number.isSafeInteger(value.required) ||
-      !Array.isArray(signers) ||
-      !signers.every((s) => isObj(s) && typeof s.id === 'string' && Array.isArray(s.kids) && s.kids.every((k) => typeof k === 'string'))
-    ) {
-      throw new Error('NEAR RPC: malformed get_self_issued');
-    }
-    return { required: value.required as number, signers: signers.map((s) => ({ id: s.id as string, kids: [...(s.kids as string[])] })) };
+    return parseSelfIssuedView(await this.view('get_self_issued', { provider }));
   }
 
   /**

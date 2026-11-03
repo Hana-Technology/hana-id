@@ -190,9 +190,11 @@ export const manifestSchema = z
     /** NEAR RPC: https outside `local*` envs (there, http only for a loopback host). */
     rpc: z.string().url(),
     /**
-     * Optional second NEAR RPC (https, not `rpc` itself), from an independent provider. The vault and the export
-     * window read from it only when `rpc` errors or times out (get_session re-syncs, registry views, tx polling), and
-     * each read's answer comes from one endpoint. It joins `rpc` in those pages' CSP `connect-src`.
+     * Second NEAR RPC (https, not `rpc` itself), from an independent provider (another registrable domain outside
+     * `local*` envs). The vault and the export window read from it when `rpc` errors or times out (get_session
+     * re-syncs, registry views, tx polling), each read's answer from one endpoint; and they confirm on both, read
+     * separately, any path that isn't the signed-in identity's own (an account member's, D263). Required with
+     * `emailIssuer` outside `local*` envs (linking makes members). It joins `rpc` in those pages' CSP `connect-src`.
      */
     rpcFallback: z.string().url().optional(),
     /** The API's base URL: https outside `local*` envs (there, http only for a loopback host). */
@@ -317,6 +319,11 @@ export const manifestSchema = z
     dashboardRules(m, ctx);
     if (m.rpcFallback !== undefined && m.rpcFallback === m.rpc) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['rpcFallback'], message: 'rpcFallback must be a different endpoint from rpc' });
+    } else if (m.rpcFallback !== undefined && !isLocalEnv(m.name) && safeSite(m.rpcFallback) !== null && safeSite(m.rpcFallback) === safeSite(m.rpc)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['rpcFallback'], message: `rpcFallback must be another provider (registrable domain) than rpc outside local* envs (both are ${safeSite(m.rpc)})` });
+    }
+    if (m.emailIssuer && m.rpcFallback === undefined && !isLocalEnv(m.name)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['rpcFallback'], message: 'an env with emailIssuer needs rpcFallback outside local* envs: a linked identity’s path is confirmed on two providers (D263)' });
     }
     const dup = (list: string[]) => list.find((v, i) => list.indexOf(v) !== i);
     for (const field of ['googleClientIds', 'sharedGoogleClientIds'] as const) {
@@ -355,6 +362,15 @@ export function endpointUrlProblem(value: string, envName: string): string | nul
  * placeholder by hand may leave a stale source; fetch-ckd-key rewrites both together, and the build refuses the
  * placeholder anyway.)
  */
+/** The registrable domain of a URL, or null when it doesn't parse (endpointUrlProblem reports that). */
+function safeSite(url: string): string | null {
+  try {
+    return siteOf(new URL(url).origin);
+  } catch {
+    return null;
+  }
+}
+
 function ckdSourceRules(source: { rpcs: string[] }, ctx: z.RefinementCtx): void {
   if (new Set(source.rpcs).size !== source.rpcs.length) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ckdNetworkKeySource', 'rpcs'], message: 'ckdNetworkKeySource.rpcs must be distinct' });

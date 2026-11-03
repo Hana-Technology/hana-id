@@ -171,3 +171,36 @@ export function peekEmailTokenSub(token: string): string | null {
     return null;
   }
 }
+
+const isViewObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/**
+ * `get_issuer_keys("email")` as the chain answers it: null (no keys) or a list of `{kid, n, e}`. Anything else throws
+ * (a broken or lying RPC): a reader never drops the odd entry and goes on with the rest.
+ */
+export function parseIssuerKeysView(value: unknown): EmailChainKey[] | null {
+  if (value === null) return null;
+  if (!Array.isArray(value) || !value.every((k) => isViewObj(k) && typeof k.kid === 'string' && typeof k.n === 'string' && typeof k.e === 'string')) {
+    throw new Error('NEAR RPC: malformed get_issuer_keys');
+  }
+  return value.map((k: Record<string, unknown>) => ({ kid: k.kid as string, n: k.n as string, e: k.e as string }));
+}
+
+/**
+ * `get_self_issued(provider)` as the chain answers it: null (not a self-issued provider) or `{required, signers: [{id,
+ * kids}]}`. Anything else throws (a contract before v3, a broken or lying RPC), never a policy built from the parts
+ * that parsed.
+ */
+export function parseSelfIssuedView(value: unknown): EmailSignerPolicy | null {
+  if (value === null) return null;
+  const signers = isViewObj(value) ? value.signers : undefined;
+  if (
+    !isViewObj(value) ||
+    !Number.isSafeInteger(value.required) ||
+    !Array.isArray(signers) ||
+    !signers.every((s) => isViewObj(s) && typeof s.id === 'string' && Array.isArray(s.kids) && s.kids.every((k) => typeof k === 'string'))
+  ) {
+    throw new Error('NEAR RPC: malformed get_self_issued');
+  }
+  return { required: value.required as number, signers: (signers as Record<string, unknown>[]).map((s) => ({ id: s.id as string, kids: [...(s.kids as string[])] })) };
+}

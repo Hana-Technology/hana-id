@@ -125,6 +125,13 @@ describe('manifestSchema: emailIssuer', () => {
     expect(problems.join()).toContain('testnet only');
   });
 
+  it('needs rpcFallback outside local* envs: linking makes members, whose paths are confirmed on two providers (D263)', () => {
+    const m = block();
+    expect(issues(m)).toEqual([]);
+    delete (m as Record<string, unknown>).rpcFallback;
+    expect(issues(m).join()).toContain('needs rpcFallback');
+  });
+
   it('the outbox stub only in local* envs', () => {
     expect(issues(block({ sender: 'outbox' })).join()).toContain('local* envs only');
     const local = { name: 'local-dev', apiUrl: 'http://127.0.0.1:8787', rpc: 'http://127.0.0.1:3030' };

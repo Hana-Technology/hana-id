@@ -1,6 +1,6 @@
 // google-match (spec "How the popup gets Google's verified email", "The four cases"; D119, D122, D132, D133, D195):
 // tokeninfo and userinfo checks, the Google-hosted rule, every case's decision and link mode, no token without `link`,
-// the access token revoked, link tickets, and the auto_link nonce's join read from the chain at minting.
+// the access token never revoked (D265), link tickets, and the auto_link nonce's join read from the chain at minting.
 import { describe, expect, it } from 'vitest';
 import { emailSub, normalizeEmail } from '@hana-id/email';
 import { sha256 } from '../src/bytes.ts';
@@ -40,15 +40,36 @@ const sub = async (h: Harness, email: string) => {
 const gAccount = (email: string, over: Partial<GoogleAccount> = {}): GoogleAccount => ({ sub: `1${Math.floor(Math.random() * 1e15)}`, email, ...over });
 
 describe('Google checks', () => {
-  it('a tokeninfo aud mismatch is refused, and the access token is revoked anyway', async () => {
+  it('a tokeninfo aud mismatch is refused; the access token is never revoked (D265), and never in a URL', async () => {
     const h = await harness();
     const app = await seedApp(h);
     const { res, body, accessToken } = await match(h, app, gAccount(`a${uid()}@gmail.com`), { tokenAud: 'other.apps.googleusercontent.com' });
     expect(res.status).toBe(400);
     expect(body.code).toBe('google_token_invalid');
-    expect(h.google.revoked).toContain(accessToken);
+    expect(h.google.revoked).toEqual([]);
     // Tokens travel in bodies and headers, never in a URL.
     for (const r of h.google.requests) expect(r.url).not.toContain(accessToken);
+  });
+
+  it('D265: a successful match revokes nothing, so the same token can be sent again (the vault’s retry after a 429)', async () => {
+    const h = await harness();
+    const app = await seedApp(h);
+    const account = gAccount(`r${uid()}@gmail.com`);
+    const first = await match(h, app, account);
+    expect(first.res.status).toBe(200);
+    expect(h.google.revoked).toEqual([]);
+    expect(h.google.requests.some((r) => r.url.includes('/revoke'))).toBe(false);
+    const commitment = sessionCommitment(app.scope, h.clock.now);
+    const googleIdToken = await h.google.idToken(account, GOOGLE_CLIENT, nonceFor(commitment));
+    const again = await h.call('/v1/email/google-match', { pk: app.pk, accessToken: first.accessToken, googleIdToken, commitment: commitment.json, link: true });
+    expect(again.status).toBe(200);
+  });
+
+  it('D264: an access token of another Google account (picked on Google’s screen) is google_account_mismatch', async () => {
+    const h = await harness();
+    const app = await seedApp(h);
+    const { res, body } = await match(h, app, gAccount(`m${uid()}@gmail.com`, { tokenSub: '1999' }));
+    expect([res.status, body.code]).toEqual([400, 'google_account_mismatch']);
   });
 
   it('an ID token for another client, with the wrong nonce, or for another scope is refused', async () => {

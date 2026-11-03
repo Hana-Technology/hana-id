@@ -1,9 +1,13 @@
 // The vault's one call to the email issuer (docs/email-login-spec.md "How the popup gets Google's verified email";
 // build plan batch 8b): `POST {issuer}/v1/email/google-match`, CORS for vaultOrigin only (D199), no cookies. The vault
-// sends Google's access token (which the issuer uses for tokeninfo and userinfo, then revokes) with the login's Google
-// ID token and session commitment; the issuer answers the case it judged from the chain and, when the case and `link`
-// allow it, an `auto_link` email token. The vault re-judges everything from its own RPC before it uses that token
-// (D133): the issuer's answer only decides which screen the popup shows.
+// sends Google's access token (which the issuer uses for tokeninfo and userinfo, and never stores or revokes: it is
+// email-scope only and expires within the hour, D265) with the login's Google ID token and session commitment; the
+// issuer answers the case it judged from the chain and, when the case and `link` allow it, an `auto_link` email token.
+// The vault re-judges everything from its own RPC before it uses that token (D133), but which email identity the
+// Google address matches is the issuer's word alone (K_sub is the issuer's): see D266.
+//
+// A 429 or 503 is MatchBusy (with the `retry-after`, when sent): the login retries it (G-M3). The request gives up after
+// MATCH_TIMEOUT_MS (G-L5).
 //
 // SECURITY: the body carries Google's ID and access tokens; the answer may carry an email token. Nothing here logs a
 // body or puts one in an error; the address never reaches the vault (the issuer reads it from Google and drops it).
@@ -33,6 +37,27 @@ export interface MatchRequest {
   commitment: { scopeId: string; sessionPublicKey: number[]; expiresAtMs: number; keyIndex: number; maxUses: number; salt: number[] };
   link: boolean;
   linkTicket?: string;
+}
+
+/** How long google-match gets before the vault gives up on it (it calls Google twice and the chain a few times). */
+export const MATCH_TIMEOUT_MS = 30_000;
+
+/** google-match answered 429 or 503: try again after `retryAfterMs` (its `retry-after` header), when it said. */
+export class MatchBusy extends Error {
+  constructor(
+    readonly status: number,
+    readonly retryAfterMs: number | null,
+  ) {
+    super(`google-match is busy (${status})`);
+  }
+}
+
+/** `retry-after` in seconds (1..3600) as ms; null when absent or not a number of seconds. */
+function retryAfterMs(res: Response): number | null {
+  const raw = res.headers.get('retry-after');
+  if (raw === null || !/^\d{1,4}$/u.test(raw.trim())) return null;
+  const s = Number(raw.trim());
+  return s >= 1 && s <= 3600 ? s * 1000 : null;
 }
 
 const bad = (): ApiError => new ApiError(502, 'bad_response', 'Unexpected google-match response', null, null);
@@ -77,7 +102,13 @@ export function issuerApi(issuerUrl: string, fetchFn: Fetch = (...args) => fetch
         referrerPolicy: 'no-referrer',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(r),
+        signal: AbortSignal.timeout(MATCH_TIMEOUT_MS),
       });
+      if (res.status === 429 || res.status === 503) {
+        const after = retryAfterMs(res);
+        await res.body?.cancel().catch(() => undefined);
+        throw new MatchBusy(res.status, after);
+      }
       return parseGoogleMatch(await parseApiResponse(res));
     },
   };

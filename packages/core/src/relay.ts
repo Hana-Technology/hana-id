@@ -9,8 +9,15 @@ import { isTimings } from './timings.ts';
 
 export const RELAY_IV_BYTES = 12;
 export const RELAY_KEY_BYTES = 32;
-/** The relay's body cap (8 KiB, enforced by the API too). */
-export const RELAY_MAX_BODY_BYTES = 8192;
+/** The relay's body cap (12 KiB, enforced by the API too: apps/api login-relay.ts RELAY_MAX_BODY). */
+export const RELAY_MAX_BODY_BYTES = 12_288;
+/**
+ * The largest plaintext a relay value may have: its ciphertext (plus the 16-byte tag), base64url in `{"iv","ct"}`, then
+ * fits RELAY_MAX_BODY_BYTES with room to spare (33 + ⌈4·(9000 + 16)/3⌉ = 12 055 bytes). Every payload the format
+ * allows fits: one-request mode's largest token payload (an ID token of 4096 and an access token of 2048 characters,
+ * case B's proof and 8 timings) is about 6.6 KB (G-L7). encryptRelayValue refuses anything larger.
+ */
+export const RELAY_MAX_PLAINTEXT_BYTES = 9000;
 const GOOGLE_ERROR = /^[a-z_]{1,64}$/u;
 
 /**
@@ -141,6 +148,11 @@ export interface LinkBanner {
  *   sent by `resend` after the click) or "Sign in with email" (D195).
  * - `use_email`: case A that can't link (the email's account already has a Google sign-in, or is full): only "Sign in
  *   with email" (never a second wallet, D122).
+ * - `email_consent`: a Google identity without a wallet whose address google-match couldn't read, because the user
+ *   declined Google's email permission (`declined`) or picked another Google account on Google's screen
+ *   (`account_mismatch`): the popup explains why it is needed and offers "Sign in with email instead" (an email login,
+ *   `as: 'session'`) or "Try Google again" (the access request again, `login_hint` the signed-in `sub`, whose answer,
+ *   `{accessToken}` or `{error}`, is the reply), D264.
  * - `prove`: a link method's proof (`hana.linkAccount`'s two sign-ins).
  * - `done`: the vault's last word: close, or show these banners first.
  * - `stop`: the login ended with `code` (`link_pending`: this method's link activates at `effectiveAtMs`).
@@ -148,6 +160,7 @@ export interface LinkBanner {
 export type FollowNotice =
   | { t: 'link_code'; challengeId: string; expiresAtMs: number; to: string }
   | { t: 'use_email'; reason: 'provider_taken' | 'account_full' | 'unavailable' }
+  | { t: 'email_consent'; reason: 'declined' | 'account_mismatch'; loginHint: string }
   | { t: 'prove'; why: 'link_new' | 'link_account'; prove: FollowProve; provider: string }
   | { t: 'done'; banners: LinkBanner[] }
   | { t: 'stop'; code: string; effectiveAtMs?: number; banners?: LinkBanner[] };
@@ -191,6 +204,8 @@ export function isFollowNotice(v: unknown): v is FollowNotice {
       return only('t', 'challengeId', 'expiresAtMs', 'to') && typeof v.challengeId === 'string' && /^[A-Za-z0-9_-]{16,128}$/u.test(v.challengeId) && isMsValue(v.expiresAtMs) && isShortText(v.to, 260);
     case 'use_email':
       return only('t', 'reason') && (v.reason === 'provider_taken' || v.reason === 'account_full' || v.reason === 'unavailable');
+    case 'email_consent':
+      return only('t', 'reason', 'loginHint') && (v.reason === 'declined' || v.reason === 'account_mismatch') && typeof v.loginHint === 'string' && /^[0-9A-Za-z_-]{1,255}$/u.test(v.loginHint);
     case 'prove':
       return only('t', 'why', 'prove', 'provider') && (v.why === 'link_new' || v.why === 'link_account') && isFollowProve(v.prove) && isProvider(v.provider);
     case 'done':
@@ -204,10 +219,16 @@ export function isFollowNotice(v: unknown): v is FollowNotice {
 
 /** Encrypts any JSON value for one relay slot (AES-GCM under relayKey, AAD relayAad(relayId)). */
 export async function encryptRelayValue(relayKey: Uint8Array, relayId: string, payload: unknown): Promise<RelayCiphertext> {
-  const key = await importKey(relayKey, 'encrypt');
-  const iv = crypto.getRandomValues(new Uint8Array(RELAY_IV_BYTES));
-  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: relayAad(relayId) }, key, utf8(JSON.stringify(payload))));
-  return { iv: base64UrlEncode(iv), ct: base64UrlEncode(ct) };
+  const plain = utf8(JSON.stringify(payload));
+  try {
+    if (plain.length > RELAY_MAX_PLAINTEXT_BYTES) throw new Error('The relay value is too large');
+    const key = await importKey(relayKey, 'encrypt');
+    const iv = crypto.getRandomValues(new Uint8Array(RELAY_IV_BYTES));
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: relayAad(relayId) }, key, plain));
+    return { iv: base64UrlEncode(iv), ct: base64UrlEncode(ct) };
+  } finally {
+    plain.fill(0);
+  }
 }
 
 /** Decrypts a relay slot value and checks it with `check`. Throws (without detail) when it doesn't decrypt or check. */

@@ -72,7 +72,11 @@ function run(
     sessionExpiresAtMs?: number;
     env?: typeof ENV;
     identity?: (provider: string, sub: string) => Record<string, unknown> | undefined;
+    /** The second provider's get_identity (D263), when it differs from the first's; `null`: no second provider. */
+    secondIdentity?: ((provider: string, sub: string) => Record<string, unknown> | undefined) | null;
     emailKeys?: { kid: string; n: string; e: string }[];
+    /** Raw `get_issuer_keys` / `get_self_issued` answers (W-L2), instead of the ones made from `emailKeys`. */
+    rawEmailViews?: { keys?: unknown; policy?: unknown };
   } = {},
 ): Run {
   const chain = o.chain ?? 'stellar';
@@ -99,17 +103,26 @@ function run(
     }),
   };
   // get_identity (batch 7): own unless the test links the identity; the email views for an email re-authentication.
+  const views =
+    (identity: ((provider: string, sub: string) => Record<string, unknown> | undefined) | undefined) =>
+    async (method: string, args: unknown): Promise<unknown> => {
+      const a = args as { provider: string; sub: string; scope_id: string; aud: string };
+      if (method === 'get_identity') return identity?.(a.provider, a.sub) ?? { key: identityKeyHex(a.scope_id, a.provider, a.sub), status: 'own', opened: true, account_epoch: 0 };
+      if (method === 'scope_for_client') return SCOPE;
+      if (method === 'get_issuer_keys') return o.rawEmailViews && 'keys' in o.rawEmailViews ? o.rawEmailViews.keys : (o.emailKeys ?? null);
+      if (method === 'get_self_issued') {
+        if (o.rawEmailViews && 'policy' in o.rawEmailViews) return o.rawEmailViews.policy;
+        return o.emailKeys ? { signers: [{ id: 'hana', kids: o.emailKeys.map((k) => k.kid) }], required: 1 } : null;
+      }
+      return null;
+    };
+  const first = views(o.identity);
+  const second = o.secondIdentity === null ? null : views(o.secondIdentity ?? o.identity);
   const near: NearReader = {
     getSession: vi.fn(),
     txOutcome: vi.fn(),
-    view: vi.fn(async (_signer: string, method: string, args: unknown) => {
-      const a = args as { provider: string; sub: string; scope_id: string; aud: string };
-      if (method === 'get_identity') return o.identity?.(a.provider, a.sub) ?? { key: identityKeyHex(a.scope_id, a.provider, a.sub), status: 'own', opened: true, account_epoch: 0 };
-      if (method === 'scope_for_client') return SCOPE;
-      if (method === 'get_issuer_keys') return o.emailKeys ?? null;
-      if (method === 'get_self_issued') return o.emailKeys ? { signers: [{ id: 'hana', kids: o.emailKeys.map((k) => k.kid) }], required: 1 } : null;
-      return null;
-    }),
+    view: vi.fn(async (_signer: string, method: string, args: unknown) => first(method, args)),
+    independent: vi.fn(() => (second ? { primary: first, second } : null)),
   };
   const page = startExportPage({ win, env: o.env ?? ENV, api, near, jwks: async (kid) => (kid === signer.jwk.kid ? signer.jwk : null), sleep: async () => {}, isGesture: () => o.gesture ?? true });
   const context = {
@@ -200,6 +213,20 @@ describe('/export resolves the path through get_identity (batch 7) and takes an 
     expect(await r.page.settled).toBe('confirm');
   });
 
+  it('D263: a member view only one provider gives (a lying RPC) exports nothing, before any login', async () => {
+    const member = (p: string, s: string) => (p === 'google' ? { key: identityKeyHex(SCOPE, p, s), status: 'member', opened: false, root: { provider: 'email', sub: E_SUB }, effective_at_ms: 1, account_epoch: 1 } : undefined);
+    // The second provider says own (it disagrees), or the env has none (unconfirmed): never the root's path.
+    const honestOwn = () => undefined;
+    for (const secondIdentity of [honestOwn, null]) {
+      const r = run({ address: addressFor('stellar', E_PATH), loginPath: E_PATH, identity: member, secondIdentity });
+      await signIn(r);
+      await r.deliver();
+      expect(await r.page.settled).toBe('error');
+      expect(r.page.errorCode).toBe('api_unavailable');
+      expect(r.api.login).not.toHaveBeenCalled();
+    }
+  });
+
   it('a pending member exports nothing (link_pending), before any login', async () => {
     const r = run({ identity: (p, s) => ({ key: identityKeyHex(SCOPE, p, s), status: 'pending', opened: false, root: { provider: 'email', sub: E_SUB }, effective_at_ms: 9, account_epoch: 1 }) });
     await signIn(r);
@@ -207,6 +234,26 @@ describe('/export resolves the path through get_identity (batch 7) and takes an 
     expect(await r.page.settled).toBe('error');
     expect(r.page.errorCode).toBe('link_pending');
     expect(r.api.login).not.toHaveBeenCalled();
+  });
+
+  it('W-L2: the email keys and signer policy are parsed strictly: one malformed entry refuses, never a policy of the rest', async () => {
+    const issuer = await emailIssuerSigner();
+    const bad = [
+      { policy: { signers: [{ id: 'hana', kids: [issuer.chainKey.kid] }, { id: 5, kids: [] }], required: 1 } },
+      { policy: { signers: [{ id: 'hana', kids: [issuer.chainKey.kid] }], required: '1' } },
+      { keys: [issuer.chainKey, { kid: 'x' }] },
+    ];
+    for (const rawEmailViews of bad) {
+      const r = run({ env: EMAIL_ENV, config: emailApp(), address: addressFor('stellar', E_PATH), loginPath: E_PATH, emailKeys: [issuer.chainKey], rawEmailViews });
+      await signInAgain(r);
+      await r.deliverPayload(async (p) => {
+        const now = Math.floor(Date.now() / 1000);
+        return { idToken: await issuer.token({ iss: EMAIL_ENV.emailIss, aud: `email:${SCOPE}`, sub: E_SUB, iat: now, exp: now + 600, nonce: p.nonce, jti: 'j' }) };
+      });
+      expect(await r.page.settled, JSON.stringify(rawEmailViews)).toBe('error');
+      expect(r.page.errorCode).toBe('api_unavailable');
+      expect(r.api.login).not.toHaveBeenCalled();
+    }
   });
 
   it('an app with email: the child offers both methods; an email code over this window’s own session exports the email wallet', async () => {

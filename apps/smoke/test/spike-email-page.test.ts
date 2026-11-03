@@ -67,6 +67,62 @@ describe('spike-email.html', () => {
     expect(JSON.parse(document.getElementById('summary')!.textContent!)[0]).toMatchObject({ mode: 'two', silentError: 'consent_required', interactiveError: 'access_denied', emailInIdToken: false });
   });
 
+  it('calls tokeninfo by POST (never the token in a URL) and never revokes it (D265)', async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u: string, init?: RequestInit) => {
+        calls.push({ url: String(u), ...(init ? { init } : {}) });
+        return { status: 200, json: async () => (String(u).includes('tokeninfo') ? { aud: '123-abc.apps.googleusercontent.com', sub: '42', scope: 'email' } : { sub: '42', email: 'ada@gmail.com', email_verified: true }) };
+      }),
+    );
+    (document.getElementById('one') as HTMLButtonElement).click();
+    deliver(`id_token=${jwt({ sub: '42', nonce: opened[0]!.searchParams.get('nonce') })}&access_token=ya29.secret&state=${opened[0]!.searchParams.get('state')}`);
+    await vi.waitFor(() => expect(document.getElementById('summary')!.textContent).toContain('oneRequestUsable'));
+    const tokeninfo = calls.find((c) => c.url.includes('tokeninfo'))!;
+    expect(tokeninfo.init?.method).toBe('POST');
+    for (const c of calls) expect(c.url).not.toContain('ya29');
+    expect(calls.some((c) => c.url.includes('revoke'))).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
+  it('C and D run after B: a plain openid login (flags email claims: a token_has_pii lockout), then B’s silent request again', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (u: string) => ({ status: 200, json: async () => (String(u).includes('tokeninfo') ? { aud: '123-abc.apps.googleusercontent.com', sub: '42', scope: 'email' } : { sub: '42', email: 'ada@gmail.com', email_verified: true }) })));
+    expect((document.getElementById('three') as HTMLButtonElement).disabled).toBe(true);
+    (document.getElementById('two') as HTMLButtonElement).click();
+    deliver(`id_token=${jwt({ sub: '42', nonce: opened[0]!.searchParams.get('nonce') })}&state=${opened[0]!.searchParams.get('state')}`);
+    await vi.waitFor(() => expect(opened).toHaveLength(2));
+    deliver(`access_token=ya29.x&state=${opened[1]!.searchParams.get('state')}`);
+    await vi.waitFor(() => expect((document.getElementById('three') as HTMLButtonElement).disabled).toBe(false));
+    // C: openid only; here Google added email claims, which the summary flags as a lockout.
+    (document.getElementById('three') as HTMLButtonElement).click();
+    expect(Object.fromEntries(opened[2]!.searchParams)).toMatchObject({ response_type: 'id_token', scope: 'openid', prompt: 'select_account' });
+    deliver(`id_token=${jwt({ sub: '42', email: 'ada@gmail.com', email_verified: true, nonce: opened[2]!.searchParams.get('nonce') })}&state=${opened[2]!.searchParams.get('state')}`);
+    await vi.waitFor(() => expect(JSON.parse(document.getElementById('summary')!.textContent!)).toHaveLength(2));
+    const c = JSON.parse(document.getElementById('summary')!.textContent!)[1];
+    expect(c).toMatchObject({ mode: 'three', tokenHasPiiLockout: true, lockoutClaims: ['email', 'email_verified'], sameAccountAsB: true });
+    expect(c.idTokenClaimNames).toContain('email');
+    // D: the silent request again, for B's account; no interactive retry: its error (or token) is the answer.
+    (document.getElementById('four') as HTMLButtonElement).click();
+    expect(Object.fromEntries(opened[3]!.searchParams)).toMatchObject({ response_type: 'token', scope: 'email', prompt: 'none', login_hint: '42' });
+    deliver(`error=consent_required&state=${opened[3]!.searchParams.get('state')}`);
+    await vi.waitFor(() => expect(JSON.parse(document.getElementById('summary')!.textContent!)).toHaveLength(3));
+    expect(JSON.parse(document.getElementById('summary')!.textContent!)[2]).toMatchObject({ mode: 'four', silentError: 'consent_required' });
+    expect(opened).toHaveLength(4);
+    expect(document.getElementById('summary')!.textContent).not.toContain('ada@gmail.com');
+    expect(document.getElementById('summary')!.textContent).not.toContain('"42"');
+    vi.unstubAllGlobals();
+  });
+
+  it('takes exactly one state, the leg’s own, once (as production’s callback)', () => {
+    (document.getElementById('one') as HTMLButtonElement).click();
+    const state = opened[0]!.searchParams.get('state');
+    deliver(`error=access_denied&state=${state}&state=${state}`);
+    expect(document.getElementById('out')!.textContent).toBe('state mismatch: ignored');
+    deliver(`error=access_denied&state=${state}`);
+    expect(JSON.parse(document.getElementById('summary')!.textContent!)[0]).toMatchObject({ error: 'access_denied' });
+  });
+
   it('ignores a fragment without the run’s state and shows nothing of it', () => {
     (document.getElementById('one') as HTMLButtonElement).click();
     deliver('error=%3Cimg%20src%3Dx%3E&state=wrong');

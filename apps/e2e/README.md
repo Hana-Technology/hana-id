@@ -26,6 +26,7 @@ Ports are `HANA_E2E_PORT_BASE` (default 4410) plus the offsets below: the table 
 | `http://127.0.0.1:4440` | the Hana API: apps/api's Worker, with `/v1/login`, `/v1/derive`, `/v1/sessions/revoke` and `/v1/link*` mocked; plus `/__e2e/*` control endpoints (`/__e2e/google-key`: the stack's Google signing key) |
 | `http://127.0.0.1:4442` | the email issuer: apps/email-issuer's Worker with the `outbox` stub; plus `GET /__e2e/outbox` (the mails, for the tests) |
 | `http://127.0.0.1:4450`, `:4460` | mocked NEAR RPC and EVM chain RPC |
+| `http://127.0.0.1:4451` | the same mocked chain as the env's `rpcFallback`: a member's path is confirmed on both (D263) |
 | `http://127.0.0.1:4421`, `:4431`, `:4441` | live mode's vault, auth and API hosts (below): reached only through the tests' routes |
 
 Both partner sites are cross-site to the Hana pages, as in production, so the vault frame is a third-party frame on
@@ -83,7 +84,7 @@ the openid-only login with the account chooser, a proof the vault asks for (`log
 the second, silent request for the email scope (`response_type=token`, `scope=email`, `login_hint`, `prompt=none`;
 answered with an access token). It refuses an ID token with the email scope, and signs RS256 tokens with the claims
 Google sends for `scope=openid`. On the server side (`src/server/google-backend.ts`), the stack answers Google's JWKS,
-`tokeninfo`, `userinfo` and revoke for the Workers in its process (the issuer's google-match), by wrapping that
+`tokeninfo`, `userinfo` and revoke (which the issuer must never call, D265) for the Workers in its process (the issuer's google-match), by wrapping that
 process's `fetch` for those three Google hosts. One RSA key per stack signs every ID token: the browser stubs fetch it
 from `GET {API}/__e2e/google-key` (no CORS, refused with an `Origin`), so the issuer's JWKS cache always knows the
 kid. Access tokens are self-describing test values (`ya29.e2e.<b64url JSON>`: the client, sub, email,

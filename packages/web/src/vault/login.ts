@@ -71,6 +71,8 @@ import {
   type SessionKey,
   type SessionView,
   EMAIL_PROVIDER,
+  JOIN_SESSION_IDENTITY,
+  PATH_PROVIDERS,
   ViewShapeError,
   ckdAppId,
   decryptCkd,
@@ -107,8 +109,9 @@ import type { HanaEnv } from '../hana-env.ts';
 import type { VaultApi } from './api.ts';
 import { type Persistence, SESSION_TTL_CAP_MS, type VaultConfig } from './config.ts';
 import { VaultError, apiErrorToVault } from './errors.ts';
-import type { GoogleMatch, IssuerApi } from './issuer.ts';
+import { type GoogleMatch, type IssuerApi, MatchBusy } from './issuer.ts';
 import { type NearView, ckdResultOf } from './near.ts';
+import { PathCheckError, confirmPath } from '../path-check.ts';
 import { type Clock, type Timers, type WindowMessageEvent, type WindowRef, sleep } from './runtime.ts';
 
 /** The pending login ends after this long without finishing (`login_timeout`, stage 'pending'). */
@@ -133,6 +136,26 @@ export const KEY_PENDING_DEFAULT_WAIT_S = 30;
 export const AFTERWORD_MS = 5 * 60_000;
 /** An active sign-in method added this recently still gets a banner at login (spec "Notices"). */
 export const RECENT_LINK_MS = 7 * 24 * 3_600_000;
+/** google-match answered 429 or 503: the longest one wait (its `retry-after`, else a backoff), and all waits together. */
+export const MATCH_RETRY_MAX_WAIT_MS = 20_000;
+export const MATCH_RETRY_BUDGET_MS = 45_000;
+/** The first wait after a 429 or 503 without `retry-after`, doubled each time up to MATCH_RETRY_MAX_WAIT_MS. */
+export const MATCH_RETRY_FIRST_MS = 1_000;
+/** A login stops retrying google-match this long before its own deadline (LOGIN_PENDING_MS), to finish the chain step. */
+const MATCH_DEADLINE_MARGIN_MS = 90_000;
+/** How many times the email-consent screen (declined, another account) is shown in one login. */
+export const EMAIL_CONSENT_ROUNDS = 3;
+
+/**
+ * What the login vault remembers per signed-in identity (D263): the identity whose path it last derived, the account
+ * root. Absent: never seen (or the app keeps nothing on this device). Both methods may throw (storage); the login then
+ * goes on without the pin.
+ */
+export interface RootPins {
+  /** The root's identity key (hex) last derived for this identity, or null. */
+  get(identityKeyHex: string): Promise<string | null>;
+  set(identityKeyHex: string, rootKeyHex: string): Promise<void>;
+}
 
 export type LoginMode = 'partner' | 'vault';
 export type LoginStage = 'popup_connected' | 'google' | 'email_code' | 'token' | 'linking' | 'chain' | 'key_pending' | 'done';
@@ -199,6 +222,8 @@ export interface LoginContext {
   flow: 'combined' | 'split';
   /** Monotonic ms (performance.now) for per-stage timings (pk_test_ apps only). */
   perfNow(): number;
+  /** The account root each identity last opened (D263); none: no pin is kept or checked. */
+  pins?: RootPins;
 }
 
 /** A link this login made: the method that joined, and when it opens the wallet (now, or after the delay). */
@@ -297,6 +322,7 @@ type AuthParams = {
 };
 
 const fail = (code: ConstructorParameters<typeof VaultError>[0], message: string, data?: Record<string, unknown>) => new VaultError(code, message, data);
+const sameRef = (a: IdentityRef, b: IdentityRef): boolean => a.provider === b.provider && a.sub === b.sub;
 
 /** A verified sign-in: who, its token, and when the token expires. */
 interface Who {
@@ -714,6 +740,9 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       } else {
         path = await this.ownPath(who.ref);
       }
+      // D263: a silent change of the root this device last opened for this identity, other than a link activating
+      // (own → member, confirmed on both providers above), is confirmed on both providers again.
+      await this.checkPin(who.ref, pathOwner(path) as IdentityRef);
 
       // Step 9: the chain.
       ctx.progress('chain');
@@ -767,6 +796,8 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
         const addresses = deriveAddresses(prk);
         mark('decrypt');
         const linked = linkedRef ? await this.madeLink(linkedRef, link as LinkPlan) : null;
+        // In the background (memory at once, storage after): the login never waits on IndexedDB for it.
+        void this.writePin(who.ref, pathOwner(path) as IdentityRef);
         this.afterword(who, path, linked);
         return { prk, addresses, path, expiresAtMs, maxUses, sessionKey, timings, markedAt: lap, identity: { provider: who.ref.provider, sub: who.ref.sub }, linked };
       } catch (e) {
@@ -790,39 +821,57 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
     verify: TokenCheck,
     sessionNonceValue: string,
   ): Promise<{ who: Who; link: LinkPlan | null }> {
-    const { ctx } = this;
     const follow = this.follow as FollowChannel;
     let accessToken: string | null = first.accessToken ?? null;
+    /** Slot 1's (or a consent answer's) Google error instead of an access token. */
+    let accessError: string | null = null;
     if (!accessToken && first.access === 'follow') {
       const a = await follow.answer(0, this.abortCtl.signal);
       this.check();
-      accessToken = 'accessToken' in a && !('idToken' in a) ? a.accessToken : null;
+      if ('accessToken' in a && !('idToken' in a)) accessToken = a.accessToken;
+      else if ('error' in a) accessError = a.error;
     }
     let match: GoogleMatch | null = null;
-    if (accessToken) {
-      try {
-        match = await (ctx.issuer as IssuerApi).googleMatch({
-          pk: ctx.config.publishableKey,
-          accessToken,
-          googleIdToken: google.token,
-          commitment,
-          link: true,
-          ...(first.caseB ? { linkTicket: first.caseB.linkTicket } : {}),
-        });
-      } catch {
-        match = null;
-      } finally {
+    for (let round = 1; ; round++) {
+      // The popup couldn't keep the login's keys for its next page (G-L2): it shows the error; the login ends.
+      if (accessError === 'storage_unavailable') throw fail('storage_unavailable', 'This browser blocked the storage the sign-in needs');
+      let problem: 'declined' | 'account_mismatch' | 'unavailable' = accessError === 'access_denied' ? 'declined' : 'unavailable';
+      if (accessToken) {
+        const got = await this.googleMatch(google, accessToken, commitment, first.caseB?.linkTicket);
         accessToken = null;
+        if (got === 'account_mismatch') problem = 'account_mismatch';
+        else match = got;
       }
-      this.check();
-    }
-    if (!match) {
+      if (match) break;
       // No answer: only an identity that can't be case A logs in (it has a wallet, or is in an account), D255.
       const g = await this.identityOf(google.ref);
       const known = g.status !== 'own' || g.opened || (await this.accountHasMembers(google.ref));
-      if (!known) throw fail('api_unavailable', 'Hana could not check this Google account against email sign-ins; try again', { reason: 'email_match_unavailable' });
-      return { who: google, link: null };
+      if (known) return { who: google, link: null };
+      if (problem === 'unavailable') throw fail('api_unavailable', 'Hana could not check this Google account against email sign-ins; try again', { reason: 'email_match_unavailable' });
+      const reason = problem === 'declined' ? 'email_consent_declined' : 'google_account_mismatch';
+      if (round >= EMAIL_CONSENT_ROUNDS) throw fail('login_cancelled', 'Google’s email address is needed to open a new wallet with Google here', { reason });
+      // D264: the popup explains why the address is needed and offers email instead, or Google's screen again.
+      const slot = await follow.notice({ t: 'email_consent', reason: problem, loginHint: google.ref.sub }, true);
+      const a = await follow.answer(slot, this.abortCtl.signal);
+      this.check();
+      if ('accessToken' in a && !('idToken' in a)) {
+        accessToken = a.accessToken;
+        accessError = null;
+        continue;
+      }
+      if ('error' in a) {
+        if (a.error === 'access_denied' || a.error === 'storage_unavailable') {
+          accessError = a.error;
+          continue;
+        }
+        const err = this.emailAnswerError(a.error);
+        throw err.code === 'login_cancelled' ? fail('login_cancelled', 'The sign-in was cancelled', { reason }) : err;
+      }
+      if (!isRelayToken(a) || a.as !== 'session' || !isJsonFormToken(a.idToken)) throw fail('token_invalid', 'The sign-in answer was refused');
+      // "Sign in with email instead": an email login (Google's token is dropped unused).
+      return { who: await verify.email(a.idToken, sessionNonceValue), link: null };
     }
+    if (!match) throw fail('api_unavailable', 'Hana could not check this Google account against email sign-ins; try again', { reason: 'email_match_unavailable' });
 
     if (match.decision === 'case_a') {
       if (match.emailToken) {
@@ -856,6 +905,43 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
     }
     // C, linked, pending, unlinked, both wallets, a plain Google login in case B: no link, the login's own path.
     return { who: google, link: null };
+  }
+
+  /**
+   * One google-match (the access token is never revoked, D265, so it can be sent again), retried after a 429 or 503
+   * while the login has time (G-M3): the issuer's `retry-after` when it gives one (no retry when that is longer than
+   * MATCH_RETRY_MAX_WAIT_MS), else a doubling backoff, at most MATCH_RETRY_BUDGET_MS of waits in all, and never past
+   * MATCH_DEADLINE_MARGIN_MS before the login's own deadline. Null when the issuer can't answer; `account_mismatch`
+   * when the access token is another Google account's (the user picked another one on Google's screen).
+   */
+  private async googleMatch(
+    google: Who,
+    accessToken: string,
+    commitment: { scopeId: string; sessionPublicKey: number[]; expiresAtMs: number; keyIndex: number; maxUses: number; salt: number[] },
+    linkTicket: string | undefined,
+  ): Promise<GoogleMatch | 'account_mismatch' | null> {
+    const { ctx } = this;
+    const issuer = ctx.issuer as IssuerApi;
+    let waited = 0;
+    let backoff = MATCH_RETRY_FIRST_MS;
+    for (;;) {
+      try {
+        const m = await issuer.googleMatch({ pk: ctx.config.publishableKey, accessToken, googleIdToken: google.token, commitment, link: true, ...(linkTicket ? { linkTicket } : {}) });
+        this.check();
+        return m;
+      } catch (e) {
+        this.check();
+        if (e instanceof ApiError && e.code === 'google_account_mismatch') return 'account_mismatch';
+        if (!(e instanceof MatchBusy)) return null;
+        if (e.retryAfterMs !== null && e.retryAfterMs > MATCH_RETRY_MAX_WAIT_MS) return null;
+        const wait = Math.min(e.retryAfterMs ?? backoff, MATCH_RETRY_MAX_WAIT_MS);
+        backoff = Math.min(backoff * 2, MATCH_RETRY_MAX_WAIT_MS);
+        if (waited + wait > MATCH_RETRY_BUDGET_MS || ctx.perfNow() + wait > this.startedAt + LOGIN_PENDING_MS - MATCH_DEADLINE_MARGIN_MS) return null;
+        waited += wait;
+        await sleep(ctx.timers, wait, this.abortCtl.signal);
+        this.check();
+      }
+    }
   }
 
   /**
@@ -901,6 +987,14 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       throw fail('link_refused', 'The sign-in methods can’t be linked', { reason: judged.reason === 'not_immediate' ? 'link_mismatch' : judged.reason });
     }
     if (judged.join !== link.join) throw fail('link_refused', 'The link no longer matches the chain', { reason: 'link_mismatch' });
+    const target = judged.pathIdentity;
+    if (!PATH_PROVIDERS.includes(target.provider)) throw fail('login_method_unavailable', 'This wallet’s sign-in method isn’t supported here', { reason: 'root_unsupported' });
+    // D263: the account root's path, unless it is the session identity's own, on both providers (the target side's
+    // view named it: the email identity's in case A, the session identity's in case B).
+    if (!sameRef(target, who.ref)) {
+      const via = link.join === JOIN_SESSION_IDENTITY ? e : x;
+      await this.confirmed(via.ref, via.identity, target);
+    }
     const checked = await verify.emailWithNonce(link.token, judged.nonce);
     if (checked.sub !== eSub) throw fail('token_invalid', 'The link token was refused', { reason: 'link_mismatch' });
     return { pathIdentity: judged.pathIdentity, joiner: link.join === 1 ? who.ref : eRef };
@@ -921,7 +1015,10 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
     }
   }
 
-  /** The path a session of `self` derives (batch 7): its own, or its account root's; a pending member is refused. */
+  /**
+   * The path a session of `self` derives (batch 7): its own, or its account root's, which must then be confirmed on
+   * both providers (D263); a pending member is refused.
+   */
   private async ownPath(self: IdentityRef): Promise<string> {
     const view = await this.identityOf(self);
     let p;
@@ -933,18 +1030,70 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
     if (p.kind === 'pending') {
       throw fail('link_pending', 'This sign-in method’s link to an account is pending', p.effectiveAtMs === null ? undefined : { effectiveAtMs: p.effectiveAtMs });
     }
-    return loginPath(this.ctx.config.scopeId, p.identity.provider as 'google' | 'email', p.identity.sub, KEY_INDEX);
+    if (p.kind === 'unsupported') throw fail('login_method_unavailable', 'This wallet’s sign-in method isn’t supported here', { reason: 'root_unsupported' });
+    if (p.linked) await this.confirmed(self, view, p.identity);
+    return loginPath(this.ctx.config.scopeId, p.identity.provider, p.identity.sub, KEY_INDEX);
   }
 
+  /** `get_identity` of `self` on the vault's RPC, its key checked against the one computed here (W-L2). */
   private async identityOf(self: IdentityRef): Promise<IdentityView> {
+    let v: IdentityView;
     try {
-      const v = await this.ctx.near.identity(this.ctx.config.scopeId, self.provider, self.sub);
-      this.check();
-      return v;
+      v = await this.ctx.near.identity(this.ctx.config.scopeId, self.provider, self.sub);
     } catch (e) {
       this.check();
       if (e instanceof VaultError) throw e;
       throw fail('api_unavailable', 'Could not read the sign-in method on NEAR', { reason: 'identity_unchecked' });
+    }
+    this.check();
+    if (v.key !== identityKeyHex(this.ctx.config.scopeId, self.provider, self.sub)) throw fail('api_unavailable', 'The NEAR RPC answered another identity', { reason: 'identity_unchecked' });
+    return v;
+  }
+
+  /** D263: `path`, named by `via`'s view, confirmed on both providers; refused (`api_unavailable`) otherwise. */
+  private async confirmed(via: IdentityRef, viaView: IdentityView, path: IdentityRef): Promise<void> {
+    try {
+      await confirmPath({ scopeId: this.ctx.config.scopeId, via, viaView, path, views: this.ctx.near.independent() });
+    } catch (e) {
+      this.check();
+      if (e instanceof PathCheckError) {
+        throw fail('api_unavailable', e.reason === 'path_disputed' ? 'NEAR providers disagree about the wallet this sign-in opens; try again later' : 'The wallet this sign-in opens could not be confirmed on NEAR; try again', {
+          reason: e.reason,
+        });
+      }
+      throw e;
+    }
+    this.check();
+  }
+
+  /**
+   * D263: the root this device last opened for `self`. The same, none yet, or `self` (own → member: a link activated,
+   * already confirmed on both providers): nothing more. Any other change (unlinked: member → own; another account)
+   * is confirmed on both providers now, or refused.
+   */
+  private async checkPin(self: IdentityRef, now: IdentityRef): Promise<void> {
+    const pins = this.ctx.pins;
+    if (!pins) return;
+    const scopeId = this.ctx.config.scopeId;
+    const selfKey = identityKeyHex(scopeId, self.provider, self.sub);
+    let pinned: string | null;
+    try {
+      pinned = await pins.get(selfKey);
+    } catch {
+      pinned = null;
+    }
+    this.check();
+    if (!pinned || pinned === identityKeyHex(scopeId, now.provider, now.sub) || pinned === selfKey) return;
+    await this.confirmed(self, await this.identityOf(self), now);
+  }
+
+  /** After a derivation that passed its pairing check: the root `self` opened, for the next login's checkPin. */
+  private async writePin(self: IdentityRef, root: IdentityRef): Promise<void> {
+    try {
+      const scopeId = this.ctx.config.scopeId;
+      await this.ctx.pins?.set(identityKeyHex(scopeId, self.provider, self.sub), identityKeyHex(scopeId, root.provider, root.sub));
+    } catch {
+      // Storage: the next login has no pin to compare, as on a new device.
     }
   }
 
@@ -963,15 +1112,22 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
    * identity (a link activated between the read and the transaction); else null.
    */
   private async movedPath(sessionKey: SessionKey, self: IdentityRef, used: string): Promise<string | null> {
+    let s: SessionView | null;
+    let view: IdentityView;
+    let p;
     try {
-      const [s, view] = await Promise.all([this.ctx.near.getSession(sessionKey.publicKey), this.ctx.near.identity(this.ctx.config.scopeId, self.provider, self.sub)]);
-      const p = pathIdentity(this.ctx.config.scopeId, self, view);
-      if (!s || p.kind !== 'path' || s.scope_id !== this.ctx.config.scopeId) return null;
-      const now = loginPath(this.ctx.config.scopeId, p.identity.provider as 'google' | 'email', p.identity.sub, KEY_INDEX);
-      return now !== used && s.path === now ? now : null;
+      [s, view] = await Promise.all([this.ctx.near.getSession(sessionKey.publicKey), this.ctx.near.identity(this.ctx.config.scopeId, self.provider, self.sub)]);
+      p = pathIdentity(this.ctx.config.scopeId, self, view);
     } catch {
       return null;
     }
+    this.check();
+    if (!s || p.kind !== 'path' || s.scope_id !== this.ctx.config.scopeId) return null;
+    const now = loginPath(this.ctx.config.scopeId, p.identity.provider, p.identity.sub, KEY_INDEX);
+    if (now === used || s.path !== now) return null;
+    // The session and the view come from one provider: a root's path is taken only once both providers confirm it.
+    if (p.linked) await this.confirmed(self, view, p.identity);
+    return now;
   }
 
   /** The link this login made, from the joiner's view (pending: when it activates). */
@@ -988,6 +1144,8 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
 
   /** An email step's `{error}` answer as the login's error (D245). */
   private emailAnswerError(error: string): VaultError {
+    // The popup couldn't store its next page's keys (G-L2): it says so itself.
+    if (error === 'storage_unavailable') return fail('storage_unavailable', 'This browser blocked the storage the sign-in needs');
     const email = Object.hasOwn(EMAIL_RELAY_ERRORS, error) ? EMAIL_RELAY_ERRORS[error] : undefined;
     if (email === 'rate_limited') return fail('rate_limited', 'Too many attempts, try again later');
     if (email === 'login_method_unavailable') return fail('login_method_unavailable', 'Email sign-in is not available for this app');

@@ -22,7 +22,7 @@ import type { HanaEnv } from '../hana-env.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import { PageError } from './errors.ts';
 import { type EmailContext, storeEmailContext } from './email-storage.ts';
-import { GOOGLE_EMAIL_FLOW, googleAuthUrl } from './google.ts';
+import { GOOGLE_EMAIL_FLOW, googleAuthUrl, wantsEmailScope } from './google.ts';
 import { addLoginTimings, storeLoginEntry } from './login-storage.ts';
 import { type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed } from './page-window.ts';
 
@@ -171,7 +171,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
         state: msg.relayId,
         forceReauth: mode === 'export',
         // One-request mode (auth/google.ts GOOGLE_EMAIL_FLOW): the login's own request asks for the email scope too.
-        withEmailScope: !!follow && !task && GOOGLE_EMAIL_FLOW === 'one_request',
+        withEmailScope: wantsEmailScope(GOOGLE_EMAIL_FLOW, { follow: !!follow, task: !!task }),
       });
       const intro = () => d.h('p', {}, task ? 'Adding a sign-in method in ' : 'Signing in to ', d.h('strong', {}, msg.appName), ' at ', d.h('span', { class: 'origin' }, msg.parentOrigin));
       // Email is offered only by the vault or the export window, only for an env with an email issuer.

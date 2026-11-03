@@ -3,7 +3,8 @@
 // the `get_identity` / `get_account` views, and the two judgements the vault makes from its own chain reads:
 //
 // - pathIdentity: the identity whose own path a session of (provider, sub) derives (batch 7): itself when it is
-//   "own", its account root when it is an active member; a pending member derives nothing (`link_pending`).
+//   "own", its account root when it is an active member (which the caller confirms on a second provider, D263); a
+//   pending member derives nothing (`link_pending`).
 // - judgeAutoLink: what `create_session_and_derive` with a `link_jwt` will do (contracts/hana-signer/src/links.rs
 //   `auto_link`, the same order as apps/api link-precheck.ts), and the `auto_link` nonce the link token must carry
 //   for it (D133). The vault signs the linked CKD payload only when the token's nonce is exactly that one.
@@ -179,19 +180,37 @@ export function parseAccountView(raw: unknown): AccountView | null {
 
 // ---- judgements ----
 
-/** The path identity of a session of `self` (D119, contract `open_session`), or `pending` (no session opens). */
-export type PathIdentity = { kind: 'path'; identity: IdentityRef; linked: boolean } | { kind: 'pending'; effectiveAtMs: number | null };
+/** The providers whose identities have a derivation path here (`{scope}#{provider}#{sub}#{key_index}`). */
+export const PATH_PROVIDERS: readonly string[] = Object.freeze(['google', 'email']);
 
 /**
- * Which identity's own path a session of `self` derives, from `get_identity` on the vault's own RPC. The view's key
- * must be the one computed here (a wrong view could only point the vault at another path, which the CKD pairing
- * check would then refuse; it is refused first).
+ * The path identity of a session of `self` (D119, contract `open_session`), `pending` (no session opens), or
+ * `unsupported`: an active member whose account root is of a provider this code has no path for (refused, never
+ * guessed).
+ */
+export type PathIdentity =
+  | { kind: 'path'; identity: IdentityRef & { provider: 'google' | 'email' }; linked: boolean }
+  | { kind: 'pending'; effectiveAtMs: number | null }
+  | { kind: 'unsupported'; provider: string };
+
+/**
+ * Which identity's own path a session of `self` derives, from one `get_identity` view. The view's key must be the one
+ * computed here (else ViewShapeError). This is one provider's word: a `linked` answer names another identity's path,
+ * and a lying RPC that knows that path's secret can forge a CKD answer for it that passes the pairing check (the check
+ * proves the key is the MPC's for the path asked about, not that the path is right). The caller must confirm a
+ * `linked` path on two independent providers before deriving it (packages/web path-check.ts, D263); only the own
+ * path (`linked: false`) is safe on one provider's word, because only the MPC can answer for it.
  */
 export function pathIdentity(scopeId: string, self: IdentityRef, view: IdentityView): PathIdentity {
   if (view.key !== identityKeyHex(scopeId, self.provider, self.sub)) throw new ViewShapeError('get_identity key');
   if (view.status === 'pending') return { kind: 'pending', effectiveAtMs: view.effectiveAtMs };
-  if (view.status === 'member') return { kind: 'path', identity: view.root as IdentityRef, linked: true };
-  return { kind: 'path', identity: { provider: self.provider, sub: self.sub }, linked: false };
+  if (!PATH_PROVIDERS.includes(self.provider)) return { kind: 'unsupported', provider: self.provider };
+  if (view.status === 'member') {
+    const root = view.root as IdentityRef;
+    if (!PATH_PROVIDERS.includes(root.provider)) return { kind: 'unsupported', provider: root.provider };
+    return { kind: 'path', identity: { provider: root.provider as 'google' | 'email', sub: root.sub }, linked: true };
+  }
+  return { kind: 'path', identity: { provider: self.provider as 'google' | 'email', sub: self.sub }, linked: false };
 }
 
 /** One side of a link judgement: an identity, its `get_identity` and its `get_account`. */

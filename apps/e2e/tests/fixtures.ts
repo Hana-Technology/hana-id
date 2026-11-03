@@ -273,8 +273,20 @@ export async function clickLauncher(page: Page, label: string | RegExp): Promise
   return popup;
 }
 
-/** The record keys in the vault frame's IndexedDB (as this top-level site's partition sees them). */
+/**
+ * The record keys in the vault frame's IndexedDB (as this top-level site's partition sees them). The root pins
+ * beside them (`pin|…`, D263: they outlive a logout on purpose) are listed by vaultPinKeys.
+ */
 export async function vaultRecordKeys(page: Page): Promise<string[]> {
+  return (await vaultStoreKeys(page)).filter((k) => !k.startsWith('pin|'));
+}
+
+/** The root pins' keys in the vault frame's IndexedDB (D263). */
+export async function vaultPinKeys(page: Page): Promise<string[]> {
+  return (await vaultStoreKeys(page)).filter((k) => k.startsWith('pin|'));
+}
+
+async function vaultStoreKeys(page: Page): Promise<string[]> {
   return vaultFrame(page).evaluate(
     () =>
       new Promise<string[]>((resolve, reject) => {

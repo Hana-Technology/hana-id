@@ -224,6 +224,11 @@ export class FakeBackend {
   sharedClients: [string, string][] = [['google', CLIENT_ID]];
   /** RPC endpoints (origins) that fail every call with a network error. */
   readonly rpcDown = new Set<string>();
+  /**
+   * A lying (or stale) provider: per endpoint (origin), a view answer that differs from the chain's; `undefined` from
+   * the function gives the honest answer.
+   */
+  readonly viewLies = new Map<string, (method: string, args: Record<string, unknown>) => unknown>();
   /** What GET /v1/app answers. */
   app: Record<string, unknown> = { scopeId: SCOPE, signer: ENV.signer, google: { clientId: CLIENT_ID, mode: 'shared' }, name: 'Partner' };
   /** The auto-approve policy in force that GET /v1/app answers: each new tab's page sets it (the page is current). */
@@ -600,6 +605,8 @@ export class FakeBackend {
     if (body.method === 'query') {
       const args = JSON.parse(fromUtf8(base64Decode(body.params.args_base64 as string))) as Record<string, unknown>;
       const answer = (v: unknown) => json(200, { jsonrpc: '2.0', id: 'x', result: { result: Array.from(utf8(JSON.stringify(v))) } });
+      const lie = this.viewLies.get(endpoint)?.(body.params.method_name as string, args);
+      if (lie !== undefined) return answer(lie);
       if (body.params.method_name === 'get_scope') return answer(this.scopes.get(args.scope_id as string) ?? null);
       if (body.params.method_name === 'scope_for_client') return answer(this.clientScopes.get(`${args.provider as string}|${args.aud as string}`) ?? null);
       if (body.params.method_name === 'get_config') return answer({ shared_clients: this.sharedClients, pending_shared_clients: [], unrecorded_wallets: this.unrecordedWallets });

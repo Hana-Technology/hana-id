@@ -21,6 +21,8 @@ import {
   isJsonFormToken,
   isRelayToken,
   parseIdentityView,
+  parseIssuerKeysView,
+  parseSelfIssuedView,
   pathIdentity,
   verifyEmailIdToken,
   EXPORT_MAX_AUTH_AGE_MS,
@@ -57,6 +59,7 @@ import { ServerClock } from './clock.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import { PageError, apiErrorCode, errorMessage } from './errors.ts';
 import type { NearReader } from './near-rpc.ts';
+import { PathCheckError, confirmPath } from '../path-check.ts';
 import { type GestureCheck, type PageWindow, isFramed, isUserGesture, randomName } from './page-window.ts';
 
 /** The export session's lifetime: it is used once, within minutes. */
@@ -184,18 +187,27 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
       throw new PageError('api_unavailable', 'The email sign-in keys could not be read on NEAR. Try again.');
     }
     if (scope !== scopeId) throw new PageError('config_mismatch', errorMessage('config_mismatch'));
-    const chainKeys = Array.isArray(keys) ? keys.filter((k): k is EmailChainKey => typeof k === 'object' && k !== null && typeof k.kid === 'string' && typeof k.n === 'string' && typeof k.e === 'string') : [];
-    const p = policy as { signers?: unknown; required?: unknown } | null;
-    const signerPolicy: EmailSignerPolicy | null =
-      p && Array.isArray(p.signers) && Number.isSafeInteger(p.required)
-        ? { required: p.required as number, signers: (p.signers as { id: string; kids: string[] }[]).filter((s) => typeof s?.id === 'string' && Array.isArray(s.kids)) }
-        : null;
+    // Parsed strictly, as the vault's NearView does (W-L2): a malformed answer refuses, never a key list or a policy
+    // built from the entries that happened to parse.
+    let chainKeys: EmailChainKey[];
+    let signerPolicy: EmailSignerPolicy | null;
+    try {
+      chainKeys = parseIssuerKeysView(keys) ?? [];
+      signerPolicy = parseSelfIssuedView(policy);
+    } catch {
+      throw new PageError('api_unavailable', 'The email sign-in keys could not be read on NEAR. Try again.');
+    }
     const checked = await verifyEmailIdToken(token, { iss: env.emailIss as string, aud: `email:${scopeId}`, nonce, nowMs: clock.now(), keys: chainKeys, policy: signerPolicy });
     if (!checked.ok) throw new PageError(checked.code === 'key_pending' ? 'api_unavailable' : 'token_invalid', errorMessage(checked.code === 'key_pending' ? 'api_unavailable' : 'token_invalid'));
     return { provider: EMAIL_PROVIDER, sub: checked.token.sub, expMs: checked.token.exp * 1000 };
   }
 
-  /** The path the export derives (batch 7): `get_identity` on this window's own RPC names the identity or its root. */
+  /**
+   * The path the export derives (batch 7): `get_identity` on this window's own RPC names the identity or its root. A
+   * root's path is confirmed on both providers first (D263): a lying RPC that knows a path's secret could otherwise
+   * show its own wallet's key here as the user's. (The key is shown only if it is the vault session's address, which
+   * the vault resolved the same way.)
+   */
   async function pathFor(scopeId: string, who: { provider: 'google' | 'email'; sub: string }, keyIndex: number): Promise<string> {
     let view;
     try {
@@ -210,6 +222,18 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
       throw new PageError('api_unavailable', 'Your sign-in method could not be read on NEAR. Try again.');
     }
     if (p.kind === 'pending') throw new PageError('link_pending', 'This sign-in method’s link to the wallet is still pending. Sign in with the wallet’s own method.');
+    if (p.kind === 'unsupported') throw new PageError('login_method_unavailable', 'This wallet’s sign-in method isn’t supported here.');
+    if (p.linked) {
+      try {
+        await confirmPath({ scopeId, via: who, viaView: view, path: p.identity, views: near.independent(env.signer) });
+      } catch (e) {
+        if (!(e instanceof PathCheckError)) throw e;
+        throw new PageError(
+          'api_unavailable',
+          e.reason === 'path_disputed' ? 'NEAR providers disagree about the wallet this sign-in opens. Nothing was exported; try again later.' : 'The wallet this sign-in opens could not be confirmed on NEAR. Try again.',
+        );
+      }
+    }
     return `${scopeId}#${p.identity.provider}#${p.identity.sub}#${keyIndex}`;
   }
 

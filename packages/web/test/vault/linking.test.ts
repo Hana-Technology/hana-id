@@ -24,17 +24,22 @@ import {
   verifyEd25519,
 } from '@hana-id/core';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import type { HanaEnv } from '../../src/hana-env.ts';
+import { openRecordStore } from '../../src/vault/record.ts';
+import { ACCOUNT_CACHE_MS } from '../../src/vault/vault.ts';
 import {
   Browser,
   EMAIL_ENV,
   EMAIL_SUB,
   ENV,
   type EmailIssuer,
+  RPC_FALLBACK,
   type Google,
   type LoginRun,
   SCOPE,
   SUB,
   type Tab,
+  apiError,
   deliverToken,
   emailClaims,
   emailIssuer,
@@ -66,7 +71,11 @@ const E = { provider: 'email', sub: EMAIL_SUB };
 const ik = (r: { provider: string; sub: string }) => identityKey(SCOPE, r.provider, r.sub);
 const pathOf = (r: { provider: string; sub: string }) => `${SCOPE}#${r.provider}#${r.sub}#0`;
 
-async function tab(browser: Browser, env = EMAIL_ENV): Promise<Tab> {
+/** The envs of these tests, with a second RPC provider: a member's path is confirmed on both (D263). */
+const ENV2: HanaEnv = Object.freeze({ ...ENV, rpcFallback: RPC_FALLBACK });
+const EMAIL_ENV2: HanaEnv = Object.freeze({ ...EMAIL_ENV, rpcFallback: RPC_FALLBACK });
+
+async function tab(browser: Browser, env: HanaEnv = EMAIL_ENV2): Promise<Tab> {
   const t = await readyTab(browser, { googleJwk: g.jwk, env });
   tabs.push(t);
   return t;
@@ -154,7 +163,7 @@ describe('the path through get_identity (batch 7)', () => {
     const b = new Browser();
     b.backend.opened.add(Buffer.from(ik(E)).toString('hex'));
     b.backend.link(E, G);
-    const t = await tab(b, ENV);
+    const t = await tab(b, ENV2);
     const { reply } = await login(t, g);
     expect(reply.error).toBeUndefined();
     expect((reply.result as { addresses: unknown }).addresses).toEqual(addressesOf(pathOf(E)));
@@ -344,7 +353,9 @@ describe('google-match and the four cases (batch 8b)', () => {
 
   it('google-match unreachable: a Google identity without a wallet is refused (it might be case A); one with a wallet logs in', async () => {
     const b = emailBrowser();
-    b.backend.googleMatch = null;
+    b.backend.googleMatch = () => {
+      throw new TypeError('Failed to fetch');
+    };
     const t = await tab(b);
     expect((await login(t, g)).reply.error).toMatchObject({ code: 'api_unavailable', data: { reason: 'email_match_unavailable' } });
     expect(b.backend.count('/v1/login')).toBe(0);
@@ -403,6 +414,7 @@ describe('the wallet’s sign-in methods', () => {
     await login(t, g);
     expect((await t.request('hana_account')).result).toEqual({ methods: [{ provider: 'google', status: 'active', effectiveAtMs: null, root: true }] });
     b.backend.link(G, E, { active: false, effectiveAtMs: 1_800_090_000_000 });
+    t.browser.timers.advance(ACCOUNT_CACHE_MS);
     expect((await t.request('hana_account')).result).toEqual({
       methods: [
         { provider: 'google', status: 'active', effectiveAtMs: null, root: true },
@@ -411,9 +423,32 @@ describe('the wallet’s sign-in methods', () => {
     });
     expect(linkEvents(t)).toContainEqual({ provider: 'email', status: 'pending', effectiveAtMs: 1_800_090_000_000 });
     b.backend.accounts.clear();
+    t.browser.timers.advance(ACCOUNT_CACHE_MS);
     await t.request('hana_account');
     expect(linkEvents(t)).toContainEqual({ provider: 'email', status: 'removed', effectiveAtMs: null });
     expect(JSON.stringify((await t.request('hana_account')).result)).not.toContain(SUB);
+  });
+
+  it('hana.account() calls within ACCOUNT_CACHE_MS share one get_account read; a later call reads again (W-L4)', async () => {
+    const b = emailBrowser();
+    b.backend.opened.add(Buffer.from(ik(G)).toString('hex'));
+    const t = await tab(b);
+    await login(t, g);
+    // The vault's own read after the login settles first.
+    await new Promise((r) => setTimeout(r, 20));
+    const reads = () => b.backend.rpcCalls.filter((c) => c.params.method_name === 'get_account').length;
+    const before = reads();
+    const [one, two] = await Promise.all([t.request('hana_account'), t.request('hana_account')]);
+    expect(one.result).toEqual(two.result);
+    await t.request('hana_account');
+    expect(reads() - before).toBeLessThanOrEqual(1);
+    const cached = reads();
+    b.backend.link(G, E, { active: false, effectiveAtMs: 1_800_090_000_000 });
+    // Still the shared read: the new member shows once the cache has aged.
+    expect(((await t.request('hana_account')).result as { methods: unknown[] }).methods).toHaveLength(1);
+    t.browser.timers.advance(ACCOUNT_CACHE_MS);
+    expect(((await t.request('hana_account')).result as { methods: unknown[] }).methods).toHaveLength(2);
+    expect(reads()).toBe(cached + 1);
   });
 
   it('hana.account() logged out is 4100', async () => {
@@ -491,6 +526,365 @@ describe('the wallet’s sign-in methods', () => {
     const u = await tab(emailBrowser());
     expect((await u.request('hana_linkAccount', { method: 'email' })).error?.code).toBe(4100);
     void fromHex;
+  });
+});
+
+describe('Google’s email permission and google-match’s availability (D264, G-M1, G-M3, G-L2)', () => {
+  /** The login's token with `access: 'follow'` (two-request mode); slot 1 is then written by the test. */
+  async function followLogin(b: Browser) {
+    const t = await tab(b);
+    const pending = t.request('hana_login', { method: 'google' });
+    const run = await popupHello(t);
+    const token = await g.token(tokenClaims(run.params, {}, t.browser.timers.now));
+    await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: token, access: 'follow' } as RelayPayload);
+    return { t, run, pending };
+  }
+  const busy = (status: number, retryAfter?: string) =>
+    new Response(JSON.stringify({ error: 'busy', code: status === 429 ? 'rate_limited' : 'unavailable', requestId: 'rq' }), {
+      status,
+      headers: { 'content-type': 'application/json', ...(retryAfter ? { 'retry-after': retryAfter } : {}) },
+    });
+
+  it('declined (access_denied in slot 1), a new Google identity: the popup explains; “Sign in with email instead” logs in with email', async () => {
+    const b = emailBrowser();
+    b.backend.opened.add(Buffer.from(ik(E)).toString('hex'));
+    const { t, run, pending } = await followLogin(b);
+    await answer(t, run, 0, { error: 'access_denied' });
+    expect(await notice(t, run, 2)).toEqual({ t: 'email_consent', reason: 'declined', loginHint: SUB });
+    await answer(t, run, 2, { idToken: await issuer.token(emailClaims(run.params, {}, t.browser.timers.now)), as: 'session' });
+    const reply = await pending;
+    expect(reply.error).toBeUndefined();
+    expect((reply.result as { addresses: unknown }).addresses).toEqual(addressesOf(pathOf(E)));
+    expect(b.backend.matchCalls).toHaveLength(0);
+  });
+
+  it('declined, then “Try Google again” granted: the new access token goes to google-match and the login goes on', async () => {
+    const b = emailBrowser();
+    b.backend.googleMatch = () => ({ decision: 'none', googleHosted: false, linkable: false });
+    const { t, run, pending } = await followLogin(b);
+    await answer(t, run, 0, { error: 'access_denied' });
+    expect((await notice(t, run, 2)).t).toBe('email_consent');
+    await answer(t, run, 2, { accessToken: 'ya29.again' });
+    const reply = await pending;
+    expect(reply.error).toBeUndefined();
+    expect(b.backend.matchCalls.map((m) => m.accessToken)).toEqual(['ya29.again']);
+    expect((reply.result as { addresses: unknown }).addresses).toEqual(addressesOf(pathOf(G)));
+  });
+
+  it('declined, then Cancel: login_cancelled with its own reason (never email_match_unavailable)', async () => {
+    const b = emailBrowser();
+    const { t, run, pending } = await followLogin(b);
+    await answer(t, run, 0, { error: 'access_denied' });
+    expect((await notice(t, run, 2)).t).toBe('email_consent');
+    await answer(t, run, 2, { error: 'email_cancelled' });
+    expect((await pending).error).toMatchObject({ code: 'login_cancelled', data: { reason: 'email_consent_declined' } });
+    expect(b.backend.count('/v1/login')).toBe(0);
+  });
+
+  it('declined every time: after EMAIL_CONSENT_ROUNDS screens the login ends (email_consent_declined)', async () => {
+    const b = emailBrowser();
+    const { t, run, pending } = await followLogin(b);
+    await answer(t, run, 0, { error: 'access_denied' });
+    expect((await notice(t, run, 2)).t).toBe('email_consent');
+    await answer(t, run, 2, { error: 'access_denied' });
+    expect((await notice(t, run, 4)).t).toBe('email_consent');
+    await answer(t, run, 4, { error: 'access_denied' });
+    expect((await pending).error).toMatchObject({ code: 'login_cancelled', data: { reason: 'email_consent_declined' } });
+  });
+
+  it('declined by an identity that already has a wallet: a plain login, no screen', async () => {
+    const b = emailBrowser();
+    b.backend.opened.add(Buffer.from(ik(G)).toString('hex'));
+    const { t, run, pending } = await followLogin(b);
+    await answer(t, run, 0, { error: 'access_denied' });
+    expect((await pending).error).toBeUndefined();
+    expect((await notice(t, run, 2)).t).toBe('done');
+  });
+
+  it('another Google account on Google’s screen (google_account_mismatch): the screen says so', async () => {
+    const b = emailBrowser();
+    b.backend.googleMatch = () => apiError(400, 'google_account_mismatch');
+    const { t, run, pending } = await followLogin(b);
+    await answer(t, run, 0, { accessToken: 'ya29.other' });
+    expect(await notice(t, run, 2)).toEqual({ t: 'email_consent', reason: 'account_mismatch', loginHint: SUB });
+    await answer(t, run, 2, { error: 'email_cancelled' });
+    expect((await pending).error).toMatchObject({ code: 'login_cancelled', data: { reason: 'google_account_mismatch' } });
+  });
+
+  it('G-L2: the popup couldn’t store its next leg (storage_unavailable in slot 1): the login ends with storage_unavailable', async () => {
+    const b = emailBrowser();
+    b.backend.opened.add(Buffer.from(ik(G)).toString('hex'));
+    const { t, run, pending } = await followLogin(b);
+    await answer(t, run, 0, { error: 'storage_unavailable' });
+    expect((await pending).error?.code).toBe('storage_unavailable');
+    expect(b.backend.count('/v1/login')).toBe(0);
+  });
+
+  it('G-M3: a 429 or 503 from google-match is retried after its retry-after (or a backoff), then answers', async () => {
+    for (const first of [() => busy(429, '1'), () => busy(503)]) {
+      const b = emailBrowser();
+      let n = 0;
+      b.backend.googleMatch = () => (++n === 1 ? first() : { decision: 'none', googleHosted: false, linkable: false });
+      const t = await tab(b);
+      const { reply } = await login(t, g);
+      expect(reply.error).toBeUndefined();
+      expect(b.backend.matchCalls).toHaveLength(2);
+    }
+  });
+
+  it('G-M3: a retry-after longer than the login can wait is not retried: a new identity gets email_match_unavailable', async () => {
+    const b = emailBrowser();
+    b.backend.googleMatch = () => busy(429, '600');
+    const t = await tab(b);
+    expect((await login(t, g)).reply.error).toMatchObject({ code: 'api_unavailable', data: { reason: 'email_match_unavailable' } });
+    expect(b.backend.matchCalls).toHaveLength(1);
+  });
+});
+
+describe('D137 / D257: a linked login’s recovery (W-L3)', () => {
+  type Call = Parameters<Parameters<Browser['backend']['overrides']['set']>[1]>[0];
+  /** A Google-hosted case-A login (a linked login) whose /v1/login answers go through `onLogin` (undefined: the fake's). */
+  async function linkedLogin(b: Browser, onLogin: (call: Call, n: number) => Response | undefined) {
+    b.backend.opened.add(Buffer.from(ik(E)).toString('hex'));
+    let n = 0;
+    b.backend.overrides.set('/v1/login', (call) => onLogin(call, ++n));
+    const t = await tab(b);
+    const pending = t.request('hana_login');
+    const run = await popupHello(t);
+    const emailToken = await linkToken(t, run, { join: 1, immediate: true });
+    b.backend.googleMatch = () => ({ decision: 'case_a', googleHosted: true, linkable: true, emailToken, linkImmediate: true });
+    await googleAnswer(t, run);
+    return { t, run, reply: await pending };
+  }
+  const pkHexOf = (run: LoginRun) => Buffer.from(run.params.sessionPublicKey as Uint8Array).toString('hex');
+
+  it('a timeout whose transaction returned the key: the key is taken from the transaction, nothing revoked', async () => {
+    const b = emailBrowser();
+    const { reply } = await linkedLogin(b, (call, n) => {
+      if (n > 1) return undefined;
+      const r = b.backend.createSession(call.body as Record<string, unknown>, true);
+      if (r.ok) b.backend.txs.set('tx-linked', r.result);
+      return apiError(504, 'timeout', { nearTx: 'tx-linked' });
+    });
+    expect(reply.error).toBeUndefined();
+    expect((reply.result as { addresses: unknown }).addresses).toEqual(addressesOf(pathOf(E)));
+    expect(b.backend.count('/v1/login')).toBe(1);
+    expect(b.backend.count('/v1/sessions/revoke')).toBe(0);
+    expect(b.backend.count('/v1/derive')).toBe(0);
+  });
+
+  it('a timeout whose transaction has no key: the session is revoked and the login ends (link_restart)', async () => {
+    const b = emailBrowser();
+    const { reply, run } = await linkedLogin(b, (call) => {
+      b.backend.createSession({ ...(call.body as object), linkJwt: undefined } as Record<string, unknown>, false);
+      b.backend.txs.set('tx-nokey', 'failure');
+      return apiError(504, 'timeout', { nearTx: 'tx-nokey' });
+    });
+    expect(reply.error).toMatchObject({ code: 'derive_failed', data: { reason: 'link_restart' } });
+    expect(b.backend.count('/v1/sessions/revoke')).toBe(1);
+    expect(b.backend.sessions.has(pkHexOf(run))).toBe(false);
+    expect(b.backend.count('/v1/derive')).toBe(0);
+  });
+
+  it('ckd_failed: revoked, never derived on with the plain payload', async () => {
+    const b = emailBrowser();
+    const { reply, run } = await linkedLogin(b, (call) => {
+      b.backend.createSession({ ...(call.body as object), linkJwt: undefined } as Record<string, unknown>, false);
+      return apiError(502, 'ckd_failed', { nearTx: 'tx-ckd' });
+    });
+    expect(reply.error).toMatchObject({ code: 'derive_failed', data: { reason: 'link_restart' } });
+    expect(b.backend.count('/v1/sessions/revoke')).toBe(1);
+    expect(b.backend.sessions.has(pkHexOf(run))).toBe(false);
+    expect(b.backend.count('/v1/derive')).toBe(0);
+  });
+
+  it('a network error (the request may have landed): revoked, link_restart', async () => {
+    const b = emailBrowser();
+    const { reply, run } = await linkedLogin(b, (call) => {
+      b.backend.createSession({ ...(call.body as object), linkJwt: undefined } as Record<string, unknown>, false);
+      throw new TypeError('Failed to fetch');
+    });
+    expect(reply.error).toMatchObject({ code: 'derive_failed', data: { reason: 'link_restart' } });
+    expect(b.backend.count('/v1/sessions/revoke')).toBe(1);
+    expect(b.backend.sessions.has(pkHexOf(run))).toBe(false);
+  });
+
+  it('a "not executed" answer is resent once, the same linked body, and the link is made', async () => {
+    const b = emailBrowser();
+    const { reply, t } = await linkedLogin(b, (_call, n) => (n === 1 ? apiError(503, 'relayer_busy', { nearTx: null }) : undefined));
+    expect(reply.error).toBeUndefined();
+    expect((reply.result as { addresses: unknown }).addresses).toEqual(addressesOf(pathOf(E)));
+    const bodies = b.backend.calls.filter((c) => c.path === '/v1/login').map((c) => JSON.stringify(c.body));
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]).toBe(bodies[1]);
+    expect(await signedLinked(loginBody(t)!)).toBe(true);
+    expect(b.backend.count('/v1/sessions/revoke')).toBe(0);
+  });
+
+  it('/v1/derive answering identity_linked (a resynced own-path session, D136) ends session_consumed (identity_linked)', async () => {
+    const b = new Browser();
+    b.backend.overrides.set('/v1/login', (call) => {
+      // The session opened (on the identity's own path) but its answer was lost; its one use is left.
+      b.backend.createSession(call.body as Record<string, unknown>, false);
+      return apiError(409, 'session_exists', { nearTx: null });
+    });
+    b.backend.overrides.set('/v1/derive', () => apiError(409, 'identity_linked'));
+    const t = await tab(b, ENV2);
+    const { reply } = await login(t, g);
+    expect(reply.error).toMatchObject({ code: 'session_consumed', data: { reason: 'identity_linked' } });
+    expect(b.backend.count('/v1/derive')).toBe(1);
+  });
+});
+
+describe('D263: a path through another identity, confirmed on two providers', () => {
+  /** The attacker's own email wallet: they can sign in with it, so they know its S. */
+  const A = { provider: 'email', sub: `e1.${'A'.repeat(43)}` };
+  const memberOf = (root: { provider: string; sub: string }) => (method: string, args: Record<string, unknown>) =>
+    method === 'get_identity' && args.provider === G.provider && args.sub === G.sub
+      ? { key: Buffer.from(ik(G)).toString('hex'), status: 'member', opened: false, root, effective_at_ms: 1, account_epoch: 1 }
+      : undefined;
+  /** The API's NEAR_RPC is the same provider: /v1/login answers a CKD the attacker built for their own path. */
+  const forgedLogin = (b: Browser) =>
+    b.backend.overrides.set('/v1/login', (call) => {
+      const body = call.body as { pk1: string; expiresAtMs: number; maxUses: number };
+      return new Response(JSON.stringify({ result: mpcAnswer(body.pk1, pathOf(A)), session: { scope_id: SCOPE, expires_at_ms: body.expiresAtMs, max_uses: body.maxUses, used: 1 }, nearTx: 'tx9', requestId: 'rq' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+
+  it('a forged member view on the primary, with a CKD answer for the attacker’s path, is refused before /v1/login', async () => {
+    const b = new Browser();
+    b.backend.opened.add(Buffer.from(ik(A)).toString('hex'));
+    b.backend.viewLies.set(ENV.rpc, memberOf(A));
+    forgedLogin(b);
+    const t = await tab(b, ENV2);
+    const { reply } = await login(t, g);
+    expect(reply.error).toMatchObject({ code: 'api_unavailable', data: { reason: 'path_disputed' } });
+    expect(reply.result).toBeUndefined();
+    expect(b.backend.count('/v1/login')).toBe(0);
+    // Both providers were asked about the identity, each on its own.
+    const asked = b.backend.rpcCalls.filter((c) => c.params.method_name === 'get_identity').map((c) => c.endpoint);
+    expect(asked).toContain(ENV.rpc);
+    expect(asked).toContain(RPC_FALLBACK);
+  });
+
+  it('the forged answer would have passed the pairing check: without the second provider it is never derived either', async () => {
+    // No second provider in the env: a member path can't be confirmed, so the login is refused (fail closed), never
+    // derived on the own path instead.
+    const b = new Browser();
+    b.backend.viewLies.set(ENV.rpc, memberOf(A));
+    forgedLogin(b);
+    const t = await tab(b, ENV);
+    const { reply } = await login(t, g);
+    expect(reply.error).toMatchObject({ code: 'api_unavailable', data: { reason: 'path_unconfirmed' } });
+    expect(b.backend.count('/v1/login')).toBe(0);
+  });
+
+  it('an unreachable second provider refuses a member path (fail closed); a real member logs in when both agree', async () => {
+    const b = new Browser();
+    b.backend.opened.add(Buffer.from(ik(E)).toString('hex'));
+    b.backend.link(E, G);
+    b.backend.rpcDown.add(RPC_FALLBACK);
+    const t = await tab(b, ENV2);
+    expect((await login(t, g)).reply.error).toMatchObject({ code: 'api_unavailable', data: { reason: 'path_unconfirmed' } });
+    expect(b.backend.count('/v1/login')).toBe(0);
+    b.backend.rpcDown.delete(RPC_FALLBACK);
+    const u = await tab(b, ENV2);
+    const { reply } = await login(u, g);
+    expect((reply.result as { addresses: unknown }).addresses).toEqual(addressesOf(pathOf(E)));
+  });
+
+  it('both providers must show the root as an account root (own, its own key)', async () => {
+    const b = new Browser();
+    b.backend.opened.add(Buffer.from(ik(E)).toString('hex'));
+    b.backend.link(E, G);
+    // The second provider agrees about the member but says the root is itself a member somewhere.
+    b.backend.viewLies.set(RPC_FALLBACK, (method, args) =>
+      method === 'get_identity' && args.provider === E.provider && args.sub === E.sub ? { key: Buffer.from(ik(E)).toString('hex'), status: 'member', opened: true, root: A, effective_at_ms: 1, account_epoch: 1 } : undefined,
+    );
+    const t = await tab(b, ENV2);
+    expect((await login(t, g)).reply.error).toMatchObject({ code: 'api_unavailable', data: { reason: 'path_disputed' } });
+    expect(b.backend.count('/v1/login')).toBe(0);
+  });
+
+  it('a linked login’s target root (case A, the email identity a member of another root) is confirmed too', async () => {
+    const b = emailBrowser();
+    b.backend.opened.add(Buffer.from(ik(E)).toString('hex'));
+    // The primary says the user's email identity is a member of the attacker's account.
+    b.backend.viewLies.set(ENV.rpc, (method, args) =>
+      method === 'get_identity' && args.provider === E.provider && args.sub === E.sub ? { key: Buffer.from(ik(E)).toString('hex'), status: 'member', opened: true, root: A, effective_at_ms: 1, account_epoch: 1 } : undefined,
+    );
+    const t = await tab(b);
+    const pending = t.request('hana_login');
+    const run = await popupHello(t);
+    const emailToken = await linkToken(t, run, { join: 1, immediate: true });
+    b.backend.googleMatch = () => ({ decision: 'case_a', googleHosted: true, linkable: true, emailToken, linkImmediate: true });
+    await googleAnswer(t, run);
+    expect((await pending).error).toMatchObject({ code: 'api_unavailable', data: { reason: 'path_disputed' } });
+    expect(b.backend.count('/v1/login')).toBe(0);
+  });
+
+  it('the own path needs no second provider (only the MPC can answer for it)', async () => {
+    const b = new Browser();
+    b.backend.rpcDown.add(RPC_FALLBACK);
+    const t = await tab(b, ENV2);
+    const { reply } = await login(t, g);
+    expect((reply.result as { addresses: unknown }).addresses).toEqual(addressesOf(pathOf(G)));
+  });
+});
+
+describe('D263: the root this device last opened for an identity', () => {
+  it('own → member (a link activated) is taken; member → own (unlinked) is confirmed on both providers first', async () => {
+    const b = new Browser();
+    b.backend.opened.add(Buffer.from(ik(E)).toString('hex'));
+    const t = await tab(b, ENV2);
+    expect(((await login(t, g)).reply.result as { addresses: unknown }).addresses).toEqual(addressesOf(pathOf(G)));
+    // The link activates: the pin moves from own to the root (both providers confirm the member path).
+    b.backend.link(E, G);
+    expect(((await login(t, g)).reply.result as { addresses: unknown }).addresses).toEqual(addressesOf(pathOf(E)));
+    // Unlinked: G is own again. With the second provider down the change can't be confirmed: refused, not derived.
+    b.backend.accounts.clear();
+    b.backend.rpcDown.add(RPC_FALLBACK);
+    expect((await login(t, g)).reply.error).toMatchObject({ code: 'api_unavailable', data: { reason: 'path_unconfirmed' } });
+    // Both providers say own: the change is taken, and the pin follows.
+    b.backend.rpcDown.delete(RPC_FALLBACK);
+    expect(((await login(t, g)).reply.result as { addresses: unknown }).addresses).toEqual(addressesOf(pathOf(G)));
+    b.backend.rpcDown.add(RPC_FALLBACK);
+    expect(((await login(t, g)).reply.result as { addresses: unknown }).addresses).toEqual(addressesOf(pathOf(G)));
+  });
+
+  it('the pin is stored with the record (survives a reload and a logout), as identity keys only: no sub, no path', async () => {
+    const b = new Browser();
+    b.backend.opened.add(Buffer.from(ik(E)).toString('hex'));
+    b.backend.link(E, G);
+    const t = await tab(b, ENV2);
+    await login(t, g);
+    expect((await t.request('hana_logout')).error).toBeUndefined();
+    const store = await openRecordStore(b.idb);
+    const key = `pin|${ENV.signer}|app_1|${SCOPE}|${Buffer.from(ik(G)).toString('hex')}`;
+    const pin = await store.get(key);
+    expect(pin).toEqual({ v: 1, t: 'root-pin', root: Buffer.from(ik(E)).toString('hex') });
+    expect(JSON.stringify(pin)).not.toContain(SUB);
+    expect(JSON.stringify(pin)).not.toContain(EMAIL_SUB);
+    // A new tab (a reload): a primary that now says own is checked against the stored pin.
+    b.backend.viewLies.set(ENV.rpc, (method, args) =>
+      method === 'get_identity' && args.provider === G.provider && args.sub === G.sub ? { key: Buffer.from(ik(G)).toString('hex'), status: 'own', opened: false, account_epoch: 0 } : undefined,
+    );
+    const u = await tab(b, ENV2);
+    expect((await login(u, g)).reply.error).toMatchObject({ code: 'api_unavailable', data: { reason: 'path_disputed' } });
+  });
+
+  it('a primary that suddenly says own for a linked identity is caught by the pin (the second provider disagrees)', async () => {
+    const b = new Browser();
+    b.backend.opened.add(Buffer.from(ik(E)).toString('hex'));
+    b.backend.link(E, G);
+    const t = await tab(b, ENV2);
+    expect(((await login(t, g)).reply.result as { addresses: unknown }).addresses).toEqual(addressesOf(pathOf(E)));
+    b.backend.viewLies.set(ENV.rpc, (method, args) =>
+      method === 'get_identity' && args.provider === G.provider && args.sub === G.sub ? { key: Buffer.from(ik(G)).toString('hex'), status: 'own', opened: false, account_epoch: 0 } : undefined,
+    );
+    expect((await login(t, g)).reply.error).toMatchObject({ code: 'api_unavailable', data: { reason: 'path_disputed' } });
   });
 });
 

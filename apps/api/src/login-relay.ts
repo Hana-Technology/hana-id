@@ -34,9 +34,15 @@ export function loggedEndpoint(pathname: string): string {
 /** A written value lives this long, then a tombstone answers 410 for as long again, then the object is empty. */
 export const RELAY_TTL_MS = 120_000;
 export const RELAY_TOMBSTONE_MS = 120_000;
-export const RELAY_MAX_BODY = 8 * 1024;
+/** 12 KiB: one-request mode's largest valid payload, encrypted, fits (core relay.ts RELAY_MAX_PLAINTEXT_BYTES, G-L7). */
+export const RELAY_MAX_BODY = 12 * 1024;
 export const RELAY_MAX_WAIT_S = 25;
-export const RELAY_WRITES_PER_IP_MINUTE = 10;
+/**
+ * A login of an app with email writes up to 5 slots (the token, Google's access token, a notice, an answer, the last
+ * word; a consent or proof round adds two more), and users behind one NAT sign in side by side: 40 a minute is about
+ * eight such logins a minute from one IP (G-M3, D267). Reads stay at 120 (each write is long-polled about once).
+ */
+export const RELAY_WRITES_PER_IP_MINUTE = 40;
 export const RELAY_READS_PER_IP_MINUTE = 120;
 /** b64url(sha256(relayReadKey)): 43 characters. */
 export const RELAY_ID_RE = /^[A-Za-z0-9_-]{43}$/u;

@@ -89,7 +89,7 @@ export const TEST_MANIFEST = {
   ckdDomainId: 2,
   ckdNetworkKey: 'UNSET',
   rpc: 'https://rpc.test.invalid',
-  rpcFallback: 'https://rpc-fallback.test.invalid',
+  rpcFallback: 'https://rpc.fallback-provider.invalid',
   apiUrl: 'https://api.test',
   vaultOrigin: 'https://vault.test',
   authOrigin: 'https://auth.test',

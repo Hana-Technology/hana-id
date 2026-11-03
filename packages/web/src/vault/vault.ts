@@ -68,7 +68,7 @@ import { autoApproveStatus, consentActive, consentEnd, newConsent, withUsage } f
 import { type Persistence, type PolicyInForce, type RawSign, type VaultConfig, parentAllowed, policyInForce } from './config.ts';
 import { VaultError, apiErrorToVault, disconnected, notLoggedIn, toProtocolError, userRejected } from './errors.ts';
 import { Launcher, type LauncherHandle, type LauncherView } from './launcher.ts';
-import { type LoginContext, type LoginMode, type LoginRequest, type LoginStage, type LoginSuccess, PendingLink, PendingLogin, isOwnLoginPath, pathOwner, serverDetail } from './login.ts';
+import { type LoginContext, type LoginMode, type LoginRequest, type LoginStage, type LoginSuccess, PendingLink, PendingLogin, type RootPins, isOwnLoginPath, pathOwner, serverDetail } from './login.ts';
 import { type IssuerApi, issuerApi } from './issuer.ts';
 import { NearView } from './near.ts';
 import {
@@ -80,7 +80,9 @@ import {
   openConsent,
   openPrk,
   parseRecord,
+  parseRootPin,
   recordKey,
+  rootPinKey,
   sameSession,
   sealConsent,
   sealPrk,
@@ -240,6 +242,8 @@ class PersistFailure extends Error {
 
 /** A failed POST /v1/vault/shares is tried once more after this long (D79). */
 export const PERSIST_RETRY_MS = 1_000;
+/** A partner's `hana_account` calls within this long of a read share it (W-L4). */
+export const ACCOUNT_CACHE_MS = 5_000;
 
 /** A 'session'-mode session whose PRK was zeroed for idleness: the record can unlock it again (same share only). */
 interface Dormant {
@@ -355,6 +359,11 @@ export class Vault {
   private methodsSeen: { path: string; methods: AccountMethod[] } | null = null;
   /** The provider the last login linked (already reported), skipped by the first snapshot. */
   private freshLink: LoginMethod | null = null;
+  /** `hana_account`'s last answer for a path, reused for ACCOUNT_CACHE_MS (W-L4), and the read in flight. */
+  private accountCache: { path: string; atMs: number; result: AccountResult } | null = null;
+  private accountRead: { path: string; read: Promise<AccountResult> } | null = null;
+  /** Root pins (D263) of this frame's logins, in front of the stored ones (the only ones when nothing is stored). */
+  private readonly memoryPins = new Map<string, string>();
   private continueIntent: LauncherHandle | null = null;
   private exportJob: ExportJob | null = null;
   private appConfigPromise: Promise<AppConfig> | null = null;
@@ -792,10 +801,32 @@ export class Vault {
       linkRemoved: (provider) => {
         if (provider !== 'google' && provider !== 'email') return;
         this.emit('linkChanged', { provider, status: 'removed', effectiveAtMs: null });
-        void this.account().catch(() => undefined);
+        void this.account(true).catch(() => undefined);
       },
       flow: this.o.loginFlow ?? 'combined',
       perfNow: this.perfNow,
+      pins: this.rootPins(),
+    };
+  }
+
+  /**
+   * D263: the account root each identity last opened on this device, in this app's record store (an app that keeps the
+   * wallet across reloads) and this frame's memory (every app). Pins outlive logouts: they exist to notice a root that
+   * changes between sessions.
+   */
+  private rootPins(): RootPins {
+    const key = (ik: string) => rootPinKey(this.env.signer, this.config.appId, this.config.scopeId, ik);
+    return {
+      get: async (ik) => {
+        const mem = this.memoryPins.get(ik);
+        if (mem) return mem;
+        const store = this.store;
+        return store ? parseRootPin(await store.get(key(ik))) : null;
+      },
+      set: async (ik, root) => {
+        this.memoryPins.set(ik, root);
+        await this.store?.put(key(ik), { v: 1, t: 'root-pin', root });
+      },
     };
   }
 
@@ -808,11 +839,31 @@ export class Vault {
 
   /**
    * hana_account: the wallet's sign-in methods from `get_account` on the vault's own RPC (its root, from the session's
-   * path, and its members; no sub, no address). Reports what changed since the last read as `linkChanged`.
+   * path, and its members; no sub, no address). Reports what changed since the last read as `linkChanged`. A partner's
+   * calls share one read for ACCOUNT_CACHE_MS (W-L4: a page that polls it can't turn each poll into an RPC call);
+   * the vault's own reads after a login, a link or a banner's action are `fresh`.
    */
-  private async account(): Promise<AccountResult> {
+  private async account(fresh = false): Promise<AccountResult> {
     const path = this.sessionPath();
     if (!path) throw notLoggedIn();
+    const copy = (r: AccountResult): AccountResult => ({ methods: r.methods.map((m) => ({ ...m })) });
+    const cached = this.accountCache;
+    const now = this.deviceNow();
+    if (!fresh && cached && cached.path === path && now - cached.atMs >= 0 && now - cached.atMs < ACCOUNT_CACHE_MS) return copy(cached.result);
+    const inFlight = this.accountRead;
+    if (!fresh && inFlight && inFlight.path === path) return copy(await inFlight.read);
+    const read = this.readAccount(path);
+    this.accountRead = { path, read };
+    try {
+      const result = await read;
+      this.accountCache = { path, atMs: this.deviceNow(), result: copy(result) };
+      return copy(result);
+    } finally {
+      if (this.accountRead?.read === read) this.accountRead = null;
+    }
+  }
+
+  private async readAccount(path: string): Promise<AccountResult> {
     const root = pathOwner(path);
     if (!root || !this.near) throw new VaultError('api_unavailable', 'This wallet’s sign-in methods can’t be read');
     let view;
@@ -884,7 +935,7 @@ export class Vault {
     try {
       const made = await task.done;
       this.emit('linkChanged', { provider: made.provider, status: made.status, effectiveAtMs: made.effectiveAtMs });
-      void this.account().catch(() => undefined);
+      void this.account(true).catch(() => undefined);
       return { provider: made.provider, status: made.status, effectiveAtMs: made.effectiveAtMs };
     } finally {
       intent?.remove();
@@ -996,7 +1047,8 @@ export class Vault {
     if (success.linked) this.emit('linkChanged', { provider: success.linked.provider, status: success.linked.status, effectiveAtMs: success.linked.effectiveAtMs });
     this.methodsSeen = null;
     this.freshLink = success.linked?.provider ?? null;
-    void this.account().catch(() => undefined);
+    this.accountCache = null;
+    void this.account(true).catch(() => undefined);
     const result: LoginResult = { addresses: { ...s.addresses }, expiresAtMs: s.expiresAtMs, persistence };
     if (warning) result.warning = warning;
     if (this.testApp) {

@@ -10,6 +10,7 @@
 //                                          tests' /__e2e control endpoints)
 //   http://127.0.0.1:4442                  the email issuer (apps/email-issuer's Worker, the outbox stub; /__e2e/outbox)
 //   http://127.0.0.1:4450                  the mocked NEAR RPC
+//   http://127.0.0.1:4451                  the same chain, as the env's rpcFallback (D263)
 //   http://127.0.0.1:4460                  the mocked EVM chain RPC
 //   http://127.0.0.1:4421, :4431, :4441    live mode's vault, auth and API hosts (LIVE_ENV, src/stack.ts): the same
 //                                          apps/api code on the same D1 and chain, serving the https origins the
@@ -64,6 +65,8 @@ export async function startStack(fingerprint: string): Promise<void> {
   await serve(PORTS.liveAuth, loopback, servedAt(LIVE_AUTH_ORIGIN, authHost(modules, live)));
   await serve(PORTS.liveApi, loopback, servedAt(LIVE_API_URL, (req) => liveApi.handle(req)));
   await serve(PORTS.near, loopback, chain.handler());
+  // The env's rpcFallback: another endpoint on the same chain (a member's path is confirmed on both, D263).
+  await serve(PORTS.nearFallback, loopback, chain.handler());
   await serve(PORTS.evm, loopback, evm.handler());
 }
 

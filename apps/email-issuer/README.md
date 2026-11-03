@@ -41,7 +41,7 @@ nothing on chain and holds no chain key.
 | `src/domain.ts`, `src/ip.ts` | the recipient domain's cap (registrable domain, exempt consumer providers); IP subjects and their /24, /56, /48 prefixes |
 | `src/jws.ts`, `src/signer.ts`, `src/kms.ts` | JWS JSON minting with a self-check; the Worker-secret signer; the KMS adapter (aws4fetch) |
 | `src/sender.ts`, `src/sendgrid.ts`, `src/outbox.ts`, `src/mail.ts` | the sender interface, SendGrid v3, the `local*`-only outbox stub, the per-purpose mail texts |
-| `src/google.ts`, `src/chain.ts`, `src/apps.ts`, `src/access.ts`, `src/webhook.ts` | Google (ID token, tokeninfo, userinfo, revoke), NEAR views, the app lookup, Cloudflare Access, SendGrid's signed events |
+| `src/google.ts`, `src/chain.ts`, `src/apps.ts`, `src/access.ts`, `src/webhook.ts` | Google (ID token, tokeninfo, userinfo; the access token is never revoked, D265), NEAR views, the app lookup, Cloudflare Access, SendGrid's signed events |
 | `scripts/gen-contract-fixture.ts` | writes `contracts/hana-signer/src/issuer_tokens_fixture.json` (tokens from this code, for the contract's unit tests), deterministically from a public test seed; `scripts/test/gen-contract-fixture.test.ts` checks the committed file matches |
 | `migrations/0001_init.sql` | the issuer's D1: `email_issuance`, `email_hints`, `email_suppressions`, `email_admin_audit` |
 

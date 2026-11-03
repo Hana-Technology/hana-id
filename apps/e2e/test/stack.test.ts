@@ -86,7 +86,7 @@ describe('the e2e env', () => {
     expect(portBase(undefined)).toBe(DEFAULT_PORT_BASE);
     expect(portBase('')).toBe(DEFAULT_PORT_BASE);
     expect(portBase('4510')).toBe(4510);
-    expect(portsFrom(4510)).toEqual({ partner: 4510, siteB: 4511, demo: 4512, vault: 4520, liveVault: 4521, auth: 4530, liveAuth: 4531, api: 4540, liveApi: 4541, issuer: 4542, near: 4550, evm: 4560 });
+    expect(portsFrom(4510)).toEqual({ partner: 4510, siteB: 4511, demo: 4512, vault: 4520, liveVault: 4521, auth: 4530, liveAuth: 4531, api: 4540, liveApi: 4541, issuer: 4542, near: 4550, nearFallback: 4551, evm: 4560 });
     for (const bad of ['80', '65500', '45.5', '4510x', '-1', ' 0x1000']) expect(() => portBase(bad)).toThrow(/HANA_E2E_PORT_BASE/u);
     // A base that puts a port on one browsers refuse (5010 + 50 = 5060, SIP) fails at once, not in the tests.
     expect(() => portBase('5010')).toThrow(/port 5060, which browsers refuse/u);
@@ -96,7 +96,7 @@ describe('the e2e env', () => {
     const base = portBase();
     expect([PARTNER_ORIGIN, SITE_B_ORIGIN, VAULT_ORIGIN, AUTH_ORIGIN, API_URL].map((o) => Number(new URL(o).port))).toEqual([base, base + 1, base + 10, base + 20, base + 30]);
     expect(Number(new URL(DEMO_ORIGIN).port)).toBe(base + 2);
-    expect(new Set(Object.values(PORTS)).size).toBe(12);
+    expect(new Set(Object.values(PORTS)).size).toBe(13);
   });
 
   it('gives live mode an env of its own whose every origin is https, not loopback, and routed to the stack', () => {
@@ -119,8 +119,8 @@ describe('the e2e env', () => {
     expect(LIVE_UPSTREAMS[LIVE_EVM_RPC]).toBe(EVM_RPC);
     for (const o of [LIVE_VAULT_ORIGIN, LIVE_AUTH_ORIGIN, LIVE_API_URL]) expect(LIVE_UPSTREAMS[o]).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/u);
     // The same chain, accounts and test MPC as the e2e env; its own name and origins.
-    const { emailIssuerUrl: _u, emailIss: _i, ...noEmail } = E2E_ENV;
-    // Live mode runs no email issuer.
+    const { emailIssuerUrl: _u, emailIss: _i, rpcFallback: _f, ...noEmail } = E2E_ENV;
+    // Live mode runs no email issuer (so no link) and no second RPC.
     expect(LIVE_ENV).toEqual({ ...noEmail, name: LIVE_ENV_NAME, apiUrl: LIVE_API_URL, vaultOrigin: LIVE_VAULT_ORIGIN, authOrigin: LIVE_AUTH_ORIGIN, rpc: LIVE_NEAR_RPC });
     expect(ckdKeyProblem(LIVE_ENV)).toBeNull();
     expect(isScopeId(LIVE_SCOPE_ID)).toBe(true);

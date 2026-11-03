@@ -112,6 +112,12 @@ describe('pathIdentity (batch 7)', () => {
     expect(() => pathIdentity('s1', G, own(eHex, false))).toThrow(ViewShapeError);
     expect(() => pathIdentity('s2', G, own(gHex, false))).toThrow(ViewShapeError);
   });
+
+  it('a root (or an identity) of a provider without a path here is `unsupported`, never a path (W-L2)', () => {
+    expect(pathIdentity('s1', G, member(gHex, { provider: 'apple', sub: 'a1' }, 1))).toEqual({ kind: 'unsupported', provider: 'apple' });
+    const apple = { provider: 'apple', sub: 'a1' };
+    expect(pathIdentity('s1', apple, own(identityKeyHex('s1', 'apple', 'a1'), false))).toEqual({ kind: 'unsupported', provider: 'apple' });
+  });
 });
 
 describe('judgeAutoLink (D133)', () => {

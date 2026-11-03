@@ -1,6 +1,7 @@
 // Google's server-side endpoints for the stack's own Workers (build plan batch 8b): the email issuer's google-match
-// (apps/email-issuer src/google.ts) reads Google's JWKS, `tokeninfo` and `userinfo` and revokes the access token, and
-// apps/api reads the JWKS too. Both Workers run in this Node process, so `install()` answers those URLs here, in the
+// (apps/email-issuer src/google.ts) reads Google's JWKS, `tokeninfo` and `userinfo` (and never revokes the access token,
+// D265: the revoke endpoint is still answered, so a regression would show in `revoked`), and apps/api reads the JWKS
+// too. Both Workers run in this Node process, so `install()` answers those URLs here, in the
 // stack process only (every other fetch goes out unchanged).
 //
 // One RSA key per stack signs every ID token: the tests' Google stub (src/google-stub.ts, in the test process, one per

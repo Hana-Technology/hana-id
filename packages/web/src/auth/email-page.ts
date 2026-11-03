@@ -71,7 +71,7 @@ import type { AuthApi } from './api.ts';
 import { type Dom, dom, errorView } from './dom.ts';
 import type { EmailApi, LinkPurpose, SessionCommitment, Verified } from './email-api.ts';
 import { EMAIL_STEP_LIMIT_MS, type EmailContext, deviceTicketFor, dropEmailContext, readEmailContext, saveDeviceTicket, storeEmailContext } from './email-storage.ts';
-import { googleAuthUrl } from './google.ts';
+import { GOOGLE_EMAIL_FLOW, type GoogleEmailFlow, googleAccessUrl, googleAuthUrl, wantsEmailScope } from './google.ts';
 import { peekLogin, storeLoginEntry, takeLogin, zeroTaken } from './login-storage.ts';
 import { type PageWindow, childFrame, isFramed } from './page-window.ts';
 
@@ -88,6 +88,8 @@ export interface EmailPageDeps {
   /** Timers (tests drive the resend delay). */
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (t: unknown) => void;
+  /** How a Google request asks for the email scope (auth/google.ts GOOGLE_EMAIL_FLOW; tests set the other mode). */
+  googleEmailFlow?: GoogleEmailFlow;
 }
 
 export type EmailStage =
@@ -620,7 +622,10 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       }
       clearT(deadlineTimer);
       tellVault('google');
-      win.location.assign(googleAuthUrl({ clientId, authOrigin: env.authOrigin, nonce: ctx.nonce, state: rid, forceReauth: false }));
+      // One-request mode asks for the email scope here too, as /login does (G-L3): google-match needs it in case B.
+      const follows = peekLogin(win.sessionStorage, rid, now())?.follows === true;
+      const withEmailScope = wantsEmailScope(deps.googleEmailFlow ?? GOOGLE_EMAIL_FLOW, { follow: follows && !ctx.exportMode, task: !!ctx.proof });
+      win.location.assign(googleAuthUrl({ clientId, authOrigin: env.authOrigin, nonce: ctx.nonce, state: rid, forceReauth: false, withEmailScope }));
     };
     const buttons: HTMLElement[] = [];
     if (link) {
@@ -802,6 +807,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         return showLinkCode(n, slot);
       case 'use_email':
         return showUseEmail(slot);
+      case 'email_consent':
+        return showEmailConsent(n, slot);
       case 'prove':
         return prove(n.prove, slot, n.why === 'link_account' ? `Sign in with the ${providerName(n.provider)} that opens this wallet` : null);
       case 'done':
@@ -864,6 +871,73 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     );
     notice = 'use_email';
     settle('link_choice');
+  }
+
+  /**
+   * D264: a new Google wallet here needs Google's address checked once (case A: an email wallet may already have it),
+   * and google-match couldn't read it: the user declined Google's permission, or picked another Google account on
+   * Google's screen. "Sign in with email instead" (an email login answered to the vault), "Try Google again" (Google's
+   * permission screen for the signed-in account, its answer in the next slot), or Cancel.
+   */
+  function showEmailConsent(n: Extract<FollowNotice, { t: 'email_consent' }>, slot: number): void {
+    const viaEmail = d.h('button', { attrs: { type: 'button', id: 'consent-email' } }, 'Sign in with email instead');
+    const again = d.h('button', { class: 'primary', attrs: { type: 'button', id: 'consent-google' } }, 'Try Google again');
+    viaEmail.addEventListener('click', () => toEmailLogin(slot));
+    again.addEventListener('click', () => {
+      viaEmail.setAttribute('disabled', '');
+      again.setAttribute('disabled', '');
+      googleAgain(n.loginHint, slot);
+    });
+    const cancelB = d.h('button', { class: 'link', attrs: { type: 'button', id: 'email-cancel' } }, 'Cancel');
+    cancelB.addEventListener('click', () => {
+      sink = { kind: 'answer', slot, as: 'session' };
+      reason = 'email_cancelled';
+      void cancel();
+    });
+    const declined = n.reason === 'declined';
+    d.show(
+      d.h(
+        'section',
+        { class: 'panel' },
+        d.h('h1', {}, declined ? 'Your Google email address is needed' : 'Another Google account was chosen'),
+        header(),
+        d.h(
+          'p',
+          { attrs: { id: 'consent-text' } },
+          declined
+            ? 'This app checks whether your Google address already has a wallet. Hana uses it once and doesn’t keep it. Without it you can’t open a new wallet with Google here.'
+            : 'You signed in with one Google account, then picked a different one when Google asked to share your email address. Try Google again and pick the account you signed in with, or sign in with email instead.',
+        ),
+        d.h('div', { class: 'actions' }, cancelB, viaEmail, again),
+      ),
+    );
+    notice = declined ? 'email_consent_declined' : 'google_account_mismatch';
+    settle('link_choice');
+  }
+
+  /** "Try Google again": Google's email permission for `loginHint`, interactively; the callback answers slot + 1. */
+  function googleAgain(loginHint: string, slot: number): void {
+    const f = follow;
+    const clientId = ctx.clientId;
+    if (!f || !clientId) {
+      void answer(slot, { error: 'email_unavailable' });
+      return;
+    }
+    const state = followSlot(f.followKey, slot + 1).id;
+    try {
+      storeLoginEntry(win.sessionStorage, state, f.relayKey, now(), undefined, { followKey: f.followKey, home: rid, next: slot + 2, leg: 'access', clientId, loginHint, interactive: true });
+    } catch {
+      void answer(slot, { error: 'storage_unavailable' }).finally(() => {
+        endFollow();
+        fatal('Sign-in stopped', 'This browser blocked the storage the sign-in needs.', 'storage_unavailable');
+      });
+      return;
+    }
+    zeroTaken({ relayKey: f.relayKey, followKey: f.followKey });
+    follow = null;
+    d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Continuing to Google'), header(), d.h('p', { class: 'muted' }, 'Google will ask to share your email address.')));
+    settle('done');
+    win.location.assign(googleAccessUrl({ clientId, authOrigin: env.authOrigin, state, loginHint, silent: false }));
   }
 
   function toEmailLogin(slot: number): void {

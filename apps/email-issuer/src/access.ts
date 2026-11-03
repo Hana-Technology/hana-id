@@ -3,7 +3,7 @@
 // issuer's own staff allowlist (a second check behind the Access policy). Any failure is a 403 that names nothing.
 import { base64UrlDecode } from './bytes.ts';
 import { type Jwk, usableJwks } from '@hana-id/jwks';
-import { responseJson } from './http.ts';
+import { responseJson, globalFetch } from './http.ts';
 import { verifyRs256 } from './signer.ts';
 
 export const ACCESS_HEADER = 'cf-access-jwt-assertion';
@@ -47,7 +47,7 @@ export class AccessVerifier {
 
   constructor(
     private readonly cfg: AccessConfig,
-    private readonly fetcher: typeof fetch = fetch,
+    private readonly fetcher: typeof fetch = globalFetch,
     private readonly now: () => number = Date.now,
   ) {}
 

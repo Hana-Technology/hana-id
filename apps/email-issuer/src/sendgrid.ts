@@ -3,7 +3,7 @@
 // and used by this Worker alone. Click, open and subscription tracking are off: code mails carry no link, and a
 // rewritten link in a notice would point away from authOrigin. No response body is ever logged (an error body can
 // echo the recipient); the body is read at most 4 KB and only to drain it.
-import { responseText } from './http.ts';
+import { responseText, globalFetch } from './http.ts';
 import type { EmailSender, MailMessage, SendResult } from './sender.ts';
 
 export const SENDGRID_URL = 'https://api.sendgrid.com/v3/mail/send';
@@ -42,7 +42,7 @@ export class SendGridSender implements EmailSender {
   constructor(
     private readonly apiKey: string | undefined,
     private readonly from: string,
-    private readonly fetcher: typeof fetch = fetch,
+    private readonly fetcher: typeof fetch = globalFetch,
   ) {}
 
   async send(m: MailMessage): Promise<SendResult> {

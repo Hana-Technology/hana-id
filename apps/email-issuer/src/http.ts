@@ -92,3 +92,10 @@ export function onlyKeys(o: Record<string, unknown>, required: readonly string[]
   const allowed = new Set([...required, ...optional]);
   return required.every((k) => k in o) && Object.keys(o).every((k) => allowed.has(k));
 }
+
+/**
+ * The global fetch, wrapped so it can be stored and called as an object's method. Workers' fetch throws "Illegal
+ * invocation" when called with another `this` (e.g. `this.fetcher(...)` on a field that holds `fetch` itself), which
+ * every catch here read as "no answer". Always default a stored fetcher to this, never to `fetch`.
+ */
+export const globalFetch: typeof fetch = (input, init) => fetch(input, init);

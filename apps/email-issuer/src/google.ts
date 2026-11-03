@@ -5,7 +5,7 @@
 // nothing here logs a token, an address or a body.
 import { base64UrlDecode } from './bytes.ts';
 import { GOOGLE_JWKS_URL, type Jwk, usableJwks } from '@hana-id/jwks';
-import { responseJson } from './http.ts';
+import { responseJson, globalFetch } from './http.ts';
 import { verifyRs256 } from './signer.ts';
 
 export const GOOGLE_ISSUERS = ['https://accounts.google.com', 'accounts.google.com'];
@@ -49,7 +49,7 @@ export class Google {
   private lastFetch = -Infinity;
 
   constructor(
-    private readonly fetcher: typeof fetch = fetch,
+    private readonly fetcher: typeof fetch = globalFetch,
     private readonly now: () => number = Date.now,
   ) {}
 

@@ -2,7 +2,7 @@
 //
 // | Requirement | Detected | How |
 // |---|---|---|
-// | CSP frame-src allows vaultOrigin | at mount | `securitypolicyviolation` for vaultOrigin, else the 5 s handshake timeout → `vault_unavailable` |
+// | CSP frame-src allows vaultOrigin | at mount | `securitypolicyviolation` for vaultOrigin (`vault_unavailable`, `csp_frame_src`), else the handshake timeouts (`no_answer`, vault-connection.ts) |
 // | popups allowed | at login | window.open returns null → `popup_blocked` handling (the vault's launcher) |
 // | COOP not same-origin | at login | the popup reports `closed` before it connects → `coop_blocks_popup` |
 // | login() in a click | at login | as popups (the launcher fallback costs one more click) |

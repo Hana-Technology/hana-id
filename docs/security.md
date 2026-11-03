@@ -1,7 +1,8 @@
 # Security model
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
-known open issues. Last verified against code: 2026-11-02 for email login in the web (branch `feat/email-login-8a`:
+known open issues. Last verified against code: 2026-11-03 for the vault's `connected` event and the SDK's frame retry
+(branch `fix/demo-polish`, "Browser": no answer before the hello's checks pass, D262); 2026-11-02 for email login in the web (branch `feat/email-login-8a`:
 "Email login in the popup and the vault" under "Browser", `/login/email`'s CSP, the device ticket on `authOrigin`,
 D245–D249); 2026-11-02 for email login's API part (branch `feat/email-login-6`: the
 email-token, proof-of-possession, link-precheck and link-relay invariants under "API", the issuer reached without the
@@ -536,7 +537,10 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   and `ancestorOrigins[0]`; every other `ancestorOrigins` entry must be an allowed origin too, sweep VAUL-6) and serves
   only that port. Where the browser has no `ancestorOrigins` (Firefox), nested framing is refused by the CSP
   `frame-ancestors` alone, which every current browser enforces for every ancestor. Popups and the vault authenticate each other by `event.origin` and
-  `event.source`.
+  `event.source`. The vault's first message, `connected` (no data), goes only on the port of the hello it took, after
+  every one of those checks; a hello it refuses, and its 403/503 page (framed nowhere, no script), get no answer at
+  all, so a page that frames it learns nothing from the handshake (D262). The SDK's one retry inserts the same frame
+  (same name and `src`) after removing the first, closes the first's port and ignores its late events.
 - No message in any direction carries key bytes, S, PRK, a CKD response, a token or a session secret, except
   `relayKey` from the vault to its authenticated login popup (schemas: `packages/core/src/protocol.ts`).
 - One display-safety rule (`packages/core/src/display-safe.ts`, D118, sweep AUTH-5/CORE-4 and AUTH-2): text with a

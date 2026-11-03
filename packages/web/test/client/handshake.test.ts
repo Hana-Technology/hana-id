@@ -4,9 +4,9 @@ import { ErrorCode } from '@hana-id/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HanaClient } from '../../src/client/client.ts';
 import { HanaError } from '../../src/client/errors.ts';
-import { LAUNCHER_HEIGHT_PX, LAUNCHER_WIDTH_PX, READY_TIMEOUT_MS } from '../../src/client/vault-connection.ts';
+import { ANSWER_TIMEOUT_MS, LAUNCHER_HEIGHT_PX, LAUNCHER_WIDTH_PX, READY_AFTER_CONNECT_MS, VAULT_UNAVAILABLE_MESSAGES } from '../../src/client/vault-connection.ts';
 import { VERSION } from '../../src/version.ts';
-import { EVM, LOGGED_IN, LOGGED_OUT, ORIGINS, PK, STELLAR, type Setup, flush, setup } from './harness.ts';
+import { EVM, FakeVault, LOGGED_IN, LOGGED_OUT, ORIGINS, PK, STELLAR, type Setup, flush, setup } from './harness.ts';
 
 let s: Setup;
 beforeEach(() => {
@@ -118,22 +118,99 @@ describe('handshake', () => {
     expect(s.vault.hello).toBe(first);
   });
 
-  it('rejects ready with vault_unavailable when no ready arrives within 5 s of insertion', async () => {
+  const frames = () => [...document.querySelectorAll('iframe[name^="hana-vault-"]')] as HTMLIFrameElement[];
+
+  it('replaces a frame that loaded but did not answer within 5 s once, then rejects with vault_unavailable (no_answer)', async () => {
     s = setup();
     s.vault.load();
-    await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS - 1);
+    await vi.advanceTimersByTimeAsync(ANSWER_TIMEOUT_MS - 1);
     expect(s.client.status).toBe('unlocking');
     await vi.advanceTimersByTimeAsync(1);
+    // The retry: the first frame is gone, a new one with the same name and src is in.
+    expect(frames()).toHaveLength(1);
+    const second = frames()[0]!;
+    expect(second).not.toBe(s.frame);
+    expect(s.frame.isConnected).toBe(false);
+    expect(second.name).toBe(s.frame.name);
+    expect(second.getAttribute('src')).toBe(`${ORIGINS.vaultOrigin}/vault?pk=${PK}`);
+    expect(s.client.status).toBe('unlocking');
+    new FakeVault(second).load();
+    await vi.advanceTimersByTimeAsync(ANSWER_TIMEOUT_MS);
     const e = await rejection(s.client.ready);
     expect(e.code).toBe('vault_unavailable');
+    expect(e.data).toEqual({ reason: 'no_answer', attempts: 2 });
+    expect(e.message).toBe(VAULT_UNAVAILABLE_MESSAGES.no_answer);
     expect(s.client.status).toBe('error');
     expect(s.client.error?.code).toBe('vault_unavailable');
+    expect(frames()).toHaveLength(1);
+  });
+
+  it('a frame that never loads is frame_timeout', async () => {
+    s = setup();
+    await vi.advanceTimersByTimeAsync(2 * ANSWER_TIMEOUT_MS);
+    const e = await rejection(s.client.ready);
+    expect(e.data).toEqual({ reason: 'frame_timeout', attempts: 2 });
+    expect(e.message).toMatch(/didn't load in time/u);
+  });
+
+  it('the retried frame can still connect, and a late answer from the first frame counts for nothing', async () => {
+    s = setup();
+    s.vault.load();
+    await vi.advanceTimersByTimeAsync(ANSWER_TIMEOUT_MS);
+    const second = new FakeVault(frames()[0]!);
+    // The first frame's vault answers late: its port was closed and is ignored.
+    s.vault.emit('ready', LOGGED_IN);
+    s.frame.dispatchEvent(new Event('load'));
+    await flush();
+    expect(s.client.status).toBe('unlocking');
+    await second.connect(LOGGED_OUT);
+    await expect(s.client.ready).resolves.toBeUndefined();
+    expect(s.client.status).toBe('logged_out');
+    expect(s.client.addresses).toBeNull();
+  });
+
+  it('after connected, ready may take up to 20 s more; later it is ready_timeout, without a retry', async () => {
+    s = setup();
+    s.vault.load();
+    await flush();
+    await vi.advanceTimersByTimeAsync(ANSWER_TIMEOUT_MS - 100);
+    s.vault.emit('connected', null);
+    await flush();
+    await vi.advanceTimersByTimeAsync(READY_AFTER_CONNECT_MS - 1);
+    expect(s.client.status).toBe('unlocking');
+    expect(frames()).toEqual([s.frame]);
+    await vi.advanceTimersByTimeAsync(1);
+    const e = await rejection(s.client.ready);
+    expect(e.data).toEqual({ reason: 'ready_timeout', attempts: 1 });
+    expect(frames()).toEqual([s.frame]);
+  });
+
+  it('a second load before ready is frame_replaced, without a retry', async () => {
+    s = setup();
+    s.vault.load();
+    s.vault.load();
+    const e = await rejection(s.client.ready);
+    expect(e.data).toEqual({ reason: 'frame_replaced', attempts: 1 });
+  });
+
+  it('a slow unlock after connected still resolves ready', async () => {
+    s = setup();
+    s.vault.load();
+    await flush();
+    s.vault.emit('connected', null);
+    await vi.advanceTimersByTimeAsync(ANSWER_TIMEOUT_MS + 5_000);
+    s.vault.emit('ready', LOGGED_IN);
+    await flush();
+    await expect(s.client.ready).resolves.toBeUndefined();
+    expect(s.client.status).toBe('logged_in');
   });
 
   it('a late ready after the timeout is ignored, and requests stay refused', async () => {
     s = setup();
     s.vault.load();
-    await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(ANSWER_TIMEOUT_MS);
+    new FakeVault(frames()[0]!).load();
+    await vi.advanceTimersByTimeAsync(ANSWER_TIMEOUT_MS);
     s.vault.emit('ready', LOGGED_IN);
     s.vault.emit('accountsChanged', { addresses: { stellar: STELLAR, evm: EVM } });
     await flush();
@@ -149,7 +226,11 @@ describe('handshake', () => {
     document.dispatchEvent(ev);
     const e = await rejection(s.client.ready);
     expect(e.code).toBe('vault_unavailable');
-    expect(e.data).toEqual({ reason: 'csp_frame_src' });
+    expect(e.data).toEqual({ reason: 'csp_frame_src', attempts: 1 });
+    expect(e.message).toBe(VAULT_UNAVAILABLE_MESSAGES.csp_frame_src);
+    // No retry for a block the page's own policy makes.
+    await vi.advanceTimersByTimeAsync(2 * ANSWER_TIMEOUT_MS);
+    expect(frames()).toEqual([s.frame]);
   });
 
   it('ignores a report-only frame-src violation for vaultOrigin: the frame still loads, and ready resolves', async () => {

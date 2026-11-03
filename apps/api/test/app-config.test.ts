@@ -1,7 +1,9 @@
 // GET /v1/app, batch B additions: name, serverTimeMs, google_web_client_id, calls from the Hana pages.
 import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ORIGIN, appHeaders, call, chain, seedApp, uid } from './helpers.ts';
+import { Rpc } from '../src/near/rpc.ts';
+import { VIEW_TIMEOUT_MS, clearViewCaches } from '../src/views.ts';
+import { ORIGIN, appHeaders, call, chain, newKey, seedApp, uid } from './helpers.ts';
 import { AUTH, VAULT, hanaHeaders } from './login-helpers.ts';
 import { autoApprovePolicy } from './vault-helpers.ts';
 
@@ -21,9 +23,76 @@ describe('GET /v1/app (batch B)', () => {
     const res = await get(appHeaders(app));
     const b = await body(res);
     expect(res.status).toBe(200);
-    expect(b).toEqual({ name: `Test ${app.id}`, scopeId: app.scope, signer: env.SIGNER_ACCOUNT, google: { clientId: aud, mode: 'own' }, loginMethods: ['google'], serverTimeMs: expect.any(Number), autoApprovePolicy: null, rawSign: 'off', requestId: expect.any(String) });
+    expect(b).toEqual({
+      name: `Test ${app.id}`,
+      scopeId: app.scope,
+      signer: env.SIGNER_ACCOUNT,
+      google: { clientId: aud, mode: 'own' },
+      loginMethods: ['google'],
+      serverTimeMs: expect.any(Number),
+      autoApprovePolicy: null,
+      rawSign: 'off',
+      // A pk_test_ app's response carries the API's own time and phases (docs/api.md "Timings").
+      timings: { totalMs: expect.any(Number), phases: { app: expect.any(Number), limits: expect.any(Number), settings: expect.any(Number), chain: expect.any(Number) } },
+      requestId: expect.any(String),
+    });
     expect(b.serverTimeMs as number).toBeGreaterThanOrEqual(before);
     expect(b.serverTimeMs as number).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('a pk_live_ app gets no timings', async () => {
+    const app = await seedApp({ key: newKey('pk_live_') });
+    chain({ [newAud()]: app.scope });
+    const res = await get(appHeaders(app));
+    expect(res.status).toBe(200);
+    expect(await body(res)).not.toHaveProperty('timings');
+  });
+
+  it('reads the settings rows and the registry side by side: get_config is asked while get_scope is still out', async () => {
+    clearViewCaches();
+    const app = await seedApp();
+    const shared = newAud();
+    const near = chain({}, { shared: [shared], allowShared: [app.scope] });
+    let configAsked!: () => void;
+    const configSeen = new Promise<void>((r) => (configAsked = r));
+    near.onView = (method) => {
+      if (method === 'get_config') configAsked();
+      // get_scope answers only once get_config was asked (or after 2 s, and the test fails below).
+      if (method === 'get_scope') return Promise.race([configSeen, new Promise<void>((r) => setTimeout(r, 2_000))]);
+    };
+    const started = Date.now();
+    const res = await get(appHeaders(app));
+    expect(await body(res)).toMatchObject({ google: { clientId: shared, mode: 'shared' } });
+    expect(Date.now() - started).toBeLessThan(1_500);
+  });
+
+  it('a get_config that fails counts only when the shared client is needed', async () => {
+    clearViewCaches();
+    const app = await seedApp();
+    const own = newAud();
+    const near = chain({ [own]: app.scope });
+    near.views.get_scope = (a) => ({ id: a.scope_id, owners: [], clients: [['google', own]], pending: [], action_nonce: 0, allow_shared: true });
+    near.views.get_config = () => {
+      throw new Error('config view down');
+    };
+    expect(await body(await get(appHeaders(app)))).toMatchObject({ google: { clientId: own, mode: 'own' } });
+    clearViewCaches();
+    near.views.get_scope = (a) => ({ id: a.scope_id, owners: [], clients: [], pending: [], action_nonce: 0, allow_shared: true });
+    const res = await get(appHeaders(app));
+    expect([res.status, (await body(res)).code]).toEqual([502, 'near_unavailable']);
+  });
+
+  it('the registry views give up after VIEW_TIMEOUT_MS (an Rpc with a timeout passes an abort signal)', async () => {
+    const seen: (AbortSignal | null | undefined)[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      seen.push(init?.signal);
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    });
+    await expect(new Rpc(env.NEAR_RPC, VIEW_TIMEOUT_MS).view('signer.test', 'get_scope', {})).rejects.toThrow(/NEAR RPC unreachable/u);
+    await expect(new Rpc(env.NEAR_RPC).view('signer.test', 'get_scope', {})).rejects.toThrow(/NEAR RPC unreachable/u);
+    expect(seen[0]).toBeInstanceOf(AbortSignal);
+    expect(seen[1]).toBeUndefined();
+    expect(VIEW_TIMEOUT_MS).toBe(8_000);
   });
 
   it('uses google_web_client_id when set, the scope’s first Google client when unset', async () => {

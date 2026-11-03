@@ -128,11 +128,18 @@ Login stages, in order:
 |---|---|---|
 | `open` | partner page | `window.open` of the login popup in the click |
 | `wait` | partner page | until the vault's handshake was done and `hana_login` sent (0 once the page is ready) |
-| `app` | vault | `GET /v1/app` (normally cached since the vault loaded) |
+| `app` | vault | `GET /v1/app` (normally answered already: the vault asks right after `ready`; a 5xx or network failure is asked once more) |
 | `keygen` | vault | the session key, salt, nonce and relay keys |
 | `popup` | vault | until the login popup's hello (popup window, `/login` load) |
-| `authCheck` | `/login` | its checks of the vault's message (pinned signer, nonce) and storing the relay key, until it navigates to Google; no API call since D77 |
-| `google` | vault | what is left of hello → token: the user at Google and Google's pages, **plus the relay's network legs** no single clock sees (the callback's CORS preflight and POST upstream, the vault's read response downstream, ≈ 1.5 API round trips) |
+| `authCheck` | `/login` | its checks of the vault's message (pinned signer, nonce) and storing the relay key, until it shows the chooser or navigates on; no API call since D77 |
+| `choose` | `/login` | only when the popup shows the method chooser (an app with email): chooser shown → click (D260) |
+| `emailLoad` | `/login/email` | email login only: the email step's navigation, the chooser's click → the address screen |
+| `emailEntry` | `/login/email` | email login only: the user on the address screen (summed over visits) |
+| `emailStart` | `/login/email` | email login only: the issuer's `start` round trip (and any `resend`) |
+| `emailCode` | `/login/email` | email login only: the code screen, the mail's delivery and the user typing the code |
+| `emailVerify` | `/login/email` | email login only: the issuer's `verify` round trip and encrypting the token, until the relay POST is sent |
+| `emailRelay` | vault | email login only, instead of `google`: what is left of hello → token, the relay's network legs (the page's POST upstream, the vault's read downstream) and any gap between the measured parts |
+| `google` | vault | Google login only: what is left of hello → token: the user at Google and Google's pages, **plus the relay's network legs** no single clock sees (the callback's CORS preflight and POST upstream, the vault's read response downstream, ≈ 1.5 API round trips) |
 | `callbackRedirect` | `/login/callback` | Google's redirect hops before the callback page was fetched (its navigation `fetchStart`) |
 | `callbackFetch` | `/login/callback` | DNS, TLS, the auth page Worker and the HTML (`fetchStart` → `responseEnd`) |
 | `callbackBoot` | `/login/callback` | parsing and loading the callback script (`responseEnd` → script start) |
@@ -145,7 +152,10 @@ Login stages, in order:
 | `finish` | vault | switching to the new session, revoking the replaced share (not awaited), starting the share and record (not awaited), the events |
 | `port` | partner page | the `hana_login` round trip minus the vault's own time (postMessage both ways, queueing) |
 
-Login breakdown: `scopeCheck` (the registry view itself, overlapped), `chainPrep` (BLS key + signature, inside
+Login breakdown: `appRtt` / `appServer` (inside `app`: the `GET /v1/app` request it waited for, on the vault's clock,
+which may have started before the login / the API's own total) with `appServerGate` (D1 app + IP limiter),
+`appServerSettings` (the settings and login-methods rows) and `appServerChain` (`get_scope`, and `get_config` for a
+shared client, read side by side with the settings; D261), `scopeCheck` (the registry view itself, overlapped), `chainPrep` (BLS key + signature, inside
 `chain`), `loginRtt` / `loginServer` (`POST /v1/login` on the vault's clock / the API's own total, so `loginRtt −
 loginServer` is network, CORS preflight and Worker routing) with `loginServerGate` (D1 app + limiter objects),
 `loginServerChecks` (token, chain reads, signature), `loginServerRelay` (relayer key object round trip),
@@ -159,7 +169,8 @@ Unlock stages, in order:
 
 | Stage | Clock | What it covers |
 |---|---|---|
-| `mount` | partner page | `createHana` until the iframe is in the document |
+| `mount` | partner page | `createHana` until the (first) iframe is in the document |
+| `retry` | partner page | only when the first frame didn't answer in time: the first iframe → the second one (D262) |
 | `frameStart` | partner page | the iframe's load as the page sees it, minus the four `vault*` stages: its navigation start |
 | `vaultFetch` | vault document | navigation start → the vault page's last byte (DNS, TLS, the page Worker, the API Worker's D1 reads, the HTML) |
 | `vaultScript` | vault document | parsing and loading `/vault.js` until it runs |

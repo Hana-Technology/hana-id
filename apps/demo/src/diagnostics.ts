@@ -6,6 +6,8 @@
 
 export interface LoginTiming {
   at: string;
+  /** The button the user clicked (each names its method, so the popup shows no chooser). */
+  method: 'google' | 'email';
   /** Click to addresses on this page. */
   totalMs: number;
   /** The vault's per-stage ms (pk_test_ apps), or null. */
@@ -100,7 +102,7 @@ export function diagnostics(input: DiagnosticsInput, nowMs: number): Record<stri
     sessionExpiresAt: input.expiresAtMs === null ? null : new Date(input.expiresAtMs).toISOString(),
     addresses: input.addresses ? { stellar: input.addresses.stellar, evm: input.addresses.evm } : null,
     unlockMs: finite(input.unlockMs),
-    logins: input.logins.slice(-MAX_ENTRIES).map((l) => ({ at: l.at, totalMs: finite(l.totalMs), stages: stages(l.stages) })),
+    logins: input.logins.slice(-MAX_ENTRIES).map((l) => ({ at: l.at, method: l.method === 'email' ? 'email' : 'google', totalMs: finite(l.totalMs), stages: stages(l.stages) })),
     errors: input.errors.slice(-MAX_ENTRIES).map((e) => ({
       at: e.at,
       action: e.action,

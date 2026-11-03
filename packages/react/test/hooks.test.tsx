@@ -189,9 +189,14 @@ describe('useHana', () => {
     expect(m.renders.last.hana.error?.code).toBe(4900);
   });
 
-  it('a vault that never answers gives status error with vault_unavailable after 5 s', async () => {
+  it('a vault that never answers gives status error with vault_unavailable (5 s per frame, one retry)', async () => {
     vi.useFakeTimers();
     const m = mount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    // The SDK put in a second frame; it doesn't answer either.
+    expect(m.renders.last.hana.status).not.toBe('error');
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });

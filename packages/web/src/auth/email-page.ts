@@ -8,6 +8,10 @@
 //
 // - "Resend code" (after the issuer's `resendAfterMs`) and "Use a different email" (a new `start`, same commitment).
 // - Every limit is the same generic "try again later" (the issuer's answers are enumeration-safe; so is this page).
+//   Errors are told apart as: the service can't be reached (a network error or a 5xx: the notice offers "Try again",
+//   which repeats the same request), a limit (429: no retry button, the user waits), a wrong or expired code (their
+//   own messages), email unavailable for the app (the step ends), and any other refusal ("Something went wrong", with
+//   its code).
 // - The device ticket `verify` returns is kept on authOrigin for this address (email-storage.ts) and sent with the
 //   next `start`, so its owner's code mail gets past the shared limits (D198).
 // - Case B (`googleWallet`: a Google identity that reported this address has the wallet, the email identity has none):
@@ -23,6 +27,9 @@
 // - After `start` answered, it tells the vault (`hana:auth-progress`, `loginProgress: email_code`); before going to
 //   Google (case B) it says `google`.
 // - The partner's `emailHint` prefills the field; it is dropped from the stored context on load (kept in memory only).
+//
+// - pk_test_ apps (the login entry carries /login's timings): this step's stages ride in the relay slot with the token
+//   (timings.ts `emailLoad` … `emailVerify`), each a sum of durations on this page's clock. Nothing else is measured.
 //
 // It calls only the issuer and the API's relay (its CSP's connect-src, pages.ts).
 //
@@ -47,6 +54,8 @@ export interface EmailPageDeps {
   /** Where device tickets live (window.localStorage); null when it can't be used. */
   tickets: Storage | null;
   now?: () => number;
+  /** Monotonic ms on this page's clock (0 = its navigation start), for a pk_test_ app's timings; default performance.now. */
+  perfNow?: () => number;
   /** Timers (tests drive the resend delay). */
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (t: unknown) => void;
@@ -74,9 +83,14 @@ const FRAGMENT_RE = /^#([A-Za-z0-9_-]{43})$/u;
 /** The issuer's answers that mean "this app can't use email right now": nothing the user can fix here. */
 const UNAVAILABLE = new Set(['email_not_enabled', 'no_email_client', 'app_suspended', 'invalid_key', 'scope_mismatch', 'origin_not_allowed', 'bad_request']);
 
+/** This step's pk_test_ stages (timings.ts), in the order the user meets them. */
+export const EMAIL_STEP_STAGES = ['emailLoad', 'emailEntry', 'emailStart', 'emailCode', 'emailVerify'] as const;
+type EmailStepStage = (typeof EMAIL_STEP_STAGES)[number];
+
 const TEXT = {
   rateLimited: 'Too many attempts. Try again later.',
   unreachable: 'Hana’s email service can’t be reached right now. Try again in a moment.',
+  failed: (code: string) => `Something went wrong (${code}). Try again, or close this window and start again from the app.`,
   invalidEmail: 'Enter a valid email address.',
   domain: 'Addresses on this domain can’t be used to sign in.',
   expired: 'This code expired or can’t be used any more. Send a new code.',
@@ -87,6 +101,7 @@ const TEXT = {
 export function startEmailPage(deps: EmailPageDeps): EmailPage {
   const { win, env, issuer, api } = deps;
   const now = deps.now ?? (() => Date.now());
+  const perfNow = deps.perfNow ?? (() => performance.now());
   const setT = deps.setTimeout ?? ((fn, ms) => setTimeout(fn, ms));
   const clearT = deps.clearTimeout ?? ((t) => clearTimeout(t as ReturnType<typeof setTimeout>));
   const d: Dom = dom(win.document);
@@ -143,6 +158,16 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   let address = ctx.emailHint ?? '';
   let resendTimer: unknown = null;
   let deadlineTimer: unknown = null;
+  // pk_test_ timings: the stage the page is in since `phaseAt` (it starts loading at this page's time 0).
+  const spent: Record<EmailStepStage, number> = { emailLoad: 0, emailEntry: 0, emailStart: 0, emailCode: 0, emailVerify: 0 };
+  let phase: EmailStepStage | null = 'emailLoad';
+  let phaseAt = 0;
+  const enter = (next: EmailStepStage | null) => {
+    const t = perfNow();
+    if (phase) spent[phase] += Math.max(0, t - phaseAt);
+    phase = next;
+    phaseAt = t;
+  };
 
   const remember = (patch: Partial<EmailContext>) => {
     Object.assign(ctx, patch);
@@ -192,7 +217,19 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
 
   const header = () =>
     d.h('p', {}, 'Signing in to ', d.h('strong', {}, ctx.appName), ' at ', d.h('span', { class: 'origin' }, ctx.parentOrigin));
-  const message = (text: string | null, id: string) => (text ? d.h('p', { class: 'note', attrs: { role: 'alert', id } }, text) : null);
+  /** A notice; `retry` (a transient failure) adds "Try again", which repeats the request that failed. */
+  const message = (text: string | null, id: string, retry?: () => void) => {
+    if (!text) return null;
+    const note = d.h('p', { class: 'note', attrs: { role: 'alert', id } }, text);
+    if (!retry) return note;
+    const again = d.h('button', { class: 'link', attrs: { type: 'button', id: 'email-retry' } }, 'Try again');
+    again.addEventListener('click', () => {
+      again.setAttribute('disabled', '');
+      retry();
+    });
+    note.append(' ', again);
+    return note;
+  };
   const cancelButton = () => {
     const b = d.h('button', { class: 'link', attrs: { type: 'button', id: 'email-cancel' } }, 'Cancel');
     b.addEventListener('click', () => void cancel());
@@ -213,14 +250,15 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
 
   // ---- screens ----
 
-  function showAddress(problem: string | null = null): void {
+  function showAddress(problem: string | null = null, retry?: () => void): void {
     clearT(resendTimer);
+    enter('emailEntry');
     const input = d.h('input', {
       attrs: { type: 'email', id: 'email-address', name: 'email', autocomplete: 'email', inputmode: 'email', autocapitalize: 'none', spellcheck: 'false', required: '', maxlength: '254' },
     });
     input.value = address;
     const send = d.h('button', { class: 'primary', attrs: { type: 'submit', id: 'email-send' } }, 'Send code');
-    const form = d.h('form', { attrs: { novalidate: '' } }, d.h('label', { attrs: { for: 'email-address' } }, 'Email address', input), message(problem, 'email-notice'), d.h('div', { class: 'actions' }, cancelButton(), send));
+    const form = d.h('form', { attrs: { novalidate: '' } }, d.h('label', { attrs: { for: 'email-address' } }, 'Email address', input), message(problem, 'email-notice', retry), d.h('div', { class: 'actions' }, cancelButton(), send));
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       address = input.value.trim();
@@ -235,10 +273,13 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     settle('address');
   }
 
-  function showCode(resendAfterMs: number, problem: string | null = null): void {
+  /** `code`: the code the user typed, kept in the field after a failure that wasn't about the code. */
+  function showCode(resendAfterMs: number, problem: string | null = null, retry?: () => void, code?: string): void {
+    enter('emailCode');
     const input = d.h('input', {
       attrs: { type: 'text', id: 'email-code', name: 'code', inputmode: 'numeric', autocomplete: 'one-time-code', pattern: '[0-9]{6}', maxlength: '6', required: '' },
     });
+    if (code) input.value = code;
     const go = d.h('button', { class: 'primary', attrs: { type: 'submit', id: 'email-verify' } }, 'Continue');
     const resend = d.h('button', { class: 'link', attrs: { type: 'button', id: 'email-resend', disabled: '' } }, 'Resend code');
     const other = d.h('button', { class: 'link', attrs: { type: 'button', id: 'email-other' } }, 'Use a different email');
@@ -255,7 +296,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       { attrs: { novalidate: '' } },
       d.h('p', {}, 'We sent a 6-digit code to ', d.h('strong', {}, address), '. Type it here, in this Hana window only.'),
       d.h('label', { attrs: { for: 'email-code' } }, 'Code', input),
-      message(problem, 'email-notice'),
+      message(problem, 'email-notice', retry),
       d.h('div', { class: 'actions' }, cancelButton(), go),
       d.h('p', { class: 'muted links' }, resend, ' · ', other),
     );
@@ -278,19 +319,26 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   }
 
   function busy(title: string, text: string, s: EmailStage): void {
+    enter(s === 'sending' ? 'emailStart' : s === 'verifying' ? 'emailVerify' : null);
     d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, title), header(), d.h('p', { class: 'muted' }, text)));
     stage = s;
   }
 
   // ---- steps ----
 
-  /** An issuer error as what this page shows: a notice for the screen the user is on, or a fatal end. */
-  function issuerProblem(err: unknown): { notice: string; text: string } | 'unavailable' {
-    if (!(err instanceof ApiError)) return { notice: 'api_unavailable', text: TEXT.unreachable };
-    if (err.status === 429) return { notice: err.code === 'resend_limit' ? 'resend_limit' : 'rate_limited', text: err.code === 'resend_limit' ? TEXT.resendLimit : TEXT.rateLimited };
+  /**
+   * An issuer error as what this page shows: a notice for the screen the user is on (`transient`: the service couldn't
+   * answer, so the notice offers "Try again"), or a fatal end. A limit is never transient: retrying it can't help.
+   */
+  function issuerProblem(err: unknown): { notice: string; text: string; transient: boolean } | 'unavailable' {
+    if (!(err instanceof ApiError)) return { notice: 'api_unavailable', text: TEXT.unreachable, transient: true };
+    if (err.status === 429) {
+      const limit = err.code === 'resend_limit';
+      return { notice: limit ? 'resend_limit' : 'rate_limited', text: limit ? TEXT.resendLimit : TEXT.rateLimited, transient: false };
+    }
     if (UNAVAILABLE.has(err.code)) return 'unavailable';
-    if (err.status >= 500) return { notice: 'api_unavailable', text: TEXT.unreachable };
-    return { notice: err.code, text: TEXT.unreachable };
+    if (err.status >= 500) return { notice: 'api_unavailable', text: TEXT.unreachable, transient: true };
+    return { notice: err.code, text: TEXT.failed(err.code), transient: false };
   }
 
   const unavailable = () =>
@@ -326,7 +374,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       if (p === 'unavailable') return unavailable();
       notice = p.notice;
       if (p.notice === 'rate_limited') reason = 'email_rate_limited';
-      showAddress(p.text);
+      showAddress(p.text, p.transient ? () => void sendCode() : undefined);
     }
   }
 
@@ -358,7 +406,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       if (p === 'unavailable') return unavailable();
       notice = p.notice;
       if (p.notice === 'rate_limited') reason = 'email_rate_limited';
-      showCode(now() + RESEND_WAIT_MAX_MS, p.text);
+      showCode(now() + RESEND_WAIT_MAX_MS, p.text, p.transient ? () => void resendCode() : undefined);
     }
   }
 
@@ -394,7 +442,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       if (p === 'unavailable') return unavailable();
       notice = p.notice;
       if (p.notice === 'rate_limited') reason = 'email_rate_limited';
-      showCode(resendAfterMs, p.text);
+      showCode(resendAfterMs, p.text, p.transient ? () => void verifyCode(code, resendAfterMs) : undefined, code);
       return;
     }
     if (verified.deviceTicket) saveDeviceTicket(deps.tickets, address, verified.deviceTicket, now());
@@ -407,6 +455,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
 
   /** Case B: the address belongs to a wallet created with Google here; continue with Google (no link in batch 8a). */
   function showGoogleWallet(): void {
+    enter(null);
     const clientId = ctx.clientId;
     if (!clientId) {
       void abandon('email_unavailable', 'Sign in with Google', 'This email already opens a wallet you created with Google, and this app doesn’t offer Google sign-in here.', 'login_method_unavailable');
@@ -447,7 +496,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       return;
     }
     const { relayKey } = taken;
-    let body: RelayPayload | null = taken.timings && 'idToken' in payload ? { ...payload, timings: taken.timings } : payload;
+    let body: RelayPayload | null = taken.timings && 'idToken' in payload ? { ...payload, timings: { ...taken.timings, ...spent } } : payload;
     try {
       const value = await encryptRelayPayload(relayKey, rid, body);
       body = null;

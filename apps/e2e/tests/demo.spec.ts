@@ -51,8 +51,10 @@ test('the demo logs in, shows addresses and timings, signs, and copies safe diag
 
   await page.getByText('Login timings').click();
   const cells = page.locator('#timings tr').first().locator('td');
-  await expect(cells).toHaveCount(8);
-  await expect(cells.nth(5)).toHaveText(/^\d+$/u); // the chain stage, from the vault (a pk_test_ app)
+  await expect(cells).toHaveCount(9);
+  await expect(cells.nth(1)).toHaveText('google'); // the method
+  await expect(cells.nth(4)).toHaveText(/^\d+$/u); // sign-in: the `google` stage
+  await expect(cells.nth(6)).toHaveText(/^\d+$/u); // the chain stage, from the vault (a pk_test_ app)
 
   // personal_sign: the click opens the approval popup itself, with no launcher (D99); then a Stellar message and the
   // test transaction in the same popup, which waits for follow-ups.

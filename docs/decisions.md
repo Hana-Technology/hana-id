@@ -3581,6 +3581,64 @@ Spec ambiguities met while building the minimal slice of batch 8 (no linking). A
     The screen is built and unit-tested for 8b.
 - Rejected: building `get_identity` resolution now (not needed while no links exist, and batch 6 is still in review).
 
+## Demo polish (branch `fix/demo-polish`), 2026-11-03
+
+### D260. An email login's timings have their own stages; `google` is Google's only
+- Date 2026-11-03 · Status: to confirm · Source: the sandbox-dev demo's diagnostics (an email login reported
+  `google: 32476`), `packages/core/src/timings.ts`
+- Decision: the residual of the vault's hello → token was always named `google`. For an email login it is now
+  `emailRelay` (the relay's network legs), and the email step reports what it can measure on its own clock, as sums:
+  `emailLoad` (its navigation), `emailEntry` (the address screen), `emailStart` (`start` and any `resend` round trips),
+  `emailCode` (the code screen: the mail's delivery and the typing), `emailVerify` (`verify` and encrypting, up to the
+  relay POST). The chooser's time is `choose` for either method (stored by /login into its own sessionStorage entry on
+  the click, so the callback or the email step relays it). Stage names stay letters only (the record's key rule), so
+  the brief's `email_entry` is `emailEntry`. A Google-only app's timings are unchanged; a Google login through the
+  chooser has `google` less `choose`. The demo's table shows a method column and one "sign-in" column (`google`, or
+  the email step's four user and issuer stages).
+- Rejected: renaming `google` to a neutral name for both methods (breaks every saved run and the smoke page's history).
+
+### D261. GET /v1/app: reads side by side, 8 s view timeouts, one retry from the login, its own timings
+- Date 2026-11-03 · Status: to confirm · Source: a demo login with `app: 9954` (normally 0–500 ms)
+- Findings (from the code; the request log of that login wasn't available here): the `app` stage is only the wait
+  for `GET /v1/app`, which the vault asks right after `ready`. The vault's email-chain views (8a) and the registry
+  check start after `app` and run in parallel, and the vault's RPC fallback (8 s, then `rpc.testnet.near.org` at
+  ≈ 3.3 s a view, measured from Malaysia) only affects `verify`/`scopeWait`, so neither can make `app` slow. Smart
+  Placement was replaced by a fixed region (D97). What remains is the request itself on a cold isolate after a deploy:
+  the gate (D1 and the IP limiter object), two D1 rows, then `get_scope` and, for a shared-client app such as the
+  demo's, `get_config`, one after the other, each a fetch with no timeout. Measured warm from here: `GET /v1/app` 0.4–
+  1.3 s, a fastnear view 0.3 s.
+- Decision: the API reads the settings rows and the registry views side by side (`get_config` alongside `get_scope`
+  when the app has no web client of its own; its failure counts only if needed) and gives `get_scope` and
+  `get_config` an 8 s timeout (as the vault's own RPC calls). The vault's login asks `GET /v1/app` once more after a
+  5xx or a network failure. `pk_test_` responses carry the API's timings, phases `app`, `limits`, `settings`, `chain`,
+  and the login reports them inside `app` with the vault's round trip: `appRtt`, `appServer`, `appServerGate`,
+  `appServerSettings`, `appServerChain`. The next slow `app` therefore says whether it was the API (and which part)
+  or the network.
+- Rejected: prefetching `GET /v1/app` before the unlock (it would compete with the unlock call on the reload path,
+  D79's reason); an API-side RPC fallback (the API reads only `NEAR_RPC` today; a second endpoint is its own decision).
+
+### D262. The SDK's vault load: an early `connected`, one frame retry, reasons for `vault_unavailable`
+- Date 2026-11-03 · Status: to confirm · Source: "Could not load the Hana vault" for several minutes after a round of
+  deploys, with wallet extensions installed, later fine with them on
+- Findings: the SDK gave the whole load 5 s from inserting the frame to `ready`, with no retry. `ready` waits for the
+  vault page (page Worker → API Worker → 3 D1 reads), `/vault.js`, IndexedDB and, with a stored session, the
+  `POST /v1/vault/unlock` round trip (measured 2.0–3.0 s on a normal cold-ish session, `docs/context.md`). Right after
+  deploys every hop is cold (new isolates without the app cache, restarted limiter objects), and extensions that inject
+  into every frame add to the frame's load, so 5 s is easily passed; then the failure is final. The vault itself waits
+  on no chain read before `ready`, only that one API call. Not conclusive without that session's logs, but the margin
+  explains "minutes after a deploy, then fine" without the extensions being the cause.
+- Decision: the vault posts `connected` (no data) on the port as soon as it takes the hello, before storage and the
+  unlock. The SDK gives each frame 5 s to answer (`connected`, or `ready` from an older vault); a frame that doesn't
+  is removed and inserted again once (same name and `src`, the first port closed, its late events ignored); after
+  `connected`, `ready` has 20 s. `vault_unavailable` carries `data.reason` (`csp_frame_src` at once without a retry,
+  `no_answer`, `frame_timeout`, `ready_timeout`, `frame_replaced`) and `data.attempts`, with a message for each. A
+  missing vault now fails after about 10 s instead of 5. `frame-ancestors`, the hello's origin and ancestor checks and
+  the one-hello rule are unchanged; a refused hello and the vault's error page still get no answer, so "blocked by
+  the vault page" and "the vault refused" are one reason (`no_answer`) by design. Unlock timings gain `retry`.
+- Rejected: the vault answering a refused hello with a reason (tells a framing page whether a key or origin is
+  valid); retrying after `ready_timeout` (the vault is alive; a reload repeats the slow unlock); a longer single
+  timeout (a missing vault would still fail as late, and a slow one still fail).
+
 ## Superseded or amended
 
 | Was | Now | Source |
@@ -3662,6 +3720,9 @@ methods, with a global cap).
 To confirm from email login batch 8a (`feat/email-login-8a`): D245 (the email step's cancel codes and progress), D246
 (no key export for email wallets yet), D247 (the SDK surface: `login_method_unavailable`, hints, no email-only apps),
 D248 (turning email on for the demo by hand) and D249 (paths without `get_identity`, the popup's storage).
+To confirm from the demo polish (`fix/demo-polish`): D260 (an email login's own timing stages), D261 (`GET /v1/app`'s
+side-by-side reads, view timeouts, the login's retry and its timings) and D262 (the vault's `connected`, the SDK's one
+frame retry, `vault_unavailable`'s reasons).
 To confirm from the identity token's step 7 (the KMS signer's code): D215 (the manifest shape and credentials), D216
 (`DIGEST`), D217 (strict DER, the self-check), D218 (one `Sign`, no retry, limits) and D219 (the standby's region, the
 IAM policy on the active key only).

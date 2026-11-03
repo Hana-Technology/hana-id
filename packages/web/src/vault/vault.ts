@@ -5,6 +5,8 @@
 // - It accepts exactly one hana:hello: from window.parent, from an origin the app allows (and equal to
 //   location.ancestorOrigins[0] where the browser has it), with one MessagePort. It pins that origin and port and drops
 //   every later hello and every other window message from the parent.
+// - It says `connected` on the port as soon as it takes the hello, before anything that waits on storage or the
+//   network, so the SDK can tell a vault that never answered from one that is slow to unlock.
 // - After the handshake it unlocks a persisted record (one API call, no chain call), replies `ready`, then fetches
 //   GET /v1/app in the background (never on the unlock path).
 // - Requests arrive on the port only. Signatures need a guarded Approve in a Hana popup, or a match against an
@@ -342,6 +344,8 @@ export class Vault {
   private continueIntent: LauncherHandle | null = null;
   private exportJob: ExportJob | null = null;
   private appConfigPromise: Promise<AppConfig> | null = null;
+  /** Each GET /v1/app answer's round trip on this clock (pk_test_ login timings: `appRtt`). */
+  private readonly appRtts = new WeakMap<AppConfig, number>();
   private declinedPolicyId: string | null = null;
   private readonly seenIds = new Set<string>();
   private jwksCache: { keys: Jwk[]; at: number } | null = null;
@@ -440,6 +444,8 @@ export class Vault {
       onWindow: (open) => this.emit('approvalWindow', { open }),
     });
     port.onmessage = (m) => void this.onPortMessage(m.data);
+    // Before storage and the unlock: the SDK's answer deadline only covers the frame's load and this hello.
+    this.emit('connected', null);
     this.started = this.start();
   }
 
@@ -515,7 +521,9 @@ export class Vault {
   private appConfig(): Promise<AppConfig> {
     if (!this.appConfigPromise) {
       const at = this.clock.now();
+      const sent = this.perfNow();
       const p = this.api!.app().then((app) => {
+        this.appRtts.set(app, this.perfNow() - sent);
         this.applyServedPolicy(app, at);
         this.applyServedRawSign(app, at);
         return app;
@@ -742,6 +750,7 @@ export class Vault {
         timers: this.timers,
         jwks: (kid) => this.jwks(kid),
         appConfig: () => this.appConfig(),
+        appRtt: (app) => this.appRtts.get(app),
         parentWindow: this.host.parent,
         progress: (stage: LoginStage) => {
           if (this.pending === pending) this.emit('loginProgress', { stage });

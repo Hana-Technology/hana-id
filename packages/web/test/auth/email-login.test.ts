@@ -70,13 +70,13 @@ const typeInto = (id: string, value: string) => {
 
 // ---- /login: the chooser ----
 
-function loginSetup(env: HanaEnv = EMAIL_ENV) {
+function loginSetup(env: HanaEnv = EMAIL_ENV, perfNow?: () => number) {
   const win = new FakeWindow('/login', `?v=${VAULT_FRAME}`);
   const opener = remoteWindow();
   const vault = remoteWindow({ parent: opener });
   opener.frames[VAULT_FRAME] = vault;
   win.opener = asWindow(opener);
-  const page = startLoginPage({ win, env, now: () => NOW });
+  const page = startLoginPage({ win, env, now: () => NOW, ...(perfNow ? { perfNow } : {}) });
   return { win, vault, page };
 }
 
@@ -140,6 +140,31 @@ describe('/login method chooser', () => {
     expect(new URL(g.win.location.assigned[0] as string).origin).toBe('https://accounts.google.com');
   });
 
+  it('a pk_test_ login adds `choose` (chooser shown → click) to the stored timings, for either method; pk_live_ never', async () => {
+    for (const button of ['continue-google', 'continue-email']) {
+      resetDom();
+      let clock = 1000;
+      const s = loginSetup(EMAIL_ENV, () => clock);
+      const params = authParams({ methods: ['google', 'email'] });
+      const relayKey = Buffer.from(params.relayKey).toString('base64url');
+      s.win.message(params, ENV.vaultOrigin, s.vault);
+      await s.page.done;
+      clock += 2500;
+      click(button);
+      const entry = JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + params.relayId) as string) as { t: Record<string, number>; relayKey: string };
+      expect(entry.t).toEqual({ authCheck: 0, choose: 2500 });
+      // The relay key is left as it was.
+      expect(entry.relayKey).toBe(relayKey);
+    }
+    resetDom();
+    const live = loginSetup(EMAIL_ENV, () => 0);
+    const params = authParams({ methods: ['google', 'email'], pk: 'pk_live_1111111111111111' });
+    live.win.message(params, ENV.vaultOrigin, live.vault);
+    await live.page.done;
+    click('continue-email');
+    expect(JSON.parse(live.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + params.relayId) as string)).not.toHaveProperty('t');
+  });
+
   it('an env without an email issuer ignores the offer and goes to Google', async () => {
     const s = loginSetup(ENV);
     s.win.message(authParams({ methods: ['google', 'email'], method: 'email' }), ENV.vaultOrigin, s.vault);
@@ -174,7 +199,9 @@ interface EmailSetup {
   timers: (() => void)[];
 }
 
-function emailSetup(opts: { hint?: string | null; clientId?: string | null; env?: HanaEnv; storeEntry?: boolean; framed?: boolean; f?: Fakes; now?: number } = {}): EmailSetup {
+function emailSetup(
+  opts: { hint?: string | null; clientId?: string | null; env?: HanaEnv; storeEntry?: boolean; framed?: boolean; f?: Fakes; now?: number; timings?: Record<string, number>; perfNow?: () => number } = {},
+): EmailSetup {
   const p = authParams();
   const relayId = p.relayId;
   const relayKey = Uint8Array.from(p.relayKey);
@@ -185,7 +212,7 @@ function emailSetup(opts: { hint?: string | null; clientId?: string | null; env?
   win.opener = asWindow(opener);
   if (opts.framed) win.top = {};
   if (opts.storeEntry !== false) {
-    storeLoginEntry(win.sessionStorage, relayId, p.relayKey, NOW);
+    storeLoginEntry(win.sessionStorage, relayId, p.relayKey, NOW, opts.timings);
     win.sessionStorage.setItem(
       EMAIL_ENTRY_PREFIX + relayId,
       JSON.stringify({
@@ -223,6 +250,7 @@ function emailSetup(opts: { hint?: string | null; clientId?: string | null; env?
     now: () => opts.now ?? NOW,
     setTimeout: (fn) => timers.push(fn),
     clearTimeout: () => {},
+    ...(opts.perfNow ? { perfNow: opts.perfNow } : {}),
   });
   return { win, vault, page, f, relayId, relayKey, timers };
 }
@@ -351,6 +379,109 @@ describe('/login/email', () => {
     submit('email-verify');
     await flush();
     expect(pageText()).toContain('Too many attempts. Try again later.');
+  });
+
+  it('a service that can’t answer (network, 5xx) offers “Try again”, which repeats the same request', async () => {
+    const s = emailSetup();
+    s.f.issuer.start.mockRejectedValueOnce(new ApiError(502, 'near_unavailable', 'x', null, null));
+    typeInto('email-address', 'ada@example.com');
+    submit('email-send');
+    await flush();
+    expect(s.page.stage).toBe('address');
+    expect(s.page.notice).toBe('api_unavailable');
+    expect(pageText()).toContain('can’t be reached right now');
+    click('email-retry');
+    await flush();
+    expect(s.f.issuer.start).toHaveBeenCalledTimes(2);
+    expect(s.f.issuer.start.mock.calls[1]?.[1]).toBe('ada@example.com');
+    expect(s.page.stage).toBe('code');
+    // verify: the code typed stays in the field, and the retry sends it again.
+    s.f.issuer.verify.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    typeInto('email-code', '123456');
+    submit('email-verify');
+    await flush();
+    expect(s.page.stage).toBe('code');
+    expect(s.page.notice).toBe('api_unavailable');
+    expect((document.getElementById('email-code') as HTMLInputElement).value).toBe('123456');
+    click('email-retry');
+    await vi.waitFor(() => expect(s.page.stage).toBe('done'));
+    expect(s.f.issuer.verify.mock.calls).toEqual([
+      [CID, '123456'],
+      [CID, '123456'],
+    ]);
+    // resend: its retry asks for the resend again.
+    const r = emailSetup();
+    await toCode(r);
+    for (const t of r.timers) t();
+    r.f.issuer.resend.mockRejectedValueOnce(new ApiError(503, 'signer_unavailable', 'x', null, null));
+    click('email-resend');
+    await flush();
+    expect(r.page.notice).toBe('api_unavailable');
+    click('email-retry');
+    await flush();
+    expect(r.f.issuer.resend).toHaveBeenCalledTimes(2);
+    expect(pageText()).toContain('A new code is on its way');
+  });
+
+  it('a limit offers no retry; a wrong code is its own message; any other refusal names its code', async () => {
+    const s = emailSetup();
+    s.f.issuer.start.mockRejectedValueOnce(new ApiError(429, 'rate_limited', 'x', null, null));
+    typeInto('email-address', 'ada@example.com');
+    submit('email-send');
+    await flush();
+    expect(pageText()).toContain('Too many attempts');
+    expect(document.getElementById('email-retry')).toBeNull();
+    s.f.issuer.start.mockRejectedValueOnce(new ApiError(404, 'not_found', 'x', null, null));
+    submit('email-send');
+    await flush();
+    expect(s.page.notice).toBe('not_found');
+    expect(pageText()).toContain('Something went wrong (not_found)');
+    expect(pageText()).not.toContain('can’t be reached');
+    expect(document.getElementById('email-retry')).toBeNull();
+    await toCode(s);
+    s.f.issuer.verify.mockRejectedValueOnce(new ApiError(400, 'code_invalid', 'Wrong code', null, null, { attemptsLeft: 2 }));
+    typeInto('email-code', '000000');
+    submit('email-verify');
+    await flush();
+    expect(pageText()).toContain('That code is wrong. 2 tries left.');
+    expect(pageText()).not.toContain('can’t be reached');
+    expect(document.getElementById('email-retry')).toBeNull();
+  });
+
+  it('a pk_test_ login relays the step’s stages with /login’s timings, each a sum on this page’s clock', async () => {
+    let clock = 120;
+    const f = fakes();
+    f.issuer.start.mockImplementation(async () => {
+      clock += 300;
+      return challenge();
+    });
+    f.issuer.verify.mockImplementation(async () => {
+      clock += 200;
+      return { kind: 'token', idToken: TOKEN, deviceTicket: null };
+    });
+    const s = emailSetup({ f, timings: { authCheck: 2, choose: 900 }, perfNow: () => clock });
+    clock += 4000;
+    // A wrong address first: the address screen's time adds up across both visits.
+    typeInto('email-address', 'nope');
+    submit('email-send');
+    clock += 1000;
+    await toCode(s, 'ada@example.com');
+    clock += 25_000;
+    typeInto('email-code', '123456');
+    submit('email-verify');
+    await vi.waitFor(() => expect(s.page.stage).toBe('done'));
+    const [, value] = s.f.api.writeRelay.mock.calls[0] as [string, RelayCiphertext];
+    expect(await decryptRelayPayload(s.relayKey, s.relayId, value)).toEqual({
+      idToken: TOKEN,
+      timings: { authCheck: 2, choose: 900, emailLoad: 120, emailEntry: 5000, emailStart: 300, emailCode: 25_000, emailVerify: 200 },
+    });
+    // A pk_live_ login (no stored timings) relays none; a cancel never does.
+    const live = emailSetup();
+    await toCode(live);
+    click('email-cancel');
+    await vi.waitFor(() => expect(live.f.api.writeRelay).toHaveBeenCalled());
+    const [, cancelled] = live.f.api.writeRelay.mock.calls[0] as [string, RelayCiphertext];
+    expect(await decryptRelayPayload(live.relayKey, live.relayId, cancelled)).toEqual({ error: 'email_cancelled' });
   });
 
   it('an invalid or disposable address is told inline; an app without email ends the step', async () => {

@@ -30,12 +30,13 @@ One page: a testnet banner and a short explainer, then
 - **Identity token**: *Get identity token* (`hana.getIdentityToken()`, no popup) shows the token's decoded header and
   claims (display only: the page never trusts them) and a "verify it yourself" `jose` snippet with the token's own
   `iss` and `aud` (`docs/integration.md` section 15);
-- **Login timings** (collapsible): the vault's per-stage times (`app`, `popup`, `google`, `verify`, `chain`,
-  `decrypt`, which `pk_test_` apps get) and the total from the click, plus the unlock time when a page load restored
-  the session;
+- **Login timings** (collapsible): per login, its method and the vault's per-stage times (`app`, `popup`, sign-in,
+  `verify`, `chain`, `decrypt`, which `pk_test_` apps get) and the total from the click; sign-in is `google` for a
+  Google login and, for email, the email step's address, code request, code wait and verify (each listed under the
+  row, D260); other stages are listed after; plus the unlock time when a page load restored the session;
 - **Copy diagnostics**: a JSON report for bug reports, also shown on the page. It holds the env, the app key's
   first 12 characters, the page and vault origins, the SDK version, status, persistence, expiry, addresses, timings,
-  the user agent and the errors seen (code, `data.reason`, and the message with anything shaped like a token, key,
+  the user agent and the errors seen (code, `data.reason`, e.g. a `vault_unavailable`'s `no_answer` or `frame_timeout`, and the message with anything shaped like a token, key,
   signature or relay id removed). It never holds tokens, keys, signatures or relay ids: the page never sees the
   first, and `src/diagnostics.ts` builds the report field by field and scrubs the free text.
 

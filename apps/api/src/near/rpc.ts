@@ -113,7 +113,11 @@ export interface SendTxResult extends Partial<FinalOutcome> {
 }
 
 export class Rpc {
-  constructor(private readonly url: string) {}
+  /** `timeoutMs`: each call gives up after this long (an RpcError, as for an unreachable node); none by default. */
+  constructor(
+    private readonly url: string,
+    private readonly timeoutMs?: number,
+  ) {}
 
   async call<T>(method: string, params: unknown): Promise<T> {
     let res: Response;
@@ -122,6 +126,7 @@ export class Rpc {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 'hana-id-api', method, params }),
+        ...(this.timeoutMs ? { signal: AbortSignal.timeout(this.timeoutMs) } : {}),
       });
     } catch (err) {
       throw new RpcError(`NEAR RPC unreachable: ${err instanceof Error ? err.message : String(err)}`, null);

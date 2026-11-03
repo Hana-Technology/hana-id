@@ -134,8 +134,10 @@ export interface LoginContext {
   timers: Timers;
   /** Google's key for a kid (may refetch on an unknown kid); throws when Google can't be reached. */
   jwks(kid: string): Promise<Jwk | null>;
-  /** GET /v1/app, cached; throws its ApiError. */
+  /** GET /v1/app, cached (a failed request is dropped, so the next call asks again); throws its ApiError. */
   appConfig(): Promise<AppConfig>;
+  /** pk_test_ timings: the round trip of the GET /v1/app request that answered `app`, on the vault's clock. */
+  appRtt?(app: AppConfig): number | undefined;
   /** window.parent (partner mode authenticates the popup by its opener). */
   parentWindow: unknown;
   progress(stage: LoginStage): void;
@@ -159,8 +161,23 @@ export interface LoginSuccess {
   markedAt: number;
 }
 
-/** The login popup's stages that ride in the relay slot (pk_test_ apps), each a part of the vault's hello → token. */
-export const POPUP_STAGES = ['authCheck', 'callbackRedirect', 'callbackFetch', 'callbackBoot', 'callbackPrep'] as const;
+/**
+ * The login popup's stages that ride in the relay slot (pk_test_ apps), each a part of the vault's hello → token:
+ * /login's, then the callback's (Google) or the email step's (email-page.ts EMAIL_STEP_STAGES).
+ */
+export const POPUP_STAGES = [
+  'authCheck',
+  'choose',
+  'callbackRedirect',
+  'callbackFetch',
+  'callbackBoot',
+  'callbackPrep',
+  'emailLoad',
+  'emailEntry',
+  'emailStart',
+  'emailCode',
+  'emailVerify',
+] as const;
 
 /**
  * The API's own timings from a pk_test_ response, as detail entries `<prefix>Server` (its total) and
@@ -175,6 +192,9 @@ export function serverDetail(prefix: string, raw: unknown, groups: Record<string
   }
   return out;
 }
+
+/** The GET /v1/app phases (apps/api handlers.ts handleAppConfig) behind each appServer* detail. */
+export const APP_SERVER_GROUPS = { Gate: ['app', 'limits'], Settings: ['settings'], Chain: ['chain'] } as const;
 
 /** The /v1/login phases (apps/api handlers.ts `lap`, `lapRelay`) behind each loginServer* detail. */
 export const LOGIN_SERVER_GROUPS = { Gate: ['app', 'limits'], Checks: ['checks'], Relay: ['relay'], Broadcast: ['relayDispatch'], Wait: ['relayOutcome'] } as const;
@@ -333,7 +353,7 @@ export class PendingLogin {
     // Step 2: the Google client, checked against the pinned SIGNER and the inlined scope.
     let app: AppConfig;
     try {
-      app = await ctx.appConfig();
+      app = await this.appConfigWithRetry();
     } catch (e) {
       this.check();
       throw e instanceof ApiError ? apiErrorToVault(e) : fail('api_unavailable', 'Could not read the app configuration');
@@ -347,6 +367,9 @@ export class PendingLogin {
     if (this.request.method === 'email' && !emailOn) throw fail('login_method_unavailable', 'Email sign-in is not available for this app');
     this.emailOffered = emailOn;
     mark('app');
+    const appRtt = ctx.appRtt?.(app);
+    if (appRtt !== undefined) timings.appRtt = Math.max(0, appRtt);
+    Object.assign(timings, serverDetail('app', app.timings, APP_SERVER_GROUPS));
     // Q7, in the background: settled before the chain step, never an unhandled rejection.
     const scopeStarted = ctx.perfNow();
     const scopeCheck = this.checkScope(app).then(
@@ -421,6 +444,11 @@ export class PendingLogin {
       if (relayed.heldMs !== null) {
         timings.relayHeld = relayed.heldMs;
         timings.google = Math.max(0, (timings.google ?? 0) - relayed.heldMs);
+      }
+      // An email login never went to Google: the same residual is the relay's network legs (timings.ts `emailRelay`).
+      if (isJsonFormToken(idToken) && timings.google !== undefined) {
+        timings.emailRelay = timings.google;
+        delete timings.google;
       }
       // Step 7 (email): the issuer's token, checked against the chain's keys, never the API's word.
       let provider: 'google' | 'email' = 'google';
@@ -513,6 +541,21 @@ export class PendingLogin {
       }
     } finally {
       zero(salt, relayKey, relayReadKey);
+    }
+  }
+
+  /**
+   * GET /v1/app for this login, asked once more after a network error or a 5xx (the failed request was dropped from
+   * the cache, so the second call is a fresh request): a cold or briefly failing API shouldn't end the sign-in. A
+   * refusal (4xx) is final.
+   */
+  private async appConfigWithRetry(): Promise<AppConfig> {
+    try {
+      return await this.ctx.appConfig();
+    } catch (e) {
+      this.check();
+      if (e instanceof ApiError && e.status > 0 && e.status < 500) throw e;
+      return this.ctx.appConfig();
     }
   }
 

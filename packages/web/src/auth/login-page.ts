@@ -23,7 +23,7 @@ import { type Dom, dom, errorView } from './dom.ts';
 import { PageError } from './errors.ts';
 import { storeEmailContext } from './email-storage.ts';
 import { googleAuthUrl } from './google.ts';
-import { storeLoginEntry } from './login-storage.ts';
+import { addLoginTimings, storeLoginEntry } from './login-storage.ts';
 import { type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed } from './page-window.ts';
 
 export type OpenerMode = 'partner' | 'vault' | 'export';
@@ -221,17 +221,22 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
         toEmail();
         return;
       }
-      // The chooser: two buttons, nothing fetched. The relay key entry is already stored for either path.
+      // The chooser: two buttons, nothing fetched. The relay key entry is already stored for either path. A pk_test_
+      // app's entry gets `choose` (chooser shown → click) added on the click.
+      const chooserAt = perfNow();
+      const chosen = () => addLoginTimings(win.sessionStorage, msg.relayId, { choose: Math.max(0, perfNow() - chooserAt) });
       const google = d.h('button', { class: 'primary', attrs: { type: 'button', id: 'continue-google' } }, 'Continue with Google');
       const email = d.h('button', { attrs: { type: 'button', id: 'continue-email' } }, 'Continue with email');
       google.addEventListener('click', () => {
         google.setAttribute('disabled', '');
         email.setAttribute('disabled', '');
+        chosen();
         toGoogle(true);
       });
       email.addEventListener('click', () => {
         google.setAttribute('disabled', '');
         email.setAttribute('disabled', '');
+        chosen();
         toEmail();
       });
       d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Sign in'), intro(), d.h('div', { class: 'actions choose' }, google, email)));

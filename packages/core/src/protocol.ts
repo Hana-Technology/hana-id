@@ -530,6 +530,12 @@ export function parsePortReply<M extends PortMethod>(data: unknown, method: M): 
 export const LOGIN_STAGES = ['popup_connected', 'google', 'email_code', 'token', 'chain', 'key_pending', 'done'] as const;
 
 export interface PortEventMap {
+  /**
+   * The vault took the hello (every check passed) and is starting: opening its storage and unlocking a stored session,
+   * which can wait on the network. `ready` follows. The SDK then gives `ready` longer, and tells "the vault never
+   * answered" from "the vault was slow to start". An SDK that predates it drops it.
+   */
+  connected: null;
   /** `timings`: pk_test_ apps only, the vault's boot and unlock stages (timings.ts, UNLOCK_TIMING_STAGES). */
   ready: StatusResult & { warning?: 'storage_unavailable'; timings?: Record<string, number> };
   accountsChanged: { addresses: PortAddresses | null };
@@ -559,6 +565,7 @@ export type PortEventName = keyof PortEventMap;
 export type PortEvent = { [E in PortEventName]: { v: 1; event: E; data: PortEventMap[E] } }[PortEventName];
 
 const EVENTS: { [E in PortEventName]: (d: unknown) => boolean } = {
+  connected: (d) => d === null,
   ready: (d) =>
     isPlainObject(d) && (d.warning === undefined || d.warning === 'storage_unavailable') && (d.timings === undefined || isTimings(d.timings)) && isStatusResult(d, ['warning', 'timings']),
   accountsChanged: (d) => isPlainObject(d) && exactKeys(d, ['addresses']) && (d.addresses === null || isPortAddresses(d.addresses)),

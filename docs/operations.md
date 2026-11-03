@@ -1,6 +1,7 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-03 (branch `feat/email-login-8b` review fixes: "Turning linking on (batch 8b)"'s
+Last verified against code: 2026-11-03 (branch `fix/8b-rereview`: "Turning linking on (batch 8b)"'s slow second
+provider and watching `path_unconfirmed`, D263); 2026-11-03 (branch `feat/email-login-8b` review fixes: "Turning linking on (batch 8b)"'s
 second RPC, the consent screens, the API's and the issuer's redeploys for the new limits, the spike's legs C and D as
 a gate, D263–D267; "Logs and latency"'s `google_account_mismatch`); 2026-11-03 (branch `feat/email-login-8b`: "Turning linking on (batch 8b)": what users see
 in each case, the sandbox-dev checklist, lifting D248, the email-scope spike; D254–D259); 2026-11-03 (branch `fix/demo-polish`: "Hosted demo"'s vault errors and timings, "Logs
@@ -2315,7 +2316,11 @@ Checklist, in order (each check before the next):
    `rpc.testnet.near.org`; `packages/env` refuses an env with `emailIssuer` and no `rpcFallback`, or both on one
    registrable domain). Every login of a linked identity reads its path on both separately and is refused while either
    is down (D263). Check: `curl -s -X POST <each rpc> -H 'content-type: application/json' -d
-   '{"jsonrpc":"2.0","id":1,"method":"status","params":[]}'` answers on both.
+   '{"jsonrpc":"2.0","id":1,"method":"status","params":[]}'` answers on both. sandbox-dev's second provider,
+   `rpc.testnet.near.org`, is slow and rate-limited (accepted for the testnet demo; mainnet-readiness 4.19). **Watch
+   `path_unconfirmed` rates**: the vault decides it in the browser and no Worker logs it, so watch the demo's
+   *Copy diagnostics* and users' reports for `api_unavailable` with `data.reason: 'path_unconfirmed'`; a rise means
+   the second provider is failing (run the check above).
 2. **Google clients**: nothing to register. The second request uses the same client and the same
    `{authOrigin}/login/callback` redirect URI. The OAuth consent screen of each Google client used by an app with
    email must allow the `email` scope (a non-sensitive scope: no verification needed). Check (once, by hand): a

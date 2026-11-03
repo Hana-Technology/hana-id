@@ -357,11 +357,6 @@ export function endpointUrlProblem(value: string, envName: string): string | nul
   return 'must be an https URL (http only for a loopback host in local* envs)';
 }
 
-/**
- * A recorded CKD key source names distinct hosts on ≥ MIN_CKD_SOURCES registrable domains. (A key reset to a
- * placeholder by hand may leave a stale source; fetch-ckd-key rewrites both together, and the build refuses the
- * placeholder anyway.)
- */
 /** The registrable domain of a URL, or null when it doesn't parse (endpointUrlProblem reports that). */
 function safeSite(url: string): string | null {
   try {
@@ -371,6 +366,11 @@ function safeSite(url: string): string | null {
   }
 }
 
+/**
+ * A recorded CKD key source names distinct hosts on ≥ MIN_CKD_SOURCES registrable domains. (A key reset to a
+ * placeholder by hand may leave a stale source; fetch-ckd-key rewrites both together, and the build refuses the
+ * placeholder anyway.)
+ */
 function ckdSourceRules(source: { rpcs: string[] }, ctx: z.RefinementCtx): void {
   if (new Set(source.rpcs).size !== source.rpcs.length) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ckdNetworkKeySource', 'rpcs'], message: 'ckdNetworkKeySource.rpcs must be distinct' });

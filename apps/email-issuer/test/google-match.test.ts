@@ -5,9 +5,11 @@ import { describe, expect, it } from 'vitest';
 import { emailSub, normalizeEmail } from '@hana-id/email';
 import { sha256 } from '../src/bytes.ts';
 import { autoLinkPreimage, identityKey, nonceOf, sessionPreimage } from '../src/layouts.ts';
+import { IP_MATCH_LIMITS } from '../src/limits.ts';
 import {
   GOOGLE_CLIENT,
   SHARED_CLIENT,
+  VAULT,
   type GoogleAccount,
   type Harness,
   type TestApp,
@@ -424,5 +426,21 @@ describe('the four cases', () => {
     h.chain.open(app.scope, 'email', await sub(h, tagged));
     expect((await match(h, app, gAccount(`${base.slice(0, 2)}.${base.slice(2)}+1@gmail.com`))).body.decision).toBe('case_a');
     expect((await match(h, app, gAccount(`${base}@gmail.com`))).body.decision).toBe('none');
+  });
+});
+
+describe('CORS on google-match', () => {
+  it('a 429 exposes its retry-after to the vault’s origin (browsers hide it otherwise, D265)', async () => {
+    const h = await harness();
+    const app = await seedApp(h);
+    const ip = '192.0.2.77';
+    const body = { pk: app.pk, accessToken: 'ya29.x', googleIdToken: 'h.p.s', commitment: sessionCommitment(app.scope, h.clock.now).json, link: true };
+    for (let i = 0; i < IP_MATCH_LIMITS[0]!.max; i++) expect((await h.call('/v1/email/google-match', body, { ip })).status).not.toBe(429);
+    const limited = await h.call('/v1/email/google-match', body, { ip });
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get('retry-after'))).toBeGreaterThan(0);
+    expect(limited.headers.get('access-control-allow-origin')).toBe(VAULT);
+    const exposed = (limited.headers.get('access-control-expose-headers') ?? '').split(',').map((s) => s.trim().toLowerCase());
+    expect(exposed).toContain('retry-after');
   });
 });

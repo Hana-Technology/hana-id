@@ -1,7 +1,8 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-03 (branch `feat/email-login-8b` review fixes: member paths confirmed on both
+Last verified against code: 2026-11-03 (branch `fix/8b-rereview`: the issuer's CORS exposing `retry-after`, 3 consent
+screens, the pin read's 1 s timeout, the login's signal on google-match and the confirming reads; D263–D265); 2026-11-03 (branch `feat/email-login-8b` review fixes: member paths confirmed on both
 RPCs and root pins, D263; the email permission's explainer and consent screen, D264; the access token never revoked and
 google-match retried, D265; relay limits, D267); 2026-11-03 (branch `feat/email-login-8b`: automatic linking and the path through
 `get_identity` in Status, the login flows ("Email login in the popup", "Automatic linking"), key export and key
@@ -294,12 +295,12 @@ login is batch B's, message for message (no follow-up key, no google-match, no e
 3. **google-match before any chain call.** The vault sends `POST {issuer}/v1/email/google-match {pk, accessToken,
    googleIdToken, commitment, link: true, linkTicket?}` (CORS for `vaultOrigin`, D199; the vault page's CSP
    `connect-src` names the issuer, `EMAIL_ISSUER_URL`). A `429` or `503` is retried within the login (its
-   `retry-after` up to 20 s, else a backoff; 45 s of waits at most; 30 s per call). No answer: a Google identity with
+   `retry-after` up to 20 s, which the issuer's CORS exposes, else a backoff; 45 s of waits at most; 30 s per call). No answer: a Google identity with
    no wallet and no account is refused (`api_unavailable`, `email_match_unavailable`: it might be case A, and a plain
    login would open a second wallet, D255); one with a wallet or an account logs in as usual. Declined consent
    (`access_denied`) or another Google account picked on Google's screen (`google_account_mismatch`), for such an
    identity: notice `email_consent {reason, loginHint}`, the popup explains and offers "Sign in with email instead" or
-   "Try Google again" (at most 3 times), else `login_cancelled` with `email_consent_declined` /
+   "Try Google again" (at most 3 such screens per login, `EMAIL_CONSENT_ROUNDS`), else `login_cancelled` with `email_consent_declined` /
    `google_account_mismatch` (D264). A popup that can't store its next leg writes `storage_unavailable` to the slot
    the vault waits on (the login ends `storage_unavailable`).
 4. **The four cases**, from google-match's `decision`:
@@ -319,7 +320,8 @@ login is batch B's, message for message (no follow-up key, no google-match, no e
    on both, and the root `own` on both; else `api_unavailable` with `path_unconfirmed` or `path_disputed`, never the
    own path instead (D263). The vault pins the root it derived per identity (memory, and IndexedDB beside the record
    when the app keeps the wallet; identity keys only); a root that changed other than own → member is confirmed on
-   both again. With a link (D133): fresh `get_config` (links open only when
+   both again (a pin read that doesn't answer within 1 s counts as no pin). The confirming reads and google-match
+   also end when the login does (its abort signal). With a link (D133): fresh `get_config` (links open only when
    `unrecorded_wallets` is `false`), `get_identity` and `get_account` of both identities; `judgeAutoLink` (the
    contract's `auto_link` order) gives the join, the account root's path and the `auto_link` nonce; the join must be the
    case's, and the link token must verify against the chain's email keys with exactly that nonce. Then the session key

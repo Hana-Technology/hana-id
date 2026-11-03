@@ -28,6 +28,8 @@ export interface NearCallOptions {
   /** Whether an endpoint's body is an answer the caller can use; false moves to the next endpoint. Default: any object. */
   usable?: (body: Record<string, unknown>) => boolean;
   timeoutMs?: number;
+  /** The caller's own signal (a login's): its abort ends the call too, beside the timeout. */
+  signal?: AbortSignal;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -37,7 +39,7 @@ export function nearEndpoints(e: NearEndpoints): string[] {
   return e.rpcFallback && e.rpcFallback !== e.rpc ? [e.rpc, e.rpcFallback] : [e.rpc];
 }
 
-async function callOne(fetchFn: Fetch, url: string, body: string, timeoutMs: number): Promise<Record<string, unknown>> {
+async function callOne(fetchFn: Fetch, url: string, body: string, timeoutMs: number, signal?: AbortSignal): Promise<Record<string, unknown>> {
   const ctl = new AbortController();
   const timer = globalThis.setTimeout(() => ctl.abort(), timeoutMs);
   try {
@@ -48,7 +50,7 @@ async function callOne(fetchFn: Fetch, url: string, body: string, timeoutMs: num
       credentials: 'omit',
       cache: 'no-store',
       referrerPolicy: 'no-referrer',
-      signal: ctl.signal,
+      signal: signal ? AbortSignal.any([signal, ctl.signal]) : ctl.signal,
     });
     if (!res.ok) throw new Error(`NEAR RPC HTTP ${res.status}`);
     const parsed: unknown = await res.json();
@@ -69,7 +71,7 @@ export function independentEndpoints(e: NearEndpoints): readonly [string, string
 
 /** One endpoint's usable body, with no fallback; throws when it fails or the body isn't usable. */
 export async function nearCallAt(url: string, fetchFn: Fetch, method: string, params: unknown, o: NearCallOptions): Promise<Record<string, unknown>> {
-  const answer = await callOne(fetchFn, url, JSON.stringify({ jsonrpc: '2.0', id: o.id, method, params }), o.timeoutMs ?? NEAR_RPC_TIMEOUT_MS);
+  const answer = await callOne(fetchFn, url, JSON.stringify({ jsonrpc: '2.0', id: o.id, method, params }), o.timeoutMs ?? NEAR_RPC_TIMEOUT_MS, o.signal);
   if (!(o.usable ?? (() => true))(answer)) throw new Error(`NEAR RPC: ${method} failed`);
   return answer;
 }
@@ -81,7 +83,7 @@ export async function nearCall(endpoints: NearEndpoints, fetchFn: Fetch, method:
   let last: unknown = new Error('NEAR RPC: no endpoint');
   for (const url of nearEndpoints(endpoints)) {
     try {
-      const answer = await callOne(fetchFn, url, body, o.timeoutMs ?? NEAR_RPC_TIMEOUT_MS);
+      const answer = await callOne(fetchFn, url, body, o.timeoutMs ?? NEAR_RPC_TIMEOUT_MS, o.signal);
       if (usable(answer)) return answer;
       last = new Error(`NEAR RPC: ${method} failed`);
     } catch (e) {

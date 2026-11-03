@@ -126,4 +126,13 @@ describe('independent reads (D263): each provider alone, never one through the o
       expect(f.calls).toEqual([FALLBACK]);
     }
   });
+
+  it('the login’s signal ends a hanging read at once (no waiting out the timeout after the login ended)', async () => {
+    const f = fakeFetch({ [PRIMARY]: 'hang', [FALLBACK]: 'hang' });
+    const login = new AbortController();
+    const pair = new NearView(ENDS, 'signer.testnet', 'relayer.testnet', f.fetchFn, 60_000).independent(login.signal)!;
+    const reads = [pair.primary('get_identity', {}), pair.second('get_identity', {})].map((p) => p.then(() => 'answered', () => 'ended'));
+    login.abort();
+    expect(await Promise.all(reads)).toEqual(['ended', 'ended']);
+  });
 });

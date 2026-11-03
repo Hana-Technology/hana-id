@@ -77,15 +77,15 @@ export class NearView {
 
   /**
    * The env's two providers, each read alone (no fallback from one to the other), for confirming a path that isn't
-   * the signed-in identity's own (D263); null without a second provider.
+   * the signed-in identity's own (D263); null without a second provider. `signal` (the login's) ends the reads early.
    */
-  independent(): IndependentViews | null {
+  independent(signal?: AbortSignal): IndependentViews | null {
     const ends = independentEndpoints(this.endpoints);
     if (!ends) return null;
     const at =
       (url: string): ViewRead =>
       async (method, args) => {
-        const body = await nearCallAt(url, this.fetchFn, 'query', this.viewParams(method, args), { id: 'hana-vault', usable: viewAnswered, ...(this.timeoutMs ? { timeoutMs: this.timeoutMs } : {}) });
+        const body = await nearCallAt(url, this.fetchFn, 'query', this.viewParams(method, args), { id: 'hana-vault', usable: viewAnswered, ...(this.timeoutMs ? { timeoutMs: this.timeoutMs } : {}), ...(signal ? { signal } : {}) });
         return JSON.parse(fromUtf8(Uint8Array.from((body.result as { result: number[] }).result))) as unknown;
       };
     return { primary: at(ends[0]), second: at(ends[1]) };

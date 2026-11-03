@@ -143,7 +143,12 @@ export const MATCH_RETRY_BUDGET_MS = 45_000;
 export const MATCH_RETRY_FIRST_MS = 1_000;
 /** A login stops retrying google-match this long before its own deadline (LOGIN_PENDING_MS), to finish the chain step. */
 const MATCH_DEADLINE_MARGIN_MS = 90_000;
-/** How many times the email-consent screen (declined, another account) is shown in one login. */
+/** How long a login waits for its root pin (IndexedDB) before it goes on as if there were none (D263). */
+export const PIN_READ_TIMEOUT_MS = 1_000;
+/**
+ * The most email-consent screens (declined, another account) one login shows (D264: at most 3); a refusal after the
+ * last one ends the login with `login_cancelled`.
+ */
 export const EMAIL_CONSENT_ROUNDS = 3;
 
 /**
@@ -849,7 +854,8 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
       if (known) return { who: google, link: null };
       if (problem === 'unavailable') throw fail('api_unavailable', 'Hana could not check this Google account against email sign-ins; try again', { reason: 'email_match_unavailable' });
       const reason = problem === 'declined' ? 'email_consent_declined' : 'google_account_mismatch';
-      if (round >= EMAIL_CONSENT_ROUNDS) throw fail('login_cancelled', 'Google’s email address is needed to open a new wallet with Google here', { reason });
+      // `round` screens shown so far: `round - 1`; this would be screen `round`.
+      if (round > EMAIL_CONSENT_ROUNDS) throw fail('login_cancelled', 'Google’s email address is needed to open a new wallet with Google here', { reason });
       // D264: the popup explains why the address is needed and offers email instead, or Google's screen again.
       const slot = await follow.notice({ t: 'email_consent', reason: problem, loginHint: google.ref.sub }, true);
       const a = await follow.answer(slot, this.abortCtl.signal);
@@ -926,7 +932,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
     let backoff = MATCH_RETRY_FIRST_MS;
     for (;;) {
       try {
-        const m = await issuer.googleMatch({ pk: ctx.config.publishableKey, accessToken, googleIdToken: google.token, commitment, link: true, ...(linkTicket ? { linkTicket } : {}) });
+        const m = await issuer.googleMatch({ pk: ctx.config.publishableKey, accessToken, googleIdToken: google.token, commitment, link: true, ...(linkTicket ? { linkTicket } : {}) }, this.abortCtl.signal);
         this.check();
         return m;
       } catch (e) {
@@ -1053,7 +1059,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
   /** D263: `path`, named by `via`'s view, confirmed on both providers; refused (`api_unavailable`) otherwise. */
   private async confirmed(via: IdentityRef, viaView: IdentityView, path: IdentityRef): Promise<void> {
     try {
-      await confirmPath({ scopeId: this.ctx.config.scopeId, via, viaView, path, views: this.ctx.near.independent() });
+      await confirmPath({ scopeId: this.ctx.config.scopeId, via, viaView, path, views: this.ctx.near.independent(this.abortCtl.signal) });
     } catch (e) {
       this.check();
       if (e instanceof PathCheckError) {
@@ -1067,21 +1073,30 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
   }
 
   /**
-   * D263: the root this device last opened for `self`. The same, none yet, or `self` (own → member: a link activated,
-   * already confirmed on both providers): nothing more. Any other change (unlinked: member → own; another account)
-   * is confirmed on both providers now, or refused.
+   * D263: the root this device last opened for `self`. The same, none yet (or no answer within PIN_READ_TIMEOUT_MS),
+   * or `self` (own → member: a link activated, already confirmed on both providers): nothing more. Any other change
+   * (unlinked: member → own; another account) is confirmed on both providers now, or refused.
    */
   private async checkPin(self: IdentityRef, now: IdentityRef): Promise<void> {
     const pins = this.ctx.pins;
     if (!pins) return;
     const scopeId = this.ctx.config.scopeId;
     const selfKey = identityKeyHex(scopeId, self.provider, self.sub);
-    let pinned: string | null;
-    try {
-      pinned = await pins.get(selfKey);
-    } catch {
-      pinned = null;
-    }
+    // A store that never answers (a stuck IndexedDB) must not hold the login: after PIN_READ_TIMEOUT_MS it counts as no
+    // pin, as a storage error does (a new device).
+    const pinned = await new Promise<string | null>((resolve) => {
+      const timer = this.ctx.timers.setTimeout(() => resolve(null), PIN_READ_TIMEOUT_MS);
+      pins.get(selfKey).then(
+        (v) => {
+          this.ctx.timers.clearTimeout(timer);
+          resolve(v);
+        },
+        () => {
+          this.ctx.timers.clearTimeout(timer);
+          resolve(null);
+        },
+      );
+    });
     this.check();
     if (!pinned || pinned === identityKeyHex(scopeId, now.provider, now.sub) || pinned === selfKey) return;
     await this.confirmed(self, await this.identityOf(self), now);

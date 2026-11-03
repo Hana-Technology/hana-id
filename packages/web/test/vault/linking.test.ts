@@ -26,6 +26,7 @@ import {
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { HanaEnv } from '../../src/hana-env.ts';
 import { openRecordStore } from '../../src/vault/record.ts';
+import { EMAIL_CONSENT_ROUNDS, PIN_READ_TIMEOUT_MS } from '../../src/vault/login.ts';
 import { ACCOUNT_CACHE_MS } from '../../src/vault/vault.ts';
 import {
   Browser,
@@ -539,10 +540,11 @@ describe('Google’s email permission and google-match’s availability (D264, G
     await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: token, access: 'follow' } as RelayPayload);
     return { t, run, pending };
   }
-  const busy = (status: number, retryAfter?: string) =>
+  /** A busy google-match, with the issuer's CORS (it exposes `retry-after`) unless `expose` is false. */
+  const busy = (status: number, retryAfter?: string, expose = true) =>
     new Response(JSON.stringify({ error: 'busy', code: status === 429 ? 'rate_limited' : 'unavailable', requestId: 'rq' }), {
       status,
-      headers: { 'content-type': 'application/json', ...(retryAfter ? { 'retry-after': retryAfter } : {}) },
+      headers: { 'content-type': 'application/json', ...(retryAfter ? { 'retry-after': retryAfter } : {}), ...(expose ? { 'access-control-expose-headers': 'retry-after' } : {}) },
     });
 
   it('declined (access_denied in slot 1), a new Google identity: the popup explains; “Sign in with email instead” logs in with email', async () => {
@@ -581,15 +583,18 @@ describe('Google’s email permission and google-match’s availability (D264, G
     expect(b.backend.count('/v1/login')).toBe(0);
   });
 
-  it('declined every time: after EMAIL_CONSENT_ROUNDS screens the login ends (email_consent_declined)', async () => {
+  it('declined every time: EMAIL_CONSENT_ROUNDS (3, D264) screens, then the login ends (email_consent_declined)', async () => {
+    expect(EMAIL_CONSENT_ROUNDS).toBe(3);
     const b = emailBrowser();
     const { t, run, pending } = await followLogin(b);
     await answer(t, run, 0, { error: 'access_denied' });
-    expect((await notice(t, run, 2)).t).toBe('email_consent');
-    await answer(t, run, 2, { error: 'access_denied' });
-    expect((await notice(t, run, 4)).t).toBe('email_consent');
-    await answer(t, run, 4, { error: 'access_denied' });
+    for (let i = 1; i <= EMAIL_CONSENT_ROUNDS; i++) {
+      expect((await notice(t, run, 2 * i)).t).toBe('email_consent');
+      await answer(t, run, 2 * i, { error: 'access_denied' });
+    }
     expect((await pending).error).toMatchObject({ code: 'login_cancelled', data: { reason: 'email_consent_declined' } });
+    // No fourth screen.
+    expect(b.backend.relay.has(followSlot(run.params.followKey as Uint8Array, 2 * EMAIL_CONSENT_ROUNDS + 2).id)).toBe(false);
   });
 
   it('declined by an identity that already has a wallet: a plain login, no screen', async () => {
@@ -638,6 +643,16 @@ describe('Google’s email permission and google-match’s availability (D264, G
     const t = await tab(b);
     expect((await login(t, g)).reply.error).toMatchObject({ code: 'api_unavailable', data: { reason: 'email_match_unavailable' } });
     expect(b.backend.matchCalls).toHaveLength(1);
+  });
+
+  it('M1: the retry-after reaches the vault only because the issuer’s CORS exposes it (hidden, the vault backs off)', async () => {
+    const b = emailBrowser();
+    let n = 0;
+    // Not exposed: the browser hides the 600 s, so the vault retries after its own backoff instead of giving up.
+    b.backend.googleMatch = () => (++n === 1 ? busy(429, '600', false) : { decision: 'none', googleHosted: false, linkable: false });
+    const t = await tab(b);
+    expect((await login(t, g)).reply.error).toBeUndefined();
+    expect(b.backend.matchCalls).toHaveLength(2);
   });
 });
 
@@ -885,6 +900,68 @@ describe('D263: the root this device last opened for an identity', () => {
       method === 'get_identity' && args.provider === G.provider && args.sub === G.sub ? { key: Buffer.from(ik(G)).toString('hex'), status: 'own', opened: false, account_epoch: 0 } : undefined,
     );
     expect((await login(t, g)).reply.error).toMatchObject({ code: 'api_unavailable', data: { reason: 'path_disputed' } });
+  });
+});
+
+describe('D263: a link that activates between the read and the transaction (movedPath)', () => {
+  /** G's link into E's account activates as /v1/login runs: the vault read G as own, the contract derives E's path. */
+  function activateOnLogin(b: Browser) {
+    b.backend.opened.add(Buffer.from(ik(E)).toString('hex'));
+    b.backend.overrides.set('/v1/login', () => {
+      if (!b.backend.accountOf(Buffer.from(ik(G)).toString('hex'))) b.backend.link(E, G);
+      return undefined;
+    });
+  }
+  const fallbackIdentityReads = (b: Browser) => b.backend.rpcCalls.filter((c) => c.endpoint === RPC_FALLBACK && c.params.method_name === 'get_identity').length;
+
+  it('both providers agree the identity is now a member: the root’s path is taken', async () => {
+    const b = new Browser();
+    activateOnLogin(b);
+    const t = await tab(b, ENV2);
+    const { reply } = await login(t, g);
+    expect((reply.result as { addresses: unknown }).addresses).toEqual(addressesOf(pathOf(E)));
+    expect(b.backend.count('/v1/login')).toBe(1);
+    // The moved path was confirmed on the second provider, not taken from the primary's word.
+    expect(fallbackIdentityReads(b)).toBeGreaterThan(0);
+  });
+
+  it('the second provider disputes it (still own): path_disputed, no key', async () => {
+    const b = new Browser();
+    activateOnLogin(b);
+    b.backend.viewLies.set(RPC_FALLBACK, (method, args) =>
+      method === 'get_identity' && args.provider === G.provider && args.sub === G.sub ? { key: Buffer.from(ik(G)).toString('hex'), status: 'own', opened: false, account_epoch: 0 } : undefined,
+    );
+    const t = await tab(b, ENV2);
+    const { reply } = await login(t, g);
+    expect(reply.error).toMatchObject({ code: 'api_unavailable', data: { reason: 'path_disputed' } });
+    expect(reply.result).toBeUndefined();
+    expect(b.backend.count('/v1/login')).toBe(1);
+  });
+});
+
+describe('D263: a root pin read that never answers', () => {
+  it('a stuck pin store counts as no pin after PIN_READ_TIMEOUT_MS: the login goes on', async () => {
+    expect(PIN_READ_TIMEOUT_MS).toBe(1_000);
+    const b = new Browser();
+    b.backend.opened.add(Buffer.from(ik(E)).toString('hex'));
+    b.backend.link(E, G);
+    let pinReads = 0;
+    b.openStore = async () => {
+      const store = await openRecordStore(b.idb);
+      return {
+        ...store,
+        get: (key: string) => {
+          if (!key.startsWith('pin|')) return store.get(key);
+          pinReads += 1;
+          return new Promise<never>(() => undefined);
+        },
+      };
+    };
+    const t = await tab(b, ENV2);
+    const { reply } = await login(t, g);
+    expect(reply.error).toBeUndefined();
+    expect((reply.result as { addresses: unknown }).addresses).toEqual(addressesOf(pathOf(E)));
+    expect(pinReads).toBe(1);
   });
 });
 

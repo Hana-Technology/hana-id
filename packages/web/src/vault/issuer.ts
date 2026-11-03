@@ -6,8 +6,8 @@
 // The vault re-judges everything from its own RPC before it uses that token (D133), but which email identity the
 // Google address matches is the issuer's word alone (K_sub is the issuer's): see D266.
 //
-// A 429 or 503 is MatchBusy (with the `retry-after`, when sent): the login retries it (G-M3). The request gives up after
-// MATCH_TIMEOUT_MS (G-L5).
+// A 429 or 503 is MatchBusy (with the `retry-after`, when sent; the issuer's CORS exposes it): the login retries it
+// (G-M3). The request gives up after MATCH_TIMEOUT_MS (G-L5), or when the login's own signal aborts.
 //
 // SECURITY: the body carries Google's ID and access tokens; the answer may carry an email token. Nothing here logs a
 // body or puts one in an error; the address never reaches the vault (the issuer reads it from Google and drops it).
@@ -88,13 +88,14 @@ export function parseGoogleMatch(body: Record<string, unknown>): GoogleMatch {
 }
 
 export interface IssuerApi {
-  googleMatch(r: MatchRequest): Promise<GoogleMatch>;
+  /** `signal` (the login's) ends the request early, beside MATCH_TIMEOUT_MS. */
+  googleMatch(r: MatchRequest, signal?: AbortSignal): Promise<GoogleMatch>;
 }
 
 export function issuerApi(issuerUrl: string, fetchFn: Fetch = (...args) => fetch(...args)): IssuerApi {
   const base = `${new URL(issuerUrl).origin}/v1/email`;
   return {
-    async googleMatch(r) {
+    async googleMatch(r, signal) {
       const res = await fetchFn(`${base}/google-match`, {
         method: 'POST',
         cache: 'no-store',
@@ -102,7 +103,7 @@ export function issuerApi(issuerUrl: string, fetchFn: Fetch = (...args) => fetch
         referrerPolicy: 'no-referrer',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(r),
-        signal: AbortSignal.timeout(MATCH_TIMEOUT_MS),
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(MATCH_TIMEOUT_MS)]) : AbortSignal.timeout(MATCH_TIMEOUT_MS),
       });
       if (res.status === 429 || res.status === 503) {
         const after = retryAfterMs(res);

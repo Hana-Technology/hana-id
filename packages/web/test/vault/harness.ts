@@ -209,6 +209,22 @@ type Handler = (call: ApiCall) => Response | Promise<Response | undefined> | und
 const json = (status: number, body: unknown): Response => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 export const apiError = (status: number, code: string, extra: Record<string, unknown> = {}): Response => json(status, { error: code, code, requestId: 'rq', ...extra });
 
+/** The response headers every cross-origin page may read (Fetch's CORS-safelisted response-header names). */
+const CORS_SAFELISTED = new Set(['cache-control', 'content-language', 'content-length', 'content-type', 'expires', 'last-modified', 'pragma']);
+
+/**
+ * A cross-origin response as the page's fetch sees it: a header that isn't safelisted is hidden unless the response
+ * names it in `access-control-expose-headers` (as a browser does), so a test catches a server that forgets to expose one.
+ */
+export function corsView(res: Response): Response {
+  const exposed = new Set((res.headers.get('access-control-expose-headers') ?? '').split(',').map((h) => h.trim().toLowerCase()));
+  const headers = new Headers();
+  res.headers.forEach((v, k) => {
+    if (CORS_SAFELISTED.has(k) || exposed.has(k)) headers.set(k, v);
+  });
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
 export class FakeBackend {
   readonly sessions = new Map<string, ChainSession>();
   readonly shares = new Map<string, FakeShare>();
@@ -419,9 +435,10 @@ export class FakeBackend {
     if (url.origin === 'https://issuer.test' && url.pathname === '/v1/email/google-match') {
       const b = body as Record<string, unknown>;
       this.matchCalls.push(b);
-      if (!this.googleMatch) return apiError(503, 'unavailable');
+      if (!this.googleMatch) return corsView(apiError(503, 'unavailable'));
       const r = this.googleMatch(b);
-      return r instanceof Response ? r : json(200, r);
+      // The issuer is another origin: the vault reads only what its CORS exposes.
+      return corsView(r instanceof Response ? r : json(200, r));
     }
     const call: ApiCall = { method: init?.method ?? 'GET', path: url.pathname, headers, body };
     this.calls.push(call);

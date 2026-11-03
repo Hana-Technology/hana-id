@@ -10,12 +10,17 @@ export function json(status: number, body: unknown, headers: Record<string, stri
 export const error = (status: number, code: string, message: string, data?: Record<string, unknown>, headers: Record<string, string> = {}): Response =>
   json(status, { error: message, code, ...(data ? { data } : {}) }, headers);
 
-/** CORS for one checked origin (or `*` for the public key documents). No credentials: the issuer never sets cookies (D70). */
+/**
+ * CORS for one checked origin (or `*` for the public key documents). No credentials: the issuer never sets cookies (D70).
+ * `retry-after` is exposed: browsers hide a non-safelisted response header from a cross-origin page unless it is named
+ * here, and the vault waits google-match's `retry-after` (D265), the auth page its `start`/`resend` ones.
+ */
 export function corsHeaders(origin: string): Record<string, string> {
   return {
     'access-control-allow-origin': origin,
     'access-control-allow-methods': origin === '*' ? 'GET, OPTIONS' : 'POST, OPTIONS',
     'access-control-allow-headers': 'content-type',
+    'access-control-expose-headers': 'retry-after',
     'access-control-max-age': '600',
     ...(origin === '*' ? {} : { vary: 'Origin' }),
   };

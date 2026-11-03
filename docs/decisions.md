@@ -10,7 +10,8 @@ change (branch `fix/email-plus-tags`) on 2026-11-02; D190–D193 (branch `feat/e
 2026-11-02. D210–D214 (branch `feat/identity-token-8`, to confirm, amended after its review the same
 day) on 2026-11-02. D230–D234, D250–D252 (branch `feat/email-login-6`, to confirm) on 2026-11-02, with batch 6 notes on D137,
 D154, D155, D199 and D206. D263–D267 (the batch 8b review, branch `feat/email-login-8b`, to confirm) on 2026-11-03, with
-notes on D42, D254 and D255. Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
+notes on D42, D254 and D255; D263's operations and pin-read notes and D264's screen count (`EMAIL_CONSENT_ROUNDS`)
+on 2026-11-03 (branch `fix/8b-rereview`). Status lines of D4, D33, D80–D82, D85–D87, D100, D120, D190, D191, D193 and D200, D123 Q3's
 provider note, two "Superseded or amended" rows, the user-mail line under "Proposed", and the headings from D125 on, checked against `develop` @ 1c6a124 and what sandbox-dev runs (`docs/operations.md`) on
 2026-11-02 (branch `docs/consistency-pass`); no decision changed. D220–D224 (branch `feat/batch-c-4`, to confirm) on
 2026-11-02. D245–D249 (branch `feat/email-login-8a`, to confirm) on 2026-11-02. D254–D259 (branch `feat/email-login-8b`, to
@@ -3803,6 +3804,12 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   forged wallet from their own, so the rare refusal while a provider is down is the right cost.
 - Cost: a linked identity can't sign in while either provider is down (the playbook `near-rpc-outage` says so); four
   more view reads per member login.
+- Operations: watch the rate of `path_unconfirmed` refusals (it rises when `rpcFallback` is down or rate-limits the
+  vault). Testnet: sandbox-dev's second provider is `rpc.testnet.near.org` (slow, rate-limited), now needed by every
+  linked login; accepted for the testnet demo. Before mainnet: keyed, operator-independent providers, and maybe 2 of
+  3 (`docs/mainnet-readiness.md` row 4.19); 2-of-3 is not built. (Re-review, 2026-11-03.)
+- A pin read that doesn't answer within 1 s counts as no pin, as a storage error does (re-review L3); the pins
+  outlive logout on a shared device (an identity-key hash per scope: `docs/security.md`).
 - Rejected: trusting the pairing check alone (the finding); one provider at `final` finality (still one provider);
   falling back to the own path when unconfirmed (a second wallet, and the user's funds split); refusing every root
   change outright (an unlinked user would be locked out on that device for good).
@@ -3825,7 +3832,8 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
     one Google account, then picked a different one when Google asked to share your email address. Try Google again
     and pick the account you signed in with, or sign in with email instead."), with **Sign in with email instead** (an
     email login, `as: 'session'`), **Try Google again** (Google's permission screen for `loginHint`, its answer in
-    the next slot) and Cancel. At most 3 such screens per login; then, or on Cancel, `login_cancelled` with
+    the next slot) and Cancel. At most 3 such screens per login (`vault/login.ts` `EMAIL_CONSENT_ROUNDS`: a refusal
+    on the third ends the login; until the 2026-11-03 re-review the code ended it after 2); then, or on Cancel, `login_cancelled` with
     `data.reason: 'email_consent_declined'` or `'google_account_mismatch'` (never `email_match_unavailable`, which
     stays for an issuer that can't answer). An identity with a wallet or an account logs in as before, no screen.
   - D42's partner-held client warning gains: with email login on, users grant that client the `email` scope, so

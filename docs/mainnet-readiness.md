@@ -3,7 +3,7 @@
 Everything that must be true before Hana ID runs on mainnet with real funds. This is a current-state doc for the
 two founders to track. Update a row in the same branch as the change that moves it (rule in `CLAUDE.md`).
 
-Last verified: 2026-11-03 for rows 7.1h and 7.1i (branch `feat/email-login-8b` review fixes, D263–D267); 2026-11-03 for
+Last verified: 2026-11-03 for row 4.19 (branch `fix/8b-rereview`, the second NEAR provider, D263); 2026-11-03 for rows 7.1h and 7.1i (branch `feat/email-login-8b` review fixes, D263–D267); 2026-11-03 for
 rows 7.1f and 7.1g (branch `feat/email-login-8b`, automatic linking, D254–D259); 2026-11-02
 before that (branch `feat/email-login-8a`, plain email login in the web, D245–D249);
 2026-11-02 for rows 7.1–7.1e (branch `feat/email-login-6`, the API's email login part and its reviews, D230–D234, D250–D252);
@@ -140,6 +140,7 @@ These have the longest lead time, or other rows wait on them.
 | 4.16 | D1 backup beyond 30 days and outside Cloudflare (export of the apps tables) | Time Travel stops at 30 days | not built | Claude build | D152; playbooks `d1-data-loss` |
 | 4.17 | SDK published: `NPM_TOKEN`, drop `"private": true`, claim the `@hana-id` npm scope | Partners install outside the monorepo | unclear: check (scope claim status not recorded) | founder | D1, D72; operations.md "SDK publishing" |
 | 4.18 | Usage ledger Hyperdrive configs created through Cloudflare's REST API with the role password in the HTTPS body, not `wrangler hyperdrive create --connection-string` (the password is in the local process list while it runs; acceptable on sandbox-dev only) | The writer's credential could insert made-up usage | not built | Claude build, founder | D224; operations.md "Usage capture" step 3 |
+| 4.19 | Keyed, operator-independent NEAR RPC providers for `rpc` and `rpcFallback` (each its own account and API key, run by different operators), and consider requiring 2 out of 3 for D263's path confirmations (e.g. adding `near-testnet.drpc.org`'s mainnet counterpart as a third) | Every login of a linked identity is refused (`path_unconfirmed`) while either provider is down or rate-limits it; sandbox-dev's second provider is the public `rpc.testnet.near.org`, slow and rate-limited, accepted for the testnet demo | not built (2-of-3 not built; testnet accepted) | founder, Claude build | D263; operations.md "Turning linking on (batch 8b)" |
 
 ## 5. Monitoring and paging
 

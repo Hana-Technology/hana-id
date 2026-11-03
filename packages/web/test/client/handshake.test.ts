@@ -118,6 +118,8 @@ describe('handshake', () => {
     expect(s.vault.hello).toBe(first);
   });
 
+  /** A frame's answer deadline plus the task the SDK drains before deciding. */
+  const DEADLINE = ANSWER_TIMEOUT_MS + 1;
   const frames = () => [...document.querySelectorAll('iframe[name^="hana-vault-"]')] as HTMLIFrameElement[];
 
   it('replaces a frame that loaded but did not answer within 5 s once, then rejects with vault_unavailable (no_answer)', async () => {
@@ -125,7 +127,7 @@ describe('handshake', () => {
     s.vault.load();
     await vi.advanceTimersByTimeAsync(ANSWER_TIMEOUT_MS - 1);
     expect(s.client.status).toBe('unlocking');
-    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(2); // the deadline, then the drained task
     // The retry: the first frame is gone, a new one with the same name and src is in.
     expect(frames()).toHaveLength(1);
     const second = frames()[0]!;
@@ -135,28 +137,50 @@ describe('handshake', () => {
     expect(second.getAttribute('src')).toBe(`${ORIGINS.vaultOrigin}/vault?pk=${PK}`);
     expect(s.client.status).toBe('unlocking');
     new FakeVault(second).load();
-    await vi.advanceTimersByTimeAsync(ANSWER_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(DEADLINE);
     const e = await rejection(s.client.ready);
     expect(e.code).toBe('vault_unavailable');
     expect(e.data).toEqual({ reason: 'no_answer', attempts: 2 });
     expect(e.message).toBe(VAULT_UNAVAILABLE_MESSAGES.no_answer);
     expect(s.client.status).toBe('error');
     expect(s.client.error?.code).toBe('vault_unavailable');
-    expect(frames()).toHaveLength(1);
+    // A failed handshake leaves no frame behind.
+    expect(frames()).toHaveLength(0);
   });
 
-  it('a frame that never loads is frame_timeout', async () => {
+  it('a frame still loading gets one more deadline, not a replacement; then frame_timeout', async () => {
     s = setup();
-    await vi.advanceTimersByTimeAsync(2 * ANSWER_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(DEADLINE);
+    expect(frames()).toEqual([s.frame]);
+    expect(s.client.status).toBe('unlocking');
+    await vi.advanceTimersByTimeAsync(DEADLINE);
     const e = await rejection(s.client.ready);
-    expect(e.data).toEqual({ reason: 'frame_timeout', attempts: 2 });
+    expect(e.data).toEqual({ reason: 'frame_timeout', attempts: 1 });
     expect(e.message).toMatch(/didn't load in time/u);
+    expect(frames()).toHaveLength(0);
+  });
+
+  it('a frame that loads during its extra time and then answers connects', async () => {
+    s = setup();
+    await vi.advanceTimersByTimeAsync(ANSWER_TIMEOUT_MS + 1_000);
+    await s.vault.connect(LOGGED_OUT);
+    await expect(s.client.ready).resolves.toBeUndefined();
+    expect(frames()).toEqual([s.frame]);
+  });
+
+  it('a frame that loads during its extra time but never answers is replaced once', async () => {
+    s = setup();
+    await vi.advanceTimersByTimeAsync(ANSWER_TIMEOUT_MS + 1_000);
+    s.vault.load();
+    await vi.advanceTimersByTimeAsync(DEADLINE);
+    expect(frames()).toHaveLength(1);
+    expect(frames()[0]).not.toBe(s.frame);
   });
 
   it('the retried frame can still connect, and a late answer from the first frame counts for nothing', async () => {
     s = setup();
     s.vault.load();
-    await vi.advanceTimersByTimeAsync(ANSWER_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(DEADLINE);
     const second = new FakeVault(frames()[0]!);
     // The first frame's vault answers late: its port was closed and is ignored.
     s.vault.emit('ready', LOGGED_IN);
@@ -182,7 +206,8 @@ describe('handshake', () => {
     await vi.advanceTimersByTimeAsync(1);
     const e = await rejection(s.client.ready);
     expect(e.data).toEqual({ reason: 'ready_timeout', attempts: 1 });
-    expect(frames()).toEqual([s.frame]);
+    // No retry, and the failed frame is gone.
+    expect(frames()).toHaveLength(0);
   });
 
   it('a second load before ready is frame_replaced, without a retry', async () => {
@@ -208,9 +233,9 @@ describe('handshake', () => {
   it('a late ready after the timeout is ignored, and requests stay refused', async () => {
     s = setup();
     s.vault.load();
-    await vi.advanceTimersByTimeAsync(ANSWER_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(DEADLINE);
     new FakeVault(frames()[0]!).load();
-    await vi.advanceTimersByTimeAsync(ANSWER_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(DEADLINE);
     s.vault.emit('ready', LOGGED_IN);
     s.vault.emit('accountsChanged', { addresses: { stellar: STELLAR, evm: EVM } });
     await flush();
@@ -228,9 +253,9 @@ describe('handshake', () => {
     expect(e.code).toBe('vault_unavailable');
     expect(e.data).toEqual({ reason: 'csp_frame_src', attempts: 1 });
     expect(e.message).toBe(VAULT_UNAVAILABLE_MESSAGES.csp_frame_src);
-    // No retry for a block the page's own policy makes.
+    // No retry for a block the page's own policy makes; the frame is removed.
     await vi.advanceTimersByTimeAsync(2 * ANSWER_TIMEOUT_MS);
-    expect(frames()).toEqual([s.frame]);
+    expect(frames()).toHaveLength(0);
   });
 
   it('ignores a report-only frame-src violation for vaultOrigin: the frame still loads, and ready resolves', async () => {

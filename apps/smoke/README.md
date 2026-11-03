@@ -170,7 +170,7 @@ Unlock stages, in order:
 | Stage | Clock | What it covers |
 |---|---|---|
 | `mount` | partner page | `createHana` until the (first) iframe is in the document |
-| `retry` | partner page | only when the first frame didn't answer in time: the first iframe → the second one (D262) |
+| `retry` | partner page | only when the first frame loaded but didn't answer in time: the first iframe → the second one (D262) |
 | `frameStart` | partner page | the iframe's load as the page sees it, minus the four `vault*` stages: its navigation start |
 | `vaultFetch` | vault document | navigation start → the vault page's last byte (DNS, TLS, the page Worker, the API Worker's D1 reads, the HTML) |
 | `vaultScript` | vault document | parsing and loading `/vault.js` until it runs |

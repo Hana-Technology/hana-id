@@ -390,6 +390,7 @@ describe('/login/email', () => {
     expect(s.page.stage).toBe('address');
     expect(s.page.notice).toBe('api_unavailable');
     expect(pageText()).toContain('can’t be reached right now');
+    expect(pageText()).toContain('A code may already be on its way');
     click('email-retry');
     await flush();
     expect(s.f.issuer.start).toHaveBeenCalledTimes(2);
@@ -403,11 +404,14 @@ describe('/login/email', () => {
     expect(s.page.stage).toBe('code');
     expect(s.page.notice).toBe('api_unavailable');
     expect((document.getElementById('email-code') as HTMLInputElement).value).toBe('123456');
+    expect(pageText()).not.toContain('A code may already be on its way');
+    // The retry sends what the field holds when it is clicked.
+    typeInto('email-code', '654 321');
     click('email-retry');
     await vi.waitFor(() => expect(s.page.stage).toBe('done'));
     expect(s.f.issuer.verify.mock.calls).toEqual([
       [CID, '123456'],
-      [CID, '123456'],
+      [CID, '654321'],
     ]);
     // resend: its retry asks for the resend again.
     const r = emailSetup();
@@ -417,6 +421,13 @@ describe('/login/email', () => {
     click('email-resend');
     await flush();
     expect(r.page.notice).toBe('api_unavailable');
+    // Its retry waits out the resend delay, as the Resend button does.
+    expect((document.getElementById('email-retry') as HTMLButtonElement).disabled).toBe(true);
+    click('email-retry');
+    await flush();
+    expect(r.f.issuer.resend).toHaveBeenCalledTimes(1);
+    for (const t of r.timers.splice(0)) t();
+    expect((document.getElementById('email-retry') as HTMLButtonElement).disabled).toBe(false);
     click('email-retry');
     await flush();
     expect(r.f.issuer.resend).toHaveBeenCalledTimes(2);

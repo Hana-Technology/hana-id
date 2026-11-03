@@ -7,8 +7,10 @@
 //    targetOrigin = vaultOrigin, transferring port2. From then on everything goes over port1.
 // 3. Wait for the vault's answer: `connected` (it took the hello and is starting) or `ready`, within ANSWER_TIMEOUT_MS
 //    of the frame's insertion; then `ready` within READY_AFTER_CONNECT_MS of `connected` (the vault's unlock waits on
-//    the Hana API). A frame that didn't answer in time is replaced once (FRAME_ATTEMPTS, same name and src); then, or
-//    when `ready` is late, `vault_unavailable` with `data.reason` saying which (VAULT_UNAVAILABLE_MESSAGES). A CSP
+//    the Hana API). At the deadline one task is drained first (an answer already queued still counts). A frame still
+//    loading gets one more ANSWER_TIMEOUT_MS, then fails `frame_timeout`; a frame that loaded but didn't answer is
+//    replaced once (FRAME_ATTEMPTS, same name and src). Then, or when `ready` is late, `vault_unavailable` with
+//    `data.reason` saying which (VAULT_UNAVAILABLE_MESSAGES), and the frame and its port are removed. A CSP
 //    `frame-src` violation for vaultOrigin fails at once, without a retry (partner requirement, detected); a
 //    report-only one doesn't block anything. The vault reports nothing before `connected`: a hello it refuses and its
 //    error page (403/503, framed nowhere) get no answer, by design, so a framing page learns nothing from it.
@@ -113,6 +115,8 @@ export class VaultConnection {
   #attempts = 0;
   /** The current frame's vault said `connected`. */
   #connected = false;
+  /** The current frame's answer deadline was extended once because it was still loading. */
+  #extended = false;
   #readyDone = false;
   /** `ready` arrived in time: requests may be sent. */
   #readyOk = false;
@@ -166,10 +170,25 @@ export class VaultConnection {
     frame.addEventListener('load', () => this.#onLoad(frame));
     this.#frame = frame;
     this.#attempts += 1;
-    this.#arm(ANSWER_TIMEOUT_MS, () => this.#noAnswer());
+    this.#extended = false;
+    this.#connected = false;
+    this.#armAnswer();
     container.append(frame);
     this.#appendedAt = this.#now();
     if (this.#attempts === 1) this.#firstAppendedAt = this.#appendedAt;
+  }
+
+  /**
+   * The current frame's answer deadline. At it, one task is drained (setTimeout 0) before deciding, so a `connected`
+   * or `ready` already queued on the port still lands.
+   */
+  #armAnswer(): void {
+    const frame = this.#frame;
+    this.#arm(ANSWER_TIMEOUT_MS, () => {
+      this.#readyTimer = setTimeout(() => {
+        if (frame === this.#frame) this.#noAnswer();
+      }, 0);
+    });
   }
 
   #arm(ms: number, then: () => void): void {
@@ -198,15 +217,34 @@ export class VaultConnection {
     target.postMessage({ v: 1, t: 'hana:hello', sdk: this.#o.sdkVersion }, this.#o.vaultOrigin, [channel.port2]);
   }
 
-  /** The current frame didn't answer in time: replace it once, else fail. */
+  /**
+   * The current frame didn't answer in time. Still loading: one more deadline, then `frame_timeout` (a slow page isn't
+   * helped by asking for it again). Loaded without an answer: replace it once, else `no_answer`.
+   */
   #noAnswer(): void {
-    if (this.#readyDone || this.#disconnected) return;
-    const reason: VaultUnavailableReason = this.#loads > 0 ? 'no_answer' : 'frame_timeout';
+    if (this.#readyDone || this.#disconnected || this.#connected) return;
+    if (this.#loads === 0) {
+      if (!this.#extended) {
+        this.#extended = true;
+        this.#armAnswer();
+        return;
+      }
+      this.#failReady('frame_timeout');
+      return;
+    }
     if (this.#attempts >= FRAME_ATTEMPTS) {
-      this.#failReady(reason);
+      this.#failReady('no_answer');
       return;
     }
     // A fresh frame, same name and src. The old one's port is closed and its late events dropped.
+    this.#dropFrame();
+    this.#loads = 0;
+    this.#loadAt = 0;
+    this.#mount();
+  }
+
+  /** Closes the current frame's port (its late events dropped) and removes the frame. */
+  #dropFrame(): void {
     if (this.#port) {
       this.#port.onmessage = null;
       this.#port.close();
@@ -214,9 +252,6 @@ export class VaultConnection {
     this.#port = null;
     this.#frame?.remove();
     this.#frame = null;
-    this.#loads = 0;
-    this.#loadAt = 0;
-    this.#mount();
   }
 
   #cspViolation(e: SecurityPolicyViolationEvent): void {
@@ -235,6 +270,8 @@ export class VaultConnection {
     if (this.#readyDone) return;
     this.#readyDone = true;
     clearTimeout(this.#readyTimer);
+    // A failed handshake leaves nothing behind (as destroy() does): no frame, no port.
+    if (reason) this.#dropFrame();
     this.#rejectReady(
       reason ? hanaError('vault_unavailable', VAULT_UNAVAILABLE_MESSAGES[reason], { reason, attempts: this.#attempts }) : hanaError('vault_unavailable'),
     );

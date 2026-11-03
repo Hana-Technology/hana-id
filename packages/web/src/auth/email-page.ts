@@ -90,6 +90,8 @@ type EmailStepStage = (typeof EMAIL_STEP_STAGES)[number];
 const TEXT = {
   rateLimited: 'Too many attempts. Try again later.',
   unreachable: 'Hana’s email service can’t be reached right now. Try again in a moment.',
+  /** `start` failed without an answer: it may still have sent a mail. */
+  unreachableStart: 'Hana’s email service can’t be reached right now. A code may already be on its way: if you try again, use the newest code.',
   failed: (code: string) => `Something went wrong (${code}). Try again, or close this window and start again from the app.`,
   invalidEmail: 'Enter a valid email address.',
   domain: 'Addresses on this domain can’t be used to sign in.',
@@ -273,8 +275,12 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     settle('address');
   }
 
-  /** `code`: the code the user typed, kept in the field after a failure that wasn't about the code. */
-  function showCode(resendAfterMs: number, problem: string | null = null, retry?: () => void, code?: string): void {
+  /**
+   * `retry` (a transient failure): "Try again" repeats `verify` with what the code field holds when it is clicked, or
+   * the `resend`, enabled only once the resend wait is over (as the Resend button). `code`: the code the user typed,
+   * kept in the field after a failure that wasn't about the code.
+   */
+  function showCode(resendAfterMs: number, problem: string | null = null, retry?: 'verify' | 'resend', code?: string): void {
     enter('emailCode');
     const input = d.h('input', {
       attrs: { type: 'text', id: 'email-code', name: 'code', inputmode: 'numeric', autocomplete: 'one-time-code', pattern: '[0-9]{6}', maxlength: '6', required: '' },
@@ -289,25 +295,36 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       reason = 'email_cancelled';
       showAddress();
     });
-    clearT(resendTimer);
-    resendTimer = setT(() => resend.removeAttribute('disabled'), Math.min(RESEND_WAIT_MAX_MS, Math.max(0, resendAfterMs - now())));
+    const submitCode = () => {
+      const typed = input.value.replace(/\s+/gu, '');
+      if (!CODE_RE.test(typed)) {
+        showCode(resendAfterMs, 'Enter the 6-digit code from the mail.');
+        return;
+      }
+      void verifyCode(typed, resendAfterMs);
+    };
     const form = d.h(
       'form',
       { attrs: { novalidate: '' } },
       d.h('p', {}, 'We sent a 6-digit code to ', d.h('strong', {}, address), '. Type it here, in this Hana window only.'),
       d.h('label', { attrs: { for: 'email-code' } }, 'Code', input),
-      message(problem, 'email-notice', retry),
+      message(problem, 'email-notice', retry === 'verify' ? submitCode : retry === 'resend' ? () => void resendCode() : undefined),
       d.h('div', { class: 'actions' }, cancelButton(), go),
       d.h('p', { class: 'muted links' }, resend, ' · ', other),
     );
+    const retryResend = retry === 'resend' ? form.querySelector('#email-retry') : null;
+    retryResend?.setAttribute('disabled', '');
+    clearT(resendTimer);
+    resendTimer = setT(
+      () => {
+        resend.removeAttribute('disabled');
+        retryResend?.removeAttribute('disabled');
+      },
+      Math.min(RESEND_WAIT_MAX_MS, Math.max(0, resendAfterMs - now())),
+    );
     form.addEventListener('submit', (e) => {
       e.preventDefault();
-      const code = input.value.replace(/\s+/gu, '');
-      if (!CODE_RE.test(code)) {
-        showCode(resendAfterMs, 'Enter the 6-digit code from the mail.');
-        return;
-      }
-      void verifyCode(code, resendAfterMs);
+      submitCode();
     });
     d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Check your email'), header(), form));
     try {
@@ -374,7 +391,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       if (p === 'unavailable') return unavailable();
       notice = p.notice;
       if (p.notice === 'rate_limited') reason = 'email_rate_limited';
-      showAddress(p.text, p.transient ? () => void sendCode() : undefined);
+      showAddress(p.notice === 'api_unavailable' ? TEXT.unreachableStart : p.text, p.transient ? () => void sendCode() : undefined);
     }
   }
 
@@ -406,7 +423,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       if (p === 'unavailable') return unavailable();
       notice = p.notice;
       if (p.notice === 'rate_limited') reason = 'email_rate_limited';
-      showCode(now() + RESEND_WAIT_MAX_MS, p.text, p.transient ? () => void resendCode() : undefined);
+      showCode(now() + RESEND_WAIT_MAX_MS, p.text, p.transient ? 'resend' : undefined);
     }
   }
 
@@ -442,7 +459,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       if (p === 'unavailable') return unavailable();
       notice = p.notice;
       if (p.notice === 'rate_limited') reason = 'email_rate_limited';
-      showCode(resendAfterMs, p.text, p.transient ? () => void verifyCode(code, resendAfterMs) : undefined, code);
+      showCode(resendAfterMs, p.text, p.transient ? 'verify' : undefined, code);
       return;
     }
     if (verified.deviceTicket) saveDeviceTicket(deps.tickets, address, verified.deviceTicket, now());

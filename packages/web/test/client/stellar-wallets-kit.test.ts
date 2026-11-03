@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HANA_ID_ICON } from '../../src/client/icon.ts';
 import { HOT_WALLET, HanaIdModule, IS_AVAILABLE_TIMEOUT_MS } from '../../src/stellar-wallets-kit.ts';
-import { ANSWER_TIMEOUT_MS, FRAME_ATTEMPTS } from '../../src/client/vault-connection.ts';
+import { ANSWER_TIMEOUT_MS } from '../../src/client/vault-connection.ts';
 import { EVM, LOGGED_IN, LOGGED_OUT, ORIGINS, STELLAR, type Setup, flush, setup } from './harness.ts';
 
 const TESTNET = 'Test SDF Network ; September 2015';
@@ -64,7 +64,7 @@ describe('HanaIdModule', () => {
     expect(result).toBeUndefined();
     await vi.advanceTimersByTimeAsync(1);
     expect(result).toBe(false);
-    await vi.advanceTimersByTimeAsync(FRAME_ATTEMPTS * ANSWER_TIMEOUT_MS); // vault_unavailable (after its one retry)
+    await vi.advanceTimersByTimeAsync(2 * (ANSWER_TIMEOUT_MS + 1)); // vault_unavailable (the frame never loads: its deadline, then its one extension)
     await expect(m.isAvailable()).resolves.toBe(false);
   });
 

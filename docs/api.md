@@ -1,8 +1,9 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's)
 
 Last verified against code: 2026-11-03 (branch `fix/demo-polish`: `GET /v1/app` reads its D1 rows and the registry
-side by side, its `settings` and `chain` phases and its `timings` for `pk_test_` apps, the 8 s RPC timeout on
-`get_scope` and `get_config`; D261); 2026-11-02 (branch `feat/email-login-8a`: the auth page Worker's `/login/email` and its
+and the registry side by side, `get_config` only when a shared client is needed, its `settings` and `chain` phases and
+its `timings` for `pk_test_` apps, the 8 s timeout on every contract view, the self-healing shared `get_config` read;
+D261); 2026-11-02 (branch `feat/email-login-8a`: the auth page Worker's `/login/email` and its
 `EMAIL_ISSUER_URL`, the web as the caller of `start` / `resend` / `verify` and of `GET /v1/app`'s `loginMethods`;
 D245–D249); 2026-11-02 (branch `feat/email-login-6`: email tokens on `/v1/sessions` and `/v1/login`, the
 create_session proof of possession, `/v1/login`'s `linkJwt` precheck, the link relays `/v1/link*`, the email-login
@@ -279,11 +280,13 @@ Headers: `x-hana-key`; from a Hana page also `x-hana-parent-origin`. Gate kind `
   "timings": { "totalMs": 0, "phases": {} }, "requestId": "string" }
 ```
 
-After the gate, the settings and `login_methods` rows (D1) and the registry views run side by side (D261): `get_scope`
-always, and `get_config` alongside it when the app has no `google_web_client_id` (it may then need a shared client;
-cached 60 s, one read in flight per isolate). A failed `get_config` counts only when the shared client is needed. Each
-view gives up after 8 s (`VIEW_TIMEOUT_MS`, the same bound as the vault's own RPC calls), so a stalled node answers
-`502 near_unavailable` instead of holding the request; the vault asks once more (`packages/web` vault/login.ts).
+After the gate, the settings and `login_methods` rows (D1) and the registry read run side by side (D261), and both are
+awaited before any answer, on every path. The registry read is `get_scope`, then `get_config` only when the scope
+needs a shared client (the app has no `google_web_client_id`, the scope has no Google client and allows shared
+login; cached 60 s, one read in flight per isolate). A failed `get_config` counts only where the shared client is
+used. Like every contract view the API makes, each gives up after 8 s ([Timings](#timings) below), so a stalled node
+answers `502 near_unavailable` instead of holding the request; the vault asks once more (`packages/web`
+vault/login.ts).
 `timings`: `pk_test_` apps only ([Timings](#timings)).
 
 `loginMethods` (L, D231) is what the app's D1 `login_methods` enables (migration 0010; `'google'` by default, read
@@ -1201,6 +1204,13 @@ reports inside the login's `app` stage (`appServer*`):
 ```json
 "timings": { "totalMs": 0, "phases": { "app": 0, "limits": 0, "…": 0 } }
 ```
+
+**RPC view timeout.** Every contract view the API makes (`Rpc.view`, `call_function`: the scope, config, session,
+issuer and link views on every endpoint, `/v1/login`'s and `/v1/sessions`' checks included) gives up after 8 s
+(`VIEW_TIMEOUT_MS`, `src/near/rpc.ts`, D261) and fails as an unreachable node does (`502 near_unavailable` on the
+endpoints). Transactions (`send_tx`, `tx`) and the relayer's access-key and block reads wait as long as the node does.
+A shared `get_config` read in flight that hasn't settled within 10 s is no longer shared, so a read cancelled with its
+request can't hold up the isolate's later requests.
 
 `totalMs` runs from the request reaching the Worker to the answer; `phases` are the request log's (below). Durations
 only, under phase names: no request field, key, token or transaction. Like the log, they move only on I/O (the Workers

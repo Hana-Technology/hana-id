@@ -312,9 +312,10 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
   const { app } = gate;
   ctx.exposeTimings = isTestApp(app);
   // The D1 rows and the registry views don't depend on each other, so they run side by side (phases `settings` and
-  // `chain`, each from the gate's end to its own answer). `get_config` is only needed for a shared client, which an
-  // app without a web client of its own may use: it is read alongside then (cached 60 s, one read in flight per
-  // isolate), and its failure counts only if it is needed.
+  // `chain`, each from the gate's end to its own answer). `get_config` is read only when the scope says a shared
+  // client is needed (no web client of the app's own, no Google client in the scope, shared login allowed), right
+  // after `get_scope`. Both reads are awaited before any answer, on every path: an unawaited read could be cancelled
+  // with the request and leave getConfig's shared in-flight promise unsettled for the isolate's later requests.
   const from = Date.now();
   const timed = <T>(phase: string, p: Promise<T>): Promise<Settled<T>> =>
     settle(p).then((r) => {
@@ -325,9 +326,16 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
     'settings',
     Promise.all([getSettingsRow(env.DB, app.id).then((row) => (row ? effectiveSettings(row, app.id, Date.now()) : null)), appLoginMethods(env.DB, app.id)]),
   );
-  const scopeRead = timed('chain', getScope(env, app.scope_id));
-  const configRead = app.google_web_client_id === null ? timed('chain', getConfig(env)) : null;
-  const settingsDone = await settingsRead;
+  const web = app.google_web_client_id;
+  const chainRead = timed(
+    'chain',
+    getScope(env, app.scope_id).then(async (scope) => {
+      const needsShared = scope !== null && web === null && scope.allow_shared && !scope.clients.some(([p]) => p === 'google');
+      // Settled here: its failure counts only where the shared client is used (an email-only app never uses it).
+      return { scope, config: needsShared ? await settle(getConfig(env)) : null };
+    }),
+  );
+  const [settingsDone, chainDone] = await Promise.all([settingsRead, chainRead]);
   if (!settingsDone.ok) return reject(ctx, 503, 'config_unavailable', 'App config is unavailable, try again');
   const [settings, methods] = settingsDone.value;
   const autoApprovePolicy: AppSettings['autoApprovePolicy'] = settings?.autoApprovePolicy ?? null;
@@ -335,20 +343,17 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
   // A Google-only app keeps batch B's answers and errors exactly.
   const googleOnly = methods.length === 1 && methods[0] === 'google';
   try {
-    const scopeDone = await scopeRead;
-    if (!scopeDone.ok) throw scopeDone.error;
-    const scope = scopeDone.value;
+    if (!chainDone.ok) throw chainDone.error;
+    const { scope, config } = chainDone.value;
     if (!scope) return reject(ctx, 409, 'scope_not_registered', 'The app’s scope is not registered on chain');
     let google: { clientId: string; mode: 'own' | 'shared' } | null = null;
     if (methods.includes('google')) {
-      const web = app.google_web_client_id;
       const own = scope.clients.find(([p, aud]) => p === 'google' && (web === null || aud === web));
       if (web !== null && !own && googleOnly) return reject(ctx, 409, 'no_google_client', 'The app’s Google web client is no longer one of its scope’s clients');
       if (own) google = { clientId: own[1], mode: 'own' };
       else if (web === null && scope.allow_shared) {
-        const configDone = await (configRead ?? timed('chain', getConfig(env)));
-        if (!configDone.ok) throw configDone.error;
-        const shared = effectiveSharedClients(configDone.value).find(([p]) => p === 'google');
+        if (config && !config.ok) throw config.error;
+        const shared = config ? effectiveSharedClients(config.value).find(([p]) => p === 'google') : undefined;
         if (shared) google = { clientId: shared[1], mode: 'shared' };
       }
       if (!google && googleOnly) return reject(ctx, 409, 'no_google_client', 'The app has no Google client and shared login is not available');

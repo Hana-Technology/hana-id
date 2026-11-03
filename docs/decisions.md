@@ -3607,9 +3607,11 @@ Spec ambiguities met while building the minimal slice of batch 8 (no linking). A
   the gate (D1 and the IP limiter object), two D1 rows, then `get_scope` and, for a shared-client app such as the
   demo's, `get_config`, one after the other, each a fetch with no timeout. Measured warm from here: `GET /v1/app` 0.4–
   1.3 s, a fastnear view 0.3 s.
-- Decision: the API reads the settings rows and the registry views side by side (`get_config` alongside `get_scope`
-  when the app has no web client of its own; its failure counts only if needed) and gives `get_scope` and
-  `get_config` an 8 s timeout (as the vault's own RPC calls). The vault's login asks `GET /v1/app` once more after a
+- Decision: the API reads the settings rows and the registry side by side, awaiting both on every path (`get_config`
+  only after `get_scope` shows a shared client is needed; its failure counts only where it is used), and gives every
+  contract view an 8 s timeout (as the vault's own RPC calls; transactions keep waiting for the node). The shared
+  in-flight `get_config` read is dropped once older than 10 s, so a read cancelled with its request (Workers cancel a
+  request's unawaited I/O) can't hang the isolate's later `getConfig` calls (review H1). The vault's login asks `GET /v1/app` once more after a
   5xx or a network failure. `pk_test_` responses carry the API's timings, phases `app`, `limits`, `settings`, `chain`,
   and the login reports them inside `app` with the vault's round trip: `appRtt`, `appServer`, `appServerGate`,
   `appServerSettings`, `appServerChain`. The next slow `app` therefore says whether it was the API (and which part)
@@ -3628,11 +3630,12 @@ Spec ambiguities met while building the minimal slice of batch 8 (no linking). A
   on no chain read before `ready`, only that one API call. Not conclusive without that session's logs, but the margin
   explains "minutes after a deploy, then fine" without the extensions being the cause.
 - Decision: the vault posts `connected` (no data) on the port as soon as it takes the hello, before storage and the
-  unlock. The SDK gives each frame 5 s to answer (`connected`, or `ready` from an older vault); a frame that doesn't
-  is removed and inserted again once (same name and `src`, the first port closed, its late events ignored); after
-  `connected`, `ready` has 20 s. `vault_unavailable` carries `data.reason` (`csp_frame_src` at once without a retry,
+  unlock. The SDK gives each frame 5 s to answer (`connected`, or `ready` from an older vault), draining one task at
+  the deadline so a queued answer still counts. A frame still loading gets 5 s more, then `frame_timeout`; a frame
+  that loaded but didn't answer is removed and inserted again once (same name and `src`, the first port closed, its
+  late events ignored); after `connected`, `ready` has 20 s. Any failure removes the frame and closes its port. `vault_unavailable` carries `data.reason` (`csp_frame_src` at once without a retry,
   `no_answer`, `frame_timeout`, `ready_timeout`, `frame_replaced`) and `data.attempts`, with a message for each. A
-  missing vault now fails after about 10 s instead of 5. `frame-ancestors`, the hello's origin and ancestor checks and
+  misconfigured page (origin, key) now fails after about 10 s instead of 5 (`docs/integration.md` section 3). `frame-ancestors`, the hello's origin and ancestor checks and
   the one-hello rule are unchanged; a refused hello and the vault's error page still get no answer, so "blocked by
   the vault page" and "the vault refused" are one reason (`no_answer`) by design. Unlock timings gain `retry`.
 - Rejected: the vault answering a refused hello with a reason (tells a framing page whether a key or origin is

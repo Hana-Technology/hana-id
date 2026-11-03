@@ -2,7 +2,7 @@
 import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Rpc } from '../src/near/rpc.ts';
-import { VIEW_TIMEOUT_MS, clearViewCaches } from '../src/views.ts';
+import { CONFIG_READ_STALE_MS, VIEW_TIMEOUT_MS, clearViewCaches, getConfig } from '../src/views.ts';
 import { ORIGIN, appHeaders, call, chain, newKey, seedApp, uid } from './helpers.ts';
 import { AUTH, VAULT, hanaHeaders } from './login-helpers.ts';
 import { autoApprovePolicy } from './vault-helpers.ts';
@@ -48,48 +48,61 @@ describe('GET /v1/app (batch B)', () => {
     expect(await body(res)).not.toHaveProperty('timings');
   });
 
-  it('reads the settings rows and the registry side by side: get_config is asked while get_scope is still out', async () => {
-    clearViewCaches();
-    const app = await seedApp();
-    const shared = newAud();
-    const near = chain({}, { shared: [shared], allowShared: [app.scope] });
-    let configAsked!: () => void;
-    const configSeen = new Promise<void>((r) => (configAsked = r));
-    near.onView = (method) => {
-      if (method === 'get_config') configAsked();
-      // get_scope answers only once get_config was asked (or after 2 s, and the test fails below).
-      if (method === 'get_scope') return Promise.race([configSeen, new Promise<void>((r) => setTimeout(r, 2_000))]);
-    };
-    const started = Date.now();
-    const res = await get(appHeaders(app));
-    expect(await body(res)).toMatchObject({ google: { clientId: shared, mode: 'shared' } });
-    expect(Date.now() - started).toBeLessThan(1_500);
-  });
-
-  it('a get_config that fails counts only when the shared client is needed', async () => {
+  it('reads get_config only when the scope needs a shared client, after get_scope', async () => {
     clearViewCaches();
     const app = await seedApp();
     const own = newAud();
     const near = chain({ [own]: app.scope });
     near.views.get_scope = (a) => ({ id: a.scope_id, owners: [], clients: [['google', own]], pending: [], action_nonce: 0, allow_shared: true });
+    expect(await body(await get(appHeaders(app)))).toMatchObject({ google: { clientId: own, mode: 'own' } });
+    expect(near.viewCalls.map((c) => c.method)).toEqual(['get_scope']);
+    clearViewCaches();
+    const shared = newAud();
+    const other = chain({}, { shared: [shared], allowShared: [app.scope] });
+    expect(await body(await get(appHeaders(app)))).toMatchObject({ google: { clientId: shared, mode: 'shared' } });
+    expect(other.viewCalls.map((c) => c.method)).toEqual(['get_scope', 'get_config']);
+  });
+
+  it('a get_config that fails is 502 when the shared client is needed; an email-only app never uses it', async () => {
+    clearViewCaches();
+    const app = await seedApp();
+    const near = chain({}, { allowShared: [app.scope] });
+    near.views.get_scope = (a) => ({ id: a.scope_id, owners: [], clients: [['email', `email:${a.scope_id}`]], pending: [], action_nonce: 0, allow_shared: true });
     near.views.get_config = () => {
       throw new Error('config view down');
     };
-    expect(await body(await get(appHeaders(app)))).toMatchObject({ google: { clientId: own, mode: 'own' } });
-    clearViewCaches();
-    near.views.get_scope = (a) => ({ id: a.scope_id, owners: [], clients: [], pending: [], action_nonce: 0, allow_shared: true });
     const res = await get(appHeaders(app));
     expect([res.status, (await body(res)).code]).toEqual([502, 'near_unavailable']);
+    clearViewCaches();
+    await env.DB.prepare("UPDATE apps SET login_methods = 'email' WHERE id = ?1").bind(app.id).run();
+    const email = await get(appHeaders(app));
+    expect(email.status).toBe(200);
+    expect(await body(email)).toMatchObject({ google: null, loginMethods: ['email'], email: { aud: `email:${app.scope}` } });
   });
 
-  it('the registry views give up after VIEW_TIMEOUT_MS (an Rpc with a timeout passes an abort signal)', async () => {
+  it('a shared get_config read that never settles is dropped after CONFIG_READ_STALE_MS: the next read still answers', async () => {
+    clearViewCaches();
+    const near = chain({}, { shared: ['aud-1'] });
+    let hang = true;
+    near.onView = (method) => (method === 'get_config' && hang ? new Promise<void>(() => {}) : undefined);
+    void getConfig(env); // its request "cancelled": neither the answer nor the timeout ever comes
+    await new Promise((r) => setTimeout(r, 10));
+    hang = false;
+    const realNow = Date.now.bind(Date);
+    vi.spyOn(Date, 'now').mockImplementation(() => realNow() + CONFIG_READ_STALE_MS + 1);
+    const config = await getConfig(env);
+    expect(config.shared_clients).toEqual([['google', 'aud-1']]);
+    expect(near.viewCalls.filter((c) => c.method === 'get_config')).toHaveLength(2);
+  });
+
+  it('every contract view gives up after VIEW_TIMEOUT_MS (an abort signal); transactions wait for the node', async () => {
     const seen: (AbortSignal | null | undefined)[] = [];
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
       seen.push(init?.signal);
       throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
     });
-    await expect(new Rpc(env.NEAR_RPC, VIEW_TIMEOUT_MS).view('signer.test', 'get_scope', {})).rejects.toThrow(/NEAR RPC unreachable/u);
     await expect(new Rpc(env.NEAR_RPC).view('signer.test', 'get_scope', {})).rejects.toThrow(/NEAR RPC unreachable/u);
+    await expect(new Rpc(env.NEAR_RPC).txStatus('h', 'relayer.test')).rejects.toThrow(/NEAR RPC unreachable/u);
     expect(seen[0]).toBeInstanceOf(AbortSignal);
     expect(seen[1]).toBeUndefined();
     expect(VIEW_TIMEOUT_MS).toBe(8_000);

@@ -540,7 +540,8 @@ proved on generated fakes by `scripts/secret-scan-selftest.mjs` in the tests and
   `event.source`. The vault's first message, `connected` (no data), goes only on the port of the hello it took, after
   every one of those checks; a hello it refuses, and its 403/503 page (framed nowhere, no script), get no answer at
   all, so a page that frames it learns nothing from the handshake (D262). The SDK's one retry inserts the same frame
-  (same name and `src`) after removing the first, closes the first's port and ignores its late events.
+  (same name and `src`) after removing the first, closes the first's port and ignores its late events; a failed
+handshake removes the frame and closes its port, as `destroy()` does.
 - No message in any direction carries key bytes, S, PRK, a CKD response, a token or a session secret, except
   `relayKey` from the vault to its authenticated login popup (schemas: `packages/core/src/protocol.ts`).
 - One display-safety rule (`packages/core/src/display-safe.ts`, D118, sweep AUTH-5/CORE-4 and AUTH-2): text with a

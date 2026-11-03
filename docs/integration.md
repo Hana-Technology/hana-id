@@ -176,20 +176,23 @@ something like "Google just rotated its signing key; finishing in a few seconds"
 login rejects with `api_unavailable`; ask the user to sign in again in a few minutes.
 
 `hana.ready` rejects with `vault_unavailable` when the vault doesn't load. The SDK gives the vault frame 5 s to answer
-(the vault says `connected` as soon as it has checked your page); a frame that doesn't is replaced once, so a missing
-vault fails after about 10 s. A vault that answered then has 20 s to finish starting (restoring a session waits on one
-Hana API call). `error.data.reason` says which part failed (D262):
+(the vault says `connected` as soon as it has checked your page). A frame still loading at 5 s gets 5 s more; a frame
+that loaded but didn't answer is replaced once. A vault that answered then has 20 s to finish starting (restoring a
+session waits on one Hana API call). On any failure the SDK removes the frame. `error.data.reason` says which part
+failed (D262):
 
 | `data.reason` | What happened | Usually |
 |---|---|---|
 | `csp_frame_src` | your page's CSP blocked the frame (detected at once, no retry) | `frame-src` ([section 5](#5-your-page-origins-csp-popups)) |
-| `no_answer` | the frame loaded but the vault never answered, twice | your page's origin (or a page framing it) isn't one of your app's origins, or the key is unknown or suspended: the vault page refuses to be framed and says nothing, by design |
-| `frame_timeout` | the frame didn't load in time, twice | the network, or Hana's page Workers slow to answer |
+| `no_answer` | the frame loaded but the vault never answered, in either of two frames | your page's origin (or a page framing it) isn't one of your app's origins, or the key is unknown or suspended: the vault page refuses to be framed and says nothing, by design |
+| `frame_timeout` | the frame didn't load within 10 s | the network, or Hana's page Workers slow to answer |
 | `ready_timeout` | the vault answered but didn't finish starting within 20 s | the Hana API slow or unreachable |
 | `frame_replaced` | something navigated the vault frame before it was ready | another script on your page |
 
 `data.attempts` is how many frames were tried. `hana.readyTimings` (test apps) has a `retry` stage when the second
-frame was used.
+frame was used. **A misconfiguration is slower to show than it used to be:** a page whose origin isn't one of your
+app's origins, or an unknown or suspended key, now fails with `no_answer` after about 10 s (two frames of 5 s), not 5 s.
+While you set up a page, check `data.reason` rather than waiting for it.
 
 ## 4. Log in, log out
 
@@ -718,7 +721,7 @@ code request), `emailCode` (waiting for the mail and typing the code), `emailVer
 | `4200` | Unsupported method (`eth_sign`, …; `exportKey` for an email wallet, `data.reason: 'email_export'`) | use a supported method |
 | `4900` | The vault is gone (logged out, session ended, frame replaced) | create the client again, or log in |
 | `4902` | EVM chain not in `evm.chains` | add it to `createHana` |
-| `vault_unavailable` | The vault didn't load (one automatic retry; `data.reason`: `csp_frame_src`, `no_answer`, `frame_timeout`, `ready_timeout`, `frame_replaced`, [section 3](#3-create-the-client)) | check `frame-src`, your origins, the network |
+| `vault_unavailable` | The vault didn't load (one automatic retry; `data.reason`: `csp_frame_src`, `no_answer`, `frame_timeout`, `ready_timeout`, `frame_replaced`, [section 3](#3-create-the-client)) | check `frame-src`, your origins, the network. A wrong origin or key takes about 10 s to report (`no_answer`) |
 | `popup_blocked` | The browser blocked the popup and the sign-in was cancelled | call `login()` in a click |
 | `coop_blocks_popup` | The popup closed before it connected (COOP `same-origin`, or the user closed it at once) | fix COOP |
 | `login_timeout` | The popup never connected (15 s), or the sign-in took over 5 min | retry |

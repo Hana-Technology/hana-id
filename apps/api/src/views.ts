@@ -2,7 +2,7 @@
 import { hex } from './bytes.ts';
 import type { Env } from './env.ts';
 import { issuerKids } from './issuer-keys.ts';
-import { Rpc } from './near/rpc.ts';
+import { Rpc, VIEW_TIMEOUT_MS } from './near/rpc.ts';
 
 export class TtlCache<V> {
   private readonly map = new Map<string, { value: V; until: number }>();
@@ -112,12 +112,9 @@ export interface ScopeView {
   allow_shared: boolean;
 }
 
-/**
- * How long `get_scope` and `get_config` (GET /v1/app's reads, and the login checks') wait for the RPC: a node that
- * stalls fails the request (502 near_unavailable, which the vault asks again once) instead of holding it open. A
- * healthy view answers in ≈ 0.3 s. The same bound as the vault's own RPC calls (packages/web near-call.ts).
- */
-export const VIEW_TIMEOUT_MS = 8_000;
+export { VIEW_TIMEOUT_MS };
+/** A shared get_config read older than this is dropped (it should have settled or timed out by then). */
+export const CONFIG_READ_STALE_MS = VIEW_TIMEOUT_MS + 2_000;
 
 /** get_config, ≤ 60 s; ≤ 10 s while it says paused, so an unpause reaches logins quickly. */
 const configCache = new TtlCache<ConfigView>(60_000, 1);
@@ -142,15 +139,21 @@ export function parsePendingShared(raw: unknown): PendingSharedClient[] {
   });
 }
 
-/** A get_config read in flight: concurrent misses (a login's scope and governance checks) share it. */
+/**
+ * A get_config read in flight: concurrent misses (a login's scope and governance checks) share it. Self-healing: a
+ * read that hasn't settled within CONFIG_READ_STALE_MS (one whose request was cancelled before its fetch answered, so
+ * neither the answer nor the timeout ever arrives) is no longer shared, and the next caller reads again.
+ */
 let configRead: Promise<ConfigView> | null = null;
+let configReadAt = 0;
 
 export async function getConfig(env: Env): Promise<ConfigView> {
   const cached = configCache.get('config');
   if (cached) return cached;
-  if (configRead) return configRead;
-  configRead = (async () => {
-    const raw = await new Rpc(env.NEAR_RPC, VIEW_TIMEOUT_MS).view<{ console_audiences?: unknown; shared_clients?: unknown; paused?: unknown; unrecorded_wallets?: unknown } | null>(env.SIGNER_ACCOUNT, 'get_config', {});
+  if (configRead && Date.now() - configReadAt < CONFIG_READ_STALE_MS) return configRead;
+  configReadAt = Date.now();
+  const read = (async () => {
+    const raw = await new Rpc(env.NEAR_RPC).view<{ console_audiences?: unknown; shared_clients?: unknown; paused?: unknown; unrecorded_wallets?: unknown } | null>(env.SIGNER_ACCOUNT, 'get_config', {});
     const value: ConfigView = {
       console_audiences: Array.isArray(raw?.console_audiences) ? raw.console_audiences.filter(isPair) : [],
       shared_clients: Array.isArray(raw?.shared_clients) ? raw.shared_clients.filter(isPair) : [],
@@ -163,10 +166,11 @@ export async function getConfig(env: Env): Promise<ConfigView> {
     configCache.set('config', value, Date.now(), value.paused ? PAUSED_CONFIG_TTL_MS : undefined);
     return value;
   })();
+  configRead = read;
   try {
-    return await configRead;
+    return await read;
   } finally {
-    configRead = null;
+    if (configRead === read) configRead = null;
   }
 }
 
@@ -227,7 +231,7 @@ export const isSharedOrPending = (config: ConfigView, provider: string, aud: str
 export async function getScope(env: Env, scopeId: string, opts: { fresh?: boolean } = {}): Promise<ScopeView | null> {
   const cached = opts.fresh ? undefined : scopeViewCache.get(scopeId);
   if (cached !== undefined) return cached;
-  const raw = await new Rpc(env.NEAR_RPC, VIEW_TIMEOUT_MS).view<Record<string, unknown> | null>(env.SIGNER_ACCOUNT, 'get_scope', { scope_id: scopeId });
+  const raw = await new Rpc(env.NEAR_RPC).view<Record<string, unknown> | null>(env.SIGNER_ACCOUNT, 'get_scope', { scope_id: scopeId });
   let value: ScopeView | null = null;
   if (raw && typeof raw === 'object' && Array.isArray(raw.owners) && Array.isArray(raw.clients) && Array.isArray(raw.pending)) {
     value = {

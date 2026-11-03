@@ -11,7 +11,7 @@ import { sessionStanding } from '../src/session-standing.ts';
 import { clearViewCaches } from '../src/views.ts';
 import { autoLinkNonce, createProofPayload, linkAccountNonce, linkChangeNonce, linkNewNonce, linkedCkdPayload, sessionNonce, sessionNoncePreimage } from '../src/session-crypto.ts';
 import { EMAIL_ISS, type EmailChain, emailAud, emailEnv, emailSigner, emailToken, ikSync, issuer, setLoginMethods, withEmail } from './email-helpers.ts';
-import { appHeaders, bytes, call, chain, google, newSessionKey, seedApp, sessionBody, signSession, uid } from './helpers.ts';
+import { appHeaders, bytes, call, chain, google, newSessionKey, seedApp, sessionBody, signSession, uid, minuteHeadroom } from './helpers.ts';
 import { appKey, hanaHeaders, loginBody, withCombinedCall } from './login-helpers.ts';
 import { panic } from './near-mock.ts';
 import { ledger } from './usage-ledger.ts';
@@ -399,6 +399,8 @@ describe('POST /v1/link (explicit linking)', () => {
   });
 
   it('per IP, adds have their own window: a flood of adds never blocks a cancel', async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom).
+    await minuteHeadroom(15_000);
     const { app, near } = await explicit();
     const ip = '10.9.8.7';
     const headers = { ...hanaHeaders(app), 'cf-connecting-ip': ip };
@@ -593,6 +595,8 @@ describe('batch 6 review: requests bound to fail, link limits, unknown fields', 
   });
 
   it('adds are limited per account root, whatever the IP', async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom).
+    await minuteHeadroom(15_000);
     const s = await setup();
     s.near.identities.set(`google#${G_SUB}`, { status: 'own', opened: true });
     s.near.contract.link_identity = () => Date.now() + 60_000;

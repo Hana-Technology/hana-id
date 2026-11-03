@@ -26,7 +26,7 @@ import { clearJwksCache } from '@hana-id/oidc';
 import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { GOVERNANCE_METHODS, UPDATER_METHODS, parseRelayerKeys } from '../src/relayer-config.ts';
 import { clearViewCaches, parsePendingShared } from '../src/views.ts';
-import { call, startOfMinuteClock } from './helpers.ts';
+import { call, minuteHeadroom, startOfMinuteClock } from './helpers.ts';
 import { NearMock, type RsaSigner, makeJwt, panic, rsaSigner } from './near-mock.ts';
 import { eventFor, ledger } from './usage-ledger.ts';
 
@@ -431,6 +431,9 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
     });
 
   it('frees the token when a cap turns the request away', async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom; no clock shift: the changes'
+    // delays are on the real clock).
+    await minuteHeadroom(15_000);
     const n = near();
     await exhaust(scopeLimiterKey('s1'), OWNER_ACTIONS_PER_SCOPE_MINUTE);
     const body = await setOwners();
@@ -442,6 +445,9 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   });
 
   it(`unauthenticated execute_change has its own per-scope window (${EXECUTES_PER_SCOPE_MINUTE}/min), never the owners'`, async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom; no clock shift: the changes'
+    // delays are on the real clock).
+    await minuteHeadroom(15_000);
     const n = near();
     const statuses: number[] = [];
     for (let i = 0; i < EXECUTES_PER_SCOPE_MINUTE + 1; i++) statuses.push((await execute('s1', i)).status);
@@ -455,6 +461,9 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   });
 
   it(`caps owner actions per scope (${OWNER_ACTIONS_PER_SCOPE_MINUTE} per minute), across owners`, async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom; no clock shift: the changes'
+    // delays are on the real clock).
+    await minuteHeadroom(15_000);
     const n = near();
     const owners = (n.scopes.s1 as { owners: unknown[] }).owners;
     const subs = Array.from({ length: 3 }, (_, i) => `7${i}`);
@@ -466,6 +475,9 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   });
 
   it(`caps owner actions per owner identity (${OWNER_ACTIONS_PER_OWNER_MINUTE} per minute), whatever the IP`, async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom; no clock shift: the changes'
+    // delays are on the real clock).
+    await minuteHeadroom(15_000);
     const n = near();
     (n.scopes.s1 as { owners: unknown[] }).owners.push({ Oidc: { provider: 'google', sub: OTHER_OWNER_SUB } });
     const statuses: number[] = [];
@@ -476,6 +488,9 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   });
 
   it(`caps relayed owner actions globally (${OWNER_ACTIONS_GLOBAL_MINUTE} per minute) across scopes`, async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom; no clock shift: the changes'
+    // delays are on the real clock).
+    await minuteHeadroom(15_000);
     const n = near();
     await fill('s1', EXECUTES_PER_SCOPE_MINUTE);
     await fill('s2', OWNER_ACTIONS_GLOBAL_MINUTE - EXECUTES_PER_SCOPE_MINUTE, 50);
@@ -485,6 +500,9 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   });
 
   it('a request a later window refuses is taken back from the earlier ones (a refusal costs no window)', async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom; no clock shift: the changes'
+    // delays are on the real clock).
+    await minuteHeadroom(15_000);
     near();
     await exhaust('owner-actions:global', OWNER_ACTIONS_GLOBAL_MINUTE);
     // Twice the owner's own allowance, all refused by the global ceiling...
@@ -499,6 +517,9 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   });
 
   it('cancel_change is never starved: its own per-owner allowance and ceiling, outside every other cap (APIW-3)', async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom; no clock shift: the changes'
+    // delays are on the real clock).
+    await minuteHeadroom(15_000);
     const n = near();
     (n.scopes.s1 as { owners: unknown[] }).owners.push({ Oidc: { provider: 'google', sub: OTHER_OWNER_SUB } });
     // Someone fills the global ceiling, the victim scope's owner window and its execute window.
@@ -518,6 +539,9 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   });
 
   it(`cancels have a high global ceiling of their own (${CANCELS_GLOBAL_MINUTE}/min); a refused cancel keeps the owner's and scope's allowance`, async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom; no clock shift: the changes'
+    // delays are on the real clock).
+    await minuteHeadroom(15_000);
     near();
     await exhaust(CANCEL_GLOBAL_LIMITER, CANCELS_GLOBAL_MINUTE);
     const refused = await cancel();
@@ -539,6 +563,9 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
   });
 
   it(`a scope's cancel window (${CANCELS_PER_SCOPE_MINUTE}/min) is filled only by that scope's owners, and never by fewer than all of them`, async () => {
+    // Fixed per-minute windows: the whole run in one minute (helpers.ts minuteHeadroom; no clock shift: the changes'
+    // delays are on the real clock).
+    await minuteHeadroom(15_000);
     const n = near();
     const coOwners = ['81', '82', '83', '84']; // with OWNER_SUB: the contract's MAX_OWNERS
     await clearLimiters([...(await Promise.all([...coOwners, 'mallory'].map((sub) => ownerLimiterKey({ provider: 'google', sub }))))]);

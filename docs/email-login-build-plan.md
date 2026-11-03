@@ -46,6 +46,9 @@ Steps 0, 3 and 5 can run beside 1–2. About 12k lines in all, as the spec estim
   `response_type=token` request so the on-chain token stays openid-only).
 - **Files.** `apps/smoke/spike.html`, results in `docs/context.md` (testnet measurements).
 - **Tests.** None beyond the manual run; the API's `token_has_pii` refusal already guards the chain either way.
+  Since batch 8b's review the page (`apps/smoke/spike-email.html`) also has legs C (a plain openid login after the
+  email grant: no `email` claims may appear) and D (the silent email request again: it must succeed), a gate before
+  batch 8b reaches real users (D265).
 - **User-visible.** Nothing.
 
 ### Batch 1: contract v3 (this branch)
@@ -676,3 +679,14 @@ addition, D246 lifted). No contract change; no path, nonce layout or derivation 
   banners in the approval and export popups and Hana Home; email-only apps; running the spike; measuring latency and
   gas on testnet (batch 8's "Deploy").
 - **Decisions (to confirm)**: D254–D259.
+- **Review fixes** (same branch): a path that isn't the signed-in identity's own (a member's root, a link's target
+  root, a moved path, the export window's) is confirmed on `rpc` and `rpcFallback` read separately, with root pins
+  per identity (D263; the e2e stack gained a second RPC endpoint on the same chain); strict parsing of the chain's
+  email keys and policy in the export window, and of a root's provider; the email permission explained before
+  Google's prompt, and a consent screen for a declined permission or another Google account (D264); the access token
+  no longer revoked, google-match retried after 429 or 503 within the login, a 30 s timeout (D265); the issuer's word
+  on the match recorded as an accepted risk (D266); the relay's 40 writes a minute per IP, 12 KiB bodies, google-match
+  120 per 10 min (D267); `hana.account()` cached 5 s; tests for every D137 branch; the spike gained legs C and D.
+- **Gate before real users**: the user runs `apps/smoke/spike-email.html` legs C and D on real Google (C: no
+  `email` or `email_verified` in a later openid-only ID token, else a `token_has_pii` lockout; D: the silent request
+  succeeds again without a prompt). `docs/operations.md` "Turning linking on (batch 8b)".

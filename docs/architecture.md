@@ -1,7 +1,9 @@
 # Architecture: how Hana ID works today
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
-Last verified against code: 2026-11-03 (branch `feat/email-login-8b`: automatic linking and the path through
+Last verified against code: 2026-11-03 (branch `feat/email-login-8b` review fixes: member paths confirmed on both
+RPCs and root pins, D263; the email permission's explainer and consent screen, D264; the access token never revoked and
+google-match retried, D265; relay limits, D267); 2026-11-03 (branch `feat/email-login-8b`: automatic linking and the path through
 `get_identity` in Status, the login flows ("Email login in the popup", "Automatic linking"), key export and key
 derivation, D254–D259); 2026-11-03 (branch `fix/demo-polish`: the vault's `connected` event and the SDK's one
 frame retry in Components, D262; `GET /v1/app` asked once more by the login, read side by side by the API, D261; the
@@ -148,7 +150,7 @@ Who talks to whom:
 | `/login/callback`, `/login/email` → API | `POST /v1/login-relay/:relayId` (`Origin: authOrigin`) | AES-GCM ciphertext of the token; in a login that offers email also the access token and the answers to the vault's follow-up notices (follow-up slots) |
 | Vault → API | `fetch`, `Origin: vaultOrigin`, `x-hana-key`, `x-hana-parent-origin` | `/v1/app`, relay read and (follow-up notices, batch 8b) relay write, `/v1/login`, `/v1/sessions/revoke`, `/v1/link*`, `/v1/vault/*` |
 | Vault → email issuer | `fetch`, `Origin: vaultOrigin`, no cookies | `POST /v1/email/google-match` (Google's ID and access tokens, the session commitment; batch 8b) |
-| Vault → NEAR RPC | JSON-RPC (manifest `rpc`; `rpcFallback` only when `rpc` errors or times out, one endpoint per answer: `packages/web/src/near-call.ts`) | `get_session` re-sync, the login's registry check (`scope_for_client`, or `get_scope` and `get_config`), `get_identity` (the path, batch 7), `get_account` and `get_config().unrecorded_wallets` (links), the email keys and policy, `EXPERIMENTAL_tx_status` polling; the export window the same |
+| Vault → NEAR RPC | JSON-RPC (manifest `rpc`; `rpcFallback` only when `rpc` errors or times out, one endpoint per answer: `packages/web/src/near-call.ts`; and both read separately to confirm any path that isn't the signed-in identity's own: `packages/web/src/path-check.ts`, D263) | `get_session` re-sync, the login's registry check (`scope_for_client`, or `get_scope` and `get_config`), `get_identity` (the path, batch 7), `get_account` and `get_config().unrecorded_wallets` (links), the email keys and policy, `EXPERIMENTAL_tx_status` polling; the export window the same |
 | Vault, export window → Google | `https://www.googleapis.com/oauth2/v3/certs` | JWKS for the defence-in-depth RS256 check |
 | Partner page → API | `fetch` from the partner origin | `GET /v1/app` (any key); `/v1/sessions`, `/v1/derive`, `/v1/sessions/revoke` only for test-scope apps in dev envs (`apps/smoke`) |
 | API → NEAR | NEAR RPC | Views (`get_config`, `get_scope`, `scope_for_client`, `get_session`, `session_key_in_use`, `get_issuer`; for the cron and `GET /v1/governance` also `get_key_changes`, `get_governance`, `view_access_key_list`), `send_tx`, `tx` |
@@ -282,15 +284,24 @@ login is batch B's, message for message (no follow-up key, no google-match, no e
    `response_type=id_token`, `scope=openid`; the callback relays the token with `access: 'follow'`, then makes a
    second, silent request (`response_type=token`, `scope=email`, `prompt=none`, `login_hint=<sub>`) whose access token
    it relays to slot 1. When Google needs the user (`consent_required`, `interaction_required`, `login_required`,
-   `account_selection_required`), it asks once more without `prompt=none`. The switch's other value,
+   `account_selection_required`: the first time, since the token is never revoked, D265), it shows Hana's own screen
+   (what Google will ask and why: only the email service sees the address, to find a wallet, and doesn't keep it;
+   Continue or Not now, D264), then asks once more without `prompt=none`. The switch's other value,
    `'one_request'` (`id_token token`, `openid email`), waits for the batch 0 spike (`apps/smoke/spike-email.html`).
-   The address never reaches the vault or the partner page; the on-chain token stays openid-only (D25, the vault's and
-   the API's `token_has_pii`).
+   The full address never reaches the vault or the partner page (the vault relays only case A's masked hint,
+   `a…@domain`, to the popup, end to end); the on-chain token stays openid-only (D25, the vault's and the API's
+   `token_has_pii`). The issuer never revokes the access token (D265).
 3. **google-match before any chain call.** The vault sends `POST {issuer}/v1/email/google-match {pk, accessToken,
    googleIdToken, commitment, link: true, linkTicket?}` (CORS for `vaultOrigin`, D199; the vault page's CSP
-   `connect-src` names the issuer, `EMAIL_ISSUER_URL`). No answer, or no access token: a Google identity with no wallet
-   and no account is refused (`api_unavailable`, `email_match_unavailable`: it might be case A, and a plain login would
-   open a second wallet, D255); one with a wallet or an account logs in as usual.
+   `connect-src` names the issuer, `EMAIL_ISSUER_URL`). A `429` or `503` is retried within the login (its
+   `retry-after` up to 20 s, else a backoff; 45 s of waits at most; 30 s per call). No answer: a Google identity with
+   no wallet and no account is refused (`api_unavailable`, `email_match_unavailable`: it might be case A, and a plain
+   login would open a second wallet, D255); one with a wallet or an account logs in as usual. Declined consent
+   (`access_denied`) or another Google account picked on Google's screen (`google_account_mismatch`), for such an
+   identity: notice `email_consent {reason, loginHint}`, the popup explains and offers "Sign in with email instead" or
+   "Try Google again" (at most 3 times), else `login_cancelled` with `email_consent_declined` /
+   `google_account_mismatch` (D264). A popup that can't store its next leg writes `storage_unavailable` to the slot
+   the vault waits on (the login ends `storage_unavailable`).
 4. **The four cases**, from google-match's `decision`:
    - `case_a` with `emailToken` (only when `googleHosted` and immediate; anything else is refused as the issuer's
      error): a linked login, silent.
@@ -303,7 +314,12 @@ login is batch B's, message for message (no follow-up key, no google-match, no e
    - anything else (`none`, `linked`, `pending`, `unlinked`, `both_wallets`, `case_b` without a token): a plain login.
 5. **The path** (batch 7): without a link, `get_identity` of the signed-in identity (the view's key checked against
    the computed one): own → its own path, active member → its account root's, pending → `link_pending` (with
-   `effectiveAtMs`, also told to the popup). With a link (D133): fresh `get_config` (links open only when
+   `effectiveAtMs`, also told to the popup). Any path that isn't the identity's own (a member's root, a link's target
+   root, a path a pairing failure moved to) is confirmed on `rpc` and `rpcFallback`, each read alone: the same view
+   on both, and the root `own` on both; else `api_unavailable` with `path_unconfirmed` or `path_disputed`, never the
+   own path instead (D263). The vault pins the root it derived per identity (memory, and IndexedDB beside the record
+   when the app keeps the wallet; identity keys only); a root that changed other than own → member is confirmed on
+   both again. With a link (D133): fresh `get_config` (links open only when
    `unrecorded_wallets` is `false`), `get_identity` and `get_account` of both identities; `judgeAutoLink` (the
    contract's `auto_link` order) gives the join, the account root's path and the `auto_link` nonce; the join must be the
    case's, and the link token must verify against the chain's email keys with exactly that nonce. Then the session key
@@ -619,8 +635,9 @@ would be `hana-id/chain-keys/v2/extract`, opt-in, with v1 still derivable.
   Only `sandbox-dev` exists. `network` accepts only `testnet`. Every account name the code uses comes from here
   (`signer`, `relayer`, `owner`, `mpc`); code reads it via generated config, never by hard-coding names.
 - Other fields: `ckdDomainId`, `ckdNetworkKey` (pinned with `scripts/fetch-ckd-key.ts`), `rpc`, optional
-  `rpcFallback` (https, not `rpc`; the vault's and the export window's second NEAR RPC, in their CSP, and the
-  Workers' `NEAR_RPC_FALLBACK`), `apiUrl`,
+  `rpcFallback` (https, not `rpc`, another registrable domain outside `local*`, required with `emailIssuer` outside
+  `local*`; the vault's and the export window's second NEAR RPC, in their CSP, and the Workers'
+  `NEAR_RPC_FALLBACK`; a member's path is confirmed on both, D263), `apiUrl`,
   `vaultOrigin`/`authOrigin` (both or neither; bare origins; `https`; loopback only in `local*` envs; otherwise a real
   DNS name, never an IP, a bare public suffix, a single label or a trailing dot; different origins, neither
   `apiUrl`'s origin; different sites from each other and from `apiUrl` outside `local*`/`sandbox*`,

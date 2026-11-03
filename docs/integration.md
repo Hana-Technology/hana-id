@@ -11,7 +11,9 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 > for mainnet chains at all ([section 12](#12-test-and-live-keys)). This guide follows the code; the original
 > specification is `docs/batch-b-spec.md`.
 
-Last verified against code: 2026-11-03 (branch `feat/email-login-8b`: one wallet per person, "Sign-in methods and
+Last verified against code: 2026-11-03 (branch `feat/email-login-8b` review fixes: the email permission's screens and
+reasons, `api_unavailable`'s `path_unconfirmed` / `path_disputed`, `storage_unavailable` in a login, `hana.account()`'s
+5 s cache, D263–D265); 2026-11-03 (branch `feat/email-login-8b`: one wallet per person, "Sign-in methods and
 links" in section 4 (`hana.account()`, `linkChanged`, `hana.linkAccount()`, what users see in each case), key export
 for email wallets, `link_refused`, `link_pending`'s `effectiveAtMs`, the `linking` progress stage); 2026-11-03 (branch
 `fix/demo-polish`: the vault load's one retry and `vault_unavailable`'s `data.reason` in section 3 and 13, the login
@@ -253,12 +255,14 @@ button.addEventListener('click', async () => {
   | signs in with Google, and an email wallet exists for an address Google doesn't host | "This email already has a wallet": **Link and continue** (a code to `a…@domain`) or **Sign in with email** | the email wallet either way; linked only after the code |
   | signs in with email, and a Google wallet exists for that address | "This email belongs to a wallet you created by signing in with Google": **Link and continue** or **Sign in with Google**, then Google | the Google wallet's addresses; the email joins it at once (Google-hosted) or after 24 h (other addresses: a pending banner with **Cancel this link**) |
   | has neither wallet | the usual sign-in | a new wallet for that method |
+  | signs in with Google, has no wallet yet, and declines Google's "share your email address" (or picks another Google account there) | Hana explains it first ("Google will now ask to share your email address…"); after a refusal: **Sign in with email instead** or **Try Google again** | an email wallet, or Google again; Cancel rejects with `login_cancelled` (`data.reason: 'email_consent_declined'` or `'google_account_mismatch'`) |
 
   Nobody ever gets a second wallet for the same verified address. While a link is pending, signing in with the
   pending method fails with `link_pending` (`data.effectiveAtMs`: when it opens the wallet). The user can cancel it
   from the Hana popup's banner at their next sign-in.
   - `await hana.account()` → `{methods: [{provider: 'google' | 'email', status: 'active' | 'pending', effectiveAtMs,
-    root}]}`: the wallet's own method (`root: true`) and the ones linked to it. No identifiers, no addresses. **Show
+    root}]}`: the wallet's own method (`root: true`) and the ones linked to it. No identifiers, no addresses. Calls
+    within 5 s of a read share it (the vault reads afresh after a login, a link or a banner's action). **Show
     pending methods to the user** ("An email will be able to open this wallet from …") and tell them to sign in to
     cancel it if it isn't theirs: the mailbox of a pending email may be an attacker's.
   - `hana.on('linkChanged', ({provider, status, effectiveAtMs}) => …)`: a method was added (`pending` or `active`),
@@ -753,7 +757,7 @@ code request), `emailCode` (waiting for the mail and typing the code), `emailVer
 | `popup_blocked` | The browser blocked the popup and the sign-in was cancelled | call `login()` in a click |
 | `coop_blocks_popup` | The popup closed before it connected (COOP `same-origin`, or the user closed it at once) | fix COOP |
 | `login_timeout` | The popup never connected (15 s), or the sign-in took over 5 min | retry |
-| `login_cancelled` | `cancelLogin()`, or a newer `login()`, or the user cancelled the email step | nothing |
+| `login_cancelled` | `cancelLogin()`, or a newer `login()`, or the user cancelled the email step; `data.reason: 'email_consent_declined'` or `'google_account_mismatch'`: a new Google user refused Google's email permission (or chose another Google account there) and cancelled Hana's explanation | offer email sign-in |
 | `login_method_unavailable` | `login({method})` named a method your app doesn't offer (email not turned on) | offer the other method |
 | `code_invalid`, `challenge_expired` | Email login: the user cancelled after a wrong or expired code | let them retry |
 | `link_pending` | This sign-in method is waiting to join a wallet (`data.effectiveAtMs`: when it can open it) | show when; sign in with the wallet's other method meanwhile |
@@ -764,7 +768,8 @@ code request), `emailCode` (waiting for the mail and typing the code), `emailVer
 | `config_mismatch` | Hana's pages disagree about the signer, scope or client, or the scope doesn't match the on-chain registry (`data.reason: 'scope_mismatch'`) | report it to Hana; never retry around it |
 | `ckd_failed`, `derive_failed`, `pairing_failed`, `address_mismatch` | The key couldn't be produced (`derive_failed` with `data.reason: 'link_restart'`: a linking login was interrupted and its session revoked) | the user logs in again |
 | `session_consumed` | Someone replayed the login transaction first | the vault offers "Continue signing in" |
-| `rate_limited`, `app_suspended`, `origin_not_allowed`, `api_unavailable` | From Hana's API (`rate_limited` also after 3 key exports of one account in an hour), or NEAR's RPC couldn't be read | back off, or contact Hana |
+| `rate_limited`, `app_suspended`, `origin_not_allowed`, `api_unavailable` | From Hana's API (`rate_limited` also after 3 key exports of one account in an hour), or NEAR's RPC couldn't be read. `api_unavailable` with `data.reason`: `email_match_unavailable` (Hana's email service didn't answer for a new Google user), `path_unconfirmed` (a linked sign-in method's wallet couldn't be confirmed on both of Hana's NEAR providers), `path_disputed` (they disagree: report it) | back off, or contact Hana |
+| `storage_unavailable` | The Hana popup couldn't store what its next step needs (blocked or full browser storage) | ask the user to allow site data, or try another browser |
 | `busy` | An export is already running | wait |
 | `identity_unavailable` | `getIdentityToken()`: Hana's API or signer is unavailable, or this browser couldn't keep the session (`data.reason: 'no_share'`) | retry later |
 | `session_ended` | `getIdentityToken()`: the Hana session is over (`sessionExpired` fires too), or ends within 30 s (`data.reason: 'session_ending'`) | treat as logged out |

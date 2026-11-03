@@ -2,7 +2,7 @@
 
 Current-state map of the whole system: components, flows, key derivation, data stores, environments and the relayer.
 Last verified against code: 2026-11-03 (branch `fix/8b-rereview`: the issuer's CORS exposing `retry-after`, 3 consent
-screens, the pin read's 1 s timeout, the login's signal on google-match and the confirming reads; D263–D265); 2026-11-03 (branch `feat/email-login-8b` review fixes: member paths confirmed on both
+screens, the pin read's 1 s timeout (fail closed), the login's signal on google-match and the confirming reads; D263–D265); 2026-11-03 (branch `feat/email-login-8b` review fixes: member paths confirmed on both
 RPCs and root pins, D263; the email permission's explainer and consent screen, D264; the access token never revoked and
 google-match retried, D265; relay limits, D267); 2026-11-03 (branch `feat/email-login-8b`: automatic linking and the path through
 `get_identity` in Status, the login flows ("Email login in the popup", "Automatic linking"), key export and key
@@ -320,7 +320,7 @@ login is batch B's, message for message (no follow-up key, no google-match, no e
    on both, and the root `own` on both; else `api_unavailable` with `path_unconfirmed` or `path_disputed`, never the
    own path instead (D263). The vault pins the root it derived per identity (memory, and IndexedDB beside the record
    when the app keeps the wallet; identity keys only); a root that changed other than own → member is confirmed on
-   both again (a pin read that doesn't answer within 1 s counts as no pin). The confirming reads and google-match
+   both again, as is any path but the identity's own when the pin read fails or doesn't answer within 1 s. The confirming reads and google-match
    also end when the login does (its abort signal). With a link (D133): fresh `get_config` (links open only when
    `unrecorded_wallets` is `false`), `get_identity` and `get_account` of both identities; `judgeAutoLink` (the
    contract's `auto_link` order) gives the join, the account root's path and the `auto_link` nonce; the join must be the

@@ -3808,8 +3808,10 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   vault). Testnet: sandbox-dev's second provider is `rpc.testnet.near.org` (slow, rate-limited), now needed by every
   linked login; accepted for the testnet demo. Before mainnet: keyed, operator-independent providers, and maybe 2 of
   3 (`docs/mainnet-readiness.md` row 4.19); 2-of-3 is not built. (Re-review, 2026-11-03.)
-- A pin read that doesn't answer within 1 s counts as no pin, as a storage error does (re-review L3); the pins
-  outlive logout on a shared device (an identity-key hash per scope: `docs/security.md`).
+- A pin read that fails or doesn't answer within 1 s (`PIN_READ_TIMEOUT_MS`, re-review L3) fails closed: unless the
+  path is the identity's own (the pairing check covers that), it is confirmed on both providers again, as a pin
+  mismatch is, or refused. A store that answers "no pin" (a new device) still needs nothing more. The pins outlive
+  logout on a shared device (an identity-key hash per scope: `docs/security.md`).
 - Rejected: trusting the pairing check alone (the finding); one provider at `final` finality (still one provider);
   falling back to the own path when unconfirmed (a second wallet, and the user's funds split); refusing every root
   change outright (an unlinked user would be locked out on that device for good).

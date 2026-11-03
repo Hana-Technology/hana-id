@@ -2,7 +2,7 @@
 
 Who is trusted for what, every key and secret, the invariants and where each is enforced, auto-approve rules, and
 known open issues. Last verified against code: 2026-11-03 for the batch 8b re-review fixes (branch `fix/8b-rereview`:
-the pin read's 1 s timeout and the pins' privacy note, D263); 2026-11-03 for the batch 8b review fixes (branch `feat/email-login-8b`:
+the pin read's 1 s timeout, failing closed, and the pins' privacy note, D263); 2026-11-03 for the batch 8b review fixes (branch `feat/email-login-8b`:
 member paths confirmed on two RPC providers and root pins, D263; the email permission's screens, D264; the access token
 never revoked, D265; the issuer's word on the match, D266; relay and google-match limits, D267); 2026-11-03 for
 automatic linking (branch `feat/email-login-8b`: the path
@@ -648,9 +648,10 @@ handshake removes the frame and closes its port, as `destroy()` does.
   the transaction), confirmed on both providers when it is a root's. **Root pins**: the vault remembers, per
   identity and app on this device (memory, and IndexedDB beside the record when the app keeps the wallet; identity
   keys only, no `sub`; it outlives logouts), the root it last derived; a root that changed other than by a link
-  activating (own → member) is confirmed on both providers again, or refused. A pin read that doesn't answer within
-  1 s (`PIN_READ_TIMEOUT_MS`, a stuck IndexedDB) counts as no pin, as a storage error does: the check then works as
-  on a new device. **Privacy**: on a shared device the pins (an identity-key hash per scope, the root it opened)
+  activating (own → member) is confirmed on both providers again, or refused. A pin read that fails or doesn't answer
+  within 1 s (`PIN_READ_TIMEOUT_MS`, a stuck IndexedDB) fails closed: a path that isn't the identity's own is
+  confirmed on both providers again, as on a pin mismatch, or refused; the own path goes on (the pairing check covers
+  it). **Privacy**: on a shared device the pins (an identity-key hash per scope, the root it opened)
   outlive logout, so the next user of that browser profile can tell which identity keys signed in to that app there,
   and whether they are linked; they hold no `sub`, address or key.
 - **Email logins of real scopes (D248 lifted for scopes whose Google logins write hints).** Every Google login of an

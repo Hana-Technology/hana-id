@@ -939,29 +939,66 @@ describe('D263: a link that activates between the read and the transaction (move
   });
 });
 
-describe('D263: a root pin read that never answers', () => {
-  it('a stuck pin store counts as no pin after PIN_READ_TIMEOUT_MS: the login goes on', async () => {
-    expect(PIN_READ_TIMEOUT_MS).toBe(1_000);
-    const b = new Browser();
-    b.backend.opened.add(Buffer.from(ik(E)).toString('hex'));
-    b.backend.link(E, G);
-    let pinReads = 0;
+describe('D263: a root pin read that never answers (or fails) fails closed', () => {
+  /** A record store whose pin reads never answer (a stuck IndexedDB), or fail; other reads work. */
+  function stuckPins(b: Browser, how: 'hang' | 'fail' = 'hang') {
+    const reads = { n: 0 };
     b.openStore = async () => {
       const store = await openRecordStore(b.idb);
       return {
         ...store,
         get: (key: string) => {
           if (!key.startsWith('pin|')) return store.get(key);
-          pinReads += 1;
-          return new Promise<never>(() => undefined);
+          reads.n += 1;
+          return how === 'hang' ? new Promise<never>(() => undefined) : Promise.reject(new Error('blocked'));
         },
       };
     };
-    const t = await tab(b, ENV2);
-    const { reply } = await login(t, g);
-    expect(reply.error).toBeUndefined();
+    return reads;
+  }
+  const fallbackIdentityReads = (b: Browser) => b.backend.rpcCalls.filter((c) => c.endpoint === RPC_FALLBACK && c.params.method_name === 'get_identity').length;
+  function linkedBrowser() {
+    const b = new Browser();
+    b.backend.opened.add(Buffer.from(ik(E)).toString('hex'));
+    b.backend.link(E, G);
+    return b;
+  }
+
+  it('a member path: after PIN_READ_TIMEOUT_MS it is confirmed on both providers again (twice the second provider’s reads)', async () => {
+    expect(PIN_READ_TIMEOUT_MS).toBe(1_000);
+    const plain = linkedBrowser();
+    expect(((await login(await tab(plain, ENV2), g)).reply.result as { addresses: unknown }).addresses).toEqual(addressesOf(pathOf(E)));
+    const b = linkedBrowser();
+    const reads = stuckPins(b);
+    const { reply } = await login(await tab(b, ENV2), g);
     expect((reply.result as { addresses: unknown }).addresses).toEqual(addressesOf(pathOf(E)));
-    expect(pinReads).toBe(1);
+    expect(reads.n).toBe(1);
+    expect(fallbackIdentityReads(b)).toBe(2 * fallbackIdentityReads(plain));
+  });
+
+  it('a member path whose second confirmation the second provider disputes is refused (path_disputed, no /v1/login)', async () => {
+    for (const how of ['hang', 'fail'] as const) {
+      const b = linkedBrowser();
+      stuckPins(b, how);
+      // The second provider answers truly for the path read (G and its root E), then says G is its own.
+      let n = 0;
+      b.backend.viewLies.set(RPC_FALLBACK, (method, args) =>
+        method === 'get_identity' && ++n > 2 && args.provider === G.provider && args.sub === G.sub ? { key: Buffer.from(ik(G)).toString('hex'), status: 'own', opened: false, account_epoch: 0 } : undefined,
+      );
+      const { reply } = await login(await tab(b, ENV2), g);
+      expect(reply.error, how).toMatchObject({ code: 'api_unavailable', data: { reason: 'path_disputed' } });
+      expect(b.backend.count('/v1/login'), how).toBe(0);
+    }
+  });
+
+  it('the identity’s own path carries on without a second provider (the pairing check covers it)', async () => {
+    const b = new Browser();
+    const reads = stuckPins(b);
+    b.backend.rpcDown.add(RPC_FALLBACK);
+    const { reply } = await login(await tab(b, ENV2), g);
+    expect(reply.error).toBeUndefined();
+    expect((reply.result as { addresses: unknown }).addresses).toEqual(addressesOf(pathOf(G)));
+    expect(reads.n).toBe(1);
   });
 });
 

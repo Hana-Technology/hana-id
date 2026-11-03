@@ -112,7 +112,7 @@ import { VaultError, apiErrorToVault } from './errors.ts';
 import { type GoogleMatch, type IssuerApi, MatchBusy } from './issuer.ts';
 import { type NearView, ckdResultOf } from './near.ts';
 import { PathCheckError, confirmPath } from '../path-check.ts';
-import { type Clock, type Timers, type WindowMessageEvent, type WindowRef, sleep } from './runtime.ts';
+import { type Clock, type Timers, type WindowMessageEvent, type WindowRef, realTimers, sleep } from './runtime.ts';
 
 /** The pending login ends after this long without finishing (`login_timeout`, stage 'pending'). */
 export const LOGIN_PENDING_MS = 5 * 60_000;
@@ -143,7 +143,10 @@ export const MATCH_RETRY_BUDGET_MS = 45_000;
 export const MATCH_RETRY_FIRST_MS = 1_000;
 /** A login stops retrying google-match this long before its own deadline (LOGIN_PENDING_MS), to finish the chain step. */
 const MATCH_DEADLINE_MARGIN_MS = 90_000;
-/** How long a login waits for its root pin (IndexedDB) before it goes on as if there were none (D263). */
+/**
+ * How long a login waits for its root pin (IndexedDB). Then, as on a read error, a path that isn't the identity's own
+ * is confirmed on both providers (D263: fail closed).
+ */
 export const PIN_READ_TIMEOUT_MS = 1_000;
 /**
  * The most email-consent screens (declined, another account) one login shows (D264: at most 3); a refusal after the
@@ -1073,32 +1076,39 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
   }
 
   /**
-   * D263: the root this device last opened for `self`. The same, none yet (or no answer within PIN_READ_TIMEOUT_MS),
-   * or `self` (own → member: a link activated, already confirmed on both providers): nothing more. Any other change
-   * (unlinked: member → own; another account) is confirmed on both providers now, or refused.
+   * D263: the root this device last opened for `self`. The same, none yet, or `self` (own → member: a link activated,
+   * already confirmed on both providers): nothing more. Any other change (unlinked: member → own; another account)
+   * is confirmed on both providers now, or refused. A read that fails or doesn't answer within PIN_READ_TIMEOUT_MS (a
+   * stuck IndexedDB) fails closed: the path is confirmed on both providers unless it is `self`'s own (which only the
+   * MPC can answer for: the pairing check covers it).
    */
   private async checkPin(self: IdentityRef, now: IdentityRef): Promise<void> {
     const pins = this.ctx.pins;
     if (!pins) return;
     const scopeId = this.ctx.config.scopeId;
     const selfKey = identityKeyHex(scopeId, self.provider, self.sub);
-    // A store that never answers (a stuck IndexedDB) must not hold the login: after PIN_READ_TIMEOUT_MS it counts as no
-    // pin, as a storage error does (a new device).
-    const pinned = await new Promise<string | null>((resolve) => {
-      const timer = this.ctx.timers.setTimeout(() => resolve(null), PIN_READ_TIMEOUT_MS);
+    const nowKey = identityKeyHex(scopeId, now.provider, now.sub);
+    const pinned = await new Promise<string | null | 'unknown'>((resolve) => {
+      // Real time, not the injected clock: what it races is real I/O (a test clock that skips ahead would let it win
+      // against a read that is merely slow).
+      const timer = realTimers.setTimeout(() => resolve('unknown'), PIN_READ_TIMEOUT_MS);
       pins.get(selfKey).then(
         (v) => {
-          this.ctx.timers.clearTimeout(timer);
+          realTimers.clearTimeout(timer);
           resolve(v);
         },
         () => {
-          this.ctx.timers.clearTimeout(timer);
-          resolve(null);
+          realTimers.clearTimeout(timer);
+          resolve('unknown');
         },
       );
     });
     this.check();
-    if (!pinned || pinned === identityKeyHex(scopeId, now.provider, now.sub) || pinned === selfKey) return;
+    if (pinned === 'unknown') {
+      if (nowKey !== selfKey) await this.confirmed(self, await this.identityOf(self), now);
+      return;
+    }
+    if (!pinned || pinned === nowKey || pinned === selfKey) return;
     await this.confirmed(self, await this.identityOf(self), now);
   }
 

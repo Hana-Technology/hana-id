@@ -227,6 +227,8 @@ describe('port events', () => {
     [{ v: 1, event: 'disconnect', data: { code: 4900 } }],
     [{ v: 1, event: 'sessionExpired', data: null }],
     [{ v: 1, event: 'sessionExpired' }],
+    [{ v: 1, event: 'connected', data: null }],
+    [{ v: 1, event: 'connected' }],
     [{ v: 1, event: 'loginProgress', data: { stage: 'chain' } }],
     [{ v: 1, event: 'loginProgress', data: { stage: 'key_pending' } }],
     [{ v: 1, event: 'ui', data: { launcher: 'show', label: 'Review in Hana' } }],
@@ -252,6 +254,8 @@ describe('port events', () => {
     [{ v: 1, event: 'approvalWindow', data: { open: 'yes' } }],
     [{ v: 1, event: 'approvalWindow', data: { open: true, name: 'hana-approve-x' } }],
     [{ v: 1, event: 'approvalWindow', data: null }],
+    [{ v: 1, event: 'connected', data: {} }],
+    [{ v: 1, event: 'connected', data: { status: 'logged_out' } }],
   ])('refuses %j', (data) => {
     expect(parsePortEvent(data)).toBeNull();
   });

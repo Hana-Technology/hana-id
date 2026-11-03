@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HanaError } from '../../src/client/errors.ts';
 import { LOGIN_POPUP_FEATURES, POPUP_CONNECT_TIMEOUT_MS } from '../../src/client/login.ts';
+import { ANSWER_TIMEOUT_MS } from '../../src/client/vault-connection.ts';
 import { EVM, EVM_2, LOGGED_IN, LOGGED_OUT, ORIGINS, STELLAR, STELLAR_2, type Setup, flush, setup } from './harness.ts';
 
 let s: Setup;
@@ -118,7 +119,7 @@ describe('opening the popup', () => {
 
   it('after vault_unavailable, rejects at once without opening a popup', async () => {
     s = setup();
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(2 * (ANSWER_TIMEOUT_MS + 1)); // a frame that never loads: its deadline, then its one extension
     const e = await rejection(s.client.login());
     expect(e.code).toBe('vault_unavailable');
     expect(s.open).not.toHaveBeenCalled();
@@ -128,7 +129,7 @@ describe('opening the popup', () => {
     s = setup();
     const p = s.client.login();
     p.catch(() => {});
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(2 * (ANSWER_TIMEOUT_MS + 1)); // a frame that never loads: its deadline, then its one extension
     expect((await rejection(p)).code).toBe('vault_unavailable');
     expect(s.popups[0]?.close).toHaveBeenCalled();
     expect(s.client.status).toBe('error');

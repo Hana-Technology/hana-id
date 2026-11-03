@@ -25,6 +25,11 @@ describe('plainMessage', () => {
     expect(plainMessage(new HanaError(4001, 'x'), 'login')).toMatch(/did not complete/u);
     expect(plainMessage(new HanaError('google_error', 'x', { error: 'access_denied' }), 'login')).toBe('You declined the Google sign-in.');
     expect(plainMessage(new HanaError('vault_unavailable', 'x'), 'load')).toMatch(/Could not load the Hana vault/u);
+    // The SDK's reason after its one retry: a timeout, a frame that didn't answer, a slow start, a blocked frame.
+    expect(plainMessage(new HanaError('vault_unavailable', 'x', { reason: 'frame_timeout', attempts: 2 }), 'load')).toMatch(/Could not load the Hana vault in time/u);
+    expect(plainMessage(new HanaError('vault_unavailable', 'x', { reason: 'no_answer', attempts: 2 }), 'load')).toMatch(/didn’t answer.*allowed origins/u);
+    expect(plainMessage(new HanaError('vault_unavailable', 'x', { reason: 'ready_timeout', attempts: 1 }), 'load')).toMatch(/too slow to restore/u);
+    expect(plainMessage(new HanaError('vault_unavailable', 'x', { reason: 'csp_frame_src', attempts: 1 }), 'load')).toMatch(/security policy blocks/u);
     expect(plainMessage(new HanaError('origin_not_allowed', 'x'), 'load')).toMatch(/allowed origins/u);
   });
 

@@ -31,6 +31,8 @@ export interface AppConfig {
   loginMethods?: ('google' | 'email')[];
   /** Present when `loginMethods` has email: the scope's email client, `email:<scopeId>`. */
   email?: { aud: string };
+  /** pk_test_ apps: the API's own total and phases (docs/api.md "Timings"); checked where used (isServerTimings). */
+  timings?: unknown;
   requestId: string;
 }
 

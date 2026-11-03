@@ -44,8 +44,25 @@ export interface DemoDeps {
   copy?: (text: string) => Promise<void>;
 }
 
-/** The vault's login stages, in order (docs: apps/smoke/README.md). Others it may add are shown after them. */
-export const STAGES = ['app', 'popup', 'google', 'verify', 'chain', 'decrypt'] as const;
+/**
+ * The Login timings table's columns: the vault's login stages, in order (@hana-id/core timings.ts), with the sign-in
+ * step as one column (`signIn`). Others the vault adds are listed after them.
+ */
+export const STAGES = ['app', 'popup', 'signIn', 'verify', 'chain', 'decrypt'] as const;
+/** An email login's own stages (timings.ts): the user's and the issuer's part, summed in the sign-in column. */
+export const EMAIL_SIGN_IN_STAGES = ['emailEntry', 'emailStart', 'emailCode', 'emailVerify'] as const;
+const EMAIL_LABELS: Record<(typeof EMAIL_SIGN_IN_STAGES)[number], string> = { emailEntry: 'address', emailStart: 'code request', emailCode: 'code wait', emailVerify: 'verify' };
+
+/** Which method a login's stages came from: an email login has the email step's stages, a Google one `google`. */
+export function loginMethodOf(stages: Readonly<Record<string, number>>): 'google' | 'email' {
+  return EMAIL_SIGN_IN_STAGES.some((k) => k in stages) || 'emailRelay' in stages ? 'email' : 'google';
+}
+
+/** The sign-in column: Google's pages (`google`), or the email step's address, code request, code wait and verify. */
+export function signInMs(stages: Readonly<Record<string, number>>): number | undefined {
+  if (loginMethodOf(stages) === 'google') return stages.google;
+  return EMAIL_SIGN_IN_STAGES.reduce((sum, k) => sum + (stages[k] ?? 0), 0);
+}
 
 const PROGRESS: Record<string, string> = {
   popup_connected: 'The Hana sign-in window is open.',
@@ -236,20 +253,28 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
   function renderTimings(): void {
     const body = el('timings');
     if (logins.length === 0) return;
-    const extra = [...new Set(logins.flatMap((l) => Object.keys(l.stages ?? {})))].filter((k) => !(STAGES as readonly string[]).includes(k));
+    const shown: readonly string[] = [...STAGES, 'google', ...EMAIL_SIGN_IN_STAGES];
+    const extra = [...new Set(logins.flatMap((l) => Object.keys(l.stages ?? {})))].filter((k) => !shown.includes(k));
+    const cell = (ms: number | undefined) => h('td', {}, ms === undefined ? '—' : String(Math.round(ms)));
     body.replaceChildren(
       ...logins.map((l) =>
         h(
           'tr',
           {},
           h('td', {}, new Date(l.at).toLocaleTimeString()),
-          ...STAGES.map((s) => h('td', {}, l.stages?.[s] === undefined ? '—' : String(Math.round(l.stages[s]!)))),
+          h('td', {}, l.method),
+          ...STAGES.map((s) => cell(!l.stages ? undefined : s === 'signIn' ? signInMs(l.stages) : l.stages[s])),
           h('td', {}, String(Math.round(l.totalMs))),
         ),
       ),
     );
-    if (extra.length) body.append(h('tr', {}, h('td', { colspan: '8', class: 'muted' }, `Other stages: ${logins.map((l) => extra.map((k) => `${k} ${l.stages?.[k] ?? '—'}`).join(', ')).join(' | ')}`)));
-    if (logins.some((l) => l.stages === null)) body.append(h('tr', {}, h('td', { colspan: '8', class: 'muted' }, 'No per-stage times: the vault returns them for test apps (pk_test_) only.')));
+    const email = logins.filter((l) => l.stages && loginMethodOf(l.stages) === 'email');
+    if (email.length) {
+      const parts = email.map((l) => EMAIL_SIGN_IN_STAGES.map((k) => `${EMAIL_LABELS[k]} ${Math.round(l.stages?.[k] ?? 0)}`).join(', '));
+      body.append(h('tr', {}, h('td', { colspan: '9', class: 'muted' }, `Email sign-in: ${parts.join(' | ')}`)));
+    }
+    if (extra.length) body.append(h('tr', {}, h('td', { colspan: '9', class: 'muted' }, `Other stages: ${logins.map((l) => extra.map((k) => `${k} ${l.stages?.[k] ?? '—'}`).join(', ')).join(' | ')}`)));
+    if (logins.some((l) => l.stages === null)) body.append(h('tr', {}, h('td', { colspan: '9', class: 'muted' }, 'No per-stage times: the vault returns them for test apps (pk_test_) only.')));
   }
 
   function renderUnlock(): void {
@@ -345,7 +370,7 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
       () => {
         const result = c.lastLogin;
         if (result && result !== before) {
-          logins.push({ at: new Date(clock()).toISOString(), totalMs: now() - start, stages: result.timings ? { ...result.timings } : null });
+          logins.push({ at: new Date(clock()).toISOString(), method, totalMs: now() - start, stages: result.timings ? { ...result.timings } : null });
           renderTimings();
         }
         notice(null);

@@ -59,6 +59,8 @@ const results: Record<string, Result> = {};
 const events: { name: string; data: unknown }[] = [];
 let ready: 'pending' | 'ok' | 'error' = 'pending';
 let readyError: unknown = null;
+/** `data.reason` of a vault_unavailable (the SDK's vault-connection.ts), or null. */
+let readyErrorReason: unknown = null;
 
 hana.ready.then(
   () => {
@@ -67,6 +69,7 @@ hana.ready.then(
   (e: unknown) => {
     ready = 'error';
     readyError = e instanceof HanaError ? e.code : String(e);
+    readyErrorReason = e instanceof HanaError ? ((e.data as { reason?: unknown } | undefined)?.reason ?? null) : null;
   },
 );
 for (const name of ['statusChanged', 'accountsChanged', 'sessionExpired', 'disconnect', 'launcher', 'loginProgress', 'autoApproved', 'identityTokenChanged'] as const) {
@@ -233,6 +236,9 @@ const e2e = {
   },
   get readyError() {
     return readyError;
+  },
+  get readyErrorReason() {
+    return readyErrorReason;
   },
   status: () => hana.status,
   addresses: () => hana.addresses,

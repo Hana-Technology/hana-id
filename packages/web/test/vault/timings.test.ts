@@ -3,7 +3,23 @@
 // as durations, and hold nothing but stage names and numbers. pk_live_ apps get none.
 import { LOGIN_TIMING_DETAILS, LOGIN_TIMING_STAGES, UNLOCK_TIMING_DETAILS, UNLOCK_TIMING_STAGES, isTimings, stageSum, toHex } from '@hana-id/core';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { Browser, type Google, SUB, type Tab, google, login, makeConfig, readyTab } from './harness.ts';
+import {
+  Browser,
+  EMAIL_ENV,
+  type EmailIssuer,
+  type Google,
+  SUB,
+  type Tab,
+  deliverEmailToken,
+  emailIssuer,
+  enableEmail,
+  google,
+  login,
+  makeConfig,
+  persisted,
+  popupHello,
+  readyTab,
+} from './harness.ts';
 
 let g: Google;
 const tabs: Tab[] = [];
@@ -25,12 +41,15 @@ async function tab(browser = new Browser(), o: Parameters<typeof readyTab>[1] = 
 
 /** The partner client's own stages (it adds them around the vault's). */
 const CLIENT_LOGIN_STAGES = new Set(['open', 'wait', 'port']);
-const CLIENT_UNLOCK_STAGES = new Set(['mount', 'frameStart', 'port']);
+const CLIENT_UNLOCK_STAGES = new Set(['mount', 'retry', 'frameStart', 'port']);
+/** The login stages of the other method (and the chooser, which a preselected or Google-only login never shows). */
+const EMAIL_ONLY = new Set(['choose', 'emailLoad', 'emailEntry', 'emailStart', 'emailCode', 'emailVerify', 'emailRelay']);
+const GOOGLE_ONLY = new Set(['choose', 'google', 'callbackRedirect', 'callbackFetch', 'callbackBoot', 'callbackPrep']);
 // Small enough to fit inside the test's own hello → token time (real values are hundreds of ms).
 const POPUP = { authCheck: 0.03, callbackRedirect: 0.01, callbackFetch: 0.02, callbackBoot: 0.01, callbackPrep: 0.005 };
 const SERVER = {
   totalMs: 700,
-  phases: { app: 40, limits: 60, checks: 100, relay: 480, relayDispatch: 30, relayOutcome: 440, settings: 20, session: 300, insert: 25, share: 50, advance: 35 },
+  phases: { app: 40, limits: 60, checks: 100, relay: 480, relayDispatch: 30, relayOutcome: 440, settings: 20, chain: 15, session: 300, insert: 25, share: 50, advance: 35 },
 };
 
 /** Close to `want` (the stages are consecutive marks of one clock, so only float rounding separates them). */
@@ -54,7 +73,11 @@ describe('login timings', () => {
     const timings = (reply.result as { timings: Record<string, number> }).timings;
 
     const vaultStages = LOGIN_TIMING_STAGES.filter((s) => !CLIENT_LOGIN_STAGES.has(s));
-    for (const s of vaultStages) expect(timings, s).toHaveProperty(s);
+    for (const s of vaultStages.filter((s) => !EMAIL_ONLY.has(s))) expect(timings, s).toHaveProperty(s);
+    for (const s of EMAIL_ONLY) expect(timings, s).not.toHaveProperty(s);
+    // GET /v1/app: the vault's round trip of the request `app` waited for, and the API's own phases.
+    expect(timings).toMatchObject({ appServer: 700, appServerGate: 100, appServerSettings: 20, appServerChain: 15 });
+    expect(timings).toHaveProperty('appRtt');
     // The popup's own stages, passed as durations inside the encrypted slot, and the API's relay hold.
     expect(timings).toMatchObject({ ...POPUP, relayHeld: 0.01 });
     // Every vault stage is a lap of one clock from hana_login to the reply: they sum to `vault` exactly.
@@ -96,6 +119,39 @@ describe('login timings', () => {
       ),
       timings.vault!,
     );
+  });
+
+  it('a Google login whose popup showed the chooser has `choose`, taken out of `google`', async () => {
+    const browser = new Browser();
+    browser.backend.popupTimings = { ...POPUP, choose: 0.02 };
+    const t = await tab(browser);
+    const timings = ((await login(t, g)).reply.result as { timings: Record<string, number> }).timings;
+    expect(timings.choose).toBe(0.02);
+    near(stageSum(timings, LOGIN_TIMING_STAGES.filter((s) => !CLIENT_LOGIN_STAGES.has(s))), timings.vault!);
+  });
+
+  it('an email login has the email step’s stages and `emailRelay` instead of `google`, and they add up', async () => {
+    const issuer: EmailIssuer = await emailIssuer();
+    const browser = new Browser();
+    enableEmail(browser.backend, issuer);
+    const step = { authCheck: 0.01, choose: 0.01, emailLoad: 0.01, emailEntry: 0.02, emailStart: 0.01, emailCode: 0.03, emailVerify: 0.01 };
+    browser.backend.popupTimings = step;
+    browser.backend.relayHeldMs = 0.01;
+    browser.backend.serverTimings = SERVER;
+    const t = await tab(browser, { env: EMAIL_ENV });
+    const pending = t.request('hana_login');
+    const run = await popupHello(t);
+    await deliverEmailToken(t, issuer, run);
+    const reply = await pending;
+    await persisted(t);
+    const timings = (reply.result as { timings: Record<string, number> }).timings;
+    expect(timings).toMatchObject({ ...step, relayHeld: 0.01 });
+    expect(timings).not.toHaveProperty('google');
+    for (const s of GOOGLE_ONLY) if (s !== 'choose') expect(timings, s).not.toHaveProperty(s);
+    expect(timings).toHaveProperty('emailRelay');
+    const vaultStages = LOGIN_TIMING_STAGES.filter((s) => !CLIENT_LOGIN_STAGES.has(s));
+    near(stageSum(timings, vaultStages), timings.vault!);
+    expectNothingSensitive(timings, [...LOGIN_TIMING_STAGES, ...LOGIN_TIMING_DETAILS], [SUB, run.params.relayId as string, run.params.nonce as string]);
   });
 
   it('a malformed API timings object is ignored', async () => {

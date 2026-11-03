@@ -1,6 +1,8 @@
 # Operations runbook — running a Hana ID environment (testnet only)
 
-Last verified against code: 2026-11-02 (branch `feat/email-login-8a`: "Email login demo on sandbox-dev (batch 8a)",
+Last verified against code: 2026-11-03 (branch `fix/demo-polish`: "Hosted demo"'s vault errors and timings, "Logs
+and latency"'s `GET /v1/app` phases, "Common failures"' `vault_unavailable` reasons and the slow `app` stage;
+D260–D262); 2026-11-02 (branch `feat/email-login-8a`: "Email login demo on sandbox-dev (batch 8a)",
 the auth page Worker's `EMAIL_ISSUER_URL`, the local demo on the e2e stack's outbox; D245–D249); 2026-11-02 (branch `feat/email-login-6`, after both batch 6 reviews: "Email login on
 sandbox-dev" against the merged develop (0006/0009/0010, `hotDb` 9, C3's step-6 checks, C4's optional capture and its
 required marker copy, the pages before the API, the zero-downtime pool switch, the upgrade's `createProof` gate, the
@@ -1631,9 +1633,16 @@ corepack pnpm --filter @hana-id/demo run build && corepack pnpm --filter @hana-i
   code, `frame-ancestors 'none'`, Trusted Types) and `nosniff`, `no-referrer`, `X-Frame-Options: DENY`, COOP
   `same-origin-allow-popups` on every response; preview URLs are off and it answers only on its own origin.
 - Redeploy after changing `envs/<env>.json` (the vault origin is in the CSP and the bundle) or `@hana-id/web`.
-- "Could not load the Hana vault" on the demo: the origin isn't in force on the app (`app:origins:add` and
-  `app:changes:announce` above, then 60 s), or the build is for another env. `admin <env> app:list --remote` shows the
-  app's origins in force and its pending changes.
+- "Could not load the Hana vault" on the demo: *Copy diagnostics* shows the error's `reason` (the SDK tries a second
+  frame once before it gives up, D262). `no_answer`: the vault page refused the frame, so the origin isn't in force on
+  the app (`app:origins:add` and `app:changes:announce` above, then 60 s), the key is unknown or suspended, or the build
+  is for another env; `admin <env> app:list --remote` shows the app's origins in force and its pending changes.
+  `frame_timeout` (the frame never loaded) and `ready_timeout` (the vault answered but its unlock call didn't come
+  back in 20 s): the network or cold Workers, typically for a minute or two after a deploy; reload.
+- *Login timings*: one row per login with its method; "sign-in" is `google` for Google, and for email the sum of
+  `emailEntry`, `emailStart`, `emailCode` and `emailVerify` (listed under the row), D260. A large `app` with a large
+  `appServerChain` (in *Copy diagnostics*) is the API's registry read; a large `appRtt` with a small `appServer` is the
+  network or the Worker's routing.
 - Removing the origin (`app:origins:remove`) signs out everyone who used the demo, on their next use.
 
 ## Watchdog service (`apps/watchdog`)
@@ -2403,6 +2412,8 @@ Worker's metrics. Check once after a deploy that no relay URL appears in the Wor
 | `session` large on `/v1/vault/shares` | the RPC node behind `/v1/login`'s optimistic answer: `get_session` re-read every 300 ms (up to 2 s) |
 | `settings`, `insert`, `share`, `advance` large | D1 round trips (each is one or two queries) |
 | `vault_page` `latencyMs` | the vault page's D1 reads (app, origins, settings) that every page load waits for |
+| `GET /v1/app` `settings`, `chain` large | the D1 rows, or `get_scope` (then `get_config` for a shared client); the D1 rows and the registry run side by side since D261 |
+| `502 near_unavailable` after about 8 s, on any endpoint (logins included) | a contract view hit the 8 s RPC timeout (every view the API makes, D261): the node stalled. `GET /v1/app` is asked once more by the vault; a login fails and the user retries |
 
 **Stage timings (`pk_test_` apps).** The smoke page's *Timings* table (`apps/smoke/README.md` "Timings") splits a
 login and a reload unlock into consecutive stages that add up to the page's total (with `other`), measured where they
@@ -2464,6 +2475,8 @@ Google token (`docs/contract-interface.md` "Gas of the email login calls" and "U
 | 4100 `raw_not_allowed_for_test_apps` / `mainnet_not_allowed` from the vault | a `pk_test_` app asked for a raw signature (whatever `raw_sign` says), or for a mainnet Stellar passphrase or an EVM chain outside the testnet allowlist (D39) | expected for test apps; use a test network |
 | `429 rate_limited` "(per IP per minute)" or "(share per minute)" on `/v1/vault/*` with `retry-after: 60` | the vault's per-location flood limits (60/min per IP per app, 10/min per share; D95), counted per Cloudflare location and approximate | wait; not visible in the dashboard, so count the 429s in the request logs |
 | `429 rate_limited` "Too many key exports" on `/v1/login` from the export window | more than 3 exports in an hour for one user path in one app (D59) | wait for `retry-after` |
+| `vault_unavailable` on a partner page (`data.reason`) | `csp_frame_src`: the page's CSP; `no_answer` (after one retry): the vault page refused the frame (origin not in force, key unknown or suspended, wrong env build) or its script didn't run; `frame_timeout` / `ready_timeout`: network or cold Workers, often right after a deploy (D262) | fix the origin or CSP; for timeouts, reload, and check the `vault_page` and `/v1/vault/unlock` latencies in the request log |
+| A login's `app` stage takes seconds (`pk_test_` timings) | the `GET /v1/app` the vault asked after `ready` was still out: `appServer*` say whether the API (D1, the registry views) or the network took the time (D261) | look at the `/v1/app` request log line's `phases` and `colo`; a stalled RPC view now fails after 8 s (every view, logins included) and `/v1/app` is asked once more |
 | `409 no_google_client` on `/v1/app` | scope has no Google client and no usable shared client (or shared client still in its timelock) | add a client, or `--allow-shared` + wait `changeDelayMs` |
 | `admin`: "No wrangler config in apps/api" | `wrangler.jsonc` missing | `corepack pnpm --filter @hana-id/api run gen <env>` |
 | `deploy-contract` "Cannot deploy until these are fixed" | a key with the wrong receiver, methods, empty method list or too-large/unlimited allowance | run the printed `near account delete-keys …`, re-run |

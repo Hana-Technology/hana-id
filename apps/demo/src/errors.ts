@@ -49,7 +49,12 @@ export function plainMessage(e: unknown, action: DemoAction): string {
     case 'google_error':
       return isObj(e) && isObj(e.data) && e.data.error === 'access_denied' ? 'You declined the Google sign-in.' : `Google returned an error. Try again. ${REPORT}`;
     case 'vault_unavailable':
-      return 'Could not load the Hana vault. Check your connection and any content blocker, then reload the page.';
+      // data.reason (the SDK's vault-connection.ts): which part of the vault's load failed, after its one retry.
+      if (reason === 'csp_frame_src') return `This page’s security policy blocks the Hana vault frame. ${REPORT}`;
+      if (reason === 'no_answer') return `The Hana vault loaded but didn’t answer (is this site on the demo app’s allowed origins?). Reload the page. ${REPORT}`;
+      if (reason === 'ready_timeout') return 'Hana’s service was too slow to restore your session. Check your connection, then reload the page.';
+      if (reason === 'frame_replaced') return 'Something replaced the Hana vault frame (an extension?). Reload the page.';
+      return 'Could not load the Hana vault in time. Check your connection and any content blocker, then reload the page.';
     case 'api_unavailable':
       return 'Could not reach Hana’s service. Check your connection and try again.';
     case 'rate_limited':

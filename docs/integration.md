@@ -11,8 +11,10 @@ popup, unless it falls under an auto-approve policy you set and the user accepte
 > for mainnet chains at all ([section 12](#12-test-and-live-keys)). This guide follows the code; the original
 > specification is `docs/batch-b-spec.md`.
 
-Last verified against code: 2026-11-02 (branch `feat/email-login-8a`: email login, "Email login" in section 4, the
-new error codes and the `email_code` progress stage).
+Last verified against code: 2026-11-03 (branch `fix/demo-polish`: the vault load's one retry and
+`vault_unavailable`'s `data.reason` in section 3 and 13, the login timings' stages in section 12); 2026-11-02 (branch
+`feat/email-login-8a`: email login, "Email login" in section 4, the new error codes and the `email_code` progress
+stage).
 
 ## How it works
 
@@ -173,8 +175,24 @@ hana.on('persistenceChanged', (persistence) => {}); // 'none': this login won't 
 something like "Google just rotated its signing key; finishing in a few seconds". If the retry is refused too, the
 login rejects with `api_unavailable`; ask the user to sign in again in a few minutes.
 
-`hana.ready` rejects with `vault_unavailable` if the vault doesn't answer within 5 s: usually your CSP's
-`frame-src`, an origin Hana hasn't allowed for your app, or the network ([section 5](#5-your-page-origins-csp-popups)).
+`hana.ready` rejects with `vault_unavailable` when the vault doesn't load. The SDK gives the vault frame 5 s to answer
+(the vault says `connected` as soon as it has checked your page). A frame still loading at 5 s gets 5 s more; a frame
+that loaded but didn't answer is replaced once. A vault that answered then has 20 s to finish starting (restoring a
+session waits on one Hana API call). On any failure the SDK removes the frame. `error.data.reason` says which part
+failed (D262):
+
+| `data.reason` | What happened | Usually |
+|---|---|---|
+| `csp_frame_src` | your page's CSP blocked the frame (detected at once, no retry) | `frame-src` ([section 5](#5-your-page-origins-csp-popups)) |
+| `no_answer` | the frame loaded but the vault never answered, in either of two frames | your page's origin (or a page framing it) isn't one of your app's origins, or the key is unknown or suspended: the vault page refuses to be framed and says nothing, by design |
+| `frame_timeout` | the frame didn't load within 10 s | the network, or Hana's page Workers slow to answer |
+| `ready_timeout` | the vault answered but didn't finish starting within 20 s | the Hana API slow or unreachable |
+| `frame_replaced` | something navigated the vault frame before it was ready | another script on your page |
+
+`data.attempts` is how many frames were tried. `hana.readyTimings` (test apps) has a `retry` stage when the second
+frame was used. **A misconfiguration is slower to show than it used to be:** a page whose origin isn't one of your
+app's origins, or an unknown or suspended key, now fails with `no_answer` after about 10 s (two frames of 5 s), not 5 s.
+While you set up a page, check `data.reason` rather than waiting for it.
 
 ## 4. Log in, log out
 
@@ -660,7 +678,7 @@ const evmProvider = createSodaxEvmProvider(hana, { chainId: 8453, rpcUrl });    
 |---|---|---|
 | Where | sandbox envs (testnet), the pilot | the production MVP (mainnet), after the audit; not issued yet |
 | Loopback origins (`http://localhost:…`) | allowed, in `local*`/`sandbox*` envs only | never |
-| Login result | carries per-stage `timings` (`hana.lastLogin.timings`); the handshake and unlock's are `hana.readyTimings` | no timings (`hana.readyTimings` is null) |
+| Login result | carries per-stage `timings` (`hana.lastLogin.timings`, below); the handshake and unlock's are `hana.readyTimings` | no timings (`hana.readyTimings` is null) |
 | Direct API calls from your page (`/v1/sessions`, `/v1/derive`) | only in sandbox envs, for test tooling such as `apps/smoke` | never |
 | Networks | test networks only: any Stellar network but the public one, and the EVM chains below | any |
 
@@ -680,6 +698,17 @@ Sepolia (421614), OP Sepolia (11155420), Sonic testnet (14601), Sonic Blaze test
 A test app and a live app never share a scope. Your staging and production apps therefore give the same Google
 account **different addresses** (D51). Wallets made with test keys are disposable.
 
+**Login timings (test apps).** `hana.lastLogin.timings` holds consecutive stages, in ms, that add up to the login's
+time (the full table: `apps/smoke/README.md` "Timings"): `open`, `wait`, `app` (`GET /v1/app`), `keygen`, `popup`,
+`authCheck`, then the sign-in step, then `relayHeld`, `verify`, `scopeWait`, `chain`, `decrypt`, `finish`, `port`. The
+sign-in step depends on the method (D260): `choose` when the popup showed its method chooser; for Google, `google`
+(the user and Google's pages, plus the relay's network legs) and `callbackRedirect`, `callbackFetch`, `callbackBoot`,
+`callbackPrep`; for email, `emailLoad` (the email screen's load), `emailEntry` (typing the address), `emailStart` (the
+code request), `emailCode` (waiting for the mail and typing the code), `emailVerify` (checking the code) and
+`emailRelay` (the relay's network legs), and no `google`. Breakdown values that aren't added: `appRtt`, `appServer`,
+`appServerGate`, `appServerSettings`, `appServerChain` (inside `app`), `scopeCheck`, `chainPrep`, `loginRtt`,
+`loginServer*`, `vault`.
+
 ## 13. Errors
 
 `hana.*` methods reject with a `HanaError {code, message, data?}`. The EIP-1193 provider maps string codes to numbers
@@ -692,7 +721,7 @@ account **different addresses** (D51). Wallets made with test keys are disposabl
 | `4200` | Unsupported method (`eth_sign`, …; `exportKey` for an email wallet, `data.reason: 'email_export'`) | use a supported method |
 | `4900` | The vault is gone (logged out, session ended, frame replaced) | create the client again, or log in |
 | `4902` | EVM chain not in `evm.chains` | add it to `createHana` |
-| `vault_unavailable` | The vault didn't load in 5 s | check `frame-src`, your origins, the network |
+| `vault_unavailable` | The vault didn't load (one automatic retry; `data.reason`: `csp_frame_src`, `no_answer`, `frame_timeout`, `ready_timeout`, `frame_replaced`, [section 3](#3-create-the-client)) | check `frame-src`, your origins, the network. A wrong origin or key takes about 10 s to report (`no_answer`) |
 | `popup_blocked` | The browser blocked the popup and the sign-in was cancelled | call `login()` in a click |
 | `coop_blocks_popup` | The popup closed before it connected (COOP `same-origin`, or the user closed it at once) | fix COOP |
 | `login_timeout` | The popup never connected (15 s), or the sign-in took over 5 min | retry |

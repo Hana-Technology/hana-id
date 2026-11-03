@@ -63,6 +63,10 @@ test('email login through the chooser opens a wallet; no Google request, one log
   expect(requests.count(LOGIN_ENDPOINT)).toBe(1);
   // The first start carries no device ticket.
   expect(JSON.parse(bodies[0] as string)).not.toHaveProperty('deviceTicket');
+  // pk_test_ timings: the chooser and the email step's own stages, the relay residual, and no `google` stage.
+  const timings = (await page.evaluate(() => (window as any).e2e.hana.lastLogin?.timings)) as Record<string, number>;
+  for (const k of ['choose', 'emailLoad', 'emailEntry', 'emailStart', 'emailCode', 'emailVerify', 'emailRelay', 'appRtt', 'appServer']) expect(timings, k).toHaveProperty(k);
+  for (const k of ['google', 'callbackFetch']) expect(timings, k).not.toHaveProperty(k);
 });
 
 test('a returning email login sends its device ticket and opens the same wallet', async ({ page }, info) => {
@@ -123,6 +127,10 @@ test('Google through the chooser is the Google login, unchanged: the same wallet
   const viaChooser = await okValue<{ stellar: string; evm: string }>(page, 'login');
   expect(google.requests).toHaveLength(1);
   expect(google.requests[0]?.ok).toBe(true);
+  // The chooser's time is its own stage, out of `google`; no email stage.
+  const timings = (await page.evaluate(() => (window as any).e2e.hana.lastLogin?.timings)) as Record<string, number>;
+  for (const k of ['choose', 'google', 'callbackFetch']) expect(timings, k).toHaveProperty(k);
+  for (const k of Object.keys(timings)) expect(k).not.toMatch(/^email/u);
 
   // A Google-only app on the same scope, same Google account: no chooser, the same path, so the same addresses.
   const other = await browser.newContext();

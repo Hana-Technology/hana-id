@@ -15,13 +15,30 @@ export const LOGIN_TIMING_STAGES = [
   // Partner client: window.open of the login popup, and waiting for the vault's handshake before hana_login is sent.
   'open',
   'wait',
-  // Vault: GET /v1/app (normally already cached), the session key and nonce, the popup's hello.
+  // Vault: GET /v1/app (normally already answered: the vault asks right after `ready`), the session key and nonce, the
+  // popup's hello.
   'app',
   'keygen',
   'popup',
   // Login popup (/login): its checks of the vault's message (the pinned signer, the nonce) and storing the relay key,
-  // until it navigates to Google. No API call (D77).
+  // until it shows the method chooser or navigates on. No API call (D77).
   'authCheck',
+  // Login popup (/login), only when it shows the method chooser (an app with email): the user choosing, chooser shown
+  // → click. A Google-only app's login never has it.
+  'choose',
+  // Email login only, the email step (/login/email), each a sum on that page's clock: `emailLoad` its navigation (the
+  // chooser's click → the address screen), `emailEntry` the user typing the address, `emailStart` the issuer's `start`
+  // (and any `resend`) round trips, `emailCode` the wait for the code (the mail's delivery and the user typing it),
+  // `emailVerify` the `verify` round trips and encrypting the token, up to the relay POST. `emailRelay` is the
+  // residual of the vault's hello → token once those and the relay's own part are taken out: the relay's network
+  // legs (the page's POST upstream, the vault's read downstream) and any gap between the measured parts. An email
+  // login has no `google` stage.
+  'emailLoad',
+  'emailEntry',
+  'emailStart',
+  'emailCode',
+  'emailVerify',
+  'emailRelay',
   // The residual of the vault's hello → token time once the popup's and the relay's own parts are taken out: the
   // user at Google and Google's pages, plus the relay's network legs, which no single clock sees (the callback's
   // CORS preflight and POST upstream, the vault's read response downstream: about 1.5 API round trips).
@@ -51,6 +68,17 @@ export const LOGIN_TIMING_STAGES = [
 
 /** Login details: parts of a stage, or overlapped with the stages. Not added to the total. */
 export const LOGIN_TIMING_DETAILS = [
+  /**
+   * Inside `app`: the GET /v1/app request the login waited for, on the vault's clock (it may have started before the
+   * login, so it can be longer than `app`), and the API's own total and phases: `Gate` (the app row and the IP
+   * limiter), `Settings` (the settings and login-methods rows), `Chain` (the registry views, `get_scope` and, for a
+   * shared client, `get_config`, read side by side with the settings).
+   */
+  'appRtt',
+  'appServer',
+  'appServerGate',
+  'appServerSettings',
+  'appServerChain',
   /** The registry view of the app's scope (overlapped: started at `app`, waited for at `scopeWait`). */
   'scopeCheck',
   /** Inside `chain`: the BLS app key and the counter-1 signature. */
@@ -71,6 +99,9 @@ export const LOGIN_TIMING_DETAILS = [
 export const UNLOCK_TIMING_STAGES = [
   // Partner client: createHana until the iframe is in the document (waits for <body> when run in <head>).
   'mount',
+  // Partner client, only when the first frame didn't answer in time and the SDK put in a new one (one retry): the
+  // first frame's insertion → the second's. The stages after it are the second frame's.
+  'retry',
   // The vault iframe's navigation start, as far as the partner sees it: frame load minus the vault's own parts below.
   'frameStart',
   // Vault document, from its navigation timing: request to the vault page Worker (DNS, TLS, D1 reads, the HTML),

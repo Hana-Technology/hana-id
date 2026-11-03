@@ -189,11 +189,16 @@ describe('useHana', () => {
     expect(m.renders.last.hana.error?.code).toBe(4900);
   });
 
-  it('a vault that never answers gives status error with vault_unavailable after 5 s', async () => {
+  it('a vault that never answers gives status error with vault_unavailable (a frame that never loads: 5 s, extended once)', async () => {
     vi.useFakeTimers();
     const m = mount();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
+    });
+    // The frame never loaded: it gets one more deadline, then fails.
+    expect(m.renders.last.hana.status).not.toBe('error');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5002);
     });
     expect(m.renders.last.hana.status).toBe('error');
     expect(m.renders.last.hana.error?.code).toBe('vault_unavailable');

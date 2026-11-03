@@ -1,6 +1,9 @@
 # API reference — every endpoint the `apps/api` Worker serves today (and the email issuer's)
 
-Last verified against code: 2026-11-02 (branch `feat/email-login-8a`: the auth page Worker's `/login/email` and its
+Last verified against code: 2026-11-03 (branch `fix/demo-polish`: `GET /v1/app` reads its D1 rows and the registry
+and the registry side by side, `get_config` only when a shared client is needed, its `settings` and `chain` phases and
+its `timings` for `pk_test_` apps, the 8 s timeout on every contract view, the self-healing shared `get_config` read;
+D261); 2026-11-02 (branch `feat/email-login-8a`: the auth page Worker's `/login/email` and its
 `EMAIL_ISSUER_URL`, the web as the caller of `start` / `resend` / `verify` and of `GET /v1/app`'s `loginMethods`;
 D245–D249); 2026-11-02 (branch `feat/email-login-6`: email tokens on `/v1/sessions` and `/v1/login`, the
 create_session proof of possession, `/v1/login`'s `linkJwt` precheck, the link relays `/v1/link*`, the email-login
@@ -273,8 +276,18 @@ Headers: `x-hana-key`; from a Hana page also `x-hana-parent-origin`. Gate kind `
 { "name": "string", "scopeId": "string", "signer": "string",
   "google": { "clientId": "string", "mode": "own" | "shared" } | null,
   "loginMethods": ["google", "email"], "email": { "aud": "email:<scopeId>" },
-  "serverTimeMs": 0, "autoApprovePolicy": {} | null, "rawSign": "off" | "approval", "requestId": "string" }
+  "serverTimeMs": 0, "autoApprovePolicy": {} | null, "rawSign": "off" | "approval",
+  "timings": { "totalMs": 0, "phases": {} }, "requestId": "string" }
 ```
+
+After the gate, the settings and `login_methods` rows (D1) and the registry read run side by side (D261), and both are
+awaited before any answer, on every path. The registry read is `get_scope`, then `get_config` only when the scope
+needs a shared client (the app has no `google_web_client_id`, the scope has no Google client and allows shared
+login; cached 60 s, one read in flight per isolate). A failed `get_config` counts only where the shared client is
+used. Like every contract view the API makes, each gives up after 8 s ([Timings](#timings) below), so a stalled node
+answers `502 near_unavailable` instead of holding the request; the vault asks once more (`packages/web`
+vault/login.ts).
+`timings`: `pk_test_` apps only ([Timings](#timings)).
 
 `loginMethods` (L, D231) is what the app's D1 `login_methods` enables (migration 0010; `'google'` by default, read
 here, never in the gate; a database before 0010 reads as Google-only) and the scope can serve on chain, in the order
@@ -1179,16 +1192,25 @@ relay's `relayId`; security sweep APIV-3, D100), the cron.
 
 ## Timings
 
-A `pk_test_` app's successful `POST /v1/login`, `POST /v1/vault/shares` and `POST /v1/vault/unlock` answer with the
-request's own timings, so a test page can set the API's time against its own round trip (apps/smoke, README
+A `pk_test_` app's successful `GET /v1/app`, `POST /v1/login`, `POST /v1/vault/shares` and `POST /v1/vault/unlock`
+answer with the request's own timings, so a test page can set the API's time against its own round trip (apps/smoke, README
 "Timings"). The vault reports the login's and the unlock's; share creation's arrive after the login reply (D79), so
 the vault drops them (the request log keeps them). Unlock's phases are `app` (the cached app row), `limits` (the IP
 and share limits, local bindings, and the app quota object; D95), `share` (the KEK, the share and settings rows) and
-`advance` (the counter update); there is no `shareLimit` phase any more (D78):
+`advance` (the counter update); there is no `shareLimit` phase any more (D78). `GET /v1/app`'s are `app`, `limits`
+(the gate), `settings` and `chain` (from the gate's end to each read's answer; they overlap, D261), which the vault
+reports inside the login's `app` stage (`appServer*`):
 
 ```json
 "timings": { "totalMs": 0, "phases": { "app": 0, "limits": 0, "…": 0 } }
 ```
+
+**RPC view timeout.** Every contract view the API makes (`Rpc.view`, `call_function`: the scope, config, session,
+issuer and link views on every endpoint, `/v1/login`'s and `/v1/sessions`' checks included) gives up after 8 s
+(`VIEW_TIMEOUT_MS`, `src/near/rpc.ts`, D261) and fails as an unreachable node does (`502 near_unavailable` on the
+endpoints). Transactions (`send_tx`, `tx`) and the relayer's access-key and block reads wait as long as the node does.
+A shared `get_config` read in flight that hasn't settled within 10 s is no longer shared, so a read cancelled with its
+request can't hold up the isolate's later requests.
 
 `totalMs` runs from the request reaching the Worker to the answer; `phases` are the request log's (below). Durations
 only, under phase names: no request field, key, token or transaction. Like the log, they move only on I/O (the Workers
@@ -1217,7 +1239,8 @@ signatures, bodies, keys, CKD responses, relay bodies or panic text.
 | `app` | D1 app lookup (vault endpoints: ~0 when the per-isolate cache has the app, D78) |
 | `limits` | rate-limiter round trips (vault endpoints: the IP and share limits are local bindings with no round trip, then the app quota object; the body read is in it too, D95) |
 | `checks` | body, token, nonce, chain reads, signature, pre-checks (everything before the relay) |
-| `settings` | share creation: the app's settings row (D1) |
+| `settings` | share creation: the app's settings row (D1); `GET /v1/app`: the settings and `login_methods` rows, from the gate's end (overlaps `chain`) |
+| `chain` | `GET /v1/app`: `get_scope` (and `get_config` when read), from the gate's end (overlaps `settings`) |
 | `session` | share creation: signature check, then the session read and its retries (every 300 ms for up to 2 s while the node lags) |
 | `insert` | share creation: wrapping K_s and the D1 insert |
 | `share` | share actions: the KEK, the share row and (unlock, touch) the settings row (D1) |
